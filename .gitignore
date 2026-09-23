@@ -1,0 +1,9 @@
+# Rust
+**/target/
+
+# logs
+*.log
+
+# editor
+.vscode/
+.idea/
