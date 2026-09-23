@@ -7,12 +7,12 @@ Zed 级速度的 pi coding agent 桌面端 —— 用 Rust 重写 [pi-web](https
 ```
 ┌──────────────────────────┐      ACP / pi RPC (JSONL over stdio)      ┌─────────────────┐
 │  pi-flash (Rust + GPUI)  │ ────────────────────────────────────────  │  pi sidecar     │
-│  原生 UI / 流式渲染      │   先复用 pi-acp 适配器，后备直连 RPC      │  agent core     │
+│  原生 UI / 流式渲染      │   vendor 钉版 pi，spawn 其 cli.js       │  agent core     │
 └──────────────────────────┘                                           └─────────────────┘
 ```
 
 - **UI**: GPUI（Zed 同款框架，Windows DirectX / macOS Metal 原生渲染）
-- **桥接**: pi 子进程 `--mode rpc`，JSONL 协议（见 pi docs/rpc.md）；后期评估直连 ACP client 形态
+- **桥接**: 内置钉版 pi（vendor 随应用分发），spawn `node vendor/pi/dist/bundle/cli.js --mode rpc`；绝不读 PATH（对齐 pi-web 的版本锁步策略）
 - **目标平台**: Windows + macOS（macOS 包走 GitHub Actions macos runner）
 
 ## 目录
