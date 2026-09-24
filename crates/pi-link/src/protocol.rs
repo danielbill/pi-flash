@@ -22,6 +22,7 @@ pub enum Command {
     SetSessionName { name: String },
     GetCommands,
     GetAvailableModels,
+    ExportHtml,
     SetThinkingLevel { level: String },
 }
 
@@ -38,6 +39,7 @@ impl Command {
             Command::SetModel { .. } => "set_model",
             Command::SetSessionName { .. } => "set_session_name",
             Command::GetCommands => "get_commands",
+            Command::ExportHtml => "export_html",
             Command::GetAvailableModels => "get_available_models",
             Command::SetThinkingLevel { .. } => "set_thinking_level",
         }
@@ -56,7 +58,8 @@ impl Command {
             | Command::GetMessages
             | Command::GetSessionStats
             | Command::GetCommands
-            | Command::GetAvailableModels => {
+            | Command::GetAvailableModels
+            | Command::ExportHtml => {
                 json!({ "type": self.kind() })
             }
             Command::SetThinkingLevel { level } => {

@@ -65,6 +65,7 @@ impl Msg {
 enum Dialog {
     RenameSession { value: String },
     ModelSelect { filter: String },
+    FilePreview { path: PathBuf, content: String },
 }
 
 struct Chat {
@@ -398,6 +399,67 @@ impl Chat {
         }
     }
 
+    /// Heuristic session title (first user message, trimmed). LLM-based
+    /// generation needs the pi-ai SDK and is a later parity item.
+    fn auto_title(&mut self, cx: &mut Context<Self>) {
+        let title = self
+            .messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.plain_text())
+            .unwrap_or_default();
+        let mut title = title.trim().to_string();
+        if title.is_empty() {
+            self.status = "nothing to title yet".into();
+            cx.notify();
+            return;
+        }
+        title = title.replace('\n', " ");
+        if title.chars().count() > 40 {
+            let mut cut = 40;
+            while !title.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            title.truncate(cut);
+            title.push('\u{2026}');
+        }
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetSessionName { name: title });
+        }
+        self.refresh_state();
+        cx.notify();
+    }
+
+    fn export_html(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::ExportHtml);
+            self.status = "exporting...".into();
+        }
+        cx.notify();
+    }
+
+    fn open_file_preview(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        const MAX: u64 = 200 * 1024;
+        let meta = std::fs::metadata(&path);
+        let too_big = meta.as_ref().map(|m| m.len() > MAX).unwrap_or(false);
+        let content = if too_big {
+            "(file too large to preview)".to_string()
+        } else {
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    if bytes.contains(&0) {
+                        "(binary file)".to_string()
+                    } else {
+                        String::from_utf8_lossy(&bytes).to_string()
+                    }
+                }
+                Err(e) => format!("read failed: {e}"),
+            }
+        };
+        self.dialog = Some(Dialog::FilePreview { path, content });
+        cx.notify();
+    }
+
     fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
             let _ = session.send(&Command::SetModel {
@@ -533,6 +595,12 @@ impl Chat {
                         self.active_session_file =
                             data["sessionFile"].as_str().map(PathBuf::from);
                     }
+                } else if command == "export_html" && success {
+                    self.status = format!(
+                        "exported: {}",
+                        data.and_then(|d| d["path"].as_str().map(str::to_string))
+                            .unwrap_or_default()
+                    );
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
@@ -1109,6 +1177,7 @@ impl Render for Chat {
         let weak_for_msg = weak.clone();
         let weak_for_dialog = weak.clone();
         let weak_menu = weak.clone();
+        let weak_for_files = weak.clone();
         let pending_chip: Option<SharedString> = self
             .state
             .as_ref()
@@ -1437,15 +1506,40 @@ impl Render for Chat {
                             .children(
                                 top_level_entries(&self.cwd)
                                     .into_iter()
-                                    .map(|(is_dir, name)| {
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(t.text_muted))
-                                            .child(SharedString::from(format!(
-                                                "{}{}",
-                                                if is_dir { "\u{25b8} \u{1f4c1} " } else { "\u{1f4c4} " },
-                                                name
-                                            )))
+                                    .filter_map(|(is_dir, name)| {
+                                        if is_dir {
+                                            return Some(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(t.text_muted))
+                                                    .child(SharedString::from(format!(
+                                                        "\u{25b8} \u{1f4c1} {name}"
+                                                    )))
+                                                    .into_any_element(),
+                                            );
+                                        }
+                                        let path = self.cwd.join(&name);
+                                        let weak_f = weak_for_files.clone();
+                                        Some(
+                                            div()
+                                                .id(SharedString::from(format!("file-{name}")))
+                                                .text_xs()
+                                                .text_color(rgb(t.text_muted))
+                                                .cursor_pointer()
+                                                .hover(|s| {
+                                                    s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
+                                                })
+                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                    let p = path.clone();
+                                                    let _ = weak_f.update(cx, |c, cx| {
+                                                        c.open_file_preview(p, cx)
+                                                    });
+                                                })
+                                                .child(SharedString::from(format!(
+                                                    "\u{1f4c4} {name}"
+                                                )))
+                                                .into_any_element(),
+                                        )
                                     }),
                             ),
                     ),
@@ -1511,9 +1605,42 @@ impl Render for Chat {
                     .border_color(rgb(t.border))
                     .child(pill("tb-sidebar", SharedString::from("\u{2630}")))
                     .child(pill("tb-history", SharedString::from("\u{1f550} 完整历史")))
-                    .child(pill("tb-title", SharedString::from("\u{270e} 生成标题")))
+                    .child(
+                        div()
+                            .id("tb-title")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| this.auto_title(cx),
+                            ))
+                            .child("\u{270e} 生成标题"),
+                    )
                     .child(pill("tb-system", SharedString::from("\u{1f4c4} 系统")))
                     .child(pill("tb-tools", SharedString::from("\u{1f527} 工具")))
+                    .child(
+                        div()
+                            .id("tb-export")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| this.export_html(cx),
+                            ))
+                            .child("\u{2913} 导出"),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -1954,6 +2081,82 @@ impl Chat {
                                     .child(filter_view),
                             )
                             .child(list_panel),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if let Some(Dialog::FilePreview { path, content }) = self.dialog.as_ref() {
+            let path_text: SharedString = path.to_string_lossy().to_string().into();
+            // cap rendered text to keep paint cheap
+            let mut body = content.clone();
+            if body.chars().count() > 20000 {
+                let mut cut = 20000;
+                while !body.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                body.truncate(cut);
+                body.push('\n');
+                body.push('\n');
+                body.push('\u{2026}');
+                body.push_str(" (truncated)");
+            }
+            let weak_close = weak.clone();
+            return Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(760.))
+                            .max_h(px(640.))
+                            .bg(rgb(t.bg_panel))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .rounded_lg()
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .shadow_lg()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_family("Consolas")
+                                            .text_color(rgb(t.text_muted))
+                                            .child(path_text),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("file-close")
+                                            .px_2()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                let _ = weak_close.update(cx, |c, cx| {
+                                                    c.dialog = None;
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .child("\u{00d7}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .font_family("Consolas")
+                                    .text_xs()
+                                    .text_color(rgb(t.text))
+                                    .child(SharedString::from(body)),
+                            ),
                     )
                     .into_any_element(),
             );
