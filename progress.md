@@ -19,6 +19,14 @@
 - 测试：32 全绿（pi-link 25 + markdown 7）
 ## 协议陷阱（实测钉进 fixture）
 
+- pi RPC 无 navigate_tree（原地切 leaf 是 pi-web 服务端概念）；fork(entryId) position
+  before 要求 entry 是**用户消息**，target = parentId，branched session 文件首条消息时才落盘
+- gpui 0.2.2：`overflow_y_scroll`/`track_scroll` 只在 Stateful<Div>（需先 .id()）；
+  `visible_on_hover` 不存在，用 `.group("x")` + 子元素 `.group_hover("x", |s| s.opacity(1.))`
+- Windows `Path::components()` 的 RootDir 保留原始分隔符（/ 或 \），component 拼接
+  不可用于路径 key；用字符串级规范化（/ → \、去尾、case-fold）
+- 桌面版持久化用文件（~/.pi/agent/pi-flash-workspace.json），localStorage 不可用
+
 - 内容块类型是 camelCase `"toolCall"`（message.content 数组）
 - 流式 args 起始来自 `partialJson`（message_start 阶段 arguments 为空对象）
 - 工具结果以 `role:"toolResult"` 独立消息回灌（需挂接回工具卡片）
@@ -41,6 +49,17 @@
 | 会话行-hover按钮.png | 单行截断+hover ✏/🗑 |
 | 图片选择器.png | 🖼 attach_images 文件选择器 |
 | 文件预览.png | Cargo.toml 预览弹窗 |
+## 当前迭代纪要（M2 收尾 + M3 前两项）
+
+- pi-flash-kzw 分支导航：fork/tree 面板 + 消息 hover「新分支」（已关闭）
+- pi-flash-4su 文件树：collect_tree_rows 递归展开、24px 行/14px 缩进、
+  chevron 状态、懒加载 read_dir（300/目录 cap）、滚动容器（已关闭）
+- pi-flash-bnh git status/diff：porcelain=v1 -z 解析分类 M/A/D/R/U/C、
+  numstat 汇总 +a -d header、文件徽章（11px bold pi-web 色）、目录含改动黄点、
+  改动文件点击 → GitDiff 弹窗（untracked 合成 patch）（已关闭）
+- workspace 记忆：~/.pi/agent/pi-flash-workspace.json（per-workspace last open
+  + __last 全局指针），列表按项目过滤，项目选择弹窗，启动恢复最后 workspace+会话
+
 ## 待办
 
 已迁移至 beads 任务跟踪（`bd list` / `bd ready` 查看剩余工作；完成后 `bd close <id>`）。
