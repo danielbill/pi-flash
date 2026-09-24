@@ -20,6 +20,7 @@ pub enum Command {
     GetSessionStats,
     SetModel { provider: String, model: String },
     SetSessionName { name: String },
+    GetCommands,
 }
 
 impl Command {
@@ -34,6 +35,7 @@ impl Command {
             Command::GetSessionStats => "get_session_stats",
             Command::SetModel { .. } => "set_model",
             Command::SetSessionName { .. } => "set_session_name",
+            Command::GetCommands => "get_commands",
         }
     }
 
@@ -48,7 +50,8 @@ impl Command {
             Command::Abort
             | Command::GetState
             | Command::GetMessages
-            | Command::GetSessionStats => {
+            | Command::GetSessionStats
+            | Command::GetCommands => {
                 json!({ "type": self.kind() })
             }
             Command::SetModel { provider, model } => {
@@ -226,6 +229,29 @@ impl Usage {
             cache_read: v["cacheRead"].as_u64().unwrap_or(0),
             cost: v["cost"]["total"].as_f64().or_else(|| v["cost"].as_f64()).unwrap_or(0.0),
         })
+    }
+}
+
+/// A runnable slash command (extension commands, prompt templates, skills).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SlashCommand {
+    pub name: String,
+    pub description: String,
+}
+
+impl SlashCommand {
+    pub fn parse_list(data: &Value) -> Vec<SlashCommand> {
+        data["commands"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|c| SlashCommand {
+                        name: c["name"].as_str().unwrap_or("").to_string(),
+                        description: c["description"].as_str().unwrap_or("").to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -606,6 +632,18 @@ mod tests {
     fn set_session_name_record_shape() {
         let c = Command::SetSessionName { name: "my-feature".into() };
         assert_eq!(c.to_record("n1"), json!({"id":"n1","type":"set_session_name","name":"my-feature"}));
+    }
+
+    #[test]
+    fn slash_commands_parse_list() {
+        let data = serde_json::json!({"commands":[
+            {"name":"fix-tests","description":"Fix failing tests","source":"prompt"},
+            {"name":"review","description":"","source":"skill"}
+        ]});
+        let cmds = SlashCommand::parse_list(&data);
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].name, "fix-tests");
+        assert_eq!(cmds[0].description, "Fix failing tests");
     }
 
     #[test]

@@ -14,7 +14,8 @@ use gpui::{
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
 use pi_link::protocol::{
-    AssistantEvent, Block, Command, Event, SessionState, SessionStats, Usage, content_blocks,
+    AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, Usage,
+    content_blocks,
 };
 use pi_link::sessions::{SessionInfo, list_sessions};
 
@@ -82,11 +83,68 @@ struct Chat {
     stats: Option<SessionStats>,
     active_session_file: Option<PathBuf>,
     collapsed: HashSet<(usize, usize)>,
+    /// slash commands from get_commands
+    commands: Vec<SlashCommand>,
+    /// project files (relative paths) for the @ lookup menu
+    project_files: Vec<String>,
+    /// sent-prompt history (pi-web chat input parity)
+    history: Vec<String>,
+    history_ix: Option<usize>,
+    /// highlighted row in the active slash/@ menu
+    menu_ix: usize,
     /// guards against stale events from a replaced sidecar process
     epoch: u64,
 }
 
 use std::collections::HashSet;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MenuKind {
+    Slash,
+    At,
+}
+
+#[derive(Debug, Clone)]
+struct MenuItem {
+    /// what gets inserted into the input when accepted
+    insert: String,
+    title: String,
+    desc: String,
+}
+
+fn walk_files(cwd: &Path, depth: usize, cap: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    fn rec(dir: &Path, rel: &str, depth: usize, cap: usize, out: &mut Vec<String>) {
+        if depth == 0 || out.len() >= cap {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.len() >= cap {
+                return;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || name == "dist"
+            {
+                continue;
+            }
+            let rel_path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                rec(&e.path(), &rel_path, depth - 1, cap, out);
+            } else {
+                out.push(rel_path);
+            }
+        }
+    }
+    rec(cwd, "", depth, cap, &mut out);
+    out
+}
 
 impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -121,14 +179,17 @@ impl Chat {
             stats: None,
             active_session_file: None,
             collapsed: HashSet::new(),
+            commands: Vec::new(),
+            project_files: Vec::new(),
+            history: Vec::new(),
+            history_ix: None,
+            menu_ix: 0,
             epoch: 1,
         };
         chat.sessions_list.reset(chat.sessions.len());
+        chat.load_project_files();
         if connected {
-            if let Some(s) = &chat.session {
-                let _ = s.send(&Command::GetState);
-                let _ = s.send(&Command::GetSessionStats);
-            }
+            chat.refresh_state();
         }
 
         if let Some(events) = events {
@@ -140,11 +201,77 @@ impl Chat {
         chat
     }
 
+    /// The menu currently active for the input text, if any.
+    fn active_menu(&self) -> Option<MenuKind> {
+        let input = &self.input;
+        if input.starts_with('/') && !input[1..].contains(char::is_whitespace) {
+            return Some(MenuKind::Slash);
+        }
+        if let Some(at) = input.rfind('@') {
+            if !input[at..].contains(char::is_whitespace) && input[at + 1..].len() < 64 {
+                return Some(MenuKind::At);
+            }
+        }
+        None
+    }
+
+    fn menu_items(&self) -> Vec<MenuItem> {
+        match self.active_menu() {
+            Some(MenuKind::Slash) => {
+                let q = self.input[1..].to_lowercase();
+                self.commands
+                    .iter()
+                    .filter(|c| q.is_empty() || c.name.to_lowercase().starts_with(&q))
+                    .take(8)
+                    .map(|c| MenuItem {
+                        insert: c.name.clone(),
+                        title: format!("/{}", c.name),
+                        desc: c.description.clone(),
+                    })
+                    .collect()
+            }
+            Some(MenuKind::At) => {
+                let at = self.input.rfind('@').unwrap_or(0);
+                let q = self.input[at + 1..].to_lowercase();
+                self.project_files
+                    .iter()
+                    .filter(|f| q.is_empty() || f.to_lowercase().contains(&q))
+                    .take(8)
+                    .map(|f| MenuItem {
+                        insert: f.clone(),
+                        title: f.clone(),
+                        desc: String::new(),
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    }
+
+    fn accept_menu(&mut self, insert: String, cx: &mut Context<Self>) {
+        match self.active_menu() {
+            Some(MenuKind::Slash) => self.input = format!("/{insert} "),
+            Some(MenuKind::At) => {
+                if let Some(at) = self.input.rfind('@') {
+                    self.input = format!("{}{} ", &self.input[..=at], insert);
+                }
+            }
+            None => {}
+        }
+        self.menu_ix = 0;
+        cx.notify();
+    }
+
     fn refresh_state(&self) {
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetState);
             let _ = session.send(&Command::GetSessionStats);
+            let _ = session.send(&Command::GetCommands);
         }
+    }
+
+    fn load_project_files(&mut self) {
+        self.project_files = walk_files(&self.cwd, 3, 400);
     }
 
     /// The trailing assistant message, created on demand.
@@ -241,12 +368,16 @@ impl Chat {
         // pi-web parity: while streaming, typed text steers the running agent
         let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
         let cmd = if streaming {
-            Command::Steer { message: text }
+            Command::Steer { message: text.clone() }
         } else {
-            Command::Prompt { message: text }
+            Command::Prompt { message: text.clone() }
         };
         match session.send(&cmd) {
             Ok(_) => {
+                if self.history.last().map(|h| h != &text).unwrap_or(true) {
+                    self.history.push(text);
+                }
+                self.history_ix = None;
                 self.input.clear();
                 self.status = if streaming { "steering" } else { "running" }.into();
             }
@@ -287,6 +418,7 @@ impl Chat {
         self.collapsed.clear();
         self.status = status_line(self.session.is_some(), "新会话");
         self.refresh_state();
+        self.load_project_files();
         if let Some(events) = events {
             let epoch = self.epoch;
             cx.spawn(async move |this, cx| {
@@ -321,9 +453,9 @@ impl Chat {
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
-            let _ = session.send(&Command::GetState);
-            let _ = session.send(&Command::GetSessionStats);
         }
+        self.refresh_state();
+        self.load_project_files();
         if let Some(events) = events {
             let epoch = self.epoch;
             cx.spawn(async move |this, cx| {
@@ -366,6 +498,10 @@ impl Chat {
                         self.stats = Some(SessionStats::parse(data));
                         self.active_session_file =
                             data["sessionFile"].as_str().map(PathBuf::from);
+                    }
+                } else if command == "get_commands" && success {
+                    if let Some(data) = &data {
+                        self.commands = SlashCommand::parse_list(data);
                     }
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
@@ -927,18 +1063,80 @@ impl Render for Chat {
             .and_then(|s| s.session_name.clone())
             .unwrap_or_else(|| "pi-flash".into())
             .into();
-        let pending_chip: Option<SharedString> = self
-            .state
-            .as_ref()
-            .filter(|s| s.pending_message_count > 0)
-            .map(|s| SharedString::from(format!("queued {}", s.pending_message_count)));
-
         let entity = cx.entity();
         let weak = entity.downgrade();
         let weak_for_list = weak.clone();
         let weak_for_del = weak.clone();
         let weak_for_msg = weak.clone();
         let weak_for_dialog = weak.clone();
+        let weak_menu = weak.clone();
+        let pending_chip: Option<SharedString> = self
+            .state
+            .as_ref()
+            .filter(|s| s.pending_message_count > 0)
+            .map(|s| SharedString::from(format!("queued {}", s.pending_message_count)));
+
+        // slash/@ popup menu state (derived from input text)
+        let menu_now = self.menu_items();
+        let menu_open = self.active_menu().is_some() && !menu_now.is_empty();
+        let menu_sel = self.menu_ix.min(menu_now.len().saturating_sub(1));
+        let menu_el: Option<gpui::AnyElement> = if menu_open {
+            let rows: Vec<gpui::AnyElement> = menu_now
+                .iter()
+                .enumerate()
+                .map(|(i, mi)| {
+                    let selected = i == menu_sel;
+                    let insert = mi.insert.clone();
+                    let weak_i = weak_menu.clone();
+                    let title: SharedString = mi.title.clone().into();
+                    let desc: SharedString = mi.desc.clone().into();
+                    div()
+                        .id(SharedString::from(format!("menu-{i}")))
+                        .w_full()
+                        .px_3()
+                        .py_1p5()
+                        .cursor_pointer()
+                        .when(selected, |d| d.bg(rgb(t.bg_selected)))
+                        .hover(move |s| s.bg(rgb(t.bg_hover)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let ins = insert.clone();
+                            let _ = weak_i.update(cx, |c, cx| c.accept_menu(ins, cx));
+                        })
+                        .flex()
+                        .justify_between()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family("Consolas")
+                                .text_color(rgb(t.accent))
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(t.text_muted))
+                                .child(desc),
+                        )
+                        .into_any_element()
+                })
+                .collect();
+            Some(
+                div()
+                    .flex_col()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.assistant_bg))
+                    .shadow_lg()
+                    .py_1()
+                    .children(rows)
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
 
         // ---- sidebar ----------------------------------------------------
         let sessions_entity = entity.clone();
@@ -1309,6 +1507,7 @@ impl Render for Chat {
                 div()
                     .px_4()
                     .pb_2()
+                    .children(menu_el)
                     .child(
                         div()
                             .w_full()
@@ -1329,17 +1528,79 @@ impl Render for Chat {
                                     .min_w_0()
                                     .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
                                         let key = ev.keystroke.key.as_str();
+                                        let shift = ev.keystroke.modifiers.shift;
+                                        let menu_open = this.active_menu().is_some();
+                                        let items = this.menu_items();
                                         match key {
+                                            "enter" if shift => {
+                                                this.input.push('\n');
+                                                cx.notify();
+                                            }
+                                            "enter" if menu_open && !items.is_empty() => {
+                                                let ix = this.menu_ix.min(items.len() - 1);
+                                                let insert = items[ix].insert.clone();
+                                                this.accept_menu(insert, cx);
+                                            }
                                             "enter" => this.send_input(cx),
+                                            "escape" if menu_open => {
+                                                this.menu_ix = 0;
+                                                // close the menu by terminating the query
+                                                if this.active_menu() == Some(MenuKind::At) {
+                                                    if let Some(at) = this.input.rfind('@') {
+                                                        let q = this.input[at + 1..].to_string();
+                                                        this.input =
+                                                            format!("{}{} ", &this.input[..at], q);
+                                                    }
+                                                } else if !this.input.is_empty() {
+                                                    this.input = format!("{} ", this.input);
+                                                }
+                                                cx.notify();
+                                            }
                                             "escape" => this.abort(cx),
+                                            "tab" if menu_open && !items.is_empty() => {
+                                                let ix = this.menu_ix.min(items.len() - 1);
+                                                let insert = items[ix].insert.clone();
+                                                this.accept_menu(insert, cx);
+                                            }
+                                            "up" if menu_open && !items.is_empty() => {
+                                                this.menu_ix = this.menu_ix.saturating_sub(1);
+                                                cx.notify();
+                                            }
+                                            "down" if menu_open && !items.is_empty() => {
+                                                this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
+                                                cx.notify();
+                                            }
+                                            "up" if !this.history.is_empty() => {
+                                                let ix = match this.history_ix {
+                                                    None => this.history.len() - 1,
+                                                    Some(i) => i.saturating_sub(1),
+                                                };
+                                                this.history_ix = Some(ix);
+                                                this.input = this.history[ix].clone();
+                                                cx.notify();
+                                            }
+                                            "down" => {
+                                                if let Some(i) = this.history_ix {
+                                                    if i + 1 < this.history.len() {
+                                                        this.history_ix = Some(i + 1);
+                                                        this.input = this.history[i + 1].clone();
+                                                    } else {
+                                                        this.history_ix = None;
+                                                        this.input.clear();
+                                                    }
+                                                    cx.notify();
+                                                }
+                                            }
                                             "backspace" => {
                                                 if !ev.keystroke.modifiers.modified() {
                                                     this.input.pop();
+                                                    this.menu_ix = 0;
                                                     cx.notify();
                                                 }
                                             }
                                             "space" => {
                                                 this.input.push(' ');
+                                                this.menu_ix = 0;
                                                 cx.notify();
                                             }
                                             k => {
@@ -1349,6 +1610,7 @@ impl Render for Chat {
                                                 if printable {
                                                     if let Some(c) = k.chars().next() {
                                                         this.input.push(c);
+                                                        this.menu_ix = 0;
                                                         cx.notify();
                                                     }
                                                 }
