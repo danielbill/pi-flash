@@ -6,6 +6,61 @@ use gpui::{
     div, prelude::*, px, rgb,
 };
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Color, ThemeSet};
+use syntect::parsing::SyntaxSet;
+
+/// Syntax highlighting state (loaded once; ~100ms cold, cached for process life).
+struct Syn {
+    ps: SyntaxSet,
+    ts: ThemeSet,
+}
+
+fn syn() -> &'static Syn {
+    static SYN: std::sync::OnceLock<Syn> = std::sync::OnceLock::new();
+    SYN.get_or_init(|| {
+        // start from the built-in defaults (includes plain text + common langs),
+        // then allow extra syntaxes from an optional assets folder
+        let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+        builder.add_from_folder("assets/syntaxes", false).ok();
+        let ps = builder.build();
+        let ts = ThemeSet::load_defaults();
+        Syn { ps, ts }
+    })
+}
+
+const THEME: &str = "base16-ocean.dark";
+
+/// Highlight `code` and return colored text segments.
+fn highlight_segments(code: &str, lang: &str) -> Vec<(String, [u8; 3])> {
+    let syn = syn();
+    let syntax = lang
+        .split(',')
+        .next()
+        .map(str::trim)
+        .and_then(|l| syn.ps.find_syntax_by_token(l))
+        .unwrap_or_else(|| syn.ps.find_syntax_plain_text());
+    let Some(theme) = syn.ts.themes.get(THEME) else {
+        return vec![(code.to_string(), [0xd7, 0xda, 0xdd])];
+    };
+    let mut hl = HighlightLines::new(syntax, theme);
+    let mut out: Vec<(String, [u8; 3])> = Vec::new();
+    for line in syntect::util::LinesWithEndings::from(code) {
+        let Ok(ranges) = hl.highlight_line(line, &syn.ps) else { continue };
+        for (style, text) in ranges {
+            let Color { r, g, b, a: _ } = style.foreground;
+            // merge consecutive segments with identical colors
+            if let Some(last) = out.last_mut() {
+                if last.1 == [r, g, b] {
+                    last.0.push_str(text);
+                    continue;
+                }
+            }
+            out.push((text.to_string(), [r, g, b]));
+        }
+    }
+    out
+}
 
 const MONO_FAMILY: &str = "Consolas";
 const COL_TEXT: u32 = 0xd7dadd;
@@ -348,17 +403,37 @@ fn render_block(b: &MdBlock, depth: usize) -> AnyElement {
             .text_color(rgb(COL_TEXT))
             .child(styled_text(runs, COL_TEXT, 14.))
             .into_any_element(),
-        MdBlock::Code { code, .. } => div()
-            .w_full()
-            .my_1()
-            .p_2()
-            .rounded_md()
-            .bg(rgb(COL_CODE_BG))
-            .font_family(MONO_FAMILY)
-            .text_xs()
-            .text_color(rgb(COL_TEXT))
-            .child(SharedString::from(code.trim_end().to_string()))
-            .into_any_element(),
+        MdBlock::Code { code, lang, .. } => {
+            let code = code.trim_end();
+            let base = TextStyle {
+                color: rgb(COL_TEXT).into(),
+                font_family: MONO_FAMILY.into(),
+                font_size: px(12.).into(),
+                ..Default::default()
+            };
+            let mut text = String::new();
+            let mut highlights = Vec::new();
+            for (seg, [r, g, b]) in highlight_segments(code, lang) {
+                let start = text.len();
+                text.push_str(&seg);
+                let end = text.len();
+                highlights.push((
+                    start..end,
+                    HighlightStyle { color: Some(rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()), ..Default::default() },
+                ));
+            }
+            div()
+                .w_full()
+                .my_1()
+                .p_2()
+                .rounded_md()
+                .bg(rgb(COL_CODE_BG))
+                .font_family(MONO_FAMILY)
+                .text_xs()
+                .text_color(rgb(COL_TEXT))
+                .child(StyledText::new(text).with_default_highlights(&base, highlights))
+                .into_any_element()
+        }
         MdBlock::Quote { blocks } => div()
             .w_full()
             .border_l_2()
@@ -467,6 +542,16 @@ mod tests {
             MdBlock::ListItem { marker, .. } => assert_eq!(marker, "1."),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn code_highlight_produces_colored_runs() {
+        let segs = highlight_segments("fn main() {}
+", "rust");
+        assert!(!segs.is_empty());
+        // keyword "fn" should be styled differently from plain text
+        assert!(segs.iter().any(|(t, _)| t.contains("fn")));
+        assert!(segs.len() > 1, "expected multiple colored segments");
     }
 
     #[test]
