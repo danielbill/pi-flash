@@ -59,10 +59,7 @@
 | 用户气泡-mist主题.png | 用户气泡+thinking 卡片 |
 | 文件预览.png | Cargo.toml 预览弹窗 |
 
-## 待办（对应 PORT_PLAN.md）
+## 待办
 
-- M2 剩余：分支导航（fork/tree，需 get_entries 追踪 entryId）
-- M3：文件树交互深化（目录展开）、git status/diff、内置终端
-- M4：配置面（模型/插件/技能/系统提示词面板）
-- M5：扩展 UI 协议、子代理、原生通知
-- M6：i18n、SVG 图标替换 emoji、主题运行时切换、macOS CI、LLM 生成标题（需 pi-ai SDK）
+已迁移至 beads 任务跟踪（`bd list` / `bd ready` 查看剩余工作；完成后 `bd close <id>`）。
+计划全量见 PORT_PLAN.md。
