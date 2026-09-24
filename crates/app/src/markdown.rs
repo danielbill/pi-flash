@@ -63,11 +63,11 @@ fn highlight_segments(code: &str, lang: &str) -> Vec<(String, [u8; 3])> {
 }
 
 const MONO_FAMILY: &str = "Consolas";
-const COL_TEXT: u32 = 0xd7dadd;
-const COL_DIM: u32 = 0x9aa0a6;
-const COL_CODE_BG: u32 = 0x111214;
-const COL_RULE: u32 = 0x33353a;
-const COL_LINK: u32 = 0x8ab4f8;
+const COL_TEXT: u32 = 0xe8e8e8; // --text
+const COL_DIM: u32 = 0xa4a4a4; // --text-dim
+const COL_CODE_BG: u32 = 0x222222; // --tool-bg
+const COL_RULE: u32 = 0x454545; // --border
+const COL_LINK: u32 = 0xa4c2f4; // --accent
 
 // ---------------------------------------------------------------------------
 // inline runs

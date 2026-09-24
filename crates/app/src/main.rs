@@ -10,7 +10,7 @@ use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
     App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
     MouseButton, ParentElement, Render, SharedString, Styled, WindowOptions, div, list,
-    prelude::*, px, rgb,
+    prelude::*, px, relative, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
 use pi_link::protocol::{AssistantEvent, Block, Command, Event, SessionState, SessionStats, content_blocks};
@@ -19,18 +19,25 @@ use pi_link::sessions::{SessionInfo, list_sessions};
 mod markdown;
 
 // ---------------------------------------------------------------------------
-// palette (placeholder theme; visual polish is deliberately deferred)
+// palette: translated 1:1 from pi-web app/globals.css CSS variables (dark)
 // ---------------------------------------------------------------------------
 
-const COL_BG: u32 = 0x1a1b1e;
-const COL_PANEL: u32 = 0x232428;
-const COL_SIDEBAR: u32 = 0x141518;
-const COL_TEXT: u32 = 0xd7dadd;
-const COL_USER: u32 = 0x8ab4f8;
-const COL_ASSISTANT: u32 = 0x81c995;
-const COL_STATUS: u32 = 0x9aa0a6;
-const COL_THINKING: u32 = 0x7a7f87;
-const COL_CARD_BORDER: u32 = 0x3a3d44;
+const COL_BG: u32 = 0x1a1a1a; // --bg
+const COL_PANEL: u32 = 0x242424; // --bg-panel
+const COL_BG_HOVER: u32 = 0x2e2e2e; // --bg-hover
+const COL_BG_SELECTED: u32 = 0x383838; // --bg-selected
+const COL_SIDEBAR: u32 = 0x1a1a1a; // sidebar is transparent over --bg
+const COL_BORDER: u32 = 0x454545; // --border
+const COL_TEXT: u32 = 0xe8e8e8; // --text
+const COL_USER: u32 = 0xa4c2f4; // --accent (message label)
+const COL_ASSISTANT: u32 = 0xa4c2f4; // --accent
+const COL_STATUS: u32 = 0xb7b7b7; // --text-muted
+const COL_THINKING: u32 = 0xa4a4a4; // --text-dim
+const COL_CARD_BORDER: u32 = 0x454545; // --border
+const COL_ACCENT: u32 = 0xa4c2f4; // --accent
+const COL_USER_BG: u32 = 0x292929; // --user-bg
+const COL_ASSISTANT_BG: u32 = 0x1a1a1a; // --assistant-bg
+const COL_TOOL_BG: u32 = 0x222222; // --tool-bg
 
 // ---------------------------------------------------------------------------
 // chat state
@@ -652,6 +659,7 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
         Role::Assistant => ("pi", rgb(COL_ASSISTANT)),
     };
     let mut col = div()
+        .max_w(px(720.))
         .w_full()
         .px_3()
         .py_1()
@@ -666,12 +674,23 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
                 .child(label),
         );
     if m.role == Role::User {
+        // MessageView.tsx: right-aligned bubble, --user-bg, radius 12, pad 8/12
         let text = m.plain_text();
-        col = col.child(
-            div()
-                .text_color(rgb(COL_TEXT))
-                .child(SharedString::from(text)),
-        );
+        col = col
+            .items_end()
+            .child(
+                div()
+                    .max_w(relative(0.85))
+                    .mt_1()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(12.))
+                    .bg(rgb(COL_USER_BG))
+                    .border_1()
+                    .border_color(gpui::rgba(0x3b82f633))
+                    .text_color(rgb(COL_TEXT))
+                    .child(SharedString::from(text)),
+            );
     } else {
         for b in &m.blocks {
             col = col.child(render_block(b, msg_ix, weak, collapsed));
@@ -738,7 +757,7 @@ impl Render for Chat {
         let sessions_entity = entity.clone();
         let sessions_weak = weak.clone();
         let sidebar = div()
-            .w(px(280.))
+            .w(px(260.))
             .h_full()
             .flex_shrink_0()
             .flex()
