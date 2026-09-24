@@ -58,6 +58,7 @@ assets! {
     "icons/layers.svg",
     "icons/loader.svg",
     "icons/trash.svg",
+    "icons/check.svg",
 }
 
 pub const ICON: &str = "icons";

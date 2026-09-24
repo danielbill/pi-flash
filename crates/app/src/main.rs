@@ -71,6 +71,7 @@ enum Dialog {
     ModelSelect { filter: String },
     FilePreview { path: PathBuf, content: String },
     BranchTree,
+    ProjectSelect,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +150,13 @@ impl Chat {
             input: String::new(),
             messages: Vec::new(),
             list,
-            sessions: list_sessions(100),
+            sessions: {
+                let cwd_text = cwd.to_string_lossy().to_string();
+                list_sessions(100)
+                    .into_iter()
+                    .filter(|s| same_ws(&s.cwd, &cwd_text))
+                    .collect()
+            },
             sessions_list,
             cwd: cwd.clone(),
             branch,
@@ -182,6 +189,31 @@ impl Chat {
             })
             .detach();
         }
+        // Startup restore (pi-web last-open-by-workspace, plus a global
+        // last-workspace pointer): reopen the app in the workspace that was
+        // used last and reopen the session it had open.
+        let mut chat = chat;
+        let last_ws = get_last_workspace();
+        let target_ws = last_ws.unwrap_or_else(|| cwd.to_string_lossy().to_string());
+        if !same_ws(&target_ws, &cwd.to_string_lossy()) {
+            let ws_path = PathBuf::from(&target_ws);
+            if ws_path.is_dir() {
+                chat.cwd = ws_path;
+                chat.branch = read_branch(&chat.cwd);
+                let cwd_text = chat.cwd.to_string_lossy().to_string();
+                chat.sessions = list_sessions(100)
+                    .into_iter()
+                    .filter(|s| same_ws(&s.cwd, &cwd_text))
+                    .collect();
+                chat.load_project_files();
+            }
+        }
+        if let Some(p) = get_last_open(&chat.cwd.to_string_lossy()) {
+            let path = PathBuf::from(&p);
+            if path.exists() {
+                chat.open_session(path, false, cx);
+            }
+        }
         chat
     }
 
@@ -194,6 +226,48 @@ impl Chat {
         }
     }
 
+
+    /// Reload sessions filtered to the selected project (pi-web
+    /// sessionsForProject: only the selected cwd's sessions are listed).
+    fn refresh_sessions(&mut self) {
+        let cwd = self.cwd.to_string_lossy().to_string();
+        self.sessions = list_sessions(100)
+            .into_iter()
+            .filter(|s| same_ws(&s.cwd, &cwd))
+            .collect();
+    }
+
+    /// Switch workspace: reset context, filter sessions, restore the last
+    /// open session of that workspace (or land on a blank new session).
+    fn switch_project(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
+        self.cwd = cwd;
+        // mark as the globally-last active workspace for startup restore
+        set_last_workspace(&self.cwd.to_string_lossy());
+        self.branch = read_branch(&self.cwd);
+        self.refresh_sessions();
+        self.messages.clear();
+        self.state = None;
+        self.stats = None;
+        self.active_session_file = None;
+        self.collapsed.clear();
+        self.dialog = None;
+        self.load_project_files();
+        if let Some(p) = get_last_open(&self.cwd.to_string_lossy()) {
+            let path = PathBuf::from(&p);
+            if path.exists() {
+                self.open_session(path, false, cx);
+                cx.notify();
+                return;
+            }
+        }
+        self.new_session(cx);
+        cx.notify();
+    }
+
+    fn open_project_select(&mut self, cx: &mut Context<Self>) {
+        self.dialog = Some(Dialog::ProjectSelect);
+        cx.notify();
+    }
 
     /// Open the branch navigator: request a fresh tree, show the panel.
     fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
@@ -471,6 +545,7 @@ impl Chat {
         self.stats = None;
         self.active_session_file = None;
         self.collapsed.clear();
+        clear_last_open(&self.cwd.to_string_lossy());
         self.status = status_line(self.session.is_some(), "新会话");
         self.refresh_state();
         self.load_project_files();
@@ -497,6 +572,7 @@ impl Chat {
             spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
         self.session = session;
         self.cwd = cwd;
+        set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
         self.branch = read_branch(&self.cwd);
         self.messages.clear();
         self.state = None;
@@ -725,6 +801,7 @@ impl Chat {
                         }
                         // branch_tree was refreshed by the GetTree request below;
                         // message entry ids re-map there as well.
+                        self.refresh_sessions();
                         self.status = "forked".into();
                     } else {
                         self.status = format!(
@@ -986,6 +1063,122 @@ fn spawn_with_epoch(
             (None, None)
         }
     }
+}
+
+/// Key holding the globally-last active workspace (startup target).
+const WS_LAST_KEY: &str = "__last";
+
+/// Per-workspace "last open session" memory (pi-web workspace-memory parity).
+/// Stored at ~/.pi/agent/pi-flash-workspace.json as { "<cwd>": "<session path>" };
+/// an empty string means "this workspace was left on a blank new session".
+fn workspace_memory_path() -> Option<PathBuf> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
+    Some(
+        Path::new(&home)
+            .join(".pi")
+            .join("agent")
+            .join("pi-flash-workspace.json"),
+    )
+}
+
+fn load_workspace_memory() -> serde_json::Map<String, serde_json::Value> {
+    let Some(path) = workspace_memory_path() else {
+        return serde_json::Map::new();
+    };
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return serde_json::Map::new(),
+    };
+    let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(v) => v,
+        Err(_) => return serde_json::Map::new(),
+    };
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = parsed.as_object() {
+        for (k, v) in obj {
+            // `__last` stays as-is; workspace keys get normalized once.
+            if k == WS_LAST_KEY {
+                out.insert(k.clone(), v.clone());
+            } else {
+                out.insert(ws_key(k), v.clone());
+            }
+        }
+    }
+    out
+}
+
+fn save_workspace_memory(map: &serde_json::Map<String, serde_json::Value>) {
+    let Some(path) = workspace_memory_path() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(path, raw);
+    }
+}
+
+/// Normalized workspace key: Path components joined with "\\", so
+/// "D:/a/b" and "D:\a\b" share one memory slot (Windows path parity).
+fn ws_key(cwd: &str) -> String {
+    // String-level normalization: "/" -> "\\", strip trailing separator,
+    // case-fold (Windows paths are case-insensitive).
+    let mut k = cwd.replace('/', "\\");
+    while k.ends_with('\\') {
+        k.pop();
+    }
+    k.to_ascii_lowercase()
+}
+
+/// Workspace-key-aware path equality.
+fn same_ws(a: &str, b: &str) -> bool {
+    ws_key(a) == ws_key(b)
+}
+
+/// Remember `session_path` as the last open session for `cwd` and mark it
+/// as the globally-last active workspace (startup restore target).
+fn set_last_open(cwd: &str, session_path: &str) {
+    let mut map = load_workspace_memory();
+    let key = ws_key(cwd);
+    map.insert(WS_LAST_KEY.to_string(), serde_json::Value::String(key.clone().into()));
+    map.insert(key, serde_json::Value::String(session_path.into()));
+    save_workspace_memory(&map);
+}
+
+/// Mark `cwd` as the globally-last active workspace.
+fn set_last_workspace(cwd: &str) {
+    let mut map = load_workspace_memory();
+    map.insert(
+        WS_LAST_KEY.to_string(),
+        serde_json::Value::String(ws_key(cwd).into()),
+    );
+    save_workspace_memory(&map);
+}
+
+/// The workspace the app was last used in, if known.
+fn get_last_workspace() -> Option<String> {
+    load_workspace_memory()
+        .get(WS_LAST_KEY)?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Remember that `cwd` was left on a blank new session.
+fn clear_last_open(cwd: &str) {
+    let mut map = load_workspace_memory();
+    map.insert(ws_key(cwd), serde_json::Value::String(String::new()));
+    save_workspace_memory(&map);
+}
+
+/// The remembered session path for `cwd`, if any.
+fn get_last_open(cwd: &str) -> Option<String> {
+    load_workspace_memory()
+        .get(&ws_key(cwd))?
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn status_line(connected: bool, state: &str) -> String {
@@ -1667,6 +1860,7 @@ impl Render for Chat {
             // project box
             .child(
                 div()
+                    .id("project-frame")
                     .mx_3()
                     .mb_1p5()
                     .px_2p5()
@@ -1677,6 +1871,13 @@ impl Render for Chat {
                     .bg(rgb(t.assistant_bg))
                     .text_xs()
                     .text_color(rgb(t.text))
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(rgb(t.text_dim)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, _: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_project_select(cx);
+                        },
+                    ))
                     .child(cwd_text),
             )
             // branch box
@@ -2958,6 +3159,151 @@ impl Render for Chat {
                                     .child("点击节点：从该用户消息处创建分支新会话"),
                             )
                             .child(body),
+                    ),
+            );
+        }
+        if self.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::ProjectSelect)) {
+            let t = T();
+            let weak = weak_for_dialog.clone();
+            // recent projects: unique cwds by latest activity (getRecentProjects parity)
+            let mut latest: std::collections::HashMap<String, (PathBuf, std::time::SystemTime)> =
+                std::collections::HashMap::new();
+            for s in list_sessions(200) {
+                let entry = latest.entry(s.cwd.clone()).or_insert((PathBuf::from(&s.cwd), s.modified));
+                if s.modified > entry.1 {
+                    entry.1 = s.modified;
+                }
+            }
+            let mut projects: Vec<(String, PathBuf)> = latest.into_iter().map(|(k, v)| (k, v.0)).collect();
+            projects.sort_by(|a, b| a.0.cmp(&b.0));
+            let current = self.cwd.to_string_lossy().to_string();
+
+            let mut rows: Vec<gpui::AnyElement> = Vec::new();
+            for (cwd_text, cwd_path) in &projects {
+                let is_current = same_ws(cwd_text, &current);
+                let cwd_clone = cwd_path.clone();
+                let weak_row = weak.clone();
+                rows.push(
+                    div()
+                        .id(SharedString::from(format!("proj-{}", cwd_text)))
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(7.))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .cursor_pointer()
+                        .when(is_current, |d| {
+                            d.bg(rgb(t.bg_selected))
+                                .border_1()
+                                .border_color(rgb(t.accent))
+                        })
+                        .when(!is_current, |d| {
+                            d.border_1()
+                                .border_color(rgb(t.border))
+                                .hover(|s| s.bg(rgb(t.bg_hover)))
+                        })
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let p = cwd_clone.clone();
+                            let _ = weak_row.update(cx, |c, cx| {
+                                c.switch_project(p, cx);
+                            });
+                        })
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(t.text))
+                                .child(SharedString::from(cwd_text.clone())),
+                        )
+                        .child(if is_current {
+                            icon("check", 12., t.accent)
+                                .into_any_element()
+                        } else {
+                            div().into_any_element()
+                        })
+                        .into_any_element()
+            );
+            }
+            root = root.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(520.))
+                            .max_h(px(560.))
+                            .bg(rgb(t.bg_panel))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .shadow_lg()
+                            .p_3()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(rgb(t.text))
+                                            .child("选择项目"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("project-close")
+                                            .px_2()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("x", 12., t.text_muted)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_dim))
+                                    .child("切换后仅显示该项目的会话，并恢复上次打开的会话"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1p5()
+                                    .max_h(px(380.))
+                                    .overflow_hidden()
+                                    .children(rows),
+                            ),
                     ),
             );
         }
