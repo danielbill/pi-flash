@@ -7,6 +7,9 @@ vendor/pi/node_modules/
 # logs
 *.log
 
+# screenshots
+tmp/
+
 # editor
 .vscode/
 .idea/
