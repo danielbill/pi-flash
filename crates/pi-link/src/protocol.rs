@@ -4,7 +4,6 @@
 //! Unknown record shapes are preserved as [`Event::Other`] / raw JSON so a pi
 //! upgrade never silently drops data — conformance tests fail loudly instead.
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// One pi RPC record kind we send. Correlated via `id` where a response is expected.
@@ -43,82 +42,151 @@ impl Command {
                 json!({ "type": self.kind(), "provider": provider, "model": model })
             }
         };
-        // abort/set_model responses are correlated too; always attach an id
         v["id"] = json!(id);
         v
     }
 }
 
-/// A content block as it appears in `message.content` arrays.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ContentBlock {
-    Text { text: String },
-    Thinking { thinking: String },
-    #[serde(rename_all = "camelCase")]
-    ToolCall { id: Option<String>, name: Option<String>, arguments: Option<Value> },
-    Image,
-    Other,
+/// Assistant content block kinds carried by `message.content` arrays.
+///
+/// Mirrors the wire blocks pi emits (json.md): `text`, `thinking`, `toolcall`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Block {
+    Text { content_index: usize, text: String },
+    Thinking { content_index: usize, text: String },
+    ToolCall {
+        content_index: usize,
+        id: String,
+        name: String,
+        args: String,
+        /// Output text delivered by a following role="toolResult" message.
+        result: String,
+    },
 }
 
-/// Flatten `content: string | ContentBlock[]` into plain text (per json.md).
-pub fn content_text(content: &Value) -> String {
+impl Block {
+    pub fn content_index(&self) -> usize {
+        match self {
+            Block::Text { content_index, .. }
+            | Block::Thinking { content_index, .. }
+            | Block::ToolCall { content_index, .. } => *content_index,
+        }
+    }
+}
+
+/// Extract ordered content blocks from a `message.content` value
+/// (string form is treated as a single text block).
+pub fn content_blocks(content: &Value) -> Vec<Block> {
     match content {
-        Value::String(s) => s.clone(),
-        Value::Array(blocks) => blocks
+        Value::String(s) => vec![Block::Text { content_index: 0, text: s.clone() }],
+        Value::Array(items) => items
             .iter()
-            .filter_map(|b| match block_kind(b) {
-                BlockKind::Text => b["text"].as_str().map(str::to_string),
-                _ => None,
+            .enumerate()
+            .map(|(ix, b)| {
+                let idx = b["index"].as_u64().unwrap_or(ix as u64) as usize;
+                match b["type"].as_str() {
+                    Some("thinking") => Block::Thinking {
+                        content_index: idx,
+                        text: b["thinking"].as_str().unwrap_or("").to_string(),
+                    },
+                    Some("toolCall") | Some("toolcall") => {
+                        let args = b["partialJson"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| {
+                                b["arguments"]
+                                    .as_object()
+                                    .filter(|o| !o.is_empty())
+                                    .map(|o| Value::Object(o.clone()).to_string())
+                                    .unwrap_or_default()
+                            });
+                        Block::ToolCall {
+                            content_index: idx,
+                            id: b["id"].as_str().unwrap_or("").to_string(),
+                            name: b["name"]
+                                .as_str()
+                                .or_else(|| b["toolName"].as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            args,
+                            result: String::new(),
+                        }
+                    }
+                    _ => Block::Text {
+                        content_index: idx,
+                        text: b["text"].as_str().unwrap_or("").to_string(),
+                    },
+                }
             })
-            .collect::<Vec<_>>()
-            .join(""),
-        _ => String::new(),
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
-enum BlockKind {
-    Text,
-    Other,
+/// Flatten text blocks only (user echo, quick summaries).
+pub fn content_text(content: &Value) -> String {
+    content_blocks(content)
+        .into_iter()
+        .map(|b| match b {
+            Block::Text { text, .. } => text,
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
-fn block_kind(b: &Value) -> BlockKind {
-    match b["type"].as_str() {
-        Some("text") => BlockKind::Text,
-        _ => BlockKind::Other,
-    }
-}
-
-/// Incremental assistant message update events (`assistantMessageEvent`).
+/// Incremental assistant message events (`assistantMessageEvent` in `message_update`).
+///
+/// Field names per json.md: `contentIndex`, `delta`, `content`, `id`, `toolName`,
+/// `toolCall`. `*_end` variants carry authoritative content and replace the
+/// streamed reconstruction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssistantEvent {
-    /// append text to block `content_index`
     TextDelta { content_index: usize, delta: String },
-    TextEnd { content_index: usize },
-    ThinkingDelta { delta: String },
-    ToolCallStart { name: String },
-    ToolCallEnd { name: String },
+    TextEnd { content_index: usize, content: String },
+    ThinkingStart { content_index: usize },
+    ThinkingDelta { content_index: usize, delta: String },
+    ThinkingEnd { content_index: usize, content: String },
+    ToolCallStart { content_index: usize, id: String, tool_name: String },
+    ToolCallDelta { content_index: usize, delta: String },
+    ToolCallEnd { content_index: usize, tool_call: Value },
     Other(Value),
 }
 
 impl AssistantEvent {
     pub fn parse(v: &Value) -> AssistantEvent {
+        let idx = || v["contentIndex"].as_u64().unwrap_or(0) as usize;
         match v["type"].as_str() {
             Some("text_delta") => AssistantEvent::TextDelta {
-                content_index: v["contentIndex"].as_u64().unwrap_or(0) as usize,
+                content_index: idx(),
                 delta: v["delta"].as_str().unwrap_or("").to_string(),
             },
             Some("text_end") => AssistantEvent::TextEnd {
-                content_index: v["contentIndex"].as_u64().unwrap_or(0) as usize,
+                content_index: idx(),
+                content: v["content"].as_str().unwrap_or("").to_string(),
             },
+            Some("thinking_start") => AssistantEvent::ThinkingStart { content_index: idx() },
             Some("thinking_delta") => AssistantEvent::ThinkingDelta {
+                content_index: idx(),
                 delta: v["delta"].as_str().unwrap_or("").to_string(),
             },
+            Some("thinking_end") => AssistantEvent::ThinkingEnd {
+                content_index: idx(),
+                content: v["content"].as_str().unwrap_or("").to_string(),
+            },
             Some("toolcall_start") => AssistantEvent::ToolCallStart {
-                name: v["name"].as_str().unwrap_or("").to_string(),
+                content_index: idx(),
+                id: v["id"].as_str().unwrap_or("").to_string(),
+                tool_name: v["toolName"].as_str().unwrap_or("").to_string(),
+            },
+            Some("toolcall_delta") => AssistantEvent::ToolCallDelta {
+                content_index: idx(),
+                delta: v["delta"].as_str().unwrap_or("").to_string(),
             },
             Some("toolcall_end") => AssistantEvent::ToolCallEnd {
-                name: v["name"].as_str().unwrap_or("").to_string(),
+                content_index: idx(),
+                tool_call: v["toolCall"].clone(),
             },
             _ => AssistantEvent::Other(v.clone()),
         }
@@ -130,10 +198,10 @@ impl AssistantEvent {
 pub enum Event {
     /// Response to a command, correlated by id.
     Response { id: String, command: String, success: bool, error: Option<String> },
-    MessageStart { role: String, text: String },
+    MessageStart { role: String, blocks: Vec<Block> },
     MessageUpdate(AssistantEvent),
-    /// Authoritative final message for a role.
-    MessageEnd { role: String, text: String },
+    /// Authoritative final message; blocks replace any streamed reconstruction.
+    MessageEnd { role: String, blocks: Vec<Block> },
     AgentStart,
     AgentEnd { will_retry: bool },
     /// pi will not continue automatically (retries/queue drained).
@@ -157,14 +225,17 @@ pub fn parse_record(v: &Value) -> Event {
             success: v["success"].as_bool().unwrap_or(false),
             error: v["error"].as_str().map(str::to_string),
         },
+        // roles: "system" | "user" | "assistant" | "toolResult" (json.md wire)
         Some("message_start") => Event::MessageStart {
             role: v["message"]["role"].as_str().unwrap_or("").to_string(),
-            text: content_text(&v["message"]["content"]),
+            blocks: content_blocks(&v["message"]["content"]),
         },
-        Some("message_update") => Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"])),
+        Some("message_update") => {
+            Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
+        }
         Some("message_end") => Event::MessageEnd {
             role: v["message"]["role"].as_str().unwrap_or("").to_string(),
-            text: content_text(&v["message"]["content"]),
+            blocks: content_blocks(&v["message"]["content"]),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
@@ -205,7 +276,10 @@ mod tests {
         let e = parse_line(r#"{"id":"1","type":"response","command":"prompt","success":true}"#).unwrap();
         match e {
             Event::Response { id, command, success, error } => {
-                assert_eq!((id.as_str(), command.as_str(), success, error.is_none()), ("1", "prompt", true, true));
+                assert_eq!(
+                    (id.as_str(), command.as_str(), success, error.is_none()),
+                    ("1", "prompt", true, true)
+                );
             }
             other => panic!("wrong event: {other:?}"),
         }
@@ -219,9 +293,9 @@ mod tests {
         )
         .unwrap();
         match e {
-            Event::MessageStart { role, text } => {
+            Event::MessageStart { role, blocks } => {
                 assert_eq!(role, "user");
-                assert_eq!(text, "say OK");
+                assert_eq!(blocks, vec![Block::Text { content_index: 0, text: "say OK".into() }]);
             }
             other => panic!("wrong event: {other:?}"),
         }
@@ -237,6 +311,78 @@ mod tests {
             Event::MessageUpdate(AssistantEvent::TextDelta { content_index, delta }) => {
                 assert_eq!(content_index, 0);
                 assert_eq!(delta, "Hello ");
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn toolcall_events_carry_tool_name_and_content() {
+        let start = parse_line(
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"tc_1","toolName":"bash","partial":{}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            start,
+            Event::MessageUpdate(AssistantEvent::ToolCallStart { content_index: 1, tool_name, .. })
+                if tool_name == "bash"
+        ));
+
+        let end = parse_line(
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"id":"tc_1","name":"bash","arguments":{"command":"ls"}}}}"#,
+        )
+        .unwrap();
+        match end {
+            Event::MessageUpdate(AssistantEvent::ToolCallEnd { content_index, tool_call }) => {
+                assert_eq!(content_index, 1);
+                assert_eq!(tool_call["name"], "bash");
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn thinking_events() {
+        let e = parse_line(
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"hmm"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::MessageUpdate(AssistantEvent::ThinkingDelta { delta, .. }) if delta == "hmm"
+        ));
+    }
+
+    #[test]
+    fn message_end_blocks_extract_toolcall_with_tool_name() {
+        // assistant final content uses toolName; index comes from the block itself
+        let e = parse_line(
+            r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","index":0},{"type":"toolCall","id":"tc_1","name":"read","arguments":{"path":"a.rs"},"index":1},{"type":"text","text":"done","index":2}]}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageEnd { role, blocks } => {
+                assert_eq!(role, "assistant");
+                assert_eq!(blocks.len(), 3);
+                assert!(matches!(&blocks[0], Block::Thinking { content_index: 0, text } if text.is_empty()));
+                assert!(matches!(&blocks[1], Block::ToolCall { content_index: 1, name, .. } if name == "read"));
+                assert!(matches!(&blocks[2], Block::Text { content_index: 2, text } if text == "done"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assistant_message_start_partial_toolcall_uses_partial_json() {
+        // REAL record: message_start carries a partial toolCall block
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_x","name":"bash","arguments":{},"partialJson":"","index":0}]}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { role, blocks } => {
+                assert_eq!(role, "assistant");
+                assert!(matches!(&blocks[0], Block::ToolCall { name, args, .. } if name == "bash" && args.is_empty()));
             }
             other => panic!("wrong event: {other:?}"),
         }

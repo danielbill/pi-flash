@@ -11,7 +11,9 @@ use gpui::{
     ParentElement, Render, SharedString, Styled, WindowOptions, div, list, prelude::*, px, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
-use pi_link::protocol::{AssistantEvent, Command, Event};
+use pi_link::protocol::{AssistantEvent, Block, Command, Event};
+
+mod markdown;
 
 // ---------------------------------------------------------------------------
 // palette (placeholder theme; visual polish is deliberately deferred)
@@ -23,6 +25,8 @@ const COL_TEXT: u32 = 0xd7dadd;
 const COL_USER: u32 = 0x8ab4f8;
 const COL_ASSISTANT: u32 = 0x81c995;
 const COL_STATUS: u32 = 0x9aa0a6;
+const COL_THINKING: u32 = 0x7a7f87;
+const COL_CARD_BORDER: u32 = 0x3a3d44;
 
 // ---------------------------------------------------------------------------
 // chat state
@@ -36,7 +40,20 @@ enum Role {
 
 struct Msg {
     role: Role,
-    text: String,
+    blocks: Vec<Block>,
+}
+
+impl Msg {
+    fn plain_text(&self) -> String {
+        self.blocks
+            .iter()
+            .map(|b| match b {
+                Block::Text { text, .. } => text.as_str(),
+                _ => "",
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
 }
 
 struct Chat {
@@ -89,20 +106,37 @@ impl Chat {
         }
     }
 
-    fn push_message(&mut self, role: Role, text: &str) {
-        self.messages.push(Msg { role, text: text.to_string() });
-        let count = self.messages.len();
-        self.list.reset(count);
+    fn notify_repaint(&mut self, cx: &mut Context<Self>) {
+        self.list.reset(self.messages.len());
+        cx.notify();
     }
 
-    /// Append to the trailing assistant message, creating one if needed.
-    fn append_assistant(&mut self, delta: &str) {
-        match self.messages.last_mut() {
-            Some(m) if m.role == Role::Assistant => m.text.push_str(delta),
-            _ => self.push_message(Role::Assistant, delta),
+    /// The trailing assistant message, created on demand.
+    fn last_assistant(&mut self) -> &mut Msg {
+        if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
+            self.messages.push(Msg { role: Role::Assistant, blocks: Vec::new() });
         }
-        let count = self.messages.len();
-        self.list.reset(count);
+        self.messages.last_mut().expect("just pushed")
+    }
+
+    /// Slot for streaming block at `content_index`: pads holes, replaces a
+    /// block whose kind just changed at that index.
+    fn assistant_slot(&mut self, content_index: usize, fresh: Block) -> &mut Block {
+        let msg = self.last_assistant();
+        while msg.blocks.len() <= content_index {
+            let pad = msg.blocks.len();
+            msg.blocks.push(Block::Text { content_index: pad, text: String::new() });
+        }
+        let same_kind = match (&msg.blocks[content_index], &fresh) {
+            (Block::Text { .. }, Block::Text { .. })
+            | (Block::Thinking { .. }, Block::Thinking { .. })
+            | (Block::ToolCall { .. }, Block::ToolCall { .. }) => true,
+            _ => false,
+        };
+        if !same_kind {
+            msg.blocks[content_index] = fresh;
+        }
+        &mut msg.blocks[content_index]
     }
 
     fn send_input(&mut self, cx: &mut Context<Self>) {
@@ -142,21 +176,132 @@ impl Chat {
                     format!("{command} failed: {}", error.unwrap_or_default())
                 };
             }
-            Event::MessageStart { role, text } => match role.as_str() {
-                "user" => self.push_message(Role::User, &text),
-                "assistant" => self.push_message(Role::Assistant, ""),
+            Event::MessageStart { role, blocks } => match role.as_str() {
+                "user" => self.messages.push(Msg { role: Role::User, blocks }),
+                "assistant" => self.messages.push(Msg { role: Role::Assistant, blocks }),
+                "toolResult" => {
+                    // wire: tool output arrives as role="toolResult"; attach it
+                    // to the most recent tool card of the trailing assistant msg
+                    let text: String = blocks
+                        .iter()
+                        .map(|b| match b {
+                            Block::Text { text, .. } => text.as_str(),
+                            _ => "",
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .trim_end()
+                        .to_string();
+                    if let Some(m) = self.messages.last_mut() {
+                        if m.role == Role::Assistant {
+                            if let Some(Block::ToolCall { result, .. }) =
+                                m.blocks.iter_mut().rev().find(|b| matches!(b, Block::ToolCall { .. }))
+                            {
+                                result.push_str(&text);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             },
-            Event::MessageUpdate(AssistantEvent::TextDelta { delta, .. }) => {
-                self.append_assistant(&delta);
-            }
-            Event::MessageUpdate(AssistantEvent::ThinkingDelta { .. }) => {}
-            Event::MessageUpdate(_) => {}
-            Event::MessageEnd { role, text } => {
-                if role == "assistant" && !text.is_empty() {
-                    match self.messages.last_mut() {
-                        Some(m) if m.role == Role::Assistant && m.text.is_empty() => m.text = text,
-                        _ => {}
+            Event::MessageUpdate(assistant_event) => match assistant_event {
+                AssistantEvent::TextDelta { content_index, delta } => {
+                    if let Block::Text { text, .. } =
+                        self.assistant_slot(content_index, Block::Text { content_index, text: String::new() })
+                    {
+                        text.push_str(&delta);
+                    }
+                }
+                AssistantEvent::TextEnd { content_index, content } => {
+                    if let Block::Text { text, .. } =
+                        self.assistant_slot(content_index, Block::Text { content_index, text: String::new() })
+                    {
+                        *text = content;
+                    }
+                }
+                AssistantEvent::ThinkingStart { content_index } => {
+                    self.assistant_slot(
+                        content_index,
+                        Block::Thinking { content_index, text: String::new() },
+                    );
+                }
+                AssistantEvent::ThinkingDelta { content_index, delta } => {
+                    if let Block::Thinking { text, .. } = self.assistant_slot(
+                        content_index,
+                        Block::Thinking { content_index, text: String::new() },
+                    ) {
+                        text.push_str(&delta);
+                    }
+                }
+                AssistantEvent::ThinkingEnd { content_index, content } => {
+                    if let Block::Thinking { text, .. } = self.assistant_slot(
+                        content_index,
+                        Block::Thinking { content_index, text: String::new() },
+                    ) {
+                        *text = content;
+                    }
+                }
+                AssistantEvent::ToolCallStart { content_index, id, tool_name } => {
+                    self.assistant_slot(
+                        content_index,
+                        Block::ToolCall {
+                            content_index,
+                            id,
+                            name: tool_name,
+                            args: String::new(),
+                            result: String::new(),
+                        },
+                    );
+                }
+                AssistantEvent::ToolCallDelta { content_index, delta } => {
+                    if let Block::ToolCall { args, .. } = self.assistant_slot(
+                        content_index,
+                        Block::ToolCall {
+                            content_index,
+                            id: String::new(),
+                            name: String::new(),
+                            args: String::new(),
+                            result: String::new(),
+                        },
+                    ) {
+                        args.push_str(&delta);
+                    }
+                }
+                AssistantEvent::ToolCallEnd { content_index, tool_call } => {
+                    // authoritative name/arguments overwrite the streamed build
+                    let name = tool_call["toolName"]
+                        .as_str()
+                        .or_else(|| tool_call["name"].as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args = tool_call["arguments"]
+                        .as_object()
+                        .filter(|o| !o.is_empty())
+                        .map(|o| serde_json::Value::Object(o.clone()).to_string())
+                        .unwrap_or_default();
+                    if let Block::ToolCall { name, args, .. } = self.assistant_slot(
+                        content_index,
+                        Block::ToolCall {
+                            content_index,
+                            id: String::new(),
+                            name: name.clone(),
+                            args: args.clone(),
+                            result: String::new(),
+                        },
+                    ) {
+                        *name = name.clone();
+                        *args = args.clone();
+                    }
+                }
+                AssistantEvent::Other(_) => {}
+            },
+            Event::MessageEnd { role, blocks } => {
+                // authoritative final content replaces streamed reconstruction
+                if role == "assistant" {
+                    if let Some(m) = self.messages.last_mut() {
+                        if m.role == Role::Assistant {
+                            m.blocks = blocks;
+                        }
                     }
                 }
             }
@@ -166,7 +311,7 @@ impl Chat {
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
         }
-        cx.notify();
+        self.notify_repaint(cx);
     }
 }
 
@@ -196,26 +341,124 @@ impl Focusable for Chat {
 // rendering
 // ---------------------------------------------------------------------------
 
-fn render_msg(m: &Msg) -> impl IntoElement {
+fn pretty_args(args: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(args)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or_else(|| args.to_string())
+}
+
+fn render_block(b: &Block) -> gpui::Div {
+    match b {
+        Block::Text { text, .. } if !text.trim().is_empty() => {
+            div().w_full().child(markdown::render(text))
+        }
+        Block::Thinking { text, .. } if !text.trim().is_empty() => div()
+            .w_full()
+            .my_1()
+            .p_2()
+            .rounded_md()
+            .bg(rgb(COL_PANEL))
+            .border_l_2()
+            .border_color(rgb(COL_THINKING))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_xs()
+                    .italic()
+                    .text_color(rgb(COL_THINKING))
+                    .child("thinking"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .italic()
+                    .text_color(rgb(COL_THINKING))
+                    .child(SharedString::from(text.clone())),
+            ),
+        Block::ToolCall { name, args, result, .. } if !name.is_empty() => {
+            let mut card = div()
+                .w_full()
+                .my_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(COL_CARD_BORDER))
+                .bg(rgb(COL_PANEL))
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(COL_ASSISTANT))
+                        .child(SharedString::from(format!("tool \u{b7} {name}"))),
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .pb_1()
+                        .font_family("Consolas")
+                        .text_xs()
+                        .text_color(rgb(COL_STATUS))
+                        .child(SharedString::from(pretty_args(args))),
+                );
+            if !result.is_empty() {
+                card = card.child(
+                    div()
+                        .px_2()
+                        .pb_1()
+                        .mt_1()
+                        .border_t_1()
+                        .border_color(rgb(COL_CARD_BORDER))
+                        .font_family("Consolas")
+                        .text_xs()
+                        .text_color(rgb(COL_TEXT))
+                        .child(SharedString::from(result.clone())),
+                );
+            }
+            card
+        }
+        _ => div().w_full(),
+    }
+}
+
+fn render_msg(m: &Msg) -> gpui::Div {
     let (label, color) = match m.role {
         Role::User => ("you", rgb(COL_USER)),
         Role::Assistant => ("pi", rgb(COL_ASSISTANT)),
     };
-    div()
+    let mut col = div()
         .w_full()
         .px_3()
         .py_1()
         .flex()
         .flex_col()
-        .gap_0p5()
+        .gap_1()
         .child(
             div()
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(color)
                 .child(label),
-        )
-        .child(div().text_color(rgb(COL_TEXT)).child(SharedString::from(m.text.clone())))
+        );
+    if m.role == Role::User {
+        let text = m.plain_text();
+        col = col.child(
+            div()
+                .text_color(rgb(COL_TEXT))
+                .child(SharedString::from(text)),
+        );
+    } else {
+        for b in &m.blocks {
+            col = col.child(render_block(b));
+        }
+    }
+    col
 }
 
 impl Render for Chat {
@@ -347,4 +590,3 @@ fn main() {
         cx.activate(true);
     });
 }
-

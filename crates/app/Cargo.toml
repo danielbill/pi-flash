@@ -11,3 +11,5 @@ path = "src/main.rs"
 gpui = "0.2.2"
 pi-link = { path = "../pi-link" }
 futures = "0.3"
+serde_json = "1"
+pulldown-cmark = "0.13"
