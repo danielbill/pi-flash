@@ -19,6 +19,7 @@ use pi_link::protocol::{
 };
 use pi_link::sessions::{SessionInfo, list_sessions};
 
+mod assets;
 mod markdown;
 mod theme;
 use theme::theme as T;
@@ -1024,6 +1025,18 @@ fn top_level_entries(cwd: &Path) -> Vec<(bool, String)> {
 // rendering
 // ---------------------------------------------------------------------------
 
+/// Render an embedded SVG icon (lucide-style stroke, colored via text color).
+fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
+    use std::sync::OnceLock;
+    static ICON_BASE: OnceLock<gpui::TextStyle> = OnceLock::new();
+    let _ = ICON_BASE.get_or_init(|| gpui::TextStyle::default());
+    gpui::svg()
+        .path(SharedString::from(format!("icons/{name}.svg")))
+        .text_color(rgb(color))
+        .size(px(size))
+        .into_any_element()
+}
+
 fn pretty_args(args: &str) -> String {
     serde_json::from_str::<serde_json::Value>(args)
         .ok()
@@ -1067,11 +1080,11 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                                 cx.notify();
                             });
                         })
-                        .child(SharedString::from(if is_collapsed {
-                            "thinking \u{25b8}".to_string()
+                        .child(if is_collapsed {
+                            icon("chevron-right", 10., t.text_dim)
                         } else {
-                            "thinking \u{25be}".to_string()
-                        })),
+                            icon("chevron-down", 10., t.text_dim)
+                        }),
                 );
             if !is_collapsed {
                 block = block.child(
@@ -1182,7 +1195,7 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
     col
 }
 
-fn pill(id: &'static str, label: SharedString) -> gpui::AnyElement {
+fn pill(id: &'static str, icon_name: &'static str, label: SharedString) -> gpui::AnyElement {
     div()
         .id(id)
         .px_2()
@@ -1194,6 +1207,7 @@ fn pill(id: &'static str, label: SharedString) -> gpui::AnyElement {
         .text_color(rgb(T().text_muted))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(T().bg_hover)).text_color(rgb(T().text)))
+        .child(icon(icon_name, 12., T().text_muted))
         .child(label)
         .into_any_element()
 }
@@ -1291,9 +1305,15 @@ impl Render for Chat {
                                 cx.notify();
                             });
                         })
-                        .child(SharedString::from(format!(
-                            "\u{1f5bc} {name} \u{00d7}"
-                        )))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(icon("image", 10., t.text_muted))
+                                .child(SharedString::from(name.clone()))
+                                .child(icon("x", 10., t.text_muted)),
+                        )
                         .into_any_element()
                 })
                 .collect();
@@ -1386,7 +1406,7 @@ impl Render for Chat {
         let branch_label: SharedString = if self.branch.is_empty() {
             "no git".into()
         } else {
-            format!("\u{2387} {}", self.branch).into()
+            self.branch.clone().into()
         };
 
         let files_entity = entity.clone();
@@ -1452,7 +1472,7 @@ impl Render for Chat {
                                     .text_color(rgb(t.text))
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(t.bg_hover)))
-                                    .child("\u{1f50d}"),
+                                    .child(icon("search", 12., t.text)),
                             ),
                     ),
             )
@@ -1487,8 +1507,15 @@ impl Render for Chat {
                     .text_xs()
                     .child(
                         div()
-                            .text_color(rgb(t.text))
-                            .child(branch_label),
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(icon("git-branch", 12., t.text))
+                            .child(
+                                div()
+                                    .text_color(rgb(t.text))
+                                    .child(branch_label),
+                            ),
                     )
                     .child(
                         div()
@@ -1496,7 +1523,7 @@ impl Render for Chat {
                             .gap_1()
                             .text_color(rgb(t.text_muted))
                             .child("主分支")
-                            .child("\u{25be}"),
+                            .child(icon("chevron-down", 10., t.text_muted)),
                     ),
             )
             // sessions list
@@ -1577,7 +1604,14 @@ impl Render for Chat {
                                     let p = p_del.clone();
                                     let _ = weak_del.update(cx, |c, cx| c.delete_session(p, cx));
                                 })
-                                .child(if is_active { "\u{25cf}" } else { "\u{00d7}" }),
+                                .child(if is_active {
+                                    div()
+                                        .text_color(rgb(t.accent))
+                                        .child("\u{25cf}")
+                                        .into_any_element()
+                                } else {
+                                    icon("x", 12., t.text_muted)
+                                }),
                         )
                         .into_any_element()
                 })
@@ -1601,7 +1635,14 @@ impl Render for Chat {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
-                                    .child("\u{25be} 文件浏览器"),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(icon("chevron-down", 10., t.text))
+                                            .child(SharedString::from("文件浏览器")),
+                                    ),
                             )
                             .child(
                                 div()
@@ -1609,10 +1650,10 @@ impl Render for Chat {
                                     .gap_2()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
-                                    .child("\u{1f5a5}")
-                                    .child("\u{1f50d}")
-                                    .child("\u{2191}")
-                                    .child("\u{21bb}"),
+                                    .child(icon("monitor", 12., t.text_muted))
+                                    .child(icon("search", 12., t.text_muted))
+                                    .child(icon("upload", 12., t.text_muted))
+                                    .child(icon("refresh", 12., t.text_muted)),
                             ),
                     )
                     .child(
@@ -1629,11 +1670,12 @@ impl Render for Chat {
                                         if is_dir {
                                             return Some(
                                                 div()
-                                                    .text_xs()
-                                                    .text_color(rgb(t.text_muted))
-                                                    .child(SharedString::from(format!(
-                                                        "\u{25b8} \u{1f4c1} {name}"
-                                                    )))
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(icon("chevron-right", 10., t.text_dim))
+                                                    .child(icon("folder", 10., t.text_dim))
+                                                    .child(SharedString::from(name))
                                                     .into_any_element(),
                                             );
                                         }
@@ -1654,9 +1696,14 @@ impl Render for Chat {
                                                         c.open_file_preview(p, cx)
                                                     });
                                                 })
-                                                .child(SharedString::from(format!(
-                                                    "\u{1f4c4} {name}"
-                                                )))
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(icon("file", 10., t.text_dim))
+                                                        .child(SharedString::from(name)),
+                                                )
                                                 .into_any_element(),
                                         )
                                     }),
@@ -1677,7 +1724,14 @@ impl Render for Chat {
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child("\u{2699} 模型"),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(icon("settings", 12., t.text_muted))
+                                    .child(SharedString::from("模型")),
+                            ),
                     )
                     .child(
                         div()
@@ -1687,7 +1741,14 @@ impl Render for Chat {
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child("\u{2637} 技能"),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(icon("layers", 12., t.text_muted))
+                                    .child(SharedString::from("技能")),
+                            ),
                     )
                     .child(
                         div()
@@ -1697,7 +1758,14 @@ impl Render for Chat {
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child("\u{2699} 设置"),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(icon("settings", 12., t.text_muted))
+                                    .child(SharedString::from("设置")),
+                            ),
                     ),
             );
 
@@ -1722,8 +1790,8 @@ impl Render for Chat {
                     .py_1p5()
                     .border_b_1()
                     .border_color(rgb(t.border))
-                    .child(pill("tb-sidebar", SharedString::from("\u{2630}")))
-                    .child(pill("tb-history", SharedString::from("\u{1f550} 完整历史")))
+                    .child(pill("tb-sidebar", "panel-left", SharedString::from("")))
+                    .child(pill("tb-history", "history", SharedString::from("完整历史")))
                     .child(
                         div()
                             .id("tb-title")
@@ -1739,10 +1807,17 @@ impl Render for Chat {
                             .on_mouse_down(MouseButton::Left, cx.listener(
                                 |this, _: &gpui::MouseDownEvent, _w, cx| this.auto_title(cx),
                             ))
-                            .child("\u{270e} 生成标题"),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(icon("pencil", 12., t.text_muted))
+                                            .child(SharedString::from("生成标题")),
+                                    ),
                     )
-                    .child(pill("tb-system", SharedString::from("\u{1f4c4} 系统")))
-                    .child(pill("tb-tools", SharedString::from("\u{1f527} 工具")))
+                    .child(pill("tb-system", "file-text", SharedString::from("系统")))
+                    .child(pill("tb-tools", "wrench", SharedString::from("工具")))
                     .child(
                         div()
                             .id("tb-export")
@@ -1758,7 +1833,14 @@ impl Render for Chat {
                             .on_mouse_down(MouseButton::Left, cx.listener(
                                 |this, _: &gpui::MouseDownEvent, _w, cx| this.export_html(cx),
                             ))
-                            .child("\u{2913} 导出"),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(icon("download", 12., t.text_muted))
+                                            .child(SharedString::from("导出")),
+                                    ),
                     )
                     .child(
                         div()
@@ -1927,7 +2009,14 @@ impl Render for Chat {
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _w, cx| {
                                         this.send_input(cx);
                                     }))
-                                    .child("\u{2192} 发送"),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(icon("send", 12., t.text))
+                                            .child(SharedString::from("发送")),
+                                    ),
                             ),
                     )
                     .child(
@@ -1944,7 +2033,7 @@ impl Render for Chat {
                                     .gap_3()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
-                                    .child("\u{1f5bc}")
+                                    .child(icon("image", 12., t.text_muted))
                                     .child(
                                         div()
                                             .id("model-select")
@@ -1968,7 +2057,7 @@ impl Render for Chat {
                                                     });
                                                 }
                                             })
-                                            .child("\u{2699}")
+                                            .child(icon("settings", 12., t.text_muted))
                                             .child(model_label),
                                     ),
                             )
@@ -1989,11 +2078,27 @@ impl Render for Chat {
                                                     this.cycle_thinking(cx);
                                                 },
                                             ))
-                                            .child(format!("\u{1f4a1} {thinking_label}")),
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(icon("lightbulb", 12., t.text_muted))
+                                                    .child(SharedString::from(
+                                                        thinking_label.clone(),
+                                                    )),
+                                            ),
                                     )
                                     .child("configured")
-                                    .child("\u{2702} 压缩")
-                                    .child("\u{1f50a}"),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(icon("scissors", 12., t.text_muted))
+                                            .child(SharedString::from("压缩")),
+                                    )
+                                    .child(icon("volume", 12., t.text_muted)),
                             ),
                     ),
             )
@@ -2145,7 +2250,7 @@ impl Chat {
                                                     cx.notify();
                                                 });
                                             })
-                                            .child("\u{00d7}"),
+                                            .child(icon("x", 12., t.text_muted)),
                                     ),
                             )
                             .child(
@@ -2267,7 +2372,7 @@ impl Chat {
                                                     cx.notify();
                                                 });
                                             })
-                                            .child("\u{00d7}"),
+                                            .child(icon("x", 12., t.text_muted)),
                                     ),
                             )
                             .child(
@@ -2423,7 +2528,9 @@ impl Chat {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(|cx: &mut App| {
         let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
         cx.open_window(
             WindowOptions {
