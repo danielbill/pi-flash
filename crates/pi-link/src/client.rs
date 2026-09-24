@@ -30,8 +30,10 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
         .ok_or_else(|| "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string())?;
 
     let mut cmd = StdCommand::new("node");
+    // no baked-in --no-session: fresh spawns persist by default (pi-web
+    // parity: sessions are resumable); pass ["--session", <path>] to resume
     cmd.arg(&cli)
-        .args(["--mode", "rpc", "--no-session"])
+        .args(["--mode", "rpc"])
         .args(extra_args)
         .current_dir(cwd)
         .stdin(Stdio::piped())

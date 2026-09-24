@@ -8,10 +8,12 @@ use std::path::PathBuf;
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
     App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
-    ParentElement, Render, SharedString, Styled, WindowOptions, div, list, prelude::*, px, rgb,
+    MouseButton, ParentElement, Render, SharedString, Styled, WindowOptions, div, list,
+    prelude::*, px, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
-use pi_link::protocol::{AssistantEvent, Block, Command, Event};
+use pi_link::protocol::{AssistantEvent, Block, Command, Event, content_blocks};
+use pi_link::sessions::{SessionInfo, list_sessions};
 
 mod markdown;
 
@@ -21,6 +23,7 @@ mod markdown;
 
 const COL_BG: u32 = 0x1a1b1e;
 const COL_PANEL: u32 = 0x232428;
+const COL_SIDEBAR: u32 = 0x141518;
 const COL_TEXT: u32 = 0xd7dadd;
 const COL_USER: u32 = 0x8ab4f8;
 const COL_ASSISTANT: u32 = 0x81c995;
@@ -61,49 +64,55 @@ struct Chat {
     input: String,
     messages: Vec<Msg>,
     list: ListState,
+    sessions: Vec<SessionInfo>,
+    sessions_list: ListState,
+    cwd: PathBuf,
     session: Option<PiSession>,
     status: String,
+    /// guards against stale events from a replaced sidecar process
+    epoch: u64,
 }
 
 impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
-
         let cwd = std::env::var("PI_FLASH_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let (session, events) = match spawn_pi(&cwd, &[]) {
-            Ok((s, ev)) => (Some(s), Some(ev)),
-            Err(e) => {
-                eprintln!("{e}");
-                (None, None)
-            }
-        };
-
-        let status = match &session {
-            Some(_) => format!("pi {} | starting", pi_link::PI_VENDOR_VERSION),
-            None => "pi not available (vendor missing)".to_string(),
-        };
-
-        if let Some(events) = events {
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events).await;
-            })
-            .detach();
-        }
+        let (session, events) = spawn_with_epoch(&cwd, &[], 1);
 
         let mut list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
+        let mut sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
 
-        Self {
+        let connected = session.is_some();
+        let mut chat = Self {
             focus,
             input: String::new(),
             messages: Vec::new(),
             list,
+            sessions: list_sessions(100),
+            sessions_list,
+            cwd,
             session,
-            status,
+            status: status_line(connected, "starting"),
+            epoch: 1,
+        };
+        chat.sync_sidebar();
+        chat.status = status_line(chat.session.is_some(), "idle");
+
+        if let Some(events) = events {
+            cx.spawn(async move |this, cx| {
+                consume_events(this, cx, events, 1).await;
+            })
+            .detach();
         }
+        chat
+    }
+
+    fn sync_sidebar(&mut self) {
+        self.sessions_list.reset(self.sessions.len());
     }
 
     fn notify_repaint(&mut self, cx: &mut Context<Self>) {
@@ -139,6 +148,37 @@ impl Chat {
         &mut msg.blocks[content_index]
     }
 
+    /// Common ingestion for live wire messages and resumed history replay.
+    fn ingest_message(&mut self, role: &str, blocks: Vec<Block>, cx: &mut Context<Self>) {
+        match role {
+            "user" => self.messages.push(Msg { role: Role::User, blocks }),
+            "assistant" => self.messages.push(Msg { role: Role::Assistant, blocks }),
+            "toolResult" => {
+                let text: String = blocks
+                    .iter()
+                    .map(|b| match b {
+                        Block::Text { text, .. } => text.as_str(),
+                        _ => "",
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .trim_end()
+                    .to_string();
+                if let Some(m) = self.messages.last_mut() {
+                    if m.role == Role::Assistant {
+                        if let Some(Block::ToolCall { result, .. }) =
+                            m.blocks.iter_mut().rev().find(|b| matches!(b, Block::ToolCall { .. }))
+                        {
+                            result.push_str(&text);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.notify_repaint(cx);
+    }
+
     fn send_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
         if text.is_empty() {
@@ -167,54 +207,83 @@ impl Chat {
         }
     }
 
+    /// Spawn a fresh sidecar for the current project.
+    fn new_session(&mut self, cx: &mut Context<Self>) {
+        self.epoch += 1;
+        let (session, events) = spawn_with_epoch(&self.cwd, &[], self.epoch);
+        self.session = session;
+        self.messages.clear();
+        self.status = status_line(self.session.is_some(), "new session");
+        if let Some(events) = events {
+            let epoch = self.epoch;
+            cx.spawn(async move |this, cx| {
+                consume_events(this, cx, events, epoch).await;
+            })
+            .detach();
+        }
+        self.notify_repaint(cx);
+    }
+
+    /// Resume a stored session: sidecar started with `--session <path>`,
+    /// history replayed from the get_messages response.
+    fn open_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let cwd = self
+            .sessions
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| PathBuf::from(s.cwd.clone()))
+            .unwrap_or_else(|| self.cwd.clone());
+        self.epoch += 1;
+        let (session, events) = spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
+        self.session = session;
+        self.cwd = cwd;
+        self.messages.clear();
+        self.status = status_line(self.session.is_some(), "resuming");
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetMessages);
+        }
+        if let Some(events) = events {
+            let epoch = self.epoch;
+            cx.spawn(async move |this, cx| {
+                consume_events(this, cx, events, epoch).await;
+            })
+            .detach();
+        }
+        self.notify_repaint(cx);
+    }
+
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
-            Event::Response { command, success, error, .. } => {
-                self.status = if success {
-                    format!("{command} ok")
-                } else {
-                    format!("{command} failed: {}", error.unwrap_or_default())
-                };
-            }
-            Event::MessageStart { role, blocks } => match role.as_str() {
-                "user" => self.messages.push(Msg { role: Role::User, blocks }),
-                "assistant" => self.messages.push(Msg { role: Role::Assistant, blocks }),
-                "toolResult" => {
-                    // wire: tool output arrives as role="toolResult"; attach it
-                    // to the most recent tool card of the trailing assistant msg
-                    let text: String = blocks
-                        .iter()
-                        .map(|b| match b {
-                            Block::Text { text, .. } => text.as_str(),
-                            _ => "",
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                        .trim_end()
-                        .to_string();
-                    if let Some(m) = self.messages.last_mut() {
-                        if m.role == Role::Assistant {
-                            if let Some(Block::ToolCall { result, .. }) =
-                                m.blocks.iter_mut().rev().find(|b| matches!(b, Block::ToolCall { .. }))
-                            {
-                                result.push_str(&text);
-                            }
+            Event::Response { command, success, error, data, .. } => {
+                if command == "get_messages" && success {
+                    if let Some(data) = &data {
+                        for msg in data["messages"].as_array().into_iter().flatten() {
+                            let role = msg["role"].as_str().unwrap_or("");
+                            let blocks = content_blocks(&msg["content"]);
+                            self.ingest_message(role, blocks, cx);
                         }
                     }
+                    self.status = "resumed".into();
+                } else if success {
+                    self.status = format!("{command} ok");
+                } else {
+                    self.status = format!("{command} failed: {}", error.unwrap_or_default());
                 }
-                _ => {}
-            },
+            }
+            Event::MessageStart { role, blocks } => {
+                self.ingest_message(&role, blocks, cx);
+            }
             Event::MessageUpdate(assistant_event) => match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
-                    if let Block::Text { text, .. } =
-                        self.assistant_slot(content_index, Block::Text { content_index, text: String::new() })
+                    if let Block::Text { text, .. } = self
+                        .assistant_slot(content_index, Block::Text { content_index, text: String::new() })
                     {
                         text.push_str(&delta);
                     }
                 }
                 AssistantEvent::TextEnd { content_index, content } => {
-                    if let Block::Text { text, .. } =
-                        self.assistant_slot(content_index, Block::Text { content_index, text: String::new() })
+                    if let Block::Text { text, .. } = self
+                        .assistant_slot(content_index, Block::Text { content_index, text: String::new() })
                     {
                         *text = content;
                     }
@@ -279,18 +348,20 @@ impl Chat {
                         .filter(|o| !o.is_empty())
                         .map(|o| serde_json::Value::Object(o.clone()).to_string())
                         .unwrap_or_default();
+                    let name_c = name;
+                    let args_c = args;
                     if let Block::ToolCall { name, args, .. } = self.assistant_slot(
                         content_index,
                         Block::ToolCall {
                             content_index,
                             id: String::new(),
-                            name: name.clone(),
-                            args: args.clone(),
+                            name: name_c.clone(),
+                            args: args_c.clone(),
                             result: String::new(),
                         },
                     ) {
-                        *name = name.clone();
-                        *args = args.clone();
+                        *name = name_c;
+                        *args = args_c;
                     }
                 }
                 AssistantEvent::Other(_) => {}
@@ -315,19 +386,53 @@ impl Chat {
     }
 }
 
+fn spawn_with_epoch(
+    cwd: &PathBuf,
+    extra_args: &[&str],
+    _epoch: u64,
+) -> (Option<PiSession>, Option<UnboundedReceiver<Event>>) {
+    match spawn_pi(cwd, extra_args) {
+        Ok((s, ev)) => (Some(s), Some(ev)),
+        Err(e) => {
+            eprintln!("{e}");
+            (None, None)
+        }
+    }
+}
+
+fn status_line(connected: bool, state: &str) -> String {
+    if connected {
+        format!("pi {} | {state}", pi_link::PI_VENDOR_VERSION)
+    } else {
+        "pi not available (vendor missing)".to_string()
+    }
+}
+
 async fn consume_events(
     this: gpui::WeakEntity<Chat>,
     cx: &mut gpui::AsyncApp,
     mut rx: UnboundedReceiver<Event>,
+    epoch: u64,
 ) {
     while let Some(event) = rx.next().await {
-        if this.update(cx, |chat, cx| chat.on_event(event, cx)).is_err() {
+        let stale = this
+            .update(cx, |chat, cx| {
+                if chat.epoch != epoch {
+                    return true;
+                }
+                chat.on_event(event, cx);
+                false
+            })
+            .unwrap_or(true);
+        if stale {
             return;
         }
     }
     let _ = this.update(cx, |chat, cx| {
-        chat.status = "pi exited".into();
-        cx.notify();
+        if chat.epoch == epoch {
+            chat.status = "pi exited".into();
+            cx.notify();
+        }
     });
 }
 
@@ -461,6 +566,10 @@ fn render_msg(m: &Msg) -> gpui::Div {
     col
 }
 
+fn cwd_tail(cwd: &str) -> String {
+    cwd.rsplit(['/', '\\']).next().unwrap_or(cwd).to_string()
+}
+
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.focus(&self.focus);
@@ -473,9 +582,102 @@ impl Render for Chat {
         };
         let input_empty = self.input.is_empty();
         let entity = cx.entity();
+        let weak = entity.downgrade();
+        let weak_for_list = weak.clone();
 
-        div()
-            .size_full()
+        // session sidebar rows
+        let sessions_entity = entity.clone();
+        let sessions_weak = weak.clone();
+        let sidebar = div()
+            .w(px(280.))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(rgb(COL_SIDEBAR))
+            .border_r_1()
+            .border_color(rgb(COL_CARD_BORDER))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .py_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(COL_STATUS))
+                            .child("SESSIONS"),
+                    )
+                    .child(
+                        div()
+                            .id("new-session")
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(rgb(COL_PANEL))
+                            .text_xs()
+                            .text_color(rgb(COL_TEXT))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = sessions_weak.update(cx, |c, cx| c.new_session(cx));
+                            })
+                            .child("+ new"),
+                    ),
+            )
+            .child(
+                list(self.sessions_list.clone(), move |ix, _window, cx| {
+                    let chat = sessions_entity.read(cx);
+                    let Some(info) = chat.sessions.get(ix) else {
+                        return div().into_any_element();
+                    };
+                    let path = info.path.clone();
+                    let preview: SharedString = if info.preview.is_empty() {
+                        "(empty)".into()
+                    } else {
+                        info.preview.clone().into()
+                    };
+                    let project: SharedString = cwd_tail(&info.cwd).into();
+                    let weak = weak_for_list.clone();
+                    div()
+                        .id(SharedString::from(format!("sess-{ix}")))
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(rgb(COL_PANEL))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(COL_PANEL)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let p = path.clone();
+                            let _ = weak.update(cx, |c, cx| c.open_session(p, cx));
+                        })
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(COL_TEXT))
+                                .child(preview),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(COL_STATUS))
+                                .child(project),
+                        )
+                        .into_any_element()
+                })
+                .flex_1()
+                .min_h_0(),
+            );
+
+        let main_col = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .flex()
             .flex_col()
             .bg(rgb(COL_BG))
@@ -568,13 +770,20 @@ impl Render for Chat {
                             })
                             .child(input),
                     ),
-            )
+            );
+
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .child(sidebar)
+            .child(main_col)
     }
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let bounds = gpui::Bounds::centered(None, gpui::size(px(720.), px(520.)), cx);
+        let bounds = gpui::Bounds::centered(None, gpui::size(px(980.), px(620.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),

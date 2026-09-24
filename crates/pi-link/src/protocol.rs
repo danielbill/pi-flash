@@ -196,8 +196,15 @@ impl AssistantEvent {
 /// One parsed record from pi's stdout.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// Response to a command, correlated by id.
-    Response { id: String, command: String, success: bool, error: Option<String> },
+    /// Response to a command, correlated by id. `data` carries command
+    /// payloads (e.g. get_messages -> {"messages": [...]}).
+    Response {
+        id: String,
+        command: String,
+        success: bool,
+        error: Option<String>,
+        data: Option<Value>,
+    },
     MessageStart { role: String, blocks: Vec<Block> },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
@@ -224,6 +231,7 @@ pub fn parse_record(v: &Value) -> Event {
             command: v["command"].as_str().unwrap_or("").to_string(),
             success: v["success"].as_bool().unwrap_or(false),
             error: v["error"].as_str().map(str::to_string),
+            data: v.get("data").cloned(),
         },
         // roles: "system" | "user" | "assistant" | "toolResult" (json.md wire)
         Some("message_start") => Event::MessageStart {
@@ -275,11 +283,27 @@ mod tests {
     fn response_success() {
         let e = parse_line(r#"{"id":"1","type":"response","command":"prompt","success":true}"#).unwrap();
         match e {
-            Event::Response { id, command, success, error } => {
+            Event::Response { id, command, success, error, data } => {
                 assert_eq!(
-                    (id.as_str(), command.as_str(), success, error.is_none()),
-                    ("1", "prompt", true, true)
+                    (id.as_str(), command.as_str(), success, error.is_none(), data.is_none()),
+                    ("1", "prompt", true, true, true)
                 );
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_messages_response_carries_data() {
+        let e = parse_line(
+            r#"{"type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"hi"}]}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::Response { command, data, .. } => {
+                assert_eq!(command, "get_messages");
+                let data = data.expect("data");
+                assert_eq!(data["messages"][0]["role"], "user");
             }
             other => panic!("wrong event: {other:?}"),
         }

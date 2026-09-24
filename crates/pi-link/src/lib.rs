@@ -9,6 +9,7 @@
 
 pub mod client;
 pub mod protocol;
+pub mod sessions;
 pub mod vendor;
 
 /// Vendored pi version this crate's types/tests are written against.
