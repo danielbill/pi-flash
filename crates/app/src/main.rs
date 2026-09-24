@@ -12,7 +12,7 @@ use gpui::{
     prelude::*, px, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
-use pi_link::protocol::{AssistantEvent, Block, Command, Event, content_blocks};
+use pi_link::protocol::{AssistantEvent, Block, Command, Event, SessionState, content_blocks};
 use pi_link::sessions::{SessionInfo, list_sessions};
 
 mod markdown;
@@ -69,8 +69,17 @@ struct Chat {
     cwd: PathBuf,
     session: Option<PiSession>,
     status: String,
+    state: Option<SessionState>,
     /// guards against stale events from a replaced sidecar process
     epoch: u64,
+}
+
+impl Chat {
+    fn refresh_state(&self) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetState);
+        }
+    }
 }
 
 impl Chat {
@@ -97,10 +106,12 @@ impl Chat {
             cwd,
             session,
             status: status_line(connected, "starting"),
+            state: None,
             epoch: 1,
         };
         chat.sync_sidebar();
         chat.status = status_line(chat.session.is_some(), "idle");
+        chat.refresh_state();
 
         if let Some(events) = events {
             cx.spawn(async move |this, cx| {
@@ -189,10 +200,17 @@ impl Chat {
             cx.notify();
             return;
         };
-        match session.send(&Command::Prompt { message: text }) {
+        // pi-web parity: while streaming, typed text steers the running agent
+        let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
+        let cmd = if streaming {
+            Command::Steer { message: text }
+        } else {
+            Command::Prompt { message: text }
+        };
+        match session.send(&cmd) {
             Ok(_) => {
                 self.input.clear();
-                self.status = "running".into();
+                self.status = if streaming { "steering" } else { "running" }.into();
             }
             Err(e) => self.status = e,
         }
@@ -213,7 +231,9 @@ impl Chat {
         let (session, events) = spawn_with_epoch(&self.cwd, &[], self.epoch);
         self.session = session;
         self.messages.clear();
+        self.state = None;
         self.status = status_line(self.session.is_some(), "new session");
+        self.refresh_state();
         if let Some(events) = events {
             let epoch = self.epoch;
             cx.spawn(async move |this, cx| {
@@ -241,6 +261,7 @@ impl Chat {
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
+            let _ = session.send(&Command::GetState);
         }
         if let Some(events) = events {
             let epoch = self.epoch;
@@ -255,7 +276,11 @@ impl Chat {
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::Response { command, success, error, data, .. } => {
-                if command == "get_messages" && success {
+                if command == "get_state" && success {
+                    if let Some(data) = &data {
+                        self.state = Some(SessionState::parse(data));
+                    }
+                } else if command == "get_messages" && success {
                     if let Some(data) = &data {
                         for msg in data["messages"].as_array().into_iter().flatten() {
                             let role = msg["role"].as_str().unwrap_or("");
@@ -377,7 +402,10 @@ impl Chat {
                 }
             }
             Event::AgentStart => self.status = "running".into(),
-            Event::AgentSettled => self.status = "idle".into(),
+            Event::AgentSettled => {
+                self.status = "idle".into();
+                self.refresh_state();
+            }
             Event::AgentEnd { .. } => {}
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
@@ -574,6 +602,12 @@ impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.focus(&self.focus);
 
+        let model_label: SharedString = self
+            .state
+            .as_ref()
+            .and_then(|s| s.model_label())
+            .unwrap_or_else(|| "no model".into())
+            .into();
         let status: SharedString = self.status.clone().into();
         let input: SharedString = if self.input.is_empty() {
             "type a prompt, Enter to send, Esc to abort".into()
@@ -700,8 +734,12 @@ impl Render for Chat {
                     )
                     .child(
                         div()
+                            .flex()
+                            .gap_2()
                             .text_xs()
                             .text_color(rgb(COL_STATUS))
+                            .child(model_label)
+                            .child(SharedString::from("|"))
                             .child(status),
                     ),
             )

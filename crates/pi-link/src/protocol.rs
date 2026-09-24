@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Prompt { message: String },
+    /// Queued while the agent is running; delivered after the current
+    /// assistant turn finishes its tool calls (rpc-commands.md 「steer」).
+    Steer { message: String },
     FollowUp { message: String },
     Abort,
     GetState,
@@ -21,6 +24,7 @@ impl Command {
     pub fn kind(&self) -> &'static str {
         match self {
             Command::Prompt { .. } => "prompt",
+            Command::Steer { .. } => "steer",
             Command::FollowUp { .. } => "follow_up",
             Command::Abort => "abort",
             Command::GetState => "get_state",
@@ -32,7 +36,9 @@ impl Command {
     /// Serialize to a single JSONL record (no trailing newline).
     pub fn to_record(&self, id: &str) -> Value {
         let mut v = match self {
-            Command::Prompt { message } | Command::FollowUp { message } => {
+            Command::Prompt { message }
+            | Command::Steer { message }
+            | Command::FollowUp { message } => {
                 json!({ "type": self.kind(), "message": message })
             }
             Command::Abort | Command::GetState | Command::GetMessages => {
@@ -216,6 +222,67 @@ pub enum Event {
     /// Extension UI protocol records (dialogs/widgets/status), raw until M5.
     ExtensionUi(Value),
     Unparsed(Value),
+}
+
+/// Snapshot of `get_state` response data.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionState {
+    pub model: Option<ModelInfo>,
+    pub thinking_level: Option<String>,
+    pub is_streaming: bool,
+    pub session_name: Option<String>,
+    pub message_count: u64,
+    pub pending_message_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub context_window: Option<u64>,
+}
+
+impl ModelInfo {
+    fn parse(v: &Value) -> Option<ModelInfo> {
+        Some(ModelInfo {
+            id: v["id"].as_str()?.to_string(),
+            name: v["name"].as_str().unwrap_or("").to_string(),
+            provider: v["provider"].as_str().unwrap_or("").to_string(),
+            context_window: v["contextWindow"].as_u64(),
+        })
+    }
+
+    pub fn label(&self) -> String {
+        if self.name.is_empty() {
+            self.id.clone()
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
+impl SessionState {
+    pub fn parse(data: &Value) -> SessionState {
+        SessionState {
+            model: ModelInfo::parse(&data["model"]),
+            thinking_level: data["thinkingLevel"].as_str().map(str::to_string),
+            is_streaming: data["isStreaming"].as_bool().unwrap_or(false),
+            session_name: data["sessionName"].as_str().map(str::to_string),
+            message_count: data["messageCount"].as_u64().unwrap_or(0),
+            pending_message_count: data["pendingMessageCount"].as_u64().unwrap_or(0),
+        }
+    }
+
+    pub fn model_label(&self) -> Option<String> {
+        self.model.as_ref().map(|m| {
+            if m.provider.is_empty() {
+                m.label()
+            } else {
+                format!("{}/{}", m.provider, m.label())
+            }
+        })
+    }
 }
 
 /// Parse a single JSONL line from pi's stdout.
@@ -410,6 +477,33 @@ mod tests {
             }
             other => panic!("wrong event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn get_state_parses_snapshot() {
+        let e = parse_line(
+            r#"{"type":"response","command":"get_state","success":true,"data":{"model":{"id":"glm-5.3-flash","name":"GLM-5.3-Flash","provider":"glm","contextWindow":200000},"thinkingLevel":"high","isStreaming":false,"sessionId":"abc","messageCount":7,"pendingMessageCount":1}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::Response { command, data, .. } => {
+                assert_eq!(command, "get_state");
+                let st = SessionState::parse(&data.expect("data"));
+                assert_eq!(st.model_label().as_deref(), Some("glm/GLM-5.3-Flash"));
+                assert_eq!(st.thinking_level.as_deref(), Some("high"));
+                assert!(!st.is_streaming);
+                assert_eq!(st.message_count, 7);
+                assert_eq!(st.pending_message_count, 1);
+                assert!(st.session_name.is_none());
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn steer_record_shape() {
+        let c = Command::Steer { message: "stop".into() };
+        assert_eq!(c.to_record("s1"), json!({"id":"s1","type":"steer","message":"stop"}));
     }
 
     #[test]
