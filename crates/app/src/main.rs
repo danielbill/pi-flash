@@ -72,6 +72,7 @@ enum Dialog {
     FilePreview { path: PathBuf, content: String },
     BranchTree,
     ProjectSelect,
+    GitDiff { path: PathBuf, patch: String },
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +113,9 @@ struct Chat {
     active_session_file: Option<PathBuf>,
     collapsed: HashSet<(usize, usize)>,
     expanded_dirs: HashSet<PathBuf>,
+    /// working-tree changes for the current project
+    git_files: Vec<GitFile>,
+    git_add_del: (u64, u64),
     commands: Vec<SlashCommand>,
     available_models: Vec<pi_link::protocol::ModelInfo>,
     project_files: Vec<String>,
@@ -168,6 +172,8 @@ impl Chat {
             active_session_file: None,
             collapsed: HashSet::new(),
             expanded_dirs: HashSet::new(),
+            git_files: Vec::new(),
+            git_add_del: (0, 0),
             commands: Vec::new(),
             available_models: Vec::new(),
             project_files: Vec::new(),
@@ -210,6 +216,7 @@ impl Chat {
                 chat.load_project_files();
             }
         }
+        chat.refresh_git();
         if let Some(p) = get_last_open(&chat.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
             if path.exists() {
@@ -239,6 +246,12 @@ impl Chat {
             .collect();
     }
 
+    /// Re-read working-tree changes (git status + numstat summary).
+    fn refresh_git(&mut self) {
+        self.git_files = git_status_files(&self.cwd);
+        self.git_add_del = git_numstat(&self.cwd);
+    }
+
     /// Switch workspace: reset context, filter sessions, restore the last
     /// open session of that workspace (or land on a blank new session).
     fn switch_project(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
@@ -254,6 +267,7 @@ impl Chat {
         self.collapsed.clear();
         self.dialog = None;
         self.expanded_dirs.clear();
+        self.refresh_git();
         self.load_project_files();
         if let Some(p) = get_last_open(&self.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
@@ -264,6 +278,17 @@ impl Chat {
             }
         }
         self.new_session(cx);
+        cx.notify();
+    }
+
+    /// Open the unified diff for a changed file.
+    fn open_git_diff(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let untracked = self
+            .git_files
+            .iter()
+            .any(|f| f.path == path && f.status == GitStatus::Untracked);
+        let patch = git_file_diff(&self.cwd, &path, untracked);
+        self.dialog = Some(Dialog::GitDiff { path, patch });
         cx.notify();
     }
 
@@ -551,6 +576,7 @@ impl Chat {
         clear_last_open(&self.cwd.to_string_lossy());
         self.status = status_line(self.session.is_some(), "新会话");
         self.refresh_state();
+        self.refresh_git();
         self.load_project_files();
         if let Some(events) = events {
             let epoch = self.epoch;
@@ -1009,6 +1035,8 @@ impl Chat {
                 if let Some(s) = self.session.as_ref() {
                     let _ = s.send(&Command::GetTree);
                 }
+                // agent may have written files: refresh git status
+                self.refresh_git();
             }
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
@@ -1121,6 +1149,147 @@ fn save_workspace_memory(map: &serde_json::Map<String, serde_json::Value>) {
     if let Ok(raw) = serde_json::to_string_pretty(map) {
         let _ = std::fs::write(path, raw);
     }
+}
+
+// ---------------------------------------------------------------------------
+// git status/diff (lib/git-changes.ts parity)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflict,
+}
+
+impl GitStatus {
+    fn badge(&self) -> &'static str {
+        match self {
+            GitStatus::Modified => "M",
+            GitStatus::Added => "A",
+            GitStatus::Deleted => "D",
+            GitStatus::Renamed => "R",
+            GitStatus::Untracked => "U",
+            GitStatus::Conflict => "C",
+        }
+    }
+
+    fn color(&self) -> u32 {
+        match self {
+            GitStatus::Modified => 0xd6a84b,
+            GitStatus::Added | GitStatus::Untracked => 0x4ade80,
+            GitStatus::Deleted | GitStatus::Conflict => 0xf87171,
+            GitStatus::Renamed => 0x60a5fa,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GitFile {
+    path: PathBuf,
+    status: GitStatus,
+}
+
+fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// `git status --porcelain=v1 -z --untracked-files=all` parsed to files.
+fn git_status_files(cwd: &Path) -> Vec<GitFile> {
+    let Some(out) = run_git(cwd, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+    else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    // -z: NUL-separated records; rename records embed a TAB then the new name
+    for rec in out.split('\0') {
+        if rec.len() < 4 {
+            continue;
+        }
+        let xy = &rec[..2];
+        let rest = &rec[3..];
+        let (status, file_path) = match xy {
+            "??" => (GitStatus::Untracked, rest),
+            _ => {
+                let x = xy.as_bytes()[0];
+                let y = xy.as_bytes()[1];
+                let st = if x == b'D' || y == b'D' {
+                    GitStatus::Deleted
+                } else if x == b'A' {
+                    GitStatus::Added
+                } else if x == b'R' || y == b'R' {
+                    GitStatus::Renamed
+                } else if x == b'U' || y == b'U' || (x == b'A' && y == b'A') {
+                    GitStatus::Conflict
+                } else {
+                    GitStatus::Modified
+                };
+                // renames: "orig	new" — track the new name
+                let p = match rest.split_once('\t') {
+                    Some((_, new)) => new,
+                    None => rest,
+                };
+                (st, p)
+            }
+        };
+        let full = cwd.join(file_path);
+        files.push(GitFile { path: full, status });
+    }
+    files
+}
+
+/// Total (+, -) line counts of tracked changes (numstat HEAD summary).
+fn git_numstat(cwd: &Path) -> (u64, u64) {
+    let Some(out) = run_git(
+        cwd,
+        &["diff", "--no-color", "--no-ext-diff", "--numstat", "HEAD"],
+    ) else {
+        return (0, 0);
+    };
+    let (mut add, mut del) = (0u64, 0u64);
+    for line in out.lines() {
+        let mut it = line.split('\t');
+        let (Some(a), Some(d)) = (it.next(), it.next()) else { continue };
+        if let Ok(n) = a.parse::<u64>() { add += n; }
+        if let Ok(n) = d.parse::<u64>() { del += n; }
+    }
+    (add, del)
+}
+
+/// Unified diff for one file; untracked files render as all-added content.
+fn git_file_diff(cwd: &Path, path: &Path, untracked: bool) -> String {
+    if untracked {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            let rel = path
+                .strip_prefix(cwd)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace("\\", "/");
+            let mut out = format!("@@ -0,0 +1,L @@\n");
+            for line in text.lines() {
+                out.push('+');
+                out.push_str(line);
+                out.push('\n');
+            }
+            let _ = rel;
+            return out;
+        }
+        return String::new();
+    }
+    run_git(
+        cwd,
+        &["diff", "--no-color", "--no-ext-diff", "--", &path.to_string_lossy()],
+    )
+    .unwrap_or_default()
 }
 
 /// Normalized workspace key: Path components joined with "\\", so
@@ -1639,6 +1808,8 @@ fn collect_tree_rows(
     dir: &Path,
     depth: usize,
     expanded: &HashSet<PathBuf>,
+    git_map: &std::collections::HashMap<PathBuf, GitStatus>,
+    changed_dirs: &HashSet<PathBuf>,
     weak: &gpui::WeakEntity<Chat>,
     t: &theme::Theme,
     out: &mut Vec<gpui::AnyElement>,
@@ -1709,15 +1880,42 @@ fn collect_tree_rows(
                 .child(SharedString::from(name));
             let weak_open = weak.clone();
             let fp = path.clone();
+            let is_changed = git_map.contains_key(&path);
             row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let _ = weak_open.update(cx, |c, cx| {
-                    c.open_file_preview(fp.clone(), cx);
+                    if is_changed {
+                        c.open_git_diff(fp.clone(), cx);
+                    } else {
+                        c.open_file_preview(fp.clone(), cx);
+                    }
                 });
             });
         }
+        // git badge on files; dot on directories containing changes
+        if is_dir {
+            if changed_dirs.contains(&path) {
+                row = row.child(
+                    div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .ml_auto()
+                        .bg(rgb(0xd6a84b)),
+                );
+            }
+        } else if let Some(st) = git_map.get(&path) {
+            let color = st.color();
+            row = row.child(
+                div()
+                    .ml_auto()
+                    .text_size(px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(color))
+                    .child(st.badge()),
+            );
+        }
         out.push(row.into_any_element());
         if open {
-            collect_tree_rows(&path, depth + 1, expanded, weak, t, out);
+            collect_tree_rows(&path, depth + 1, expanded, git_map, changed_dirs, weak, t, out);
         }
     }
 }
@@ -2241,6 +2439,19 @@ impl Render for Chat {
                                     .child(icon("monitor", 12., t.text_muted))
                                     .child(icon("search", 12., t.text_muted))
                                     .child(icon("upload", 12., t.text_muted))
+                                    .child(if self.git_add_del.0 + self.git_add_del.1 > 0 {
+                                        div()
+                                            .text_xs()
+                                            .font_family("Consolas")
+                                            .text_color(rgb(0xd6a84b))
+                                            .child(SharedString::from(format!(
+                                                "+{} -{}",
+                                                self.git_add_del.0, self.git_add_del.1
+                                            )))
+                                            .into_any_element()
+                                    } else {
+                                        div().into_any_element()
+                                    })
                                     .child(icon("refresh", 12., t.text_muted)),
                             ),
                     )
@@ -2251,18 +2462,39 @@ impl Render for Chat {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .children({
+                            .child(
+                            div()
+                                .id("file-tree-scroll")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .children({
                                 let mut rows: Vec<gpui::AnyElement> = Vec::new();
+                                let git_map: std::collections::HashMap<
+                                    PathBuf,
+                                    GitStatus,
+                                > = self
+                                    .git_files
+                                    .iter()
+                                    .map(|f| (f.path.clone(), f.status))
+                                    .collect();
+                                let changed_dirs: HashSet<PathBuf> = git_map
+                                    .keys()
+                                    .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
+                                    .collect();
                                 collect_tree_rows(
                                     &self.cwd,
                                     0,
                                     &self.expanded_dirs,
+                                    &git_map,
+                                    &changed_dirs,
                                     &weak_for_dialog,
                                     t,
                                     &mut rows,
                                 );
                                 rows
                             }),
+                            ),
                     ),
             )
             // bottom nav
@@ -3365,6 +3597,100 @@ impl Render for Chat {
                                     .max_h(px(380.))
                                     .overflow_hidden()
                                     .children(rows),
+                            ),
+                    ),
+            );
+        }
+        if let Some(Dialog::GitDiff { path, patch }) = self.dialog.as_ref() {
+            let path_text: SharedString = path.to_string_lossy().to_string().into();
+            let mut body = patch.clone();
+            if body.chars().count() > 60000 {
+                body = body.chars().take(60000).collect();
+                body.push_str("\n\n\u{2026} (truncated)");
+            }
+            root = root.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(760.))
+                            .max_h(px(640.))
+                            .bg(rgb(t.bg_panel))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .rounded(px(8.))
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .shadow_lg()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(icon("git-branch", 12., t.accent))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_family("Consolas")
+                                                    .text_color(rgb(t.text_muted))
+                                                    .child(path_text),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("diff-close")
+                                            .px_2()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("x", 12., t.text_muted)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .max_h(px(520.))
+                                    .overflow_hidden()
+                                    .p_2()
+                                    .rounded(px(6.))
+                                    .bg(rgb(t.bg))
+                                    .font_family("Consolas")
+                                    .text_size(px(11.))
+                                    .text_color(rgb(t.text))
+                                    .child(SharedString::from(body)),
                             ),
                     ),
             );
