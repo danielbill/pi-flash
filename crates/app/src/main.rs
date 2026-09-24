@@ -60,8 +60,15 @@ impl Msg {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum Dialog {
+    RenameSession { value: String },
+}
+
 struct Chat {
     focus: FocusHandle,
+    dialog_focus: FocusHandle,
+    dialog: Option<Dialog>,
     input: String,
     messages: Vec<Msg>,
     list: ListState,
@@ -110,6 +117,7 @@ impl Chat {
 impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
+        let dialog_focus = cx.focus_handle();
         let cwd = std::env::var("PI_FLASH_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -123,6 +131,8 @@ impl Chat {
         let connected = session.is_some();
         let mut chat = Self {
             focus,
+            dialog_focus,
+            dialog: None,
             input: String::new(),
             messages: Vec::new(),
             list,
@@ -242,6 +252,18 @@ impl Chat {
             }
             Err(e) => self.status = e,
         }
+        cx.notify();
+    }
+
+    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(Dialog::RenameSession { value }) = &self.dialog {
+            let name = value.trim().to_string();
+            if let Some(session) = &self.session {
+                let _ = session.send(&Command::SetSessionName { name });
+            }
+            self.refresh_state();
+        }
+        self.dialog = None;
         cx.notify();
     }
 
@@ -664,8 +686,28 @@ fn cwd_tail(cwd: &str) -> String {
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        window.focus(&self.focus);
+        if self.dialog.is_some() {
+            window.focus(&self.dialog_focus);
+        } else {
+            window.focus(&self.focus);
+        }
 
+        let session_title: SharedString = self
+            .state
+            .as_ref()
+            .and_then(|s| s.session_name.clone())
+            .unwrap_or_else(|| "pi-flash".into())
+            .into();
+        let rename_prefill = self
+            .state
+            .as_ref()
+            .and_then(|s| s.session_name.clone())
+            .unwrap_or_default();
+        let pending_chip: Option<SharedString> = self
+            .state
+            .as_ref()
+            .filter(|s| s.pending_message_count > 0)
+            .map(|s| SharedString::from(format!("queued {}", s.pending_message_count)));
         let model_label: SharedString = self
             .state
             .as_ref()
@@ -690,6 +732,7 @@ impl Render for Chat {
         let weak_for_list = weak.clone();
         let weak_for_del = weak.clone();
         let weak_for_msg = weak.clone();
+        let weak_for_dialog = weak.clone();
 
         // session sidebar rows
         let sessions_entity = entity.clone();
@@ -831,11 +874,51 @@ impl Render for Chat {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("pi-flash"),
+                            .child(session_title),
                     )
                     .child(
                         div()
+                            .id("rename")
+                            .mx_2()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(rgb(COL_SIDEBAR))
+                            .text_xs()
+                            .text_color(rgb(COL_STATUS))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(COL_TEXT)))
+                            .on_mouse_down(MouseButton::Left, {
+                                let weak = weak_for_dialog.clone();
+                                move |_, _, cx| {
+                                    let _ = weak.update(cx, |c, cx| {
+                                        c.dialog = Some(Dialog::RenameSession {
+                                            value: c
+                                                .state
+                                                .as_ref()
+                                                .and_then(|s| s.session_name.clone())
+                                                .unwrap_or_default(),
+                                        });
+                                        cx.notify();
+                                    });
+                                }
+                            })
+                            .child("\u{270e}"),
+                    )
+                    .children(pending_chip.map(|c| {
+                        div()
+                            .text_xs()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(rgb(COL_SIDEBAR))
+                            .text_color(rgb(COL_USER))
+                            .child(c)
+                    }))
+                    .child(
+                        div()
                             .flex()
+                            .items_center()
                             .gap_2()
                             .text_xs()
                             .text_color(rgb(COL_STATUS))
@@ -917,12 +1000,162 @@ impl Render for Chat {
                     ),
             );
 
-        div()
+        let mut root = div()
             .size_full()
+            .relative()
             .flex()
             .flex_row()
             .child(sidebar)
-            .child(main_col)
+            .child(main_col);
+        if let Some(overlay) = self.render_dialog(&weak_for_dialog) {
+            root = root.child(overlay);
+        }
+        root
+    }
+}
+
+impl Chat {
+    /// Modal overlay for the current dialog (rename session for now).
+    fn render_dialog(&mut self, weak: &gpui::WeakEntity<Chat>) -> Option<gpui::AnyElement> {
+        let Dialog::RenameSession { value } = self.dialog.as_ref()?;
+        let value: SharedString = if value.is_empty() {
+            "session name".into()
+        } else {
+            value.clone().into()
+        };
+        let value_empty = value == "session name";
+        let weak_input = weak.clone();
+        let weak_cancel = weak.clone();
+        let weak_ok = weak.clone();
+        let prefill_input = weak_input.clone();
+
+        let input = div()
+            .id("dialog-input")
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx_dialog_listener(weak, move |this, ev, cx| {
+                let key = ev.keystroke.key.as_str();
+                match key {
+                    "enter" => this.confirm_rename(cx),
+                    "escape" => {
+                        this.dialog = None;
+                        cx.notify();
+                    }
+                    "backspace" => {
+                        if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
+                            value.pop();
+                            cx.notify();
+                        }
+                    }
+                    "space" => {
+                        if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
+                            value.push(' ');
+                            cx.notify();
+                        }
+                    }
+                    k => {
+                        let printable =
+                            k.chars().count() == 1 && !ev.keystroke.modifiers.modified();
+                        if printable {
+                            if let (Some(c), Some(Dialog::RenameSession { value })) =
+                                (k.chars().next(), &mut this.dialog)
+                            {
+                                value.push(c);
+                                cx.notify();
+                            }
+                        }
+                    }
+                }
+                let _ = &prefill_input;
+            }))
+            .flex_1()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(COL_BG))
+            .text_color(if value_empty { rgb(COL_STATUS) } else { rgb(COL_TEXT) })
+            .child(value);
+
+        let panel = div()
+            .w(px(420.))
+            .bg(rgb(COL_PANEL))
+            .border_1()
+            .border_color(rgb(COL_CARD_BORDER))
+            .rounded_lg()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(COL_TEXT))
+                    .child("rename session"),
+            )
+            .child(input)
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("dialog-cancel")
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(COL_SIDEBAR))
+                            .text_xs()
+                            .text_color(rgb(COL_STATUS))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(COL_TEXT)))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_cancel.update(cx, |c, cx| {
+                                    c.dialog = None;
+                                    cx.notify();
+                                });
+                            })
+                            .child("cancel"),
+                    )
+                    .child(
+                        div()
+                            .id("dialog-ok")
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(COL_ASSISTANT))
+                            .text_xs()
+                            .text_color(rgb(0x10120f))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_ok.update(cx, |c, cx| c.confirm_rename(cx));
+                            })
+                            .child("save"),
+                    ),
+            );
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .bg(gpui::hsla(0., 0., 0., 0.55))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(panel)
+                .into_any_element(),
+        )
+    }
+}
+
+/// Build a chat-state listener usable inside non-element closures.
+fn cx_dialog_listener(
+    weak: &gpui::WeakEntity<Chat>,
+    f: impl Fn(&mut Chat, &KeyDownEvent, &mut gpui::Context<Chat>) + 'static,
+) -> impl Fn(&KeyDownEvent, &mut gpui::Window, &mut gpui::App) + 'static {
+    let weak = weak.clone();
+    move |ev, _w, cx| {
+        let _ = weak.update(cx, |chat, cx| f(chat, ev, cx));
     }
 }
 

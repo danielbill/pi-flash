@@ -19,6 +19,7 @@ pub enum Command {
     GetMessages,
     GetSessionStats,
     SetModel { provider: String, model: String },
+    SetSessionName { name: String },
 }
 
 impl Command {
@@ -32,6 +33,7 @@ impl Command {
             Command::GetMessages => "get_messages",
             Command::GetSessionStats => "get_session_stats",
             Command::SetModel { .. } => "set_model",
+            Command::SetSessionName { .. } => "set_session_name",
         }
     }
 
@@ -51,6 +53,9 @@ impl Command {
             }
             Command::SetModel { provider, model } => {
                 json!({ "type": self.kind(), "provider": provider, "model": model })
+            }
+            Command::SetSessionName { name } => {
+                json!({ "type": self.kind(), "name": name })
             }
         };
         v["id"] = json!(id);
@@ -560,6 +565,12 @@ mod tests {
     fn steer_record_shape() {
         let c = Command::Steer { message: "stop".into() };
         assert_eq!(c.to_record("s1"), json!({"id":"s1","type":"steer","message":"stop"}));
+    }
+
+    #[test]
+    fn set_session_name_record_shape() {
+        let c = Command::SetSessionName { name: "my-feature".into() };
+        assert_eq!(c.to_record("n1"), json!({"id":"n1","type":"set_session_name","name":"my-feature"}));
     }
 
     #[test]
