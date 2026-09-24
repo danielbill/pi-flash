@@ -59,6 +59,31 @@
   改动文件点击 → GitDiff 弹窗（untracked 合成 patch）（已关闭）
 - workspace 记忆：~/.pi/agent/pi-flash-workspace.json（per-workspace last open
   + __last 全局指针），列表按项目过滤，项目选择弹窗，启动恢复最后 workspace+会话
+- **pi-flash-oqg M3 内置终端**（已关闭）：
+  - 依赖：alacritty_terminal 0.26.0（crates.io，非 zed git fork）；tty::new
+    Windows 走 ConPTY，shell = ComSpec ?? cmd.exe（terminal-manager parity）
+  - 架构：`terminal.rs` 自定义 gpui Element（Interactivity 内嵌 →
+    track_focus/on_key_down）+ paint 阶段 shape_line 逐行绘制；Term 存
+    `Arc<FairMutex>`，EventLoop spawn io 线程，Proxy(EventListener) →
+    futures unbounded channel → Chat 泵任务（tab_id, Event）
+  - pi-web 面板 parity：右侧面板 560px、TabBar 36px（terminal 图标+标题+X、
+    中键关闭、active bg/font-weight）、header 38px（状态点 7px 黄绿红 + cwd
+    11px mono + Restart）、exit/error 横幅、固定深色面 #111318（任意主题）、
+    Consolas 13px/1.25、scrollback 8000、cursor #60a5fa、选区 #365b8a、
+    xterm 16 色 = pi-web theme、padding 10/8/22/12
+  - 输入：keystroke_to_pty 表（ctrl 字符/alt 前缀/APP_CURSOR 方向键/F1-F12/
+    CSI 1;m 修饰）、bracketed paste、Ctrl+C 有选区=复制否则 ^C、Ctrl+V 粘贴
+  - 交互：左键拖选（网格坐标 + display_offset 钳制）、滚轮 scroll_display、
+    ALT_SCREEN 时滚轮→方向键（zed alt_scroll parity）、首帧 prepaint 适配
+    cols/rows → term.resize + Msg::Resize
+  - 测试 15 个：palette/snapshot(SGR/inverse/选区)/selection_text/键表/paste
+    + **conpty_echo_smoke**（真 ConPTY round-trip，无需 gpui）
+  - 偏差记录：无 Reconnect（进程内无 SSE 断连概念）；MOUSE_MODE 应用只做
+    滚轮→方向键（无鼠标上报）；IME 仅 key_char 路径；渲染逐行 shape（CJK
+    宽字符列对齐受回退字体影响，同 xterm.js 回退行为）
+  - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
+    （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
+    prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）
 
 ## 待办
 

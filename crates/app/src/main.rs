@@ -23,7 +23,9 @@ use pi_link::sessions::{SessionInfo, list_sessions};
 mod assets;
 mod markdown;
 mod theme;
+mod terminal;
 use theme::theme as T;
+use terminal::{TermStatus, TerminalTab};
 
 // ---------------------------------------------------------------------------
 // state
@@ -130,6 +132,15 @@ struct Chat {
     /// user-message entry ids along the active root→leaf path (fork anchors)
     active_user_entry_ids: Vec<String>,
     epoch: u64,
+    /// built-in terminal tabs (pi-web TerminalPanel); cwd-keyed dedupe
+    terminals: Vec<TerminalTab>,
+    active_terminal: Option<usize>,
+    right_panel_open: bool,
+    term_seq: usize,
+    /// alacritty event channel for all terminal tabs
+    term_events: Option<futures::channel::mpsc::UnboundedSender<
+        (usize, alacritty_terminal::event::Event),
+    >>,
 }
 
 impl Chat {
@@ -186,6 +197,11 @@ impl Chat {
             branch_tree: None,
             active_user_entry_ids: Vec::new(),
             epoch: 1,
+            terminals: Vec::new(),
+            active_terminal: None,
+            right_panel_open: false,
+            term_seq: 0,
+            term_events: None,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -197,6 +213,22 @@ impl Chat {
             })
             .detach();
         }
+        // terminal event pump: alacritty EventListener -> Chat (single channel)
+        let (term_tx, term_rx) =
+            futures::channel::mpsc::unbounded::<(usize, alacritty_terminal::event::Event)>();
+        chat.term_events = Some(term_tx);
+        cx.spawn(async move |this, cx| {
+            let mut rx = term_rx;
+            while let Some((tab_id, event)) = rx.next().await {
+                if this
+                    .update(cx, |chat, cx| chat.on_term_event(tab_id, event, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         // Startup restore (pi-web last-open-by-workspace, plus a global
         // last-workspace pointer): reopen the app in the workspace that was
         // used last and reopen the session it had open.
@@ -250,6 +282,191 @@ impl Chat {
     fn refresh_git(&mut self) {
         self.git_files = git_status_files(&self.cwd);
         self.git_add_del = git_numstat(&self.cwd);
+    }
+
+    // -----------------------------------------------------------------------
+    // built-in terminal (pi-web TerminalPanel parity)
+    // -----------------------------------------------------------------------
+
+    /// Open (or focus) a terminal for the selected workspace cwd. One PTY per
+    /// cwd (terminal-manager idempotent-create parity).
+    fn open_terminal(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.right_panel_open = true;
+        if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &self.cwd)) {
+            self.active_terminal = Some(ix);
+            let focus = self.terminals[ix].focus.clone();
+            window.focus(&focus);
+            cx.notify();
+            return;
+        }
+        let Some(tx) = self.term_events.clone() else { return };
+        let (cell_w, line_h) = terminal::measure_cell(window);
+        self.term_seq += 1;
+        let id = self.term_seq;
+        let focus = cx.focus_handle();
+        let proxy = terminal::Proxy { tab: id, tx };
+        match terminal::spawn_terminal(id, self.cwd.clone(), cell_w, line_h, focus, proxy) {
+            Ok(tab) => {
+                self.terminals.push(tab);
+                self.active_terminal = Some(self.terminals.len() - 1);
+                let focus = self.terminals[self.terminals.len() - 1].focus.clone();
+                window.focus(&focus);
+                cx.notify();
+            }
+            Err(e) => {
+                self.status = format!("terminal spawn failed: {e}");
+                cx.notify();
+            }
+        }
+    }
+
+    /// Close a tab: shutdown the PTY, drop state (DELETE /api/terminal/:id).
+    fn close_terminal(&mut self, ix: usize, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if ix >= self.terminals.len() {
+            return;
+        }
+        let _ = self.terminals[ix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
+        self.terminals.remove(ix);
+        self.active_terminal = match self.active_terminal {
+            Some(a) if a >= self.terminals.len() => {
+                if self.terminals.is_empty() {
+                    self.right_panel_open = false;
+                    None
+                } else {
+                    Some(a.saturating_sub(1))
+                }
+            }
+            other => other,
+        };
+        if self.right_panel_open && self.active_terminal.is_none() {
+            window.focus(&self.focus);
+        }
+        cx.notify();
+    }
+
+    /// Restart: kill + respawn with the same cwd and current grid size.
+    fn restart_terminal(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(tx) = self.term_events.clone() else { return };
+        let Some(old) = self.terminals.get(ix) else { return };
+        if old.status == TermStatus::Ready {
+            let _ = old.pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
+        }
+        let (cols, rows, cell_w, line_h) = (old.cols, old.rows, old.cell_w, old.line_h);
+        let cwd = old.cwd.clone();
+        self.term_seq += 1;
+        let id = self.term_seq;
+        let focus = cx.focus_handle();
+        let proxy = terminal::Proxy { tab: id, tx };
+        match terminal::spawn_terminal(id, cwd, cell_w, line_h, focus, proxy) {
+            Ok(mut tab) => {
+                tab.cols = cols;
+                tab.rows = rows;
+                self.terminals[ix] = tab;
+                self.active_terminal = Some(ix);
+            }
+            Err(e) => {
+                self.terminals[ix].status = TermStatus::Failed(e);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Active terminal index helper.
+    fn active_term(&mut self) -> Option<&mut TerminalTab> {
+        self.active_terminal
+            .and_then(|ix| self.terminals.get_mut(ix))
+    }
+
+    /// Terminal keyboard input: copy/paste shortcuts first (pi-web
+    /// attachCustomKeyEventHandler parity: Ctrl+C with selection copies and
+    /// never sends ^C; Ctrl+V goes to the PTY, never the browser), then the
+    /// keystroke → escape-sequence table.
+    fn terminal_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+        use alacritty_terminal::event_loop::Msg;
+        let Some(tab) = self.active_term() else { return };
+        let k = &ev.keystroke;
+        let ctrl = k.modifiers.control;
+        let shift = k.modifiers.shift;
+        let mode = *tab.term.lock().mode();
+
+        if ctrl && k.key == "v" {
+            if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                let bytes = terminal::paste_bytes(&text, &mode);
+                let _ = tab.pty.send(Msg::Input(bytes.into()));
+            }
+            cx.stop_propagation();
+            return;
+        }
+        if ctrl && k.key == "c" && (shift || tab.selection.is_some()) {
+            if let Some(sel) = tab.selection {
+                let text = terminal::selection_text(&tab.term.lock(), sel);
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                tab.selection = None;
+                tab.sel_anchor = None;
+            }
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(bytes) = terminal::keystroke_to_pty(k, &mode) {
+            let _ = tab.pty.send(Msg::Input(bytes.into()));
+            cx.stop_propagation();
+        }
+    }
+
+    /// Pump task target: route one alacritty event to its tab.
+    fn on_term_event(
+        &mut self,
+        tab_id: usize,
+        event: alacritty_terminal::event::Event,
+        cx: &mut Context<Self>,
+    ) {
+        use alacritty_terminal::event_loop::Msg;
+        let Some(tab) = self.terminals.iter_mut().find(|t| t.id == tab_id) else {
+            return;
+        };
+        match event {
+            alacritty_terminal::event::Event::Wakeup => {
+                cx.notify();
+            }
+            alacritty_terminal::event::Event::PtyWrite(s) => {
+                let _ = tab.pty.send(Msg::Input(s.into_bytes().into()));
+            }
+            alacritty_terminal::event::Event::ClipboardStore(_, text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            }
+            alacritty_terminal::event::Event::ClipboardLoad(_, fmt) => {
+                let text = cx
+                    .read_from_clipboard()
+                    .and_then(|i| i.text())
+                    .unwrap_or_default();
+                let _ = tab.pty.send(Msg::Input(fmt(&text).into_bytes().into()));
+            }
+            alacritty_terminal::event::Event::ColorRequest(i, fmt) => {
+                let _ = tab
+                    .pty
+                    .send(Msg::Input(fmt(terminal::term_rgb(i)).into_bytes().into()));
+            }
+            alacritty_terminal::event::Event::TextAreaSizeRequest(fmt) => {
+                let ws = alacritty_terminal::event::WindowSize {
+                    num_cols: tab.cols as u16,
+                    num_lines: tab.rows as u16,
+                    cell_width: tab.cell_w as u16,
+                    cell_height: tab.line_h as u16,
+                };
+                let _ = tab.pty.send(Msg::Input(fmt(ws).into_bytes().into()));
+            }
+            alacritty_terminal::event::Event::ChildExit(status) => {
+                tab.status = TermStatus::Exited(status.code());
+                cx.notify();
+            }
+            alacritty_terminal::event::Event::Exit => {
+                if tab.status == TermStatus::Ready {
+                    tab.status = TermStatus::Exited(None);
+                }
+                cx.notify();
+            }
+            _ => {}
+        }
     }
 
     /// Switch workspace: reset context, filter sessions, restore the last
@@ -1309,6 +1526,12 @@ fn same_ws(a: &str, b: &str) -> bool {
     ws_key(a) == ws_key(b)
 }
 
+/// Path equality via the same string-level normalization as same_ws
+/// (Windows Path::components is not reusable as a key).
+fn same_path(a: &Path, b: &Path) -> bool {
+    same_ws(&a.to_string_lossy(), &b.to_string_lossy())
+}
+
 /// Remember `session_path` as the last open session for `cwd` and mark it
 /// as the globally-last active workspace (startup restore target).
 fn set_last_open(cwd: &str, session_path: &str) {
@@ -2047,9 +2270,11 @@ fn render_msg(
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // keep terminal focus alive across frames (render focuses chat input
+        // otherwise, which would steal it back every redraw)
         if self.dialog.is_some() {
             window.focus(&self.dialog_focus);
-        } else {
+        } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
             window.focus(&self.focus);
         }
         let t = T();
@@ -2458,15 +2683,29 @@ impl Render for Chat {
                                     .child(icon("chevron-down", 10., t.text))
                                     .child(SharedString::from("文件浏览器")),
                             )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_color(rgb(t.text_muted))
+                            .child(icon("monitor", 12., t.text_muted))
+                            .child(icon("search", 12., t.text_muted))
+                            .child(icon("upload", 12., t.text_muted))
+                            // open terminal for the selected cwd (pi-web
+                            // SessionSidebar explorer terminal button)
                             .child(
                                 div()
-                                    .flex()
-                                    .gap_2()
-                                    .text_color(rgb(t.text_muted))
-                                    .child(icon("monitor", 12., t.text_muted))
-                                    .child(icon("search", 12., t.text_muted))
-                                    .child(icon("upload", 12., t.text_muted))
-                                    .child(if self.git_add_del.0 + self.git_add_del.1 > 0 {
+                                    .id("open-terminal")
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(rgb(t.text)))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(
+                                        |this, _: &gpui::MouseDownEvent, window, cx| {
+                                            this.open_terminal(window, cx);
+                                        },
+                                    ))
+                                    .child(icon("terminal", 13., t.text_muted)),
+                            )
+                            .child(if self.git_add_del.0 + self.git_add_del.1 > 0 {
                                         div()
                                             .text_xs()
                                             .font_family("Consolas")
@@ -3061,6 +3300,239 @@ impl Render for Chat {
             .font_family("Segoe UI")
             .child(sidebar)
             .child(main_col);
+
+        // ---- right panel: terminal tabs (pi-web right-panel TabBar +
+        //      TerminalPanel; fixed dark surface in every theme) -----------
+        if self.right_panel_open && !self.terminals.is_empty() {
+            let weak_for_tabs = weak.clone();
+            let tabbar = div()
+                .flex()
+                .h(px(36.))
+                .flex_shrink_0()
+                .bg(rgb(t.bg_panel))
+                .border_b_1()
+                .border_color(rgb(t.border))
+                .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
+                    let active = self.active_terminal == Some(ix);
+                    let title: SharedString = tab.title.clone().into();
+                    let weak_tab = weak_for_tabs.clone();
+                    let weak_close = weak_for_tabs.clone();
+                    let focus_for_tab = tab.focus.clone();
+                    div()
+                        .id(SharedString::from(format!("term-tab-{ix}")))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .pl(px(12.))
+                        .pr(px(6.))
+                        .min_w(px(80.))
+                        .max_w(px(180.))
+                        .border_r_1()
+                        .border_color(rgb(t.border))
+                        .bg(if active { rgb(t.bg) } else { rgb(t.bg_panel) })
+                        .text_xs()
+                        .font_weight(if active {
+                            gpui::FontWeight::MEDIUM
+                        } else {
+                            gpui::FontWeight::NORMAL
+                        })
+                        .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            let _ = weak_tab.update(cx, |c, cx| {
+                                c.active_terminal = Some(ix);
+                                cx.notify();
+                            });
+                            window.focus(&focus_for_tab);
+                        })
+                        // middle-click closes the tab (pi-web TabBar auxclick)
+                        .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
+                            let _ = weak_close.update(cx, |c, cx| {
+                                c.close_terminal(ix, window, cx);
+                            });
+                        })
+                        .child(icon(
+                            "terminal",
+                            13.,
+                            if active { t.text } else { t.text_muted },
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .overflow_hidden()
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("term-close-{ix}")))
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .text_color(rgb(t.text_muted))
+                                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    let weak_x = weak_for_tabs.clone();
+                                    move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        let _ = weak_x.update(cx, |c, cx| {
+                                            c.close_terminal(ix, window, cx);
+                                        });
+                                    }
+                                })
+                                .child(icon("x", 11., t.text_muted)),
+                        )
+                        .into_any_element()
+                }));
+
+            let panel_body: Option<gpui::AnyElement> = self.active_terminal.and_then(|ix| {
+                self.terminals.get(ix).map(|tab| {
+                    let (dot, _status) = match &tab.status {
+                        TermStatus::Ready => (0x4ade80, ""),
+                        TermStatus::Exited(_) | TermStatus::Failed(_) => (0xf87171, ""),
+                    };
+                    let cwd_text: SharedString = tab.cwd.to_string_lossy().to_string().into();
+                    let weak_restart = weak.clone();
+                    let mut col = div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        // header: 38px, status dot + cwd + restart
+                        .child(
+                            div()
+                                .h(px(38.))
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .pl(px(13.))
+                                .pr(px(10.))
+                                .bg(rgb(0x181b21))
+                                .border_b_1()
+                                .border_color(rgb(0x2f3540))
+                                .child(
+                                    div()
+                                        .size(px(7.))
+                                        .rounded_full()
+                                        .flex_shrink_0()
+                                        .bg(rgb(dot)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(px(11.))
+                                        .font_family(terminal::FONT_FAMILY)
+                                        .text_color(rgb(0x9ca3af))
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .overflow_hidden()
+                                        .child(cwd_text),
+                                )
+                                .child(
+                                    div()
+                                        .id("term-restart")
+                                        .h(px(27.))
+                                        .px(px(8.))
+                                        .flex()
+                                        .items_center()
+                                        .rounded(px(5.))
+                                        .border_1()
+                                        .border_color(rgb(0x343a46))
+                                        .text_color(rgb(0x9ca3af))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(0x242932)).text_color(rgb(0xe5e7eb)))
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let rix = ix;
+                                            move |_, _, cx| {
+                                                let _ = weak_restart.update(cx, |c, cx| {
+                                                    c.restart_terminal(rix, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(icon("refresh", 12., 0x9ca3af)),
+                                ),
+                        );
+                    // banners: error (role=alert) / exit code (pi-web parity)
+                    match &tab.status {
+                        TermStatus::Failed(e) => {
+                            col = col.child(
+                                div()
+                                    .py(px(7.))
+                                    .px(px(12.))
+                                    .bg(rgb(0x321b1b))
+                                    .border_b_1()
+                                    .border_color(rgb(0x5f2424))
+                                    .text_size(px(11.))
+                                    .font_family(terminal::FONT_FAMILY)
+                                    .text_color(rgb(0xfca5a5))
+                                    .child(SharedString::from(e.clone())),
+                            );
+                        }
+                        TermStatus::Exited(code) => {
+                            let code_text = code
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "unknown".into());
+                            col = col.child(
+                                div()
+                                    .py(px(7.))
+                                    .px(px(12.))
+                                    .text_size(px(11.))
+                                    .font_family(terminal::FONT_FAMILY)
+                                    .text_color(rgb(0x9ca3af))
+                                    .child(SharedString::from(format!(
+                                        "Process exited with code {code_text}"
+                                    ))),
+                            );
+                        }
+                        TermStatus::Ready => {}
+                    }
+                    // xterm host: fixed #111318 surface, pi-web padding
+                    col.child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .bg(rgb(0x111318))
+                            .child(
+                                terminal::TerminalElement::new(tab, weak.clone())
+                                    .track_focus(&tab.focus)
+                                    .flex_1()
+                                    .h_full()
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let f = tab.focus.clone();
+                                        move |_, window, _cx| {
+                                            window.focus(&f);
+                                        }
+                                    })
+                                    .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
+                                        this.terminal_key(ev, cx);
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+                })
+            });
+
+            root = root.child(
+                div()
+                    .w(px(560.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .bg(rgb(t.bg))
+                    .border_l_1()
+                    .border_color(rgb(t.border))
+                    .child(tabbar)
+                    .children(panel_body),
+            );
+        }
 
         // dialogs
         if let Some(Dialog::ModelSelect { filter }) = self.dialog.as_ref() {
