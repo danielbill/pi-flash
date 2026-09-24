@@ -31,6 +31,10 @@ pub enum Command {
     GetAvailableModels,
     ExportHtml,
     SetThinkingLevel { level: String },
+    /// Full session tree with branch structure
+    GetTree,
+    /// Fork a new session branching before the given user-message entry
+    Fork { entry_id: String },
 }
 
 impl Command {
@@ -49,6 +53,8 @@ impl Command {
             Command::ExportHtml => "export_html",
             Command::GetAvailableModels => "get_available_models",
             Command::SetThinkingLevel { .. } => "set_thinking_level",
+            Command::GetTree => "get_tree",
+            Command::Fork { .. } => "fork",
         }
     }
 
@@ -90,6 +96,11 @@ impl Command {
             }
             Command::SetSessionName { name } => {
                 json!({ "type": self.kind(), "name": name })
+            }
+            Command::GetTree => json!({ "type": self.kind() }),
+            // wire field is entryId (rpc-types.d.ts fork)
+            Command::Fork { entry_id } => {
+                json!({ "type": self.kind(), "entryId": entry_id })
             }
         };
         v["id"] = json!(id);
@@ -322,6 +333,84 @@ pub fn parse_model_list(data: &Value) -> Vec<ModelInfo> {
         .as_array()
         .map(|arr| arr.iter().filter_map(ModelInfo::parse).collect())
         .unwrap_or_default()
+}
+
+/// A node of the session branch tree (`get_tree` response).
+/// Mirrors pi's SessionTreeNode: entry identity + role/text for message
+/// entries, plus recursive children. Text is truncated to 80 chars because
+/// the UI only ever shows a bounded preview.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TreeNode {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub entry_type: String,
+    /// "user" | "assistant" | "toolResult" | "system" for message entries
+    pub role: Option<String>,
+    /// bounded message text preview (80 chars)
+    pub text: Option<String>,
+    pub children: Vec<TreeNode>,
+}
+
+impl TreeNode {
+    fn parse(v: &Value) -> Option<TreeNode> {
+        let entry = &v["entry"];
+        let mut node = TreeNode {
+            id: entry["id"].as_str()?.to_string(),
+            parent_id: entry["parentId"].as_str().map(str::to_string),
+            entry_type: entry["type"].as_str().unwrap_or("").to_string(),
+            role: entry["message"]["role"].as_str().map(str::to_string),
+            text: None,
+            children: v["children"]
+                .as_array()
+                .map(|a| a.iter().filter_map(TreeNode::parse).collect())
+                .unwrap_or_default(),
+        };
+        if node.entry_type == "message" {
+            node.text = Some(extract_message_preview(&entry["message"]["content"]));
+        }
+        Some(node)
+    }
+
+    /// First user-message entry id on this node or its single-child chain
+    /// (pi fork position "before" requires a user message entry).
+    pub fn forkable_entry_id(&self) -> Option<&str> {
+        let mut cur = Some(self);
+        while let Some(n) = cur {
+            if n.role.as_deref() == Some("user") {
+                return Some(&n.id);
+            }
+            cur = n.children.first();
+        }
+        None
+    }
+}
+
+/// Extract a bounded text preview from message content (string or blocks).
+fn extract_message_preview(content: &Value) -> String {
+    let mut text = String::new();
+    if let Some(s) = content.as_str() {
+        text = s.to_string();
+    } else if let Some(arr) = content.as_array() {
+        for b in arr {
+            if b["type"].as_str() == Some("text") {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(b["text"].as_str().unwrap_or(""));
+            }
+        }
+    }
+    text.chars().take(80).collect()
+}
+
+/// Parse a `get_tree` response: {"tree": [...], "leafId": "..."|null}
+pub fn parse_tree(data: &Value) -> (Vec<TreeNode>, Option<String>) {
+    let tree = data["tree"]
+        .as_array()
+        .map(|a| a.iter().filter_map(TreeNode::parse).collect())
+        .unwrap_or_default();
+    let leaf_id = data["leafId"].as_str().map(str::to_string);
+    (tree, leaf_id)
 }
 
 /// Snapshot of `get_state` response data.
@@ -684,6 +773,54 @@ mod tests {
         let c = Command::SetSessionName { name: "my-feature".into() };
         assert_eq!(c.to_record("n1"), json!({"id":"n1","type":"set_session_name","name":"my-feature"}));
     }
+
+    #[test]
+    fn fork_record_shape() {
+        // wire field is entryId (rpc-types.d.ts fork command)
+        let c = Command::Fork { entry_id: "e-42".into() };
+        assert_eq!(c.to_record("f1"), json!({"id":"f1","type":"fork","entryId":"e-42"}));
+        assert_eq!(Command::GetTree.to_record("t1"), json!({"id":"t1","type":"get_tree"}));
+    }
+
+    #[test]
+    fn parse_tree_response() {
+        // Mirrors pi get_tree: entries wrap {entry:{id,parentId,type,message}, children:[]}
+        let data = json!({
+            "leafId": "c2",
+            "tree": [{
+                "entry": {"id":"a1","parentId":null,"type":"message",
+                    "message": {"role":"user","content":"fix the login bug"}},
+                "children": [
+                    {"entry": {"id":"b1","parentId":"a1","type":"message",
+                        "message": {"role":"assistant","content":"sure, on it"}},
+                        "children": []},
+                    {"entry": {"id":"c1","parentId":"a1","type":"message",
+                        "message": {"role":"user","content":"actually try tests first",
+                            "extra": 1}},
+                        "children": [
+                            {"entry": {"id":"c2","parentId":"c1","type":"model_change"},
+                             "children": []}
+                        ]}
+                ]
+            }]
+        });
+        let (tree, leaf) = parse_tree(&data);
+        assert_eq!(leaf.as_deref(), Some("c2"));
+        assert_eq!(tree.len(), 1);
+        let root = &tree[0];
+        assert_eq!(root.id, "a1");
+        assert_eq!(root.role.as_deref(), Some("user"));
+        assert_eq!(root.text.as_deref(), Some("fix the login bug"));
+        assert_eq!(root.children.len(), 2);
+        // model_change entry has no message text
+        let c2 = &root.children[1].children[0];
+        assert_eq!(c2.entry_type, "model_change");
+        assert!(c2.text.is_none());
+        // forkable: assistant chain skips to first user message
+        assert_eq!(root.children[0].forkable_entry_id(), None); // assistant leaf, no user below
+        assert_eq!(root.forkable_entry_id(), Some("a1"));
+    }
+
 
     #[test]
     fn slash_commands_parse_list() {

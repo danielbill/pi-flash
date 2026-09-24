@@ -15,8 +15,8 @@ use gpui::{
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
 use pi_link::protocol::{
-    AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, Usage,
-    content_blocks,
+    AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, TreeNode,
+    Usage, content_blocks, parse_tree,
 };
 use pi_link::sessions::{SessionInfo, list_sessions};
 
@@ -48,6 +48,8 @@ struct Msg {
     role: Role,
     blocks: Vec<Block>,
     usage: Option<UsageLine>,
+    /// session entry id for user messages (fork anchor), filled from get_entries
+    entry_id: Option<String>,
 }
 
 impl Msg {
@@ -68,6 +70,7 @@ enum Dialog {
     RenameSession { value: String },
     ModelSelect { filter: String },
     FilePreview { path: PathBuf, content: String },
+    BranchTree,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +119,10 @@ struct Chat {
     menu_ix: usize,
     hovered_session: Option<usize>,
     pending_rename: bool,
+    /// get_tree snapshot: (roots, active leaf id)
+    branch_tree: Option<(Vec<TreeNode>, Option<String>)>,
+    /// user-message entry ids along the active root→leaf path (fork anchors)
+    active_user_entry_ids: Vec<String>,
     epoch: u64,
 }
 
@@ -161,6 +168,8 @@ impl Chat {
             menu_ix: 0,
             hovered_session: None,
             pending_rename: false,
+            branch_tree: None,
+            active_user_entry_ids: Vec::new(),
             epoch: 1,
         };
         chat.sessions_list.reset(chat.sessions.len());
@@ -185,6 +194,37 @@ impl Chat {
         }
     }
 
+
+    /// Open the branch navigator: request a fresh tree, show the panel.
+    fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
+        self.branch_tree = None;
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetTree);
+        }
+        self.dialog = Some(Dialog::BranchTree);
+        cx.notify();
+    }
+
+    /// Fork a new session branching before the given user-message entry.
+    /// pi rebinds this process to the branched session; the "fork" response
+    /// handler reloads state/messages/tree.
+    fn fork_from_entry(&mut self, entry_id: String, cx: &mut Context<Self>) {
+        if self
+            .state
+            .as_ref()
+            .is_some_and(|s| s.is_streaming)
+        {
+            self.status = "cannot fork while running".into();
+            cx.notify();
+            return;
+        }
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Fork { entry_id });
+            self.dialog = None;
+        }
+        cx.notify();
+    }
+
     fn load_project_files(&mut self) {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
@@ -204,7 +244,7 @@ impl Chat {
     fn last_assistant(&mut self) -> &mut Msg {
         if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
             self.messages
-                .push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None });
+                .push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None, entry_id: None });
         }
         self.messages.last_mut().expect("just pushed")
     }
@@ -233,11 +273,12 @@ impl Chat {
         blocks: Vec<Block>,
         usage: Option<Usage>,
         time: Option<String>,
+        entry_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
         match role {
             "user" => {
-                self.messages.push(Msg { role: Role::User, blocks, usage: None });
+                self.messages.push(Msg { role: Role::User, blocks, usage: None, entry_id });
             }
             "assistant" => {
                 self.messages.push(Msg {
@@ -250,6 +291,7 @@ impl Chat {
                         cost: u.cost,
                         time: time.clone().unwrap_or_default(),
                     }),
+                    entry_id: None,
                 });
             }
             "toolResult" => {
@@ -465,6 +507,8 @@ impl Chat {
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
+            // branch tree snapshot for the fork panel
+            let _ = session.send(&Command::GetTree);
         }
         self.refresh_state();
         self.load_project_files();
@@ -655,6 +699,39 @@ impl Chat {
                         self.available_models =
                             pi_link::protocol::parse_model_list(data);
                     }
+                } else if command == "get_tree" && success {
+                    if let Some(data) = &data {
+                        let (tree, leaf) = parse_tree(data);
+                        self.active_user_entry_ids =
+                            collect_path_user_ids(&tree, leaf.as_deref());
+                        let mut ids = self.active_user_entry_ids.iter();
+                        for m in self.messages.iter_mut() {
+                            if m.role == Role::User {
+                                m.entry_id = ids.next().cloned();
+                            }
+                        }
+                        self.branch_tree = Some((tree, leaf));
+                    }
+                } else if command == "fork" {
+                    if success {
+                        // pi rebound this process to the branched session.
+                        self.branch_tree = None;
+                        self.messages.clear();
+                        self.notify_list(cx);
+                        if let Some(s) = self.session.as_ref() {
+                            let _ = s.send(&Command::GetState);
+                            let _ = s.send(&Command::GetMessages);
+                            let _ = s.send(&Command::GetTree);
+                        }
+                        // branch_tree was refreshed by the GetTree request below;
+                        // message entry ids re-map there as well.
+                        self.status = "forked".into();
+                    } else {
+                        self.status = format!(
+                            "fork failed: {}",
+                            error.unwrap_or_default()
+                        );
+                    }
                 } else if command == "export_html" && success {
                     self.status = format!(
                         "exported: {}",
@@ -667,8 +744,16 @@ impl Chat {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
-                            self.ingest_message(role, blocks, usage, None, cx);
+                            self.ingest_message(role, blocks, usage, None, None, cx);
                         }
+                        // map user messages to active-path entry ids (fork anchors)
+                        let mut ids = self.active_user_entry_ids.iter();
+                        for m in self.messages.iter_mut() {
+                            if m.role == Role::User {
+                                m.entry_id = ids.next().cloned();
+                            }
+                        }
+                        self.notify_list(cx);
                     }
                     self.status = status_line(true, "resumed");
                 } else if success {
@@ -682,13 +767,14 @@ impl Chat {
                 match role.as_str() {
                     "user" => {
                         self.messages
-                            .push(Msg { role: Role::User, blocks, usage: None });
+                            .push(Msg { role: Role::User, blocks, usage: None, entry_id: None });
                     }
                     "assistant" => {
                         self.messages.push(Msg {
                             role: Role::Assistant,
                             blocks,
                             usage: None,
+                            entry_id: None,
                         });
                     }
                     "toolResult" => {
@@ -837,7 +923,12 @@ impl Chat {
                 self.status = status_line(true, "idle");
                 self.refresh_state();
             }
-            Event::AgentEnd { .. } => {}
+            Event::AgentEnd { .. } => {
+                // refresh branch tree so newly-sent user messages gain entry ids
+                if let Some(s) = self.session.as_ref() {
+                    let _ = s.send(&Command::GetTree);
+                }
+            }
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
         }
@@ -1066,6 +1157,134 @@ fn fmt_compact(n: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// branch tree helpers (BranchNavigator.tsx parity)
+// ---------------------------------------------------------------------------
+
+/// Iterative check: does the tree branch anywhere?
+fn tree_has_branches(nodes: &[TreeNode]) -> bool {
+    if nodes.len() > 1 {
+        return true;
+    }
+    let mut stack: Vec<&TreeNode> = nodes.iter().collect();
+    while let Some(n) = stack.pop() {
+        if n.children.len() > 1 {
+            return true;
+        }
+        for c in &n.children {
+            stack.push(c);
+        }
+    }
+    false
+}
+
+/// Ids on the root→leaf path (iterative DFS, BranchNavigator parity).
+fn build_active_path(nodes: &[TreeNode], leaf_id: Option<&str>) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let Some(target) = leaf_id else {
+        return out;
+    };
+    let mut stack: Vec<(&TreeNode, Vec<String>)> =
+        nodes.iter().map(|n| (n, vec![n.id.clone()])).collect();
+    while let Some((node, path)) = stack.pop() {
+        if node.id == target {
+            out.extend(path);
+            break;
+        }
+        for c in &node.children {
+            let mut p = path.clone();
+            p.push(c.id.clone());
+            stack.push((c, p));
+        }
+    }
+    out
+}
+
+/// Compress a single-child chain into its branching/leaf representative.
+/// Returns (representative, skipped count, label). Label prefers the first
+/// message text on the chain (40 chars, pi-web getLabel parity).
+fn compress_chain(node: &TreeNode) -> (TreeNode, usize, String) {
+    let mut current = node.clone();
+    let mut label_entry: Option<String> = message_label(node);
+    let mut skipped = 0usize;
+    while current.children.len() == 1 {
+        current = current.children[0].clone();
+        if label_entry.is_none() {
+            label_entry = message_label(&current);
+        }
+        skipped += 1;
+    }
+    let label = label_entry
+        .or_else(|| message_label(&current))
+        .unwrap_or_else(|| current.entry_type.clone());
+    (current, skipped, label)
+}
+
+/// 40-char label for message entries (getLabel parity).
+fn message_label(node: &TreeNode) -> Option<String> {
+    if node.entry_type != "message" || node.role.as_deref() == Some("system") {
+        return None;
+    }
+    let mut text = node.text.clone()?;
+    if text.is_empty() {
+        if node.role.as_deref() == Some("assistant") {
+            text = "[assistant]".into();
+        } else {
+            return None;
+        }
+    }
+    let mut t: String = text.chars().take(40).collect();
+    if text.chars().count() > 40 {
+        t.push('…');
+    }
+    Some(t)
+}
+
+/// User-message entry ids along the root→leaf path (fork anchors for the
+/// per-message fork button). Ordering matches the projected user messages.
+fn collect_path_user_ids(nodes: &[TreeNode], leaf_id: Option<&str>) -> Vec<String> {
+    let Some(target) = leaf_id else {
+        return Vec::new();
+    };
+    fn flatten<'a>(nodes: &'a [TreeNode], map: &mut std::collections::HashMap<String, &'a TreeNode>) {
+        for n in nodes {
+            map.insert(n.id.clone(), n);
+            flatten(&n.children, map);
+        }
+    }
+    let mut map = std::collections::HashMap::new();
+    flatten(nodes, &mut map);
+    let mut chain: Vec<TreeNode> = Vec::new();
+    let mut cur = map.get(target);
+    while let Some(n) = cur {
+        chain.push((*n).clone());
+        cur = n.parent_id.as_deref().and_then(|pid| map.get(pid));
+    }
+    chain.reverse();
+    chain
+        .into_iter()
+        .filter(|n| n.role.as_deref() == Some("user"))
+        .map(|n| n.id)
+        .collect()
+}
+
+/// Top-level rows: multiple roots => the roots; otherwise children of the
+/// first branching node (empty when the session is linear).
+fn select_top_level_branches(tree: &[TreeNode]) -> Vec<TreeNode> {
+    if tree.len() > 1 {
+        return tree.to_vec();
+    }
+    if tree.is_empty() {
+        return Vec::new();
+    }
+    let first = compress_chain(&tree[0]).0;
+    if first.children.len() > 1 {
+        first.children.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // rendering
 // ---------------------------------------------------------------------------
 
@@ -1226,9 +1445,48 @@ fn render_msg(
 ) -> gpui::Div {
     let mut col = div().w_full().mb_4().flex().flex_col();
     if m.role == Role::User {
-        // MessageView.tsx: right-aligned bubble, --user-bg, radius 12, pad 8/12
+        // MessageView.tsx: right-aligned bubble, --user-bg, radius 12, pad 8/12.
+        // UserMessageView hover toolbar: fork button (git-branch 11px) appears
+        // on hover and forks the session before this user message.
         let text = m.plain_text();
-        col = col.items_end().child(
+        let entry = m.entry_id.clone();
+        let weak_fork = weak.clone();
+        let mut row = div()
+            .id(SharedString::from(format!("msgrow-{msg_ix}")))
+            .group("usermsg")
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap_0p5();
+        if entry.is_some() {
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("fork-{msg_ix}")))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded(px(5.))
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .opacity(0.)
+                    .group_hover("usermsg", |s| s.opacity(1.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.accent)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        if let Some(eid) = entry.clone() {
+                            let _ = weak_fork.update(cx, |c, cx| {
+                                c.fork_from_entry(eid, cx)
+                            });
+                        }
+                    })
+                    .child(icon("git-branch", 11., t.text_dim))
+                    .child(SharedString::from("新分支")),
+            );
+        }
+        row = row.child(
             div()
                 .max_w(relative(0.85))
                 .px_3()
@@ -1241,6 +1499,7 @@ fn render_msg(
                 .text_size(px(14.))
                 .child(SharedString::from(text)),
         );
+        col = col.child(row);
     } else {
         // MessageView: model label 11px --text-dim, margin-bottom 4
         col = col.child(
@@ -1826,6 +2085,41 @@ impl Render for Chat {
                     ))
                     .child(
                         div()
+                            .id("tb-branch")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.open_branch_tree(cx);
+                                },
+                            ))
+                            .child(icon(
+                                "git-branch",
+                                12.,
+                                if self
+                                    .branch_tree
+                                    .as_ref()
+                                    .is_some_and(|(tr, _)| tree_has_branches(tr))
+                                {
+                                    t.accent
+                                } else {
+                                    t.text_muted
+                                },
+                            ))
+                            .child(SharedString::from("分支")),
+                    )
+                    .child(
+                        div()
                             .id("tb-title")
                             .px_2()
                             .py_1()
@@ -2376,6 +2670,294 @@ impl Render for Chat {
                                     .child(SharedString::from("filter models...")),
                             )
                             .child(list_panel),
+                    ),
+            );
+        }
+        if self.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::BranchTree)) {
+            let t = T();
+            let weak = weak_for_dialog.clone();
+            let (has_session, tree, leaf_id) = match &self.branch_tree {
+                Some((tree, leaf)) => (self.session.is_some(), tree.clone(), leaf.clone()),
+                None => (self.session.is_some(), Vec::new(), None),
+            };
+            let has_branches = tree_has_branches(&tree);
+            let active_path = build_active_path(&tree, leaf_id.as_deref());
+            let top_level = select_top_level_branches(&tree);
+
+            // ── node rows (BranchNavigator TreeNodeView, token-level) ──
+            fn push_node(
+                node: &TreeNode,
+                skipped: usize,
+                label: &str,
+                is_last: bool,
+                parent_lines: &[bool],
+                active_path: &std::collections::HashSet<String>,
+                weak: &gpui::WeakEntity<Chat>,
+                out: &mut Vec<gpui::AnyElement>,
+            ) {
+                let t = T();
+                let is_on_path = active_path.contains(&node.id);
+                let is_active = is_on_path;
+                let role = node.role.clone().unwrap_or_default();
+                let mut row = div()
+                    .w_full()
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(t.bg_hover)));
+                // indent guide lines
+                for has_line in parent_lines {
+                    row = row.child(
+                        div()
+                            .w(px(16.))
+                            .h_full()
+                            .border_l_1()
+                            .border_color(if *has_line {
+                                rgb(t.border)
+                            } else {
+                                gpui::rgba(0x00000000)
+                            }),
+                    );
+                }
+                // connector: vertical line + horizontal tick
+                let mut connector = div()
+                    .w(px(16.))
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .border_l_1()
+                    .border_color(rgb(t.border));
+                if !node.children.is_empty() || skipped > 0 {
+                    connector = connector.child(
+                        div()
+                            .w(px(9.))
+                            .h(px(1.))
+                            .bg(rgb(t.border)),
+                    );
+                }
+                row = row.child(connector);
+                // node dot
+                row = row.child(
+                    div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .mr_1p5()
+                        .flex_shrink_0()
+                        .bg(if is_active {
+                            rgb(t.accent)
+                        } else if is_on_path {
+                            rgb(t.text_dim)
+                        } else {
+                            rgb(t.border)
+                        }),
+                );
+                // role badge
+                if role == "user" || role == "assistant" {
+                    row = row.child(
+                        div()
+                            .px_1()
+                            .mr_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(if role == "user" {
+                                rgb(t.accent)
+                            } else {
+                                rgb(t.border)
+                            })
+                            .text_size(px(9.))
+                            .line_height(px(14.))
+                            .text_color(if role == "user" {
+                                rgb(t.accent)
+                            } else {
+                                rgb(t.text_dim)
+                            })
+                            .child(if role == "user" {
+                                "U"
+                            } else {
+                                "A"
+                            }),
+                    );
+                }
+                // skipped indicator
+                if skipped > 0 {
+                    row = row.child(
+                        div()
+                            .text_size(px(10.))
+                            .mr_1()
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(format!("+{skipped}"))),
+                    );
+                }
+                // label
+                row = row.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(11.))
+                        .font_weight(if is_active {
+                            gpui::FontWeight::MEDIUM
+                        } else {
+                            gpui::FontWeight::NORMAL
+                        })
+                        .text_color(if is_active {
+                            rgb(t.text)
+                        } else if is_on_path {
+                            rgb(t.text_dim)
+                        } else {
+                            rgb(0x9ca3af)
+                        })
+                        .child(SharedString::from(label.to_string())),
+                );
+                // click = fork from this node's user message
+                if let Some(entry_id) = node.forkable_entry_id() {
+                    let entry_id = entry_id.to_string();
+                    let weak_click = weak.clone();
+                    row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_click.update(cx, |c, cx| {
+                            c.fork_from_entry(entry_id.clone(), cx);
+                        });
+                    });
+                }
+                out.push(row.into_any_element());
+                let n_children = node.children.len();
+                for (i, child) in node.children.iter().enumerate() {
+                    let (rep, sk, lab) = compress_chain(child);
+                    push_node(
+                        &rep,
+                        sk,
+                        &lab,
+                        i == n_children - 1,
+                        &[
+                            parent_lines,
+                            &[!is_last as bool],
+                        ]
+                        .concat(),
+                        active_path,
+                        weak,
+                        out,
+                    );
+                }
+            }
+
+            let mut rows: Vec<gpui::AnyElement> = Vec::new();
+            for (i, node) in top_level.iter().enumerate() {
+                let (rep, sk, lab) = compress_chain(node);
+                push_node(
+                    &rep,
+                    sk,
+                    &lab,
+                    i == top_level.len() - 1,
+                    &[],
+                    &active_path,
+                    &weak,
+                    &mut rows,
+                );
+            }
+
+            let body: gpui::AnyElement = if !has_session {
+                div()
+                    .px_4()
+                    .py_2p5()
+                    .text_xs()
+                    .text_color(rgb(t.text_muted))
+                    .child("无活动会话")
+                    .into_any_element()
+            } else if !has_branches || rows.is_empty() {
+                div()
+                    .px_4()
+                    .py_2p5()
+                    .text_xs()
+                    .text_color(rgb(t.text_muted))
+                    .child("暂无分支")
+                    .into_any_element()
+            } else {
+                div()
+                    .px_3()
+                    .pt_1()
+                    .pb_2()
+                    .max_h(px(260.))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .children(rows)
+                    .into_any_element()
+            };
+
+            root = root.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(520.))
+                            .max_h(px(560.))
+                            .bg(rgb(t.bg_panel))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .shadow_lg()
+                            .p_3()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(rgb(t.text))
+                                            .child("分支"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("branch-close")
+                                            .px_2()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("x", 12., t.text_muted)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_dim))
+                                    .child("点击节点：从该用户消息处创建分支新会话"),
+                            )
+                            .child(body),
                     ),
             );
         }

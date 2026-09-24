@@ -4,22 +4,19 @@
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
 ## 当前状态（2025-09，提交 816fad6）
-## 当前状态（2025-09，会话行对齐 pi-web）
+## 当前状态（2025-09，分支导航 fork 完成）
 
-- workspace：`crates/pi-link`（协议层，23 测试）+ `crates/app`（GPUI 界面：assets/markdown/theme + 主渲染，7 markdown 测试）+ `vendor/pi`（钉版 0.87.1）
-- **会话行对齐 pi-web SessionItem（本轮）**：54px 固定行高、单行标题 ellipsis、
-  运行中 loader spinner（accent 色 14px）、hover 才显示 ✏/🗑 按钮（28px 圆角 7、
-  pencil hover 变 accent、trash hover 变红 #ef4444、cx.stop_propagation 防误开行）、
-  整行可点恢复会话、非活动会话改名 = open(p,true) 后 get_state 自动弹改名框
-- 改名预填对齐 pi-web：session_name || 首条用户消息前 50 字
-- 入口修复（816fad6 重写时丢失的接线全部补回）：⚙ 模型弹窗、🖼 attach_images、
-  💡 cycle_thinking、生成标题 auto_title、文件树文件行 open_file_preview
-- 弹窗统一 ESC 关闭：三处 overlay track_focus(dialog_focus) + on_key_down escape
-- 图标：loader.svg 对齐 pi-web spinner path（M21 12a9 9 0 1 1-3.8-7.4, sw 2.8）、新增 trash.svg
-- 功能已通：流式聊天/steer/中断/图片发送、Markdown+语法高亮、thinking 折叠(自动+手动)、
-  工具卡片(参数+结果)、会话列表/恢复(546 条验证)/新建/删除/改名弹窗/启发式标题/导出 HTML、
-  模型切换弹窗+思考级别循环、stats/cost 显示、斜杠菜单(42 命令)/@文件菜单/历史/多行、文件预览
-- 测试：30 全绿（pi-link 23 + markdown 7）
+- workspace：`crates/pi-link`（协议层，25 测试）+ `crates/app`（GPUI 界面，7 markdown 测试）+ `vendor/pi`（钉版 0.87.1）
+- **分支导航（pi-flash-kzw 已关闭）**：
+  - pi-link：Command::GetTree / Command::Fork{entry_id}（wire `entryId`）、TreeNode 递归解析（80 字预览）、parse_tree fixture 测试
+  - 入口①：工具栏「分支」pill → BranchTree 面板（BranchNavigator 令牌级：24px 行、16px 缩进参考线、7px 圆点 accent/path/border、U/A 徽章、+N skipped、40 字标签、无会话/暂无分支空态）
+  - 入口②：用户消息 hover → 「新分支」按钮（group+group_hover opacity 0→1，11px git-branch）
+  - 链路：fork(entryId) → pi 创建 branched session（position before：复制到该消息之前）+ 进程内 rebind → UI 清空消息 + GetState/GetMessages/GetTree 重载 + list_sessions 刷新；新会话文件首条消息时落盘（pi 行为）
+  - entryId 映射：get_tree 响应收集 active path 上的 user entry ids 回填 Msg.entry_id；AgentEnd 后刷新 tree（新消息也能 fork）
+  - helpers：tree_has_branches / build_active_path / compress_chain / message_label / select_top_level_branches / collect_path_user_ids（BranchNavigator.tsx 迭代实现 parity）
+- 会话行已对齐 pi-web SessionItem（54px、ellipsis、spinner、hover ✏/🗑）；弹窗统一 ESC 关闭
+- 功能已通：流式聊天/steer/中断/图片发送、Markdown+高亮、thinking 折叠、工具卡片、会话管理/改名/删除、模型切换、thinking 循环、斜杠/@ 菜单、文件预览、**fork 分支**
+- 测试：32 全绿（pi-link 25 + markdown 7）
 ## 协议陷阱（实测钉进 fixture）
 
 - 内容块类型是 camelCase `"toolCall"`（message.content 数组）

@@ -1,1 +1,2 @@
 {"id":"int-65f83d9980d2512a9c661662062b6e68","kind":"field_change","created_at":"2026-09-24T12:08:11.1477682Z","actor":"多多有鱼","issue_id":"pi-flash-zdq","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-701b8c99926f8cc2ef7bba90ef4b47fe","kind":"field_change","created_at":"2026-09-24T21:13:37.7639941Z","actor":"多多有鱼","issue_id":"pi-flash-kzw","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
