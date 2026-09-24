@@ -114,6 +114,8 @@ struct Chat {
     history: Vec<String>,
     history_ix: Option<usize>,
     menu_ix: usize,
+    hovered_session: Option<usize>,
+    pending_rename: bool,
     epoch: u64,
 }
 
@@ -157,6 +159,8 @@ impl Chat {
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
+            hovered_session: None,
+            pending_rename: false,
             epoch: 1,
         };
         chat.sessions_list.reset(chat.sessions.len());
@@ -439,7 +443,7 @@ impl Chat {
         cx.notify();
     }
 
-    fn open_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
         let cwd = self
             .sessions
             .iter()
@@ -457,6 +461,7 @@ impl Chat {
         self.stats = None;
         self.active_session_file = None;
         self.collapsed.clear();
+        self.pending_rename = rename;
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
@@ -617,6 +622,12 @@ impl Chat {
                 if command == "get_state" && success {
                     if let Some(data) = &data {
                         self.state = Some(SessionState::parse(data));
+                    }
+                    if self.pending_rename {
+                        self.pending_rename = false;
+                        self.dialog = Some(Dialog::RenameSession {
+                            value: self.state.as_ref().and_then(|s| s.session_name.clone()).unwrap_or_default(),
+                        });
                     }
                 } else if command == "get_session_stats" && success {
                     if let Some(data) = &data {
@@ -1486,7 +1497,7 @@ impl Render for Chat {
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let p = path.clone();
-                                    let _ = weak.update(cx, |c, cx| c.open_session(p, cx));
+                                    let _ = weak.update(cx, |c, cx| c.open_session(p, false, cx));
                                 })
                                 .flex()
                                 .flex_col()
