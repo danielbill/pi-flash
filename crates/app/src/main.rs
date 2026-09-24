@@ -1846,6 +1846,7 @@ fn collect_tree_rows(
             .flex()
             .items_center()
             .gap_1()
+            .overflow_hidden()
             .pl(px(8. + depth as f32 * 14.))
             .pr(px(8.))
             .rounded(px(4.))
@@ -1855,13 +1856,27 @@ fn collect_tree_rows(
             .hover(|s| s.bg(rgb(t.bg_hover)));
         if is_dir {
             row = row
-                .child(if open {
-                    icon("chevron-down", 10., t.text_dim)
-                } else {
-                    icon("chevron-right", 10., t.text_dim)
-                })
-                .child(icon("folder", 14., t.text_dim))
-                .child(SharedString::from(name));
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .child(if open {
+                            icon("chevron-down", 10., t.text_dim)
+                        } else {
+                            icon("chevron-right", 10., t.text_dim)
+                        }),
+                )
+                .child(
+                    div().flex_shrink_0().child(icon("folder", 14., t.text_dim)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(name)),
+                );
             let weak_toggle = weak.clone();
             let dir_path = path.clone();
             row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -1875,9 +1890,19 @@ fn collect_tree_rows(
             });
         } else {
             row = row
-                .child(div().w(px(10.)))
-                .child(icon("file", 14., t.text_dim))
-                .child(SharedString::from(name));
+                .child(div().w(px(10.)).flex_shrink_0())
+                .child(
+                    div().flex_shrink_0().child(icon("file", 14., t.text_dim)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(name)),
+                );
             let weak_open = weak.clone();
             let fp = path.clone();
             let is_changed = git_map.contains_key(&path);
@@ -1899,6 +1924,7 @@ fn collect_tree_rows(
                         .size(px(6.))
                         .rounded_full()
                         .ml_auto()
+                        .flex_shrink_0()
                         .bg(rgb(0xd6a84b)),
                 );
             }
@@ -1907,6 +1933,7 @@ fn collect_tree_rows(
             row = row.child(
                 div()
                     .ml_auto()
+                    .flex_shrink_0()
                     .text_size(px(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(color))
