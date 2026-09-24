@@ -16,6 +16,7 @@ pub struct SessionInfo {
     pub modified: SystemTime,
     /// first user message text (used as the row label, like pi-web)
     pub preview: String,
+    pub message_count: u64,
 }
 
 /// Home-relative sessions root (`~/.pi/agent/sessions`), honoring
@@ -68,6 +69,8 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
     let mut id = String::new();
     let mut cwd = String::new();
     let mut preview = String::new();
+    let message_count = (u64::from(content.contains("\"type\":\"message\"")))
+        * content.matches("\"type\":\"message\"").count() as u64;
     // header + first user message are near the top; read a bounded prefix
     for line in content.lines().take(40) {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
@@ -111,7 +114,14 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
         preview.push('…');
     }
     preview = preview.replace('\n', " ");
-    Some(SessionInfo { path: path.to_path_buf(), id, cwd, modified, preview })
+    Some(SessionInfo {
+        path: path.to_path_buf(),
+        id,
+        cwd,
+        modified,
+        preview,
+        message_count,
+    })
 }
 
 #[cfg(test)]

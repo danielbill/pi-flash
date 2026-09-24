@@ -1,9 +1,9 @@
-//! pi-flash M1 shell: GPUI chat over the vendored pi (pi-link).
+//! pi-flash — desktop shell for the pi coding agent.
 //!
-//! UI note: interaction parity with pi-web comes first; visual polish last
-//! (see PORT_PLAN.md). This is the M1 chat core, not the final look.
+//! Component-by-component translation of pi-web (see PORT_PLAN.md). Layout
+//! values (sizes, colors, spacing) come from pi-web sources: globals.css
+//! theme tokens, panel-layout.ts, MessageView/ChatInput/AppShell structures.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
@@ -13,31 +13,14 @@ use gpui::{
     prelude::*, px, relative, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
-use pi_link::protocol::{AssistantEvent, Block, Command, Event, SessionState, SessionStats, content_blocks};
+use pi_link::protocol::{
+    AssistantEvent, Block, Command, Event, SessionState, SessionStats, Usage, content_blocks,
+};
 use pi_link::sessions::{SessionInfo, list_sessions};
 
 mod markdown;
-
-// ---------------------------------------------------------------------------
-// palette: translated 1:1 from pi-web app/globals.css CSS variables (dark)
-// ---------------------------------------------------------------------------
-
-const COL_BG: u32 = 0x1a1a1a; // --bg
-const COL_PANEL: u32 = 0x242424; // --bg-panel
-const COL_BG_HOVER: u32 = 0x2e2e2e; // --bg-hover
-const COL_BG_SELECTED: u32 = 0x383838; // --bg-selected
-const COL_SIDEBAR: u32 = 0x1a1a1a; // sidebar is transparent over --bg
-const COL_BORDER: u32 = 0x454545; // --border
-const COL_TEXT: u32 = 0xe8e8e8; // --text
-const COL_USER: u32 = 0xa4c2f4; // --accent (message label)
-const COL_ASSISTANT: u32 = 0xa4c2f4; // --accent
-const COL_STATUS: u32 = 0xb7b7b7; // --text-muted
-const COL_THINKING: u32 = 0xa4a4a4; // --text-dim
-const COL_CARD_BORDER: u32 = 0x454545; // --border
-const COL_ACCENT: u32 = 0xa4c2f4; // --accent
-const COL_USER_BG: u32 = 0x292929; // --user-bg
-const COL_ASSISTANT_BG: u32 = 0x1a1a1a; // --assistant-bg
-const COL_TOOL_BG: u32 = 0x222222; // --tool-bg
+mod theme;
+use theme::theme as T;
 
 // ---------------------------------------------------------------------------
 // chat state
@@ -49,9 +32,19 @@ enum Role {
     Assistant,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+struct UsageLine {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cost: f64,
+    time: String,
+}
+
 struct Msg {
     role: Role,
     blocks: Vec<Block>,
+    usage: Option<UsageLine>,
 }
 
 impl Msg {
@@ -82,44 +75,18 @@ struct Chat {
     sessions: Vec<SessionInfo>,
     sessions_list: ListState,
     cwd: PathBuf,
+    branch: String,
     session: Option<PiSession>,
     status: String,
     state: Option<SessionState>,
     stats: Option<SessionStats>,
     active_session_file: Option<PathBuf>,
-    /// (msg_ix, content_index) of thinking blocks rendered collapsed
     collapsed: HashSet<(usize, usize)>,
     /// guards against stale events from a replaced sidecar process
     epoch: u64,
 }
 
-impl Chat {
-    fn refresh_state(&self) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::GetState);
-            let _ = session.send(&Command::GetSessionStats);
-        }
-    }
-
-    /// Delete a stored session file (pi-web parity: delete from the picker).
-    /// The active session's file is protected — close/switch first.
-    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.active_session_file.as_deref() == Some(path.as_path()) {
-            self.status = "cannot delete the active session".into();
-            cx.notify();
-            return;
-        }
-        match std::fs::remove_file(&path) {
-            Ok(_) => {
-                self.sessions.retain(|s| s.path != path);
-                self.sync_sidebar();
-                self.status = "session deleted".into();
-            }
-            Err(e) => self.status = format!("delete failed: {e}"),
-        }
-        cx.notify();
-    }
-}
+use std::collections::HashSet;
 
 impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -128,6 +95,7 @@ impl Chat {
         let cwd = std::env::var("PI_FLASH_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let branch = read_branch(&cwd);
 
         let (session, events) = spawn_with_epoch(&cwd, &[], 1);
 
@@ -145,18 +113,23 @@ impl Chat {
             list,
             sessions: list_sessions(100),
             sessions_list,
-            cwd,
+            cwd: cwd.clone(),
+            branch,
             session,
-            status: status_line(connected, "starting"),
+            status: status_line(connected, "idle"),
             state: None,
             stats: None,
             active_session_file: None,
             collapsed: HashSet::new(),
             epoch: 1,
         };
-        chat.sync_sidebar();
-        chat.status = status_line(chat.session.is_some(), "idle");
-        chat.refresh_state();
+        chat.sessions_list.reset(chat.sessions.len());
+        if connected {
+            if let Some(s) = &chat.session {
+                let _ = s.send(&Command::GetState);
+                let _ = s.send(&Command::GetSessionStats);
+            }
+        }
 
         if let Some(events) = events {
             cx.spawn(async move |this, cx| {
@@ -167,19 +140,17 @@ impl Chat {
         chat
     }
 
-    fn sync_sidebar(&mut self) {
-        self.sessions_list.reset(self.sessions.len());
-    }
-
-    fn notify_repaint(&mut self, cx: &mut Context<Self>) {
-        self.list.reset(self.messages.len());
-        cx.notify();
+    fn refresh_state(&self) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetState);
+            let _ = session.send(&Command::GetSessionStats);
+        }
     }
 
     /// The trailing assistant message, created on demand.
     fn last_assistant(&mut self) -> &mut Msg {
         if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
-            self.messages.push(Msg { role: Role::Assistant, blocks: Vec::new() });
+            self.messages.push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None });
         }
         self.messages.last_mut().expect("just pushed")
     }
@@ -205,10 +176,31 @@ impl Chat {
     }
 
     /// Common ingestion for live wire messages and resumed history replay.
-    fn ingest_message(&mut self, role: &str, blocks: Vec<Block>, cx: &mut Context<Self>) {
+    fn ingest_message(
+        &mut self,
+        role: &str,
+        blocks: Vec<Block>,
+        usage: Option<Usage>,
+        time: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         match role {
-            "user" => self.messages.push(Msg { role: Role::User, blocks }),
-            "assistant" => self.messages.push(Msg { role: Role::Assistant, blocks }),
+            "user" => {
+                self.messages.push(Msg { role: Role::User, blocks, usage: None });
+            }
+            "assistant" => {
+                self.messages.push(Msg {
+                    role: Role::Assistant,
+                    blocks,
+                    usage: usage.map(|u| UsageLine {
+                        input: u.input,
+                        output: u.output,
+                        cache_read: u.cache_read,
+                        cost: u.cost,
+                        time: time.clone().unwrap_or_default(),
+                    }),
+                });
+            }
             "toolResult" => {
                 let text: String = blocks
                     .iter()
@@ -232,7 +224,8 @@ impl Chat {
             }
             _ => {}
         }
-        self.notify_repaint(cx);
+        self.list.reset(self.messages.len());
+        cx.notify();
     }
 
     fn send_input(&mut self, cx: &mut Context<Self>) {
@@ -241,7 +234,7 @@ impl Chat {
             return;
         }
         let Some(session) = &self.session else {
-            self.status = "not connected".into();
+            self.status = "未连接".into();
             cx.notify();
             return;
         };
@@ -262,6 +255,14 @@ impl Chat {
         cx.notify();
     }
 
+    fn abort(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Abort);
+            self.status = "aborting".into();
+            cx.notify();
+        }
+    }
+
     fn confirm_rename(&mut self, cx: &mut Context<Self>) {
         if let Some(Dialog::RenameSession { value }) = &self.dialog {
             let name = value.trim().to_string();
@@ -274,14 +275,6 @@ impl Chat {
         cx.notify();
     }
 
-    fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::Abort);
-            self.status = "aborting".into();
-            cx.notify();
-        }
-    }
-
     /// Spawn a fresh sidecar for the current project.
     fn new_session(&mut self, cx: &mut Context<Self>) {
         self.epoch += 1;
@@ -292,7 +285,7 @@ impl Chat {
         self.stats = None;
         self.active_session_file = None;
         self.collapsed.clear();
-        self.status = status_line(self.session.is_some(), "new session");
+        self.status = status_line(self.session.is_some(), "新会话");
         self.refresh_state();
         if let Some(events) = events {
             let epoch = self.epoch;
@@ -301,7 +294,8 @@ impl Chat {
             })
             .detach();
         }
-        self.notify_repaint(cx);
+        self.list.reset(0);
+        cx.notify();
     }
 
     /// Resume a stored session: sidecar started with `--session <path>`,
@@ -314,10 +308,13 @@ impl Chat {
             .map(|s| PathBuf::from(s.cwd.clone()))
             .unwrap_or_else(|| self.cwd.clone());
         self.epoch += 1;
-        let (session, events) = spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
+        let (session, events) =
+            spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
         self.session = session;
         self.cwd = cwd;
+        self.branch = read_branch(&self.cwd);
         self.messages.clear();
+        self.state = None;
         self.stats = None;
         self.active_session_file = None;
         self.collapsed.clear();
@@ -325,6 +322,7 @@ impl Chat {
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
             let _ = session.send(&Command::GetState);
+            let _ = session.send(&Command::GetSessionStats);
         }
         if let Some(events) = events {
             let epoch = self.epoch;
@@ -333,7 +331,27 @@ impl Chat {
             })
             .detach();
         }
-        self.notify_repaint(cx);
+        self.list.reset(0);
+        cx.notify();
+    }
+
+    /// Delete a stored session file (pi-web parity). The active session's
+    /// file is protected.
+    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.active_session_file.as_deref() == Some(path.as_path()) {
+            self.status = "cannot delete the active session".into();
+            cx.notify();
+            return;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(_) => {
+                self.sessions.retain(|s| s.path != path);
+                self.sessions_list.reset(self.sessions.len());
+                self.status = "session deleted".into();
+            }
+            Err(e) => self.status = format!("delete failed: {e}"),
+        }
+        cx.notify();
     }
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
@@ -346,40 +364,81 @@ impl Chat {
                 } else if command == "get_session_stats" && success {
                     if let Some(data) = &data {
                         self.stats = Some(SessionStats::parse(data));
-                        self.active_session_file = data["sessionFile"]
-                            .as_str()
-                            .map(PathBuf::from);
+                        self.active_session_file =
+                            data["sessionFile"].as_str().map(PathBuf::from);
                     }
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
                         for msg in data["messages"].as_array().into_iter().flatten() {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
-                            self.ingest_message(role, blocks, cx);
+                            let usage = Usage::parse(&msg["usage"]);
+                            self.ingest_message(role, blocks, usage, None, cx);
                         }
                     }
-                    self.status = "resumed".into();
+                    self.status = status_line(true, "resumed");
                 } else if success {
                     self.status = format!("{command} ok");
                 } else {
                     self.status = format!("{command} failed: {}", error.unwrap_or_default());
                 }
             }
-            Event::MessageStart { role, blocks } => {
-                self.ingest_message(&role, blocks, cx);
+            Event::MessageStart { role, blocks, timestamp } => {
+                let time = timestamp.map(fmt_hhmm).unwrap_or_default();
+                match role.as_str() {
+                    "user" => {
+                        self.messages
+                            .push(Msg { role: Role::User, blocks, usage: None });
+                        let _ = time;
+                    }
+                    "assistant" => {
+                        self.messages.push(Msg {
+                            role: Role::Assistant,
+                            blocks,
+                            usage: None,
+                        });
+                    }
+                    "toolResult" => {
+                        let text: String = blocks
+                            .iter()
+                            .map(|b| match b {
+                                Block::Text { text, .. } => text.as_str(),
+                                _ => "",
+                            })
+                            .collect::<Vec<_>>()
+                            .join("")
+                            .trim_end()
+                            .to_string();
+                        if let Some(m) = self.messages.last_mut() {
+                            if m.role == Role::Assistant {
+                                if let Some(Block::ToolCall { result, .. }) = m
+                                    .blocks
+                                    .iter_mut()
+                                    .rev()
+                                    .find(|b| matches!(b, Block::ToolCall { .. }))
+                                {
+                                    result.push_str(&text);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             Event::MessageUpdate(assistant_event) => match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
-                    if let Block::Text { text, .. } = self
-                        .assistant_slot(content_index, Block::Text { content_index, text: String::new() })
-                    {
+                    if let Block::Text { text, .. } = self.assistant_slot(
+                        content_index,
+                        Block::Text { content_index, text: String::new() },
+                    ) {
                         text.push_str(&delta);
                     }
                 }
                 AssistantEvent::TextEnd { content_index, content } => {
-                    if let Block::Text { text, .. } = self
-                        .assistant_slot(content_index, Block::Text { content_index, text: String::new() })
-                    {
+                    if let Block::Text { text, .. } = self.assistant_slot(
+                        content_index,
+                        Block::Text { content_index, text: String::new() },
+                    ) {
                         *text = content;
                     }
                 }
@@ -432,7 +491,6 @@ impl Chat {
                     }
                 }
                 AssistantEvent::ToolCallEnd { content_index, tool_call } => {
-                    // authoritative name/arguments overwrite the streamed build
                     let name = tool_call["toolName"]
                         .as_str()
                         .or_else(|| tool_call["name"].as_str())
@@ -461,26 +519,33 @@ impl Chat {
                 }
                 AssistantEvent::Other(_) => {}
             },
-            Event::MessageEnd { role, blocks } => {
-                // authoritative final content replaces streamed reconstruction
+            Event::MessageEnd { role, blocks, usage, timestamp } => {
                 if role == "assistant" {
                     if let Some(m) = self.messages.last_mut() {
                         if m.role == Role::Assistant {
                             m.blocks = blocks;
+                            m.usage = usage.map(|u| UsageLine {
+                                input: u.input,
+                                output: u.output,
+                                cache_read: u.cache_read,
+                                cost: u.cost,
+                                time: timestamp.map(fmt_hhmm).unwrap_or_default(),
+                            });
                         }
                     }
                 }
             }
             Event::AgentStart => self.status = "running".into(),
             Event::AgentSettled => {
-                self.status = "idle".into();
+                self.status = status_line(true, "idle");
                 self.refresh_state();
             }
             Event::AgentEnd { .. } => {}
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
         }
-        self.notify_repaint(cx);
+        self.list.reset(self.messages.len());
+        cx.notify();
     }
 }
 
@@ -541,6 +606,106 @@ impl Focusable for Chat {
 }
 
 // ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+/// pi-web format: "1,784 in · 574 out · 373,056 cache R · $0.0888"
+fn usage_footer(u: &UsageLine) -> String {
+    let mut s = format!(
+        "{} in · {} out",
+        fmt_thousands(u.input),
+        fmt_thousands(u.output)
+    );
+    if u.cache_read > 0 {
+        s.push_str(&format!(" · {} cache R", fmt_thousands(u.cache_read)));
+    }
+    s.push_str(&format!(" · ${:.4}", u.cost));
+    s
+}
+
+fn fmt_thousands(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::new();
+    for (i, ch) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*ch as char);
+    }
+    out
+}
+
+fn fmt_hhmm(ms: i64) -> String {
+    use chrono::TimeZone;
+    match chrono::Local.timestamp_millis_opt(ms) {
+        chrono::LocalResult::Single(t) => t.format("%H:%M").to_string(),
+        _ => String::new(),
+    }
+}
+
+/// "33秒前" / "2分钟前" / "28分钟前" / "5小时前" / "3天前"
+fn time_ago(modified: std::time::SystemTime) -> String {
+    let secs = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?;
+            Some(now.as_secs() as i64 - d.as_secs() as i64)
+        })
+        .unwrap_or(0)
+        .max(0);
+    match secs {
+        0..=59 => format!("{secs}秒前"),
+        60..=3599 => format!("{}分钟前", secs / 60),
+        3600..=86399 => format!("{}小时前", secs / 3600),
+        _ => format!("{}天前", secs / 86400),
+    }
+}
+
+/// branch name from `<cwd>/.git/HEAD`
+fn read_branch(cwd: &Path) -> String {
+    let Ok(head) = std::fs::read_to_string(cwd.join(".git").join("HEAD")) else {
+        return String::new();
+    };
+    head.trim()
+        .strip_prefix("ref: refs/heads/")
+        .unwrap_or(head.trim())
+        .to_string()
+}
+
+fn cwd_tail(cwd: &str) -> String {
+    cwd.rsplit(['/', '\\']).next().unwrap_or(cwd).to_string()
+}
+
+fn top_level_entries(cwd: &Path) -> Vec<(bool, String)> {
+    let Ok(rd) = std::fs::read_dir(cwd) else { return Vec::new() };
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            dirs.push(name);
+        } else {
+            files.push(name);
+        }
+    }
+    dirs.sort();
+    files.sort();
+    dirs.iter()
+        .map(|n| (true, n.clone()))
+        .chain(files.iter().map(|n| (false, n.clone())))
+        .take(12)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // rendering
 // ---------------------------------------------------------------------------
 
@@ -551,10 +716,10 @@ fn pretty_args(args: &str) -> String {
         .unwrap_or_else(|| args.to_string())
 }
 
-fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>) -> gpui::Div {
+fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>, t: &theme::Theme) -> gpui::Div {
     match b {
         Block::Text { text, .. } if !text.trim().is_empty() => {
-            div().w_full().child(markdown::render(text))
+            div().w_full().child(markdown::render_themed(text))
         }
         Block::Thinking { text, content_index } if !text.trim().is_empty() => {
             let key = (msg_ix, *content_index);
@@ -565,9 +730,9 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                 .my_1()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(COL_PANEL))
+                .bg(rgb(t.bg_panel))
                 .border_l_2()
-                .border_color(rgb(COL_THINKING))
+                .border_color(rgb(t.border))
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -577,7 +742,7 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                         .cursor_pointer()
                         .text_xs()
                         .italic()
-                        .text_color(rgb(COL_THINKING))
+                        .text_color(rgb(t.text_dim))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let k = key;
                             let _ = weak.update(cx, |c, cx| {
@@ -598,7 +763,7 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                     div()
                         .text_xs()
                         .italic()
-                        .text_color(rgb(COL_THINKING))
+                        .text_color(rgb(t.text_dim))
                         .child(SharedString::from(text.clone())),
                 );
             }
@@ -610,8 +775,8 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                 .my_1()
                 .rounded_md()
                 .border_1()
-                .border_color(rgb(COL_CARD_BORDER))
-                .bg(rgb(COL_PANEL))
+                .border_color(rgb(t.border))
+                .bg(rgb(t.tool_bg))
                 .flex()
                 .flex_col()
                 .overflow_hidden()
@@ -621,7 +786,7 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                         .py_1()
                         .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(COL_ASSISTANT))
+                        .text_color(rgb(t.accent))
                         .child(SharedString::from(format!("tool \u{b7} {name}"))),
                 )
                 .child(
@@ -630,7 +795,7 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                         .pb_1()
                         .font_family("Consolas")
                         .text_xs()
-                        .text_color(rgb(COL_STATUS))
+                        .text_color(rgb(t.text_muted))
                         .child(SharedString::from(pretty_args(args))),
                 );
             if !result.is_empty() {
@@ -640,10 +805,10 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                         .pb_1()
                         .mt_1()
                         .border_t_1()
-                        .border_color(rgb(COL_CARD_BORDER))
+                        .border_color(rgb(t.border))
                         .font_family("Consolas")
                         .text_xs()
-                        .text_color(rgb(COL_TEXT))
+                        .text_color(rgb(t.text))
                         .child(SharedString::from(result.clone())),
                 );
             }
@@ -653,99 +818,121 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
     }
 }
 
-fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>) -> gpui::Div {
-    let (label, color) = match m.role {
-        Role::User => ("you", rgb(COL_USER)),
-        Role::Assistant => ("pi", rgb(COL_ASSISTANT)),
-    };
+fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>, t: &theme::Theme) -> gpui::Div {
     let mut col = div()
-        .max_w(px(720.))
         .w_full()
-        .px_3()
-        .py_1()
+        .mb_4()
         .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(color)
-                .child(label),
-        );
+        .flex_col();
     if m.role == Role::User {
         // MessageView.tsx: right-aligned bubble, --user-bg, radius 12, pad 8/12
         let text = m.plain_text();
-        col = col
-            .items_end()
-            .child(
-                div()
-                    .max_w(relative(0.85))
-                    .mt_1()
-                    .px_3()
-                    .py_2()
-                    .rounded(px(12.))
-                    .bg(rgb(COL_USER_BG))
-                    .border_1()
-                    .border_color(gpui::rgba(0x3b82f633))
-                    .text_color(rgb(COL_TEXT))
-                    .child(SharedString::from(text)),
-            );
+        col = col.items_end().child(
+            div()
+                .max_w(relative(0.85))
+                .px_3()
+                .py_2()
+                .rounded(px(12.))
+                .bg(rgb(t.user_bg))
+                .border_1()
+                .border_color(gpui::rgba(0x3b82f633))
+                .text_color(rgb(t.text))
+                .text_size(px(14.))
+                .child(SharedString::from(text)),
+        );
     } else {
+        col = col.child(
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.accent))
+                .child("pi"),
+        );
         for b in &m.blocks {
-            col = col.child(render_block(b, msg_ix, weak, collapsed));
+            col = col.child(render_block(b, msg_ix, weak, collapsed, t));
+        }
+        if let Some(u) = &m.usage {
+            col = col.child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .mt_2()
+                    .text_xs()
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(usage_footer(u)))
+                    .child(SharedString::from(u.time.clone())),
+            );
         }
     }
     col
 }
 
-fn cwd_tail(cwd: &str) -> String {
-    cwd.rsplit(['/', '\\']).next().unwrap_or(cwd).to_string()
+fn pill(id: &'static str, label: SharedString) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(T().border))
+        .text_xs()
+        .text_color(rgb(T().text_muted))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(T().bg_hover)).text_color(rgb(T().text)))
+        .child(label)
+        .into_any_element()
+}
+
+fn fmt_compact(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = T();
         if self.dialog.is_some() {
             window.focus(&self.dialog_focus);
         } else {
             window.focus(&self.focus);
         }
 
+        let status: SharedString = self.status.clone().into();
+        let input_ph: SharedString = if self.input.is_empty() {
+            "消息...输入 / 使用命令，输入 @ 查找文件".into()
+        } else {
+            self.input.clone().into()
+        };
+        let input_empty = self.input.is_empty();
+        let model_label: SharedString = self
+            .state
+            .as_ref()
+            .and_then(|s| s.model_label())
+            .unwrap_or_else(|| "选择模型".into())
+            .into();
+        let thinking_label: SharedString = self
+            .state
+            .as_ref()
+            .and_then(|s| s.thinking_level.clone())
+            .unwrap_or_else(|| "medium".into())
+            .into();
         let session_title: SharedString = self
             .state
             .as_ref()
             .and_then(|s| s.session_name.clone())
             .unwrap_or_else(|| "pi-flash".into())
             .into();
-        let rename_prefill = self
-            .state
-            .as_ref()
-            .and_then(|s| s.session_name.clone())
-            .unwrap_or_default();
         let pending_chip: Option<SharedString> = self
             .state
             .as_ref()
             .filter(|s| s.pending_message_count > 0)
             .map(|s| SharedString::from(format!("queued {}", s.pending_message_count)));
-        let model_label: SharedString = self
-            .state
-            .as_ref()
-            .and_then(|s| s.model_label())
-            .unwrap_or_else(|| "no model".into())
-            .into();
-        let stats_label: SharedString = self
-            .stats
-            .as_ref()
-            .map(|s| s.summary())
-            .unwrap_or_default()
-            .into();
-        let status: SharedString = self.status.clone().into();
-        let input: SharedString = if self.input.is_empty() {
-            "type a prompt, Enter to send, Esc to abort".into()
-        } else {
-            self.input.clone().into()
-        };
-        let input_empty = self.input.is_empty();
+
         let entity = cx.entity();
         let weak = entity.downgrade();
         let weak_for_list = weak.clone();
@@ -753,18 +940,41 @@ impl Render for Chat {
         let weak_for_msg = weak.clone();
         let weak_for_dialog = weak.clone();
 
-        // session sidebar rows
+        // ---- sidebar ----------------------------------------------------
         let sessions_entity = entity.clone();
-        let sessions_weak = weak.clone();
+        let weak_for_sessions = weak.clone();
+        let stats_right = if let Some(st) = &self.stats {
+            format!(
+                "\u{2191}{} \u{2193}{} ${:.2}  {}% / {}",
+                fmt_compact(st.input),
+                fmt_compact(st.output),
+                st.cost,
+                st.context_percent.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+                st.context_window.map(fmt_compact).unwrap_or_else(|| "-".into())
+            )
+        } else {
+            String::new()
+        };
+        let stats_right: SharedString = stats_right.into();
+
+        let cwd_text: SharedString = self.cwd.to_string_lossy().to_string().into();
+        let branch_label: SharedString = if self.branch.is_empty() {
+            "no git".into()
+        } else {
+            format!("\u{2387} {}", self.branch).into()
+        };
+
+        let files_entity = entity.clone();
         let sidebar = div()
             .w(px(260.))
             .h_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .bg(rgb(COL_SIDEBAR))
+            .bg(rgb(t.bg))
             .border_r_1()
-            .border_color(rgb(COL_CARD_BORDER))
+            .border_color(rgb(t.border))
+            // header: brand + new + search
             .child(
                 div()
                     .flex()
@@ -774,51 +984,130 @@ impl Render for Chat {
                     .py_2()
                     .child(
                         div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(COL_STATUS))
-                            .child("SESSIONS"),
+                            .text_base()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(rgb(t.text))
+                            .child("pi-flash"),
                     )
                     .child(
                         div()
-                            .id("new-session")
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(rgb(COL_PANEL))
-                            .text_xs()
-                            .text_color(rgb(COL_TEXT))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = sessions_weak.update(cx, |c, cx| c.new_session(cx));
-                            })
-                            .child("+ new"),
+                            .flex()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .id("new-session")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.assistant_bg))
+                                    .text_xs()
+                                    .text_color(rgb(t.text))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let weak = weak_for_sessions.clone();
+                                        move |_, _, cx| {
+                                            let _ = weak.update(cx, |c, cx| c.new_session(cx));
+                                        }
+                                    })
+                                    .child("+ 新建"),
+                            )
+                            .child(
+                                div()
+                                    .id("search")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.assistant_bg))
+                                    .text_xs()
+                                    .text_color(rgb(t.text))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                                    .child("\u{1f50d}"),
+                            ),
                     ),
             )
+            // project box
+            .child(
+                div()
+                    .mx_3()
+                    .mb_1p5()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.assistant_bg))
+                    .text_xs()
+                    .text_color(rgb(t.text))
+                    .child(cwd_text),
+            )
+            // branch box
+            .child(
+                div()
+                    .mx_3()
+                    .mb_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.assistant_bg))
+                    .flex()
+                    .justify_between()
+                    .text_xs()
+                    .child(
+                        div()
+                            .text_color(rgb(t.text))
+                            .child(branch_label),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .text_color(rgb(t.text_muted))
+                            .child("主分支")
+                            .child("\u{25be}"),
+                    ),
+            )
+            // sessions list
             .child(
                 list(self.sessions_list.clone(), move |ix, _window, cx| {
                     let chat = sessions_entity.read(cx);
                     let Some(info) = chat.sessions.get(ix) else {
                         return div().into_any_element();
                     };
+                    let is_active =
+                        chat.active_session_file.as_deref() == Some(info.path.as_path());
                     let path = info.path.clone();
                     let preview: SharedString = if info.preview.is_empty() {
                         "(empty)".into()
                     } else {
                         info.preview.clone().into()
                     };
-                    let project: SharedString = cwd_tail(&info.cwd).into();
-                    let weak = weak_for_list.clone();
-                    let weak_del = weak_for_del.clone();
+                    let meta: SharedString = format!(
+                        "{} · {} 条消息",
+                        time_ago(info.modified),
+                        info.message_count
+                    )
+                    .into();
+                    let weak = weak_for_sessions.clone();
+                    let weak_del = weak_for_sessions.clone();
                     let p_del = info.path.clone();
-                    let active = chat.active_session_file.as_deref() == Some(info.path.as_path());
-                    // sibling layout: [clickable row][x] - no event bubbling
-                    // between them; the active session cannot be deleted
                     div()
                         .w_full()
                         .flex()
                         .items_start()
-                        .border_b_1()
-                        .border_color(rgb(COL_PANEL))
+                        .when(is_active, |d| {
+                            d.bg(rgb(t.bg_selected))
+                                .border_l_2()
+                                .border_color(rgb(t.accent))
+                        })
+                        .when(!is_active, |d| d.border_l_2().border_color(rgb(t.bg)))
                         .child(
                             div()
                                 .id(SharedString::from(format!("sess-{ix}")))
@@ -827,7 +1116,7 @@ impl Render for Chat {
                                 .px_3()
                                 .py_2()
                                 .cursor_pointer()
-                                .hover(|s| s.bg(rgb(COL_PANEL)))
+                                .hover(|s| s.bg(rgb(t.bg_hover)))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let p = path.clone();
                                     let _ = weak.update(cx, |c, cx| c.open_session(p, cx));
@@ -838,131 +1127,175 @@ impl Render for Chat {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(COL_TEXT))
+                                        .text_color(rgb(t.text))
                                         .child(preview),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(COL_STATUS))
-                                        .child(project),
+                                        .text_color(rgb(t.text_muted))
+                                        .child(meta),
                                 ),
                         )
                         .child(
                             div()
                                 .id(SharedString::from(format!("del-{ix}")))
-                                .w(px(28.))
+                                .w(px(24.))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor_pointer()
                                 .text_xs()
-                                .text_color(rgb(COL_STATUS))
-                                .hover(|s| s.bg(rgb(COL_PANEL)).text_color(rgb(0xf28b82)))
+                                .text_color(rgb(t.text_muted))
+                                .hover(|s| s.text_color(rgb(0xd9534f)))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let p = p_del.clone();
                                     let _ = weak_del.update(cx, |c, cx| c.delete_session(p, cx));
                                 })
-                                .child(if active { "\u{25cf}" } else { "\u{d7}" }),
+                                .child(if is_active { "\u{25cf}" } else { "\u{00d7}" }),
                         )
                         .into_any_element()
                 })
                 .flex_1()
                 .min_h_0(),
+            )
+            // file explorer section
+            .child(
+                div()
+                    .border_t_1()
+                    .border_color(rgb(t.border))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_3()
+                            .py_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(t.text))
+                                    .child("\u{25be} 文件浏览器"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_muted))
+                                    .child("\u{1f5a5}")
+                                    .child("\u{1f50d}")
+                                    .child("\u{2191}")
+                                    .child("\u{21bb}"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .px_3()
+                            .pb_2()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(
+                                top_level_entries(&self.cwd)
+                                    .into_iter()
+                                    .map(|(is_dir, name)| {
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(t.text_muted))
+                                            .child(SharedString::from(format!(
+                                                "{}{}",
+                                                if is_dir { "\u{25b8} \u{1f4c1} " } else { "\u{1f4c4} " },
+                                                name
+                                            )))
+                                    }),
+                            ),
+                    ),
+            )
+            // bottom nav
+            .child(
+                div()
+                    .flex()
+                    .border_t_1()
+                    .border_color(rgb(t.border))
+                    .child(
+                        div()
+                            .flex_1()
+                            .py_2()
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .child("\u{2699} 模型"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .py_2()
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .child("\u{2637} 技能"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .py_2()
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .child("\u{2699} 设置"),
+                    ),
             );
 
+        // ---- main column -------------------------------------------------
+        let chat_entity = entity.clone();
         let main_col = div()
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(COL_BG))
-            .text_color(rgb(COL_TEXT))
+            .bg(rgb(t.assistant_bg))
+            .text_color(rgb(t.text))
             .font_family("Segoe UI")
-            .text_sm()
-            // header
+            // top toolbar
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .gap_1p5()
                     .px_3()
-                    .py_2()
-                    .bg(rgb(COL_PANEL))
+                    .py_1p5()
+                    .border_b_1()
+                    .border_color(rgb(t.border))
+                    .child(pill("tb-sidebar", SharedString::from("\u{2630}")))
+                    .child(pill("tb-history", SharedString::from("\u{1f550} 完整历史")))
+                    .child(pill("tb-title", SharedString::from("\u{270e} 生成标题")))
+                    .child(pill("tb-system", SharedString::from("\u{1f4c4} 系统")))
+                    .child(pill("tb-tools", SharedString::from("\u{1f527} 工具")))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(session_title),
-                            )
-                            .child(
-                                div()
-                                    .id("rename")
-                                .mx_2()
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(rgb(COL_SIDEBAR))
-                                .text_xs()
-                                .text_color(rgb(COL_STATUS))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(rgb(COL_TEXT)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    let weak = weak_for_dialog.clone();
-                                    move |_, _, cx| {
-                                        let _ = weak.update(cx, |c, cx| {
-                                            c.dialog = Some(Dialog::RenameSession {
-                                                value: c
-                                                    .state
-                                                    .as_ref()
-                                                    .and_then(|s| s.session_name.clone())
-                                                    .unwrap_or_default(),
-                                            });
-                                            cx.notify();
-                                        });
-                                    }
-                                })
-                                .child("\u{270e}"),
-                            )
-                            .children(pending_chip.map(|c| {
-                                div()
-                                    .text_xs()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(rgb(COL_SIDEBAR))
-                                    .text_color(rgb(COL_USER))
-                                    .child(c)
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
+                            .flex_1()
+                            .text_right()
                             .text_xs()
-                            .text_color(rgb(COL_STATUS))
-                            .child(model_label)
-                            .child(SharedString::from("|"))
-                            .child(stats_label)
-                            .child(SharedString::from("|"))
-                            .child(status),
+                            .text_color(rgb(t.text_muted))
+                            .child(stats_right),
                     ),
             )
-            // message list (bottom-aligned: sticks to the newest message)
+            // message list
             .child(
                 list(self.list.clone(), move |ix, _window, cx| {
-                    let chat = entity.read(cx);
+                    let chat = chat_entity.read(cx);
                     let weak = weak_for_msg.clone();
                     match chat.messages.get(ix) {
                         Some(m) => div()
                             .w_full()
-                            .child(render_msg(m, ix, &weak, &chat.collapsed))
+                            .px_4()
+                            .child(render_msg(m, ix, &weak, &chat.collapsed, t))
                             .into_any_element(),
                         None => div().w_full().into_any_element(),
                     }
@@ -971,58 +1304,133 @@ impl Render for Chat {
                 .min_h_0()
                 .py_2(),
             )
-            // input row
+            // input box + toolbar
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .px_3()
-                    .py_2()
-                    .bg(rgb(COL_PANEL))
+                    .px_4()
+                    .pb_2()
                     .child(
                         div()
-                            .id("input")
-                            .track_focus(&self.focus)
-                            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
-                                let key = ev.keystroke.key.as_str();
-                                match key {
-                                    "enter" => this.send_input(cx),
-                                    "escape" => this.abort(cx),
-                                    "backspace" => {
-                                        if !ev.keystroke.modifiers.modified() {
-                                            this.input.pop();
-                                            cx.notify();
-                                        }
-                                    }
-                                    "space" => {
-                                        this.input.push(' ');
-                                        cx.notify();
-                                    }
-                                    k => {
-                                        let printable = k.chars().count() == 1
-                                            && !ev.keystroke.modifiers.control
-                                            && !ev.keystroke.modifiers.alt;
-                                        if printable {
-                                            if let Some(c) = k.chars().next() {
-                                                this.input.push(c);
+                            .w_full()
+                            .rounded(px(12.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.assistant_bg))
+                            .px_4()
+                            .py_3()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .id("input")
+                                    .track_focus(&self.focus)
+                                    .flex_1()
+                                    .min_w_0()
+                                    .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
+                                        let key = ev.keystroke.key.as_str();
+                                        match key {
+                                            "enter" => this.send_input(cx),
+                                            "escape" => this.abort(cx),
+                                            "backspace" => {
+                                                if !ev.keystroke.modifiers.modified() {
+                                                    this.input.pop();
+                                                    cx.notify();
+                                                }
+                                            }
+                                            "space" => {
+                                                this.input.push(' ');
                                                 cx.notify();
                                             }
+                                            k => {
+                                                let printable = k.chars().count() == 1
+                                                    && !ev.keystroke.modifiers.control
+                                                    && !ev.keystroke.modifiers.alt;
+                                                if printable {
+                                                    if let Some(c) = k.chars().next() {
+                                                        this.input.push(c);
+                                                        cx.notify();
+                                                    }
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                            }))
-                            .flex_1()
+                                    }))
+                                    .text_sm()
+                                    .text_color(if input_empty {
+                                        rgb(t.text_dim)
+                                    } else {
+                                        rgb(t.text)
+                                    })
+                                    .child(input_ph),
+                            )
+                            .child(
+                                div()
+                                    .id("send")
+                                    .px_3()
+                                    .py_1p5()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.bg_panel))
+                                    .text_sm()
+                                    .text_color(rgb(t.text))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _w, cx| {
+                                        this.send_input(cx);
+                                    }))
+                                    .child("\u{2192} 发送"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(rgb(COL_BG))
-                            .text_color(if input_empty {
-                                rgb(COL_STATUS)
-                            } else {
-                                rgb(COL_TEXT)
-                            })
-                            .child(input),
+                            .pt_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_muted))
+                                    .child("\u{1f5bc}")
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child("\u{2699}")
+                                            .child(model_label),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .text_xs()
+                                    .text_color(rgb(t.text_muted))
+                                    .child(format!("\u{1f4a1} {thinking_label}"))
+                                    .child("configured")
+                                    .child("\u{2702} 压缩")
+                                    .child("\u{1f50a}"),
+                            ),
                     ),
+            )
+            // status bar
+            .child(
+                div()
+                    .px_3()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.bg_panel))
+                    .text_xs()
+                    .text_color(rgb(t.text_muted))
+                    .child(status),
             );
 
         let mut root = div()
@@ -1030,9 +1438,12 @@ impl Render for Chat {
             .relative()
             .flex()
             .flex_row()
+            .bg(rgb(t.bg))
+            .text_color(rgb(t.text))
+            .font_family("Segoe UI")
             .child(sidebar)
             .child(main_col);
-        if let Some(overlay) = self.render_dialog(&weak_for_dialog) {
+        if let Some(overlay) = self.render_dialog(&weak_for_dialog, t) {
             root = root.child(overlay);
         }
         root
@@ -1041,7 +1452,7 @@ impl Render for Chat {
 
 impl Chat {
     /// Modal overlay for the current dialog (rename session for now).
-    fn render_dialog(&mut self, weak: &gpui::WeakEntity<Chat>) -> Option<gpui::AnyElement> {
+    fn render_dialog(&mut self, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme) -> Option<gpui::AnyElement> {
         let Dialog::RenameSession { value } = self.dialog.as_ref()?;
         let value: SharedString = if value.is_empty() {
             "session name".into()
@@ -1050,72 +1461,78 @@ impl Chat {
         };
         let value_empty = value == "session name";
         let weak_input = weak.clone();
-        let weak_cancel = weak.clone();
         let weak_ok = weak.clone();
-        let prefill_input = weak_input.clone();
+        let weak_cancel = weak.clone();
 
         let input = div()
             .id("dialog-input")
             .track_focus(&self.dialog_focus)
-            .on_key_down(cx_dialog_listener(weak, move |this, ev, cx| {
-                let key = ev.keystroke.key.as_str();
-                match key {
-                    "enter" => this.confirm_rename(cx),
-                    "escape" => {
-                        this.dialog = None;
-                        cx.notify();
-                    }
-                    "backspace" => {
-                        if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
-                            value.pop();
-                            cx.notify();
-                        }
-                    }
-                    "space" => {
-                        if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
-                            value.push(' ');
-                            cx.notify();
-                        }
-                    }
-                    k => {
-                        let printable =
-                            k.chars().count() == 1 && !ev.keystroke.modifiers.modified();
-                        if printable {
-                            if let (Some(c), Some(Dialog::RenameSession { value })) =
-                                (k.chars().next(), &mut this.dialog)
-                            {
-                                value.push(c);
+            .on_key_down({
+                let weak = weak_input.clone();
+                move |ev: &KeyDownEvent, _w, cx| {
+                    let key = ev.keystroke.key.as_str();
+                    let _ = weak.update(cx, |this, cx| {
+                        match key {
+                            "enter" => this.confirm_rename(cx),
+                            "escape" => {
+                                this.dialog = None;
                                 cx.notify();
                             }
+                            "backspace" => {
+                                if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
+                                    value.pop();
+                                    cx.notify();
+                                }
+                            }
+                            "space" => {
+                                if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
+                                    value.push(' ');
+                                    cx.notify();
+                                }
+                            }
+                            k => {
+                                let printable =
+                                    k.chars().count() == 1 && !ev.keystroke.modifiers.modified();
+                                if printable {
+                                    if let (Some(c), Some(Dialog::RenameSession { value })) =
+                                        (k.chars().next(), &mut this.dialog)
+                                    {
+                                        value.push(c);
+                                        cx.notify();
+                                    }
+                                }
+                            }
                         }
-                    }
+                    });
                 }
-                let _ = &prefill_input;
-            }))
+            })
             .flex_1()
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(COL_BG))
-            .text_color(if value_empty { rgb(COL_STATUS) } else { rgb(COL_TEXT) })
+            .bg(rgb(t.bg))
+            .border_1()
+            .border_color(rgb(t.border))
+            .text_color(if value_empty { rgb(t.text_dim) } else { rgb(t.text) })
             .child(value);
 
         let panel = div()
             .w(px(420.))
-            .bg(rgb(COL_PANEL))
+            .bg(rgb(t.bg_panel))
             .border_1()
-            .border_color(rgb(COL_CARD_BORDER))
+            .border_color(rgb(t.border))
             .rounded_lg()
             .p_4()
             .flex()
             .flex_col()
             .gap_3()
+            .shadow_lg()
             .child(
                 div()
                     .text_sm()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(COL_TEXT))
-                    .child("rename session"),
+                    .text_color(rgb(t.text))
+                    .child("重命名会话"),
             )
             .child(input)
             .child(
@@ -1129,18 +1546,20 @@ impl Chat {
                             .px_3()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(COL_SIDEBAR))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.assistant_bg))
                             .text_xs()
-                            .text_color(rgb(COL_STATUS))
+                            .text_color(rgb(t.text_muted))
                             .cursor_pointer()
-                            .hover(|s| s.text_color(rgb(COL_TEXT)))
+                            .hover(|s| s.text_color(rgb(t.text)))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_cancel.update(cx, |c, cx| {
                                     c.dialog = None;
                                     cx.notify();
                                 });
                             })
-                            .child("cancel"),
+                            .child("取消"),
                     )
                     .child(
                         div()
@@ -1148,14 +1567,14 @@ impl Chat {
                             .px_3()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(COL_ASSISTANT))
+                            .bg(rgb(t.accent))
                             .text_xs()
-                            .text_color(rgb(0x10120f))
+                            .text_color(rgb(t.accent_contrast))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_ok.update(cx, |c, cx| c.confirm_rename(cx));
                             })
-                            .child("save"),
+                            .child("保存"),
                     ),
             );
 
@@ -1163,7 +1582,7 @@ impl Chat {
             div()
                 .absolute()
                 .inset_0()
-                .bg(gpui::hsla(0., 0., 0., 0.55))
+                .bg(gpui::hsla(0., 0., 0., 0.35))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1173,20 +1592,9 @@ impl Chat {
     }
 }
 
-/// Build a chat-state listener usable inside non-element closures.
-fn cx_dialog_listener(
-    weak: &gpui::WeakEntity<Chat>,
-    f: impl Fn(&mut Chat, &KeyDownEvent, &mut gpui::Context<Chat>) + 'static,
-) -> impl Fn(&KeyDownEvent, &mut gpui::Window, &mut gpui::App) + 'static {
-    let weak = weak.clone();
-    move |ev, _w, cx| {
-        let _ = weak.update(cx, |chat, cx| f(chat, ev, cx));
-    }
-}
-
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let bounds = gpui::Bounds::centered(None, gpui::size(px(980.), px(620.)), cx);
+        let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),

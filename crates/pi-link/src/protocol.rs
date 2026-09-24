@@ -209,6 +209,26 @@ impl AssistantEvent {
     }
 }
 
+/// Token usage + cost for one assistant message (json.md `usage`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Usage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cost: f64,
+}
+
+impl Usage {
+    pub fn parse(v: &Value) -> Option<Usage> {
+        Some(Usage {
+            input: v["input"].as_u64()?,
+            output: v["output"].as_u64()?,
+            cache_read: v["cacheRead"].as_u64().unwrap_or(0),
+            cost: v["cost"]["total"].as_f64().or_else(|| v["cost"].as_f64()).unwrap_or(0.0),
+        })
+    }
+}
+
 /// One parsed record from pi's stdout.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -221,10 +241,15 @@ pub enum Event {
         error: Option<String>,
         data: Option<Value>,
     },
-    MessageStart { role: String, blocks: Vec<Block> },
+    MessageStart { role: String, blocks: Vec<Block>, timestamp: Option<i64> },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
-    MessageEnd { role: String, blocks: Vec<Block> },
+    MessageEnd {
+        role: String,
+        blocks: Vec<Block>,
+        usage: Option<Usage>,
+        timestamp: Option<i64>,
+    },
     AgentStart,
     AgentEnd { will_retry: bool },
     /// pi will not continue automatically (retries/queue drained).
@@ -298,6 +323,9 @@ impl SessionState {
 /// Snapshot of `get_session_stats` response data (tokens/cost/context).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionStats {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
     pub tokens_total: u64,
     pub cost: f64,
     pub context_tokens: Option<u64>,
@@ -308,6 +336,9 @@ pub struct SessionStats {
 impl SessionStats {
     pub fn parse(data: &Value) -> SessionStats {
         SessionStats {
+            input: data["tokens"]["input"].as_u64().unwrap_or(0),
+            output: data["tokens"]["output"].as_u64().unwrap_or(0),
+            cache_read: data["tokens"]["cacheRead"].as_u64().unwrap_or(0),
             tokens_total: data["tokens"]["total"].as_u64().unwrap_or(0),
             cost: data["cost"].as_f64().unwrap_or(0.0),
             context_tokens: data["contextUsage"]["tokens"].as_u64(),
@@ -346,6 +377,7 @@ pub fn parse_record(v: &Value) -> Event {
         Some("message_start") => Event::MessageStart {
             role: v["message"]["role"].as_str().unwrap_or("").to_string(),
             blocks: content_blocks(&v["message"]["content"]),
+            timestamp: v["message"]["timestamp"].as_i64(),
         },
         Some("message_update") => {
             Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
@@ -353,6 +385,8 @@ pub fn parse_record(v: &Value) -> Event {
         Some("message_end") => Event::MessageEnd {
             role: v["message"]["role"].as_str().unwrap_or("").to_string(),
             blocks: content_blocks(&v["message"]["content"]),
+            usage: Usage::parse(&v["message"]["usage"]),
+            timestamp: v["message"]["timestamp"].as_i64(),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
@@ -426,8 +460,9 @@ mod tests {
         )
         .unwrap();
         match e {
-            Event::MessageStart { role, blocks } => {
+            Event::MessageStart { role, blocks, timestamp } => {
                 assert_eq!(role, "user");
+                assert_eq!(timestamp, Some(1790206311858));
                 assert_eq!(blocks, vec![Block::Text { content_index: 0, text: "say OK".into() }]);
             }
             other => panic!("wrong event: {other:?}"),
@@ -494,7 +529,7 @@ mod tests {
         )
         .unwrap();
         match e {
-            Event::MessageEnd { role, blocks } => {
+            Event::MessageEnd { role, blocks, .. } => {
                 assert_eq!(role, "assistant");
                 assert_eq!(blocks.len(), 3);
                 assert!(matches!(&blocks[0], Block::Thinking { content_index: 0, text } if text.is_empty()));
@@ -513,7 +548,7 @@ mod tests {
         )
         .unwrap();
         match e {
-            Event::MessageStart { role, blocks } => {
+            Event::MessageStart { role, blocks, .. } => {
                 assert_eq!(role, "assistant");
                 assert!(matches!(&blocks[0], Block::ToolCall { name, args, .. } if name == "bash" && args.is_empty()));
             }

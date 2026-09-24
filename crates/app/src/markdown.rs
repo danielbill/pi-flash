@@ -63,11 +63,6 @@ fn highlight_segments(code: &str, lang: &str) -> Vec<(String, [u8; 3])> {
 }
 
 const MONO_FAMILY: &str = "Consolas";
-const COL_TEXT: u32 = 0xe8e8e8; // --text
-const COL_DIM: u32 = 0xa4a4a4; // --text-dim
-const COL_CODE_BG: u32 = 0x222222; // --tool-bg
-const COL_RULE: u32 = 0x454545; // --border
-const COL_LINK: u32 = 0xa4c2f4; // --accent
 
 // ---------------------------------------------------------------------------
 // inline runs
@@ -326,16 +321,18 @@ fn parse_block(
 // rendering
 // ---------------------------------------------------------------------------
 
-fn base_style(color: u32, size: f32) -> TextStyle {
+use crate::theme::Theme;
+
+fn base_style(t: &Theme, size: f32) -> TextStyle {
     TextStyle {
-        color: rgb(color).into(),
+        color: rgb(t.text).into(),
         font_family: "Segoe UI".into(),
         font_size: px(size).into(),
         ..Default::default()
     }
 }
 
-fn highlight(style: Style) -> Option<HighlightStyle> {
+fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     let h = match style {
         Style::Normal => return None,
         Style::Bold => HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() },
@@ -346,9 +343,9 @@ fn highlight(style: Style) -> Option<HighlightStyle> {
             ..Default::default()
         },
         // note: gpui 0.2.2 highlights cannot change font family; code gets bg only
-        Style::Code => HighlightStyle { background_color: Some(rgb(COL_CODE_BG).into()), ..Default::default() },
+        Style::Code => HighlightStyle { background_color: Some(rgb(t.tool_bg).into()), ..Default::default() },
         Style::Link => HighlightStyle {
-            color: Some(rgb(COL_LINK).into()),
+            color: Some(rgb(t.accent).into()),
             underline: Some(gpui::UnderlineStyle { thickness: px(1.), ..Default::default() }),
             ..Default::default()
         },
@@ -356,18 +353,18 @@ fn highlight(style: Style) -> Option<HighlightStyle> {
     Some(h)
 }
 
-fn styled_text(runs: &[Run], color: u32, size: f32) -> StyledText {
+fn styled_text(runs: &[Run], t: &Theme, size: f32) -> StyledText {
     let mut s = String::new();
     let mut highlights = Vec::new();
     for r in runs {
         let start = s.len();
         s.push_str(&r.text);
         let end = s.len();
-        if let Some(h) = highlight(r.style) {
+        if let Some(h) = highlight(r.style, t) {
             highlights.push((start..end, h));
         }
     }
-    StyledText::new(s).with_default_highlights(&base_style(color, size), highlights)
+    StyledText::new(s).with_default_highlights(&base_style(t, size), highlights)
 }
 
 fn size_for_level(level: u8) -> f32 {
@@ -380,33 +377,33 @@ fn size_for_level(level: u8) -> f32 {
     }
 }
 
-fn render_blocks(blocks: &[MdBlock], depth: usize) -> gpui::Div {
+fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme) -> gpui::Div {
     let mut col = div().flex().flex_col().gap_2();
     for b in blocks {
-        col = col.child(render_block(b, depth));
+        col = col.child(render_block(b, depth, t));
     }
     col
 }
 
-fn render_block(b: &MdBlock, depth: usize) -> AnyElement {
+fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
     match b {
         MdBlock::Heading { level, runs } => div()
             .w_full()
             .mt_2()
             .font_weight(FontWeight::SEMIBOLD)
             .text_size(px(size_for_level(*level)))
-            .text_color(rgb(COL_TEXT))
-            .child(styled_text(runs, COL_TEXT, size_for_level(*level)))
+            .text_color(rgb(t.text))
+            .child(styled_text(runs, t, size_for_level(*level)))
             .into_any_element(),
         MdBlock::Paragraph { runs } => div()
             .w_full()
-            .text_color(rgb(COL_TEXT))
-            .child(styled_text(runs, COL_TEXT, 14.))
+            .text_color(rgb(t.text))
+            .child(styled_text(runs, t, 14.))
             .into_any_element(),
         MdBlock::Code { code, lang, .. } => {
             let code = code.trim_end();
             let base = TextStyle {
-                color: rgb(COL_TEXT).into(),
+                color: rgb(t.text).into(),
                 font_family: MONO_FAMILY.into(),
                 font_size: px(12.).into(),
                 ..Default::default()
@@ -427,38 +424,38 @@ fn render_block(b: &MdBlock, depth: usize) -> AnyElement {
                 .my_1()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(COL_CODE_BG))
+                .bg(rgb(t.tool_bg))
                 .font_family(MONO_FAMILY)
                 .text_xs()
-                .text_color(rgb(COL_TEXT))
+                .text_color(rgb(t.text))
                 .child(StyledText::new(text).with_default_highlights(&base, highlights))
                 .into_any_element()
         }
         MdBlock::Quote { blocks } => div()
             .w_full()
             .border_l_2()
-            .border_color(rgb(COL_RULE))
+            .border_color(rgb(t.border))
             .pl_3()
-            .child(render_blocks(blocks, depth + 1))
+            .child(render_blocks(blocks, depth + 1, t))
             .into_any_element(),
         MdBlock::ListItem { depth: d, marker, runs } => div()
             .flex()
             .gap_2()
             .pl(px((d.saturating_sub(1) * 16) as f32))
-            .child(div().text_color(rgb(COL_DIM)).child(SharedString::from(marker.clone())))
-            .child(div().flex_1().text_color(rgb(COL_TEXT)).child(styled_text(runs, COL_TEXT, 14.)))
+            .child(div().text_color(rgb(t.text_dim)).child(SharedString::from(marker.clone())))
+            .child(div().flex_1().text_color(rgb(t.text)).child(styled_text(runs, t, 14.)))
             .into_any_element(),
         MdBlock::Rule => div()
             .w_full()
             .h(px(1.))
             .my_1()
-            .bg(rgb(COL_RULE))
+            .bg(rgb(t.border))
             .into_any_element(),
     }
 }
 
 /// Render a markdown string as a vertical stack of styled GPUI elements.
-pub fn render(src: &str) -> AnyElement {
+pub fn render(src: &str, t: &Theme) -> AnyElement {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
@@ -467,7 +464,12 @@ pub fn render(src: &str) -> AnyElement {
     if blocks.is_empty() {
         return div().into_any_element();
     }
-    render_blocks(&blocks, 1).into_any_element()
+    render_blocks(&blocks, 1, t).into_any_element()
+}
+
+/// Render with the active global theme.
+pub fn render_themed(src: &str) -> AnyElement {
+    render(src, crate::theme::theme())
 }
 
 #[cfg(test)]
