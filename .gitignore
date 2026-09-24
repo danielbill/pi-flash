@@ -20,3 +20,5 @@ tmp/
 .beads-credential-key
 .beads/proxieddb/
 dist/
+dist/
+*.zip
