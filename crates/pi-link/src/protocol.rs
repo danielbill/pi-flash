@@ -17,6 +17,7 @@ pub enum Command {
     Abort,
     GetState,
     GetMessages,
+    GetSessionStats,
     SetModel { provider: String, model: String },
 }
 
@@ -29,6 +30,7 @@ impl Command {
             Command::Abort => "abort",
             Command::GetState => "get_state",
             Command::GetMessages => "get_messages",
+            Command::GetSessionStats => "get_session_stats",
             Command::SetModel { .. } => "set_model",
         }
     }
@@ -41,7 +43,10 @@ impl Command {
             | Command::FollowUp { message } => {
                 json!({ "type": self.kind(), "message": message })
             }
-            Command::Abort | Command::GetState | Command::GetMessages => {
+            Command::Abort
+            | Command::GetState
+            | Command::GetMessages
+            | Command::GetSessionStats => {
                 json!({ "type": self.kind() })
             }
             Command::SetModel { provider, model } => {
@@ -285,6 +290,38 @@ impl SessionState {
     }
 }
 
+/// Snapshot of `get_session_stats` response data (tokens/cost/context).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SessionStats {
+    pub tokens_total: u64,
+    pub cost: f64,
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub context_percent: Option<u64>,
+}
+
+impl SessionStats {
+    pub fn parse(data: &Value) -> SessionStats {
+        SessionStats {
+            tokens_total: data["tokens"]["total"].as_u64().unwrap_or(0),
+            cost: data["cost"].as_f64().unwrap_or(0.0),
+            context_tokens: data["contextUsage"]["tokens"].as_u64(),
+            context_window: data["contextUsage"]["contextWindow"].as_u64(),
+            context_percent: data["contextUsage"]["percent"].as_u64(),
+        }
+    }
+
+    /// "ctx 30% - $0.45" (context part omitted when unavailable)
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(p) = self.context_percent {
+            parts.push(format!("ctx {p}%"));
+        }
+        parts.push(format!("${:.2}", self.cost));
+        parts.join(" \u{b7} ")
+    }
+}
+
 /// Parse a single JSONL line from pi's stdout.
 pub fn parse_line(line: &str) -> Option<Event> {
     let v: Value = serde_json::from_str(line).ok()?;
@@ -474,6 +511,25 @@ mod tests {
             Event::MessageStart { role, blocks } => {
                 assert_eq!(role, "assistant");
                 assert!(matches!(&blocks[0], Block::ToolCall { name, args, .. } if name == "bash" && args.is_empty()));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_session_stats_parses() {
+        let e = parse_line(
+            r#"{"type":"response","command":"get_session_stats","success":true,"data":{"tokens":{"input":50000,"output":10000,"cacheRead":40000,"cacheWrite":5000,"total":105000},"cost":0.45,"contextUsage":{"tokens":60000,"contextWindow":200000,"percent":30}}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::Response { command, data, .. } => {
+                assert_eq!(command, "get_session_stats");
+                let st = SessionStats::parse(&data.expect("data"));
+                assert_eq!(st.tokens_total, 105000);
+                assert!((st.cost - 0.45).abs() < 1e-9);
+                assert_eq!(st.context_percent, Some(30));
+                assert_eq!(st.summary(), "ctx 30% \u{b7} $0.45");
             }
             other => panic!("wrong event: {other:?}"),
         }

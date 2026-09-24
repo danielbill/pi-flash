@@ -3,7 +3,8 @@
 //! UI note: interaction parity with pi-web comes first; visual polish last
 //! (see PORT_PLAN.md). This is the M1 chat core, not the final look.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
@@ -12,7 +13,7 @@ use gpui::{
     prelude::*, px, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
-use pi_link::protocol::{AssistantEvent, Block, Command, Event, SessionState, content_blocks};
+use pi_link::protocol::{AssistantEvent, Block, Command, Event, SessionState, SessionStats, content_blocks};
 use pi_link::sessions::{SessionInfo, list_sessions};
 
 mod markdown;
@@ -70,6 +71,10 @@ struct Chat {
     session: Option<PiSession>,
     status: String,
     state: Option<SessionState>,
+    stats: Option<SessionStats>,
+    active_session_file: Option<PathBuf>,
+    /// (msg_ix, content_index) of thinking blocks rendered collapsed
+    collapsed: HashSet<(usize, usize)>,
     /// guards against stale events from a replaced sidecar process
     epoch: u64,
 }
@@ -78,7 +83,27 @@ impl Chat {
     fn refresh_state(&self) {
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetState);
+            let _ = session.send(&Command::GetSessionStats);
         }
+    }
+
+    /// Delete a stored session file (pi-web parity: delete from the picker).
+    /// The active session's file is protected — close/switch first.
+    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.active_session_file.as_deref() == Some(path.as_path()) {
+            self.status = "cannot delete the active session".into();
+            cx.notify();
+            return;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(_) => {
+                self.sessions.retain(|s| s.path != path);
+                self.sync_sidebar();
+                self.status = "session deleted".into();
+            }
+            Err(e) => self.status = format!("delete failed: {e}"),
+        }
+        cx.notify();
     }
 }
 
@@ -107,6 +132,9 @@ impl Chat {
             session,
             status: status_line(connected, "starting"),
             state: None,
+            stats: None,
+            active_session_file: None,
+            collapsed: HashSet::new(),
             epoch: 1,
         };
         chat.sync_sidebar();
@@ -232,6 +260,9 @@ impl Chat {
         self.session = session;
         self.messages.clear();
         self.state = None;
+        self.stats = None;
+        self.active_session_file = None;
+        self.collapsed.clear();
         self.status = status_line(self.session.is_some(), "new session");
         self.refresh_state();
         if let Some(events) = events {
@@ -258,6 +289,9 @@ impl Chat {
         self.session = session;
         self.cwd = cwd;
         self.messages.clear();
+        self.stats = None;
+        self.active_session_file = None;
+        self.collapsed.clear();
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
@@ -279,6 +313,13 @@ impl Chat {
                 if command == "get_state" && success {
                     if let Some(data) = &data {
                         self.state = Some(SessionState::parse(data));
+                    }
+                } else if command == "get_session_stats" && success {
+                    if let Some(data) = &data {
+                        self.stats = Some(SessionStats::parse(data));
+                        self.active_session_file = data["sessionFile"]
+                            .as_str()
+                            .map(PathBuf::from);
                     }
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
@@ -481,36 +522,59 @@ fn pretty_args(args: &str) -> String {
         .unwrap_or_else(|| args.to_string())
 }
 
-fn render_block(b: &Block) -> gpui::Div {
+fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>) -> gpui::Div {
     match b {
         Block::Text { text, .. } if !text.trim().is_empty() => {
             div().w_full().child(markdown::render(text))
         }
-        Block::Thinking { text, .. } if !text.trim().is_empty() => div()
-            .w_full()
-            .my_1()
-            .p_2()
-            .rounded_md()
-            .bg(rgb(COL_PANEL))
-            .border_l_2()
-            .border_color(rgb(COL_THINKING))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_xs()
-                    .italic()
-                    .text_color(rgb(COL_THINKING))
-                    .child("thinking"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .italic()
-                    .text_color(rgb(COL_THINKING))
-                    .child(SharedString::from(text.clone())),
-            ),
+        Block::Thinking { text, content_index } if !text.trim().is_empty() => {
+            let key = (msg_ix, *content_index);
+            let is_collapsed = collapsed.contains(&key);
+            let weak = weak.clone();
+            let mut block = div()
+                .w_full()
+                .my_1()
+                .p_2()
+                .rounded_md()
+                .bg(rgb(COL_PANEL))
+                .border_l_2()
+                .border_color(rgb(COL_THINKING))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("th-{msg_ix}-{content_index}")))
+                        .cursor_pointer()
+                        .text_xs()
+                        .italic()
+                        .text_color(rgb(COL_THINKING))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let k = key;
+                            let _ = weak.update(cx, |c, cx| {
+                                if !c.collapsed.remove(&k) {
+                                    c.collapsed.insert(k);
+                                }
+                                cx.notify();
+                            });
+                        })
+                        .child(SharedString::from(if is_collapsed {
+                            "thinking \u{25b8}".to_string()
+                        } else {
+                            "thinking \u{25be}".to_string()
+                        })),
+                );
+            if !is_collapsed {
+                block = block.child(
+                    div()
+                        .text_xs()
+                        .italic()
+                        .text_color(rgb(COL_THINKING))
+                        .child(SharedString::from(text.clone())),
+                );
+            }
+            block
+        }
         Block::ToolCall { name, args, result, .. } if !name.is_empty() => {
             let mut card = div()
                 .w_full()
@@ -560,7 +624,7 @@ fn render_block(b: &Block) -> gpui::Div {
     }
 }
 
-fn render_msg(m: &Msg) -> gpui::Div {
+fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>) -> gpui::Div {
     let (label, color) = match m.role {
         Role::User => ("you", rgb(COL_USER)),
         Role::Assistant => ("pi", rgb(COL_ASSISTANT)),
@@ -588,7 +652,7 @@ fn render_msg(m: &Msg) -> gpui::Div {
         );
     } else {
         for b in &m.blocks {
-            col = col.child(render_block(b));
+            col = col.child(render_block(b, msg_ix, weak, collapsed));
         }
     }
     col
@@ -608,6 +672,12 @@ impl Render for Chat {
             .and_then(|s| s.model_label())
             .unwrap_or_else(|| "no model".into())
             .into();
+        let stats_label: SharedString = self
+            .stats
+            .as_ref()
+            .map(|s| s.summary())
+            .unwrap_or_default()
+            .into();
         let status: SharedString = self.status.clone().into();
         let input: SharedString = if self.input.is_empty() {
             "type a prompt, Enter to send, Esc to abort".into()
@@ -618,6 +688,8 @@ impl Render for Chat {
         let entity = cx.entity();
         let weak = entity.downgrade();
         let weak_for_list = weak.clone();
+        let weak_for_del = weak.clone();
+        let weak_for_msg = weak.clone();
 
         // session sidebar rows
         let sessions_entity = entity.clone();
@@ -674,33 +746,62 @@ impl Render for Chat {
                     };
                     let project: SharedString = cwd_tail(&info.cwd).into();
                     let weak = weak_for_list.clone();
+                    let weak_del = weak_for_del.clone();
+                    let p_del = info.path.clone();
+                    let active = chat.active_session_file.as_deref() == Some(info.path.as_path());
+                    // sibling layout: [clickable row][x] - no event bubbling
+                    // between them; the active session cannot be deleted
                     div()
-                        .id(SharedString::from(format!("sess-{ix}")))
                         .w_full()
-                        .px_3()
-                        .py_2()
+                        .flex()
+                        .items_start()
                         .border_b_1()
                         .border_color(rgb(COL_PANEL))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(COL_PANEL)))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let p = path.clone();
-                            let _ = weak.update(cx, |c, cx| c.open_session(p, cx));
-                        })
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(rgb(COL_TEXT))
-                                .child(preview),
+                                .id(SharedString::from(format!("sess-{ix}")))
+                                .flex_1()
+                                .min_w_0()
+                                .px_3()
+                                .py_2()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(COL_PANEL)))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let p = path.clone();
+                                    let _ = weak.update(cx, |c, cx| c.open_session(p, cx));
+                                })
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(COL_TEXT))
+                                        .child(preview),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(COL_STATUS))
+                                        .child(project),
+                                ),
                         )
                         .child(
                             div()
+                                .id(SharedString::from(format!("del-{ix}")))
+                                .w(px(28.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
                                 .text_xs()
                                 .text_color(rgb(COL_STATUS))
-                                .child(project),
+                                .hover(|s| s.bg(rgb(COL_PANEL)).text_color(rgb(0xf28b82)))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let p = p_del.clone();
+                                    let _ = weak_del.update(cx, |c, cx| c.delete_session(p, cx));
+                                })
+                                .child(if active { "\u{25cf}" } else { "\u{d7}" }),
                         )
                         .into_any_element()
                 })
@@ -740,6 +841,8 @@ impl Render for Chat {
                             .text_color(rgb(COL_STATUS))
                             .child(model_label)
                             .child(SharedString::from("|"))
+                            .child(stats_label)
+                            .child(SharedString::from("|"))
                             .child(status),
                     ),
             )
@@ -747,8 +850,12 @@ impl Render for Chat {
             .child(
                 list(self.list.clone(), move |ix, _window, cx| {
                     let chat = entity.read(cx);
+                    let weak = weak_for_msg.clone();
                     match chat.messages.get(ix) {
-                        Some(m) => div().w_full().child(render_msg(m)).into_any_element(),
+                        Some(m) => div()
+                            .w_full()
+                            .child(render_msg(m, ix, &weak, &chat.collapsed))
+                            .into_any_element(),
                         None => div().w_full().into_any_element(),
                     }
                 })
