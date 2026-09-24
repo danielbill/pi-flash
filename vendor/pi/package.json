@@ -1,0 +1,8 @@
+{
+  "name": "pi-flash-vendor-pi",
+  "private": true,
+  "description": "Pinned pi runtime vendored into pi-flash. NEVER resolve pi from PATH. Bump = deliberate release act, see PORT_PLAN.md.",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.87.1"
+  }
+}

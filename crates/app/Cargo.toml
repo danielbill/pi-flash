@@ -1,0 +1,13 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "pi-flash"
+path = "src/main.rs"
+
+[dependencies]
+gpui = "0.2.2"
+pi-link = { path = "../pi-link" }
+futures = "0.3"

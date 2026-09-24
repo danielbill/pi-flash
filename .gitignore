@@ -1,6 +1,9 @@
 # Rust
 **/target/
 
+# vendored pi closure (rebuild with: cd vendor/pi && npm ci)
+vendor/pi/node_modules/
+
 # logs
 *.log
 
