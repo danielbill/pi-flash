@@ -873,48 +873,54 @@ impl Render for Chat {
                     .bg(rgb(COL_PANEL))
                     .child(
                         div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(session_title),
-                    )
-                    .child(
-                        div()
-                            .id("rename")
-                            .mx_2()
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(rgb(COL_SIDEBAR))
-                            .text_xs()
-                            .text_color(rgb(COL_STATUS))
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(rgb(COL_TEXT)))
-                            .on_mouse_down(MouseButton::Left, {
-                                let weak = weak_for_dialog.clone();
-                                move |_, _, cx| {
-                                    let _ = weak.update(cx, |c, cx| {
-                                        c.dialog = Some(Dialog::RenameSession {
-                                            value: c
-                                                .state
-                                                .as_ref()
-                                                .and_then(|s| s.session_name.clone())
-                                                .unwrap_or_default(),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(session_title),
+                            )
+                            .child(
+                                div()
+                                    .id("rename")
+                                .mx_2()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(rgb(COL_SIDEBAR))
+                                .text_xs()
+                                .text_color(rgb(COL_STATUS))
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(rgb(COL_TEXT)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    let weak = weak_for_dialog.clone();
+                                    move |_, _, cx| {
+                                        let _ = weak.update(cx, |c, cx| {
+                                            c.dialog = Some(Dialog::RenameSession {
+                                                value: c
+                                                    .state
+                                                    .as_ref()
+                                                    .and_then(|s| s.session_name.clone())
+                                                    .unwrap_or_default(),
+                                            });
+                                            cx.notify();
                                         });
-                                        cx.notify();
-                                    });
-                                }
-                            })
-                            .child("\u{270e}"),
+                                    }
+                                })
+                                .child("\u{270e}"),
+                            )
+                            .children(pending_chip.map(|c| {
+                                div()
+                                    .text_xs()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(rgb(COL_SIDEBAR))
+                                    .text_color(rgb(COL_USER))
+                                    .child(c)
+                            })),
                     )
-                    .children(pending_chip.map(|c| {
-                        div()
-                            .text_xs()
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(rgb(COL_SIDEBAR))
-                            .text_color(rgb(COL_USER))
-                            .child(c)
-                    }))
                     .child(
                         div()
                             .flex()
