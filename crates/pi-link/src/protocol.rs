@@ -21,6 +21,8 @@ pub enum Command {
     SetModel { provider: String, model: String },
     SetSessionName { name: String },
     GetCommands,
+    GetAvailableModels,
+    SetThinkingLevel { level: String },
 }
 
 impl Command {
@@ -36,6 +38,8 @@ impl Command {
             Command::SetModel { .. } => "set_model",
             Command::SetSessionName { .. } => "set_session_name",
             Command::GetCommands => "get_commands",
+            Command::GetAvailableModels => "get_available_models",
+            Command::SetThinkingLevel { .. } => "set_thinking_level",
         }
     }
 
@@ -51,11 +55,16 @@ impl Command {
             | Command::GetState
             | Command::GetMessages
             | Command::GetSessionStats
-            | Command::GetCommands => {
+            | Command::GetCommands
+            | Command::GetAvailableModels => {
                 json!({ "type": self.kind() })
             }
+            Command::SetThinkingLevel { level } => {
+                json!({ "type": self.kind(), "level": level })
+            }
+            // wire field is modelId (rpc-commands.md set_model)
             Command::SetModel { provider, model } => {
-                json!({ "type": self.kind(), "provider": provider, "model": model })
+                json!({ "type": self.kind(), "provider": provider, "modelId": model })
             }
             Command::SetSessionName { name } => {
                 json!({ "type": self.kind(), "name": name })
@@ -285,6 +294,14 @@ pub enum Event {
     Unparsed(Value),
 }
 
+/// Parse `get_available_models` data: {"models": [...]}
+pub fn parse_model_list(data: &Value) -> Vec<ModelInfo> {
+    data["models"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(ModelInfo::parse).collect())
+        .unwrap_or_default()
+}
+
 /// Snapshot of `get_state` response data.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionState {
@@ -444,7 +461,7 @@ mod tests {
         let c = Command::SetModel { provider: "glm".into(), model: "glm-5.3-flash".into() };
         assert_eq!(
             c.to_record("m1"),
-            json!({"id":"m1","type":"set_model","provider":"glm","model":"glm-5.3-flash"})
+            json!({"id":"m1","type":"set_model","provider":"glm","modelId":"glm-5.3-flash"})
         );
     }
 
@@ -644,6 +661,19 @@ mod tests {
         assert_eq!(cmds.len(), 2);
         assert_eq!(cmds[0].name, "fix-tests");
         assert_eq!(cmds[0].description, "Fix failing tests");
+    }
+
+    #[test]
+    fn model_list_parses_and_thinking_record_shape() {
+        let data = serde_json::json!({"models":[
+            {"id":"glm-5.3-flash","name":"GLM 5.3 Flash","provider":"glm","contextWindow":200000},
+            {"id":"m2","name":"M2","provider":"p"}
+        ]});
+        let models = parse_model_list(&data);
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].provider, "glm");
+        let c = Command::SetThinkingLevel { level: "high".into() };
+        assert_eq!(c.to_record("t1"), json!({"id":"t1","type":"set_thinking_level","level":"high"}));
     }
 
     #[test]

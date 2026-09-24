@@ -64,6 +64,7 @@ impl Msg {
 #[derive(Debug, Clone, PartialEq)]
 enum Dialog {
     RenameSession { value: String },
+    ModelSelect { filter: String },
 }
 
 struct Chat {
@@ -85,6 +86,7 @@ struct Chat {
     collapsed: HashSet<(usize, usize)>,
     /// slash commands from get_commands
     commands: Vec<SlashCommand>,
+    available_models: Vec<pi_link::protocol::ModelInfo>,
     /// project files (relative paths) for the @ lookup menu
     project_files: Vec<String>,
     /// sent-prompt history (pi-web chat input parity)
@@ -180,6 +182,7 @@ impl Chat {
             active_session_file: None,
             collapsed: HashSet::new(),
             commands: Vec::new(),
+            available_models: Vec::new(),
             project_files: Vec::new(),
             history: Vec::new(),
             history_ix: None,
@@ -267,6 +270,7 @@ impl Chat {
             let _ = session.send(&Command::GetState);
             let _ = session.send(&Command::GetSessionStats);
             let _ = session.send(&Command::GetCommands);
+            let _ = session.send(&Command::GetAvailableModels);
         }
     }
 
@@ -394,6 +398,36 @@ impl Chat {
         }
     }
 
+    fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetModel {
+                provider,
+                model: id,
+            });
+        }
+        self.dialog = None;
+        self.refresh_state();
+        cx.notify();
+    }
+
+    fn cycle_thinking(&mut self, cx: &mut Context<Self>) {
+        const LEVELS: [&str; 7] =
+            ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+        let cur = self
+            .state
+            .as_ref()
+            .and_then(|s| s.thinking_level.clone())
+            .unwrap_or_else(|| "medium".into());
+        let idx = LEVELS.iter().position(|&l| l == cur).map(|i| i + 1).unwrap_or(0);
+        let next = LEVELS[idx % LEVELS.len()].to_string();
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetThinkingLevel { level: next.clone() });
+        }
+        self.refresh_state();
+        self.status = format!("thinking: {next}");
+        cx.notify();
+    }
+
     fn confirm_rename(&mut self, cx: &mut Context<Self>) {
         if let Some(Dialog::RenameSession { value }) = &self.dialog {
             let name = value.trim().to_string();
@@ -502,6 +536,11 @@ impl Chat {
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
+                    }
+                } else if command == "get_available_models" && success {
+                    if let Some(data) = &data {
+                        self.available_models =
+                            pi_link::protocol::parse_model_list(data);
                     }
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
@@ -1661,9 +1700,27 @@ impl Render for Chat {
                                     .child("\u{1f5bc}")
                                     .child(
                                         div()
+                                            .id("model-select")
                                             .flex()
                                             .items_center()
                                             .gap_1()
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        if c.available_models.is_empty() {
+                                                            c.refresh_state();
+                                                        }
+                                                        c.dialog =
+                                                            Some(Dialog::ModelSelect {
+                                                                filter: String::new(),
+                                                            });
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
                                             .child("\u{2699}")
                                             .child(model_label),
                                     ),
@@ -1675,7 +1732,18 @@ impl Render for Chat {
                                     .gap_3()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
-                                    .child(format!("\u{1f4a1} {thinking_label}"))
+                                    .child(
+                                        div()
+                                            .id("thinking-cycle")
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.cycle_thinking(cx);
+                                                },
+                                            ))
+                                            .child(format!("\u{1f4a1} {thinking_label}")),
+                                    )
                                     .child("configured")
                                     .child("\u{2702} 压缩")
                                     .child("\u{1f50a}"),
@@ -1715,7 +1783,184 @@ impl Render for Chat {
 impl Chat {
     /// Modal overlay for the current dialog (rename session for now).
     fn render_dialog(&mut self, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme) -> Option<gpui::AnyElement> {
-        let Dialog::RenameSession { value } = self.dialog.as_ref()?;
+        if let Some(Dialog::ModelSelect { filter }) = self.dialog.as_ref() {
+            let flt = filter.to_lowercase();
+            let mut rows: Vec<gpui::AnyElement> = Vec::new();
+            let mut shown = 0usize;
+            for m in self
+                .available_models
+                .iter()
+                .filter(|m| {
+                    flt.is_empty()
+                        || m.id.to_lowercase().contains(&flt)
+                        || m.name.to_lowercase().contains(&flt)
+                        || m.provider.to_lowercase().contains(&flt)
+                })
+                .take(40)
+            {
+                if shown >= 12 {
+                    break;
+                }
+                shown += 1;
+                let provider = m.provider.clone();
+                let id = m.id.clone();
+                let weak_row = weak.clone();
+                let label: SharedString = format!("{} / {}", m.provider, m.label()).into();
+                let ctx: SharedString = m
+                    .context_window
+                    .map(|c| format!("{}k", c / 1000))
+                    .unwrap_or_default()
+                    .into();
+                rows.push(
+                    div()
+                        .id(SharedString::from(format!("model-{provider}-{id}")))
+                        .w_full()
+                        .px_3()
+                        .py_1p5()
+                        .cursor_pointer()
+                        .rounded_md()
+                        .hover(|s| s.bg(rgb(t.bg_selected)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let (p, mid) = (provider.clone(), id.clone());
+                            let _ = weak_row.update(cx, |c, cx| c.select_model(p, mid, cx));
+                        })
+                        .flex()
+                        .justify_between()
+                        .child(
+                            div().text_xs().text_color(rgb(t.text)).child(label),
+                        )
+                        .child(
+                            div().text_xs().text_color(rgb(t.text_dim)).child(ctx),
+                        )
+                        .into_any_element());
+            }
+            let list_panel = if rows.is_empty() {
+                div()
+                    .py_2()
+                    .text_xs()
+                    .text_color(rgb(t.text_dim))
+                    .child("no models match")
+                    .into_any_element()
+            } else {
+                div().flex().flex_col().gap_0p5().children(rows).into_any_element()
+            };
+            let weak_close = weak.clone();
+            let weak_f = weak.clone();
+            let filter_view: SharedString = if filter.is_empty() {
+                "filter models...".into()
+            } else {
+                filter.clone().into()
+            };
+            let filter_empty = filter.is_empty();
+            return Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(520.))
+                            .max_h(px(560.))
+                            .bg(rgb(t.bg_panel))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .rounded_lg()
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .shadow_lg()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(rgb(t.text))
+                                            .child("select model"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("model-close")
+                                            .px_2()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                let _ = weak_close.update(cx, |c, cx| {
+                                                    c.dialog = None;
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .child("\u{00d7}"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("model-filter")
+                                    .track_focus(&self.dialog_focus)
+                                    .on_key_down({
+                                        let weak = weak_f.clone();
+                                        move |ev: &KeyDownEvent, _w, cx| {
+                                            let key = ev.keystroke.key.as_str();
+                                            let _ = weak.update(cx, |this, cx| {
+                                                if let Some(Dialog::ModelSelect { filter }) =
+                                                    &mut this.dialog
+                                                {
+                                                    match key {
+                                                        "escape" => {
+                                                            this.dialog = None;
+                                                            cx.notify();
+                                                        }
+                                                        "backspace" => {
+                                                            filter.pop();
+                                                            cx.notify();
+                                                        }
+                                                        "space" => {
+                                                            filter.push(' ');
+                                                            cx.notify();
+                                                        }
+                                                        k => {
+                                                            if k.chars().count() == 1 {
+                                                                if let Some(c) = k.chars().next() {
+                                                                    filter.push(c);
+                                                                    cx.notify();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    })
+                                    .px_2()
+                                    .py_1p5()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.bg))
+                                    .text_xs()
+                                    .text_color(if filter_empty {
+                                        rgb(t.text_dim)
+                                    } else {
+                                        rgb(t.text)
+                                    })
+                                    .child(filter_view),
+                            )
+                            .child(list_panel),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let Some(Dialog::RenameSession { value }) = self.dialog.as_ref() else {
+            return None;
+        };
         let value: SharedString = if value.is_empty() {
             "session name".into()
         } else {
