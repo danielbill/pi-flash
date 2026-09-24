@@ -131,9 +131,9 @@ impl Chat {
         let (session, events) = spawn_with_epoch(&cwd, &[], 1);
         let connected = session.is_some();
 
-        let mut list = ListState::new(0, ListAlignment::Bottom, px(1000.));
+        let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
-        let mut sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
+        let sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
 
         let mut chat = Self {
             focus,
@@ -626,7 +626,18 @@ impl Chat {
                     if self.pending_rename {
                         self.pending_rename = false;
                         self.dialog = Some(Dialog::RenameSession {
-                            value: self.state.as_ref().and_then(|s| s.session_name.clone()).unwrap_or_default(),
+                            value: self
+                                .state
+                                .as_ref()
+                                .and_then(|s| s.session_name.clone())
+                                .or_else(|| {
+                                    self.messages
+                                        .iter()
+                                        .find(|m| matches!(m.role, Role::User))
+                                        .map(|m| m.plain_text())
+                                })
+                                .map(|v| v.chars().take(50).collect::<String>())
+                                .unwrap_or_default(),
                         });
                     }
                 } else if command == "get_session_stats" && success {
@@ -1294,10 +1305,7 @@ impl Render for Chat {
 
         let entity = cx.entity();
         let weak = entity.downgrade();
-        let weak_for_msg = weak.clone();
-        let weak_for_sessions = weak.clone();
         let weak_for_dialog = weak.clone();
-        let weak_for_files = weak.clone();
 
         let stats_right: SharedString = if let Some(st) = &self.stats {
             format!(
@@ -1324,8 +1332,6 @@ impl Render for Chat {
         // ---- sidebar ----------------------------------------------------
         let sessions_entity = entity.clone();
         let weak_for_sessions = weak.clone();
-        let files_entity = entity.clone();
-        let weak_for_files = weak.clone();
         let sidebar = div()
             .w(px(260.))
             .h_full()
@@ -1465,46 +1471,65 @@ impl Render for Chat {
                     } else {
                         info.preview.clone().into()
                     };
-                    let meta: SharedString = format!(
-                        "{} {} 条消息",
-                        time_ago(info.modified),
-                        info.message_count
-                    )
-                    .into();
+                    let time_text = time_ago(info.modified);
+                    let streaming = is_active
+                        && chat
+                            .state
+                            .as_ref()
+                            .is_some_and(|s| s.is_streaming);
+                    let hovered = chat.hovered_session == Some(ix);
                     let weak = weak_for_sessions.clone();
                     let weak_del = weak_for_sessions.clone();
                     let weak_ren = weak_for_sessions.clone();
+                    let weak_hover = weak_for_sessions.clone();
                     let p_del = info.path.clone();
                     div()
+                        .id(SharedString::from(format!("row-{ix}")))
                         .w_full()
+                        .h(px(54.))
                         .flex()
-                        .items_start()
+                        .items_center()
+                        .gap_1p5()
+                        .pl_3p5()
+                        .pr_2()
+                        .overflow_hidden()
+                        .cursor_pointer()
+                        .border_l_2()
                         .when(is_active, |d| {
                             d.bg(rgb(t.bg_selected))
-                                .border_l_2()
                                 .border_color(rgb(t.accent))
                         })
-                        .when(!is_active, |d| d.border_l_2().border_color(rgb(t.bg)))
+                        .when(!is_active, |d| d.border_color(rgb(t.bg)))
+                        .when(hovered && !is_active, |d| d.bg(rgb(t.bg_hover)))
+                        .on_mouse_down(MouseButton::Left, {
+                            let p = path.clone();
+                            move |_, _, cx| {
+                                let _ = weak.update(cx, |c, cx| c.open_session(p.clone(), false, cx));
+                            }
+                        })
+                        .on_hover(move |h, _, cx| {
+                            let _ = weak_hover.update(cx, |c, cx| {
+                                let next = if *h { Some(ix) } else { None };
+                                if c.hovered_session != next {
+                                    c.hovered_session = next;
+                                    cx.notify();
+                                }
+                            });
+                        })
                         .child(
                             div()
-                                .id(SharedString::from(format!("sess-{ix}")))
                                 .flex_1()
                                 .min_w_0()
-                                .pl_3p5()
-                                .pr_2()
-                                .py_2()
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(t.bg_hover)))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let p = path.clone();
-                                    let _ = weak.update(cx, |c, cx| c.open_session(p, false, cx));
-                                })
                                 .flex()
                                 .flex_col()
                                 .gap_0p5()
                                 .child(
                                     div()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
                                         .text_xs()
+                                        .line_height(relative(1.4))
                                         .font_weight(if is_active {
                                             gpui::FontWeight::MEDIUM
                                         } else {
@@ -1515,53 +1540,116 @@ impl Render for Chat {
                                 )
                                 .child(
                                     div()
-                                        .text_xs()
+                                        .mt(px(2.))
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .text_size(px(11.))
+                                        .min_w_0()
                                         .text_color(rgb(t.text_dim))
-                                        .child(meta),
+                                        .child(if is_active && streaming {
+                                            icon("loader", 14., t.accent).into_any_element()
+                                        } else {
+                                            SharedString::from(time_text.clone())
+                                                .into_any_element()
+                                        })
+                                        .child(SharedString::from(format!(
+                                            "{} 条消息",
+                                            info.message_count
+                                        ))),
                                 ),
                         )
-                        .child(if is_active {
-                            div()
-                                .id(SharedString::from(format!("ren-{ix}")))
-                                .w(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .text_color(rgb(t.accent))
-                                .hover(|s| s.text_color(rgb(t.text)))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_ren.update(cx, |c, cx| {
-                                        c.dialog = Some(Dialog::RenameSession {
-                                            value: c
-                                                .state
-                                                .as_ref()
-                                                .and_then(|s| s.session_name.clone())
-                                                .unwrap_or_default(),
-                                        });
-                                        cx.notify();
-                                    });
-                                })
-                                .child(icon("pencil", 11., t.accent))
-                                .into_any_element()
+                        .children(if hovered {
+                            Some(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .flex_shrink_0()
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("ren-{ix}")))
+                                            .size(px(28.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(7.))
+                                            .border_1()
+                                            .border_color(rgb(t.border))
+                                            .bg(rgb(t.bg_hover))
+                                            .text_color(rgb(t.text_dim))
+                                            .cursor_pointer()
+                                            .hover(|s| {
+                                                s.bg(rgb(t.bg_selected))
+                                                    .text_color(rgb(t.accent))
+                                            })
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let p = path.clone();
+                                                move |_, _, cx| {
+                                                    cx.stop_propagation();
+                                                    let _ = weak_ren.update(cx, |c, cx| {
+                                                        if c.active_session_file.as_deref()
+                                                            == Some(p.as_path())
+                                                        {
+                                                            c.dialog =
+                                                                Some(Dialog::RenameSession {
+                                                                value: c
+                                                                    .state
+                                                                    .as_ref()
+                                                                    .and_then(|s| {
+                                                                        s.session_name.clone()
+                                                                    })
+                                                                    .or_else(|| {
+                                                                        c.messages
+                                                                            .iter()
+                                                                            .find(|m| {
+                                                                                matches!(m.role, Role::User)
+                                                                            })
+                                                                            .map(|m| m.plain_text())
+                                                                    })
+                                                                    .map(|v| {
+                                                                        v.chars().take(50).collect::<String>()
+                                                                    })
+                                                                    .unwrap_or_default(),
+                                                                });
+                                                        } else {
+                                                            c.open_session(p.clone(), true, cx);
+                                                        }
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("pencil", 14., t.text_dim)),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("del-{ix}")))
+                                            .size(px(28.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(px(7.))
+                                            .border_1()
+                                            .border_color(rgb(t.border))
+                                            .bg(rgb(t.bg_hover))
+                                            .text_color(rgb(t.text_dim))
+                                            .cursor_pointer()
+                                            .hover(|s| {
+                                                s.bg(rgb(0xf6e9e9))
+                                                    .text_color(rgb(0xef4444))
+                                            })
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let p = p_del.clone();
+                                                move |_, _, cx| {
+                                                    cx.stop_propagation();
+                                                    let _ = weak_del.update(cx, |c, cx| {
+                                                        c.delete_session(p.clone(), cx);
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("trash", 14., t.text_dim)),
+                                    ),
+                            )
                         } else {
-                            div()
-                                .id(SharedString::from(format!("del-{ix}")))
-                                .w(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .text_color(rgb(t.text_dim))
-                                .hover(|s| s.text_color(rgb(0xd9534f)))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let p = p_del.clone();
-                                    let _ = weak_del.update(cx, |c, cx| {
-                                        c.delete_session(p, cx);
-                                    });
-                                })
-                                .child(icon("x", 12., t.text_dim))
-                                .into_any_element()
+                            None
                         })
                         .into_any_element()
                 })
@@ -1629,12 +1717,24 @@ impl Render for Chat {
                                                 .child(SharedString::from(name))
                                                 .into_any_element()
                                         } else {
+                                            let weak_click = weak_for_dialog.clone();
+                                            let fp = self.cwd.join(&name);
                                             div()
+                                                .id(SharedString::from(format!(
+                                                    "file-{name}"
+                                                )))
                                                 .flex()
                                                 .items_center()
                                                 .gap_1()
                                                 .text_xs()
                                                 .text_color(rgb(t.text_muted))
+                                                .cursor_pointer()
+                                                .hover(|s| s.text_color(rgb(t.text)))
+                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                    let _ = weak_click.update(cx, |c, cx| {
+                                                        c.open_file_preview(fp.clone(), cx);
+                                                    });
+                                                })
                                                 .child(icon("file", 10., t.text_dim))
                                                 .child(SharedString::from(name))
                                                 .into_any_element()
@@ -1724,7 +1824,29 @@ impl Render for Chat {
                         "history",
                         SharedString::from("完整历史"),
                     ))
-                    .child(pill("tb-title", "pencil", SharedString::from("生成标题")))
+                    .child(
+                        div()
+                            .id("tb-title")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.auto_title(cx);
+                                },
+                            ))
+                            .child(icon("pencil", 12., t.text_muted))
+                            .child(SharedString::from("生成标题")),
+                    )
                     .child(pill("tb-system", "file-text", SharedString::from("系统")))
                     .child(pill("tb-tools", "wrench", SharedString::from("工具")))
                     .child(
@@ -2019,12 +2141,43 @@ impl Render for Chat {
                                     .gap_3()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
-                                    .child(icon("image", 12., t.text_muted))
                                     .child(
                                         div()
+                                            .id("attach-image")
+                                            .flex()
+                                            .items_center()
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.attach_images(cx);
+                                                },
+                                            ))
+                                            .child(icon("image", 12., t.text_muted)),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("open-model-select")
                                             .flex()
                                             .items_center()
                                             .gap_1()
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        if c.available_models.is_empty() {
+                                                            c.refresh_state();
+                                                        }
+                                                        c.dialog =
+                                                            Some(Dialog::ModelSelect {
+                                                                filter: String::new(),
+                                                            });
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
                                             .child(icon("settings", 12., t.text_muted))
                                             .child(model_label),
                                     ),
@@ -2038,9 +2191,17 @@ impl Render for Chat {
                                     .text_color(rgb(t.text_muted))
                                     .child(
                                         div()
+                                            .id("thinking-cycle")
                                             .flex()
                                             .items_center()
                                             .gap_1()
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.cycle_thinking(cx);
+                                                },
+                                            ))
                                             .child(icon(
                                                 "lightbulb",
                                                 12.,
@@ -2138,12 +2299,23 @@ impl Render for Chat {
             } else {
                 div().flex().flex_col().gap_0p5().children(rows).into_any_element()
             };
-            let weak_close = weak_for_dialog.clone();
             root = root.child(
                 div()
                     .absolute()
                     .inset_0()
                     .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2218,12 +2390,23 @@ impl Render for Chat {
                 body.truncate(cut);
                 body.push_str("\n\n\u{2026} (truncated)");
             }
-            let weak_close = weak_for_dialog.clone();
             root = root.child(
                 div()
                     .absolute()
                     .inset_0()
                     .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2295,6 +2478,18 @@ impl Render for Chat {
                     .absolute()
                     .inset_0()
                     .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .track_focus(&self.dialog_focus)
+                    .on_key_down({
+                        let weak = weak_for_dialog.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key == "escape" {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.dialog = None;
+                                    cx.notify();
+                                });
+                            }
+                        }
+                    })
                     .flex()
                     .items_center()
                     .justify_center()
