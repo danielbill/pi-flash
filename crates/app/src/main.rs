@@ -111,6 +111,7 @@ struct Chat {
     stats: Option<SessionStats>,
     active_session_file: Option<PathBuf>,
     collapsed: HashSet<(usize, usize)>,
+    expanded_dirs: HashSet<PathBuf>,
     commands: Vec<SlashCommand>,
     available_models: Vec<pi_link::protocol::ModelInfo>,
     project_files: Vec<String>,
@@ -166,6 +167,7 @@ impl Chat {
             stats: None,
             active_session_file: None,
             collapsed: HashSet::new(),
+            expanded_dirs: HashSet::new(),
             commands: Vec::new(),
             available_models: Vec::new(),
             project_files: Vec::new(),
@@ -251,6 +253,7 @@ impl Chat {
         self.active_session_file = None;
         self.collapsed.clear();
         self.dialog = None;
+        self.expanded_dirs.clear();
         self.load_project_files();
         if let Some(p) = get_last_open(&self.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
@@ -573,6 +576,7 @@ impl Chat {
         self.session = session;
         self.cwd = cwd;
         set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
+        self.expanded_dirs.clear();
         self.branch = read_branch(&self.cwd);
         self.messages.clear();
         self.state = None;
@@ -1628,6 +1632,96 @@ fn render_block(
     }
 }
 
+/// Recursive file-explorer rows (FileExplorer.tsx TreeNodeView parity):
+/// 24px rows, indent 8+depth*14, directories toggle lazily on click,
+/// files open the preview dialog.
+fn collect_tree_rows(
+    dir: &Path,
+    depth: usize,
+    expanded: &HashSet<PathBuf>,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &theme::Theme,
+    out: &mut Vec<gpui::AnyElement>,
+) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        if e.file_type().map(|ty| ty.is_dir()).unwrap_or(false) {
+            dirs.push(e.path());
+        } else {
+            files.push(e.path());
+        }
+    }
+    dirs.sort();
+    files.sort();
+    dirs.truncate(300);
+    files.truncate(300);
+    for path in dirs.into_iter().chain(files.into_iter()) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let is_dir = path.is_dir();
+        let open = is_dir && expanded.contains(&path);
+        let mut row = div()
+            .id(SharedString::from(format!("tree-{}", path.display())))
+            .w_full()
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .gap_1()
+            .pl(px(8. + depth as f32 * 14.))
+            .pr(px(8.))
+            .rounded(px(4.))
+            .text_xs()
+            .text_color(rgb(t.text))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)));
+        if is_dir {
+            row = row
+                .child(if open {
+                    icon("chevron-down", 10., t.text_dim)
+                } else {
+                    icon("chevron-right", 10., t.text_dim)
+                })
+                .child(icon("folder", 14., t.text_dim))
+                .child(SharedString::from(name));
+            let weak_toggle = weak.clone();
+            let dir_path = path.clone();
+            row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let d = dir_path.clone();
+                let _ = weak_toggle.update(cx, |c, cx| {
+                    if !c.expanded_dirs.remove(&d) {
+                        c.expanded_dirs.insert(d);
+                    }
+                    cx.notify();
+                });
+            });
+        } else {
+            row = row
+                .child(div().w(px(10.)))
+                .child(icon("file", 14., t.text_dim))
+                .child(SharedString::from(name));
+            let weak_open = weak.clone();
+            let fp = path.clone();
+            row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_open.update(cx, |c, cx| {
+                    c.open_file_preview(fp.clone(), cx);
+                });
+            });
+        }
+        out.push(row.into_any_element());
+        if open {
+            collect_tree_rows(&path, depth + 1, expanded, weak, t, out);
+        }
+    }
+}
+
 fn render_msg(
     m: &Msg,
     msg_ix: usize,
@@ -2157,50 +2251,18 @@ impl Render for Chat {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .children(
-                                top_level_entries(&self.cwd)
-                                    .into_iter()
-                                    .map(|(is_dir, name)| {
-                                        if is_dir {
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .text_xs()
-                                                .text_color(rgb(t.text_muted))
-                                                .child(icon(
-                                                    "chevron-right",
-                                                    10.,
-                                                    t.text_dim,
-                                                ))
-                                                .child(icon("folder", 10., t.text_dim))
-                                                .child(SharedString::from(name))
-                                                .into_any_element()
-                                        } else {
-                                            let weak_click = weak_for_dialog.clone();
-                                            let fp = self.cwd.join(&name);
-                                            div()
-                                                .id(SharedString::from(format!(
-                                                    "file-{name}"
-                                                )))
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .text_xs()
-                                                .text_color(rgb(t.text_muted))
-                                                .cursor_pointer()
-                                                .hover(|s| s.text_color(rgb(t.text)))
-                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                                    let _ = weak_click.update(cx, |c, cx| {
-                                                        c.open_file_preview(fp.clone(), cx);
-                                                    });
-                                                })
-                                                .child(icon("file", 10., t.text_dim))
-                                                .child(SharedString::from(name))
-                                                .into_any_element()
-                                        }
-                                    }),
-                            ),
+                            .children({
+                                let mut rows: Vec<gpui::AnyElement> = Vec::new();
+                                collect_tree_rows(
+                                    &self.cwd,
+                                    0,
+                                    &self.expanded_dirs,
+                                    &weak_for_dialog,
+                                    t,
+                                    &mut rows,
+                                );
+                                rows
+                            }),
                     ),
             )
             // bottom nav
