@@ -4,6 +4,7 @@
 //! values (sizes, colors, spacing) come from pi-web sources: globals.css
 //! theme tokens, panel-layout.ts, MessageView/ChatInput/AppShell structures.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
@@ -25,7 +26,7 @@ mod theme;
 use theme::theme as T;
 
 // ---------------------------------------------------------------------------
-// chat state
+// state
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -62,6 +63,13 @@ impl Msg {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum Dialog {
+    RenameSession { value: String },
+    ModelSelect { filter: String },
+    FilePreview { path: PathBuf, content: String },
+}
+
 #[derive(Debug, Clone)]
 struct AttachedImage {
     name: String,
@@ -69,26 +77,17 @@ struct AttachedImage {
     mime: String,
 }
 
-fn mime_from_ext(path: &Path) -> String {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png".to_string(),
-        Some("jpg") | Some("jpeg") => "image/jpeg".to_string(),
-        Some("gif") => "image/gif".to_string(),
-        Some("webp") => "image/webp".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MenuKind {
+    Slash,
+    At,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Dialog {
-    RenameSession { value: String },
-    ModelSelect { filter: String },
-    FilePreview { path: PathBuf, content: String },
+#[derive(Debug, Clone)]
+struct MenuItem {
+    insert: String,
+    title: String,
+    desc: String,
 }
 
 struct Chat {
@@ -108,69 +107,14 @@ struct Chat {
     stats: Option<SessionStats>,
     active_session_file: Option<PathBuf>,
     collapsed: HashSet<(usize, usize)>,
-    /// slash commands from get_commands
     commands: Vec<SlashCommand>,
     available_models: Vec<pi_link::protocol::ModelInfo>,
-    /// project files (relative paths) for the @ lookup menu
     project_files: Vec<String>,
     pending_images: Vec<AttachedImage>,
-    /// sent-prompt history (pi-web chat input parity)
     history: Vec<String>,
     history_ix: Option<usize>,
-    /// highlighted row in the active slash/@ menu
     menu_ix: usize,
-    /// guards against stale events from a replaced sidecar process
     epoch: u64,
-}
-
-use std::collections::HashSet;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum MenuKind {
-    Slash,
-    At,
-}
-
-#[derive(Debug, Clone)]
-struct MenuItem {
-    /// what gets inserted into the input when accepted
-    insert: String,
-    title: String,
-    desc: String,
-}
-
-fn walk_files(cwd: &Path, depth: usize, cap: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    fn rec(dir: &Path, rel: &str, depth: usize, cap: usize, out: &mut Vec<String>) {
-        if depth == 0 || out.len() >= cap {
-            return;
-        }
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
-        let mut entries: Vec<_> = rd.flatten().collect();
-        entries.sort_by_key(|e| e.file_name());
-        for e in entries {
-            if out.len() >= cap {
-                return;
-            }
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.')
-                || name == "node_modules"
-                || name == "target"
-                || name == "dist"
-            {
-                continue;
-            }
-            let rel_path = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            if is_dir {
-                rec(&e.path(), &rel_path, depth - 1, cap, out);
-            } else {
-                out.push(rel_path);
-            }
-        }
-    }
-    rec(cwd, "", depth, cap, &mut out);
-    out
 }
 
 impl Chat {
@@ -183,12 +127,12 @@ impl Chat {
         let branch = read_branch(&cwd);
 
         let (session, events) = spawn_with_epoch(&cwd, &[], 1);
+        let connected = session.is_some();
 
         let mut list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
         let mut sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
 
-        let connected = session.is_some();
         let mut chat = Self {
             focus,
             dialog_focus,
@@ -217,9 +161,7 @@ impl Chat {
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
-        if connected {
-            chat.refresh_state();
-        }
+        chat.refresh_state();
 
         if let Some(events) = events {
             cx.spawn(async move |this, cx| {
@@ -230,7 +172,385 @@ impl Chat {
         chat
     }
 
-    /// The menu currently active for the input text, if any.
+    fn refresh_state(&self) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetState);
+            let _ = session.send(&Command::GetSessionStats);
+            let _ = session.send(&Command::GetCommands);
+            let _ = session.send(&Command::GetAvailableModels);
+        }
+    }
+
+    fn load_project_files(&mut self) {
+        self.project_files = walk_files(&self.cwd, 3, 400);
+    }
+
+    fn model_label_text(&self) -> String {
+        self.state
+            .as_ref()
+            .and_then(|s| s.model_label())
+            .unwrap_or_else(|| "pi".to_string())
+    }
+
+    fn notify_list(&mut self, cx: &mut Context<Self>) {
+        self.list.reset(self.messages.len());
+        cx.notify();
+    }
+
+    fn last_assistant(&mut self) -> &mut Msg {
+        if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
+            self.messages
+                .push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None });
+        }
+        self.messages.last_mut().expect("just pushed")
+    }
+
+    fn assistant_slot(&mut self, content_index: usize, fresh: Block) -> &mut Block {
+        let msg = self.last_assistant();
+        while msg.blocks.len() <= content_index {
+            let pad = msg.blocks.len();
+            msg.blocks.push(Block::Text { content_index: pad, text: String::new() });
+        }
+        let same_kind = match (&msg.blocks[content_index], &fresh) {
+            (Block::Text { .. }, Block::Text { .. })
+            | (Block::Thinking { .. }, Block::Thinking { .. })
+            | (Block::ToolCall { .. }, Block::ToolCall { .. }) => true,
+            _ => false,
+        };
+        if !same_kind {
+            msg.blocks[content_index] = fresh;
+        }
+        &mut msg.blocks[content_index]
+    }
+
+    fn ingest_message(
+        &mut self,
+        role: &str,
+        blocks: Vec<Block>,
+        usage: Option<Usage>,
+        time: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        match role {
+            "user" => {
+                self.messages.push(Msg { role: Role::User, blocks, usage: None });
+            }
+            "assistant" => {
+                self.messages.push(Msg {
+                    role: Role::Assistant,
+                    blocks,
+                    usage: usage.map(|u| UsageLine {
+                        input: u.input,
+                        output: u.output,
+                        cache_read: u.cache_read,
+                        cost: u.cost,
+                        time: time.clone().unwrap_or_default(),
+                    }),
+                });
+            }
+            "toolResult" => {
+                let text: String = blocks
+                    .iter()
+                    .map(|b| match b {
+                        Block::Text { text, .. } => text.as_str(),
+                        _ => "",
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .trim_end()
+                    .to_string();
+                if let Some(m) = self.messages.last_mut() {
+                    if m.role == Role::Assistant {
+                        if let Some(Block::ToolCall { result, .. }) = m
+                            .blocks
+                            .iter_mut()
+                            .rev()
+                            .find(|b| matches!(b, Block::ToolCall { .. }))
+                        {
+                            result.push_str(&text);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.notify_list(cx);
+    }
+
+    fn send_input(&mut self, cx: &mut Context<Self>) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let Some(session) = &self.session else {
+            self.status = "未连接".into();
+            cx.notify();
+            return;
+        };
+        let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
+        let images: Vec<serde_json::Value> = self
+            .pending_images
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "type": "image",
+                    "data": img.data_b64,
+                    "mimeType": img.mime
+                })
+            })
+            .collect();
+        let cmd = if streaming {
+            Command::Steer { message: text.clone(), images: images.clone() }
+        } else {
+            Command::Prompt { message: text.clone(), images }
+        };
+        match session.send(&cmd) {
+            Ok(_) => {
+                if self.history.last().map(|h| h != &text).unwrap_or(true) {
+                    self.history.push(text);
+                }
+                self.history_ix = None;
+                self.input.clear();
+                self.pending_images.clear();
+                self.status = if streaming { "steering" } else { "running" }.into();
+            }
+            Err(e) => self.status = e,
+        }
+        cx.notify();
+    }
+
+    fn send_follow_up(&mut self, cx: &mut Context<Self>) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::FollowUp { message: text });
+            self.input.clear();
+            self.pending_images.clear();
+            self.status = "queued".into();
+        }
+        cx.notify();
+    }
+
+    fn abort(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Abort);
+            self.status = "aborting".into();
+            cx.notify();
+        }
+    }
+
+    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(Dialog::RenameSession { value }) = &self.dialog {
+            let name = value.trim().to_string();
+            if let Some(session) = &self.session {
+                let _ = session.send(&Command::SetSessionName { name });
+            }
+            self.refresh_state();
+        }
+        self.dialog = None;
+        cx.notify();
+    }
+
+    fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetModel { provider, model: id });
+        }
+        self.dialog = None;
+        self.refresh_state();
+        cx.notify();
+    }
+
+    fn cycle_thinking(&mut self, cx: &mut Context<Self>) {
+        const LEVELS: [&str; 7] =
+            ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+        let cur = self
+            .state
+            .as_ref()
+            .and_then(|s| s.thinking_level.clone())
+            .unwrap_or_else(|| "medium".into());
+        let idx = LEVELS.iter().position(|&l| l == cur).map(|i| i + 1).unwrap_or(0);
+        let next = LEVELS[idx % LEVELS.len()].to_string();
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetThinkingLevel { level: next.clone() });
+        }
+        self.refresh_state();
+        self.status = format!("thinking: {next}");
+        cx.notify();
+    }
+
+    fn auto_title(&mut self, cx: &mut Context<Self>) {
+        let title = self
+            .messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.plain_text())
+            .unwrap_or_default();
+        let mut title = title.trim().replace('\n', " ").to_string();
+        if title.is_empty() {
+            self.status = "nothing to title yet".into();
+            cx.notify();
+            return;
+        }
+        if title.chars().count() > 40 {
+            let mut cut = 40;
+            while !title.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            title.truncate(cut);
+            title.push('\u{2026}');
+        }
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetSessionName { name: title });
+        }
+        self.refresh_state();
+        cx.notify();
+    }
+
+    fn export_html(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::ExportHtml);
+            self.status = "exporting...".into();
+        }
+        cx.notify();
+    }
+
+    fn new_session(&mut self, cx: &mut Context<Self>) {
+        self.epoch += 1;
+        let (session, events) = spawn_with_epoch(&self.cwd, &[], self.epoch);
+        self.session = session;
+        self.messages.clear();
+        self.state = None;
+        self.stats = None;
+        self.active_session_file = None;
+        self.collapsed.clear();
+        self.status = status_line(self.session.is_some(), "新会话");
+        self.refresh_state();
+        self.load_project_files();
+        if let Some(events) = events {
+            let epoch = self.epoch;
+            cx.spawn(async move |this, cx| {
+                consume_events(this, cx, events, epoch).await;
+            })
+            .detach();
+        }
+        self.list.reset(0);
+        cx.notify();
+    }
+
+    fn open_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let cwd = self
+            .sessions
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| PathBuf::from(s.cwd.clone()))
+            .unwrap_or_else(|| self.cwd.clone());
+        self.epoch += 1;
+        let (session, events) =
+            spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
+        self.session = session;
+        self.cwd = cwd;
+        self.branch = read_branch(&self.cwd);
+        self.messages.clear();
+        self.state = None;
+        self.stats = None;
+        self.active_session_file = None;
+        self.collapsed.clear();
+        self.status = status_line(self.session.is_some(), "resuming");
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::GetMessages);
+        }
+        self.refresh_state();
+        self.load_project_files();
+        if let Some(events) = events {
+            let epoch = self.epoch;
+            cx.spawn(async move |this, cx| {
+                consume_events(this, cx, events, epoch).await;
+            })
+            .detach();
+        }
+        self.list.reset(0);
+        cx.notify();
+    }
+
+    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.active_session_file.as_deref() == Some(path.as_path()) {
+            self.status = "cannot delete the active session".into();
+            cx.notify();
+            return;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(_) => {
+                self.sessions.retain(|s| s.path != path);
+                self.sessions_list.reset(self.sessions.len());
+                self.status = "session deleted".into();
+            }
+            Err(e) => self.status = format!("delete failed: {e}"),
+        }
+        cx.notify();
+    }
+
+    fn open_file_preview(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        const MAX: u64 = 200 * 1024;
+        let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
+        let content = if too_big {
+            "(file too large to preview)".to_string()
+        } else {
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    if bytes.contains(&0) {
+                        "(binary file)".to_string()
+                    } else {
+                        String::from_utf8_lossy(&bytes).to_string()
+                    }
+                }
+                Err(e) => format!("read failed: {e}"),
+            }
+        };
+        self.dialog = Some(Dialog::FilePreview { path, content });
+        cx.notify();
+    }
+
+    fn attach_images(&mut self, cx: &mut Context<Self>) {
+        let opts = gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        };
+        let rx = cx.prompt_for_paths(opts);
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
+            let Some(paths) = picked else {
+                return;
+            };
+            let _ = this.update(cx, |chat, cx| {
+                for path in paths {
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    use base64::Engine as _;
+                    let data_b64 =
+                        base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "image".into());
+                    let mime = mime_from_ext(&path);
+                    chat.pending_images
+                        .push(AttachedImage { name, data_b64, mime });
+                }
+                if !chat.pending_images.is_empty() {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn load_project_files_pub(&mut self) {
+        self.load_project_files();
+    }
+
     fn active_menu(&self) -> Option<MenuKind> {
         let input = &self.input;
         if input.starts_with('/') && !input[1..].contains(char::is_whitespace) {
@@ -291,367 +611,6 @@ impl Chat {
         cx.notify();
     }
 
-    fn refresh_state(&self) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::GetState);
-            let _ = session.send(&Command::GetSessionStats);
-            let _ = session.send(&Command::GetCommands);
-            let _ = session.send(&Command::GetAvailableModels);
-        }
-    }
-
-    fn load_project_files(&mut self) {
-        self.project_files = walk_files(&self.cwd, 3, 400);
-    }
-
-    /// The trailing assistant message, created on demand.
-    fn last_assistant(&mut self) -> &mut Msg {
-        if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
-            self.messages.push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None });
-        }
-        self.messages.last_mut().expect("just pushed")
-    }
-
-    /// Slot for streaming block at `content_index`: pads holes, replaces a
-    /// block whose kind just changed at that index.
-    fn assistant_slot(&mut self, content_index: usize, fresh: Block) -> &mut Block {
-        let msg = self.last_assistant();
-        while msg.blocks.len() <= content_index {
-            let pad = msg.blocks.len();
-            msg.blocks.push(Block::Text { content_index: pad, text: String::new() });
-        }
-        let same_kind = match (&msg.blocks[content_index], &fresh) {
-            (Block::Text { .. }, Block::Text { .. })
-            | (Block::Thinking { .. }, Block::Thinking { .. })
-            | (Block::ToolCall { .. }, Block::ToolCall { .. }) => true,
-            _ => false,
-        };
-        if !same_kind {
-            msg.blocks[content_index] = fresh;
-        }
-        &mut msg.blocks[content_index]
-    }
-
-    /// Common ingestion for live wire messages and resumed history replay.
-    fn ingest_message(
-        &mut self,
-        role: &str,
-        blocks: Vec<Block>,
-        usage: Option<Usage>,
-        time: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        match role {
-            "user" => {
-                self.messages.push(Msg { role: Role::User, blocks, usage: None });
-            }
-            "assistant" => {
-                self.messages.push(Msg {
-                    role: Role::Assistant,
-                    blocks,
-                    usage: usage.map(|u| UsageLine {
-                        input: u.input,
-                        output: u.output,
-                        cache_read: u.cache_read,
-                        cost: u.cost,
-                        time: time.clone().unwrap_or_default(),
-                    }),
-                });
-            }
-            "toolResult" => {
-                let text: String = blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Text { text, .. } => text.as_str(),
-                        _ => "",
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim_end()
-                    .to_string();
-                if let Some(m) = self.messages.last_mut() {
-                    if m.role == Role::Assistant {
-                        if let Some(Block::ToolCall { result, .. }) =
-                            m.blocks.iter_mut().rev().find(|b| matches!(b, Block::ToolCall { .. }))
-                        {
-                            result.push_str(&text);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        self.list.reset(self.messages.len());
-        cx.notify();
-    }
-
-    fn send_input(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let Some(session) = &self.session else {
-            self.status = "未连接".into();
-            cx.notify();
-            return;
-        };
-        // pi-web parity: while streaming, typed text steers the running agent
-        let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
-        let images: Vec<serde_json::Value> = self
-            .pending_images
-            .iter()
-            .map(|img| {
-                serde_json::json!({
-                    "type": "image",
-                    "data": img.data_b64,
-                    "mimeType": img.mime
-                })
-            })
-            .collect();
-        let cmd = if streaming {
-            Command::Steer { message: text.clone(), images: images.clone() }
-        } else {
-            Command::Prompt { message: text.clone(), images }
-        };
-        match session.send(&cmd) {
-            Ok(_) => {
-                if self.history.last().map(|h| h != &text).unwrap_or(true) {
-                    self.history.push(text);
-                }
-                self.history_ix = None;
-                self.input.clear();
-                self.pending_images.clear();
-                self.status = if streaming { "steering" } else { "running" }.into();
-            }
-            Err(e) => self.status = e,
-        }
-        cx.notify();
-    }
-
-    fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::Abort);
-            self.status = "aborting".into();
-            cx.notify();
-        }
-    }
-
-    fn attach_images(&mut self, cx: &mut Context<Self>) {
-        let opts = gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: None,
-        };
-        let rx = cx.prompt_for_paths(opts);
-        cx.spawn(async move |this, cx| {
-            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
-            let Some(paths) = picked else {
-                return;
-            };
-            let _ = this.update(cx, |chat, cx| {
-                for path in paths {
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
-                    use base64::Engine as _;
-                    let data_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "image".into());
-                    let mime = mime_from_ext(&path);
-                    chat.pending_images.push(AttachedImage { name, data_b64, mime });
-                }
-                if !chat.pending_images.is_empty() {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Heuristic session title (first user message, trimmed). LLM-based
-    /// generation needs the pi-ai SDK and is a later parity item.
-    fn auto_title(&mut self, cx: &mut Context<Self>) {
-        let title = self
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.plain_text())
-            .unwrap_or_default();
-        let mut title = title.trim().to_string();
-        if title.is_empty() {
-            self.status = "nothing to title yet".into();
-            cx.notify();
-            return;
-        }
-        title = title.replace('\n', " ");
-        if title.chars().count() > 40 {
-            let mut cut = 40;
-            while !title.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            title.truncate(cut);
-            title.push('\u{2026}');
-        }
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::SetSessionName { name: title });
-        }
-        self.refresh_state();
-        cx.notify();
-    }
-
-    fn export_html(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::ExportHtml);
-            self.status = "exporting...".into();
-        }
-        cx.notify();
-    }
-
-    fn open_file_preview(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        const MAX: u64 = 200 * 1024;
-        let meta = std::fs::metadata(&path);
-        let too_big = meta.as_ref().map(|m| m.len() > MAX).unwrap_or(false);
-        let content = if too_big {
-            "(file too large to preview)".to_string()
-        } else {
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    if bytes.contains(&0) {
-                        "(binary file)".to_string()
-                    } else {
-                        String::from_utf8_lossy(&bytes).to_string()
-                    }
-                }
-                Err(e) => format!("read failed: {e}"),
-            }
-        };
-        self.dialog = Some(Dialog::FilePreview { path, content });
-        cx.notify();
-    }
-
-    fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::SetModel {
-                provider,
-                model: id,
-            });
-        }
-        self.dialog = None;
-        self.refresh_state();
-        cx.notify();
-    }
-
-    fn cycle_thinking(&mut self, cx: &mut Context<Self>) {
-        const LEVELS: [&str; 7] =
-            ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-        let cur = self
-            .state
-            .as_ref()
-            .and_then(|s| s.thinking_level.clone())
-            .unwrap_or_else(|| "medium".into());
-        let idx = LEVELS.iter().position(|&l| l == cur).map(|i| i + 1).unwrap_or(0);
-        let next = LEVELS[idx % LEVELS.len()].to_string();
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::SetThinkingLevel { level: next.clone() });
-        }
-        self.refresh_state();
-        self.status = format!("thinking: {next}");
-        cx.notify();
-    }
-
-    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
-        if let Some(Dialog::RenameSession { value }) = &self.dialog {
-            let name = value.trim().to_string();
-            if let Some(session) = &self.session {
-                let _ = session.send(&Command::SetSessionName { name });
-            }
-            self.refresh_state();
-        }
-        self.dialog = None;
-        cx.notify();
-    }
-
-    /// Spawn a fresh sidecar for the current project.
-    fn new_session(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
-        let (session, events) = spawn_with_epoch(&self.cwd, &[], self.epoch);
-        self.session = session;
-        self.messages.clear();
-        self.state = None;
-        self.stats = None;
-        self.active_session_file = None;
-        self.collapsed.clear();
-        self.status = status_line(self.session.is_some(), "新会话");
-        self.refresh_state();
-        self.load_project_files();
-        if let Some(events) = events {
-            let epoch = self.epoch;
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events, epoch).await;
-            })
-            .detach();
-        }
-        self.list.reset(0);
-        cx.notify();
-    }
-
-    /// Resume a stored session: sidecar started with `--session <path>`,
-    /// history replayed from the get_messages response.
-    fn open_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let cwd = self
-            .sessions
-            .iter()
-            .find(|s| s.path == path)
-            .map(|s| PathBuf::from(s.cwd.clone()))
-            .unwrap_or_else(|| self.cwd.clone());
-        self.epoch += 1;
-        let (session, events) =
-            spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
-        self.session = session;
-        self.cwd = cwd;
-        self.branch = read_branch(&self.cwd);
-        self.messages.clear();
-        self.state = None;
-        self.stats = None;
-        self.active_session_file = None;
-        self.collapsed.clear();
-        self.status = status_line(self.session.is_some(), "resuming");
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::GetMessages);
-        }
-        self.refresh_state();
-        self.load_project_files();
-        if let Some(events) = events {
-            let epoch = self.epoch;
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events, epoch).await;
-            })
-            .detach();
-        }
-        self.list.reset(0);
-        cx.notify();
-    }
-
-    /// Delete a stored session file (pi-web parity). The active session's
-    /// file is protected.
-    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.active_session_file.as_deref() == Some(path.as_path()) {
-            self.status = "cannot delete the active session".into();
-            cx.notify();
-            return;
-        }
-        match std::fs::remove_file(&path) {
-            Ok(_) => {
-                self.sessions.retain(|s| s.path != path);
-                self.sessions_list.reset(self.sessions.len());
-                self.status = "session deleted".into();
-            }
-            Err(e) => self.status = format!("delete failed: {e}"),
-        }
-        cx.notify();
-    }
-
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         match event {
             Event::Response { command, success, error, data, .. } => {
@@ -665,12 +624,6 @@ impl Chat {
                         self.active_session_file =
                             data["sessionFile"].as_str().map(PathBuf::from);
                     }
-                } else if command == "export_html" && success {
-                    self.status = format!(
-                        "exported: {}",
-                        data.and_then(|d| d["path"].as_str().map(str::to_string))
-                            .unwrap_or_default()
-                    );
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
@@ -680,6 +633,12 @@ impl Chat {
                         self.available_models =
                             pi_link::protocol::parse_model_list(data);
                     }
+                } else if command == "export_html" && success {
+                    self.status = format!(
+                        "exported: {}",
+                        data.and_then(|d| d["path"].as_str().map(str::to_string))
+                            .unwrap_or_default()
+                    );
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
                         for msg in data["messages"].as_array().into_iter().flatten() {
@@ -693,16 +652,15 @@ impl Chat {
                 } else if success {
                     self.status = format!("{command} ok");
                 } else {
-                    self.status = format!("{command} failed: {}", error.unwrap_or_default());
+                    self.status =
+                        format!("{command} failed: {}", error.unwrap_or_default());
                 }
             }
             Event::MessageStart { role, blocks, timestamp } => {
-                let time = timestamp.map(fmt_hhmm).unwrap_or_default();
                 match role.as_str() {
                     "user" => {
                         self.messages
                             .push(Msg { role: Role::User, blocks, usage: None });
-                        let _ = time;
                     }
                     "assistant" => {
                         self.messages.push(Msg {
@@ -737,6 +695,7 @@ impl Chat {
                     }
                     _ => {}
                 }
+                let _ = timestamp;
             }
             Event::MessageUpdate(assistant_event) => match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
@@ -860,30 +819,7 @@ impl Chat {
             Event::ExtensionUi(_) => {}
             Event::Unparsed(_) => {}
         }
-        self.list.reset(self.messages.len());
-        cx.notify();
-    }
-}
-
-fn spawn_with_epoch(
-    cwd: &PathBuf,
-    extra_args: &[&str],
-    _epoch: u64,
-) -> (Option<PiSession>, Option<UnboundedReceiver<Event>>) {
-    match spawn_pi(cwd, extra_args) {
-        Ok((s, ev)) => (Some(s), Some(ev)),
-        Err(e) => {
-            eprintln!("{e}");
-            (None, None)
-        }
-    }
-}
-
-fn status_line(connected: bool, state: &str) -> String {
-    if connected {
-        format!("pi {} | {state}", pi_link::PI_VENDOR_VERSION)
-    } else {
-        "pi not available (vendor missing)".to_string()
+        self.notify_list(cx);
     }
 }
 
@@ -925,7 +861,28 @@ impl Focusable for Chat {
 // helpers
 // ---------------------------------------------------------------------------
 
-/// pi-web format: "1,784 in · 574 out · 373,056 cache R · $0.0888"
+fn spawn_with_epoch(
+    cwd: &PathBuf,
+    extra_args: &[&str],
+    _epoch: u64,
+) -> (Option<PiSession>, Option<UnboundedReceiver<Event>>) {
+    match spawn_pi(cwd, extra_args) {
+        Ok((s, ev)) => (Some(s), Some(ev)),
+        Err(e) => {
+            eprintln!("{e}");
+            (None, None)
+        }
+    }
+}
+
+fn status_line(connected: bool, state: &str) -> String {
+    if connected {
+        format!("pi {} | {state}", pi_link::PI_VENDOR_VERSION)
+    } else {
+        "pi not available (vendor missing)".to_string()
+    }
+}
+
 fn usage_footer(u: &UsageLine) -> String {
     let mut s = format!(
         "{} in · {} out",
@@ -960,7 +917,6 @@ fn fmt_hhmm(ms: i64) -> String {
     }
 }
 
-/// "33秒前" / "2分钟前" / "28分钟前" / "5小时前" / "3天前"
 fn time_ago(modified: std::time::SystemTime) -> String {
     let secs = modified
         .duration_since(std::time::UNIX_EPOCH)
@@ -981,7 +937,6 @@ fn time_ago(modified: std::time::SystemTime) -> String {
     }
 }
 
-/// branch name from `<cwd>/.git/HEAD`
 fn read_branch(cwd: &Path) -> String {
     let Ok(head) = std::fs::read_to_string(cwd.join(".git").join("HEAD")) else {
         return String::new();
@@ -1021,20 +976,54 @@ fn top_level_entries(cwd: &Path) -> Vec<(bool, String)> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// rendering
-// ---------------------------------------------------------------------------
+fn walk_files(cwd: &Path, depth: usize, cap: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    fn rec(dir: &Path, rel: &str, depth: usize, cap: usize, out: &mut Vec<String>) {
+        if depth == 0 || out.len() >= cap {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.len() >= cap {
+                return;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || name == "dist"
+            {
+                continue;
+            }
+            let rel_path =
+                if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                rec(&e.path(), &rel_path, depth - 1, cap, out);
+            } else {
+                out.push(rel_path);
+            }
+        }
+    }
+    rec(cwd, "", depth, cap, &mut out);
+    out
+}
 
-/// Render an embedded SVG icon (lucide-style stroke, colored via text color).
-fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
-    use std::sync::OnceLock;
-    static ICON_BASE: OnceLock<gpui::TextStyle> = OnceLock::new();
-    let _ = ICON_BASE.get_or_init(|| gpui::TextStyle::default());
-    gpui::svg()
-        .path(SharedString::from(format!("icons/{name}.svg")))
-        .text_color(rgb(color))
-        .size(px(size))
-        .into_any_element()
+fn mime_from_ext(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png".to_string(),
+        Some("jpg") | Some("jpeg") => "image/jpeg".to_string(),
+        Some("gif") => "image/gif".to_string(),
+        Some("webp") => "image/webp".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
 }
 
 fn pretty_args(args: &str) -> String {
@@ -1044,7 +1033,60 @@ fn pretty_args(args: &str) -> String {
         .unwrap_or_else(|| args.to_string())
 }
 
-fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>, t: &theme::Theme) -> gpui::Div {
+fn fmt_compact(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rendering
+// ---------------------------------------------------------------------------
+
+fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
+    gpui::svg()
+        .path(SharedString::from(format!("icons/{name}.svg")))
+        .text_color(rgb(color))
+        .size(px(size))
+        .into_any_element()
+}
+
+fn pill(
+    id: &'static str,
+    icon_name: &'static str,
+    label: SharedString,
+) -> gpui::AnyElement {
+    let t = T();
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(rgb(t.border))
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .text_xs()
+        .text_color(rgb(t.text_muted))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .child(icon(icon_name, 12., t.text_muted))
+        .child(label)
+        .into_any_element()
+}
+
+fn render_block(
+    b: &Block,
+    msg_ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashSet<(usize, usize)>,
+    t: &theme::Theme,
+) -> gpui::Div {
     match b {
         Block::Text { text, .. } if !text.trim().is_empty() => {
             div().w_full().child(markdown::render_themed(text))
@@ -1058,18 +1100,22 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                 .my_1()
                 .p_2()
                 .rounded_md()
-                .bg(rgb(t.bg_panel))
-                .border_l_2()
+                .border_1()
                 .border_color(rgb(t.border))
+                .bg(rgb(t.bg_subtle))
                 .flex()
                 .flex_col()
                 .gap_1()
                 .child(
                     div()
-                        .id(SharedString::from(format!("th-{msg_ix}-{content_index}")))
+                        .id(SharedString::from(format!(
+                            "th-{msg_ix}-{content_index}"
+                        )))
                         .cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
                         .text_xs()
-                        .italic()
                         .text_color(rgb(t.text_dim))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let k = key;
@@ -1080,6 +1126,8 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                                 cx.notify();
                             });
                         })
+                        .child(icon("lightbulb", 11., t.text_dim))
+                        .child(SharedString::from("thinking"))
                         .child(if is_collapsed {
                             icon("chevron-right", 10., t.text_dim)
                         } else {
@@ -1089,9 +1137,8 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
             if !is_collapsed {
                 block = block.child(
                     div()
-                        .text_xs()
-                        .italic()
-                        .text_color(rgb(t.text_dim))
+                        .text_sm()
+                        .text_color(rgb(t.text))
                         .child(SharedString::from(text.clone())),
                 );
             }
@@ -1113,9 +1160,10 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
                         .px_2()
                         .py_1()
                         .text_xs()
+                        .font_family("Consolas")
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.accent))
-                        .child(SharedString::from(format!("tool \u{b7} {name}"))),
+                        .child(SharedString::from(name.clone())),
                 )
                 .child(
                     div()
@@ -1146,12 +1194,15 @@ fn render_block(b: &Block, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collaps
     }
 }
 
-fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: &HashSet<(usize, usize)>, t: &theme::Theme) -> gpui::Div {
-    let mut col = div()
-        .w_full()
-        .mb_4()
-        .flex()
-        .flex_col();
+fn render_msg(
+    m: &Msg,
+    msg_ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashSet<(usize, usize)>,
+    t: &theme::Theme,
+    model_label: &str,
+) -> gpui::Div {
+    let mut col = div().w_full().mb_4().flex().flex_col();
     if m.role == Role::User {
         // MessageView.tsx: right-aligned bubble, --user-bg, radius 12, pad 8/12
         let text = m.plain_text();
@@ -1169,12 +1220,13 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
                 .child(SharedString::from(text)),
         );
     } else {
+        // MessageView: model label 11px --text-dim, margin-bottom 4
         col = col.child(
             div()
                 .text_xs()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.accent))
-                .child("pi"),
+                .text_color(rgb(t.text_dim))
+                .mb_1()
+                .child(SharedString::from(model_label.to_string())),
         );
         for b in &m.blocks {
             col = col.child(render_block(b, msg_ix, weak, collapsed, t));
@@ -1185,6 +1237,7 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
                     .flex()
                     .justify_between()
                     .mt_2()
+                    .font_family("Consolas")
                     .text_xs()
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(usage_footer(u)))
@@ -1195,41 +1248,18 @@ fn render_msg(m: &Msg, msg_ix: usize, weak: &gpui::WeakEntity<Chat>, collapsed: 
     col
 }
 
-fn pill(id: &'static str, icon_name: &'static str, label: SharedString) -> gpui::AnyElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(T().border))
-        .text_xs()
-        .text_color(rgb(T().text_muted))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(T().bg_hover)).text_color(rgb(T().text)))
-        .child(icon(icon_name, 12., T().text_muted))
-        .child(label)
-        .into_any_element()
-}
-
-fn fmt_compact(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.0}k", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
+// ---------------------------------------------------------------------------
+// root render
+// ---------------------------------------------------------------------------
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = T();
         if self.dialog.is_some() {
             window.focus(&self.dialog_focus);
         } else {
             window.focus(&self.focus);
         }
+        let t = T();
 
         let status: SharedString = self.status.clone().into();
         let input_ph: SharedString = if self.input.is_empty() {
@@ -1250,166 +1280,41 @@ impl Render for Chat {
             .and_then(|s| s.thinking_level.clone())
             .unwrap_or_else(|| "medium".into())
             .into();
-        let session_title: SharedString = self
-            .state
-            .as_ref()
-            .and_then(|s| s.session_name.clone())
-            .unwrap_or_else(|| "pi-flash".into())
-            .into();
+
         let entity = cx.entity();
         let weak = entity.downgrade();
-        let weak_for_list = weak.clone();
-        let weak_for_del = weak.clone();
         let weak_for_msg = weak.clone();
-        let weak_for_dialog = weak.clone();
-        let weak_menu = weak.clone();
-        let weak_for_files = weak.clone();
-        let pending_chip: Option<SharedString> = self
-            .state
-            .as_ref()
-            .filter(|s| s.pending_message_count > 0)
-            .map(|s| SharedString::from(format!("queued {}", s.pending_message_count)));
-
-        // slash/@ popup menu state (derived from input text)
-        let menu_now = self.menu_items();
-        let menu_open = self.active_menu().is_some() && !menu_now.is_empty();
-        let menu_sel = self.menu_ix.min(menu_now.len().saturating_sub(1));
-        let image_chips: Option<gpui::AnyElement> = if self.pending_images.is_empty()
-        {
-            None
-        } else {
-            let rows: Vec<gpui::AnyElement> = self
-                .pending_images
-                .iter()
-                .enumerate()
-                .map(|(i, img)| {
-                    let weak_i = weak_menu.clone();
-                    let name: SharedString = img.name.clone().into();
-                    div()
-                        .id(SharedString::from(format!("img-{i}")))
-                        .px_2()
-                        .py_0p5()
-                        .rounded_md()
-                        .bg(rgb(t.bg_panel))
-                        .border_1()
-                        .border_color(rgb(t.border))
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(rgb(0xd9534f)))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = weak_i.update(cx, |c, cx| {
-                                if i < c.pending_images.len() {
-                                    c.pending_images.remove(i);
-                                }
-                                cx.notify();
-                            });
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .child(icon("image", 10., t.text_muted))
-                                .child(SharedString::from(name.clone()))
-                                .child(icon("x", 10., t.text_muted)),
-                        )
-                        .into_any_element()
-                })
-                .collect();
-            Some(
-                div()
-                    .w_full()
-                    .mb_1p5()
-                    .flex()
-                    .gap_2()
-                    .children(rows)
-                    .into_any_element(),
-            )
-        };
-        let menu_el: Option<gpui::AnyElement> = if menu_open {
-            let rows: Vec<gpui::AnyElement> = menu_now
-                .iter()
-                .enumerate()
-                .map(|(i, mi)| {
-                    let selected = i == menu_sel;
-                    let insert = mi.insert.clone();
-                    let weak_i = weak_menu.clone();
-                    let title: SharedString = mi.title.clone().into();
-                    let desc: SharedString = mi.desc.clone().into();
-                    div()
-                        .id(SharedString::from(format!("menu-{i}")))
-                        .w_full()
-                        .px_3()
-                        .py_1p5()
-                        .cursor_pointer()
-                        .when(selected, |d| d.bg(rgb(t.bg_selected)))
-                        .hover(move |s| s.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let ins = insert.clone();
-                            let _ = weak_i.update(cx, |c, cx| c.accept_menu(ins, cx));
-                        })
-                        .flex()
-                        .justify_between()
-                        .gap_3()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_family("Consolas")
-                                .text_color(rgb(t.accent))
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(t.text_muted))
-                                .child(desc),
-                        )
-                        .into_any_element()
-                })
-                .collect();
-            Some(
-                div()
-                    .flex_col()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.assistant_bg))
-                    .shadow_lg()
-                    .py_1()
-                    .children(rows)
-                    .into_any_element(),
-            )
-        } else {
-            None
-        };
-
-
-        // ---- sidebar ----------------------------------------------------
-        let sessions_entity = entity.clone();
         let weak_for_sessions = weak.clone();
-        let stats_right = if let Some(st) = &self.stats {
+        let weak_for_dialog = weak.clone();
+        let weak_for_files = weak.clone();
+
+        let stats_right: SharedString = if let Some(st) = &self.stats {
             format!(
-                "\u{2191}{} \u{2193}{} ${:.2}  {}% / {}",
+                "\u{2191}{} \u{2193}{} \u{27f3}{} ${:.2}  {}% / {}",
                 fmt_compact(st.input),
                 fmt_compact(st.output),
+                fmt_compact(st.cache_read),
                 st.cost,
                 st.context_percent.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
                 st.context_window.map(fmt_compact).unwrap_or_else(|| "-".into())
             )
+            .into()
         } else {
-            String::new()
+            SharedString::from("")
         };
-        let stats_right: SharedString = stats_right.into();
 
         let cwd_text: SharedString = self.cwd.to_string_lossy().to_string().into();
-        let branch_label: SharedString = if self.branch.is_empty() {
+        let branch: SharedString = if self.branch.is_empty() {
             "no git".into()
         } else {
             self.branch.clone().into()
         };
 
+        // ---- sidebar ----------------------------------------------------
+        let sessions_entity = entity.clone();
+        let weak_for_sessions = weak.clone();
         let files_entity = entity.clone();
+        let weak_for_files = weak.clone();
         let sidebar = div()
             .w(px(260.))
             .h_full()
@@ -1419,7 +1324,7 @@ impl Render for Chat {
             .bg(rgb(t.bg))
             .border_r_1()
             .border_color(rgb(t.border))
-            // header: brand + new + search
+            // brand + new + search
             .child(
                 div()
                     .flex()
@@ -1441,38 +1346,45 @@ impl Render for Chat {
                             .child(
                                 div()
                                     .id("new-session")
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
                                     .px_2()
                                     .py_1()
-                                    .rounded_md()
+                                    .rounded(px(7.))
                                     .border_1()
                                     .border_color(rgb(t.border))
-                                    .bg(rgb(t.assistant_bg))
+                                    .bg(rgb(t.bg_hover))
                                     .text_xs()
                                     .text_color(rgb(t.text))
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                                    .hover(|s| s.bg(rgb(t.bg_selected)))
                                     .on_mouse_down(MouseButton::Left, {
                                         let weak = weak_for_sessions.clone();
                                         move |_, _, cx| {
-                                            let _ = weak.update(cx, |c, cx| c.new_session(cx));
+                                            let _ =
+                                                weak.update(cx, |c, cx| c.new_session(cx));
                                         }
                                     })
-                                    .child("+ 新建"),
+                                    .child(icon("plus", 12., t.text))
+                                    .child(SharedString::from("新建")),
                             )
                             .child(
                                 div()
                                     .id("search")
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
+                                    .w(px(30.))
+                                    .h(px(26.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(7.))
                                     .border_1()
                                     .border_color(rgb(t.border))
-                                    .bg(rgb(t.assistant_bg))
-                                    .text_xs()
-                                    .text_color(rgb(t.text))
+                                    .bg(rgb(t.bg_hover))
+                                    .text_color(rgb(t.text_muted))
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(t.bg_hover)))
-                                    .child(icon("search", 12., t.text)),
+                                    .hover(|s| s.bg(rgb(t.bg_selected)))
+                                    .child(icon("search", 12., t.text_muted)),
                             ),
                     ),
             )
@@ -1481,9 +1393,9 @@ impl Render for Chat {
                 div()
                     .mx_3()
                     .mb_1p5()
-                    .px_2()
+                    .px_2p5()
                     .py_1p5()
-                    .rounded_md()
+                    .rounded(px(7.))
                     .border_1()
                     .border_color(rgb(t.border))
                     .bg(rgb(t.assistant_bg))
@@ -1496,33 +1408,32 @@ impl Render for Chat {
                 div()
                     .mx_3()
                     .mb_2()
-                    .px_2()
+                    .px_2p5()
                     .py_1p5()
-                    .rounded_md()
+                    .rounded(px(7.))
                     .border_1()
                     .border_color(rgb(t.border))
                     .bg(rgb(t.assistant_bg))
                     .flex()
+                    .items_center()
                     .justify_between()
                     .text_xs()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_1()
+                            .gap_1p5()
+                            .text_color(rgb(t.text))
                             .child(icon("git-branch", 12., t.text))
-                            .child(
-                                div()
-                                    .text_color(rgb(t.text))
-                                    .child(branch_label),
-                            ),
+                            .child(branch),
                     )
                     .child(
                         div()
                             .flex()
+                            .items_center()
                             .gap_1()
                             .text_color(rgb(t.text_muted))
-                            .child("主分支")
+                            .child(SharedString::from("主分支"))
                             .child(icon("chevron-down", 10., t.text_muted)),
                     ),
             )
@@ -1533,8 +1444,10 @@ impl Render for Chat {
                     let Some(info) = chat.sessions.get(ix) else {
                         return div().into_any_element();
                     };
-                    let is_active =
-                        chat.active_session_file.as_deref() == Some(info.path.as_path());
+                    let is_active = chat
+                        .active_session_file
+                        .as_deref()
+                        == Some(info.path.as_path());
                     let path = info.path.clone();
                     let preview: SharedString = if info.preview.is_empty() {
                         "(empty)".into()
@@ -1542,13 +1455,14 @@ impl Render for Chat {
                         info.preview.clone().into()
                     };
                     let meta: SharedString = format!(
-                        "{} · {} 条消息",
+                        "{} {} 条消息",
                         time_ago(info.modified),
                         info.message_count
                     )
                     .into();
                     let weak = weak_for_sessions.clone();
                     let weak_del = weak_for_sessions.clone();
+                    let weak_ren = weak_for_sessions.clone();
                     let p_del = info.path.clone();
                     div()
                         .w_full()
@@ -1565,7 +1479,8 @@ impl Render for Chat {
                                 .id(SharedString::from(format!("sess-{ix}")))
                                 .flex_1()
                                 .min_w_0()
-                                .px_3()
+                                .pl_3p5()
+                                .pr_2()
                                 .py_2()
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -1579,17 +1494,46 @@ impl Render for Chat {
                                 .child(
                                     div()
                                         .text_xs()
+                                        .font_weight(if is_active {
+                                            gpui::FontWeight::MEDIUM
+                                        } else {
+                                            gpui::FontWeight::NORMAL
+                                        })
                                         .text_color(rgb(t.text))
                                         .child(preview),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(t.text_muted))
+                                        .text_color(rgb(t.text_dim))
                                         .child(meta),
                                 ),
                         )
-                        .child(
+                        .child(if is_active {
+                            div()
+                                .id(SharedString::from(format!("ren-{ix}")))
+                                .w(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .text_color(rgb(t.accent))
+                                .hover(|s| s.text_color(rgb(t.text)))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = weak_ren.update(cx, |c, cx| {
+                                        c.dialog = Some(Dialog::RenameSession {
+                                            value: c
+                                                .state
+                                                .as_ref()
+                                                .and_then(|s| s.session_name.clone())
+                                                .unwrap_or_default(),
+                                        });
+                                        cx.notify();
+                                    });
+                                })
+                                .child(icon("pencil", 11., t.accent))
+                                .into_any_element()
+                        } else {
                             div()
                                 .id(SharedString::from(format!("del-{ix}")))
                                 .w(px(24.))
@@ -1597,22 +1541,17 @@ impl Render for Chat {
                                 .items_center()
                                 .justify_center()
                                 .cursor_pointer()
-                                .text_xs()
-                                .text_color(rgb(t.text_muted))
+                                .text_color(rgb(t.text_dim))
                                 .hover(|s| s.text_color(rgb(0xd9534f)))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let p = p_del.clone();
-                                    let _ = weak_del.update(cx, |c, cx| c.delete_session(p, cx));
+                                    let _ = weak_del.update(cx, |c, cx| {
+                                        c.delete_session(p, cx);
+                                    });
                                 })
-                                .child(if is_active {
-                                    div()
-                                        .text_color(rgb(t.accent))
-                                        .child("\u{25cf}")
-                                        .into_any_element()
-                                } else {
-                                    icon("x", 12., t.text_muted)
-                                }),
-                        )
+                                .child(icon("x", 12., t.text_dim))
+                                .into_any_element()
+                        })
                         .into_any_element()
                 })
                 .flex_1()
@@ -1632,23 +1571,19 @@ impl Render for Chat {
                             .py_2()
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .child(icon("chevron-down", 10., t.text))
-                                            .child(SharedString::from("文件浏览器")),
-                                    ),
+                                    .child(icon("chevron-down", 10., t.text))
+                                    .child(SharedString::from("文件浏览器")),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .gap_2()
-                                    .text_xs()
                                     .text_color(rgb(t.text_muted))
                                     .child(icon("monitor", 12., t.text_muted))
                                     .child(icon("search", 12., t.text_muted))
@@ -1666,46 +1601,33 @@ impl Render for Chat {
                             .children(
                                 top_level_entries(&self.cwd)
                                     .into_iter()
-                                    .filter_map(|(is_dir, name)| {
+                                    .map(|(is_dir, name)| {
                                         if is_dir {
-                                            return Some(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(icon("chevron-right", 10., t.text_dim))
-                                                    .child(icon("folder", 10., t.text_dim))
-                                                    .child(SharedString::from(name))
-                                                    .into_any_element(),
-                                            );
-                                        }
-                                        let path = self.cwd.join(&name);
-                                        let weak_f = weak_for_files.clone();
-                                        Some(
                                             div()
-                                                .id(SharedString::from(format!("file-{name}")))
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
                                                 .text_xs()
                                                 .text_color(rgb(t.text_muted))
-                                                .cursor_pointer()
-                                                .hover(|s| {
-                                                    s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
-                                                })
-                                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                                    let p = path.clone();
-                                                    let _ = weak_f.update(cx, |c, cx| {
-                                                        c.open_file_preview(p, cx)
-                                                    });
-                                                })
-                                                .child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .gap_1()
-                                                        .child(icon("file", 10., t.text_dim))
-                                                        .child(SharedString::from(name)),
-                                                )
-                                                .into_any_element(),
-                                        )
+                                                .child(icon(
+                                                    "chevron-right",
+                                                    10.,
+                                                    t.text_dim,
+                                                ))
+                                                .child(icon("folder", 10., t.text_dim))
+                                                .child(SharedString::from(name))
+                                                .into_any_element()
+                                        } else {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
+                                                .text_xs()
+                                                .text_color(rgb(t.text_muted))
+                                                .child(icon("file", 10., t.text_dim))
+                                                .child(SharedString::from(name))
+                                                .into_any_element()
+                                        }
                                     }),
                             ),
                     ),
@@ -1719,58 +1641,53 @@ impl Render for Chat {
                     .child(
                         div()
                             .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap_1p5()
                             .py_2()
                             .text_xs()
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1p5()
-                                    .child(icon("settings", 12., t.text_muted))
-                                    .child(SharedString::from("模型")),
-                            ),
+                            .child(icon("settings", 12., t.text_muted))
+                            .child(SharedString::from("模型")),
                     )
                     .child(
                         div()
                             .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap_1p5()
                             .py_2()
                             .text_xs()
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1p5()
-                                    .child(icon("layers", 12., t.text_muted))
-                                    .child(SharedString::from("技能")),
-                            ),
+                            .child(icon("layers", 12., t.text_muted))
+                            .child(SharedString::from("技能")),
                     )
                     .child(
                         div()
                             .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap_1p5()
                             .py_2()
                             .text_xs()
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1p5()
-                                    .child(icon("settings", 12., t.text_muted))
-                                    .child(SharedString::from("设置")),
-                            ),
+                            .child(icon("settings", 12., t.text_muted))
+                            .child(SharedString::from("设置")),
                     ),
             );
 
         // ---- main column -------------------------------------------------
         let chat_entity = entity.clone();
+        let weak_for_msg = weak.clone();
         let main_col = div()
             .flex_1()
             .min_w_0()
@@ -1791,57 +1708,14 @@ impl Render for Chat {
                     .border_b_1()
                     .border_color(rgb(t.border))
                     .child(pill("tb-sidebar", "panel-left", SharedString::from("")))
-                    .child(pill("tb-history", "history", SharedString::from("完整历史")))
-                    .child(
-                        div()
-                            .id("tb-title")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| this.auto_title(cx),
-                            ))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(icon("pencil", 12., t.text_muted))
-                                            .child(SharedString::from("生成标题")),
-                                    ),
-                    )
+                    .child(pill(
+                        "tb-history",
+                        "history",
+                        SharedString::from("完整历史"),
+                    ))
+                    .child(pill("tb-title", "pencil", SharedString::from("生成标题")))
                     .child(pill("tb-system", "file-text", SharedString::from("系统")))
                     .child(pill("tb-tools", "wrench", SharedString::from("工具")))
-                    .child(
-                        div()
-                            .id("tb-export")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| this.export_html(cx),
-                            ))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(icon("download", 12., t.text_muted))
-                                            .child(SharedString::from("导出")),
-                                    ),
-                    )
                     .child(
                         div()
                             .flex_1()
@@ -1851,7 +1725,7 @@ impl Render for Chat {
                             .child(stats_right),
                     ),
             )
-            // message list
+            // message list (820px centered column, ChatWindow parity)
             .child(
                 list(self.list.clone(), move |ix, _window, cx| {
                     let chat = chat_entity.read(cx);
@@ -1859,8 +1733,21 @@ impl Render for Chat {
                     match chat.messages.get(ix) {
                         Some(m) => div()
                             .w_full()
-                            .px_4()
-                            .child(render_msg(m, ix, &weak, &chat.collapsed, t))
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(820.))
+                                    .child(render_msg(
+                                        m,
+                                        ix,
+                                        &weak,
+                                        &chat.collapsed,
+                                        t,
+                                        &chat.model_label_text(),
+                                    )),
+                            )
                             .into_any_element(),
                         None => div().w_full().into_any_element(),
                     }
@@ -1869,122 +1756,194 @@ impl Render for Chat {
                 .min_h_0()
                 .py_2(),
             )
-            // input box + toolbar
+            // input area
             .child(
                 div()
                     .px_4()
                     .pb_2()
-                    .children(menu_el)
-                    .children(image_chips)
+                    .children(if self.pending_images.is_empty() {
+                        None
+                    } else {
+                        let rows: Vec<gpui::AnyElement> = self
+                            .pending_images
+                            .iter()
+                            .enumerate()
+                            .map(|(i, img)| {
+                                let weak_i = weak_for_dialog.clone();
+                                let name: SharedString = img.name.clone().into();
+                                div()
+                                    .id(SharedString::from(format!("img-{i}")))
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(rgb(t.bg_panel))
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .text_xs()
+                                    .text_color(rgb(t.text_muted))
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                        let _ = weak_i.update(cx, |c, cx| {
+                                            if i < c.pending_images.len() {
+                                                c.pending_images.remove(i);
+                                            }
+                                            cx.notify();
+                                        });
+                                    })
+                                    .child(SharedString::from(format!(
+                                        "\u{1f5bc} {name} \u{00d7}"
+                                    )))
+                                    .into_any_element()
+                            })
+                            .collect();
+                        Some(
+                            div()
+                                .w_full()
+                                .mb_1p5()
+                                .flex()
+                                .gap_2()
+                                .children(rows)
+                                .into_any_element(),
+                        )
+                    })
                     .child(
                         div()
                             .w_full()
-                            .rounded(px(12.))
+                            .rounded(px(14.))
                             .border_1()
                             .border_color(rgb(t.border))
-                            .bg(rgb(t.assistant_bg))
-                            .px_4()
-                            .py_3()
+                            .bg(rgb(t.bg))
+                            .pl_3p5()
+                            .pr_2p5()
+                            .py_2p5()
                             .flex()
                             .items_center()
-                            .gap_3()
+                            .gap_2()
                             .child(
                                 div()
                                     .id("input")
                                     .track_focus(&self.focus)
                                     .flex_1()
                                     .min_w_0()
-                                    .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
-                                        let key = ev.keystroke.key.as_str();
-                                        let shift = ev.keystroke.modifiers.shift;
-                                        let menu_open = this.active_menu().is_some();
-                                        let items = this.menu_items();
-                                        match key {
-                                            "enter" if shift => {
-                                                this.input.push('\n');
-                                                cx.notify();
-                                            }
-                                            "enter" if menu_open && !items.is_empty() => {
-                                                let ix = this.menu_ix.min(items.len() - 1);
-                                                let insert = items[ix].insert.clone();
-                                                this.accept_menu(insert, cx);
-                                            }
-                                            "enter" => this.send_input(cx),
-                                            "escape" if menu_open => {
-                                                this.menu_ix = 0;
-                                                // close the menu by terminating the query
-                                                if this.active_menu() == Some(MenuKind::At) {
-                                                    if let Some(at) = this.input.rfind('@') {
-                                                        let q = this.input[at + 1..].to_string();
-                                                        this.input =
-                                                            format!("{}{} ", &this.input[..at], q);
-                                                    }
-                                                } else if !this.input.is_empty() {
-                                                    this.input = format!("{} ", this.input);
-                                                }
-                                                cx.notify();
-                                            }
-                                            "escape" => this.abort(cx),
-                                            "tab" if menu_open && !items.is_empty() => {
-                                                let ix = this.menu_ix.min(items.len() - 1);
-                                                let insert = items[ix].insert.clone();
-                                                this.accept_menu(insert, cx);
-                                            }
-                                            "up" if menu_open && !items.is_empty() => {
-                                                this.menu_ix = this.menu_ix.saturating_sub(1);
-                                                cx.notify();
-                                            }
-                                            "down" if menu_open && !items.is_empty() => {
-                                                this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
-                                                cx.notify();
-                                            }
-                                            "up" if !this.history.is_empty() => {
-                                                let ix = match this.history_ix {
-                                                    None => this.history.len() - 1,
-                                                    Some(i) => i.saturating_sub(1),
-                                                };
-                                                this.history_ix = Some(ix);
-                                                this.input = this.history[ix].clone();
-                                                cx.notify();
-                                            }
-                                            "down" => {
-                                                if let Some(i) = this.history_ix {
-                                                    if i + 1 < this.history.len() {
-                                                        this.history_ix = Some(i + 1);
-                                                        this.input = this.history[i + 1].clone();
-                                                    } else {
-                                                        this.history_ix = None;
-                                                        this.input.clear();
-                                                    }
+                                    .on_key_down(cx.listener(
+                                        |this, ev: &KeyDownEvent, _w, cx| {
+                                            let key = ev.keystroke.key.as_str();
+                                            let shift = ev.keystroke.modifiers.shift;
+                                            let menu_open =
+                                                this.active_menu().is_some();
+                                            let items = this.menu_items();
+                                            match key {
+                                                "enter" if shift => {
+                                                    this.input.push('\n');
                                                     cx.notify();
                                                 }
-                                            }
-                                            "backspace" => {
-                                                if !ev.keystroke.modifiers.modified() {
-                                                    this.input.pop();
+                                                "enter"
+                                                    if menu_open && !items.is_empty() => {
+                                                    let ix = this
+                                                        .menu_ix
+                                                        .min(items.len() - 1);
+                                                    let insert =
+                                                        items[ix].insert.clone();
+                                                    this.accept_menu(insert, cx);
+                                                }
+                                                "enter" => this.send_input(cx),
+                                                "escape" if menu_open => {
                                                     this.menu_ix = 0;
+                                                    if this.active_menu()
+                                                        == Some(MenuKind::At)
+                                                    {
+                                                        if let Some(at) =
+                                                            this.input.rfind('@')
+                                                        {
+                                                            let q = this.input
+                                                                [at + 1..]
+                                                                .to_string();
+                                                            this.input = format!(
+                                                                "{}{} ",
+                                                                &this.input[..at],
+                                                                q
+                                                            );
+                                                        }
+                                                    } else if !this.input.is_empty() {
+                                                        this.input =
+                                                            format!("{} ", this.input);
+                                                    }
                                                     cx.notify();
                                                 }
-                                            }
-                                            "space" => {
-                                                this.input.push(' ');
-                                                this.menu_ix = 0;
-                                                cx.notify();
-                                            }
-                                            k => {
-                                                let printable = k.chars().count() == 1
-                                                    && !ev.keystroke.modifiers.control
-                                                    && !ev.keystroke.modifiers.alt;
-                                                if printable {
-                                                    if let Some(c) = k.chars().next() {
-                                                        this.input.push(c);
+                                                "escape" => this.abort(cx),
+                                                "tab" if menu_open && !items.is_empty() => {
+                                                    let ix = this
+                                                        .menu_ix
+                                                        .min(items.len() - 1);
+                                                    let insert =
+                                                        items[ix].insert.clone();
+                                                    this.accept_menu(insert, cx);
+                                                }
+                                                "up" if menu_open && !items.is_empty() => {
+                                                    this.menu_ix =
+                                                        this.menu_ix.saturating_sub(1);
+                                                    cx.notify();
+                                                }
+                                                "down"
+                                                    if menu_open && !items.is_empty() =>
+                                                {
+                                                    this.menu_ix = (this.menu_ix + 1)
+                                                        .min(items.len() - 1);
+                                                    cx.notify();
+                                                }
+                                                "up" if !this.history.is_empty() => {
+                                                    let ix = match this.history_ix {
+                                                        None => this.history.len() - 1,
+                                                        Some(i) => i.saturating_sub(1),
+                                                    };
+                                                    this.history_ix = Some(ix);
+                                                    this.input =
+                                                        this.history[ix].clone();
+                                                    cx.notify();
+                                                }
+                                                "down" => {
+                                                    if let Some(i) = this.history_ix {
+                                                        if i + 1 < this.history.len() {
+                                                            this.history_ix = Some(i + 1);
+                                                            this.input =
+                                                                this.history[i + 1]
+                                                                    .clone();
+                                                        } else {
+                                                            this.history_ix = None;
+                                                            this.input.clear();
+                                                        }
+                                                        cx.notify();
+                                                    }
+                                                }
+                                                "backspace" => {
+                                                    if !ev.keystroke.modifiers.modified()
+                                                    {
+                                                        this.input.pop();
                                                         this.menu_ix = 0;
                                                         cx.notify();
                                                     }
                                                 }
+                                                "space" => {
+                                                    this.input.push(' ');
+                                                    this.menu_ix = 0;
+                                                    cx.notify();
+                                                }
+                                                k => {
+                                                    let printable = k.chars().count() == 1
+                                                        && !ev.keystroke.modifiers.control
+                                                        && !ev.keystroke.modifiers.alt;
+                                                    if printable {
+                                                        if let Some(c) = k.chars().next()
+                                                        {
+                                                            this.input.push(c);
+                                                            this.menu_ix = 0;
+                                                            cx.notify();
+                                                        }
+                                                    }
+                                                }
                                             }
-                                        }
-                                    }))
+                                        },
+                                    ))
                                     .text_sm()
                                     .text_color(if input_empty {
                                         rgb(t.text_dim)
@@ -1996,19 +1955,35 @@ impl Render for Chat {
                             .child(
                                 div()
                                     .id("send")
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
                                     .px_3()
                                     .py_1p5()
                                     .rounded_lg()
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .bg(rgb(t.bg_panel))
+                                    .bg(if !input_empty
+                                        || !self.pending_images.is_empty()
+                                    {
+                                        rgb(t.accent)
+                                    } else {
+                                        rgb(t.bg_panel)
+                                    })
                                     .text_sm()
-                                    .text_color(rgb(t.text))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(if !input_empty
+                                        || !self.pending_images.is_empty()
+                                    {
+                                        rgb(t.accent_contrast)
+                                    } else {
+                                        rgb(t.text_dim)
+                                    })
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(t.bg_hover)))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _w, cx| {
-                                        this.send_input(cx);
-                                    }))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(
+                                        |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                            this.send_input(cx);
+                                        },
+                                    ))
                                     .child(
                                         div()
                                             .flex()
@@ -2036,27 +2011,9 @@ impl Render for Chat {
                                     .child(icon("image", 12., t.text_muted))
                                     .child(
                                         div()
-                                            .id("model-select")
                                             .flex()
                                             .items_center()
                                             .gap_1()
-                                            .cursor_pointer()
-                                            .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let weak = weak_for_dialog.clone();
-                                                move |_, _, cx| {
-                                                    let _ = weak.update(cx, |c, cx| {
-                                                        if c.available_models.is_empty() {
-                                                            c.refresh_state();
-                                                        }
-                                                        c.dialog =
-                                                            Some(Dialog::ModelSelect {
-                                                                filter: String::new(),
-                                                            });
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            })
                                             .child(icon("settings", 12., t.text_muted))
                                             .child(model_label),
                                     ),
@@ -2070,26 +2027,17 @@ impl Render for Chat {
                                     .text_color(rgb(t.text_muted))
                                     .child(
                                         div()
-                                            .id("thinking-cycle")
-                                            .cursor_pointer()
-                                            .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                                    this.cycle_thinking(cx);
-                                                },
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(icon(
+                                                "lightbulb",
+                                                12.,
+                                                t.text_muted,
                                             ))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(icon("lightbulb", 12., t.text_muted))
-                                                    .child(SharedString::from(
-                                                        thinking_label.clone(),
-                                                    )),
-                                            ),
+                                            .child(thinking_label),
                                     )
-                                    .child("configured")
+                                    .child(SharedString::from("configured"))
                                     .child(
                                         div()
                                             .flex()
@@ -2125,21 +2073,11 @@ impl Render for Chat {
             .font_family("Segoe UI")
             .child(sidebar)
             .child(main_col);
-        if let Some(overlay) = self.render_dialog(&weak_for_dialog, t) {
-            root = root.child(overlay);
-        }
-        root
-    }
-}
 
-impl Chat {
-    /// Modal overlay for the current dialog (rename session for now).
-    fn render_dialog(&mut self, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme) -> Option<gpui::AnyElement> {
+        // dialogs
         if let Some(Dialog::ModelSelect { filter }) = self.dialog.as_ref() {
             let flt = filter.to_lowercase();
-            let mut rows: Vec<gpui::AnyElement> = Vec::new();
-            let mut shown = 0usize;
-            for m in self
+            let rows: Vec<gpui::AnyElement> = self
                 .available_models
                 .iter()
                 .filter(|m| {
@@ -2148,22 +2086,18 @@ impl Chat {
                         || m.name.to_lowercase().contains(&flt)
                         || m.provider.to_lowercase().contains(&flt)
                 })
-                .take(40)
-            {
-                if shown >= 12 {
-                    break;
-                }
-                shown += 1;
-                let provider = m.provider.clone();
-                let id = m.id.clone();
-                let weak_row = weak.clone();
-                let label: SharedString = format!("{} / {}", m.provider, m.label()).into();
-                let ctx: SharedString = m
-                    .context_window
-                    .map(|c| format!("{}k", c / 1000))
-                    .unwrap_or_default()
-                    .into();
-                rows.push(
+                .take(12)
+                .map(|m| {
+                    let provider = m.provider.clone();
+                    let id = m.id.clone();
+                    let weak_row = weak_for_dialog.clone();
+                    let label: SharedString =
+                        format!("{} / {}", m.provider, m.label()).into();
+                    let ctx: SharedString = m
+                        .context_window
+                        .map(|c| format!("{}k", c / 1000))
+                        .unwrap_or_default()
+                        .into();
                     div()
                         .id(SharedString::from(format!("model-{provider}-{id}")))
                         .w_full()
@@ -2178,14 +2112,11 @@ impl Chat {
                         })
                         .flex()
                         .justify_between()
-                        .child(
-                            div().text_xs().text_color(rgb(t.text)).child(label),
-                        )
-                        .child(
-                            div().text_xs().text_color(rgb(t.text_dim)).child(ctx),
-                        )
-                        .into_any_element());
-            }
+                        .child(div().text_xs().text_color(rgb(t.text)).child(label))
+                        .child(div().text_xs().text_color(rgb(t.text_dim)).child(ctx))
+                        .into_any_element()
+                })
+                .collect();
             let list_panel = if rows.is_empty() {
                 div()
                     .py_2()
@@ -2196,15 +2127,8 @@ impl Chat {
             } else {
                 div().flex().flex_col().gap_0p5().children(rows).into_any_element()
             };
-            let weak_close = weak.clone();
-            let weak_f = weak.clone();
-            let filter_view: SharedString = if filter.is_empty() {
-                "filter models...".into()
-            } else {
-                filter.clone().into()
-            };
-            let filter_empty = filter.is_empty();
-            return Some(
+            let weak_close = weak_for_dialog.clone();
+            root = root.child(
                 div()
                     .absolute()
                     .inset_0()
@@ -2244,53 +2168,20 @@ impl Chat {
                                             .cursor_pointer()
                                             .text_color(rgb(t.text_muted))
                                             .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                                let _ = weak_close.update(cx, |c, cx| {
-                                                    c.dialog = None;
-                                                    cx.notify();
-                                                });
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
                                             })
                                             .child(icon("x", 12., t.text_muted)),
                                     ),
                             )
                             .child(
                                 div()
-                                    .id("model-filter")
-                                    .track_focus(&self.dialog_focus)
-                                    .on_key_down({
-                                        let weak = weak_f.clone();
-                                        move |ev: &KeyDownEvent, _w, cx| {
-                                            let key = ev.keystroke.key.as_str();
-                                            let _ = weak.update(cx, |this, cx| {
-                                                if let Some(Dialog::ModelSelect { filter }) =
-                                                    &mut this.dialog
-                                                {
-                                                    match key {
-                                                        "escape" => {
-                                                            this.dialog = None;
-                                                            cx.notify();
-                                                        }
-                                                        "backspace" => {
-                                                            filter.pop();
-                                                            cx.notify();
-                                                        }
-                                                        "space" => {
-                                                            filter.push(' ');
-                                                            cx.notify();
-                                                        }
-                                                        k => {
-                                                            if k.chars().count() == 1 {
-                                                                if let Some(c) = k.chars().next() {
-                                                                    filter.push(c);
-                                                                    cx.notify();
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    })
                                     .px_2()
                                     .py_1p5()
                                     .rounded_md()
@@ -2298,21 +2189,15 @@ impl Chat {
                                     .border_color(rgb(t.border))
                                     .bg(rgb(t.bg))
                                     .text_xs()
-                                    .text_color(if filter_empty {
-                                        rgb(t.text_dim)
-                                    } else {
-                                        rgb(t.text)
-                                    })
-                                    .child(filter_view),
+                                    .text_color(rgb(t.text_dim))
+                                    .child(SharedString::from("filter models...")),
                             )
                             .child(list_panel),
-                    )
-                    .into_any_element(),
+                    ),
             );
         }
         if let Some(Dialog::FilePreview { path, content }) = self.dialog.as_ref() {
             let path_text: SharedString = path.to_string_lossy().to_string().into();
-            // cap rendered text to keep paint cheap
             let mut body = content.clone();
             if body.chars().count() > 20000 {
                 let mut cut = 20000;
@@ -2320,13 +2205,10 @@ impl Chat {
                     cut -= 1;
                 }
                 body.truncate(cut);
-                body.push('\n');
-                body.push('\n');
-                body.push('\u{2026}');
-                body.push_str(" (truncated)");
+                body.push_str("\n\n\u{2026} (truncated)");
             }
-            let weak_close = weak.clone();
-            return Some(
+            let weak_close = weak_for_dialog.clone();
+            root = root.child(
                 div()
                     .absolute()
                     .inset_0()
@@ -2366,11 +2248,14 @@ impl Chat {
                                             .cursor_pointer()
                                             .text_color(rgb(t.text_muted))
                                             .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                                let _ = weak_close.update(cx, |c, cx| {
-                                                    c.dialog = None;
-                                                    cx.notify();
-                                                });
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_for_dialog.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
                                             })
                                             .child(icon("x", 12., t.text_muted)),
                                     ),
@@ -2382,148 +2267,155 @@ impl Chat {
                                     .text_color(rgb(t.text))
                                     .child(SharedString::from(body)),
                             ),
-                    )
-                    .into_any_element(),
-            );
-        }
-        let Some(Dialog::RenameSession { value }) = self.dialog.as_ref() else {
-            return None;
-        };
-        let value: SharedString = if value.is_empty() {
-            "session name".into()
-        } else {
-            value.clone().into()
-        };
-        let value_empty = value == "session name";
-        let weak_input = weak.clone();
-        let weak_ok = weak.clone();
-        let weak_cancel = weak.clone();
-
-        let input = div()
-            .id("dialog-input")
-            .track_focus(&self.dialog_focus)
-            .on_key_down({
-                let weak = weak_input.clone();
-                move |ev: &KeyDownEvent, _w, cx| {
-                    let key = ev.keystroke.key.as_str();
-                    let _ = weak.update(cx, |this, cx| {
-                        match key {
-                            "enter" => this.confirm_rename(cx),
-                            "escape" => {
-                                this.dialog = None;
-                                cx.notify();
-                            }
-                            "backspace" => {
-                                if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
-                                    value.pop();
-                                    cx.notify();
-                                }
-                            }
-                            "space" => {
-                                if let Some(Dialog::RenameSession { value }) = &mut this.dialog {
-                                    value.push(' ');
-                                    cx.notify();
-                                }
-                            }
-                            k => {
-                                let printable =
-                                    k.chars().count() == 1 && !ev.keystroke.modifiers.modified();
-                                if printable {
-                                    if let (Some(c), Some(Dialog::RenameSession { value })) =
-                                        (k.chars().next(), &mut this.dialog)
-                                    {
-                                        value.push(c);
-                                        cx.notify();
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-            })
-            .flex_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(rgb(t.bg))
-            .border_1()
-            .border_color(rgb(t.border))
-            .text_color(if value_empty { rgb(t.text_dim) } else { rgb(t.text) })
-            .child(value);
-
-        let panel = div()
-            .w(px(420.))
-            .bg(rgb(t.bg_panel))
-            .border_1()
-            .border_color(rgb(t.border))
-            .rounded_lg()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .shadow_lg()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text))
-                    .child("重命名会话"),
-            )
-            .child(input)
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("dialog-cancel")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .bg(rgb(t.assistant_bg))
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_cancel.update(cx, |c, cx| {
-                                    c.dialog = None;
-                                    cx.notify();
-                                });
-                            })
-                            .child("取消"),
-                    )
-                    .child(
-                        div()
-                            .id("dialog-ok")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .bg(rgb(t.accent))
-                            .text_xs()
-                            .text_color(rgb(t.accent_contrast))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_ok.update(cx, |c, cx| c.confirm_rename(cx));
-                            })
-                            .child("保存"),
                     ),
             );
-
-        Some(
-            div()
-                .absolute()
-                .inset_0()
-                .bg(gpui::hsla(0., 0., 0., 0.35))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(panel)
-                .into_any_element(),
-        )
+        }
+        if let Some(Dialog::RenameSession { value }) = self.dialog.as_ref() {
+            let value_view: SharedString = if value.is_empty() {
+                "session name".into()
+            } else {
+                value.clone().into()
+            };
+            let value_empty = value.is_empty();
+            let weak_ok = weak_for_dialog.clone();
+            let weak_cancel = weak_for_dialog.clone();
+            root = root.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(gpui::hsla(0., 0., 0., 0.35))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(420.))
+                            .bg(rgb(t.bg_panel))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .rounded_lg()
+                            .p_4()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .shadow_lg()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(t.text))
+                                    .child("重命名会话"),
+                            )
+                            .child(
+                                div()
+                                    .id("dialog-input")
+                                    .track_focus(&self.dialog_focus)
+                                    .on_key_down({
+                                        let weak = weak_for_dialog.clone();
+                                        move |ev: &KeyDownEvent, _w, cx| {
+                                            let key = ev.keystroke.key.as_str();
+                                            let _ = weak.update(cx, |this, cx| {
+                                                if let Some(Dialog::RenameSession {
+                                                    value,
+                                                }) = &mut this.dialog
+                                                {
+                                                    match key {
+                                                        "enter" => this.confirm_rename(cx),
+                                                        "escape" => {
+                                                            this.dialog = None;
+                                                            cx.notify();
+                                                        }
+                                                        "backspace" => {
+                                                            value.pop();
+                                                            cx.notify();
+                                                        }
+                                                        "space" => {
+                                                            value.push(' ');
+                                                            cx.notify();
+                                                        }
+                                                        k => {
+                                                            if k.chars().count() == 1 {
+                                                                if let Some(c) =
+                                                                    k.chars().next()
+                                                                {
+                                                                    value.push(c);
+                                                                    cx.notify();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    })
+                                    .px_2()
+                                    .py_1p5()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.bg))
+                                    .text_sm()
+                                    .text_color(if value_empty {
+                                        rgb(t.text_dim)
+                                    } else {
+                                        rgb(t.text)
+                                    })
+                                    .child(value_view),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_end()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("dialog-cancel")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(rgb(t.border))
+                                            .bg(rgb(t.assistant_bg))
+                                            .text_xs()
+                                            .text_color(rgb(t.text_muted))
+                                            .cursor_pointer()
+                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_cancel.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.dialog = None;
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                            .child("取消"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("dialog-ok")
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_md()
+                                            .bg(rgb(t.accent))
+                                            .text_xs()
+                                            .text_color(rgb(t.accent_contrast))
+                                            .cursor_pointer()
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let weak = weak_ok.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak.update(cx, |c, cx| {
+                                                        c.confirm_rename(cx)
+                                                    });
+                                                }
+                                            })
+                                            .child("保存"),
+                                    ),
+                            ),
+                    ),
+            );
+        }
+        root
     }
 }
 
@@ -2531,19 +2423,19 @@ fn main() {
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
-        let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("pi-flash".into()),
+            let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("pi-flash".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |_, cx| cx.new(Chat::new),
-        )
-        .unwrap();
-        cx.activate(true);
-    });
+                },
+                |_, cx| cx.new(Chat::new),
+            )
+            .unwrap();
+            cx.activate(true);
+        });
 }
