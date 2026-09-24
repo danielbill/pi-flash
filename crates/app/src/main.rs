@@ -61,6 +61,28 @@ impl Msg {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AttachedImage {
+    name: String,
+    data_b64: String,
+    mime: String,
+}
+
+fn mime_from_ext(path: &Path) -> String {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png".to_string(),
+        Some("jpg") | Some("jpeg") => "image/jpeg".to_string(),
+        Some("gif") => "image/gif".to_string(),
+        Some("webp") => "image/webp".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Dialog {
     RenameSession { value: String },
@@ -90,6 +112,7 @@ struct Chat {
     available_models: Vec<pi_link::protocol::ModelInfo>,
     /// project files (relative paths) for the @ lookup menu
     project_files: Vec<String>,
+    pending_images: Vec<AttachedImage>,
     /// sent-prompt history (pi-web chat input parity)
     history: Vec<String>,
     history_ix: Option<usize>,
@@ -185,6 +208,7 @@ impl Chat {
             commands: Vec::new(),
             available_models: Vec::new(),
             project_files: Vec::new(),
+            pending_images: Vec::new(),
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
@@ -372,10 +396,21 @@ impl Chat {
         };
         // pi-web parity: while streaming, typed text steers the running agent
         let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
+        let images: Vec<serde_json::Value> = self
+            .pending_images
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "type": "image",
+                    "data": img.data_b64,
+                    "mimeType": img.mime
+                })
+            })
+            .collect();
         let cmd = if streaming {
-            Command::Steer { message: text.clone() }
+            Command::Steer { message: text.clone(), images: images.clone() }
         } else {
-            Command::Prompt { message: text.clone() }
+            Command::Prompt { message: text.clone(), images }
         };
         match session.send(&cmd) {
             Ok(_) => {
@@ -384,6 +419,7 @@ impl Chat {
                 }
                 self.history_ix = None;
                 self.input.clear();
+                self.pending_images.clear();
                 self.status = if streaming { "steering" } else { "running" }.into();
             }
             Err(e) => self.status = e,
@@ -397,6 +433,39 @@ impl Chat {
             self.status = "aborting".into();
             cx.notify();
         }
+    }
+
+    fn attach_images(&mut self, cx: &mut Context<Self>) {
+        let opts = gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        };
+        let rx = cx.prompt_for_paths(opts);
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
+            let Some(paths) = picked else {
+                return;
+            };
+            let _ = this.update(cx, |chat, cx| {
+                for path in paths {
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    use base64::Engine as _;
+                    let data_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "image".into());
+                    let mime = mime_from_ext(&path);
+                    chat.pending_images.push(AttachedImage { name, data_b64, mime });
+                }
+                if !chat.pending_images.is_empty() {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Heuristic session title (first user message, trimmed). LLM-based
@@ -705,6 +774,9 @@ impl Chat {
                         Block::Thinking { content_index, text: String::new() },
                     ) {
                         *text = content;
+                        // pi-web parity: collapse thinking once it completes
+                        let msg_ix = self.messages.len().saturating_sub(1);
+                        self.collapsed.insert((msg_ix, content_index));
                     }
                 }
                 AssistantEvent::ToolCallStart { content_index, id, tool_name } => {
@@ -1188,6 +1260,53 @@ impl Render for Chat {
         let menu_now = self.menu_items();
         let menu_open = self.active_menu().is_some() && !menu_now.is_empty();
         let menu_sel = self.menu_ix.min(menu_now.len().saturating_sub(1));
+        let image_chips: Option<gpui::AnyElement> = if self.pending_images.is_empty()
+        {
+            None
+        } else {
+            let rows: Vec<gpui::AnyElement> = self
+                .pending_images
+                .iter()
+                .enumerate()
+                .map(|(i, img)| {
+                    let weak_i = weak_menu.clone();
+                    let name: SharedString = img.name.clone().into();
+                    div()
+                        .id(SharedString::from(format!("img-{i}")))
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(rgb(t.bg_panel))
+                        .border_1()
+                        .border_color(rgb(t.border))
+                        .text_xs()
+                        .text_color(rgb(t.text_muted))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(rgb(0xd9534f)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_i.update(cx, |c, cx| {
+                                if i < c.pending_images.len() {
+                                    c.pending_images.remove(i);
+                                }
+                                cx.notify();
+                            });
+                        })
+                        .child(SharedString::from(format!(
+                            "\u{1f5bc} {name} \u{00d7}"
+                        )))
+                        .into_any_element()
+                })
+                .collect();
+            Some(
+                div()
+                    .w_full()
+                    .mb_1p5()
+                    .flex()
+                    .gap_2()
+                    .children(rows)
+                    .into_any_element(),
+            )
+        };
         let menu_el: Option<gpui::AnyElement> = if menu_open {
             let rows: Vec<gpui::AnyElement> = menu_now
                 .iter()
@@ -1674,6 +1793,7 @@ impl Render for Chat {
                     .px_4()
                     .pb_2()
                     .children(menu_el)
+                    .children(image_chips)
                     .child(
                         div()
                             .w_full()

@@ -9,10 +9,17 @@ use serde_json::{Value, json};
 /// One pi RPC record kind we send. Correlated via `id` where a response is expected.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Prompt { message: String },
+    Prompt {
+        message: String,
+        /// image contents: [{"type":"image","data":<b64>,"mimeType":...}]
+        images: Vec<Value>,
+    },
     /// Queued while the agent is running; delivered after the current
     /// assistant turn finishes its tool calls (rpc-commands.md 「steer」).
-    Steer { message: String },
+    Steer {
+        message: String,
+        images: Vec<Value>,
+    },
     FollowUp { message: String },
     Abort,
     GetState,
@@ -48,9 +55,21 @@ impl Command {
     /// Serialize to a single JSONL record (no trailing newline).
     pub fn to_record(&self, id: &str) -> Value {
         let mut v = match self {
-            Command::Prompt { message }
-            | Command::Steer { message }
-            | Command::FollowUp { message } => {
+            Command::Prompt { message, images } => {
+                let mut v = json!({ "type": self.kind(), "message": message });
+                if !images.is_empty() {
+                    v["images"] = json!(images);
+                }
+                v
+            }
+            Command::Steer { message, images } => {
+                let mut v = json!({ "type": self.kind(), "message": message });
+                if !images.is_empty() {
+                    v["images"] = json!(images);
+                }
+                v
+            }
+            Command::FollowUp { message } => {
                 json!({ "type": self.kind(), "message": message })
             }
             Command::Abort
@@ -452,7 +471,7 @@ mod tests {
 
     #[test]
     fn prompt_record_shape() {
-        let c = Command::Prompt { message: "hi".into() };
+        let c = Command::Prompt { message: "hi".into(), images: vec![] };
         assert_eq!(
             c.to_record("req-1"),
             json!({"id":"req-1","type":"prompt","message":"hi"})
@@ -644,8 +663,20 @@ mod tests {
 
     #[test]
     fn steer_record_shape() {
-        let c = Command::Steer { message: "stop".into() };
+        let c = Command::Steer { message: "stop".into(), images: vec![] };
         assert_eq!(c.to_record("s1"), json!({"id":"s1","type":"steer","message":"stop"}));
+    }
+
+    #[test]
+    fn prompt_with_images_omits_empty_and_includes_present() {
+        let c = Command::Prompt { message: "hi".into(), images: vec![] };
+        assert_eq!(c.to_record("a"), json!({"id":"a","type":"prompt","message":"hi"}));
+        let img = json!({"type":"image","data":"QUJD","mimeType":"image/png"});
+        let c = Command::Prompt { message: "hi".into(), images: vec![img.clone()] };
+        assert_eq!(
+            c.to_record("b"),
+            json!({"id":"b","type":"prompt","message":"hi","images":[img]})
+        );
     }
 
     #[test]
