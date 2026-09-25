@@ -204,7 +204,14 @@
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）
 
+## 状态（2026-09-25）
+
+**PORT_PLAN M1-M6 全部交付**：9 个 beads 任务按里程碑顺序完成并关闭
+（M3 终端 → M4 配置面×2 → M5 扩展UI+子代理 → M6 CI/主题/i18n + 标题），
+`bd list` = No issues found；测试 68 全绿（app 30 + pi-link 38）。
+各任务实现要点与偏差记录见上方迭代纪要。
+
 ## 待办
 
-已迁移至 beads 任务跟踪（`bd list` / `bd ready` 查看剩余工作；完成后 `bd close <id>`）。
+beads 任务跟踪已清空。后续工作 → 新建 beads（`bd create`）。
 计划全量见 PORT_PLAN.md。
