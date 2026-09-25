@@ -1117,10 +1117,10 @@ impl Chat {
         if let Some(session) = &self.session {
             let _ = session.send(&Command::SetSessionName { name });
         }
+        // sidebar label comes from the session file's `session_info` entry;
+        // reload it when pi confirms the write (set_session_name response —
+        // an immediate re-read here would race the file flush)
         self.refresh_state();
-        // the sidebar label comes from the session file's name entry —
-        // reload it (pi-web onRenamed → loadSessions parity)
-        self.refresh_sessions();
         self.renaming = None;
         self.rename_input = None;
         cx.notify();
@@ -1587,6 +1587,22 @@ impl Chat {
                         self.active_session_file =
                             data["sessionFile"].as_str().map(PathBuf::from);
                     }
+                } else if command == "set_session_name" && success {
+                    // pi flushed the name to the session file — reload the
+                    // sidebar labels (pi-web onRenamed → loadSessions), with
+                    // one delayed pass to cover flush lag
+                    self.refresh_sessions();
+                    cx.notify();
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(500))
+                            .await;
+                        let _ = this.update(cx, |c, cx| {
+                            c.refresh_sessions();
+                            cx.notify();
+                        });
+                    })
+                    .detach();
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
