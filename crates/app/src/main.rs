@@ -7090,10 +7090,27 @@ fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::Any
         .gap_4()
         .child(
             div()
-                .text_size(px(15.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(tr("外观")),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(tr("外观")),
+                )
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(10.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(format!(
+                            "pi-flash v{} · vendored pi {}",
+                            env!("CARGO_PKG_VERSION"),
+                            pi_link::vendor::vendored_version().unwrap_or_default()
+                        ))),
+                ),
         );
     // language row (pi-web i18n parity: 简体中文 / 繁體中文 / English)
     let lang_current = i18n::lang_ix();
