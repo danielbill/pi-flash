@@ -21,10 +21,12 @@ use pi_link::protocol::{
 use pi_link::sessions::{SessionInfo, list_sessions};
 
 mod assets;
+mod i18n;
 mod markdown;
 mod models_config;
 mod theme;
 mod terminal;
+use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
 use terminal::{TermStatus, TerminalTab};
@@ -612,7 +614,7 @@ impl Chat {
     /// Apply a pattern edit: persist to settings.json, refresh panel state.
     fn apply_pattern_edit(&mut self, edit: models_config::Edit, cx: &mut Context<Self>) {
         if self.mc_project_scope {
-            self.mc_set_error("项目级 .pi/settings.json 覆盖了 enabledModels，面板只读", cx);
+            self.mc_set_error(tr("项目级 .pi/settings.json 覆盖了 enabledModels，面板只读"), cx);
             return;
         }
         if !edit.changed {
@@ -621,7 +623,7 @@ impl Chat {
         if let Err(e) =
             pi_link::config::write_enabled_models(&pi_link::config::settings_path(), edit.patterns.clone())
         {
-            self.mc_set_error(&format!("写入 settings.json 失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("写入 settings.json 失败: {e}", &[("e", e)]), cx);
             return;
         }
         self.mc_patterns = edit.patterns;
@@ -634,7 +636,7 @@ impl Chat {
         self.mc_clear_error(cx);
         match models_config::set_models_enabled(self.mc_patterns.as_ref(), &self.mc_refs(), &[r], enable) {
             Ok(edit) => self.apply_pattern_edit(edit, cx),
-            Err(_) => self.mc_set_error("不能停用最后一个启用的模型", cx),
+            Err(_) => self.mc_set_error(tr("不能停用最后一个启用的模型"), cx),
         }
     }
 
@@ -642,18 +644,18 @@ impl Chat {
         self.mc_clear_error(cx);
         match models_config::set_provider_enabled(self.mc_patterns.as_ref(), &self.mc_refs(), provider, enable) {
             Ok(edit) => self.apply_pattern_edit(edit, cx),
-            Err(_) => self.mc_set_error("不能停用最后一个启用的模型", cx),
+            Err(_) => self.mc_set_error(tr("不能停用最后一个启用的模型"), cx),
         }
     }
 
     fn mc_save_key(&mut self, provider: String, key: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         if key.trim().is_empty() {
-            self.mc_set_error("API Key 不能为空", cx);
+            self.mc_set_error(tr("API Key 不能为空"), cx);
             return;
         }
         if let Err(e) = pi_link::config::set_api_key(&pi_link::config::auth_path(), &provider, key.trim()) {
-            self.mc_set_error(&format!("保存失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("保存失败: {e}", &[("e", e)]), cx);
             return;
         }
         // pi resolves auth.json per request; only a brand-new provider's
@@ -713,7 +715,7 @@ impl Chat {
         self.mc_clear_error(cx);
         let p = PathBuf::from(&path);
         if let Err(e) = pi_link::skills::set_disable_invocation(&p, disable) {
-            self.mc_set_error(&format!("写入 SKILL.md 失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("写入 SKILL.md 失败: {e}", &[("e", e)]), cx);
             return;
         }
         self.reload_settings_panel();
@@ -752,7 +754,7 @@ impl Chat {
             pi_link::config::settings_path()
         };
         if let Err(e) = pi_link::config::write_packages(&path, next) {
-            self.mc_set_error(&format!("写入 settings.json 失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("写入 settings.json 失败: {e}", &[("e", e)]), cx);
             return;
         }
         self.reload_settings_panel();
@@ -769,7 +771,13 @@ impl Chat {
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let msg = match pi_link::vendor::run_cli(&cwd, &arg_refs) {
                 Ok(_) => done,
-                Err(e) => format!("pi {} 失败: {}", args.join(" "), e.lines().last().unwrap_or("")),
+                Err(e) => crate::i18n::tf(
+                    tr("pi {} 失败: {}"),
+                    &[
+                        ("cmd", args.join(" ")),
+                        ("err", e.lines().last().unwrap_or("").to_string()),
+                    ],
+                ),
             };
             let _ = tx.unbounded_send(msg);
         });
@@ -780,14 +788,14 @@ impl Chat {
         self.mc_clear_error(cx);
         let source = pi_link::skills::normalize_source(&source);
         if source.is_empty() {
-            self.mc_set_error("请输入插件来源（npm: / git: / 本地路径）", cx);
+            self.mc_set_error(tr("请输入插件来源（npm: / git: / 本地路径）"), cx);
             return;
         }
         let mut args = vec!["install".to_string(), source.clone()];
         if scope_project {
             args.push("-l".to_string());
         }
-        self.mc_cli_op(args, format!("已安装 {source}"), cx);
+        self.mc_cli_op(args, crate::i18n::tf("已安装 {source}", &[("source", source.clone())]), cx);
         if let Some(Dialog::Settings { section, .. }) = &mut self.dialog {
             *section = "__add__".into();
         }
@@ -799,7 +807,7 @@ impl Chat {
         if scope_project {
             args.push("-l".to_string());
         }
-        self.mc_cli_op(args, format!("已移除 {source}"), cx);
+        self.mc_cli_op(args, crate::i18n::tf("已移除 {source}", &[("source", source.clone())]), cx);
     }
 
     /// Tool presets (pi-web tool-presets.ts) via settings.json `defaultTools`;
@@ -814,7 +822,7 @@ impl Chat {
             _ => return,
         };
         if let Err(e) = pi_link::config::write_default_tools(&pi_link::config::settings_path(), tools) {
-            self.mc_set_error(&format!("写入 settings.json 失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("写入 settings.json 失败: {e}", &[("e", e)]), cx);
             return;
         }
         self.reload_settings_panel();
@@ -948,7 +956,7 @@ impl Chat {
             &pi_link::config::agent_dir(),
             &self.sa_settings,
         ) {
-            self.mc_set_error(&format!("写入 agents/settings.json 失败: {e}"), cx);
+            self.mc_set_error(&crate::i18n::tf("写入 agents/settings.json 失败: {e}", &[("e", e)]), cx);
             return;
         }
         self.reload_settings_panel();
@@ -981,7 +989,7 @@ impl Chat {
             let mut next = profile.clone();
             next.enabled = !profile.enabled;
             if let Err(e) = pi_link::subagents::write_profile_file(path, &next) {
-                self.mc_set_error(&format!("写入 profile 失败: {e}"), cx);
+                self.mc_set_error(&crate::i18n::tf("写入 profile 失败: {e}", &[("e", e)]), cx);
                 return;
             }
         }
@@ -996,7 +1004,7 @@ impl Chat {
         };
         if let Some(path) = &profile.file_path {
             if let Err(e) = std::fs::remove_file(path) {
-                self.mc_set_error(&format!("删除失败: {e}"), cx);
+                self.mc_set_error(&crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())]), cx);
                 return;
             }
         }
@@ -1042,7 +1050,7 @@ impl Chat {
         let (session, events) = match pi_link::client::spawn(&self.cwd, &arg_refs) {
             Ok(pair) => pair,
             Err(e) => {
-                self.mc_set_error(&format!("子代理启动失败: {e}"), cx);
+                self.mc_set_error(&crate::i18n::tf("子代理启动失败: {e}", &[("e", e)]), cx);
                 return;
             }
         };
@@ -1353,7 +1361,7 @@ impl Chat {
             return;
         }
         let Some(session) = &self.session else {
-            self.status = "未连接".into();
+            self.status = tr("未连接").into();
             cx.notify();
             return;
         };
@@ -1496,7 +1504,7 @@ impl Chat {
         self.active_session_file = None;
         self.collapsed.clear();
         clear_last_open(&self.cwd.to_string_lossy());
-        self.status = status_line(self.session.is_some(), "新会话");
+        self.status = status_line(self.session.is_some(), tr("新会话"));
         self.refresh_state();
         self.refresh_git();
         self.load_project_files();
@@ -2248,6 +2256,22 @@ fn set_last_open(cwd: &str, session_path: &str) {
 }
 
 /// Mark `cwd` as the globally-last active workspace.
+const WS_LANG_KEY: &str = "__lang";
+
+/// Persisted language preference (workspace memory file, global key).
+fn load_lang_pref() -> Option<usize> {
+    load_workspace_memory()
+        .get(WS_LANG_KEY)
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(2) as usize)
+}
+
+fn save_lang_pref(ix: usize) {
+    let mut map = load_workspace_memory();
+    map.insert(WS_LANG_KEY.to_string(), serde_json::Value::Number((ix as u64).into()));
+    save_workspace_memory(&map);
+}
+
 fn set_last_workspace(cwd: &str) {
     let mut map = load_workspace_memory();
     map.insert(
@@ -2337,10 +2361,10 @@ fn time_ago(modified: std::time::SystemTime) -> String {
         .unwrap_or(0)
         .max(0);
     match secs {
-        0..=59 => format!("{secs}秒前"),
-        60..=3599 => format!("{}分钟前", secs / 60),
-        3600..=86399 => format!("{}小时前", secs / 3600),
-        _ => format!("{}天前", secs / 86400),
+        0..=59 => crate::i18n::tf("{secs}秒前", &[("secs", secs.to_string())]),
+        60..=3599 => crate::i18n::tf("{n}分钟前", &[("n", (secs / 60).to_string())]),
+        3600..=86399 => crate::i18n::tf("{n}小时前", &[("n", (secs / 3600).to_string())]),
+        _ => crate::i18n::tf("{n}天前", &[("n", (secs / 86400).to_string())]),
     }
 }
 
@@ -2923,7 +2947,7 @@ fn render_msg(
                         }
                     })
                     .child(icon("git-branch", 11., t.text_dim))
-                    .child(SharedString::from("新分支")),
+                    .child(SharedString::from(tr("新分支"))),
             );
         }
         row = row.child(
@@ -2986,7 +3010,7 @@ impl Render for Chat {
 
         let status: SharedString = self.status.clone().into();
         let input_ph: SharedString = if self.input.is_empty() {
-            "消息...输入 / 使用命令，输入 @ 查找文件".into()
+            tr("消息...输入 / 使用命令，输入 @ 查找文件").into()
         } else {
             self.input.clone().into()
         };
@@ -2995,7 +3019,7 @@ impl Render for Chat {
             .state
             .as_ref()
             .and_then(|s| s.model_label())
-            .unwrap_or_else(|| "选择模型".into())
+            .unwrap_or_else(|| tr("选择模型").into())
             .into();
         let thinking_label: SharedString = self
             .state
@@ -3085,7 +3109,7 @@ impl Render for Chat {
                                         }
                                     })
                                     .child(icon("plus", 12., t.text))
-                                    .child(SharedString::from("新建")),
+                                    .child(SharedString::from(tr("新建"))),
                             )
                             .child(
                                 div()
@@ -3159,7 +3183,7 @@ impl Render for Chat {
                             .items_center()
                             .gap_1()
                             .text_color(rgb(t.text_muted))
-                            .child(SharedString::from("主分支"))
+                            .child(SharedString::from(tr("主分支")))
                             .child(icon("chevron-down", 10., t.text_muted)),
                     ),
             )
@@ -3262,9 +3286,9 @@ impl Render for Chat {
                                             SharedString::from(time_text.clone())
                                                 .into_any_element()
                                         })
-                                        .child(SharedString::from(format!(
-                                            "{} 条消息",
-                                            info.message_count
+                                        .child(SharedString::from(crate::i18n::tf(
+                                            "{n} 条消息",
+                                            &[("n", info.message_count.to_string())],
                                         ))),
                                 ),
                         )
@@ -3386,7 +3410,7 @@ impl Render for Chat {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
                                     .child(icon("chevron-down", 10., t.text))
-                                    .child(SharedString::from("文件浏览器")),
+                                    .child(SharedString::from(tr("文件浏览器"))),
                             )
                     .child(
                         div()
@@ -3493,7 +3517,7 @@ impl Render for Chat {
                                 },
                             ))
                             .child(icon("settings", 12., t.text_muted))
-                            .child(SharedString::from("模型")),
+                            .child(SharedString::from(tr("模型"))),
                     )
                     .child(
                         div()
@@ -3513,7 +3537,7 @@ impl Render for Chat {
                                 },
                             ))
                             .child(icon("layers", 12., t.text_muted))
-                            .child(SharedString::from("技能")),
+                            .child(SharedString::from(tr("技能"))),
                     )
                     .child(
                         div()
@@ -3533,7 +3557,7 @@ impl Render for Chat {
                                 },
                             ))
                             .child(icon("settings", 12., t.text_muted))
-                            .child(SharedString::from("插件")),
+                            .child(SharedString::from(tr("插件"))),
                     ),
             );
 
@@ -3563,7 +3587,7 @@ impl Render for Chat {
                     .child(pill(
                         "tb-history",
                         "history",
-                        SharedString::from("完整历史"),
+                        SharedString::from(tr("完整历史")),
                     ))
                     .child(
                         div()
@@ -3598,7 +3622,7 @@ impl Render for Chat {
                                     t.text_muted
                                 },
                             ))
-                            .child(SharedString::from("分支")),
+                            .child(SharedString::from(tr("分支"))),
                     )
                     .child(
                         div()
@@ -3621,10 +3645,10 @@ impl Render for Chat {
                                 },
                             ))
                             .child(icon("pencil", 12., t.text_muted))
-                            .child(SharedString::from("生成标题")),
+                            .child(SharedString::from(tr("生成标题"))),
                     )
-                    .child(pill("tb-system", "file-text", SharedString::from("系统")))
-                    .child(pill("tb-tools", "wrench", SharedString::from("工具")))
+                    .child(pill("tb-system", "file-text", SharedString::from(tr("系统"))))
+                    .child(pill("tb-tools", "wrench", SharedString::from(tr("工具"))))
                     .child(
                         div()
                             .flex_1()
@@ -3909,7 +3933,7 @@ impl Render for Chat {
                                             .items_center()
                                             .gap_1p5()
                                             .child(icon("send", 12., t.text))
-                                            .child(SharedString::from("发送")),
+                                            .child(SharedString::from(tr("发送"))),
                                     ),
                             ),
                     )
@@ -4002,7 +4026,7 @@ impl Render for Chat {
                                             .items_center()
                                             .gap_1()
                                             .child(icon("scissors", 12., t.text_muted))
-                                            .child(SharedString::from("压缩")),
+                                            .child(SharedString::from(tr("压缩"))),
                                     )
                                     .child(icon("volume", 12., t.text_muted)),
                             ),
@@ -4238,8 +4262,9 @@ impl Render for Chat {
                                     .text_size(px(11.))
                                     .font_family(terminal::FONT_FAMILY)
                                     .text_color(rgb(0x9ca3af))
-                                    .child(SharedString::from(format!(
-                                        "Process exited with code {code_text}"
+                                    .child(SharedString::from(crate::i18n::tf(
+                                        "Process exited with code {code_text}",
+                                        &[("code_text", code_text)],
                                     ))),
                             );
                         }
@@ -4619,7 +4644,7 @@ impl Render for Chat {
                     .py_2p5()
                     .text_xs()
                     .text_color(rgb(t.text_muted))
-                    .child("无活动会话")
+                    .child(tr("无活动会话"))
                     .into_any_element()
             } else if !has_branches || rows.is_empty() {
                 div()
@@ -4627,7 +4652,7 @@ impl Render for Chat {
                     .py_2p5()
                     .text_xs()
                     .text_color(rgb(t.text_muted))
-                    .child("暂无分支")
+                    .child(tr("暂无分支"))
                     .into_any_element()
             } else {
                 div()
@@ -4685,7 +4710,7 @@ impl Render for Chat {
                                             .text_sm()
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .text_color(rgb(t.text))
-                                            .child("分支"),
+                                            .child(tr("分支")),
                                     )
                                     .child(
                                         div()
@@ -4710,7 +4735,7 @@ impl Render for Chat {
                                 div()
                                     .text_xs()
                                     .text_color(rgb(t.text_dim))
-                                    .child("点击节点：从该用户消息处创建分支新会话"),
+                                    .child(tr("点击节点：从该用户消息处创建分支新会话")),
                             )
                             .child(body),
                     ),
@@ -4822,7 +4847,7 @@ impl Render for Chat {
                                             .text_sm()
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .text_color(rgb(t.text))
-                                            .child("选择项目"),
+                                            .child(tr("选择项目")),
                                     )
                                     .child(
                                         div()
@@ -4847,7 +4872,7 @@ impl Render for Chat {
                                 div()
                                     .text_xs()
                                     .text_color(rgb(t.text_dim))
-                                    .child("切换后仅显示该项目的会话，并恢复上次打开的会话"),
+                                    .child(tr("切换后仅显示该项目的会话，并恢复上次打开的会话")),
                             )
                             .child(
                                 div()
@@ -5086,7 +5111,7 @@ impl Render for Chat {
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
-                                    .child("重命名会话"),
+                                    .child(tr("重命名会话")),
                             )
                             .child(
                                 div()
@@ -5171,7 +5196,7 @@ impl Render for Chat {
                                                     });
                                                 }
                                             })
-                                            .child("取消"),
+                                            .child(tr("取消")),
                                     )
                                     .child(
                                         div()
@@ -5191,7 +5216,7 @@ impl Render for Chat {
                                                     });
                                                 }
                                             })
-                                            .child("保存"),
+                                            .child(tr("保存")),
                                     ),
                             ),
                     ),
@@ -5427,7 +5452,7 @@ fn render_ext_dialog(
                                         });
                                     }
                                 })
-                                .child("取消")
+                                .child(tr("取消"))
                                 .into_any_element()
                         }))
                         .children(is_confirm.then(|| {
@@ -5450,11 +5475,11 @@ fn render_ext_dialog(
                                         });
                                     }
                                 })
-                                .child("否")
+                                .child(tr("否"))
                                 .into_any_element()
                         }))
                         .children((!is_select).then(|| {
-                            let label = if is_confirm { "是" } else { "提交" };
+                            let label = if is_confirm { tr("是") } else { tr("提交") };
                             div()
                                 .id("ext-ok")
                                 .px_3()
@@ -5511,7 +5536,7 @@ fn mc_skills_view(
         .p(px(6.))
         .pt(px(8.))
         .overflow_y_scroll();
-    for (label, scope) in [("项目", pi_link::skills::SkillScope::Project), ("全局", pi_link::skills::SkillScope::Global)] {
+    for (label, scope) in [(tr("项目"), pi_link::skills::SkillScope::Project), (tr("全局"), pi_link::skills::SkillScope::Global)] {
         let items: Vec<&pi_link::skills::SkillEntry> =
             chat.mc_skills.iter().filter(|s| s.scope == scope).collect();
         if items.is_empty() {
@@ -5580,7 +5605,7 @@ fn mc_skills_view(
                 .p(px(12.))
                 .text_size(px(11.))
                 .text_color(rgb(t.text_dim))
-                .child("没有找到技能（扫描项目 .pi/skills、.agents/skills 与全局目录）"),
+                .child(tr("没有找到技能（扫描项目 .pi/skills、.agents/skills 与全局目录）")),
         );
     }
 
@@ -5595,13 +5620,13 @@ fn mc_skills_view(
             .p(px(20.))
             .text_size(px(12.))
             .text_color(rgb(t.text_dim))
-            .child("没有找到技能")
+            .child(tr("没有找到技能"))
             .into_any_element(),
         Some(sk) => {
             let scope_tag = if sk.scope == pi_link::skills::SkillScope::Project {
-                ("项目", gpui::hsla(0.63, 0.86, 0.62, 0.12), gpui::hsla(0.63, 0.86, 0.62, 0.8))
+                (tr("项目"), gpui::hsla(0.63, 0.86, 0.62, 0.12), gpui::hsla(0.63, 0.86, 0.62, 0.8))
             } else {
-                ("全局", gpui::hsla(0., 0., 0.5, 0.12), rgb(t.text_dim).into())
+                (tr("全局"), gpui::hsla(0., 0., 0.5, 0.12), rgb(t.text_dim).into())
             };
             let weak_sw = weak.clone();
             let sw_path = sk.path.to_string_lossy().to_string();
@@ -5665,7 +5690,7 @@ fn mc_skills_view(
                                 .text_size(px(11.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .text_color(rgb(t.text_muted))
-                                .child(if visible { "对模型可见" } else { "已隐藏（仍可手动调用）" }),
+                                .child(if visible { tr("对模型可见") } else { tr("已隐藏（仍可手动调用）") }),
                         )
                         .child(div().flex_1())
                         .child(
@@ -5785,7 +5810,7 @@ fn mc_plugins_view(
                         .bg(gpui::hsla(0.63, 0.86, 0.62, 0.12))
                         .text_size(px(9.))
                         .text_color(gpui::hsla(0.63, 0.86, 0.62, 0.85))
-                        .child("项目")
+                        .child(tr("项目"))
                         .into_any_element()
                 } else {
                     div().into_any_element()
@@ -5824,7 +5849,7 @@ fn mc_plugins_view(
                         });
                     })
                     .child(icon("plus", 13., t.text_dim))
-                    .child("添加插件"),
+                    .child(tr("添加插件")),
             ),
     );
 
@@ -5851,13 +5876,13 @@ fn mc_plugins_view(
                     .text_size(px(15.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
-                    .child("添加插件"),
+                    .child(tr("添加插件")),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("npm:@scope/pi-plugin · git:https://... · /绝对路径"),
+                    .child(tr("npm:@scope/pi-plugin · git:https://... · /绝对路径")),
             )
             .child(
                 div()
@@ -5903,7 +5928,7 @@ fn mc_plugins_view(
                         });
                     })
                     .child(if input_value.is_empty() {
-                        div().text_color(rgb(t.text_dim)).child("来源").into_any_element()
+                        div().text_color(rgb(t.text_dim)).child(tr("来源")).into_any_element()
                     } else {
                         div().child(SharedString::from(input_value)).into_any_element()
                     }),
@@ -5935,7 +5960,7 @@ fn mc_plugins_view(
                                     }
                                 });
                             })
-                            .child("全局")
+                            .child(tr("全局"))
                     })
                     .child({
                         let weak_p = weak_scope.clone();
@@ -5960,7 +5985,7 @@ fn mc_plugins_view(
                                     }
                                 });
                             })
-                            .child("项目")
+                            .child(tr("项目"))
                     }),
             )
             .child(
@@ -6001,13 +6026,13 @@ fn mc_plugins_view(
                             c.mc_install_package(src, proj, cx);
                         });
                     })
-                    .child("安装"),
+                    .child(tr("安装")),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("安装位置：全局 ~/.pi/agent/{npm,git}；项目 <工作区>/.pi/agent/{npm,git}"),
+                    .child(tr("安装位置：全局 ~/.pi/agent/{npm,git}；项目 <工作区>/.pi/agent/{npm,git}")),
             )
             .into_any_element()
     } else {
@@ -6020,7 +6045,7 @@ fn mc_plugins_view(
         else {
             return (
                 sb.into_any_element(),
-                div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child("没有已配置的插件").into_any_element(),
+                div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child(tr("没有已配置的插件")).into_any_element(),
             );
         };
         let src = pi_link::skills::entry_source(v);
@@ -6062,7 +6087,7 @@ fn mc_plugins_view(
                             .bg(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.12) } else { gpui::hsla(0., 0., 0.5, 0.12) })
                             .text_size(px(10.))
                             .text_color(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.85) } else { rgb(t.text_dim).into() })
-                            .child(if proj { "项目" } else { "全局" }),
+                            .child(if proj { tr("项目") } else { tr("全局") }),
                     ),
             )
             .child(
@@ -6072,7 +6097,7 @@ fn mc_plugins_view(
                     .gap_2()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child(if disabled { "已停用" } else { "已加载" })
+                    .child(if disabled { tr("已停用") } else { tr("已加载") })
                     .child(
                         div()
                             .font_family("Consolas")
@@ -6090,7 +6115,7 @@ fn mc_plugins_view(
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
-                            .child(if disabled { "已停用（资源不加载）" } else { "已启用" }),
+                            .child(if disabled { tr("已停用（资源不加载）") } else { tr("已启用") }),
                     )
                     .child(div().flex_1())
                     .child(
@@ -6139,13 +6164,13 @@ fn mc_plugins_view(
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_del.update(cx, |c, cx| c.mc_remove_package(del_proj, del_src.clone(), cx));
                     })
-                    .child("移除"),
+                    .child(tr("移除")),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("移除/安装通过 vendored pi CLI 执行（pi remove/install）"),
+                    .child(tr("移除/安装通过 vendored pi CLI 执行（pi remove/install）")),
             )
             .into_any_element()
     };
@@ -6157,15 +6182,15 @@ fn mc_plugins_view(
 fn mc_tools_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::AnyElement, gpui::AnyElement) {
     let t = T();
     let current: SharedString = match &chat.mc_default_tools {
-        None => "未设置（pi 默认解析全部工具）".into(),
-        Some(list) if list.is_empty() => "[]（无工具）".into(),
+        None => tr("未设置（pi 默认解析全部工具）").into(),
+        Some(list) if list.is_empty() => tr("[]（无工具）").into(),
         Some(list) => list.join(", ").into(),
     };
     let presets: [(&str, &str, &str); 4] = [
-        ("全部", "all", "不覆盖，pi 默认（全部内置工具）"),
-        ("默认", "default", "read, bash, edit, write"),
-        ("只读", "read-only", "read, grep, find, ls"),
-        ("无", "none", "禁用所有工具"),
+        (tr("全部"), "all", tr("不覆盖，pi 默认（全部内置工具）")),
+        (tr("默认"), "default", "read, bash, edit, write"),
+        (tr("只读"), "read-only", "read, grep, find, ls"),
+        (tr("无"), "none", tr("禁用所有工具")),
     ];
     let active_preset = |list: &Option<Vec<String>>| -> &str {
         match list {
@@ -6199,7 +6224,7 @@ fn mc_tools_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::AnyEl
                         .text_size(px(15.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
-                        .child("工具选择"),
+                        .child(tr("工具选择")),
                 ),
         )
         .child(
@@ -6252,7 +6277,7 @@ fn mc_tools_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::AnyEl
         div()
             .text_size(px(11.))
             .text_color(rgb(t.text_dim))
-            .child("写入 ~/.pi/agent/settings.json 的 defaultTools；新会话生效（与 pi CLI --tools 一致）"),
+            .child(tr("写入 ~/.pi/agent/settings.json 的 defaultTools；新会话生效（与 pi CLI --tools 一致）")),
     );
     (div().into_any_element(), detail.into_any_element())
 }
@@ -6291,15 +6316,15 @@ fn mc_subagents_view(
                 .text_size(px(10.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text_dim))
-                .child("运行"),
+                .child(tr("运行")),
         );
         for run in &chat.sa_runs {
             let active = section == format!("run-{}", run.id);
             let (dot, status_text) = match run.status {
-                0 => (t.accent, "运行中"),
-                1 => (0x4ade80, "已完成"),
-                2 => (0xf87171, "失败"),
-                _ => (0xfacc15, "已中止"),
+                0 => (t.accent, tr("运行中")),
+                1 => (0x4ade80, tr("已完成")),
+                2 => (0xf87171, tr("失败")),
+                _ => (0xfacc15, tr("已中止")),
             };
             let weak_item = weak.clone();
             let sel = format!("run-{}", run.id);
@@ -6346,10 +6371,10 @@ fn mc_subagents_view(
         }
     }
     for (label, scope) in [
-        ("内置", SubagentScope::Builtin),
-        ("全局", SubagentScope::Global),
-        ("工作区", SubagentScope::Workspace),
-        ("项目", SubagentScope::Project),
+        (tr("内置"), SubagentScope::Builtin),
+        (tr("全局"), SubagentScope::Global),
+        (tr("工作区"), SubagentScope::Workspace),
+        (tr("项目"), SubagentScope::Project),
     ] {
         let items: Vec<&pi_link::subagents::SubagentProfile> =
             chat.sa_profiles.iter().filter(|p| p.scope == scope).collect();
@@ -6414,7 +6439,7 @@ fn mc_subagents_view(
                         div()
                             .text_size(px(9.))
                             .text_color(rgb(t.text_dim))
-                            .child("覆盖")
+                            .child(tr("覆盖"))
                             .into_any_element()
                     } else {
                         div().into_any_element()
@@ -6433,16 +6458,16 @@ fn mc_subagents_view(
                 .p(px(20.))
                 .text_size(px(12.))
                 .text_color(rgb(t.text_dim))
-                .child("运行已结束")
+                .child(tr("运行已结束"))
                 .into_any_element(),
             Some(run) => {
                 let weak_abort = weak.clone();
                 let abort_id = run.id;
                 let (status_text, status_color) = match run.status {
-                    0 => ("运行中", t.accent),
-                    1 => ("已完成", 0x4ade80),
-                    2 => ("失败", 0xf87171),
-                    _ => ("已中止", 0xfacc15),
+                    0 => (tr("运行中"), t.accent),
+                    1 => (tr("已完成"), 0x4ade80),
+                    2 => (tr("失败"), 0xf87171),
+                    _ => (tr("已中止"), 0xfacc15),
                 };
                 let mut detail = div()
                     .id("mc-detail")
@@ -6495,7 +6520,7 @@ fn mc_subagents_view(
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_abort.update(cx, |c, cx| c.sa_abort_run(abort_id, cx));
                             })
-                            .child("中止"),
+                            .child(tr("中止")),
                     );
                 }
                 if !run.last_text.is_empty() {
@@ -6509,7 +6534,7 @@ fn mc_subagents_view(
                                     .text_size(px(11.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(rgb(t.text_muted))
-                                    .child("输出"),
+                                    .child(tr("输出")),
                             )
                             .child(
                                 div()
@@ -6540,7 +6565,7 @@ fn mc_subagents_view(
         let weak_run = weak.clone();
         let (sw_name, del_name, run_name) = (p.name.clone(), p.name.clone(), p.name.clone());
         let tools_text: SharedString = if p.tools.is_empty() {
-            "（无）".into()
+            tr("（无）").into()
         } else {
             p.tools.join(", ").into()
         };
@@ -6612,7 +6637,7 @@ fn mc_subagents_view(
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
-                            .child("工具"),
+                            .child(tr("工具")),
                     )
                     .child(
                         div()
@@ -6628,17 +6653,20 @@ fn mc_subagents_view(
                     .gap_4()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(format!(
-                        "模型: {}",
-                        p.model.clone().unwrap_or_else(|| "继承".into())
+                    .child(SharedString::from(crate::i18n::tf(
+                        "模型: {v}",
+                        &[("v", p.model.clone().unwrap_or_else(|| tr("继承").into()))],
                     )))
-                    .child(SharedString::from(format!(
-                        "思考: {}",
-                        p.thinking.clone().unwrap_or_else(|| "继承".into())
+                    .child(SharedString::from(crate::i18n::tf(
+                        "思考: {v}",
+                        &[("v", p.thinking.clone().unwrap_or_else(|| tr("继承").into()))],
                     )))
-                    .child(SharedString::from(format!(
-                        "最大轮数: {}",
-                        p.max_turns.map(|t| t.to_string()).unwrap_or_else(|| "∞".into())
+                    .child(SharedString::from(crate::i18n::tf(
+                        "最大轮数: {v}",
+                        &[(
+                            "v",
+                            p.max_turns.map(|x| x.to_string()).unwrap_or_else(|| "∞".into()),
+                        )],
                     ))),
             )
             .child(
@@ -6652,7 +6680,7 @@ fn mc_subagents_view(
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
-                            .child(if p.enabled { "已启用" } else { "已停用" }),
+                            .child(if p.enabled { tr("已启用") } else { tr("已停用") }),
                     )
                     .child(div().flex_1())
                     .child(
@@ -6704,7 +6732,7 @@ fn mc_subagents_view(
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_run.update(cx, |c, cx| c.sa_run(run_name.clone(), cx));
                             })
-                            .child("运行"),
+                            .child(tr("运行")),
                     )
                     .children((!builtin).then(|| {
                         div()
@@ -6726,7 +6754,7 @@ fn mc_subagents_view(
                                     c.sa_delete_profile(del_name.clone(), cx)
                                 });
                             })
-                            .child("删除")
+                            .child(tr("删除"))
                             .into_any_element()
                     })),
             )
@@ -6753,13 +6781,13 @@ fn mc_subagents_view(
                     .text_size(px(15.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
-                    .child("子代理"),
+                    .child(tr("子代理")),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("选择一个子代理查看详情并运行；内置子代理由 agents/settings.json 控制"),
+                    .child(tr("选择一个子代理查看详情并运行；内置子代理由 agents/settings.json 控制")),
             )
             .child(
                 div()
@@ -6772,7 +6800,7 @@ fn mc_subagents_view(
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
-                            .child("内置子代理"),
+                            .child(tr("内置子代理")),
                     )
                     .child(div().flex_1())
                     .child(
@@ -6821,7 +6849,7 @@ fn mc_subagents_view(
                             .text_size(px(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
-                            .child("最大并发 (1-32)"),
+                            .child(tr("最大并发 (1-32)")),
                     )
                     .child(div().flex_1())
                     .child(
@@ -6878,7 +6906,7 @@ fn mc_subagents_view(
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_save.update(cx, |c, cx| c.sa_save_settings(cx));
                             })
-                            .child("保存"),
+                            .child(tr("保存")),
                     ),
             )
             .into_any_element()
@@ -6907,8 +6935,49 @@ fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::Any
                 .text_size(px(15.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
-                .child("外观"),
+                .child(tr("外观")),
         );
+    // language row (pi-web i18n parity: 简体中文 / 繁體中文 / English)
+    let lang_current = i18n::lang_ix();
+    for (ix, label) in i18n::LANG_LABELS.iter().enumerate() {
+        let active = lang_current == ix;
+        let weak_lang = weak.clone();
+        detail = detail.child(
+            div()
+                .id(SharedString::from(format!("lang-{ix}")))
+                .min_h(px(36.))
+                .py(px(6.))
+                .px(px(9.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(if active { rgb(t.accent) } else { rgb(t.border) })
+                .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_lang.update(cx, |c, cx| {
+                        i18n::set_lang(ix);
+                        save_lang_pref(ix);
+                        cx.notify();
+                    });
+                })
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(label.to_string())),
+                )
+                .child(if active {
+                    div().text_size(px(10.)).text_color(rgb(t.accent)).child(tr("当前")).into_any_element()
+                } else {
+                    div().into_any_element()
+                }),
+        );
+    }
     let current = theme::theme_name();
     for (name, th) in theme::ALL {
         let active = *name == current;
@@ -6956,7 +7025,7 @@ fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::Any
                     div()
                         .text_size(px(10.))
                         .text_color(rgb(th.accent))
-                        .child("当前")
+                        .child(tr("当前"))
                         .into_any_element()
                 } else {
                     div().into_any_element()
@@ -6967,9 +7036,9 @@ fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::Any
         div()
             .text_size(px(11.))
             .text_color(rgb(t.text_dim))
-            .child(SharedString::from(format!(
-                "主题写入 ~/.pi/agent/settings.json 的 theme 键（与 pi 共用）；vendored pi {}",
-                pi_link::vendor::vendored_version().unwrap_or_default()
+            .child(SharedString::from(crate::i18n::tf(
+                tr("主题写入 ~/.pi/agent/settings.json 的 theme 键（与 pi 共用）；vendored pi {}"),
+                &[("v", pi_link::vendor::vendored_version().unwrap_or_default())],
             ))),
     );
     let _ = chat;
@@ -7119,11 +7188,11 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
 
     // provider header: name + status
     let (status_text, status_color) = if oauth {
-        ("OAuth 已登录", 0x4ade80)
+        (tr("OAuth 已登录"), 0x4ade80)
     } else if configured {
-        ("API Key 已配置", 0x4ade80)
+        (tr("API Key 已配置"), 0x4ade80)
     } else {
-        ("未配置", t.text_dim)
+        (tr("未配置"), t.text_dim)
     };
     let detail = detail.child(
         div()
@@ -7180,13 +7249,13 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                         .text_size(px(11.))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(rgb(t.text_muted))
-                        .child("凭据"),
+                        .child(tr("凭据")),
                 )
                 .child(
                     div()
                         .text_size(px(11.))
                         .text_color(rgb(t.text_dim))
-                        .child("登录凭据存储于 ~/.pi/agent/auth.json（与 pi 共用）"),
+                        .child(tr("登录凭据存储于 ~/.pi/agent/auth.json（与 pi 共用）")),
                 )
                 .child(
                     div()
@@ -7208,7 +7277,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                 c.mc_logout(logout_provider.clone(), cx)
                             });
                         })
-                        .child("退出登录"),
+                        .child(tr("退出登录")),
                 ),
         );
     } else {
@@ -7285,7 +7354,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                 .child(if key_input.is_empty() {
                                     div()
                                         .text_color(rgb(t.text_dim))
-                                        .child("ENV 变量、!命令 或明文 key")
+                                        .child(tr("ENV 变量、!命令 或明文 key"))
                                         .into_any_element()
                                 } else {
                                     div().child(shown_key).into_any_element()
@@ -7320,7 +7389,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                         });
                                     }
                                 })
-                                .child(if key_visible { "隐藏" } else { "显示" }),
+                                .child(if key_visible { tr("隐藏") } else { tr("显示") }),
                         ),
                 )
                 .child(
@@ -7358,7 +7427,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                         c.mc_save_key(save_provider.clone(), key, cx);
                                     });
                                 })
-                                .child(if configured { "更新" } else { "保存" }),
+                                .child(if configured { tr("更新") } else { tr("保存") }),
                         )
                         .child(if configured {
                             div()
@@ -7380,7 +7449,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                         c.mc_delete_key(del_provider.clone(), cx)
                                     });
                                 })
-                                .child("删除")
+                                .child(tr("删除"))
                                 .into_any_element()
                         } else {
                             div().into_any_element()
@@ -7390,7 +7459,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                     div()
                         .text_size(px(11.))
                         .text_color(rgb(t.text_dim))
-                        .child("密钥写入 ~/.pi/agent/auth.json（与 pi 共用）；新 provider 的模型需重启 pi-flash 后出现在列表"),
+                        .child(tr("密钥写入 ~/.pi/agent/auth.json（与 pi 共用）；新 provider 的模型需重启 pi-flash 后出现在列表")),
                 ),
         );
     }
@@ -7412,7 +7481,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                         .text_size(px(13.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
-                        .child("已启用模型"),
+                        .child(tr("已启用模型")),
                 )
                 .child(
                     div()
@@ -7448,7 +7517,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                 });
                             }
                         })
-                        .child("全部启用"),
+                        .child(tr("全部启用")),
                 )
                 .child(
                     div()
@@ -7472,7 +7541,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                 });
                             }
                         })
-                        .child("全部停用"),
+                        .child(tr("全部停用")),
                 ),
         );
         if chat.mc_project_scope {
@@ -7480,7 +7549,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("项目级 settings.json 覆盖了 enabledModels，此面板只读"),
+                    .child(tr("项目级 settings.json 覆盖了 enabledModels，此面板只读")),
             );
         }
         // rows
@@ -7503,7 +7572,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                     .p(px(12.))
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
-                    .child("没有匹配的模型"),
+                    .child(tr("没有匹配的模型")),
             );
         }
         for (ix, m) in shown.iter().enumerate() {
@@ -7662,7 +7731,7 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                         .items_center()
                         .border_b_1()
                         .border_color(rgb(t.border))
-                        .children(["模型", "技能", "插件", "工具", "子代理", "通用"].iter().enumerate().map(|(i, label)| {
+                        .children([tr("模型"), tr("技能"), tr("插件"), tr("工具"), tr("子代理"), tr("通用")].iter().enumerate().map(|(i, label)| {
                             let active = tab as usize == i;
                             let weak_tab = weak_close.clone();
                             div()
@@ -7751,6 +7820,10 @@ fn main() {
         if let Some(name) = pi_link::config::read_theme(&pi_link::config::settings_path()) {
             theme::set_by_name(&name);
         }
+    }
+    // language: persisted workspace-memory preference
+    if let Some(ix) = load_lang_pref() {
+        i18n::set_lang(ix);
     }
     Application::new()
         .with_assets(assets::Assets)

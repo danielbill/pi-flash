@@ -176,6 +176,17 @@
   - Settings 弹窗第 6 个 tab「通用」：4 主题选择行（色板预览 bg/accent/muted
     圆点 + 当前标记），点击切换并写盘；显示 vendored pi 版本
   - 测试：theme 切换 roundtrip + 未知名拒绝 + 4 主题字段完整性（62 全绿）
+- **pi-flash-04k M6 i18n 三语**（已关闭）：
+  - `i18n.rs`：t(源字符串) 恒等映射方案——zh-CN 为源（恒等返回），zh-TW/en 走
+    ~120 项 TABLE（(zh, zh-TW, en) 三元组线性查找）；未命中的字符串原样透传
+    （新 UI 优雅降级）；tf({key} 模板) 处理带参消息
+  - 语言运行时切换（LANG_IX AtomicUsize）+ 持久化（workspace 记忆文件
+    __lang 键）；通用 tab 三语按钮（简体中文/繁體中文/English）
+  - 全部 117 处 UI 字面量包裹 tr()/tf()（含状态栏、设置面板、弹窗、消息列表
+    相对时间、错误消息、退出横幅）
+  - 测试：恒等/翻译/未命中透传/模板替换（65 全绿）
+  - 陷阱：源码里 `t(` 后缀重命名 t→tr 时误伤 .expect(/.format(（已修）；
+    match 恒等返回借用输入生命周期、翻译返回 'static——统一 'a 签名
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）
