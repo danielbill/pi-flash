@@ -215,6 +215,8 @@ struct Chat {
     pill_menu: Option<PillMenu>,
     /// notification sound preference (persisted "__sound")
     sound_on: bool,
+    /// wall-clock start of the current agent run (for the t/s estimate)
+    stream_started: Option<std::time::Instant>,
     /// session system prompt + tools parsed from export_html (top panels)
     sys_prompt: Option<String>,
     session_tools: Option<Vec<(String, String)>>,
@@ -355,6 +357,7 @@ impl Chat {
             thinking_override: None,
             pill_menu: None,
             sound_on: load_sound_pref(),
+            stream_started: None,
             sys_prompt: None,
             session_tools: None,
             top_panel: None,
@@ -1498,6 +1501,52 @@ impl Chat {
         self.notify_list(cx);
     }
 
+    /// 引导：中断当前运行并立即注入此消息（rpc steer）。
+    fn steer_input(&mut self, cx: &mut Context<Self>) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let images: Vec<serde_json::Value> = self
+            .pending_images
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "type": "image", "data": img.data_b64, "mimeType": img.mime
+                })
+            })
+            .collect();
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Steer { message: text, images });
+        }
+        self.input.clear();
+        self.pending_images.clear();
+        cx.notify();
+    }
+
+    /// 后续消息：Agent 完成后排队此消息（rpc follow_up）。
+    fn follow_up_input(&mut self, cx: &mut Context<Self>) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::FollowUp { message: text });
+        }
+        self.input.clear();
+        self.pending_images.clear();
+        cx.notify();
+    }
+
+    /// 停止（rpc abort）。
+    fn abort_stream(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Abort);
+        }
+        self.stream_started = None;
+        cx.notify();
+    }
+
     fn send_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
         if text.is_empty() {
@@ -2253,18 +2302,25 @@ impl Chat {
                     }
                 }
             }
-            Event::AgentStart => self.status = "running".into(),
+            Event::AgentStart => {
+                self.status = "running".into();
+                if self.stream_started.is_none() {
+                    self.stream_started = Some(std::time::Instant::now());
+                }
+            }
             Event::AgentSettled => {
                 self.status = status_line(true, "idle");
+                self.stream_started = None;
                 self.refresh_state();
             }
             Event::AgentEnd { .. } => {
                 if self.sound_on {
                     play_notify_sound();
                 }
-                if self.sound_on {
-                    play_notify_sound();
-                }
+                self.stream_started = None;
+                // the session file exists now — make the new session show up
+                // in the sidebar (pi-web refreshKey-on-agent_end parity)
+                self.refresh_sessions();
                 // refresh branch tree so newly-sent user messages gain entry ids
                 if let Some(s) = self.session.as_ref() {
                     let _ = s.send(&Command::GetTree);
@@ -2946,6 +3002,39 @@ fn parse_export_html(html: &str) -> (Option<String>, Vec<(String, String)>) {
     (prompt, tools)
 }
 
+/// pi-web estimateTokens: CJK chars ~1 token each, others ~4 chars/token.
+fn estimate_tokens(text: &str) -> u64 {
+    let mut cjk: u64 = 0;
+    let mut rest: u64 = 0;
+    for ch in text.chars() {
+        let c = ch as u32;
+        let is_cjk = (0x3000..=0x30ff).contains(&c)
+            || (0x3400..=0x9fff).contains(&c)
+            || (0xf900..=0xfaff).contains(&c)
+            || (0x20000..=0x2fa1f).contains(&c)
+            || (0xac00..=0xd7af).contains(&c);
+        if is_cjk {
+            cjk += 1;
+        } else {
+            rest += 1;
+        }
+    }
+    cjk + rest / 4
+}
+
+/// Speed badge color (pi-web: >=50 cyan, >=30 green, >=15 yellow, else red).
+fn tps_color(tps: f32) -> u32 {
+    if tps >= 50. {
+        0x53b3cb
+    } else if tps >= 30. {
+        0x9bc53d
+    } else if tps >= 15. {
+        0xf9c22e
+    } else {
+        0xe01a4f
+    }
+}
+
 fn fmt_compact(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -3388,6 +3477,8 @@ fn render_msg(
     collapsed: &HashSet<(usize, usize)>,
     t: &theme::Theme,
     model_label: &str,
+    // while this message is streaming: (estimated tokens, tok/s)
+    stream_info: Option<(u64, Option<f32>)>,
 ) -> gpui::Div {
     let mut col = div().w_full().mb_4().flex().flex_col();
     if m.role == Role::User {
@@ -3447,13 +3538,46 @@ fn render_msg(
         );
         col = col.child(row);
     } else {
-        // MessageView: model label 11px --text-dim, margin-bottom 4
+        // MessageView: model label 11px --text-dim, margin-bottom 4; while
+        // streaming add the estimated-token arrow + speed badge
         col = col.child(
             div()
                 .text_xs()
                 .text_color(rgb(t.text_dim))
                 .mb_1()
-                .child(SharedString::from(model_label.to_string())),
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .child(SharedString::from(model_label.to_string()))
+                .children(stream_info.and_then(|(est, tps)| {
+                    (est > 0).then(|| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_color(rgb(t.text))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_0p5()
+                                    .text_size(px(11.))
+                                    .child("\u{2193}"),
+                            )
+                            .child(SharedString::from(est.to_string()))
+                            .children(tps.map(|v| {
+                                div()
+                                    .ml(px(6.))
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .rounded(px(4.))
+                                    .bg(rgb(tps_color(v)))
+                                    .text_size(px(11.))
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .child(SharedString::from(format!("{:.1} t/s", v)))
+                            }))
+                    })
+                })),
         );
         for b in &m.blocks {
             col = col.child(render_block(b, msg_ix, weak, collapsed, t));
@@ -3491,12 +3615,19 @@ impl Render for Chat {
         let t = T();
 
         let status: SharedString = self.status.clone().into();
-        let input_ph: SharedString = if self.input.is_empty() {
+        let streaming = self
+            .state
+            .as_ref()
+            .is_some_and(|st| st.is_streaming);
+        let input_ph: SharedString = if streaming {
+            tr("立即引导 / 排队后续消息...").into()
+        } else if self.input.is_empty() {
             tr("消息...输入 / 使用命令，输入 @ 查找文件").into()
         } else {
             self.input.clone().into()
         };
         let input_empty = self.input.is_empty();
+        let can_queue = !input_empty || !self.pending_images.is_empty();
         let model_label: SharedString = self
             .state
             .as_ref()
@@ -4428,6 +4559,40 @@ impl Render for Chat {
                                         &chat.collapsed,
                                         t,
                                         &chat.model_label_text(),
+                                        {
+                                            let streaming = chat
+                                                .state
+                                                .as_ref()
+                                                .is_some_and(|s| s.is_streaming);
+                                            let is_last_assistant = streaming
+                                                && Some(ix) == chat.messages.len().checked_sub(1)
+                                                && m.role == Role::Assistant;
+                                            if !is_last_assistant {
+                                                None
+                                            } else {
+                                                let text: String = m
+                                                    .blocks
+                                                    .iter()
+                                                    .map(|b| match b {
+                                                        Block::Text { text, .. }
+                                                        | Block::Thinking { text, .. } => {
+                                                            text.as_str()
+                                                        }
+                                                        _ => "",
+                                                    })
+                                                    .collect();
+                                                let est = estimate_tokens(&text);
+                                                let tps = chat.stream_started.and_then(
+                                                    |start| {
+                                                        let secs =
+                                                            start.elapsed().as_secs_f32();
+                                                        (secs > 0.5 && est > 0)
+                                                            .then(|| est as f32 / secs)
+                                                    },
+                                                );
+                                                Some((est, tps))
+                                            }
+                                        },
                                     )),
                             )
                             .into_any_element(),
@@ -4580,7 +4745,13 @@ impl Render for Chat {
                             .w_full()
                             .rounded(px(14.))
                             .border_1()
-                            .border_color(rgb(t.border))
+                            .border_color(if streaming {
+                                gpui::rgba(0xeab30866) // amber, pi-web streaming
+                            } else if input_focused {
+                                rgb(t.accent)
+                            } else {
+                                rgb(t.border)
+                            })
                             .bg(rgb(t.bg))
                             .pl_3p5()
                             .pr_2p5()
@@ -4602,7 +4773,18 @@ impl Render for Chat {
                                             let menu_open =
                                                 this.active_menu().is_some();
                                             let items = this.menu_items();
+                                            let streaming = this
+                                                .state
+                                                .as_ref()
+                                                .is_some_and(|s| s.is_streaming);
+                                            let can_queue = !this.input.is_empty()
+                                                || !this.pending_images.is_empty();
                                             match key {
+                                                "enter" if shift && streaming => {
+                                                    if can_queue {
+                                                        this.follow_up_input(cx);
+                                                    }
+                                                }
                                                 "enter" if shift => {
                                                     this.input.push('\n');
                                                     cx.notify();
@@ -4616,7 +4798,15 @@ impl Render for Chat {
                                                         items[ix].insert.clone();
                                                     this.accept_menu(insert, cx);
                                                 }
+                                                "enter" if streaming => {
+                                                    if can_queue {
+                                                        this.steer_input(cx);
+                                                    }
+                                                }
                                                 "enter" => this.send_input(cx),
+                                                "escape" if streaming && !menu_open => {
+                                                    this.abort_stream(cx);
+                                                }
                                                 "escape" if menu_open => {
                                                     this.menu_ix = 0;
                                                     if this.active_menu()
@@ -4715,12 +4905,6 @@ impl Render for Chat {
                                         },
                                     ))
                                     .text_sm()
-                                    .border_1()
-                                    .border_color(if input_focused {
-                                        rgb(t.accent)
-                                    } else {
-                                        rgb(t.border)
-                                    })
                                     .child(
                                         // text + blinking caret (gpui editor is
                                         // hand-rolled; the caret marks the end)
@@ -4751,44 +4935,119 @@ impl Render for Chat {
                             )
                             .child(
                                 div()
-                                    .id("send")
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1p5()
-                                    .px_3()
-                                    .py_1p5()
-                                    .rounded_lg()
-                                    .bg(if !input_empty
-                                        || !self.pending_images.is_empty()
-                                    {
-                                        rgb(t.accent)
+                                    .children(if streaming {
+                                        // steer / follow-up pair (pi-web
+                                        // ChatInput streaming mode)
+                                        let weak_b = weak_for_dialog.clone();
+                                        Some(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .id("steer")
+                                                        .px_3()
+                                                        .py_1p5()
+                                                        .rounded_lg()
+                                                        .border_1()
+                                                        .border_color(gpui::rgba(
+                                                            0xeab30800 | 0x35,
+                                                        ))
+                                                        .bg(gpui::rgba(0xeab30800 | 0x12))
+                                                        .text_sm()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .text_color(gpui::rgb(0xb48200))
+                                                        .cursor_pointer()
+                                                        .when(!can_queue, |d| d.opacity(0.5))
+                                                        .on_mouse_down(MouseButton::Left, {
+                                                            let weak = weak_b.clone();
+                                                            move |_, _, cx| {
+                                                                let _ = weak.update(
+                                                                    cx,
+                                                                    |c, cx| {
+                                                                        if can_queue {
+                                                                            c.steer_input(cx)
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                        }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id("followup")
+                                                        .px_3()
+                                                        .py_1p5()
+                                                        .rounded_lg()
+                                                        .border_1()
+                                                        .border_color(gpui::rgba(
+                                                            0x818cf400 | 0x35,
+                                                        ))
+                                                        .bg(gpui::rgba(0x818cf400 | 0x12))
+                                                        .text_sm()
+                                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                        .text_color(gpui::rgb(0x6366f1))
+                                                        .cursor_pointer()
+                                                        .when(!can_queue, |d| d.opacity(0.5))
+                                                        .on_mouse_down(MouseButton::Left, {
+                                                            let weak = weak_b.clone();
+                                                            move |_, _, cx| {
+                                                                let _ = weak.update(
+                                                                    cx,
+                                                                    |c, cx| {
+                                                                        if can_queue {
+                                                                            c.follow_up_input(cx)
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                        }),
+                                                ),
+                                        )
                                     } else {
-                                        rgb(t.bg_panel)
+                                        None
                                     })
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(if !input_empty
-                                        || !self.pending_images.is_empty()
-                                    {
-                                        rgb(t.accent_contrast)
+                                    .child(if streaming {
+                                        div().into_any_element()
                                     } else {
-                                        rgb(t.text_dim)
-                                    })
-                                    .cursor_pointer()
-                                    .on_mouse_down(MouseButton::Left, cx.listener(
-                                        |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                            this.send_input(cx);
-                                        },
-                                    ))
-                                    .child(
                                         div()
+                                            .id("send")
+                                            .flex_shrink_0()
                                             .flex()
                                             .items_center()
                                             .gap_1p5()
-                                            .child(icon("send", 12., t.text))
-                                            .child(SharedString::from(tr("发送"))),
-                                    ),
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(if can_queue {
+                                                rgb(t.accent)
+                                            } else {
+                                                rgb(t.bg_panel)
+                                            })
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(if can_queue {
+                                                rgb(t.accent_contrast)
+                                            } else {
+                                                rgb(t.text_dim)
+                                            })
+                                            .cursor_pointer()
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.send_input(cx);
+                                                },
+                                            ))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .child(icon("send", 12., t.text))
+                                                    .child(SharedString::from(tr("发送"))),
+                                            )
+                                            .into_any_element()
+                                    }),
                             ),
                     )
                     .child(
@@ -4933,6 +5192,41 @@ impl Render for Chat {
                                             .child(icon("scissors", 12., t.text_muted))
                                             .child(SharedString::from(tr("压缩"))),
                                     )
+                                    // 停止 (pi-web chat.stop; abort the run)
+                                    .when(streaming, |d| {
+                                        d.child(
+                                            div()
+                                                .id("stop")
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .px_2()
+                                                .py(px(3.))
+                                                .rounded(px(5.))
+                                                .border_1()
+                                                .border_color(gpui::rgba(0xef44444d))
+                                                .bg(gpui::rgba(0xef444414))
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(gpui::rgb(0xef4444))
+                                                .cursor_pointer()
+                                                .hover(|s| {
+                                                    s.bg(gpui::rgba(0xef444429))
+                                                })
+                                                .on_mouse_down(MouseButton::Left, cx.listener(
+                                                    |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                        this.abort_stream(cx);
+                                                    },
+                                                ))
+                                                .child(
+                                                    div()
+                                                        .size(px(7.))
+                                                        .rounded(px(1.5))
+                                                        .bg(gpui::rgb(0xef4444)),
+                                                )
+                                                .child(SharedString::from(tr("停止"))),
+                                        )
+                                    })
                                     // notification sound toggle
                                     .child(
                                         div()

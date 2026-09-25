@@ -575,13 +575,7 @@ impl SessionState {
     }
 
     pub fn model_label(&self) -> Option<String> {
-        self.model.as_ref().map(|m| {
-            if m.provider.is_empty() {
-                m.label()
-            } else {
-                format!("{}/{}", m.provider, m.label())
-            }
-        })
+        self.model.as_ref().map(|m| m.label())
     }
 }
 
@@ -858,7 +852,7 @@ mod tests {
             Event::Response { command, data, .. } => {
                 assert_eq!(command, "get_state");
                 let st = SessionState::parse(&data.expect("data"));
-                assert_eq!(st.model_label().as_deref(), Some("glm/GLM-5.3-Flash"));
+                assert_eq!(st.model_label().as_deref(), Some("GLM-5.3-Flash"));
                 assert_eq!(st.thinking_level.as_deref(), Some("high"));
                 assert!(!st.is_streaming);
                 assert_eq!(st.message_count, 7);
