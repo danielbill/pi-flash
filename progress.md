@@ -187,6 +187,19 @@
   - 测试：恒等/翻译/未命中透传/模板替换（65 全绿）
   - 陷阱：源码里 `t(` 后缀重命名 t→tr 时误伤 .expect(/.format(（已修）；
     match 恒等返回借用输入生命周期、翻译返回 'static——统一 'a 签名
+- **pi-flash-43o LLM 生成标题**（已关闭，最后一个 beads 任务）：
+  - 方案 = bead 预案的「独立小会话」：一次性 `pi --no-session --print
+    --no-tools --thinking off [--provider/--model 当前会话模型]` 后台线程
+    生成，stdout 即标题（vendor::run_cli_stdout 只收 stdout，stderr 仅报错）
+  - pi-web session-title.ts 移植：TITLE_SYSTEM_PROMPT/TITLE_PROMPT 原文、
+    transcript 裁剪（用户轮 800 字、中间回复 300、最后回复 600、总预算 6000
+    头部优先 40%、中段省略）、标题清洗（首行/剥引号反引号/markdown 符号/
+    80 字符钳制）
+  - 完成后走既有 SetSessionName RPC + refresh_state；titling 防重入；
+    结果经 title_tx 泵任务回主线程
+  - 实测：真机 deepseek --print 通道 stdout 干净（无工具噪声）
+  - 测试 +3：裁剪/预算省略/清洗（68 全绿）
+  - 与启发式差异：heuristic（首条用户消息截断）已移除，统一走 LLM
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）

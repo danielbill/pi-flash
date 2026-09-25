@@ -186,6 +186,9 @@ struct Chat {
     sa_settings: pi_link::subagents::SubagentSettings,
     sa_runs: Vec<SubagentRun>,
     sa_run_seq: usize,
+    /// LLM title generation results (one-off pi --print run)
+    title_tx: Option<futures::channel::mpsc::UnboundedSender<Result<String, String>>>,
+    titling: bool,
 }
 
 /// One live subagent run (child RPC session spawned with profile flags).
@@ -275,6 +278,8 @@ impl Chat {
             sa_settings: pi_link::subagents::SubagentSettings::default(),
             sa_runs: Vec::new(),
             sa_run_seq: 0,
+            title_tx: None,
+            titling: false,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -286,6 +291,21 @@ impl Chat {
             })
             .detach();
         }
+        // LLM title pump: one-off `pi --print` result -> set_session_name
+        let (title_tx, mut title_rx) =
+            futures::channel::mpsc::unbounded::<Result<String, String>>();
+        chat.title_tx = Some(title_tx);
+        cx.spawn(async move |this, cx| {
+            while let Some(result) = title_rx.next().await {
+                if this
+                    .update(cx, |chat, cx| chat.on_title_result(result, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         // settings panel CLI op pump (pi install/remove runs in background)
         let (op_tx, mut op_rx) = futures::channel::mpsc::unbounded::<String>();
         chat.op_tx = Some(op_tx);
@@ -1458,31 +1478,68 @@ impl Chat {
         cx.notify();
     }
 
+    /// LLM session title (pi-web lib/session-title.ts parity via a one-off
+    /// `pi --no-session --print` run; the in-process SDK call pi-web uses is
+    /// not reachable over RPC).
     fn auto_title(&mut self, cx: &mut Context<Self>) {
-        let title = self
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.plain_text())
-            .unwrap_or_default();
-        let mut title = title.trim().replace('\n', " ").to_string();
-        if title.is_empty() {
-            self.status = "nothing to title yet".into();
+        if self.titling {
+            return;
+        }
+        let transcript = build_title_transcript(&self.messages);
+        if transcript.is_empty() {
+            self.status = tr("nothing to title yet").to_string();
             cx.notify();
             return;
         }
-        if title.chars().count() > 40 {
-            let mut cut = 40;
-            while !title.is_char_boundary(cut) {
-                cut -= 1;
+        let Some(tx) = self.title_tx.clone() else { return };
+        self.titling = true;
+        self.status = tr("生成标题…").to_string();
+        cx.notify();
+
+        // cheap one-shot: no tools, thinking off, current session's model
+        let mut args: Vec<String> = vec![
+            "--no-session".into(),
+            "--print".into(),
+            "--no-tools".into(),
+            "--thinking".into(),
+            "off".into(),
+        ];
+        if let Some(model) = self.state.as_ref().and_then(|s| s.model.clone()) {
+            args.push("--provider".into());
+            args.push(model.provider.clone());
+            args.push("--model".into());
+            args.push(model.id.clone());
+        }
+        args.push("--system-prompt".into());
+        args.push(TITLE_SYSTEM_PROMPT.into());
+        args.push("--".into());
+        args.push(format!("{transcript}\n\n{TITLE_PROMPT}"));
+
+        let cwd = self.cwd.clone();
+        std::thread::spawn(move || {
+            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let result = pi_link::vendor::run_cli_stdout(&cwd, &arg_refs)
+                .map(|out| sanitize_title(&out))
+                .and_then(|t| if t.is_empty() { Err("empty title".into()) } else { Ok(t) });
+            let _ = tx.unbounded_send(result);
+        });
+        cx.notify();
+    }
+
+    fn on_title_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+        self.titling = false;
+        match result {
+            Ok(title) => {
+                if let Some(session) = &self.session {
+                    let _ = session.send(&Command::SetSessionName { name: title.clone() });
+                }
+                self.status = tr("已生成标题: {title}").replace("{title}", &title);
+                self.refresh_state();
             }
-            title.truncate(cut);
-            title.push('\u{2026}');
+            Err(e) => {
+                self.status = tr("标题生成失败: {e}").replace("{e}", &e);
+            }
         }
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::SetSessionName { name: title });
-        }
-        self.refresh_state();
         cx.notify();
     }
 
@@ -2462,6 +2519,107 @@ fn pretty_args(args: &str) -> String {
         .ok()
         .and_then(|v| serde_json::to_string_pretty(&v).ok())
         .unwrap_or_else(|| args.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// LLM session title (pi-web lib/session-title.ts parity)
+// ---------------------------------------------------------------------------
+
+const TITLE_SYSTEM_PROMPT: &str = "You name chat sessions from a transcript. Reply with the title only.";
+
+const TITLE_PROMPT: &str = "Create a concise title for this session based on the conversation above.\n\
+Requirements:\n\
+- Match the primary language used by the user.\n\
+- Describe the user's concrete goal or the outcome, not the act of chatting.\n\
+- Use 4-12 words for space-separated languages, or 8-24 characters for CJK text when practical.\n\
+- Do not call any tools.\n\
+- Return only the title as plain text, with no quotes, label, markdown, or explanation.";
+
+const TITLE_USER_CHARS: usize = 800;
+const TITLE_ASSISTANT_CHARS: usize = 300;
+const TITLE_LAST_ASSISTANT_CHARS: usize = 600;
+const TITLE_TRANSCRIPT_CHARS: usize = 6000;
+const TITLE_HEAD_CHARS: usize = TITLE_TRANSCRIPT_CHARS * 40 / 100;
+const TITLE_MAX_LEN: usize = 80;
+const TITLE_ELISION: &str = "\u{2026}";
+
+fn clip_chars(text: &str, max: usize) -> String {
+    let mut out: String = text.chars().take(max).collect();
+    if text.chars().count() > max {
+        out.push_str(TITLE_ELISION);
+    }
+    out
+}
+
+/// Compact transcript for the title request: every user turn (what was
+/// asked), the last reply (what came out), middle replies as openers only.
+/// Total budget with head priority keeps the session's opening goal.
+fn build_title_transcript(messages: &[Msg]) -> String {
+    let n = messages.len();
+    let mut lines: Vec<String> = Vec::new();
+    for (ix, m) in messages.iter().enumerate() {
+        let raw = m.plain_text();
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let (role, cap) = match m.role {
+            Role::User => ("User", TITLE_USER_CHARS),
+            Role::Assistant if ix + 1 == n => ("Assistant", TITLE_LAST_ASSISTANT_CHARS),
+            Role::Assistant => ("Assistant", TITLE_ASSISTANT_CHARS),
+        };
+        lines.push(format!("{role}: {}", clip_chars(raw.trim(), cap)));
+    }
+    let total: usize = lines.iter().map(|l| l.chars().count()).sum();
+    if total <= TITLE_TRANSCRIPT_CHARS {
+        return lines.join("\n");
+    }
+    // head 40%, tail keeps the newest turns, middle elided
+    let mut head: Vec<String> = Vec::new();
+    let mut used = 0usize;
+    let mut ix = 0usize;
+    while ix < lines.len() && used < TITLE_HEAD_CHARS {
+        used += lines[ix].chars().count();
+        head.push(lines[ix].clone());
+        ix += 1;
+    }
+    let mut tail: Vec<String> = Vec::new();
+    let mut tused = 0usize;
+    let mut j = lines.len();
+    while j > ix && tused < TITLE_TRANSCRIPT_CHARS.saturating_sub(used + 40) {
+        j -= 1;
+        tused += lines[j].chars().count();
+        tail.push(lines[j].clone());
+    }
+    tail.reverse();
+    head.push(TITLE_ELISION.to_string());
+    head.extend(tail);
+    head.join("\n")
+}
+
+/// Clean the model's reply into a session title: first non-empty line, strip
+/// wrapping quotes/markdown, clamp to the pi-web title length.
+fn sanitize_title(raw: &str) -> String {
+    let mut title = raw
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string();
+    loop {
+        let before = title.clone();
+        for mark in ["#", "*", "`", "\"", "'", "\u{201c}", "\u{201d}"] {
+            if title.starts_with(mark) {
+                title = title[mark.len()..].trim_start().to_string();
+            }
+            if title.ends_with(mark) && title.chars().count() > mark.chars().count() {
+                title = title[..title.len() - mark.len()].trim_end().to_string();
+            }
+        }
+        if title == before {
+            break;
+        }
+    }
+    clip_chars(title.trim(), TITLE_MAX_LEN).trim_end_matches(TITLE_ELISION).trim_end().to_string()
 }
 
 fn fmt_compact(n: u64) -> String {
@@ -7843,4 +8001,54 @@ fn main() {
             .unwrap();
             cx.activate(true);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: Role, text: &str) -> Msg {
+        Msg { role, blocks: vec![Block::Text { content_index: 0, text: text.to_string() }], usage: None, entry_id: None }
+    }
+
+    #[test]
+    fn transcript_clips_long_turns_and_keeps_order() {
+        let long = "x".repeat(2000);
+        let messages = vec![msg(Role::User, &long), msg(Role::Assistant, &long)];
+        let t = build_title_transcript(&messages);
+        assert!(t.starts_with("User: "));
+        assert!(t.contains("Assistant: "));
+        assert!(t.chars().count() < 2 * 2000);
+        // per-turn caps applied
+        let user_line = t.lines().next().unwrap();
+        assert!(user_line.chars().count() <= TITLE_USER_CHARS + TITLE_ELISION.len() + "User: ".len());
+    }
+
+    #[test]
+    fn transcript_budget_elides_middle() {
+        let mut messages = Vec::new();
+        for i in 0..40 {
+            messages.push(msg(Role::User, &format!("turn {i}: {}", "y".repeat(300))));
+            messages.push(msg(Role::Assistant, &format!("reply {i}: {}", "z".repeat(200))));
+        }
+        let t = build_title_transcript(&messages);
+        // single-line overshoot past the soft budget is fine (the prompt is
+        // small either way); it must stay far below the raw transcript
+        assert!(t.chars().count() < TITLE_TRANSCRIPT_CHARS + 600, "budget respected: {}", t.chars().count());
+        assert!(t.contains(TITLE_ELISION));
+        // head keeps the opening goal, tail keeps the newest turns
+        assert!(t.contains("turn 0"));
+        assert!(t.contains("turn 39"));
+    }
+
+    #[test]
+    fn sanitize_title_strips_markdown_and_quotes() {
+        assert_eq!(sanitize_title("\"Fix login bug\"\n"), "Fix login bug");
+        assert_eq!(sanitize_title("`重构主题模块`"), "重构主题模块");
+        assert_eq!(sanitize_title("## A Title"), "A Title");
+        assert_eq!(sanitize_title("\n\n  \n"), "");
+        let long = "w".repeat(200);
+        let got = sanitize_title(&long);
+        assert!(got.chars().count() <= TITLE_MAX_LEN);
+    }
 }

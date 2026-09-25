@@ -198,8 +198,12 @@ pub fn tf(template: &str, pairs: &[(&str, String)]) -> String {
 mod tests {
     use super::*;
 
+    /// tests mutate the process-global language; serialize them
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn identity_for_source_language() {
+        let _g = LOCK.lock();
         set_lang(0);
         assert_eq!(tr("保存"), "保存");
         assert_eq!(tr("something new"), "something new");
@@ -207,6 +211,7 @@ mod tests {
 
     #[test]
     fn translations_for_other_languages() {
+        let _g = LOCK.lock();
         set_lang(1);
         assert_eq!(tr("保存"), "儲存");
         assert_eq!(tr("新分支"), "新分支");
@@ -219,6 +224,7 @@ mod tests {
 
     #[test]
     fn template_replacement() {
+        let _g = LOCK.lock();
         set_lang(2);
         assert_eq!(
             tf("已安装 {source}", &[("source", "npm:x".to_string())]),
