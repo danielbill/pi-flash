@@ -17,6 +17,9 @@ pub struct SessionInfo {
     /// first user message text (used as the row label, like pi-web)
     pub preview: String,
     pub message_count: u64,
+    /// session name (pi `session_info` entry; pi-web `session.name` — the
+    /// row label prefers it over `preview` when set)
+    pub name: Option<String>,
 }
 
 /// Home-relative sessions root (`~/.pi/agent/sessions`), honoring
@@ -69,6 +72,7 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
     let mut id = String::new();
     let mut cwd = String::new();
     let mut preview = String::new();
+    let mut name = None;
     let message_count = (u64::from(content.contains("\"type\":\"message\"")))
         * content.matches("\"type\":\"message\"").count() as u64;
     // header + first user message are near the top; read a bounded prefix
@@ -104,6 +108,16 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
     if id.is_empty() {
         return None;
     }
+    // renames append `session_info` entries at any position (last one wins)
+    if let Some(pos) = content.rfind("\"type\":\"session_info\"") {
+        let tail = &content[pos..];
+        let line_end = tail.find('\n').unwrap_or(tail.len());
+        if let Ok(v) = serde_json::from_str::<Value>(&tail[..line_end]) {
+            if let Some(n) = v["name"].as_str() {
+                name = Some(n.to_string());
+            }
+        }
+    }
     if preview.len() > 120 {
         // truncate at a char boundary
         let mut cut = 120;
@@ -121,6 +135,7 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
         modified,
         preview,
         message_count,
+        name,
     })
 }
 

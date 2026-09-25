@@ -1118,6 +1118,9 @@ impl Chat {
             let _ = session.send(&Command::SetSessionName { name });
         }
         self.refresh_state();
+        // the sidebar label comes from the session file's name entry —
+        // reload it (pi-web onRenamed → loadSessions parity)
+        self.refresh_sessions();
         self.renaming = None;
         self.rename_input = None;
         cx.notify();
@@ -2632,7 +2635,7 @@ impl Render for Chat {
         // (stack overflow); dialogs keep the force since they mount before
         // their first frame.
         if let Some(input) = rename_focus.or(dialog_input) {
-            let handle = input.read(cx).focus_handle();
+            let handle = input.read(cx).focus_handle_in(cx);
             if !handle.is_focused(window) {
                 window.focus(&handle);
             }
@@ -2938,8 +2941,7 @@ impl Render for Chat {
                                             let input = this.search_input.clone();
                                             input.update(cx, |ti, cx| ti.set_value(String::new(), cx));
                                             if this.search_open {
-                                                let handle = input.read(cx).focus_handle();
-                                                window.focus(&handle);
+                                                input.update(cx, |ti, cx| ti.focus(window, cx));
                                             }
                                             this.refresh_sessions();
                                             cx.notify();
@@ -3025,6 +3027,9 @@ impl Render for Chat {
                         .enumerate()
                         .filter(|(_, i)| {
                             i.preview.to_lowercase().contains(&q)
+                                || i.name
+                                    .as_ref()
+                                    .is_some_and(|n| n.to_lowercase().contains(&q))
                                 || i
                                     .path
                                     .to_string_lossy()
@@ -3059,6 +3064,13 @@ impl Render for Chat {
                     } else {
                         info.preview.clone().into()
                     };
+                    // pi-web title = session.name || first message
+                    let title: SharedString = info
+                        .name
+                        .clone()
+                        .filter(|n| !n.trim().is_empty())
+                        .map(SharedString::from)
+                        .unwrap_or_else(|| preview.clone());
                     let time_text = time_ago(info.modified);
                     // pi-web runningSessionIds: the spinner replaces the
                     // timestamp on the running session's row (one embedded
@@ -3079,7 +3091,11 @@ impl Render for Chat {
                     let weak_del3 = weak_for_sessions.clone();
                     // pi-web: "删除 {title}？" truncates the title at 22 chars
                     let confirm_title: String = {
-                        let mut s = preview.to_string();
+                        let mut s = info
+                            .name
+                            .clone()
+                            .filter(|n| !n.trim().is_empty())
+                            .unwrap_or_else(|| preview.clone().to_string());
                         if s.chars().count() > 22 {
                             s = s.chars().take(22).collect::<String>() + "…";
                         }
@@ -3171,7 +3187,7 @@ impl Render for Chat {
                                             gpui::FontWeight::NORMAL
                                         })
                                         .text_color(rgb(t.text))
-                                        .child(preview),
+                                        .child(title),
                                 )
                                 .child(
                                     div()
@@ -6081,6 +6097,30 @@ fn main() {
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            // gpui-component (widget library powering TextInput): global
+            // init + token mapping from the active app theme
+            gpui_component::init(cx);
+            gpui_component::theme::init(cx);
+            {
+                let t = T();
+                let tc = gpui_component::theme::Theme::global_mut(cx);
+                tc.radius = px(5.);
+                let c = &mut tc.colors;
+                c.background = rgb(t.bg_panel).into();
+                c.foreground = rgb(t.text).into();
+                c.border = rgb(t.border).into();
+                c.input = rgb(t.border).into();
+                c.ring = rgb(t.accent).into();
+                c.caret = rgb(t.text).into();
+                c.accent = rgb(t.accent).into();
+                c.accent_foreground = rgb(t.accent_contrast).into();
+                c.muted = rgb(t.bg_hover).into();
+                c.muted_foreground = rgb(t.text_dim).into();
+                c.secondary = rgb(t.bg_selected).into();
+                let mut sel: gpui::Hsla = rgb(t.accent).into();
+                sel.a = 0.28;
+                c.selection = sel;
+            }
             let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
             cx.open_window(
                 WindowOptions {
@@ -6091,7 +6131,12 @@ fn main() {
                     }),
                     ..Default::default()
                 },
-                |_, cx| cx.new(Chat::new),
+                |window, cx| {
+                    // gpui-component widgets require its Root as the window
+                    // root view (renders their context-menu/popover layers)
+                    let chat = cx.new(Chat::new);
+                    cx.new(|cx| gpui_component::Root::new(chat.into(), window, cx))
+                },
             )
             .unwrap();
             cx.activate(true);

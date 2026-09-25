@@ -17,3 +17,4 @@ base64 = "0.22"
 pulldown-cmark = "0.13"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 alacritty_terminal = "0.26"
+gpui-component = "0.2.0"

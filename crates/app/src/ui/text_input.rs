@@ -1,93 +1,72 @@
-//! TextInput — the app-wide text input component (pi-web parity note:
-//! pi-web has no shared input component because HTML `<input>` natively
-//! provides focus, caret and IME; GPUI has no such builtin, so this module
-//! IS that builtin). Every text field in the app must render this instead
-//! of hand-rolled `on_key_down` char matching (see ARCHITECTURE.md).
+//! TextInput — the app-wide single-line text input (pi-web parity note:
+//! pi-web leans on HTML `<input>` natively providing focus, caret,
+//! selection, clipboard and IME; GPUI has no such builtin, so this facade
+//! adapts **gpui-component's InputState** (battle-tested widget: real
+//! selection highlight, arrow/word movement, copy/cut/paste, undo, Windows
+//! IME) behind the app's own constructor/config API so call sites stay
+//! framework-agnostic (see ARCHITECTURE.md §4).
 //!
-//! Owns per-instance: focus handle, value, IME marked range, blinking
-//! caret, placeholder/masking/numeric filtering and change/submit/escape
-//! callbacks.
+//! The inner `InputState` needs `&mut Window` at construction, so it is
+//! created lazily on first render; config set before that is buffered and
+//! applied at creation / sync time.
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, GlobalElementId, InspectorElementId,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
-    prelude::*, Render, SharedString, Styled, Window, div,
+    App, Context, FocusHandle, Focusable as _, KeyDownEvent, ParentElement, Render, SharedString,
+    Styled, Window, div, prelude::*,
 };
+use gpui_component::input::{InputEvent, InputState, SelectAll, TextInput as GpInput};
 
 use crate::theme::theme as T;
 
-/// Instance counter for unique element ids (multiple inputs can be mounted
-/// in one frame, e.g. settings forms).
-static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// fires after every user value mutation (typing, IME commit, backspace);
-/// receives the new value so callers never need to re-read the entity
-/// (re-entrant reads from inside the input's own listener would panic)
+/// fires after every user value mutation; receives the new value so callers
+/// never need to re-read the entity (re-entrant reads from inside the
+/// input's own event handling would panic)
 type Changed = Box<dyn Fn(&str, &mut App)>;
-/// Enter (single-line input); receives the current value — see Changed
+/// Enter (single-line input); receives the current value
 type Submitted = Box<dyn Fn(&str, &mut App)>;
-/// Escape
+/// Escape (propagates out of the inner widget; IME-cancel keeps priority)
 type Escaped = Box<dyn Fn(&mut App)>;
 
 pub struct TextInput {
-    focus: FocusHandle,
-    id: SharedString,
-    /// utf16 range of the active IME composition
-    marked: Option<std::ops::Range<usize>>,
-    caret_on: bool,
-    /// refreshed every render; the blink pump only notifies while focused
-    focused_hint: bool,
-    numeric: bool,
-    masked: bool,
-    /// next focus (and IME query) reports the whole value selected
-    select_all: bool,
+    fallback_focus: FocusHandle,
+    state: Option<gpui::Entity<InputState>>,
+    // config (buffered until the inner state exists)
     placeholder: Option<SharedString>,
-    /// fires after every value mutation (typing, IME commit, programmatic)
+    masked: bool,
+    numeric: bool,
+    select_all_on_focus: bool,
+    select_all_done: bool,
+    // dirty buffers applied on render (inner setters need &mut Window)
+    pending_value: Option<String>,
+    pending_placeholder: Option<SharedString>,
+    pending_masked: Option<bool>,
+    want_select_all: bool,
+    /// mirrored inner value so `value()` works without cx (call-site compat)
+    value: String,
     on_change: Option<Changed>,
-    /// Enter (single-line input)
     on_submit: Option<Submitted>,
     on_escape: Option<Escaped>,
-    /// the field value (public read via `value()`; mutate via `set_value`)
-    pub(crate) value: String,
 }
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let input = Self {
-            focus: cx.focus_handle(),
-            id: SharedString::from(format!("ti-{id}")),
-            marked: None,
-            caret_on: true,
-            focused_hint: false,
-            numeric: false,
-            masked: false,
-            select_all: false,
+        Self {
+            fallback_focus: cx.focus_handle(),
+            state: None,
             placeholder: None,
+            masked: false,
+            numeric: false,
+            select_all_on_focus: false,
+            select_all_done: false,
+            pending_value: None,
+            pending_placeholder: None,
+            pending_masked: None,
+            want_select_all: false,
+            value: String::new(),
             on_change: None,
             on_submit: None,
             on_escape: None,
-            value: String::new(),
-        };
-        // caret blink pump (530ms, mirrors the chat editor's cadence);
-        // repaints only while this input owns focus
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(530))
-                .await;
-            let Ok(()) = this.update(cx, |ti, cx| {
-                if ti.focused_hint {
-                    ti.caret_on = !ti.caret_on;
-                    cx.notify();
-                } else {
-                    ti.caret_on = true;
-                }
-            }) else {
-                return;
-            };
-        })
-        .detach();
-        input
+        }
     }
 
     pub fn placeholder(mut self, ph: impl Into<SharedString>) -> Self {
@@ -107,10 +86,10 @@ impl TextInput {
         self
     }
 
-    /// Mount-selected mode (pi-web rename input parity: autoFocus + select;
-    /// the first typed character replaces the whole value).
+    /// pi-web rename parity: when focus first lands, the whole value is
+    /// selected so typing replaces it (←/→ collapse, Backspace clears).
     pub fn select_all_on_focus(mut self) -> Self {
-        self.select_all = true;
+        self.select_all_on_focus = true;
         self
     }
 
@@ -144,11 +123,17 @@ impl TextInput {
     }
 
     pub fn set_placeholder(&mut self, ph: Option<SharedString>) {
-        self.placeholder = ph;
+        self.placeholder = ph.clone();
+        if self.state.is_some() {
+            self.pending_placeholder = ph;
+        }
     }
 
-    pub fn set_masked(&mut self, masked: bool) {
+    pub fn set_masked(&mut self, masked: bool, _cx: &mut Context<Self>) {
         self.masked = masked;
+        if self.state.is_some() {
+            self.pending_masked = Some(masked);
+        }
     }
 
     pub fn value(&self) -> &str {
@@ -156,343 +141,158 @@ impl TextInput {
     }
 
     pub fn set_value(&mut self, v: String, cx: &mut Context<Self>) {
-        self.value = v;
+        self.value = v.clone();
+        self.pending_value = Some(v);
         cx.notify();
     }
 
+    /// Focus handle before the inner state exists (one-frame fallback).
     pub fn focus_handle(&self) -> FocusHandle {
-        self.focus.clone()
+        self.fallback_focus.clone()
     }
 
-    /// utf16 offset -> char offset for `value`
-    fn utf16_to_char_offset(&self, u16_offset: usize) -> usize {
-        let mut u16_count = 0usize;
-        for (char_ix, ch) in self.value.chars().enumerate() {
-            if u16_count >= u16_offset {
-                return char_ix;
+    /// The inner widget's focus handle once initialized.
+    pub fn focus_handle_in(&self, cx: &App) -> FocusHandle {
+        use gpui::Focusable as _;
+        self.state
+            .as_ref()
+            .map(|s| s.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| self.fallback_focus.clone())
+    }
+
+    /// Create (once) + focus the inner state immediately — for callers that
+    /// must focus programmatically (session search toggle).
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.ensure_state(window, cx);
+        if let Some(state) = state {
+            state.update(cx, |st, scx| st.focus(window, scx));
+        }
+        cx.notify();
+    }
+
+    fn ensure_state(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<InputState>> {
+        if let Some(state) = &self.state {
+            return Some(state.clone());
+        }
+        let placeholder = self.placeholder.clone().unwrap_or_default();
+        let masked = self.masked;
+        let state = cx.new(|scx| {
+            let mut st = InputState::new(window, scx).placeholder(placeholder);
+            if masked {
+                st = st.masked(true);
             }
-            u16_count += ch.len_utf16();
+            st
+        });
+        cx.subscribe(&state, |this, entity, event: &InputEvent, cx| {
+            this.on_inner_event(entity, event, cx);
+        })
+        .detach();
+        // apply a pre-init value (prefill) now that we have a window
+        if let Some(v) = self.pending_value.take() {
+            self.value = v.clone();
+            state.update(cx, |st, scx| st.set_value(v, window, scx));
         }
-        self.value.chars().count()
+        self.state = Some(state.clone());
+        Some(state)
     }
 
-    fn fire(cb: &Option<Changed>, value: &str, cx: &mut App) {
-        if let Some(cb) = cb {
-            cb(value, cx);
+    fn on_inner_event(
+        &mut self,
+        entity: gpui::Entity<InputState>,
+        event: &InputEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            InputEvent::Change => {
+                let mut v = entity.read(cx).value().to_string();
+                if self.numeric {
+                    let digits: String = v.chars().filter(|c| c.is_ascii_digit()).collect();
+                    if digits != v {
+                        // reject the rejected characters
+                        self.pending_value = Some(digits.clone());
+                    }
+                    v = digits;
+                }
+                self.value = v.clone();
+                let cb = self.on_change.take();
+                if let Some(cb) = &cb {
+                    cb(&v, cx);
+                }
+                self.on_change = cb;
+            }
+            InputEvent::PressEnter { .. } => {
+                let v = self.value.clone();
+                let cb = self.on_submit.take();
+                if let Some(cb) = &cb {
+                    cb(&v, cx);
+                }
+                self.on_submit = cb;
+            }
+            InputEvent::Focus => {
+                if self.select_all_on_focus && !self.select_all_done && !self.value.is_empty() {
+                    self.select_all_done = true;
+                    self.want_select_all = true; // dispatched in render (needs window)
+                    cx.notify();
+                }
+            }
+            InputEvent::Blur => {}
         }
-    }
-}
-
-impl Focusable for TextInput {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus.clone()
     }
 }
 
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.ensure_state(window, cx).expect("input state");
+        // apply dirty buffers (inner setters need the window)
+        if let Some(v) = self.pending_value.take() {
+            self.value = v.clone();
+            state.update(cx, |st, scx| st.set_value(v, window, scx));
+        }
+        if let Some(ph) = self.pending_placeholder.take() {
+            state.update(cx, |st, scx| st.set_placeholder(ph, window, scx));
+        }
+        if let Some(m) = self.pending_masked.take() {
+            state.update(cx, |st, scx| st.set_masked(m, window, scx));
+        }
+        if self.want_select_all {
+            self.want_select_all = false;
+            window.dispatch_action(Box::new(SelectAll), cx);
+        }
+
         let t = T();
-        let focused = self.focus.is_focused(window);
-        self.focused_hint = focused;
-        let composing = self.marked.is_some();
-        let empty = self.value.is_empty() && !composing;
-
-        let shown: SharedString = if empty {
-            self.placeholder.clone().unwrap_or_default()
-        } else if self.masked && !composing {
-            "\u{2022}".repeat(self.value.chars().count()).into()
-        } else {
-            self.value.clone().into()
-        };
-
-        let field_focus = self.focus.clone();
-        let show_caret = focused && self.caret_on && !composing;
-        let entity = cx.entity();
-
+        let focused = state.read(cx).focus_handle(cx).is_focused(window);
         div()
-            .id(self.id.clone())
-            .track_focus(&self.focus)
-            // click anywhere in the field focuses it (fixes "点击没有 focus")
-            .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
-                window.focus(&field_focus);
-            })
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
-                if this.marked.is_some() {
-                    return; // IME owns the composition keys
-                }
-                match ev.keystroke.key.as_str() {
-                    "enter" => {
-                        let v = this.value.clone();
-                        if let Some(cb) = this.on_submit.as_ref() {
-                            cb(&v, cx);
-                        }
-                    }
-                    "escape" => {
-                        if let Some(cb) = this.on_escape.as_ref() {
-                            cb(cx);
-                        }
-                    }
-                    "backspace" => {
-                        if this.select_all && !this.value.is_empty() {
-                            this.value.clear(); // select-all + backspace = clear
-                        } else {
-                            this.value.pop();
-                        }
-                        this.select_all = false;
-                        let v = this.value.clone();
-                        TextInput::fire(&this.on_change, &v, cx);
-                        cx.notify();
-                    }
-                    _ => {}
-                }
-            }))
-            .flex()
-            .items_center()
-            .min_h(gpui::px(30.))
-            .px(gpui::px(9.))
-            .rounded(gpui::px(5.))
-            .border_1()
-            .border_color(gpui::rgb(if focused { t.accent } else { t.border }))
-            .bg(gpui::rgb(t.bg_panel))
-            .overflow_hidden()
+            .w_full()
+            .h(gpui::px(30.))
+            // inherit into the inner widget's text shaping
             .font_family("Consolas")
             .text_size(gpui::px(12.))
-            .line_height(gpui::relative(1.4))
-            .text_color(gpui::rgb(if empty { t.text_dim } else { t.text }))
+            // escape bubbles up from the inner widget (it only unmarks IME
+            // composition and propagates) — turn it into the app callback
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
+                if ev.keystroke.key == "escape" {
+                    let cb = this.on_escape.take();
+                    if let Some(cb) = &cb {
+                        cb(cx);
+                    }
+                    this.on_escape = cb;
+                    cx.stop_propagation();
+                }
+            }))
             .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(shown),
+                GpInput::new(&state)
+                    .appearance(true)
+                    .bordered(true)
+                    .map(|input| {
+                        input
+                            .bg(gpui::rgb(t.bg_panel))
+                            .border_color(gpui::rgb(if focused { t.accent } else { t.border }))
+                            .rounded(gpui::px(5.))
+                    }),
             )
-            .when(show_caret, |d| {
-                d.child(
-                    div()
-                        .w(gpui::px(1.))
-                        .h(gpui::px(14.))
-                        .flex_shrink_0()
-                        .bg(gpui::rgb(t.text)),
-                )
-            })
-            // paint-phase IME registration (absolute overlay, no layout)
-            .child(
-                TextInputElement::new(entity, self.focus.clone())
-                    .absolute()
-                    .inset_0(),
-            )
-    }
-}
-
-impl gpui::EntityInputHandler for TextInput {
-    fn text_for_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        adjusted_range: &mut Option<std::ops::Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<String> {
-        let text: Vec<u16> = self.value.encode_utf16().collect();
-        let slice: String = text
-            .get(range.start..range.end)?
-            .iter()
-            .map(|&u| char::from_u32(u as u32).unwrap_or('\u{fffd}'))
-            .collect();
-        adjusted_range.replace(range);
-        Some(slice)
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<gpui::UTF16Selection> {
-        let end = self.value.encode_utf16().count();
-        // select_all_on_focus: report the whole value selected until the
-        // user edits (platform IMEs replace the selection on input)
-        if self.select_all && end > 0 {
-            return Some(gpui::UTF16Selection { range: 0..end, reversed: false });
-        }
-        // single-line field: caret at end, empty selection
-        Some(gpui::UTF16Selection { range: end..end, reversed: false })
-    }
-
-    fn marked_text_range(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<std::ops::Range<usize>> {
-        self.marked.clone()
-    }
-
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.marked = None;
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        range: Option<std::ops::Range<usize>>,
-        text: &str,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let text = if self.numeric {
-            text.chars().filter(|c| c.is_ascii_digit()).collect::<String>()
-        } else {
-            text.to_string()
-        };
-        if text.is_empty() && range.is_none() && !self.numeric {
-            return;
-        }
-        match range.or_else(|| self.marked.clone()) {
-            Some(r) => {
-                let start = self.utf16_to_char_offset(r.start);
-                let end = self.utf16_to_char_offset(r.end);
-                self.value.replace_range(start..end, &text);
-            }
-            None => self.value.push_str(&text),
-        }
-        self.marked = None;
-        self.select_all = false;
-        let v = self.value.clone();
-        TextInput::fire(&self.on_change, &v, cx);
-        cx.notify();
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<std::ops::Range<usize>>,
-        new_text: &str,
-        _new_selected_range: Option<std::ops::Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        // composition update: swap the marked span for the new composition
-        // string, then re-mark it
-        let range = range.or_else(|| self.marked.clone());
-        let start = match &range {
-            Some(r) => self.utf16_to_char_offset(r.start),
-            None => self.value.chars().count(),
-        };
-        let end = range
-            .as_ref()
-            .map(|r| self.utf16_to_char_offset(r.end))
-            .unwrap_or(start);
-        self.value.replace_range(start..end, new_text);
-        let start_u16 = self.value.chars().take(start).map(char::len_utf16).sum();
-        let new_len = new_text.encode_utf16().count();
-        self.marked = Some(start_u16..start_u16 + new_len);
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _range: std::ops::Range<usize>,
-        element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        // IME candidate window anchors to the field
-        Some(element_bounds)
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _point: gpui::Point<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<usize> {
-        None
-    }
-}
-
-/// Invisible paint-phase element that registers the input as the window's
-/// InputHandler when focused (required for Windows IME); mirrors the chat
-/// editor's EditorInputElement.
-pub struct TextInputElement {
-    focus: FocusHandle,
-    view: gpui::Entity<TextInput>,
-    interactivity: gpui::Interactivity,
-}
-
-impl TextInputElement {
-    pub fn new(view: gpui::Entity<TextInput>, focus: FocusHandle) -> Self {
-        Self {
-            focus,
-            view,
-            interactivity: gpui::Interactivity::new(),
-        }
-    }
-}
-
-impl IntoElement for TextInputElement {
-    type Element = Self;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl Styled for TextInputElement {
-    fn style(&mut self) -> &mut gpui::StyleRefinement {
-        &mut self.interactivity.base_style
-    }
-}
-
-impl gpui::Element for TextInputElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<gpui::ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let layout_id = self.interactivity.request_layout(
-            global_id,
-            inspector_id,
-            window,
-            cx,
-            |style, window, cx| window.request_layout(style, None, cx),
-        );
-        (layout_id, ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        window.handle_input(
-            &self.focus,
-            gpui::ElementInputHandler::new(bounds, self.view.clone()),
-            cx,
-        );
     }
 }

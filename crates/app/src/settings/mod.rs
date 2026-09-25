@@ -380,7 +380,7 @@ pub(crate) fn render_settings(
                                                     cx.notify();
                                                     s.key_visible
                                                 });
-                                                input.update(cx, |ti, _| ti.set_masked(!visible));
+                                                input.update(cx, |ti, cx| ti.set_masked(!visible, cx));
                                             }
                                         });
                                     }
