@@ -29,15 +29,20 @@ pub fn vendor_dir() -> Option<PathBuf> {
     None
 }
 
-/// Node binary resolution (bundled node.exe > PI_FLASH_NODE > PATH),
-/// shared by the RPC spawner and one-off CLI operations.
+/// Node binary resolution (bundled node next to the exe > PI_FLASH_NODE >
+/// PATH), shared by the RPC spawner and one-off CLI operations. The bundled
+/// lookup accepts `node.exe` (Windows) and `node` (macOS/Linux) so the app
+/// bundle is self-contained even when Finder gives it an empty PATH.
 pub fn node_bin() -> String {
     std::env::var("PI_FLASH_NODE").ok().or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|d| d.parent().map(|p| p.join("node.exe")))
-            .filter(|p| p.is_file())
-            .map(|p| p.to_string_lossy().to_string())
+        std::env::current_exe().ok().and_then(|d| {
+            let dir = d.parent()?;
+            #[cfg(windows)]
+            let candidate = dir.join("node.exe");
+            #[cfg(not(windows))]
+            let candidate = dir.join("node");
+            candidate.is_file().then(|| candidate.to_string_lossy().to_string())
+        })
     })
     .unwrap_or_else(|| "node".to_string())
 }

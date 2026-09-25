@@ -1,0 +1,132 @@
+# macOS build bundle (pi-flash-650): build the .app with the vendored pi,
+# sign + notarize when Apple secrets are configured, ad-hoc sign otherwise.
+# Windows stays a local-development build (see AGENTS.md) and is not built here.
+
+name: release-macos
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+  APPLE_ID: ${{ secrets.APPLE_ID }}
+  APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+jobs:
+  macos:
+    runs-on: macos-14 # Apple silicon runner
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # vendored pi: node_modules is not committed (AGENTS.md 铁律)
+      - name: Install vendored pi dependencies
+        run: npm ci
+        working-directory: vendor/pi
+
+      - name: Run pi-link tests (protocol conformance)
+        run: cargo test -p pi-link
+
+      - name: Build app (release)
+        run: cargo build --release -p app
+
+      - name: Fetch bundled node runtime (arm64)
+        run: |
+          NODE_VERSION=v22.14.0
+          curl -fsSLO "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-darwin-arm64.tar.gz"
+          tar -xzf "node-${NODE_VERSION}-darwin-arm64.tar.gz"
+          cp "node-${NODE_VERSION}-darwin-arm64/bin/node" ./node
+          chmod +x ./node
+          rm -rf "node-${NODE_VERSION}-darwin-arm64.tar.gz" "node-${NODE_VERSION}-darwin-arm64"
+
+      - name: Bundle pi-flash.app
+        run: |
+          set -euo pipefail
+          APP=pi-flash.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/release/pi-flash "$APP/Contents/MacOS/pi-flash"
+          cp node "$APP/Contents/MacOS/node"
+          # release layout: vendor/pi lives next to the executable
+          cp -R vendor "$APP/Contents/MacOS/vendor"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>pi-flash</string>
+            <key>CFBundleDisplayName</key><string>pi-flash</string>
+            <key>CFBundleIdentifier</key><string>dev.pi-flash.app</string>
+            <key>CFBundleExecutable</key><string>pi-flash</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleVersion</key><string>${GITHUB_SHA::8}</string>
+            <key>LSMinimumSystemVersion</key><string>13.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          # ad-hoc signature so the bundle launches even without Apple secrets
+          codesign --force --deep --sign - "$APP"
+          zip -qry pi-flash-macos-arm64.zip "$APP"
+
+      # real signing/notarization only when the repo has the secrets
+      - name: Import signing identity
+        if: ${{ env.APPLE_CERTIFICATE_P12 != '' }}
+        run: |
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p ci-build build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci-build build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci-build build.keychain
+          rm /tmp/cert.p12
+
+      - name: Codesign (Developer ID)
+        if: ${{ env.APPLE_CERTIFICATE_P12 != '' }}
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | awk '/Developer ID Application/ {print $2; exit}')
+          test -n "$IDENTITY" || { echo "no Developer ID identity in keychain"; exit 1; }
+          codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp pi-flash.app
+
+      - name: Notarize + staple
+        if: ${{ env.APPLE_CERTIFICATE_P12 != '' && env.APPLE_ID != '' }}
+        run: |
+          zip -qry pi-flash-macos-arm64.zip pi-flash.app
+          xcrun notarytool submit pi-flash-macos-arm64.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple pi-flash.app
+          rm pi-flash-macos-arm64.zip
+          zip -qry pi-flash-macos-arm64.zip pi-flash.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-flash-macos-arm64
+          path: pi-flash-macos-arm64.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pi-flash-macos-arm64.zip
