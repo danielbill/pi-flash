@@ -33,6 +33,8 @@ pub enum Command {
     SetThinkingLevel { level: String },
     /// Full session tree with branch structure
     GetTree,
+    /// Final assistant text of the last turn (rpc get_last_assistant_text)
+    GetLastAssistantText,
     /// Fork a new session branching before the given user-message entry
     Fork { entry_id: String },
     /// Answer to a blocking extension UI request (rpc-mode reads this at the
@@ -62,6 +64,7 @@ impl Command {
             Command::GetAvailableModels => "get_available_models",
             Command::SetThinkingLevel { .. } => "set_thinking_level",
             Command::GetTree => "get_tree",
+            Command::GetLastAssistantText => "get_last_assistant_text",
             Command::Fork { .. } => "fork",
             Command::ExtensionUiResponse { .. } => "extension_ui_response",
         }
@@ -121,7 +124,7 @@ impl Command {
             Command::SetSessionName { name } => {
                 json!({ "type": self.kind(), "name": name })
             }
-            Command::GetTree => json!({ "type": self.kind() }),
+            Command::GetTree | Command::GetLastAssistantText => json!({ "type": self.kind() }),
             // wire field is entryId (rpc-types.d.ts fork)
             Command::Fork { entry_id } => {
                 json!({ "type": self.kind(), "entryId": entry_id })

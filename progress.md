@@ -146,6 +146,28 @@
   - 测试：协议 8 变体解析 + 响应记录形状（cancelled/confirmed/value 组合）
   - 偏差：expiresAt 超时由 pi 侧 resolve(defaultValue) 兜底，客户端不做倒计时；
     editor 单行输入（多行编辑器后置）
+- **pi-flash-vxc M5 子代理面板**（已关闭）：
+  - pi-link `subagents.rs`：SubagentProfile 模型（pi-web subagents.ts 对齐）、
+    三个内置 profile（general-purpose 全工具 / explore、plan 只读）、发现目录
+    （agentDir/agents、cwd/.agents/agents、cwd/.pi/agents，shadowing 顺序
+    builtin<global<workspace<project，同名小写 last-write-wins）、markdown
+    frontmatter（snake_case）round-trip、agents/settings.json（builtInEnabled/
+    disabledBuiltIns/maxConcurrent 1-32，默认 10）
+  - Settings 弹窗第 5 个 tab「子代理」：侧栏=运行区 + 内置/全局/工作区/项目
+    分组（绿点=启用、「覆盖」徽章）；详情=scope 标签+路径+描述+工具+模型/
+    思考/最大轮数 + 启用开关（内置→disabledBuiltIns，文件→frontmatter）+
+    删除（文件 scope）；全局设置区=内置开关 + maxConcurrent 输入
+  - 运行/控制：按 profile 以 CLI flags spawn 子 RPC 会话（--system-prompt/
+    --tools/--model/--thinking），sa_runs 列表（运行/已完成/失败/已中止），
+    子会话事件泵至 AgentSettled（AgentEnd→get_last_assistant_text 回读输出），
+    运行详情=状态 + 输出文本 + 中止（Abort）
+  - Command::GetLastAssistantText 新增
+  - 测试 +5（内置/禁用、roundtrip+shadowing、settings、frontmatter 容错）
+    = 61 全绿
+  - 偏差：运行由面板手动触发（pi-web 由模型经 Agent 工具触发——该机制在
+    pi-web 服务端层，不在 RPC 面）；profile 编辑器后置（markdown 本就是
+    pi 的手编格式）；worktree 隔离/队列/父会话通知属 pi-web 服务端运行时，
+    不在 RPC 面
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）

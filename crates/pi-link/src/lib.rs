@@ -12,6 +12,7 @@ pub mod config;
 pub mod protocol;
 pub mod sessions;
 pub mod skills;
+pub mod subagents;
 pub mod vendor;
 
 /// Vendored pi version this crate's types/tests are written against.

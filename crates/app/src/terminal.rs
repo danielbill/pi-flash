@@ -643,7 +643,7 @@ impl gpui::Element for TerminalElement {
                         bounds.origin.x + px(PAD_L),
                         bounds.origin.y + px(PAD_T) + line_h * r as f32,
                     );
-                    line.paint(origin, line_h, window, cx);
+                    let _ = line.paint(origin, line_h, window, cx);
                 }
 
                 // mouse: selection drag + wheel scroll (hit-tested manually)
