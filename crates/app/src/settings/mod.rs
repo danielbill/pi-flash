@@ -1,6 +1,7 @@
 //! Settings panel family (pi-web SettingsPanel + Models/Skills/Agents/
-//! Plugins/ToolDefinitions Config components). Views render per-tab; the
-//! mc_*/sa_* action methods stay on Chat (single RPC owner).
+//! Plugins/ToolDefinitions Config components). The SettingsPanel entity owns
+//! the form state (tab/section/inputs/error) with its own focus; the mc_*/
+//! sa_* action methods stay on Chat (single RPC owner).
 
 pub(crate) mod general;
 pub(crate) mod models;
@@ -16,13 +17,91 @@ use subagents::mc_subagents_view;
 use tools::mc_tools_view;
 
 use super::*;
-pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+
+/// The settings modal's form state (pi-web SettingsPanel own-state parity).
+pub(crate) struct SettingsPanel {
+    /// modal focus (escape + click-away target)
+    pub focus: gpui::FocusHandle,
+    /// 0 models · 1 skills · 2 plugins · 3 tools · 4 subagents
+    pub tab: u8,
+    /// selected entry in the tab's sidebar (provider id / skill path /
+    /// package source / "__add__" for the install form)
+    pub section: String,
+    pub key_input: gpui::Entity<TextInput>,
+    pub key_visible: bool,
+    pub install_input: gpui::Entity<TextInput>,
+    pub install_scope_project: bool,
+    /// subagents tab: maxConcurrent input value
+    pub sa_input: gpui::Entity<TextInput>,
+    pub error: Option<String>,
+}
+
+impl SettingsPanel {
+    pub(crate) fn new(cx: &mut gpui::Context<Self>) -> Self {
+        Self {
+            focus: cx.focus_handle(),
+            tab: 0,
+            section: String::new(),
+            key_input: cx.new(|cx| {
+                TextInput::new(cx)
+                    .masked(true)
+                    .placeholder(tr("ENV 变量、!命令 或明文 key"))
+            }),
+            key_visible: false,
+            install_input: cx.new(|cx| TextInput::new(cx).placeholder(tr("来源"))),
+            install_scope_project: false,
+            sa_input: cx.new(|cx| TextInput::new(cx).numeric(true)),
+            error: None,
+        }
+    }
+}
+
+/// Stack snapshot of the panel state for one render pass (the views are
+/// free functions without cx access to the entity).
+#[derive(Clone)]
+pub(crate) struct SettingsFormData {
+    pub focus: gpui::FocusHandle,
+    pub tab: u8,
+    pub section: String,
+    pub key_input: gpui::Entity<TextInput>,
+    pub key_visible: bool,
+    pub install_input: gpui::Entity<TextInput>,
+    pub install_scope_project: bool,
+    pub sa_input: gpui::Entity<TextInput>,
+    pub error: Option<String>,
+}
+
+impl SettingsFormData {
+    pub(crate) fn snapshot(
+        panel: &SettingsPanel,
+        cx: &gpui::App,
+    ) -> Self {
+        let p = panel;
+        Self {
+            focus: p.focus.clone(),
+            tab: p.tab,
+            section: p.section.clone(),
+            key_input: p.key_input.clone(),
+            key_visible: p.key_visible,
+            install_input: p.install_input.clone(),
+            install_scope_project: p.install_scope_project,
+            sa_input: p.sa_input.clone(),
+            error: p.error.clone(),
+        }
+    }
+}
+
+pub(crate) fn render_settings(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    d: &SettingsFormData,
+) -> gpui::AnyElement {
+    // BISECT: skip the real tree
+    return div().into_any_element();
+    #[allow(unreachable_code)]
     let t = T();
-    let Some(Dialog::Settings { tab, section, key_input, key_visible, install_input, install_scope_project, sa_input, error }) =
-        chat.dialog.clone()
-    else {
-        return div().into_any_element();
-    };
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, install_input, install_scope_project, sa_input, error } =
+        d.clone();
     let weak_close = weak.clone();
 
     let (sidebar, detail) = if tab == 0 {
@@ -86,11 +165,12 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| {
-                        if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog
-                        {
-                            *section = pid.clone();
-                            *error = None;
-                            cx.notify();
+                        if let Some(st) = c.settings.clone() {
+                            st.update(cx, |s, cx| {
+                                s.section = pid.clone();
+                                s.error = None;
+                                cx.notify();
+                            });
                         }
                     });
                 })
@@ -293,21 +373,15 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                                     let weak_eye = weak.clone();
                                     move |_, _, cx| {
                                         let _ = weak_eye.update(cx, |c, cx| {
-                                            let next = if let Some(Dialog::Settings {
-                                                key_visible,
-                                                key_input,
-                                                ..
-                                            }) = &mut c.dialog
-                                            {
-                                                *key_visible = !*key_visible;
-                                                Some((key_input.clone(), *key_visible))
-                                            } else {
-                                                None
-                                            };
-                                            if let Some((input, visible)) = next {
+                                            if let Some(st) = c.settings.clone() {
+                                                let input = st.read(cx).key_input.clone();
+                                                let visible = st.update(cx, |s, cx| {
+                                                    s.key_visible = !s.key_visible;
+                                                    cx.notify();
+                                                    s.key_visible
+                                                });
                                                 input.update(cx, |ti, _| ti.set_masked(!visible));
                                             }
-                                            cx.notify();
                                         });
                                     }
                                 })
@@ -337,14 +411,9 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let _ = weak_save.update(cx, |c, cx| {
                                         let key = c
-                                            .dialog
+                                            .settings
                                             .as_ref()
-                                            .and_then(|d| match d {
-                                                Dialog::Settings { key_input, .. } => {
-                                                    Some(key_input.clone())
-                                                }
-                                                _ => None,
-                                            })
+                                            .map(|st| st.read(cx).key_input.clone())
                                             .and_then(|input| {
                                                 Some(input.read(cx).value().to_string())
                                             })
@@ -626,7 +695,7 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
             move |ev: &KeyDownEvent, _w, cx| {
                 if ev.keystroke.key == "escape" {
                     let _ = weak.update(cx, |this, cx| {
-                        this.dialog = None;
+                        this.settings = None;
                         cx.notify();
                     });
                 }
@@ -684,11 +753,13 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                                             4 => c.sa_profiles.first().map(|p| p.name.clone()).unwrap_or_default(),
                                             _ => String::new(),
                                         };
-                                        if let Some(Dialog::Settings { tab, section, error, .. }) = &mut c.dialog {
-                                            *tab = i as u8;
-                                            *section = next_section;
-                                            *error = None;
-                                            cx.notify();
+                                        if let Some(st) = c.settings.clone() {
+                                            st.update(cx, |s, cx| {
+                                                s.tab = i as u8;
+                                                s.section = next_section;
+                                                s.error = None;
+                                                cx.notify();
+                                            });
                                         }
                                     });
                                 })
@@ -718,7 +789,7 @@ pub(crate) fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                                     let weak = weak_close.clone();
                                     move |_, _, cx| {
                                         let _ = weak.update(cx, |c, cx| {
-                                            c.dialog = None;
+                                            c.settings = None;
                                             cx.notify();
                                         });
                                     }

@@ -1,0 +1,4 @@
+# Windows 主线程默认栈仅 1MB;GPUI 布局/渲染逐元素递归(大帧)在文件树
+# 展开等场景会爆栈(实测 100MB 稳定、1MB 必崩)。Zed 同款做法:链接期提到 16MB。
+[target.'cfg(windows)']
+rustflags = ["-C", "link-args=/STACK:16777216"]

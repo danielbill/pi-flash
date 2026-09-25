@@ -56,8 +56,8 @@ impl Chat {
             args.push("-l".to_string());
         }
         self.mc_cli_op(args, crate::i18n::tf("已安装 {source}", &[("source", source.clone())]), cx);
-        if let Some(Dialog::Settings { section, .. }) = &mut self.dialog {
-            *section = "__add__".into();
+        if let Some(st) = self.settings.clone() {
+            st.update(cx, |s, _| s.section = "__add__".into());
         }
     }
 
@@ -125,11 +125,13 @@ pub(crate) fn mc_plugins_view(
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| {
-                        if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
-                            *section = item_src.clone();
-                            *error = None;
-                            let _ = item_proj;
-                            cx.notify();
+                        if let Some(st) = c.settings.clone() {
+                            st.update(cx, |s, cx| {
+                                s.section = item_src.clone();
+                                s.error = None;
+                                let _ = item_proj;
+                                cx.notify();
+                            });
                         }
                     });
                 })
@@ -188,11 +190,13 @@ pub(crate) fn mc_plugins_view(
                     .hover(|s| s.bg(rgb(t.bg_hover)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_add.update(cx, |c, cx| {
-                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
-                                *section = "__add__".into();
-                                *error = None;
-                                cx.notify();
-                            }
+                            if let Some(st) = c.settings.clone() {
+                                                st.update(cx, |s, cx| {
+                                                    s.section = "__add__".into();
+                                                    s.error = None;
+                                                    cx.notify();
+                                                });
+                                            }
                         });
                     })
                     .child(icon("plus", 13., t.text_dim))
@@ -251,9 +255,11 @@ pub(crate) fn mc_plugins_view(
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_g.update(cx, |c, cx| {
-                                    if let Some(Dialog::Settings { install_scope_project, .. }) = &mut c.dialog {
-                                        *install_scope_project = false;
-                                        cx.notify();
+                                    if let Some(st) = c.settings.clone() {
+                                        st.update(cx, |s, cx| {
+                                            s.install_scope_project = false;
+                                            cx.notify();
+                                        });
                                     }
                                 });
                             })
@@ -276,9 +282,11 @@ pub(crate) fn mc_plugins_view(
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let _ = weak_p.update(cx, |c, cx| {
-                                    if let Some(Dialog::Settings { install_scope_project, .. }) = &mut c.dialog {
-                                        *install_scope_project = true;
-                                        cx.notify();
+                                    if let Some(st) = c.settings.clone() {
+                                        st.update(cx, |s, cx| {
+                                            s.install_scope_project = true;
+                                            cx.notify();
+                                        });
                                     }
                                 });
                             })
@@ -304,23 +312,15 @@ pub(crate) fn mc_plugins_view(
                     .hover(|s| s.bg(rgb(t.accent_hover)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_go.update(cx, |c, cx| {
-                            let src = c
-                                .dialog
+                            let st = c.settings.clone();
+                            let src = st
                                 .as_ref()
-                                .and_then(|d| match d {
-                                    Dialog::Settings { install_input, .. } => {
-                                        Some(install_input.read(cx).value().to_string())
-                                    }
-                                    _ => None,
-                                })
+                                .map(|st| st.read(cx).install_input.clone())
+                                .and_then(|input| Some(input.read(cx).value().to_string()))
                                 .unwrap_or_default();
-                            let proj = c
-                                .dialog
+                            let proj = st
                                 .as_ref()
-                                .and_then(|d| match d {
-                                    Dialog::Settings { install_scope_project, .. } => Some(*install_scope_project),
-                                    _ => None,
-                                })
+                                .map(|st| st.read(cx).install_scope_project)
                                 .unwrap_or(false);
                             c.mc_install_package(src, proj, cx);
                         });

@@ -74,11 +74,13 @@ pub(crate) fn mc_skills_view(
                     .hover(|s| s.bg(rgb(t.bg_hover)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| {
-                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
-                                *section = path.clone();
-                                *error = None;
-                                cx.notify();
-                            }
+                            if let Some(st) = c.settings.clone() {
+                                                st.update(cx, |s, cx| {
+                                                    s.section = path.clone();
+                                                    s.error = None;
+                                                    cx.notify();
+                                                });
+                                            }
                         });
                     })
                     .child(

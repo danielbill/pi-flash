@@ -5,88 +5,9 @@ use super::*;
 
 impl Chat {
     pub(crate) fn open_settings(&mut self, tab: u8, cx: &mut Context<Self>) {
+        // BISECT A: reload only, no entity
         self.reload_settings_panel();
-        let section = match tab {
-            0 => self.mc_provider_ids().first().cloned().unwrap_or_default(),
-            1 => self.mc_skills.first().map(|s| s.path.to_string_lossy().to_string()).unwrap_or_default(),
-            2 => self
-                .mc_pkgs_global
-                .first()
-                .or_else(|| self.mc_pkgs_project.first())
-                .map(pi_link::skills::entry_source)
-                .unwrap_or_else(|| "__add__".into()),
-            4 => self
-                .sa_profiles
-                .first()
-                .map(|p| p.name.clone())
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
-        // settings inputs (own focus handles; TextInput = the app-wide field)
-        let weak_key = cx.entity().downgrade();
-        let key_input = cx.new(|cx| {
-            TextInput::new(cx)
-                .masked(true)
-                .placeholder(tr("ENV 变量、!命令 或明文 key"))
-        });
-        key_input.update(cx, |ti, _| {
-            let weak_esc = weak_key.clone();
-            ti.set_on_change(Box::new(move |_, cx| {
-                // masked-key preview re-renders on every keystroke
-                let _ = weak_key.update(cx, |_, cx| cx.notify());
-            }));
-            ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_esc.update(cx, |c, cx| {
-                    c.dialog = None;
-                    cx.notify();
-                });
-            }));
-        });
-        let weak_install = cx.entity().downgrade();
-        let install_input =
-            cx.new(|cx| TextInput::new(cx).placeholder(tr("来源")));
-        install_input.update(cx, |ti, _| {
-            let weak_esc = weak_install.clone();
-            ti.set_on_submit(Box::new(move |v, cx| {
-                let _ = weak_install.update(cx, |c, cx| {
-                    let proj = match &c.dialog {
-                        Some(Dialog::Settings { install_scope_project, .. }) => {
-                            *install_scope_project
-                        }
-                        _ => return,
-                    };
-                    c.mc_install_package(v.to_string(), proj, cx);
-                });
-            }));
-            ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_esc.update(cx, |c, cx| {
-                    c.dialog = None;
-                    cx.notify();
-                });
-            }));
-        });
-        let weak_sa = cx.entity().downgrade();
-        let sa_input = cx.new(|cx| TextInput::new(cx).numeric(true));
-        sa_input.update(cx, |ti, _| {
-            ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_sa.update(cx, |c, cx| {
-                    c.dialog = None;
-                    cx.notify();
-                });
-            }));
-        });
-        let max_prefill = self.sa_settings.max_concurrent.to_string();
-        sa_input.update(cx, |ti, cx| ti.set_value(max_prefill, cx));
-        self.dialog = Some(Dialog::Settings {
-            tab,
-            section,
-            key_input,
-            key_visible: false,
-            install_input,
-            install_scope_project: false,
-            sa_input,
-            error: None,
-        });
+        let _ = tab;
         cx.notify();
     }
 
@@ -136,17 +57,20 @@ impl Chat {
     }
 
     pub(crate) fn mc_set_error(&mut self, msg: &str, cx: &mut Context<Self>) {
-        if let Some(Dialog::Settings { error, .. }) = &mut self.dialog {
-            *error = Some(msg.to_string());
+        if let Some(st) = self.settings.clone() {
+            st.update(cx, |s, _| s.error = Some(msg.to_string()));
         }
         cx.notify();
     }
 
     pub(crate) fn mc_clear_error(&mut self, cx: &mut Context<Self>) {
-        if let Some(Dialog::Settings { error, .. }) = &mut self.dialog {
-            if error.is_some() {
-                *error = None;
-                cx.notify();
+        if let Some(st) = self.settings.clone() {
+            let had = st.read(cx).error.is_some();
+            if had {
+                st.update(cx, |s, cx| {
+                    s.error = None;
+                    cx.notify();
+                });
             }
         }
     }
@@ -201,8 +125,7 @@ impl Chat {
         // pi resolves auth.json per request; only a brand-new provider's
         // catalog needs a process restart to appear in available models
         self.reload_settings_panel();
-        if let Some(Dialog::Settings { key_input, .. }) = &self.dialog {
-            let input = key_input.clone();
+        if let Some(input) = self.settings.as_ref().map(|st| st.read(cx).key_input.clone()) {
             input.update(cx, |ti, cx| ti.set_value(String::new(), cx));
         }
         cx.notify();

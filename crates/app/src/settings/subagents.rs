@@ -15,15 +15,10 @@ impl Chat {
     pub(crate) fn sa_save_settings(&mut self, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let max = self
-            .dialog
+            .settings
             .as_ref()
-            .and_then(|d| match d {
-                Dialog::Settings { sa_input, .. } => {
-                    Some(sa_input.read(cx).value().parse::<u32>().ok())
-                }
-                _ => None,
-            })
-            .flatten()
+            .map(|st| st.read(cx).sa_input.clone())
+            .and_then(|input| input.read(cx).value().parse::<u32>().ok())
             .unwrap_or(self.sa_settings.max_concurrent)
             .clamp(1, 32);
         self.sa_settings.max_concurrent = max;
@@ -84,8 +79,9 @@ impl Chat {
             }
         }
         self.reload_settings_panel();
-        if let Some(Dialog::Settings { section, .. }) = &mut self.dialog {
-            *section = self.sa_profiles.first().map(|p| p.name.clone()).unwrap_or_default();
+        if let Some(st) = self.settings.clone() {
+            let first = self.sa_profiles.first().map(|p| p.name.clone()).unwrap_or_default();
+            st.update(cx, |s, _| s.section = first);
         }
         cx.notify();
     }
@@ -264,11 +260,13 @@ pub(crate) fn mc_subagents_view(
                     .hover(|s| s.bg(rgb(t.bg_hover)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| {
-                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
-                                *section = sel.clone();
-                                *error = None;
-                                cx.notify();
-                            }
+                            if let Some(st) = c.settings.clone() {
+                                                st.update(cx, |s, cx| {
+                                                    s.section = sel.clone();
+                                                    s.error = None;
+                                                    cx.notify();
+                                                });
+                                            }
                         });
                     })
                     .child(div().size(px(6.)).rounded_full().flex_shrink_0().bg(rgb(dot)))
@@ -332,11 +330,13 @@ pub(crate) fn mc_subagents_view(
                     .hover(|s| s.bg(rgb(t.bg_hover)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| {
-                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
-                                *section = name.clone();
-                                *error = None;
-                                cx.notify();
-                            }
+                            if let Some(st) = c.settings.clone() {
+                                                st.update(cx, |s, cx| {
+                                                    s.section = name.clone();
+                                                    s.error = None;
+                                                    cx.notify();
+                                                });
+                                            }
                         });
                     })
                     .child(

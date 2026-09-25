@@ -88,21 +88,6 @@ enum Dialog {
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
-    /// Settings panel (pi-web SettingsPanel): tabs 模型/技能/插件/工具
-    Settings {
-        /// 0 models · 1 skills · 2 plugins · 3 tools · 4 subagents
-        tab: u8,
-        /// selected entry in the tab's sidebar (provider id / skill path /
-        /// package source / "__add__" for the install form)
-        section: String,
-        key_input: gpui::Entity<TextInput>,
-        key_visible: bool,
-        install_input: gpui::Entity<TextInput>,
-        install_scope_project: bool,
-        /// subagents tab: maxConcurrent input value
-        sa_input: gpui::Entity<TextInput>,
-        error: Option<String>,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +220,8 @@ struct Chat {
     session_tools: Option<Vec<(String, String)>>,
     /// top-bar dropdown panel (系统提示词 / 工具定义)
     top_panel: Option<TopPanel>,
+    /// settings modal (own entity; pi-web SettingsPanel)
+    settings: Option<gpui::Entity<settings::SettingsPanel>>,
     /// sidebar session text search (pi-web SessionSearch)
     search_open: bool,
     search_input: gpui::Entity<TextInput>,
@@ -382,6 +369,7 @@ impl Chat {
             sys_prompt: None,
             session_tools: None,
             top_panel: None,
+            settings: None,
             search_open: false,
             search_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
@@ -2337,6 +2325,11 @@ fn collect_tree_rows(
     t: &theme::Theme,
     out: &mut Vec<gpui::AnyElement>,
 ) {
+    // defensive depth cap: pathological trees must not kill the app
+    // (Windows main stack; see .cargo/config.toml for the 16MB bump)
+    if depth >= 12 {
+        return;
+    }
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
@@ -2614,16 +2607,13 @@ impl Render for Chat {
             Some(Dialog::RenameSession { input }) | Some(Dialog::ModelSelect { input }) => {
                 Some(input.clone())
             }
-            Some(Dialog::Settings { tab, key_input, install_input, sa_input, .. }) => Some(
-                match tab {
-                    2 => install_input.clone(),
-                    4 => sa_input.clone(),
-                    _ => key_input.clone(),
-                },
-            ),
             _ => None,
         };
-        if let Some(input) = &dialog_input {
+        // NOTE: settings inputs are click-to-focus only — frame-level focus
+        // forcing on a not-yet-mounted entity recurses in gpui focus handling
+        // (stack overflow); dialogs keep the force since they mount before
+        // their first frame.
+        if let Some(input) = dialog_input {
             let handle = input.read(cx).focus_handle();
             if !handle.is_focused(window) {
                 window.focus(&handle);
@@ -5766,12 +5756,8 @@ impl Render for Chat {
                     ),
             );
         }
-        if self
-            .dialog
-            .as_ref()
-            .is_some_and(|d| matches!(d, Dialog::Settings { .. }))
-        {
-            root = root.child(settings::render_settings(self, &weak_for_dialog));
+        if let Some(_panel) = self.settings.clone() {
+            // BISECT: skip snapshot+render entirely
         }
         // toolbar pill popup menus
         if let Some(el) = pill_menu_el {
