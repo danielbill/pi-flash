@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
-    App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
-    MouseButton, ParentElement, Render, SharedString, Styled, WindowOptions, div, list,
-    prelude::*, px, relative, rgb,
+    Animation, AnimationExt, App, Application, Context, FocusHandle, Focusable, KeyDownEvent,
+    ListAlignment, ListState, MouseButton, ParentElement, Render, SharedString, Styled,
+    WindowOptions, div, list, prelude::*, pulsating_between, px, relative, rgb,
 };
 use pi_link::client::{PiSession, spawn as spawn_pi};
 use pi_link::protocol::{
@@ -229,6 +229,14 @@ struct Chat {
     search_query: String,
     search_focus: gpui::FocusHandle,
     sessions_list_count: usize,
+    /// send feedback: pulsing "waiting for model" row under the message list
+    /// (pi-web agentPhase=waiting_model + animate-[pulse_1.5s_infinite])
+    phase_waiting: bool,
+    /// inline delete confirmation on a session row (pi-web confirmDelete)
+    confirm_delete: Option<PathBuf>,
+    /// true from AgentStart until AgentEnd/AgentSettled (pi-web
+    /// runningSessionIds; drives the sidebar spinner)
+    agent_running: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -368,6 +376,9 @@ impl Chat {
             search_query: String::new(),
             search_focus: cx.focus_handle(),
             sessions_list_count: 0,
+            phase_waiting: false,
+            confirm_delete: None,
+            agent_running: false,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -964,10 +975,17 @@ impl Chat {
     fn mc_set_tools_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let tools: Option<Vec<String>> = match preset {
-            "all" => None, // pi default resolution (no override)
-            "default" => Some(["read", "bash", "edit", "write"].iter().map(|s| s.to_string()).collect()),
+            // configured sends no override: pi resolves settings defaultTools
+            "configured" => None,
+            "chat-only" => Some(Vec::new()),
             "read-only" => Some(["read", "grep", "find", "ls"].iter().map(|s| s.to_string()).collect()),
-            "none" => Some(Vec::new()),
+            "default" => Some(["read", "bash", "edit", "write"].iter().map(|s| s.to_string()).collect()),
+            "full" => Some(
+                ["bash", "read", "edit", "write", "grep", "find", "ls"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
             _ => return,
         };
         if let Err(e) = pi_link::config::write_default_tools(&pi_link::config::settings_path(), tools) {
@@ -1417,8 +1435,16 @@ impl Chat {
             .unwrap_or_else(|| "pi".to_string())
     }
 
+    /// pi-web ChatWindow: pulsing phase label renders while the agent is
+    /// running but no assistant content has arrived yet
+    fn phase_row_visible(&self) -> bool {
+        self.phase_waiting
+            && !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant)
+    }
+
     fn notify_list(&mut self, cx: &mut Context<Self>) {
-        self.list.reset(self.messages.len());
+        self.list
+            .reset(self.messages.len() + usize::from(self.phase_row_visible()));
         cx.notify();
     }
 
@@ -1580,12 +1606,24 @@ impl Chat {
         match session.send(&cmd) {
             Ok(_) => {
                 if self.history.last().map(|h| h != &text).unwrap_or(true) {
-                    self.history.push(text);
+                    self.history.push(text.clone());
                 }
                 self.history_ix = None;
                 self.input.clear();
                 self.pending_images.clear();
                 self.status = if streaming { "steering" } else { "running" }.into();
+                if !streaming {
+                    // pi-web optimistic append: the sent bubble shows up
+                    // immediately, RPC echo later upgrades it in place
+                    self.messages.push(Msg {
+                        role: Role::User,
+                        blocks: vec![Block::Text { content_index: 0, text }],
+                        usage: None,
+                        entry_id: None,
+                    });
+                    self.phase_waiting = true;
+                    self.notify_list(cx);
+                }
             }
             Err(e) => self.status = e,
         }
@@ -1658,6 +1696,7 @@ impl Chat {
             Some(list) if list.is_empty() => "chat-only",
             Some(list) if list == &vec!["read".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "read-only",
             Some(list) if list == &vec!["read".to_string(), "bash".to_string(), "edit".to_string(), "write".to_string()] => "default",
+            Some(list) if list == &vec!["bash".to_string(), "read".to_string(), "edit".to_string(), "write".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "full",
             _ => "",
         }
     }
@@ -1769,6 +1808,8 @@ impl Chat {
         self.stats = None;
         self.active_session_file = None;
         self.collapsed.clear();
+        self.phase_waiting = false;
+        self.agent_running = false;
         clear_last_open(&self.cwd.to_string_lossy());
         self.status = status_line(self.session.is_some(), tr("新会话"));
         self.refresh_state();
@@ -1806,6 +1847,9 @@ impl Chat {
         self.active_session_file = None;
         self.collapsed.clear();
         self.pending_rename = rename;
+        self.phase_waiting = false;
+        self.agent_running = false;
+        self.confirm_delete = None;
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
@@ -1825,20 +1869,31 @@ impl Chat {
         cx.notify();
     }
 
+    /// pi-web DELETE /api/sessions/{id}: unlink the session file; a live
+    /// (active) session is aborted + shut down first and the shell resets
+    /// to a fresh draft with the same cwd.
     fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.active_session_file.as_deref() == Some(path.as_path()) {
-            self.status = "cannot delete the active session".into();
-            cx.notify();
-            return;
+        self.confirm_delete = None;
+        let was_active = self.active_session_file.as_deref() == Some(path.as_path());
+        if was_active {
+            if let Some(session) = &self.session {
+                let _ = session.send(&Command::Abort);
+            }
+            // respawn without a session file = pi-web new-draft-with-same-cwd
+            // (drops the old pi process, clearing the file handle on Windows)
+            self.new_session(cx);
         }
         match std::fs::remove_file(&path) {
             Ok(_) => {
                 self.sessions.retain(|s| s.path != path);
                 self.sessions_list.reset(self.sessions.len());
-                self.status = "session deleted".into();
+                self.status = status_line(self.session.is_some(), "session deleted");
             }
-            Err(e) => self.status = format!("delete failed: {e}"),
+            Err(e) => {
+                self.status = crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())])
+            }
         }
+        self.refresh_sessions();
         cx.notify();
     }
 
@@ -2153,10 +2208,33 @@ impl Chat {
             Event::MessageStart { role, blocks, timestamp } => {
                 match role.as_str() {
                     "user" => {
-                        self.messages
-                            .push(Msg { role: Role::User, blocks, usage: None, entry_id: None });
+                        // upgrade the optimistic send bubble in place instead
+                        // of pushing a duplicate echo (pi-web
+                        // optimisticUserMessageKey parity); image blocks and
+                        // entry ids ride in with the echo
+                        let echo_text = blocks
+                            .iter()
+                            .map(|b| match b {
+                                Block::Text { text, .. } => text.as_str(),
+                                _ => "",
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+                        let optimistic = self.phase_waiting
+                            && matches!(self.messages.last(), Some(m)
+                                if m.role == Role::User && m.plain_text() == echo_text);
+                        if optimistic {
+                            if let Some(m) = self.messages.last_mut() {
+                                m.blocks = blocks;
+                            }
+                            self.phase_waiting = false;
+                        } else {
+                            self.messages
+                                .push(Msg { role: Role::User, blocks, usage: None, entry_id: None });
+                        }
                     }
                     "assistant" => {
+                        self.phase_waiting = false;
                         self.messages.push(Msg {
                             role: Role::Assistant,
                             blocks,
@@ -2192,7 +2270,9 @@ impl Chat {
                 }
                 let _ = timestamp;
             }
-            Event::MessageUpdate(assistant_event) => match assistant_event {
+            Event::MessageUpdate(assistant_event) => {
+                self.phase_waiting = false;
+                match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
                     if let Block::Text { text, .. } = self.assistant_slot(
                         content_index,
@@ -2288,7 +2368,8 @@ impl Chat {
                     }
                 }
                 AssistantEvent::Other(_) => {}
-            },
+                }
+            }
             Event::MessageEnd { role, blocks, usage, timestamp } => {
                 if role == "assistant" {
                     if let Some(m) = self.messages.last_mut() {
@@ -2306,17 +2387,22 @@ impl Chat {
                 }
             }
             Event::AgentStart => {
+                self.agent_running = true;
                 self.status = "running".into();
                 if self.stream_started.is_none() {
                     self.stream_started = Some(std::time::Instant::now());
                 }
             }
             Event::AgentSettled => {
+                self.agent_running = false;
+                self.phase_waiting = false;
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
                 self.refresh_state();
             }
             Event::AgentEnd { .. } => {
+                self.agent_running = false;
+                self.phase_waiting = false;
                 if self.sound_on {
                     play_notify_sound();
                 }
@@ -3403,6 +3489,25 @@ fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// Rotating arc spinner (pi-web RunningSessionIndicator: the loader SVG
+/// spun 360°/0.9s, SMIL parity via with_animation).
+fn spinner(size: f32, color: u32) -> gpui::AnyElement {
+    gpui::svg()
+        .path(SharedString::from("icons/loader.svg"))
+        .text_color(rgb(color))
+        .size(px(size))
+        .with_animation(
+            "spin",
+            Animation::new(std::time::Duration::from_millis(900)).repeat(),
+            |el, delta| {
+                el.with_transformation(
+                    gpui::Transformation::rotate(gpui::radians(delta * std::f32::consts::TAU)),
+                )
+            },
+        )
+        .into_any_element()
+}
+
 fn pill(
     id: &'static str,
     icon_name: &'static str,
@@ -3441,52 +3546,83 @@ fn render_block(
         }
         Block::Thinking { text, content_index } if !text.trim().is_empty() => {
             let key = (msg_ix, *content_index);
-            let is_collapsed = collapsed.contains(&key);
+            let expanded = !collapsed.contains(&key);
             let weak = weak.clone();
+            // pi-web getThinkingPreview: first line, up to 240 chars, trimmed
+            let preview: String = text
+                .trim_start()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(240)
+                .collect::<String>()
+                .trim_end()
+                .to_string();
+            // pi-web ThinkingBlock: flat var(--bg) strip with 1px border —
+            // [lightbulb] [one-line preview] collapsed, [lightbulb] [pre-wrap
+            // muted body] expanded; amber bulb while expanded, no chevron, no
+            // "thinking" label
+            let toggle = div()
+                .id(SharedString::from(format!("th-{msg_ix}-{content_index}")))
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .min_w_0()
+                .text_color(rgb(t.text_muted))
+                .when(expanded, |d| d.flex_shrink_0())
+                .when(!expanded, |d| d.flex_1())
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let k = key;
+                    let _ = weak.update(cx, |c, cx| {
+                        if !c.collapsed.remove(&k) {
+                            c.collapsed.insert(k);
+                        }
+                        cx.notify();
+                    });
+                })
+                .child(if expanded {
+                    icon("lightbulb", 14., 0xd4a017)
+                } else {
+                    icon("lightbulb", 14., t.text_muted)
+                })
+                .children((!expanded).then(|| {
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(if preview.is_empty() {
+                            SharedString::from("...").into_any_element()
+                        } else {
+                            SharedString::from(preview).into_any_element()
+                        })
+                }));
             let mut block = div()
                 .w_full()
                 .my_1()
-                .p_2()
-                .rounded_md()
+                .flex()
+                .items_start()
+                .gap_1p5()
+                .min_w_0()
+                .px(px(10.))
+                .py(px(6.))
+                .rounded(px(7.))
                 .border_1()
                 .border_color(rgb(t.border))
-                .bg(rgb(t.bg_subtle))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "th-{msg_ix}-{content_index}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .items_center()
-                        .gap_1p5()
-                        .text_xs()
-                        .text_color(rgb(t.text_dim))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let k = key;
-                            let _ = weak.update(cx, |c, cx| {
-                                if !c.collapsed.remove(&k) {
-                                    c.collapsed.insert(k);
-                                }
-                                cx.notify();
-                            });
-                        })
-                        .child(icon("lightbulb", 11., t.text_dim))
-                        .child(SharedString::from("thinking"))
-                        .child(if is_collapsed {
-                            icon("chevron-right", 10., t.text_dim)
-                        } else {
-                            icon("chevron-down", 10., t.text_dim)
-                        }),
-                );
-            if !is_collapsed {
+                .bg(rgb(t.bg))
+                .font_family("Consolas")
+                .text_size(px(11.))
+                .line_height(relative(1.5))
+                .child(toggle);
+            if expanded {
                 block = block.child(
                     div()
-                        .text_sm()
-                        .text_color(rgb(t.text))
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(rgb(t.text_muted))
                         .child(SharedString::from(text.clone())),
                 );
             }
@@ -4221,12 +4357,28 @@ impl Render for Chat {
                         info.preview.clone().into()
                     };
                     let time_text = time_ago(info.modified);
+                    // pi-web runningSessionIds: the spinner replaces the
+                    // timestamp on the running session's row (one embedded
+                    // agent → the active session is the running one)
                     let streaming = is_active
-                        && chat
-                            .state
-                            .as_ref()
-                            .is_some_and(|s| s.is_streaming);
+                        && (chat.agent_running
+                            || chat
+                                .state
+                                .as_ref()
+                                .is_some_and(|s| s.is_streaming));
                     let hovered = chat.hovered_session == Some(ix);
+                    let confirming =
+                        chat.confirm_delete.as_deref() == Some(info.path.as_path());
+                    let weak_del2 = weak_for_sessions.clone();
+                    let weak_del3 = weak_for_sessions.clone();
+                    // pi-web: "删除 {title}？" truncates the title at 22 chars
+                    let confirm_title: String = {
+                        let mut s = preview.to_string();
+                        if s.chars().count() > 22 {
+                            s = s.chars().take(22).collect::<String>() + "…";
+                        }
+                        s
+                    };
                     let weak = weak_for_sessions.clone();
                     let weak_del = weak_for_sessions.clone();
                     let weak_ren = weak_for_sessions.clone();
@@ -4242,30 +4394,50 @@ impl Render for Chat {
                         .pl_3p5()
                         .pr_2()
                         .overflow_hidden()
-                        .cursor_pointer()
                         .border_l_2()
-                        .when(is_active, |d| {
-                            d.bg(rgb(t.bg_selected))
-                                .border_color(rgb(t.accent))
+                        // pi-web: confirm state paints the row red and
+                        // swallows the row click
+                        .when(confirming, |d| {
+                            d.cursor(gpui::CursorStyle::Arrow)
+                                .bg(gpui::rgba(0xef44440f))
+                                .border_color(rgb(0xef4444))
                         })
-                        .when(!is_active, |d| d.border_color(rgb(t.bg)))
-                        .when(hovered && !is_active, |d| d.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, {
-                            let p = path.clone();
-                            move |_, _, cx| {
-                                let _ = weak.update(cx, |c, cx| c.open_session(p.clone(), false, cx));
-                            }
+                        .when(!confirming, |d| {
+                            d.cursor_pointer()
+                                .when(is_active, |d| {
+                                    d.bg(rgb(t.bg_selected))
+                                        .border_color(rgb(t.accent))
+                                })
+                                .when(!is_active, |d| d.border_color(rgb(t.bg)))
+                                .when(hovered && !is_active, |d| d.bg(rgb(t.bg_hover)))
+                        })
+                        .when(!confirming, |d| {
+                            d.on_mouse_down(MouseButton::Left, {
+                                let p = path.clone();
+                                move |_, _, cx| {
+                                    let _ = weak.update(cx, |c, cx| {
+                                        c.open_session(p.clone(), false, cx)
+                                    });
+                                }
+                            })
                         })
                         .on_hover(move |h, _, cx| {
                             let _ = weak_hover.update(cx, |c, cx| {
-                                let next = if *h { Some(ix) } else { None };
-                                if c.hovered_session != next {
-                                    c.hovered_session = next;
+                                // only the owning row may clear its own hover;
+                                // row A's (false) must not erase row B's (true)
+                                // when leave/enter events arrive out of order
+                                if *h {
+                                    if c.hovered_session != Some(ix) {
+                                        c.hovered_session = Some(ix);
+                                        cx.notify();
+                                    }
+                                } else if c.hovered_session == Some(ix) {
+                                    c.hovered_session = None;
                                     cx.notify();
                                 }
                             });
                         })
-                        .child(
+                        .children((!confirming).then(|| {
                             div()
                                 .flex_1()
                                 .min_w_0()
@@ -4296,8 +4468,8 @@ impl Render for Chat {
                                         .text_size(px(11.))
                                         .min_w_0()
                                         .text_color(rgb(t.text_dim))
-                                        .child(if is_active && streaming {
-                                            icon("loader", 14., t.accent).into_any_element()
+                                        .child(if streaming {
+                                            spinner(14., t.accent)
                                         } else {
                                             SharedString::from(time_text.clone())
                                                 .into_any_element()
@@ -4306,9 +4478,86 @@ impl Render for Chat {
                                             "{n} 条消息",
                                             &[("n", info.message_count.to_string())],
                                         ))),
-                                ),
-                        )
-                        .children(if hovered {
+                                )
+                        }))
+                        .children(if confirming {
+                            // pi-web delete confirmation: the row content
+                            // swaps in place — "删除 {title}？" + red 删除/取消
+                            Some(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(px(12.))
+                                            .text_color(rgb(t.text))
+                                            .child(SharedString::from(crate::i18n::tf(
+                                                "删除 {title}？",
+                                                &[("title", confirm_title)],
+                                            ))),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("delok-{ix}")))
+                                            .h(px(30.))
+                                            .px(px(11.))
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .rounded(px(6.))
+                                            .bg(rgb(0xef4444))
+                                            .text_size(px(12.))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(rgb(0xffffff))
+                                            .cursor_pointer()
+                                            .flex_shrink_0()
+                                            .child(icon("trash", 12., 0xffffff))
+                                            .child(SharedString::from(tr("删除")))
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let p = p_del.clone();
+                                                move |_, _, cx| {
+                                                    let _ = weak_del2.update(cx, |c, cx| {
+                                                        c.delete_session(p.clone(), cx)
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("delno-{ix}")))
+                                            .h(px(30.))
+                                            .px(px(11.))
+                                            .flex()
+                                            .items_center()
+                                            .rounded(px(6.))
+                                            .border_1()
+                                            .border_color(rgb(t.border))
+                                            .bg(rgb(t.bg_hover))
+                                            .text_size(px(12.))
+                                            .text_color(rgb(t.text_muted))
+                                            .cursor_pointer()
+                                            .flex_shrink_0()
+                                            .child(SharedString::from(tr("取消")))
+                                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                                let _ = weak_del3.update(cx, |c, cx| {
+                                                    c.confirm_delete = None;
+                                                    cx.notify();
+                                                });
+                                            }),
+                                    ),
+                            )
+                        } else {
+                            None
+                        })
+                        .children(if hovered && !confirming {
                             Some(
                                 div()
                                     .flex()
@@ -4382,15 +4631,22 @@ impl Render for Chat {
                                             .text_color(rgb(t.text_dim))
                                             .cursor_pointer()
                                             .hover(|s| {
-                                                s.bg(rgb(0xf6e9e9))
+                                                s.bg(gpui::rgba(0xef444414))
                                                     .text_color(rgb(0xef4444))
                                             })
                                             .on_mouse_down(MouseButton::Left, {
                                                 let p = p_del.clone();
-                                                move |_, _, cx| {
+                                                move |ev, _, cx| {
                                                     cx.stop_propagation();
                                                     let _ = weak_del.update(cx, |c, cx| {
-                                                        c.delete_session(p.clone(), cx);
+                                                        if ev.modifiers.shift {
+                                                            // pi-web: shift+click deletes
+                                                            // without confirmation
+                                                            c.delete_session(p.clone(), cx);
+                                                        } else {
+                                                            c.confirm_delete = Some(p.clone());
+                                                            cx.notify();
+                                                        }
                                                     });
                                                 }
                                             })
@@ -4814,7 +5070,38 @@ impl Render for Chat {
                                     )),
                             )
                             .into_any_element(),
-                        None => div().w_full().into_any_element(),
+                        None => {
+                            // pi-web ChatWindow phase label: pulsing text under
+                            // the list while running with no streamed content
+                            // yet (animate-[pulse_1.5s_infinite])
+                            if chat.phase_row_visible() {
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(820.))
+                                            .py_2()
+                                            .text_size(px(13.))
+                                            .text_color(rgb(t.text_muted))
+                                            .child(SharedString::from(tr("正在等待模型...")))
+                                            .with_animation(
+                                                "phase-pulse",
+                                                Animation::new(std::time::Duration::from_millis(
+                                                    1500,
+                                                ))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.5, 1.0)),
+                                                |label, delta| label.opacity(delta),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                div().w_full().into_any_element()
+                            }
+                        }
                     }
                 })
                 .flex_1()
@@ -4981,6 +5268,7 @@ impl Render for Chat {
                                 div()
                                     .id("input")
                                     .track_focus(&self.focus)
+                                    .relative()
                                     .flex_1()
                                     .min_w_0()
                                     .rounded_md()
@@ -4988,6 +5276,12 @@ impl Render for Chat {
                                         |this, ev: &KeyDownEvent, _w, cx| {
                                             let key = ev.keystroke.key.as_str();
                                             let shift = ev.keystroke.modifiers.shift;
+                                            // while the IME is composing, the
+                                            // keyboard belongs to the IME — text
+                                            // arrives via the InputHandler
+                                            if this.ime_marked.is_some() {
+                                                return;
+                                            }
                                             let menu_open =
                                                 this.active_menu().is_some();
                                             let items = this.menu_items();
@@ -5101,24 +5395,7 @@ impl Render for Chat {
                                                         cx.notify();
                                                     }
                                                 }
-                                                "space" => {
-                                                    this.input.push(' ');
-                                                    this.menu_ix = 0;
-                                                    cx.notify();
-                                                }
-                                                k => {
-                                                    let printable = k.chars().count() == 1
-                                                        && !ev.keystroke.modifiers.control
-                                                        && !ev.keystroke.modifiers.alt;
-                                                    if printable {
-                                                        if let Some(c) = k.chars().next()
-                                                        {
-                                                            this.input.push(c);
-                                                            this.menu_ix = 0;
-                                                            cx.notify();
-                                                        }
-                                                    }
-                                                }
+                                                _ => {}
                                             }
                                         },
                                     ))
@@ -5177,6 +5454,13 @@ impl Render for Chat {
                                                     )
                                                 },
                                             ),
+                                    )
+                                    // paint-phase input handler: routes the
+                                    // Windows IME into the hand-rolled editor
+                                    .child(
+                                        EditorInputElement::new(entity.clone(), self.focus.clone())
+                                            .absolute()
+                                            .inset_0(),
                                     ),
                             )
                             .child(
