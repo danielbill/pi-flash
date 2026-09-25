@@ -4909,36 +4909,47 @@ impl Render for Chat {
                                         // text + blinking caret (gpui editor is
                                         // hand-rolled; the caret marks the end)
                                         div()
+                                            .relative()
                                             .flex()
                                             .items_center()
                                             .min_w_0()
+                                            // caret is an absolute overlay so its
+                                            // blinking never shifts the text
+                                            .when(
+                                                input_focused && caret_on && input_empty,
+                                                |d| {
+                                                    d.child(
+                                                        div()
+                                                            .absolute()
+                                                            .left_0()
+                                                            .top(px(3.))
+                                                            .w(px(1.5))
+                                                            .h(px(16.))
+                                                            .bg(rgb(t.accent)),
+                                                    )
+                                                },
+                                            )
                                             .when(input_empty, |d| {
-                                                // caret sits BEFORE the placeholder
-                                                let caret = div()
-                                                    .w(px(1.5))
-                                                    .h(px(16.))
-                                                    .flex_shrink_0()
-                                                    .bg(rgb(t.accent));
-                                                let ph = div()
-                                                    .min_w_0()
-                                                    .whitespace_nowrap()
-                                                    .overflow_hidden()
-                                                    .text_color(rgb(t.text_dim))
-                                                    .opacity(0.55)
-                                                    .child(SharedString::from(
-                                                        input_ph.clone(),
-                                                    ));
-                                                if input_focused && caret_on {
-                                                    d.child(caret).child(ph)
-                                                } else {
-                                                    d.child(ph)
-                                                }
+                                                d.child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .whitespace_nowrap()
+                                                        .overflow_hidden()
+                                                        .text_color(rgb(t.text_dim))
+                                                        .opacity(0.55)
+                                                        .child(SharedString::from(
+                                                            input_ph.clone(),
+                                                        )),
+                                                )
                                             })
                                             .when(!input_empty, |d| {
                                                 d.child(SharedString::from(
                                                     this_input.clone(),
                                                 ))
-                                                .when(input_focused && caret_on, |d| {
+                                            })
+                                            .when(
+                                                input_focused && caret_on && !input_empty,
+                                                |d| {
                                                     d.child(
                                                         div()
                                                             .w(px(1.5))
@@ -4946,8 +4957,8 @@ impl Render for Chat {
                                                             .flex_shrink_0()
                                                             .bg(rgb(t.accent)),
                                                     )
-                                                })
-                                            }),
+                                                },
+                                            ),
                                     ),
                             )
                             .child(
