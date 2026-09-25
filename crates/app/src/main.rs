@@ -75,7 +75,6 @@ impl Msg {
 enum Dialog {
     RenameSession { value: String },
     ModelSelect { filter: String },
-    FilePreview { path: PathBuf, content: String },
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
@@ -189,6 +188,69 @@ struct Chat {
     /// LLM title generation results (one-off pi --print run)
     title_tx: Option<futures::channel::mpsc::UnboundedSender<Result<String, String>>>,
     titling: bool,
+    /// right panel width (px; drag handle + expand toggle, pi-web parity)
+    right_panel_width: f32,
+    /// right panel tabs: file viewers + terminals in one TabBar (pi-web
+    /// AppShell panelTabs merge)
+    panel_tabs: Vec<PanelTab>,
+    active_panel_tab: Option<usize>,
+    /// right-panel drag: (start pointer x, start width)
+    resizing_panel: Option<(gpui::Pixels, f32)>,
+    /// markdown Source/Preview toggle for file tabs (per-path)
+    file_preview_mode: std::collections::HashMap<PathBuf, bool>,
+    /// cached content of open file tabs
+    file_cache: std::collections::HashMap<PathBuf, FileTab>,
+    /// sessions-pane height as a fraction of the sidebar (pi-web
+    /// --sidebar-session-pane-height; default half)
+    sidebar_sessions_frac: f32,
+    /// active sidebar pane drag: (start pointer y, start fraction)
+    resizing_sidebar: Option<(gpui::Pixels, f32)>,
+    /// editor caret blink state (toggled by the blink pump)
+    caret_on: bool,
+    /// whether the chat editor currently owns focus (updated in render)
+    input_focused: bool,
+    /// local thinking-level override ("auto" = pi default governs)
+    thinking_override: Option<String>,
+    /// toolbar pill popup (thinking / tools preset menus)
+    pill_menu: Option<PillMenu>,
+    /// notification sound preference (persisted "__sound")
+    sound_on: bool,
+    /// session system prompt + tools parsed from export_html (top panels)
+    sys_prompt: Option<String>,
+    session_tools: Option<Vec<(String, String)>>,
+    /// top-bar dropdown panel (系统提示词 / 工具定义)
+    top_panel: Option<TopPanel>,
+    /// sidebar session text search (pi-web SessionSearch)
+    search_open: bool,
+    search_query: String,
+    search_focus: gpui::FocusHandle,
+    sessions_list_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TopPanel {
+    System,
+    Tools,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PillMenu {
+    Thinking,
+    Tools,
+}
+
+/// One right-panel tab: a file viewer or a terminal session.
+#[derive(Debug, Clone, PartialEq)]
+enum PanelTab {
+    File(PathBuf),
+    Term(usize),
+}
+
+/// Cached file content for a viewer tab (read once on open).
+struct FileTab {
+    path: PathBuf,
+    content: String,
+    truncated: bool,
 }
 
 /// One live subagent run (child RPC session spawned with profile flags).
@@ -280,6 +342,26 @@ impl Chat {
             sa_run_seq: 0,
             title_tx: None,
             titling: false,
+            sidebar_sessions_frac: 0.5,
+            resizing_sidebar: None,
+            right_panel_width: 560.,
+            panel_tabs: Vec::new(),
+            active_panel_tab: None,
+            resizing_panel: None,
+            file_preview_mode: std::collections::HashMap::new(),
+            file_cache: std::collections::HashMap::new(),
+            caret_on: true,
+            input_focused: false,
+            thinking_override: None,
+            pill_menu: None,
+            sound_on: load_sound_pref(),
+            sys_prompt: None,
+            session_tools: None,
+            top_panel: None,
+            search_open: false,
+            search_query: String::new(),
+            search_focus: cx.focus_handle(),
+            sessions_list_count: 0,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -291,6 +373,27 @@ impl Chat {
             })
             .detach();
         }
+        // caret blink pump (2 Hz toggle; repaint only while the editor is
+        // focused — input_focused is refreshed every render)
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(530))
+                    .await;
+                let ok = this
+                    .update(cx, |c, cx| {
+                        c.caret_on = !c.caret_on;
+                        if c.input_focused {
+                            cx.notify();
+                        }
+                    })
+                    .is_ok();
+                if !ok {
+                    break;
+                }
+            }
+        })
+        .detach();
         // LLM title pump: one-off `pi --print` result -> set_session_name
         let (title_tx, mut title_rx) =
             futures::channel::mpsc::unbounded::<Result<String, String>>();
@@ -390,6 +493,9 @@ impl Chat {
             .into_iter()
             .filter(|s| same_ws(&s.cwd, &cwd))
             .collect();
+        // ListState caches the row count — without this the list renders
+        // stale (empty) after switching projects
+        self.sessions_list.reset(self.sessions.len());
     }
 
     /// Re-read working-tree changes (git status + numstat summary).
@@ -423,6 +529,8 @@ impl Chat {
             Ok(tab) => {
                 self.terminals.push(tab);
                 self.active_terminal = Some(self.terminals.len() - 1);
+                self.panel_tabs.push(PanelTab::Term(id));
+                self.active_panel_tab = Some(self.panel_tabs.len() - 1);
                 let focus = self.terminals[self.terminals.len() - 1].focus.clone();
                 window.focus(&focus);
                 cx.notify();
@@ -438,6 +546,21 @@ impl Chat {
     fn close_terminal(&mut self, ix: usize, window: &mut gpui::Window, cx: &mut Context<Self>) {
         if ix >= self.terminals.len() {
             return;
+        }
+        let term_id = self.terminals[ix].id;
+        if let Some(pix) = self.panel_tabs.iter().position(|t| matches!(t, PanelTab::Term(id) if *id == term_id)) {
+            self.panel_tabs.remove(pix);
+            self.active_panel_tab = match self.active_panel_tab {
+                Some(a) if a >= self.panel_tabs.len() => {
+                    if self.panel_tabs.is_empty() {
+                        self.right_panel_open = false;
+                        None
+                    } else {
+                        Some(a.saturating_sub(1))
+                    }
+                }
+                other => other,
+            };
         }
         let _ = self.terminals[ix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
         self.terminals.remove(ix);
@@ -1460,22 +1583,47 @@ impl Chat {
         cx.notify();
     }
 
-    fn cycle_thinking(&mut self, cx: &mut Context<Self>) {
-        const LEVELS: [&str; 7] =
-            ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-        let cur = self
-            .state
-            .as_ref()
-            .and_then(|s| s.thinking_level.clone())
-            .unwrap_or_else(|| "medium".into());
-        let idx = LEVELS.iter().position(|&l| l == cur).map(|i| i + 1).unwrap_or(0);
-        let next = LEVELS[idx % LEVELS.len()].to_string();
-        if let Some(session) = &self.session {
-            let _ = session.send(&Command::SetThinkingLevel { level: next.clone() });
+    /// Thinking level from the pill menu. "auto" clears the local override
+    /// (pi default governs, pi-web parity — no RPC); other levels are sent.
+    fn set_thinking_level(&mut self, level: &str, cx: &mut Context<Self>) {
+        if level == "auto" {
+            self.thinking_override = None;
+            cx.notify();
+            return;
         }
-        self.refresh_state();
-        self.status = format!("thinking: {next}");
+        self.thinking_override = Some(level.to_string());
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetThinkingLevel { level: level.to_string() });
+        }
         cx.notify();
+    }
+
+    /// Current tools preset key from settings.json defaultTools
+    /// (pi-web tool-presets.ts resolution; "" = custom list).
+    fn tool_preset_key(&self) -> &'static str {
+        match &self.mc_default_tools {
+            None => "configured",
+            Some(list) if list.is_empty() => "chat-only",
+            Some(list) if list == &vec!["read".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "read-only",
+            Some(list) if list == &vec!["read".to_string(), "bash".to_string(), "edit".to_string(), "write".to_string()] => "default",
+            _ => "",
+        }
+    }
+
+    fn tool_preset_label(&self) -> &'static str {
+        match self.tool_preset_key() {
+            "" => "configured",
+            other => other,
+        }
+    }
+
+    /// Editor toolbar 压缩: rpc compact (summarize the context).
+    fn compact_session(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::Compact);
+            self.status = tr("压缩中…").to_string();
+            cx.notify();
+        }
     }
 
     /// LLM session title (pi-web lib/session-title.ts parity via a one-off
@@ -1543,12 +1691,21 @@ impl Chat {
         cx.notify();
     }
 
-    fn export_html(&mut self, cx: &mut Context<Self>) {
+    /// Request an export (the exported HTML embeds the live session's
+    /// systemPrompt + tool definitions, which the RPC surface does not
+    /// expose directly). The Response handler parses + caches them.
+    fn request_system_info(&mut self, cx: &mut Context<Self>) {
+        if self.session_tools.is_some() && self.sys_prompt.is_some() {
+            return;
+        }
         if let Some(session) = &self.session {
             let _ = session.send(&Command::ExportHtml);
-            self.status = "exporting...".into();
         }
         cx.notify();
+    }
+
+    fn export_html(&mut self, cx: &mut Context<Self>) {
+        self.request_system_info(cx);
     }
 
     fn new_session(&mut self, cx: &mut Context<Self>) {
@@ -1633,7 +1790,19 @@ impl Chat {
         cx.notify();
     }
 
-    fn open_file_preview(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    /// Open a file as a right-panel tab (pi-web file tabs; replaces the
+    /// old preview dialog). Re-activates an existing tab for the path.
+    fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.right_panel_open = true;
+        if let Some(ix) = self
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, PanelTab::File(p) if *p == path))
+        {
+            self.active_panel_tab = Some(ix);
+            cx.notify();
+            return;
+        }
         const MAX: u64 = 200 * 1024;
         let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
         let content = if too_big {
@@ -1650,8 +1819,62 @@ impl Chat {
                 Err(e) => format!("read failed: {e}"),
             }
         };
-        self.dialog = Some(Dialog::FilePreview { path, content });
+        let tab = PanelTab::File(path.clone());
+        self.file_cache.insert(path.clone(), FileTab { path: path.clone(), content, truncated: too_big });
+        self.panel_tabs.push(tab);
+        self.active_panel_tab = Some(self.panel_tabs.len() - 1);
         cx.notify();
+    }
+
+    fn close_panel_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix >= self.panel_tabs.len() {
+            return;
+        }
+        let removed = self.panel_tabs.remove(ix);
+        if let PanelTab::Term(id) = &removed {
+            if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
+                let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
+                self.terminals.remove(tix);
+            }
+        }
+        if let PanelTab::File(p) = &removed {
+            self.file_cache.remove(p);
+        }
+        self.active_panel_tab = match self.active_panel_tab {
+            Some(a) if a >= self.panel_tabs.len() => {
+                if self.panel_tabs.is_empty() {
+                    self.right_panel_open = false;
+                    None
+                } else {
+                    Some(a.saturating_sub(1))
+                }
+            }
+            other => other,
+        };
+        cx.notify();
+    }
+
+    /// File viewer meta line: language · lines · size (pi-web FileViewer).
+    fn file_meta(path: &Path, content: &str) -> String {
+        let lang = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("txt")
+            .to_string();
+        let lines = content.lines().count();
+        let bytes = content.len();
+        let size = if bytes < 1024 {
+            format!("{bytes} B")
+        } else {
+            format!("{:.1} KB", bytes as f64 / 1024.)
+        };
+        format!("{lang} · {lines} lines · {size}")
+    }
+
+    fn is_markdown(path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e == "md" || e == "markdown")
     }
 
     fn attach_images(&mut self, cx: &mut Context<Self>) {
@@ -1786,6 +2009,24 @@ impl Chat {
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
+                    }
+                } else if command == "export_html" && success {
+                    if let Some(path) = data
+                        .as_ref()
+                        .and_then(|d| d["path"].as_str())
+                        .map(PathBuf::from)
+                    {
+                        if let Ok(html) = std::fs::read_to_string(&path) {
+                            let (prompt, tools) = parse_export_html(&html);
+                            if self.sys_prompt.is_none() {
+                                self.sys_prompt = prompt;
+                            }
+                            if self.session_tools.is_none() && !tools.is_empty() {
+                                self.session_tools = Some(tools);
+                            }
+                        }
+                        let _ = std::fs::remove_file(&path);
+                        cx.notify();
                     }
                 } else if command == "get_available_models" && success {
                     if let Some(data) = &data {
@@ -2018,6 +2259,12 @@ impl Chat {
                 self.refresh_state();
             }
             Event::AgentEnd { .. } => {
+                if self.sound_on {
+                    play_notify_sound();
+                }
+                if self.sound_on {
+                    play_notify_sound();
+                }
                 // refresh branch tree so newly-sent user messages gain entry ids
                 if let Some(s) = self.session.as_ref() {
                     let _ = s.send(&Command::GetTree);
@@ -2316,6 +2563,37 @@ fn set_last_open(cwd: &str, session_path: &str) {
 const WS_LANG_KEY: &str = "__lang";
 
 /// Persisted language preference (workspace memory file, global key).
+const WS_SOUND_KEY: &str = "__sound";
+
+fn load_sound_pref() -> bool {
+    load_workspace_memory()
+        .get(WS_SOUND_KEY)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn save_sound_pref(on: bool) {
+    let mut map = load_workspace_memory();
+    map.insert(WS_SOUND_KEY.to_string(), serde_json::Value::Bool(on));
+    save_workspace_memory(&map);
+}
+
+/// Agent-run finished notification sound (Windows MessageBeep; no-op elsewhere).
+fn play_notify_sound() {
+    #[cfg(windows)]
+    {
+        // MB_ICONASTERISK = 0x40 — the system "asterisk" notification sound
+        const MB_ICONASTERISK: u32 = 0x0000_0040;
+        unsafe {
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn MessageBeep(wtype: u32) -> i32;
+            }
+            MessageBeep(MB_ICONASTERISK);
+        }
+    }
+}
+
 fn load_lang_pref() -> Option<usize> {
     load_workspace_memory()
         .get(WS_LANG_KEY)
@@ -2620,6 +2898,52 @@ fn sanitize_title(raw: &str) -> String {
         }
     }
     clip_chars(title.trim(), TITLE_MAX_LEN).trim_end_matches(TITLE_ELISION).trim_end().to_string()
+}
+
+/// Unescape the handful of entities escapeHtml produces.
+fn html_unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+}
+
+/// Extract (systemPrompt, [(tool name, description)]) from an exported
+/// session HTML (core/export-html/template.js markers).
+fn parse_export_html(html: &str) -> (Option<String>, Vec<(String, String)>) {
+    let mut prompt = None;
+    if let Some(pos) = html.find("class=\"system-prompt-full\"") {
+        if let Some(gt) = html[pos..].find('>') {
+            let from = pos + gt + 1;
+            if let Some(close) = html[from..].find("</div>") {
+                let raw = &html[from..from + close];
+                let text = html_unescape(raw).trim().to_string();
+                if !text.is_empty() {
+                    prompt = Some(text);
+                }
+            }
+        }
+    }
+    let mut tools = Vec::new();
+    let needle = "<span class=\"tool-item-name\">";
+    let mut search_from = 0usize;
+    while let Some(rel) = html[search_from..].find(needle) {
+        let name_from = search_from + rel + needle.len();
+        let Some(name_end) = html[name_from..].find("</span>") else { break };
+        let name = html_unescape(&html[name_from..name_from + name_end]);
+        let after_name = name_from + name_end + "</span>".len();
+        let desc_needle = " - <span class=\"tool-item-desc\">";
+        let Some(drel) = html[after_name..].find(desc_needle) else { break };
+        let desc_from = after_name + drel + desc_needle.len();
+        let Some(desc_end) = html[desc_from..].find("</span>") else { break };
+        let desc = html_unescape(&html[desc_from..desc_from + desc_end]);
+        tools.push((name, desc));
+        search_from = desc_from + desc_end;
+    }
+    (prompt, tools)
 }
 
 fn fmt_compact(n: u64) -> String {
@@ -3021,7 +3345,7 @@ fn collect_tree_rows(
                     if is_changed {
                         c.open_git_diff(fp.clone(), cx);
                     } else {
-                        c.open_file_preview(fp.clone(), cx);
+                        c.open_file_tab(fp.clone(), cx);
                     }
                 });
             });
@@ -3205,6 +3529,152 @@ impl Render for Chat {
             SharedString::from("")
         };
 
+        // editor focus + caret (render refreshes input_focused for the blink pump)
+        let input_focused = self.focus.is_focused(window);
+        self.input_focused = input_focused;
+        let caret_on = self.caret_on;
+        let this_input: SharedString = self.input.clone().into();
+        let thinking_menu_open = self.pill_menu == Some(PillMenu::Thinking);
+        let tools_menu_open = self.pill_menu == Some(PillMenu::Tools);
+        let tools_label = self.tool_preset_label();
+        let thinking_label: SharedString = self
+            .thinking_override
+            .clone()
+            .or_else(|| {
+                self.state
+                    .as_ref()
+                    .and_then(|st| st.thinking_level.clone())
+            })
+            .unwrap_or_else(|| "auto".to_string())
+            .into();
+        let right_px = if self.right_panel_open {
+            self.right_panel_width + 24.
+        } else {
+            24.
+        };
+        // popup menu overlay anchored above the editor toolbar row
+        let pill_menu_el = self.pill_menu.map(|menu| {
+            let weak_menu = weak.clone();
+            let rows: Vec<(String, String, bool)> = match menu {
+                PillMenu::Thinking => [
+                    ("auto", tr("使用 pi 默认设置"), self.thinking_override.is_none()),
+                    ("low", tr("低强度推理"), self.thinking_override.as_deref() == Some("low")),
+                    ("high", tr("高强度推理"), self.thinking_override.as_deref() == Some("high")),
+                    ("max", tr("最强推理"), self.thinking_override.as_deref() == Some("max")),
+                ]
+                .iter()
+                .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
+                .collect(),
+                PillMenu::Tools => [
+                    ("configured", tr("取自 settings.json 的 defaultTools"), self.tool_preset_key() == "configured"),
+                    ("chat-only", tr("仅聊天"), self.tool_preset_key() == "chat-only"),
+                    ("read-only", tr("4 个只读内置工具"), self.tool_preset_key() == "read-only"),
+                    ("default", tr("4 个内置工具"), self.tool_preset_key() == "default"),
+                    ("full", tr("全部内置工具"), self.tool_preset_key() == "full"),
+                ]
+                .iter()
+                .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
+                .collect(),
+            };
+            let is_thinking = menu == PillMenu::Thinking;
+            let items = rows
+                .into_iter()
+                .map(|(key, desc, active)| {
+                    let weak_row = weak_menu.clone();
+                    let key_for_rpc = key.clone();
+                    div()
+                        .id(SharedString::from(format!(
+                            "pm-{}-{}",
+                            if is_thinking { "t" } else { "w" },
+                            key
+                        )))
+                        .min_h(px(40.))
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(t.bg_hover)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            let _ = weak_row.update(cx, |c, cx| {
+                                c.pill_menu = None;
+                                if is_thinking {
+                                    c.set_thinking_level(&key_for_rpc, cx);
+                                } else {
+                                    c.mc_set_tools_preset(&key_for_rpc, cx);
+                                }
+                            });
+                        })
+                        .child(
+                            div()
+                                .w(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .children(active.then(|| icon("check", 13., t.accent))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(14.))
+                                .font_weight(if active {
+                                    gpui::FontWeight::SEMIBOLD
+                                } else {
+                                    gpui::FontWeight::NORMAL
+                                })
+                                .text_color(rgb(t.text))
+                                .child(SharedString::from(key)),
+                        )
+                        .child(
+                            div()
+                                .ml_auto()
+                                .text_size(px(11.))
+                                .text_color(rgb(t.text_dim))
+                                .child(desc),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            div()
+                .absolute()
+                .inset_0()
+                .child(
+                    // transparent backdrop: click anywhere closes the menu
+                    div()
+                        .size_full()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, {
+                            let weak = weak_menu.clone();
+                            move |_, _, cx| {
+                                let _ = weak.update(cx, |c, cx| {
+                                    if c.pill_menu.is_some() {
+                                        c.pill_menu = None;
+                                        cx.notify();
+                                    }
+                                });
+                            }
+                        }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .bottom(px(120.))
+                        .right(px(right_px))
+                        .min_w(px(320.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(rgb(t.border))
+                        .bg(rgb(t.bg))
+                        .shadow_lg()
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .children(items),
+                )
+                .into_any_element()
+        });
+
         let cwd_text: SharedString = self.cwd.to_string_lossy().to_string().into();
         let branch: SharedString = if self.branch.is_empty() {
             "no git".into()
@@ -3284,7 +3754,18 @@ impl Render for Chat {
                                     .text_color(rgb(t.text_muted))
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(t.bg_selected)))
-                                    .child(icon("search", 12., t.text_muted)),
+                                                                        .on_mouse_down(MouseButton::Left, cx.listener(
+                                        |this, _: &gpui::MouseDownEvent, window, cx| {
+                                            this.search_open = !this.search_open;
+                                            this.search_query.clear();
+                                            if this.search_open {
+                                                window.focus(&this.search_focus);
+                                            }
+                                            this.refresh_sessions();
+                                            cx.notify();
+                                        },
+                                    ))
+.child(icon("search", 12., t.text_muted)),
                             ),
                     ),
             )
@@ -3345,13 +3826,41 @@ impl Render for Chat {
                             .child(icon("chevron-down", 10., t.text_muted)),
                     ),
             )
-            // sessions list
-            .child(
-                list(self.sessions_list.clone(), move |ix, _window, cx| {
-                    let chat = sessions_entity.read(cx);
-                    let Some(info) = chat.sessions.get(ix) else {
-                        return div().into_any_element();
-                    };
+            // sessions list (pi-web SessionSearch: query filters the list)
+            .child({
+                let q = self.search_query.to_lowercase();
+                let session_display: Vec<usize> = if q.is_empty() {
+                    (0..self.sessions.len()).collect()
+                } else {
+                    self.sessions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, i)| {
+                            i.preview.to_lowercase().contains(&q)
+                                || i
+                                    .path
+                                    .to_string_lossy()
+                                    .to_lowercase()
+                                    .contains(&q)
+                        })
+                        .map(|(i, _)| i)
+                        .collect()
+                };
+                if self.sessions_list_count != session_display.len() {
+                    self.sessions_list.reset(session_display.len());
+                    self.sessions_list_count = session_display.len();
+                }
+                let session_display = std::sync::Arc::new(session_display);
+                list(
+                    self.sessions_list.clone(),
+                    move |ix, _window, cx| {
+                        let chat = sessions_entity.read(cx);
+                        let Some(orig) = session_display.get(ix).copied() else {
+                            return div().into_any_element();
+                        };
+                        let Some(info) = chat.sessions.get(orig) else {
+                            return div().into_any_element();
+                        };
                     let is_active = chat
                         .active_session_file
                         .as_deref()
@@ -3543,13 +4052,35 @@ impl Render for Chat {
                             None
                         })
                         .into_any_element()
-                })
-                .flex_1()
-                .min_h_0(),
-            )
-            // file explorer section
+                    }  // move closure
+                    )  // list(
+                // sessions pane height = persisted fraction of the sidebar
+                // (pi-web --sidebar-session-pane-height; default half)
+                .flex_basis(relative(self.sidebar_sessions_frac))
+                .min_h_0()
+                .overflow_hidden()
+            })  // .child({ ... }) block
+            // pane resize handle (pi-web sidebar-section-resize-handle)
             .child(
                 div()
+                    .id("sidebar-resize")
+                    .h(px(12.))
+                    .flex_shrink_0()
+                    .cursor(gpui::CursorStyle::ResizeUpDown)
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, ev: &gpui::MouseDownEvent, _w, _cx| {
+                            this.resizing_sidebar =
+                                Some((ev.position.y, this.sidebar_sessions_frac));
+                        },
+                    )),
+            )
+            // file explorer section (flex rest)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
                     .border_t_1()
                     .border_color(rgb(t.border))
                     .child(
@@ -3805,8 +4336,68 @@ impl Render for Chat {
                             .child(icon("pencil", 12., t.text_muted))
                             .child(SharedString::from(tr("生成标题"))),
                     )
-                    .child(pill("tb-system", "file-text", SharedString::from(tr("系统"))))
-                    .child(pill("tb-tools", "wrench", SharedString::from(tr("工具"))))
+                    .child(
+                        div()
+                            .id("tb-system")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(if self.top_panel == Some(TopPanel::System) { t.accent } else { t.border }))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(rgb(if self.top_panel == Some(TopPanel::System) { t.accent } else { t.text_muted }))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.top_panel = match this.top_panel {
+                                        Some(TopPanel::System) => None,
+                                        _ => Some(TopPanel::System),
+                                    };
+                                    this.request_system_info(cx);
+                                },
+                            ))
+                            .child(icon(
+                                "file-text",
+                                12.,
+                                if self.sys_prompt.is_some() { t.accent } else { t.text_muted },
+                            ))
+                            .child(SharedString::from(tr("系统"))),
+                    )
+                    .child(
+                        div()
+                            .id("tb-tools")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgb(if self.top_panel == Some(TopPanel::Tools) { t.accent } else { t.border }))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(rgb(if self.top_panel == Some(TopPanel::Tools) { t.accent } else { t.text_muted }))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.top_panel = match this.top_panel {
+                                        Some(TopPanel::Tools) => None,
+                                        _ => Some(TopPanel::Tools),
+                                    };
+                                    this.request_system_info(cx);
+                                },
+                            ))
+                            .child(icon(
+                                "wrench",
+                                12.,
+                                if self.session_tools.is_some() { t.accent } else { t.text_muted },
+                            ))
+                            .child(SharedString::from(tr("工具"))),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -3847,6 +4438,83 @@ impl Render for Chat {
                 .min_h_0()
                 .py_2(),
             )
+            // empty new-session hero (pi-web ChatWindow isEmptyNew): logo row
+            // directly above the editor, flex spacer below centers the pair
+            .children((self.messages.is_empty()
+                && !self
+                    .state
+                    .as_ref()
+                    .is_some_and(|s| s.is_streaming))
+            .then(|| {
+                div()
+                    .w_full()
+                    .mb_3()
+                    .px(px(16.))
+                    .child(
+                        div()
+                            .max_w(px(820.))
+                            .mx_auto()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .font_family("Consolas")
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .size(px(32.))
+                                            .rounded(px(8.))
+                                            .bg(rgb(t.accent))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(px(20.))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(rgb(t.accent_contrast))
+                                            .child("\u{3c0}"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(22.))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(rgb(t.text))
+                                            .child("pi-flash"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_end()
+                                    .gap(px(2.))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(t.text_muted))
+                                            .child(SharedString::from(format!(
+                                                "app v{}",
+                                                env!("CARGO_PKG_VERSION")
+                                            ))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(t.text_muted))
+                                            .child(SharedString::from(format!(
+                                                "pi v{}",
+                                                pi_link::vendor::vendored_version()
+                                                    .unwrap_or_default()
+                                            ))),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            }))
             // extension widgets above the editor (setWidget aboveEditor)
             .children((!self.ext_widgets.is_empty()).then(|| {
                 let rows: Vec<gpui::AnyElement> = self
@@ -3926,6 +4594,7 @@ impl Render for Chat {
                                     .track_focus(&self.focus)
                                     .flex_1()
                                     .min_w_0()
+                                    .rounded_md()
                                     .on_key_down(cx.listener(
                                         |this, ev: &KeyDownEvent, _w, cx| {
                                             let key = ev.keystroke.key.as_str();
@@ -4046,12 +4715,39 @@ impl Render for Chat {
                                         },
                                     ))
                                     .text_sm()
-                                    .text_color(if input_empty {
-                                        rgb(t.text_dim)
+                                    .border_1()
+                                    .border_color(if input_focused {
+                                        rgb(t.accent)
                                     } else {
-                                        rgb(t.text)
+                                        rgb(t.border)
                                     })
-                                    .child(input_ph),
+                                    .child(
+                                        // text + blinking caret (gpui editor is
+                                        // hand-rolled; the caret marks the end)
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .min_w_0()
+                                            .when(input_empty, |d| {
+                                                d.child(SharedString::from(
+                                                    input_ph.clone(),
+                                                ))
+                                            })
+                                            .when(!input_empty, |d| {
+                                                d.child(SharedString::from(
+                                                    this_input.clone(),
+                                                ))
+                                            })
+                                            .when(input_focused && caret_on, |d| {
+                                                d.child(
+                                                    div()
+                                                        .w(px(1.5))
+                                                        .h(px(16.))
+                                                        .flex_shrink_0()
+                                                        .bg(rgb(t.accent)),
+                                                )
+                                            }),
+                                    ),
                             )
                             .child(
                                 div()
@@ -4152,41 +4848,118 @@ impl Render for Chat {
                             )
                             .child(
                                 div()
+                                    .relative()
                                     .flex()
                                     .items_center()
                                     .gap_3()
                                     .text_xs()
                                     .text_color(rgb(t.text_muted))
+                                    // thinking level pill -> popup menu
+                                    // (pi-web ChatInput thinking dropdown)
                                     .child(
                                         div()
-                                            .id("thinking-cycle")
+                                            .id("thinking-menu")
                                             .flex()
                                             .items_center()
                                             .gap_1()
+                                            .px(px(4.))
+                                            .py(px(3.))
+                                            .rounded(px(5.))
                                             .cursor_pointer()
-                                            .hover(|s| s.text_color(rgb(t.text)))
+                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                                             .on_mouse_down(MouseButton::Left, cx.listener(
                                                 |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                                    this.cycle_thinking(cx);
+                                                    this.pill_menu =
+                                                        match this.pill_menu {
+                                                            Some(PillMenu::Thinking) => None,
+                                                            _ => Some(PillMenu::Thinking),
+                                                        };
+                                                    cx.notify();
                                                 },
                                             ))
                                             .child(icon(
                                                 "lightbulb",
                                                 12.,
-                                                t.text_muted,
+                                                if thinking_menu_open { t.accent } else { t.text_muted },
                                             ))
                                             .child(thinking_label),
                                     )
-                                    .child(SharedString::from("configured"))
+                                    // tools preset pill -> popup menu
                                     .child(
                                         div()
+                                            .id("tools-menu")
                                             .flex()
                                             .items_center()
                                             .gap_1()
+                                            .px(px(4.))
+                                            .py(px(3.))
+                                            .rounded(px(5.))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.pill_menu =
+                                                        match this.pill_menu {
+                                                            Some(PillMenu::Tools) => None,
+                                                            _ => Some(PillMenu::Tools),
+                                                        };
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child(icon(
+                                                "wrench",
+                                                12.,
+                                                if tools_menu_open { t.accent } else { t.text_muted },
+                                            ))
+                                            .child(SharedString::from(tools_label)),
+                                    )
+                                    // compact (rpc compact)
+                                    .child(
+                                        div()
+                                            .id("compact")
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .px(px(4.))
+                                            .py(px(3.))
+                                            .rounded(px(5.))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.compact_session(cx);
+                                                },
+                                            ))
                                             .child(icon("scissors", 12., t.text_muted))
                                             .child(SharedString::from(tr("压缩"))),
                                     )
-                                    .child(icon("volume", 12., t.text_muted)),
+                                    // notification sound toggle
+                                    .child(
+                                        div()
+                                            .id("sound")
+                                            .flex()
+                                            .items_center()
+                                            .px(px(4.))
+                                            .py(px(3.))
+                                            .rounded(px(5.))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                    this.sound_on = !this.sound_on;
+                                                    save_sound_pref(this.sound_on);
+                                                    if this.sound_on {
+                                                        play_notify_sound();
+                                                    }
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child(icon(
+                                                "volume",
+                                                12.,
+                                                if self.sound_on { t.accent } else { t.text_muted },
+                                            )),
+                                    )
                             ),
                     ),
             )
@@ -4200,6 +4973,12 @@ impl Render for Chat {
                     .collect();
                 (!rows.is_empty()).then(|| div().px_4().pb_1().flex().flex_col().gap_1().children(rows).into_any_element())
             }).flatten())
+            .children((self.messages.is_empty()
+                && !self
+                    .state
+                    .as_ref()
+                    .is_some_and(|s| s.is_streaming))
+            .then(|| div().flex_1().into_any_element()))
             // status bar (+ extension status items)
             .child(
                 div()
@@ -4232,28 +5011,81 @@ impl Render for Chat {
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
             .font_family("Segoe UI")
+            .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
+                if let Some((start_y, start_frac)) = this.resizing_sidebar {
+                    let height = f32::from(window.viewport_size().height);
+                    let frac = start_frac + (f32::from(ev.position.y) - f32::from(start_y)) / height;
+                    this.sidebar_sessions_frac = frac.clamp(0.12, 0.85);
+                    cx.notify();
+                }
+                if let Some((start_x, start_width)) = this.resizing_panel {
+                    // growth direction left: dragging left widens the panel
+                    let width = start_width - (f32::from(ev.position.x) - f32::from(start_x));
+                    this.right_panel_width = width.clamp(300., 1200.);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(
+                |this, _: &gpui::MouseUpEvent, _w, cx| {
+                    if this.resizing_sidebar.take().is_some()
+                        || this.resizing_panel.take().is_some()
+                    {
+                        cx.notify();
+                    }
+                },
+            ))
             .child(sidebar)
             .child(main_col);
 
-        // ---- right panel: terminal tabs (pi-web right-panel TabBar +
-        //      TerminalPanel; fixed dark surface in every theme) -----------
-        if self.right_panel_open && !self.terminals.is_empty() {
+        // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
+        //      merge; fixed dark terminal surface in every theme) -----------
+        if self.right_panel_open && !self.panel_tabs.is_empty() {
             let weak_for_tabs = weak.clone();
             let tabbar = div()
                 .flex()
-                .h(px(36.))
-                .flex_shrink_0()
-                .bg(rgb(t.bg_panel))
-                .border_b_1()
-                .border_color(rgb(t.border))
-                .children(self.terminals.iter().enumerate().map(|(ix, tab)| {
-                    let active = self.active_terminal == Some(ix);
-                    let title: SharedString = tab.title.clone().into();
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .children(self.panel_tabs.iter().enumerate().map(|(ix, tab)| {
+                    let active = self.active_panel_tab == Some(ix);
+                    let (icon_name, label, title_text) = match tab {
+                        PanelTab::File(p) => (
+                            "file-text",
+                            p.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| p.to_string_lossy().to_string()),
+                            p.to_string_lossy().to_string(),
+                        ),
+                        PanelTab::Term(id) => {
+                            let title = self
+                                .terminals
+                                .iter()
+                                .find(|t| t.id == *id)
+                                .map(|t| t.title.clone())
+                                .unwrap_or_default();
+                            let cwd = self
+                                .terminals
+                                .iter()
+                                .find(|t| t.id == *id)
+                                .map(|t| t.cwd.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            ("terminal", title, cwd)
+                        }
+                    };
+                    let label: SharedString = label.into();
+                    let title_text: SharedString = title_text.into();
                     let weak_tab = weak_for_tabs.clone();
                     let weak_close = weak_for_tabs.clone();
-                    let focus_for_tab = tab.focus.clone();
+                    let term_focus: Option<gpui::FocusHandle> = match tab {
+                        PanelTab::Term(id) => self
+                            .terminals
+                            .iter()
+                            .find(|t| t.id == *id)
+                            .map(|t| t.focus.clone()),
+                        _ => None,
+                    };
                     div()
-                        .id(SharedString::from(format!("term-tab-{ix}")))
+                        .id(SharedString::from(format!("ptab-{ix}")))
                         .flex()
                         .items_center()
                         .gap(px(6.))
@@ -4274,22 +5106,21 @@ impl Render for Chat {
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             let _ = weak_tab.update(cx, |c, cx| {
-                                c.active_terminal = Some(ix);
+                                c.active_panel_tab = Some(ix);
                                 cx.notify();
                             });
-                            window.focus(&focus_for_tab);
+                            if let Some(f) = term_focus.clone() {
+                                window.focus(&f);
+                            }
                         })
                         // middle-click closes the tab (pi-web TabBar auxclick)
-                        .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
-                            let _ = weak_close.update(cx, |c, cx| {
-                                c.close_terminal(ix, window, cx);
-                            });
+                        .on_mouse_down(MouseButton::Middle, {
+                            let w = weak_for_tabs.clone();
+                            move |_, _, cx| {
+                                let _ = w.update(cx, |c, cx| c.close_panel_tab(ix, cx));
+                            }
                         })
-                        .child(icon(
-                            "terminal",
-                            13.,
-                            if active { t.text } else { t.text_muted },
-                        ))
+                        .child(icon(icon_name, 13., if active { t.text } else { t.text_muted }))
                         .child(
                             div()
                                 .flex_1()
@@ -4297,11 +5128,11 @@ impl Render for Chat {
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .overflow_hidden()
-                                .child(title),
+                                .child(label),
                         )
                         .child(
                             div()
-                                .id(SharedString::from(format!("term-close-{ix}")))
+                                .id(SharedString::from(format!("ptab-x-{ix}")))
                                 .size(px(24.))
                                 .flex()
                                 .items_center()
@@ -4311,12 +5142,10 @@ impl Render for Chat {
                                 .text_color(rgb(t.text_muted))
                                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                                 .on_mouse_down(MouseButton::Left, {
-                                    let weak_x = weak_for_tabs.clone();
-                                    move |_, window, cx| {
+                                    let w = weak_close.clone();
+                                    move |_, _, cx| {
                                         cx.stop_propagation();
-                                        let _ = weak_x.update(cx, |c, cx| {
-                                            c.close_terminal(ix, window, cx);
-                                        });
+                                        let _ = w.update(cx, |c, cx| c.close_panel_tab(ix, cx));
                                     }
                                 })
                                 .child(icon("x", 11., t.text_muted)),
@@ -4324,148 +5153,346 @@ impl Render for Chat {
                         .into_any_element()
                 }));
 
-            let panel_body: Option<gpui::AnyElement> = self.active_terminal.and_then(|ix| {
-                self.terminals.get(ix).map(|tab| {
-                    let (dot, _status) = match &tab.status {
-                        TermStatus::Ready => (0x4ade80, ""),
-                        TermStatus::Exited(_) | TermStatus::Failed(_) => (0xf87171, ""),
-                    };
-                    let cwd_text: SharedString = tab.cwd.to_string_lossy().to_string().into();
-                    let weak_restart = weak.clone();
-                    let mut col = div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .flex_col()
-                        // header: 38px, status dot + cwd + restart
-                        .child(
-                            div()
-                                .h(px(38.))
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .pl(px(13.))
-                                .pr(px(10.))
-                                .bg(rgb(0x181b21))
-                                .border_b_1()
-                                .border_color(rgb(0x2f3540))
-                                .child(
+            let body: Option<gpui::AnyElement> = self
+                .active_panel_tab
+                .and_then(|ix| self.panel_tabs.get(ix).cloned())
+                .map(|tab| match tab {
+                    PanelTab::Term(id) => {
+                        // terminal panel (header + banners + grid)
+                        let tix = self.terminals.iter().position(|t| t.id == id);
+                        let Some(tix) = tix else {
+                            return div().into_any_element();
+                        };
+                        let tab = &self.terminals[tix];
+                        let (dot, _status) = match &tab.status {
+                            TermStatus::Ready => (0x4ade80, ""),
+                            TermStatus::Exited(_) | TermStatus::Failed(_) => (0xf87171, ""),
+                        };
+                        let cwd_text: SharedString = tab.cwd.to_string_lossy().to_string().into();
+                        let weak_restart = weak.clone();
+                        let mut col = div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .h(px(38.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .pl(px(13.))
+                                    .pr(px(10.))
+                                    .bg(rgb(0x181b21))
+                                    .border_b_1()
+                                    .border_color(rgb(0x2f3540))
+                                    .child(
+                                        div()
+                                            .size(px(7.))
+                                            .rounded_full()
+                                            .flex_shrink_0()
+                                            .bg(rgb(dot)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_size(px(11.))
+                                            .font_family(terminal::FONT_FAMILY)
+                                            .text_color(rgb(0x9ca3af))
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .overflow_hidden()
+                                            .child(cwd_text),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("term-restart")
+                                            .h(px(27.))
+                                            .px(px(8.))
+                                            .flex()
+                                            .items_center()
+                                            .rounded(px(5.))
+                                            .border_1()
+                                            .border_color(rgb(0x343a46))
+                                            .text_color(rgb(0x9ca3af))
+                                            .cursor_pointer()
+                                            .hover(|s| {
+                                                s.bg(rgb(0x242932)).text_color(rgb(0xe5e7eb))
+                                            })
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let rix = tix;
+                                                move |_, _, cx| {
+                                                    let _ = weak_restart.update(cx, |c, cx| {
+                                                        c.restart_terminal(rix, cx);
+                                                    });
+                                                }
+                                            })
+                                            .child(icon("refresh", 12., 0x9ca3af)),
+                                    ),
+                            );
+                        match &tab.status {
+                            TermStatus::Failed(e) => {
+                                col = col.child(
                                     div()
-                                        .size(px(7.))
-                                        .rounded_full()
-                                        .flex_shrink_0()
-                                        .bg(rgb(dot)),
-                                )
-                                .child(
+                                        .py(px(7.))
+                                        .px(px(12.))
+                                        .bg(rgb(0x321b1b))
+                                        .border_b_1()
+                                        .border_color(rgb(0x5f2424))
+                                        .text_size(px(11.))
+                                        .font_family(terminal::FONT_FAMILY)
+                                        .text_color(rgb(0xfca5a5))
+                                        .child(SharedString::from(e.clone())),
+                                );
+                            }
+                            TermStatus::Exited(code) => {
+                                let code_text = code
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| tr("unknown").to_string());
+                                col = col.child(
                                     div()
-                                        .flex_1()
-                                        .min_w_0()
+                                        .py(px(7.))
+                                        .px(px(12.))
                                         .text_size(px(11.))
                                         .font_family(terminal::FONT_FAMILY)
                                         .text_color(rgb(0x9ca3af))
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .overflow_hidden()
-                                        .child(cwd_text),
-                                )
+                                        .child(SharedString::from(crate::i18n::tf(
+                                            "Process exited with code {code_text}",
+                                            &[("code_text", code_text)],
+                                        ))),
+                                );
+                            }
+                            TermStatus::Ready => {}
+                        }
+                        col.child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .bg(rgb(0x111318))
                                 .child(
-                                    div()
-                                        .id("term-restart")
-                                        .h(px(27.))
-                                        .px(px(8.))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(px(5.))
-                                        .border_1()
-                                        .border_color(rgb(0x343a46))
-                                        .text_color(rgb(0x9ca3af))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(0x242932)).text_color(rgb(0xe5e7eb)))
+                                    terminal::TerminalElement::new(tab, weak.clone())
+                                        .track_focus(&tab.focus)
+                                        .flex_1()
+                                        .h_full()
                                         .on_mouse_down(MouseButton::Left, {
-                                            let rix = ix;
-                                            move |_, _, cx| {
-                                                let _ = weak_restart.update(cx, |c, cx| {
-                                                    c.restart_terminal(rix, cx);
-                                                });
+                                            let f = tab.focus.clone();
+                                            move |_, window, _cx| {
+                                                window.focus(&f);
                                             }
                                         })
-                                        .child(icon("refresh", 12., 0x9ca3af)),
+                                        .on_key_down(cx.listener(
+                                            |this, ev: &KeyDownEvent, _w, cx| {
+                                                this.terminal_key(ev, cx);
+                                            },
+                                        )),
                                 ),
-                        );
-                    // banners: error (role=alert) / exit code (pi-web parity)
-                    match &tab.status {
-                        TermStatus::Failed(e) => {
-                            col = col.child(
-                                div()
-                                    .py(px(7.))
-                                    .px(px(12.))
-                                    .bg(rgb(0x321b1b))
-                                    .border_b_1()
-                                    .border_color(rgb(0x5f2424))
-                                    .text_size(px(11.))
-                                    .font_family(terminal::FONT_FAMILY)
-                                    .text_color(rgb(0xfca5a5))
-                                    .child(SharedString::from(e.clone())),
-                            );
-                        }
-                        TermStatus::Exited(code) => {
-                            let code_text = code
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "unknown".into());
-                            col = col.child(
-                                div()
-                                    .py(px(7.))
-                                    .px(px(12.))
-                                    .text_size(px(11.))
-                                    .font_family(terminal::FONT_FAMILY)
-                                    .text_color(rgb(0x9ca3af))
-                                    .child(SharedString::from(crate::i18n::tf(
-                                        "Process exited with code {code_text}",
-                                        &[("code_text", code_text)],
-                                    ))),
-                            );
-                        }
-                        TermStatus::Ready => {}
+                        )
+                        .into_any_element()
                     }
-                    // xterm host: fixed #111318 surface, pi-web padding
-                    col.child(
-                        div()
+                    PanelTab::File(path) => {
+                        // file viewer (pi-web FileViewer header + source/preview)
+                        let Some(fc) = self.file_cache.get(&path) else {
+                            return div().into_any_element();
+                        };
+                        let content = fc.content.clone();
+                        let meta: SharedString =
+                            Self::file_meta(&path, &content).into();
+                        let rel: SharedString = path
+                            .strip_prefix(&self.cwd)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|_| path.to_string_lossy().to_string())
+                            .into();
+                        let is_md = Self::is_markdown(&path);
+                        let preview = is_md
+                            && self.file_preview_mode.get(&path).copied().unwrap_or(false);
+                        let weak_mode = weak.clone();
+                        let mode_path = path.clone();
+                        let mut col = div()
                             .flex_1()
                             .min_h_0()
-                            .bg(rgb(0x111318))
+                            .flex()
+                            .flex_col()
+                            .bg(rgb(t.bg))
                             .child(
-                                terminal::TerminalElement::new(tab, weak.clone())
-                                    .track_focus(&tab.focus)
-                                    .flex_1()
-                                    .h_full()
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let f = tab.focus.clone();
-                                        move |_, window, _cx| {
-                                            window.focus(&f);
-                                        }
-                                    })
-                                    .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
-                                        this.terminal_key(ev, cx);
+                                div()
+                                    .h(px(38.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_3()
+                                    .border_b_1()
+                                    .border_color(rgb(t.border))
+                                    .child(
+                                        div()
+                                            .font_family("Consolas")
+                                            .text_size(px(11.))
+                                            .text_color(rgb(t.text))
+                                            .whitespace_nowrap()
+                                            .child(rel),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(t.text_dim))
+                                            .whitespace_nowrap()
+                                            .child(meta),
+                                    )
+                                    .child(div().flex_1())
+                                    .children(is_md.then(|| {
+                                        div()
+                                            .flex()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .id("fv-source")
+                                                    .px_2()
+                                                    .py(px(3.))
+                                                    .rounded(px(4.))
+                                                    .text_size(px(11.))
+                                                    .cursor_pointer()
+                                                    .bg(if preview {
+                                                        rgb(t.bg_panel)
+                                                    } else {
+                                                        rgb(t.bg_selected)
+                                                    })
+                                                    .text_color(rgb(t.text))
+                                                    .on_mouse_down(MouseButton::Left, {
+                                                        let w = weak_mode.clone();
+                                                        let p2 = mode_path.clone();
+                                                        move |_, _, cx| {
+                                                            let _ = w.update(cx, |c, cx| {
+                                                                c.file_preview_mode.insert(p2.clone(), false);
+                                                                cx.notify();
+                                                            });
+                                                        }
+                                                    })
+                                                    .child("Source"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("fv-preview")
+                                                    .px_2()
+                                                    .py(px(3.))
+                                                    .rounded(px(4.))
+                                                    .text_size(px(11.))
+                                                    .cursor_pointer()
+                                                    .bg(if preview {
+                                                        rgb(t.bg_selected)
+                                                    } else {
+                                                        rgb(t.bg_panel)
+                                                    })
+                                                    .text_color(rgb(t.text))
+                                                    .on_mouse_down(MouseButton::Left, {
+                                                        let w = weak_mode.clone();
+                                                        let p2 = mode_path.clone();
+                                                        move |_, _, cx| {
+                                                            let _ = w.update(cx, |c, cx| {
+                                                                c.file_preview_mode.insert(p2.clone(), true);
+                                                                cx.notify();
+                                                            });
+                                                        }
+                                                    })
+                                                    .child("Preview"),
+                                            )
                                     })),
-                            ),
-                    )
-                    .into_any_element()
-                })
-            });
+                            );
+                        if preview {
+                            col = col.child(
+                                div()
+                                    .id("fv-scroll")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .py_4()
+                                    .child(markdown::render(&content, &t)),
+                            );
+                        } else {
+                            col = col.child(
+                                div()
+                                    .id("fv-scroll")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .py_2()
+                                    .px_3()
+                                    .font_family("Consolas")
+                                    .text_size(px(12.))
+                                    .text_color(rgb(t.text))
+                                    .flex()
+                                    .flex_col()
+                                    .children(content.lines().map(|l| {
+                                        div().child(SharedString::from(l.to_string()))
+                                    })),
+                            );
+                        }
+                        col.into_any_element()
+                    }
+                });
 
             root = root.child(
                 div()
-                    .w(px(560.))
                     .h_full()
                     .flex_shrink_0()
                     .flex()
-                    .flex_col()
-                    .bg(rgb(t.bg))
-                    .border_l_1()
-                    .border_color(rgb(t.border))
-                    .child(tabbar)
-                    .children(panel_body),
+                    // drag handle (pi-web panel-resize-handle; growth left)
+                    .child(
+                        div()
+                            .id("panel-resize")
+                            .w(px(4.))
+                            .h_full()
+                            .cursor(gpui::CursorStyle::ResizeLeftRight)
+                            .hover(|s| s.bg(rgb(t.accent)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, ev: &gpui::MouseDownEvent, _w, _cx| {
+                                    this.resizing_panel =
+                                        Some((ev.position.x, this.right_panel_width));
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w(px(self.right_panel_width))
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .bg(rgb(t.bg))
+                            .border_l_1()
+                            .border_color(rgb(t.border))
+                            .child(
+                                div()
+                                    .flex()
+                                    .h(px(36.))
+                                    .flex_shrink_0()
+                                    .bg(rgb(t.bg_panel))
+                                    .border_b_1()
+                                    .border_color(rgb(t.border))
+                                    .child(tabbar)
+                                    .child(div().flex_1())
+                                    .child(
+                                        div()
+                                            .id("panel-close")
+                                            .w(px(36.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .text_color(rgb(t.text_muted))
+                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                                |this, _: &gpui::MouseDownEvent, window, cx| {
+                                                    this.right_panel_open = false;
+                                                    window.focus(&this.focus);
+                                                    cx.notify();
+                                                },
+                                            ))
+                                            .child(icon("x", 13., t.text_muted)),
+                                    ),
+                            )
+                            .children(body),
+                    ),
             );
         }
 
@@ -5138,91 +6165,6 @@ impl Render for Chat {
                     ),
             );
         }
-        if let Some(Dialog::FilePreview { path, content }) = self.dialog.as_ref() {
-            let path_text: SharedString = path.to_string_lossy().to_string().into();
-            let mut body = content.clone();
-            if body.chars().count() > 20000 {
-                let mut cut = 20000;
-                while !body.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                body.truncate(cut);
-                body.push_str("\n\n\u{2026} (truncated)");
-            }
-            root = root.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .bg(gpui::hsla(0., 0., 0., 0.35))
-                    .track_focus(&self.dialog_focus)
-                    .on_key_down({
-                        let weak = weak_for_dialog.clone();
-                        move |ev: &KeyDownEvent, _w, cx| {
-                            if ev.keystroke.key == "escape" {
-                                let _ = weak.update(cx, |this, cx| {
-                                    this.dialog = None;
-                                    cx.notify();
-                                });
-                            }
-                        }
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .w(px(760.))
-                            .max_h(px(640.))
-                            .bg(rgb(t.bg_panel))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .rounded_lg()
-                            .p_4()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .shadow_lg()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .font_family("Consolas")
-                                            .text_color(rgb(t.text_muted))
-                                            .child(path_text),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("file-close")
-                                            .px_2()
-                                            .cursor_pointer()
-                                            .text_color(rgb(t.text_muted))
-                                            .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let weak = weak_for_dialog.clone();
-                                                move |_, _, cx| {
-                                                    let _ = weak.update(cx, |c, cx| {
-                                                        c.dialog = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            })
-                                            .child(icon("x", 12., t.text_muted)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .font_family("Consolas")
-                                    .text_xs()
-                                    .text_color(rgb(t.text))
-                                    .child(SharedString::from(body)),
-                            ),
-                    ),
-            );
-        }
         if let Some(Dialog::RenameSession { value }) = self.dialog.as_ref() {
             let value_view: SharedString = if value.is_empty() {
                 "session name".into()
@@ -5382,6 +6324,139 @@ impl Render for Chat {
         }
         if let Some(Dialog::Settings { .. }) = self.dialog.as_ref() {
             root = root.child(render_settings(self, &weak_for_dialog));
+        }
+        // toolbar pill popup menus
+        if let Some(el) = pill_menu_el {
+            root = root.child(el);
+        }
+        // top-bar dropdown panels (系统提示词 / 工具定义)
+        if let Some(tp) = self.top_panel {
+            let weak_tp = weak.clone();
+            let mut panel = div()
+                .id("top-panel")
+                .absolute()
+                .top(px(44.))
+                .left(px(276.))
+                .w(px(680.))
+                .max_h(px(520.))
+                .bg(rgb(t.bg))
+                .border_1()
+                .border_color(rgb(t.border))
+                .rounded(px(8.))
+                .shadow_lg()
+                .overflow_y_scroll()
+                .p(px(12.))
+                .flex()
+                .flex_col()
+                .gap_2();
+            match tp {
+                TopPanel::System => {
+                    panel = panel.child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text))
+                            .child(tr("系统提示词")),
+                    );
+                    match &self.sys_prompt {
+                        Some(text) => {
+                            panel = panel.child(
+                                div()
+                                    .font_family("Consolas")
+                                    .text_size(px(11.))
+                                    .text_color(rgb(t.text_muted))
+                                    .flex()
+                                    .flex_col()
+                                    .children(
+                                        text.lines().map(|l| {
+                                            div().child(SharedString::from(l.to_string()))
+                                        }),
+                                    ),
+                            );
+                        }
+                        None => {
+                            panel = panel.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(t.text_dim))
+                                    .child(tr("正在获取（export 中）…")),
+                            );
+                        }
+                    }
+                }
+                TopPanel::Tools => {
+                    panel = panel.child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text))
+                            .child(tr("工具定义")),
+                    );
+                    match &self.session_tools {
+                        Some(tools) if !tools.is_empty() => {
+                            for (name, desc) in tools {
+                                panel = panel.child(
+                                    div()
+                                        .flex()
+                                        .items_baseline()
+                                        .gap_2()
+                                        .px_2()
+                                        .py(px(4.))
+                                        .rounded(px(4.))
+                                        .hover(|s| s.bg(rgb(t.bg_hover)))
+                                        .child(
+                                            div()
+                                                .font_family("Consolas")
+                                                .text_size(px(11.))
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(rgb(t.text))
+                                                .child(SharedString::from(name.clone())),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(t.text_muted))
+                                                .child(SharedString::from(desc.clone())),
+                                        ),
+                                );
+                            }
+                        }
+                        _ => {
+                            panel = panel.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(t.text_dim))
+                                    .child(tr("正在获取（export 中）…")),
+                            );
+                        }
+                    }
+                }
+            }
+            root = root.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, {
+                                let w = weak_tp.clone();
+                                move |_, _, cx| {
+                                    let _ = w.update(cx, |c, cx| {
+                                        if c.top_panel.is_some() {
+                                            c.top_panel = None;
+                                            cx.notify();
+                                        }
+                                    });
+                                }
+                            }),
+                    )
+                    .child(panel),
+            );
         }
         // extension notify toast (top-right)
         if let Some((message, ty)) = &self.ext_notice {

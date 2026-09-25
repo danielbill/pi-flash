@@ -22,6 +22,8 @@ pub enum Command {
     },
     FollowUp { message: String },
     Abort,
+    /// Summarize/compact the session context (rpc compact)
+    Compact,
     GetState,
     GetMessages,
     GetSessionStats,
@@ -54,6 +56,7 @@ impl Command {
             Command::Steer { .. } => "steer",
             Command::FollowUp { .. } => "follow_up",
             Command::Abort => "abort",
+            Command::Compact => "compact",
             Command::GetState => "get_state",
             Command::GetMessages => "get_messages",
             Command::GetSessionStats => "get_session_stats",
@@ -105,7 +108,8 @@ impl Command {
             Command::FollowUp { message } => {
                 json!({ "type": self.kind(), "message": message })
             }
-            Command::Abort
+            Command::Compact
+            | Command::Abort
             | Command::GetState
             | Command::GetMessages
             | Command::GetSessionStats
