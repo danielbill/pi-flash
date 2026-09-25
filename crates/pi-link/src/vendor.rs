@@ -29,6 +29,45 @@ pub fn vendor_dir() -> Option<PathBuf> {
     None
 }
 
+/// Node binary resolution (bundled node.exe > PI_FLASH_NODE > PATH),
+/// shared by the RPC spawner and one-off CLI operations.
+pub fn node_bin() -> String {
+    std::env::var("PI_FLASH_NODE").ok().or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|d| d.parent().map(|p| p.join("node.exe")))
+            .filter(|p| p.is_file())
+            .map(|p| p.to_string_lossy().to_string())
+    })
+    .unwrap_or_else(|| "node".to_string())
+}
+
+/// Run a one-off vendored pi CLI command (`pi install/remove/list ...`) and
+/// return combined output. Synchronous — call from a background thread.
+pub fn run_cli(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let cli = cli_path().ok_or_else(|| "vendored pi not found".to_string())?;
+    let mut cmd = std::process::Command::new(node_bin());
+    cmd.arg(&cli).args(args).current_dir(cwd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(if text.trim().is_empty() {
+            format!("pi {} failed ({})", args.join(" "), out.status)
+        } else {
+            text
+        })
+    }
+}
+
 /// Full path to the vendored pi CLI entry (`dist/bundle/cli.js`).
 pub fn cli_path() -> Option<PathBuf> {
     let dir = vendor_dir()?;

@@ -77,12 +77,17 @@ enum Dialog {
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
-    /// Models panel (pi-web ModelsConfig): selected provider + input state
-    ModelsConfig {
-        /// provider id shown in the detail pane
+    /// Settings panel (pi-web SettingsPanel): tabs 模型/技能/插件/工具
+    Settings {
+        /// 0 models · 1 skills · 2 plugins · 3 tools
+        tab: u8,
+        /// selected entry in the tab's sidebar (provider id / skill path /
+        /// package source / "__add__" for the install form)
         section: String,
         key_input: String,
         key_visible: bool,
+        install_input: String,
+        install_scope_project: bool,
         error: Option<String>,
     },
 }
@@ -151,11 +156,17 @@ struct Chat {
     term_events: Option<futures::channel::mpsc::UnboundedSender<
         (usize, alacritty_terminal::event::Event),
     >>,
-    /// models panel state (loaded when the panel opens)
+    /// settings panel state (loaded when the panel opens)
     mc_patterns: Option<Vec<String>>,
     mc_state: EnabledState,
     mc_creds: Vec<(String, pi_link::config::CredentialKind)>,
     mc_project_scope: bool,
+    mc_skills: Vec<pi_link::skills::SkillEntry>,
+    mc_pkgs_global: Vec<serde_json::Value>,
+    mc_pkgs_project: Vec<serde_json::Value>,
+    mc_default_tools: Option<Vec<String>>,
+    /// background pi-CLI operation results (install/remove) -> status line
+    op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
 }
 
 impl Chat {
@@ -221,6 +232,11 @@ impl Chat {
             mc_state: EnabledState::default(),
             mc_creds: Vec::new(),
             mc_project_scope: false,
+            mc_skills: Vec::new(),
+            mc_pkgs_global: Vec::new(),
+            mc_pkgs_project: Vec::new(),
+            mc_default_tools: None,
+            op_tx: None,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -232,6 +248,24 @@ impl Chat {
             })
             .detach();
         }
+        // settings panel CLI op pump (pi install/remove runs in background)
+        let (op_tx, mut op_rx) = futures::channel::mpsc::unbounded::<String>();
+        chat.op_tx = Some(op_tx);
+        cx.spawn(async move |this, cx| {
+            while let Some(msg) = op_rx.next().await {
+                if this
+                    .update(cx, |chat, cx| {
+                        chat.status = msg;
+                        chat.reload_settings_panel();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         // terminal event pump: alacritty EventListener -> Chat (single channel)
         let (term_tx, term_rx) =
             futures::channel::mpsc::unbounded::<(usize, alacritty_terminal::event::Event)>();
@@ -270,7 +304,7 @@ impl Chat {
         chat.refresh_git();
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
-        chat.reload_models_panel();
+        chat.reload_settings_panel();
         if let Some(p) = get_last_open(&chat.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
             if path.exists() {
@@ -447,13 +481,26 @@ impl Chat {
             .collect()
     }
 
-    fn open_models_config(&mut self, cx: &mut Context<Self>) {
-        self.reload_models_panel();
-        let section = self.mc_provider_ids().first().cloned().unwrap_or_default();
-        self.dialog = Some(Dialog::ModelsConfig {
+    fn open_settings(&mut self, tab: u8, cx: &mut Context<Self>) {
+        self.reload_settings_panel();
+        let section = match tab {
+            0 => self.mc_provider_ids().first().cloned().unwrap_or_default(),
+            1 => self.mc_skills.first().map(|s| s.path.to_string_lossy().to_string()).unwrap_or_default(),
+            2 => self
+                .mc_pkgs_global
+                .first()
+                .or_else(|| self.mc_pkgs_project.first())
+                .map(pi_link::skills::entry_source)
+                .unwrap_or_else(|| "__add__".into()),
+            _ => String::new(),
+        };
+        self.dialog = Some(Dialog::Settings {
+            tab,
             section,
             key_input: String::new(),
             key_visible: false,
+            install_input: String::new(),
+            install_scope_project: false,
             error: None,
         });
         cx.notify();
@@ -470,11 +517,11 @@ impl Chat {
         out
     }
 
-    /// Re-read settings.json + auth.json (called on open and after writes).
-    fn reload_models_panel(&mut self) {
-        let settings = pi_link::config::settings_path();
+    /// Re-read pi config + resources (called on open and after writes).
+    fn reload_settings_panel(&mut self) {
+        let settings_path = pi_link::config::settings_path();
         self.mc_patterns =
-            pi_link::config::read_enabled_models(&settings).unwrap_or_else(|_| None);
+            pi_link::config::read_enabled_models(&settings_path).unwrap_or_else(|_| None);
         let project = pi_link::config::project_settings_path(&self.cwd);
         self.mc_project_scope =
             pi_link::config::read_enabled_models(&project).unwrap_or_else(|_| None).is_some();
@@ -482,17 +529,34 @@ impl Chat {
             .unwrap_or_default();
         self.mc_state =
             models_config::compute_state(self.mc_patterns.as_ref(), &self.mc_refs());
+        // skills (DefaultResourceLoader dir subset)
+        let settings_value =
+            pi_link::config::read_json(&settings_path).unwrap_or_else(|_| serde_json::json!({}));
+        let agent_dir = pi_link::config::agent_dir();
+        let home_agents = agent_dir
+            .parent()
+            .map(|p| p.join("..").join(".agents").join("skills"))
+            .map(|p| p.canonicalize().unwrap_or(p))
+            .unwrap_or_else(|| agent_dir.clone());
+        self.mc_skills =
+            pi_link::skills::discover_skills(&self.cwd, &agent_dir, &home_agents, &settings_value);
+        // packages (global + project scopes)
+        self.mc_pkgs_global =
+            pi_link::config::read_packages(&settings_path).unwrap_or_default();
+        self.mc_pkgs_project = pi_link::config::read_packages(&project).unwrap_or_default();
+        self.mc_default_tools =
+            pi_link::config::read_default_tools(&settings_path).unwrap_or_else(|_| None);
     }
 
     fn mc_set_error(&mut self, msg: &str, cx: &mut Context<Self>) {
-        if let Some(Dialog::ModelsConfig { error, .. }) = &mut self.dialog {
+        if let Some(Dialog::Settings { error, .. }) = &mut self.dialog {
             *error = Some(msg.to_string());
         }
         cx.notify();
     }
 
     fn mc_clear_error(&mut self, cx: &mut Context<Self>) {
-        if let Some(Dialog::ModelsConfig { error, .. }) = &mut self.dialog {
+        if let Some(Dialog::Settings { error, .. }) = &mut self.dialog {
             if error.is_some() {
                 *error = None;
                 cx.notify();
@@ -549,8 +613,8 @@ impl Chat {
         }
         // pi resolves auth.json per request; only a brand-new provider's
         // catalog needs a process restart to appear in available models
-        self.reload_models_panel();
-        if let Some(Dialog::ModelsConfig { key_input, .. }) = &mut self.dialog {
+        self.reload_settings_panel();
+        if let Some(Dialog::Settings { key_input, .. }) = &mut self.dialog {
             key_input.clear();
         }
         cx.notify();
@@ -562,7 +626,7 @@ impl Chat {
             self.mc_set_error(&e, cx);
             return;
         }
-        self.reload_models_panel();
+        self.reload_settings_panel();
         cx.notify();
     }
 
@@ -581,7 +645,7 @@ impl Chat {
             self.mc_set_error(&e, cx);
             return;
         }
-        self.reload_models_panel();
+        self.reload_settings_panel();
         cx.notify();
     }
 
@@ -596,6 +660,120 @@ impl Chat {
         self.mc_creds
             .iter()
             .any(|(p, k)| p == provider && *k == pi_link::config::CredentialKind::OAuth)
+    }
+
+    /// Skills toggle: write `disable-model-invocation` into SKILL.md
+    /// (pi-web PATCH /api/skills parity).
+    fn mc_toggle_skill(&mut self, path: String, disable: bool, cx: &mut Context<Self>) {
+        self.mc_clear_error(cx);
+        let p = PathBuf::from(&path);
+        if let Err(e) = pi_link::skills::set_disable_invocation(&p, disable) {
+            self.mc_set_error(&format!("写入 SKILL.md 失败: {e}"), cx);
+            return;
+        }
+        self.reload_settings_panel();
+        cx.notify();
+    }
+
+    /// Enable/disable a package: zero out its resource arrays (pi-web
+    /// disable parity) in the owning scope's settings.json.
+    fn mc_toggle_package(&mut self, scope_project: bool, ix: usize, cx: &mut Context<Self>) {
+        self.mc_clear_error(cx);
+        let list = if scope_project { &self.mc_pkgs_project } else { &self.mc_pkgs_global };
+        let Some(entry) = list.get(ix) else { return };
+        let source = pi_link::skills::entry_source(entry);
+        let next: Vec<serde_json::Value> = list
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                if i != ix {
+                    return e.clone();
+                }
+                if pi_link::skills::entry_disabled(e) {
+                    // enable: restore the plain source entry (loader re-resolves)
+                    serde_json::Value::String(source.clone())
+                } else {
+                    // disable: keep the entry but load nothing
+                    serde_json::json!({
+                        "source": source,
+                        "extensions": [], "skills": [], "prompts": [], "themes": []
+                    })
+                }
+            })
+            .collect();
+        let path = if scope_project {
+            pi_link::config::project_settings_path(&self.cwd)
+        } else {
+            pi_link::config::settings_path()
+        };
+        if let Err(e) = pi_link::config::write_packages(&path, next) {
+            self.mc_set_error(&format!("写入 settings.json 失败: {e}"), cx);
+            return;
+        }
+        self.reload_settings_panel();
+        cx.notify();
+    }
+
+    /// Install/remove via the vendored pi CLI, on a background thread; the
+    /// result lands on the op pump (status line + panel refresh).
+    fn mc_cli_op(&mut self, args: Vec<String>, done: String, cx: &mut Context<Self>) {
+        let Some(tx) = self.op_tx.clone() else { return };
+        self.status = format!("pi {} …", args.join(" "));
+        let cwd = self.cwd.clone();
+        std::thread::spawn(move || {
+            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let msg = match pi_link::vendor::run_cli(&cwd, &arg_refs) {
+                Ok(_) => done,
+                Err(e) => format!("pi {} 失败: {}", args.join(" "), e.lines().last().unwrap_or("")),
+            };
+            let _ = tx.unbounded_send(msg);
+        });
+        cx.notify();
+    }
+
+    fn mc_install_package(&mut self, source: String, scope_project: bool, cx: &mut Context<Self>) {
+        self.mc_clear_error(cx);
+        let source = pi_link::skills::normalize_source(&source);
+        if source.is_empty() {
+            self.mc_set_error("请输入插件来源（npm: / git: / 本地路径）", cx);
+            return;
+        }
+        let mut args = vec!["install".to_string(), source.clone()];
+        if scope_project {
+            args.push("-l".to_string());
+        }
+        self.mc_cli_op(args, format!("已安装 {source}"), cx);
+        if let Some(Dialog::Settings { section, .. }) = &mut self.dialog {
+            *section = "__add__".into();
+        }
+    }
+
+    fn mc_remove_package(&mut self, scope_project: bool, source: String, cx: &mut Context<Self>) {
+        self.mc_clear_error(cx);
+        let mut args = vec!["remove".to_string(), source.clone()];
+        if scope_project {
+            args.push("-l".to_string());
+        }
+        self.mc_cli_op(args, format!("已移除 {source}"), cx);
+    }
+
+    /// Tool presets (pi-web tool-presets.ts) via settings.json `defaultTools`;
+    /// picked up by new sessions exactly like the CLI.
+    fn mc_set_tools_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
+        self.mc_clear_error(cx);
+        let tools: Option<Vec<String>> = match preset {
+            "all" => None, // pi default resolution (no override)
+            "default" => Some(["read", "bash", "edit", "write"].iter().map(|s| s.to_string()).collect()),
+            "read-only" => Some(["read", "grep", "find", "ls"].iter().map(|s| s.to_string()).collect()),
+            "none" => Some(Vec::new()),
+            _ => return,
+        };
+        if let Err(e) = pi_link::config::write_default_tools(&pi_link::config::settings_path(), tools) {
+            self.mc_set_error(&format!("写入 settings.json 失败: {e}"), cx);
+            return;
+        }
+        self.reload_settings_panel();
+        cx.notify();
     }
 
     /// Pump task target: route one alacritty event to its tab.
@@ -2969,7 +3147,7 @@ impl Render for Chat {
                             .hover(|s| s.bg(rgb(t.bg_hover)))
                             .on_mouse_down(MouseButton::Left, cx.listener(
                                 |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                    this.open_models_config(cx);
+                                    this.open_settings(0, cx);
                                 },
                             ))
                             .child(icon("settings", 12., t.text_muted))
@@ -2987,6 +3165,11 @@ impl Render for Chat {
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.open_settings(1, cx);
+                                },
+                            ))
                             .child(icon("layers", 12., t.text_muted))
                             .child(SharedString::from("技能")),
                     )
@@ -3002,8 +3185,13 @@ impl Render for Chat {
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(
+                                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                    this.open_settings(2, cx);
+                                },
+                            ))
                             .child(icon("settings", 12., t.text_muted))
-                            .child(SharedString::from("设置")),
+                            .child(SharedString::from("插件")),
                     ),
             );
 
@@ -4636,8 +4824,8 @@ impl Render for Chat {
                     ),
             );
         }
-        if let Some(Dialog::ModelsConfig { .. }) = self.dialog.as_ref() {
-            root = root.child(render_models_config(self, &weak_for_dialog));
+        if let Some(Dialog::Settings { .. }) = self.dialog.as_ref() {
+            root = root.child(render_settings(self, &weak_for_dialog));
         }
         root
     }
@@ -4646,9 +4834,777 @@ impl Render for Chat {
 /// Models panel dialog (pi-web ModelsConfig parity): 900px surface, 240px
 /// provider sidebar, detail pane with API-key editor + per-provider
 /// enabledModels list (36px rows, 32×18 ConfigSwitch, pi-web tokens).
-fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+
+/// Skills tab: project/global grouped sidebar + detail with the
+/// visible-to-model switch (SKILL.md frontmatter).
+fn mc_skills_view(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+) -> (gpui::AnyElement, gpui::AnyElement) {
     let t = T();
-    let Some(Dialog::ModelsConfig { section, key_input, key_visible, error }) =
+    let mut sb = div()
+        .id("mc-sidebar")
+        .w(px(240.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(t.bg_panel))
+        .border_r_1()
+        .border_color(rgb(t.border))
+        .p(px(6.))
+        .pt(px(8.))
+        .overflow_y_scroll();
+    for (label, scope) in [("项目", pi_link::skills::SkillScope::Project), ("全局", pi_link::skills::SkillScope::Global)] {
+        let items: Vec<&pi_link::skills::SkillEntry> =
+            chat.mc_skills.iter().filter(|s| s.scope == scope).collect();
+        if items.is_empty() {
+            continue;
+        }
+        sb = sb.child(
+            div()
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(2.))
+                .text_size(px(10.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(label.to_string())),
+        );
+        for sk in items {
+            let active = sk.path.to_string_lossy() == section;
+            let weak_item = weak.clone();
+            let path = sk.path.to_string_lossy().to_string();
+            sb = sb.child(
+                div()
+                    .id(SharedString::from(format!("skill-{}", sk.name)))
+                    .h(px(30.))
+                    .px(px(8.))
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                    .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                    .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_item.update(cx, |c, cx| {
+                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
+                                *section = path.clone();
+                                *error = None;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .child(
+                        div()
+                            .size(px(6.))
+                            .rounded_full()
+                            .flex_shrink_0()
+                            .bg(if sk.disable_invocation { rgb(t.border) } else { rgb(0x4ade80) }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(sk.name.clone())),
+                    ),
+            );
+        }
+    }
+    if chat.mc_skills.is_empty() {
+        sb = sb.child(
+            div()
+                .p(px(12.))
+                .text_size(px(11.))
+                .text_color(rgb(t.text_dim))
+                .child("没有找到技能（扫描项目 .pi/skills、.agents/skills 与全局目录）"),
+        );
+    }
+
+    let selected = chat
+        .mc_skills
+        .iter()
+        .find(|s| s.path.to_string_lossy() == section)
+        .or_else(|| chat.mc_skills.first());
+    let detail = match selected {
+        None => div()
+            .flex_1()
+            .p(px(20.))
+            .text_size(px(12.))
+            .text_color(rgb(t.text_dim))
+            .child("没有找到技能")
+            .into_any_element(),
+        Some(sk) => {
+            let scope_tag = if sk.scope == pi_link::skills::SkillScope::Project {
+                ("项目", gpui::hsla(0.63, 0.86, 0.62, 0.12), gpui::hsla(0.63, 0.86, 0.62, 0.8))
+            } else {
+                ("全局", gpui::hsla(0., 0., 0.5, 0.12), rgb(t.text_dim).into())
+            };
+            let weak_sw = weak.clone();
+            let sw_path = sk.path.to_string_lossy().to_string();
+            let visible = !sk.disable_invocation;
+            div()
+                .id("mc-detail")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .overflow_y_scroll()
+                .p(px(20.))
+                .text_size(px(12.))
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .min_h(px(28.))
+                        .child(
+                            div()
+                                .text_size(px(15.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(rgb(t.text))
+                                .child(SharedString::from(sk.name.clone())),
+                        )
+                        .child(
+                            div()
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(3.))
+                                .bg(scope_tag.1)
+                                .text_size(px(10.))
+                                .text_color(scope_tag.2)
+                                .child(scope_tag.0),
+                        ),
+                )
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(11.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(sk.path.to_string_lossy().to_string())),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(t.text_muted))
+                        .child(SharedString::from(sk.description.clone())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .min_h(px(36.))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(rgb(t.text_muted))
+                                .child(if visible { "对模型可见" } else { "已隐藏（仍可手动调用）" }),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .id("skill-switch")
+                                .w(px(32.))
+                                .h(px(18.))
+                                .rounded(px(9.))
+                                .border_1()
+                                .border_color(if visible { rgb(t.accent) } else { rgb(t.border) })
+                                .bg(if visible { rgb(t.accent) } else { rgb(t.bg_selected) })
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .ml(if visible { px(14.) } else { px(2.) })
+                                        .size(px(12.))
+                                        .rounded_full()
+                                        .bg(if visible { rgb(t.bg) } else { rgb(t.text_muted) }),
+                                )
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = weak_sw.update(cx, |c, cx| {
+                                        c.mc_toggle_skill(sw_path.clone(), visible, cx)
+                                    });
+                                }),
+                        ),
+                )
+                .into_any_element()
+        }
+    };
+    (sb.into_any_element(), detail.into_any_element())
+}
+
+/// Plugins tab: scope-grouped package list + install form / package detail.
+fn mc_plugins_view(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+    install_input: &str,
+    install_scope_project: bool,
+) -> (gpui::AnyElement, gpui::AnyElement) {
+    let t = T();
+    let entries: Vec<(bool, usize, &serde_json::Value)> = chat
+        .mc_pkgs_global
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (false, i, v))
+        .chain(chat.mc_pkgs_project.iter().enumerate().map(|(i, v)| (true, i, v)))
+        .collect();
+
+    let mut sb = div()
+        .id("mc-sidebar")
+        .w(px(240.))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(t.bg_panel))
+        .border_r_1()
+        .border_color(rgb(t.border))
+        .p(px(6.))
+        .pt(px(8.))
+        .overflow_y_scroll()
+        .children(entries.iter().map(|(proj, ix, v)| {
+            let src = pi_link::skills::entry_source(v);
+            let disabled = pi_link::skills::entry_disabled(v);
+            let active = src == section;
+            let weak_item = weak.clone();
+            let item_src = src.clone();
+            let item_proj = *proj;
+            div()
+                .id(SharedString::from(format!("pkg-{ix}-{}", src)))
+                .h(px(30.))
+                .px(px(8.))
+                .rounded(px(5.))
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(px(12.))
+                .cursor_pointer()
+                .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
+                .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_item.update(cx, |c, cx| {
+                        if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
+                            *section = item_src.clone();
+                            *error = None;
+                            let _ = item_proj;
+                            cx.notify();
+                        }
+                    });
+                })
+                .child(
+                    div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .flex_shrink_0()
+                        .bg(if disabled { rgb(t.border) } else { rgb(t.accent) }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(src.clone())),
+                )
+                .child(if *proj {
+                    div()
+                        .px(px(5.))
+                        .py(px(1.))
+                        .rounded(px(3.))
+                        .bg(gpui::hsla(0.63, 0.86, 0.62, 0.12))
+                        .text_size(px(9.))
+                        .text_color(gpui::hsla(0.63, 0.86, 0.62, 0.85))
+                        .child("项目")
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
+                })
+        }));
+
+    // "add plugin" list action (ConfigListAction parity)
+    let weak_add = weak.clone();
+    sb = sb.child(
+        div()
+            .id("pkg-add")
+            .mt_auto()
+            .px(px(6.))
+            .pt(px(8.))
+            .border_t_1()
+            .border_color(rgb(t.border))
+            .child(
+                div()
+                    .h(px(30.))
+                    .px(px(8.))
+                    .rounded(px(5.))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .text_color(if section == "__add__" { rgb(t.accent) } else { rgb(t.text_dim) })
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_add.update(cx, |c, cx| {
+                            if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog {
+                                *section = "__add__".into();
+                                *error = None;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .child(icon("plus", 13., t.text_dim))
+                    .child("添加插件"),
+            ),
+    );
+
+    let detail = if section == "__add__" || entries.is_empty() {
+        // install form
+        let weak_in = weak.clone();
+        let weak_scope = weak.clone();
+        let weak_go = weak.clone();
+        let scope_project = install_scope_project;
+        let input_value = install_input.to_string();
+        div()
+            .id("mc-detail")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_y_scroll()
+            .p(px(20.))
+            .text_size(px(12.))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child("添加插件"),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child("npm:@scope/pi-plugin · git:https://... · /绝对路径"),
+            )
+            .child(
+                div()
+                    .id("pkg-add-input")
+                    .track_focus(&chat.dialog_focus)
+                    .py(px(6.))
+                    .px(px(9.))
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.bg_panel))
+                    .font_family("Consolas")
+                    .text_size(px(12.))
+                    .text_color(rgb(t.text))
+                    .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
+                        let key = ev.keystroke.key.as_str();
+                        let _ = weak_in.update(cx, |c, cx| {
+                            if let Some(Dialog::Settings { install_input, .. }) = &mut c.dialog {
+                                match key {
+                                    "enter" => {
+                                        let src = install_input.clone();
+                                        let proj = install_scope_project;
+                                        c.mc_install_package(src, proj, cx);
+                                    }
+                                    "backspace" => {
+                                        install_input.pop();
+                                        cx.notify();
+                                    }
+                                    "space" => {
+                                        install_input.push(' ');
+                                        cx.notify();
+                                    }
+                                    k => {
+                                        if k.chars().count() == 1 {
+                                            if let Some(ch) = k.chars().next() {
+                                                install_input.push(ch);
+                                                cx.notify();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    })
+                    .child(if input_value.is_empty() {
+                        div().text_color(rgb(t.text_dim)).child("来源").into_any_element()
+                    } else {
+                        div().child(SharedString::from(input_value)).into_any_element()
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child({
+                        let weak_g = weak_scope.clone();
+                        div()
+                            .id("pkg-scope-global")
+                            .h(px(28.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(if !scope_project { rgb(t.accent) } else { rgb(t.border) })
+                            .bg(if !scope_project { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                            .text_size(px(11.))
+                            .text_color(rgb(t.text))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_g.update(cx, |c, cx| {
+                                    if let Some(Dialog::Settings { install_scope_project, .. }) = &mut c.dialog {
+                                        *install_scope_project = false;
+                                        cx.notify();
+                                    }
+                                });
+                            })
+                            .child("全局")
+                    })
+                    .child({
+                        let weak_p = weak_scope.clone();
+                        div()
+                            .id("pkg-scope-project")
+                            .h(px(28.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(if scope_project { rgb(t.accent) } else { rgb(t.border) })
+                            .bg(if scope_project { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                            .text_size(px(11.))
+                            .text_color(rgb(t.text))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_p.update(cx, |c, cx| {
+                                    if let Some(Dialog::Settings { install_scope_project, .. }) = &mut c.dialog {
+                                        *install_scope_project = true;
+                                        cx.notify();
+                                    }
+                                });
+                            })
+                            .child("项目")
+                    }),
+            )
+            .child(
+                div()
+                    .id("pkg-install-go")
+                    .w(px(96.))
+                    .h(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(rgb(t.accent))
+                    .bg(rgb(t.accent))
+                    .text_size(px(12.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.accent_contrast))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(t.accent_hover)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_go.update(cx, |c, cx| {
+                            let src = c
+                                .dialog
+                                .as_ref()
+                                .and_then(|d| match d {
+                                    Dialog::Settings { install_input, .. } => Some(install_input.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            let proj = c
+                                .dialog
+                                .as_ref()
+                                .and_then(|d| match d {
+                                    Dialog::Settings { install_scope_project, .. } => Some(*install_scope_project),
+                                    _ => None,
+                                })
+                                .unwrap_or(false);
+                            c.mc_install_package(src, proj, cx);
+                        });
+                    })
+                    .child("安装"),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child("安装位置：全局 ~/.pi/agent/{npm,git}；项目 <工作区>/.pi/agent/{npm,git}"),
+            )
+            .into_any_element()
+    } else {
+        // package detail
+        let Some((proj, ix, v)) = entries
+            .iter()
+            .find(|(_, _, v)| pi_link::skills::entry_source(v) == section)
+            .map(|(p, i, v)| (*p, *i, *v))
+            .or_else(|| entries.first().map(|(p, i, v)| (*p, *i, *v)))
+        else {
+            return (
+                sb.into_any_element(),
+                div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child("没有已配置的插件").into_any_element(),
+            );
+        };
+        let src = pi_link::skills::entry_source(v);
+        let disabled = pi_link::skills::entry_disabled(v);
+        let (ext, sk, pr, th) = pi_link::skills::entry_resource_counts(v);
+        let weak_sw = weak.clone();
+        let weak_del = weak.clone();
+        let (sw_proj, sw_ix, sw_disabled) = (proj, ix, disabled);
+        let (del_proj, del_src) = (proj, src.clone());
+        div()
+            .id("mc-detail")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_y_scroll()
+            .p(px(20.))
+            .text_size(px(12.))
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_h(px(28.))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text))
+                            .child(SharedString::from(src.clone())),
+                    )
+                    .child(
+                        div()
+                            .px(px(5.))
+                            .py(px(1.))
+                            .rounded(px(3.))
+                            .bg(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.12) } else { gpui::hsla(0., 0., 0.5, 0.12) })
+                            .text_size(px(10.))
+                            .text_color(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.85) } else { rgb(t.text_dim).into() })
+                            .child(if proj { "项目" } else { "全局" }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child(if disabled { "已停用" } else { "已加载" })
+                    .child(
+                        div()
+                            .font_family("Consolas")
+                            .child(SharedString::from(format!("ext {ext} · skills {sk} · prompts {pr} · themes {th}"))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_h(px(36.))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(rgb(t.text_muted))
+                            .child(if disabled { "已停用（资源不加载）" } else { "已启用" }),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("pkg-switch")
+                            .w(px(32.))
+                            .h(px(18.))
+                            .rounded(px(9.))
+                            .border_1()
+                            .border_color(if !disabled { rgb(t.accent) } else { rgb(t.border) })
+                            .bg(if !disabled { rgb(t.accent) } else { rgb(t.bg_selected) })
+                            .flex()
+                            .items_center()
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .ml(if !disabled { px(14.) } else { px(2.) })
+                                    .size(px(12.))
+                                    .rounded_full()
+                                    .bg(if !disabled { rgb(t.bg) } else { rgb(t.text_muted) }),
+                            )
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_sw.update(cx, |c, cx| {
+                                    c.mc_toggle_package(sw_proj, sw_ix, cx);
+                                    let _ = sw_disabled;
+                                });
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("pkg-remove")
+                    .w(px(64.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(rgb(0xef4444))
+                    .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
+                    .text_size(px(11.))
+                    .text_color(rgb(0xef4444))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_del.update(cx, |c, cx| c.mc_remove_package(del_proj, del_src.clone(), cx));
+                    })
+                    .child("移除"),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child("移除/安装通过 vendored pi CLI 执行（pi remove/install）"),
+            )
+            .into_any_element()
+    };
+    (sb.into_any_element(), detail.into_any_element())
+}
+
+/// Tools tab: tool presets persisted to settings.json `defaultTools`
+/// (pi-web tool-presets.ts; new sessions pick it up like the CLI).
+fn mc_tools_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::AnyElement, gpui::AnyElement) {
+    let t = T();
+    let current: SharedString = match &chat.mc_default_tools {
+        None => "未设置（pi 默认解析全部工具）".into(),
+        Some(list) if list.is_empty() => "[]（无工具）".into(),
+        Some(list) => list.join(", ").into(),
+    };
+    let presets: [(&str, &str, &str); 4] = [
+        ("全部", "all", "不覆盖，pi 默认（全部内置工具）"),
+        ("默认", "default", "read, bash, edit, write"),
+        ("只读", "read-only", "read, grep, find, ls"),
+        ("无", "none", "禁用所有工具"),
+    ];
+    let active_preset = |list: &Option<Vec<String>>| -> &str {
+        match list {
+            None => "all",
+            Some(l) if l.is_empty() => "none",
+            Some(l) if l == &vec!["read".to_string(), "bash".to_string(), "edit".to_string(), "write".to_string()] => "default",
+            Some(l) if l == &vec!["read".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "read-only",
+            _ => "",
+        }
+    };
+    let active = active_preset(&chat.mc_default_tools);
+    let mut detail = div()
+        .id("mc-detail")
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .overflow_y_scroll()
+        .p(px(20.))
+        .text_size(px(12.))
+        .flex()
+        .flex_col()
+        .gap_4()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .min_h(px(28.))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child("工具选择"),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .font_family("Consolas")
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(format!("defaultTools: {current}"))),
+        );
+    for (label, key, tools_text) in presets {
+        let weak_row = weak.clone();
+        let key = key.to_string();
+        let is_active = active == key;
+        detail = detail.child(
+            div()
+                .id(SharedString::from(format!("tool-preset-{key}")))
+                .min_h(px(36.))
+                .py(px(6.))
+                .px(px(9.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(if is_active { rgb(t.accent) } else { rgb(t.border) })
+                .bg(if is_active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_row.update(cx, |c, cx| c.mc_set_tools_preset(&key, cx));
+                })
+                .child(
+                    div()
+                        .w(px(48.))
+                        .text_size(px(12.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(if is_active { rgb(t.text) } else { rgb(t.text_muted) })
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(11.))
+                        .text_color(rgb(t.text_dim))
+                        .child(tools_text),
+                ),
+        );
+    }
+    detail = detail.child(
+        div()
+            .text_size(px(11.))
+            .text_color(rgb(t.text_dim))
+            .child("写入 ~/.pi/agent/settings.json 的 defaultTools；新会话生效（与 pi CLI --tools 一致）"),
+    );
+    (div().into_any_element(), detail.into_any_element())
+}
+
+fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let Some(Dialog::Settings { tab, section, key_input, key_visible, install_input, install_scope_project, error }) =
         chat.dialog.clone()
     else {
         return div().into_any_element();
@@ -4656,6 +5612,7 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
     let weak_close = weak.clone();
     let weak_input = weak.clone();
 
+    let (sidebar, detail) = if tab == 0 {
     // provider groups in available-models order
     let provider_ids = chat.mc_provider_ids();
     let selected = if section.is_empty() {
@@ -4716,7 +5673,7 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| {
-                        if let Some(Dialog::ModelsConfig { section, error, .. }) = &mut c.dialog
+                        if let Some(Dialog::Settings { section, error, .. }) = &mut c.dialog
                         {
                             *section = pid.clone();
                             *error = None;
@@ -4923,7 +5880,7 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
                                 .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
                                     let key = ev.keystroke.key.as_str();
                                     let _ = weak_input.update(cx, |c, cx| {
-                                        if let Some(Dialog::ModelsConfig {
+                                        if let Some(Dialog::Settings {
                                             key_input, ..
                                         }) = &mut c.dialog
                                         {
@@ -4976,7 +5933,7 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
                                     let weak_eye = weak.clone();
                                     move |_, _, cx| {
                                         let _ = weak_eye.update(cx, |c, cx| {
-                                            if let Some(Dialog::ModelsConfig {
+                                            if let Some(Dialog::Settings {
                                                 key_visible, ..
                                             }) = &mut c.dialog
                                             {
@@ -5015,7 +5972,7 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
                                             .dialog
                                             .as_ref()
                                             .and_then(|d| match d {
-                                                Dialog::ModelsConfig { key_input, .. } => {
+                                                Dialog::Settings { key_input, .. } => {
                                                     Some(key_input.clone())
                                                 }
                                                 _ => None,
@@ -5275,6 +6232,14 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
         section_col = section_col.child(list);
         detail = detail.child(section_col);
     }
+    (sidebar.into_any_element(), detail.into_any_element())
+    } else if tab == 1 {
+        mc_skills_view(chat, weak, &section)
+    } else if tab == 2 {
+        mc_plugins_view(chat, weak, &section, &install_input, install_scope_project)
+    } else {
+        mc_tools_view(chat, weak)
+    };
 
     div()
         .absolute()
@@ -5297,8 +6262,8 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
         .justify_center()
         .child(
             div()
-                .w(px(900.))
-                .max_h(px(640.))
+                .w(px(1080.))
+                .max_h(px(700.))
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_color(rgb(t.border))
@@ -5307,28 +6272,63 @@ fn render_models_config(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui:
                 .flex()
                 .flex_col()
                 .overflow_hidden()
-                // header 50px
+                // settings tab strip (pi-web SettingsPanel: 96px tabs, 24x2 accent underline)
                 .child(
                     div()
                         .h(px(50.))
                         .flex_shrink_0()
                         .flex()
                         .items_center()
-                        .justify_between()
-                        .pl(px(18.))
-                        .pr(px(14.))
                         .border_b_1()
                         .border_color(rgb(t.border))
-                        .child(
+                        .children(["模型", "技能", "插件", "工具"].iter().enumerate().map(|(i, label)| {
+                            let active = tab as usize == i;
+                            let weak_tab = weak_close.clone();
                             div()
-                                .text_size(px(15.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(t.text))
-                                .child("模型"),
-                        )
+                                .id(SharedString::from(format!("mc-tab-{i}")))
+                                .w(px(96.))
+                                .h_full()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .gap(px(3.))
+                                .text_size(px(12.))
+                                .cursor_pointer()
+                                .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
+                                .hover(|s| s.bg(rgb(t.bg_hover)))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = weak_tab.update(cx, |c, cx| {
+                                        let next_section = match i {
+                                            0 => c.mc_provider_ids().first().cloned().unwrap_or_default(),
+                                            1 => c.mc_skills.first().map(|s| s.path.to_string_lossy().to_string()).unwrap_or_default(),
+                                            2 => c.mc_pkgs_global.first()
+                                                .or_else(|| c.mc_pkgs_project.first())
+                                                .map(pi_link::skills::entry_source)
+                                                .unwrap_or_else(|| "__add__".into()),
+                                            _ => String::new(),
+                                        };
+                                        if let Some(Dialog::Settings { tab, section, error, .. }) = &mut c.dialog {
+                                            *tab = i as u8;
+                                            *section = next_section;
+                                            *error = None;
+                                            cx.notify();
+                                        }
+                                    });
+                                })
+                                .child(SharedString::from((*label).to_string()))
+                                .child(if active {
+                                    div().w(px(24.)).h(px(2.)).bg(rgb(t.accent))
+                                } else {
+                                    div().h(px(2.))
+                                })
+                                .into_any_element()
+                        }))
+                        .child(div().flex_1())
                         .child(
                             div()
                                 .id("mc-close")
+                                .mr(px(14.))
                                 .size(px(30.))
                                 .flex()
                                 .items_center()

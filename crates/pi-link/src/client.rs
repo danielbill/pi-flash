@@ -29,15 +29,7 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
     let cli = vendor::cli_path()
         .ok_or_else(|| "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string())?;
 
-    // node runtime: bundled node.exe next to the exe wins (true portable),
-    // then PI_FLASH_NODE, then PATH lookup
-    let node: String = std::env::var("PI_FLASH_NODE").ok().or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|d| d.parent().map(|p| p.join("node.exe")))
-            .filter(|p| p.is_file())
-            .map(|p| p.to_string_lossy().to_string())
-    }).unwrap_or_else(|| "node".to_string());
+    let node: String = vendor::node_bin();
     let mut cmd = StdCommand::new(node);
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume

@@ -103,6 +103,31 @@
   - 偏差：OAuth 登录流不做（仅显示状态+退出=删凭据，无吊销）；models.json 自定义
     provider 编辑后置（pi-flash-68h）；测试按钮（completeSimple）后置；新 provider
     的模型需重启 pi-flash 才进 available 列表（configuredProviders 启动快照）
+- **pi-flash-68h M4 插件/技能/工具面板**（已关闭）：
+  - ModelsConfig 弹窗升级为 SettingsPanel：1080px、tab 条（96px 标签、24×2
+    accent 下划线）——模型 / 技能 / 插件 / 工具；底栏 模型/技能/插件 三入口
+  - pi-link `skills.rs`：DefaultResourceLoader 目录子集发现（项目 .pi/skills、
+    .agents/skills、全局 agent skills、~/.agents/skills、settings.skills 路径）、
+    SKILL.md frontmatter 解析（name/description/disable-model-invocation）、
+    set_disable_invocation 前言编辑（插入/替换/删除行、缺块创建）=
+    pi-web PATCH /api/skills parity；PackageSource 条目助手（entry_source/
+    entry_disabled=四资源数组全空/资源计数/normalize_source）
+  - config.rs 增 packages 读写 + defaultTools 读写（保留其他键）
+  - vendor.rs：node_bin() 提取 + run_cli()（CREATE_NO_WINDOW，一次-off CLI）；
+    插件 安装/移除 走 vendored `pi install/remove [-l]` 后台线程 → op 泵任务
+    刷状态行 + 面板（source 归一化 "$ pi install " 前缀）
+  - 技能 tab：项目/全局分组侧栏（绿点=可见）、详情 scope 标签 + 路径 + 描述 +
+    「对模型可见」开关
+  - 插件 tab：侧栏（状态点 accent=加载/dim=停用、项目徽章）+ 底部「添加插件」
+    ConfigListAction；详情=来源/范围/资源计数/ext·skills·prompts·themes/
+    启停开关（停用=资源数组清零 parity，启用=恢复 plain source）/移除；
+    安装表单（来源输入 + 全局/项目分段 + 安装按钮）
+  - 工具 tab：defaultTools 预设（全部/默认 read-bash-edit-write/只读
+    read-grep-find-ls/无）写 settings.json，新会话生效（与 CLI --tools 一致）
+  - 测试 +4（发现/无前言回退/前言开关 roundtrip/包条目助手），共 56 全绿
+  - 偏差：SystemPromptPanel 后置——钉版 pi RPC get_state 不含 systemPrompt
+    （pi-web 是进程内 SDK 直取，RPC 面无此命令）；skills.sh 搜索/安装后置；
+    插件 update 后置；项目信任(trust)检查后置
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）

@@ -290,3 +290,53 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+// ---------------------------------------------------------------------------
+// packages + defaultTools (settings.json; plugins/tools panels)
+// ---------------------------------------------------------------------------
+
+/// `settingsManager.getGlobalSettings().packages` (string | object entries).
+pub fn read_packages(path: &Path) -> Result<Vec<Value>, String> {
+    let value = read_json(path)?;
+    Ok(value
+        .get("packages")
+        .and_then(|v| v.as_array())
+        .map(|a| a.clone())
+        .unwrap_or_default())
+}
+
+/// Replace the `packages` array in one scope's settings.json.
+pub fn write_packages(path: &Path, packages: Vec<Value>) -> Result<(), String> {
+    let mut value = read_json(path)?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not an object".to_string())?;
+    obj.insert("packages".into(), Value::Array(packages));
+    write_json(path, &value)
+}
+
+/// `settings.defaultTools` — the tool allowlist (None = unset, pi default).
+pub fn read_default_tools(path: &Path) -> Result<Option<Vec<String>>, String> {
+    let value = read_json(path)?;
+    Ok(value
+        .get("defaultTools")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
+}
+
+/// Write/clear `settings.defaultTools`.
+pub fn write_default_tools(path: &Path, tools: Option<Vec<String>>) -> Result<(), String> {
+    let mut value = read_json(path)?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not an object".to_string())?;
+    match tools {
+        Some(list) => {
+            obj.insert("defaultTools".into(), Value::Array(list.into_iter().map(Value::String).collect()));
+        }
+        None => {
+            obj.remove("defaultTools");
+        }
+    }
+    write_json(path, &value)
+}
