@@ -81,6 +81,28 @@
   - 偏差记录：无 Reconnect（进程内无 SSE 断连概念）；MOUSE_MODE 应用只做
     滚轮→方向键（无鼠标上报）；IME 仅 key_char 路径；渲染逐行 shape（CJK
     宽字符列对齐受回退字体影响，同 xterm.js 回退行为）
+- **pi-flash-d3i M4 模型/Provider 配置面板**（已关闭）：
+  - pi-link `config.rs`：getAgentDir() parity（PI_CODING_AGENT_DIR ?? ~/.pi/agent）、
+    settings.json enabledModels 读写（保留其他键）、auth.json 凭据（api_key/oauth、
+    OAuth 拒删 parity）、lenient JSON（BOM/行注释/尾逗号 = pi loader 行为）、原子写
+  - app `models_config.rs`：pi-web lib/enabled-models.ts 纯逻辑移植——
+    PatternResolution/Entry、materialize（空 scope → 验证过的 provider glob）、
+    collapseProvider/normalizeProviderGlobs（自愈改名）、serialize（覆盖全部且无
+    stale/pin 时删键）、last-model 守卫；模式匹配子集：精确 ref（大小写不敏感）、
+    裸 provider、provider/*（不跨 /）、provider/**、*、:level pin
+  - UI（900px 弹窗，底栏「模型」打开）：50px header + 240px 侧栏（provider 行
+    h30、绿点=已配置、N/M 徽章）+ 详情页：provider 头（状态点）、API Key 编辑
+    （input 6/9 圆角5、显示/隐藏、保存/删除 ConfigButton h28、auth.json 说明）、
+    已启用模型区（13px/600 标题 + N/M mono + 全部启用/停用 h28 + 列表 max360
+    圆角6 bg_panel、行 36px name 11px/id mono 10px/pin 芯片 + ConfigSwitch
+    32×18 knub12、最后一启用模型禁用开关）
+  - 联动：ModelSelect 选择器按 enabled 白名单过滤（resolveVisibleModels parity）；
+    项目级 .pi/settings.json 覆盖时面板只读（editable=false parity）
+  - 测试 +9：匹配/材质化/守卫/glob 归一化/pin 保留/stale 不动 + lenient 解析、
+    settings/auth CRUD（app 23 + pi-link 29 = 52 全绿）
+  - 偏差：OAuth 登录流不做（仅显示状态+退出=删凭据，无吊销）；models.json 自定义
+    provider 编辑后置（pi-flash-68h）；测试按钮（completeSimple）后置；新 provider
+    的模型需重启 pi-flash 才进 available 列表（configuredProviders 启动快照）
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）

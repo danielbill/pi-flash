@@ -8,6 +8,7 @@
 //!   act gated by the protocol conformance tests in this crate.
 
 pub mod client;
+pub mod config;
 pub mod protocol;
 pub mod sessions;
 pub mod vendor;
