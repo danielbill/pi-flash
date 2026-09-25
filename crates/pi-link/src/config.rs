@@ -340,3 +340,21 @@ pub fn write_default_tools(path: &Path, tools: Option<Vec<String>>) -> Result<()
     }
     write_json(path, &value)
 }
+
+/// The `theme` key of settings.json (shared with pi's own TUI).
+pub fn read_theme(path: &Path) -> Option<String> {
+    read_json(path)
+        .ok()?
+        .get("theme")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+pub fn write_theme(path: &Path, theme: &str) -> Result<(), String> {
+    let mut value = read_json(path)?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not an object".to_string())?;
+    obj.insert("theme".into(), Value::String(theme.to_string()));
+    write_json(path, &value)
+}

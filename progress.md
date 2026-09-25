@@ -168,6 +168,14 @@
     pi-web 服务端层，不在 RPC 面）；profile 编辑器后置（markdown 本就是
     pi 的手编格式）；worktree 隔离/队列/父会话通知属 pi-web 服务端运行时，
     不在 RPC 面
+- **pi-flash-4ok M6 主题运行时切换**（已关闭）：
+  - theme.rs：THEME_IX AtomicUsize 全局索引，set_by_name/theme_name 运行时
+    切换（UI 每帧重读，切换即全局重绘）；PI_FLASH_THEME 仍为 dev 覆盖
+  - 持久化：settings.json 的 theme 键（config::read_theme/write_theme），
+    与 pi TUI 共用同一配置；启动顺序 = env 覆盖 > settings.json > mist
+  - Settings 弹窗第 6 个 tab「通用」：4 主题选择行（色板预览 bg/accent/muted
+    圆点 + 当前标记），点击切换并写盘；显示 vendored pi 版本
+  - 测试：theme 切换 roundtrip + 未知名拒绝 + 4 主题字段完整性（62 全绿）
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）

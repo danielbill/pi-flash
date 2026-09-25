@@ -105,15 +105,47 @@ pub const ALL: &[(&str, Theme)] = &[
     ("rose", ROSE),
 ];
 
-/// Active theme. Runtime switching arrives with the M6 theme panel;
-/// `PI_FLASH_THEME=<name>` overrides for development.
+/// Active theme index; the UI re-reads it every render so a switch repaints
+/// everything. `PI_FLASH_THEME=<name>` overrides the persisted choice for dev.
+static THEME_IX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Apply a theme by name; false when the name is unknown.
+pub fn set_by_name(name: &str) -> bool {
+    if let Some(ix) = ALL.iter().position(|(n, _)| *n == name) {
+        THEME_IX.store(ix, std::sync::atomic::Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn theme_name() -> &'static str {
+    ALL[THEME_IX.load(std::sync::atomic::Ordering::Relaxed)].0
+}
+
 pub fn theme() -> &'static Theme {
-    if let Ok(name) = std::env::var("PI_FLASH_THEME") {
-        if let Some((_, t)) = ALL.iter().find(|(n, _)| *n == name) {
-            return t;
+    &ALL[THEME_IX.load(std::sync::atomic::Ordering::Relaxed)].1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switch_roundtrip_and_reject() {
+        assert!(set_by_name("dark"));
+        assert_eq!(theme_name(), "dark");
+        assert_eq!(theme().bg, DARK.bg);
+        assert!(set_by_name("mist"));
+        assert_eq!(theme_name(), "mist");
+        assert!(!set_by_name("nope"));
+        assert_eq!(theme_name(), "mist");
+        // all four themes have complete, distinct-ish palettes
+        for (name, t) in ALL {
+            assert!(t.accent != 0, "{name} missing accent");
+            assert!(t.border != 0, "{name} missing border");
         }
     }
-    &MIST
 }
 
 /// gpui color helper
