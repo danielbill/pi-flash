@@ -83,7 +83,6 @@ impl Msg {
 
 #[derive(Debug, Clone)]
 enum Dialog {
-    RenameSession { input: gpui::Entity<TextInput> },
     ModelSelect { input: gpui::Entity<TextInput> },
     BranchTree,
     ProjectSelect,
@@ -222,6 +221,10 @@ struct Chat {
     top_panel: Option<TopPanel>,
     /// settings modal (own entity; pi-web SettingsPanel)
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
+    /// inline session rename (pi-web SessionSidebar renaming): the row being
+    /// edited + its input (value pre-filled, select-all on focus)
+    renaming: Option<PathBuf>,
+    rename_input: Option<gpui::Entity<TextInput>>,
     /// sidebar session text search (pi-web SessionSearch)
     search_open: bool,
     search_input: gpui::Entity<TextInput>,
@@ -370,6 +373,8 @@ impl Chat {
             session_tools: None,
             top_panel: None,
             settings: None,
+            renaming: None,
+            rename_input: None,
             search_open: false,
             search_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
@@ -1053,11 +1058,16 @@ impl Chat {
         }
     }
 
-    /// Rename dialog with a pre-filled, IME-capable input.
-    fn rename_dialog(prefill: String, cx: &mut Context<Self>) -> Dialog {
+    /// Begin an inline rename (pi-web SessionSidebar: the row becomes an
+    /// input with the current title selected; typing replaces it).
+    fn start_rename(&mut self, path: PathBuf, prefill: String, cx: &mut Context<Self>) {
         let weak_ok = cx.entity().downgrade();
         let weak_esc = cx.entity().downgrade();
-        let input = cx.new(|cx| TextInput::new(cx).placeholder(tr("session name")));
+        let input = cx.new(|cx| {
+            TextInput::new(cx)
+                .select_all_on_focus()
+                .placeholder(tr("session name"))
+        });
         input.update(cx, |ti, cx| ti.set_value(prefill, cx));
         input.update(cx, |ti, _| {
             ti.set_on_submit(Box::new(move |v, cx| {
@@ -1065,12 +1075,21 @@ impl Chat {
             }));
             ti.set_on_escape(Box::new(move |cx| {
                 let _ = weak_esc.update(cx, |c, cx| {
-                    c.dialog = None;
+                    c.renaming = None;
+                    c.rename_input = None;
                     cx.notify();
                 });
             }));
         });
-        Dialog::RenameSession { input }
+        self.renaming = Some(path);
+        self.rename_input = Some(input);
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.renaming = None;
+        self.rename_input = None;
+        cx.notify();
     }
 
     /// Model-select dialog with a live filter input.
@@ -1092,14 +1111,6 @@ impl Chat {
         Dialog::ModelSelect { input }
     }
 
-    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
-        let name = match &self.dialog {
-            Some(Dialog::RenameSession { input }) => input.read(cx).value().trim().to_string(),
-            _ => String::new(),
-        };
-        self.apply_rename(name, cx);
-    }
-
     /// Rename commit path that never reads the input entity (called from
     /// the input's own submit callback where the entity is borrowed).
     fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
@@ -1107,7 +1118,8 @@ impl Chat {
             let _ = session.send(&Command::SetSessionName { name });
         }
         self.refresh_state();
-        self.dialog = None;
+        self.renaming = None;
+        self.rename_input = None;
         cx.notify();
     }
 
@@ -1264,6 +1276,8 @@ impl Chat {
         self.collapsed.clear();
         self.phase_waiting = false;
         self.agent_running = false;
+        self.renaming = None;
+        self.rename_input = None;
         clear_last_open(&self.cwd.to_string_lossy());
         self.status = status_line(self.session.is_some(), tr("新会话"));
         self.refresh_state();
@@ -1304,6 +1318,8 @@ impl Chat {
         self.phase_waiting = false;
         self.agent_running = false;
         self.confirm_delete = None;
+        self.renaming = None;
+        self.rename_input = None;
         self.status = status_line(self.session.is_some(), "resuming");
         if let Some(session) = &self.session {
             let _ = session.send(&Command::GetMessages);
@@ -1558,7 +1574,9 @@ impl Chat {
                             })
                             .map(|v| v.chars().take(50).collect::<String>())
                             .unwrap_or_default();
-                        self.dialog = Some(Self::rename_dialog(prefill, cx));
+                        if let Some(path) = self.active_session_file.clone() {
+                            self.start_rename(path, prefill, cx);
+                        }
                     }
                 } else if command == "get_session_stats" && success {
                     if let Some(data) = &data {
@@ -2604,16 +2622,16 @@ impl Render for Chat {
         // dialog inputs own their focus handles; force-focus only when the
         // input isn't already focused so click-to-focus still works
         let dialog_input = match &self.dialog {
-            Some(Dialog::RenameSession { input }) | Some(Dialog::ModelSelect { input }) => {
-                Some(input.clone())
-            }
+            Some(Dialog::ModelSelect { input }) => Some(input.clone()),
             _ => None,
         };
+        // inline rename input keeps keyboard focus until committed/cancelled
+        let rename_focus = self.rename_input.clone();
         // NOTE: settings inputs are click-to-focus only — frame-level focus
         // forcing on a not-yet-mounted entity recurses in gpui focus handling
         // (stack overflow); dialogs keep the force since they mount before
         // their first frame.
-        if let Some(input) = dialog_input {
+        if let Some(input) = rename_focus.or(dialog_input) {
             let handle = input.read(cx).focus_handle();
             if !handle.is_focused(window) {
                 window.focus(&handle);
@@ -3054,6 +3072,9 @@ impl Render for Chat {
                     let hovered = chat.hovered_session == Some(ix);
                     let confirming =
                         chat.confirm_delete.as_deref() == Some(info.path.as_path());
+                    // pi-web renaming: this row's content swaps for the input
+                    let renaming =
+                        chat.renaming.as_deref() == Some(info.path.as_path());
                     let weak_del2 = weak_for_sessions.clone();
                     let weak_del3 = weak_for_sessions.clone();
                     // pi-web: "删除 {title}？" truncates the title at 22 chars
@@ -3096,7 +3117,7 @@ impl Render for Chat {
                                 .when(!is_active, |d| d.border_color(rgb(t.bg)))
                                 .when(hovered && !is_active, |d| d.bg(rgb(t.bg_hover)))
                         })
-                        .when(!confirming, |d| {
+                        .when(!confirming && !renaming, |d| {
                             d.on_mouse_down(MouseButton::Left, {
                                 let p = path.clone();
                                 move |_, _, cx| {
@@ -3122,7 +3143,15 @@ impl Render for Chat {
                                 }
                             });
                         })
-                        .children((!confirming).then(|| {
+                        .children(if renaming {
+                            // pi-web: "Rename: input fills the same row"
+                            (chat.rename_input.clone().map(|input| {
+                                div().flex_1().min_w_0().child(input)
+                            }))
+                        } else {
+                            None
+                        })
+                        .children((!confirming && !renaming).then(|| {
                             div()
                                 .flex_1()
                                 .min_w_0()
@@ -3242,7 +3271,7 @@ impl Render for Chat {
                         } else {
                             None
                         })
-                        .children(if hovered && !confirming {
+                        .children(if hovered && !confirming && !renaming {
                             Some(
                                 div()
                                     .flex()
@@ -3273,6 +3302,7 @@ impl Render for Chat {
                                                         if c.active_session_file.as_deref()
                                                             == Some(p.as_path())
                                                         {
+                                                            // pi-web: inline rename, no modal
                                                             let prefill = c
                                                                 .state
                                                                 .as_ref()
@@ -3291,8 +3321,7 @@ impl Render for Chat {
                                                                     v.chars().take(50).collect::<String>()
                                                                 })
                                                                 .unwrap_or_default();
-                                                            c.dialog =
-                                                                Some(Self::rename_dialog(prefill, cx));
+                                                            c.start_rename(p.clone(), prefill, cx);
                                                         } else {
                                                             c.open_session(p.clone(), true, cx);
                                                         }
@@ -5660,104 +5689,9 @@ impl Render for Chat {
                     ),
             );
         }
-        if let Some(Dialog::RenameSession { input }) = self.dialog.as_ref() {
-            let weak_ok = weak_for_dialog.clone();
-            let weak_cancel = weak_for_dialog.clone();
-            root = root.child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .bg(gpui::hsla(0., 0., 0., 0.35))
-                    .track_focus(&self.dialog_focus)
-                    .on_key_down({
-                        let weak = weak_for_dialog.clone();
-                        move |ev: &KeyDownEvent, _w, cx| {
-                            if ev.keystroke.key == "escape" {
-                                let _ = weak.update(cx, |this, cx| {
-                                    this.dialog = None;
-                                    cx.notify();
-                                });
-                            }
-                        }
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .w(px(420.))
-                            .bg(rgb(t.bg_panel))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .rounded_lg()
-                            .p_4()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .shadow_lg()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(t.text))
-                                    .child(tr("重命名会话")),
-                            )
-                            .child(input.clone())
-                            .child(
-                                div()
-                                    .flex()
-                                    .justify_end()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .id("dialog-cancel")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(rgb(t.border))
-                                            .bg(rgb(t.assistant_bg))
-                                            .text_xs()
-                                            .text_color(rgb(t.text_muted))
-                                            .cursor_pointer()
-                                            .hover(|s| s.text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let weak = weak_cancel.clone();
-                                                move |_, _, cx| {
-                                                    let _ = weak.update(cx, |c, cx| {
-                                                        c.dialog = None;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            })
-                                            .child(tr("取消")),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("dialog-ok")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .bg(rgb(t.accent))
-                                            .text_xs()
-                                            .text_color(rgb(t.accent_contrast))
-                                            .cursor_pointer()
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let weak = weak_ok.clone();
-                                                move |_, _, cx| {
-                                                    let _ = weak.update(cx, |c, cx| {
-                                                        c.confirm_rename(cx)
-                                                    });
-                                                }
-                                            })
-                                            .child(tr("保存")),
-                                    ),
-                            ),
-                    ),
-            );
-        }
-        if let Some(_panel) = self.settings.clone() {
-            // BISECT: skip snapshot+render entirely
+        if let Some(panel) = self.settings.clone() {
+            let data = settings::SettingsFormData::snapshot(panel.read(cx), cx);
+            root = root.child(settings::render_settings(self, &weak_for_dialog, &data));
         }
         // toolbar pill popup menus
         if let Some(el) = pill_menu_el {

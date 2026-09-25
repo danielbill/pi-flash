@@ -39,6 +39,8 @@ pub struct TextInput {
     focused_hint: bool,
     numeric: bool,
     masked: bool,
+    /// next focus (and IME query) reports the whole value selected
+    select_all: bool,
     placeholder: Option<SharedString>,
     /// fires after every value mutation (typing, IME commit, programmatic)
     on_change: Option<Changed>,
@@ -60,6 +62,7 @@ impl TextInput {
             focused_hint: false,
             numeric: false,
             masked: false,
+            select_all: false,
             placeholder: None,
             on_change: None,
             on_submit: None,
@@ -101,6 +104,13 @@ impl TextInput {
     /// Reject non-ASCII-digit input (numeric fields).
     pub fn numeric(mut self, numeric: bool) -> Self {
         self.numeric = numeric;
+        self
+    }
+
+    /// Mount-selected mode (pi-web rename input parity: autoFocus + select;
+    /// the first typed character replaces the whole value).
+    pub fn select_all_on_focus(mut self) -> Self {
+        self.select_all = true;
         self
     }
 
@@ -223,7 +233,12 @@ impl Render for TextInput {
                         }
                     }
                     "backspace" => {
-                        this.value.pop();
+                        if this.select_all && !this.value.is_empty() {
+                            this.value.clear(); // select-all + backspace = clear
+                        } else {
+                            this.value.pop();
+                        }
+                        this.select_all = false;
                         let v = this.value.clone();
                         TextInput::fire(&this.on_change, &v, cx);
                         cx.notify();
@@ -294,8 +309,13 @@ impl gpui::EntityInputHandler for TextInput {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<gpui::UTF16Selection> {
-        // single-line field: caret at end, empty selection
         let end = self.value.encode_utf16().count();
+        // select_all_on_focus: report the whole value selected until the
+        // user edits (platform IMEs replace the selection on input)
+        if self.select_all && end > 0 {
+            return Some(gpui::UTF16Selection { range: 0..end, reversed: false });
+        }
+        // single-line field: caret at end, empty selection
         Some(gpui::UTF16Selection { range: end..end, reversed: false })
     }
 
@@ -335,6 +355,7 @@ impl gpui::EntityInputHandler for TextInput {
             None => self.value.push_str(&text),
         }
         self.marked = None;
+        self.select_all = false;
         let v = self.value.clone();
         TextInput::fire(&self.on_change, &v, cx);
         cx.notify();
