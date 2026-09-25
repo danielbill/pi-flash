@@ -35,6 +35,14 @@ pub enum Command {
     GetTree,
     /// Fork a new session branching before the given user-message entry
     Fork { entry_id: String },
+    /// Answer to a blocking extension UI request (rpc-mode reads this at the
+    /// raw-line level, before command dispatch).
+    ExtensionUiResponse {
+        id: String,
+        value: Option<String>,
+        confirmed: Option<bool>,
+        cancelled: bool,
+    },
 }
 
 impl Command {
@@ -55,11 +63,27 @@ impl Command {
             Command::SetThinkingLevel { .. } => "set_thinking_level",
             Command::GetTree => "get_tree",
             Command::Fork { .. } => "fork",
+            Command::ExtensionUiResponse { .. } => "extension_ui_response",
         }
     }
 
     /// Serialize to a single JSONL record (no trailing newline).
     pub fn to_record(&self, id: &str) -> Value {
+        // extension_ui_response is correlated by the REQUEST id at pi's
+        // raw-line reader — no cmd sequence id
+        if let Command::ExtensionUiResponse { id, value, confirmed, cancelled } = self {
+            let mut v = json!({ "type": "extension_ui_response", "id": id });
+            if let Some(value) = value {
+                v["value"] = json!(value);
+            }
+            if let Some(confirmed) = confirmed {
+                v["confirmed"] = json!(confirmed);
+            }
+            if *cancelled {
+                v["cancelled"] = json!(true);
+            }
+            return v;
+        }
         let mut v = match self {
             Command::Prompt { message, images } => {
                 let mut v = json!({ "type": self.kind(), "message": message });
@@ -102,6 +126,8 @@ impl Command {
             Command::Fork { entry_id } => {
                 json!({ "type": self.kind(), "entryId": entry_id })
             }
+            // handled by the early return above (request-id correlation)
+            Command::ExtensionUiResponse { .. } => unreachable!(),
         };
         v["id"] = json!(id);
         v
@@ -297,6 +323,84 @@ impl SlashCommand {
     }
 }
 
+/// Extension UI request (`extension_ui_request`): the RPC-mode surface of
+/// pi's extension ui context. Blocking methods (select/confirm/input/editor)
+/// expect an `extension_ui_response`; the rest are fire-and-forget.
+/// `custom` is not exposed by RPC mode (rpc-mode.js returns undefined).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionUiRequest {
+    pub id: String,
+    pub method: ExtUiMethod,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtUiMethod {
+    Select { title: String, options: Vec<String> },
+    Confirm { title: String, message: String },
+    Input { title: String, placeholder: Option<String> },
+    Editor { title: String, prefill: Option<String> },
+    Notify { message: String, notify_type: Option<String> },
+    SetStatus { status_key: String, status_text: Option<String> },
+    SetWidget {
+        widget_key: String,
+        widget_lines: Option<Vec<String>>,
+        /// "aboveEditor" | "belowEditor" (None -> pi-web default aboveEditor)
+        placement: Option<String>,
+    },
+    SetTitle { title: String },
+    SetEditorText { text: String },
+}
+
+impl ExtensionUiRequest {
+    fn parse(v: &Value) -> Option<ExtensionUiRequest> {
+        let id = v["id"].as_str()?.to_string();
+        let method = match v["method"].as_str()? {
+            "select" => ExtUiMethod::Select {
+                title: v["title"].as_str().unwrap_or("").to_string(),
+                options: v["options"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|o| o.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default(),
+            },
+            "confirm" => ExtUiMethod::Confirm {
+                title: v["title"].as_str().unwrap_or("").to_string(),
+                message: v["message"].as_str().unwrap_or("").to_string(),
+            },
+            "input" => ExtUiMethod::Input {
+                title: v["title"].as_str().unwrap_or("").to_string(),
+                placeholder: v["placeholder"].as_str().map(str::to_string),
+            },
+            "editor" => ExtUiMethod::Editor {
+                title: v["title"].as_str().unwrap_or("").to_string(),
+                prefill: v["prefill"].as_str().map(str::to_string),
+            },
+            "notify" => ExtUiMethod::Notify {
+                message: v["message"].as_str().unwrap_or("").to_string(),
+                notify_type: v["notifyType"].as_str().map(str::to_string),
+            },
+            "setStatus" => ExtUiMethod::SetStatus {
+                status_key: v["statusKey"].as_str().unwrap_or("").to_string(),
+                status_text: v["statusText"].as_str().map(str::to_string),
+            },
+            "setWidget" => ExtUiMethod::SetWidget {
+                widget_key: v["widgetKey"].as_str().unwrap_or("").to_string(),
+                widget_lines: v["widgetLines"].as_array().map(|a| {
+                    a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()
+                }),
+                placement: v["widgetPlacement"].as_str().map(str::to_string),
+            },
+            "setTitle" => ExtUiMethod::SetTitle {
+                title: v["title"].as_str().unwrap_or("").to_string(),
+            },
+            "set_editor_text" => ExtUiMethod::SetEditorText {
+                text: v["text"].as_str().unwrap_or("").to_string(),
+            },
+            _ => return None,
+        };
+        Some(ExtensionUiRequest { id, method })
+    }
+}
+
 /// One parsed record from pi's stdout.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -322,8 +426,8 @@ pub enum Event {
     AgentEnd { will_retry: bool },
     /// pi will not continue automatically (retries/queue drained).
     AgentSettled,
-    /// Extension UI protocol records (dialogs/widgets/status), raw until M5.
-    ExtensionUi(Value),
+    /// Extension UI protocol records (dialogs/widgets/status/notify).
+    ExtensionUi(ExtensionUiRequest),
     Unparsed(Value),
 }
 
@@ -547,7 +651,15 @@ pub fn parse_record(v: &Value) -> Event {
             will_retry: v["willRetry"].as_bool().unwrap_or(false),
         },
         Some("agent_settled") => Event::AgentSettled,
-        Some("extension_ui_request") => Event::ExtensionUi(v.clone()),
+        Some("extension_ui_request") => {
+            Event::ExtensionUi(ExtensionUiRequest::parse(v).unwrap_or(ExtensionUiRequest {
+                id: String::new(),
+                method: ExtUiMethod::Notify {
+                    message: String::new(),
+                    notify_type: None,
+                },
+            }))
+        }
         _ => Event::Unparsed(v.clone()),
     }
 }
@@ -858,12 +970,104 @@ mod tests {
     }
 
     #[test]
-    fn extension_ui_is_preserved_raw() {
+    fn extension_ui_requests_are_typed() {
+        // select
         let e = parse_line(
-            r#"{"type":"extension_ui_request","id":"x","method":"setStatus","statusKey":"goal"}"#,
+            r#"{"type":"extension_ui_request","id":"r1","method":"select","title":"Pick","options":["a","b"],"timeout":5000}"#,
         )
         .unwrap();
-        assert!(matches!(e, Event::ExtensionUi(_)));
+        let Event::ExtensionUi(req) = e else { panic!("not extension ui") };
+        assert_eq!(req.id, "r1");
+        match req.method {
+            ExtUiMethod::Select { title, options } => {
+                assert_eq!(title, "Pick");
+                assert_eq!(options, vec!["a", "b"]);
+            }
+            _ => panic!("wrong method"),
+        }
+        // setStatus / setWidget / notify / set_editor_text / confirm / editor / setTitle
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r2","method":"setStatus","statusKey":"goal","statusText":"42%"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest {
+                method: ExtUiMethod::SetStatus { status_key, status_text },
+                ..
+            }) if status_key == "goal" && status_text.as_deref() == Some("42%")
+        ));
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r3","method":"setWidget","widgetKey":"plan","widgetLines":["step 1"],"widgetPlacement":"belowEditor"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest {
+                method: ExtUiMethod::SetWidget { placement, .. },
+                ..
+            }) if placement.as_deref() == Some("belowEditor")
+        ));
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r4","method":"notify","message":"done","notifyType":"warning"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest {
+                method: ExtUiMethod::Notify { notify_type, .. },
+                ..
+            }) if notify_type.as_deref() == Some("warning")
+        ));
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r5","method":"input","title":"Name","placeholder":"x"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest { method: ExtUiMethod::Input { .. }, .. })
+        ));
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r6","method":"confirm","title":"Sure?","message":"go"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest { method: ExtUiMethod::Confirm { .. }, .. })
+        ));
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"r7","method":"set_editor_text","text":"hi"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest { method: ExtUiMethod::SetEditorText { .. }, .. })
+        ));
+    }
+
+    #[test]
+    fn extension_ui_response_record_shape() {
+        let c = Command::ExtensionUiResponse {
+            id: "r1".into(),
+            value: Some("a".into()),
+            confirmed: None,
+            cancelled: false,
+        };
+        let v = c.to_record("ignored");
+        assert_eq!(v["type"], "extension_ui_response");
+        assert_eq!(v["id"], "r1");
+        assert_eq!(v["value"], "a");
+        assert!(v.get("confirmed").is_none());
+        assert!(v.get("cancelled").is_none());
+        let cancel = Command::ExtensionUiResponse {
+            id: "r2".into(),
+            value: None,
+            confirmed: Some(true),
+            cancelled: true,
+        };
+        let v = cancel.to_record("ignored");
+        assert_eq!(v["confirmed"], true);
+        assert_eq!(v["cancelled"], true);
     }
 
     #[test]

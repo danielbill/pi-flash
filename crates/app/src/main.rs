@@ -167,6 +167,16 @@ struct Chat {
     mc_default_tools: Option<Vec<String>>,
     /// background pi-CLI operation results (install/remove) -> status line
     op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
+    // extension UI protocol state (pi-web rpc-manager parity)
+    /// ordered status items (setStatus)
+    ext_status: Vec<(String, String)>,
+    /// widgets (setWidget): key, lines, above-editor
+    ext_widgets: Vec<(String, Vec<String>, bool)>,
+    /// blocking extension dialog (select/confirm/input/editor)
+    ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
+    ext_dialog_input: String,
+    /// transient notify toast (message, 0 info/1 warning/2 error)
+    ext_notice: Option<(String, u8)>,
 }
 
 impl Chat {
@@ -237,6 +247,11 @@ impl Chat {
             mc_pkgs_project: Vec::new(),
             mc_default_tools: None,
             op_tx: None,
+            ext_status: Vec::new(),
+            ext_widgets: Vec::new(),
+            ext_dialog: None,
+            ext_dialog_input: String::new(),
+            ext_notice: None,
         };
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
@@ -774,6 +789,108 @@ impl Chat {
         }
         self.reload_settings_panel();
         cx.notify();
+    }
+
+    // -----------------------------------------------------------------------
+    // extension UI protocol (rpc-mode extension_ui_request surface)
+    // -----------------------------------------------------------------------
+
+    fn on_ext_ui(
+        &mut self,
+        req: pi_link::protocol::ExtensionUiRequest,
+        cx: &mut Context<Self>,
+    ) {
+        use pi_link::protocol::ExtUiMethod;
+        match req.method {
+            ExtUiMethod::SetStatus { status_key, status_text } => {
+                match status_text {
+                    Some(text) if !text.is_empty() => {
+                        if let Some(item) = self.ext_status.iter_mut().find(|(k, _)| *k == status_key) {
+                            item.1 = text;
+                        } else {
+                            self.ext_status.push((status_key, text));
+                        }
+                    }
+                    _ => self.ext_status.retain(|(k, _): &(String, String)| *k != status_key),
+                }
+                cx.notify();
+            }
+            ExtUiMethod::SetWidget { widget_key, widget_lines, placement } => {
+                let above = placement.as_deref() != Some("belowEditor");
+                match widget_lines {
+                    Some(lines) if !lines.is_empty() => {
+                        if let Some(w) = self.ext_widgets.iter_mut().find(|(k, _, _)| *k == widget_key) {
+                            w.1 = lines;
+                            w.2 = above;
+                        } else {
+                            self.ext_widgets.push((widget_key, lines, above));
+                        }
+                    }
+                    _ => self.ext_widgets.retain(|(k, _, _)| *k != widget_key),
+                }
+                cx.notify();
+            }
+            ExtUiMethod::Notify { message, notify_type } => {
+                let ty = match notify_type.as_deref() {
+                    Some("warning") => 1,
+                    Some("error") => 2,
+                    _ => 0,
+                };
+                self.ext_notice = Some((message, ty));
+                cx.notify();
+                // auto-dismiss (pi-web notice toast)
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(4))
+                        .await;
+                    let _ = this.update(cx, |c, cx| {
+                        if c.ext_notice.take().is_some() {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+            ExtUiMethod::SetTitle { .. } => {
+                // window title is fixed in this shell (pi-web sets document.title)
+            }
+            ExtUiMethod::SetEditorText { text } => {
+                self.input = text;
+                cx.notify();
+            }
+            blocking => {
+                self.ext_dialog_input = match &blocking {
+                    ExtUiMethod::Editor { prefill, .. } => prefill.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                self.ext_dialog = Some(pi_link::protocol::ExtensionUiRequest {
+                    id: req.id,
+                    method: blocking,
+                });
+                cx.notify();
+            }
+        }
+    }
+
+    /// Answer the pending blocking extension UI request.
+    fn ext_respond(
+        &mut self,
+        value: Option<String>,
+        confirmed: Option<bool>,
+        cancelled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(req) = self.ext_dialog.take() {
+            if let Some(session) = &self.session {
+                let _ = session.send(&pi_link::protocol::Command::ExtensionUiResponse {
+                    id: req.id,
+                    value,
+                    confirmed,
+                    cancelled,
+                });
+            }
+            cx.notify();
+        }
     }
 
     /// Pump task target: route one alacritty event to its tab.
@@ -1618,7 +1735,7 @@ impl Chat {
                 // agent may have written files: refresh git status
                 self.refresh_git();
             }
-            Event::ExtensionUi(_) => {}
+            Event::ExtensionUi(req) => self.on_ext_ui(req, cx),
             Event::Unparsed(_) => {}
         }
         self.notify_list(cx);
@@ -2635,7 +2752,7 @@ impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.ext_dialog.is_some() {
             window.focus(&self.dialog_focus);
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
             window.focus(&self.focus);
@@ -3323,6 +3440,16 @@ impl Render for Chat {
                 .min_h_0()
                 .py_2(),
             )
+            // extension widgets above the editor (setWidget aboveEditor)
+            .children((!self.ext_widgets.is_empty()).then(|| {
+                let rows: Vec<gpui::AnyElement> = self
+                    .ext_widgets
+                    .iter()
+                    .filter(|(_, _, above)| *above)
+                    .map(|(_, lines, _)| render_ext_widget(lines, t))
+                    .collect();
+                (!rows.is_empty()).then(|| div().px_4().flex().flex_col().gap_1().children(rows).into_any_element())
+            }).flatten())
             // input area
             .child(
                 div()
@@ -3656,7 +3783,17 @@ impl Render for Chat {
                             ),
                     ),
             )
-            // status bar
+            // extension widgets below the editor (setWidget belowEditor)
+            .children((!self.ext_widgets.is_empty()).then(|| {
+                let rows: Vec<gpui::AnyElement> = self
+                    .ext_widgets
+                    .iter()
+                    .filter(|(_, _, above)| !above)
+                    .map(|(_, lines, _)| render_ext_widget(lines, t))
+                    .collect();
+                (!rows.is_empty()).then(|| div().px_4().pb_1().flex().flex_col().gap_1().children(rows).into_any_element())
+            }).flatten())
+            // status bar (+ extension status items)
             .child(
                 div()
                     .px_3()
@@ -3666,7 +3803,18 @@ impl Render for Chat {
                     .bg(rgb(t.bg_panel))
                     .text_xs()
                     .text_color(rgb(t.text_muted))
-                    .child(status),
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(status))
+                    .children(self.ext_status.iter().map(|(k, text)| {
+                        div()
+                            .flex_shrink_0()
+                            .font_family("Consolas")
+                            .text_size(px(10.))
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(format!("{}: {}", k, text)))
+                    })),
             );
 
         let mut root = div()
@@ -4827,8 +4975,290 @@ impl Render for Chat {
         if let Some(Dialog::Settings { .. }) = self.dialog.as_ref() {
             root = root.child(render_settings(self, &weak_for_dialog));
         }
+        // extension notify toast (top-right)
+        if let Some((message, ty)) = &self.ext_notice {
+            let color = match ty {
+                1 => 0xfacc15,
+                2 => 0xf87171,
+                _ => 0x4ade80,
+            };
+            let text: SharedString = message.clone().into();
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(12.))
+                    .right(px(12.))
+                    .max_w(px(420.))
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(rgb(color))
+                    .bg(rgb(t.bg_panel))
+                    .shadow_lg()
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .child(div().size(px(7.)).rounded_full().mt(px(4.)).bg(rgb(color)))
+                    .child(div().text_size(px(12.)).text_color(rgb(t.text)).child(text)),
+            );
+        }
+        // blocking extension dialog (select/confirm/input/editor)
+        if let Some(req) = &self.ext_dialog {
+            root = root.child(render_ext_dialog(self, req.clone(), &weak_for_dialog));
+        }
         root
     }
+}
+
+/// One extension widget block (mono lines, pi-web widget rendering).
+fn render_ext_widget(lines: &[String], t: &crate::theme::Theme) -> gpui::AnyElement {
+    let text: String = lines.join("\n");
+    div()
+        .w_full()
+        .px_3()
+        .py_2()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .bg(rgb(t.tool_bg))
+        .font_family("Consolas")
+        .text_size(px(11.))
+        .text_color(rgb(t.text_muted))
+        .child(SharedString::from(text))
+        .into_any_element()
+}
+
+/// Blocking extension UI dialog (select/confirm/input/editor).
+fn render_ext_dialog(
+    chat: &mut Chat,
+    req: pi_link::protocol::ExtensionUiRequest,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::AnyElement {
+    use pi_link::protocol::ExtUiMethod;
+    let t = T();
+    let weak = weak.clone();
+    let (title, body): (String, gpui::AnyElement) = match &req.method {
+        ExtUiMethod::Select { title, options } => {
+            let weak_opts = weak.clone();
+            let opts: Vec<gpui::AnyElement> = options
+                .iter()
+                .enumerate()
+                .map(|(ix, o)| {
+                    let weak_o = weak_opts.clone();
+                    let v = o.clone();
+                    div()
+                        .id(SharedString::from(format!("ext-opt-{ix}")))
+                        .w_full()
+                        .px_3()
+                        .py_1p5()
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(rgb(t.border))
+                        .text_size(px(12.))
+                        .text_color(rgb(t.text))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(t.bg_selected)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_o.update(cx, |c, cx| {
+                                c.ext_respond(Some(v.clone()), None, false, cx)
+                            });
+                        })
+                        .child(SharedString::from(o.clone()))
+                        .into_any_element()
+                })
+                .collect();
+            (
+                title.clone(),
+                div().flex().flex_col().gap_1().children(opts).into_any_element(),
+            )
+        }
+        ExtUiMethod::Confirm { title, message } => {
+            let msg: SharedString = message.clone().into();
+            (
+                title.clone(),
+                div().text_size(px(12.)).text_color(rgb(t.text_muted)).child(msg).into_any_element(),
+            )
+        }
+        ExtUiMethod::Input { title, .. } | ExtUiMethod::Editor { title, .. } => {
+            let placeholder = match &req.method {
+                ExtUiMethod::Input { placeholder: Some(p), .. } => Some(p.clone()),
+                _ => None,
+            };
+            let value = chat.ext_dialog_input.clone();
+            let shown: SharedString = if value.is_empty() {
+                placeholder.unwrap_or_default().into()
+            } else {
+                value.into()
+            };
+            let weak_in = weak.clone();
+            let field = div()
+                .id("ext-dialog-input")
+                .track_focus(&chat.dialog_focus)
+                .w_full()
+                .py_1p5()
+                .px_2p5()
+                .rounded(px(5.))
+                .border_1()
+                .border_color(rgb(t.border))
+                .bg(rgb(t.bg))
+                .text_size(px(12.))
+                .text_color(rgb(t.text))
+                .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
+                    let key = ev.keystroke.key.as_str();
+                    let _ = weak_in.update(cx, |c, cx| {
+                        match key {
+                            "enter" => {
+                                let v = c.ext_dialog_input.clone();
+                                c.ext_respond(Some(v), None, false, cx);
+                            }
+                            "backspace" => {
+                                c.ext_dialog_input.pop();
+                                cx.notify();
+                            }
+                            "space" => {
+                                c.ext_dialog_input.push(' ');
+                                cx.notify();
+                            }
+                            k => {
+                                if k.chars().count() == 1 {
+                                    if let Some(ch) = k.chars().next() {
+                                        c.ext_dialog_input.push(ch);
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                        }
+                    });
+                })
+                .child(shown);
+            (title.clone(), field.into_any_element())
+        }
+        _ => (String::new(), div().into_any_element()),
+    };
+    let title: SharedString = title.into();
+    let is_confirm = matches!(req.method, ExtUiMethod::Confirm { .. });
+    let is_select = matches!(req.method, ExtUiMethod::Select { .. });
+    let weak_cancel = weak.clone();
+    let weak_ok = weak.clone();
+    div()
+        .absolute()
+        .inset_0()
+        .bg(gpui::hsla(0., 0., 0., 0.35))
+        .track_focus(&chat.dialog_focus)
+        .on_key_down({
+            let weak = weak_cancel.clone();
+            move |ev: &KeyDownEvent, _w, cx| {
+                if ev.keystroke.key == "escape" {
+                    let _ = weak.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
+                }
+            }
+        })
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .w(px(460.))
+                .bg(rgb(t.bg_panel))
+                .border_1()
+                .border_color(rgb(t.border))
+                .rounded_lg()
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .shadow_lg()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(title),
+                )
+                .child(body)
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .children((!is_select).then(|| {
+                            div()
+                                .id("ext-cancel")
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(rgb(t.border))
+                                .text_xs()
+                                .text_color(rgb(t.text_muted))
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(rgb(t.text)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    let weak = weak_cancel.clone();
+                                    move |_, _, cx| {
+                                        let _ = weak.update(cx, |c, cx| {
+                                            c.ext_respond(None, None, true, cx)
+                                        });
+                                    }
+                                })
+                                .child("取消")
+                                .into_any_element()
+                        }))
+                        .children(is_confirm.then(|| {
+                            div()
+                                .id("ext-no")
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(rgb(t.border))
+                                .text_xs()
+                                .text_color(rgb(t.text))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(t.bg_hover)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    let weak = weak_ok.clone();
+                                    move |_, _, cx| {
+                                        let _ = weak.update(cx, |c, cx| {
+                                            c.ext_respond(None, Some(false), false, cx)
+                                        });
+                                    }
+                                })
+                                .child("否")
+                                .into_any_element()
+                        }))
+                        .children((!is_select).then(|| {
+                            let label = if is_confirm { "是" } else { "提交" };
+                            div()
+                                .id("ext-ok")
+                                .px_3()
+                                .py_1()
+                                .rounded_md()
+                                .bg(rgb(t.accent))
+                                .text_xs()
+                                .text_color(rgb(t.accent_contrast))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(t.accent_hover)))
+                                .on_mouse_down(MouseButton::Left, {
+                                    let weak = weak_ok.clone();
+                                    move |_, _, cx| {
+                                        let _ = weak.update(cx, |c, cx| {
+                                            if is_confirm {
+                                                c.ext_respond(None, Some(true), false, cx);
+                                            } else {
+                                                let v = c.ext_dialog_input.clone();
+                                                c.ext_respond(Some(v), None, false, cx);
+                                            }
+                                        });
+                                    }
+                                })
+                                .child(label)
+                                .into_any_element()
+                        })),
+                ),
+        )
+        .into_any_element()
 }
 
 /// Models panel dialog (pi-web ModelsConfig parity): 900px surface, 240px

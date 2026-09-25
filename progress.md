@@ -128,6 +128,24 @@
   - 偏差：SystemPromptPanel 后置——钉版 pi RPC get_state 不含 systemPrompt
     （pi-web 是进程内 SDK 直取，RPC 面无此命令）；skills.sh 搜索/安装后置；
     插件 update 后置；项目信任(trust)检查后置
+- **pi-flash-fhf M5 扩展 UI 协议**（已关闭）：
+  - 协议层：Event::ExtensionUi(Value) → typed ExtensionUiRequest{id, method}
+    —— select/confirm/input/editor（阻塞）/notify/setStatus/setWidget/setTitle/
+    set_editor_text；RPC 模式 **不支持 custom**（rpc-mode.js custom()=undefined，
+    无需 custom-ui 假终端）；Command::ExtensionUiResponse{id,value,confirmed,
+    cancelled}——**id 必须是请求 id**（pi 在 raw-line 层按 id 关联，to_record
+    早返回绕过 cmd 序号 id 注入）
+  - app：setStatus → 状态栏右侧 key: text 项（空文本=移除）；setWidget →
+    编辑器上/下 widget 块（mono 行块，空行数组=移除，belowEditor 置底）；
+    notify → 右上角 toast（info/warning/error 色）4s 自动消失（spawn+timer）；
+    set_editor_text → 直接写入聊天输入框；setTitle 记录为 no-op（桌面窗口
+    标题固定，pi-web 是 document.title）；阻塞类 → ext_dialog 弹窗
+    （select=选项按钮、confirm=是/否、input/editor=文本输入+提交），
+    ESC=cancelled，应答经 session.send 发 extension_ui_response
+  - 焦点协调：ext_dialog 与 dialog 共用 dialog_focus（同时存在时 ext 在顶层）
+  - 测试：协议 8 变体解析 + 响应记录形状（cancelled/confirmed/value 组合）
+  - 偏差：expiresAt 超时由 pi 侧 resolve(defaultValue) 兜底，客户端不做倒计时；
+    editor 单行输入（多行编辑器后置）
   - 陷阱：unbounded() 返回 (Sender, Receiver) 别解构反；Pixels 字段私有
     （f32::from / 除法）；paint 闭包要 move 自持数据（interactivity 可变借）；
     prepaint/paint 第 5 参是 prepaint state 非 hitbox（PrepaintState=Option<Hitbox>）
