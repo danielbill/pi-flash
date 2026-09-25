@@ -23,7 +23,9 @@ NOTES_FILE=${2:-}
 ZIP_NAME="pi-flash-${VERSION}-windows-x64.zip"
 
 # --- 0. 前置校验 -----------------------------------------------------------
-if [[ -n "$(git status --porcelain)" ]]; then
+# only tracked changes block a release; untracked scratch files (e.g.
+# buglist.md) never enter the build
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "✗ 工作区有未提交改动，先提交再发布："
   git status --short
   exit 1
