@@ -110,7 +110,9 @@ fn read_session(path: &Path, modified: SystemTime) -> Option<SessionInfo> {
     }
     // renames append `session_info` entries at any position (last one wins)
     if let Some(pos) = content.rfind("\"type\":\"session_info\"") {
-        let tail = &content[pos..];
+        // the needle sits inside the JSON line — back up to its `{`
+        let line_start = content[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let tail = &content[line_start..];
         let line_end = tail.find('\n').unwrap_or(tail.len());
         if let Ok(v) = serde_json::from_str::<Value>(&tail[..line_end]) {
             if let Some(n) = v["name"].as_str() {
@@ -152,5 +154,26 @@ mod tests {
             assert!(!s.id.is_empty());
             assert!(s.path.exists());
         }
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn parses_session_info_name_from_real_file_tail() {
+        // the session the user renamed via the inline editor
+        let home = std::env::var("USERPROFILE").unwrap();
+        let p = Path::new(&home)
+            .join(".pi/agent/sessions/--D--ai_workspace-pi_work--")
+            .join("2026-09-25T06-12-27-503Z_01a0d731-9aee-71ef-982e-cfb077b412de.jsonl");
+        let Ok(meta) = std::fs::metadata(&p) else {
+            eprintln!("file missing, skipping");
+            return;
+        };
+        let info = read_session(&p, meta.modified().unwrap()).expect("session parsed");
+        eprintln!("parsed name={:?} preview={:?}", info.name, info.preview);
+        assert!(info.name.is_some(), "session_info name must be parsed");
     }
 }
