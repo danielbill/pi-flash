@@ -26,10 +26,13 @@ mod markdown;
 mod models_config;
 mod theme;
 mod terminal;
+mod ui;
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
 use terminal::{TermStatus, TerminalTab};
+use ui::TextInput;
+use ui::{icon, pill, spinner};
 
 // ---------------------------------------------------------------------------
 // state
@@ -71,10 +74,10 @@ impl Msg {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum Dialog {
-    RenameSession { value: String },
-    ModelSelect { filter: String },
+    RenameSession { input: gpui::Entity<TextInput> },
+    ModelSelect { input: gpui::Entity<TextInput> },
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
@@ -85,12 +88,12 @@ enum Dialog {
         /// selected entry in the tab's sidebar (provider id / skill path /
         /// package source / "__add__" for the install form)
         section: String,
-        key_input: String,
+        key_input: gpui::Entity<TextInput>,
         key_visible: bool,
-        install_input: String,
+        install_input: gpui::Entity<TextInput>,
         install_scope_project: bool,
         /// subagents tab: maxConcurrent input value
-        sa_input: String,
+        sa_input: gpui::Entity<TextInput>,
         error: Option<String>,
     },
 }
@@ -177,7 +180,8 @@ struct Chat {
     ext_widgets: Vec<(String, Vec<String>, bool)>,
     /// blocking extension dialog (select/confirm/input/editor)
     ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
-    ext_dialog_input: String,
+    /// its text field (Input/Editor variants)
+    ext_input: gpui::Entity<TextInput>,
     /// transient notify toast (message, 0 info/1 warning/2 error)
     ext_notice: Option<(String, u8)>,
     // subagent profiles + runs (pi-web subagents.ts / AgentSessionPanel)
@@ -226,8 +230,7 @@ struct Chat {
     top_panel: Option<TopPanel>,
     /// sidebar session text search (pi-web SessionSearch)
     search_open: bool,
-    search_query: String,
-    search_focus: gpui::FocusHandle,
+    search_input: gpui::Entity<TextInput>,
     sessions_list_count: usize,
     /// send feedback: pulsing "waiting for model" row under the message list
     /// (pi-web agentPhase=waiting_model + animate-[pulse_1.5s_infinite])
@@ -346,7 +349,7 @@ impl Chat {
             ext_status: Vec::new(),
             ext_widgets: Vec::new(),
             ext_dialog: None,
-            ext_dialog_input: String::new(),
+            ext_input: cx.new(|cx| TextInput::new(cx)),
             ext_notice: None,
             sa_profiles: Vec::new(),
             sa_settings: pi_link::subagents::SubagentSettings::default(),
@@ -373,13 +376,29 @@ impl Chat {
             session_tools: None,
             top_panel: None,
             search_open: false,
-            search_query: String::new(),
-            search_focus: cx.focus_handle(),
+            search_input: cx
+                .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
             sessions_list_count: 0,
             phase_waiting: false,
             confirm_delete: None,
             agent_running: false,
         };
+        // wire input callbacks that need the root entity handle
+        let weak_self = cx.entity().downgrade();
+        chat.search_input.update(cx, |ti, _| {
+            ti.set_on_change(Box::new(move |_, cx| {
+                // typing refilters the sessions list (owner repaint)
+                let _ = weak_self.update(cx, |_, cx| cx.notify());
+            }));
+        });
+        let weak_ext = cx.entity().downgrade();
+        chat.ext_input.update(cx, |ti, _| {
+            ti.set_on_submit(Box::new(move |v, cx| {
+                let _ = weak_ext.update(cx, |c, cx| {
+                    c.ext_respond(Some(v.to_string()), None, false, cx);
+                });
+            }));
+        });
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
         chat.refresh_state();
@@ -697,14 +716,69 @@ impl Chat {
                 .unwrap_or_default(),
             _ => String::new(),
         };
+        // settings inputs (own focus handles; TextInput = the app-wide field)
+        let weak_key = cx.entity().downgrade();
+        let key_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .masked(true)
+                .placeholder(tr("ENV 变量、!命令 或明文 key"))
+        });
+        key_input.update(cx, |ti, _| {
+            let weak_esc = weak_key.clone();
+            ti.set_on_change(Box::new(move |_, cx| {
+                // masked-key preview re-renders on every keystroke
+                let _ = weak_key.update(cx, |_, cx| cx.notify());
+            }));
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_esc.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        let weak_install = cx.entity().downgrade();
+        let install_input =
+            cx.new(|cx| TextInput::new(cx).placeholder(tr("来源")));
+        install_input.update(cx, |ti, _| {
+            let weak_esc = weak_install.clone();
+            ti.set_on_submit(Box::new(move |v, cx| {
+                let _ = weak_install.update(cx, |c, cx| {
+                    let proj = match &c.dialog {
+                        Some(Dialog::Settings { install_scope_project, .. }) => {
+                            *install_scope_project
+                        }
+                        _ => return,
+                    };
+                    c.mc_install_package(v.to_string(), proj, cx);
+                });
+            }));
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_esc.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        let weak_sa = cx.entity().downgrade();
+        let sa_input = cx.new(|cx| TextInput::new(cx).numeric(true));
+        sa_input.update(cx, |ti, _| {
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_sa.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        let max_prefill = self.sa_settings.max_concurrent.to_string();
+        sa_input.update(cx, |ti, cx| ti.set_value(max_prefill, cx));
         self.dialog = Some(Dialog::Settings {
             tab,
             section,
-            key_input: String::new(),
+            key_input,
             key_visible: false,
-            install_input: String::new(),
+            install_input,
             install_scope_project: false,
-            sa_input: self.sa_settings.max_concurrent.to_string(),
+            sa_input,
             error: None,
         });
         cx.notify();
@@ -821,8 +895,9 @@ impl Chat {
         // pi resolves auth.json per request; only a brand-new provider's
         // catalog needs a process restart to appear in available models
         self.reload_settings_panel();
-        if let Some(Dialog::Settings { key_input, .. }) = &mut self.dialog {
-            key_input.clear();
+        if let Some(Dialog::Settings { key_input, .. }) = &self.dialog {
+            let input = key_input.clone();
+            input.update(cx, |ti, cx| ti.set_value(String::new(), cx));
         }
         cx.notify();
     }
@@ -1064,10 +1139,21 @@ impl Chat {
                 cx.notify();
             }
             blocking => {
-                self.ext_dialog_input = match &blocking {
+                let prefill = match &blocking {
                     ExtUiMethod::Editor { prefill, .. } => prefill.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
+                let placeholder = match &blocking {
+                    ExtUiMethod::Input { placeholder: Some(p), .. } => {
+                        Some(SharedString::from(p.clone()))
+                    }
+                    _ => None,
+                };
+                let input = self.ext_input.clone();
+                input.update(cx, |ti, cx| {
+                    ti.set_placeholder(placeholder);
+                    ti.set_value(prefill, cx);
+                });
                 self.ext_dialog = Some(pi_link::protocol::ExtensionUiRequest {
                     id: req.id,
                     method: blocking,
@@ -1113,9 +1199,12 @@ impl Chat {
             .dialog
             .as_ref()
             .and_then(|d| match d {
-                Dialog::Settings { sa_input, .. } => sa_input.parse::<u32>().ok(),
+                Dialog::Settings { sa_input, .. } => {
+                    Some(sa_input.read(cx).value().parse::<u32>().ok())
+                }
                 _ => None,
             })
+            .flatten()
             .unwrap_or(self.sa_settings.max_concurrent)
             .clamp(1, 32);
         self.sa_settings.max_concurrent = max;
@@ -1652,14 +1741,60 @@ impl Chat {
         }
     }
 
+    /// Rename dialog with a pre-filled, IME-capable input.
+    fn rename_dialog(prefill: String, cx: &mut Context<Self>) -> Dialog {
+        let weak_ok = cx.entity().downgrade();
+        let weak_esc = cx.entity().downgrade();
+        let input = cx.new(|cx| TextInput::new(cx).placeholder(tr("session name")));
+        input.update(cx, |ti, cx| ti.set_value(prefill, cx));
+        input.update(cx, |ti, _| {
+            ti.set_on_submit(Box::new(move |v, cx| {
+                let _ = weak_ok.update(cx, |c, cx| c.apply_rename(v.trim().to_string(), cx));
+            }));
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_esc.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        Dialog::RenameSession { input }
+    }
+
+    /// Model-select dialog with a live filter input.
+    fn model_select_dialog(cx: &mut Context<Self>) -> Dialog {
+        let weak_change = cx.entity().downgrade();
+        let weak_esc = cx.entity().downgrade();
+        let input = cx.new(|cx| TextInput::new(cx).placeholder("filter models..."));
+        input.update(cx, |ti, _| {
+            ti.set_on_change(Box::new(move |_, cx| {
+                let _ = weak_change.update(cx, |_, cx| cx.notify());
+            }));
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_esc.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        Dialog::ModelSelect { input }
+    }
+
     fn confirm_rename(&mut self, cx: &mut Context<Self>) {
-        if let Some(Dialog::RenameSession { value }) = &self.dialog {
-            let name = value.trim().to_string();
-            if let Some(session) = &self.session {
-                let _ = session.send(&Command::SetSessionName { name });
-            }
-            self.refresh_state();
+        let name = match &self.dialog {
+            Some(Dialog::RenameSession { input }) => input.read(cx).value().trim().to_string(),
+            _ => String::new(),
+        };
+        self.apply_rename(name, cx);
+    }
+
+    /// Rename commit path that never reads the input entity (called from
+    /// the input's own submit callback where the entity is borrowed).
+    fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.send(&Command::SetSessionName { name });
         }
+        self.refresh_state();
         self.dialog = None;
         cx.notify();
     }
@@ -2092,20 +2227,19 @@ impl Chat {
                     }
                     if self.pending_rename {
                         self.pending_rename = false;
-                        self.dialog = Some(Dialog::RenameSession {
-                            value: self
-                                .state
-                                .as_ref()
-                                .and_then(|s| s.session_name.clone())
-                                .or_else(|| {
-                                    self.messages
-                                        .iter()
-                                        .find(|m| matches!(m.role, Role::User))
-                                        .map(|m| m.plain_text())
-                                })
-                                .map(|v| v.chars().take(50).collect::<String>())
-                                .unwrap_or_default(),
-                        });
+                        let prefill = self
+                            .state
+                            .as_ref()
+                            .and_then(|s| s.session_name.clone())
+                            .or_else(|| {
+                                self.messages
+                                    .iter()
+                                    .find(|m| matches!(m.role, Role::User))
+                                    .map(|m| m.plain_text())
+                            })
+                            .map(|v| v.chars().take(50).collect::<String>())
+                            .unwrap_or_default();
+                        self.dialog = Some(Self::rename_dialog(prefill, cx));
                     }
                 } else if command == "get_session_stats" && success {
                     if let Some(data) = &data {
@@ -3481,58 +3615,6 @@ fn select_top_level_branches(tree: &[TreeNode]) -> Vec<TreeNode> {
 // rendering
 // ---------------------------------------------------------------------------
 
-fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
-    gpui::svg()
-        .path(SharedString::from(format!("icons/{name}.svg")))
-        .text_color(rgb(color))
-        .size(px(size))
-        .into_any_element()
-}
-
-/// Rotating arc spinner (pi-web RunningSessionIndicator: the loader SVG
-/// spun 360°/0.9s, SMIL parity via with_animation).
-fn spinner(size: f32, color: u32) -> gpui::AnyElement {
-    gpui::svg()
-        .path(SharedString::from("icons/loader.svg"))
-        .text_color(rgb(color))
-        .size(px(size))
-        .with_animation(
-            "spin",
-            Animation::new(std::time::Duration::from_millis(900)).repeat(),
-            |el, delta| {
-                el.with_transformation(
-                    gpui::Transformation::rotate(gpui::radians(delta * std::f32::consts::TAU)),
-                )
-            },
-        )
-        .into_any_element()
-}
-
-fn pill(
-    id: &'static str,
-    icon_name: &'static str,
-    label: SharedString,
-) -> gpui::AnyElement {
-    let t = T();
-    div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(t.border))
-        .flex()
-        .items_center()
-        .gap_1p5()
-        .text_xs()
-        .text_color(rgb(t.text_muted))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-        .child(icon(icon_name, 12., t.text_muted))
-        .child(label)
-        .into_any_element()
-}
-
 fn render_block(
     b: &Block,
     msg_ix: usize,
@@ -3961,8 +4043,47 @@ impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
-        if self.dialog.is_some() || self.ext_dialog.is_some() {
-            window.focus(&self.dialog_focus);
+        //
+        // dialog inputs own their focus handles; force-focus only when the
+        // input isn't already focused so click-to-focus still works
+        let dialog_input = match &self.dialog {
+            Some(Dialog::RenameSession { input }) | Some(Dialog::ModelSelect { input }) => {
+                Some(input.clone())
+            }
+            Some(Dialog::Settings { tab, key_input, install_input, sa_input, .. }) => Some(
+                match tab {
+                    2 => install_input.clone(),
+                    4 => sa_input.clone(),
+                    _ => key_input.clone(),
+                },
+            ),
+            _ => None,
+        };
+        if let Some(input) = &dialog_input {
+            let handle = input.read(cx).focus_handle();
+            if !handle.is_focused(window) {
+                window.focus(&handle);
+            }
+        } else if self.ext_dialog.is_some() {
+            let ext_text = matches!(
+                self.ext_dialog.as_ref().map(|r| &r.method),
+                Some(
+                    pi_link::protocol::ExtUiMethod::Input { .. }
+                        | pi_link::protocol::ExtUiMethod::Editor { .. }
+                )
+            );
+            let handle = if ext_text {
+                self.ext_input.read(cx).focus_handle()
+            } else {
+                self.dialog_focus.clone()
+            };
+            if !handle.is_focused(window) {
+                window.focus(&handle);
+            }
+        } else if self.dialog.is_some() {
+            if !self.dialog_focus.is_focused(window) {
+                window.focus(&self.dialog_focus);
+            }
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
             window.focus(&self.focus);
         }
@@ -4242,9 +4363,11 @@ impl Render for Chat {
                                                                         .on_mouse_down(MouseButton::Left, cx.listener(
                                         |this, _: &gpui::MouseDownEvent, window, cx| {
                                             this.search_open = !this.search_open;
-                                            this.search_query.clear();
+                                            let input = this.search_input.clone();
+                                            input.update(cx, |ti, cx| ti.set_value(String::new(), cx));
                                             if this.search_open {
-                                                window.focus(&this.search_focus);
+                                                let handle = input.read(cx).focus_handle();
+                                                window.focus(&handle);
                                             }
                                             this.refresh_sessions();
                                             cx.notify();
@@ -4311,9 +4434,17 @@ impl Render for Chat {
                             .child(icon("chevron-down", 10., t.text_muted)),
                     ),
             )
+            // session search row (pi-web SessionSearch input)
+            .children(self.search_open.then(|| {
+                div()
+                    .id("session-search-row")
+                    .mx_3()
+                    .mb_1p5()
+                    .child(self.search_input.clone())
+            }))
             // sessions list (pi-web SessionSearch: query filters the list)
             .child({
-                let q = self.search_query.to_lowercase();
+                let q = self.search_input.read(cx).value().to_lowercase();
                 let session_display: Vec<usize> = if q.is_empty() {
                     (0..self.sessions.len()).collect()
                 } else {
@@ -4588,27 +4719,26 @@ impl Render for Chat {
                                                         if c.active_session_file.as_deref()
                                                             == Some(p.as_path())
                                                         {
+                                                            let prefill = c
+                                                                .state
+                                                                .as_ref()
+                                                                .and_then(|s| {
+                                                                    s.session_name.clone()
+                                                                })
+                                                                .or_else(|| {
+                                                                    c.messages
+                                                                        .iter()
+                                                                        .find(|m| {
+                                                                            matches!(m.role, Role::User)
+                                                                        })
+                                                                        .map(|m| m.plain_text())
+                                                                })
+                                                                .map(|v| {
+                                                                    v.chars().take(50).collect::<String>()
+                                                                })
+                                                                .unwrap_or_default();
                                                             c.dialog =
-                                                                Some(Dialog::RenameSession {
-                                                                value: c
-                                                                    .state
-                                                                    .as_ref()
-                                                                    .and_then(|s| {
-                                                                        s.session_name.clone()
-                                                                    })
-                                                                    .or_else(|| {
-                                                                        c.messages
-                                                                            .iter()
-                                                                            .find(|m| {
-                                                                                matches!(m.role, Role::User)
-                                                                            })
-                                                                            .map(|m| m.plain_text())
-                                                                    })
-                                                                    .map(|v| {
-                                                                        v.chars().take(50).collect::<String>()
-                                                                    })
-                                                                    .unwrap_or_default(),
-                                                                });
+                                                                Some(Self::rename_dialog(prefill, cx));
                                                         } else {
                                                             c.open_session(p.clone(), true, cx);
                                                         }
@@ -5624,9 +5754,7 @@ impl Render for Chat {
                                                             c.refresh_state();
                                                         }
                                                         c.dialog =
-                                                            Some(Dialog::ModelSelect {
-                                                                filter: String::new(),
-                                                            });
+                                                            Some(Self::model_select_dialog(cx));
                                                         cx.notify();
                                                     });
                                                 }
@@ -6321,8 +6449,8 @@ impl Render for Chat {
         }
 
         // dialogs
-        if let Some(Dialog::ModelSelect { filter }) = self.dialog.as_ref() {
-            let flt = filter.to_lowercase();
+        if let Some(Dialog::ModelSelect { input: filter_input }) = self.dialog.as_ref() {
+            let flt = filter_input.read(cx).value().to_lowercase();
             // enabledModels whitelist narrows the picker (pi-web /api/models
             // resolveVisibleModels parity)
             let picker_enabled = !self.mc_state.all_enabled;
@@ -6446,18 +6574,7 @@ impl Render for Chat {
                                             .child(icon("x", 12., t.text_muted)),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py_1p5()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .bg(rgb(t.bg))
-                                    .text_xs()
-                                    .text_color(rgb(t.text_dim))
-                                    .child(SharedString::from("filter models...")),
-                            )
+                            .child(filter_input.clone())
                             .child(list_panel),
                     ),
             );
@@ -6989,13 +7106,7 @@ impl Render for Chat {
                     ),
             );
         }
-        if let Some(Dialog::RenameSession { value }) = self.dialog.as_ref() {
-            let value_view: SharedString = if value.is_empty() {
-                "session name".into()
-            } else {
-                value.clone().into()
-            };
-            let value_empty = value.is_empty();
+        if let Some(Dialog::RenameSession { input }) = self.dialog.as_ref() {
             let weak_ok = weak_for_dialog.clone();
             let weak_cancel = weak_for_dialog.clone();
             root = root.child(
@@ -7037,62 +7148,7 @@ impl Render for Chat {
                                     .text_color(rgb(t.text))
                                     .child(tr("重命名会话")),
                             )
-                            .child(
-                                div()
-                                    .id("dialog-input")
-                                    .track_focus(&self.dialog_focus)
-                                    .on_key_down({
-                                        let weak = weak_for_dialog.clone();
-                                        move |ev: &KeyDownEvent, _w, cx| {
-                                            let key = ev.keystroke.key.as_str();
-                                            let _ = weak.update(cx, |this, cx| {
-                                                if let Some(Dialog::RenameSession {
-                                                    value,
-                                                }) = &mut this.dialog
-                                                {
-                                                    match key {
-                                                        "enter" => this.confirm_rename(cx),
-                                                        "escape" => {
-                                                            this.dialog = None;
-                                                            cx.notify();
-                                                        }
-                                                        "backspace" => {
-                                                            value.pop();
-                                                            cx.notify();
-                                                        }
-                                                        "space" => {
-                                                            value.push(' ');
-                                                            cx.notify();
-                                                        }
-                                                        k => {
-                                                            if k.chars().count() == 1 {
-                                                                if let Some(c) =
-                                                                    k.chars().next()
-                                                                {
-                                                                    value.push(c);
-                                                                    cx.notify();
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    })
-                                    .px_2()
-                                    .py_1p5()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .bg(rgb(t.bg))
-                                    .text_sm()
-                                    .text_color(if value_empty {
-                                        rgb(t.text_dim)
-                                    } else {
-                                        rgb(t.text)
-                                    })
-                                    .child(value_view),
-                            )
+                            .child(input.clone())
                             .child(
                                 div()
                                     .flex()
@@ -7146,7 +7202,11 @@ impl Render for Chat {
                     ),
             );
         }
-        if let Some(Dialog::Settings { .. }) = self.dialog.as_ref() {
+        if self
+            .dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d, Dialog::Settings { .. }))
+        {
             root = root.child(render_settings(self, &weak_for_dialog));
         }
         // toolbar pill popup menus
@@ -7388,58 +7448,7 @@ fn render_ext_dialog(
             )
         }
         ExtUiMethod::Input { title, .. } | ExtUiMethod::Editor { title, .. } => {
-            let placeholder = match &req.method {
-                ExtUiMethod::Input { placeholder: Some(p), .. } => Some(p.clone()),
-                _ => None,
-            };
-            let value = chat.ext_dialog_input.clone();
-            let shown: SharedString = if value.is_empty() {
-                placeholder.unwrap_or_default().into()
-            } else {
-                value.into()
-            };
-            let weak_in = weak.clone();
-            let field = div()
-                .id("ext-dialog-input")
-                .track_focus(&chat.dialog_focus)
-                .w_full()
-                .py_1p5()
-                .px_2p5()
-                .rounded(px(5.))
-                .border_1()
-                .border_color(rgb(t.border))
-                .bg(rgb(t.bg))
-                .text_size(px(12.))
-                .text_color(rgb(t.text))
-                .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
-                    let key = ev.keystroke.key.as_str();
-                    let _ = weak_in.update(cx, |c, cx| {
-                        match key {
-                            "enter" => {
-                                let v = c.ext_dialog_input.clone();
-                                c.ext_respond(Some(v), None, false, cx);
-                            }
-                            "backspace" => {
-                                c.ext_dialog_input.pop();
-                                cx.notify();
-                            }
-                            "space" => {
-                                c.ext_dialog_input.push(' ');
-                                cx.notify();
-                            }
-                            k => {
-                                if k.chars().count() == 1 {
-                                    if let Some(ch) = k.chars().next() {
-                                        c.ext_dialog_input.push(ch);
-                                        cx.notify();
-                                    }
-                                }
-                            }
-                        }
-                    });
-                })
-                .child(shown);
-            (title.clone(), field.into_any_element())
+            (title.clone(), chat.ext_input.clone().into_any_element())
         }
         _ => (String::new(), div().into_any_element()),
     };
@@ -7554,7 +7563,8 @@ fn render_ext_dialog(
                                             if is_confirm {
                                                 c.ext_respond(None, Some(true), false, cx);
                                             } else {
-                                                let v = c.ext_dialog_input.clone();
+                                                let v =
+                                                    c.ext_input.read(cx).value().to_string();
                                                 c.ext_respond(Some(v), None, false, cx);
                                             }
                                         });
@@ -7787,7 +7797,7 @@ fn mc_plugins_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
-    install_input: &str,
+    install_input: &gpui::Entity<TextInput>,
     install_scope_project: bool,
 ) -> (gpui::AnyElement, gpui::AnyElement) {
     let t = T();
@@ -7912,11 +7922,9 @@ fn mc_plugins_view(
 
     let detail = if section == "__add__" || entries.is_empty() {
         // install form
-        let weak_in = weak.clone();
         let weak_scope = weak.clone();
         let weak_go = weak.clone();
         let scope_project = install_scope_project;
-        let input_value = install_input.to_string();
         div()
             .id("mc-detail")
             .flex_1()
@@ -7941,55 +7949,7 @@ fn mc_plugins_view(
                     .text_color(rgb(t.text_dim))
                     .child(tr("npm:@scope/pi-plugin · git:https://... · /绝对路径")),
             )
-            .child(
-                div()
-                    .id("pkg-add-input")
-                    .track_focus(&chat.dialog_focus)
-                    .py(px(6.))
-                    .px(px(9.))
-                    .rounded(px(5.))
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.bg_panel))
-                    .font_family("Consolas")
-                    .text_size(px(12.))
-                    .text_color(rgb(t.text))
-                    .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
-                        let key = ev.keystroke.key.as_str();
-                        let _ = weak_in.update(cx, |c, cx| {
-                            if let Some(Dialog::Settings { install_input, .. }) = &mut c.dialog {
-                                match key {
-                                    "enter" => {
-                                        let src = install_input.clone();
-                                        let proj = install_scope_project;
-                                        c.mc_install_package(src, proj, cx);
-                                    }
-                                    "backspace" => {
-                                        install_input.pop();
-                                        cx.notify();
-                                    }
-                                    "space" => {
-                                        install_input.push(' ');
-                                        cx.notify();
-                                    }
-                                    k => {
-                                        if k.chars().count() == 1 {
-                                            if let Some(ch) = k.chars().next() {
-                                                install_input.push(ch);
-                                                cx.notify();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    })
-                    .child(if input_value.is_empty() {
-                        div().text_color(rgb(t.text_dim)).child(tr("来源")).into_any_element()
-                    } else {
-                        div().child(SharedString::from(input_value)).into_any_element()
-                    }),
-            )
+            .child(install_input.clone())
             .child(
                 div()
                     .flex()
@@ -8068,7 +8028,9 @@ fn mc_plugins_view(
                                 .dialog
                                 .as_ref()
                                 .and_then(|d| match d {
-                                    Dialog::Settings { install_input, .. } => Some(install_input.clone()),
+                                    Dialog::Settings { install_input, .. } => {
+                                        Some(install_input.read(cx).value().to_string())
+                                    }
                                     _ => None,
                                 })
                                 .unwrap_or_default();
@@ -8346,7 +8308,7 @@ fn mc_subagents_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
-    sa_input: &str,
+    sa_input: &gpui::Entity<TextInput>,
 ) -> (gpui::AnyElement, gpui::AnyElement) {
     use pi_link::subagents::SubagentScope;
     let t = T();
@@ -8820,10 +8782,8 @@ fn mc_subagents_view(
     } else {
         // agents global settings (builtInEnabled + maxConcurrent)
         let weak_fea = weak.clone();
-        let weak_max = weak.clone();
         let weak_save = weak.clone();
         let fea_on = chat.sa_settings.builtin_enabled;
-        let value: SharedString = sa_input.to_string().into();
         div()
             .id("mc-detail")
             .flex_1()
@@ -8912,38 +8872,8 @@ fn mc_subagents_view(
                     .child(div().flex_1())
                     .child(
                         div()
-                            .id("sa-max-input")
-                            .track_focus(&chat.dialog_focus)
-                            .w(px(64.))
-                            .py(px(6.))
-                            .px(px(9.))
-                            .rounded(px(5.))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .bg(rgb(t.bg_panel))
-                            .font_family("Consolas")
-                            .text_size(px(12.))
-                            .text_color(rgb(t.text))
-                            .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
-                                let key = ev.keystroke.key.as_str();
-                                let _ = weak_max.update(cx, |c, cx| {
-                                    if let Some(Dialog::Settings { sa_input, .. }) = &mut c.dialog {
-                                        match key {
-                                            "backspace" => {
-                                                sa_input.pop();
-                                                cx.notify();
-                                            }
-                                            k => {
-                                                if k.chars().count() == 1 && k.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                                                    sa_input.push_str(k);
-                                                    cx.notify();
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                            })
-                            .child(value),
+                            .w(px(80.))
+                            .child(sa_input.clone()),
                     )
                     .child(
                         div()
@@ -9131,7 +9061,6 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
         return div().into_any_element();
     };
     let weak_close = weak.clone();
-    let weak_input = weak.clone();
 
     let (sidebar, detail) = if tab == 0 {
     // provider groups in available-models order
@@ -9360,13 +9289,6 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
         let weak_del = weak.clone();
         let save_provider = selected.clone();
         let del_provider = selected.clone();
-        let shown_key: SharedString = if key_visible {
-            key_input.clone().into()
-        } else if key_input.is_empty() {
-            "".into()
-        } else {
-            "\u{2022}".repeat(key_input.chars().count()).into()
-        };
         detail = detail.child(
             div()
                 .flex()
@@ -9385,55 +9307,9 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                         .gap_2()
                         .child(
                             div()
-                                .id("mc-key-input")
-                                .track_focus(&chat.dialog_focus)
                                 .flex_1()
                                 .min_w_0()
-                                .py(px(6.))
-                                .px(px(9.))
-                                .rounded(px(5.))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .bg(rgb(t.bg_panel))
-                                .font_family("Consolas")
-                                .text_size(px(12.))
-                                .text_color(rgb(t.text))
-                                .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
-                                    let key = ev.keystroke.key.as_str();
-                                    let _ = weak_input.update(cx, |c, cx| {
-                                        if let Some(Dialog::Settings {
-                                            key_input, ..
-                                        }) = &mut c.dialog
-                                        {
-                                            match key {
-                                                "backspace" => {
-                                                    key_input.pop();
-                                                    cx.notify();
-                                                }
-                                                "space" => {
-                                                    key_input.push(' ');
-                                                    cx.notify();
-                                                }
-                                                k => {
-                                                    if k.chars().count() == 1 {
-                                                        if let Some(ch) = k.chars().next() {
-                                                            key_input.push(ch);
-                                                            cx.notify();
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    });
-                                })
-                                .child(if key_input.is_empty() {
-                                    div()
-                                        .text_color(rgb(t.text_dim))
-                                        .child(tr("ENV 变量、!命令 或明文 key"))
-                                        .into_any_element()
-                                } else {
-                                    div().child(shown_key).into_any_element()
-                                }),
+                                .child(key_input.clone()),
                         )
                         .child(
                             div()
@@ -9454,13 +9330,21 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                     let weak_eye = weak.clone();
                                     move |_, _, cx| {
                                         let _ = weak_eye.update(cx, |c, cx| {
-                                            if let Some(Dialog::Settings {
-                                                key_visible, ..
+                                            let next = if let Some(Dialog::Settings {
+                                                key_visible,
+                                                key_input,
+                                                ..
                                             }) = &mut c.dialog
                                             {
                                                 *key_visible = !*key_visible;
-                                                cx.notify();
+                                                Some((key_input.clone(), *key_visible))
+                                            } else {
+                                                None
+                                            };
+                                            if let Some((input, visible)) = next {
+                                                input.update(cx, |ti, _| ti.set_masked(!visible));
                                             }
+                                            cx.notify();
                                         });
                                     }
                                 })
@@ -9497,6 +9381,9 @@ fn render_settings(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyE
                                                     Some(key_input.clone())
                                                 }
                                                 _ => None,
+                                            })
+                                            .and_then(|input| {
+                                                Some(input.read(cx).value().to_string())
                                             })
                                             .unwrap_or_default();
                                         c.mc_save_key(save_provider.clone(), key, cx);
