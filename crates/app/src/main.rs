@@ -4913,23 +4913,40 @@ impl Render for Chat {
                                             .items_center()
                                             .min_w_0()
                                             .when(input_empty, |d| {
-                                                d.child(SharedString::from(
-                                                    input_ph.clone(),
-                                                ))
+                                                // caret sits BEFORE the placeholder
+                                                let caret = div()
+                                                    .w(px(1.5))
+                                                    .h(px(16.))
+                                                    .flex_shrink_0()
+                                                    .bg(rgb(t.accent));
+                                                let ph = div()
+                                                    .min_w_0()
+                                                    .whitespace_nowrap()
+                                                    .overflow_hidden()
+                                                    .text_color(rgb(t.text_dim))
+                                                    .opacity(0.55)
+                                                    .child(SharedString::from(
+                                                        input_ph.clone(),
+                                                    ));
+                                                if input_focused && caret_on {
+                                                    d.child(caret).child(ph)
+                                                } else {
+                                                    d.child(ph)
+                                                }
                                             })
                                             .when(!input_empty, |d| {
                                                 d.child(SharedString::from(
                                                     this_input.clone(),
                                                 ))
-                                            })
-                                            .when(input_focused && caret_on, |d| {
-                                                d.child(
-                                                    div()
-                                                        .w(px(1.5))
-                                                        .h(px(16.))
-                                                        .flex_shrink_0()
-                                                        .bg(rgb(t.accent)),
-                                                )
+                                                .when(input_focused && caret_on, |d| {
+                                                    d.child(
+                                                        div()
+                                                            .w(px(1.5))
+                                                            .h(px(16.))
+                                                            .flex_shrink_0()
+                                                            .bg(rgb(t.accent)),
+                                                    )
+                                                })
                                             }),
                                     ),
                             )
