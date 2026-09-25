@@ -1,16 +1,19 @@
-# 铁律
+# 项目目标
+以PI-WEB为功能原型，ZED为性能原型，用Rust+GPUI编写一个极速的Pi桌面端。
 
-- **内置钉版 pi**：对齐 pi-web（精确钉 `@earendil-works/pi-coding-agent` 无 `^`），vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**绝不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试。开发期 `PI_FLASH_PI_BIN` 可覆盖。
-- **产品 = 1:1 复刻 pi-web**（布局/功能），Rust+GPUI 只做"更快的壳"；不自创产品。布局做法：逐组件读 pi-web 源码（globals.css 令牌 / panel-layout.ts / 组件结构）→ 令牌级翻译，不手搓近似。
+# 铁律
+- **内置pi**：内置 `@earendil-works/pi-coding-agent` ，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试。开发期 `PI_FLASH_PI_BIN` 可覆盖。
 - **目标平台**：Windows + macOS（macOS 包走 GitHub Actions runner，不做交叉编译）。
 
 # 路径
 
-- pi-web 源码（产品需求文档）：`D:\github\---ai-tools---\pi-web`
-- zed 参考源码（稀疏浅克隆）：`D:\github\zed` → gpui、markdown、theme、ui、terminal、agent_ui、acp_thread 等
+- pi-web 功能原型：`D:\github\---ai-tools---\pi-web` 
+- zed 性能原型：`D:\github\zed` → gpui、markdown、theme、ui、terminal、agent_ui
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
-- 进度台账：`progress.md`；复刻计划：`PORT_PLAN.md`
-- 截图：`tmp/屏幕截图/`（gitignore）
+- 架构设计：`docs/ARCHITECTURE.md`
+- bug 追踪：`docs/bugs.md`
+- 进度：`docs/progress.md`；复刻计划：`docs/PORT_PLAN.md`
+- 截图：`tmp/屏幕截图/`
 
 # 架构
 
