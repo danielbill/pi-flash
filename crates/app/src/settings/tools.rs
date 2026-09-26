@@ -5,29 +5,6 @@ use super::*;
     /// Tool presets (pi-web tool-presets.ts) via settings.json `defaultTools`;
     /// picked up by new sessions exactly like the CLI.
 impl Chat {
-    pub(crate) fn mc_set_tools_preset(&mut self, preset: &str, cx: &mut Context<Self>) {
-        self.mc_clear_error(cx);
-        let tools: Option<Vec<String>> = match preset {
-            // configured sends no override: pi resolves settings defaultTools
-            "configured" => None,
-            "chat-only" => Some(Vec::new()),
-            "read-only" => Some(["read", "grep", "find", "ls"].iter().map(|s| s.to_string()).collect()),
-            "default" => Some(["read", "bash", "edit", "write"].iter().map(|s| s.to_string()).collect()),
-            "full" => Some(
-                ["bash", "read", "edit", "write", "grep", "find", "ls"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-            ),
-            _ => return,
-        };
-        if let Err(e) = pi_link::config::write_default_tools(&pi_link::config::settings_path(), tools) {
-            self.mc_set_error(&crate::i18n::tf("写入 settings.json 失败: {e}", &[("e", e)]), cx);
-            return;
-        }
-        self.reload_settings_panel();
-        cx.notify();
-    }
 
     // -----------------------------------------------------------------------
     // extension UI protocol (rpc-mode extension_ui_request surface)
@@ -130,7 +107,7 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         if let Some(req) = self.ext_dialog.take() {
-            if let Some(session) = &self.agent.read(cx).session {
+            if let Some(session) = &self.rt().read(cx).agent.session {
                 let _ = session.send(&pi_link::protocol::Command::ExtensionUiResponse {
                     id: req.id,
                     value,

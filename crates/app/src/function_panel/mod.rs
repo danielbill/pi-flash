@@ -225,7 +225,9 @@ pub(crate) fn sidebar(
                         return div().into_any_element();
                     };
                 let is_active = chat
-                    .active_session_file
+                    .rt()
+                    .read(cx)
+                    .file
                     .as_deref()
                     == Some(info.path.as_path());
                 let path = info.path.clone();
@@ -245,12 +247,17 @@ pub(crate) fn sidebar(
                 // pi-web runningSessionIds: the spinner replaces the
                 // timestamp on the running session's row (one embedded
                 // agent → the active session is the running one)
-                let streaming = is_active
-                    && (chat.agent_running
-                        || chat
-                            .state
-                            .as_ref()
-                            .is_some_and(|s| s.is_streaming));
+                // spinner: THIS session's own run state — any resident
+                // runtime shows its live status (020 并发监控面板)
+                let streaming = chat
+                    .runtimes
+                    .values()
+                    .any(|rt| {
+                        let r = rt.read(cx);
+                        r.file.as_deref() == Some(info.path.as_path())
+                            && (r.agent_running
+                                || r.state.as_ref().is_some_and(|s| s.is_streaming))
+                    });
                 let hovered = chat.hovered_session == Some(ix);
                 let confirming =
                     chat.confirm_delete.as_deref() == Some(info.path.as_path());
@@ -485,24 +492,26 @@ pub(crate) fn sidebar(
                                             move |_, _, cx| {
                                                 cx.stop_propagation();
                                                 let _ = weak_ren.update(cx, |c, cx| {
-                                                    if c.active_session_file.as_deref()
-                                                        == Some(p.as_path())
-                                                    {
-                                                        // pi-web: inline rename, no modal
-                                                        let prefill = c
-                                                            .state
-                                                            .as_ref()
-                                                            .and_then(|s| {
-                                                                s.session_name.clone()
-                                                            })
-                                                            .or_else(|| {
-                                                                c.messages
-                                                                    .iter()
-                                                                    .find(|m| {
-                                                                        matches!(m.role, Role::User)
-                                                                    })
-                                                                    .map(|m| m.plain_text())
-                                                            })
+                                                    let rt = c.rt();
+                                                    let (own, prefill) = {
+                                                        let r = rt.read(cx);
+                                                        (
+                                                            r.file.as_deref() == Some(p.as_path()),
+                                                            r.state
+                                                                .as_ref()
+                                                                .and_then(|s| s.session_name.clone())
+                                                                .or_else(|| {
+                                                                    r.messages
+                                                                        .iter()
+                                                                        .find(|m| {
+                                                                            matches!(m.role, Role::User)
+                                                                        })
+                                                                        .map(|m| m.plain_text())
+                                                                }),
+                                                        )
+                                                    };
+                                                    if own {
+                                                        let prefill = prefill
                                                             .map(|v| {
                                                                 v.chars().take(50).collect::<String>()
                                                             })

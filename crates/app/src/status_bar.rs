@@ -86,7 +86,7 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
                 .px_2()
                 .text_xs()
                 .text_color(rgb(t.text_dim))
-                .child(SharedString::from(chat.status.clone())),
+                .child(SharedString::from(chat.rt().read(cx).status.clone())),
         );
     bar
 }

@@ -66,6 +66,19 @@ crates/app/src/
 pi-link:sessions.rs 索引化扫描(group 目录定位 + tail-seek 摘要 + (mtime,size)
 指纹索引落盘 + `read_tail_messages` 尾窗解析)+ 协议层(不变,只对钉版 pi 负责)。
 
+## 2.5 会话模型(pi-web 多开对齐,2026-09-26 定案)
+
+**每个会话 = 一个常驻 SessionRuntime 实体**(session/runtime.rs):独立 pi 进程
+(AgentSession)+ 全量消息 + 投影状态 + **独立 inputPanel(草稿/附件/history/
+思考强度/工具集/模型)** + 自有事件泵与 title 泵。创建即常驻,删除才销毁;
+**几十个 agent 并发工作,互不依赖用户注视**——切换 = 用户注意力转移
+(Chat.active_key 改指针 + 编辑器镜像 flush/load,毫秒级、零 IO、零进程操作);
+侧栏转圈 = 每行读自己 runtime 的 agent_running(并发监控面板)。
+Chat 是壳:池(runtimes map)+ 注意力指针 + 侧栏/git/文件/终端/设置。
+工具集无活改 RPC(pi-web 走进程内 SDK)→ 会话带 --tools 等参数重绑进程;
+模型/思考强度走活改 RPC。空闲回收:非 active 且空闲 10 分钟只杀进程、
+消息保留。
+
 ## 3. 状态所有权
 
 | 状态 | 属主 |

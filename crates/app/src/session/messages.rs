@@ -94,9 +94,12 @@ pub(crate) fn render_block(
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let k = key;
                     let _ = weak.update(cx, |c, cx| {
-                        if !c.collapsed.remove(&k) {
-                            c.collapsed.insert(k);
-                        }
+                        let rt = c.rt();
+                        rt.update(cx, |r, _| {
+                            if !r.collapsed.remove(&k) {
+                                r.collapsed.insert(k);
+                            }
+                        });
                         cx.notify();
                     });
                 })
@@ -241,7 +244,7 @@ pub(crate) fn render_msg(
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         if let Some(eid) = entry.clone() {
                             let _ = weak_fork.update(cx, |c, cx| {
-                                c.fork_from_entry(eid, cx)
+                                c.rt().update(cx, |r, cx| r.fork_from_entry(eid, cx))
                             });
                         }
                     })

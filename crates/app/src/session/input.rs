@@ -127,8 +127,10 @@ pub(crate) fn input_area(
                                         }
                                         let menu_open =
                                             this.active_menu().is_some();
-                                        let items = this.menu_items();
+                                        let items = this.menu_items(cx);
                                         let streaming = this
+                                            .rt()
+                                            .read(cx)
                                             .state
                                             .as_ref()
                                             .is_some_and(|s| s.is_streaming);
@@ -185,7 +187,7 @@ pub(crate) fn input_area(
                                                 }
                                                 cx.notify();
                                             }
-                                            "escape" => this.abort(cx),
+                                            "escape" => this.abort_stream(cx),
                                             "tab" if menu_open && !items.is_empty() => {
                                                 let ix = this
                                                     .menu_ix
@@ -463,7 +465,7 @@ pub(crate) fn input_area(
                                             let weak = weak.clone();
                                             move |_, _, cx| {
                                                 let _ = weak.update(cx, |c, cx| {
-                                                    if c.available_models.is_empty() {
+                                                    if c.rt().read(cx).available_models.is_empty() {
                                                         c.refresh_state(cx);
                                                     }
                                                     c.dialog =
@@ -557,7 +559,7 @@ pub(crate) fn input_area(
                                         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                                         .on_mouse_down(MouseButton::Left, cx.listener(
                                             |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                                this.compact_session(cx);
+                                                this.rt().update(cx, |r, cx| r.compact_session(cx));
                                             },
                                         ))
                                         .child(icon("scissors", 12., t.text_muted))

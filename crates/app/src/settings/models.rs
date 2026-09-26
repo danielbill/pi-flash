@@ -201,7 +201,7 @@ impl Chat {
     /// (pi-web PATCH /api/skills parity).
     pub(crate) fn mc_cli_op(&mut self, args: Vec<String>, done: String, cx: &mut Context<Self>) {
         let Some(tx) = self.op_tx.clone() else { return };
-        self.status = format!("pi {} …", args.join(" "));
+
         let cwd = self.cwd.clone();
         std::thread::spawn(move || {
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();

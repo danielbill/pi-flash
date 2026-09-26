@@ -2,6 +2,7 @@
 
 pub(crate) mod input;
 pub(crate) mod messages;
+pub(crate) mod runtime;
 
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, pulsating_between, px, rgb};
 use pi_link::protocol::Block;
@@ -31,28 +32,32 @@ pub(crate) fn main_column(
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::Div {
     let t = T();
-    let status: SharedString = chat.status.clone().into();
-    let streaming = chat.state.as_ref().is_some_and(|st| st.is_streaming);
-    let model_label: SharedString = chat
+    // all conversation state comes from the ACTIVE session runtime
+    let rt = chat.rt();
+    let rt_r = rt.read(cx);
+    let status: SharedString = rt_r.status.clone().into();
+    let streaming = rt_r.state.as_ref().is_some_and(|st| st.is_streaming);
+    let model_label: SharedString = rt_r
         .state
         .as_ref()
         .and_then(|s| s.model_label())
         .unwrap_or_else(|| tr("选择模型").into())
         .into();
-    let thinking_label: SharedString = chat
+    let thinking_label: SharedString = rt_r
         .state
         .as_ref()
         .and_then(|s| s.thinking_level.clone())
         .unwrap_or_else(|| "medium".into())
         .into();
+    drop(rt_r);
     let input_focused = chat.focus.is_focused(window);
     chat.input_focused = input_focused;
     let caret_on = chat.caret_on;
     let this_input: SharedString = chat.input.clone().into();
     let thinking_menu_open = chat.pill_menu == Some(PillMenu::Thinking);
     let tools_menu_open = chat.pill_menu == Some(PillMenu::Tools);
-    let tools_label = chat.tool_preset_label();
-    let stats_right: SharedString = if let Some(st) = chat.stats.as_ref() {
+    let tools_label = rt.read(cx).tool_preset_label();
+    let stats_right: SharedString = if let Some(st) = rt.read(cx).stats.as_ref() {
         format!(
             "↑{} ↓{} ⟳{} ${:.2}  {}% / {}",
             fmt_compact(st.input),
@@ -69,6 +74,10 @@ pub(crate) fn main_column(
     let chat_entity = entity.clone();
 
     let weak_for_msg = weak.clone();
+
+    let rt_entity = rt.clone();
+
+    let rt_list = rt.read(cx).list.clone();
 
     let main_col = div()
 
@@ -168,6 +177,10 @@ pub(crate) fn main_column(
 
                             if chat
 
+                                .rt()
+
+                                .read(cx)
+
                                 .branch_tree
 
                                 .as_ref()
@@ -224,7 +237,7 @@ pub(crate) fn main_column(
 
                             |this, _: &gpui::MouseDownEvent, _w, cx| {
 
-                                this.auto_title(cx);
+                                this.rt().update(cx, |r, cx| r.auto_title(cx));
 
                             },
 
@@ -278,7 +291,7 @@ pub(crate) fn main_column(
 
                                 };
 
-                                this.request_system_info(cx);
+                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
 
                             },
 
@@ -290,7 +303,7 @@ pub(crate) fn main_column(
 
                             12.,
 
-                            if chat.sys_prompt.is_some() { t.accent } else { t.text_muted },
+                            if chat.rt().read(cx).sys_prompt.is_some() { t.accent } else { t.text_muted },
 
                         ))
 
@@ -340,7 +353,7 @@ pub(crate) fn main_column(
 
                                 };
 
-                                this.request_system_info(cx);
+                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
 
                             },
 
@@ -352,7 +365,7 @@ pub(crate) fn main_column(
 
                             12.,
 
-                            if chat.session_tools.is_some() { t.accent } else { t.text_muted },
+                            if chat.rt().read(cx).session_tools.is_some() { t.accent } else { t.text_muted },
 
                         ))
 
@@ -382,13 +395,15 @@ pub(crate) fn main_column(
 
         .child(
 
-            list(chat.list.clone(), move |ix, _window, cx| {
+            list(rt_list.clone(), move |ix, _window, cx| {
+
+                let rt_view = rt_entity.read(cx);
 
                 let chat = chat_entity.read(cx);
 
                 let weak = weak_for_msg.clone();
 
-                match chat.messages.get(ix) {
+                match rt_view.messages.get(ix) {
 
                     Some(m) => div()
 
@@ -414,15 +429,15 @@ pub(crate) fn main_column(
 
                                     &weak,
 
-                                    &chat.collapsed,
+                                    &rt_view.collapsed,
 
                                     t,
 
-                                    &chat.model_label_text(),
+                                    &rt_view.model_label_text(),
 
                                     {
 
-                                        let streaming = chat
+                                        let streaming = rt_view
 
                                             .state
 
@@ -432,7 +447,7 @@ pub(crate) fn main_column(
 
                                         let is_last_assistant = streaming
 
-                                            && Some(ix) == chat.messages.len().checked_sub(1)
+                                            && Some(ix) == rt_view.messages.len().checked_sub(1)
 
                                             && m.role == Role::Assistant;
 
@@ -466,7 +481,7 @@ pub(crate) fn main_column(
 
                                             let est = estimate_tokens(&text);
 
-                                            let tps = chat.stream_started.and_then(
+                                            let tps = chat.rt().read(cx).stream_started.and_then(
 
                                                 |start| {
 
@@ -502,7 +517,7 @@ pub(crate) fn main_column(
 
                         // yet (animate-[pulse_1.5s_infinite])
 
-                        if chat.phase_row_visible() {
+                        if chat.rt().read(cx).phase_row_visible() {
 
                             div()
 
@@ -574,9 +589,13 @@ pub(crate) fn main_column(
 
         // directly above the editor, flex spacer below centers the pair
 
-        .children((chat.messages.is_empty()
+        .children((chat.rt().read(cx).messages.is_empty()
 
             && !chat
+
+                .rt()
+
+                .read(cx)
 
                 .state
 
@@ -744,7 +763,7 @@ pub(crate) fn main_column(
 
         }).flatten())
 
-        .child(input::input_area(chat, entity.clone(), &weak, streaming, input_focused, caret_on, this_input, model_label, thinking_menu_open, tools_menu_open, thinking_label, tools_label, cx))
+        .child(input::input_area(chat, entity.clone(), &weak, streaming, input_focused, caret_on, this_input, model_label, thinking_menu_open, tools_menu_open, thinking_label, &tools_label, cx))
 
         // extension widgets below the editor (setWidget belowEditor)
 
@@ -766,9 +785,13 @@ pub(crate) fn main_column(
 
         }).flatten())
 
-        .children((chat.messages.is_empty()
+        .children((chat.rt().read(cx).messages.is_empty()
 
             && !chat
+
+                .rt()
+
+                .read(cx)
 
                 .state
 

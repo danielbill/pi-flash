@@ -47,6 +47,7 @@ use services::git::*;
 use services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use services::workspace::*;
 use session::messages::{Msg, Role, UsageLine, msgs_from_tail};
+use session::runtime::{SessionEvent, SessionRuntime};
 use terminal::{TermStatus, TerminalTab};
 use ui::TextInput;
 use ui::icon;
@@ -134,55 +135,72 @@ struct Chat {
     /// functionPanel active view + side (015/018, persisted)
     dock_panel: DockPanel,
     dock_right: bool,
+    /// EDITOR MIRROR of the active session's inputPanel draft (031):
+    /// the live text lives in SessionRuntime.input; Chat flushes/loads on
+    /// switch (single editor surface, single focus handle)
     input: String,
-    messages: Vec<Msg>,
+    /// mirror of the active session's pending attachments (031)
+    pending_images: Vec<AttachedImage>,
+    /// mirror of the active session's input history navigation
+    history: Vec<String>,
+    history_ix: Option<usize>,
     /// preloaded message tails for recent sessions (cross-project,
     /// N = app_settings preload_sessions; stale entries are harmless —
     /// the get_messages snapshot replaces them on open)
     session_tail_cache: std::collections::HashMap<PathBuf, Vec<Msg>>,
-    list: ListState,
     sessions: Vec<SessionInfo>,
     sessions_list: ListState,
     cwd: PathBuf,
     branch: String,
-    /// pi RPC process ownership (spawn/epoch/events) — headless entity
-    agent: gpui::Entity<AgentSession>,
-    status: String,
-    state: Option<SessionState>,
-    stats: Option<SessionStats>,
-    active_session_file: Option<PathBuf>,
-    collapsed: HashSet<(usize, usize)>,
-    expanded_dirs: HashSet<PathBuf>,
-    /// working-tree changes for the current project
+    /// model list mirror of the active session (settings/picker read this;
+    /// refreshed by runtime events)
+    available_models: Vec<pi_link::protocol::ModelInfo>,
+    /// session pool (pi-web __piSessions parity): one resident runtime per
+    /// session — process + messages + inputPanel state. Switching sessions
+    /// moves `active_key` only; processes never pause or die on switch.
+    runtimes: std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
+    active_key: String,
+    draft_seq: usize,
+    /// completion menu selection index (view state)
+    menu_ix: usize,
+    /// sessions/files pane split in the sidebar (persisted fraction)
+    sidebar_sessions_frac: f32,
+    /// terminal event channel (dock terminal view)
+    term_events: Option<futures::channel::mpsc::UnboundedSender<(usize, alacritty_terminal::event::Event)>>,
+    op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
+    // editor view state
+    ime_marked: Option<std::ops::Range<usize>>,
+    caret_on: bool,
+    input_focused: bool,
+    // sidebar view state
+    hovered_session: Option<usize>,
+    renaming: Option<PathBuf>,
+    rename_input: Option<gpui::Entity<TextInput>>,
+    confirm_delete: Option<PathBuf>,
+    search_open: bool,
+    search_input: gpui::Entity<TextInput>,
+    sessions_list_count: usize,
+    // shell surfaces
+    pill_menu: Option<PillMenu>,
+    top_panel: Option<TopPanel>,
+    // git panel
     git_files: Vec<GitFile>,
     git_add_del: (u64, u64),
-    /// git panel (022 simplified) state
     git_tab: function_panel::git_panel::GitTab,
     git_log: Vec<GitCommit>,
     git_error: Option<String>,
     git_commit_input: gpui::Entity<TextInput>,
-    commands: Vec<SlashCommand>,
-    available_models: Vec<pi_link::protocol::ModelInfo>,
+    // workspace / project files
     project_files: Vec<String>,
-    pending_images: Vec<AttachedImage>,
-    history: Vec<String>,
-    history_ix: Option<usize>,
-    menu_ix: usize,
-    hovered_session: Option<usize>,
-    pending_rename: bool,
-    /// get_tree snapshot: (roots, active leaf id)
-    branch_tree: Option<(Vec<TreeNode>, Option<String>)>,
-    /// user-message entry ids along the active root→leaf path (fork anchors)
-    active_user_entry_ids: Vec<String>,
-    /// built-in terminal tabs (pi-web TerminalPanel); cwd-keyed dedupe
+    expanded_dirs: HashSet<PathBuf>,
+    file_cache: std::collections::HashMap<PathBuf, FileTab>,
+    // terminals (dock view)
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
     term_seq: usize,
-    /// alacritty event channel for all terminal tabs
-    term_events: Option<futures::channel::mpsc::UnboundedSender<
-        (usize, alacritty_terminal::event::Event),
-    >>,
-    /// settings panel state (loaded when the panel opens)
+    panel_tabs: Vec<PanelTab>,
+    active_panel_tab: Option<usize>,
+    // settings panel data
     mc_patterns: Option<Vec<String>>,
     mc_state: EnabledState,
     mc_creds: Vec<(String, pi_link::config::CredentialKind)>,
@@ -191,77 +209,20 @@ struct Chat {
     mc_pkgs_global: Vec<serde_json::Value>,
     mc_pkgs_project: Vec<serde_json::Value>,
     mc_default_tools: Option<Vec<String>>,
-    /// background pi-CLI operation results (install/remove) -> status line
-    op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
-    // extension UI protocol state (pi-web rpc-manager parity)
-    /// ordered status items (setStatus)
+    // extension UI surface (active session)
     ext_status: Vec<(String, String)>,
-    /// widgets (setWidget): key, lines, above-editor
     ext_widgets: Vec<(String, Vec<String>, bool)>,
-    /// blocking extension dialog (select/confirm/input/editor)
     ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
-    /// its text field (Input/Editor variants)
     ext_input: gpui::Entity<TextInput>,
-    /// transient notify toast (message, 0 info/1 warning/2 error)
     ext_notice: Option<(String, u8)>,
-    // subagent profiles + runs (pi-web subagents.ts / AgentSessionPanel)
+    // subagent test runs (settings panel; G+ moves per-session)
     sa_profiles: Vec<pi_link::subagents::SubagentProfile>,
     sa_settings: pi_link::subagents::SubagentSettings,
     sa_runs: Vec<SubagentRun>,
     sa_run_seq: usize,
-    /// LLM title generation results (one-off pi --print run)
-    title_tx: Option<futures::channel::mpsc::UnboundedSender<Result<String, String>>>,
-    titling: bool,
-    /// right panel width (px; drag handle + expand toggle, pi-web parity)
-    /// right panel tabs: file viewers + terminals in one TabBar (pi-web
-    /// AppShell panelTabs merge)
-    panel_tabs: Vec<PanelTab>,
-    active_panel_tab: Option<usize>,
-    /// right-panel drag: (start pointer x, start width)
-    /// markdown Source/Preview toggle for file tabs (per-path)
-    /// cached content of open file tabs
-    file_cache: std::collections::HashMap<PathBuf, FileTab>,
-    /// sessions-pane height as a fraction of the sidebar (pi-web
-    /// --sidebar-session-pane-height; default half)
-    sidebar_sessions_frac: f32,
-    /// active sidebar pane drag: (start pointer y, start fraction)
-    /// editor caret blink state (toggled by the blink pump)
-    caret_on: bool,
-    /// whether the chat editor currently owns focus (updated in render)
-    input_focused: bool,
-    /// local thinking-level override ("auto" = pi default governs)
-    thinking_override: Option<String>,
-    /// toolbar pill popup (thinking / tools preset menus)
-    pill_menu: Option<PillMenu>,
-    /// notification sound preference (persisted "__sound")
+    op_seq: std::cell::Cell<u64>,
     sound_on: bool,
-    /// wall-clock start of the current agent run (for the t/s estimate)
-    stream_started: Option<std::time::Instant>,
-    /// IME composition marked range (utf16 offsets into self.input)
-    ime_marked: Option<std::ops::Range<usize>>,
-    /// session system prompt + tools parsed from export_html (top panels)
-    sys_prompt: Option<String>,
-    session_tools: Option<Vec<(String, String)>>,
-    /// top-bar dropdown panel (系统提示词 / 工具定义)
-    top_panel: Option<TopPanel>,
-    /// settings modal (own entity; pi-web SettingsPanel)
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
-    /// inline session rename (pi-web SessionSidebar renaming): the row being
-    /// edited + its input (value pre-filled, select-all on focus)
-    renaming: Option<PathBuf>,
-    rename_input: Option<gpui::Entity<TextInput>>,
-    /// sidebar session text search (pi-web SessionSearch)
-    search_open: bool,
-    search_input: gpui::Entity<TextInput>,
-    sessions_list_count: usize,
-    /// send feedback: pulsing "waiting for model" row under the message list
-    /// (pi-web agentPhase=waiting_model + animate-[pulse_1.5s_infinite])
-    phase_waiting: bool,
-    /// inline delete confirmation on a session row (pi-web confirmDelete)
-    confirm_delete: Option<PathBuf>,
-    /// true from AgentStart until AgentEnd/AgentSettled (pi-web
-    /// runningSessionIds; drives the sidebar spinner)
-    agent_running: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -320,12 +281,6 @@ impl Chat {
         let last_open = get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
             .filter(|p| p.exists());
-        let agent = cx.new(|_| AgentSession::new(1));
-        let events = agent.update(cx, |a, _cx| a.spawn(&cwd, last_open.as_deref()));
-        let connected = agent.read(cx).session.is_some();
-
-        let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
-        list.reset(0);
         let sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
         let dock_state = get_dock_state();
 
@@ -334,9 +289,8 @@ impl Chat {
             dialog_focus,
             dialog: None,
             input: String::new(),
-            messages: Vec::new(),
+            pending_images: Vec::new(),
             session_tail_cache: std::collections::HashMap::new(),
-            list,
             // skeleton first (ARCHITECTURE.md §4): the list fills in the
             // background task below; the page flips Welcome -> Session then
             sessions: Vec::new(),
@@ -352,12 +306,10 @@ impl Chat {
             sessions_list,
             cwd: cwd.clone(),
             branch,
-            agent,
-            status: status_line(connected, "idle"),
-            state: None,
-            stats: None,
-            active_session_file: None,
-            collapsed: HashSet::new(),
+            runtimes: std::collections::HashMap::new(),
+            active_key: String::new(),
+            draft_seq: 0,
+            available_models: Vec::new(),
             expanded_dirs: HashSet::new(),
             git_files: Vec::new(),
             git_tab: function_panel::git_panel::GitTab::Changes,
@@ -368,17 +320,11 @@ impl Chat {
                 input
             },
             git_add_del: (0, 0),
-            commands: Vec::new(),
-            available_models: Vec::new(),
             project_files: Vec::new(),
-            pending_images: Vec::new(),
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
             hovered_session: None,
-            pending_rename: false,
-            branch_tree: None,
-            active_user_entry_ids: Vec::new(),
             terminals: Vec::new(),
             active_terminal: None,
             term_seq: 0,
@@ -401,21 +347,15 @@ impl Chat {
             sa_settings: pi_link::subagents::SubagentSettings::default(),
             sa_runs: Vec::new(),
             sa_run_seq: 0,
-            title_tx: None,
-            titling: false,
             sidebar_sessions_frac: 0.5,
             panel_tabs: Vec::new(),
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),
             caret_on: true,
             input_focused: false,
-            thinking_override: None,
             pill_menu: None,
             sound_on: load_sound_pref(),
-            stream_started: None,
             ime_marked: None,
-            sys_prompt: None,
-            session_tools: None,
             top_panel: None,
             settings: None,
             renaming: None,
@@ -424,9 +364,8 @@ impl Chat {
             search_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
             sessions_list_count: 0,
-            phase_waiting: false,
+            op_seq: std::cell::Cell::new(0),
             confirm_delete: None,
-            agent_running: false,
         };
         // wire input callbacks that need the root entity handle
         let weak_self = cx.entity().downgrade();
@@ -446,14 +385,7 @@ impl Chat {
         });
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
-        chat.refresh_state(cx);
 
-        if let Some(events) = events {
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events, 1).await;
-            })
-            .detach();
-        }
         // caret blink pump (2 Hz toggle; repaint only while the editor is
         // focused — input_focused is refreshed every render)
         cx.spawn(async move |this, cx| {
@@ -475,21 +407,6 @@ impl Chat {
             }
         })
         .detach();
-        // LLM title pump: one-off `pi --print` result -> set_session_name
-        let (title_tx, mut title_rx) =
-            futures::channel::mpsc::unbounded::<Result<String, String>>();
-        chat.title_tx = Some(title_tx);
-        cx.spawn(async move |this, cx| {
-            while let Some(result) = title_rx.next().await {
-                if this
-                    .update(cx, |chat, cx| chat.on_title_result(result, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
         // settings panel CLI op pump (pi install/remove runs in background)
         let (op_tx, mut op_rx) = futures::channel::mpsc::unbounded::<String>();
         chat.op_tx = Some(op_tx);
@@ -497,7 +414,7 @@ impl Chat {
             while let Some(msg) = op_rx.next().await {
                 if this
                     .update(cx, |chat, cx| {
-                        chat.status = msg;
+                        chat.set_status(msg, cx);
                         chat.reload_settings_panel();
                         cx.notify();
                     })
@@ -533,26 +450,49 @@ impl Chat {
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
         chat.reload_settings_panel();
-        if let Some(path) = last_open.clone() {
-            // single-spawn startup: pi already resumed from the file — fill
-            // UI state + disk-direct render, no second process, no waiting
-            // for the RPC snapshot to show the last conversation
-            chat.active_session_file = Some(path.clone());
-            chat.status = status_line(chat.agent.read(cx).session.is_some(), "resuming");
-            if let Some(session) = &chat.agent.read(cx).session {
-                let _ = session.send(&Command::GetMessages);
-                let _ = session.send(&Command::GetTree);
+        // initial runtime: restore the last session (disk-direct tail) or a
+        // lazy draft. The process spawns AFTER first paint — the conversation
+        // is already on screen by then (startup §4).
+        let rt_key = last_open
+            .as_deref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "draft-0".to_string());
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(
+                rt_key.clone(),
+                cwd.clone(),
+                last_open.clone(),
+            );
+            if let Some(path) = &last_open {
+                r.messages = msgs_from_tail(read_tail_messages(path, 256 * 1024, 100));
+                r.list.reset(r.messages.len());
+                r.status = "resuming".into();
             }
-            for msg in read_tail_messages(&path, 256 * 1024, 100) {
-                let m = &msg["message"];
-                let role = m["role"].as_str().unwrap_or("");
-                let blocks = content_blocks(&m["content"]);
-                let usage = Usage::parse(&m["usage"]);
-                chat.ingest_message(role, blocks, usage, None, None, cx);
-            }
-            chat.notify_list(cx);
-            chat.refresh_state(cx);
-        }
+            r
+        });
+        chat.draft_seq = if last_open.is_some() { 1 } else { 0 };
+        chat.runtimes.insert(rt_key.clone(), rt.clone());
+        chat.active_key = rt_key.clone();
+        chat.subscribe_runtime(&rt, cx);
+        // background process attach (no process kill involved; spawn is a
+        // one-time ~100ms process creation off the first frame)
+        let rt_for_spawn = rt.clone();
+        cx.spawn(async move |_this, cx| {
+            let _ = rt_for_spawn.update(cx, |r, cx| {
+                if r.agent.session.is_none() {
+                    if let Some(rx) = r.spawn() {
+                        let epoch = r.agent.epoch;
+                        session::runtime::SessionRuntime::attach_pump(&rt_for_spawn, rx, epoch, cx);
+                    }
+                }
+                if let Some(s) = &r.agent.session {
+                    let _ = s.send(&Command::GetMessages);
+                    let _ = s.send(&Command::GetTree);
+                }
+                r.refresh_state();
+            });
+        })
+        .detach();
         // git panel: Enter in the commit box commits staged changes
         let entity_for_git = cx.entity();
         chat.git_commit_input.update(cx, |ti, _| {
@@ -618,13 +558,8 @@ impl Chat {
         });
     }
 
-    fn refresh_state(&self, cx: &gpui::App) {
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::GetState);
-            let _ = session.send(&Command::GetSessionStats);
-            let _ = session.send(&Command::GetCommands);
-            let _ = session.send(&Command::GetAvailableModels);
-        }
+    fn refresh_state(&self, cx: &mut gpui::App) {
+        self.rt().update(cx, |r, _| r.refresh_state());
     }
 
 
@@ -679,7 +614,7 @@ impl Chat {
                 cx.notify();
             }
             Err(e) => {
-                self.status = format!("terminal spawn failed: {e}");
+                self.set_status(format!("terminal spawn failed: {e}"), cx);
                 cx.notify();
             }
         }
@@ -868,11 +803,6 @@ impl Chat {
         set_last_workspace(&self.cwd.to_string_lossy());
         self.branch = read_branch(&self.cwd);
         self.refresh_sessions();
-        self.messages.clear();
-        self.state = None;
-        self.stats = None;
-        self.active_session_file = None;
-        self.collapsed.clear();
         self.dialog = None;
         self.expanded_dirs.clear();
         self.refresh_git();
@@ -886,6 +816,198 @@ impl Chat {
             }
         }
         self.new_session(cx);
+        cx.notify();
+    }
+
+
+
+    /// Flush editor mirrors into the active session, then run an action on it.
+    fn with_active_editor<Act: FnOnce(&mut SessionRuntime, &mut Context<SessionRuntime>)>(
+        &mut self,
+        cx: &mut Context<Self>,
+        act: Act,
+    ) {
+        let rt = self.rt();
+        let (input, images, history) = (
+            self.input.clone(),
+            self.pending_images.clone(),
+            self.history.clone(),
+        );
+        rt.update(cx, |r, cx| {
+            r.input = input;
+            r.pending_images = images;
+            r.history = history;
+            act(r, cx);
+        });
+        // pull post-action state back (history push, input clear)
+        let (input, images, history) = {
+            let r = rt.read(cx);
+            (r.input.clone(), r.pending_images.clone(), r.history.clone())
+        };
+        self.input = input;
+        self.pending_images = images;
+        self.history = history;
+        self.history_ix = None;
+        cx.notify();
+    }
+
+    fn send_input(&mut self, cx: &mut Context<Self>) {
+        self.with_active_editor(cx, |r, cx| r.send_input(cx));
+    }
+
+    fn steer_input(&mut self, cx: &mut Context<Self>) {
+        self.with_active_editor(cx, |r, cx| r.steer_input(cx));
+    }
+
+    fn follow_up_input(&mut self, cx: &mut Context<Self>) {
+        self.with_active_editor(cx, |r, cx| r.follow_up_input(cx));
+    }
+
+    fn abort_stream(&mut self, cx: &mut Context<Self>) {
+        self.rt().update(cx, |r, cx| r.abort_stream(cx));
+        cx.notify();
+    }
+
+
+    /// Active-session thinking level (pill menu).
+    fn set_thinking_level(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.rt().update(cx, |r, cx| r.set_thinking_level(key, cx));
+    }
+
+    /// Active-session tool preset: recorded per session and applied by a
+    /// --session respawn (RPC has no live tool switching; pi-web uses the
+    /// in-process SDK for this — recorded deviation).
+    fn mc_set_tools_preset(&mut self, key: &str, cx: &mut Context<Self>) {
+        let rt = self.rt();
+        rt.update(cx, |r, cx| {
+            r.tools_preset = key.to_string();
+            if let Some(rx) = r.spawn() {
+                let epoch = r.agent.epoch;
+                session::runtime::SessionRuntime::attach_pump(&rt, rx, epoch, cx);
+            }
+            if let Some(s) = &r.agent.session {
+                let _ = s.send(&Command::GetMessages);
+                let _ = s.send(&Command::GetTree);
+            }
+            r.refresh_state();
+            r.status = crate::i18n::tf("工具预设: {k} (会话进程已重绑)", &[("k", key.to_string())]);
+            cx.emit(session::runtime::SessionEvent::Changed);
+        });
+        cx.notify();
+    }
+
+    /// The active session runtime (attention pointer target).
+    fn rt(&self) -> gpui::Entity<session::runtime::SessionRuntime> {
+        self.runtimes
+            .get(&self.active_key)
+            .expect("active runtime exists")
+            .clone()
+    }
+
+    /// Route a shell-level status line to the active session's bar.
+    fn set_status(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.rt().update(cx, |r, _| r.status = msg);
+    }
+
+    /// Wire a runtime's shell-effect events (sidebar/sound/git/ext dialog).
+    fn subscribe_runtime(
+        &mut self,
+        rt: &gpui::Entity<session::runtime::SessionRuntime>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe(rt, |chat, rt, ev: &session::runtime::SessionEvent, cx| {
+            use session::runtime::SessionEvent;
+            let is_active = rt.read(cx).key == chat.active_key;
+            match ev {
+                SessionEvent::Changed => {
+                    if is_active {
+                        chat.available_models = rt.read(cx).available_models.clone();
+                    }
+                    cx.notify();
+                }
+                SessionEvent::RunningChanged => cx.notify(),
+                SessionEvent::ListDirty => {
+                    chat.refresh_sessions();
+                    cx.notify();
+                }
+                SessionEvent::FileBound(p) => {
+                    if is_active {
+                        set_last_open(&chat.cwd.to_string_lossy(), &p.to_string_lossy());
+                    }
+                    chat.refresh_sessions();
+                    cx.notify();
+                }
+                SessionEvent::AgentFinished => {
+                    if is_active && chat.sound_on {
+                        play_notify_sound();
+                    }
+                    if is_active {
+                        chat.refresh_git();
+                    }
+                    chat.refresh_sessions();
+                    cx.notify();
+                }
+                SessionEvent::ExtUi(req) => {
+                    if is_active {
+                        let req = req.clone();
+                        chat.on_ext_ui(req, cx);
+                    }
+                }
+                SessionEvent::RenameReady(prefill) => {
+                    if is_active {
+                        if let Some(f) = rt.read(cx).file.clone() {
+                            chat.start_rename(f, prefill.clone(), cx);
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Attention switch: flush the editor mirrors into the outgoing
+    /// session, load the incoming one's inputPanel state. Zero process
+    /// operations, zero IO — this is the pi-web "switch" and it is instant.
+    fn switch_to(
+        &mut self,
+        rt: gpui::Entity<session::runtime::SessionRuntime>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old) = self.runtimes.get(&self.active_key).cloned() {
+            if old != rt {
+                let (input, images, history) = (
+                    std::mem::take(&mut self.input),
+                    std::mem::take(&mut self.pending_images),
+                    std::mem::take(&mut self.history),
+                );
+                old.update(cx, |r, _| {
+                    r.input = input;
+                    r.pending_images = images;
+                    r.history = history;
+                });
+            }
+        }
+        let (input, images, history, key, file) =
+            rt.update(cx, |r, _| {
+                (
+                    r.input.clone(),
+                    r.pending_images.clone(),
+                    r.history.clone(),
+                    r.key.clone(),
+                    r.file.clone(),
+                )
+            });
+        self.input = input;
+        self.pending_images = images;
+        self.history = history;
+        self.history_ix = None;
+        self.active_key = key;
+        if let Some(f) = file {
+            set_last_open(&self.cwd.to_string_lossy(), &f.to_string_lossy());
+        }
+        self.pill_menu = None;
+        self.top_panel = None;
+        self.menu_ix = 0;
         cx.notify();
     }
 
@@ -907,261 +1029,34 @@ impl Chat {
 
     /// Open the branch navigator: request a fresh tree, show the panel.
     fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
-        self.branch_tree = None;
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::GetTree);
-        }
+        self.rt().update(cx, |r, _| {
+            r.branch_tree = None;
+            if let Some(session) = &r.agent.session {
+                let _ = session.send(&Command::GetTree);
+            }
+        });
         self.dialog = Some(Dialog::BranchTree);
         cx.notify();
     }
 
-    /// Fork a new session branching before the given user-message entry.
-    /// pi rebinds this process to the branched session; the "fork" response
-    /// handler reloads state/messages/tree.
-    fn fork_from_entry(&mut self, entry_id: String, cx: &mut Context<Self>) {
-        if self
-            .state
-            .as_ref()
-            .is_some_and(|s| s.is_streaming)
-        {
-            self.status = "cannot fork while running".into();
-            cx.notify();
-            return;
-        }
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::Fork { entry_id });
-            self.dialog = None;
-        }
-        cx.notify();
-    }
 
     fn load_project_files(&mut self) {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
 
-    fn model_label_text(&self) -> String {
-        self.state
-            .as_ref()
-            .and_then(|s| s.model_label())
-            .unwrap_or_else(|| "pi".to_string())
-    }
 
     /// pi-web ChatWindow: pulsing phase label renders while the agent is
     /// running but no assistant content has arrived yet
-    fn phase_row_visible(&self) -> bool {
-        self.phase_waiting
-            && !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant)
-    }
 
-    fn notify_list(&mut self, cx: &mut Context<Self>) {
-        self.list
-            .reset(self.messages.len() + usize::from(self.phase_row_visible()));
-        cx.notify();
-    }
 
-    fn last_assistant(&mut self) -> &mut Msg {
-        if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
-            self.messages
-                .push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None, entry_id: None });
-        }
-        self.messages.last_mut().expect("just pushed")
-    }
 
-    fn assistant_slot(&mut self, content_index: usize, fresh: Block) -> &mut Block {
-        let msg = self.last_assistant();
-        while msg.blocks.len() <= content_index {
-            let pad = msg.blocks.len();
-            msg.blocks.push(Block::Text { content_index: pad, text: String::new() });
-        }
-        let same_kind = match (&msg.blocks[content_index], &fresh) {
-            (Block::Text { .. }, Block::Text { .. })
-            | (Block::Thinking { .. }, Block::Thinking { .. })
-            | (Block::ToolCall { .. }, Block::ToolCall { .. }) => true,
-            _ => false,
-        };
-        if !same_kind {
-            msg.blocks[content_index] = fresh;
-        }
-        &mut msg.blocks[content_index]
-    }
 
-    fn ingest_message(
-        &mut self,
-        role: &str,
-        blocks: Vec<Block>,
-        usage: Option<Usage>,
-        time: Option<String>,
-        entry_id: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        match role {
-            "user" => {
-                self.messages.push(Msg { role: Role::User, blocks, usage: None, entry_id });
-            }
-            "assistant" => {
-                self.messages.push(Msg {
-                    role: Role::Assistant,
-                    blocks,
-                    usage: usage.map(|u| UsageLine {
-                        input: u.input,
-                        output: u.output,
-                        cache_read: u.cache_read,
-                        cost: u.cost,
-                        time: time.clone().unwrap_or_default(),
-                    }),
-                    entry_id: None,
-                });
-            }
-            "toolResult" => {
-                let text: String = blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Text { text, .. } => text.as_str(),
-                        _ => "",
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim_end()
-                    .to_string();
-                if let Some(m) = self.messages.last_mut() {
-                    if m.role == Role::Assistant {
-                        if let Some(Block::ToolCall { result, .. }) = m
-                            .blocks
-                            .iter_mut()
-                            .rev()
-                            .find(|b| matches!(b, Block::ToolCall { .. }))
-                        {
-                            result.push_str(&text);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        self.notify_list(cx);
-    }
 
-    /// 引导：中断当前运行并立即注入此消息（rpc steer）。
-    fn steer_input(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let images: Vec<serde_json::Value> = self
-            .pending_images
-            .iter()
-            .map(|img| {
-                serde_json::json!({
-                    "type": "image", "data": img.data_b64, "mimeType": img.mime
-                })
-            })
-            .collect();
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::Steer { message: text, images });
-        }
-        self.input.clear();
-        self.pending_images.clear();
-        cx.notify();
-    }
 
-    /// 后续消息：Agent 完成后排队此消息（rpc follow_up）。
-    fn follow_up_input(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::FollowUp { message: text });
-        }
-        self.input.clear();
-        self.pending_images.clear();
-        cx.notify();
-    }
 
-    /// 停止（rpc abort）。
-    fn abort_stream(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::Abort);
-        }
-        self.stream_started = None;
-        cx.notify();
-    }
 
-    fn send_input(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let Some(session) = &self.agent.read(cx).session else {
-            self.status = tr("未连接").into();
-            cx.notify();
-            return;
-        };
-        let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
-        let images: Vec<serde_json::Value> = self
-            .pending_images
-            .iter()
-            .map(|img| {
-                serde_json::json!({
-                    "type": "image",
-                    "data": img.data_b64,
-                    "mimeType": img.mime
-                })
-            })
-            .collect();
-        let cmd = if streaming {
-            Command::Steer { message: text.clone(), images: images.clone() }
-        } else {
-            Command::Prompt { message: text.clone(), images }
-        };
-        match session.send(&cmd) {
-            Ok(_) => {
-                if self.history.last().map(|h| h != &text).unwrap_or(true) {
-                    self.history.push(text.clone());
-                }
-                self.history_ix = None;
-                self.input.clear();
-                self.pending_images.clear();
-                self.status = if streaming { "steering" } else { "running" }.into();
-                if !streaming {
-                    // pi-web optimistic append: the sent bubble shows up
-                    // immediately, RPC echo later upgrades it in place
-                    self.messages.push(Msg {
-                        role: Role::User,
-                        blocks: vec![Block::Text { content_index: 0, text }],
-                        usage: None,
-                        entry_id: None,
-                    });
-                    self.phase_waiting = true;
-                    self.notify_list(cx);
-                }
-            }
-            Err(e) => self.status = e,
-        }
-        cx.notify();
-    }
 
-    fn send_follow_up(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::FollowUp { message: text });
-            self.input.clear();
-            self.pending_images.clear();
-            self.status = "queued".into();
-        }
-        cx.notify();
-    }
 
-    fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::Abort);
-            self.status = "aborting".into();
-            cx.notify();
-        }
-    }
 
     /// Begin an inline rename (pi-web SessionSidebar: the row becomes an
     /// input with the current title selected; typing replaces it).
@@ -1219,7 +1114,7 @@ impl Chat {
     /// Rename commit path that never reads the input entity (called from
     /// the input's own submit callback where the entity is borrowed).
     fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.read(cx).session {
+        if let Some(session) = &self.rt().read(cx).agent.session {
             let _ = session.send(&Command::SetSessionName { name });
         }
         // sidebar label comes from the session file's `session_info` entry;
@@ -1231,175 +1126,34 @@ impl Chat {
         cx.notify();
     }
 
-    fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::SetModel { provider, model: id });
-        }
-        self.dialog = None;
-        self.refresh_state(cx);
-        cx.notify();
-    }
 
-    /// Thinking level from the pill menu. "auto" clears the local override
-    /// (pi default governs, pi-web parity — no RPC); other levels are sent.
-    fn set_thinking_level(&mut self, level: &str, cx: &mut Context<Self>) {
-        if level == "auto" {
-            self.thinking_override = None;
-            cx.notify();
-            return;
-        }
-        self.thinking_override = Some(level.to_string());
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::SetThinkingLevel { level: level.to_string() });
-        }
-        cx.notify();
-    }
 
-    /// Current tools preset key from settings.json defaultTools
-    /// (pi-web tool-presets.ts resolution; "" = custom list).
-    fn tool_preset_key(&self) -> &'static str {
-        match &self.mc_default_tools {
-            None => "configured",
-            Some(list) if list.is_empty() => "chat-only",
-            Some(list) if list == &vec!["read".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "read-only",
-            Some(list) if list == &vec!["read".to_string(), "bash".to_string(), "edit".to_string(), "write".to_string()] => "default",
-            Some(list) if list == &vec!["bash".to_string(), "read".to_string(), "edit".to_string(), "write".to_string(), "grep".to_string(), "find".to_string(), "ls".to_string()] => "full",
-            _ => "",
-        }
-    }
 
-    fn tool_preset_label(&self) -> &'static str {
-        match self.tool_preset_key() {
-            "" => "configured",
-            other => other,
-        }
-    }
 
-    /// Editor toolbar 压缩: rpc compact (summarize the context).
-    fn compact_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::Compact);
-            self.status = tr("压缩中…").to_string();
-            cx.notify();
-        }
-    }
 
-    /// LLM session title (pi-web lib/session-title.ts parity via a one-off
-    /// `pi --no-session --print` run; the in-process SDK call pi-web uses is
-    /// not reachable over RPC).
-    fn auto_title(&mut self, cx: &mut Context<Self>) {
-        if self.titling {
-            return;
-        }
-        let transcript = build_title_transcript(
-            &self
-                .messages
-                .iter()
-                .map(|m| TitleTurn { user: m.role == Role::User, text: m.plain_text() })
-                .collect::<Vec<_>>(),
-        );
-        if transcript.is_empty() {
-            self.status = tr("nothing to title yet").to_string();
-            cx.notify();
-            return;
-        }
-        let Some(tx) = self.title_tx.clone() else { return };
-        self.titling = true;
-        self.status = tr("生成标题…").to_string();
-        cx.notify();
 
-        // cheap one-shot: no tools, thinking off, current session's model
-        let mut args: Vec<String> = vec![
-            "--no-session".into(),
-            "--print".into(),
-            "--no-tools".into(),
-            "--thinking".into(),
-            "off".into(),
-        ];
-        if let Some(model) = self.state.as_ref().and_then(|s| s.model.clone()) {
-            args.push("--provider".into());
-            args.push(model.provider.clone());
-            args.push("--model".into());
-            args.push(model.id.clone());
-        }
-        args.push("--system-prompt".into());
-        let (title_sys_prompt, title_prompt) = crate::services::title::title_prompts();
-        args.push(title_sys_prompt.into());
-        args.push("--".into());
-        args.push(format!("{transcript}\n\n{title_prompt}"));
 
-        let cwd = self.cwd.clone();
-        std::thread::spawn(move || {
-            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let result = pi_link::vendor::run_cli_stdout(&cwd, &arg_refs)
-                .map(|out| sanitize_title(&out))
-                .and_then(|t| if t.is_empty() { Err("empty title".into()) } else { Ok(t) });
-            let _ = tx.unbounded_send(result);
-        });
-        cx.notify();
-    }
-
-    fn on_title_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
-        self.titling = false;
-        match result {
-            Ok(title) => {
-                if let Some(session) = &self.agent.read(cx).session {
-                    let _ = session.send(&Command::SetSessionName { name: title.clone() });
-                }
-                self.status = tr("已生成标题: {title}").replace("{title}", &title);
-                self.refresh_state(cx);
-            }
-            Err(e) => {
-                self.status = tr("标题生成失败: {e}").replace("{e}", &e);
-            }
-        }
-        cx.notify();
-    }
-
-    /// Request an export (the exported HTML embeds the live session's
-    /// systemPrompt + tool definitions, which the RPC surface does not
-    /// expose directly). The Response handler parses + caches them.
-    fn request_system_info(&mut self, cx: &mut Context<Self>) {
-        if self.session_tools.is_some() && self.sys_prompt.is_some() {
-            return;
-        }
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::ExportHtml);
-        }
-        cx.notify();
-    }
 
     fn export_html(&mut self, cx: &mut Context<Self>) {
-        self.request_system_info(cx);
+        self.rt().update(cx, |r, cx| r.request_system_info(cx));
     }
 
     fn new_session(&mut self, cx: &mut Context<Self>) {
-        let events = self
-            .agent
-            .update(cx, |a, _cx| a.spawn(&self.cwd, None));
-        self.messages.clear();
-        self.state = None;
-        self.stats = None;
-        self.active_session_file = None;
-        self.collapsed.clear();
-        self.phase_waiting = false;
-        self.agent_running = false;
+        // lazy draft (pi-web parity): the pi process spawns on the first
+        // prompt, not now; running sessions are untouched
+        let key = format!("draft-{}", self.draft_seq);
+        self.draft_seq += 1;
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(key.clone(), self.cwd.clone(), None);
+            r.status = tr("新会话").to_string();
+            r
+        });
+        self.runtimes.insert(key, rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        clear_last_open(&self.cwd.to_string_lossy());
         self.renaming = None;
         self.rename_input = None;
-        clear_last_open(&self.cwd.to_string_lossy());
-        self.status = status_line(self.agent.read(cx).session.is_some(), tr("新会话"));
-        self.refresh_state(cx);
-        self.refresh_git();
-        self.load_project_files();
-        if let Some(events) = events {
-            let epoch = self.agent.read(cx).epoch;
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events, epoch).await;
-            })
-            .detach();
-        }
-        self.list.reset(0);
-        cx.notify();
+        self.switch_to(rt, cx);
     }
 
     fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
@@ -1409,32 +1163,26 @@ impl Chat {
             .find(|s| s.path == path)
             .map(|s| PathBuf::from(s.cwd.clone()))
             .unwrap_or_else(|| self.cwd.clone());
-        let events = self.agent.update(cx, |a, _cx| a.spawn(&cwd, Some(&path)));
-        self.cwd = cwd;
-        set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
-        self.expanded_dirs.clear();
-        self.branch = read_branch(&self.cwd);
-        self.messages.clear();
-        self.state = None;
-        self.stats = None;
-        self.active_session_file = None;
-        self.collapsed.clear();
-        self.pending_rename = rename;
-        self.phase_waiting = false;
-        self.agent_running = false;
-        self.confirm_delete = None;
-        self.renaming = None;
-        self.rename_input = None;
-        self.status = status_line(self.agent.read(cx).session.is_some(), "resuming");
-        // disk-direct: render the tail from the session file before the RPC
-        // snapshot lands; the authoritative get_messages response then
-        // replaces it (full history)
+        let key = path.to_string_lossy().to_string();
+        // pool hit: switch attention — instant, all messages in place
+        if let Some(rt) = self.runtimes.get(&key).cloned() {
+            self.cwd = cwd;
+            self.branch = read_branch(&self.cwd);
+            self.renaming = None;
+            self.rename_input = None;
+            self.confirm_delete = None;
+            if rename {
+                rt.update(cx, |r, _| r.pending_rename = true);
+            }
+            self.switch_to(rt, cx);
+            return;
+        }
+        // new runtime: tail render first (cache or disk), process spawns in
+        // the background — the conversation is on screen before node exists
         let tail = match self.session_tail_cache.get(&path).cloned() {
             Some(msgs) => msgs,
             None => {
                 let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                // bounded backfill: a full cache triggers a rebuild on the
-                // next preload; staleness is harmless (snapshot reconciles)
                 if self.session_tail_cache.len() >= preload_sessions() * 2 {
                     self.session_tail_cache.clear();
                 }
@@ -1442,24 +1190,45 @@ impl Chat {
                 msgs
             }
         };
-        self.messages.extend(tail);
-        self.notify_list(cx);
-        if let Some(session) = &self.agent.read(cx).session {
-            let _ = session.send(&Command::GetMessages);
-            // branch tree snapshot for the fork panel
-            let _ = session.send(&Command::GetTree);
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
+            r.messages = tail;
+            r.list.reset(r.messages.len());
+            r.status = "resuming".into();
+            r.pending_rename = rename;
+            r
+        });
+        self.runtimes.insert(rt.read(cx).key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        if !same_ws(&cwd.to_string_lossy(), &self.cwd.to_string_lossy()) {
+            self.cwd = cwd;
+            self.branch = read_branch(&self.cwd);
+            self.expanded_dirs.clear();
+            self.refresh_sessions();
+            self.load_project_files();
         }
-        self.refresh_state(cx);
-        self.load_project_files();
-        if let Some(events) = events {
-            let epoch = self.agent.read(cx).epoch;
-            cx.spawn(async move |this, cx| {
-                consume_events(this, cx, events, epoch).await;
-            })
-            .detach();
-        }
-        self.list.reset(0);
-        cx.notify();
+        set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
+        self.renaming = None;
+        self.rename_input = None;
+        self.confirm_delete = None;
+        self.switch_to(rt.clone(), cx);
+        let rt_spawn = rt;
+        cx.spawn(async move |_this, cx| {
+            let _ = rt_spawn.update(cx, |r, cx| {
+                if r.agent.session.is_none() {
+                    if let Some(rx) = r.spawn() {
+                        let epoch = r.agent.epoch;
+                        session::runtime::SessionRuntime::attach_pump(&rt_spawn, rx, epoch, cx);
+                    }
+                }
+                if let Some(s) = &r.agent.session {
+                    let _ = s.send(&Command::GetMessages);
+                    let _ = s.send(&Command::GetTree);
+                }
+                r.refresh_state();
+            });
+        })
+        .detach();
     }
 
     /// pi-web DELETE /api/sessions/{id}: unlink the session file; a live
@@ -1467,23 +1236,31 @@ impl Chat {
     /// to a fresh draft with the same cwd.
     fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.confirm_delete = None;
-        let was_active = self.active_session_file.as_deref() == Some(path.as_path());
+        let key = path.to_string_lossy().to_string();
+        let was_active = self.runtimes.get(&self.active_key)
+            .map(|rt| rt.read(cx).file.as_deref() == Some(path.as_path()))
+            .unwrap_or(false);
+        // tear down the runtime (abort + process kill; dropping the entity
+        // clears the file handle on Windows before unlink)
+        if let Some(rt) = self.runtimes.remove(&key) {
+            rt.update(cx, |r, _| {
+                if let Some(s) = &r.agent.session {
+                    let _ = s.send(&Command::Abort);
+                }
+                r.shutdown_process();
+            });
+        }
         if was_active {
-            if let Some(session) = &self.agent.read(cx).session {
-                let _ = session.send(&Command::Abort);
-            }
-            // respawn without a session file = pi-web new-draft-with-same-cwd
-            // (drops the old pi process, clearing the file handle on Windows)
             self.new_session(cx);
         }
         match std::fs::remove_file(&path) {
             Ok(_) => {
                 self.sessions.retain(|s| s.path != path);
                 self.sessions_list.reset(self.sessions.len());
-                self.status = status_line(self.agent.read(cx).session.is_some(), "session deleted");
+                self.set_status("session deleted".into(), cx);
             }
             Err(e) => {
-                self.status = crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())])
+                self.set_status(crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())]), cx);
             }
         }
         self.refresh_sessions();
@@ -1612,11 +1389,13 @@ impl Chat {
         None
     }
 
-    fn menu_items(&self) -> Vec<MenuItem> {
+    fn menu_items(&self, cx: &gpui::App) -> Vec<MenuItem> {
         match self.active_menu() {
             Some(MenuKind::Slash) => {
                 let q = self.input[1..].to_lowercase();
-                self.commands
+                self.rt()
+                    .read(cx)
+                    .commands
                     .iter()
                     .filter(|c| q.is_empty() || c.name.to_lowercase().starts_with(&q))
                     .take(8)
@@ -1659,394 +1438,6 @@ impl Chat {
         cx.notify();
     }
 
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        match event {
-            Event::Response { command, success, error, data, .. } => {
-                if command == "get_state" && success {
-                    if let Some(data) = &data {
-                        self.state = Some(SessionState::parse(data));
-                    }
-                    if self.pending_rename {
-                        self.pending_rename = false;
-                        let prefill = self
-                            .state
-                            .as_ref()
-                            .and_then(|s| s.session_name.clone())
-                            .or_else(|| {
-                                self.messages
-                                    .iter()
-                                    .find(|m| matches!(m.role, Role::User))
-                                    .map(|m| m.plain_text())
-                            })
-                            .map(|v| v.chars().take(50).collect::<String>())
-                            .unwrap_or_default();
-                        if let Some(path) = self.active_session_file.clone() {
-                            self.start_rename(path, prefill, cx);
-                        }
-                    }
-                } else if command == "get_session_stats" && success {
-                    if let Some(data) = &data {
-                        self.stats = Some(SessionStats::parse(data));
-                        self.active_session_file =
-                            data["sessionFile"].as_str().map(PathBuf::from);
-                    }
-                } else if command == "set_session_name" && success {
-                    // pi flushed the name to the session file — reload the
-                    // sidebar labels (pi-web onRenamed → loadSessions), with
-                    // one delayed pass to cover flush lag
-                    self.refresh_sessions();
-                    cx.notify();
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_millis(500))
-                            .await;
-                        let _ = this.update(cx, |c, cx| {
-                            c.refresh_sessions();
-                            cx.notify();
-                        });
-                    })
-                    .detach();
-                } else if command == "get_commands" && success {
-                    if let Some(data) = &data {
-                        self.commands = SlashCommand::parse_list(data);
-                    }
-                } else if command == "export_html" && success {
-                    if let Some(path) = data
-                        .as_ref()
-                        .and_then(|d| d["path"].as_str())
-                        .map(PathBuf::from)
-                    {
-                        if let Ok(html) = std::fs::read_to_string(&path) {
-                            let (prompt, tools) = parse_export_html(&html);
-                            if self.sys_prompt.is_none() {
-                                self.sys_prompt = prompt;
-                            }
-                            if self.session_tools.is_none() && !tools.is_empty() {
-                                self.session_tools = Some(tools);
-                            }
-                        }
-                        let _ = std::fs::remove_file(&path);
-                        cx.notify();
-                    }
-                } else if command == "get_available_models" && success {
-                    if let Some(data) = &data {
-                        self.available_models =
-                            pi_link::protocol::parse_model_list(data);
-                    }
-                } else if command == "get_tree" && success {
-                    if let Some(data) = &data {
-                        let (tree, leaf) = parse_tree(data);
-                        self.active_user_entry_ids =
-                            collect_path_user_ids(&tree, leaf.as_deref());
-                        let mut ids = self.active_user_entry_ids.iter();
-                        for m in self.messages.iter_mut() {
-                            if m.role == Role::User {
-                                m.entry_id = ids.next().cloned();
-                            }
-                        }
-                        self.branch_tree = Some((tree, leaf));
-                    }
-                } else if command == "fork" {
-                    if success {
-                        // pi rebound this process to the branched session.
-                        self.branch_tree = None;
-                        self.messages.clear();
-                        self.notify_list(cx);
-                        if let Some(s) = self.agent.read(cx).session.as_ref() {
-                            let _ = s.send(&Command::GetState);
-                            let _ = s.send(&Command::GetMessages);
-                            let _ = s.send(&Command::GetTree);
-                        }
-                        // branch_tree was refreshed by the GetTree request below;
-                        // message entry ids re-map there as well.
-                        self.refresh_sessions();
-                        self.status = "forked".into();
-                    } else {
-                        self.status = format!(
-                            "fork failed: {}",
-                            error.unwrap_or_default()
-                        );
-                    }
-                } else if command == "export_html" && success {
-                    self.status = format!(
-                        "exported: {}",
-                        data.and_then(|d| d["path"].as_str().map(str::to_string))
-                            .unwrap_or_default()
-                    );
-                } else if command == "get_messages" && success {
-                    if let Some(data) = &data {
-                        // authoritative projection: replace any disk-direct /
-                        // cached pre-render instead of appending (fixes
-                        // doubled rows after the tail pre-render)
-                        self.messages.clear();
-                        for msg in data["messages"].as_array().into_iter().flatten() {
-                            let role = msg["role"].as_str().unwrap_or("");
-                            let blocks = content_blocks(&msg["content"]);
-                            let usage = Usage::parse(&msg["usage"]);
-                            self.ingest_message(role, blocks, usage, None, None, cx);
-                        }
-                        // map user messages to active-path entry ids (fork anchors)
-                        let mut ids = self.active_user_entry_ids.iter();
-                        for m in self.messages.iter_mut() {
-                            if m.role == Role::User {
-                                m.entry_id = ids.next().cloned();
-                            }
-                        }
-                        self.notify_list(cx);
-                    }
-                    self.status = status_line(true, "resumed");
-                } else if success {
-                    self.status = format!("{command} ok");
-                } else {
-                    self.status =
-                        format!("{command} failed: {}", error.unwrap_or_default());
-                }
-            }
-            Event::MessageStart { role, blocks, timestamp } => {
-                match role.as_str() {
-                    "user" => {
-                        // upgrade the optimistic send bubble in place instead
-                        // of pushing a duplicate echo (pi-web
-                        // optimisticUserMessageKey parity); image blocks and
-                        // entry ids ride in with the echo
-                        let echo_text = blocks
-                            .iter()
-                            .map(|b| match b {
-                                Block::Text { text, .. } => text.as_str(),
-                                _ => "",
-                            })
-                            .collect::<Vec<_>>()
-                            .join("");
-                        let optimistic = self.phase_waiting
-                            && matches!(self.messages.last(), Some(m)
-                                if m.role == Role::User && m.plain_text() == echo_text);
-                        if optimistic {
-                            if let Some(m) = self.messages.last_mut() {
-                                m.blocks = blocks;
-                            }
-                            self.phase_waiting = false;
-                        } else {
-                            self.messages
-                                .push(Msg { role: Role::User, blocks, usage: None, entry_id: None });
-                        }
-                    }
-                    "assistant" => {
-                        self.phase_waiting = false;
-                        self.messages.push(Msg {
-                            role: Role::Assistant,
-                            blocks,
-                            usage: None,
-                            entry_id: None,
-                        });
-                    }
-                    "toolResult" => {
-                        let text: String = blocks
-                            .iter()
-                            .map(|b| match b {
-                                Block::Text { text, .. } => text.as_str(),
-                                _ => "",
-                            })
-                            .collect::<Vec<_>>()
-                            .join("")
-                            .trim_end()
-                            .to_string();
-                        if let Some(m) = self.messages.last_mut() {
-                            if m.role == Role::Assistant {
-                                if let Some(Block::ToolCall { result, .. }) = m
-                                    .blocks
-                                    .iter_mut()
-                                    .rev()
-                                    .find(|b| matches!(b, Block::ToolCall { .. }))
-                                {
-                                    result.push_str(&text);
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                let _ = timestamp;
-            }
-            Event::MessageUpdate(assistant_event) => {
-                self.phase_waiting = false;
-                match assistant_event {
-                AssistantEvent::TextDelta { content_index, delta } => {
-                    if let Block::Text { text, .. } = self.assistant_slot(
-                        content_index,
-                        Block::Text { content_index, text: String::new() },
-                    ) {
-                        text.push_str(&delta);
-                    }
-                }
-                AssistantEvent::TextEnd { content_index, content } => {
-                    if let Block::Text { text, .. } = self.assistant_slot(
-                        content_index,
-                        Block::Text { content_index, text: String::new() },
-                    ) {
-                        *text = content;
-                    }
-                }
-                AssistantEvent::ThinkingStart { content_index } => {
-                    self.assistant_slot(
-                        content_index,
-                        Block::Thinking { content_index, text: String::new() },
-                    );
-                }
-                AssistantEvent::ThinkingDelta { content_index, delta } => {
-                    if let Block::Thinking { text, .. } = self.assistant_slot(
-                        content_index,
-                        Block::Thinking { content_index, text: String::new() },
-                    ) {
-                        text.push_str(&delta);
-                    }
-                }
-                AssistantEvent::ThinkingEnd { content_index, content } => {
-                    if let Block::Thinking { text, .. } = self.assistant_slot(
-                        content_index,
-                        Block::Thinking { content_index, text: String::new() },
-                    ) {
-                        *text = content;
-                        // pi-web parity: collapse thinking once it completes
-                        let msg_ix = self.messages.len().saturating_sub(1);
-                        self.collapsed.insert((msg_ix, content_index));
-                    }
-                }
-                AssistantEvent::ToolCallStart { content_index, id, tool_name } => {
-                    self.assistant_slot(
-                        content_index,
-                        Block::ToolCall {
-                            content_index,
-                            id,
-                            name: tool_name,
-                            args: String::new(),
-                            result: String::new(),
-                        },
-                    );
-                }
-                AssistantEvent::ToolCallDelta { content_index, delta } => {
-                    if let Block::ToolCall { args, .. } = self.assistant_slot(
-                        content_index,
-                        Block::ToolCall {
-                            content_index,
-                            id: String::new(),
-                            name: String::new(),
-                            args: String::new(),
-                            result: String::new(),
-                        },
-                    ) {
-                        args.push_str(&delta);
-                    }
-                }
-                AssistantEvent::ToolCallEnd { content_index, tool_call } => {
-                    let name = tool_call["toolName"]
-                        .as_str()
-                        .or_else(|| tool_call["name"].as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let args = tool_call["arguments"]
-                        .as_object()
-                        .filter(|o| !o.is_empty())
-                        .map(|o| serde_json::Value::Object(o.clone()).to_string())
-                        .unwrap_or_default();
-                    let name_c = name;
-                    let args_c = args;
-                    if let Block::ToolCall { name, args, .. } = self.assistant_slot(
-                        content_index,
-                        Block::ToolCall {
-                            content_index,
-                            id: String::new(),
-                            name: name_c.clone(),
-                            args: args_c.clone(),
-                            result: String::new(),
-                        },
-                    ) {
-                        *name = name_c;
-                        *args = args_c;
-                    }
-                }
-                AssistantEvent::Other(_) => {}
-                }
-            }
-            Event::MessageEnd { role, blocks, usage, timestamp } => {
-                if role == "assistant" {
-                    if let Some(m) = self.messages.last_mut() {
-                        if m.role == Role::Assistant {
-                            m.blocks = blocks;
-                            m.usage = usage.map(|u| UsageLine {
-                                input: u.input,
-                                output: u.output,
-                                cache_read: u.cache_read,
-                                cost: u.cost,
-                                time: timestamp.map(fmt_hhmm).unwrap_or_default(),
-                            });
-                        }
-                    }
-                }
-            }
-            Event::AgentStart => {
-                self.agent_running = true;
-                self.status = "running".into();
-                if self.stream_started.is_none() {
-                    self.stream_started = Some(std::time::Instant::now());
-                }
-            }
-            Event::AgentSettled => {
-                self.agent_running = false;
-                self.phase_waiting = false;
-                self.status = status_line(true, "idle");
-                self.stream_started = None;
-                self.refresh_state(cx);
-            }
-            Event::AgentEnd { .. } => {
-                self.agent_running = false;
-                self.phase_waiting = false;
-                if self.sound_on {
-                    play_notify_sound();
-                }
-                self.stream_started = None;
-                // the session file exists now — make the new session show up
-                // in the sidebar (pi-web refreshKey-on-agent_end parity)
-                self.refresh_sessions();
-                // refresh branch tree so newly-sent user messages gain entry ids
-                if let Some(s) = self.agent.read(cx).session.as_ref() {
-                    let _ = s.send(&Command::GetTree);
-                }
-                // agent may have written files: refresh git status
-                self.refresh_git();
-            }
-            Event::ExtensionUi(req) => self.on_ext_ui(req, cx),
-            Event::Unparsed(_) => {}
-        }
-        self.notify_list(cx);
-    }
-}
-
-async fn consume_events(
-    this: gpui::WeakEntity<Chat>,
-    cx: &mut gpui::AsyncApp,
-    mut rx: UnboundedReceiver<Event>,
-    epoch: u64,
-) {
-    while let Some(event) = rx.next().await {
-        let stale = this
-            .update(cx, |chat, cx| {
-                if chat.agent.read(cx).epoch != epoch {
-                    return true;
-                }
-                chat.on_event(event, cx);
-                false
-            })
-            .unwrap_or(true);
-        if stale {
-            return;
-        }
-    }
-    let _ = this.update(cx, |chat, cx| {
-        if chat.agent.read(cx).epoch == epoch {
-            chat.status = "pi exited".into();
-            cx.notify();
-        }
-    });
 }
 
 impl Focusable for Chat {
@@ -2362,25 +1753,31 @@ impl Render for Chat {
         let weak_for_dialog = weak.clone();
 
         let right_px = 24.;
-        // popup menu overlay anchored above the editor toolbar row
+        // popup menu overlay anchored above the editor toolbar row (options
+        // reflect the ACTIVE session's overrides)
+        let (thinking_override, preset_key) = {
+            let rt = self.rt();
+            let r = rt.read(cx);
+            (r.thinking_override.clone(), r.tools_preset.clone())
+        };
         let pill_menu_el = self.pill_menu.map(|menu| {
             let weak_menu = weak.clone();
             let rows: Vec<(String, String, bool)> = match menu {
                 PillMenu::Thinking => [
-                    ("auto", tr("使用 pi 默认设置"), self.thinking_override.is_none()),
-                    ("low", tr("低强度推理"), self.thinking_override.as_deref() == Some("low")),
-                    ("high", tr("高强度推理"), self.thinking_override.as_deref() == Some("high")),
-                    ("max", tr("最强推理"), self.thinking_override.as_deref() == Some("max")),
+                    ("auto", tr("使用 pi 默认设置"), thinking_override.is_none()),
+                    ("low", tr("低强度推理"), thinking_override.as_deref() == Some("low")),
+                    ("high", tr("高强度推理"), thinking_override.as_deref() == Some("high")),
+                    ("max", tr("最强推理"), thinking_override.as_deref() == Some("max")),
                 ]
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
                 .collect(),
                 PillMenu::Tools => [
-                    ("configured", tr("取自 settings.json 的 defaultTools"), self.tool_preset_key() == "configured"),
-                    ("chat-only", tr("仅聊天"), self.tool_preset_key() == "chat-only"),
-                    ("read-only", tr("4 个只读内置工具"), self.tool_preset_key() == "read-only"),
-                    ("default", tr("4 个内置工具"), self.tool_preset_key() == "default"),
-                    ("full", tr("全部内置工具"), self.tool_preset_key() == "full"),
+                    ("configured", tr("取自 settings.json 的 defaultTools"), preset_key == "configured"),
+                    ("chat-only", tr("仅聊天"), preset_key == "chat-only"),
+                    ("read-only", tr("4 个只读内置工具"), preset_key == "read-only"),
+                    ("default", tr("4 个内置工具"), preset_key == "default"),
+                    ("full", tr("全部内置工具"), preset_key == "full"),
                 ]
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
@@ -2564,7 +1961,9 @@ impl Render for Chat {
                             .text_color(rgb(t.text))
                             .child(tr("系统提示词")),
                     );
-                    match &self.sys_prompt {
+                    let rt = self.rt();
+                    let sys_prompt = rt.read(cx).sys_prompt.clone();
+                    match &sys_prompt {
                         Some(text) => {
                             panel = panel.child(
                                 div()
@@ -2591,6 +1990,7 @@ impl Render for Chat {
                     }
                 }
                 TopPanel::Tools => {
+                    let session_tools = self.rt().read(cx).session_tools.clone();
                     panel = panel.child(
                         div()
                             .text_size(px(13.))
@@ -2598,7 +1998,7 @@ impl Render for Chat {
                             .text_color(rgb(t.text))
                             .child(tr("工具定义")),
                     );
-                    match &self.session_tools {
+                    match &session_tools {
                         Some(tools) if !tools.is_empty() => {
                             for (name, desc) in tools {
                                 panel = panel.child(

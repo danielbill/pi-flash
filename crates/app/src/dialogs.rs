@@ -30,8 +30,8 @@ pub(crate) fn render_dialogs(
                 // enabledModels whitelist narrows the picker (pi-web /api/models
                 // resolveVisibleModels parity)
                 let picker_enabled = !chat.mc_state.all_enabled;
-                let rows: Vec<gpui::AnyElement> = chat
-                    .available_models
+                let models = chat.rt().read(cx).available_models.clone();
+                let rows: Vec<gpui::AnyElement> = models
                     .iter()
                     .filter(|m| {
                         if picker_enabled {
@@ -67,7 +67,7 @@ pub(crate) fn render_dialogs(
                             .hover(|s| s.bg(rgb(t.bg_selected)))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let (p, mid) = (provider.clone(), id.clone());
-                                let _ = weak_row.update(cx, |c, cx| c.select_model(p, mid, cx));
+                                let _ = weak_row.update(cx, |c, cx| c.rt().update(cx, |r, cx| r.select_model(p, mid, cx)));
                             })
                             .flex()
                             .justify_between()
@@ -158,9 +158,11 @@ pub(crate) fn render_dialogs(
             if chat.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::BranchTree)) {
                 let t = T();
                 let weak = weak.clone();
-                let (has_session, tree, leaf_id) = match &chat.branch_tree {
-                    Some((tree, leaf)) => (chat.agent.read(cx).session.is_some(), tree.clone(), leaf.clone()),
-                    None => (chat.agent.read(cx).session.is_some(), Vec::new(), None),
+                let rt = chat.rt();
+                let rt_r = rt.read(cx);
+                let (has_session, tree, leaf_id) = match &rt_r.branch_tree {
+                    Some((tree, leaf)) => (rt_r.agent.session.is_some(), tree.clone(), leaf.clone()),
+                    None => (rt_r.agent.session.is_some(), Vec::new(), None),
                 };
                 let has_branches = tree_has_branches(&tree);
                 let active_path = build_active_path(&tree, leaf_id.as_deref());
@@ -300,7 +302,7 @@ pub(crate) fn render_dialogs(
                         let weak_click = weak.clone();
                         row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = weak_click.update(cx, |c, cx| {
-                                c.fork_from_entry(entry_id.clone(), cx);
+                                c.rt().update(cx, |r, cx| r.fork_from_entry(entry_id.clone(), cx));
                             });
                         });
                     }
