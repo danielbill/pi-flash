@@ -13,13 +13,14 @@ use gpui::{
     ListAlignment, ListState, MouseButton, ParentElement, Render, SharedString, Styled,
     WindowOptions, div, list, prelude::*, pulsating_between, px, rgb,
 };
-use pi_link::client::{PiSession, spawn as spawn_pi};
+use agent_session::AgentSession;
 use pi_link::protocol::{
     AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, TreeNode,
     Usage, content_blocks, parse_tree,
 };
-use pi_link::sessions::{SessionInfo, list_sessions_for_cwd};
+use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
 
+mod agent_session;
 mod appearance;
 mod assets;
 mod dialogs;
@@ -140,7 +141,8 @@ struct Chat {
     sessions_list: ListState,
     cwd: PathBuf,
     branch: String,
-    session: Option<PiSession>,
+    /// pi RPC process ownership (spawn/epoch/events)
+    agent: AgentSession,
     status: String,
     state: Option<SessionState>,
     stats: Option<SessionStats>,
@@ -168,7 +170,6 @@ struct Chat {
     branch_tree: Option<(Vec<TreeNode>, Option<String>)>,
     /// user-message entry ids along the active root→leaf path (fork anchors)
     active_user_entry_ids: Vec<String>,
-    epoch: u64,
     /// built-in terminal tabs (pi-web TerminalPanel); cwd-keyed dedupe
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
@@ -301,10 +302,23 @@ impl Chat {
         let cwd = std::env::var("PI_FLASH_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // startup restore decides workspace + last session BEFORE the first
+        // spawn — exactly one pi process (ARCHITECTURE.md §4, was two)
+        let last_ws = get_last_workspace();
+        let target_ws = last_ws.unwrap_or_else(|| cwd.to_string_lossy().to_string());
+        let cwd = if !same_ws(&target_ws, &cwd.to_string_lossy()) {
+            let ws_path = PathBuf::from(&target_ws);
+            if ws_path.is_dir() { ws_path } else { cwd }
+        } else {
+            cwd
+        };
         let branch = read_branch(&cwd);
-
-        let (session, events) = spawn_with_epoch(&cwd, &[], 1);
-        let connected = session.is_some();
+        let last_open = get_last_open(&cwd.to_string_lossy())
+            .map(PathBuf::from)
+            .filter(|p| p.exists());
+        let mut agent = AgentSession::new(1);
+        let events = agent.spawn(&cwd, last_open.as_deref());
+        let connected = agent.session.is_some();
 
         let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
@@ -333,7 +347,7 @@ impl Chat {
             sessions_list,
             cwd: cwd.clone(),
             branch,
-            session,
+            agent,
             status: status_line(connected, "idle"),
             state: None,
             stats: None,
@@ -360,7 +374,6 @@ impl Chat {
             pending_rename: false,
             branch_tree: None,
             active_user_entry_ids: Vec::new(),
-            epoch: 1,
             terminals: Vec::new(),
             active_terminal: None,
             term_seq: 0,
@@ -510,25 +523,30 @@ impl Chat {
         // last-workspace pointer): reopen the app in the workspace that was
         // used last and reopen the session it had open.
         let mut chat = chat;
-        let last_ws = get_last_workspace();
-        let target_ws = last_ws.unwrap_or_else(|| cwd.to_string_lossy().to_string());
-        if !same_ws(&target_ws, &cwd.to_string_lossy()) {
-            let ws_path = PathBuf::from(&target_ws);
-            if ws_path.is_dir() {
-                chat.cwd = ws_path;
-                chat.branch = read_branch(&chat.cwd);
-                chat.load_project_files();
-            }
-        }
+        chat.load_project_files();
         chat.refresh_git();
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
         chat.reload_settings_panel();
-        if let Some(p) = get_last_open(&chat.cwd.to_string_lossy()) {
-            let path = PathBuf::from(&p);
-            if path.exists() {
-                chat.open_session(path, false, cx);
+        if let Some(path) = last_open {
+            // single-spawn startup: pi already resumed from the file — fill
+            // UI state + disk-direct render, no second process, no waiting
+            // for the RPC snapshot to show the last conversation
+            chat.active_session_file = Some(path.clone());
+            chat.status = status_line(chat.agent.session.is_some(), "resuming");
+            if let Some(session) = &chat.agent.session {
+                let _ = session.send(&Command::GetMessages);
+                let _ = session.send(&Command::GetTree);
             }
+            for msg in read_tail_messages(&path, 256 * 1024, 100) {
+                let m = &msg["message"];
+                let role = m["role"].as_str().unwrap_or("");
+                let blocks = content_blocks(&m["content"]);
+                let usage = Usage::parse(&m["usage"]);
+                chat.ingest_message(role, blocks, usage, None, None, cx);
+            }
+            chat.notify_list(cx);
+            chat.refresh_state();
         }
         // git panel: Enter in the commit box commits staged changes
         let entity_for_git = cx.entity();
@@ -569,7 +587,7 @@ impl Chat {
     }
 
     fn refresh_state(&self) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::GetState);
             let _ = session.send(&Command::GetSessionStats);
             let _ = session.send(&Command::GetCommands);
@@ -858,7 +876,7 @@ impl Chat {
     /// Open the branch navigator: request a fresh tree, show the panel.
     fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
         self.branch_tree = None;
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::GetTree);
         }
         self.dialog = Some(Dialog::BranchTree);
@@ -878,7 +896,7 @@ impl Chat {
             cx.notify();
             return;
         }
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::Fork { entry_id });
             self.dialog = None;
         }
@@ -1006,7 +1024,7 @@ impl Chat {
                 })
             })
             .collect();
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::Steer { message: text, images });
         }
         self.input.clear();
@@ -1020,7 +1038,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::FollowUp { message: text });
         }
         self.input.clear();
@@ -1030,7 +1048,7 @@ impl Chat {
 
     /// 停止（rpc abort）。
     fn abort_stream(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::Abort);
         }
         self.stream_started = None;
@@ -1042,7 +1060,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        let Some(session) = &self.session else {
+        let Some(session) = &self.agent.session else {
             self.status = tr("未连接").into();
             cx.notify();
             return;
@@ -1096,7 +1114,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::FollowUp { message: text });
             self.input.clear();
             self.pending_images.clear();
@@ -1106,7 +1124,7 @@ impl Chat {
     }
 
     fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::Abort);
             self.status = "aborting".into();
             cx.notify();
@@ -1169,7 +1187,7 @@ impl Chat {
     /// Rename commit path that never reads the input entity (called from
     /// the input's own submit callback where the entity is borrowed).
     fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::SetSessionName { name });
         }
         // sidebar label comes from the session file's `session_info` entry;
@@ -1182,7 +1200,7 @@ impl Chat {
     }
 
     fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::SetModel { provider, model: id });
         }
         self.dialog = None;
@@ -1199,7 +1217,7 @@ impl Chat {
             return;
         }
         self.thinking_override = Some(level.to_string());
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::SetThinkingLevel { level: level.to_string() });
         }
         cx.notify();
@@ -1227,7 +1245,7 @@ impl Chat {
 
     /// Editor toolbar 压缩: rpc compact (summarize the context).
     fn compact_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::Compact);
             self.status = tr("压缩中…").to_string();
             cx.notify();
@@ -1293,7 +1311,7 @@ impl Chat {
         self.titling = false;
         match result {
             Ok(title) => {
-                if let Some(session) = &self.session {
+                if let Some(session) = &self.agent.session {
                     let _ = session.send(&Command::SetSessionName { name: title.clone() });
                 }
                 self.status = tr("已生成标题: {title}").replace("{title}", &title);
@@ -1313,7 +1331,7 @@ impl Chat {
         if self.session_tools.is_some() && self.sys_prompt.is_some() {
             return;
         }
-        if let Some(session) = &self.session {
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::ExportHtml);
         }
         cx.notify();
@@ -1324,9 +1342,7 @@ impl Chat {
     }
 
     fn new_session(&mut self, cx: &mut Context<Self>) {
-        self.epoch += 1;
-        let (session, events) = spawn_with_epoch(&self.cwd, &[], self.epoch);
-        self.session = session;
+        let events = self.agent.spawn(&self.cwd, None);
         self.messages.clear();
         self.state = None;
         self.stats = None;
@@ -1337,12 +1353,12 @@ impl Chat {
         self.renaming = None;
         self.rename_input = None;
         clear_last_open(&self.cwd.to_string_lossy());
-        self.status = status_line(self.session.is_some(), tr("新会话"));
+        self.status = status_line(self.agent.session.is_some(), tr("新会话"));
         self.refresh_state();
         self.refresh_git();
         self.load_project_files();
         if let Some(events) = events {
-            let epoch = self.epoch;
+            let epoch = self.agent.epoch;
             cx.spawn(async move |this, cx| {
                 consume_events(this, cx, events, epoch).await;
             })
@@ -1359,10 +1375,7 @@ impl Chat {
             .find(|s| s.path == path)
             .map(|s| PathBuf::from(s.cwd.clone()))
             .unwrap_or_else(|| self.cwd.clone());
-        self.epoch += 1;
-        let (session, events) =
-            spawn_with_epoch(&cwd, &["--session", &path.to_string_lossy()], self.epoch);
-        self.session = session;
+        let events = self.agent.spawn(&cwd, Some(&path));
         self.cwd = cwd;
         set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
         self.expanded_dirs.clear();
@@ -1378,8 +1391,19 @@ impl Chat {
         self.confirm_delete = None;
         self.renaming = None;
         self.rename_input = None;
-        self.status = status_line(self.session.is_some(), "resuming");
-        if let Some(session) = &self.session {
+        self.status = status_line(self.agent.session.is_some(), "resuming");
+        // disk-direct: render the tail from the session file before the RPC
+        // snapshot lands; the authoritative get_messages response then
+        // replaces it (full history)
+        for msg in read_tail_messages(&path, 256 * 1024, 100) {
+            let m = &msg["message"];
+            let role = m["role"].as_str().unwrap_or("");
+            let blocks = content_blocks(&m["content"]);
+            let usage = Usage::parse(&m["usage"]);
+            self.ingest_message(role, blocks, usage, None, None, cx);
+        }
+        self.notify_list(cx);
+        if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::GetMessages);
             // branch tree snapshot for the fork panel
             let _ = session.send(&Command::GetTree);
@@ -1387,7 +1411,7 @@ impl Chat {
         self.refresh_state();
         self.load_project_files();
         if let Some(events) = events {
-            let epoch = self.epoch;
+            let epoch = self.agent.epoch;
             cx.spawn(async move |this, cx| {
                 consume_events(this, cx, events, epoch).await;
             })
@@ -1404,7 +1428,7 @@ impl Chat {
         self.confirm_delete = None;
         let was_active = self.active_session_file.as_deref() == Some(path.as_path());
         if was_active {
-            if let Some(session) = &self.session {
+            if let Some(session) = &self.agent.session {
                 let _ = session.send(&Command::Abort);
             }
             // respawn without a session file = pi-web new-draft-with-same-cwd
@@ -1415,7 +1439,7 @@ impl Chat {
             Ok(_) => {
                 self.sessions.retain(|s| s.path != path);
                 self.sessions_list.reset(self.sessions.len());
-                self.status = status_line(self.session.is_some(), "session deleted");
+                self.status = status_line(self.agent.session.is_some(), "session deleted");
             }
             Err(e) => {
                 self.status = crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())])
@@ -1688,7 +1712,7 @@ impl Chat {
                         self.branch_tree = None;
                         self.messages.clear();
                         self.notify_list(cx);
-                        if let Some(s) = self.session.as_ref() {
+                        if let Some(s) = self.agent.session.as_ref() {
                             let _ = s.send(&Command::GetState);
                             let _ = s.send(&Command::GetMessages);
                             let _ = s.send(&Command::GetTree);
@@ -1940,7 +1964,7 @@ impl Chat {
                 // in the sidebar (pi-web refreshKey-on-agent_end parity)
                 self.refresh_sessions();
                 // refresh branch tree so newly-sent user messages gain entry ids
-                if let Some(s) = self.session.as_ref() {
+                if let Some(s) = self.agent.session.as_ref() {
                     let _ = s.send(&Command::GetTree);
                 }
                 // agent may have written files: refresh git status
@@ -1962,7 +1986,7 @@ async fn consume_events(
     while let Some(event) = rx.next().await {
         let stale = this
             .update(cx, |chat, cx| {
-                if chat.epoch != epoch {
+                if chat.agent.epoch != epoch {
                     return true;
                 }
                 chat.on_event(event, cx);
@@ -1974,7 +1998,7 @@ async fn consume_events(
         }
     }
     let _ = this.update(cx, |chat, cx| {
-        if chat.epoch == epoch {
+        if chat.agent.epoch == epoch {
             chat.status = "pi exited".into();
             cx.notify();
         }
@@ -1991,19 +2015,6 @@ impl Focusable for Chat {
 // helpers
 // ---------------------------------------------------------------------------
 
-fn spawn_with_epoch(
-    cwd: &PathBuf,
-    extra_args: &[&str],
-    _epoch: u64,
-) -> (Option<PiSession>, Option<UnboundedReceiver<Event>>) {
-    match spawn_pi(cwd, extra_args) {
-        Ok((s, ev)) => (Some(s), Some(ev)),
-        Err(e) => {
-            eprintln!("{e}");
-            (None, None)
-        }
-    }
-}
 
 
 // ---------------------------------------------------------------------------
