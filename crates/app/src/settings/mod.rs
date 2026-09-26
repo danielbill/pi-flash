@@ -96,9 +96,6 @@ pub(crate) fn render_settings(
     weak: &gpui::WeakEntity<Chat>,
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
-    // BISECT: skip the real tree
-    return div().into_any_element();
-    #[allow(unreachable_code)]
     let t = T();
     let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, install_input, install_scope_project, sa_input, error } =
         d.clone();

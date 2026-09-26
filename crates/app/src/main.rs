@@ -2675,6 +2675,18 @@ impl Render for Chat {
             if !self.dialog_focus.is_focused(window) {
                 window.focus(&self.dialog_focus);
             }
+        } else if let Some(panel) = self.settings.as_ref() {
+            // settings inputs stay click-to-focus (see NOTE above); claim
+            // the modal escape target only while nothing inside the modal
+            // holds focus, so Esc reaches the modal's close handler
+            let p = panel.read(cx);
+            let inner_focused = p.focus.is_focused(window)
+                || p.key_input.read(cx).focus_handle_in(cx).is_focused(window)
+                || p.install_input.read(cx).focus_handle_in(cx).is_focused(window)
+                || p.sa_input.read(cx).focus_handle_in(cx).is_focused(window);
+            if !inner_focused && !self.dialog_focus.is_focused(window) {
+                window.focus(&self.dialog_focus);
+            }
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
             window.focus(&self.focus);
         }

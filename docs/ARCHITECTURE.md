@@ -1,99 +1,157 @@
-# pi-flash 架构(1:1 对齐 pi-web)
+# pi-flash 架构契约(v2:ZED 框架 × pi-web 对话层 × 极速启动)
 
-本文档是架构契约:模块边界 = pi-web 组件边界,数据流向 = pi-web props/callbacks 流向。
-改代码前先对照本文;改完架构相关的代码要同步更新本文。
+本文档是架构契约。改代码前先对照本文;改完架构相关的代码要同步更新本文。
+上位规格:`docs/模块设计/`(005-032,模块边界以此为准,本文负责技术落地)。
 
-## 1. 设计原则
+## 0. 对齐基准(双轨制)
 
-pi-web 是三层结构,Rust/GPUI 的对应物:
+| 层 | 原型 | 方式 |
+|---|---|---|
+| 框架层(布局/dock/文件树/git 面板/状态栏/顶栏) | **ZED**(`D:\github\zed`,移植基线 commit `4c902c9`,2026-09-23) | 剪裁移植源码(渲染/交互照抄,数据层接本地) |
+| 会话列表(020) | **ZCode**(`D:\github\---harness-tools---\ZCode` packages/ui) | 按其设计规格实现(排序/交互/布局参数照搬) |
+| 对话层(030/031/032) | **pi-web**(行为规格,React 无代码可搬) | 自研,行为 1:1 对齐 |
+| 外观体系(006/007) | 架构 ZED,数据 pi-web | ThemeRegistry/ActiveTheme + mist/rose 令牌 + pi-web markdown |
+| 通用基座(弹窗/浮层/输入) | gpui-component 0.2.0(已接通,钉版) | Modal/Popover/Notification/InputState |
+
+## 1. 设计原则(pi-web 三层 → GPUI 对应物,不变)
 
 | pi-web | pi-flash |
 |---|---|
-| React 组件(`components/*.tsx`) | GPUI `Entity<T> + Render`(Zed 模式) |
-| props 向下 | 父持 `Entity<T>`,`child.update(cx, |c| c.set_x(..))` |
-| callbacks 向上(`onXxx`) | 子 `cx.emit(Event)`,父 `cx.subscribe` 分发 |
-| hooks(`useAgentSession` 等) | 实体内部的异步泵/服务模块 |
-| lib 服务层(`lib/*.ts`) | 无 UI 的 `services/` 纯函数模块 |
-| CSS 令牌(`globals.css`) | `theme.rs` 令牌(逐组件对照 pi-web 翻译,不手搓) |
+| React 组件 | GPUI `Entity<T> + Render`(Zed 模式) |
+| props 向下 | 父持 `Entity<T>`,`child.update(cx, \|c\| c.set_x(..))` |
+| callbacks 向上 | 子 `cx.emit(Event)`,父 `cx.subscribe` 分发 |
+| hooks | 实体内部异步泵/服务模块 |
+| lib 服务层 | 无 UI 的 `services/` 纯函数模块 |
+| CSS 令牌 | 主题令牌(见 §5 外观体系) |
 
-## 2. 模块布局(↔ pi-web 组件映射)
+## 2. 模块布局(目标,↔ 模块设计文档)
 
 ```
 crates/app/src/
-├── main.rs        bootstrap(= app/layout.tsx + page.tsx)
-├── shell.rs       AppShell:三栏布局/面板显隐与尺寸/panel tabs/选中会话/
-│                  workspace 恢复/modal 路由 (= AppShell.tsx)
-├── chat/
-│   ├── mod.rs     ChatWindow:PiSession RPC/epoch 泵/事件 reducer/notices
-│   │              (= ChatWindow.tsx + hooks/useAgentSession.ts)
-│   ├── events.rs  consume_events + on_event 拆分
-│   ├── message.rs Msg/render_msg/render_block (= MessageView.tsx)
-│   └── stream.rs  流式组装/phase/tps (= lib/streaming-message.ts)
-├── composer.rs    Composer:编辑器(IME)/图片附件/history/slash+@ 菜单/
-│                  thinking+tools pill/发送-引导-排队 (= ChatInput.tsx)
-├── sidebar.rs     SessionSidebar:会话列表/搜索/改名/删除确认/项目框
-│                  (= SessionSidebar.tsx)
-├── explorer.rs    FileExplorer:文件树 + git 徽标 (= FileExplorer.tsx)
-├── panel.rs       右面板:TabBar + FileViewer + 终端宿主
-│                  (= TabBar + FileViewer + TerminalPanel)
-├── dialogs.rs     模型选择/分支树/项目选择/git diff/改名 modal
-├── ext_ui.rs      扩展 widgets/statusbar/dialog/notice
-│                  (= ExtensionWidgets + ExtensionStatusBar + ChatWindow 内 dialog)
-├── settings/      设置 modal(= SettingsPanel + 各 Config 组件)
-│   ├── mod.rs     壳 + Settings 实体 (= SettingsPanel.tsx)
-│   ├── ui.rs      ConfigField/Button/Switch 原语 (= SettingsUi.tsx)
-│   └── models.rs skills.rs plugins.rs tools.rs subagents.rs general.rs
-├── ui/
-│   ├── mod.rs     icon/spinner/pill(= 图标层原语)
-│   └── text_input.rs TextInput —— 全 app 唯一文本输入组件(见 §4)
-├── services/      (= lib/ 纯逻辑)
-│   ├── workspace.rs git.rs title.rs branch.rs format.rs
-└── theme.rs i18n.rs markdown.rs models_config.rs terminal.rs assets.rs(原样)
+├── main.rs            bootstrap(<300 行)
+├── startup.rs         启动编排:恢复层/骨架先行/后台填充管线(§4)
+├── appearance/        主题注册表 + ActiveTheme + icon theme + 字体(§5)
+├── shell.rs           AppShell:布局组装/页面路由(welcome|newSession|session)/
+│                      dock 位置/焦点仲裁 (= 005)
+├── titlebar.rs        顶栏:logo + settings + 窗口控制三按钮 (= 005 上段;
+│                      源:zed platform_title_bar/platform_windows.rs 直搬+stub)
+├── function_panel/    ZED 式 dock(= 015;源:zed workspace/dock.rs 剪裁)
+│   ├── mod.rs         容器:视图互斥切换 + 左右 dock 位置(018 状态栏驱动)
+│   ├── sessions.rs    projectSessionList(= 020;设计规格:ZCode)
+│   ├── file_tree.rs   dirTreeView(= 021;源:zed project_panel 骨架移植)
+│   ├── git_panel.rs   gitPanel(= 022;源:zed git_panel 行渲染,简化版:
+│   │                  Changes|History 双列表 + commit/push,无 diff 视图)
+│   └── (terminal)     终端宿主(第 4 视图;alacritty_terminal 不变)
+├── status_bar.rs      statusControlBar(= 018;源:zed status_bar.rs StatusItemView)
+├── pages/             welcome(= 011)+ new_session(= 012,复用 inputPanel)
+├── session/
+│   ├── mod.rs         sessionView 容器(= 030)
+│   ├── messages.rs    sessionMessagePanel:render_msg/render_block/流式(= 032)
+│   └── input.rs       inputPanel 专用 Composer 实体:编辑器基座+工具栏
+│                      (发送/停止/steer/排队+模型/思考/skill/权限/工具/压缩/
+│                       上下文/图片 pill)+补全菜单(= 031)
+├── agent_session.rs   无头实体:PiSession/事件泵/epoch/on_event 分发;
+│                      单次 spawn + 磁盘直读消息(pi ready 前 RPC 对账)
+├── zed_ui/            vendored zed ui 原语(Icon/Button/ListItem/ContextMenu/
+│                      Tooltip/IndentGuides/Scrollbar/DiffStat 等,剪裁版)
+├── dialogs.rs         ModelSelect/BranchTree/ProjectSelect/GitDiff/文件预览弹窗
+├── ext_ui.rs          扩展 widgets/statusbar/dialog/notice(自 settings/tools.rs 归位)
+├── session_search.rs  搜索弹窗 + 结果页(= 013,细节后置)
+├── settings/          设置 modal(= SettingsPanel;模型/技能/插件/工具/子代理/通用)
+├── ui/                text_input.rs(全 app 唯一文本输入,§6)+ 图标原语
+├── services/          workspace(状态+app_settings)/git/title/branch/format
+└── theme.rs i18n.rs markdown.rs models_config.rs terminal.rs assets.rs
 ```
 
-## 3. 状态所有权(Chat god-object 已按 pi-web 归属拆分)
+pi-link:sessions.rs 索引化扫描(group 目录定位 + tail-seek 摘要 + (mtime,size)
+指纹索引落盘 + `read_tail_messages` 尾窗解析)+ 协议层(不变,只对钉版 pi 负责)。
 
-| 状态 | 属主 | pi-web 依据 |
-|---|---|---|
-| 编辑器文本/IME/history/图片/pill 菜单 | Composer | ChatInput 自持 state |
-| 消息/RPC 会话/流式/stats/branch 树/epoch | ChatWindow | useAgentSession |
-| 会话列表/搜索/hover/删除确认 | Sidebar | SessionSidebar 自拉列表 |
-| cwd/branch/git/面板尺寸/panel tabs/modal 路由 | AppShell | AppShell 壳状态 |
-| settings 面板全部状态 | Settings 实体 | SettingsPanel 自持 |
-| 扩展 UI 状态 | ExtUi(ChatWindow 子级) | pi-web 在 ChatWindow 内渲染 |
-| 主题/语言 | 全局(theme.rs/i18n.rs) | useTheme/useI18n 外部 store |
+## 3. 状态所有权
 
-## 4. TextInput:全 app 唯一文本输入
+| 状态 | 属主 |
+|---|---|
+| RPC 会话/事件泵/epoch/消息数据 | AgentSession(无头) |
+| 消息渲染/折叠/流式状态 | session/messages |
+| 编辑器草稿/附件/pill 菜单/history | session/input(Composer 实体) |
+| 会话列表/搜索/改名/删除确认/分钟 ticker | function_panel/sessions |
+| cwd/branch/git 状态/页面路由/dock 位置 | shell |
+| 窗口 bounds/布局状态 | 状态文件(services/workspace,shell 恢复) |
+| settings 面板全部状态 | Settings 实体(自持) |
+| 扩展 UI 状态 | ExtUi |
+| 主题/语言/字体 | 全局(appearance/i18n) |
 
-pi-web 没有共享输入组件,因为 HTML `<input>` 原生自带焦点/光标/IME,全 app
-30+ 输入点零成本。GPUI 没有这个内建物——所以 `ui/text_input.rs` 就是它:
+## 4. 启动(pi-web 启动清单 × zed 机制)
 
-- 每实例独立 `FocusHandle`(点击聚焦、可被 frame 级焦点策略强制聚焦)
-- `EntityInputHandler`(utf16 IME 组合段合同,平移自主编辑器已验证实现)
-- paint 阶段 `TextInputElement` 注册 `window.handle_input`
-- 聚焦时手绘闪烁光标(530ms 泵,仅聚焦实例重绘)
-- placeholder / masked(API key)/ numeric(数字校验)/on_change/on_submit/on_escape
+四层清单(pi-web 核实):恢复层(主题/语言/布局/上次 workspace/每项目上次会话,
+同步一次读)→ 会话列表层(索引化扫描)→ 会话内容+运行时层(磁盘直读渲染,
+pi 单次 spawn,新会话懒 spawn)→ 后台杂项(git/模型,不阻塞)。
 
-**铁律:任何文本输入禁止用 `on_key_down` 字符匹配手搓**(这正是改名框中文
-输入坏掉的病根:主编辑器的 IME 修复没有沉淀成组件,5 处对话框输入各自手写
-残废实现)。唯一例外:终端(PTY 字节流,非文本框)与主编辑器(多行,
-Composer 迁移后同样收敛到 TextInput 基座)。
+zed 机制:骨架先行(首帧零数据 IO)、同步小读+异步节流写、目录树后台增量扫描、
+不存树展开状态(用最后活动文件 + auto-reveal 替代)、无总闸门渐进填充。
 
-## 5. 通信规约
+状态机:`Restore(<5ms,一次读全部状态文件)→ FirstFrame(<50ms,壳骨架+欢迎页)
+→ BackgroundFill(会话列表/文件树/git 并行;pi 单次 spawn 带 --session,
+newSession 懒到首条 prompt)→ SessionReady(磁盘直读渲染上次对话,pi ready 后
+RPC 对账)→ 页面流转`。
 
-- 父→子:方法调用 `composer.update(cx, |c| c.set_draft(..))`
-- 子→父:`cx.emit(SidebarEvent::OpenSession(path))`,父 `cx.subscribe` 分发;
-  禁止子组件持 `WeakEntity<父>` 散弹式 `weak.update`(回调闭包除外)
+**预算(验收线):首帧 <50ms;会话列表 <150ms;上次对话消息上屏 <300ms
+(与 node 无关);pi 就绪 <1s 且不阻塞任何 UI。** 实测基线:热索引扫描
+49 会话 5-9ms/0 文件扫描(阶段 A,原 200-400ms×2 全量读)。
+
+## 5. 外观体系(006/007)
+
+- **主题**:ZED 架构(ThemeRegistry + ActiveTheme + 主题族 light/dark)。
+  内置 7 套:浅色 mist(雾青)/rose(蔷薇,pi-web 令牌转换)+ One Light/
+  nord light/ayu light(拷 zed 主题 JSON);深色 One Dark/nord dark。
+  主题切换需重跑 gpui-component token 映射。
+- **syntax**:zed 主题 syntax 色 → syntect 色彩方案映射(markdown.rs +
+  syntect 保留;006 定案不引 zed markdown,markdown preview 对齐 pi-web)。
+- **icon theme**:ZED 架构(注册表/文件图标集解析,服务 021 文件树),
+  内置内容 = pi-web 图标。
+- **字体三档**:session font(≈zed UI font)/ panel font / markdown preview
+  font + 字号(app_settings.json)。
+- **配置三层分界**:pi `settings.json`(模型/凭证/工具,归 pi)≠
+  `~/.pi/agent/pi-flash-app-settings.json`(主题/图标/字体/lang/sound)≠
+  `pi-flash-workspace.json`(运行时状态:每项目上次会话/__window/__dock 布局)。
+  后两者原子写(tmp+rename)+ 内容不变跳过 + 进程内单次读缓存。
+- **多语言(007)**:i18n.rs 现行模式;新模块字符串一律 `tr()` 收口。
+
+## 6. TextInput:全 app 唯一文本输入
+
+`ui/text_input.rs` = gpui-component InputState 的 facade(真实选区/光标/
+剪贴板/IME 由其提供;e60f842 起)。**铁律:任何文本输入禁止用 `on_key_down`
+字符匹配手搓。** 例外:终端(PTY 字节流)与主编辑器(多行,EditorInputElement
++ EntityInputHandler,随 Composer 迁移,收敛到 InputState 基座是既定方向,
+迁移时须实测中文 IME)。
+
+## 7. 通信规约
+
+- 父→子:方法调用;子→父:`cx.emit` + `subscribe`;
+  禁止子组件持 `WeakEntity<父>` 散弹式 update(回调闭包除外)
 - 视图组件不直接碰 PiSession RPC(pi-web:ChatInput/MessageView 无网络请求)
 
-## 6. 守护规则(scripts/check_arch.sh)
+## 8. 守护规则(scripts/check_arch.sh,阶段 F 落地)
 
 1. 单文件 ≤1500 行;render 函数 ≤300 行
-2. 禁止 `on_key_down` 里出现 `chars().count() == 1` 之类的字符匹配输入模式
-3. cargo build 无新警告;cargo test 全绿
+2. 禁止 `on_key_down` 字符匹配输入模式
+3. `cargo build` 无新警告;`cargo test` 全绿
+4. 新 UI 字符串走 `tr()`
 
-## 7. 迁移记录
+## 9. 迁移记录
 
-- 阶段1(2026-09-25):ui/ + TextInput 落地,9 输入点全部接入(改名/扩展
-  input+editor/API key/插件安装/子代理并发/session 搜索/模型过滤为主编辑器
-  之外的 8 点;终端按设计例外)。Chat god-object 拆分自阶段3起逐步执行。
+- 阶段 1(2026-09-25,52c5675):ui/ + TextInput 落地,9 输入点接入。
+- 阶段 2(9bcf25b):services/ 层拆出,main.rs 9881→9055。
+- 阶段 3a(c0d8f55):settings/ 模块树,→6180。
+- 阶段 3b(848b96b):SettingsPanel 独立实体;主线程栈 16MB。
+- e60f842:TextInput 换 gpui-component InputState 基座;窗口根包 Root。
+- 3b8ae6f:docs/模块设计/ 新设计(005-032)入库,驱动本轮重构。
+- **阶段 A(93c29e9,2026-09-26)**:pi-link sessions 索引化扫描(group 定位/
+  tail-seek/指纹索引/尾窗解析,热扫描 5-9ms)+ app_settings.json/状态文件
+  三层配置(原子写/单次读缓存/__window/__dock schema)。
+- **阶段 B(2026-09-26)**:撤 settings 双 BISECT 短路(render_settings 空返回 +
+  open_settings reload-only),按 3b 架构重接 SettingsPanel;修焦点仲裁缺失
+  settings 分支(Esc 关闭弹窗,原 Esc 误触会话中止);6 tab UI 实测通过;
+  修 015/020 文档;本文重写为 v2 契约。
+- 待做:阶段 C(渲染按新边界拆分)→ D(外观底座+新布局骨架+startup 接入)
+  → E(实体拆分:AgentSession/InputPanel/SessionsPanel/FunctionPanel/Shell)
+  → F(check_arch.sh)→ G+(功能细化,等详细要求)。

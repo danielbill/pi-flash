@@ -5,9 +5,33 @@ use super::*;
 
 impl Chat {
     pub(crate) fn open_settings(&mut self, tab: u8, cx: &mut Context<Self>) {
-        // BISECT A: reload only, no entity
         self.reload_settings_panel();
-        let _ = tab;
+        let section = match tab {
+            0 => self.mc_provider_ids().first().cloned().unwrap_or_default(),
+            1 => self
+                .mc_skills
+                .first()
+                .map(|s| s.path.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            2 => self
+                .mc_pkgs_global
+                .first()
+                .or_else(|| self.mc_pkgs_project.first())
+                .map(pi_link::skills::entry_source)
+                .unwrap_or_else(|| "__add__".into()),
+            4 => self.sa_profiles.first().map(|p| p.name.clone()).unwrap_or_default(),
+            _ => String::new(),
+        };
+        // subagents tab: prefill the max-concurrent input from saved settings
+        let max_prefill = self.sa_settings.max_concurrent.to_string();
+        let panel = cx.new(|cx| {
+            let mut panel = SettingsPanel::new(cx);
+            panel.tab = tab;
+            panel.section = section;
+            panel.sa_input.update(cx, |ti, cx| ti.set_value(max_prefill, cx));
+            panel
+        });
+        self.settings = Some(panel);
         cx.notify();
     }
 
