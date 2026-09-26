@@ -54,6 +54,10 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
                 // left click: switch the dock view (mutually exclusive)
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
                     this.dock_panel = DockPanel::parse(view);
+                    if view == "git" {
+                        this.refresh_git();
+                        this.refresh_git_log();
+                    }
                     this.persist_dock();
                     cx.notify();
                 }))

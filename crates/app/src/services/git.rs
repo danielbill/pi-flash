@@ -38,6 +38,17 @@ impl GitStatus {
 pub struct GitFile {
     pub path: PathBuf,
     pub status: GitStatus,
+    /// index (X) column non-blank — the change is staged
+    pub staged: bool,
+}
+
+/// One history entry (022 History list; simplified — no graph).
+#[derive(Debug, Clone)]
+pub struct GitCommit {
+    pub hash: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
@@ -64,6 +75,8 @@ pub fn git_status_files(cwd: &Path) -> Vec<GitFile> {
         }
         let xy = &rec[..2];
         let rest = &rec[3..];
+        let x_byte = xy.as_bytes()[0];
+        let staged = !matches!(x_byte, b' ' | b'?');
         let (status, file_path) = match xy {
             "??" => (GitStatus::Untracked, rest),
             _ => {
@@ -89,7 +102,7 @@ pub fn git_status_files(cwd: &Path) -> Vec<GitFile> {
             }
         };
         let full = cwd.join(file_path);
-        files.push(GitFile { path: full, status });
+        files.push(GitFile { path: full, status, staged });
     }
     files
 }
@@ -137,4 +150,106 @@ pub fn git_file_diff(cwd: &Path, path: &Path, untracked: bool) -> String {
         &["diff", "--no-color", "--no-ext-diff", "--", &path.to_string_lossy()],
     )
     .unwrap_or_default()
+}
+
+
+/// run_git with error surface (commit/push report failure text).
+fn run_git_checked(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// Stage one change (`git add -- <path>`; also removes deletions from the
+/// index).
+pub fn git_stage(cwd: &Path, path: &Path) -> Result<(), String> {
+    run_git_checked(cwd, &["add", "--", &path.to_string_lossy()]).map(|_| ())
+}
+
+/// Unstage one change (`git reset -q HEAD -- <path>`; a repo without a
+/// first commit reports an error, which the panel surfaces verbatim).
+pub fn git_unstage(cwd: &Path, path: &Path) -> Result<(), String> {
+    run_git_checked(cwd, &["reset", "-q", "HEAD", "--", &path.to_string_lossy()]).map(|_| ())
+}
+
+/// Commit the staged changes with a validated message.
+pub fn git_commit(cwd: &Path, message: &str) -> Result<(), String> {
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("commit message is empty".into());
+    }
+    run_git_checked(cwd, &["commit", "-m", msg]).map(|_| ())
+}
+
+/// Push the current branch; returns remote output on success.
+pub fn git_push(cwd: &Path) -> Result<String, String> {
+    // stderr carries the progress/ref output even on success
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["push", "--verbose"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(text)
+    }
+}
+
+/// Recent commits, newest first (`git log` field-separated by  so
+/// subjects containing `|` stay intact).
+pub fn git_log(cwd: &Path, max: usize) -> Vec<GitCommit> {
+    let Some(out) = run_git(
+        cwd,
+        &[
+            "log",
+            &format!("--max-count={}", max),
+            "--date=format:%Y-%m-%d %H:%M",
+            "--pretty=format:%h%an%ad%s",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    parse_git_log(&out)
+}
+
+fn parse_git_log(out: &str) -> Vec<GitCommit> {
+    out.lines()
+        .filter_map(|line| {
+            let mut it = line.split('');
+            Some(GitCommit {
+                hash: it.next()?.to_string(),
+                author: it.next()?.to_string(),
+                date: it.next()?.to_string(),
+                subject: it.next().unwrap_or_default().to_string(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod panel_tests {
+    use super::*;
+
+    #[test]
+    fn parses_log_fields() {
+        let out = "abc1234Alice2026-09-26 10:00feat: add | pipe
+beef00Bob2026-09-25 09:00fix";
+        let log = parse_git_log(out);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].hash, "abc1234");
+        assert_eq!(log[0].author, "Alice");
+        assert_eq!(log[0].subject, "feat: add | pipe");
+        assert_eq!(log[1].subject, "fix");
+    }
 }

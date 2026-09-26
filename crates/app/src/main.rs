@@ -61,6 +61,8 @@ enum Dialog {
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
+    /// read-only file preview (replaces the old right-panel viewer tab)
+    FilePreview { path: PathBuf },
 }
 
 /// Full-page state (005/011/012): Welcome shows until the project/session
@@ -148,6 +150,11 @@ struct Chat {
     /// working-tree changes for the current project
     git_files: Vec<GitFile>,
     git_add_del: (u64, u64),
+    /// git panel (022 simplified) state
+    git_tab: function_panel::git_panel::GitTab,
+    git_log: Vec<GitCommit>,
+    git_error: Option<String>,
+    git_commit_input: gpui::Entity<TextInput>,
     commands: Vec<SlashCommand>,
     available_models: Vec<pi_link::protocol::ModelInfo>,
     project_files: Vec<String>,
@@ -207,7 +214,6 @@ struct Chat {
     active_panel_tab: Option<usize>,
     /// right-panel drag: (start pointer x, start width)
     /// markdown Source/Preview toggle for file tabs (per-path)
-    file_preview_mode: std::collections::HashMap<PathBuf, bool>,
     /// cached content of open file tabs
     file_cache: std::collections::HashMap<PathBuf, FileTab>,
     /// sessions-pane height as a fraction of the sidebar (pi-web
@@ -268,7 +274,6 @@ enum PillMenu {
 /// One right-panel tab: a file viewer or a terminal session.
 #[derive(Debug, Clone, PartialEq)]
 enum PanelTab {
-    File(PathBuf),
     Term(usize),
 }
 
@@ -336,6 +341,13 @@ impl Chat {
             collapsed: HashSet::new(),
             expanded_dirs: HashSet::new(),
             git_files: Vec::new(),
+            git_tab: function_panel::git_panel::GitTab::Changes,
+            git_log: Vec::new(),
+            git_error: None,
+            git_commit_input: {
+                let input = cx.new(|cx| TextInput::new(cx).placeholder(tr("提交信息（提交已暂存更改）")));
+                input
+            },
             git_add_del: (0, 0),
             commands: Vec::new(),
             available_models: Vec::new(),
@@ -376,7 +388,6 @@ impl Chat {
             sidebar_sessions_frac: 0.5,
             panel_tabs: Vec::new(),
             active_panel_tab: None,
-            file_preview_mode: std::collections::HashMap::new(),
             file_cache: std::collections::HashMap::new(),
             caret_on: true,
             input_focused: false,
@@ -519,6 +530,14 @@ impl Chat {
                 chat.open_session(path, false, cx);
             }
         }
+        // git panel: Enter in the commit box commits staged changes
+        let entity_for_git = cx.entity();
+        chat.git_commit_input.update(cx, |ti, _| {
+            let weak_git = entity_for_git.downgrade();
+            ti.set_on_submit(Box::new(move |_, cx| {
+                let _ = weak_git.update(cx, |c, cx| c.git_commit_staged(cx));
+            }));
+        });
         // background fill: project session list (startup budget §4 — the
         // first frame renders the welcome page while this lands)
         let cwd_text = chat.cwd.to_string_lossy().to_string();
@@ -1409,16 +1428,6 @@ impl Chat {
     /// Open a file as a right-panel tab (pi-web file tabs; replaces the
     /// old preview dialog). Re-activates an existing tab for the path.
     fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.dock_panel = DockPanel::Terminal;
-        if let Some(ix) = self
-            .panel_tabs
-            .iter()
-            .position(|t| matches!(t, PanelTab::File(p) if *p == path))
-        {
-            self.active_panel_tab = Some(ix);
-            cx.notify();
-            return;
-        }
         const MAX: u64 = 200 * 1024;
         let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
         let content = if too_big {
@@ -1435,10 +1444,8 @@ impl Chat {
                 Err(e) => format!("read failed: {e}"),
             }
         };
-        let tab = PanelTab::File(path.clone());
         self.file_cache.insert(path.clone(), FileTab { path: path.clone(), content, truncated: too_big });
-        self.panel_tabs.push(tab);
-        self.active_panel_tab = Some(self.panel_tabs.len() - 1);
+        self.dialog = Some(Dialog::FilePreview { path });
         cx.notify();
     }
 
@@ -1452,9 +1459,6 @@ impl Chat {
                 let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
                 self.terminals.remove(tix);
             }
-        }
-        if let PanelTab::File(p) = &removed {
-            self.file_cache.remove(p);
         }
         self.active_panel_tab = match self.active_panel_tab {
             Some(a) if a >= self.panel_tabs.len() => {
@@ -2862,451 +2866,12 @@ impl Render for Chat {
 
         // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
         //      merge; fixed dark terminal surface in every theme) -----------
-        let terminal_el: Option<gpui::Div> = if self.dock_panel == DockPanel::Terminal && !self.panel_tabs.is_empty() {
-            let weak_for_tabs = weak.clone();
-            let tabbar = div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .children(self.panel_tabs.iter().enumerate().map(|(ix, tab)| {
-                    let active = self.active_panel_tab == Some(ix);
-                    let (icon_name, label, title_text) = match tab {
-                        PanelTab::File(p) => (
-                            "file-text",
-                            p.file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| p.to_string_lossy().to_string()),
-                            p.to_string_lossy().to_string(),
-                        ),
-                        PanelTab::Term(id) => {
-                            let title = self
-                                .terminals
-                                .iter()
-                                .find(|t| t.id == *id)
-                                .map(|t| t.title.clone())
-                                .unwrap_or_default();
-                            let cwd = self
-                                .terminals
-                                .iter()
-                                .find(|t| t.id == *id)
-                                .map(|t| t.cwd.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            ("terminal", title, cwd)
-                        }
-                    };
-                    let label: SharedString = label.into();
-                    let title_text: SharedString = title_text.into();
-                    let weak_tab = weak_for_tabs.clone();
-                    let weak_close = weak_for_tabs.clone();
-                    let term_focus: Option<gpui::FocusHandle> = match tab {
-                        PanelTab::Term(id) => self
-                            .terminals
-                            .iter()
-                            .find(|t| t.id == *id)
-                            .map(|t| t.focus.clone()),
-                        _ => None,
-                    };
-                    div()
-                        .id(SharedString::from(format!("ptab-{ix}")))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .pl(px(12.))
-                        .pr(px(6.))
-                        .min_w(px(80.))
-                        .max_w(px(180.))
-                        .border_r_1()
-                        .border_color(rgb(t.border))
-                        .bg(if active { rgb(t.bg) } else { rgb(t.bg_panel) })
-                        .text_xs()
-                        .font_weight(if active {
-                            gpui::FontWeight::MEDIUM
-                        } else {
-                            gpui::FontWeight::NORMAL
-                        })
-                        .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            let _ = weak_tab.update(cx, |c, cx| {
-                                c.active_panel_tab = Some(ix);
-                                cx.notify();
-                            });
-                            if let Some(f) = term_focus.clone() {
-                                window.focus(&f);
-                            }
-                        })
-                        // middle-click closes the tab (pi-web TabBar auxclick)
-                        .on_mouse_down(MouseButton::Middle, {
-                            let w = weak_for_tabs.clone();
-                            move |_, _, cx| {
-                                let _ = w.update(cx, |c, cx| c.close_panel_tab(ix, cx));
-                            }
-                        })
-                        .child(icon(icon_name, 13., if active { t.text } else { t.text_muted }))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .overflow_hidden()
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("ptab-x-{ix}")))
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(4.))
-                                .cursor_pointer()
-                                .text_color(rgb(t.text_muted))
-                                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    let w = weak_close.clone();
-                                    move |_, _, cx| {
-                                        cx.stop_propagation();
-                                        let _ = w.update(cx, |c, cx| c.close_panel_tab(ix, cx));
-                                    }
-                                })
-                                .child(icon("x", 11., t.text_muted)),
-                        )
-                        .into_any_element()
-                }));
-
-            let body: Option<gpui::AnyElement> = self
-                .active_panel_tab
-                .and_then(|ix| self.panel_tabs.get(ix).cloned())
-                .map(|tab| match tab {
-                    PanelTab::Term(id) => {
-                        // terminal panel (header + banners + grid)
-                        let tix = self.terminals.iter().position(|t| t.id == id);
-                        let Some(tix) = tix else {
-                            return div().into_any_element();
-                        };
-                        let tab = &self.terminals[tix];
-                        let (dot, _status) = match &tab.status {
-                            TermStatus::Ready => (0x4ade80, ""),
-                            TermStatus::Exited(_) | TermStatus::Failed(_) => (0xf87171, ""),
-                        };
-                        let cwd_text: SharedString = tab.cwd.to_string_lossy().to_string().into();
-                        let weak_restart = weak.clone();
-                        let mut col = div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .h(px(38.))
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .pl(px(13.))
-                                    .pr(px(10.))
-                                    .bg(rgb(0x181b21))
-                                    .border_b_1()
-                                    .border_color(rgb(0x2f3540))
-                                    .child(
-                                        div()
-                                            .size(px(7.))
-                                            .rounded_full()
-                                            .flex_shrink_0()
-                                            .bg(rgb(dot)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_size(px(11.))
-                                            .font_family(terminal::FONT_FAMILY)
-                                            .text_color(rgb(0x9ca3af))
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .overflow_hidden()
-                                            .child(cwd_text),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("term-restart")
-                                            .h(px(27.))
-                                            .px(px(8.))
-                                            .flex()
-                                            .items_center()
-                                            .rounded(px(5.))
-                                            .border_1()
-                                            .border_color(rgb(0x343a46))
-                                            .text_color(rgb(0x9ca3af))
-                                            .cursor_pointer()
-                                            .hover(|s| {
-                                                s.bg(rgb(0x242932)).text_color(rgb(0xe5e7eb))
-                                            })
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let rix = tix;
-                                                move |_, _, cx| {
-                                                    let _ = weak_restart.update(cx, |c, cx| {
-                                                        c.restart_terminal(rix, cx);
-                                                    });
-                                                }
-                                            })
-                                            .child(icon("refresh", 12., 0x9ca3af)),
-                                    ),
-                            );
-                        match &tab.status {
-                            TermStatus::Failed(e) => {
-                                col = col.child(
-                                    div()
-                                        .py(px(7.))
-                                        .px(px(12.))
-                                        .bg(rgb(0x321b1b))
-                                        .border_b_1()
-                                        .border_color(rgb(0x5f2424))
-                                        .text_size(px(11.))
-                                        .font_family(terminal::FONT_FAMILY)
-                                        .text_color(rgb(0xfca5a5))
-                                        .child(SharedString::from(e.clone())),
-                                );
-                            }
-                            TermStatus::Exited(code) => {
-                                let code_text = code
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| tr("unknown").to_string());
-                                col = col.child(
-                                    div()
-                                        .py(px(7.))
-                                        .px(px(12.))
-                                        .text_size(px(11.))
-                                        .font_family(terminal::FONT_FAMILY)
-                                        .text_color(rgb(0x9ca3af))
-                                        .child(SharedString::from(crate::i18n::tf(
-                                            "Process exited with code {code_text}",
-                                            &[("code_text", code_text)],
-                                        ))),
-                                );
-                            }
-                            TermStatus::Ready => {}
-                        }
-                        col.child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .bg(rgb(0x111318))
-                                .child(
-                                    terminal::TerminalElement::new(tab, weak.clone())
-                                        .track_focus(&tab.focus)
-                                        .flex_1()
-                                        .h_full()
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let f = tab.focus.clone();
-                                            move |_, window, _cx| {
-                                                window.focus(&f);
-                                            }
-                                        })
-                                        .on_key_down(cx.listener(
-                                            |this, ev: &KeyDownEvent, _w, cx| {
-                                                this.terminal_key(ev, cx);
-                                            },
-                                        )),
-                                ),
-                        )
-                        .into_any_element()
-                    }
-                    PanelTab::File(path) => {
-                        // file viewer (pi-web FileViewer header + source/preview)
-                        let Some(fc) = self.file_cache.get(&path) else {
-                            return div().into_any_element();
-                        };
-                        let content = fc.content.clone();
-                        let meta: SharedString =
-                            Self::file_meta(&path, &content).into();
-                        let rel: SharedString = path
-                            .strip_prefix(&self.cwd)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|_| path.to_string_lossy().to_string())
-                            .into();
-                        let is_md = Self::is_markdown(&path);
-                        let preview = is_md
-                            && self.file_preview_mode.get(&path).copied().unwrap_or(false);
-                        let weak_mode = weak.clone();
-                        let mode_path = path.clone();
-                        let mut col = div()
-                            .flex_1()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .bg(rgb(t.bg))
-                            .child(
-                                div()
-                                    .h(px(38.))
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_3()
-                                    .border_b_1()
-                                    .border_color(rgb(t.border))
-                                    .child(
-                                        div()
-                                            .font_family("Consolas")
-                                            .text_size(px(11.))
-                                            .text_color(rgb(t.text))
-                                            .whitespace_nowrap()
-                                            .child(rel),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(t.text_dim))
-                                            .whitespace_nowrap()
-                                            .child(meta),
-                                    )
-                                    .child(div().flex_1())
-                                    .children(is_md.then(|| {
-                                        div()
-                                            .flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .id("fv-source")
-                                                    .px_2()
-                                                    .py(px(3.))
-                                                    .rounded(px(4.))
-                                                    .text_size(px(11.))
-                                                    .cursor_pointer()
-                                                    .bg(if preview {
-                                                        rgb(t.bg_panel)
-                                                    } else {
-                                                        rgb(t.bg_selected)
-                                                    })
-                                                    .text_color(rgb(t.text))
-                                                    .on_mouse_down(MouseButton::Left, {
-                                                        let w = weak_mode.clone();
-                                                        let p2 = mode_path.clone();
-                                                        move |_, _, cx| {
-                                                            let _ = w.update(cx, |c, cx| {
-                                                                c.file_preview_mode.insert(p2.clone(), false);
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                    })
-                                                    .child("Source"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id("fv-preview")
-                                                    .px_2()
-                                                    .py(px(3.))
-                                                    .rounded(px(4.))
-                                                    .text_size(px(11.))
-                                                    .cursor_pointer()
-                                                    .bg(if preview {
-                                                        rgb(t.bg_selected)
-                                                    } else {
-                                                        rgb(t.bg_panel)
-                                                    })
-                                                    .text_color(rgb(t.text))
-                                                    .on_mouse_down(MouseButton::Left, {
-                                                        let w = weak_mode.clone();
-                                                        let p2 = mode_path.clone();
-                                                        move |_, _, cx| {
-                                                            let _ = w.update(cx, |c, cx| {
-                                                                c.file_preview_mode.insert(p2.clone(), true);
-                                                                cx.notify();
-                                                            });
-                                                        }
-                                                    })
-                                                    .child("Preview"),
-                                            )
-                                    })),
-                            );
-                        if preview {
-                            col = col.child(
-                                div()
-                                    .id("fv-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .py_4()
-                                    .child(markdown::render(&content, &t)),
-                            );
-                        } else {
-                            col = col.child(
-                                div()
-                                    .id("fv-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .py_2()
-                                    .px_3()
-                                    .font_family("Consolas")
-                                    .text_size(px(12.))
-                                    .text_color(rgb(t.text))
-                                    .flex()
-                                    .flex_col()
-                                    .children(content.lines().map(|l| {
-                                        div().child(SharedString::from(l.to_string()))
-                                    })),
-                            );
-                        }
-                        col.into_any_element()
-                    }
-                });
-
-            Some(
-                div()
-                    .h_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .child(
-                        div()
-                            .w_full()
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .bg(rgb(t.bg))
-                            .child(
-                                div()
-                                    .flex()
-                                    .h(px(36.))
-                                    .flex_shrink_0()
-                                    .bg(rgb(t.bg_panel))
-                                    .border_b_1()
-                                    .border_color(rgb(t.border))
-                                    .child(tabbar)
-                                    .child(div().flex_1())
-                                    .child(
-                                        div()
-                                            .id("panel-close")
-                                            .w(px(36.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .cursor_pointer()
-                                            .text_color(rgb(t.text_muted))
-                                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                                |this, _: &gpui::MouseDownEvent, window, cx| {
-                                                    window.focus(&this.focus);
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .child(icon("x", 13., t.text_muted)),
-                                    ),
-                            )
-                            .children(body),
-                    ),
-            )
-        } else {
-            None
-        };
         // 005 layout: vertical shell — titlebar / body(dock + session) / control bar
         let body = if self.page == Page::Welcome {
             pages::welcome::welcome().into_any_element()
         } else {
-            let dock_el = function_panel::dock(self, entity.clone(), &weak, terminal_el, cx);
+            let dock_el =
+                function_panel::dock(self, entity.clone(), &weak, window, cx);
             if self.dock_right {
                 div()
                     .flex_1()
