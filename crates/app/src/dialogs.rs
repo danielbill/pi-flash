@@ -159,8 +159,8 @@ pub(crate) fn render_dialogs(
                 let t = T();
                 let weak = weak.clone();
                 let (has_session, tree, leaf_id) = match &chat.branch_tree {
-                    Some((tree, leaf)) => (chat.agent.session.is_some(), tree.clone(), leaf.clone()),
-                    None => (chat.agent.session.is_some(), Vec::new(), None),
+                    Some((tree, leaf)) => (chat.agent.read(cx).session.is_some(), tree.clone(), leaf.clone()),
+                    None => (chat.agent.read(cx).session.is_some(), Vec::new(), None),
                 };
                 let has_branches = tree_has_branches(&tree);
                 let active_path = build_active_path(&tree, leaf_id.as_deref());

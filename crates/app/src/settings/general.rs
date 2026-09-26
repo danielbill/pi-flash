@@ -84,10 +84,23 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
         );
     }
     let current = theme::theme_name();
-    for (name, th) in theme::ALL {
-        let active = *name == current;
+    for entry in crate::appearance::registry() {
+        let (name, th) = (
+            entry.id,
+            theme::ALL
+                .iter()
+                .find(|(id, _)| *id == entry.id)
+                .map(|(_, t)| *t)
+                .expect("registry id missing from theme table"),
+        );
+        let active = name == current;
         let weak_row = weak.clone();
         let theme_name = name.to_string();
+        let display: SharedString = if entry.name != entry.id {
+            format!("{} ({})", entry.name, entry.id).into()
+        } else {
+            entry.id.into()
+        };
         detail = detail.child(
             div()
                 .id(SharedString::from(format!("theme-{name}")))
@@ -127,7 +140,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                         .text_size(px(12.))
                         .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
                         .text_color(rgb(t.text))
-                        .child(SharedString::from(name.to_string())),
+                        .child(display),
                 )
                 .child(if active {
                     div()

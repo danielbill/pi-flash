@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui::{
-    Animation, AnimationExt, App, Application, Context, FocusHandle, Focusable, KeyDownEvent,
-    ListAlignment, ListState, MouseButton, ParentElement, Render, SharedString, Styled,
-    WindowOptions, div, list, prelude::*, pulsating_between, px, rgb,
+    App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
+    MouseButton, ParentElement,
+    Render, SharedString, Styled, WindowOptions, div, prelude::*, px, rgb,
 };
 use agent_session::AgentSession;
 use pi_link::protocol::{
@@ -46,11 +46,11 @@ use services::format::*;
 use services::git::*;
 use services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use services::workspace::*;
-use session::messages::{Msg, Role, UsageLine, render_msg};
+use session::messages::{Msg, Role, UsageLine};
 use terminal::{TermStatus, TerminalTab};
 use ui::TextInput;
-use ui::{icon, pill};
-use ext_ui::{render_ext_dialog, render_ext_widget};
+use ui::icon;
+use ext_ui::render_ext_dialog;
 
 // ---------------------------------------------------------------------------
 // state
@@ -141,8 +141,8 @@ struct Chat {
     sessions_list: ListState,
     cwd: PathBuf,
     branch: String,
-    /// pi RPC process ownership (spawn/epoch/events)
-    agent: AgentSession,
+    /// pi RPC process ownership (spawn/epoch/events) — headless entity
+    agent: gpui::Entity<AgentSession>,
     status: String,
     state: Option<SessionState>,
     stats: Option<SessionStats>,
@@ -316,9 +316,9 @@ impl Chat {
         let last_open = get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
             .filter(|p| p.exists());
-        let mut agent = AgentSession::new(1);
-        let events = agent.spawn(&cwd, last_open.as_deref());
-        let connected = agent.session.is_some();
+        let agent = cx.new(|_| AgentSession::new(1));
+        let events = agent.update(cx, |a, _cx| a.spawn(&cwd, last_open.as_deref()));
+        let connected = agent.read(cx).session.is_some();
 
         let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
@@ -441,7 +441,7 @@ impl Chat {
         });
         chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
-        chat.refresh_state();
+        chat.refresh_state(cx);
 
         if let Some(events) = events {
             cx.spawn(async move |this, cx| {
@@ -533,8 +533,8 @@ impl Chat {
             // UI state + disk-direct render, no second process, no waiting
             // for the RPC snapshot to show the last conversation
             chat.active_session_file = Some(path.clone());
-            chat.status = status_line(chat.agent.session.is_some(), "resuming");
-            if let Some(session) = &chat.agent.session {
+            chat.status = status_line(chat.agent.read(cx).session.is_some(), "resuming");
+            if let Some(session) = &chat.agent.read(cx).session {
                 let _ = session.send(&Command::GetMessages);
                 let _ = session.send(&Command::GetTree);
             }
@@ -546,7 +546,7 @@ impl Chat {
                 chat.ingest_message(role, blocks, usage, None, None, cx);
             }
             chat.notify_list(cx);
-            chat.refresh_state();
+            chat.refresh_state(cx);
         }
         // git panel: Enter in the commit box commits staged changes
         let entity_for_git = cx.entity();
@@ -586,8 +586,8 @@ impl Chat {
         });
     }
 
-    fn refresh_state(&self) {
-        if let Some(session) = &self.agent.session {
+    fn refresh_state(&self, cx: &gpui::App) {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::GetState);
             let _ = session.send(&Command::GetSessionStats);
             let _ = session.send(&Command::GetCommands);
@@ -876,7 +876,7 @@ impl Chat {
     /// Open the branch navigator: request a fresh tree, show the panel.
     fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
         self.branch_tree = None;
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::GetTree);
         }
         self.dialog = Some(Dialog::BranchTree);
@@ -896,7 +896,7 @@ impl Chat {
             cx.notify();
             return;
         }
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::Fork { entry_id });
             self.dialog = None;
         }
@@ -1024,7 +1024,7 @@ impl Chat {
                 })
             })
             .collect();
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::Steer { message: text, images });
         }
         self.input.clear();
@@ -1038,7 +1038,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::FollowUp { message: text });
         }
         self.input.clear();
@@ -1048,7 +1048,7 @@ impl Chat {
 
     /// 停止（rpc abort）。
     fn abort_stream(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::Abort);
         }
         self.stream_started = None;
@@ -1060,7 +1060,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        let Some(session) = &self.agent.session else {
+        let Some(session) = &self.agent.read(cx).session else {
             self.status = tr("未连接").into();
             cx.notify();
             return;
@@ -1114,7 +1114,7 @@ impl Chat {
         if text.is_empty() {
             return;
         }
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::FollowUp { message: text });
             self.input.clear();
             self.pending_images.clear();
@@ -1124,7 +1124,7 @@ impl Chat {
     }
 
     fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::Abort);
             self.status = "aborting".into();
             cx.notify();
@@ -1187,24 +1187,24 @@ impl Chat {
     /// Rename commit path that never reads the input entity (called from
     /// the input's own submit callback where the entity is borrowed).
     fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::SetSessionName { name });
         }
         // sidebar label comes from the session file's `session_info` entry;
         // reload it when pi confirms the write (set_session_name response —
         // an immediate re-read here would race the file flush)
-        self.refresh_state();
+        self.refresh_state(cx);
         self.renaming = None;
         self.rename_input = None;
         cx.notify();
     }
 
     fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::SetModel { provider, model: id });
         }
         self.dialog = None;
-        self.refresh_state();
+        self.refresh_state(cx);
         cx.notify();
     }
 
@@ -1217,7 +1217,7 @@ impl Chat {
             return;
         }
         self.thinking_override = Some(level.to_string());
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::SetThinkingLevel { level: level.to_string() });
         }
         cx.notify();
@@ -1245,7 +1245,7 @@ impl Chat {
 
     /// Editor toolbar 压缩: rpc compact (summarize the context).
     fn compact_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::Compact);
             self.status = tr("压缩中…").to_string();
             cx.notify();
@@ -1311,11 +1311,11 @@ impl Chat {
         self.titling = false;
         match result {
             Ok(title) => {
-                if let Some(session) = &self.agent.session {
+                if let Some(session) = &self.agent.read(cx).session {
                     let _ = session.send(&Command::SetSessionName { name: title.clone() });
                 }
                 self.status = tr("已生成标题: {title}").replace("{title}", &title);
-                self.refresh_state();
+                self.refresh_state(cx);
             }
             Err(e) => {
                 self.status = tr("标题生成失败: {e}").replace("{e}", &e);
@@ -1331,7 +1331,7 @@ impl Chat {
         if self.session_tools.is_some() && self.sys_prompt.is_some() {
             return;
         }
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::ExportHtml);
         }
         cx.notify();
@@ -1342,7 +1342,9 @@ impl Chat {
     }
 
     fn new_session(&mut self, cx: &mut Context<Self>) {
-        let events = self.agent.spawn(&self.cwd, None);
+        let events = self
+            .agent
+            .update(cx, |a, _cx| a.spawn(&self.cwd, None));
         self.messages.clear();
         self.state = None;
         self.stats = None;
@@ -1353,12 +1355,12 @@ impl Chat {
         self.renaming = None;
         self.rename_input = None;
         clear_last_open(&self.cwd.to_string_lossy());
-        self.status = status_line(self.agent.session.is_some(), tr("新会话"));
-        self.refresh_state();
+        self.status = status_line(self.agent.read(cx).session.is_some(), tr("新会话"));
+        self.refresh_state(cx);
         self.refresh_git();
         self.load_project_files();
         if let Some(events) = events {
-            let epoch = self.agent.epoch;
+            let epoch = self.agent.read(cx).epoch;
             cx.spawn(async move |this, cx| {
                 consume_events(this, cx, events, epoch).await;
             })
@@ -1375,7 +1377,7 @@ impl Chat {
             .find(|s| s.path == path)
             .map(|s| PathBuf::from(s.cwd.clone()))
             .unwrap_or_else(|| self.cwd.clone());
-        let events = self.agent.spawn(&cwd, Some(&path));
+        let events = self.agent.update(cx, |a, _cx| a.spawn(&cwd, Some(&path)));
         self.cwd = cwd;
         set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
         self.expanded_dirs.clear();
@@ -1391,7 +1393,7 @@ impl Chat {
         self.confirm_delete = None;
         self.renaming = None;
         self.rename_input = None;
-        self.status = status_line(self.agent.session.is_some(), "resuming");
+        self.status = status_line(self.agent.read(cx).session.is_some(), "resuming");
         // disk-direct: render the tail from the session file before the RPC
         // snapshot lands; the authoritative get_messages response then
         // replaces it (full history)
@@ -1403,15 +1405,15 @@ impl Chat {
             self.ingest_message(role, blocks, usage, None, None, cx);
         }
         self.notify_list(cx);
-        if let Some(session) = &self.agent.session {
+        if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::GetMessages);
             // branch tree snapshot for the fork panel
             let _ = session.send(&Command::GetTree);
         }
-        self.refresh_state();
+        self.refresh_state(cx);
         self.load_project_files();
         if let Some(events) = events {
-            let epoch = self.agent.epoch;
+            let epoch = self.agent.read(cx).epoch;
             cx.spawn(async move |this, cx| {
                 consume_events(this, cx, events, epoch).await;
             })
@@ -1428,7 +1430,7 @@ impl Chat {
         self.confirm_delete = None;
         let was_active = self.active_session_file.as_deref() == Some(path.as_path());
         if was_active {
-            if let Some(session) = &self.agent.session {
+            if let Some(session) = &self.agent.read(cx).session {
                 let _ = session.send(&Command::Abort);
             }
             // respawn without a session file = pi-web new-draft-with-same-cwd
@@ -1439,7 +1441,7 @@ impl Chat {
             Ok(_) => {
                 self.sessions.retain(|s| s.path != path);
                 self.sessions_list.reset(self.sessions.len());
-                self.status = status_line(self.agent.session.is_some(), "session deleted");
+                self.status = status_line(self.agent.read(cx).session.is_some(), "session deleted");
             }
             Err(e) => {
                 self.status = crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())])
@@ -1478,11 +1480,10 @@ impl Chat {
             return;
         }
         let removed = self.panel_tabs.remove(ix);
-        if let PanelTab::Term(id) = &removed {
-            if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
-                let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-                self.terminals.remove(tix);
-            }
+        let PanelTab::Term(id) = &removed;
+        if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
+            let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
+            self.terminals.remove(tix);
         }
         self.active_panel_tab = match self.active_panel_tab {
             Some(a) if a >= self.panel_tabs.len() => {
@@ -1712,7 +1713,7 @@ impl Chat {
                         self.branch_tree = None;
                         self.messages.clear();
                         self.notify_list(cx);
-                        if let Some(s) = self.agent.session.as_ref() {
+                        if let Some(s) = self.agent.read(cx).session.as_ref() {
                             let _ = s.send(&Command::GetState);
                             let _ = s.send(&Command::GetMessages);
                             let _ = s.send(&Command::GetTree);
@@ -1951,7 +1952,7 @@ impl Chat {
                 self.phase_waiting = false;
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
-                self.refresh_state();
+                self.refresh_state(cx);
             }
             Event::AgentEnd { .. } => {
                 self.agent_running = false;
@@ -1964,7 +1965,7 @@ impl Chat {
                 // in the sidebar (pi-web refreshKey-on-agent_end parity)
                 self.refresh_sessions();
                 // refresh branch tree so newly-sent user messages gain entry ids
-                if let Some(s) = self.agent.session.as_ref() {
+                if let Some(s) = self.agent.read(cx).session.as_ref() {
                     let _ = s.send(&Command::GetTree);
                 }
                 // agent may have written files: refresh git status
@@ -1986,7 +1987,7 @@ async fn consume_events(
     while let Some(event) = rx.next().await {
         let stale = this
             .update(cx, |chat, cx| {
-                if chat.agent.epoch != epoch {
+                if chat.agent.read(cx).epoch != epoch {
                     return true;
                 }
                 chat.on_event(event, cx);
@@ -1998,7 +1999,7 @@ async fn consume_events(
         }
     }
     let _ = this.update(cx, |chat, cx| {
-        if chat.agent.epoch == epoch {
+        if chat.agent.read(cx).epoch == epoch {
             chat.status = "pi exited".into();
             cx.notify();
         }
@@ -2014,7 +2015,6 @@ impl Focusable for Chat {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
 
 
 // ---------------------------------------------------------------------------
@@ -2314,61 +2314,10 @@ impl Render for Chat {
         }
         let t = T();
 
-        let status: SharedString = self.status.clone().into();
-        let streaming = self
-            .state
-            .as_ref()
-            .is_some_and(|st| st.is_streaming);
-        let model_label: SharedString = self
-            .state
-            .as_ref()
-            .and_then(|s| s.model_label())
-            .unwrap_or_else(|| tr("选择模型").into())
-            .into();
-        let thinking_label: SharedString = self
-            .state
-            .as_ref()
-            .and_then(|s| s.thinking_level.clone())
-            .unwrap_or_else(|| "medium".into())
-            .into();
-
         let entity = cx.entity();
         let weak = entity.downgrade();
         let weak_for_dialog = weak.clone();
 
-        let stats_right: SharedString = if let Some(st) = &self.stats {
-            format!(
-                "\u{2191}{} \u{2193}{} \u{27f3}{} ${:.2}  {}% / {}",
-                fmt_compact(st.input),
-                fmt_compact(st.output),
-                fmt_compact(st.cache_read),
-                st.cost,
-                st.context_percent.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
-                st.context_window.map(fmt_compact).unwrap_or_else(|| "-".into())
-            )
-            .into()
-        } else {
-            SharedString::from("")
-        };
-
-        // editor focus + caret (render refreshes input_focused for the blink pump)
-        let input_focused = self.focus.is_focused(window);
-        self.input_focused = input_focused;
-        let caret_on = self.caret_on;
-        let this_input: SharedString = self.input.clone().into();
-        let thinking_menu_open = self.pill_menu == Some(PillMenu::Thinking);
-        let tools_menu_open = self.pill_menu == Some(PillMenu::Tools);
-        let tools_label = self.tool_preset_label();
-        let thinking_label: SharedString = self
-            .thinking_override
-            .clone()
-            .or_else(|| {
-                self.state
-                    .as_ref()
-                    .and_then(|st| st.thinking_level.clone())
-            })
-            .unwrap_or_else(|| "auto".to_string())
-            .into();
         let right_px = 24.;
         // popup menu overlay anchored above the editor toolbar row
         let pill_menu_el = self.pill_menu.map(|menu| {
@@ -2493,390 +2442,8 @@ impl Render for Chat {
                 .into_any_element()
         });
 
-        // ---- main column -------------------------------------------------
-        let chat_entity = entity.clone();
-        let weak_for_msg = weak.clone();
-        let main_col = div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(t.assistant_bg))
-            .text_color(rgb(t.text))
-            .font_family("Segoe UI")
-            // top toolbar
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .px_3()
-                    .py_1p5()
-                    .border_b_1()
-                    .border_color(rgb(t.border))
-                    .child(pill("tb-sidebar", "panel-left", SharedString::from("")))
-                    .child(pill(
-                        "tb-history",
-                        "history",
-                        SharedString::from(tr("完整历史")),
-                    ))
-                    .child(
-                        div()
-                            .id("tb-branch")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                    this.open_branch_tree(cx);
-                                },
-                            ))
-                            .child(icon(
-                                "git-branch",
-                                12.,
-                                if self
-                                    .branch_tree
-                                    .as_ref()
-                                    .is_some_and(|(tr, _)| tree_has_branches(tr))
-                                {
-                                    t.accent
-                                } else {
-                                    t.text_muted
-                                },
-                            ))
-                            .child(SharedString::from(tr("分支"))),
-                    )
-                    .child(
-                        div()
-                            .id("tb-title")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                    this.auto_title(cx);
-                                },
-                            ))
-                            .child(icon("pencil", 12., t.text_muted))
-                            .child(SharedString::from(tr("生成标题"))),
-                    )
-                    .child(
-                        div()
-                            .id("tb-system")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(if self.top_panel == Some(TopPanel::System) { t.accent } else { t.border }))
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(rgb(if self.top_panel == Some(TopPanel::System) { t.accent } else { t.text_muted }))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                    this.top_panel = match this.top_panel {
-                                        Some(TopPanel::System) => None,
-                                        _ => Some(TopPanel::System),
-                                    };
-                                    this.request_system_info(cx);
-                                },
-                            ))
-                            .child(icon(
-                                "file-text",
-                                12.,
-                                if self.sys_prompt.is_some() { t.accent } else { t.text_muted },
-                            ))
-                            .child(SharedString::from(tr("系统"))),
-                    )
-                    .child(
-                        div()
-                            .id("tb-tools")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(if self.top_panel == Some(TopPanel::Tools) { t.accent } else { t.border }))
-                            .flex()
-                            .items_center()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(rgb(if self.top_panel == Some(TopPanel::Tools) { t.accent } else { t.text_muted }))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                    this.top_panel = match this.top_panel {
-                                        Some(TopPanel::Tools) => None,
-                                        _ => Some(TopPanel::Tools),
-                                    };
-                                    this.request_system_info(cx);
-                                },
-                            ))
-                            .child(icon(
-                                "wrench",
-                                12.,
-                                if self.session_tools.is_some() { t.accent } else { t.text_muted },
-                            ))
-                            .child(SharedString::from(tr("工具"))),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_right()
-                            .text_xs()
-                            .text_color(rgb(t.text_muted))
-                            .child(stats_right),
-                    ),
-            )
-            // message list (820px centered column, ChatWindow parity)
-            .child(
-                list(self.list.clone(), move |ix, _window, cx| {
-                    let chat = chat_entity.read(cx);
-                    let weak = weak_for_msg.clone();
-                    match chat.messages.get(ix) {
-                        Some(m) => div()
-                            .w_full()
-                            .flex()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(820.))
-                                    .child(render_msg(
-                                        m,
-                                        ix,
-                                        &weak,
-                                        &chat.collapsed,
-                                        t,
-                                        &chat.model_label_text(),
-                                        {
-                                            let streaming = chat
-                                                .state
-                                                .as_ref()
-                                                .is_some_and(|s| s.is_streaming);
-                                            let is_last_assistant = streaming
-                                                && Some(ix) == chat.messages.len().checked_sub(1)
-                                                && m.role == Role::Assistant;
-                                            if !is_last_assistant {
-                                                None
-                                            } else {
-                                                let text: String = m
-                                                    .blocks
-                                                    .iter()
-                                                    .map(|b| match b {
-                                                        Block::Text { text, .. }
-                                                        | Block::Thinking { text, .. } => {
-                                                            text.as_str()
-                                                        }
-                                                        _ => "",
-                                                    })
-                                                    .collect();
-                                                let est = estimate_tokens(&text);
-                                                let tps = chat.stream_started.and_then(
-                                                    |start| {
-                                                        let secs =
-                                                            start.elapsed().as_secs_f32();
-                                                        (secs > 0.5 && est > 0)
-                                                            .then(|| est as f32 / secs)
-                                                    },
-                                                );
-                                                Some((est, tps))
-                                            }
-                                        },
-                                    )),
-                            )
-                            .into_any_element(),
-                        None => {
-                            // pi-web ChatWindow phase label: pulsing text under
-                            // the list while running with no streamed content
-                            // yet (animate-[pulse_1.5s_infinite])
-                            if chat.phase_row_visible() {
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .justify_center()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .max_w(px(820.))
-                                            .py_2()
-                                            .text_size(px(13.))
-                                            .text_color(rgb(t.text_muted))
-                                            .child(SharedString::from(tr("正在等待模型...")))
-                                            .with_animation(
-                                                "phase-pulse",
-                                                Animation::new(std::time::Duration::from_millis(
-                                                    1500,
-                                                ))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.5, 1.0)),
-                                                |label, delta| label.opacity(delta),
-                                            ),
-                                    )
-                                    .into_any_element()
-                            } else {
-                                div().w_full().into_any_element()
-                            }
-                        }
-                    }
-                })
-                .flex_1()
-                .min_h_0()
-                .py_2(),
-            )
-            // empty new-session hero (pi-web ChatWindow isEmptyNew): logo row
-            // directly above the editor, flex spacer below centers the pair
-            .children((self.messages.is_empty()
-                && !self
-                    .state
-                    .as_ref()
-                    .is_some_and(|s| s.is_streaming))
-            .then(|| {
-                div()
-                    .w_full()
-                    .mb_3()
-                    .px(px(16.))
-                    .child(
-                        div()
-                            .max_w(px(820.))
-                            .mx_auto()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_3()
-                            .font_family("Consolas")
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2p5()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .size(px(32.))
-                                            .rounded(px(8.))
-                                            .bg(rgb(t.accent))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .text_size(px(20.))
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(rgb(t.accent_contrast))
-                                            .child("\u{3c0}"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(22.))
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(rgb(t.text))
-                                            .child("pi-flash"),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_end()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(t.text_muted))
-                                            .child(SharedString::from(format!(
-                                                "app v{}",
-                                                env!("CARGO_PKG_VERSION")
-                                            ))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(t.text_muted))
-                                            .child(SharedString::from(format!(
-                                                "pi v{}",
-                                                pi_link::vendor::vendored_version()
-                                                    .unwrap_or_default()
-                                            ))),
-                                    ),
-                            ),
-                    )
-                    .into_any_element()
-            }))
-            // extension widgets above the editor (setWidget aboveEditor)
-            .children((!self.ext_widgets.is_empty()).then(|| {
-                let rows: Vec<gpui::AnyElement> = self
-                    .ext_widgets
-                    .iter()
-                    .filter(|(_, _, above)| *above)
-                    .map(|(_, lines, _)| render_ext_widget(lines, t))
-                    .collect();
-                (!rows.is_empty()).then(|| div().px_4().flex().flex_col().gap_1().children(rows).into_any_element())
-            }).flatten())
-            .child(session::input::input_area(self, entity.clone(), &weak, streaming, input_focused, caret_on, this_input, model_label, thinking_menu_open, tools_menu_open, thinking_label, tools_label, cx))
-            // extension widgets below the editor (setWidget belowEditor)
-            .children((!self.ext_widgets.is_empty()).then(|| {
-                let rows: Vec<gpui::AnyElement> = self
-                    .ext_widgets
-                    .iter()
-                    .filter(|(_, _, above)| !above)
-                    .map(|(_, lines, _)| render_ext_widget(lines, t))
-                    .collect();
-                (!rows.is_empty()).then(|| div().px_4().pb_1().flex().flex_col().gap_1().children(rows).into_any_element())
-            }).flatten())
-            .children((self.messages.is_empty()
-                && !self
-                    .state
-                    .as_ref()
-                    .is_some_and(|s| s.is_streaming))
-            .then(|| div().flex_1().into_any_element()))
-            // status bar (+ extension status items)
-            .child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.bg_panel))
-                    .text_xs()
-                    .text_color(rgb(t.text_muted))
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(status))
-                    .children(self.ext_status.iter().map(|(k, text)| {
-                        div()
-                            .flex_shrink_0()
-                            .font_family("Consolas")
-                            .text_size(px(10.))
-                            .text_color(rgb(t.text_dim))
-                            .child(SharedString::from(format!("{}: {}", k, text)))
-                    })),
-            );
-
-
-        // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
-        //      merge; fixed dark terminal surface in every theme) -----------
+        // ---- main column (session::main_column) --------------------------
+        let main_col = session::main_column(self, entity.clone(), &weak, window, cx);
         // 005 layout: vertical shell — titlebar / body(dock + session) / control bar
         let body = if self.page == Page::Welcome {
             pages::welcome::welcome().into_any_element()

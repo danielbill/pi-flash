@@ -130,7 +130,7 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         if let Some(req) = self.ext_dialog.take() {
-            if let Some(session) = &self.agent.session {
+            if let Some(session) = &self.agent.read(cx).session {
                 let _ = session.send(&pi_link::protocol::Command::ExtensionUiResponse {
                     id: req.id,
                     value,

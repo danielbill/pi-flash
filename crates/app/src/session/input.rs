@@ -464,7 +464,7 @@ pub(crate) fn input_area(
                                             move |_, _, cx| {
                                                 let _ = weak.update(cx, |c, cx| {
                                                     if c.available_models.is_empty() {
-                                                        c.refresh_state();
+                                                        c.refresh_state(cx);
                                                     }
                                                     c.dialog =
                                                         Some(Chat::model_select_dialog(cx));

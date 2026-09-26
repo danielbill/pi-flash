@@ -3,15 +3,13 @@
 //! Data comes from services::git process calls — the same pattern zed's
 //! git crate uses, so the zed panel skeleton port can reuse this layer.
 
-use std::path::PathBuf;
-
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::i18n::tr;
-use crate::services::git::{self, GitStatus};
+use crate::services::git;
 use crate::theme::theme as T;
-use crate::ui::{TextInput, icon};
+use crate::ui::icon;
 
 /// Active git panel tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +88,7 @@ pub(crate) fn view(
 fn changes_body(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
-    cx: &mut gpui::Context<Chat>,
+    _cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
     let t = T();
     let cwd = chat.cwd.clone();

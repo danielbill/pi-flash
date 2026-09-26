@@ -742,7 +742,7 @@ pub(crate) fn dock(
 pub(crate) fn terminal_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
-    window: &mut gpui::Window,
+    _window: &mut gpui::Window,
     cx: &mut Context<Chat>,
 ) -> Option<gpui::Div> {
     let t = T();
@@ -775,7 +775,6 @@ pub(crate) fn terminal_view(
                         .iter()
                         .find(|t| t.id == *id)
                         .map(|t| t.focus.clone()),
-                    _ => None,
                 };
                 div()
                     .id(SharedString::from(format!("ptab-{ix}")))
