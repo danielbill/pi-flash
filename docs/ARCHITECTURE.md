@@ -152,6 +152,10 @@ RPC 对账)→ 页面流转`。
   open_settings reload-only),按 3b 架构重接 SettingsPanel;修焦点仲裁缺失
   settings 分支(Esc 关闭弹窗,原 Esc 误触会话中止);6 tab UI 实测通过;
   修 015/020 文档;本文重写为 v2 契约。
-- 待做:阶段 C(渲染按新边界拆分)→ D(外观底座+新布局骨架+startup 接入)
+- **阶段 C(a34af22,2026-09-26)**:render() 3260→1291 行,main.rs 6173→3533。
+  新边界模块(session/messages+input、dialogs、ext_ui、function_panel/mod+file_tree)
+  以 settings 式自由函数承接原内联区块,零行为变更;警告 20→19(余量均为
+  BISECT 时代死代码,阶段 D/E 清)。
+- 待做:阶段 D(外观底座+新布局骨架+startup 接入,右面板在本阶段拆除)
   → E(实体拆分:AgentSession/InputPanel/SessionsPanel/FunctionPanel/Shell)
   → F(check_arch.sh)→ G+(功能细化,等详细要求)。
