@@ -18,7 +18,7 @@ use pi_link::protocol::{
     AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, TreeNode,
     Usage, content_blocks, parse_tree,
 };
-use pi_link::sessions::{SessionInfo, list_sessions};
+use pi_link::sessions::{SessionInfo, list_sessions, list_sessions_for_cwd};
 
 mod assets;
 mod i18n;
@@ -300,7 +300,7 @@ impl Chat {
             list,
             sessions: {
                 let cwd_text = cwd.to_string_lossy().to_string();
-                list_sessions(100)
+                list_sessions_for_cwd(&cwd_text, 100)
                     .into_iter()
                     .filter(|s| same_ws(&s.cwd, &cwd_text))
                     .collect()
@@ -491,7 +491,7 @@ impl Chat {
                 chat.cwd = ws_path;
                 chat.branch = read_branch(&chat.cwd);
                 let cwd_text = chat.cwd.to_string_lossy().to_string();
-                chat.sessions = list_sessions(100)
+                chat.sessions = list_sessions_for_cwd(&cwd_text, 100)
                     .into_iter()
                     .filter(|s| same_ws(&s.cwd, &cwd_text))
                     .collect();
@@ -525,7 +525,7 @@ impl Chat {
     /// sessionsForProject: only the selected cwd's sessions are listed).
     fn refresh_sessions(&mut self) {
         let cwd = self.cwd.to_string_lossy().to_string();
-        self.sessions = list_sessions(100)
+        self.sessions = list_sessions_for_cwd(&cwd, 100)
             .into_iter()
             .filter(|s| same_ws(&s.cwd, &cwd))
             .collect();
@@ -3177,9 +3177,9 @@ impl Render for Chat {
                         })
                         .children(if renaming {
                             // pi-web: "Rename: input fills the same row"
-                            (chat.rename_input.clone().map(|input| {
+                            chat.rename_input.clone().map(|input| {
                                 div().flex_1().min_w_0().child(input)
-                            }))
+                            })
                         } else {
                             None
                         })
