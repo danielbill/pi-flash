@@ -261,6 +261,11 @@ pub(crate) fn sidebar(
                 let hovered = chat.hovered_session == Some(ix);
                 let confirming =
                     chat.confirm_delete.as_deref() == Some(info.path.as_path());
+                // parked-session permission queue badge (needs attention)
+                let ext_pending = chat.runtimes.values().any(|rt| {
+                    let r = rt.read(cx);
+                    r.file.as_deref() == Some(info.path.as_path()) && !r.ext_queue.is_empty()
+                });
                 // pi-web renaming: this row's content swaps for the input
                 let renaming =
                     chat.renaming.as_deref() == Some(info.path.as_path());
@@ -366,6 +371,14 @@ pub(crate) fn sidebar(
                                     .text_color(rgb(t.text))
                                     .child(title),
                             )
+                            .when(ext_pending, |row| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0xf87171))
+                                        .child(tr("需要确认 →")),
+                                )
+                            })
                             .child(
                                 div()
                                     .mt(px(2.))

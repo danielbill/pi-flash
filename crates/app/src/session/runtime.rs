@@ -163,15 +163,15 @@ impl SessionRuntime {
         self.agent.session = None;
     }
 
-    fn touch(&mut self) {
-        self.last_activity = std::time::Instant::now();
-    }
-
     pub(crate) fn model_label_text(&self) -> String {
         self.state
             .as_ref()
             .and_then(|s| s.model_label())
             .unwrap_or_else(|| "pi".to_string())
+    }
+
+    pub(crate) fn touch(&mut self) {
+        self.last_activity = std::time::Instant::now();
     }
 
     pub(crate) fn refresh_state(&self) {
@@ -223,6 +223,7 @@ async fn consume_runtime_events(
                 if rt.agent.epoch != epoch {
                     return true;
                 }
+                rt.touch();
                 rt.on_event(event, cx);
                 false
             })

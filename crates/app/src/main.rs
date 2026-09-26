@@ -501,6 +501,35 @@ impl Chat {
                 let _ = weak_git.update(cx, |c, cx| c.git_commit_staged(cx));
             }));
         });
+        // idle recycle (pi-web idle-timeout parity): every 60s, kill the
+        // process of any non-active session idle >10min. Messages stay —
+        // reopening is instant; the next prompt re-pulls the process.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(60))
+                .await;
+            let ok = this
+                .update(cx, |chat, cx| {
+                    let idle_cap = std::time::Duration::from_secs(600);
+                    for (key, rt) in &chat.runtimes {
+                        if *key == chat.active_key {
+                            continue;
+                        }
+                        let r = rt.read(cx);
+                        if !r.agent_running
+                            && r.last_activity.elapsed() > idle_cap
+                            && r.agent.session.is_some()
+                        {
+                            rt.update(cx, |r2, _| r2.shutdown_process());
+                        }
+                    }
+                })
+                .is_ok();
+            if !ok {
+                break;
+            }
+        })
+        .detach();
         // background fill: project session list (startup budget §4 — the
         // first frame renders the welcome page while this lands)
         let cwd_text = chat.cwd.to_string_lossy().to_string();
@@ -951,6 +980,11 @@ impl Chat {
                     if is_active {
                         let req = req.clone();
                         chat.on_ext_ui(req, cx);
+                    } else {
+                        // parked session asks for permission: queue it, the
+                        // badge surfaces it; popped when user switches there
+                        rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
+                        cx.notify();
                     }
                 }
                 SessionEvent::RenameReady(prefill) => {
@@ -1008,6 +1042,20 @@ impl Chat {
         self.pill_menu = None;
         self.top_panel = None;
         self.menu_ix = 0;
+        // surface queued permission requests of the incoming session
+        let queued = rt.update(cx, |r, _| {
+            let q = std::mem::take(&mut r.ext_queue);
+            r.touch();
+            q
+        });
+        if let Some(first) = queued.first() {
+            let first = first.clone();
+            cx.notify();
+            self.on_ext_ui(first, cx);
+            for r in queued.into_iter().skip(1) {
+                rt.update(cx, |r2, _| r2.ext_queue.push(r));
+            }
+        }
         cx.notify();
     }
 
