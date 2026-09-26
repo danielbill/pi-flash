@@ -53,6 +53,9 @@ use ui::TextInput;
 use ui::icon;
 use ext_ui::render_ext_dialog;
 
+static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
@@ -493,6 +496,11 @@ impl Chat {
             });
         })
         .detach();
+        if PERF.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(t0) = T0.get() {
+                eprintln!("[perf] last-session tail rendered: {:?}", t0.elapsed());
+            }
+        }
         // git panel: Enter in the commit box commits staged changes
         let entity_for_git = cx.entity();
         chat.git_commit_input.update(cx, |ti, _| {
@@ -545,6 +553,11 @@ impl Chat {
                     chat.page = Page::Session;
                 }
                 cx.notify();
+                if PERF.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(t0) = T0.get() {
+                        eprintln!("[perf] session list: {:?}", t0.elapsed());
+                    }
+                }
             });
             // cross-project tail preload (startup §4): the last N sessions'
             // conversations land in memory off the frame path, so switching
@@ -1739,6 +1752,14 @@ impl gpui::Element for EditorInputElement {
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if PERF.load(std::sync::atomic::Ordering::Relaxed)
+            && !FIRST.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            if let Some(t0) = T0.get() {
+                eprintln!("[perf] first frame: {:?}", t0.elapsed());
+            }
+        }
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
         //
@@ -2154,8 +2175,9 @@ impl Render for Chat {
 
 
 fn main() {
-    // theme: PI_FLASH_THEME (dev override) > app_settings.json (006) >
-    // pi settings.json (shared with pi's TUI) > mist
+    let _ = T0.set(std::time::Instant::now());
+    PERF.store(true, std::sync::atomic::Ordering::Relaxed);
+    // theme: PI_FLASH_THEME (dev override) > persisted settings.json > mist
     if std::env::var("PI_FLASH_THEME").ok().and_then(|n| theme::set_by_name(&n).then_some(())).is_none() {
         let app = app_settings().theme;
         if let Some(name) = app.or_else(|| pi_link::config::read_theme(&pi_link::config::settings_path())) {
