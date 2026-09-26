@@ -3571,6 +3571,23 @@ fn main() {
                     // gpui-component widgets require its Root as the window
                     // root view (renders their context-menu/popover layers)
                     let chat = cx.new(Chat::new);
+                    let weak = chat.downgrade();
+                    // persist window bounds + dock layout on close so the
+                    // startup restore layer has data (§4)
+                    window.on_window_should_close(cx, move |window, cx| {
+                        let b = window.bounds();
+                        save_window_state(&WindowState {
+                            x: f64::from(b.origin.x),
+                            y: f64::from(b.origin.y),
+                            w: f64::from(b.size.width),
+                            h: f64::from(b.size.height),
+                            maximized: window.is_maximized(),
+                        });
+                        if let Some(chat) = weak.upgrade() {
+                            chat.update(cx, |chat, _cx| chat.persist_dock());
+                        }
+                        true
+                    });
                     cx.new(|cx| gpui_component::Root::new(chat.into(), window, cx))
                 },
             )

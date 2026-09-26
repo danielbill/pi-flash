@@ -38,7 +38,10 @@ pub(crate) fn title_bar(
         .bg(rgb(t.bg_panel))
         .border_b_1()
         .border_color(rgb(t.border))
-        .window_control_area(WindowControlArea::Drag)
+        // NOTE: no Drag area on the bar itself — the hit-test callback
+        // matches hitboxes in insertion order (parents first), so a
+        // bar-wide Drag would shadow the caption buttons' Min/Max/Close
+        // (everything became HTCAPTION). Drag lives on the filler below.
         // logo (left)
         .child(
             div()
@@ -76,8 +79,14 @@ pub(crate) fn title_bar(
                 ))
                 .child(SharedString::from(tr("设置"))),
         )
-        // drag filler to the caption buttons
-        .child(div().flex_1());
+        // drag filler: the empty middle is the drag region (HTCAPTION —
+        // platform handles move + double-click-zoom)
+        .child(
+            div()
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
+        );
 
     for (area, glyph, tip) in [
         (WindowControlArea::Min, "\u{E921}", tr("最小化")),
