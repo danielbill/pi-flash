@@ -165,7 +165,22 @@ RPC 对账)→ 页面流转`。
   zed 仓库可达补数据,真实源:fallback_themes.rs + assets/themes JSON)+
   切换重跑 gpui-component 映射 + 字体槽位 + icon theme 骨架;设置通用页
   主题选择器接新链路。default/dark 主题按 006 退役。
-- 待做:阶段 E(实体拆分:AgentSession/InputPanel/SessionsPanel/FunctionPanel/
-  Shell;git 面板+文件树骨架;终端宿主归位;文件预览弹窗化)
-  → F(check_arch.sh)→ G+(功能细化,等详细要求)。
-  待补验证:主题切换/dock 换边/窗口控制的交互实测(用户占用机器,暂缓)。
+- **阶段 E(32c985d + 45e4404 + 51e9984,2026-09-26,已完成)**:
+  ① dock 收尾——git 面板简化版(Changes|History + 行点击暂存 + commit/push,
+  push 走后台执行器;services/git.rs 增 stage/unstage/commit/push/log)、
+  终端宿主归位 function_panel::terminal_view、文件预览弹窗化(PanelTab::File
+  删除);② **AgentSession 无头实体**(Chat 持 Entity<AgentSession>,session/
+  epoch 进实体,spawn 走 entity update,refresh_state 取 &App);③ **单次
+  spawn**(启动恢复决策前移,消灭白起再杀的 node 进程);④ **磁盘直读**
+  (启动恢复与 open_session 先用会话文件尾窗上屏,get_messages 快照后到
+  对账——已实测:resuming 状态下消息已可见);⑤ sessionView 组装迁
+  session::main_column(main.rs 3172→2740);⑥ 主题选择器接 registry
+  (雾青/蔷薇/One Dark 显示名)。
+  **E 范围裁定**:InputPanel/SessionsPanel/FunctionPanel 的完整
+  Entity+EventEmitter 化移入 G+ 按需升级——模块边界已由自由函数视图落位,
+  粗粒度重绘对单窗口应用足够;IME/编辑器迁移涉及最高回归风险区,须在
+  031 细化要求到位后单独成战役。
+- 待做:阶段 F(check_arch.sh 守护脚本)→ G+(功能细化,等详细要求;
+  含 InputPanel/SessionsPanel/FunctionPanel 实体升级、外观字体设置 tab、
+  One Light/nord/ayu 主题数据)。
+  待补交互实测:主题切换/dock 换边/git 面板操作/磁盘直读上屏速度。
