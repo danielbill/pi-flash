@@ -676,8 +676,17 @@ mod name_tests {
 
     #[test]
     fn parses_session_info_name_from_real_file_tail() {
-        // the session the user renamed via the inline editor
-        let home = std::env::var("USERPROFILE").unwrap();
+        // regression for the rfind mid-line bug; machine-dependent by
+        // design (the renamed session lives on the dev machine) — CI and
+        // fresh checkouts skip silently. Fixture coverage for the same
+        // parse path lives in scan_parses_summary_name_and_count.
+        let home = match std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            Ok(h) => h,
+            Err(_) => {
+                eprintln!("no home dir, skipping");
+                return;
+            }
+        };
         let p = Path::new(&home)
             .join(".pi/agent/sessions/--D--ai_workspace-pi_work--")
             .join("2026-09-25T06-12-27-503Z_01a0d731-9aee-71ef-982e-cfb077b412de.jsonl");
