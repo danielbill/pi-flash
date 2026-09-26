@@ -105,11 +105,14 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_row.update(cx, |c, cx| {
-                        if theme::set_by_name(&theme_name) {
+                        if crate::appearance::persist_theme(&theme_name) {
                             let _ = pi_link::config::write_theme(
                                 &pi_link::config::settings_path(),
                                 &theme_name,
                             );
+                            // 006: re-map tokens so widget-library surfaces
+                            // (inputs/modals) follow the switch
+                            crate::appearance::sync_gpui_tokens(cx);
                             cx.notify();
                         }
                     });

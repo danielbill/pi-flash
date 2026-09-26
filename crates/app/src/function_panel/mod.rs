@@ -10,6 +10,7 @@ use self::file_tree::collect_tree_rows;
 use std::path::PathBuf;
 
 use crate::Chat;
+use crate::DockPanel;
 use crate::services::git::GitStatus;
 use crate::session::messages::Role;
 use std::collections::HashSet;
@@ -35,14 +36,11 @@ pub(crate) fn sidebar(
     let sessions_entity = entity.clone();
     let weak_for_sessions = weak.clone();
     let sidebar = div()
-        .w(px(260.))
-        .h_full()
-        .flex_shrink_0()
+        .flex_1()
+        .min_h_0()
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
-        .border_r_1()
-        .border_color(rgb(t.border))
         // brand + new + search
         .child(
             div()
@@ -56,7 +54,7 @@ pub(crate) fn sidebar(
                         .text_base()
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(rgb(t.text))
-                        .child("pi-flash"),
+                        .child(tr("会话")),
                 )
                 .child(
                     div()
@@ -562,22 +560,25 @@ pub(crate) fn sidebar(
             .min_h_0()
             .overflow_hidden()
         })  // .child({ ... }) block
-        // pane resize handle (pi-web sidebar-section-resize-handle)
-        .child(
-            div()
-                .id("sidebar-resize")
-                .h(px(12.))
-                .flex_shrink_0()
-                .cursor(gpui::CursorStyle::ResizeUpDown)
-                .hover(|s| s.bg(rgb(t.bg_hover)))
-                .on_mouse_down(MouseButton::Left, cx.listener(
-                    |this, ev: &gpui::MouseDownEvent, _w, _cx| {
-                        this.resizing_sidebar =
-                            Some((ev.position.y, this.sidebar_sessions_frac));
-                    },
-                )),
-        )
-        // file explorer section (flex rest)
+        ;
+    sidebar
+}
+
+/// files view (021 groundwork): the directory file explorer, moved out of
+/// the old sidebar; the zed project_panel skeleton lands in phase E.
+pub(crate) fn files_view(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    cx: &mut Context<Chat>,
+) -> gpui::Div {
+    let t = T();
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .bg(rgb(t.bg))
         .child(
             div()
                 .flex_1()
@@ -683,73 +684,133 @@ pub(crate) fn sidebar(
                         ),
                 ),
         )
-        // bottom nav
+}
+
+/// git view (022 groundwork): working-tree changes from the existing
+/// status cache; the zed git_panel skeleton (Changes|History + commit/push)
+/// replaces this in phase E.
+pub(crate) fn git_view(chat: &mut Chat) -> gpui::Div {
+    let t = T();
+    let mut col = div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .bg(rgb(t.bg))
         .child(
             div()
+                .px_3()
+                .py_2()
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text_muted))
+                .child(tr("更改")),
+        );
+    let (added, deleted) = chat.git_add_del;
+    col = col.child(
+        div()
+            .px_3()
+            .pb_1()
+            .text_xs()
+            .text_color(rgb(t.text_dim))
+            .child(SharedString::from(format!(
+                "+{} -{}  \u{2192} 022 git 面板骨架(阶段 E 落地 zed 移植)",
+                added, deleted
+            ))),
+    );
+    if chat.git_files.is_empty() {
+        col = col.child(
+            div()
+                .px_3()
+                .py_2()
+                .text_xs()
+                .text_color(rgb(t.text_dim))
+                .child(tr("工作区干净")),
+        );
+    }
+    for f in &chat.git_files {
+        let (badge, color) = match f.status {
+            GitStatus::Modified => ("M", 0xe0af68),
+            GitStatus::Added => ("A", 0x4ade80),
+            GitStatus::Deleted => ("D", 0xf87171),
+            GitStatus::Renamed => ("R", 0xe0af68),
+            GitStatus::Untracked => ("U", 0x7aa2f7),
+            GitStatus::Conflict => ("!", 0xf87171),
+        };
+        col = col.child(
+            div()
+                .px_3()
+                .py_1()
                 .flex()
-                .border_t_1()
-                .border_color(rgb(t.border))
+                .items_center()
+                .gap_2()
+                .text_xs()
                 .child(
                     div()
-                        .id("nav-models")
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_1p5()
-                        .py_2()
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, cx.listener(
-                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                this.open_settings(0, cx);
-                            },
-                        ))
-                        .child(icon("settings", 12., t.text_muted))
-                        .child(SharedString::from(tr("模型"))),
+                        .w(px(14.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(color))
+                        .child(badge),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_1p5()
-                        .py_2()
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, cx.listener(
-                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                this.open_settings(1, cx);
-                            },
-                        ))
-                        .child(icon("layers", 12., t.text_muted))
-                        .child(SharedString::from(tr("技能"))),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_1p5()
-                        .py_2()
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, cx.listener(
-                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                this.open_settings(2, cx);
-                            },
-                        ))
-                        .child(icon("settings", 12., t.text_muted))
-                        .child(SharedString::from(tr("插件"))),
+                        .min_w_0()
+                        .text_ellipsis()
+                        .overflow_hidden()
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(
+                            f.path.to_string_lossy().to_string(),
+                        )),
                 ),
         );
-    sidebar
+    }
+    col
+}
+
+/// Dock container (015): fixed-width column whose border side flips with
+/// dock_right (018 right-click); hosts the active view. The terminal view
+/// element is built in main.rs render (right-panel host; phase E moves it
+/// here).
+pub(crate) fn dock(
+    chat: &mut Chat,
+    entity: Entity<Chat>,
+    weak: &gpui::WeakEntity<Chat>,
+    terminal_el: Option<gpui::Div>,
+    cx: &mut Context<Chat>,
+) -> gpui::Div {
+    let t = T();
+    let right = chat.dock_right;
+    let view: gpui::AnyElement = match chat.dock_panel {
+        DockPanel::Sessions => sidebar(chat, entity, weak, cx).into_any_element(),
+        DockPanel::Files => files_view(chat, weak, cx).into_any_element(),
+        DockPanel::Git => git_view(chat).into_any_element(),
+        DockPanel::Terminal => terminal_el
+            .map(|d| d.into_any_element())
+            .unwrap_or_else(|| {
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(rgb(t.text_dim))
+                    .child(tr("暂无终端会话"))
+                    .into_any_element()
+            }),
+    };
+    let mut col = div()
+        .w(px(260.))
+        .h_full()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .bg(rgb(t.bg));
+    col = if right {
+        col.border_l_1().border_color(rgb(t.border))
+    } else {
+        col.border_r_1().border_color(rgb(t.border))
+    };
+    col.child(view)
 }

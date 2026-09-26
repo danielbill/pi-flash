@@ -20,10 +20,12 @@ use pi_link::protocol::{
 };
 use pi_link::sessions::{SessionInfo, list_sessions_for_cwd};
 
+mod appearance;
 mod assets;
 mod dialogs;
 mod ext_ui;
 mod function_panel;
+mod pages;
 mod i18n;
 mod markdown;
 mod models_config;
@@ -31,6 +33,8 @@ mod theme;
 mod services;
 mod session;
 mod settings;
+mod status_bar;
+mod titlebar;
 mod terminal;
 mod ui;
 use i18n::tr;
@@ -59,6 +63,45 @@ enum Dialog {
     GitDiff { path: PathBuf, patch: String },
 }
 
+/// Full-page state (005/011/012): Welcome shows until the project/session
+/// list has loaded; the session view carries the newSession hero (012)
+/// whenever no session is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Welcome,
+    Session,
+}
+
+/// functionPanel active view (015/018): mutually exclusive, switched from
+/// the bottom control bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockPanel {
+    Sessions,
+    Files,
+    Git,
+    Terminal,
+}
+
+impl DockPanel {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DockPanel::Sessions => "sessions",
+            DockPanel::Files => "files",
+            DockPanel::Git => "git",
+            DockPanel::Terminal => "terminal",
+        }
+    }
+
+    fn parse(s: &str) -> DockPanel {
+        match s {
+            "files" => DockPanel::Files,
+            "git" => DockPanel::Git,
+            "terminal" => DockPanel::Terminal,
+            _ => DockPanel::Sessions,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct AttachedImage {
     name: String,
@@ -83,6 +126,11 @@ struct Chat {
     focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog: Option<Dialog>,
+    /// full-page state (welcome gate until the session list lands)
+    page: Page,
+    /// functionPanel active view + side (015/018, persisted)
+    dock_panel: DockPanel,
+    dock_right: bool,
     input: String,
     messages: Vec<Msg>,
     list: ListState,
@@ -117,7 +165,6 @@ struct Chat {
     /// built-in terminal tabs (pi-web TerminalPanel); cwd-keyed dedupe
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
-    right_panel_open: bool,
     term_seq: usize,
     /// alacritty event channel for all terminal tabs
     term_events: Option<futures::channel::mpsc::UnboundedSender<
@@ -154,13 +201,11 @@ struct Chat {
     title_tx: Option<futures::channel::mpsc::UnboundedSender<Result<String, String>>>,
     titling: bool,
     /// right panel width (px; drag handle + expand toggle, pi-web parity)
-    right_panel_width: f32,
     /// right panel tabs: file viewers + terminals in one TabBar (pi-web
     /// AppShell panelTabs merge)
     panel_tabs: Vec<PanelTab>,
     active_panel_tab: Option<usize>,
     /// right-panel drag: (start pointer x, start width)
-    resizing_panel: Option<(gpui::Pixels, f32)>,
     /// markdown Source/Preview toggle for file tabs (per-path)
     file_preview_mode: std::collections::HashMap<PathBuf, bool>,
     /// cached content of open file tabs
@@ -169,7 +214,6 @@ struct Chat {
     /// --sidebar-session-pane-height; default half)
     sidebar_sessions_frac: f32,
     /// active sidebar pane drag: (start pointer y, start fraction)
-    resizing_sidebar: Option<(gpui::Pixels, f32)>,
     /// editor caret blink state (toggled by the blink pump)
     caret_on: bool,
     /// whether the chat editor currently owns focus (updated in render)
@@ -260,6 +304,7 @@ impl Chat {
         let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         list.reset(0);
         let sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
+        let dock_state = get_dock_state();
 
         let mut chat = Self {
             focus,
@@ -268,13 +313,18 @@ impl Chat {
             input: String::new(),
             messages: Vec::new(),
             list,
-            sessions: {
-                let cwd_text = cwd.to_string_lossy().to_string();
-                list_sessions_for_cwd(&cwd_text, 100)
-                    .into_iter()
-                    .filter(|s| same_ws(&s.cwd, &cwd_text))
-                    .collect()
-            },
+            // skeleton first (ARCHITECTURE.md §4): the list fills in the
+            // background task below; the page flips Welcome -> Session then
+            sessions: Vec::new(),
+            page: Page::Welcome,
+            dock_panel: dock_state
+                .as_ref()
+                .map(|d| DockPanel::parse(&d.panel))
+                .unwrap_or(DockPanel::Sessions),
+            dock_right: dock_state
+                .as_ref()
+                .map(|d| d.position == "right")
+                .unwrap_or(false),
             sessions_list,
             cwd: cwd.clone(),
             branch,
@@ -301,7 +351,6 @@ impl Chat {
             epoch: 1,
             terminals: Vec::new(),
             active_terminal: None,
-            right_panel_open: false,
             term_seq: 0,
             term_events: None,
             mc_patterns: None,
@@ -325,11 +374,8 @@ impl Chat {
             title_tx: None,
             titling: false,
             sidebar_sessions_frac: 0.5,
-            resizing_sidebar: None,
-            right_panel_width: 560.,
             panel_tabs: Vec::new(),
             active_panel_tab: None,
-            resizing_panel: None,
             file_preview_mode: std::collections::HashMap::new(),
             file_cache: std::collections::HashMap::new(),
             caret_on: true,
@@ -460,11 +506,6 @@ impl Chat {
             if ws_path.is_dir() {
                 chat.cwd = ws_path;
                 chat.branch = read_branch(&chat.cwd);
-                let cwd_text = chat.cwd.to_string_lossy().to_string();
-                chat.sessions = list_sessions_for_cwd(&cwd_text, 100)
-                    .into_iter()
-                    .filter(|s| same_ws(&s.cwd, &cwd_text))
-                    .collect();
                 chat.load_project_files();
             }
         }
@@ -478,7 +519,34 @@ impl Chat {
                 chat.open_session(path, false, cx);
             }
         }
+        // background fill: project session list (startup budget §4 — the
+        // first frame renders the welcome page while this lands)
+        let cwd_text = chat.cwd.to_string_lossy().to_string();
+        cx.spawn(async move |this, cx| {
+            let sessions = list_sessions_for_cwd(&cwd_text, 100)
+                .into_iter()
+                .filter(|s| same_ws(&s.cwd, &cwd_text))
+                .collect::<Vec<_>>();
+            let _ = this.update(cx, |chat, cx| {
+                chat.sessions = sessions;
+                chat.sessions_list.reset(chat.sessions.len());
+                if chat.page == Page::Welcome {
+                    chat.page = Page::Session;
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         chat
+    }
+
+    /// Persist the dock layout (015 side + 018 active view).
+    fn persist_dock(&mut self) {
+        save_dock_state(&DockState {
+            position: if self.dock_right { "right" } else { "left" }.into(),
+            panel: self.dock_panel.as_str().into(),
+            width: 260.,
+        });
     }
 
     fn refresh_state(&self) {
@@ -517,7 +585,7 @@ impl Chat {
     /// Open (or focus) a terminal for the selected workspace cwd. One PTY per
     /// cwd (terminal-manager idempotent-create parity).
     fn open_terminal(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.right_panel_open = true;
+        self.dock_panel = DockPanel::Terminal;
         if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &self.cwd)) {
             self.active_terminal = Some(ix);
             let focus = self.terminals[ix].focus.clone();
@@ -559,7 +627,6 @@ impl Chat {
             self.active_panel_tab = match self.active_panel_tab {
                 Some(a) if a >= self.panel_tabs.len() => {
                     if self.panel_tabs.is_empty() {
-                        self.right_panel_open = false;
                         None
                     } else {
                         Some(a.saturating_sub(1))
@@ -573,7 +640,6 @@ impl Chat {
         self.active_terminal = match self.active_terminal {
             Some(a) if a >= self.terminals.len() => {
                 if self.terminals.is_empty() {
-                    self.right_panel_open = false;
                     None
                 } else {
                     Some(a.saturating_sub(1))
@@ -581,7 +647,7 @@ impl Chat {
             }
             other => other,
         };
-        if self.right_panel_open && self.active_terminal.is_none() {
+        if self.active_terminal.is_none() {
             window.focus(&self.focus);
         }
         cx.notify();
@@ -1343,7 +1409,7 @@ impl Chat {
     /// Open a file as a right-panel tab (pi-web file tabs; replaces the
     /// old preview dialog). Re-activates an existing tab for the path.
     fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.right_panel_open = true;
+        self.dock_panel = DockPanel::Terminal;
         if let Some(ix) = self
             .panel_tabs
             .iter()
@@ -1393,7 +1459,6 @@ impl Chat {
         self.active_panel_tab = match self.active_panel_tab {
             Some(a) if a >= self.panel_tabs.len() => {
                 if self.panel_tabs.is_empty() {
-                    self.right_panel_open = false;
                     None
                 } else {
                     Some(a.saturating_sub(1))
@@ -2289,11 +2354,7 @@ impl Render for Chat {
             })
             .unwrap_or_else(|| "auto".to_string())
             .into();
-        let right_px = if self.right_panel_open {
-            self.right_panel_width + 24.
-        } else {
-            24.
-        };
+        let right_px = 24.;
         // popup menu overlay anchored above the editor toolbar row
         let pill_menu_el = self.pill_menu.map(|menu| {
             let weak_menu = weak.clone();
@@ -2417,8 +2478,6 @@ impl Render for Chat {
                 .into_any_element()
         });
 
-        // ---- sidebar (function_panel::sidebar) ---------------------------
-        let sidebar = function_panel::sidebar(self, entity.clone(), &weak, cx);
         // ---- main column -------------------------------------------------
         let chat_entity = entity.clone();
         let weak_for_msg = weak.clone();
@@ -2800,43 +2859,10 @@ impl Render for Chat {
                     })),
             );
 
-        let mut root = div()
-            .size_full()
-            .relative()
-            .flex()
-            .flex_row()
-            .bg(rgb(t.bg))
-            .text_color(rgb(t.text))
-            .font_family("Segoe UI")
-            .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
-                if let Some((start_y, start_frac)) = this.resizing_sidebar {
-                    let height = f32::from(window.viewport_size().height);
-                    let frac = start_frac + (f32::from(ev.position.y) - f32::from(start_y)) / height;
-                    this.sidebar_sessions_frac = frac.clamp(0.12, 0.85);
-                    cx.notify();
-                }
-                if let Some((start_x, start_width)) = this.resizing_panel {
-                    // growth direction left: dragging left widens the panel
-                    let width = start_width - (f32::from(ev.position.x) - f32::from(start_x));
-                    this.right_panel_width = width.clamp(300., 1200.);
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(MouseButton::Left, cx.listener(
-                |this, _: &gpui::MouseUpEvent, _w, cx| {
-                    if this.resizing_sidebar.take().is_some()
-                        || this.resizing_panel.take().is_some()
-                    {
-                        cx.notify();
-                    }
-                },
-            ))
-            .child(sidebar)
-            .child(main_col);
 
         // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
         //      merge; fixed dark terminal surface in every theme) -----------
-        if self.right_panel_open && !self.panel_tabs.is_empty() {
+        let terminal_el: Option<gpui::Div> = if self.dock_panel == DockPanel::Terminal && !self.panel_tabs.is_empty() {
             let weak_for_tabs = weak.clone();
             let tabbar = div()
                 .flex()
@@ -3229,35 +3255,18 @@ impl Render for Chat {
                     }
                 });
 
-            root = root.child(
+            Some(
                 div()
                     .h_full()
                     .flex_shrink_0()
                     .flex()
-                    // drag handle (pi-web panel-resize-handle; growth left)
                     .child(
                         div()
-                            .id("panel-resize")
-                            .w(px(4.))
-                            .h_full()
-                            .cursor(gpui::CursorStyle::ResizeLeftRight)
-                            .hover(|s| s.bg(rgb(t.accent)))
-                            .on_mouse_down(MouseButton::Left, cx.listener(
-                                |this, ev: &gpui::MouseDownEvent, _w, _cx| {
-                                    this.resizing_panel =
-                                        Some((ev.position.x, this.right_panel_width));
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .w(px(self.right_panel_width))
+                            .w_full()
                             .h_full()
                             .flex()
                             .flex_col()
                             .bg(rgb(t.bg))
-                            .border_l_1()
-                            .border_color(rgb(t.border))
                             .child(
                                 div()
                                     .flex()
@@ -3280,7 +3289,6 @@ impl Render for Chat {
                                             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                                             .on_mouse_down(MouseButton::Left, cx.listener(
                                                 |this, _: &gpui::MouseDownEvent, window, cx| {
-                                                    this.right_panel_open = false;
                                                     window.focus(&this.focus);
                                                     cx.notify();
                                                 },
@@ -3290,8 +3298,46 @@ impl Render for Chat {
                             )
                             .children(body),
                     ),
-            );
-        }
+            )
+        } else {
+            None
+        };
+        // 005 layout: vertical shell — titlebar / body(dock + session) / control bar
+        let body = if self.page == Page::Welcome {
+            pages::welcome::welcome().into_any_element()
+        } else {
+            let dock_el = function_panel::dock(self, entity.clone(), &weak, terminal_el, cx);
+            if self.dock_right {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .child(main_col)
+                    .child(dock_el)
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .child(dock_el)
+                    .child(main_col)
+                    .into_any_element()
+            }
+        };
+        let mut root = div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .bg(rgb(t.bg))
+            .text_color(rgb(t.text))
+            .font_family("Segoe UI")
+            .child(titlebar::title_bar(self, window, cx))
+            .child(body)
+            .child(status_bar::control_bar(self, cx));
 
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
 
@@ -3474,9 +3520,11 @@ impl Render for Chat {
 
 
 fn main() {
-    // theme: PI_FLASH_THEME (dev override) > persisted settings.json > mist
+    // theme: PI_FLASH_THEME (dev override) > app_settings.json (006) >
+    // pi settings.json (shared with pi's TUI) > mist
     if std::env::var("PI_FLASH_THEME").ok().and_then(|n| theme::set_by_name(&n).then_some(())).is_none() {
-        if let Some(name) = pi_link::config::read_theme(&pi_link::config::settings_path()) {
+        let app = app_settings().theme;
+        if let Some(name) = app.or_else(|| pi_link::config::read_theme(&pi_link::config::settings_path())) {
             theme::set_by_name(&name);
         }
     }
@@ -3488,35 +3536,33 @@ fn main() {
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             // gpui-component (widget library powering TextInput): global
-            // init + token mapping from the active app theme
+            // init + token mapping from the active app theme (appearance
+            // owns the remap so theme switches re-run it)
             gpui_component::init(cx);
-            gpui_component::theme::init(cx);
-            {
-                let t = T();
-                let tc = gpui_component::theme::Theme::global_mut(cx);
-                tc.radius = px(5.);
-                let c = &mut tc.colors;
-                c.background = rgb(t.bg_panel).into();
-                c.foreground = rgb(t.text).into();
-                c.border = rgb(t.border).into();
-                c.input = rgb(t.border).into();
-                c.ring = rgb(t.accent).into();
-                c.caret = rgb(t.text).into();
-                c.accent = rgb(t.accent).into();
-                c.accent_foreground = rgb(t.accent_contrast).into();
-                c.muted = rgb(t.bg_hover).into();
-                c.muted_foreground = rgb(t.text_dim).into();
-                c.secondary = rgb(t.bg_selected).into();
-                let mut sel: gpui::Hsla = rgb(t.accent).into();
-                sel.a = 0.28;
-                c.selection = sel;
-            }
-            let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
+            appearance::sync_gpui_tokens(cx);
+            // restore last window bounds (startup restore layer §4)
+            let restored = get_window_state();
+            let bounds = gpui::Bounds::centered(
+                None,
+                gpui::size(
+                    px(restored.as_ref().map(|w| w.w as f32).unwrap_or(1180.)),
+                    px(restored.as_ref().map(|w| w.h as f32).unwrap_or(760.)),
+                ),
+                cx,
+            );
+            let window_bounds = if restored.map(|w| w.maximized).unwrap_or(false) {
+                gpui::WindowBounds::Maximized(bounds)
+            } else {
+                gpui::WindowBounds::Windowed(bounds)
+            };
             cx.open_window(
                 WindowOptions {
-                    window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                    window_bounds: Some(window_bounds),
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("pi-flash".into()),
+                        // client-side title bar (005: app-drawn, window
+                        // control hitboxes registered by titlebar.rs)
+                        appears_transparent: true,
                         ..Default::default()
                     }),
                     ..Default::default()

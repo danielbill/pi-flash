@@ -100,10 +100,30 @@ pub const ROSE: Theme = Theme {
 
 pub const ALL: &[(&str, Theme)] = &[
     ("mist", MIST),
-    ("default", DEFAULT),
-    ("dark", DARK),
     ("rose", ROSE),
+    ("one-dark", ONE_DARK),
 ];
+
+/// ZED "One Dark" — ported from `zed/crates/theme/src/fallback_themes.rs`
+/// `zed_default_dark()` (the compile-time fallback family), HSLA -> RGB8.
+/// 006 主题内置之一;One Light / nord / ayu 的 JSON 数据待 zed 仓库可达后补入。
+pub const ONE_DARK: Theme = Theme {
+    bg: 0x22252b,         // background hsla(215,12%,15%)
+    bg_panel: 0x282c33,   // editor/toolbar hsla(220,12%,18%)
+    bg_hover: 0x3c404c,   // element_hover hsla(225,11.8%,26.7%)
+    bg_selected: 0x3b3f4a, // element_selected hsla(224,11.3%,26.1%)
+    border: 0x1b1d23,     // border hsla(225,13%,12%)
+    text: 0xd7dadf,       // text hsla(221,11%,86%)
+    text_muted: 0x6d737e, // text_muted hsla(218,7%,46%)
+    text_dim: 0x6a6f79,   // text_disabled hsla(220,6.6%,44.5%)
+    accent: 0x6189eb,     // text_accent blue hsla(222.6,77.5%,65.1%)
+    accent_hover: 0x6088eb, // border_focused hsla(223,78%,65%)
+    accent_contrast: 0xffffff,
+    user_bg: 0x2f333d,    // element_background hsla(223,13%,21%)
+    assistant_bg: 0x262931, // elevated_surface hsla(225,12%,17%)
+    tool_bg: 0x2d3139,    // element_active hsla(220,11.8%,20%)
+    bg_subtle: 0xffffff14,
+};
 
 /// Active theme index; the UI re-reads it every render so a switch repaints
 /// everything. `PI_FLASH_THEME=<name>` overrides the persisted choice for dev.
@@ -133,9 +153,9 @@ mod tests {
 
     #[test]
     fn switch_roundtrip_and_reject() {
-        assert!(set_by_name("dark"));
-        assert_eq!(theme_name(), "dark");
-        assert_eq!(theme().bg, DARK.bg);
+        assert!(set_by_name("rose"));
+        assert_eq!(theme_name(), "rose");
+        assert_eq!(theme().bg, ROSE.bg);
         assert!(set_by_name("mist"));
         assert_eq!(theme_name(), "mist");
         assert!(!set_by_name("nope"));
