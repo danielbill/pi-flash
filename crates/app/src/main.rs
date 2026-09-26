@@ -18,7 +18,7 @@ use pi_link::protocol::{
     AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, TreeNode,
     Usage, content_blocks, parse_tree,
 };
-use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
+use pi_link::sessions::{SessionInfo, list_sessions, list_sessions_for_cwd, read_tail_messages};
 
 mod agent_session;
 mod appearance;
@@ -46,7 +46,7 @@ use services::format::*;
 use services::git::*;
 use services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use services::workspace::*;
-use session::messages::{Msg, Role, UsageLine};
+use session::messages::{Msg, Role, UsageLine, msgs_from_tail};
 use terminal::{TermStatus, TerminalTab};
 use ui::TextInput;
 use ui::icon;
@@ -136,6 +136,10 @@ struct Chat {
     dock_right: bool,
     input: String,
     messages: Vec<Msg>,
+    /// preloaded message tails for recent sessions (cross-project,
+    /// N = app_settings preload_sessions; stale entries are harmless —
+    /// the get_messages snapshot replaces them on open)
+    session_tail_cache: std::collections::HashMap<PathBuf, Vec<Msg>>,
     list: ListState,
     sessions: Vec<SessionInfo>,
     sessions_list: ListState,
@@ -331,6 +335,7 @@ impl Chat {
             dialog: None,
             input: String::new(),
             messages: Vec::new(),
+            session_tail_cache: std::collections::HashMap::new(),
             list,
             // skeleton first (ARCHITECTURE.md §4): the list fills in the
             // background task below; the page flips Welcome -> Session then
@@ -528,7 +533,7 @@ impl Chat {
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
         chat.reload_settings_panel();
-        if let Some(path) = last_open {
+        if let Some(path) = last_open.clone() {
             // single-spawn startup: pi already resumed from the file — fill
             // UI state + disk-direct render, no second process, no waiting
             // for the RPC snapshot to show the last conversation
@@ -572,6 +577,33 @@ impl Chat {
                 }
                 cx.notify();
             });
+            // cross-project tail preload (startup §4): the last N sessions'
+            // conversations land in memory off the frame path, so switching
+            // to a recent project paints its last session instantly
+            let n = preload_sessions();
+            if n > 0 {
+                let active = last_open.clone();
+                let preloaded = cx
+                    .background_spawn(async move {
+                        let mut map = std::collections::HashMap::new();
+                        for s in list_sessions(n) {
+                            if map.len() >= n {
+                                break;
+                            }
+                            if Some(&s.path) == active.as_ref() {
+                                continue;
+                            }
+                            let msgs =
+                                msgs_from_tail(read_tail_messages(&s.path, 256 * 1024, 100));
+                            map.insert(s.path, msgs);
+                        }
+                        map
+                    })
+                    .await;
+                let _ = this.update(cx, |chat, _cx| {
+                    chat.session_tail_cache = preloaded;
+                });
+            }
         })
         .detach();
         chat
@@ -1397,13 +1429,20 @@ impl Chat {
         // disk-direct: render the tail from the session file before the RPC
         // snapshot lands; the authoritative get_messages response then
         // replaces it (full history)
-        for msg in read_tail_messages(&path, 256 * 1024, 100) {
-            let m = &msg["message"];
-            let role = m["role"].as_str().unwrap_or("");
-            let blocks = content_blocks(&m["content"]);
-            let usage = Usage::parse(&m["usage"]);
-            self.ingest_message(role, blocks, usage, None, None, cx);
-        }
+        let tail = match self.session_tail_cache.get(&path).cloned() {
+            Some(msgs) => msgs,
+            None => {
+                let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
+                // bounded backfill: a full cache triggers a rebuild on the
+                // next preload; staleness is harmless (snapshot reconciles)
+                if self.session_tail_cache.len() >= preload_sessions() * 2 {
+                    self.session_tail_cache.clear();
+                }
+                self.session_tail_cache.insert(path.clone(), msgs.clone());
+                msgs
+            }
+        };
+        self.messages.extend(tail);
         self.notify_list(cx);
         if let Some(session) = &self.agent.read(cx).session {
             let _ = session.send(&Command::GetMessages);
@@ -1736,6 +1775,10 @@ impl Chat {
                     );
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
+                        // authoritative projection: replace any disk-direct /
+                        // cached pre-render instead of appending (fixes
+                        // doubled rows after the tail pre-render)
+                        self.messages.clear();
                         for msg in data["messages"].as_array().into_iter().flatten() {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);

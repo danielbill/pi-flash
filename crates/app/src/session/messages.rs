@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use gpui::{MouseButton, SharedString, div, prelude::*, px, relative, rgb};
-use pi_link::protocol::Block;
+use pi_link::protocol::{content_blocks, Block, Usage};
 
 use crate::Chat;
 use crate::i18n::tr;
@@ -29,6 +29,7 @@ pub(crate) struct UsageLine {
     pub(crate) time: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Msg {
     pub(crate) role: Role,
     pub(crate) blocks: Vec<Block>,
@@ -322,4 +323,101 @@ pub(crate) fn render_msg(
         }
     }
     col
+}
+
+/// Convert raw session-file tail entries (`{"type":"message","message":{…}}`,
+/// as produced by `pi_link::sessions::read_tail_messages`) into renderable
+/// `Msg`s. Mirrors `Chat::ingest_message` semantics exactly: user/assistant
+/// push, toolResult merges into the last assistant's tool call, other roles
+/// skipped; disk tails carry no wall-clock time (UsageLine.time stays empty).
+pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
+    let mut out: Vec<Msg> = Vec::new();
+    for v in values {
+        let m = &v["message"];
+        let role = m["role"].as_str().unwrap_or("");
+        let blocks = content_blocks(&m["content"]);
+        let usage = Usage::parse(&m["usage"]);
+        match role {
+            "user" => out.push(Msg {
+                role: Role::User,
+                blocks,
+                usage: None,
+                entry_id: None,
+            }),
+            "assistant" => out.push(Msg {
+                role: Role::Assistant,
+                blocks,
+                usage: usage.map(|u| UsageLine {
+                    input: u.input,
+                    output: u.output,
+                    cache_read: u.cache_read,
+                    cost: u.cost,
+                    time: String::new(),
+                }),
+                entry_id: None,
+            }),
+            "toolResult" => {
+                let text: String = blocks
+                    .iter()
+                    .map(|b| match b {
+                        Block::Text { text, .. } => text.as_str(),
+                        _ => "",
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .trim_end()
+                    .to_string();
+                if let Some(last) = out.last_mut() {
+                    if last.role == Role::Assistant {
+                        if let Some(Block::ToolCall { result, .. }) = last
+                            .blocks
+                            .iter_mut()
+                            .rev()
+                            .find(|b| matches!(b, Block::ToolCall { .. }))
+                        {
+                            result.push_str(&text);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tail_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn converts_user_assistant_and_merges_toolresult() {
+        let vals = vec![
+            json!({"type":"message","message":{"role":"user","content":"查一下"}}),
+            json!({"type":"message","message":{"role":"assistant","content":[
+                    {"type":"thinking","text":"想"},
+                    {"type":"toolCall","id":"t1","name":"web","arguments":{"q":"x"},"result":""}
+                ],
+                "usage":{"input":10,"output":5,"cache_read":0,"cost":0.01}}}),
+            json!({"type":"message","message":{"role":"toolResult","content":[
+                    {"type":"text","text":"结果内容"}]}}),
+            json!({"type":"message","message":{"role":"system","content":"skip"}}),
+        ];
+        let msgs = msgs_from_tail(vals);
+        assert_eq!(msgs.len(), 2, "toolResult merges; system skipped");
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[1].role, Role::Assistant);
+        let usage = msgs[1].usage.as_ref().expect("assistant usage kept");
+        assert_eq!((usage.input, usage.output), (10, 5));
+        let merged = msgs[1]
+            .blocks
+            .iter()
+            .find_map(|b| match b {
+                Block::ToolCall { result, .. } => Some(result.as_str()),
+                _ => None,
+            })
+            .expect("toolcall present");
+        assert_eq!(merged, "结果内容");
+    }
 }

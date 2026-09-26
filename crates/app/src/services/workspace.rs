@@ -179,6 +179,11 @@ pub fn save_sound_pref(on: bool) {
     save_app_settings(&s);
 }
 
+/// Effective cross-project tail-preload count (settings override, default 10).
+pub fn preload_sessions() -> usize {
+    app_settings().preload.unwrap_or(10)
+}
+
 /// Agent-run finished notification sound (Windows MessageBeep; no-op elsewhere).
 pub fn play_notify_sound() {
     #[cfg(windows)]
@@ -346,6 +351,9 @@ pub struct AppSettings {
     pub lang: Option<usize>,
     /// notification sound on/off
     pub sound: Option<bool>,
+    /// how many recent sessions (cross-project) get their message tail
+    /// preloaded into memory at startup; 0 disables
+    pub preload: Option<usize>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -394,6 +402,10 @@ pub fn app_settings() -> AppSettings {
                         .and_then(|v| v.as_u64())
                         .map(|v| v.min(2) as usize),
                     sound: map.get("sound").and_then(|v| v.as_bool()),
+                    preload: map
+                        .get("preload_sessions")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize),
                 }
             }
             None => AppSettings::default(),
@@ -428,6 +440,9 @@ pub fn save_app_settings(s: &AppSettings) {
     }
     if let Some(v) = s.sound {
         obj.insert("sound".into(), Value::Bool(v));
+    }
+    if let Some(v) = s.preload {
+        obj.insert("preload_sessions".into(), Value::Number((v as u64).into()));
     }
     save_map_to(&path, &obj);
 }

@@ -98,6 +98,20 @@ RPC 对账)→ 页面流转`。
 (与 node 无关);pi 就绪 <1s 且不阻塞任何 UI。** 实测基线:热索引扫描
 49 会话 5-9ms/0 文件扫描(阶段 A,原 200-400ms×2 全量读)。
 
+**加载深度与预加载(2026-09-26 调查定案)**:pi 本体无窗口——
+SessionManager.open 全量解析文件(82MB ~1.1s),get_messages 返回
+compaction 感知投影全量(压缩后 = 摘要检查点 + 压缩点之后的消息,
+活跃投影通常远小于原始消息数);pi-web 的 50 条尾窗是其 API route
+自截断(tail=50 cap 1000,toolResult 不占额,raw cap=max(200,tail×6)),
+并非来自 pi。pi-web 的"切项目秒出"= 页面内存 LRU(8 会话/32MB)+
+SM 指纹缓存(12 个/256MB)+ 尾窗响应,无跨项目预加载。
+pi-flash 策略:read_tail_messages 物理尾窗(256KB/100 条)天然快于
+pi-web 冷路径;启动后台预加载**跨项目最近 N 个会话**的尾窗进内存
+(`preload_sessions`,app_settings.json,缺省 10,0=关),open_session
+先查 `session_tail_cache` 命中秒出;get_messages 投影快照到达后
+clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏差:
+物理尾窗可能含废弃分支条目,由 RPC 对账校正;分支感知尾窗留 G+。
+
 ## 5. 外观体系(006/007)
 
 - **主题**:ZED 架构(ThemeRegistry + ActiveTheme + 主题族 light/dark)。
