@@ -188,8 +188,7 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
   statusControlBar(018,四视图互斥 + 右键换边)、functionPanel dock、
   welcome 页面态 + 后台填充(会话列表不再阻塞首帧,骨架先行)、窗口
   bounds/最大化恢复;右面板拆除(终端宿主暂挂 dock Terminal 视图,阶段 E
-  归位);appearance/ 注册表(mist/rose/one-dark;One Light/nord/ayu 待
-  zed 仓库可达补数据,真实源:fallback_themes.rs + assets/themes JSON)+
+  归位);appearance/ 注册表(mist/rose/one-dark 起步)+
   切换重跑 gpui-component 映射 + 字体槽位 + icon theme 骨架;设置通用页
   主题选择器接新链路。default/dark 主题按 006 退役。
 - **阶段 E(32c985d + 45e4404 + 51e9984,2026-09-26,已完成)**:
@@ -207,7 +206,12 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
   Entity+EventEmitter 化移入 G+ 按需升级——模块边界已由自由函数视图落位,
   粗粒度重绘对单窗口应用足够;IME/编辑器迁移涉及最高回归风险区,须在
   031 细化要求到位后单独成战役。
-- 待做:阶段 F(check_arch.sh 守护脚本)→ G+(功能细化,等详细要求;
-  含 InputPanel/SessionsPanel/FunctionPanel 实体升级、外观字体设置 tab、
-  One Light/nord/ayu 主题数据)。
-  待补交互实测:主题切换/dock 换边/git 面板操作/磁盘直读上屏速度。
+- **主题数据补齐(2026-09-27)**:One Light/nord light/ayu light/nord dark
+  落地——源 JSON 入库 `assets/themes/{one,ayu,nord}/`(含 LICENSE;nord 取自
+  用户本机 Zed 扩展目录),`tmp/gen_themes.py` 移植进 theme.rs(半透明色按
+  主题底色烘焙);registry() 凑齐 006 定案 7 套;PI_FLASH_THEME 实测
+  nord-dark/one-light 截图通过。
+- 待做:G+(功能细化,等详细要求;含 InputPanel/SessionsPanel/FunctionPanel
+  实体升级、外观字体设置 tab、032 气泡控制栏、013 会话搜索、check_arch
+  超标函数拆分:main.rs 2252 行 + 7 个 >300 行视图)。
+  待补交互实测:dock 换边/git 面板操作/池多会话并发场景。

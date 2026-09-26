@@ -31,13 +31,16 @@ pub struct ThemeEntry {
     pub source: &'static str,
 }
 
-/// The built-in catalog (006). One Light / nord light / ayu light /
-/// nord dark land here as soon as their zed theme JSON data is reachable
-/// (offline checkout; entries append to `theme::ALL`).
+/// The built-in catalog (006): pi-web 浅色雾青/蔷薇 + zed One Light/One Dark、
+/// nord light/dark、ayu light。调色板源数据在 `assets/themes/`（含 LICENSE）。
 pub fn registry() -> &'static [ThemeEntry] {
     &[
         ThemeEntry { id: "mist", name: "雾青", family: Family::Light, source: "pi-web" },
         ThemeEntry { id: "rose", name: "蔷薇", family: Family::Light, source: "pi-web" },
+        ThemeEntry { id: "one-light", name: "One Light", family: Family::Light, source: "zed" },
+        ThemeEntry { id: "nord-light", name: "Nord Light", family: Family::Light, source: "zed (nord)" },
+        ThemeEntry { id: "nord-dark", name: "Nord Dark", family: Family::Dark, source: "zed (nord)" },
+        ThemeEntry { id: "ayu-light", name: "Ayu Light", family: Family::Light, source: "zed" },
         ThemeEntry { id: "one-dark", name: "One Dark", family: Family::Dark, source: "zed" },
     ]
 }
