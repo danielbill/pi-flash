@@ -23,7 +23,6 @@ use pi_link::protocol::{
 
 use crate::agent_session::AgentSession;
 use crate::services::branch::*;
-use crate::services::format::fmt_hhmm;
 use crate::services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use crate::session::messages::{Msg, Role, UsageLine, msgs_from_tail};
 use crate::i18n::tr;
@@ -96,6 +95,9 @@ pub(crate) struct SessionRuntime {
     pub last_activity: std::time::Instant,
     /// queued ext requests while not active (G+ surfaces a badge)
     pub ext_queue: Vec<pi_link::protocol::ExtensionUiRequest>,
+
+    /// (msg_ix, flashed_at) — 复制 pill's 已复制 flash (032)
+    pub copy_flash: Option<(usize, std::time::Instant)>,
 }
 
 impl SessionRuntime {
@@ -132,6 +134,7 @@ impl SessionRuntime {
             title_tx: None,
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
+            copy_flash: None,
         }
     }
 
@@ -369,7 +372,8 @@ impl SessionRuntime {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
-                            self.ingest_message(role, blocks, usage, None, None, cx);
+                            let ts = msg["timestamp"].as_i64();
+                            self.ingest_message(role, blocks, usage, ts, None, cx);
                         }
                         // map user messages to active-path entry ids (fork anchors)
                         let mut ids = self.active_user_entry_ids.iter();
@@ -378,6 +382,10 @@ impl SessionRuntime {
                                 m.entry_id = ids.next().cloned();
                             }
                         }
+                        // get_messages payloads carry generation-START stamps
+                        // only; completion stamps (回复用时) come from the
+                        // session file's entry write-times
+                        self.merge_tail_stamps();
                         self.notify_list(cx);
                     }
                     self.status = status_line(true, "resumed");
@@ -412,8 +420,14 @@ impl SessionRuntime {
                             }
                             self.phase_waiting = false;
                         } else {
-                            self.messages
-                                .push(Msg { role: Role::User, blocks, usage: None, entry_id: None });
+                            self.messages.push(Msg {
+                                role: Role::User,
+                                blocks,
+                                usage: None,
+                                entry_id: None,
+                                ts: timestamp,
+                                end_ts: None,
+                            });
                         }
                     }
                     "assistant" => {
@@ -423,6 +437,8 @@ impl SessionRuntime {
                             blocks,
                             usage: None,
                             entry_id: None,
+                            ts: timestamp,
+                            end_ts: None,
                         });
                     }
                     "toolResult" => {
@@ -563,8 +579,9 @@ impl SessionRuntime {
                                 output: u.output,
                                 cache_read: u.cache_read,
                                 cost: u.cost,
-                                time: timestamp.map(fmt_hhmm).unwrap_or_default(),
                             });
+                            m.ts = timestamp.or(m.ts);
+                            m.end_ts = Some(crate::services::format::now_ms());
                         }
                     }
                 }
@@ -602,18 +619,64 @@ impl SessionRuntime {
         self.notify_list(cx);
     }
 
+    /// Backfill message stamps from the session-file tail: snapshots never
+    /// carry completion times, and entry write-times are the only end-stamp
+    /// source for history (aligned by suffix — tail conversion mirrors the
+    /// same ingest semantics).
+    fn merge_tail_stamps(&mut self) {
+        use crate::session::messages::msgs_from_tail;
+        let Some(f) = self.file.clone() else {
+            return;
+        };
+        let entries = pi_link::sessions::read_tail_messages(&f, 256 * 1024, 400);
+        if entries.is_empty() {
+            return;
+        }
+        let tail = msgs_from_tail(entries);
+        if tail.len() > self.messages.len() {
+            return; // projection shorter than file (compaction) — skip unsafe align
+        }
+        let start = self.messages.len() - tail.len();
+        for (i, tm) in tail.into_iter().enumerate() {
+            let m = &mut self.messages[start + i];
+            if m.role == tm.role {
+                if m.ts.is_none() {
+                    m.ts = tm.ts;
+                }
+                if m.end_ts.is_none() {
+                    m.end_ts = tm.end_ts;
+                }
+            }
+        }
+    }
+
+    /// Clear the 复制 flash ~1.5s after it lit (pi-web copied-reset parity).
+    pub fn spawn_flash_clear(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1500))
+                .await;
+            let _ = this.update(cx, |r, cx| {
+                r.copy_flash = None;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn ingest_message(
         &mut self,
         role: &str,
         blocks: Vec<Block>,
         usage: Option<Usage>,
-        time: Option<String>,
+        ts: Option<i64>,
         entry_id: Option<String>,
         cx: &mut Context<Self>,
     ) {
         match role {
             "user" => {
-                self.messages.push(Msg { role: Role::User, blocks, usage: None, entry_id });
+                self.messages
+                    .push(Msg { role: Role::User, blocks, usage: None, entry_id, ts, end_ts: None });
             }
             "assistant" => {
                 self.messages.push(Msg {
@@ -624,9 +687,10 @@ impl SessionRuntime {
                         output: u.output,
                         cache_read: u.cache_read,
                         cost: u.cost,
-                        time: time.clone().unwrap_or_default(),
                     }),
                     entry_id: None,
+                    ts,
+                    end_ts: None,
                 });
             }
             "toolResult" => {
@@ -661,7 +725,14 @@ impl SessionRuntime {
     fn last_assistant(&mut self) -> &mut Msg {
         if !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant) {
             self.messages
-                .push(Msg { role: Role::Assistant, blocks: Vec::new(), usage: None, entry_id: None });
+                .push(Msg {
+                    role: Role::Assistant,
+                    blocks: Vec::new(),
+                    usage: None,
+                    entry_id: None,
+                    ts: None,
+                    end_ts: None,
+                });
         }
         self.messages.last_mut().expect("just pushed")
     }
@@ -785,6 +856,8 @@ impl SessionRuntime {
                         blocks: vec![Block::Text { content_index: 0, text }],
                         usage: None,
                         entry_id: None,
+                        ts: Some(crate::services::format::now_ms()),
+                        end_ts: None,
                     });
                     self.phase_waiting = true;
                     self.notify_list(cx);

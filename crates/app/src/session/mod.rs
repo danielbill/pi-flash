@@ -7,7 +7,7 @@ pub(crate) mod runtime;
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, pulsating_between, px, rgb};
 use pi_link::protocol::Block;
 
-use self::messages::{Role, render_msg};
+use self::messages::{Role, compute_meta, render_msg};
 use crate::ext_ui::render_ext_widget;
 
 use crate::Chat;
@@ -502,6 +502,14 @@ pub(crate) fn main_column(
                                         }
 
                                     },
+
+                                    compute_meta(&rt_view.messages, ix),
+
+                                    rt_view.copy_flash.is_some_and(|(cix, at)| {
+
+                                        cix == ix && at.elapsed().as_millis() < 1500
+
+                                    }),
 
                                 )),
 

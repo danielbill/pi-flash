@@ -45,6 +45,40 @@ pub fn fmt_hhmm(ms: i64) -> String {
     }
 }
 
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Message send/reply time (pi-web formatTime): today -> "HH:MM",
+/// otherwise "MM-DD HH:MM".
+pub fn fmt_msg_time(ms: i64) -> String {
+    use chrono::TimeZone;
+    match chrono::Local.timestamp_millis_opt(ms) {
+        chrono::LocalResult::Single(t) => {
+            let today = chrono::Local::now().date_naive() == t.date_naive();
+            if today {
+                t.format("%H:%M").to_string()
+            } else {
+                t.format("%m-%d %H:%M").to_string()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Wall-clock turn duration (032 回复用时): "3.2s" / "1m24s" / "12m".
+pub fn fmt_duration_ms(ms: i64) -> String {
+    let secs = (ms / 1000).max(0);
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{}", secs / 60, if secs % 60 > 0 { format!("{}s", secs % 60) } else { String::new() })
+    }
+}
+
 pub fn time_ago(modified: std::time::SystemTime) -> String {
     let secs = modified
         .duration_since(std::time::UNIX_EPOCH)
