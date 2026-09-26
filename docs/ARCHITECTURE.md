@@ -156,6 +156,16 @@ RPC 对账)→ 页面流转`。
   新边界模块(session/messages+input、dialogs、ext_ui、function_panel/mod+file_tree)
   以 settings 式自由函数承接原内联区块,零行为变更;警告 20→19(余量均为
   BISECT 时代死代码,阶段 D/E 清)。
-- 待做:阶段 D(外观底座+新布局骨架+startup 接入,右面板在本阶段拆除)
-  → E(实体拆分:AgentSession/InputPanel/SessionsPanel/FunctionPanel/Shell)
+- **阶段 D(f09b60e,2026-09-26)**:005 壳骨架落地——无边框窗口 + 自绘顶栏
+  (WindowControlArea 拖拽/三按钮,zed platform_title_bar 机制)、底部
+  statusControlBar(018,四视图互斥 + 右键换边)、functionPanel dock、
+  welcome 页面态 + 后台填充(会话列表不再阻塞首帧,骨架先行)、窗口
+  bounds/最大化恢复;右面板拆除(终端宿主暂挂 dock Terminal 视图,阶段 E
+  归位);appearance/ 注册表(mist/rose/one-dark;One Light/nord/ayu 待
+  zed 仓库可达补数据,真实源:fallback_themes.rs + assets/themes JSON)+
+  切换重跑 gpui-component 映射 + 字体槽位 + icon theme 骨架;设置通用页
+  主题选择器接新链路。default/dark 主题按 006 退役。
+- 待做:阶段 E(实体拆分:AgentSession/InputPanel/SessionsPanel/FunctionPanel/
+  Shell;git 面板+文件树骨架;终端宿主归位;文件预览弹窗化)
   → F(check_arch.sh)→ G+(功能细化,等详细要求)。
+  待补验证:主题切换/dock 换边/窗口控制的交互实测(用户占用机器,暂缓)。
