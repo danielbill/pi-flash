@@ -89,6 +89,25 @@ pub(crate) fn mc_plugins_view(
         .chain(chat.mc_pkgs_project.iter().enumerate().map(|(i, v)| (true, i, v)))
         .collect();
 
+    let mut missing = false;
+    let sb = pl_sidebar(chat, weak, section, &entries, t);
+    let detail = pl_detail(chat, weak, section, &entries, install_input, install_scope_project, &mut missing, t);
+    let detail = if missing {
+        div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child(tr("没有已配置的插件")).into_any_element()
+    } else {
+        detail
+    };
+    (sb.into_any_element(), detail.into_any_element())
+}
+
+/// Plugins sidebar (split from mc_plugins_view).
+fn pl_sidebar(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+    entries: &[(bool, usize, &serde_json::Value)],
+    t: &crate::theme::Theme,
+) -> gpui::AnyElement {
     let mut sb = div()
         .id("mc-sidebar")
         .w(px(240.))
@@ -202,8 +221,21 @@ pub(crate) fn mc_plugins_view(
                     .child(icon("plus", 13., t.text_dim))
                     .child(tr("添加插件")),
             ),
-    );
+);
+    sb.into_any_element()
+}
 
+/// Plugins detail: install form or the installed list (split).
+fn pl_detail(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+    entries: &[(bool, usize, &serde_json::Value)],
+    install_input: &gpui::Entity<TextInput>,
+    install_scope_project: bool,
+    missing: &mut bool,
+    t: &crate::theme::Theme,
+) -> gpui::AnyElement {
     let detail = if section == "__add__" || entries.is_empty() {
         // install form
         let weak_scope = weak.clone();
@@ -342,10 +374,8 @@ pub(crate) fn mc_plugins_view(
             .map(|(p, i, v)| (*p, *i, *v))
             .or_else(|| entries.first().map(|(p, i, v)| (*p, *i, *v)))
         else {
-            return (
-                sb.into_any_element(),
-                div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child(tr("没有已配置的插件")).into_any_element(),
-            );
+            *missing = true;
+            return div().into_any_element();
         };
         let src = pi_link::skills::entry_source(v);
         let disabled = pi_link::skills::entry_disabled(v);
@@ -473,6 +503,5 @@ pub(crate) fn mc_plugins_view(
             )
             .into_any_element()
     };
-    (sb.into_any_element(), detail.into_any_element())
+    detail.into_any_element()
 }
-

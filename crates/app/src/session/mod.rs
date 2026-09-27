@@ -99,7 +99,339 @@ pub(crate) fn main_column(
 
         // top toolbar
 
+        .child(session_toolbar(chat, entity.clone(), weak, stats_right.clone(), t, cx))
+
+        // message list (820px centered column, ChatWindow parity)
+
         .child(
+
+            list(rt_list.clone(), move |ix, _window, cx| {
+
+                let rt_view = rt_entity.read(cx);
+
+                let chat = chat_entity.read(cx);
+
+                let weak = weak_for_msg.clone();
+
+                match rt_view.messages.get(ix) {
+
+                    Some(m) => div()
+
+                        .w_full()
+
+                        .flex()
+
+                        .justify_center()
+
+                        .child(
+
+                            div()
+
+                                .w_full()
+
+                                .max_w(px(820.))
+
+                                .child(render_msg(
+
+                                    m,
+
+                                    ix,
+
+                                    &weak,
+
+                                    &rt_view.collapsed,
+
+                                    t,
+
+                                    &rt_view.model_label_text(),
+
+                                    {
+
+                                        let streaming = rt_view
+
+                                            .state
+
+                                            .as_ref()
+
+                                            .is_some_and(|s| s.is_streaming);
+
+                                        let is_last_assistant = streaming
+
+                                            && Some(ix) == rt_view.messages.len().checked_sub(1)
+
+                                            && m.role == Role::Assistant;
+
+                                        if !is_last_assistant {
+
+                                            None
+
+                                        } else {
+
+                                            let text: String = m
+
+                                                .blocks
+
+                                                .iter()
+
+                                                .map(|b| match b {
+
+                                                    Block::Text { text, .. }
+
+                                                    | Block::Thinking { text, .. } => {
+
+                                                        text.as_str()
+
+                                                    }
+
+                                                    _ => "",
+
+                                                })
+
+                                                .collect();
+
+                                            let est = estimate_tokens(&text);
+
+                                            let tps = chat.rt().read(cx).stream_started.and_then(
+
+                                                |start| {
+
+                                                    let secs =
+
+                                                        start.elapsed().as_secs_f32();
+
+                                                    (secs > 0.5 && est > 0)
+
+                                                        .then(|| est as f32 / secs)
+
+                                                },
+
+                                            );
+
+                                            Some((est, tps))
+
+                                        }
+
+                                    },
+
+                                    compute_meta(&rt_view.messages, ix),
+
+                                    rt_view.copy_flash.is_some_and(|(cix, at)| {
+
+                                        cix == ix && at.elapsed().as_millis() < 1500
+
+                                    }),
+
+                                )),
+
+                        )
+
+                        .into_any_element(),
+
+                    None => {
+
+                        // pi-web ChatWindow phase label: pulsing text under
+
+                        // the list while running with no streamed content
+
+                        // yet (animate-[pulse_1.5s_infinite])
+
+                        if chat.rt().read(cx).phase_row_visible() {
+
+                            div()
+
+                                .w_full()
+
+                                .flex()
+
+                                .justify_center()
+
+                                .child(
+
+                                    div()
+
+                                        .w_full()
+
+                                        .max_w(px(820.))
+
+                                        .py_2()
+
+                                        .text_size(px(13.))
+
+                                        .text_color(rgb(t.text_muted))
+
+                                        .child(SharedString::from(tr("正在等待模型...")))
+
+                                        .with_animation(
+
+                                            "phase-pulse",
+
+                                            Animation::new(std::time::Duration::from_millis(
+
+                                                1500,
+
+                                            ))
+
+                                            .repeat()
+
+                                            .with_easing(pulsating_between(0.5, 1.0)),
+
+                                            |label, delta| label.opacity(delta),
+
+                                        ),
+
+                                )
+
+                                .into_any_element()
+
+                        } else {
+
+                            div().w_full().into_any_element()
+
+                        }
+
+                    }
+
+                }
+
+            })
+
+            .flex_1()
+
+            .min_h_0()
+
+            .py_2(),
+
+        )
+
+        // empty new-session hero (pi-web ChatWindow isEmptyNew): logo row
+
+        // directly above the editor, flex spacer below centers the pair
+
+        .children(session_hero(chat, streaming, t, cx))
+        // extension widgets above the editor (setWidget aboveEditor)
+
+        .children((!chat.ext_widgets.is_empty()).then(|| {
+
+            let rows: Vec<gpui::AnyElement> = chat
+
+                .ext_widgets
+
+                .iter()
+
+                .filter(|(_, _, above)| *above)
+
+                .map(|(_, lines, _)| render_ext_widget(lines, t))
+
+                .collect();
+
+            (!rows.is_empty()).then(|| div().px_4().flex().flex_col().gap_1().children(rows).into_any_element())
+
+        }).flatten())
+
+        .child(input::input_area(chat, entity.clone(), &weak, streaming, input_focused, caret_on, this_input, model_label, thinking_menu_open, tools_menu_open, thinking_label, &tools_label, cx))
+
+        // extension widgets below the editor (setWidget belowEditor)
+
+        .children((!chat.ext_widgets.is_empty()).then(|| {
+
+            let rows: Vec<gpui::AnyElement> = chat
+
+                .ext_widgets
+
+                .iter()
+
+                .filter(|(_, _, above)| !above)
+
+                .map(|(_, lines, _)| render_ext_widget(lines, t))
+
+                .collect();
+
+            (!rows.is_empty()).then(|| div().px_4().pb_1().flex().flex_col().gap_1().children(rows).into_any_element())
+
+        }).flatten())
+
+        .children((chat.rt().read(cx).messages.is_empty()
+
+            && !chat
+
+                .rt()
+
+                .read(cx)
+
+                .state
+
+                .as_ref()
+
+                .is_some_and(|s| s.is_streaming))
+
+        .then(|| div().flex_1().into_any_element()))
+
+        // status bar (+ extension status items)
+
+        .child(
+
+            div()
+
+                .px_3()
+
+                .py_1()
+
+                .border_t_1()
+
+                .border_color(rgb(t.border))
+
+                .bg(rgb(t.bg_panel))
+
+                .text_xs()
+
+                .text_color(rgb(t.text_muted))
+
+                .flex()
+
+                .items_center()
+
+                .gap_3()
+
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(status))
+
+                .children(chat.ext_status.iter().map(|(k, text)| {
+
+                    div()
+
+                        .flex_shrink_0()
+
+                        .font_family("Consolas")
+
+                        .text_size(px(10.))
+
+                        .text_color(rgb(t.text_dim))
+
+                        .child(SharedString::from(format!("{}: {}", k, text)))
+
+                })),
+
+        );
+
+
+
+
+
+    // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
+
+    //      merge; fixed dark terminal surface in every theme) -----------
+
+    main_col
+}
+
+/// Session toolbar (split from main_column).
+fn session_toolbar(
+    chat: &mut Chat,
+    entity: gpui::Entity<Chat>,
+    weak: &gpui::WeakEntity<Chat>,
+    stats_right: SharedString,
+    t: &crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
 
             div()
 
@@ -433,217 +765,17 @@ pub(crate) fn main_column(
 
                         .child(stats_right),
 
-                ),
-
-        )
-
-        // message list (820px centered column, ChatWindow parity)
-
-        .child(
-
-            list(rt_list.clone(), move |ix, _window, cx| {
-
-                let rt_view = rt_entity.read(cx);
-
-                let chat = chat_entity.read(cx);
-
-                let weak = weak_for_msg.clone();
-
-                match rt_view.messages.get(ix) {
-
-                    Some(m) => div()
-
-                        .w_full()
-
-                        .flex()
-
-                        .justify_center()
-
-                        .child(
-
-                            div()
-
-                                .w_full()
-
-                                .max_w(px(820.))
-
-                                .child(render_msg(
-
-                                    m,
-
-                                    ix,
-
-                                    &weak,
-
-                                    &rt_view.collapsed,
-
-                                    t,
-
-                                    &rt_view.model_label_text(),
-
-                                    {
-
-                                        let streaming = rt_view
-
-                                            .state
-
-                                            .as_ref()
-
-                                            .is_some_and(|s| s.is_streaming);
-
-                                        let is_last_assistant = streaming
-
-                                            && Some(ix) == rt_view.messages.len().checked_sub(1)
-
-                                            && m.role == Role::Assistant;
-
-                                        if !is_last_assistant {
-
-                                            None
-
-                                        } else {
-
-                                            let text: String = m
-
-                                                .blocks
-
-                                                .iter()
-
-                                                .map(|b| match b {
-
-                                                    Block::Text { text, .. }
-
-                                                    | Block::Thinking { text, .. } => {
-
-                                                        text.as_str()
-
-                                                    }
-
-                                                    _ => "",
-
-                                                })
-
-                                                .collect();
-
-                                            let est = estimate_tokens(&text);
-
-                                            let tps = chat.rt().read(cx).stream_started.and_then(
-
-                                                |start| {
-
-                                                    let secs =
-
-                                                        start.elapsed().as_secs_f32();
-
-                                                    (secs > 0.5 && est > 0)
-
-                                                        .then(|| est as f32 / secs)
-
-                                                },
-
-                                            );
-
-                                            Some((est, tps))
-
-                                        }
-
-                                    },
-
-                                    compute_meta(&rt_view.messages, ix),
-
-                                    rt_view.copy_flash.is_some_and(|(cix, at)| {
-
-                                        cix == ix && at.elapsed().as_millis() < 1500
-
-                                    }),
-
-                                )),
-
-                        )
-
-                        .into_any_element(),
-
-                    None => {
-
-                        // pi-web ChatWindow phase label: pulsing text under
-
-                        // the list while running with no streamed content
-
-                        // yet (animate-[pulse_1.5s_infinite])
-
-                        if chat.rt().read(cx).phase_row_visible() {
-
-                            div()
-
-                                .w_full()
-
-                                .flex()
-
-                                .justify_center()
-
-                                .child(
-
-                                    div()
-
-                                        .w_full()
-
-                                        .max_w(px(820.))
-
-                                        .py_2()
-
-                                        .text_size(px(13.))
-
-                                        .text_color(rgb(t.text_muted))
-
-                                        .child(SharedString::from(tr("正在等待模型...")))
-
-                                        .with_animation(
-
-                                            "phase-pulse",
-
-                                            Animation::new(std::time::Duration::from_millis(
-
-                                                1500,
-
-                                            ))
-
-                                            .repeat()
-
-                                            .with_easing(pulsating_between(0.5, 1.0)),
-
-                                            |label, delta| label.opacity(delta),
-
-                                        ),
-
-                                )
-
-                                .into_any_element()
-
-                        } else {
-
-                            div().w_full().into_any_element()
-
-                        }
-
-                    }
-
-                }
-
-            })
-
-            .flex_1()
-
-            .min_h_0()
-
-            .py_2(),
-
-        )
-
-        // empty new-session hero (pi-web ChatWindow isEmptyNew): logo row
-
-        // directly above the editor, flex spacer below centers the pair
-
-        .children((chat.rt().read(cx).messages.is_empty()
+                )
+                .into_any_element()
+}
+/// Empty new-session hero (pi-web ChatWindow isEmptyNew; split).
+fn session_hero(
+    chat: &Chat,
+    streaming: bool,
+    t: &crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> Option<gpui::AnyElement> {
+(chat.rt().read(cx).messages.is_empty()
 
             && !chat
 
@@ -795,119 +927,5 @@ pub(crate) fn main_column(
 
                 .into_any_element()
 
-        }))
-
-        // extension widgets above the editor (setWidget aboveEditor)
-
-        .children((!chat.ext_widgets.is_empty()).then(|| {
-
-            let rows: Vec<gpui::AnyElement> = chat
-
-                .ext_widgets
-
-                .iter()
-
-                .filter(|(_, _, above)| *above)
-
-                .map(|(_, lines, _)| render_ext_widget(lines, t))
-
-                .collect();
-
-            (!rows.is_empty()).then(|| div().px_4().flex().flex_col().gap_1().children(rows).into_any_element())
-
-        }).flatten())
-
-        .child(input::input_area(chat, entity.clone(), &weak, streaming, input_focused, caret_on, this_input, model_label, thinking_menu_open, tools_menu_open, thinking_label, &tools_label, cx))
-
-        // extension widgets below the editor (setWidget belowEditor)
-
-        .children((!chat.ext_widgets.is_empty()).then(|| {
-
-            let rows: Vec<gpui::AnyElement> = chat
-
-                .ext_widgets
-
-                .iter()
-
-                .filter(|(_, _, above)| !above)
-
-                .map(|(_, lines, _)| render_ext_widget(lines, t))
-
-                .collect();
-
-            (!rows.is_empty()).then(|| div().px_4().pb_1().flex().flex_col().gap_1().children(rows).into_any_element())
-
-        }).flatten())
-
-        .children((chat.rt().read(cx).messages.is_empty()
-
-            && !chat
-
-                .rt()
-
-                .read(cx)
-
-                .state
-
-                .as_ref()
-
-                .is_some_and(|s| s.is_streaming))
-
-        .then(|| div().flex_1().into_any_element()))
-
-        // status bar (+ extension status items)
-
-        .child(
-
-            div()
-
-                .px_3()
-
-                .py_1()
-
-                .border_t_1()
-
-                .border_color(rgb(t.border))
-
-                .bg(rgb(t.bg_panel))
-
-                .text_xs()
-
-                .text_color(rgb(t.text_muted))
-
-                .flex()
-
-                .items_center()
-
-                .gap_3()
-
-                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(status))
-
-                .children(chat.ext_status.iter().map(|(k, text)| {
-
-                    div()
-
-                        .flex_shrink_0()
-
-                        .font_family("Consolas")
-
-                        .text_size(px(10.))
-
-                        .text_color(rgb(t.text_dim))
-
-                        .child(SharedString::from(format!("{}: {}", k, text)))
-
-                })),
-
-        );
-
-
-
-
-
-    // ---- right panel: file + terminal tabs (pi-web AppShell panelTabs
-
-    //      merge; fixed dark terminal surface in every theme) -----------
-
-    main_col
+})
 }

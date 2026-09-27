@@ -163,11 +163,26 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
             ))),
     );
 
+    detail = detail.child(appearance_rows(weak, t));
+    let _ = chat;
+    (
+        div().into_any_element(),
+        detail.into_any_element(),
+    )
+}
+
+
+/// 006 外观 rows (icon theme + three font slots), split out of
+/// mc_general_view for the view-size budget.
+fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gpui::AnyElement {
+    let t = T();
+    let weak = weak.clone();
+    let mut out = div().w_full().flex().flex_col().gap_4();
     // ---- icon theme (006): zed architecture, pi-web set is the built-in ----
     let icon_current = crate::appearance::icon_theme_id();
     for it in crate::appearance::ICON_THEMES {
         let active = it.id == icon_current;
-        detail = detail.child(
+        out = out.child(
             div()
                 .min_h(px(36.))
                 .py(px(6.))
@@ -218,7 +233,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
         let fam_dec = spec.family.clone();
         let fam_inc = spec.family.clone();
         let size0 = spec.size;
-        detail = detail.child(
+        out = out.child(
             div()
                 .min_h(px(40.))
                 .py(px(6.))
@@ -368,17 +383,13 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 ),
         );
     }
-    detail = detail.child(
+    out = out.child(
         div()
             .text_size(px(11.))
             .text_color(rgb(t.text_dim))
             .child(tr("字体与字号即时生效并保存到 app_settings.json；会话字体作用于聊天气泡，面板字体为全局界面字体，Markdown 字体作用于正文渲染")),
     );
-    let _ = chat;
-    (
-        div().into_any_element(),
-        detail.into_any_element(),
-    )
+    out.into_any_element()
 }
 
 /// Cycle the curated family list (006 settings parity with zed's font

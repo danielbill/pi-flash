@@ -28,6 +28,28 @@ pub(crate) fn render_dialogs(
 ) -> Div {
         // dialogs (bodies verbatim from the former inline section)
             if let Some(Dialog::ModelSelect { input: filter_input }) = chat.dialog.as_ref() {
+                return render_model_select(root, chat, weak, filter_input, t, cx);
+            }
+            if chat.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::BranchTree)) {
+                return render_branch_tree(root, chat, weak, t, cx);
+            }
+            if chat.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::ProjectSelect)) {
+                return render_project_select(root, chat, weak, t, cx);
+            }
+            if let Some(Dialog::FilePreview { path }) = chat.dialog.as_ref() {
+                return render_file_preview(root, chat, weak, path, t, cx);
+            }
+            if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
+                return render_git_diff(root, chat, weak, path, patch, t, cx);
+            }
+            if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
+                root = root.child(render_session_search(chat, weak, input, t, cx));
+            }
+    root
+}
+
+/// ModelSelect dialog surface (extracted from render_dialogs).
+fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
                 let flt = filter_input.read(cx).value().to_lowercase();
                 // enabledModels whitelist narrows the picker (pi-web /api/models
                 // resolveVisibleModels parity)
@@ -156,8 +178,11 @@ pub(crate) fn render_dialogs(
                                 .child(list_panel),
                         ),
                 );
-            }
-            if chat.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::BranchTree)) {
+    root
+}
+
+/// BranchTree dialog surface (extracted from render_dialogs).
+fn render_branch_tree( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme, cx: &App) -> Div {
                 let t = T();
                 let weak = weak.clone();
                 let rt = chat.rt();
@@ -446,8 +471,11 @@ pub(crate) fn render_dialogs(
                                 .child(body),
                         ),
                 );
-            }
-            if chat.dialog.as_ref().is_some_and(|d| matches!(d, Dialog::ProjectSelect)) {
+    root
+}
+
+/// ProjectSelect dialog surface (extracted from render_dialogs).
+fn render_project_select( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme, cx: &App) -> Div {
                 let t = T();
                 let weak = weak.clone();
                 // recent projects: unique cwds by latest activity (getRecentProjects parity)
@@ -591,8 +619,11 @@ pub(crate) fn render_dialogs(
                                 ),
                         ),
                 );
-            }
-            if let Some(Dialog::FilePreview { path }) = chat.dialog.as_ref() {
+    root
+}
+
+/// FilePreview dialog surface (extracted from render_dialogs).
+fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, t: &theme::Theme, cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
                 let (content, meta_line) = match chat.file_cache.get(path) {
                     Some(fc) => {
@@ -668,8 +699,11 @@ pub(crate) fn render_dialogs(
                                 ),
                         ),
                 );
-            }
-            if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
+    root
+}
+
+/// GitDiff dialog surface (extracted from render_dialogs).
+fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
                 let mut body = patch.clone();
                 if body.chars().count() > 60000 {
@@ -762,10 +796,6 @@ pub(crate) fn render_dialogs(
                                 ),
                         ),
                 );
-            }
-            if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
-                root = root.child(render_session_search(chat, weak, input, t, cx));
-            }
     root
 }
 

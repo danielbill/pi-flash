@@ -209,7 +209,21 @@ pub(crate) fn mc_subagents_view(
     use pi_link::subagents::SubagentScope;
     let t = T();
 
-    // ---- sidebar: runs first, then profiles by scope ---------------------
+    // sidebar + detail live in sa_sidebar/sa_detail (view-size budget)
+    let sb = sa_sidebar(chat, weak, section);
+    let detail = sa_detail(chat, weak, section, sa_input);
+    (sb.into_any_element(), detail)
+}
+
+/// Subagents sidebar: runs first, then profiles by scope (split from
+/// mc_subagents_view for the view-size budget).
+fn sa_sidebar(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+) -> gpui::AnyElement {
+    use pi_link::subagents::SubagentScope;
+    let t = T();
     let mut sb = div()
         .id("mc-sidebar")
         .w(px(240.))
@@ -367,8 +381,19 @@ pub(crate) fn mc_subagents_view(
             );
         }
     }
+    sb.into_any_element()
+}
 
-    // ---- detail ----------------------------------------------------------
+/// Subagents detail: run detail / profile detail / empty state (split
+/// from mc_subagents_view).
+fn sa_detail(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    section: &str,
+    sa_input: &gpui::Entity<TextInput>,
+) -> gpui::AnyElement {
+    let t = T();
+    use pi_link::subagents::SubagentScope;
     let detail = if let Some(run_str) = section.strip_prefix("run-") {
         // run detail
         let run = run_str.parse::<usize>().ok().and_then(|id| chat.sa_runs.iter().find(|r| r.id == id));
@@ -380,102 +405,7 @@ pub(crate) fn mc_subagents_view(
                 .text_color(rgb(t.text_dim))
                 .child(tr("运行已结束"))
                 .into_any_element(),
-            Some(run) => {
-                let weak_abort = weak.clone();
-                let abort_id = run.id;
-                let (status_text, status_color) = match run.status {
-                    0 => (tr("运行中"), t.accent),
-                    1 => (tr("已完成"), 0x4ade80),
-                    2 => (tr("失败"), 0xf87171),
-                    _ => (tr("已中止"), 0xfacc15),
-                };
-                let mut detail = div()
-                    .id("mc-detail")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_y_scroll()
-                    .p(px(20.))
-                    .text_size(px(12.))
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .min_h(px(28.))
-                            .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(t.text))
-                                    .child(SharedString::from(run.profile.clone())),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(status_color))
-                                    .child(status_text),
-                            ),
-                    );
-                if run.status == 0 {
-                    detail = detail.child(
-                        div()
-                            .id("sa-abort")
-                            .w(px(64.))
-                            .h(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(5.))
-                            .border_1()
-                            .border_color(rgb(0xef4444))
-                            .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                            .text_size(px(11.))
-                            .text_color(rgb(0xef4444))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_abort.update(cx, |c, cx| c.sa_abort_run(abort_id, cx));
-                            })
-                            .child(tr("中止")),
-                    );
-                }
-                if !run.last_text.is_empty() {
-                    detail = detail.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(5.))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(t.text_muted))
-                                    .child(tr("输出")),
-                            )
-                            .child(
-                                div()
-                                    .p(px(9.))
-                                    .rounded(px(6.))
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .bg(rgb(t.bg_panel))
-                                    .font_family("Consolas")
-                                    .text_size(px(11.))
-                                    .text_color(rgb(t.text))
-                                    .flex()
-                                    .flex_col()
-                                    .children(run.last_text.lines().map(|l| {
-                                        div().child(SharedString::from(l.to_string()))
-                                    })),
-                            ),
-                    );
-                }
-                detail.into_any_element()
-            }
+            Some(run) => sa_run_body(run, weak, t),
         }
     } else if let Some(p) = chat.sa_selected(section).cloned() {
         // profile detail
@@ -680,6 +610,121 @@ pub(crate) fn mc_subagents_view(
             )
             .into_any_element()
     } else {
+        sa_agents_settings(chat, weak, sa_input, t)
+    };
+    detail.into_any_element()
+}
+use crate::SubagentRun;
+
+/// Run detail body (split from sa_detail).
+fn sa_run_body(
+    run: &SubagentRun,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &crate::theme::Theme,
+) -> gpui::AnyElement {
+                let weak_abort = weak.clone();
+                let abort_id = run.id;
+                let (status_text, status_color) = match run.status {
+                    0 => (tr("运行中"), t.accent),
+                    1 => (tr("已完成"), 0x4ade80),
+                    2 => (tr("失败"), 0xf87171),
+                    _ => (tr("已中止"), 0xfacc15),
+                };
+                let mut detail = div()
+                    .id("mc-detail")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .p(px(20.))
+                    .text_size(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_h(px(28.))
+                            .child(
+                                div()
+                                    .text_size(px(15.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(t.text))
+                                    .child(SharedString::from(run.profile.clone())),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(status_color))
+                                    .child(status_text),
+                            ),
+                    );
+                if run.status == 0 {
+                    detail = detail.child(
+                        div()
+                            .id("sa-abort")
+                            .w(px(64.))
+                            .h(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(rgb(0xef4444))
+                            .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
+                            .text_size(px(11.))
+                            .text_color(rgb(0xef4444))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_abort.update(cx, |c, cx| c.sa_abort_run(abort_id, cx));
+                            })
+                            .child(tr("中止")),
+                    );
+                }
+                if !run.last_text.is_empty() {
+                    detail = detail.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(rgb(t.text_muted))
+                                    .child(tr("输出")),
+                            )
+                            .child(
+                                div()
+                                    .p(px(9.))
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.bg_panel))
+                                    .font_family("Consolas")
+                                    .text_size(px(11.))
+                                    .text_color(rgb(t.text))
+                                    .flex()
+                                    .flex_col()
+                                    .children(run.last_text.lines().map(|l| {
+                                        div().child(SharedString::from(l.to_string()))
+                                    })),
+                            ),
+                    );
+                }
+                detail.into_any_element()
+}
+
+/// Agents global settings pane (split from sa_detail).
+fn sa_agents_settings(
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    sa_input: &gpui::Entity<TextInput>,
+    t: &crate::theme::Theme,
+) -> gpui::AnyElement {
         // agents global settings (builtInEnabled + maxConcurrent)
         let weak_fea = weak.clone();
         let weak_save = weak.clone();
@@ -798,7 +843,4 @@ pub(crate) fn mc_subagents_view(
                     ),
             )
             .into_any_element()
-    };
-    (sb.into_any_element(), detail)
 }
-
