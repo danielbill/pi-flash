@@ -211,7 +211,36 @@
 `bd list` = No issues found；测试 68 全绿（app 30 + pi-link 38）。
 各任务实现要点与偏差记录见上方迭代纪要。
 
+## 状态（2026-09-28）— check_arch 全绿，bead pi-flash-719 关闭
+
+**架构重构 v4 收官（a1bfff0 + b68faca）**：check_arch 四项全 PASS——
+单文件 ≤1500 ✓、全部视图函数 ≤300 ✓、无手搓字符输入 ✓、警告 0 + 测试
+84 全绿 ✓。三阶段拆分：phase 1 超标视图（dialogs/general/subagents/
+plugins/settings/models/main_column）→ phase 2 main.rs 2364→1418（7 个
+根模块 actions_*）→ phase 3 function_panel sidebar（565 行）拆出
+sidebar_lists + session_row_confirming + session_row_actions。
+
+phase 3 顺手清零 54 条警告：删除死代码（export_html、AgentSession::spawn、
+is_markdown/load_project_files_pub、cancel_rename、close_terminal〔与
+close_panel_tab 重复〕、icon_theme、LANGS/lang_name、clear_scope、theme
+DEFAULT/DARK/c()、fmt_hhmm/cwd_tail/top_level_entries、terminal cell_at、
+TextInput::on_submit builder、runtime send_follow_up/abort〔Chat 自有〕、
+FileTab.path/truncated、MenuItem.title/desc、ThemeEntry.family/source +
+Family 枚举、op_seq、drop(&ref) 空操作）；拆分残留参数下划线化；
+SessionEvent 的 RunningChanged/AgentFinished/FileBound 保留
+`#[allow(dead_code)]`（会话池重构预接线，订阅臂已在 actions_runtime.rs）。
+
+UI 实测（真机）：sessions 面板渲染/行点击打开会话/hover 改名删除按钮/
+confirming 行内确认+取消 全部正常（tmp/shots/sessions_final.png 等）。
+
+陷阱补充：python 脚本整文件重写会把 CRLF 库文件翻成 LF（i18n/
+models_config/terminal 中招，已还原）——改文件前先探 `\r`，写回保持
+原行尾；子串替换锚点要带行首 `\n` 防缩进子串误匹配；move 闭包捕获
+`&WeakEntity` 参数会 E0521（'static 要求 owned），须在闭包外 clone。
+
 ## 待办
 
 beads 任务跟踪已清空。后续工作 → 新建 beads（`bd create`）。
-计划全量见 PORT_PLAN.md。
+计划全量见 PORT_PLAN.md。下一主线：用户提出重新设计 UI；
+会话池重构计划见 .zcode/plans/plan-sess_1c4e46f7（每会话常驻
+SessionRuntime，pi-web 多开模型对齐）。
