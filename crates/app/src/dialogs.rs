@@ -4,12 +4,14 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, Div, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{App, Div, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 
 use crate::Dialog;
 use crate::Chat;
+use crate::TextInput;
 use crate::i18n::tr;
 use crate::services::branch::*;
+use crate::services::format::time_ago;
 use crate::services::workspace::same_ws;
 use pi_link::sessions::list_sessions;
 use pi_link::protocol::TreeNode;
@@ -761,5 +763,166 @@ pub(crate) fn render_dialogs(
                         ),
                 );
             }
+            if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
+                root = root.child(render_session_search(chat, weak, input, t, cx));
+            }
     root
+}
+
+/// 013 sessionSearchDialog + sessionSearchResultView: query on top, results
+/// grouped by session below; a row click switches sessions and reveals the
+/// matched message (pi-web SessionSearch, dialog-mounted per 013).
+fn render_session_search(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    input: &gpui::Entity<TextInput>,
+    t: &theme::Theme,
+    cx: &App,
+) -> Div {
+    let status: SharedString = if chat.search_running {
+        tr("搜索中…").into()
+    } else if chat.search_needle.is_empty() {
+        tr("输入关键词，搜索当前项目的会话内容").into()
+    } else if chat.search_hits.is_empty() {
+        tr("没有匹配结果").into()
+    } else {
+        format!("{} 条结果", chat.search_hits.len()).into()
+    };
+    let weak_close = weak.clone();
+    let mut results = div().flex().flex_col();
+    let mut last_session: Option<PathBuf> = None;
+    for (hit_ix, hit) in chat.search_hits.iter().enumerate() {
+        if last_session.as_ref() != Some(&hit.session_path) {
+            last_session = Some(hit.session_path.clone());
+            let age = time_ago(hit.modified);
+            let label: SharedString = hit
+                .session_name
+                .clone()
+                .unwrap_or_else(|| {
+                    if hit.preview.is_empty() {
+                        hit.session_path
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    } else {
+                        hit.preview.clone()
+                    }
+                })
+                .into();
+            results = results.child(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .flex()
+                    .items_baseline()
+                    .justify_between()
+                    .child(SharedString::from(label))
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_weight(gpui::FontWeight::NORMAL)
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(age)),
+                    ),
+            );
+        }
+        let path = hit.session_path.clone();
+        let ts = hit.ts;
+        let weak_row = weak.clone();
+        results = results.child(
+            div()
+                .id(SharedString::from(format!("hit-{hit_ix}")))
+                .px_3()
+                .py_1p5()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let path = path.clone();
+                    let _ = weak_row.update(cx, |c, cx| c.jump_to_hit(path, ts, cx));
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .line_height(relative(1.5))
+                        .text_color(rgb(t.text_muted))
+                        .flex()
+                        .flex_wrap()
+                        .items_baseline()
+                        .gap_1()
+                        .child(SharedString::from(hit.before.clone()))
+                        .child(
+                            div()
+                                .px_0p5()
+                                .rounded(px(3.))
+                                .bg(gpui::hsla(
+                                    0., 0., 0.5, 0.15,
+                                ))
+                                .text_color(rgb(t.accent))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(SharedString::from(hit.match_text.clone())),
+                        )
+                        .child(SharedString::from(hit.after.clone())),
+                ),
+        );
+    }
+    div()
+        .absolute()
+        .inset_0()
+        .bg(gpui::hsla(0., 0., 0., 0.35))
+        .track_focus(&chat.dialog_focus)
+        .flex()
+        .items_center()
+        .justify_center()
+        .on_mouse_down(MouseButton::Left, {
+            let weak = weak_close.clone();
+                move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.dialog = None;
+                        cx.notify();
+                    });
+                }
+            })
+            .child(
+                div()
+                    .w(px(620.))
+                    .max_h(px(640.))
+                    .bg(rgb(t.bg_panel))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .rounded(px(8.))
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(input.clone())
+                    .child({
+                        let label: SharedString = if chat.search_truncated {
+                            format!("{status} · {partial}", partial = tr("部分结果")).into()
+                        } else {
+                            status
+                        };
+                        div()
+                            .px_1()
+                            .text_xs()
+                            .text_color(rgb(t.text_dim))
+                            .child(label)
+                    })
+        .child(
+            div()
+                .id("search-results")
+                .max_h(px(520.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .child(results),
+        ),
+    )
 }

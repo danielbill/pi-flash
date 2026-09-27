@@ -68,6 +68,8 @@ enum Dialog {
     GitDiff { path: PathBuf, patch: String },
     /// read-only file preview (replaces the old right-panel viewer tab)
     FilePreview { path: PathBuf },
+    /// session content search (013): query + grouped results, click jumps
+    SessionSearch { input: gpui::Entity<TextInput> },
 }
 
 /// Full-page state (005/011/012): Welcome shows until the project/session
@@ -183,6 +185,17 @@ struct Chat {
     search_open: bool,
     search_input: gpui::Entity<TextInput>,
     sessions_list_count: usize,
+    // session content search (013): dialog query input + background results
+    search_hits: Vec<pi_link::sessions::SearchHit>,
+    search_truncated: bool,
+    search_running: bool,
+    /// committed needle (locate fallback) — mirrored for jump_to_hit
+    search_needle: String,
+    /// debounced-search generation guard
+    search_gen: u64,
+    /// hit clicked while the target session still loads (pool miss): applied
+    /// by the runtime once the get_messages reconcile lands
+    pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
     top_panel: Option<TopPanel>,
@@ -297,6 +310,12 @@ impl Chat {
             // skeleton first (ARCHITECTURE.md §4): the list fills in the
             // background task below; the page flips Welcome -> Session then
             sessions: Vec::new(),
+            search_hits: Vec::new(),
+            search_truncated: false,
+            search_running: false,
+            search_needle: String::new(),
+            search_gen: 0,
+            pending_locate: None,
             page: Page::Welcome,
             dock_panel: dock_state
                 .as_ref()
@@ -1088,6 +1107,97 @@ impl Chat {
         cx.notify();
     }
 
+    /// Open the session content search (013): query input + grouped results.
+    fn open_session_search(&mut self, cx: &mut Context<Self>) {
+        let weak = cx.weak_entity();
+        let weak_esc = weak.clone();
+        let input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder(tr("搜索会话内容…"))
+                .on_change(Box::new(move |q: &str, cx: &mut App| {
+                    let _ = weak.update(cx, |c, cx| c.search_changed(q, cx));
+                }))
+                .on_escape(Box::new(move |cx: &mut App| {
+                    let _ = weak_esc.update(cx, |c, cx| {
+                        c.dialog = None;
+                        cx.notify();
+                    });
+                }))
+        });
+        self.search_hits.clear();
+        self.search_truncated = false;
+        self.search_needle.clear();
+        self.dialog = Some(Dialog::SessionSearch { input });
+        cx.notify();
+    }
+
+    /// Query text changed: bump the generation, debounce 300ms, then scan
+    /// this project's session files on the background executor (pi-web
+    /// SessionSearch debounce parity; stale responses drop by generation).
+    fn search_changed(&mut self, q: &str, cx: &mut Context<Self>) {
+        self.search_gen += 1;
+        let epoch = self.search_gen;
+        let needle = q.trim().to_string();
+        self.search_needle = needle.clone();
+        self.search_hits.clear();
+        self.search_truncated = false;
+        if needle.is_empty() {
+            self.search_running = false;
+            cx.notify();
+            return;
+        }
+        self.search_running = true;
+        let cwd = self.cwd.clone();
+        cx.spawn(async move |weak, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
+            let cancelled = weak.update(cx, |c, _| c.search_gen != epoch).unwrap_or(true);
+            if cancelled {
+                return;
+            }
+            let needle2 = needle.clone();
+            let resp = cx
+                .background_spawn(async move {
+                    pi_link::sessions::search_sessions_for_cwd(
+                        &cwd.to_string_lossy(),
+                        &needle2,
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |c, cx| {
+                if c.search_gen != epoch {
+                    return;
+                }
+                c.search_running = false;
+                c.search_truncated = resp.truncated;
+                c.search_hits = resp.hits;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Jump to a search hit: open (or switch to) the session, then reveal the
+    /// matched row — located by payload timestamp, falling back to the first
+    /// message containing the needle.
+    fn jump_to_hit(&mut self, path: PathBuf, ts: Option<i64>, cx: &mut Context<Self>) {
+        let needle = self.search_needle.clone();
+        self.dialog = None;
+        let key = path.to_string_lossy().to_string();
+        let already_open = self.active_key == key || self.runtimes.contains_key(&key);
+        if self.active_key != key {
+            self.open_session(path.clone(), false, cx);
+        }
+        let rt = self.rt();
+        let located = rt.update(cx, |r, cx| r.locate_message(ts, &needle, cx));
+        if !located && !already_open {
+            // messages still loading (pool miss) — apply after the reconcile
+            self.pending_locate = Some((path, ts, needle));
+        }
+        cx.notify();
+    }
+
     /// Open the branch navigator: request a fresh tree, show the panel.
     fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
         self.rt().update(cx, |r, _| {
@@ -1766,7 +1876,9 @@ impl Render for Chat {
         // dialog inputs own their focus handles; force-focus only when the
         // input isn't already focused so click-to-focus still works
         let dialog_input = match &self.dialog {
-            Some(Dialog::ModelSelect { input }) => Some(input.clone()),
+            Some(Dialog::ModelSelect { input }) | Some(Dialog::SessionSearch { input }) => {
+                Some(input.clone())
+            }
             _ => None,
         };
         // inline rename input keeps keyboard focus until committed/cancelled

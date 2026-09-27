@@ -119,6 +119,52 @@ pub(crate) fn main_column(
 
                 .child(pill("tb-sidebar", "panel-left", SharedString::from("")))
 
+                .child(
+
+                    div()
+
+                        .id("tb-search")
+
+                        .px_2()
+
+                        .py_1()
+
+                        .rounded_md()
+
+                        .border_1()
+
+                        .border_color(rgb(t.border))
+
+                        .flex()
+
+                        .items_center()
+
+                        .gap_1p5()
+
+                        .text_xs()
+
+                        .text_color(rgb(t.text_muted))
+
+                        .cursor_pointer()
+
+                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+
+                        .on_mouse_down(MouseButton::Left, cx.listener(
+
+                            |this, _: &gpui::MouseDownEvent, _w, cx| {
+
+                                this.open_session_search(cx);
+
+                            },
+
+                        ))
+
+                        .child(icon("search", 12., t.text_muted))
+
+                        .child(SharedString::from(tr("搜索"))),
+
+                )
+
                 .child(pill(
 
                     "tb-history",

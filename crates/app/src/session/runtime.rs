@@ -98,6 +98,8 @@ pub(crate) struct SessionRuntime {
 
     /// (msg_ix, flashed_at) — 复制 pill's 已复制 flash (032)
     pub copy_flash: Option<(usize, std::time::Instant)>,
+    /// 013: jump target waiting for the message snapshot to land
+    pub pending_locate: Option<(Option<i64>, String)>,
 }
 
 impl SessionRuntime {
@@ -135,6 +137,7 @@ impl SessionRuntime {
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
             copy_flash: None,
+            pending_locate: None,
         }
     }
 
@@ -386,6 +389,7 @@ impl SessionRuntime {
                         // only; completion stamps (回复用时) come from the
                         // session file's entry write-times
                         self.merge_tail_stamps();
+                        self.apply_pending_locate(cx);
                         self.notify_list(cx);
                     }
                     self.status = status_line(true, "resumed");
@@ -646,6 +650,46 @@ impl SessionRuntime {
                 if m.end_ts.is_none() {
                     m.end_ts = tm.end_ts;
                 }
+            }
+        }
+    }
+
+    /// Reveal a search hit (013): scroll the message list to the matched row —
+    /// by payload timestamp, falling back to the first message containing the
+    /// needle. Returns false when messages aren't loaded yet (caller parks a
+    /// pending_locate for the reconcile to apply).
+    pub fn locate_message(&mut self, ts: Option<i64>, needle: &str, cx: &mut Context<Self>) -> bool {
+        if self.messages.is_empty() {
+            self.pending_locate = Some((ts, needle.to_string()));
+            return false;
+        }
+        let ix = self.hit_index(ts, needle);
+        if let Some(ix) = ix {
+            self.list.scroll_to_reveal_item(ix);
+        }
+        ix.is_some()
+    }
+
+    fn hit_index(&self, ts: Option<i64>, needle: &str) -> Option<usize> {
+        if let Some(ts) = ts {
+            if let Some(ix) = self.messages.iter().rposition(|m| m.ts == Some(ts)) {
+                return Some(ix);
+            }
+        }
+        let needle_lc = needle.to_lowercase();
+        if needle_lc.is_empty() {
+            return None;
+        }
+        self.messages
+            .iter()
+            .position(|m| m.plain_text().to_lowercase().contains(&needle_lc))
+    }
+
+    /// Apply a parked 013 jump once messages exist (reconcile path).
+    fn apply_pending_locate(&mut self, cx: &mut Context<Self>) {
+        if let Some((ts, needle)) = self.pending_locate.take() {
+            if let Some(ix) = self.hit_index(ts, &needle) {
+                self.list.scroll_to_reveal_item(ix);
             }
         }
     }
