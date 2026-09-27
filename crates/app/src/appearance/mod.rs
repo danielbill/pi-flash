@@ -95,7 +95,7 @@ pub fn session_font() -> FontSpec {
 pub fn panel_font() -> FontSpec {
     app_settings().panel_font.unwrap_or(FontSpec {
         family: default_font_family(),
-        size: 13.,
+        size: 12.,
     })
 }
 
@@ -147,6 +147,19 @@ pub struct IconTheme {
 /// (assets.rs); file-type icon sets for the file tree land with the
 /// dirTreeView port.
 pub const ICON_THEMES: &[IconTheme] = &[IconTheme { id: "pi-web", name: "pi-web" }];
+
+/// Curated font families for the settings cycle (shipped-safe on Windows).
+pub const FONT_CHOICES: &[&str] = &[
+    "Segoe UI",
+    "Microsoft YaHei",
+    "Consolas",
+    "Cascadia Code",
+    "Arial",
+];
+
+pub fn icon_theme_id() -> &'static str {
+    ICON_THEMES.first().map(|t| t.id).unwrap_or("pi-web")
+}
 
 pub fn icon_theme(id: &str) -> Option<&'static IconTheme> {
     ICON_THEMES.iter().find(|t| t.id == id)

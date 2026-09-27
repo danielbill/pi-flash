@@ -265,6 +265,10 @@ pub(crate) fn render_msg(
         let weak_fork = weak.clone();
         let copy_text = text.clone();
         let edit_text = text.clone();
+        // 006 session font slot drives the chat bubble text
+        let sf = crate::appearance::session_font();
+        let session_family = sf.family;
+        let session_size = sf.size;
 
         // action pill: 11px icon+label, dim → accent, hover-revealed.
         // variants: (icon, label) differ when the copy flash is lit.
@@ -368,7 +372,8 @@ pub(crate) fn render_msg(
                     .border_1()
                     .border_color(gpui::rgba(0x3b82f633))
                     .text_color(rgb(t.text))
-                    .text_size(px(14.))
+                    .font_family(session_family.clone())
+                    .text_size(px(session_size))
                     .child(SharedString::from(text)),
             )
             .child(bottom);

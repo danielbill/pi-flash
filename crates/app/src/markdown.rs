@@ -324,10 +324,12 @@ fn parse_block(
 use crate::theme::Theme;
 
 fn base_style(t: &Theme, size: f32) -> TextStyle {
+    // 006 markdown preview font slot (family; size scaled from the slot)
+    let spec = crate::appearance::markdown_font();
     TextStyle {
         color: rgb(t.text).into(),
-        font_family: "Segoe UI".into(),
-        font_size: px(size).into(),
+        font_family: spec.family.clone().into(),
+        font_size: px(size / 14. * spec.size).into(),
         ..Default::default()
     }
 }

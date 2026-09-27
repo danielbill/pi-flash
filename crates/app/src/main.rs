@@ -2098,7 +2098,7 @@ impl Render for Chat {
             .flex_col()
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
-            .font_family("Segoe UI")
+            .font_family(crate::appearance::panel_font().family.clone())
             .child(titlebar::title_bar(self, window, cx))
             .child(body)
             .child(status_bar::control_bar(self, cx));
