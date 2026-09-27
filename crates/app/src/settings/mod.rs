@@ -74,7 +74,7 @@ pub(crate) struct SettingsFormData {
 impl SettingsFormData {
     pub(crate) fn snapshot(
         panel: &SettingsPanel,
-        cx: &gpui::App,
+        _cx: &gpui::App,
     ) -> Self {
         let p = panel;
         Self {

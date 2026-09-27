@@ -23,22 +23,6 @@ impl AgentSession {
         }
     }
 
-    /// (Re)spawn the pi process, resuming `session_file` when given; the
-    /// previous process dies with the dropped PiSession (epoch bumps so
-    /// stale event pumps exit).
-    pub(crate) fn spawn(
-        &mut self,
-        cwd: &Path,
-        session_file: Option<&Path>,
-    ) -> Option<UnboundedReceiver<Event>> {
-        let mut extra: Vec<String> = Vec::new();
-        if let Some(f) = session_file {
-            extra.push("--session".into());
-            extra.push(f.to_string_lossy().into());
-        }
-        self.spawn_with(cwd, &extra)
-    }
-
     /// Spawn with raw CLI args (per-session tool presets etc. — the RPC
     /// surface has no live tool switching, so tools ride spawn flags).
     pub(crate) fn spawn_with(

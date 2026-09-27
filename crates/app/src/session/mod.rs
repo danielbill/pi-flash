@@ -49,7 +49,6 @@ pub(crate) fn main_column(
         .and_then(|s| s.thinking_level.clone())
         .unwrap_or_else(|| "medium".into())
         .into();
-    drop(rt_r);
     let input_focused = chat.focus.is_focused(window);
     chat.input_focused = input_focused;
     let caret_on = chat.caret_on;
@@ -72,8 +71,6 @@ pub(crate) fn main_column(
         SharedString::from("")
     };
     let chat_entity = entity.clone();
-
-    let weak_for_msg = weak.clone();
 
     let rt_entity = rt.clone();
 
@@ -237,7 +234,7 @@ pub(crate) fn main_column(
 /// Session toolbar (split from main_column).
 fn session_toolbar(
     chat: &mut Chat,
-    entity: gpui::Entity<Chat>,
+    _entity: gpui::Entity<Chat>,
     weak: &gpui::WeakEntity<Chat>,
     stats_right: SharedString,
     t: &'static crate::theme::Theme,
@@ -462,7 +459,7 @@ fn session_toolbar(
 /// Empty new-session hero (pi-web ChatWindow isEmptyNew; split).
 fn session_hero(
     chat: &Chat,
-    streaming: bool,
+    _streaming: bool,
     t: &crate::theme::Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> Option<gpui::AnyElement> {
@@ -623,14 +620,14 @@ fn session_hero(
 
 /// Message list + phase row (split from main_column).
 fn session_list(
-    chat: &mut Chat,
+    _chat: &mut Chat,
     chat_entity: gpui::Entity<Chat>,
     weak_for_msg: gpui::WeakEntity<Chat>,
     rt_list: gpui::ListState,
     rt_entity: gpui::Entity<crate::session::runtime::SessionRuntime>,
-    streaming: bool,
+    _streaming: bool,
     t: &'static crate::theme::Theme,
-    cx: &mut gpui::Context<Chat>,
+    _cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
             list(rt_list.clone(), move |ix, _window, cx| {
 
@@ -832,7 +829,7 @@ fn session_list(
 /// system pill (split from session_toolbar).
 fn toolbar_system_pill(
     chat: &Chat,
-    weak: gpui::WeakEntity<Chat>,
+    _weak: gpui::WeakEntity<Chat>,
     t: &'static crate::theme::Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
@@ -898,7 +895,7 @@ fn toolbar_system_pill(
 /// tools pill (split from session_toolbar).
 fn toolbar_tools_pill(
     chat: &Chat,
-    weak: gpui::WeakEntity<Chat>,
+    _weak: gpui::WeakEntity<Chat>,
     t: &'static crate::theme::Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {

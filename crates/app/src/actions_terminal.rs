@@ -39,43 +39,6 @@ impl Chat {
     }
 
     /// Close a tab: shutdown the PTY, drop state (DELETE /api/terminal/:id).
-    pub(crate) fn close_terminal(&mut self, ix: usize, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        if ix >= self.terminals.len() {
-            return;
-        }
-        let term_id = self.terminals[ix].id;
-        if let Some(pix) = self.panel_tabs.iter().position(|t| matches!(t, PanelTab::Term(id) if *id == term_id)) {
-            self.panel_tabs.remove(pix);
-            self.active_panel_tab = match self.active_panel_tab {
-                Some(a) if a >= self.panel_tabs.len() => {
-                    if self.panel_tabs.is_empty() {
-                        None
-                    } else {
-                        Some(a.saturating_sub(1))
-                    }
-                }
-                other => other,
-            };
-        }
-        let _ = self.terminals[ix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-        self.terminals.remove(ix);
-        self.active_terminal = match self.active_terminal {
-            Some(a) if a >= self.terminals.len() => {
-                if self.terminals.is_empty() {
-                    None
-                } else {
-                    Some(a.saturating_sub(1))
-                }
-            }
-            other => other,
-        };
-        if self.active_terminal.is_none() {
-            window.focus(&self.focus);
-        }
-        cx.notify();
-    }
-
-    /// Restart: kill + respawn with the same cwd and current grid size.
     pub(crate) fn restart_terminal(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(tx) = self.term_events.clone() else { return };
         let Some(old) = self.terminals.get(ix) else { return };

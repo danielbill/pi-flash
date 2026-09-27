@@ -127,8 +127,6 @@ enum MenuKind {
 #[derive(Debug, Clone)]
 struct MenuItem {
     insert: String,
-    title: String,
-    desc: String,
 }
 
 struct Chat {
@@ -214,7 +212,6 @@ struct Chat {
     sa_settings: pi_link::subagents::SubagentSettings,
     sa_runs: Vec<SubagentRun>,
     sa_run_seq: usize,
-    op_seq: std::cell::Cell<u64>,
     sound_on: bool,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
 }
@@ -239,9 +236,7 @@ enum PanelTab {
 
 /// Cached file content for a viewer tab (read once on open).
 struct FileTab {
-    path: PathBuf,
     content: String,
-    truncated: bool,
 }
 
 /// One live subagent run (child RPC session spawned with profile flags).
@@ -363,7 +358,6 @@ impl Chat {
             search_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
             sessions_list_count: 0,
-            op_seq: std::cell::Cell::new(0),
             confirm_delete: None,
         };
         // wire input callbacks that need the root entity handle
@@ -810,9 +804,6 @@ impl Chat {
 
 
 
-    fn export_html(&mut self, cx: &mut Context<Self>) {
-        self.rt().update(cx, |r, cx| r.request_system_info(cx));
-    }
 
 
 

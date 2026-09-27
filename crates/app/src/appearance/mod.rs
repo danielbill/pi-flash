@@ -14,34 +14,25 @@ use gpui::App;
 use crate::services::workspace::{self, AppSettings, FontSpec};
 use crate::theme::{self, Theme};
 
-/// Light/dark family (zed Appearance parity).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Family {
-    Light,
-    Dark,
-}
 
 /// One catalog entry of the theme registry.
 #[derive(Debug, Clone, Copy)]
 pub struct ThemeEntry {
     pub id: &'static str,
     pub name: &'static str,
-    pub family: Family,
-    /// where the palette comes from (006: pi-web tokens vs zed theme JSON)
-    pub source: &'static str,
 }
 
 /// The built-in catalog (006): pi-web 浅色雾青/蔷薇 + zed One Light/One Dark、
 /// nord light/dark、ayu light。调色板源数据在 `assets/themes/`（含 LICENSE）。
 pub fn registry() -> &'static [ThemeEntry] {
     &[
-        ThemeEntry { id: "mist", name: "雾青", family: Family::Light, source: "pi-web" },
-        ThemeEntry { id: "rose", name: "蔷薇", family: Family::Light, source: "pi-web" },
-        ThemeEntry { id: "one-light", name: "One Light", family: Family::Light, source: "zed" },
-        ThemeEntry { id: "nord-light", name: "Nord Light", family: Family::Light, source: "zed (nord)" },
-        ThemeEntry { id: "nord-dark", name: "Nord Dark", family: Family::Dark, source: "zed (nord)" },
-        ThemeEntry { id: "ayu-light", name: "Ayu Light", family: Family::Light, source: "zed" },
-        ThemeEntry { id: "one-dark", name: "One Dark", family: Family::Dark, source: "zed" },
+        ThemeEntry { id: "mist", name: "雾青" },
+        ThemeEntry { id: "rose", name: "蔷薇" },
+        ThemeEntry { id: "one-light", name: "One Light" },
+        ThemeEntry { id: "nord-light", name: "Nord Light" },
+        ThemeEntry { id: "nord-dark", name: "Nord Dark" },
+        ThemeEntry { id: "ayu-light", name: "Ayu Light" },
+        ThemeEntry { id: "one-dark", name: "One Dark" },
     ]
 }
 
@@ -161,6 +152,3 @@ pub fn icon_theme_id() -> &'static str {
     ICON_THEMES.first().map(|t| t.id).unwrap_or("pi-web")
 }
 
-pub fn icon_theme(id: &str) -> Option<&'static IconTheme> {
-    ICON_THEMES.iter().find(|t| t.id == id)
-}

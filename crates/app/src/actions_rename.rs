@@ -32,11 +32,6 @@ impl Chat {
         cx.notify();
     }
 
-    pub(crate) fn cancel_rename(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
-        self.rename_input = None;
-        cx.notify();
-    }
 
     /// Model-select dialog with a live filter input.
     pub(crate) fn model_select_dialog(cx: &mut Context<Self>) -> Dialog {

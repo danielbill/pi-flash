@@ -361,11 +361,6 @@ pub fn set_provider_enabled(
     set_models_enabled(patterns, refs, &targets, enable)
 }
 
-/// Drop the scope so every model is enabled again (the one op that also
-/// discards stale patterns).
-pub fn clear_scope() -> Edit {
-    Edit { patterns: None, changed: true }
-}
 
 #[cfg(test)]
 mod tests {

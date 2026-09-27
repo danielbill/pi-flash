@@ -31,8 +31,6 @@ impl Chat {
                     .take(8)
                     .map(|c| MenuItem {
                         insert: c.name.clone(),
-                        title: format!("/{}", c.name),
-                        desc: c.description.clone(),
                     })
                     .collect()
             }
@@ -45,8 +43,6 @@ impl Chat {
                     .take(8)
                     .map(|f| MenuItem {
                         insert: f.clone(),
-                        title: f.clone(),
-                        desc: String::new(),
                     })
                     .collect()
             }

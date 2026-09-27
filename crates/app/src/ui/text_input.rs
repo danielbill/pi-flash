@@ -98,10 +98,6 @@ impl TextInput {
         self
     }
 
-    pub fn on_submit(mut self, cb: Submitted) -> Self {
-        self.on_submit = Some(cb);
-        self
-    }
 
     pub fn on_escape(mut self, cb: Escaped) -> Self {
         self.on_escape = Some(cb);

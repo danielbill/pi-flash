@@ -187,7 +187,27 @@ pub(crate) fn sidebar(
                 .child(chat.search_input.clone())
         }))
         // sessions list (pi-web SessionSearch: query filters the list)
-        .child({
+        .child(sidebar_lists(
+            chat,
+            sessions_entity,
+            weak_for_sessions,
+            t,
+            cx,
+        ))
+        ;
+    sidebar
+}
+
+/// Sessions pane: query-filtered session rows + per-row overlays, split
+/// out of `sidebar` for check_arch. Height = persisted flex fraction.
+#[allow(clippy::too_many_arguments)]
+fn sidebar_lists(
+    chat: &mut Chat,
+    sessions_entity: Entity<Chat>,
+    weak_for_sessions: gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
             let q = chat.search_input.read(cx).value().to_lowercase();
             let session_display: Vec<usize> = if q.is_empty() {
                 (0..chat.sessions.len()).collect()
@@ -269,8 +289,6 @@ pub(crate) fn sidebar(
                 // pi-web renaming: this row's content swaps for the input
                 let renaming =
                     chat.renaming.as_deref() == Some(info.path.as_path());
-                let weak_del2 = weak_for_sessions.clone();
-                let weak_del3 = weak_for_sessions.clone();
                 // pi-web: "删除 {title}？" truncates the title at 22 chars
                 let confirm_title: String = {
                     let mut s = info
@@ -284,8 +302,6 @@ pub(crate) fn sidebar(
                     s
                 };
                 let weak = weak_for_sessions.clone();
-                let weak_del = weak_for_sessions.clone();
-                let weak_ren = weak_for_sessions.clone();
                 let weak_hover = weak_for_sessions.clone();
                 let p_del = info.path.clone();
                 div()
@@ -400,10 +416,50 @@ pub(crate) fn sidebar(
                                     ))),
                             )
                     }))
-                    .children(if confirming {
-                        // pi-web delete confirmation: the row content
-                        // swaps in place — "删除 {title}？" + red 删除/取消
-                        Some(
+                    .children(session_row_confirming(
+                        confirming,
+                        ix,
+                        confirm_title,
+                        &p_del,
+                        weak_for_sessions.clone(),
+                        weak_for_sessions.clone(),
+                        t,
+                    ))
+                    .children(session_row_actions(
+                        hovered && !confirming && !renaming,
+                        ix,
+                        &path,
+                        &p_del,
+                        weak_for_sessions.clone(),
+                        weak_for_sessions.clone(),
+                        t,
+                    ))
+                    .into_any_element()
+                }  // move closure
+                )  // list(
+            // sessions pane height = persisted fraction of the sidebar
+            // (pi-web --sidebar-session-pane-height; default half)
+            .flex_basis(relative(chat.sidebar_sessions_frac))
+            .min_h_0()
+            .overflow_hidden()
+        .into_any_element()
+}
+
+/// Row overlay: pi-web delete confirmation — the row content swaps in
+/// place for "删除 {title}？" + red 删除/取消.
+fn session_row_confirming(
+    confirming: bool,
+    ix: usize,
+    confirm_title: String,
+    p_del: &PathBuf,
+    weak_del2: gpui::WeakEntity<Chat>,
+    weak_del3: gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+) -> Option<gpui::Div> {
+    if !confirming {
+        return None;
+    }
+    Some(
                             div()
                                 .flex_1()
                                 .min_w_0()
@@ -473,12 +529,24 @@ pub(crate) fn sidebar(
                                             });
                                         }),
                                 ),
-                        )
-                    } else {
-                        None
-                    })
-                    .children(if hovered && !confirming && !renaming {
-                        Some(
+    )
+}
+
+/// Row overlay: hover actions (rename + delete), hidden while
+/// confirming/renaming (pi-web SessionSidebar row buttons).
+fn session_row_actions(
+    show: bool,
+    ix: usize,
+    path: &PathBuf,
+    p_del: &PathBuf,
+    weak_ren: gpui::WeakEntity<Chat>,
+    weak_del: gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+) -> Option<gpui::Div> {
+    if !show {
+        return None;
+    }
+    Some(
                             div()
                                 .flex()
                                 .gap_1()
@@ -573,21 +641,7 @@ pub(crate) fn sidebar(
                                         })
                                         .child(icon("trash", 14., t.text_dim)),
                                 ),
-                        )
-                    } else {
-                        None
-                    })
-                    .into_any_element()
-                }  // move closure
-                )  // list(
-            // sessions pane height = persisted fraction of the sidebar
-            // (pi-web --sidebar-session-pane-height; default half)
-            .flex_basis(relative(chat.sidebar_sessions_frac))
-            .min_h_0()
-            .overflow_hidden()
-        })  // .child({ ... }) block
-        ;
-    sidebar
+    )
 }
 
 /// files view (021 groundwork): the directory file explorer, moved out of

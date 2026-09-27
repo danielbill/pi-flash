@@ -63,7 +63,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_lang.update(cx, |c, cx| {
+                    let _ = weak_lang.update(cx, |_c, cx| {
                         i18n::set_lang(ix);
                         save_lang_pref(ix);
                         cx.notify();
@@ -117,7 +117,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_row.update(cx, |c, cx| {
+                    let _ = weak_row.update(cx, |_c, cx| {
                         if crate::appearance::persist_theme(&theme_name) {
                             let _ = pi_link::config::write_theme(
                                 &pi_link::config::settings_path(),
@@ -174,7 +174,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
 
 /// 006 外观 rows (icon theme + three font slots), split out of
 /// mc_general_view for the view-size budget.
-fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gpui::AnyElement {
+fn appearance_rows(weak: &gpui::WeakEntity<Chat>, _t: &crate::theme::Theme) -> gpui::AnyElement {
     let t = T();
     let weak = weak.clone();
     let mut out = div().w_full().flex().flex_col().gap_4();
@@ -268,7 +268,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gp
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_fam_prev.update(cx, |c, cx| {
+                                    let _ = weak_fam_prev.update(cx, |_c, cx| {
                                         crate::appearance::save_font(
                                             slot,
                                             crate::services::workspace::FontSpec {
@@ -304,7 +304,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gp
                                 .text_color(rgb(t.text_muted))
                                 .child("›")
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_fam_next.update(cx, |c, cx| {
+                                    let _ = weak_fam_next.update(cx, |_c, cx| {
                                         crate::appearance::save_font(
                                             slot,
                                             crate::services::workspace::FontSpec {
@@ -335,7 +335,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gp
                                 .text_size(px(12.))
                                 .child("−")
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_dec.update(cx, |c, cx| {
+                                    let _ = weak_dec.update(cx, |_c, cx| {
                                         crate::appearance::save_font(
                                             slot,
                                             crate::services::workspace::FontSpec {
@@ -368,7 +368,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gp
                                 .text_size(px(12.))
                                 .child("+")
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_inc.update(cx, |c, cx| {
+                                    let _ = weak_inc.update(cx, |_c, cx| {
                                         crate::appearance::save_font(
                                             slot,
                                             crate::services::workspace::FontSpec {

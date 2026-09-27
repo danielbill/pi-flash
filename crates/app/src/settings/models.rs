@@ -355,7 +355,7 @@ fn mc_models_detail(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     selected: String,
-    provider_ids: &[String],
+    _provider_ids: &[String],
     key_input: &gpui::Entity<crate::TextInput>,
     key_visible: bool,
     error: &Option<String>,
@@ -372,10 +372,6 @@ fn mc_models_detail(
         .iter()
         .map(|m| format!("{}/{}", m.provider, m.id))
         .collect();
-    let enabled_count = prov_refs
-        .iter()
-        .filter(|r| chat.mc_state.enabled.contains(r))
-        .count();
     let configured = chat.mc_configured(&selected);
     let oauth = chat.mc_oauth(&selected);
     let detail = div()

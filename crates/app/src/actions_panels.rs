@@ -23,7 +23,7 @@ impl Chat {
                 Err(e) => format!("read failed: {e}"),
             }
         };
-        self.file_cache.insert(path.clone(), FileTab { path: path.clone(), content, truncated: too_big });
+        self.file_cache.insert(path.clone(), FileTab { content });
         self.dialog = Some(Dialog::FilePreview { path });
         cx.notify();
     }
@@ -68,11 +68,6 @@ impl Chat {
         format!("{lang} · {lines} lines · {size}")
     }
 
-    pub(crate) fn is_markdown(path: &Path) -> bool {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "md" || e == "markdown")
-    }
 
     pub(crate) fn attach_images(&mut self, cx: &mut Context<Self>) {
         let opts = gpui::PathPromptOptions {
@@ -109,7 +104,4 @@ impl Chat {
         .detach();
     }
 
-    pub(crate) fn load_project_files_pub(&mut self) {
-        self.load_project_files();
-    }
 }

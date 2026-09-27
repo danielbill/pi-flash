@@ -102,7 +102,7 @@ pub(crate) fn mc_plugins_view(
 
 /// Plugins sidebar (split from mc_plugins_view).
 fn pl_sidebar(
-    chat: &Chat,
+    _chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
     entries: &[(bool, usize, &serde_json::Value)],
@@ -227,7 +227,7 @@ fn pl_sidebar(
 
 /// Plugins detail: install form or the installed list (split).
 fn pl_detail(
-    chat: &Chat,
+    _chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
     entries: &[(bool, usize, &serde_json::Value)],

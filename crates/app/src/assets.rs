@@ -62,7 +62,6 @@ assets! {
     "icons/terminal.svg",
 }
 
-pub const ICON: &str = "icons";
 
 #[cfg(test)]
 mod tests {

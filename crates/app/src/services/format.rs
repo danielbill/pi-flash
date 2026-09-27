@@ -37,14 +37,6 @@ pub fn fmt_thousands(n: u64) -> String {
     out
 }
 
-pub fn fmt_hhmm(ms: i64) -> String {
-    use chrono::TimeZone;
-    match chrono::Local.timestamp_millis_opt(ms) {
-        chrono::LocalResult::Single(t) => t.format("%H:%M").to_string(),
-        _ => String::new(),
-    }
-}
-
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -109,34 +101,6 @@ pub fn read_branch(cwd: &Path) -> String {
         .to_string()
 }
 
-pub fn cwd_tail(cwd: &str) -> String {
-    cwd.rsplit(['/', '\\']).next().unwrap_or(cwd).to_string()
-}
-
-pub fn top_level_entries(cwd: &Path) -> Vec<(bool, String)> {
-    let Ok(rd) = std::fs::read_dir(cwd) else { return Vec::new() };
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
-    for e in rd.flatten() {
-        let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if is_dir {
-            dirs.push(name);
-        } else {
-            files.push(name);
-        }
-    }
-    dirs.sort();
-    files.sort();
-    dirs.iter()
-        .map(|n| (true, n.clone()))
-        .chain(files.iter().map(|n| (false, n.clone())))
-        .take(12)
-        .collect()
-}
 
 pub fn walk_files(cwd: &Path, depth: usize, cap: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();

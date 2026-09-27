@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// 0 zh-CN · 1 zh-TW · 2 en
 static LANG_IX: AtomicUsize = AtomicUsize::new(0);
 
-pub const LANGS: [&str; 3] = ["zh-CN", "zh-TW", "en"];
 pub const LANG_LABELS: [&str; 3] = ["简体中文", "繁體中文", "English"];
 
 pub fn set_lang(ix: usize) {
@@ -19,9 +18,6 @@ pub fn lang_ix() -> usize {
     LANG_IX.load(Ordering::Relaxed)
 }
 
-pub fn lang_name() -> &'static str {
-    LANGS[lang_ix()]
-}
 
 /// (source zh-CN, zh-TW, en)
 const TABLE: &[(&str, &str, &str)] = &[

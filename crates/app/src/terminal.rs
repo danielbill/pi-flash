@@ -263,7 +263,6 @@ fn named_index(n: NamedColor) -> usize {
         DimMagenta => 5,
         DimCyan => 6,
         DimWhite => 7,
-        _ => 256,
     }
 }
 
@@ -489,20 +488,6 @@ impl TerminalElement {
         }
     }
 
-    /// Mouse position -> grid point (grid Line includes display offset).
-    fn cell_at(&self, bounds: gpui::Bounds<Pixels>, pos: Point<Pixels>) -> SelPt {
-        let term = self.term.lock();
-        let offset = term.grid().display_offset() as i32;
-        let cols = term.grid().columns();
-        let screen = term.grid().screen_lines() as i32;
-        let history = term.grid().total_lines() as i32 - screen;
-        drop(term);
-        let x = f32::from(pos.x - bounds.origin.x - px(PAD_L));
-        let y = f32::from(pos.y - bounds.origin.y - px(PAD_T));
-        let col = ((x / self.cell_w).floor() as i32).clamp(0, cols as i32 - 1) as usize;
-        let row = (y / self.line_h).floor() as i32;
-        SelPt { line: (row - offset).clamp(-history, screen - 1), col }
-    }
 }
 
 impl gpui::IntoElement for TerminalElement {

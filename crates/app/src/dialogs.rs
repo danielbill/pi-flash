@@ -807,7 +807,7 @@ fn render_session_search(
     weak: &gpui::WeakEntity<Chat>,
     input: &gpui::Entity<TextInput>,
     t: &theme::Theme,
-    cx: &App,
+    _cx: &App,
 ) -> Div {
     let status: SharedString = if chat.search_running {
         tr("搜索中…").into()

@@ -29,6 +29,9 @@ use crate::i18n::tr;
 use crate::services::format::status_line;
 
 /// Shell-level effects a runtime bubbles up (Chat subscribes).
+/// RunningChanged/AgentFinished/FileBound arms are pre-wired for the
+/// resident-runtime pool refactor; not emitted yet.
+#[allow(dead_code)]
 pub(crate) enum SessionEvent {
     /// repaint-worthy state change
     Changed,
@@ -160,7 +163,6 @@ impl SessionRuntime {
             }
             _ => {}
         }
-        let args: Vec<&str> = extra.iter().map(String::as_str).collect();
         self.agent.spawn_with(&self.cwd, &extra)
     }
 
@@ -193,7 +195,7 @@ impl SessionRuntime {
     /// the epoch they just created — reading the entity here would be a
     /// re-entrant borrow (we are typically inside `rt.update`).
     pub(crate) fn attach_pump(
-        this: &Entity<Self>,
+        _this: &Entity<Self>,
         rx: UnboundedReceiver<Event>,
         epoch: u64,
         cx: &mut Context<Self>,
@@ -292,7 +294,7 @@ impl SessionRuntime {
                         cx.background_executor()
                             .timer(std::time::Duration::from_millis(500))
                             .await;
-                        let _ = this.update(cx, |c, cx| {
+                        let _ = this.update(cx, |_c, cx| {
                             cx.emit(SessionEvent::ListDirty);
                             cx.notify();
                         });
@@ -658,7 +660,7 @@ impl SessionRuntime {
     /// by payload timestamp, falling back to the first message containing the
     /// needle. Returns false when messages aren't loaded yet (caller parks a
     /// pending_locate for the reconcile to apply).
-    pub fn locate_message(&mut self, ts: Option<i64>, needle: &str, cx: &mut Context<Self>) -> bool {
+    pub fn locate_message(&mut self, ts: Option<i64>, needle: &str, _cx: &mut Context<Self>) -> bool {
         if self.messages.is_empty() {
             self.pending_locate = Some((ts, needle.to_string()));
             return false;
@@ -686,7 +688,7 @@ impl SessionRuntime {
     }
 
     /// Apply a parked 013 jump once messages exist (reconcile path).
-    fn apply_pending_locate(&mut self, cx: &mut Context<Self>) {
+    fn apply_pending_locate(&mut self, _cx: &mut Context<Self>) {
         if let Some((ts, needle)) = self.pending_locate.take() {
             if let Some(ix) = self.hit_index(ts, &needle) {
                 self.list.scroll_to_reveal_item(ix);
@@ -912,27 +914,6 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    fn send_follow_up(&mut self, cx: &mut Context<Self>) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::FollowUp { message: text });
-            self.input.clear();
-            self.pending_images.clear();
-            self.status = "queued".into();
-        }
-        cx.notify();
-    }
-
-    fn abort(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::Abort);
-            self.status = "aborting".into();
-            cx.notify();
-        }
-    }
 
     /// Fork a new session branching before the given user-message entry.
     /// pi rebinds this process to the branched session; the "fork" response
