@@ -1,6 +1,7 @@
 //! UI primitives shared across all components (pi-web's icon-level layer:
 //! ThinkingIcon / ThemeIcon / spinner etc. + the app-wide TextInput).
 
+pub mod editor_input;
 pub mod text_input;
 
 pub use text_input::TextInput;

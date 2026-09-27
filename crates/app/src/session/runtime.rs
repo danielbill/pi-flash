@@ -17,14 +17,14 @@ use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{Context, Entity, EventEmitter, ListAlignment, ListState, Render, prelude::*, px};
 use pi_link::protocol::{
-    self, AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, Usage,
+    AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, Usage,
     TreeNode, content_blocks, parse_tree,
 };
 
 use crate::agent_session::AgentSession;
 use crate::services::branch::*;
 use crate::services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
-use crate::session::messages::{Msg, Role, UsageLine, msgs_from_tail};
+use crate::session::messages::{Msg, Role, UsageLine};
 use crate::i18n::tr;
 use crate::services::format::status_line;
 

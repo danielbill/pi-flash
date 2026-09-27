@@ -7,20 +7,23 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
+use futures::StreamExt;
 use gpui::{
     App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
     MouseButton, ParentElement,
     Render, SharedString, Styled, WindowOptions, div, prelude::*, px, rgb,
 };
-use agent_session::AgentSession;
-use pi_link::protocol::{
-    AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, TreeNode,
-    Usage, content_blocks, parse_tree,
-};
+use pi_link::protocol::Command;
 use pi_link::sessions::{SessionInfo, list_sessions, list_sessions_for_cwd, read_tail_messages};
 
 mod agent_session;
+mod actions_dialogs;
+mod actions_menu;
+mod actions_panels;
+mod actions_rename;
+mod actions_runtime;
+mod actions_sessions;
+mod actions_terminal;
 mod appearance;
 mod assets;
 mod dialogs;
@@ -38,16 +41,15 @@ mod status_bar;
 mod titlebar;
 mod terminal;
 mod ui;
+pub(crate) use ui::editor_input::EditorInputElement;
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
-use services::branch::*;
 use services::format::*;
 use services::git::*;
-use services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use services::workspace::*;
-use session::messages::{Msg, Role, UsageLine, msgs_from_tail};
-use session::runtime::{SessionEvent, SessionRuntime};
+use session::messages::{Msg, msgs_from_tail};
+use session::runtime::SessionRuntime;
 use terminal::{TermStatus, TerminalTab};
 use ui::TextInput;
 use ui::icon;
@@ -66,9 +68,7 @@ enum Dialog {
     BranchTree,
     ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
-    /// read-only file preview (replaces the old right-panel viewer tab)
     FilePreview { path: PathBuf },
-    /// session content search (013): query + grouped results, click jumps
     SessionSearch { input: gpui::Entity<TextInput> },
 }
 
@@ -135,42 +135,24 @@ struct Chat {
     focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog: Option<Dialog>,
-    /// full-page state (welcome gate until the session list lands)
     page: Page,
-    /// functionPanel active view + side (015/018, persisted)
     dock_panel: DockPanel,
     dock_right: bool,
-    /// EDITOR MIRROR of the active session's inputPanel draft (031):
-    /// the live text lives in SessionRuntime.input; Chat flushes/loads on
-    /// switch (single editor surface, single focus handle)
     input: String,
-    /// mirror of the active session's pending attachments (031)
     pending_images: Vec<AttachedImage>,
-    /// mirror of the active session's input history navigation
     history: Vec<String>,
     history_ix: Option<usize>,
-    /// preloaded message tails for recent sessions (cross-project,
-    /// N = app_settings preload_sessions; stale entries are harmless —
-    /// the get_messages snapshot replaces them on open)
     session_tail_cache: std::collections::HashMap<PathBuf, Vec<Msg>>,
     sessions: Vec<SessionInfo>,
     sessions_list: ListState,
     cwd: PathBuf,
     branch: String,
-    /// model list mirror of the active session (settings/picker read this;
-    /// refreshed by runtime events)
     available_models: Vec<pi_link::protocol::ModelInfo>,
-    /// session pool (pi-web __piSessions parity): one resident runtime per
-    /// session — process + messages + inputPanel state. Switching sessions
-    /// moves `active_key` only; processes never pause or die on switch.
     runtimes: std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
     active_key: String,
     draft_seq: usize,
-    /// completion menu selection index (view state)
     menu_ix: usize,
-    /// sessions/files pane split in the sidebar (persisted fraction)
     sidebar_sessions_frac: f32,
-    /// terminal event channel (dock terminal view)
     term_events: Option<futures::channel::mpsc::UnboundedSender<(usize, alacritty_terminal::event::Event)>>,
     op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
     // editor view state
@@ -189,12 +171,8 @@ struct Chat {
     search_hits: Vec<pi_link::sessions::SearchHit>,
     search_truncated: bool,
     search_running: bool,
-    /// committed needle (locate fallback) — mirrored for jump_to_hit
     search_needle: String,
-    /// debounced-search generation guard
     search_gen: u64,
-    /// hit clicked while the target session still loads (pool miss): applied
-    /// by the runtime once the get_messages reconcile lands
     pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
@@ -270,7 +248,6 @@ struct FileTab {
 struct SubagentRun {
     id: usize,
     profile: String,
-    /// 0 running · 1 completed · 2 failed · 3 aborted
     status: u8,
     last_text: String,
     session: Option<pi_link::client::PiSession>,
@@ -610,7 +587,6 @@ impl Chat {
         chat
     }
 
-    /// Persist the dock layout (015 side + 018 active view).
     fn persist_dock(&mut self) {
         save_dock_state(&DockState {
             position: if self.dock_right { "right" } else { "left" }.into(),
@@ -624,8 +600,6 @@ impl Chat {
     }
 
 
-    /// Reload sessions filtered to the selected project (pi-web
-    /// sessionsForProject: only the selected cwd's sessions are listed).
     fn refresh_sessions(&mut self) {
         let cwd = self.cwd.to_string_lossy().to_string();
         self.sessions = list_sessions_for_cwd(&cwd, 100)
@@ -637,7 +611,6 @@ impl Chat {
         self.sessions_list.reset(self.sessions.len());
     }
 
-    /// Re-read working-tree changes (git status + numstat summary).
     fn refresh_git(&mut self) {
         self.git_files = git_status_files(&self.cwd);
         self.git_add_del = git_numstat(&self.cwd);
@@ -647,160 +620,8 @@ impl Chat {
     // built-in terminal (pi-web TerminalPanel parity)
     // -----------------------------------------------------------------------
 
-    /// Open (or focus) a terminal for the selected workspace cwd. One PTY per
-    /// cwd (terminal-manager idempotent-create parity).
-    fn open_terminal(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.dock_panel = DockPanel::Terminal;
-        if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &self.cwd)) {
-            self.active_terminal = Some(ix);
-            let focus = self.terminals[ix].focus.clone();
-            window.focus(&focus);
-            cx.notify();
-            return;
-        }
-        let Some(tx) = self.term_events.clone() else { return };
-        let (cell_w, line_h) = terminal::measure_cell(window);
-        self.term_seq += 1;
-        let id = self.term_seq;
-        let focus = cx.focus_handle();
-        let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, self.cwd.clone(), cell_w, line_h, focus, proxy) {
-            Ok(tab) => {
-                self.terminals.push(tab);
-                self.active_terminal = Some(self.terminals.len() - 1);
-                self.panel_tabs.push(PanelTab::Term(id));
-                self.active_panel_tab = Some(self.panel_tabs.len() - 1);
-                let focus = self.terminals[self.terminals.len() - 1].focus.clone();
-                window.focus(&focus);
-                cx.notify();
-            }
-            Err(e) => {
-                self.set_status(format!("terminal spawn failed: {e}"), cx);
-                cx.notify();
-            }
-        }
-    }
-
-    /// Close a tab: shutdown the PTY, drop state (DELETE /api/terminal/:id).
-    fn close_terminal(&mut self, ix: usize, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        if ix >= self.terminals.len() {
-            return;
-        }
-        let term_id = self.terminals[ix].id;
-        if let Some(pix) = self.panel_tabs.iter().position(|t| matches!(t, PanelTab::Term(id) if *id == term_id)) {
-            self.panel_tabs.remove(pix);
-            self.active_panel_tab = match self.active_panel_tab {
-                Some(a) if a >= self.panel_tabs.len() => {
-                    if self.panel_tabs.is_empty() {
-                        None
-                    } else {
-                        Some(a.saturating_sub(1))
-                    }
-                }
-                other => other,
-            };
-        }
-        let _ = self.terminals[ix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-        self.terminals.remove(ix);
-        self.active_terminal = match self.active_terminal {
-            Some(a) if a >= self.terminals.len() => {
-                if self.terminals.is_empty() {
-                    None
-                } else {
-                    Some(a.saturating_sub(1))
-                }
-            }
-            other => other,
-        };
-        if self.active_terminal.is_none() {
-            window.focus(&self.focus);
-        }
-        cx.notify();
-    }
-
-    /// Restart: kill + respawn with the same cwd and current grid size.
-    fn restart_terminal(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(tx) = self.term_events.clone() else { return };
-        let Some(old) = self.terminals.get(ix) else { return };
-        if old.status == TermStatus::Ready {
-            let _ = old.pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-        }
-        let (cols, rows, cell_w, line_h) = (old.cols, old.rows, old.cell_w, old.line_h);
-        let cwd = old.cwd.clone();
-        self.term_seq += 1;
-        let id = self.term_seq;
-        let focus = cx.focus_handle();
-        let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, cwd, cell_w, line_h, focus, proxy) {
-            Ok(mut tab) => {
-                tab.cols = cols;
-                tab.rows = rows;
-                self.terminals[ix] = tab;
-                self.active_terminal = Some(ix);
-            }
-            Err(e) => {
-                self.terminals[ix].status = TermStatus::Failed(e);
-            }
-        }
-        cx.notify();
-    }
-
-    /// Active terminal index helper.
-    fn active_term(&mut self) -> Option<&mut TerminalTab> {
-        self.active_terminal
-            .and_then(|ix| self.terminals.get_mut(ix))
-    }
-
-    /// Terminal keyboard input: copy/paste shortcuts first (pi-web
-    /// attachCustomKeyEventHandler parity: Ctrl+C with selection copies and
-    /// never sends ^C; Ctrl+V goes to the PTY, never the browser), then the
-    /// keystroke → escape-sequence table.
-    fn terminal_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        use alacritty_terminal::event_loop::Msg;
-        let Some(tab) = self.active_term() else { return };
-        let k = &ev.keystroke;
-        let ctrl = k.modifiers.control;
-        let shift = k.modifiers.shift;
-        let mode = *tab.term.lock().mode();
-
-        if ctrl && k.key == "v" {
-            if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                let bytes = terminal::paste_bytes(&text, &mode);
-                let _ = tab.pty.send(Msg::Input(bytes.into()));
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if ctrl && k.key == "c" && (shift || tab.selection.is_some()) {
-            if let Some(sel) = tab.selection {
-                let text = terminal::selection_text(&tab.term.lock(), sel);
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                tab.selection = None;
-                tab.sel_anchor = None;
-            }
-            cx.stop_propagation();
-            return;
-        }
-        if let Some(bytes) = terminal::keystroke_to_pty(k, &mode) {
-            let _ = tab.pty.send(Msg::Input(bytes.into()));
-            cx.stop_propagation();
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // models panel (pi-web ModelsConfig parity: enabledModels + API keys)
-    // -----------------------------------------------------------------------
-
-    /// `provider/modelId` refs of every available model, display order.
-    fn mc_refs(&self) -> Vec<String> {
-        self.available_models
-            .iter()
-            .map(|m| format!("{}/{}", m.provider, m.id))
-            .collect()
-    }
 
 
-    /// Pump task target: route one alacritty event to its tab.
     fn on_term_event(
         &mut self,
         tab_id: usize,
@@ -856,8 +677,6 @@ impl Chat {
         }
     }
 
-    /// Switch workspace: reset context, filter sessions, restore the last
-    /// open session of that workspace (or land on a blank new session).
     fn switch_project(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
         self.cwd = cwd;
         // mark as the globally-last active workspace for startup restore
@@ -882,7 +701,6 @@ impl Chat {
 
 
 
-    /// Flush editor mirrors into the active session, then run an action on it.
     fn with_active_editor<Act: FnOnce(&mut SessionRuntime, &mut Context<SessionRuntime>)>(
         &mut self,
         cx: &mut Context<Self>,
@@ -930,14 +748,10 @@ impl Chat {
     }
 
 
-    /// Active-session thinking level (pill menu).
     fn set_thinking_level(&mut self, key: &str, cx: &mut Context<Self>) {
         self.rt().update(cx, |r, cx| r.set_thinking_level(key, cx));
     }
 
-    /// Active-session tool preset: recorded per session and applied by a
-    /// --session respawn (RPC has no live tool switching; pi-web uses the
-    /// in-process SDK for this — recorded deviation).
     fn mc_set_tools_preset(&mut self, key: &str, cx: &mut Context<Self>) {
         let rt = self.rt();
         rt.update(cx, |r, cx| {
@@ -957,7 +771,6 @@ impl Chat {
         cx.notify();
     }
 
-    /// The active session runtime (attention pointer target).
     fn rt(&self) -> gpui::Entity<session::runtime::SessionRuntime> {
         self.runtimes
             .get(&self.active_key)
@@ -965,250 +778,11 @@ impl Chat {
             .clone()
     }
 
-    /// Route a shell-level status line to the active session's bar.
     fn set_status(&mut self, msg: String, cx: &mut Context<Self>) {
         self.rt().update(cx, |r, _| r.status = msg);
     }
 
-    /// Wire a runtime's shell-effect events (sidebar/sound/git/ext dialog).
-    fn subscribe_runtime(
-        &mut self,
-        rt: &gpui::Entity<session::runtime::SessionRuntime>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.subscribe(rt, |chat, rt, ev: &session::runtime::SessionEvent, cx| {
-            use session::runtime::SessionEvent;
-            let is_active = rt.read(cx).key == chat.active_key;
-            match ev {
-                SessionEvent::Changed => {
-                    if is_active {
-                        chat.available_models = rt.read(cx).available_models.clone();
-                    }
-                    cx.notify();
-                }
-                SessionEvent::RunningChanged => cx.notify(),
-                SessionEvent::ListDirty => {
-                    chat.refresh_sessions();
-                    cx.notify();
-                }
-                SessionEvent::FileBound(p) => {
-                    if is_active {
-                        set_last_open(&chat.cwd.to_string_lossy(), &p.to_string_lossy());
-                    }
-                    chat.refresh_sessions();
-                    cx.notify();
-                }
-                SessionEvent::AgentFinished => {
-                    if is_active && chat.sound_on {
-                        play_notify_sound();
-                    }
-                    if is_active {
-                        chat.refresh_git();
-                    }
-                    chat.refresh_sessions();
-                    cx.notify();
-                }
-                SessionEvent::ExtUi(req) => {
-                    if is_active {
-                        let req = req.clone();
-                        chat.on_ext_ui(req, cx);
-                    } else {
-                        // parked session asks for permission: queue it, the
-                        // badge surfaces it; popped when user switches there
-                        rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
-                        cx.notify();
-                    }
-                }
-                SessionEvent::RenameReady(prefill) => {
-                    if is_active {
-                        if let Some(f) = rt.read(cx).file.clone() {
-                            chat.start_rename(f, prefill.clone(), cx);
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
-    }
 
-    /// Attention switch: flush the editor mirrors into the outgoing
-    /// session, load the incoming one's inputPanel state. Zero process
-    /// operations, zero IO — this is the pi-web "switch" and it is instant.
-    fn switch_to(
-        &mut self,
-        rt: gpui::Entity<session::runtime::SessionRuntime>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(old) = self.runtimes.get(&self.active_key).cloned() {
-            if old != rt {
-                let (input, images, history) = (
-                    std::mem::take(&mut self.input),
-                    std::mem::take(&mut self.pending_images),
-                    std::mem::take(&mut self.history),
-                );
-                old.update(cx, |r, _| {
-                    r.input = input;
-                    r.pending_images = images;
-                    r.history = history;
-                });
-            }
-        }
-        let (input, images, history, key, file) =
-            rt.update(cx, |r, _| {
-                (
-                    r.input.clone(),
-                    r.pending_images.clone(),
-                    r.history.clone(),
-                    r.key.clone(),
-                    r.file.clone(),
-                )
-            });
-        self.input = input;
-        self.pending_images = images;
-        self.history = history;
-        self.history_ix = None;
-        self.active_key = key;
-        if let Some(f) = file {
-            set_last_open(&self.cwd.to_string_lossy(), &f.to_string_lossy());
-        }
-        self.pill_menu = None;
-        self.top_panel = None;
-        self.menu_ix = 0;
-        // surface queued permission requests of the incoming session
-        let queued = rt.update(cx, |r, _| {
-            let q = std::mem::take(&mut r.ext_queue);
-            r.touch();
-            q
-        });
-        if let Some(first) = queued.first() {
-            let first = first.clone();
-            cx.notify();
-            self.on_ext_ui(first, cx);
-            for r in queued.into_iter().skip(1) {
-                rt.update(cx, |r2, _| r2.ext_queue.push(r));
-            }
-        }
-        cx.notify();
-    }
-
-    /// Open the unified diff for a changed file.
-    fn open_git_diff(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let untracked = self
-            .git_files
-            .iter()
-            .any(|f| f.path == path && f.status == GitStatus::Untracked);
-        let patch = git_file_diff(&self.cwd, &path, untracked);
-        self.dialog = Some(Dialog::GitDiff { path, patch });
-        cx.notify();
-    }
-
-    fn open_project_select(&mut self, cx: &mut Context<Self>) {
-        self.dialog = Some(Dialog::ProjectSelect);
-        cx.notify();
-    }
-
-    /// Open the session content search (013): query input + grouped results.
-    fn open_session_search(&mut self, cx: &mut Context<Self>) {
-        let weak = cx.weak_entity();
-        let weak_esc = weak.clone();
-        let input = cx.new(|cx| {
-            TextInput::new(cx)
-                .placeholder(tr("搜索会话内容…"))
-                .on_change(Box::new(move |q: &str, cx: &mut App| {
-                    let _ = weak.update(cx, |c, cx| c.search_changed(q, cx));
-                }))
-                .on_escape(Box::new(move |cx: &mut App| {
-                    let _ = weak_esc.update(cx, |c, cx| {
-                        c.dialog = None;
-                        cx.notify();
-                    });
-                }))
-        });
-        self.search_hits.clear();
-        self.search_truncated = false;
-        self.search_needle.clear();
-        self.dialog = Some(Dialog::SessionSearch { input });
-        cx.notify();
-    }
-
-    /// Query text changed: bump the generation, debounce 300ms, then scan
-    /// this project's session files on the background executor (pi-web
-    /// SessionSearch debounce parity; stale responses drop by generation).
-    fn search_changed(&mut self, q: &str, cx: &mut Context<Self>) {
-        self.search_gen += 1;
-        let epoch = self.search_gen;
-        let needle = q.trim().to_string();
-        self.search_needle = needle.clone();
-        self.search_hits.clear();
-        self.search_truncated = false;
-        if needle.is_empty() {
-            self.search_running = false;
-            cx.notify();
-            return;
-        }
-        self.search_running = true;
-        let cwd = self.cwd.clone();
-        cx.spawn(async move |weak, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(300))
-                .await;
-            let cancelled = weak.update(cx, |c, _| c.search_gen != epoch).unwrap_or(true);
-            if cancelled {
-                return;
-            }
-            let needle2 = needle.clone();
-            let resp = cx
-                .background_spawn(async move {
-                    pi_link::sessions::search_sessions_for_cwd(
-                        &cwd.to_string_lossy(),
-                        &needle2,
-                    )
-                })
-                .await;
-            let _ = weak.update(cx, |c, cx| {
-                if c.search_gen != epoch {
-                    return;
-                }
-                c.search_running = false;
-                c.search_truncated = resp.truncated;
-                c.search_hits = resp.hits;
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Jump to a search hit: open (or switch to) the session, then reveal the
-    /// matched row — located by payload timestamp, falling back to the first
-    /// message containing the needle.
-    fn jump_to_hit(&mut self, path: PathBuf, ts: Option<i64>, cx: &mut Context<Self>) {
-        let needle = self.search_needle.clone();
-        self.dialog = None;
-        let key = path.to_string_lossy().to_string();
-        let already_open = self.active_key == key || self.runtimes.contains_key(&key);
-        if self.active_key != key {
-            self.open_session(path.clone(), false, cx);
-        }
-        let rt = self.rt();
-        let located = rt.update(cx, |r, cx| r.locate_message(ts, &needle, cx));
-        if !located && !already_open {
-            // messages still loading (pool miss) — apply after the reconcile
-            self.pending_locate = Some((path, ts, needle));
-        }
-        cx.notify();
-    }
-
-    /// Open the branch navigator: request a fresh tree, show the panel.
-    fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
-        self.rt().update(cx, |r, _| {
-            r.branch_tree = None;
-            if let Some(session) = &r.agent.session {
-                let _ = session.send(&Command::GetTree);
-            }
-        });
-        self.dialog = Some(Dialog::BranchTree);
-        cx.notify();
-    }
 
 
     fn load_project_files(&mut self) {
@@ -1216,8 +790,6 @@ impl Chat {
     }
 
 
-    /// pi-web ChatWindow: pulsing phase label renders while the agent is
-    /// running but no assistant content has arrived yet
 
 
 
@@ -1229,73 +801,6 @@ impl Chat {
 
 
 
-    /// Begin an inline rename (pi-web SessionSidebar: the row becomes an
-    /// input with the current title selected; typing replaces it).
-    fn start_rename(&mut self, path: PathBuf, prefill: String, cx: &mut Context<Self>) {
-        let weak_ok = cx.entity().downgrade();
-        let weak_esc = cx.entity().downgrade();
-        let input = cx.new(|cx| {
-            TextInput::new(cx)
-                .select_all_on_focus()
-                .placeholder(tr("session name"))
-        });
-        input.update(cx, |ti, cx| ti.set_value(prefill, cx));
-        input.update(cx, |ti, _| {
-            ti.set_on_submit(Box::new(move |v, cx| {
-                let _ = weak_ok.update(cx, |c, cx| c.apply_rename(v.trim().to_string(), cx));
-            }));
-            ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_esc.update(cx, |c, cx| {
-                    c.renaming = None;
-                    c.rename_input = None;
-                    cx.notify();
-                });
-            }));
-        });
-        self.renaming = Some(path);
-        self.rename_input = Some(input);
-        cx.notify();
-    }
-
-    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
-        self.renaming = None;
-        self.rename_input = None;
-        cx.notify();
-    }
-
-    /// Model-select dialog with a live filter input.
-    fn model_select_dialog(cx: &mut Context<Self>) -> Dialog {
-        let weak_change = cx.entity().downgrade();
-        let weak_esc = cx.entity().downgrade();
-        let input = cx.new(|cx| TextInput::new(cx).placeholder("filter models..."));
-        input.update(cx, |ti, _| {
-            ti.set_on_change(Box::new(move |_, cx| {
-                let _ = weak_change.update(cx, |_, cx| cx.notify());
-            }));
-            ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_esc.update(cx, |c, cx| {
-                    c.dialog = None;
-                    cx.notify();
-                });
-            }));
-        });
-        Dialog::ModelSelect { input }
-    }
-
-    /// Rename commit path that never reads the input entity (called from
-    /// the input's own submit callback where the entity is borrowed).
-    fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
-        if let Some(session) = &self.rt().read(cx).agent.session {
-            let _ = session.send(&Command::SetSessionName { name });
-        }
-        // sidebar label comes from the session file's `session_info` entry;
-        // reload it when pi confirms the write (set_session_name response —
-        // an immediate re-read here would race the file flush)
-        self.refresh_state(cx);
-        self.renaming = None;
-        self.rename_input = None;
-        cx.notify();
-    }
 
 
 
@@ -1309,305 +814,8 @@ impl Chat {
         self.rt().update(cx, |r, cx| r.request_system_info(cx));
     }
 
-    fn new_session(&mut self, cx: &mut Context<Self>) {
-        // lazy draft (pi-web parity): the pi process spawns on the first
-        // prompt, not now; running sessions are untouched
-        let key = format!("draft-{}", self.draft_seq);
-        self.draft_seq += 1;
-        let rt = cx.new(|_| {
-            let mut r = session::runtime::SessionRuntime::new(key.clone(), self.cwd.clone(), None);
-            r.status = tr("新会话").to_string();
-            r
-        });
-        self.runtimes.insert(key, rt.clone());
-        self.subscribe_runtime(&rt, cx);
-        clear_last_open(&self.cwd.to_string_lossy());
-        self.renaming = None;
-        self.rename_input = None;
-        self.switch_to(rt, cx);
-    }
 
-    fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
-        let cwd = self
-            .sessions
-            .iter()
-            .find(|s| s.path == path)
-            .map(|s| PathBuf::from(s.cwd.clone()))
-            .unwrap_or_else(|| self.cwd.clone());
-        let key = path.to_string_lossy().to_string();
-        // pool hit: switch attention — instant, all messages in place
-        if let Some(rt) = self.runtimes.get(&key).cloned() {
-            self.cwd = cwd;
-            self.branch = read_branch(&self.cwd);
-            self.renaming = None;
-            self.rename_input = None;
-            self.confirm_delete = None;
-            if rename {
-                rt.update(cx, |r, _| r.pending_rename = true);
-            }
-            self.switch_to(rt, cx);
-            return;
-        }
-        // new runtime: tail render first (cache or disk), process spawns in
-        // the background — the conversation is on screen before node exists
-        let tail = match self.session_tail_cache.get(&path).cloned() {
-            Some(msgs) => msgs,
-            None => {
-                let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                if self.session_tail_cache.len() >= preload_sessions() * 2 {
-                    self.session_tail_cache.clear();
-                }
-                self.session_tail_cache.insert(path.clone(), msgs.clone());
-                msgs
-            }
-        };
-        let rt = cx.new(|_| {
-            let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
-            r.messages = tail;
-            r.list.reset(r.messages.len());
-            r.status = "resuming".into();
-            r.pending_rename = rename;
-            r
-        });
-        self.runtimes.insert(rt.read(cx).key.clone(), rt.clone());
-        self.subscribe_runtime(&rt, cx);
-        if !same_ws(&cwd.to_string_lossy(), &self.cwd.to_string_lossy()) {
-            self.cwd = cwd;
-            self.branch = read_branch(&self.cwd);
-            self.expanded_dirs.clear();
-            self.refresh_sessions();
-            self.load_project_files();
-        }
-        set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
-        self.renaming = None;
-        self.rename_input = None;
-        self.confirm_delete = None;
-        self.switch_to(rt.clone(), cx);
-        let rt_spawn = rt;
-        cx.spawn(async move |_this, cx| {
-            let _ = rt_spawn.update(cx, |r, cx| {
-                if r.agent.session.is_none() {
-                    if let Some(rx) = r.spawn() {
-                        let epoch = r.agent.epoch;
-                        session::runtime::SessionRuntime::attach_pump(&rt_spawn, rx, epoch, cx);
-                    }
-                }
-                if let Some(s) = &r.agent.session {
-                    let _ = s.send(&Command::GetMessages);
-                    let _ = s.send(&Command::GetTree);
-                }
-                r.refresh_state();
-            });
-        })
-        .detach();
-    }
 
-    /// pi-web DELETE /api/sessions/{id}: unlink the session file; a live
-    /// (active) session is aborted + shut down first and the shell resets
-    /// to a fresh draft with the same cwd.
-    fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.confirm_delete = None;
-        let key = path.to_string_lossy().to_string();
-        let was_active = self.runtimes.get(&self.active_key)
-            .map(|rt| rt.read(cx).file.as_deref() == Some(path.as_path()))
-            .unwrap_or(false);
-        // tear down the runtime (abort + process kill; dropping the entity
-        // clears the file handle on Windows before unlink)
-        if let Some(rt) = self.runtimes.remove(&key) {
-            rt.update(cx, |r, _| {
-                if let Some(s) = &r.agent.session {
-                    let _ = s.send(&Command::Abort);
-                }
-                r.shutdown_process();
-            });
-        }
-        if was_active {
-            self.new_session(cx);
-        }
-        match std::fs::remove_file(&path) {
-            Ok(_) => {
-                self.sessions.retain(|s| s.path != path);
-                self.sessions_list.reset(self.sessions.len());
-                self.set_status("session deleted".into(), cx);
-            }
-            Err(e) => {
-                self.set_status(crate::i18n::tf("删除失败: {e}", &[("e", e.to_string())]), cx);
-            }
-        }
-        self.refresh_sessions();
-        cx.notify();
-    }
-
-    /// Open a file as a right-panel tab (pi-web file tabs; replaces the
-    /// old preview dialog). Re-activates an existing tab for the path.
-    fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        const MAX: u64 = 200 * 1024;
-        let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
-        let content = if too_big {
-            "(file too large to preview)".to_string()
-        } else {
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    if bytes.contains(&0) {
-                        "(binary file)".to_string()
-                    } else {
-                        String::from_utf8_lossy(&bytes).to_string()
-                    }
-                }
-                Err(e) => format!("read failed: {e}"),
-            }
-        };
-        self.file_cache.insert(path.clone(), FileTab { path: path.clone(), content, truncated: too_big });
-        self.dialog = Some(Dialog::FilePreview { path });
-        cx.notify();
-    }
-
-    fn close_panel_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix >= self.panel_tabs.len() {
-            return;
-        }
-        let removed = self.panel_tabs.remove(ix);
-        let PanelTab::Term(id) = &removed;
-        if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
-            let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-            self.terminals.remove(tix);
-        }
-        self.active_panel_tab = match self.active_panel_tab {
-            Some(a) if a >= self.panel_tabs.len() => {
-                if self.panel_tabs.is_empty() {
-                    None
-                } else {
-                    Some(a.saturating_sub(1))
-                }
-            }
-            other => other,
-        };
-        cx.notify();
-    }
-
-    /// File viewer meta line: language · lines · size (pi-web FileViewer).
-    fn file_meta(path: &Path, content: &str) -> String {
-        let lang = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("txt")
-            .to_string();
-        let lines = content.lines().count();
-        let bytes = content.len();
-        let size = if bytes < 1024 {
-            format!("{bytes} B")
-        } else {
-            format!("{:.1} KB", bytes as f64 / 1024.)
-        };
-        format!("{lang} · {lines} lines · {size}")
-    }
-
-    fn is_markdown(path: &Path) -> bool {
-        path.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "md" || e == "markdown")
-    }
-
-    fn attach_images(&mut self, cx: &mut Context<Self>) {
-        let opts = gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: None,
-        };
-        let rx = cx.prompt_for_paths(opts);
-        cx.spawn(async move |this, cx| {
-            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
-            let Some(paths) = picked else {
-                return;
-            };
-            let _ = this.update(cx, |chat, cx| {
-                for path in paths {
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
-                    use base64::Engine as _;
-                    let data_b64 =
-                        base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "image".into());
-                    let mime = mime_from_ext(&path);
-                    chat.pending_images
-                        .push(AttachedImage { name, data_b64, mime });
-                }
-                if !chat.pending_images.is_empty() {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    fn load_project_files_pub(&mut self) {
-        self.load_project_files();
-    }
-
-    fn active_menu(&self) -> Option<MenuKind> {
-        let input = &self.input;
-        if input.starts_with('/') && !input[1..].contains(char::is_whitespace) {
-            return Some(MenuKind::Slash);
-        }
-        if let Some(at) = input.rfind('@') {
-            if !input[at..].contains(char::is_whitespace) && input[at + 1..].len() < 64 {
-                return Some(MenuKind::At);
-            }
-        }
-        None
-    }
-
-    fn menu_items(&self, cx: &gpui::App) -> Vec<MenuItem> {
-        match self.active_menu() {
-            Some(MenuKind::Slash) => {
-                let q = self.input[1..].to_lowercase();
-                self.rt()
-                    .read(cx)
-                    .commands
-                    .iter()
-                    .filter(|c| q.is_empty() || c.name.to_lowercase().starts_with(&q))
-                    .take(8)
-                    .map(|c| MenuItem {
-                        insert: c.name.clone(),
-                        title: format!("/{}", c.name),
-                        desc: c.description.clone(),
-                    })
-                    .collect()
-            }
-            Some(MenuKind::At) => {
-                let at = self.input.rfind('@').unwrap_or(0);
-                let q = self.input[at + 1..].to_lowercase();
-                self.project_files
-                    .iter()
-                    .filter(|f| q.is_empty() || f.to_lowercase().contains(&q))
-                    .take(8)
-                    .map(|f| MenuItem {
-                        insert: f.clone(),
-                        title: f.clone(),
-                        desc: String::new(),
-                    })
-                    .collect()
-            }
-            None => Vec::new(),
-        }
-    }
-
-    fn accept_menu(&mut self, insert: String, cx: &mut Context<Self>) {
-        match self.active_menu() {
-            Some(MenuKind::Slash) => self.input = format!("/{insert} "),
-            Some(MenuKind::At) => {
-                if let Some(at) = self.input.rfind('@') {
-                    self.input = format!("{}{} ", &self.input[..=at], insert);
-                }
-            }
-            None => {}
-        }
-        self.menu_ix = 0;
-        cx.notify();
-    }
 
 }
 
@@ -1637,214 +845,6 @@ impl Focusable for Chat {
 // EntityInputHandler (replace_and_mark_text_in_range = composition,
 // replace_text_in_range = commit). UTF-16 offsets per the trait contract.
 // ---------------------------------------------------------------------------
-impl gpui::EntityInputHandler for Chat {
-    fn text_for_range(
-        &mut self,
-        range: std::ops::Range<usize>,
-        adjusted_range: &mut Option<std::ops::Range<usize>>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<String> {
-        let text: Vec<u16> = self.input.encode_utf16().collect();
-        let slice: String = text
-            .get(range.start..range.end)?
-            .iter()
-            .map(|&u| char::from_u32(u as u32).unwrap_or('\u{fffd}'))
-            .collect();
-        adjusted_range.replace(range);
-        Some(slice)
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::UTF16Selection> {
-        // hand-rolled editor: caret at end, empty selection
-        let end = self.input.encode_utf16().count();
-        Some(gpui::UTF16Selection { range: end..end, reversed: false })
-    }
-
-    fn marked_text_range(
-        &self,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<std::ops::Range<usize>> {
-        self.ime_marked.clone()
-    }
-
-    fn unmark_text(&mut self, _window: &mut gpui::Window, _cx: &mut gpui::Context<Self>) {
-        self.ime_marked = None;
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        range: Option<std::ops::Range<usize>>,
-        text: &str,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
-        match range.or_else(|| self.ime_marked.clone()) {
-            Some(r) => {
-                let start = self.utf16_to_char_offset(r.start);
-                let end = self.utf16_to_char_offset(r.end);
-                self.input.replace_range(start..end, text);
-            }
-            None => self.input.push_str(text),
-        }
-        self.ime_marked = None;
-        self.menu_ix = 0;
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range: Option<std::ops::Range<usize>>,
-        new_text: &str,
-        _new_selected_range: Option<std::ops::Range<usize>>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) {
-        // composition update: swap the marked span for the new composition
-        // string, then re-mark it
-        let range = range.or_else(|| self.ime_marked.clone());
-        let start = match &range {
-            Some(r) => self.utf16_to_char_offset(r.start),
-            None => self.input.chars().count(),
-        };
-        let end = range
-            .as_ref()
-            .map(|r| self.utf16_to_char_offset(r.end))
-            .unwrap_or(start);
-        self.input.replace_range(start..end, new_text);
-        let start_u16 = self.input.chars().take(start).map(char::len_utf16).sum();
-        let new_len = new_text.encode_utf16().count();
-        self.ime_marked = Some(start_u16..start_u16 + new_len);
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        _range: std::ops::Range<usize>,
-        element_bounds: gpui::Bounds<gpui::Pixels>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<gpui::Bounds<gpui::Pixels>> {
-        // IME candidate window anchors to the editor container
-        Some(element_bounds)
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        _point: gpui::Point<gpui::Pixels>,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
-    ) -> Option<usize> {
-        None
-    }
-}
-
-impl Chat {
-    /// utf16 offset -> char offset for self.input
-    fn utf16_to_char_offset(&self, u16_offset: usize) -> usize {
-        let mut u16_count = 0usize;
-        for (char_ix, ch) in self.input.chars().enumerate() {
-            if u16_count >= u16_offset {
-                return char_ix;
-            }
-            u16_count += ch.len_utf16();
-        }
-        self.input.chars().count()
-    }
-}
-
-/// Invisible paint-phase element that registers the chat editor as the
-/// window's InputHandler when focused (required for Windows IME).
-pub struct EditorInputElement {
-    focus: gpui::FocusHandle,
-    view: gpui::Entity<Chat>,
-    interactivity: gpui::Interactivity,
-}
-
-impl EditorInputElement {
-    pub fn new(view: gpui::Entity<Chat>, focus: gpui::FocusHandle) -> Self {
-        Self {
-            focus,
-            view,
-            interactivity: gpui::Interactivity::new(),
-        }
-    }
-}
-
-impl gpui::IntoElement for EditorInputElement {
-    type Element = Self;
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl gpui::Styled for EditorInputElement {
-    fn style(&mut self) -> &mut gpui::StyleRefinement {
-        &mut self.interactivity.base_style
-    }
-}
-
-impl gpui::Element for EditorInputElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<gpui::ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        global_id: Option<&gpui::GlobalElementId>,
-        inspector_id: Option<&gpui::InspectorElementId>,
-        window: &mut gpui::Window,
-        cx: &mut gpui::App,
-    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let layout_id = self.interactivity.request_layout(
-            global_id,
-            inspector_id,
-            window,
-            cx,
-            |style, window, cx| window.request_layout(style, None, cx),
-        );
-        (layout_id, ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _global_id: Option<&gpui::GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        _bounds: gpui::Bounds<gpui::Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut gpui::Window,
-        _cx: &mut gpui::App,
-    ) -> Self::PrepaintState {
-    }
-
-    fn paint(
-        &mut self,
-        _global_id: Option<&gpui::GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: gpui::Bounds<gpui::Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut gpui::Window,
-        cx: &mut gpui::App,
-    ) {
-        window.handle_input(
-            &self.focus,
-            gpui::ElementInputHandler::new(bounds, self.view.clone()),
-            cx,
-        );
-    }
-}
 
 
 // ---------------------------------------------------------------------------

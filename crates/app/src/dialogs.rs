@@ -182,7 +182,7 @@ fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
 }
 
 /// BranchTree dialog surface (extracted from render_dialogs).
-fn render_branch_tree( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme, cx: &App) -> Div {
+fn render_branch_tree( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, _t: &theme::Theme, cx: &App) -> Div {
                 let t = T();
                 let weak = weak.clone();
                 let rt = chat.rt();
@@ -475,7 +475,7 @@ fn render_branch_tree( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
 }
 
 /// ProjectSelect dialog surface (extracted from render_dialogs).
-fn render_project_select( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &theme::Theme, cx: &App) -> Div {
+fn render_project_select( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, _t: &theme::Theme, _cx: &App) -> Div {
                 let t = T();
                 let weak = weak.clone();
                 // recent projects: unique cwds by latest activity (getRecentProjects parity)
@@ -623,7 +623,7 @@ fn render_project_select( mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Ch
 }
 
 /// FilePreview dialog surface (extracted from render_dialogs).
-fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, t: &theme::Theme, cx: &App) -> Div {
+fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, t: &theme::Theme, _cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
                 let (content, meta_line) = match chat.file_cache.get(path) {
                     Some(fc) => {
@@ -703,7 +703,7 @@ fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
 }
 
 /// GitDiff dialog surface (extracted from render_dialogs).
-fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, cx: &App) -> Div {
+fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, _cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
                 let mut body = patch.clone();
                 if body.chars().count() > 60000 {

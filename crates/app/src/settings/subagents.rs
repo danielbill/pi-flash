@@ -206,7 +206,7 @@ pub(crate) fn mc_subagents_view(
     section: &str,
     sa_input: &gpui::Entity<TextInput>,
 ) -> (gpui::AnyElement, gpui::AnyElement) {
-    use pi_link::subagents::SubagentScope;
+    
     let t = T();
 
     // sidebar + detail live in sa_sidebar/sa_detail (view-size budget)

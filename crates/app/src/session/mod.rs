@@ -103,205 +103,16 @@ pub(crate) fn main_column(
 
         // message list (820px centered column, ChatWindow parity)
 
-        .child(
-
-            list(rt_list.clone(), move |ix, _window, cx| {
-
-                let rt_view = rt_entity.read(cx);
-
-                let chat = chat_entity.read(cx);
-
-                let weak = weak_for_msg.clone();
-
-                match rt_view.messages.get(ix) {
-
-                    Some(m) => div()
-
-                        .w_full()
-
-                        .flex()
-
-                        .justify_center()
-
-                        .child(
-
-                            div()
-
-                                .w_full()
-
-                                .max_w(px(820.))
-
-                                .child(render_msg(
-
-                                    m,
-
-                                    ix,
-
-                                    &weak,
-
-                                    &rt_view.collapsed,
-
-                                    t,
-
-                                    &rt_view.model_label_text(),
-
-                                    {
-
-                                        let streaming = rt_view
-
-                                            .state
-
-                                            .as_ref()
-
-                                            .is_some_and(|s| s.is_streaming);
-
-                                        let is_last_assistant = streaming
-
-                                            && Some(ix) == rt_view.messages.len().checked_sub(1)
-
-                                            && m.role == Role::Assistant;
-
-                                        if !is_last_assistant {
-
-                                            None
-
-                                        } else {
-
-                                            let text: String = m
-
-                                                .blocks
-
-                                                .iter()
-
-                                                .map(|b| match b {
-
-                                                    Block::Text { text, .. }
-
-                                                    | Block::Thinking { text, .. } => {
-
-                                                        text.as_str()
-
-                                                    }
-
-                                                    _ => "",
-
-                                                })
-
-                                                .collect();
-
-                                            let est = estimate_tokens(&text);
-
-                                            let tps = chat.rt().read(cx).stream_started.and_then(
-
-                                                |start| {
-
-                                                    let secs =
-
-                                                        start.elapsed().as_secs_f32();
-
-                                                    (secs > 0.5 && est > 0)
-
-                                                        .then(|| est as f32 / secs)
-
-                                                },
-
-                                            );
-
-                                            Some((est, tps))
-
-                                        }
-
-                                    },
-
-                                    compute_meta(&rt_view.messages, ix),
-
-                                    rt_view.copy_flash.is_some_and(|(cix, at)| {
-
-                                        cix == ix && at.elapsed().as_millis() < 1500
-
-                                    }),
-
-                                )),
-
-                        )
-
-                        .into_any_element(),
-
-                    None => {
-
-                        // pi-web ChatWindow phase label: pulsing text under
-
-                        // the list while running with no streamed content
-
-                        // yet (animate-[pulse_1.5s_infinite])
-
-                        if chat.rt().read(cx).phase_row_visible() {
-
-                            div()
-
-                                .w_full()
-
-                                .flex()
-
-                                .justify_center()
-
-                                .child(
-
-                                    div()
-
-                                        .w_full()
-
-                                        .max_w(px(820.))
-
-                                        .py_2()
-
-                                        .text_size(px(13.))
-
-                                        .text_color(rgb(t.text_muted))
-
-                                        .child(SharedString::from(tr("正在等待模型...")))
-
-                                        .with_animation(
-
-                                            "phase-pulse",
-
-                                            Animation::new(std::time::Duration::from_millis(
-
-                                                1500,
-
-                                            ))
-
-                                            .repeat()
-
-                                            .with_easing(pulsating_between(0.5, 1.0)),
-
-                                            |label, delta| label.opacity(delta),
-
-                                        ),
-
-                                )
-
-                                .into_any_element()
-
-                        } else {
-
-                            div().w_full().into_any_element()
-
-                        }
-
-                    }
-
-                }
-
-            })
-
-            .flex_1()
-
-            .min_h_0()
-
-            .py_2(),
-
-        )
+        .child(session_list(
+            chat,
+            chat_entity,
+            weak.clone(),
+            rt_list,
+            rt_entity,
+            streaming,
+            t,
+            cx,
+        ))
 
         // empty new-session hero (pi-web ChatWindow isEmptyNew): logo row
 
@@ -429,7 +240,7 @@ fn session_toolbar(
     entity: gpui::Entity<Chat>,
     weak: &gpui::WeakEntity<Chat>,
     stats_right: SharedString,
-    t: &crate::theme::Theme,
+    t: &'static crate::theme::Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
 
@@ -627,129 +438,9 @@ fn session_toolbar(
 
                 )
 
-                .child(
+        .child(toolbar_system_pill(chat, weak.clone(), t, cx))
 
-                    div()
-
-                        .id("tb-system")
-
-                        .px_2()
-
-                        .py_1()
-
-                        .rounded_md()
-
-                        .border_1()
-
-                        .border_color(rgb(if chat.top_panel == Some(TopPanel::System) { t.accent } else { t.border }))
-
-                        .flex()
-
-                        .items_center()
-
-                        .gap_1p5()
-
-                        .text_xs()
-
-                        .text_color(rgb(if chat.top_panel == Some(TopPanel::System) { t.accent } else { t.text_muted }))
-
-                        .cursor_pointer()
-
-                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-
-                        .on_mouse_down(MouseButton::Left, cx.listener(
-
-                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-
-                                this.top_panel = match this.top_panel {
-
-                                    Some(TopPanel::System) => None,
-
-                                    _ => Some(TopPanel::System),
-
-                                };
-
-                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
-
-                            },
-
-                        ))
-
-                        .child(icon(
-
-                            "file-text",
-
-                            12.,
-
-                            if chat.rt().read(cx).sys_prompt.is_some() { t.accent } else { t.text_muted },
-
-                        ))
-
-                        .child(SharedString::from(tr("系统"))),
-
-                )
-
-                .child(
-
-                    div()
-
-                        .id("tb-tools")
-
-                        .px_2()
-
-                        .py_1()
-
-                        .rounded_md()
-
-                        .border_1()
-
-                        .border_color(rgb(if chat.top_panel == Some(TopPanel::Tools) { t.accent } else { t.border }))
-
-                        .flex()
-
-                        .items_center()
-
-                        .gap_1p5()
-
-                        .text_xs()
-
-                        .text_color(rgb(if chat.top_panel == Some(TopPanel::Tools) { t.accent } else { t.text_muted }))
-
-                        .cursor_pointer()
-
-                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-
-                        .on_mouse_down(MouseButton::Left, cx.listener(
-
-                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-
-                                this.top_panel = match this.top_panel {
-
-                                    Some(TopPanel::Tools) => None,
-
-                                    _ => Some(TopPanel::Tools),
-
-                                };
-
-                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
-
-                            },
-
-                        ))
-
-                        .child(icon(
-
-                            "wrench",
-
-                            12.,
-
-                            if chat.rt().read(cx).session_tools.is_some() { t.accent } else { t.text_muted },
-
-                        ))
-
-                        .child(SharedString::from(tr("工具"))),
-
-                )
+        .child(toolbar_tools_pill(chat, weak.clone(), t, cx))
 
                 .child(
 
@@ -928,4 +619,345 @@ fn session_hero(
                 .into_any_element()
 
 })
+}
+
+/// Message list + phase row (split from main_column).
+fn session_list(
+    chat: &mut Chat,
+    chat_entity: gpui::Entity<Chat>,
+    weak_for_msg: gpui::WeakEntity<Chat>,
+    rt_list: gpui::ListState,
+    rt_entity: gpui::Entity<crate::session::runtime::SessionRuntime>,
+    streaming: bool,
+    t: &'static crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+            list(rt_list.clone(), move |ix, _window, cx| {
+
+                let rt_view = rt_entity.read(cx);
+
+                let chat = chat_entity.read(cx);
+
+                let weak = weak_for_msg.clone();
+
+                match rt_view.messages.get(ix) {
+
+                    Some(m) => div()
+
+                        .w_full()
+
+                        .flex()
+
+                        .justify_center()
+
+                        .child(
+
+                            div()
+
+                                .w_full()
+
+                                .max_w(px(820.))
+
+                                .child(render_msg(
+
+                                    m,
+
+                                    ix,
+
+                                    &weak,
+
+                                    &rt_view.collapsed,
+
+                                    t,
+
+                                    &rt_view.model_label_text(),
+
+                                    {
+
+                                        let streaming = rt_view
+
+                                            .state
+
+                                            .as_ref()
+
+                                            .is_some_and(|s| s.is_streaming);
+
+                                        let is_last_assistant = streaming
+
+                                            && Some(ix) == rt_view.messages.len().checked_sub(1)
+
+                                            && m.role == Role::Assistant;
+
+                                        if !is_last_assistant {
+
+                                            None
+
+                                        } else {
+
+                                            let text: String = m
+
+                                                .blocks
+
+                                                .iter()
+
+                                                .map(|b| match b {
+
+                                                    Block::Text { text, .. }
+
+                                                    | Block::Thinking { text, .. } => {
+
+                                                        text.as_str()
+
+                                                    }
+
+                                                    _ => "",
+
+                                                })
+
+                                                .collect();
+
+                                            let est = estimate_tokens(&text);
+
+                                            let tps = chat.rt().read(cx).stream_started.and_then(
+
+                                                |start| {
+
+                                                    let secs =
+
+                                                        start.elapsed().as_secs_f32();
+
+                                                    (secs > 0.5 && est > 0)
+
+                                                        .then(|| est as f32 / secs)
+
+                                                },
+
+                                            );
+
+                                            Some((est, tps))
+
+                                        }
+
+                                    },
+
+                                    compute_meta(&rt_view.messages, ix),
+
+                                    rt_view.copy_flash.is_some_and(|(cix, at)| {
+
+                                        cix == ix && at.elapsed().as_millis() < 1500
+
+                                    }),
+
+                                )),
+
+                        )
+
+                        .into_any_element(),
+
+                    None => {
+
+                        // pi-web ChatWindow phase label: pulsing text under
+
+                        // the list while running with no streamed content
+
+                        // yet (animate-[pulse_1.5s_infinite])
+
+                        if chat.rt().read(cx).phase_row_visible() {
+
+                            div()
+
+                                .w_full()
+
+                                .flex()
+
+                                .justify_center()
+
+                                .child(
+
+                                    div()
+
+                                        .w_full()
+
+                                        .max_w(px(820.))
+
+                                        .py_2()
+
+                                        .text_size(px(13.))
+
+                                        .text_color(rgb(t.text_muted))
+
+                                        .child(SharedString::from(tr("正在等待模型...")))
+
+                                        .with_animation(
+
+                                            "phase-pulse",
+
+                                            Animation::new(std::time::Duration::from_millis(
+
+                                                1500,
+
+                                            ))
+
+                                            .repeat()
+
+                                            .with_easing(pulsating_between(0.5, 1.0)),
+
+                                            |label, delta| label.opacity(delta),
+
+                                        ),
+
+                                )
+
+                                .into_any_element()
+
+                        } else {
+
+                            div().w_full().into_any_element()
+
+                        }
+
+                    }
+
+                }
+
+            })
+
+            .flex_1()
+
+            .min_h_0()
+
+            .py_2()
+.into_any_element()
+}
+/// system pill (split from session_toolbar).
+fn toolbar_system_pill(
+    chat: &Chat,
+    weak: gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+                    div()
+
+                        .id("tb-system")
+
+                        .px_2()
+
+                        .py_1()
+
+                        .rounded_md()
+
+                        .border_1()
+
+                        .border_color(rgb(if chat.top_panel == Some(TopPanel::System) { t.accent } else { t.border }))
+
+                        .flex()
+
+                        .items_center()
+
+                        .gap_1p5()
+
+                        .text_xs()
+
+                        .text_color(rgb(if chat.top_panel == Some(TopPanel::System) { t.accent } else { t.text_muted }))
+
+                        .cursor_pointer()
+
+                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+
+                        .on_mouse_down(MouseButton::Left, cx.listener(
+
+                            |this, _: &gpui::MouseDownEvent, _w, cx| {
+
+                                this.top_panel = match this.top_panel {
+
+                                    Some(TopPanel::System) => None,
+
+                                    _ => Some(TopPanel::System),
+
+                                };
+
+                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
+
+                            },
+
+                        ))
+
+                        .child(icon(
+
+                            "file-text",
+
+                            12.,
+
+                            if chat.rt().read(cx).sys_prompt.is_some() { t.accent } else { t.text_muted },
+
+                        ))
+
+                        .child(SharedString::from(tr("系统")))
+.into_any_element()
+}
+/// tools pill (split from session_toolbar).
+fn toolbar_tools_pill(
+    chat: &Chat,
+    weak: gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+                    div()
+
+                        .id("tb-tools")
+
+                        .px_2()
+
+                        .py_1()
+
+                        .rounded_md()
+
+                        .border_1()
+
+                        .border_color(rgb(if chat.top_panel == Some(TopPanel::Tools) { t.accent } else { t.border }))
+
+                        .flex()
+
+                        .items_center()
+
+                        .gap_1p5()
+
+                        .text_xs()
+
+                        .text_color(rgb(if chat.top_panel == Some(TopPanel::Tools) { t.accent } else { t.text_muted }))
+
+                        .cursor_pointer()
+
+                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+
+                        .on_mouse_down(MouseButton::Left, cx.listener(
+
+                            |this, _: &gpui::MouseDownEvent, _w, cx| {
+
+                                this.top_panel = match this.top_panel {
+
+                                    Some(TopPanel::Tools) => None,
+
+                                    _ => Some(TopPanel::Tools),
+
+                                };
+
+                                this.rt().update(cx, |r, cx| r.request_system_info(cx));
+
+                            },
+
+                        ))
+
+                        .child(icon(
+
+                            "wrench",
+
+                            12.,
+
+                            if chat.rt().read(cx).session_tools.is_some() { t.accent } else { t.text_muted },
+
+                        ))
+
+                        .child(SharedString::from(tr("工具")))
+.into_any_element()
 }

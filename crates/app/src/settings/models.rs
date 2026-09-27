@@ -1,7 +1,6 @@
 //! Models tab logic: open/reload, error surface, enabledModels edits,
 //! credentials (API key / OAuth).
 
-use super::*;
 
 impl Chat {
     pub(crate) fn open_settings(&mut self, tab: u8, cx: &mut Context<Self>) {

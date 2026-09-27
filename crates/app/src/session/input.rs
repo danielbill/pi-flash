@@ -107,7 +107,165 @@ pub(crate) fn input_area(
                         .flex()
                         .items_center()
                         .gap_2()
+.child(input_editor(
+    chat,
+    entity.clone(),
+    streaming,
+    input_focused,
+    caret_on,
+    this_input,
+    input_empty,
+    input_ph.clone(),
+    t,
+    cx,
+))
                         .child(
+                            div()
+                                .children(if streaming {
+                                    // steer / follow-up pair (pi-web
+                                    // ChatInput streaming mode)
+                                    let weak_b = weak.clone();
+                                    Some(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(
+                                                div()
+                                                    .id("steer")
+                                                    .px_3()
+                                                    .py_1p5()
+                                                    .rounded_lg()
+                                                    .border_1()
+                                                    .border_color(gpui::rgba(
+                                                        0xeab30800 | 0x35,
+                                                    ))
+                                                    .bg(gpui::rgba(0xeab30800 | 0x12))
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(gpui::rgb(0xb48200))
+                                                    .cursor_pointer()
+                                                    .when(!can_queue, |d| d.opacity(0.5))
+                                                    .on_mouse_down(MouseButton::Left, {
+                                                        let weak = weak_b.clone();
+                                                        move |_, _, cx| {
+                                                            let _ = weak.update(
+                                                                cx,
+                                                                |c, cx| {
+                                                                    if can_queue {
+                                                                        c.steer_input(cx)
+                                                                    }
+                                                                },
+                                                            );
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("followup")
+                                                    .px_3()
+                                                    .py_1p5()
+                                                    .rounded_lg()
+                                                    .border_1()
+                                                    .border_color(gpui::rgba(
+                                                        0x818cf400 | 0x35,
+                                                    ))
+                                                    .bg(gpui::rgba(0x818cf400 | 0x12))
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(gpui::rgb(0x6366f1))
+                                                    .cursor_pointer()
+                                                    .when(!can_queue, |d| d.opacity(0.5))
+                                                    .on_mouse_down(MouseButton::Left, {
+                                                        let weak = weak_b.clone();
+                                                        move |_, _, cx| {
+                                                            let _ = weak.update(
+                                                                cx,
+                                                                |c, cx| {
+                                                                    if can_queue {
+                                                                        c.follow_up_input(cx)
+                                                                    }
+                                                                },
+                                                            );
+                                                        }
+                                                    }),
+                                            ),
+                                    )
+                                } else {
+                                    None
+                                })
+                                .child(if streaming {
+                                    div().into_any_element()
+                                } else {
+                                    div()
+                                        .id("send")
+                                        .flex_shrink_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .px_3()
+                                        .py_1p5()
+                                        .rounded_lg()
+                                        .bg(if can_queue {
+                                            rgb(t.accent)
+                                        } else {
+                                            rgb(t.bg_panel)
+                                        })
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(if can_queue {
+                                            rgb(t.accent_contrast)
+                                        } else {
+                                            rgb(t.text_dim)
+                                        })
+                                        .cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(
+                                            |this, _: &gpui::MouseDownEvent, _w, cx| {
+                                                this.send_input(cx);
+                                            },
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(icon("send", 12., t.text))
+                                                .child(SharedString::from(tr("发送"))),
+                                        )
+                                        .into_any_element()
+                                }),
+                        ),
+                )
+.child(input_menus(
+    chat,
+    entity.clone(),
+    weak,
+    streaming,
+    model_label.clone(),
+    thinking_menu_open,
+    thinking_label.clone(),
+    tools_menu_open,
+    &tools_label,
+    input_empty,
+    input_ph.clone(),
+    t,
+    cx,
+))
+}
+
+/// Editor surface + streaming badge (split from input_area).
+fn input_editor(
+    chat: &mut Chat,
+    entity: gpui::Entity<Chat>,
+    _streaming: bool,
+    input_focused: bool,
+    caret_on: bool,
+    this_input: SharedString,
+    input_empty: bool,
+    input_ph: SharedString,
+    t: &'static crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
                             div()
                                 .id("input")
                                 .track_focus(&chat.focus)
@@ -306,127 +464,26 @@ pub(crate) fn input_area(
                                     EditorInputElement::new(entity.clone(), chat.focus.clone())
                                         .absolute()
                                         .inset_0(),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .children(if streaming {
-                                    // steer / follow-up pair (pi-web
-                                    // ChatInput streaming mode)
-                                    let weak_b = weak.clone();
-                                    Some(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(
-                                                div()
-                                                    .id("steer")
-                                                    .px_3()
-                                                    .py_1p5()
-                                                    .rounded_lg()
-                                                    .border_1()
-                                                    .border_color(gpui::rgba(
-                                                        0xeab30800 | 0x35,
-                                                    ))
-                                                    .bg(gpui::rgba(0xeab30800 | 0x12))
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .text_color(gpui::rgb(0xb48200))
-                                                    .cursor_pointer()
-                                                    .when(!can_queue, |d| d.opacity(0.5))
-                                                    .on_mouse_down(MouseButton::Left, {
-                                                        let weak = weak_b.clone();
-                                                        move |_, _, cx| {
-                                                            let _ = weak.update(
-                                                                cx,
-                                                                |c, cx| {
-                                                                    if can_queue {
-                                                                        c.steer_input(cx)
-                                                                    }
-                                                                },
-                                                            );
-                                                        }
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id("followup")
-                                                    .px_3()
-                                                    .py_1p5()
-                                                    .rounded_lg()
-                                                    .border_1()
-                                                    .border_color(gpui::rgba(
-                                                        0x818cf400 | 0x35,
-                                                    ))
-                                                    .bg(gpui::rgba(0x818cf400 | 0x12))
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .text_color(gpui::rgb(0x6366f1))
-                                                    .cursor_pointer()
-                                                    .when(!can_queue, |d| d.opacity(0.5))
-                                                    .on_mouse_down(MouseButton::Left, {
-                                                        let weak = weak_b.clone();
-                                                        move |_, _, cx| {
-                                                            let _ = weak.update(
-                                                                cx,
-                                                                |c, cx| {
-                                                                    if can_queue {
-                                                                        c.follow_up_input(cx)
-                                                                    }
-                                                                },
-                                                            );
-                                                        }
-                                                    }),
-                                            ),
-                                    )
-                                } else {
-                                    None
-                                })
-                                .child(if streaming {
-                                    div().into_any_element()
-                                } else {
-                                    div()
-                                        .id("send")
-                                        .flex_shrink_0()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1p5()
-                                        .px_3()
-                                        .py_1p5()
-                                        .rounded_lg()
-                                        .bg(if can_queue {
-                                            rgb(t.accent)
-                                        } else {
-                                            rgb(t.bg_panel)
-                                        })
-                                        .text_sm()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(if can_queue {
-                                            rgb(t.accent_contrast)
-                                        } else {
-                                            rgb(t.text_dim)
-                                        })
-                                        .cursor_pointer()
-                                        .on_mouse_down(MouseButton::Left, cx.listener(
-                                            |this, _: &gpui::MouseDownEvent, _w, cx| {
-                                                this.send_input(cx);
-                                            },
-                                        ))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1p5()
-                                                .child(icon("send", 12., t.text))
-                                                .child(SharedString::from(tr("发送"))),
-                                        )
-                                        .into_any_element()
-                                }),
-                        ),
-                )
-                .child(
-                    div()
+                                )
+.into_any_element()
+}
+/// Completion menus + placeholder (split from input_area).
+fn input_menus(
+    chat: &mut Chat,
+    _entity: gpui::Entity<Chat>,
+    weak: &gpui::WeakEntity<Chat>,
+    streaming: bool,
+    model_label: SharedString,
+    thinking_menu_open: bool,
+    thinking_label: SharedString,
+    tools_menu_open: bool,
+    tools_label: &SharedString,
+    _input_empty: bool,
+    _input_ph: SharedString,
+    t: &'static crate::theme::Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+    div()
                         .flex()
                         .items_center()
                         .justify_between()
@@ -628,5 +685,5 @@ pub(crate) fn input_area(
                                         )),
                                 )
                         )
-                )
+.into_any_element()
 }
