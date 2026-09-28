@@ -218,18 +218,6 @@ pub fn content_blocks(content: &Value) -> Vec<Block> {
     }
 }
 
-/// Flatten text blocks only (user echo, quick summaries).
-pub fn content_text(content: &Value) -> String {
-    content_blocks(content)
-        .into_iter()
-        .map(|b| match b {
-            Block::Text { text, .. } => text,
-            _ => String::new(),
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
 /// Incremental assistant message events (`assistantMessageEvent` in `message_update`).
 ///
 /// Field names per json.md: `contentIndex`, `delta`, `content`, `id`, `toolName`,

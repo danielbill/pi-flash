@@ -21,25 +21,7 @@ impl Chat {
                     }
                     cx.notify();
                 }
-                SessionEvent::RunningChanged => cx.notify(),
                 SessionEvent::ListDirty => {
-                    chat.refresh_sessions();
-                    cx.notify();
-                }
-                SessionEvent::FileBound(p) => {
-                    if is_active {
-                        set_last_open(&chat.cwd.to_string_lossy(), &p.to_string_lossy());
-                    }
-                    chat.refresh_sessions();
-                    cx.notify();
-                }
-                SessionEvent::AgentFinished => {
-                    if is_active && chat.sound_on {
-                        play_notify_sound();
-                    }
-                    if is_active {
-                        chat.refresh_git();
-                    }
                     chat.refresh_sessions();
                     cx.notify();
                 }

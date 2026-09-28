@@ -29,21 +29,11 @@ use crate::i18n::tr;
 use crate::services::format::status_line;
 
 /// Shell-level effects a runtime bubbles up (Chat subscribes).
-/// RunningChanged/AgentFinished/FileBound arms are pre-wired for the
-/// resident-runtime pool refactor; not emitted yet.
-#[allow(dead_code)]
 pub(crate) enum SessionEvent {
     /// repaint-worthy state change
     Changed,
-    /// agent_running flipped (sidebar spinner)
-    RunningChanged,
-    /// the session file landed on disk (first prompt / fork) — refresh list
-    /// agent finished a run (active session: sound + git refresh)
-    AgentFinished,
     /// sidebar list should refresh (rename flush, fork, file landed)
     ListDirty,
-    /// this runtime's file binding changed (stats reported a session file)
-    FileBound(PathBuf),
     /// extension UI request (active session only surfaces the dialog)
     ExtUi(pi_link::protocol::ExtensionUiRequest),
     /// get_state arrived with a pending rename prefill

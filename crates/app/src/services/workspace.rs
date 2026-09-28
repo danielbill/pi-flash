@@ -254,7 +254,6 @@ pub fn get_last_open(cwd: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // phase D: shell restores window bounds from here
 pub struct WindowState {
     pub x: f64,
     pub y: f64,
@@ -264,7 +263,6 @@ pub struct WindowState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // phase D: function panel restores dock position/view
 pub struct DockState {
     /// "left" | "right"
     pub position: String,
@@ -273,7 +271,6 @@ pub struct DockState {
     pub width: f32,
 }
 
-#[allow(dead_code)] // phase D consumers
 pub fn get_window_state() -> Option<WindowState> {
     let map = memory();
     let v = map.get(WS_WINDOW_KEY)?;
@@ -286,7 +283,6 @@ pub fn get_window_state() -> Option<WindowState> {
     })
 }
 
-#[allow(dead_code)] // phase D consumers
 pub fn save_window_state(s: &WindowState) {
     let mut map = memory();
     map.insert(
@@ -298,7 +294,6 @@ pub fn save_window_state(s: &WindowState) {
     set_memory(&map);
 }
 
-#[allow(dead_code)] // phase D consumers
 pub fn get_dock_state() -> Option<DockState> {
     let map = memory();
     let v = map.get(WS_DOCK_KEY)?;
@@ -309,7 +304,6 @@ pub fn get_dock_state() -> Option<DockState> {
     })
 }
 
-#[allow(dead_code)] // phase D consumers
 pub fn save_dock_state(s: &DockState) {
     let mut map = memory();
     map.insert(
@@ -328,14 +322,12 @@ pub fn save_dock_state(s: &DockState) {
 /// One font slot of the appearance settings (006): family + pt size.
 /// `None` fields mean "unset" so defaults stay code-side.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // phase D: appearance module reads these
 pub struct FontSpec {
     pub family: String,
     pub size: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-#[allow(dead_code)] // phase D: appearance module + settings panel read these
 pub struct AppSettings {
     /// theme id ("mist" / "rose" / "one-light" / ... 006 built-ins)
     pub theme: Option<String>,

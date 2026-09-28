@@ -324,22 +324,6 @@ pub fn read_default_tools(path: &Path) -> Result<Option<Vec<String>>, String> {
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
 }
 
-/// Write/clear `settings.defaultTools`.
-pub fn write_default_tools(path: &Path, tools: Option<Vec<String>>) -> Result<(), String> {
-    let mut value = read_json(path)?;
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| "settings.json is not an object".to_string())?;
-    match tools {
-        Some(list) => {
-            obj.insert("defaultTools".into(), Value::Array(list.into_iter().map(Value::String).collect()));
-        }
-        None => {
-            obj.remove("defaultTools");
-        }
-    }
-    write_json(path, &value)
-}
 
 /// The `theme` key of settings.json (shared with pi's own TUI).
 pub fn read_theme(path: &Path) -> Option<String> {
