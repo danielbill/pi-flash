@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-flash · 主界面设计稿（项目会话一体列表 / slp 三面板 / 一体 composer / 会话导航）</title>
+<style>
+    :root {
+        --bg: #f4f8f7;
+    --bg-panel: #e9f0ee;
+    --bg-hover: #e0eae7;
+    --bg-selected: #d7e4df;
+    --border: #afc4ba;
+    --text: #202e2b;
+    --text-muted: #455f56;
+    --text-dim: #52685f;
+    --accent: #1e6559;
+    --accent-hover: #174f46;
+    --accent-contrast: #ffffff;
+    --user-bg: #e0efeb;
+    --tool-bg: #ecf3f0;
+        --unread: #2fa356;
+        --chrome: #dfe9e5;            --chrome-hover: #e7efec;      --nav: #eef4f1;
+    --slp-w: 282px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    .app {
+    width: 100vw; height: 100vh;
+    background: var(--bg);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    font-size: 13px;
+    position: relative;
+  }
+
+    .topbar-l, .topbar-r {
+    height: 38px; flex: none;
+    display: flex; align-items: center;
+    user-select: none;
+  }
+  .topbar-l {
+    padding: 0;
+    background: var(--chrome);
+  }
+    .topbar-l #panesToggle { margin-left: 5px; }
+  .topbar-r {
+    padding: 0 6px 0 4px;
+    background: var(--chrome);
+    border-bottom: 1px solid rgba(175, 196, 186, .45);
+  }
+    .tb-icon-btn {
+    width: 30px; height: 30px; flex: none;
+    border: 0; border-radius: 7px; padding: 0;
+    background: transparent; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+    cursor: default;
+  }
+  .tb-icon-btn:hover { background: var(--chrome-hover); color: var(--text); }
+  .tb-icon-btn svg { width: 18px; height: 18px; }
+  .tb-divider { width: 1px; height: 18px; background: rgba(175, 196, 186, .55); margin: 0 6px; }
+  .tb-spacer { flex: 1; }
+  .tb-win { display: flex; align-items: center; }
+  .tb-win svg { width: 14px; height: 14px; }
+  .tb-win > div {
+    width: 42px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); cursor: default;
+  }
+  .tb-win > div:hover { background: var(--bg-hover); }
+  .tb-win > div.close:hover { background: #d8626a; color: #fff; }
+
+  .app-body { flex: 1; min-height: 0; display: flex; }
+    .panel-col {
+    width: var(--slp-w); flex: none;
+    display: flex; flex-direction: column; min-height: 0;
+    background: var(--chrome);
+    transition: width .22s ease;
+  }
+  .panel-row { flex: 1; min-height: 0; display: flex; }
+  .content-col {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; min-height: 0;
+    border-left: 1px solid rgba(175, 196, 186, .6);
+    background: var(--bg);
+  }
+
+  .ls-label {
+    padding: 0 8px 2px;
+    font-size: 12px; font-weight: 600; color: #8a9d95;
+    display: flex; align-items: center;
+  }
+  .ls-label .prj-actions { opacity: 1; gap: 10px; }
+  .prj-act[data-tip="新建会话"] { margin-left: 2px; }
+  .prj-act.sort { margin-left: -1.5px; }
+  .prj-row {
+    position: relative; flex: none;
+    width: 100%;
+    border: 0; cursor: default; text-align: left;
+    background: transparent; color: var(--text-dim);
+    border-radius: 8px;
+    padding: 6px 8px;
+    display: flex; align-items: center; gap: 8px;
+    font-family: inherit; font-size: 13px; font-weight: 500;
+  }
+  .prj-row:hover { background: var(--bg-hover); }
+  .prj-row .fico { width: 15px; height: 15px; flex: none; }
+  .prj-row .p-fico { display: flex; flex: none; }
+  .prj-row .pname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prj-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; }
+  .prj-row:hover .prj-actions, .prj-row:focus .prj-actions { opacity: 1; }
+  .prj-act { width: 22px; height: 22px; border-radius: 6px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); cursor: default; }
+  .prj-act:hover { background: var(--bg-hover); color: var(--text); }
+  .prj-act svg { width: 18px; height: 18px; }
+  .prj-act.big svg { width: 21px; height: 21px; }
+  .prj-group.off { display: none; }
+  .prj-row.active { color: var(--text); font-weight: 600; }
+  .ps-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6.5px 10px 6.5px 8px;
+    border-radius: 8px; cursor: default;
+    font-size: 13px; color: var(--text);
+  }
+  .ps-row:hover { background: var(--bg-hover); }
+  .ps-row.sel, .ps-row.sel:hover { background: rgba(30, 101, 89, .10); }
+  .ps-row .slot {
+    width: 15px; height: 15px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .ps-row .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ps-empty { padding: 5.5px 10px 6.5px 31px; font-size: 12.5px; color: var(--text-dim); }
+  .spin {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    border: 1.5px solid var(--accent); border-top-color: transparent;
+    animation: rot 1s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .gdot {
+    width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--unread);
+    box-shadow: 0 0 0 2.5px rgba(47, 163, 86, .16);
+  }
+
+  
+    .dock { transition: width .22s ease, opacity .18s ease; }
+  .app.panes-hidden .panel-col { width: 0; }
+  .app.panes-hidden .dock {
+    width: 0; min-width: 0; padding: 0;
+    border-right: 0; opacity: 0; overflow: hidden;
+  }
+  .app.panes-hidden .content-col { border-left: 0; margin-bottom: 0; }
+    .app.panes-hidden .topbar-l #panesToggle { display: none; }
+  .topbar-r #panesToggleR { display: none; }
+  .app.panes-hidden .topbar-r #panesToggleR { display: flex; }
+
+    #tooltip {
+    position: fixed; z-index: 99; pointer-events: none; display: none;
+    background: #22312d; color: #eef4f1;
+    font-size: 11.5px; line-height: 1.55;
+    padding: 8px 11px; border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    max-width: 300px;
+  }
+  #tooltip .t-path { color: #9fbcb2; font-family: Consolas, monospace; font-size: 10.5px; }
+  #hcard {
+    position: fixed; z-index: 98; width: 258px;
+    background: #fff; border: 1px solid rgba(175, 196, 186, .55);
+    border-radius: 12px; box-shadow: 0 12px 36px rgba(20, 40, 34, .18);
+    padding: 11px 13px 9px; display: none;
+  }
+  .hc-head { display: flex; align-items: center; gap: 7px; }
+  .hc-name { min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text;
+    padding: 1px 5px; margin: -1px -5px; border-radius: 6px; }
+  .hc-name:hover { background: var(--bg-hover); }
+  .hc-row { display: flex; align-items: center; gap: 8px; margin-top: 7.5px;
+    font-size: 12.5px; color: var(--text); }
+  .hc-row svg { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
+  .hc-sep { height: 1px; background: rgba(175, 196, 186, .4); margin: 9px -13px 7px; }
+  .hc-del { border: 1px solid rgba(216, 98, 106, .45); border-radius: 7px; background: transparent;
+    padding: 3px 10px; font-size: 12px; color: #c25460; font-family: inherit; cursor: default; }
+  .hc-del:hover { background: rgba(216, 98, 106, .10); border-color: rgba(216, 98, 106, .7); }
+  .hc-actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .hc-ok { border: 0; border-radius: 7px; background: #c25460; color: #fff;
+    padding: 3.5px 11px; font-size: 12px; font-family: inherit; cursor: default; }
+  .hc-ok:hover { background: #a12f3c; }
+  .hc-cancel { border: 1px solid var(--border); border-radius: 7px; background: transparent;
+    padding: 3px 10px; font-size: 12px; color: var(--text-dim); font-family: inherit; cursor: default; }
+  .hc-cancel:hover { background: var(--bg-hover); color: var(--text); }
+  .hc-edit { flex: 1; min-width: 0; border: 1px solid var(--accent); border-radius: 6px;
+    font: inherit; font-size: 13px; padding: 1px 6px; outline: 0;
+    background: #fff; color: var(--text); }
+  #pmenu, #pmsub {
+    position: fixed; z-index: 99; min-width: 214px;
+    background: var(--bg); border: 1px solid rgba(175, 196, 186, .55);
+    border-radius: 9px; box-shadow: 0 10px 34px rgba(20, 40, 34, .16);
+    padding: 4px; display: none;
+  }
+  .pm-item { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: transparent;
+    padding: 7px 10px; border-radius: 6px; font-size: 12.5px; color: var(--text);
+    font-family: inherit; cursor: default; text-align: left; }
+  .pm-item > svg { width: 15px; height: 15px; flex: none; }
+  .pm-item > span { flex: 1; }
+  .pm-item .chev { width: 12px; height: 12px; flex: none; color: var(--text-dim); }
+  .pm-item .ck { width: 13px; height: 13px; flex: none; margin-left: auto; color: var(--accent); }
+  .pm-item:hover { background: var(--bg-hover); }
+  .pm-item.danger { color: #c25460; }
+  .pm-item.danger:hover { background: rgba(216, 98, 106, .12); }
+
+    .dock {
+    width: var(--slp-w); flex: none; position: relative;
+    background: var(--nav);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+      .slp-resizer {
+    position: absolute; top: 0; bottom: 0; right: -3px; width: 6px;
+    cursor: col-resize; z-index: 20;
+  }
+  .slp-resizer::after {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 2.5px;
+    width: 1px; background: transparent;
+  }
+  .slp-resizer:hover::after, .slp-resizer.dragging::after { background: var(--accent); }
+  .panel-view { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 6px; }
+  .panel-view.on { display: block; }
+    #pv-files { position: relative; }
+  .ft-row {
+    position: relative; display: flex; align-items: center; gap: 7px;
+    padding: 4.5px 8px 4.5px 14px; border-radius: 0;
+    font-size: 12.5px; color: var(--text); cursor: default; white-space: nowrap;
+  }
+  .ft-row:hover { background: var(--bg-hover); }
+  .ft-row.sel { background: var(--bg-hover); }
+  .ft-row .fico { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
+  .ft-row.root { font-weight: 600; }
+  .ft-row.l1 { padding-left: 30px; }
+  .ft-row.l2 { padding-left: 46px; }
+  .ft-row.l3 { padding-left: 62px; }
+  .ft-guide { position: absolute; top: 32px; bottom: 6px; width: 1px; background: rgba(175, 196, 186, .4); }
+    #pv-git.on { display: flex; flex-direction: column; padding: 0; }
+  .g-proj { flex: none; display: flex; align-items: center; gap: 7px;
+    padding: 8px 10px 6px 14px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .g-proj svg { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
+  .g-tabs { flex: none; display: flex; border-bottom: 1px solid rgba(175,196,186,.4); }
+  .g-tab {
+    flex: 1; border: 0; background: transparent; padding: 9px 0 8px;
+    font-size: 12.5px; color: var(--text-muted); font-family: inherit; cursor: default;
+  }
+  .g-tab:hover { color: var(--text); }
+  .g-tab.on { background: var(--bg); color: var(--text); font-weight: 600; }
+  .g-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  .g-view.on { display: flex; }
+  .g-actions { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 10px; }
+  .g-ghost { border: 0; background: transparent; padding: 3px 6px; border-radius: 6px;
+    font-size: 12px; color: var(--text-muted); font-family: inherit; cursor: default;
+    display: flex; align-items: center; gap: 6px; }
+  .g-ghost:hover { background: var(--bg-hover); color: var(--text); }
+  .g-ghost svg { width: 13px; height: 13px; }
+  .g-btn { border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+    padding: 3.5px 9px; font-size: 12px; color: var(--text); font-family: inherit; cursor: default;
+    display: flex; align-items: center; gap: 5px; }
+  .g-btn:hover { background: var(--bg-hover); }
+  .g-btn svg { width: 12px; height: 12px; }
+  .g-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 6px 6px; }
+  .g-row {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    padding: 4.5px 8px; font-size: 12.5px; color: var(--text); cursor: default; white-space: nowrap;
+  }
+  .g-row:hover { background: var(--bg-hover); }
+  .g-row.sel { background: var(--bg-hover); outline: 1px solid var(--accent); outline-offset: -1px; }
+  .g-row .fico { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
+  .g-row.l1 { padding-left: 22px; }
+  .g-row.l2 { padding-left: 36px; }
+  .g-row.l1::before, .g-row.l2::before {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 1px;
+    background: rgba(175, 196, 186, .4);
+  }
+  .g-row.l1::before { left: 14px; }
+  .g-row.l2::before { left: 28px; }
+  .g-cb { margin-left: auto; flex: none; width: 14px; height: 14px;
+    border: 1px solid var(--border); border-radius: 3px; background: var(--bg); }
+  .g-plus { width: 15px; height: 15px; flex: none; color: #2e8b57; }
+  .g-sec { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+    font-size: 12px; font-weight: 600; color: var(--text); }
+  .g-sec .tw { font-size: 9px; color: var(--text-dim); width: 11px; text-align: center; }
+  .g-bottom { flex: none; border-top: 1px solid rgba(175,196,186,.4); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .g-branch { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text); }
+  .g-branch > svg { width: 14px; height: 14px; color: var(--text-muted); flex: none; }
+  .g-branch .g-btn { margin-left: auto; }
+  .g-msg { border: 0; background: transparent; border-radius: 0;
+    padding: 8px 12px 0; min-height: 96px; font-size: 12.5px; color: var(--text-dim); }
+  .g-msg .g-exp { position: absolute; right: 6px; bottom: 5px; display: flex; flex-direction: column; gap: 2px; color: var(--text-dim); }
+  .g-msg .g-exp svg { width: 12px; height: 12px; }
+  .g-commit-row { display: flex; align-items: center; gap: 8px; }
+  .g-commit-row .g-btn { margin-left: auto; }
+  .g-last { flex: none; display: flex; align-items: center; gap: 8px;
+    border-top: 1px solid rgba(175,196,186,.4); padding: 7px 10px;
+    font-size: 12px; color: var(--text-muted); }
+  .g-last .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-last svg { width: 13px; height: 13px; flex: none; }
+    .g-hist { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 6px; }
+  .gc-item { padding: 8px 8px 9px; border-bottom: 1px solid rgba(175,196,186,.3); cursor: default; }
+  .gc-item:hover { background: var(--bg-hover); }
+  .gc-title { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; color: var(--text); }
+  .gc-title .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gc-title .up { flex: none; width: 17px; height: 17px; border: 1px solid var(--border); border-radius: 4px;
+    display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+  .gc-title .up svg { width: 10px; height: 10px; }
+  .gc-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 2px;
+    font-size: 11.5px; color: var(--text-dim); }
+  .gc-ava { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg); }
+    .chat-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .main.term-on .chat-wrap { display: none; }
+  .main.md-on .chat-wrap { display: none; }
+  .term-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .main.term-on .term-view { display: flex; }
+  .md-view { display: none; flex: 1; min-height: 0; flex-direction: column; overflow-y: auto; }
+  .main.md-on .md-view { display: flex; }
+  .md-page { max-width: 760px; margin: 0 auto; padding: 26px 34px 40px; width: 100%; }
+  .md-page h1 { font-size: 19px; margin-bottom: 14px; }
+  .md-page h2 { font-size: 14.5px; margin: 18px 0 8px; }
+  .md-page p { font-size: 13px; line-height: 1.75; color: var(--text); margin-bottom: 10px; }
+  .md-page ul { margin: 0 0 10px 18px; }
+  .md-page li { font-size: 13px; line-height: 1.7; color: var(--text); }
+  .md-page pre { background: var(--bg-panel); border: 1px solid rgba(175,196,186,.4); border-radius: 8px;
+    padding: 12px 14px; font-family: Consolas, monospace; font-size: 12px; line-height: 1.6;
+    overflow-x: auto; margin-bottom: 10px; white-space: pre; }
+  .term-tab, .md-tab {
+    display: none;
+    align-self: center; height: 38px;
+    align-items: center; gap: 9px;
+    background: transparent; border: 0; border-radius: 0;
+    padding: 0 12px;
+    font-size: 12px; color: var(--text-muted);
+    white-space: nowrap; cursor: default;
+  }
+  .term-tab { margin-left: 10px; }
+  .md-tab { margin-left: 4px; }
+  .content-col.term-on .term-tab { display: flex; }
+  .content-col.md-on .md-tab { display: flex; }
+  #panesToggleR { margin-right: 4px; }
+  .term-tab.act, .md-tab.act {
+    align-self: flex-end; height: 35px; margin-bottom: -1px;
+    background: var(--bg);
+    border: 1px solid rgba(175,196,186,.55); border-bottom: 0;
+    border-radius: 9px 9px 0 0;
+    color: var(--text);
+    padding: 0 5px 0 12px;
+  }
+  .term-tab .x, .md-tab .x { width: 20px; height: 20px; border-radius: 5px; display: none; align-items: center; justify-content: center; color: var(--text-dim); font-size: 13px; cursor: default; }
+  .term-tab .x:hover, .md-tab .x:hover { background: var(--bg-hover); color: var(--text); }
+  .term-tab.act .x, .md-tab.act .x { display: flex; }
+  .term-body { flex: 1; background: #141a17; color: #cfe0d9; font-family: Consolas, monospace; font-size: 12.5px; line-height: 1.7; padding: 14px 18px; overflow-y: auto; }
+  .term-body .dim { color: #6e8a7d; }
+  .tcur { display: inline-block; width: 7px; height: 14px; background: #cfe0d9; vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+
+    .chat { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 30px 12px 34px; scrollbar-width: none; }
+  .chat::-webkit-scrollbar { display: none; }
+  .chat-wrap { position: relative; }
+  .chat-and-nav { flex: 1; min-height: 0; display: flex; }
+  .nav-gutter {
+    position: relative; flex: none; width: 26px;
+    display: flex; flex-direction: column;
+  }
+  .msg-nav {
+    position: absolute; top: 100px; right: 0; width: 26px;
+    height: 70%;                }
+    .nav-node {
+    position: absolute; left: 50%; transform: translate(-50%, -50%);
+    width: 7px; height: 7px; border-radius: 50%; padding: 0; border: 0;
+    background: #a9beb5; cursor: default;
+  }
+  .nav-node:hover { background: var(--accent); }
+  .nav-node.on { width: 8px; height: 8px; background: var(--accent); }
+  .nav-seg {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    width: 1px; background: rgba(175, 196, 186, .6);
+  }
+    .nav-flyout {
+    position: absolute; right: 26px; top: 0; bottom: 0; width: 326px;
+    background: var(--bg);
+    border-left: 1px solid rgba(175, 196, 186, .5);
+    box-shadow: -10px 0 26px rgba(20, 40, 34, .07);
+    overflow-y: auto; padding: 8px 0;
+    opacity: 0; pointer-events: none;
+    transition: opacity .15s ease;
+  }
+  .nav-gutter:hover .nav-flyout, .nav-gutter.open .nav-flyout { opacity: 1; pointer-events: auto; }
+  .nv-turn { padding: 7px 34px 7px 12px; border-bottom: 1px solid rgba(175, 196, 186, .35); }
+  .nv-turn.on { background: rgba(30, 101, 89, .06); box-shadow: inset 2px 0 0 var(--accent); }
+  .nv-user { display: flex; gap: 9px; }
+  .nv-no {
+    flex: none; width: 18px; text-align: right;
+    font-family: Consolas, monospace; font-size: 10px; line-height: 1.7;
+    color: var(--text-dim);
+  }
+  .nv-user p {
+    margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text); font-weight: 600;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .nv-agent { display: flex; gap: 9px; margin-top: 5px; }
+  .nv-a {
+    flex: none; width: 18px; text-align: right;
+    font-size: 10px; line-height: 1.8; color: var(--text-dim);
+  }
+  .nv-agent p {
+    margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-inner { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+  .msg-user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .bubble {
+    background: var(--user-bg); border-radius: 14px;
+    padding: 9px 15px; font-size: 14px; max-width: 62%;
+  }
+  .msg-actions { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-dim); padding-right: 4px; }
+  .msg-actions span { cursor: default; }
+  .msg-actions span:hover { color: var(--text); }
+  .msg-actions .when { margin-left: 4px; }
+
+  .msg-assistant { display: flex; flex-direction: column; gap: 8px; }
+  .as-name { font-size: 11px; color: var(--text-dim); }
+  .as-body { font-size: 14px; line-height: 1.7; color: var(--text); }
+  .as-body p { margin-bottom: 8px; }
+  .as-body ul { margin: 2px 0 8px 4px; list-style: none; }
+  .as-body li { padding-left: 16px; position: relative; margin-bottom: 4px; }
+  .as-body li::before { content: "•"; position: absolute; left: 4px; color: var(--text-dim); }
+  .code-chip {
+    font-family: Consolas, monospace; font-size: 12.5px;
+    background: rgba(24, 65, 50, .07); border-radius: 5px; padding: 1px 6px;
+  }
+  .as-stats {
+    display: flex; justify-content: space-between;
+    font-family: Consolas, monospace; font-size: 11px; color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+    .phase-row { display: flex; align-items: center; gap: 9px; color: var(--accent); font-size: 13px; }
+  .phase-row .spark { width: 14px; height: 14px; }
+  .phase-row .spark { animation: spin 1.4s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .phase-row .dots::after { content: ""; animation: dots 1.4s steps(4, end) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "…"; } }
+  .shimmer {
+    height: 10px; width: 260px; border-radius: 5px; margin-top: 9px;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, var(--bg-selected) 50%, var(--bg-hover) 75%);
+    background-size: 600px 100%;
+    animation: slide 1.6s linear infinite;
+  }
+  @keyframes slide { to { background-position: 600px 0; } }
+
+    .input-wrap { padding: 2px 34px 5px; }
+  .composer {
+    max-width: 920px; margin: 0 auto;
+    border: 1.5px solid var(--border); border-radius: 16px;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    padding: 5px 7px 7px;
+  }
+  .composer-input {
+    padding: 12px 12px 20px;
+    font-size: 13.5px; color: var(--text-dim);
+    line-height: 1.6; white-space: pre-wrap;
+  }
+  .composer-bar { display: flex; align-items: center; gap: 6px; padding: 0 3px; }
+  .c-left, .c-right { display: flex; align-items: center; gap: 4px; }
+  .c-right { margin-left: auto; }
+  .cmp-icon {
+    width: 28px; height: 28px; border: 0; border-radius: 8px; padding: 0;
+    background: transparent; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; cursor: default;
+  }
+  .cmp-icon:hover { background: var(--bg-hover); color: var(--text); }
+  .cmp-icon svg { width: 15px; height: 15px; }
+  .cmp-pill {
+    height: 28px; padding: 0 8px;
+    display: flex; align-items: center; gap: 5px;
+    border: 0; border-radius: 8px; background: transparent;
+    font-size: 12px; color: var(--text-muted); font-family: inherit; cursor: default;
+    white-space: nowrap;
+  }
+  .cmp-pill:hover { background: var(--bg-hover); color: var(--text); }
+  .cmp-pill svg { width: 13px; height: 13px; }
+  .cmp-pill .chev { width: 10px; height: 10px; color: var(--text-dim); flex: none; }
+    .ctx-ring {
+    width: 28px; height: 28px; border: 0; border-radius: 8px; padding: 0;
+    background: transparent; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; cursor: default;
+  }
+  .ctx-ring:hover { background: var(--bg-hover); }
+  .cmp-send {
+    width: 32px; height: 32px; margin-left: 5px;
+    border: 0; border-radius: 10px; padding: 0;
+    background: var(--accent); color: var(--accent-contrast);
+    display: flex; align-items: center; justify-content: center; cursor: default;
+  }
+  .cmp-send:hover { background: var(--accent-hover); }
+  .cmp-send svg { width: 15px; height: 15px; }
+
+    .statusbar {
+    position: relative;
+    width: var(--slp-w);
+    height: 30px; flex: none;
+    background: var(--chrome);
+    border-top: 1px solid rgba(175, 196, 186, .5);
+    display: flex; align-items: center;
+    font-size: 11px; color: var(--text-dim);
+  }
+  .statusbar::before {
+    content: ""; position: absolute;
+    right: 0; top: 0; bottom: 0; width: 1px;
+    background: rgba(175, 196, 186, .6);
+  }
+  /* 内容列下探 25px：statusbar 仅覆盖面板段 */
+  .content-col { margin-bottom: -25px; }
+    .sb-btns { display: flex; align-items: stretch; gap: 2px; padding-left: 16px; align-self: stretch; }
+  .app.panes-hidden .statusbar { display: none; }
+    .sb-tab {
+    align-self: stretch; width: 46px; margin-top: -1px;
+    display: flex; align-items: center; justify-content: center;
+    border: 0; background: transparent; padding: 0;
+    color: var(--text-muted); font-family: inherit; cursor: default;
+  }
+  .sb-tab:hover { background: var(--chrome-hover); border-radius: 0 0 8px 8px; }
+  .sb-tab.on {
+    background: var(--nav);
+    border: 1px solid rgba(175,196,186,.55); border-top: 0;
+    border-radius: 0 0 9px 9px;
+    color: var(--accent);
+  }
+  .sb-tab.on:hover { background: var(--nav); }
+  .sb-tab svg { width: 16px; height: 16px; }
+    .sb-info { display: none; }
+
+
+    .settings-mask {
+    position: absolute; inset: 0; z-index: 60;
+    background: rgba(20, 40, 34, .35);
+    display: none; align-items: center; justify-content: center;
+  }
+  .settings-mask.open { display: flex; }
+  .settings {
+    width: 70%; height: 98%;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 24px 70px rgba(20, 40, 34, .3);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .settings-topbar {
+    flex: none; height: 38px;
+    display: flex; align-items: center;
+    padding: 0 8px 0 16px;
+    border-bottom: 1px solid rgba(175, 196, 186, .45);
+    background: var(--chrome);
+  }
+  .settings-topbar .t { font-size: 13px; font-weight: 700; }
+  .settings-topbar .x {
+    margin-left: auto; width: 30px; height: 28px; border: 0; border-radius: 7px;
+    background: transparent; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; cursor: default; padding: 0;
+  }
+  .settings-topbar .x:hover { background: #d8626a; color: #fff; }
+  .settings-topbar .x svg { width: 13px; height: 13px; }
+  .set-nav {
+    width: 200px; flex: none;
+    background: var(--nav); border-right: 1px solid rgba(175, 196, 186, .4);
+    display: flex; flex-direction: column; padding: 12px 8px;
+  }
+  .set-nav button {
+    border: 0; background: transparent; text-align: left;
+    padding: 7.5px 10px; border-radius: 8px; margin-bottom: 1px;
+    font-size: 13px; color: var(--text-muted); font-family: inherit; cursor: default;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .set-nav button svg { width: 15px; height: 15px; flex: none; }
+  .set-nav button.on svg { color: var(--accent); }
+  .set-nav button:hover { background: var(--bg-hover); color: var(--text); }
+  .set-nav button.on { background: var(--bg-selected); color: var(--text); font-weight: 600; }
+  .set-body { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 30px 30px; }
+  .set-pane { display: none; }
+  .set-pane.on { display: block; }
+  .set-pane h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .set-pane .sub { font-size: 12px; color: var(--text-dim); padding-bottom: 12px; border-bottom: 1px solid rgba(175,196,186,.35); }
+  .set-row { display: flex; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid rgba(175,196,186,.25); }
+  .set-row .info { flex: 1; min-width: 0; }
+  .set-row .t { font-size: 13px; font-weight: 600; color: var(--text); }
+  .set-row .d { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+  .sel-btn { border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
+    padding: 4px 10px; font-size: 12.5px; color: var(--text); font-family: inherit; cursor: default;
+    display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
+  .sel-btn .chev { width: 10px; height: 10px; color: var(--text-dim); flex: none; }
+  .sel-btn:hover { background: var(--bg-hover); }
+  .sw { flex: none; width: 34px; height: 19px; border-radius: 10px; background: var(--border);
+    position: relative; cursor: default; transition: background .15s; }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+    border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw.on { background: var(--accent); }
+  .sw.on::after { transform: translateX(15px); }
+  .set-list { border: 1px solid rgba(175,196,186,.35); border-radius: 9px; overflow: hidden; margin-top: 12px; }
+  .set-li { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    font-size: 12.5px; color: var(--text); border-bottom: 1px solid rgba(175,196,186,.25); background: var(--bg); }
+  .set-li:last-child { border-bottom: 0; }
+  .set-li .mono { font-family: Consolas, monospace; font-size: 12px; color: var(--text-dim); }
+  .set-li .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ghost-btn { border: 0; background: transparent; padding: 3px 8px; border-radius: 6px;
+    font-size: 12px; color: var(--text-muted); font-family: inherit; cursor: default; }
+  .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
+</style>
+</head>
+<body>
+
+
+  <div class="app" id="app">
+
+        <div class="app-body">
+
+            <div class="panel-col">
+        <div class="topbar-l">
+          <button class="tb-icon-btn" id="panesToggle" data-tip="收起 / 展开侧栏">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M5.5 2.5v11"/></svg>
+          </button>
+        </div>
+        <div class="panel-row">
+
+                    <aside class="dock">
+            <div class="slp-resizer" id="slpResize" title="拖拽调整宽度（250–500），双击复位"></div>
+            <div class="panel-view on" id="pv-sessions"></div>
+          <div class="panel-view" id="pv-files">
+            <i class="ft-guide" style="left: 36px"></i>
+            <i class="ft-guide" style="left: 52px"></i>
+            <div class="ft-row root"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>pi-flash</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>.agents\skills\beads</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>.beads</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>.cargo</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>crates</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>docs</div>
+            <div class="ft-row l2"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>UI设计</div>
+            <div class="ft-row l3"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg>主界面UI设计.html</div>
+            <div class="ft-row l3 sel"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>主界面UI设计说明.md</div>
+            <div class="ft-row l2"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>模块设计</div>
+            <div class="ft-row l3"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>004-项目管理.md</div>
+            <div class="ft-row l3"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>005-app-layout.md</div>
+            <div class="ft-row l3"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>020-项目会话列表.md</div>
+            <div class="ft-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>scripts</div>
+            <div class="ft-row l2"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>dev.sh</div>
+            <div class="ft-row l2"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>release.sh</div>
+            <div class="ft-row root"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>package.json</div>
+            <div class="ft-row root"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>README.md</div>
+          </div>
+          <div class="panel-view" id="pv-git">
+            <div class="g-proj"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg><span id="gitProj">pi-flash</span></div>
+            <div class="g-tabs">
+              <button class="g-tab on" data-gt="changes">Changes (4)</button>
+              <button class="g-tab" data-gt="history">History</button>
+            </div>
+            <div class="g-view on" id="gv-changes">
+              <div class="g-actions">
+                <button class="g-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/></svg>View Diff</button>
+                <span style="flex:1"></span>
+                <button class="g-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg></button>
+                <button class="g-btn">Stage All <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+              </div>
+              <div class="g-tree">
+                <div class="g-sec"><span class="tw">▾</span>Untracked <i class="g-cb"></i></div>
+                <div class="g-row sel"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>.zcode\plans <i class="g-cb"></i></div>
+                <div class="g-row l1"><svg class="g-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>plan-sess_96b2d08b-cefb-45… <i class="g-cb"></i></div>
+                <div class="g-row"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>docs <i class="g-cb"></i></div>
+                <div class="g-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>UI设计 <i class="g-cb"></i></div>
+                <div class="g-row l2"><svg class="g-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>主界面UI设计.html <i class="g-cb"></i></div>
+                <div class="g-row l2"><svg class="g-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>主界面UI设计说明.md <i class="g-cb"></i></div>
+                <div class="g-row l1"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>模块设计 <i class="g-cb"></i></div>
+                <div class="g-row l2"><svg class="g-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>004-项目管理.md <i class="g-cb"></i></div>
+              </div>
+              <div class="g-bottom">
+                <div class="g-branch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg><span>main</span><button class="g-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>4 Push <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+                <div class="g-msg">Enter commit message
+                </div>
+                <div class="g-commit-row">
+                  <button class="g-btn">Commit Tracked <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+                </div>
+              </div>
+              <div class="g-last">
+                <span class="t">refactor: purge all remaining dea…</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+              </div>
+            </div>
+            <div class="g-view" id="gv-history">
+              <div class="g-hist">
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">refactor: purge all remaining dea…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>12 hours ago</span><span>·</span><span>52f8b6e</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">beads: close pi-flash-719 (check…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>12 hours ago</span><span>·</span><span>0946853</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">docs: progress.md — check_arch…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>12 hours ago</span><span>·</span><span>7b764da</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">refactor(check_arch): phase 3 —…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>12 hours ago</span><span>·</span><span>b68faca</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">refactor(check_arch): phase 2 —…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>Yesterday</span><span>·</span><span>a1bfff0</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">refactor(check_arch): phase 1 —…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>Yesterday</span><span>·</span><span>3495a3b</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">feat(006): font slots + icon the…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>Yesterday</span><span>·</span><span>a5b7765</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">feat(013): session content search</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>Yesterday</span><span>·</span><span>77b343d</span></div>
+            </div>
+            <div class="gc-item">
+              <div class="gc-title"><span class="t">chore: startup perf instrumentat…</span><span class="up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span></div>
+              <div class="gc-meta"><i class="gc-ava"></i><span>多多有鱼</span><span>·</span><span>2 days ago</span><span>·</span><span>1f9b276</span></div>
+            </div>
+              </div>
+            </div>
+          </div>
+          </aside>
+        </div>
+      </div>
+
+            <div class="content-col">
+        <div class="topbar-r">
+          <button class="tb-icon-btn" id="panesToggleR" data-tip="展开侧栏">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M10.5 2.5v11"/></svg>
+          </button>
+          <div class="term-tab" id="termTabBar">
+            <span>bash — pi_work</span>
+            <span class="x" id="termClose">×</span>
+          </div>
+          <div class="term-tab md-tab" id="mdTabBar">
+            <span>主界面UI设计说明.md</span>
+            <span class="x" id="mdClose">×</span>
+          </div>
+          <div class="tb-spacer"></div>
+          <button class="tb-icon-btn" data-tip="设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
+          </button>
+          <div class="tb-divider"></div>
+          <div class="tb-win">
+            <div><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1 6h10"/></svg></div>
+            <div><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5"/></svg></div>
+            <div class="close"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 2l8 8M10 2l-8 8"/></svg></div>
+          </div>
+        </div>
+
+                <main class="main" id="mainCol">
+        <div class="chat-wrap">
+        <div class="chat-and-nav">
+        <div class="chat">
+          <div class="chat-inner">
+            <div class="msg-user">
+              <div class="bubble">hello</div>
+              <div class="msg-actions">
+                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
+                <span class="when">08-25 05:22</span>
+              </div>
+            </div>
+
+            <div class="msg-assistant">
+              <div class="as-name">DeepSeek Flash</div>
+              <div class="as-body">
+                <p>Hello! 👋</p>
+                <p>I'm ox-alpha，你的编程助手。当前工作目录是 <span class="code-chip">D:/ai_workspace/pi_work</span>。</p>
+                <p>有什么可以帮你的吗？比如：</p>
+                <ul>
+                  <li>读取、编辑或创建代码文件</li>
+                  <li>执行命令</li>
+                  <li>查询行情/财务数据(mx-data / mx-search / mx-xuangu)</li>
+                  <li>前端页面设计</li>
+                  <li>其他开发任务</li>
+                </ul>
+                <p>请告诉我你想做什么~</p>
+              </div>
+              <div class="as-stats"><span>5,172 in · 89 out · $0.0000</span><span>5s · 08-25 05:22</span></div>
+            </div>
+
+            <div class="msg-user">
+              <div class="bubble">帮我把这个项目画成架构图</div>
+              <div class="msg-actions">
+                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
+                <span class="when">08-25 06:02</span>
+              </div>
+            </div>
+
+            <div class="msg-assistant">
+              <div class="as-name">DeepSeek Flash</div>
+              <div class="as-body">
+                <p>已生成 <span class="code-chip">docs/architecture.svg</span>。分层：GPUI Shell / SessionRuntime / pi-link RPC / vendor pi CLI。</p>
+              </div>
+              <div class="as-stats"><span>1,204 in · 210 out · $0.0012</span><span>4s · 08-25 06:02</span></div>
+            </div>
+
+            <div class="msg-user">
+              <div class="bubble">个股调研的会话也并进侧栏吧</div>
+              <div class="msg-actions">
+                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
+                <span class="when">08-25 06:10</span>
+              </div>
+            </div>
+
+            <div class="msg-assistant">
+              <div class="as-name">DeepSeek Flash</div>
+              <div class="as-body">
+                <p>已并入。状态行 = 旋转圈（3 个在跑）+ 未读回执数（5）。</p>
+              </div>
+              <div class="as-stats"><span>890 in · 120 out · $0.0008</span><span>3s · 08-25 06:10</span></div>
+            </div>
+
+            <div class="msg-user">
+              <div class="bubble">把 sidebar 的会话列表按项目分组，先出个方案</div>
+              <div class="msg-actions">
+                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
+                <span class="when">刚刚</span>
+              </div>
+            </div>
+
+            <div class="msg-assistant">
+              <div class="as-name">DeepSeek Flash</div>
+              <div class="phase-row">
+                <svg class="spark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l1.8 4.7L14.5 8l-4.7 1.8L8 14.5 6.2 9.8 1.5 8l4.7-1.8z"/></svg>
+                <span class="dots">正在思考</span>
+              </div>
+              <div class="shimmer"></div>
+            </div>
+          </div>
+        </div>
+
+                <div class="nav-gutter">
+          <div class="nav-flyout">
+            <div class="nv-turn">
+              <div class="nv-user"><span class="nv-no">01</span><p>hello</p></div>
+              <div class="nv-agent"><span class="nv-a">A</span><p>Hello! 👋 I'm ox-alpha，你的编程助手…</p></div>
+            </div>
+            <div class="nv-turn">
+              <div class="nv-user"><span class="nv-no">02</span><p>帮我把这个项目画成架构图</p></div>
+              <div class="nv-agent"><span class="nv-a">A</span><p>已生成 docs/architecture.svg。分层：GPUI Shell /…</p></div>
+            </div>
+            <div class="nv-turn">
+              <div class="nv-user"><span class="nv-no">03</span><p>个股调研的会话也并进侧栏吧</p></div>
+              <div class="nv-agent"><span class="nv-a">A</span><p>已并入。状态行 = 旋转圈（3 个在跑）+ 未读回执数…</p></div>
+            </div>
+            <div class="nv-turn on">
+              <div class="nv-user"><span class="nv-no">04</span><p>把 sidebar 的会话列表按项目分组，先出个方案</p></div>
+              <div class="nv-agent"><span class="nv-a">A</span><p>正在思考…</p></div>
+            </div>
+          </div>
+          <div class="msg-nav" id="msgNav">
+                      </div>
+        </div>
+        </div>
+
+        <div class="input-wrap">
+          <div class="composer">
+            <div class="composer-input">消息...输入 / 使用命令，输入 @ 查找文件</div>
+            <div class="composer-bar">
+              <div class="c-left">
+                <button class="cmp-icon" data-tip="附加图片">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                </button>
+                <button class="cmp-pill" data-tip="工具预设">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                  默认
+                  <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
+                </button>
+              </div>
+              <div class="c-right">
+                <button class="ctx-ring" data-tip="上下文 15.2万 / 1.0M（15%）— 点击查看明细">
+                  <svg viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="5.5" fill="none" stroke="#d7e4df" stroke-width="2"/><circle cx="8" cy="8" r="5.5" fill="none" stroke="#1e6559" stroke-width="2" stroke-dasharray="5.2 29.4" stroke-linecap="round" transform="rotate(-90 8 8)"/></svg>
+                </button>
+                <button class="cmp-pill" data-tip="模型">
+                  DeepSeek Flash
+                  <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
+                </button>
+                <button class="cmp-pill" data-tip="推理强度">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>
+                  high
+                  <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>
+                </button>
+                <button class="cmp-send" data-tip="发送 (Enter) / 运行中变停止">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+
+                <div class="term-view">
+          <div class="term-body">
+            <div><span class="dim">$</span> npm run dev</div>
+            <div class="dim">> pi-work@0.9.0 dev</div>
+            <div class="dim">> vite --host</div>
+            <div>&nbsp;</div>
+            <div>  VITE v6.0.7  ready in 312 ms</div>
+            <div>&nbsp;</div>
+            <div>  ➜  Local:   http://localhost:5173/</div>
+            <div>  ➜  Network: use --host to expose</div>
+            <div>&nbsp;</div>
+            <div><span class="dim">$</span> <span class="tcur"></span></div>
+          </div>
+        </div>
+        <div class="md-view">
+          <div class="md-page">
+            <h1>主界面UI设计说明</h1>
+            <p>配套文件：主界面UI设计.html（可交互设计稿）· mist 主题。演示哈希：#collapsed 收起侧栏、#files / #git 切面板、#term 开终端。</p>
+            <h2>布局总览</h2>
+            <pre>topbar  [收放]                        [设置] [─][□][×]
+slp 282px 项目+会话一体列表 │ 内容区（聊天 / 终端 / 预览）
+statusbar（面板 tabs）     │</pre>
+            <h2>三层色阶</h2>
+            <ul>
+              <li>chrome #dfe9e5 — topbar + statusbar</li>
+              <li>nav #eef4f1 — 项目/会话侧栏</li>
+              <li>content #f4f8f7 — 聊天 / 预览</li>
+            </ul>
+            <p>选中语言一句话：选中会话 = accent soft-tint；accent bar 只归活动项目行。</p>
+            <h2>会话导航</h2>
+            <p>topbar 下 100px 起，最高内容区 70%，节点硬上限 10 个；灰点灰线分段连接，悬停展开发言列表覆盖层。</p>
+          </div>
+        </div>
+        </main>
+      </div>
+    </div>
+
+        <div class="statusbar">
+      <div class="sb-btns">
+        <button class="sb-tab on" data-panel="sessions" data-tip="项目 / 会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></svg></button>
+        <button class="sb-tab" data-panel="files" data-tip="文件树"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></svg></button>
+        <button class="sb-tab" data-panel="git" data-tip="Git"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="settings-mask" id="settingsMask">
+      <div class="settings">
+        <div class="settings-topbar">
+          <button class="x" id="settingsClose"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+        </div>
+        <div style="flex:1;min-height:0;display:flex">
+        <aside class="set-nav">
+              <button class="set-item on" data-sp="ui"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v4"/><path d="M8 21h8"/><path d="m9 17 6.1-6.1a2 2 0 0 1 2.81.01L22 15"/><circle cx="8" cy="9" r="2"/><rect x="2" y="3" width="20" height="14" rx="2"/></svg>界面</button>
+              <button class="set-item" data-sp="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v2"/><path d="M12 2v2"/><path d="M17 20v2"/><path d="M17 2v2"/><path d="M2 12h2"/><path d="M2 17h2"/><path d="M2 7h2"/><path d="M20 12h2"/><path d="M20 17h2"/><path d="M20 7h2"/><path d="M7 20v2"/><path d="M7 2v2"/><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>模型</button>
+              <button class="set-item" data-sp="skills"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>技能</button>
+              <button class="set-item" data-sp="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>子代理</button>
+              <button class="set-item" data-sp="plugins"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/></svg>插件</button>
+              <button class="set-item" data-sp="misc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>其他</button>
+        </aside>
+        <div class="set-body">
+          <div class="set-pane on" id="sp-ui">
+            <div class="set-row"><div class="info"><div class="t">主题</div><div class="d">应用配色（mist / rose / one-light / nord / ayu）</div></div><button class="sel-btn">mist<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">图标主题</div><div class="d">内置 pi-web 图标集</div></div><button class="sel-btn">pi-web 内置<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">会话字体</div><div class="d">会话区正文与输入框字体</div></div><button class="sel-btn">Inter · 14.5<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">功能面板字体</div><div class="d">slp / 文件树 / git 面板字体</div></div><button class="sel-btn">Segoe UI · 13<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">Markdown 预览字体</div><div class="d">agent 输出的 markdown 渲染字体</div></div><button class="sel-btn">Inter · 14<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">界面语言</div><div class="d">中文 / English</div></div><button class="sel-btn">中文<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">提示音</div><div class="d">agent 运行结束播放系统提示音</div></div><i class="sw on"></i></div>
+            <div class="set-row"><div class="info"><div class="t">跨项目预载会话数</div><div class="d">启动时预载最近会话的消息尾部，0 关闭</div></div><button class="sel-btn">10<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+          </div>
+          <div class="set-pane" id="sp-models">
+            <div class="set-row"><div class="info"><div class="t">默认模型</div><div class="d">新会话使用的模型</div></div><button class="sel-btn">DeepSeek Flash<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">默认思考强度</div><div class="d">auto / low / high / max</div></div><button class="sel-btn">auto<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-list">
+              <div class="set-li"><span class="grow">DeepSeek Flash</span><span class="mono">deepseek</span><i class="sw on"></i></div>
+              <div class="set-li"><span class="grow">GLM-5.3-Flash</span><span class="mono">zai</span><i class="sw on"></i></div>
+              <div class="set-li"><span class="grow">MiniMax 3.1 preview</span><span class="mono">minimax</span><i class="sw"></i></div>
+              <div class="set-li"><span class="grow">Kimi K2</span><span class="mono">moonshot</span><i class="sw"></i></div>
+            </div>
+          </div>
+          <div class="set-pane" id="sp-skills">
+            <div class="set-list">
+              <div class="set-li"><span class="grow">beads</span><span class="mono">项目任务追踪</span><i class="sw on"></i></div>
+              <div class="set-li"><span class="grow">mx-data</span><span class="mono">行情数据</span><i class="sw on"></i></div>
+              <div class="set-li"><span class="grow">frontend-design</span><span class="mono">前端设计</span><i class="sw on"></i></div>
+              <div class="set-li"><span class="grow">dark-diagram</span><span class="mono">示意图绘制</span><i class="sw"></i></div>
+            </div>
+          </div>
+          <div class="set-pane" id="sp-agents">
+            <div class="set-list">
+              <div class="set-li"><span class="grow">explorer</span><span class="mono">DeepSeek Flash · read-only</span><button class="ghost-btn">编辑</button></div>
+              <div class="set-li"><span class="grow">reviewer</span><span class="mono">GLM-5.3-Flash · chat-only</span><button class="ghost-btn">编辑</button></div>
+            </div>
+            <div style="margin-top:12px"><button class="sel-btn">＋ 新建档案</button></div>
+          </div>
+          <div class="set-pane" id="sp-plugins">
+            <div class="set-list">
+              <div class="set-li"><span class="grow">pi-web-ext</span><span class="mono">global · 0.4.1</span><button class="ghost-btn">卸载</button></div>
+              <div class="set-li"><span class="grow">pi-review-tools</span><span class="mono">project · 0.2.0</span><button class="ghost-btn">卸载</button></div>
+            </div>
+            <div style="margin-top:12px"><button class="sel-btn">＋ 安装包</button></div>
+          </div>
+          <div class="set-pane" id="sp-misc">
+            <div class="set-row"><div class="info"><div class="t">pi 版本</div><div class="d">vendored pi-coding-agent</div></div><span class="mono" style="font-size:12px;color:var(--text-dim)">0.87.1</span></div>
+            <div class="set-row"><div class="info"><div class="t">启动恢复</div><div class="d">启动时恢复上次激活的项目与会话</div></div><i class="sw on"></i></div>
+            <div class="set-row"><div class="info"><div class="t">默认加载项目数</div><div class="d">启动时按最近使用加载的项目数量</div></div><button class="sel-btn">5<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button></div>
+            <div class="set-row"><div class="info"><div class="t">工作区数据目录</div><div class="d">会话记忆 / 布局状态存放位置</div></div><span class="mono" style="font-size:11.5px;color:var(--text-dim)">~\.pi\agent</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+
+<div id="tooltip"></div>
+<div id="hcard"></div>
+<div id="pmenu"></div>
+<div id="pmsub"></div>
+
+<script>
+  // ---- 示意数据：项目 → 会话 一体列表（≤5 个，按最近更新倒序；上限可在设置-其他调整） ----
+  // 会话行状态槽：运行中 → 旋转圈，回复未读 → 绿点；空项目展开显示「无会话」
+  const data = [
+    { name: "pi-flash", path: "D:\\ai_workspace\\pi-flash", open: true,
+      sessions: [
+        { t: "HTML设计后再讨论项目", time: "7小时", sel: true, msgs: 86 },
+        { t: "实现pi-flash", time: "22小时", msgs: 214 },
+        { t: "继续修改bug，接下来的问题", time: "3天", msgs: 57 },
+        { t: "查看当前工作进度", time: "3天", msgs: 12 },
+      ] },
+    { name: "20观宏知微", path: "D:\\ai_workspace\\20观宏知微", open: true,
+      sessions: [ { t: "询问zcode开源日期", time: "19小时", unread: true, msgs: 6 } ] },
+    { name: "ghzw", path: "D:\\ai_workspace\\ghzw", open: true,
+      sessions: [ { t: "排查爆款热点抓取失败原因", time: "1天", run: true, msgs: 31 } ] },
+    { name: "pi_work", path: "D:\\ai_workspace\\pi_work", open: true, sessions: [] },
+    { name: "agent_sprite_factory", path: "D:\\ai_workspace\\agent_sprite_factory", open: false, sessions: [] },
+  ];
+  data.forEach((p, i) => { p._recent = i; p._manual = i; });
+  let sortMode = "time";
+  let listMode = "grouped";
+  function setListMode(m) { listMode = m; renderList(); }
+
+  const list = document.getElementById("pv-sessions");
+  const tooltip = document.getElementById("tooltip");
+  const app = document.getElementById("app");
+  const hcard = document.getElementById("hcard");
+  const pmenu = document.getElementById("pmenu");
+  const pmsub = document.getElementById("pmsub");
+
+  const FOLDER_OPEN = `<svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`;
+  const FOLDER = `<svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`;
+  const ELLIPSIS = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>`;
+  const PLUS = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
+  const FOLDER_CLOSED = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg>`;
+  const MSG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+  const CLOCK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+  const SEARCH = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>`;
+  const ICON_ORGANIZE = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="40" stroke-linejoin="round"><path d="M349.405343 154.62259 155.596266 154.62259c-29.150924 0-52.873208 23.724331-52.873208 52.845579l0 193.823404c0 29.150924 23.722284 52.844555 52.873208 52.844555l193.810101 0c29.136597 0 52.859905-23.693632 52.859905-52.844555L402.266271 207.467145C402.265248 178.345897 378.541941 154.62259 349.405343 154.62259M351.851045 207.467145l0 193.823404c0 1.339508-1.106194 2.474354-2.445702 2.474354L155.596266 403.764903c-1.338485 0-2.503007-1.134847-2.503007-2.474354L153.093259 207.467145c0-1.38351 1.134847-2.474354 2.503007-2.474354l193.810101 0C350.774527 204.992791 351.851045 206.084659 351.851045 207.467145" p-id="6543"></path><path d="M349.405343 569.837266 155.596266 569.837266c-29.150924 0-52.873208 23.75196-52.873208 52.856835L102.723058 816.519552c0 29.164227 23.722284 52.857858 52.873208 52.857858l193.810101 0c29.136597 0 52.859905-23.693632 52.859905-52.857858L402.266271 622.694101C402.265248 593.589227 378.541941 569.837266 349.405343 569.837266M351.851045 622.694101 351.851045 816.519552c0 1.36816-1.106194 2.472308-2.445702 2.472308L155.596266 818.99186c-1.338485 0-2.503007-1.104147-2.503007-2.472308L153.093259 622.694101c0-1.367137 1.134847-2.474354 2.503007-2.474354l193.810101 0C350.774527 620.219747 351.851045 621.326964 351.851045 622.694101" p-id="6544"></path><path d="M519.857457 224.930889c0.727571 0.480954 1.601474 0.801249 2.532683 0.801249l1.77646 0c0.434905 0.058328 0.900509 0.058328 1.36816 0l367.768061 0c0.233314 0.029676 0.493234 0.058328 0.697895 0.058328 0.233314 0 0.466628-0.028653 0.670266-0.058328l1.454118 0c0.787946 0 1.514493-0.261966 2.124384-0.626263 12.023848-2.081405 20.900006-12.341073 20.900006-24.464181 0-11.949146-8.586562-22.064528-20.345374-24.348548-0.756223-0.566912-1.687432-0.931209-2.679016-0.931209L522.389116 175.361937c-0.901533 0-1.775436 0.422625-2.501984 1.019213-11.614525 2.357697-20.200064 12.458753-20.200064 24.261567C499.687068 212.474183 508.272607 222.574215 519.857457 224.930889" p-id="6545"></path><path d="M519.507486 411.493935c0.756223 0.683569 1.77646 1.134847 2.88163 1.134847l373.73496 0c0.903579 0 1.719154-0.39295 2.446725-0.932232 11.818163-2.196015 20.550035-12.369725 20.550035-24.405853 0-12.123109-8.847505-22.354124-20.784372-24.434505-0.668219-0.39295-1.425466-0.596588-2.212388-0.596588l-0.697895 0.115634c-0.581238-0.145309-1.456165-0.203638-2.297322-0.115634l-366.867552 0.115634c-0.611937-0.145309-1.457188-0.203638-2.300392-0.115634l-1.571798 0c-0.814552 0-1.542122 0.233314-2.213411 0.714268-11.786441 2.241041-20.459984 12.398378-20.459984 24.317848C499.715721 398.976854 508.040317 408.990928 519.507486 411.493935" p-id="6546"></path><path d="M519.537162 660.680251c0.756223 0.667196 1.775436 1.075495 2.851954 1.075495l373.73496 0c0.408299 0 0.787946-0.058328 1.196245-0.174985 13.271258-0.608867 23.954575-11.641131 23.954575-25.118074 0-13.827937-11.294231-25.118074-25.15082-25.118074-0.202615 0-0.435928 0.027629-0.697895 0.058328L525.50406 611.402941c-0.437975-0.058328-0.873903-0.058328-1.36816 0l-1.746784 0c-0.842181 0-1.600451 0.25992-2.270716 0.725524-11.729136 2.270716-20.402679 12.428054-20.402679 24.334221C499.715721 648.166239 508.097622 658.176221 519.537162 660.680251" p-id="6547"></path><path d="M897.755226 777.807878c-0.493234-0.203638-1.077541-0.319272-1.63115-0.319272L522.389116 777.488607c-0.959861 0-1.893116 0.462534-2.589988 1.1328-11.583826 2.416026-20.083407 12.485359-20.083407 24.275893 0 11.904121 8.674567 22.064528 20.402679 24.334221 0.669242 0.405229 1.428535 0.60989 2.270716 0.60989l0.728594-0.115634c0.290619 0.057305 0.726547 0.202615 2.620687 0.115634l368.639918-0.115634c0.466628 0.115634 1.340531 0.290619 1.74576 0.290619 13.856589 0 25.15082-11.291161 25.15082-25.119097C921.274896 789.565666 910.883221 778.679735 897.755226 777.807878" p-id="6548"></path></svg>`;
+  const ICON_SORT = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="20" stroke-linejoin="round"><path d="M736 170.666667l-4.266667 0.298666a32 32 0 0 0-27.733333 31.701334v541.525333l-137.386667-137.301333-3.584-3.072a32 32 0 0 0-41.642666 48.384l192.170666 192 3.584 3.072a32 32 0 0 0 41.642667-3.114667l191.872-192 3.072-3.584a32 32 0 0 0-3.114667-41.685333l-3.584-3.072a32 32 0 0 0-41.685333 3.114666L768 744.362667V202.666667l-0.256-4.352A32 32 0 0 0 736.042667 170.666667z m-470.869333 9.386666L73.386667 371.84l-3.114667 3.584a32 32 0 0 0 3.114667 41.642667l3.584 3.114666a32 32 0 0 0 41.642666-3.114666l137.258667-137.301334v541.781334l0.341333 4.352a32 32 0 0 0 31.701334 27.648l4.309333-0.298667a32 32 0 0 0 27.690667-31.701333L319.872 279.850667l137.514667 137.258666 3.584 3.072a32 32 0 0 0 41.6-48.384L310.4 180.053333l-3.626667-3.072a32 32 0 0 0-41.642666 3.114667z" p-id="9174"></path></svg>`;
+  const CHEV_R = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`;
+  const ICON_GROUPED = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="40" stroke-linejoin="round"><path d="M227.008 94.976h129.28c25.92 0 38.976 0 51.072 3.136 10.688 2.688 20.8 7.168 30.016 13.184 10.432 6.848 19.264 16.448 36.8 35.52l40.576 44.16c8.704 9.6 13.12 14.4 18.368 17.792a50.048 50.048 0 0 0 15.04 6.592c6.016 1.536 12.544 1.536 25.536 1.536h228.608c56.192 0 84.992 0.128 106.304 11.264 18.432 9.536 33.472 24.64 42.88 43.072 11.072 21.376 11.072 50.176 10.816 106.368l-1.792 390.144c-0.256 55.744-0.512 84.288-11.52 105.472a100.48 100.48 0 0 1-42.88 42.688c-21.312 11.008-49.792 11.072-105.6 11.072H227.008c-56 0-84.672-0.064-105.984-11.136a100.48 100.48 0 0 1-42.88-42.88c-11.008-21.312-11.136-49.92-11.136-105.984v-512c0-56 0.128-84.608 11.136-105.92a100.48 100.48 0 0 1 42.88-42.88c21.312-11.072 49.92-11.2 105.984-11.2z m0 64q-68.8 0-76.48 4.032-10.24 5.248-15.552 15.488-3.968 7.68-3.968 76.48V384h767.232v-6.656q0.32-69.12-3.648-76.8-5.248-10.304-15.488-15.616-7.68-4.032-76.8-4.032H573.696q-27.52 0-41.344-3.52-18.368-4.672-34.24-15.04-11.968-7.808-30.544-28.096l-40.576-44.16q-20.864-22.72-24.64-25.216-4.992-3.264-10.816-4.736-4.352-1.152-35.2-1.152H226.944zM897.92 448H131.008v318.976q0 68.864 3.968 76.544 5.312 10.24 15.552 15.488 7.68 3.968 76.48 3.968h573.504q68.48 0 76.16-3.904 10.24-5.312 15.552-15.488 3.968-7.68 4.288-76.16L897.984 448z"/></svg>`;
+  const ICON_FLAT = `<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M128 256a42.666667 42.666667 0 1 1 0-85.333333 42.666667 42.666667 0 0 1 0 85.333333z m0 597.333333a42.666667 42.666667 0 1 1 0-85.333333 42.666667 42.666667 0 0 1 0 85.333333z m0-298.666666a42.666667 42.666667 0 1 1 0-85.333334 42.666667 42.666667 0 0 1 0 85.333334z" fill-opacity=".9"></path><path d="M256 256V170.666667h682.666667v85.333333H256z m0 597.333333v-85.333333h682.666667v85.333333H256z m0-298.666666v-85.333334h682.666667v85.333334H256z"></path></svg>`;
+  const ICON_CHECK = `<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
+  const ICON_CLOCK = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="30" stroke-linejoin="round"><path d="M 876.239 846.198 c 0 16.5895 -13.4425 30.0314 -30.032 30.0314 c -16.5901 0 -30.0326 -13.4419 -30.0326 -30.0314 c 0 -16.5883 13.4425 -30.0326 30.0326 -30.0326 c 16.5895 0 30.032 13.4443 30.032 30.0326"></path><path d="M 726.341 899.964 c -64.7825 35.7963 -137.658 54.8392 -213.381 54.8392 c -244.024 0 -441.842 -197.82 -441.842 -441.844 c 0 -244.025 197.818 -441.845 441.842 -441.845 c 244.026 0 441.845 197.819 441.845 441.845 c 0 81.4226 -22.0268 159.53 -63.1292 227.729 c -9.77947 16.2223 -4.55528 37.2924 11.6664 47.0719 c 16.2223 9.77827 37.3008 4.55408 47.0803 -11.6676 c 47.4969 -78.8126 72.9743 -169.143 72.9743 -263.133 c 0 -281.907 -228.531 -510.436 -510.438 -510.436 c -281.903 0 -510.435 228.53 -510.435 510.436 c 0 281.906 228.531 510.438 510.435 510.438 c 87.3987 0 171.681 -22.0208 246.553 -63.4019 c 16.5733 -9.15814 22.591 -30.0242 13.4256 -46.6047 c -9.15753 -16.5739 -30.023 -22.5844 -46.5975 -13.4268 Z m 0 0"></path><path d="M 478.671 272.893 V 525.592 a 34.3109 34.3109 0 0 0 10.759 24.9463 l 223.478 210.845 c 13.7778 13.0006 35.485 12.3624 48.4777 -1.40644 c 13.0012 -13.7766 12.3708 -35.4856 -1.40644 -48.4856 L 536.494 500.646 l 10.7596 24.9463 V 272.893 c 0 -18.9382 -15.3553 -34.2929 -34.2929 -34.2929 c -18.9364 0.000602 -34.2893 15.3553 -34.2893 34.2929 Z m 0 0"></path></svg>`;
+  const ICON_HAND = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="20" stroke-linejoin="round"><path d="M328.774875 588.249792v-1.407756c-0.831855-14.33351-8.190577-21.500264-17.916887-25.083642a53.622683 53.622683 0 0 0-30.202752 0c-9.790299 3.583377-17.14902 11.517999-17.14902 26.491398v165.283282c0 64.436804 2.431578 68.020181 40.760918 110.892732l10.622154 12.157888 82.41768 93.743712c13.053732 14.33351 9.790299 34.36203-5.758999 45.816039a41.272829 41.272829 0 0 1-52.982795-5.758999l-83.185546-93.679723-10.622155-12.157888c-53.878639-60.789438-57.142072-65.140682-57.142071-151.65365V587.481925c0-45.048173 29.434886-74.41907 66.100515-87.280835 13.053732-5.055122 27.707186-7.166755 42.424629-7.166755 10.622154 0 22.012175 1.407755 32.634329 3.583378V202.5888c0-45.048173 28.539041-74.41907 66.100515-86.576957 13.053732-4.991133 28.539041-7.870632 43.192496-7.870633 13.053732 0 27.771175 2.111633 40.824906 7.166755 10.558166-24.315775 31.802474-40.824907 57.078083-49.399417a146.662517 146.662517 0 0 1 85.681113 0c36.665629 12.861765 65.26866 42.93654 65.26866 88.048702v191.71069c11.390021-2.815511 22.012175-3.519389 32.634329-3.519388 15.485309 0 29.370897 2.111633 43.192496 6.398888 25.339597 9.342377 46.519917 25.787519 57.142071 50.103294 13.053732-4.991133 26.87533-7.166755 40.760918-7.166754 13.885587 0 29.434886 2.8795 42.424629 7.870632 36.729618 12.157888 66.100515 41.528784 66.100515 86.576957v339.908941c0 2.815511-0.831855 5.758999-1.663711 7.870633l-46.455928 165.283282c-4.095288 17.916887-24.507742 28.60303-45.688062 23.611897-20.412453-4.287255-32.63433-22.204142-27.771175-40.05704l45.688062-160.996027V485.227692c0-12.861765-8.126588-21.500264-17.916887-25.78752a44.536262 44.536262 0 0 0-14.717443-2.111633 57.845949 57.845949 0 0 0-15.485309 2.111633 28.411064 28.411064 0 0 0-17.916887 25.083642v37.881418c0 18.620765-17.14902 33.658152-37.561474 33.658152-21.18032 0-37.497485-15.037387-37.497485-33.658152V436.596141c0-14.33351-7.358721-23.675886-17.916887-26.491397a49.78335 49.78335 0 0 0-15.549298-2.175622 44.536262 44.536262 0 0 0-14.717443 2.175622 24.827686 24.827686 0 0 0-17.916887 25.019653v87.280835c0 18.620765-17.14902 33.658152-37.561474 33.658152-20.348464 0-37.497485-15.037387-37.497484-33.658152v-369.215849c0-14.269521-7.358721-22.844031-17.916887-26.427408a44.536262 44.536262 0 0 0-14.717443-2.175622 48.119639 48.119639 0 0 0-14.717443 2.175622c-10.558166 3.583377-17.916887 12.157888-17.916887 26.427408v369.215849c0 18.620765-17.14902 33.658152-37.497485 33.658152-20.476442 0-37.561474-15.037387-37.561474-33.658152v-320.584298c-0.831855-14.269521-8.126588-22.140153-17.916886-25.723531a53.622683 53.622683 0 0 0-30.202753 0 25.403586 25.403586 0 0 0-17.916887 25.787519v529.507998c0 18.556776-17.14902 33.594163-39.161195 33.594163-20.476442 0-36.729618-15.037387-36.729619-33.594163V588.249792z m507.431834-531.619631a31.354552 31.354552 0 0 1-0.831855-47.223795c15.485309-12.157888 38.393329-12.861765 53.046783 0l122.346742 106.605477c7.358721 5.758999 13.053732 15.037387 13.053732 25.019653 0 10.046254-5.758999 18.620765-13.053732 25.787519l-122.346742 106.605477a39.545129 39.545129 0 0 1-53.046783 0c-14.717443-12.861765-14.717443-33.658152 0.831855-47.223794l59.50966-52.214928h-139.495762c-20.348464 0-37.497485-15.037387-37.497485-33.658152 0-17.916887 17.14902-32.186408 37.497485-32.186408h139.495762l-59.50966-51.511049zM134.632608 9.406366c14.717443-12.861765 39.161196-12.157888 53.814649 0a31.354552 31.354552 0 0 1 0 47.223795l-60.341515 52.214927h139.495762c21.18032 0 38.32934 14.33351 38.329341 32.186408 0 18.620765-17.14902 33.658152-38.39333 33.658152h-139.495762l60.405504 52.214927c13.885587 13.629632 14.717443 34.36203 0 47.223795a40.63294 40.63294 0 0 1-53.814649 0l-121.578876-107.309355A34.298041 34.298041 0 0 1 0 141.031496c0-9.982266 5.758999-19.324642 13.053732-25.019653l121.578876-106.605477z"></path></svg>`;
+  const ICON_PROJECT = `<svg viewBox="56 90 963 827" fill="currentColor" stroke="currentColor" stroke-width="35" stroke-linejoin="round"><path d="M738.06 466.5 436.26 466.5c-2.3 0-3.2-0.5-3.2-1.9 0-3.6 0-29.1 0-34.4 0-2.3 0-2.9 4.9-2.9l354.6 0c5.2 0 6 1.2 6 3 0 9.1 0 28 0 32.3 0 2.5 0 3.9-5.6 3.9l-36 0L738.06 466.5zM437.76 641.7c-4.7 0-4.7-1.3-4.7-4.5 0-5.1 0-27 0-32 0-1.8 0-2.7 5.3-2.7l354.3 0c5.8 0 5.8 1.7 5.8 4.3 0 5.4 0 26.2 0 29.8 0 3.9-0.9 5.1-4.6 5.1L437.76 641.7zM936.36 249c0-8.1-7.8-7.6-7.8-7.6s-398.4 0.3-380.2 0c-12.6 0.3-15.3-6.2-15.3-6.2s-32.2-45.7-41.7-60.8c-4.2-4.3-11.6-6.4-11.6-6.4L141.36 168c-6.1 0-7.9 7.9-7.9 7.9l0 662.6c0 8.8 5.6 9.5 5.6 9.5l793 0.1c4 0 4.3-3.2 4.3-3.2L936.36 249zM897.16 802c0 3.8-3 6.8-6.8 6.8L183.76 808.8c-7.5 0-11.1-8.7-11.1-17.5l-0.1-577.8c0-1.7 0-6.5 4.8-6.5 4.1 0 268.2 0 277.5 0 7.6 0 6.9 1.5 10.4 6.3 11.5 15.5 34.6 46.3 45.4 59.7 5.3 6.6 9.3 6.8 16.7 7.3l362.6 0.3c4.1 0 7.2 4.5 7.2 9.4L897.16 802z"/><path d="M307.2 424.96l44.032 0 0 44.032-44.032 0 0-44.032Z"/><path d="M307.2 600.064l44.032 0 0 44.032-44.032 0 0-44.032Z"/></svg>`;
+  const ICON_NEW_CHAT = `<svg viewBox="118 155 824 767" fill="currentColor" stroke="currentColor" stroke-width="20" stroke-linejoin="round"><path d="M187.733333 708.736v-339.626667A127.530667 127.530667 0 0 1 315.306667 241.536h169.813333a25.6 25.6 0 0 1 0 51.2H315.306667c-42.154667 0-76.373333 34.176-76.373334 76.288v339.669333c0 42.154667 34.218667 76.373333 76.373334 76.373334h339.626666c42.154667 0 76.330667-34.218667 76.330667-76.373334v-169.813333a25.6 25.6 0 0 1 51.2 0v169.813333A127.488 127.488 0 0 1 654.933333 836.266667H315.264A127.488 127.488 0 0 1 187.733333 708.693333zM675.968 205.226667a59.605333 59.605333 0 0 1 84.224-0.042667L818.773333 263.68c23.296 23.253333 23.296 60.970667 0.042667 84.224l-276.650667 276.821333a59.648 59.648 0 0 1-30.378666 16.256l-123.562667 24.874667a25.557333 25.557333 0 0 1-30.122667-30.165333l24.96-123.392c2.304-11.52 7.936-22.058667 16.213334-30.336l276.693333-276.778667z m48.042667 36.138666a8.362667 8.362667 0 0 0-11.861334 0l-276.650666 276.864a8.405333 8.405333 0 0 0-2.304 4.266667l-17.322667 85.632 85.845333-17.28a8.362667 8.362667 0 0 0 4.266667-2.304l276.650667-276.778667a8.362667 8.362667 0 0 0 0-11.861333l-58.624-58.538667z"/></svg>`;
+
+  function slotHtml(s) {
+    if (s.run) return `<i class="spin"></i>`;
+    if (s.unread) return `<span class="gdot"></span>`;
+    return "";
+  }
+
+  function setActive(prj) {
+    list.querySelectorAll(".prj-row").forEach(x => x.classList.remove("active"));
+    prj.classList.add("active");
+  }
+
+  let cardTimer = 0;
+  function hideCard() { hcard.style.display = "none"; }
+  function hideCardSoon() { clearTimeout(cardTimer); cardTimer = setTimeout(hideCard, 300); }
+  function keepCard() { clearTimeout(cardTimer); }
+  hcard.addEventListener("mouseenter", keepCard);
+  hcard.addEventListener("mouseleave", hideCardSoon);
+  hcard.addEventListener("click", e => e.stopPropagation());
+
+  function showCard(s, row, p) {
+    clearTimeout(cardTimer);
+    hcard.innerHTML = `<div class="hc-head"><span class="hc-name">${s.t}</span></div>` +
+      `<div class="hc-row">${FOLDER_CLOSED}<span>${p.name}</span></div>` +
+      `<div class="hc-row">${CLOCK}<span>${s.time}${s.time === "刚刚" ? "" : "前"}</span></div>` +
+      `<div class="hc-row">${MSG}<span>${s.msgs || 0} 条消息</span></div>` +
+      `<div class="hc-sep"></div><div class="hc-actions"></div>`;
+    const dr = document.querySelector(".dock").getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    hcard.style.display = "block";
+    hcard.style.left = (dr.right + 8) + "px";
+    hcard.style.top = Math.max(8, Math.min(rr.top - 6, window.innerHeight - hcard.offsetHeight - 8)) + "px";
+    const title = hcard.querySelector(".hc-name");
+    title.addEventListener("click", () => {
+      const inp = document.createElement("input");
+      inp.className = "hc-edit";
+      inp.value = s.t;
+      title.replaceWith(inp);
+      inp.focus(); inp.select();
+      let done = false;
+      const commit = () => {
+        if (done) return;
+        done = true;
+        s.t = inp.value.trim() || s.t;
+        row.querySelector(".t").textContent = s.t;
+        hideCardSoon();
+      };
+      inp.addEventListener("blur", commit);
+      inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); commit(); } });
+    });
+    const actions = hcard.querySelector(".hc-actions");
+    const renderDel = () => {
+      actions.innerHTML = `<button class="hc-del">删除</button>`;
+      actions.querySelector(".hc-del").addEventListener("click", renderConfirm);
+    };
+    const renderConfirm = () => {
+      actions.innerHTML = `<button class="hc-cancel">取消</button><button class="hc-ok">确认</button>`;
+      actions.querySelector(".hc-cancel").addEventListener("click", renderDel);
+      actions.querySelector(".hc-ok").addEventListener("click", () => {
+        p.sessions = p.sessions.filter(x => x !== s);
+        hideCard();
+        renderGroup(p);
+      });
+    };
+    renderDel();
+  }
+
+  function hideMenu() { pmenu.style.display = "none"; }
+
+  function showMenu(p, btn) {
+    pmenu.innerHTML = "";
+    [
+      ["在系统文件浏览器中打开", ""],
+      ["为项目打开终端", ""],
+      ["删除项目所有会话", "danger"],
+    ].forEach(([label, cls]) => {
+      const it = document.createElement("button");
+      it.className = "pm-item" + (cls ? " " + cls : "");
+      it.textContent = label;
+      it.addEventListener("click", () => {
+        hideMenu();
+        if (label === "为项目打开终端") {
+          openTerm();
+          setPanel("files");
+        } else if (label === "删除项目所有会话") {
+          p.sessions = [];
+          renderGroup(p);
+        }
+      });
+      pmenu.appendChild(it);
+    });
+    const r = btn.getBoundingClientRect();
+    pmenu.style.display = "block";
+    pmenu.style.left = Math.max(8, r.left) + "px";
+    pmenu.style.top = Math.min(r.bottom + 6, window.innerHeight - pmenu.offsetHeight - 8) + "px";
+  }
+
+  let subTimer = 0;
+  function hideSub() { pmsub.style.display = "none"; }
+  function hideSubSoon() { clearTimeout(subTimer); subTimer = setTimeout(hideSub, 200); }
+  pmsub.addEventListener("mouseenter", () => clearTimeout(subTimer));
+  pmsub.addEventListener("mouseleave", hideSubSoon);
+
+  const SUBMENUS = {
+    view: () => [
+      ["项目分组列表", () => setListMode("grouped"), ICON_GROUPED, listMode === "grouped"],
+      ["最近会话列表", () => setListMode("flat"), ICON_FLAT, listMode === "flat"],
+    ],
+    sort: () => [
+      ["按更新时间排序", () => { sortMode = "time"; data.sort((a, b) => a._recent - b._recent); renderList(); }, ICON_CLOCK, sortMode === "time"],
+      ["手动排序", () => { sortMode = "manual"; data.sort((a, b) => a._manual - b._manual); renderList(); }, ICON_HAND, sortMode === "manual"],
+    ],
+  };
+
+  function showSub(key, item) {
+    clearTimeout(subTimer);
+    pmsub.innerHTML = "";
+    SUBMENUS[key]().forEach(([label, fn, icon, active]) => {
+      const it = document.createElement("button");
+      it.className = "pm-item";
+      it.innerHTML = (icon || "") + `<span>${label}</span>` + (active ? ICON_CHECK : "");
+      it.addEventListener("click", () => { fn(); hideSub(); hideMenu(); });
+      pmsub.appendChild(it);
+    });
+    const mr = pmenu.getBoundingClientRect();
+    const ir = item.getBoundingClientRect();
+    pmsub.style.display = "block";
+    pmsub.style.left = (mr.right + 6) + "px";
+    pmsub.style.top = Math.min(ir.top - 4, window.innerHeight - pmsub.offsetHeight - 8) + "px";
+  }
+
+  function showDotsMenu(btn) {
+    hideSub();
+    pmenu.innerHTML = "";
+    [
+      ["列表方式", ICON_ORGANIZE, "view"],
+      ["排序方式", ICON_SORT, "sort"],
+    ].forEach(([label, icon, key]) => {
+      const it = document.createElement("button");
+      it.className = "pm-item";
+      it.innerHTML = icon + `<span>${label}</span>` + CHEV_R;
+      it.addEventListener("mouseenter", () => showSub(key, it));
+      it.addEventListener("mouseleave", hideSubSoon);
+      pmenu.appendChild(it);
+    });
+    const r = btn.getBoundingClientRect();
+    pmenu.style.display = "block";
+    pmenu.style.left = Math.max(8, r.left) + "px";
+    pmenu.style.top = Math.min(r.bottom + 6, window.innerHeight - pmenu.offsetHeight - 8) + "px";
+  }
+
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#pmenu") && !e.target.closest("#pmsub") && !e.target.closest(".prj-act")) hideMenu();
+    hideSub();
+    if (!e.target.closest("#hcard")) {
+      const i = hcard.querySelector(".hc-edit");
+      if (i) i.blur(); else hideCard();
+    }
+  });
+
+  function makeSessionRow(s, p) {
+    const r = document.createElement("div");
+    r.className = "ps-row" + (s.sel ? " sel" : "");
+    r.innerHTML = `<span class="slot">${slotHtml(s)}</span><span class="t">${s.t}</span>`;
+    r.addEventListener("click", () => {
+      list.querySelectorAll(".ps-row").forEach(x => x.classList.remove("sel"));
+      r.classList.add("sel");
+      p.sessions.forEach(x => { x.sel = (x === s); });
+      document.getElementById("gitProj").textContent = p.name;
+      if (p._row) setActive(p._row);
+    });
+    r.addEventListener("mouseenter", () => showCard(s, r, p));
+    r.addEventListener("mouseleave", hideCardSoon);
+    return r;
+  }
+
+  function renderGroup(p) {
+    const group = p._group;
+    group.innerHTML = "";
+    if (!p.sessions.length) {
+      const e = document.createElement("div");
+      e.className = "ps-empty";
+      e.textContent = "无会话";
+      group.appendChild(e);
+      return;
+    }
+    p.sessions.forEach(s => group.appendChild(makeSessionRow(s, p)));
+  }
+
+  function renderList() {
+    list.innerHTML = "";
+    const label = document.createElement("div");
+    label.className = "ls-label";
+    label.innerHTML = `<span>${listMode === "flat" ? "会话" : "项目"}</span><span class="prj-actions">` +
+      `<span class="prj-act" data-tip="打开项目">${ICON_PROJECT}</span>` +
+      `<span class="prj-act" data-tip="新建会话">${ICON_NEW_CHAT}</span>`+
+      `<span class="prj-act" data-tip="会话查询">${SEARCH}</span>` +
+      `<span class="prj-act sort">${ELLIPSIS}</span></span>`;
+    label.querySelector(".prj-act.sort").addEventListener("click", e => {
+      e.stopPropagation();
+      showDotsMenu(e.currentTarget);
+    });
+    list.appendChild(label);
+
+    if (listMode === "flat") {
+      data.forEach(p => p.sessions.forEach(s => list.appendChild(makeSessionRow(s, p))));
+      return;
+    }
+
+    data.forEach(p => {
+      const prj = document.createElement("button");
+      prj.className = "prj-row" + (p.sessions.some(s => s.sel) ? " active" : "");
+      prj.innerHTML = `<span class="p-fico">${p.open ? FOLDER_OPEN : FOLDER}</span>` +
+        `<span class="pname">${p.name}</span>` +
+        `<span class="prj-actions">` +
+        `<span class="prj-act" data-tip="更多">${ELLIPSIS}</span>` +
+        `<span class="prj-act" data-tip="新会话">${PLUS}</span>` +
+        `</span>`;
+      prj.addEventListener("click", e => {
+        if (e.target.closest(".prj-act")) return;
+        p.open = !p.open;
+        prj.querySelector(".p-fico").innerHTML = p.open ? FOLDER_OPEN : FOLDER;
+        p._group.classList.toggle("off", !p.open);
+      });
+      prj.addEventListener("mousemove", e => {
+        if (e.target.closest(".prj-act")) return;
+        tooltip.style.display = "block";
+        tooltip.innerHTML = `<b>${p.name}</b><br><span class="t-path">${p.path}</span>`;
+        const x = Math.min(e.clientX + 14, window.innerWidth - 310);
+        tooltip.style.left = x + "px";
+        tooltip.style.top = (e.clientY + 16) + "px";
+      });
+      prj.addEventListener("mouseleave", () => tooltip.style.display = "none");
+
+      const [mBtn, nBtn] = prj.querySelectorAll(".prj-act");
+      mBtn.addEventListener("click", e => { e.stopPropagation(); showMenu(p, mBtn); });
+      nBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        const s = { t: "(新会话)", time: "刚刚", sel: true, msgs: 0 };
+        p.sessions.forEach(x => { x.sel = false; });
+        p.sessions.push(s);
+        if (!p.open) {
+          p.open = true;
+          prj.querySelector(".p-fico").innerHTML = FOLDER_OPEN;
+          p._group.classList.remove("off");
+        }
+        renderGroup(p);
+        const rows = p._group.querySelectorAll(".ps-row");
+        rows[rows.length - 1].classList.add("sel");
+        document.getElementById("gitProj").textContent = p.name;
+        setActive(prj);
+      });
+
+      const group = document.createElement("div");
+      group.className = "prj-group" + (p.open ? "" : " off");
+      p._row = prj;
+      p._group = group;
+      list.appendChild(prj);
+      list.appendChild(group);
+      renderGroup(p);
+    });
+  }
+  renderList();
+
+  // 左上角按钮：收起/展开侧栏（URL 带 #collapsed 时直接进入收起态，便于截图/演示）
+  document.querySelectorAll("#panesToggle, #panesToggleR").forEach(el =>
+    el.addEventListener("click", () => app.classList.toggle("panes-hidden")));
+  if (location.hash === "#collapsed") app.classList.add("panes-hidden");
+
+  // v17: slp 三面板 tabs（会话默认 / 文件树 / git），状态栏切换
+  const panelTabs = document.querySelectorAll(".sb-tab");
+  const panelViews = {
+    sessions: document.getElementById("pv-sessions"),
+    files: document.getElementById("pv-files"),
+    git: document.getElementById("pv-git"),
+  };
+  function setPanel(name) {
+    panelTabs.forEach(t => t.classList.toggle("on", t.dataset.panel === name));
+    Object.entries(panelViews).forEach(([k, v]) => v.classList.toggle("on", k === name));
+  }
+  panelTabs.forEach(t => t.addEventListener("click", () => setPanel(t.dataset.panel)));
+
+  // 内容区视图状态机：chat 默认；terminal / markdown 预览以 topbar tab 打开
+  const mainCol = document.getElementById("mainCol");
+  const contentCol = document.querySelector(".content-col");
+  const termTabBar = document.getElementById("termTabBar");
+  const mdTabBar = document.getElementById("mdTabBar");
+  let termOpen = false, mdOpen = false, contentView = "chat";
+  function renderContentTabs() {
+    termTabBar.classList.toggle("act", termOpen && contentView === "term");
+    mdTabBar.classList.toggle("act", mdOpen && contentView === "md");
+  }
+  function setContent(v) {
+    contentView = v;
+    mainCol.classList.toggle("term-on", v === "term");
+    mainCol.classList.toggle("md-on", v === "md");
+    contentCol.classList.toggle("term-on", v === "term");
+    contentCol.classList.toggle("md-on", v === "md");
+    renderContentTabs();
+  }
+  function openTerm() { termOpen = true; setContent("term"); }
+  document.getElementById("termClose").addEventListener("click", e => {
+    e.stopPropagation(); termOpen = false;
+    if (contentView === "term") setContent(mdOpen ? "md" : "chat"); else renderContentTabs();
+  });
+  document.getElementById("mdClose").addEventListener("click", e => {
+    e.stopPropagation(); mdOpen = false;
+    if (contentView === "md") setContent(termOpen ? "term" : "chat"); else renderContentTabs();
+  });
+  termTabBar.addEventListener("click", () => { if (termOpen) setContent("term"); });
+  mdTabBar.addEventListener("click", () => { if (mdOpen) setContent("md"); });
+  document.querySelectorAll("#pv-files .ft-row.l3").forEach(r =>
+    r.addEventListener("click", () => {
+      if (r.textContent.includes(".md")) { mdOpen = true; setContent("md"); }
+    }));
+
+  // slp 宽度拖拽：250–500px，双击复位；写 --slp-w 变量，所有依赖尺寸自动跟随
+  {
+    const rz = document.getElementById("slpResize");
+    let startX = 0, startW = 0;
+    const clampW = w => Math.min(500, Math.max(250, w));
+    rz.addEventListener("pointerdown", e => {
+      startX = e.clientX;
+      startW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--slp-w"));
+      rz.classList.add("dragging");
+      rz.setPointerCapture(e.pointerId);
+    });
+    rz.addEventListener("pointermove", e => {
+      if (!rz.classList.contains("dragging")) return;
+      const w = clampW(startW + e.clientX - startX);
+      document.documentElement.style.setProperty("--slp-w", w + "px");
+    });
+    rz.addEventListener("pointerup", e => {
+      rz.classList.remove("dragging");
+      rz.releasePointerCapture(e.pointerId);
+    });
+    rz.addEventListener("dblclick", () =>
+      document.documentElement.style.setProperty("--slp-w", "282px"));
+  }
+
+  // git 面板页签切换
+  document.querySelectorAll(".g-tab").forEach(t => t.addEventListener("click", () => {
+    document.querySelectorAll(".g-tab").forEach(x => x.classList.toggle("on", x === t));
+    document.getElementById("gv-changes").classList.toggle("on", t.dataset.gt === "changes");
+    document.getElementById("gv-history").classList.toggle("on", t.dataset.gt === "history");
+  }));
+
+  // 设置弹窗：齿轮开 / 点遮罩或 Esc 关；页签切换
+  const settingsMask = document.getElementById("settingsMask");
+  document.querySelectorAll('[data-tip="设置"]').forEach(el =>
+    el.addEventListener("click", () => settingsMask.classList.add("open")));
+  document.getElementById("settingsClose").addEventListener("click", () =>
+    settingsMask.classList.remove("open"));
+  settingsMask.addEventListener("click", e => {
+    if (e.target === settingsMask) settingsMask.classList.remove("open");
+  });
+  document.querySelectorAll(".set-item").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll(".set-item").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll(".set-pane").forEach(pn =>
+      pn.classList.toggle("on", pn.id === "sp-" + b.dataset.sp));
+  }));
+
+  // hash 预置：#files / #git / #term 便于截图演示
+  if (location.hash === "#files") setPanel("files");
+  if (location.hash === "#git") setPanel("git");
+  if (location.hash === "#history") { setPanel("git"); document.querySelector('.g-tab[data-gt="history"]').click(); }
+  if (location.hash === "#term") { termOpen = true; setContent("term"); }
+  if (location.hash === "#md") { mdOpen = true; setContent("md"); }
+  if (location.hash === "#both") { termOpen = true; mdOpen = true; setContent("term"); }
+  if (location.hash === "#settings") settingsMask.classList.add("open");
+  if (location.hash === "#nav") document.querySelector(".nav-gutter").classList.add("open");
+
+  // v28: 比例尺——10 个灰圆点 + 9 段灰线（线不穿点）；超 10 轮不增长只细分
+  const msgNav = document.getElementById("msgNav");
+  const DOTS = 10, ACTIVE = 7, step = 100 / (DOTS - 1);
+  for (let i = 0; i < DOTS; i++) {
+    const d = document.createElement("button");
+    d.className = "nav-node" + (i === ACTIVE ? " on" : "");
+    d.style.top = i * step + "%";
+    msgNav.appendChild(d);
+    if (i < DOTS - 1) {
+      const seg = document.createElement("i");
+      seg.className = "nav-seg";
+      seg.style.top = `calc(${i * step}% + 4.5px)`;
+      seg.style.height = `calc(${step}% - 9px)`;
+      msgNav.appendChild(seg);
+    }
+  }
+
+  // topbar 图标按钮：悬停 tip 气泡（复用 #tooltip）
+  document.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("mousemove", e => {
+      tooltip.textContent = el.dataset.tip;
+      tooltip.style.display = "block";
+      const th = tooltip.offsetHeight;
+      const x = Math.min(e.clientX + 14, window.innerWidth - 160);
+      tooltip.style.left = x + "px";
+      tooltip.style.top = (e.clientY + 18 + th > window.innerHeight - 4)
+        ? (e.clientY - 6 - th) + "px"
+        : (e.clientY + 18) + "px";
+    });
+    el.addEventListener("mouseleave", () => tooltip.style.display = "none");
+  });
+</script>
+</body>
+</html>
