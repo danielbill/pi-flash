@@ -1,138 +1,144 @@
 # pi-flash 主界面设计说明
 
-> 配套文件：[主界面UI设计.html](./主界面UI设计.html)（可交互设计稿，双击浏览器打开）
-> 状态：设计定稿 · 2026-09-28 · mist 主题 · 共 35 轮迭代
+> 现行定稿：[主界面UI设计-2.html](./主界面UI设计-2.html)（psp 一体列表版，可交互设计稿，双击浏览器打开）
+> 旧版（v53 plb 版）已删除，演进过程见 git 历史
+> 状态：设计封稿 · 2026-09-29 · mist 主题
 > 文件约定：HTML 内**不写注释、不写页面说明文字**；补丁脚本存于 `tmp/design/patch_*.py`
 > 演示哈希：`#collapsed` 收起侧栏 · `#files` / `#git` 切面板 · `#term` / `#md` / `#both` 内容区视图 · `#history` git 历史页 · `#nav` 会话导航展开 · `#settings` 设置弹窗
 
 ## 1. 布局总览
 
 ```
-┌──────────────────────────────┬────────────────────────────────┐
-│ topbar 左段（chrome）         │ topbar 右段（chrome）           │
-│ [收放][项目][会话][搜索][终端] │ [终端tab][md tab]   [设置]│─□× │
-├──────┬──────────────┬────────┴────────────────────────────────┤
-│ plb  │ slp          │ 内容区（聊天 / 终端 / md 预览）           │
-│ 66px │ 250–500px    │                                        │
-│ 项目 │ 会话|文件树|git│                                        │
-│ 标签 │ 三面板        │                                        │
-├──────┴──────────────┴────────┐                               │
-│ statusbar（仅面板段）[3 tabs] │ ← 内容区直通窗口底              │
-└──────────────────────────────┴────────────────────────────────┘
+┌────────────────────────┬──────────────────────────────────┐
+│ topbar 左段（chrome）    │ topbar 右段（chrome）              │
+│ [收放]                  │ [终端tab][md tab]   [设置]│─□×    │
+├────────────────────────┴─────┬────────────────────────────┤
+│ psp 250–500px                │ 内容区（聊天/终端/md 预览）   │
+│ 项目+会话一体列表|文件树|git    │                            │
+├──────────────────────────────┴───┐                        │
+│ statusbar（仅面板段）[3 tabs]      │ ← 内容区直通窗口底      │
+└──────────────────────────────────┴────────────────────────┘
 ```
 
-- topbar 完全自绘（无系统边框），分左右两段：左段属面板区（chrome 底），右段属内容区（内容底）——Obsidian 式
-- plb|slp 之间**无分隔线**（色差分层）；slp|内容一条全高竖线
-- **statusbar 只存在于面板段**（宽度 = plb + slp）：内容区在所有视图下都直通窗口底，内容列下探 25px，composer 贴近底缘
-- git 面板没有独立内容区——它的"内容区"就是会话内容区
+- **plb（66px 项目竖栏）已废除**：项目与会话合并为 psp 单列一体列表（ChatGPT 式，设计核心=隐藏复杂度、减少第一层信息量）
+- topbar 左段只剩收放钮；原工具钮全部下沉 psp title 行
+- slp|内容一条全高竖线；statusbar 只在面板段，内容区所有视图直通窗口底（内容列下探 25px）
 
-## 2. 尺寸系统（全部走 CSS 变量）
+## 2. 尺寸系统（CSS 变量）
 
 | 项 | 值 |
 |---|---|
-| topbar 高 | **38px**（两段同高；图标 17px，窗口控制 glyph 14px） |
-| statusbar 高 | **30px**，宽度恒为面板段 |
-| plb 宽 | **66px**，padding 上 0 下 5 左右 3（首标签贴 topbar 下沿，无 gap） |
-| slp 宽 | **可拖拽 250–500px**，默认 282px |
-| composer 边距 | 上 2px、左右 34px、下 5px |
+| topbar 高 | **36px**（两段同高；窗口控制钮高度跟随） |
+| statusbar 高 | 30px，宽度 = slp；**收起态整个隐藏**（v54 前 statusbar 残留 bug 的修正） |
+| psp 宽 | **可拖拽 250–500px**，默认 282px（分隔线 6px 命中区 + 双击复位） |
+| composer | 宽 **内容区 75%**、min 500px；内边距 5/7/3 |
 | 内容列 | 无条件 `margin-bottom: -25px` 下探 |
-| 对齐锚点 | topbar 工具簇、状态栏 tabs、slp 会话行同起点 = `plb + 16px`；topbar tools 实际 margin = `plb/2 + 1px`（因前方有收放钮） |
+| 内容区 tab | 常态 36px、激活连体态 33px（随 topbar -2px 同步） |
 
-**变量化是硬约束**：`--plb-w` / `--slp-w` 定义在 `:root`，rail/dock/panel-col/贯穿线/对齐锚点全部 `calc()` 派生——改动任何宽度，其余自动跟随（曾因写死 350px 与实际 348px 差 2px 出过"分隔线变宽"的 bug）。
-
-**slp 拖拽**（参考 zed panel resize）：分隔线上 6px 隐形命中区，pointer capture 拖拽 + clamp(250,500) + 双击复位 282px；悬停/拖拽显 accent 线。
+变量化硬约束不变：`--slp-w` 派生一切（panel-col/贯穿线/statusbar 宽）。
 
 ## 3. 三层色阶
 
 | 层 | token | 色值 | 区域 |
 |---|---|---|---|
-| chrome | `--chrome` | `#dfe9e5` | topbar 两段 + statusbar + plb |
-| nav | `--nav` | `#eef4f1` | slp |
-| content | `--bg` | `#f4f8f7` | 聊天 / 终端标签页 / md 预览 |
+| chrome | `--chrome` | `#dfe9e5` | topbar 两段 + statusbar |
+| nav | `--nav` | `#eef4f1` | psp |
+| content | `--bg` | `#f4f8f7` | 聊天 / md 预览 |
 
-- `--chrome-hover: #e7efec`（chrome 区悬停）；悬停通则 = 所在层按下一档
-- **选中语言一句话：填充色 = 它打开的目标区域；accent bar 只归项目标签**
-  - 项目标签选中：满幅出血色带（nav 色）连体 slp + 左缘 3px accent 竖条（贴窗口边、全高、方形）
-  - 会话行选中：accent 10% soft-tint 圆角 pill（色相偏移，非明度差——浅色主题上纯明度差不可见的教训）
-  - 状态栏面板 tab 激活：nav 色向上顶穿状态栏顶线连体 slp
-  - 内容区 tab 激活：bg 色凸起卡片，下缘压过 topbar 底线连体内容
+- 选中语言：**会话选中 = accent 10% soft-tint**（色相偏移，非明度差）；**活动项目 = 名字提亮加粗**（v60 起无 accent bar）；tab 激活 = 填充色连体（状态栏 tab 向上顶穿、内容区 tab 向下凸起、git 头部 tab 同）
+- 淡灰辅助色 `#a3b0aa`（placeholder / 非操作信息 / 导航工具列表）；title 淡色 `#8a9d95`
 
-## 4. plb（projectListBar，66px）
+## 4. psp（项目会话面板，单列）
 
-- 标签**统一 46px 等高**：第一行项目名，第二行恒存在
-- 第二行语义二分：**活跃** = 旋转圈（有 session 在跑）/ 绿点（全停有未读）+ 未读回执数（session 个数 ≠ 消息数）；**空闲** = 距今时间（"1小时前"）
-- 空闲项目整体降灰：名字 `--text-dim` + 字重 500（只降色不降字重看不出差别）
-- 排序：活跃/未读在前，空闲按时间倒序；**硬上限 10 个**（`slice(0,10)`），更多只能「打开项目」手动打开
-- 选中：满幅出血 `width: calc(100%+8px); margin-left: -4px; padding-left: 12px`，文字与他签同位；出血必须显式加宽——纵向 flex 里负 margin-right 撑不宽盒子（踩过）
+**title 行**（操作行，灰字 `#8a9d95`、行高 24px）：
+- 左：文案随列表模式切换——分组列表=「项目」，平铺=「会话」
+- 右：**4 个常显钮**（18px 图标，gap 10px + per-icon margin 配平，无 tip）——打开项目（iconfont 实底）/ 新建会话（iconfont 实底，19px）/ 会话查询（lucide search）/ 排序（ellipsis，无 tip）
 
-## 5. slp（sessionListPanel，三面板）
+**⋯ 排序菜单**（一级菜单**左对齐**触发钮左缘；二级菜单右侧弹出）：
+- 列表方式 › **项目分组列表** ✓ / **最近会话列表**（iconfont 图标 + 选中勾，切换后 title 文案跟随）
+- 排序方式 › **按更新时间排序** ✓ / **手动排序**（iconfont 图标 + 勾；手动=恢复初始序，真拖拽待实现）
 
-状态栏 tabs 切换，会话默认：
+**分组列表**（默认）：
+- 项目行 = folder 开合图标 + 名字（muted 500 字重；活动项目提亮加粗）；**点击 = 组收起/展开**；空组展开显示淡灰「无会话」
+- 会话行缩进：15px 状态槽（运行=旋转圈 / 未读=绿点 / 空槽占位对齐）+ 标题；**标题与项目名同一对齐列**
+- 项目行 hover：深色 tooltip（短目录名 + 全路径 mono）+ 右侧 **⋯ / ＋** 显现（22px 槽、图标 18px、gap 2px）
+  - ⋯ 菜单（左对齐）：在文件浏览器中打开 / 在终端中打开（开终端 + slp 切文件树）/ 删除项目及所有会话（红字，iconfont 图标）
+  - ＋ = 新会话入组即选中并激活项目
+- **≤5 个项目**按最近更新倒序（settings-其他「默认加载项目数」可调）；上限由 10 改 5
 
-1. **会话**：session list；选中 = soft-tint pill
-2. **文件树**（Zed 式）：根项目行（folder-open + 加粗）、每级缩进 guide 线（1px 通长）、按类型图标（folder-open/folder、md=book、html=file-code、json=braces、sh=file）、选中行全宽色带；点 .md 行打开内容区预览 tab
-3. **git**（Zed 式，不做 diff 详情页）：
-   - 页签 `Changes (N) / History`
-   - Changes：View Diff + Stage All ∨ 操作行；Untracked 变更树（文件夹开合图标、新增文件绿色 + 徽标、行尾复选框、选中行 accent 描边）；底部固定区 = `⎇ main + ↑N Push ∨` / **commit message 大区**（无边框无卡片、与面板同底、min-height 96px，靠留白视觉扩容）/ `Commit Tracked ∨`；最底最近提交条 = 标题 + 单个 uncommit（undo-2 图标）
-   - **明确去掉**：窗口操作图标（放大/弹出）、AI 写描述按钮
-   - History：提交列表（标题 + ↑ 推送小钮；`○ 多多有鱼 · 时间 · hash` 元行），底部 commit 区不显示
+**平铺列表**：全部会话按最近顺序平铺、无项目头，title 切「会话」；点会话仍记选中态与项目归属
 
-## 6. topbar（38px 两段）
+**会话行 hover 详情卡**（浅色浮层，258px，锚定侧栏右缘外 8px）：
+- 标题（hover 蒙 `--bg-hover` 引导点击 → 变输入框改名，Enter/blur 双路提交）
+- folder-closed 项目名 / clock 最后活动（"N小时前"） / message N 条消息 / 通宽分隔线
+- 底部右对齐：**删除**（红 ghost 钮）→ 点击原地换 **取消/确认**（确认执行、组即时刷新）
+- 交互三坑（已修）：settings-mask 漏 `</div>` 吞浮层、离行 300ms 宽限 + 进卡取消隐藏、卡片内点击 stopPropagation（否则改名即闪退）
 
-- **左段**（chrome）：收放钮（贴左 5px）+ 工具簇：打开项目（folder-open）/ 新建会话（message-square-plus）/ 会话搜索（search）/ 打开终端（terminal）——纯图标 30×30，图标 17px，悬停 tip 气泡
-- **右段**（内容底，padding-left 4px）：内容区 tabs + 弹性空档 + 设置（sliders-horizontal）+ 竖线 + 窗口控制（42×38，关闭悬停红）
-- **收起**（Obsidian 式）：面板整体归零隐藏（非留 46px 竖条）、内容区竖线与状态栏一并消失；收放钮跳到内容区 topbar 起点（图标**镜像**：竖线在右），点击展开
-- 收起态间隙 **4px 等距**（上下左右一致，38px 行内 30px 按钮）
+## 5. 文件树面板（不变）
 
-## 7. 内容区 tab（Obsidian 式）
+Zed 式：根项目行、每级缩进 guide 线、类型图标（folder-open/folder、md=book、html=file-code、json=braces、sh=file）、选中行全宽色带；点 .md 行打开内容区预览 tab
 
-- **激活 tab** = 凸起卡片：bg 色、顶部圆角、下缘压线连体内容、× 可见（× 关闭）
-- **非激活 tab** = 平铺文字：无底无框、muted 灰、条带内垂直居中、无 ×；点文字切换，凸起随之转移
-- 视图状态机：`chat`（默认，无 tab）→ `term`（终端，暗底 + bash tab）→ `md`（markdown 预览：居中 760px 版式、h1/h2/p/ul/pre 样式，代码块 panel 底）
-- 终端标签与分隔线相隔 10px；tab 间 4px
+## 6. git 面板
 
-## 8. composer（一体式，ZCode 式）
+- **头部单行**：`项目title（淡色 #8a9d95，min 100px / max 50%，截断） + Changes(N)/History tabs 右靠`（tab 11.5px，激活连体；项目名随选中会话切换）
+- Changes：View Diff（iconfont 加号底线图标）+ Stage All ∨；Untracked 变更树（开合文件夹、绿 + 徽标、行尾复选框、选中 accent 描边）；底部 = `⎇ main + ↑N Push ∨` / commit message 大区（无边框融入式 96px）/ `Commit Tracked ∨`；最近提交条 + uncommit
+- History：提交列表（○ 多多有鱼 · 时间 · hash + ↑ 推送小钮）
+- 明确去掉：窗口操作图标、AI 写描述按钮
 
-单容器（16px 圆角、1.5px 边框）：上部多行文本区 + 底部控件行
+## 7. topbar（36px 两段）
 
-- 左：**图片**（lucide image）+ **工具预设**（wrench「默认 ∨」）——没有 + 按钮
-- 右：**上下文用量环**（donut 弧线 = 已用比例，tip 显示"15.2万 / 1.0M（15%），点击查看明细"；点击出分项弹窗：消息/系统工具/技能/系统提示词/MCP + 缓存命中率）→ **模型 ∨** → **思考强度 ∨**（lightbulb「high」）→ **发送 ↑**（accent 方形圆角键，运行中变停止）
-- 无压缩、无铃声、无 AI 按钮
+- 左段（chrome）：**仅收放钮**（贴左 5px）——打开项目/新建会话/搜索/终端四钮已下沉或删除
+- 右段：内容区 tabs + 设置（sliders-horizontal）+ 竖线 + 窗口控制（42×36，关闭悬停红）
+- 收起（Obsidian 式）：面板 + statusbar **全部隐藏**；收放钮跳到右段起点（竖线镜像），4px 等距
 
-## 9. statusbar（30px，仅面板段）
+## 8. 内容区 tab（不变，Obsidian 式）
 
-- 永远只有三个面板 tab（会话/文件树/Git），46px 宽、icon 即标签
-- 右段状态信息**已删除**（所有视图下内容区都无 statusbar）
+激活=凸起卡片（bg 色、顶圆角、压底线、× 可见）；非激活=平铺文字；状态机 chat/term/md；term|md tab 距分隔线 10px
 
-## 10. 设置弹窗
+## 9. composer（一体式）
 
-- 居中 **70% 宽 × 98% 高**，遮罩点击关闭，右上 × 关闭（悬停红）；弹窗自带 38px topbar（chrome 底、发丝线）
-- 左导航 **200px**（nav 底）：六页签带图标——界面(wallpaper)/模型(cpu)/技能(wand-sparkles)/子代理(bot)/插件(plug)/其他(ellipsis-vertical)；激活项选中底 + accent 图标
-- 右内容：**无页标题、无页面说明**，直接设置行（标题+描述居左、控件居右、发丝线分行）
-- 行控件：下拉（sel-btn 单行 + 10px chev）、toggle（34×19 accent pill）、只读文本、列表卡（set-list）
-- 各页内容按真实配置 mock：界面（主题/图标/三字体/语言/提示音/预载数）、模型（默认模型/思考强度/可用列表）、技能开关、子代理档案、npm 插件、其他（pi 版本/启动恢复/数据目录）
+- 单容器 16px 圆角 1.5px 边框；**宽 75% / min 500px**，居中，整体高出窗口底 10px
+- **悬浮胶囊（独立性的表达）**：上浮 18px 叠在聊天区上（消息从胶囊后滚过），双层软影 `0 8px 24px / 0 2px 6px rgba(20,40,34,…)`；wrapper `pointer-events:none`、胶囊 `auto`（叠住区不吞点击）；聊天区底部 padding 12→30px 让位
+- placeholder：`/使用命令，shift回车换行`，淡灰 `#a3b0aa`
+- 控件行：左 = 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨ + 思考∨ + **圆形发送 ↑**（28px、上提 3px、accent 底）
+- 操作栏距下边框 3px；无压缩/铃声/AI 按钮
 
-## 11. 会话导航（minimap）
+## 10. statusbar（30px，仅面板段）
 
-- 位置：聊天滚动区**外侧**（聊天区滚动条隐藏），透明底常驻
-- 几何硬性规定：**topbar 下 100px 起；最高内容区 70%；节点硬上限 10 个**
-- 节点 = **比例尺**：不对应单条对话；≤10 轮一轮一点，超过不增长只细分；当前阅读位 = accent 实心
-- 样式：pi-web 式**灰点（7px）+ 灰线分段连接，线不穿过圆点**（弃用 ZCode 式小横条）
-- 悬停展开：326px 发言列表**覆盖层**（绝对定位、不挤压布局）：`01` 编号 + 用户发言（加粗 ≤3 行）/ `A` + agent 回复首行，轮间分隔线，当前轮 accent 左条；圆点列保持覆盖层右缘可见
+三个面板 tab（psp/文件树/Git）46px 宽 icon 即标签；**收起态整个隐藏**
 
-## 12. 图标系统
+## 11. 设置弹窗
 
-统一 **Lucide 24 栅格 2px 描边**，SVG path 内嵌。已用：messages-square（会话 tab）、message-square-plus（新建会话）、folder-open（打开项目/展开目录）、folder、search、terminal、sliders-horizontal（设置）、file-code、book（md）、braces（json）、file、image、wrench、lightbulb、git-branch、undo-2（uncommit）、wallpaper/cpu/wand-sparkles/bot/plug/ellipsis-vertical（设置导航）。
+70%×98% 居中，自带 **36px** topbar；左导航 200px 六页签带图标；界面页含「默认加载项目数·5」；其余同前（无页标题无说明文字）
 
-## 13. GPUI 实现注记
+## 12. 会话导航（比例尺）
 
-- 拖拽区：`WindowControlArea::Drag` 挂 topbar 背景，子按钮命中豁免（已验证的坑）
-- slp 宽度拖拽 → dock state 持久化（position/panel/width 已有 schema）
-- statusbar 语境化 = 内容列 `margin-bottom: -25px` + 面板段独立条；GPUI 里直接给 content-col 换算高度
-- 会话导航：节点位置按轮数等分 + 滚动比例点亮；跳转 scroll_to 消息锚点；未读回执数需 SessionRuntime 状态 + 持久化（配合 project 管理）
-- 色阶：chrome/nav 需在 theme.rs 新增两个派生档（或 mist 常量直落）
-- 覆盖层（导航 flyout / 设置弹窗）：gpui overlay + z 顺序，不参与布局
+- **垂直居中**于内容区（上下等距，v27 的"top 下 100px/70% 高"废止）；**高 65%**；节点 ≤10、灰点灰线分段连接、当前位 accent
+- 悬停展开 326px 发言列表覆盖层（不挤压布局）
 
-## 14. 迭代史要点（v1→v35）
+## 13. 对话区消息
 
-100px 居中标签 → 左对齐+状态行 → 无分组贯穿线 → 三按钮上 topbar → Obsidian 自绘 topbar → 图标化两段 topbar → 对齐系统 → 三层色阶 → 连体 tab 出血修正 ×4 → plb 66px → 会话选中 soft-tint → 三面板 tabs → 内容区终端 → 面板 tab 连体 → Lucide 图标 → 一体 composer → 会话导航（minimap 比例尺 → pi-web 灰点灰线）→ 画板自适应视口 → 文档转正（docs/UI设计/）→ topbar 38/statusbar 30 → 首标签贴顶 → 等高标签+空闲时间行 → 空闲降灰+10 上限 → slp 可拖拽+变量化 → 对齐锚点修正 → Obsidian 收起（全隐+镜像钮）→ 4px 等距 → statusbar 仅面板段 → 内容区 tab 化（terminal/md）→ Obsidian tab 凸起/平铺 → 设置弹窗 → 注释清零。
+**用户气泡**（右对齐）：
+- 操作栏**默认隐藏**，hover 消息行（整行感应区）淡入 0.15s
+- 内容：⧉复制 / ✎编辑 / ⑂新分支（lucide 图标 + 文字）+ 时间；操作项 `--text-dim` hover 提亮，时间淡灰
+
+**agent 回复**（左对齐）：
+- 开头**工作详情折叠行**（pi-web 特色，无框、与正文左对齐、chevron 旋转 90° 展开）：`工作详情 · N 条消息 · N 次工具调用`；展开 = 左细线缩进的工具调用列表（tool · 对象）；仅**已完成**回复有（工作中无）
+- 操作栏**默认隐藏**、hover 消息块显示；左对齐三块：⧉复制 / 用时（"用时1分55秒"）/ 时间；**支出信息已删**（冗余，可下沉 hover 或会话级统计）
+- **时间格式统一**「X月X日 HH:MM」；非操作信息淡灰 `#a3b0aa`
+
+## 14. 图标系统
+
+- **Lucide 24 栅格 2px 描边**：search、image、wrench、lightbulb、copy、pencil、git-branch、check、chevron、undo-2、sliders-horizontal、wallpaper/cpu/wand-sparkles/bot/plug/ellipsis-vertical、folder-tree、messages-square、file 系
+- **iconfont 实底**（用户提供）：打开项目（1099 箱）、新建会话（1024 箱）、文件浏览器、终端、垃圾桶、列表方式、分组/平铺列表、时钟、手动排序、View Diff 加号底线
+- **混排三规则**：① fill 转 `currentColor` 继承；② iconfont 轮廓字线宽写死在视箱单位里，需 svg 根加 stroke 配重（project=31/new chat=24/菜单组=40/时钟=40，按显示尺寸折算）；③ **viewBox 收紧到墨迹边界**（~88% 填充率）消除"外围束缚"，否则图形本体比 Lucide 小一圈
+
+## 15. GPUI 实现注记
+
+- plb 已废：项目列表=psp 树状结构（项目组+会话子行），展开态持久化
+- psp 交互映射：组收起/展开、hover 浮层（tooltip/详情卡/两级菜单）用 gpui overlay；详情卡改名=行内编辑态
+- 工作详情折叠行 = 消息元数据（消息数/工具调用数 + 工具流），SessionRuntime 聚合
+- 消息操作栏 hover 显隐 = 消息块 hover 状态；复制/编辑/新分支接会话分支机制
+- 手动排序需会话顺序持久化（`_manual` 索引示意）；跨项目预载、启动恢复照旧
+- 拖拽/色阶/覆盖层注记同前版
+

@@ -35,7 +35,7 @@
   }
 
     .topbar-l, .topbar-r {
-    height: 38px; flex: none;
+    height: 36px; flex: none; position: relative;
     display: flex; align-items: center;
     user-select: none;
   }
@@ -63,7 +63,7 @@
   .tb-win { display: flex; align-items: center; }
   .tb-win svg { width: 14px; height: 14px; }
   .tb-win > div {
-    width: 42px; height: 38px;
+    width: 42px; height: 36px;
     display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); cursor: default;
   }
@@ -241,16 +241,19 @@
   .ft-row.l3 { padding-left: 62px; }
   .ft-guide { position: absolute; top: 32px; bottom: 6px; width: 1px; background: rgba(175, 196, 186, .4); }
     #pv-git.on { display: flex; flex-direction: column; padding: 0; }
-  .g-proj { flex: none; display: flex; align-items: center; gap: 7px;
-    padding: 8px 10px 6px 14px; font-size: 12.5px; font-weight: 600; color: var(--text); }
-  .g-proj svg { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
-  .g-tabs { flex: none; display: flex; border-bottom: 1px solid rgba(175,196,186,.4); }
+  .g-head { flex: none; display: flex; align-items: center;
+    border-bottom: 1px solid rgba(175,196,186,.4); }
+  .g-proj { display: flex; align-items: center; flex: none; min-width: 100px; max-width: 50%;
+    padding: 5px 4px 5px 14px; font-size: 12px; font-weight: 600; color: #8a9d95; }
+  .g-proj span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g-tabs { margin-left: auto; display: flex; }
   .g-tab {
-    flex: 1; border: 0; background: transparent; padding: 9px 0 8px;
-    font-size: 12.5px; color: var(--text-muted); font-family: inherit; cursor: default;
+    flex: none; border: 0; background: transparent; padding: 6px 9px 5px; margin-bottom: -1px;
+    font-size: 11.5px; color: var(--text-muted); font-family: inherit; cursor: default;
   }
   .g-tab:hover { color: var(--text); }
-  .g-tab.on { background: var(--bg); color: var(--text); font-weight: 600; }
+  .g-tab.on { background: var(--bg); color: var(--text); font-weight: 600;
+    border: 1px solid rgba(175,196,186,.4); border-bottom: 0; border-radius: 7px 7px 0 0; }
   .g-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
   .g-view.on { display: flex; }
   .g-actions { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 10px; }
@@ -330,7 +333,7 @@
     overflow-x: auto; margin-bottom: 10px; white-space: pre; }
   .term-tab, .md-tab {
     display: none;
-    align-self: center; height: 38px;
+    align-self: center; height: 36px;
     align-items: center; gap: 9px;
     background: transparent; border: 0; border-radius: 0;
     padding: 0 12px;
@@ -343,7 +346,7 @@
   .content-col.md-on .md-tab { display: flex; }
   #panesToggleR { margin-right: 4px; }
   .term-tab.act, .md-tab.act {
-    align-self: flex-end; height: 35px; margin-bottom: -1px;
+    align-self: flex-end; height: 33px; margin-bottom: -1px;
     background: var(--bg);
     border: 1px solid rgba(175,196,186,.55); border-bottom: 0;
     border-radius: 9px 9px 0 0;
@@ -360,7 +363,7 @@
 
     .main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
 
-    .chat { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 30px 12px 34px; scrollbar-width: none; }
+    .chat { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 30px 135px 34px; scrollbar-width: none; }
   .chat::-webkit-scrollbar { display: none; }
   .chat-wrap { position: relative; }
   .chat-and-nav { flex: 1; min-height: 0; display: flex; }
@@ -369,8 +372,9 @@
     display: flex; flex-direction: column;
   }
   .msg-nav {
-    position: absolute; top: 100px; right: 0; width: 26px;
-    height: 70%;                }
+    position: absolute; top: 50%; right: 0; width: 26px;
+    transform: translateY(-50%);
+    height: 65%; }
     .nav-node {
     position: absolute; left: 50%; transform: translate(-50%, -50%);
     width: 7px; height: 7px; border-radius: 50%; padding: 0; border: 0;
@@ -420,12 +424,27 @@
     background: var(--user-bg); border-radius: 14px;
     padding: 9px 15px; font-size: 14px; max-width: 62%;
   }
-  .msg-actions { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-dim); padding-right: 4px; }
+  .msg-actions { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-dim); padding-right: 4px;
+    opacity: 0; transition: opacity .15s ease; }
+  .msg-user:hover .msg-actions { opacity: 1; }
   .msg-actions span { cursor: default; }
-  .msg-actions span:hover { color: var(--text); }
-  .msg-actions .when { margin-left: 4px; }
+  .msg-actions .act:hover { color: var(--text); }
+  .msg-actions .act { display: flex; align-items: center; gap: 4px; }
+  .msg-actions .act svg { width: 12px; height: 12px; }
+  .msg-actions .when { margin-left: 4px; color: #a3b0aa; }
 
   .msg-assistant { display: flex; flex-direction: column; gap: 8px; }
+  .work-fold { display: flex; align-items: center; gap: 6px; width: fit-content;
+    padding: 4px 8px; margin: 0 0 10px -8px;
+    font-size: 12px; color: var(--text-dim); cursor: default; user-select: none; }
+  .work-fold:hover { background: var(--bg-hover); }
+  .work-fold svg { width: 12px; height: 12px; flex: none; transition: transform .15s ease; }
+  .work-fold.open svg { transform: rotate(90deg); }
+  .work-body { display: none; margin: -4px 0 10px; padding: 2px 0 2px 14px;
+    border-left: 2px solid rgba(175,196,186,.4); }
+  .work-fold.open + .work-body { display: block; }
+  .work-body div { font-size: 12px; color: #a3b0aa; padding: 3px 0; }
+  .work-body .t { color: var(--text-dim); }
   .as-name { font-size: 11px; color: var(--text-dim); }
   .as-body { font-size: 14px; line-height: 1.7; color: var(--text); }
   .as-body p { margin-bottom: 8px; }
@@ -437,10 +456,16 @@
     background: rgba(24, 65, 50, .07); border-radius: 5px; padding: 1px 6px;
   }
   .as-stats {
-    display: flex; justify-content: space-between;
-    font-family: Consolas, monospace; font-size: 11px; color: var(--text-dim);
-    margin-top: 2px;
+    display: flex; align-items: center; gap: 14px;
+    font-size: 11.5px; color: var(--text-dim);
+    margin-top: 6px;
+    opacity: 0; transition: opacity .15s ease;
   }
+  .msg-assistant:hover .as-stats { opacity: 1; }
+  .as-stats .act { display: flex; align-items: center; gap: 4px; cursor: default; }
+  .as-stats .act svg { width: 12px; height: 12px; }
+  .as-stats .act:hover { color: var(--text); }
+  .as-stats > span:not(.act) { color: #a3b0aa; }
 
     .phase-row { display: flex; align-items: center; gap: 9px; color: var(--accent); font-size: 13px; }
   .phase-row .spark { width: 14px; height: 14px; }
@@ -456,17 +481,20 @@
   }
   @keyframes slide { to { background-position: 600px 0; } }
 
-    .input-wrap { padding: 2px 34px 5px; }
+    .input-wrap { position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 2px 34px 15px; pointer-events: none; }
+  .input-wrap .composer { pointer-events: auto; }
   .composer {
-    max-width: 920px; margin: 0 auto;
+    width: 75%; min-width: 500px; margin: 0 auto;
     border: 1.5px solid var(--border); border-radius: 16px;
     background: var(--bg);
+    box-shadow: 0 8px 24px rgba(20,40,34,.10), 0 2px 6px rgba(20,40,34,.05);
     display: flex; flex-direction: column;
-    padding: 5px 7px 7px;
+    padding: 5px 7px 3px;
   }
   .composer-input {
     padding: 12px 12px 20px;
-    font-size: 13.5px; color: var(--text-dim);
+    font-size: 13.5px; color: #a3b0aa;
     line-height: 1.6; white-space: pre-wrap;
   }
   .composer-bar { display: flex; align-items: center; gap: 6px; padding: 0 3px; }
@@ -496,10 +524,11 @@
   }
   .ctx-ring:hover { background: var(--bg-hover); }
   .cmp-send {
-    width: 32px; height: 32px; margin-left: 5px;
-    border: 0; border-radius: 10px; padding: 0;
+    width: 28px; height: 28px; margin-left: 5px;
+    border: 0; border-radius: 50%; padding: 0;
     background: var(--accent); color: var(--accent-contrast);
     display: flex; align-items: center; justify-content: center; cursor: default;
+    transform: translateY(-3px);
   }
   .cmp-send:hover { background: var(--accent-hover); }
   .cmp-send svg { width: 15px; height: 15px; }
@@ -519,7 +548,7 @@
     background: rgba(175, 196, 186, .6);
   }
   /* 内容列下探 25px：statusbar 仅覆盖面板段 */
-  .content-col { margin-bottom: -25px; }
+  .content-col { margin-bottom: -30px; }
     .sb-btns { display: flex; align-items: stretch; gap: 2px; padding-left: 16px; align-self: stretch; }
   .app.panes-hidden .statusbar { display: none; }
     .sb-tab {
@@ -553,7 +582,7 @@
     display: flex; flex-direction: column; overflow: hidden;
   }
   .settings-topbar {
-    flex: none; height: 38px;
+    flex: none; height: 36px;
     display: flex; align-items: center;
     padding: 0 8px 0 16px;
     border-bottom: 1px solid rgba(175, 196, 186, .45);
@@ -654,14 +683,16 @@
             <div class="ft-row root"><svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>README.md</div>
           </div>
           <div class="panel-view" id="pv-git">
-            <div class="g-proj"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg><span id="gitProj">pi-flash</span></div>
+            <div class="g-head">
+            <div class="g-proj"><span id="gitProj">pi-flash</span></div>
             <div class="g-tabs">
               <button class="g-tab on" data-gt="changes">Changes (4)</button>
               <button class="g-tab" data-gt="history">History</button>
             </div>
+            </div>
             <div class="g-view on" id="gv-changes">
               <div class="g-actions">
-                <button class="g-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"/><path d="m21 3 1 11h-2"/><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"/><path d="M3 4h8"/></svg>View Diff</button>
+                <button class="g-ghost"><svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M864 896H224a32 32 0 0 1 0-64h640a32 32 0 0 1 0 64zM544 704a32 32 0 0 1-32-32V448H224a32 32 0 0 1 0-64h288V160a32 32 0 0 1 64 0v224h288a32 32 0 0 1 0 64H576v224a32 32 0 0 1-32 32z"/></svg>View Diff</button>
                 <span style="flex:1"></span>
                 <button class="g-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg></button>
                 <button class="g-btn">Stage All <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
@@ -768,12 +799,13 @@
             <div class="msg-user">
               <div class="bubble">hello</div>
               <div class="msg-actions">
-                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
-                <span class="when">08-25 05:22</span>
+                <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>编辑</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>新分支</span>
+                <span class="when">8月25日 05:22</span>
               </div>
             </div>
 
             <div class="msg-assistant">
+              <div class="work-fold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span>工作详情 · 2 条消息 · 1 次工具调用</span></div><div class="work-body"><div><span class="t">read_file</span> · AGENTS.md</div><div><span class="t">bash</span> · node --version</div></div>
               <div class="as-name">DeepSeek Flash</div>
               <div class="as-body">
                 <p>Hello! 👋</p>
@@ -788,45 +820,47 @@
                 </ul>
                 <p>请告诉我你想做什么~</p>
               </div>
-              <div class="as-stats"><span>5,172 in · 89 out · $0.0000</span><span>5s · 08-25 05:22</span></div>
+              <div class="as-stats"><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span>用时5秒</span><span>8月25日 05:22</span></div>
             </div>
 
             <div class="msg-user">
               <div class="bubble">帮我把这个项目画成架构图</div>
               <div class="msg-actions">
-                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
-                <span class="when">08-25 06:02</span>
+                <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>编辑</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>新分支</span>
+                <span class="when">8月25日 06:02</span>
               </div>
             </div>
 
             <div class="msg-assistant">
+              <div class="work-fold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span>工作详情 · 6 条消息 · 5 次工具调用</span></div><div class="work-body"><div><span class="t">read_file</span> · docs/PORT_PLAN.md</div><div><span class="t">edit_file</span> · docs/architecture.svg</div><div><span class="t">bash</span> · cargo check</div></div>
               <div class="as-name">DeepSeek Flash</div>
               <div class="as-body">
                 <p>已生成 <span class="code-chip">docs/architecture.svg</span>。分层：GPUI Shell / SessionRuntime / pi-link RPC / vendor pi CLI。</p>
               </div>
-              <div class="as-stats"><span>1,204 in · 210 out · $0.0012</span><span>4s · 08-25 06:02</span></div>
+              <div class="as-stats"><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span>用时4秒</span><span>8月25日 06:02</span></div>
             </div>
 
             <div class="msg-user">
               <div class="bubble">个股调研的会话也并进侧栏吧</div>
               <div class="msg-actions">
-                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
-                <span class="when">08-25 06:10</span>
+                <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>编辑</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>新分支</span>
+                <span class="when">8月25日 06:10</span>
               </div>
             </div>
 
             <div class="msg-assistant">
+              <div class="work-fold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span>工作详情 · 4 条消息 · 3 次工具调用</span></div><div class="work-body"><div><span class="t">search</span> · 个股 财报</div><div><span class="t">fetch</span> · eastmoney.com</div><div><span class="t">read_file</span> · tmp/research.md</div></div>
               <div class="as-name">DeepSeek Flash</div>
               <div class="as-body">
                 <p>已并入。状态行 = 旋转圈（3 个在跑）+ 未读回执数（5）。</p>
               </div>
-              <div class="as-stats"><span>890 in · 120 out · $0.0008</span><span>3s · 08-25 06:10</span></div>
+              <div class="as-stats"><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span>用时3秒</span><span>8月25日 06:10</span></div>
             </div>
 
             <div class="msg-user">
               <div class="bubble">把 sidebar 的会话列表按项目分组，先出个方案</div>
               <div class="msg-actions">
-                <span>复制</span><span>编辑</span><span>⑂ 新分支</span>
+                <span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>复制</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>编辑</span><span class="act"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></svg>新分支</span>
                 <span class="when">刚刚</span>
               </div>
             </div>
@@ -868,7 +902,7 @@
 
         <div class="input-wrap">
           <div class="composer">
-            <div class="composer-input">消息...输入 / 使用命令，输入 @ 查找文件</div>
+            <div class="composer-input">/使用命令，shift回车换行</div>
             <div class="composer-bar">
               <div class="c-left">
                 <button class="cmp-icon" data-tip="附加图片">
@@ -1063,6 +1097,9 @@ statusbar（面板 tabs）     │</pre>
   const SEARCH = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>`;
   const ICON_ORGANIZE = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="40" stroke-linejoin="round"><path d="M349.405343 154.62259 155.596266 154.62259c-29.150924 0-52.873208 23.724331-52.873208 52.845579l0 193.823404c0 29.150924 23.722284 52.844555 52.873208 52.844555l193.810101 0c29.136597 0 52.859905-23.693632 52.859905-52.844555L402.266271 207.467145C402.265248 178.345897 378.541941 154.62259 349.405343 154.62259M351.851045 207.467145l0 193.823404c0 1.339508-1.106194 2.474354-2.445702 2.474354L155.596266 403.764903c-1.338485 0-2.503007-1.134847-2.503007-2.474354L153.093259 207.467145c0-1.38351 1.134847-2.474354 2.503007-2.474354l193.810101 0C350.774527 204.992791 351.851045 206.084659 351.851045 207.467145" p-id="6543"></path><path d="M349.405343 569.837266 155.596266 569.837266c-29.150924 0-52.873208 23.75196-52.873208 52.856835L102.723058 816.519552c0 29.164227 23.722284 52.857858 52.873208 52.857858l193.810101 0c29.136597 0 52.859905-23.693632 52.859905-52.857858L402.266271 622.694101C402.265248 593.589227 378.541941 569.837266 349.405343 569.837266M351.851045 622.694101 351.851045 816.519552c0 1.36816-1.106194 2.472308-2.445702 2.472308L155.596266 818.99186c-1.338485 0-2.503007-1.104147-2.503007-2.472308L153.093259 622.694101c0-1.367137 1.134847-2.474354 2.503007-2.474354l193.810101 0C350.774527 620.219747 351.851045 621.326964 351.851045 622.694101" p-id="6544"></path><path d="M519.857457 224.930889c0.727571 0.480954 1.601474 0.801249 2.532683 0.801249l1.77646 0c0.434905 0.058328 0.900509 0.058328 1.36816 0l367.768061 0c0.233314 0.029676 0.493234 0.058328 0.697895 0.058328 0.233314 0 0.466628-0.028653 0.670266-0.058328l1.454118 0c0.787946 0 1.514493-0.261966 2.124384-0.626263 12.023848-2.081405 20.900006-12.341073 20.900006-24.464181 0-11.949146-8.586562-22.064528-20.345374-24.348548-0.756223-0.566912-1.687432-0.931209-2.679016-0.931209L522.389116 175.361937c-0.901533 0-1.775436 0.422625-2.501984 1.019213-11.614525 2.357697-20.200064 12.458753-20.200064 24.261567C499.687068 212.474183 508.272607 222.574215 519.857457 224.930889" p-id="6545"></path><path d="M519.507486 411.493935c0.756223 0.683569 1.77646 1.134847 2.88163 1.134847l373.73496 0c0.903579 0 1.719154-0.39295 2.446725-0.932232 11.818163-2.196015 20.550035-12.369725 20.550035-24.405853 0-12.123109-8.847505-22.354124-20.784372-24.434505-0.668219-0.39295-1.425466-0.596588-2.212388-0.596588l-0.697895 0.115634c-0.581238-0.145309-1.456165-0.203638-2.297322-0.115634l-366.867552 0.115634c-0.611937-0.145309-1.457188-0.203638-2.300392-0.115634l-1.571798 0c-0.814552 0-1.542122 0.233314-2.213411 0.714268-11.786441 2.241041-20.459984 12.398378-20.459984 24.317848C499.715721 398.976854 508.040317 408.990928 519.507486 411.493935" p-id="6546"></path><path d="M519.537162 660.680251c0.756223 0.667196 1.775436 1.075495 2.851954 1.075495l373.73496 0c0.408299 0 0.787946-0.058328 1.196245-0.174985 13.271258-0.608867 23.954575-11.641131 23.954575-25.118074 0-13.827937-11.294231-25.118074-25.15082-25.118074-0.202615 0-0.435928 0.027629-0.697895 0.058328L525.50406 611.402941c-0.437975-0.058328-0.873903-0.058328-1.36816 0l-1.746784 0c-0.842181 0-1.600451 0.25992-2.270716 0.725524-11.729136 2.270716-20.402679 12.428054-20.402679 24.334221C499.715721 648.166239 508.097622 658.176221 519.537162 660.680251" p-id="6547"></path><path d="M897.755226 777.807878c-0.493234-0.203638-1.077541-0.319272-1.63115-0.319272L522.389116 777.488607c-0.959861 0-1.893116 0.462534-2.589988 1.1328-11.583826 2.416026-20.083407 12.485359-20.083407 24.275893 0 11.904121 8.674567 22.064528 20.402679 24.334221 0.669242 0.405229 1.428535 0.60989 2.270716 0.60989l0.728594-0.115634c0.290619 0.057305 0.726547 0.202615 2.620687 0.115634l368.639918-0.115634c0.466628 0.115634 1.340531 0.290619 1.74576 0.290619 13.856589 0 25.15082-11.291161 25.15082-25.119097C921.274896 789.565666 910.883221 778.679735 897.755226 777.807878" p-id="6548"></path></svg>`;
   const ICON_SORT = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="20" stroke-linejoin="round"><path d="M736 170.666667l-4.266667 0.298666a32 32 0 0 0-27.733333 31.701334v541.525333l-137.386667-137.301333-3.584-3.072a32 32 0 0 0-41.642666 48.384l192.170666 192 3.584 3.072a32 32 0 0 0 41.642667-3.114667l191.872-192 3.072-3.584a32 32 0 0 0-3.114667-41.685333l-3.584-3.072a32 32 0 0 0-41.685333 3.114666L768 744.362667V202.666667l-0.256-4.352A32 32 0 0 0 736.042667 170.666667z m-470.869333 9.386666L73.386667 371.84l-3.114667 3.584a32 32 0 0 0 3.114667 41.642667l3.584 3.114666a32 32 0 0 0 41.642666-3.114666l137.258667-137.301334v541.781334l0.341333 4.352a32 32 0 0 0 31.701334 27.648l4.309333-0.298667a32 32 0 0 0 27.690667-31.701333L319.872 279.850667l137.514667 137.258666 3.584 3.072a32 32 0 0 0 41.6-48.384L310.4 180.053333l-3.626667-3.072a32 32 0 0 0-41.642666 3.114667z" p-id="9174"></path></svg>`;
+  const ICON_FILEBROWSER = `<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M1018.77497 399.936172a21.706865 21.706865 0 0 0-16.4938-7.571765H957.158238V149.093689a30.252875 30.252875 0 0 0-30.218691-30.218691H402.795667l-42.473669-70.778054a30.338335 30.338335 0 0 0-25.911502-14.682045H98.574806A30.252875 30.252875 0 0 0 68.373207 63.63359v328.713725H21.729085a21.706865 21.706865 0 0 0-21.484669 24.971441l84.058553 554.824056a21.621405 21.621405 0 0 0 21.467577 18.425197h812.452071c10.802157 0 19.826743-7.742685 21.484669-18.476473l84.041461-554.704412a21.655589 21.655589 0 0 0-4.973777-17.450952zM102.557247 67.61603h229.614194l42.473669 70.778055c5.41817 9.058771 15.348634 14.682045 25.911502 14.682045H922.974198v239.288277h-17.092019v-68.368079h-17.09202v-51.27606h-17.09202v-51.276059H153.833306v51.276059H136.741286v51.27606H119.649266v68.368079H102.557247v-324.748377z m51.276059 290.564338h717.864833v34.184039H153.833306v-34.184039z m17.09202-51.27606h683.680793v17.09202H170.925326v-17.09202z m666.588773-34.18404H188.017346v-17.092019h649.496753v17.092019z m70.008913 683.680794H116.487243l-80.264125-529.852615h951.581112l-80.281218 529.852615z" p-id="88083"></path><path d="M460.737614 870.940962h358.932417v-239.288277h-358.932417v239.288277z m34.18404-205.104238h290.564337v170.920199h-290.564337v-170.920199z" p-id="88084"></path><path d="M546.197713 734.204804h68.36808a17.09202 17.09202 0 1 0 0-34.18404h-68.36808a17.09202 17.09202 0 1 0 0 34.18404zM682.933872 734.204804h17.09202a17.09202 17.09202 0 1 0 0-34.18404h-17.09202a17.09202 17.09202 0 1 0 0 34.18404zM734.209931 768.388843h-188.012218a17.09202 17.09202 0 1 0 0 34.18404h188.012218a17.09202 17.09202 0 1 0 0-34.18404z" p-id="88085"></path></svg>`;
+  const ICON_TERMINAL = `<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M499.712 481.792l-128-128c-16.896-16.384-44.032-15.872-60.416 1.024-15.872 16.384-15.872 42.496 0 59.392L409.088 512l-97.792 97.792c-16.896 16.384-17.408 43.52-1.024 60.416s43.52 17.408 60.416 1.024l1.024-1.024 128-128c16.384-16.896 16.384-43.52 0-60.416zM682.496 597.504h-128c-23.552 0-42.496 18.944-42.496 42.496 0 23.552 18.944 42.496 42.496 42.496h128c23.552 0 42.496-18.944 42.496-42.496s-18.944-42.496-42.496-42.496z" p-id="90973"></path><path d="M810.496 128H213.504c-70.656 0-128 57.344-128 128v512c0 70.656 57.344 128 128 128h597.504c70.656 0 128-57.344 128-128V256c-0.512-70.656-57.856-128-128.512-128z m0 682.496H213.504c-23.552 0-42.496-18.944-42.496-42.496V256c0-23.552 18.944-42.496 42.496-42.496h597.504c23.552 0 42.496 18.944 42.496 42.496v512c0 23.552-19.456 42.496-43.008 42.496z" p-id="90974"></path></svg>`;
+  const ICON_TRASH = `<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M92.748283 203.507071h838.503434v44.140606H92.748283zM644.402424 115.238788v44.127677h44.127677V115.238788c0-24.384646-19.75596-44.127677-43.998384-44.127677h-265.050505a43.97899 43.97899 0 0 0-31.172525 12.916364 43.918222 43.918222 0 0 0-12.825859 31.211313v44.127677h44.127677V115.238788h264.791919z m0 0" p-id="95376"></path><path d="M203.073939 909.614545v-661.979798H158.946263V909.575758c0 24.410505 19.639596 44.179394 44.179394 44.179394h617.761616c24.410505 0 44.179394-19.639596 44.179394-44.179394V247.634747H820.926061v661.979798H203.073939z m0 0" p-id="95377"></path><path d="M313.412525 335.90303h44.127677V733.090909h-44.127677V335.90303z m176.523637 0h44.127676V733.090909H489.936162V335.90303z m176.523636 0h44.127677V733.090909h-44.127677V335.90303z m0 0" p-id="95378"></path></svg>`;
   const CHEV_R = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`;
   const ICON_GROUPED = `<svg viewBox="0 0 1024 1024" fill="currentColor" stroke="currentColor" stroke-width="40" stroke-linejoin="round"><path d="M227.008 94.976h129.28c25.92 0 38.976 0 51.072 3.136 10.688 2.688 20.8 7.168 30.016 13.184 10.432 6.848 19.264 16.448 36.8 35.52l40.576 44.16c8.704 9.6 13.12 14.4 18.368 17.792a50.048 50.048 0 0 0 15.04 6.592c6.016 1.536 12.544 1.536 25.536 1.536h228.608c56.192 0 84.992 0.128 106.304 11.264 18.432 9.536 33.472 24.64 42.88 43.072 11.072 21.376 11.072 50.176 10.816 106.368l-1.792 390.144c-0.256 55.744-0.512 84.288-11.52 105.472a100.48 100.48 0 0 1-42.88 42.688c-21.312 11.008-49.792 11.072-105.6 11.072H227.008c-56 0-84.672-0.064-105.984-11.136a100.48 100.48 0 0 1-42.88-42.88c-11.008-21.312-11.136-49.92-11.136-105.984v-512c0-56 0.128-84.608 11.136-105.92a100.48 100.48 0 0 1 42.88-42.88c21.312-11.072 49.92-11.2 105.984-11.2z m0 64q-68.8 0-76.48 4.032-10.24 5.248-15.552 15.488-3.968 7.68-3.968 76.48V384h767.232v-6.656q0.32-69.12-3.648-76.8-5.248-10.304-15.488-15.616-7.68-4.032-76.8-4.032H573.696q-27.52 0-41.344-3.52-18.368-4.672-34.24-15.04-11.968-7.808-30.544-28.096l-40.576-44.16q-20.864-22.72-24.64-25.216-4.992-3.264-10.816-4.736-4.352-1.152-35.2-1.152H226.944zM897.92 448H131.008v318.976q0 68.864 3.968 76.544 5.312 10.24 15.552 15.488 7.68 3.968 76.48 3.968h573.504q68.48 0 76.16-3.904 10.24-5.312 15.552-15.488 3.968-7.68 4.288-76.16L897.984 448z"/></svg>`;
   const ICON_FLAT = `<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M128 256a42.666667 42.666667 0 1 1 0-85.333333 42.666667 42.666667 0 0 1 0 85.333333z m0 597.333333a42.666667 42.666667 0 1 1 0-85.333333 42.666667 42.666667 0 0 1 0 85.333333z m0-298.666666a42.666667 42.666667 0 1 1 0-85.333334 42.666667 42.666667 0 0 1 0 85.333334z" fill-opacity=".9"></path><path d="M256 256V170.666667h682.666667v85.333333H256z m0 597.333333v-85.333333h682.666667v85.333333H256z m0-298.666666v-85.333334h682.666667v85.333334H256z"></path></svg>`;
@@ -1143,19 +1180,19 @@ statusbar（面板 tabs）     │</pre>
   function showMenu(p, btn) {
     pmenu.innerHTML = "";
     [
-      ["在系统文件浏览器中打开", ""],
-      ["为项目打开终端", ""],
-      ["删除项目所有会话", "danger"],
-    ].forEach(([label, cls]) => {
+      [ICON_FILEBROWSER, "在文件浏览器中打开", ""],
+      [ICON_TERMINAL, "在终端中打开", ""],
+      [ICON_TRASH, "删除项目及所有会话", "danger"],
+    ].forEach(([icon, label, cls]) => {
       const it = document.createElement("button");
       it.className = "pm-item" + (cls ? " " + cls : "");
-      it.textContent = label;
+      it.innerHTML = icon + `<span>${label}</span>`;
       it.addEventListener("click", () => {
         hideMenu();
-        if (label === "为项目打开终端") {
+        if (label === "在终端中打开") {
           openTerm();
           setPanel("files");
-        } else if (label === "删除项目所有会话") {
+        } else if (label === "删除项目及所有会话") {
           p.sessions = [];
           renderGroup(p);
         }
@@ -1334,6 +1371,8 @@ statusbar（面板 tabs）     │</pre>
     });
   }
   renderList();
+  document.querySelectorAll(".work-fold").forEach(f =>
+    f.addEventListener("click", () => f.classList.toggle("open")));
 
   // 左上角按钮：收起/展开侧栏（URL 带 #collapsed 时直接进入收起态，便于截图/演示）
   document.querySelectorAll("#panesToggle, #panesToggleR").forEach(el =>
