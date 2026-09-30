@@ -1,4 +1,4 @@
-//! Modal dialogs: ModelSelect / ProjectSelect / GitDiff / FilePreview
+//! Modal dialogs: ModelSelect / GitDiff / SessionSearch
 //! (pi-web parity surfaces layered over the app root). Free function over
 //! Chat state; entity split lands in phase E (ARCHITECTURE.md §2).
 
@@ -24,9 +24,6 @@ pub(crate) fn render_dialogs(
         // dialogs (bodies verbatim from the former inline section)
             if let Some(Dialog::ModelSelect { input: filter_input }) = chat.dialog.as_ref() {
                 return render_model_select(root, chat, weak, filter_input, t, cx);
-            }
-            if let Some(Dialog::FilePreview { path }) = chat.dialog.as_ref() {
-                return render_file_preview(root, chat, weak, path, t, cx);
             }
             if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
                 return render_git_diff(root, chat, weak, path, patch, t, cx);
@@ -172,87 +169,8 @@ fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
 }
 
 
-/// FilePreview dialog surface (extracted from render_dialogs).
-fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, t: &theme::Theme, _cx: &App) -> Div {
-                let path_text: SharedString = path.to_string_lossy().to_string().into();
-                let (content, meta_line) = match chat.file_cache.get(path) {
-                    Some(fc) => {
-                        let meta = Chat::file_meta(path, &fc.content);
-                        (fc.content.clone(), meta)
-                    }
-                    None => ("(loading)".to_string(), String::new()),
-                };
-                let mut body = content;
-                if body.chars().count() > 80000 {
-                    body = body.chars().take(80000).collect();
-                    body.push_str("\n\n\u{2026} (truncated)");
-                }
-                root = root.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .occlude()
-                        .bg(gpui::hsla(0., 0., 0., 0.35))
-                        .track_focus(&chat.dialog_focus)
-                        .on_key_down({
-                            let weak = weak.clone();
-                            move |ev: &KeyDownEvent, _w, cx| {
-                                if ev.keystroke.key == "escape" {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.dialog = None;
-                                        cx.notify();
-                                    });
-                                }
-                            }
-                        })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w(px(760.))
-                                .max_h(px(640.))
-                                .bg(rgb(t.bg_panel))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .rounded(px(8.))
-                                .p_4()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .shadow_lg()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(rgb(t.text))
-                                        .child(path_text),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(t.text_dim))
-                                        .child(SharedString::from(meta_line)),
-                                )
-                                .child(
-                                    div()
-                                        .id("file-preview-body")
-                                        .flex_1()
-                                        .min_h_0()
-                                        .overflow_y_scroll()
-                                        .bg(rgb(t.bg))
-                                        .rounded(px(6.))
-                                        .p_2()
-                                        .font_family("Consolas")
-                                        .text_size(px(11.))
-                                        .text_color(rgb(t.text))
-                                        .child(SharedString::from(body)),
-                                ),
-                        ),
-                );
-    root
-}
-
+/// 013 sessionSearchDialog + sessionSearchResultView: query on top, results
+/// grouped by session below; a row click switches sessions and reveals the
 /// GitDiff dialog surface (extracted from render_dialogs).
 fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, _cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
@@ -351,8 +269,7 @@ fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, pa
     root
 }
 
-/// 013 sessionSearchDialog + sessionSearchResultView: query on top, results
-/// grouped by session below; a row click switches sessions and reveals the
+
 /// matched message (pi-web SessionSearch, dialog-mounted per 013).
 fn render_session_search(
     chat: &Chat,

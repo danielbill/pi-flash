@@ -93,8 +93,7 @@ pub(crate) fn topbar_r(
     let mut tabs_host = div().id("topbar-tabs").h_full().flex().items_end();
 
     for (ix, tab) in chat.panel_tabs.iter().enumerate() {
-        let active = chat.content_view == ContentView::Term && chat.active_panel_tab == Some(ix);
-        let label: SharedString = match tab {
+        let (label, is_file): (SharedString, bool) = match tab {
             crate::PanelTab::Term(id) => {
                 let title = chat
                     .terminals
@@ -109,28 +108,28 @@ pub(crate) fn topbar_r(
                         format!("bash — {dir}")
                     })
                     .unwrap_or_else(|| "bash".into());
-                title.into()
+                (title.into(), false)
             }
+            crate::PanelTab::File(p) => (
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".into())
+                    .into(),
+                true,
+            ),
         };
+        let active = chat.content_view
+            == if is_file { ContentView::File } else { ContentView::Term }
+            && chat.active_panel_tab == Some(ix);
         tabs_host = tabs_host.child(content_tab(
-            "ctab-term",
+            if is_file { "ctab-file" } else { "ctab-term" },
             ix,
             label,
             active,
             if ix == 0 { 10. } else { 4. },
+            is_file,
             cx,
         ));
-    }
-    if chat.md_preview.is_some() {
-        let label: SharedString = chat
-            .md_preview
-            .as_deref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "preview".into())
-            .into();
-        let active = chat.content_view == ContentView::Md;
-        tabs_host = tabs_host.child(md_tab(label, active, cx));
     }
     bar = bar.child(tabs_host);
 
@@ -190,54 +189,43 @@ fn icon_btn(
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×
 /// 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
+#[allow(clippy::too_many_arguments)]
 fn content_tab(
     id: &'static str,
     ix: usize,
     label: SharedString,
     active: bool,
     ml: f32,
+    is_file: bool,
     cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
     let t = T();
     let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.close_panel_tab(ix, cx);
-        if this.content_view == ContentView::Term && this.panel_tabs.is_empty() {
-            let v = if this.md_preview.is_some() {
-                ContentView::Md
-            } else {
+        // 关掉当前 tab 后内容区回退：终端→浏览区遗留→chat
+        if this.content_view
+            == if is_file { ContentView::File } else { ContentView::Term }
+            && this.active_panel_tab.is_none()
+        {
+            let v = if this.panel_tabs.is_empty() {
                 ContentView::Chat
+            } else {
+                this.browse_last
             };
             this.set_content_view(v);
+            if this.content_view == ContentView::Term {
+                this.active_panel_tab = Some(this.panel_tabs.len() - 1);
+            }
         }
         cx.notify();
     });
     let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.active_panel_tab = Some(ix);
-        this.set_content_view(ContentView::Term);
+        let v = if is_file { ContentView::File } else { ContentView::Term };
+        this.set_content_view(v);
         cx.notify();
     });
     tab_shell(id, label, active, ml, t, switch, Some(close))
-}
-
-fn md_tab(label: SharedString, active: bool, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
-    let t = T();
-    let close = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-        this.md_preview = None;
-        if this.content_view == ContentView::Md {
-            let v = if !this.panel_tabs.is_empty() {
-                ContentView::Term
-            } else {
-                ContentView::Chat
-            };
-            this.set_content_view(v);
-        }
-        cx.notify();
-    });
-    let switch = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-        this.set_content_view(ContentView::Md);
-        cx.notify();
-    });
-    tab_shell("ctab-md", label, active, 4., t, switch, Some(close))
 }
 
 #[allow(clippy::too_many_arguments)]

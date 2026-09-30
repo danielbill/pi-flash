@@ -2,7 +2,7 @@
 //! markdown 预览以 topbar tab 打开（Obsidian 式），聊天为默认视图。内容
 //! 区直通窗口底（statusbar 只在面板段）。
 
-use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 
 use crate::Chat;
 use crate::ContentView;
@@ -25,7 +25,7 @@ pub(crate) fn content_main(
         ContentView::Term => term_view(chat, weak, window, cx)
             .map(|d| d.into_any_element())
             .unwrap_or_else(|| empty_hint(tr("暂无终端会话"), t)),
-        ContentView::Md => md_view(chat).into_any_element(),
+        ContentView::File => file_view(chat).into_any_element(),
     };
     div()
         .id("content-main")
@@ -65,6 +65,7 @@ pub(crate) fn term_view(
         .active_panel_tab
         .and_then(|ix| chat.panel_tabs.get(ix).cloned())
         .map(|tab| match tab {
+            crate::PanelTab::File(_) => div().into_any_element(),
             crate::PanelTab::Term(id) => {
                 let tix = chat.terminals.iter().position(|t| t.id == id);
                 let Some(tix) = tix else {
@@ -211,34 +212,237 @@ pub(crate) fn term_view(
 }
 
 // ---------------------------------------------------------------------------
-// markdown 预览：max 760px 居中页（文件树点 .md 行打开）
+// 文件查看：md/html 渲染预览（pi-web rendered-first parity）、其余源码
+// （markdown 渲染器带语法高亮）、大文件/二进制提示
 // ---------------------------------------------------------------------------
 
-fn md_view(chat: &mut Chat) -> gpui::AnyElement {
+fn file_view(chat: &mut Chat) -> gpui::AnyElement {
     let t = T();
-    let md_font = crate::appearance::markdown_font();
+    let path = chat
+        .active_panel_tab
+        .and_then(|ix| chat.panel_tabs.get(ix).cloned())
+        .and_then(|tab| match tab {
+            crate::PanelTab::File(p) => Some(p),
+            _ => None,
+        });
+    let Some(path) = path else {
+        return empty_hint("no file", t);
+    };
     let content = chat
-        .md_preview
-        .as_deref()
-        .and_then(|p| chat.file_cache.get(p))
+        .file_cache
+        .get(&path)
         .map(|f| f.content.clone())
         .unwrap_or_default();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let meta = Chat::file_meta(&path, &content);
+    let md_font = crate::appearance::markdown_font();
+
+    let body: gpui::AnyElement = match ext.as_str() {
+        // md：渲染（复用 agent 正文的 markdown 渲染器，自带语法高亮）
+        "md" | "markdown" => div()
+            .id("fv-md")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .bg(rgb(t.bg))
+            .font_family(md_font.family.clone())
+            .child(
+                div()
+                    .max_w(px(760.))
+                    .mx_auto()
+                    .w_full()
+                    .pt(px(26.))
+                    .px(px(34.))
+                    .pb(px(40.))
+                    .child(crate::markdown::render_themed(&content)),
+            )
+            .into_any_element(),
+        // html：无法安全执行脚本（无 webview），展示带样式的只读提示 +
+        // 源码；正文 markdown 亦按渲染处理。pi-web 用 iframe srcdoc——
+        // 桌面端后续接 webview 时替换
+        "html" | "htm" => div()
+            .id("fv-html")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .bg(rgb(t.bg))
+            .child(
+                div()
+                    .max_w(px(900.))
+                    .mx_auto()
+                    .w_full()
+                    .pt(px(18.))
+                    .px(px(30.))
+                    .pb(px(30.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .px(px(10.))
+                            .py(px(7.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.bg_panel))
+                            .text_size(px(12.))
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(tr(
+                                "HTML 预览（静态渲染）：脚本未执行；需要交互请用浏览器打开",
+                            ))),
+                    )
+                    .child(crate::markdown::render_themed(&html_to_md(&content))),
+            )
+            .into_any_element(),
+        // 图片（桌面端暂无 image 元素支持，提示）
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => empty_hint(
+            "图片预览即将支持——请在资源管理器中查看",
+            t,
+        ),
+        // 其余：源码
+        _ => div()
+            .id("fv-src")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .bg(rgb(t.bg))
+            .font_family("Consolas")
+            .child(
+                div()
+                    .w_full()
+                    .pt(px(14.))
+                    .px(px(22.))
+                    .pb(px(30.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .children(content.lines().enumerate().map(|(i, line)| {
+                                div()
+                                    .flex()
+                                    .text_size(px(12.5))
+                                    .line_height(relative(1.55))
+                                    .child(
+                                        div()
+                                            .w(px(44.))
+                                            .flex_shrink_0()
+                                            .text_right()
+                                            .pr(px(12.))
+                                            .text_color(rgb(t.text_faint))
+                                            .child(SharedString::from(format!(
+                                                "{}",
+                                                i + 1
+                                            ))),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .whitespace_nowrap()
+                                            .text_color(rgb(t.text))
+                                            .child(SharedString::from(
+                                                line.to_string(),
+                                            )),
+                                    )
+                            })),
+                    ),
+            )
+            .into_any_element(),
+    };
+
     div()
-        .id("md-view")
+        .id("file-view")
         .flex_1()
         .min_h_0()
-        .overflow_y_scroll()
+        .flex()
+        .flex_col()
         .bg(rgb(t.bg))
+        // 头部：文件名 + 语言/行数/大小
         .child(
             div()
-                .max_w(px(760.))
-                .mx_auto()
-                .w_full()
-                .pt(px(26.))
-                .px(px(34.))
-                .pb(px(40.))
-                .font_family(md_font.family.clone())
-                .child(crate::markdown::render_themed(&content)),
+                .h(px(34.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .px(px(16.))
+                .border_b_1()
+                .border_color(gpui::rgba(0xafc4ba66))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                        )),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(rgb(t.text_faint))
+                        .child(SharedString::from(meta)),
+                ),
         )
+        .child(body)
         .into_any_element()
+}
+
+/// 极简 HTML→文本转换（去标签保结构），供无 webview 场景的静态阅读。
+fn html_to_md(html: &str) -> String {
+    // 块级标签换行
+    let mut s = html
+        .replace("</p>", "\n\n")
+        .replace("</div>", "\n")
+        .replace("</h1>", "\n\n")
+        .replace("</h2>", "\n\n")
+        .replace("</h3>", "\n\n")
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("</li>", "\n");
+    // 去掉 script/style 块
+    if let Some(a) = s.find("<script") {
+        if let Some(b) = s[a..].find("</script>") {
+            s = format!("{}{}", &s[..a], &s[a + b + 9..]);
+        }
+    }
+    if let Some(a) = s.find("<style") {
+        if let Some(b) = s[a..].find("</style>") {
+            s = format!("{}{}", &s[..a], &s[a + b + 8..]);
+        }
+    }
+    // 剥其余标签
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    // 折叠空行
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let mut prev_blank = false;
+    let mut cleaned = String::new();
+    for l in lines {
+        let blank = l.trim().is_empty();
+        if blank && prev_blank {
+            continue;
+        }
+        cleaned.push_str(l);
+        cleaned.push('\n');
+        prev_blank = blank;
+    }
+    cleaned
 }

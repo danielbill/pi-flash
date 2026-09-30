@@ -89,17 +89,24 @@ fn tabs(
                     if panel == DockPanel::Sessions {
                         this.content_view = crate::ContentView::Chat;
                     } else if panel == DockPanel::Files {
-                        let term_ok = !this.panel_tabs.is_empty();
-                        let md_ok = this.md_preview.is_some();
-                        this.content_view = match this.browse_last {
-                            crate::ContentView::Term if term_ok => {
-                                crate::ContentView::Term
+                        // 浏览操作区：有文件 tab 或终端任一存在才切
+                        let any = this
+                            .panel_tabs
+                            .iter()
+                            .any(|t| matches!(t, crate::PanelTab::File(_)))
+                            || !this.panel_tabs.is_empty();
+                        if any {
+                            let v = this.browse_last;
+                            this.set_content_view(v);
+                            // File 视图需要定位到具体 tab
+                            if this.content_view == crate::ContentView::File {
+                                if let Some(ix) = this.panel_tabs.iter().position(
+                                    |t| matches!(t, crate::PanelTab::File(_)),
+                                ) {
+                                    this.active_panel_tab = Some(ix);
+                                }
                             }
-                            crate::ContentView::Md if md_ok => crate::ContentView::Md,
-                            _ if term_ok => crate::ContentView::Term,
-                            _ if md_ok => crate::ContentView::Md,
-                            _ => this.content_view,
-                        };
+                        }
                     }
                     this.persist_ui();
                     cx.notify();

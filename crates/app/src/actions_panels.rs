@@ -128,17 +128,6 @@ impl Chat {
             }
         };
         self.file_cache.insert(path.clone(), FileTab { content });
-        // v54: .md 走内容区预览 tab；其他文件保留弹窗预览
-        let is_md = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("md"));
-        if is_md {
-            self.md_preview = Some(path);
-            self.set_content_view(ContentView::Md);
-        } else {
-            self.dialog = Some(Dialog::FilePreview { path });
-        }
         cx.notify();
     }
 
@@ -147,10 +136,13 @@ impl Chat {
             return;
         }
         let removed = self.panel_tabs.remove(ix);
-        let PanelTab::Term(id) = &removed;
-        if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
-            let _ = self.terminals[tix].pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-            self.terminals.remove(tix);
+        if let PanelTab::Term(id) = &removed {
+            if let Some(tix) = self.terminals.iter().position(|t| t.id == *id) {
+                let _ = self.terminals[tix]
+                    .pty
+                    .send(alacritty_terminal::event_loop::Msg::Shutdown);
+                self.terminals.remove(tix);
+            }
         }
         self.active_panel_tab = match self.active_panel_tab {
             Some(a) if a >= self.panel_tabs.len() => {
