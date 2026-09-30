@@ -115,7 +115,6 @@ pub struct TerminalTab {
     pub id: usize,
     pub cwd: PathBuf,
     /// tab label: basename of cwd (pi-web `getFileName(tab.cwd)`)
-    pub title: String,
     pub status: TermStatus,
     pub term: Arc<FairMutex<Term<Proxy>>>,
     pub pty: EventLoopSender,
@@ -174,10 +173,6 @@ pub fn spawn_terminal(
     Ok(TerminalTab {
         id,
         cwd: cwd.clone(),
-        title: cwd
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| cwd.to_string_lossy().to_string()),
         status: TermStatus::Ready,
         term,
         pty: pty_tx,

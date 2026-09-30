@@ -10,32 +10,7 @@ pub fn status_line(connected: bool, state: &str) -> String {
     }
 }
 
-/// Usage footer line (pi-web message footer) over raw usage fields.
-pub fn usage_footer(input: u64, output: u64, cache_read: u64, cost: f64) -> String {
-    let mut s = format!(
-        "{} in · {} out",
-        fmt_thousands(input),
-        fmt_thousands(output)
-    );
-    if cache_read > 0 {
-        s.push_str(&format!(" · {} cache R", fmt_thousands(cache_read)));
-    }
-    s.push_str(&format!(" · ${:.4}", cost));
-    s
-}
 
-pub fn fmt_thousands(n: u64) -> String {
-    let s = n.to_string();
-    let bytes = s.as_bytes();
-    let mut out = String::new();
-    for (i, ch) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(*ch as char);
-    }
-    out
-}
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -159,15 +134,6 @@ pub fn pretty_args(args: &str) -> String {
         .unwrap_or_else(|| args.to_string())
 }
 
-pub fn fmt_compact(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.0}k", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
 
 /// pi-web estimateTokens: CJK chars ~1 token each, others ~4 chars/token.
 pub fn estimate_tokens(text: &str) -> u64 {
@@ -189,15 +155,3 @@ pub fn estimate_tokens(text: &str) -> u64 {
     cjk + rest / 4
 }
 
-/// Speed badge color (pi-web: >=50 cyan, >=30 green, >=15 yellow, else red).
-pub fn tps_color(tps: f32) -> u32 {
-    if tps >= 50. {
-        0x53b3cb
-    } else if tps >= 30. {
-        0x9bc53d
-    } else if tps >= 15. {
-        0xf9c22e
-    } else {
-        0xe01a4f
-    }
-}

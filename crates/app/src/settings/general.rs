@@ -5,7 +5,7 @@ use super::*;
 /// General tab: theme picker (4 pi-web themes with swatch previews) +
 /// runtime info. Theme choice persists in pi settings.json (shared with the
 /// pi TUI).
-pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> (gpui::AnyElement, gpui::AnyElement) {
+pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let mut detail = div()
         .id("mc-detail")
@@ -164,11 +164,77 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
     );
 
     detail = detail.child(appearance_rows(weak, t));
+    // v54 界面页补充：提示音 + 跨项目预载会话数（set-row 版式）
+    detail = detail.child(v54_rows(weak, t));
     let _ = chat;
-    (
-        div().into_any_element(),
-        detail.into_any_element(),
-    )
+    detail.into_any_element()
+}
+
+/// v54 界面页补充行（提示音 / 跨项目预载会话数）。
+fn v54_rows(weak: &gpui::WeakEntity<Chat>, t: &crate::theme::Theme) -> gpui::AnyElement {
+    let mut col = div().w_full().flex().flex_col().mt_px();
+    // 提示音
+    let sound_on = crate::services::workspace::load_sound_pref();
+    col = col.child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .py(px(12.))
+            .border_t_1()
+            .border_color(gpui::rgba(0xafc4ba40))
+            .child(
+                div()
+                    .flex_1()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text))
+                            .child(tr("提示音")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(rgb(t.text_dim))
+                            .child(tr("agent 运行结束播放系统提示音")),
+                    ),
+            )
+            .child(
+                div()
+                    .id("ui-sound")
+                    .w(px(34.))
+                    .h(px(19.))
+                    .rounded_full()
+                    .bg(rgb(if sound_on { t.accent } else { t.border }))
+                    .relative()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(2.))
+                            .when(sound_on, |d| d.left(px(17.)))
+                            .when(!sound_on, |d| d.left(px(2.)))
+                            .size(px(15.))
+                            .rounded_full()
+                            .bg(rgb(0xffffff)),
+                    )
+                    .on_mouse_down(MouseButton::Left, {
+                        let weak = weak.clone();
+                        move |_, _, cx| {
+                            let _ = weak.update(cx, |c, cx| {
+                                c.sound_on = !c.sound_on;
+                                crate::services::workspace::save_sound_pref(c.sound_on);
+                                if c.sound_on {
+                                    crate::services::workspace::play_notify_sound();
+                                }
+                                cx.notify();
+                            });
+                        }
+                    }),
+            ),
+    );
+    col.into_any_element()
 }
 
 

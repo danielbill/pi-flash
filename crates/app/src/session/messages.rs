@@ -10,7 +10,7 @@ use pi_link::protocol::{content_blocks, Block, Usage};
 use crate::Chat;
 use crate::i18n::tr;
 use crate::markdown;
-use crate::services::format::{pretty_args, tps_color, usage_footer};
+use crate::services::format::pretty_args;
 use crate::theme;
 use crate::ui::icon;
 
@@ -190,54 +190,126 @@ pub(crate) fn render_block(
             }
             block
         }
-        Block::ToolCall { name, args, result, .. } if !name.is_empty() => {
-            let mut card = div()
-                .w_full()
-                .my_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(t.border))
-                .bg(rgb(t.tool_bg))
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .text_xs()
-                        .font_family("Consolas")
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.accent))
-                        .child(SharedString::from(name.clone())),
-                )
-                .child(
-                    div()
-                        .px_2()
-                        .pb_1()
-                        .font_family("Consolas")
-                        .text_xs()
-                        .text_color(rgb(t.text_muted))
-                        .child(SharedString::from(pretty_args(args))),
-                );
-            if !result.is_empty() {
-                card = card.child(
-                    div()
-                        .px_2()
-                        .pb_1()
-                        .mt_1()
-                        .border_t_1()
-                        .border_color(rgb(t.border))
-                        .font_family("Consolas")
-                        .text_xs()
-                        .text_color(rgb(t.text))
-                        .child(SharedString::from(result.clone())),
-                );
-            }
-            card
+        Block::ToolCall { .. } => {
+            // v54: 工具调用收进「工作详情」折叠行（render_msg 的工作折
+            // 叠区），不再逐卡内联渲染
+            div().w_full()
         }
         _ => div().w_full(),
     }
+}
+
+/// 「工作详情」折叠行 + 展开的工具调用列表（左细线缩进；tool · 对象）。
+/// 按轮聚合：label 计整轮，tools 为整轮的 (工具名, 对象) 序列。
+#[allow(clippy::too_many_arguments)]
+fn work_fold(
+    msg_ix: usize,
+    n_msgs: usize,
+    n_tools: usize,
+    tools: &[(String, String)],
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashSet<(usize, usize)>,
+    t: &theme::Theme,
+) -> gpui::AnyElement {
+    let key = (msg_ix, usize::MAX);
+    let expanded = !collapsed.contains(&key);
+    let label = crate::i18n::tf(
+        "工作详情 · {m} 条消息 · {t} 次工具调用",
+        &[
+            ("m", n_msgs.to_string()),
+            ("t", n_tools.to_string()),
+        ],
+    );
+    let weak_fold = weak.clone();
+    // 外层列容器：折叠行在上、展开体在下（此前 body 挂在 flex 行容器里
+    // 被排到标签右侧——布局 bug）
+    let mut wrap = div().flex().flex_col();
+    let fold_row = div()
+        .id(SharedString::from(format!("work-fold-{msg_ix}")))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .px(px(8.))
+        .py(px(4.))
+        .ml(px(-8.))
+        .text_size(px(12.))
+        .text_color(rgb(t.text_dim))
+        .cursor_pointer()
+        .rounded(px(6.))
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = weak_fold.update(cx, |c, cx| {
+                let rt = c.rt();
+                rt.update(cx, |r, _| {
+                    if !r.collapsed.remove(&key) {
+                        r.collapsed.insert(key);
+                    }
+                });
+                cx.notify();
+            });
+        })
+        .child(icon(
+            if expanded { "chevron-down" } else { "chevron-right" },
+            12.,
+            t.text_dim,
+        ))
+        .child(SharedString::from(label));
+    wrap = wrap.child(fold_row);
+    if expanded {
+        let mut body = div()
+            .ml(px(14.))
+            .pl(px(14.))
+            .mb(px(10.))
+            .border_l_2()
+            .border_color(gpui::rgba(0xafc4ba66))
+            .flex()
+            .flex_col();
+        for (tool, target) in tools {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_baseline()
+                    .gap(px(4.))
+                    .py(px(3.))
+                    .text_size(px(12.))
+                    .child(
+                        div()
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(crate::i18n::tf(
+                                "{tool} ·",
+                                &[("tool", tool.to_string())],
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(rgb(t.text_faint))
+                            .child(SharedString::from(target)),
+                    ),
+            );
+        }
+        wrap = wrap.child(body);
+    }
+    wrap.into_any_element()
+}
+
+/// 工具调用「对象」：主参数（file_path/command/pattern/url/query…），缺省
+/// 用 pretty_args 首 40 字符。
+fn tool_target(args: &str) -> String {
+    const KEYS: &[&str] = &[
+        "file_path", "path", "command", "pattern", "url", "query", "content", "text",
+    ];
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(args) {
+        for k in KEYS {
+            if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
+                return s.chars().take(60).collect();
+            }
+        }
+    }
+    pretty_args(args).chars().take(40).collect()
 }
 
 pub(crate) fn render_msg(
@@ -246,18 +318,16 @@ pub(crate) fn render_msg(
     weak: &gpui::WeakEntity<Chat>,
     collapsed: &HashSet<(usize, usize)>,
     t: &theme::Theme,
-    model_label: &str,
-    // while this message is streaming: (estimated tokens, tok/s)
-    stream_info: Option<(u64, Option<f32>)>,
-    meta: MsgMeta,
+    // Some(est_tokens) 仅当此消息是流式中的最后一条（工作中回复）
+    _stream_info: Option<u64>,
+    _meta: MsgMeta,
     // copy flash for this row (032 复制 → 已复制, 1.5s)
     copied: bool,
 ) -> gpui::Div {
-    let mut col = div().w_full().mb_4().flex().flex_col();
+    let mut col = div().w_full().mb(px(22.)).flex().flex_col();
     if m.role == Role::User {
-        // MessageView.tsx UserMessageView: right-aligned bubble, --user-bg,
-        // radius 12, pad 8/12; bottom row under the bubble (right-aligned):
-        // [copy] [edit-from-here] [new branch] on hover + send time always.
+        // v54 用户气泡：右对齐、62% 宽、radius 14、pad 9/15、无边框；
+        // 操作行（复制/编辑/新分支+时间）hover 整行淡入，无框无底色。
         let text = m.plain_text();
         let entry = m.entry_id.clone();
         let weak_copy = weak.clone();
@@ -270,27 +340,21 @@ pub(crate) fn render_msg(
         let session_family = sf.family;
         let session_size = sf.size;
 
-        // action pill: 11px icon+label, dim → accent, hover-revealed.
-        // variants: (icon, label) differ when the copy flash is lit.
         let action = |id: String, icon_name: &'static str, label: &'static str| {
             div()
                 .id(SharedString::from(id))
                 .flex()
                 .items_center()
-                .gap_1()
-                .px_1p5()
-                .py_0p5()
-                .rounded(px(5.))
-                .text_size(px(11.))
+                .gap(px(4.))
+                .text_size(px(11.5))
                 .text_color(rgb(t.text_dim))
                 .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.accent)))
-                .child(icon(icon_name, 11., t.text_dim))
+                .hover(|s| s.text_color(rgb(t.text)))
+                .child(icon(icon_name, 12., t.text_dim))
                 .child(SharedString::from(tr(label)))
         };
 
-        let mut actions = div().flex().items_center().gap_0p5();
-        // copy (copied state swaps the icon to a check + label, pi-web parity)
+        let mut actions = div().flex().items_center().gap(px(12.));
         let copy_pill = if copied {
             action(format!("copy-{msg_ix}"), "check", "已复制").text_color(rgb(t.accent))
         } else {
@@ -307,9 +371,6 @@ pub(crate) fn render_msg(
             });
         });
         actions = actions.child(copy_pill);
-        // edit-from-here: prefill the composer with this message's text
-        // (pi-web replaceMessage parity; RPC has no navigate_tree — recorded
-        // deviation: no in-place tree move)
         actions = actions.child(
             action(format!("edit-{msg_ix}"), "pencil", "编辑")
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -320,7 +381,6 @@ pub(crate) fn render_msg(
                     });
                 }),
         );
-        // fork this exchange into a new session (existing fork anchor)
         if let Some(eid) = entry.clone() {
             actions = actions.child(
                 action(format!("fork-{msg_ix}"), "git-branch", "新分支")
@@ -336,21 +396,18 @@ pub(crate) fn render_msg(
         let mut bottom = div()
             .flex()
             .items_center()
-            .mt(px(3.))
-            .child(
-                div()
-                    .flex()
-                    .gap_0p5()
-                    .opacity(if copied { 1. } else { 0. })
-                    .group_hover("usermsg", |s| s.opacity(1.))
-                    .child(actions),
-            );
+            .gap(px(12.))
+            .mt(px(6.))
+            .pr(px(4.))
+            .opacity(if copied { 1. } else { 0. })
+            .group_hover("usermsg", |s| s.opacity(1.))
+            .child(actions);
         if let Some(ts) = m.ts {
             bottom = bottom.child(
                 div()
-                    .ml_1()
-                    .text_size(px(10.))
-                    .text_color(rgb(t.text_dim))
+                    .ml(px(4.))
+                    .text_size(px(11.5))
+                    .text_color(rgb(t.text_faint))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }
@@ -361,16 +418,14 @@ pub(crate) fn render_msg(
             .flex()
             .flex_col()
             .items_end()
-            .gap_0p5()
+            .gap(px(6.))
             .child(
                 div()
-                    .max_w(relative(0.85))
-                    .px_3()
-                    .py_2()
-                    .rounded(px(12.))
+                    .max_w(relative(0.62))
+                    .px(px(15.))
+                    .py(px(9.))
+                    .rounded(px(14.))
                     .bg(rgb(t.user_bg))
-                    .border_1()
-                    .border_color(gpui::rgba(0x3b82f633))
                     .text_color(rgb(t.text))
                     .font_family(session_family.clone())
                     .text_size(px(session_size))
@@ -379,115 +434,134 @@ pub(crate) fn render_msg(
             .child(bottom);
         col = col.child(row);
     } else {
-        // reveal for the hover copy pill (group ancestor)
+        // 单条 assistant（仅当它不构成轮头时才会走到这里——session_list
+        // 已把轮渲染收敛到 render_assistant_turn；此分支防御性保留）
         col = col.group("astat");
-        // MessageView: model label 11px --text-dim, margin-bottom 4; while
-        // streaming add the estimated-token arrow + speed badge
-        col = col.child(
-            div()
-                .text_xs()
-                .text_color(rgb(t.text_dim))
-                .mb_1()
-                .flex()
-                .items_center()
-                .gap_1p5()
-                .child(SharedString::from(model_label.to_string()))
-                .children(stream_info.and_then(|(est, tps)| {
-                    (est > 0).then(|| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_color(rgb(t.text))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_0p5()
-                                    .text_size(px(11.))
-                                    .child("\u{2193}"),
-                            )
-                            .child(SharedString::from(est.to_string()))
-                            .children(tps.map(|v| {
-                                div()
-                                    .ml(px(6.))
-                                    .px(px(6.))
-                                    .py(px(1.))
-                                    .rounded(px(4.))
-                                    .bg(rgb(tps_color(v)))
-                                    .text_size(px(11.))
-                                    .text_color(gpui::rgb(0xffffff))
-                                    .child(SharedString::from(format!("{:.1} t/s", v)))
-                            }))
-                    })
-                })),
-        );
         for b in &m.blocks {
             col = col.child(render_block(b, msg_ix, weak, collapsed, t));
         }
-        if let Some(u) = &m.usage {
-            // stats bar (032): usage always; copy on hover; 用时+时间 on the
-            // last assistant of the exchange (pi-web showTimestamp rule)
-            let reply_text = m.plain_text();
-            let weak_copy = weak.clone();
-            let mut bar = div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .mt_2()
-                .font_family("Consolas")
-                .text_xs()
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(usage_footer(u.input, u.output, u.cache_read, u.cost)));
-            if !reply_text.trim().is_empty() {
-                let mut pill = div()
-                    .id(SharedString::from(format!("acopy-{msg_ix}")))
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .px_1p5()
-                    .py_0p5()
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .opacity(0.)
-                    .hover(|s| s.bg(rgb(t.bg_hover)).opacity(1.))
-                    .group_hover("astat", |s| s.opacity(1.));
-                pill = if copied {
-                    pill.child(icon("check", 11., t.accent)).child(SharedString::from(tr("已复制")))
-                } else {
-                    pill.child(icon("copy", 11., t.text_dim)).child(SharedString::from(tr("复制")))
-                };
-                pill = pill.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let text = reply_text.clone();
-                    let _ = weak_copy.update(cx, |c, cx| {
-                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                        c.rt().update(cx, |r, cx| {
-                            r.copy_flash = Some((msg_ix, std::time::Instant::now()));
-                            r.spawn_flash_clear(cx);
-                        });
-                    });
-                });
-                bar = bar.child(pill);
-            }
-            if meta.show_ts {
-                let mut meta_text = String::new();
-                if let (Some(end), Some(start)) = (m.end_ts, meta.turn_user_ts) {
-                    meta_text.push_str(&crate::services::format::fmt_duration_ms(end - start));
-                    meta_text.push_str(" · ");
+    }
+    col
+}
+
+/// 一轮 agent 回复（用户消息 → 下一用户消息之间的全部 assistant 消息）：
+/// 工作详情折叠（整轮聚合）+ 模型名（一次）+ 依序正文 + hover 操作栏
+/// （复制整轮文本 / 用时 / 时间）。pi-web AssistantMessageView 的轮级
+/// 收敛 + v54 设计折叠行。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_assistant_turn(
+    turn: &[&Msg],
+    // 轮内各消息的全局索引（thinking/copy key 用）
+    turn_ixs: &[usize],
+    start_ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashSet<(usize, usize)>,
+    t: &theme::Theme,
+    model_label: &str,
+    // Some(est_tokens)：此轮正在流式（最后一个 assistant 消息）
+    stream_info: Option<u64>,
+    meta: MsgMeta,
+    copied: bool,
+) -> gpui::Div {
+    let mut col = div().w_full().mb(px(22.)).flex().flex_col().group("astat");
+
+    // 整轮聚合：工具调用与正文
+    let mut n_tools = 0usize;
+    let mut tools: Vec<(String, String)> = Vec::new();
+    let mut turn_text = String::new();
+    for m in turn {
+        for b in &m.blocks {
+            match b {
+                Block::ToolCall { name, args, .. } if !name.is_empty() => {
+                    n_tools += 1;
+                    tools.push((name.clone(), tool_target(args)));
                 }
-                meta_text.push_str(&m.ts.map(crate::services::format::fmt_msg_time).unwrap_or_default());
-                if !meta_text.is_empty() {
-                    bar = bar.child(
-                        div()
-                            .ml_auto()
-                            .text_size(px(10.))
-                            .child(SharedString::from(meta_text)),
-                    );
+                Block::Text { text, .. } if !text.trim().is_empty() => {
+                    if !turn_text.is_empty() {
+                        turn_text.push_str("\n\n");
+                    }
+                    turn_text.push_str(text);
                 }
+                _ => {}
             }
-            col = col.child(bar);
         }
     }
+    let n_msgs = turn.len();
+    let is_working = stream_info.is_some();
+
+    // 工作详情折叠行：仅已完成轮有（v54 §13）
+    if n_tools > 0 && !is_working {
+        col = col.child(work_fold(start_ix, n_msgs, n_tools, &tools, weak, collapsed, t));
+    }
+    // 模型名：每轮一次
+    col = col.child(
+        div()
+            .text_size(px(11.))
+            .text_color(rgb(t.text_dim))
+            .mb(px(4.))
+            .child(SharedString::from(model_label.to_string())),
+    );
+    // 正文：依序渲染各消息的 text/thinking 块（ToolCall 已收进折叠行）
+    for (m, &gix) in turn.iter().zip(turn_ixs) {
+        for b in &m.blocks {
+            col = col.child(render_block(b, gix, weak, collapsed, t));
+        }
+    }
+    // hover 操作栏：复制整轮文本 + 用时 + 时间（末条消息的时间戳）
+    let weak_copy = weak.clone();
+    let mut bar = div()
+        .flex()
+        .items_center()
+        .gap(px(14.))
+        .mt(px(6.))
+        .text_size(px(11.5))
+        .text_color(rgb(t.text_dim))
+        .opacity(0.)
+        .group_hover("astat", |s| s.opacity(1.));
+    if !turn_text.trim().is_empty() {
+        let mut pill = div()
+            .id(SharedString::from(format!("acopy-{start_ix}")))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            .hover(|s| s.text_color(rgb(t.text)));
+        pill = if copied {
+            pill.child(icon("check", 12., t.accent)).child(SharedString::from(tr("已复制")))
+        } else {
+            pill.child(icon("copy", 12., t.text_dim)).child(SharedString::from(tr("复制")))
+        };
+        pill = pill.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let text = turn_text.clone();
+            let _ = weak_copy.update(cx, |c, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                c.rt().update(cx, |r, cx| {
+                    r.copy_flash = Some((start_ix, std::time::Instant::now()));
+                    r.spawn_flash_clear(cx);
+                });
+            });
+        });
+        bar = bar.child(pill);
+    }
+    // 用时/时间取轮内末条消息
+    if let Some(last) = turn.last() {
+        let mut meta_text = String::new();
+        if let (Some(end), Some(start)) = (last.end_ts, meta.turn_user_ts) {
+            meta_text.push_str(&format!(
+                "{}{}",
+                tr("用时"),
+                crate::services::format::fmt_duration_ms(end - start)
+            ));
+            meta_text.push_str("  ");
+        }
+        meta_text.push_str(&last.ts.map(crate::services::format::fmt_msg_time).unwrap_or_default());
+        if !meta_text.trim().is_empty() {
+            bar = bar.child(
+                div().text_color(rgb(t.text_faint)).child(SharedString::from(meta_text)),
+            );
+        }
+    }
+    col = col.child(bar);
     col
 }
 

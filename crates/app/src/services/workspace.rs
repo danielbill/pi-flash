@@ -30,8 +30,6 @@ const WS_SOUND_KEY: &str = "__sound";
 /// the phase-D shell).
 const WS_WINDOW_KEY: &str = "__window";
 
-/// Function-panel dock layout: position (left|right), active view, width.
-const WS_DOCK_KEY: &str = "__dock";
 
 // ---------------------------------------------------------------------------
 // core: path-injected map IO (tests use these directly; no cache)
@@ -148,6 +146,11 @@ pub fn same_ws(a: &str, b: &str) -> bool {
     ws_key(a) == ws_key(b)
 }
 
+/// Public ws-key conversion (psp collapsed-group persistence).
+pub fn same_ws_key(cwd: &str) -> String {
+    ws_key(cwd)
+}
+
 /// Path equality via the same string-level normalization as same_ws
 /// (Windows Path::components is not reusable as a key).
 pub fn same_path(a: &Path, b: &Path) -> bool {
@@ -262,13 +265,94 @@ pub struct WindowState {
     pub maximized: bool,
 }
 
+/// v54 shell layout state (psp width/modes/panes + collapsed project groups),
+/// one JSON blob under `__ui` in the workspace memory file.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockState {
-    /// "left" | "right"
-    pub position: String,
-    /// "sessions" | "files" | "git" | "terminal"
+pub struct UiState {
+    /// active statusbar panel: "sessions" | "files" | "git"
     pub panel: String,
-    pub width: f32,
+    /// psp dock width in px (250–500)
+    pub slp_w: f32,
+    /// panels + statusbar hidden (Obsidian-style collapse)
+    pub panes_hidden: bool,
+    /// "grouped" | "flat"
+    pub list_mode: String,
+    /// "time" | "manual"
+    pub sort_mode: String,
+    /// collapsed project groups (workspace keys)
+    pub collapsed: Vec<String>,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            panel: "sessions".into(),
+            slp_w: 282.,
+            panes_hidden: false,
+            list_mode: "grouped".into(),
+            sort_mode: "time".into(),
+            collapsed: Vec::new(),
+        }
+    }
+}
+
+const WS_UI_KEY: &str = "__ui";
+
+pub fn ui_state() -> UiState {
+    let d = UiState::default();
+    let m = memory();
+    let Some(v) = m.get(WS_UI_KEY) else {
+        return d;
+    };
+    UiState {
+        panel: v
+            .get("panel")
+            .and_then(|p| p.as_str())
+            .unwrap_or(&d.panel)
+            .to_string(),
+        slp_w: v
+            .get("slp_w")
+            .and_then(|w| w.as_f64())
+            .map(|w| (w as f32).clamp(250., 500.))
+            .unwrap_or(d.slp_w),
+        panes_hidden: v
+            .get("panes_hidden")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false),
+        list_mode: v
+            .get("list_mode")
+            .and_then(|s| s.as_str())
+            .filter(|s| *s == "flat")
+            .unwrap_or(&d.list_mode)
+            .to_string(),
+        sort_mode: v
+            .get("sort_mode")
+            .and_then(|s| s.as_str())
+            .filter(|s| *s == "manual")
+            .unwrap_or(&d.sort_mode)
+            .to_string(),
+        collapsed: v
+            .get("collapsed")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+pub fn save_ui_state(s: &UiState) {
+    let mut map = memory();
+    map.insert(
+        WS_UI_KEY.to_string(),
+        serde_json::json!({
+            "panel": s.panel, "slp_w": s.slp_w, "panes_hidden": s.panes_hidden,
+            "list_mode": s.list_mode, "sort_mode": s.sort_mode, "collapsed": s.collapsed,
+        }),
+    );
+    set_memory(&map);
 }
 
 pub fn get_window_state() -> Option<WindowState> {
@@ -294,26 +378,6 @@ pub fn save_window_state(s: &WindowState) {
     set_memory(&map);
 }
 
-pub fn get_dock_state() -> Option<DockState> {
-    let map = memory();
-    let v = map.get(WS_DOCK_KEY)?;
-    Some(DockState {
-        position: v.get("pos")?.as_str()?.to_string(),
-        panel: v.get("panel")?.as_str()?.to_string(),
-        width: v.get("width")?.as_f64()? as f32,
-    })
-}
-
-pub fn save_dock_state(s: &DockState) {
-    let mut map = memory();
-    map.insert(
-        WS_DOCK_KEY.to_string(),
-        serde_json::json!({
-            "pos": s.position, "panel": s.panel, "width": s.width,
-        }),
-    );
-    set_memory(&map);
-}
 
 // ---------------------------------------------------------------------------
 // app settings (006 界面设置): theme / icon theme / fonts + lang / sound
@@ -346,6 +410,10 @@ pub struct AppSettings {
     /// how many recent sessions (cross-project) get their message tail
     /// preloaded into memory at startup; 0 disables
     pub preload: Option<usize>,
+    /// v54 psp: how many recent projects the sidebar loads at startup
+    pub projects: Option<usize>,
+    /// v54 其他页: restore last workspace + session on startup
+    pub restore: Option<bool>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -398,6 +466,11 @@ pub fn app_settings() -> AppSettings {
                         .get("preload_sessions")
                         .and_then(|v| v.as_u64())
                         .map(|v| v as usize),
+                    projects: map
+                        .get("project_count")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| (v as usize).clamp(1, 20)),
+                    restore: map.get("startup_restore").and_then(|v| v.as_bool()),
                 }
             }
             None => AppSettings::default(),
@@ -436,7 +509,23 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.preload {
         obj.insert("preload_sessions".into(), Value::Number((v as u64).into()));
     }
+    if let Some(v) = s.projects {
+        obj.insert("project_count".into(), Value::Number((v as u64).into()));
+    }
+    if let Some(v) = s.restore {
+        obj.insert("startup_restore".into(), Value::Bool(v));
+    }
     save_map_to(&path, &obj);
+}
+
+/// v54 psp: how many projects the sidebar loads (settings-其他, default 5).
+pub fn project_count() -> usize {
+    app_settings().projects.unwrap_or(5).clamp(1, 20)
+}
+
+/// v54 其他: startup restore toggle (default on).
+pub fn startup_restore() -> bool {
+    app_settings().restore.unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -493,16 +582,17 @@ mod tests {
             serde_json::json!({"x": 10.0, "y": 20.0, "w": 1180.0, "h": 760.0, "max": true}),
         );
         map.insert(
-            WS_DOCK_KEY.into(),
-            serde_json::json!({"pos": "right", "panel": "git", "width": 300.0}),
+            "__ui".into(),
+            serde_json::json!({"panel": "git", "slp_w": 300.0, "panes_hidden": false,
+                                "list_mode": "grouped", "sort_mode": "time", "collapsed": []}),
         );
         save_map_to(&path, &map);
         let loaded = load_map_from(&path);
         let w = loaded.get(WS_WINDOW_KEY).unwrap();
         assert_eq!(w.get("max").unwrap(), &Value::Bool(true));
         assert_eq!(w.get("w").unwrap(), &serde_json::json!(1180.0));
-        let d = loaded.get(WS_DOCK_KEY).unwrap();
-        assert_eq!(d.get("pos").unwrap(), "right");
+        let d = loaded.get("__ui").unwrap();
+        assert_eq!(d.get("panel").unwrap(), "git");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

@@ -25,11 +25,18 @@ impl Chat {
     }
 
     pub(crate) fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
+        // cwd lookup: current project first, then all psp groups (v54 跨项目)
         let cwd = self
             .sessions
             .iter()
             .find(|s| s.path == path)
             .map(|s| PathBuf::from(s.cwd.clone()))
+            .or_else(|| {
+                self.projects
+                    .iter()
+                    .find(|g| g.sessions.iter().any(|s| s.path == path))
+                    .map(|g| g.path.clone())
+            })
             .unwrap_or_else(|| self.cwd.clone());
         let key = path.to_string_lossy().to_string();
         // pool hit: switch attention — instant, all messages in place
@@ -118,13 +125,15 @@ impl Chat {
                 r.shutdown_process();
             });
         }
+        self.running_files.remove(&path);
+        self.unread.remove(&path);
         if was_active {
+            self.active_file = None;
             self.new_session(cx);
         }
         match std::fs::remove_file(&path) {
             Ok(_) => {
                 self.sessions.retain(|s| s.path != path);
-                self.sessions_list.reset(self.sessions.len());
                 self.set_status("session deleted".into(), cx);
             }
             Err(e) => {

@@ -1,25 +1,54 @@
-//! Title bar (005 上段): logo + drag region left, settings + window
-//! control buttons right. The bar is a client-side decoration — the whole
-//! surface is a `WindowControlArea::Drag` hitbox so the platform handles
-//! dragging and double-click-zoom; the three caption buttons register
-//! Min/Max/Close hitboxes the same way (zed platform_title_bar parity:
-//! on Windows the platform layer owns the click behavior).
+//! topbar 两段 (v54): 左段在 panel-col 内（仅收放钮 + 拖拽区），右段在
+//! content-col 内（内容区 term/md tabs + 设置 + 窗口控制钮）。整条是客户
+//! 区自绘标题栏——空段挂 `WindowControlArea::Drag` 命中盒，三个窗口钮注册
+//! Min/Max/Close 命中盒（zed platform_title_bar parity）。收起态面板全隐，
+//! 收放钮跳到右段起点（竖线镜像位）。
 
 use gpui::{MouseButton, SharedString, Window, div, prelude::*, px, rgb};
 use gpui::WindowControlArea;
 
 use crate::Chat;
+use crate::ContentView;
 use crate::i18n::tr;
 use crate::theme::theme as T;
 
-/// Windows title bar height (zed ui constants parity).
-const HEIGHT: f32 = 32.;
+/// topbar 高（两段同高；窗口控制钮高度跟随）。
+pub(crate) const HEIGHT: f32 = 36.;
 
 /// Caption-button glyph font (Win11; MDL2 covers Win10).
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
-pub(crate) fn title_bar(
-    _chat: &mut Chat,
+/// 左段：收放钮（贴左 5px）+ 拖拽填充。
+pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    let t = T();
+    div()
+        .id("topbar-l")
+        .h(px(HEIGHT))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .bg(rgb(t.chrome))
+        .child(div().ml(px(5.)).child(icon_btn(
+            "panes-toggle",
+            "panel-left",
+            tr("收起 / 展开侧栏"),
+            cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                this.toggle_panes(cx);
+            }),
+        )))
+        // drag filler: the empty middle is the drag region (HTCAPTION —
+        // platform handles move + double-click-zoom)
+        .child(
+            div()
+                .flex_1()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag),
+        )
+}
+
+/// 右段：内容区 tabs + 设置 + 竖线 + 窗口控制。
+pub(crate) fn topbar_r(
+    chat: &mut Chat,
     window: &mut Window,
     cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
@@ -28,100 +57,270 @@ pub(crate) fn title_bar(
     // Glyphs: 0xE921 min, 0xE922 max, 0xE923 restore, 0xE8BB close.
     let max_glyph = if maximized { "\u{E923}" } else { "\u{E922}" };
     let max_tip = if maximized { tr("向下还原") } else { tr("最大化") };
+    let _ = max_tip;
 
     let mut bar = div()
-        .id("titlebar")
+        .id("topbar-r")
         .h(px(HEIGHT))
         .flex_shrink_0()
+        .relative()
         .flex()
         .items_center()
-        .bg(rgb(t.bg_panel))
+        .bg(rgb(t.chrome))
         .border_b_1()
-        .border_color(rgb(t.border))
-        // NOTE: no Drag area on the bar itself — the hit-test callback
-        // matches hitboxes in insertion order (parents first), so a
-        // bar-wide Drag would shadow the caption buttons' Min/Max/Close
-        // (everything became HTCAPTION). Drag lives on the filler below.
-        // logo (left)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1p5()
-                .px_3()
-                .text_sm()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(t.accent))
-                        .child(SharedString::from("π")),
-                )
-                .child(SharedString::from("pi-flash")),
-        )
-        // settings button (005 右侧操作区)
-        .child(
-            div()
-                .id("titlebar-settings")
-                .mx_2()
-                .px_2()
-                .py_0p5()
-                .rounded(px(5.))
-                .cursor_pointer()
-                .text_xs()
-                .text_color(rgb(t.text_muted))
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                .on_mouse_down(MouseButton::Left, cx.listener(
-                    |this, _: &gpui::MouseDownEvent, _w, cx| {
-                        this.open_settings(0, cx);
-                    },
-                ))
-                .child(SharedString::from(tr("设置"))),
-        )
-        // drag filler: the empty middle is the drag region (HTCAPTION —
-        // platform handles move + double-click-zoom)
-        .child(
-            div()
-                .flex_1()
-                .h_full()
-                .window_control_area(WindowControlArea::Drag),
-        );
+        .border_color(gpui::rgba(0xafc4ba73));
 
-    for (area, glyph, tip) in [
-        (WindowControlArea::Min, "\u{E921}", tr("最小化")),
-        (WindowControlArea::Max, max_glyph, max_tip),
-    ] {
-        bar = bar.child(caption_button(area, glyph, tip, false, t));
+    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）+ 内容区 tabs
+    // 都住在 items_end 的 tabs host 里（激活 tab 连体贴底需要）
+    // 收起态：收放钮在 bar 主层（垂直居中），tabs host 只装内容区 tabs
+    if chat.panes_hidden {
+        bar = bar
+            .child(
+                div()
+                    .ml(px(4.))
+                    .mr(px(2.))
+                    .child(icon_btn(
+                        "panes-toggle-r",
+                        "panel-left",
+                        tr("展开侧栏"),
+                        cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                            this.toggle_panes(cx);
+                        }),
+                    )),
+            )
+            .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(0xafc4ba8c)).mx(px(4.)));
     }
-    bar = bar.child(caption_button(
+    let mut tabs_host = div().id("topbar-tabs").h_full().flex().items_end();
+
+    for (ix, tab) in chat.panel_tabs.iter().enumerate() {
+        let active = chat.content_view == ContentView::Term && chat.active_panel_tab == Some(ix);
+        let label: SharedString = match tab {
+            crate::PanelTab::Term(id) => {
+                let title = chat
+                    .terminals
+                    .iter()
+                    .find(|t| t.id == *id)
+                    .map(|t| {
+                        let dir = t
+                            .cwd
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        format!("bash — {dir}")
+                    })
+                    .unwrap_or_else(|| "bash".into());
+                title.into()
+            }
+        };
+        tabs_host = tabs_host.child(content_tab(
+            "ctab-term",
+            ix,
+            label,
+            active,
+            if ix == 0 { 10. } else { 4. },
+            cx,
+        ));
+    }
+    if chat.md_preview.is_some() {
+        let label: SharedString = chat
+            .md_preview
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "preview".into())
+            .into();
+        let active = chat.content_view == ContentView::Md;
+        tabs_host = tabs_host.child(md_tab(label, active, cx));
+    }
+    bar = bar.child(tabs_host);
+
+    bar = bar.child(
+        div()
+            .flex_1()
+            .h_full()
+            .window_control_area(WindowControlArea::Drag),
+    );
+    // 设置（sliders-horizontal）
+    bar = bar.child(
+        div().mx(px(6.)).child(icon_btn(
+            "topbar-settings",
+            "sliders-horizontal",
+            tr("设置"),
+            cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                this.open_settings(0, cx);
+            }),
+        )),
+    );
+    bar = bar.child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(0xafc4ba8c)).mx(px(6.)));
+
+    for (area, glyph) in [
+        (WindowControlArea::Min, "\u{E921}"),
+        (WindowControlArea::Max, max_glyph),
+    ] {
+        bar = bar.child(caption_button(area, glyph, t));
+    }
+    bar.child(caption_button(
         WindowControlArea::Close,
         "\u{E8BB}",
-        tr("关闭"),
-        true,
         t,
-    ));
-    bar
+    ))
+}
+
+/// 30×30 图标钮（topbar 通用；hover chrome-hover）。
+fn icon_btn(
+    id: &'static str,
+    icon_name: &'static str,
+    _tip: &'static str,
+    handler: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl gpui::IntoElement {
+    let t = T();
+    div()
+        .id(id)
+        .size(px(30.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(7.))
+        .text_color(rgb(t.text_muted))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .on_mouse_down(MouseButton::Left, handler)
+        .child(crate::ui::icon(icon_name, 18., t.text_muted))
+}
+
+/// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×
+/// 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
+fn content_tab(
+    id: &'static str,
+    ix: usize,
+    label: SharedString,
+    active: bool,
+    ml: f32,
+    cx: &mut gpui::Context<Chat>,
+) -> impl gpui::IntoElement {
+    let t = T();
+    let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.close_panel_tab(ix, cx);
+        if this.content_view == ContentView::Term && this.panel_tabs.is_empty() {
+            this.content_view = if this.md_preview.is_some() {
+                ContentView::Md
+            } else {
+                ContentView::Chat
+            };
+        }
+        cx.notify();
+    });
+    let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.active_panel_tab = Some(ix);
+        this.content_view = ContentView::Term;
+        cx.notify();
+    });
+    tab_shell(id, label, active, ml, t, switch, Some(close))
+}
+
+fn md_tab(label: SharedString, active: bool, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    let t = T();
+    let close = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.md_preview = None;
+        if this.content_view == ContentView::Md {
+            this.content_view = if !this.panel_tabs.is_empty() {
+                ContentView::Term
+            } else {
+                ContentView::Chat
+            };
+        }
+        cx.notify();
+    });
+    let switch = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.content_view = ContentView::Md;
+        cx.notify();
+    });
+    tab_shell("ctab-md", label, active, 4., t, switch, Some(close))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tab_shell(
+    id: &'static str,
+    label: SharedString,
+    active: bool,
+    ml: f32,
+    t: &'static crate::theme::Theme,
+    switch: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+    close: Option<impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static>,
+) -> impl gpui::IntoElement {
+    let mut tab = div()
+        .id(id)
+        .ml(px(ml))
+        .flex()
+        .items_center()
+        .gap(px(9.))
+        .text_size(px(12.))
+        .cursor_pointer()
+        .when(active, |d| {
+            // 连体态：33px 高、bg 填充、压住底线（host 已 items_end 贴底）
+            d.h(px(HEIGHT - 3.))
+                .mb(px(-1.))
+                .bg(rgb(t.bg))
+                .border_1()
+                .border_b_0()
+                .border_color(gpui::rgba(0xafc4ba8c))
+                .rounded_tl(px(9.))
+                .rounded_tr(px(9.))
+                .pl(px(12.))
+                .pr(px(5.))
+                .text_color(rgb(t.text))
+        })
+        .when(!active, |d| {
+            d.h(px(HEIGHT))
+                .pl(px(12.))
+                .pr(px(12.))
+                .text_color(rgb(t.text_muted))
+                .hover(|s| s.text_color(rgb(t.text)))
+        })
+        .on_mouse_down(MouseButton::Left, switch);
+    tab = tab
+        .child(label)
+        .children(active.then(|| {
+            let mut x = div()
+                .id(SharedString::from(format!("{id}-x")))
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .text_color(rgb(t.text_dim))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)));
+            if let Some(close) = close {
+                x = x.on_mouse_down(MouseButton::Left, move |ev, w, cx| {
+                    cx.stop_propagation();
+                    close(ev, w, cx);
+                });
+            }
+            x.child(crate::ui::icon("x", 11., t.text_dim))
+        }));
+    tab
 }
 
 fn caption_button(
     area: WindowControlArea,
     glyph: &'static str,
-    tip: &'static str,
-    danger: bool,
     t: &crate::theme::Theme,
 ) -> impl gpui::IntoElement {
-    let hover_bg = if danger {
-        rgb(0xe81123) // Windows close-button red (platform_windows.rs parity)
+    let hover_bg = if area == WindowControlArea::Close {
+        rgb(0xd8626a) // v54 关闭悬停红（设计稿 #d8626a）
     } else {
         rgb(t.bg_hover)
     };
-    let hover_fg = if danger { rgb(0xffffff) } else { rgb(t.text) };
-    let _ = tip; // tooltips land with the zed_ui vendoring (Tooltip text)
+    let hover_fg = if area == WindowControlArea::Close {
+        rgb(0xffffff)
+    } else {
+        rgb(t.text)
+    };
     div()
         .id(SharedString::from(format!("wb-{}", area as u8)))
-        .w(px(46.))
-        .h_full()
+        .w(px(42.))
+        .h(px(HEIGHT))
         .flex()
         .items_center()
         .justify_center()

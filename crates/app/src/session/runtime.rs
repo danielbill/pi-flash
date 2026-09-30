@@ -22,8 +22,6 @@ use pi_link::protocol::{
 };
 
 use crate::agent_session::AgentSession;
-use crate::services::branch::*;
-use crate::services::title::{TitleTurn, build_title_transcript, parse_export_html, sanitize_title};
 use crate::session::messages::{Msg, Role, UsageLine};
 use crate::i18n::tr;
 use crate::services::format::status_line;
@@ -80,10 +78,6 @@ pub(crate) struct SessionRuntime {
     /// applied at spawn via CLI flags (RPC has no live tool switching)
     pub tools_preset: String,
 
-    // ---- titling ----
-    titling: bool,
-    title_tx: Option<futures::channel::mpsc::UnboundedSender<Result<String, String>>>,
-
     /// last user-visible activity (idle recycle)
     pub last_activity: std::time::Instant,
     /// queued ext requests while not active (G+ surfaces a badge)
@@ -125,8 +119,6 @@ impl SessionRuntime {
             history_ix: None,
             thinking_override: None,
             tools_preset: "default".into(),
-            titling: false,
-            title_tx: None,
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
             copy_flash: None,
@@ -927,90 +919,6 @@ impl SessionRuntime {
     /// LLM session title (pi-web lib/session-title.ts parity via a one-off
     /// `pi --no-session --print` run; the in-process SDK call pi-web uses is
     /// not reachable over RPC).
-    pub(crate) fn auto_title(&mut self, cx: &mut Context<Self>) {
-        if self.titling {
-            return;
-        }
-        let transcript = build_title_transcript(
-            &self
-                .messages
-                .iter()
-                .map(|m| TitleTurn { user: m.role == Role::User, text: m.plain_text() })
-                .collect::<Vec<_>>(),
-        );
-        if transcript.is_empty() {
-            self.status = tr("nothing to title yet").to_string();
-            cx.notify();
-            return;
-        }
-        if self.title_tx.is_none() {
-            let (tx, mut rx) = futures::channel::mpsc::unbounded::<Result<String, String>>();
-            self.title_tx = Some(tx);
-            cx.spawn(async move |this, cx| {
-                use futures::StreamExt;
-                while let Some(result) = rx.next().await {
-                    if this.update(cx, |r, cx| r.on_title_result(result, cx)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .detach();
-        }
-        let Some(tx) = self.title_tx.clone() else { return };
-        self.titling = true;
-        self.status = tr("生成标题…").to_string();
-        cx.notify();
-
-        // cheap one-shot: no tools, thinking off, current session's model
-        let mut args: Vec<String> = vec![
-            "--no-session".into(),
-            "--print".into(),
-            "--no-tools".into(),
-            "--thinking".into(),
-            "off".into(),
-        ];
-        if let Some(model) = self.state.as_ref().and_then(|s| s.model.clone()) {
-            args.push("--provider".into());
-            args.push(model.provider.clone());
-            args.push("--model".into());
-            args.push(model.id.clone());
-        }
-        args.push("--system-prompt".into());
-        let (title_sys_prompt, title_prompt) = crate::services::title::title_prompts();
-        args.push(title_sys_prompt.into());
-        args.push("--".into());
-        args.push(format!("{transcript}\n\n{title_prompt}"));
-
-        let cwd = self.cwd.clone();
-        std::thread::spawn(move || {
-            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let result = pi_link::vendor::run_cli_stdout(&cwd, &arg_refs)
-                .map(|out| sanitize_title(&out))
-                .and_then(|t| if t.is_empty() { Err("empty title".into()) } else { Ok(t) });
-            let _ = tx.unbounded_send(result);
-        });
-        cx.notify();
-    }
-
-    pub(crate) fn on_title_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
-        self.titling = false;
-        match result {
-            Ok(title) => {
-                if let Some(session) = &self.agent.session {
-                    let _ = session.send(&Command::SetSessionName { name: title.clone() });
-                }
-                self.status = tr("已生成标题: {title}").replace("{title}", &title);
-                self.refresh_state();
-            }
-            Err(e) => {
-                self.status = tr("标题生成失败: {e}").replace("{e}", &e);
-            }
-        }
-        cx.notify();
-    }
-
-    /// Thinking level from the pill menu. "auto" clears the local override
-    /// (pi default governs, pi-web parity — no RPC); other levels are sent.
     pub(crate) fn set_thinking_level(&mut self, level: &str, cx: &mut Context<Self>) {
         if level == "auto" {
             self.thinking_override = None;
@@ -1033,15 +941,6 @@ impl SessionRuntime {
     }
 
     /// Editor toolbar 压缩: rpc compact (summarize the context).
-    pub(crate) fn compact_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::Compact);
-            self.status = tr("压缩中…").to_string();
-            cx.notify();
-        }
-    }
-
-    /// Per-session tools preset key (031 state; applied at spawn).
     pub(crate) fn tool_preset_key(&self) -> &str {
         &self.tools_preset
     }
@@ -1051,17 +950,82 @@ impl SessionRuntime {
         if key.is_empty() { "configured".into() } else { key.to_string() }
     }
 
-    /// Request an export (the exported HTML embeds the live session's
-    /// systemPrompt + tool definitions, which the RPC surface does not
-    /// expose directly). The Response handler parses + caches them.
-    pub(crate) fn request_system_info(&mut self, cx: &mut Context<Self>) {
-        if self.session_tools.is_some() && self.sys_prompt.is_some() {
-            return;
-        }
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::ExportHtml);
-        }
-        cx.notify();
-    }
+}
 
+// ---------------------------------------------------------------------------
+// moved from services/{title,branch}.rs (v54 sweep: those modules are gone,
+// these two helpers are still live on the export/get_tree paths)
+// ---------------------------------------------------------------------------
+
+fn html_unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+}
+
+/// Extract (systemPrompt, [(tool name, description)]) from an exported
+/// session HTML (core/export-html/template.js markers).
+fn parse_export_html(html: &str) -> (Option<String>, Vec<(String, String)>) {
+    let mut prompt = None;
+    if let Some(pos) = html.find("class=\"system-prompt-full\"") {
+        if let Some(gt) = html[pos..].find('>') {
+            let from = pos + gt + 1;
+            if let Some(close) = html[from..].find("</div>") {
+                let raw = &html[from..from + close];
+                let text = html_unescape(raw).trim().to_string();
+                if !text.is_empty() {
+                    prompt = Some(text);
+                }
+            }
+        }
+    }
+    let mut tools = Vec::new();
+    let needle = "<span class=\"tool-item-name\">";
+    let mut search_from = 0usize;
+    while let Some(rel) = html[search_from..].find(needle) {
+        let name_from = search_from + rel + needle.len();
+        let Some(name_end) = html[name_from..].find("</span>") else { break };
+        let name = html_unescape(&html[name_from..name_from + name_end]);
+        let after_name = name_from + name_end + "</span>".len();
+        let desc_needle = " - <span class=\"tool-item-desc\">";
+        let Some(drel) = html[after_name..].find(desc_needle) else { break };
+        let desc_from = after_name + drel + desc_needle.len();
+        let Some(desc_end) = html[desc_from..].find("</span>") else { break };
+        let desc = html_unescape(&html[desc_from..desc_from + desc_end]);
+        tools.push((name, desc));
+        search_from = desc_from + desc_end;
+    }
+    (prompt, tools)
+}
+
+/// User-message entry ids along the root→leaf path (fork anchors for the
+/// per-message fork button). Ordering matches the projected user messages.
+fn collect_path_user_ids(nodes: &[TreeNode], leaf_id: Option<&str>) -> Vec<String> {
+    let Some(target) = leaf_id else {
+        return Vec::new();
+    };
+    fn flatten<'a>(nodes: &'a [TreeNode], map: &mut std::collections::HashMap<String, &'a TreeNode>) {
+        for n in nodes {
+            map.insert(n.id.clone(), n);
+            flatten(&n.children, map);
+        }
+    }
+    let mut map = std::collections::HashMap::new();
+    flatten(nodes, &mut map);
+    let mut chain: Vec<TreeNode> = Vec::new();
+    let mut cur = map.get(target);
+    while let Some(n) = cur {
+        chain.push((*n).clone());
+        cur = n.parent_id.as_deref().and_then(|pid| map.get(pid));
+    }
+    chain.reverse();
+    chain
+        .into_iter()
+        .filter(|n| n.role.as_deref() == Some("user"))
+        .map(|n| n.id)
+        .collect()
 }

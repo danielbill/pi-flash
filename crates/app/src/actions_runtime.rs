@@ -18,6 +18,40 @@ impl Chat {
                 SessionEvent::Changed => {
                     if is_active {
                         chat.available_models = rt.read(cx).available_models.clone();
+                    } else {
+                        // v54 未读绿点：非活跃会话在跑/在流式 → 记未读，
+                        // 切换到它时清除
+                        let (file, running) = {
+                            let r = rt.read(cx);
+                            (
+                                r.file.clone(),
+                                r.agent_running
+                                    || r.state.as_ref().is_some_and(|s| s.is_streaming),
+                            )
+                        };
+                        if let Some(f) = file {
+                            if running && !chat.unread.contains(&f) {
+                                chat.unread.insert(f);
+                            }
+                        }
+                    }
+                    // psp 状态槽: 维护运行集合（任何 runtime 的流式状态）
+                    let mut running: Vec<(PathBuf, bool)> = Vec::new();
+                    for (k, rt) in &chat.runtimes {
+                        let r = rt.read(cx);
+                        if let Some(f) = &r.file {
+                            let on = r.agent_running
+                                || r.state.as_ref().is_some_and(|s| s.is_streaming);
+                            running.push((f.clone(), on));
+                        }
+                        let _ = k;
+                    }
+                    for (f, on) in running {
+                        if on {
+                            chat.running_files.insert(f);
+                        } else {
+                            chat.running_files.remove(&f);
+                        }
                     }
                     cx.notify();
                 }
@@ -85,11 +119,13 @@ impl Chat {
         self.history = history;
         self.history_ix = None;
         self.active_key = key;
-        if let Some(f) = file {
+        self.active_file = file.clone();
+        if let Some(f) = &file {
             set_last_open(&self.cwd.to_string_lossy(), &f.to_string_lossy());
+            // v54: 切入会话清除未读
+            self.unread.remove(f);
         }
         self.pill_menu = None;
-        self.top_panel = None;
         self.menu_ix = 0;
         // surface queued permission requests of the incoming session
         let queued = rt.update(cx, |r, _| {

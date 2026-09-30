@@ -8,7 +8,6 @@ pub use text_input::TextInput;
 
 use gpui::{Animation, AnimationExt, SharedString, Styled, prelude::*};
 
-use crate::theme::theme as T;
 
 /// Embedded-SVG icon (`crates/app/assets/icons/{name}.svg`).
 pub fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
@@ -37,31 +36,5 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
                 )
             },
         )
-        .into_any_element()
-}
-
-/// Toolbar pill (icon + label, hover highlight).
-pub fn pill(
-    id: &'static str,
-    icon_name: &'static str,
-    label: SharedString,
-) -> gpui::AnyElement {
-    let t = T();
-    gpui::div()
-        .id(id)
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(gpui::rgb(t.border))
-        .flex()
-        .items_center()
-        .gap_1p5()
-        .text_xs()
-        .text_color(gpui::rgb(t.text_muted))
-        .cursor_pointer()
-        .hover(|s| s.bg(gpui::rgb(t.bg_hover)).text_color(gpui::rgb(t.text)))
-        .child(icon(icon_name, 12., t.text_muted))
-        .child(label)
         .into_any_element()
 }

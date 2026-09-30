@@ -6,10 +6,21 @@
 use crate::*;
 
 impl Chat {
-    pub(crate) fn open_terminal(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        self.dock_panel = DockPanel::Terminal;
-        if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &self.cwd)) {
+    /// 打开（或聚焦）一个终端；`cwd_override` 为 psp 项目菜单定向打开时
+    /// 的项目目录，None = 当前工作区。v54: 终端在内容区 tab 显示。
+    pub(crate) fn open_terminal(
+        &mut self,
+        cwd_override: Option<PathBuf>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let term_cwd = cwd_override.unwrap_or_else(|| self.cwd.clone());
+        if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &term_cwd)) {
             self.active_terminal = Some(ix);
+            if let Some(tix) = self.panel_tabs.iter().position(|tab| matches!(tab, PanelTab::Term(id) if *id == self.terminals[ix].id)) {
+                self.active_panel_tab = Some(tix);
+            }
+            self.content_view = ContentView::Term;
             let focus = self.terminals[ix].focus.clone();
             window.focus(&focus);
             cx.notify();
@@ -21,12 +32,13 @@ impl Chat {
         let id = self.term_seq;
         let focus = cx.focus_handle();
         let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, self.cwd.clone(), cell_w, line_h, focus, proxy) {
+        match terminal::spawn_terminal(id, term_cwd.clone(), cell_w, line_h, focus, proxy) {
             Ok(tab) => {
                 self.terminals.push(tab);
                 self.active_terminal = Some(self.terminals.len() - 1);
                 self.panel_tabs.push(PanelTab::Term(id));
                 self.active_panel_tab = Some(self.panel_tabs.len() - 1);
+                self.content_view = ContentView::Term;
                 let focus = self.terminals[self.terminals.len() - 1].focus.clone();
                 window.focus(&focus);
                 cx.notify();

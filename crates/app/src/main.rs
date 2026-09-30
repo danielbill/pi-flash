@@ -1,23 +1,23 @@
 //! pi-flash — desktop shell for the pi coding agent.
 //!
-//! Component-by-component translation of pi-web (see PORT_PLAN.md). Layout
-//! values (sizes, colors, spacing) come from pi-web sources: globals.css
-//! theme tokens, panel-layout.ts, MessageView/ChatInput/AppShell structures.
+//! v54 shell: topbar 两段（左=收放钮 chrome / 右=内容 tabs+设置+窗口控制）·
+//! psp 项目+会话一体列表 · 内容区 chat/term/md 状态机 · statusbar 仅面板段。
+//! Layout values come from docs/UI设计/主界面UI设计-2.html (mist tokens).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use gpui::{
-    App, Application, Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListState,
+    App, Application, Context, FocusHandle, Focusable, KeyDownEvent,
     MouseButton, ParentElement,
     Render, SharedString, Styled, WindowOptions, div, prelude::*, px, rgb,
 };
 use pi_link::protocol::Command;
 use pi_link::sessions::{SessionInfo, list_sessions, list_sessions_for_cwd, read_tail_messages};
 
-mod agent_session;
 mod actions_dialogs;
+mod agent_session;
 mod actions_menu;
 mod actions_panels;
 mod actions_rename;
@@ -26,10 +26,11 @@ mod actions_sessions;
 mod actions_terminal;
 mod appearance;
 mod assets;
+mod content;
 mod dialogs;
 mod ext_ui;
+mod ext_ui_actions;
 mod function_panel;
-mod pages;
 mod i18n;
 mod markdown;
 mod models_config;
@@ -65,30 +66,17 @@ static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 #[derive(Debug, Clone)]
 enum Dialog {
     ModelSelect { input: gpui::Entity<TextInput> },
-    BranchTree,
-    ProjectSelect,
     GitDiff { path: PathBuf, patch: String },
     FilePreview { path: PathBuf },
     SessionSearch { input: gpui::Entity<TextInput> },
 }
 
-/// Full-page state (005/011/012): Welcome shows until the project/session
-/// list has loaded; the session view carries the newSession hero (012)
-/// whenever no session is active.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Page {
-    Welcome,
-    Session,
-}
-
-/// functionPanel active view (015/018): mutually exclusive, switched from
-/// the bottom control bar.
+/// functionPanel active view (statusbar 三 tab): mutually exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DockPanel {
     Sessions,
     Files,
     Git,
-    Terminal,
 }
 
 impl DockPanel {
@@ -97,7 +85,6 @@ impl DockPanel {
             DockPanel::Sessions => "sessions",
             DockPanel::Files => "files",
             DockPanel::Git => "git",
-            DockPanel::Terminal => "terminal",
         }
     }
 
@@ -105,10 +92,62 @@ impl DockPanel {
         match s {
             "files" => DockPanel::Files,
             "git" => DockPanel::Git,
-            "terminal" => DockPanel::Terminal,
             _ => DockPanel::Sessions,
         }
     }
+}
+
+/// 内容区视图状态机 (v54): chat 默认；terminal / markdown 预览以 topbar tab 打开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContentView {
+    Chat,
+    Term,
+    Md,
+}
+
+/// psp 列表方式（⋯ 菜单）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ListMode {
+    Grouped,
+    Flat,
+}
+
+/// psp 排序方式（⋯ 菜单；手动=初始序，真拖拽待实现）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SortMode {
+    Time,
+    Manual,
+}
+
+/// One project group of the psp (sessions sorted mtime desc at build).
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectGroup {
+    pub name: String,
+    pub path: PathBuf,
+    pub sessions: Vec<SessionInfo>,
+}
+
+/// 会话 hover 详情卡状态（300ms 离行宽限 + 进卡取消隐藏）。
+#[derive(Debug, Clone)]
+pub(crate) struct HoverCard {
+    pub path: PathBuf,
+    pub y: f32,
+    pub hide_at: Option<std::time::Instant>,
+    pub confirming: bool,
+    /// 鼠标当前是否在卡上（gpui 的行退出/卡进入事件顺序不保证，
+    /// 行退出只在 !card_hovered 时才启动消失宽限）
+    pub card_hovered: bool,
+    /// 标题点击后原地改名（设计稿：卡内变输入框，Enter 提交 / Esc 取消）
+    pub renaming: bool,
+    pub rename_input: Option<gpui::Entity<crate::ui::TextInput>>,
+}
+
+/// psp 菜单（⋯ 排序两级 / 项目菜单）；(x, y) 为事件坐标锚点。
+#[derive(Debug, Clone)]
+pub(crate) enum PspMenu {
+    /// sub: 0=列表方式, 1=排序方式
+    Sort { sub: Option<u8>, x: f32, y: f32 },
+    Project { path: PathBuf, x: f32, y: f32 },
 }
 
 #[derive(Debug, Clone)]
@@ -133,16 +172,13 @@ struct Chat {
     focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog: Option<Dialog>,
-    page: Page,
     dock_panel: DockPanel,
-    dock_right: bool,
     input: String,
     pending_images: Vec<AttachedImage>,
     history: Vec<String>,
     history_ix: Option<usize>,
     session_tail_cache: std::collections::HashMap<PathBuf, Vec<Msg>>,
     sessions: Vec<SessionInfo>,
-    sessions_list: ListState,
     cwd: PathBuf,
     branch: String,
     available_models: Vec<pi_link::protocol::ModelInfo>,
@@ -150,21 +186,16 @@ struct Chat {
     active_key: String,
     draft_seq: usize,
     menu_ix: usize,
-    sidebar_sessions_frac: f32,
     term_events: Option<futures::channel::mpsc::UnboundedSender<(usize, alacritty_terminal::event::Event)>>,
     op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
     // editor view state
     ime_marked: Option<std::ops::Range<usize>>,
     caret_on: bool,
     input_focused: bool,
-    // sidebar view state
-    hovered_session: Option<usize>,
+    // inline rename (active session)
     renaming: Option<PathBuf>,
     rename_input: Option<gpui::Entity<TextInput>>,
     confirm_delete: Option<PathBuf>,
-    search_open: bool,
-    search_input: gpui::Entity<TextInput>,
-    sessions_list_count: usize,
     // session content search (013): dialog query input + background results
     search_hits: Vec<pi_link::sessions::SearchHit>,
     search_truncated: bool,
@@ -174,10 +205,10 @@ struct Chat {
     pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
-    top_panel: Option<TopPanel>,
     // git panel
     git_files: Vec<GitFile>,
     git_add_del: (u64, u64),
+    git_selected: Option<PathBuf>,
     git_tab: function_panel::git_panel::GitTab,
     git_log: Vec<GitCommit>,
     git_error: Option<String>,
@@ -186,7 +217,7 @@ struct Chat {
     project_files: Vec<String>,
     expanded_dirs: HashSet<PathBuf>,
     file_cache: std::collections::HashMap<PathBuf, FileTab>,
-    // terminals (dock view)
+    // terminals (content-area tabs)
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
     term_seq: usize,
@@ -207,19 +238,40 @@ struct Chat {
     ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
     ext_input: gpui::Entity<TextInput>,
     ext_notice: Option<(String, u8)>,
-    // subagent test runs (settings panel; G+ moves per-session)
+    // subagent test runs (settings panel)
     sa_profiles: Vec<pi_link::subagents::SubagentProfile>,
     sa_settings: pi_link::subagents::SubagentSettings,
     sa_runs: Vec<SubagentRun>,
     sa_run_seq: usize,
     sound_on: bool,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum TopPanel {
-    System,
-    Tools,
+    // ---- v54 shell state ----
+    /// psp 项目组（当前项目钉顶，其余按最近会话倒序；上限=设置.默认加载项目数）
+    projects: Vec<ProjectGroup>,
+    /// 当前活跃会话文件（psp 选中态；switch_to 时更新）
+    active_file: Option<PathBuf>,
+    /// 正在运行/流式中的会话文件集合（psp 旋转圈；Changed 事件维护）
+    running_files: std::collections::HashSet<PathBuf>,
+    list_mode: ListMode,
+    sort_mode: SortMode,
+    collapsed_keys: HashSet<String>,
+    slp_w: f32,
+    panes_hidden: bool,
+    slp_drag: Option<(f32, f32)>,
+    content_view: ContentView,
+    md_preview: Option<PathBuf>,
+    nav_open: bool,
+    nav_hide_at: Option<std::time::Instant>,
+    nav_flyout_hovered: bool,
+    /// flyout 内鼠标所在轮（选择框/比例尺亮点跟随鼠标）
+    nav_hover_turn: Option<usize>,
+    unread: HashSet<PathBuf>,
+    hovered_project: Option<usize>,
+    proj_tip: Option<(PathBuf, f32, f32)>,
+    hover_card: Option<HoverCard>,
+    psp_menu: Option<PspMenu>,
+    confirm_prj_del: Option<(PathBuf, f32, f32)>,
+    status_toast: Option<(String, std::time::Instant)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -228,7 +280,7 @@ enum PillMenu {
     Tools,
 }
 
-/// One right-panel tab: a file viewer or a terminal session.
+/// One content-area tab: a terminal session.
 #[derive(Debug, Clone, PartialEq)]
 enum PanelTab {
     Term(usize),
@@ -257,7 +309,7 @@ impl Chat {
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         // startup restore decides workspace + last session BEFORE the first
         // spawn — exactly one pi process (ARCHITECTURE.md §4, was two)
-        let last_ws = get_last_workspace();
+        let last_ws = if startup_restore() { get_last_workspace() } else { None };
         let target_ws = last_ws.unwrap_or_else(|| cwd.to_string_lossy().to_string());
         let cwd = if !same_ws(&target_ws, &cwd.to_string_lossy()) {
             let ws_path = PathBuf::from(&target_ws);
@@ -266,11 +318,14 @@ impl Chat {
             cwd
         };
         let branch = read_branch(&cwd);
-        let last_open = get_last_open(&cwd.to_string_lossy())
-            .map(PathBuf::from)
-            .filter(|p| p.exists());
-        let sessions_list = ListState::new(0, ListAlignment::Top, px(500.));
-        let dock_state = get_dock_state();
+        let last_open = if startup_restore() {
+            get_last_open(&cwd.to_string_lossy())
+                .map(PathBuf::from)
+                .filter(|p| p.exists())
+        } else {
+            None
+        };
+        let ui = ui_state();
 
         let mut chat = Self {
             focus,
@@ -279,8 +334,6 @@ impl Chat {
             input: String::new(),
             pending_images: Vec::new(),
             session_tail_cache: std::collections::HashMap::new(),
-            // skeleton first (ARCHITECTURE.md §4): the list fills in the
-            // background task below; the page flips Welcome -> Session then
             sessions: Vec::new(),
             search_hits: Vec::new(),
             search_truncated: false,
@@ -288,16 +341,7 @@ impl Chat {
             search_needle: String::new(),
             search_gen: 0,
             pending_locate: None,
-            page: Page::Welcome,
-            dock_panel: dock_state
-                .as_ref()
-                .map(|d| DockPanel::parse(&d.panel))
-                .unwrap_or(DockPanel::Sessions),
-            dock_right: dock_state
-                .as_ref()
-                .map(|d| d.position == "right")
-                .unwrap_or(false),
-            sessions_list,
+            dock_panel: DockPanel::parse(&ui.panel),
             cwd: cwd.clone(),
             branch,
             runtimes: std::collections::HashMap::new(),
@@ -306,6 +350,7 @@ impl Chat {
             available_models: Vec::new(),
             expanded_dirs: HashSet::new(),
             git_files: Vec::new(),
+            git_selected: None,
             git_tab: function_panel::git_panel::GitTab::Changes,
             git_log: Vec::new(),
             git_error: None,
@@ -318,7 +363,6 @@ impl Chat {
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
-            hovered_session: None,
             terminals: Vec::new(),
             active_terminal: None,
             term_seq: 0,
@@ -341,7 +385,6 @@ impl Chat {
             sa_settings: pi_link::subagents::SubagentSettings::default(),
             sa_runs: Vec::new(),
             sa_run_seq: 0,
-            sidebar_sessions_frac: 0.5,
             panel_tabs: Vec::new(),
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),
@@ -350,24 +393,34 @@ impl Chat {
             pill_menu: None,
             sound_on: load_sound_pref(),
             ime_marked: None,
-            top_panel: None,
             settings: None,
             renaming: None,
             rename_input: None,
-            search_open: false,
-            search_input: cx
-                .new(|cx| TextInput::new(cx).placeholder(tr("搜索会话..."))),
-            sessions_list_count: 0,
             confirm_delete: None,
+            projects: Vec::new(),
+            active_file: last_open.clone(),
+            running_files: std::collections::HashSet::new(),
+            list_mode: if ui.list_mode == "flat" { ListMode::Flat } else { ListMode::Grouped },
+            sort_mode: if ui.sort_mode == "manual" { SortMode::Manual } else { SortMode::Time },
+            collapsed_keys: ui.collapsed.iter().cloned().collect(),
+            slp_w: ui.slp_w,
+            panes_hidden: ui.panes_hidden,
+            slp_drag: None,
+            content_view: ContentView::Chat,
+            md_preview: None,
+            nav_open: false,
+            nav_hide_at: None,
+            nav_flyout_hovered: false,
+            nav_hover_turn: None,
+            unread: HashSet::new(),
+            hovered_project: None,
+            proj_tip: None,
+            hover_card: None,
+            psp_menu: None,
+            confirm_prj_del: None,
+            status_toast: None,
         };
         // wire input callbacks that need the root entity handle
-        let weak_self = cx.entity().downgrade();
-        chat.search_input.update(cx, |ti, _| {
-            ti.set_on_change(Box::new(move |_, cx| {
-                // typing refilters the sessions list (owner repaint)
-                let _ = weak_self.update(cx, |_, cx| cx.notify());
-            }));
-        });
         let weak_ext = cx.entity().downgrade();
         chat.ext_input.update(cx, |ti, _| {
             ti.set_on_submit(Box::new(move |v, cx| {
@@ -376,20 +429,60 @@ impl Chat {
                 });
             }));
         });
-        chat.sessions_list.reset(chat.sessions.len());
         chat.load_project_files();
+        chat.refresh_git();
 
         // caret blink pump (2 Hz toggle; repaint only while the editor is
-        // focused — input_focused is refreshed every render)
+        // focused — input_focused is refreshed every render). Also expires
+        // the psp hover card (300ms grace) and status toasts (2.5s).
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(530))
+                    .timer(std::time::Duration::from_millis(120))
                     .await;
                 let ok = this
                     .update(cx, |c, cx| {
                         c.caret_on = !c.caret_on;
-                        if c.input_focused {
+                        let mut dirty = c.input_focused;
+                        // 改名中：不打字时鼠标虽不在卡上，也不能清卡
+                        let renaming = c
+                            .hover_card
+                            .as_ref()
+                            .is_some_and(|h| h.renaming);
+                        if !renaming {
+                            if let Some(at) =
+                                c.hover_card.as_ref().and_then(|h| h.hide_at)
+                            {
+                                if at.elapsed()
+                                    > std::time::Duration::from_millis(300)
+                                {
+                                    c.hover_card = None;
+                                    dirty = true;
+                                }
+                            }
+                        }
+                        // 导航 flyout 250ms 离开宽限（pi-web
+                        // PREVIEW_HIDE_DELAY parity）
+                        if c.nav_open {
+                            if let Some(at) = c.nav_hide_at {
+                                if at.elapsed()
+                                    > std::time::Duration::from_millis(250)
+                                {
+                                    c.nav_open = false;
+                                    c.nav_flyout_hovered = false;
+                                    c.nav_hover_turn = None;
+                                    c.nav_hide_at = None;
+                                    dirty = true;
+                                }
+                            }
+                        }
+                        if let Some((_, at)) = &c.status_toast {
+                            if at.elapsed() > std::time::Duration::from_millis(2500) {
+                                c.status_toast = None;
+                                dirty = true;
+                            }
+                        }
+                        if dirty {
                             cx.notify();
                         }
                     })
@@ -434,18 +527,11 @@ impl Chat {
             }
         })
         .detach();
-        // Startup restore (pi-web last-open-by-workspace, plus a global
-        // last-workspace pointer): reopen the app in the workspace that was
-        // used last and reopen the session it had open.
-        let mut chat = chat;
-        chat.load_project_files();
-        chat.refresh_git();
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
         chat.reload_settings_panel();
         // initial runtime: restore the last session (disk-direct tail) or a
-        // lazy draft. The process spawns AFTER first paint — the conversation
-        // is already on screen by then (startup §4).
+        // lazy draft. The process spawns AFTER first paint.
         let rt_key = last_open
             .as_deref()
             .map(|p| p.to_string_lossy().to_string())
@@ -500,8 +586,7 @@ impl Chat {
             }));
         });
         // idle recycle (pi-web idle-timeout parity): every 60s, kill the
-        // process of any non-active session idle >10min. Messages stay —
-        // reopening is instant; the next prompt re-pulls the process.
+        // process of any non-active session idle >10min.
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(60))
@@ -513,11 +598,13 @@ impl Chat {
                         if *key == chat.active_key {
                             continue;
                         }
-                        let r = rt.read(cx);
-                        if !r.agent_running
-                            && r.last_activity.elapsed() > idle_cap
-                            && r.agent.session.is_some()
-                        {
+                        let idle = {
+                            let r = rt.read(cx);
+                            !r.agent_running
+                                && r.last_activity.elapsed() > idle_cap
+                                && r.agent.session.is_some()
+                        };
+                        if idle {
                             rt.update(cx, |r2, _| r2.shutdown_process());
                         }
                     }
@@ -528,8 +615,8 @@ impl Chat {
             }
         })
         .detach();
-        // background fill: project session list (startup budget §4 — the
-        // first frame renders the welcome page while this lands)
+        // background fill: cross-project scan -> psp 项目组（startup budget
+        // §4 — the first frame renders the empty shell while this lands）
         let cwd_text = chat.cwd.to_string_lossy().to_string();
         cx.spawn(async move |this, cx| {
             let sessions = list_sessions_for_cwd(&cwd_text, 100)
@@ -538,10 +625,6 @@ impl Chat {
                 .collect::<Vec<_>>();
             let _ = this.update(cx, |chat, cx| {
                 chat.sessions = sessions;
-                chat.sessions_list.reset(chat.sessions.len());
-                if chat.page == Page::Welcome {
-                    chat.page = Page::Session;
-                }
                 cx.notify();
                 if PERF.load(std::sync::atomic::Ordering::Relaxed) {
                     if let Some(t0) = T0.get() {
@@ -549,9 +632,19 @@ impl Chat {
                     }
                 }
             });
-            // cross-project tail preload (startup §4): the last N sessions'
-            // conversations land in memory off the frame path, so switching
-            // to a recent project paints its last session instantly
+            // psp 一体列表: all projects (grouped), capped by settings
+            let all = cx
+                .background_spawn(async move {
+                    let mut all = list_sessions(400);
+                    all.sort_by(|a, b| b.modified.cmp(&a.modified));
+                    all
+                })
+                .await;
+            let _ = this.update(cx, |chat, cx| {
+                chat.rebuild_projects(all);
+                cx.notify();
+            });
+            // cross-project tail preload (startup §4)
             let n = preload_sessions();
             if n > 0 {
                 let active = last_open.clone();
@@ -581,18 +674,9 @@ impl Chat {
         chat
     }
 
-    fn persist_dock(&mut self) {
-        save_dock_state(&DockState {
-            position: if self.dock_right { "right" } else { "left" }.into(),
-            panel: self.dock_panel.as_str().into(),
-            width: 260.,
-        });
-    }
-
     fn refresh_state(&self, cx: &mut gpui::App) {
         self.rt().update(cx, |r, _| r.refresh_state());
     }
-
 
     fn refresh_sessions(&mut self) {
         let cwd = self.cwd.to_string_lossy().to_string();
@@ -600,9 +684,19 @@ impl Chat {
             .into_iter()
             .filter(|s| same_ws(&s.cwd, &cwd))
             .collect();
-        // ListState caches the row count — without this the list renders
-        // stale (empty) after switching projects
-        self.sessions_list.reset(self.sessions.len());
+        // sync the current project's group, then re-pin project order
+        let all: Vec<SessionInfo> = self
+            .projects
+            .iter()
+            .flat_map(|g| {
+                if same_ws(&g.path.to_string_lossy(), &cwd) {
+                    self.sessions.clone()
+                } else {
+                    g.sessions.clone()
+                }
+            })
+            .collect();
+        self.rebuild_projects(all);
     }
 
     fn refresh_git(&mut self) {
@@ -613,8 +707,6 @@ impl Chat {
     // -----------------------------------------------------------------------
     // built-in terminal (pi-web TerminalPanel parity)
     // -----------------------------------------------------------------------
-
-
 
     fn on_term_event(
         &mut self,
@@ -693,8 +785,6 @@ impl Chat {
         cx.notify();
     }
 
-
-
     fn with_active_editor<Act: FnOnce(&mut SessionRuntime, &mut Context<SessionRuntime>)>(
         &mut self,
         cx: &mut Context<Self>,
@@ -741,7 +831,6 @@ impl Chat {
         cx.notify();
     }
 
-
     fn set_thinking_level(&mut self, key: &str, cx: &mut Context<Self>) {
         self.rt().update(cx, |r, cx| r.set_thinking_level(key, cx));
     }
@@ -773,41 +862,14 @@ impl Chat {
     }
 
     fn set_status(&mut self, msg: String, cx: &mut Context<Self>) {
-        self.rt().update(cx, |r, _| r.status = msg);
+        self.status_toast = Some((msg, std::time::Instant::now()));
+        self.rt().update(cx, |r, _| r.status = String::new());
+        let _ = cx;
     }
-
-
-
 
     fn load_project_files(&mut self) {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 impl Focusable for Chat {
@@ -817,38 +879,7 @@ impl Focusable for Chat {
 }
 
 // ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// git status/diff (lib/git-changes.ts parity)
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// LLM session title (pi-web lib/session-title.ts parity)
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// IME support: gpui routes Windows IME through the focused view's
-// EntityInputHandler (replace_and_mark_text_in_range = composition,
-// replace_text_in_range = commit). UTF-16 offsets per the trait contract.
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// branch tree helpers (BranchNavigator.tsx parity)
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
 // rendering
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// root render
 // ---------------------------------------------------------------------------
 
 impl Render for Chat {
@@ -863,21 +894,19 @@ impl Render for Chat {
         }
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
-        //
-        // dialog inputs own their focus handles; force-focus only when the
-        // input isn't already focused so click-to-focus still works
         let dialog_input = match &self.dialog {
             Some(Dialog::ModelSelect { input }) | Some(Dialog::SessionSearch { input }) => {
                 Some(input.clone())
             }
             _ => None,
         };
-        // inline rename input keeps keyboard focus until committed/cancelled
-        let rename_focus = self.rename_input.clone();
-        // NOTE: settings inputs are click-to-focus only — frame-level focus
-        // forcing on a not-yet-mounted entity recurses in gpui focus handling
-        // (stack overflow); dialogs keep the force since they mount before
-        // their first frame.
+        // 详情卡的原地改名输入框也要持有焦点——否则每帧的焦点回收
+        // 会把它抢回主输入框，键盘输入进不去
+        let card_rename_focus = self
+            .hover_card
+            .as_ref()
+            .and_then(|c| c.rename_input.clone());
+        let rename_focus = self.rename_input.clone().or(card_rename_focus);
         if let Some(input) = rename_focus.or(dialog_input) {
             let handle = input.read(cx).focus_handle_in(cx);
             if !handle.is_focused(window) {
@@ -904,9 +933,6 @@ impl Render for Chat {
                 window.focus(&self.dialog_focus);
             }
         } else if let Some(panel) = self.settings.as_ref() {
-            // settings inputs stay click-to-focus (see NOTE above); claim
-            // the modal escape target only while nothing inside the modal
-            // holds focus, so Esc reaches the modal's close handler
             let p = panel.read(cx);
             let inner_focused = p.focus.is_focused(window)
                 || p.key_input.read(cx).focus_handle_in(cx).is_focused(window)
@@ -924,9 +950,7 @@ impl Render for Chat {
         let weak = entity.downgrade();
         let weak_for_dialog = weak.clone();
 
-        let right_px = 24.;
-        // popup menu overlay anchored above the editor toolbar row (options
-        // reflect the ACTIVE session's overrides)
+        // popup menu overlay anchored above the composer controls row
         let (thinking_override, preset_key) = {
             let rt = self.rt();
             let r = rt.read(cx);
@@ -1038,8 +1062,8 @@ impl Render for Chat {
                 .child(
                     div()
                         .absolute()
-                        .bottom(px(120.))
-                        .right(px(right_px))
+                        .bottom(px(64.))
+                        .right(px(24.))
                         .min_w(px(320.))
                         .rounded(px(8.))
                         .border_1()
@@ -1054,34 +1078,81 @@ impl Render for Chat {
                 .into_any_element()
         });
 
-        // ---- main column (session::main_column) --------------------------
-        let main_col = session::main_column(self, entity.clone(), &weak, window, cx);
-        // 005 layout: vertical shell — titlebar / body(dock + session) / control bar
-        let body = if self.page == Page::Welcome {
-            pages::welcome::welcome().into_any_element()
-        } else {
-            let dock_el =
-                function_panel::dock(self, entity.clone(), &weak, window, cx);
-            if self.dock_right {
+        // ---- v54 body: panel-col (topbar-l + dock + statusbar) | content-col
+        let entity_for_body = entity.clone();
+        let weak_for_body = weak.clone();
+        let panes_hidden = self.panes_hidden;
+        let slp_dragging = self.slp_drag.is_some();
+        let mut body = div()
+            .id("app-body")
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .flex()
+            // slp 宽度拖拽（resizer 按下时在此跟踪）
+            .on_mouse_move(move |ev: &gpui::MouseMoveEvent, _, cx| {
+                let _ = weak_for_body.update(cx, |c, cx| {
+                    if let Some((start_x, start_w)) = c.slp_drag {
+                        c.slp_w = (start_w + f32::from(ev.position.x) - start_x).clamp(250., 500.);
+                        cx.notify();
+                    }
+                });
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                {
+                    let weak = weak.clone();
+                    move |_, _, cx| {
+                        let _ = weak.update(cx, |c, cx| {
+                            if c.slp_drag.take().is_some() {
+                                c.persist_ui();
+                                cx.notify();
+                            }
+                        });
+                    }
+                },
+            );
+        if !panes_hidden {
+            body = body.child(
                 div()
-                    .flex_1()
-                    .min_h_0()
+                    .id("panel-col")
+                    .w(px(self.slp_w))
+                    .flex_shrink_0()
                     .flex()
-                    .flex_row()
-                    .child(main_col)
-                    .child(dock_el)
-                    .into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_row()
-                    .child(dock_el)
-                    .child(main_col)
-                    .into_any_element()
-            }
-        };
+                    .flex_col()
+                    .bg(rgb(t.chrome))
+                    .child(titlebar::topbar_l(self, cx))
+                    .child(function_panel::dock(
+                        self,
+                        entity_for_body.clone(),
+                        &weak,
+                        cx,
+                    ))
+                    .child(status_bar::control_bar(self, cx)),
+            );
+        }
+        body = body.child(
+            div()
+                .id("content-col")
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .relative()
+                .bg(rgb(t.bg))
+                .when(!panes_hidden && !slp_dragging, |d| {
+                    d.border_l_1().border_color(gpui::rgba(0xafc4ba99))
+                })
+                .child(titlebar::topbar_r(self, window, cx))
+                .child(content::content_main(
+                    self,
+                    entity_for_body,
+                    &weak,
+                    window,
+                    cx,
+                )),
+        );
+
         let mut root = div()
             .size_full()
             .relative()
@@ -1090,9 +1161,7 @@ impl Render for Chat {
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
             .font_family(crate::appearance::panel_font().family.clone())
-            .child(titlebar::title_bar(self, window, cx))
-            .child(body)
-            .child(status_bar::control_bar(self, cx));
+            .child(body);
 
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
 
@@ -1100,140 +1169,35 @@ impl Render for Chat {
             let data = settings::SettingsFormData::snapshot(panel.read(cx), cx);
             root = root.child(settings::render_settings(self, &weak_for_dialog, &data));
         }
+        // psp 悬浮层（tooltip / 详情卡 / 菜单 / 确认）
+        root = root.child(function_panel::psp_overlays::psp_overlays(self, cx));
         // toolbar pill popup menus
         if let Some(el) = pill_menu_el {
             root = root.child(el);
         }
-        // top-bar dropdown panels (系统提示词 / 工具定义)
-        if let Some(tp) = self.top_panel {
-            let weak_tp = weak.clone();
-            let mut panel = div()
-                .id("top-panel")
-                .absolute()
-                .top(px(44.))
-                .left(px(276.))
-                .w(px(680.))
-                .max_h(px(520.))
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(t.border))
-                .rounded(px(8.))
-                .shadow_lg()
-                .overflow_y_scroll()
-                .p(px(12.))
-                .flex()
-                .flex_col()
-                .gap_2();
-            match tp {
-                TopPanel::System => {
-                    panel = panel.child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(t.text))
-                            .child(tr("系统提示词")),
-                    );
-                    let rt = self.rt();
-                    let sys_prompt = rt.read(cx).sys_prompt.clone();
-                    match &sys_prompt {
-                        Some(text) => {
-                            panel = panel.child(
-                                div()
-                                    .font_family("Consolas")
-                                    .text_size(px(11.))
-                                    .text_color(rgb(t.text_muted))
-                                    .flex()
-                                    .flex_col()
-                                    .children(
-                                        text.lines().map(|l| {
-                                            div().child(SharedString::from(l.to_string()))
-                                        }),
-                                    ),
-                            );
-                        }
-                        None => {
-                            panel = panel.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(t.text_dim))
-                                    .child(tr("正在获取（export 中）…")),
-                            );
-                        }
-                    }
-                }
-                TopPanel::Tools => {
-                    let session_tools = self.rt().read(cx).session_tools.clone();
-                    panel = panel.child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(t.text))
-                            .child(tr("工具定义")),
-                    );
-                    match &session_tools {
-                        Some(tools) if !tools.is_empty() => {
-                            for (name, desc) in tools {
-                                panel = panel.child(
-                                    div()
-                                        .flex()
-                                        .items_baseline()
-                                        .gap_2()
-                                        .px_2()
-                                        .py(px(4.))
-                                        .rounded(px(4.))
-                                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                                        .child(
-                                            div()
-                                                .font_family("Consolas")
-                                                .text_size(px(11.))
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(rgb(t.text))
-                                                .child(SharedString::from(name.clone())),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(t.text_muted))
-                                                .child(SharedString::from(desc.clone())),
-                                        ),
-                                );
-                            }
-                        }
-                        _ => {
-                            panel = panel.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(t.text_dim))
-                                    .child(tr("正在获取（export 中）…")),
-                            );
-                        }
-                    }
-                }
-            }
+        // status toast（v54: statusbar 无状态文本，改瞬时提示）
+        if let Some((msg, _)) = &self.status_toast {
+            let text: SharedString = msg.clone().into();
             root = root.child(
                 div()
                     .absolute()
-                    .inset_0()
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, {
-                                let w = weak_tp.clone();
-                                move |_, _, cx| {
-                                    let _ = w.update(cx, |c, cx| {
-                                        if c.top_panel.is_some() {
-                                            c.top_panel = None;
-                                            cx.notify();
-                                        }
-                                    });
-                                }
-                            }),
-                    )
-                    .child(panel),
+                    .top(px(44.))
+                    .left_1_2()
+                    .ml(px(-160.))
+                    .w(px(320.))
+                    .px(px(12.))
+                    .py(px(7.))
+                    .rounded(px(8.))
+                    .bg(rgb(0x22312d))
+                    .shadow_lg()
+                    .text_size(px(12.))
+                    .text_color(rgb(0xeef4f1))
+                    .flex()
+                    .justify_center()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(text),
             );
         }
         // extension notify toast (top-right)
@@ -1272,11 +1236,6 @@ impl Render for Chat {
     }
 }
 
-/// Models panel dialog (pi-web ModelsConfig parity): 900px surface, 240px
-/// provider sidebar, detail pane with API-key editor + per-provider
-/// enabledModels list (36px rows, 32×18 ConfigSwitch, pi-web tokens).
-
-
 fn main() {
     let _ = T0.set(std::time::Instant::now());
     PERF.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1295,31 +1254,24 @@ fn main() {
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             // gpui-component (widget library powering TextInput): global
-            // init + token mapping from the active app theme (appearance
-            // owns the remap so theme switches re-run it)
+            // init + token mapping from the active app theme
             gpui_component::init(cx);
             appearance::sync_gpui_tokens(cx);
-            // restore last window bounds (startup restore layer §4)
-            let restored = get_window_state();
-            let bounds = gpui::Bounds::centered(
-                None,
-                gpui::size(
-                    px(restored.as_ref().map(|w| w.w as f32).unwrap_or(1180.)),
-                    px(restored.as_ref().map(|w| w.h as f32).unwrap_or(760.)),
-                ),
-                cx,
-            );
-            let window_bounds = if restored.map(|w| w.maximized).unwrap_or(false) {
-                gpui::WindowBounds::Maximized(bounds)
-            } else {
-                gpui::WindowBounds::Windowed(bounds)
-            };
+            // startup restore (§4)：每次启动默认最大化（位置不持久化——
+            // gpui Windows 的外框/客户区坐标在存取间不对称，每个周期漂移
+            // 一个边框宽）。取消最大化后的尺寸仍保存，供会话内还原参考。
+            let _restored = get_window_state();
+            let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
+            let window_bounds = gpui::WindowBounds::Maximized(bounds);
+            // gpui 0.2.2 Windows 创建路径对 Maximized 的延迟处理依赖
+            // initial_placement/可见时序，实测不生效——回调里再显式 zoom
+            let mut force_maximize = true;
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("pi-flash".into()),
-                        // client-side title bar (005: app-drawn, window
+                        // client-side title bar (v54 topbar 两段, window
                         // control hitboxes registered by titlebar.rs)
                         appears_transparent: true,
                         ..Default::default()
@@ -1327,11 +1279,15 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    // gpui-component widgets require its Root as the window
+                    if force_maximize {
+                        window.zoom_window();
+                        force_maximize = false;
+                    }
+                    // gpui-component widgets require their Root as the window
                     // root view (renders their context-menu/popover layers)
                     let chat = cx.new(Chat::new);
                     let weak = chat.downgrade();
-                    // persist window bounds + dock layout on close so the
+                    // persist window bounds + shell layout on close so the
                     // startup restore layer has data (§4)
                     window.on_window_should_close(cx, move |window, cx| {
                         let b = window.bounds();
@@ -1343,7 +1299,7 @@ fn main() {
                             maximized: window.is_maximized(),
                         });
                         if let Some(chat) = weak.upgrade() {
-                            chat.update(cx, |chat, _cx| chat.persist_dock());
+                            chat.update(cx, |chat, _cx| chat.persist_ui());
                         }
                         true
                     });

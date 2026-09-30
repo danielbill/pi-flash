@@ -158,14 +158,7 @@ impl TextInput {
 
     /// Create (once) + focus the inner state immediately — for callers that
     /// must focus programmatically (session search toggle).
-    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = self.ensure_state(window, cx);
-        if let Some(state) = state {
-            state.update(cx, |st, scx| st.focus(window, scx));
-        }
-        cx.notify();
-    }
-
+    
     fn ensure_state(
         &mut self,
         window: &mut Window,

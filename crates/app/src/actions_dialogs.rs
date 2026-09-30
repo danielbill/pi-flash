@@ -16,10 +16,6 @@ impl Chat {
         cx.notify();
     }
 
-    pub(crate) fn open_project_select(&mut self, cx: &mut Context<Self>) {
-        self.dialog = Some(Dialog::ProjectSelect);
-        cx.notify();
-    }
 
     /// Open the session content search (013): query input + grouped results.
     pub(crate) fn open_session_search(&mut self, cx: &mut Context<Self>) {
@@ -109,18 +105,6 @@ impl Chat {
             // messages still loading (pool miss) — apply after the reconcile
             self.pending_locate = Some((path, ts, needle));
         }
-        cx.notify();
-    }
-
-    /// Open the branch navigator: request a fresh tree, show the panel.
-    pub(crate) fn open_branch_tree(&mut self, cx: &mut Context<Self>) {
-        self.rt().update(cx, |r, _| {
-            r.branch_tree = None;
-            if let Some(session) = &r.agent.session {
-                let _ = session.send(&Command::GetTree);
-            }
-        });
-        self.dialog = Some(Dialog::BranchTree);
         cx.notify();
     }
 }

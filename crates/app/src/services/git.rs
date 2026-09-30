@@ -174,6 +174,23 @@ pub fn git_stage(cwd: &Path, path: &Path) -> Result<(), String> {
     run_git_checked(cwd, &["add", "--", &path.to_string_lossy()]).map(|_| ())
 }
 
+/// Stage every change incl. untracked (`git add -A`; v54 Stage All).
+pub fn git_stage_all(cwd: &Path) -> Result<(), String> {
+    run_git_checked(cwd, &["add", "-A"]).map(|_| ())
+}
+
+/// Undo the last commit, keeping changes staged (`git reset --soft HEAD~1`).
+pub fn git_uncommit(cwd: &Path) -> Result<(), String> {
+    run_git_checked(cwd, &["reset", "--soft", "HEAD~1"]).map(|_| ())
+}
+
+/// Commits the local branch is ahead of its upstream (v54 `↑N Push` badge).
+pub fn git_ahead_count(cwd: &Path) -> usize {
+    run_git(cwd, &["rev-list", "--count", "@{upstream}..HEAD"])
+        .and_then(|out| out.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 /// Unstage one change (`git reset -q HEAD -- <path>`; a repo without a
 /// first commit reports an error, which the panel surfaces verbatim).
 pub fn git_unstage(cwd: &Path, path: &Path) -> Result<(), String> {
