@@ -473,13 +473,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .phase-row .dots::after { content: ""; animation: dots 1.4s steps(4, end) infinite; }
   @keyframes dots { 0% { content: ""; } 25% { content: "…"; } }
-  .shimmer {
-    height: 10px; width: 260px; border-radius: 5px; margin-top: 9px;
-    background: linear-gradient(90deg, var(--bg-hover) 25%, var(--bg-selected) 50%, var(--bg-hover) 75%);
-    background-size: 600px 100%;
-    animation: slide 1.6s linear infinite;
-  }
-  @keyframes slide { to { background-position: 600px 0; } }
 
     .input-wrap { position: absolute; left: 0; right: 0; bottom: 0;
     padding: 2px 34px 15px; pointer-events: none; }
@@ -871,7 +864,6 @@
                 <svg class="spark" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 1.5l1.8 4.7L14.5 8l-4.7 1.8L8 14.5 6.2 9.8 1.5 8l4.7-1.8z"/></svg>
                 <span class="dots">正在思考</span>
               </div>
-              <div class="shimmer"></div>
             </div>
           </div>
         </div>

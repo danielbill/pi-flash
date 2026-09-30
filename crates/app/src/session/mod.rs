@@ -185,8 +185,10 @@ fn session_list(
                     .into_any_element()
             }
             None => {
-                // v54 §13 等待动画：spark 旋转 + 正在思考 + shimmer 滑动条
+                // v54 §13 等待动画：模型名 + spark 旋转 + 「正在思考…」+ shimmer 滑动条。
+                // 生命周期 = 发送成功 → agent 第一个 assistant 事件（runtime.phase_waiting）
                 if chat.rt().read(cx).phase_row_visible() {
+                    let model = chat.rt().read(cx).model_label_text();
                     div()
                         .w_full()
                         .flex()
@@ -201,15 +203,23 @@ fn session_list(
                                 .gap(px(2.))
                                 .child(
                                     div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(t.text_dim))
+                                        .mb(px(4.))
+                                        .child(SharedString::from(model)),
+                                )
+                                .child(
+                                    div()
                                         .flex()
                                         .items_center()
                                         .gap(px(9.))
                                         .text_size(px(13.))
                                         .text_color(rgb(t.accent))
                                         .child(spark_spin(14., t.accent))
-                                        .child(SharedString::from(tr("正在思考"))),
+                                        .child(thinking_label(t.accent)),
                                 )
-                                .child(shimmer_bar(t)),
+                                // 设计 §13 原还有一条 260×10 shimmer 骨架条，已按用户要求去掉：
+                                // 已有「正在思考…」文案，骨架条不承载信息，纯属视觉噪音
                         )
                         .into_any_element()
                 } else {
@@ -391,7 +401,7 @@ fn nav_gutter(
             .w(px(326.))
             .bg(rgb(t.bg))
             .border_l_1()
-            .border_color(gpui::rgba(0xafc4ba80))
+            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
             .shadow_lg()
             .overflow_y_scroll()
             .py(px(8.))
@@ -561,7 +571,7 @@ fn nav_gutter(
                         .top(relative(top + step * 0.18))
                         .h(relative(step * 0.64))
                         .w(px(1.))
-                        .bg(gpui::rgba(0xafc4ba99)),
+                        .bg(gpui::rgba(crate::theme::border_alpha(t, 0x99))),
                 );
             }
         }
@@ -641,35 +651,25 @@ fn spark_spin(size: f32, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// shimmer 滑动条（260×10 圆角，高亮块左→右循环 1.6s）。
-fn shimmer_bar(t: &'static crate::theme::Theme) -> gpui::AnyElement {
+/// 「正在思考…」标签（设计 §13 .dots：1.4s/4 步，0→3 个点循环）。
+fn thinking_label(accent: u32) -> gpui::AnyElement {
     div()
-        .mt(px(9.))
-        .w(px(260.))
-        .h(px(10.))
-        .rounded(px(5.))
-        .bg(rgb(t.bg_hover))
-        .overflow_hidden()
-        .child(
-            div()
-                .size_full()
-                .with_animation(
-                    "phase-shimmer",
-                    Animation::new(std::time::Duration::from_millis(1600)).repeat(),
-                    move |track, delta| {
-                        // 高亮块自左滑出、右滑入
-                        let x = (delta * 360. - 100.).clamp(-100., 260.);
-                        track.child(
-                            div()
-                                .ml(px(x))
-                                .mt(px(1.))
-                                .w(px(100.))
-                                .h(px(8.))
-                                .rounded(px(4.))
-                                .bg(rgb(t.bg_selected)),
-                        )
-                    },
-                ),
+        .flex()
+        .items_center()
+        .text_size(px(13.))
+        .text_color(rgb(accent))
+        .with_animation(
+            "phase-dots",
+            Animation::new(std::time::Duration::from_millis(1400)).repeat(),
+            |el, delta| {
+                let n = ((delta * 4.).floor().max(0.) as usize).min(3);
+                el.child(SharedString::from(format!(
+                    "{}{}",
+                    tr("正在思考"),
+                    ".".repeat(n)
+                )))
+            },
         )
         .into_any_element()
 }
+

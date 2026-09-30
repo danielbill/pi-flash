@@ -122,6 +122,11 @@ Zed 式：根项目行、每级缩进 guide 线、类型图标（folder-open/fol
 - 操作栏**默认隐藏**，hover 消息行（整行感应区）淡入 0.15s
 - 内容：⧉复制 / ✎编辑 / ⑂新分支（lucide 图标 + 文字）+ 时间；操作项 `--text-dim` hover 提亮，时间淡灰
 
+**等待动画**（发送后 → agent 首个 token 之前）：
+- 结构：模型名（11px `--text-dim`）+ 旋转 spark（14px，1.4s/圈）+「正在思考…」（省略号 1.4s/4 步循环，accent 色）。~~下方 260×10 shimmer 骨架条~~ **已删**（已有文案，骨架条是纯视觉噪音）
+- 生命周期：`SessionRuntime.phase_waiting` 发送成功置位；assistant `message_start`/`message_update`、`agent_settled`/`agent_end`、`prompt` 失败、用户中止（Esc）清零
+- 实现坑：回显去重标记 `pending_echo` 必须与 `phase_waiting` 解耦 —— pi 回显 user 消息是瞬时的，两者共用一个标记会让等待行「一闪即灭」
+
 **agent 回复**（左对齐）：
 - 开头**工作详情折叠行**（pi-web 特色，无框、与正文左对齐、chevron 旋转 90° 展开）：`工作详情 · N 条消息 · N 次工具调用`；展开 = 左细线缩进的工具调用列表（tool · 对象）；仅**已完成**回复有（工作中无）
 - 操作栏**默认隐藏**、hover 消息块显示；左对齐三块：⧉复制 / 用时（"用时1分55秒"）/ 时间；**支出信息已删**（冗余，可下沉 hover 或会话级统计）

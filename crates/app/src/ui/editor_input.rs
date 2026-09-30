@@ -13,11 +13,9 @@ impl gpui::EntityInputHandler for Chat {
         _cx: &mut gpui::Context<Self>,
     ) -> Option<String> {
         let text: Vec<u16> = self.input.encode_utf16().collect();
-        let slice: String = text
-            .get(range.start..range.end)?
-            .iter()
-            .map(|&u| char::from_u32(u as u32).unwrap_or('\u{fffd}'))
-            .collect();
+        // utf16 代理对必须整体重组：逐 u16 char::from_u32 会把中文/emoji
+        // 拆成一串 U+FFFD（TSF 取标区文本时必踩）
+        let slice: String = String::from_utf16_lossy(text.get(range.start..range.end)?);
         adjusted_range.replace(range);
         Some(slice)
     }
@@ -50,18 +48,20 @@ impl gpui::EntityInputHandler for Chat {
         range: Option<std::ops::Range<usize>>,
         text: &str,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) {
         match range.or_else(|| self.ime_marked.clone()) {
             Some(r) => {
-                let start = self.utf16_to_char_offset(r.start);
-                let end = self.utf16_to_char_offset(r.end);
-                self.input.replace_range(start..end, text);
+                let start = self.utf16_to_byte_offset(r.start);
+                let end = self.utf16_to_byte_offset(r.end);
+                self.safe_replace_range(start, end, text);
             }
             None => self.input.push_str(text),
         }
         self.ime_marked = None;
         self.menu_ix = 0;
+        // 漏 notify = 文本进了 model 但界面不动
+        cx.notify();
     }
 
     fn replace_and_mark_text_in_range(
@@ -70,23 +70,27 @@ impl gpui::EntityInputHandler for Chat {
         new_text: &str,
         _new_selected_range: Option<std::ops::Range<usize>>,
         _window: &mut gpui::Window,
-        _cx: &mut gpui::Context<Self>,
+        cx: &mut gpui::Context<Self>,
     ) {
         // composition update: swap the marked span for the new composition
         // string, then re-mark it
         let range = range.or_else(|| self.ime_marked.clone());
         let start = match &range {
-            Some(r) => self.utf16_to_char_offset(r.start),
-            None => self.input.chars().count(),
+            Some(r) => self.utf16_to_byte_offset(r.start),
+            None => self.input.len(),
         };
         let end = range
             .as_ref()
-            .map(|r| self.utf16_to_char_offset(r.end))
+            .map(|r| self.utf16_to_byte_offset(r.end))
             .unwrap_or(start);
-        self.input.replace_range(start..end, new_text);
-        let start_u16 = self.input.chars().take(start).map(char::len_utf16).sum();
+        // 字节边界 + 夹取：平台给的 range 可能越界/反转，replace_range
+        // panic 会直接带走进程（STATUS_STACK_BUFFER_OVERRUN）
+        let used_start = self.safe_replace_range(start, end, new_text);
+        let start_u16 = self.input[..used_start].encode_utf16().count();
         let new_len = new_text.encode_utf16().count();
         self.ime_marked = Some(start_u16..start_u16 + new_len);
+        // 漏 notify = 组合中的拼音/候选词不显示
+        cx.notify();
     }
 
     fn bounds_for_range(
@@ -111,17 +115,48 @@ impl gpui::EntityInputHandler for Chat {
 }
 
 impl Chat {
-    /// utf16 offset -> char offset for self.input
-    fn utf16_to_char_offset(&self, u16_offset: usize) -> usize {
+    /// utf16 offset -> **字节** offset（`String::replace_range` 的坐标）。
+    /// 注意别用 char 下标：中文/emoji 一个 char 3~4 字节，
+    /// 拿 char 下标去切会 panic `assertion failed: self.is_char_boundary(n)`。
+    fn utf16_to_byte_offset(&self, u16_offset: usize) -> usize {
         let mut u16_count = 0usize;
-        for (char_ix, ch) in self.input.chars().enumerate() {
+        for (byte_ix, ch) in self.input.char_indices() {
             if u16_count >= u16_offset {
-                return char_ix;
+                return byte_ix;
             }
             u16_count += ch.len_utf16();
         }
-        self.input.chars().count()
+        self.input.len()
     }
+
+    /// 把 `start..end` 夹到合法字节区间后替换，返回实际使用的 start（字节）。
+    /// IME/TSF 给的 range 不保证在界内、不保证 start <= end —— 这里不夹，
+    /// `replace_range` 会 panic 并带走整个进程。
+    fn safe_replace_range(&mut self, start: usize, end: usize, with: &str) -> usize {
+        let len = self.input.len();
+        let start = floor_char_boundary(&self.input, start.min(len));
+        let end = ceil_char_boundary(&self.input, end.clamp(start, len));
+        self.input.replace_range(start..end, with);
+        start
+    }
+}
+
+/// 向下取到最近字符边界（`str::floor_char_boundary` 未稳定前的等价物）。
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// 向上取到最近字符边界。
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    i = i.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 /// Invisible paint-phase element that registers the chat editor as the

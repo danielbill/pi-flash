@@ -52,6 +52,9 @@ pub(crate) struct SessionRuntime {
     pub list: ListState,
     pub collapsed: HashSet<(usize, usize)>,
     pub phase_waiting: bool,
+    /// 乐观发送的用户文本：只用于把 pi 回显的同文 user 消息就地升级（去重）。
+    /// 与 phase_waiting 解耦 —— 回显到达 ≠ agent 已应答，等待行不能被它掐掉。
+    pub pending_echo: Option<String>,
     pub stream_started: Option<std::time::Instant>,
     pub agent_running: bool,
     pub status: String,
@@ -101,6 +104,7 @@ impl SessionRuntime {
             list,
             collapsed: HashSet::new(),
             phase_waiting: false,
+            pending_echo: None,
             stream_started: None,
             agent_running: false,
             status: String::new(),
@@ -355,6 +359,7 @@ impl SessionRuntime {
                         // cached pre-render instead of appending (fixes
                         // doubled rows after the tail pre-render)
                         self.messages.clear();
+                        self.pending_echo = None;
                         for msg in data["messages"].as_array().into_iter().flatten() {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
@@ -382,6 +387,11 @@ impl SessionRuntime {
                 } else {
                     self.status =
                         format!("{command} failed: {}", error.unwrap_or_default());
+                    if command == "prompt" {
+                        // 发送失败：等待行不能一直转下去
+                        self.phase_waiting = false;
+                        self.pending_echo = None;
+                    }
                 }
             }
             Event::MessageStart { role, blocks, timestamp } => {
@@ -399,14 +409,16 @@ impl SessionRuntime {
                             })
                             .collect::<Vec<_>>()
                             .join("");
-                        let optimistic = self.phase_waiting
+                        // 去重只看 pending_echo：pi 回显 user 消息 ≠ agent 已开始应答，
+                        // 等待行（spark + 正在思考… + shimmer）必须活到第一个 assistant 事件
+                        let optimistic = self.pending_echo.is_some()
                             && matches!(self.messages.last(), Some(m)
                                 if m.role == Role::User && m.plain_text() == echo_text);
+                        self.pending_echo = None;
                         if optimistic {
                             if let Some(m) = self.messages.last_mut() {
                                 m.blocks = blocks;
                             }
-                            self.phase_waiting = false;
                         } else {
                             self.messages.push(Msg {
                                 role: Role::User,
@@ -420,6 +432,7 @@ impl SessionRuntime {
                     }
                     "assistant" => {
                         self.phase_waiting = false;
+                        self.pending_echo = None;
                         self.messages.push(Msg {
                             role: Role::Assistant,
                             blocks,
@@ -459,6 +472,7 @@ impl SessionRuntime {
             }
             Event::MessageUpdate(assistant_event) => {
                 self.phase_waiting = false;
+                self.pending_echo = None;
                 match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
                     if let Block::Text { text, .. } = self.assistant_slot(
@@ -584,6 +598,7 @@ impl SessionRuntime {
             Event::AgentSettled => {
                 self.agent_running = false;
                 self.phase_waiting = false;
+                self.pending_echo = None;
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
                 self.refresh_state();
@@ -591,6 +606,7 @@ impl SessionRuntime {
             Event::AgentEnd { .. } => {
                 self.agent_running = false;
                 self.phase_waiting = false;
+                self.pending_echo = None;
                 self.stream_started = None;
                 // the session file exists now — make the new session show up
                 // in the sidebar (pi-web refreshKey-on-agent_end parity)
@@ -837,6 +853,10 @@ impl SessionRuntime {
             let _ = session.send(&Command::Abort);
         }
         self.stream_started = None;
+        // 中止：等待行立即收起（不等 agent_settled）
+        self.phase_waiting = false;
+        self.pending_echo = None;
+        self.notify_list(cx);
         cx.notify();
     }
 
@@ -879,6 +899,8 @@ impl SessionRuntime {
                 if !streaming {
                     // pi-web optimistic append: the sent bubble shows up
                     // immediately, RPC echo later upgrades it in place
+                    // pending_echo 只做回显去重；等待行可见性由 phase_waiting 独立控制
+                    self.pending_echo = Some(text.clone());
                     self.messages.push(Msg {
                         role: Role::User,
                         blocks: vec![Block::Text { content_index: 0, text }],
