@@ -105,7 +105,7 @@ fn set_row(
         .gap(px(14.))
         .py(px(13.))
         .border_b_1()
-        .border_color(gpui::rgba(0xafc4ba40))
+        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x40)))
         .child(
             div()
                 .flex_1()

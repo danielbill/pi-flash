@@ -55,6 +55,9 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     c.muted = gpui::rgb(t.bg_hover).into();
     c.muted_foreground = gpui::rgb(t.text_dim).into();
     c.secondary = gpui::rgb(t.bg_selected).into();
+    c.danger = gpui::rgb(t.danger).into();
+    c.danger_hover = gpui::rgb(t.danger_hover).into();
+    c.danger_foreground = gpui::rgb(0xffffff).into();
     let mut sel: gpui::Hsla = gpui::rgb(t.accent).into();
     sel.a = 0.28;
     c.selection = sel;

@@ -1183,7 +1183,7 @@ impl Render for Chat {
                 .relative()
                 .bg(rgb(t.bg))
                 .when(!panes_hidden && !slp_dragging, |d| {
-                    d.border_l_1().border_color(gpui::rgba(0xafc4ba99))
+                    d.border_l_1().border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
                 })
                 .child(titlebar::topbar_r(self, window, cx))
                 .child(content::content_main(

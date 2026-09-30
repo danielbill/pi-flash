@@ -358,7 +358,7 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 .gap(px(10.))
                 .px(px(16.))
                 .border_b_1()
-                .border_color(gpui::rgba(0xafc4ba66))
+                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
                 .child(
                     div()
                         .text_size(px(12.5))

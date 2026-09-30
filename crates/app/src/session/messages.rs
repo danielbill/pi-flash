@@ -261,7 +261,7 @@ fn work_fold(
             .pl(px(14.))
             .mb(px(10.))
             .border_l_2()
-            .border_color(gpui::rgba(0xafc4ba66))
+            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
             .flex()
             .flex_col();
         for (tool, target) in tools {

@@ -162,7 +162,7 @@ pub(crate) fn render_settings(
                         .pl(px(16.))
                         .bg(rgb(t.chrome))
                         .border_b_1()
-                        .border_color(gpui::rgba(0xafc4ba73))
+                        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)))
                         .child(div().flex_1())
                         .child(
                             div()
@@ -200,7 +200,7 @@ pub(crate) fn render_settings(
                                 .flex_shrink_0()
                                 .bg(rgb(t.nav))
                                 .border_r_1()
-                                .border_color(gpui::rgba(0xafc4ba66))
+                                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
                                 .flex()
                                 .flex_col()
                                 .p(px(8.))

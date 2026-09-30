@@ -24,10 +24,10 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
         .items_center()
         .bg(rgb(t.chrome))
         .border_t_1()
-        .border_color(gpui::rgba(0xafc4ba80))
+        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
         // 右缘竖线：与 slp|内容 分隔线贯通到窗口底
         .border_r_1()
-        .border_color(gpui::rgba(0xafc4ba99))
+        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
         .child(
             div()
                 .flex()
@@ -68,7 +68,7 @@ fn tabs(
                 d.bg(rgb(t.nav))
                     .border_1()
                     .border_t_0()
-                    .border_color(gpui::rgba(0xafc4ba8c))
+                    .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
                     .rounded_bl(px(9.))
                     .rounded_br(px(9.))
                     .mt(px(-1.))

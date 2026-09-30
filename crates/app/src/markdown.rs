@@ -1,9 +1,18 @@
-//! Minimal Markdown renderer for chat messages (pi-web MarkdownBody parity,
-//! visual polish deferred). Streaming-friendly: whole-message re-render.
+//! Markdown renderer for chat messages and md file preview (pi-web
+//! MarkdownBody parity: globals.css `.markdown-body` spec + CodeBlock
+//! structure). Streaming-friendly: whole-message re-render.
+//!
+//! pi-web 规格（app/globals.css + MermaidBlock.tsx CodeBlock）：
+//! - 正文 14px / line-height 1.7；段落间距 8px
+//! - 标题 600 字重 margin 10/5、h1 1.16em / h2 1.08em / h3 0.98em 混色
+//! - 列表 marker = accent 72% 混 muted、600 字重
+//! - 行内 code = bg-subtle 底；代码块 = 外框圆角 + 头部（语言名/复制）+ 12.5px/1.62
+//! - 语法高亮：浅色 InspiredGitHub / 深色 base16-ocean.dark（pi-web 用
+//!   Prism vs / vscDarkPlus 随明暗切换——固定单主题在另一半主题下不可读）
 
 use gpui::{
     AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString, StyledText, TextStyle,
-    div, prelude::*, px, rgb,
+    div, prelude::*, px, relative, rgb, rgba,
 };
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use syntect::easy::HighlightLines;
@@ -29,34 +38,41 @@ fn syn() -> &'static Syn {
     })
 }
 
-const THEME: &str = "base16-ocean.dark";
+/// 语法高亮主题按 UI 明暗切换（pi-web: isDark ? vscDarkPlus : vs）。
+const DARK_THEME: &str = "base16-ocean.dark";
+const LIGHT_THEME: &str = "InspiredGitHub";
 
-/// Highlight `code` and return colored text segments.
-fn highlight_segments(code: &str, lang: &str) -> Vec<(String, [u8; 3])> {
+/// Highlight `code` and return colored text segments (never spans across
+/// lines — callers rely on per-line boundaries for the gutter).
+fn highlight_segments(code: &str, lang: &str, dark: bool) -> Vec<(String, [u8; 3])> {
     let syn = syn();
     let syntax = lang
         .split(',')
         .next()
         .map(str::trim)
+        .filter(|l| !l.is_empty())
         .and_then(|l| syn.ps.find_syntax_by_token(l))
         .unwrap_or_else(|| syn.ps.find_syntax_plain_text());
-    let Some(theme) = syn.ts.themes.get(THEME) else {
+    let name = if dark { DARK_THEME } else { LIGHT_THEME };
+    let Some(theme) = syn.ts.themes.get(name) else {
         return vec![(code.to_string(), [0xd7, 0xda, 0xdd])];
     };
     let mut hl = HighlightLines::new(syntax, theme);
     let mut out: Vec<(String, [u8; 3])> = Vec::new();
     for line in syntect::util::LinesWithEndings::from(code) {
         let Ok(ranges) = hl.highlight_line(line, &syn.ps) else { continue };
+        // 每行起一段新 run（行号 gutter 需要按行插入）
+        let mut line_open = false;
         for (style, text) in ranges {
             let Color { r, g, b, a: _ } = style.foreground;
-            // merge consecutive segments with identical colors
             if let Some(last) = out.last_mut() {
-                if last.1 == [r, g, b] {
+                if line_open && last.1 == [r, g, b] {
                     last.0.push_str(text);
                     continue;
                 }
             }
             out.push((text.to_string(), [r, g, b]));
+            line_open = true;
         }
     }
     out
@@ -76,6 +92,7 @@ enum Style {
     BoldItalic,
     Code,
     Link,
+    Strike,
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +108,8 @@ enum MdBlock {
     Code { lang: String, code: String },
     Quote { blocks: Vec<MdBlock> },
     ListItem { depth: usize, marker: String, runs: Vec<Run> },
+    Table { head: Vec<Vec<Run>>, rows: Vec<Vec<Vec<Run>>> },
+    Image { url: String, alt: Vec<Run> },
     Rule,
 }
 
@@ -106,6 +125,7 @@ fn style_push(styles: &mut Vec<Style>, tag: &Tag) {
             _ => Style::Italic,
         },
         Tag::Link { .. } => Style::Link,
+        Tag::Strikethrough => Style::Strike,
         _ => base,
     };
     styles.push(next);
@@ -113,7 +133,7 @@ fn style_push(styles: &mut Vec<Style>, tag: &Tag) {
 
 fn style_pop(styles: &mut Vec<Style>, end: &TagEnd) {
     match end {
-        TagEnd::Strong | TagEnd::Emphasis | TagEnd::Link => {
+        TagEnd::Strong | TagEnd::Emphasis | TagEnd::Link | TagEnd::Strikethrough => {
             styles.pop();
         }
         _ => {}
@@ -194,6 +214,41 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
     out
 }
 
+/// True when the paragraph from `start` holds nothing but whitespace and a
+/// single image — those render as a real image block (pi-web img: block).
+fn solo_image(events: &[Event], start: usize) -> Option<String> {
+    let mut url: Option<String> = None;
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < events.len() {
+        match &events[i] {
+            Event::End(TagEnd::Paragraph) => break,
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                if depth == 0 {
+                    if url.is_some() {
+                        return None;
+                    }
+                    url = Some(dest_url.to_string());
+                }
+                depth += 1;
+            }
+            Event::End(TagEnd::Image) => depth -= 1,
+            _ if depth == 0 => {
+                if let Event::Text(t) = &events[i] {
+                    if t.trim().is_empty() {
+                        i += 1;
+                        continue;
+                    }
+                }
+                return None;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    url
+}
+
 fn parse_block(
     events: &[Event],
     i: &mut usize,
@@ -203,8 +258,28 @@ fn parse_block(
 ) {
     match tag {
         Tag::Paragraph => {
-            let runs = collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::Paragraph)));
-            out.push(MdBlock::Paragraph { runs });
+            if let Some(url) = solo_image(events, *i) {
+                // 独立图片段落：定位 Image，收 alt，越过 End(Paragraph)
+                while !matches!(events[*i], Event::Start(Tag::Image { .. })) {
+                    *i += 1;
+                }
+                if let Event::Start(Tag::Image { .. }) = &events[*i] {
+                    *i += 1;
+                    let alt = collect_inline(events, i, &|e| {
+                        matches!(e, Event::End(TagEnd::Image))
+                    });
+                    out.push(MdBlock::Image { url, alt });
+                }
+                while *i < events.len() && !matches!(events[*i], Event::End(TagEnd::Paragraph)) {
+                    *i += 1;
+                }
+                *i += 1;
+            } else {
+                let runs = collect_inline(events, i, &|e| {
+                    matches!(e, Event::End(TagEnd::Paragraph))
+                });
+                out.push(MdBlock::Paragraph { runs });
+            }
         }
         Tag::Heading { level, .. } => {
             let runs = collect_inline(events, i, &|e| {
@@ -245,6 +320,37 @@ fn parse_block(
             }
             out.push(MdBlock::Code { lang, code });
         }
+        Tag::Table(_) => {
+            let mut head: Vec<Vec<Run>> = Vec::new();
+            let mut rows: Vec<Vec<Vec<Run>>> = Vec::new();
+            while *i < events.len() {
+                match &events[*i] {
+                    Event::End(TagEnd::Table) => {
+                        *i += 1;
+                        break;
+                    }
+                    Event::Start(Tag::TableHead) => {
+                        *i += 1;
+                        head = parse_table_cells(events, i, &|e| {
+                            matches!(e, Event::End(TagEnd::TableHead))
+                        });
+                    }
+                    Event::Start(Tag::TableRow) => {
+                        *i += 1;
+                        let row = parse_table_cells(events, i, &|e| {
+                            matches!(e, Event::End(TagEnd::TableRow))
+                        });
+                        rows.push(row);
+                    }
+                    _ => *i += 1,
+                }
+            }
+            out.push(MdBlock::Table { head, rows });
+        }
+        Tag::Image { dest_url, .. } => {
+            let alt = collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::Image)));
+            out.push(MdBlock::Image { url: dest_url.to_string(), alt });
+        }
         Tag::List(start) => {
             let ordered = start.is_some();
             let mut n = start.unwrap_or(1);
@@ -279,7 +385,10 @@ fn parse_block(
                                     Tag::List(_) => {
                                         parse_block(events, i, inner_tag, &mut nested, depth + 1);
                                     }
-                                    Tag::CodeBlock(_) | Tag::BlockQuote(_) => {
+                                    Tag::CodeBlock(_) | Tag::BlockQuote(_) | Tag::Table(_) => {
+                                        parse_block(events, i, inner_tag, &mut nested, depth + 1);
+                                    }
+                                    Tag::Image { .. } => {
                                         parse_block(events, i, inner_tag, &mut nested, depth + 1);
                                     }
                                     _ => {}
@@ -317,19 +426,49 @@ fn parse_block(
     }
 }
 
+/// Parse `Start(TableCell) … End(TableCell)` sequences until `is_end` fires
+/// (the row/head End event), one `Vec<Run>` per cell.
+fn parse_table_cells(
+    events: &[Event],
+    i: &mut usize,
+    is_end: &dyn Fn(&Event) -> bool,
+) -> Vec<Vec<Run>> {
+    let mut cells: Vec<Vec<Run>> = Vec::new();
+    while *i < events.len() {
+        if is_end(&events[*i]) {
+            *i += 1;
+            break;
+        }
+        if matches!(events[*i], Event::Start(Tag::TableCell)) {
+            *i += 1;
+            let runs = collect_inline(events, i, &|e| {
+                matches!(e, Event::End(TagEnd::TableCell))
+            });
+            cells.push(runs);
+        } else {
+            *i += 1;
+        }
+    }
+    cells
+}
+
 // ---------------------------------------------------------------------------
-// rendering
+// rendering — pi-web globals.css `.markdown-body` spec
 // ---------------------------------------------------------------------------
 
 use crate::theme::Theme;
 
-fn base_style(t: &Theme, size: f32) -> TextStyle {
+/// markdown 基准字号（pi-web: 14px + chat-font-size-offset；本项目的 slot 缩放）
+const BASE: f32 = 14.;
+
+fn base_style(t: &Theme, size: f32, line_h: f32) -> TextStyle {
     // 006 markdown preview font slot (family; size scaled from the slot)
     let spec = crate::appearance::markdown_font();
     TextStyle {
         color: rgb(t.text).into(),
         font_family: spec.family.clone().into(),
-        font_size: px(size / 14. * spec.size).into(),
+        font_size: px(size / BASE * spec.size).into(),
+        line_height: relative(line_h),
         ..Default::default()
     }
 }
@@ -337,11 +476,22 @@ fn base_style(t: &Theme, size: f32) -> TextStyle {
 fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     let h = match style {
         Style::Normal => return None,
-        Style::Bold => HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() },
-        Style::Italic => HighlightStyle { font_style: Some(FontStyle::Italic), ..Default::default() },
+        // pi-web strong: color-mix(text 88%, accent)
+        Style::Bold => HighlightStyle {
+            font_weight: Some(FontWeight::SEMIBOLD),
+            color: Some(rgb(crate::theme::mix_rgb(t.text, t.accent, 0.88)).into()),
+            ..Default::default()
+        },
+        // pi-web em: var(--text-muted)
+        Style::Italic => HighlightStyle {
+            font_style: Some(FontStyle::Italic),
+            color: Some(rgb(t.text_muted).into()),
+            ..Default::default()
+        },
         Style::BoldItalic => HighlightStyle {
             font_weight: Some(FontWeight::SEMIBOLD),
             font_style: Some(FontStyle::Italic),
+            color: Some(rgb(crate::theme::mix_rgb(t.text, t.accent, 0.88)).into()),
             ..Default::default()
         },
         // note: gpui 0.2.2 highlights cannot change font family; code gets bg only
@@ -351,11 +501,15 @@ fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
             underline: Some(gpui::UnderlineStyle { thickness: px(1.), ..Default::default() }),
             ..Default::default()
         },
+        Style::Strike => HighlightStyle {
+            strikethrough: Some(gpui::StrikethroughStyle { thickness: px(1.), ..Default::default() }),
+            ..Default::default()
+        },
     };
     Some(h)
 }
 
-fn styled_text(runs: &[Run], t: &Theme, size: f32) -> StyledText {
+fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32) -> StyledText {
     let mut s = String::new();
     let mut highlights = Vec::new();
     for r in runs {
@@ -366,91 +520,330 @@ fn styled_text(runs: &[Run], t: &Theme, size: f32) -> StyledText {
             highlights.push((start..end, h));
         }
     }
-    StyledText::new(s).with_default_highlights(&base_style(t, size), highlights)
+    StyledText::new(s).with_default_highlights(&base_style(t, size, line_h), highlights)
 }
 
+/// pi-web 标题字号（em 相对 14px 正文）。
 fn size_for_level(level: u8) -> f32 {
     match level {
-        1 => 22.,
-        2 => 18.,
-        3 => 16.,
-        4 => 15.,
-        _ => 14.,
+        1 => BASE * 1.16,
+        2 => BASE * 1.08,
+        3 => BASE * 0.98,
+        _ => BASE,
     }
 }
 
+fn runs_text(runs: &[Run]) -> String {
+    runs.iter().map(|r| r.text.as_str()).collect()
+}
+
 fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme) -> gpui::Div {
-    let mut col = div().flex().flex_col().gap_2();
+    let mut col = div().flex().flex_col();
     for b in blocks {
         col = col.child(render_block(b, depth, t));
     }
     col
 }
 
-fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
-    match b {
-        MdBlock::Heading { level, runs } => div()
-            .w_full()
-            .mt_2()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_size(px(size_for_level(*level)))
-            .text_color(rgb(t.text))
-            .child(styled_text(runs, t, size_for_level(*level)))
-            .into_any_element(),
-        MdBlock::Paragraph { runs } => div()
-            .w_full()
-            .text_color(rgb(t.text))
-            .child(styled_text(runs, t, 14.))
-            .into_any_element(),
-        MdBlock::Code { code, lang, .. } => {
-            let code = code.trim_end();
-            let base = TextStyle {
-                color: rgb(t.text).into(),
-                font_family: MONO_FAMILY.into(),
-                font_size: px(12.).into(),
-                ..Default::default()
-            };
-            let mut text = String::new();
-            let mut highlights = Vec::new();
-            for (seg, [r, g, b]) in highlight_segments(code, lang) {
-                let start = text.len();
-                text.push_str(&seg);
-                let end = text.len();
-                highlights.push((
-                    start..end,
-                    HighlightStyle { color: Some(rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32).into()), ..Default::default() },
-                ));
+/// 代码块：外框圆角 7px + 头部（语言名 / 复制）+ 行号 + 12.5px/1.62 高亮体
+/// （pi-web .markdown-code-block / .markdown-code-header / Prism 行号）。
+fn render_code_block(lang: &str, code: &str, t: &Theme) -> gpui::Div {
+    let code = code.trim_end_matches('\n');
+    let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
+
+    // header
+    let copy_code = code.to_string();
+    let header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.))
+        .px(px(10.))
+        .py(px(5.))
+        .bg(rgb(t.bg_panel))
+        .border_b_1()
+        .border_color(rgb(t.border))
+        .text_size(px(11.))
+        .child(
+            div()
+                .font_family(MONO_FAMILY)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(if lang.is_empty() {
+                    "text".to_string()
+                } else {
+                    lang.to_string()
+                })),
+        )
+        .child(
+            div()
+                .id("md-copy")
+                .cursor_pointer()
+                .rounded(px(5.))
+                .border_1()
+                .border_color(rgb(t.border))
+                .px(px(7.))
+                .py(px(2.))
+                .text_color(rgb(t.text_muted))
+                .hover(|s| s.text_color(rgb(t.text)))
+                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_code.clone()));
+                })
+                .child(SharedString::from(crate::i18n::tr("复制"))),
+        );
+
+    // 代码体：行号 gutter 前缀 + 逐行高亮段
+    let lines: Vec<&str> = if code.is_empty() {
+        vec![""]
+    } else {
+        code.split('\n').collect()
+    };
+    let n_digits = lines.len().to_string().len();
+    let dim = rgb(t.text_dim);
+    let mut text = String::new();
+    let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+    let mut segs = highlight_segments(code, lang, t.dark);
+    segs.push((String::new(), [0, 0, 0])); // sentinel：保证末行 flush
+    let mut seg_ix = 0usize;
+    for (i, _) in lines.iter().enumerate() {
+        // 行号 gutter
+        let start = text.len();
+        text.push_str(&format!("{:>w$}  ", i + 1, w = n_digits));
+        highlights.push((
+            start..text.len(),
+            HighlightStyle { color: Some(dim.into()), ..Default::default() },
+        ));
+        // 该行的高亮段
+        while seg_ix < segs.len() {
+            let (seg, c) = &segs[seg_ix];
+            match seg.find('\n') {
+                Some(pos) => {
+                    let (head, _) = seg.split_at(pos);
+                    if !head.is_empty() {
+                        let start = text.len();
+                        text.push_str(head);
+                        push_color(&mut highlights, start, text.len(), *c);
+                    }
+                    seg_ix += 1;
+                    break; // 该行结束
+                }
+                None => {
+                    if !seg.is_empty() {
+                        let start = text.len();
+                        text.push_str(seg);
+                        push_color(&mut highlights, start, text.len(), *c);
+                    }
+                    seg_ix += 1;
+                }
             }
+        }
+        if i + 1 < lines.len() {
+            text.push('\n');
+        }
+    }
+
+    let base = TextStyle {
+        color: rgb(t.text).into(),
+        font_family: MONO_FAMILY.into(),
+        font_size: px(12.5).into(),
+        line_height: relative(1.62),
+        ..Default::default()
+    };
+
+    div()
+        .w_full()
+        .mt(px(6.))
+        .mb(px(6.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(7.))
+        .overflow_hidden()
+        .bg(rgb(body_bg))
+        .child(header)
+        .child(
             div()
                 .w_full()
-                .my_1()
-                .p_2()
-                .rounded_md()
-                .bg(rgb(t.tool_bg))
-                .font_family(MONO_FAMILY)
-                .text_xs()
-                .text_color(rgb(t.text))
-                .child(StyledText::new(text).with_default_highlights(&base, highlights))
+                .px(px(13.))
+                .py(px(11.))
+                .overflow_hidden()
+                .child(StyledText::new(text).with_default_highlights(&base, highlights)),
+        )
+}
+
+fn push_color(
+    highlights: &mut Vec<(std::ops::Range<usize>, HighlightStyle)>,
+    start: usize,
+    end: usize,
+    c: [u8; 3],
+) {
+    let color = rgb(((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32);
+    highlights.push((
+        start..end,
+        HighlightStyle { color: Some(color.into()), ..Default::default() },
+    ));
+}
+
+/// 表格：外框圆角 7px、th bg_panel 650 字重、行分隔线、偶数行斑马纹
+/// （pi-web .markdown-table-wrap）。
+fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::Div {
+    let head_cells: Vec<gpui::AnyElement> = head
+        .iter()
+        .map(|cell| {
+            div()
+                .flex_1()
+                .px(px(10.))
+                .py(px(6.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
+                .child(styled_text(cell, t, BASE, 1.6))
+                .into_any_element()
+        })
+        .collect();
+    let head_row = div()
+        .flex()
+        .bg(rgb(t.bg_panel))
+        .border_b_1()
+        .border_color(rgb(t.border))
+        .children(head_cells);
+
+    let body_rows: Vec<gpui::AnyElement> = rows
+        .iter()
+        .enumerate()
+        .map(|(ri, row)| {
+            let mut line = div()
+                .flex()
+                .border_b_1()
+                .border_color(rgb(t.border));
+            if ri % 2 == 1 {
+                line = line.bg(rgba(t.bg_subtle));
+            }
+            for cell in row {
+                line = line.child(
+                    div()
+                        .flex_1()
+                        .px(px(10.))
+                        .py(px(6.))
+                        .child(styled_text(cell, t, BASE, 1.6)),
+                );
+            }
+            line.into_any_element()
+        })
+        .collect();
+
+    div()
+        .w_full()
+        .mt(px(8.))
+        .mb(px(8.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(7.))
+        .overflow_hidden()
+        .child(head_row)
+        .children(body_rows)
+}
+
+/// 图片：本地文件 gpui img() 直渲染；http/不存在 → alt 文本占位。
+fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
+    let placeholder = || {
+        div()
+            .w_full()
+            .my(px(8.))
+            .text_color(rgb(t.text_dim))
+            .italic()
+            .child(SharedString::from(format!("🖼 {}", runs_text(alt))))
+            .into_any_element()
+    };
+    if url.starts_with("http://") || url.starts_with("https://") || url.is_empty() {
+        return placeholder();
+    }
+    let ext = std::path::Path::new(url)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let format = match ext.as_str() {
+        "png" => Some(gpui::ImageFormat::Png),
+        "jpg" | "jpeg" => Some(gpui::ImageFormat::Jpeg),
+        "gif" => Some(gpui::ImageFormat::Gif),
+        "bmp" => Some(gpui::ImageFormat::Bmp),
+        "svg" => Some(gpui::ImageFormat::Svg),
+        "webp" => Some(gpui::ImageFormat::Webp),
+        _ => None,
+    };
+    let Some((bytes, format)) = std::fs::read(url).ok().zip(format) else {
+        return placeholder();
+    };
+    div()
+        .w_full()
+        .my(px(8.))
+        .child(
+            gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
+                .max_w_full()
+                .rounded(px(6.)),
+        )
+        .into_any_element()
+}
+
+fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
+    match b {
+        MdBlock::Heading { level, runs } => {
+            let size = size_for_level(*level);
+            // h3 color-mix(text 88%, muted)（pi-web h3 规则）
+            let color = if *level == 3 {
+                crate::theme::mix_rgb(t.text, t.text_muted, 0.88)
+            } else {
+                t.text
+            };
+            div()
+                .w_full()
+                .mt(px(10.))
+                .mb(px(5.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(size))
+                .line_height(relative(1.35))
+                .text_color(rgb(color))
+                .child(styled_text(runs, t, size, 1.35))
                 .into_any_element()
         }
+        MdBlock::Paragraph { runs } => div()
+            .w_full()
+            .mb(px(8.))
+            .text_color(rgb(t.text))
+            .child(styled_text(runs, t, BASE, 1.7))
+            .into_any_element(),
+        MdBlock::Code { code, lang, .. } => render_code_block(lang, code, t).into_any_element(),
         MdBlock::Quote { blocks } => div()
             .w_full()
-            .border_l_2()
-            .border_color(rgb(t.border))
-            .pl_3()
+            .mt(px(6.))
+            .mb(px(6.))
+            .border_l_3()
+            .border_color(rgb(crate::theme::mix_rgb(t.border, t.text_muted, 0.75)))
+            .rounded_r(px(6.))
+            .bg(rgba(t.bg_subtle))
+            .px(px(11.))
+            .py(px(6.))
+            .text_color(rgb(t.text_muted))
             .child(render_blocks(blocks, depth + 1, t))
             .into_any_element(),
         MdBlock::ListItem { depth: d, marker, runs } => div()
             .flex()
-            .gap_2()
-            .pl(px((d.saturating_sub(1) * 16) as f32))
-            .child(div().text_color(rgb(t.text_dim)).child(SharedString::from(marker.clone())))
-            .child(div().flex_1().text_color(rgb(t.text)).child(styled_text(runs, t, 14.)))
+            .mb(px(3.))
+            .pl(px((d * 16) as f32))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72)))
+                    .child(SharedString::from(marker.clone())),
+            )
+            .child(div().flex_1().min_w_0().text_color(rgb(t.text)).child(styled_text(runs, t, BASE, 1.7)))
             .into_any_element(),
+        MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
+        MdBlock::Image { url, alt } => render_image(url, alt, t),
         MdBlock::Rule => div()
             .w_full()
             .h(px(1.))
-            .my_1()
+            .mt(px(12.))
+            .mb(px(12.))
             .bg(rgb(t.border))
             .into_any_element(),
     }
@@ -483,7 +876,10 @@ mod tests {
     }
 
     fn parse(src: &str) -> Vec<MdBlock> {
-        parse_blocks(&Parser::new(src).collect::<Vec<_>>())
+        let mut opts = Options::empty();
+        opts.insert(Options::ENABLE_STRIKETHROUGH);
+        opts.insert(Options::ENABLE_TABLES);
+        parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>())
     }
 
     #[test]
@@ -550,12 +946,50 @@ mod tests {
 
     #[test]
     fn code_highlight_produces_colored_runs() {
-        let segs = highlight_segments("fn main() {}
-", "rust");
-        assert!(!segs.is_empty());
-        // keyword "fn" should be styled differently from plain text
-        assert!(segs.iter().any(|(t, _)| t.contains("fn")));
-        assert!(segs.len() > 1, "expected multiple colored segments");
+        for dark in [false, true] {
+            let segs = highlight_segments("fn main() {}\n", "rust", dark);
+            assert!(!segs.is_empty(), "dark={dark}");
+            // keyword "fn" should be styled differently from plain text
+            assert!(segs.iter().any(|(t, _)| t.contains("fn")));
+            assert!(segs.len() > 1, "expected multiple colored segments, dark={dark}");
+        }
+    }
+
+    #[test]
+    fn table_parses_head_and_rows() {
+        let blocks = parse("| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |");
+        match &blocks[0] {
+            MdBlock::Table { head, rows } => {
+                assert_eq!(head.len(), 2);
+                assert_eq!(text_of(&head[0]), "a");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(text_of(&rows[1][0]), "3");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_parses_url_and_alt() {
+        let blocks = parse("![alt text](img.png)");
+        match &blocks[0] {
+            MdBlock::Image { url, alt } => {
+                assert_eq!(url, "img.png");
+                assert_eq!(text_of(alt), "alt text");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn strikethrough_run() {
+        let blocks = parse("~~gone~~ kept");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert!(runs.iter().any(|r| r.style == Style::Strike && r.text == "gone"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

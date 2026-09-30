@@ -68,7 +68,7 @@ pub(crate) fn topbar_r(
         .items_center()
         .bg(rgb(t.chrome))
         .border_b_1()
-        .border_color(gpui::rgba(0xafc4ba73));
+        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)));
 
     // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）+ 内容区 tabs
     // 都住在 items_end 的 tabs host 里（激活 tab 连体贴底需要）
@@ -88,7 +88,7 @@ pub(crate) fn topbar_r(
                         }),
                     )),
             )
-            .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(0xafc4ba8c)).mx(px(4.)));
+            .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(4.)));
     }
     // topbar 状态与内容区绑定：会话视图=左对齐会话标题（≤15 字）；
     // 浏览操作区=终端/文件 tabs（切回会话视图 tabs 即消失）
@@ -129,7 +129,7 @@ pub(crate) fn topbar_r(
             }),
         )),
     );
-    bar = bar.child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(0xafc4ba8c)).mx(px(6.)));
+    bar = bar.child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(6.)));
 
     for (area, glyph) in [
         (WindowControlArea::Min, "\u{E921}"),
@@ -282,7 +282,7 @@ fn tab_shell(
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_b_0()
-                .border_color(gpui::rgba(0xafc4ba8c))
+                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
                 .rounded_tl(px(9.))
                 .rounded_tr(px(9.))
                 .pl(px(12.))
@@ -327,7 +327,7 @@ fn caption_button(
     t: &crate::theme::Theme,
 ) -> impl gpui::IntoElement {
     let hover_bg = if area == WindowControlArea::Close {
-        rgb(0xd8626a) // v54 关闭悬停红（设计稿 #d8626a）
+        rgb(t.danger_hover) // v54 关闭悬停红（随主题 danger 系；mist 即设计稿 #d8626a）
     } else {
         rgb(t.bg_hover)
     };
