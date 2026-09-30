@@ -25,9 +25,9 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
         .bg(rgb(t.chrome))
         .border_t_1()
         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
-        // 右缘竖线：与 slp|内容 分隔线贯通到窗口底
-        .border_r_1()
-        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
+        // 右缘不画线：slp|内容分隔线 = content-col 的 border_l 一条全高线，
+        // statusbar 再画 border_r 会与其相邻成 2px 双线（设计稿 ::before 在
+        // 浏览器亚像素下糊成一条，gpui 锐利像素下显形）
         .child(
             div()
                 .flex()
