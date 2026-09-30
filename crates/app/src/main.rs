@@ -42,7 +42,6 @@ mod status_bar;
 mod titlebar;
 mod terminal;
 mod ui;
-mod webview;
 pub(crate) use ui::editor_input::EditorInputElement;
 use i18n::tr;
 use models_config::EnabledState;
@@ -254,15 +253,6 @@ struct Chat {
     content_view: ContentView,
     /// 浏览操作区的最后视图（Term/File）：文件树标签点击时恢复
     browse_last: ContentView,
-    /// 应用内 HTML 渲染面板（wry/WebView2 子窗口；html 文件 tab 激活时显示）
-    html_panel: Option<webview::HtmlPanel>,
-    /// html_panel 当前加载的文件
-    html_panel_path: Option<PathBuf>,
-    /// render 期写的期望状态（pump 消费；wry 调用禁止在 render 借用内）
-    html_want: Option<(PathBuf, String)>,
-    html_geo: webview::HtmlPanelGeo,
-    /// 主窗口句柄（pump 创建 webview 需在其 window 上下文中执行）
-    main_window: Option<gpui::AnyWindowHandle>,
     /// 文件查看视图的滚动（滚动条渲染数据源）
     file_scroll: gpui::ScrollHandle,
     file_scrollbar: gpui_component::scroll::ScrollbarState,
@@ -417,13 +407,6 @@ impl Chat {
             slp_drag: None,
             content_view: ContentView::Chat,
             browse_last: ContentView::Term,
-            html_panel: None,
-            html_panel_path: None,
-            html_want: None,
-            html_geo: webview::HtmlPanelGeo {
-                x: 0., y: 0., w: 800., h: 600.,
-            },
-            main_window: None,
             file_scroll: gpui::ScrollHandle::new(),
             file_scrollbar: gpui_component::scroll::ScrollbarState::default(),
             nav_open: false,
@@ -458,43 +441,6 @@ impl Chat {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(120))
                     .await;
-                // html webview 创建：三段式（chat 取任务 → window 上下文
-                // 创建 wry → chat 写回），任一段都不与另一段的借用嵌套
-                // （wry 创建会同步分发 Win32 消息，render/chat 借用期内
-                // 执行会重入 panic）
-                let job = this
-                    .update(cx, |c, _cx| c.take_html_job())
-                    .ok()
-                    .flatten();
-                if let Some((path, html, geo)) = job {
-                    let handle = this
-                        .update(cx, |c, _cx| c.main_window)
-                        .ok()
-                        .flatten();
-                    if let Some(h) = handle {
-                        let created = h.update(cx, |_, window, _| {
-                            wry::WebView::new_as_child(
-                                window,
-                                wry::WebViewAttributes::default(),
-                            )
-                            .map(|w| {
-                                let _ = w.set_bounds(geo.rect());
-                                let _ = w.set_visible(true);
-                                w
-                            })
-                        });
-                        match created {
-                            Ok(Ok(w)) => {
-                                let _ = this.update(cx, |c, _cx| {
-                                    c.html_panel =
-                                        Some(webview::HtmlPanel::from_webview(w, path.clone()));
-                                    c.html_panel_path = Some(path);
-                                });
-                            }
-                            _ => eprintln!("[webview] create failed"),
-                        }
-                    }
-                }
                 let ok = this
                     .update(cx, |c, cx| {
                         c.caret_on = !c.caret_on;
@@ -516,7 +462,6 @@ impl Chat {
                                 }
                             }
                         }
-                        c.sync_html_panel();
                         // 导航 flyout 250ms 离开宽限（pi-web
                         // PREVIEW_HIDE_DELAY parity）
                         if c.nav_open {
@@ -937,52 +882,6 @@ impl Chat {
             })
     }
 
-    /// render 期只写期望状态（geo/want/hwnd），wry 实际调用在 pump
-    /// （borrow 外）执行——wry 会同步分发 Win32 消息，render 内调用会
-    /// 重入借用 panic。
-    pub(crate) fn stage_html_panel(&mut self, window: &mut gpui::Window) {
-        self.html_geo = webview::HtmlPanelGeo::new(self, window);
-        self.main_window = Some(window.window_handle());
-        self.html_want = self
-            .active_file_tab()
-            .filter(|_| self.content_view == ContentView::File)
-            .filter(|p| {
-                p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm"))
-            })
-            .and_then(|p| {
-                self.file_cache.get(&p).map(|f| (p.clone(), f.content.clone()))
-            });
-    }
-
-    /// pump 期取走待创建任务（无 render 借用）。创建需要 Window
-    /// （HasWindowHandle），由调用方在 AnyWindowHandle::update 里执行。
-    pub(crate) fn take_html_job(
-        &mut self,
-    ) -> Option<(PathBuf, String, webview::HtmlPanelGeo)> {
-        let want = self.html_want.take();
-        if let Some((path, html)) = want {
-            if self.html_panel.is_none() {
-                return Some((path, html, self.html_geo));
-            }
-            self.html_want = Some((path, html));
-        }
-        None
-    }
-
-    /// pump 期执行（无 render 借用）：差量驱动 load/bounds/visible。
-    pub(crate) fn sync_html_panel(&mut self) {
-        if let Some(panel) = self.html_panel.as_mut() {
-            let visible = self.html_want.is_some()
-                && matches!(self.content_view, ContentView::File);
-            if visible {
-                panel.set_bounds(&self.html_geo);
-            }
-            panel.set_visible(visible);
-        }
-    }
-
     /// 切内容区视图；落在浏览操作区（Term/Md）时记住，供文件树标签恢复
     pub(crate) fn set_content_view(&mut self, v: ContentView) {
         self.content_view = v;
@@ -1353,8 +1252,6 @@ impl Render for Chat {
         if let Some(req) = &self.ext_dialog {
             root = root.child(render_ext_dialog(self, req.clone(), &weak_for_dialog));
         }
-        // html 文件 tab 的应用内渲染面板（只 stage；wry 调用在 pump）
-        self.stage_html_panel(window);
         root
     }
 }

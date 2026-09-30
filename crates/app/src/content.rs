@@ -269,34 +269,6 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 gpui_component::scroll::Scrollbar::vertical(&chat.file_scrollbar, &chat.file_scroll),
             )
             .into_any_element(),
-        // html：wry(WebView2) 子窗口真渲染（render 尾部 sync_html_panel
-        // 覆盖此区域）；gpui 只画底色与提示
-        "html" | "htm" => div()
-            .id("fv-html")
-            .flex_1()
-            .min_h_0()
-            .bg(rgb(t.bg))
-            .child(
-                div()
-                    .pt(px(120.))
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .px(px(12.))
-                            .py(px(6.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .bg(rgb(t.bg_panel))
-                            .text_size(px(12.))
-                            .text_color(rgb(t.text_faint))
-                            .child(SharedString::from(tr(
-                                "HTML 渲染中（WebView2）… 若长时间空白，说明 WebView2 运行时缺失",
-                            ))),
-                    ),
-            )
-            .into_any_element(),
         // 图片：gpui img() 真渲染（最佳查看方式）
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => {
             let format = match ext.as_str() {

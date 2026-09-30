@@ -6,6 +6,21 @@
 
 use crate::*;
 
+/// 用系统默认浏览器打开文件（html/htm）。
+pub(crate) fn open_in_browser(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(path)
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(path).spawn();
+    }
+}
+
 /// 在系统文件浏览器中打开目录（Windows explorer / macOS open）。
 pub(crate) fn open_in_explorer(path: &std::path::Path) {
     #[cfg(windows)]
@@ -110,10 +125,17 @@ impl Chat {
         cx.notify();
     }
 
-    /// v54.4：所有文件统一打开为内容区 tab（无弹窗）。md/html 渲染预览
-    /// （pi-web rendered-first），其余文本源码 + 行号。
+    /// v54.4：文件打开路由——html/htm 交系统浏览器（webview 内嵌在 gpui
+    /// 上不可行，绕过）；其余统一打开为内容区 tab（md 渲染、源码带行号）。
     pub(crate) fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        eprintln!("[file] open_file_tab: {}", path.display());
+        let is_html = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm"));
+        if is_html {
+            open_in_browser(&path);
+            return;
+        }
         const MAX: u64 = 400 * 1024;
         let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
         let content = if too_big {
