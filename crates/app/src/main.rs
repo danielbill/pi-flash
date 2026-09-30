@@ -42,6 +42,7 @@ mod status_bar;
 mod titlebar;
 mod terminal;
 mod ui;
+mod webview;
 pub(crate) use ui::editor_input::EditorInputElement;
 use i18n::tr;
 use models_config::EnabledState;
@@ -84,14 +85,6 @@ impl DockPanel {
             DockPanel::Sessions => "sessions",
             DockPanel::Files => "files",
             DockPanel::Git => "git",
-        }
-    }
-
-    fn parse(s: &str) -> DockPanel {
-        match s {
-            "files" => DockPanel::Files,
-            "git" => DockPanel::Git,
-            _ => DockPanel::Sessions,
         }
     }
 }
@@ -261,6 +254,18 @@ struct Chat {
     content_view: ContentView,
     /// 浏览操作区的最后视图（Term/File）：文件树标签点击时恢复
     browse_last: ContentView,
+    /// 应用内 HTML 渲染面板（wry/WebView2 子窗口；html 文件 tab 激活时显示）
+    html_panel: Option<webview::HtmlPanel>,
+    /// html_panel 当前加载的文件
+    html_panel_path: Option<PathBuf>,
+    /// render 期写的期望状态（pump 消费；wry 调用禁止在 render 借用内）
+    html_want: Option<(PathBuf, String)>,
+    html_geo: webview::HtmlPanelGeo,
+    /// 主窗口 HWND（render 首帧缓存，供 pump 创建 webview）
+    hwnd_cache: Option<isize>,
+    /// 文件查看视图的滚动（滚动条渲染数据源）
+    file_scroll: gpui::ScrollHandle,
+    file_scrollbar: gpui_component::scroll::ScrollbarState,
     nav_open: bool,
     nav_hide_at: Option<std::time::Instant>,
     nav_flyout_hovered: bool,
@@ -343,7 +348,9 @@ impl Chat {
             search_needle: String::new(),
             search_gen: 0,
             pending_locate: None,
-            dock_panel: DockPanel::parse(&ui.panel),
+            // v54.4 定案：启动固定会话界面（面板/内容区绑定关系见
+            // status_bar；不恢复上次离开时的面板）
+            dock_panel: DockPanel::Sessions,
             cwd: cwd.clone(),
             branch,
             runtimes: std::collections::HashMap::new(),
@@ -410,6 +417,15 @@ impl Chat {
             slp_drag: None,
             content_view: ContentView::Chat,
             browse_last: ContentView::Term,
+            html_panel: None,
+            html_panel_path: None,
+            html_want: None,
+            html_geo: webview::HtmlPanelGeo {
+                x: 0., y: 0., w: 800., h: 600.,
+            },
+            hwnd_cache: None,
+            file_scroll: gpui::ScrollHandle::new(),
+            file_scrollbar: gpui_component::scroll::ScrollbarState::default(),
             nav_open: false,
             nav_hide_at: None,
             nav_flyout_hovered: false,
@@ -463,6 +479,8 @@ impl Chat {
                                 }
                             }
                         }
+                        // html webview 同步（wry 调用禁止在 render 借用内）
+                        c.sync_html_panel();
                         // 导航 flyout 250ms 离开宽限（pi-web
                         // PREVIEW_HIDE_DELAY parity）
                         if c.nav_open {
@@ -873,6 +891,73 @@ impl Chat {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
 
+    /// 当前激活的文件 tab（PanelTab::File），无则 None
+    fn active_file_tab(&self) -> Option<PathBuf> {
+        self.active_panel_tab
+            .and_then(|ix| self.panel_tabs.get(ix))
+            .and_then(|t| match t {
+                PanelTab::File(p) => Some(p.clone()),
+                _ => None,
+            })
+    }
+
+    /// render 期只写期望状态（geo/want/hwnd），wry 实际调用在 pump
+    /// （borrow 外）执行——wry 会同步分发 Win32 消息，render 内调用会
+    /// 重入借用 panic。
+    pub(crate) fn stage_html_panel(&mut self, window: &mut gpui::Window) {
+        self.html_geo = webview::HtmlPanelGeo::new(self, window);
+        if self.hwnd_cache.is_none() {
+            // gpui 的 WindowHandle 不暴露 raw HWND；按标题精确定位本应用
+            // 主窗口（Foreground 不可靠——缓存时机不对会拿到别的窗口，
+            // webview 会挂到别人家去）
+            self.hwnd_cache = unsafe { find_app_hwnd() };
+        }
+        self.html_want = self
+            .active_file_tab()
+            .filter(|_| self.content_view == ContentView::File)
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm"))
+            })
+            .and_then(|p| {
+                self.file_cache.get(&p).map(|f| (p.clone(), f.content.clone()))
+            });
+    }
+
+    /// pump 期执行（无 render 借用）：差量驱动 create/load/bounds/visible。
+    pub(crate) fn sync_html_panel(&mut self) {
+        let want = self.html_want.take();
+        let geo = self.html_geo;
+        match (want, self.html_panel.as_mut()) {
+            (Some((path, html)), Some(panel)) => {
+                if self.html_panel_path.as_deref() != Some(path.as_path()) {
+                    if let Err(e) = panel.load(path.clone(), &html) {
+                        eprintln!("[webview] load: {e}");
+                    }
+                    self.html_panel_path = Some(path);
+                }
+                panel.set_bounds(&geo);
+                panel.set_visible(true);
+            }
+            (Some((path, html)), None) => {
+                let Some(hwnd) = self.hwnd_cache else { return };
+                match webview::HtmlPanel::create_with_hwnd(hwnd, path.clone(), &html, geo) {
+                    Ok(panel) => {
+                        panel.set_visible(true);
+                        self.html_panel = Some(panel);
+                        self.html_panel_path = Some(path);
+                    }
+                    Err(e) => eprintln!("[webview] create: {e}"),
+                }
+            }
+            (None, Some(panel)) => {
+                panel.set_visible(false);
+            }
+            (None, None) => {}
+        }
+    }
+
     /// 切内容区视图；落在浏览操作区（Term/Md）时记住，供文件树标签恢复
     pub(crate) fn set_content_view(&mut self, v: ContentView) {
         self.content_view = v;
@@ -1243,8 +1328,28 @@ impl Render for Chat {
         if let Some(req) = &self.ext_dialog {
             root = root.child(render_ext_dialog(self, req.clone(), &weak_for_dialog));
         }
+        // html 文件 tab 的应用内渲染面板（只 stage；wry 调用在 pump）
+        self.stage_html_panel(window);
         root
     }
+}
+
+/// 本应用主窗口 HWND（按标题 "pi-flash" 精确查找；webview 子窗口的
+/// 父句柄来源——Foreground 在缓存时机上不可靠）。
+#[cfg(windows)]
+unsafe fn find_app_hwnd() -> Option<isize> {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn FindWindowW(lp_class: *const u16, lp_window: *const u16) -> isize;
+    }
+    let mut title: Vec<u16> = "pi-flash ".encode_utf16().collect();
+    let h = unsafe { FindWindowW(std::ptr::null(), title.as_mut_ptr()) };
+    (h != 0).then_some(h)
+}
+
+#[cfg(not(windows))]
+unsafe fn find_app_hwnd() -> Option<isize> {
+    None
 }
 
 fn main() {

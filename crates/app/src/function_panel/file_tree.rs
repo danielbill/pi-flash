@@ -95,6 +95,7 @@ pub(crate) fn collect_tree_rows(
             let weak_toggle = weak.clone();
             let dir_path = path.clone();
             row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                eprintln!("[tree] DIR clicked: {}", dir_path.display());
                 let d = dir_path.clone();
                 let _ = weak_toggle.update(cx, |c, cx| {
                     if !c.expanded_dirs.remove(&d) {
@@ -122,6 +123,7 @@ pub(crate) fn collect_tree_rows(
             let fp = path.clone();
             let is_changed = git_map.contains_key(&path);
             row = row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                eprintln!("[tree] FILE clicked: {} changed={}", fp.display(), is_changed);
                 let _ = weak_open.update(cx, |c, cx| {
                     if is_changed {
                         c.open_git_diff(fp.clone(), cx);

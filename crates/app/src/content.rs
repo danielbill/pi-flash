@@ -2,7 +2,7 @@
 //! markdown 预览以 topbar tab 打开（Obsidian 式），聊天为默认视图。内容
 //! 区直通窗口底（statusbar 只在面板段）。
 
-use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
+use gpui::{Context, Entity, Image, KeyDownEvent, MouseButton, SharedString, div, img, prelude::*, px, relative, rgb};
 
 use crate::Chat;
 use crate::ContentView;
@@ -245,11 +245,15 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
         // md：渲染（复用 agent 正文的 markdown 渲染器，自带语法高亮）
         "md" | "markdown" => div()
             .id("fv-md")
+            .relative()
             .flex_1()
             .min_h_0()
+            .min_w_0()
             .overflow_y_scroll()
+            .track_scroll(&chat.file_scroll)
             .bg(rgb(t.bg))
             .font_family(md_font.family.clone())
+            .overflow_x_hidden()
             .child(
                 div()
                     .max_w(px(760.))
@@ -258,99 +262,111 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                     .pt(px(26.))
                     .px(px(34.))
                     .pb(px(40.))
+                    .overflow_hidden()
                     .child(crate::markdown::render_themed(&content)),
             )
+            .child(
+                gpui_component::scroll::Scrollbar::vertical(&chat.file_scrollbar, &chat.file_scroll),
+            )
             .into_any_element(),
-        // html：无法安全执行脚本（无 webview），展示带样式的只读提示 +
-        // 源码；正文 markdown 亦按渲染处理。pi-web 用 iframe srcdoc——
-        // 桌面端后续接 webview 时替换
+        // html：wry(WebView2) 子窗口真渲染（render 尾部 sync_html_panel
+        // 覆盖此区域）；gpui 只画底色与提示
         "html" | "htm" => div()
             .id("fv-html")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
             .bg(rgb(t.bg))
             .child(
                 div()
-                    .max_w(px(900.))
-                    .mx_auto()
-                    .w_full()
-                    .pt(px(18.))
-                    .px(px(30.))
-                    .pb(px(30.))
+                    .pt(px(120.))
                     .flex()
-                    .flex_col()
-                    .gap(px(10.))
+                    .justify_center()
                     .child(
                         div()
-                            .px(px(10.))
-                            .py(px(7.))
+                            .px(px(12.))
+                            .py(px(6.))
                             .rounded(px(8.))
                             .border_1()
                             .border_color(rgb(t.border))
                             .bg(rgb(t.bg_panel))
                             .text_size(px(12.))
-                            .text_color(rgb(t.text_dim))
+                            .text_color(rgb(t.text_faint))
                             .child(SharedString::from(tr(
-                                "HTML 预览（静态渲染）：脚本未执行；需要交互请用浏览器打开",
+                                "HTML 渲染中（WebView2）… 若长时间空白，说明 WebView2 运行时缺失",
                             ))),
-                    )
-                    .child(crate::markdown::render_themed(&html_to_md(&content))),
-            )
-            .into_any_element(),
-        // 图片（桌面端暂无 image 元素支持，提示）
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => empty_hint(
-            "图片预览即将支持——请在资源管理器中查看",
-            t,
-        ),
-        // 其余：源码
-        _ => div()
-            .id("fv-src")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .bg(rgb(t.bg))
-            .font_family("Consolas")
-            .child(
-                div()
-                    .w_full()
-                    .pt(px(14.))
-                    .px(px(22.))
-                    .pb(px(30.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .children(content.lines().enumerate().map(|(i, line)| {
-                                div()
-                                    .flex()
-                                    .text_size(px(12.5))
-                                    .line_height(relative(1.55))
-                                    .child(
-                                        div()
-                                            .w(px(44.))
-                                            .flex_shrink_0()
-                                            .text_right()
-                                            .pr(px(12.))
-                                            .text_color(rgb(t.text_faint))
-                                            .child(SharedString::from(format!(
-                                                "{}",
-                                                i + 1
-                                            ))),
-                                    )
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .whitespace_nowrap()
-                                            .text_color(rgb(t.text))
-                                            .child(SharedString::from(
-                                                line.to_string(),
-                                            )),
-                                    )
-                            })),
                     ),
             )
             .into_any_element(),
+        // 图片：gpui img() 真渲染（最佳查看方式）
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => {
+            let format = match ext.as_str() {
+                "png" => Some(gpui::ImageFormat::Png),
+                "jpg" | "jpeg" => Some(gpui::ImageFormat::Jpeg),
+                "gif" => Some(gpui::ImageFormat::Gif),
+                "bmp" => Some(gpui::ImageFormat::Bmp),
+                "svg" => Some(gpui::ImageFormat::Svg),
+                _ => Some(gpui::ImageFormat::Webp),
+            };
+            match std::fs::read(&path)
+                .ok()
+                .zip(format)
+                .map(|(bytes, f)| std::sync::Arc::new(Image::from_bytes(f, bytes)))
+            {
+                Some(image) => div()
+                    .id("fv-img")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .bg(rgb(t.bg))
+                    .p(px(20.))
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .child(
+                        img(image).max_w_full(),
+                    )
+                    .into_any_element(),
+                None => empty_hint("图片读取失败", t),
+            }
+        }
+        // 其余：源码。单 text 块渲染整个文件（逐行 div 在千行级文件上
+        // 会拖垮帧率——无虚拟化）。行号以内嵌右对齐数字拼接。
+        _ => {
+            let numbered: String = content
+                .lines()
+                .enumerate()
+                .map(|(i, line)| {
+                    // 行内 tab 展开为 4 空格（等宽对齐）
+                    let line = line.replace("	", "    ");
+                    format!("{:>4} │ {}", i + 1, line)
+                })
+                .collect::<Vec<_>>()
+                .join("
+");
+            div()
+                .id("fv-src")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .overflow_y_scroll()
+                .track_scroll(&chat.file_scroll)
+                .bg(rgb(t.bg))
+                .overflow_x_hidden()
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(12.5))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(t.text))
+                        .overflow_hidden()
+                        .child(SharedString::from(numbered)),
+                )
+                .child(
+                    gpui_component::scroll::Scrollbar::vertical(&chat.file_scrollbar, &chat.file_scroll),
+                )
+                .into_any_element()
+        }
     };
 
     div()
@@ -391,58 +407,4 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
         )
         .child(body)
         .into_any_element()
-}
-
-/// 极简 HTML→文本转换（去标签保结构），供无 webview 场景的静态阅读。
-fn html_to_md(html: &str) -> String {
-    // 块级标签换行
-    let mut s = html
-        .replace("</p>", "\n\n")
-        .replace("</div>", "\n")
-        .replace("</h1>", "\n\n")
-        .replace("</h2>", "\n\n")
-        .replace("</h3>", "\n\n")
-        .replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("</li>", "\n");
-    // 去掉 script/style 块
-    if let Some(a) = s.find("<script") {
-        if let Some(b) = s[a..].find("</script>") {
-            s = format!("{}{}", &s[..a], &s[a + b + 9..]);
-        }
-    }
-    if let Some(a) = s.find("<style") {
-        if let Some(b) = s[a..].find("</style>") {
-            s = format!("{}{}", &s[..a], &s[a + b + 8..]);
-        }
-    }
-    // 剥其余标签
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for ch in s.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    // 折叠空行
-    let lines: Vec<&str> = out
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .collect();
-    let mut prev_blank = false;
-    let mut cleaned = String::new();
-    for l in lines {
-        let blank = l.trim().is_empty();
-        if blank && prev_blank {
-            continue;
-        }
-        cleaned.push_str(l);
-        cleaned.push('\n');
-        prev_blank = blank;
-    }
-    cleaned
 }

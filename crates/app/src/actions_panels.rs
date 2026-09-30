@@ -110,8 +110,11 @@ impl Chat {
         cx.notify();
     }
 
+    /// v54.4：所有文件统一打开为内容区 tab（无弹窗）。md/html 渲染预览
+    /// （pi-web rendered-first），其余文本源码 + 行号。
     pub(crate) fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        const MAX: u64 = 200 * 1024;
+        eprintln!("[file] open_file_tab: {}", path.display());
+        const MAX: u64 = 400 * 1024;
         let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
         let content = if too_big {
             "(file too large to preview)".to_string()
@@ -128,6 +131,20 @@ impl Chat {
             }
         };
         self.file_cache.insert(path.clone(), FileTab { content });
+        // 已打开则只切过去
+        if let Some(ix) = self
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, PanelTab::File(p) if same_path(p, &path)))
+        {
+            self.active_panel_tab = Some(ix);
+            self.set_content_view(ContentView::File);
+            cx.notify();
+            return;
+        }
+        self.panel_tabs.push(PanelTab::File(path));
+        self.active_panel_tab = Some(self.panel_tabs.len() - 1);
+        self.set_content_view(ContentView::File);
         cx.notify();
     }
 
