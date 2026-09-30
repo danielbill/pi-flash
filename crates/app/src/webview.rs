@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use wry::raw_window_handle::HasWindowHandle;
 use wry::dpi::{LogicalPosition, LogicalSize};
 
 /// 期望的 webview 几何（逻辑像素），render 尾部算好。
@@ -36,7 +37,7 @@ impl HtmlPanelGeo {
         }
     }
 
-    fn rect(&self) -> wry::Rect {
+    pub(crate) fn rect(&self) -> wry::Rect {
         wry::Rect {
             position: LogicalPosition::new(self.x, self.y).into(),
             size: LogicalSize::new(self.w, self.h).into(),
@@ -52,28 +53,21 @@ pub(crate) struct HtmlPanel {
 }
 
 impl HtmlPanel {
+    pub(crate) fn from_webview(webview: wry::WebView, path: PathBuf) -> Self {
+        Self { webview, path }
+    }
+}
+
+impl HtmlPanel {
     /// 从缓存的 HWND 创建（pump 上下文无 Window——wry 的调用一律在
     /// render 之外的空闲点执行，否则 Win32 消息重入 render 借用会 panic）
-    pub(crate) fn create_with_hwnd(
-        hwnd: isize,
+    pub(crate) fn create_with_hwnd<W: HasWindowHandle>(
+        parent: &W,
         path: PathBuf,
         html: &str,
         geo: HtmlPanelGeo,
     ) -> Result<Self, String> {
-        struct Hwnd(isize);
-        impl wry::raw_window_handle::HasWindowHandle for Hwnd {
-            fn window_handle(
-                &self,
-            ) -> Result<wry::raw_window_handle::WindowHandle<'_>, wry::raw_window_handle::HandleError>
-            {
-                use wry::raw_window_handle::{RawWindowHandle, WindowHandle, Win32WindowHandle};
-                let handle = Win32WindowHandle::new(
-                    std::num::NonZeroIsize::new(self.0).expect("hwnd non-zero"),
-                );
-                Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Win32(handle)) })
-            }
-        }
-        let webview = wry::WebView::new_as_child(&Hwnd(hwnd), wry::WebViewAttributes::default())
+        let webview = wry::WebView::new_as_child(parent, wry::WebViewAttributes::default())
             .map_err(|e| format!("webview create: {e}"))?;
         let _ = webview.set_bounds(geo.rect());
         let _ = webview.set_visible(false);
