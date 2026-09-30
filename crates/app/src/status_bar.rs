@@ -83,6 +83,11 @@ fn tabs(
                         this.refresh_git();
                         this.refresh_git_log();
                     }
+                    // 绑定关系：会话 tab = 内容区回到当前会话；
+                    // git/files tab = 只切面板，内容区保持现状
+                    if panel == DockPanel::Sessions {
+                        this.content_view = crate::ContentView::Chat;
+                    }
                     this.persist_ui();
                     cx.notify();
                 },
