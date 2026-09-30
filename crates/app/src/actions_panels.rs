@@ -60,7 +60,7 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         self.open_terminal(Some(cwd), window, cx);
-        self.content_view = ContentView::Term;
+        self.set_content_view(ContentView::Term);
         cx.notify();
     }
 
@@ -135,7 +135,7 @@ impl Chat {
             .is_some_and(|e| e.eq_ignore_ascii_case("md"));
         if is_md {
             self.md_preview = Some(path);
-            self.content_view = ContentView::Md;
+            self.set_content_view(ContentView::Md);
         } else {
             self.dialog = Some(Dialog::FilePreview { path });
         }

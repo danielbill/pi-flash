@@ -202,17 +202,18 @@ fn content_tab(
     let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.close_panel_tab(ix, cx);
         if this.content_view == ContentView::Term && this.panel_tabs.is_empty() {
-            this.content_view = if this.md_preview.is_some() {
+            let v = if this.md_preview.is_some() {
                 ContentView::Md
             } else {
                 ContentView::Chat
             };
+            this.set_content_view(v);
         }
         cx.notify();
     });
     let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.active_panel_tab = Some(ix);
-        this.content_view = ContentView::Term;
+        this.set_content_view(ContentView::Term);
         cx.notify();
     });
     tab_shell(id, label, active, ml, t, switch, Some(close))
@@ -223,16 +224,17 @@ fn md_tab(label: SharedString, active: bool, cx: &mut gpui::Context<Chat>) -> im
     let close = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
         this.md_preview = None;
         if this.content_view == ContentView::Md {
-            this.content_view = if !this.panel_tabs.is_empty() {
+            let v = if !this.panel_tabs.is_empty() {
                 ContentView::Term
             } else {
                 ContentView::Chat
             };
+            this.set_content_view(v);
         }
         cx.notify();
     });
     let switch = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-        this.content_view = ContentView::Md;
+        this.set_content_view(ContentView::Md);
         cx.notify();
     });
     tab_shell("ctab-md", label, active, 4., t, switch, Some(close))

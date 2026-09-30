@@ -259,6 +259,8 @@ struct Chat {
     panes_hidden: bool,
     slp_drag: Option<(f32, f32)>,
     content_view: ContentView,
+    /// 浏览操作区的最后视图（Term/Md）：文件树标签点击时恢复
+    browse_last: ContentView,
     md_preview: Option<PathBuf>,
     nav_open: bool,
     nav_hide_at: Option<std::time::Instant>,
@@ -407,6 +409,7 @@ impl Chat {
             panes_hidden: ui.panes_hidden,
             slp_drag: None,
             content_view: ContentView::Chat,
+            browse_last: ContentView::Term,
             md_preview: None,
             nav_open: false,
             nav_hide_at: None,
@@ -869,6 +872,14 @@ impl Chat {
 
     fn load_project_files(&mut self) {
         self.project_files = walk_files(&self.cwd, 3, 400);
+    }
+
+    /// 切内容区视图；落在浏览操作区（Term/Md）时记住，供文件树标签恢复
+    pub(crate) fn set_content_view(&mut self, v: ContentView) {
+        self.content_view = v;
+        if matches!(v, ContentView::Term | ContentView::Md) {
+            self.browse_last = v;
+        }
     }
 }
 

@@ -83,10 +83,23 @@ fn tabs(
                         this.refresh_git();
                         this.refresh_git_log();
                     }
-                    // 绑定关系：会话 tab = 内容区回到当前会话；
-                    // git/files tab = 只切面板，内容区保持现状
+                    // 绑定关系：会话 tab = 会话内容区（chat）；
+                    // files tab = 浏览操作区（终端/文件预览的最后状态）；
+                    // git tab = 只切面板
                     if panel == DockPanel::Sessions {
                         this.content_view = crate::ContentView::Chat;
+                    } else if panel == DockPanel::Files {
+                        let term_ok = !this.panel_tabs.is_empty();
+                        let md_ok = this.md_preview.is_some();
+                        this.content_view = match this.browse_last {
+                            crate::ContentView::Term if term_ok => {
+                                crate::ContentView::Term
+                            }
+                            crate::ContentView::Md if md_ok => crate::ContentView::Md,
+                            _ if term_ok => crate::ContentView::Term,
+                            _ if md_ok => crate::ContentView::Md,
+                            _ => this.content_view,
+                        };
                     }
                     this.persist_ui();
                     cx.notify();
