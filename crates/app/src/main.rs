@@ -1042,6 +1042,7 @@ impl Render for Chat {
             div()
                 .absolute()
                 .inset_0()
+                .occlude()
                 .child(
                     // transparent backdrop: click anywhere closes the menu
                     div()

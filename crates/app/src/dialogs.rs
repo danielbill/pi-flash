@@ -103,6 +103,7 @@ fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
                     div()
                         .absolute()
                         .inset_0()
+                        .occlude()
                         .bg(gpui::hsla(0., 0., 0., 0.35))
                         .track_focus(&chat.dialog_focus)
                         .on_key_down({
@@ -190,6 +191,7 @@ fn render_file_preview(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
                     div()
                         .absolute()
                         .inset_0()
+                        .occlude()
                         .bg(gpui::hsla(0., 0., 0., 0.35))
                         .track_focus(&chat.dialog_focus)
                         .on_key_down({
@@ -263,6 +265,7 @@ fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, pa
                     div()
                         .absolute()
                         .inset_0()
+                        .occlude()
                         .bg(gpui::hsla(0., 0., 0., 0.35))
                         .track_focus(&chat.dialog_focus)
                         .on_key_down({
@@ -451,6 +454,7 @@ fn render_session_search(
     div()
         .absolute()
         .inset_0()
+        .occlude()
         .bg(gpui::hsla(0., 0., 0., 0.35))
         .track_focus(&chat.dialog_focus)
         .flex()

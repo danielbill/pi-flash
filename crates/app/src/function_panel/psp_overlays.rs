@@ -18,8 +18,16 @@ pub(crate) fn psp_overlays(
 ) -> gpui::AnyElement {
     let t = T();
     // 全窗口定位层：absolute inset_0 铺满 root，悬浮子元素相对它定位，
-    // 且不参与流布局（0 高容器会把 absolute 子元素裁掉——菜单曾因此不可见）
-    let mut el = div().id("psp-overlays").absolute().inset_0();
+    // 且不参与流布局（0 高容器会把 absolute 子元素裁掉——菜单曾因此不可见）。
+    // 有卡片/菜单/确认层时 occlude：hit-test 截断下层，防止鼠标事件层层穿透
+    let shielding = chat.hover_card.is_some()
+        || chat.psp_menu.is_some()
+        || chat.confirm_prj_del.is_some();
+    let mut el = div()
+        .id("psp-overlays")
+        .absolute()
+        .inset_0()
+        .when(shielding, |d| d.occlude());
     if let Some((path, x, y)) = &chat.proj_tip {
         el = el.child(proj_tip(path, *x, *y));
     }
@@ -334,6 +342,7 @@ fn menu_layer(chat: &mut Chat, t: &'static Theme, cx: &mut gpui::Context<Chat>) 
         .id("psp-menu-layer")
         .absolute()
         .inset_0()
+        .occlude()
         // 透明背板：点击任意处关闭
         .child(
             div()
@@ -566,6 +575,7 @@ fn confirm_project_del(
         .id("psp-confirm-del")
         .absolute()
         .inset_0()
+        .occlude()
         .child(
             div().absolute().inset_0().cursor_pointer().on_mouse_down(
                 MouseButton::Left,

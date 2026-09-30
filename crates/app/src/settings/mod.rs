@@ -123,6 +123,7 @@ pub(crate) fn render_settings(
     div()
         .absolute()
         .inset_0()
+        .occlude()
         .bg(gpui::hsla(0., 0., 0., 0.35))
         .track_focus(&chat.dialog_focus)
         .on_key_down({

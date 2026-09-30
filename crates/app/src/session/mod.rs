@@ -387,6 +387,7 @@ fn nav_gutter(
             .right(px(26.))
             .top_0()
             .bottom_0()
+            .occlude()
             .w(px(326.))
             .bg(rgb(t.bg))
             .border_l_1()
