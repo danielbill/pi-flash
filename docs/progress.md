@@ -68,6 +68,19 @@
 
 **gpui 0.2.2 新陷阱（钉死）**：① `list()` 虚拟列表 item 宽度语义不可靠（psp 弃用改全量 div 渲染）；② overlay 容器必须是 `absolute().inset_0()`（流内 0 高容器裁掉 absolute 子元素——菜单曾不可见）；③ `WindowBounds::Maximized` 创建路径无效需 `zoom_window()`；④ hover 竞争：行 on_hover 退出事件可能晚于卡进入，用 `card_hovered` 标志门控；⑤ 调试 hitbox：patch gpui `on_mouse_down` 打印 `is_hovered+bounds` 最快定位
 
+## 状态（2026-09-30 晚）— v54 迭代收尾（用户验收通过）
+
+主体重构后多轮小步迭代（均已提交、用户验收）：
+- **绑定域定案**：statusbar 会话标签↔会话内容区(chat)、文件树标签↔浏览操作区(终端/文件预览 browse_last)、git 标签仅切面板；启动固定会话界面
+- **topbar 双态**：会话视图左对齐会话标题（≤15 字，pi 名优先/首条消息回落）；终端/文件 tabs 仅浏览操作区显示（切回会话即消失）
+- **文件预览 tab 化**：全部文件走内容区 tab（无弹窗）；md 渲染（复用 agent 渲染器）、图片 gpui img()、源码单文本块+行号（修逐行 div 卡顿）+ 垂直滚动条（gpui-component Scrollbar）；横向溢出修复
+- **html 打开**：webview 内嵌尝试 3 轮失败（Foreground/FindWindow HWND 挂错应用、gpui Window 直接传→消息重入 panic、三段式仍不显示）→ 定案绕行：系统默认浏览器打开，wry 全链路移除，等 gpui 生态成熟再评估
+- **会话导航修复**：比例尺常显（单轮也渲染）、激活位随滚动追踪、flyout 自持 hover+250ms 宽限（修无法点击）、单行摘要（首条有正文回复首句，非会话副本）、选择框/比例尺亮点跟随鼠标+四面完整边框、点击定位 scroll_to_reveal_item
+- **鼠标穿透**：全部 overlay（flyout/菜单/确认层/对话框遮罩/设置遮罩/pill 菜单/详情卡容器）挂 occlude() 截断 hit-test
+- **杂项**：statusbar 30→36px、消息时间「X月X日 HH:MM」、调试日志清理
+- **验收通过清单**（用户确认）：双绑定、topbar 双态、文件滚动条、html 浏览器打开、导航定位、菜单/二级菜单/详情卡改名删除/收起态/拖宽/等待动画/发送
+- **遗留**：beads = check_arch 复跑、手动排序真拖拽；wry 内嵌 GPUI 的重入问题已记录（绕行）；未 push
+
 ## 当前迭代纪要（M2 收尾 + M3 前两项）
 
 - pi-flash-kzw 分支导航：fork/tree 面板 + 消息 hover「新分支」（已关闭）
