@@ -458,6 +458,43 @@ impl Chat {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(120))
                     .await;
+                // html webview 创建：三段式（chat 取任务 → window 上下文
+                // 创建 wry → chat 写回），任一段都不与另一段的借用嵌套
+                // （wry 创建会同步分发 Win32 消息，render/chat 借用期内
+                // 执行会重入 panic）
+                let job = this
+                    .update(cx, |c, _cx| c.take_html_job())
+                    .ok()
+                    .flatten();
+                if let Some((path, html, geo)) = job {
+                    let handle = this
+                        .update(cx, |c, _cx| c.main_window)
+                        .ok()
+                        .flatten();
+                    if let Some(h) = handle {
+                        let created = h.update(cx, |_, window, _| {
+                            wry::WebView::new_as_child(
+                                window,
+                                wry::WebViewAttributes::default(),
+                            )
+                            .map(|w| {
+                                let _ = w.set_bounds(geo.rect());
+                                let _ = w.set_visible(true);
+                                w
+                            })
+                        });
+                        match created {
+                            Ok(Ok(w)) => {
+                                let _ = this.update(cx, |c, _cx| {
+                                    c.html_panel =
+                                        Some(webview::HtmlPanel::from_webview(w, path.clone()));
+                                    c.html_panel_path = Some(path);
+                                });
+                            }
+                            _ => eprintln!("[webview] create failed"),
+                        }
+                    }
+                }
                 let ok = this
                     .update(cx, |c, cx| {
                         c.caret_on = !c.caret_on;
@@ -477,34 +514,6 @@ impl Chat {
                                     c.hover_card = None;
                                     dirty = true;
                                 }
-                            }
-                        }
-                        // html webview：创建任务走 window 上下文（wry
-                        // 需要 HasWindowHandle 且消息分发禁止在 render
-                        // 借用内），load/bounds/visible 在 chat 上下文
-                        if let Some(job) = c.take_html_job() {
-                            let handle = c.main_window;
-                            let this = cx.entity();
-                            if let Some(h) = handle {
-                                h.update(cx, |_, window, cx| {
-                                    let (path, html, geo) = job;
-                                    let webview = wry::WebView::new_as_child(
-                                        window,
-                                        wry::WebViewAttributes::default(),
-                                    );
-                                    match webview {
-                                        Ok(w) => {
-                                            let _ = w.set_bounds(geo.rect());
-                                            let _ = w.load_html(&html);
-                                            let _ = w.set_visible(true);
-                                            let _ = this.update(cx, |c, _cx| {
-                                                c.html_panel = Some(webview::HtmlPanel::from_webview(w, path.clone()));
-                                                c.html_panel_path = Some(path);
-                                            });
-                                        }
-                                        Err(e) => eprintln!("[webview] create: {e}"),
-                                    }
-                                });
                             }
                         }
                         c.sync_html_panel();
