@@ -872,14 +872,36 @@ impl Chat {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
 
-    /// 当前激活的文件 tab（PanelTab::File），无则 None
-    fn active_file_tab(&self) -> Option<PathBuf> {
-        self.active_panel_tab
-            .and_then(|ix| self.panel_tabs.get(ix))
-            .and_then(|t| match t {
-                PanelTab::File(p) => Some(p.clone()),
-                _ => None,
+    /// 当前会话标题（topbar 会话视图展示；≤15 字截断）。优先 pi 会话名，
+    /// 回落首条用户消息。
+    pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
+        let file = self
+            .runtimes
+            .get(&self.active_key)
+            .and_then(|rt| rt.read(cx).file.clone());
+        let raw = file
+            .and_then(|f| {
+                self.projects
+                    .iter()
+                    .flat_map(|g| &g.sessions)
+                    .find(|s| same_path(&s.path, &f))
+                    .and_then(|s| {
+                        s.name
+                            .clone()
+                            .filter(|n| !n.trim().is_empty())
+                            .or_else(|| {
+                                Some(s.preview.clone()).filter(|p| !p.trim().is_empty())
+                            })
+                    })
             })
+            .unwrap_or_else(|| tr("新会话").to_string());
+        // 首行 + ≤15 字
+        let first_line = raw.lines().next().unwrap_or("").trim().to_string();
+        let mut out: String = first_line.chars().take(15).collect();
+        if first_line.chars().count() > 15 {
+            out.push('…');
+        }
+        out
     }
 
     /// 切内容区视图；落在浏览操作区（Term/Md）时记住，供文件树标签恢复

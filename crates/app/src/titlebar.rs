@@ -90,48 +90,27 @@ pub(crate) fn topbar_r(
             )
             .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(0xafc4ba8c)).mx(px(4.)));
     }
-    let mut tabs_host = div().id("topbar-tabs").h_full().flex().items_end();
-
-    for (ix, tab) in chat.panel_tabs.iter().enumerate() {
-        let (label, is_file): (SharedString, bool) = match tab {
-            crate::PanelTab::Term(id) => {
-                let title = chat
-                    .terminals
-                    .iter()
-                    .find(|t| t.id == *id)
-                    .map(|t| {
-                        let dir = t
-                            .cwd
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        format!("bash — {dir}")
-                    })
-                    .unwrap_or_else(|| "bash".into());
-                (title.into(), false)
-            }
-            crate::PanelTab::File(p) => (
-                p.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "file".into())
-                    .into(),
-                true,
-            ),
-        };
-        let active = chat.content_view
-            == if is_file { ContentView::File } else { ContentView::Term }
-            && chat.active_panel_tab == Some(ix);
-        tabs_host = tabs_host.child(content_tab(
-            if is_file { "ctab-file" } else { "ctab-term" },
-            ix,
-            label,
-            active,
-            if ix == 0 { 10. } else { 4. },
-            is_file,
-            cx,
-        ));
+    // topbar 状态与内容区绑定：会话视图=左对齐会话标题（≤15 字）；
+    // 浏览操作区=终端/文件 tabs（切回会话视图 tabs 即消失）
+    if chat.content_view == ContentView::Chat {
+        let title: SharedString = chat.session_title(cx).into();
+        bar = bar.child(
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                .pl(px(12.))
+                .min_w_0()
+                .max_w(px(320.))
+                .overflow_hidden()
+                .text_size(px(12.5))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text))
+                .child(title),
+        );
+    } else {
+        bar = bar.child(browse_tabs(chat, cx));
     }
-    bar = bar.child(tabs_host);
 
     bar = bar.child(
         div()
@@ -189,6 +168,56 @@ fn icon_btn(
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×
 /// 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
+
+
+/// 浏览操作区的 topbar tabs（终端 + 文件）。
+fn browse_tabs(
+    chat: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::Stateful<gpui::Div> {
+    let mut tabs_host = div().id("topbar-tabs").h_full().flex().items_end();
+    for (ix, tab) in chat.panel_tabs.iter().enumerate() {
+        let (label, is_file): (SharedString, bool) = match tab {
+            crate::PanelTab::Term(id) => {
+                let title = chat
+                    .terminals
+                    .iter()
+                    .find(|t| t.id == *id)
+                    .map(|t| {
+                        let dir = t
+                            .cwd
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        format!("bash — {dir}")
+                    })
+                    .unwrap_or_else(|| "bash".into());
+                (title.into(), false)
+            }
+            crate::PanelTab::File(p) => (
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".into())
+                    .into(),
+                true,
+            ),
+        };
+        let active = chat.content_view
+            == if is_file { ContentView::File } else { ContentView::Term }
+            && chat.active_panel_tab == Some(ix);
+        tabs_host = tabs_host.child(content_tab(
+            if is_file { "ctab-file" } else { "ctab-term" },
+            ix,
+            label,
+            active,
+            if ix == 0 { 10. } else { 4. },
+            is_file,
+            cx,
+        ));
+    }
+    tabs_host
+}
+
 #[allow(clippy::too_many_arguments)]
 fn content_tab(
     id: &'static str,
