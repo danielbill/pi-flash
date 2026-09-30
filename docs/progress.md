@@ -49,6 +49,25 @@
 | 会话行-hover按钮.png | 单行截断+hover ✏/🗑 |
 | 图片选择器.png | 🖼 attach_images 文件选择器 |
 | 文件预览.png | Cargo.toml 预览弹窗 |
+## 状态（2026-09-30）— v54 UI 重构全量落地（7 beads 关闭）
+
+以 `docs/UI设计/主界面UI设计-2.html` + 设计说明为唯一蓝本的全量重构（用户确认两决策：全量一轮推进、按设计删除旧功能）：
+
+- **布局骨架**：topbar 两段 36px（左段仅收放钮 / 右段内容 tabs+设置+窗口控制 42×36、关闭悬停红 #d8626a）；statusbar 30px 仅面板段三 tab（激活 nav 连体卡）；收起态面板+statusbar 全隐、收放钮跳右段；psp 宽 250–500 拖拽（282 默认、双击复位、`__ui` 持久化）
+- **psp 一体列表**：跨项目扫描按会话 mtime 聚类 ≤N 项目（当前钉顶，设置-其他「默认加载项目数」）；title 行 4 钮（iconfont 打开项目/新建会话 + search + ⋯）；⋯ 两级菜单（列表方式 分组/平铺 + 排序方式 时间/手动，勾选态+持久化）；项目行收合（持久化）+ hover tooltip（深色 全路径 mono）+ ⋯/＋（资源管理器/终端/删除项目确认流）；会话行 15px 状态槽（旋转圈/未读绿点 `running_files`+`unread` 集合）；**hover 详情卡**（锚侧栏右缘外 8px、标题原地改名输入框 Enter/Esc、删除→取消/确认、300ms 离行宽限 + `card_hovered` 竞争修复）
+- **内容区**：chat/term/md 状态机（ContentView），term/md tab 在 topbar-r（Obsidian 连体凸起卡）；终端从 dock 移入内容区（psp 项目菜单「在终端中打开」入口）；.md 点开走 md 预览 tab（760px 页）
+- **composer**：悬浮胶囊（75%/min500、16px 圆角、0 高 wrapper、底 padding 135px 让位）；控件行 图片+工具预设 | 上下文环（ring-25/50/75/100 分桶）+模型+思考+圆形发送↑（运行中变停止红）
+- **消息区**：用户气泡 62%/r14 无边框 + hover 操作行（复制/编辑/新分支+「X月X日 HH:MM」）；agent 回复「工作详情 · N 条消息 · N 次工具调用」折叠行（工具·对象列表、chevron、工作中不显示）；等待动画 spark 旋转（1.4s）+ shimmer 滑动条（1.6s）；hover 操作行（复制/用时/时间）
+- **git 面板**：头部单行（项目名 #8a9d95 + Changes(N)/History 连体 tab）；Changes：View Diff/Stage All/变更树（目录嵌套+绿+徽标+复选）/底部 ⎇+↑N Push(git_ahead_count)/融入式提交区/最近提交条+uncommit(git reset --soft)
+- **设置弹窗**：70%×98% 自带 36px topbar、左导航 200px 六页签（界面/模型/技能/子代理/插件/其他）+「默认加载项目数」「启动恢复」新增
+- **启动**：每次默认最大化（`window.zoom_window()` 显式调用——gpui 0.2.2 Windows 的 `WindowBounds::Maximized` 创建路径不生效）；**位置不再持久化**（外框/客户区坐标存取不对称导致每周期漂移一个边框宽——用户报告的"每次打开下移"）
+- **删除（按设计）**：TopPanel 系统提示词/工具定义、statusbar 状态文本、dock 终端视图、BranchTree/内容搜索对话框、title 生成（services/title.rs）、services/branch.rs（collect_path_user_ids/parse_export_html 迁入 runtime.rs）、tools 设置页、pages/welcome、DockPanel::Terminal、pill()
+- **主题**：三层色阶 chrome/nav/content + text_soft/text_faint/danger 七主题全配；30 新图标（lucide 补齐 + iconfont 实底提取自设计稿 + ring 分桶）
+- **实测通过（用户+工具驱动）**：菜单两级/删除项目/详情卡改名删除/状态栏切换/收起展开/宽拖拽/发送/等待动画；设置弹窗钮待用户复测（其屏幕坐标疑有外部悬浮窗干扰）
+- **测试**：81 全绿（pi-link 47 + app 34）
+
+**gpui 0.2.2 新陷阱（钉死）**：① `list()` 虚拟列表 item 宽度语义不可靠（psp 弃用改全量 div 渲染）；② overlay 容器必须是 `absolute().inset_0()`（流内 0 高容器裁掉 absolute 子元素——菜单曾不可见）；③ `WindowBounds::Maximized` 创建路径无效需 `zoom_window()`；④ hover 竞争：行 on_hover 退出事件可能晚于卡进入，用 `card_hovered` 标志门控；⑤ 调试 hitbox：patch gpui `on_mouse_down` 打印 `is_hovered+bounds` 最快定位
+
 ## 当前迭代纪要（M2 收尾 + M3 前两项）
 
 - pi-flash-kzw 分支导航：fork/tree 面板 + 消息 hover「新分支」（已关闭）
