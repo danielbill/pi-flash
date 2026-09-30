@@ -81,6 +81,17 @@
 - **验收通过清单**（用户确认）：双绑定、topbar 双态、文件滚动条、html 浏览器打开、导航定位、菜单/二级菜单/详情卡改名删除/收起态/拖宽/等待动画/发送
 - **遗留**：beads = check_arch 复跑、手动排序真拖拽；wry 内嵌 GPUI 的重入问题已记录（绕行）；未 push
 
+## 状态（2026-10-01）— v54.6 修复 + v54.7 UI 主题一致性（待用户验收）
+
+- **v54.6（2d87783，用户已确认修复）**：IME 中文输入 panic（char 下标当字节下标 → utf16_to_byte_offset + safe_replace_range）；等待动画与乐观回显解耦（phase_waiting 拆 pending_echo，模型名+省略号补齐）；shimmer 骨架条删除（视觉噪音）
+- **v54.7（d82a5f8，UI 一致性专项）**：
+  - **markdown 渲染对齐 pi-web 规格**（MarkdownBody + CodeBlock parity）：正文 14px/行高 1.7；标题克制放大（1.16/1.08/0.98em、margin 10/5、h3 混色）；列表 marker accent 72% 混色 600 字重；代码块完整结构（外框圆角 7 + 头部语言名/复制按钮 + 行号 gutter + 12.5px/1.62 + bg 92%混 panel）；引用块 3px 混色边 + bg-subtle 底 + muted 文字；**表格渲染（此前表格内容直接丢失）**：外框 + th bg_panel 650 + 斑马纹 + 行分隔线；独立图片段落 gpui img() 真渲染（http/缺失降级 alt 占位）；strong 混 accent、em muted、删除线支持
+  - **语法高亮随主题明暗切换**（pi-web Prism vs/vscDarkPlus parity）：浅色 InspiredGitHub / 深色 base16-ocean.dark——修复固定 base16-ocean.dark 在浅色主题下浅底亮字对比崩坏（本轮根因之一）
+  - **zed 系五主题语义校准**（Theme 增 dark 标记 + 语义阶梯不变量测试）：one-dark/nord-dark border 提亮到 bg 之上（原更暗 → 分隔线不可见）；one-light/ayu tool_bg 回 bg+3%（原=selected 过深）；nord-light border/hover/selected 加深可见；nord-dark selected 降饱和（6c99a6→4d5a72）；one-dark/nord-dark text 阶梯拉开（muted 过暗）；ayu accent_hover 加深（原反向变浅）
+  - **mist 专属硬编码色全量语义化**：0xafc4baXX 系（20+ 处）→ border_alpha(t, a)、0xd8626a → danger_alpha/danger_hover、0x2e8b57 → UNREAD；设计意图保留：tooltip/toast 恒深底、终端 ANSI、thinking 金灯、行内 code 底
+  - **sync_gpui_tokens 补 danger 系映射**（gpui-component 部件删除态随主题）
+  - 测试 85 全绿（pi-link 47 + app 38：新增语义阶梯不变量/表格/图片/删除线/双主题高亮）
+
 ## 当前迭代纪要（M2 收尾 + M3 前两项）
 
 - pi-flash-kzw 分支导航：fork/tree 面板 + 消息 hover「新分支」（已关闭）
