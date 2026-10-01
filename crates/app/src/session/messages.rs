@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
+use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, TextAlign, div, prelude::*, px, relative, rgb};
 use pi_link::protocol::{content_blocks, Block, Usage};
 
 use crate::Chat;
@@ -269,7 +269,9 @@ pub(crate) fn render_block(
             args,
             result,
             is_error,
+            images,
             duration_s,
+            details,
             args_partial,
             result_arrived,
             ..
@@ -284,6 +286,8 @@ pub(crate) fn render_block(
                 args,
                 result,
                 *is_error,
+                images,
+                details.as_ref(),
                 *duration_s,
                 *args_partial,
                 *result_arrived,
@@ -373,6 +377,7 @@ fn result_is_empty(result: &str) -> bool {
 
 /// 「工作详情」组内的 pi-web ToolCallBlock 卡片（v56-2 c8/c9）。
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn render_tool_card(
     msg_ix: usize,
     content_index: usize,
@@ -380,6 +385,8 @@ fn render_tool_card(
     args: &str,
     result: &str,
     is_error: bool,
+    images: &[pi_link::protocol::ImageData],
+    details: Option<&serde_json::Value>,
     duration_s: Option<i64>,
     args_partial: bool,
     result_arrived: bool,
@@ -387,11 +394,44 @@ fn render_tool_card(
     collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
 ) -> gpui::Div {
+    let _ = images; // c11 渲染
     let key = (msg_ix, content_index);
     // pi-web isToolCallExpanded：模块级记忆，默认全部折叠
     let expanded = collapsed.get(&key).copied().unwrap_or(false);
     let is_patch = crate::session::diff::is_apply_patch_tool_name(name);
     let is_edit = crate::session::diff::is_edit_tool_name(name);
+
+    // c10: diff 视图数据 —— apply_patch 优先解析输入 V4A 文档，失败退
+    // details.preview；write/edit 取 details.patch/.diff（统一 diff）
+    let input_text = serde_json::from_str::<serde_json::Value>(args)
+        .ok()
+        .and_then(|v| v.get("input").and_then(|x| x.as_str()).map(str::to_string))
+        .unwrap_or_else(|| args.to_string());
+    let patch_files = if is_patch {
+        crate::session::diff::parse_apply_patch_input(&input_text)
+            .or_else(|| {
+                if is_error {
+                    None
+                } else {
+                    details
+                        .as_ref()
+                        .and_then(|d| crate::session::diff::apply_patch_preview_to_files(d))
+                }
+            })
+            .map(|f| (f, false))
+    } else {
+        None
+    };
+    let result_diff = if result_arrived && !is_error {
+        details.as_ref().and_then(|d| {
+            d.get("patch")
+                .or_else(|| d.get("diff"))
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        })
+    } else {
+        None
+    };
 
     // 状态色（pi-web 成功绿/失败红 边框+底色+工具名）
     let (border_c, bg_c, name_c, top_c) = if is_error {
@@ -508,8 +548,8 @@ fn render_tool_card(
         .bg(gpui::rgba(bg_c))
         .child(head);
 
-    // 展开体：参数 pre（编辑类工具且参数完整时让位给 diff 视图——c10）
-    if expanded && (args_partial || !is_edit) && !is_patch {
+    // 展开体：参数 pre（有 diff 视图时让位——pi-web !patchFiles 门）
+    if expanded && (args_partial || !is_edit) && !is_patch && patch_files.is_none() {
         card = card.child(
             div()
                 .border_t_1()
@@ -524,47 +564,278 @@ fn render_tool_card(
                 .child(SharedString::from(tool_args_display(args, args_partial))),
         );
     }
-    // 展开体：结果 pre（PairedResult parity：maxHeight 400、空结果斜体、
-    // 错误红字；结果未到不显示）
-    if expanded && result_arrived && (is_error || !result_is_empty(result)) {
-        let empty = result_is_empty(result);
-        let text = if empty {
-            tr("(无输出)").to_string()
-        } else {
-            result.to_string()
-        };
-        card = card.child(
-            div()
-                .id(SharedString::from(format!("tres-{msg_ix}-{content_index}")))
-                .max_h(px(400.))
-                .overflow_y_scroll()
-                .border_t_1()
-                .border_color(gpui::rgba(if is_error {
-                    rgba_a(0xf87171, 0.3)
-                } else {
-                    rgba_a(0x22c55e, 0.15)
-                }))
-                .bg(if is_error {
-                    gpui::rgba(rgba_a(0xf87171, 0.04))
-                } else {
-                    rgb(t.bg_subtle)
-                })
-                .px(px(10.))
-                .py(px(8.))
-                .font_family("Consolas")
-                .text_size(px(12.))
-                .line_height(relative(1.5))
-                .when(empty, |d| {
-                    d.italic()
-                        .text_color(rgb(t.text_dim))
-                        .opacity(0.6)
-                })
-                .when(!empty && is_error, |d| d.text_color(rgb(0xf87171)))
-                .when(!empty && !is_error, |d| d.text_color(rgb(t.text_muted)))
-                .child(SharedString::from(text)),
-        );
+    // 展开体（pi-web 决策树）：patchFiles > resultDiff(SplitPatch) >
+    // PairedResult；patch 视图存在且失败时结果文本仍然显示
+    if expanded {
+        if let Some((files, _)) = &patch_files {
+            card = card.child(
+                div()
+                    .border_t_1()
+                    .border_color(gpui::rgba(rgba_a(0x22c55e, 0.15)))
+                    .bg(rgb(t.bg))
+                    .child(split_files_view(files, t)),
+            );
+            if is_error && result_arrived && !result_is_empty(result) {
+                card = card.child(paired_result(result, is_error, t, msg_ix, content_index));
+            }
+        } else if let Some(diff_text) = &result_diff {
+            card = card.child(
+                div()
+                    .border_t_1()
+                    .border_color(gpui::rgba(rgba_a(0x22c55e, 0.15)))
+                    .bg(rgb(t.bg))
+                    .child(match crate::session::diff::parse_unified_patch(diff_text) {
+                        Some(files) => split_files_view(&files, t),
+                        None => patch_text_view(diff_text, t),
+                    }),
+            );
+        } else if result_arrived && (is_error || !result_is_empty(result)) {
+            card = card.child(paired_result(result, is_error, t, msg_ix, content_index));
+        }
     }
     card
+}
+
+/// pi-web PairedResult：maxHeight 400 滚动、空结果斜体 0.6、错误红字。
+fn paired_result(
+    result: &str,
+    is_error: bool,
+    t: &theme::Theme,
+    msg_ix: usize,
+    content_index: usize,
+) -> gpui::AnyElement {
+    let empty = result_is_empty(result);
+    let text = if empty {
+        tr("（无输出）").to_string()
+    } else {
+        result.to_string()
+    };
+    div()
+        .id(SharedString::from(format!("tres-{msg_ix}-{content_index}")))
+        .max_h(px(400.))
+        .overflow_y_scroll()
+        .border_t_1()
+        .border_color(gpui::rgba(if is_error {
+            rgba_a(0xf87171, 0.3)
+        } else {
+            rgba_a(0x22c55e, 0.15)
+        }))
+        .bg(if is_error {
+            gpui::rgba(rgba_a(0xf87171, 0.04))
+        } else {
+            rgb(t.bg_subtle)
+        })
+        .px(px(10.))
+        .py(px(8.))
+        .font_family("Consolas")
+        .text_size(px(12.))
+        .line_height(relative(1.5))
+        .when(empty, |d| d.italic().text_color(rgb(t.text_dim)).opacity(0.6))
+        .when(!empty && is_error, |d| d.text_color(rgb(0xf87171)))
+        .when(!empty && !is_error, |d| d.text_color(rgb(t.text_muted)))
+        .child(SharedString::from(text))
+        .into_any_element()
+}
+
+/// pi-web SplitFilesView：双栏 split diff，maxHeight 560 滚动；多文件时
+/// 显示文件头（pi-web sticky 头在 gpui 无对应，退化为普通行）。
+fn split_files_view(files: &[crate::session::diff::DiffFile], t: &theme::Theme) -> gpui::AnyElement {
+    use crate::session::diff::Row;
+    let show_headers = files.len() > 1;
+    let mut wrap = div()
+        .id(SharedString::from(SharedString::from(format!("sd-{}", files.len()))))
+        .max_h(px(560.))
+        .overflow_y_scroll()
+        .min_w_0()
+        .font_family("Consolas")
+        .text_size(px(12.))
+        .line_height(relative(1.55));
+    for (fix, file) in files.iter().enumerate() {
+        let mut fcol = div().min_w_0();
+        if fix > 0 {
+            fcol = fcol.border_t_1().border_color(rgb(t.border));
+        }
+        if show_headers {
+            let header = |title: Option<&String>, left: bool| {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(10.))
+                    .py(px(5.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(rgb(t.text_dim))
+                    .when(left, |d| d.border_r_1().border_color(rgb(t.border)))
+                    .child(SharedString::from(
+                        title
+                            .map(|s| s.clone())
+                            .unwrap_or_else(|| tr("之前").to_string()),
+                    ))
+                    .into_any_element()
+            };
+            // 右栏标题：newPath 缺省显示「之后」
+            let right_title = match &file.new_path {
+                Some(p) => Some(p.clone()),
+                None => None,
+            };
+            fcol = fcol.child(
+                div()
+                    .flex()
+                    .min_w_0()
+                    .bg(rgb(t.bg_panel))
+                    .border_b_1()
+                    .border_color(rgb(t.border))
+                    .child(header(file.old_path.as_ref(), true))
+                    .child(header(right_title.as_ref(), false)),
+            );
+        }
+        for row in &file.rows {
+            match row {
+                Row::Hunk(_) => {}
+                Row::Line { left, right } => {
+                    fcol = fcol
+                        .child(diff_cell(left, true, t))
+                        .child(diff_cell(right, false, t));
+                }
+            }
+        }
+        wrap = wrap.child(fcol);
+    }
+    wrap.into_any_element()
+}
+
+/// pi-web SplitDiffCellView：行号槽 42px + 标记列 18px + 文本。
+fn diff_cell(
+    cell: &crate::session::diff::Cell,
+    left_side: bool,
+    t: &theme::Theme,
+) -> gpui::AnyElement {
+    use crate::session::diff::CellKind;
+    let bg = match cell.kind {
+        CellKind::Added => gpui::rgba(rgba_a(0x22c55e, 0.12)),
+        CellKind::Removed => gpui::rgba(rgba_a(0xf87171, 0.13)),
+        CellKind::Empty => rgb(t.bg_subtle),
+        CellKind::Context => gpui::rgba(0),
+    };
+    let marker = match cell.kind {
+        CellKind::Added => "+",
+        CellKind::Removed => "-",
+        _ => " ",
+    };
+    let marker_color = match cell.kind {
+        CellKind::Added => 0x22c55e,
+        CellKind::Removed => 0xf87171,
+        _ => t.text_dim,
+    };
+    let line_no = cell
+        .line_no
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+    div()
+        .flex()
+        .min_w_0()
+        .bg(bg)
+        .when(left_side, |d| d.border_r_1().border_color(rgb(t.border)))
+        .child(
+            div()
+                .w(px(42.))
+                .px(px(6.))
+                .flex_shrink_0()
+                .text_align(TextAlign::Right)
+                .text_color(rgb(t.text_dim))
+                .bg(rgb(t.bg_panel))
+                .border_r_1()
+                .border_color(rgb(t.border))
+                .child(SharedString::from(line_no)),
+        )
+        .child(
+            div()
+                .w(px(18.))
+                .px(px(5.))
+                .flex_shrink_0()
+                .text_color(rgb(marker_color))
+                .when(matches!(cell.kind, CellKind::Added | CellKind::Removed), |d| {
+                    d.font_weight(FontWeight::BOLD)
+                })
+                .child(SharedString::from(marker)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .pr(px(10.))
+                .text_color(rgb(if matches!(cell.kind, CellKind::Empty) {
+                    t.text_dim
+                } else {
+                    t.text
+                }))
+                .child(SharedString::from(if cell.text.is_empty() {
+                    "\u{a0}".to_string()
+                } else {
+                    cell.text.clone()
+                })),
+        )
+        .into_any_element()
+}
+
+/// pi-web PatchTextView：单栏回退（unified 解析失败时），maxHeight 520。
+fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement {
+    div()
+        .id("ptext")
+        .max_h(px(520.))
+        .overflow_y_scroll()
+        .min_w_0()
+        .font_family("Consolas")
+        .text_size(px(12.))
+        .line_height(relative(1.55))
+        .children(text.lines().enumerate().map(|(i, line)| {
+            let kind = if line.starts_with("@@") {
+                0
+            } else if line.starts_with('+') && !line.starts_with("+++") {
+                1
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                2
+            } else {
+                3
+            };
+            let (bg, color, bar) = match kind {
+                0 => (gpui::rgba(rgba_a(0x60a5fa, 0.12)), t.accent, t.accent),
+                1 => (gpui::rgba(rgba_a(0x22c55e, 0.12)), 0x22c55e, 0x22c55e),
+                2 => (gpui::rgba(rgba_a(0xf87171, 0.13)), 0xf87171, 0xf87171),
+                _ => (gpui::rgba(0), t.text, 0),
+            };
+            div()
+                .flex()
+                .min_w_0()
+                .bg(bg)
+                .when(kind != 3, |d| d.border_l_3().border_color(rgb(bar)))
+                .when(kind == 3, |d| d.border_l_3().border_color(gpui::rgba(0)))
+                .child(
+                    div()
+                        .w(px(48.))
+                        .px(px(8.))
+                        .flex_shrink_0()
+                        .text_align(TextAlign::Right)
+                        .text_color(rgb(t.text_dim))
+                        .bg(rgb(t.bg_panel))
+                        .border_r_1()
+                        .border_color(rgb(t.border))
+                        .child(SharedString::from((i + 1).to_string())),
+                )
+                .child(
+                    div()
+                        .px(px(10.))
+                        .min_w_0()
+                        .text_color(rgb(color))
+                        .child(SharedString::from(if line.is_empty() {
+                            "\u{a0}".to_string()
+                        } else {
+                            line.to_string()
+                        })),
+                )
+        }))
+        .into_any_element()
 }
 
 pub(crate) fn render_msg(
