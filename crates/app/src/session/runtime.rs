@@ -10,7 +10,6 @@
 //! (sidebar refresh, sound, git refresh, ext dialogs) for the active
 //! session only.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use futures::StreamExt;
@@ -64,7 +63,9 @@ pub(crate) struct SessionRuntime {
     // ---- message log ----
     pub messages: Vec<Msg>,
     pub list: ListState,
-    pub collapsed: HashSet<(usize, usize)>,
+    /// explicit open/close overrides; absent = per-state default (thinking
+    /// blocks open, process group closed when the turn has a final answer)
+    pub collapsed: std::collections::HashMap<(usize, usize), bool>,
     pub phase_waiting: bool,
     /// 乐观发送的用户文本：只用于把 pi 回显的同文 user 消息就地升级（去重）。
     /// 与 phase_waiting 解耦 —— 回显到达 ≠ agent 已应答，等待行不能被它掐掉。
@@ -122,7 +123,7 @@ impl SessionRuntime {
             agent: AgentSession::new(1),
             messages: Vec::new(),
             list,
-            collapsed: HashSet::new(),
+            collapsed: std::collections::HashMap::new(),
             phase_waiting: false,
             pending_echo: None,
             stream_started: None,
@@ -485,6 +486,7 @@ impl SessionRuntime {
                                 custom_type: None,
                                 custom_display: true,
                                 details: None,
+                                model: None,
                             });
                         }
                     }
@@ -503,6 +505,7 @@ impl SessionRuntime {
                             custom_type: None,
                             custom_display: true,
                             details: None,
+                            model: None,
                         });
                     }
                     "toolResult" => {
@@ -524,6 +527,7 @@ impl SessionRuntime {
                             custom_type,
                             custom_display,
                             details: None,
+                            model: None,
                         });
                     }
                     _ => {}
@@ -572,7 +576,7 @@ impl SessionRuntime {
                         *text = content;
                         // pi-web parity: collapse thinking once it completes
                         let msg_ix = self.messages.len().saturating_sub(1);
-                        self.collapsed.insert((msg_ix, content_index));
+                        self.collapsed.insert((msg_ix, content_index), false);
                     }
                 }
                 AssistantEvent::ToolCallStart { content_index, id, tool_name } => {
@@ -637,7 +641,7 @@ impl SessionRuntime {
                 AssistantEvent::Other(_) => {}
                 }
             }
-            Event::MessageEnd { role, blocks, usage, timestamp, stop_reason, error_message, .. } => {
+            Event::MessageEnd { role, blocks, usage, timestamp, stop_reason, error_message, model, .. } => {
                 if role == "assistant" {
                     if let Some(m) = self.messages.last_mut() {
                         if m.role == Role::Assistant {
@@ -653,6 +657,7 @@ impl SessionRuntime {
                             m.end_ts = Some(crate::services::format::now_ms());
                             m.stop_reason = stop_reason;
                             m.error_message = error_message;
+                            m.model = model;
                         }
                     }
                 }
@@ -846,6 +851,7 @@ impl SessionRuntime {
                     custom_type: None,
                     custom_display: true,
                     details: None,
+                    model: None,
                 });
             }
             "assistant" => {
@@ -864,6 +870,7 @@ impl SessionRuntime {
                     end_ts: None,
                     stop_reason: msg["stopReason"].as_str().map(str::to_string),
                     error_message: msg["errorMessage"].as_str().map(str::to_string),
+                    model: msg["model"].as_str().map(str::to_string),
                     custom_type: None,
                     custom_display: true,
                     details: None,
@@ -890,6 +897,7 @@ impl SessionRuntime {
                     custom_type: Some(msg["customType"].as_str().unwrap_or("").to_string()),
                     custom_display: msg["display"].as_bool().unwrap_or(true),
                     details: msg["details"].as_object().map(|_| msg["details"].clone()),
+                    model: None,
                 });
             }
             _ => {}
@@ -912,6 +920,7 @@ impl SessionRuntime {
                     custom_type: None,
                     custom_display: true,
                     details: None,
+                    model: None,
                 });
         }
         self.messages.last_mut().expect("just pushed")
@@ -1049,6 +1058,7 @@ impl SessionRuntime {
                         custom_type: None,
                         custom_display: true,
                         details: None,
+                        model: None,
                     });
                     self.phase_waiting = true;
                     self.notify_list(cx);

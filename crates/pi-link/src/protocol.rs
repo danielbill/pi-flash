@@ -470,6 +470,8 @@ pub enum Event {
         custom_type: Option<String>,
         /// CustomMessage.display (true default for non-custom roles)
         custom_display: bool,
+        /// AssistantMessage.model — per-message model label source
+        model: Option<String>,
     },
     AgentStart,
     AgentEnd { will_retry: bool },
@@ -698,6 +700,7 @@ pub fn parse_record(v: &Value) -> Event {
             tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
             custom_type: v["message"]["customType"].as_str().map(str::to_string),
             custom_display: v["message"]["display"].as_bool().unwrap_or(true),
+            model: v["message"]["model"].as_str().map(str::to_string),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {

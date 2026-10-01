@@ -2,7 +2,7 @@
 //! pi-web MessageView.tsx parity). Free functions over Chat state; the
 //! entity split lands in phase E (ARCHITECTURE.md §2).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use gpui::{MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 use pi_link::protocol::{content_blocks, Block, Usage};
@@ -57,6 +57,9 @@ pub(crate) struct Msg {
     pub(crate) custom_display: bool,
     /// CustomMessage.details (compaction: tokensBefore/firstKeptEntryId)
     pub(crate) details: Option<serde_json::Value>,
+    /// AssistantMessage.model — per-message label (pi-web getModelDisplayName
+    /// source); None on live-streamed messages until MessageEnd
+    pub(crate) model: Option<String>,
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list
@@ -158,7 +161,7 @@ pub(crate) fn render_block(
     b: &Block,
     msg_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
-    collapsed: &HashSet<(usize, usize)>,
+    collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
 ) -> gpui::Div {
     match b {
@@ -167,7 +170,7 @@ pub(crate) fn render_block(
         }
         Block::Thinking { text, content_index } if !text.trim().is_empty() => {
             let key = (msg_ix, *content_index);
-            let expanded = !collapsed.contains(&key);
+            let expanded = collapsed.get(&key).copied().unwrap_or(true);
             let weak = weak.clone();
             // pi-web getThinkingPreview: first line, up to 240 chars, trimmed
             let preview: String = text
@@ -199,9 +202,8 @@ pub(crate) fn render_block(
                     let _ = weak.update(cx, |c, cx| {
                         let rt = c.rt();
                         rt.update(cx, |r, _| {
-                            if !r.collapsed.remove(&k) {
-                                r.collapsed.insert(k);
-                            }
+                            let next = !r.collapsed.get(&k).copied().unwrap_or(true);
+                            r.collapsed.insert(k, next);
                         });
                         cx.notify();
                     });
@@ -252,110 +254,37 @@ pub(crate) fn render_block(
             }
             block
         }
-        Block::ToolCall { .. } => {
-            // v54: 工具调用收进「工作详情」折叠行（render_msg 的工作折
-            // 叠区），不再逐卡内联渲染
-            div().w_full()
+        Block::ToolCall { name, args, .. } => {
+            // v56-1: 工具调用收进「工作详情」组，组内逐条一行
+            // （v56-2 c9 升级为 pi-web ToolCallBlock 卡片）
+            div()
+                .w_full()
+                .flex()
+                .items_baseline()
+                .gap(px(4.))
+                .py(px(3.))
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(crate::i18n::tf(
+                            "{tool} ·",
+                            &[("tool", name.to_string())],
+                        ))),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_shrink()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_color(rgb(t.text_faint))
+                        .child(SharedString::from(tool_target(args))),
+                )
         }
         _ => div().w_full(),
     }
-}
-
-/// 「工作详情」折叠行 + 展开的工具调用列表（左细线缩进；tool · 对象）。
-/// 按轮聚合：label 计整轮，tools 为整轮的 (工具名, 对象) 序列。
-#[allow(clippy::too_many_arguments)]
-fn work_fold(
-    msg_ix: usize,
-    n_msgs: usize,
-    n_tools: usize,
-    tools: &[(String, String)],
-    weak: &gpui::WeakEntity<Chat>,
-    collapsed: &HashSet<(usize, usize)>,
-    t: &theme::Theme,
-) -> gpui::AnyElement {
-    let key = (msg_ix, usize::MAX);
-    let expanded = !collapsed.contains(&key);
-    let label = crate::i18n::tf(
-        "工作详情 · {m} 条消息 · {t} 次工具调用",
-        &[
-            ("m", n_msgs.to_string()),
-            ("t", n_tools.to_string()),
-        ],
-    );
-    let weak_fold = weak.clone();
-    // 外层列容器：折叠行在上、展开体在下（此前 body 挂在 flex 行容器里
-    // 被排到标签右侧——布局 bug）
-    let mut wrap = div().flex().flex_col();
-    let fold_row = div()
-        .id(SharedString::from(format!("work-fold-{msg_ix}")))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .px(px(8.))
-        .py(px(4.))
-        .ml(px(-8.))
-        .text_size(px(12.))
-        .text_color(rgb(t.text_dim))
-        .cursor_pointer()
-        .rounded(px(6.))
-        .hover(|s| s.bg(rgb(t.bg_hover)))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let _ = weak_fold.update(cx, |c, cx| {
-                let rt = c.rt();
-                rt.update(cx, |r, _| {
-                    if !r.collapsed.remove(&key) {
-                        r.collapsed.insert(key);
-                    }
-                });
-                cx.notify();
-            });
-        })
-        .child(icon(
-            if expanded { "chevron-down" } else { "chevron-right" },
-            12.,
-            t.text_dim,
-        ))
-        .child(SharedString::from(label));
-    wrap = wrap.child(fold_row);
-    if expanded {
-        let mut body = div()
-            .ml(px(14.))
-            .pl(px(14.))
-            .mb(px(10.))
-            .border_l_2()
-            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
-            .flex()
-            .flex_col();
-        for (tool, target) in tools {
-            body = body.child(
-                div()
-                    .flex()
-                    .items_baseline()
-                    .gap(px(4.))
-                    .py(px(3.))
-                    .text_size(px(12.))
-                    .child(
-                        div()
-                            .text_color(rgb(t.text_dim))
-                            .child(SharedString::from(crate::i18n::tf(
-                                "{tool} ·",
-                                &[("tool", tool.to_string())],
-                            ))),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(rgb(t.text_faint))
-                            .child(SharedString::from(target)),
-                    ),
-            );
-        }
-        wrap = wrap.child(body);
-    }
-    wrap.into_any_element()
 }
 
 /// 工具调用「对象」：主参数（file_path/command/pattern/url/query…），缺省
@@ -378,7 +307,7 @@ pub(crate) fn render_msg(
     m: &Msg,
     msg_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
-    collapsed: &HashSet<(usize, usize)>,
+    collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
     // Some(est_tokens) 仅当此消息是流式中的最后一条（工作中回复）
     _stream_info: Option<u64>,
@@ -506,10 +435,74 @@ pub(crate) fn render_msg(
     col
 }
 
-/// 一轮 agent 回复（用户消息 → 下一用户消息之间的全部 assistant 消息）：
-/// 工作详情折叠（整轮聚合）+ 模型名（一次）+ 依序正文 + hover 操作栏
-/// （复制整轮文本 / 用时 / 时间）。pi-web AssistantMessageView 的轮级
-/// 收敛 + v54 设计折叠行。
+/// Block 渲染可见性（组内条目计数/过滤用；空 thinking/空 text 跳过）。
+fn block_displayable(b: &Block) -> bool {
+    match b {
+        Block::Text { text, .. } | Block::Thinking { text, .. } => !text.trim().is_empty(),
+        Block::ToolCall { name, .. } => !name.is_empty(),
+        Block::Image { .. } => true,
+    }
+}
+
+/// pi-web splitFinalAssistantBlocks：最终回答 = 尾部 text/image 连续段，
+/// 返回首个 answer 块下标（无连续段时 == len）。
+fn split_answer_start(blocks: &[Block]) -> usize {
+    blocks
+        .iter()
+        .rposition(|b| !matches!(b, Block::Text { .. } | Block::Image { .. }))
+        .map_or(0, |i| i + 1)
+}
+
+/// pi-web hasFinalAssistantAnswer：存在非空 text 或 image 块。
+fn msg_has_answer(m: &Msg) -> bool {
+    m.blocks.iter().any(|b| match b {
+        Block::Text { text, .. } => !text.trim().is_empty(),
+        Block::Image { .. } => true,
+        _ => false,
+    })
+}
+
+fn usage_line(u: &UsageLine) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if u.input > 0 {
+        parts.push(format!("{} in", crate::services::format::fmt_thousand(u.input)));
+    }
+    if u.output > 0 {
+        parts.push(format!("{} out", crate::services::format::fmt_thousand(u.output)));
+    }
+    if u.cache_read > 0 {
+        parts.push(format!(
+            "{} cache R",
+            crate::services::format::fmt_thousand(u.cache_read)
+        ));
+    }
+    if u.cache_write > 0 {
+        parts.push(format!(
+            "{} cache W",
+            crate::services::format::fmt_thousand(u.cache_write)
+        ));
+    }
+    if u.cost > 0. {
+        parts.push(format!("${:.4}", u.cost));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+fn model_label_div(label: &str, t: &theme::Theme) -> gpui::Div {
+    div()
+        .text_size(px(11.))
+        .text_color(rgb(t.text_dim))
+        .mb(px(4.))
+        .child(SharedString::from(label.to_string()))
+}
+
+/// 一轮 agent 回复（用户消息 → 下一用户消息之间的全部 assistant 消息）。
+/// pi-web ChatWindow 轮分组 parity（v56-1）：思考+工具调用全部收进
+/// 「工作详情」组——有最终回答时默认折叠、流式中/无最终回答时展开；
+/// 最终回答 = 末条 assistant 的尾部 text/image 连续段
+/// （splitFinalAssistantBlocks parity），其前置块同样入组；每条 assistant
+/// 消息自带模型名标签；usage 只取最终消息（omitUsage parity）。hover
+/// 操作栏（复制整轮/用时/时间）为自定义豁免项。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_assistant_turn(
     turn: &[&Msg],
@@ -517,7 +510,7 @@ pub(crate) fn render_assistant_turn(
     turn_ixs: &[usize],
     start_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
-    collapsed: &HashSet<(usize, usize)>,
+    collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
     model_label: &str,
     // Some(est_tokens)：此轮正在流式（最后一个 assistant 消息）
@@ -526,84 +519,137 @@ pub(crate) fn render_assistant_turn(
     copied: bool,
 ) -> gpui::Div {
     let mut col = div().w_full().mb(px(22.)).flex().flex_col().group("astat");
+    let is_working = stream_info.is_some();
 
-    // 整轮聚合：工具调用与正文
-    let mut n_tools = 0usize;
-    let mut tools: Vec<(String, String)> = Vec::new();
+    // pi-web findFinalAssistantIndex：有 answer 连续段的末条 assistant，
+    // 兜底取末条 assistant
+    let final_pos = turn
+        .iter()
+        .rposition(|m| m.role == Role::Assistant && msg_has_answer(m))
+        .or_else(|| turn.iter().rposition(|m| m.role == Role::Assistant));
+    let Some(final_pos) = final_pos else {
+        return col;
+    };
+    let final_msg = turn[final_pos];
+    let final_gix = turn_ixs[final_pos];
+    let answer_start = split_answer_start(&final_msg.blocks);
+    let answer_len = final_msg.blocks.len() - answer_start;
+    let final_error = final_msg.stop_reason.as_deref() == Some("error");
+    let final_truncated = final_msg.stop_reason.as_deref() == Some("length");
+    let has_final_answer = answer_len > 0 || final_error || final_truncated;
+
+    // 复制整轮文本（hover 操作栏，自定义保留）
     let mut turn_text = String::new();
     for m in turn {
         for b in &m.blocks {
-            match b {
-                Block::ToolCall { name, args, .. } if !name.is_empty() => {
-                    n_tools += 1;
-                    tools.push((name.clone(), tool_target(args)));
-                }
-                Block::Text { text, .. } if !text.trim().is_empty() => {
+            if let Block::Text { text, .. } = b {
+                if !text.trim().is_empty() {
                     if !turn_text.is_empty() {
                         turn_text.push_str("\n\n");
                     }
                     turn_text.push_str(text);
                 }
-                _ => {}
             }
         }
     }
-    let n_msgs = turn.len();
-    let is_working = stream_info.is_some();
 
-    // 工作详情折叠行：仅已完成轮有（v54 §13）
-    if n_tools > 0 && !is_working {
-        col = col.child(work_fold(start_ix, n_msgs, n_tools, &tools, weak, collapsed, t));
+    // ---- 「工作详情」组：全部 assistant 消息的 thinking/toolCall，最终
+    // 消息只贡献 answer 连续段之前的前置块（pi-web processViews parity）----
+    let mut group_body = div().mt(px(8.)).flex().flex_col();
+    let mut n_views = 0usize;
+    let mut n_tools = 0usize;
+    for (i, (m, &gix)) in turn.iter().zip(turn_ixs).enumerate().take(final_pos + 1) {
+        if m.role != Role::Assistant {
+            continue;
+        }
+        let end = if i == final_pos { answer_start } else { m.blocks.len() };
+        let disp: Vec<&Block> = m.blocks[..end].iter().filter(|b| block_displayable(b)).collect();
+        if disp.is_empty() {
+            continue;
+        }
+        n_views += 1;
+        let mut item = div().mb(px(16.)).flex().flex_col();
+        // 每条 assistant 消息自带模型名标签（pi-web AssistantMessageView）
+        item = item.child(model_label_div(
+            m.model.as_deref().unwrap_or(model_label),
+            t,
+        ));
+        for b in disp {
+            if matches!(b, Block::ToolCall { .. }) {
+                n_tools += 1;
+            }
+            item = item.child(render_block(b, gix, weak, collapsed, t));
+        }
+        group_body = group_body.child(item);
     }
-    // 模型名：每轮一次
-    col = col.child(
-        div()
-            .text_size(px(11.))
+
+    if n_views > 0 {
+        // 折叠状态：显式覆盖 > 每态默认（流式中/无最终回答 = 展开，
+        // 有最终回答 = 折叠；pi-web defaultExpanded={!finalAnswerMessage}）
+        let key = (start_ix, usize::MAX);
+        let default_open = is_working || !has_final_answer;
+        let open = collapsed.get(&key).copied().unwrap_or(default_open);
+        let label = crate::i18n::tf(
+            "工作详情 · {m} 条消息 · {t} 次工具调用",
+            &[("m", n_views.to_string()), ("t", n_tools.to_string())],
+        );
+        let weak_fold = weak.clone();
+        let fold_row = div()
+            .id(SharedString::from(format!("work-fold-{start_ix}")))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(8.))
+            .py(px(4.))
+            .ml(px(-8.))
+            .text_size(px(12.))
             .text_color(rgb(t.text_dim))
-            .mb(px(4.))
-            .child(SharedString::from(model_label.to_string())),
-    );
-    // 正文：依序渲染各消息的 text/thinking 块（ToolCall 已收进折叠行）
-    for (m, &gix) in turn.iter().zip(turn_ixs) {
-        for b in &m.blocks {
-            col = col.child(render_block(b, gix, weak, collapsed, t));
+            .cursor_pointer()
+            .rounded(px(6.))
+            .hover(|s| s.bg(rgb(t.bg_hover)))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_fold.update(cx, |c, cx| {
+                    let rt = c.rt();
+                    rt.update(cx, |r, _| {
+                        let next = !r.collapsed.get(&key).copied().unwrap_or(false);
+                        r.collapsed.insert(key, next);
+                    });
+                    cx.notify();
+                });
+            })
+            .child(icon(
+                if open { "chevron-down" } else { "chevron-right" },
+                12.,
+                t.text_dim,
+            ))
+            .child(SharedString::from(label));
+        col = col.child(fold_row);
+        if open {
+            col = col.child(group_body);
         }
     }
-    // token 用量行（pi-web formatUsage parity：常显于轮尾，有值才显示）
-    if let Some(u) = turn.iter().rev().find_map(|m| m.usage.as_ref()) {
-        let mut parts: Vec<String> = Vec::new();
-        if u.input > 0 {
-            parts.push(format!("{} in", crate::services::format::fmt_thousand(u.input)));
-        }
-        if u.output > 0 {
-            parts.push(format!("{} out", crate::services::format::fmt_thousand(u.output)));
-        }
-        if u.cache_read > 0 {
-            parts.push(format!(
-                "{} cache R",
-                crate::services::format::fmt_thousand(u.cache_read)
-            ));
-        }
-        if u.cache_write > 0 {
-            parts.push(format!(
-                "{} cache W",
-                crate::services::format::fmt_thousand(u.cache_write)
-            ));
-        }
-        if u.cost > 0. {
-            parts.push(format!("${:.4}", u.cost));
-        }
-        if !parts.is_empty() {
-            col = col.child(
-                div()
-                    .mt(px(2.))
-                    .text_size(px(11.))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(parts.join(" · "))),
-            );
+
+    // ---- 最终回答：末条消息的 answer 连续段（pi-web finalAnswerMessage）----
+    if answer_len > 0 {
+        col = col.child(model_label_div(
+            final_msg.model.as_deref().unwrap_or(model_label),
+            t,
+        ));
+        for b in &final_msg.blocks[answer_start..] {
+            col = col.child(render_block(b, final_gix, weak, collapsed, t));
         }
     }
-    // hover 操作栏：复制整轮文本 + 用时 + 时间（末条消息的时间戳）
+    // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）
+    if let Some(line) = final_msg.usage.as_ref().and_then(usage_line) {
+        col = col.child(
+            div()
+                .mt(px(2.))
+                .text_size(px(11.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(line)),
+        );
+    }
+    // hover 操作栏：复制整轮文本 + 用时 + 时间（自定义豁免项）
     let weak_copy = weak.clone();
     let mut bar = div()
         .flex()
@@ -689,6 +735,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 custom_type: None,
                 custom_display: true,
                 details: None,
+                model: None,
             }),
             "assistant" => out.push(Msg {
                 role: Role::Assistant,
@@ -705,6 +752,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 end_ts: entry_ts.or(ts),
                 stop_reason: m["stopReason"].as_str().map(str::to_string),
                 error_message: m["errorMessage"].as_str().map(str::to_string),
+                model: m["model"].as_str().map(str::to_string),
                 custom_type: None,
                 custom_display: true,
                 details: None,
@@ -721,6 +769,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 custom_type: Some(m["customType"].as_str().unwrap_or("").to_string()),
                 custom_display: m["display"].as_bool().unwrap_or(true),
                 details: m["details"].as_object().map(|_| m["details"].clone()),
+                model: None,
             }),
             "toolResult" => {
                 let (text, images) = result_payload(&blocks);
