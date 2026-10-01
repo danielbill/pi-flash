@@ -207,12 +207,14 @@ pub(crate) fn psp_view(
                     .flex_col()
                     .children(rows),
             )
+            // 贴边（v55 定稿）：定位层 right 0；Scrollbar thumb 自带 2px
+            // 内缩，把定位层右移 1.5px 抵消，最终 thumb 距缘 ≈0.5px（视觉贴边）
             .child(
                 div()
                     .absolute()
                     .top(px(2.))
                     .bottom(px(2.))
-                    .right(px(1.))
+                    .right(px(-1.5))
                     .w(px(12.))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(
