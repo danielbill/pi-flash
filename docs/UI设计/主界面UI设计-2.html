@@ -1061,10 +1061,10 @@ statusbar（面板 tabs）     │</pre>
   // ---- 示意数据：项目 → 会话 一体列表（≤5 个，按最近更新倒序；上限可在设置-其他调整） ----
   // 会话行状态槽：运行中 → 旋转圈，回复未读 → 绿点；空项目展开显示「无会话」
   // 会话行时间格式（规格）：最近活动距今
-  //   < 5 分钟 → 刚刚；< 60 分钟 → N分；< 24 小时 → N小时；否则 → N天
+  //   < 5 分钟 → 刚刚；< 60 分钟 → N分钟；< 24 小时 → N小时；否则 → N天
   function fmtAgo(mins) {
     if (mins < 5) return "刚刚";
-    if (mins < 60) return mins + "分";
+    if (mins < 60) return mins + "分钟";
     if (mins < 60 * 24) return Math.floor(mins / 60) + "小时";
     return Math.floor(mins / (60 * 24)) + "天";
   }
