@@ -148,7 +148,8 @@ pub(crate) fn psp_view(
     chat: &mut Chat,
     _entity: Entity<Chat>,
     weak: gpui::WeakEntity<Chat>,
-    _cx: &mut Context<Chat>,
+    window: &mut gpui::Window,
+    cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     // title 行固定在 dock 顶部（操作行永远可见），只有列表滚动。
     // 之前 title 行放滚动容器内时，其按钮 hitbox 被 scroll mask 裁掉，
@@ -167,10 +168,10 @@ pub(crate) fn psp_view(
         .filter(|row| *row != PspRow::Title)
         .map(|row| match row {
             PspRow::Project(pi) => project_row(chat, pi, &weak, t),
-            PspRow::Session { p, s } => session_row_view(chat, p, s, &weak, t),
+            PspRow::Session { p, s } => session_row_view(chat, p, s, &weak, t, window, cx),
             PspRow::Empty => div()
                 .id("psp-empty")
-                .pl(px(31.))
+                .pl(px(45.))
                 .py(px(5.5))
                 .text_size(px(12.5))
                 .text_color(rgb(t.text_dim))
@@ -186,6 +187,9 @@ pub(crate) fn psp_view(
             .min_h_0()
             .w_full()
             .overflow_y_scroll()
+            // ZCode TaskList parity：列表两侧 p-3 留白——选中/悬停块不满宽，
+            // 右侧留白给 slp 分隔线与拖拽区
+            .px(px(12.))
             .flex()
             .flex_col()
             .children(rows),
@@ -328,10 +332,12 @@ fn project_row(
     div()
         .id(SharedString::from(format!("prj-{pi}")))
         .h(px(33.))
+        .mb(px(2.))
         .flex()
         .items_center()
         .gap(px(8.))
-        .px(px(8.))
+        .pl(px(10.))
+        .pr(px(4.))
         .rounded(px(8.))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -467,6 +473,8 @@ fn session_row_view(
     s: usize,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    window: &gpui::Window,
+    cx: &gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let Some(g) = chat.projects.get(p) else {
         return div().into_any_element();
@@ -498,19 +506,26 @@ fn session_row_view(
     let w_hover = weak.clone();
     let w_move = weak.clone();
 
-    // 毛玻璃截断（设计 v55）：渐变属于标题容器尾部，透明端必须用同色
-    // a=0（透明黑会在 HSL 插值中段产生半透明暗带）；尾端用行底的**合成
-    // 视觉色（不透明）**——选中行底是 10% accent 透明色，overlay 若也用
-    // 透明色会 alpha 累积出第二层底色，混成不透明色后尾端与行底视觉一致、
-    // 完全隐形。hover 时行背景变 bg_hover，尾色随 group_hover 跟变。
+    // ---- ZCode TaskListItem 样式 parity（源码实测值）----
+    // 列表 p-3 留白 + 行 pl-2.5/pr-1/py-1 + space-y-0.5 行距 + rounded-lg；
+    // 选中/悬停 = 中性前景薄纱（10% / 5%，非 accent——accent 底会与毛玻璃
+    // overlay 互相染色）；标题溢出 = 尾部 24px 渐隐，**量宽确认溢出才挂**
+    // （短标题不糊尾）。overlay 尾色 = 行底合成视觉色（不透明）：透明端必
+    // 须同色 a=0，透明黑会在 HSL 插值中段产生暗带。
+    let row_sel = gpui::rgba((t.text << 8) | 0x1a); // 10%
+    let row_hover = gpui::rgba((t.text << 8) | 0x0d); // 5%
     let row_base = if is_active {
-        // accent_tint（10% accent）叠在 dock nav 上的最终视觉色
-        gpui::rgb(crate::theme::mix_rgb(t.accent, t.nav, 0.1))
+        gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.1))
     } else {
         gpui::rgb(t.nav)
     };
+    let row_base_hover = if is_active {
+        gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.1))
+    } else {
+        gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.05))
+    };
     let fade_to = gpui::Hsla::from(row_base);
-    let fade_hover_to = gpui::Hsla::from(row_base);
+    let fade_hover_to = gpui::Hsla::from(row_base_hover);
     let fade = gpui::linear_gradient(
         90.,
         gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_to }, 0.),
@@ -522,23 +537,47 @@ fn session_row_view(
         gpui::linear_color_stop(fade_hover_to, 1.),
     );
 
+    // 溢出测量：标题真实排版宽 vs 行内可用宽（列表 px 24 + 行 pl/pr 14 +
+    // slot 15 + 两个 gap 16 + 时间列 38）
+    let panel_family = crate::appearance::panel_font().family;
+    let measure_font = gpui::Font {
+        family: panel_family.clone().into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: gpui::FontWeight::NORMAL,
+        style: gpui::FontStyle::Normal,
+    };
+    let measure_run = gpui::TextRun {
+        len: title.len(),
+        font: measure_font,
+        color: rgb(t.text).into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let title_w = window
+        .text_system()
+        .layout_line(&title, px(13.), &[measure_run], None)
+        .width;
+    let available = px(chat.slp_w - 24. - 14. - 15. - 16. - 38.);
+    let title_overflows = title_w > available;
+
     div()
         .id(SharedString::from(format!("ps-{}", info.id)))
         .relative()
         .group("psrow")
         .w_full()
-        .h(px(30.))
+        .h(px(32.))
+        .mb(px(2.))
         .flex()
         .items_center()
         .gap(px(8.))
-        .pl(px(8.))
-        .pr(px(10.))
+        .pl(px(10.))
+        .pr(px(4.))
         .rounded(px(8.))
         .cursor_pointer()
-        .when(is_active, |d| {
-            d.bg(gpui::rgba(accent_tint(t))).hover(|s| s.bg(gpui::rgba(accent_tint(t))))
-        })
-        .when(!is_active, |d| d.hover(|s| s.bg(rgb(t.bg_hover))))
+        .when(is_active, |d| d.bg(row_sel).hover(|s| s.bg(row_sel)))
+        .when(!is_active, |d| d.hover(|s| s.bg(row_hover)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let _ = w_click.update(cx, |c, cx| {
                 c.open_session(path_click.clone(), false, cx);
@@ -603,28 +642,30 @@ fn session_row_view(
                 }),
         )
         .child(
-            // 标题：flex_1 到时间区左缘为止（不进入时间区），尾部 28px 在
-            // 自身容器内渐变淡出——标题与时间永不重叠，淡出带位置随时间
-            // 列固定宽而对齐
+            // 标题：flex_1 到时间区左缘为止（不进入时间区）；仅确认溢出时
+            // 挂尾部 24px 渐隐（ZCode TaskTitleOverflowText parity）
             div()
                 .relative()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
+                .font_family(panel_family)
                 .text_size(px(13.))
                 .text_color(rgb(t.text))
                 .child(title)
-                .child(
-                    div()
-                        .absolute()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(22.))
-                        .bg(fade)
-                        .group_hover("psrow", |s| s.bg(fade_hover)),
-                ),
+                .when(title_overflows, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .right_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(24.))
+                            .bg(fade)
+                            .group_hover("psrow", |s| s.bg(fade_hover)),
+                    )
+                }),
         )
         // 时间区（v55 fmtAgo）：固定宽右对齐成一列（宽度与左侧图标区+
         // padding 视觉平衡，标题可用空间最大化）
@@ -652,11 +693,12 @@ pub(crate) fn dock(
     chat: &mut Chat,
     entity: Entity<Chat>,
     weak: &gpui::WeakEntity<Chat>,
+    window: &mut gpui::Window,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
     let view: gpui::AnyElement = match chat.dock_panel {
-        DockPanel::Sessions => psp_view(chat, entity, weak.clone(), cx),
+        DockPanel::Sessions => psp_view(chat, entity, weak.clone(), window, cx),
         DockPanel::Files => files_view(chat, weak, cx).into_any_element(),
         DockPanel::Git => git_panel::view(chat, weak, cx).into_any_element(),
     };

@@ -1189,6 +1189,7 @@ impl Render for Chat {
                         self,
                         entity_for_body.clone(),
                         &weak,
+                        window,
                         cx,
                     ))
                     .child(status_bar::control_bar(self, cx)),
