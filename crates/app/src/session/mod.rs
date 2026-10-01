@@ -10,7 +10,7 @@ pub(crate) mod runtime;
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, px, relative, rgb};
 use pi_link::protocol::Block;
 
-use self::messages::{Role, compute_meta, render_assistant_turn, render_msg};
+use self::messages::{Role, compute_meta, render_assistant_turn, render_custom_msg, render_msg};
 use crate::ext_ui::render_ext_widget;
 
 use crate::Chat;
@@ -98,7 +98,17 @@ fn session_list(
         let chat = chat_entity.read(cx);
         let weak = weak_for_msg.clone();
         match rt_view.messages.get(ix) {
-            Some(m) if m.role == Role::Custom => div().into_any_element(),
+            Some(m) if m.role == Role::Custom => div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(920.))
+                        .child(render_custom_msg(m, ix, t)),
+                )
+                .into_any_element(),
             Some(m) if m.role == Role::User => div()
                 .w_full()
                 .flex()

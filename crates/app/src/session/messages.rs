@@ -585,6 +585,332 @@ fn render_tool_card(
     card
 }
 
+/// pi-web 告警框（providerError/truncated 共用结构）：mono 12px、
+/// 1px 边框 + 0.07 底色、圆角 6、pre-wrap。
+fn alert_box(text: String, color: u32, border_rgb: u32, _t: &theme::Theme) -> gpui::AnyElement {
+    div()
+        .mt(px(8.))
+        .px(px(10.))
+        .py(px(7.))
+        .border_1()
+        .border_color(gpui::rgba(rgba_a(border_rgb, 0.3)))
+        .rounded(px(6.))
+        .bg(gpui::rgba(rgba_a(border_rgb, 0.07)))
+        .text_color(rgb(color))
+        .font_family("Consolas")
+        .text_size(px(12.))
+        .line_height(relative(1.5))
+        .child(SharedString::from(text))
+        .into_any_element()
+}
+
+/// pi-web parseCompactionSummary parity：剥离尾部的
+/// <read-files>/<modified-files> 段，返回 (body, read, modified)。
+fn parse_compaction_summary(summary: &str) -> (String, Vec<String>, Vec<String>) {
+    let lines: Vec<&str> = summary.lines().collect();
+    let mut spans: Vec<(usize, usize, usize)> = Vec::new(); // (kind, start, end)
+    let mut k = 0usize;
+    while k < lines.len() {
+        let t = lines[k].trim();
+        let kind = if t == "<read-files>" {
+            0
+        } else if t == "<modified-files>" {
+            1
+        } else {
+            k += 1;
+            continue;
+        };
+        let close = if kind == 0 { "</read-files>" } else { "</modified-files>" };
+        let mut j = k + 1;
+        while j < lines.len() && lines[j].trim() != close {
+            j += 1;
+        }
+        if j < lines.len() {
+            spans.push((kind, k, j));
+            k = j + 1;
+        } else {
+            k += 1;
+        }
+    }
+    // 尾段：从文档末尾反向取连续（只隔空行）的 section 段
+    let mut read = Vec::new();
+    let mut modified = Vec::new();
+    let mut body_end = lines.len();
+    let mut cursor = lines.len();
+    for (kind, start, end) in spans.iter().rev() {
+        if *end != cursor - 1 {
+            break;
+        }
+        // 段与段之间（或首段之前）只允许空行
+        if cursor < lines.len() {
+            if !lines[*end + 1..cursor].iter().all(|l| l.trim().is_empty()) {
+                break;
+            }
+        }
+        if *start > 0 && !lines[*start - 1].trim().is_empty() {
+            break;
+        }
+        let files: Vec<String> = lines[*start + 1..*end]
+            .iter()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        if *kind == 0 {
+            read.extend(files);
+        } else {
+            modified.extend(files);
+        }
+        body_end = *start;
+        cursor = *start;
+    }
+    let body = lines[..body_end].join("\n").trim().to_string();
+    (body, read, modified)
+}
+
+/// Role::Custom 渲染（v56-6 c28；mod.rs 分发入口）。
+pub(crate) fn render_custom_msg(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div {
+    let mut col = div().w_full().mb(px(16.)).flex().flex_col();
+    let custom_type = m.custom_type.as_deref().unwrap_or("");
+    match custom_type {
+        "compaction" => col = col.child(render_compaction_card(m, msg_ix, t)),
+        "branch_summary" => {
+            // pi-web 将 branch_summary 渲为 user 气泡（斜体引言+摘要）；
+            // 这里为保持 fork 锚点对齐保留 Custom 角色，渲染为斜体引言 +
+            // 摘要 markdown（已知偏差）
+            let summary = m.plain_text();
+            col = col.child(
+                div()
+                    .italic()
+                    .text_color(rgb(t.text_muted))
+                    .text_size(px(13.))
+                    .mb(px(4.))
+                    .child(SharedString::from(tr(
+                        "*此对话曾短暂探索另一分支后返回，摘要如下：*",
+                    ))),
+            );
+            if !summary.trim().is_empty() {
+                col = col.child(markdown::render(&summary, t, false));
+            }
+        }
+        _ if !m.custom_display => {
+            // pi-web display:false：折叠暗卡 + 140 字符预览
+            let preview: String = m
+                .plain_text()
+                .replace('\n', " ")
+                .chars()
+                .take(140)
+                .collect();
+            let preview = if preview.is_empty() {
+                tr("扩展消息（不显示）").to_string()
+            } else {
+                format!("{}...", preview)
+            };
+            col = col.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(10.))
+                    .py(px(6.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.bg))
+                    .opacity(0.82)
+                    .text_size(px(12.))
+                    .text_color(rgb(t.text_muted))
+                    .child(
+                        div()
+                            .font_family("Consolas")
+                            .text_size(px(11.))
+                            .child(SharedString::from(if custom_type.is_empty() {
+                                "extension".to_string()
+                            } else {
+                                custom_type.to_string()
+                            })),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(preview)),
+                    ),
+            );
+        }
+        _ => {
+            // pi-web CustomMessageView 简化 parity：customType 头 + markdown 正文
+            let body = m.plain_text();
+            let card = div()
+                .border_1()
+                .border_color(rgb(t.border))
+                .rounded(px(8.))
+                .overflow_hidden()
+                .bg(rgb(t.bg))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .px(px(10.))
+                        .py(px(7.))
+                        .border_b_1()
+                        .border_color(rgb(t.border))
+                        .bg(rgb(t.bg_panel))
+                        .text_color(rgb(t.text_muted))
+                        .child(
+                            div()
+                                .font_family("Consolas")
+                                .text_size(px(11.))
+                                .child(SharedString::from(if custom_type.is_empty() {
+                                    "extension".to_string()
+                                } else {
+                                    custom_type.to_string()
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .px(px(13.))
+                        .py(px(11.))
+                        .child(markdown::render(&body, t, false)),
+                );
+            col = col.child(card);
+        }
+    }
+    col
+}
+
+/// pi-web CompactionMessageView parity（v56-6 c28）。
+fn render_compaction_card(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div {
+    let (body, read_files, modified_files) = parse_compaction_summary(&m.plain_text());
+    let mut card = div()
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(8.))
+        .overflow_hidden()
+        .bg(rgb(t.bg))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(10.))
+                .py(px(7.))
+                .border_b_1()
+                .border_color(rgb(t.border))
+                .bg(rgb(t.bg_panel))
+                .text_color(rgb(t.text_muted))
+                .child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(11.))
+                        .child(SharedString::from("compaction")),
+                )
+                .child(
+                    div()
+                        .ml_auto()
+                        .text_size(px(10.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(
+                            m.ts.map(crate::services::format::fmt_msg_time).unwrap_or_default(),
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .px(px(13.))
+                .pt(px(11.))
+                .pb(px(12.))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::BOLD)
+                        .line_height(relative(1.35))
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(tr("会话已压缩"))),
+                )
+                .child(
+                    div()
+                        .mt(px(3.))
+                        .mb(px(10.))
+                        .text_size(px(14.))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(tr(
+                            "此处之前的会话历史已压缩为以下摘要：",
+                        ))),
+                )
+                .child(if body.is_empty() {
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(tr("（无摘要）")))
+                        .into_any_element()
+                } else {
+                    markdown::render(&body, t, false)
+                }),
+        );
+    // 文件元数据（pi-web <details> parity：默认折叠，点击展开清单）
+    let total = read_files.len() + modified_files.len();
+    if total > 0 {
+        let mut parts: Vec<String> = Vec::new();
+        if !read_files.is_empty() {
+            parts.push(format!("{} 读取", read_files.len()));
+        }
+        if !modified_files.is_empty() {
+            parts.push(format!("{} 修改", modified_files.len()));
+        }
+        let mut meta = div()
+            .mt(px(8.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(parts.join("，"))),
+            );
+        for (title, files) in [("修改文件", &modified_files), ("读取文件", &read_files)] {
+            if files.is_empty() {
+                continue;
+            }
+            let mut sec = div()
+                .mt(px(6.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text_muted))
+                        .child(SharedString::from(title)),
+                );
+            let mut list = div()
+                .id(SharedString::from(format!("cfiles-{msg_ix}-{title}")))
+                .mt(px(2.))
+                .max_h(px(180.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col();
+            for f in files.iter() {
+                list = list.child(
+                    div()
+                        .font_family("Consolas")
+                        .text_size(px(11.))
+                        .text_color(rgb(t.text_muted))
+                        .child(SharedString::from(f.clone())),
+                );
+            }
+            sec = sec.child(list);
+            meta = meta.child(sec);
+        }
+        card = card.child(meta);
+    }
+    card
+}
+
 /// pi-web isWriteToolName（tool-names.ts）。
 fn is_write_tool_name(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -1393,7 +1719,7 @@ pub(crate) fn render_assistant_turn(
     // answer 文本未出现时也渲染（等待文本的窗口期不空白）
     let est = stream_info.filter(|_| is_working);
     let tps = stream_tps.filter(|_| is_working);
-    if is_working || answer_len > 0 {
+    if is_working || answer_len > 0 || final_error || final_truncated {
         let label = div()
             .text_size(px(11.))
             .text_color(rgb(t.text_dim))
@@ -1451,6 +1777,29 @@ pub(crate) fn render_assistant_turn(
             let streaming = is_working && final_pos == turn.len() - 1;
             col = col.child(render_block(b, final_gix, weak, collapsed, t, streaming));
         }
+    }
+    // c26/c27（pi-web providerError / truncated parity）：错误红框、截断黄框
+    if final_error {
+        let msg = final_msg
+            .error_message
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .unwrap_or("Unknown provider error");
+        col = col.child(alert_box(
+            format!("Error: {msg}"),
+            0xef4444,
+            0xef4444,
+            t,
+        ));
+    }
+    if final_truncated {
+        col = col.child(alert_box(
+            tr("回复因达到模型输出长度上限而被截断。发送一条后续消息以继续。").to_string(),
+            0xca8a04,
+            0xeab308,
+            t,
+        ));
     }
     // c24: 轮内写文件 chips（pi-web TurnWrittenFiles parity：由
     // 成功的 write/edit/apply_patch 工具调用推导，绝不扫描回复文本）
