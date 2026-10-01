@@ -2,6 +2,7 @@
 //! ThinkingIcon / ThemeIcon / spinner etc. + the app-wide TextInput).
 
 pub mod editor_input;
+pub mod psp_scrollbar;
 pub mod text_input;
 
 pub use text_input::TextInput;

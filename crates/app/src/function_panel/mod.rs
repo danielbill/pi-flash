@@ -202,39 +202,38 @@ pub(crate) fn psp_view(
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&chat.psp_scroll)
-                    // 鼠标进 panel 即显示滚动条：微抖 scroll offset（±0.01px
-                    // 再还原）触发组件的 offset-changed 判定 → 它自己把
-                    // last_scroll_time 刷成当下（视同刚滚动过），离开后原生
-                    // 3s 淡出（FADE_OUT_DURATION）自然接管
+                    // 鼠标进 panel → 滚动条立现；离开 → 3s 后淡出（自绘
+                    // psp_scrollbar 读这两个状态自绘透明度）
                     .on_hover(cx.listener(|this, hovered: &bool, _w, cx| {
                         if *hovered {
-                            let h = &this.psp_scroll;
-                            let o = h.offset();
-                            h.set_offset(gpui::point(o.x + gpui::px(0.01), o.y));
-                            h.set_offset(o);
-                            cx.notify();
+                            this.psp_sb_state.panel_hovered.set(true);
+                            this.psp_sb_state.left_at.set(None);
+                        } else {
+                            this.psp_sb_state.panel_hovered.set(false);
+                            this.psp_sb_state
+                                .left_at
+                                .set(Some(std::time::Instant::now()));
                         }
+                        cx.notify();
                     }))
                     // 水平留白由 col 外层统一（10px），此处不再叠加
                     .flex()
                     .flex_col()
                     .children(rows),
             )
-            // 贴边（v55 定稿）：定位层 right -4px 抵消 thumb 自带 2px 内缩
-            // （用户定值），thumb 越出定位层但仍在 dock 内、距缘 ≈2px
+            // 自绘滚动条（ZED Regular 移植）：贴边 0px；无 track；panel 内
+            // 常显、离开 3s+1s 淡出；thumb 悬停加宽；事件不穿透
             .child(
                 div()
                     .absolute()
-                    .top(px(2.))
-                    .bottom(px(2.))
-                    .right(px(-6.))
+                    .top(px(0.))
+                    .bottom(px(0.))
+                    .right(px(0.))
                     .w(px(12.))
-                    .child(
-                        gpui_component::scroll::Scrollbar::vertical(
-                            &chat.psp_scrollbar,
-                            &chat.psp_scroll,
-                        ),
-                    ),
+                    .child(crate::ui::psp_scrollbar::psp_scrollbar(
+                        &chat.psp_sb_state,
+                        &chat.psp_scroll,
+                    )),
             ),
     );
     col.into_any_element()
