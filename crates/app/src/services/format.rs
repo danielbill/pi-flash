@@ -168,3 +168,18 @@ pub fn fmt_thousand(n: u64) -> String {
     }
     out
 }
+
+/// 会话行相对时间（设计稿 fmtAgo parity）：距今
+/// <5 分钟=「刚刚」；<60 分钟=N分钟；<24 小时=N小时；否则=N天。
+pub fn fmt_ago(t: std::time::SystemTime) -> String {
+    let mins = t.elapsed().map(|d| d.as_secs() / 60).unwrap_or(0) as i64;
+    if mins < 5 {
+        "刚刚".to_string()
+    } else if mins < 60 {
+        format!("{mins}分钟")
+    } else if mins < 60 * 24 {
+        format!("{}小时", mins / 60)
+    } else {
+        format!("{}天", mins / (60 * 24))
+    }
+}

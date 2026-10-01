@@ -498,8 +498,24 @@ fn session_row_view(
     let w_hover = weak.clone();
     let w_move = weak.clone();
 
+    // 毛玻璃截断（设计 v55）：标题溢出不用省略号，右缘 28px 渐变淡出到行
+    // 背景色；hover 时行背景变 bg_hover，overlay 尾色随 group_hover 跟变。
+    let fade_to = if is_active { gpui::rgba(accent_tint(t)) } else { gpui::rgb(t.nav) };
+    let fade_hover_to = if is_active { gpui::rgba(accent_tint(t)) } else { rgb(t.bg_hover) };
+    let fade = gpui::linear_gradient(
+        90.,
+        gpui::linear_color_stop(gpui::hsla(0., 0., 0., 0.), 0.),
+        gpui::linear_color_stop(gpui::Hsla::from(fade_to), 1.),
+    );
+    let fade_hover = gpui::linear_gradient(
+        90.,
+        gpui::linear_color_stop(gpui::hsla(0., 0., 0., 0.), 0.),
+        gpui::linear_color_stop(gpui::Hsla::from(fade_hover_to), 1.),
+    );
+
     div()
         .id(SharedString::from(format!("ps-{}", info.id)))
+        .group("psrow")
         .w_full()
         .h(px(30.))
         .flex()
@@ -578,14 +594,35 @@ fn session_row_view(
         )
         .child(
             div()
+                .relative()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
-                .text_ellipsis()
                 .text_size(px(13.))
                 .text_color(rgb(t.text))
-                .child(title),
+                .child(title)
+                // 尾部渐变淡出（毛玻璃感）；尾色 = 当前行背景，hover 随行变
+                .child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(28.))
+                        .bg(fade)
+                        .group_hover("psrow", |s| s.bg(fade_hover)),
+                ),
+        )
+        // 时间区（v55 fmtAgo）：刚刚 / N分钟 / N小时 / N天
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(11.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(crate::services::format::fmt_ago(
+                    info.modified,
+                ))),
         )
         .into_any_element()
 }
