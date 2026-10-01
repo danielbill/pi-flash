@@ -384,20 +384,30 @@ pub(crate) fn render_msg(
             );
         }
 
-        let mut bottom = div()
+        // pi-web UserMessageView footer parity（v56-1 c7）：操作按钮 hover
+        // 淡入（自定义豁免），时间戳常显 10px 右对齐
+        let mut actions_wrap = div()
             .flex()
             .items_center()
             .gap(px(12.))
-            .mt(px(6.))
-            .pr(px(4.))
             .opacity(if copied { 1. } else { 0. })
             .group_hover("usermsg", |s| s.opacity(1.))
             .child(actions);
+        if copied {
+            actions_wrap = actions_wrap.opacity(1.);
+        }
+        let mut bottom = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(12.))
+            .mt(px(6.))
+            .pr(px(4.))
+            .child(actions_wrap);
         if let Some(ts) = m.ts {
             bottom = bottom.child(
                 div()
-                    .ml(px(4.))
-                    .text_size(px(11.5))
+                    .text_size(px(10.))
                     .text_color(rgb(t.text_faint))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
@@ -685,25 +695,35 @@ pub(crate) fn render_assistant_turn(
         });
         bar = bar.child(pill);
     }
-    // 用时/时间取轮内末条消息
+    // 用时取轮内末条消息（自定义 hover 豁免项）
     if let Some(last) = turn.last() {
-        let mut meta_text = String::new();
         if let (Some(end), Some(start)) = (last.end_ts, meta.turn_user_ts) {
-            meta_text.push_str(&format!(
-                "{}{}",
-                tr("用时"),
-                crate::services::format::fmt_duration_ms(end - start)
-            ));
-            meta_text.push_str("  ");
-        }
-        meta_text.push_str(&last.ts.map(crate::services::format::fmt_msg_time).unwrap_or_default());
-        if !meta_text.trim().is_empty() {
             bar = bar.child(
-                div().text_color(rgb(t.text_faint)).child(SharedString::from(meta_text)),
+                div()
+                    .text_color(rgb(t.text_faint))
+                    .child(SharedString::from(format!(
+                        "{}{}",
+                        tr("用时"),
+                        crate::services::format::fmt_duration_ms(end - start)
+                    ))),
             );
         }
     }
     col = col.child(bar);
+    // pi-web parity（c7）：时间戳静态 10px 右下，仅轮尾显示、流式尾部隐藏
+    if !is_working {
+        if let Some(ts) = turn.last().and_then(|m| m.ts) {
+            col = col.child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .mt(px(2.))
+                    .text_size(px(10.))
+                    .text_color(rgb(t.text_faint))
+                    .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
+            );
+        }
+    }
     col
 }
 
