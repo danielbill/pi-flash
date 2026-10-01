@@ -18,6 +18,9 @@ use crate::ui::{icon, icon_hover};
 pub(crate) enum Role {
     User,
     Assistant,
+    /// pi CustomMessage (compaction summary, extension messages,
+    /// branch summaries) — v56-6 renders the card; skipped until then
+    Custom,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -48,6 +51,12 @@ pub(crate) struct Msg {
     pub(crate) stop_reason: Option<String>,
     /// AssistantMessage.errorMessage — set when stop_reason == "error"
     pub(crate) error_message: Option<String>,
+    /// CustomMessage.customType (None for user/assistant)
+    pub(crate) custom_type: Option<String>,
+    /// CustomMessage.display — false = hidden extension payload
+    pub(crate) custom_display: bool,
+    /// CustomMessage.details (compaction: tokensBefore/firstKeptEntryId)
+    pub(crate) details: Option<serde_json::Value>,
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list
@@ -677,6 +686,9 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 end_ts: None,
                 stop_reason: None,
                 error_message: None,
+                custom_type: None,
+                custom_display: true,
+                details: None,
             }),
             "assistant" => out.push(Msg {
                 role: Role::Assistant,
@@ -693,6 +705,22 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 end_ts: entry_ts.or(ts),
                 stop_reason: m["stopReason"].as_str().map(str::to_string),
                 error_message: m["errorMessage"].as_str().map(str::to_string),
+                custom_type: None,
+                custom_display: true,
+                details: None,
+            }),
+            "custom" => out.push(Msg {
+                role: Role::Custom,
+                blocks,
+                usage: None,
+                entry_id: None,
+                ts,
+                end_ts: None,
+                stop_reason: None,
+                error_message: None,
+                custom_type: Some(m["customType"].as_str().unwrap_or("").to_string()),
+                custom_display: m["display"].as_bool().unwrap_or(true),
+                details: m["details"].as_object().map(|_| m["details"].clone()),
             }),
             "toolResult" => {
                 let (text, images) = result_payload(&blocks);

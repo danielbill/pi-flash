@@ -445,6 +445,10 @@ pub enum Event {
         is_error: bool,
         /// ToolResultMessage.toolCallId — correlates the result with its call
         tool_call_id: Option<String>,
+        /// CustomMessage.customType (None for non-custom roles)
+        custom_type: Option<String>,
+        /// CustomMessage.display (true default for non-custom roles)
+        custom_display: bool,
     },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
@@ -462,6 +466,10 @@ pub enum Event {
         is_error: bool,
         /// ToolResultMessage.toolCallId
         tool_call_id: Option<String>,
+        /// CustomMessage.customType (None for non-custom roles)
+        custom_type: Option<String>,
+        /// CustomMessage.display (true default for non-custom roles)
+        custom_display: bool,
     },
     AgentStart,
     AgentEnd { will_retry: bool },
@@ -673,6 +681,8 @@ pub fn parse_record(v: &Value) -> Event {
             timestamp: v["message"]["timestamp"].as_i64(),
             is_error: v["message"]["isError"].as_bool().unwrap_or(false),
             tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
+            custom_type: v["message"]["customType"].as_str().map(str::to_string),
+            custom_display: v["message"]["display"].as_bool().unwrap_or(true),
         },
         Some("message_update") => {
             Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
@@ -686,6 +696,8 @@ pub fn parse_record(v: &Value) -> Event {
             error_message: v["message"]["errorMessage"].as_str().map(str::to_string),
             is_error: v["message"]["isError"].as_bool().unwrap_or(false),
             tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
+            custom_type: v["message"]["customType"].as_str().map(str::to_string),
+            custom_display: v["message"]["display"].as_bool().unwrap_or(true),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
@@ -884,6 +896,23 @@ mod tests {
             Event::MessageStart { blocks, .. } => {
                 assert_eq!(blocks.len(), 2);
                 assert!(matches!(&blocks[1], Block::Image { mime, data, .. } if mime == "image/png" && data == "QUJD"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_message_carries_custom_type_and_display() {
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"custom","customType":"compaction","content":"summary text","display":true,"timestamp":1790206311858}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { role, blocks, custom_type, custom_display, .. } => {
+                assert_eq!(role, "custom");
+                assert_eq!(custom_type.as_deref(), Some("compaction"));
+                assert!(custom_display);
+                assert_eq!(blocks, vec![Block::Text { content_index: 0, text: "summary text".into() }]);
             }
             other => panic!("wrong event: {other:?}"),
         }

@@ -98,6 +98,7 @@ fn session_list(
         let chat = chat_entity.read(cx);
         let weak = weak_for_msg.clone();
         match rt_view.messages.get(ix) {
+            Some(m) if m.role == Role::Custom => div().into_any_element(),
             Some(m) if m.role == Role::User => div()
                 .w_full()
                 .flex()
@@ -133,7 +134,7 @@ fn session_list(
                 }
                 let end = rt_view.messages[ix..]
                     .iter()
-                    .position(|mm| mm.role == Role::User)
+                    .position(|mm| matches!(mm.role, Role::User | Role::Custom))
                     .map(|off| ix + off)
                     .unwrap_or(rt_view.messages.len());
                 let turn: Vec<&pi_link::protocol::Block> = Vec::new();

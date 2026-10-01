@@ -447,7 +447,7 @@ impl SessionRuntime {
                     }
                 }
             }
-            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id } => {
+            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type, custom_display } => {
                 match role.as_str() {
                     "user" => {
                         // upgrade the optimistic send bubble in place instead
@@ -482,6 +482,9 @@ impl SessionRuntime {
                                 end_ts: None,
                                 stop_reason: None,
                                 error_message: None,
+                                custom_type: None,
+                                custom_display: true,
+                                details: None,
                             });
                         }
                     }
@@ -497,6 +500,9 @@ impl SessionRuntime {
                             end_ts: None,
                             stop_reason: None,
                             error_message: None,
+                            custom_type: None,
+                            custom_display: true,
+                            details: None,
                         });
                     }
                     "toolResult" => {
@@ -504,6 +510,21 @@ impl SessionRuntime {
                         if let Some(m) = self.messages.last_mut() {
                             merge_tool_result(m, tool_call_id.as_deref(), is_error, &text, images);
                         }
+                    }
+                    "custom" => {
+                        self.messages.push(Msg {
+                            role: Role::Custom,
+                            blocks,
+                            usage: None,
+                            entry_id: None,
+                            ts: timestamp,
+                            end_ts: None,
+                            stop_reason: None,
+                            error_message: None,
+                            custom_type,
+                            custom_display,
+                            details: None,
+                        });
                     }
                     _ => {}
                 }
@@ -822,6 +843,9 @@ impl SessionRuntime {
                     end_ts: None,
                     stop_reason: None,
                     error_message: None,
+                    custom_type: None,
+                    custom_display: true,
+                    details: None,
                 });
             }
             "assistant" => {
@@ -840,6 +864,9 @@ impl SessionRuntime {
                     end_ts: None,
                     stop_reason: msg["stopReason"].as_str().map(str::to_string),
                     error_message: msg["errorMessage"].as_str().map(str::to_string),
+                    custom_type: None,
+                    custom_display: true,
+                    details: None,
                 });
             }
             "toolResult" => {
@@ -849,6 +876,21 @@ impl SessionRuntime {
                 if let Some(m) = self.messages.last_mut() {
                     merge_tool_result(m, tcid, is_error, &text, images);
                 }
+            }
+            "custom" => {
+                self.messages.push(Msg {
+                    role: Role::Custom,
+                    blocks,
+                    usage: None,
+                    entry_id: None,
+                    ts,
+                    end_ts: None,
+                    stop_reason: None,
+                    error_message: None,
+                    custom_type: Some(msg["customType"].as_str().unwrap_or("").to_string()),
+                    custom_display: msg["display"].as_bool().unwrap_or(true),
+                    details: msg["details"].as_object().map(|_| msg["details"].clone()),
+                });
             }
             _ => {}
         }
@@ -867,6 +909,9 @@ impl SessionRuntime {
                     end_ts: None,
                     stop_reason: None,
                     error_message: None,
+                    custom_type: None,
+                    custom_display: true,
+                    details: None,
                 });
         }
         self.messages.last_mut().expect("just pushed")
@@ -1001,6 +1046,9 @@ impl SessionRuntime {
                         end_ts: None,
                         stop_reason: None,
                         error_message: None,
+                        custom_type: None,
+                        custom_display: true,
+                        details: None,
                     });
                     self.phase_waiting = true;
                     self.notify_list(cx);

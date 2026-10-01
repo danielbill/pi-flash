@@ -26,7 +26,7 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Bounded prefix parsed for header + first user message (preview).
 const PREFIX_BYTES: u64 = 256 * 1024;
@@ -424,6 +424,54 @@ fn scan_file(path: &Path, modified: SystemTime, size: u64) -> Option<IndexEntry>
     })
 }
 
+/// Map one session-file entry to its renderable message shape (pi-web
+/// session-reader.ts entryToMessage parity): `message` entries pass through;
+/// `compaction` / `custom_message` map to synthetic role="custom" envelopes;
+/// `branch_summary` maps to a custom message too (pi-web renders it as a user
+/// bubble, but a synthetic User here would consume a fork-anchor id — kept
+/// custom so entry-id alignment stays intact).
+fn renderable_message(v: &Value) -> Option<Value> {
+    let ts = v["timestamp"].clone();
+    let envelope = |message: Value| {
+        Some(json!({
+            "id": v["id"].clone(),
+            "parentId": v["parentId"].clone(),
+            "type": "message",
+            "timestamp": ts,
+            "message": message,
+        }))
+    };
+    match v["type"].as_str()? {
+        "message" => Some(v.clone()),
+        "compaction" => envelope(json!({
+            "role": "custom",
+            "customType": "compaction",
+            "content": v["summary"].as_str().unwrap_or(""),
+            "display": true,
+            "details": {
+                "tokensBefore": v["tokensBefore"].clone(),
+                "firstKeptEntryId": v["firstKeptEntryId"].clone(),
+            },
+        })),
+        "custom_message" => envelope(json!({
+            "role": "custom",
+            "customType": v["customType"].as_str().unwrap_or(""),
+            "content": v["content"].clone(),
+            "display": v["display"].as_bool().unwrap_or(true),
+            "details": v["details"].clone(),
+        })),
+        "branch_summary" if v["summary"].as_str().is_some_and(|s| !s.is_empty()) => {
+            envelope(json!({
+                "role": "custom",
+                "customType": "branch_summary",
+                "content": v["summary"].as_str().unwrap_or(""),
+                "display": true,
+            }))
+        }
+        _ => None,
+    }
+}
+
 /// Parse the trailing whole message entries of a session file — the
 /// disk-direct render path (agent_session renders the last conversation
 /// before the RPC session is up). Returns up to `max` parsed
@@ -441,8 +489,8 @@ pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value
     let mut messages: Vec<Value> = Vec::new();
     for line in body.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if v["type"].as_str() == Some("message") {
-            messages.push(v);
+        if let Some(m) = renderable_message(&v) {
+            messages.push(m);
         }
     }
     if messages.len() > max {
@@ -488,9 +536,9 @@ pub fn read_leaf_messages(path: &Path, max: usize) -> Vec<Value> {
                 id.to_string(),
                 v["parentId"].as_str().unwrap_or("").to_string(),
             );
-            if v["type"].as_str() == Some("message") {
+            if let Some(m) = renderable_message(&v) {
                 anchor = Some(id.to_string());
-                messages.push(v);
+                messages.push(m);
             }
         }
     }
