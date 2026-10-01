@@ -56,7 +56,22 @@
     display: flex; align-items: center; justify-content: center;
     cursor: default;
   }
-  .tb-icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  /* v55 icon hover 统一规格：底色方案在各层背景上区分度差，废弃；
+     改为图标自身动效——上抬 1px + 放大约 1px（scale 1.06），颜色提亮保留。
+     豁免：窗口控制钮（Windows 惯例底色）、关闭/删除/发送/resizer 语义色、
+     文字 pill 与菜单行（ghost-btn/cmp-pill/set-nav/pm-item/hc-cancel 保持底色）。 */
+  .tb-icon-btn svg, .prj-act svg, .g-btn svg, .g-tab svg, .sb-tab svg,
+  .term-tab .x svg, .md-tab .x svg, .cmp-icon svg, .sel-btn svg,
+  .msg-actions .act svg, .as-stats .act svg {
+    transition: transform .12s ease;
+  }
+  .tb-icon-btn:hover svg, .prj-act:hover svg, .g-btn:hover svg, .g-tab:hover svg,
+  .sb-tab:hover svg, .term-tab .x:hover svg, .md-tab .x:hover svg, .cmp-icon:hover svg,
+  .sel-btn:hover svg, .msg-actions .act:hover svg, .as-stats .act:hover svg {
+    transform: translateY(-1px) scale(1.06);
+  }
+
+  .tb-icon-btn:hover { color: var(--text); }
   .tb-icon-btn svg { width: 18px; height: 18px; }
   .tb-divider { width: 1px; height: 18px; background: rgba(175, 196, 186, .55); margin: 0 6px; }
   .tb-spacer { flex: 1; }
@@ -114,7 +129,7 @@
   .prj-act { width: 22px; height: 22px; border-radius: 6px; flex: none;
     display: flex; align-items: center; justify-content: center;
     color: var(--text-dim); cursor: default; }
-  .prj-act:hover { background: var(--bg-hover); color: var(--text); }
+  .prj-act:hover { color: var(--text); }
   .prj-act svg { width: 18px; height: 18px; }
   .prj-act.big svg { width: 21px; height: 21px; }
   .prj-group.off { display: none; }
@@ -261,7 +276,7 @@
     flex: none; border: 0; background: transparent; padding: 6px 9px 5px; margin-bottom: -1px;
     font-size: 11.5px; color: var(--text-muted); font-family: inherit; cursor: default;
   }
-  .g-tab:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
+  .g-tab:hover { color: var(--text); }
   .g-tab.on { background: var(--bg); color: var(--text); font-weight: 600;
     border: 1px solid rgba(175,196,186,.4); border-bottom: 0; border-radius: 7px 7px 0 0; }
   .g-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
@@ -275,7 +290,7 @@
   .g-btn { border: 1px solid var(--border); border-radius: 7px; background: var(--bg);
     padding: 3.5px 9px; font-size: 12px; color: var(--text); font-family: inherit; cursor: default;
     display: flex; align-items: center; gap: 5px; }
-  .g-btn:hover { background: var(--bg-hover); }
+  .g-btn:hover { color: var(--text); }
   .g-btn svg { width: 12px; height: 12px; }
   .g-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 6px 6px; }
   .g-row {
@@ -364,7 +379,7 @@
     padding: 0 5px 0 12px;
   }
   .term-tab .x, .md-tab .x { width: 20px; height: 20px; border-radius: 5px; display: none; align-items: center; justify-content: center; color: var(--text-dim); font-size: 13px; cursor: default; }
-  .term-tab .x:hover, .md-tab .x:hover { background: var(--bg-hover); color: var(--text); }
+  .term-tab .x:hover, .md-tab .x:hover { color: var(--text); }
   .term-tab.act .x, .md-tab.act .x { display: flex; }
   .term-body { flex: 1; background: #141a17; color: #cfe0d9; font-family: Consolas, monospace; font-size: 12.5px; line-height: 1.7; padding: 14px 18px; overflow-y: auto; }
   .term-body .dim { color: #6e8a7d; }
@@ -438,7 +453,7 @@
     opacity: 0; transition: opacity .15s ease; }
   .msg-user:hover .msg-actions { opacity: 1; }
   .msg-actions span { cursor: default; }
-  .msg-actions .act:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
+  .msg-actions .act:hover { color: var(--text); }
   .msg-actions .act { display: flex; align-items: center; gap: 4px; }
   .msg-actions .act svg { width: 12px; height: 12px; }
   .msg-actions .when { margin-left: 4px; color: #a3b0aa; }
@@ -474,7 +489,7 @@
   .msg-assistant:hover .as-stats { opacity: 1; }
   .as-stats .act { display: flex; align-items: center; gap: 4px; cursor: default; }
   .as-stats .act svg { width: 12px; height: 12px; }
-  .as-stats .act:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
+  .as-stats .act:hover { color: var(--text); }
   .as-stats > span:not(.act) { color: #a3b0aa; }
 
     .phase-row { display: flex; align-items: center; gap: 9px; color: var(--accent); font-size: 13px; }
@@ -508,7 +523,7 @@
     background: transparent; color: var(--text-muted);
     display: flex; align-items: center; justify-content: center; cursor: default;
   }
-  .cmp-icon:hover { background: var(--bg-hover); color: var(--text); }
+  .cmp-icon:hover { color: var(--text); }
   .cmp-icon svg { width: 15px; height: 15px; }
   .cmp-pill {
     height: 28px; padding: 0 8px;
@@ -560,7 +575,7 @@
     border: 0; background: transparent; padding: 0;
     color: var(--text-muted); font-family: inherit; cursor: default;
   }
-  .sb-tab:hover { background: var(--bg-hover); border-radius: 0 0 8px 8px; }
+  .sb-tab:hover { color: var(--text); }
   .sb-tab.on {
     background: var(--nav);
     border: 1px solid rgba(175,196,186,.55); border-top: 0;
@@ -627,7 +642,7 @@
     padding: 4px 10px; font-size: 12.5px; color: var(--text); font-family: inherit; cursor: default;
     display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
   .sel-btn .chev { width: 10px; height: 10px; color: var(--text-dim); flex: none; }
-  .sel-btn:hover { background: var(--bg-hover); }
+  .sel-btn:hover { color: var(--text); }
   .sw { flex: none; width: 34px; height: 19px; border-radius: 10px; background: var(--border);
     position: relative; cursor: default; transition: background .15s; }
   .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
