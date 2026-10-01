@@ -260,7 +260,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, _t: &crate::theme::Theme) -> g
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(icon("image", 12., t.text_muted))
+                .child(icon_hover("image", 12., t.text_muted))
                 .child(
                     div()
                         .text_size(px(12.))

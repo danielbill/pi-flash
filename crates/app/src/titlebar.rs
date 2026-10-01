@@ -163,7 +163,7 @@ fn icon_btn(
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
         .on_mouse_down(MouseButton::Left, handler)
-        .child(crate::ui::icon(icon_name, 18., t.text_muted))
+        .child(crate::ui::icon_hover(icon_name, 18., t.text_muted))
 }
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×

@@ -12,7 +12,7 @@ use crate::i18n::tr;
 use crate::markdown;
 use crate::services::format::pretty_args;
 use crate::theme;
-use crate::ui::icon;
+use crate::ui::{icon, icon_hover};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Role {
@@ -555,9 +555,9 @@ pub(crate) fn render_assistant_turn(
             .cursor_pointer()
             .hover(|s| s.text_color(rgb(t.text)));
         pill = if copied {
-            pill.child(icon("check", 12., t.accent)).child(SharedString::from(tr("已复制")))
+            pill.child(icon_hover("check", 12., t.accent)).child(SharedString::from(tr("已复制")))
         } else {
-            pill.child(icon("copy", 12., t.text_dim)).child(SharedString::from(tr("复制")))
+            pill.child(icon_hover("copy", 12., t.text_dim)).child(SharedString::from(tr("复制")))
         };
         pill = pill.on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let text = turn_text.clone();

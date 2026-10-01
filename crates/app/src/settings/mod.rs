@@ -186,7 +186,7 @@ pub(crate) fn render_settings(
                                         });
                                     }
                                 })
-                                .child(icon("x", 13., t.text_muted)),
+                                .child(icon_hover("x", 13., t.text_muted)),
                         ),
                 )
                 // 左导航 200px + body

@@ -322,7 +322,7 @@ fn changes_body(
                                         this.git_push_branch(cx);
                                     },
                                 ))
-                                .child(icon("arrow-up", 12., t.text))
+                                .child(icon_hover("arrow-up", 12., t.text))
                                 .child(SharedString::from(format!("{ahead} Push")))
                                 .child(icon("chevron-down", 10., t.text_dim)),
                         ),

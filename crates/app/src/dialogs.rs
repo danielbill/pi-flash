@@ -12,7 +12,7 @@ use crate::TextInput;
 use crate::i18n::tr;
 use crate::services::format::time_ago;
 use crate::theme;
-use crate::ui::icon;
+use crate::ui::{icon, icon_hover};
 
 pub(crate) fn render_dialogs(
     mut root: Div,
@@ -158,7 +158,7 @@ fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
                                                         });
                                                     }
                                                 })
-                                                .child(icon("x", 12., t.text_muted)),
+                                                .child(icon_hover("x", 12., t.text_muted)),
                                         ),
                                 )
                                 .child(filter_input.clone())
@@ -223,7 +223,7 @@ fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, pa
                                                 .flex()
                                                 .items_center()
                                                 .gap_2()
-                                                .child(icon("git-branch", 12., t.accent))
+                                                .child(icon_hover("git-branch", 12., t.accent))
                                                 .child(
                                                     div()
                                                         .text_xs()
@@ -248,7 +248,7 @@ fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, pa
                                                         });
                                                     }
                                                 })
-                                                .child(icon("x", 12., t.text_muted)),
+                                                .child(icon_hover("x", 12., t.text_muted)),
                                         ),
                                 )
                                 .child(
