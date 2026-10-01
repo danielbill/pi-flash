@@ -178,6 +178,20 @@ impl Element for ScrollbarElement {
 
         // ---- 可见性（zed VisibilityState 简化）：parent 内常显；离开后
         // AUTOHIDE_MS 内保持（由 mousemove 持续刷新 last_active），超时渐隐 ----
+        // zed reveal：offset/内容高度相对上帧变化 = 用户滚动 → 重置
+        // autohide 计时（淡出后滚轮一动立刻复现）
+        let off_now = self.scroll.offset().y.to_f64() as f32;
+        let max_now = self.scroll.max_offset().height.to_f64() as f32;
+        let scrolled = LAST_OFFSET.with(|c| {
+            let prev = c.get();
+            c.set(Some((off_now, max_now)));
+            prev.is_some_and(|(po, pm)| {
+                (po - off_now).abs() > 0.5 || (pm - max_now).abs() > 0.5
+            })
+        });
+        if scrolled {
+            self.state.last_active.set(Some(Instant::now()));
+        }
         let hovered = layout.hit_bounds.contains(&window.mouse_position());
         let active = self.state.last_active.get();
         let opacity = if parent_hovered || hovered {
