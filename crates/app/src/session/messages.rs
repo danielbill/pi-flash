@@ -922,8 +922,10 @@ pub(crate) fn render_msg(
 ) -> gpui::Div {
     let mut col = div().w_full().mb(px(22.)).flex().flex_col();
     if m.role == Role::User {
-        // v54 用户气泡：右对齐、62% 宽、radius 14、pad 9/15、无边框；
-        // 操作行（复制/编辑/新分支+时间）hover 整行淡入，无框无底色。
+        // v56-4 c18-c22（pi-web UserMessageView parity）：右对齐 85% 宽、
+        // user_bg 底 + 1px 蓝边框 rgba(59,130,246,.2)、圆角 12、pad 8/12、
+        // 内容走 markdown、内嵌图片 240 上限、超高 300px 内部滚动；
+        // 操作行（复制/编辑/新分支）hover 淡入 = 自定义豁免项。
         let text = m.plain_text();
         let entry = m.entry_id.clone();
         let weak_copy = weak.clone();
@@ -931,10 +933,42 @@ pub(crate) fn render_msg(
         let weak_fork = weak.clone();
         let copy_text = text.clone();
         let edit_text = text.clone();
-        // 006 session font slot drives the chat bubble text
-        let sf = crate::appearance::session_font();
-        let session_family = sf.family;
-        let session_size = sf.size;
+
+        // c20: 用户消息内嵌图片（flex wrap、240 上限、蓝边框）
+        let image_block: gpui::AnyElement = {
+            let imgs: Vec<&Block> =
+                m.blocks.iter().filter(|b| matches!(b, Block::Image { .. })).collect();
+            if imgs.is_empty() {
+                div().into_any_element()
+            } else {
+                let mut wrap = div().flex().flex_wrap().gap(px(6.)).mb(px(8.));
+                for b in imgs {
+                    if let Block::Image { mime, data, .. } = b {
+                        if let Some(format) = mime_to_image_format(mime) {
+                            if let Ok(bytes) = decode_image_data(data) {
+                                wrap = wrap.child(
+                                    gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(
+                                        format, bytes,
+                                    )))
+                                    .max_w(px(240.))
+                                    .max_h(px(240.))
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.15))),
+                                );
+                            }
+                        }
+                    }
+                }
+                wrap.into_any_element()
+            }
+        };
+        // c19: 用户内容走 markdown（pi-web SafeMarkdownBody parity）
+        let md: gpui::AnyElement = if text.trim().is_empty() {
+            div().into_any_element()
+        } else {
+            markdown::render(&text, t, false)
+        };
 
         let action = |id: String, icon_name: &'static str, label: &'static str| {
             div()
@@ -1024,18 +1058,29 @@ pub(crate) fn render_msg(
             .flex()
             .flex_col()
             .items_end()
-            .gap(px(6.))
+            .gap(px(3.))
             .child(
                 div()
-                    .max_w(relative(0.62))
-                    .px(px(15.))
-                    .py(px(9.))
-                    .rounded(px(14.))
-                    .bg(rgb(t.user_bg))
-                    .text_color(rgb(t.text))
-                    .font_family(session_family.clone())
-                    .text_size(px(session_size))
-                    .child(SharedString::from(text)),
+                    .max_w(relative(0.85))
+                    .flex()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("ububble-{msg_ix}")))
+                            // c21: 超高气泡 300px 内部滚动（USER_BUBBLE_MAX_HEIGHT）
+                            .max_h(px(300.))
+                            .overflow_y_scroll()
+                            .flex_1()
+                            .min_w_0()
+                            .px(px(12.))
+                            .py(px(8.))
+                            .rounded(px(12.))
+                            .bg(rgb(t.user_bg))
+                            .border_1()
+                            .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.2)))
+                            .text_color(rgb(t.text))
+                            .child(div().flex().flex_col().child(image_block).child(md)),
+                    ),
             )
             .child(bottom);
         col = col.child(row);
