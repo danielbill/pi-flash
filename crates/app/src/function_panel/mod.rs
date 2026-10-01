@@ -317,7 +317,13 @@ fn project_row(
     };
     let active = same_ws(&g.path.to_string_lossy(), &chat.cwd.to_string_lossy());
     let collapsed = chat.collapsed_keys.contains(&same_ws_key(&g.path.to_string_lossy()));
-    let hovered = chat.hovered_project == Some(pi);
+    let hovered = chat.hovered_project == Some(pi)
+        // ⋯ 菜单打开中：按钮保持显示（交互进行中不消失）
+        || matches!(
+            &chat.psp_menu,
+            Some(crate::PspMenu::Project { path: mp, .. })
+            if crate::services::workspace::same_path(mp, &g.path)
+        );
     let path = g.path.clone();
     let path_toggle = path.clone();
     let path_tip = path.clone();
@@ -340,7 +346,7 @@ fn project_row(
         .pr(px(4.))
         .rounded(px(8.))
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
+        // v55：项目行悬停不给背景色（避免与会话行选中态混淆）
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let _ = w_toggle.update(cx, |c, cx| {
                 let key = crate::services::workspace::same_ws_key(&path_toggle.to_string_lossy());
