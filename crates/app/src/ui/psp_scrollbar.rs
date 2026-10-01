@@ -345,4 +345,6 @@ impl Element for ScrollbarElement {
 thread_local! {
     static DRAG: std::cell::RefCell<Option<f32>> = const { std::cell::RefCell::new(None) };
     static THUMB_HOVER: Cell<bool> = const { Cell::new(false) };
+    /// 上帧 (offset.y, max_offset.height)——zed ScrollbarPosition reveal 检测
+    static LAST_OFFSET: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
 }
