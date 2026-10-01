@@ -498,23 +498,27 @@ fn session_row_view(
     let w_hover = weak.clone();
     let w_move = weak.clone();
 
-    // 毛玻璃截断（设计 v55）：标题溢出不用省略号，右缘 28px 渐变淡出到行
-    // 背景色；hover 时行背景变 bg_hover，overlay 尾色随 group_hover 跟变。
-    let fade_to = if is_active { gpui::rgba(accent_tint(t)) } else { gpui::rgb(t.nav) };
-    let fade_hover_to = if is_active { gpui::rgba(accent_tint(t)) } else { rgb(t.bg_hover) };
+    // 毛玻璃截断（设计 v55）：渐变属于**时间区**——时间列固定宽右对齐，
+    // 左缘从行底色的 0-alpha 版本渐到实色，把过长标题的尾部遮蔽融化掉。
+    // 透明端必须用同色 a=0（透明黑会在 HSL 插值中段产生半透明暗带，即上一
+    // 版的"黑块"）；hover 时行背景变 bg_hover，渐变尾色随 group_hover 跟变。
+    let fade_to = gpui::Hsla::from(if is_active { gpui::rgba(accent_tint(t)) } else { gpui::rgb(t.nav) });
+    let fade_hover_to =
+        gpui::Hsla::from(if is_active { gpui::rgba(accent_tint(t)) } else { rgb(t.bg_hover) });
     let fade = gpui::linear_gradient(
         90.,
-        gpui::linear_color_stop(gpui::hsla(0., 0., 0., 0.), 0.),
-        gpui::linear_color_stop(gpui::Hsla::from(fade_to), 1.),
+        gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_to }, 0.),
+        gpui::linear_color_stop(fade_to, 1.),
     );
     let fade_hover = gpui::linear_gradient(
         90.,
-        gpui::linear_color_stop(gpui::hsla(0., 0., 0., 0.), 0.),
-        gpui::linear_color_stop(gpui::Hsla::from(fade_hover_to), 1.),
+        gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_hover_to }, 0.),
+        gpui::linear_color_stop(fade_hover_to, 1.),
     );
 
     div()
         .id(SharedString::from(format!("ps-{}", info.id)))
+        .relative()
         .group("psrow")
         .w_full()
         .h(px(30.))
@@ -593,36 +597,39 @@ fn session_row_view(
                 }),
         )
         .child(
+            // 标题：占满 slot 之后的整行宽（尾部会滑进时间区下方，被其
+            // 渐变背景遮蔽），不再自身挂 overlay
             div()
-                .relative()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_size(px(13.))
                 .text_color(rgb(t.text))
-                .child(title)
-                // 尾部渐变淡出（毛玻璃感）；尾色 = 当前行背景，hover 随行变
-                .child(
-                    div()
-                        .absolute()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(28.))
-                        .bg(fade)
-                        .group_hover("psrow", |s| s.bg(fade_hover)),
-                ),
+                .child(title),
         )
-        // 时间区（v55 fmtAgo）：刚刚 / N分钟 / N小时 / N天
+        // 时间区（v55 fmtAgo）：固定宽右对齐成一列，渐变背景左缘遮蔽过长
+        // 标题——"时间区遮蔽 title"的字面实现
         .child(
             div()
-                .flex_shrink_0()
-                .text_size(px(11.))
-                .text_color(rgb(t.text_faint))
-                .child(SharedString::from(crate::services::format::fmt_ago(
-                    info.modified,
-                ))),
+                .absolute()
+                .right(px(10.))
+                .top_0()
+                .bottom_0()
+                .w(px(44.))
+                .flex()
+                .items_center()
+                .justify_end()
+                .bg(fade)
+                .group_hover("psrow", |s| s.bg(fade_hover))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(t.text_faint))
+                        .child(SharedString::from(crate::services::format::fmt_ago(
+                            info.modified,
+                        ))),
+                ),
         )
         .into_any_element()
 }
