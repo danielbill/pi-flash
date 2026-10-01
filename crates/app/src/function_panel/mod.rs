@@ -502,9 +502,11 @@ fn session_row_view(
     let path = info.path.clone();
     let path_click = path.clone();
     let path_card = path.clone();
+    let path_bounds = path.clone();
     let w_click = weak.clone();
     let w_hover = weak.clone();
     let w_move = weak.clone();
+    let w_bounds = weak.clone();
 
     // ---- ZCode TaskListItem 样式 parity（源码实测值）----
     // 列表 p-3 留白 + 行 pl-2.5/pr-1/py-1 + space-y-0.5 行距 + rounded-lg；
@@ -512,30 +514,19 @@ fn session_row_view(
     // overlay 互相染色）；标题溢出 = 尾部 24px 渐隐，**量宽确认溢出才挂**
     // （短标题不糊尾）。overlay 尾色 = 行底合成视觉色（不透明）：透明端必
     // 须同色 a=0，透明黑会在 HSL 插值中段产生暗带。
-    let row_sel = gpui::rgba((t.text << 8) | 0x1a); // 10%
-    let row_hover = gpui::rgba((t.text << 8) | 0x0d); // 5%
+    let row_sel = gpui::rgba((t.text << 8) | 0x1a); // 10%（悬停与选中同色）
     let row_base = if is_active {
         gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.1))
     } else {
         gpui::rgb(t.nav)
     };
-    let row_base_hover = if is_active {
-        gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.1))
-    } else {
-        gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.05))
-    };
     let fade_to = gpui::Hsla::from(row_base);
-    let fade_hover_to = gpui::Hsla::from(row_base_hover);
     let fade = gpui::linear_gradient(
         90.,
         gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_to }, 0.),
         gpui::linear_color_stop(fade_to, 1.),
     );
-    let fade_hover = gpui::linear_gradient(
-        90.,
-        gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_hover_to }, 0.),
-        gpui::linear_color_stop(fade_hover_to, 1.),
-    );
+    let fade_hover = fade.clone();
 
     // 溢出测量：标题真实排版宽 vs 行内可用宽（列表 px 24 + 行 pl/pr 14 +
     // slot 15 + 两个 gap 16 + 时间列 38）
@@ -562,6 +553,29 @@ fn session_row_view(
     let available = px(chat.slp_w - 24. - 14. - 15. - 16. - 38.);
     let title_overflows = title_w > available;
 
+    // 行顶对齐钩子：详情卡的 top = 本行 bounds.origin.y（ZCode 用
+    // getBoundingClientRect；gpui 等价物 = wrapper 的 children_prepainted）。
+    // 自下而上进入行时鼠标首事件落在行底，只靠 mouse move 会偏下——这里
+    // 用真实 bounds 校正；bounds 稳定后不再 notify。滚动时自动跟随。
+    let weak_for_row_el = weak.clone();
+    let _ = weak_for_row_el;
+    div()
+        .on_children_prepainted(move |children: Vec<gpui::Bounds<gpui::Pixels>>, _, cx| {
+            if let Some(b) = children.first() {
+                let top = b.origin.y;
+                let _ = w_bounds.update(cx, |c, cx| {
+                    if let Some(card) = c.hover_card.as_mut() {
+                        if crate::services::workspace::same_path(&card.path, &path_bounds)
+                            && (card.y - f32::from(top)).abs() > 0.5
+                        {
+                            card.y = f32::from(top);
+                            cx.notify();
+                        }
+                    }
+                });
+            }
+        })
+        .child(
     div()
         .id(SharedString::from(format!("ps-{}", info.id)))
         .relative()
@@ -577,7 +591,7 @@ fn session_row_view(
         .rounded(px(8.))
         .cursor_pointer()
         .when(is_active, |d| d.bg(row_sel).hover(|s| s.bg(row_sel)))
-        .when(!is_active, |d| d.hover(|s| s.bg(row_hover)))
+        .when(!is_active, |d| d.hover(|s| s.bg(row_sel)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let _ = w_click.update(cx, |c, cx| {
                 c.open_session(path_click.clone(), false, cx);
@@ -607,7 +621,9 @@ fn session_row_view(
                 if !same {
                     c.hover_card = Some(crate::HoverCard {
                         path: path_card.clone(),
-                        y,
+                        // 临时估计（鼠标 y - 半行高）；prepaint 钩子会把
+                        // y 校正为本行的真实顶部（bounds.origin.y）
+                        y: y - 16.,
                         hide_at: None,
                         show_at: std::time::Instant::now(),
                         shown: false,
@@ -683,6 +699,7 @@ fn session_row_view(
                 .child(SharedString::from(crate::services::format::fmt_ago(
                     info.modified,
                 ))),
+        ),
         )
         .into_any_element()
 }
