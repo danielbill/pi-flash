@@ -498,13 +498,19 @@ fn session_row_view(
     let w_hover = weak.clone();
     let w_move = weak.clone();
 
-    // 毛玻璃截断（设计 v55）：渐变属于**时间区**——时间列固定宽右对齐，
-    // 左缘从行底色的 0-alpha 版本渐到实色，把过长标题的尾部遮蔽融化掉。
-    // 透明端必须用同色 a=0（透明黑会在 HSL 插值中段产生半透明暗带，即上一
-    // 版的"黑块"）；hover 时行背景变 bg_hover，渐变尾色随 group_hover 跟变。
-    let fade_to = gpui::Hsla::from(if is_active { gpui::rgba(accent_tint(t)) } else { gpui::rgb(t.nav) });
-    let fade_hover_to =
-        gpui::Hsla::from(if is_active { gpui::rgba(accent_tint(t)) } else { rgb(t.bg_hover) });
+    // 毛玻璃截断（设计 v55）：渐变属于标题容器尾部，透明端必须用同色
+    // a=0（透明黑会在 HSL 插值中段产生半透明暗带）；尾端用行底的**合成
+    // 视觉色（不透明）**——选中行底是 10% accent 透明色，overlay 若也用
+    // 透明色会 alpha 累积出第二层底色，混成不透明色后尾端与行底视觉一致、
+    // 完全隐形。hover 时行背景变 bg_hover，尾色随 group_hover 跟变。
+    let row_base = if is_active {
+        // accent_tint（10% accent）叠在 dock nav 上的最终视觉色
+        gpui::rgb(crate::theme::mix_rgb(t.accent, t.nav, 0.1))
+    } else {
+        gpui::rgb(t.nav)
+    };
+    let fade_to = gpui::Hsla::from(row_base);
+    let fade_hover_to = gpui::Hsla::from(row_base);
     let fade = gpui::linear_gradient(
         90.,
         gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_to }, 0.),
@@ -615,16 +621,17 @@ fn session_row_view(
                         .right_0()
                         .top_0()
                         .bottom_0()
-                        .w(px(28.))
+                        .w(px(22.))
                         .bg(fade)
                         .group_hover("psrow", |s| s.bg(fade_hover)),
                 ),
         )
-        // 时间区（v55 fmtAgo）：固定宽右对齐成一列
+        // 时间区（v55 fmtAgo）：固定宽右对齐成一列（宽度与左侧图标区+
+        // padding 视觉平衡，标题可用空间最大化）
         .child(
             div()
                 .flex_shrink_0()
-                .w(px(44.))
+                .w(px(38.))
                 .flex()
                 .items_center()
                 .justify_end()
