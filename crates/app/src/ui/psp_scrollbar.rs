@@ -116,7 +116,7 @@ impl Element for PspScrollbarEl {
         _request: &mut (),
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut gpui::App,
+        _cx: &mut gpui::App,
     ) {
         let hitbox = match prepaint.as_ref() {
             Some(h) => h.clone(),
