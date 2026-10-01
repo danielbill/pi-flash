@@ -54,6 +54,10 @@ pub(crate) struct SessionRuntime {
     /// this means pi's restored leaf chain is truncated (mis-parented
     /// non-message entry) and the display rebuilds from the file instead
     pub disk_msg_count: usize,
+    /// session file size at last read — an external writer (pi-web on the
+    /// same session) grows the file behind our pi process's back, which
+    /// never notices; the tick compares and re-reads from disk
+    pub disk_file_len: u64,
     /// pi process ownership (None while recycled/lazy)
     pub agent: AgentSession,
 
@@ -108,8 +112,13 @@ impl SessionRuntime {
         Self {
             key,
             cwd,
-            file,
+            file: file.clone(),
             disk_msg_count: 0,
+            disk_file_len: file
+                .as_deref()
+                .and_then(|f| std::fs::metadata(f).ok())
+                .map(|m| m.len())
+                .unwrap_or(0),
             agent: AgentSession::new(1),
             messages: Vec::new(),
             list,
@@ -648,12 +657,14 @@ impl SessionRuntime {
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
                 self.refresh_state();
-            }
-            Event::AgentEnd { .. } => {
+            }            Event::AgentEnd { .. } => {
                 self.agent_running = false;
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.stream_started = None;
+                // our own writer advanced the file — re-baseline so the
+                // external-append tick doesn't re-read our own turn
+                self.sync_disk_baseline();
                 // the session file exists now — make the new session show up
                 // in the sidebar (pi-web refreshKey-on-agent_end parity)
                 cx.emit(SessionEvent::ListDirty);
@@ -669,12 +680,52 @@ impl SessionRuntime {
         self.notify_list(cx);
     }
 
+    /// Remember the session file's current size (our own writer's progress):
+    /// the external-append tick only re-reads when someone ELSE grew it.
+    pub(crate) fn sync_disk_baseline(&mut self) {
+        if let Some(f) = &self.file {
+            if let Ok(meta) = std::fs::metadata(f) {
+                self.disk_file_len = meta.len();
+            }
+        }
+    }
+
+    /// External-append watch (pi-web session-revision parity): another
+    /// writer (pi-web on the same session file) appends behind our pi
+    /// process's back, and pi's in-memory chain never notices. While idle,
+    /// a size change triggers a disk leaf-chain re-read.
+    pub(crate) fn check_external_append(&mut self, cx: &mut Context<Self>) {
+        if self.agent_running || self.pending_echo.is_some() {
+            return;
+        }
+        let Some(f) = self.file.clone() else { return };
+        let Ok(meta) = std::fs::metadata(&f) else { return };
+        let len = meta.len();
+        if len == self.disk_file_len || len == 0 {
+            return;
+        }
+        let msgs = msgs_from_tail(read_leaf_messages(&f, LEAF_REPAIR_MAX));
+        self.disk_file_len = len;
+        if msgs.len() != self.messages.len() {
+            self.messages = msgs;
+            // fork anchors best-effort (same as the open-time repair path)
+            let mut ids = self.active_user_entry_ids.iter();
+            for m in self.messages.iter_mut() {
+                if m.role == Role::User {
+                    m.entry_id = ids.next().cloned();
+                }
+            }
+            self.apply_pending_locate(cx);
+            self.notify_list(cx);
+            self.status = status_line(true, "synced from disk");
+        }
+    }
+
     /// Backfill message stamps from the session-file tail: snapshots never
     /// carry completion times, and entry write-times are the only end-stamp
     /// source for history (aligned by suffix — tail conversion mirrors the
     /// same ingest semantics).
     fn merge_tail_stamps(&mut self) {
-        use crate::session::messages::msgs_from_tail;
         let Some(f) = self.file.clone() else {
             return;
         };

@@ -617,6 +617,26 @@ impl Chat {
             }
         })
         .detach();
+        // external-append watch (pi-web session-revision parity): every 3s,
+        // re-read sessions whose files grew behind our pi process (pi-web
+        // writing the same session). Idle runtimes only — a running agent
+        // owns its file.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+            let ok = this
+                .update(cx, |chat, cx| {
+                    for rt in chat.runtimes.values() {
+                        rt.update(cx, |r, cx| r.check_external_append(cx));
+                    }
+                })
+                .is_ok();
+            if !ok {
+                break;
+            }
+        })
+        .detach();
         // background fill: cross-project scan -> psp 项目组（startup budget
         // §4 — the first frame renders the empty shell while this lands）
         let cwd_text = chat.cwd.to_string_lossy().to_string();
