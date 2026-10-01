@@ -125,6 +125,10 @@ pub(crate) struct HoverCard {
     pub path: PathBuf,
     pub y: f32,
     pub hide_at: Option<std::time::Instant>,
+    /// 创建时刻：悬停满 300ms 才显示（快速滑过列表不弹卡、不干扰行悬停）
+    pub show_at: std::time::Instant,
+    /// show_at 到期后由 120ms tick 置 true 并渲染一次
+    pub shown: bool,
     pub confirming: bool,
     /// 鼠标当前是否在卡上（gpui 的行退出/卡进入事件顺序不保证，
     /// 行退出只在 !card_hovered 时才启动消失宽限）
@@ -460,6 +464,18 @@ impl Chat {
                                     c.hover_card = None;
                                     dirty = true;
                                 }
+                            }
+                        }
+                        // 详情卡延迟显示（0.3s）：悬停期满且鼠标未在离行
+                        // 宽限时才置 shown，下一次渲染把卡画出来
+                        if let Some(card) = c.hover_card.as_mut() {
+                            if !card.shown
+                                && card.hide_at.is_none()
+                                && card.show_at.elapsed()
+                                    >= std::time::Duration::from_millis(300)
+                            {
+                                card.shown = true;
+                                dirty = true;
                             }
                         }
                         // 导航 flyout 250ms 离开宽限（pi-web

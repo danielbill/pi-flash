@@ -609,6 +609,8 @@ fn session_row_view(
                         path: path_card.clone(),
                         y,
                         hide_at: None,
+                        show_at: std::time::Instant::now(),
+                        shown: false,
                         confirming: false,
                         card_hovered: false,
                         renaming: false,

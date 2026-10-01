@@ -19,20 +19,20 @@ pub(crate) fn psp_overlays(
     let t = T();
     // 全窗口定位层：absolute inset_0 铺满 root，悬浮子元素相对它定位，
     // 且不参与流布局（0 高容器会把 absolute 子元素裁掉——菜单曾因此不可见）。
-    // 有卡片/菜单/确认层时 occlude：hit-test 截断下层，防止鼠标事件层层穿透
-    let shielding = chat.hover_card.is_some()
-        || chat.psp_menu.is_some()
-        || chat.confirm_prj_del.is_some();
+    // **父层不得 occlude**：inset_0 的层一挡全窗口 hit-test 都断（行悬停
+    // 背景闪烁的根因）；各浮层在自己的 bounds 内各自 occlude。
     let mut el = div()
         .id("psp-overlays")
         .absolute()
-        .inset_0()
-        .when(shielding, |d| d.occlude());
+        .inset_0();
     if let Some((path, x, y)) = &chat.proj_tip {
         el = el.child(proj_tip(path, *x, *y));
     }
-    if chat.hover_card.is_some() {
-        el = el.child(hover_card(chat, t, cx));
+    if let Some(card) = &chat.hover_card {
+        // 延迟显示（0.3s）：快速滑过会话列表时不创建视觉，不干扰行悬停
+        if card.shown {
+            el = el.child(hover_card(chat, t, cx));
+        }
     }
     if chat.psp_menu.is_some() {
         el = el.child(menu_layer(chat, t, cx));
@@ -121,6 +121,8 @@ fn hover_card(chat: &mut Chat, t: &'static Theme, cx: &mut gpui::Context<Chat>) 
         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
         .rounded(px(12.))
         .shadow_lg()
+        // 遮挡只作用于卡片自身 bounds（父层 occlude 会断全窗口 hit-test）
+        .occlude()
         .px(px(13.))
         .pt(px(11.))
         .pb(px(9.))
