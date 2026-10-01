@@ -54,10 +54,6 @@ pub(crate) fn topbar_r(
 ) -> impl gpui::IntoElement {
     let t = T();
     let maximized = window.is_maximized();
-    // Glyphs: 0xE921 min, 0xE922 max, 0xE923 restore, 0xE8BB close.
-    let max_glyph = if maximized { "\u{E923}" } else { "\u{E922}" };
-    let max_tip = if maximized { tr("向下还原") } else { tr("最大化") };
-    let _ = max_tip;
 
     let mut bar = div()
         .id("topbar-r")
@@ -131,11 +127,12 @@ pub(crate) fn topbar_r(
     );
     bar = bar.child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(6.)));
 
-    for (area, glyph) in [
-        (WindowControlArea::Min, "\u{E921}"),
-        (WindowControlArea::Max, max_glyph),
+    // v55: min/max switch to SVG icons via HoverIcon; close keeps red-bg exemption
+    for (area, icon_name) in [
+        (WindowControlArea::Min, "minus"),
+        (WindowControlArea::Max, if maximized { "restore" } else { "square" }),
     ] {
-        bar = bar.child(caption_button(area, glyph, t));
+        bar = bar.child(caption_button(area, icon_name, t));
     }
     bar.child(caption_button(
         WindowControlArea::Close,
@@ -323,19 +320,28 @@ fn tab_shell(
 
 fn caption_button(
     area: WindowControlArea,
-    glyph: &'static str,
+    icon_name: &'static str,
     t: &crate::theme::Theme,
 ) -> impl gpui::IntoElement {
-    let hover_bg = if area == WindowControlArea::Close {
-        rgb(t.danger_hover) // v54 关闭悬停红（随主题 danger 系；mist 即设计稿 #d8626a）
-    } else {
-        rgb(t.bg_hover)
-    };
-    let hover_fg = if area == WindowControlArea::Close {
-        rgb(0xffffff)
-    } else {
-        rgb(t.text)
-    };
+    // 关闭钮豁免：红底白字（v54 语义，glyph 渲染）；min/max 走 HoverIcon
+    // 统一动效（无底色，图标自身上抬+放大，v55 全局规格）
+    if area == WindowControlArea::Close {
+        return div()
+            .id(SharedString::from(format!("wb-{}", area as u8)))
+            .w(px(42.))
+            .h(px(HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .font_family(CAPTION_FONT)
+            .text_sm()
+            .text_color(rgb(t.text_muted))
+            .cursor_pointer()
+            .hover(move |s| s.bg(rgb(t.danger_hover)).text_color(rgb(0xffffff)))
+            .window_control_area(area)
+            .child(SharedString::from("\u{E8BB}"))
+            .into_any_element();
+    }
     div()
         .id(SharedString::from(format!("wb-{}", area as u8)))
         .w(px(42.))
@@ -343,17 +349,9 @@ fn caption_button(
         .flex()
         .items_center()
         .justify_center()
-        .font_family(CAPTION_FONT)
-        .text_sm()
-        .text_color(rgb(t.text_muted))
         .cursor_pointer()
-        .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
+        .hover(|s| s.text_color(rgb(t.text)))
         .window_control_area(area)
-        .child(
-            div()
-                .text_color(rgb(t.text_muted))
-                // 最小/最大化并入 icon 动效（v55）：上抬 1px；关闭钮保持红底豁免
-                .when(area != WindowControlArea::Close, |d| d.hover(|s| s.mt(px(-1.))))
-                .child(SharedString::from(glyph)),
-        )
+        .child(crate::ui::icon_hover(icon_name, 13., t.text_muted))
+        .into_any_element()
 }

@@ -12,7 +12,7 @@ use crate::TextInput;
 use crate::i18n::tr;
 use crate::services::format::time_ago;
 use crate::theme;
-use crate::ui::{icon, icon_hover};
+use crate::ui::icon_hover;
 
 pub(crate) fn render_dialogs(
     mut root: Div,

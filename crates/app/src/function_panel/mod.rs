@@ -18,7 +18,7 @@ use crate::i18n::tr;
 use crate::services::workspace::{same_ws, same_ws_key};
 use crate::ListMode;
 use crate::SortMode;
-use crate::theme::{Theme, accent_tint, theme as T};
+use crate::theme::{Theme, theme as T};
 use crate::ui::{icon, icon_hover, spinner};
 
 /// Flattened psp row model (one virtual list over all rows).
@@ -237,7 +237,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(|s| s.opacity(0.7))
+                        .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_open.update(cx, |c, cx| c.pick_project_folder(cx));
                         })
@@ -254,7 +254,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(|s| s.opacity(0.7))
+                        .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_new.update(cx, |c, cx| c.new_session(cx));
                         })
@@ -270,7 +270,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(|s| s.opacity(0.7))
+                        .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_search.update(cx, |c, cx| c.open_session_search(cx));
                         })
@@ -287,7 +287,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .items_center()
                         .justify_center()
                         .cursor_pointer()
-                        .hover(|s| s.opacity(0.7))
+                        .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |ev: &gpui::MouseDownEvent, _, cx| {
                             cx.stop_propagation();
                             let _ = w_sort.update(cx, |c, cx| {
@@ -480,7 +480,7 @@ fn session_row_view(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     window: &gpui::Window,
-    cx: &gpui::Context<Chat>,
+    _cx: &gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let Some(g) = chat.projects.get(p) else {
         return div().into_any_element();

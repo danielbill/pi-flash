@@ -94,6 +94,9 @@ assets! {
     "icons/ring-50.svg",
     "icons/ring-75.svg",
     "icons/ring-100.svg",
+    "icons/minus.svg",
+    "icons/square.svg",
+    "icons/restore.svg",
 }
 
 

@@ -6,7 +6,7 @@ pub mod text_input;
 
 pub use text_input::TextInput;
 
-use gpui::{Animation, AnimationExt, SharedString, Styled, div, prelude::*, px};
+use gpui::{Animation, AnimationExt, SharedString, Styled, prelude::*};
 
 
 /// Embedded-SVG icon (`crates/app/assets/icons/{name}.svg`).
@@ -68,25 +68,25 @@ impl gpui::Element for HoverIcon {
         _id: Option<&gpui::GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut gpui::Window,
-        cx: &mut gpui::App,
+        _cx: &mut gpui::App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut style = gpui::Style::default();
         style.size = gpui::Size {
             width: gpui::px(self.size + 2.).into(),
             height: gpui::px(self.size + 2.).into(),
         };
-        let layout_id = window.request_layout(style, None, cx);
+        let layout_id = window.request_layout(style, None, _cx);
         (layout_id, layout_id)
     }
 
     fn prepaint(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
+        _id: Option<&gpui::GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: gpui::Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut gpui::Window,
-        cx: &mut gpui::App,
+        _cx: &mut gpui::App,
     ) -> Self::PrepaintState {
         let _ = request_layout;
         // hitbox 必须在 prepaint 建（insert_hitbox debug_assert_prepaint）；

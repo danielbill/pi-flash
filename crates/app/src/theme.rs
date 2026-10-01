@@ -72,11 +72,6 @@ pub fn danger_alpha(t: &Theme, a: u32) -> u32 {
     (t.danger_hover << 8) | (a & 0xff)
 }
 
-/// accent at 10% alpha over a light surface (psp 选中 soft-tint).
-pub fn accent_tint(t: &Theme) -> u32 {
-    (t.accent << 8) | 0x1a
-}
-
 /// danger at ~12% alpha (menu hover / confirm row wash).
 pub fn danger_wash(t: &Theme) -> u32 {
     (t.danger_hover << 8) | 0x1f
