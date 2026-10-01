@@ -143,7 +143,8 @@ impl Command {
 
 /// Assistant content block kinds carried by `message.content` arrays.
 ///
-/// Mirrors the wire blocks pi emits (json.md): `text`, `thinking`, `toolcall`.
+/// Mirrors the wire blocks pi emits (json.md): `text`, `thinking`, `toolcall`,
+/// `image` (v56: tool results and user messages may carry images).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Text { content_index: usize, text: String },
@@ -155,7 +156,25 @@ pub enum Block {
         args: String,
         /// Output text delivered by a following role="toolResult" message.
         result: String,
+        /// ToolResultMessage.isError — set when the result message merges in.
+        is_error: bool,
+        /// Images delivered by the toolResult message content.
+        images: Vec<ImageData>,
     },
+    /// ImageContent { type:"image", data: b64, mimeType } — user message
+    /// attachments; tool-result images merge into the paired ToolCall.
+    Image {
+        content_index: usize,
+        mime: String,
+        data: String,
+    },
+}
+
+/// Decoded image payload (`ImageContent` on the wire): b64 `data` + mime.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageData {
+    pub mime: String,
+    pub data: String,
 }
 
 impl Block {
@@ -163,7 +182,8 @@ impl Block {
         match self {
             Block::Text { content_index, .. }
             | Block::Thinking { content_index, .. }
-            | Block::ToolCall { content_index, .. } => *content_index,
+            | Block::ToolCall { content_index, .. }
+            | Block::Image { content_index, .. } => *content_index,
         }
     }
 }
@@ -182,6 +202,11 @@ pub fn content_blocks(content: &Value) -> Vec<Block> {
                     Some("thinking") => Block::Thinking {
                         content_index: idx,
                         text: b["thinking"].as_str().unwrap_or("").to_string(),
+                    },
+                    Some("image") => Block::Image {
+                        content_index: idx,
+                        mime: b["mimeType"].as_str().unwrap_or("image/png").to_string(),
+                        data: b["data"].as_str().unwrap_or("").to_string(),
                     },
                     Some("toolCall") | Some("toolcall") => {
                         let args = b["partialJson"]
@@ -205,6 +230,8 @@ pub fn content_blocks(content: &Value) -> Vec<Block> {
                                 .to_string(),
                             args,
                             result: String::new(),
+                            is_error: false,
+                            images: Vec::new(),
                         }
                     }
                     _ => Block::Text {
@@ -410,7 +437,15 @@ pub enum Event {
         error: Option<String>,
         data: Option<Value>,
     },
-    MessageStart { role: String, blocks: Vec<Block>, timestamp: Option<i64> },
+    MessageStart {
+        role: String,
+        blocks: Vec<Block>,
+        timestamp: Option<i64>,
+        /// ToolResultMessage.isError (false for other roles)
+        is_error: bool,
+        /// ToolResultMessage.toolCallId — correlates the result with its call
+        tool_call_id: Option<String>,
+    },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
     MessageEnd {
@@ -423,6 +458,10 @@ pub enum Event {
         stop_reason: Option<String>,
         /// AssistantMessage.errorMessage — set when stopReason == "error".
         error_message: Option<String>,
+        /// ToolResultMessage.isError (false for other roles)
+        is_error: bool,
+        /// ToolResultMessage.toolCallId
+        tool_call_id: Option<String>,
     },
     AgentStart,
     AgentEnd { will_retry: bool },
@@ -632,6 +671,8 @@ pub fn parse_record(v: &Value) -> Event {
             role: v["message"]["role"].as_str().unwrap_or("").to_string(),
             blocks: content_blocks(&v["message"]["content"]),
             timestamp: v["message"]["timestamp"].as_i64(),
+            is_error: v["message"]["isError"].as_bool().unwrap_or(false),
+            tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
         },
         Some("message_update") => {
             Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
@@ -643,6 +684,8 @@ pub fn parse_record(v: &Value) -> Event {
             timestamp: v["message"]["timestamp"].as_i64(),
             stop_reason: v["message"]["stopReason"].as_str().map(str::to_string),
             error_message: v["message"]["errorMessage"].as_str().map(str::to_string),
+            is_error: v["message"]["isError"].as_bool().unwrap_or(false),
+            tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
@@ -826,6 +869,36 @@ mod tests {
             Event::MessageEnd { stop_reason, error_message, .. } => {
                 assert_eq!(stop_reason.as_deref(), Some("stop"));
                 assert!(error_message.is_none());
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn image_blocks_parse_with_mime_and_data() {
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"look","index":0},{"type":"image","data":"QUJD","mimeType":"image/png","index":1}]}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { blocks, .. } => {
+                assert_eq!(blocks.len(), 2);
+                assert!(matches!(&blocks[1], Block::Image { mime, data, .. } if mime == "image/png" && data == "QUJD"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_message_carries_is_error_and_tool_call_id() {
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"toolResult","toolCallId":"tc_1","toolName":"bash","content":[{"type":"text","text":"nope","index":0}],"isError":true,"timestamp":1790206311858}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { is_error, tool_call_id, .. } => {
+                assert!(is_error);
+                assert_eq!(tool_call_id.as_deref(), Some("tc_1"));
             }
             other => panic!("wrong event: {other:?}"),
         }

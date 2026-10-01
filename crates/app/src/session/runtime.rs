@@ -22,7 +22,7 @@ use pi_link::protocol::{
 };
 
 use crate::agent_session::AgentSession;
-use crate::session::messages::{Msg, Role, UsageLine, msgs_from_tail};
+use crate::session::messages::{Msg, Role, UsageLine, merge_tool_result, msgs_from_tail, result_payload};
 use pi_link::sessions::read_leaf_messages;
 
 /// no cap for the disk-side leaf-chain rebuild: the repair must be longer
@@ -416,13 +416,9 @@ impl SessionRuntime {
                         self.messages.clear();
                         self.pending_echo = None;
                         for msg in &rpc_msgs {
-                            let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
-                            let ts = msg["timestamp"].as_i64();
-                            let stop = msg["stopReason"].as_str().map(str::to_string);
-                            let err = msg["errorMessage"].as_str().map(str::to_string);
-                            self.ingest_message(role, blocks, usage, ts, None, stop, err, cx);
+                            self.ingest_message(msg, blocks, usage, None, cx);
                         }
                         // map user messages to active-path entry ids (fork anchors)
                         let mut ids = self.active_user_entry_ids.iter();
@@ -451,7 +447,7 @@ impl SessionRuntime {
                     }
                 }
             }
-            Event::MessageStart { role, blocks, timestamp } => {
+            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id } => {
                 match role.as_str() {
                     "user" => {
                         // upgrade the optimistic send bubble in place instead
@@ -504,27 +500,9 @@ impl SessionRuntime {
                         });
                     }
                     "toolResult" => {
-                        let text: String = blocks
-                            .iter()
-                            .map(|b| match b {
-                                Block::Text { text, .. } => text.as_str(),
-                                _ => "",
-                            })
-                            .collect::<Vec<_>>()
-                            .join("")
-                            .trim_end()
-                            .to_string();
+                        let (text, images) = result_payload(&blocks);
                         if let Some(m) = self.messages.last_mut() {
-                            if m.role == Role::Assistant {
-                                if let Some(Block::ToolCall { result, .. }) = m
-                                    .blocks
-                                    .iter_mut()
-                                    .rev()
-                                    .find(|b| matches!(b, Block::ToolCall { .. }))
-                                {
-                                    result.push_str(&text);
-                                }
-                            }
+                            merge_tool_result(m, tool_call_id.as_deref(), is_error, &text, images);
                         }
                     }
                     _ => {}
@@ -585,6 +563,8 @@ impl SessionRuntime {
                             name: tool_name,
                             args: String::new(),
                             result: String::new(),
+                            is_error: false,
+                            images: Vec::new(),
                         },
                     );
                 }
@@ -597,6 +577,8 @@ impl SessionRuntime {
                             name: String::new(),
                             args: String::new(),
                             result: String::new(),
+                            is_error: false,
+                            images: Vec::new(),
                         },
                     ) {
                         args.push_str(&delta);
@@ -623,6 +605,8 @@ impl SessionRuntime {
                             name: name_c.clone(),
                             args: args_c.clone(),
                             result: String::new(),
+                            is_error: false,
+                            images: Vec::new(),
                         },
                     ) {
                         *name = name_c;
@@ -632,7 +616,7 @@ impl SessionRuntime {
                 AssistantEvent::Other(_) => {}
                 }
             }
-            Event::MessageEnd { role, blocks, usage, timestamp, stop_reason, error_message } => {
+            Event::MessageEnd { role, blocks, usage, timestamp, stop_reason, error_message, .. } => {
                 if role == "assistant" {
                     if let Some(m) = self.messages.last_mut() {
                         if m.role == Role::Assistant {
@@ -814,17 +798,19 @@ impl SessionRuntime {
         .detach();
     }
 
+    /// Convert one wire message (get_messages snapshot shape) into render
+    /// state. Mirrors msgs_from_tail semantics exactly: user/assistant push,
+    /// toolResult merges into the paired tool call, other roles skipped.
     fn ingest_message(
         &mut self,
-        role: &str,
+        msg: &serde_json::Value,
         blocks: Vec<Block>,
         usage: Option<Usage>,
-        ts: Option<i64>,
         entry_id: Option<String>,
-        stop_reason: Option<String>,
-        error_message: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        let role = msg["role"].as_str().unwrap_or("");
+        let ts = msg["timestamp"].as_i64();
         match role {
             "user" => {
                 self.messages.push(Msg {
@@ -852,32 +838,16 @@ impl SessionRuntime {
                     entry_id: None,
                     ts,
                     end_ts: None,
-                    stop_reason,
-                    error_message,
+                    stop_reason: msg["stopReason"].as_str().map(str::to_string),
+                    error_message: msg["errorMessage"].as_str().map(str::to_string),
                 });
             }
             "toolResult" => {
-                let text: String = blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Text { text, .. } => text.as_str(),
-                        _ => "",
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim_end()
-                    .to_string();
+                let (text, images) = result_payload(&blocks);
+                let is_error = msg["isError"].as_bool().unwrap_or(false);
+                let tcid = msg["toolCallId"].as_str();
                 if let Some(m) = self.messages.last_mut() {
-                    if m.role == Role::Assistant {
-                        if let Some(Block::ToolCall { result, .. }) = m
-                            .blocks
-                            .iter_mut()
-                            .rev()
-                            .find(|b| matches!(b, Block::ToolCall { .. }))
-                        {
-                            result.push_str(&text);
-                        }
-                    }
+                    merge_tool_result(m, tcid, is_error, &text, images);
                 }
             }
             _ => {}

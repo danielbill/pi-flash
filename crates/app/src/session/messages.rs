@@ -59,6 +59,54 @@ pub(crate) struct MsgMeta {
     pub(crate) turn_user_ts: Option<i64>,
 }
 
+/// Decoded image payload from a toolResult content array (v56-0 c3).
+pub(crate) fn result_payload(blocks: &[Block]) -> (String, Vec<pi_link::protocol::ImageData>) {
+    use pi_link::protocol::ImageData;
+    let mut text = String::new();
+    let mut images = Vec::new();
+    for b in blocks {
+        match b {
+            Block::Text { text: t, .. } => text.push_str(t),
+            Block::Image { mime, data, .. } => images.push(ImageData {
+                mime: mime.clone(),
+                data: data.clone(),
+            }),
+            _ => {}
+        }
+    }
+    (text.trim_end().to_string(), images)
+}
+
+/// Merge a toolResult payload into the paired ToolCall of `msg` (must be the
+/// last assistant message). Correlates by toolCallId; blind-fallback to the
+/// last call keeps old snapshots without ids working.
+pub(crate) fn merge_tool_result(
+    msg: &mut Msg,
+    tool_call_id: Option<&str>,
+    is_error: bool,
+    text: &str,
+    images: Vec<pi_link::protocol::ImageData>,
+) {
+    if msg.role != Role::Assistant {
+        return;
+    }
+    // two-pass by index: rposition's immutable borrow ends before get_mut
+    let ix = msg
+        .blocks
+        .iter()
+        .rposition(|b| matches!(b, Block::ToolCall { id, .. } if tool_call_id == Some(id.as_str())))
+        .or_else(|| msg.blocks.iter().rposition(|b| matches!(b, Block::ToolCall { .. })));
+    if let Some(ix) = ix {
+        if let Some(Block::ToolCall { result, is_error: err, images: imgs, .. }) =
+            msg.blocks.get_mut(ix)
+        {
+            result.push_str(text);
+            *err = is_error;
+            imgs.extend(images);
+        }
+    }
+}
+
 impl Msg {
     pub(crate) fn plain_text(&self) -> String {
         self.blocks
@@ -647,27 +695,11 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 error_message: m["errorMessage"].as_str().map(str::to_string),
             }),
             "toolResult" => {
-                let text: String = blocks
-                    .iter()
-                    .map(|b| match b {
-                        Block::Text { text, .. } => text.as_str(),
-                        _ => "",
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim_end()
-                    .to_string();
+                let (text, images) = result_payload(&blocks);
+                let is_error = m["isError"].as_bool().unwrap_or(false);
+                let tcid = m["toolCallId"].as_str();
                 if let Some(last) = out.last_mut() {
-                    if last.role == Role::Assistant {
-                        if let Some(Block::ToolCall { result, .. }) = last
-                            .blocks
-                            .iter_mut()
-                            .rev()
-                            .find(|b| matches!(b, Block::ToolCall { .. }))
-                        {
-                            result.push_str(&text);
-                        }
-                    }
+                    merge_tool_result(last, tcid, is_error, &text, images);
                 }
             }
             _ => {}
