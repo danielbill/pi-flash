@@ -208,6 +208,22 @@ pub(crate) fn psp_view(
                         this.psp_sb_state.set_parent_hovered(*hovered);
                         cx.notify();
                     }))
+                    // 滚动时立刻关掉全部浮层（详情卡/⋯菜单/项目tooltip/删除
+                    // 确认）——它们锚定的是行位置，滚动后锚点漂移，钉在原地
+                    // 只会错位（用户定稿：滚动 = 菜单立即消失）
+                    .on_scroll_wheel(cx.listener(|this, _: &gpui::ScrollWheelEvent, _w, cx| {
+                        if this.hover_card.is_some()
+                            || this.psp_menu.is_some()
+                            || this.proj_tip.is_some()
+                            || this.confirm_prj_del.is_some()
+                        {
+                            this.hover_card = None;
+                            this.psp_menu = None;
+                            this.proj_tip = None;
+                            this.confirm_prj_del = None;
+                            cx.notify();
+                        }
+                    }))
                     // 水平留白由 col 外层统一（10px），此处不再叠加
                     .flex()
                     .flex_col()
@@ -220,7 +236,7 @@ pub(crate) fn psp_view(
                     .absolute()
                     .top(px(0.))
                     .bottom(px(0.))
-                    .right(px(-6.))
+                    .right(px(-10.))
                     .w(px(12.))
                     .child(crate::ui::psp_scrollbar::psp_scrollbar(
                         &chat.psp_sb_state,
