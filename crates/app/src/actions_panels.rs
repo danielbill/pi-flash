@@ -292,6 +292,7 @@ impl Chat {
                         cwd,
                         Some(path.clone()),
                     );
+                    r.disk_msg_count = pi_link::sessions::count_message_entries(&path) as usize;
                     r.messages = tail;
                     r.list.reset(r.messages.len());
                     r

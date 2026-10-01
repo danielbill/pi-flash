@@ -451,6 +451,69 @@ pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value
     messages
 }
 
+/// Byte-level probe: occurrences of the compact `"type":"message"` marker.
+/// Message *text* can contain the literal (false positives), so this is only
+/// a cheap upper bound for the leaf-chain integrity check — a false positive
+/// costs one full `read_leaf_messages` pass, never correctness.
+pub fn count_message_entries(path: &Path) -> u64 {
+    let Ok(data) = std::fs::read(path) else { return 0 };
+    const NEEDLE: &[u8] = b"\"type\":\"message\"";
+    data.windows(NEEDLE.len()).filter(|&w| w == NEEDLE).count() as u64
+}
+
+/// Full leaf-chain read anchored at the LAST `type=message` entry.
+///
+/// pi's own restore (`session-manager _buildIndex`) anchors the leaf at the
+/// last entry of ANY type — a mis-parented non-message entry (real case:
+/// `plan-mode-state` written with a stale parentId) strands whole turns off
+/// the default chain, and `get_messages` then returns a truncated
+/// conversation. Anchoring at the last MESSAGE entry and backtracking
+/// parentId repairs the display side. Returns chain messages oldest→newest
+/// (file order = chain order: entries always append below their parent),
+/// up to `max`.
+pub fn read_leaf_messages(path: &Path, max: usize) -> Vec<Value> {
+    use std::io::BufRead;
+    let Ok(file) = std::fs::File::open(path) else { return Vec::new() };
+    let mut parent_of: HashMap<String, String> = HashMap::new();
+    let mut messages: Vec<Value> = Vec::new();
+    let mut anchor: Option<String> = None;
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { break };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if v["type"].as_str() == Some("session") {
+            continue;
+        }
+        if let Some(id) = v["id"].as_str() {
+            parent_of.insert(
+                id.to_string(),
+                v["parentId"].as_str().unwrap_or("").to_string(),
+            );
+            if v["type"].as_str() == Some("message") {
+                anchor = Some(id.to_string());
+                messages.push(v);
+            }
+        }
+    }
+    let Some(anchor) = anchor else { return Vec::new() };
+    let mut on_chain: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cur = Some(anchor);
+    while let Some(id) = cur {
+        if !on_chain.insert(id.clone()) {
+            break; // cycle guard
+        }
+        cur = parent_of.get(&id).filter(|p| !p.is_empty()).cloned();
+    }
+    messages.retain(|v| {
+        v["id"]
+            .as_str()
+            .is_some_and(|id| on_chain.contains(id))
+    });
+    if messages.len() > max {
+        messages.drain(..messages.len() - max);
+    }
+    messages
+}
+
 // ---------------------------------------------------------------------------
 // global convenience (process-wide persisted scanner)
 // ---------------------------------------------------------------------------
@@ -949,5 +1012,53 @@ mod name_tests {
         let e = scan_file(&p, meta.modified().unwrap(), meta.len()).expect("session parsed");
         eprintln!("parsed name={:?} preview={} count={}", e.name, e.preview, e.message_count);
         assert!(e.name.is_some(), "session_info name must be parsed");
+    }
+}
+
+#[cfg(test)]
+mod leaf_chain_tests {
+    use super::*;
+
+    /// Synthetic session: linear messages, then a mis-parented custom entry
+    /// (plan-mode-state shape) that pi's own restore anchors the leaf at —
+    /// stranding the final turn. read_leaf_messages must anchor at the last
+    /// MESSAGE instead and recover the stranded turn.
+    #[test]
+    fn leaf_anchored_at_last_message_recovers_stranded_turn() {
+        let dir = std::env::temp_dir().join("pi-flash-leaf-chain-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("leaf-chain.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session","version":3,"id":"hdr","cwd":"/w"}"#, "\n",
+                r#"{"type":"message","id":"m1","parentId":"hdr","timestamp":1,"message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#, "\n",
+                r#"{"type":"message","id":"m2","parentId":"m1","timestamp":2,"message":{"role":"assistant","content":[{"type":"text","text":"first"}]}}"#, "\n",
+                r#"{"type":"message","id":"m3","parentId":"m2","timestamp":3,"message":{"role":"user","content":[{"type":"text","text":"again"}]}}"#, "\n",
+                // mis-parented: pi's default leaf lands here (parent = m2, not m3)
+                r#"{"type":"custom","customType":"plan-mode-state","id":"c1","parentId":"m2","timestamp":4,"data":{"enabled":false}}"#, "\n",
+                // stranded turn
+                r#"{"type":"message","id":"m4","parentId":"m3","timestamp":5,"message":{"role":"assistant","content":[{"type":"text","text":"stranded tail"}]}}"#, "\n",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(count_message_entries(&path), 4);
+        let msgs = read_leaf_messages(&path, 100);
+        let texts: Vec<String> = msgs
+            .iter()
+            .map(|v| v["message"]["content"][0]["text"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert_eq!(texts, vec!["hi", "first", "again", "stranded tail"]);
+
+        // max trims from the head, keeps the newest
+        let trimmed = read_leaf_messages(&path, 2);
+        let texts: Vec<String> = trimmed
+            .iter()
+            .map(|v| v["message"]["content"][0]["text"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert_eq!(texts, vec!["again", "stranded tail"]);
+
+        std::fs::remove_file(&path).ok();
     }
 }

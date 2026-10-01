@@ -67,6 +67,8 @@ impl Chat {
         };
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
+            // leaf-chain integrity probe for the get_messages guard
+            r.disk_msg_count = pi_link::sessions::count_message_entries(&path) as usize;
             r.messages = tail;
             r.list.reset(r.messages.len());
             r.status = "resuming".into();

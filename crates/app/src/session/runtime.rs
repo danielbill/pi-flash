@@ -22,7 +22,12 @@ use pi_link::protocol::{
 };
 
 use crate::agent_session::AgentSession;
-use crate::session::messages::{Msg, Role, UsageLine};
+use crate::session::messages::{Msg, Role, UsageLine, msgs_from_tail};
+use pi_link::sessions::read_leaf_messages;
+
+/// cap for the disk-side leaf-chain rebuild (render is full-div; a bound
+/// keeps very long histories smooth — matches the disk-direct window scale)
+const LEAF_REPAIR_MAX: usize = 400;
 use crate::i18n::tr;
 use crate::services::format::status_line;
 
@@ -44,6 +49,10 @@ pub(crate) struct SessionRuntime {
     pub cwd: PathBuf,
     /// None until pi persists the draft (first prompt)
     pub file: Option<PathBuf>,
+    /// disk-side message count at open time — get_messages shorter than
+    /// this means pi's restored leaf chain is truncated (mis-parented
+    /// non-message entry) and the display rebuilds from the file instead
+    pub disk_msg_count: usize,
     /// pi process ownership (None while recycled/lazy)
     pub agent: AgentSession,
 
@@ -99,6 +108,7 @@ impl SessionRuntime {
             key,
             cwd,
             file,
+            disk_msg_count: 0,
             agent: AgentSession::new(1),
             messages: Vec::new(),
             list,
@@ -331,6 +341,8 @@ impl SessionRuntime {
                         // pi rebound this process to the branched session.
                         self.branch_tree = None;
                         self.messages.clear();
+                        // fresh branched file: RPC snapshot is authoritative
+                        self.disk_msg_count = 0;
                         self.notify_list(cx);
                         if let Some(s) = self.agent.session.as_ref() {
                             let _ = s.send(&Command::GetState);
@@ -355,12 +367,45 @@ impl SessionRuntime {
                     );
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
+                        let rpc_msgs = data["messages"].as_array().cloned().unwrap_or_default();
+                        // leaf-chain repair: pi anchors its restored leaf at the
+                        // last entry of ANY type; a mis-parented custom entry
+                        // (plan-mode-state 实测) strands whole turns off the
+                        // chain and get_messages comes back short. Rebuild from
+                        // the file anchored at the last message entry instead.
+                        let mut repaired = false;
+                        if rpc_msgs.len() < self.disk_msg_count {
+                            if let Some(path) = &self.file {
+                                let msgs =
+                                    msgs_from_tail(read_leaf_messages(path, LEAF_REPAIR_MAX));
+                                if msgs.len() > rpc_msgs.len() {
+                                    self.messages = msgs;
+                                    self.pending_echo = None;
+                                    // entry-id mapping stays the RPC/GetTree view
+                                    // (fork anchors best-effort on repaired chains)
+                                    let mut ids = self.active_user_entry_ids.iter();
+                                    for m in self.messages.iter_mut() {
+                                        if m.role == Role::User {
+                                            m.entry_id = ids.next().cloned();
+                                        }
+                                    }
+                                    self.apply_pending_locate(cx);
+                                    self.notify_list(cx);
+                                    self.status =
+                                        "resumed (leaf chain repaired from disk)".into();
+                                    repaired = true;
+                                }
+                            }
+                        }
+                        if repaired {
+                            return;
+                        }
                         // authoritative projection: replace any disk-direct /
                         // cached pre-render instead of appending (fixes
                         // doubled rows after the tail pre-render)
                         self.messages.clear();
                         self.pending_echo = None;
-                        for msg in data["messages"].as_array().into_iter().flatten() {
+                        for msg in &rpc_msgs {
                             let role = msg["role"].as_str().unwrap_or("");
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);

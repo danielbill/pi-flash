@@ -545,6 +545,7 @@ impl Chat {
             );
             if let Some(path) = &last_open {
                 r.messages = msgs_from_tail(read_tail_messages(path, 256 * 1024, 100));
+                r.disk_msg_count = pi_link::sessions::count_message_entries(path) as usize;
                 r.list.reset(r.messages.len());
                 r.status = "resuming".into();
             }
