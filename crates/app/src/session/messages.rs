@@ -564,6 +564,10 @@ fn render_tool_card(
                 .child(SharedString::from(tool_args_display(args, args_partial))),
         );
     }
+    // 结果图片（c11）：始终显示，与折叠无关（pi-web ResultImages）
+    if !images.is_empty() {
+        card = card.child(result_images(images, is_error, t));
+    }
     // 展开体（pi-web 决策树）：patchFiles > resultDiff(SplitPatch) >
     // PairedResult；patch 视图存在且失败时结果文本仍然显示
     if expanded {
@@ -635,6 +639,70 @@ fn paired_result(
         .when(!empty && !is_error, |d| d.text_color(rgb(t.text_muted)))
         .child(SharedString::from(text))
         .into_any_element()
+}
+
+/// pi-web ResultImages parity（v56-2 c11）：flex wrap、图片
+/// maxWidth 720/maxHeight 520、圆角 6、1px 边框；10MB 上限、
+/// png/jpeg/webp/gif/bmp 白名单（pi-web 另含 avif，gpui 无解码器跳过）。
+fn result_images(
+    images: &[pi_link::protocol::ImageData],
+    is_error: bool,
+    t: &theme::Theme,
+) -> gpui::AnyElement {
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+    let mut wrap = div()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.))
+        .p(px(10.))
+        .bg(rgb(t.bg))
+        .border_t_1()
+        .border_color(gpui::rgba(if is_error {
+            rgba_a(0xf87171, 0.3)
+        } else {
+            rgba_a(0x22c55e, 0.15)
+        }));
+    for data in images {
+        let Some(format) = mime_to_image_format(&data.mime) else {
+            continue;
+        };
+        let Ok(bytes) = decode_image_data(&data.data) else {
+            continue;
+        };
+        if bytes.len() > MAX_IMAGE_BYTES {
+            continue;
+        }
+        wrap = wrap.child(
+            gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
+                .max_w(px(720.))
+                .max_h(px(520.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(rgb(t.border)),
+        );
+    }
+    wrap.into_any_element()
+}
+
+fn mime_to_image_format(mime: &str) -> Option<gpui::ImageFormat> {
+    match mime {
+        "image/png" => Some(gpui::ImageFormat::Png),
+        "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
+        "image/gif" => Some(gpui::ImageFormat::Gif),
+        "image/bmp" => Some(gpui::ImageFormat::Bmp),
+        "image/webp" => Some(gpui::ImageFormat::Webp),
+        "image/svg+xml" => Some(gpui::ImageFormat::Svg),
+        _ => None,
+    }
+}
+
+fn decode_image_data(data: &str) -> Result<Vec<u8>, ()> {
+    use base64::Engine as _;
+    let trimmed = data.trim();
+    base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(trimmed))
+        .map_err(|_| ())
 }
 
 /// pi-web SplitFilesView：双栏 split diff，maxHeight 560 滚动；多文件时
