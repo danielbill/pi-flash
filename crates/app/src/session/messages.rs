@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{MouseButton, SharedString, div, prelude::*, px, relative, rgb};
+use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 use pi_link::protocol::{content_blocks, Block, Usage};
 
 use crate::Chat;
@@ -98,6 +98,8 @@ pub(crate) fn merge_tool_result(
     is_error: bool,
     text: &str,
     images: Vec<pi_link::protocol::ImageData>,
+    details: Option<serde_json::Value>,
+    result_ts: Option<i64>,
 ) {
     if msg.role != Role::Assistant {
         return;
@@ -108,13 +110,20 @@ pub(crate) fn merge_tool_result(
         .iter()
         .rposition(|b| matches!(b, Block::ToolCall { id, .. } if tool_call_id == Some(id.as_str())))
         .or_else(|| msg.blocks.iter().rposition(|b| matches!(b, Block::ToolCall { .. })));
+    // pi-web {n}s duration = result arrival − message start (rounded s)
+    let duration_s = match (result_ts, msg.ts) {
+        (Some(r), Some(start)) => Some(((r - start).max(0)) / 1000),
+        _ => None,
+    };
     if let Some(ix) = ix {
-        if let Some(Block::ToolCall { result, is_error: err, images: imgs, .. }) =
+        if let Some(Block::ToolCall { result, is_error: err, images: imgs, duration_s: dur, details: det, .. }) =
             msg.blocks.get_mut(ix)
         {
             result.push_str(text);
             *err = is_error;
             imgs.extend(images);
+            *det = details;
+            *dur = duration_s;
         }
     }
 }
@@ -254,34 +263,34 @@ pub(crate) fn render_block(
             }
             block
         }
-        Block::ToolCall { name, args, .. } => {
-            // v56-1: 工具调用收进「工作详情」组，组内逐条一行
-            // （v56-2 c9 升级为 pi-web ToolCallBlock 卡片）
-            div()
-                .w_full()
-                .flex()
-                .items_baseline()
-                .gap(px(4.))
-                .py(px(3.))
-                .text_size(px(12.))
-                .child(
-                    div()
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(crate::i18n::tf(
-                            "{tool} ·",
-                            &[("tool", name.to_string())],
-                        ))),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_shrink()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_color(rgb(t.text_faint))
-                        .child(SharedString::from(tool_target(args))),
-                )
+        Block::ToolCall {
+            content_index,
+            name,
+            args,
+            result,
+            is_error,
+            duration_s,
+            args_partial,
+            result_arrived,
+            ..
+        } => {
+            // v56-2 c8/c9: pi-web ToolCallBlock parity —— 状态色卡片 +
+            // 参数摘要 + 耗时 + 旋转箭头 + 展开体（参数 pre / 结果 pre）；
+            // diff（c10）与图片（c11）见后续提交。收进「工作详情」组内。
+            render_tool_card(
+                msg_ix,
+                *content_index,
+                name,
+                args,
+                result,
+                *is_error,
+                *duration_s,
+                *args_partial,
+                *result_arrived,
+                weak,
+                collapsed,
+                t,
+            )
         }
         _ => div().w_full(),
     }
@@ -301,6 +310,261 @@ fn tool_target(args: &str) -> String {
         }
     }
     pretty_args(args).chars().take(40).collect()
+}
+
+fn rgba_a(rgb24: u32, alpha: f32) -> u32 {
+    let a = (alpha * 255.0).round().clamp(0.0, 255.0) as u32;
+    ((rgb24 & 0xffffff) | (a << 24)) as u32
+}
+
+/// pi-web getToolPreview：command/path/file_path/pattern/query 键序取值
+/// 截 120 字符，都没有取首个键的值。
+fn tool_preview(args: &str) -> String {
+    const KEYS: &[&str] = &["command", "path", "file_path", "pattern", "query"];
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(args) else {
+        return String::new();
+    };
+    let Some(obj) = v.as_object() else { return String::new() };
+    if obj.is_empty() {
+        return String::new();
+    }
+    let value_of = |k: &str| -> Option<String> {
+        obj.get(k).map(|x| match x {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+    };
+    let raw = KEYS.iter().find_map(|k| value_of(k)).or_else(|| {
+        obj.iter().next().and_then(|(_, v)| match v {
+            serde_json::Value::String(s) => Some(s.clone()),
+            other => Some(other.to_string()),
+        })
+    });
+    raw.map(|r| r.chars().take(120).collect()).unwrap_or_default()
+}
+
+/// pi-web summarizeApplyPatchInput：apply_patch 目标文件路径 join 截 120。
+fn summarize_apply_patch(args: &str) -> String {
+    let text = serde_json::from_str::<serde_json::Value>(args)
+        .ok()
+        .and_then(|v| v.get("input").and_then(|x| x.as_str()).map(str::to_string))
+        .unwrap_or_else(|| args.to_string());
+    let paths = crate::session::diff::extract_apply_patch_paths(&text);
+    let joined = paths.join(", ");
+    joined.chars().take(120).collect()
+}
+
+/// 参数展开体文本：流式原始串；完整参数 pretty JSON（pi-web
+/// JSON.stringify(input, null, 2) parity）。
+fn tool_args_display(args: &str, partial: bool) -> String {
+    if partial {
+        return args.to_string();
+    }
+    serde_json::from_str::<serde_json::Value>(args)
+        .map(|v| serde_json::to_string_pretty(&v).unwrap_or_else(|_| args.to_string()))
+        .unwrap_or_else(|_| args.to_string())
+}
+
+/// 结果空文案判定：空串或 pi 的 "(no output)"。
+fn result_is_empty(result: &str) -> bool {
+    let r = result.trim();
+    r.is_empty() || r == "(no output)"
+}
+
+/// 「工作详情」组内的 pi-web ToolCallBlock 卡片（v56-2 c8/c9）。
+#[allow(clippy::too_many_arguments)]
+fn render_tool_card(
+    msg_ix: usize,
+    content_index: usize,
+    name: &str,
+    args: &str,
+    result: &str,
+    is_error: bool,
+    duration_s: Option<i64>,
+    args_partial: bool,
+    result_arrived: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashMap<(usize, usize), bool>,
+    t: &theme::Theme,
+) -> gpui::Div {
+    let key = (msg_ix, content_index);
+    // pi-web isToolCallExpanded：模块级记忆，默认全部折叠
+    let expanded = collapsed.get(&key).copied().unwrap_or(false);
+    let is_patch = crate::session::diff::is_apply_patch_tool_name(name);
+    let is_edit = crate::session::diff::is_edit_tool_name(name);
+
+    // 状态色（pi-web 成功绿/失败红 边框+底色+工具名）
+    let (border_c, bg_c, name_c, top_c) = if is_error {
+        (
+            rgba_a(0xf87171, 0.45),
+            rgba_a(0xf87171, 0.05),
+            0xf87171,
+            rgba_a(0xf87171, 0.25),
+        )
+    } else {
+        (
+            rgba_a(0x22c55e, 0.25),
+            rgba_a(0x22c55e, 0.04),
+            0x16a34a,
+            rgba_a(0x22c55e, 0.2),
+        )
+    };
+
+    // 标题行：工具名 + 参数摘要（apply_patch 用路径摘要）+ 耗时 + 箭头
+    let preview = if args_partial && result.is_empty() && !result_arrived {
+        tr("正在生成参数...").to_string()
+    } else if is_patch {
+        let s = summarize_apply_patch(args);
+        if s.is_empty() {
+            tool_preview(args)
+        } else {
+            s
+        }
+    } else {
+        tool_preview(args)
+    };
+
+    let weak_toggle = weak.clone();
+    let mut head = div()
+        .id(SharedString::from(format!("tc-{msg_ix}-{content_index}")))
+        .flex()
+        .items_center()
+        .gap(px(7.))
+        .px(px(10.))
+        .py(px(6.))
+        .min_w_0()
+        .flex_1()
+        .text_size(px(12.))
+        .text_color(rgb(t.text_muted))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = weak_toggle.update(cx, |c, cx| {
+                let rt = c.rt();
+                rt.update(cx, |r, _| {
+                    let next = !r.collapsed.get(&key).copied().unwrap_or(false);
+                    r.collapsed.insert(key, next);
+                });
+                cx.notify();
+            });
+        })
+        .child(
+            div()
+                .flex_shrink_0()
+                .font_family("Consolas")
+                .text_size(px(11.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(name_c))
+                .child(SharedString::from(name.to_string())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .font_family("Consolas")
+                .text_size(px(11.))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(preview)),
+        );
+    if let Some(d) = duration_s {
+        head = head.child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(11.))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(format!("{d}s"))),
+        );
+    }
+    // 箭头：pi-web 收起=下、展开=上（150ms 旋转过渡）
+    head = head.child(if expanded {
+        gpui::svg()
+            .path(SharedString::from("icons/chevron-down.svg"))
+            .text_color(rgb(t.text_dim))
+            .size(px(10.))
+            .flex_shrink_0()
+            .with_animation(
+                SharedString::from(format!("tchev-{msg_ix}-{content_index}")),
+                Animation::new(std::time::Duration::from_millis(150)),
+                |el, delta| {
+                    el.with_transformation(gpui::Transformation::rotate(
+                        gpui::radians(delta * std::f32::consts::PI),
+                    ))
+                },
+            )
+            .into_any_element()
+    } else {
+        icon("chevron-down", 10., t.text_dim)
+    });
+
+    let mut card = div()
+        .w_full()
+        .rounded(px(7.))
+        .overflow_hidden()
+        .text_size(px(12.))
+        .border_1()
+        .border_color(gpui::rgba(border_c))
+        .bg(gpui::rgba(bg_c))
+        .child(head);
+
+    // 展开体：参数 pre（编辑类工具且参数完整时让位给 diff 视图——c10）
+    if expanded && (args_partial || !is_edit) && !is_patch {
+        card = card.child(
+            div()
+                .border_t_1()
+                .border_color(gpui::rgba(top_c))
+                .bg(rgb(t.bg_subtle))
+                .px(px(10.))
+                .py(px(8.))
+                .font_family("Consolas")
+                .text_size(px(12.))
+                .line_height(relative(1.5))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(tool_args_display(args, args_partial))),
+        );
+    }
+    // 展开体：结果 pre（PairedResult parity：maxHeight 400、空结果斜体、
+    // 错误红字；结果未到不显示）
+    if expanded && result_arrived && (is_error || !result_is_empty(result)) {
+        let empty = result_is_empty(result);
+        let text = if empty {
+            tr("(无输出)").to_string()
+        } else {
+            result.to_string()
+        };
+        card = card.child(
+            div()
+                .id(SharedString::from(format!("tres-{msg_ix}-{content_index}")))
+                .max_h(px(400.))
+                .overflow_y_scroll()
+                .border_t_1()
+                .border_color(gpui::rgba(if is_error {
+                    rgba_a(0xf87171, 0.3)
+                } else {
+                    rgba_a(0x22c55e, 0.15)
+                }))
+                .bg(if is_error {
+                    gpui::rgba(rgba_a(0xf87171, 0.04))
+                } else {
+                    rgb(t.bg_subtle)
+                })
+                .px(px(10.))
+                .py(px(8.))
+                .font_family("Consolas")
+                .text_size(px(12.))
+                .line_height(relative(1.5))
+                .when(empty, |d| {
+                    d.italic()
+                        .text_color(rgb(t.text_dim))
+                        .opacity(0.6)
+                })
+                .when(!empty && is_error, |d| d.text_color(rgb(0xf87171)))
+                .when(!empty && !is_error, |d| d.text_color(rgb(t.text_muted)))
+                .child(SharedString::from(text)),
+        );
+    }
+    card
 }
 
 pub(crate) fn render_msg(
@@ -795,8 +1059,9 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 let (text, images) = result_payload(&blocks);
                 let is_error = m["isError"].as_bool().unwrap_or(false);
                 let tcid = m["toolCallId"].as_str();
+                let details = m["details"].as_object().map(|_| m["details"].clone());
                 if let Some(last) = out.last_mut() {
-                    merge_tool_result(last, tcid, is_error, &text, images);
+                    merge_tool_result(last, tcid, is_error, &text, images, details, ts);
                 }
             }
             _ => {}

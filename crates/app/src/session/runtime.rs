@@ -452,7 +452,7 @@ impl SessionRuntime {
                     }
                 }
             }
-            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type, custom_display } => {
+            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type, custom_display, details } => {
                 match role.as_str() {
                     "user" => {
                         // upgrade the optimistic send bubble in place instead
@@ -516,10 +516,19 @@ impl SessionRuntime {
                     "toolResult" => {
                         let (text, images) = result_payload(&blocks);
                         if let Some(m) = self.messages.last_mut() {
-                            merge_tool_result(m, tool_call_id.as_deref(), is_error, &text, images);
+                            merge_tool_result(
+                                m,
+                                tool_call_id.as_deref(),
+                                is_error,
+                                &text,
+                                images,
+                                details.clone(),
+                                timestamp,
+                            );
                         }
                     }
                     "custom" => {
+                        let _ = &details;
                         self.messages.push(Msg {
                             role: Role::Custom,
                             blocks,
@@ -596,6 +605,10 @@ impl SessionRuntime {
                             result: String::new(),
                             is_error: false,
                             images: Vec::new(),
+                            duration_s: None,
+                            details: None,
+                            args_partial: true,
+                            result_arrived: false,
                         },
                     );
                 }
@@ -610,6 +623,10 @@ impl SessionRuntime {
                             result: String::new(),
                             is_error: false,
                             images: Vec::new(),
+                            duration_s: None,
+                            details: None,
+                            args_partial: true,
+                            result_arrived: false,
                         },
                     ) {
                         args.push_str(&delta);
@@ -638,6 +655,10 @@ impl SessionRuntime {
                             result: String::new(),
                             is_error: false,
                             images: Vec::new(),
+                            duration_s: None,
+                            details: None,
+                            args_partial: false,
+                            result_arrived: false,
                         },
                     ) {
                         *name = name_c;
@@ -889,8 +910,9 @@ impl SessionRuntime {
                 let (text, images) = result_payload(&blocks);
                 let is_error = msg["isError"].as_bool().unwrap_or(false);
                 let tcid = msg["toolCallId"].as_str();
+                let details = msg["details"].as_object().map(|_| msg["details"].clone());
                 if let Some(m) = self.messages.last_mut() {
-                    merge_tool_result(m, tcid, is_error, &text, images);
+                    merge_tool_result(m, tcid, is_error, &text, images, details, ts);
                 }
             }
             "custom" => {

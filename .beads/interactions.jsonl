@@ -30,3 +30,4 @@
 {"id":"int-849a5d0c51b453c015ff89728b33b389","kind":"field_change","created_at":"2026-09-29T23:01:29.885907Z","actor":"多多有鱼","issue_id":"pi-flash-rgb","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-3151598d9dda491cfced75fddc85ee10","kind":"field_change","created_at":"2026-09-29T23:01:30.8722286Z","actor":"多多有鱼","issue_id":"pi-flash-7v6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-0feef6f21b61164ff927f7e2ce95a219","kind":"field_change","created_at":"2026-10-01T22:39:14.7626416Z","actor":"多多有鱼","issue_id":"pi-flash-48u.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-1d3adcfbe9cb6760221e41655280cc4a","kind":"field_change","created_at":"2026-10-01T23:12:37.6929485Z","actor":"多多有鱼","issue_id":"pi-flash-48u.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

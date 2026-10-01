@@ -160,6 +160,14 @@ pub enum Block {
         is_error: bool,
         /// Images delivered by the toolResult message content.
         images: Vec<ImageData>,
+        /// result arrival − message start, seconds (pi-web {n}s duration)
+        duration_s: Option<i64>,
+        /// ToolResultMessage.details (write/edit patch, apply_patch preview)
+        details: Option<Value>,
+        /// args still streaming (toolcall_delta); flips false on toolcall_end
+        args_partial: bool,
+        /// a toolResult message has merged in (empty text ≠ "no result yet")
+        result_arrived: bool,
     },
     /// ImageContent { type:"image", data: b64, mimeType } — user message
     /// attachments; tool-result images merge into the paired ToolCall.
@@ -232,6 +240,10 @@ pub fn content_blocks(content: &Value) -> Vec<Block> {
                             result: String::new(),
                             is_error: false,
                             images: Vec::new(),
+                            duration_s: None,
+                            details: None,
+                            args_partial: false,
+                            result_arrived: false,
                         }
                     }
                     _ => Block::Text {
@@ -449,6 +461,8 @@ pub enum Event {
         custom_type: Option<String>,
         /// CustomMessage.display (true default for non-custom roles)
         custom_display: bool,
+        /// ToolResultMessage.details (write/edit patch, apply_patch preview)
+        details: Option<Value>,
     },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
@@ -685,6 +699,7 @@ pub fn parse_record(v: &Value) -> Event {
             tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
             custom_type: v["message"]["customType"].as_str().map(str::to_string),
             custom_display: v["message"]["display"].as_bool().unwrap_or(true),
+            details: v["message"]["details"].as_object().map(|_| v["message"]["details"].clone()),
         },
         Some("message_update") => {
             Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))

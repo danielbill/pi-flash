@@ -2,6 +2,7 @@
 //! 会话导航比例尺（右侧 26px gutter，垂直居中 65% 高，≤10 节点）。无工具
 //! 栏、无内嵌状态行（v54 按设计删除）。
 
+pub(crate) mod diff;
 pub(crate) mod input;
 pub(crate) mod messages;
 pub(crate) mod runtime;
