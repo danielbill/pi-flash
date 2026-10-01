@@ -426,7 +426,7 @@ fn project_row(
                     .child(
                         div()
                             .id(SharedString::from(format!("prj-menu-{pi}")))
-                            .size(px(22.))
+                            .size(px(28.))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -455,7 +455,7 @@ fn project_row(
                     .child(
                         div()
                             .id(SharedString::from(format!("prj-new-{pi}")))
-                            .size(px(22.))
+                            .size(px(28.))
                             .flex()
                             .items_center()
                             .justify_center()
