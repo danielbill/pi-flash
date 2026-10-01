@@ -429,7 +429,7 @@ fn project_row(
                             .rounded(px(6.))
                             .text_color(rgb(t.text_dim))
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_selected)).text_color(rgb(t.text)))
+                            .hover(|s| s.text_color(rgb(t.text)))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 move |ev: &gpui::MouseDownEvent, _, cx| {
@@ -458,7 +458,7 @@ fn project_row(
                             .rounded(px(6.))
                             .text_color(rgb(t.text_dim))
                             .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_selected)).text_color(rgb(t.text)))
+                            .hover(|s| s.text_color(rgb(t.text)))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 cx.stop_propagation();
                                 let _ = w_new.update(cx, |c, cx| {
