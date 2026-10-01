@@ -112,7 +112,7 @@ fn tabs(
                     cx.notify();
                 },
             ))
-            .child(crate::ui::icon(icon_name, 16., if on { t.accent } else { t.text_muted }))
+            .child(crate::ui::icon_hover(icon_name, 16., if on { t.accent } else { t.text_muted }))
     })
     .collect()
 }

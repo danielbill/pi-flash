@@ -316,7 +316,7 @@ fn tab_shell(
                     close(ev, w, cx);
                 });
             }
-            x.child(crate::ui::icon("x", 11., t.text_dim))
+            x.child(crate::ui::icon_hover("x", 11., t.text_dim))
         }));
     tab
 }
@@ -352,6 +352,8 @@ fn caption_button(
         .child(
             div()
                 .text_color(rgb(t.text_muted))
+                // 最小/最大化并入 icon 动效（v55）：上抬 1px；关闭钮保持红底豁免
+                .when(area != WindowControlArea::Close, |d| d.hover(|s| s.mt(px(-1.))))
                 .child(SharedString::from(glyph)),
         )
 }

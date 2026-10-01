@@ -19,7 +19,7 @@ use crate::services::workspace::{same_ws, same_ws_key};
 use crate::ListMode;
 use crate::SortMode;
 use crate::theme::{Theme, accent_tint, theme as T};
-use crate::ui::{icon, spinner};
+use crate::ui::{icon, icon_hover, spinner};
 
 /// Flattened psp row model (one virtual list over all rows).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -241,7 +241,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_open.update(cx, |c, cx| c.pick_project_folder(cx));
                         })
-                        .child(icon("icon-project", 18., t.text_dim)),
+                        .child(icon_hover("icon-project", 18., t.text_dim)),
                 )
                 // 新建会话（19px 实底，ml 2）
                 .child(
@@ -258,7 +258,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_new.update(cx, |c, cx| c.new_session(cx));
                         })
-                        .child(icon("icon-new-chat", 19., t.text_dim)),
+                        .child(icon_hover("icon-new-chat", 19., t.text_dim)),
                 )
                 // 会话查询（lucide search）
                 .child(
@@ -274,7 +274,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = w_search.update(cx, |c, cx| c.open_session_search(cx));
                         })
-                        .child(icon("search", 18., t.text_dim)),
+                        .child(icon_hover("search", 18., t.text_dim)),
                 )
                 // 排序（ellipsis，无 tip）
                 .child(
@@ -299,7 +299,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                                 cx.notify();
                             });
                         })
-                        .child(icon("ellipsis", 18., t.text_dim)),
+                        .child(icon_hover("ellipsis", 18., t.text_dim)),
                 ),
         )
         .into_any_element()
@@ -445,7 +445,7 @@ fn project_row(
                                     });
                                 },
                             )
-                            .child(icon("ellipsis", 18., t.text_dim)),
+                            .child(icon_hover("ellipsis", 18., t.text_dim)),
                     )
                     // ＋ 新会话入组
                     .child(
@@ -465,7 +465,7 @@ fn project_row(
                                     c.new_session_in(path.clone(), cx);
                                 });
                             })
-                            .child(icon("plus", 18., t.text_dim)),
+                            .child(icon_hover("plus", 18., t.text_dim)),
                     ),
             )
         })

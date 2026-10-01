@@ -11,7 +11,7 @@ use crate::Chat;
 use crate::i18n::tr;
 use crate::services::git;
 use crate::theme::{Theme, theme as T};
-use crate::ui::icon;
+use crate::ui::{icon, icon_hover};
 
 /// Active git panel tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,7 +237,7 @@ fn changes_body(
                                 }
                             },
                         ))
-                        .child(icon("icon-viewdiff", 13., t.text_muted))
+                        .child(icon_hover("icon-viewdiff", 13., t.text_muted))
                         .child(SharedString::from("View Diff")),
                 )
                 .child(div().flex_1())
@@ -405,7 +405,7 @@ fn changes_body(
                                         cx.notify();
                                     },
                                 ))
-                                .child(icon("refresh", 13., t.text_muted)),
+                                .child(icon_hover("refresh", 13., t.text_muted)),
                         )
                 })),
         )
@@ -450,7 +450,7 @@ fn collect_rows(
                         .py(px(4.5))
                         .text_size(px(12.5))
                         .text_color(rgb(t.text))
-                        .child(icon("folder-open", 15., t.text_muted))
+                        .child(icon_hover("folder-open", 15., t.text_muted))
                         .child(SharedString::from(name.clone()))
                         .into_any_element(),
                 );

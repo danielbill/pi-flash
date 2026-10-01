@@ -11,7 +11,7 @@ use crate::PillMenu;
 use crate::MenuKind;
 use crate::i18n::tr;
 use crate::theme::theme as T;
-use crate::ui::icon;
+use crate::ui::{icon, icon_hover};
 
 pub(crate) fn input_area(
     chat: &mut Chat,
@@ -375,7 +375,7 @@ fn composer_bar(
                         this.attach_images(cx);
                     },
                 ))
-                .child(icon("image", 15., t.text_muted)),
+                .child(icon_hover("image", 15., t.text_muted)),
         )
         .child(
             // 工具预设「默认∨」
@@ -400,7 +400,7 @@ fn composer_bar(
                         cx.notify();
                     },
                 ))
-                .child(icon("wrench", 13., if tools_open { t.accent } else { t.text_muted }))
+                .child(icon_hover("wrench", 13., if tools_open { t.accent } else { t.text_muted }))
                 .child(SharedString::from(tools_label.to_string()))
                 .child(icon("chevron-down", 10., t.text_dim)),
         );
@@ -486,7 +486,7 @@ fn composer_bar(
                     cx.notify();
                 },
             ))
-            .child(icon("lightbulb", 13., if thinking_open { t.accent } else { t.text_muted }))
+            .child(icon_hover("lightbulb", 13., if thinking_open { t.accent } else { t.text_muted }))
             .child(SharedString::from(thinking_label.to_string()))
             .child(icon("chevron-down", 10., t.text_dim)),
     );

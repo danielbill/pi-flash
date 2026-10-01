@@ -218,7 +218,7 @@ fn pl_sidebar(
                                             }
                         });
                     })
-                    .child(icon("plus", 13., t.text_dim))
+                    .child(icon_hover("plus", 13., t.text_dim))
                     .child(tr("添加插件")),
             ),
 );

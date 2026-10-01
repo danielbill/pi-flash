@@ -16,6 +16,7 @@ use skills::mc_skills_view;
 use subagents::mc_subagents_view;
 
 use super::*;
+pub(crate) use crate::ui::{icon, icon_hover};
 
 /// The settings modal's form state (pi-web SettingsPanel own-state parity).
 pub(crate) struct SettingsPanel {
