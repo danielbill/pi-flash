@@ -71,17 +71,6 @@ impl IntoElement for PspScrollbarEl {
     }
 }
 
-/// thumb 几何（prepaint 算好，paint/事件共用）。
-#[derive(Clone, Copy)]
-struct ThumbGeom {
-    /// thumb 顶点 y（相对定位层）
-    y: f32,
-    /// thumb 长
-    len: f32,
-    /// 当前宽（悬停/拖拽加宽）
-    w: f32,
-}
-
 impl Element for PspScrollbarEl {
     type RequestLayoutState = ();
     type PrepaintState = Option<gpui::Hitbox>;
@@ -104,7 +93,7 @@ impl Element for PspScrollbarEl {
         let mut style = Style::default();
         style.size = size(px(12.).into(), px(1.).into());
         style.flex_grow = 1.;
-        (window.request_layout(style, None, cx), ())
+        (window.request_layout(style, None, _cx), ())
     }
 
     fn prepaint(
