@@ -25,6 +25,8 @@ use gpui::{
 const WIDTH: f32 = 6.;
 /// ZED `SCROLLBAR_PADDING`——thumb 容器相对 track 的内缩（含命中区加宽）
 const PADDING: f32 = 4.;
+/// 悬停/拖拽加宽（用户定稿 +4px：6→10）
+const WIDTH_ACTIVE: f32 = 10.;
 /// ZED `MINIMUM_THUMB_SIZE`
 const MIN_THUMB: f32 = 25.;
 /// ZED `MAXIMUM_OPACITY`
@@ -208,8 +210,12 @@ impl Element for ScrollbarElement {
         let dragging = DRAG.with(|c| c.borrow().is_some());
 
         if opacity > 0. {
-            // zed: thumb_base = scrollbar_thumb_background；blend 到 surface。
-            // 本项目无独立 token，用 text 薄纱直接带透明度（等效视觉）。
+            // 悬停/拖拽加宽 4px（用户定稿）：右缘锚定不动，向左扩
+            let mut draw_bounds = layout.thumb_bounds;
+            if thumb_hovered || dragging {
+                draw_bounds.origin.x -= px(4.);
+                draw_bounds.size.width += px(4.);
+            }
             let base = gpui::Hsla::from(rgb(t.text));
             let a = if thumb_hovered || dragging {
                 0.38 * opacity / MAX_OPACITY
@@ -219,8 +225,8 @@ impl Element for ScrollbarElement {
             let color = gpui::hsla(base.h, base.s, base.l, a.min(1.));
             // zed Regular: 全圆角（clamp 到尺寸半宽）
             window.paint_quad(gpui::quad(
-                layout.thumb_bounds,
-                Corners::all(px(WIDTH / 2.)),
+                draw_bounds,
+                Corners::all(px(WIDTH_ACTIVE / 2.)),
                 color,
                 Edges::default(),
                 gpui::transparent_black(),
