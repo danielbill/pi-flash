@@ -287,3 +287,38 @@ beads 任务跟踪已清空。后续工作 → 新建 beads（`bd create`）。
 计划全量见 PORT_PLAN.md。下一主线：用户提出重新设计 UI；
 会话池重构计划见 .zcode/plans/plan-sess_1c4e46f7（每会话常驻
 SessionRuntime，pi-web 多开模型对齐）。
+
+## v56（2026-10-02）消息渲染全面对齐 pi-web
+
+epic pi-flash-48u（7 子任务全关，c1-c30 共 13 提交）。目标=session 渲染与
+pi-web 完全对齐，唯一豁免=消息末尾操作栏（复制/编辑/分支 hover 栏自定义保留）。
+
+- c1-c4 数据层：stopReason/errorMessage/Usage.cache_write 透传；Block::Image
+  +ToolCall is_error/images/duration_s/details/args_partial/result_arrived；
+  toolResult 按 toolCallId 关联合并（merge_tool_result 收敛三路）；
+  sessions::renderable_message 把 compaction/custom_message/branch_summary
+  映射为 role=custom（branch_summary 不映射 user，保 fork 锚点对齐）。
+- c5-c7 轮结构：thinking+toolCall 全收「工作详情」组（splitFinalAssistantBlocks
+  parity：最终回答=末条 assistant 尾部 text/image 连续段，前置块入组）；组默认
+  折叠=有最终回答/error/length，流式中展开（collapsed 改 HashMap 显式覆盖）；
+  相位行 pi-web 语义（agentRunning&&!hasStreamingContent，Running {tool} 三档
+  文案，13px 脉冲）；时间戳静态 10px。
+- c8-c11 工具卡：ToolCallBlock 卡片（状态色/摘要 120 键序/apply_patch 路径
+  摘要/耗时/旋转箭头）+参数 pre（流式原始/完成 pretty）+结果 pre maxH400+
+  （无输出）斜体+错误红字；diff.rs 解析器（unified+V4A+preview，带测试），
+  SplitFilesView 双栏/PatchText 单栏；结果图片 b64 直渲 maxW720/maxH520。
+- c12-c16 markdown：任务列表自绘复选框+GFM 裸 URL linkify（自研 split_links
+  补 pulldown 缺口）+frontmatter 吞掉；代码块横向滚动（nowrap+overflow_x_scroll
+  替换裁剪）；流式跳过 syntect 高亮与行号；100k 字符守卫。
+- c18-c22 用户气泡：85%+蓝边框+圆角12+pad 8x12+走 markdown+图片 240+300px 内滚。
+- c23-c25：流式估算 token+四档 t/s 徽章（0.5s 延迟）；written files chips
+  （appliedFiles>preview>输入解析，剔 delete，点击 open_file_tab）；cache W。
+- c26-c28：错误红框/截断黄框；compaction 卡片（parse_compaction_summary 剥
+  尾部文件段）；custom 三态（hidden 暗卡 140 预览/branch_summary 斜体引言/
+  generic 卡）。
+- c29/c30 核实无改动：pi-web 工具结果亦原样渲染 ANSI；空块过滤语义一致。
+
+已知偏差：KaTeX/mermaid/raw HTML 降级（GPUI 平台限制）；c17 syntect 主题校准
+暂缓（可选）；branch_summary 渲为斜体引言（非 user 气泡）；compaction 文件
+清单常显（pi-web <details> 默认折叠）；模型名每消息一条（Msg.model 三路解析）。
+测试 97 全绿（app 45 + pi-link 52）。
