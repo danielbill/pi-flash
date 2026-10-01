@@ -1170,6 +1170,7 @@ impl Render for Chat {
         let weak_for_body = weak.clone();
         let panes_hidden = self.panes_hidden;
         let slp_dragging = self.slp_drag.is_some();
+        let slp_hovered = self.slp_hover;
         let mut body = div()
             .id("app-body")
             .flex_1()
@@ -1201,8 +1202,7 @@ impl Render for Chat {
             );
         if !panes_hidden {
             // 分隔线响应区（跨线）：panel 内 3px + 内容区 9px（避开滚动条
-            // 命中区）；hover 时线加粗加深 + col_resize 光标
-            let slp_hovered = self.slp_hover;
+            // 命中区）；可视线由 content-col 的 border 承担（hover 2px 深线）
             body = body.child(
                 div()
                     .id("slp-resizer")
@@ -1230,18 +1230,6 @@ impl Render for Chat {
                             }
                         },
                     ))
-                    .when(slp_hovered || slp_dragging, |d| {
-                        // 2px 可视线，锚在 panel|内容 交界（slp_w-1）
-                        d.child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(px(self.slp_w - 1. - (self.slp_w - 3.)))
-                                .w(px(2.))
-                                .bg(gpui::rgba(crate::theme::border_alpha(t, 0xd0))),
-                        )
-                    }),
             );
             body = body.child(
                 div()
@@ -1271,8 +1259,18 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                .when(!panes_hidden && !slp_dragging && !self.slp_hover, |d| {
-                    d.border_l_1().border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
+                .when(
+                    !panes_hidden && !slp_dragging && !self.slp_hover,
+                    |d| {
+                        d.border_l_1()
+                            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
+                    },
+                )
+                // hover/拖拽：2px 深色线替换 1px 常驻线（画在左缘 = 交界，
+                // content-col 在 panel-col 之后渲染，z 序安全）
+                .when(slp_hovered || slp_dragging, |d| {
+                    d.border_l_2()
+                        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0xc8)))
                 })
                 .child(titlebar::topbar_r(self, window, cx))
                 .child(content::content_main(
