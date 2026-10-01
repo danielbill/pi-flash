@@ -155,12 +155,18 @@ pub(crate) fn psp_view(
     // 之前 title 行放滚动容器内时，其按钮 hitbox 被 scroll mask 裁掉，
     // 点击全部失效——这也是设计的本意：title 行不是列表内容。
     let t = T();
+    // 统一对齐线（v55）：col 外层 px 10 是唯一的水平留白源——title 行与
+    // 列表同处一个坐标系；行内 pl/pr 10 叠加其上（图标列 = 10+10），
+    // title 行自身 px 0（文字 = 10，与下方 folder 图标…不对，folder 图标
+    // 在行内 pl 10 → 20px）。title 文字要与 folder 图标同线 → title 行
+    // 也挂 pl 10（= 10 容器 + 10 行 = 20px 同线）。右线同理。
     let mut col = div()
         .flex_1()
         .min_h_0()
         .w_full()
         .flex()
         .flex_col()
+        .px(px(10.))
         .pt(px(6.))
         .child(title_row(chat, &weak, t));
     let rows: Vec<gpui::AnyElement> = psp_rows(chat)
@@ -187,9 +193,7 @@ pub(crate) fn psp_view(
             .min_h_0()
             .w_full()
             .overflow_y_scroll()
-            // 统一对齐线（v55 定稿）：全 dock 左右各 10px——title 行、
-            // 项目行、会话行、时间列全部对齐这条线
-            .px(px(10.))
+            // 水平留白由 col 外层统一（10px），此处不再叠加
             .flex()
             .flex_col()
             .children(rows),
@@ -213,7 +217,8 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
         .h(px(30.))
         .flex()
         .items_center()
-        .px(px(10.))
+        .pl(px(10.))
+        .pr(px(10.))
 
         .text_size(px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
