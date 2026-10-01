@@ -172,10 +172,12 @@ pub(crate) fn render_block(
     weak: &gpui::WeakEntity<Chat>,
     collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
+    // 流式中的消息：markdown 代码块跳过 syntect 高亮（v56-3 c15）
+    streaming: bool,
 ) -> gpui::Div {
     match b {
         Block::Text { text, .. } if !text.trim().is_empty() => {
-            div().w_full().child(markdown::render_themed(text))
+            div().w_full().child(markdown::render(text, t, streaming))
         }
         Block::Thinking { text, content_index } if !text.trim().is_empty() => {
             let key = (msg_ix, *content_index);
@@ -1042,7 +1044,7 @@ pub(crate) fn render_msg(
         // 已把轮渲染收敛到 render_assistant_turn；此分支防御性保留）
         col = col.group("astat");
         for b in &m.blocks {
-            col = col.child(render_block(b, msg_ix, weak, collapsed, t));
+            col = col.child(render_block(b, msg_ix, weak, collapsed, t, false));
         }
     }
     col
@@ -1191,7 +1193,8 @@ pub(crate) fn render_assistant_turn(
             if matches!(b, Block::ToolCall { .. }) {
                 n_tools += 1;
             }
-            item = item.child(render_block(b, gix, weak, collapsed, t));
+            let streaming = is_working && i == turn.len() - 1;
+            item = item.child(render_block(b, gix, weak, collapsed, t, streaming));
         }
         group_body = group_body.child(item);
     }
@@ -1249,7 +1252,8 @@ pub(crate) fn render_assistant_turn(
             t,
         ));
         for b in &final_msg.blocks[answer_start..] {
-            col = col.child(render_block(b, final_gix, weak, collapsed, t));
+            let streaming = is_working && final_pos == turn.len() - 1;
+            col = col.child(render_block(b, final_gix, weak, collapsed, t, streaming));
         }
     }
     // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）

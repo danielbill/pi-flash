@@ -107,7 +107,7 @@ enum MdBlock {
     Paragraph { runs: Vec<Run> },
     Code { lang: String, code: String },
     Quote { blocks: Vec<MdBlock> },
-    ListItem { depth: usize, marker: String, runs: Vec<Run> },
+    ListItem { depth: usize, marker: String, runs: Vec<Run>, task: Option<bool> },
     Table { head: Vec<Vec<Run>>, rows: Vec<Vec<Vec<Run>>> },
     Image { url: String, alt: Vec<Run> },
     Rule,
@@ -140,6 +140,68 @@ fn style_pop(styles: &mut Vec<Style>, end: &TagEnd) {
     }
 }
 
+/// GFM autolink-literal parity (pi-web remark-gfm；pulldown 0.13 无此扩展)：
+/// 把普通文本按裸 http(s) URL 切成 Link run。尾部标点剥到 URL 外。
+fn split_links(text: &str) -> Vec<(String, bool)> {
+    const HTTPS: &str = "https://";
+    const HTTP: &str = "http://";
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let mut rest = text;
+    loop {
+        let start = [HTTPS, HTTP]
+            .iter()
+            .filter_map(|sc| rest.find(sc))
+            .min();
+        let Some(start) = start else { break };
+        // 前缀须是词边界（避免 "foohttps://" 误切）
+        let boundary_ok = start == 0
+            || !rest[..start]
+                .chars()
+                .next_back()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        if !boundary_ok {
+            // 跳过这个伪起点，从下一个字符继续找
+            let (head, tail) = rest.split_at(start + 1);
+            out.push((head.to_string(), false));
+            rest = tail;
+            continue;
+        }
+        // URL 止于空白或尖括号；尾部标点剥出
+        let candidate = &rest[start..];
+        let end = candidate
+            .find(|c: char| c.is_whitespace() || c == '<' || c == '>')
+            .unwrap_or(candidate.len());
+        let mut url = &candidate[..end];
+        while url
+            .chars()
+            .next_back()
+            .map(|c| "!.,;:?\")'".contains(c))
+            .unwrap_or(false)
+        {
+            url = &url[..url.len() - 1];
+        }
+        if url.len() > HTTPS.len() {
+            if start > 0 {
+                out.push((rest[..start].to_string(), false));
+            }
+            out.push((url.to_string(), true));
+            rest = &rest[start + url.len()..];
+        } else {
+            // 裸 scheme 无主体——原样保留
+            let (head, tail) = rest.split_at(start + 1);
+            out.push((head.to_string(), false));
+            rest = tail;
+        }
+    }
+    if out.is_empty() {
+        vec![(text.to_string(), false)]
+    } else {
+        out.push((rest.to_string(), false));
+        out
+    }
+}
+
 /// Collect inline runs until `is_end` matches (consuming the end event).
 fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bool) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
@@ -148,8 +210,22 @@ fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bo
     let mut cur = Style::Normal;
 
     fn flush(text: &mut String, cur: Style, runs: &mut Vec<Run>) {
-        if !text.is_empty() {
-            runs.push(Run { text: std::mem::take(text), style: cur });
+        if text.is_empty() {
+            return;
+        }
+        let taken = std::mem::take(text);
+        if cur == Style::Normal {
+            // GFM 自动链接：普通文本里的裸 URL 提为 Link run
+            for (seg, is_link) in split_links(&taken) {
+                if !seg.is_empty() {
+                    runs.push(Run {
+                        text: seg,
+                        style: if is_link { Style::Link } else { Style::Normal },
+                    });
+                }
+            }
+        } else {
+            runs.push(Run { text: taken, style: cur });
         }
     }
 
@@ -365,8 +441,14 @@ fn parse_block(
                     n += 1;
                     let mut runs: Vec<Run> = Vec::new();
                     let mut nested = Vec::new();
+                    let mut task: Option<bool> = None;
                     while *i < events.len() && !matches!(events[*i], Event::End(TagEnd::Item)) {
                         match &events[*i] {
+                            // c12: 任务列表复选框（pi-web 自绘 14px accent 对勾）
+                            Event::TaskListMarker(checked) => {
+                                task = Some(*checked);
+                                *i += 1;
+                            }
                             Event::Start(inner_tag) => {
                                 let inner_tag = inner_tag.clone();
                                 *i += 1;
@@ -402,7 +484,7 @@ fn parse_block(
                         }
                     }
                     *i += 1; // End(Item)
-                    out.push(MdBlock::ListItem { depth, marker, runs });
+                    out.push(MdBlock::ListItem { depth, marker, runs, task });
                     out.extend(nested);
                 } else {
                     *i += 1;
@@ -537,17 +619,17 @@ fn runs_text(runs: &[Run]) -> String {
     runs.iter().map(|r| r.text.as_str()).collect()
 }
 
-fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme) -> gpui::Div {
+fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme, streaming: bool) -> gpui::Div {
     let mut col = div().flex().flex_col();
     for b in blocks {
-        col = col.child(render_block(b, depth, t));
+        col = col.child(render_block(b, depth, t, streaming));
     }
     col
 }
 
 /// 代码块：外框圆角 7px + 头部（语言名 / 复制）+ 行号 + 12.5px/1.62 高亮体
 /// （pi-web .markdown-code-block / .markdown-code-header / Prism 行号）。
-fn render_code_block(lang: &str, code: &str, t: &Theme) -> gpui::Div {
+fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui::Div {
     let code = code.trim_end_matches('\n');
     let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
 
@@ -598,47 +680,53 @@ fn render_code_block(lang: &str, code: &str, t: &Theme) -> gpui::Div {
     } else {
         code.split('\n').collect()
     };
-    let n_digits = lines.len().to_string().len();
-    let dim = rgb(t.text_dim);
+    // c15: 流式期间纯文本（pi-web 渲染裸 <pre>，不做 Prism 高亮）
     let mut text = String::new();
     let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
-    let mut segs = highlight_segments(code, lang, t.dark);
-    segs.push((String::new(), [0, 0, 0])); // sentinel：保证末行 flush
-    let mut seg_ix = 0usize;
-    for (i, _) in lines.iter().enumerate() {
-        // 行号 gutter
-        let start = text.len();
-        text.push_str(&format!("{:>w$}  ", i + 1, w = n_digits));
-        highlights.push((
-            start..text.len(),
-            HighlightStyle { color: Some(dim.into()), ..Default::default() },
-        ));
-        // 该行的高亮段
-        while seg_ix < segs.len() {
-            let (seg, c) = &segs[seg_ix];
-            match seg.find('\n') {
-                Some(pos) => {
-                    let (head, _) = seg.split_at(pos);
-                    if !head.is_empty() {
-                        let start = text.len();
-                        text.push_str(head);
-                        push_color(&mut highlights, start, text.len(), *c);
+    if streaming {
+        // 纯文本，无行号无高亮
+        text.push_str(code);
+    } else {
+        let n_digits = lines.len().to_string().len();
+        let dim = rgb(t.text_dim);
+        let mut segs = highlight_segments(code, lang, t.dark);
+        segs.push((String::new(), [0, 0, 0])); // sentinel：保证末行 flush
+        let mut seg_ix = 0usize;
+        for (i, _) in lines.iter().enumerate() {
+            // 行号 gutter
+            let start = text.len();
+            text.push_str(&format!("{:>w$}  ", i + 1, w = n_digits));
+            highlights.push((
+                start..text.len(),
+                HighlightStyle { color: Some(dim.into()), ..Default::default() },
+            ));
+            // 该行的高亮段
+            while seg_ix < segs.len() {
+                let (seg, c) = &segs[seg_ix];
+                match seg.find('\n') {
+                    Some(pos) => {
+                        let (head, _) = seg.split_at(pos);
+                        if !head.is_empty() {
+                            let start = text.len();
+                            text.push_str(head);
+                            push_color(&mut highlights, start, text.len(), *c);
+                        }
+                        seg_ix += 1;
+                        break; // 该行结束
                     }
-                    seg_ix += 1;
-                    break; // 该行结束
-                }
-                None => {
-                    if !seg.is_empty() {
-                        let start = text.len();
-                        text.push_str(seg);
-                        push_color(&mut highlights, start, text.len(), *c);
+                    None => {
+                        if !seg.is_empty() {
+                            let start = text.len();
+                            text.push_str(seg);
+                            push_color(&mut highlights, start, text.len(), *c);
+                        }
+                        seg_ix += 1;
                     }
-                    seg_ix += 1;
                 }
             }
-        }
-        if i + 1 < lines.len() {
-            text.push('\n');
+            if i + 1 < lines.len() {
+                text.push('\n');
+            }
         }
     }
 
@@ -662,10 +750,13 @@ fn render_code_block(lang: &str, code: &str, t: &Theme) -> gpui::Div {
         .child(header)
         .child(
             div()
+                .id("md-code-body")
                 .w_full()
                 .px(px(13.))
                 .py(px(11.))
-                .overflow_hidden()
+                // c15：长行不再裁剪——nowrap + 横向滚动（pi-web <pre> 语义）
+                .whitespace_nowrap()
+                .overflow_x_scroll()
                 .child(StyledText::new(text).with_default_highlights(&base, highlights)),
         )
 }
@@ -784,7 +875,7 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
         .into_any_element()
 }
 
-fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
+fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyElement {
     match b {
         MdBlock::Heading { level, runs } => {
             let size = size_for_level(*level);
@@ -811,7 +902,9 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
             .text_color(rgb(t.text))
             .child(styled_text(runs, t, BASE, 1.7))
             .into_any_element(),
-        MdBlock::Code { code, lang, .. } => render_code_block(lang, code, t).into_any_element(),
+        MdBlock::Code { code, lang, .. } => {
+            render_code_block(lang, code, t, streaming).into_any_element()
+        }
         MdBlock::Quote { blocks } => div()
             .w_full()
             .mt(px(6.))
@@ -823,20 +916,47 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
             .px(px(11.))
             .py(px(6.))
             .text_color(rgb(t.text_muted))
-            .child(render_blocks(blocks, depth + 1, t))
+            .child(render_blocks(blocks, depth + 1, t, streaming))
             .into_any_element(),
-        MdBlock::ListItem { depth: d, marker, runs } => div()
-            .flex()
-            .mb(px(3.))
-            .pl(px((d * 16) as f32))
-            .child(
-                div()
+        MdBlock::ListItem { depth: d, marker, runs, task } => {
+            let task = *task;
+            // c12: 任务项 marker = 14px 复选框（选中 accent 对勾），否则原 marker
+            let marker_el: AnyElement = match task {
+                Some(checked) => div()
+                    .w(px(14.))
+                    .h(px(14.))
+                    .mt(px(4.))
+                    .flex_shrink_0()
+                    .rounded(px(3.))
+                    .border_1()
+                    .border_color(rgb(if checked { t.accent } else { t.border }))
+                    .bg(rgb(if checked { t.accent } else { t.bg }))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(checked, |b| {
+                        b.child(
+                            div()
+                                .text_size(px(10.))
+                                .text_color(rgb(0xffffff))
+                                .child(SharedString::from("✓")),
+                        )
+                    })
+                    .into_any_element(),
+                None => div()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72)))
-                    .child(SharedString::from(marker.clone())),
-            )
-            .child(div().flex_1().min_w_0().text_color(rgb(t.text)).child(styled_text(runs, t, BASE, 1.7)))
-            .into_any_element(),
+                    .child(SharedString::from(marker.clone()))
+                    .into_any_element(),
+            };
+            div()
+                .flex()
+                .mb(px(3.))
+                .pl(px((d * 16) as f32))
+                .child(marker_el)
+                .child(div().flex_1().min_w_0().text_color(rgb(t.text)).child(styled_text(runs, t, BASE, 1.7)))
+                .into_any_element()
+        }
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
         MdBlock::Image { url, alt } => render_image(url, alt, t),
         MdBlock::Rule => div()
@@ -849,22 +969,67 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme) -> AnyElement {
     }
 }
 
+/// pi-web MAX_MARKDOWN_CHARS（v56-3 c16）：超限跳过管线，退纯文本。
+const MAX_MARKDOWN_CHARS: usize = 100_000;
+
 /// Render a markdown string as a vertical stack of styled GPUI elements.
-pub fn render(src: &str, t: &Theme) -> AnyElement {
+/// `streaming`（v56-3 c15）：流式中的消息跳过 syntect 高亮与行号
+/// （pi-web CodeBlock：流式期间 Prism 逐 chunk 重分词是最贵开销）。
+pub fn render(src: &str, t: &Theme, streaming: bool) -> AnyElement {
+    if src.chars().count() > MAX_MARKDOWN_CHARS {
+        return render_oversize(src, t);
+    }
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
+    // c12: 任务列表 + GFM 自动链接；c14: YAML frontmatter 吞掉
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_GFM);
+    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     let events: Vec<Event> = Parser::new_ext(src, opts).collect();
     let blocks = parse_blocks(&events);
     if blocks.is_empty() {
         return div().into_any_element();
     }
-    render_blocks(&blocks, 1, t).into_any_element()
+    render_blocks(&blocks, 1, t, streaming).into_any_element()
+}
+
+/// 超长消息（pi-web ⚠ Message content is very large）：提示行 + 纯文本
+/// 滚动视图（pi-web 展开后的 pre maxHeight 420；省去一次点击）。
+fn render_oversize(src: &str, t: &Theme) -> AnyElement {
+    let kb = src.len() / 1024;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .child(
+            div()
+                .text_color(rgb(0xca8a04))
+                .text_size(px(12.))
+                .child(SharedString::from(format!(
+                    "⚠ {} ({}KB)",
+                    crate::i18n::tr("消息内容过大，已按纯文本显示"),
+                    kb
+                ))),
+        )
+        .child(
+            div()
+                .id("md-oversize")
+                .max_h(px(420.))
+                .overflow_y_scroll()
+                .font_family(MONO_FAMILY)
+                .text_size(px(12.))
+                .line_height(relative(1.5))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(src.to_string())),
+        )
+        .into_any_element()
 }
 
 /// Render with the active global theme.
 pub fn render_themed(src: &str) -> AnyElement {
-    render(src, crate::theme::theme())
+    render(src, crate::theme::theme(), false)
 }
 
 #[cfg(test)]
@@ -879,6 +1044,9 @@ mod tests {
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_STRIKETHROUGH);
         opts.insert(Options::ENABLE_TABLES);
+        opts.insert(Options::ENABLE_TASKLISTS);
+        opts.insert(Options::ENABLE_GFM);
+        opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
         parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>())
     }
 
@@ -931,7 +1099,7 @@ mod tests {
             blocks.iter().filter(|b| matches!(b, MdBlock::ListItem { .. })).collect();
         assert_eq!(items.len(), 3);
         match items[0] {
-            MdBlock::ListItem { marker, runs, depth } => {
+            MdBlock::ListItem { marker, runs, depth, .. } => {
                 assert_eq!(marker, "\u{2022}");
                 assert_eq!(*depth, 0);
                 assert_eq!(text_of(runs), "one");
@@ -987,6 +1155,60 @@ mod tests {
         match &blocks[0] {
             MdBlock::Paragraph { runs } => {
                 assert!(runs.iter().any(|r| r.style == Style::Strike && r.text == "gone"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_list_marker_parsed() {
+        let blocks = parse("- [x] done
+- [ ] todo");
+        let items: Vec<&MdBlock> =
+            blocks.iter().filter(|b| matches!(b, MdBlock::ListItem { .. })).collect();
+        assert_eq!(items.len(), 2);
+        match items[0] {
+            MdBlock::ListItem { task, .. } => assert_eq!(*task, Some(true)),
+            other => panic!("{other:?}"),
+        }
+        match items[1] {
+            MdBlock::ListItem { task, .. } => assert_eq!(*task, Some(false)),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn gfm_autolink_becomes_link_run() {
+        let blocks = parse("see https://example.com/x now");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert!(runs.iter().any(|r| r.style == Style::Link && r.text.contains("example.com")));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn yaml_frontmatter_swallowed() {
+        let blocks = parse("---
+title: x
+---
+
+hello");
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => assert_eq!(text_of(runs), "hello"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn single_tilde_is_not_strikethrough() {
+        // pi-web remark-gfm {singleTilde:false}: CJK 范围 "5~7" 不误删
+        let blocks = parse("range 5~7 days");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert!(!runs.iter().any(|r| r.style == Style::Strike));
             }
             other => panic!("{other:?}"),
         }
