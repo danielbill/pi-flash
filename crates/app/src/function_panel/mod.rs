@@ -187,9 +187,9 @@ pub(crate) fn psp_view(
             .min_h_0()
             .w_full()
             .overflow_y_scroll()
-            // ZCode TaskList parity：列表两侧 p-3 留白——选中/悬停块不满宽，
-            // 右侧留白给 slp 分隔线与拖拽区
-            .px(px(12.))
+            // 统一对齐线（v55 定稿）：全 dock 左右各 10px——title 行、
+            // 项目行、会话行、时间列全部对齐这条线
+            .px(px(10.))
             .flex()
             .flex_col()
             .children(rows),
@@ -213,7 +213,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
         .h(px(30.))
         .flex()
         .items_center()
-        .px(px(8.))
+        .px(px(10.))
 
         .text_size(px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -280,7 +280,6 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                 .child(
                     div()
                         .id("psp-sort-menu")
-                        .ml(px(-1.5))
                         .w(px(28.))
                         .h_full()
                         .flex()
@@ -343,7 +342,7 @@ fn project_row(
         .items_center()
         .gap(px(8.))
         .pl(px(10.))
-        .pr(px(4.))
+        .pr(px(10.))
         .rounded(px(8.))
         .cursor_pointer()
         // v55：项目行悬停不给背景色（避免与会话行选中态混淆）
@@ -417,7 +416,7 @@ fn project_row(
             d.child(
                 div()
                     .flex()
-                    .gap(px(2.))
+                    .gap(px(10.))
                     // ⋯ 项目菜单
                     .child(
                         div()
@@ -600,7 +599,7 @@ fn session_row_view(
         .items_center()
         .gap(px(8.))
         .pl(px(10.))
-        .pr(px(4.))
+        .pr(px(10.))
         .rounded(px(8.))
         .cursor_pointer()
         .when(is_active, |d| d.bg(row_sel).hover(|s| s.bg(row_sel)))
