@@ -186,26 +186,40 @@ pub(crate) fn psp_view(
             PspRow::Title => div().into_any_element(),
         })
         .collect();
-    // psp 会话列表滚动 + 右缘滚动条（gpui-component Scrollbar，ZED Regular
-    // 同款视觉：6px 圆角 thumb、hover 加宽）
+    // psp 会话列表滚动 + 右缘滚动条。Scrollbar 挂在与滚动容器平级的
+    // relative 包裹上（贴 dock 右缘，不吃容器内 10px 留白）；ZED Regular
+    // 视觉：只有 thumb 无 track（track 色已在 sync_gpui_tokens 透明化）。
     col = col.child(
         div()
-            .id("psp-scroll")
+            .id("psp-scroll-wrap")
             .relative()
             .flex_1()
             .min_h_0()
             .w_full()
-            .overflow_y_scroll()
-            .track_scroll(&chat.psp_scroll)
-            // 水平留白由 col 外层统一（10px），此处不再叠加
-            .flex()
-            .flex_col()
-            .children(rows)
             .child(
-                gpui_component::scroll::Scrollbar::vertical(
-                    &chat.psp_scrollbar,
-                    &chat.psp_scroll,
-                ),
+                div()
+                    .id("psp-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&chat.psp_scroll)
+                    // 水平留白由 col 外层统一（10px），此处不再叠加
+                    .flex()
+                    .flex_col()
+                    .children(rows),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(2.))
+                    .bottom(px(2.))
+                    .right(px(1.))
+                    .w(px(12.))
+                    .child(
+                        gpui_component::scroll::Scrollbar::vertical(
+                            &chat.psp_scrollbar,
+                            &chat.psp_scroll,
+                        ),
+                    ),
             ),
     );
     col.into_any_element()

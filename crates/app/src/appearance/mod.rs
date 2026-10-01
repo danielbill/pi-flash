@@ -58,6 +58,12 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     c.danger = gpui::rgb(t.danger).into();
     c.danger_hover = gpui::rgb(t.danger_hover).into();
     c.danger_foreground = gpui::rgb(0xffffff).into();
+    // 滚动条（ZED Regular 视觉）：**只有 thumb、无 track**——gpui-component
+    // 默认 track 色是半透明灰白条（#fafafa80），即截图里"两条滚动条"的第
+    // 一条；透明化后只剩 thumb。thumb 用 text 薄纱（贴合各主题，hover 加深）。
+    c.scrollbar = gpui::transparent_black().into();
+    c.scrollbar_thumb = gpui::rgba((t.text << 8) | 0x33).into();
+    c.scrollbar_thumb_hover = gpui::rgba((t.text << 8) | 0x61).into();
     let mut sel: gpui::Hsla = gpui::rgb(t.accent).into();
     sel.a = 0.28;
     c.selection = sel;
