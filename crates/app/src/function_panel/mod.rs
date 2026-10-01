@@ -597,39 +597,42 @@ fn session_row_view(
                 }),
         )
         .child(
-            // 标题：占满 slot 之后的整行宽（尾部会滑进时间区下方，被其
-            // 渐变背景遮蔽），不再自身挂 overlay
+            // 标题：flex_1 到时间区左缘为止（不进入时间区），尾部 28px 在
+            // 自身容器内渐变淡出——标题与时间永不重叠，淡出带位置随时间
+            // 列固定宽而对齐
             div()
+                .relative()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_size(px(13.))
                 .text_color(rgb(t.text))
-                .child(title),
+                .child(title)
+                .child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(28.))
+                        .bg(fade)
+                        .group_hover("psrow", |s| s.bg(fade_hover)),
+                ),
         )
-        // 时间区（v55 fmtAgo）：固定宽右对齐成一列，渐变背景左缘遮蔽过长
-        // 标题——"时间区遮蔽 title"的字面实现
+        // 时间区（v55 fmtAgo）：固定宽右对齐成一列
         .child(
             div()
-                .absolute()
-                .right(px(10.))
-                .top_0()
-                .bottom_0()
+                .flex_shrink_0()
                 .w(px(44.))
                 .flex()
                 .items_center()
                 .justify_end()
-                .bg(fade)
-                .group_hover("psrow", |s| s.bg(fade_hover))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(t.text_faint))
-                        .child(SharedString::from(crate::services::format::fmt_ago(
-                            info.modified,
-                        ))),
-                ),
+                .text_size(px(11.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(crate::services::format::fmt_ago(
+                    info.modified,
+                ))),
         )
         .into_any_element()
 }
