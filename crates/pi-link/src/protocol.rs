@@ -767,7 +767,7 @@ mod tests {
         )
         .unwrap();
         match e {
-            Event::MessageStart { role, blocks, timestamp } => {
+            Event::MessageStart { role, blocks, timestamp, .. } => {
                 assert_eq!(role, "user");
                 assert_eq!(timestamp, Some(1790206311858));
                 assert_eq!(blocks, vec![Block::Text { content_index: 0, text: "say OK".into() }]);
