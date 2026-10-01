@@ -186,17 +186,27 @@ pub(crate) fn psp_view(
             PspRow::Title => div().into_any_element(),
         })
         .collect();
+    // psp 会话列表滚动 + 右缘滚动条（gpui-component Scrollbar，ZED Regular
+    // 同款视觉：6px 圆角 thumb、hover 加宽）
     col = col.child(
         div()
             .id("psp-scroll")
+            .relative()
             .flex_1()
             .min_h_0()
             .w_full()
             .overflow_y_scroll()
+            .track_scroll(&chat.psp_scroll)
             // 水平留白由 col 外层统一（10px），此处不再叠加
             .flex()
             .flex_col()
-            .children(rows),
+            .children(rows)
+            .child(
+                gpui_component::scroll::Scrollbar::vertical(
+                    &chat.psp_scrollbar,
+                    &chat.psp_scroll,
+                ),
+            ),
     );
     col.into_any_element()
 }

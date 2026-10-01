@@ -260,6 +260,9 @@ struct Chat {
     /// 文件查看视图的滚动（滚动条渲染数据源）
     file_scroll: gpui::ScrollHandle,
     file_scrollbar: gpui_component::scroll::ScrollbarState,
+    /// psp 会话列表滚动（滚动条数据源）
+    psp_scroll: gpui::ScrollHandle,
+    psp_scrollbar: gpui_component::scroll::ScrollbarState,
     nav_open: bool,
     nav_hide_at: Option<std::time::Instant>,
     nav_flyout_hovered: bool,
@@ -413,6 +416,8 @@ impl Chat {
             browse_last: ContentView::Term,
             file_scroll: gpui::ScrollHandle::new(),
             file_scrollbar: gpui_component::scroll::ScrollbarState::default(),
+            psp_scroll: gpui::ScrollHandle::new(),
+            psp_scrollbar: gpui_component::scroll::ScrollbarState::default(),
             nav_open: false,
             nav_hide_at: None,
             nav_flyout_hovered: false,
