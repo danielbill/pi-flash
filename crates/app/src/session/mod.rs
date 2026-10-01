@@ -13,7 +13,6 @@ use self::messages::{Role, compute_meta, render_assistant_turn, render_msg};
 use crate::ext_ui::render_ext_widget;
 
 use crate::Chat;
-use crate::i18n::tr;
 use crate::services::format::*;
 use crate::theme::theme as T;
 
@@ -186,10 +185,11 @@ fn session_list(
                     .into_any_element()
             }
             None => {
-                // v54 §13 等待动画：模型名 + spark 旋转 + 「正在思考…」+ shimmer 滑动条。
-                // 生命周期 = 发送成功 → agent 第一个 assistant 事件（runtime.phase_waiting）
+                // pi-web parity（v56-1 c6）：agentRunning && !hasStreamingContent
+                // 时显示 13px text_muted 脉冲行——等待模型 / 运行工具（列名，
+                // 1/≤3/更多 三档），文本流式一经出现即让位
                 if chat.rt().read(cx).phase_row_visible() {
-                    let model = chat.rt().read(cx).model_label_text();
+                    let label = chat.rt().read(cx).phase_label();
                     div()
                         .w_full()
                         .flex()
@@ -199,28 +199,7 @@ fn session_list(
                                 .w_full()
                                 .max_w(px(920.))
                                 .pt(px(2.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.))
-                                .child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(t.text_dim))
-                                        .mb(px(4.))
-                                        .child(SharedString::from(model)),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(9.))
-                                        .text_size(px(13.))
-                                        .text_color(rgb(t.accent))
-                                        .child(spark_spin(14., t.accent))
-                                        .child(thinking_label(t.accent)),
-                                )
-                                // 设计 §13 原还有一条 260×10 shimmer 骨架条，已按用户要求去掉：
-                                // 已有「正在思考…」文案，骨架条不承载信息，纯属视觉噪音
+                                .child(phase_pulse(label, t)),
                         )
                         .into_any_element()
                 } else {
@@ -634,41 +613,18 @@ fn ext_widget_rows(chat: &Chat, t: &'static crate::theme::Theme, above: bool) ->
     })
 }
 
-/// 旋转的四角星 spark（设计 §13 phase-row 图标，1.4s/圈）。
-fn spark_spin(size: f32, color: u32) -> gpui::AnyElement {
-    gpui::svg()
-        .path(SharedString::from("icons/spark.svg"))
-        .text_color(gpui::rgb(color))
-        .size(gpui::px(size))
-        .with_animation(
-            "phase-spark",
-            Animation::new(std::time::Duration::from_millis(1400)).repeat(),
-            |el, delta| {
-                el.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                    delta * std::f32::consts::TAU,
-                )))
-            },
-        )
-        .into_any_element()
-}
-
-/// 「正在思考…」标签（设计 §13 .dots：1.4s/4 步，0→3 个点循环）。
-fn thinking_label(accent: u32) -> gpui::AnyElement {
+/// 相位行文本（pi-web：13px text_muted，1.5s 透明度脉冲）。
+fn phase_pulse(label: String, t: &crate::theme::Theme) -> gpui::AnyElement {
     div()
-        .flex()
-        .items_center()
         .text_size(px(13.))
-        .text_color(rgb(accent))
+        .text_color(rgb(t.text_muted))
         .with_animation(
-            "phase-dots",
-            Animation::new(std::time::Duration::from_millis(1400)).repeat(),
-            |el, delta| {
-                let n = ((delta * 4.).floor().max(0.) as usize).min(3);
-                el.child(SharedString::from(format!(
-                    "{}{}",
-                    tr("正在思考"),
-                    ".".repeat(n)
-                )))
+            "phase-pulse",
+            Animation::new(std::time::Duration::from_millis(1500)).repeat(),
+            move |el, delta| {
+                let wave = (delta * std::f32::consts::PI).sin().abs() as f32;
+                el.opacity(0.45 + 0.55 * wave)
+                    .child(SharedString::from(label.clone()))
             },
         )
         .into_any_element()

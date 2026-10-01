@@ -67,6 +67,9 @@ pub(crate) struct SessionRuntime {
     /// blocks open, process group closed when the turn has a final answer)
     pub collapsed: std::collections::HashMap<(usize, usize), bool>,
     pub phase_waiting: bool,
+    /// text/thinking/toolcall deltas in flight (pi-web hasStreamingContent
+    /// parity): the running/waiting phase row yields while content streams
+    pub streaming_content: bool,
     /// 乐观发送的用户文本：只用于把 pi 回显的同文 user 消息就地升级（去重）。
     /// 与 phase_waiting 解耦 —— 回显到达 ≠ agent 已应答，等待行不能被它掐掉。
     pub pending_echo: Option<String>,
@@ -125,6 +128,7 @@ impl SessionRuntime {
             list,
             collapsed: std::collections::HashMap::new(),
             phase_waiting: false,
+            streaming_content: false,
             pending_echo: None,
             stream_started: None,
             agent_running: false,
@@ -493,6 +497,7 @@ impl SessionRuntime {
                     "assistant" => {
                         self.phase_waiting = false;
                         self.pending_echo = None;
+                        self.streaming_content = false;
                         self.messages.push(Msg {
                             role: Role::Assistant,
                             blocks,
@@ -537,6 +542,7 @@ impl SessionRuntime {
             Event::MessageUpdate(assistant_event) => {
                 self.phase_waiting = false;
                 self.pending_echo = None;
+                self.streaming_content = true;
                 match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
                     if let Block::Text { text, .. } = self.assistant_slot(
@@ -658,6 +664,7 @@ impl SessionRuntime {
                             m.stop_reason = stop_reason;
                             m.error_message = error_message;
                             m.model = model;
+                            self.streaming_content = false;
                         }
                     }
                 }
@@ -673,6 +680,7 @@ impl SessionRuntime {
                 self.agent_running = false;
                 self.phase_waiting = false;
                 self.pending_echo = None;
+                self.streaming_content = false;
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
                 self.refresh_state();
@@ -680,6 +688,7 @@ impl SessionRuntime {
                 self.agent_running = false;
                 self.phase_waiting = false;
                 self.pending_echo = None;
+                self.streaming_content = false;
                 self.stream_started = None;
                 // our own writer advanced the file — re-baseline so the
                 // external-append tick doesn't re-read our own turn
@@ -944,9 +953,46 @@ impl SessionRuntime {
         &mut msg.blocks[content_index]
     }
 
+    /// pi-web ChatWindow agentRunning && !hasStreamingContent parity: the
+    /// waiting/running row shows while no content is streaming — before the
+    /// first assistant event (waiting) and during tool execution (running).
     pub(crate) fn phase_row_visible(&self) -> bool {
-        self.phase_waiting
-            && !matches!(self.messages.last(), Some(m) if m.role == Role::Assistant)
+        (self.phase_waiting || self.agent_running) && !self.streaming_content
+    }
+
+    /// pi-web phaseLabel parity: running tool names derive from the last
+    /// assistant message's unanswered tool calls; none pending = waiting.
+    pub(crate) fn phase_label(&self) -> String {
+        let tools: Vec<String> = self
+            .messages
+            .last()
+            .filter(|m| m.role == Role::Assistant)
+            .map(|m| {
+                m.blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        Block::ToolCall { name, result, .. }
+                            if !name.is_empty() && result.is_empty() =>
+                        {
+                            Some(name.to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        match tools.len() {
+            0 => tr("正在等待模型...").to_string(),
+            1 => crate::i18n::tf("正在运行 {name}...", &[("name", tools[0].clone())]),
+            n if n <= 3 => crate::i18n::tf("正在运行 {names}...", &[("names", tools.join(", "))]),
+            n => crate::i18n::tf(
+                "正在运行 {names}（另有 {count} 个）...",
+                &[
+                    ("names", tools[..2].join(", ")),
+                    ("count", (n - 2).to_string()),
+                ],
+            ),
+        }
     }
 
     fn notify_list(&mut self, cx: &mut Context<Self>) {
