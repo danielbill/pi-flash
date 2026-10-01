@@ -82,7 +82,10 @@
     display: flex; align-items: center; justify-content: center;
     color: var(--text-muted); cursor: default;
   }
-  .tb-win > div:hover { background: var(--bg-hover); }
+  /* 最小化/最大化并入 icon 动效规格（用户确认）；仅关闭钮保持红底 */
+  .tb-win > div:not(.close):hover { color: var(--text); }
+  .tb-win > div:not(.close) svg { transition: transform .12s ease; }
+  .tb-win > div:not(.close):hover svg { transform: translateY(-1px) scale(1.06); }
   .tb-win > div.close:hover { background: #d8626a; color: #fff; }
 
   .app-body { flex: 1; min-height: 0; display: flex; }
