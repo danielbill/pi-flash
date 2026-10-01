@@ -160,6 +160,11 @@ fn session_list(
                 } else {
                     None
                 };
+                // v56-5 c23（pi-web tps badge parity）：启动 0.5s 后显示
+                let stream_tps = stream_est.zip(rt_view.stream_started).and_then(|(est, start)| {
+                    let secs = start.elapsed().as_secs_f32();
+                    (secs >= 0.5 && est > 0).then(|| est as f32 / secs)
+                });
                 div()
                     .w_full()
                     .flex()
@@ -177,6 +182,7 @@ fn session_list(
                                 t,
                                 &rt_view.model_label_text(),
                                 stream_est,
+                                stream_tps,
                                 compute_meta(&rt_view.messages, ix),
                                 rt_view.copy_flash.is_some_and(|(cix, at)| {
                                     cix == ix && at.elapsed().as_millis() < 1500

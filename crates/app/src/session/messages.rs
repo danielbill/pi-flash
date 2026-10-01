@@ -585,6 +585,119 @@ fn render_tool_card(
     card
 }
 
+/// pi-web isWriteToolName（tool-names.ts）。
+fn is_write_tool_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n == "write" || n.starts_with("write_") || n.ends_with(".write") || n.ends_with("_write")
+}
+
+fn is_file_writing_tool(name: &str) -> bool {
+    is_write_tool_name(name)
+        || crate::session::diff::is_edit_tool_name(name)
+        || crate::session::diff::is_apply_patch_tool_name(name)
+}
+
+fn read_tool_path(args: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args).ok()?;
+    v.get("file_path")
+        .or_else(|| v.get("path"))
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// pi-web readApplyPatchPaths parity：appliedFiles > preview > 输入解析，
+/// 剔除 delete，failures 无 applied 时写零文件。
+fn apply_patch_written_paths(args: &str, details: Option<&serde_json::Value>) -> Vec<String> {
+    let delete_paths: Vec<String> = args
+        .lines()
+        .filter_map(|l| l.strip_prefix("*** Delete File: "))
+        .map(|p| p.trim().to_string())
+        .collect();
+    let has_failures = details
+        .and_then(|d| d.get("result"))
+        .and_then(|r| r.get("failures"))
+        .and_then(|f| f.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    if let Some(applied) = details
+        .and_then(|d| d.get("result"))
+        .and_then(|r| r.get("appliedFiles"))
+        .and_then(|a| a.as_array())
+    {
+        let applied: Vec<String> = applied
+            .iter()
+            .filter_map(|x| x.as_str())
+            .filter(|p| !p.is_empty() && !delete_paths.contains(&p.to_string()))
+            .map(str::to_string)
+            .collect();
+        return applied;
+    }
+    if has_failures {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    if let Some(d) = details {
+        if let Some(files) = crate::session::diff::apply_patch_preview_to_files(d) {
+            for f in files {
+                if let Some(p) = f.new_path {
+                    paths.push(p);
+                }
+            }
+        }
+    }
+    if paths.is_empty() {
+        if let Some(files) = crate::session::diff::parse_apply_patch_input(args) {
+            for f in files {
+                if let Some(p) = f.new_path {
+                    paths.push(p);
+                }
+            }
+        }
+    }
+    paths
+}
+
+/// pi-web extractTurnWrittenFiles parity：本轮实际写过的文件（工具调用
+/// 为准，去重保序，相对路径按 cwd 解析）。
+fn turn_written_files(turn: &[&Msg]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let cwd = std::env::current_dir().ok();
+    let push = |raw: String, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>| {
+        let path = std::path::Path::new(&raw);
+        let resolved = if path.is_absolute() {
+            raw.clone()
+        } else {
+            match &cwd {
+                Some(c) => c.join(raw).to_string_lossy().to_string(),
+                None => return,
+            }
+        };
+        if seen.insert(resolved.clone()) {
+            out.push(resolved);
+        }
+    };
+    for m in turn {
+        for b in &m.blocks {
+            let Block::ToolCall { name, args, is_error, result_arrived, details, .. } = b else {
+                continue;
+            };
+            if *is_error || !*result_arrived || !is_file_writing_tool(name) {
+                continue;
+            }
+            if crate::session::diff::is_apply_patch_tool_name(name) {
+                for p in apply_patch_written_paths(args, details.as_ref()) {
+                    push(p, &mut seen, &mut out);
+                }
+            } else if let Some(p) = read_tool_path(args) {
+                push(p, &mut seen, &mut out);
+            }
+        }
+    }
+    out
+}
+
 /// pi-web PairedResult：maxHeight 400 滚动、空结果斜体 0.6、错误红字。
 fn paired_result(
     result: &str,
@@ -1158,6 +1271,8 @@ pub(crate) fn render_assistant_turn(
     model_label: &str,
     // Some(est_tokens)：此轮正在流式（最后一个 assistant 消息）
     stream_info: Option<u64>,
+    // Some(tps)：流式速度（pi-web 300ms tick 估算，四档配色）
+    stream_tps: Option<f32>,
     meta: MsgMeta,
     copied: bool,
 ) -> gpui::Div {
@@ -1274,15 +1389,109 @@ pub(crate) fn render_assistant_turn(
     }
 
     // ---- 最终回答：末条消息的 answer 连续段（pi-web finalAnswerMessage）----
+    // 流式中：标签行带估算 token + t/s 徽章（pi-web isStreaming label parity），
+    // answer 文本未出现时也渲染（等待文本的窗口期不空白）
+    let est = stream_info.filter(|_| is_working);
+    let tps = stream_tps.filter(|_| is_working);
+    if is_working || answer_len > 0 {
+        let label = div()
+            .text_size(px(11.))
+            .text_color(rgb(t.text_dim))
+            .mb(px(4.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(SharedString::from(
+                final_msg.model.as_deref().unwrap_or(model_label).to_string(),
+            ));
+        let label = match est.filter(|e| *e > 0) {
+            Some(e) => {
+                let mut row = label
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .text_color(rgb(t.text))
+                            .child(SharedString::from(format!(
+                                "\u{2193} {}",
+                                crate::services::format::fmt_thousand(e)
+                            ))),
+                    );
+                if let Some(v) = tps {
+                    let bg = if v >= 50. {
+                        0x53b3cb
+                    } else if v >= 30. {
+                        0x9bc53d
+                    } else if v >= 15. {
+                        0xf9c22e
+                    } else {
+                        0xe01a4f
+                    };
+                    row = row.child(
+                        div()
+                            .ml(px(6.))
+                            .px(px(6.))
+                            .py(px(1.))
+                            .rounded(px(4.))
+                            .bg(gpui::rgb(bg))
+                            .text_size(px(11.))
+                            .text_color(rgb(0xffffff))
+                            .child(SharedString::from(format!("{v:.1} t/s"))),
+                    );
+                }
+                row
+            }
+            None => label,
+        };
+        col = col.child(label);
+    }
     if answer_len > 0 {
-        col = col.child(model_label_div(
-            final_msg.model.as_deref().unwrap_or(model_label),
-            t,
-        ));
         for b in &final_msg.blocks[answer_start..] {
             let streaming = is_working && final_pos == turn.len() - 1;
             col = col.child(render_block(b, final_gix, weak, collapsed, t, streaming));
         }
+    }
+    // c24: 轮内写文件 chips（pi-web TurnWrittenFiles parity：由
+    // 成功的 write/edit/apply_patch 工具调用推导，绝不扫描回复文本）
+    let written = turn_written_files(turn);
+    if !written.is_empty() {
+        let mut chips = div().flex().flex_wrap().gap(px(6.)).mt(px(6.));
+        for path in &written {
+            let p = path.clone();
+            let weak_open = weak.clone();
+            let name = std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            chips = chips.child(
+                div()
+                    .id(SharedString::from(format!("wf-{start_ix}-{name}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded(px(6.))
+                    .bg(rgb(t.bg_subtle))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .font_family("Consolas")
+                    .text_size(px(12.))
+                    .text_color(rgb(t.text_muted))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(t.text)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let p = p.clone();
+                        let _ = weak_open.update(cx, |c, cx| {
+                            c.open_file_tab(std::path::PathBuf::from(&p), cx)
+                        });
+                    })
+                    .child(icon("file", 12., t.text_dim))
+                    .child(SharedString::from(name)),
+            );
+        }
+        col = col.child(chips);
     }
     // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）
     if let Some(line) = final_msg.usage.as_ref().and_then(usage_line) {
