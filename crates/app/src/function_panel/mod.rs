@@ -205,15 +205,7 @@ pub(crate) fn psp_view(
                     // 鼠标进 panel → 滚动条立现；离开 → 3s 后淡出（自绘
                     // psp_scrollbar 读这两个状态自绘透明度）
                     .on_hover(cx.listener(|this, hovered: &bool, _w, cx| {
-                        if *hovered {
-                            this.psp_sb_state.panel_hovered.set(true);
-                            this.psp_sb_state.left_at.set(None);
-                        } else {
-                            this.psp_sb_state.panel_hovered.set(false);
-                            this.psp_sb_state
-                                .left_at
-                                .set(Some(std::time::Instant::now()));
-                        }
+                        this.psp_sb_state.set_parent_hovered(*hovered);
                         cx.notify();
                     }))
                     // 水平留白由 col 外层统一（10px），此处不再叠加

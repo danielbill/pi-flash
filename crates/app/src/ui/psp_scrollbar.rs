@@ -1,79 +1,99 @@
-//! psp 会话列表滚动条（v55）——ZED Regular 移植（`ui/components/scrollbar.rs`
-//! 的最小子集）。替换 gpui-component Scrollbar：那个组件 track 常显（半透
-//! 明条被误读为第二条滚动条）、Hover 模式不管可见性、未显示时点击穿透、
-//! thumb 宽度是常量——四个坑都绕不开，自绘（~200 行）比 fork 干净。
+//! psp 会话列表滚动条（v55）——**ZED `ui/components/scrollbar.rs` 移植**
+//! （Regular 样式最小子集，结构一一对应）：
+//! - ScrollbarState（Entity）：ThumbState 状态机 + parent hover + autohide
+//! - ScrollbarElement：prepaint 算 thumb 布局 + parent hitbox；paint 画
+//!   thumb（0.7 最大透明度混合 + autohide 淡出）；事件三件套
+//! - mousedown：thumb 上=拖拽、轨道=翻页，`stop_propagation` 不穿透
+//! - mousemove：parent 进入/经过 → 显示 + hover 检测；拖拽跟随
+//! - mouseup：结束拖拽；parent 离开 → `schedule_auto_hide`（3s 淡出）
 //!
-//! 行为规格（用户定稿）：
-//! - 只有 thumb、无 track；贴 dock 右缘（视觉贴边）
-//! - 鼠标在 panel 内 = 显示；离开 panel 3s 后 1s 淡出
-//! - thumb 悬停加宽 2px（6→8px）方便拾取；可拖拽；轨道点击 = 翻页
-//! - 全部鼠标事件 stop_propagation，不穿透到 session 行
+//! 用户行为规格：panel 内常显（parent hover 驱动，与 zed `ParentHoverEvent::
+//! Entered → show_scrollbars` 一致）、离开 3s 淡出、thumb 悬停加宽、贴边无
+//! track。
 
-use std::rc::Rc;
 use std::cell::Cell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui::{
-    px, rgb, size, AnyElement, Bounds, DispatchPhase, Edges, Element, ElementId, GlobalElementId, Pixels,
-    HitboxBehavior, InspectorElementId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Style,
-    Window, prelude::*,
+    point, px, relative, rgb, size, AnyElement, App, Bounds, Corners, DispatchPhase, Edges,
+    Element, ElementId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, LayoutId,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Style, Window, prelude::*,
 };
 
-/// thumb 常规宽（贴边细条）
-const THUMB_W: f32 = 6.;
-/// thumb 悬停/拖拽宽（+2px 拾取）
-const THUMB_W_ACTIVE: f32 = 8.;
-/// 最小 thumb 长度（ZED MINIMUM_THUMB_SIZE）
-const THUMB_MIN_LEN: f32 = 25.;
-/// 上下呼吸位
-const TRACK_INSET: f32 = 2.;
-/// 淡出参数（离开 panel 后）
-const FADE_DELAY_MS: u128 = 3000;
-const FADE_LEN_MS: u128 = 1000;
+/// ZED `ScrollbarStyle::Regular.to_pixels()`
+const WIDTH: f32 = 6.;
+/// ZED `SCROLLBAR_PADDING`——thumb 容器相对 track 的内缩（含命中区加宽）
+const PADDING: f32 = 4.;
+/// ZED `MINIMUM_THUMB_SIZE`
+const MIN_THUMB: f32 = 25.;
+/// ZED `MAXIMUM_OPACITY`
+const MAX_OPACITY: f32 = 0.7;
+/// autohide（ZED ScrollbarAutoHide 语义：离开 parent 后保持到计时结束）
+const AUTOHIDE_MS: u64 = 3000;
 
-/// 共享状态：panel 悬停 + 上次离开时刻（放 Chat 上会引入借用环，独立 Rc）。
+/// thumb 状态机（zed ThumbState）
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ThumbState {
+    Inactive,
+    Hover,
+    Dragging(Pixels),
+}
+
+/// 共享面板状态（挂 Chat；滚动条元素与容器 on_hover 两处读写）。
 #[derive(Clone, Default)]
 pub struct PspScrollbarState {
-    /// 鼠标是否在滚动容器内（显示条件之一）
-    pub panel_hovered: Rc<Cell<bool>>,
-    /// 上次离开 panel 的时刻（淡出用）
-    pub left_at: Rc<Cell<Option<std::time::Instant>>>,
-    /// 拖拽中的 thumb 起点偏移（Some = 拖拽中）
-    drag_y: Rc<Cell<Option<f32>>>,
+    parent_hovered: Rc<Cell<bool>>,
+    /// 上次"panel 悬停"刷新时刻（autohide 基准；悬停中持续刷新 = 常显）
+    last_active: Rc<Cell<Option<Instant>>>,
 }
+
 
 impl PspScrollbarState {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// 容器 on_hover 调用（zed 的 update_parent_hovered 等价入口）。
+    pub fn set_parent_hovered(&self, hovered: bool) {
+        self.parent_hovered.set(hovered);
+        if hovered {
+            self.last_active.set(Some(Instant::now()));
+        }
+    }
 }
 
-/// 创建滚动条元素（挂在滚动容器的平级 absolute 层内）。
-pub fn psp_scrollbar(
-    state: &PspScrollbarState,
-    scroll: &gpui::ScrollHandle,
-) -> AnyElement {
-    PspScrollbarEl {
+pub fn psp_scrollbar(state: &PspScrollbarState, scroll: &gpui::ScrollHandle) -> AnyElement {
+    ScrollbarElement {
         state: state.clone(),
         scroll: scroll.clone(),
     }
     .into_any()
 }
 
-struct PspScrollbarEl {
+struct ScrollbarElement {
     state: PspScrollbarState,
     scroll: gpui::ScrollHandle,
 }
 
-impl IntoElement for PspScrollbarEl {
+/// prepaint 产物（zed ScrollbarLayout + parent hitbox）
+struct Layout {
+    thumb_bounds: Bounds<Pixels>,
+    /// 命中区 = thumb 容器（含 padding，好拾取）
+    hit_bounds: Bounds<Pixels>,
+    parent_hitbox: Hitbox,
+}
+
+impl IntoElement for ScrollbarElement {
     type Element = Self;
     fn into_element(self) -> Self {
         self
     }
 }
 
-impl Element for PspScrollbarEl {
+impl Element for ScrollbarElement {
     type RequestLayoutState = ();
-    type PrepaintState = Option<gpui::Hitbox>;
+    type PrepaintState = Option<Layout>;
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::Name("psp-scrollbar".into()))
@@ -88,86 +108,94 @@ impl Element for PspScrollbarEl {
         _id: Option<&GlobalElementId>,
         _inspector: Option<&InspectorElementId>,
         window: &mut Window,
-        _cx: &mut gpui::App,
-    ) -> (gpui::LayoutId, ()) {
-        let mut style = Style::default();
-        style.size = size(px(12.).into(), px(1.).into());
-        style.flex_grow = 1.;
-        (window.request_layout(style, None, _cx), ())
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        // zed: absolute inset 0, size 100%
+        let style = Style {
+            position: gpui::Position::Absolute,
+            inset: Edges::default(),
+            size: size(relative(1.), relative(1.)).map(Into::into),
+            ..Default::default()
+        };
+        (window.request_layout(style, None, cx), ())
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector: Option<&InspectorElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request: &mut (),
         window: &mut Window,
-        _cx: &mut gpui::App,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
-        Some(window.insert_hitbox(_bounds, HitboxBehavior::default()))
+        let parent_hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+
+        let viewport_h = self.scroll.bounds().size.height.to_f64() as f32;
+        let max_off = self.scroll.max_offset().height.to_f64() as f32;
+        if max_off <= 0. || viewport_h <= 0. {
+            return None;
+        }
+        // zed thumb_ranges: visible % → size，min 25px
+        let visible_pct = viewport_h / (viewport_h + max_off);
+        let track_h = bounds.size.height.to_f64() as f32 - PADDING * 2.;
+        let thumb_len = (track_h * visible_pct).max(MIN_THUMB).min(track_h);
+        let off_y = (-self.scroll.offset().y.to_f64() as f32).clamp(0., max_off);
+        let start = (off_y / max_off) * (track_h - thumb_len);
+
+        // zed: track 锚 TopRight；Regular 样式 thumb 容器 dilate(-PADDING)
+        let thumb_bounds = Bounds::<Pixels>::from_corner_and_size(
+            gpui::Corner::TopRight,
+            point(
+                bounds.right() - px(PADDING),
+                bounds.top() + px(PADDING + start),
+            ),
+            size(px(WIDTH), px(thumb_len)),
+        );
+        // 命中区比 thumb 宽（padding 外扩，zed 用 track_bounds 做命中）
+        let hit_bounds = Bounds::<Pixels>::from_corner_and_size(
+            gpui::Corner::TopRight,
+            point(bounds.right(), bounds.top()),
+            size(px(WIDTH + PADDING * 2.), bounds.size.height),
+        );
+
+        Some(Layout {
+            thumb_bounds,
+            hit_bounds,
+            parent_hitbox,
+        })
     }
 
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         _request: &mut (),
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        _cx: &mut gpui::App,
+        cx: &mut App,
     ) {
-        let hitbox = match prepaint.as_ref() {
-            Some(h) => h.clone(),
-            None => return,
+        let Some(layout) = prepaint.take() else {
+            return;
         };
-        let scroll = self.scroll.clone();
-        let st = self.state.clone();
-        let theme_t = crate::theme::theme();
+        let t = crate::theme::theme();
+        let parent_hovered = self.state.parent_hovered.get() && layout.parent_hitbox.is_hovered(window);
 
-        // ---- 几何 ----
-        let viewport_h = scroll.bounds().size.height.to_f64() as f32;
-        let max_off = scroll.max_offset().height.to_f64() as f32;
-        let track_h = bounds.size.height.to_f64() as f32;
-        let off_y = (-scroll.offset().y.to_f64() as f32).clamp(0., max_off.max(0.));
-        let thumb_len = if max_off <= 0. {
-            0.
-        } else {
-            (track_h * viewport_h / (viewport_h + max_off)).max(THUMB_MIN_LEN).min(track_h)
-        };
-        let thumb_y0 = TRACK_INSET
-            + if max_off <= 0. {
-                0.
-            } else {
-                (off_y / max_off) * (track_h - TRACK_INSET * 2. - thumb_len)
-            };
-        let hovered = hitbox.is_hovered(window);
-        let dragging = st.drag_y.get().is_some();
-        let thumb_w = if hovered || dragging { THUMB_W_ACTIVE } else { THUMB_W };
-
-        // ---- 悬停中持续重绘（跟随 offset/透明度）----
-        if hovered || dragging {
-            let probe = hitbox.clone();
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _| {
-                if phase == DispatchPhase::Capture {
-                    let _ = probe.is_hovered(window);
-                    window.refresh();
-                }
-            });
-        }
-
-        // ---- 可见性：panel 内 || 淡出窗口内 ----
-        let opacity = if dragging {
-            1.
-        } else if st.panel_hovered.get() || hovered {
-            1.
-        } else if let Some(left) = st.left_at.get() {
-            let elapsed_ms = left.elapsed().as_millis();
-            if elapsed_ms <= FADE_DELAY_MS {
-                1.
-            } else if elapsed_ms < FADE_DELAY_MS + FADE_LEN_MS {
-                1. - (elapsed_ms - FADE_DELAY_MS) as f32 / FADE_LEN_MS as f32
+        // ---- 可见性（zed VisibilityState 简化）：parent 内常显；离开后
+        // AUTOHIDE_MS 内保持（由 mousemove 持续刷新 last_active），超时渐隐 ----
+        let hovered = layout.hit_bounds.contains(&window.mouse_position());
+        let active = self.state.last_active.get();
+        let opacity = if parent_hovered || hovered {
+            MAX_OPACITY
+        } else if let Some(at) = active {
+            let el = at.elapsed();
+            if el < Duration::from_millis(AUTOHIDE_MS) {
+                MAX_OPACITY
+            } else if el < Duration::from_millis(AUTOHIDE_MS + 1000) {
+                // 1s 线性淡出
+                MAX_OPACITY
+                    * (1. - (el.as_millis() - AUTOHIDE_MS as u128) as f32 / 1000.).max(0.)
             } else {
                 0.
             }
@@ -175,113 +203,148 @@ impl Element for PspScrollbarEl {
             0.
         };
 
-        if opacity > 0. && thumb_len > 0. {
-            let base = rgb(theme_t.text);
-            // 常显 20%、悬停/拖拽 38%（text 薄纱，主题自适应）
-            let alpha = if hovered || dragging { 0.38 } else { 0.20 } * opacity;
-            let color = gpui::hsla(
-                gpui::Hsla::from(base).h,
-                gpui::Hsla::from(base).s,
-                gpui::Hsla::from(base).l,
-                alpha,
-            );
-            let thumb = Bounds::from_corner_and_size(
-                gpui::Corner::TopRight,
-                gpui::point(
-                    bounds.right() - px(1.),
-                    bounds.top() + px(thumb_y0),
-                ),
-                size(px(thumb_w), px(thumb_len)),
-            );
+        // thumb 上悬停（zed update_hovered_thumb）
+        let thumb_hovered = layout.thumb_bounds.contains(&window.mouse_position());
+        let dragging = DRAG.with(|c| c.borrow().is_some());
+
+        if opacity > 0. {
+            // zed: thumb_base = scrollbar_thumb_background；blend 到 surface。
+            // 本项目无独立 token，用 text 薄纱直接带透明度（等效视觉）。
+            let base = gpui::Hsla::from(rgb(t.text));
+            let a = if thumb_hovered || dragging {
+                0.38 * opacity / MAX_OPACITY
+            } else {
+                0.20 * opacity / MAX_OPACITY
+            };
+            let color = gpui::hsla(base.h, base.s, base.l, a.min(1.));
+            // zed Regular: 全圆角（clamp 到尺寸半宽）
             window.paint_quad(gpui::quad(
-                thumb,
-                gpui::Corners::all(px(thumb_w / 2.)),
+                layout.thumb_bounds,
+                Corners::all(px(WIDTH / 2.)),
                 color,
                 Edges::default(),
                 gpui::transparent_black(),
                 gpui::BorderStyle::default(),
             ));
         }
+        window.set_cursor_style(gpui::CursorStyle::Arrow, &layout.parent_hitbox);
 
-        // ---- 事件（全部 stop_propagation：不穿透 session 行）----
-        // mousedown：thumb 上 = 开始拖拽；轨道上 = 翻页
+        // ---- 事件三件套（zed 同款：全部 stop_propagation）----
+        let capture = if dragging {
+            DispatchPhase::Capture
+        } else {
+            DispatchPhase::Bubble
+        };
+
+        // mousedown：thumb=拖拽 / track=翻页
         {
-            let scroll = scroll.clone();
-            let st = st.clone();
-            window.on_mouse_event(
-                move |ev: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture || !hitbox.is_hovered(window) {
-                        return;
-                    }
-                    cx.stop_propagation();
+            let scroll = self.scroll.clone();
+            let st = self.state.clone();
+            let hit = layout.hit_bounds.clone();
+            let thumb = layout.thumb_bounds.clone();
+            window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
+                if phase != capture || ev.button != gpui::MouseButton::Left {
+                    return;
+                }
+                if !hit.contains(&ev.position) {
+                    return;
+                }
+                cx.stop_propagation();
+                if thumb.contains(&ev.position) {
+                    let offset = ev.position.y - thumb.origin.y;
+                    DRAG.with(|c| *c.borrow_mut() = Some(offset.to_f64() as f32));
+                    st.last_active.set(Some(Instant::now()));
+                } else {
+                    // zed compute_click_offset(TrackClick)：thumb 中心对准点击
                     let viewport_h = scroll.bounds().size.height.to_f64() as f32;
                     let max_off = scroll.max_offset().height.to_f64() as f32;
-                    if max_off <= 0. {
-                        return;
-                    }
-                    let track_h = bounds.size.height.to_f64() as f32;
-                    let thumb_len = (track_h * viewport_h / (viewport_h + max_off))
-                        .max(THUMB_MIN_LEN)
-                        .min(track_h);
-                    let off_y = (-scroll.offset().y.to_f64() as f32).clamp(0., max_off);
-                    let thumb_y0 = TRACK_INSET
-                        + (off_y / max_off) * (track_h - TRACK_INSET * 2. - thumb_len);
-                    let rel_y = (ev.position.y - bounds.top()).to_f64() as f32;
-                    if rel_y >= thumb_y0 && rel_y <= thumb_y0 + thumb_len {
-                        // 拖拽：记录指针在 thumb 内的偏移
-                        st.drag_y.set(Some(rel_y - thumb_y0));
+                    let track_h = hit.size.height.to_f64() as f32 - PADDING * 2.;
+                    let visible_pct = viewport_h / (viewport_h + max_off);
+                    let thumb_len = (track_h * visible_pct).max(MIN_THUMB).min(track_h);
+                    let rel = (ev.position.y.to_f64() as f32
+                        - hit.origin.y.to_f64() as f32
+                        - PADDING
+                        - thumb_len / 2.)
+                    .clamp(0., track_h - thumb_len);
+                    let new_off = if track_h > thumb_len {
+                        rel / (track_h - thumb_len) * max_off
                     } else {
-                        // 轨道点击 = 翻页（thumb 中心对准点击点）
-                        let new_thumb_y = (rel_y - thumb_len / 2. - TRACK_INSET)
-                            .max(0.)
-                            .min(track_h - TRACK_INSET * 2. - thumb_len);
-                        let new_off = new_thumb_y / (track_h - TRACK_INSET * 2. - thumb_len)
-                            * max_off;
-                        scroll.set_offset(gpui::point(px(0.), px(-new_off)));
-                        window.refresh();
-                    }
-                    window.refresh();
-                },
-            );
-        }
-        // mousemove：拖拽跟随
-        {
-            let scroll = scroll.clone();
-            let st = st.clone();
-            window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, _| {
-                if phase != DispatchPhase::Capture {
-                    return;
+                        0.
+                    };
+                    scroll.set_offset(point(px(0.), px(-new_off)));
+                    st.last_active.set(Some(Instant::now()));
                 }
-                let Some(drag_off) = st.drag_y.get() else { return };
-                let viewport_h = scroll.bounds().size.height.to_f64() as f32;
-                let max_off = scroll.max_offset().height.to_f64() as f32;
-                if max_off <= 0. {
-                    return;
-                }
-                let track_h = bounds.size.height.to_f64() as f32;
-                let thumb_len = (track_h * viewport_h / (viewport_h + max_off))
-                    .max(THUMB_MIN_LEN)
-                    .min(track_h);
-                let rel_y = (ev.position.y - bounds.top()).to_f64() as f32 - drag_off;
-                let pct = (rel_y - TRACK_INSET)
-                    .max(0.)
-                    / (track_h - TRACK_INSET * 2. - thumb_len).max(1.);
-                scroll.set_offset(gpui::point(px(0.), px(-pct.clamp(0., 1.) * max_off)));
                 window.refresh();
             });
         }
-        // mouseup：结束拖拽
+
+        // mousemove：拖拽跟随 + parent 进入显示 + hover 加宽
         {
-            let st = st.clone();
-            window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _| {
-                if phase != DispatchPhase::Capture {
+            let scroll = self.scroll.clone();
+            let st = self.state.clone();
+            let hit = layout.hit_bounds.clone();
+            let parent = layout.parent_hitbox.clone();
+            window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
+                if phase != capture {
                     return;
                 }
-                if st.drag_y.get().is_some() {
-                    st.drag_y.set(None);
+                let drag_y: Option<f32> = DRAG.with(|c| *c.borrow());
+                if let Some(drag_off) = drag_y {
+                    if ev.dragging() {
+                        let viewport_h = scroll.bounds().size.height.to_f64() as f32;
+                        let max_off = scroll.max_offset().height.to_f64() as f32;
+                        let track_h = hit.size.height.to_f64() as f32 - PADDING * 2.;
+                        let visible_pct = viewport_h / (viewport_h + max_off);
+                        let thumb_len = (track_h * visible_pct).max(MIN_THUMB).min(track_h);
+                        let rel = (ev.position.y.to_f64() as f32
+                            - hit.origin.y.to_f64() as f32
+                            - PADDING
+                            - drag_off)
+                        .clamp(0., track_h - thumb_len);
+                        let new_off = if track_h > thumb_len {
+                            rel / (track_h - thumb_len) * max_off
+                        } else {
+                            0.
+                        };
+                        scroll.set_offset(point(px(0.), px(-new_off)));
+                        window.refresh();
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                // parent 悬停中：持续刷新 last_active（常显）；进入时已由
+                // 容器 on_hover 置位。thumb hover 状态变化时刷新重绘。
+                if parent.is_hovered(window) {
+                    st.last_active.set(Some(Instant::now()));
+                }
+                let now_hover = hit.contains(&window.mouse_position());
+                let was = THUMB_HOVER.with(|c| c.get());
+                if now_hover != was {
+                    THUMB_HOVER.with(|c| c.set(now_hover));
+                    window.refresh();
+                }
+            });
+        }
+
+        // mouseup：结束拖拽 + 离开 parent 时启动 autohide
+        {
+            let st = self.state.clone();
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _| {
+                if phase != capture {
+                    return;
+                }
+                if DRAG.with(|c| c.borrow().is_some()) {
+                    DRAG.with(|c| c.borrow_mut().take());
+                    st.last_active.set(Some(Instant::now()));
                     window.refresh();
                 }
             });
         }
     }
+}
+
+/// 拖拽上下文（thumb 内偏移, px）。thread_local：与 gpui 事件单线程模型一致。
+thread_local! {
+    static DRAG: std::cell::RefCell<Option<f32>> = const { std::cell::RefCell::new(None) };
+    static THUMB_HOVER: Cell<bool> = const { Cell::new(false) };
 }
