@@ -507,6 +507,34 @@ pub(crate) fn render_assistant_turn(
             col = col.child(render_block(b, gix, weak, collapsed, t));
         }
     }
+    // token 用量行（pi-web formatUsage parity：常显于轮尾，有值才显示）
+    if let Some(u) = turn.iter().rev().find_map(|m| m.usage.as_ref()) {
+        let mut parts: Vec<String> = Vec::new();
+        if u.input > 0 {
+            parts.push(format!("{} in", crate::services::format::fmt_thousand(u.input)));
+        }
+        if u.output > 0 {
+            parts.push(format!("{} out", crate::services::format::fmt_thousand(u.output)));
+        }
+        if u.cache_read > 0 {
+            parts.push(format!(
+                "{} cache R",
+                crate::services::format::fmt_thousand(u.cache_read)
+            ));
+        }
+        if u.cost > 0. {
+            parts.push(format!("${:.4}", u.cost));
+        }
+        if !parts.is_empty() {
+            col = col.child(
+                div()
+                    .mt(px(2.))
+                    .text_size(px(11.))
+                    .text_color(rgb(t.text_faint))
+                    .child(SharedString::from(parts.join(" · "))),
+            );
+        }
+    }
     // hover 操作栏：复制整轮文本 + 用时 + 时间（末条消息的时间戳）
     let weak_copy = weak.clone();
     let mut bar = div()

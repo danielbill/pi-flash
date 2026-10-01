@@ -155,3 +155,16 @@ pub fn estimate_tokens(text: &str) -> u64 {
     cjk + rest / 4
 }
 
+
+/// 千分位（pi-web usage 行的 toLocaleString parity）：785536 → "785,536"。
+pub fn fmt_thousand(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
