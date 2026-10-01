@@ -25,6 +25,7 @@ pub(crate) struct UsageLine {
     pub(crate) input: u64,
     pub(crate) output: u64,
     pub(crate) cache_read: u64,
+    pub(crate) cache_write: u64,
     pub(crate) cost: f64,
 }
 
@@ -526,6 +527,12 @@ pub(crate) fn render_assistant_turn(
                 crate::services::format::fmt_thousand(u.cache_read)
             ));
         }
+        if u.cache_write > 0 {
+            parts.push(format!(
+                "{} cache W",
+                crate::services::format::fmt_thousand(u.cache_write)
+            ));
+        }
         if u.cost > 0. {
             parts.push(format!("${:.4}", u.cost));
         }
@@ -630,6 +637,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                     input: u.input,
                     output: u.output,
                     cache_read: u.cache_read,
+                    cache_write: u.cache_write,
                     cost: u.cost,
                 }),
                 entry_id: None,

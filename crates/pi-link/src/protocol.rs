@@ -281,6 +281,7 @@ pub struct Usage {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
+    pub cache_write: u64,
     pub cost: f64,
 }
 
@@ -290,6 +291,7 @@ impl Usage {
             input: v["input"].as_u64()?,
             output: v["output"].as_u64()?,
             cache_read: v["cacheRead"].as_u64().unwrap_or(0),
+            cache_write: v["cacheWrite"].as_u64().unwrap_or(0),
             cost: v["cost"]["total"].as_f64().or_else(|| v["cost"].as_f64()).unwrap_or(0.0),
         })
     }

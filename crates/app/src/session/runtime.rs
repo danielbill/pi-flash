@@ -641,6 +641,7 @@ impl SessionRuntime {
                                 input: u.input,
                                 output: u.output,
                                 cache_read: u.cache_read,
+                                cache_write: u.cache_write,
                                 cost: u.cost,
                             });
                             m.ts = timestamp.or(m.ts);
@@ -845,6 +846,7 @@ impl SessionRuntime {
                         input: u.input,
                         output: u.output,
                         cache_read: u.cache_read,
+                        cache_write: u.cache_write,
                         cost: u.cost,
                     }),
                     entry_id: None,
