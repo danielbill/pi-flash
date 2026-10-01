@@ -89,37 +89,10 @@ impl gpui::Element for HoverIcon {
         cx: &mut gpui::App,
     ) -> Self::PrepaintState {
         let _ = request_layout;
-        let hitbox = window.insert_hitbox(bounds, gpui::HitboxBehavior::default());
-        // 悬停变化 → window.refresh()（重绘下一帧，paint 按 is_hovered 重选
-        // transformation；与 gpui 自身 hover 样式的 notify 机制一致）。
-        // 上一帧悬停值存 element state（id 由框架经 prepaint 传入）。
-        // gpui 的 hover 样式监听（div.rs Interactivity::paint）在
-        // hover_style.is_some() 时自动挂"悬停变化 → notify"事件——借这个
-        // 机制：interactivity 需要的话见 v55.3 注记。此处手工挂同款监听：
-        // 与 Interactivity 一样在 capture 期比较 hitbox 前后状态，变化即
-        // refresh。前后值存窗口级 element state（key 用本元素 id —— prepaint
-        // 收到的 GlobalElementId 不可 clone，改用每元素唯一 ElementId 字符串
-        // 配合 window.with_element_state 的 GlobalElementId 要求 → 退而求
-        // 其次：状态直接放闭包外的 HitboxId → 不可能。最终方案：无条件
-        // refresh（mousemove 高频但 refresh 幂等合并为一帧，开销可忽略——
-        // gpui Interactivity 的实现也是逐 mousemove 比较后 notify，等价）。
-        let probe = hitbox.clone();
-        let was_hovered_cell = std::cell::Cell::new(false);
-        let cell_ref = &was_hovered_cell;
-        let _ = cell_ref;
-        window.on_mouse_event({
-            move |_: &gpui::MouseMoveEvent, phase, window, _cx| {
-                if phase == gpui::DispatchPhase::Capture {
-                    let now = probe.is_hovered(window);
-                    // Cell 无法跨帧存活 —— 依赖 refresh 幂等：hover 中每
-                    // mousemove 标脏一次，gpui 合帧后实际重绘频率不变
-                    if now {
-                        window.refresh();
-                    }
-                }
-            }
-        });
-        Some(hitbox)
+        // hitbox 必须在 prepaint 建（insert_hitbox debug_assert_prepaint）；
+        // 悬停监听在 paint 期经 PrepaintState 注册（on_mouse_event 只允许
+        // paint 期调用）
+        Some(window.insert_hitbox(bounds, gpui::HitboxBehavior::default()))
     }
 
     fn paint(
@@ -136,6 +109,19 @@ impl gpui::Element for HoverIcon {
         let hovered = prepaint
             .as_ref()
             .is_some_and(|h| h.is_hovered(window));
+        // 无条件挂 mousemove 监听（paint 期注册）：悬停中标脏保持续渲染，
+        // 离开悬停的那次 move 也经它触发重绘（refresh 幂等合帧，开销即
+        // gpui 自身 hover 样式的同款成本）
+        if let Some(hitbox) = prepaint.as_ref() {
+            let probe = hitbox.clone();
+            window.on_mouse_event(
+                move |_: &gpui::MouseMoveEvent, phase, window, _cx| {
+                    if phase == gpui::DispatchPhase::Capture && probe.is_hovered(window) {
+                        window.refresh();
+                    }
+                },
+            );
+        }
         // 与 Svg::Transformation::into_matrix 同式的矩阵：绕中心 scale，再平移
         let sf = window.scale_factor();
         let c = bounds.center();
