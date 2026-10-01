@@ -25,9 +25,10 @@ use crate::agent_session::AgentSession;
 use crate::session::messages::{Msg, Role, UsageLine, msgs_from_tail};
 use pi_link::sessions::read_leaf_messages;
 
-/// cap for the disk-side leaf-chain rebuild (render is full-div; a bound
-/// keeps very long histories smooth — matches the disk-direct window scale)
-const LEAF_REPAIR_MAX: usize = 400;
+/// no cap for the disk-side leaf-chain rebuild: the repair must be longer
+/// than the truncated RPC snapshot to win the length contest, and the RPC
+/// path already renders the full (broken) chain — same render scale
+const LEAF_REPAIR_MAX: usize = usize::MAX;
 use crate::i18n::tr;
 use crate::services::format::status_line;
 
