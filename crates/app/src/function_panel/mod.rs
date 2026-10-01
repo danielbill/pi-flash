@@ -526,7 +526,14 @@ fn session_row_view(
         gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_to }, 0.),
         gpui::linear_color_stop(fade_to, 1.),
     );
-    let fade_hover = fade.clone();
+    // 悬停态行底变成 10% 白纱（over nav），渐隐尾色必须跟着换白纱的合成
+    // 视觉色——否则纯 nav 的 overlay 盖在白纱底上就是一块深色（黑块回归）
+    let fade_hover_to = gpui::Hsla::from(gpui::rgb(crate::theme::mix_rgb(t.text, t.nav, 0.1)));
+    let fade_hover = gpui::linear_gradient(
+        90.,
+        gpui::linear_color_stop(gpui::Hsla { a: 0., ..fade_hover_to }, 0.),
+        gpui::linear_color_stop(fade_hover_to, 1.),
+    );
 
     // 溢出测量：标题真实排版宽 vs 行内可用宽（列表 px 24 + 行 pl/pr 14 +
     // slot 15 + 两个 gap 16 + 时间列 38）
