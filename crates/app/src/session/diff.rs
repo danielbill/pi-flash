@@ -19,6 +19,7 @@ pub(crate) struct Cell {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Hunk text 未渲染（pi-web hunk 行返回 null）但保留数据
 pub(crate) enum Row {
     /// @@ header / "\ No newline" marker — rendered as a band, no cells
     Hunk(String),

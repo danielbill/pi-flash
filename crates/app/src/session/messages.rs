@@ -10,7 +10,6 @@ use pi_link::protocol::{content_blocks, Block, Usage};
 use crate::Chat;
 use crate::i18n::tr;
 use crate::markdown;
-use crate::services::format::pretty_args;
 use crate::theme;
 use crate::ui::{icon, icon_hover};
 
@@ -300,22 +299,6 @@ pub(crate) fn render_block(
         }
         _ => div().w_full(),
     }
-}
-
-/// 工具调用「对象」：主参数（file_path/command/pattern/url/query…），缺省
-/// 用 pretty_args 首 40 字符。
-fn tool_target(args: &str) -> String {
-    const KEYS: &[&str] = &[
-        "file_path", "path", "command", "pattern", "url", "query", "content", "text",
-    ];
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(args) {
-        for k in KEYS {
-            if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
-                return s.chars().take(60).collect();
-            }
-        }
-    }
-    pretty_args(args).chars().take(40).collect()
 }
 
 fn rgba_a(rgb24: u32, alpha: f32) -> u32 {

@@ -127,14 +127,6 @@ pub fn mime_from_ext(path: &Path) -> String {
     }
 }
 
-pub fn pretty_args(args: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(args)
-        .ok()
-        .and_then(|v| serde_json::to_string_pretty(&v).ok())
-        .unwrap_or_else(|| args.to_string())
-}
-
-
 /// pi-web estimateTokens: CJK chars ~1 token each, others ~4 chars/token.
 pub fn estimate_tokens(text: &str) -> u64 {
     let mut cjk: u64 = 0;
