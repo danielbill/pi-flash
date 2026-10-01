@@ -792,28 +792,6 @@ pub(crate) fn dock(
         .flex()
         .flex_col()
         .bg(rgb(t.nav))
-        .child(
-            // 拖拽调宽（250–500，双击复位 282）；6px 命中区贴右缘
-            div()
-                .id("slp-resizer")
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right_0()
-                .w(px(6.))
-                .cursor_col_resize()
-                .on_mouse_down(MouseButton::Left, cx.listener(
-                    |this, ev: &gpui::MouseDownEvent, _w, cx| {
-                        if ev.click_count == 2 {
-                            this.slp_w = 282.;
-                            this.persist_ui();
-                            cx.notify();
-                        } else {
-                            this.slp_drag = Some((f32::from(ev.position.x), this.slp_w));
-                        }
-                    },
-                )),
-        )
         .child(view)
         .into_any_element()
 }

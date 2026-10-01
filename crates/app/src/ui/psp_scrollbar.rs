@@ -34,14 +34,6 @@ const MAX_OPACITY: f32 = 0.7;
 /// autohide（ZED ScrollbarAutoHide 语义：离开 parent 后保持到计时结束）
 const AUTOHIDE_MS: u64 = 3000;
 
-/// thumb 状态机（zed ThumbState）
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum ThumbState {
-    Inactive,
-    Hover,
-    Dragging(Pixels),
-}
-
 /// 共享面板状态（挂 Chat；滚动条元素与容器 on_hover 两处读写）。
 #[derive(Clone, Default)]
 pub struct PspScrollbarState {
@@ -176,7 +168,7 @@ impl Element for ScrollbarElement {
         _request: &mut (),
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) {
         let Some(layout) = prepaint.take() else {
             return;
@@ -349,7 +341,7 @@ impl Element for ScrollbarElement {
     }
 }
 
-/// 拖拽上下文（thumb 内偏移, px）。thread_local：与 gpui 事件单线程模型一致。
+// 拖拽上下文（thumb 内偏移, px）。thread_local：与 gpui 事件单线程模型一致。
 thread_local! {
     static DRAG: std::cell::RefCell<Option<f32>> = const { std::cell::RefCell::new(None) };
     static THUMB_HOVER: Cell<bool> = const { Cell::new(false) };

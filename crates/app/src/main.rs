@@ -254,6 +254,8 @@ struct Chat {
     slp_w: f32,
     panes_hidden: bool,
     slp_drag: Option<(f32, f32)>,
+    /// 分隔线响应区悬停（线加深加粗 + col_resize 光标已由 resizer 承担）
+    slp_hover: bool,
     content_view: ContentView,
     /// 浏览操作区的最后视图（Term/File）：文件树标签点击时恢复
     browse_last: ContentView,
@@ -412,6 +414,7 @@ impl Chat {
             slp_w: ui.slp_w,
             panes_hidden: ui.panes_hidden,
             slp_drag: None,
+            slp_hover: false,
             content_view: ContentView::Chat,
             browse_last: ContentView::Term,
             file_scroll: gpui::ScrollHandle::new(),
@@ -1197,6 +1200,49 @@ impl Render for Chat {
                 },
             );
         if !panes_hidden {
+            // 分隔线响应区（跨线）：panel 内 3px + 内容区 9px（避开滚动条
+            // 命中区）；hover 时线加粗加深 + col_resize 光标
+            let slp_hovered = self.slp_hover;
+            body = body.child(
+                div()
+                    .id("slp-resizer")
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(self.slp_w - 3.))
+                    .w(px(12.))
+                    .cursor_col_resize()
+                    .on_hover(cx.listener(|this, h: &bool, _w, cx| {
+                        if this.slp_hover != *h {
+                            this.slp_hover = *h;
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        |this, ev: &gpui::MouseDownEvent, _w, cx| {
+                            if ev.click_count == 2 {
+                                this.slp_w = 282.;
+                                this.persist_ui();
+                                cx.notify();
+                            } else {
+                                this.slp_drag =
+                                    Some((f32::from(ev.position.x), this.slp_w));
+                            }
+                        },
+                    ))
+                    .when(slp_hovered || slp_dragging, |d| {
+                        // 2px 可视线，锚在 panel|内容 交界（slp_w-1）
+                        d.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(px(self.slp_w - 1. - (self.slp_w - 3.)))
+                                .w(px(2.))
+                                .bg(gpui::rgba(crate::theme::border_alpha(t, 0xd0))),
+                        )
+                    }),
+            );
             body = body.child(
                 div()
                     .id("panel-col")
@@ -1225,7 +1271,7 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                .when(!panes_hidden && !slp_dragging, |d| {
+                .when(!panes_hidden && !slp_dragging && !self.slp_hover, |d| {
                     d.border_l_1().border_color(gpui::rgba(crate::theme::border_alpha(t, 0x99)))
                 })
                 .child(titlebar::topbar_r(self, window, cx))
