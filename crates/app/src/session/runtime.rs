@@ -420,7 +420,9 @@ impl SessionRuntime {
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
                             let ts = msg["timestamp"].as_i64();
-                            self.ingest_message(role, blocks, usage, ts, None, cx);
+                            let stop = msg["stopReason"].as_str().map(str::to_string);
+                            let err = msg["errorMessage"].as_str().map(str::to_string);
+                            self.ingest_message(role, blocks, usage, ts, None, stop, err, cx);
                         }
                         // map user messages to active-path entry ids (fork anchors)
                         let mut ids = self.active_user_entry_ids.iter();
@@ -482,6 +484,8 @@ impl SessionRuntime {
                                 entry_id: None,
                                 ts: timestamp,
                                 end_ts: None,
+                                stop_reason: None,
+                                error_message: None,
                             });
                         }
                     }
@@ -495,6 +499,8 @@ impl SessionRuntime {
                             entry_id: None,
                             ts: timestamp,
                             end_ts: None,
+                            stop_reason: None,
+                            error_message: None,
                         });
                     }
                     "toolResult" => {
@@ -626,7 +632,7 @@ impl SessionRuntime {
                 AssistantEvent::Other(_) => {}
                 }
             }
-            Event::MessageEnd { role, blocks, usage, timestamp } => {
+            Event::MessageEnd { role, blocks, usage, timestamp, stop_reason, error_message } => {
                 if role == "assistant" {
                     if let Some(m) = self.messages.last_mut() {
                         if m.role == Role::Assistant {
@@ -639,6 +645,8 @@ impl SessionRuntime {
                             });
                             m.ts = timestamp.or(m.ts);
                             m.end_ts = Some(crate::services::format::now_ms());
+                            m.stop_reason = stop_reason;
+                            m.error_message = error_message;
                         }
                     }
                 }
@@ -812,12 +820,22 @@ impl SessionRuntime {
         usage: Option<Usage>,
         ts: Option<i64>,
         entry_id: Option<String>,
+        stop_reason: Option<String>,
+        error_message: Option<String>,
         cx: &mut Context<Self>,
     ) {
         match role {
             "user" => {
-                self.messages
-                    .push(Msg { role: Role::User, blocks, usage: None, entry_id, ts, end_ts: None });
+                self.messages.push(Msg {
+                    role: Role::User,
+                    blocks,
+                    usage: None,
+                    entry_id,
+                    ts,
+                    end_ts: None,
+                    stop_reason: None,
+                    error_message: None,
+                });
             }
             "assistant" => {
                 self.messages.push(Msg {
@@ -832,6 +850,8 @@ impl SessionRuntime {
                     entry_id: None,
                     ts,
                     end_ts: None,
+                    stop_reason,
+                    error_message,
                 });
             }
             "toolResult" => {
@@ -873,6 +893,8 @@ impl SessionRuntime {
                     entry_id: None,
                     ts: None,
                     end_ts: None,
+                    stop_reason: None,
+                    error_message: None,
                 });
         }
         self.messages.last_mut().expect("just pushed")
@@ -1005,6 +1027,8 @@ impl SessionRuntime {
                         entry_id: None,
                         ts: Some(crate::services::format::now_ms()),
                         end_ts: None,
+                        stop_reason: None,
+                        error_message: None,
                     });
                     self.phase_waiting = true;
                     self.notify_list(cx);

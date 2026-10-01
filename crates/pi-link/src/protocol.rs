@@ -416,6 +416,11 @@ pub enum Event {
         blocks: Vec<Block>,
         usage: Option<Usage>,
         timestamp: Option<i64>,
+        /// AssistantMessage.stopReason ("stop" | "length" | "toolUse" |
+        /// "error" | "aborted" | "deferred"); absent on other roles.
+        stop_reason: Option<String>,
+        /// AssistantMessage.errorMessage — set when stopReason == "error".
+        error_message: Option<String>,
     },
     AgentStart,
     AgentEnd { will_retry: bool },
@@ -634,6 +639,8 @@ pub fn parse_record(v: &Value) -> Event {
             blocks: content_blocks(&v["message"]["content"]),
             usage: Usage::parse(&v["message"]["usage"]),
             timestamp: v["message"]["timestamp"].as_i64(),
+            stop_reason: v["message"]["stopReason"].as_str().map(str::to_string),
+            error_message: v["message"]["errorMessage"].as_str().map(str::to_string),
         },
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
@@ -790,6 +797,33 @@ mod tests {
                 assert!(matches!(&blocks[0], Block::Thinking { content_index: 0, text } if text.is_empty()));
                 assert!(matches!(&blocks[1], Block::ToolCall { content_index: 1, name, .. } if name == "read"));
                 assert!(matches!(&blocks[2], Block::Text { content_index: 2, text } if text == "done"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_end_carries_stop_reason_and_error() {
+        let e = parse_line(
+            r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"x","index":0}],"stopReason":"error","errorMessage":"boom"}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageEnd { stop_reason, error_message, .. } => {
+                assert_eq!(stop_reason.as_deref(), Some("error"));
+                assert_eq!(error_message.as_deref(), Some("boom"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+        // non-error messages: stopReason present, errorMessage absent
+        let e = parse_line(
+            r#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"stop"}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageEnd { stop_reason, error_message, .. } => {
+                assert_eq!(stop_reason.as_deref(), Some("stop"));
+                assert!(error_message.is_none());
             }
             other => panic!("wrong event: {other:?}"),
         }

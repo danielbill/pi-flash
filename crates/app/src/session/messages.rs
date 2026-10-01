@@ -43,6 +43,10 @@ pub(crate) struct Msg {
     /// ~300ms delta), so duration needs the entry write-time (tails) or the
     /// MessageEnd arrival (live). None in get_messages snapshots.
     pub(crate) end_ts: Option<i64>,
+    /// AssistantMessage.stopReason (v56 error/length alert boxes)
+    pub(crate) stop_reason: Option<String>,
+    /// AssistantMessage.errorMessage — set when stop_reason == "error"
+    pub(crate) error_message: Option<String>,
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list
@@ -616,6 +620,8 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 entry_id: None,
                 ts,
                 end_ts: None,
+                stop_reason: None,
+                error_message: None,
             }),
             "assistant" => out.push(Msg {
                 role: Role::Assistant,
@@ -629,6 +635,8 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 entry_id: None,
                 ts,
                 end_ts: entry_ts.or(ts),
+                stop_reason: m["stopReason"].as_str().map(str::to_string),
+                error_message: m["errorMessage"].as_str().map(str::to_string),
             }),
             "toolResult" => {
                 let text: String = blocks
