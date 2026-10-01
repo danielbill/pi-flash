@@ -56,7 +56,7 @@
     display: flex; align-items: center; justify-content: center;
     cursor: default;
   }
-  .tb-icon-btn:hover { background: var(--chrome-hover); color: var(--text); }
+  .tb-icon-btn:hover { background: var(--bg-hover); color: var(--text); }
   .tb-icon-btn svg { width: 18px; height: 18px; }
   .tb-divider { width: 1px; height: 18px; background: rgba(175, 196, 186, .55); margin: 0 6px; }
   .tb-spacer { flex: 1; }
@@ -103,12 +103,14 @@
     display: flex; align-items: center; gap: 8px;
     font-family: inherit; font-size: 13px; font-weight: 500;
   }
-  .prj-row:hover { background: var(--bg-hover); }
+  /* v55：项目行悬停不给背景色（与会话行选中态区分） */
   .prj-row .fico { width: 15px; height: 15px; flex: none; }
   .prj-row .p-fico { display: flex; flex: none; }
   .prj-row .pname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .prj-actions { margin-left: auto; display: flex; gap: 2px; opacity: 0; }
   .prj-row:hover .prj-actions, .prj-row:focus .prj-actions { opacity: 1; }
+  /* ⋯ 菜单打开中：按钮保持显示（交互进行中不消失） */
+  .prj-row:has(.prj-act.menu-open) .prj-actions { opacity: 1; }
   .prj-act { width: 22px; height: 22px; border-radius: 6px; flex: none;
     display: flex; align-items: center; justify-content: center;
     color: var(--text-dim); cursor: default; }
@@ -259,7 +261,7 @@
     flex: none; border: 0; background: transparent; padding: 6px 9px 5px; margin-bottom: -1px;
     font-size: 11.5px; color: var(--text-muted); font-family: inherit; cursor: default;
   }
-  .g-tab:hover { color: var(--text); }
+  .g-tab:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
   .g-tab.on { background: var(--bg); color: var(--text); font-weight: 600;
     border: 1px solid rgba(175,196,186,.4); border-bottom: 0; border-radius: 7px 7px 0 0; }
   .g-view { flex: 1; min-height: 0; display: none; flex-direction: column; }
@@ -436,7 +438,7 @@
     opacity: 0; transition: opacity .15s ease; }
   .msg-user:hover .msg-actions { opacity: 1; }
   .msg-actions span { cursor: default; }
-  .msg-actions .act:hover { color: var(--text); }
+  .msg-actions .act:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
   .msg-actions .act { display: flex; align-items: center; gap: 4px; }
   .msg-actions .act svg { width: 12px; height: 12px; }
   .msg-actions .when { margin-left: 4px; color: #a3b0aa; }
@@ -472,7 +474,7 @@
   .msg-assistant:hover .as-stats { opacity: 1; }
   .as-stats .act { display: flex; align-items: center; gap: 4px; cursor: default; }
   .as-stats .act svg { width: 12px; height: 12px; }
-  .as-stats .act:hover { color: var(--text); }
+  .as-stats .act:hover { background: var(--bg-hover); color: var(--text); border-radius: 6px; }
   .as-stats > span:not(.act) { color: #a3b0aa; }
 
     .phase-row { display: flex; align-items: center; gap: 9px; color: var(--accent); font-size: 13px; }
@@ -558,7 +560,7 @@
     border: 0; background: transparent; padding: 0;
     color: var(--text-muted); font-family: inherit; cursor: default;
   }
-  .sb-tab:hover { background: var(--chrome-hover); border-radius: 0 0 8px 8px; }
+  .sb-tab:hover { background: var(--bg-hover); border-radius: 0 0 8px 8px; }
   .sb-tab.on {
     background: var(--nav);
     border: 1px solid rgba(175,196,186,.55); border-top: 0;
@@ -1186,9 +1188,12 @@ statusbar（面板 tabs）     │</pre>
     renderDel();
   }
 
-  function hideMenu() { pmenu.style.display = "none"; }
+  function hideMenu() { pmenu.style.display = "none";
+    document.querySelectorAll(".prj-act.menu-open").forEach(x => x.classList.remove("menu-open")); }
 
   function showMenu(p, btn) {
+    document.querySelectorAll(".prj-act.menu-open").forEach(x => x.classList.remove("menu-open"));
+    btn.classList.add("menu-open");
     pmenu.innerHTML = "";
     [
       [ICON_FILEBROWSER, "在文件浏览器中打开", ""],
@@ -1252,6 +1257,8 @@ statusbar（面板 tabs）     │</pre>
 
   function showDotsMenu(btn) {
     hideSub();
+    document.querySelectorAll(".prj-act.menu-open").forEach(x => x.classList.remove("menu-open"));
+    btn.classList.add("menu-open");
     pmenu.innerHTML = "";
     [
       ["列表方式", ICON_ORGANIZE, "view"],
@@ -1271,7 +1278,10 @@ statusbar（面板 tabs）     │</pre>
   }
 
   document.addEventListener("click", e => {
-    if (!e.target.closest("#pmenu") && !e.target.closest("#pmsub") && !e.target.closest(".prj-act")) hideMenu();
+    if (!e.target.closest("#pmenu") && !e.target.closest("#pmsub") && !e.target.closest(".prj-act")) {
+      hideMenu();
+      document.querySelectorAll(".prj-act.menu-open").forEach(x => x.classList.remove("menu-open"));
+    }
     hideSub();
     if (!e.target.closest("#hcard")) {
       const i = hcard.querySelector(".hc-edit");

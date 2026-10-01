@@ -141,6 +141,8 @@ Zed 式：根项目行、每级缩进 guide 线、类型图标（folder-open/fol
 - **Lucide 24 栅格 2px 描边**：search、image、wrench、lightbulb、copy、pencil、git-branch、check、chevron、undo-2、sliders-horizontal、wallpaper/cpu/wand-sparkles/bot/plug/ellipsis-vertical、folder-tree、messages-square、file 系
 - **iconfont 实底**（用户提供）：打开项目（1099 箱）、新建会话（1024 箱）、文件浏览器、终端、垃圾桶、列表方式、分组/平铺列表、时钟、手动排序、View Diff 加号底线
 - **混排三规则**：① fill 转 `currentColor` 继承；② iconfont 轮廓字线宽写死在视箱单位里，需 svg 根加 stroke 配重（project=31/new chat=24/菜单组=40/时钟=40，按显示尺寸折算）；③ **viewBox 收紧到墨迹边界**（~88% 填充率）消除"外围束缚"，否则图形本体比 Lucide 小一圈
+- **icon hover 统一规格（v55 定稿）**：全部图标按钮（topbar 钮 / 项目行 ⋯＋ / statusbar tab / git 钮与 tab / tab 关闭 × / composer 图标与 pill / 模型选择钮 / 幽灵按钮 / 消息操作行 act）统一为 **`bg-hover` 底 + 图标色提亮为 `text`**，圆角 6px；**豁免**：窗口关闭钮（danger 红 #d8626a）、详情卡删除/确认（danger 系）、发送钮（accent-hover）、slp resizer（accent 条）、导航比例尺节点（accent 底）——语义色不参与统一
+- **项目行交互（v55）**：悬停**不给背景色**（与会话行选中态区分）；⋯ 菜单打开期间该行的 ⋯/＋ 按钮保持显示（`:has(.menu-open)` / 实现侧按 PspMenu::Project path 匹配），交互中不消失
 
 ## 15. GPUI 实现注记
 
