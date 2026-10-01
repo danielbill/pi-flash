@@ -202,6 +202,19 @@ pub(crate) fn psp_view(
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&chat.psp_scroll)
+                    // 鼠标进 panel 即显示滚动条：微抖 scroll offset（±0.01px
+                    // 再还原）触发组件的 offset-changed 判定 → 它自己把
+                    // last_scroll_time 刷成当下（视同刚滚动过），离开后原生
+                    // 3s 淡出（FADE_OUT_DURATION）自然接管
+                    .on_hover(cx.listener(|this, hovered: &bool, _w, cx| {
+                        if *hovered {
+                            let h = &this.psp_scroll;
+                            let o = h.offset();
+                            h.set_offset(gpui::point(o.x + gpui::px(0.01), o.y));
+                            h.set_offset(o);
+                            cx.notify();
+                        }
+                    }))
                     // 水平留白由 col 外层统一（10px），此处不再叠加
                     .flex()
                     .flex_col()
@@ -214,7 +227,7 @@ pub(crate) fn psp_view(
                     .absolute()
                     .top(px(2.))
                     .bottom(px(2.))
-                    .right(px(-4.))
+                    .right(px(-6.))
                     .w(px(12.))
                     .child(
                         gpui_component::scroll::Scrollbar::vertical(
