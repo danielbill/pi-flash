@@ -321,9 +321,16 @@ fn ensure_composer(
                 // 换行并经 Change 污染 chat.input（含空白使菜单判定失败，
                 // 回车被误当发送）
                 chat.input = v.to_string();
-                // 菜单开着：Enter=接受补全而非发送
+                // chip 激活（命令已确认成胶囊）时 Enter=发送——裸 "/命令"
+                // 的输入形态与菜单过滤态相同，必须以 chip 态区分，否则
+                // Enter 会走"接受补全"永远发不出去
+                let chip = chat
+                    .composer
+                    .as_ref()
+                    .map(|c| c.read(cx).chip_active())
+                    .unwrap_or(false);
                 let items = chat.menu_items(cx);
-                if chat.active_menu().is_some() && !items.is_empty() {
+                if !chip && chat.active_menu().is_some() && !items.is_empty() {
                     let ix = chat.menu_ix.min(items.len() - 1);
                     let insert = items[ix].insert.clone();
                     chat.accept_menu(insert, cx);

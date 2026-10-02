@@ -124,6 +124,11 @@ impl ComposerInput {
         cx.notify();
     }
 
+    /// 命令/技能 chip 是否激活（输入 = "/命令名" + 可选尾随空格/参数）。
+    pub fn chip_active(&self) -> bool {
+        self.token.is_some()
+    }
+
     /// 编辑器为空时退格 = 删除整个 chip（转发给宿主清空输入）。
     pub fn set_on_chip_backspace(&mut self, cb: std::rc::Rc<dyn Fn(&mut gpui::App)>) {
         self.on_chip_backspace = Some(cb);
