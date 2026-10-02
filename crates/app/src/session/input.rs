@@ -1,7 +1,7 @@
-//! composer (v54 一体式): 单容器 16px 圆角 1px 边框，宽 75%/min 500 居中，
-//! 悬浮胶囊上浮叠在聊天区上（0 高 wrapper 不吞点击/滚轮）。控件行：左 =
-//! 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨ + 思考∨ + 圆形发送
-//! ↑（运行中变停止）。无压缩/铃声/AI 按钮。
+//! composer (v54 一体式): 单容器 16px 圆角 1px 边框，宽 75%/min 500/max 920
+//! （与消息列对齐）居中，悬浮胶囊上浮叠在聊天区上（0 高 wrapper 不吞点击/
+//! 滚轮）。控件行：左 = 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨
+//! + 思考∨ + 圆形发送 ↑（运行中变停止）。无压缩/铃声/AI 按钮。
 
 use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
 
@@ -53,6 +53,7 @@ pub(crate) fn input_area(
     let mut capsule = div()
         .id("composer")
         .w(gpui::relative(0.75))
+        .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
         .min_w(px(500.))
         .rounded(px(16.))
         .border_1()
@@ -118,7 +119,7 @@ pub(crate) fn input_area(
     capsule = capsule.child(
         div()
             .w_full()
-            .min_h(px(44.))
+            .min_h(px(59.))
             .px(px(12.))
             .pt(px(10.))
             .pb(px(2.))
@@ -158,7 +159,7 @@ pub(crate) fn input_area(
         .child(
             div()
                 .absolute()
-                .bottom(px(10.))
+                .bottom(px(20.))
                 .left_0()
                 .right_0()
                 .flex()
@@ -471,11 +472,11 @@ fn composer_bar(
             .child(
                 div()
                     .relative()
-                    .size(px(15.))
+                    .size(px(18.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(crate::ui::icon("ring-track", 15., t.bg_selected))
+                    .child(crate::ui::icon("ring-track", 18., t.bg_selected))
                     .child(crate::ui::icon(
                         match ctx_pct.unwrap_or(0) {
                             0..=12 => "ring-track",
@@ -484,7 +485,7 @@ fn composer_bar(
                             63..=87 => "ring-75",
                             _ => "ring-100",
                         },
-                        15.,
+                        18.,
                         t.accent,
                     )),
             ),
@@ -548,7 +549,6 @@ fn composer_bar(
         div()
             .id("send")
             .ml(px(5.))
-            .mt(px(-3.))
             .size(px(28.))
             .rounded_full()
             .flex()
