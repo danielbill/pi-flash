@@ -91,7 +91,7 @@ pub(crate) fn input_area(
         .flex()
         .flex_col()
         .pt(px(5.))
-        .pb(px(3.));
+        .pb(px(12.)); // 操作栏到下边框的距离
     // 附加图片 chips
     if !chat.pending_images.is_empty() {
         let rows: Vec<gpui::AnyElement> = chat
@@ -342,8 +342,6 @@ fn composer_bar(
     let mut bar = div()
         .flex()
         .items_center()
-        // 操作栏整体垂直微调（负值上移；发送钮的 mt 在自身块里叠加）
-        .mt(px(-5.))
         .px(px(10.))
         .child(
             // 左侧：图片 + 工具预设（内容裸宽，组内间距 10px，与右侧一致）
@@ -493,7 +491,7 @@ fn composer_bar(
         div()
             .id("send")
             .mr(px(5.))
-            .mt(px(-3.)) // -8(原定位) + 5(操作栏上移) = 视觉位不变
+            .mt(px(-8.))
             .size(px(28.))
             .rounded(if streaming { px(9.) } else { px(14.) })
             .flex()
