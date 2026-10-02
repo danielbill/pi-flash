@@ -283,6 +283,22 @@ fn input_editor(
                             cx.notify();
                         }
                     }
+                    // Ctrl/Cmd+V：追加剪贴板文本（无选区模型，光标恒在末尾；
+                    // 修复输入框从未实现粘贴的功能缺失）
+                    "v" if ev.keystroke.modifiers.control
+                        || ev.keystroke.modifiers.platform =>
+                    {
+                        if let Some(text) = cx
+                            .read_from_clipboard()
+                            .and_then(|item| item.text())
+                        {
+                            if !text.is_empty() {
+                                this.input.push_str(&text);
+                                this.menu_ix = 0;
+                                cx.notify();
+                            }
+                        }
+                    }
                     _ => {}
                 }
             },
