@@ -322,3 +322,30 @@ pi-web 完全对齐，唯一豁免=消息末尾操作栏（复制/编辑/分支 
 暂缓（可选）；branch_summary 渲为斜体引言（非 user 气泡）；compaction 文件
 清单常显（pi-web <details> 默认折叠）；模型名每消息一条（Msg.model 三路解析）。
 测试 97 全绿（app 45 + pi-link 52）。
+
+## v57（2026-10-02）富渲染三组件：KaTeX / mermaid / raw HTML
+
+epic pi-flash-w9w（3 子任务全关）。v56 已知偏差三项全部落地，代码独立存放于
+crates/app/src/render/（html.rs / math.rs / mermaid.rs / mod.rs），markdown.rs
+只留薄胶水（事件接线 + MdBlock 分支）。
+
+- v57-1 raw HTML：scraper（html5ever）解析 Event::Html/InlineHtml（v56 前直接
+  丢弃）→ 安全子集映射到 MdBlock/Run。行内 b/i/code/a/del/br→Run，块级
+  pre（language-x）/img/标题/ul-ol-li/table/blockquote/hr/details（平铺）→块，
+  script/style/iframe/svg 剥离，HTML5 容错+实体解码。8 测试。
+- v57-2 KaTeX：RaTeX 0.1.14 管线（ratex-parser→ratex-layout→ratex-render，
+  embed-fonts 内嵌 19 字体），pulldown ENABLE_MATH；多行 $$…$$ 的 DisplayMath
+  实测发在 Paragraph 事件流内 → Style::Math/DisplayMath 标记 run，段落分段
+  flex（文本段 StyledText 换行 + 行内公式 img + 块级公式整行图）；透明底 PNG
+  2x 超采样、颜色=主题文字色；进程级 LRU（latex+display+color 哈希）防流式
+  重渲；失败降级等宽文本。6 测试。
+- v57-3 mermaid：mermaid-rs-renderer 0.3.1（纯 Rust，--no-default-features
+  库模式）→ SVG → gpui img（usvg 系统字体，图内 text 可渲——源码已核）。
+  深色 Theme::dark/浅色 mermaid_default；(源码+主题) LRU；流式期间与失败
+  均回退源码块（pi-web MermaidBlock parity）。4 测试。
+
+陷阱：rcdom 0.39 是不受维护的测试 DOM（README 明确警告）→ 换 scraper 0.27；
+ego-tree 0.11 把 Node 私有化，公共类型=NodeRef<'a,T>（scraper 不 re-export，
+需直接依赖 ego-tree 0.11 同版对齐）；bash heredoc 反斜杠转义会静默损坏
+（ 变 formfeed 0x0C 进文件）——python 补丁一律 chr(92) 构造或写脚本文件。
+测试 116 全绿（app 64 + pi-link 52）。
