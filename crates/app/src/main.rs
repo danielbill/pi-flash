@@ -202,6 +202,9 @@ struct Chat {
     pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
+    /// window-coords of the pill that opened the menu — the popup anchors
+    /// above THIS pill instead of a fixed window corner (v57 错位修复)
+    pill_anchor: Option<gpui::Point<gpui::Pixels>>,
     // git panel
     git_files: Vec<GitFile>,
     git_add_del: (u64, u64),
@@ -400,6 +403,7 @@ impl Chat {
             caret_on: true,
             input_focused: false,
             pill_menu: None,
+            pill_anchor: None,
             sound_on: load_sound_pref(),
             ime_marked: None,
             settings: None,
@@ -1148,20 +1152,38 @@ impl Render for Chat {
                         }),
                 )
                 .child(
-                    div()
-                        .absolute()
-                        .bottom(px(64.))
-                        .right(px(24.))
-                        .min_w(px(320.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(rgb(t.border))
-                        .bg(rgb(t.bg))
-                        .shadow_lg()
-                        .overflow_hidden()
-                        .flex()
-                        .flex_col()
-                        .children(items),
+                    {
+                        // anchor above the clicked pill: bottom = window_h − pill_y
+                        // + gap; left clamped so the 320px menu stays on screen
+                        let vp = window.viewport_size();
+                        let gap = px(6.);
+                        let menu_w = px(320.);
+                        let (anchor_bottom, anchor_left) = match self.pill_anchor {
+                            Some(p) => {
+                                let bottom = (vp.height - p.y + gap).max(px(8.));
+                                let mut left = p.x - px(8.);
+                                if left + menu_w > vp.width - px(8.) {
+                                    left = vp.width - menu_w - px(8.);
+                                }
+                                (bottom, left.max(px(8.)))
+                            }
+                            None => (px(64.), vp.width - menu_w - px(24.)),
+                        };
+                        div()
+                            .absolute()
+                            .bottom(anchor_bottom)
+                            .left(anchor_left)
+                            .min_w(menu_w)
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.bg))
+                            .shadow_lg()
+                            .overflow_hidden()
+                            .flex()
+                            .flex_col()
+                            .children(items)
+                    }
                 )
                 .into_any_element()
         });

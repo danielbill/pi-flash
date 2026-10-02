@@ -392,7 +392,8 @@ fn composer_bar(
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                 .on_mouse_down(MouseButton::Left, cx.listener(
-                    |this, _: &gpui::MouseDownEvent, _w, cx| {
+                    |this, event: &gpui::MouseDownEvent, _w, cx| {
+                        this.pill_anchor = Some(event.position);
                         this.pill_menu = match this.pill_menu {
                             Some(PillMenu::Tools) => None,
                             _ => Some(PillMenu::Tools),
@@ -478,7 +479,8 @@ fn composer_bar(
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
             .on_mouse_down(MouseButton::Left, cx.listener(
-                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                |this, event: &gpui::MouseDownEvent, _w, cx| {
+                    this.pill_anchor = Some(event.position);
                     this.pill_menu = match this.pill_menu {
                         Some(PillMenu::Thinking) => None,
                         _ => Some(PillMenu::Thinking),
