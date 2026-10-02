@@ -124,6 +124,7 @@ fn session_list(
                             m,
                             ix,
                             &weak,
+                            &chat.expanded_skills,
                             &rt_view.collapsed,
                             t,
                             None,

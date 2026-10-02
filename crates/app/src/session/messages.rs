@@ -1331,10 +1331,38 @@ fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// pi-web lib/slash-display.ts skillExpansionToCommand 的 Rust 移植：识别
+/// pi _expandSkillCommand 输出的信封，还原紧凑命令（仅显示用，存储文本
+/// 不变）。贪婪正文（正文可能含示例 </skill>，取最后一个），可选双换行
+/// 后缀为用户参数。
+pub(crate) fn skill_expansion_to_command(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("<skill name=\"")?;
+    let (name, rest) = rest.split_once('"')?;
+    let rest = rest.strip_prefix(" location=\"")?;
+    let (_loc, rest) = rest.split_once('"')?;
+    let rest = rest.strip_prefix(">\n")?;
+    let rest = rest.strip_prefix("References are relative to ")?;
+    let rest = rest.split_once('\n')?.1; // 跳过 base 目录行
+    let rest = rest.strip_prefix('\n')?; // 空行
+    let close = rest.rfind("\n</skill>")?;
+    let tail = &rest[close + 9..];
+    let args = match tail.strip_prefix("\n\n") {
+        Some(a) => a.to_string(),
+        None if tail.is_empty() => String::new(),
+        None => return None,
+    };
+    Some(if args.is_empty() {
+        format!("/skill:{}", name)
+    } else {
+        format!("/skill:{} {}", name, args)
+    })
+}
+
 pub(crate) fn render_msg(
     m: &Msg,
     msg_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
+    expanded_skills: &std::collections::HashSet<String>,
     collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
     // Some(est_tokens) 仅当此消息是流式中的最后一条（工作中回复）
@@ -1389,8 +1417,70 @@ pub(crate) fn render_msg(
         // c19: 用户内容走 markdown；但 HTML 不渲染、标签原样显示
         // （render_user）——用户消息是发出内容的凭证，气泡吞标签会让
         // 用户无法核对 agent 实际收到的文本（v57 用户反馈）
+        //
+        // v57: 技能展开消息（CLI 把 /skill:xxx 展开成多行全文）默认折叠
+        // 成 mono 命令行 + 展开箭头（pi-web parity），展开后内容区限高
+        // 带滚动条；单行 /skill:xxx（未展开回显）按普通渲染
+        // v57: pi-web UserMessageView parity——skill 展开消息（信封文本）
+        // 默认折叠：mono 技能名 + 展开箭头 + 参数原文；展开显示全文
+        // markdown；复制/编辑目标都是紧凑命令（copyTarget/editTarget parity）
+        let command_text = skill_expansion_to_command(&text);
+        let skill_key = m
+            .entry_id
+            .clone()
+            .unwrap_or_else(|| format!("skill-{}", msg_ix));
+        let skill_open = expanded_skills.contains(&skill_key);
         let md: gpui::AnyElement = if text.trim().is_empty() {
             div().into_any_element()
+        } else if let Some(cmd) = &command_text {
+            let (cmd_name, cmd_args) = match cmd.split_once(' ') {
+                Some((n, a)) => (n.to_string(), a.to_string()),
+                None => (cmd.clone(), String::new()),
+            };
+            let weak_skill = weak.clone();
+            let chevron = if skill_open { "chevron-up" } else { "chevron-down" };
+            let mut stack = div().flex().flex_col().w_full().gap(px(6.));
+            stack = stack.child(
+                div().flex().items_start().gap(px(8.)).flex_wrap()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("skill-toggle-{}", msg_ix)))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .flex_shrink_0()
+                            .font_family("Consolas")
+                            .text_size(px(13.))
+                            .text_color(rgb(t.accent))
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.85))
+                            .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                                let key = skill_key.clone();
+                                let _ = weak_skill.update(cx, |c, cx| {
+                                    if !c.expanded_skills.remove(&key) {
+                                        c.expanded_skills.insert(key);
+                                    }
+                                    cx.notify();
+                                });
+                            })
+                            .child(SharedString::from(cmd_name))
+                            .child(icon(chevron, 11., t.accent)),
+                    )
+                    .when(!cmd_args.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(14.))
+                                .text_color(rgb(t.text))
+                                .child(SharedString::from(cmd_args)),
+                        )
+                    }),
+            );
+            if skill_open {
+                stack = stack.child(markdown::render_user(&text, t));
+            }
+            stack.into_any_element()
         } else {
             markdown::render_user(&text, t)
         };
@@ -1497,6 +1587,7 @@ pub(crate) fn render_msg(
                             .overflow_y_scroll()
                             .flex_1()
                             .min_w_0()
+                            .occlude() // 禁止鼠标透传到下层消息
                             .px(px(12.))
                             .py(px(8.))
                             .rounded(px(12.))
@@ -2073,5 +2164,59 @@ mod tests {
         assert!((subtle.g - 1.0).abs() < 1e-3);
         assert!((subtle.b - 1.0).abs() < 1e-3);
         assert!((subtle.a - 0.0784).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod skill_fold_tests {
+    use super::skill_expansion_to_command;
+
+    // pi-web lib/slash-display.test.mjs skillExpansion fixture 同款
+    fn envelope(body: &str, args: Option<&str>) -> String {
+        let args_s = args
+            .map(|a| format!("\n\n{}", a))
+            .unwrap_or_default();
+        format!(
+            "<skill name=\"review\" location=\"/path/to/review/SKILL.md\">\nReferences are relative to /path/to/review.\n\n{body}\n</skill>{args}"
+            ,
+            body = body,
+            args = args_s,
+        )
+    }
+
+    #[test]
+    fn restores_with_args() {
+        assert_eq!(
+            skill_expansion_to_command(&envelope("Review the supplied files.", Some("src/main.ts"))).as_deref(),
+            Some("/skill:review src/main.ts")
+        );
+    }
+    #[test]
+    fn restores_without_args() {
+        assert_eq!(
+            skill_expansion_to_command(&envelope("Review the supplied files.", None)).as_deref(),
+            Some("/skill:review")
+        );
+    }
+    #[test]
+    fn multiline_args() {
+        assert_eq!(
+            skill_expansion_to_command(&envelope("Body.", Some("first line\nsecond line"))).as_deref(),
+            Some("/skill:review first line\nsecond line")
+        );
+    }
+    #[test]
+    fn final_closing_tag_wins() {
+        assert_eq!(
+            skill_expansion_to_command(&envelope("Example:\n</skill>\nContinue.", Some("src"))).as_deref(),
+            Some("/skill:review src")
+        );
+    }
+
+    #[test]
+    fn lookalike_not_collapsed() {
+        assert_eq!(skill_expansion_to_command("<skill name=\"review\" location=\"/path/to/review/SKILL.md\">\nordinary user text"), None);
+        assert_eq!(skill_expansion_to_command("<skill name=\"review\" location=\"/path/to/review/SKILL.md\">\nReferences are elsewhere.\n\nbody\n</skill>"), None);
+        assert_eq!(skill_expansion_to_command("ordinary user text"), None);
     }
 }

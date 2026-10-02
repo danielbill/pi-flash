@@ -1109,7 +1109,10 @@ impl SessionRuntime {
                 self.input.clear();
                 self.pending_images.clear();
                 self.status = if streaming { "steering" } else { "running" }.into();
-                if !streaming {
+                // 技能命令不做乐观回显（pi-web parity）：RPC 回显的是展开
+                // 信封文本（渲染层折叠成紧凑命令），乐观插入裸 "/skill:xxx"
+                // 会多出一条重复气泡
+                if !streaming && !text.starts_with("/skill:") {
                     // pi-web optimistic append: the sent bubble shows up
                     // immediately, RPC echo later upgrades it in place
                     // pending_echo 只做回显去重；等待行可见性由 phase_waiting 独立控制

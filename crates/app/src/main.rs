@@ -195,6 +195,8 @@ struct Chat {
     // editor view state（输入组件实体在 composer 首次渲染时惰性创建；
     // 真输入框 = gpui-component InputState，光标/选区/IME/滚动条全内置）
     composer: Option<gpui::Entity<ComposerInput>>,
+    /// 技能展开消息的展开态（key = entry_id 或序号键）
+    expanded_skills: std::collections::HashSet<String>,
     input_focused: bool,
     // inline rename (active session)
     renaming: Option<PathBuf>,
@@ -408,6 +410,7 @@ impl Chat {
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),
             composer: None,
+            expanded_skills: std::collections::HashSet::new(),
             input_focused: false,
             pill_menu: None,
             pill_anchor: None,
