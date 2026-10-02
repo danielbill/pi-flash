@@ -333,17 +333,42 @@ fn input_editor(
                     )
                 })
                 .when(!input_empty, |d| {
-                    d.child(SharedString::from(this_input.clone()))
-                })
-                .when(input_focused && caret_on && !input_empty, |d| {
+                    // 块级全宽容器：文本按宽自动折行、换行符生效（此前在
+                    // flex 行里不折行，长文本/粘贴多行横向溢出被裁）；caret
+                    // 用追加着色字符实现——随文本折行，永远紧跟末尾
+                    let mut text = this_input.to_string();
+                    let caret_on_now = input_focused && caret_on;
+                    if caret_on_now {
+                        text.push_str("\u{258f}");
+                    }
+                    let caret_ix = this_input.chars().count();
+                    let base = gpui::TextStyle {
+                        color: rgb(t.text).into(),
+                        font_size: px(14.).into(),
+                        ..Default::default()
+                    };
+                    let highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
+                        if caret_on_now {
+                            vec![(
+                                caret_ix..caret_ix + 1,
+                                gpui::HighlightStyle {
+                                    color: Some(rgb(t.accent).into()),
+                                    ..Default::default()
+                                },
+                            )]
+                        } else {
+                            Vec::new()
+                        };
                     d.child(
                         div()
-                            .w(px(1.5))
-                            .h(px(16.))
-                            .flex_shrink_0()
-                            .bg(rgb(t.accent)),
+                            .w_full()
+                            .min_w_0()
+                            .child(
+                                gpui::StyledText::new(text)
+                                    .with_default_highlights(&base, highlights),
+                            ),
                     )
-                }),
+                })
         )
         // paint-phase input handler: routes the Windows IME
         .child(
