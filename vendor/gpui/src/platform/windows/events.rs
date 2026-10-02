@@ -370,6 +370,18 @@ impl WindowsWindowInner {
     // It's a known bug that you can't trigger `ctrl-shift-0`. See:
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // v57: VK_PROCESSKEY（IME 组合键，含组合第一颗键）整体不派发进应用，
+        // 交给系统 IME（TranslateMessage）。组合串/提交串经
+        // WM_IME_COMPOSITION（COMPSTR/RESULTSTR）回流；IME 英文模式的字母
+        // 经 TranslateMessage 产出的 WM_CHAR 回流——三条路都由已注册的
+        // input handler 接住。0.2.2 原版用 ImmGetVirtualKey 把组合键还原成
+        // 假字母派发，组合永远建立不起来（is_composing 分支永远走不到），
+        // 组合期退格/回车被当成真实按键。
+        if VIRTUAL_KEY(wparam.loword()) == VK_PROCESSKEY {
+            eprintln!("[gpui-trace] VK_PROCESSKEY -> translate");
+            translate_message(handle, wparam, lparam);
+            return Some(0);
+        }
         let mut lock = self.state.borrow_mut();
         let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
