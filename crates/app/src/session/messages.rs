@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, TextAlign, div, prelude::*, px, relative, rgb};
+use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, TextAlign, div, prelude::*, px, relative, rgb, rgba};
 use pi_link::protocol::{content_blocks, Block, Usage};
 
 use crate::Chat;
@@ -301,9 +301,10 @@ pub(crate) fn render_block(
     }
 }
 
+/// 0xRRGGBB + alpha → gpui::rgba 的 0xRRGGBBAA 布局（alpha 在低字节）。
 fn rgba_a(rgb24: u32, alpha: f32) -> u32 {
     let a = (alpha * 255.0).round().clamp(0.0, 255.0) as u32;
-    ((rgb24 & 0xffffff) | (a << 24)) as u32
+    ((rgb24 & 0xffffff) << 8) | a
 }
 
 /// pi-web getToolPreview：command/path/file_path/pattern/query 键序取值
@@ -539,7 +540,7 @@ fn render_tool_card(
             div()
                 .border_t_1()
                 .border_color(gpui::rgba(top_c))
-                .bg(rgb(t.bg_subtle))
+                .bg(rgba(t.bg_subtle))
                 .px(px(10.))
                 .py(px(8.))
                 .font_family("Consolas")
@@ -1051,7 +1052,7 @@ fn paired_result(
         .bg(if is_error {
             gpui::rgba(rgba_a(0xf87171, 0.04))
         } else {
-            rgb(t.bg_subtle)
+            rgba(t.bg_subtle)
         })
         .px(px(10.))
         .py(px(8.))
@@ -1207,7 +1208,7 @@ fn diff_cell(
     let bg = match cell.kind {
         CellKind::Added => gpui::rgba(rgba_a(0x22c55e, 0.12)),
         CellKind::Removed => gpui::rgba(rgba_a(0xf87171, 0.13)),
-        CellKind::Empty => rgb(t.bg_subtle),
+        CellKind::Empty => rgba(t.bg_subtle),
         CellKind::Context => gpui::rgba(0),
     };
     let marker = match cell.kind {
@@ -1822,7 +1823,7 @@ pub(crate) fn render_assistant_turn(
                     .px(px(8.))
                     .py(px(2.))
                     .rounded(px(6.))
-                    .bg(rgb(t.bg_subtle))
+                    .bg(rgba(t.bg_subtle))
                     .border_1()
                     .border_color(rgb(t.border))
                     .font_family("Consolas")
