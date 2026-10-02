@@ -166,7 +166,13 @@ impl ComposerInput {
     ) {
         match event {
             InputEvent::Change => {
-                let v = entity.read(cx).value().to_string();
+                // 编辑器只装参数部分；拼回 chip 前缀才是完整输入（chip 化
+                // 首帧编辑器被置空，此处若不带前缀会把输入清成 ""）
+                let rest = entity.read(cx).value().to_string();
+                let v = match &self.token {
+                    Some((n, _)) => format!("/{} {}", n, rest),
+                    None => rest,
+                };
                 self.value = v.clone();
                 if let Some(cb) = self.on_change.clone() {
                     cb(&v, cx);
