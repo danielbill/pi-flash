@@ -93,6 +93,11 @@ pub(crate) enum Style {
     Code,
     Link,
     Strike,
+    /// 行内公式标记（v57-2）：Run.text 存 LaTeX 源码，渲染期拆段成图
+    Math,
+    /// 块级公式标记（$$…$$ 可能出现在段落事件流内，多行块 pulldown 也发在
+    /// Paragraph 里）：渲染期独立成整行图
+    DisplayMath,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +115,8 @@ pub(crate) enum MdBlock {
     ListItem { depth: usize, marker: String, runs: Vec<Run>, task: Option<bool> },
     Table { head: Vec<Vec<Run>>, rows: Vec<Vec<Vec<Run>>> },
     Image { url: String, alt: Vec<Run> },
+    /// 块级公式（$$…$$，v57-2）
+    Math { latex: String },
     Rule,
 }
 
@@ -251,6 +258,16 @@ fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bo
                 cur = Style::Normal;
                 styles.clear();
             }
+            Event::InlineMath(tex) => {
+                // v57-2: 行内公式标记 run（渲染期拆段成图）
+                flush(&mut text, cur, &mut runs);
+                runs.push(Run { text: tex.to_string(), style: Style::Math });
+            }
+            Event::DisplayMath(tex) => {
+                // 多行 $$…$$ 的 DisplayMath 事件发在段落流内（实测），同用标记
+                flush(&mut text, cur, &mut runs);
+                runs.push(Run { text: tex.to_string(), style: Style::DisplayMath });
+            }
             Event::Code(c) => {
                 flush(&mut text, cur, &mut runs);
                 runs.push(Run { text: c.to_string(), style: Style::Code });
@@ -294,6 +311,11 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
             Event::Html(h) => {
                 // v57-1: 块级 HTML → 安全子集块（此前直接丢弃）
                 out.extend(crate::render::html::blocks(h));
+                i += 1;
+            }
+            Event::DisplayMath(tex) => {
+                // v57-2: 块级公式（$$…$$）
+                out.push(MdBlock::Math { latex: tex.to_string() });
                 i += 1;
             }
             Event::InlineHtml(h) => {
@@ -606,6 +628,10 @@ fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
             strikethrough: Some(gpui::StrikethroughStyle { thickness: px(1.), ..Default::default() }),
             ..Default::default()
         },
+        // 公式在渲染前已拆段为图片；防御性落到代码风
+        Style::Math | Style::DisplayMath => {
+            HighlightStyle { background_color: Some(rgb(t.tool_bg).into()), ..Default::default() }
+        }
     };
     Some(h)
 }
@@ -942,12 +968,55 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyEle
                 .child(styled_text(runs, t, size, 1.35))
                 .into_any_element()
         }
-        MdBlock::Paragraph { runs } => div()
-            .w_full()
-            .mb(px(8.))
-            .text_color(rgb(t.text))
-            .child(styled_text(runs, t, BASE, 1.7))
-            .into_any_element(),
+        MdBlock::Paragraph { runs } => {
+            // v57-2: 含公式标记的段落 → 分段 flex（文本段 StyledText 可换行，
+            // 行内公式=行内图片、块级公式=独立整行图）；纯文本段落走原路
+            if runs.iter().any(|r| matches!(r.style, Style::Math | Style::DisplayMath)) {
+                let mut row = div().w_full().mb(px(8.)).flex().flex_wrap().items_end();
+                let mut text_run: Vec<Run> = Vec::new();
+                for r in runs {
+                    match r.style {
+                        Style::Math => {
+                            if !text_run.is_empty() {
+                                row = row.child(
+                                    div()
+                                        .max_w_full()
+                                        .child(styled_text(&text_run, t, BASE, 1.7)),
+                                );
+                                text_run = Vec::new();
+                            }
+                            row = row.child(crate::render::math::inline_element(&r.text, t));
+                        }
+                        Style::DisplayMath => {
+                            if !text_run.is_empty() {
+                                row = row.child(
+                                    div()
+                                        .max_w_full()
+                                        .child(styled_text(&text_run, t, BASE, 1.7)),
+                                );
+                                text_run = Vec::new();
+                            }
+                            // 块级公式：独立整行（flex_wrap 下 w_full 独占一行）
+                            row = row.child(
+                                div().w_full().child(crate::render::math::block_element(&r.text, t)),
+                            );
+                        }
+                        _ => text_run.push(r.clone()),
+                    }
+                }
+                if !text_run.is_empty() {
+                    row = row.child(div().max_w_full().child(styled_text(&text_run, t, BASE, 1.7)));
+                }
+                row.into_any_element()
+            } else {
+                div()
+                    .w_full()
+                    .mb(px(8.))
+                    .text_color(rgb(t.text))
+                    .child(styled_text(runs, t, BASE, 1.7))
+                    .into_any_element()
+            }
+        }
         MdBlock::Code { code, lang, .. } => {
             render_code_block(lang, code, t, streaming).into_any_element()
         }
@@ -1005,6 +1074,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyEle
         }
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
         MdBlock::Image { url, alt } => render_image(url, alt, t),
+        MdBlock::Math { latex } => crate::render::math::block_element(latex, t),
         MdBlock::Rule => div()
             .w_full()
             .h(px(1.))
@@ -1032,6 +1102,8 @@ pub fn render(src: &str, t: &Theme, streaming: bool) -> AnyElement {
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_GFM);
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
+    opts.insert(Options::ENABLE_MATH);
     let events: Vec<Event> = Parser::new_ext(src, opts).collect();
     let blocks = parse_blocks(&events);
     if blocks.is_empty() {
@@ -1093,6 +1165,8 @@ mod tests {
         opts.insert(Options::ENABLE_TASKLISTS);
         opts.insert(Options::ENABLE_GFM);
         opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
+    opts.insert(Options::ENABLE_MATH);
         parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>())
     }
 
@@ -1259,6 +1333,31 @@ hello");
             other => panic!("{other:?}"),
         }
     }
+
+    #[test]
+    fn inline_math_becomes_marker_run() {
+        let blocks = parse("能量公式 $E=mc^2$ 很有名");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert!(runs.iter().any(|r| r.style == Style::Math && r.text == "E=mc^2"));
+                assert!(runs.iter().any(|r| r.style == Style::Normal && r.text.contains("能量公式")));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn display_math_is_block() {
+        let blocks = parse(r"前文
+
+$$
+\frac{1}{2}
+$$");
+        let has_display = blocks.iter().any(|b| matches!(b, MdBlock::Paragraph { runs }
+            if runs.iter().any(|r| r.style == Style::DisplayMath && r.text.contains("frac"))));
+        assert!(has_display, "multiline $$ must surface as DisplayMath marker run");
+    }
+
 
     #[test]
     fn chinese_text_roundtrip() {

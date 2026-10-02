@@ -4,3 +4,4 @@
 //! - mermaid.rs：mermaid 图渲染 [v57-3]
 
 pub(crate) mod html;
+pub(crate) mod math;

@@ -21,3 +21,8 @@ gpui-component = "0.2.0"
 wry = "0.46"
 scraper = "0.27.0"
 ego-tree = "0.11"
+ratex-parser = "0.1.14"
+ratex-layout = "0.1.14"
+ratex-render = { version = "0.1.14", features = ["embed-fonts"] }
+lru = "0.18.5"
+ratex-types = "0.1.14"
