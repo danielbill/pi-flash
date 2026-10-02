@@ -141,9 +141,7 @@ impl ComposerInput {
                     cb(&v, cx);
                 }
             }
-            InputEvent::PressEnter { secondary: false } => {
-                eprintln!("[ime-trace] facade PressEnter secondary=false");
-                // 多行模式组件已在光标处自插 "\n"（cursor 停在其后）——剥掉
+            InputEvent::PressEnter { secondary: false } => {                // 多行模式组件已在光标处自插 "\n"（cursor 停在其后）——剥掉
                 // 再交给上层发送；上层随后清空，无需写回组件
                 let sent = {
                     let state = entity.read(cx);
@@ -154,9 +152,7 @@ impl ComposerInput {
                     } else {
                         v
                     }
-                };
-                eprintln!("[ime-trace] facade stripped sent={:?}", sent);
-                // 事件派发期间本实体处于租用中——回调若同步再 composer
+                };                // 事件派发期间本实体处于租用中——回调若同步再 composer
                 // .update()（发送清空走 Chat::set_input）即双重租约 panic
                 //（0xc0000409，已实测）。defer 到本租约结束后执行。
                 if let Some(cb) = self.on_submit.clone() {

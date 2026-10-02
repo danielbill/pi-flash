@@ -1140,9 +1140,7 @@ impl InputState {
         self.pause_blink_cursor(cx);
     }
 
-    pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
-        eprintln!("[ime-trace] enter secondary={} marked={:?}", action.secondary, self.ime_marked_range);
-        if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
+    pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {        if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
 
@@ -1610,6 +1608,15 @@ impl InputState {
             }
         }
         self.history.ignore = false;
+    }
+
+    /// v57: 是否存在纵向溢出（折行总行数超过当前可视行数）。AutoGrow 模式
+    /// 行数随内容增长到 max_rows 封顶，超出即溢出——仅此时渲染滚动条。
+    pub fn has_vertical_overflow(&self) -> bool {
+        if !self.mode.is_multi_line() {
+            return false;
+        }
+        self.text_wrapper.len() > self.mode.rows()
     }
 
     /// Get byte offset of the cursor.
@@ -2117,8 +2124,6 @@ impl EntityInputHandler for InputState {
         if self.disabled {
             return;
         }
-        eprintln!("[ime-trace] replace_text enter text={:?} range={:?}", new_text, range_utf16);
-
         self.pause_blink_cursor(cx);
 
         let range = range_utf16
@@ -2170,9 +2175,7 @@ impl EntityInputHandler for InputState {
             self.handle_completion_trigger(&range, &new_text, window, cx);
         }
         cx.emit(InputEvent::Change);
-        cx.notify();
-        eprintln!("[ime-trace] replace_text exit range={:?}", range);
-    }
+        cx.notify();    }
 
     /// Mark text is the IME temporary insert on typing.
     fn replace_and_mark_text_in_range(
@@ -2186,8 +2189,6 @@ impl EntityInputHandler for InputState {
         if self.disabled {
             return;
         }
-        eprintln!("[ime-trace] replace_and_mark enter text={:?} range={:?} sel={:?}", new_text, range_utf16, new_selected_range_utf16);
-
         self.lsp.reset();
 
         let range = range_utf16
@@ -2234,9 +2235,7 @@ impl EntityInputHandler for InputState {
         }
         self.mode.update_auto_grow(&self.text_wrapper);
         cx.emit(InputEvent::Change);
-        cx.notify();
-        eprintln!("[ime-trace] replace_and_mark exit");
-    }
+        cx.notify();    }
 
     /// Used to position IME candidates.
     fn bounds_for_range(
@@ -2245,9 +2244,7 @@ impl EntityInputHandler for InputState {
         bounds: Bounds<Pixels>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        eprintln!("[ime-trace] bounds_for_range {:?}", range_utf16);
-        let last_layout = self.last_layout.as_ref()?;
+    ) -> Option<Bounds<Pixels>> {        let last_layout = self.last_layout.as_ref()?;
         let line_height = last_layout.line_height;
         let line_number_width = last_layout.line_number_width;
         let range = self.range_from_utf16(&range_utf16);

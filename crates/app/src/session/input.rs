@@ -143,9 +143,7 @@ pub(crate) fn input_area(
     capsule = capsule
         .on_key_down(cx.listener(
             |this, ev: &KeyDownEvent, window, cx| {
-                let key = ev.keystroke.key.as_str();
-                eprintln!("[ime-trace] wrapper key={} shift={}", key, ev.keystroke.modifiers.shift);
-                if key == "enter" && ev.keystroke.modifiers.shift {
+                let key = ev.keystroke.key.as_str();                if key == "enter" && ev.keystroke.modifiers.shift {
                     // IME 组合期平台不派发按键（gpui windows events.rs），
                     // 无需组合守卫
                     let streaming = this.rt().read(cx).agent_running;

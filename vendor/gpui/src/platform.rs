@@ -950,9 +950,7 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
-        eprintln!("[gpui-trace] dispatch_input {:?}", input);
-        self.handler.replace_text_in_range(None, input, window, cx);
+    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {        self.handler.replace_text_in_range(None, input, window, cx);
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {

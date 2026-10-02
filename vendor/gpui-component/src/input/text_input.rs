@@ -185,7 +185,9 @@ impl TextInput {
             .size_full()
             .children(state.search_panel.clone())
             .child(div().flex_1().child(input_state.clone()).map(|this| {
-                if let Some(last_layout) = state.last_layout.as_ref() {
+                // v57: 无纵向溢出不渲染滚动条（空/短文本下常显滚动条是噪音）
+                if state.has_vertical_overflow() {
+                    if let Some(last_layout) = state.last_layout.as_ref() {
                     let left = if last_layout.line_number_width.is_zero() {
                         px(0.)
                     } else {
@@ -204,15 +206,18 @@ impl TextInput {
                         Scrollbar::vertical(&state.scroll_state, &state.scroll_handle)
                     };
 
-                    this.relative().child(
-                        div()
-                            .absolute()
-                            .top(-paddings.top + MIN_SCROLL_PADDING)
-                            .left(left)
-                            .right(-paddings.right + MIN_SCROLL_PADDING)
-                            .bottom(-paddings.bottom + MIN_SCROLL_PADDING)
-                            .child(scrollbar.scroll_size(scroll_size)),
-                    )
+                        this.relative().child(
+                            div()
+                                .absolute()
+                                .top(-paddings.top + MIN_SCROLL_PADDING)
+                                .left(left)
+                                .right(-paddings.right + MIN_SCROLL_PADDING)
+                                .bottom(-paddings.bottom + MIN_SCROLL_PADDING)
+                                .child(scrollbar.scroll_size(scroll_size)),
+                        )
+                    } else {
+                        this
+                    }
                 } else {
                     this
                 }

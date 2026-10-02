@@ -377,9 +377,7 @@ impl WindowsWindowInner {
         // input handler 接住。0.2.2 原版用 ImmGetVirtualKey 把组合键还原成
         // 假字母派发，组合永远建立不起来（is_composing 分支永远走不到），
         // 组合期退格/回车被当成真实按键。
-        if VIRTUAL_KEY(wparam.loword()) == VK_PROCESSKEY {
-            eprintln!("[gpui-trace] VK_PROCESSKEY -> translate");
-            translate_message(handle, wparam, lparam);
+        if VIRTUAL_KEY(wparam.loword()) == VK_PROCESSKEY {            translate_message(handle, wparam, lparam);
             return Some(0);
         }
         let mut lock = self.state.borrow_mut();
@@ -674,9 +672,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_ime_composition_inner(&self, ctx: HIMC, lparam: LPARAM) -> Option<isize> {
-        let lparam = lparam.0 as u32;
-        eprintln!("[gpui-trace] ime_composition lparam={:#x}", lparam);
-        if lparam == 0 {
+        let lparam = lparam.0 as u32;        if lparam == 0 {
             // Japanese IME may send this message with lparam = 0, which indicates that
             // there is no composition string.
             self.with_input_handler(|input_handler| {
@@ -687,16 +683,12 @@ impl WindowsWindowInner {
             // v57 port(zed gpui_windows): RESULTSTR 在前、COMPSTR 也处理、
             // 光标位置经 comp attr 修正、utf16 长度做标记范围
             if lparam & GCS_RESULTSTR.0 > 0 {
-                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
-                eprintln!("[gpui-trace] ime result={:?}", comp_result);
-                self.with_input_handler(|input_handler| {
+                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;                self.with_input_handler(|input_handler| {
                     input_handler.replace_text_in_range(None, &comp_result);
                 })?;
             }
             if lparam & GCS_COMPSTR.0 > 0 {
-                let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
-                eprintln!("[gpui-trace] ime comp={:?}", comp_string);
-                let caret_pos =
+                let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;                let caret_pos =
                     (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                         let cursor_pos = retrieve_composition_cursor_position(ctx);
                         let pos = if should_use_ime_cursor_position(ctx, cursor_pos) {
@@ -1285,13 +1277,7 @@ impl WindowsWindowInner {
     where
         F: FnOnce(&mut PlatformInputHandler) -> R,
     {
-        let mut input_handler = match self.state.borrow_mut().input_handler.take() {
-            Some(h) => h,
-            None => {
-                eprintln!("[gpui-trace] with_input_handler ABSENT");
-                return None;
-            }
-        };
+        let mut input_handler = self.state.borrow_mut().input_handler.take()?;
         let result = f(&mut input_handler);
         self.state.borrow_mut().input_handler = Some(input_handler);
         Some(result)
