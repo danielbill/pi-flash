@@ -292,7 +292,11 @@ fn collect_inline(
                 flush(&mut text, cur, &mut runs);
                 runs.push(Run { text: c.to_string(), style: Style::Code });
             }
-            Event::SoftBreak => text.push(' '),
+            // html=false 即用户气泡路径（render_user 唯一调用方）：段内软
+            // 换行保留 \n（pi-web parity：.markdown-user-message p 的
+            // white-space:pre-wrap——用户分次回车的多行按原文折行，而非
+            // CommonMark 默认折叠成空格）
+            Event::SoftBreak => text.push(if html { ' ' } else { '\n' }),
             Event::HardBreak => text.push('\n'),
             Event::Start(tag) => style_push(&mut styles, tag),
             Event::End(end) => style_pop(&mut styles, end),
