@@ -117,6 +117,8 @@ pub(crate) enum MdBlock {
     Image { url: String, alt: Vec<Run> },
     /// 块级公式（$$…$$，v57-2）
     Math { latex: String },
+    /// mermaid 图代码块（v57-3）
+    Mermaid { source: String },
     Rule,
 }
 
@@ -435,7 +437,12 @@ fn parse_block(
                 }
                 *i += 1;
             }
-            out.push(MdBlock::Code { lang, code });
+            if lang.trim() == "mermaid" {
+                // v57-3: mermaid 图（渲染期流式回退源码）
+                out.push(MdBlock::Mermaid { source: code });
+            } else {
+                out.push(MdBlock::Code { lang, code });
+            }
         }
         Tag::Table(_) => {
             let mut head: Vec<Vec<Run>> = Vec::new();
@@ -1075,6 +1082,15 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyEle
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
         MdBlock::Image { url, alt } => render_image(url, alt, t),
         MdBlock::Math { latex } => crate::render::math::block_element(latex, t),
+        MdBlock::Mermaid { source } => {
+            // pi-web MermaidBlock parity：流式期间只显源码；失败回退源码块
+            if !streaming {
+                if let Some(el) = crate::render::mermaid::diagram_element(source, t.dark) {
+                    return el;
+                }
+            }
+            render_code_block("mermaid", source, t, true).into_any_element()
+        }
         MdBlock::Rule => div()
             .w_full()
             .h(px(1.))

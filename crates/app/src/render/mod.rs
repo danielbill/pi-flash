@@ -5,3 +5,4 @@
 
 pub(crate) mod html;
 pub(crate) mod math;
+pub(crate) mod mermaid;

@@ -26,3 +26,4 @@ ratex-layout = "0.1.14"
 ratex-render = { version = "0.1.14", features = ["embed-fonts"] }
 lru = "0.18.5"
 ratex-types = "0.1.14"
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
