@@ -2051,3 +2051,25 @@ mod tail_tests {
         assert_eq!(msgs[0].ts, Some(1790470923456));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// gpui::rgba 是 0xRRGGBBAA（alpha 低字节）——v56 曾写反成 AARRGGBB
+    /// 导致通道错位（工具卡藏青/参数区纯黄，用户实测发现）。
+    #[test]
+    fn rgba_a_layout_is_rrggbbaa() {
+        assert_eq!(rgba_a(0x22c55e, 0.25), 0x22c55e40);
+        assert_eq!(rgba_a(0xf87171, 0.45), 0xf8717173);
+        assert_eq!(rgba_a(0x3b82f6, 0.2), 0x3b82f633);
+        // bg_subtle 是全仓库唯一 8 位 RRGGBBAA 主题色，必须走 rgba() 不能
+        // 走 rgb()（rgb 跳首字节，0xffffff14 会读成 #ffff14 纯黄）
+        // 深色主题 bg_subtle=0xffffff14 → 白 8% alpha（而非 rgb() 误读的 #ffff14）
+        let subtle = gpui::rgba(0xffffff14);
+        assert!((subtle.r - 1.0).abs() < 1e-3);
+        assert!((subtle.g - 1.0).abs() < 1e-3);
+        assert!((subtle.b - 1.0).abs() < 1e-3);
+        assert!((subtle.a - 0.0784).abs() < 1e-3);
+    }
+}
