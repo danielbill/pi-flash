@@ -15,6 +15,8 @@
 //! - ↑/↓/Tab：被 main.rs 注册的同上下文("Input")覆盖绑定截获（菜单导航/
 //!   历史/补全），非空多行时由 composer 重新派发 MoveUp/MoveDown。
 
+use std::rc::Rc;
+
 use gpui::{App, Context, Entity, FocusHandle, ParentElement, Render, SharedString, Styled, Window, div, prelude::*};
 use gpui_component::input::{InputEvent, InputState, TextInput as GpInput};
 
@@ -22,9 +24,9 @@ use crate::theme::theme as T;
 use gpui::{px, rgb};
 
 /// fires after every user value mutation (typing, paste, IME commit)
-pub type Changed = Box<dyn Fn(&str, &mut App)>;
+pub type Changed = Rc<dyn Fn(&str, &mut App)>;
 /// plain Enter (IME 组合期不会到达)；参数为剥掉组件自插 "\n" 后的文本
-pub type Submitted = Box<dyn Fn(&str, &mut App)>;
+pub type Submitted = Rc<dyn Fn(&str, &mut App)>;
 
 pub struct ComposerInput {
     fallback_focus: FocusHandle,
@@ -135,13 +137,12 @@ impl ComposerInput {
             InputEvent::Change => {
                 let v = entity.read(cx).value().to_string();
                 self.value = v.clone();
-                let cb = self.on_change.take();
-                if let Some(cb) = &cb {
+                if let Some(cb) = self.on_change.clone() {
                     cb(&v, cx);
                 }
-                self.on_change = cb;
             }
             InputEvent::PressEnter { secondary: false } => {
+                eprintln!("[ime-trace] facade PressEnter secondary=false");
                 // 多行模式组件已在光标处自插 "\n"（cursor 停在其后）——剥掉
                 // 再交给上层发送；上层随后清空，无需写回组件
                 let sent = {
@@ -154,11 +155,13 @@ impl ComposerInput {
                         v
                     }
                 };
-                let cb = self.on_submit.take();
-                if let Some(cb) = &cb {
-                    cb(&sent, cx);
+                eprintln!("[ime-trace] facade stripped sent={:?}", sent);
+                // 事件派发期间本实体处于租用中——回调若同步再 composer
+                // .update()（发送清空走 Chat::set_input）即双重租约 panic
+                //（0xc0000409，已实测）。defer 到本租约结束后执行。
+                if let Some(cb) = self.on_submit.clone() {
+                    cx.defer(move |cx| cb(&sent, cx));
                 }
-                self.on_submit = cb;
             }
             // Ctrl+Enter（secondary）：composer 未使用
             InputEvent::PressEnter { secondary: true } => {}

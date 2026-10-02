@@ -1141,6 +1141,7 @@ impl InputState {
     }
 
     pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        eprintln!("[ime-trace] enter secondary={} marked={:?}", action.secondary, self.ime_marked_range);
         if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
@@ -2116,6 +2117,7 @@ impl EntityInputHandler for InputState {
         if self.disabled {
             return;
         }
+        eprintln!("[ime-trace] replace_text enter text={:?} range={:?}", new_text, range_utf16);
 
         self.pause_blink_cursor(cx);
 
@@ -2169,6 +2171,7 @@ impl EntityInputHandler for InputState {
         }
         cx.emit(InputEvent::Change);
         cx.notify();
+        eprintln!("[ime-trace] replace_text exit range={:?}", range);
     }
 
     /// Mark text is the IME temporary insert on typing.
@@ -2183,6 +2186,7 @@ impl EntityInputHandler for InputState {
         if self.disabled {
             return;
         }
+        eprintln!("[ime-trace] replace_and_mark enter text={:?} range={:?} sel={:?}", new_text, range_utf16, new_selected_range_utf16);
 
         self.lsp.reset();
 
@@ -2231,6 +2235,7 @@ impl EntityInputHandler for InputState {
         self.mode.update_auto_grow(&self.text_wrapper);
         cx.emit(InputEvent::Change);
         cx.notify();
+        eprintln!("[ime-trace] replace_and_mark exit");
     }
 
     /// Used to position IME candidates.
@@ -2241,6 +2246,7 @@ impl EntityInputHandler for InputState {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        eprintln!("[ime-trace] bounds_for_range {:?}", range_utf16);
         let last_layout = self.last_layout.as_ref()?;
         let line_height = last_layout.line_height;
         let line_number_width = last_layout.line_number_width;

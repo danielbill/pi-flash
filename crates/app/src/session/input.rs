@@ -14,6 +14,8 @@
 //!   /历史回溯/补全），非空多行重新派发组件 MoveUp/MoveDown
 //! - Escape → wrapper on_key_down（菜单开=取消补全，运行中=中止）
 
+use std::rc::Rc;
+
 use gpui::{Context, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
@@ -142,6 +144,7 @@ pub(crate) fn input_area(
         .on_key_down(cx.listener(
             |this, ev: &KeyDownEvent, window, cx| {
                 let key = ev.keystroke.key.as_str();
+                eprintln!("[ime-trace] wrapper key={} shift={}", key, ev.keystroke.modifiers.shift);
                 if key == "enter" && ev.keystroke.modifiers.shift {
                     // IME 组合期平台不派发按键（gpui windows events.rs），
                     // 无需组合守卫
@@ -275,7 +278,7 @@ fn ensure_composer(
     let weak_submit = weak.clone();
     let c = cx.new(|icx| {
         let mut f = ComposerInput::new(icx);
-        f.set_on_change(Box::new(move |v, cx| {
+        f.set_on_change(Rc::new(move |v, cx| {
             let _ = weak_change.update(cx, |chat, cx| {
                 if chat.input != v {
                     chat.input = v.to_string();
@@ -284,7 +287,7 @@ fn ensure_composer(
                 }
             });
         }));
-        f.set_on_submit(Box::new(move |v, cx| {
+        f.set_on_submit(Rc::new(move |v, cx| {
             let _ = weak_submit.update(cx, |chat, cx| {
                 // 菜单开着：Enter=接受补全而非发送
                 let items = chat.menu_items(cx);
@@ -295,14 +298,17 @@ fn ensure_composer(
                     return;
                 }
                 chat.input = v.to_string();
-                let streaming = chat.rt().read(cx).agent_running;
                 let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
+                let streaming = chat.rt().read(cx).agent_running;
                 if streaming {
                     if can_queue {
                         chat.steer_input(cx);
                     }
-                } else {
+                } else if can_queue {
                     chat.send_input(cx);
+                } else {
+                    // 空输入回车：不发送，顺手清掉组件自插的 "\n"
+                    chat.set_input(String::new(), cx);
                 }
             });
         }));
