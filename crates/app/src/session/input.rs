@@ -80,6 +80,11 @@ pub(crate) fn input_area(
         })
         .bg(rgb(t.bg))
         .shadow_lg()
+        // 鼠标透传修复（psp_overlays 同款方案）：胶囊浮在聊天区上，指针处
+        // 双层 hitbox 都命中，事件漏进底下的消息列表（悬停/滚轮/点击穿
+        // 透）。occlude 让胶囊自身 bounds 遮挡先绘制的 hitbox；控件行子
+        // 元素后绘制不受影响（occlusion 只作用于更早的 hitbox）。
+        .occlude()
         .flex()
         .flex_col()
         .pt(px(5.))
