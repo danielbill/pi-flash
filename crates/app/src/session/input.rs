@@ -342,6 +342,8 @@ fn composer_bar(
     let mut bar = div()
         .flex()
         .items_center()
+        // 操作栏整体垂直微调（负值上移；发送钮的 mt 在自身块里叠加）
+        .mt(px(-5.))
         .px(px(10.))
         .child(
             // 左侧：图片 + 工具预设（内容裸宽，组内间距 10px，与右侧一致）
@@ -491,7 +493,7 @@ fn composer_bar(
         div()
             .id("send")
             .mr(px(5.))
-            .mt(px(-8.))
+            .mt(px(-3.)) // -8(原定位) + 5(操作栏上移) = 视觉位不变
             .size(px(28.))
             .rounded(if streaming { px(9.) } else { px(14.) })
             .flex()
