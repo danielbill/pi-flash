@@ -27,7 +27,10 @@ pub(crate) fn main_column(
     let t = T();
     // all conversation state comes from the ACTIVE session runtime
     let rt = chat.rt();
-    let streaming = rt.read(cx).state.as_ref().is_some_and(|st| st.is_streaming);
+    // composer 的流式态用事件驱动的 agent_running（AgentStart/End 实时更新），
+    // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
+    // 导致 stop 按钮永远不出现
+    let streaming = rt.read(cx).agent_running;
     let input_focused = chat.focus.is_focused(window);
     chat.input_focused = input_focused;
     let caret_on = chat.caret_on;

@@ -197,12 +197,7 @@ fn input_editor(
                 }
                 let menu_open = this.active_menu().is_some();
                 let items = this.menu_items(cx);
-                let streaming = this
-                    .rt()
-                    .read(cx)
-                    .state
-                    .as_ref()
-                    .is_some_and(|s| s.is_streaming);
+                let streaming = this.rt().read(cx).agent_running;
                 let can_queue = !this.input.is_empty() || !this.pending_images.is_empty();
                 match key {
                     "enter" if shift && streaming => {
@@ -549,20 +544,21 @@ fn composer_bar(
             .child(SharedString::from(thinking_label.to_string()))
             .child(icon("chevron-down", 10., t.text_dim)),
     );
-    // 圆形发送 ↑（运行中变停止）；用户定位：左移 5px、上移 8px
+    // 圆形发送 ↑（运行中变停止：ZCode 规格中性深底圆角方块+白色停止块，
+    // 非红色警示）；用户定位：左移 5px、上移 8px
     right = right.child(
         div()
             .id("send")
             .mr(px(5.))
             .mt(px(-8.))
             .size(px(28.))
-            .rounded_full()
+            .rounded(if streaming { px(9.) } else { px(14.) })
             .flex()
             .items_center()
             .justify_center()
             .cursor_pointer()
             .bg(rgb(if streaming {
-                t.danger
+                t.text
             } else if can_queue {
                 t.accent
             } else {
@@ -571,13 +567,9 @@ fn composer_bar(
             .hover(|s| s.opacity(0.9))
             .on_mouse_down(MouseButton::Left, cx.listener(
                 |this, _: &gpui::MouseDownEvent, _w, cx| {
-                    let streaming = this
-                        .rt()
-                        .read(cx)
-                        .state
-                        .as_ref()
-                        .is_some_and(|s| s.is_streaming);
-                    if streaming {
+                    // 与按钮渲染同源：agent_running（事件驱动），快照
+                    // is_streaming 恒 false 会把"停止"点成"发送"
+                    if this.rt().read(cx).agent_running {
                         this.abort_stream(cx);
                     } else {
                         this.send_input(cx);
@@ -587,9 +579,9 @@ fn composer_bar(
             .child(if streaming {
                 // 停止方块
                 div()
-                    .size(px(10.))
-                    .rounded(px(1.5))
-                    .bg(rgb(0xffffff))
+                    .size(px(12.))
+                    .rounded(px(2.5))
+                    .bg(rgb(t.bg))
                     .into_any_element()
             } else {
                 icon("arrow-up", 15., t.accent_contrast)
