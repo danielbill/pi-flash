@@ -344,12 +344,15 @@ fn input_editor(
                     // 用追加着色字符实现——随文本折行，永远紧跟末尾
                     let mut text = this_input.to_string();
                     let caret_on_now = input_focused && caret_on;
+                    let caret_char = "\u{258f}";
+                    // 高亮 range 以 UTF-8 字节计且必须落在字符边界上——
+                    // range 只罩光标字符的首字节会把 str 切进多字节序列
+                    // 中间，gpui 按高亮边界切片直接 panic（0xc0000409）
+                    let caret_ix = text.len();
                     if caret_on_now {
-                        text.push_str("\u{258f}");
+                        text.push_str(caret_char);
                     }
-                    // gpui highlight range 以 UTF-8 字节计——用 chars().count()
-                    // 在中文下落到多字节序列中间，cosmic-text 切 glyph 即崩
-                    let caret_ix = this_input.len();
+                    let caret_end = text.len();
                     let base = gpui::TextStyle {
                         color: rgb(t.text).into(),
                         font_size: px(14.).into(),
@@ -357,8 +360,7 @@ fn input_editor(
                     };
                     let highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
                         if caret_on_now {
-                            vec![(
-                                caret_ix..caret_ix + 1,
+                            vec![(caret_ix..caret_end,
                                 gpui::HighlightStyle {
                                     color: Some(rgb(t.accent).into()),
                                     ..Default::default()
