@@ -776,14 +776,47 @@ fn push_color(
 
 /// 表格：外框圆角 7px、th bg_panel 650 字重、行分隔线、偶数行斑马纹
 /// （pi-web .markdown-table-wrap）。
+/// 单元格显示宽度权重：ASCII 记 1、CJK/全角记 2（HTML 表 auto layout 的
+/// 近似度量）。
+fn cell_weight(runs: &[Run]) -> usize {
+    runs.iter().map(|r| r.text.chars().map(|c| if (c as u32) > 0x2e80 { 2 } else { 1 }).sum::<usize>()).sum()
+}
+
 fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::Div {
+    // 列宽 = 列内最长单元格的显示宽度（钳制 [6,44]），归一化后全表共用
+    // 同一组相对宽度——跨行对齐成网格，长单元格换行（pi-web HTML 表
+    // auto layout 的近似；flex_1 按内容分配导致每行列位漂移，已废）
+    let n_cols = head
+        .len()
+        .max(rows.iter().map(|r| r.len()).max().unwrap_or(0))
+        .max(1);
+    const MIN_W: usize = 6;
+    const MAX_W: usize = 44;
+    let mut weights = vec![MIN_W; n_cols];
+    for (ci, cell) in head.iter().enumerate() {
+        weights[ci] = weights[ci].max(cell_weight(cell).clamp(MIN_W, MAX_W));
+    }
+    for row in rows {
+        for (ci, cell) in row.iter().enumerate().take(n_cols) {
+            weights[ci] = weights[ci].max(cell_weight(cell).clamp(MIN_W, MAX_W));
+        }
+    }
+    let total: f32 = weights.iter().sum::<usize>() as f32;
+    let fracs: Vec<f32> = weights.iter().map(|w| *w as f32 / total).collect();
+
+    let cell_div = |frac: f32| {
+        div()
+            .w(relative(frac))
+            .min_w_0()
+            .px(px(10.))
+            .py(px(6.))
+    };
+
     let head_cells: Vec<gpui::AnyElement> = head
         .iter()
-        .map(|cell| {
-            div()
-                .flex_1()
-                .px(px(10.))
-                .py(px(6.))
+        .enumerate()
+        .map(|(ci, cell)| {
+            cell_div(fracs[ci])
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
                 .child(styled_text(cell, t, BASE, 1.6))
@@ -808,14 +841,8 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
             if ri % 2 == 1 {
                 line = line.bg(rgba(t.bg_subtle));
             }
-            for cell in row {
-                line = line.child(
-                    div()
-                        .flex_1()
-                        .px(px(10.))
-                        .py(px(6.))
-                        .child(styled_text(cell, t, BASE, 1.6)),
-                );
+            for (ci, cell) in row.iter().enumerate().take(n_cols) {
+                line = line.child(cell_div(fracs[ci]).child(styled_text(cell, t, BASE, 1.6)));
             }
             line.into_any_element()
         })
