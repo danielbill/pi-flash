@@ -68,8 +68,6 @@ pub(crate) fn input_area(
         .shadow_lg()
         .flex()
         .flex_col()
-        .pl(px(7.))
-        .pr(px(7.))
         .pt(px(5.))
         .pb(px(3.));
     // 附加图片 chips
@@ -408,17 +406,15 @@ fn composer_bar(
     let mut bar = div()
         .flex()
         .items_center()
-        .gap(px(6.))
-        .px(px(3.))
+        .px(px(10.))
         .child(
+            // 左侧：图片 + 工具预设（内容裸宽，组内间距 10px，与右侧一致）
+            div().flex().items_center().gap(px(10.)).child(
             // 图片
             div()
                 .id("attach-image")
-                .size(px(28.))
-                .rounded(px(8.))
                 .flex()
                 .items_center()
-                .justify_center()
                 .text_color(rgb(t.text_muted))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -428,13 +424,12 @@ fn composer_bar(
                     },
                 ))
                 .child(icon_hover("image", 15., t.text_muted)),
-        )
-        .child(
+            )
+            .child(
             // 工具预设「默认∨」
             div()
                 .id("tools-menu")
                 .h(px(28.))
-                .px(px(8.))
                 .flex()
                 .items_center()
                 .gap(px(5.))
@@ -456,46 +451,57 @@ fn composer_bar(
                 .child(icon_hover("wrench", 13., if tools_open { t.accent } else { t.text_muted }))
                 .child(SharedString::from(tools_label.to_string()))
                 .child(icon("chevron-down", 10., t.text_dim)),
+            ),
         );
-    // 右侧
-    bar = bar.child(div().ml_auto().flex().items_center().gap(px(4.)).child(
+    // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 10px；操作栏左右
+    // padding 10px = 发送钮距胶囊边框 10px
+    let mut right = div().ml_auto().flex().items_center().gap(px(10.)).child(
         // 上下文用量环（25% 分桶）
         div()
             .id("ctx-ring")
-            .size(px(28.))
-            .rounded(px(8.))
-            .flex()
-            .items_center()
-            .justify_center()
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)))
             .child(
+                // 同心双环：track 在下、进度弧在上（svg 是 flex 行内子元素
+                // 会并排——必须各自绝对定位铺满后居中才叠成同心）
                 div()
                     .relative()
                     .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(crate::ui::icon("ring-track", 18., t.bg_selected))
-                    .child(crate::ui::icon(
-                        match ctx_pct.unwrap_or(0) {
-                            0..=12 => "ring-track",
-                            13..=37 => "ring-25",
-                            38..=62 => "ring-50",
-                            63..=87 => "ring-75",
-                            _ => "ring-100",
-                        },
-                        18.,
-                        t.accent,
-                    )),
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::ui::icon("ring-track", 18., t.bg_selected)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::ui::icon(
+                                match ctx_pct.unwrap_or(0) {
+                                    0..=12 => "ring-track",
+                                    13..=37 => "ring-25",
+                                    38..=62 => "ring-50",
+                                    63..=87 => "ring-75",
+                                    _ => "ring-100",
+                                },
+                                18.,
+                                t.accent,
+                            )),
+                    ),
             ),
-    ));
+    );
     // 模型 ∨
-    bar = bar.child(
+    right = right.child(
         div()
             .id("open-model-select")
             .h(px(28.))
-            .px(px(8.))
             .flex()
             .items_center()
             .gap(px(5.))
@@ -517,11 +523,10 @@ fn composer_bar(
             .child(icon("chevron-down", 10., t.text_dim)),
     );
     // 思考强度 ∨
-    bar = bar.child(
+    right = right.child(
         div()
             .id("thinking-menu")
             .h(px(28.))
-            .px(px(8.))
             .flex()
             .items_center()
             .gap(px(5.))
@@ -544,11 +549,12 @@ fn composer_bar(
             .child(SharedString::from(thinking_label.to_string()))
             .child(icon("chevron-down", 10., t.text_dim)),
     );
-    // 圆形发送 ↑（运行中变停止）
-    bar = bar.child(
+    // 圆形发送 ↑（运行中变停止）；用户定位：左移 5px、上移 8px
+    right = right.child(
         div()
             .id("send")
-            .ml(px(5.))
+            .mr(px(5.))
+            .mt(px(-8.))
             .size(px(28.))
             .rounded_full()
             .flex()
@@ -589,5 +595,6 @@ fn composer_bar(
                 icon("arrow-up", 15., t.accent_contrast)
             }),
     );
+    bar = bar.child(right);
     bar
 }
