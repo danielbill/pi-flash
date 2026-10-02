@@ -212,7 +212,12 @@ fn split_links(text: &str) -> Vec<(String, bool)> {
 }
 
 /// Collect inline runs until `is_end` matches (consuming the end event).
-fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bool) -> Vec<Run> {
+fn collect_inline(
+    events: &[Event],
+    i: &mut usize,
+    is_end: &dyn Fn(&Event) -> bool,
+    html: bool,
+) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
     let mut styles: Vec<Style> = Vec::new();
     let mut text = String::new();
@@ -254,11 +259,24 @@ fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bo
                 text.push_str(t);
             }
             Event::InlineHtml(h) => {
-                // v57-1: 行内 HTML 片段 → 安全子集 runs（此前直接丢弃）
+                // v57-1: 行内 HTML；html=false（用户气泡）时标签原文可见。
+                // 开/闭标签跨事件维持样式栈（配对标签样式不丢）
                 flush(&mut text, cur, &mut runs);
-                runs.extend(crate::render::html::inline_runs(h));
-                cur = Style::Normal;
-                styles.clear();
+                if html {
+                    use crate::render::html::InlineHtmlEffect as E;
+                    match crate::render::html::fragment_effect(h) {
+                        E::StylePush(st) => styles.push(st),
+                        E::StylePop => {
+                            styles.pop();
+                        }
+                        E::Runs(rs) => runs.extend(rs),
+                    }
+                    cur = *styles.last().unwrap_or(&Style::Normal);
+                } else {
+                    runs.extend(literal_runs(h));
+                    cur = Style::Normal;
+                    styles.clear();
+                }
             }
             Event::InlineMath(tex) => {
                 // v57-2: 行内公式标记 run（渲染期拆段成图）
@@ -290,7 +308,7 @@ fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bo
 // block parsing
 // ---------------------------------------------------------------------------
 
-fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
+fn parse_blocks(events: &[Event], html: bool) -> Vec<MdBlock> {
     let mut out: Vec<MdBlock> = Vec::new();
     let mut i = 0;
     while i < events.len() {
@@ -298,7 +316,7 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
             Event::Start(tag) => {
                 let tag = tag.clone();
                 i += 1;
-                parse_block(events, &mut i, tag, &mut out, 0);
+                parse_block(events, &mut i, tag, &mut out, 0, html);
             }
             Event::Rule => {
                 out.push(MdBlock::Rule);
@@ -311,8 +329,13 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
                 i += 1;
             }
             Event::Html(h) => {
-                // v57-1: 块级 HTML → 安全子集块（此前直接丢弃）
-                out.extend(crate::render::html::blocks(h));
+                if html {
+                    // v57-1: 块级 HTML → 安全子集块（此前直接丢弃）
+                    out.extend(crate::render::html::blocks(h));
+                } else {
+                    // 用户气泡：标签原文可见
+                    out.push(MdBlock::Paragraph { runs: literal_runs(h) });
+                }
                 i += 1;
             }
             Event::DisplayMath(tex) => {
@@ -321,9 +344,13 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
                 i += 1;
             }
             Event::InlineHtml(h) => {
-                let runs = crate::render::html::inline_runs(h);
-                if !runs.is_empty() {
-                    out.push(MdBlock::Paragraph { runs });
+                if html {
+                    let runs = crate::render::html::inline_runs(h);
+                    if !runs.is_empty() {
+                        out.push(MdBlock::Paragraph { runs });
+                    }
+                } else {
+                    out.push(MdBlock::Paragraph { runs: literal_runs(h) });
                 }
                 i += 1;
             }
@@ -374,6 +401,7 @@ fn parse_block(
     tag: Tag,
     out: &mut Vec<MdBlock>,
     depth: usize,
+    html: bool,
 ) {
     match tag {
         Tag::Paragraph => {
@@ -386,7 +414,7 @@ fn parse_block(
                     *i += 1;
                     let alt = collect_inline(events, i, &|e| {
                         matches!(e, Event::End(TagEnd::Image))
-                    });
+}, html);
                     out.push(MdBlock::Image { url, alt });
                 }
                 while *i < events.len() && !matches!(events[*i], Event::End(TagEnd::Paragraph)) {
@@ -396,14 +424,14 @@ fn parse_block(
             } else {
                 let runs = collect_inline(events, i, &|e| {
                     matches!(e, Event::End(TagEnd::Paragraph))
-                });
+}, html);
                 out.push(MdBlock::Paragraph { runs });
             }
         }
         Tag::Heading { level, .. } => {
             let runs = collect_inline(events, i, &|e| {
                 matches!(e, Event::End(TagEnd::Heading(_)))
-            });
+}, html);
             out.push(MdBlock::Heading { level: level as u8, runs });
         }
         Tag::BlockQuote(_) => {
@@ -412,7 +440,7 @@ fn parse_block(
                 if let Event::Start(t) = &events[*i] {
                     let t = t.clone();
                     *i += 1;
-                    parse_block(events, i, t, &mut inner, depth + 1);
+                    parse_block(events, i, t, &mut inner, depth + 1, html);
                 } else {
                     *i += 1;
                 }
@@ -455,15 +483,21 @@ fn parse_block(
                     }
                     Event::Start(Tag::TableHead) => {
                         *i += 1;
-                        head = parse_table_cells(events, i, &|e| {
-                            matches!(e, Event::End(TagEnd::TableHead))
-                        });
+                        head = parse_table_cells(
+                            events,
+                            i,
+                            &|e| matches!(e, Event::End(TagEnd::TableHead)),
+                            html,
+                        );
                     }
                     Event::Start(Tag::TableRow) => {
                         *i += 1;
-                        let row = parse_table_cells(events, i, &|e| {
-                            matches!(e, Event::End(TagEnd::TableRow))
-                        });
+                        let row = parse_table_cells(
+                            events,
+                            i,
+                            &|e| matches!(e, Event::End(TagEnd::TableRow)),
+                            html,
+                        );
                         rows.push(row);
                     }
                     _ => *i += 1,
@@ -472,7 +506,7 @@ fn parse_block(
             out.push(MdBlock::Table { head, rows });
         }
         Tag::Image { dest_url, .. } => {
-            let alt = collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::Image)));
+            let alt = collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::Image)), html);
             out.push(MdBlock::Image { url: dest_url.to_string(), alt });
         }
         Tag::List(start) => {
@@ -504,7 +538,7 @@ fn parse_block(
                                     Tag::Paragraph => {
                                         let r = collect_inline(events, i, &|e| {
                                             matches!(e, Event::End(TagEnd::Paragraph))
-                                        });
+}, html);
                                         if !runs.is_empty() {
                                             if let Some(last) = runs.last_mut() {
                                                 last.text.push(' ');
@@ -513,13 +547,13 @@ fn parse_block(
                                         runs.extend(r);
                                     }
                                     Tag::List(_) => {
-                                        parse_block(events, i, inner_tag, &mut nested, depth + 1);
+                                        parse_block(events, i, inner_tag, &mut nested, depth + 1, html);
                                     }
                                     Tag::CodeBlock(_) | Tag::BlockQuote(_) | Tag::Table(_) => {
-                                        parse_block(events, i, inner_tag, &mut nested, depth + 1);
+                                        parse_block(events, i, inner_tag, &mut nested, depth + 1, html);
                                     }
                                     Tag::Image { .. } => {
-                                        parse_block(events, i, inner_tag, &mut nested, depth + 1);
+                                        parse_block(events, i, inner_tag, &mut nested, depth + 1, html);
                                     }
                                     _ => {}
                                 }
@@ -562,6 +596,7 @@ fn parse_table_cells(
     events: &[Event],
     i: &mut usize,
     is_end: &dyn Fn(&Event) -> bool,
+    html: bool,
 ) -> Vec<Vec<Run>> {
     let mut cells: Vec<Vec<Run>> = Vec::new();
     while *i < events.len() {
@@ -571,9 +606,8 @@ fn parse_table_cells(
         }
         if matches!(events[*i], Event::Start(Tag::TableCell)) {
             *i += 1;
-            let runs = collect_inline(events, i, &|e| {
-                matches!(e, Event::End(TagEnd::TableCell))
-            });
+            let runs =
+                collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::TableCell)), html);
             cells.push(runs);
         } else {
             *i += 1;
@@ -1108,6 +1142,16 @@ const MAX_MARKDOWN_CHARS: usize = 100_000;
 /// `streaming`（v56-3 c15）：流式中的消息跳过 syntect 高亮与行号
 /// （pi-web CodeBlock：流式期间 Prism 逐 chunk 重分词是最贵开销）。
 pub fn render(src: &str, t: &Theme, streaming: bool) -> AnyElement {
+    render_impl(src, t, streaming, true)
+}
+
+/// 用户气泡专用（v57）：HTML 标签不渲染、按原文显示——用户消息是发出
+/// 内容的凭证，气泡吞标签会让用户无法核对 agent 实际收到的文本。
+pub fn render_user(src: &str, t: &Theme) -> AnyElement {
+    render_impl(src, t, false, false)
+}
+
+fn render_impl(src: &str, t: &Theme, streaming: bool, html: bool) -> AnyElement {
     if src.chars().count() > MAX_MARKDOWN_CHARS {
         return render_oversize(src, t);
     }
@@ -1121,11 +1165,16 @@ pub fn render(src: &str, t: &Theme, streaming: bool) -> AnyElement {
     // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
     opts.insert(Options::ENABLE_MATH);
     let events: Vec<Event> = Parser::new_ext(src, opts).collect();
-    let blocks = parse_blocks(&events);
+    let blocks = parse_blocks(&events, html);
     if blocks.is_empty() {
         return div().into_any_element();
     }
     render_blocks(&blocks, 1, t, streaming).into_any_element()
+}
+
+/// Html/InlineHtml 的字面显示（html=false 路径）：标签原文可见。
+fn literal_runs(html_src: &str) -> Vec<Run> {
+    vec![Run { text: html_src.to_string(), style: Style::Normal }]
 }
 
 /// 超长消息（pi-web ⚠ Message content is very large）：提示行 + 纯文本
@@ -1175,15 +1224,19 @@ mod tests {
     }
 
     fn parse(src: &str) -> Vec<MdBlock> {
+        parse_with(src, true)
+    }
+
+    fn parse_with(src: &str, html: bool) -> Vec<MdBlock> {
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_STRIKETHROUGH);
         opts.insert(Options::ENABLE_TABLES);
         opts.insert(Options::ENABLE_TASKLISTS);
         opts.insert(Options::ENABLE_GFM);
         opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-    // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
-    opts.insert(Options::ENABLE_MATH);
-        parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>())
+        // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
+        opts.insert(Options::ENABLE_MATH);
+        parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>(), html)
     }
 
     #[test]
@@ -1374,6 +1427,29 @@ $$");
         assert!(has_display, "multiline $$ must surface as DisplayMath marker run");
     }
 
+
+    #[test]
+    fn user_mode_shows_html_literals() {
+        // render_user：标签不渲染、原文可见（用户消息凭证原则）
+        let blocks = parse_with("<b>粗体</b> 保持", false);
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                let all = runs.iter().map(|r| r.text.as_str()).collect::<String>();
+                assert!(all.contains("<b>粗体</b>"), "tags must stay literal: {all}");
+                assert!(runs.iter().all(|r| r.style == Style::Normal));
+            }
+            other => panic!("{other:?}"),
+        }
+        // html=true 路径依旧渲染（assistant）
+        let blocks2 = parse_with("<b>粗体</b> 保持", true);
+        match &blocks2[0] {
+            MdBlock::Paragraph { runs } => {
+                assert!(!runs.iter().any(|r| r.text.contains("<b>")), "tags consumed");
+                assert!(runs.iter().any(|r| r.style == Style::Bold));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn chinese_text_roundtrip() {

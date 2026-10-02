@@ -1386,11 +1386,13 @@ pub(crate) fn render_msg(
                 wrap.into_any_element()
             }
         };
-        // c19: 用户内容走 markdown（pi-web SafeMarkdownBody parity）
+        // c19: 用户内容走 markdown；但 HTML 不渲染、标签原样显示
+        // （render_user）——用户消息是发出内容的凭证，气泡吞标签会让
+        // 用户无法核对 agent 实际收到的文本（v57 用户反馈）
         let md: gpui::AnyElement = if text.trim().is_empty() {
             div().into_any_element()
         } else {
-            markdown::render(&text, t, false)
+            markdown::render_user(&text, t)
         };
 
         let action = |id: String, icon_name: &'static str, label: &'static str| {

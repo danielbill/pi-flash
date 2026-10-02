@@ -29,6 +29,67 @@ pub(crate) fn inline_runs(html: &str) -> Vec<Run> {
     runs
 }
 
+/// 单个 InlineHtml 片段的效果（pulldown 把 `<b>x</b>` 拆成开标签/文本/
+/// 闭标签三个事件——开闭标签需要跨事件维持样式栈）。
+#[derive(Debug)]
+pub(crate) enum InlineHtmlEffect {
+    /// 开标签：把样式压入调用方的样式栈
+    StylePush(Style),
+    /// 闭标签：弹出样式栈
+    StylePop,
+    /// 自带内容（文本/br/img/完整片段）：直接产出 runs
+    Runs(Vec<Run>),
+}
+
+fn tag_style(tag: &str) -> Option<Style> {
+    let style = match tag {
+        "b" | "strong" => Style::Bold,
+        "i" | "em" | "cite" | "var" => Style::Italic,
+        "code" | "kbd" | "samp" => Style::Code,
+        "a" => Style::Link,
+        "del" | "s" | "strike" => Style::Strike,
+        _ => return None,
+    };
+    Some(style)
+}
+
+/// 判定一个 InlineHtml 片段的效果。html5ever 会丢弃无配对的闭标签——
+/// 解析结果为空即视为闭标签（StylePop）；纯开标签（无文本内容）视为
+/// StylePush；有内容则产出 runs。
+pub(crate) fn fragment_effect(html: &str) -> InlineHtmlEffect {
+    let frag = Html::parse_fragment(html);
+    let mut style_tag: Option<Style> = None;
+    let mut has_content = false;
+    for node in frag.tree.root().descendants() {
+        match node.value() {
+            scraper::node::Node::Text(t) => {
+                if !t.text.trim().is_empty() {
+                    has_content = true;
+                }
+            }
+            scraper::node::Node::Element(el) => {
+                let name = el.name().to_ascii_lowercase();
+                match name.as_str() {
+                    "br" | "img" => has_content = true,
+                    _ => {
+                        if let Some(st) = tag_style(&name) {
+                            style_tag = style_tag.or(Some(st));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if has_content {
+        InlineHtmlEffect::Runs(inline_runs(html))
+    } else if let Some(st) = style_tag {
+        InlineHtmlEffect::StylePush(st)
+    } else {
+        InlineHtmlEffect::StylePop
+    }
+}
+
 /// 块级原文 → MdBlock 列表（markdown 顶层 Event::Html 分支用）。
 pub(crate) fn blocks(html: &str) -> Vec<MdBlock> {
     let frag = Html::parse_fragment(html);
@@ -415,6 +476,24 @@ mod tests {
             MdBlock::Paragraph { runs } => assert_eq!(runs[0].style, Style::Bold),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn fragment_effects_for_paired_tags() {
+        // pulldown 把 <b>x</b> 拆成三个事件：开标签/文本/闭标签
+        use crate::markdown::Style;
+        match fragment_effect("<b>") {
+            InlineHtmlEffect::StylePush(st) => assert_eq!(st, Style::Bold),
+            other => panic!("{other:?}"),
+        }
+        match fragment_effect("</b>") {
+            InlineHtmlEffect::StylePop => {}
+            other => panic!("{other:?}"),
+        }
+        // br 有内容效果（换行 run）
+        assert!(matches!(fragment_effect("<br>"), InlineHtmlEffect::Runs(_)));
+        // 自带文本的完整片段走 runs
+        assert!(matches!(fragment_effect("<b>x</b>"), InlineHtmlEffect::Runs(_)));
     }
 
     #[test]
