@@ -1,38 +1,39 @@
-//! composer (v54 一体式): 单容器 16px 圆角 1px 边框，宽 75%/min 500/max 920
-//! （与消息列对齐）居中，悬浮胶囊上浮叠在聊天区上（0 高 wrapper 不吞点击/
-//! 滚轮）。控件行：左 = 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨
-//! + 思考∨ + 圆形发送 ↑（运行中变停止）。无压缩/铃声/AI 按钮。
+//! composer (v57 输入组件化)：真输入框 = gpui-component InputState 多行
+//! 模式（ui/composer_input.rs 门面）——点击定位光标、左右键移动、多行上下
+//! 键、选区、IME、undo、超限纵向滚动条全为组件内置，不再手搓 String+绘制
+//! 光标。单容器 16px 圆角 1px 边框，宽 75%/min 500/max 920（与消息列对齐）
+//! 居中，悬浮胶囊上浮叠在聊天区上（0 高 wrapper 不吞点击/滚轮）。控件行：
+//! 左 = 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨ + 思考∨ +
+//! 圆形发送 ↑ / 主题色停止块（运行中）。
+//!
+//! 按键路由（详见 composer_input.rs 头注）：
+//! - Enter → 组件 PressEnter{secondary:false} → on_submit（菜单开=接受补全；
+//!   运行中=引导；空闲=发送）
+//! - Shift+Enter → wrapper on_key_down（运行中=排队 follow-up，空闲=换行）
+//! - ↑/↓/Tab → "Input" 上下文覆盖绑定截获为 ComposerUp/Down/Tab（菜单导航
+//!   /历史回溯/补全），非空多行重新派发组件 MoveUp/MoveDown
+//! - Escape → wrapper on_key_down（菜单开=取消补全，运行中=中止）
 
-use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{Context, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::EditorInputElement;
+use crate::ComposerInput;
 use crate::PillMenu;
 use crate::MenuKind;
+use crate::{ComposerDown, ComposerTab, ComposerUp};
 use crate::i18n::tr;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
 
 pub(crate) fn input_area(
     chat: &mut Chat,
-    entity: Entity<Chat>,
     weak: &gpui::WeakEntity<Chat>,
     streaming: bool,
     input_focused: bool,
-    caret_on: bool,
-    this_input: SharedString,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
-    let input_ph: SharedString = if streaming {
-        tr("立即引导 / 排队后续消息...").into()
-    } else if chat.input.is_empty() {
-        tr("/使用命令，shift回车换行").into()
-    } else {
-        chat.input.clone().into()
-    };
-    let input_empty = chat.input.is_empty();
-    let can_queue = !input_empty || !chat.pending_images.is_empty();
+    let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
     let (model_label, thinking_label, tools_label, ctx_pct) = {
         let r = chat.rt().read(cx);
         (
@@ -48,6 +49,17 @@ pub(crate) fn input_area(
             r.stats.as_ref().and_then(|s| s.context_percent),
         )
     };
+
+    // 输入组件：惰性创建 + 每帧同步占位/值（set_value 同值跳过）
+    let composer = ensure_composer(chat, weak, cx);
+    let ph: SharedString = if streaming {
+        tr("立即引导 / 排队后续消息...").into()
+    } else {
+        tr("/使用命令，shift回车换行").into()
+    };
+    composer.update(cx, |f, _| f.set_placeholder(Some(ph)));
+    let cur = chat.input.clone();
+    composer.update(cx, |f, fcx| f.set_value(cur, fcx));
 
     // ---- 胶囊 ----
     let mut capsule = div()
@@ -113,28 +125,110 @@ pub(crate) fn input_area(
                 .children(rows),
         );
     }
-    // 编辑区（键处理 + IME 完整保留）
+    // 编辑区：真输入组件（多行 AutoGrow，超出 max 出纵向滚动条）
     capsule = capsule.child(
         div()
             .w_full()
             .min_h(px(59.))
-            .px(px(12.))
-            .pt(px(10.))
+            .pt(px(6.))
             .pb(px(2.))
-            .text_size(px(13.5))
-            .child(input_editor(
-                chat,
-                entity,
-                streaming,
-                input_focused,
-                caret_on,
-                this_input,
-                input_empty,
-                input_ph,
-                t,
-                cx,
-            )),
+            .px(px(6.))
+            .child(composer),
     );
+    // 按键路由：组件处理的键（Enter/方向键/粘贴/undo…）到不了这里；
+    // 这里只接组件无绑定的 Shift+Enter、已传播的 Escape，以及覆盖绑定
+    // 截获的 ↑/↓/Tab 动作
+    capsule = capsule
+        .on_key_down(cx.listener(
+            |this, ev: &KeyDownEvent, window, cx| {
+                let key = ev.keystroke.key.as_str();
+                if key == "enter" && ev.keystroke.modifiers.shift {
+                    // IME 组合期平台不派发按键（gpui windows events.rs），
+                    // 无需组合守卫
+                    let streaming = this.rt().read(cx).agent_running;
+                    let can_queue =
+                        !this.input.is_empty() || !this.pending_images.is_empty();
+                    if streaming {
+                        if can_queue {
+                            this.follow_up_input(cx);
+                        }
+                    } else if let Some(c) = &this.composer {
+                        c.update(cx, |f, fcx| f.insert_newline(window, fcx));
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "escape" {
+                    // 走到这说明组件的 escape 已处理（解除 IME 标记且未清
+                    // 草稿）并传播；这里做 app 层语义：菜单取消 / 中止
+                    let menu = this.active_menu();
+                    let streaming = this.rt().read(cx).agent_running;
+                    if let Some(kind) = menu {
+                        if kind == MenuKind::At {
+                            if let Some(at) = this.input.rfind('@') {
+                                let q = this.input[at + 1..].to_string();
+                                let v = format!("{}{} ", &this.input[..at], q);
+                                this.set_input(v, cx);
+                            }
+                        } else if !this.input.is_empty() {
+                            let v = format!("{} ", this.input);
+                            this.set_input(v, cx);
+                        }
+                        this.menu_ix = 0;
+                        cx.notify();
+                    } else if streaming {
+                        this.abort_stream(cx);
+                    }
+                    cx.stop_propagation();
+                }
+            },
+        ))
+        .on_action(cx.listener(|this, _: &ComposerUp, window, cx| {
+            let items = this.menu_items(cx);
+            if this.active_menu().is_some() && !items.is_empty() {
+                this.menu_ix = this.menu_ix.saturating_sub(1);
+                cx.notify();
+            } else if this.input.is_empty() && !this.history.is_empty() {
+                let ix = match this.history_ix {
+                    None => this.history.len() - 1,
+                    Some(i) => i.saturating_sub(1),
+                };
+                this.history_ix = Some(ix);
+                let v = this.history[ix].clone();
+                this.set_input(v, cx);
+            } else {
+                // 非空多行：上移一行交还组件
+                window.dispatch_action(Box::new(gpui_component::input::MoveUp), cx);
+            }
+        }))
+        .on_action(cx.listener(|this, _: &ComposerDown, window, cx| {
+            let items = this.menu_items(cx);
+            if this.active_menu().is_some() && !items.is_empty() {
+                this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
+                cx.notify();
+            } else if this.input.is_empty() {
+                if let Some(i) = this.history_ix {
+                    if i + 1 < this.history.len() {
+                        this.history_ix = Some(i + 1);
+                        let v = this.history[i + 1].clone();
+                        this.set_input(v, cx);
+                    } else {
+                        this.history_ix = None;
+                        this.set_input(String::new(), cx);
+                    }
+                }
+            } else {
+                window.dispatch_action(Box::new(gpui_component::input::MoveDown), cx);
+            }
+        }))
+        .on_action(cx.listener(|this, _: &ComposerTab, _window, cx| {
+            let items = this.menu_items(cx);
+            if this.active_menu().is_some() && !items.is_empty() {
+                let ix = this.menu_ix.min(items.len() - 1);
+                let insert = items[ix].insert.clone();
+                this.accept_menu(insert, cx);
+            }
+        }));
     // 控件行
     capsule = capsule.child(composer_bar(
         chat,
@@ -167,223 +261,58 @@ pub(crate) fn input_area(
         .into_any_element()
 }
 
-/// Editor surface (hand-rolled editor + caret; keys/IME unchanged).
-fn input_editor(
+/// 惰性创建 composer 输入组件（InputState 构造需要 &mut Window，挂在渲染
+/// 期；回调经 weak 回写 Chat，不改持有结构）。
+fn ensure_composer(
     chat: &mut Chat,
-    entity: gpui::Entity<Chat>,
-    _streaming: bool,
-    input_focused: bool,
-    caret_on: bool,
-    this_input: SharedString,
-    input_empty: bool,
-    input_ph: SharedString,
-    t: &'static crate::theme::Theme,
+    weak: &gpui::WeakEntity<Chat>,
     cx: &mut Context<Chat>,
-) -> gpui::AnyElement {
-    div()
-        .id("input")
-        .track_focus(&chat.focus)
-        .relative()
-        .flex_1()
-        .min_w_0()
-        .rounded_md()
-        .on_key_down(cx.listener(
-            |this, ev: &KeyDownEvent, _w, cx| {
-                let key = ev.keystroke.key.as_str();
-                let shift = ev.keystroke.modifiers.shift;
-                // while the IME is composing, the keyboard belongs to the IME
-                if this.ime_marked.is_some() {
+) -> gpui::Entity<ComposerInput> {
+    if let Some(c) = &chat.composer {
+        return c.clone();
+    }
+    let weak_change = weak.clone();
+    let weak_submit = weak.clone();
+    let c = cx.new(|icx| {
+        let mut f = ComposerInput::new(icx);
+        f.set_on_change(Box::new(move |v, cx| {
+            let _ = weak_change.update(cx, |chat, cx| {
+                if chat.input != v {
+                    chat.input = v.to_string();
+                    chat.menu_ix = 0;
+                    cx.notify();
+                }
+            });
+        }));
+        f.set_on_submit(Box::new(move |v, cx| {
+            let _ = weak_submit.update(cx, |chat, cx| {
+                // 菜单开着：Enter=接受补全而非发送
+                let items = chat.menu_items(cx);
+                if chat.active_menu().is_some() && !items.is_empty() {
+                    let ix = chat.menu_ix.min(items.len() - 1);
+                    let insert = items[ix].insert.clone();
+                    chat.accept_menu(insert, cx);
                     return;
                 }
-                let menu_open = this.active_menu().is_some();
-                let items = this.menu_items(cx);
-                let streaming = this.rt().read(cx).agent_running;
-                let can_queue = !this.input.is_empty() || !this.pending_images.is_empty();
-                match key {
-                    "enter" if shift && streaming => {
-                        if can_queue {
-                            this.follow_up_input(cx);
-                        }
+                chat.input = v.to_string();
+                let streaming = chat.rt().read(cx).agent_running;
+                let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
+                if streaming {
+                    if can_queue {
+                        chat.steer_input(cx);
                     }
-                    "enter" if shift => {
-                        this.input.push('\n');
-                        cx.notify();
-                    }
-                    "enter" if menu_open && !items.is_empty() => {
-                        let ix = this.menu_ix.min(items.len() - 1);
-                        let insert = items[ix].insert.clone();
-                        this.accept_menu(insert, cx);
-                    }
-                    "enter" if streaming => {
-                        if can_queue {
-                            this.steer_input(cx);
-                        }
-                    }
-                    "enter" => this.send_input(cx),
-                    "escape" if streaming && !menu_open => {
-                        this.abort_stream(cx);
-                    }
-                    "escape" if menu_open => {
-                        this.menu_ix = 0;
-                        if this.active_menu() == Some(MenuKind::At) {
-                            if let Some(at) = this.input.rfind('@') {
-                                let q = this.input[at + 1..].to_string();
-                                this.input = format!("{}{} ", &this.input[..at], q);
-                            }
-                        } else if !this.input.is_empty() {
-                            this.input = format!("{} ", this.input);
-                        }
-                        cx.notify();
-                    }
-                    "escape" => this.abort_stream(cx),
-                    "tab" if menu_open && !items.is_empty() => {
-                        let ix = this.menu_ix.min(items.len() - 1);
-                        let insert = items[ix].insert.clone();
-                        this.accept_menu(insert, cx);
-                    }
-                    "up" if menu_open && !items.is_empty() => {
-                        this.menu_ix = this.menu_ix.saturating_sub(1);
-                        cx.notify();
-                    }
-                    "down" if menu_open && !items.is_empty() => {
-                        this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
-                        cx.notify();
-                    }
-                    "up" if !this.history.is_empty() => {
-                        let ix = match this.history_ix {
-                            None => this.history.len() - 1,
-                            Some(i) => i.saturating_sub(1),
-                        };
-                        this.history_ix = Some(ix);
-                        this.input = this.history[ix].clone();
-                        cx.notify();
-                    }
-                    "down" => {
-                        if let Some(i) = this.history_ix {
-                            if i + 1 < this.history.len() {
-                                this.history_ix = Some(i + 1);
-                                this.input = this.history[i + 1].clone();
-                            } else {
-                                this.history_ix = None;
-                                this.input.clear();
-                            }
-                            cx.notify();
-                        }
-                    }
-                    "backspace" => {
-                        if !ev.keystroke.modifiers.modified() {
-                            this.input.pop();
-                            this.menu_ix = 0;
-                            cx.notify();
-                        }
-                    }
-                    // Ctrl/Cmd+V：追加剪贴板文本（无选区模型，光标恒在末尾；
-                    // 修复输入框从未实现粘贴的功能缺失）
-                    "v" if ev.keystroke.modifiers.control
-                        || ev.keystroke.modifiers.platform =>
-                    {
-                        if let Some(text) = cx
-                            .read_from_clipboard()
-                            .and_then(|item| item.text())
-                        {
-                                                        // Windows clipboard newlines are CRLF;
-                                                        // cosmic-text treats bare CR as undefined
-                                                        // (fail-fast) -- normalize to LF
-                                                        let text = text
-                                                            .replace("\r\n", "\n")
-                                                            .replace('\r', "\n");
-                            if !text.is_empty() {
-                                this.input.push_str(&text);
-                                this.menu_ix = 0;
-                                cx.notify();
-                            }
-                        }
-                    }
-                    _ => {}
+                } else {
+                    chat.send_input(cx);
                 }
-            },
-        ))
-        .child(
-            // text + blinking caret (caret marks the end; absolute overlay so
-            // blinking never shifts the text)
-            div()
-                .relative()
-                .flex()
-                .items_center()
-                .min_w_0()
-                .when(input_focused && caret_on && input_empty, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top(px(3.))
-                            .w(px(1.5))
-                            .h(px(16.))
-                            .bg(rgb(t.accent)),
-                    )
-                })
-                .when(input_empty, |d| {
-                    d.child(
-                        div()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_color(rgb(t.text_faint))
-                            .child(SharedString::from(input_ph.clone())),
-                    )
-                })
-                .when(!input_empty, |d| {
-                    // 块级全宽容器：文本按宽自动折行、换行符生效（此前在
-                    // flex 行里不折行，长文本/粘贴多行横向溢出被裁）；caret
-                    // 用追加着色字符实现——随文本折行，永远紧跟末尾
-                    let mut text = this_input.to_string();
-                    let caret_on_now = input_focused && caret_on;
-                    let caret_char = "\u{258f}";
-                    // 高亮 range 以 UTF-8 字节计且必须落在字符边界上——
-                    // range 只罩光标字符的首字节会把 str 切进多字节序列
-                    // 中间，gpui 按高亮边界切片直接 panic（0xc0000409）
-                    let caret_ix = text.len();
-                    if caret_on_now {
-                        text.push_str(caret_char);
-                    }
-                    let caret_end = text.len();
-                    let base = gpui::TextStyle {
-                        color: rgb(t.text).into(),
-                        font_size: px(14.).into(),
-                        ..Default::default()
-                    };
-                    let highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
-                        if caret_on_now {
-                            vec![(caret_ix..caret_end,
-                                gpui::HighlightStyle {
-                                    color: Some(rgb(t.accent).into()),
-                                    ..Default::default()
-                                },
-                            )]
-                        } else {
-                            Vec::new()
-                        };
-                    d.child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .child(
-                                gpui::StyledText::new(text)
-                                    .with_default_highlights(&base, highlights),
-                            ),
-                    )
-                })
-        )
-        // paint-phase input handler: routes the Windows IME
-        .child(
-            EditorInputElement::new(entity.clone(), chat.focus.clone())
-                .absolute()
-                .inset_0(),
-        )
-        .into_any_element()
+            });
+        }));
+        f
+    });
+    chat.composer = Some(c.clone());
+    c
 }
 
-/// 控件行：左 = 图片 + 工具预设；右 = 上下文环 + 模型 + 思考 + 发送。
+/// 控件行：左 = 图片 + 工具预设；右 = 上下文环 + 模型 + 思考 + 发送/停止。
 #[allow(clippy::too_many_arguments)]
 fn composer_bar(
     chat: &mut Chat,
@@ -544,8 +473,8 @@ fn composer_bar(
             .child(SharedString::from(thinking_label.to_string()))
             .child(icon("chevron-down", 10., t.text_dim)),
     );
-    // 圆形发送 ↑（运行中变停止：ZCode 规格中性深底圆角方块+白色停止块，
-    // 非红色警示）；用户定位：左移 5px、上移 8px
+    // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
+    // 左移 5px、上移 8px
     right = right.child(
         div()
             .id("send")

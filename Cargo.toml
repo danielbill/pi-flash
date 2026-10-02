@@ -7,3 +7,6 @@ edition = "2024"
 
 [profile.dev]
 debug = 1
+
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }

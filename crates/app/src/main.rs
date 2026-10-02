@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use gpui::{
-    App, Application, Context, FocusHandle, Focusable, KeyDownEvent,
+    actions, App, Application, Context, FocusHandle, Focusable, KeyBinding, KeyDownEvent,
     MouseButton, ParentElement,
     Render, SharedString, Styled, WindowOptions, div, prelude::*, px, rgb,
 };
@@ -43,7 +43,12 @@ mod status_bar;
 mod titlebar;
 mod terminal;
 mod ui;
-pub(crate) use ui::editor_input::EditorInputElement;
+pub(crate) use ui::ComposerInput;
+
+// composer 覆盖动作（注册为 "Input" 上下文绑定，见 run() 里 bind_keys）：
+// ↑/↓ 在菜单态导航补全、空输入态回溯历史，非空多行重新派发组件 MoveUp/
+// MoveDown；Tab 在菜单态接受补全。组件默认的这些键由此被截获。
+actions!(app, [ComposerUp, ComposerDown, ComposerTab]);
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
@@ -185,9 +190,9 @@ struct Chat {
     menu_ix: usize,
     term_events: Option<futures::channel::mpsc::UnboundedSender<(usize, alacritty_terminal::event::Event)>>,
     op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
-    // editor view state
-    ime_marked: Option<std::ops::Range<usize>>,
-    caret_on: bool,
+    // editor view state（输入组件实体在 composer 首次渲染时惰性创建；
+    // 真输入框 = gpui-component InputState，光标/选区/IME/滚动条全内置）
+    composer: Option<gpui::Entity<ComposerInput>>,
     input_focused: bool,
     // inline rename (active session)
     renaming: Option<PathBuf>,
@@ -400,12 +405,11 @@ impl Chat {
             panel_tabs: Vec::new(),
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),
-            caret_on: true,
+            composer: None,
             input_focused: false,
             pill_menu: None,
             pill_anchor: None,
             sound_on: load_sound_pref(),
-            ime_marked: None,
             settings: None,
             renaming: None,
             rename_input: None,
@@ -450,9 +454,8 @@ impl Chat {
         chat.load_project_files();
         chat.refresh_git();
 
-        // caret blink pump (2 Hz toggle; repaint only while the editor is
-        // focused — input_focused is refreshed every render). Also expires
-        // the psp hover card (300ms grace) and status toasts (2.5s).
+        // 120ms 泵：悬停卡/导航 flyout/状态条过期（光标闪烁由输入组件
+        // 自管，不再需要 2Hz 切换）。
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -460,8 +463,7 @@ impl Chat {
                     .await;
                 let ok = this
                     .update(cx, |c, cx| {
-                        c.caret_on = !c.caret_on;
-                        let mut dirty = c.input_focused;
+                        let mut dirty = false;
                         // 改名中：不打字时鼠标虽不在卡上，也不能清卡
                         let renaming = c
                             .hover_card
@@ -836,6 +838,17 @@ impl Chat {
         cx.notify();
     }
 
+    /// chat.input 唯一写入口：同步镜像进输入组件（组件是渲染真值源，
+    /// 手写 input 不再存在）。历史/草稿/清空/补全改写都走这里。
+    pub(crate) fn set_input(&mut self, v: String, cx: &mut Context<Self>) {
+        self.input = v;
+        if let Some(c) = &self.composer {
+            let v = self.input.clone();
+            c.update(cx, |f, fcx| f.set_value(v, fcx));
+        }
+        cx.notify();
+    }
+
     fn with_active_editor<Act: FnOnce(&mut SessionRuntime, &mut Context<SessionRuntime>)>(
         &mut self,
         cx: &mut Context<Self>,
@@ -858,7 +871,7 @@ impl Chat {
             let r = rt.read(cx);
             (r.input.clone(), r.pending_images.clone(), r.history.clone())
         };
-        self.input = input;
+        self.set_input(input, cx);
         self.pending_images = images;
         self.history = history;
         self.history_ix = None;
@@ -964,8 +977,13 @@ impl Chat {
 }
 
 impl Focusable for Chat {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        // composer 就绪后，"聚焦聊天"即落到输入组件（真输入框：光标/
+        // 选区/IME 全可用），chat.focus 仅作组件创建前的回退
+        self.composer
+            .as_ref()
+            .map(|c| c.read(cx).focus_handle_in(cx))
+            .unwrap_or_else(|| self.focus.clone())
     }
 }
 
@@ -1033,7 +1051,7 @@ impl Render for Chat {
                 window.focus(&self.dialog_focus);
             }
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
-            window.focus(&self.focus);
+            window.focus(&self.focus_handle(cx));
         }
         let t = T();
 
@@ -1408,6 +1426,15 @@ fn main() {
             // gpui-component (widget library powering TextInput): global
             // init + token mapping from the active app theme
             gpui_component::init(cx);
+            // composer 覆盖绑定：同深度("Input")后注册者优先，必须排在
+            // gpui_component::init 之后（其绑定含 up/down/tab→组件移动/
+            // 缩进）。被截获的键由 composer 的 on_action 处理（菜单导航/
+            // 历史回溯/补全接受），非空多行时重新派发 MoveUp/MoveDown。
+            cx.bind_keys([
+                KeyBinding::new("up", ComposerUp, Some("Input")),
+                KeyBinding::new("down", ComposerDown, Some("Input")),
+                KeyBinding::new("tab", ComposerTab, Some("Input")),
+            ]);
             appearance::sync_gpui_tokens(cx);
             // startup restore (§4)：每次启动默认最大化（位置不持久化——
             // gpui Windows 的外框/客户区坐标在存取间不对称，每个周期漂移

@@ -52,10 +52,11 @@ impl Chat {
 
     pub(crate) fn accept_menu(&mut self, insert: String, cx: &mut Context<Self>) {
         match self.active_menu() {
-            Some(MenuKind::Slash) => self.input = format!("/{insert} "),
+            Some(MenuKind::Slash) => self.set_input(format!("/{insert} "), cx),
             Some(MenuKind::At) => {
                 if let Some(at) = self.input.rfind('@') {
-                    self.input = format!("{}{} ", &self.input[..=at], insert);
+                    let v = format!("{}{} ", &self.input[..=at], insert);
+                    self.set_input(v, cx);
                 }
             }
             None => {}

@@ -31,10 +31,13 @@ pub(crate) fn main_column(
     // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
     // 导致 stop 按钮永远不出现
     let streaming = rt.read(cx).agent_running;
-    let input_focused = chat.focus.is_focused(window);
+    // composer 焦点态来自输入组件（chat.focus 仅是组件创建前的回退）
+    let input_focused = chat
+        .composer
+        .as_ref()
+        .map(|c| c.read(cx).focus_handle_in(cx).is_focused(window))
+        .unwrap_or(false);
     chat.input_focused = input_focused;
-    let caret_on = chat.caret_on;
-    let this_input: SharedString = chat.input.clone().into();
     let chat_entity = entity.clone();
     let rt_entity = rt.clone();
     let rt_list = rt.read(cx).list.clone();
@@ -73,12 +76,9 @@ pub(crate) fn main_column(
                         .children(ext_widget_rows(chat, t, true))
                         .child(input::input_area(
                             chat,
-                            entity.clone(),
                             weak,
                             streaming,
                             input_focused,
-                            caret_on,
-                            this_input,
                             cx,
                         ))
                         .children(ext_widget_rows(chat, t, false)),
