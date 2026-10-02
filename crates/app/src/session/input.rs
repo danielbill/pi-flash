@@ -27,6 +27,9 @@ use crate::i18n::tr;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
 
+/// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）
+const BAR_FONT: f32 = 15.;
+
 pub(crate) fn input_area(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -367,7 +370,7 @@ fn composer_bar(
                 .items_center()
                 .gap(px(5.))
                 .rounded(px(8.))
-                .text_size(px(14.))
+                .text_size(px(BAR_FONT))
                 .text_color(rgb(if tools_open { t.accent } else { t.text_muted }))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -439,7 +442,7 @@ fn composer_bar(
             .items_center()
             .gap(px(5.))
             .rounded(px(8.))
-            .text_size(px(14.))
+            .text_size(px(BAR_FONT))
             .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -464,7 +467,7 @@ fn composer_bar(
             .items_center()
             .gap(px(5.))
             .rounded(px(8.))
-            .text_size(px(14.))
+            .text_size(px(BAR_FONT))
             .text_color(rgb(if thinking_open { t.accent } else { t.text_muted }))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
