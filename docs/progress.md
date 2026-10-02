@@ -349,3 +349,26 @@ ego-tree 0.11 把 Node 私有化，公共类型=NodeRef<'a,T>（scraper 不 re-e
 需直接依赖 ego-tree 0.11 同版对齐）；bash heredoc 反斜杠转义会静默损坏
 （ 变 formfeed 0x0C 进文件）——python 补丁一律 chr(92) 构造或写脚本文件。
 测试 116 全绿（app 64 + pi-link 52）。
+
+## v57 实测轮（2026-10-02 下午）真机验证 + 顺手修复
+
+三组件真机验证全过：mermaid（复杂 subgraph 流程图 SVG 渲染成功）、KaTeX
+（行内/块级公式印刷体，气泡与回复两侧）、raw HTML（b/i/del 真样式 ✓）。
+测试期间揪出并修复 5 个问题：
+
+- RPC 全断（7393014）：系统 pi 升 1.0 后 ~/.pi/agent 扩展 fatal 掉 0.87.1
+  内核 → spawn 加 -ne；live_rpc_probe 探针入库。
+- tools/thinking 菜单错位（b53d208）：写死窗口右下角 → pill_anchor 动态锚定。
+- composer 粘贴缺失：key_down 无 Ctrl+V 分支（v54 起缺失）→ 补剪贴板追加。
+- 粘贴即崩 0xc0000409（两连修）：caret 高亮 range 字节/字符错位（+1 切进
+  3 字节光标字符中间，gpui str 切片 panic）→ range 精确覆盖全字符；CRLF
+  归一。教训：gpui highlight range 永远按字节且必须落在字符边界。
+- 长文本不折行：编辑区文本在 flex 行内溢出裁剪 → 块级全宽容器 + caret
+  改追加着色字符（随折行）。
+- 用户气泡 HTML 按原文显示（产品规则，用户拍板）：用户消息=发出内容凭证，
+  气泡吞标签无法核对 agent 收到什么 → markdown 管线加 html 开关
+  （render_user 字面路径）；顺带修 assistant 行内 HTML 配对标签跨事件
+  样式丢失（fragment_effect StylePush/Pop/Runs 状态机）。
+
+与 pi-web 的既定偏差新增：用户气泡不渲染 HTML（pi-web 渲染）。
+测试 118 全绿（app 66 + pi-link 52）。
