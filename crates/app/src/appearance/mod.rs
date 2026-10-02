@@ -70,6 +70,13 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     let mut sel: gpui::Hsla = gpui::rgb(t.accent).into();
     sel.a = 0.28;
     c.selection = sel;
+    // mode 与应用主题一致（此前恒为系统外观 Dark：组件内部 is_dark 分支
+    // 与默认配置选择都会走错；Theme::change 按系统外观初始化后无人纠正）
+    tc.mode = if t.dark {
+        gpui_component::theme::ThemeMode::Dark
+    } else {
+        gpui_component::theme::ThemeMode::Light
+    };
 }
 
 use gpui::px;

@@ -173,7 +173,7 @@ impl Render for ComposerInput {
             .w_full()
             .relative()
             // 字号/颜色从 wrapper 继承进组件的文本塑形
-            .text_size(px(13.5))
+            .text_size(px(14.5))
             .text_color(rgb(t.text))
             // 占位层：与组件 Medium 内边距对齐（px12/px5+行首偏移）；
             // 无交互性的 div 不建 hitbox，点击/命中穿透到输入组件

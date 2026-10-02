@@ -40,6 +40,13 @@ pub(crate) const DEFAULT_THEME_COLORS: LazyLock<
 });
 
 pub(super) fn init(cx: &mut App) {
+    // v57: 幂等——重复 set_global 会触发 observe_global::<ThemeRegistry>
+    // 回调（延迟到效果期执行），其 Theme::change 用默认主题配置整套覆盖
+    // 宿主 app 刚映射进全局的 token（切主题后输入框文字掉回默认暗色、
+    // 浅色主题下不可见的根因）。首次初始化已注册 observer，直接返回。
+    if cx.has_global::<ThemeRegistry>() {
+        return;
+    }
     cx.set_global(ThemeRegistry::default());
     ThemeRegistry::global_mut(cx).init_default_themes();
 
