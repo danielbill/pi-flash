@@ -292,6 +292,12 @@ fn input_editor(
                             .read_from_clipboard()
                             .and_then(|item| item.text())
                         {
+                                                        // Windows clipboard newlines are CRLF;
+                                                        // cosmic-text treats bare CR as undefined
+                                                        // (fail-fast) -- normalize to LF
+                                                        let text = text
+                                                            .replace("\r\n", "\n")
+                                                            .replace('\r', "\n");
                             if !text.is_empty() {
                                 this.input.push_str(&text);
                                 this.menu_ix = 0;
@@ -341,7 +347,9 @@ fn input_editor(
                     if caret_on_now {
                         text.push_str("\u{258f}");
                     }
-                    let caret_ix = this_input.chars().count();
+                    // gpui highlight range 以 UTF-8 字节计——用 chars().count()
+                    // 在中文下落到多字节序列中间，cosmic-text 切 glyph 即崩
+                    let caret_ix = this_input.len();
                     let base = gpui::TextStyle {
                         color: rgb(t.text).into(),
                         font_size: px(14.).into(),
