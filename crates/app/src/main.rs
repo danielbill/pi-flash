@@ -44,6 +44,7 @@ mod titlebar;
 mod terminal;
 mod ui;
 pub(crate) use ui::ComposerInput;
+pub(crate) use actions_menu::slash_menu_view;
 
 // composer 覆盖动作（注册为 "Input" 上下文绑定，见 run() 里 bind_keys）：
 // ↑/↓ 在菜单态导航补全、空输入态回溯历史，非空多行重新派发组件 MoveUp/
@@ -168,6 +169,7 @@ enum MenuKind {
 #[derive(Debug, Clone)]
 struct MenuItem {
     insert: String,
+    desc: String,
 }
 
 struct Chat {

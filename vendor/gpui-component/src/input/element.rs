@@ -1017,7 +1017,7 @@ impl Element for TextElement {
             self.layout_document_colors(&document_colors, &last_layout, &bounds);
 
         let state = self.state.read(cx);
-        let line_numbers = if state.mode.line_number() {
+                let line_numbers = if state.mode.line_number() {
             let mut line_numbers = vec![];
             let other_line_runs = vec![TextRun {
                 len: line_number_len,

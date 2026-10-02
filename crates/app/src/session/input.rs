@@ -65,13 +65,14 @@ pub(crate) fn input_area(
     composer.update(cx, |f, _| f.set_placeholder(Some(ph)));
     let cur = chat.input.clone();
     composer.update(cx, |f, fcx| f.set_value(cur, fcx));
+    let names: Vec<String> =
+        chat.rt().read(cx).commands.iter().map(|c| c.name.clone()).collect();
+    composer.update(cx, |f, fcx| f.set_command_names(names, fcx));
 
     // ---- 胶囊 ----
     let mut capsule = div()
         .id("composer")
-        .w(gpui::relative(0.75))
-        .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
-        .min_w(px(500.))
+        .w_full() // 尺寸由外层锚点统一定（75%/min500/max920），/ 菜单与胶囊同宽
         .rounded(px(16.))
         .border_1()
         .border_color(if streaming {
@@ -251,7 +252,9 @@ pub(crate) fn input_area(
         cx,
     ));
 
-    // 0 高 wrapper：胶囊绝对定位悬浮（聊天消息从胶囊后滚过）
+    // 0 高 wrapper：胶囊绝对定位悬浮（聊天消息从胶囊后滚过）；/ 菜单
+    // 挂在胶囊正上方（pi-web：bottom 100% + 8px 间隙）
+    let slash_open = chat.active_menu() == Some(MenuKind::Slash);
     div()
         .id("composer-wrap")
         .relative()
@@ -265,7 +268,25 @@ pub(crate) fn input_area(
                 .right_0()
                 .flex()
                 .justify_center()
-                .child(capsule),
+                .child(
+                    div()
+                        .relative()
+                        .w(gpui::relative(0.75))
+                        .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
+                        .min_w(px(500.))
+                        .when(slash_open, |d| {
+                            d.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .bottom(gpui::relative(1.))
+                                    .pb(px(8.))
+                                    .child(crate::slash_menu_view(chat, weak, t, cx)),
+                            )
+                        })
+                        .child(capsule),
+                ),
         )
         .into_any_element()
 }
@@ -282,6 +303,7 @@ fn ensure_composer(
     }
     let weak_change = weak.clone();
     let weak_submit = weak.clone();
+    let weak_chip = weak.clone();
     let c = cx.new(|icx| {
         let mut f = ComposerInput::new(icx);
         f.set_on_change(Rc::new(move |v, cx| {
@@ -295,6 +317,10 @@ fn ensure_composer(
         }));
         f.set_on_submit(Rc::new(move |v, cx| {
             let _ = weak_submit.update(cx, |chat, cx| {
+                // 先落到剥离换行后的 v 再判菜单：组件 enter() 会先插一个
+                // 换行并经 Change 污染 chat.input（含空白使菜单判定失败，
+                // 回车被误当发送）
+                chat.input = v.to_string();
                 // 菜单开着：Enter=接受补全而非发送
                 let items = chat.menu_items(cx);
                 if chat.active_menu().is_some() && !items.is_empty() {
@@ -303,7 +329,6 @@ fn ensure_composer(
                     chat.accept_menu(insert, cx);
                     return;
                 }
-                chat.input = v.to_string();
                 let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
                 let streaming = chat.rt().read(cx).agent_running;
                 if streaming {
@@ -313,9 +338,14 @@ fn ensure_composer(
                 } else if can_queue {
                     chat.send_input(cx);
                 } else {
-                    // 空输入回车：不发送，顺手清掉组件自插的 "\n"
+                    // 空输入回车：不发送，顺手清掉组件自插的换行
                     chat.set_input(String::new(), cx);
                 }
+            });
+        }));
+        f.set_on_chip_backspace(Rc::new(move |cx| {
+            let _ = weak_chip.update(cx, |chat, cx| {
+                chat.set_input(String::new(), cx);
             });
         }));
         f

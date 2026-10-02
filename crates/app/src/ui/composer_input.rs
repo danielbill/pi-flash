@@ -23,6 +23,18 @@ use gpui_component::input::{InputEvent, InputState, TextInput as GpInput};
 use crate::theme::theme as T;
 use gpui::{px, rgb};
 
+/// 从完整输入中拆出命令/技能 chip：`/名字 ` 或 `/名字 参数...`（命令词
+/// 已终止——尾随空格存在才成 chip，打字途中 "/llam" 仍是普通文本走菜单）。
+/// 返回 (命令名, 是否技能)。
+fn split_token(value: &str, commands: &[String]) -> Option<(String, bool)> {
+    let after = value.strip_prefix('/')?;
+    let ix = after.find(' ')?;
+    let word = &after[..ix];
+    let name = commands.iter().find(|c| c.as_str() == word)?;
+    let skill = name.starts_with("skill:");
+    Some((name.clone(), skill))
+}
+
 /// 输入首行到输入区顶边的距离（px）。改这一个数字即可。
 /// 原理：组件内边距 py=5 + 行高领先 ≈3，其余差值由容器 pt 补齐，
 /// 因此这里只调 wrapper 的 pt：INPUT_PAD_TOP - 11 写回容器。
@@ -42,8 +54,14 @@ pub struct ComposerInput {
     max_rows: usize,
     // config buffered until the inner state exists (needs &mut Window)
     pending_value: Option<String>,
+    pending_commands: Option<Vec<String>>,
     /// mirrored inner value so `value()` works without cx
     value: String,
+    /// 命令名镜像（渲染期判断 token 态用）
+    commands: Vec<String>,
+    /// 当前激活的命令/技能 chip（由 value 派生；编辑器只装参数部分）
+    token: Option<(String, bool)>,
+    on_chip_backspace: Option<std::rc::Rc<dyn Fn(&mut gpui::App)>>,
     on_change: Option<Changed>,
     on_submit: Option<Submitted>,
 }
@@ -57,7 +75,11 @@ impl ComposerInput {
             min_rows: 3,
             max_rows: 10,
             pending_value: None,
+            pending_commands: None,
             value: String::new(),
+            commands: Vec::new(),
+            token: None,
+            on_chip_backspace: None,
             on_change: None,
             on_submit: None,
         }
@@ -77,9 +99,9 @@ impl ComposerInput {
         self.placeholder = ph;
     }
 
-    /// 外部写入（草稿切换/历史/清空）。与镜像同值时跳过，避免回环。
+    /// 外部写入（草稿切换/历史/清空/菜单接受）。与镜像同值时跳过，避免回环。
     pub fn set_value(&mut self, v: String, cx: &mut Context<Self>) {
-        if self.value == v {
+        if self.value == v && self.token == split_token(&v, &self.commands) {
             return;
         }
         self.value = v.clone();
@@ -94,6 +116,17 @@ impl ComposerInput {
             .as_ref()
             .map(|s| s.read(cx).focus_handle(cx))
             .unwrap_or_else(|| self.fallback_focus.clone())
+    }
+
+    /// 注册命令名（不含 "/" 前缀；供 token 高亮/整体退格/类别图标）。
+    pub fn set_command_names(&mut self, names: Vec<String>, cx: &mut Context<Self>) {
+        self.commands = names;
+        cx.notify();
+    }
+
+    /// 编辑器为空时退格 = 删除整个 chip（转发给宿主清空输入）。
+    pub fn set_on_chip_backspace(&mut self, cb: std::rc::Rc<dyn Fn(&mut gpui::App)>) {
+        self.on_chip_backspace = Some(cb);
     }
 
     /// Shift+Enter 换行（组件对 shift-enter 无绑定，由 composer wrapper 调）。
@@ -139,9 +172,10 @@ impl ComposerInput {
                     cb(&v, cx);
                 }
             }
-            InputEvent::PressEnter { secondary: false } => {                // 多行模式组件已在光标处自插 "\n"（cursor 停在其后）——剥掉
-                // 再交给上层发送；上层随后清空，无需写回组件
-                let sent = {
+            InputEvent::PressEnter { secondary: false } => {
+                // 多行模式组件已在光标处自插换行（cursor 停在其后）——剥掉、
+                // 拼回 chip 前缀，再交给上层发送
+                let stripped = {
                     let state = entity.read(cx);
                     let v = state.value().to_string();
                     let c = state.cursor();
@@ -150,7 +184,13 @@ impl ComposerInput {
                     } else {
                         v
                     }
-                };                // 事件派发期间本实体处于租用中——回调若同步再 composer
+                };
+                let sent = match &self.token {
+                    Some((n, _)) if stripped.is_empty() => format!("/{}", n),
+                    Some((n, _)) => format!("/{} {}", n, stripped),
+                    None => stripped,
+                };
+                // 事件派发期间本实体处于租用中——回调若同步再 composer
                 // .update()（发送清空走 Chat::set_input）即双重租约 panic
                 //（0xc0000409，已实测）。defer 到本租约结束后执行。
                 if let Some(cb) = self.on_submit.clone() {
@@ -167,14 +207,59 @@ impl ComposerInput {
 impl Render for ComposerInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.ensure_state(window, cx);
-        if let Some(v) = self.pending_value.take() {
-            self.value = v.clone();
-            state.update(cx, |st, scx| st.set_value(v, window, scx));
+        if let Some(names) = self.pending_commands.take() {
+            self.commands = names;
         }
         let t = T();
+        // chip 派生：value = "/名字 参数..."（尾随空格已终止命令词）
+        self.token = split_token(&self.value, &self.commands);
+        let editor_value = match &self.token {
+            Some((n, _)) => self.value[1 + n.len() + 1..].to_string(),
+            None => self.value.clone(),
+        };
+        if state.read(cx).value().as_ref() != editor_value {
+            let ev = editor_value.clone();
+            state.update(cx, |st, scx| st.set_value(ev, window, scx));
+        }
+        {
+            let chip = self.token.is_some();
+            let cb = self.on_chip_backspace.clone();
+            state.update(cx, |st, _| {
+                st.chip_active = chip;
+                st.on_chip_backspace = cb;
+            });
+        }
+
         let ph = self.placeholder.clone().unwrap_or_default();
         let empty = self.value.is_empty();
         let pad_top = px(INPUT_PAD_TOP - 11.);
+        // token chip（ZCode 原子节点 parity）：图标+裸名胶囊，顶格插在编辑器前
+        let chip_el = self.token.as_ref().map(|(n, skill)| {
+            let bare = n.strip_prefix("skill:").unwrap_or(n);
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .px(px(8.))
+                .py(px(3.))
+                .mt(px(1.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(gpui::rgba(((t.accent as u64) << 8) as u32 | 0x4d))
+                .bg(rgb(t.bg_selected))
+                .child(crate::ui::icon(
+                    if *skill { "wand" } else { "terminal" },
+                    13.,
+                    t.accent,
+                ))
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .text_color(rgb(t.accent))
+                        .child(SharedString::from(bare.to_string())),
+                )
+        });
+
         div()
             .id("composer-input")
             .w_full()
@@ -182,18 +267,25 @@ impl Render for ComposerInput {
             // 字号/颜色从 wrapper 继承进组件的文本塑形
             .text_size(px(15.))
             .text_color(rgb(t.text))
-            // 占位层：与组件 Medium 内边距对齐（px12/px5+行首偏移）；
-            // 无交互性的 div 不建 hitbox，点击/命中穿透到输入组件
-            .when(empty && !ph.is_empty(), |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .top(pad_top + px(2.))
-                        .left(px(12.))
-                        .text_color(rgb(t.text_faint))
-                        .child(ph),
-                )
-            })
-            .child(GpInput::new(&state).appearance(false).bordered(false))
+            .flex()
+            .items_start()
+            .gap(px(6.))
+            .children(chip_el)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .when(empty && self.token.is_none() && !ph.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(pad_top + px(2.))
+                                .left(px(12.))
+                                .text_color(rgb(t.text_faint))
+                                .child(ph),
+                        )
+                    })
+                    .child(GpInput::new(&state).appearance(false).bordered(false)),
+            )
     }
 }

@@ -297,6 +297,10 @@ pub struct InputState {
     pub(super) masked: bool,
     pub(super) clean_on_escape: bool,
     pub(super) soft_wrap: bool,
+    /// v57: 宿主在编辑器外渲染命令/技能 chip（ZCode 原子节点 parity）。
+    /// 编辑器文本为空时按退格 = 删除整个 chip（经 on_chip_backspace 回调）
+    pub chip_active: bool,
+    pub on_chip_backspace: Option<std::rc::Rc<dyn Fn(&mut gpui::App)>>,
     pub(super) pattern: Option<regex::Regex>,
     pub(super) validate: Option<Box<dyn Fn(&str, &mut Context<Self>) -> bool + 'static>>,
     pub(crate) scroll_handle: ScrollHandle,
@@ -394,6 +398,8 @@ impl InputState {
             masked: false,
             clean_on_escape: false,
             soft_wrap: true,
+            chip_active: false,
+            on_chip_backspace: None,
             loading: false,
             pattern: None,
             validate: None,
@@ -640,11 +646,12 @@ impl InputState {
         self.replace_text(value, window, cx);
         self.disabled = was_disabled;
         self.history.ignore = false;
-        // Ensure cursor to start when set text
+        // Ensure cursor to end when set text（v57: 多行同样到末尾——菜单
+        // 接受后光标应停在插入命令之后）
         if self.mode.is_single_line() {
             self.selected_range = (self.text.len()..self.text.len()).into();
         } else {
-            self.selected_range.clear();
+            self.selected_range = (self.text.len()..self.text.len()).into();
 
             self._pending_update = true;
             self.lsp.reset();
@@ -1054,6 +1061,15 @@ impl InputState {
     }
 
     pub(super) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        // v57: chip 模式（宿主在编辑器外渲染命令/技能原子 chip）下，编辑器
+        // 文本为空时退格 = 删除整个 chip。回调 defer：动作处理期间本实体
+        // 处于租用中，宿主同步 set_value 会双重租约 panic
+        if self.chip_active && self.text.len() == 0 && self.ime_marked_range.is_none() {
+            if let Some(cb) = self.on_chip_backspace.clone() {
+                cx.defer(move |cx| cb(cx));
+            }
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor()), cx)
         }
