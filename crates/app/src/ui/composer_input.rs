@@ -36,7 +36,6 @@ pub struct ComposerInput {
     max_rows: usize,
     // config buffered until the inner state exists (needs &mut Window)
     pending_value: Option<String>,
-    pending_placeholder: Option<SharedString>,
     /// mirrored inner value so `value()` works without cx
     value: String,
     on_change: Option<Changed>,
@@ -52,7 +51,6 @@ impl ComposerInput {
             min_rows: 3,
             max_rows: 10,
             pending_value: None,
-            pending_placeholder: None,
             value: String::new(),
             on_change: None,
             on_submit: None,
@@ -67,11 +65,10 @@ impl ComposerInput {
         self.on_submit = Some(cb);
     }
 
+    /// 占位文案仅门面自绘（text_faint，设计规范 placeholder 专属色）——
+    /// 组件内置占位用 muted_foreground(=text_dim) 过深，与正文难区分。
     pub fn set_placeholder(&mut self, ph: Option<SharedString>) {
-        self.placeholder = ph.clone();
-        if self.state.is_some() {
-            self.pending_placeholder = ph;
-        }
+        self.placeholder = ph;
     }
 
     /// 外部写入（草稿切换/历史/清空）。与镜像同值时跳过，避免回环。
@@ -108,13 +105,8 @@ impl ComposerInput {
         if let Some(state) = &self.state {
             return state.clone();
         }
-        let placeholder = self.placeholder.clone().unwrap_or_default();
         let (min, max) = (self.min_rows, self.max_rows);
-        let state = cx.new(|scx| {
-            InputState::new(window, scx)
-                .auto_grow(min, max)
-                .placeholder(placeholder)
-        });
+        let state = cx.new(|scx| InputState::new(window, scx).auto_grow(min, max));
         cx.subscribe(&state, |this, entity, event: &InputEvent, cx| {
             this.on_inner_event(entity, event, cx);
         })
@@ -173,17 +165,28 @@ impl Render for ComposerInput {
             self.value = v.clone();
             state.update(cx, |st, scx| st.set_value(v, window, scx));
         }
-        if let Some(ph) = self.pending_placeholder.take() {
-            state.update(cx, |st, scx| st.set_placeholder(ph, window, scx));
-        }
-
         let t = T();
+        let ph = self.placeholder.clone().unwrap_or_default();
+        let empty = self.value.is_empty();
         div()
             .id("composer-input")
             .w_full()
+            .relative()
             // 字号/颜色从 wrapper 继承进组件的文本塑形
             .text_size(px(13.5))
             .text_color(rgb(t.text))
+            // 占位层：与组件 Medium 内边距对齐（px12/px5+行首偏移）；
+            // 无交互性的 div 不建 hitbox，点击/命中穿透到输入组件
+            .when(empty && !ph.is_empty(), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(7.))
+                        .left(px(12.))
+                        .text_color(rgb(t.text_faint))
+                        .child(ph),
+                )
+            })
             .child(GpInput::new(&state).appearance(false).bordered(false))
     }
 }
