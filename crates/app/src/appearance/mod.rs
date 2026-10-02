@@ -43,6 +43,9 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     let t: &Theme = theme::theme();
     let tc = gpui_component::theme::Theme::global_mut(cx);
     tc.radius = px(5.);
+    // composer 多行滚动条常显（默认 Scrolling=滚动进行中才闪现，用户视为
+    // "没有滚动条"）
+    tc.scrollbar_show = gpui_component::scroll::ScrollbarShow::Always;
     let c = &mut tc.colors;
     c.background = gpui::rgb(t.bg_panel).into();
     c.foreground = gpui::rgb(t.text).into();
