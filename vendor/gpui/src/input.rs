@@ -127,6 +127,10 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         window: &mut Window,
         cx: &mut App,
     ) {
+        eprintln!(
+            "[gpui-trace] ElementInputHandler replace_text {:?} range={:?}",
+            text, replacement_range
+        );
         self.view.update(cx, |view, cx| {
             view.replace_text_in_range(replacement_range, text, window, cx)
         });

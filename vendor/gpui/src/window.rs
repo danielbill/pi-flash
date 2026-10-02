@@ -3405,7 +3405,9 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        if focus_handle.is_focused(self) {
+        let focused_now = focus_handle.is_focused(self);
+        eprintln!("[gpui-trace] handle_input focused={}", focused_now);
+        if focused_now {
             let cx = self.to_async(cx);
             self.next_frame
                 .input_handlers

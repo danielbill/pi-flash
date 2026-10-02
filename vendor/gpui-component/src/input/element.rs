@@ -1098,6 +1098,10 @@ impl Element for TextElement {
         let selected_range = self.state.read(cx).selected_range;
         let visible_range = &prepaint.last_layout.visible_range;
 
+        eprintln!(
+            "[ime-trace] composer element paint focused={}",
+            focused
+        );
         window.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.state.clone()),

@@ -951,6 +951,7 @@ impl PlatformInputHandler {
     }
 
     pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
+        eprintln!("[gpui-trace] dispatch_input {:?}", input);
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 

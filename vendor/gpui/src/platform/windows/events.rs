@@ -1360,11 +1360,13 @@ where
             }))
         }
         vkey => {
-            let vkey = if vkey == VK_PROCESSKEY {
-                VIRTUAL_KEY(unsafe { ImmGetVirtualKey(handle) } as u16)
-            } else {
-                vkey
-            };
+            // v57 port(zed gpui_windows): VK_PROCESSKEY 是 IME 组合键——0.2.2
+            // 用 ImmGetVirtualKey 把它还原成原字母派发，导致应用在组合期收到
+            // "真实"按键：退格删掉已录入文本、回车直接发送（IME 组合对应用
+            // 完全不可见）。组合期按键必须留给系统 IME 处理，不下发。
+            if vkey == VK_PROCESSKEY {
+                return None;
+            }
             let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
             Some(f(keystroke))
         }
