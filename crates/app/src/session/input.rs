@@ -91,7 +91,7 @@ pub(crate) fn input_area(
         .flex()
         .flex_col()
         .pt(px(10.))
-        .pb(px(10.)); // 操作栏到下边框的距离
+        .pb(px(12.)); // 操作栏到下边框的距离
     // 附加图片 chips
     if !chat.pending_images.is_empty() {
         let rows: Vec<gpui::AnyElement> = chat
@@ -139,8 +139,8 @@ pub(crate) fn input_area(
     capsule = capsule.child(
         div()
             .w_full()
-            .min_h(px(59.))
-            .pt(px(6.))
+            .min_h(px(60.))
+            .pt(px(2.))
             .pb(px(2.))
             .px(px(6.))
             .child(composer),
@@ -349,7 +349,7 @@ fn composer_bar(
             // 图片
             div()
                 .id("attach-image")
-                .pl(px(5.)) // 左侧额外留白（用户微调处）
+                .pl(px(8.)) // 图片与正文首行左对齐：正文=编辑行6+组件12=18，图片=栏10+8=18
                 .flex()
                 .items_center()
                 .text_color(rgb(t.text_muted))
@@ -491,10 +491,10 @@ fn composer_bar(
     right = right.child(
         div()
             .id("send")
-            .mr(px(5.))
+            .mr(px(2.)) // 右边距=栏padding10+2=12（与下边距对齐）
             .mt(px(-8.))
-            .size(px(28.))
-            .rounded(if streaming { px(9.) } else { px(14.) })
+            .size(px(36.)) // 发送/停止共用直径（用户微调处）
+            .rounded(if streaming { px(9.) } else { px(18.) })
             .flex()
             .items_center()
             .justify_center()

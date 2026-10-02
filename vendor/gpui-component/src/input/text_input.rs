@@ -354,7 +354,11 @@ impl RenderOnce for TextInput {
             .input_h(self.size)
             .cursor_text()
             .text_size(font_size)
-            .items_center()
+            // v57: 多行顶对齐——AutoGrow 最小行数撑高容器时，居中会让首行
+            // 上方多出约一行空白（顶 padding 视觉上远大于左 padding）；
+            // 单行输入仍居中
+            .when(state.mode.is_multi_line(), |this| this.items_start())
+            .when(!state.mode.is_multi_line(), |this| this.items_center())
             .when(state.mode.is_multi_line(), |this| {
                 this.h_auto()
                     .when_some(self.height, |this, height| this.h(height))

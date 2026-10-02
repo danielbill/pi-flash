@@ -23,6 +23,12 @@ use gpui_component::input::{InputEvent, InputState, TextInput as GpInput};
 use crate::theme::theme as T;
 use gpui::{px, rgb};
 
+/// 输入首行到输入区顶边的距离（px）。改这一个数字即可。
+/// 原理：组件内边距 py=5 + 行高领先 ≈3，其余差值由容器 pt 补齐，
+/// 因此这里只调 wrapper 的 pt：INPUT_PAD_TOP - 11 写回容器。
+const INPUT_PAD_TOP: f32 = 16.;
+
+
 /// fires after every user value mutation (typing, paste, IME commit)
 pub type Changed = Rc<dyn Fn(&str, &mut App)>;
 /// plain Enter (IME 组合期不会到达)；参数为剥掉组件自插 "\n" 后的文本
@@ -168,6 +174,7 @@ impl Render for ComposerInput {
         let t = T();
         let ph = self.placeholder.clone().unwrap_or_default();
         let empty = self.value.is_empty();
+        let pad_top = px(INPUT_PAD_TOP - 11.);
         div()
             .id("composer-input")
             .w_full()
@@ -181,7 +188,7 @@ impl Render for ComposerInput {
                 d.child(
                     div()
                         .absolute()
-                        .top(px(7.))
+                        .top(pad_top + px(2.))
                         .left(px(12.))
                         .text_color(rgb(t.text_faint))
                         .child(ph),
