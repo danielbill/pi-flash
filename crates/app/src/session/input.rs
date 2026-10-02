@@ -558,7 +558,7 @@ fn composer_bar(
             .justify_center()
             .cursor_pointer()
             .bg(rgb(if streaming {
-                t.text
+                t.accent // 停止态外圈=主题色（用户定稿，非深色）
             } else if can_queue {
                 t.accent
             } else {
@@ -581,7 +581,7 @@ fn composer_bar(
                 div()
                     .size(px(12.))
                     .rounded(px(2.5))
-                    .bg(rgb(t.bg))
+                    .bg(rgb(t.accent_contrast))
                     .into_any_element()
             } else {
                 icon("arrow-up", 15., t.accent_contrast)
