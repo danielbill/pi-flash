@@ -9,4 +9,5 @@ edition = "2024"
 debug = 1
 
 [patch.crates-io]
+gpui = { path = "vendor/gpui" }
 gpui-component = { path = "vendor/gpui-component" }
