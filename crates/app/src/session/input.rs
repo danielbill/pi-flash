@@ -90,8 +90,8 @@ pub(crate) fn input_area(
         .occlude()
         .flex()
         .flex_col()
-        .pt(px(5.))
-        .pb(px(12.)); // 操作栏到下边框的距离
+        .pt(px(10.))
+        .pb(px(10.)); // 操作栏到下边框的距离
     // 附加图片 chips
     if !chat.pending_images.is_empty() {
         let rows: Vec<gpui::AnyElement> = chat
@@ -349,6 +349,7 @@ fn composer_bar(
             // 图片
             div()
                 .id("attach-image")
+                .pl(px(5.)) // 左侧额外留白（用户微调处）
                 .flex()
                 .items_center()
                 .text_color(rgb(t.text_muted))
