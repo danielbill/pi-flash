@@ -34,6 +34,7 @@ mod function_panel;
 mod i18n;
 mod markdown;
 mod models_config;
+mod render;
 mod theme;
 mod services;
 mod session;

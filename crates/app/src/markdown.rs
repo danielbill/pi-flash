@@ -85,7 +85,7 @@ const MONO_FAMILY: &str = "Consolas";
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Style {
+pub(crate) enum Style {
     Normal,
     Bold,
     Italic,
@@ -96,13 +96,13 @@ enum Style {
 }
 
 #[derive(Clone, Debug)]
-struct Run {
-    text: String,
-    style: Style,
+pub(crate) struct Run {
+    pub(crate) text: String,
+    pub(crate) style: Style,
 }
 
 #[derive(Clone, Debug)]
-enum MdBlock {
+pub(crate) enum MdBlock {
     Heading { level: u8, runs: Vec<Run> },
     Paragraph { runs: Vec<Run> },
     Code { lang: String, code: String },
@@ -244,6 +244,13 @@ fn collect_inline(events: &[Event], i: &mut usize, is_end: &dyn Fn(&Event) -> bo
                 }
                 text.push_str(t);
             }
+            Event::InlineHtml(h) => {
+                // v57-1: 行内 HTML 片段 → 安全子集 runs（此前直接丢弃）
+                flush(&mut text, cur, &mut runs);
+                runs.extend(crate::render::html::inline_runs(h));
+                cur = Style::Normal;
+                styles.clear();
+            }
             Event::Code(c) => {
                 flush(&mut text, cur, &mut runs);
                 runs.push(Run { text: c.to_string(), style: Style::Code });
@@ -282,6 +289,18 @@ fn parse_blocks(events: &[Event]) -> Vec<MdBlock> {
                 out.push(MdBlock::Paragraph {
                     runs: vec![Run { text: t.to_string(), style: Style::Normal }],
                 });
+                i += 1;
+            }
+            Event::Html(h) => {
+                // v57-1: 块级 HTML → 安全子集块（此前直接丢弃）
+                out.extend(crate::render::html::blocks(h));
+                i += 1;
+            }
+            Event::InlineHtml(h) => {
+                let runs = crate::render::html::inline_runs(h);
+                if !runs.is_empty() {
+                    out.push(MdBlock::Paragraph { runs });
+                }
                 i += 1;
             }
             _ => i += 1,
