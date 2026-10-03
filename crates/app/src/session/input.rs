@@ -122,15 +122,6 @@ fn ctx_usage_panel(
     stats: Option<pi_link::protocol::SessionStats>,
     t: &'static crate::theme::Theme,
 ) -> gpui::Div {
-    let compact = |n: u64| -> String {
-        if n >= 1_000_000 {
-            format!("{:.1}M", n as f64 / 1_000_000.)
-        } else if n >= 1000 {
-            format!("{}k", n / 1000)
-        } else {
-            n.to_string()
-        }
-    };
     let row = |label: &str, value: String| -> gpui::AnyElement {
         div()
             .flex()
@@ -176,21 +167,21 @@ fn ctx_usage_panel(
                 .into_any_element(),
         ],
         Some(s) => {
+            let fmt_k = |n: u64| -> String { format!("{}K", (n as f64 / 1000.).round() as u64) };
             let ctx_rows = vec![
                 row(
                     tr("使用比例"),
-                    match (s.context_percent, s.context_window) {
-                        (Some(p), Some(w)) => format!("{p:.1}% / {}", compact(w)),
-                        (Some(p), None) => format!("{p:.1}%"),
-                        (None, Some(w)) => format!("? / {}", compact(w)),
-                        (None, None) => "\u{2014}".into(),
-                    },
+                    s.context_percent
+                        .map(|p| format!("{p:.1}%"))
+                        .unwrap_or_else(|| "\u{2014}".into()),
                 ),
                 row(
                     tr("上下文 token"),
-                    s.context_tokens
-                        .map(fmt_thousand)
-                        .unwrap_or_else(|| "\u{2014}".into()),
+                    match (s.context_tokens, s.context_window) {
+                        (Some(t), Some(w)) => format!("{} / {}", fmt_k(t), fmt_k(w)),
+                        (Some(t), None) => fmt_k(t),
+                        _ => "\u{2014}".into(),
+                    },
                 ),
             ];
             let token_rows = vec![
