@@ -56,12 +56,14 @@ pub(crate) fn render_dialogs(
     t: &theme::Theme,
     cx: &App,
 ) -> Div {
-        // dialogs (bodies verbatim from the former inline section)
+        // dialogs mount as a CHILD of the chat root — on top of the content,
+        // never replacing it (replacing the root blanks the whole UI behind
+        // the dialog; settings parity = content stays visible beneath)
             if let Some(Dialog::ModelSelect { input: filter_input, .. }) = chat.dialog.as_ref() {
-                return render_model_select(chat, weak, filter_input, t, cx);
+                root = root.child(render_model_select(chat, weak, filter_input, t, cx));
             }
             if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
-                return render_git_diff(chat, weak, path, patch, t, cx);
+                root = root.child(render_git_diff(chat, weak, path, patch, t, cx));
             }
             if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
                 root = root.child(render_session_search(chat, weak, input, t, cx));
