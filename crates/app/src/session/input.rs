@@ -110,7 +110,10 @@ fn ctx_tip_element(
     } else {
         wrap.into_any_element()
     };
-    Some(el)
+    // vendored gpui 的 Style::paint 把边框画在子元素之后——面板挂在胶囊
+    // 内部会被胶囊聚焦边框压线（实测横穿面板）；deferred 推迟到整帧末尾
+    // 绘制（布局仍在原位，锚定/hover 关系不变，弹层同机制）
+    Some(gpui::deferred(el).into_any_element())
 }
 
 /// 用量详情面板本体（pi-web session-info-popover 简化版——上下文比例 /
