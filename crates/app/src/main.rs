@@ -197,6 +197,11 @@ struct Chat {
     composer: Option<gpui::Entity<ComposerInput>>,
     /// 技能展开消息的展开态（key = entry_id 或序号键）
     expanded_skills: std::collections::HashSet<String>,
+    /// 消息气泡滚动句柄（key 同 expanded_skills；跨帧保持滚动位置并供
+    /// gpui-component Scrollbar 读取）
+    bubble_scrolls: std::rc::Rc<std::cell::RefCell<
+        std::collections::HashMap<String, gpui::ScrollHandle>,
+    >>,
     input_focused: bool,
     // inline rename (active session)
     renaming: Option<PathBuf>,
@@ -411,6 +416,9 @@ impl Chat {
             file_cache: std::collections::HashMap::new(),
             composer: None,
             expanded_skills: std::collections::HashSet::new(),
+            bubble_scrolls: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
             input_focused: false,
             pill_menu: None,
             pill_anchor: None,

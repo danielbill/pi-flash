@@ -125,6 +125,7 @@ fn session_list(
                             ix,
                             &weak,
                             &chat.expanded_skills,
+                            &chat.bubble_scrolls,
                             &rt_view.collapsed,
                             t,
                             None,

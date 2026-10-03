@@ -1363,6 +1363,9 @@ pub(crate) fn render_msg(
     msg_ix: usize,
     weak: &gpui::WeakEntity<Chat>,
     expanded_skills: &std::collections::HashSet<String>,
+    bubble_scrolls: &std::rc::Rc<
+        std::cell::RefCell<std::collections::HashMap<String, gpui::ScrollHandle>>,
+    >,
     collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
     // Some(est_tokens) 仅当此消息是流式中的最后一条（工作中回复）
@@ -1485,6 +1488,20 @@ pub(crate) fn render_msg(
             markdown::render_user(&text, t)
         };
 
+        let scroll_key = m
+            .entry_id
+            .clone()
+            .unwrap_or_else(|| format!("ububble-{}", msg_ix));
+        let (scroll_handle, scroll_state) = {
+            let mut map = bubble_scrolls.borrow_mut();
+            let h = map
+                .entry(scroll_key)
+                .or_insert_with(gpui::ScrollHandle::new)
+                .clone();
+            let st = gpui_component::scroll::ScrollbarState::default();
+            (h, st)
+        };
+
         let action = |id: String, icon_name: &'static str, label: &'static str| {
             div()
                 .id(SharedString::from(id))
@@ -1581,21 +1598,39 @@ pub(crate) fn render_msg(
                     .min_w_0()
                     .child(
                         div()
-                            .id(SharedString::from(format!("ububble-{msg_ix}")))
-                            // c21: 超高气泡 300px 内部滚动（USER_BUBBLE_MAX_HEIGHT）
-                            .max_h(px(300.))
-                            .overflow_y_scroll()
+                            .relative()
                             .flex_1()
                             .min_w_0()
-                            .occlude() // 禁止鼠标透传到下层消息
-                            .px(px(12.))
-                            .py(px(8.))
-                            .rounded(px(12.))
-                            .bg(rgb(t.user_bg))
-                            .border_1()
-                            .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.2)))
-                            .text_color(rgb(t.text))
-                            .child(div().flex().flex_col().child(image_block).child(md)),
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("ububble-{msg_ix}")))
+                                    // c21: 超高气泡 300px 内部滚动（USER_BUBBLE_MAX_HEIGHT）
+                                    .max_h(px(300.))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&scroll_handle)
+                                    .flex_1()
+                                    .min_w_0()
+                                    .occlude() // 禁止鼠标透传到下层消息
+                                    .px(px(12.))
+                                    .pr(px(14.))
+                                    .py(px(8.))
+                                    .rounded(px(12.))
+                                    .bg(rgb(t.user_bg))
+                                    .border_1()
+                                    .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.2)))
+                                    .text_color(rgb(t.text))
+                                    .child(div().flex().flex_col().child(image_block).child(md)),
+                            )
+                            .child(
+                                gpui_component::scroll::Scrollbar::vertical(
+                                    &scroll_state,
+                                    &scroll_handle,
+                                )
+                                .scroll_size(gpui::size(
+                                    px(0.),
+                                    px(300.) + scroll_handle.max_offset().height,
+                                )),
+                            ),
                     ),
             )
             .child(bottom);
