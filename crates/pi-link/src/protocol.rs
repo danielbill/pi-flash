@@ -658,11 +658,12 @@ pub struct SessionStats {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
+    pub cache_write: u64,
     pub tokens_total: u64,
     pub cost: f64,
     pub context_tokens: Option<u64>,
     pub context_window: Option<u64>,
-    pub context_percent: Option<u64>,
+    pub context_percent: Option<f64>,
 }
 
 impl SessionStats {
@@ -671,11 +672,12 @@ impl SessionStats {
             input: data["tokens"]["input"].as_u64().unwrap_or(0),
             output: data["tokens"]["output"].as_u64().unwrap_or(0),
             cache_read: data["tokens"]["cacheRead"].as_u64().unwrap_or(0),
+            cache_write: data["tokens"]["cacheWrite"].as_u64().unwrap_or(0),
             tokens_total: data["tokens"]["total"].as_u64().unwrap_or(0),
             cost: data["cost"].as_f64().unwrap_or(0.0),
             context_tokens: data["contextUsage"]["tokens"].as_u64(),
             context_window: data["contextUsage"]["contextWindow"].as_u64(),
-            context_percent: data["contextUsage"]["percent"].as_u64(),
+            context_percent: data["contextUsage"]["percent"].as_f64(),
         }
     }
 
@@ -683,10 +685,17 @@ impl SessionStats {
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
         if let Some(p) = self.context_percent {
-            parts.push(format!("ctx {p}%"));
+            parts.push(format!("ctx {p:.0}%"));
         }
         parts.push(format!("${:.2}", self.cost));
         parts.join(" \u{b7} ")
+    }
+
+    /// 缓存命中率 = cacheRead / (input + cacheWrite + cacheRead)（分母覆盖
+    /// 全部输入类 token；pi-web session-info-popover 同式）。
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        let denom = self.input + self.cache_write + self.cache_read;
+        (denom > 0).then(|| self.cache_read as f64 / denom as f64)
     }
 }
 
@@ -993,9 +1002,13 @@ mod tests {
                 assert_eq!(command, "get_session_stats");
                 let st = SessionStats::parse(&data.expect("data"));
                 assert_eq!(st.tokens_total, 105000);
+                assert_eq!(st.cache_write, 5000);
                 assert!((st.cost - 0.45).abs() < 1e-9);
-                assert_eq!(st.context_percent, Some(30));
+                assert_eq!(st.context_percent, Some(30.0));
                 assert_eq!(st.summary(), "ctx 30% \u{b7} $0.45");
+                // cacheRead / (input + cacheWrite + cacheRead)
+                let hit = st.cache_hit_rate().expect("rate");
+                assert!((hit - 40_000. / 95_000.).abs() < 1e-9);
             }
             other => panic!("wrong event: {other:?}"),
         }

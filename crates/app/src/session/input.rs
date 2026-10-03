@@ -24,11 +24,165 @@ use crate::PillMenu;
 use crate::MenuKind;
 use crate::{ComposerDown, ComposerTab, ComposerUp, ComposerPaste};
 use crate::i18n::tr;
+use crate::services::format::fmt_thousand;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
 
 /// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）
 const BAR_FONT: f32 = 15.;
+
+/// 上下文用量详情弹层（ctx-ring 点击；pi-web session-info-popover 简化——
+/// 只保留用量部分：上下文比例 / token 分项 / 费用 / 缓存命中率）。复用
+/// pill 弹层机制：全窗 occlude + 透明背板点击关闭，面板锚在环上方。
+pub(crate) fn context_usage_overlay(
+    stats: Option<pi_link::protocol::SessionStats>,
+    anchor: Option<gpui::Point<gpui::Pixels>>,
+    window: &mut gpui::Window,
+    t: &'static crate::theme::Theme,
+    weak: gpui::WeakEntity<Chat>,
+) -> gpui::AnyElement {
+    let vp = window.viewport_size();
+    let menu_w = px(300.);
+    let gap = px(6.);
+    let (anchor_bottom, anchor_left) = match anchor {
+        Some(p) => {
+            let bottom = (vp.height - p.y + gap).max(px(8.));
+            // 面板水平居中于环，两侧夹在视口内
+            let mut left = p.x - menu_w / 2.;
+            if left + menu_w > vp.width - px(8.) {
+                left = vp.width - menu_w - px(8.);
+            }
+            (bottom, left.max(px(8.)))
+        }
+        None => (px(64.), vp.width - menu_w - px(24.)),
+    };
+    let compact = |n: u64| -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.)
+        } else if n >= 1000 {
+            format!("{}k", n / 1000)
+        } else {
+            n.to_string()
+        }
+    };
+    let row = |label: &str, value: String| -> gpui::AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(label.to_string())),
+            )
+            .child(
+                div()
+                    .ml_auto()
+                    .text_size(px(12.))
+                    .font_family("Consolas")
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(value)),
+            )
+            .into_any_element()
+    };
+    let section = |title: &str, rows: Vec<gpui::AnyElement>| -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(title.to_string())),
+            )
+            .children(rows)
+            .into_any_element()
+    };
+
+    let body: Vec<gpui::AnyElement> = match stats {
+        None => vec![
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(t.text_muted))
+                .child(tr("会话尚未产生用量。"))
+                .into_any_element(),
+        ],
+        Some(s) => {
+            let ctx_rows = vec![
+                row(
+                    tr("使用比例"),
+                    match (s.context_percent, s.context_window) {
+                        (Some(p), Some(w)) => format!("{p:.1}% / {}", compact(w)),
+                        (Some(p), None) => format!("{p:.1}%"),
+                        (None, Some(w)) => format!("? / {}", compact(w)),
+                        (None, None) => "\u{2014}".into(),
+                    },
+                ),
+                row(
+                    tr("上下文 token"),
+                    s.context_tokens
+                        .map(fmt_thousand)
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                ),
+            ];
+            let token_rows = vec![
+                row(tr("输入"), fmt_thousand(s.input)),
+                row(tr("输出"), fmt_thousand(s.output)),
+                row(tr("缓存读"), fmt_thousand(s.cache_read)),
+                row(tr("缓存写"), fmt_thousand(s.cache_write)),
+                row(tr("总计"), fmt_thousand(s.tokens_total)),
+            ];
+            let mut cost_rows = vec![row(tr("累计费用"), format!("${:.4}", s.cost))];
+            if let Some(r) = s.cache_hit_rate() {
+                cost_rows.push(row(tr("缓存命中率"), format!("{:.1}%", r * 100.)));
+            }
+            vec![
+                section(tr("上下文"), ctx_rows),
+                section(tr("Token 累计"), token_rows),
+                section(tr("费用"), cost_rows),
+            ]
+        }
+    };
+
+    div()
+        .absolute()
+        .inset_0()
+        .occlude()
+        .child(
+            // 透明背板：点任意处关闭（与 Thinking/Tools 弹层同机制）
+            div()
+                .size_full()
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        if c.pill_menu.is_some() {
+                            c.pill_menu = None;
+                            cx.notify();
+                        }
+                    });
+                }),
+        )
+        .child(
+            div()
+                .absolute()
+                .bottom(anchor_bottom)
+                .left(anchor_left)
+                .w(menu_w)
+                .rounded(px(8.))
+                .border_1()
+                .border_color(rgb(t.border))
+                .bg(rgb(t.bg))
+                .shadow_lg()
+                .p(px(12.))
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .children(body),
+        )
+        .into_any_element()
+}
 
 pub(crate) fn input_area(
     chat: &mut Chat,
@@ -427,7 +581,7 @@ fn composer_bar(
     model_label: &str,
     thinking_label: &str,
     tools_label: &str,
-    ctx_pct: Option<u64>,
+    ctx_pct: Option<f64>,
     t: &'static crate::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {
@@ -487,11 +641,26 @@ fn composer_bar(
     // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 10px；操作栏左右
     // padding 10px = 发送钮距胶囊边框 10px
     let mut right = div().ml_auto().flex().items_center().gap(px(10.)).child(
-        // 上下文用量环（25% 分桶）
+        // 上下文用量环：track 在下、实际比例的主题色弧在上（弧 SVG 按百分比
+        // 运行时生成，icons/ring-p{1-99}；100% 走静态 ring-100）。点击弹
+        // 用量详情（PillMenu::Context，pi-web session 面板简化版）
         div()
             .id("ctx-ring")
+            .p(px(4.))
+            .m(px(-4.)) // 命中区扩到 26px，视觉位置不变
             .cursor_pointer()
+            .rounded_full()
             .hover(|s| s.bg(rgb(t.bg_hover)))
+            .on_mouse_down(MouseButton::Left, cx.listener(
+                |this, event: &gpui::MouseDownEvent, _w, cx| {
+                    this.pill_anchor = Some(event.position);
+                    this.pill_menu = match this.pill_menu {
+                        Some(PillMenu::Context) => None,
+                        _ => Some(PillMenu::Context),
+                    };
+                    cx.notify();
+                },
+            ))
             .child(
                 // 同心双环：track 在下、进度弧在上（svg 是 flex 行内子元素
                 // 会并排——必须各自绝对定位铺满后居中才叠成同心）
@@ -507,25 +676,25 @@ fn composer_bar(
                             .justify_center()
                             .child(crate::ui::icon("ring-track", 18., t.bg_selected)),
                     )
-                    .child(
+                    .children(ctx_pct.map(|p| {
+                        let path = if p >= 100. {
+                            "icons/ring-100.svg".to_string()
+                        } else {
+                            format!("icons/ring-p{}.svg", p.round().clamp(1., 99.) as u8)
+                        };
                         div()
                             .absolute()
                             .inset_0()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(crate::ui::icon(
-                                match ctx_pct.unwrap_or(0) {
-                                    0..=12 => "ring-track",
-                                    13..=37 => "ring-25",
-                                    38..=62 => "ring-50",
-                                    63..=87 => "ring-75",
-                                    _ => "ring-100",
-                                },
-                                18.,
-                                t.accent,
-                            )),
-                    ),
+                            .child(
+                                gpui::svg()
+                                    .path(SharedString::from(path))
+                                    .text_color(rgb(t.accent))
+                                    .size(px(18.)),
+                            )
+                    })),
             ),
     );
     // 模型 ∨

@@ -313,6 +313,8 @@ struct Chat {
 enum PillMenu {
     Thinking,
     Tools,
+    /// ctx-ring 点击：上下文用量详情（session::input::context_usage_overlay）
+    Context,
 }
 
 /// One content-area tab: a terminal session or a file viewer.
@@ -1093,6 +1095,18 @@ impl Render for Chat {
         };
         let pill_menu_el = self.pill_menu.map(|menu| {
             let weak_menu = weak.clone();
+            // 上下文用量详情：面板体与 rows 不同构，走专用构造器（同一
+            // occlude 背板 + 锚点机制）
+            if menu == PillMenu::Context {
+                let stats = self.rt().read(cx).stats.clone();
+                return crate::session::input::context_usage_overlay(
+                    stats,
+                    self.pill_anchor,
+                    window,
+                    t,
+                    weak_menu,
+                );
+            }
             let rows: Vec<(String, String, bool)> = match menu {
                 PillMenu::Thinking => [
                     ("auto", tr("使用 pi 默认设置"), thinking_override.is_none()),
@@ -1113,6 +1127,8 @@ impl Render for Chat {
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
                 .collect(),
+                // Context 在上方 early-return，此处仅为穷尽性
+                PillMenu::Context => Vec::new(),
             };
             let is_thinking = menu == PillMenu::Thinking;
             let items = rows

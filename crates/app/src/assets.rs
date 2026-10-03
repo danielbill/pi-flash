@@ -10,24 +10,46 @@ macro_rules! assets {
         const ASSETS: &[(&str, &str)] = &[
             $( ($name, include_str!(concat!("../assets/", $name))) ),*
         ];
+    };
+}
 
-        impl AssetSource for Assets {
-            fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-                Ok(ASSETS
-                    .iter()
-                    .find(|(p, _)| *p == path)
-                    .map(|(_, s)| Cow::Borrowed(s.as_bytes())))
-            }
-
-            fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-                Ok(ASSETS
-                    .iter()
-                    .filter(|(p, _)| p.starts_with(path))
-                    .map(|(p, _)| SharedString::from(p.clone()))
-                    .collect())
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(pct) = path.strip_prefix("icons/ring-p").and_then(|s| s.strip_suffix(".svg")) {
+            if let Ok(p) = pct.parse::<u8>() {
+                if (1..=99).contains(&p) {
+                    return Ok(Some(Cow::Owned(ring_arc_svg(p))));
+                }
             }
         }
-    };
+        Ok(ASSETS
+            .iter()
+            .find(|(p, _)| *p == path)
+            .map(|(_, s)| Cow::Borrowed(s.as_bytes())))
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+        Ok(ASSETS
+            .iter()
+            .filter(|(p, _)| p.starts_with(path))
+            .map(|(p, _)| SharedString::from(*p))
+            .collect())
+    }
+}
+
+/// 上下文比例环进度弧（1–99%）：与 ring-track.svg 同几何（viewBox 16、
+/// r=5.5、stroke 2），12 点钟起顺时针 dasharray 弧；100% 走静态 ring-100。
+/// gpui 的 svg 渲染只取 alpha 通道再按调用色着色，这里形状即一切。
+fn ring_arc_svg(pct: u8) -> Vec<u8> {
+    const CIRC: f32 = 2. * std::f32::consts::PI * 5.5; // ≈ 34.5575
+    let arc = CIRC * pct as f32 / 100.;
+    let rest = CIRC - arc;
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\
+<circle cx=\"8\" cy=\"8\" r=\"5.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" \
+stroke-dasharray=\"{arc:.2} {rest:.2}\" stroke-linecap=\"round\" transform=\"rotate(-90 8 8)\"/></svg>"
+    );
+    svg.into_bytes()
 }
 
 assets! {
@@ -88,12 +110,9 @@ assets! {
     "icons/icon-clock-solid.svg",
     "icons/icon-hand.svg",
     "icons/icon-viewdiff.svg",
-    // v54 UI: composer context ring buckets
+    // v54 UI: composer context ring（进度弧 ring-p{1-99} 运行时生成）
     "icons/spark.svg",
     "icons/ring-track.svg",
-    "icons/ring-25.svg",
-    "icons/ring-50.svg",
-    "icons/ring-75.svg",
     "icons/ring-100.svg",
     "icons/minus.svg",
     "icons/square.svg",
@@ -113,5 +132,20 @@ mod tests {
             assert!(!loaded.is_empty());
         }
         assert!(Assets.load("icons/missing.svg").expect("ok").is_none());
+    }
+
+    #[test]
+    fn ring_arc_generated() {
+        for p in [1u8, 13, 50, 87, 99] {
+            let svg = Assets
+                .load(&format!("icons/ring-p{p}.svg"))
+                .expect("ok")
+                .expect("generated");
+            let s = std::str::from_utf8(&svg).expect("utf8");
+            assert!(s.contains("<svg") && s.contains("stroke-dasharray"), "{p} bad");
+        }
+        // 0 与 100 不生成：0 无弧不渲染，100 走静态 ring-100
+        assert!(Assets.load("icons/ring-p0.svg").expect("ok").is_none());
+        assert!(Assets.load("icons/ring-p100.svg").expect("ok").is_none());
     }
 }
