@@ -396,3 +396,19 @@ pi-link 测试钉住；SDK 需嵌 Node 宿主、耦合 pi 内部 API，已论证
   版本错位这个具体案例）。
 - 测试 123 全绿（app 71 + pi-link 52，fixtures 为 0.87.1 真实报文，1.0.0
   下照样通过=wire 兼容）。待用户启动实测模型列表/会话/工具调用。
+
+## RPC 线缆日志（2026-10-03，诊断「应用内模型列表空」）
+
+1.0.0 升级后用户复测仍报模型列表空，但所有离线模拟全通：live probe
+（repo/pi-web cwd）447/450 模型；手工 spawn vendored 1.0.0 + `-ne` +
+`--session <0.87 写的会话文件>` + cwd=ghzw 项目——get_state 与
+get_available_models 均 success（会话恢复模型=space-bunny-alpha，即用户
+过滤框输入 "space" 的由来）。排除：协议面、vendor 版本、会话恢复、
+项目 cwd、enabledModels 白名单（全局 settings.json 无该键→不过滤；
+启动时 reload_settings_panel 已把 all_enabled 置 true）。
+
+剩余盲区=应用进程内实际 spawn 的参数/响应/stderr（stderr 此前被
+Stdio::null() 丢弃，pi fatal 完全不可见）。落地：pi-link client 支持
+`PI_FLASH_RPC_LOG=<path>` 线缆日志（spawn 头+双向 JSONL+stderr+EOF，
+父目录自动创建）；dev.sh 每次启动导出绝对路径 tmp/rpc-last.log 并截断。
+待用户：完全退出旧实例→dev.sh 重启→复现→读日志定位。

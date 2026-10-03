@@ -10,6 +10,12 @@ if [[ "${1:-}" == "--test" ]]; then
   cargo test
 fi
 
+# RPC wire log (pi-link client reads PI_FLASH_RPC_LOG): records spawn args,
+# every JSONL line both ways, and the child stderr. Delete to silence.
+export PI_FLASH_RPC_LOG="${PI_FLASH_RPC_LOG:-$PWD/tmp/rpc-last.log}"
+mkdir -p "$(dirname "$PI_FLASH_RPC_LOG")"
+: > "$PI_FLASH_RPC_LOG"
+
 cargo build -p app
 ./target/debug/pi-flash.exe &
-echo "已启动 target/debug/pi-flash.exe"
+echo "已启动 target/debug/pi-flash.exe（RPC 日志 tmp/rpc-last.log）"

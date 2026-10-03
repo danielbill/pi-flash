@@ -30,6 +30,40 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
         .ok_or_else(|| "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string())?;
 
     let node: String = vendor::node_bin();
+    // Optional wire log (PI_FLASH_RPC_LOG=<path>): every spawn records its
+    // full command line, then ">> " outgoing / "< " incoming lines and the
+    // child's stderr — diagnosis for "RPC works in probes, dead in the app".
+    // Off by default; scripts/dev.sh turns it on per launch.
+    let rpc_log: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> =
+        std::env::var("PI_FLASH_RPC_LOG")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .and_then(|p| {
+                // create(true) doesn't make parent dirs; the path may be
+                // relative to the OPENED PROJECT's cwd, so make sure it exists
+                if let Some(parent) = std::path::Path::new(&p).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&p)
+                    .ok()
+                    .map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+            });
+    if let Some(log) = &rpc_log {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut f = log.lock().unwrap();
+        let _ = writeln!(
+            f,
+            "=== spawn ts={ts} node={node} cwd={} args={extra_args:?} cli={}",
+            cwd.display(),
+            cli.display()
+        );
+    }
     let mut cmd = StdCommand::new(node);
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
@@ -43,8 +77,14 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
         .args(extra_args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stdout(Stdio::piped());
+    // stderr is discarded unless the wire log is on — pi fatals (extension
+    // crashes etc.) only ever show up there, and it was a blind spot.
+    if rpc_log.is_some() {
+        cmd.stderr(Stdio::piped());
+    } else {
+        cmd.stderr(Stdio::null());
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -57,12 +97,34 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
 
     let stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take();
+
+    // stderr drainer: only exists when the wire log is on
+    if let (Some(log), Some(mut err)) = (rpc_log.clone(), stderr) {
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            use std::io::Read as _;
+            while let Ok(n) = err.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let text = String::from_utf8_lossy(&buf[..n]);
+                let mut f = log.lock().unwrap();
+                let _ = write!(f, "[stderr] {text}");
+            }
+        });
+    }
 
     // writer thread: owns pi's stdin
     let (cmd_tx, cmd_rx) = mpsc::channel::<String>();
+    let log_out = rpc_log.clone();
     thread::spawn(move || {
         let mut stdin = stdin;
         for line in cmd_rx {
+            if let Some(log) = &log_out {
+                let mut f = log.lock().unwrap();
+                let _ = writeln!(f, ">> {line}");
+            }
             if stdin.write_all(line.as_bytes()).is_err() || stdin.write_all(b"\n").is_err() {
                 break;
             }
@@ -75,12 +137,24 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
+            if let Some(log) = &rpc_log {
+                let mut f = log.lock().unwrap();
+                let _ = writeln!(f, "< {line}");
+            }
             if let Some(event) = parse_line(&line) {
                 if event_tx.unbounded_send(event).is_err() {
                     break;
                 }
             }
             // non-JSON noise (ANSI title sequences etc.) is intentionally dropped
+        }
+        if let Some(log) = &rpc_log {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let mut f = log.lock().unwrap();
+            let _ = writeln!(f, "=== stdout EOF ts={ts}");
         }
     });
 
