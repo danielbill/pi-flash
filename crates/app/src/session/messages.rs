@@ -1622,14 +1622,25 @@ pub(crate) fn render_msg(
                                     .child(div().flex().flex_col().child(image_block).child(md)),
                             )
                             .child(
-                                gpui_component::scroll::Scrollbar::vertical(
-                                    &scroll_state,
-                                    &scroll_handle,
-                                )
-                                .scroll_size(gpui::size(
-                                    px(0.),
-                                    px(300.) + scroll_handle.max_offset().height,
-                                )),
+                                // 滚动条绝对定位覆盖在气泡右缘内（pi-web
+                                // overflowY:auto 原生条的位置）
+                                div()
+                                    .absolute()
+                                    .top(px(8.))
+                                    .bottom(px(8.))
+                                    .right(px(3.))
+                                    .w(px(8.))
+                                    .child(
+                                        gpui_component::scroll::Scrollbar::vertical(
+                                            &scroll_state,
+                                            &scroll_handle,
+                                        )
+                                        .scroll_size(gpui::size(
+                                            px(0.),
+                                            px(300.)
+                                                + scroll_handle.max_offset().height,
+                                        )),
+                                    ),
                             ),
                     ),
             )

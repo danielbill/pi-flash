@@ -48,6 +48,7 @@ assets! {
     "icons/volume.svg",
     "icons/x.svg",
     "icons/chevron-down.svg",
+    "icons/chevron-up.svg",
     "icons/chevron-right.svg",
     "icons/folder.svg",
     "icons/file.svg",
