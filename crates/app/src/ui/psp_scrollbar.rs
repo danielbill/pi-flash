@@ -9,7 +9,7 @@
 //!
 //! 用户行为规格：panel 内常显（parent hover 驱动，与 zed `ParentHoverEvent::
 //! Entered → show_scrollbars` 一致）、离开 3s 淡出、thumb 悬停加宽、贴边无
-//! track。
+//! track。`menu_scrollbar` = / 菜单变体（v58）：可滚动即常显，无 hover 门。
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -61,6 +61,18 @@ pub fn psp_scrollbar(state: &PspScrollbarState, scroll: &gpui::ScrollHandle) -> 
     ScrollbarElement {
         state: state.clone(),
         scroll: scroll.clone(),
+        always_visible: false,
+    }
+    .into_any()
+}
+
+/// 菜单用变体：可滚动即常显（弹出菜单指针通常不在其上，parent-hover
+/// 驱动的显隐永远等不到进入），其余行为（thumb 拖拽/翻页/悬停加宽）同源。
+pub fn menu_scrollbar(scroll: &gpui::ScrollHandle) -> AnyElement {
+    ScrollbarElement {
+        state: PspScrollbarState::default(),
+        scroll: scroll.clone(),
+        always_visible: true,
     }
     .into_any()
 }
@@ -68,6 +80,8 @@ pub fn psp_scrollbar(state: &PspScrollbarState, scroll: &gpui::ScrollHandle) -> 
 struct ScrollbarElement {
     state: PspScrollbarState,
     scroll: gpui::ScrollHandle,
+    /// true = 不看 parent hover，可滚动即常显（/ 菜单）
+    always_visible: bool,
 }
 
 /// prepaint 产物（zed ScrollbarLayout + parent hitbox）
@@ -90,7 +104,11 @@ impl Element for ScrollbarElement {
     type PrepaintState = Option<Layout>;
 
     fn id(&self) -> Option<ElementId> {
-        Some(ElementId::Name("psp-scrollbar".into()))
+        Some(ElementId::Name(if self.always_visible {
+            "menu-scrollbar".into()
+        } else {
+            "psp-scrollbar".into()
+        }))
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
@@ -174,7 +192,8 @@ impl Element for ScrollbarElement {
             return;
         };
         let t = crate::theme::theme();
-        let parent_hovered = self.state.parent_hovered.get() && layout.parent_hitbox.is_hovered(window);
+        let parent_hovered = self.always_visible
+            || (self.state.parent_hovered.get() && layout.parent_hitbox.is_hovered(window));
 
         // ---- 可见性（zed VisibilityState 简化）：parent 内常显；离开后
         // AUTOHIDE_MS 内保持（由 mousemove 持续刷新 last_active），超时渐隐 ----
