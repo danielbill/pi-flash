@@ -20,7 +20,12 @@ pub enum Command {
         message: String,
         images: Vec<Value>,
     },
-    FollowUp { message: String },
+    FollowUp {
+        message: String,
+        /// image contents: [{"type":"image","data":<b64>,"mimeType":...}]
+        /// (pi 1.0 follow_up 原生携带 images：session.followUp(message, images))
+        images: Vec<Value>,
+    },
     Abort,
     /// Summarize/compact the session context (rpc compact)
     Compact,
@@ -105,8 +110,12 @@ impl Command {
                 }
                 v
             }
-            Command::FollowUp { message } => {
-                json!({ "type": self.kind(), "message": message })
+            Command::FollowUp { message, images } => {
+                let mut v = json!({ "type": self.kind(), "message": message });
+                if !images.is_empty() {
+                    v["images"] = json!(images);
+                }
+                v
             }
             Command::Compact
             | Command::Abort
@@ -1035,6 +1044,19 @@ mod tests {
     fn set_session_name_record_shape() {
         let c = Command::SetSessionName { name: "my-feature".into() };
         assert_eq!(c.to_record("n1"), json!({"id":"n1","type":"set_session_name","name":"my-feature"}));
+    }
+
+    #[test]
+    fn follow_up_record_shape_with_images() {
+        // pi 1.0 rpc-mode: session.followUp(command.message, command.images)
+        let c = Command::FollowUp { message: "queued".into(), images: vec![] };
+        assert_eq!(c.to_record("u1"), json!({"id":"u1","type":"follow_up","message":"queued"}));
+        let img = json!({"type":"image","data":"QUJD","mimeType":"image/png"});
+        let c = Command::FollowUp { message: "queued".into(), images: vec![img.clone()] };
+        assert_eq!(
+            c.to_record("u2"),
+            json!({"id":"u2","type":"follow_up","message":"queued","images":[img]})
+        );
     }
 
     #[test]
