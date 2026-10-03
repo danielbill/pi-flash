@@ -1621,26 +1621,28 @@ pub(crate) fn render_msg(
                                     .text_color(rgb(t.text))
                                     .child(div().flex().flex_col().child(image_block).child(md)),
                             )
-                            .child(
-                                // 滚动条绝对定位覆盖在气泡右缘内（pi-web
-                                // overflowY:auto 原生条的位置）
-                                div()
-                                    .absolute()
-                                    .top(px(8.))
-                                    .bottom(px(8.))
-                                    .right(px(3.))
-                                    .w(px(8.))
-                                    .child(
-                                        gpui_component::scroll::Scrollbar::vertical(
-                                            &scroll_state,
-                                            &scroll_handle,
+                            // 滚动条仅在实际溢出限高时渲染（max_offset>0
+                            // = 内容超高；未溢出无条）
+                            .children(
+                                (scroll_handle.max_offset().height > px(0.)).then(|| {
+                                    div()
+                                        .absolute()
+                                        .top(px(8.))
+                                        .bottom(px(8.))
+                                        .right(px(3.))
+                                        .w(px(8.))
+                                        .child(
+                                            gpui_component::scroll::Scrollbar::vertical(
+                                                &scroll_state,
+                                                &scroll_handle,
+                                            )
+                                            .scroll_size(gpui::size(
+                                                px(0.),
+                                                px(300.)
+                                                    + scroll_handle.max_offset().height,
+                                            )),
                                         )
-                                        .scroll_size(gpui::size(
-                                            px(0.),
-                                            px(300.)
-                                                + scroll_handle.max_offset().height,
-                                        )),
-                                    ),
+                                }),
                             ),
                     ),
             )
