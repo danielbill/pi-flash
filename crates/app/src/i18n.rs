@@ -52,6 +52,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("提交", "提交", "Submit"),
     ("select model", "select model", "select model"),
     ("选择模型", "選擇模型", "Select model"),
+    ("过滤模型...", "過濾模型...", "filter models..."),
     ("选择项目", "選擇項目", "Select project"),
     ("no models match", "no models match", "no models match"),
     // settings tabs

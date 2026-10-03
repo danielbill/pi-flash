@@ -37,10 +37,21 @@ impl Chat {
     pub(crate) fn model_select_dialog(cx: &mut Context<Self>) -> Dialog {
         let weak_change = cx.entity().downgrade();
         let weak_esc = cx.entity().downgrade();
-        let input = cx.new(|cx| TextInput::new(cx).placeholder("filter models..."));
+        let weak_submit = cx.entity().downgrade();
+        let input = cx.new(|cx| TextInput::new(cx).placeholder(tr("过滤模型...")));
         input.update(cx, |ti, _| {
             ti.set_on_change(Box::new(move |_, cx| {
-                let _ = weak_change.update(cx, |_, cx| cx.notify());
+                let _ = weak_change.update(cx, |c, cx| {
+                    // list contents changed with the filter text — restart
+                    // keyboard selection from the top
+                    if let Some(Dialog::ModelSelect { sel, .. }) = &mut c.dialog {
+                        *sel = 0;
+                    }
+                    cx.notify();
+                });
+            }));
+            ti.set_on_submit(Box::new(move |_, cx| {
+                let _ = weak_submit.update(cx, |c, cx| c.apply_model_sel(cx));
             }));
             ti.set_on_escape(Box::new(move |cx| {
                 let _ = weak_esc.update(cx, |c, cx| {
@@ -49,7 +60,62 @@ impl Chat {
                 });
             }));
         });
-        Dialog::ModelSelect { input }
+        Dialog::ModelSelect { input, sel: 0 }
+    }
+
+    /// Models visible in the picker: available_models narrowed by the
+    /// enabledModels whitelist and the live filter text. Shared by rendering
+    /// and keyboard navigation so ↑/↓/Enter always match what is on screen.
+    pub(crate) fn filtered_models(&self, cx: &App) -> Vec<pi_link::protocol::ModelInfo> {
+        let flt = match &self.dialog {
+            Some(Dialog::ModelSelect { input, .. }) => input.read(cx).value().to_lowercase(),
+            _ => String::new(),
+        };
+        let picker_enabled = !self.mc_state.all_enabled;
+        self.rt()
+            .read(cx)
+            .available_models
+            .iter()
+            .filter(|m| {
+                if picker_enabled {
+                    let r = format!("{}/{}", m.provider, m.id);
+                    if !self.mc_state.enabled.iter().any(|e| e == &r) {
+                        return false;
+                    }
+                }
+                flt.is_empty()
+                    || m.id.to_lowercase().contains(&flt)
+                    || m.name.to_lowercase().contains(&flt)
+                    || m.provider.to_lowercase().contains(&flt)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// ↑/↓ on the picker: move the keyboard selection (clamped).
+    pub(crate) fn move_model_sel(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let n = self.filtered_models(cx).len().min(MODEL_PICKER_ROWS);
+        if n == 0 {
+            return;
+        }
+        if let Some(Dialog::ModelSelect { sel, .. }) = &mut self.dialog {
+            *sel = ((*sel as i32) + delta).clamp(0, n as i32 - 1) as usize;
+            cx.notify();
+        }
+    }
+
+    /// Enter on the picker: switch to the highlighted model and close.
+    pub(crate) fn apply_model_sel(&mut self, cx: &mut Context<Self>) {
+        let sel = match &self.dialog {
+            Some(Dialog::ModelSelect { sel, .. }) => *sel,
+            _ => return,
+        };
+        let pick = self.filtered_models(cx).get(sel).map(|m| (m.provider.clone(), m.id.clone()));
+        if let Some((provider, id)) = pick {
+            self.rt().update(cx, |r, cx| r.select_model(provider, id, cx));
+        }
+        self.dialog = None;
+        cx.notify();
     }
 
     /// Rename commit path that never reads the input entity (called from

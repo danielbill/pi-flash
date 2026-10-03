@@ -70,9 +70,13 @@ static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 // state
 // ---------------------------------------------------------------------------
 
+/// Rows rendered in the model picker (and the keyboard-selection range);
+/// further matches are reachable by typing to filter.
+pub(crate) const MODEL_PICKER_ROWS: usize = 12;
+
 #[derive(Debug, Clone)]
 enum Dialog {
-    ModelSelect { input: gpui::Entity<TextInput> },
+    ModelSelect { input: gpui::Entity<TextInput>, sel: usize },
     GitDiff { path: PathBuf, patch: String },
     SessionSearch { input: gpui::Entity<TextInput> },
 }
@@ -1017,7 +1021,7 @@ impl Render for Chat {
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
         let dialog_input = match &self.dialog {
-            Some(Dialog::ModelSelect { input }) | Some(Dialog::SessionSearch { input }) => {
+            Some(Dialog::ModelSelect { input, .. }) | Some(Dialog::SessionSearch { input }) => {
                 Some(input.clone())
             }
             _ => None,

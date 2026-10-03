@@ -9,10 +9,45 @@ use gpui::{App, Div, KeyDownEvent, MouseButton, SharedString, div, prelude::*, p
 use crate::Dialog;
 use crate::Chat;
 use crate::TextInput;
+use crate::{ComposerDown, ComposerUp, MODEL_PICKER_ROWS};
 use crate::i18n::tr;
 use crate::services::format::time_ago;
 use crate::theme;
 use crate::ui::icon_hover;
+
+/// Shared shell for modal dialogs: dimmed pass-through-blocking overlay,
+/// click-outside-to-close (unified close mechanism — clicks inside the panel
+/// stop propagation), ESC-to-close, centered panel.
+fn dialog_shell(chat: &Chat, weak: &gpui::WeakEntity<Chat>, panel: Div) -> Div {
+    let weak_esc = weak.clone();
+    let weak_bg = weak.clone();
+    div()
+        .absolute()
+        .inset_0()
+        .occlude()
+        .bg(gpui::hsla(0., 0., 0., 0.35))
+        .track_focus(&chat.dialog_focus)
+        .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
+            if ev.keystroke.key == "escape" {
+                let _ = weak_esc.update(cx, |this, cx| {
+                    this.dialog = None;
+                    cx.notify();
+                });
+            }
+        })
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = weak_bg.update(cx, |c, cx| {
+                c.dialog = None;
+                cx.notify();
+            });
+        })
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| {
+            cx.stop_propagation();
+        }))
+}
 
 pub(crate) fn render_dialogs(
     mut root: Div,
@@ -22,11 +57,11 @@ pub(crate) fn render_dialogs(
     cx: &App,
 ) -> Div {
         // dialogs (bodies verbatim from the former inline section)
-            if let Some(Dialog::ModelSelect { input: filter_input }) = chat.dialog.as_ref() {
-                return render_model_select(root, chat, weak, filter_input, t, cx);
+            if let Some(Dialog::ModelSelect { input: filter_input, .. }) = chat.dialog.as_ref() {
+                return render_model_select(chat, weak, filter_input, t, cx);
             }
             if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
-                return render_git_diff(root, chat, weak, path, patch, t, cx);
+                return render_git_diff(chat, weak, path, patch, t, cx);
             }
             if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
                 root = root.child(render_session_search(chat, weak, input, t, cx));
@@ -35,28 +70,17 @@ pub(crate) fn render_dialogs(
 }
 
 /// ModelSelect dialog surface (extracted from render_dialogs).
-fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
-                let flt = filter_input.read(cx).value().to_lowercase();
-                // enabledModels whitelist narrows the picker (pi-web /api/models
-                // resolveVisibleModels parity)
-                let picker_enabled = !chat.mc_state.all_enabled;
-                let models = chat.rt().read(cx).available_models.clone();
+fn render_model_select(chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
+                let sel = match &chat.dialog {
+                    Some(Dialog::ModelSelect { sel, .. }) => *sel,
+                    _ => 0,
+                };
+                let models = chat.filtered_models(cx);
                 let rows: Vec<gpui::AnyElement> = models
                     .iter()
-                    .filter(|m| {
-                        if picker_enabled {
-                            let r = format!("{}/{}", m.provider, m.id);
-                            if !chat.mc_state.enabled.iter().any(|e| e == &r) {
-                                return false;
-                            }
-                        }
-                        flt.is_empty()
-                            || m.id.to_lowercase().contains(&flt)
-                            || m.name.to_lowercase().contains(&flt)
-                            || m.provider.to_lowercase().contains(&flt)
-                    })
-                    .take(12)
-                    .map(|m| {
+                    .enumerate()
+                    .take(MODEL_PICKER_ROWS)
+                    .map(|(ix, m)| {
                         let provider = m.provider.clone();
                         let id = m.id.clone();
                         let weak_row = weak.clone();
@@ -74,134 +98,121 @@ fn render_model_select(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>
                             .py_1p5()
                             .cursor_pointer()
                             .rounded_md()
+                            .when(ix == sel, |d| d.bg(rgb(t.bg_selected)))
                             .hover(|s| s.bg(rgb(t.bg_selected)))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                 let (p, mid) = (provider.clone(), id.clone());
-                                let _ = weak_row.update(cx, |c, cx| c.rt().update(cx, |r, cx| r.select_model(p, mid, cx)));
+                                let _ = weak_row.update(cx, |c, cx| {
+                                    c.rt().update(cx, |r, cx| r.select_model(p, mid, cx));
+                                    // picking is also the dismissal gesture
+                                    c.dialog = None;
+                                    cx.notify();
+                                });
                             })
                             .flex()
                             .justify_between()
-                            .child(div().text_xs().text_color(rgb(t.text)).child(label))
-                            .child(div().text_xs().text_color(rgb(t.text_dim)).child(ctx))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(rgb(t.text))
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(rgb(t.text_dim))
+                                    .child(ctx),
+                            )
                             .into_any_element()
                     })
                     .collect();
                 let list_panel = if rows.is_empty() {
                     div()
                         .py_2()
-                        .text_xs()
+                        .text_size(px(14.))
                         .text_color(rgb(t.text_dim))
-                        .child("no models match")
+                        .child(tr("no models match"))
                         .into_any_element()
                 } else {
                     div().flex().flex_col().gap_0p5().children(rows).into_any_element()
                 };
-                root = root.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .occlude()
-                        .bg(gpui::hsla(0., 0., 0., 0.35))
-                        .track_focus(&chat.dialog_focus)
-                        .on_key_down({
-                            let weak = weak.clone();
-                            move |ev: &KeyDownEvent, _w, cx| {
-                                if ev.keystroke.key == "escape" {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.dialog = None;
-                                        cx.notify();
-                                    });
-                                }
-                            }
-                        })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w(px(520.))
-                                .max_h(px(560.))
-                                .bg(rgb(t.bg_panel))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .rounded_lg()
-                                .p_4()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .shadow_lg()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(rgb(t.text))
-                                                .child("select model"),
-                                        )
-                                        .child(
-                                            div()
-                                                .id("model-close")
-                                                .px_2()
-                                                .cursor_pointer()
-                                                .text_color(rgb(t.text_muted))
-                                                .hover(|s| s.text_color(rgb(t.text)))
-                                                .on_mouse_down(MouseButton::Left, {
-                                                    let weak = weak.clone();
-                                                    move |_, _, cx| {
-                                                        let _ = weak.update(cx, |c, cx| {
-                                                            c.dialog = None;
-                                                            cx.notify();
-                                                        });
-                                                    }
-                                                })
-                                                .child(icon_hover("x", 12., t.text_muted)),
-                                        ),
-                                )
-                                .child(filter_input.clone())
-                                .child(list_panel),
-                        ),
-                );
-    root
+                let panel = div()
+                    .w(px(620.))
+                    .max_h(px(560.))
+                    .bg(rgb(t.bg_panel))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .rounded_lg()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(t.text))
+                                    .child(tr("选择模型")),
+                            )
+                            .child(
+                                div()
+                                    .id("model-close")
+                                    .px_2()
+                                    .cursor_pointer()
+                                    .text_color(rgb(t.text_muted))
+                                    .hover(|s| s.text_color(rgb(t.text)))
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let weak = weak.clone();
+                                        move |_, _, cx| {
+                                            let _ = weak.update(cx, |c, cx| {
+                                                c.dialog = None;
+                                                cx.notify();
+                                            });
+                                        }
+                                    })
+                                    .child(icon_hover("x", 12., t.text_muted)),
+                            ),
+                    )
+                    .child(filter_input.clone())
+                    .child(list_panel);
+                // ↑/↓ reach the picker as ComposerUp/ComposerDown actions: the
+                // app rebinds "up"/"down" on the input context and single-line
+                // inputs register no cursor-up/down handler, so the actions
+                // bubble up to this overlay. Enter comes through the filter
+                // input's on_submit hook (see model_select_dialog).
+                dialog_shell(chat, weak, panel)
+                    .on_action({
+                        let weak = weak.clone();
+                        move |_: &ComposerUp, _w, cx| {
+                            let _ = weak.update(cx, |c, cx| c.move_model_sel(-1, cx));
+                        }
+                    })
+                    .on_action({
+                        let weak = weak.clone();
+                        move |_: &ComposerDown, _w, cx| {
+                            let _ = weak.update(cx, |c, cx| c.move_model_sel(1, cx));
+                        }
+                    })
 }
 
 
 /// 013 sessionSearchDialog + sessionSearchResultView: query on top, results
 /// grouped by session below; a row click switches sessions and reveals the
 /// GitDiff dialog surface (extracted from render_dialogs).
-fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, _cx: &App) -> Div {
+fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, patch: &String, t: &theme::Theme, _cx: &App) -> Div {
                 let path_text: SharedString = path.to_string_lossy().to_string().into();
                 let mut body = patch.clone();
                 if body.chars().count() > 60000 {
                     body = body.chars().take(60000).collect();
                     body.push_str("\n\n\u{2026} (truncated)");
                 }
-                root = root.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .occlude()
-                        .bg(gpui::hsla(0., 0., 0., 0.35))
-                        .track_focus(&chat.dialog_focus)
-                        .on_key_down({
-                            let weak = weak.clone();
-                            move |ev: &KeyDownEvent, _w, cx| {
-                                if ev.keystroke.key == "escape" {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.dialog = None;
-                                        cx.notify();
-                                    });
-                                }
-                            }
-                        })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
+                let panel = div()
                                 .w(px(760.))
                                 .max_h(px(640.))
                                 .bg(rgb(t.bg_panel))
@@ -263,10 +274,8 @@ fn render_git_diff(mut root: Div, chat: &Chat, weak: &gpui::WeakEntity<Chat>, pa
                                         .text_size(px(11.))
                                         .text_color(rgb(t.text))
                                         .child(SharedString::from(body)),
-                                ),
-                        ),
-                );
-    root
+                                );
+                dialog_shell(chat, weak, panel)
 }
 
 
@@ -287,7 +296,6 @@ fn render_session_search(
     } else {
         format!("{} 条结果", chat.search_hits.len()).into()
     };
-    let weak_close = weak.clone();
     let mut results = div().flex().flex_col();
     let mut last_session: Option<PathBuf> = None;
     for (hit_ix, hit) in chat.search_hits.iter().enumerate() {
@@ -368,26 +376,7 @@ fn render_session_search(
                 ),
         );
     }
-    div()
-        .absolute()
-        .inset_0()
-        .occlude()
-        .bg(gpui::hsla(0., 0., 0., 0.35))
-        .track_focus(&chat.dialog_focus)
-        .flex()
-        .items_center()
-        .justify_center()
-        .on_mouse_down(MouseButton::Left, {
-            let weak = weak_close.clone();
-                move |_, _, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.dialog = None;
-                        cx.notify();
-                    });
-                }
-            })
-            .child(
-                div()
+    let panel = div()
                     .w(px(620.))
                     .max_h(px(640.))
                     .bg(rgb(t.bg_panel))
@@ -423,6 +412,6 @@ fn render_session_search(
                 .flex()
                 .flex_col()
                 .child(results),
-        ),
-    )
+        );
+    dialog_shell(chat, weak, panel)
 }

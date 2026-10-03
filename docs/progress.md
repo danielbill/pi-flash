@@ -412,3 +412,17 @@ Stdio::null() 丢弃，pi fatal 完全不可见）。落地：pi-link client 支
 `PI_FLASH_RPC_LOG=<path>` 线缆日志（spawn 头+双向 JSONL+stderr+EOF，
 父目录自动创建）；dev.sh 每次启动导出绝对路径 tmp/rpc-last.log 并截断。
 待用户：完全退出旧实例→dev.sh 重启→复现→读日志定位。
+
+## 模型列表弹窗优化（2026-10-03，六项）
+
+- 宽度 520→620；列表行字号 12→14px（标签+上下文列+空态）；标题接 i18n
+  （tr("选择模型")，表内已有条目）；过滤占位符入表（过滤模型...）。
+- 统一关闭机制：dialogs.rs 新增 dialog_shell（遮罩 occlude + 点外关闭 +
+  ESC + 居中 + 面板 stop_propagation），ModelSelect/GitDiff/SessionSearch
+  三弹窗全走 shell（GitDiff 此前无点外关闭；SessionSearch 原实现并入）。
+- 行点击=切换模型+关窗；键盘：↑/↓=ComposerUp/Down action 冒泡到 overlay
+  （app 级 Input 上下文覆盖绑定，单行输入无 cursor-up handler 必冒泡），
+  Enter=门面 on_submit；过滤变化重置选中；选中行常亮 bg_selected。
+- Dialog::ModelSelect 加 sel 状态；Chat 增 filtered_models（渲染与键盘共
+  用同一白名单+过滤逻辑）/move_model_sel/apply_model_sel（actions_rename.rs）。
+- 测试 123 全绿零警告。待用户实测。
