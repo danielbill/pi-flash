@@ -68,14 +68,12 @@ impl Chat {
     }
 }
 
-/// pi-web「/」大菜单（ChatInput.tsx slash 菜单 parity）：挂在胶囊正上方，
-/// 头部 = 命令计数 + Tab/Enter 提示，主体 = 滚动区 + 双列卡片网格。
-/// v58：布局从「双独立列」改为行主序 `chunks(2)`——同一行两张卡 stretch
-/// 等宽等高，左右列永远对齐（旧布局两列各自 flex_1，行高随内容漂移）。
-/// 行 = 滚动容器的直接子元素，`menu_scroll.scroll_to_item(行号)` 即按键
-/// 选中时的最小滚动跟随；右缘常显滚动条 = psp_scrollbar 菜单变体。
-/// 卡片 = mono 命令名 13px + 描述 11px 两行截断，选中态 accent 边框 +
-/// bg_selected。
+/// pi-web「/」大菜单：挂在胶囊正上方，头部 = 命令计数 + Tab/Enter 提示，
+/// 主体 = 滚动区 + 单列卡片（v58 用户终裁：双列等宽对齐烦琐，改单行单列，
+/// 一条一行天然等宽）。描述含 \n 硬行——gpui 的 line_clamp 只限软换行，
+/// 硬行全数渲染会撑爆卡片（v58 实测 humanizer 5 行），先拍平成空格再
+/// clamp(2)。内容上对齐；右缘常显滚动条 = psp_scrollbar 菜单变体；卡片
+/// = 滚动容器直接子元素，`menu_scroll.scroll_to_item(menu_ix)` 按键跟随。
 pub(crate) fn slash_menu_view(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -90,16 +88,14 @@ pub(crate) fn slash_menu_view(
         let weak = weak.clone();
         let name = c.insert.clone();
         let display_name = name.strip_prefix("skill:").unwrap_or(&name).to_string();
-        let desc = c.desc.clone();
+        let desc = c.desc.replace('\n', " ");
         div()
             .id(SharedString::from(format!("slash-{ix}")))
-            .flex_1()
-            .min_w_0()
+            .w_full()
             .min_h(px(58.))
             .flex()
             .flex_col()
             .gap(px(4.))
-            .justify_center()
             .px(px(10.))
             .py(px(9.))
             .rounded(px(7.))
@@ -145,22 +141,11 @@ pub(crate) fn slash_menu_view(
             .into_any_element()
     };
 
-    // 行主序：每行两张卡（偶数下标左、奇数右），行内 stretch 等高对齐。
-    // 行必须是滚动容器的「直接子元素」——scroll_to_item 按 child_bounds
-    // 索引，中间再包一层 body 就跟踪不到了
-    let mut rows: Vec<gpui::AnyElement> = Vec::new();
-    for (row_ix, pair) in items.chunks(2).enumerate() {
-        let mut row = div().flex().gap(px(8.)).w_full();
-        for (off, c) in pair.iter().enumerate() {
-            let ix = row_ix * 2 + off;
-            row = row.child(card(ix, c));
-        }
-        if pair.len() == 1 {
-            // 奇数收尾行补空位，保持卡片恒为半宽
-            row = row.child(div().flex_1());
-        }
-        rows.push(row.into_any_element());
-    }
+    let cards: Vec<gpui::AnyElement> = items
+        .iter()
+        .enumerate()
+        .map(|(ix, c)| card(ix, c))
+        .collect();
 
     div()
         .occlude()
@@ -194,7 +179,7 @@ pub(crate) fn slash_menu_view(
         )
         .child(
             // 滚动区包 relative 壳：滚动条贴壳右缘（psp 面板同构），不随
-            // 内容滚走；行直接挂在滚动容器下（scroll_to_item 依赖）
+            // 内容滚走；卡片直接挂在滚动容器下（scroll_to_item 依赖）
             div()
                 .relative()
                 .flex_1()
@@ -221,7 +206,7 @@ pub(crate) fn slash_menu_view(
                             .flex()
                             .flex_col()
                             .gap(px(8.))
-                            .children(rows);
+                            .children(cards);
                     }
                     scroll
                 })

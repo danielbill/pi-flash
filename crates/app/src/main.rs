@@ -49,7 +49,7 @@ pub(crate) use actions_menu::slash_menu_view;
 // composer 覆盖动作（注册为 "Input" 上下文绑定，见 run() 里 bind_keys）：
 // ↑/↓ 在菜单态导航补全、空输入态回溯历史，非空多行重新派发组件 MoveUp/
 // MoveDown；Tab 在菜单态接受补全。组件默认的这些键由此被截获。
-actions!(app, [ComposerUp, ComposerDown, ComposerTab, ComposerLeft, ComposerRight]);
+actions!(app, [ComposerUp, ComposerDown, ComposerTab]);
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
@@ -1450,15 +1450,10 @@ fn main() {
             // gpui_component::init 之后（其绑定含 up/down/tab→组件移动/
             // 缩进）。被截获的键由 composer 的 on_action 处理（菜单导航/
             // 历史回溯/补全接受），非空多行时重新派发 MoveUp/MoveDown。
-            // left/right 用 "ComposerMenu > Input" 谓词（胶囊菜单开时才挂
-            // 该祖先上下文）：与组件 "Input" 同深度，后注册取胜；菜单关闭
-            // 时谓词不匹配，所有输入框左右键光标移动原样保留。
             cx.bind_keys([
                 KeyBinding::new("up", ComposerUp, Some("Input")),
                 KeyBinding::new("down", ComposerDown, Some("Input")),
                 KeyBinding::new("tab", ComposerTab, Some("Input")),
-                KeyBinding::new("left", ComposerLeft, Some("ComposerMenu > Input")),
-                KeyBinding::new("right", ComposerRight, Some("ComposerMenu > Input")),
             ]);
             appearance::sync_gpui_tokens(cx);
             // startup restore (§4)：每次启动默认最大化（位置不持久化——

@@ -22,7 +22,7 @@ use crate::Chat;
 use crate::ComposerInput;
 use crate::PillMenu;
 use crate::MenuKind;
-use crate::{ComposerDown, ComposerLeft, ComposerRight, ComposerTab, ComposerUp};
+use crate::{ComposerDown, ComposerTab, ComposerUp};
 use crate::i18n::tr;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
@@ -89,14 +89,6 @@ pub(crate) fn input_area(
         // 透）。occlude 让胶囊自身 bounds 遮挡先绘制的 hitbox；控件行子
         // 元素后绘制不受影响（occlusion 只作用于更早的 hitbox）。
         .occlude()
-        // 菜单开时挂 ComposerMenu 上下文：全局 left/right 绑定用
-        // "ComposerMenu > Input" 谓词（祖先+焦点组合，深度同 "Input" 打平
-        // 靠后注册取胜），只在菜单开着时劫持左右键——关着时对话框等一切
-        // 其他输入框的光标移动不受影响（up/down 那套无条件覆盖不可用于
-        // 左右键，会把所有输入框的光标移动打成死键）
-        .when(chat.active_menu().is_some(), |d| {
-            d.key_context("ComposerMenu")
-        })
         .flex()
         .flex_col()
         .pt(px(10.))
@@ -205,7 +197,7 @@ pub(crate) fn input_area(
             let items = this.menu_items(cx);
             if this.active_menu().is_some() && !items.is_empty() {
                 this.menu_ix = this.menu_ix.saturating_sub(1);
-                this.menu_scroll.scroll_to_item(this.menu_ix / 2);
+                this.menu_scroll.scroll_to_item(this.menu_ix);
                 cx.notify();
             } else if this.input.is_empty() && !this.history.is_empty() {
                 let ix = match this.history_ix {
@@ -224,7 +216,7 @@ pub(crate) fn input_area(
             let items = this.menu_items(cx);
             if this.active_menu().is_some() && !items.is_empty() {
                 this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
-                this.menu_scroll.scroll_to_item(this.menu_ix / 2);
+                this.menu_scroll.scroll_to_item(this.menu_ix);
                 cx.notify();
             } else if this.input.is_empty() {
                 if let Some(i) = this.history_ix {
@@ -239,35 +231,6 @@ pub(crate) fn input_area(
                 }
             } else {
                 window.dispatch_action(Box::new(gpui_component::input::MoveDown), cx);
-            }
-        }))
-        // 左右键 = 上下键（菜单行主序流：← 上一项 / → 下一项）。绑定仅
-        // 在 ComposerMenu 上下文（菜单开）时命中；这里 stop_propagation
-        // 挡掉绑定链上的组件 MoveLeft/MoveRight（单行下光标会跟着走）
-        .on_action(cx.listener(|this, _: &ComposerLeft, window, cx| {
-            let items = this.menu_items(cx);
-            if this.active_menu().is_some() {
-                if !items.is_empty() {
-                    this.menu_ix = this.menu_ix.saturating_sub(1);
-                    this.menu_scroll.scroll_to_item(this.menu_ix / 2);
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            } else {
-                window.dispatch_action(Box::new(gpui_component::input::MoveLeft), cx);
-            }
-        }))
-        .on_action(cx.listener(|this, _: &ComposerRight, window, cx| {
-            let items = this.menu_items(cx);
-            if this.active_menu().is_some() {
-                if !items.is_empty() {
-                    this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
-                    this.menu_scroll.scroll_to_item(this.menu_ix / 2);
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            } else {
-                window.dispatch_action(Box::new(gpui_component::input::MoveRight), cx);
             }
         }))
         .on_action(cx.listener(|this, _: &ComposerTab, _window, cx| {
