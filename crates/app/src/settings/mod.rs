@@ -125,7 +125,7 @@ pub(crate) fn render_settings(
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::hsla(0., 0., 0., 0.35))
+        .bg(gpui::rgba((t.bg << 8) | 0xcc))
         .track_focus(&chat.dialog_focus)
         .on_key_down({
             let weak = weak_close.clone();

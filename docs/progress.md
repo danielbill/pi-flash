@@ -463,3 +463,12 @@ set_model 臂=用响应 data 直接更新 state.model（pi-link 加 parse_model_
 + 此时再 refresh_state（swap 已落地，thinkingLevel 正确）。鼠标/键盘同
 路径修复。check+123 测试绿；exe 被运行中应用锁定未链接，用户关应用后
 dev.sh 自动重链。
+
+### 弹窗遮罩：灰→应用底色柔雾（2026-10-03）
+
+用户要求弹窗背景不用灰色、用底层界面模糊。实测确认 gpui 0.2.2 渲染层
+（Windows DirectX/Metal）无逐元素 backdrop blur——着色器仅阴影高斯，无
+离屏 pass；真模糊需给双平台渲染器各写 blur pass（大手术，暂不做）。
+落地近似：三处遮罩（dialog_shell/ext_ui/settings）从 35% 黑改为应用
+bg 色 80% 透明（rgba((t.bg<<8)|0xcc)）——底层界面以 20% 幽灵度透出，
+观感为「界面退隐成同色柔雾」而非灰膜；真毛玻璃留作渲染器级后续项。
