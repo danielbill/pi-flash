@@ -91,7 +91,7 @@ pub(crate) fn render_ext_dialog(
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::rgba((t.bg << 8) | 0xcc))
+        .bg(gpui::hsla(0., 0., 0., 0.35))
         .track_focus(&chat.dialog_focus)
         .on_key_down({
             let weak = weak_cancel.clone();

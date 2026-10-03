@@ -15,21 +15,17 @@ use crate::services::format::time_ago;
 use crate::theme;
 use crate::ui::icon_hover;
 
-/// Shared shell for modal dialogs: pass-through-blocking overlay,
+/// Shared shell for modal dialogs: dimmed pass-through-blocking overlay,
 /// click-outside-to-close (unified close mechanism — clicks inside the panel
-/// stop propagation), ESC-to-close, centered panel. Backdrop = the app's own
-/// background at 80% (interface recedes into a soft fog of itself; gpui
-/// 0.2.2 has no per-element backdrop blur, so true frosted glass is not
-/// renderable — see progress.md).
+/// stop propagation), ESC-to-close, centered panel.
 fn dialog_shell(chat: &Chat, weak: &gpui::WeakEntity<Chat>, panel: Div) -> Div {
     let weak_esc = weak.clone();
     let weak_bg = weak.clone();
-    let t = theme::theme();
     div()
         .absolute()
         .inset_0()
         .occlude()
-        .bg(gpui::rgba((t.bg << 8) | 0xcc))
+        .bg(gpui::hsla(0., 0., 0., 0.35))
         .track_focus(&chat.dialog_focus)
         .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
             if ev.keystroke.key == "escape" {
