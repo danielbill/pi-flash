@@ -1388,34 +1388,59 @@ pub(crate) fn render_msg(
         let copy_text = text.clone();
         let edit_text = text.clone();
 
-        // c20: 用户消息内嵌图片（flex wrap、240 上限、蓝边框）
-        let image_block: gpui::AnyElement = {
-            let imgs: Vec<&Block> =
-                m.blocks.iter().filter(|b| matches!(b, Block::Image { .. })).collect();
-            if imgs.is_empty() {
-                div().into_any_element()
-            } else {
-                let mut wrap = div().flex().flex_wrap().gap(px(6.)).mb(px(8.));
-                for b in imgs {
-                    if let Block::Image { mime, data, .. } = b {
-                        if let Some(format) = mime_to_image_format(mime) {
-                            if let Ok(bytes) = decode_image_data(data) {
-                                wrap = wrap.child(
-                                    gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(
-                                        format, bytes,
-                                    )))
-                                    .max_w(px(240.))
-                                    .max_h(px(240.))
+        // v58: 用户消息图片 = 气泡上方独立缩略图行（参考截图 parity，不再
+        // 内嵌气泡）：67×67（composer 56 的 +20%）、间隔 5px、右对齐（随
+        // 行 items_end）、点击开 ImagePreview 大图弹窗
+        let image_row: Option<gpui::AnyElement> = {
+            let mut thumbs: Vec<gpui::AnyElement> = Vec::new();
+            for (bi, b) in m.blocks.iter().enumerate() {
+                if let Block::Image { mime, data, .. } = b {
+                    if let Some(format) = mime_to_image_format(mime) {
+                        if let Ok(bytes) = decode_image_data(data) {
+                            let image =
+                                std::sync::Arc::new(gpui::Image::from_bytes(format, bytes));
+                            let image_for_open = image.clone();
+                            let weak_open = weak.clone();
+                            thumbs.push(
+                                div()
+                                    .id(SharedString::from(format!("uimg-{msg_ix}-{bi}")))
+                                    .size(px(67.))
+                                    .flex_shrink_0()
                                     .rounded(px(6.))
                                     .border_1()
-                                    .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.15))),
-                                );
-                            }
+                                    .border_color(rgb(t.border))
+                                    .bg(rgb(t.bg_panel))
+                                    .overflow_hidden()
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                        let image = image_for_open.clone();
+                                        let _ = weak_open.update(cx, |c, cx| {
+                                            c.dialog =
+                                                Some(crate::Dialog::ImagePreview { image });
+                                            cx.notify();
+                                        });
+                                    })
+                                    .child(
+                                        gpui::img(image)
+                                            .size_full()
+                                            .object_fit(gpui::ObjectFit::Cover),
+                                    )
+                                    .into_any_element(),
+                            );
                         }
                     }
                 }
-                wrap.into_any_element()
             }
+            (!thumbs.is_empty()).then(|| {
+                div()
+                    .w(relative(0.85))
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(5.))
+                    .children(thumbs)
+                    .into_any_element()
+            })
         };
         // c19: 用户内容走 markdown；但 HTML 不渲染、标签原样显示
         // （render_user）——用户消息是发出内容的凭证，气泡吞标签会让
@@ -1583,15 +1608,21 @@ pub(crate) fn render_msg(
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }
-        let row = div()
+        // 纯图片消息（空文本）不渲染空泡；缩略图行在气泡上方
+        let has_text = !text.trim().is_empty();
+        let mut row = div()
             .id(SharedString::from(format!("msgrow-{msg_ix}")))
             .group("usermsg")
             .w_full()
             .flex()
             .flex_col()
             .items_end()
-            .gap(px(3.))
-            .child(
+            .gap(px(3.));
+        if let Some(imgs) = image_row {
+            row = row.child(imgs);
+        }
+        if has_text {
+            row = row.child(
                 div()
                     .max_w(relative(0.85))
                     .flex()
@@ -1619,7 +1650,7 @@ pub(crate) fn render_msg(
                                     .border_1()
                                     .border_color(gpui::rgba(rgba_a(0x3b82f6, 0.2)))
                                     .text_color(rgb(t.text))
-                                    .child(div().flex().flex_col().child(image_block).child(md)),
+                                    .child(div().flex().flex_col().child(md)),
                             )
                             // 滚动条仅在实际溢出限高时渲染（max_offset>0
                             // = 内容超高；未溢出无条）
@@ -1645,8 +1676,9 @@ pub(crate) fn render_msg(
                                 }),
                             ),
                     ),
-            )
-            .child(bottom);
+            );
+        }
+        row = row.child(bottom);
         col = col.child(row);
     } else {
         // 单条 assistant（仅当它不构成轮头时才会走到这里——session_list

@@ -154,6 +154,10 @@ pub(crate) fn input_area(
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                // X 与图片盒的 hitbox 都含点击点（X 叠在其角
+                                // 上），且二者非祖先——不拦截会继续派发到图
+                                // 片盒的"开大图"handler（实测删除前弹预览）
+                                cx.stop_propagation();
                                 let _ = weak_i.update(cx, |c, cx| {
                                     if i < c.pending_images.len() {
                                         c.pending_images.remove(i);
