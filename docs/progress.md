@@ -448,3 +448,18 @@ dialog=None 把正在派发的两个实体 drop 掉。修=两个回调内改走 
 事件必达 overlay）。on_submit 路径保留（双触发被 dialog=None 早退守卫）。
 apply_model_sel 加 debug eprintln 探针（sel/pick/session），dev.sh 控制台
 可见；若再失效一轮定位。123 测试全绿零警告。
+
+### 修复：模型切换滞后一拍（同日续，实测定位）
+
+用户报：点击模型标签不更新、下次点击才换成上一个；误判标签短名/思考
+off 为 bug（短名=预期行为用户确认；off=pi 真实状态，gpt-4.1 非推理模型，
+pi-web 同样显示，切回推理模型自动恢复 high）。
+实测（ghzw cwd 真 1.0 进程）：set_model 后立刻 get_state 回的是**旧模型**
+（swap 异步，set_model 响应最后到）；set_model 响应 data 里带切换后的
+完整模型对象；响应到达后 state 即新值，thinkingLevel 同步（gpt-4.1=off，
+deepseek-flash 恢复 high=按模型记忆）。
+修：select_model 去掉立刻 refresh_state（必拿旧值）；响应处理新增
+set_model 臂=用响应 data 直接更新 state.model（pi-link 加 parse_model_info）
++ 此时再 refresh_state（swap 已落地，thinkingLevel 正确）。鼠标/键盘同
+路径修复。check+123 测试绿；exe 被运行中应用锁定未链接，用户关应用后
+dev.sh 自动重链。

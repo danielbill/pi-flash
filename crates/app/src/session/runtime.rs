@@ -338,6 +338,19 @@ impl SessionRuntime {
                         self.available_models =
                             pi_link::protocol::parse_model_list(data);
                     }
+                } else if command == "set_model" && success {
+                    // pi 1.0 swaps the model asynchronously — a get_state sent
+                    // right after the command still reports the PREVIOUS model
+                    // (measured), which made the pill lag one click behind.
+                    // The set_model response carries the swapped model: apply
+                    // it immediately, then re-sync state (thinking level now
+                    // reflects the new model, e.g. "off" for non-reasoning).
+                    if let Some(data) = &data {
+                        if let Some(st) = self.state.as_mut() {
+                            st.model = pi_link::protocol::parse_model_info(data);
+                        }
+                    }
+                    self.refresh_state();
                 } else if command == "get_tree" && success {
                     if let Some(data) = &data {
                         let (tree, leaf) = parse_tree(data);
@@ -1180,7 +1193,10 @@ impl SessionRuntime {
         if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::SetModel { provider, model: id });
         }
-        self.refresh_state();
+        // no immediate refresh_state here: pi 1.0 completes the swap
+        // asynchronously, so an eager get_state reports the PREVIOUS model —
+        // the label updates from the set_model response instead (see the
+        // set_model response arm)
         cx.notify();
     }
 

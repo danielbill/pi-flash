@@ -504,6 +504,12 @@ pub fn parse_model_list(data: &Value) -> Vec<ModelInfo> {
         .unwrap_or_default()
 }
 
+/// Parse a single model object (the `set_model` response carries the
+/// swapped-in model).
+pub fn parse_model_info(v: &Value) -> Option<ModelInfo> {
+    ModelInfo::parse(v)
+}
+
 /// A node of the session branch tree (`get_tree` response).
 /// Mirrors pi's SessionTreeNode: entry identity + role/text for message
 /// entries, plus recursive children. Text is truncated to 80 chars because
