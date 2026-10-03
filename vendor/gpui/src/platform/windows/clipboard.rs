@@ -12,7 +12,7 @@ use windows::Win32::{
             RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-        Ole::{CF_HDROP, CF_UNICODETEXT},
+        Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT},
     },
     UI::Shell::{DragQueryFileW, HDROP},
 };
@@ -45,6 +45,10 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
+    // pi-flash: 截图/聊天工具普遍只放 DIB（无 "PNG" 注册格式），缺席时
+    // read_from_clipboard 对截图返回 None——粘贴图片整链路静默失效
+    formats_map.insert(CF_DIB.0 as u32, ClipboardFormatType::Image);
+    formats_map.insert(CF_DIBV5.0 as u32, ClipboardFormatType::Image);
     formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
     formats_map
 });
@@ -55,6 +59,8 @@ static FORMATS_SET: LazyLock<FxHashSet<u32>> = LazyLock::new(|| {
     formats_map.insert(*CLIPBOARD_GIF_FORMAT);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT);
+    formats_map.insert(CF_DIB.0 as u32);
+    formats_map.insert(CF_DIBV5.0 as u32);
     formats_map.insert(CF_HDROP.0 as u32);
     formats_map
 });
@@ -327,8 +333,64 @@ fn read_metadata_from_clipboard() -> Option<String> {
 }
 
 fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
-    let image_format = format_number_to_image_format(format)?;
-    read_image_for_type(format, *image_format)
+    match format_number_to_image_format(format) {
+        Some(image_format) => read_image_for_type(format, *image_format),
+        // pi-flash: CF_DIB/CF_DIBV5 无注册格式名——DIB 拼 BITMAPFILEHEADER
+        // 成完整 BMP，再归一为 PNG（附件 mime/缩略图解码两端都干净）
+        None => read_dib_from_clipboard(format),
+    }
+}
+
+fn read_dib_from_clipboard(format: u32) -> Option<ClipboardEntry> {
+    let dib = with_clipboard_data(format, |data_ptr, size| {
+        unsafe { std::slice::from_raw_parts(data_ptr as *mut u8 as _, size) }.to_vec()
+    })?;
+    let bmp = dib_to_bmp_bytes(&dib)?;
+    let png = convert_image_to_png_format(&bmp, ImageFormat::Bmp).ok()?;
+    Some(ClipboardEntry::Image(Image {
+        format: ImageFormat::Png,
+        id: hash(&png),
+        bytes: png,
+    }))
+}
+
+/// CF_DIB/CF_DIBV5 → BMP 文件字节：前拼 14 字节 BITMAPFILEHEADER。仅支持
+/// 现代 info header（40/108/124，16 位 core header 12 不处理——实际剪贴板
+/// 截图均为前者）。
+fn dib_to_bmp_bytes(dib: &[u8]) -> Option<Vec<u8>> {
+    if dib.len() < 40 {
+        return None;
+    }
+    let header_size = u32::from_le_bytes(dib[0..4].try_into().ok()?) as usize;
+    if header_size < 40 || dib.len() < header_size {
+        return None;
+    }
+    let bit_count = u16::from_le_bytes(dib[14..16].try_into().ok()?) as usize;
+    let compression = u32::from_le_bytes(dib[16..20].try_into().ok()?);
+    let clr_used = u32::from_le_bytes(dib[32..36].try_into().ok()?) as usize;
+    // 调色板/掩码区大小：biClrUsed 优先；≤8bpp 全表；BI_BITFIELDS(3) 且
+    // 旧 40 字节 header 时 3 个掩码跟在 header 后（V4/V5 header 内嵌不加）
+    let table_len = if clr_used > 0 {
+        clr_used * 4
+    } else if bit_count <= 8 {
+        (1usize << bit_count) * 4
+    } else if compression == 3 && header_size == 40 {
+        12
+    } else {
+        0
+    };
+    if dib.len() < header_size + table_len {
+        return None;
+    }
+    let pixel_offset = (14 + header_size + table_len) as u32;
+    let file_size = (14 + dib.len()) as u32;
+    let mut out = Vec::with_capacity(14 + dib.len());
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&file_size.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    out.extend_from_slice(&pixel_offset.to_le_bytes());
+    out.extend_from_slice(dib);
+    Some(out)
 }
 
 #[inline]
