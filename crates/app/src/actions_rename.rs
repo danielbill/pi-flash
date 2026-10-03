@@ -124,6 +124,8 @@ impl Chat {
             _ => return,
         };
         let pick = self.filtered_models(cx).get(sel).map(|m| (m.provider.clone(), m.id.clone()));
+        #[cfg(debug_assertions)]
+        eprintln!("[model-picker] apply sel={sel} pick={pick:?} session={}", self.rt().read(cx).agent.session.is_some());
         if let Some((provider, id)) = pick {
             self.rt().update(cx, |r, cx| r.select_model(provider, id, cx));
         }

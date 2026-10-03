@@ -435,3 +435,16 @@ InputState）被派发链租用期间同步 weak.update(Chat)，apply_model_sel 
 dialog=None 把正在派发的两个实体 drop 掉。修=两个回调内改走 cx.defer
 （App::defer，派发周期结束后再执行；composer 事故同款解法）。on_change
 只改 sel 不 drop 实体，维持同步。123 测试全绿零警告。
+
+### 修复：Enter 选模型无反应（同日续）
+
+上一轮 defer 修了崩溃但 Enter 仍不切模型。复盘链路：ESC 好使走的是门面
+渲染 div 的 on_key_down 冒泡（text_input.rs:265），不经过 InputEvent 订
+阅——所以「ESC 正常」证明不了订阅链路。Enter 原设计走 PressEnter 订阅
+→on_submit→defer，实测未生效（具体断点未定位，疑似订阅/emit 时机）。
+改法=Enter 接到已被验证的层：模型弹窗 overlay 上加 on_key_down("enter")
+→stop_propagation+defer apply_model_sel（与 ESC/箭头同层；gpui 派发顺
+序=action 先、key_down 后，InputState::enter 单行模式显式 propagate，
+事件必达 overlay）。on_submit 路径保留（双触发被 dialog=None 早退守卫）。
+apply_model_sel 加 debug eprintln 探针（sel/pick/session），dev.sh 控制台
+可见；若再失效一轮定位。123 测试全绿零警告。

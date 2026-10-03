@@ -181,12 +181,28 @@ fn render_model_select(chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input:
                     )
                     .child(filter_input.clone())
                     .child(list_panel);
-                // ↑/↓ reach the picker as ComposerUp/ComposerDown actions: the
-                // app rebinds "up"/"down" on the input context and single-line
-                // inputs register no cursor-up/down handler, so the actions
-                // bubble up to this overlay. Enter comes through the filter
-                // input's on_submit hook (see model_select_dialog).
+                // Enter: caught at the overlay as a bubbled key event — the
+                // same layer the ESC and ↑/↓ handling lives on (all three
+                // proven paths; the filter input's PressEnter subscription
+                // chain did not fire reliably). InputState::enter propagates
+                // the keystroke in single-line mode, so the event reaches
+                // this handler.
                 dialog_shell(chat, weak, panel)
+                    .on_key_down({
+                        let weak = weak.clone();
+                        move |ev: &KeyDownEvent, _w, cx| {
+                            if ev.keystroke.key != "enter" {
+                                return;
+                            }
+                            cx.stop_propagation();
+                            // applying drops the dispatching entities
+                            // (dialog = None) — defer out of the dispatch
+                            let weak = weak.clone();
+                            cx.defer(move |cx| {
+                                let _ = weak.update(cx, |c, cx| c.apply_model_sel(cx));
+                            });
+                        }
+                    })
                     .on_action({
                         let weak = weak.clone();
                         move |_: &ComposerUp, _w, cx| {
