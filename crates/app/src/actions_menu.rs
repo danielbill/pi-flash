@@ -69,11 +69,11 @@ impl Chat {
 }
 
 /// pi-web「/」大菜单：挂在胶囊正上方，头部 = 命令计数 + Tab/Enter 提示，
-/// 主体 = 滚动区 + 单列卡片（v58 用户终裁：双列等宽对齐烦琐，改单行单列，
-/// 一条一行天然等宽）。描述含 \n 硬行——gpui 的 line_clamp 只限软换行，
-/// 硬行全数渲染会撑爆卡片（v58 实测 humanizer 5 行），先拍平成空格再
-/// clamp(2)。内容上对齐；右缘常显滚动条 = psp_scrollbar 菜单变体；卡片
-/// = 滚动容器直接子元素，`menu_scroll.scroll_to_item(menu_ix)` 按键跟随。
+/// 主体 = 滚动区 + 单列单行条目（v58 用户终裁：命令名 + 描述同行，描述
+/// 超出右缘省略号截断，不占第二行）。desc 含 \n 硬行先拍平成空格（gpui
+/// line_clamp 只限软换行）。滚动区右侧留白比左侧多 4px 给滚动条让位；
+/// 滚动条贴壳右缘（right 0）。条目 = 滚动容器直接子元素，
+/// `menu_scroll.scroll_to_item(menu_ix)` 按键跟随。
 pub(crate) fn slash_menu_view(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -92,12 +92,11 @@ pub(crate) fn slash_menu_view(
         div()
             .id(SharedString::from(format!("slash-{ix}")))
             .w_full()
-            .min_h(px(58.))
             .flex()
-            .flex_col()
-            .gap(px(4.))
+            .items_center()
+            .gap(px(8.))
             .px(px(10.))
-            .py(px(9.))
+            .py(px(8.))
             .rounded(px(7.))
             .border_1()
             .border_color(rgb(if active { t.accent } else { t.border }))
@@ -113,31 +112,32 @@ pub(crate) fn slash_menu_view(
                     }
                 });
             })
+            .child(crate::ui::icon(
+                if name.starts_with("skill:") { "wand" } else { "terminal" },
+                13.,
+                if active { t.accent } else { t.text_dim },
+            ))
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(crate::ui::icon(
-                        if name.starts_with("skill:") { "wand" } else { "terminal" },
-                        13.,
-                        if active { t.accent } else { t.text_dim },
-                    ))
-                    .child(
-                        div()
-                            .font_family("Consolas")
-                            .text_size(px(13.))
-                            .text_color(rgb(t.text))
-                            .child(SharedString::from(display_name)),
-                    ),
+                    .font_family("Consolas")
+                    .text_size(px(13.))
+                    .text_color(rgb(t.text))
+                    .whitespace_nowrap()
+                    .child(SharedString::from(display_name)),
             )
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .line_clamp(2)
-                    .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(desc)),
-            )
+            .when(!desc.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(11.))
+                        .text_color(rgb(t.text_dim))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(SharedString::from(desc)),
+                )
+            })
             .into_any_element()
     };
 
@@ -193,7 +193,11 @@ pub(crate) fn slash_menu_view(
                         .min_h_0()
                         .overflow_y_scroll()
                         .track_scroll(&chat.menu_scroll)
-                        .p(px(10.));
+                        // 右侧比左侧多 4px：给滚动条让位（用户定稿）
+                        .pt(px(10.))
+                        .pb(px(10.))
+                        .pl(px(10.))
+                        .pr(px(14.));
                     if n == 0 {
                         scroll = scroll.child(
                             div()
@@ -216,7 +220,7 @@ pub(crate) fn slash_menu_view(
                             .absolute()
                             .top(px(2.))
                             .bottom(px(2.))
-                            .right(px(2.))
+                            .right(px(0.))
                             .w(px(10.))
                             .child(crate::ui::psp_scrollbar::menu_scrollbar(
                                 &chat.menu_scroll,
