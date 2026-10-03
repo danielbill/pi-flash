@@ -33,11 +33,11 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
     let mut cmd = StdCommand::new(node);
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
-    // -ne (no extensions): ~/.pi/agent extensions may target a NEWER pi than
-    // the vendored pin (real case: system pi 1.0's auto-router.ts uses
-    // pi.registerVirtualModel — 0.87.1 exits fatal on load, killing the whole
-    // RPC). Vendored pin = self-contained distribution; extensions belong to
-    // the host's own pi, not ours. (pi 0.87 hint: "pi -ne")
+    // -ne (no extensions): vendored pin = self-contained distribution;
+    // extensions belong to the host's own ~/.pi/agent (written against
+    // whatever pi the host happens to run) and can crash OUR pin (real
+    // case: system pi 1.0's auto-router.ts fatals a 0.87.1 RPC). Keep the
+    // isolation even when pins coincide. (pi hint: "pi -ne")
     cmd.arg(&cli)
         .args(["-ne", "--mode", "rpc"])
         .args(extra_args)

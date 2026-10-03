@@ -372,3 +372,27 @@ ego-tree 0.11 把 Node 私有化，公共类型=NodeRef<'a,T>（scraper 不 re-e
 
 与 pi-web 的既定偏差新增：用户气泡不渲染 HTML（pi-web 渲染）。
 测试 118 全绿（app 66 + pi-link 52）。
+
+## vendor pi 0.87.1 → 1.0.0（2026-10-03）
+
+背景：用户报「系统 pi 升 1.0 后应用启动找不到 model 列表」。诊断结论：
+
+- vendored 0.87.1 的 RPC 链路实测**并未断**（live_rpc_probe 在仓库 cwd 与
+  pi-web cwd 均返回 450+ 模型，~/.pi/agent 被 1.0 迁移后 0.87.1 也能读）；
+  故障应为 1.0 迁移配置期间的瞬态，或来自系统 pi 的测试路径。
+- npm 上 1.x 仅 1.0.0（=latest=用户系统版本），无版本选择问题。
+
+升级动作（调用方式维持 RPC，不引入 SDK——RPC 是官方进程边界、可用
+pi-link 测试钉住；SDK 需嵌 Node 宿主、耦合 pi 内部 API，已论证否决）：
+
+- vendor/pi：package.json + lock 0.87.1→1.0.0，npm install；VERSION 同步；
+  crates/pi-link PI_VENDOR_VERSION 同步。vendored 与系统 1.0.0 chunks 逐字节一致。
+- 协议面核对：Command 枚举全部命令名（abort/compact/steer/follow_up/
+  get_available_models/set_model/get_tree/…）逐一 grep 1.0 bundle 全部在；
+  「toolcall」仅是 protocol.rs 防御别名，wire 上是 toolCall（camelCase，在）。
+- 实机探针（1.0.0 + -ne）：get_state/get_available_models/get_commands 三连
+  success；模型列表结构与 0.87 同形（data.models 数组），447 个解析成功。
+- `-ne` 维持：钉版分发自包含原则不变，注释更新为隔离原则表述（不再依赖
+  版本错位这个具体案例）。
+- 测试 123 全绿（app 71 + pi-link 52，fixtures 为 0.87.1 真实报文，1.0.0
+  下照样通过=wire 兼容）。待用户启动实测模型列表/会话/工具调用。
