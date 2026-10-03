@@ -16,7 +16,7 @@
 
 use std::rc::Rc;
 
-use gpui::{Context, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{AnimationExt, Context, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::ComposerInput;
@@ -31,31 +31,94 @@ use crate::ui::{icon, icon_hover};
 /// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）
 const BAR_FONT: f32 = 15.;
 
-/// 上下文用量详情弹层（ctx-ring 点击；pi-web session-info-popover 简化——
-/// 只保留用量部分：上下文比例 / token 分项 / 费用 / 缓存命中率）。复用
-/// pill 弹层机制：全窗 occlude + 透明背板点击关闭，面板锚在环上方。
-pub(crate) fn context_usage_overlay(
-    stats: Option<pi_link::protocol::SessionStats>,
-    anchor: Option<gpui::Point<gpui::Pixels>>,
-    window: &mut gpui::Window,
-    t: &'static crate::theme::Theme,
-    weak: gpui::WeakEntity<Chat>,
-) -> gpui::AnyElement {
-    let vp = window.viewport_size();
-    let menu_w = px(300.);
-    let gap = px(6.);
-    let (anchor_bottom, anchor_left) = match anchor {
-        Some(p) => {
-            let bottom = (vp.height - p.y + gap).max(px(8.));
-            // 面板水平居中于环，两侧夹在视口内
-            let mut left = p.x - menu_w / 2.;
-            if left + menu_w > vp.width - px(8.) {
-                left = vp.width - menu_w - px(8.);
-            }
-            (bottom, left.max(px(8.)))
+/// 悬停标志更新 + 淡出状态机（乱序免疫）：只按 (was_open, open) 转移，
+/// 环→面板交接时两个 hover 事件无论先后都收敛到正确状态。双面全空才
+/// 开始淡出（200ms 定时器到期清除，守卫时刻戳防旧定时器误杀新一轮）。
+fn ctx_tip_hover(
+    chat: &mut Chat,
+    ring: bool,
+    entered: bool,
+    cx: &mut Context<Chat>,
+) {
+    let was_open = chat.ctx_tip_ring_hover || chat.ctx_tip_panel_hover;
+    if ring {
+        chat.ctx_tip_ring_hover = entered;
+    } else {
+        chat.ctx_tip_panel_hover = entered;
+    }
+    let open = chat.ctx_tip_ring_hover || chat.ctx_tip_panel_hover;
+    match (was_open, open) {
+        (false, true) => {
+            chat.ctx_tip_closing = None;
+            cx.notify();
         }
-        None => (px(64.), vp.width - menu_w - px(24.)),
+        (true, false) => {
+            let t = std::time::Instant::now();
+            chat.ctx_tip_closing = Some(t);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let _ = this.update(cx, |c, cx| {
+                    if c.ctx_tip_closing == Some(t) {
+                        c.ctx_tip_closing = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+            cx.notify();
+        }
+        _ => {}
+    }
+}
+
+/// 悬浮详情浮层（挂在 ctx-ring 容器内，absolute 越界浮在聊天区上）：
+/// Open 常显；Closing 包一层 160ms 透明度淡出，定时器随后卸载。wrapper
+/// 下方 12px 隐形尾迹压住环顶 2px，环→面板悬停交接无死区。
+fn ctx_tip_element(
+    chat: &mut Chat,
+    t: &'static crate::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> Option<gpui::AnyElement> {
+    let visible =
+        chat.ctx_tip_ring_hover || chat.ctx_tip_panel_hover || chat.ctx_tip_closing.is_some();
+    if !visible {
+        return None;
+    }
+    let stats = chat.rt().read(cx).stats.clone();
+    let closing = chat.ctx_tip_closing.is_some();
+    let wrap = div()
+        .id("ctx-tip")
+        .absolute()
+        .bottom(px(24.)) // 环命中区 26px，压顶 2px 防接缝死区
+        .right(px(0.))
+        .w(px(320.))
+        .pb(px(12.))
+        .flex()
+        .flex_col()
+        .on_hover(cx.listener(|this, h: &bool, _w, cx| ctx_tip_hover(this, false, *h, cx)))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(ctx_usage_panel(stats, t));
+    let el = if closing {
+        wrap.with_animation(
+            "ctx-tip-out",
+            gpui::Animation::new(std::time::Duration::from_millis(160)),
+            |el, delta| el.opacity(1. - delta),
+        )
+        .into_any_element()
+    } else {
+        wrap.into_any_element()
     };
+    Some(el)
+}
+
+/// 用量详情面板本体（pi-web session-info-popover 简化版——上下文比例 /
+/// token 分项 / 费用 / 缓存命中率）。
+fn ctx_usage_panel(
+    stats: Option<pi_link::protocol::SessionStats>,
+    t: &'static crate::theme::Theme,
+) -> gpui::Div {
     let compact = |n: u64| -> String {
         if n >= 1_000_000 {
             format!("{:.1}M", n as f64 / 1_000_000.)
@@ -71,14 +134,14 @@ pub(crate) fn context_usage_overlay(
             .items_center()
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(14.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(label.to_string())),
             )
             .child(
                 div()
                     .ml_auto()
-                    .text_size(px(12.))
+                    .text_size(px(14.))
                     .font_family("Consolas")
                     .text_color(rgb(t.text))
                     .child(SharedString::from(value)),
@@ -92,7 +155,7 @@ pub(crate) fn context_usage_overlay(
             .gap(px(6.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(12.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(title.to_string())),
@@ -104,7 +167,7 @@ pub(crate) fn context_usage_overlay(
     let body: Vec<gpui::AnyElement> = match stats {
         None => vec![
             div()
-                .text_size(px(12.))
+                .text_size(px(14.))
                 .text_color(rgb(t.text_muted))
                 .child(tr("会话尚未产生用量。"))
                 .into_any_element(),
@@ -147,41 +210,16 @@ pub(crate) fn context_usage_overlay(
     };
 
     div()
-        .absolute()
-        .inset_0()
-        .occlude()
-        .child(
-            // 透明背板：点任意处关闭（与 Thinking/Tools 弹层同机制）
-            div()
-                .size_full()
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        if c.pill_menu.is_some() {
-                            c.pill_menu = None;
-                            cx.notify();
-                        }
-                    });
-                }),
-        )
-        .child(
-            div()
-                .absolute()
-                .bottom(anchor_bottom)
-                .left(anchor_left)
-                .w(menu_w)
-                .rounded(px(8.))
-                .border_1()
-                .border_color(rgb(t.border))
-                .bg(rgb(t.bg))
-                .shadow_lg()
-                .p(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .children(body),
-        )
-        .into_any_element()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .bg(rgb(t.bg))
+        .shadow_lg()
+        .p(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .children(body)
 }
 
 pub(crate) fn input_area(
@@ -640,27 +678,20 @@ fn composer_bar(
         );
     // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 10px；操作栏左右
     // padding 10px = 发送钮距胶囊边框 10px
+    let ctx_tip = ctx_tip_element(chat, t, cx);
     let mut right = div().ml_auto().flex().items_center().gap(px(10.)).child(
         // 上下文用量环：track 在下、实际比例的主题色弧在上（弧 SVG 按百分比
-        // 运行时生成，icons/ring-p{1-99}；100% 走静态 ring-100）。点击弹
-        // 用量详情（PillMenu::Context，pi-web session 面板简化版）
+        // 运行时生成，icons/ring-p{1-99}；100% 走静态 ring-100）。悬浮显示
+        // 用量详情，挪开淡出（ctx_tip_* 状态机）
         div()
             .id("ctx-ring")
+            .relative()
             .p(px(4.))
             .m(px(-4.)) // 命中区扩到 26px，视觉位置不变
             .cursor_pointer()
             .rounded_full()
             .hover(|s| s.bg(rgb(t.bg_hover)))
-            .on_mouse_down(MouseButton::Left, cx.listener(
-                |this, event: &gpui::MouseDownEvent, _w, cx| {
-                    this.pill_anchor = Some(event.position);
-                    this.pill_menu = match this.pill_menu {
-                        Some(PillMenu::Context) => None,
-                        _ => Some(PillMenu::Context),
-                    };
-                    cx.notify();
-                },
-            ))
+            .on_hover(cx.listener(|this, h: &bool, _w, cx| ctx_tip_hover(this, true, *h, cx)))
             .child(
                 // 同心双环：track 在下、进度弧在上（svg 是 flex 行内子元素
                 // 会并排——必须各自绝对定位铺满后居中才叠成同心）
@@ -694,7 +725,9 @@ fn composer_bar(
                                     .text_color(rgb(t.accent))
                                     .size(px(18.)),
                             )
-                    })),
+                    }))
+                    // 悬浮详情浮层（absolute 越界，浮层随 hover/淡出态挂载）
+                    .children(ctx_tip),
             ),
     );
     // 模型 ∨

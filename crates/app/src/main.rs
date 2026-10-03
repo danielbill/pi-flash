@@ -231,6 +231,11 @@ struct Chat {
     /// window-coords of the pill that opened the menu — the popup anchors
     /// above THIS pill instead of a fixed window corner (v57 错位修复)
     pill_anchor: Option<gpui::Point<gpui::Pixels>>,
+    /// ctx-ring 悬浮详情（v58 响应式）：环/面板两面悬停标志 + 淡出起始
+    /// 时刻（input.rs ctx_tip_hover 状态机持有）
+    ctx_tip_ring_hover: bool,
+    ctx_tip_panel_hover: bool,
+    ctx_tip_closing: Option<std::time::Instant>,
     // git panel
     git_files: Vec<GitFile>,
     git_add_del: (u64, u64),
@@ -313,8 +318,6 @@ struct Chat {
 enum PillMenu {
     Thinking,
     Tools,
-    /// ctx-ring 点击：上下文用量详情（session::input::context_usage_overlay）
-    Context,
 }
 
 /// One content-area tab: a terminal session or a file viewer.
@@ -437,6 +440,9 @@ impl Chat {
             input_focused: false,
             pill_menu: None,
             pill_anchor: None,
+            ctx_tip_ring_hover: false,
+            ctx_tip_panel_hover: false,
+            ctx_tip_closing: None,
             sound_on: load_sound_pref(),
             settings: None,
             renaming: None,
@@ -1095,18 +1101,6 @@ impl Render for Chat {
         };
         let pill_menu_el = self.pill_menu.map(|menu| {
             let weak_menu = weak.clone();
-            // 上下文用量详情：面板体与 rows 不同构，走专用构造器（同一
-            // occlude 背板 + 锚点机制）
-            if menu == PillMenu::Context {
-                let stats = self.rt().read(cx).stats.clone();
-                return crate::session::input::context_usage_overlay(
-                    stats,
-                    self.pill_anchor,
-                    window,
-                    t,
-                    weak_menu,
-                );
-            }
             let rows: Vec<(String, String, bool)> = match menu {
                 PillMenu::Thinking => [
                     ("auto", tr("使用 pi 默认设置"), thinking_override.is_none()),
@@ -1127,8 +1121,6 @@ impl Render for Chat {
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
                 .collect(),
-                // Context 在上方 early-return，此处仅为穷尽性
-                PillMenu::Context => Vec::new(),
             };
             let is_thinking = menu == PillMenu::Thinking;
             let items = rows
