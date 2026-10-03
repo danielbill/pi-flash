@@ -22,7 +22,7 @@ use crate::Chat;
 use crate::ComposerInput;
 use crate::PillMenu;
 use crate::MenuKind;
-use crate::{ComposerDown, ComposerTab, ComposerUp};
+use crate::{ComposerDown, ComposerTab, ComposerUp, ComposerPaste};
 use crate::i18n::tr;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
@@ -93,35 +93,64 @@ pub(crate) fn input_area(
         .flex_col()
         .pt(px(10.))
         .pb(px(12.)); // 操作栏到下边框的距离
-    // 附加图片 chips
+    // 附加图片缩略图（v58 图片粘贴）：56×56 圆角方块，panel 左上角并列、
+    // 间隔 5px；右上角悬浮 16px 圆形 X 点击删除（pi-web ImagePreview 布局
+    // parity：X 偏移 -4,-4 半嵌在缩略图角上）
     if !chat.pending_images.is_empty() {
-        let rows: Vec<gpui::AnyElement> = chat
+        let thumbs: Vec<gpui::AnyElement> = chat
             .pending_images
             .iter()
             .enumerate()
             .map(|(i, img)| {
                 let weak_i = weak.clone();
-                let name: SharedString = img.name.clone().into();
+                let thumb = img.thumb.clone();
                 div()
-                    .id(SharedString::from(format!("img-{i}")))
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .bg(rgb(t.bg_panel))
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .text_xs()
-                    .text_color(rgb(t.text_muted))
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let _ = weak_i.update(cx, |c, cx| {
-                            if i < c.pending_images.len() {
-                                c.pending_images.remove(i);
-                            }
-                            cx.notify();
-                        });
-                    })
-                    .child(SharedString::from(format!("\u{1f5bc} {name} \u{00d7}")))
+                    .id(SharedString::from(format!("img-thumb-{i}")))
+                    .relative()
+                    .size(px(56.))
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .size_full()
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.bg_panel))
+                            .overflow_hidden()
+                            .child(match thumb {
+                                Some(image) => gpui::img(image)
+                                    .size_full()
+                                    .object_fit(gpui::ObjectFit::Cover)
+                                    .into_any_element(),
+                                None => div().into_any_element(),
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("img-del-{i}")))
+                            .absolute()
+                            .top(px(-4.))
+                            .right(px(-4.))
+                            .size(px(16.))
+                            .rounded_full()
+                            .bg(rgb(t.bg_panel))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_i.update(cx, |c, cx| {
+                                    if i < c.pending_images.len() {
+                                        c.pending_images.remove(i);
+                                    }
+                                    cx.notify();
+                                });
+                            })
+                            .child(icon("x", 8., t.text_muted)),
+                    )
                     .into_any_element()
             })
             .collect();
@@ -132,8 +161,8 @@ pub(crate) fn input_area(
                 .px(px(12.))
                 .flex()
                 .flex_wrap()
-                .gap_2()
-                .children(rows),
+                .gap(px(5.))
+                .children(thumbs),
         );
     }
     // 编辑区：真输入组件（多行 AutoGrow，超出 max 出纵向滚动条）
@@ -239,6 +268,13 @@ pub(crate) fn input_area(
                 let ix = this.menu_ix.min(items.len() - 1);
                 let insert = items[ix].insert.clone();
                 this.accept_menu(insert, cx);
+            }
+        }))
+        // Ctrl+V 截获（bind_keys 覆盖组件粘贴绑定）：剪贴板含图 → 附件化；
+        // 否则重派发组件 Paste 走原文本粘贴
+        .on_action(cx.listener(|this, _: &ComposerPaste, window, cx| {
+            if !this.attach_clipboard_image(cx) {
+                window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
             }
         }));
     // 控件行

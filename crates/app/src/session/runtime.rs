@@ -1039,7 +1039,7 @@ impl SessionRuntime {
     /// 引导：中断当前运行并立即注入此消息（rpc steer）。
     pub(crate) fn steer_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.pending_images.is_empty() {
             return;
         }
         let images: Vec<serde_json::Value> = self
@@ -1059,14 +1059,24 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// 后续消息：Agent 完成后排队此消息（rpc follow_up）。
+    /// 后续消息：Agent 完成后排队此消息（rpc follow_up，pi 1.0 原生携带
+    /// images）。
     pub(crate) fn follow_up_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.pending_images.is_empty() {
             return;
         }
+        let images: Vec<serde_json::Value> = self
+            .pending_images
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "type": "image", "data": img.data_b64, "mimeType": img.mime
+                })
+            })
+            .collect();
         if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::FollowUp { message: text });
+            let _ = session.send(&Command::FollowUp { message: text, images });
         }
         self.input.clear();
         self.pending_images.clear();
@@ -1088,7 +1098,8 @@ impl SessionRuntime {
 
     pub(crate) fn send_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
-        if text.is_empty() {
+        // 空文本+图片可发送（pi-web handleSend：!msg && !images 才拦）
+        if text.is_empty() && self.pending_images.is_empty() {
             return;
         }
         let Some(session) = &self.agent.session else {
@@ -1115,7 +1126,9 @@ impl SessionRuntime {
         };
         match session.send(&cmd) {
             Ok(_) => {
-                if self.history.last().map(|h| h != &text).unwrap_or(true) {
+                // 纯图片发送不进历史、不做乐观回显（空文本气泡无内容可显，
+                // 等 RPC 回显带图的完整用户消息）
+                if !text.is_empty() && self.history.last().map(|h| h != &text).unwrap_or(true) {
                     self.history.push(text.clone());
                 }
                 self.history_ix = None;
@@ -1125,7 +1138,7 @@ impl SessionRuntime {
                 // 技能命令不做乐观回显（pi-web parity）：RPC 回显的是展开
                 // 信封文本（渲染层折叠成紧凑命令），乐观插入裸 "/skill:xxx"
                 // 会多出一条重复气泡
-                if !streaming && !text.starts_with("/skill:") {
+                if !streaming && !text.is_empty() && !text.starts_with("/skill:") {
                     // pi-web optimistic append: the sent bubble shows up
                     // immediately, RPC echo later upgrades it in place
                     // pending_echo 只做回显去重；等待行可见性由 phase_waiting 独立控制

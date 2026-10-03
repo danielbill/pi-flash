@@ -48,8 +48,9 @@ pub(crate) use actions_menu::slash_menu_view;
 
 // composer 覆盖动作（注册为 "Input" 上下文绑定，见 run() 里 bind_keys）：
 // ↑/↓ 在菜单态导航补全、空输入态回溯历史，非空多行重新派发组件 MoveUp/
-// MoveDown；Tab 在菜单态接受补全。组件默认的这些键由此被截获。
-actions!(app, [ComposerUp, ComposerDown, ComposerTab]);
+// MoveDown；Tab 在菜单态接受补全；Ctrl+V 截获图片粘贴（composer 附件化，
+// 其余输入框经根节点兜底重派发组件 Paste）。组件默认的这些键由此被截获。
+actions!(app, [ComposerUp, ComposerDown, ComposerTab, ComposerPaste]);
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
@@ -159,9 +160,11 @@ pub(crate) enum PspMenu {
 
 #[derive(Debug, Clone)]
 struct AttachedImage {
-    name: String,
     data_b64: String,
     mime: String,
+    /// 缩略图渲染源（附加时预构建）：img() 按 Image id 缓存解码，避免
+    /// 逐帧重哈希/重解码大图
+    thumb: Option<std::sync::Arc<gpui::Image>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1351,6 +1354,12 @@ impl Render for Chat {
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
             .font_family(crate::appearance::panel_font().family.clone())
+            // ComposerPaste 兜底：焦点在对话框等非 composer 输入框时，ctrl-v
+            // 截获后走到这里——原样重派发组件 Paste，普通文本粘贴不受影响
+            //（composer 胶囊内有更近的 on_action，bubble 最内层先停）
+            .on_action(cx.listener(|_, _: &ComposerPaste, window, cx| {
+                window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+            }))
             .child(body);
 
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
@@ -1454,6 +1463,10 @@ fn main() {
                 KeyBinding::new("up", ComposerUp, Some("Input")),
                 KeyBinding::new("down", ComposerDown, Some("Input")),
                 KeyBinding::new("tab", ComposerTab, Some("Input")),
+                // 图片粘贴：同深度后注册者优先（覆盖组件 ctrl-v→Paste），
+                // composer 内层处理图片附件，其余输入框由根节点兜底重派发
+                KeyBinding::new("ctrl-v", ComposerPaste, Some("Input")),
+                KeyBinding::new("cmd-v", ComposerPaste, Some("Input")),
             ]);
             appearance::sync_gpui_tokens(cx);
             // startup restore (§4)：每次启动默认最大化（位置不持久化——

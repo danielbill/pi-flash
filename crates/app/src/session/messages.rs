@@ -1109,7 +1109,7 @@ fn result_images(
     wrap.into_any_element()
 }
 
-fn mime_to_image_format(mime: &str) -> Option<gpui::ImageFormat> {
+pub(crate) fn mime_to_image_format(mime: &str) -> Option<gpui::ImageFormat> {
     match mime {
         "image/png" => Some(gpui::ImageFormat::Png),
         "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
