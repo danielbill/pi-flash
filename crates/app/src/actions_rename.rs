@@ -51,12 +51,25 @@ impl Chat {
                 });
             }));
             ti.set_on_submit(Box::new(move |_, cx| {
-                let _ = weak_submit.update(cx, |c, cx| c.apply_model_sel(cx));
+                // Enter dispatch happens while the filter input (+ its inner
+                // InputState) is leased by the event chain; apply_model_sel
+                // drops both (dialog = None) — doing that synchronously here
+                // crashed (double-lease, 0xc0000409, same as the composer
+                // incident). Defer until the dispatch cycle has settled.
+                let weak = weak_submit.clone();
+                cx.defer(move |cx| {
+                    let _ = weak.update(cx, |c, cx| c.apply_model_sel(cx));
+                });
             }));
             ti.set_on_escape(Box::new(move |cx| {
-                let _ = weak_esc.update(cx, |c, cx| {
-                    c.dialog = None;
-                    cx.notify();
+                // same dispatch-lease hazard as submit: closing the dialog
+                // drops the dispatching input — defer the dismissal
+                let weak = weak_esc.clone();
+                cx.defer(move |cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.dialog = None;
+                        cx.notify();
+                    });
                 });
             }));
         });

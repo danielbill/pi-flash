@@ -426,3 +426,12 @@ Stdio::null() 丢弃，pi fatal 完全不可见）。落地：pi-link client 支
 - Dialog::ModelSelect 加 sel 状态；Chat 增 filtered_models（渲染与键盘共
   用同一白名单+过滤逻辑）/move_model_sel/apply_model_sel（actions_rename.rs）。
 - 测试 123 全绿零警告。待用户实测。
+
+### 修复：Enter 选模型崩溃（同日）
+
+键盘 ↑↓+Enter 崩 0xc0000409=记忆中的双重租约（事件派发期间同步 update/
+drop 正被派发的实体）：on_submit/on_escape 回调在过滤输入（及其内部
+InputState）被派发链租用期间同步 weak.update(Chat)，apply_model_sel 的
+dialog=None 把正在派发的两个实体 drop 掉。修=两个回调内改走 cx.defer
+（App::defer，派发周期结束后再执行；composer 事故同款解法）。on_change
+只改 sel 不 drop 实体，维持同步。123 测试全绿零警告。
