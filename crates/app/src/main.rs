@@ -80,6 +80,9 @@ enum Dialog {
     ModelSelect { input: gpui::Entity<TextInput>, sel: usize },
     GitDiff { path: PathBuf, patch: String },
     SessionSearch { input: gpui::Entity<TextInput> },
+    /// composer 缩略图点击大图预览：直接持渲染源（Arc 指针拷贝，无索引
+    /// 失效问题）
+    ImagePreview { image: std::sync::Arc<gpui::Image> },
 }
 
 /// functionPanel active view (statusbar 三 tab): mutually exclusive.

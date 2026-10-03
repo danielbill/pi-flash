@@ -1,4 +1,4 @@
-//! Modal dialogs: ModelSelect / GitDiff / SessionSearch
+//! Modal dialogs: ModelSelect / GitDiff / SessionSearch / ImagePreview
 //! (pi-web parity surfaces layered over the app root). Free function over
 //! Chat state; entity split lands in phase E (ARCHITECTURE.md §2).
 
@@ -67,6 +67,9 @@ pub(crate) fn render_dialogs(
             }
             if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
                 root = root.child(render_session_search(chat, weak, input, t, cx));
+            }
+            if let Some(Dialog::ImagePreview { image }) = chat.dialog.as_ref() {
+                root = root.child(render_image_preview(chat, weak, image, t));
             }
     root
 }
@@ -294,6 +297,32 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                         .child(SharedString::from(body)),
                                 );
                 dialog_shell(chat, weak, panel)
+}
+
+
+/// composer 缩略图点击大图预览（v58）：dialog_shell 金标准外壳（点外关闭
+/// /ESC/遮挡），图片居中按 max 限宽高等比缩放（messages.rs 结果图同款，
+/// img 尊重 max 约束）；无头部控件——ESC 或点击弹窗外任意处关闭。
+fn render_image_preview(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    image: &std::sync::Arc<gpui::Image>,
+    t: &theme::Theme,
+) -> Div {
+    let panel = div()
+        .bg(rgb(t.bg_panel))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded_lg()
+        .p_2()
+        .shadow_lg()
+        .child(
+            gpui::img(image.clone())
+                .max_w(px(1040.))
+                .max_h(px(680.))
+                .rounded(px(6.)),
+        );
+    dialog_shell(chat, weak, panel)
 }
 
 

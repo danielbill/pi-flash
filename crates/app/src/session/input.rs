@@ -103,20 +103,32 @@ pub(crate) fn input_area(
             .enumerate()
             .map(|(i, img)| {
                 let weak_i = weak.clone();
+                let weak_open = weak.clone();
                 let thumb = img.thumb.clone();
+                let thumb_for_open = thumb.clone();
                 div()
                     .id(SharedString::from(format!("img-thumb-{i}")))
                     .relative()
                     .size(px(56.))
                     .flex_shrink_0()
                     .child(
+                        // 点击看大图（X 是 sibling 不在祖先链，两 handler 互不误触）
                         div()
+                            .id(SharedString::from(format!("img-view-{i}")))
                             .size_full()
                             .rounded(px(6.))
                             .border_1()
                             .border_color(rgb(t.border))
                             .bg(rgb(t.bg_panel))
                             .overflow_hidden()
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let Some(image) = thumb_for_open.clone() else { return; };
+                                let _ = weak_open.update(cx, |c, cx| {
+                                    c.dialog = Some(crate::Dialog::ImagePreview { image });
+                                    cx.notify();
+                                });
+                            })
                             .child(match thumb {
                                 Some(image) => gpui::img(image)
                                     .size_full()
