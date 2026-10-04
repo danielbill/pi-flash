@@ -86,20 +86,34 @@ fn ctx_tip_element(
     if !visible {
         return None;
     }
-    let stats = chat.rt().read(cx).stats.clone();
+    let (stats, compacting, can_compact) = {
+        let r = chat.rt().read(cx);
+        (r.stats.clone(), r.compacting, r.can_compact())
+    };
     let closing = chat.ctx_tip_closing.is_some();
     let wrap = div()
         .id("ctx-tip")
         .absolute()
         .bottom(px(24.)) // 环命中区 26px，压顶 2px 防接缝死区
-        .right(px(0.))
-        .w(px(320.))
+        // 相对圆环居中：向左/右对称扩张 + flex 居中。手算 left 偏移要跟着
+        // 环的 padding(4)+负 margin(-4) 一起走，对称扩张则天然以环为轴，
+        // 环宽变了也不用改常数。±200 > 320/2 保证面板不被压缩。
+        .left(px(-200.))
+        .right(px(-200.))
         .pb(px(12.))
         .flex()
-        .flex_col()
+        .flex_row()
+        .justify_center()
+        // hover 挂整层：面板与环之间的空档也属于浮层，鼠标横穿不闪断
         .on_hover(cx.listener(|this, h: &bool, _w, cx| ctx_tip_hover(this, false, *h, cx)))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(ctx_usage_panel(stats, t));
+        // mousedown 拦截只挂面板本体（点面板不穿透到消息列表）；空档区域
+        // 无 mousedown handler，点击照常落到下层消息
+        .child(
+            div()
+                .w(px(320.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(ctx_usage_panel(stats, compacting, can_compact, t, cx)),
+        );
     let el = if closing {
         wrap.with_animation(
             "ctx-tip-out",
@@ -120,7 +134,10 @@ fn ctx_tip_element(
 /// token 分项 / 费用 / 缓存命中率）。
 fn ctx_usage_panel(
     stats: Option<pi_link::protocol::SessionStats>,
+    compacting: bool,
+    can_compact: bool,
     t: &'static crate::theme::Theme,
+    cx: &mut Context<Chat>,
 ) -> gpui::Div {
     let row = |label: &str, value: String| -> gpui::AnyElement {
         div()
@@ -136,7 +153,7 @@ fn ctx_usage_panel(
                 div()
                     .ml_auto()
                     .text_size(px(14.))
-                    .font_family("Consolas")
+                    .font_family(crate::markdown::MONO_FAMILY)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(value)),
             )
@@ -203,6 +220,17 @@ fn ctx_usage_panel(
         }
     };
 
+    // 「压 缩」字间插窄空格（gpui 无 letter_spacing，字符串层处理；
+    // 「压缩中…」多字，保持原样不插）
+    let compact_label = {
+        let raw = if compacting { tr("压缩中…") } else { tr("压缩") };
+        let mut cs = raw.chars();
+        match (cs.next(), cs.next(), cs.next()) {
+            (Some(a), Some(b), None) => format!("{a}\u{2009}{b}"),
+            _ => raw.to_string(),
+        }
+    };
+
     div()
         .rounded(px(8.))
         .border_1()
@@ -214,6 +242,41 @@ fn ctx_usage_panel(
         .flex_col()
         .gap(px(12.))
         .children(body)
+        .child(
+            // 底部手动压缩按钮：无门槛（点不点由用户决定），描边按钮
+            // 无常态底色（hover 才出 bg_hover）；固定高 34 + items_center
+            // 保证文字在框内垂直居中。compacting 仅防连点。
+            div()
+                .id("ctx-compact")
+                .h(px(34.))
+                .w_full()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(rgb(t.border))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(14.))
+                .when(can_compact, |s| s.cursor_pointer())
+                .text_color(rgb(if compacting {
+                    t.text_muted
+                } else if can_compact {
+                    t.accent
+                } else {
+                    t.text_faint
+                }))
+                .hover(move |s| if can_compact { s.bg(rgb(t.bg_hover)) } else { s })
+                .on_mouse_down(MouseButton::Left, cx.listener(
+                    |this, _: &gpui::MouseDownEvent, _w, cx| {
+                        // 双重守卫：按钮禁用态之外再查一次 runtime（agent
+                        // 跑动中 compact 会中止当前 turn）
+                        if this.rt().read(cx).can_compact() {
+                            this.rt().update(cx, |r, cx| r.compact(cx));
+                        }
+                    },
+                ))
+                .child(SharedString::from(compact_label)),
+        )
 }
 
 pub(crate) fn input_area(
@@ -225,7 +288,7 @@ pub(crate) fn input_area(
 ) -> gpui::AnyElement {
     let t = T();
     let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
-    let (model_label, thinking_label, tools_label, ctx_pct) = {
+    let (model_label, thinking_label, tools_label, ctx_pct, compacting) = {
         let r = chat.rt().read(cx);
         (
             r.state
@@ -238,17 +301,25 @@ pub(crate) fn input_area(
                 .unwrap_or_else(|| "medium".to_string()),
             r.tool_preset_label(),
             r.stats.as_ref().and_then(|s| s.context_percent),
+            r.compacting,
         )
     };
 
     // 输入组件：惰性创建 + 每帧同步占位/值（set_value 同值跳过）
     let composer = ensure_composer(chat, weak, cx);
-    let ph: SharedString = if streaming {
+    let ph: SharedString = if compacting {
+        // 压缩期间输入锁死（下方 on_change/on_submit 丢弃变更），用
+        // placeholder 文案告知用户系统在做什么
+        tr("上下文压缩中，请稍等……").into()
+    } else if streaming {
         tr("立即引导 / 排队后续消息...").into()
     } else {
         tr("/使用命令，shift回车换行").into()
     };
     composer.update(cx, |f, _| f.set_placeholder(Some(ph)));
+    // 压缩锁：编辑器组件整块不挂载（无焦点/IME/粘贴），显示 placeholder
+    // 样式的压缩提示；草稿保留在 chat.input，解锁即恢复
+    composer.update(cx, |f, fcx| f.set_read_only(compacting, fcx));
     let cur = chat.input.clone();
     composer.update(cx, |f, fcx| f.set_value(cur, fcx));
     let names: Vec<String> =
@@ -480,10 +551,16 @@ pub(crate) fn input_area(
             }
         }));
     // 控件行
+    // 锁定期间强制收起胶囊菜单（工具预设/思考），否则菜单会浮在
+    // 锁定的控件上还能点
+    if compacting && chat.pill_menu.is_some() {
+        chat.pill_menu = None;
+    }
     capsule = capsule.child(composer_bar(
         chat,
         streaming,
         can_queue,
+        compacting,
         &model_label,
         &thinking_label,
         &tools_label,
@@ -495,6 +572,9 @@ pub(crate) fn input_area(
     // 0 高 wrapper：胶囊绝对定位悬浮（聊天消息从胶囊后滚过）；/ 菜单
     // 挂在胶囊正上方（pi-web：bottom 100% + 8px 间隙）
     let slash_open = chat.active_menu() == Some(MenuKind::Slash);
+    // 「回到最新」按钮：不贴底且有消息时，悬浮在输入面板顶部上方 20px
+    let show_scroll_btn = !chat.rt().read(cx).pager.is_at_bottom()
+        && !chat.rt().read(cx).messages.is_empty();
     div()
         .id("composer-wrap")
         .relative()
@@ -507,13 +587,19 @@ pub(crate) fn input_area(
                 .left_0()
                 .right_0()
                 .flex()
-                .justify_center()
+                .flex_col()
+                .items_center()
+                // 按钮与胶囊间距 20px：随输入框增高自动上移，永不叠进面板
+                .gap(px(20.))
+                .when(show_scroll_btn, |d| {
+                    d.child(crate::session::scroll_to_bottom_button(weak, t))
+                })
                 .child(
                     div()
                         .relative()
                         .w(gpui::relative(0.75))
                         .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
-                        .min_w(px(500.))
+                        // 无 min_w：窄窗下跟随 75% 收缩，不溢出窗口边
                         .when(slash_open, |d| {
                             d.child(
                                 div()
@@ -560,6 +646,9 @@ fn ensure_composer(
         }));
         f.set_on_submit(Rc::new(move |v, cx| {
             let _ = weak_submit.update(cx, |chat, cx| {
+                if chat.rt().read(cx).compacting {
+                    return;
+                }
                 // 先落到剥离换行后的 v 再判菜单：组件 enter() 会先插一个
                 // 换行并经 Change 污染 chat.input（含空白使菜单判定失败，
                 // 回车被误当发送）
@@ -610,6 +699,8 @@ fn composer_bar(
     chat: &mut Chat,
     streaming: bool,
     can_queue: bool,
+    // 压缩锁：整行控件禁用（图片/工具预设/模型/思考/发送）
+    locked: bool,
     model_label: &str,
     thinking_label: &str,
     tools_label: &str,
@@ -632,15 +723,20 @@ fn composer_bar(
                 .pl(px(8.)) // 图片与正文首行左对齐：正文=编辑行6+组件12=18，图片=栏10+8=18
                 .flex()
                 .items_center()
-                .text_color(rgb(t.text_muted))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
+                .when(!locked, |d| d.cursor_pointer())
+                .hover(move |s| {
+                    if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
+                })
                 .on_mouse_down(MouseButton::Left, cx.listener(
                     |this, _: &gpui::MouseDownEvent, _w, cx| {
+                        if this.rt().read(cx).compacting {
+                            return;
+                        }
                         this.attach_images(cx);
                     },
                 ))
-                .child(icon_hover("image", 15., t.text_muted)),
+                .child(icon_hover("image", 15., if locked { t.text_faint } else { t.text_muted })),
             )
             .child(
             // 工具预设「默认∨」
@@ -652,11 +748,22 @@ fn composer_bar(
                 .gap(px(5.))
                 .rounded(px(8.))
                 .text_size(px(BAR_FONT))
-                .text_color(rgb(if tools_open { t.accent } else { t.text_muted }))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+                .text_color(rgb(if locked {
+                    t.text_faint
+                } else if tools_open {
+                    t.accent
+                } else {
+                    t.text_muted
+                }))
+                .when(!locked, |d| d.cursor_pointer())
+                .hover(move |s| {
+                    if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
+                })
                 .on_mouse_down(MouseButton::Left, cx.listener(
                     |this, event: &gpui::MouseDownEvent, _w, cx| {
+                        if this.rt().read(cx).compacting {
+                            return;
+                        }
                         this.pill_anchor = Some(event.position);
                         this.pill_menu = match this.pill_menu {
                             Some(PillMenu::Tools) => None,
@@ -734,11 +841,16 @@ fn composer_bar(
             .gap(px(5.))
             .rounded(px(8.))
             .text_size(px(BAR_FONT))
-            .text_color(rgb(t.text_muted))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
+            .when(!locked, |d| d.cursor_pointer())
+            .hover(move |s| {
+                if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
+            })
             .on_mouse_down(MouseButton::Left, cx.listener(
                 |this, _: &gpui::MouseDownEvent, _w, cx| {
+                    if this.rt().read(cx).compacting {
+                        return;
+                    }
                     if this.rt().read(cx).available_models.is_empty() {
                         this.refresh_state(cx);
                     }
@@ -747,7 +859,7 @@ fn composer_bar(
                 },
             ))
             .child(SharedString::from(model_label.to_string()))
-            .child(icon("chevron-down", 10., t.text_dim)),
+            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim })),
     );
     // 思考强度 ∨
     right = right.child(
@@ -759,11 +871,22 @@ fn composer_bar(
             .gap(px(5.))
             .rounded(px(8.))
             .text_size(px(BAR_FONT))
-            .text_color(rgb(if thinking_open { t.accent } else { t.text_muted }))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .text_color(rgb(if locked {
+                t.text_faint
+            } else if thinking_open {
+                t.accent
+            } else {
+                t.text_muted
+            }))
+            .when(!locked, |d| d.cursor_pointer())
+            .hover(move |s| {
+                if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
+            })
             .on_mouse_down(MouseButton::Left, cx.listener(
                 |this, event: &gpui::MouseDownEvent, _w, cx| {
+                    if this.rt().read(cx).compacting {
+                        return;
+                    }
                     this.pill_anchor = Some(event.position);
                     this.pill_menu = match this.pill_menu {
                         Some(PillMenu::Thinking) => None,
@@ -772,9 +895,19 @@ fn composer_bar(
                     cx.notify();
                 },
             ))
-            .child(icon_hover("lightbulb", 13., if thinking_open { t.accent } else { t.text_muted }))
+            .child(icon_hover(
+                "lightbulb",
+                13.,
+                if locked {
+                    t.text_faint
+                } else if thinking_open {
+                    t.accent
+                } else {
+                    t.text_muted
+                },
+            ))
             .child(SharedString::from(thinking_label.to_string()))
-            .child(icon("chevron-down", 10., t.text_dim)),
+            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim })),
     );
     // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
     // 左移 5px、上移 8px
@@ -788,17 +921,23 @@ fn composer_bar(
             .flex()
             .items_center()
             .justify_center()
-            .cursor_pointer()
-            .bg(rgb(if streaming {
+            .when(!locked, |d| d.cursor_pointer())
+            .bg(rgb(if locked {
+                // 压缩锁：恒灰，不给"可点"的暗示
+                t.bg_selected
+            } else if streaming {
                 t.accent // 停止态外圈=主题色（用户定稿，非深色）
             } else if can_queue {
                 t.accent
             } else {
                 t.bg_selected
             }))
-            .hover(|s| s.opacity(0.9))
+            .hover(move |s| if locked { s } else { s.opacity(0.9) })
             .on_mouse_down(MouseButton::Left, cx.listener(
                 |this, _: &gpui::MouseDownEvent, _w, cx| {
+                    if this.rt().read(cx).compacting {
+                        return;
+                    }
                     // 与按钮渲染同源：agent_running（事件驱动），快照
                     // is_streaming 恒 false 会把"停止"点成"发送"
                     if this.rt().read(cx).agent_running {

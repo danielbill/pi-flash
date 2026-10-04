@@ -94,6 +94,7 @@ assets! {
     "icons/folder-tree.svg",
     "icons/clock.svg",
     "icons/arrow-up.svg",
+    "icons/arrow-down.svg",
     "icons/wand.svg",
     "icons/bot.svg",
     "icons/plug.svg",

@@ -611,7 +611,7 @@ impl Chat {
             if let Some(path) = &last_open {
                 r.messages = msgs_from_tail(read_tail_messages(path, 256 * 1024, 100));
                 r.disk_msg_count = pi_link::sessions::count_message_entries(path) as usize;
-                r.list.reset(r.messages.len());
+                r.pager.reload(r.messages.len());
                 r.status = "resuming".into();
             }
             r
@@ -1256,7 +1256,7 @@ impl Render for Chat {
             .on_mouse_move(move |ev: &gpui::MouseMoveEvent, _, cx| {
                 let _ = weak_for_body.update(cx, |c, cx| {
                     if let Some((start_x, start_w)) = c.slp_drag {
-                        c.slp_w = (start_w + f32::from(ev.position.x) - start_x).clamp(250., 500.);
+                        c.slp_w = (start_w + f32::from(ev.position.x) - start_x).clamp(300., 500.);
                         cx.notify();
                     }
                 });
@@ -1296,7 +1296,7 @@ impl Render for Chat {
                     .on_mouse_down(MouseButton::Left, cx.listener(
                         |this, ev: &gpui::MouseDownEvent, _w, cx| {
                             if ev.click_count == 2 {
-                                this.slp_w = 282.;
+                                this.slp_w = 300.;
                                 this.persist_ui();
                                 cx.notify();
                             } else {
@@ -1463,6 +1463,14 @@ fn main() {
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            // JetBrains Mono 随二进制打包（pi-web --font-mono 首选；三档字重
+            // 覆盖 mono 400/600/700 用途）。注册失败仅回退系统字体，不致命。
+            cx.text_system().add_fonts(vec![
+                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice()),
+                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf").as_slice()),
+                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice()),
+            ])
+            .expect("embedded JetBrains Mono fonts are valid TTF");
             // gpui-component (widget library powering TextInput): global
             // init + token mapping from the active app theme
             gpui_component::init(cx);

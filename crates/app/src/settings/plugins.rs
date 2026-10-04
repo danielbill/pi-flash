@@ -429,7 +429,7 @@ fn pl_detail(
                     .child(if disabled { tr("已停用") } else { tr("已加载") })
                     .child(
                         div()
-                            .font_family("Consolas")
+                            .font_family(crate::markdown::MONO_FAMILY)
                             .child(SharedString::from(format!("ext {ext} · skills {sk} · prompts {pr} · themes {th}"))),
                     ),
             )

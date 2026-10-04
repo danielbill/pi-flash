@@ -49,6 +49,31 @@ pub(crate) fn mc_misc_view(
         t,
     ));
 
+    // 展示思考 switch（思考块始终渲染；关（默认）=新思考块收成一行，
+    // 开=默认展开全文。用户手动开合过的块以显式状态为准）
+    let show_thinking = crate::services::workspace::show_thinking();
+    col = col.child(set_row(
+        tr("展示思考"),
+        tr("开启时思考块默认展开全文，关闭时默认收起为一行"),
+        switch(
+            "misc-show-thinking",
+            show_thinking,
+            {
+                let weak = weak.clone();
+                move |on, cx| {
+                    let _ = weak.update(cx, |_c, cx| {
+                        let mut s = crate::services::workspace::app_settings();
+                        s.show_thinking = Some(on);
+                        crate::services::workspace::save_app_settings(&s);
+                        cx.notify();
+                    });
+                }
+            },
+            t,
+        ),
+        t,
+    ));
+
     // 默认加载项目数 stepper（1–10）
     let projects = crate::services::workspace::project_count();
     col = col.child(set_row(
@@ -134,7 +159,7 @@ fn set_row(
 fn mono_value(text: &str) -> gpui::AnyElement {
     let t = T();
     div()
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.))
         .text_color(rgb(t.text_dim))
         .child(SharedString::from(text.to_string()))
@@ -205,7 +230,7 @@ fn stepper(
             div()
                 .min_w(px(28.))
                 .text_align(gpui::TextAlign::Center)
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(px(12.5))
                 .text_color(rgb(t.text))
                 .child(SharedString::from(value.to_string())),

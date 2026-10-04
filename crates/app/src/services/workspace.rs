@@ -287,7 +287,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             panel: "sessions".into(),
-            slp_w: 282.,
+            slp_w: 300.,
             panes_hidden: false,
             list_mode: "grouped".into(),
             sort_mode: "time".into(),
@@ -313,7 +313,7 @@ pub fn ui_state() -> UiState {
         slp_w: v
             .get("slp_w")
             .and_then(|w| w.as_f64())
-            .map(|w| (w as f32).clamp(250., 500.))
+            .map(|w| (w as f32).clamp(300., 500.))
             .unwrap_or(d.slp_w),
         panes_hidden: v
             .get("panes_hidden")
@@ -414,6 +414,8 @@ pub struct AppSettings {
     pub projects: Option<usize>,
     /// v54 其他页: restore last workspace + session on startup
     pub restore: Option<bool>,
+    /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）
+    pub show_thinking: Option<bool>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -471,6 +473,7 @@ pub fn app_settings() -> AppSettings {
                         .and_then(|v| v.as_u64())
                         .map(|v| (v as usize).clamp(1, 20)),
                     restore: map.get("startup_restore").and_then(|v| v.as_bool()),
+                    show_thinking: map.get("show_thinking").and_then(|v| v.as_bool()),
                 }
             }
             None => AppSettings::default(),
@@ -515,6 +518,9 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.restore {
         obj.insert("startup_restore".into(), Value::Bool(v));
     }
+    if let Some(v) = s.show_thinking {
+        obj.insert("show_thinking".into(), Value::Bool(v));
+    }
     save_map_to(&path, &obj);
 }
 
@@ -526,6 +532,11 @@ pub fn project_count() -> usize {
 /// v54 其他: startup restore toggle (default on).
 pub fn startup_restore() -> bool {
     app_settings().restore.unwrap_or(true)
+}
+
+/// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）。
+pub fn show_thinking() -> bool {
+    app_settings().show_thinking.unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

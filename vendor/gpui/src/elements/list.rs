@@ -418,6 +418,24 @@ impl ListState {
         None
     }
 
+    /// Sum of the heights of the items in `range` (end exclusive).
+    ///
+    /// Items that have not been rendered yet summarize to zero, so the result is
+    /// a **lower bound** of the true height as soon as the range contains an
+    /// unmeasured item, and exact once every item in the range is measured.
+    ///
+    /// Unlike [`Self::bounds_for_item`] this works for items *above* the logical
+    /// scroll top too (e.g. measuring from a pinned item down to the end of a
+    /// bottom-aligned list, where the logical scroll top reports `item_count`).
+    pub fn measured_height_in(&self, range: Range<usize>) -> Pixels {
+        let state = &*self.0.borrow();
+        let mut cursor = state.items.cursor::<Dimensions<Count, Height>>(());
+        cursor.seek(&Count(range.start), Bias::Right);
+        let start = cursor.start().1.0;
+        cursor.seek(&Count(range.end), Bias::Right);
+        cursor.start().1.0 - start
+    }
+
     /// Call this method when the user starts dragging the scrollbar.
     ///
     /// This will prevent the height reported to the scrollbar from changing during the drag
@@ -1283,5 +1301,156 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    /// 贴底胶水的绘制几何（Bottom 对齐、`logical_scroll_top = None`）：**末条
+    /// 底边钉在 `viewport.bottom − padding.bottom`**，其余条目自该处向上排。
+    /// 聊天列的翻页垫片公式是这个恒等式的逆解：
+    ///
+    /// ```text
+    /// painted(anchor).top = viewport.bottom − padding.bottom − spacer − content_below
+    /// ```
+    ///
+    /// 故让锚点顶落在 `viewport.top + padding.top` 须取
+    /// `spacer = (视口高 − padding.top − padding.bottom) − content_below`。
+    /// 少减这两个内边距（旧实现只减视口高），锚点会停在
+    /// `viewport.top − padding.bottom`：消息整条滚出屏顶、下方留一整片空白。
+    #[gpui::test]
+    fn test_bottom_glue_pins_last_item_above_bottom_padding(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+
+        use crate::{
+            AppContext, Bounds, Context, IntoElement, ListAlignment, ListState, ParentElement,
+            Pixels, Render, Styled, Window, canvas, div, list, point, px, size,
+        };
+
+        const PAD_TOP: f32 = 22.;
+        const PAD_BOTTOM: f32 = 135.;
+        const VIEWPORT_H: f32 = 1000.;
+
+        struct TestView {
+            state: ListState,
+            heights: [f32; 4],
+            spacer: Rc<Cell<f32>>,
+            seen: Rc<std::cell::RefCell<Vec<(usize, Bounds<Pixels>)>>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let heights = self.heights;
+                let spacer = self.spacer.clone();
+                let seen = self.seen.clone();
+                list(self.state.clone(), move |ix, _, _| {
+                    let seen = seen.clone();
+                    let height = if ix == 4 { spacer.get() } else { heights[ix] };
+                    div()
+                        .h(px(height))
+                        .w_full()
+                        .child(
+                            canvas(
+                                move |bounds, _, _| seen.borrow_mut().push((ix, bounds)),
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        )
+                        .into_any_element()
+                })
+                .w_full()
+                .h_full()
+                .pt(px(PAD_TOP))
+                .pb(px(PAD_BOTTOM))
+            }
+        }
+
+        /// 按给定条目高度（`[history, anchor, reply, phase]`）与垫片高度画一帧，
+        /// 返回各条目实际被绘制的 bounds。
+        fn paint(
+            cx: &mut TestAppContext,
+            heights: [f32; 4],
+            spacer_px: f32,
+        ) -> Vec<(usize, Bounds<Pixels>)> {
+            let state = ListState::new(5, ListAlignment::Bottom, px(0.));
+            let spacer = Rc::new(Cell::new(spacer_px));
+            let seen: Rc<std::cell::RefCell<Vec<(usize, Bounds<Pixels>)>>> = Default::default();
+            cx.add_empty_window().draw::<crate::Entity<TestView>>(
+                point(px(0.), px(0.)),
+                size(px(400.), px(VIEWPORT_H)),
+                |_, cx| {
+                    cx.new(|_| TestView {
+                        state: state.clone(),
+                        heights,
+                        spacer: spacer.clone(),
+                        seen: seen.clone(),
+                    })
+                },
+            );
+            seen.take()
+        }
+
+        let top = |items: &[(usize, Bounds<Pixels>)], ix: usize| {
+            items.iter().find(|(i, _)| *i == ix).map(|(_, b)| b.top())
+        };
+        let bottom = |items: &[(usize, Bounds<Pixels>)], ix: usize| {
+            items.iter().find(|(i, _)| *i == ix).map(|(_, b)| b.bottom())
+        };
+
+        // 内容短于视口：垫片 = (视口高 − 上下内边距) − 锚下内容 ⇒ 锚点顶落在
+        // padding.top，垫片底边落在「视口底 − padding.bottom」（贴底胶水恒等式）
+        let short = [40., 60., 50., 20.]; // below = 130
+        let content_below = short[1] + short[2] + short[3];
+        let items = paint(cx, short, VIEWPORT_H - PAD_TOP - PAD_BOTTOM - content_below);
+        assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
+        assert_eq!(bottom(&items, 4), Some(px(VIEWPORT_H - PAD_BOTTOM)));
+
+        // 旧实现只减视口高（垫片 870）：可见区只剩垫片这一片空白，锚点与回复
+        // 整条滚出屏顶——「发送后白屏 / 消息不见了」的根因
+        let items = paint(cx, short, VIEWPORT_H - content_below);
+        assert!(items.iter().all(|(ix, _)| *ix == 4));
+        assert!(items[0].1.top() <= px(0.));
+
+        // 内容长过可用高度：垫片归零，胶水跟随尾部（锚点被顶出屏顶，
+        // 可见区显示内容末条）
+        let tall = [40., 60., 900., 20.]; // below = 980 > 843
+        let items = paint(cx, tall, 0.);
+        assert_eq!(bottom(&items, 4), Some(px(VIEWPORT_H - PAD_BOTTOM)));
+        assert_eq!(top(&items, 3), Some(px(VIEWPORT_H - PAD_BOTTOM - tall[3])));
+        assert_eq!(top(&items, 1), None);
+    }
+
+    /// `measured_height_in`：区间高度求和，未测量条目按 0 计（已测量区间内精确，
+    /// 否则是下界）。贴底胶水列表里锚点条目位于逻辑滚动位之上，`bounds_for_item`
+    /// 会直接判 None，这里必须仍能量出「锚点到尾部」的高度。
+    #[gpui::test]
+    fn test_measured_height_in_counts_only_measured_items(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, IntoElement, ListAlignment, ListState, Render, Styled, Window,
+            div, list, point, px, size,
+        };
+
+        const HEIGHTS: [f32; 5] = [10., 20., 30., 40., 50.];
+
+        let cx = cx.add_empty_window();
+        let state = ListState::new(5, ListAlignment::Bottom, px(0.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    div().h(px(HEIGHTS[ix])).w_full().into_any_element()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        // 视口 100：贴底胶水只渲染到填满视口为止 → [30, 40, 50] 被测量，
+        // [10, 20] 仍是 Unmeasured
+        cx.draw::<crate::Entity<TestView>>(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone()))
+        });
+        assert_eq!(state.item_count(), 5);
+        assert_eq!(state.measured_height_in(2..5), px(120.));
+        assert_eq!(state.measured_height_in(0..5), px(120.)); // 下界（真值 150）
+        assert_eq!(state.measured_height_in(0..2), px(0.));
     }
 }

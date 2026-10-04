@@ -171,7 +171,7 @@ pub(crate) fn mc_skills_view(
                 )
                 .child(
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(11.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(sk.path.to_string_lossy().to_string())),

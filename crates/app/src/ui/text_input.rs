@@ -258,7 +258,7 @@ impl Render for TextInput {
             .w_full()
             .h(gpui::px(30.))
             // inherit into the inner widget's text shaping
-            .font_family("Consolas")
+            .font_family(crate::markdown::MONO_FAMILY)
             .text_size(gpui::px(12.))
             // escape bubbles up from the inner widget (it only unmarks IME
             // composition and propagates) — turn it into the app callback

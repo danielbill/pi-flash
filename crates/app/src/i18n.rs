@@ -22,6 +22,15 @@ pub fn lang_ix() -> usize {
 /// (source zh-CN, zh-TW, en)
 const TABLE: &[(&str, &str, &str)] = &[
     // chrome / sidebar
+    // compaction card（pi-web CompactionMessageView parity）
+    ("会话已压缩", "Conversation compacted", "會話已壓縮"),
+    ("此处之前的会话历史已压缩为以下摘要：", "The conversation history before this point was compacted into the following summary:", "此處之前的會話歷史已壓縮為以下摘要："),
+    ("（无摘要）", "(no summary)", "（無摘要）"),
+    ("文件上下文：{details}", "File context: {details}", "檔案脈絡：{details}"),
+    ("{n} 读取", "{n} read", "{n} 讀取"),
+    ("{n} 修改", "{n} modified", "{n} 修改"),
+    ("修改文件", "Modified files", "修改檔案"),
+    ("读取文件", "Read files", "讀取檔案"),
     ("pi-flash", "pi-flash", "pi-flash"),
     ("新建", "新建", "New"),
     ("新会话", "新會話", "New session"),
@@ -171,6 +180,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("4 个内置工具", "4 個內置工具", "4 built-in tools"),
     ("全部内置工具", "全部內置工具", "All built-in tools"),
     ("压缩中…", "壓縮中…", "Compacting…"),
+    ("上下文压缩中，请稍等……", "上下文壓縮中，請稍等……", "Compacting context, please wait…"),
     ("生成标题…", "生成標題…", "Generating title…"),
     ("已生成标题: {title}", "已生成標題: {title}", "Title set: {title}"),
     ("标题生成失败: {e}", "標題生成失敗: {e}", "Title generation failed: {e}"),

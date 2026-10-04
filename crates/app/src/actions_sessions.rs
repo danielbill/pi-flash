@@ -70,7 +70,7 @@ impl Chat {
             // leaf-chain integrity probe for the get_messages guard
             r.disk_msg_count = pi_link::sessions::count_message_entries(&path) as usize;
             r.messages = tail;
-            r.list.reset(r.messages.len());
+            r.pager.reload(r.messages.len());
             r.status = "resuming".into();
             r.pending_rename = rename;
             r

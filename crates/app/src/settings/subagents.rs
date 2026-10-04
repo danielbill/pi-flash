@@ -453,7 +453,7 @@ fn sa_detail(
                     )
                     .child(
                         div()
-                            .font_family("Consolas")
+                            .font_family(crate::markdown::MONO_FAMILY)
                             .text_size(px(10.))
                             .text_color(rgb(t.text_dim))
                             .child(SharedString::from(p.name.clone())),
@@ -461,7 +461,7 @@ fn sa_detail(
             )
             .child(if let Some(path) = &p.file_path {
                 div()
-                    .font_family("Consolas")
+                    .font_family(crate::markdown::MONO_FAMILY)
                     .text_size(px(11.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(path.to_string_lossy().to_string()))
@@ -489,7 +489,7 @@ fn sa_detail(
                     )
                     .child(
                         div()
-                            .font_family("Consolas")
+                            .font_family(crate::markdown::MONO_FAMILY)
                             .text_size(px(11.))
                             .text_color(rgb(t.text))
                             .child(tools_text),
@@ -702,7 +702,7 @@ fn sa_run_body(
                                     .border_1()
                                     .border_color(rgb(t.border))
                                     .bg(rgb(t.bg_panel))
-                                    .font_family("Consolas")
+                                    .font_family(crate::markdown::MONO_FAMILY)
                                     .text_size(px(11.))
                                     .text_color(rgb(t.text))
                                     .flex()

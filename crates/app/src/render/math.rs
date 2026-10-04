@@ -127,7 +127,7 @@ pub(crate) fn inline_element(latex: &str, t: &Theme) -> gpui::AnyElement {
             .child(gpui::img(img).w(px(w)).h(px(h)))
             .into_any_element(),
         None => div()
-            .font_family("Consolas")
+            .font_family(crate::markdown::MONO_FAMILY)
             .text_color(rgb_color(t.accent))
             .child(SharedString::from(latex.to_string()))
             .into_any_element(),
@@ -147,7 +147,7 @@ fn fallback(latex: &str, t: &Theme) -> gpui::AnyElement {
         .py(px(6.))
         .rounded(px(6.))
         .bg(gpui::rgba(crate::theme::border_alpha(t, 0x33)))
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.5))
         .text_color(rgb_color(t.text_muted))
         .child(SharedString::from(latex.to_string()))

@@ -64,6 +64,10 @@ pub struct ComposerInput {
     on_chip_backspace: Option<std::rc::Rc<dyn Fn(&mut gpui::App)>>,
     on_change: Option<Changed>,
     on_submit: Option<Submitted>,
+    /// 锁态（如上下文压缩中）：编辑器组件**不挂载**——无焦点、无 IME、
+    /// 无粘贴、无点击定位，整块输入区替换为 placeholder 样式提示。
+    /// 草稿仍留在 self.value / chat.input，解锁即恢复。
+    read_only: bool,
 }
 
 impl ComposerInput {
@@ -82,6 +86,7 @@ impl ComposerInput {
             on_chip_backspace: None,
             on_change: None,
             on_submit: None,
+            read_only: false,
         }
     }
 
@@ -116,6 +121,15 @@ impl ComposerInput {
             .as_ref()
             .map(|s| s.read(cx).focus_handle(cx))
             .unwrap_or_else(|| self.fallback_focus.clone())
+    }
+
+    /// 锁态开关（input_area 每帧按 runtime.compacting 同步）。
+    pub fn set_read_only(&mut self, v: bool, cx: &mut Context<Self>) {
+        if self.read_only == v {
+            return;
+        }
+        self.read_only = v;
+        cx.notify();
     }
 
     /// 注册命令名（不含 "/" 前缀；供 token 高亮/整体退格/类别图标）。
@@ -241,6 +255,16 @@ impl Render for ComposerInput {
             });
         }
 
+        if self.read_only {
+            // 锁态先把焦点赶走：编辑器马上不再挂载，留着焦点会让按键
+            // 事件打进一个没有元素的 handle
+            use gpui::Focusable as _;
+            let handle = state.read(cx).focus_handle(cx);
+            if handle.is_focused(window) {
+                window.blur();
+            }
+        }
+
         let ph = self.placeholder.clone().unwrap_or_default();
         let empty = self.value.is_empty();
         let pad_top = px(INPUT_PAD_TOP - 11.);
@@ -281,8 +305,16 @@ impl Render for ComposerInput {
             .flex()
             .items_start()
             .gap(px(6.))
-            .children(chip_el)
-            .child(
+            .children(if self.read_only { None } else { chip_el })
+            .child(if self.read_only {
+                // 锁态：整块换成 placeholder 样式的提示（草稿不丢，
+                // 只是暂时不显示，解锁后原样回来）
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(rgb(t.text_faint))
+                    .child(ph)
+            } else {
                 div()
                     .flex_1()
                     .min_w_0()
@@ -296,7 +328,7 @@ impl Render for ComposerInput {
                                 .child(ph),
                         )
                     })
-                    .child(GpInput::new(&state).appearance(false).bordered(false)),
-            )
+                    .child(GpInput::new(&state).appearance(false).bordered(false))
+            })
     }
 }

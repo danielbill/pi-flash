@@ -327,7 +327,7 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 .overflow_x_hidden()
                 .child(
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(12.5))
                         .line_height(relative(1.5))
                         .text_color(rgb(t.text))

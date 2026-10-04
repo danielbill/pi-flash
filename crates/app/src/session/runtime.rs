@@ -14,13 +14,14 @@ use std::path::PathBuf;
 
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{Context, Entity, EventEmitter, ListAlignment, ListState, Render, prelude::*, px};
+use gpui::{Context, Entity, EventEmitter, Render, prelude::*};
 use pi_link::protocol::{
     AssistantEvent, Block, Command, Event, SessionState, SessionStats, SlashCommand, Usage,
     TreeNode, content_blocks, parse_tree,
 };
 
 use crate::agent_session::AgentSession;
+use crate::session::chat_list::ChatList;
 use crate::session::messages::{Msg, Role, UsageLine, merge_tool_result, msgs_from_tail, result_payload};
 use pi_link::sessions::read_leaf_messages;
 
@@ -62,7 +63,8 @@ pub(crate) struct SessionRuntime {
 
     // ---- message log ----
     pub messages: Vec<Msg>,
-    pub list: ListState,
+    /// 滚屏状态机（chat_list.rs）：gpui 列表 + 翻页锚点 + 垫片 + splice 记账
+    pub pager: ChatList,
     /// explicit open/close overrides; absent = per-state default (thinking
     /// blocks open, process group closed when the turn has a final answer)
     pub collapsed: std::collections::HashMap<(usize, usize), bool>,
@@ -83,6 +85,8 @@ pub(crate) struct SessionRuntime {
     pub branch_tree: Option<(Vec<TreeNode>, Option<String>)>,
     pub active_user_entry_ids: Vec<String>,
     pub pending_rename: bool,
+    /// 手动压缩进行中（圆环弹窗按钮防连点；compact 响应清除）
+    pub compacting: bool,
     pub commands: Vec<SlashCommand>,
     pub available_models: Vec<pi_link::protocol::ModelInfo>,
     /// system prompt / tool summary from export_html (top-panel display)
@@ -112,7 +116,6 @@ pub(crate) struct SessionRuntime {
 
 impl SessionRuntime {
     pub(crate) fn new(key: String, cwd: PathBuf, file: Option<PathBuf>) -> Self {
-        let list = ListState::new(0, ListAlignment::Bottom, px(1000.));
         Self {
             key,
             cwd,
@@ -125,7 +128,7 @@ impl SessionRuntime {
                 .unwrap_or(0),
             agent: AgentSession::new(1),
             messages: Vec::new(),
-            list,
+            pager: ChatList::new(),
             collapsed: std::collections::HashMap::new(),
             phase_waiting: false,
             streaming_content: false,
@@ -138,6 +141,7 @@ impl SessionRuntime {
             branch_tree: None,
             active_user_entry_ids: Vec::new(),
             pending_rename: false,
+            compacting: false,
             commands: Vec::new(),
             available_models: Vec::new(),
             sys_prompt: None,
@@ -254,6 +258,7 @@ async fn consume_runtime_events(
     let _ = this.update(cx, |rt, cx| {
         if rt.agent.epoch == epoch {
             rt.status = "pi exited".into();
+            rt.compacting = false;
             cx.emit(SessionEvent::Changed);
             cx.notify();
         }
@@ -266,6 +271,8 @@ async fn consume_runtime_events(
 
 impl SessionRuntime {
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        // MessageStart(user) 置位翻页锚点（见函数尾 page_turn）
+        let mut user_arrived = false;
         match event {
             Event::Response { command, success, error, data, .. } => {
                 if command == "get_state" && success {
@@ -433,6 +440,8 @@ impl SessionRuntime {
                         // doubled rows after the tail pre-render)
                         self.messages.clear();
                         self.pending_echo = None;
+                        // 快照重建：锚点作废，reset 后按 Bottom 对齐贴底
+                        self.pager.release();
                         for msg in &rpc_msgs {
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
@@ -453,15 +462,30 @@ impl SessionRuntime {
                         self.notify_list(cx);
                     }
                     self.status = status_line(true, "resumed");
+                } else if command == "compact" {
+                    // 手动压缩（圆环弹窗按钮）：response 在摘要 LLM 完成后
+                    // 才回（带 summary/usage）——清防连点标志并重拉
+                    // stats/messages（compaction 卡片 + 上下文环跟着变）
+                    self.compacting = false;
+                    if success {
+                        self.refresh_state();
+                        if let Some(s) = self.agent.session.as_ref() {
+                            let _ = s.send(&Command::GetMessages);
+                        }
+                    } else {
+                        self.status =
+                            format!("compact failed: {}", error.unwrap_or_default());
+                    }
                 } else if success {
                     self.status = format!("{command} ok");
                 } else {
                     self.status =
                         format!("{command} failed: {}", error.unwrap_or_default());
                     if command == "prompt" {
-                        // 发送失败：等待行不能一直转下去
+                        // 发送失败：等待行不能一直转下去；锚点也无从跟随
                         self.phase_waiting = false;
                         self.pending_echo = None;
+                        self.pager.release();
                     }
                 }
             }
@@ -506,6 +530,7 @@ impl SessionRuntime {
                                 model: None,
                             });
                         }
+                        user_arrived = true;
                     }
                     "assistant" => {
                         self.phase_waiting = false;
@@ -715,6 +740,11 @@ impl SessionRuntime {
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.streaming_content = false;
+                // 一轮结束**不**退役锚点：pi-web 只是 promptAnchorActive=false
+                // 让垫片收敛，容器 scrollTop 保持——短回复留在屏顶、长回复由
+                // 胶水跟随尾部。锚点在此退役会把内容拽回屏底（消息从屏顶跳走，
+                // 等于立刻撤销「发言钉顶」）。锚点留待用户滚轮 / 发送失败 /
+                // 快照重建 / 会话切换退役。
                 self.status = status_line(true, "idle");
                 self.stream_started = None;
                 self.refresh_state();
@@ -723,6 +753,7 @@ impl SessionRuntime {
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.streaming_content = false;
+                // 同上：轮末不退役锚点（短回复继续钉在屏顶）
                 self.stream_started = None;
                 // our own writer advanced the file — re-baseline so the
                 // external-append tick doesn't re-read our own turn
@@ -738,6 +769,13 @@ impl SessionRuntime {
                             }
             Event::ExtensionUi(req) => cx.emit(SessionEvent::ExtUi(req)),
             Event::Unparsed(_) => {}
+        }
+        // 用户消息到达（发送回显升级 / steer 推入）→ 翻页：该消息钉视口
+        // 顶，历史滚出屏（回显升级同锚点重入不重钉，见 page_turn）
+        if user_arrived {
+            let ix = self.messages.len() - 1;
+            self.pager
+                .page_turn(ix, self.messages.len(), self.phase_row_visible());
         }
         self.notify_list(cx);
     }
@@ -769,6 +807,8 @@ impl SessionRuntime {
         let msgs = msgs_from_tail(read_leaf_messages(&f, LEAF_REPAIR_MAX));
         self.disk_file_len = len;
         if msgs.len() != self.messages.len() {
+            // 整表重读 → 锚点索引失效（内容整体换过），先退役
+            self.pager.release();
             self.messages = msgs;
             // fork anchors best-effort (same as the open-time repair path)
             let mut ids = self.active_user_entry_ids.iter();
@@ -824,7 +864,7 @@ impl SessionRuntime {
         }
         let ix = self.hit_index(ts, needle);
         if let Some(ix) = ix {
-            self.list.scroll_to_reveal_item(ix);
+            self.pager.reveal(ix);
         }
         ix.is_some()
     }
@@ -848,7 +888,7 @@ impl SessionRuntime {
     fn apply_pending_locate(&mut self, _cx: &mut Context<Self>) {
         if let Some((ts, needle)) = self.pending_locate.take() {
             if let Some(ix) = self.hit_index(ts, &needle) {
-                self.list.scroll_to_reveal_item(ix);
+                self.pager.reveal(ix);
             }
         }
     }
@@ -882,6 +922,8 @@ impl SessionRuntime {
         let ts = msg["timestamp"].as_i64();
         match role {
             "user" => {
+                // 快照重建路径（打开会话/刷新循环调用）：不做清屏，
+                // reset 后 Bottom 对齐保持贴底；清屏只属活事件路径
                 self.messages.push(Msg {
                     role: Role::User,
                     blocks,
@@ -1030,13 +1072,15 @@ impl SessionRuntime {
         }
     }
 
-    fn notify_list(&mut self, cx: &mut Context<Self>) {
-        self.list
-            .reset(self.messages.len() + usize::from(self.phase_row_visible()));
+    /// 列表同步：结构手术（splice/reset）与翻页垫片结算全在 ChatList
+    /// （chat_list.rs，pi-web useAgentSession 滚屏层的移植）。
+    pub(crate) fn notify_list(&mut self, cx: &mut Context<Self>) {
+        self.pager.sync(self.messages.len(), self.phase_row_visible());
         cx.notify();
     }
 
-    /// 引导：中断当前运行并立即注入此消息（rpc steer）。
+    /// 引导：中断当前运行并立即注入此消息（rpc steer）。乐观上屏与翻页
+    /// 和 prompt 发送一致——发送帧气泡钉视口顶，不等回显。
     pub(crate) fn steer_input(&mut self, cx: &mut Context<Self>) {
         let text = self.input.trim().to_string();
         if text.is_empty() && self.pending_images.is_empty() {
@@ -1051,17 +1095,62 @@ impl SessionRuntime {
                 })
             })
             .collect();
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::Steer { message: text, images });
+        match self
+            .agent
+            .session
+            .as_ref()
+            .map(|session| session.send(&Command::Steer { message: text.clone(), images }))
+        {
+            Some(Ok(_)) => {
+                self.input.clear();
+                self.pending_images.clear();
+                if !text.is_empty() && !text.starts_with("/skill:") {
+                    self.optimistic_send(text, cx);
+                } else {
+                    cx.notify();
+                }
+            }
+            Some(Err(e)) => self.status = e,
+            None => {}
         }
-        self.input.clear();
-        self.pending_images.clear();
+    }
+
+    /// 乐观上屏 + 发送帧翻页（prompt/steer 共用，pi-web optimistic user
+    /// message parity）：气泡立即显示并钉视口顶，RPC 回显经 pending_echo
+    /// 去重就地升级。
+    fn optimistic_send(&mut self, text: String, cx: &mut Context<Self>) {
+        self.pending_echo = Some(text.clone());
+        self.messages.push(Msg {
+            role: Role::User,
+            blocks: vec![Block::Text { content_index: 0, text }],
+            usage: None,
+            entry_id: None,
+            ts: Some(crate::services::format::now_ms()),
+            end_ts: None,
+            stop_reason: None,
+            error_message: None,
+            custom_type: None,
+            custom_display: true,
+            details: None,
+            model: None,
+        });
+        self.phase_waiting = true;
+        // 发送帧翻页：新用户消息立即钉视口顶、历史滚出屏，不等回显不等
+        // bounds（page_turn 内部完成 sync 落账）
+        let ix = self.messages.len() - 1;
+        let msgs = self.messages.len();
+        let phase = self.phase_row_visible();
+        self.pager.page_turn(ix, msgs, phase);
         cx.notify();
     }
 
     /// 后续消息：Agent 完成后排队此消息（rpc follow_up，pi 1.0 原生携带
     /// images）。
     pub(crate) fn follow_up_input(&mut self, cx: &mut Context<Self>) {
+        // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
+        if self.compacting {
+            return;
+        }
         let text = self.input.trim().to_string();
         if text.is_empty() && self.pending_images.is_empty() {
             return;
@@ -1096,7 +1185,18 @@ impl SessionRuntime {
         cx.notify();
     }
 
+    /// 「回到最新」按钮（pi-web scrollToBottom）：reveal 列表末条（锚点期
+    /// 含垫片——reveal 垫片底 = 回到钉顶位，与 pi-web scrollToBottom 落在
+    /// 垫片底同款）。落底后 Bottom 对齐自动归 None 恢复跟随。
+    pub(crate) fn scroll_to_bottom(&mut self) {
+        self.pager.jump_to_bottom();
+    }
+
     pub(crate) fn send_input(&mut self, cx: &mut Context<Self>) {
+        // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
+        if self.compacting {
+            return;
+        }
         let text = self.input.trim().to_string();
         // 空文本+图片可发送（pi-web handleSend：!msg && !images 才拦）
         if text.is_empty() && self.pending_images.is_empty() {
@@ -1107,7 +1207,9 @@ impl SessionRuntime {
             cx.notify();
             return;
         };
-        let streaming = self.state.as_ref().is_some_and(|s| s.is_streaming);
+        // 运行中发消息 = steer（事件驱动 agent_running 优先：快照 is_streaming
+        // 一轮内恒 false，会让「引导」变成新 prompt）
+        let streaming = self.agent_running || self.state.as_ref().is_some_and(|s| s.is_streaming);
         let images: Vec<serde_json::Value> = self
             .pending_images
             .iter()
@@ -1137,28 +1239,10 @@ impl SessionRuntime {
                 self.status = if streaming { "steering" } else { "running" }.into();
                 // 技能命令不做乐观回显（pi-web parity）：RPC 回显的是展开
                 // 信封文本（渲染层折叠成紧凑命令），乐观插入裸 "/skill:xxx"
-                // 会多出一条重复气泡
-                if !streaming && !text.is_empty() && !text.starts_with("/skill:") {
-                    // pi-web optimistic append: the sent bubble shows up
-                    // immediately, RPC echo later upgrades it in place
-                    // pending_echo 只做回显去重；等待行可见性由 phase_waiting 独立控制
-                    self.pending_echo = Some(text.clone());
-                    self.messages.push(Msg {
-                        role: Role::User,
-                        blocks: vec![Block::Text { content_index: 0, text }],
-                        usage: None,
-                        entry_id: None,
-                        ts: Some(crate::services::format::now_ms()),
-                        end_ts: None,
-                        stop_reason: None,
-                        error_message: None,
-                        custom_type: None,
-                        custom_display: true,
-                        details: None,
-                        model: None,
-                    });
-                    self.phase_waiting = true;
-                    self.notify_list(cx);
+                // 会多出一条重复气泡。prompt 与 steer 一致——发送帧即上屏
+                // 翻页，不等回显
+                if !text.is_empty() && !text.starts_with("/skill:") {
+                    self.optimistic_send(text, cx);
                 }
             }
             Err(e) => self.status = e,
@@ -1171,7 +1255,8 @@ impl SessionRuntime {
     /// pi rebinds this process to the branched session; the "fork" response
     /// handler reloads state/messages/tree.
     pub(crate) fn fork_from_entry(&mut self, entry_id: String, cx: &mut Context<Self>) {
-        if self
+        if self.agent_running
+            || self
             .state
             .as_ref()
             .is_some_and(|s| s.is_streaming)
@@ -1213,7 +1298,31 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// Editor toolbar 压缩: rpc compact (summarize the context).
+    /// 压缩按钮可用性：agent 跑动中不可（compact 会中止当前 turn）、
+    /// 压缩中防连点、未连接不可。除此之外不设门槛——用不用由用户决定。
+    pub(crate) fn can_compact(&self) -> bool {
+        !self.compacting && !self.agent_running && self.agent.session.is_some()
+    }
+
+    /// 圆环弹窗底部手动压缩：rpc compact。`compacting` 期间输入面板锁死
+    /// （placeholder 提示 + 变更丢弃）；完成后 pi 回 compact response，
+    /// 由其分支清标志并刷新 stats/messages。
+    pub(crate) fn compact(&mut self, cx: &mut Context<Self>) {
+        if !self.can_compact() {
+            return;
+        }
+        match self.agent.session.as_ref().map(|s| s.send(&Command::Compact)) {
+            Some(Ok(_)) => {
+                self.compacting = true;
+                self.status = tr("压缩中…").into();
+            }
+            Some(Err(e)) => self.status = e,
+            None => self.status = tr("未连接").into(),
+        }
+        cx.emit(SessionEvent::Changed);
+        cx.notify();
+    }
+
     pub(crate) fn tool_preset_key(&self) -> &str {
         &self.tools_preset
     }

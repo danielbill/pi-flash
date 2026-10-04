@@ -472,3 +472,442 @@ dev.sh 自动重链。
 落地近似：三处遮罩（dialog_shell/ext_ui/settings）从 35% 黑改为应用
 bg 色 80% 透明（rgba((t.bg<<8)|0xcc)）——底层界面以 20% 幽灵度透出，
 观感为「界面退隐成同色柔雾」而非灰膜；真毛玻璃留作渲染器级后续项。
+
+## agent 输出样式对齐 pi-web（2026-10-04，P1 五项 + P2 扫尾）
+
+与 pi-web globals.css/MessageView/MermaidBlock 逐项比较后的对齐批次：
+
+- **块间距统一 8px**（P1 最大观感项）：messages.rs 组内 item/最终回答/防御
+  分支的块容器全部加 gap(8)，thinking 去掉 my_1（原 4px）、工具卡原 0px
+  贴死——现在 text/thinking/工具卡间一律 8px（pi-web 块容器 gap:8 parity）。
+  messages 间距 22→16、写文件 chips 文字色 text_muted→text、usage 行/两处
+  时间戳/用时 text_faint→text_dim、工作详情折叠行 text_dim→text_muted。
+- **markdown 块间距 = CSS margin 折叠**：render_blocks 按
+  max(前块mb, 本块mt) 挂间距（此前逐块挂 margin 不折叠，段→代码 8+6=14px
+  而 CSS 取 8，整体系统性偏大）；末块不再挂 mb = p:last-child 归零。
+  各块 margin 值集中在 block_margins()（heading 10/5、p 0/8、code/quote
+  6/6、列表 5/8、table/img 8/8、rule 12/12）。
+- **strong 700**：FontWeight SEMIBOLD(600)→BOLD(700)（pi-web strong:700；
+  标题/工具名/th 表头维持 600/650 对应 SEMIBOLD）。链接下划线补 45% 透明色
+  （offset gpui 无对应）。
+- **行内 code 等宽盒**：gpui highlight 换不了字体家族——含 Code run 的段落
+  拆 flex-wrap 段（paragraph_element，与 math 拆段同路），code = JetBrains
+  Mono 0.92em + bg-subtle + 圆角5 + padding 1/5 + 70% 边框（pi-web
+  .markdown-inline-code）；表格/标题内的 code 仍是 bg 兜底高亮。
+- **混色真正落到 run**：base_style 增加 color 参数（StyledText 自带 base
+  style 会覆盖容器 text_color）——引用块正文现在真是 text_muted、h3 真是
+  88% 混色；标题色按 pi-web 规则恒 text（引用块内也是），经参数传入。
+- **JetBrains Mono 打包**：assets/fonts 三档字重（Regular/SemiBold/Bold +
+  OFL.txt）include_bytes 进二进制，main.rs text_system().add_fonts 注册；
+  MONO_FAMILY 常量改 "JetBrains Mono"，全仓库 41 处 .font_family("Consolas")
+  统一切换（终端 FONT_FAMILY 与字体选择列表保留 Consolas；选择列表加
+  JetBrains Mono 项）。
+- **深色高亮 = VS Dark+**：syntect 默认主题集无 vscDarkPlus，按 dark_plus
+  调色板用代码构建 Theme（22 条选择器：keyword 蓝/control 紫/string 橙/
+  fn 黄/type 青/comment 绿…），替换 base16-ocean.dark；浅色 InspiredGitHub
+  不变。
+- **其它 pi-web parity**：表格字号 14→13px、行高 1.6→1.7（th 色也走参数）；
+  任务框选中态 = accent 10% 淡底 + 55% 边框 + accent 对勾 + 圆角4（原实心
+  accent 白勾）；hr = 底线 + 两端 18% 渐变遮罩复现 linear-gradient 淡出
+  （linear_color_stop）；代码块补 box-shadow 0 1px 0 border 42%；
+  thinking 块补右侧时长 Ns（快照按消息首尾时间差，流式中无）。
+- **消息列默认边距 10px**：session_list pl34/pr30 → px(10)（920 列宽不动，
+  宽窗居中、窄窗不贴边）；composer 去掉 min_w 500（窄窗溢出另一来源）。
+- **已知未做**：代码块复制按钮无"已复制"反馈（读全局需要渲染期 cx，gpui
+  渲染函数拿不到，defer）；工具参数 pre 的 break-all（gpui 按词折行，
+  超长 token 可能溢出）；链接下划线 offset（无 API）。
+
+测试 126 全绿零警告（app 73 + pi-link 53；新增 render 冒烟测试覆盖明暗两
+主题全路径 incl. vs_dark_plus）。待用户实测。
+
+### 补丁：marker 对齐与尺寸（同日，用户实测反馈）
+
+- 列表 marker 槽 items_center→items_start + 行盒 1.7：pi-web outside
+  marker 与内容第一行对齐，原实现在多行 item 上圆点垂直居中漂到中部。
+- 无序圆点弃用 "•" 字形（14px 下 ~4px 过小），画 0.45em 实心圆
+  （Chrome disc 尺寸），随 markdown 字号槽缩放；任务框 mt5 =
+  pi-web checkbox top:0.35em 首行定位。
+- compaction「文件上下文」三角：10px text_faint "▾/▸" 字形小到不可见，
+  换 12px text_muted chevron 图标（与工作详情折叠行同款）。
+
+### 补丁：消息列两侧 10px 边距真正生效（同日，用户二次反馈）
+
+根因在 gpui List 实现（vendor/gpui/src/elements/list.rs prepaint_items）：
+`item_origin = bounds.origin + (0, padding.top)`——**只应用垂直 padding，
+左右 padding 对条目完全无效**，条目恒从列表 bounds 左缘画起。此前
+pl(34)/pr(30) 与改后的 px(10) 挂在 list() 上均从未生效（垂直的 pt/pb
+一直正常，掩盖了问题）。修：list 包进 `.px(px(10.))` 外层 flex_col 容器，
+920 列宽与居中不动。全仓库仅此一处 list()，无同类隐患。
+
+### 左侧栏最小宽度 300（同日，用户要求）
+
+slp_w 四处对齐：拖拽 clamp(250,500)→clamp(300,500)、双击复位 282→300、
+workspace.rs UiState 默认值 282→300、持久化加载 clamp 同步 300（旧存档
+282 载入时抬到 300）。
+
+### 设置-其他新增「展示思考」开关（同日，用户要求）
+
+AppSettings.show_thinking（默认 false=不展示）+ 加载/保存 + show_thinking()
+getter；其他页新增 set_row + 34×19 switch（展示思考 / 在消息中显示模型的
+思考块（开启时默认收起））。消息层双处生效：render_block Thinking 臂先
+门控（关=整块不渲染）、默认态 unwrap_or(true)→false（开启时默认收起，
+用户展开后记忆在该块）；block_displayable 同步门控，纯思考消息在「工作
+详情」组不再渲染光杆模型标签。存储键 show_thinking。
+
+### 回到最新按钮 + 发送即滚到最新（同日，用户要求；pi-web parity）
+
+- `SessionRuntime.list_at_bottom: Rc<Cell<bool>>`——list 滚动不通知实体，
+  `set_scroll_handler` 里按 `ListScrollEvent.visible_range.end >= count`
+  判定贴底，翻转时 `window.refresh()` 重绘按钮显隐。
+- 悬浮按钮（session/mod.rs `scroll_to_bottom_button`）：32px 圆钮、
+  border/bg_panel、常态 opacity .28 hover 全亮、0 2px 8px 阴影，absolute
+  bottom 96 居中于 composer 上方；点击 `scroll_to_latest()`。新增
+  assets/icons/arrow-down.svg（arrow-up 翻转版）并入 assets! 清单。
+- `scroll_to_latest()` = `list.scroll_to_reveal_item(末条)` + 置位贴底；
+  两个调用点：send_input 乐观气泡 push 后（发送即滚）、live ingest 的
+  user 臂（steer/回显消息到达即滚）。贴底时 ListAlignment::Bottom 天然
+  跟随新消息，无需额外锚定。
+
+### 修正：「展示思考」语义（同日，用户纠错）
+
+上一版把开关做成了「关=整块不渲染」——错。正确语义：思考块**始终渲染**，
+开关只控制新思考块的默认展开态：关（默认）=收成一行（灯泡+单行预览，
+点击可展开）；开=默认展开全文。`unwrap_or(show_thinking())`，撤销
+block_displayable 的 thinking 门控（纯思考消息照常计入工作详情组），
+设置描述更正。用户手动开合过的块仍以显式状态为准。
+
+### 修正：「回到最新」按钮位置（同日，用户纠错）
+
+原实现 absolute bottom(96) 固定定位——输入面板（胶囊）增高（多行/带图）
+后按钮叠进面板。改为把按钮挂进 composer-wrap 的悬浮容器：容器改
+flex_col + items_center + gap(20)，按钮（若有）叠在胶囊正上方 20px，
+随面板高度自动上移，永不叠进面板；builder 去 absolute 包装改 pub(crate)，
+main_column 旧挂载点移除。
+
+### 修正：发送即「清屏」（同日，用户纠错，pi-web scrollUserMsgToTop 语义）
+
+此前用 `scroll_to_reveal_item`（最小滚动，新消息落在视口底部）=错。
+pi-web 的 `scrollUserMsgToTop` 是把最后一条用户消息滚到视口**顶部**
+（elAbsTop-16，clamp 到 maxScrollTop）。pi-flash 对应实现
+`clear_to_sent_message()`：`list.scroll_to(ListOffset{item_ix: 末条,
+offset_in_item: 0})` —— vendored gpui 的 scroll_to 直接设置
+logical_scroll_top、不经过 wheel 路径的 scroll_max 钳制，末条消息也能
+钉在第一行，历史全部滚出屏幕上方，下方留白等回复；list_at_bottom 置
+false（↓ 按钮出现，响应流入后由此跟进）。两个发送点（send_input 乐观
+气泡、live ingest 回显）都走清屏；↓ 按钮单独走 `scroll_to_bottom()`
+（reveal 末条 + 贴底标记）。
+
+### 修正：清屏被 `ListState::reset()` 抹掉（同日，用户实测截图定位）
+
+三处时序问题叠加导致发送后消息仍在底部：
+1. gpui `ListState::reset()` 会把 `logical_scroll_top` 置 None（回贴底），
+   `notify_list` 内部就是 reset——send_input 里 clear 在 notify 之后执行，
+   钉顶当场被抹。修：先 notify 再 clear。
+2. 活回显 `Event::MessageStart`(user) 走 `on_event` 尾部的 notify_list，
+   同样抹掉乐观路径的钉顶。修：on_event 加 `user_arrived` 局部标志，
+   尾部 notify 后重钉（覆盖回显升级与 steer 回显推入两分支）。
+3. `ingest_message` 是 get_messages 快照重建路径（打开会话/刷新循环），
+   撤销其中的清屏——打开会话保持贴底。
+
+### 修正：清屏钉顶在流式期间保不住（同日，用户实测截图定位）
+
+钉顶后，流式增量 / phase 行切换 / 状态事件每次都触发 `notify_list` →
+`reset()`（logical_scroll_top=None 回贴底），视口立刻被拽回底部——截图
+表现为新消息停在半屏。修：`notify_list` 在 reset 前保存
+`logical_scroll_top()`，当 `list_at_bottom == false`（非贴底）时
+`scroll_to(prev)` 恢复原位；贴底时维持 None 继续跟随新内容。此后清屏
+钉顶、用户上翻位置都能在整轮流式期间存活。
+
+### 滚屏整体重写：pi-web useAgentSession 全机制移植（同日，用户要求）
+
+通读 pi-web hooks/useAgentSession.ts + lib/chat-lazy-load.ts 后推倒重写，
+替换此前的三轮补丁：
+
+pi-web 机制 → pi-flash 移植：
+- `promptAnchorActive` + spacer（钉顶=贴底的关键：spacer 使 scrollHeight
+  = 用户消息顶+视口高，scrollToBottom 与钉顶位重合）→ `prompt_anchor:
+  Rc<Cell<Option<usize>>>`（锚定用户消息的列表条目号）；gpui 无 DOM 布局
+  后量测，钉顶直接用 `scroll_to(ListOffset{ix, 0})` 达到同一位置语义。
+- `isNearBottomRef` + rAF 跟随循环（"scrolled up, leave them there"）→
+  gpui Bottom 对齐原生：logical=None=跟随、Some=手动；`notify_list` 单点
+  状态机：跟随哨兵（`logical_scroll_top().item_ix == item_count`，Bottom
+  默认值物化）/manual reset 后恢复/锚点重钉。
+- spacer 归零后 scrollToBottom 跟随尾部 → 锚点条目到末条内容（含 phase
+  行，`content_below` 用上轮布局 bounds）≥ 视口高时锚点退役，切回跟随；
+  边界处两位置重合，无缝。
+- 用户在锚点中上翻 → 检测 prev 偏离钉位，锚点让位 manual。
+- 按钮显隐 `shouldShowScrollToLatest` → scroll handler
+  `at_bottom = 锚点激活 || !is_scrolled`（锚点期钉顶即贴底，不显按钮）。
+- `!agentRunning → setPromptAnchorActive(false) + scrollToBottom` →
+  AgentSettled/AgentEnd 清锚点回尾部跟随（展示回复结尾）；发送失败、
+  快照重建（messages.clear）同样清锚点。
+- 打开会话 scrollToBottom("instant") → reset 默认跟随。✓（原有）
+
+126 测试全绿零警告。
+
+### 钉顶失效的真根因与 spacer 完整移植（同日）
+
+通读 vendor/gpui list.rs layout_items 全文，定位铁律：**滚动位到列表末尾
+的内容填不满视口 → Bottom 对齐强制 logical=None（贴底跟随）**——"能看到
+末尾=在底部"。发送后锚下只有等待行，必然填不满，所以任何 scroll_to 钉顶
+都会在下一轮布局被抹（此前三轮失败的共同根因）。
+
+这正是 pi-web `PromptAnchorSpacer`（getPromptAnchorSpacerHeight）存在的
+原因——之前只移植了锚点概念没移植 spacer，等于没抄完。完整移植：
+
+- 列表条目结构恒为 [msgs | phase 行 | spacer]；spacer 是真实列表条目，
+  高度 = 视口 − 锚下内容（bounds 上一轮布局，滞后一帧≈pi-web rAF），
+  把「跟随位」精确垫到用户消息顶——列表全程保持原生跟随（None），
+  钉顶不与元素对抗；内容长过视口后 spacer 归零，跟随自然滑向尾部。
+- 弃每帧 reset()（全量重测 + Bottom 归 None 的元凶），改外科手术式
+  splice：listed_msgs/listed_phase/listed_spacer 三段跟踪，消息插入
+  phase/spacer 之前；仅整体重排（快照重建）才 reset（恰好要贴底）。
+- 渲染闭包 None 臂按 [phase?|spacer?] 分解渲染 spacer 条目；
+  scroll_to_bottom reveal 末条（含 spacer，锚点期=回钉顶位，pi-web
+  scrollToBottom 落 spacer 底同款）。
+
+## 状态（2026-10-04）— v59 滚屏算法抽离 `session/chat_list.rs` + 发送帧翻页修正
+
+用户裁定「每次发言必须翻页：历史滚出屏、最新发言钉视口顶」，且原实现全是错的。
+先定位真根因，再整体重构（bead pi-flash-73k）：
+
+### 原钉顶失效的直接原因（在 spacer 移植版之上）
+
+`notify_list` 的垫片高度 = 视口 − 锚下内容，取自**上一帧** `bounds_for_item`；
+发送帧刚 splice 的用户消息是 Unmeasured → `content_below` 返回 None →
+`spacer_ready=false` → 垫片不挂载 → Bottom 铁律（list.rs 674-716 填不满视口
+强制 logical=None 贴底）生效 → 气泡停屏底。发送路径从未 `scroll_to`，修正
+只能等下一个 pi 事件，甚至整轮不落位。
+
+### 新架构：`crates/app/src/session/chat_list.rs`（滚屏唯一归属）
+
+- `ChatList` 收拢原 SessionRuntime 六个散字段（list/list_at_bottom/
+  prompt_anchor/prompt_spacer_px/listed_*）→ `pager: ChatList` 单字段；
+  gpui ListState + 锚点 + 垫片 + splice 记账 + scroll handler 全内建
+- 函数级 API：`page_turn`（翻页）/ `sync`（结构手术，内部 settle_spacer/
+  splice 编排）/ `release`（锚点退役）/ `reload`（会话切换 reset+记账）/
+  `jump_to_bottom` / `reveal` / `is_at_bottom` / `anchor_active` /
+  `spacer_px` / `scroll_top_ix`；7 个记账单测（ListState splice/reset 可
+  无窗口跑）
+- runtime 侧 `notify_list` 缩成薄封装（pager.sync + cx.notify）
+
+### 发送帧翻页算法（核心修正）
+
+1. 发送帧：锚定新消息，垫片按视口高**过估**挂载（新消息未测量，精确高度
+   算不出）→ `scroll_to(anchor_ix, 0)` 硬置顶——逻辑位 Some 直接绕开
+   Bottom 贴底铁律，**不等回显、不等 bounds**
+2. 下一帧（回显/任意事件）：消息已测量 → `settle_spacer` 收缩垫片到精确
+   高度（视口 − 锚下内容），逻辑位交还贴底胶水（scroll_to(count) ≡ None，
+   同一几何同帧落地无跳变）；此后流式增长由胶水自然下滑（spacer 退役同款）
+3. 同锚点重入（回显升级）不重钉不重估；滚轮 is_scrolled 即退役锚点并就地
+   卸垫片（尊重用户滚动，按钮出现）；AgentEnd/Settled、快照重建、发送失败
+   → release；steer 回显同样翻页
+
+外部三处裸 `list.reset`（actions_sessions/actions_panels/main 恢复会话）
+改 `pager.reload`（reset + 记账同步，消除记账失配隐患）。测试 87 全绿
+（app 80，其中 chat_list 7）。
+
+### v59 首轮验收修正（同日，用户实测三症状全根因定位）
+
+- **崩溃**：卸垫片的 splice 原放在 scroll handler 里——gpui `scroll()` 持有
+  ListState 的 RefCell 可变借用期间回调 handler，再 splice 即 BorrowMutError。
+  铁律：滚动回调里严禁触碰 ListState。退役改为只置 `pending_release` 标记，
+  渲染层每帧经 `take_frame_sync()` 补一次 sync（结算尝试带 12 次上限防病态循环）
+- **白屏**：过估垫片（整视口高）在未结算窗口内一旦落到贴底胶水 = 整屏只剩
+  垫片。sync 尾部加守卫：锚点未结算期间任何胶水位弹回 `scroll_to(锚, 0)`；
+  结算成功后交还胶水（同一几何）。相位脉冲动画每帧驱动渲染 → 结算在发送后
+  ~2 帧内完成，窗口可忽略
+- **steer 发送不翻页**：composer 回车在 agent_running 时走 steer_input，原只
+  等回显。抽出 `optimistic_send()`（pending_echo + 乐观气泡 + phase_waiting +
+  page_turn），prompt/steer 共用，发送帧即上屏翻页
+- app 测试 82 全绿（chat_list 9：+滚动延迟卸载、+帧补账上限）
+
+## 状态（2026-10-04）— v59 滚屏三修：钉顶几何真根因（内边距）+ 端点几何锁
+
+用户口径不变：**每次发言，用户消息刷新到屏幕顶部，把整屏留给 agent 回复**
+（pi-web 为示意图）。首轮（上面那节）虽修了崩溃/白屏窗口/steer 翻页，实测仍不对。
+
+### 真根因一：垫片公式漏减列表上下内边距（157px）
+
+`settle_spacer` 算的是 `spacer = 视口高 − content_below`，但 gpui 贴底胶水
+（Bottom 对齐、`logical_scroll_top = None`）把**末条底边钉在
+`viewport.bottom − padding.bottom`**，而聊天列元素自带 `.pt(22)/.pb(135)`：
+
+```
+painted(anchor).top = viewport.bottom − padding.bottom − spacer − content_below
+⇒ 要让锚点顶落在 viewport.top + padding.top：spacer = (视口高 − pt − pb) − content_below
+```
+
+少减 157px 的后果正好是首轮那个「白屏」：锚点停在 `viewport.top − 135`（消息
+整条滚出屏顶），可见区只剩那片空白 spacer 自己。首轮把白屏只当成「未结算窗口」
+的过估问题，其实结算后的公式本身也是错的——这才是白屏的真正归宿。
+
+### 真根因二：垫片只结算一次，之后流式增长全靠一帧前的旧高度
+
+`content_below` 原用 `bounds_for_item`，该 API 开头就是「条目索引 < 逻辑滚动位
+→ 返回 None」，而胶水态逻辑滚动位恒为 `item_count`（锚点在上方）→ 结算只能
+成功一次；此后锚点被冻结的垫片吊着，内容越长锚点越往屏顶外漂（实测症状：
+发完消息锚点立刻消失/下方留一大片空白）。
+
+修法：vendor/gpui `ListState::measured_height_in(range)`（区间高度和，未测量
+条目按 0 计 = 下界），胶水态下每帧可重算；下界偏小 ⇒ 垫片偏大 ⇒ 钉顶更稳，
+且「下界已填满内容区」足以判定转跟随。
+
+### 真根因三：轮末退役锚点 = 立刻撤销钉顶
+
+`AgentEnd`/`AgentSettled` 原来调 `pager.release()`（就地卸垫片）。gpui Bottom
+对齐下内容短于视口时「贴底胶水」会把内容拽到**屏底** → 短回复一结束消息就从
+屏顶跳到屏底。pi-web 只把 `promptAnchorActive` 置 false（垫片收敛），容器
+scrollTop 保持：短回复留在屏顶、长回复由胶水跟尾。现锚点只由用户滚轮 / 发送
+失败 / 快照重建 / 外部整表重读 / 会话切换退役。
+
+### 配套
+
+- `chat_list.rs`：`spacer_target(avail, content_below) -> (px, follow)`；垫片
+  高度扣 `PAD_TOP`/`PAD_BOTTOM`（与 `session::session_list` 的 `.pt()/.pb()`
+  同源常量，改一处即改滚屏数学）；sync 第 6 步「内容未长过内容区 → 逻辑位硬
+  停锚点顶」；结算前守卫「内容条目必须已进树」（sync 先结算后 splice，发送帧
+  区间求和越界会把不存在的区间算成别的区间 → 偏小垫片 → 钉顶被铁律顶掉）
+- `jump_to_bottom` 改 `scroll_to(item_count)`（交还胶水 = 继续跟随，pi-web
+  scrollToBottom + isNearBottom 同款），不再是一次性 reveal
+- 测试：`scripts/test_gpui_glue.sh`（vendor/gpui 不是 workspace 成员——它的
+  examples 进 members 会编不过；脚本临时挂成员只跑 `--lib`，trap 还原）
+  - gpui 侧：`test_bottom_glue_pins_last_item_above_bottom_padding`（canvas 抓
+    真实绘制 bounds：正确公式锚点顶 = padding.top、垫片底 = 屏底 − pb；旧公式
+    复现「可见区只剩垫片」）、`test_measured_height_in_counts_only_measured_items`
+  - app 侧 `chat_list::glue_geometry`（真 gpui 布局 + 真 ChatList，模拟发送帧 →
+    结算 → 回复逐帧增长 → 长过内容区跟随 → 滚轮退役；断言用的也是真实绘制位置）
+  - app 84 测试、pi-link 53 测试全绿；`cargo test` 未新增警告
+- 待用户肉眼验收（bead `pi-flash-fkh`）
+
+### 已知行为（不是 bug，勿再改）
+
+「回复只到屏幕中央 + 下方一大片空白」= 钉顶态本身：用户消息钉在内容区顶、
+回复在其下方，剩余空间由 spacer（**真实列表条目**，不是 padding）填满。
+
+「一滑就掉到屏底、下方空白消失」= 滚轮退役锚点（pi-web 同款）：
+
+- 退役 → spacer 从内容里摘掉 → 内容高度 < 视口高 → gpui Bottom 对齐铁律把
+  末条底边拉回屏底 → 整块内容下落
+- 落下后没有滚动余量（内容比视口短 ⇒ 最大滚动位就是尾部位），滑不回去；
+  重回钉顶只有再发一条消息（pi-web 的 `promptAnchorActive` 也只由发送置位）
+- 长回复不受影响（内容高于视口时胶水没接管，滚到哪停在哪儿）
+
+用户实测确认与 pi-web 一致，故保留；若日后要「滚动不塌空白」，得让滚轮只退役
+**钉顶**而保留垫片——那会偏离 pi-web，属产品决策不是修 bug。
+
+### 追加修复：消息区「流式中」也用了过期快照（思考框/徽章不显示）
+
+用户对比 pi-web 截图指出：pi-flash 流式期间既不显示模型行的 `↓token 估算 + t/s
+徽章`，也看不到思考框（thinking 条）。
+
+根因同一类：`session/mod.rs` 的消息渲染闭包用
+`rt_view.state.as_ref().is_some_and(|s| s.is_streaming)` 判「工作中」，而
+`get_state` 快照在一轮内没人重拉 → 恒 false（composer 当初正因此改用事件驱动的
+`agent_running`，消息区漏改）。后果两连：
+
+- `stream_est = None` → `is_working = false` → 模型行只渲染模型名，↓token 与
+  t/s 徽章永不出场（pi-web 这两项是 `isStreaming && est > 0` 才渲染）
+- 「工作详情」组按 `default_open = is_working || !has_final_answer` 折叠 →
+  思考/工具块全被折起来，看不见思考框
+
+修法（4 处同类漏改一起收）：
+
+- `session/mod.rs` 消息区 `streaming = rt_view.agent_running`
+- `session_hero` 空态判据改 `agent_running`
+- `runtime.rs` `send_input` 的 steer/prompt 分流、`fork_from_entry` 的
+  「运行中禁止 fork」守卫都改成 `agent_running || 快照 is_streaming`
+
+`actions_runtime.rs` 里本来就是 OR 关系，无需改。app 84 测试全绿，无警告。
+
+### 追加修复：流式期间平铺渲染（pi-web `isLiveTail`）+ 垫片帧自检
+
+用户对照 pi-web 列出五步：①等待模型应答 ②模型思考（出计速徽章）③模型工作
+④模型输出 ⑤折叠思考/工作进「处理详情」。pi-flash 却是②就直接给出折叠的
+「工作详情」，模型还在干活，接着翻页乱掉。
+
+根因一（渲染结构）：pi-web `ChatWindow` 有 `isLiveTail = (sessionBusy ||
+isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx`——
+**运行中的这一轮直接平铺渲染**（每条 assistant 一个模型名行，thinking/toolCall/
+text 就地展开），`ProcessDetailsGroup` 折叠行与最终回答分区只在轮末整形时才生成
+（`defaultExpanded={!finalAnswerMessage}`）。pi-flash 把「分组折叠」过早套上：
+思考/工具被折起来（看不见思考框），内容高度忽大忽小。
+
+修法：`render_assistant_turn` 里 `is_working` 时直接 `return col.child(
+live_turn_body(...))`——新增 `live_turn_body()` 平铺渲染（每条消息：模型名行 +
+全部块；流式那条的模型名行带 ↓token 估算 + t/s 徽章）。usage 行 / 复制栏照
+pi-web `MessageView` 的 `!isStreaming` 规则留给轮末；写文件 chips 同理。顺带把
+模型名行抽成 `model_label_div(label, est, tps, t)`（徽章四档配色同 pi-web）。
+
+根因二（翻页乱）：内容**形状**一变（轮末折叠、手动展开收合、chips/usage 行出现），
+垫片假设就过期，而贴底胶水会把锚点摆到错误位置（内容变短 → 锚点坠到屏幕中段）。
+旧实现只在「未结算」时补账，形状变化只能等下一条 pi 事件才自愈。
+
+修法：`ChatList::take_frame_sync` 增加第三条触发——每帧自检
+`spacer_lagging()`：实测锚下高度推出的目标垫片与当前值差 > 0.5px 就补一次 sync
+（末条内容条目用「条目数 − 垫片」推得，无需 msgs/phase 拆分）。顺带消掉流式
+增长的垫片一帧滞后；静止时自检安静（不空转）。
+
+测试：`chat_list::glue_geometry` 加 `shape_change_triggers_frame_sync`（整形后
+帧自检必须补账、锚点回到 padding.top，静止后不再请求）；app 85 测试、pi-link 53
+全绿；真机启动无 panic。
+
+### v59 滚屏四修：垫片改成常数（钉顶与测量精度解耦）——用户截图错位状态的真正机制
+
+用户实测（截图四）：agent 内容尾巴贴在屏顶、下方一整片空白，用户消息整个不见——
+「每次 agent 消息都顶到顶部去」，而需求是**只有用户消息刷到顶部**。
+
+真机制（前三次修都没打中的那层）：钉顶靠「逻辑位 = 锚点」+ 精算垫片撑着，而
+gpui `layout_items` 在 `pt + below + spacer + pb < H`（锚下填不满视口）时会
+**丢掉逻辑位、强制改成贴底胶水**（`logical_scroll_top = None`），胶水定位用的是
+列表里**缓存的条目高度**。内容在两帧之间变矮（轮末把思考/工具折进「工作详情」、
+等待行/思考块收起、下一条消息开始；尤其**模型派发后的静默期没有任何 pi 事件**，
+没人补账）时：
+
+1. 精算垫片（= 内容区高 − 锚下内容）相对偏大 → 覆盖条件成立
+2. 逻辑位被夺走 → 胶水按偏大的旧垫片算出更靠上的起点
+3. **锚点条目不在绘制范围里**（第一段绘制从更靠上的条目开始）→ 用户消息消失
+4. 帧自检读的是同一份缓存高度 → 认为垫片没问题 → 不补账 → 静默期一直停在错位状态
+
+修法（结构性）：
+
+- `spacer_target` 只给两个取值：**钉顶期 = 一整屏内容区高（常数）**、跟尾期 = 0。
+  这样一来覆盖条件 `pt + below + spacer + pb ≥ H` 恒成立（below ≥ 0）⇒ 逻辑位
+  永远不被夺走 ⇒ 锚点位置与测量精度、条目缓存新鲜度**彻底解耦**。垫片偏大只是
+  屏下空白多一点（看不见）。
+- `settle_spacer` 只做一件事：定「钉顶 or 跟尾」（`below ≥ 内容区高` 即交还胶水，
+  只在翻过去那次 `scroll_to(count)`；翻回来由 sync 第 6 步重新钉顶）。夹紧末条
+  内容条目为「已存在的最后一条内容条目」——结算发生在 splice 之前，否则会把垫片
+  自己算进锚下内容（凭空多一整屏 → 误判跟尾，单测抓到过）。
+- 帧自检（`take_frame_sync` 第 3 条触发）改为**只在钉顶/跟尾判定翻转时**请求补账
+  （形状变化不经过 pi 事件时用），静止时完全不空转。
+- `jump_to_bottom`（回到最新）：钉顶期就是 `scroll_to(锚点, 0)`；只有锚点已退役
+  才交还胶水——**别在垫片还是正数时用胶水**，那正是把内容末尾推到屏顶的错位状态。
+
+测试：新增 `glue_geometry::shape_shrink_without_event_keeps_pin`（内容变矮且无
+pi 事件时锚点必须纹丝不动；长过内容区后判定翻转补账跟尾）；`spacer_target_is_a
+_constant_while_pinned`；app 86 测试 + pi-link 53 全绿，真机启动无 panic。
+
+### v59 滚屏五修：快流下「钉顶/跟尾」判定每事件翻转（= 永不自动上滚）+ 下边距改 150
+
+用户实测：agent 输出一路顶出屏幕、**到输出结束都不自动上滚**；要求「输出距
+input panel 上沿 20px 就该开始滚」。
+
+根因（快流下的判定抖动）：`sync` 第 5 步「外科重测尾部」的区间是
+`msgs-1 .. target`——**单条回复的回合里，`msgs-1` 正是承载整轮内容的「轮首
+条目」**。它被打回 `Unmeasured` 后，同一帧里第二个 pi 事件结算时 ListState 按 0
+计它的高度 ⇒ `below` 只剩锚点高度 ⇒ 判定翻回「钉顶」⇒ sync 第 6 步重新钉顶、
+垫片弹回一整屏。230 tok/s 时一帧 2~4 个 delta，于是判定**每个事件翻一次**，
+表现就是钉顶压着不动、内容一直长出屏幕（用户看到的「不自动上滚」）。
+
+修法：第 5 步避开「轮首条目」（`from = max(msgs-1, 锚点+2)`）——它本来就每帧
+被布局重测（钉顶期在首屏内、跟尾期在胶水 walk-up 里都会被渲染），不需要也不该
+被 splice 打回未测量。
+
+另外按用户口径把下边距 135 → **150**：内容区高 = 视口高 − 22 − 150，跟尾时内容
+末条停在「胶囊上沿 + 20px」（胶囊高 ~110 + 底距 20）。「回到最新」按钮本来就悬浮
+在胶囊上方 20px 处，现在与内容末条正好落在同一条线上。
+
+回归锁：`glue_geometry::burst_events_do_not_flip_follow_decision`（一帧内两个
+事件：判定必须保持跟尾、末尾贴屏底；改动前该测试失败，正好复现用户现象）。
+app 87 测试 + pi-link 53 全绿，真机启动无 panic。

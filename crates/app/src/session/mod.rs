@@ -2,6 +2,7 @@
 //! 会话导航比例尺（右侧 26px gutter，垂直居中 65% 高，≤10 节点）。无工具
 //! 栏、无内嵌状态行（v54 按设计删除）。
 
+pub(crate) mod chat_list;
 pub(crate) mod diff;
 pub(crate) mod input;
 pub(crate) mod messages;
@@ -27,6 +28,14 @@ pub(crate) fn main_column(
     let t = T();
     // all conversation state comes from the ACTIVE session runtime
     let rt = chat.rt();
+    // 滚屏补账（chat_list.rs）：滚动事件回调与列表布局期严禁触碰
+    // ListState（RefCell 冲突即崩），垫片的延迟卸载/结算借这里的下一帧
+    // 渲染补 sync——page_turn 后消息测完即 settle 精确高度交还胶水；滚轮
+    // 退役锚点后就地卸垫片
+    let pager_pending = rt.read(cx).pager.take_frame_sync();
+    if pager_pending {
+        rt.update(cx, |r, cx| r.notify_list(cx));
+    }
     // composer 的流式态用事件驱动的 agent_running（AgentStart/End 实时更新），
     // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
     // 导致 stop 按钮永远不出现
@@ -40,7 +49,7 @@ pub(crate) fn main_column(
     chat.input_focused = input_focused;
     let chat_entity = entity.clone();
     let rt_entity = rt.clone();
-    let rt_list = rt.read(cx).list.clone();
+    let rt_list = rt.read(cx).pager.state();
 
     let sf = crate::appearance::session_font();
 
@@ -87,6 +96,46 @@ pub(crate) fn main_column(
         )
 }
 
+/// 回到最新消息（pi-web chat-scroll-to-bottom parity）：32px 圆钮，由
+/// composer 悬浮容器以 gap 20px 叠在输入面板顶部上方（随面板增高上移，
+/// 永不叠进面板）；常显 0.28 透明、hover 全亮；点击滚到末条并置位贴底。
+pub(crate) fn scroll_to_bottom_button(
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+) -> gpui::AnyElement {
+    let weak = weak.clone();
+    div()
+        .id("scroll-to-bottom")
+        .flex_shrink_0()
+        .size(px(32.))
+        .rounded_full()
+        .border_1()
+        .border_color(rgb(t.border))
+        .bg(rgb(t.bg_panel))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        // pi-web: 常态 opacity .28，hover/focus 全亮
+        .opacity(0.28)
+        .hover(|s| s.opacity(1.))
+        // pi-web box-shadow: 0 2px 8px text 16%
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::rgba((t.text << 8) | 0x29).into(),
+            offset: gpui::point(px(0.), px(2.)),
+            blur_radius: px(8.),
+            spread_radius: px(0.),
+        }])
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = weak.update(cx, |c, cx| {
+                c.rt().update(cx, |r, _| r.scroll_to_bottom());
+                cx.notify();
+            });
+        })
+        .child(crate::ui::icon("arrow-down", 14., t.text_muted))
+        .into_any_element()
+}
+
 /// Message list + phase row (v54: 920px 列，行距 22)。
 fn session_list(
     _chat: &mut Chat,
@@ -96,7 +145,18 @@ fn session_list(
     rt_entity: gpui::Entity<crate::session::runtime::SessionRuntime>,
     t: &'static crate::theme::Theme,
 ) -> gpui::AnyElement {
-    list(rt_list.clone(), move |ix, _window, cx| {
+    // 水平边距必须挂外层容器：gpui List 的 prepaint 只应用 padding.top/
+    // bottom（item_origin = bounds.origin + (0, padding.top)），左右 padding
+    // 对条目完全无效——此前 pl34/pr30「看起来不存在」即此因
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        // 默认两侧边距 10px（窄窗口下内容不贴边；920 列宽不动，宽窗居中）
+        .px(px(10.))
+        .child(
+            list(rt_list.clone(), move |ix, _window, cx| {
         let rt_view = rt_entity.read(cx);
         let chat = chat_entity.read(cx);
         let weak = weak_for_msg.clone();
@@ -109,7 +169,7 @@ fn session_list(
                     div()
                         .w_full()
                         .max_w(px(920.))
-                        .child(render_custom_msg(m, ix, t)),
+                        .child(render_custom_msg(m, ix, t, &rt_view.collapsed, &weak)),
                 )
                 .into_any_element(),
             Some(m) if m.role == Role::User => div()
@@ -157,8 +217,13 @@ fn session_list(
                 let turn_msgs: Vec<&crate::session::messages::Msg> =
                     rt_view.messages[ix..end].iter().collect();
                 let turn_ixs: Vec<usize> = (ix..end).collect();
-                // 流式中且本轮包含最后一条消息 → 工作中（隐藏折叠行）
-                let streaming = rt_view.state.as_ref().is_some_and(|s| s.is_streaming);
+                // 流式中且本轮包含最后一条消息 → 工作中（思考/工具组默认展开，
+                // 模型行显示 ↓token 估算 + t/s 徽章）。
+                // 必须用事件驱动的 agent_running：get_state 快照的 is_streaming
+                // 一轮内没人重拉 → 恒 false，会让「工作详情」组按「已有最终回答」
+                // 默认折叠（思考框看不见）、↓token / t/s 徽章永不出现——composer
+                // 早为此改用 agent_running（见 main_column 顶部注释），消息区漏改。
+                let streaming = rt_view.agent_running;
                 let stream_est = if streaming && end == rt_view.messages.len() {
                     rt_view.messages.last().map(|last| {
                         let text: String = last
@@ -207,10 +272,18 @@ fn session_list(
                     .into_any_element()
             }
             None => {
-                // pi-web parity（v56-1 c6）：agentRunning && !hasStreamingContent
-                // 时显示 13px text_muted 脉冲行——等待模型 / 运行工具（列名，
-                // 1/≤3/更多 三档），文本流式一经出现即让位
-                if chat.rt().read(cx).phase_row_visible() {
+                // 条目序 [msgs | phase 行 | spacer]（chat_list::sync 的
+                // splice 编排与之对齐）。spacer = 翻页垫片（pi-web
+                // PromptAnchorSpacer）：把「跟随位」垫到用户消息顶。
+                // phase 行 = 等待脉冲（文本流式一经出现即让位）
+                let content = rt_view.messages.len()
+                    + usize::from(rt_view.phase_row_visible());
+                if rt_view.pager.anchor_active() && ix == content {
+                    div()
+                        .w_full()
+                        .h(px(rt_view.pager.spacer_px()))
+                        .into_any_element()
+                } else if chat.rt().read(cx).phase_row_visible() {
                     let label = chat.rt().read(cx).phase_label();
                     div()
                         .w_full()
@@ -232,11 +305,12 @@ fn session_list(
     })
     .flex_1()
     .min_h_0()
-    .pt(px(22.))
-    .pr(px(30.))
-    .pb(px(135.))
-    .pl(px(34.))
-    .into_any_element()
+    // 上下内边距必须与 chat_list 的钉顶/垫片几何一致（PAD_TOP/PAD_BOTTOM），
+    // 改这里等于改滚屏数学
+    .pt(px(chat_list::PAD_TOP))
+    .pb(px(chat_list::PAD_BOTTOM)),
+        )
+        .into_any_element()
 }
 
 /// Empty new-session hero (pi-web ChatWindow isEmptyNew; v54 极简版).
@@ -246,12 +320,7 @@ fn session_hero(
     cx: &mut gpui::Context<Chat>,
 ) -> Option<gpui::AnyElement> {
     (chat.rt().read(cx).messages.is_empty()
-        && !chat
-            .rt()
-            .read(cx)
-            .state
-            .as_ref()
-            .is_some_and(|s| s.is_streaming))
+        && !chat.rt().read(cx).agent_running)
         .then(|| {
             div()
                 .w_full()
@@ -265,7 +334,7 @@ fn session_hero(
                         .items_center()
                         .justify_between()
                         .gap_3()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .child(
                             div()
                                 .flex()
@@ -336,7 +405,7 @@ fn nav_gutter(
     // turns = 用户消息锚点（ChatMinimap.tsx parity：每轮=用户消息 + 其后
     // 的全部 assistant 回复）
     let msgs_len = rt_entity.read(cx).messages.len();
-    let scroll_top_ix = rt_entity.read(cx).list.logical_scroll_top().item_ix;
+    let scroll_top_ix = rt_entity.read(cx).pager.scroll_top_ix();
     let turns: Vec<usize> = rt_entity
         .read(cx)
         .messages
@@ -466,14 +535,14 @@ fn nav_gutter(
                         .gap(px(9.))
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let list = rt_scroll.read(cx).list.clone();
-                            list.scroll_to_reveal_item(ux);
+                            let state = rt_scroll.read(cx).pager.state();
+                            state.scroll_to_reveal_item(ux);
                         })
                         .child(
                             div()
                                 .w(px(18.))
                                 .text_right()
-                                .font_family("Consolas")
+                                .font_family(crate::markdown::MONO_FAMILY)
                                 .text_size(px(10.))
                                 .line_height(relative(1.7))
                                 .text_color(rgb(t.text_dim))
@@ -526,8 +595,8 @@ fn nav_gutter(
                         .ml(px(27.))
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let list = rt_scroll_a.read(cx).list.clone();
-                            list.scroll_to_reveal_item(aix);
+                            let state = rt_scroll_a.read(cx).pager.state();
+                            state.scroll_to_reveal_item(aix);
                         })
                         .child(
                             div()
@@ -598,8 +667,8 @@ fn nav_gutter(
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(t.accent)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let list = rt_scroll.read(cx).list.clone();
-                        list.scroll_to_reveal_item(ux);
+                        let state = rt_scroll.read(cx).pager.state();
+                        state.scroll_to_reveal_item(ux);
                     }),
             );
         }

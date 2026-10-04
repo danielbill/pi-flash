@@ -19,7 +19,7 @@ pub(crate) fn render_ext_widget(lines: &[String], t: &crate::theme::Theme) -> gp
         .border_1()
         .border_color(rgb(t.border))
         .bg(rgb(t.tool_bg))
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(11.))
         .text_color(rgb(t.text_muted))
         .child(SharedString::from(text))

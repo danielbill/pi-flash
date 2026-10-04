@@ -74,7 +74,7 @@ fn proj_tip(path: &std::path::PathBuf, x: f32, y: f32) -> impl gpui::IntoElement
         .child(
             div()
                 .text_size(px(10.5))
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_color(rgb(0x9fbcb2))
                 .child(SharedString::from(full)),
         )

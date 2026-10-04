@@ -336,7 +336,7 @@ fn mc_models_sidebar(
                 )
                 .child(if enabled < total {
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!("{enabled}/{total}")))
@@ -651,7 +651,7 @@ fn mc_model_rows(
                 .child(
                     div()
                         .flex_grow()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!(
@@ -775,7 +775,7 @@ fn mc_model_rows(
                             )
                             .child(
                                 div()
-                                    .font_family("Consolas")
+                                    .font_family(crate::markdown::MONO_FAMILY)
                                     .text_size(px(10.))
                                     .text_color(rgb(t.text_dim))
                                     .overflow_hidden()

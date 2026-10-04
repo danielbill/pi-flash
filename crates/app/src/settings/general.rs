@@ -32,7 +32,7 @@ pub(crate) fn mc_general_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
                 )
                 .child(
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!(
@@ -418,7 +418,7 @@ fn appearance_rows(weak: &gpui::WeakEntity<Chat>, _t: &crate::theme::Theme) -> g
                                 .min_w(px(28.))
                                 .text_align(gpui::TextAlign::Center)
                                 .text_size(px(12.))
-                                .font_family("Consolas")
+                                .font_family(crate::markdown::MONO_FAMILY)
                                 .text_color(rgb(t.text))
                                 .child(SharedString::from(format!("{}", spec.size as i32))),
                         )

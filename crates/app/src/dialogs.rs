@@ -259,7 +259,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                                 .child(
                                                     div()
                                                         .text_xs()
-                                                        .font_family("Consolas")
+                                                        .font_family(crate::markdown::MONO_FAMILY)
                                                         .text_color(rgb(t.text_muted))
                                                         .child(path_text),
                                                 ),
@@ -291,7 +291,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                         .p_2()
                                         .rounded(px(6.))
                                         .bg(rgb(t.bg))
-                                        .font_family("Consolas")
+                                        .font_family(crate::markdown::MONO_FAMILY)
                                         .text_size(px(11.))
                                         .text_color(rgb(t.text))
                                         .child(SharedString::from(body)),

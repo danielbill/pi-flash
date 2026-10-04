@@ -8,7 +8,7 @@ use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, TextA
 use pi_link::protocol::{content_blocks, Block, Usage};
 
 use crate::Chat;
-use crate::i18n::tr;
+use crate::i18n::{tf, tr};
 use crate::markdown;
 use crate::theme;
 use crate::ui::{icon, icon_hover};
@@ -173,6 +173,8 @@ pub(crate) fn render_block(
     t: &theme::Theme,
     // 流式中的消息：markdown 代码块跳过 syntect 高亮（v56-3 c15）
     streaming: bool,
+    // thinking 时长（pi-web ThinkingBlock 右侧 Ns；快照按消息首尾时间差）
+    thinking_dur: Option<i64>,
 ) -> gpui::Div {
     match b {
         Block::Text { text, .. } if !text.trim().is_empty() => {
@@ -180,7 +182,13 @@ pub(crate) fn render_block(
         }
         Block::Thinking { text, content_index } if !text.trim().is_empty() => {
             let key = (msg_ix, *content_index);
-            let expanded = collapsed.get(&key).copied().unwrap_or(true);
+            // 「展示思考」开关 = 新思考块的默认展开态：开=默认展开全文，
+            // 关（默认）=收成一行（灯泡+单行预览，点击可展开）；用户手动
+            // 展开过的块以 collapsed 里的显式值为准
+            let expanded = collapsed
+                .get(&key)
+                .copied()
+                .unwrap_or(crate::services::workspace::show_thinking());
             let weak = weak.clone();
             // pi-web getThinkingPreview: first line, up to 240 chars, trimmed
             let preview: String = text
@@ -238,7 +246,8 @@ pub(crate) fn render_block(
                 }));
             let mut block = div()
                 .w_full()
-                .my_1()
+                // 块间距由上层 gap 8 容器统一（pi-web 块容器 gap:8），
+                // 块自身不挂 margin（此前 my_1=4px 与工具卡 0px 不均）
                 .flex()
                 .items_start()
                 .gap_1p5()
@@ -249,7 +258,7 @@ pub(crate) fn render_block(
                 .border_1()
                 .border_color(rgb(t.border))
                 .bg(rgb(t.bg))
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(px(11.))
                 .line_height(relative(1.5))
                 .child(toggle);
@@ -260,6 +269,15 @@ pub(crate) fn render_block(
                         .min_w_0()
                         .text_color(rgb(t.text_muted))
                         .child(SharedString::from(text.clone())),
+                );
+            }
+            // pi-web {duration}s：右侧 text-dim
+            if let Some(d) = thinking_dur {
+                block = block.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(format!("{d}s"))),
                 );
             }
             block
@@ -476,7 +494,7 @@ fn render_tool_card(
         .child(
             div()
                 .flex_shrink_0()
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(px(11.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(name_c))
@@ -489,7 +507,7 @@ fn render_tool_card(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(px(11.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(preview)),
@@ -543,7 +561,7 @@ fn render_tool_card(
                 .bg(rgba(t.bg_subtle))
                 .px(px(10.))
                 .py(px(8.))
-                .font_family("Consolas")
+                .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(px(12.))
                 .line_height(relative(1.5))
                 .text_color(rgb(t.text_muted))
@@ -598,7 +616,7 @@ fn alert_box(text: String, color: u32, border_rgb: u32, _t: &theme::Theme) -> gp
         .rounded(px(6.))
         .bg(gpui::rgba(rgba_a(border_rgb, 0.07)))
         .text_color(rgb(color))
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.))
         .line_height(relative(1.5))
         .child(SharedString::from(text))
@@ -669,11 +687,19 @@ fn parse_compaction_summary(summary: &str) -> (String, Vec<String>, Vec<String>)
 }
 
 /// Role::Custom 渲染（v56-6 c28；mod.rs 分发入口）。
-pub(crate) fn render_custom_msg(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div {
+pub(crate) fn render_custom_msg(
+    m: &Msg,
+    msg_ix: usize,
+    t: &theme::Theme,
+    collapsed: &HashMap<(usize, usize), bool>,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::Div {
     let mut col = div().w_full().mb(px(16.)).flex().flex_col();
     let custom_type = m.custom_type.as_deref().unwrap_or("");
     match custom_type {
-        "compaction" => col = col.child(render_compaction_card(m, msg_ix, t)),
+        "compaction" => {
+            col = col.child(render_compaction_card(m, msg_ix, t, collapsed, weak))
+        }
         "branch_summary" => {
             // pi-web 将 branch_summary 渲为 user 气泡（斜体引言+摘要）；
             // 这里为保持 fork 锚点对齐保留 Custom 角色，渲染为斜体引言 +
@@ -722,7 +748,7 @@ pub(crate) fn render_custom_msg(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpu
                     .text_color(rgb(t.text_muted))
                     .child(
                         div()
-                            .font_family("Consolas")
+                            .font_family(crate::markdown::MONO_FAMILY)
                             .text_size(px(11.))
                             .child(SharedString::from(if custom_type.is_empty() {
                                 "extension".to_string()
@@ -762,7 +788,7 @@ pub(crate) fn render_custom_msg(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpu
                         .text_color(rgb(t.text_muted))
                         .child(
                             div()
-                                .font_family("Consolas")
+                                .font_family(crate::markdown::MONO_FAMILY)
                                 .text_size(px(11.))
                                 .child(SharedString::from(if custom_type.is_empty() {
                                     "extension".to_string()
@@ -784,9 +810,15 @@ pub(crate) fn render_custom_msg(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpu
 }
 
 /// pi-web CompactionMessageView parity（v56-6 c28）。
-fn render_compaction_card(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div {
+fn render_compaction_card(
+    m: &Msg,
+    msg_ix: usize,
+    t: &theme::Theme,
+    collapsed: &HashMap<(usize, usize), bool>,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::Div {
     let (body, read_files, modified_files) = parse_compaction_summary(&m.plain_text());
-    let mut card = div()
+    let card = div()
         .border_1()
         .border_color(rgb(t.border))
         .rounded(px(8.))
@@ -805,7 +837,7 @@ fn render_compaction_card(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div
                 .text_color(rgb(t.text_muted))
                 .child(
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(px(11.))
                         .child(SharedString::from("compaction")),
                 )
@@ -819,15 +851,18 @@ fn render_compaction_card(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div
                         )),
                 ),
         )
+        ;
+    // 正文容器（pi-web <div style={{padding:"11px 13px 12px"}}>）：
+    // 文件元数据必须挂在这层里面；挂到卡片根上会让分隔线和清单框
+    // 顶掉左右 13px 内边距，直接贴住卡片边框
+    let mut body = div()
+        .px(px(13.))
+        .pt(px(11.))
+        .pb(px(12.))
         .child(
             div()
-                .px(px(13.))
-                .pt(px(11.))
-                .pb(px(12.))
-                .child(
-                    div()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::BOLD)
+                .text_size(px(15.))
+                .font_weight(FontWeight::BOLD)
                         .line_height(relative(1.35))
                         .text_color(rgb(t.text))
                         .child(SharedString::from(tr("会话已压缩"))),
@@ -851,65 +886,115 @@ fn render_compaction_card(m: &Msg, msg_ix: usize, t: &theme::Theme) -> gpui::Div
                         .into_any_element()
                 } else {
                     markdown::render(&body, t, false)
-                }),
-        );
-    // 文件元数据（pi-web <details> parity：默认折叠，点击展开清单）
+                });
+
+    // 文件元数据（pi-web CompactionFileMetadata parity）：
+    // <details> 默认收起，summary 行 =「文件上下文：N 读取，M 修改」，
+    // 顶线分隔；展开后按"修改/读取"分节，清单是带边框底色的等宽框
     let total = read_files.len() + modified_files.len();
     if total > 0 {
         let mut parts: Vec<String> = Vec::new();
         if !read_files.is_empty() {
-            parts.push(format!("{} 读取", read_files.len()));
+            parts.push(tf("{n} 读取", &[("n", read_files.len().to_string())]));
         }
         if !modified_files.is_empty() {
-            parts.push(format!("{} 修改", modified_files.len()));
+            parts.push(tf("{n} 修改", &[("n", modified_files.len().to_string())]));
         }
+        // 折叠位复用 runtime.collapsed；usize::MAX 作content_index，
+        // 避开同一消息里工具调用用的 (msg_ix, content_index) 键
+        let key = (msg_ix, usize::MAX);
+        let open = collapsed.get(&key).copied().unwrap_or(false);
+        let weak_toggle = weak.clone();
+        let label = tf("文件上下文：{details}", &[("details", parts.join(", "))]);
         let mut meta = div()
-            .mt(px(8.))
+            .mt(px(10.))
+            .pt(px(8.))
+            .border_t_1()
+            .border_color(rgb(t.border))
             .flex()
             .flex_col()
             .child(
                 div()
-                    .text_size(px(11.))
-                    .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(parts.join("，"))),
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = weak_toggle.update(cx, |c, cx| {
+                            let rt = c.rt();
+                            rt.update(cx, |r, _| {
+                                let next = !r.collapsed.get(&key).copied().unwrap_or(false);
+                                r.collapsed.insert(key, next);
+                            });
+                            cx.notify();
+                        });
+                    })
+                    .child(
+                        // pi-web 浏览器 <summary> 原生三角（summary 12px muted
+                        // 同款尺寸）——原 10px text_faint 字形小到看不清
+                        icon(
+                            if open { "chevron-down" } else { "chevron-right" },
+                            12.,
+                            t.text_muted,
+                        ),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .line_height(relative(1.4))
+                            .text_color(rgb(t.text_muted))
+                            .child(SharedString::from(label.clone())),
+                    ),
             );
-        for (title, files) in [("修改文件", &modified_files), ("读取文件", &read_files)] {
-            if files.is_empty() {
-                continue;
-            }
-            let mut sec = div()
-                .mt(px(6.))
-                .flex()
-                .flex_col()
-                .child(
+
+        if open {
+            for (title, files) in [("修改文件", &modified_files), ("读取文件", &read_files)] {
+                if files.is_empty() {
+                    continue;
+                }
+                let list = div()
+                    .id(SharedString::from(format!("cfiles-{msg_ix}-{title}")))
+                    .max_h(px(180.))
+                    .overflow_y_scroll()
+                    .py(px(7.))
+                    .px(px(8.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.bg_panel))
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.)) // li + li { margin-top: 3px }
+                    .children(files.iter().map(|f| {
+                        div()
+                            .font_family(crate::markdown::MONO_FAMILY)
+                            .text_size(px(11.))
+                            .line_height(relative(1.45))
+                            .text_color(rgb(t.text_muted))
+                            .child(SharedString::from(f.clone()))
+                    }));
+                meta = meta.child(
                     div()
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text_muted))
-                        .child(SharedString::from(title)),
-                );
-            let mut list = div()
-                .id(SharedString::from(format!("cfiles-{msg_ix}-{title}")))
-                .mt(px(2.))
-                .max_h(px(180.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col();
-            for f in files.iter() {
-                list = list.child(
-                    div()
-                        .font_family("Consolas")
-                        .text_size(px(11.))
-                        .text_color(rgb(t.text_muted))
-                        .child(SharedString::from(f.clone())),
+                        .mt(px(8.))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .mb(px(4.))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(t.text))
+                                .child(SharedString::from(tr(title))),
+                        )
+                        .child(list),
                 );
             }
-            sec = sec.child(list);
-            meta = meta.child(sec);
         }
-        card = card.child(meta);
+        body = body.child(meta);
     }
-    card
+    card.child(body)
 }
 
 /// pi-web isWriteToolName（tool-names.ts）。
@@ -1056,7 +1141,7 @@ fn paired_result(
         })
         .px(px(10.))
         .py(px(8.))
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.))
         .line_height(relative(1.5))
         .when(empty, |d| d.italic().text_color(rgb(t.text_dim)).opacity(0.6))
@@ -1140,7 +1225,7 @@ fn split_files_view(files: &[crate::session::diff::DiffFile], t: &theme::Theme) 
         .max_h(px(560.))
         .overflow_y_scroll()
         .min_w_0()
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.))
         .line_height(relative(1.55));
     for (fix, file) in files.iter().enumerate() {
@@ -1279,7 +1364,7 @@ fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement {
         .max_h(px(520.))
         .overflow_y_scroll()
         .min_w_0()
-        .font_family("Consolas")
+        .font_family(crate::markdown::MONO_FAMILY)
         .text_size(px(12.))
         .line_height(relative(1.55))
         .children(text.lines().enumerate().map(|(i, line)| {
@@ -1374,7 +1459,8 @@ pub(crate) fn render_msg(
     // copy flash for this row (032 复制 → 已复制, 1.5s)
     copied: bool,
 ) -> gpui::Div {
-    let mut col = div().w_full().mb(px(22.)).flex().flex_col();
+    // pi-web 消息间距 marginBottom 16（v 此前 22 偏大）
+    let mut col = div().w_full().mb(px(16.)).flex().flex_col();
     if m.role == Role::User {
         // v56-4 c18-c22（pi-web UserMessageView parity）：右对齐 85% 宽、
         // user_bg 底 + 1px 蓝边框 rgba(59,130,246,.2)、圆角 12、pad 8/12、
@@ -1477,7 +1563,7 @@ pub(crate) fn render_msg(
                             .items_center()
                             .gap(px(6.))
                             .flex_shrink_0()
-                            .font_family("Consolas")
+                            .font_family(crate::markdown::MONO_FAMILY)
                             .text_size(px(13.))
                             .text_color(rgb(t.accent))
                             .cursor_pointer()
@@ -1604,7 +1690,7 @@ pub(crate) fn render_msg(
             bottom = bottom.child(
                 div()
                     .text_size(px(10.))
-                    .text_color(rgb(t.text_faint))
+                    .text_color(rgb(t.text_dim))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }
@@ -1684,14 +1770,18 @@ pub(crate) fn render_msg(
         // 单条 assistant（仅当它不构成轮头时才会走到这里——session_list
         // 已把轮渲染收敛到 render_assistant_turn；此分支防御性保留）
         col = col.group("astat");
+        // pi-web 块容器 gap 8（text/thinking/工具卡统一间距）
+        let mut blocks_col = div().w_full().flex().flex_col().gap(px(8.));
         for b in &m.blocks {
-            col = col.child(render_block(b, msg_ix, weak, collapsed, t, false));
+            blocks_col = blocks_col.child(render_block(b, msg_ix, weak, collapsed, t, false, None));
         }
+        col = col.child(blocks_col);
     }
     col
 }
 
 /// Block 渲染可见性（组内条目计数/过滤用；空 thinking/空 text 跳过）。
+/// 思考块永远可见（收起=一行），不随「展示思考」开关消失。
 fn block_displayable(b: &Block) -> bool {
     match b {
         Block::Text { text, .. } | Block::Thinking { text, .. } => !text.trim().is_empty(),
@@ -1744,12 +1834,98 @@ fn usage_line(u: &UsageLine) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
-fn model_label_div(label: &str, t: &theme::Theme) -> gpui::Div {
-    div()
+/// 模型名行（pi-web MessageView model label）：模型名 + 流式期间的 ↓token
+/// 估算 + t/s 徽章（四档配色同 pi-web：≥50 青 / ≥30 绿 / ≥15 黄 / 其余红）。
+fn model_label_div(label: &str, est: Option<u64>, tps: Option<f32>, t: &theme::Theme) -> gpui::Div {
+    let mut row = div()
         .text_size(px(11.))
         .text_color(rgb(t.text_dim))
         .mb(px(4.))
-        .child(SharedString::from(label.to_string()))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(SharedString::from(label.to_string()));
+    if let Some(e) = est.filter(|e| *e > 0) {
+        row = row.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .text_color(rgb(t.text))
+                .child(SharedString::from(format!(
+                    "\u{2193} {}",
+                    crate::services::format::fmt_thousand(e)
+                ))),
+        );
+        if let Some(v) = tps {
+            let bg = if v >= 50. {
+                0x53b3cb
+            } else if v >= 30. {
+                0x9bc53d
+            } else if v >= 15. {
+                0xf9c22e
+            } else {
+                0xe01a4f
+            };
+            row = row.child(
+                div()
+                    .ml(px(6.))
+                    .px(px(6.))
+                    .py(px(1.))
+                    .rounded(px(4.))
+                    .bg(gpui::rgb(bg))
+                    .text_size(px(11.))
+                    .text_color(rgb(0xffffff))
+                    .child(SharedString::from(format!("{v:.1} t/s"))),
+            );
+        }
+    }
+    row
+}
+
+/// pi-web `isLiveTail` 的平铺渲染：运行中的这一轮**不分组、不折叠**——每条
+/// assistant 消息一个模型名行 + 全部块（thinking/toolCall/text 就地展开），
+/// 流式那条的模型名行带 ↓token 估算 + t/s 徽章。
+///
+/// 「工作详情」折叠行与最终回答分区只在轮末整形后生成；usage 行/复制栏也照
+/// pi-web MessageView 的 `!isStreaming` 规则留给轮末（见 `render_assistant_turn`）。
+#[allow(clippy::too_many_arguments)]
+fn live_turn_body(
+    turn: &[&Msg],
+    turn_ixs: &[usize],
+    weak: &gpui::WeakEntity<Chat>,
+    collapsed: &HashMap<(usize, usize), bool>,
+    t: &theme::Theme,
+    model_label: &str,
+    est: Option<u64>,
+    tps: Option<f32>,
+) -> gpui::Div {
+    let mut body = div().flex().flex_col();
+    for (i, (m, &gix)) in turn.iter().zip(turn_ixs).enumerate() {
+        if m.role != Role::Assistant {
+            continue;
+        }
+        let disp: Vec<&Block> = m.blocks.iter().filter(|b| block_displayable(b)).collect();
+        if disp.is_empty() {
+            continue;
+        }
+        // 轮内最后一条 = 正在流式输出/干活的那条（徽章与 streaming 态挂它）
+        let streaming = i == turn.len() - 1;
+        let mut item = div().mb(px(16.)).flex().flex_col().gap(px(8.));
+        item = item.child(model_label_div(
+            m.model.as_deref().unwrap_or(model_label),
+            if streaming { est } else { None },
+            if streaming { tps } else { None },
+            t,
+        ));
+        // pi-web thinkingDurationFromFile：该消息的生成时长挂到 thinking 块
+        let msg_think_dur = m.end_ts.zip(m.ts).map(|(e, s)| (e - s).max(0) / 1000);
+        for b in disp {
+            item = item.child(render_block(b, gix, weak, collapsed, t, streaming, msg_think_dur));
+        }
+        body = body.child(item);
+    }
+    body
 }
 
 /// 一轮 agent 回复（用户消息 → 下一用户消息之间的全部 assistant 消息）。
@@ -1776,7 +1952,7 @@ pub(crate) fn render_assistant_turn(
     meta: MsgMeta,
     copied: bool,
 ) -> gpui::Div {
-    let mut col = div().w_full().mb(px(22.)).flex().flex_col().group("astat");
+    let mut col = div().w_full().mb(px(16.)).flex().flex_col().group("astat");
     let is_working = stream_info.is_some();
 
     // pi-web findFinalAssistantIndex：有 answer 连续段的末条 assistant，
@@ -1811,9 +1987,34 @@ pub(crate) fn render_assistant_turn(
         }
     }
 
+    // ---- 运行中：pi-web `isLiveTail` 平铺渲染（不分组、不折叠）----
+    // pi-web ChatWindow：`isLiveTail = (sessionBusy || isStreaming) &&
+    // endIdx === messages.length && userIdx === lastAnchorIdx` 时，把这一轮直接
+    // 平铺——每条 assistant 一个模型名行、thinking/toolCall/text 就地展开，流式
+    // 那条的模型名行带 ↓token 估算 + t/s 徽章。usage 行 / 复制栏（pi-web
+    // MessageView `!isStreaming` 才渲染）与「工作详情」折叠行、最终回答分区一律
+    // 等到**轮末整形**（下面的 !is_working 分支）才出现。
+    // 旧实现轮中就套上折叠组：思考/工具被折起来（streaming 时看不见思考框），
+    // 内容高度忽大忽小，还把翻页钉顶搅乱。
+    let est = stream_info.filter(|_| is_working);
+    let tps = stream_tps.filter(|_| is_working);
+    if is_working {
+        return col.child(live_turn_body(
+            turn,
+            turn_ixs,
+            weak,
+            collapsed,
+            t,
+            model_label,
+            est,
+            tps,
+        ));
+    }
+
     // ---- 「工作详情」组：全部 assistant 消息的 thinking/toolCall，最终
     // 消息只贡献 answer 连续段之前的前置块（pi-web processViews parity）----
     let mut group_body = div().mt(px(8.)).flex().flex_col();
+
     let mut n_views = 0usize;
     let mut n_tools = 0usize;
     for (i, (m, &gix)) in turn.iter().zip(turn_ixs).enumerate().take(final_pos + 1) {
@@ -1826,18 +2027,24 @@ pub(crate) fn render_assistant_turn(
             continue;
         }
         n_views += 1;
-        let mut item = div().mb(px(16.)).flex().flex_col();
+        // 块容器 gap 8（pi-web AssistantMessageView：label 下方 flexDirection
+        // column + gap 8）；label 自带 mb 4 → label→首块 12px，与 pi-web 一致
+        let mut item = div().mb(px(16.)).flex().flex_col().gap(px(8.));
         // 每条 assistant 消息自带模型名标签（pi-web AssistantMessageView）
         item = item.child(model_label_div(
             m.model.as_deref().unwrap_or(model_label),
+            None,
+            None,
             t,
         ));
+        // pi-web thinkingDurationFromFile：该消息的生成时长挂到 thinking 块
+        let msg_think_dur = m.end_ts.zip(m.ts).map(|(e, s)| (e - s).max(0) / 1000);
         for b in disp {
             if matches!(b, Block::ToolCall { .. }) {
                 n_tools += 1;
             }
             let streaming = is_working && i == turn.len() - 1;
-            item = item.child(render_block(b, gix, weak, collapsed, t, streaming));
+            item = item.child(render_block(b, gix, weak, collapsed, t, streaming, msg_think_dur));
         }
         group_body = group_body.child(item);
     }
@@ -1862,7 +2069,7 @@ pub(crate) fn render_assistant_turn(
             .py(px(4.))
             .ml(px(-8.))
             .text_size(px(12.))
-            .text_color(rgb(t.text_dim))
+            .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .rounded(px(6.))
             .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -1888,69 +2095,24 @@ pub(crate) fn render_assistant_turn(
         }
     }
 
-    // ---- 最终回答：末条消息的 answer 连续段（pi-web finalAnswerMessage）----
-    // 流式中：标签行带估算 token + t/s 徽章（pi-web isStreaming label parity），
-    // answer 文本未出现时也渲染（等待文本的窗口期不空白）
-    let est = stream_info.filter(|_| is_working);
-    let tps = stream_tps.filter(|_| is_working);
-    if is_working || answer_len > 0 || final_error || final_truncated {
-        let label = div()
-            .text_size(px(11.))
-            .text_color(rgb(t.text_dim))
-            .mb(px(4.))
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .child(SharedString::from(
-                final_msg.model.as_deref().unwrap_or(model_label).to_string(),
-            ));
-        let label = match est.filter(|e| *e > 0) {
-            Some(e) => {
-                let mut row = label
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.))
-                            .text_color(rgb(t.text))
-                            .child(SharedString::from(format!(
-                                "\u{2193} {}",
-                                crate::services::format::fmt_thousand(e)
-                            ))),
-                    );
-                if let Some(v) = tps {
-                    let bg = if v >= 50. {
-                        0x53b3cb
-                    } else if v >= 30. {
-                        0x9bc53d
-                    } else if v >= 15. {
-                        0xf9c22e
-                    } else {
-                        0xe01a4f
-                    };
-                    row = row.child(
-                        div()
-                            .ml(px(6.))
-                            .px(px(6.))
-                            .py(px(1.))
-                            .rounded(px(4.))
-                            .bg(gpui::rgb(bg))
-                            .text_size(px(11.))
-                            .text_color(rgb(0xffffff))
-                            .child(SharedString::from(format!("{v:.1} t/s"))),
-                    );
-                }
-                row
-            }
-            None => label,
-        };
-        col = col.child(label);
+    // ---- 轮末整形：最终回答分区（pi-web finalAnswerMessage）----
+    // 走到这里必然 !is_working（运行中已在上面平铺返回），所以模型名行不带
+    // ↓token/t-s 徽章——pi-web 的徽章只属于 isStreaming 的那条消息。
+    if answer_len > 0 || final_error || final_truncated {
+        col = col.child(model_label_div(
+            final_msg.model.as_deref().unwrap_or(model_label),
+            None,
+            None,
+            t,
+        ));
     }
     if answer_len > 0 {
+        // pi-web 最终回答块容器 gap 8
+        let mut answer = div().w_full().flex().flex_col().gap(px(8.));
         for b in &final_msg.blocks[answer_start..] {
-            let streaming = is_working && final_pos == turn.len() - 1;
-            col = col.child(render_block(b, final_gix, weak, collapsed, t, streaming));
+            answer = answer.child(render_block(b, final_gix, weak, collapsed, t, false, None));
         }
+        col = col.child(answer);
     }
     // c26/c27（pi-web providerError / truncated parity）：错误红框、截断黄框
     if final_error {
@@ -1999,9 +2161,9 @@ pub(crate) fn render_assistant_turn(
                     .bg(rgba(t.bg_subtle))
                     .border_1()
                     .border_color(rgb(t.border))
-                    .font_family("Consolas")
+                    .font_family(crate::markdown::MONO_FAMILY)
                     .text_size(px(12.))
-                    .text_color(rgb(t.text_muted))
+                    .text_color(rgb(t.text))
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.text)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -2016,13 +2178,14 @@ pub(crate) fn render_assistant_turn(
         }
         col = col.child(chips);
     }
-    // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）
+    // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）；
+    // 色 = text-dim（pi-web usage 行 var(--text-dim)）
     if let Some(line) = final_msg.usage.as_ref().and_then(usage_line) {
         col = col.child(
             div()
                 .mt(px(2.))
                 .text_size(px(11.))
-                .text_color(rgb(t.text_faint))
+                .text_color(rgb(t.text_dim))
                 .child(SharedString::from(line)),
         );
     }
@@ -2067,7 +2230,7 @@ pub(crate) fn render_assistant_turn(
         if let (Some(end), Some(start)) = (last.end_ts, meta.turn_user_ts) {
             bar = bar.child(
                 div()
-                    .text_color(rgb(t.text_faint))
+                    .text_color(rgb(t.text_dim))
                     .child(SharedString::from(format!(
                         "{}{}",
                         tr("用时"),
@@ -2086,7 +2249,7 @@ pub(crate) fn render_assistant_turn(
                     .justify_end()
                     .mt(px(2.))
                     .text_size(px(10.))
-                    .text_color(rgb(t.text_faint))
+                    .text_color(rgb(t.text_dim))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }

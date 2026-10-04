@@ -3,12 +3,14 @@
 //! structure). Streaming-friendly: whole-message re-render.
 //!
 //! pi-web 规格（app/globals.css + MermaidBlock.tsx CodeBlock）：
-//! - 正文 14px / line-height 1.7；段落间距 8px
-//! - 标题 600 字重 margin 10/5、h1 1.16em / h2 1.08em / h3 0.98em 混色
-//! - 列表 marker = accent 72% 混 muted、600 字重
-//! - 行内 code = bg-subtle 底；代码块 = 外框圆角 + 头部（语言名/复制）+ 12.5px/1.62
-//! - 语法高亮：浅色 InspiredGitHub / 深色 base16-ocean.dark（pi-web 用
-//!   Prism vs / vscDarkPlus 随明暗切换——固定单主题在另一半主题下不可读）
+//! - 正文 14px / line-height 1.7；块间距 = CSS margin 折叠 max(mb, mt)，
+//!   末块不挂 mb（p:last-child 同效）
+//! - 标题 600 字重、h1 1.16em / h2 1.08em / h3 0.98em 88% 混色
+//! - strong = 700 + 88% 混 accent；em = muted；marker = accent 72% 混 muted
+//! - 行内 code = mono 0.92em 等宽盒（拆段渲染）；代码块 = 外框圆角 7 +
+//!   头部 + 行号 + 12.5px/1.62，阴影 0 1px 0
+//! - 语法高亮：浅色 InspiredGitHub / 深色 VS Dark+（代码构建，pi-web 用
+//!   Prism vscDarkPlus）
 
 use gpui::{
     AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString, StyledText, TextStyle,
@@ -23,6 +25,9 @@ use syntect::parsing::SyntaxSet;
 struct Syn {
     ps: SyntaxSet,
     ts: ThemeSet,
+    /// 深色主题（VS Code Dark+ 近似，代码构建——syntect 默认主题集无
+    /// vscDarkPlus，base16-ocean.dark 色系偏蓝灰差距大）
+    dark: syntect::highlighting::Theme,
 }
 
 fn syn() -> &'static Syn {
@@ -34,13 +39,54 @@ fn syn() -> &'static Syn {
         builder.add_from_folder("assets/syntaxes", false).ok();
         let ps = builder.build();
         let ts = ThemeSet::load_defaults();
-        Syn { ps, ts }
+        let dark = vs_dark_plus();
+        Syn { ps, ts, dark }
     })
 }
 
 /// 语法高亮主题按 UI 明暗切换（pi-web: isDark ? vscDarkPlus : vs）。
-const DARK_THEME: &str = "base16-ocean.dark";
 const LIGHT_THEME: &str = "InspiredGitHub";
+
+/// VS Code Dark+ 调色板（dark_plus.json 的 token 色），按选择器前缀匹配。
+/// 空选择器 = 全局默认前景 #D4D4D4。
+fn vs_dark_plus() -> syntect::highlighting::Theme {
+    use syntect::highlighting::{Color, StyleModifier, ThemeItem};
+    let fg = |rgb24: u32| Color { r: (rgb24 >> 16) as u8, g: (rgb24 >> 8) as u8, b: rgb24 as u8, a: 0xff };
+    let item = |selector: &str, rgb24: u32| ThemeItem {
+        scope: selector.parse().expect("valid scope selector"),
+        style: StyleModifier { foreground: Some(fg(rgb24)), background: None, font_style: None },
+    };
+    let table: &[(&str, u32)] = &[
+        ("", 0xd4d4d4),
+        ("comment", 0x6a9955),
+        ("string", 0xce9178),
+        ("string.regexp", 0xd16969),
+        ("constant.numeric", 0xb5cea8),
+        ("constant.character.escape", 0xd7ba7d),
+        ("constant.language", 0x569cd6),
+        ("keyword.control", 0xc586c0),
+        ("keyword", 0x569cd6),
+        ("storage", 0x569cd6),
+        ("entity.name.function", 0xdcdcaa),
+        ("support.function", 0xdcdcaa),
+        ("entity.name.type", 0x4ec9b0),
+        ("entity.name.class", 0x4ec9b0),
+        ("entity.name.struct", 0x4ec9b0),
+        ("entity.name.enum", 0x4ec9b0),
+        ("support.type", 0x4ec9b0),
+        ("support.class", 0x4ec9b0),
+        ("entity.name.tag", 0x569cd6),
+        ("entity.other.attribute-name", 0x9cdcfe),
+        ("variable", 0x9cdcfe),
+        ("support.variable", 0x9cdcfe),
+    ];
+    syntect::highlighting::Theme {
+        name: Some("vs-dark-plus".into()),
+        author: Some("pi-flash".into()),
+        settings: Default::default(),
+        scopes: table.iter().map(|(s, c)| item(s, *c)).collect(),
+    }
+}
 
 /// Highlight `code` and return colored text segments (never spans across
 /// lines — callers rely on per-line boundaries for the gutter).
@@ -53,9 +99,10 @@ fn highlight_segments(code: &str, lang: &str, dark: bool) -> Vec<(String, [u8; 3
         .filter(|l| !l.is_empty())
         .and_then(|l| syn.ps.find_syntax_by_token(l))
         .unwrap_or_else(|| syn.ps.find_syntax_plain_text());
-    let name = if dark { DARK_THEME } else { LIGHT_THEME };
-    let Some(theme) = syn.ts.themes.get(name) else {
-        return vec![(code.to_string(), [0xd7, 0xda, 0xdd])];
+    let theme = if dark {
+        &syn.dark
+    } else {
+        syn.ts.themes.get(LIGHT_THEME).unwrap_or_else(|| syn.ts.themes.values().next().unwrap())
     };
     let mut hl = HighlightLines::new(syntax, theme);
     let mut out: Vec<(String, [u8; 3])> = Vec::new();
@@ -78,7 +125,9 @@ fn highlight_segments(code: &str, lang: &str, dark: bool) -> Vec<(String, [u8; 3
     out
 }
 
-const MONO_FAMILY: &str = "Consolas";
+/// 等宽字体（pi-web --font-mono 首选 JetBrains Mono；三档字重随二进制打包，
+/// main.rs 注册。gpui 单 family 参数，无回退链——打包保证可解析）
+pub(crate) const MONO_FAMILY: &str = "JetBrains Mono";
 
 // ---------------------------------------------------------------------------
 // inline runs
@@ -629,11 +678,13 @@ use crate::theme::Theme;
 /// markdown 基准字号（pi-web: 14px + chat-font-size-offset；本项目的 slot 缩放）
 const BASE: f32 = 14.;
 
-fn base_style(t: &Theme, size: f32, line_h: f32) -> TextStyle {
+fn base_style(size: f32, line_h: f32, color: u32) -> TextStyle {
     // 006 markdown preview font slot (family; size scaled from the slot)
     let spec = crate::appearance::markdown_font();
     TextStyle {
-        color: rgb(t.text).into(),
+        // 容器 .text_color 不会传进 StyledText（自带 base style 覆盖继承），
+        // 颜色必须显式入参——h3 混色/引用块 muted 都靠它落到 run 上
+        color: rgb(color).into(),
         font_family: spec.family.clone().into(),
         font_size: px(size / BASE * spec.size).into(),
         line_height: relative(line_h),
@@ -644,9 +695,9 @@ fn base_style(t: &Theme, size: f32, line_h: f32) -> TextStyle {
 fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     let h = match style {
         Style::Normal => return None,
-        // pi-web strong: color-mix(text 88%, accent)
+        // pi-web strong: 700 字重 + color-mix(text 88%, accent)
         Style::Bold => HighlightStyle {
-            font_weight: Some(FontWeight::SEMIBOLD),
+            font_weight: Some(FontWeight::BOLD),
             color: Some(rgb(crate::theme::mix_rgb(t.text, t.accent, 0.88)).into()),
             ..Default::default()
         },
@@ -657,16 +708,22 @@ fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
             ..Default::default()
         },
         Style::BoldItalic => HighlightStyle {
-            font_weight: Some(FontWeight::SEMIBOLD),
+            font_weight: Some(FontWeight::BOLD),
             font_style: Some(FontStyle::Italic),
             color: Some(rgb(crate::theme::mix_rgb(t.text, t.accent, 0.88)).into()),
             ..Default::default()
         },
-        // note: gpui 0.2.2 highlights cannot change font family; code gets bg only
+        // note: gpui 0.2.2 highlights cannot change font family; 正文的行内 code
+        // 走 paragraph_element 拆段成等宽盒，此高亮只是表格/标题内的兜底
         Style::Code => HighlightStyle { background_color: Some(rgb(t.tool_bg).into()), ..Default::default() },
+        // pi-web a: 下划线 45% 透明（offset gpui 无对应）
         Style::Link => HighlightStyle {
             color: Some(rgb(t.accent).into()),
-            underline: Some(gpui::UnderlineStyle { thickness: px(1.), ..Default::default() }),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(gpui::rgba((t.accent << 8) | 0x73).into()),
+                ..Default::default()
+            }),
             ..Default::default()
         },
         Style::Strike => HighlightStyle {
@@ -681,7 +738,7 @@ fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     Some(h)
 }
 
-fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32) -> StyledText {
+fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32, color: u32) -> StyledText {
     let mut s = String::new();
     let mut highlights = Vec::new();
     for r in runs {
@@ -692,7 +749,7 @@ fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32) -> StyledText {
             highlights.push((start..end, h));
         }
     }
-    StyledText::new(s).with_default_highlights(&base_style(t, size, line_h), highlights)
+    StyledText::new(s).with_default_highlights(&base_style(size, line_h, color), highlights)
 }
 
 /// pi-web 标题字号（em 相对 14px 正文）。
@@ -709,10 +766,53 @@ fn runs_text(runs: &[Run]) -> String {
     runs.iter().map(|r| r.text.as_str()).collect()
 }
 
-fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme, streaming: bool) -> gpui::Div {
+/// 各块的 CSS margin (mt, mb)，pi-web globals.css .markdown-body 规格。
+/// flex 不做外边距折叠——render_blocks 用 max(prev.mb, cur.mt) 复现 CSS
+/// 兄弟折叠，末块自然无 mb（= p:last-child { margin-bottom: 0 } 同效，
+/// 此前逐块挂 margin 导致块间距系统性偏大：8+6=14 而 CSS 取 8）。
+fn block_margins(b: &MdBlock) -> (f32, f32) {
+    match b {
+        MdBlock::Heading { .. } => (10., 5.),
+        MdBlock::Paragraph { .. } => (0., 8.),
+        MdBlock::Code { .. } | MdBlock::Mermaid { .. } => (6., 6.),
+        MdBlock::Quote { .. } => (6., 6.),
+        // 列表容器 ul/ol { margin: 5px 0 8px }
+        MdBlock::ListItem { .. } => (5., 8.),
+        MdBlock::Table { .. } => (8., 8.),
+        // pi-web img { margin: 8px 0 }
+        MdBlock::Image { .. } => (8., 8.),
+        // katex-display { margin: 0.6em }
+        MdBlock::Math { .. } => (8., 8.),
+        MdBlock::Rule => (12., 12.),
+    }
+}
+
+fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme, streaming: bool, color: u32) -> gpui::Div {
     let mut col = div().flex().flex_col();
-    for b in blocks {
-        col = col.child(render_block(b, depth, t, streaming));
+    // 间距 = max(前块 mb, 本块 mt)；首块保留自身 mt（引用块内有 padding，
+    // 首元素 margin 不折叠出去，与 CSS 一致）
+    let mut prev_mb: Option<f32> = None;
+    let mut push = |col: gpui::Div, el: gpui::AnyElement, mt: f32, mb: f32| -> gpui::Div {
+        let space = prev_mb.map_or(mt, |p| p.max(mt));
+        prev_mb = Some(mb);
+        col.child(div().mt(px(space)).child(el))
+    };
+    // 连续 ListItem 收进列表容器（li 间距 3px 用 gap）
+    let mut i = 0;
+    while i < blocks.len() {
+        if matches!(blocks[i], MdBlock::ListItem { .. }) {
+            let mut list = div().flex().flex_col().gap(px(3.));
+            while i < blocks.len() && matches!(blocks[i], MdBlock::ListItem { .. }) {
+                list = list.child(render_block(&blocks[i], depth, t, streaming, color));
+                i += 1;
+            }
+            col = push(col, list.into_any_element(), 5., 8.);
+        } else {
+            let (mt, mb) = block_margins(&blocks[i]);
+            let el = render_block(&blocks[i], depth, t, streaming, color);
+            col = push(col, el, mt, mb);
+            i += 1;
+        }
     }
     col
 }
@@ -830,13 +930,18 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
 
     div()
         .w_full()
-        .mt(px(6.))
-        .mb(px(6.))
         .border_1()
         .border_color(rgb(t.border))
         .rounded(px(7.))
         .overflow_hidden()
         .bg(rgb(body_bg))
+        // pi-web box-shadow: 0 1px 0 border 42%（块底一条更深的细线）
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::rgba(crate::theme::border_alpha(t, 0x6b)).into(),
+            offset: gpui::point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+        }])
         .child(header)
         .child(
             div()
@@ -902,6 +1007,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
             .py(px(6.))
     };
 
+    // pi-web 表格字号 = calc(13px + offset)（比正文小 1px），行高继承 1.7
     let head_cells: Vec<gpui::AnyElement> = head
         .iter()
         .enumerate()
@@ -909,7 +1015,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
             cell_div(fracs[ci])
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
-                .child(styled_text(cell, t, BASE, 1.6))
+                .child(styled_text(cell, t, 13., 1.7, crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
                 .into_any_element()
         })
         .collect();
@@ -932,7 +1038,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
                 line = line.bg(rgba(t.bg_subtle));
             }
             for (ci, cell) in row.iter().enumerate().take(n_cols) {
-                line = line.child(cell_div(fracs[ci]).child(styled_text(cell, t, BASE, 1.6)));
+                line = line.child(cell_div(fracs[ci]).child(styled_text(cell, t, 13., 1.7, t.text)));
             }
             line.into_any_element()
         })
@@ -955,7 +1061,6 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
     let placeholder = || {
         div()
             .w_full()
-            .my(px(8.))
             .text_color(rgb(t.text_dim))
             .italic()
             .child(SharedString::from(format!("🖼 {}", runs_text(alt))))
@@ -983,7 +1088,6 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
     };
     div()
         .w_full()
-        .my(px(8.))
         .child(
             gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
                 .max_w_full()
@@ -992,11 +1096,77 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
         .into_any_element()
 }
 
-fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyElement {
+/// 行内 code 盒（pi-web .markdown-inline-code）：mono 0.92em + bg-subtle +
+/// 圆角 5 + padding 1px 5px + 70% 边框描边；颜色恒 --text（引用块内不继承）。
+/// gpui 行内 highlight 换不了字体家族，拆盒才能落 mono。
+fn inline_code_box(text: &str, t: &Theme) -> AnyElement {
+    let spec = crate::appearance::markdown_font();
+    let style = TextStyle {
+        color: rgb(t.text).into(),
+        font_family: MONO_FAMILY.into(),
+        font_size: px(0.92 * spec.size).into(),
+        line_height: relative(1.5),
+        ..Default::default()
+    };
+    div()
+        .max_w_full()
+        .rounded(px(5.))
+        .bg(rgba(t.bg_subtle))
+        .border_1()
+        .border_color(gpui::rgba((t.border << 8) | 0xb3))
+        .px(px(5.))
+        .py(px(1.))
+        .child(StyledText::new(text.to_string()).with_default_highlights(&style, Vec::new()))
+        .into_any_element()
+}
+
+/// 行内富段：含 Code/Math 的段落拆 flex-wrap 段（文本段内部自然换行，
+/// code = 等宽盒、公式 = 图片）；纯文本段落保持单一 StyledText。
+fn paragraph_element(runs: &[Run], t: &Theme, color: u32) -> AnyElement {
+    let rich = runs
+        .iter()
+        .any(|r| matches!(r.style, Style::Code | Style::Math | Style::DisplayMath));
+    if !rich {
+        return div().w_full().child(styled_text(runs, t, BASE, 1.7, color)).into_any_element();
+    }
+    let flush =
+        |row: gpui::Div, tr: &mut Vec<Run>, t: &Theme, color: u32| -> gpui::Div {
+            if !tr.is_empty() {
+                let taken = std::mem::take(tr);
+                return row.child(div().max_w_full().child(styled_text(&taken, t, BASE, 1.7, color)));
+            }
+            row
+        };
+    let mut row = div().w_full().flex().flex_wrap().items_end();
+    let mut text_run: Vec<Run> = Vec::new();
+    for r in runs {
+        match r.style {
+            Style::Code => {
+                row = flush(row, &mut text_run, t, color);
+                row = row.child(inline_code_box(&r.text, t));
+            }
+            Style::Math => {
+                row = flush(row, &mut text_run, t, color);
+                row = row.child(crate::render::math::inline_element(&r.text, t));
+            }
+            Style::DisplayMath => {
+                row = flush(row, &mut text_run, t, color);
+                // 块级公式：flex_wrap 下 w_full 独占一行
+                row = row.child(div().w_full().child(crate::render::math::block_element(&r.text, t)));
+            }
+            _ => text_run.push(r.clone()),
+        }
+    }
+    row = flush(row, &mut text_run, t, color);
+    row.into_any_element()
+}
+
+fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u32) -> AnyElement {
     match b {
         MdBlock::Heading { level, runs } => {
             let size = size_for_level(*level);
-            // h3 color-mix(text 88%, muted)（pi-web h3 规则）
+            // pi-web 标题规则：h1/h2/h4-h6 = var(--text)（引用块内也是），
+            // h3 = color-mix(text 88%, muted)
             let color = if *level == 3 {
                 crate::theme::mix_rgb(t.text, t.text_muted, 0.88)
             } else {
@@ -1004,117 +1174,107 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyEle
             };
             div()
                 .w_full()
-                .mt(px(10.))
-                .mb(px(5.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_size(px(size))
                 .line_height(relative(1.35))
-                .text_color(rgb(color))
-                .child(styled_text(runs, t, size, 1.35))
+                .child(styled_text(runs, t, size, 1.35, color))
                 .into_any_element()
         }
-        MdBlock::Paragraph { runs } => {
-            // v57-2: 含公式标记的段落 → 分段 flex（文本段 StyledText 可换行，
-            // 行内公式=行内图片、块级公式=独立整行图）；纯文本段落走原路
-            if runs.iter().any(|r| matches!(r.style, Style::Math | Style::DisplayMath)) {
-                let mut row = div().w_full().mb(px(8.)).flex().flex_wrap().items_end();
-                let mut text_run: Vec<Run> = Vec::new();
-                for r in runs {
-                    match r.style {
-                        Style::Math => {
-                            if !text_run.is_empty() {
-                                row = row.child(
-                                    div()
-                                        .max_w_full()
-                                        .child(styled_text(&text_run, t, BASE, 1.7)),
-                                );
-                                text_run = Vec::new();
-                            }
-                            row = row.child(crate::render::math::inline_element(&r.text, t));
-                        }
-                        Style::DisplayMath => {
-                            if !text_run.is_empty() {
-                                row = row.child(
-                                    div()
-                                        .max_w_full()
-                                        .child(styled_text(&text_run, t, BASE, 1.7)),
-                                );
-                                text_run = Vec::new();
-                            }
-                            // 块级公式：独立整行（flex_wrap 下 w_full 独占一行）
-                            row = row.child(
-                                div().w_full().child(crate::render::math::block_element(&r.text, t)),
-                            );
-                        }
-                        _ => text_run.push(r.clone()),
-                    }
-                }
-                if !text_run.is_empty() {
-                    row = row.child(div().max_w_full().child(styled_text(&text_run, t, BASE, 1.7)));
-                }
-                row.into_any_element()
-            } else {
-                div()
-                    .w_full()
-                    .mb(px(8.))
-                    .text_color(rgb(t.text))
-                    .child(styled_text(runs, t, BASE, 1.7))
-                    .into_any_element()
-            }
-        }
+        MdBlock::Paragraph { runs } => paragraph_element(runs, t, color),
         MdBlock::Code { code, lang, .. } => {
             render_code_block(lang, code, t, streaming).into_any_element()
         }
         MdBlock::Quote { blocks } => div()
             .w_full()
-            .mt(px(6.))
-            .mb(px(6.))
             .border_l_3()
             .border_color(rgb(crate::theme::mix_rgb(t.border, t.text_muted, 0.75)))
             .rounded_r(px(6.))
             .bg(rgba(t.bg_subtle))
             .px(px(11.))
             .py(px(6.))
-            .text_color(rgb(t.text_muted))
-            .child(render_blocks(blocks, depth + 1, t, streaming))
+            // pi-web blockquote color: var(--text-muted)——经 color 参数落进
+            // 内部段落的 StyledText（此前容器色被子元素硬编码 text 覆盖）
+            .child(render_blocks(blocks, depth + 1, t, streaming, t.text_muted))
             .into_any_element(),
         MdBlock::ListItem { depth: d, marker, runs, task } => {
             let task = *task;
-            // c12: 任务项 marker = 14px 复选框（选中 accent 对勾），否则原 marker
+            // 悬挂缩进（pi-web ul{padding-left:22px} + li{padding-left:2px}
+            // + list-style-position:outside）：marker 落在文字左侧的固定
+            // 槽里，文字统一从 24px 起排，嵌套每层 +22px。
+            // items_start（非 center）：pi-web outside marker 与内容第一行
+            // 对齐——多行 item 时圆点/勾选框必须钉在首行，垂直居中会漂到
+            // 整条 item 中间；行盒 = 1.7×字号，文本 marker（"1."）行盒同高
+            // 自然落首行
+            let slot = div()
+                .w(px(24.))
+                .flex_shrink_0()
+                .flex()
+                .items_start()
+                .justify_end() // marker 靠槽右缘 = 悬挂在文字左侧
+                .pr(px(4.)) // marker 右边到文字的视觉间隙（浏览器 outside marker）
+                .text_size(px(BASE)) // 不继承外层字号（标题内列表会撑大圆点）
+                .line_height(relative(1.7))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72)));
             let marker_el: AnyElement = match task {
-                Some(checked) => div()
-                    .w(px(14.))
-                    .h(px(14.))
-                    .mt(px(4.))
-                    .flex_shrink_0()
-                    .rounded(px(3.))
-                    .border_1()
-                    .border_color(rgb(if checked { t.accent } else { t.border }))
-                    .bg(rgb(if checked { t.accent } else { t.bg }))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(checked, |b| {
-                        b.child(
-                            div()
-                                .text_size(px(10.))
-                                .text_color(rgb(0xffffff))
-                                .child(SharedString::from("✓")),
-                        )
-                    })
+                // c12: 任务项 marker = 14px 复选框（选中 = accent 10% 淡底 +
+                // 55% 边框 + accent 对勾，pi-web :checked 规则）；top:0.35em
+                // 钉在首行（pi-web input 绝对定位 top 0.35em parity）
+                Some(checked) => slot
+                    .child(
+                        div()
+                            .mt(px(5.))
+                            .w(px(14.))
+                            .h(px(14.))
+                            .flex_shrink_0()
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(rgb(if checked {
+                                crate::theme::mix_rgb(t.accent, t.border, 0.55)
+                            } else {
+                                t.border
+                            }))
+                            .bg(rgb(if checked {
+                                crate::theme::mix_rgb(t.accent, t.bg, 0.10)
+                            } else {
+                                t.bg
+                            }))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(checked, |b| {
+                                b.child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(rgb(t.accent))
+                                        .child(SharedString::from("✓")),
+                                )
+                            }),
+                    )
                     .into_any_element(),
-                None => div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72)))
-                    .child(SharedString::from(marker.clone()))
-                    .into_any_element(),
+                // 无序列表：画 0.45em 实心圆（Chrome list-style disc 尺寸），
+                // 首行行盒内垂直居中——"•" 字形在 14px 下只有 ~4px 且偏细
+                None if marker == "•" => {
+                    let spec = crate::appearance::markdown_font();
+                    let dot = (0.45 * spec.size).round();
+                    let first_line = 1.7 * spec.size;
+                    slot.child(
+                        div()
+                            .mt(px(((first_line - dot) / 2.).max(0.)))
+                            .size(px(dot))
+                            .rounded(px(dot / 2.))
+                            .bg(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72))),
+                    )
+                    .into_any_element()
+                }
+                None => slot.child(SharedString::from(marker.clone())).into_any_element(),
             };
             div()
                 .flex()
-                .mb(px(3.))
-                .pl(px((d * 16) as f32))
+                .pl(px((d * 22) as f32))
                 .child(marker_el)
-                .child(div().flex_1().min_w_0().text_color(rgb(t.text)).child(styled_text(runs, t, BASE, 1.7)))
+                .child(div().flex_1().min_w_0().child(paragraph_element(runs, t, t.text)))
                 .into_any_element()
         }
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
@@ -1129,13 +1289,45 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool) -> AnyEle
             }
             render_code_block("mermaid", source, t, true).into_any_element()
         }
-        MdBlock::Rule => div()
-            .w_full()
-            .h(px(1.))
-            .mt(px(12.))
-            .mb(px(12.))
-            .bg(rgb(t.border))
-            .into_any_element(),
+        MdBlock::Rule => {
+            // pi-web hr: 渐变淡出线（linear-gradient 90deg transparent-border-
+            // transparent）。gpui 渐变仅两停靠点，用底线 + 两端 18% 遮罩复现
+            let base: gpui::Hsla = rgb(t.border).into();
+            let bg: gpui::Hsla = rgb(t.bg).into();
+            let bg_a0 = gpui::Hsla { a: 0., ..bg };
+            div()
+                .w_full()
+                .h(px(1.))
+                .relative()
+                .child(div().size_full().bg(base))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w(relative(0.18))
+                        .h_full()
+                        .bg(gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(bg, 0.),
+                            gpui::linear_color_stop(bg_a0, 1.),
+                        )),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .w(relative(0.18))
+                        .h_full()
+                        .bg(gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(bg_a0, 0.),
+                            gpui::linear_color_stop(bg, 1.),
+                        )),
+                )
+                .into_any_element()
+        }
     }
 }
 
@@ -1173,7 +1365,7 @@ fn render_impl(src: &str, t: &Theme, streaming: bool, html: bool) -> AnyElement 
     if blocks.is_empty() {
         return div().into_any_element();
     }
-    render_blocks(&blocks, 1, t, streaming).into_any_element()
+    render_blocks(&blocks, 1, t, streaming, t.text).into_any_element()
 }
 
 /// Html/InlineHtml 的字面显示（html=false 路径）：标签原文可见。
@@ -1416,6 +1608,17 @@ hello");
                 assert!(runs.iter().any(|r| r.style == Style::Normal && r.text.contains("能量公式")));
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    /// 渲染冒烟：vs Dark+ 高亮 / 行内 code 盒 / 引用 muted / 任务框 / hr
+    /// 渐变各路径在明暗两主题下都不 panic（vs_dark_plus 是代码构建主题）。
+    #[test]
+    fn render_smoke_all_paths_both_modes() {
+        let src = "# 标题\n\n正文 **bold** `code` [link](https://x.y) $E=mc^2$\n\n```rust\nfn a() {}\n```\n\n> 引用 **内粗**\n\n- [x] done\n- [ ] todo\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n";
+        for t in crate::theme::ALL {
+            let el = render(src, &t.1, false);
+            let _ = el.into_any_element();
         }
     }
 

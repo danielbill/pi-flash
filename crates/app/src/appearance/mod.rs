@@ -159,9 +159,11 @@ pub struct IconTheme {
 pub const ICON_THEMES: &[IconTheme] = &[IconTheme { id: "pi-web", name: "pi-web" }];
 
 /// Curated font families for the settings cycle (shipped-safe on Windows).
+/// JetBrains Mono 随二进制打包（assets/fonts，main.rs 注册），必可选。
 pub const FONT_CHOICES: &[&str] = &[
     "Segoe UI",
     "Microsoft YaHei",
+    "JetBrains Mono",
     "Consolas",
     "Cascadia Code",
     "Arial",

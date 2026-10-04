@@ -227,6 +227,10 @@ impl Chat {
     }
 
     pub(crate) fn attach_images(&mut self, cx: &mut Context<Self>) {
+        // 压缩锁：压缩期间不弹文件选择器
+        if self.rt().read(cx).compacting {
+            return;
+        }
         let opts = gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -334,7 +338,7 @@ impl Chat {
                     );
                     r.disk_msg_count = pi_link::sessions::count_message_entries(&path) as usize;
                     r.messages = tail;
-                    r.list.reset(r.messages.len());
+                    r.pager.reload(r.messages.len());
                     r
                 });
                 self.runtimes.insert(key, rt.clone());

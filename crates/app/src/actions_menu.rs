@@ -119,7 +119,7 @@ pub(crate) fn slash_menu_view(
             ))
             .child(
                 div()
-                    .font_family("Consolas")
+                    .font_family(crate::markdown::MONO_FAMILY)
                     .text_size(px(13.))
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
@@ -173,7 +173,7 @@ pub(crate) fn slash_menu_view(
                 .child(SharedString::from(format!("斜杠命令 · {n}")))
                 .child(
                     div()
-                        .font_family("Consolas")
+                        .font_family(crate::markdown::MONO_FAMILY)
                         .child(tr("Tab / Enter 插入")),
                 ),
         )

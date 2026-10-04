@@ -27,3 +27,8 @@ ratex-render = { version = "0.1.14", features = ["embed-fonts"] }
 lru = "0.18.5"
 ratex-types = "0.1.14"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+
+[dev-dependencies]
+# gpui 测试夹具（TestAppContext + 真布局）——只有 app 的 test target 会带上
+# test-support 特性，正常构建不受影响。
+gpui = { version = "0.2.2", features = ["test-support"] }
