@@ -20,7 +20,7 @@ pub(crate) fn render_ext_widget(lines: &[String], t: &crate::theme::Theme) -> gp
         .border_color(rgb(t.border))
         .bg(rgb(t.tool_bg))
         .font_family(crate::markdown::MONO_FAMILY)
-        .text_size(px(11.))
+        .text_size(crate::appearance::ui_size(11.))
         .text_color(rgb(t.text_muted))
         .child(SharedString::from(text))
         .into_any_element()
@@ -52,7 +52,7 @@ pub(crate) fn render_ext_dialog(
                         .rounded(px(5.))
                         .border_1()
                         .border_color(rgb(t.border))
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(12.))
                         .text_color(rgb(t.text))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_selected)))
@@ -74,7 +74,7 @@ pub(crate) fn render_ext_dialog(
             let msg: SharedString = message.clone().into();
             (
                 title.clone(),
-                div().text_size(px(12.)).text_color(rgb(t.text_muted)).child(msg).into_any_element(),
+                div().text_size(crate::appearance::ui_size(12.)).text_color(rgb(t.text_muted)).child(msg).into_any_element(),
             )
         }
         ExtUiMethod::Input { title, .. } | ExtUiMethod::Editor { title, .. } => {
@@ -101,6 +101,13 @@ pub(crate) fn render_ext_dialog(
                 }
             }
         })
+        // 点卡片外 = 取消（与 ESC 同义，扩展收到 cancelled 响应）
+        .on_mouse_down(MouseButton::Left, {
+            let weak = weak_cancel.clone();
+            move |_, _, cx| {
+                let _ = weak.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
+            }
+        })
         .flex()
         .items_center()
         .justify_center()
@@ -116,6 +123,8 @@ pub(crate) fn render_ext_dialog(
                 .flex_col()
                 .gap_3()
                 .shadow_lg()
+                // 卡片内点击不冒泡到背板（否则点卡片任意处都会取消）
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .text_sm()

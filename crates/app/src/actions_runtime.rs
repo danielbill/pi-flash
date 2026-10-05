@@ -16,9 +16,13 @@ impl Chat {
             let is_active = rt.read(cx).key == chat.active_key;
             match ev {
                 SessionEvent::Changed => {
-                    if is_active {
-                        chat.available_models = rt.read(cx).available_models.clone();
-                    } else {
+                    // recents (003-session管理): message-level activity on
+                    // this runtime is "recently updated" — promote its file
+                    // in the recent-activity list (persist throttled)
+                    if let Some(f) = rt.read(cx).file.clone() {
+                        pi_link::recents::touch_recent(&f);
+                    }
+                    if !is_active {
                         // v54 未读绿点：非活跃会话在跑/在流式 → 记未读，
                         // 切换到它时清除
                         let (file, running) = {
@@ -69,6 +73,20 @@ impl Chat {
                         rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
                         cx.notify();
                     }
+                }
+                SessionEvent::Models(models) => {
+                    // project-level shared catalog (pi-web /api/models parity):
+                    // every runtime writes its own cwd's entry — parked sessions
+                    // of other projects refresh theirs too. The enabledModels
+                    // scope state re-resolves against the now-known refs.
+                    let cwd_key = rt.read(cx).cwd.to_string_lossy().to_string();
+                    chat.models_by_cwd.insert(cwd_key, models.clone());
+                    chat.mc_state =
+                        models_config::compute_state(chat.mc_patterns.as_ref(), &chat.mc_refs());
+                    cx.notify();
+                }
+                SessionEvent::FileBound(path) => {
+                    chat.on_file_bound(&rt, path.clone(), cx);
                 }
                 SessionEvent::RenameReady(prefill) => {
                     if is_active {

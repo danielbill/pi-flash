@@ -134,7 +134,7 @@ pub struct Scanner {
     entries: HashMap<PathBuf, IndexEntry>,
     dirty: bool,
     /// files actually scanned since `Scanner` creation (diagnostics/tests)
-    scans: u64,
+    pub(crate) scans: u64,
 }
 
 impl Scanner {
@@ -192,8 +192,19 @@ impl Scanner {
 
     /// Most-recently-modified sessions across all groups, newest first.
     pub fn list(&mut self, max: usize) -> Vec<SessionInfo> {
+        self.list_excluding(max, &std::collections::HashSet::new())
+    }
+
+    /// [`list`](Self::list) minus the excluded files — the recents poll
+    /// passes live runtimes' files here so it never rescans a file pi is
+    /// actively appending to (their recency arrives via the event path).
+    pub fn list_excluding(
+        &mut self,
+        max: usize,
+        exclude: &std::collections::HashSet<PathBuf>,
+    ) -> Vec<SessionInfo> {
         let groups = self.group_dirs();
-        self.list_groups(&groups, max)
+        self.list_groups(&groups, max, exclude)
     }
 
     /// Sessions of one project only: reads the cwd's group directory,
@@ -202,7 +213,7 @@ impl Scanner {
     pub fn list_for_cwd(&mut self, cwd: &str, max: usize) -> Vec<SessionInfo> {
         let group = self.root.join(group_name_for_cwd(cwd));
         if group.is_dir() {
-            self.list_groups(&[group], max)
+            self.list_groups(&[group], max, &std::collections::HashSet::new())
         } else {
             Vec::new()
         }
@@ -218,12 +229,20 @@ impl Scanner {
             .collect()
     }
 
-    fn list_groups(&mut self, groups: &[PathBuf], max: usize) -> Vec<SessionInfo> {
+    fn list_groups(
+        &mut self,
+        groups: &[PathBuf],
+        max: usize,
+        exclude: &std::collections::HashSet<PathBuf>,
+    ) -> Vec<SessionInfo> {
         let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
         for group in groups {
             let Ok(rd) = std::fs::read_dir(group) else { continue };
             for f in rd.flatten() {
                 let path = f.path();
+                if exclude.contains(&path) {
+                    continue;
+                }
                 if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                     continue;
                 }
@@ -346,11 +365,44 @@ fn count_messages(path: &Path) -> u64 {
     count
 }
 
+/// Upper bound for the session_info tail search. A rename record sits at
+/// the file position it was made at; a session kept chatting afterwards
+/// pushes it past any fixed tail window (real case: a 153KB file renamed
+/// on 09-25, chatted until 10-04 — the record fell out of 64KB). The
+/// window doubles from TAIL_BYTES up to this cap, so normal sessions pay
+/// one 64KB read and only pathological ones reach the bound.
+const SESSION_INFO_MAX_WINDOW: u64 = 1024 * 1024;
+
+/// Parse the LAST `session_info` line out of a tail window (the needle
+/// sits inside the JSON line — back up to its `{`).
+fn parse_last_session_info(tail: &str) -> Option<Value> {
+    let pos = tail.rfind(NEEDLE_SESSION_INFO)?;
+    let line_start = tail[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let rest = &tail[line_start..];
+    let line_end = rest.find('\n').unwrap_or(rest.len());
+    serde_json::from_str::<Value>(&rest[..line_end]).ok()
+}
+
+/// Latest `session_info` entry, growing the tail window as needed — a
+/// fixed window loses the rename once the session outgrows it.
+fn read_latest_session_info(path: &Path) -> Option<Value> {
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let mut window = TAIL_BYTES.min(len);
+    loop {
+        if let Some(v) = parse_last_session_info(&read_tail(path, window)) {
+            return Some(v);
+        }
+        if window >= len || window >= SESSION_INFO_MAX_WINDOW {
+            return None;
+        }
+        window = (window * 2).min(len).min(SESSION_INFO_MAX_WINDOW);
+    }
+}
+
 /// One bounded scan of a session file: header + preview from the prefix,
 /// name from the tail, count streamed. Never reads the whole file into
 /// memory at once.
-fn scan_file(path: &Path, modified: SystemTime, size: u64) -> Option<IndexEntry> {
-    let prefix = read_prefix(path, PREFIX_BYTES);
+fn scan_file(path: &Path, modified: SystemTime, size: u64) -> Option<IndexEntry> {    let prefix = read_prefix(path, PREFIX_BYTES);
     let mut id = String::new();
     let mut cwd = String::new();
     let mut preview = String::new();
@@ -387,20 +439,9 @@ fn scan_file(path: &Path, modified: SystemTime, size: u64) -> Option<IndexEntry>
     if id.is_empty() {
         return None;
     }
-    // renames append `session_info` entries; the latest wins (tail window)
-    let mut name = None;
-    let tail = read_tail(path, TAIL_BYTES);
-    if let Some(pos) = tail.rfind(NEEDLE_SESSION_INFO) {
-        // the needle sits inside the JSON line — back up to its `{`
-        let line_start = tail[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let tail_rest = &tail[line_start..];
-        let line_end = tail_rest.find('\n').unwrap_or(tail_rest.len());
-        if let Ok(v) = serde_json::from_str::<Value>(&tail_rest[..line_end]) {
-            if let Some(n) = v["name"].as_str() {
-                name = Some(n.to_string());
-            }
-        }
-    }
+    // renames append `session_info` entries; the latest wins
+    let name = read_latest_session_info(path)
+        .and_then(|v| v["name"].as_str().map(str::to_string));
     if preview.len() > 120 {
         // truncate at a char boundary
         let mut cut = 120;
@@ -585,6 +626,31 @@ fn with_scanner<T>(f: impl FnOnce(&mut Scanner) -> T) -> T {
 /// List most-recently-modified sessions across all projects, newest first.
 pub fn list_sessions(max: usize) -> Vec<SessionInfo> {
     with_scanner(|s| s.list(max))
+}
+
+/// [`list_sessions`] minus the excluded files (recents poll's live-runtime
+/// skip).
+pub fn list_sessions_excluding(
+    max: usize,
+    exclude: &std::collections::HashSet<PathBuf>,
+) -> Vec<SessionInfo> {
+    with_scanner(|s| s.list_excluding(max, exclude))
+}
+
+/// Summaries for an explicit path list (recents top-N startup), input order
+/// preserved, dead paths dropped. Fingerprint-served like every scanner
+/// read; a stale entry is rescanned on the spot.
+pub fn sessions_for_paths(paths: &[PathBuf]) -> Vec<SessionInfo> {
+    with_scanner(|s| {
+        paths
+            .iter()
+            .filter_map(|p| {
+                let meta = std::fs::metadata(p).ok()?;
+                let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
+                s.info_for(p, &mtime)
+            })
+            .collect()
+    })
 }
 
 /// List one project's sessions without touching other groups' files.

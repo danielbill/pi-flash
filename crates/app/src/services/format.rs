@@ -19,17 +19,16 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Message send/reply time (pi-web formatTime): today -> "HH:MM",
-/// otherwise "MM-DD HH:MM".
+/// Message send/reply time（主界面UI设计-2.html 操作栏 .when）：
+/// "8月25日 06:02"；跨年补年份 "2024年12月3日 09:15"。
 pub fn fmt_msg_time(ms: i64) -> String {
-    use chrono::TimeZone;
+    use chrono::{Datelike, TimeZone};
     match chrono::Local.timestamp_millis_opt(ms) {
         chrono::LocalResult::Single(t) => {
-            let today = chrono::Local::now().date_naive() == t.date_naive();
-            if today {
-                t.format("%H:%M").to_string()
+            if t.year() == chrono::Local::now().year() {
+                t.format("%-m月%-d日 %H:%M").to_string()
             } else {
-                t.format("%m-%d %H:%M").to_string()
+                t.format("%Y年%-m月%-d日 %H:%M").to_string()
             }
         }
         _ => String::new(),

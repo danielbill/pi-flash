@@ -36,6 +36,7 @@ pub struct TextInput {
     numeric: bool,
     select_all_on_focus: bool,
     select_all_done: bool,
+    want_focus: bool,
     // dirty buffers applied on render (inner setters need &mut Window)
     pending_value: Option<String>,
     pending_placeholder: Option<SharedString>,
@@ -58,6 +59,7 @@ impl TextInput {
             numeric: false,
             select_all_on_focus: false,
             select_all_done: false,
+            want_focus: false,
             pending_value: None,
             pending_placeholder: None,
             pending_masked: None,
@@ -91,6 +93,13 @@ impl TextInput {
     pub fn select_all_on_focus(mut self) -> Self {
         self.select_all_on_focus = true;
         self
+    }
+
+    /// Focus the inner input on the next render (popup filter best-effort
+    /// auto-focus; clicking the field always works regardless).
+    pub fn focus_soon(&mut self, _cx: &mut Context<Self>) {
+        self.want_focus = true;
+        _cx.notify();
     }
 
     pub fn on_change(mut self, cb: Changed) -> Self {
@@ -250,6 +259,11 @@ impl Render for TextInput {
         if self.want_select_all {
             self.want_select_all = false;
             window.dispatch_action(Box::new(SelectAll), cx);
+        }
+        if self.want_focus {
+            self.want_focus = false;
+            let fh = state.read(cx).focus_handle(cx);
+            window.focus(&fh);
         }
 
         let t = T();

@@ -51,10 +51,11 @@ const VIEWPORT_FALLBACK: f32 = 1000.;
 /// `.pt()` / `.pb()` 一致（钉顶与贴底胶水的几何都以它为准，见模块头注释）。
 pub(crate) const PAD_TOP: f32 = 22.;
 /// 下边距 = 悬浮 composer 的让位：胶囊高 ~110（pt10 + 编辑区 60 + 控件行 26 +
-/// pb12 + 边框）+ 底距 20 + **内容与胶囊上沿之间留 20px**（用户口径：agent
-/// 输出距 input panel 上沿 20px 就该开始上滚）。跟尾时内容末条就停在
-/// `屏底 − PAD_BOTTOM`，「回到最新」按钮也正好悬浮在胶囊上方 20px 处（同一条线）。
-pub(crate) const PAD_BOTTOM: f32 = 150.;
+/// pb12 + 边框）+ 底距 20 + **内容与胶囊上沿之间留 50px**（用户口径：agent
+/// 输出距 input panel 上沿 50px 就该开始上滚）。跟尾时内容末条就停在
+/// `屏底 − PAD_BOTTOM`；「回到最新」按钮仍悬浮在胶囊上方 20px 处（比内容末条
+/// 低 30px，只在脱离尾部后出现，不与内容末条争同一条线）。
+pub(crate) const PAD_BOTTOM: f32 = 180.;
 
 /// 垫片高度只有两个取值：**钉顶期 = 一整屏内容区高，跟尾期 = 0**。
 ///
@@ -154,6 +155,11 @@ impl ChatList {
         self.core.anchor.get().is_some()
     }
 
+    /// 锚点条目索引（整表重读后校验/重锚用）
+    pub(crate) fn anchor_ix(&self) -> Option<usize> {
+        self.core.anchor.get()
+    }
+
     /// 垫片当前高度 px
     pub(crate) fn spacer_px(&self) -> f32 {
         self.core.spacer_px.get()
@@ -195,6 +201,17 @@ impl ChatList {
     /// 搜索命中 / 导航点击定位：reveal 条目
     pub(crate) fn reveal(&self, ix: usize) {
         self.state.scroll_to_reveal_item(ix);
+    }
+
+    /// 导航点击定位（033）：目标条目置顶。不用 reveal——它向下跳时把目标
+    /// 底边贴视口底，视口顶落进上一轮内容，刻度的 active 判定（视口顶之
+    /// 上最近轮）会算到前一轮；置顶后视口顶即目标，刻度精确命中被点轮。
+    /// 程序化定位不经过滚轮回调，at_bottom 在此补正（导航跳走即离开贴底，
+    /// 「回到最新」按钮随之出现）
+    pub(crate) fn nav_goto(&self, ix: usize) {
+        self.state
+            .scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) });
+        self.core.at_bottom.set(false);
     }
 
     /// 「回到最新」：钉顶期（锚点仍激活）就是 `scroll_to(锚点, 0)` —— 内容短于
@@ -241,6 +258,21 @@ impl ChatList {
             self.state
                 .scroll_to(ListOffset { item_ix: anchor_ix, offset_in_item: px(0.) });
         }
+    }
+
+    /// 整表重读（工具预设换绑的 `get_messages`、压缩后重拉、会话文件重读）后
+    /// 把锚点落到 `ix`（调用方确认它是一条用户消息）：**垫片与跟尾状态原样保留**，
+    /// 只把 settled 打回未结算让下一帧重新实测、并由 [`ChatList::sync`] 第 6 步
+    /// 重新钉顶。
+    ///
+    /// 为什么不能沿用「整表重读就 release」：release 会把锚点退役并卸掉垫片，
+    /// 于是 Bottom 对齐把「等待模型响应」这类短内容连同刚上翻的历史一起拽回屏底
+    /// （用户实测：换工具选项时消息全部回落）。
+    pub(crate) fn reanchor(&self, ix: usize, msgs: usize, phase: bool) {
+        self.core.anchor.set(Some(ix));
+        self.core.settled.set(false);
+        self.core.settle_attempts.set(0);
+        self.sync(msgs, phase);
     }
 
     /// 列表结构同步：垫片结算、msgs 增长、phase 行增删、垫片挂卸、整体重
@@ -563,7 +595,7 @@ mod tests {
     #[test]
     fn spacer_target_is_a_constant_while_pinned() {
         let avail = 1000. - PAD_TOP - PAD_BOTTOM;
-        assert_eq!(avail, 1000. - 22. - 150.);
+        assert_eq!(avail, 1000. - 22. - 180.);
         assert_eq!(spacer_target(avail, 0.), (avail, false));
         assert_eq!(spacer_target(avail, 130.), (avail, false));
         // 内容刚好填满 → 垫片 0 且转跟随（胶水接住，几何连续）
@@ -727,7 +759,7 @@ mod glue_geometry {
         assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
 
         let last = heights.len() - 1;
-        heights[last] = 700.;
+        heights[last] = AVAIL - 200.; // 仍短于内容区（内容区高随 PAD_BOTTOM 变，勿写死）
         let items = step(window, &pager, &seen, &heights, false);
         assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
         let items = step(window, &pager, &seen, &heights, false);
@@ -825,6 +857,39 @@ mod glue_geometry {
         assert_eq!(pager.spacer_px(), 0.);
         assert_eq!(bottom(&items, 2), Some(px(VIEWPORT - PAD_BOTTOM)));
         assert_eq!(top(&items, 1), None); // 锚点退出屏顶（跟尾）
+    }
+
+    /// 整表重读（换工具预设的 `get_messages`、压缩后重拉、会话文件重读）之后
+    /// 必须**保住钉顶**：`reanchor` 只挪锚点索引、保留垫片与跟尾状态；如果照旧
+    /// `release`，就没有钉顶了，Bottom 对齐会把「等待模型响应」这类短内容连同刚
+    /// 上翻的历史一起拽回屏底（用户实测：改工具选项后消息全部回落）。
+    #[gpui::test]
+    fn reload_keeps_pin_or_falls_to_bottom(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let seen: Rc<RefCell<Vec<(usize, Bounds<Pixels>)>>> = Default::default();
+        let pager = Rc::new(ChatList::new());
+
+        let heights = vec![500., 60., 300.];
+        pager.reload(heights.len());
+        paint(window, &pager, &seen, &heights, false);
+        pager.page_turn(1, heights.len(), false);
+        paint(window, &pager, &seen, &heights, false);
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), AVAIL);
+        assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
+
+        // 整表重读：reanchor 同一索引 -> 钉顶纹丝不动
+        pager.reanchor(1, heights.len(), false);
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), AVAIL);
+        assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
+
+        // 反例（旧行为）：退役锚点 -> 垫片卸掉 -> 内容整块回落到屏底
+        pager.release();
+        let items = paint(window, &pager, &seen, &heights, false);
+        assert!(!pager.anchor_active()); // 锚点退役、垫片卸掉
+        assert_eq!(pager.state().item_count(), heights.len());
+        assert!(top(&items, 1).unwrap() > px(300.)); // 用户消息掉到屏幕下半部
     }
 
     /// 快流（一帧内多个 pi 事件）下，「钉顶 / 跟尾」判定不能被**刚重测（splice）

@@ -7,6 +7,10 @@ use crate::*;
 
 impl Chat {
     pub(crate) fn active_menu(&self) -> Option<MenuKind> {
+        // 点外收起后保持关闭，直到输入再次变化（set_input 复位）
+        if self.menu_dismissed {
+            return None;
+        }
         let input = &self.input;
         if input.starts_with('/') && !input[1..].contains(char::is_whitespace) {
             return Some(MenuKind::Slash);
@@ -120,7 +124,7 @@ pub(crate) fn slash_menu_view(
             .child(
                 div()
                     .font_family(crate::markdown::MONO_FAMILY)
-                    .text_size(px(13.))
+                    .text_size(crate::appearance::ui_size(13.))
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
                     .child(SharedString::from(display_name)),
@@ -130,7 +134,7 @@ pub(crate) fn slash_menu_view(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .whitespace_nowrap()
                         .overflow_hidden()
@@ -149,6 +153,17 @@ pub(crate) fn slash_menu_view(
 
     div()
         .occlude()
+        // 点菜单外任意处收起（capture 阶段监听）；不 stop_propagation，
+        // 这次点击继续落到下层界面（如直接点发送仍然发送）
+        .on_mouse_down_out({
+            let weak = weak.clone();
+            move |_, _, cx| {
+                let _ = weak.update(cx, |c, cx| {
+                    c.menu_dismissed = true;
+                    cx.notify();
+                });
+            }
+        })
         .w_full()
         .flex()
         .flex_col()
@@ -168,7 +183,7 @@ pub(crate) fn slash_menu_view(
                 .py(px(8.))
                 .border_b_1()
                 .border_color(rgb(t.border))
-                .text_size(px(11.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(format!("斜杠命令 · {n}")))
                 .child(
@@ -201,7 +216,7 @@ pub(crate) fn slash_menu_view(
                     if n == 0 {
                         scroll = scroll.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(crate::appearance::ui_size(12.))
                                 .text_color(rgb(t.text_dim))
                                 .child(tr("未找到扩展、提示词或技能命令")),
                         );

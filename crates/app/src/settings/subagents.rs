@@ -241,7 +241,7 @@ fn sa_sidebar(
                 .px(px(8.))
                 .pt(px(6.))
                 .pb(px(2.))
-                .text_size(px(10.))
+                .text_size(crate::appearance::ui_size(10.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text_dim))
                 .child(tr("运行")),
@@ -265,7 +265,7 @@ fn sa_sidebar(
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .cursor_pointer()
                     .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
                     .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
@@ -293,7 +293,7 @@ fn sa_sidebar(
                     )
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(crate::appearance::ui_size(10.))
                             .text_color(rgb(t.text_dim))
                             .child(status_text),
                     ),
@@ -316,7 +316,7 @@ fn sa_sidebar(
                 .px(px(8.))
                 .pt(px(6.))
                 .pb(px(2.))
-                .text_size(px(10.))
+                .text_size(crate::appearance::ui_size(10.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(label.to_string())),
@@ -334,7 +334,7 @@ fn sa_sidebar(
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .cursor_pointer()
                     .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
                     .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
@@ -369,7 +369,7 @@ fn sa_sidebar(
                     )
                     .child(if p.overridden {
                         div()
-                            .text_size(px(9.))
+                            .text_size(crate::appearance::ui_size(9.))
                             .text_color(rgb(t.text_dim))
                             .child(tr("覆盖"))
                             .into_any_element()
@@ -399,7 +399,7 @@ fn sa_detail(
             None => div()
                 .flex_1()
                 .p(px(20.))
-                .text_size(px(12.))
+                .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_dim))
                 .child(tr("运行已结束"))
                 .into_any_element(),
@@ -424,7 +424,7 @@ fn sa_detail(
             .h_full()
             .overflow_y_scroll()
             .p(px(20.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(12.))
             .flex()
             .flex_col()
             .gap_4()
@@ -436,7 +436,7 @@ fn sa_detail(
                     .min_h(px(28.))
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(crate::appearance::ui_size(13.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(t.text))
                             .child(SharedString::from(p.display_name.clone())),
@@ -447,14 +447,14 @@ fn sa_detail(
                             .py(px(1.))
                             .rounded(px(3.))
                             .bg(if builtin { gpui::hsla(0., 0., 0.5, 0.12) } else { gpui::hsla(0.63, 0.86, 0.62, 0.12) })
-                            .text_size(px(10.))
+                            .text_size(crate::appearance::ui_size(10.))
                             .text_color(rgb(t.text_dim))
                             .child(p.scope.label()),
                     )
                     .child(
                         div()
                             .font_family(crate::markdown::MONO_FAMILY)
-                            .text_size(px(10.))
+                            .text_size(crate::appearance::ui_size(10.))
                             .text_color(rgb(t.text_dim))
                             .child(SharedString::from(p.name.clone())),
                     ),
@@ -462,7 +462,7 @@ fn sa_detail(
             .child(if let Some(path) = &p.file_path {
                 div()
                     .font_family(crate::markdown::MONO_FAMILY)
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(path.to_string_lossy().to_string()))
                     .into_any_element()
@@ -471,7 +471,7 @@ fn sa_detail(
             })
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_muted))
                     .child(SharedString::from(p.description.clone())),
             )
@@ -482,7 +482,7 @@ fn sa_detail(
                     .gap(px(5.))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
                             .child(tr("工具")),
@@ -490,7 +490,7 @@ fn sa_detail(
                     .child(
                         div()
                             .font_family(crate::markdown::MONO_FAMILY)
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(t.text))
                             .child(tools_text),
                     ),
@@ -499,7 +499,7 @@ fn sa_detail(
                 div()
                     .flex()
                     .gap_4()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(crate::i18n::tf(
                         "模型: {v}",
@@ -525,7 +525,7 @@ fn sa_detail(
                     .min_h(px(36.))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
                             .child(if p.enabled { tr("已启用") } else { tr("已停用") }),
@@ -572,7 +572,7 @@ fn sa_detail(
                             .border_1()
                             .border_color(rgb(t.accent))
                             .bg(rgb(t.accent))
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(t.accent_contrast))
                             .cursor_pointer()
@@ -593,7 +593,7 @@ fn sa_detail(
                             .border_1()
                             .border_color(rgb(0xef4444))
                             .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(0xef4444))
                             .cursor_pointer()
                             .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
@@ -635,7 +635,7 @@ fn sa_run_body(
                     .h_full()
                     .overflow_y_scroll()
                     .p(px(20.))
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .flex()
                     .flex_col()
                     .gap_4()
@@ -647,14 +647,14 @@ fn sa_run_body(
                             .min_h(px(28.))
                             .child(
                                 div()
-                                    .text_size(px(15.))
+                                    .text_size(crate::appearance::ui_size(13.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
                                     .child(SharedString::from(run.profile.clone())),
                             )
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(crate::appearance::ui_size(11.))
                                     .text_color(rgb(status_color))
                                     .child(status_text),
                             ),
@@ -672,7 +672,7 @@ fn sa_run_body(
                             .border_1()
                             .border_color(rgb(0xef4444))
                             .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(0xef4444))
                             .cursor_pointer()
                             .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
@@ -690,7 +690,7 @@ fn sa_run_body(
                             .gap(px(5.))
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(crate::appearance::ui_size(11.))
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(rgb(t.text_muted))
                                     .child(tr("输出")),
@@ -703,7 +703,7 @@ fn sa_run_body(
                                     .border_color(rgb(t.border))
                                     .bg(rgb(t.bg_panel))
                                     .font_family(crate::markdown::MONO_FAMILY)
-                                    .text_size(px(11.))
+                                    .text_size(crate::appearance::ui_size(11.))
                                     .text_color(rgb(t.text))
                                     .flex()
                                     .flex_col()
@@ -733,20 +733,20 @@ fn sa_agents_settings(
             .min_w_0()
             .h_full()
             .p(px(20.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(12.))
             .flex()
             .flex_col()
             .gap_3()
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(crate::appearance::ui_size(13.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .child(tr("子代理")),
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("选择一个子代理查看详情并运行；内置子代理由 agents/settings.json 控制")),
             )
@@ -758,7 +758,7 @@ fn sa_agents_settings(
                     .min_h(px(36.))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
                             .child(tr("内置子代理")),
@@ -807,7 +807,7 @@ fn sa_agents_settings(
                     .min_h(px(36.))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
                             .child(tr("最大并发 (1-32)")),
@@ -829,7 +829,7 @@ fn sa_agents_settings(
                             .border_1()
                             .border_color(rgb(t.accent))
                             .bg(rgb(t.accent))
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(t.accent_contrast))
                             .cursor_pointer()

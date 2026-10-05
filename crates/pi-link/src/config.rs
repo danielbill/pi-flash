@@ -263,6 +263,38 @@ mod tests {
     }
 
     #[test]
+    fn default_model_thinking_and_per_model_levels_parse() {
+        let path = tmpfile("settings-defaults.json");
+        std::fs::write(
+            &path,
+            r#"{"defaultProvider":"openrouter","defaultModel":"stealth/space-bunny-alpha",
+                "defaultThinkingLevel":"high",
+                "modelThinkingLevels":{"glm/glm-5.3-flash":"high","deepseek/deepseek-flash":"low"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_default_model(&path),
+            Some(("openrouter".into(), "stealth/space-bunny-alpha".into()))
+        );
+        assert_eq!(read_default_thinking_level(&path), Some("high".into()));
+        let levels = read_model_thinking_levels(&path);
+        assert_eq!(levels.len(), 2);
+        assert!(levels.contains(&("glm/glm-5.3-flash".into(), "high".into())));
+        assert!(levels.contains(&("deepseek/deepseek-flash".into(), "low".into())));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn default_model_none_when_either_key_missing() {
+        let path = tmpfile("settings-partial.json");
+        std::fs::write(&path, r#"{"defaultModel":"gpt-5"}"#).unwrap();
+        assert_eq!(read_default_model(&path), None);
+        assert_eq!(read_default_thinking_level(&path), None);
+        assert!(read_model_thinking_levels(&path).is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn missing_settings_file_reads_as_unset() {
         let path = tmpfile("settings-missing.json");
         let _ = std::fs::remove_file(&path);
@@ -324,21 +356,36 @@ pub fn read_default_tools(path: &Path) -> Result<Option<Vec<String>>, String> {
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
 }
 
+/// `settings.defaultProvider` + `settings.defaultModel` — the model a new
+/// session starts with (pi-web /api/models `defaultModel`, consumed by
+/// selectInitialModelScope parity on the app side). Both keys must be present.
+pub fn read_default_model(path: &Path) -> Option<(String, String)> {
+    let value = read_json(path).ok()?;
+    let provider = value.get("defaultProvider")?.as_str()?.to_string();
+    let model = value.get("defaultModel")?.as_str()?.to_string();
+    Some((provider, model))
+}
 
-/// The `theme` key of settings.json (shared with pi's own TUI).
-pub fn read_theme(path: &Path) -> Option<String> {
+/// `settings.defaultThinkingLevel` — global fallback thinking level for new
+/// sessions (pi SettingsManager.getDefaultThinkingLevel).
+pub fn read_default_thinking_level(path: &Path) -> Option<String> {
     read_json(path)
         .ok()?
-        .get("theme")
-        .and_then(|v| v.as_str())
+        .get("defaultThinkingLevel")?
+        .as_str()
         .map(str::to_string)
 }
 
-pub fn write_theme(path: &Path, theme: &str) -> Result<(), String> {
-    let mut value = read_json(path)?;
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| "settings.json is not an object".to_string())?;
-    obj.insert("theme".into(), Value::String(theme.to_string()));
-    write_json(path, &value)
+/// `settings.modelThinkingLevels` — per-`provider/modelId` thinking level pi
+/// records when the user picks one (SettingsManager.getModelThinkingLevel).
+pub fn read_model_thinking_levels(path: &Path) -> Vec<(String, String)> {
+    read_json(path)
+        .ok()
+        .and_then(|v| v.get("modelThinkingLevels")?.as_object().cloned())
+        .map(|obj| {
+            obj.into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }

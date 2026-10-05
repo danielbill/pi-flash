@@ -16,7 +16,7 @@ use skills::mc_skills_view;
 use subagents::mc_subagents_view;
 
 use super::*;
-pub(crate) use crate::ui::{icon, icon_hover};
+pub(crate) use crate::ui::{icon, icon_hover, DropdownState};
 
 /// The settings modal's form state (pi-web SettingsPanel own-state parity).
 pub(crate) struct SettingsPanel {
@@ -34,10 +34,41 @@ pub(crate) struct SettingsPanel {
     /// subagents tab: maxConcurrent input value
     pub sa_input: gpui::Entity<TextInput>,
     pub error: Option<String>,
+    /// 界面页：打开的字体下拉（槽位 ix；None=全关）
+    pub font_popup: Option<usize>,
+    /// 字体下拉组件的外点收起守卫（三个触发按钮共享）
+    pub font_dd: gpui::Entity<DropdownState>,
+    /// 字体下拉顶部的筛选输入
+    pub font_filter: gpui::Entity<TextInput>,
+    /// 界面页：打开的字号三档下拉（槽位 ix；None=全关）
+    pub size_popup: Option<usize>,
+    /// 字号下拉的外点收起守卫（三个触发按钮共享）
+    pub size_dd: gpui::Entity<DropdownState>,
 }
 
 impl SettingsPanel {
     pub(crate) fn new(cx: &mut gpui::Context<Self>) -> Self {
+        // 筛选输入每敲一字 → 通知面板重渲染（列表按值过滤在渲染期读取快照）
+        let weak_filter = cx.weak_entity();
+        let weak_esc = cx.weak_entity();
+        let font_filter = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder(tr("搜索字体…"))
+                .select_all_on_focus()
+                .on_change(Box::new(move |_, cx| {
+                    if let Some(p) = weak_filter.upgrade() {
+                        p.update(cx, |_, cx| cx.notify());
+                    }
+                }))
+                .on_escape(Box::new(move |cx| {
+                    if let Some(p) = weak_esc.upgrade() {
+                        p.update(cx, |s, cx| {
+                            s.font_popup = None;
+                            cx.notify();
+                        });
+                    }
+                }))
+        });
         Self {
             focus: cx.focus_handle(),
             tab: 0,
@@ -52,6 +83,28 @@ impl SettingsPanel {
             install_scope_project: false,
             sa_input: cx.new(|cx| TextInput::new(cx).numeric(true)),
             error: None,
+            font_popup: None,
+            font_dd: cx.new(|_| DropdownState::new()),
+            font_filter,
+            size_popup: None,
+            size_dd: cx.new(|_| DropdownState::new()),
+        }
+    }
+
+    /// 打开某槽位的字体下拉（弹层锚定由 dropdown 组件负责），清空筛选。
+    /// 筛选框聚焦走 focus_soon（渲染期 best-effort）。
+    pub(crate) fn open_font_popup(&mut self, slot: usize, cx: &mut gpui::Context<Self>) {
+        self.font_popup = Some(slot);
+        self.font_filter.update(cx, |ti, tcx| {
+            ti.set_value(String::new(), tcx);
+            ti.focus_soon(tcx);
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn close_font_popup(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.font_popup.take().is_some() {
+            cx.notify();
         }
     }
 }
@@ -69,10 +122,17 @@ pub(crate) struct SettingsFormData {
     pub install_scope_project: bool,
     pub sa_input: gpui::Entity<TextInput>,
     pub error: Option<String>,
+    pub font_popup: Option<usize>,
+    pub font_dd: gpui::Entity<DropdownState>,
+    pub font_filter: gpui::Entity<TextInput>,
+    /// 渲染期读不到 cx，过滤在快照时完成（按当前筛选值）
+    pub font_filter_value: String,
+    pub size_popup: Option<usize>,
+    pub size_dd: gpui::Entity<DropdownState>,
 }
 
 impl SettingsFormData {
-    pub(crate) fn snapshot(panel: &SettingsPanel, _cx: &gpui::App) -> Self {
+    pub(crate) fn snapshot(panel: &SettingsPanel, cx: &gpui::App) -> Self {
         let p = panel;
         Self {
             focus: p.focus.clone(),
@@ -84,6 +144,12 @@ impl SettingsFormData {
             install_scope_project: p.install_scope_project,
             sa_input: p.sa_input.clone(),
             error: p.error.clone(),
+            font_popup: p.font_popup,
+            font_dd: p.font_dd.clone(),
+            font_filter: p.font_filter.clone(),
+            font_filter_value: p.font_filter.read(cx).value().to_string(),
+            size_popup: p.size_popup,
+            size_dd: p.size_dd.clone(),
         }
     }
 }
@@ -94,13 +160,13 @@ pub(crate) fn render_settings(
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
-    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, install_input, install_scope_project, sa_input, error } =
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, install_input, install_scope_project, sa_input, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
         d.clone();
     let weak_close = weak.clone();
 
     // 页内容：界面=单列 rows；其余=自带左右分栏
     let pane: gpui::AnyElement = match tab {
-        0 => mc_general_view(chat, weak),
+        0 => mc_general_view(chat, weak, font_popup, &font_dd, &font_filter, &font_filter_value, size_popup, &size_dd),
         1 => {
             let (sidebar, detail) =
                 crate::settings::models::mc_models_view(chat, weak, &section, &key_input, key_visible, &error);
@@ -121,7 +187,7 @@ pub(crate) fn render_settings(
         _ => mc_misc_view(chat, weak),
     };
 
-    div()
+    let overlay = div()
         .absolute()
         .inset_0()
         .occlude()
@@ -136,6 +202,17 @@ pub(crate) fn render_settings(
                         cx.notify();
                     });
                 }
+            }
+        })
+        // 点卡片外关闭（dialog_shell 同款；卡片自身 stop_propagation，
+        // dropdown 弹层开着时其外点监听在 capture 阶段先关弹层并拦下事件）
+        .on_mouse_down(MouseButton::Left, {
+            let weak = weak_close.clone();
+            move |_, _, cx| {
+                let _ = weak.update(cx, |c, cx| {
+                    c.settings = None;
+                    cx.notify();
+                });
             }
         })
         .flex()
@@ -153,6 +230,8 @@ pub(crate) fn render_settings(
                 .flex()
                 .flex_col()
                 .overflow_hidden()
+                // 卡片内点击不冒泡到遮罩（否则点卡片任意处都会关设置）
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // 自带 36px topbar（chrome 底色；仅右侧 ×）
                 .child(
                     div()
@@ -162,6 +241,9 @@ pub(crate) fn render_settings(
                         .items_center()
                         .pl(px(16.))
                         .bg(rgb(t.chrome))
+                        // overflow_hidden 的裁剪是纯矩形（无圆角），顶条不自己
+                        // 倒角的话方形角会从弹窗圆角外露出来（四角尖尖角）
+                        .rounded_t(px(10.))
                         .border_b_1()
                         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)))
                         .child(div().flex_1())
@@ -200,6 +282,8 @@ pub(crate) fn render_settings(
                                 .w(px(200.))
                                 .flex_shrink_0()
                                 .bg(rgb(t.nav))
+                                // 左导航贴弹窗左下角，同理自己倒左下角
+                                .rounded_bl(px(10.))
                                 .border_r_1()
                                 .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
                                 .flex()
@@ -221,8 +305,8 @@ pub(crate) fn render_settings(
                                 .child(pane),
                         ),
                 ),
-        )
-        .into_any_element()
+        );
+    overlay.into_any_element()
 }
 
 fn two_pane(sidebar: gpui::AnyElement, detail: gpui::AnyElement) -> gpui::AnyElement {
@@ -260,7 +344,7 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
             .py(px(7.5))
             .mb(px(1.))
             .rounded(px(8.))
-            .text_size(px(13.))
+            .text_size(crate::appearance::ui_size(13.))
             .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
             .when(active, |d| {
                 d.bg(rgb(t.bg_selected)).font_weight(gpui::FontWeight::SEMIBOLD)

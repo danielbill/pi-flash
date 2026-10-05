@@ -182,11 +182,6 @@ pub fn save_sound_pref(on: bool) {
     save_app_settings(&s);
 }
 
-/// Effective cross-project tail-preload count (settings override, default 10).
-pub fn preload_sessions() -> usize {
-    app_settings().preload.unwrap_or(10)
-}
-
 /// Agent-run finished notification sound (Windows MessageBeep; no-op elsewhere).
 pub fn play_notify_sound() {
     #[cfg(windows)]
@@ -407,11 +402,9 @@ pub struct AppSettings {
     pub lang: Option<usize>,
     /// notification sound on/off
     pub sound: Option<bool>,
-    /// how many recent sessions (cross-project) get their message tail
-    /// preloaded into memory at startup; 0 disables
-    pub preload: Option<usize>,
-    /// v54 psp: how many recent projects the sidebar loads at startup
-    pub projects: Option<usize>,
+    /// v60: startup load time window in days (7/14/30) — sessions whose
+    /// last activity falls inside the window form the psp list
+    pub load_window_days: Option<u64>,
     /// v54 其他页: restore last workspace + session on startup
     pub restore: Option<bool>,
     /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）
@@ -464,14 +457,9 @@ pub fn app_settings() -> AppSettings {
                         .and_then(|v| v.as_u64())
                         .map(|v| v.min(2) as usize),
                     sound: map.get("sound").and_then(|v| v.as_bool()),
-                    preload: map
-                        .get("preload_sessions")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize),
-                    projects: map
-                        .get("project_count")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| (v as usize).clamp(1, 20)),
+                    load_window_days: map
+                        .get("load_window_days")
+                        .and_then(|v| v.as_u64()),
                     restore: map.get("startup_restore").and_then(|v| v.as_bool()),
                     show_thinking: map.get("show_thinking").and_then(|v| v.as_bool()),
                 }
@@ -509,11 +497,8 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.sound {
         obj.insert("sound".into(), Value::Bool(v));
     }
-    if let Some(v) = s.preload {
-        obj.insert("preload_sessions".into(), Value::Number((v as u64).into()));
-    }
-    if let Some(v) = s.projects {
-        obj.insert("project_count".into(), Value::Number((v as u64).into()));
+    if let Some(v) = s.load_window_days {
+        obj.insert("load_window_days".into(), Value::Number(v.into()));
     }
     if let Some(v) = s.restore {
         obj.insert("startup_restore".into(), Value::Bool(v));
@@ -524,10 +509,19 @@ pub fn save_app_settings(s: &AppSettings) {
     save_map_to(&path, &obj);
 }
 
-/// v54 psp: how many projects the sidebar loads (settings-其他, default 5).
-pub fn project_count() -> usize {
-    app_settings().projects.unwrap_or(5).clamp(1, 20)
+/// Startup load time window in days (settings-其他「加载时间窗口」档位
+/// 7/14/30, default 7) — the recents list filters on it.
+pub fn load_window_days() -> u64 {
+    match app_settings().load_window_days.unwrap_or(7) {
+        14 => 14,
+        30 => 30,
+        _ => 7,
+    }
 }
+
+/// Sessions whose tail is read into memory at startup (fixed, not a
+/// setting — the load window is the user-facing knob).
+pub const TAIL_PRELOAD: usize = 10;
 
 /// v54 其他: startup restore toggle (default on).
 pub fn startup_restore() -> bool {

@@ -1,5 +1,5 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
-use collections::FxHashMap;
+use collections::{FxHashMap, VecDeque};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -392,7 +392,86 @@ impl WrappedLineLayout {
 pub(crate) struct LineLayoutCache {
     previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
+    /// 存档层：掉出两帧滑动窗口的 shaped 布局按插入序保留在字节预算内。
+    /// 上下翻页把条目重新带回视口时在此命中，免去整块重排版——会话区
+    /// 大 markdown 消息滚动卡顿的主因就是「重进视口 = 数百行重新 shape」。
+    /// 命中即搬回 current（预算内重新沉降时自然刷新插入位，近似 LRU）。
+    archive: Mutex<ArchiveCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
+}
+
+/// 存档字节预算（按 `archive_entry_bytes` 估算）：48MB ≈ 300 万字符的
+/// shaped 文本，足够整场会话来回翻。
+const ARCHIVE_BUDGET_BYTES: usize = 48 * 1024 * 1024;
+
+/// 单条缓存项的字节量估算：glyph ≈ 每字符 16B（run/描述符并入常数项）
+fn archive_entry_bytes(key: &CacheKey) -> usize {
+    key.text.len() * 16 + 512
+}
+
+#[derive(Default)]
+struct ArchiveCache {
+    lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
+    wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
+    /// 插入序（混排两种 key），超预算时从头驱逐
+    order: VecDeque<Arc<CacheKey>>,
+    total_bytes: usize,
+}
+
+enum ArchiveEntry {
+    Line(Arc<LineLayout>),
+    Wrapped(Arc<WrappedLineLayout>),
+}
+
+impl ArchiveCache {
+    /// 存入一条（finish_frame 沉降）。同 key 重复沉降只覆盖不重复记账
+    /// （防御性；正常时序下存档里的条目必先被查找搬回 current 才可能再掉出）。
+    fn deposit(&mut self, key: Arc<CacheKey>, entry: ArchiveEntry) {
+        let bytes = archive_entry_bytes(&key);
+        let existed = match &entry {
+            ArchiveEntry::Line(line) => {
+                self.lines.insert(key.clone(), line.clone()).is_some()
+            }
+            ArchiveEntry::Wrapped(line) => {
+                self.wrapped_lines.insert(key.clone(), line.clone()).is_some()
+            }
+        };
+        if !existed {
+            self.order.push_back(key);
+            self.total_bytes += bytes;
+        }
+        while self.total_bytes > ARCHIVE_BUDGET_BYTES && !self.order.is_empty() {
+            let Some(evicted) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, line)) = self.lines.remove_entry(&evicted) {
+                self.total_bytes -= archive_entry_bytes(&evicted);
+                drop(line);
+            } else if let Some((_, line)) = self.wrapped_lines.remove_entry(&evicted) {
+                self.total_bytes -= archive_entry_bytes(&evicted);
+                drop(line);
+            }
+            // order 里可能残留「已被查找搬回 current」的陈旧 key：地图未命中
+            // 即丢弃，不计账（total_bytes 在查找搬回时已扣减）
+        }
+    }
+
+    /// 取走一条 plain 布局（记账同步扣减）
+    fn take_line(&mut self, key: &dyn AsCacheKeyRef) -> Option<(Arc<CacheKey>, Arc<LineLayout>)> {
+        let entry = self.lines.remove_entry(key)?;
+        self.total_bytes -= archive_entry_bytes(&entry.0);
+        Some(entry)
+    }
+
+    /// 取走一条 wrapped 布局（记账同步扣减）
+    fn take_wrapped(
+        &mut self,
+        key: &dyn AsCacheKeyRef,
+    ) -> Option<(Arc<CacheKey>, Arc<WrappedLineLayout>)> {
+        let entry = self.wrapped_lines.remove_entry(key)?;
+        self.total_bytes -= archive_entry_bytes(&entry.0);
+        Some(entry)
+    }
 }
 
 #[derive(Default)]
@@ -414,6 +493,7 @@ impl LineLayoutCache {
         Self {
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
+            archive: Mutex::default(),
             platform_text_system,
         }
     }
@@ -459,8 +539,14 @@ impl LineLayoutCache {
         let mut prev_frame = self.previous_frame.lock();
         let mut curr_frame = self.current_frame.write();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
-        curr_frame.lines.clear();
-        curr_frame.wrapped_lines.clear();
+        // 沉降而非丢弃：掉出两帧窗口的布局进存档（预算内保留）
+        let mut archive = self.archive.lock();
+        for (key, line) in curr_frame.lines.drain() {
+            archive.deposit(key, ArchiveEntry::Line(line));
+        }
+        for (key, line) in curr_frame.wrapped_lines.drain() {
+            archive.deposit(key, ArchiveEntry::Wrapped(line));
+        }
         curr_frame.used_lines.clear();
         curr_frame.used_wrapped_lines.clear();
     }
@@ -492,6 +578,14 @@ impl LineLayoutCache {
 
         let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
         if let Some((key, layout)) = previous_frame_entry {
+            let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
+            current_frame
+                .wrapped_lines
+                .insert(key.clone(), layout.clone());
+            current_frame.used_wrapped_lines.push(key);
+            layout
+        } else if let Some((key, layout)) = self.archive.lock().take_wrapped(key) {
+            // 存档回退：两帧窗口外但预算内仍保留的 wrapped 布局，搬回 current
             let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
             current_frame
                 .wrapped_lines
@@ -556,6 +650,11 @@ impl LineLayoutCache {
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
         if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+            current_frame.lines.insert(key.clone(), layout.clone());
+            current_frame.used_lines.push(key);
+            layout
+        } else if let Some((key, layout)) = self.archive.lock().take_line(key) {
+            // 存档回退：两帧窗口外但预算内仍保留的 plain 布局，搬回 current
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout

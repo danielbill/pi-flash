@@ -911,3 +911,602 @@ input panel 上沿 20px 就该开始滚」。
 回归锁：`glue_geometry::burst_events_do_not_flip_follow_decision`（一帧内两个
 事件：判定必须保持跟尾、末尾贴屏底；改动前该测试失败，正好复现用户现象）。
 app 87 测试 + pi-link 53 全绿，真机启动无 panic。
+
+### v59 滚屏六修：换工具预设导致消息回落 + 审计 composer 各控件
+
+用户实测：发送后等待 agent 响应期间改「工具选项」，「等待模型响应」连同刚上翻的
+历史一起**掉回屏底**。
+
+根因：工具预设是 **spawn 参数**（`--tools` / `--no-tools`，见 `SessionRuntime::spawn`），
+换它要 `mc_set_tools_preset` 重绑会话进程（kill + 新开）并 `GetMessages` 整表重读；
+而整表重读的处理里无条件 `pager.release()` —— 锚点退役、垫片卸掉，Bottom 对齐
+随即把「等待模型响应」这种短内容整块拽到屏底。运行中重绑还会**直接掐掉正在跑
+的这一轮**。
+
+修法两层：
+
+1. **禁止**：agent 跑动期间工具预设置灰不可点（点击给一句提示），
+   `mc_set_tools_preset` 里也加 `agent_running` 守卫（绕过 UI 的兜底）。
+   思考强度/模型**不用禁**——它们是实时 RPC（`SetThinkingLevel` / `SetModel`），
+   不动会话进程也不重读消息表（已逐条核对代码）。
+2. **兜底**：整表重读（换绑的 `get_messages`、压缩后重拉、会话文件重读）后调
+   `ChatList::reanchor`——只挪锚点索引、保留垫片与跟尾状态、重钉一次；锚点确实
+   失效时按「最后一条用户消息」重锚，找不到才退役。fork（换会话）仍显式退役。
+
+composer 控件审计（是否重绑进程 / 重读消息表）：
+
+| 控件 | 行为 | 结论 |
+|---|---|---|
+| 工具预设 | spawn 参数 → 重绑 + GetMessages | **运行中禁止**（唯一一个） |
+| 思考强度 | 实时 RPC SetThinkingLevel | 安全，不禁 |
+| 模型 | 实时 RPC SetModel + get_state | 安全，不禁 |
+| 压缩（用量详情里） | 中止当前轮 + GetMessages | 早已锁死（can_compact） |
+| 图片附件 / / 菜单 / @ / 声音 / 用量详情 | 纯本地 | 安全 |
+| 发送 / 停止 / 排队 / 引导 | prompt/steer/follow_up | 正常（steer 本就要重钉） |
+| 消息 hover「新分支」 | fork → 重绑 + GetMessages | 早已有「运行中禁止 fork」守卫 |
+
+顺带修了 i18n 表里 8 条 en/zh-TW 顺序写反的条目（都是压缩卡片/写文件那组），
+新增一条「运行中不能更换工具预设」三语文案。
+
+测试：`glue_geometry::reload_keeps_pin_or_falls_to_bottom`（整表重读后钉顶纹丝
+不动；反例退役锚点则回落到屏下半部）。app 88 + pi-link 53 全绿。
+
+## 思考强度菜单补全 pi 1.0 全 7 档（2026-10-04）
+
+pi 1.0 的合法思考档位为 `off / minimal / low / medium / high / xhigh / max`
+（`VALID_THINKING_LEVELS`，vendor 1.0.0 已含；模型 schema `thinkingLevelMap`
+按 7 键映射到 provider 端参数，未映射档有内建回退，如
+`thinkingLevelMap?.[level] ?? "medium"`，透传安全）。composer 思考菜单原来只给
+4 项（auto/low/high/max），现补全为 auto + 7 档共 8 行，文案与 pi-web zh-CN
+逐字对齐（关闭推理/最低限度推理/中等强度推理/超高强度推理/最高强度推理，
+`max` 由「最强推理」改「最高强度推理」），en/zh-TW 同步补 4 条、改 1 条。
+runtime `set_thinking_level` 本就字符串透传（auto→None），pill 标签显示 pi
+回报的原始档位串，均无需改动。pi-web 无菜单星标（★），截图中的星标非 pi-web
+功能，不复刻。npm 上 pi 最新 1.0.2（vendor 钉 1.0.0），与档位无关，暂不 bump。
+
+## 模型目录上收 Chat 层项目级共享 + 草稿 lazy connect（2026-10-04）
+
+**bug**：已有会话能切换模型，新开对话模型选择器空白。根因是架构问题：模型列表
+`available_models` 存在每个 `SessionRuntime` 上，只有活跃会话的 RPC 响应能填，
+而「新会话」是 lazy draft（无 pi 进程），`refresh_state` 的 `if let Some(session)`
+短路 → 列表永远为空；pill 兜底补拉同样被短路。且 new_session 注释承诺的
+「首条 prompt 时 spawn」从未实现——草稿发消息会直接「未连接」。
+
+**pi-web parity**（读了源码）：`/api/models` 由服务端配置直接枚举、按 cwd 缓存
+（`lib/models-cache.ts` loadModelsWithCache：60s TTL + in-flight 去重），
+`useAgentSession.loadModels` 用 `newSessionCwd ?? session?.cwd` 拉——草稿也走
+全局接口，与会话进程零耦合。
+
+**改动**：
+- 模型目录上收 Chat 层：`models_by_cwd: HashMap<cwd, Vec<ModelInfo>>` 项目级
+  共享；`SessionRuntime` 删字段，`get_available_models` 响应只转发
+  （新 `SessionEvent::Models`，各 runtime 写各自 cwd 条目）；选择器
+  （filtered_models）、设置页（mc_provider_ids/两处渲染）、mc_refs 全部读共享
+  目录；pill 兜底改 `ensure_models_requested`——只向同 cwd 的带进程 runtime
+  补拉，绝不为选模型 spawn 进程。
+- 补 lazy connect（pi-web ensureNewSession parity）：`send_input` 发现无进程时
+  spawn + attach_pump + refresh_state 再发 prompt。
+- 补草稿提升（pi-web promoteNewSession parity）：get_session_stats 首次带回
+  sessionFile（None→Some）发 `SessionEvent::FileBound`，池 key 从 draft-N 迁移
+  到会话路径 + last_open + 侧栏刷新，否则重开该会话会起重复 runtime。
+- 修 key 碰撞：启动无 last_open 时初始 runtime 占用 "draft-0"，draft_seq 原置 0
+  会让第一次「新会话」覆盖已连接的 runtime，恒置 1。
+
+测试：app 88 全绿。pi-link 52/53——`parses_session_info_name_from_real_file_tail`
+失败为 pre-existing 机器态依赖（测试注释自述 machine-dependent by design，
+本机该 2026-09-25 会话文件的 sessionInfo 名已不存在），与本次无关。
+
+## 新会话页加载 pi 默认设置（2026-10-04）
+
+**问题**：新会话（草稿）三枚 pill 全是假值——模型「选择模型」、思考硬编码
+"medium"、工具显示 "default"，pi 配置的默认模型/思考档/工具完全没进 UI。
+pi-web 的做法（读源码）：新会话初始 = `CONFIGURED_TOOL_PRESET`（不钉名单）；
+默认模型/思考档来自 `/api/models` 的 `defaultModel`/`defaultThinkingLevel`
+（服务端 selectInitialModelScope：settings 默认模型在 scope 内 → 用它，否则
+scope 首个；思考档 = `enabledModels :level` pin > per-model
+modelThinkingLevels > 全局 defaultThinkingLevel）；用户显式选择才随
+ensure_session 透传，其余让 pi 端按 settings 解析。
+
+**改动**：
+- pi-link config.rs：`read_default_model`（defaultProvider+defaultModel）、
+  `read_default_thinking_level`、`read_model_thinking_levels` 三个 reader
+  （+2 测试）。
+- Chat 层：`reload_model_defaults()`（启动 + 设置面板都调）读 settings.json
+  默认值并重算 mc_state；`new_session_default()` = selectInitialModelScope
+  parity（scope 用现成的 models_config glob + pin 解析）；`model_display_name`。
+  Models 事件到达时重算 mc_state（scope 的 refs 此时才可知）。
+- Runtime：`pending_model`（pi-web newSessionModelOverrideRef parity）——草稿
+  选模型无进程时暂存，spawn 带 `--model provider/id`；`thinking_override` 同样
+  以 `--thinking <level>` 上 spawn（重绑场景不再丢）；工具映射补 default
+  （read,bash,edit,write）/ full（bash,read,edit,write,grep,find,ls）两档，
+  初始预设改 "configured"（无参数 = pi 按 defaultTools 解析，CLI parity）。
+- composer pill：草稿态 model = pending_model ?? new_session_default；thinking
+  = override ?? draft 默认 ?? "auto"（删除硬编码 "medium"）；有进程后仍由 pi
+  get_state 接管。工具 pill 菜单本就是 pi-web 5 档，现在初始值与语义对齐。
+
+pi CLI flag 依据：`--model <pattern>`（支持 provider/id）、`--thinking <level>`。
+测试：app 88 全绿；pi-link 54 绿 + 1 机器态失败（pre-existing，同上）。
+
+## 设置「界面」页改版 + 主题持久化去污染（2026-10-04）
+
+**背景**：设计文档 docs/UI设计/设置页面UI.md——标题「外观」→「界面」、删版本
+号；主题淡色5/深色2 各一排（去掉冗余 (id) 注释与"主题写入…"说明）；字体族
+换 zed 式下拉（250×400，顶部筛选行，参考 zed字体菜单.bmp）；字号改动即时
+反映；语言三个一排宽 100px；提示音挪「其他」页。**且主题配置此前被写进 pi
+的 settings.json（theme 键值域是 dark/light，写入 pi-flash 主题 id 会让 pi
+每次启动报错）——彻底停止污染。**
+
+- **去污染（根）**：删 pi-link `read_theme`/`write_theme`；main.rs 主题启动
+  链 = PI_FLASH_THEME > app_settings.json（不再回退读 pi settings.json）；
+  general.rs 切主题只走 `persist_theme`（app_settings.json）+ token 重映射。
+  已清理用户机上被污染的 `~/.pi/agent/settings.json`（移除 "theme":"rose"，
+  备份 .bak-piflash）。
+- **主题**：两排卡片（淡5/深2，`theme::ALL.dark` 分组），swatch=主题底色+
+  accent/muted 圆点，选中 accent 描边；显示名仅 entry.name。图标主题行随
+  本版式移除（单选项死 UI，ICON_THEMES/icon_theme_id 一并删）。
+- **字体（v60-2 WYSIWYG；v60-3 三修；v60-4 会话直连；v60-5 终版语义收敛；
+  v60-6 封装 Dropdown 组件）**：
+  v60-6（用户反馈：标签折行 + 弹层不贴合按钮正下方 + 要求封装组件）：
+  **新增 `ui/dropdown.rs` 通用下拉组件**——锚定照搬 vendored gpui-component
+  dropdown 的成熟机制：弹层 `deferred(anchored().snap_to_window_with_margin)`
+  ——deferred 保留块流内布局（absolute 静态位置 = 触发按钮正下方，无需捕获
+  /计算任何坐标）并逃出滚动容器裁剪，anchored 负责窗口内收口/溢出翻转；
+  `on_mouse_down_out` 外点收起 + DropdownState 300ms 防抖守卫（挡外点收起
+  与触发点击的双触发竞态）；popup 惰性构建（open 才建）。字体三槽位全部
+  改走该组件：删 font_anchor/font_trigger_bounds/font_popup_layer/overlay
+  弹层分支（快照减负），open 状态经快照传入 mc_general_view。"Markdown 字
+  体"标签折行 = 110px 列宽在面板 1.33× 下不够 → 130px + whitespace_nowrap。
+  v60-5（沿用）：
+  v60-5（用户定义终版）：**会话字体 = 用户/agent 输出正文的族+字号，不含
+  meta 等 chrome**——撤掉 chat_size 缩放体系（会话区 chrome/meta/composer
+  全部回归 ui_size 面板缩放，51+2 处），气泡正文走 v60-4 的 MD_SPEC 直连
+  （session_font 默认回 14）。**弹层"弹不出"根因 = gpui div() 默认
+  position:relative**——v60-3 给背板/卡片包的 wrapper div 成了 absolute
+  子节点的定位容器（0×0 → 背板消失、卡片锚到弹窗中心）；修复 = 背板/卡片
+  作为 overlay 的直接兄弟子节点（font_popup_layer 返回 tuple）。
+  v60-4：
+  v60-4：用户实测"会话字体一点没变"的根因 = 气泡正文的族+字号都挂在
+  markdown 槽位上（会话字号只以缩放系数叠上去，族完全无关）——改为
+  **thread_local MD_SPEC 按渲染上下文分流**：render/render_user（聊天）=
+  会话字体族+字号直连（气泡=用户设的族和号），render_themed（文件预览）=
+  Markdown 字体槽位；代码块 12.5→12.5/BASE×spec 等比；chat_scale 乘法删除
+  （chat_size 仍管 composer/会话区 chrome）。弹层"弹不出来"：回退 v60-3 在
+  开启路径上加的 ensure_ready+事件期 window.focus（改回 focus_soon 渲染期
+  聚焦），保留 per-slot bounds 与背板/卡片兄弟结构两个修复——开启机制与
+  v60-2（已验证能弹）完全一致。
+  v60-3 三修（沿用）：
+  三槽位每行 = 110px 标签 + 250px 下拉按钮 + 字号步进，无预览行。双缩放轴
+  模型（AtomicU32 缓存，save_font/startup 同步）：**面板字号 = 全局 UI 缩放**
+  （`ui_size(base)`=base×scale，scale=面板字号/12，钳 10–16——固定高度行
+  >1.33× 裁字）——173+3 处 `.text_size(px(N))` 脚本替换（tmp/sweep_ui_size.py；
+  排除 markdown.rs/terminal.rs/render/math.rs），含设置页自身=调整时眼前即变；
+  **会话字号 = 会话区缩放**（`chat_size(base)`，基准 15px=1.0，钳 10–24）：
+  composer（15/chip 14）、会话区 chrome（session/* 51 处）、markdown 正文
+  推导尺寸（base_style/行内 code/列表圆点 ×chat_scale()）全部跟随；
+  **Markdown 字号 = 正文基准字号**（原有 spec.size 语义不变）。
+  下拉弹层（v60-3 修）：canvas **按槽位**捕获触发按钮 bounds（原单字段被
+  三个按钮每帧覆写 → 永远开在 Markdown 行位置）；**背板与卡片改兄弟节点**
+  （原卡片嵌在背板里，点输入框冒泡触发背板"点击关闭"→ 弹窗秒收、无法输入
+  过滤）；打开即 `ensure_ready` 建态 + `window.focus` 聚焦筛选框（不再依赖
+  渲染期 focus，TextInput 的 focus_soon/want_focus 已回退删除）。250×400
+  卡片 = 顶部筛选 TextInput（清空/Escape 收起）+ `uniform_list` 虚拟化列表
+  （系统字体全量 `all_font_names`，startup 排序去重缓存 OnceLock；每项以
+  自身字体渲染，active accent 高亮），点选写 app_settings.json。
+  FONT_CHOICES/cycle_family 弃用删除。
+- **语言**：三个按钮一排（各 100px、文字左对齐、active 描边）。
+- **其他页**：新增「提示音」set_row（从界面页挪入）；`misc::stepper` 转
+  pub(crate) 供复用。
+- **实现注**：弹层 = render_settings 内 overlay 的兄弟分支（全窗口透明
+  catcher 收起 + occlude 卡片），不进滚动容器；SettingsFormData 快照增
+  font_popup/font_anchor/font_filter/font_filter_value（渲染期无 cx，筛选值
+  快照时读）；TextInput 增 `focus_soon`（want_focus 渲染期聚焦，弹层打开即
+  可打字）；Chat 无需 observe——gpui 渲染期读取的实体会注册 window
+  invalidator（app.rs record_entities_accessed），InputState notify 即重渲染。
+
+测试：app 88 全绿零警告；pi-link 54 绿 + 1 机器态失败（pre-existing，
+parses_session_info_name_from_real_file_tail 依赖的特定会话文件已被 pi 重写，
+与本次无关）。构建被运行中的 pi-flash.exe 锁定（os error 5），check 已过，
+待关闭实例后 build + 实测。
+
+### v60-3 最近活动会话清单（docs/模块设计/003-session管理.md 全量落地）
+
+启动只加载最近 N 个 session 的机制层。三层职责：
+- **摘要索引**（既有 `pi-flash-session-index.json`，不动）：每文件
+  id/cwd/preview/name/条数，`(mtime,size)` 指纹失效。
+- **活动清单**（新 `pi-link/recents.rs` → `pi-flash-session-recents.json`）：
+  top-100 条目只存 `(path, last_active)`，按活动时间降序；摘要渲染时查
+  索引不冗余。活动 = max(最近被打开, 最近有更新)：`touch`（打开/消息，
+  恒提顶置 now）+ `record`（外部 mtime，max 语义不倒退）。
+- **30s 轮询**（main.rs 常驻任务）：`poll_recent_sessions` 对账外部写入
+  （pi-web/cli）→ 记录变更 + 清死路径 + 节流落盘；**排除所有活跃 runtime
+  的会话文件**（pi 持续追加时轮询扫它们 = 每轮整文件重扫；它们的提顶走
+  事件路径）。Scanner 增 `list_excluding(max, exclude)` 入口（对齐项：
+  枚举+截断+指纹服务收敛）。
+
+三条写入路径：`open_session`/`on_file_bound` 打开提顶；
+`subscribe_runtime` Changed 分支消息级提顶（任何 runtime，非仅活跃）；
+30s 轮询外部变更。`delete_session` 同步摘除条目。
+
+启动路径：尾部预载数据源从 `list_sessions(n)`（全枚举排序）换成
+`recent_preload_paths(n)`（读清单前 N，只 stat + 查索引）；清单为空
+（首次安装到有历史会话的机器）内部用 mtime 序种子生成初版清单并落盘
+——干净机器/存量机器统一为一个入口。跨项目 400 条 rebuild_projects
+保持现状（全量摘要缓存）。
+
+**顺手修存量 bug**（上一轮标 pre-existing 的
+`parses_session_info_name_from_real_file_tail`，根因本次定位）：重命名
+记录 `session_info` 停在写入时刻的位置，会话后续追加把它推出 64KB 固定
+尾窗（实例：153KB 文件 09-25 改名聊到 10-04）→ name 解析失败退回
+preview。`scan_file` 改用 `read_latest_session_info`：尾窗 64KB 起倍增
+搜索至 1MB 封顶（`SESSION_INFO_MAX_WINDOW`），普通会话单次 64KB 读、
+病态大文件也有界。
+
+测试：pi-link 60 全绿（含 recents 5 项：提顶/容量、max 语义、prune/
+remove、持久化 roundtrip、scanner 排除跳过）；app 88 全绿。构建仍被
+运行中的 pi-flash.exe 锁定，待关闭实例后 build 实测。
+
+### v60-4 「默认加载会话数」落地（用户反馈 v60-3 看不出效果）
+
+根因：v60-3 只换了预载数据源，psp 列表仍走全量 `list_sessions(400)`，
+界面无可见差异。本版把加载单位真正切到会话：
+- **设置-其他**：「默认加载项目数」（1–10，钳 ps p组数）退役 →
+  「默认加载会话数」（5–20 步进，默认 10），绑定 key `preload_sessions`；
+  `project_count()`/settings.projects 字段删除（旧 key 值不再读写）。
+- **启动 psp 数据源**：`list_sessions(400)`+排序 → 清单前 N 路径 +
+  `sessions_for_paths`（纯 stat + 指纹索引查，种子后必命中，无文件读）
+  ——全盘枚举彻底退出启动路径；列表可见效果 = 只显示这 N 个会话
+  （按项目分组，组不再按项目数截断）。
+- 尾部预载与 psp 共用同一批 `recent_preload_paths(n)` 路径（一次取得）。
+- `sessions_for_paths`（pi-link）：显式路径列表取摘要，输入序保持，
+  死路径丢弃。i18n 补两行（繁/英）。
+
+测试：app 88 + pi-link 60 全绿；build 成功（实例已关），待实测启动
+加载条数与设置页钳位。
+
+### v60-5 修：改名后所有会话冲出列表（N 语义未贯彻刷新路径）
+
+用户实测：改名单个会话名 → psp 当前项目组冒出全部会话。根因：改名完成
+emit `ListDirty` → `refresh_sessions`，该函数沿用 v60 前"当前项目全量"
+语义——`list_sessions_for_cwd(100)` 整列回灌，冲破「默认加载会话数」。
+修复：refresh 结果裁到 mtime 最近 N 条 + 当前激活会话兜底（改名的会话
+即激活会话，保证改名标题可见；打开的旧会话同理）。003 文档「运行中
+边界」补记该行为。cargo check 0 警告；build 因运行中实例锁定 exe，
+待关闭后重启实测。
+
+### v60-6 修：列表重复会话条目（跨写方路径表示分裂）
+
+用户实测：同一会话在 psp 列表出现两次（时间戳相同）。定位：清单文件里
+同一文件存了两条路径串，唯一差异是 group 目录盘符大小写
+`--d--ai_workspace-pi_work--` vs `--D--…`。成因：pi（Node）回传的会话
+文件路径与 Rust 扫描器枚举的存储名大小写不同（Win32 两条串指向同一物理
+文件，磁盘真实目录只有一个，大写 D）；`PathBuf` 严格相等把两条当两个
+条目，启动 `sessions_for_paths` 双双返回 → 列表重复。
+
+修复（pi-link/recents.rs）：路径身份键 `path_key`（Windows 小写化、
+其他平台原样）——`promote` 按键合并、时间取 max（touch 恒 now、record
+不回拨）、最新路径表示胜出（清单串收敛回枚举形态）、无实质变化不置
+dirty（保住"仅变更时落盘"）；`load` 归并存量重复（按活动时间降序取
+首个）并标记 dirty 洗盘。回归测试
+`case_insensitive_identity_converges_cross_writer_paths`。
+
+测试：pi-link 61 全绿（recents 6 项）、app 88 全绿。待用户重启实测
+重复消失。时间窗口方案（3天/7天/2周/1月）讨论中，待拍板另做。
+
+### v60-7 加载语义改版：时间窗口 + 每项目分页（用户拍板，学 zcode）
+
+设置从「默认加载会话数」（数量 5–20）改为**「加载时间窗口」档位
+7/14/30 天**（默认 7，key `load_window_days`；preload_sessions/settings.
+preload 退役，尾部预载内部化为常量 TAIL_PRELOAD=10）。
+
+- pi-link：清单容量 100→500（30 天重度硬上限）、POLL_SCAN_WINDOW 550；
+  `recent_load_paths(days)` 替换 recent_preload_paths（空清单种子 + 窗口
+  过滤，recency 序）。窗口测试 window_filters_by_recency。
+- app 启动：psp 数据源 = 清单窗口内会话（sessions_for_paths 查索引）；
+  预载取活动序前 10。refresh_sessions 改窗口过滤（mtime 近似）+ 激活
+  会话兜底（不再裁数量）。
+- **psp 分页**（学 zcode）：每组默认显示 10 个会话标签，底部「显示更多」
+  点击续 10 条；Flat 模式全局键同样分页。PspRow 增 More 变体（去 Copy），
+  Chat.psp_shown 跨刷新保持。窗口即归档：pi 无归档机制（append-only），
+  滑出窗口 = 显示层隐藏，数据不删，搜索可找回。
+- misc.rs：stepper 换三档位按钮组（仿语言按钮）。
+
+验证：pi-link 62 全绿；app 因用户并行进行中的 general.rs 字体改版
+（800+ 行未完成 diff）暂无法整链 build，本版改动文件零错误（check
+错误全部位于 general.rs/mod.rs）。待其收敛后统一 build 实测。
+
+### v61 滚动体验对齐 pi-web：平滑减速滚轮 + 卡顿三源治理（bead pi-flash-52q）
+
+用户诉求：会话区内容一多上下翻页卡顿；pi-web 滚动带减速缓停效果极好。
+研究结论：pi-web **没有自己写滚动物理**——减速缓停是 Chrome 合成器原生
+ScrollAnimator（贝塞尔缓出 + ~250ms 收敛），pi-web 自做的是 scroll anchoring/
+懒加载/`scroll-behavior: smooth`。pi-flash 的 gpui `List` 则是滚轮 delta
+**直接跳变**（无动画），且每帧对可见条目全量重建元素树。
+
+- **① vendored gpui List 平滑滚轮**（elements/list.rs）：非 precise delta
+  （notched 滚轮）走动画路径——`begin_smooth_scroll` 把本次事件像素量累计进
+  绝对像素 target，`advance_smooth` 在 `List::prepaint`（prepaint_items 之前，
+  本帧即按推进后位置绘制）按 `current += (target-current)·(1-e^(-dt/τ))` 指数
+  逼近（τ=70ms ≈ Chrome 手感；SNAP 0.5px 截尾；dt 上限 0.1s 防挂起跳变）。
+  推进复用 `StateInner::scroll()` 全语义（钳制/贴底胶水/handler/notify）。
+  precise delta（触摸板）保持原生直滚。程序化定位（scroll_to/scroll_to_reveal/
+  set_offset_from_scrollbar/reset）取消进行中动画。动画未结束由 RAF 自续；
+  事件派发期只 refresh() 起步（`request_animation_frame` 内 `current_view`
+  断言仅绘制期成立，事件期调用会 panic——踩过）。平滑路径行高换算单独
+  33px/行（系统 3 行/格 ≈ 100px/格，对齐 Chrome；触摸板仍 20px/行）。
+  钉顶期滚轮退役锚点 → 垫片卸载 → target 重新钳到新 scroll_max →
+  「内容下落」从瞬跳变平滑滑落。
+- **② LineLayoutCache 存档层**（text_system/line_layout.rs）：原为两帧滑动
+  窗口——滚出视口的条目两帧后 shaped 布局即被清，滚动中每条重进视口 =
+  数百行重新 shape（大 markdown 轮块 5-30ms/帧，卡顿主因；最新 Zed 也是
+  两帧设计，编辑器靠自有 wrap map 不受害）。新增 archive（48MB 字节预算、
+  插入序驱逐）：finish_frame 沉降掉出两帧窗口的布局而非丢弃；查找路径
+  current → previous → archive 三级回退，命中搬回 current（自然近似 LRU）。
+  字节估算 16B/字符 + 512B 常数；重复沉降/陈旧 order key 均防御处理。
+- **③ markdown 解析缓存**（app/markdown.rs）：`render_impl` 每帧重跑
+  pulldown-cmark（大消息数百 µs～ms）。新增 `cached_blocks`：key=(FNV-1a
+  8B 块哈希, len, html 标志)、命中全等校验防碰撞、线程局部 128 项 LRU
+  （Rc<Vec<MdBlock>> 共享，渲染期零拷贝）。流式末条每 delta 一变 → 命不中
+  也只是队头轮换。
+- **④ 图片解码缓存**（app/session/messages.rs）：用户图/工具结果图每帧重走
+  base64 解码 + `Image::from_bytes` 内容哈希（几百 KB = ms 级）。
+  `decode_image_cached`：key=(哈希, len, 格式)、Err 同样入缓存防反复重试、
+  64 项 LRU；`Image.bytes` 公开字段保住 MAX_IMAGE_BYTES 校验。
+- 测试：app 88 + pi-link 62 + gpui 内部 4（scripts/test_gpui_glue.sh）全绿；
+  check 0 警告。build 因运行中实例锁 exe 待重启实测（同 v60-5）。
+
+### v61-1 调参：减速滑行延长（用户实测反馈"不卡了"）
+
+`SMOOTH_TAU_SECS` 70→110ms（收手后 ~330ms 走 95%、~500ms 完全缓停），
+`SMOOTH_SNAP_PX` 0.5→0.25（尾巴多走几帧再吸附）。其余不动；app 15 项
+chat_list 测试复跑全绿。exe 被运行中实例锁定，待关闭后 build 实测。
+
+### v61-2 字号体系整理：docs/UI设计/字体大小设置.md 落地
+
+核心换算从「比例缩放 base×(panel/12)」改「**绝对像素差**」：任何设置档下
+「设置值±N」精确成立——`ui_size(base)` = 面板设置值 + (base-12)（appearance
+PANEL_PX 缓存钳 10–16）；markdown MD_SPEC 同理 `spec.size + (size-14)`。
+新增 `sess_size(delta)` = 会话设置值 + delta，会话区文字从面板缩放体系迁到
+会话体系。文档未列的元素基值一律不动（默认档视觉不变）。
+
+- **面板侧**：topbar 标题 12.5→12；项目/会话标签 13→12；目录树 text_xs
+  （固定 12 不缩放，bug）→ ui_size(11)；git 面板 14 处统一 12/12.5/11.5→11
+  （含 text_xs 错误行）；导航面板 用户 12.5→11 / agent 12→10；操作栏
+  BAR_FONT 15→12；placeholder 15→12（输入文字改跟会话字体，Q: 文档未提
+  输入正文）；上下文用量弹窗正文 14→12（title 与其他相等 ✓）。
+- **会话侧**：thinking ui_size(11)等宽 → sess(-2)；工具卡全套（头/名/参/
+  耗时/结果/diff/patch/chips）→ sess(-2)，内部相对差 -1 保留；代码块
+  12.5 比例式 → spec-1；表头 13→spec（表体 -1 不变）；agent 名/费用/
+  操作栏/时间戳 → sess(-1)；工作详情行 → sess(0)；list mark 槽固定 14 →
+  spec+2，disc 直径 0.45×spec → 0.45×(spec+2)。
+- **文件字体**：设置标签「Markdown 字体」→「文件字体」（i18n 同步；
+  存储键 markdown_font 不变保兼容，FontSlot::Markdown→File）。md 预览
+  原本就走该槽位；源码预览（txt/json/py…）ui_size(12.5) → 文件字体字号
+  （族固定 JetBrains Mono 等宽）。
+- **设置页**：面板槽字号三档 14/15/16 → 11/12/13（原默认 12 不可选，bug；
+  就近档位映射改通用最近邻）；settings 各页 SEMIBOLD 条目名 15→13
+  （标题=设置值+1 档）。
+- 决策记录（提问未复，按推荐执行）：①±N=绝对像素差；②输入文字跟会话
+  字体；③标号字号=会话+2 且圆点同步放大；④源码只取文件字体字号、族固定
+  等宽。文档未列的钉死值（代码块头 11、任务对勾 10、超长兜底 12、statusbar
+  无文字）保持原状。app 88 测试全绿。
+
+### v61-3 字号档位统一：三槽共用 14/15/16/17，默认 15（用户定案）
+
+用户反馈三槽字号下拉必须同一组值：`size_trigger` 去掉面板槽特判，统一
+小 14 / 中 15 / 大 16 / 特大 17（新增「特大」档，i18n 补繁/英）。默认值
+对齐 15：session/panel/file 三槽默认全改 15（面板原 12 在 14 起步的档位
+里永远不可选），PANEL_PX 初值 15、钳位 10–16 → 10–17（否则特大被钳）。
+绝对像素差模型不变——ui_size 仍 = 面板设置值 + (base-12)，文档
+「设置值±N」继续精确成立；默认从 12→15 只是整窗 chrome 统一 +3px。
+app 88 测试复跑全绿。
+
+### v61-2 滚动算法重写：Zed gestures 同源闭式样条（用户反馈"不丝滑、总有点卡"）
+
+研究 D:\github\zed（gpui/gpui_windows）：Zed 的滚动物理在 `gpui/src/
+gestures.rs`（AOSP `OverScroller.SplineOverScroller` Apache-2.0 转录）——
+**轨迹闭式化**（位置 = f(速度, 已过时间)，与帧节奏解耦）+ 定长减速精确归零。
+平台层与 present（`Present(0,0)`）均无平滑，vsync 线程仅做 GPU 掉线检测
+（vendored 同构）。
+
+旧指数逼近法（τ 时间常数）两因不丝滑：①起步速度 ∝ 剩余距离，每格滚轮首帧
+只走 ~13%（发闷）②收尾亚像素爬行百余 ms（150% DPI 下肉眼可见顿挫）。
+
+重写（elements/list.rs）：`SmoothScroll{target, segment_start, started_at,
+duration}`——滚轮事件累计绝对像素 target 并**重启轨迹段**（Chrome
+ScrollAnimator 同款），位置闭式求值 `start + 距离·spline(t/duration)`，
+时长 = 剩余距离/巡航速度（钳 0.18~0.7s）。新常量：SMOOTH_CRUISE_PX_PER_SEC
+=1400、SMOOTH_MIN/MAX_DURATION_SECS=0.18/0.7（τ/SNAP/MAX_DT 废弃）。
+新增缓出样条几何锁单测（端点/单调/值域/起步快于线性）。gpui 内部 5 +
+app 88 + pi-link 62 全绿；build 成功（exe 未被锁）。设计细节归档
+docs/模块设计/050-滚动优化.md。
+
+### v62 会话字号「改了不变」根因修复：gpui StyledText 排版字号只认容器继承
+
+**症状**：改会话字体档位，聊天正文/代码块纹丝不动，只有列表标号联动
+（用户 A/B 截图 + 像素行高测量实锤：小14 与特大17 两态正文行高完全相同）。
+
+**根因**（gpui 0.2.2 text_system）：`shape_text` 只吃一个 font_size，来源
+是 `window.text_style()`（容器继承链）；runs 里的 `TextStyle.font_size`
+只决定字族/字重/颜色/装饰，**对字形尺寸无效**。markdown 里靠 base_style
+（run 字号）传尺寸的元素——正文段落、代码块体、行内 code、表格 th/td——
+从未按任何设置渲染过，一直画容器继承的默认 ~16px；只有标题、列表标号槽
+这类把 `.text_size()` 挂在容器上的元素真正随设置变——正是「标号联动、
+正文不动」的原因。字族（runs.font）不受影响，换字体立刻生效，更具迷惑性。
+
+**诊断路径**（避免重走）：设置 JSON 写入 ✓ → 渲染层 set_md_spec 每次
+render 都拿到新值 ✓（临时文件日志）→ 像素行高测量（DPI 150% 校准）→
+vendored gpui shape_text 探针拿到决定性证据：h2 排版字号 = 会话值+1.12
+（挂容器的标题 ✓）而正文恒为继承默认。
+
+**修复**（markdown.rs）：新增 `sized_text()` —— 字号 = 槽位值 + (size-14)
+与行高挂在容器 div 上，正文段落（含 flex_wrap 富段）与表格 th/td 改走
+sized_text；代码块体容器挂 text_size(spec-1)+行高 1.62；行内 code 容器挂
+spec-1.12。标题/标号原本就是容器挂法，不动。诊断探针与日志已全部移除。
+app 88 测试全绿，正式版重启验证。
+
+### v62-1 字号微调（用户定案）：表头加粗落进 runs、list mark 回归设置值
+
+- 表格头：字号已是设置值，但**加粗从未生效**——容器的 font_weight 同样
+  传不进 StyledText runs（与 font_size 同一个 gpui 0.2.2 限制）。base_style /
+  styled_text / sized_text 增加 weight 参数：th = SEMIBOLD，正文/td =
+  NORMAL；标题 runs 同步补 SEMIBOLD（此前标题也是容器加粗、runs 常规）。
+- list mark：设置值+2 → **设置值**（标号槽字号与圆点直径 0.45em 同步回
+  归 spec 基准）。
+- 表格内容 = 设置值-1 核实无误。app 88 测试全绿。
+
+### v62-2 消息操作栏统一（主界面UI设计-2.html）：图标修复 + 双栏对齐设计稿
+
+**图标丢失根因**：agent/user 操作栏图标走 icon_hover 自定义元素（v55），
+在消息列表（list 虚拟化条目）里占位不绘制——占位宽在、paint 无输出
+（同款元素在 titlebar 正常，列表内异常；未深究）。改用 icon_current：
+普通 gpui Svg 不设色、继承容器文字色（style.text.color），等价设计稿
+svg 的 currentColor——act hover 提亮时图标+文字一起变色。工具卡图标
+（同列表、同元素类型）一直正常渲染，机制可靠。
+
+**Agent 栏 .as-stats**：gap 14 / 字号 ui_size(11.5)（回归先前调好的值，
+废弃 v61-2 的 sess(-1)）；复制 act = 图标12+文字 gap4，hover 提亮；用时、
+时间戳 = 普通 span 浅一档（text_faint ≈ 设计稿 #a3b0aa）；时间戳从
+「独立右对齐行」移入栏内（设计稿结构）；已复制态 pill 整体 accent。
+**User 栏 .msg-actions**：gap 12 / 字号 ui_size(11.5)；复制/编辑/新分支
+三 act 图标+文字；.when 时间戳入栏（ml 4、text_faint），随栏 hover 淡入
+（设计稿如此，废弃 v56-1 的时间戳常显右对齐）。底行 pr 4 保留。
+icon_hover 从 messages.rs 移除（titlebar 等处保留）。app 88 测试全绿。
+
+### v62-3 操作栏收敛（用户定案）：icon() 化、删已复制、新分支恒显、时间格式
+
+- **图标**：操作栏 icon 全部改 `icon()`（工具卡同款 gpui::svg+显式
+  text_dim）。svg 上挂 group_hover 会让 copy.svg 不渲染（check/pencil 同
+  构造却正常，未深究）；icon hover 提亮暂只作用于文字。pencil/git-branch
+  资产更新为用户给的 lucide 源（copy 原本就一致）。
+- **删「已复制」**：设计稿无此反馈态。copy_flash 全链路移除（runtime
+  字段/spawn_flash_clear/render_msg 与 render_assistant_turn 的 copied 参
+  数及调用点）。点击复制只写剪贴板，栏不变。
+- **新分支**：用户栏恒显示（设计稿三 act 齐全）；历史消息无 entry_id 时
+  点击不动作。
+- **时间格式**：fmt_msg_time 改「9月17日 16:20」（设计稿 .when；跨年补
+  年份），废弃 MM-DD HH:MM。
+- **计费/用量行**：设计稿无展示 → 不再渲染（usage_line 及调用点删除）。
+- 悬停淡入沿用 group/usermsg·astat 机制（用户截图证实悬停时栏可见）。
+  app 88 测试全绿。
+
+### v63 会话导航面板落地（033 设计稿）：12px 刻度条 + 350px 悬浮摘要面板，修三 bug
+
+**刻度条重做（v54 比例尺 → 033）**：右缘 26px 灰点比例尺改为 12px 刻度条，
+屏高 75% 垂直居中；每轮一枚 2px 高 × 8px 宽刻度（行高 5px = 刻度 2 + 间隔
+3，整行命中可点，group_hover 行悬停增亮），新增刻度 justify_center 整体重
+新居中；当前轮 accent 全宽 12px，其余 0xa9beb5。编号不再截最近 10 轮——全
+部轮次 01、02… 顺排（033：01-99）。>150 轮居中裁剪（overflow_hidden），
+分页/缓存池仍留 033 待讨论。
+
+**悬浮面板（350px）**：hover 刻度条向左弹出，topbar 之下 100% 高，occlude
++ overflow_y_scroll + track_scroll(nav_flyout_scroll，跨开合保持)；滚动条
+按 user 气泡同款挂滚动容器平级 absolute 兄弟（right 3..11、宽 8、上下缩
+8），仅 max_offset>0 渲染；pl 6/pr 14 给滚动条让位。摘要 = 用户前 50 字 +
+agent 首条有正文回复首行前 50 字（新增 Msg::plain_text_prefix(N) 只拼前缀
+——nav 每帧取数，旧 plain_text 全量 join 的成本随长回复线性涨）。卡片
+hover 选择框只在 enter 置位、leave 不清（flyout 离开统一清）。
+
+**三 bug 根因**：
+- 向下划过选中框不显示：gpui 鼠标事件 bubble 阶段按绘制逆序派发，向下移动
+  时上一张卡的 leave 在下一张卡 enter 之后触发，把 nav_hover_turn 清回
+  None——enter-only 置位即修（向上恰好顺序相反故一直正常）。
+- 没有滚动条：v54 压根没实现，非显示 bug。
+- agent 行没左对齐：A 行多挂 ml(27) 缩进；去掉后与用户行同构（18px 右对
+  齐标号列 + gap 9），A 对齐编号、正文对齐用户正文。
+
+结构：nav_gutter 摘要数据（turns/turn_user/turn_agent/scroll_top_ix）帧首
+一次性算完落 owned 值再拼元素，替代旧实现 listener 之间反复 read。app 88
+测试全绿。附带发现：icon_current 未使用警告来自工作区未提交的 v62-2 后续
+重构（messages.rs 已改用 icon()），非本次引入。
+
+### v63-2 会话下边距 150 → 180：内容距 input panel 上沿 20px → 50px
+
+用户口径：跟尾时消息末条离 input panel 太近，从「胶囊上沿 + 20px」抬到
+「+ 50px」。只改一个常数 `chat_list::PAD_BOTTOM`（150 → 180，= 胶囊 ~110 +
+底距 20 + 内容让位 50）——内容区高（视口 − 22 − PAD_BOTTOM）、钉顶/跟尾判定、
+垫片一整屏高、列表 `.pb()`、`glue_geometry` 测试常量全部由它推导，无第二处
+硬编码（仅 `spacer_target_is_a_constant_while_pinned` 的断言字面量同步改 180）。
+
+「回到最新」按钮位置**不动**（仍悬浮在胶囊上方 20px）：它只在脱离尾部时出现，
+钉顶/跟尾两种状态下都不会与内容末条重叠，之前「与内容末条同一条线」的巧合
+不再是设计约束。
+
+### v63-1 导航刻度条定稿参数 + 选中语义解耦（033 用户反馈）
+
+**样式定稿**：刻度 2px 高 × 10px 宽（行 = 刻度 + 左右 padding 4 = 18×6 命中
+区），间隔 4px；悬浮面板 350→400px。居中规则改为「屏高 − inputpanel 高
+度×50% 后居中」：rail 挂 mb(0.5×composer高)——flex justify_center 连
+margin 盒一起居中，视觉中心正好上移 composer/4，无需测量刻度条自身高度；
+composer 高度用新原语 ui::measure_height（透明 Element，prepaint 把子元素
+布局高度写入 Rc<Cell<f32>>，包在胶囊本体上、不含回底按钮以免显隐 ±52px
+抖动）每帧实测，读上一帧值一帧滞后无感。
+
+**选中语义 bug**（用户：被选中刻度不应跟卡片悬浮框走，点击定位后的轮次才
+是选中刻度，常态对话在末轮所以末刻度常选中）：根因是刻度与卡片共用
+sel = nav_hover_turn.or(active_turn)。解耦：刻度只看 active_turn = 贴底
+（pager.is_at_bottom，含未滚动短会话）→ 最后一轮，否则视口顶之上最近轮；
+卡片选中框只看 nav_hover_turn。点击卡片/刻度 → scroll_to_reveal 改写滚动
+位置 → active_turn 下一帧跟随。
+
+app 88 测试全绿（主 exe 链接被运行中的实例占用跳过，关闭后重跑 build）。
+
+### v63-2 导航点击后刻度不动的根因：程序化定位是「三不管」路径
+
+用户实测：点击卡片/刻度重定位后，选中刻度没有相应变化。三个坑叠加：
+1. **gpui ListState.scroll_to_reveal_item / scroll_to 不触发任何 notify**——
+   逻辑位同步改了，但没有重渲染就没人在读；列表本身靠悬浮等杂散事件
+   重绘，刻度（nav_gutter 同帧重建）就停在旧值。
+2. **scroll 回调只在滚轮路径触发**（list.rs apply delta 处）：pager 的
+   at_bottom Cell 程序化定位不更新。v63-1 让 active_turn 优先信它 →
+   点击导航后它仍是 true → 刻度永远错停末轮。修：去掉该分支，纯
+   rposition(视口顶之上最近轮)——贴底时逻辑位 None，scroll_top_ix 回
+   退成总条目数，末轮自然选中，语义不回退。
+3. **reveal 向下跳是「目标底边贴视口底」**：目标消息停在视口底，视口顶
+   落进上一轮内容，active 判定（视口顶之上最近轮）算到前一轮。修：
+   pager 新增 nav_goto(ix) = scroll_to 目标置顶 + at_bottom 补正 false
+   （jump_to_bottom 同款显式维护；跳离贴底后「回到最新」按钮随之出现），
+   导航三处点击改用 nav_goto + window.refresh() 当帧重渲染。
+
+结论：程序化滚动要自己补「通知 + 标记位」，gpui 只管滚轮路径。app 90
+测试全绿（exe 链接被运行中实例占用，关闭后重跑 build）。
+
+### v63-3 操作栏悬停统一：用户气泡的 occlude() 吞掉了行级 hover + 两套写法并成一处
+
+用户口径：鼠标停在用户消息上，底部操作栏（复制/编辑/新分支 + 时间）不显影，
+agent 轮块却正常——同一个行为不该有两套写法。
+
+根因（gpui hit-test 语义，非「忘接线」）：v57 给用户气泡加了
+`div().occlude() // 禁止鼠标透传到下层消息`。`Window::hit_test` 是**从后往前**
+收集 hitbox，命中 `HitboxBehavior::BlockMouse` 就 `break`——被它挡住的是**先插入
+的** hitbox，也就是该气泡的**全部祖先**（行级 `on_hover` 所在的 `msgrow-*`、
+列表项、列表本身）连 `ids` 都进不去，`hitbox.is_hovered()` 恒 false。于是：
+
+- 鼠标停在气泡上 → 行级 on_hover 永不触发 → `Chat.bar_hover` 不置位 → 操作栏
+  `opacity` 停在 0（鼠标滑到气泡**左侧空白**才显影，用户看到的就是「时灵时不灵」）；
+- agent 轮块没有遮挡后代，所以「同一个功能两处表现不同」。
+
+同一处还夹带一个滚轮 bug：`ids` 被截断后外层会话列表不在命中链里
+（`should_handle_scroll` 也读 `ids`），气泡内滚到底后滚轮没处可去。删掉 occlude
+两件事一起好。
+
+实证（新增 `messages::bar_hover_hit_test`，真 hit-test + 模拟鼠标移动，不是读代码
+猜的）：气泡无遮挡 → 行 on_hover=1；气泡 `occlude()` → 行 on_hover=0（气泡自身
+仍是 1）。正反两侧都留成测试：前者锁线上行为，后者锁上面这条 gpui 语义——上游
+若改语义，这条会先炸，提示回来复核。
+
+修法（统一实现，两处写法并成一处）：
+
+- 删掉气泡的 `occlude()`，就地留注释说明**不得**再加（并写明滚轮副作用）；
+- 新增 `messages::bar_hover_wired(el, weak, ix)`：用户行与 agent 轮的进出
+  on_hover 都走它，注释写明「勿各写一段内联」（两套写法必然分叉，本次即此）；
+- 状态从 `Chat.user_bar_hover` + `Chat.turn_bar_hover` 两字段合并为
+  `Chat.bar_hover: Option<usize>`（用户行 = msg_ix，agent 轮 = 轮首 msg_ix；
+  角色不同故索引永不撞车），`session_list` 两处 `bar_revealed` 同源。
+
+验证：`cargo test -p app` 90 全绿（+2 新测试）；`cargo check -p app` 0 警告。
+真机待复验：鼠标停在用户气泡任意位置（文字上、长气泡滚动区上）操作栏都显影，
+与 agent 轮块同款淡入。
+
+顺带记录（未处理）：工作区另有若干文件的行尾是历史遗留的 CRLF 污染
+（`session/mod.rs` `dialogs.rs` `function_panel/*` 等，`git diff --ignore-cr-at-eol`
+才看得见真实改动）——本轮把 messages.rs 自己写坏的部分已还原成 LF，其余未动。

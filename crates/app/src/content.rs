@@ -106,7 +106,7 @@ pub(crate) fn term_view(
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_size(px(11.))
+                                    .text_size(crate::appearance::ui_size(11.))
                                     .font_family(crate::terminal::FONT_FAMILY)
                                     .text_color(rgb(0x6e8a7d))
                                     .whitespace_nowrap()
@@ -148,7 +148,7 @@ pub(crate) fn term_view(
                                 .bg(rgb(0x321b1b))
                                 .border_b_1()
                                 .border_color(rgb(0x5f2424))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .font_family(crate::terminal::FONT_FAMILY)
                                 .text_color(rgb(0xfca5a5))
                                 .child(SharedString::from(e.clone())),
@@ -162,7 +162,7 @@ pub(crate) fn term_view(
                             div()
                                 .py(px(7.))
                                 .px(px(12.))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .font_family(crate::terminal::FONT_FAMILY)
                                 .text_color(rgb(0x6e8a7d))
                                 .child(SharedString::from(crate::i18n::tf(
@@ -239,7 +239,7 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
         .unwrap_or("")
         .to_ascii_lowercase();
     let meta = Chat::file_meta(&path, &content);
-    let md_font = crate::appearance::markdown_font();
+    let md_font = crate::appearance::file_font();
 
     let body: gpui::AnyElement = match ext.as_str() {
         // md：渲染（复用 agent 正文的 markdown 渲染器，自带语法高亮）
@@ -328,7 +328,9 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 .child(
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(12.5))
+                        // 源码预览（txt/json/py…）：字号跟随「文件字体」设置，
+                        // 族固定等宽（字体大小设置.md §3）
+                        .text_size(px(crate::appearance::file_font().size))
                         .line_height(relative(1.5))
                         .text_color(rgb(t.text))
                         .overflow_hidden()
@@ -361,7 +363,7 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
                 .child(
                     div()
-                        .text_size(px(12.5))
+                        .text_size(crate::appearance::ui_size(12.5))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
                         .child(SharedString::from(
@@ -372,7 +374,7 @@ fn file_view(chat: &mut Chat) -> gpui::AnyElement {
                 )
                 .child(
                     div()
-                        .text_size(px(11.5))
+                        .text_size(crate::appearance::ui_size(11.5))
                         .text_color(rgb(t.text_faint))
                         .child(SharedString::from(meta)),
                 ),

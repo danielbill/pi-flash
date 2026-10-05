@@ -10,6 +10,7 @@
 pub mod client;
 pub mod config;
 pub mod protocol;
+pub mod recents;
 pub mod sessions;
 pub mod skills;
 pub mod subagents;

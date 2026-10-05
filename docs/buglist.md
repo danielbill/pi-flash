@@ -1,3 +1,26 @@
+## 待验证（本轮修复）——用户消息操作栏悬停不显影
+
+用户口径：鼠标停在**用户消息**上看不到底部操作栏（复制/编辑/新分支 + 时间），
+agent 回复的轮块却正常；同一个行为不该有两套写法。
+
+- ✅ 根因：用户气泡挂了 `div().occlude()`（v57 加的，注释写「禁止鼠标透传到下层
+  消息」）。gpui `Window::hit_test` 从后往前收集 hitbox，一旦命中
+  `HitboxBehavior::BlockMouse` 就 `break` —— 比它**先插入**的 hitbox（该气泡的
+  **全部祖先**，含挂行级 `on_hover` 的 `msgrow-*`）连 `ids` 都进不去，
+  `hitbox.is_hovered()` 恒 false。于是鼠标停在气泡上时行级 on_hover 永不触发 →
+  `Chat.bar_hover` 不置位 → 操作栏 `opacity` 停在 0。agent 轮块没有遮挡后代，
+  所以同一个功能在两处表现不同。连带副作用：`ids` 被截断也让滚轮在气泡上失效
+  （外层会话列表收不到 scroll），气泡内滚到底后不能再滚会话。
+- ✅ 修法（统一实现）：删掉气泡的 `occlude()`；把两段内联 `on_hover` 合并成
+  `messages::bar_hover_wired(el, weak, ix)` 唯一接线，状态也从
+  `user_bar_hover` / `turn_bar_hover` 两字段并为 `Chat.bar_hover: Option<usize>`
+  （用户行 = msg_ix，agent 轮 = 轮首 msg_ix，角色不同故永不撞车）。
+- ✅ 验证：`cargo test -p app` 90 全绿（新增 `messages::bar_hover_hit_test`
+  正反两侧——不遮挡必须触发行悬停、遮挡必须被吞，锁住上面那条 gpui 语义）。
+  真机待复验：鼠标停在用户气泡任意位置（含气泡内文字、长气泡滚动区）操作栏都显影。
+
+（细节见 `docs/progress.md` 的「v63-3」。）
+
 ## 待验证（本轮修复）——发言钉顶 / 回复占满整屏
 
 用户口径：每次发言，用户消息刷新到屏幕顶部；把整屏留给 agent 回复。

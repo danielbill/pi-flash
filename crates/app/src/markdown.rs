@@ -675,18 +675,39 @@ fn parse_table_cells(
 
 use crate::theme::Theme;
 
-/// markdown 基准字号（pi-web: 14px + chat-font-size-offset；本项目的 slot 缩放）
+/// markdown 基准字号（pi-web: 14px + chat-font-size-offset；本项目以
+/// 会话/文件槽位字号为基准做绝对像素差换算）
 const BASE: f32 = 14.;
 
-fn base_style(size: f32, line_h: f32, color: u32) -> TextStyle {
-    // 006 markdown preview font slot (family; size scaled from the slot)
-    let spec = crate::appearance::markdown_font();
+thread_local! {
+    /// 当前 markdown 渲染的字体规格：聊天路径（render/render_user）= 会话
+    /// 字体；文件预览（render_themed）= markdown 字体。入口设置、构建期
+    /// 读取（base_style 等在 Chat::render 内同步执行）；未设置时回退
+    /// markdown 槽位。UI 单线程，thread_local 兜底后台路径。
+    static MD_SPEC: std::cell::RefCell<Option<crate::services::workspace::FontSpec>> =
+        std::cell::RefCell::new(None);
+}
+
+fn active_md_spec() -> crate::services::workspace::FontSpec {
+    MD_SPEC.with(|c| c.borrow().clone()).unwrap_or_else(crate::appearance::file_font)
+}
+
+fn set_md_spec(s: crate::services::workspace::FontSpec) {
+    MD_SPEC.with(|c| *c.borrow_mut() = Some(s));
+}
+
+fn base_style(size: f32, line_h: f32, color: u32, weight: FontWeight) -> TextStyle {
+    // 聊天正文跟随「会话字体」，文件预览跟随「文件字体」（绝对像素差：
+    // 生效字号 = 槽位设置值 + (size - BASE)，设计稿基准 14px）。字重必须
+    // 显式入参：容器 font_weight 同样传不进 runs（同 font_size 的限制）
+    let spec = active_md_spec();
     TextStyle {
         // 容器 .text_color 不会传进 StyledText（自带 base style 覆盖继承），
         // 颜色必须显式入参——h3 混色/引用块 muted 都靠它落到 run 上
         color: rgb(color).into(),
         font_family: spec.family.clone().into(),
-        font_size: px(size / BASE * spec.size).into(),
+        font_size: px(spec.size + (size - BASE)).into(),
+        font_weight: weight,
         line_height: relative(line_h),
         ..Default::default()
     }
@@ -738,7 +759,14 @@ fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     Some(h)
 }
 
-fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32, color: u32) -> StyledText {
+fn styled_text(
+    runs: &[Run],
+    t: &Theme,
+    size: f32,
+    line_h: f32,
+    color: u32,
+    weight: FontWeight,
+) -> StyledText {
     let mut s = String::new();
     let mut highlights = Vec::new();
     for r in runs {
@@ -749,7 +777,30 @@ fn styled_text(runs: &[Run], t: &Theme, size: f32, line_h: f32, color: u32) -> S
             highlights.push((start..end, h));
         }
     }
-    StyledText::new(s).with_default_highlights(&base_style(size, line_h, color), highlights)
+    StyledText::new(s).with_default_highlights(&base_style(size, line_h, color, weight), highlights)
+}
+
+/// 正文块（段落/表格/代码等）：字号必须挂在容器 div 上——gpui 0.2.2 的
+/// StyledText 排版字号取 `window.text_style()`（容器继承链），runs 里的
+/// font_size 只决定字族/字重/颜色，对字形尺寸无效。此前 base_style 里算好
+/// 的字号对正文/表格/代码块从未生效（一直画容器继承的默认值），只有像
+/// 标题、列表标号那样把 text_size 挂在容器上的元素才真正随设置变。
+fn sized_text(
+    runs: &[Run],
+    t: &Theme,
+    size: f32,
+    line_h: f32,
+    color: u32,
+    weight: FontWeight,
+) -> AnyElement {
+    let spec = active_md_spec();
+    div()
+        .w_full()
+        .text_size(px(spec.size + (size - BASE)))
+        .line_height(relative(line_h))
+        .font_weight(weight)
+        .child(styled_text(runs, t, size, line_h, color, weight))
+        .into_any_element()
 }
 
 /// pi-web 标题字号（em 相对 14px 正文）。
@@ -817,8 +868,8 @@ fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme, streaming: bool, c
     col
 }
 
-/// 代码块：外框圆角 7px + 头部（语言名 / 复制）+ 行号 + 12.5px/1.62 高亮体
-/// （pi-web .markdown-code-block / .markdown-code-header / Prism 行号）。
+/// 代码块：外框圆角 7px + 头部（语言名 / 复制）+ 行号 + 高亮体（字号 =
+/// 槽位字号 -1，字体大小设置.md「代码块内容」；pi-web 行高 1.62）。
 fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui::Div {
     let code = code.trim_end_matches('\n');
     let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
@@ -920,10 +971,11 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
         }
     }
 
+    let spec = active_md_spec();
     let base = TextStyle {
         color: rgb(t.text).into(),
         font_family: MONO_FAMILY.into(),
-        font_size: px(12.5).into(),
+        font_size: px(spec.size - 1.).into(),
         line_height: relative(1.62),
         ..Default::default()
     };
@@ -949,6 +1001,9 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
                 .w_full()
                 .px(px(13.))
                 .py(px(11.))
+                // 字号挂容器（见 sized_text 注释）：代码块 = 槽位字号 -1
+                .text_size(px(spec.size - 1.))
+                .line_height(relative(1.62))
                 // c15：长行不再裁剪——nowrap + 横向滚动（pi-web <pre> 语义）
                 .whitespace_nowrap()
                 .overflow_x_scroll()
@@ -1007,7 +1062,8 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
             .py(px(6.))
     };
 
-    // pi-web 表格字号 = calc(13px + offset)（比正文小 1px），行高继承 1.7
+    // 字体大小设置.md：表格头 = 槽位字号，表格内容 = 槽位字号 -1，行高 1.7
+    // （字号经 sized_text 挂容器，见其注释）
     let head_cells: Vec<gpui::AnyElement> = head
         .iter()
         .enumerate()
@@ -1015,7 +1071,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
             cell_div(fracs[ci])
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
-                .child(styled_text(cell, t, 13., 1.7, crate::theme::mix_rgb(t.text, t.text_muted, 0.88)))
+                .child(sized_text(cell, t, BASE, 1.7, crate::theme::mix_rgb(t.text, t.text_muted, 0.88), FontWeight::SEMIBOLD))
                 .into_any_element()
         })
         .collect();
@@ -1038,7 +1094,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
                 line = line.bg(rgba(t.bg_subtle));
             }
             for (ci, cell) in row.iter().enumerate().take(n_cols) {
-                line = line.child(cell_div(fracs[ci]).child(styled_text(cell, t, 13., 1.7, t.text)));
+                line = line.child(cell_div(fracs[ci]).child(sized_text(cell, t, 13., 1.7, t.text, FontWeight::NORMAL)));
             }
             line.into_any_element()
         })
@@ -1096,15 +1152,16 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 行内 code 盒（pi-web .markdown-inline-code）：mono 0.92em + bg-subtle +
-/// 圆角 5 + padding 1px 5px + 70% 边框描边；颜色恒 --text（引用块内不继承）。
+/// 行内 code 盒（pi-web .markdown-inline-code）：mono（槽位字号 -1.12 =
+/// 0.92em 的绝对差换算）+ bg-subtle + 圆角 5 + padding 1px 5px + 70% 边框
+/// 描边；颜色恒 --text（引用块内不继承）。
 /// gpui 行内 highlight 换不了字体家族，拆盒才能落 mono。
 fn inline_code_box(text: &str, t: &Theme) -> AnyElement {
-    let spec = crate::appearance::markdown_font();
+    let spec = active_md_spec();
     let style = TextStyle {
         color: rgb(t.text).into(),
         font_family: MONO_FAMILY.into(),
-        font_size: px(0.92 * spec.size).into(),
+        font_size: px(spec.size - 1.12).into(),
         line_height: relative(1.5),
         ..Default::default()
     };
@@ -1116,6 +1173,9 @@ fn inline_code_box(text: &str, t: &Theme) -> AnyElement {
         .border_color(gpui::rgba((t.border << 8) | 0xb3))
         .px(px(5.))
         .py(px(1.))
+        // 字号挂容器（见 sized_text 注释）：行内 code = 槽位 -1.12（0.92em）
+        .text_size(px(spec.size - 1.12))
+        .line_height(relative(1.5))
         .child(StyledText::new(text.to_string()).with_default_highlights(&style, Vec::new()))
         .into_any_element()
 }
@@ -1127,13 +1187,13 @@ fn paragraph_element(runs: &[Run], t: &Theme, color: u32) -> AnyElement {
         .iter()
         .any(|r| matches!(r.style, Style::Code | Style::Math | Style::DisplayMath));
     if !rich {
-        return div().w_full().child(styled_text(runs, t, BASE, 1.7, color)).into_any_element();
+        return sized_text(runs, t, BASE, 1.7, color, FontWeight::NORMAL);
     }
     let flush =
         |row: gpui::Div, tr: &mut Vec<Run>, t: &Theme, color: u32| -> gpui::Div {
             if !tr.is_empty() {
                 let taken = std::mem::take(tr);
-                return row.child(div().max_w_full().child(styled_text(&taken, t, BASE, 1.7, color)));
+                return row.child(div().max_w_full().child(sized_text(&taken, t, BASE, 1.7, color, FontWeight::NORMAL)));
             }
             row
         };
@@ -1172,12 +1232,15 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
             } else {
                 t.text
             };
+            // 容器字号同样走绝对像素差换算（子级 StyledText 会再换算一次，
+            // 这里只为撑行高/标题容器）
+            let spec = active_md_spec();
             div()
                 .w_full()
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(size))
+                .text_size(px(spec.size + (size - BASE)))
                 .line_height(relative(1.35))
-                .child(styled_text(runs, t, size, 1.35, color))
+                .child(styled_text(runs, t, size, 1.35, color, FontWeight::SEMIBOLD))
                 .into_any_element()
         }
         MdBlock::Paragraph { runs } => paragraph_element(runs, t, color),
@@ -1212,7 +1275,9 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
                 .items_start()
                 .justify_end() // marker 靠槽右缘 = 悬挂在文字左侧
                 .pr(px(4.)) // marker 右边到文字的视觉间隙（浏览器 outside marker）
-                .text_size(px(BASE)) // 不继承外层字号（标题内列表会撑大圆点）
+                // 字体大小设置.md「list mark = 设置值」；绝对差换算下
+                // 不随外层标题字号复利放大
+                .text_size(px(active_md_spec().size))
                 .line_height(relative(1.7))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(crate::theme::mix_rgb(t.accent, t.text_muted, 0.72)));
@@ -1256,7 +1321,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
                 // 无序列表：画 0.45em 实心圆（Chrome list-style disc 尺寸），
                 // 首行行盒内垂直居中——"•" 字形在 14px 下只有 ~4px 且偏细
                 None if marker == "•" => {
-                    let spec = crate::appearance::markdown_font();
+                    let spec = active_md_spec();
                     let dot = (0.45 * spec.size).round();
                     let first_line = 1.7 * spec.size;
                     slot.child(
@@ -1338,12 +1403,14 @@ const MAX_MARKDOWN_CHARS: usize = 100_000;
 /// `streaming`（v56-3 c15）：流式中的消息跳过 syntect 高亮与行号
 /// （pi-web CodeBlock：流式期间 Prism 逐 chunk 重分词是最贵开销）。
 pub fn render(src: &str, t: &Theme, streaming: bool) -> AnyElement {
-    render_impl(src, t, streaming, true)
+    set_md_spec(crate::appearance::session_font());
+    render_impl(src, t, streaming, false)
 }
 
 /// 用户气泡专用（v57）：HTML 标签不渲染、按原文显示——用户消息是发出
 /// 内容的凭证，气泡吞标签会让用户无法核对 agent 实际收到的文本。
 pub fn render_user(src: &str, t: &Theme) -> AnyElement {
+    set_md_spec(crate::appearance::session_font());
     render_impl(src, t, false, false)
 }
 
@@ -1351,21 +1418,71 @@ fn render_impl(src: &str, t: &Theme, streaming: bool, html: bool) -> AnyElement 
     if src.chars().count() > MAX_MARKDOWN_CHARS {
         return render_oversize(src, t);
     }
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TABLES);
-    // c12: 任务列表 + GFM 自动链接；c14: YAML frontmatter 吞掉
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_GFM);
-    opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-    // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
-    opts.insert(Options::ENABLE_MATH);
-    let events: Vec<Event> = Parser::new_ext(src, opts).collect();
-    let blocks = parse_blocks(&events, html);
+    let blocks = cached_blocks(src, html);
     if blocks.is_empty() {
         return div().into_any_element();
     }
     render_blocks(&blocks, 1, t, streaming, t.text).into_any_element()
+}
+
+// 解析结果缓存：gpui List 每帧对可见条目重建元素树，pulldown 解析是其中
+// 最贵的纯 CPU 段（大 markdown 消息数百 µs～ms 级），滚动/流式时每帧白打。
+// key = 源文哈希 + 长度 + html 标志，命中后全等校验防碰撞；线程局部
+// VecDeque 当 LRU（元素构建只在主线程）。流式期间末条消息源文每 delta
+// 一变，最多占满队头被挤出，不影响命中态。
+thread_local! {
+    static MD_PARSE_CACHE: std::cell::RefCell<
+        std::collections::VecDeque<((u64, usize, bool), (String, std::rc::Rc<Vec<MdBlock>>))>,
+    > = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+const MD_PARSE_CACHE_CAP: usize = 128;
+
+/// FNV-1a 按 8 字节块处理（进程内去重键，非加密；命中另有全等校验兜底）
+pub(crate) fn hash_str(s: &str) -> u64 {
+    let mut h = 0xcbf29ce484222325;
+    let mut chunks = s.as_bytes().chunks_exact(8);
+    for chunk in &mut chunks {
+        let mut word = u64::from_le_bytes(chunk.try_into().unwrap());
+        for _ in 0..8 {
+            h = (h ^ (word & 0xff)).wrapping_mul(0x100000001b3);
+            word >>= 8;
+        }
+    }
+    for &byte in chunks.remainder() {
+        h = (h ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn cached_blocks(src: &str, html: bool) -> std::rc::Rc<Vec<MdBlock>> {
+    let key = (hash_str(src), src.len(), html);
+    MD_PARSE_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(pos) = cache.iter().rposition(|(k, _)| *k == key) {
+            let entry = cache.remove(pos).expect("pos 来自刚才的迭代");
+            if entry.1 .0.as_str() == src {
+                let blocks = std::rc::Rc::clone(&entry.1 .1);
+                cache.push_back(entry); // 刷新到队尾（LRU）
+                return blocks;
+            }
+        }
+        let mut opts = Options::empty();
+        opts.insert(Options::ENABLE_STRIKETHROUGH);
+        opts.insert(Options::ENABLE_TABLES);
+        // c12: 任务列表 + GFM 自动链接；c14: YAML frontmatter 吞掉
+        opts.insert(Options::ENABLE_TASKLISTS);
+        opts.insert(Options::ENABLE_GFM);
+        opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+        // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
+        opts.insert(Options::ENABLE_MATH);
+        let events: Vec<Event> = Parser::new_ext(src, opts).collect();
+        let parsed = std::rc::Rc::new(parse_blocks(&events, html));
+        cache.push_back((key, (src.to_string(), std::rc::Rc::clone(&parsed))));
+        if cache.len() > MD_PARSE_CACHE_CAP {
+            cache.pop_front();
+        }
+        parsed
+    })
 }
 
 /// Html/InlineHtml 的字面显示（html=false 路径）：标签原文可见。
@@ -1406,9 +1523,10 @@ fn render_oversize(src: &str, t: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// Render with the active global theme.
+/// Render with the active global theme（文件预览：跟随「文件字体」槽位）.
 pub fn render_themed(src: &str) -> AnyElement {
-    render(src, crate::theme::theme(), false)
+    set_md_spec(crate::appearance::file_font());
+    render_impl(src, crate::theme::theme(), false, true)
 }
 
 #[cfg(test)]

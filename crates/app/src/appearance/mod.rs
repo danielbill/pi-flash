@@ -94,25 +94,29 @@ pub fn persist_theme(id: &str) -> bool {
     true
 }
 
-/// The session (chat) font: app setting or the mist-era default.
+/// The session (chat) font: app setting or the default.
+/// 族直连聊天区容器；字号是会话区所有文字的基准（`sess_size`）。
 pub fn session_font() -> FontSpec {
     app_settings().session_font.unwrap_or(FontSpec {
         family: default_font_family(),
-        size: 14.,
+        size: 15.,
     })
 }
 
 pub fn panel_font() -> FontSpec {
     app_settings().panel_font.unwrap_or(FontSpec {
         family: default_font_family(),
-        size: 12.,
+        size: 15.,
     })
 }
 
-pub fn markdown_font() -> FontSpec {
+/// 文件字体（docs/UI设计/字体大小设置.md §3）：文件视图里能打开的文件
+/// （markdown/txt/json/py…）源码或预览的字号基准。存储键沿用历史的
+/// `markdown_font`，避免冲掉用户已存的设置。
+pub fn file_font() -> FontSpec {
     app_settings().markdown_font.unwrap_or(FontSpec {
         family: default_font_family(),
-        size: 14.,
+        size: 15.,
     })
 }
 
@@ -122,54 +126,72 @@ pub fn save_font(slot: FontSlot, spec: FontSpec) {
     match slot {
         FontSlot::Session => s.session_font = Some(spec),
         FontSlot::Panel => s.panel_font = Some(spec),
-        FontSlot::Markdown => s.markdown_font = Some(spec),
+        FontSlot::File => s.markdown_font = Some(spec),
     }
     workspace::save_app_settings(&s);
+    sync_ui_scale();
+}
+
+/// 面板字号：界面 chrome 文字的基准。全界面文字经 `ui_size()` 取
+/// 「面板设置值 + (base - 12)」——base 是面板 12px 时代的设计稿值，偏移量
+/// 在任何设置档下不变（绝对像素差模型，字体大小设置.md §1）。默认设置值
+/// 15（与设置页三档 14/15/16/17 的「中」对齐），设置里改字号，整窗界面
+/// 文字（含设置页自身）立刻变化（所见即所得）。
+static PANEL_PX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(15.0f32.to_bits());
+
+/// Startup + save_font 后重算缓存的面板字号（钳 10–17：与字号档位上限
+/// 一致；历史存档超界按边界值生效）。
+pub fn sync_ui_scale() {
+    let v = panel_font().size.clamp(10.0, 17.0);
+    std::sync::atomic::AtomicU32::store(&PANEL_PX, v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 界面 chrome 文字字号（base = 12px 设计稿值；生效值 = 面板设置值 +
+/// (base - 12)，「设置值-1」这类文档规格即 ui_size(11.)）。
+pub fn ui_size(base: f32) -> gpui::Pixels {
+    let panel = f32::from_bits(PANEL_PX.load(std::sync::atomic::Ordering::Relaxed));
+    gpui::px(panel + (base - 12.0))
+}
+
+/// 会话区元素字号 = 会话设置值 + delta（字体大小设置.md §2 的
+/// 「设置值-2 / 设置值-1 / 设置值+2」；delta 单位 px，正文传 0）。
+pub fn sess_size(delta: f32) -> gpui::Pixels {
+    gpui::px(session_font().size + delta)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontSlot {
     Session,
     Panel,
-    Markdown,
+    File,
 }
 
 fn app_settings() -> AppSettings {
     workspace::app_settings()
 }
 
-fn default_font_family() -> String {
+pub fn default_font_family() -> String {
     // system UI font; gpui resolves it per-platform
     "Segoe UI".to_string()
 }
 
 // ---------------------------------------------------------------------------
-// icon theme (006: zed architecture, pi-web icon set as the built-in)
+// system font catalog (字体下拉：zed parity，全量系统字体按字母序)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IconTheme {
-    pub id: &'static str,
-    pub name: &'static str,
+static FONT_CATALOG: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Enumerate + sort the system font families once at startup (main.rs,
+/// after the bundled fonts are registered).
+pub fn init_font_catalog(cx: &App) {
+    let mut names = cx.text_system().all_font_names();
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    let _ = FONT_CATALOG.set(names);
 }
 
-/// Built-in icon themes. The pi-web set is the embedded `assets/icons`
-/// (assets.rs); file-type icon sets for the file tree land with the
-/// dirTreeView port.
-pub const ICON_THEMES: &[IconTheme] = &[IconTheme { id: "pi-web", name: "pi-web" }];
-
-/// Curated font families for the settings cycle (shipped-safe on Windows).
-/// JetBrains Mono 随二进制打包（assets/fonts，main.rs 注册），必可选。
-pub const FONT_CHOICES: &[&str] = &[
-    "Segoe UI",
-    "Microsoft YaHei",
-    "JetBrains Mono",
-    "Consolas",
-    "Cascadia Code",
-    "Arial",
-];
-
-pub fn icon_theme_id() -> &'static str {
-    ICON_THEMES.first().map(|t| t.id).unwrap_or("pi-web")
+/// The sorted system font families (empty until init_font_catalog ran).
+pub fn font_catalog() -> &'static [String] {
+    FONT_CATALOG.get().map(|v| v.as_slice()).unwrap_or(&[])
 }
 

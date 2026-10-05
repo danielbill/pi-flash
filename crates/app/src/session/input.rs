@@ -28,8 +28,9 @@ use crate::services::format::fmt_thousand;
 use crate::theme::theme as T;
 use crate::ui::{icon, icon_hover};
 
-/// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）
-const BAR_FONT: f32 = 15.;
+/// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）。
+/// inputpanel 操作栏文字 = 面板设置值（字体大小设置.md §1）
+const BAR_FONT: f32 = 12.;
 
 /// 悬停标志更新 + 淡出状态机（乱序免疫）：只按 (was_open, open) 转移，
 /// 环→面板交接时两个 hover 事件无论先后都收敛到正确状态。双面全空才
@@ -139,20 +140,22 @@ fn ctx_usage_panel(
     t: &'static crate::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {
+    // 上下文用量弹窗：全部文字 = 面板设置值，title 与正文同号
+    // （字体大小设置.md §1）
     let row = |label: &str, value: String| -> gpui::AnyElement {
         div()
             .flex()
             .items_center()
             .child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(label.to_string())),
             )
             .child(
                 div()
                     .ml_auto()
-                    .text_size(px(14.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .font_family(crate::markdown::MONO_FAMILY)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(value)),
@@ -166,7 +169,7 @@ fn ctx_usage_panel(
             .gap(px(6.))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(title.to_string())),
@@ -178,7 +181,7 @@ fn ctx_usage_panel(
     let body: Vec<gpui::AnyElement> = match stats {
         None => vec![
             div()
-                .text_size(px(14.))
+                .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_muted))
                 .child(tr("会话尚未产生用量。"))
                 .into_any_element(),
@@ -256,7 +259,7 @@ fn ctx_usage_panel(
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(14.))
+                .text_size(crate::appearance::ui_size(12.))
                 .when(can_compact, |s| s.cursor_pointer())
                 .text_color(rgb(if compacting {
                     t.text_muted
@@ -288,17 +291,38 @@ pub(crate) fn input_area(
 ) -> gpui::AnyElement {
     let t = T();
     let can_queue = !chat.input.is_empty() || !chat.pending_images.is_empty();
+    // 新会话默认值（pi selectInitialModelScope parity：settings 默认模型
+    // 在 scope 内 → 用它，否则 scope 首个；思考档 pin > per-model > 全局）
+    // ——草稿态（无 state）的 pill 显示就落在它身上，进程起来后由 pi 的
+    // get_state 接管
+    let (draft_model, draft_thinking) = chat.new_session_default();
     let (model_label, thinking_label, tools_label, ctx_pct, compacting) = {
         let r = chat.rt().read(cx);
+        let model_label = r
+            .state
+            .as_ref()
+            .and_then(|s| s.model_label())
+            .or_else(|| {
+                r.pending_model
+                    .as_ref()
+                    .map(|(p, id)| chat.model_display_name(p, id))
+            })
+            .or_else(|| {
+                draft_model
+                    .as_ref()
+                    .map(|(p, id)| chat.model_display_name(p, id))
+            })
+            .unwrap_or_else(|| tr("选择模型").to_string());
+        let thinking_label = r
+            .state
+            .as_ref()
+            .and_then(|s| s.thinking_level.clone())
+            .or_else(|| r.thinking_override.clone())
+            .or_else(|| draft_thinking.clone())
+            .unwrap_or_else(|| "auto".to_string());
         (
-            r.state
-                .as_ref()
-                .and_then(|s| s.model_label())
-                .unwrap_or_else(|| tr("选择模型").to_string()),
-            r.state
-                .as_ref()
-                .and_then(|s| s.thinking_level.clone())
-                .unwrap_or_else(|| "medium".to_string()),
+            model_label,
+            thinking_label,
             r.tool_preset_label(),
             r.stats.as_ref().and_then(|s| s.context_percent),
             r.compacting,
@@ -575,6 +599,9 @@ pub(crate) fn input_area(
     // 「回到最新」按钮：不贴底且有消息时，悬浮在输入面板顶部上方 20px
     let show_scroll_btn = !chat.rt().read(cx).pager.is_at_bottom()
         && !chat.rt().read(cx).messages.is_empty();
+    // 胶囊高度测量槽（导航刻度条 033 居中用）；先克隆引用再拼元素，
+    // 避免 &chat.composer_h 与下方 slash_menu_view(&mut chat) 借用冲突
+    let composer_h_slot = chat.composer_h.clone();
     div()
         .id("composer-wrap")
         .relative()
@@ -595,23 +622,29 @@ pub(crate) fn input_area(
                     d.child(crate::session::scroll_to_bottom_button(weak, t))
                 })
                 .child(
-                    div()
-                        .relative()
-                        .w(gpui::relative(0.75))
-                        .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
-                        // 无 min_w：窄窗下跟随 75% 收缩，不溢出窗口边
-                        .when(slash_open, |d| {
-                            d.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .bottom(gpui::relative(1.))
-                                    .pb(px(8.))
-                                    .child(crate::slash_menu_view(chat, weak, t, cx)),
-                            )
-                        })
-                        .child(capsule),
+                    // 测量元素只包胶囊本体（不含回底按钮，按钮显隐会
+                    // 引入 ±52px 抖动）；/ 菜单是 absolute 不占布局
+                    crate::ui::measure_height(
+                        "composer-h",
+                        &composer_h_slot,
+                        div()
+                            .relative()
+                            .w(gpui::relative(0.75))
+                            .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
+                            // 无 min_w：窄窗下跟随 75% 收缩，不溢出窗口边
+                            .when(slash_open, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .left_0()
+                                        .right_0()
+                                        .bottom(gpui::relative(1.))
+                                        .pb(px(8.))
+                                        .child(crate::slash_menu_view(chat, weak, t, cx)),
+                                )
+                            })
+                            .child(capsule),
+                    ),
                 ),
         )
         .into_any_element()
@@ -710,6 +743,10 @@ fn composer_bar(
 ) -> gpui::Div {
     let thinking_open = chat.pill_menu == Some(PillMenu::Thinking);
     let tools_open = chat.pill_menu == Some(PillMenu::Tools);
+    // 工具预设 = spawn 参数（--tools/--no-tools），换它要重绑会话进程 +
+    // 整表重读：运行中换会把当前这一轮掐掉、并让「等待模型响应」掉回屏底。
+    // 所以 agent 跑动期间置灰禁止（思考强度/模型都是实时 RPC，不动消息表，照旧可用）。
+    let tools_locked = locked || streaming;
     let mut bar = div()
         .flex()
         .items_center()
@@ -747,21 +784,33 @@ fn composer_bar(
                 .items_center()
                 .gap(px(5.))
                 .rounded(px(8.))
-                .text_size(px(BAR_FONT))
-                .text_color(rgb(if locked {
+                .text_size(crate::appearance::ui_size(BAR_FONT))
+                .text_color(rgb(if tools_locked {
                     t.text_faint
                 } else if tools_open {
                     t.accent
                 } else {
                     t.text_muted
                 }))
-                .when(!locked, |d| d.cursor_pointer())
+                .when(!tools_locked, |d| d.cursor_pointer())
                 .hover(move |s| {
-                    if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
+                    if tools_locked {
+                        s
+                    } else {
+                        s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
+                    }
                 })
                 .on_mouse_down(MouseButton::Left, cx.listener(
                     |this, event: &gpui::MouseDownEvent, _w, cx| {
                         if this.rt().read(cx).compacting {
+                            return;
+                        }
+                        if this.rt().read(cx).agent_running {
+                            // 置灰之外再给一句说明：工具预设换不了是因为要重绑进程
+                            this.set_status(
+                                crate::i18n::tr("运行中不能更换工具预设").to_string(),
+                                cx,
+                            );
                             return;
                         }
                         this.pill_anchor = Some(event.position);
@@ -840,7 +889,7 @@ fn composer_bar(
             .items_center()
             .gap(px(5.))
             .rounded(px(8.))
-            .text_size(px(BAR_FONT))
+            .text_size(crate::appearance::ui_size(BAR_FONT))
             .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
             .when(!locked, |d| d.cursor_pointer())
             .hover(move |s| {
@@ -851,9 +900,10 @@ fn composer_bar(
                     if this.rt().read(cx).compacting {
                         return;
                     }
-                    if this.rt().read(cx).available_models.is_empty() {
-                        this.refresh_state(cx);
-                    }
+                    // 目录缺失（该项目还没有任何带进程的 runtime 答过）→
+                    // 借同 cwd 的活进程补拉一次；草稿无进程也照常弹出，
+                    // 列表来自 Chat 共享目录，不依赖本会话进程
+                    this.ensure_models_requested(cx);
                     this.dialog = Some(Chat::model_select_dialog(cx));
                     cx.notify();
                 },
@@ -870,7 +920,7 @@ fn composer_bar(
             .items_center()
             .gap(px(5.))
             .rounded(px(8.))
-            .text_size(px(BAR_FONT))
+            .text_size(crate::appearance::ui_size(BAR_FONT))
             .text_color(rgb(if locked {
                 t.text_faint
             } else if thinking_open {

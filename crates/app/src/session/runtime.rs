@@ -42,6 +42,13 @@ pub(crate) enum SessionEvent {
     ExtUi(pi_link::protocol::ExtensionUiRequest),
     /// get_state arrived with a pending rename prefill
     RenameReady(String),
+    /// get_available_models arrived: the model catalog is project-level
+    /// shared state (pi-web /api/models + loadModelsWithCache parity) — the
+    /// runtime only forwards it, Chat stores it per cwd for every picker
+    Models(Vec<pi_link::protocol::ModelInfo>),
+    /// a draft got persisted: pi bound this process to a fresh session file
+    /// (pi-web promoteNewSession parity — the pool key migrates draft-N → path)
+    FileBound(PathBuf),
 }
 
 pub(crate) struct SessionRuntime {
@@ -88,7 +95,6 @@ pub(crate) struct SessionRuntime {
     /// 手动压缩进行中（圆环弹窗按钮防连点；compact 响应清除）
     pub compacting: bool,
     pub commands: Vec<SlashCommand>,
-    pub available_models: Vec<pi_link::protocol::ModelInfo>,
     /// system prompt / tool summary from export_html (top-panel display)
     pub sys_prompt: Option<String>,
     pub session_tools: Option<Vec<(String, String)>>,
@@ -99,7 +105,10 @@ pub(crate) struct SessionRuntime {
     pub history: Vec<String>,
     pub history_ix: Option<usize>,
     pub thinking_override: Option<String>,
-    /// tools preset id (chat-only/read-only/default/full/configured) —
+    /// model picked while the draft had no process yet (pi-web
+    /// newSessionModelOverrideRef parity) — applied as a `--model` spawn flag
+    pub pending_model: Option<(String, String)>,
+    /// tools preset id (configured/chat-only/read-only/default/full) —
     /// applied at spawn via CLI flags (RPC has no live tool switching)
     pub tools_preset: String,
 
@@ -108,8 +117,6 @@ pub(crate) struct SessionRuntime {
     /// queued ext requests while not active (G+ surfaces a badge)
     pub ext_queue: Vec<pi_link::protocol::ExtensionUiRequest>,
 
-    /// (msg_ix, flashed_at) — 复制 pill's 已复制 flash (032)
-    pub copy_flash: Option<(usize, std::time::Instant)>,
     /// 013: jump target waiting for the message snapshot to land
     pub pending_locate: Option<(Option<i64>, String)>,
 }
@@ -143,7 +150,6 @@ impl SessionRuntime {
             pending_rename: false,
             compacting: false,
             commands: Vec::new(),
-            available_models: Vec::new(),
             sys_prompt: None,
             session_tools: None,
             input: String::new(),
@@ -151,10 +157,13 @@ impl SessionRuntime {
             history: Vec::new(),
             history_ix: None,
             thinking_override: None,
-            tools_preset: "default".into(),
+            pending_model: None,
+            // pi-web CONFIGURED_TOOL_PRESET: send no override, let pi resolve
+            // settings.json defaultTools like the CLI does
+            tools_preset: "configured".into(),
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
-            copy_flash: None,
+
             pending_locate: None,
         }
     }
@@ -170,13 +179,33 @@ impl SessionRuntime {
         }
         match self.tools_preset.as_str() {
             // spawn-arg tool selection (pi-web uses in-process
-            // setActiveToolsByName; the RPC surface has no live switch)
+            // setActiveToolsByName; the RPC surface has no live switch).
+            // "configured" sends nothing — pi resolves settings.json
+            // defaultTools exactly like the CLI does.
             "chat-only" => extra.push("--no-tools".into()),
             "read-only" => {
                 extra.push("--tools".into());
                 extra.push("read,grep,find,ls".into());
             }
+            "default" => {
+                extra.push("--tools".into());
+                extra.push("read,bash,edit,write".into());
+            }
+            "full" => {
+                extra.push("--tools".into());
+                extra.push("bash,read,edit,write,grep,find,ls".into());
+            }
             _ => {}
+        }
+        // draft picks made before the process existed ride the spawn flags
+        // (pi CLI parity: --model provider/id, --thinking level)
+        if let Some((provider, id)) = self.pending_model.take() {
+            extra.push("--model".into());
+            extra.push(format!("{provider}/{id}"));
+        }
+        if let Some(level) = self.thinking_override.clone() {
+            extra.push("--thinking".into());
+            extra.push(level);
         }
         self.agent.spawn_with(&self.cwd, &extra)
     }
@@ -299,7 +328,11 @@ impl SessionRuntime {
                     if let Some(data) = &data {
                         self.stats = Some(SessionStats::parse(data));
                         if let Some(f) = data["sessionFile"].as_str().map(PathBuf::from) {
-                            self.file = Some(f);
+                            if self.file.replace(f.clone()).is_none() {
+                                // draft got persisted by its first prompt: the
+                                // shell migrates the pool key draft-N → path
+                                cx.emit(SessionEvent::FileBound(f));
+                            }
                         }
                     }
                 } else if command == "set_session_name" && success {
@@ -342,8 +375,8 @@ impl SessionRuntime {
                     }
                 } else if command == "get_available_models" && success {
                     if let Some(data) = &data {
-                        self.available_models =
-                            pi_link::protocol::parse_model_list(data);
+                        // project-level shared catalog: forward, don't store
+                        cx.emit(SessionEvent::Models(pi_link::protocol::parse_model_list(data)));
                     }
                 } else if command == "set_model" && success {
                     // pi 1.0 swaps the model asynchronously — a get_state sent
@@ -375,6 +408,10 @@ impl SessionRuntime {
                     if success {
                         // pi rebound this process to the branched session.
                         self.branch_tree = None;
+                        // 换了条会话（分支）：锚点必须退役——留着就会把新分支
+                        // 里「最后一条用户消息」重新钉顶（restore_anchor_after_reload
+                        // 的兜底），而分支该从尾部开始看。
+                        self.pager.release();
                         self.messages.clear();
                         // fresh branched file: RPC snapshot is authoritative
                         self.disk_msg_count = 0;
@@ -440,8 +477,6 @@ impl SessionRuntime {
                         // doubled rows after the tail pre-render)
                         self.messages.clear();
                         self.pending_echo = None;
-                        // 快照重建：锚点作废，reset 后按 Bottom 对齐贴底
-                        self.pager.release();
                         for msg in &rpc_msgs {
                             let blocks = content_blocks(&msg["content"]);
                             let usage = Usage::parse(&msg["usage"]);
@@ -459,6 +494,8 @@ impl SessionRuntime {
                         // session file's entry write-times
                         self.merge_tail_stamps();
                         self.apply_pending_locate(cx);
+                        // 同一会话的重读保住钉顶（换工具预设/压缩后重拉都走这里）
+                        self.restore_anchor_after_reload();
                         self.notify_list(cx);
                     }
                     self.status = status_line(true, "resumed");
@@ -807,8 +844,7 @@ impl SessionRuntime {
         let msgs = msgs_from_tail(read_leaf_messages(&f, LEAF_REPAIR_MAX));
         self.disk_file_len = len;
         if msgs.len() != self.messages.len() {
-            // 整表重读 → 锚点索引失效（内容整体换过），先退役
-            self.pager.release();
+            // 整表重读：锚点索引可能失效，重读后按最后一条用户消息重锚
             self.messages = msgs;
             // fork anchors best-effort (same as the open-time repair path)
             let mut ids = self.active_user_entry_ids.iter();
@@ -818,6 +854,7 @@ impl SessionRuntime {
                 }
             }
             self.apply_pending_locate(cx);
+            self.restore_anchor_after_reload();
             self.notify_list(cx);
             self.status = status_line(true, "synced from disk");
         }
@@ -891,20 +928,6 @@ impl SessionRuntime {
                 self.pager.reveal(ix);
             }
         }
-    }
-
-    /// Clear the 复制 flash ~1.5s after it lit (pi-web copied-reset parity).
-    pub fn spawn_flash_clear(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(1500))
-                .await;
-            let _ = this.update(cx, |r, cx| {
-                r.copy_flash = None;
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     /// Convert one wire message (get_messages snapshot shape) into render
@@ -1192,6 +1215,29 @@ impl SessionRuntime {
         self.pager.jump_to_bottom();
     }
 
+    /// 整表重读（`get_messages` / 会话文件重读）之后恢复锚点，**不要**无条件
+    /// `release`：工具预设换绑就是一次 `GetMessages`，退役锚点会让「等待模型
+    /// 响应」等短内容连同刚上翻的历史一起掉回屏底（用户实测）。锚点仍指着一条
+    /// 用户消息就原样保留；否则按「最后一条用户消息」重锚；确实找不到才退役。
+    fn restore_anchor_after_reload(&mut self) {
+        if !self.pager.anchor_active() {
+            return;
+        }
+        let msgs = self.messages.len();
+        let phase = self.phase_row_visible();
+        let valid = self
+            .pager
+            .anchor_ix()
+            .filter(|ix| self.messages.get(*ix).is_some_and(|m| m.role == Role::User));
+        if let Some(ix) = valid {
+            self.pager.reanchor(ix, msgs, phase);
+        } else if let Some(ix) = self.messages.iter().rposition(|m| m.role == Role::User) {
+            self.pager.reanchor(ix, msgs, phase);
+        } else {
+            self.pager.release();
+        }
+    }
+
     pub(crate) fn send_input(&mut self, cx: &mut Context<Self>) {
         // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
         if self.compacting {
@@ -1201,6 +1247,27 @@ impl SessionRuntime {
         // 空文本+图片可发送（pi-web handleSend：!msg && !images 才拦）
         if text.is_empty() && self.pending_images.is_empty() {
             return;
+        }
+        if self.agent.session.is_none() {
+            // lazy draft: the pi process spawns on the first prompt
+            // (pi-web ensureNewSession parity). spawn_with returns the event
+            // receiver — attach the pump here or the session goes deaf.
+            let this = cx.entity();
+            match self.spawn() {
+                Some(rx) => {
+                    let epoch = self.agent.epoch;
+                    Self::attach_pump(&this, rx, epoch, cx);
+                }
+                None => {
+                    self.status = tr("未连接").into();
+                    cx.notify();
+                    return;
+                }
+            }
+            // state/stats/commands/models; the file-bound ping that promotes
+            // the draft comes from AgentEnd's refresh_state (the file exists
+            // only after the first turn)
+            self.refresh_state();
         }
         let Some(session) = &self.agent.session else {
             self.status = tr("未连接").into();
@@ -1290,6 +1357,10 @@ impl SessionRuntime {
     pub(crate) fn select_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
         if let Some(session) = &self.agent.session {
             let _ = session.send(&Command::SetModel { provider, model: id });
+        } else {
+            // draft with no process: remember the pick, spawn carries it as
+            // --model (pi-web newSessionModel parity)
+            self.pending_model = Some((provider, id));
         }
         // no immediate refresh_state here: pi 1.0 completes the swap
         // asynchronously, so an eager get_state reports the PREVIOUS model —

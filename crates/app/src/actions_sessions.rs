@@ -24,7 +24,40 @@ impl Chat {
         self.switch_to(rt, cx);
     }
 
+    /// Draft persisted its first prompt: pi bound this process to a fresh
+    /// session file (pi-web promoteNewSession parity). Migrate the pool key
+    /// draft-N → path so the sidebar entry and the pool share one identity,
+    /// otherwise reopening the session would spawn a duplicate runtime.
+    pub(crate) fn on_file_bound(
+        &mut self,
+        rt: &gpui::Entity<session::runtime::SessionRuntime>,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let path_key = path.to_string_lossy().to_string();
+        let old_key = rt.read(cx).key.clone();
+        if old_key == path_key {
+            return;
+        }
+        rt.update(cx, |r, _| r.key = path_key.clone());
+        if let Some(entity) = self.runtimes.remove(&old_key) {
+            self.runtimes.insert(path_key.clone(), entity);
+        }
+        if self.active_key == old_key {
+            self.active_key = path_key.clone();
+        }
+        self.active_file = Some(path.clone());
+        // recents (003-session管理): a fresh session file just landed
+        pi_link::recents::touch_recent(&path);
+        set_last_open(&rt.read(cx).cwd.to_string_lossy(), &path_key);
+        self.refresh_sessions();
+        cx.notify();
+    }
+
     pub(crate) fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
+        // recents (003-session管理): opening is activity — promote to the
+        // top of the recent-activity list (persist throttled)
+        pi_link::recents::touch_recent(&path);
         // cwd lookup: current project first, then all psp groups (v54 跨项目)
         let cwd = self
             .sessions
@@ -58,7 +91,7 @@ impl Chat {
             Some(msgs) => msgs,
             None => {
                 let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                if self.session_tail_cache.len() >= preload_sessions() * 2 {
+                if self.session_tail_cache.len() >= crate::services::workspace::TAIL_PRELOAD * 2 {
                     self.session_tail_cache.clear();
                 }
                 self.session_tail_cache.insert(path.clone(), msgs.clone());
@@ -129,6 +162,8 @@ impl Chat {
         }
         self.running_files.remove(&path);
         self.unread.remove(&path);
+        // recents (003-session管理): the file is gone, drop the entry
+        pi_link::recents::remove_recent(&path);
         if was_active {
             self.active_file = None;
             self.new_session(cx);

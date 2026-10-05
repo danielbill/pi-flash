@@ -48,7 +48,7 @@ pub(crate) fn mc_skills_view(
                 .px(px(8.))
                 .pt(px(6.))
                 .pb(px(2.))
-                .text_size(px(10.))
+                .text_size(crate::appearance::ui_size(10.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(label.to_string())),
@@ -66,7 +66,7 @@ pub(crate) fn mc_skills_view(
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .cursor_pointer()
                     .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
                     .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
@@ -106,7 +106,7 @@ pub(crate) fn mc_skills_view(
         sb = sb.child(
             div()
                 .p(px(12.))
-                .text_size(px(11.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
                 .child(tr("没有找到技能（扫描项目 .pi/skills、.agents/skills 与全局目录）")),
         );
@@ -121,7 +121,7 @@ pub(crate) fn mc_skills_view(
         None => div()
             .flex_1()
             .p(px(20.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(12.))
             .text_color(rgb(t.text_dim))
             .child(tr("没有找到技能"))
             .into_any_element(),
@@ -141,7 +141,7 @@ pub(crate) fn mc_skills_view(
                 .h_full()
                 .overflow_y_scroll()
                 .p(px(20.))
-                .text_size(px(12.))
+                .text_size(crate::appearance::ui_size(12.))
                 .flex()
                 .flex_col()
                 .gap_4()
@@ -153,7 +153,7 @@ pub(crate) fn mc_skills_view(
                         .min_h(px(28.))
                         .child(
                             div()
-                                .text_size(px(15.))
+                                .text_size(crate::appearance::ui_size(13.))
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(rgb(t.text))
                                 .child(SharedString::from(sk.name.clone())),
@@ -164,7 +164,7 @@ pub(crate) fn mc_skills_view(
                                 .py(px(1.))
                                 .rounded(px(3.))
                                 .bg(scope_tag.1)
-                                .text_size(px(10.))
+                                .text_size(crate::appearance::ui_size(10.))
                                 .text_color(scope_tag.2)
                                 .child(scope_tag.0),
                         ),
@@ -172,13 +172,13 @@ pub(crate) fn mc_skills_view(
                 .child(
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(sk.path.to_string_lossy().to_string())),
                 )
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(12.))
                         .text_color(rgb(t.text_muted))
                         .child(SharedString::from(sk.description.clone())),
                 )
@@ -190,7 +190,7 @@ pub(crate) fn mc_skills_view(
                         .min_h(px(36.))
                         .child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .text_color(rgb(t.text_muted))
                                 .child(if visible { tr("对模型可见") } else { tr("已隐藏（仍可手动调用）") }),

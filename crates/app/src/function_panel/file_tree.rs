@@ -65,7 +65,9 @@ pub(crate) fn collect_tree_rows(
             .pl(px(8. + depth as f32 * 14.))
             .pr(px(8.))
             .rounded(px(4.))
-            .text_xs()
+            // 目录树 = 面板设置值 -1（字体大小设置.md §1；text_xs 是固定
+            // 12px 不随设置走，必须用 ui_size）
+            .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)));
@@ -149,7 +151,7 @@ pub(crate) fn collect_tree_rows(
                 div()
                     .ml_auto()
                     .flex_shrink_0()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(color))
                     .child(st.badge()),

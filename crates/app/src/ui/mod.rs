@@ -2,10 +2,12 @@
 //! ThinkingIcon / ThemeIcon / spinner etc. + the app-wide TextInput).
 
 pub mod composer_input;
+pub mod dropdown;
 pub mod psp_scrollbar;
 pub mod text_input;
 
 pub use composer_input::ComposerInput;
+pub use dropdown::{dropdown, DropdownState};
 pub use text_input::TextInput;
 
 use gpui::{Animation, AnimationExt, SharedString, Styled, prelude::*};
@@ -19,6 +21,7 @@ pub fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
         .size(gpui::px(size))
         .into_any_element()
 }
+
 
 /// icon hover 动效（v55 统一规格）：悬停上抬 1px + 放大 6%，120ms。
 /// 仅用于**可交互图标按钮**；静态/状态图标用 icon()。
@@ -144,6 +147,84 @@ impl gpui::Element for HoverIcon {
             gpui::ScaledPixels::from(-cy),
         ));
         let _ = window.paint_svg(bounds, self.path.clone(), matrix, gpui::rgb(self.color).into(), _cx);
+    }
+}
+
+/// 透明测量元素：prepaint 把子元素布局高度写入 slot。读数天然滞后一帧
+/// （本帧 build 时读到的是上一帧 prepaint 写入值），只适合弱实时场景，
+/// 如导航刻度条按 composer 高度做垂直偏移（033）。
+pub fn measure_height(
+    id: impl Into<gpui::ElementId>,
+    slot: &std::rc::Rc<std::cell::Cell<f32>>,
+    child: impl gpui::IntoElement,
+) -> MeasureHeight {
+    MeasureHeight {
+        id: id.into(),
+        slot: slot.clone(),
+        child: child.into_any_element(),
+    }
+}
+
+pub struct MeasureHeight {
+    id: gpui::ElementId,
+    slot: std::rc::Rc<std::cell::Cell<f32>>,
+    child: gpui::AnyElement,
+}
+
+impl gpui::IntoElement for MeasureHeight {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for MeasureHeight {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        // 布局完全委托子元素（透明包装），本元素的尺寸即子元素尺寸
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _request: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.slot.set(bounds.size.height.to_f64() as f32);
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: gpui::Bounds<gpui::Pixels>,
+        _request: &mut (),
+        _prepaint: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.child.paint(window, cx);
     }
 }
 

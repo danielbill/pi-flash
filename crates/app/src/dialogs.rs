@@ -118,13 +118,13 @@ fn render_model_select(chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input:
                             .justify_between()
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .text_size(crate::appearance::ui_size(14.))
                                     .text_color(rgb(t.text))
                                     .child(label),
                             )
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .text_size(crate::appearance::ui_size(14.))
                                     .text_color(rgb(t.text_dim))
                                     .child(ctx),
                             )
@@ -134,7 +134,7 @@ fn render_model_select(chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input:
                 let list_panel = if rows.is_empty() {
                     div()
                         .py_2()
-                        .text_size(px(14.))
+                        .text_size(crate::appearance::ui_size(14.))
                         .text_color(rgb(t.text_dim))
                         .child(tr("no models match"))
                         .into_any_element()
@@ -292,7 +292,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                         .rounded(px(6.))
                                         .bg(rgb(t.bg))
                                         .font_family(crate::markdown::MONO_FAMILY)
-                                        .text_size(px(11.))
+                                        .text_size(crate::appearance::ui_size(11.))
                                         .text_color(rgb(t.text))
                                         .child(SharedString::from(body)),
                                 );
@@ -377,7 +377,7 @@ fn render_session_search(
                     .child(SharedString::from(label))
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(crate::appearance::ui_size(10.))
                             .font_weight(gpui::FontWeight::NORMAL)
                             .text_color(rgb(t.text_dim))
                             .child(SharedString::from(age)),

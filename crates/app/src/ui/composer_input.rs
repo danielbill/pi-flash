@@ -289,7 +289,7 @@ impl Render for ComposerInput {
                 ))
                 .child(
                     div()
-                        .text_size(px(14.))
+                        .text_size(crate::appearance::ui_size(14.))
                         .text_color(rgb(t.accent))
                         .child(SharedString::from(bare.to_string())),
                 )
@@ -299,8 +299,9 @@ impl Render for ComposerInput {
             .id("composer-input")
             .w_full()
             .relative()
-            // 字号/颜色从 wrapper 继承进组件的文本塑形
-            .text_size(px(15.))
+            // 输入文字跟随「会话字体」设置（发送后与气泡正文一致，所见即
+            // 所得）；placeholder 单独按面板设置值（字体大小设置.md §1）
+            .text_size(crate::appearance::sess_size(0.))
             .text_color(rgb(t.text))
             .flex()
             .items_start()
@@ -312,6 +313,7 @@ impl Render for ComposerInput {
                 div()
                     .flex_1()
                     .min_w_0()
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_faint))
                     .child(ph)
             } else {
@@ -324,6 +326,7 @@ impl Render for ComposerInput {
                                 .absolute()
                                 .top(pad_top + px(2.))
                                 .left(px(12.))
+                                .text_size(crate::appearance::ui_size(12.))
                                 .text_color(rgb(t.text_faint))
                                 .child(ph),
                         )

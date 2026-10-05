@@ -66,14 +66,14 @@ fn proj_tip(path: &std::path::PathBuf, x: f32, y: f32) -> impl gpui::IntoElement
         .gap(px(1.))
         .child(
             div()
-                .text_size(px(11.5))
+                .text_size(crate::appearance::ui_size(11.5))
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(0xeef4f1))
                 .child(SharedString::from(name)),
         )
         .child(
             div()
-                .text_size(px(10.5))
+                .text_size(crate::appearance::ui_size(10.5))
                 .font_family(crate::markdown::MONO_FAMILY)
                 .text_color(rgb(0x9fbcb2))
                 .child(SharedString::from(full)),
@@ -150,7 +150,7 @@ fn hover_card(chat: &mut Chat, t: &'static Theme, cx: &mut gpui::Context<Chat>) 
             Some(
             div()
                 .id("hc-name")
-                .text_size(px(13.5))
+                .text_size(crate::appearance::ui_size(13.5))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
                 .overflow_hidden()
@@ -271,7 +271,7 @@ fn info_row(icon_name: &'static str, text: SharedString, t: &'static Theme) -> i
         .items_center()
         .gap(px(8.))
         .mt(px(7.5))
-        .text_size(px(12.5))
+        .text_size(crate::appearance::ui_size(12.5))
         .text_color(rgb(t.text))
         .child(icon(icon_name, 15., t.text_muted))
         .child(text)
@@ -295,7 +295,7 @@ fn ghost_btn(
         } else {
             rgb(t.border).into()
         })
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .text_color(if danger { rgb(t.danger) } else { rgb(t.text_dim) })
         .cursor_pointer()
         .hover(|s| {
@@ -321,7 +321,7 @@ fn solid_danger_btn(
         .py(px(3.5))
         .rounded(px(7.))
         .bg(rgb(t.danger))
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .text_color(rgb(0xffffff))
         .cursor_pointer()
         .hover(|s| s.opacity(0.9))
@@ -542,7 +542,7 @@ fn menu_item<S: Into<SharedString>>(
         .px(px(10.))
         .py(px(7.))
         .rounded(px(6.))
-        .text_size(px(12.5))
+        .text_size(crate::appearance::ui_size(12.5))
         .text_color(if danger { rgb(t.danger) } else { rgb(t.text) })
         .cursor_pointer()
         .hover(|s| {
@@ -608,7 +608,7 @@ fn confirm_project_del(
                 })
                 .child(
                     div()
-                        .text_size(px(12.5))
+                        .text_size(crate::appearance::ui_size(12.5))
                         .text_color(rgb(t.text))
                         .child(SharedString::from(tf(
                             "删除项目 {name} 及其所有会话？",

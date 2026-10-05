@@ -8,6 +8,15 @@ edition = "2024"
 [profile.dev]
 debug = 1
 
+[profile.dev.package."*"]
+debug = false               # 依赖不带调试信息：windows/gpui 的 rlib 和 pdb 直接瘦一圈
+
+[profile.dev.package.gpui]
+debug = 1                   # vendored 的 gpui 保留行号表，方便断点进 gpui 内部
+
+[profile.dev.package.gpui-component]
+debug = 1
+
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 gpui-component = { path = "vendor/gpui-component" }

@@ -99,7 +99,8 @@ pub(crate) fn topbar_r(
                 .min_w_0()
                 .max_w(px(320.))
                 .overflow_hidden()
-                .text_size(px(12.5))
+                // topbar = 面板设置值（字体大小设置.md §1）
+                .text_size(crate::appearance::ui_size(12.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
                 .child(title),
@@ -270,7 +271,7 @@ fn tab_shell(
         .flex()
         .items_center()
         .gap(px(9.))
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .cursor_pointer()
         .when(active, |d| {
             // 连体态：33px 高、bg 填充、压住底线（host 已 items_end 贴底）

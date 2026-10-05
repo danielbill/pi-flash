@@ -76,18 +76,22 @@ impl Chat {
         Dialog::ModelSelect { input, sel: 0 }
     }
 
-    /// Models visible in the picker: available_models narrowed by the
-    /// enabledModels whitelist and the live filter text. Shared by rendering
-    /// and keyboard navigation so ↑/↓/Enter always match what is on screen.
+    /// Models visible in the picker: the active session's cwd entry of the
+    /// shared catalog, narrowed by the enabledModels whitelist and the live
+    /// filter text. Shared by rendering and keyboard navigation so ↑/↓/Enter
+    /// always match what is on screen. Works for process-less drafts — the
+    /// catalog belongs to Chat, not to any runtime.
     pub(crate) fn filtered_models(&self, cx: &App) -> Vec<pi_link::protocol::ModelInfo> {
         let flt = match &self.dialog {
             Some(Dialog::ModelSelect { input, .. }) => input.read(cx).value().to_lowercase(),
             _ => String::new(),
         };
         let picker_enabled = !self.mc_state.all_enabled;
-        self.rt()
-            .read(cx)
-            .available_models
+        let cwd_key = self.rt().read(cx).cwd.to_string_lossy().to_string();
+        self.models_by_cwd
+            .get(&cwd_key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
             .iter()
             .filter(|m| {
                 if picker_enabled {

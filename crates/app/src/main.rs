@@ -14,7 +14,7 @@ use gpui::{
     Render, SharedString, Styled, WindowOptions, div, prelude::*, px, rgb,
 };
 use pi_link::protocol::Command;
-use pi_link::sessions::{SessionInfo, list_sessions, list_sessions_for_cwd, read_tail_messages};
+use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
 
 mod actions_dialogs;
 mod agent_session;
@@ -195,13 +195,19 @@ struct Chat {
     sessions: Vec<SessionInfo>,
     cwd: PathBuf,
     branch: String,
-    available_models: Vec<pi_link::protocol::ModelInfo>,
+    /// model catalog keyed by cwd — project-level shared state (pi-web
+    /// /api/models + loadModelsWithCache parity): fetched once per project
+    /// through any live runtime's RPC and reused by every picker, including
+    /// process-less drafts. Runtimes forward their responses here.
+    models_by_cwd: std::collections::HashMap<String, Vec<pi_link::protocol::ModelInfo>>,
     runtimes: std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
     active_key: String,
     draft_seq: usize,
     menu_ix: usize,
     /// / 菜单滚动句柄（按键选中 scroll_to_item 行跟随；输入变化回顶）
     menu_scroll: gpui::ScrollHandle,
+    /// 斜杠/@ 菜单被点外收起（active_menu 据此返回 None；改输入即复位）
+    menu_dismissed: bool,
     term_events: Option<futures::channel::mpsc::UnboundedSender<(usize, alacritty_terminal::event::Event)>>,
     op_tx: Option<futures::channel::mpsc::UnboundedSender<String>>,
     // editor view state（输入组件实体在 composer 首次渲染时惰性创建；
@@ -214,6 +220,11 @@ struct Chat {
     bubble_scrolls: std::rc::Rc<std::cell::RefCell<
         std::collections::HashMap<String, gpui::ScrollHandle>,
     >>,
+    /// 操作栏悬停态（pi-web onMouseEnter/Leave parity，状态驱动而非
+    /// group_hover）：用户消息行与 agent 轮块**共用**这一个字段，值是行在
+    /// 列表里的索引（用户行 = msg_ix，agent 轮 = 轮首 msg_ix；角色不同故
+    /// 永不撞车）。唯一写入点 = messages::bar_hover_wired。
+    pub bar_hover: Option<usize>,
     input_focused: bool,
     // inline rename (active session)
     renaming: Option<PathBuf>,
@@ -259,6 +270,12 @@ struct Chat {
     mc_state: EnabledState,
     mc_creds: Vec<(String, pi_link::config::CredentialKind)>,
     mc_project_scope: bool,
+    /// settings.json defaults a new session starts with (pi-web /api/models
+    /// `defaultModel` + `defaultThinkingLevel`; selectInitialModelScope inputs)
+    mc_default_model: Option<(String, String)>,
+    mc_default_thinking: Option<String>,
+    /// settings.modelThinkingLevels — per-`provider/modelId` recorded levels
+    mc_model_thinking: Vec<(String, String)>,
     mc_skills: Vec<pi_link::skills::SkillEntry>,
     mc_pkgs_global: Vec<serde_json::Value>,
     mc_pkgs_project: Vec<serde_json::Value>,
@@ -277,7 +294,8 @@ struct Chat {
     sound_on: bool,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
     // ---- v54 shell state ----
-    /// psp 项目组（当前项目钉顶，其余按最近会话倒序；上限=设置.默认加载项目数）
+    /// psp 项目组（当前项目钉顶，其余按最近会话倒序；启动只加载
+    /// 设置.默认加载会话数 N 个会话，组由这批会话的 cwd 自然形成）
     projects: Vec<ProjectGroup>,
     /// 当前活跃会话文件（psp 选中态；switch_to 时更新）
     active_file: Option<PathBuf>,
@@ -286,6 +304,9 @@ struct Chat {
     list_mode: ListMode,
     sort_mode: SortMode,
     collapsed_keys: HashSet<String>,
+    /// psp 分页：每组已展开的会话数（「显示更多」每次 +10；
+    /// key = 组 ws_key，Flat 模式 = "__flat__"）
+    psp_shown: std::collections::HashMap<String, usize>,
     slp_w: f32,
     panes_hidden: bool,
     slp_drag: Option<(f32, f32)>,
@@ -305,6 +326,11 @@ struct Chat {
     nav_flyout_hovered: bool,
     /// flyout 内鼠标所在轮（选择框/比例尺亮点跟随鼠标）
     nav_hover_turn: Option<usize>,
+    /// 导航 flyout 滚动（滚动条渲染数据源；跨开合保持，随内容重夹）
+    nav_flyout_scroll: gpui::ScrollHandle,
+    /// composer 胶囊实时高度（ui::measure_height 每帧写、读到的是上一帧
+    /// 值；导航刻度条「屏高 − inputpanel/2」居中用，033）
+    composer_h: std::rc::Rc<std::cell::Cell<f32>>,
     unread: HashSet<PathBuf>,
     hovered_project: Option<usize>,
     proj_tip: Option<(PathBuf, f32, f32)>,
@@ -390,7 +416,7 @@ impl Chat {
             runtimes: std::collections::HashMap::new(),
             active_key: String::new(),
             draft_seq: 0,
-            available_models: Vec::new(),
+            models_by_cwd: std::collections::HashMap::new(),
             expanded_dirs: HashSet::new(),
             git_files: Vec::new(),
             git_selected: None,
@@ -407,6 +433,7 @@ impl Chat {
             history_ix: None,
             menu_ix: 0,
             menu_scroll: gpui::ScrollHandle::new(),
+            menu_dismissed: false,
             terminals: Vec::new(),
             active_terminal: None,
             term_seq: 0,
@@ -415,6 +442,9 @@ impl Chat {
             mc_state: EnabledState::default(),
             mc_creds: Vec::new(),
             mc_project_scope: false,
+            mc_default_model: None,
+            mc_default_thinking: None,
+            mc_model_thinking: Vec::new(),
             mc_skills: Vec::new(),
             mc_pkgs_global: Vec::new(),
             mc_pkgs_project: Vec::new(),
@@ -437,6 +467,7 @@ impl Chat {
             bubble_scrolls: std::rc::Rc::new(std::cell::RefCell::new(
                 std::collections::HashMap::new(),
             )),
+            bar_hover: None,
             input_focused: false,
             pill_menu: None,
             pill_anchor: None,
@@ -454,6 +485,7 @@ impl Chat {
             list_mode: if ui.list_mode == "flat" { ListMode::Flat } else { ListMode::Grouped },
             sort_mode: if ui.sort_mode == "manual" { SortMode::Manual } else { SortMode::Time },
             collapsed_keys: ui.collapsed.iter().cloned().collect(),
+            psp_shown: std::collections::HashMap::new(),
             slp_w: ui.slp_w,
             panes_hidden: ui.panes_hidden,
             slp_drag: None,
@@ -468,6 +500,8 @@ impl Chat {
             nav_hide_at: None,
             nav_flyout_hovered: false,
             nav_hover_turn: None,
+            nav_flyout_scroll: gpui::ScrollHandle::new(),
+            composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
             hovered_project: None,
             proj_tip: None,
@@ -476,6 +510,9 @@ impl Chat {
             confirm_prj_del: None,
             status_toast: None,
         };
+        // new-session defaults (default model / thinking / enabledModels
+        // scope) before the first frame — the draft pills render from them
+        chat.reload_model_defaults();
         // wire input callbacks that need the root entity handle
         let weak_ext = cx.entity().downgrade();
         chat.ext_input.update(cx, |ti, _| {
@@ -616,7 +653,7 @@ impl Chat {
             }
             r
         });
-        chat.draft_seq = if last_open.is_some() { 1 } else { 0 };
+        chat.draft_seq = 1; // "draft-0" is taken by the initial runtime above
         chat.runtimes.insert(rt_key.clone(), rt.clone());
         chat.active_key = rt_key.clone();
         chat.subscribe_runtime(&rt, cx);
@@ -719,42 +756,70 @@ impl Chat {
                     }
                 }
             });
-            // psp 一体列表: all projects (grouped), capped by settings
-            let all = cx
+            // psp 一体列表 + 尾部预载（003-session管理 清单驱动）：启动只
+            // 加载「加载时间窗口」内活跃的会话——清单窗口过滤，摘要查指纹
+            // 索引，无全盘枚举；首次运行清单为空时内部按 mtime 序种子
+            let days = load_window_days();
+            let paths = cx
                 .background_spawn(async move {
-                    let mut all = list_sessions(400);
-                    all.sort_by(|a, b| b.modified.cmp(&a.modified));
-                    all
+                    pi_link::recents::recent_load_paths(days)
                 })
                 .await;
+            // 清单刚种子/保活，此处必命中索引：纯 stat + 内存查，不碰文件
+            let all = pi_link::sessions::sessions_for_paths(&paths);
             let _ = this.update(cx, |chat, cx| {
                 chat.rebuild_projects(all);
                 cx.notify();
             });
-            // cross-project tail preload (startup §4)
-            let n = preload_sessions();
-            if n > 0 {
-                let active = last_open.clone();
-                let preloaded = cx
-                    .background_spawn(async move {
-                        let mut map = std::collections::HashMap::new();
-                        for s in list_sessions(n) {
-                            if map.len() >= n {
-                                break;
-                            }
-                            if Some(&s.path) == active.as_ref() {
-                                continue;
-                            }
-                            let msgs =
-                                msgs_from_tail(read_tail_messages(&s.path, 256 * 1024, 100));
-                            map.insert(s.path, msgs);
+            // tail preload（活动序前 TAIL_PRELOAD 条；active 已由首屏渲染，跳过）
+            let active = last_open.clone();
+            let preloaded = cx
+                .background_spawn(async move {
+                    let mut map = std::collections::HashMap::new();
+                    for path in paths {
+                        if map.len() >= crate::services::workspace::TAIL_PRELOAD {
+                            break;
                         }
-                        map
-                    })
-                    .await;
-                let _ = this.update(cx, |chat, _cx| {
-                    chat.session_tail_cache = preloaded;
-                });
+                        if Some(&path) == active.as_ref() || !path.is_file() {
+                            continue;
+                        }
+                        let msgs =
+                            msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
+                        map.insert(path, msgs);
+                    }
+                    map
+                })
+                .await;
+            let _ = this.update(cx, |chat, _cx| {
+                chat.session_tail_cache = preloaded;
+            });
+        })
+        .detach();
+        // recents poll (003-session管理): every 30s, reconcile the recent
+        // activity list against external writers (pi-web / cli) and flush.
+        // Live runtimes' files are excluded — the event path (open / message
+        // callbacks) owns their recency, and polling them while pi appends
+        // would rescan the file every tick.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(30))
+                .await;
+            let exclude = match this.update(cx, |chat, cx| {
+                chat.runtimes
+                    .values()
+                    .filter_map(|rt| rt.read(cx).file.clone())
+                    .collect::<Vec<_>>()
+            }) {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            let changed = cx
+                .background_spawn(async move {
+                    pi_link::recents::poll_recent_sessions(&exclude)
+                })
+                .await;
+            if changed {
+                let _ = this.update(cx, |_chat, cx| cx.notify());
             }
         })
         .detach();
@@ -767,10 +832,28 @@ impl Chat {
 
     fn refresh_sessions(&mut self) {
         let cwd = self.cwd.to_string_lossy().to_string();
-        self.sessions = list_sessions_for_cwd(&cwd, 100)
+        let full = list_sessions_for_cwd(&cwd, 500)
             .into_iter()
             .filter(|s| same_ws(&s.cwd, &cwd))
+            .collect::<Vec<_>>();
+        // v60: 加载语义 = 时间窗口（设置.加载时间窗口）——当前项目只保留
+        // 窗口内活跃的会话（mtime 近似清单 last_active）+ 当前激活会话
+        // 兜底（保证改名/打开的旧会话始终可见）；显示量由 psp 分页控制
+        let cutoff = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(load_window_days() * 86_400);
+        let mut sessions: Vec<SessionInfo> = full
+            .iter()
+            .filter(|s| s.modified >= cutoff)
+            .cloned()
             .collect();
+        if let Some(active) = &self.active_file {
+            if !sessions.iter().any(|s| &s.path == active) {
+                if let Some(info) = full.iter().find(|s| &s.path == active) {
+                    sessions.push(info.clone());
+                }
+            }
+        }
+        self.sessions = sessions;
         // sync the current project's group, then re-pin project order
         let all: Vec<SessionInfo> = self
             .projects
@@ -876,6 +959,7 @@ impl Chat {
     /// 手写 input 不再存在）。历史/草稿/清空/补全改写都走这里。
     pub(crate) fn set_input(&mut self, v: String, cx: &mut Context<Self>) {
         self.input = v;
+        self.menu_dismissed = false;
         if let Some(c) = &self.composer {
             let v = self.input.clone();
             c.update(cx, |f, fcx| f.set_value(v, fcx));
@@ -934,6 +1018,13 @@ impl Chat {
     }
 
     fn mc_set_tools_preset(&mut self, key: &str, cx: &mut Context<Self>) {
+        // 工具预设是 spawn 参数（`--tools` / `--no-tools`），换它必须重绑会话
+        // 进程（kill + 新开）+ 整表重读：运行中换会把正在跑的这一轮直接掐掉，
+        // 顺便让「等待模型响应」掉回屏底。UI 已置灰，这里是绕过 UI 的兜底。
+        if self.rt().read(cx).agent_running {
+            self.set_status(crate::i18n::tr("运行中不能更换工具预设").to_string(), cx);
+            return;
+        }
         let rt = self.rt();
         rt.update(cx, |r, cx| {
             r.tools_preset = key.to_string();
@@ -957,6 +1048,58 @@ impl Chat {
             .get(&self.active_key)
             .expect("active runtime exists")
             .clone()
+    }
+
+    /// Shared model catalog of one project (pi-web loadModelsWithCache(cwd)
+    /// read side). Empty slice until some live runtime of that cwd answered
+    /// get_available_models.
+    pub(crate) fn models_for(&self, cwd: &std::path::Path) -> &[pi_link::protocol::ModelInfo] {
+        self.models_by_cwd
+            .get(&cwd.to_string_lossy().to_string())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Picker fallback: catalog entry for the active session's cwd is empty →
+    /// ask once through a live runtime of the SAME cwd (the response flows
+    /// back via its pump into models_by_cwd). Never spawns a process for
+    /// this — model selection must not conjure session processes.
+    pub(crate) fn ensure_models_requested(&mut self, cx: &mut Context<Self>) {
+        let active = self.rt();
+        let (cwd_key, has_session) = {
+            let r = active.read(cx);
+            (
+                r.cwd.to_string_lossy().to_string(),
+                r.agent.session.is_some(),
+            )
+        };
+        if self
+            .models_by_cwd
+            .get(&cwd_key)
+            .is_some_and(|v| !v.is_empty())
+        {
+            return;
+        }
+        if has_session {
+            active.update(cx, |r, _| {
+                if let Some(s) = r.agent.session.as_ref() {
+                    let _ = s.send(&pi_link::protocol::Command::GetAvailableModels);
+                }
+            });
+            return;
+        }
+        // active is a draft: any other live runtime of the same cwd answers too
+        for (_, rt) in &self.runtimes {
+            let r = rt.read(cx);
+            if r.cwd.to_string_lossy().to_string() == cwd_key
+                && r.agent.session.is_some()
+            {
+                if let Some(s) = r.agent.session.as_ref() {
+                    let _ = s.send(&pi_link::protocol::Command::GetAvailableModels);
+                }
+                return;
+            }
+        }
     }
 
     fn set_status(&mut self, msg: String, cx: &mut Context<Self>) {
@@ -1080,7 +1223,9 @@ impl Render for Chat {
             let inner_focused = p.focus.is_focused(window)
                 || p.key_input.read(cx).focus_handle_in(cx).is_focused(window)
                 || p.install_input.read(cx).focus_handle_in(cx).is_focused(window)
-                || p.sa_input.read(cx).focus_handle_in(cx).is_focused(window);
+                || p.sa_input.read(cx).focus_handle_in(cx).is_focused(window)
+                // 字体筛选框（弹层内）：漏掉它会被每帧抢回焦点，无法输入
+                || p.font_filter.read(cx).focus_handle_in(cx).is_focused(window);
             if !inner_focused && !self.dialog_focus.is_focused(window) {
                 window.focus(&self.dialog_focus);
             }
@@ -1104,9 +1249,13 @@ impl Render for Chat {
             let rows: Vec<(String, String, bool)> = match menu {
                 PillMenu::Thinking => [
                     ("auto", tr("使用 pi 默认设置"), thinking_override.is_none()),
+                    ("off", tr("关闭推理"), thinking_override.as_deref() == Some("off")),
+                    ("minimal", tr("最低限度推理"), thinking_override.as_deref() == Some("minimal")),
                     ("low", tr("低强度推理"), thinking_override.as_deref() == Some("low")),
+                    ("medium", tr("中等强度推理"), thinking_override.as_deref() == Some("medium")),
                     ("high", tr("高强度推理"), thinking_override.as_deref() == Some("high")),
-                    ("max", tr("最强推理"), thinking_override.as_deref() == Some("max")),
+                    ("xhigh", tr("超高强度推理"), thinking_override.as_deref() == Some("xhigh")),
+                    ("max", tr("最高强度推理"), thinking_override.as_deref() == Some("max")),
                 ]
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
@@ -1163,7 +1312,7 @@ impl Render for Chat {
                         )
                         .child(
                             div()
-                                .text_size(px(14.))
+                                .text_size(crate::appearance::ui_size(14.))
                                 .font_weight(if active {
                                     gpui::FontWeight::SEMIBOLD
                                 } else {
@@ -1175,7 +1324,7 @@ impl Render for Chat {
                         .child(
                             div()
                                 .ml_auto()
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_dim))
                                 .child(desc),
                         )
@@ -1400,7 +1549,7 @@ impl Render for Chat {
                     .rounded(px(8.))
                     .bg(rgb(0x22312d))
                     .shadow_lg()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(0xeef4f1))
                     .flex()
                     .justify_center()
@@ -1435,7 +1584,7 @@ impl Render for Chat {
                     .items_start()
                     .gap_2()
                     .child(div().size(px(7.)).rounded_full().mt(px(4.)).bg(rgb(color)))
-                    .child(div().text_size(px(12.)).text_color(rgb(t.text)).child(text)),
+                    .child(div().text_size(crate::appearance::ui_size(12.)).text_color(rgb(t.text)).child(text)),
             );
         }
         // blocking extension dialog (select/confirm/input/editor)
@@ -1449,10 +1598,11 @@ impl Render for Chat {
 fn main() {
     let _ = T0.set(std::time::Instant::now());
     PERF.store(true, std::sync::atomic::Ordering::Relaxed);
-    // theme: PI_FLASH_THEME (dev override) > persisted settings.json > mist
+    // theme: PI_FLASH_THEME (dev override) > app_settings.json（pi-flash 专
+    // 属配置，绝不碰 pi 的 settings.json——pi 的 settings schema 有自己的
+    // theme 键，写入未知主题名会让 pi 每次启动报错）
     if std::env::var("PI_FLASH_THEME").ok().and_then(|n| theme::set_by_name(&n).then_some(())).is_none() {
-        let app = app_settings().theme;
-        if let Some(name) = app.or_else(|| pi_link::config::read_theme(&pi_link::config::settings_path())) {
+        if let Some(name) = app_settings().theme {
             theme::set_by_name(&name);
         }
     }
@@ -1471,6 +1621,10 @@ fn main() {
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice()),
             ])
             .expect("embedded JetBrains Mono fonts are valid TTF");
+            // 系统字体目录（设置页字体下拉数据源，字母序；一次性枚举）
+            crate::appearance::init_font_catalog(cx);
+            // 面板字号 → 全局 UI 缩放（ui_size 基准）
+            crate::appearance::sync_ui_scale();
             // gpui-component (widget library powering TextInput): global
             // init + token mapping from the active app theme
             gpui_component::init(cx);

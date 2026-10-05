@@ -93,7 +93,7 @@ pub(crate) fn mc_plugins_view(
     let sb = pl_sidebar(chat, weak, section, &entries, t);
     let detail = pl_detail(chat, weak, section, &entries, install_input, install_scope_project, &mut missing, t);
     let detail = if missing {
-        div().flex_1().p(px(20.)).text_size(px(12.)).text_color(rgb(t.text_dim)).child(tr("没有已配置的插件")).into_any_element()
+        div().flex_1().p(px(20.)).text_size(crate::appearance::ui_size(12.)).text_color(rgb(t.text_dim)).child(tr("没有已配置的插件")).into_any_element()
     } else {
         detail
     };
@@ -136,7 +136,7 @@ fn pl_sidebar(
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_size(px(12.))
+                .text_size(crate::appearance::ui_size(12.))
                 .cursor_pointer()
                 .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
                 .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
@@ -176,7 +176,7 @@ fn pl_sidebar(
                         .py(px(1.))
                         .rounded(px(3.))
                         .bg(gpui::hsla(0.63, 0.86, 0.62, 0.12))
-                        .text_size(px(9.))
+                        .text_size(crate::appearance::ui_size(9.))
                         .text_color(gpui::hsla(0.63, 0.86, 0.62, 0.85))
                         .child(tr("项目"))
                         .into_any_element()
@@ -203,7 +203,7 @@ fn pl_sidebar(
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .cursor_pointer()
                     .text_color(if section == "__add__" { rgb(t.accent) } else { rgb(t.text_dim) })
                     .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -248,20 +248,20 @@ fn pl_detail(
             .h_full()
             .overflow_y_scroll()
             .p(px(20.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(12.))
             .flex()
             .flex_col()
             .gap_3()
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(crate::appearance::ui_size(13.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .child(tr("添加插件")),
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("npm:@scope/pi-plugin · git:https://... · /绝对路径")),
             )
@@ -282,7 +282,7 @@ fn pl_detail(
                             .border_1()
                             .border_color(if !scope_project { rgb(t.accent) } else { rgb(t.border) })
                             .bg(if !scope_project { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(t.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -309,7 +309,7 @@ fn pl_detail(
                             .border_1()
                             .border_color(if scope_project { rgb(t.accent) } else { rgb(t.border) })
                             .bg(if scope_project { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(t.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -337,7 +337,7 @@ fn pl_detail(
                     .border_1()
                     .border_color(rgb(t.accent))
                     .bg(rgb(t.accent))
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.accent_contrast))
                     .cursor_pointer()
@@ -361,7 +361,7 @@ fn pl_detail(
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("安装位置：全局 ~/.pi/agent/{npm,git}；项目 <工作区>/.pi/agent/{npm,git}")),
             )
@@ -391,7 +391,7 @@ fn pl_detail(
             .h_full()
             .overflow_y_scroll()
             .p(px(20.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(12.))
             .flex()
             .flex_col()
             .gap_4()
@@ -403,7 +403,7 @@ fn pl_detail(
                     .min_h(px(28.))
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(crate::appearance::ui_size(13.))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(t.text))
                             .child(SharedString::from(src.clone())),
@@ -414,7 +414,7 @@ fn pl_detail(
                             .py(px(1.))
                             .rounded(px(3.))
                             .bg(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.12) } else { gpui::hsla(0., 0., 0.5, 0.12) })
-                            .text_size(px(10.))
+                            .text_size(crate::appearance::ui_size(10.))
                             .text_color(if proj { gpui::hsla(0.63, 0.86, 0.62, 0.85) } else { rgb(t.text_dim).into() })
                             .child(if proj { tr("项目") } else { tr("全局") }),
                     ),
@@ -424,7 +424,7 @@ fn pl_detail(
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(if disabled { tr("已停用") } else { tr("已加载") })
                     .child(
@@ -441,7 +441,7 @@ fn pl_detail(
                     .min_h(px(36.))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(rgb(t.text_muted))
                             .child(if disabled { tr("已停用（资源不加载）") } else { tr("已启用") }),
@@ -486,7 +486,7 @@ fn pl_detail(
                     .border_1()
                     .border_color(rgb(0xef4444))
                     .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(0xef4444))
                     .cursor_pointer()
                     .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
@@ -497,7 +497,7 @@ fn pl_detail(
             )
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("移除/安装通过 vendored pi CLI 执行（pi remove/install）")),
             )

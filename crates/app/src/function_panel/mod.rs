@@ -22,14 +22,19 @@ use crate::theme::{Theme, theme as T};
 use crate::ui::{icon, icon_hover, spinner};
 
 /// Flattened psp row model (one virtual list over all rows).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PspRow {
     Title,
     Project(usize),
     Session { p: usize, s: usize },
     /// 空项目展开时的「无会话」占位
     Empty,
+    /// 「显示更多」行（key = 组 ws_key；Flat 模式用全局键）
+    More { key: String },
 }
+
+/// 每页显示的会话标签数（学 zcode：「显示更多」每次续一页）
+const PSP_PAGE: usize = 10;
 
 pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
     let mut rows = vec![PspRow::Title];
@@ -37,14 +42,24 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
         ListMode::Grouped => {
             for (pi, g) in chat.projects.iter().enumerate() {
                 rows.push(PspRow::Project(pi));
-                if chat.collapsed_keys.contains(&same_ws_key(&g.path.to_string_lossy())) {
+                let key = same_ws_key(&g.path.to_string_lossy());
+                if chat.collapsed_keys.contains(&key) {
                     continue;
                 }
                 if g.sessions.is_empty() {
                     rows.push(PspRow::Empty);
                 } else {
-                    for si in 0..g.sessions.len() {
+                    let shown = chat
+                        .psp_shown
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(PSP_PAGE)
+                        .min(g.sessions.len());
+                    for si in 0..shown {
                         rows.push(PspRow::Session { p: pi, s: si });
+                    }
+                    if g.sessions.len() > shown {
+                        rows.push(PspRow::More { key });
                     }
                 }
             }
@@ -63,7 +78,14 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
                     mb.cmp(&ma)
                 });
             }
+            let key = "__flat__".to_string();
+            let shown = chat.psp_shown.get(&key).copied().unwrap_or(PSP_PAGE);
+            let total = all.len();
+            all.truncate(shown);
             all.into_iter().for_each(|(p, s)| rows.push(PspRow::Session { p, s }));
+            if total > shown {
+                rows.push(PspRow::More { key });
+            }
         }
     }
     rows
@@ -114,8 +136,8 @@ impl Chat {
                 _ => newest(b).cmp(&newest(a)),
             }
         });
-        let n = crate::services::workspace::project_count();
-        groups.truncate(n);
+        // v60: 加载单位是会话（设置.默认加载会话数）——组由这批会话的
+        // cwd 自然形成，不再按项目数截断
         self.projects = groups;
         self.sync_current_sessions();
     }
@@ -171,7 +193,7 @@ pub(crate) fn psp_view(
         .child(title_row(chat, &weak, t));
     let rows: Vec<gpui::AnyElement> = psp_rows(chat)
         .into_iter()
-        .filter(|row| *row != PspRow::Title)
+        .filter(|row| !matches!(row, PspRow::Title))
         .map(|row| match row {
             PspRow::Project(pi) => project_row(chat, pi, &weak, t),
             PspRow::Session { p, s } => session_row_view(chat, p, s, &weak, t, window, cx),
@@ -179,10 +201,31 @@ pub(crate) fn psp_view(
                 .id("psp-empty")
                 .pl(px(45.))
                 .py(px(5.5))
-                .text_size(px(12.5))
+                .text_size(crate::appearance::ui_size(12.5))
                 .text_color(rgb(t.text_dim))
                 .child(tr("无会话"))
                 .into_any_element(),
+            PspRow::More { key } => {
+                let weak_more = weak.clone();
+                let key_more = key.clone();
+                div()
+                    .id(SharedString::from(format!("psp-more-{key}")))
+                    .pl(px(45.))
+                    .py(px(5.5))
+                    .text_size(crate::appearance::ui_size(12.5))
+                    .text_color(rgb(t.text_dim))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(rgb(t.text)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let key = key_more.clone();
+                        let _ = weak_more.update(cx, |chat, cx| {
+                            *chat.psp_shown.entry(key).or_insert(PSP_PAGE) += PSP_PAGE;
+                            cx.notify();
+                        });
+                    })
+                    .child(tr("显示更多"))
+                    .into_any_element()
+            }
             PspRow::Title => div().into_any_element(),
         })
         .collect();
@@ -266,7 +309,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
         .pl(px(10.))
         .pr(px(10.))
 
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(rgb(t.text_soft))
         .child(div().flex_1().child(SharedString::from(label)))
@@ -454,7 +497,8 @@ fn project_row(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_size(px(13.))
+                // 项目标签 = 面板设置值（字体大小设置.md §1）
+                .text_size(crate::appearance::ui_size(12.))
                 .font_weight(if active {
                     gpui::FontWeight::SEMIBOLD
                 } else {
@@ -732,7 +776,8 @@ fn session_row_view(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .font_family(panel_family)
-                .text_size(px(13.))
+                // 会话标签 = 面板设置值（字体大小设置.md §1）
+                .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text))
                 .child(title)
                 .when(title_overflows, |d| {
@@ -757,7 +802,7 @@ fn session_row_view(
                 .flex()
                 .items_center()
                 .justify_end()
-                .text_size(px(11.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(crate::services::format::fmt_ago(
                     info.modified,

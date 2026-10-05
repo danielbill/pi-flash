@@ -37,7 +37,7 @@ impl Chat {
     /// Provider ids in available-models display order.
     pub(crate) fn mc_provider_ids(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for m in &self.available_models {
+        for m in self.models_for(&self.cwd) {
             if !out.contains(&m.provider) {
                 out.push(m.provider.clone());
             }
@@ -45,18 +45,92 @@ impl Chat {
         out
     }
 
-    /// Re-read pi config + resources (called on open and after writes).
-    pub(crate) fn reload_settings_panel(&mut self) {
+    /// Re-read the model-related settings.json defaults a new session starts
+    /// with (pi-web /api/models `defaultModel`/`defaultThinkingLevel` inputs).
+    /// Cheap (one settings.json read) — also called at startup, not just when
+    /// the settings panel is open.
+    pub(crate) fn reload_model_defaults(&mut self) {
         let settings_path = pi_link::config::settings_path();
         self.mc_patterns =
             pi_link::config::read_enabled_models(&settings_path).unwrap_or_else(|_| None);
         let project = pi_link::config::project_settings_path(&self.cwd);
         self.mc_project_scope =
             pi_link::config::read_enabled_models(&project).unwrap_or_else(|_| None).is_some();
-        self.mc_creds = pi_link::config::read_credential_kinds(&pi_link::config::auth_path())
-            .unwrap_or_default();
+        self.mc_default_model = pi_link::config::read_default_model(&settings_path);
+        self.mc_default_thinking = pi_link::config::read_default_thinking_level(&settings_path);
+        self.mc_model_thinking = pi_link::config::read_model_thinking_levels(&settings_path);
         self.mc_state =
             models_config::compute_state(self.mc_patterns.as_ref(), &self.mc_refs());
+    }
+
+    /// Initial model + thinking level for a NEW session (pi
+    /// `selectInitialModelScope` parity): settings default model when it is in
+    /// the enabledModels scope, else the scope's first model; thinking = scope
+    /// pin (`pattern:level`) > per-model record > global default > None (the
+    /// composer shows "auto"). An explicit draft pick (pending_model) wins and
+    /// is applied by the caller before this.
+    pub(crate) fn new_session_default(&self) -> (Option<(String, String)>, Option<String>) {
+        let catalog = self.models_for(&self.cwd);
+        let in_scope = |m: &pi_link::protocol::ModelInfo| {
+            self.mc_state.all_enabled
+                || {
+                    let r = format!("{}/{}", m.provider, m.id);
+                    self.mc_state.enabled.iter().any(|e| e == &r)
+                }
+        };
+        // pi: patterns that resolve to nothing fall back to every model
+        let scope: Vec<&pi_link::protocol::ModelInfo> = {
+            let scoped: Vec<_> = catalog.iter().filter(|m| in_scope(m)).collect();
+            if scoped.is_empty() { catalog.iter().collect() } else { scoped }
+        };
+        let default = self
+            .mc_default_model
+            .as_ref()
+            .and_then(|(p, id)| {
+                scope
+                    .iter()
+                    .find(|m| m.provider == *p && m.id == *id)
+                    .map(|m| (m.provider.clone(), m.id.clone()))
+            })
+            .or_else(|| {
+                scope
+                    .first()
+                    .map(|m| (m.provider.clone(), m.id.clone()))
+            });
+        let thinking = default.as_ref().and_then(|(p, id)| {
+            let r = format!("{p}/{id}");
+            self.mc_state
+                .pins
+                .iter()
+                .find(|(pr, _)| pr == &r)
+                .map(|(_, l)| l.clone())
+                .or_else(|| {
+                    self.mc_model_thinking
+                        .iter()
+                        .find(|(pr, _)| pr == &r)
+                        .map(|(_, l)| l.clone())
+                })
+        }).or_else(|| self.mc_default_thinking.clone());
+        (default, thinking)
+    }
+
+    /// Display name of one catalog model ("name", falling back to
+    /// `provider/id` for models the catalog hasn't listed).
+    pub(crate) fn model_display_name(&self, provider: &str, id: &str) -> String {
+        self.models_for(&self.cwd)
+            .iter()
+            .find(|m| m.provider == provider && m.id == id)
+            .map(|m| m.label())
+            .unwrap_or_else(|| format!("{provider}/{id}"))
+    }
+
+    /// Re-read pi config + resources (called on open and after writes).
+    pub(crate) fn reload_settings_panel(&mut self) {
+        self.reload_model_defaults();
+        let settings_path = pi_link::config::settings_path();
+        let project = pi_link::config::project_settings_path(&self.cwd);
+        self.mc_creds = pi_link::config::read_credential_kinds(&pi_link::config::auth_path())
+            .unwrap_or_default();
         // skills (DefaultResourceLoader dir subset)
         let settings_value =
             pi_link::config::read_json(&settings_path).unwrap_or_else(|_| serde_json::json!({}));
@@ -274,7 +348,7 @@ fn mc_models_sidebar(
         .children(provider_ids.iter().map(|p| {
             let active = *p == selected;
             let models: Vec<&pi_link::protocol::ModelInfo> = chat
-                .available_models
+                .models_for(&chat.cwd)
                 .iter()
                 .filter(|m| &m.provider == p)
                 .collect();
@@ -297,7 +371,7 @@ fn mc_models_sidebar(
                 .flex()
                 .items_center()
                 .gap_2()
-                .text_size(px(12.))
+                .text_size(crate::appearance::ui_size(12.))
                 .cursor_pointer()
                 .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
                 .font_weight(if active {
@@ -337,7 +411,7 @@ fn mc_models_sidebar(
                 .child(if enabled < total {
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(10.))
+                        .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!("{enabled}/{total}")))
                         .into_any_element()
@@ -363,7 +437,7 @@ fn mc_models_detail(
 ) -> gpui::AnyElement {
     // ---- detail pane -----------------------------------------------------
     let models: Vec<pi_link::protocol::ModelInfo> = chat
-        .available_models
+        .models_for(&chat.cwd)
         .iter()
         .filter(|m| m.provider == selected)
         .cloned()
@@ -381,7 +455,7 @@ fn mc_models_detail(
         .h_full()
         .overflow_y_scroll()
         .p(px(20.))
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .flex()
         .flex_col()
         .gap_4();
@@ -402,7 +476,7 @@ fn mc_models_detail(
             .min_h(px(28.))
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(crate::appearance::ui_size(13.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(selected.clone())),
@@ -410,7 +484,7 @@ fn mc_models_detail(
             .child(div().size(px(7.)).rounded_full().bg(rgb(status_color)))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(status_text.to_string())),
             ),
@@ -425,7 +499,7 @@ fn mc_models_detail(
                 .rounded(px(5.))
                 .border_1()
                 .border_color(rgb(0xef4444))
-                .text_size(px(11.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(0xef4444))
                 .child(SharedString::from(err.clone())),
         )
@@ -446,14 +520,14 @@ fn mc_models_detail(
                 .gap(px(5.))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(rgb(t.text_muted))
                         .child(tr("凭据")),
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(tr("登录凭据存储于 ~/.pi/agent/auth.json（与 pi 共用）")),
                 )
@@ -468,7 +542,7 @@ fn mc_models_detail(
                         .border_1()
                         .border_color(rgb(0xef4444))
                         .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(0xef4444))
                         .cursor_pointer()
                         .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
@@ -492,7 +566,7 @@ fn mc_models_detail(
                 .gap(px(5.))
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(rgb(t.text_muted))
                         .child("API Key"),
@@ -518,7 +592,7 @@ fn mc_models_detail(
                                 .rounded(px(5.))
                                 .border_1()
                                 .border_color(rgb(t.border))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_muted))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -556,7 +630,7 @@ fn mc_models_detail(
                                 .border_1()
                                 .border_color(rgb(t.accent))
                                 .bg(rgb(t.accent))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(rgb(t.accent_contrast))
                                 .cursor_pointer()
@@ -587,7 +661,7 @@ fn mc_models_detail(
                                 .border_1()
                                 .border_color(rgb(0xef4444))
                                 .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(0xef4444))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
@@ -604,7 +678,7 @@ fn mc_models_detail(
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(tr("密钥写入 ~/.pi/agent/auth.json（与 pi 共用）；新 provider 的模型需重启 pi-flash 后出现在列表")),
                 ),
@@ -643,7 +717,7 @@ fn mc_model_rows(
                 .gap_2()
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .text_size(crate::appearance::ui_size(13.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
                         .child(tr("已启用模型")),
@@ -652,7 +726,7 @@ fn mc_model_rows(
                     div()
                         .flex_grow()
                         .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(10.))
+                        .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!(
                             "{}/{}",
@@ -670,7 +744,7 @@ fn mc_model_rows(
                         .rounded(px(5.))
                         .border_1()
                         .border_color(rgb(t.border))
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_muted))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -694,7 +768,7 @@ fn mc_model_rows(
                         .rounded(px(5.))
                         .border_1()
                         .border_color(rgb(t.border))
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_muted))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -712,7 +786,7 @@ fn mc_model_rows(
         if chat.mc_project_scope {
             section_col = section_col.child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("项目级 settings.json 覆盖了 enabledModels，此面板只读")),
             );
@@ -735,7 +809,7 @@ fn mc_model_rows(
             list = list.child(
                 div()
                     .p(px(12.))
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .child(tr("没有匹配的模型")),
             );
@@ -766,7 +840,7 @@ fn mc_model_rows(
                             .flex_col()
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(crate::appearance::ui_size(11.))
                                     .text_color(rgb(t.text))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
@@ -776,7 +850,7 @@ fn mc_model_rows(
                             .child(
                                 div()
                                     .font_family(crate::markdown::MONO_FAMILY)
-                                    .text_size(px(10.))
+                                    .text_size(crate::appearance::ui_size(10.))
                                     .text_color(rgb(t.text_dim))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
@@ -799,7 +873,7 @@ fn mc_model_rows(
                             .py(px(1.))
                             .rounded(px(3.))
                             .bg(gpui::hsla(0.63, 0.86, 0.62, 0.12))
-                            .text_size(px(9.))
+                            .text_size(crate::appearance::ui_size(9.))
                             .text_color(gpui::hsla(0.63, 0.86, 0.62, 0.8))
                             .child(SharedString::from(p))
                     }))

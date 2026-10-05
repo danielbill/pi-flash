@@ -58,7 +58,7 @@ pub(crate) fn view(
                         .pl(px(14.))
                         .pr(px(4.))
                         .py(px(5.))
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text_soft))
                         .overflow_hidden()
@@ -84,7 +84,7 @@ pub(crate) fn view(
                 .flex_shrink_0()
                 .px_3()
                 .py_1()
-                .text_xs()
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.danger))
                 .child(SharedString::from(err.clone())),
         );
@@ -92,7 +92,8 @@ pub(crate) fn view(
     col
 }
 
-/// 连体 tab：激活 = bg 填充 + 边框（底无边）+ 顶圆角 + 压底线，11.5px。
+/// 连体 tab：激活 = bg 填充 + 边框（底无边）+ 顶圆角 + 压底线。
+/// git 面板全部文字 = 面板设置值 -1（字体大小设置.md §1）。
 fn git_tab(
     tab: GitTab,
     label: &str,
@@ -108,7 +109,7 @@ fn git_tab(
         .pt(px(6.))
         .pb(px(5.))
         .mb(px(-1.))
-        .text_size(px(11.5))
+        .text_size(crate::appearance::ui_size(11.))
         .cursor_pointer()
         .when(active, |d| {
             d.bg(rgb(t.bg))
@@ -219,7 +220,7 @@ fn changes_body(
                         .px(px(6.))
                         .py(px(3.))
                         .rounded(px(6.))
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_muted))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
@@ -253,7 +254,7 @@ fn changes_body(
                         .border_1()
                         .border_color(rgb(t.border))
                         .bg(rgb(t.bg))
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -297,7 +298,7 @@ fn changes_body(
                         .flex()
                         .items_center()
                         .gap(px(7.))
-                        .text_size(px(12.5))
+                        .text_size(crate::appearance::ui_size(11.))
                         .child(icon("git-branch", 14., t.text_muted))
                         .child(SharedString::from(branch))
                         .child(
@@ -313,7 +314,7 @@ fn changes_body(
                                 .border_1()
                                 .border_color(rgb(t.border))
                                 .bg(rgb(t.bg))
-                                .text_size(px(12.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -347,7 +348,7 @@ fn changes_body(
                                 .border_1()
                                 .border_color(rgb(t.border))
                                 .bg(rgb(t.bg))
-                                .text_size(px(12.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -374,7 +375,7 @@ fn changes_body(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_size(px(12.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_muted))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -418,7 +419,7 @@ fn section(chat: &Chat, weak: gpui::WeakEntity<Chat>, t: &'static Theme) -> gpui
         return div()
             .px(px(8.))
             .py(px(6.))
-            .text_size(px(12.))
+            .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text_dim))
             .child(tr("工作区干净"))
             .into_any_element();
@@ -448,7 +449,7 @@ fn collect_rows(
                         .gap(px(8.))
                         .pl(px(8. + depth as f32 * 14.))
                         .py(px(4.5))
-                        .text_size(px(12.5))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text))
                         .child(icon_hover("folder-open", 15., t.text_muted))
                         .child(SharedString::from(name.clone()))
@@ -477,7 +478,7 @@ fn collect_rows(
                         .pl(px(8. + depth as f32 * 14.))
                         .pr(px(8.))
                         .py(px(4.5))
-                        .text_size(px(12.5))
+                        .text_size(crate::appearance::ui_size(11.))
                         .cursor_pointer()
                         .when(selected, |d| {
                             d.bg(rgb(t.bg_hover))
@@ -560,7 +561,7 @@ fn history_body(
             div()
                 .px(px(8.))
                 .py(px(6.))
-                .text_size(px(12.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
                 .child(tr("暂无提交")),
         );
@@ -588,7 +589,7 @@ fn history_body(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_size(px(12.5))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -622,7 +623,7 @@ fn history_body(
                         .gap(px(6.))
                         .mt(px(4.))
                         .pl(px(2.))
-                        .text_size(px(11.5))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(div().size(px(12.)).rounded_full().border_1().border_color(rgb(t.border)).bg(rgb(t.bg)))
                         .child(meta),

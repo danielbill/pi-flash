@@ -11,7 +11,7 @@ use crate::Chat;
 use crate::i18n::{tf, tr};
 use crate::markdown;
 use crate::theme;
-use crate::ui::{icon, icon_hover};
+use crate::ui::icon;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Role {
@@ -138,6 +138,26 @@ impl Msg {
             .collect::<Vec<_>>()
             .join("")
     }
+
+    /// 文本前缀（导航面板摘要专用）：拼够 max_chars 个字符即停，避免为
+    /// 截断摘要把整条长回复全量拼接一遍（nav 每帧都取，长程任务会话里
+    /// 全量 join 的成本随回复长度线性涨）
+    pub(crate) fn plain_text_prefix(&self, max_chars: usize) -> String {
+        let mut out = String::new();
+        let mut taken = 0usize;
+        for b in &self.blocks {
+            if let Block::Text { text, .. } = b {
+                for ch in text.chars() {
+                    if taken >= max_chars {
+                        return out;
+                    }
+                    out.push(ch);
+                    taken += 1;
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Per-message display metadata (pi-web ChatWindow renderMessage parity):
@@ -259,7 +279,8 @@ pub(crate) fn render_block(
                 .border_color(rgb(t.border))
                 .bg(rgb(t.bg))
                 .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(px(11.))
+                // 思考块字号 = 会话字号 -2（字体大小设置.md §2；族保持等宽）
+                .text_size(crate::appearance::sess_size(-2.))
                 .line_height(relative(1.5))
                 .child(toggle);
             if expanded {
@@ -478,7 +499,8 @@ fn render_tool_card(
         .py(px(6.))
         .min_w_0()
         .flex_1()
-        .text_size(px(12.))
+        // 工具执行内容字号 = 会话字号 -2（字体大小设置.md §2）
+        .text_size(crate::appearance::sess_size(-2.))
         .text_color(rgb(t.text_muted))
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -495,7 +517,7 @@ fn render_tool_card(
             div()
                 .flex_shrink_0()
                 .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(px(11.))
+                .text_size(crate::appearance::sess_size(-3.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(name_c))
                 .child(SharedString::from(name.to_string())),
@@ -508,7 +530,7 @@ fn render_tool_card(
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(px(11.))
+                .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(preview)),
         );
@@ -516,7 +538,7 @@ fn render_tool_card(
         head = head.child(
             div()
                 .flex_shrink_0()
-                .text_size(px(11.))
+                .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(format!("{d}s"))),
         );
@@ -546,7 +568,7 @@ fn render_tool_card(
         .w_full()
         .rounded(px(7.))
         .overflow_hidden()
-        .text_size(px(12.))
+        .text_size(crate::appearance::sess_size(-2.))
         .border_1()
         .border_color(gpui::rgba(border_c))
         .bg(gpui::rgba(bg_c))
@@ -562,7 +584,7 @@ fn render_tool_card(
                 .px(px(10.))
                 .py(px(8.))
                 .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(px(12.))
+                .text_size(crate::appearance::sess_size(-2.))
                 .line_height(relative(1.5))
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(tool_args_display(args, args_partial))),
@@ -617,7 +639,7 @@ fn alert_box(text: String, color: u32, border_rgb: u32, _t: &theme::Theme) -> gp
         .bg(gpui::rgba(rgba_a(border_rgb, 0.07)))
         .text_color(rgb(color))
         .font_family(crate::markdown::MONO_FAMILY)
-        .text_size(px(12.))
+        .text_size(crate::appearance::ui_size(12.))
         .line_height(relative(1.5))
         .child(SharedString::from(text))
         .into_any_element()
@@ -709,7 +731,7 @@ pub(crate) fn render_custom_msg(
                 div()
                     .italic()
                     .text_color(rgb(t.text_muted))
-                    .text_size(px(13.))
+                    .text_size(crate::appearance::ui_size(13.))
                     .mb(px(4.))
                     .child(SharedString::from(tr(
                         "*此对话曾短暂探索另一分支后返回，摘要如下：*",
@@ -744,12 +766,12 @@ pub(crate) fn render_custom_msg(
                     .border_color(rgb(t.border))
                     .bg(rgb(t.bg))
                     .opacity(0.82)
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_muted))
                     .child(
                         div()
                             .font_family(crate::markdown::MONO_FAMILY)
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .child(SharedString::from(if custom_type.is_empty() {
                                 "extension".to_string()
                             } else {
@@ -789,7 +811,7 @@ pub(crate) fn render_custom_msg(
                         .child(
                             div()
                                 .font_family(crate::markdown::MONO_FAMILY)
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .child(SharedString::from(if custom_type.is_empty() {
                                     "extension".to_string()
                                 } else {
@@ -838,13 +860,13 @@ fn render_compaction_card(
                 .child(
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(11.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .child(SharedString::from("compaction")),
                 )
                 .child(
                     div()
                         .ml_auto()
-                        .text_size(px(10.))
+                        .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(
                             m.ts.map(crate::services::format::fmt_msg_time).unwrap_or_default(),
@@ -861,7 +883,7 @@ fn render_compaction_card(
         .pb(px(12.))
         .child(
             div()
-                .text_size(px(15.))
+                .text_size(crate::appearance::ui_size(15.))
                 .font_weight(FontWeight::BOLD)
                         .line_height(relative(1.35))
                         .text_color(rgb(t.text))
@@ -871,7 +893,7 @@ fn render_compaction_card(
                     div()
                         .mt(px(3.))
                         .mb(px(10.))
-                        .text_size(px(14.))
+                        .text_size(crate::appearance::ui_size(14.))
                         .line_height(relative(1.5))
                         .text_color(rgb(t.text))
                         .child(SharedString::from(tr(
@@ -880,7 +902,7 @@ fn render_compaction_card(
                 )
                 .child(if body.is_empty() {
                     div()
-                        .text_size(px(12.))
+                        .text_size(crate::appearance::ui_size(12.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(tr("（无摘要）")))
                         .into_any_element()
@@ -941,7 +963,7 @@ fn render_compaction_card(
                     .child(
                         div()
                             .min_w_0()
-                            .text_size(px(12.))
+                            .text_size(crate::appearance::ui_size(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .line_height(relative(1.4))
                             .text_color(rgb(t.text_muted))
@@ -970,7 +992,7 @@ fn render_compaction_card(
                     .children(files.iter().map(|f| {
                         div()
                             .font_family(crate::markdown::MONO_FAMILY)
-                            .text_size(px(11.))
+                            .text_size(crate::appearance::ui_size(11.))
                             .line_height(relative(1.45))
                             .text_color(rgb(t.text_muted))
                             .child(SharedString::from(f.clone()))
@@ -983,7 +1005,7 @@ fn render_compaction_card(
                         .child(
                             div()
                                 .mb(px(4.))
-                                .text_size(px(11.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(rgb(t.text))
                                 .child(SharedString::from(tr(title))),
@@ -1142,7 +1164,7 @@ fn paired_result(
         .px(px(10.))
         .py(px(8.))
         .font_family(crate::markdown::MONO_FAMILY)
-        .text_size(px(12.))
+        .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.5))
         .when(empty, |d| d.italic().text_color(rgb(t.text_dim)).opacity(0.6))
         .when(!empty && is_error, |d| d.text_color(rgb(0xf87171)))
@@ -1176,14 +1198,14 @@ fn result_images(
         let Some(format) = mime_to_image_format(&data.mime) else {
             continue;
         };
-        let Ok(bytes) = decode_image_data(&data.data) else {
+        let Ok(image) = decode_image_cached(&data.data, format) else {
             continue;
         };
-        if bytes.len() > MAX_IMAGE_BYTES {
+        if image.bytes.len() > MAX_IMAGE_BYTES {
             continue;
         }
         wrap = wrap.child(
-            gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
+            gpui::img(image)
                 .max_w(px(720.))
                 .max_h(px(520.))
                 .rounded(px(6.))
@@ -1215,6 +1237,44 @@ fn decode_image_data(data: &str) -> Result<Vec<u8>, ()> {
         .map_err(|_| ())
 }
 
+// 解码缓存：List 每帧重建元素树，同一张 base64 图每帧重走 base64 解码 +
+// `Image::from_bytes` 的内容哈希（几百 KB 数据 = ms 级），滚动/流式时纯浪费。
+// key = (哈希, 长度, 格式)，命中全等校验防碰撞；线程局部 VecDeque 当 LRU。
+thread_local! {
+    static IMAGE_DECODE_CACHE: std::cell::RefCell<
+        std::collections::VecDeque<
+            ((u64, usize, u8), (String, Result<std::sync::Arc<gpui::Image>, ()>)),
+        >,
+    > = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+const IMAGE_DECODE_CACHE_CAP: usize = 64;
+
+/// base64 → [`gpui::Image`]（带每进程缓存；Err 结果同样入缓存，坏数据不反复重试）
+pub(crate) fn decode_image_cached(
+    data: &str,
+    format: gpui::ImageFormat,
+) -> Result<std::sync::Arc<gpui::Image>, ()> {
+    let key = (crate::markdown::hash_str(data), data.len(), format as u8);
+    IMAGE_DECODE_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(pos) = cache.iter().rposition(|(k, _)| *k == key) {
+            let entry = cache.remove(pos).expect("pos 来自刚才的迭代");
+            if entry.1 .0.as_str() == data {
+                let image = entry.1 .1.clone();
+                cache.push_back(entry); // 刷新到队尾（LRU）
+                return image;
+            }
+        }
+        let decoded = decode_image_data(data)
+            .map(|bytes| std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)));
+        cache.push_back((key, (data.to_string(), decoded.clone())));
+        if cache.len() > IMAGE_DECODE_CACHE_CAP {
+            cache.pop_front();
+        }
+        decoded
+    })
+}
+
 /// pi-web SplitFilesView：双栏 split diff，maxHeight 560 滚动；多文件时
 /// 显示文件头（pi-web sticky 头在 gpui 无对应，退化为普通行）。
 fn split_files_view(files: &[crate::session::diff::DiffFile], t: &theme::Theme) -> gpui::AnyElement {
@@ -1226,7 +1286,7 @@ fn split_files_view(files: &[crate::session::diff::DiffFile], t: &theme::Theme) 
         .overflow_y_scroll()
         .min_w_0()
         .font_family(crate::markdown::MONO_FAMILY)
-        .text_size(px(12.))
+        .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.55));
     for (fix, file) in files.iter().enumerate() {
         let mut fcol = div().min_w_0();
@@ -1365,7 +1425,7 @@ fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement {
         .overflow_y_scroll()
         .min_w_0()
         .font_family(crate::markdown::MONO_FAMILY)
-        .text_size(px(12.))
+        .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.55))
         .children(text.lines().enumerate().map(|(i, line)| {
             let kind = if line.starts_with("@@") {
@@ -1443,6 +1503,39 @@ pub(crate) fn skill_expansion_to_command(text: &str) -> Option<String> {
     })
 }
 
+/// 操作栏悬停显影的**唯一**接线：用户消息行与 agent 轮块都走它，不许各写
+/// 一段内联 `on_hover`（两套写法必然分叉，见下）。
+///
+/// 状态 = [`Chat::bar_hover`]：单个 `Option<usize>`，存该行在列表里的索引
+/// （用户行 = 消息索引，agent 轮 = 轮首消息索引；两者角色不同，索引永不撞车）。
+///
+/// **为什么必须统一且小心后代遮挡**：gpui `Window::hit_test` 命中
+/// `HitboxBehavior::BlockMouse`（即 `div().occlude()`）就 `break`，插入更早
+/// 的 hitbox（**祖先全部**）连 `ids` 都进不去，`hitbox.is_hovered()` 恒
+/// false。用户气泡曾挂 `occlude()`（本意「禁止鼠标透传到下层消息」），于是
+/// 鼠标停在气泡上时行级 on_hover 永不触发、操作栏不显影；agent 轮块没有遮挡
+/// 后代，一切正常——这就是「同一种行为两处表现」的根因。
+///
+/// 挂在**有 id 的行**上（用户行 `msgrow-*` / 轮块 `turn-*`），故要
+/// `StatefulInteractiveElement`：`on_hover` 在它上面，不在裸 `InteractiveElement`。
+/// 回归锁见本文件测试模块 `bar_hover_hit_test`（正反两侧）。
+fn bar_hover_wired<E: StatefulInteractiveElement>(
+    el: E,
+    weak: &gpui::WeakEntity<Chat>,
+    ix: usize,
+) -> E {
+    let weak = weak.clone();
+    el.on_hover(move |hovered, _, cx| {
+        let _ = weak.update(cx, |c, cx| {
+            let next = if *hovered { Some(ix) } else { None };
+            if c.bar_hover != next {
+                c.bar_hover = next;
+                cx.notify();
+            }
+        });
+    })
+}
+
 pub(crate) fn render_msg(
     m: &Msg,
     msg_ix: usize,
@@ -1456,8 +1549,8 @@ pub(crate) fn render_msg(
     // Some(est_tokens) 仅当此消息是流式中的最后一条（工作中回复）
     _stream_info: Option<u64>,
     _meta: MsgMeta,
-    // copy flash for this row (032 复制 → 已复制, 1.5s)
-    copied: bool,
+    // 操作栏悬停显影（Chat.bar_hover，pi-web hovered state parity）
+    bar_revealed: bool,
 ) -> gpui::Div {
     // pi-web 消息间距 marginBottom 16（v 此前 22 偏大）
     let mut col = div().w_full().mb(px(16.)).flex().flex_col();
@@ -1482,9 +1575,7 @@ pub(crate) fn render_msg(
             for (bi, b) in m.blocks.iter().enumerate() {
                 if let Block::Image { mime, data, .. } = b {
                     if let Some(format) = mime_to_image_format(mime) {
-                        if let Ok(bytes) = decode_image_data(data) {
-                            let image =
-                                std::sync::Arc::new(gpui::Image::from_bytes(format, bytes));
+                        if let Ok(image) = decode_image_cached(data, format) {
                             let image_for_open = image.clone();
                             let weak_open = weak.clone();
                             thumbs.push(
@@ -1564,7 +1655,7 @@ pub(crate) fn render_msg(
                             .gap(px(6.))
                             .flex_shrink_0()
                             .font_family(crate::markdown::MONO_FAMILY)
-                            .text_size(px(13.))
+                            .text_size(crate::appearance::ui_size(13.))
                             .text_color(rgb(t.accent))
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.85))
@@ -1585,7 +1676,7 @@ pub(crate) fn render_msg(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_size(px(14.))
+                                .text_size(crate::appearance::ui_size(14.))
                                 .text_color(rgb(t.text))
                                 .child(SharedString::from(cmd_args)),
                         )
@@ -1613,13 +1704,15 @@ pub(crate) fn render_msg(
             (h, st)
         };
 
+        // 操作栏 act（主界面UI设计-2.html .msg-actions）：图标 12 + 文字
+        // gap 4。图标用 icon()（工具卡同款 gpui::svg+显式色，唯一被证明
+        // 在列表内稳定渲染的路径；svg 上的 group_hover 会让 copy.svg 丢失）
         let action = |id: String, icon_name: &'static str, label: &'static str| {
             div()
                 .id(SharedString::from(id))
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .text_size(px(11.5))
                 .text_color(rgb(t.text_dim))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(t.text)))
@@ -1627,20 +1720,18 @@ pub(crate) fn render_msg(
                 .child(SharedString::from(tr(label)))
         };
 
-        let mut actions = div().flex().items_center().gap(px(12.));
-        let copy_pill = if copied {
-            action(format!("copy-{msg_ix}"), "check", "已复制").text_color(rgb(t.accent))
-        } else {
-            action(format!("copy-{msg_ix}"), "copy", "复制")
-        }
+        // 栏字号 11.5（ui_size）
+        let mut actions = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .text_size(crate::appearance::ui_size(11.5));
+        // 设计稿无「已复制」反馈态：点击即写剪贴板，栏不变
+        let copy_pill = action(format!("copy-{msg_ix}"), "copy", "复制")
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let text = copy_text.clone();
-            let _ = weak_copy.update(cx, |c, cx| {
+            let _ = weak_copy.update(cx, |_c, cx| {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-                c.rt().update(cx, |r, cx| {
-                    r.copy_flash = Some((msg_ix, std::time::Instant::now()));
-                    r.spawn_flash_clear(cx);
-                });
             });
         });
         actions = actions.child(copy_pill);
@@ -1654,6 +1745,8 @@ pub(crate) fn render_msg(
                     });
                 }),
         );
+        // 新分支恒显示（设计稿三 act 齐全）；历史加载的消息无 entry id 时
+        // 点击不动作
         if let Some(eid) = entry.clone() {
             actions = actions.child(
                 action(format!("fork-{msg_ix}"), "git-branch", "新分支")
@@ -1664,46 +1757,47 @@ pub(crate) fn render_msg(
                         });
                     }),
             );
+        } else {
+            actions = actions.child(action(format!("fork-{msg_ix}"), "git-branch", "新分支"));
         }
 
-        // pi-web UserMessageView footer parity（v56-1 c7）：操作按钮 hover
-        // 淡入（自定义豁免），时间戳常显 10px 右对齐
+        // 操作栏（主界面UI设计-2.html .msg-actions）：acts + .when 时间戳
+        // 都在栏内；显影 = 状态驱动（row on_hover → Chat.bar_hover，
+        // pi-web hovered parity），不依赖 group_hover hitbox
         let mut actions_wrap = div()
             .flex()
             .items_center()
             .gap(px(12.))
-            .opacity(if copied { 1. } else { 0. })
-            .group_hover("usermsg", |s| s.opacity(1.))
+            .opacity(if bar_revealed { 1. } else { 0. })
             .child(actions);
-        if copied {
-            actions_wrap = actions_wrap.opacity(1.);
-        }
-        let mut bottom = div()
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap(px(12.))
-            .mt(px(6.))
-            .pr(px(4.))
-            .child(actions_wrap);
         if let Some(ts) = m.ts {
-            bottom = bottom.child(
+            actions_wrap = actions_wrap.child(
                 div()
-                    .text_size(px(10.))
-                    .text_color(rgb(t.text_dim))
+                    .ml(px(4.))
+                    .text_color(rgb(t.text_faint))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }
+        let bottom = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .mt(px(6.))
+            .pr(px(4.))
+            .child(actions_wrap);
         // 纯图片消息（空文本）不渲染空泡；缩略图行在气泡上方
         let has_text = !text.trim().is_empty();
-        let mut row = div()
-            .id(SharedString::from(format!("msgrow-{msg_ix}")))
-            .group("usermsg")
-            .w_full()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(3.));
+        let mut row = bar_hover_wired(
+            div()
+                .id(SharedString::from(format!("msgrow-{msg_ix}")))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(3.)),
+            weak,
+            msg_ix,
+        );
         if let Some(imgs) = image_row {
             row = row.child(imgs);
         }
@@ -1727,7 +1821,11 @@ pub(crate) fn render_msg(
                                     .track_scroll(&scroll_handle)
                                     .flex_1()
                                     .min_w_0()
-                                    .occlude() // 禁止鼠标透传到下层消息
+                                    // 此处**不得** occlude()：gpui hit_test 命中
+                                    // BlockMouse 即 break，会把祖先（本行的
+                                    // bar_hover_wired）一起挡掉 → 鼠标停在气泡上
+                                    // 操作栏永不显影（v62 修复）。滚轮也一并受益：
+                                    // 气泡内滚到底后能继续滚会话列表。
                                     .px(px(12.))
                                     .pr(px(14.))
                                     .py(px(8.))
@@ -1769,7 +1867,6 @@ pub(crate) fn render_msg(
     } else {
         // 单条 assistant（仅当它不构成轮头时才会走到这里——session_list
         // 已把轮渲染收敛到 render_assistant_turn；此分支防御性保留）
-        col = col.group("astat");
         // pi-web 块容器 gap 8（text/thinking/工具卡统一间距）
         let mut blocks_col = div().w_full().flex().flex_col().gap(px(8.));
         for b in &m.blocks {
@@ -1808,37 +1905,12 @@ fn msg_has_answer(m: &Msg) -> bool {
     })
 }
 
-fn usage_line(u: &UsageLine) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    if u.input > 0 {
-        parts.push(format!("{} in", crate::services::format::fmt_thousand(u.input)));
-    }
-    if u.output > 0 {
-        parts.push(format!("{} out", crate::services::format::fmt_thousand(u.output)));
-    }
-    if u.cache_read > 0 {
-        parts.push(format!(
-            "{} cache R",
-            crate::services::format::fmt_thousand(u.cache_read)
-        ));
-    }
-    if u.cache_write > 0 {
-        parts.push(format!(
-            "{} cache W",
-            crate::services::format::fmt_thousand(u.cache_write)
-        ));
-    }
-    if u.cost > 0. {
-        parts.push(format!("${:.4}", u.cost));
-    }
-    (!parts.is_empty()).then(|| parts.join(" · "))
-}
-
 /// 模型名行（pi-web MessageView model label）：模型名 + 流式期间的 ↓token
 /// 估算 + t/s 徽章（四档配色同 pi-web：≥50 青 / ≥30 绿 / ≥15 黄 / 其余红）。
 fn model_label_div(label: &str, est: Option<u64>, tps: Option<f32>, t: &theme::Theme) -> gpui::Div {
+    // agent 名称 = 会话字号 -1（字体大小设置.md §2）
     let mut row = div()
-        .text_size(px(11.))
+        .text_size(crate::appearance::sess_size(-1.))
         .text_color(rgb(t.text_dim))
         .mb(px(4.))
         .flex()
@@ -1874,7 +1946,7 @@ fn model_label_div(label: &str, est: Option<u64>, tps: Option<f32>, t: &theme::T
                     .py(px(1.))
                     .rounded(px(4.))
                     .bg(gpui::rgb(bg))
-                    .text_size(px(11.))
+                    .text_size(crate::appearance::sess_size(-1.))
                     .text_color(rgb(0xffffff))
                     .child(SharedString::from(format!("{v:.1} t/s"))),
             );
@@ -1950,9 +2022,20 @@ pub(crate) fn render_assistant_turn(
     // Some(tps)：流式速度（pi-web 300ms tick 估算，四档配色）
     stream_tps: Option<f32>,
     meta: MsgMeta,
-    copied: bool,
-) -> gpui::Div {
-    let mut col = div().w_full().mb(px(16.)).flex().flex_col().group("astat");
+    // 操作栏悬停显影（Chat.bar_hover，pi-web hovered state parity）
+    bar_revealed: bool,
+) -> gpui::AnyElement {
+    // pi-web onMouseEnter/Leave parity：悬停整轮（无遮挡后代，见 bar_hover_wired）
+    let mut col = bar_hover_wired(
+        div()
+            .id(SharedString::from(format!("turn-{start_ix}")))
+            .w_full()
+            .mb(px(16.))
+            .flex()
+            .flex_col(),
+        weak,
+        start_ix,
+    );
     let is_working = stream_info.is_some();
 
     // pi-web findFinalAssistantIndex：有 answer 连续段的末条 assistant，
@@ -1962,7 +2045,7 @@ pub(crate) fn render_assistant_turn(
         .rposition(|m| m.role == Role::Assistant && msg_has_answer(m))
         .or_else(|| turn.iter().rposition(|m| m.role == Role::Assistant));
     let Some(final_pos) = final_pos else {
-        return col;
+        return col.into_any_element();
     };
     let final_msg = turn[final_pos];
     let final_gix = turn_ixs[final_pos];
@@ -1999,16 +2082,9 @@ pub(crate) fn render_assistant_turn(
     let est = stream_info.filter(|_| is_working);
     let tps = stream_tps.filter(|_| is_working);
     if is_working {
-        return col.child(live_turn_body(
-            turn,
-            turn_ixs,
-            weak,
-            collapsed,
-            t,
-            model_label,
-            est,
-            tps,
-        ));
+        return col
+            .child(live_turn_body(turn, turn_ixs, weak, collapsed, t, model_label, est, tps))
+            .into_any_element();
     }
 
     // ---- 「工作详情」组：全部 assistant 消息的 thinking/toolCall，最终
@@ -2068,7 +2144,8 @@ pub(crate) fn render_assistant_turn(
             .px(px(8.))
             .py(px(4.))
             .ml(px(-8.))
-            .text_size(px(12.))
+            // 工作详情行 = 会话字号（字体大小设置.md §2）
+            .text_size(crate::appearance::sess_size(0.))
             .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .rounded(px(6.))
@@ -2162,7 +2239,7 @@ pub(crate) fn render_assistant_turn(
                     .border_1()
                     .border_color(rgb(t.border))
                     .font_family(crate::markdown::MONO_FAMILY)
-                    .text_size(px(12.))
+                    .text_size(crate::appearance::sess_size(-2.))
                     .text_color(rgb(t.text))
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.text)))
@@ -2178,59 +2255,45 @@ pub(crate) fn render_assistant_turn(
         }
         col = col.child(chips);
     }
-    // token 用量行：只取最终消息（pi-web 中间消息 omitUsage parity）；
-    // 色 = text-dim（pi-web usage 行 var(--text-dim)）
-    if let Some(line) = final_msg.usage.as_ref().and_then(usage_line) {
-        col = col.child(
-            div()
-                .mt(px(2.))
-                .text_size(px(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(line)),
-        );
-    }
-    // hover 操作栏：复制整轮文本 + 用时 + 时间（自定义豁免项）
+    // hover 操作栏（主界面UI设计-2.html .as-stats）：gap 14 / 字号 11.5 /
+    // 复制 = act（图标 12 + gap 4，hover 提亮）；用时、
+    // 时间戳为普通 span（浅一档 text_faint），时间戳在栏内；显影 =
+    // 状态驱动（col on_hover → Chat.bar_hover）。设计稿无计费/用量
+    // 展示 → 不渲染 usage 行（用户定案 v62-3）
     let weak_copy = weak.clone();
     let mut bar = div()
         .flex()
         .items_center()
         .gap(px(14.))
         .mt(px(6.))
-        .text_size(px(11.5))
+        .text_size(crate::appearance::ui_size(11.5))
         .text_color(rgb(t.text_dim))
-        .opacity(0.)
-        .group_hover("astat", |s| s.opacity(1.));
+        .opacity(if bar_revealed { 1. } else { 0. });
     if !turn_text.trim().is_empty() {
-        let mut pill = div()
+        let pill = div()
             .id(SharedString::from(format!("acopy-{start_ix}")))
             .flex()
             .items_center()
             .gap(px(4.))
             .cursor_pointer()
-            .hover(|s| s.text_color(rgb(t.text)));
-        pill = if copied {
-            pill.child(icon_hover("check", 12., t.accent)).child(SharedString::from(tr("已复制")))
-        } else {
-            pill.child(icon_hover("copy", 12., t.text_dim)).child(SharedString::from(tr("复制")))
-        };
-        pill = pill.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let text = turn_text.clone();
-            let _ = weak_copy.update(cx, |c, cx| {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                c.rt().update(cx, |r, cx| {
-                    r.copy_flash = Some((start_ix, std::time::Instant::now()));
-                    r.spawn_flash_clear(cx);
+            .hover(|s| s.text_color(rgb(t.text)))
+            // icon()（工具卡同款显式色 svg）——列表内唯一稳定渲染路径
+            .child(icon("copy", 12., t.text_dim))
+            .child(SharedString::from(tr("复制")))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let text = turn_text.clone();
+                let _ = weak_copy.update(cx, |_c, cx| {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                 });
             });
-        });
         bar = bar.child(pill);
     }
-    // 用时取轮内末条消息（自定义 hover 豁免项）
+    // 用时取轮内末条消息（as-stats 普通 span：浅一档）
     if let Some(last) = turn.last() {
         if let (Some(end), Some(start)) = (last.end_ts, meta.turn_user_ts) {
             bar = bar.child(
                 div()
-                    .text_color(rgb(t.text_dim))
+                    .text_color(rgb(t.text_faint))
                     .child(SharedString::from(format!(
                         "{}{}",
                         tr("用时"),
@@ -2239,22 +2302,18 @@ pub(crate) fn render_assistant_turn(
             );
         }
     }
-    col = col.child(bar);
-    // pi-web parity（c7）：时间戳静态 10px 右下，仅轮尾显示、流式尾部隐藏
+    // 时间戳在栏内（as-stats 普通 span）；流式尾部隐藏
     if !is_working {
         if let Some(ts) = turn.last().and_then(|m| m.ts) {
-            col = col.child(
+            bar = bar.child(
                 div()
-                    .flex()
-                    .justify_end()
-                    .mt(px(2.))
-                    .text_size(px(10.))
-                    .text_color(rgb(t.text_dim))
+                    .text_color(rgb(t.text_faint))
                     .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
             );
         }
     }
-    col
+    col = col.child(bar);
+    col.into_any_element()
 }
 
 /// Convert raw session-file tail entries (`{"type":"message","message":{…}}`,
@@ -2461,5 +2520,99 @@ mod skill_fold_tests {
         assert_eq!(skill_expansion_to_command("<skill name=\"review\" location=\"/path/to/review/SKILL.md\">\nordinary user text"), None);
         assert_eq!(skill_expansion_to_command("<skill name=\"review\" location=\"/path/to/review/SKILL.md\">\nReferences are elsewhere.\n\nbody\n</skill>"), None);
         assert_eq!(skill_expansion_to_command("ordinary user text"), None);
+    }
+}
+
+#[cfg(test)]
+mod bar_hover_hit_test {
+    //! 用户消息行操作栏悬停（v62 修复）的 gpui 几何前提锁。
+    //!
+    //! `bar_hover_wired` 把 on_hover 挂在**整行**上，靠的是「行内后代不遮挡」
+    //! 这条 gpui 语义：`Window::hit_test` 一旦命中 `HitboxBehavior::BlockMouse`
+    //! （`div().occlude()`）就 `break`，被它挡住的祖先 hitbox 连 `ids` 都进不
+    //! 去，`is_hovered()` 恒 false。用户气泡曾挂 `occlude()`，于是鼠标停在气泡
+    //! 上时行级 on_hover 永不触发 → 操作栏不显影；agent 轮块无遮挡后代故一切
+    //! 正常（同一个行为两处表现）。
+    //!
+    //! 两侧都锁：不遮挡 → 行悬停必须触发（线上行为）；遮挡 → 必须被挡掉（gpui
+    //! 现语义；上游若改，这条先炸，提示回来复核用户行实现与上面那段注释）。
+
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{
+        AppContext, Context, IntoElement, Modifiers, ParentElement, Render, Styled, TestAppContext,
+        VisualTestContext, Window, div, point, px, size, prelude::*,
+    };
+
+    /// 迷你复刻用户消息行：row = `bar_hover_wired` 的挂载点，bubble = 气泡本体
+    /// （`bubble_occludes` 开关模拟 v62 前后两种写法）。
+    struct Row {
+        row_hovered: Rc<Cell<usize>>,
+        bubble_hovered: Rc<Cell<usize>>,
+        bubble_occludes: bool,
+    }
+
+    impl Render for Row {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let row = self.row_hovered.clone();
+            let bubble = self.bubble_hovered.clone();
+            let bubble_el = div()
+                .id("bubble")
+                .when(self.bubble_occludes, |d| d.occlude())
+                .w(px(100.))
+                .h(px(40.))
+                .on_hover(move |hovered, _, _| {
+                    if *hovered {
+                        bubble.set(bubble.get() + 1);
+                    }
+                });
+            div()
+                .id("row")
+                .w(px(400.))
+                .h(px(100.))
+                .on_hover(move |hovered, _, _| {
+                    if *hovered {
+                        row.set(row.get() + 1);
+                    }
+                })
+                .child(bubble_el)
+        }
+    }
+
+    /// 画一帧后把指针移到气泡正中，返回 (行 on_hover 次数, 气泡 on_hover 次数)
+    fn hover_bubble(cx: &mut TestAppContext, bubble_occludes: bool) -> (usize, usize) {
+        let window: &mut VisualTestContext = cx.add_empty_window();
+        let row_hovered: Rc<Cell<usize>> = Default::default();
+        let bubble_hovered: Rc<Cell<usize>> = Default::default();
+        let row = row_hovered.clone();
+        let bubble = bubble_hovered.clone();
+        let _ = window.draw(point(px(0.), px(0.)), size(px(400.), px(100.)), move |_, cx| {
+            cx.new(|_| Row {
+                row_hovered: row.clone(),
+                bubble_hovered: bubble.clone(),
+                bubble_occludes,
+            })
+        });
+        window.simulate_mouse_move(point(px(50.), px(20.)), None, Modifiers::none());
+        (row_hovered.get(), bubble_hovered.get())
+    }
+
+    /// 正例（v62 线上行为）：气泡不遮挡 → 行悬停触发 → `Chat.bar_hover` 置位
+    /// → 操作栏显影，与 agent 轮块同构。
+    #[gpui::test]
+    fn bubble_without_occluder_lets_row_hover_fire(cx: &mut TestAppContext) {
+        let (row, bubble) = hover_bubble(cx, false);
+        assert_eq!(bubble, 1, "指针在气泡内，气泡自身必须 hover");
+        assert_eq!(row, 1, "行级 on_hover 必须触发——缺了它操作栏就不显影");
+    }
+
+    /// 反例（v62 之前的线上行为，勿再退化）：气泡挂 `occlude()` → 行 hitbox 被
+    /// 截断在 hit-test 之外 → 行级 on_hover 永不触发 → 操作栏不显影。
+    #[gpui::test]
+    fn bubble_occluder_swallows_row_hover(cx: &mut TestAppContext) {
+        let (row, bubble) = hover_bubble(cx, true);
+        assert_eq!(bubble, 1);
+        assert_eq!(row, 0, "occlude 会连祖先一起截断（gpui 语义若变，此断言先炸）");
     }
 }
