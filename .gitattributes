@@ -1,0 +1,24 @@
+# 统一行尾：仓库（索引）内一律 LF，检出也一律 LF；Windows/macOS 一致
+* text=auto eol=lf
+
+# 明确二进制，避免被当文本做行尾转换
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.bmp   binary
+*.zip   binary
+*.dll   binary
+*.exe   binary
+*.lib   binary
+*.dylib binary
+
+# Windows 批处理：索引 LF、检出 CRLF（cmd 对 CRLF 更稳）
+*.bat text eol=crlf
+*.cmd text eol=crlf
