@@ -19,8 +19,11 @@ tmp/
 *.db
 .beads-credential-key
 .beads/proxieddb/
-dist/
+
+# build / package artifacts
 dist/
 *.zip
-dist/
 *.bmp
+
+# crash dumps
+*.stackdump
