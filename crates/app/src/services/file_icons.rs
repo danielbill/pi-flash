@@ -4,7 +4,8 @@
 //! `assets/icons/file_icons/*.svg`（Zed 同名资产）。
 //!
 //! 去掉的基建：ThemeRegistry/GlobalTheme（本仓只有默认主题这一套）与
-//! settings_content::FolderIndicator（此处内联同款枚举）。
+//! settings_content::FolderIndicator（Zed 默认 icon 模式已够用，chevron
+//! 机制未搬；要加该设置时再从 Zed crates/file_icons 补）。
 //!
 //! 渲染注意：gpui svg 只取 alpha 通道按调用色染色，Zed 这套图标是单色
 //! 线稿（fill/stroke=black），与 `ui::icon` 的染色机制天然契合。
@@ -14,34 +15,6 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use super::paths_sort::{extension_or_hidden_file_name, multiple_extensions};
-
-/// What a panel draws ahead of a directory's name, in render order.
-/// （Zed 全量枚举搬入；渲染走 Default=Icon，Chevron/Both 随设置页启用）
-#[allow(dead_code)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum FolderIndicator {
-    #[default]
-    Icon,
-    Chevron,
-    Both,
-}
-
-impl FolderIndicator {
-    pub fn shows_chevron(&self) -> bool {
-        matches!(self, FolderIndicator::Chevron | FolderIndicator::Both)
-    }
-
-    pub fn shows_icon(&self) -> bool {
-        matches!(self, FolderIndicator::Icon | FolderIndicator::Both)
-    }
-}
-
-/// What a panel draws ahead of a directory's name, in render order.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct FolderIndicators {
-    pub chevron: Option<&'static str>,
-    pub icon: Option<&'static str>,
-}
 
 // ---------------------------------------------------------------------------
 // 主题数据结构 + 默认主题 —— 搬自 Zed crates/theme/src/icon_theme.rs
@@ -56,8 +29,6 @@ pub struct IconTheme {
 /// 为空表，接 named-folder 设置时启用）
 #[allow(dead_code)]
 pub named_directory_icons: HashMap<&'static str, DirectoryIcons>,
-    /// The icons used for chevrons.
-    pub chevron_icons: ChevronIcons,
     /// The mapping of file stems to their associated icon keys.
     pub file_stems: HashMap<&'static str, &'static str>,
     /// The mapping of file suffixes to their associated icon keys.
@@ -72,15 +43,6 @@ pub struct DirectoryIcons {
     /// The path to the icon to use for a collapsed directory.
     pub collapsed: Option<&'static str>,
     /// The path to the icon to use for an expanded directory.
-    pub expanded: Option<&'static str>,
-}
-
-/// The icons used for chevrons.
-#[derive(Debug, Clone)]
-pub struct ChevronIcons {
-    /// The path to the icon to use for a collapsed chevron.
-    pub collapsed: Option<&'static str>,
-    /// The path to the icon to use for an expanded chevron.
     pub expanded: Option<&'static str>,
 }
 
@@ -449,10 +411,6 @@ static DEFAULT_ICON_THEME: LazyLock<IconTheme> = LazyLock::new(|| IconTheme {
         expanded: Some("icons/file_icons/folder_open.svg"),
     },
     named_directory_icons: HashMap::default(),
-    chevron_icons: ChevronIcons {
-        collapsed: Some("icons/file_icons/chevron_right.svg"),
-        expanded: Some("icons/file_icons/chevron_down.svg"),
-    },
     file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
     file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
     file_icons: FILE_ICONS.iter().copied().collect(),
@@ -548,33 +506,9 @@ pub fn get_generic_folder_icon(expanded: bool) -> &'static str {
     }
 }
 
-pub fn get_chevron_icon(expanded: bool) -> &'static str {
-    let icons = &default_icon_theme().chevron_icons;
-    if expanded {
-        icons.expanded.unwrap_or("icons/file_icons/chevron_down.svg")
-    } else {
-        icons.collapsed.unwrap_or("icons/file_icons/chevron_right.svg")
-    }
-}
-
-/// Resolves what a panel should draw ahead of a directory's name. Shared by every
-/// panel that exposes a `folder_indicator` setting so they stay in agreement.
-pub fn get_folder_indicators(indicator: FolderIndicator, expanded: bool) -> FolderIndicators {
-    let chevron = indicator
-        .shows_chevron()
-        .then(|| Some(get_chevron_icon(expanded)))
-        .flatten();
-    let icon = indicator
-        .shows_icon()
-        .then(|| Some(get_generic_folder_icon(expanded)))
-        .flatten();
-
-    FolderIndicators { chevron, icon }
-}
-
 // ---------------------------------------------------------------------------
-// 测试 —— 文件夹指示器测试搬自 file_icons.rs（gpui::test 改纯单测，默认
-// 主题静态可用）；匹配测试按数据表写代表性断言
+// 测试 —— 匹配测试按数据表写代表性断言；目录图标开/闭切换是文件树唯一
+// 的展开态视觉信号（无 chevron），用测试锁住
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -583,50 +517,16 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_folder_indicators_per_setting() {
-        let icon_only = get_folder_indicators(FolderIndicator::Icon, false);
-        assert_eq!(icon_only.chevron, None);
+    fn test_folder_icon_reflects_expanded_state() {
         assert_eq!(
-            icon_only.icon,
-            Some("icons/file_icons/folder.svg"),
-            "`icon` should draw the folder icon and no chevron"
-        );
-
-        let chevron_only = get_folder_indicators(FolderIndicator::Chevron, false);
-        assert_eq!(
-            chevron_only.chevron,
-            Some("icons/file_icons/chevron_right.svg")
+            get_generic_folder_icon(false),
+            "icons/file_icons/folder.svg",
+            "collapsed dir draws the closed folder icon"
         );
         assert_eq!(
-            chevron_only.icon, None,
-            "`chevron` should draw the chevron and no folder icon"
-        );
-
-        let both = get_folder_indicators(FolderIndicator::Both, false);
-        assert_eq!(both.chevron, Some("icons/file_icons/chevron_right.svg"));
-        assert_eq!(both.icon, Some("icons/file_icons/folder.svg"));
-    }
-
-    #[test]
-    fn test_folder_indicators_reflect_expanded_state() {
-        let collapsed = get_folder_indicators(FolderIndicator::Both, false);
-        assert_eq!(
-            collapsed.chevron,
-            Some("icons/file_icons/chevron_right.svg")
-        );
-        assert_eq!(collapsed.icon, Some("icons/file_icons/folder.svg"));
-
-        let expanded = get_folder_indicators(FolderIndicator::Both, true);
-        assert_eq!(expanded.chevron, Some("icons/file_icons/chevron_down.svg"));
-        assert_eq!(expanded.icon, Some("icons/file_icons/folder_open.svg"));
-    }
-
-    #[test]
-    fn test_folder_indicator_default_is_icon() {
-        assert_eq!(
-            get_folder_indicators(FolderIndicator::default(), false),
-            get_folder_indicators(FolderIndicator::Icon, false),
-            "the default must stay `icon` so existing users see no change"
+            get_generic_folder_icon(true),
+            "icons/file_icons/folder_open.svg",
+            "expanded dir draws the open folder icon"
         );
     }
 
