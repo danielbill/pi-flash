@@ -338,11 +338,11 @@ pub(crate) fn input_area(
     let ph: SharedString = if compacting {
         // 压缩期间输入锁死（下方 on_change/on_submit 丢弃变更），用
         // placeholder 文案告知用户系统在做什么
-        tr("上下文压缩中，请稍等……").into()
+        tr("上下文压缩中，请等待……").into()
     } else if streaming {
-        tr("立即引导 / 排队后续消息...").into()
+        tr("ESC打断模型").into()
     } else {
-        tr("/使用命令，shift回车换行").into()
+        tr("/skill，!shell命令，Shift回车换行").into()
     };
     composer.update(cx, |f, _| f.set_placeholder(Some(ph)));
     // 压缩锁：编辑器组件整块不挂载（无焦点/IME/粘贴），显示 placeholder

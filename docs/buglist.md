@@ -1,3 +1,33 @@
+## 待验证（本轮修复）——文件树 / 设置·可用模型列表「滚不动」
+
+用户口径：左边文件树与设置·模型·「可用模型」两处鼠标滚轮毫无反应（截图里模型
+列表停在 Claude Fable 5 起、第一个开关右侧露出半截滚动条 thumb）。
+
+- ✅ 根因：`ui::vlist` **每帧 `UniformListScrollHandle::new()`**。gpui 对这个
+  句柄的契约是「存在视图里、每帧传给 uniform_list」（`uniform_list.rs` 里
+  `UniformListScrollHandle` 的文档原话）——滚动位就挂在该句柄内部的
+  `Rc<RefCell<Point>>`（`base_handle.offset`）上，由 div interactivity 的滚轮
+  监听器写入、uniform_list 每帧 prepaint 再从同一句柄读回来做可见范围计算。
+  每帧新建 = 滚轮写进「上一帧那个已经被扔掉的句柄」→ 下一帧以 0 重画：列表
+  纹丝不动（滚动条 thumb 也永远钉在顶端，因为 offset 恒 0）。三个调用点同源
+  全中：文件树（Fill）、可用模型列表（Capped 360）、字体弹层（Fill）。
+- ✅ 修法：句柄表收进 vlist——`scroll_handle(id)`（thread_local
+  `HashMap<&'static str, UniformListScrollHandle>`，按 id 复用）。本 app 单窗口
+  （`main.rs` 只 `open_window` 一次）+ gpui 渲染单线程，等价于「句柄挂在视图
+  上」，不必让三个调用点各穿一根句柄（字体弹层的渲染闭包拿不到 Chat）。约束：
+  同一 id 同屏只出现一次（现三个 id 互不相同）。
+- ✅ 验证：`cargo test -p app` **115 全绿**，新增 `ui::vlist` 两条——句柄按 id
+  复用（同 id 同一 Rc / 不同 id 不串）、**滚轮 → 下一帧仍按新偏移构建行**的真
+  布局锁（模拟 ScrollWheelEvent 后断言本帧构建的行号集合 = 视口移到了第 3 行）。
+  反证有效：把 `scroll_handle(id)` 改回每帧 `new()`，新测试立刻红
+  （`滚轮偏移必须写进 vlist 复用的句柄: left 0px`）。
+- ⏳ 真机待复验：文件树滚轮上下滚到任意位置不弹回；设置·模型·可用模型列表滚轮
+  滚动 + 右缘 thumb 跟随（可拖拽、轨道翻页）；顺带看字体下拉列表。
+- ⚠️ 附带说明（不是本轮改出来的）：gpui 的滚轮派发给**所有命中的可滚动
+  hitbox**（含祖先），所以设置页里滚列表时页面自身也会同时滚（pi-web 的原生
+  嵌套滚动是先内后外）。要「列表滚到底才带动页面」需要给 vlist 加滚轮
+  拦截（stop_propagation + 到底才放行），等真机手感反馈再定。
+
 ## 待验证（本轮修复）——操作栏「复制」图标不显示
 
 用户口径：操作栏里「编辑」「新分支」图标都在，只有「复制」前面空着。

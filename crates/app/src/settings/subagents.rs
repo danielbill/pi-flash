@@ -305,7 +305,11 @@ impl Chat {
             }
         }
         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let (session, events) = match pi_link::client::spawn(&self.cwd, &arg_refs) {
+        let (session, events) = match pi_link::client::spawn(
+            &self.cwd,
+            &arg_refs,
+            crate::services::workspace::load_extensions_enabled(),
+        ) {
             Ok(pair) => pair,
             Err(e) => {
                 self.mc_set_error(&crate::i18n::tf("子代理启动失败: {e}", &[("e", e)]), cx);

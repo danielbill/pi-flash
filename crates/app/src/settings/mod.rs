@@ -17,7 +17,7 @@ use general::mc_general_view;
 use misc::mc_misc_view;
 
 use super::*;
-pub(crate) use crate::ui::{icon, DropdownState};
+pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
     check_chip, config_button, config_switch, detail_shell, error_note, field, footer, grid_row,
     group_header, group_switch, list_action, mono_text, note, scope_tag, section_title,
@@ -83,12 +83,32 @@ pub(crate) struct SettingsPanel {
     pub size_dd: gpui::Entity<DropdownState>,
 }
 
-/// 建一个 TextInput（面板字段共用的小工厂）。
+/// 建一个 TextInput（面板字段共用的小工厂）。值在保存/应用时才读的
+/// 字段用这个即可。
 fn panel_input(
     placeholder: &'static str,
     cx: &mut gpui::Context<SettingsPanel>,
 ) -> gpui::Entity<TextInput> {
     cx.new(|cx| TextInput::new(cx).placeholder(tr(placeholder)))
+}
+
+/// 建一个「实时」TextInput：每敲一字通知面板重渲染（可用模型筛选、
+/// MCP 添加预览这类边输边变的面板）。不挂 on_change 的输入框能收键，
+/// 但面板拿不到新值快照，UI 纹丝不动——font 筛选（v60）与这里的差别。
+fn panel_live_input(
+    placeholder: &'static str,
+    cx: &mut gpui::Context<SettingsPanel>,
+) -> gpui::Entity<TextInput> {
+    let weak = cx.weak_entity();
+    cx.new(|cx| {
+        TextInput::new(cx)
+            .placeholder(tr(placeholder))
+            .on_change(Box::new(move |_, cx| {
+                if let Some(p) = weak.upgrade() {
+                    p.update(cx, |_, cx| cx.notify());
+                }
+            }))
+    })
 }
 
 impl SettingsPanel {
@@ -124,7 +144,7 @@ impl SettingsPanel {
                     .placeholder(tr("ENV 变量、!命令 或明文 key"))
             }),
             key_visible: false,
-            model_filter: panel_input("筛选模型…", cx),
+            model_filter: panel_live_input("筛选模型…", cx),
             mj_name: panel_input("provider-name", cx),
             mj_base: panel_input("https://api.example.com/v1", cx),
             mj_key: cx.new(|cx| {
@@ -148,8 +168,8 @@ impl SettingsPanel {
             sa_prompt: panel_input("系统指令（留空继承）", cx),
             sa_model: panel_input("provider/model（留空跟随父会话）", cx),
             sa_turns: cx.new(|cx| TextInput::new(cx).numeric(true)),
-            mcp_add: panel_input("JSON、http(s) URL、命令行，或 `pi mcp add …`", cx),
-            mcp_name: panel_input("服务器名称（字母数字_-）", cx),
+            mcp_add: panel_live_input("JSON、http(s) URL、命令行，或 `pi mcp add …`", cx),
+            mcp_name: panel_live_input("服务器名称（字母数字_-）", cx),
             mcp_scope_project: false,
             error: None,
             font_popup: None,
@@ -185,6 +205,36 @@ impl SettingsPanel {
             self.mj_key.read(cx).value().to_string(),
             self.mj_api,
         )
+    }
+
+    /// 焦点是否落在面板（含其全部输入框）内 —— Chat 焦点策略链用它判断
+    /// 要不要把焦点拽回 dialog_focus。**新增输入框自动覆盖**，不再维护
+    /// 白名单（v60 字体筛选、v70 模型/MCP 各输入框先后被"每帧抢焦点"
+    /// 咬过的教训：白名单必漏）。
+    pub(crate) fn focus_within(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
+        let inputs = [
+            &self.key_input,
+            &self.model_filter,
+            &self.mj_name,
+            &self.mj_base,
+            &self.mj_key,
+            &self.mj_id,
+            &self.mj_mname,
+            &self.mj_ctx,
+            &self.install_input,
+            &self.sa_input,
+            &self.sa_name,
+            &self.sa_display,
+            &self.sa_desc,
+            &self.sa_prompt,
+            &self.sa_model,
+            &self.sa_turns,
+            &self.mcp_add,
+            &self.mcp_name,
+            &self.font_filter,
+        ];
+        self.focus.is_focused(window)
+            || inputs.iter().any(|e| e.read(cx).focus_handle_in(cx).is_focused(window))
     }
 
     /// 切页签时的 section 预填（open_settings 与左导航点击共用）。

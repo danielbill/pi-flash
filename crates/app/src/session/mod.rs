@@ -83,8 +83,8 @@ pub(crate) fn main_column(
                         .flex()
                         .flex_col();
                     if new_session_page {
-                        // 012 新会话页：标题 + 6× 背景 logo + inputpanel（下移
-                        // 10%）+ 额外操作栏；扩展行照旧挂页面上下
+                        // 012 新会话页：标题 + 超大背景 logo + inputpanel +
+                        // 额外操作栏；扩展行照旧挂页面上下
                         wrap = wrap
                             .children(ext_widget_rows(chat, t, true))
                             .child(new_session::page(
@@ -92,6 +92,7 @@ pub(crate) fn main_column(
                                 weak,
                                 streaming,
                                 input_focused,
+                                f32::from(window.viewport_size().height),
                                 cx,
                             ))
                             .children(ext_widget_rows(chat, t, false));

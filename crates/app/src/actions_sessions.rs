@@ -114,8 +114,14 @@ impl Chat {
             self.cwd = cwd;
             self.branch = read_branch(&self.cwd);
             self.expanded_dirs.clear();
+            // 文件树：根项目行默认展开
+            self.expanded_dirs.insert(self.cwd.clone());
             self.refresh_sessions();
             self.load_project_files();
+            // 换工作区：git 状态/树缓存/fs watcher 全部跟着 cwd 重挂
+            //（此前这里漏 refresh_git，git 面板会显示上一个项目的状态）
+            self.refresh_git();
+            self.attach_fs_watch();
         }
         set_last_open(&self.cwd.to_string_lossy(), &path.to_string_lossy());
         self.renaming = None;
@@ -160,7 +166,6 @@ impl Chat {
                 r.shutdown_process();
             });
         }
-        self.running_files.remove(&path);
         self.unread.remove(&path);
         // recents (003-session管理): the file is gone, drop the entry
         pi_link::recents::remove_recent(&path);

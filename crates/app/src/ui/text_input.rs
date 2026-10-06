@@ -278,12 +278,13 @@ impl Render for TextInput {
             // composition and propagates) — turn it into the app callback
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
                 if ev.keystroke.key == "escape" {
-                    let cb = this.on_escape.take();
-                    if let Some(cb) = &cb {
+                    if let Some(cb) = this.on_escape.take() {
                         cb(cx);
+                        this.on_escape = Some(cb);
+                        // 只在输入框自己消费 ESC（如收起弹层）时拦截；
+                        // 否则放行给外层（弹窗 ESC 关闭）
+                        cx.stop_propagation();
                     }
-                    this.on_escape = cb;
-                    cx.stop_propagation();
                 }
             }))
             .child(

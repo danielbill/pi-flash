@@ -413,6 +413,60 @@ pub(crate) fn spawn_boot_tasks(
     spawn_idle_recycle(cx);
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
+    spawn_fs_watch_pump(cx);
+}
+
+/// fs 监听泵（Zed worktree 扫描器的轻量对应物）：watcher 事件经后台
+/// 去抖线程合批（FS_WATCH_LATENCY ≈ 100ms 静默期 + 批内一次抽干），
+/// gpui 侧 150ms 轮询信号 → 重扫展开目录 + git 状态。线程与 executor
+/// 各干各的活，互不阻塞。
+fn spawn_fs_watch_pump(cx: &mut gpui::Context<Chat>) {
+    cx.spawn(async move |this, cx| {
+        let rx = match this.update(cx, |c, _| c.fs_watch_rx.take()) {
+            Ok(Some(rx)) => rx,
+            _ => return,
+        };
+        let _ = this.update(cx, |c, _| c.attach_fs_watch());
+
+        // 去抖线程：首批事件后进入静默期循环，静默 100ms 才放行一次信号
+        let (ui_tx, ui_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            while rx.recv().is_ok() {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let mut more = false;
+                    while rx.try_recv().is_ok() {
+                        more = true;
+                    }
+                    if !more {
+                        break;
+                    }
+                }
+                if ui_tx.send(()).is_err() {
+                    break; // UI 侧已亡
+                }
+            }
+        });
+
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(150))
+                .await;
+            if ui_rx.try_recv().is_err() {
+                continue;
+            }
+            let ok = this
+                .update(cx, |chat, cx| {
+                    chat.refresh_git();
+                    cx.notify();
+                })
+                .is_ok();
+            if !ok {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 /// 首帧后的进程附着（spawn 只做一次 ~100ms 的进程创建，不阻塞首帧）：

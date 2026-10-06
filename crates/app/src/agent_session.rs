@@ -32,7 +32,9 @@ impl AgentSession {
     ) -> Option<UnboundedReceiver<Event>> {
         self.epoch += 1;
         let args: Vec<&str> = extra_args.iter().map(String::as_str).collect();
-        match spawn_pi(cwd, &args) {
+        // 扩展/插件加载（默认开，pi-web parity）：freeflow 等插件 provider
+        // 由此可用；个别扩展 fatal 时在设置·其他页关掉隔离
+        match spawn_pi(cwd, &args, crate::services::workspace::load_extensions_enabled()) {
             Ok((s, ev)) => {
                 self.session = Some(s);
                 Some(ev)

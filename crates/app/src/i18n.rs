@@ -36,7 +36,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("新建", "新建", "New"),
     ("新会话", "新會話", "New session"),
     // 012 新会话页（newSession）
-    ("让我们做点什么！", "讓我們做點什麼！", "What should we work on?"),
+    ("Hi，打算让我做点什么？", "Hi，打算讓我做點什麼？", "Hi, what shall we work on?"),
     ("打开项目", "開啟專案", "Open project"),
     ("切换后仅显示该项目的会话，并恢复上次打开的会话", "切換後僅顯示該項目的會話，並恢復上次打開的會話", "Show only this project's sessions and restore the last open one"),
     ("完整历史", "完整歷史", "Full history"),
@@ -284,12 +284,12 @@ mod tests {
         assert_eq!(tr("保存"), "儲存");
         assert_eq!(tr("新分支"), "新分支");
         assert_eq!(tr("创建中…"), "建立中…");
-        assert_eq!(tr("让我们做点什么！"), "讓我們做點什麼！");
+        assert_eq!(tr("Hi，打算让我做点什么？"), "Hi，打算讓我做點什麼？");
         set_lang(2);
         assert_eq!(tr("保存"), "Save");
         assert_eq!(tr("新分支"), "Fork");
         assert_eq!(tr("创建中…"), "Creating…");
-        assert_eq!(tr("让我们做点什么！"), "What should we work on?");
+        assert_eq!(tr("Hi，打算让我做点什么？"), "Hi, what shall we work on?");
         assert_eq!(tr("not in table"), "not in table");
         set_lang(0);
     }

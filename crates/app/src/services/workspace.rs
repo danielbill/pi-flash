@@ -396,6 +396,15 @@ pub struct AppSettings {
     pub restore: Option<bool>,
     /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）
     pub show_thinking: Option<bool>,
+    /// 其他页: 会话加载 ~/.pi/agent 扩展与 npm 插件（pi-web 同款；插件注册
+    /// 的 provider 如 pi-freeflow 由此可用）。None = 开（Some(false) 隔离，
+    /// 防个别扩展弄崩 RPC 会话——历史案例：系统 pi 1.0 的 auto-router.ts）。
+    pub load_extensions: Option<bool>,
+}
+
+/// load_extensions 的读取口径（None = 开）。
+pub fn load_extensions_enabled() -> bool {
+    app_settings().load_extensions.unwrap_or(true)
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -450,6 +459,7 @@ pub fn app_settings() -> AppSettings {
                         .and_then(|v| v.as_u64()),
                     restore: map.get("startup_restore").and_then(|v| v.as_bool()),
                     show_thinking: map.get("show_thinking").and_then(|v| v.as_bool()),
+                    load_extensions: map.get("load_extensions").and_then(|v| v.as_bool()),
                 }
             }
             None => AppSettings::default(),
@@ -493,6 +503,9 @@ pub fn save_app_settings(s: &AppSettings) {
     }
     if let Some(v) = s.show_thinking {
         obj.insert("show_thinking".into(), Value::Bool(v));
+    }
+    if let Some(v) = s.load_extensions {
+        obj.insert("load_extensions".into(), Value::Bool(v));
     }
     save_map_to(&path, &obj);
 }

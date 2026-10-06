@@ -278,7 +278,15 @@ struct Chat {
     // workspace / project files
     project_files: Vec<String>,
     expanded_dirs: HashSet<PathBuf>,
+    /// 文件树展平缓存（services::file_tree::flatten；渲染只读这份，
+    /// 重建点 = 展开/折叠、git 刷新、fs 事件、切项目）。
+    tree_rows: std::sync::Arc<Vec<services::file_tree::TreeRow>>,
     file_cache: std::collections::HashMap<PathBuf, FileTab>,
+    // fs watch（services::watcher）：tx 永驻（每次挂 watch clone 一份），
+    // rx 被 startup 的泵取走；watcher 句柄 drop 即解除监听。
+    fs_watch_tx: std::sync::mpsc::Sender<()>,
+    fs_watch_rx: Option<std::sync::mpsc::Receiver<()>>,
+    fs_watch: Option<services::watcher::FsWatcher>,
     // terminals (content-area tabs)
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
@@ -326,8 +334,6 @@ struct Chat {
     projects: Vec<ProjectGroup>,
     /// 当前活跃会话文件（psp 选中态；switch_to 时更新）
     active_file: Option<PathBuf>,
-    /// 正在运行/流式中的会话文件集合（psp 旋转圈；Changed 事件维护）
-    running_files: std::collections::HashSet<PathBuf>,
     list_mode: ListMode,
     sort_mode: SortMode,
     collapsed_keys: HashSet<String>,
@@ -428,6 +434,8 @@ impl Chat {
             None
         };
         let ui = ui_state();
+        // fs watch 通道：tx 永驻 Chat，rx 交给 startup 的泵任务
+        let (fs_watch_tx, fs_watch_rx_ch) = std::sync::mpsc::channel::<()>();
 
         let mut chat = Self {
             focus,
@@ -457,6 +465,7 @@ impl Chat {
             globals: startup::Globals::default(),
             project_ctx: std::collections::HashMap::new(),
             expanded_dirs: HashSet::new(),
+            tree_rows: std::sync::Arc::new(Vec::new()),
             git_files: Vec::new(),
             git_selected: None,
             git_tab: function_panel::git_panel::GitTab::Changes,
@@ -507,6 +516,9 @@ impl Chat {
             panel_tabs: Vec::new(),
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),
+            fs_watch_tx,
+            fs_watch_rx: Some(fs_watch_rx_ch),
+            fs_watch: None,
             composer: None,
             expanded_skills: std::collections::HashSet::new(),
             bubble_scrolls: std::rc::Rc::new(std::cell::RefCell::new(
@@ -525,7 +537,6 @@ impl Chat {
             confirm_delete: None,
             projects: Vec::new(),
             active_file: last_open.clone(),
-            running_files: std::collections::HashSet::new(),
             list_mode: if ui.list_mode == "flat" { ListMode::Flat } else { ListMode::Grouped },
             sort_mode: if ui.sort_mode == "manual" { SortMode::Manual } else { SortMode::Time },
             collapsed_keys: ui.collapsed.iter().cloned().collect(),
@@ -576,6 +587,8 @@ impl Chat {
             }));
         });
         chat.load_project_files();
+        // 文件树：根项目行默认展开
+        chat.expanded_dirs.insert(chat.cwd.clone());
         chat.refresh_git();
 
         // settings panel CLI op pump (pi install/remove runs in background)
@@ -710,6 +723,24 @@ impl Chat {
     fn refresh_git(&mut self) {
         self.git_files = git_status_files(&self.cwd);
         self.git_add_del = git_numstat(&self.cwd);
+        self.rebuild_tree();
+    }
+
+    /// 文件树展平缓存重建（services::file_tree::flatten：每展开目录读一次
+    /// 盘 + gitignore 过滤 + Zed 语义排序 + git 徽标回填）。展开/折叠、
+    /// git 刷新、fs 事件、切项目后都走这里。
+    fn rebuild_tree(&mut self) {
+        self.tree_rows = std::sync::Arc::new(services::file_tree::flatten(
+            &self.cwd,
+            &self.expanded_dirs,
+            &self.git_files,
+        ));
+    }
+
+    /// 挂上 fs watcher（递归 watch cwd；旧句柄 drop 即解除）。切项目时
+    /// 重挂。事件由 startup::spawn_fs_watch_pump 合批后驱动 refresh_git。
+    fn attach_fs_watch(&mut self) {
+        self.fs_watch = services::watcher::watch(&self.cwd, self.fs_watch_tx.clone()).ok();
     }
 
     // -----------------------------------------------------------------------
@@ -779,8 +810,11 @@ impl Chat {
         self.refresh_sessions();
         self.dialog = None;
         self.expanded_dirs.clear();
+        // 文件树：根项目行默认展开
+        self.expanded_dirs.insert(self.cwd.clone());
         self.refresh_git();
         self.load_project_files();
+        self.attach_fs_watch();
         if let Some(p) = get_last_open(&self.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
             if path.exists() {
@@ -1107,14 +1141,11 @@ impl Render for Chat {
                 window.focus(&self.dialog_focus);
             }
         } else if let Some(panel) = self.settings.as_ref() {
-            let p = panel.read(cx);
-            let inner_focused = p.focus.is_focused(window)
-                || p.key_input.read(cx).focus_handle_in(cx).is_focused(window)
-                || p.install_input.read(cx).focus_handle_in(cx).is_focused(window)
-                || p.sa_input.read(cx).focus_handle_in(cx).is_focused(window)
-                // 字体筛选框（弹层内）：漏掉它会被每帧抢回焦点，无法输入
-                || p.font_filter.read(cx).focus_handle_in(cx).is_focused(window);
-            if !inner_focused && !self.dialog_focus.is_focused(window) {
+            // 焦点在面板任意输入框内就不抢（白名单在 v60/v70 两度漏新输入框，
+            // 现由 SettingsPanel::focus_within 结构化自检）
+            if !panel.read(cx).focus_within(window, cx)
+                && !self.dialog_focus.is_focused(window)
+            {
                 window.focus(&self.dialog_focus);
             }
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
@@ -1500,11 +1531,13 @@ fn main() {
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             // JetBrains Mono 随二进制打包（pi-web --font-mono 首选；三档字重
-            // 覆盖 mono 400/600/700 用途）。注册失败仅回退系统字体，不致命。
+            // + Italic（新会话页欢迎语斜体）覆盖 mono 400/600/700 用途）。
+            // 注册失败仅回退系统字体，不致命。
             cx.text_system().add_fonts(vec![
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice()),
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf").as_slice()),
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice()),
+                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Italic.ttf").as_slice()),
             ])
             .expect("embedded JetBrains Mono fonts are valid TTF");
             // 系统字体目录（设置页字体下拉数据源，字母序；一次性枚举）

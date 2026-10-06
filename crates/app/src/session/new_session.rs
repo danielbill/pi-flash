@@ -3,16 +3,17 @@
 //! 不再只是「消息列为空 + 底部悬浮 composer」，而是整页的
 //! 「标题 + 背景 logo + inputpanel + 额外操作栏」。
 //!
-//! 布局（docs/模块设计/012-新会话页.md）：
-//! 1. 标题「让我们做点什么！」水平居中，落在 inputpanel 上方；
-//! 2. app logo 放到 6×，用主题淡色作背景图：水平居中、垂直上移 10%
-//!    （中线落在屏高 40%）；
-//! 3. inputpanel 不垂直居中、下移 10%（内容簇中线落在屏高 60%）；
-//! 4. inputpanel 下方一条额外操作栏（004 指定：新会话页的【打开项目】）。
+//! 布局（docs/模块设计/012-新会话页.md，v5 按 zcode 参考截图实测比例）：
+//! 1. 背景 logo = 水印方案：墨迹高 51% 聊天区、中线 32%（跨度 ~6%..57%），
+//!    text 色低 alpha（深 ~10%/浅 ~6%），下沿被 composer 遮住；
+//! 2. 欢迎语「Hi，打算让我做点什么？」中心 37%（压墨迹下半部，zcode 同款
+//!    关系），加大字号、斜体、内置 JetBrains Mono；
+//! 3. inputpanel + 操作栏簇中心 56%（zcode 实测 ~56%）。
 //!
-//! 「上/下移 10%」用两段 80% 高的带子实现：上带顶对齐 + 带内居中 ⇒ 中线
-//! 0.4H；下带底对齐 + 带内居中 ⇒ 中线 0.6H。百分比高度由 flex 链上的确定
-//! 高度解析（与 033 导航条 `h(relative(0.75))` 同机制）。
+//! 三条绝对定位带实现（百分比高由 flex 链解析，033 同机制）：logo 带
+//! 顶对齐 64% 高带内居中 ⇒ 中线 32%；欢迎语带顶对齐 74% ⇒ 中心 37%；
+//! 内容簇带底对齐 88% ⇒ 中心 56%。带间重叠无害（无 bg/无 handler 的带
+//! 不注册 hitbox，v1 双带已验证）。
 //!
 //! 触发判据在 `session::main_column`（messages 空且 agent 未跑）；composer
 //! 以 hero 模式（`input::input_area(.., hero=true)`）在正常流里排版，宽度
@@ -24,14 +25,19 @@ use crate::Chat;
 use crate::i18n::tr;
 use crate::session::input;
 use crate::theme::theme as T;
-use crate::ui::icon;
+use crate::ui::{icon, icon_alpha};
 
-/// 背景 logo = 6×（基准取侧栏/空态徽章的 32px 方框）。
-const LOGO_SCALE: f32 = 6.;
-/// logo 基准尺寸（与 032 空态徽章同款 32px）。
-const LOGO_BASE: f32 = 32.;
-/// 上/下偏移 10% 的实现带高：80% 高 + 带内居中 = 中线 40% / 60%。
-const BAND: f32 = 0.8;
+/// 背景 logo「墨迹」目标高 = 51% 聊天区高（zcode 参考实测：Z 墨迹跨度
+/// 6.4%..57.3%）。logo-marks.svg 墨迹只占 43.75% 盒高，盒子按视口高补偿
+/// （聊天区 ≈ 92% 视口 ⇒ 0.51×0.92/0.4375 ≈ 1.07）。
+const LOGO_INK_RATIO: f32 = 112. / 256.;
+const LOGO_SCREEN: f32 = 0.32 / LOGO_INK_RATIO;
+/// logo 带：顶对齐 64% 高带内居中 ⇒ 墨迹中线 32% 聊天区高。
+const LOGO_BAND: f32 = 0.5;
+/// 欢迎语带：顶对齐 74% 高带内居中 ⇒ 欢迎语中心 37%（压墨迹下半部）。
+const HEADING_BAND: f32 = 0.74;
+/// 内容簇带（inputpanel + 操作栏）：底对齐 88% ⇒ 簇中心 56%。
+const CONTENT_BAND: f32 = 0.88;
 /// 操作栏高度（胶囊控件行 28 + 上下 5 呼吸）。
 const ACTION_BAR_H: f32 = 38.;
 
@@ -42,6 +48,7 @@ pub(crate) fn page(
     weak: &gpui::WeakEntity<Chat>,
     streaming: bool,
     input_focused: bool,
+    viewport_h: f32,
     cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let t = T();
@@ -52,15 +59,29 @@ pub(crate) fn page(
         .min_h_0()
         .w_full()
         .overflow_hidden()
-        .child(logo_backdrop(t))
+        .child(logo_backdrop(t, viewport_h * LOGO_SCREEN))
         .child(
-            // 内容簇带：底对齐 80% 高 ⇒ 簇中线 60%（inputpanel 下移 10%）
+            // 欢迎语带：顶对齐 74% 高带内居中 ⇒ 中心 37%（压墨迹下半部）
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(relative(HEADING_BAND))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .items_center()
+                .child(heading(t)),
+        )
+        .child(
+            // 内容簇带：底对齐 88% 高带内居中 ⇒ 簇中心 56%
             div()
                 .absolute()
                 .bottom_0()
                 .left_0()
                 .right_0()
-                .h(relative(BAND))
+                .h(relative(CONTENT_BAND))
                 .px(px(15.))
                 .flex()
                 .flex_col()
@@ -74,7 +95,6 @@ pub(crate) fn page(
                         .flex()
                         .flex_col()
                         .items_center()
-                        .child(heading(t))
                         .child(input::input_area(
                             chat,
                             weak,
@@ -89,31 +109,37 @@ pub(crate) fn page(
         .into_any_element()
 }
 
-/// 背景 logo：6× 主题淡色（text_faint），水平居中；顶对齐 80% 高带内居中
-/// ⇒ 中线 40%（向上偏移 10%）。纯装饰层：无 id/无 handler，不参与命中。
-fn logo_backdrop(t: &'static crate::theme::Theme) -> AnyElement {
+/// 背景 logo：盒子 ~1.07×视口高（墨迹达 51% 聊天区高，见 LOGO_SCREEN），
+/// 顶对齐 64% 高带内居中 ⇒ 墨迹中线 32%，下沿没人接（composer 簇 56% 居中
+/// 会盖住 45%+ 以下的部分）。text 色低 alpha（深 ~10%、浅 ~6%）。纯装饰层：
+/// 无 id/无 handler，不参与命中。
+fn logo_backdrop(t: &'static crate::theme::Theme, size: f32) -> AnyElement {
+    let a = if t.dark { 0x1a } else { 0x10 };
     div()
         .absolute()
         .top_0()
         .left_0()
         .right_0()
-        .h(relative(BAND))
+        .h(relative(LOGO_BAND))
         .flex()
         .flex_col()
         .justify_center()
         .items_center()
-        .child(icon("logo-marks", LOGO_BASE * LOGO_SCALE, t.text_faint))
+        .child(icon_alpha("logo-marks", size, (t.text << 8) | a))
         .into_any_element()
 }
 
-/// 标题「让我们做点什么！」——codex 参考图里 "What should we work on?" 的位置。
+/// 欢迎语「Hi，打算让我做点什么？」——zcode 参考图问候语同款关系（中心
+/// 37%，压水印下半部）：加大字号、斜体、内置 JetBrains Mono（中文回退
+/// 系统字体，italic 由回退链合成）。
 fn heading(t: &'static crate::theme::Theme) -> AnyElement {
     div()
-        .pb(px(26.))
-        .text_size(crate::appearance::ui_size(30.))
+        .text_size(crate::appearance::ui_size(40.))
+        .font_family(crate::markdown::MONO_FAMILY)
+        .italic()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(rgb(t.text))
-        .child(SharedString::from(tr("让我们做点什么！")))
+        .child(SharedString::from(tr("Hi，打算让我做点什么？")))
         .into_any_element()
 }
 

@@ -7,9 +7,11 @@ pub mod list_handle;
 pub mod overlay;
 pub mod psp_scrollbar;
 pub mod text_input;
+pub mod vlist;
 
 pub use composer_input::ComposerInput;
 pub use dropdown::{dropdown, DropdownState};
+pub use vlist::{VListHeight, vlist};
 pub use text_input::TextInput;
 
 use gpui::{Animation, AnimationExt, SharedString, Styled, prelude::*};
@@ -21,6 +23,102 @@ pub fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {
         .path(SharedString::from(format!("icons/{name}.svg")))
         .text_color(gpui::rgb(color))
         .size(gpui::px(size))
+        .into_any_element()
+}
+
+/// icon at RGBA（`0xRRGGBBAA`，alpha 生效）：超大水印等纯装饰用法。
+pub fn icon_alpha(name: &'static str, size: f32, rgba: u32) -> gpui::AnyElement {
+    gpui::svg()
+        .path(SharedString::from(format!("icons/{name}.svg")))
+        .text_color(gpui::rgba(rgba))
+        .size(gpui::px(size))
+        .into_any_element()
+}
+
+/// 完整资产路径版 icon（`icons/file_icons/rust.svg`）：Zed 文件图标主题
+/// 表里存的就是这种路径，直取不再拼前缀。
+pub fn icon_path(path: &'static str, size: f32, color: u32) -> gpui::AnyElement {
+    gpui::svg()
+        .path(SharedString::from(path))
+        .text_color(gpui::rgb(color))
+        .size(gpui::px(size))
+        .into_any_element()
+}
+
+/// provider id → sprite 符号名（pi-web `ProviderIcon.tsx` 的映射表）。
+/// 不在表内的 provider 走首字母方块兜底（与 pi-web 相同）。
+fn provider_symbol(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "anthropic" => "anthropic",
+        "openai" | "openai-codex" => "openai",
+        "google" | "google-vertex" => "google",
+        "ant-ling" => "antgroup",
+        "deepseek" => "deepseek",
+        "groq" => "groq",
+        "mistral" => "mistral",
+        "moonshotai" | "moonshotai-cn" | "moonshot" => "moonshot",
+        "minimax" | "minimax-cn" => "minimax",
+        "fireworks" => "fireworks",
+        "huggingface" => "huggingface",
+        "cerebras" => "cerebras",
+        "openrouter" => "openrouter",
+        "xai" | "grok" => "xai",
+        "cloudflare-ai-gateway" | "cloudflare-workers-ai" => "cloudflare",
+        "vercel-ai-gateway" => "vercel",
+        "github-copilot" => "githubcopilot",
+        "amazon-bedrock" => "aws",
+        "azure-openai-responses" => "azure",
+        "kimi-coding" => "kimi",
+        "nvidia" => "nvidia",
+        "opencode" | "opencode-go" => "opencode",
+        "qwen" => "qwen",
+        "xiaomi" | "xiaomi-token-plan-ams" | "xiaomi-token-plan-cn" | "xiaomi-token-plan-sgp" => {
+            "xiaomimimo"
+        }
+        "zai" | "zai-coding-cn" => "zai",
+        "zhipu" => "zhipu",
+        "cohere" => "cohere",
+        "perplexity" => "perplexity",
+        "together" => "together",
+        _ => return None,
+    })
+}
+
+/// Provider logo（设置-模型页侧栏等处）：已知 provider 渲染对应
+/// `icons/provider/*.svg`（gpui 按 alpha 着色，logo 一律单色 tint），
+/// 未知 provider 用首字母圆角方块兜底——pi-web `ProviderIcon` 同款。
+pub fn provider_icon(id: &str, size: f32, color: u32) -> gpui::AnyElement {
+    if let Some(symbol) = provider_symbol(id) {
+        return gpui::svg()
+            .path(SharedString::from(format!("icons/provider/{symbol}.svg")))
+            .text_color(gpui::rgb(color))
+            .size(gpui::px(size))
+            .flex_shrink_0()
+            .into_any_element();
+    }
+    // 兜底：按 -/_ 切分取前两段首字母（"freeflow" → FF，"amazon-bedrock" → AB）
+    let label: String = id
+        .split(['-', '_'])
+        .filter(|p| !p.is_empty())
+        .take(2)
+        .filter_map(|p| p.chars().next())
+        .flat_map(|c| c.to_uppercase())
+        .collect();
+    let label = if label.is_empty() { "?".to_string() } else { label };
+    let t = crate::theme::theme();
+    gpui::div()
+        .w(gpui::px(size))
+        .h(gpui::px(size))
+        .flex_shrink_0()
+        .rounded(gpui::px(4.))
+        .border_1()
+        .border_color(gpui::rgb(t.border))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(gpui::px((size * 0.42).max(8.)))
+        .text_color(gpui::rgb(color))
+        .child(SharedString::from(label))
         .into_any_element()
 }
 

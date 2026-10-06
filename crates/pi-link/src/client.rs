@@ -25,7 +25,17 @@ pub struct PiSession {
 /// Spawn the vendored pi in RPC mode bound to `cwd`.
 ///
 /// Only the vendored pi is ever used (never PATH); see [`crate::vendor`].
-pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
+///
+/// `load_extensions = false` spawns with `-ne`: the isolation mode. pi-web
+/// loads extensions (npm plugins register providers/tools — freeflow etc.),
+/// and the app follows that by default (`AppSettings.load_extensions`,
+/// settings·misc switch); `false` is the escape hatch when some extension
+/// fatals the RPC session (historical case: system pi 1.0's auto-router.ts).
+pub fn spawn(
+    cwd: &Path,
+    extra_args: &[&str],
+    load_extensions: bool,
+) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
     let cli = vendor::cli_path()
         .ok_or_else(|| "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string())?;
 
@@ -72,9 +82,11 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
     // whatever pi the host happens to run) and can crash OUR pin (real
     // case: system pi 1.0's auto-router.ts fatals a 0.87.1 RPC). Keep the
     // isolation even when pins coincide. (pi hint: "pi -ne")
-    cmd.arg(&cli)
-        .args(["-ne", "--mode", "rpc"])
-        .args(extra_args)
+    cmd.arg(&cli);
+    if !load_extensions {
+        cmd.arg("-ne");
+    }
+    cmd.args(["--mode", "rpc"]).args(extra_args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());

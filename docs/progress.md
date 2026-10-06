@@ -2039,3 +2039,220 @@ SettingsPanel/ModelsConfig/SkillsConfig/AgentsConfig/PluginsConfig/McpConfig
 - 真机复验（`tmp/屏幕截图/010-boot-tasks.png`）：启动页→揭幕→恢复上次会话→psp 两组
   会话加载→模型 pill/思考/工具正常→cache 重写 518 models（初始附着的 RPC 链路完好）
 - 验证：app 101 + pi-link 81 全绿、0 警告、check_arch 仅存量
+
+#### v70.1 抽 ui::vlist 等高虚拟化列表基件
+
+用户问"虚拟化在好几处用到（导航面板也用了），为什么不封成底层组件"——盘点：
+仓里是两种原语四个点。`uniform_list`（等高）：字体弹层 30px、模型列表 36px；
+`list()`+`ListState`（变高）：聊天流（chat_list 状态机）、导航轮次卡
+（ListStateHandle 适配滚动条）。两类不可互换，统一必漏抽象；等高这半边
+到今天刚好第 2 个调用点，临界点到了。
+
+- 新件 `ui::vlist(id, count, row_h, height, shell, empty_text, rows)`：
+  uniform_list 构建 + 高度策略（`VListHeight::Fill` 填满父容器 /
+  `Capped(cap)` min(行数×行高, 上限)）+ 列表壳（圆角/边框/bg_panel/裁剪）
+  + 空态（Fill 居中 / Capped 44px 行）统一；行闭包按绝对索引，gpui 要求
+  `Fn`（'static，数据 own 进闭包只读）。变高那半边明确不进抽象
+  （list_handle 已是它的共享件），模块文档写清边界。
+- 迁移：字体弹层（Fill、无壳）、模型列表（Capped 360、带壳）两个调用点；
+  general.rs 仅 font_popup_card 一个 hunk，行为零变化。
+- 验证：app 101 全绿、零警告；check_arch 无新增。exe 被运行中实例占用，
+  待下次关闭后重建复验滚动/筛选手感。
+
+#### v70.2 找回丢失的两个 provider（TypeSafe / freeflow）
+
+用户实测 pi-web 侧栏有 TypeSafe、freeflow（重要），pi-flash 没有。两个不同的丢失路径：
+
+- **TypeSafe**：auth.json 里有 api_key、但可用模型目录里 0 个模型。pi-flash
+  侧栏只列"目录里有模型"的 provider（mc_creds 只用来点绿点，从不为有凭据
+  无模型的 provider 增补行）。修复：mc_provider_ids 并上 auth.json 凭据
+  providers（pi-web activeApiKey parity；0 模型行 = API KEY 表单无可用模型区）。
+- **freeflow**：pi-freeflow 插件注册的 provider（33 模型）。铁证 481−448=33：
+  主会话 spawn 带 `-ne`（隔离宿主扩展的既定决策，防系统 pi 扩展弄崩 vendored
+  pin），插件模型整个不在会话目录。修复：设置·模型页加**一次性带扩展探测
+  会话**——pi-link 新增 `spawn_extensions`（同 spawn 但不传 -ne），后台线程
+  spawn → get_available_models → 结果经 probe 泵回 Chat（mc_models_full）；
+  探测会话 Drop 即 kill，崩溃只损失一次探测、目录静默降级为会话版。实测
+  本机 9 个 npm 插件加载正常，481 模型全数返回。
+- 设置页参照系与会话参照系分离：`mc_display_state`/`mc_display_refs`（完整
+  目录）只服务设置页（banner n/m、行开关、批量、prune），mc_state/mc_refs
+  （-ne 会话目录）继续供 new_session_default/切换器——主会话没加载插件，
+  显示与可切换集合必须分开。pi install/remove 后（op 泵）重探。
+- 验证：app 101 + pi-link 80 全绿；check_arch 无新增。
+
+#### v70.3 主会话加载扩展与插件（freeflow 模型可用；用户需求拍板）
+
+用户复验：TypeSafe 已出现（0/0），freeflow 仍缺——"没有的话我就无法访问它
+提供的免费模型"，并指向 pi-web 做法。v70.2 的探测会话在真机没送回结果（静默
+降级），且探测只解决"显示"不解决"可用"。重新对齐产品语义：
+
+- **主会话默认加载扩展**（pi-web `createModelRuntimeWithExtensions` parity）：
+  `AppSettings.load_extensions`（默认 true），pi-link `spawn(cwd, args,
+  load_extensions)`，主会话与子代理试运行同开关；设置·其他页新增开关
+  「加载扩展与插件」+ 说明文案（个别扩展弄崩会话时关闭 = 逃生口）。
+  -ne 隔离降级为可选项。本机实测：无 -ne 会话加载 9 个 npm 插件正常返回
+  481 模型（历史崩溃源 auto-router.ts 已不在用户扩展目录）。
+- **撤除 v70.2 探测机制**（spawn_extensions、probe 泵、mc_models_full/
+  mc_display_state 显示参照系）——主会话目录即完整目录，单一参照系回归
+  （mc_state/mc_refs）。TypeSafe 修复保留（凭据 provider 并入侧栏）。
+- models.rs 期间被并行重构（project_ctx_now 聚合、mc_cli_op 挪
+  custom_models.rs），撤除按现状精准摘除 display 层。
+- 生效路径：重启后新会话带扩展 → 目录 481 → 侧栏 freeflow 2/33、聊天
+  切换器可选 freeflow 模型、enabledModels 白名单照常生效。装/删插件后需
+  重启会话（pi 进程不热加载插件）。
+- 验证：app 101 + pi-link 80 全绿、零警告；exe 已重建。
+
+#### v70.4 设置-模型页：可用模型行距对齐 pi-web + 侧栏 provider 换 logo（用户截图反馈）
+
+两处照 pi-web 改：
+
+- **可用模型列表挤成一团**：行高写死 36px，而 gpui 默认行高 φ≈1.618，两行
+  文本（11px 名 + 10px mono id）共 34px 直接贴分隔线。pi-web 行是 min-height
+  36 + padding 6/9 + line-height ~1.4（实际约 41px）。改 ROW_H 42 + 两行显式
+  `line_height(relative(1.35))`（ui_size 照旧），vlist 壳（圆角/边框/360 封顶）
+  本就与 pi-web 一致。
+- **侧栏 provider 前的绿点换成 logo**：绿点是当初自造的，pi-web 侧栏是
+  `ProviderIcon`（@lobehub/icons 集，MIT）。pi-web 的 sprite
+  `public/provider-icons.svg`（31 symbol）拆成 `assets/icons/provider/*.svg`
+  30 个独立文件（tmp_split_provider_icons.py，脚本入库根目录一次性用）；
+  `ui::provider_icon(id, size, color)` 带映射表（openai-codex→openai、
+  amazon-bedrock→aws 等 30 条）+ 未命中兜底（按 -/_ 切分取前两段首字母的
+  圆角方块，freeflow→FF，pi-web 同款）。gpui svg 只取 alpha 通道按调用色
+  着色，logo 一律 text_muted 单色 tint（color:true 的多色 logo 也退化为
+  剪影，与 pi-web 的 currentColor 分支观感一致）。detail 头部的 已配置/未配置
+  状态点 pi-web 本就有（OAuth/API Key 头部 7px 圆点），保留不动。
+- 验证：cargo check 零警告；assets 三测试全绿（all_icons_load / 文件↔登记
+  一致性 / ring 弧生成）。
+
+#### v70.5 修复：psp 会话行旋转圈消失（bead pi-flash-71c）
+
+用户报「会话列表的转圈动画现在没有了」。定位到 v54（45e2753）主界面重构时埋的
+一处回归：状态槽的「运行中」从**渲染期现算** `chat.runtimes` 改成了读缓存
+`chat.running_files`，而那份缓存的唯一写入点是 `SessionEvent::Changed` 订阅
+（actions_runtime.rs），Changed 又只在三处 emit——pi 进程退出（runtime.rs:339）、
+手动 compact（runtime.rs:1501）、换工具预设重绑（main.rs:879）。正常一轮的
+AgentStart / AgentSettled / AgentEnd **都不发** Changed → 缓存恒空 → 旋转圈
+永不出现；同一条路径的「未读绿点」（unread 也只在 Changed 订阅里 insert）
+一样是死数据。gpui 侧无额外缓冲：Root view 没走 `AnyView::cached`，任何实体
+`cx.notify()` 都会让根视图重渲染，所以「每帧现算」天然正确。
+
+- 状态槽改回渲染期扫池：`chat.runtimes` 里 `file == info.path &&
+  (agent_running || state.is_streaming)`（function_panel.rs session_row_view）；
+  `running_files` 字段 + 维护循环 + 删除会话时的 remove 一并摘除（死缓存）。
+- AgentStart 补 `cx.emit(SessionEvent::Changed)`：后台（park）会话跑起来才
+  能点亮未读绿点——这是未读唯一的上游信号。
+- 验证：`cargo check -p app --all-targets` 零警告、`cargo test -p app` 101 全绿；
+  真机转圈可见性待用户复验。
+- 用户复验第二轮（补两条）：截图里那个实例是 15:45 的旧 exe（源码 16:08 才改完），
+  即缓存路径的**相反**表现——某次 `Changed` 恰好发生在有 runtime 在跑/快照
+  `isStreaming=true` 时（最可能是 pi 进程退出那一下）→ 文件被永久写进
+  `running_files`，此后再没有 Changed 来清它 → 旋转圈卡死常亮。不刷新=永不亮，
+  刷一次=永久亮，同一个根因的两面。
+  - 旋转圈尺寸 9px → 15px：状态槽 15px 不变（与项目行 `folder` 15px + gap8
+    的标题对齐不能被破坏），loader.svg 墨迹占盒高 86.7% → 实际圆径 7.8px → 13px。
+  - 「运行中」标志的三处卡死口全部就地复位（`agent_running` / `phase_waiting` /
+    `stream_started` / 快照 `state.is_streaming`）：pi 进程退出（pump 尾部，
+    原来只改 status）、`shutdown_process`（空闲回收+软关，原来只清 session）、
+    `abort_stream`（按停止即灭，不等 agent_settled——pi 不回终止事件时不再
+    永久显示运行中）。
+- exe 被运行中实例占用无法覆盖：改名到 `tmp/pi-flash.exe.old-15h45` 后重新
+  构建（重启应用即生效；旧文件待实例关闭后清理）。
+- 顺手：live_rpc_probe / live_fork_probe 补上 v70.3 `spawn` 第三参
+  （load_extensions=true，探测复现应用默认路径）——此前 pi-link 测试二进制
+  编译不过。另发现预先存在的环境敏感问题（与本次无关）：debug 下
+  `deep_tree_line_survives_parse_line` 在默认测试线程栈上栈溢出
+  （400 层递归解析贴着栈深上限），`RUST_MIN_STACK=16777216` 即过，已立 bead。
+- 复验续（用户第二组截图）：行本身是 uniform_list 的 item = taffy **根节点**，
+  Definite 宽下 fit-content 收缩——分隔线只有内容宽、开关贴着文字而不是
+  pi-web 那样右对齐通栏。行加 `.w_full()`；行高改由缩放后的文本尺寸推导
+  `(ui_size(11)+ui_size(10))×1.25 + 12`（panel=12 ≈38px 对齐 pi-web 浏览器
+  normal 行高的 ~37px；此前写死 36/42，界面字号调大就再挤），两行文本显式
+  `line_height(relative(1.25))`。字体下拉行同病同修（w_full，选中底色通栏）。
+
+## 2026-10-06 文件树补齐：Zed 代码移植（icon theme + 数据层 + watcher）
+
+对照 Zed project_panel/worktree/file_icons 源码的差距清单（见会话记录），本轮把能
+搬的直接搬（不重写）：
+
+- **Zed 图标主题整套移植**：`assets/icons/file_icons/*.svg` 96 个（ghproxy 从 zed
+  main 拉取；本地 sparse blob 缺 SVG 资产）+ `services/file_icons.rs`（匹配算法
+  逐字搬自 `crates/file_icons/src/file_icons.rs`，默认主题映射表逐字搬自
+  `crates/theme/src/icon_theme.rs` 的 FILE_STEMS/FILE_SUFFIXES/FILE_ICONS）。
+  Zed 图标是单色线稿 + gpui alpha 染色，与 `ui::icon` 机制天然契合；新增
+  `ui::icon_path`（直吃主题表里的完整资产路径）。assets!() 登记 96 条。
+- **排序**：`services/paths_sort.rs` 搬自 `crates/util/src/paths.rs`——
+  natural_sort / compare_numeric_segments（含前导零与 u128 溢出回退）/
+  SortMode/SortOrder，收敛出叶子级 `compare_entry_names`（Zed
+  compare_rel_paths_by 的叶分支）；Zed 的测试段一并搬过来（#[perf]→#[test]）。
+- **gitignore**：`services/file_tree.rs` 内 IgnoreStack 逐字搬自
+  `crates/worktree/src/ignore.rs`（`ignore` crate 与 Zed 同款依赖）；根
+  .gitignore + .git/info/exclude 压栈、下钻时逐目录压 .gitignore（深层覆盖浅层）。
+- **树数据层**：`services/file_tree::flatten` 把「根+展开集」变成排序好的
+  TreeRow 扁平缓存（dot 文件过滤、目录圆点改走**祖先链**上浮，修掉只看直接
+  父目录的旧逻辑）；渲染层 `function_panel/file_tree.rs` 重写为 vlist 虚拟化
+  （行=引导线格×depth+chevron+类型图标+名称+git 徽标），render 不再碰磁盘，
+  去掉旧的 depth≤12/每目录 300 条防御截断。
+- **fs 监听**：`services/watcher.rs`（notify 7，Zed fs 层同款 watcher crate；
+  .git/编辑器临时文件过滤对齐 worktree process_events 过滤段）+ startup
+  去抖泵线程（100ms 静默期合批 = Zed FS_WATCH_LATENCY 语义）→ refresh_git
+  （内联 rebuild_tree）→ 树与 git 徽标自动刷新。切项目/跨工作区开会话重挂。
+- **顺手修**：actions_sessions 跨工作区 open_session 一直漏 refresh_git（git
+  面板显示上一个项目状态），补上。
+- 验证：`cargo check -p app` 零警告；`cargo test -p app` 112 全绿（新增 Zed
+  排序测试段 / 图标匹配 / gitignore / 展平 / watcher 往返）；exe 被运行中实例
+  占用，构建待重启后生效（同 15h45 那条的处理方式）。
+- 后续可接（接口已备好）：sort_mode/hidden_files/folder_indicator 设置位、
+  global gitignore、目录徽标聚合（Zed GitSummary sum_tree 语义）、右键菜单。
+- 可用模型列表滚动条（用户催办）：vlist 加 `scrollbar` 参数——uniform_list
+  自持 `UniformListScrollHandle` 并 `track_scroll`（div interactivity 每帧把
+  bounds/max_offset 同步进 base_handle），壳内叠 Zed 移植的常显滚动条
+  （`menu_scrollbar` 变体：thumb 拖拽/轨道翻页/不可滚动自动不画，与 pi-web
+  `.enabled-models-list` 的 overflow-y 同位）。调用点：模型列表 true；字体
+  下拉、function_panel 文件树（并行会话新文件，机械补参）false。
+- 续（同日）：目录顶部加根项目行（v54 设计注释里的「根项目行」，Zed 单根
+  worktree 同形态）：flatten 先产根行（depth 0，名字取 cwd 末段，展开态也读
+  expanded 集合 → 可折叠；子项整体 +1 层缩进），根行变更圆点=存在任何变更。
+  Chat::new / switch_project / 跨工作区开会话三处把 cwd 塞进 expanded_dirs
+  保证默认展开。测试同步（先序遍历：子项紧跟父目录，不是尾部追加）。
+- 复验修复（用户截图反馈「滚动不了/自动折叠没有」）：
+  - **滚动修复**：gpui 0.2.2（vendored）uniform_list 的契约是「fixed (or max)
+    height」容器——Fill 模式 flex_1 直挂时 measure 收到非 Definite 可用高，
+    直接画全部内容（整棵树糊出面板、无滚动）。vlist Fill 改为 psp
+    scroll-wrap 同款：relative + flex_1 包裹，列表 absolute 定死四角吃定值；
+    scrollbar 参数在 Fill 非 shell 路径也生效（文件树挂 menu_scrollbar）。
+    设置页 Fill 列表同批受益。
+  - **auto_fold（Zed auto_fold_dirs 语义）**：services::file_tree walk 时，
+    只含唯一子目录的目录不占行、链式折叠成「a/b/c」一行（sole_child 全量
+    计数与 Zed child_entries 同口径；手动展开过的目录断链，chevron 逐级
+    展开，行 path = 链尾真实目录，toggle 语义不变）。
+  - 验证：cargo test -p app 113 全绿（新增折叠链测试）、check 零警告。
+    exe 仍被运行实例锁定，重启应用后生效。
+
+## 2026-10-06 修：文件树 / 可用模型列表「滚不动」（vlist 滚动句柄每帧重建）
+
+用户截图：左边文件树与设置·模型·「可用模型」两处鼠标滚轮毫无反应（模型列表停在
+Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
+
+- **根因**（两处同一个）：`ui::vlist` 里 `let scroll = UniformListScrollHandle::new()`
+  ——**句柄每帧新建**。gpui 对该句柄的契约是「存在视图里、每帧传给 uniform_list」
+  （uniform_list.rs 里句柄的文档原话）：滚动位挂句柄内部的
+  `Rc<RefCell<Point>>`，滚轮监听器（div interactivity）往里写、uniform_list 每帧
+  prepaint 从同一句柄读回来算可见范围。每帧新建 → 滚轮写进上一帧那个已被丢弃的
+  句柄 → 下一帧以 0 重画：列表纹丝不动；滚动条 thumb 也永远钉在顶端（offset 恒 0，
+  这就是截图里那半截 thumb 的来历）。三个调用点同源全中（文件树 / 模型列表 /
+  字体弹层）——上一轮只修了 Fill 高度契约（糊出全部内容），这一层没被发现。
+- **修法**：句柄表收进 vlist 自身——`scroll_handle(id)`，thread_local
+  `HashMap<&'static str, UniformListScrollHandle>` 按 id 复用。本 app 单窗口
+  （main.rs 只 open_window 一次）+ gpui 渲染单线程，等价于「句柄挂在视图上」，
+  不必让三个调用点各穿一根句柄（字体弹层的渲染闭包拿不到 Chat，穿参要多引一层）。
+  约束写进文档注释：同一 id 同屏只能出现一次（现三个 id 互不相同）。
+- **测试（真布局）**：`ui::vlist::tests` 两条——句柄按 id 复用（同 id 同一 Rc、
+  不同 id 不串）；`wheel_scroll_keeps_offset_across_frames` 用
+  `VisualTestContext` 画 50 行×20px 的真列表（视口 100px），
+  `simulate_mouse_move` + `simulate_event(ScrollWheelEvent)` 滚 3 行后断言：偏移落在
+  注册表句柄上（-60px）、**下一帧构建的行号变成 [0,3,4,5,6,7]**（0 = uniform_list 的
+  measure 探针行，恒构建）。反证：换回每帧 `new()` 立刻红（offset 0px）。
+- 验证：`cargo test -p app` 115 全绿。真机待复验（见 docs/buglist.md 顶部）。
+- 记一笔 gpui 语义（不是本轮引入）：滚轮派发给**所有**命中的可滚动 hitbox 含祖先，
+  故嵌套滚动是「内外同时滚」而非「先内后外」；要 pi-web 那种先内后外需给 vlist 加
+  滚轮拦截（stop_propagation + 到底才放行），等用户手感反馈。

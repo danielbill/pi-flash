@@ -261,6 +261,14 @@ impl SessionRuntime {
     /// Kill the process but keep everything else (idle recycle / soft drop).
     pub(crate) fn shutdown_process(&mut self) {
         self.agent.session = None;
+        // 进程即刻不在：跑动标志就地复位。pump 退出事件可能永不到达（渠道
+        // 已死 / 事件泵先被回收），留着 true 会让状态槽的旋转圈常亮。
+        self.agent_running = false;
+        self.phase_waiting = false;
+        self.stream_started = None;
+        if let Some(s) = self.state.as_mut() {
+            s.is_streaming = false;
+        }
     }
 
     pub(crate) fn model_label_text(&self) -> String {
@@ -336,6 +344,15 @@ async fn consume_runtime_events(
         if rt.agent.epoch == epoch {
             rt.status = "pi exited".into();
             rt.compacting = false;
+            // 进程没了就不存在「在跑」：不就地复位，agent_running 与快照
+            // is_streaming 会永久卡在 true——psp 状态槽的旋转圈永不灭
+            //（用户实测：旧版还在跑的会话被掐掉后一直转）
+            rt.agent_running = false;
+            rt.phase_waiting = false;
+            rt.stream_started = None;
+            if let Some(s) = rt.state.as_mut() {
+                s.is_streaming = false;
+            }
             cx.emit(SessionEvent::Changed);
             cx.notify();
         }
@@ -805,6 +822,10 @@ impl SessionRuntime {
                 if self.stream_started.is_none() {
                     self.stream_started = Some(std::time::Instant::now());
                 }
+                // 跑动状态的订阅方（psp 状态槽的未读绿点）只挂在 Changed 上，
+                // 而 Changed 只在进程退出 / 压缩 / 换工具预设时才发——轮次起止
+                // 必须自己冒泡，否则后台会话跑起来也点不亮未读。
+                cx.emit(SessionEvent::Changed);
             }
             Event::AgentSettled => {
                 self.agent_running = false;
@@ -1332,6 +1353,13 @@ impl SessionRuntime {
         // 中止：等待行立即收起（不等 agent_settled）
         self.phase_waiting = false;
         self.pending_echo = None;
+        // 中止即「不在跑」：状态槽转圈 / composer 停止按钮都读 agent_running，
+        // 若 pi 的终止事件迟到或压根不来（进程被掐），不就地复位就会永久显示
+        // 运行中——同一条「立即收起」语义
+        self.agent_running = false;
+        if let Some(s) = self.state.as_mut() {
+            s.is_streaming = false;
+        }
         self.notify_list(cx);
         cx.notify();
     }

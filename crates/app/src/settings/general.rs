@@ -504,69 +504,57 @@ fn font_popup_card(
                 .border_color(rgb(t.border))
                 .child(filter_input.clone()),
         );
-    if idxs.is_empty() {
-        return card
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("无匹配字体")),
-            )
-            .into_any_element();
-    }
-    card.child({
-        let list_idx = idxs.clone();
-        gpui::uniform_list("font-list", idxs.len(), move |range, _window, _cx| {
+    card.child(vlist(
+        "font-list",
+        idxs.len(),
+        30.,
+        VListHeight::Fill,
+        false,
+        false,
+        "无匹配字体",
+        move |ix, _window, _cx| {
             let cat = crate::appearance::font_catalog();
-            range
-                .clone()
-                .filter_map(|ix| list_idx.get(ix).map(|cat_ix| (*cat_ix, ix)))
-                .map(|(cat_ix, ix)| {
-                    let family = &cat[cat_ix];
-                    let active = *family == current;
-                    let weak_item = weak.clone();
-                    let fam = family.clone();
-                    div()
-                        .id(SharedString::from(format!("font-item-{ix}")))
-                        .h(px(30.))
-                        .flex()
-                        .items_center()
-                        .px(px(10.))
-                        .font_family(family.clone())
-                        .text_size(crate::appearance::ui_size(12.5))
-                        .text_color(rgb(if active { t.accent } else { t.text }))
-                        .bg(rgb(if active { t.bg_selected } else { t.bg_panel }))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = weak_item.update(cx, |c, cx| {
-                                crate::appearance::save_font(
-                                    slot_of(slot_ix),
-                                    crate::services::workspace::FontSpec {
-                                        family: fam.clone(),
-                                        size: spec.size,
-                                    },
-                                );
-                                if let Some(st) = c.settings.clone() {
-                                    st.update(cx, |s, cx| s.close_font_popup(cx));
-                                }
-                                cx.notify();
-                            });
-                        })
-                        .child(SharedString::from(family.clone()))
-                        .into_any_element()
+            let Some(cat_ix) = idxs.get(ix).copied() else {
+                return div().into_any_element();
+            };
+            let family = &cat[cat_ix];
+            let active = *family == current;
+            let weak_item = weak.clone();
+            let fam = family.clone();
+            div()
+                .id(SharedString::from(format!("font-item-{ix}")))
+                .h(px(30.))
+                .w_full()
+                .flex()
+                .items_center()
+                .px(px(10.))
+                .font_family(family.clone())
+                .text_size(crate::appearance::ui_size(12.5))
+                .text_color(rgb(if active { t.accent } else { t.text }))
+                .bg(rgb(if active { t.bg_selected } else { t.bg_panel }))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_item.update(cx, |c, cx| {
+                        crate::appearance::save_font(
+                            slot_of(slot_ix),
+                            crate::services::workspace::FontSpec {
+                                family: fam.clone(),
+                                size: spec.size,
+                            },
+                        );
+                        if let Some(st) = c.settings.clone() {
+                            st.update(cx, |s, cx| s.close_font_popup(cx));
+                        }
+                        cx.notify();
+                    });
                 })
-                .collect()
-        })
-        .flex_1()
-        .min_h_0()
-    })
+                .child(SharedString::from(family.clone()))
+                .into_any_element()
+        },
+    ))
     .into_any_element()
 }
 

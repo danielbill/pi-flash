@@ -39,24 +39,6 @@ impl Chat {
                             }
                         }
                     }
-                    // psp 状态槽: 维护运行集合（任何 runtime 的流式状态）
-                    let mut running: Vec<(PathBuf, bool)> = Vec::new();
-                    for (k, rt) in &chat.runtimes {
-                        let r = rt.read(cx);
-                        if let Some(f) = &r.file {
-                            let on = r.agent_running
-                                || r.state.as_ref().is_some_and(|s| s.is_streaming);
-                            running.push((f.clone(), on));
-                        }
-                        let _ = k;
-                    }
-                    for (f, on) in running {
-                        if on {
-                            chat.running_files.insert(f);
-                        } else {
-                            chat.running_files.remove(&f);
-                        }
-                    }
                     cx.notify();
                 }
                 SessionEvent::ListDirty => {

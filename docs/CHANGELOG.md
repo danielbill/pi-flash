@@ -7,6 +7,13 @@
   合成 44.1 kHz / 16-bit mono WAV，Windows 用 `PlaySoundW(SND_MEMORY|SND_ASYNC)`
   播放（旧实现是 `MessageBeep(MB_ICONASTERISK)` 系统提示音）；非 Windows 仍 no-op
 
+### 修复
+- **文件树 / 设置·可用模型列表滚不动**：`ui::vlist` 每帧重建
+  `UniformListScrollHandle` → 滚轮写进上一帧的句柄、下一帧归零，列表纹丝不动
+  （滚动条 thumb 也钉在顶端）。改为 vlist 持有的句柄表按 id 复用（同一 id 同屏
+  只出现一次；字体弹层/文件树/模型列表三个调用点同一修法）。新增真布局回归测试
+  （滚轮 → 下一帧视口按新偏移构建）
+
 ## [0.1.1] - 2026-09-25
 
 ### 新增

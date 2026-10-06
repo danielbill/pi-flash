@@ -9,7 +9,6 @@ pub(crate) mod psp_overlays;
 
 use gpui::{Context, Entity, MouseButton, SharedString, div, prelude::*, px, rgb};
 
-use self::file_tree::collect_tree_rows;
 use std::path::PathBuf;
 
 use crate::Chat;
@@ -574,7 +573,7 @@ fn session_row_view(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     window: &gpui::Window,
-    _cx: &gpui::Context<Chat>,
+    cx: &gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let Some(g) = chat.projects.get(p) else {
         return div().into_any_element();
@@ -586,7 +585,15 @@ fn session_row_view(
         .active_file
         .as_deref()
         .is_some_and(|f| crate::services::workspace::same_path(f, &info.path));
-    let running = chat.running_files.contains(&info.path);
+    // 运行态**每帧现算**：v54 把它缓存进 chat.running_files，而那份缓存的唯一
+    // 写入点是 SessionEvent::Changed 订阅（只在进程退出 / 手动压缩 / 换工具预设
+    // 时发），正常一轮的 AgentStart/AgentSettled/AgentEnd 都不发 Changed →
+    // 缓存恒空，状态槽的旋转圈再也不出现。回到渲染期直接扫常驻 runtime。
+    let running = chat.runtimes.values().any(|rt| {
+        let r = rt.read(cx);
+        r.file.as_deref() == Some(info.path.as_path())
+            && (r.agent_running || r.state.as_ref().is_some_and(|s| s.is_streaming))
+    });
     let title: SharedString = info
         .name
         .clone()
@@ -755,7 +762,7 @@ fn session_row_view(
                 .items_center()
                 .justify_center()
                 .child(if running {
-                    spinner(9., t.accent)
+                    spinner(15., t.accent)
                 } else if chat.unread.contains(&info.path) {
                     div()
                         .size(px(7.))
@@ -841,53 +848,13 @@ pub(crate) fn dock(
         .into_any_element()
 }
 
-/// files view (v54: 文件树面板不变——Zed 式树，根项目行 + 缩进 guide +
-/// 类型图标 + 选中行全宽色带；点 .md 行打开内容区预览 tab)。
+/// files view：树渲染在 `file_tree.rs`（vlist 虚拟化 + 展平缓存，render
+/// 不碰磁盘；Zed 图标主题 + gitignore 过滤在 services::file_tree/。
+/// file_icons）。
 pub(crate) fn files_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     _cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
-    let t = T();
-    div()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .overflow_hidden()
-        .bg(rgb(t.nav))
-        .px(px(6.))
-        .py(px(10.))
-        .child(
-            div()
-                .id("file-tree-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .relative()
-                .children({
-                    let mut rows: Vec<gpui::AnyElement> = Vec::new();
-                    let git_map: std::collections::HashMap<PathBuf, crate::services::git::GitStatus> =
-                        chat.git_files
-                            .iter()
-                            .map(|f| (f.path.clone(), f.status))
-                            .collect();
-                    let changed_dirs: std::collections::HashSet<PathBuf> = git_map
-                        .keys()
-                        .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
-                        .collect();
-                    collect_tree_rows(
-                        &chat.cwd,
-                        0,
-                        &chat.expanded_dirs,
-                        &git_map,
-                        &changed_dirs,
-                        &weak,
-                        t,
-                        &mut rows,
-                    );
-                    rows
-                }),
-        )
-        .into_any_element()
+    file_tree::files_view(chat, weak, _cx)
 }

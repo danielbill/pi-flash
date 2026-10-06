@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- extracted from pi-web public/provider-icons.svg; icons derived
+       from @lobehub/icons (MIT, (c) 2023 LobeHub) -->
+  <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path>
+</svg>

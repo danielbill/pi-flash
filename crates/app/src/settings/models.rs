@@ -39,11 +39,21 @@ impl Chat {
                 out.push(m.provider.clone());
             }
         }
+        // auth.json 凭据 provider 也算一行（TypeSafe 奇偶校验：有 key、0 个
+        // 可用模型也显示，pi-web activeApiKey parity）
+        for (p, _) in &self.mc_creds {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        }
         out
     }
 
-    /// (enabled, total) of one catalog provider under the enabledModels scope.
-    pub(crate) fn mc_provider_counts(&self, provider: &str) -> (usize, usize) {
+    pub(crate) fn mc_provider_counts(
+        &self,
+        provider: &str,
+        enabled_set: &std::collections::HashSet<String>,
+    ) -> (usize, usize) {
         let models: Vec<&pi_link::protocol::ModelInfo> = self
             .catalog_for(&self.cwd)
             .iter()
@@ -53,7 +63,7 @@ impl Chat {
             .iter()
             .filter(|m| {
                 let r = format!("{}/{}", m.provider, m.id);
-                self.mc_state.enabled.iter().any(|e| e == &r)
+                enabled_set.contains(&r)
             })
             .count();
         (enabled, models.len())
@@ -77,12 +87,6 @@ impl Chat {
             models_config::compute_state(self.mc_patterns.as_ref(), &self.mc_refs());
     }
 
-    /// Initial model + thinking level for a NEW session (pi
-    /// `selectInitialModelScope` parity): settings default model when it is in
-    /// the enabledModels scope, else the scope's first model; thinking = scope
-    /// pin (`pattern:level`) > per-model record > global default > None (the
-    /// composer shows "auto"). An explicit draft pick (pending_model) wins and
-    /// is applied by the caller before this.
     pub(crate) fn new_session_default(&self) -> (Option<(String, String)>, Option<String>) {
         let catalog = self.catalog_for(&self.cwd);
         let in_scope = |m: &pi_link::protocol::ModelInfo| {
@@ -308,7 +312,8 @@ impl Chat {
         cx.notify();
     }
 
-    /// Whether the provider has an api_key credential (green dot parity).
+    /// Whether the provider has an api_key credential（detail 头部状态点用；
+    /// 侧栏已改 provider logo，不再用凭据状态点缀行）。
     pub(crate) fn mc_configured(&self, provider: &str) -> bool {
         self.mc_creds
             .iter()
@@ -451,11 +456,14 @@ pub(crate) fn mc_models_view(
     } else {
         section.to_string()
     };
-    let sb = mc_models_sidebar(chat, &weak.clone(), &selected, &provider_ids, t);
+    // 本帧的启用集合（O(1) 行查询；一次构建，sidebar/detail 共用）
+    let enabled_set: std::collections::HashSet<String> =
+        chat.mc_state.enabled.iter().cloned().collect();
+    let sb = mc_models_sidebar(chat, &weak.clone(), &selected, &provider_ids, &enabled_set, t);
     let detail = mc_models_detail(
         chat, &weak.clone(), &selected, key_input, key_visible, model_filter,
         model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx,
-        mj_api, mj_reasoning, error, t,
+        mj_api, mj_reasoning, error, &enabled_set, t,
     );
     col = col.child(two_pane_outer(sb, detail));
 
@@ -503,15 +511,15 @@ fn mc_models_sidebar(
     weak: &gpui::WeakEntity<Chat>,
     selected: &str,
     provider_ids: &[String],
+    enabled_set: &std::collections::HashSet<String>,
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
     let mut list = sidebar_list();
 
-    // catalog providers（OAuth / API Key 已配置即绿点）
+    // catalog providers（pi-web 侧栏同款：provider logo，未命中走首字母方块）
     for p in provider_ids {
         let active = *p == selected;
-        let (enabled, total) = chat.mc_provider_counts(p);
-        let configured = chat.mc_oauth(p) || chat.mc_configured(p);
+        let (enabled, total) = chat.mc_provider_counts(p, enabled_set);
         let weak_item = weak.clone();
         let pid = p.clone();
         list = list.child(
@@ -519,7 +527,7 @@ fn mc_models_sidebar(
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| c.mc_select_provider(pid.clone(), cx));
                 })
-                .child(status_dot(if configured { GREEN } else { t.border }))
+                .child(crate::ui::provider_icon(p, 16., t.text_muted))
                 .child(
                     div()
                         .flex_1()
@@ -670,6 +678,7 @@ fn mc_models_detail(
     mj_api: u8,
     mj_reasoning: bool,
     error: &Option<String>,
+    enabled_set: &std::collections::HashSet<String>,
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
     // custom provider / model editors
@@ -817,16 +826,23 @@ fn mc_models_detail(
     };
 
     // 可用模型区 + 底部（detail_shell 收尾）
-    mc_enabled_section(chat, weak, &provider, &models, model_filter, model_filter_value, detail)
+    mc_enabled_section(
+        chat, weak, &provider, &models, enabled_set, model_filter, model_filter_value, detail,
+    )
         .into_any_element()
 }
-
 /// 可用模型区（EnabledModelsSection parity）：标题+计数+批量钮+筛选+行开关。
+///
+/// 列表用 uniform_list 虚拟化——只构建可见的 ~12 行。overflow div 全量
+/// 构建 400 行 × ~12 元素、每敲一字筛选全量重建，是设置页卡顿的来源。
+/// 行高固定 36px；启用查询走调用方一次构建的 HashSet（原来是每行线性扫
+/// enabled 全表，400×400 次字符串比较/帧）。
 fn mc_enabled_section(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     provider: &str,
     models: &[pi_link::protocol::ModelInfo],
+    enabled_set: &std::collections::HashSet<String>,
     model_filter: &gpui::Entity<crate::TextInput>,
     model_filter_value: &str,
     detail: gpui::Stateful<gpui::Div>,
@@ -835,13 +851,12 @@ fn mc_enabled_section(
         return detail;
     }
     let t = T();
-    let prov_refs: Vec<String> = models
+    let enabled_count = models
         .iter()
-        .map(|m| format!("{}/{}", m.provider, m.id))
-        .collect();
-    let enabled_count = prov_refs
-        .iter()
-        .filter(|r| chat.mc_state.enabled.contains(r))
+        .filter(|m| {
+            let r = format!("{}/{}", m.provider, m.id);
+            enabled_set.contains(&r)
+        })
         .count();
     let bulk_provider = provider.to_string();
 
@@ -879,50 +894,53 @@ fn mc_enabled_section(
 
     // 筛选（>8 个模型时出现；值经快照传入）
     let q = model_filter_value.trim().to_lowercase();
-    let shown: Vec<&pi_link::protocol::ModelInfo> = models
+    let shown: Vec<pi_link::protocol::ModelInfo> = models
         .iter()
         .filter(|m| {
             q.is_empty()
                 || m.id.to_lowercase().contains(&q)
                 || m.name.to_lowercase().contains(&q)
         })
+        .cloned()
         .collect();
     if models.len() > 8 {
         section = section.child(model_filter.clone());
     }
-
-    let mut list = div()
-        .id("mc-model-list")
-        .max_h(px(360.))
-        .rounded(px(6.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .bg(rgb(t.bg_panel))
-        .overflow_y_scroll();
-    if shown.is_empty() {
-        list = list.child(
-            div()
-                .p(px(12.))
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(tr("没有匹配的模型")),
-        );
-    }
-    let enabled_now: Vec<String> = chat.mc_state.enabled.clone();
-    let pins: Vec<(String, String)> = chat.mc_state.pins.clone();
+    // pi-web 行规格：min-height 36 + padding 6/9 + 浏览器默认行高（≈1.2，
+    // 实际约 37px，开关右对齐、分隔线通栏）。行高不能写死——ui_size 随用户
+    // 界面字号缩放，行高从两行缩放后的文本尺寸推导（上下各 6px 呼吸），
+    // panel=12 时 ≈38px 与 pi-web 对齐，调大界面字号也不会再挤。
+    let row_h = (f32::from(crate::appearance::ui_size(11.))
+        + f32::from(crate::appearance::ui_size(10.)))
+        * 1.25
+        + 12.;
     let all_enabled = chat.mc_state.all_enabled;
-    for (ix, m) in shown.iter().enumerate() {
-        let r = format!("{}/{}", m.provider, m.id);
-        let is_enabled = all_enabled || enabled_now.iter().any(|e| e == &r);
-        let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-        let last_one = enabled_count == 1 && is_enabled;
-        let ref_str = r.clone();
-        let ref_click = r.clone();
-        list = list.child(
+    let project_scope = chat.mc_project_scope;
+    let last_guard = enabled_count == 1;
+    let enabled_rows = enabled_set.clone();
+    let pins = chat.mc_state.pins.clone();
+    let weak_rows = weak.clone();
+    let list = vlist(
+        "mc-model-list",
+        shown.len(),
+        row_h,
+        VListHeight::Capped(360.),
+        true,
+        true,
+        "没有匹配的模型",
+        move |ix, _window, _cx| {
+            let m = &shown[ix];
+            let r = format!("{}/{}", m.provider, m.id);
+            let is_enabled = all_enabled || enabled_rows.contains(&r);
+            let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
+            let last_one = last_guard && is_enabled;
+            let ref_click = r.clone();
             div()
                 .id(SharedString::from(format!("mc-row-{ix}")))
-                .min_h(px(36.))
-                .py(px(6.))
+                // uniform_list 的行是 fit-content（taffy 根节点不拉伸）：
+                // 不写 w_full 分隔线只有内容宽、开关贴在文字右边
+                .w_full()
+                .h(px(row_h))
                 .px(px(9.))
                 .flex()
                 .items_center()
@@ -937,6 +955,7 @@ fn mc_enabled_section(
                         .child(
                             div()
                                 .text_size(crate::appearance::ui_size(11.))
+                                .line_height(gpui::relative(1.25))
                                 .text_color(rgb(t.text))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -947,6 +966,7 @@ fn mc_enabled_section(
                             div()
                                 .font_family(crate::markdown::MONO_FAMILY)
                                 .text_size(crate::appearance::ui_size(10.))
+                                .line_height(gpui::relative(1.25))
                                 .text_color(rgb(t.text_dim))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -972,13 +992,17 @@ fn mc_enabled_section(
                 }))
                 .child(config_switch(
                     format!("mc-sw-{ix}"),
-                    weak,
+                    &weak_rows,
                     is_enabled,
-                    last_one || chat.mc_project_scope,
-                    move |c, cx| c.mc_toggle_model(ref_str.clone(), !is_enabled, cx),
-                )),
-        );
-    }
+                    last_one || project_scope,
+                    {
+                        let r = r.clone();
+                        move |c, cx| c.mc_toggle_model(r.clone(), !is_enabled, cx)
+                    },
+                ))
+                .into_any_element()
+        },
+    );
     let section = section.child(list);
     detail.child(section)
 }
