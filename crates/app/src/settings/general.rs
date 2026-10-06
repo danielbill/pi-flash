@@ -512,6 +512,7 @@ fn font_popup_card(
         false,
         false,
         "无匹配字体",
+        None,
         move |ix, _window, _cx| {
             let cat = crate::appearance::font_catalog();
             let Some(cat_ix) = idxs.get(ix).copied() else {

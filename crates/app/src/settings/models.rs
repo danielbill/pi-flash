@@ -928,6 +928,7 @@ fn mc_enabled_section(
         true,
         true,
         "没有匹配的模型",
+        None,
         move |ix, _window, _cx| {
             let m = &shown[ix];
             let r = format!("{}/{}", m.provider, m.id);

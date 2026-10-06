@@ -15,7 +15,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use gpui::{AnyElement, App, UniformListScrollHandle, Window, div, px, rgb, prelude::*};
+use gpui::{
+    AnyElement, App, UniformListDecoration, UniformListScrollHandle, Window, div, px, rgb,
+    prelude::*,
+};
 
 /// 高度策略。
 pub enum VListHeight {
@@ -36,8 +39,11 @@ pub enum VListHeight {
 ///   不可滚动自动不画；仅 shell 路径生效——pi-web `.enabled-models-list`
 ///   的 overflow-y 同位）；
 /// - `empty_text`：`count == 0` 的空态文案（zh-CN 源串，内部过 tr）；
+/// - `decoration`：gpui `UniformListDecoration` 装饰层（每次 paint 按当前
+///   可见范围/滚动位重算，画在行之上——文件树 sticky 祖先链用；无则传 None）；
 /// - `rows`：按**绝对索引**构建一行。gpui 要求 `Fn`（可能一帧多次调用），
 ///   数据捕获 own 进闭包、行内只读。
+#[allow(clippy::too_many_arguments)]
 pub fn vlist(
     id: &'static str,
     count: usize,
@@ -46,6 +52,7 @@ pub fn vlist(
     shell: bool,
     scrollbar: bool,
     empty_text: &'static str,
+    decoration: Option<Box<dyn UniformListDecoration>>,
     rows: impl 'static + Fn(usize, &mut Window, &mut App) -> AnyElement,
 ) -> AnyElement {
     let t = crate::theme::theme();
@@ -88,10 +95,13 @@ pub fn vlist(
     // interactivity 每帧把 bounds/max_offset 同步进 base_handle，滚动条元素
     // 按它算 thumb。
     let scroll = scroll_handle(id);
-    let list = gpui::uniform_list(id, count, move |range, window, cx| {
+    let mut list = gpui::uniform_list(id, count, move |range, window, cx| {
         range.map(|ix| rows(ix, window, cx)).collect()
     })
     .track_scroll(scroll.clone());
+    if let Some(decoration) = decoration {
+        list = list.with_decoration(DecorationBox(decoration));
+    }
     // Fill：外层 relative + flex_1 拿定高（psp scroll-wrap 同款），列表
     // absolute 定死四角吃这个定值。gpui 0.2.2 uniform_list 的契约是
     // 「fixed (or max) height」——flex_1 直挂时 measure 拿到非 Definite
@@ -157,7 +167,9 @@ pub fn vlist(
 /// 线程局部的句柄表，等价于「句柄挂在视图上」而不必让三个调用点各穿一根句柄
 /// （字体弹层的渲染闭包拿不到 Chat，穿参还得再引一层）。约束：**同一 id 同屏只
 /// 能出现一次**——各调用点 id 互不相同（file-tree / mc-model-list / font-list）。
-fn scroll_handle(id: &'static str) -> UniformListScrollHandle {
+/// pub(crate)：文件树 sticky 祖先链的「点击滚动到目录」要按同一 id 拿句柄
+/// 写偏移。
+pub(crate) fn scroll_handle(id: &'static str) -> UniformListScrollHandle {
     SCROLL_HANDLES.with(|handles| {
         handles
             .borrow_mut()
@@ -171,6 +183,35 @@ thread_local! {
     /// vlist 句柄表（每 id 一个，永不回收；id 是 `&'static str`，条目数上界 = 调用点数）。
     static SCROLL_HANDLES: RefCell<HashMap<&'static str, UniformListScrollHandle>> =
         RefCell::new(HashMap::new());
+}
+
+/// `Box<dyn UniformListDecoration>` 的新类型包装：`with_decoration` 收
+/// `impl UniformListDecoration`，而 trait 不能为外部类型 `Box<dyn …>` 而
+/// 实现（E0117），故套一层本地新类型。vlist 的参数用 `Option<Box<…>>`
+/// 让 None 调用点免写 turbofish。
+struct DecorationBox(Box<dyn UniformListDecoration>);
+
+impl UniformListDecoration for DecorationBox {
+    fn compute(
+        &self,
+        visible_range: std::ops::Range<usize>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        scroll_offset: gpui::Point<gpui::Pixels>,
+        item_height: gpui::Pixels,
+        item_count: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        self.0.compute(
+            visible_range,
+            bounds,
+            scroll_offset,
+            item_height,
+            item_count,
+            window,
+            cx,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +258,7 @@ mod tests {
                     false,
                     false,
                     "空",
+                    None,
                     move |ix, _, _| {
                         seen.borrow_mut().push(ix);
                         div().w_full().h(px(ROW_H)).into_any_element()
