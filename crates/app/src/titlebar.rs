@@ -86,8 +86,9 @@ pub(crate) fn topbar_r(
             )
             .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(4.)));
     }
-    // topbar 状态与内容区绑定：会话视图=左对齐会话标题（≤15 字）；
-    // 浏览操作区=终端/文件 tabs（切回会话视图 tabs 即消失）
+    // topbar 状态与内容区绑定：会话视图=会话标题（message-square-more +
+    // ≤30 字标题 + ⋯ 更多菜单）；浏览操作区=终端/文件 tabs（切回会话视图
+    // tabs 即消失）
     if chat.content_view == ContentView::Chat {
         let title: SharedString = chat.session_title(cx).into();
         bar = bar.child(
@@ -95,15 +96,25 @@ pub(crate) fn topbar_r(
                 .h_full()
                 .flex()
                 .items_center()
-                .pl(px(12.))
+                .gap(px(7.))
+                .pl(px(15.))
                 .min_w_0()
-                .max_w(px(320.))
+                .flex_shrink()
+                .max_w(px(460.))
                 .overflow_hidden()
-                // topbar = 面板设置值（字体大小设置.md §1）
-                .text_size(crate::appearance::ui_size(12.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(title),
+                .child(crate::ui::icon("message-square-more", 15., t.text_muted))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        // topbar = 面板设置值（字体大小设置.md §1）
+                        .text_size(crate::appearance::ui_size(12.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(title),
+                )
+                .child(session_more_btn(chat, cx)),
         );
     } else {
         bar = bar.child(browse_tabs(chat, cx));
@@ -162,6 +173,121 @@ fn icon_btn(
         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
         .on_mouse_down(MouseButton::Left, handler)
         .child(crate::ui::icon_hover(icon_name, 18., t.text_muted))
+}
+
+/// 会话标题后的 ⋯ 更多菜单：下拉三个入口（打开终端 / 此会话系统提示词 /
+/// 此会话加载工具）。弹层用 ui::dropdown（deferred+anchored：出裁剪、
+/// 贴窗口收口、点外收起）；菜单项自己收起菜单。
+fn session_more_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let open = chat.top_menu_open;
+    let guard = chat.top_dd.clone();
+
+    let weak_toggle = cx.entity().downgrade();
+    let weak_dismiss = cx.entity().downgrade();
+    let open_term = cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
+        this.top_menu_open = false;
+        this.open_terminal(None, window, cx);
+        cx.notify();
+    });
+    let open_prompt = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.open_session_info(crate::TopPanel::System, cx);
+    });
+    let open_tools = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.open_session_info(crate::TopPanel::Tools, cx);
+    });
+
+    crate::ui::dropdown(
+        "topbar-more",
+        &guard,
+        open,
+        move |_w, cx| {
+            let _ = weak_toggle.update(cx, |c, cx| {
+                c.top_menu_open = !c.top_menu_open;
+                cx.notify();
+            });
+        },
+        move |_w, cx| {
+            let _ = weak_dismiss.update(cx, |c, cx| {
+                c.top_menu_open = false;
+                cx.notify();
+            });
+        },
+        div()
+            .id("topbar-more-btn")
+            .size(px(22.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.))
+            .text_color(rgb(t.text_muted))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .child(crate::ui::icon_hover("ellipsis", 15., t.text_muted))
+            .into_any_element(),
+        move || {
+            div()
+                .min_w(px(214.))
+                .p(px(4.))
+                .bg(rgb(t.bg))
+                .border_1()
+                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
+                .rounded(px(9.))
+                .shadow_lg()
+                .flex()
+                .flex_col()
+                .child(menu_row(
+                    "tbm-term",
+                    "terminal",
+                    tr("打开终端"),
+                    chat.content_view == ContentView::Term,
+                    open_term,
+                ))
+                .child(menu_row(
+                    "tbm-prompt",
+                    "file-sliders",
+                    tr("此会话系统提示词"),
+                    chat.session_info_open(crate::TopPanel::System),
+                    open_prompt,
+                ))
+                .child(menu_row(
+                    "tbm-tools",
+                    "wrench",
+                    tr("此会话加载工具"),
+                    chat.session_info_open(crate::TopPanel::Tools),
+                    open_tools,
+                ))
+                .into_any_element()
+        },
+    )
+}
+
+/// 更多菜单的一行：图标 + 文案（样式对齐 psp ⋯ 菜单）；`checked` = 该面板
+/// 当前开着（pi-web 的面板按钮 active 态在这里落在菜单项的打勾上）。
+fn menu_row(
+    id: &'static str,
+    icon_name: &'static str,
+    label: &'static str,
+    checked: bool,
+    handler: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl gpui::IntoElement {
+    let t = T();
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(9.))
+        .px(px(10.))
+        .py(px(7.))
+        .rounded(px(6.))
+        .text_size(crate::appearance::ui_size(12.5))
+        .text_color(rgb(t.text))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(MouseButton::Left, handler)
+        .child(crate::ui::icon(icon_name, 15., t.text_muted))
+        .child(div().flex_1().child(SharedString::from(label)))
+        .children(checked.then(|| crate::ui::icon("check", 13., t.accent)))
 }
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×

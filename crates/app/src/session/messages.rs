@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use gpui::{Animation, AnimationExt, FontWeight, MouseButton, SharedString, TextAlign, div, prelude::*, px, relative, rgb, rgba};
 use pi_link::protocol::{content_blocks, Block, Usage};
 
+use super::actions_bar::{self, user_action_bar};
+use super::fork::ForkAnchor;
 use crate::Chat;
 use crate::i18n::{tf, tr};
 use crate::markdown;
@@ -1560,12 +1562,6 @@ pub(crate) fn render_msg(
         // 内容走 markdown、内嵌图片 240 上限、超高 300px 内部滚动；
         // 操作行（复制/编辑/新分支）hover 淡入 = 自定义豁免项。
         let text = m.plain_text();
-        let entry = m.entry_id.clone();
-        let weak_copy = weak.clone();
-        let weak_edit = weak.clone();
-        let weak_fork = weak.clone();
-        let copy_text = text.clone();
-        let edit_text = text.clone();
 
         // v58: 用户消息图片 = 气泡上方独立缩略图行（参考截图 parity，不再
         // 内嵌气泡）：67×67（composer 56 的 +20%）、间隔 5px、右对齐（随
@@ -1704,87 +1700,7 @@ pub(crate) fn render_msg(
             (h, st)
         };
 
-        // 操作栏 act（主界面UI设计-2.html .msg-actions）：图标 12 + 文字
-        // gap 4。图标用 icon()（工具卡同款 gpui::svg+显式色，唯一被证明
-        // 在列表内稳定渲染的路径；svg 上的 group_hover 会让 copy.svg 丢失）
-        let action = |id: String, icon_name: &'static str, label: &'static str| {
-            div()
-                .id(SharedString::from(id))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .text_color(rgb(t.text_dim))
-                .cursor_pointer()
-                .hover(|s| s.text_color(rgb(t.text)))
-                .child(icon(icon_name, 12., t.text_dim))
-                .child(SharedString::from(tr(label)))
-        };
-
-        // 栏字号 11.5（ui_size）
-        let mut actions = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .text_size(crate::appearance::ui_size(11.5));
-        // 设计稿无「已复制」反馈态：点击即写剪贴板，栏不变
-        let copy_pill = action(format!("copy-{msg_ix}"), "copy", "复制")
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let text = copy_text.clone();
-            let _ = weak_copy.update(cx, |_c, cx| {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
-            });
-        });
-        actions = actions.child(copy_pill);
-        actions = actions.child(
-            action(format!("edit-{msg_ix}"), "pencil", "编辑")
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    let _ = weak_edit.update(cx, |c, cx| {
-                        c.with_active_editor(cx, |r, _| r.input = edit_text.clone());
-                        let focus = c.focus.clone();
-                        window.focus(&focus);
-                    });
-                }),
-        );
-        // 新分支恒显示（设计稿三 act 齐全）；历史加载的消息无 entry id 时
-        // 点击不动作
-        if let Some(eid) = entry.clone() {
-            actions = actions.child(
-                action(format!("fork-{msg_ix}"), "git-branch", "新分支")
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let eid = eid.clone();
-                        let _ = weak_fork.update(cx, |c, cx| {
-                            c.rt().update(cx, |r, cx| r.fork_from_entry(eid, cx))
-                        });
-                    }),
-            );
-        } else {
-            actions = actions.child(action(format!("fork-{msg_ix}"), "git-branch", "新分支"));
-        }
-
-        // 操作栏（主界面UI设计-2.html .msg-actions）：acts + .when 时间戳
-        // 都在栏内；显影 = 状态驱动（row on_hover → Chat.bar_hover，
-        // pi-web hovered parity），不依赖 group_hover hitbox
-        let mut actions_wrap = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .opacity(if bar_revealed { 1. } else { 0. })
-            .child(actions);
-        if let Some(ts) = m.ts {
-            actions_wrap = actions_wrap.child(
-                div()
-                    .ml(px(4.))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
-            );
-        }
-        let bottom = div()
-            .flex()
-            .items_center()
-            .justify_end()
-            .mt(px(6.))
-            .pr(px(4.))
-            .child(actions_wrap);
+        let bottom = user_action_bar(msg_ix, weak, &text, m.ts, bar_revealed, t);
         // 纯图片消息（空文本）不渲染空泡；缩略图行在气泡上方
         let has_text = !text.trim().is_empty();
         let mut row = bar_hover_wired(
@@ -2024,6 +1940,8 @@ pub(crate) fn render_assistant_turn(
     meta: MsgMeta,
     // 操作栏悬停显影（Chat.bar_hover，pi-web hovered state parity）
     bar_revealed: bool,
+    // 「新分支」目标（None = 锚点还没回来，按钮不出）
+    fork: Option<ForkAnchor>,
 ) -> gpui::AnyElement {
     // pi-web onMouseEnter/Leave parity：悬停整轮（无遮挡后代，见 bar_hover_wired）
     let mut col = bar_hover_wired(
@@ -2255,64 +2173,17 @@ pub(crate) fn render_assistant_turn(
         }
         col = col.child(chips);
     }
-    // hover 操作栏（主界面UI设计-2.html .as-stats）：gap 14 / 字号 11.5 /
-    // 复制 = act（图标 12 + gap 4，hover 提亮）；用时、
-    // 时间戳为普通 span（浅一档 text_faint），时间戳在栏内；显影 =
-    // 状态驱动（col on_hover → Chat.bar_hover）。设计稿无计费/用量
-    // 展示 → 不渲染 usage 行（用户定案 v62-3）
-    let weak_copy = weak.clone();
-    let mut bar = div()
-        .flex()
-        .items_center()
-        .gap(px(14.))
-        .mt(px(6.))
-        .text_size(crate::appearance::ui_size(11.5))
-        .text_color(rgb(t.text_dim))
-        .opacity(if bar_revealed { 1. } else { 0. });
-    if !turn_text.trim().is_empty() {
-        let pill = div()
-            .id(SharedString::from(format!("acopy-{start_ix}")))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .cursor_pointer()
-            .hover(|s| s.text_color(rgb(t.text)))
-            // icon()（工具卡同款显式色 svg）——列表内唯一稳定渲染路径
-            .child(icon("copy", 12., t.text_dim))
-            .child(SharedString::from(tr("复制")))
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let text = turn_text.clone();
-                let _ = weak_copy.update(cx, |_c, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                });
-            });
-        bar = bar.child(pill);
-    }
-    // 用时取轮内末条消息（as-stats 普通 span：浅一档）
-    if let Some(last) = turn.last() {
-        if let (Some(end), Some(start)) = (last.end_ts, meta.turn_user_ts) {
-            bar = bar.child(
-                div()
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(format!(
-                        "{}{}",
-                        tr("用时"),
-                        crate::services::format::fmt_duration_ms(end - start)
-                    ))),
-            );
-        }
-    }
-    // 时间戳在栏内（as-stats 普通 span）；流式尾部隐藏
-    if !is_working {
-        if let Some(ts) = turn.last().and_then(|m| m.ts) {
-            bar = bar.child(
-                div()
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(crate::services::format::fmt_msg_time(ts))),
-            );
-        }
-    }
-    col = col.child(bar);
+    col = col.child(actions_bar::assistant_action_bar(
+        start_ix,
+        weak,
+        &turn_text,
+        turn.last().and_then(|m| m.end_ts),
+        meta.turn_user_ts,
+        is_working,
+        bar_revealed,
+        fork,
+        t,
+    ));
     col.into_any_element()
 }
 

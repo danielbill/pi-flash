@@ -65,6 +65,8 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp target/release/pi-flash "$APP/Contents/MacOS/pi-flash"
           cp node "$APP/Contents/MacOS/node"
+          # brand icon (Big Sur grid master -> .icns)
+          cp crates/app/assets/macos/pi-flash.icns "$APP/Contents/Resources/pi-flash.icns"
           # release layout: vendor/pi lives next to the executable
           cp -R vendor "$APP/Contents/MacOS/vendor"
           cat > "$APP/Contents/Info.plist" <<PLIST
@@ -76,6 +78,7 @@ jobs:
             <key>CFBundleDisplayName</key><string>pi-flash</string>
             <key>CFBundleIdentifier</key><string>dev.pi-flash.app</string>
             <key>CFBundleExecutable</key><string>pi-flash</string>
+            <key>CFBundleIconFile</key><string>pi-flash</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
             <key>CFBundleVersion</key><string>${GITHUB_SHA::8}</string>

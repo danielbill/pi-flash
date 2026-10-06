@@ -40,10 +40,25 @@ pub enum Command {
     SetThinkingLevel { level: String },
     /// Full session tree with branch structure
     GetTree,
+    /// Flat entry list + leafId (rpc get_entries). The tree-shaped sibling of
+    /// GetTree, and the one that scales: pi builds get_tree by recursing the
+    /// node chain, so a ~1200-message session kills pi itself with "Maximum
+    /// call stack size exceeded" before the client ever parses it. The flat
+    /// list never nests, so fork anchors (the 「新分支」 entry ids) come from
+    /// here — pi-web parity: lib/session-reader.ts sliceActiveBranch walks
+    /// parentId over the very same flat entries.
+    GetEntries,
     /// Final assistant text of the last turn (rpc get_last_assistant_text)
     GetLastAssistantText,
     /// Fork a new session branching before the given user-message entry
+    /// (rpc `fork`; pi only accepts position "before" here, so the entry must
+    /// be a user message and IT IS NOT carried over to the branch)
     Fork { entry_id: String },
+    /// Clone the whole current session into a new branch file (rpc `clone` =
+    /// `runtimeHost.fork(leafId, {position:"at"})`). This is the only wire
+    /// command that can branch *at* an entry, so "keep everything up to and
+    /// including the latest agent reply" rides on it.
+    Clone,
     /// Answer to a blocking extension UI request (rpc-mode reads this at the
     /// raw-line level, before command dispatch).
     ExtensionUiResponse {
@@ -72,8 +87,10 @@ impl Command {
             Command::GetAvailableModels => "get_available_models",
             Command::SetThinkingLevel { .. } => "set_thinking_level",
             Command::GetTree => "get_tree",
+            Command::GetEntries => "get_entries",
             Command::GetLastAssistantText => "get_last_assistant_text",
             Command::Fork { .. } => "fork",
+            Command::Clone => "clone",
             Command::ExtensionUiResponse { .. } => "extension_ui_response",
         }
     }
@@ -137,7 +154,12 @@ impl Command {
             Command::SetSessionName { name } => {
                 json!({ "type": self.kind(), "name": name })
             }
-            Command::GetTree | Command::GetLastAssistantText => json!({ "type": self.kind() }),
+            Command::GetTree
+            | Command::GetEntries
+            | Command::Clone
+            | Command::GetLastAssistantText => {
+                json!({ "type": self.kind() })
+            }
             // wire field is entryId (rpc-types.d.ts fork)
             Command::Fork { entry_id } => {
                 json!({ "type": self.kind(), "entryId": entry_id })
@@ -597,6 +619,82 @@ pub fn parse_tree(data: &Value) -> (Vec<TreeNode>, Option<String>) {
     (tree, leaf_id)
 }
 
+
+/// One session entry as `get_entries` returns it: flat, parentId-linked.
+/// Only the fields the client acts on are lifted out (fork anchors need
+/// id/parentId/type/role); the whole entry stays in `raw` for callers that
+/// want the original (nav panel previews).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionEntry {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub entry_type: String,
+    /// "user" | "assistant" | "toolResult" | "system" for message entries
+    pub role: Option<String>,
+    pub timestamp: Option<String>,
+    pub raw: Value,
+}
+
+impl SessionEntry {
+    fn parse(v: &Value) -> Option<SessionEntry> {
+        Some(SessionEntry {
+            id: v["id"].as_str()?.to_string(),
+            parent_id: v["parentId"].as_str().map(str::to_string),
+            entry_type: v["type"].as_str().unwrap_or("").to_string(),
+            role: v["message"]["role"].as_str().map(str::to_string),
+            timestamp: v["timestamp"].as_str().map(str::to_string),
+            raw: v.clone(),
+        })
+    }
+}
+
+/// Parse a `get_entries` response: {"entries": [...], "leafId": "..."|null}
+pub fn parse_entries(data: &Value) -> (Vec<SessionEntry>, Option<String>) {
+    let entries = data["entries"]
+        .as_array()
+        .map(|a| a.iter().filter_map(SessionEntry::parse).collect())
+        .unwrap_or_default();
+    let leaf_id = data["leafId"].as_str().map(str::to_string);
+    (entries, leaf_id)
+}
+
+/// Entry ids of the user messages on the active chain (leaf → root walk,
+/// returned oldest → newest).
+///
+/// pi-web parity: `sliceActiveBranch` (lib/session-reader.ts) walks parentId
+/// over the flat entry list for exactly this purpose (fork anchors +
+/// navigation targets). This replaces the get_tree version, which cannot
+/// survive a long session: pi answers deep trees with "Maximum call stack
+/// size exceeded", i.e. no anchors at all.
+pub fn active_user_entry_ids(entries: &[SessionEntry], leaf_id: Option<&str>) -> Vec<String> {
+    let Some(leaf) = leaf_id else {
+        return Vec::new();
+    };
+    let mut by_id: std::collections::HashMap<&str, &SessionEntry> =
+        std::collections::HashMap::with_capacity(entries.len());
+    for e in entries {
+        by_id.insert(e.id.as_str(), e);
+    }
+    let mut chain: Vec<&SessionEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut cur = by_id.get(leaf).copied();
+    // a corrupt parentId cycle must never hang the UI thread (and must not
+    // duplicate the entries it loops over)
+    while let Some(e) = cur {
+        if !seen.insert(e.id.as_str()) {
+            break;
+        }
+        chain.push(e);
+        cur = e.parent_id.as_deref().and_then(|p| by_id.get(p).copied());
+    }
+    chain.reverse();
+    chain
+        .into_iter()
+        .filter(|e| e.entry_type == "message" && e.role.as_deref() == Some("user"))
+        .map(|e| e.id.clone())
+        .collect()
+}
+
 /// Snapshot of `get_state` response data.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionState {
@@ -604,6 +702,12 @@ pub struct SessionState {
     pub thinking_level: Option<String>,
     pub is_streaming: bool,
     pub session_name: Option<String>,
+    /// pi 当前绑定的会话文件（rpc-types.d.ts RpcSessionState.sessionFile）。
+    /// draft 首条 prompt 落盘、fork/clone 换分支都会让它变——shell 的身份
+    /// （pool key / 侧栏高亮 / 重开目标）全挂在它上面，runtime 靠它跟随
+    /// pi 的进程内重绑定。
+    pub session_file: Option<String>,
+    pub session_id: Option<String>,
     pub message_count: u64,
     pub pending_message_count: u64,
 }
@@ -642,6 +746,8 @@ impl SessionState {
             thinking_level: data["thinkingLevel"].as_str().map(str::to_string),
             is_streaming: data["isStreaming"].as_bool().unwrap_or(false),
             session_name: data["sessionName"].as_str().map(str::to_string),
+            session_file: data["sessionFile"].as_str().map(str::to_string),
+            session_id: data["sessionId"].as_str().map(str::to_string),
             message_count: data["messageCount"].as_u64().unwrap_or(0),
             pending_message_count: data["pendingMessageCount"].as_u64().unwrap_or(0),
         }
@@ -701,7 +807,10 @@ impl SessionStats {
 
 /// Parse a single JSONL line from pi's stdout.
 pub fn parse_line(line: &str) -> Option<Event> {
-    let v: Value = serde_json::from_str(line).ok()?;
+    // NOT serde_json::from_str: get_tree nests the whole conversation
+    // (~4-5 JSON levels per turn), so any session past ~25 turns blows
+    // serde_json's 128-level default and the whole response is lost.
+    let v = crate::json::parse_value(line).ok()?;
     Some(parse_record(&v))
 }
 
@@ -758,6 +867,8 @@ pub fn parse_record(v: &Value) -> Event {
         _ => Event::Unparsed(v.clone()),
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1078,6 +1189,7 @@ mod tests {
         let c = Command::Fork { entry_id: "e-42".into() };
         assert_eq!(c.to_record("f1"), json!({"id":"f1","type":"fork","entryId":"e-42"}));
         assert_eq!(Command::GetTree.to_record("t1"), json!({"id":"t1","type":"get_tree"}));
+        assert_eq!(Command::Clone.to_record("c1"), json!({"id":"c1","type":"clone"}));
     }
 
     #[test]
@@ -1117,6 +1229,92 @@ mod tests {
         // forkable: assistant chain skips to first user message
         assert_eq!(root.children[0].forkable_entry_id(), None); // assistant leaf, no user below
         assert_eq!(root.forkable_entry_id(), Some("a1"));
+    }
+
+
+    /// 回归锁：pi get_tree 的会话树按 children 逐层嵌套（每层 entry+children
+    /// ≈ 4~5 层 JSON）。85 条消息的实测树深 95 → 整行超过 serde_json 默认
+    /// 128 层上限 → 整条 get_tree 响应被丢弃 → 所有用户消息拿不到 entry id
+    /// → 消息下的「新分支」按钮点不动。此处造一条 400 层深的链锁死行为。
+    #[test]
+    fn deep_tree_line_survives_parse_line() {
+        // 从叶子往根拼：node -> {entry, children:[node]}
+        let depth = 400;
+        let mut node = String::from(r#"{"entry":{"id":"n0","parentId":null,"type":"message","message":{"role":"user","content":"hi"}},"children":[]}"#);
+        for i in 1..depth {
+            node = format!(
+                r#"{{"entry":{{"id":"n{i}","parentId":"n{}","type":"message","message":{{"role":"assistant","content":"a{i}"}}}},"children":[{node}]}}"#,
+                i - 1
+            );
+        }
+        let line = format!(
+            r#"{{"id":"t1","type":"response","command":"get_tree","success":true,"data":{{"leafId":"n{leaf}","tree":[{node}]}}}}"#,
+            leaf = depth - 1
+        );
+        // serde_json 的默认上限会在这里直接失败——用同款解析器做对照锁
+        assert!(
+            serde_json::from_str::<Value>(&line).is_err(),
+            "fixture no longer exceeds the default recursion limit"
+        );
+        let Some(Event::Response {
+            command, data, ..
+        }) = crate::protocol::parse_line(&line)
+        else {
+            panic!("deep get_tree line was dropped by parse_line");
+        };
+        assert_eq!(command, "get_tree");
+        let (tree, leaf) = parse_tree(data.as_ref().expect("data"));
+        assert_eq!(leaf.as_deref(), Some(format!("n{}", depth - 1).as_str()));
+        let mut n = 0;
+        let mut cur = &tree[0];
+        while !cur.children.is_empty() {
+            n += 1;
+            cur = &cur.children[0];
+        }
+        assert_eq!(n, depth - 1, "full chain survived the parse");
+        assert_eq!(cur.role.as_deref(), Some("user"));
+    }
+
+
+    /// get_entries → active chain 的 user 锚点。这是「新分支」fork 的输入，
+    /// 必须与 pi-web sliceActiveBranch 同语义：沿 parentId 从 leaf 回溯，
+    /// 取 user message entry，最旧在前。
+    #[test]
+    fn active_user_ids_from_flat_entries() {
+        let data = json!({
+            "leafId": "c2",
+            "entries": [
+                {"id":"a1","parentId":null,"type":"message","message":{"role":"user","content":"first"}},
+                {"id":"m1","parentId":"a1","type":"model_change","modelId":"x"},
+                {"id":"b1","parentId":"m1","type":"message","message":{"role":"assistant","content":"ok"}},
+                {"id":"c1","parentId":"b1","type":"message","message":{"role":"user","content":"second"}},
+                {"id":"c2","parentId":"c1","type":"message","message":{"role":"assistant","content":"done"}},
+                // sibling branch off c1 — must NOT appear on the active chain
+                {"id":"c1b","parentId":"b1","type":"message","message":{"role":"user","content":"other branch"}}
+            ]
+        });
+        let (entries, leaf) = parse_entries(&data);
+        assert_eq!(leaf.as_deref(), Some("c2"));
+        assert_eq!(active_user_entry_ids(&entries, leaf.as_deref()), vec!["a1", "c1"]);
+        // no leaf → nothing is forkable (empty session)
+        assert!(active_user_entry_ids(&entries, None).is_empty());
+        // unknown leaf → nothing (not a panic)
+        assert!(active_user_entry_ids(&entries, Some("nope")).is_empty());
+    }
+
+    /// parentId 环（坏文件）不能把调用方挂死
+    #[test]
+    fn active_user_ids_survive_parent_cycle() {
+        let data = json!({
+            "leafId": "x2",
+            "entries": [
+                {"id":"x1","parentId":"x2","type":"message","message":{"role":"user","content":"a"}},
+                {"id":"x2","parentId":"x1","type":"message","message":{"role":"user","content":"b"}}
+            ]
+        });
+        let (entries, leaf) = parse_entries(&data);
+        let ids = active_user_entry_ids(&entries, leaf.as_deref());
+        assert!(ids.len() <= entries.len());
     }
 
 
@@ -1255,7 +1453,6 @@ mod tests {
         assert_eq!(v["confirmed"], true);
         assert_eq!(v["cancelled"], true);
     }
-
     #[test]
     fn unknown_record_is_unparsed_not_dropped() {
         let e = parse_line(r#"{"type":"future_thing","a":1}"#).unwrap();

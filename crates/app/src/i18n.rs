@@ -43,6 +43,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("暂无分支", "暫無分支", "No branches"),
     ("点击节点：从该用户消息处创建分支新会话", "點擊節點：從該用戶消息處創建分支新會話", "Click a node to fork a new session from that user message"),
     ("新分支", "新分支", "Fork"),
+    ("创建中…", "建立中…", "Creating…"),
     ("文件浏览器", "文件瀏覽器", "Files"),
     ("压缩", "壓縮", "Compact"),
     ("发送", "發送", "Send"),
@@ -176,6 +177,8 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("显示更多", "顯示更多", "Show more"),
     // session list / relative time templates
     ("{} 条消息", "{} 條消息", "{} messages"),
+    // 033 导航面板总结栏
+    ("{n}条消息：用户{u}条 助手{a}条 工具调用{t}次", "{n}條訊息：用户 {u} 條 助理{a}條 工具呼叫{t}次", "{n}messages:{u}user {a} assistant,{t}tool calls"),
     ("{secs}秒前", "{secs}秒前", "{secs}s ago"),
     ("{n}分钟前", "{n}分鐘前", "{n}m ago"),
     ("{n}小时前", "{n}小時前", "{n}h ago"),
@@ -183,6 +186,26 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
+    // topbar ⋯ 更多菜单（三个入口）
+    ("打开终端", "開啟終端機", "Open terminal"),
+    ("此会话系统提示词", "此會話系統提示詞", "Session system prompt"),
+    ("此会话加载工具", "此會話載入工具", "Session loaded tools"),
+    // top panel：系统提示词（pi-web system.*）
+    ("系统提示词", "系統提示詞", "System prompt"),
+    ("工具定义", "工具定義", "Tool definitions"),
+    ("系统提示词为空（工具已禁用）", "系統提示詞為空（工具已停用）", "System prompt is empty (tools are disabled)"),
+    ("系统提示词尚未加载", "系統提示詞尚未載入", "System prompt has not loaded yet"),
+    // top panel：工具定义（pi-web tools.*）
+    ("工具定义尚未加载", "工具定義尚未載入", "Tool definitions have not loaded yet"),
+    ("没有启用的工具", "沒有啟用的工具", "No active tools"),
+    ("描述", "描述", "Description"),
+    ("参数", "參數", "Parameters"),
+    ("{count} 个参数", "{count} 個參數", "{count} parameters"),
+    ("无参数", "無參數", "No parameters"),
+    ("必填", "必填", "Required"),
+    ("可选", "選填", "Optional"),
+    ("可选值", "允許值", "Allowed"),
+    ("默认值", "預設值", "Default"),
     ("模型: {v}", "模型: {v}", "Model: {v}"),
     ("思考: {v}", "思考: {v}", "Thinking: {v}"),
     ("最大轮数: {v}", "最大輪數: {v}", "Max turns: {v}"),
@@ -257,9 +280,11 @@ mod tests {
         set_lang(1);
         assert_eq!(tr("保存"), "儲存");
         assert_eq!(tr("新分支"), "新分支");
+        assert_eq!(tr("创建中…"), "建立中…");
         set_lang(2);
         assert_eq!(tr("保存"), "Save");
         assert_eq!(tr("新分支"), "Fork");
+        assert_eq!(tr("创建中…"), "Creating…");
         assert_eq!(tr("not in table"), "not in table");
         set_lang(0);
     }

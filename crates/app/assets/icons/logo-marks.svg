@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>pi-flash logo marks (P + bolt, italic; tile background provided by container)</title>
+  <!-- gpui 按 alpha 着色,fill 色仅占位;几何 = docs/logo/concept-c-v3.svg 去底 -->
+  <g transform="translate(41 0) skewX(-15)">
+    <g transform="translate(6.7 48.9) scale(0.62)" fill="#000">
+      <path fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+      <path transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+    </g>
+  </g>
+</svg>

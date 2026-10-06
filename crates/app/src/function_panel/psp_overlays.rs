@@ -38,7 +38,7 @@ pub(crate) fn psp_overlays(
         el = el.child(menu_layer(chat, t, cx));
     }
     if let Some((path, x, y)) = chat.confirm_prj_del.clone() {
-        el = el.child(confirm_project_del(&path, x, y, t, cx));
+        el = el.child(confirm_project_del(&path, x, y, t, &chat.dialog_focus, cx));
     }
     el.into_any_element()
 }
@@ -341,24 +341,14 @@ fn menu_layer(chat: &mut Chat, t: &'static Theme, cx: &mut gpui::Context<Chat>) 
         crate::PspMenu::Sort { x, y, .. } => (x, y),
         crate::PspMenu::Project { x, y, .. } => (x, y),
     };
-    let mut layer = div()
-        .id("psp-menu-layer")
-        .absolute()
-        .inset_0()
-        .occlude()
-        // 透明背板：点击任意处关闭
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, cx.listener(
-                    |this, _: &gpui::MouseDownEvent, _w, cx| {
-                        this.psp_menu = None;
-                        cx.notify();
-                    },
-                )),
-        );
+    // 浮层公共基座（遮挡不穿透 + 点外关闭 + ESC 关闭）
+    let weak_layer = weak.clone();
+    let mut layer = crate::ui::overlay::layer(false, Some(&chat.dialog_focus), move |_w, cx| {
+        let _ = weak_layer.update(cx, |c, cx| {
+            c.psp_menu = None;
+            cx.notify();
+        });
+    });
     let mut card = menu_card(x, y, t);
     match chat.psp_menu.clone().expect("re-checked") {
         crate::PspMenu::Sort { sub, .. } => {
@@ -567,6 +557,7 @@ fn confirm_project_del(
     x: f32,
     y: f32,
     t: &'static Theme,
+    focus: &gpui::FocusHandle,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let name = path
@@ -574,20 +565,14 @@ fn confirm_project_del(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let path = path.clone();
-    div()
-        .id("psp-confirm-del")
-        .absolute()
-        .inset_0()
-        .occlude()
-        .child(
-            div().absolute().inset_0().cursor_pointer().on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                    this.confirm_prj_del = None;
-                    cx.notify();
-                }),
-            ),
-        )
+    // 浮层公共基座（遮挡不穿透 + 点外关闭 + ESC 关闭）
+    let weak = cx.entity().downgrade();
+    crate::ui::overlay::layer(false, Some(focus), move |_w, cx| {
+        let _ = weak.update(cx, |c, cx| {
+            c.confirm_prj_del = None;
+            cx.notify();
+        });
+    })
         .child(
             div()
                 .absolute()

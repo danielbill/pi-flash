@@ -3,4 +3,5 @@
 
 pub mod format;
 pub mod git;
+pub mod sound;
 pub mod workspace;

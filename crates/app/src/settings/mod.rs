@@ -187,125 +187,66 @@ pub(crate) fn render_settings(
         _ => mc_misc_view(chat, weak),
     };
 
-    let overlay = div()
-        .absolute()
-        .inset_0()
-        .occlude()
-        .bg(gpui::hsla(0., 0., 0., 0.35))
-        .track_focus(&chat.dialog_focus)
-        .on_key_down({
-            let weak = weak_close.clone();
-            move |ev: &KeyDownEvent, _w, cx| {
-                if ev.keystroke.key == "escape" {
-                    let _ = weak.update(cx, |this, cx| {
-                        this.settings = None;
-                        cx.notify();
-                    });
-                }
-            }
-        })
-        // 点卡片外关闭（dialog_shell 同款；卡片自身 stop_propagation，
-        // dropdown 弹层开着时其外点监听在 capture 阶段先关弹层并拦下事件）
-        .on_mouse_down(MouseButton::Left, {
-            let weak = weak_close.clone();
-            move |_, _, cx| {
-                let _ = weak.update(cx, |c, cx| {
-                    c.settings = None;
-                    cx.notify();
-                });
-            }
-        })
+    // 浮层公共基座（遮挡不穿透 + 外点关闭 + ESC 关闭）；卡片自身
+    // stop_propagation，dropdown 弹层开着时其外点监听在 capture 阶段先关
+    // 弹层并拦下事件
+    let weak_dismiss = weak_close.clone();
+    let overlay = crate::ui::overlay::layer(
+        true,
+        Some(&chat.dialog_focus),
+        move |_w, cx| {
+            let _ = weak_dismiss.update(cx, |c, cx| {
+                c.settings = None;
+                cx.notify();
+            });
+        },
+    )
         .flex()
         .items_center()
         .justify_center()
-        .child(
+        // 窗框走公共基座（设置弹窗是这套大卡片窗框的原始形态，系统提示词 /
+        // 工具定义两个面板直接复用它）
+        .child(crate::ui::overlay::big_card(
+            // 设置弹窗没有标题（左导航即身份）
+            "",
+            Some(
+                div()
+                    .w(px(200.))
+                    .flex_shrink_0()
+                    .bg(rgb(t.nav))
+                    // 左导航贴弹窗左下角，同理自己倒左下角
+                    .rounded_bl(px(10.))
+                    .border_r_1()
+                    .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
+                    .flex()
+                    .flex_col()
+                    .p(px(8.))
+                    .pt(px(12.))
+                    .children(nav_items(tab, weak_close.clone()))
+                    .into_any_element(),
+            ),
             div()
-                .w(gpui::relative(0.7))
-                .h(gpui::relative(0.98))
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(t.border))
-                .rounded(px(10.))
-                .shadow_lg()
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                // 卡片内点击不冒泡到遮罩（否则点卡片任意处都会关设置）
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                // 自带 36px topbar（chrome 底色；仅右侧 ×）
-                .child(
-                    div()
-                        .h(px(36.))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .pl(px(16.))
-                        .bg(rgb(t.chrome))
-                        // overflow_hidden 的裁剪是纯矩形（无圆角），顶条不自己
-                        // 倒角的话方形角会从弹窗圆角外露出来（四角尖尖角）
-                        .rounded_t(px(10.))
-                        .border_b_1()
-                        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)))
-                        .child(div().flex_1())
-                        .child(
-                            div()
-                                .id("mc-close")
-                                .mr(px(8.))
-                                .size(px(30.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(7.))
-                                .text_color(rgb(t.text_muted))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(0xd8626a)).text_color(rgb(0xffffff)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    let weak = weak_close.clone();
-                                    move |_, _, cx| {
-                                        let _ = weak.update(cx, |c, cx| {
-                                            c.settings = None;
-                                            cx.notify();
-                                        });
-                                    }
-                                })
-                                .child(icon_hover("x", 13., t.text_muted)),
-                        ),
-                )
-                // 左导航 200px + body
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .child(
-                            div()
-                                .w(px(200.))
-                                .flex_shrink_0()
-                                .bg(rgb(t.nav))
-                                // 左导航贴弹窗左下角，同理自己倒左下角
-                                .rounded_bl(px(10.))
-                                .border_r_1()
-                                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x66)))
-                                .flex()
-                                .flex_col()
-                                .p(px(8.))
-                                .pt(px(12.))
-                                .children(nav_items(tab, weak_close.clone())),
-                        )
-                        .child(
-                            div()
-                                .id("mc-body")
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_y_scroll()
-                                .pt(px(22.))
-                                .pl(px(30.))
-                                .pr(px(30.))
-                                .pb(px(30.))
-                                .child(pane),
-                        ),
-                ),
-        );
+                .id("mc-body")
+                .flex_1()
+                .min_w_0()
+                .overflow_y_scroll()
+                .pt(px(22.))
+                .pl(px(30.))
+                .pr(px(30.))
+                .pb(px(30.))
+                .child(pane)
+                .into_any_element(),
+            t,
+            {
+                let weak_close = weak_close.clone();
+                move |_w, cx| {
+                    let _ = weak_close.update(cx, |c, cx| {
+                        c.settings = None;
+                        cx.notify();
+                    });
+                }
+            },
+        ));
     overlay.into_any_element()
 }
 

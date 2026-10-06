@@ -7,6 +7,9 @@ edition.workspace = true
 name = "pi-flash"
 path = "src/main.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 gpui = "0.2.2"
 pi-link = { path = "../pi-link" }

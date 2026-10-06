@@ -134,29 +134,57 @@ pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedRec
 
     // reader thread: parse JSONL into typed events
     let (event_tx, event_rx) = unbounded::<Event>();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if let Some(log) = &rpc_log {
-                let mut f = log.lock().unwrap();
-                let _ = writeln!(f, "< {line}");
-            }
-            if let Some(event) = parse_line(&line) {
-                if event_tx.unbounded_send(event).is_err() {
-                    break;
+    // 16MB stack: get_tree 的会话树是深层嵌套（每条 entry 一层），而
+    // serde_json::Value 的析构是递归的——3000 条 entry 的会话在默认
+    // 2MiB 线程栈上会溢出。std::thread::spawn 默认就是 2MiB。
+    thread::Builder::new()
+        .name("pi-rpc-reader".into())
+        .stack_size(16 << 20)
+        .spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                // NOT `break`: one non-UTF-8 line (or a JSON value too deep for
+                // the parser) would silently kill every LATER event — that is
+                // how a missing get_tree / fork response becomes "the button
+                // does nothing" with no trace anywhere.
+                let Ok(line) = line else {
+                    if let Some(log) = &rpc_log {
+                        let mut f = log.lock().unwrap();
+                        let _ = writeln!(f, "=== stdout line decode error (skipped)");
+                    }
+                    continue;
+                };
+                if let Some(log) = &rpc_log {
+                    let mut f = log.lock().unwrap();
+                    let _ = writeln!(f, "< {line}");
                 }
+                match parse_line(&line) {
+                    Some(event) => {
+                        if event_tx.unbounded_send(event).is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        // pi-web parity 依赖的响应（get_tree/fork/get_messages）
+                        // 走到这里就是被解析器丢掉了——wire log 留痕，否则
+                        // 「按钮点了没反应」在界面上完全无迹可寻
+                        if let Some(log) = &rpc_log {
+                            let mut f = log.lock().unwrap();
+                            let _ = writeln!(f, "=== unparsed ({} bytes): {}", line.len(), &line[..line.len().min(200)]);
+                        }
+                    }
+                }
+                // non-JSON noise (ANSI title sequences etc.) is intentionally dropped
             }
-            // non-JSON noise (ANSI title sequences etc.) is intentionally dropped
-        }
-        if let Some(log) = &rpc_log {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let mut f = log.lock().unwrap();
-            let _ = writeln!(f, "=== stdout EOF ts={ts}");
-        }
-    });
+            if let Some(log) = &rpc_log {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let mut f = log.lock().unwrap();
+                let _ = writeln!(f, "=== stdout EOF ts={ts}");
+            }
+        })
+        .expect("spawn pi rpc reader thread");
 
     Ok((
         PiSession {

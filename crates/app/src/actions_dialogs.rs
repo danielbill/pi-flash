@@ -107,4 +107,25 @@ impl Chat {
         }
         cx.notify();
     }
+
+    /// topbar ⋯ 菜单 → 系统提示词 / 工具定义弹窗（窗体 = 设置弹窗那套大卡片）。
+    /// 同一面再点一次收起，换面直接切。
+    ///
+    /// 数据不在这里拉：pi 0.86+ 把系统提示词与工具声明写进 transcript 的
+    /// system 消息，runtime 每次 get_messages 都 replay 一份（见
+    /// `pi_link::transcript::transcript_system`），所以打开即是最新。
+    pub(crate) fn open_session_info(&mut self, kind: crate::TopPanel, cx: &mut Context<Self>) {
+        self.top_menu_open = false;
+        self.dialog = if self.session_info_open(kind) {
+            None
+        } else {
+            Some(Dialog::SessionInfo { kind })
+        };
+        cx.notify();
+    }
+
+    /// 该面的弹窗是否正开着（⋯ 菜单打勾用）。
+    pub(crate) fn session_info_open(&self, kind: crate::TopPanel) -> bool {
+        matches!(self.dialog, Some(Dialog::SessionInfo { kind: k }) if k == kind)
+    }
 }

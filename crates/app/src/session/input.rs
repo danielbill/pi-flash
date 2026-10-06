@@ -1,7 +1,8 @@
 //! composer (v57 输入组件化)：真输入框 = gpui-component InputState 多行
 //! 模式（ui/composer_input.rs 门面）——点击定位光标、左右键移动、多行上下
 //! 键、选区、IME、undo、超限纵向滚动条全为组件内置，不再手搓 String+绘制
-//! 光标。单容器 16px 圆角 1px 边框，宽 75%/min 500/max 920（与消息列对齐）
+//! 光标。单容器 16px 圆角 1px 边框，宽 = 消息列宽（外层同 px(15) 内边距 +
+//! max_w 920），窗口缩放时始终贴合，不再用百分比近似
 //! 居中，悬浮胶囊上浮叠在聊天区上（0 高 wrapper 不吞点击/滚轮）。控件行：
 //! 左 = 图片 + 工具预设「默认∨」；右 = 上下文用量环 + 模型∨ + 思考∨ +
 //! 圆形发送 ↑ / 主题色停止块（运行中）。
@@ -353,15 +354,15 @@ pub(crate) fn input_area(
     // ---- 胶囊 ----
     let mut capsule = div()
         .id("composer")
-        .w_full() // 尺寸由外层锚点统一定（75%/min500/max920），/ 菜单与胶囊同宽
+        .w_full() // 尺寸由外层锚点统一定（消息列宽 / max 920），/ 菜单与胶囊同宽
         .rounded(px(16.))
         .border_1()
-        .border_color(if streaming {
-            gpui::rgba(0xeab30866) // amber while streaming (pi-web parity)
-        } else if input_focused {
-            rgb(t.accent).into()
+        // 边框不随 agent 运行变色（pi-web 的 streaming 琥珀色已去掉）：
+        // 只有焦点态用 accent，静息/工作中/排队一个样
+        .border_color(if input_focused {
+            rgb(t.accent)
         } else {
-            rgb(t.border).into()
+            rgb(t.border)
         })
         .bg(rgb(t.bg))
         .shadow_lg()
@@ -613,6 +614,9 @@ pub(crate) fn input_area(
                 .bottom(px(20.))
                 .left_0()
                 .right_0()
+                // 与消息列表同一水平内边距（session_list 的 px(15)）→ 胶囊列宽
+                // 恒等于消息列宽，窗口缩放时同步收缩，不再靠百分比猜
+                .px(px(15.))
                 .flex()
                 .flex_col()
                 .items_center()
@@ -629,9 +633,9 @@ pub(crate) fn input_area(
                         &composer_h_slot,
                         div()
                             .relative()
-                            .w(gpui::relative(0.75))
+                            .w_full() // 外层 px(15) 已扣除，此处宽度 == 消息列宽
                             .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
-                            // 无 min_w：窄窗下跟随 75% 收缩，不溢出窗口边
+                            // 无 min_w：窄窗下跟随消息列收缩，不溢出窗口边
                             .when(slash_open, |d| {
                                 d.child(
                                     div()

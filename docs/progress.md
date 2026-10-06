@@ -1510,3 +1510,390 @@ agent 轮块却正常——同一个行为不该有两套写法。
 顺带记录（未处理）：工作区另有若干文件的行尾是历史遗留的 CRLF 污染
 （`session/mod.rs` `dialogs.rs` `function_panel/*` 等，`git diff --ignore-cr-at-eol`
 才看得见真实改动）——本轮把 messages.rs 自己写坏的部分已还原成 LF，其余未动。
+
+### v63-4 复制图标不显示：copy.svg 从未登记进 assets!()（gpui svg 取不到资产就静默画空白）
+
+用户口径：操作栏里「编辑」「新分支」的图标都在，只有「复制」前面空着。
+
+根因：`ui::icon(name)` 走 `gpui::svg().path("icons/{name}.svg")`，资产由 `assets.rs`
+里手写的 `assets!()` 列表 + `include_str!` 编进二进制。`copy.svg` 在磁盘上
+（`assets/icons/copy.svg`，lucide 双矩形）但**没写进那个列表** → `Assets::load`
+返回 `None` → gpui 对取不到的 svg **静默画空白**（不报错、不 warn、不落日志）。
+用户行与 agent 轮两处复制图标同源同写法，所以一起消失，其余图标全部正常。
+
+全量审计（不是只挑 copy 看）：`icon()`/`icon_hover()` 调用点共 22 个不同名字，
+只有 `copy` 是「有调用点、没登记」；磁盘 30 个 svg 里也只有 `copy.svg` 漏登
+（原先 29/30 都登记了，正好漏掉这一个）。
+
+修法：
+
+- `assets!()` 补 `"icons/copy.svg"`；
+- 新增 `assets::tests::every_icon_file_and_call_site_is_registered`，双向锁：
+  ① `assets/icons/*.svg` 必须全部登记（漏登即报出文件名）；
+  ② 源码里每个 `icon("x")` / `icon_hover("x")` 调用点的名字必须有登记资产
+  （注释行不算）。旧测试 `all_icons_load` 只遍历宏列表，**漏登的文件它天然看不见**
+  ——本次这个 bug 正是从这个盲区漏出去的。
+- 反证：临时删掉登记行，测试立刻报
+  `assets/icons 下这些 svg 没登记进 assets!()（渲染为空白）：["copy.svg"]`。
+
+验证：`cargo test -p app` 91 全绿（+1）；`cargo check -p app` 0 警告。
+真机待复验：操作栏「复制」前出现双矩形图标（用户行与 agent 轮两处）。
+
+### v63-3 导航性能定稿：摘要缓存进 runtime + 刻度上限 50 百分比定位
+
+**摘要缓存（方案1 落地）**：gpui 即时渲染下 nav_gutter 原先每次重绘都从
+messages 现拼一遍摘要（用户/agent 前缀）——数据一轮一变，计算却每帧重复。
+改为 TurnSummary（user_ix/user_prefix/agent）存 SessionRuntime：notify_list
+（一切消息变化的必经点，含流式 delta）置脏，nav_summary() 惰性重建并返回
+Rc<Vec<_>>，渲染帧零重算；切会话回切直接命中缓存。
+
+**刻度上限 50（方案2 用户定案替代压缩/采样）**：轮次 ≤50 逐轮一枚；超出
+改百分比定位——50 枚均分轮次区间，轮 k → 刻度 k×50/N（用户例：100/1000
+→ 第 5 枚），点击刻度回桶首轮 i×N/50，active 轮映射回桶高亮；飞出卡片仍
+逐轮全列。飞出面板虚拟化明确不做（用户：先不考虑）。
+
+顺带：刻度/卡片元素 id 从消息索引改为刻度序号（量化后消息索引不再唯一）。
+app 91 测试全绿。033「待讨论」两条全部销项：跨会话缓存池在现架构下无的放
+矢（后台会话不产生导航开销），页内分页被百分比定位替代。
+
+### v63-4 导航总结栏：30px 固定头 + 自洽口径统计
+
+pi-web 固有统计考据（lib/session-stats.ts）：totalMessages/user/assistant
+按消息条目数、toolCalls 从 assistant content 块数、toolResults 是独立条
+目，custom 不计——严格口径 N = 用户+助手+工具结果+其他，≠ 用户公式。
+本工程 toolResult 入库即合并进 ToolCall 块（不占消息位）、system 跳过，
+两边数字本就对不上。按用户定案采用自洽口径 N = x+y+z。
+
+实现：NavData（turns + users/assistants/tool_calls）并入既有导航缓存
+（notify_list 置脏、build_nav_summary 同遍历数出，零额外每帧成本）；面板
+改 wrap(flex 列) = 总结栏 30px 固定 + 卡片滚动区 flex_1，总结栏文案走
+i18n 三语表；悬停保持打开的 on_hover 上移到整包 wrap——鼠标挪到总结栏
+不算离开面板；滚动条锚 top 38 让出总结栏。app 91 测试全绿 + 完整链接过
+（期间撞上另一会话对 runtime.rs 的进行中重构，等它落盘后复验通过）。
+
+## 状态（2026-10-05）— 「新分支」按钮修复：两层根因 + pi-web fork 语义对齐
+
+用户报：用户消息下的「新分支」点了没反应。三层问题，按发现顺序：
+
+### 1）serde_json 递归上限吃掉整条 `get_tree`（真正的死按钮）
+
+`parse_line` 用 `serde_json::from_str`，默认递归上限 128 层。pi 的
+`get_tree` 按 children 逐层嵌套整条会话（每条 entry ≈ 4~5 层 JSON）：实测
+85 条消息的会话树深 95 → 整行 `recursion limit exceeded` → **响应被
+parse_line 丢弃、无任何事件**（wire log 里明明有那条 402KB 的 `<` 行）。
+没有 get_tree → 没有 entry id → 所有用户消息 `entry_id: None` → 按钮
+根本不挂 handler（`if let Some(eid) = entry` 的 else 分支）。
+
+修法：新增 `pi_link::json::parse_value`（`Deserializer::disable_recursion_limit`
++ Cargo feature `unbounded_depth`），`protocol::parse_line` 与
+`sessions.rs` 的 JSONL 读取统一走它；顺带把 reader 线程栈从默认 2MiB 提到
+16MB（`Value` 析构递归，3000 条 entry 的会话在 2MiB 上有溢出风险），
+以及 reader 遇非 UTF-8 行不再 `break` 整条流（原来是「一行坏、后面全静默」）。
+
+### 2）长会话上 pi 自己的 `get_tree` 会炸（更深的问题）
+
+2970 条 entry 的会话（实测）：`get_tree` → `success:false,
+"Maximum call stack size exceeded"`（**pi 侧**溢出，不是我们）。也就是说
+第 1 点修好后，超长会话里按钮仍然是死的。
+
+对齐 pi-web 的正解：pi-web 从不用 get_tree 算 fork 锚点——
+`lib/session-reader.ts` 的 `sliceActiveBranch` 在**扁平 entry 列表**上走
+parentId（rpc 侧的对应命令就是 `get_entries`）。于是：
+
+- pi-link 新增 `Command::GetEntries`、`SessionEntry`、`parse_entries`、
+  `active_user_entry_ids(entries, leaf)`（leaf→root 回溯 + user 过滤 +
+  parentId 环保护）
+- runtime 新增 `refresh_anchors()`：发 GetEntries（权威）+ GetTree（033
+  导航面板用，失败即降级为空，不再影响「新分支」）；`apply_entry_ids()`
+  统一回填
+- 实测同一会话：get_tree 失败 / get_entries 2970 条、38 个 user 锚点 ✅
+
+### 3）fork 之后 shell 身份没跟着换（分支生效但界面还挂在父会话）
+
+pi 的 fork 是**进程内 rebind**：`runtimeHost.fork` → `createBranchedSession`
+→ 同一进程换绑新文件。旧实现只清消息重载，`self.file`/pool key/侧栏高亮/
+recents 全留在父会话上。
+
+- `SessionState` 补 `session_file` / `session_id`
+- runtime 新增 `follow_session_file()`：get_state / get_session_stats 里
+  发现 sessionFile 变了就跟随（draft 首条 prompt 落盘、fork、clone 三个
+  场景统一走这一条路），重取磁盘探针并发 `FileBound` → Chat 的
+  `on_file_bound` 迁移 pool key + 侧栏 + last-open
+
+### 4）UI 对齐 pi-web UserMessageView
+
+- in-flight 态：`runtime.forking` → 按钮文案「创建中…」、主题色、
+  `cursor_not_allowed`、点击不挂 handler（防连点发第二个 fork）
+- 操作栏 `opacity: hovered || forking`（pi-web 同式），创建中不许消失
+- i18n 三语补 `创建中…`
+- `fork_from_entry` 补前置条件：进程必须在、`forking` 去重
+
+### 实测证据（crates/pi-link/tests/live_fork_probe.rs，新增）
+
+短会话（167 条消息）：`fork` → `success:true`，
+sessionFile 从 `…T05-41-06…01a10a94` 变成 `…T06-02-29…01a10aa8`，
+sessionId 同步变更，messageCount 归 1（fork 点之前的路径被复制过去）——
+**clone 新分支 + 开新会话**这条链路 pi 侧本来就通，问题全在客户端。
+
+回归锁：pi-link 65 测试（新增 deep_tree 400 层 parse、flat entries 锚点、
+parentId 环 3 条）。app 91 测试。check_arch 违规数与基线一致（4+3，全存量）。
+
+### 顺带的架构收敛（不给 check_arch 留新账）
+
+- 新增 `session/fork.rs`：fork_from_entry / follow_session_file /
+  refresh_anchors / apply_entry_ids / on_fork_response / collect_path_user_ids
+  全部搬出 runtime.rs（1701 → 1566 行）
+- 新增 `session/actions_bar.rs`：用户消息操作栏（复制/编辑/新分支/时间戳）
+  搬出 messages.rs，`render_msg` 371 → ≤300 行（该函数不再是违规项），
+  messages.rs 2649 → 2545 行
+
+### 待真机验证（需先关闭正在运行的 pi-flash.exe 才能覆盖 target/debug）
+
+1. 打开一条 85+ 条消息的老会话 → hover 用户消息 → 「新分支」可点
+2. 点击 → 状态栏 forked，侧栏高亮切到新分支会话，标题变新分支内容
+3. 新分支里发一条消息正常流转
+4. 1000+ 轮的超长会话里「新分支」同样可用（get_tree 在那里已被 pi 拒绝）
+
+### v63-5 刻度条生成算法定稿：轮次均分切割整条（用户方案）
+
+替代 v63-1 的固定 2px 小横条：竖条按轮次均分切割——1 轮整条弱主题色、
+N 轮切 N 段（flex_1 等分 + 2px 缝），20 轮后段高不再缩小；>20 走既有百
+分比桶映射（TICK_MAX 50→20，轮 k → 段 k×20/N，点击回桶首轮）。**定位/
+选中算法一行未动**：active 段跟随真实滚动位置（贴底=末段）、卡片悬浮框
+不回写、nav_goto 置顶跳转——只换了「段怎么画」。段色从灰绿 0xa9beb5 改
+为弱主题色（accent α0x3d），hover 增亮 accent 实色；删掉每刻度的
+group/group_hover 双层结构（段本体即视觉即命中区），元素数 3×N→N。
+app 91 测试全绿 + 完整链接过。
+
+### v63-6 导航面板虚拟化 + 段→面板联动（「方案3」落地）
+
+卡片列表从 overflow_y_scroll 全量 div 换成 gpui `list()`：ListState 存
+Chat（跨开合保持滚动位，轮次数变化时 reset），每帧只建可视卡片 ~20 张——
+千轮会话原先是 1.2 万+ div/帧 + 1200 个 hover 监听。要点：
+- **水平 padding 挂外层容器**：List 条目只认上下 padding（session_list
+  同款结论），pl 6/pr 14 留滚动条位，pt/pb 8 挂 list 本体。
+- **卡片构建抽出 nav_card()**：list 闭包只有 &mut App，hover 改走
+  WeakEntity::upgrade + update（语义不变：enter 置位、leave 不清）；选中
+  框状态经 weak 升级 + read 读取。
+- **滚动条**：gpui-component 不认 ListState——新增 ui/list_handle.rs 的
+  ListStateHandle 适配 ScrollHandleOffsetable：offset 直接转接 list.rs 的
+  scroll_px_offset_for_scrollbar（负 y 约定与 ScrollHandle 一致），
+  content_size = max_offset_for_scrollbar + viewport_bounds，组件滚动条
+  （含拖拽）原样可用。
+- **段→面板联动**：点段 = 消息 nav_goto + 面板 scroll_to_reveal_item 到
+  该段区域起始卡（卡序号=轮序号）。区域分页方案讨论后不做：虚拟化把每
+  帧元素数打到 ~20（分页是 60），且零窗口管理逻辑。
+
+app 93 测试全绿 + 完整链接过（期间两度撞上 fork 会话的 pi-link/fork.rs
+中间态，等落盘复验通过）。
+
+## 状态（2026-10-05）— 「新分支」改挂 agent 回复 + 分支自动改名（用户定案）
+
+### 1）入口从用户消息移到 agent 轮操作栏
+
+用户判定原设计（pi-web：按钮在用户消息上）语义反了：`fork` 的 position 只能是
+`before`，分支点 = 该用户消息的 parentId，**这条用户消息本身不会带过去**——
+点「自己这条消息」却从它之前开始，很反直觉。正确语义是「一切从 clone 的地方
+开始」：按钮挂在 **agent 回复** 上，分支保留到本轮回复为止。
+
+- `ForkAnchor { next_user: Option<String>, tail: bool, forking: bool }`
+  （`session/fork.rs`）：分支点 = **下一条用户消息之前** → 从 agent 轮下按钮点
+  下去，带过去的是「本轮及之前全部」，其后的用户消息与内容丢弃
+- 本轮就是尾部（没有下一条用户消息）时 pi 没有可用的 before 目标 → 走
+  **rpc `clone`**（`runtimeHost.fork(leafId, {position:"at"})`，整段复制）。
+  pi-link 新增 `Command::Clone`（wire `{"type":"clone"}`）；`fork`/`clone`
+  响应共用 `on_fork_response`
+- 锚点没回来（`active_user_entry_ids` 为空）或中途某条用户消息缺 entry id →
+  `ForkAnchor::clickable()` 为假，按钮渲染但不接点击（宁可不点，不能开错地方）
+- 用户消息栏回归「复制 / 编辑」两 act
+
+### 2）分支自动改名：原名截取 20 字
+
+克隆出来的会话与原会话同名，侧栏里分不出谁是谁（用户实测反馈）。
+
+- 初版规则是「前 15 字 + "2"」；用户连做两次 clone 后实测后缀叠成 `…22`，
+  判定很蠢 → 改为**只截断、不加任何后缀**
+- `branch_name(base)`：`chars().take(BRANCH_NAME_CHARS = 20)`，超长补 `…`；
+  按**字**截断（中文不能切半个），空标题返回空串（调用方跳过
+  `set_session_name`，不发明名字）；单测覆盖 20 字边界 / 中文 / 连续 clone
+  同名不叠后缀
+- 原 title 必须在 fork **之前**取：`state.session_name` 优先，缺省首条用户消息
+  前 50 字（与重命名弹窗预填同口径），存 `fork_source_title`；
+  `on_fork_response` 里 `set_session_name` 发到 pi 已 rebind 的新文件上
+- 实测（`live_fork_probe` + PROBE_MODE=clone/RENAME）：`clone` 返回
+  `{cancelled:false}`，sessionFile/sessionId 换成新分支（621 条消息整段带过去），
+  `set_session_name` 后 `get_state.sessionName` 与新文件的 `session_info`
+  条目都已是新名字 → 侧栏改名生效
+
+### 顺带：render 函数违规清零（除既有 input_area）
+
+agent 轮操作栏整体搬进 `session/actions_bar.rs`（`assistant_action_bar`），
+`render_assistant_turn` 316 → 249 行；`render_msg` 已在上一步达标。
+check_arch：文件行数违规 4 条（全存量）／render 函数违规仅剩既有
+`input_area (367)`（我这两轮新引入的两条已消除）。
+
+测试：app 93（新增 branch_name ×2）、pi-link 65 全绿。
+
+### v63-7 点击选中 -1：贴底钳制改写视口顶 + 桶映射舍入；UI 微调
+
+**点击段后选中段总在点击处上方**：非索引算错。nav_goto 置顶后，若目标靠
+近会话尾部（常态——对话在末轮），下方内容不足以填满视口，gpui list 的
+layout_items 向上补条目并**改写 logical_scroll_top**（贴底钳制，vendor
+list.rs 878-907），视口顶落到目标轮之前——active 按「视口顶之上最近轮」
+推导就错选上一段。修（符合 v63-1 定稿语义「定位后的轮次才是选中的」）：
+pager Core 加 nav_pinned Cell，nav_goto 记录被点轮次，active 优先取钉住
+值；物理滚轮（scroll handler is_scrolled）清除交还位置推导。
+顺带修映射舍入：tick_of_turn 朴素 floor(t·k/N) 对桶起始轮（i·N mod k≠0，
+如 N=45/k=20 的段 5 → 轮 11 → 段 4）会 floor 回上一桶；改桶包含式
+floor((t+1)·k/N)（末端 clamp k−1）。
+
+**UI**：gutter 右呼吸位 2→4px（gutter 16、面板锚 right 16）；选中段改弱
+主题色常驻 + accent 1px 边框（不整段覆盖）；总结栏分隔线 0x40→0x80。
+app 94 测试全绿。
+
+### v63-8 段选中偏下一桶：v63-7 逆映射公式少减一
+
+v63-7 的「桶包含式」floor((t+1)·k/N) 推导有误——恒等映射（N≤20，k=N）下
+它等于 t+1，**点哪段亮下一段**（用户实测「跑下面去了」）；>20 时对部分轮
+同样 +1。与正向边界 floor(i·N/k) 自洽的逆映射是
+i = max{i : floor(i·N/k) ≤ t} = floor(((t+1)·k − 1)/N)（ceil(x)−1 恒等式
+的整数形式，末端 clamp k−1）：
+- 恒等映射：floor((t+1)N−1)/N = t ✓
+- 桶起始（N=45,k=20，t=11）：floor(239/45) = 5 = turn_of_tick(5) ✓
+两版错例（floor(t·k/N) 偏上一桶、floor((t+1)·k/N) 偏下一桶）都记录在案，
+此为终版。app 94 测试全绿。
+
+### v64 topbar 会话视图优化 + ⋯ 更多菜单（打开终端 / 系统 / 工具）
+
+用户口径：① 标题左 padding 15；② 标题前 `message-square-more`；③ 标题 30 字
+截断；④ 标题后 ⋯ 更多菜单；⑤ 菜单三项 = 打开终端 / 此会话系统提示词 / 此会话
+加载工具；⑥⑦⑧ 图标口径（打开终端用现有；系统提示词 `file-sliders`；加载工具
+`wrench`）；⑨「打开终端、系统、工具直接抄 pi-web」。
+
+**成果 = pi-web 的三个能力，数据源与面板都对齐 pi-web。**
+
+- **数据源（关键发现）**：pi 0.86+ 把系统提示词与工具声明**写进 transcript**：
+  每次运行追加一条 `role:"system"` 消息，带 `content`（追加到基础提示词）、
+  `sections`（按名打补丁，`null` 删除）、`toolsAdded`/`toolsRemoved`（声明增删）。
+  pi 自己的 `agent.state.systemPrompt` 就是这份重放（pi-web 的
+  `lib/exact-system-prompt.ts` 注释也这么写），而 CLI RPC **既没有
+  `systemPrompt` 字段也没有 `get_tools`**（pi-web 能用 `get_tools` 是因为它把
+  SDK 跑在自己的 server 进程里）。所以：
+  - 新增 `crates/pi-link/src/transcript.rs`：`transcript_system(&[Value])`，
+    逐行对齐 pi-ai `utils/transcript.js`（`getCurrentSystemMessage`）与
+    `utils/text.js`（`getSystemMessageText`）——prompt = 非空 content 段 +
+    全部存活 section 值，`\n\n` 连接；tools = 按 `toolsRemoved`/`toolsAdded`
+    重放、重名替换保值（JS `Map.set` 语义）。
+  - `serde_json` 开 `preserve_order`：sections 顺序 = 首次插入顺序，默认
+    BTreeMap 会按字母重排（preamble/tools/rules/docs/… → 字母序），面板里就不
+    是 pi 实际发送的那份提示词了。
+  - `SessionRuntime` 在 get_messages 时 replay 进 `sys_prompt` /
+    `session_tools`（原来的 `parse_export_html` + export_html 那条死路删除：
+    数据本就在每次拉的消息里，无需导出 HTML、无临时文件、无阻塞）。
+- **面板（照抄 pi-web 组件）**：新增 `crates/app/src/top_panels.rs` =
+  `activeTopPanel` 机制本身——挂在 topbar 正下方的整幅面板（`top(HEIGHT)`、
+  内容区宽、`bg_panel + border_b`、高 `min(600px,75dvh)`、`shadow_lg`），
+  一次只开一个：
+  - `TopPanel::System` ← SystemPromptPanel.tsx：单滚动区，等宽 12px / 行高 1.6 /
+    muted / pre-wrap；空态文案用 pi-web 原文（「系统提示词为空（工具已禁用）」
+    「系统提示词尚未加载」）。
+  - `TopPanel::Tools` ← ToolDefinitionsPanel.tsx：左 `clamp(112px,26%,220px)`
+    工具名列表（单选、选中 = bg-selected + 左侧 2px accent 竖条）、右详情
+    （描述 / 参数：类型 + 说明书 + 必填-可选 + 可选值 + 默认值，`formatSchemaType`
+    的 anyOf/oneOf/enum/array/$ref 规则逐条移植）；`param_fields` 对应
+    `getToolParameterFields`。选中态存 `Chat.tool_sel`（pi-web 的
+    selectedToolName）。
+  - 开关 = pi-web `toggleTopPanel`（同面再点收起、换面直切）；menu 行用 check
+    图标显示当前开着哪个。菜单项与面板文案按你的口径（「此会话系统提示词 /
+    此会话加载工具」），面板内文案保持 pi-web 原文。
+  - **打开终端**无需改动：pi-web 的 `handleOpenTerminal` = 聚焦同 cwd 的终端
+    tab、否则新建并切到内容区，pi-flash 的 `open_terminal(None, …)`（v54
+    内容区 tab）本来就是同构实现。
+- **布局**：会话视图分支 `pl(15) + gap(7) + [message-square-more 15px]
+  [标题 ≤30 字 semibold] [⋯ 22px]`，`max_w(460)`；30 字截断落在
+  `Chat::session_title`。菜单入口 = 既有 `ellipsis`。
+- **图标**：新增 `message-square-more.svg` / `file-sliders.svg`；`wrench.svg`
+  换成你给的新 lucide 变体（**全局**，输入框「工具」pill 同步改画法）；
+  曾按首版口径加的 `bot-message-square.svg` 已删（未用即删，进回收站）。
+  三个新图标都登记进 `assets!()`——`every_icon_file_and_call_site_is_registered`
+  先报红后转绿（正是当初「复制」图标静默消失那个坑的守卫）。
+- **i18n**：新增 15 条（菜单 3 + 系统面板 2 + 工具面板 10，三语，措辞取
+  pi-web 的 system.* / tools.* 译文）。
+- **死代码清理**：`on_event` 里第二个 `command == "export_html" && success`
+  （同一 if/else 链、永不可达）；`parse_export_html` + `html_unescape`。
+- **验证**：
+  - 单测：pi-link 68（+3 transcript）、app 94 全绿，`cargo check -p app` 零警告。
+  - **真机一致性**：取一条真实会话（560 条消息 / 62,522 字提示词 / 26 个工具），
+    我们的 replay 与 pi-ai `getCurrentSystemPrompt` + `getCurrentTools`
+    **逐字节相同**（prompt 与 tools 两个文件 diff 均 empty）。探针留为
+    `crates/pi-link/tests/live_transcript_probe.rs`（ignored，用法见文件头）。
+  - 已确认 RPC `get_messages` 会把 system 消息原样带回（用 vendored pi 手工
+    发一次 get_messages 验证：sections 顺序 preamble→tools→…→agent_browser、
+    toolsAdded 26 条）。
+  - `scripts/check_arch.sh`：文件行数违规仍是**存量 4 条**（main/markdown/
+    messages/runtime）+ 既有 `input_area` render 违规；新增的 transcript 逻辑
+    放进独立模块正是为了不把 pi-link/protocol.rs 顶过 1500 行。
+- **真机待复验**：构建时 `pi-flash.exe` 正被占用（未擅自关窗），exe 未更新。
+
+#### v64.1 浮层基类（用户：鼠标穿透 + 关不掉 + 「这是所有弹窗的规则」）
+
+用户实测两点：① 面板显示时鼠标**穿透**到下面的内容；② 两个面板**关不掉**
+（没关闭钮、点外无效）。并要求「所有弹窗都按同一套规则，为什么还没做基类」。
+
+- 新增 `crates/app/src/ui/overlay.rs` = **浮层唯一外壳**，把此前散落 6 处的
+  手写壳子收成一套规则：
+  1. `layer()`：`absolute inset_0 + occlude()`（鼠标**永不穿透**；裸挂 absolute
+     不 occlude 会让点击/滚轮漏进底下的消息列表——`input.rs` 胶囊、
+     `psp_overlays` 都单独踩过这个坑，现在统一由基座保证）；
+  2. 点浮层外任意处关闭；
+  3. ESC 关闭（`track_focus` 到 `chat.dialog_focus`，由调用方传 handle）；
+  4. `stop_click()`：卡片套一层，点卡片本身不关；
+  5. `close_btn()` / `panel_header()`：**看得见的 × 关闭钮**（22px，hover 变亮）。
+  `dismiss` 要求 `Clone` —— 它同时挂在外点与 ESC 两个 handler 上。
+  文件头写明了**两处故意例外**：`/` `@` 补全菜单（composer 的补全 UI，ESC 语义
+  是「取消补全」，点外收起故意让点击继续落到下层）与悬停提示（tooltip/hover 卡，
+  由 hover 状态机收起）。
+- 改造接入基座（原先各自手写「遮挡 + 点外 + ESC」的地方）：
+  - `dialogs.rs::dialog_shell`（5 个弹窗：模型选择 / Git 差异 / 会话搜索 /
+    图片预览 / ……）—— 图片预览原来**没有关闭钮**，补右上角 ×（规则 5）；
+  - `settings/mod.rs` 设置面板；
+  - `ext_ui.rs` 扩展弹窗（外点/ESC 都等于「取消」）；
+  - `function_panel/psp_overlays.rs`：psp ⋯ 菜单层 + 删除项目确认层（顺带得到
+    ESC 关闭；确认层需要焦点，签名加 `focus` 参数）；
+  - `main.rs` 胶囊下拉菜单层；
+  - `top_panels.rs` 两个面板（见下）。
+- **top panel 重做外壳**：从「content-col 里裸挂 absolute 的卡片」改为
+  `overlay::layer` + 卡片 → 鼠标不再穿透、点侧栏/内容区任意处关闭、ESC 关闭，
+  头部件加标题（系统提示词 / 工具定义）+ × 关闭钮（pi-web 那边靠 topbar 按钮的
+  active 态表示，这里按用户口径补可见关闭钮）。挂载点从 content-col 移到 **root**
+  （浮层要盖住侧栏才能做到「点外部关」），浮层从 topbar 下缘起铺 —— 窗口控制钮
+  与设置钮不被吞，卡片左缘跟 `slp_w`（侧栏收起 = 0）和内容区对齐。
+- ESC 的焦点前提：composer 的 escape 会 `stop_propagation`，抢不到 —— 焦点策略
+  链（`Chat::render`）补一支 `else if self.top_panel.is_some()` → 把焦点交给
+  `dialog_focus`（与 dialog/settings 同款），面板关闭后自动回落 composer。
+- i18n：+2（系统提示词 / 工具定义）。
+- 验证：app 94 + pi-link 68 全绿，`cargo check` 零警告；check_arch 违规仍为存量
+  4 文件 + 既有 `input_area`。真机待复验（exe 被运行中的 pi-flash 占用）。
+
+#### v64.2 两个面板改用设置弹窗窗体（用户：不要发明新窗体）
+
+用户口径：系统和工具**直接用 settings 弹窗**那套窗体，删掉之前那幅「遮挡半屏
+的弹窗」，不要自造。
+
+- 删除：v64/v64.1 那幅挂在 topbar 之下的整幅面板（`top_panels::top_panel`
+  + `Chat.top_panel` 字段 + root 挂载 + 焦点策略链里那支 + `panel_height` /
+  `sidebar_width` 计算）。
+- 抽出 **设置弹窗窗框** `ui::overlay::big_card(title, nav, body, t, close)`：
+  0.7×0.98 卡片、`rounded(10)`、chrome 36px 顶条（左标题、右 × 红 hover）、
+  可选左导航列（200px，nav 底 + 左下倒角 + 右边线）——**设置弹窗自己改用它**，
+  所以是「同一套窗体」，不是我另画一个。设置弹窗的标题传空串（它用左导航当
+  身份），两个面板传「系统提示词 / 工具定义」。
+- 两个面板回归 `Dialog::SessionInfo { kind }`（与其它弹窗同一条挂载/关闭链路）：
+  - 系统提示词：无左导航，正文走 mc-body 同款内边距（pt22/pl30/pr30/pb30）+ 滚动；
+  - 工具定义：左导航位 = 工具名列表（设置弹窗 nav_items 同款行样式），右侧 =
+    描述 / 参数详情；
+  - ⋯ 菜单项 = `open_session_info`（同面再点收起）+ 打勾态 `session_info_open`。
+- 浮层三条全局规则仍由 `ui::overlay::layer` 统一提供（遮挡不穿透 / 点外关闭 /
+  ESC 关闭），窗框自带 ×（规则 5）。
+- 验证：app 94 全绿、零警告；check_arch 违规仍为存量 4 文件 + 既有 input_area；
+  exe 已重建并启动（真机复验）。

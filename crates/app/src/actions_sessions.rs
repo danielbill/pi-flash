@@ -133,8 +133,8 @@ impl Chat {
                 }
                 if let Some(s) = &r.agent.session {
                     let _ = s.send(&Command::GetMessages);
-                    let _ = s.send(&Command::GetTree);
                 }
+                r.refresh_anchors();
                 r.refresh_state();
             });
         })

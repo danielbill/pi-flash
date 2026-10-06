@@ -2,8 +2,10 @@
 //! 会话导航面板（033：右缘 12px 刻度条，75% 高，悬停左弹 400px 轮次摘要
 //! 卡片列表）。无工具栏、无内嵌状态行（v54 按设计删除）。
 
+pub(crate) mod actions_bar;
 pub(crate) mod chat_list;
 pub(crate) mod diff;
+pub(crate) mod fork;
 pub(crate) mod input;
 pub(crate) mod messages;
 pub(crate) mod runtime;
@@ -153,8 +155,9 @@ fn session_list(
         .min_h_0()
         .flex()
         .flex_col()
-        // 默认两侧边距 10px（窄窗口下内容不贴边；920 列宽不动，宽窗居中）
-        .px(px(10.))
+        // 两侧边距 15px（窄窗口下内容不贴边；920 列宽不动，宽窗居中）
+        // 必须与 composer 悬浮层 padding 一致（input.rs），否则胶囊与消息列错位
+        .px(px(15.))
         .child(
             list(rt_list.clone(), move |ix, _window, cx| {
         let rt_view = rt_entity.read(cx);
@@ -243,6 +246,23 @@ fn session_list(
                     let secs = start.elapsed().as_secs_f32();
                     (secs >= 0.5 && est > 0).then(|| est as f32 / secs)
                 });
+                // 「新分支」锚点：分支保留到本轮 agent 回复为止 → fork 到
+                // 「下一条用户消息之前」（该用户消息本身及之后的内容丢弃）。
+                // 本轮就是尾部时 pi 没有可 fork 的 before 目标 → 走 rpc
+                // clone（整段复制）。锚点还没回来就不给按钮。
+                let fork = if rt_view.active_user_entry_ids.is_empty() {
+                    None
+                } else {
+                    let next_user = rt_view.messages[end..]
+                        .iter()
+                        .find(|m| m.role == Role::User)
+                        .and_then(|m| m.entry_id.clone());
+                    Some(self::fork::ForkAnchor {
+                        tail: end >= rt_view.messages.len(),
+                        next_user,
+                        forking: rt_view.forking,
+                    })
+                };
                 div()
                     .w_full()
                     .flex()
@@ -263,6 +283,7 @@ fn session_list(
                                 stream_tps,
                                 compute_meta(&rt_view.messages, ix),
                                 chat.bar_hover == Some(ix),
+                                fork,
                             )),
                     )
                     .into_any_element()
@@ -342,13 +363,11 @@ fn session_hero(
                                         .size(px(32.))
                                         .rounded(px(8.))
                                         .bg(rgb(t.accent))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .text_size(crate::appearance::ui_size(20.))
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(t.accent_contrast))
-                                        .child("\u{3c0}"),
+                                        .child(crate::ui::icon(
+                                            "logo-marks",
+                                            32.,
+                                            t.accent_contrast,
+                                        )),
                                 )
                                 .child(
                                     div()
@@ -389,87 +408,63 @@ fn session_hero(
         })
 }
 
-/// 会话导航面板 (033)：右缘 12px 刻度条，屏高 75%，按「屏高 − composer
-/// 高度×50%」居中；每轮一枚 2px 高 × 10px 宽刻度（左右 padding 4、间隔
-/// 4px，新增刻度整体重新居中），当前定位轮 accent 12px 全宽——选中跟随
-/// 真实滚动位置（贴底 = 末刻度），卡片悬浮框不回写。悬停向左弹出 400px
-/// 轮次摘要卡片列表（用户前 50 字 + agent 首条回复前 50 字，编号 01-99），
-/// 点击卡片/刻度定位会话；内容溢出时右缘显示滚动条。
+/// 会话导航面板 (033)：右缘 12px 竖条，屏高 75%，按「屏高 − composer
+/// 高度×50%」居中；生成算法（v63-5）：轮次均分切割整条——1 轮整条弱主
+/// 题色、N 轮切 N 段（flex_1 等分 + 2px 缝），20 轮后段高不再缩小，>20
+/// 走百分比桶映射（轮 k → 段 k×20/N，点击回桶首轮）。当前定位段 accent
+/// 实色——选中跟随真实滚动位置（贴底 = 末段），卡片悬浮框不回写。
+/// 悬停向左弹出 400px 轮次摘要卡片列表（用户前 50 字 + agent 首条回复
+/// 前 50 字，编号 01-99）+ 30px 总结栏，点击卡片/段定位会话；内容溢出
+/// 时右缘显示滚动条。摘要数据走 runtime 缓存（v63-3）：notify_list 置
+/// 脏惰性重建，渲染帧零重算。
 fn nav_gutter(
     chat: &mut Chat,
     rt_entity: gpui::Entity<crate::session::runtime::SessionRuntime>,
-    _weak: gpui::WeakEntity<Chat>,
+    weak: gpui::WeakEntity<Chat>,
     t: &'static crate::theme::Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
-    // 摘要数据每帧在这里一次性算完并落地成 owned 值（旧实现散落在
-    // 各 listener 之间反复 read），借用在块尾即结束，后面纯拼元素
-    let (turns, turn_user, turn_agent, scroll_top_ix): (
-        Vec<usize>,
-        Vec<String>,
-        Vec<Option<(usize, String)>>,
-        usize,
-    ) = {
-        let rt = rt_entity.read(cx);
-        // turns = 用户消息锚点（ChatMinimap.tsx parity：每轮=用户消息 +
-        // 其后的全部 assistant 回复）
-        let turns: Vec<usize> = rt
-            .messages
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role == Role::User)
-            .map(|(i, _)| i)
-            .collect();
-        // 每轮摘要（033：用户发言前 50 字 + agent 首条有正文回复前 50 字
-        // 的首行；定位器不是会话副本——agent 说多少话也只摘要一行）
-        let turn_user: Vec<String> = turns
-            .iter()
-            .map(|&ux| {
-                rt.messages
-                    .get(ux)
-                    .map(|m| m.plain_text_prefix(50))
-                    .unwrap_or_default()
-            })
-            .collect();
-        let turn_agent: Vec<Option<(usize, String)>> = turns
-            .iter()
-            .enumerate()
-            .map(|(ti, &ux)| {
-                let end = turns.get(ti + 1).copied().unwrap_or(rt.messages.len());
-                (ux + 1..end).find_map(|i| {
-                    let m = rt.messages.get(i)?;
-                    if m.role != Role::Assistant {
-                        return None;
-                    }
-                    let head = m.plain_text_prefix(80);
-                    let line: String = head
-                        .trim_start()
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(50)
-                        .collect();
-                    (!line.is_empty()).then_some((i, line))
-                })
-            })
-            .collect();
-        let scroll_top_ix = rt.pager.scroll_top_ix();
-        (turns, turn_user, turn_agent, scroll_top_ix)
-    };
+    // 摘要读 runtime 缓存（v63-3：notify_list 置脏、惰性重建，渲染帧
+    // 零重算——摘要「一轮一次」，不随渲染帧反复拼前缀）
+    let (summary, scroll_top_ix, nav_pinned) = rt_entity.update(cx, |rt, _| {
+        (rt.nav_summary(), rt.pager.scroll_top_ix(), rt.pager.nav_pinned())
+    });
     // 刻度选中 = 真实定位轮次（033）：视口顶之上最近的轮。贴底（含未
     // 滚动的短会话）时逻辑位是 None，scroll_top_ix 回退成总条目数 →
     // 自然选中末轮（对话常态在末轮）。**不能**用 pager.is_at_bottom：
-    // 那是滚轮回调维护的 Cell，程序化 reveal（scroll_to_reveal_item）
-    // 不经过它——导航点击后它仍是 true，刻度会错停在末轮（v63-1 踩坑）
-    let active_turn: Option<usize> = turns.iter().rposition(|&ux| ux <= scroll_top_ix + 1);
-    // 卡片选中框 = 纯悬浮光标，随意滑动不联动刻度
-    let card_sel = chat.nav_hover_turn;
+    // 那是滚轮回调维护的 Cell，程序化定位不经过它——导航点击后它仍是
+    // true，刻度会错停在末轮（v63-1 踩坑）。
+    // 导航点击优先：nav_pinned = 被点轮次（贴底钳制会改写视口顶，位置
+    // 推导会错选上一段；物理滚轮清除交还推导，v63-7）
+    let active_turn: Option<usize> = nav_pinned.or_else(|| {
+        summary
+            .turns
+            .iter()
+            .rposition(|s| s.user_ix <= scroll_top_ix + 1)
+    });
+    // 033 段上限 20（v63-5 生成算法）：轮次均分切割整条竖条——N 轮切
+    // N 段（flex_1 等分 + 2px 缝），20 轮后段高不再缩小，>20 走既有的
+    // 百分比桶映射（轮 k 命中段 k×20/N，点击段回桶首轮 i×N/20）。定位/
+    // 选中算法与刻度时代完全一致：active 跟随真实滚动位置；飞出卡片仍
+    // 逐轮全列（滚动查看）
+    const TICK_MAX: usize = 20;
+    let n_turns = summary.turns.len();
+    let tick_count = n_turns.min(TICK_MAX);
+    let turn_of_tick = move |i: usize| -> usize { i * n_turns / tick_count };
+    // 逆映射用桶包含式 floor(((t+1)·k − 1)/N)：与正向边界 floor(i·N/k)
+    // 自洽（i = max{i : floor(i·N/k) ≤ t}）。两个错例都踩过：朴素
+    // floor(t·k/N) 对桶起始轮（i·N mod k ≠ 0）floor 回上一桶——点段 i
+    // 高亮 i−1；不带 −1 的 floor((t+1)·k/N) 整体偏下一桶（恒等映射下
+    // = t+1，点哪段亮下一段）——v63-7 两版都踩过，此为终版
+    let tick_of_turn = move |t: usize| -> usize {
+        (((t + 1) * tick_count - 1) / n_turns).min(tick_count - 1)
+    };
 
     let mut gutter = div()
         .id("nav-gutter")
         .relative()
-        .w(px(12.))
+        // 16 = 段宽 12 + 右侧 4px 呼吸位（不贴窗口边）
+        .w(px(16.))
         .h_full()
         .flex_shrink_0()
         // gutter hover：进入即开，离开且鼠标不在 flyout 上才进入宽限
@@ -483,33 +478,27 @@ fn nav_gutter(
             cx.notify();
         }));
 
-    // 悬停展开的轮次摘要列表（033：topbar 之下 100% 高、350px 宽、向左
+    // 悬停展开的轮次摘要列表（033：topbar 之下 100% 高、400px 宽、向左
     // 弹出、内容溢出显示滚动条）。滚动条挂在滚动容器平级的 absolute
-    // 兄弟上（滚动容器内的绝对定位子元素会随内容滚走）
-    if chat.nav_open && !turns.is_empty() {
+    // 兄弟上（滚动容器内的绝对定位子元素会随内容滚走）。整包结构：
+    // wrap（flex 列）= 总结栏 30px 固定 + 卡片滚动区 flex_1
+    if chat.nav_open && !summary.turns.is_empty() {
         // absolute 定位本身即绝对定位子孙（滚动条）的包含块，无需再挂
         // relative——且 position 是单字段，relative 会覆盖 absolute
         let mut flyout_wrap = div()
+            .id("nav-flyout-wrap")
             .absolute()
-            .right(px(12.))
+            // 16 = 与段左缘齐平（gutter 16 = 段 12 + 右 4 呼吸位）
+            .right(px(16.))
             .top_0()
             .bottom_0()
-            .w(px(400.));
-        let mut flyout = div()
-            .id("nav-flyout")
-            .w_full()
-            .h_full()
+            .w(px(400.))
+            .flex()
+            .flex_col()
+            // 悬停保持打开：挂 wrap（含总结栏）而不是滚动区——鼠标挪到
+            // 总结栏不算离开面板，否则 250ms 宽限一到面板就收了
             .occlude()
-            .overflow_y_scroll()
-            .track_scroll(&chat.nav_flyout_scroll)
-            .bg(rgb(t.bg))
-            .border_l_1()
-            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
             .shadow_lg()
-            // pr 多留 14px 给右缘滚动条（滚动条占 right 3..11）
-            .pl(px(6.))
-            .pr(px(14.))
-            .py(px(8.))
             .on_hover(cx.listener(|this, h: &bool, _w, cx| {
                 if *h {
                     this.nav_open = true;
@@ -522,133 +511,99 @@ fn nav_gutter(
                 }
                 cx.notify();
             }));
-        for (ti, &ux) in turns.iter().enumerate() {
-            let on = card_sel == Some(ti);
-            let no = format!("{:02}", ti + 1);
-            let chars = turn_user[ti].clone();
-            let rt_scroll = rt_entity.clone();
-            let mut turn_el = div()
-                .id(SharedString::from(format!("nv-turn-{ux}")))
-                .mt(px(2.))
-                .px(px(8.))
-                .py(px(7.))
-                // 选择框四面完整：常驻 1px 边框（透明↔accent 切换，无
-                // 布局跳动），bg 同步切换
-                .rounded(px(8.))
-                .border_1()
-                .border_color(gpui::rgba(0x00000000))
-                .when(on, |d| {
-                    d.bg(gpui::rgba((t.accent as u32) << 8 | 0x0f))
-                        .border_color(rgb(t.accent))
-                })
-                // 选择框跟随鼠标：只在进入时置位，离开不清。gpui 鼠标
-                // 事件 bubble 阶段按绘制逆序派发，向下移动时后画的卡的
-                // leave 在下一张卡的 enter 之后触发，把 Some 清回 None
-                // ——这正是「向上流畅、向下几乎不显示」的根因；最终清
-                // 理由 flyout 的 on_hover(false) 统一做
-                .on_hover(cx.listener(move |this, h: &bool, _w, cx| {
-                    if *h && this.nav_hover_turn != Some(ti) {
-                        this.nav_hover_turn = Some(ti);
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    // 用户行：点击定位到该用户消息
-                    div()
-                        .id(SharedString::from(format!("nv-user-{ux}")))
-                        .flex()
-                        .gap(px(9.))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            rt_scroll.read(cx).pager.nav_goto(ux);
-                            // 程序化定位不触发任何 notify，点刻度/卡片后
-                            // 当帧重渲染，选中刻度才跟得上定位
-                            window.refresh();
-                        })
-                        .child(
-                            div()
-                                .w(px(18.))
-                                .text_right()
-                                .font_family(crate::markdown::MONO_FAMILY)
-                                .text_size(crate::appearance::ui_size(10.))
-                                .line_height(relative(1.7))
-                                .text_color(rgb(t.text_dim))
-                                .child(SharedString::from(no)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                // 会话导航面板：用户发言 = 面板字号 -1
-                                // （字体大小设置.md §1）
-                                .text_size(crate::appearance::ui_size(11.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .line_height(relative(1.55))
-                                .text_color(rgb(t.text))
-                                .max_h(px(58.))
-                                .overflow_hidden()
-                                .child(SharedString::from(chars)),
-                        ),
-                );
-            // 摘要行：A 与轮次编号对齐、正文与用户发言对齐（033）——
-            // 与用户行同构（18px 右对齐编号列 + gap 9），此前多出的
-            // ml(27) 缩进即「agent 回复没左对齐」的根因
-            if let Some((aix, preview)) = turn_agent[ti].as_ref() {
-                let (aix, preview) = (*aix, preview.clone());
-                let rt_scroll_a = rt_entity.clone();
-                turn_el = turn_el.child(
-                    div()
-                        .id(SharedString::from(format!("nv-agent-{aix}")))
-                        .flex()
-                        .gap(px(9.))
-                        .mt(px(5.))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            rt_scroll_a.read(cx).pager.nav_goto(aix);
-                            window.refresh();
-                        })
-                        .child(
-                            div()
-                                .w(px(18.))
-                                .text_right()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .line_height(relative(1.7))
-                                .text_color(rgb(t.text_dim))
-                                .child("A"),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                // 会话导航面板：agent 发言 = 面板字号 -2
-                                .text_size(crate::appearance::ui_size(10.))
-                                .line_height(relative(1.55))
-                                .text_color(rgb(t.text_dim))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(SharedString::from(preview)),
-                        ),
-                );
-            }
-            flyout = flyout.child(turn_el);
+        // 总结栏（v63-4）：30px 固定高，滚动区之外。口径「按我们自己设
+        // 计」：N = 用户 + 助手 + 工具调用（ToolCall 块数），非 pi-web
+        // totalMessages
+        let stats_line = crate::i18n::tf(
+            "{n}条消息：用户{u}条 助手{a}条 工具调用{t}次",
+            &[
+                (
+                    "n",
+                    (summary.users + summary.assistants + summary.tool_calls)
+                        .to_string(),
+                ),
+                ("u", summary.users.to_string()),
+                ("a", summary.assistants.to_string()),
+                ("t", summary.tool_calls.to_string()),
+            ],
+        );
+        let header = div()
+            .h(px(32.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            // 左缘 14 = 面板 pl 6 + 卡片 px 8，与卡片文字对齐
+            .px(px(14.))
+            .border_b_1()
+            // 分隔线与面板左边框同档（0x40 太淡看不出）
+            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
+            .bg(rgb(t.bg))
+            .text_size(crate::appearance::ui_size(11.))
+            .text_color(rgb(t.text_dim))
+            .child(SharedString::from(stats_line));
+        // 卡片列表虚拟化（v63-6）：ListState 只建可视卡片（~20）而非全
+        // 量（千轮会话原先是 1.2 万+ div/帧）。轮次数仅在用户新增一轮时
+        // 变化（面板开着时几乎不可能），reset 重算计数
+        if chat.nav_flyout_list.item_count() != summary.turns.len() {
+            chat.nav_flyout_list.reset(summary.turns.len());
         }
-        flyout_wrap = flyout_wrap.child(flyout);
-        // 滚动条仅在实际溢出时渲染（max_offset>0 = 内容超高）
-        if chat.nav_flyout_scroll.max_offset().height > px(0.) {
+        let weak_cards = weak.clone();
+        let summary_cards = summary.clone();
+        let rt_cards = rt_entity.clone();
+        let flyout = div()
+            .id("nav-flyout")
+            .w_full()
+            .flex_1()
+            .min_h_0()
+            // list 子元素靠 flex_1 撑高——父容器必须是 flex 列：block 容
+            // 器里 flex_grow 无效，list 高度 auto 塌成 0，一张卡都不渲染
+            //（v63-6 踩坑；session_list 的父容器同样是 flex().flex_col()）
+            .flex()
+            .flex_col()
+            .bg(rgb(t.bg))
+            .border_l_1()
+            .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
+            // 水平 padding 必须挂外层容器：gpui List 的 prepaint 只应用
+            // 条目的 padding.top/bottom，左右 padding 对条目完全无效
+            //（session_list 同款结论）
+            .pl(px(6.))
+            .pr(px(14.))
+            .child(
+                gpui::list(chat.nav_flyout_list.clone(), move |ix, _window, cx| {
+                    let Some(s) = summary_cards.turns.get(ix) else {
+                        return div().into_any_element();
+                    };
+                    // 选中框 = 悬浮光标（enter 置位），状态在 Chat 上，
+                    // 经 weak 升级读取（list 闭包只有 &mut App）
+                    let on = weak_cards
+                        .upgrade()
+                        .is_some_and(|c| c.read(cx).nav_hover_turn == Some(ix));
+                    nav_card(ix, s, on, &weak_cards, &rt_cards, t)
+                })
+                // 上下 padding 挂 list 本体（prepaint 会应用）
+                .pt(px(8.))
+                .pb(px(8.))
+                .flex_1()
+                .min_h_0(),
+            );
+        flyout_wrap = flyout_wrap.child(header).child(flyout);
+        // 滚动条仅在实际溢出时渲染；ListStateHandle 把 ListState 适配成
+        // gpui-component Scrollbar 的句柄（拖拽走 list.rs 的 scrollbar 协
+        // 作接口），锚在滚动区（总结栏之下）
+        if chat.nav_flyout_list.max_offset_for_scrollbar().height > px(0.) {
+            let handle = crate::ui::list_handle::ListStateHandle(
+                chat.nav_flyout_list.clone(),
+            );
             let sb_state = gpui_component::scroll::ScrollbarState::default();
             flyout_wrap = flyout_wrap.child(
                 div()
                     .absolute()
-                    .top(px(8.))
+                    .top(px(38.))
                     .bottom(px(8.))
                     .right(px(3.))
                     .w(px(8.))
                     .child(
-                        gpui_component::scroll::Scrollbar::vertical(
-                            &sb_state,
-                            &chat.nav_flyout_scroll,
-                        ),
+                        gpui_component::scroll::Scrollbar::vertical(&sb_state, &handle),
                     ),
             );
         }
@@ -657,47 +612,51 @@ fn nav_gutter(
 
     // 导航刻度条（033）：屏高 75%；居中规则 = 屏高 − inputpanel 高度×50%
     // 后居中——rail 挂 mb(0.5×composer高)，flex 连 margin 盒一起居中，
-    // 视觉中心正好上移 composer/4。行 = 10px 宽刻度 + 左右 padding 4
-    // （18×6 命中区），间隔 4px；新增刻度 justify_center 每帧重新居中。
-    // 极多轮次超出 75% 高时居中裁剪（>100 轮的加载/分页策略 033 待讨论）
-    if !turns.is_empty() {
+    // 视觉中心正好上移 composer/4。生成算法（v63-5）：轮次均分切割整条
+    // ——flex_1 等分 + 2px 缝，1 轮 = 整条弱主题色、2 轮 = 上下两段……
+    // 20 轮后段高不再缩小（>20 百分比桶映射）。段色 = 弱主题色常驻，
+    // 选中 = accent 边框（不整段覆盖），hover 增亮；gutter 14px = 段 12px
+    // + 右侧 2px 呼吸位
+    if !summary.turns.is_empty() {
         let composer_h = chat.composer_h.get();
+        let active_tick = active_turn.map(tick_of_turn);
         let mut rail = div()
             .h(relative(0.75))
             .mb(px(composer_h * 0.5))
-            .w_full()
-            .overflow_hidden()
+            .w(px(12.))
             .flex()
             .flex_col()
             .items_center()
-            .justify_center();
-        for (ti, &ux) in turns.iter().enumerate() {
-            let on = active_turn == Some(ti);
+            .gap(px(2.));
+        for i in 0..tick_count {
+            let on = active_tick == Some(i);
+            let target_ix = summary.turns[turn_of_tick(i)].user_ix;
             let rt_scroll = rt_entity.clone();
-            let tick_group = SharedString::from(format!("tick-{ux}"));
             rail = rail.child(
                 div()
-                    .id(SharedString::from(format!("nav-node-{ux}")))
-                    .group(tick_group.clone())
-                    .w(px(18.))
-                    .h(px(6.))
-                    .flex()
-                    .items_start()
-                    .justify_center()
+                    .id(SharedString::from(format!("nav-node-{i}")))
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .rounded(px(2.))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        rt_scroll.read(cx).pager.nav_goto(ux);
-                        window.refresh();
-                    })
-                    .child(
-                        div()
-                            .h(px(2.))
-                            .rounded(px(1.))
-                            .when(on, |d| d.w(px(12.)).bg(rgb(t.accent)))
-                            .when(!on, |d| d.w(px(10.)).bg(rgb(0xa9beb5)))
-                            // 行 hover：刻度增亮（刻度本体仅 2px 高，
-                            // group_hover 让整行命中区即可触发）
-                            .group_hover(tick_group, |s| s.bg(rgb(t.accent))),
+                    // 常驻 1px 边框（透明↔accent）防选中时尺寸跳动
+                    .border_1()
+                    .bg(gpui::rgba((t.accent as u32) << 8 | 0x3d))
+                    .when(on, |d| d.border_color(rgb(t.accent)))
+                    .when(!on, |d| d.border_color(gpui::rgba(0x00000000)))
+                    // 段 hover：整段增亮到实色（低透明底色上很显眼）
+                    .hover(|s| s.bg(rgb(t.accent)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            // 面板联动（v63-6）：面板滚到该段的区域起始卡
+                            //（卡序号 = 轮序号）
+                            this.nav_flyout_list
+                                .scroll_to_reveal_item(turn_of_tick(i));
+                            rt_scroll.read(cx).pager.nav_goto(turn_of_tick(i), target_ix);
+                            window.refresh();
+                        }),
                     ),
             );
         }
@@ -707,11 +666,135 @@ fn nav_gutter(
                 .h_full()
                 .w_full()
                 .flex_col()
+                .items_start()
                 .justify_center()
                 .child(rail),
         );
     }
     gutter.into_any_element()
+}
+
+/// 轮次摘要卡片（v63-6 从 nav_gutter 循环抽出供 list() 按需调用）：
+/// 编号 + 用户前 50 字 + A 行 agent 摘要，A 对齐编号、正文对齐用户正文。
+/// `on` = 悬浮选中框；hover 只在 enter 置位、leave 不清——gpui 鼠标事件
+/// bubble 阶段按绘制逆序派发，向下移动时上一张卡的 leave 在下一张卡的
+/// enter 之后触发会误清（v63 根因），统一由面板 on_hover(false) 清理。
+fn nav_card(
+    ti: usize,
+    s: &crate::session::runtime::TurnSummary,
+    on: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    rt_entity: &gpui::Entity<crate::session::runtime::SessionRuntime>,
+    t: &'static crate::theme::Theme,
+) -> gpui::AnyElement {
+    let no = format!("{:02}", ti + 1);
+    let chars = s.user_prefix.clone();
+    let user_ix = s.user_ix;
+    let rt_scroll = rt_entity.clone();
+    let weak_hover = weak.clone();
+    let mut turn_el = div()
+        .id(SharedString::from(format!("nv-turn-{}", s.user_ix)))
+        .mt(px(2.))
+        .px(px(8.))
+        .py(px(7.))
+        // 选择框四面完整：常驻 1px 边框（透明↔accent 切换，无布局跳动），
+        // bg 同步切换
+        .rounded(px(8.))
+        .border_1()
+        .border_color(gpui::rgba(0x00000000))
+        .when(on, |d| {
+            d.bg(gpui::rgba((t.accent as u32) << 8 | 0x0f))
+                .border_color(rgb(t.accent))
+        })
+        .on_hover(move |h: &bool, _window, cx| {
+            if *h {
+                let _ = weak_hover.update(cx, |this, cx| {
+                    if this.nav_hover_turn != Some(ti) {
+                        this.nav_hover_turn = Some(ti);
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .child(
+            // 用户行：点击定位到该用户消息
+            div()
+                .id(SharedString::from(format!("nv-user-{user_ix}")))
+                .flex()
+                .gap(px(9.))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    rt_scroll.read(cx).pager.nav_goto(ti, user_ix);
+                    // 程序化定位不触发任何 notify，点击后当帧重渲染，
+                    // 选中段才跟得上定位
+                    window.refresh();
+                })
+                .child(
+                    div()
+                        .w(px(18.))
+                        .text_right()
+                        .font_family(crate::markdown::MONO_FAMILY)
+                        .text_size(crate::appearance::ui_size(10.))
+                        .line_height(relative(1.7))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(no)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        // 会话导航面板：用户发言 = 面板字号 -1
+                        //（字体大小设置.md §1）
+                        .text_size(crate::appearance::ui_size(11.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .line_height(relative(1.55))
+                        .text_color(rgb(t.text))
+                        .max_h(px(58.))
+                        .overflow_hidden()
+                        .child(SharedString::from(chars)),
+                ),
+        );
+    // 摘要行：A 与轮次编号对齐、正文与用户发言对齐（033）——与用户行
+    // 同构（18px 右对齐标号列 + gap 9）
+    if let Some((aix, preview)) = s.agent.as_ref() {
+        let (aix, preview) = (*aix, preview.clone());
+        let rt_scroll_a = rt_entity.clone();
+        turn_el = turn_el.child(
+            div()
+                .id(SharedString::from(format!("nv-agent-{aix}")))
+                .flex()
+                .gap(px(9.))
+                .mt(px(5.))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    rt_scroll_a.read(cx).pager.nav_goto(ti, aix);
+                    window.refresh();
+                })
+                .child(
+                    div()
+                        .w(px(18.))
+                        .text_right()
+                        .text_size(crate::appearance::ui_size(10.))
+                        .line_height(relative(1.7))
+                        .text_color(rgb(t.text_dim))
+                        .child("A"),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        // 会话导航面板：agent 发言 = 面板字号 -2
+                        .text_size(crate::appearance::ui_size(10.))
+                        .line_height(relative(1.55))
+                        .text_color(rgb(t.text_dim))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(preview)),
+                ),
+        );
+    }
+    turn_el.into_any_element()
 }
 
 /// Extension setWidget rows above/below the composer (ext protocol surface).

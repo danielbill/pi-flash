@@ -35,10 +35,23 @@ fn split_token(value: &str, commands: &[String]) -> Option<(String, bool)> {
     Some((name.clone(), skill))
 }
 
-/// 输入首行到输入区顶边的距离（px）。改这一个数字即可。
-/// 原理：组件内边距 py=5 + 行高领先 ≈3，其余差值由容器 pt 补齐，
-/// 因此这里只调 wrapper 的 pt：INPUT_PAD_TOP - 11 写回容器。
-const INPUT_PAD_TOP: f32 = 16.;
+/// placeholder 是覆盖层（面板字号，与输入框正文的会话字号可以不同），
+/// 但它必须落在组件**第一行的行框**里，才能和光标对齐。行框由三个量决定，
+/// 三者都要与 gpui-component 内部一致（Size::Medium / text_input.rs）：
+///
+/// - 左：组件 padding.left = `input_px(Medium)` = 12
+/// - 上：组件 padding.top  = `input_py(Medium)` = 5
+/// - 行高：编辑器写死的 `LINE_HEIGHT = Rems(1.25)` = 20px（rem 16）
+///
+/// 行高最容易被漏掉：不写它，覆盖层会继承 gpui 默认行高 φ(1.618)，15px
+/// 字号 → 24.3px，比组件的 20px 高一截；行内的字形按行框居中，于是整行
+/// 下沉 (24.3−20)/2 ≈ 2.1px。此前又手调了一个 +2px「视觉补偿」，两者叠加
+/// 就成了「placeholder 比光标低半个行距」的错位。
+const PLACEHOLDER_LEFT: f32 = 12.;
+const PLACEHOLDER_TOP: f32 = 5.;
+/// 必须与 vendor/gpui-component/src/input/text_input.rs 的 LINE_HEIGHT 同值，
+/// 字号（面板 vs 会话）不同时基线才不会跑。
+const COMPOSER_LINE_HEIGHT_REMS: f32 = 1.25;
 
 
 /// fires after every user value mutation (typing, paste, IME commit)
@@ -267,7 +280,7 @@ impl Render for ComposerInput {
 
         let ph = self.placeholder.clone().unwrap_or_default();
         let empty = self.value.is_empty();
-        let pad_top = px(INPUT_PAD_TOP - 11.);
+        let ph_lh = gpui::rems(COMPOSER_LINE_HEIGHT_REMS);
         // token chip（ZCode 原子节点 parity）：图标+裸名胶囊，顶格插在编辑器前
         let chip_el = self.token.as_ref().map(|(n, skill)| {
             let bare = n.strip_prefix("skill:").unwrap_or(n);
@@ -313,6 +326,9 @@ impl Render for ComposerInput {
                 div()
                     .flex_1()
                     .min_w_0()
+                    // 与解锁态的同一条首行行框对齐（否则锁开/关提示会跳一行）
+                    .pt(px(PLACEHOLDER_TOP))
+                    .line_height(ph_lh)
                     .text_size(crate::appearance::ui_size(12.))
                     .text_color(rgb(t.text_faint))
                     .child(ph)
@@ -324,8 +340,9 @@ impl Render for ComposerInput {
                         d.child(
                             div()
                                 .absolute()
-                                .top(pad_top + px(2.))
-                                .left(px(12.))
+                                .top(px(PLACEHOLDER_TOP))
+                                .left(px(PLACEHOLDER_LEFT))
+                                .line_height(ph_lh)
                                 .text_size(crate::appearance::ui_size(12.))
                                 .text_color(rgb(t.text_faint))
                                 .child(ph),

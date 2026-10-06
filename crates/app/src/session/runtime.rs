@@ -7,8 +7,9 @@
 //! moves its attention pointer.
 //!
 //! Events bubble to the shell via SessionEvent; Chat does UI-side effects
-//! (sidebar refresh, sound, git refresh, ext dialogs) for the active
-//! session only.
+//! (sidebar refresh, git refresh, ext dialogs) for the active session only —
+//! except the turn-end notification sound, which is this runtime's own job:
+//! only it knows when its turn ended (see `settle_turn`).
 
 use std::path::PathBuf;
 
@@ -51,6 +52,25 @@ pub(crate) enum SessionEvent {
     FileBound(PathBuf),
 }
 
+/// 033 会话导航面板的一轮摘要（runtime 缓存条目）：用户消息索引 + 前
+/// 50 字，agent 首条有正文回复的 (消息索引, 首行前 50 字)。
+pub(crate) struct TurnSummary {
+    pub user_ix: usize,
+    pub user_prefix: String,
+    pub agent: Option<(usize, String)>,
+}
+
+/// 033 导航面板缓存整包：轮次摘要 + 总结栏统计。统计是「按我们自己设
+/// 计」的自洽口径 N = 用户 + 助手 + 工具调用，非 pi-web totalMessages
+/// （那条把 toolResult/system 条目也计入——本工程 toolResult 合并进
+/// ToolCall 块、system 入库即跳过，两边数字本来就对不上）
+pub(crate) struct NavData {
+    pub turns: Vec<TurnSummary>,
+    pub users: usize,
+    pub assistants: usize,
+    pub tool_calls: usize,
+}
+
 pub(crate) struct SessionRuntime {
     /// stable pool key: session file path, or "draft-N" before first prompt
     pub key: String,
@@ -85,6 +105,10 @@ pub(crate) struct SessionRuntime {
     pub stream_started: Option<std::time::Instant>,
     pub agent_running: bool,
     pub status: String,
+    /// 「其他」页提示音开关的运行时副本（app_settings.json `sound` 是真值
+    /// 来源）：轮末提示音是 runtime 的职责——只有它知道自己这一轮何时结
+    /// 束，Chat 拿不到这个时刻。开关变更时由 Chat 广播给全池。
+    pub sound_on: bool,
 
     // ---- live session state ----
     pub state: Option<SessionState>,
@@ -94,10 +118,19 @@ pub(crate) struct SessionRuntime {
     pub pending_rename: bool,
     /// 手动压缩进行中（圆环弹窗按钮防连点；compact 响应清除）
     pub compacting: bool,
+    /// fork 在飞：agent 回复下的「新分支」显示「创建中…」并禁用（pi-web
+    /// forking parity），同时防连点发出第二个 fork
+    pub forking: bool,
+    /// fork 之前捕获的「原会话标题」（state.session_name，缺省取首条用户
+    /// 消息前 50 字）。分支落地后用它命名新会话：原名截取 20 字。
+    pub fork_source_title: Option<String>,
     pub commands: Vec<SlashCommand>,
-    /// system prompt / tool summary from export_html (top-panel display)
+    /// 系统提示词 + 已加载工具声明（top panel）。数据来自 transcript 的
+    /// `role:"system"` 消息（pi 0.86+），由 pi_link::transcript::transcript_system
+    /// 在 get_messages 时 replay 出来 —— pi-web 的 System/Tools 面板同源。
+    /// `None` = 尚未加载（无进程或消息还没回来），`Some("")` = 真的空提示词。
     pub sys_prompt: Option<String>,
-    pub session_tools: Option<Vec<(String, String)>>,
+    pub session_tools: Option<Vec<pi_link::transcript::ToolDecl>>,
 
     // ---- inputPanel (031) per-session state ----
     pub input: String,
@@ -119,6 +152,12 @@ pub(crate) struct SessionRuntime {
 
     /// 013: jump target waiting for the message snapshot to land
     pub pending_locate: Option<(Option<i64>, String)>,
+
+    /// 033 导航数据缓存（摘要 + 总结栏统计）：渲染层每帧读、消息变化才
+    /// 重算（notify_list 置脏，nav_summary() 惰性重建）——语义上「一轮
+    /// 一次」，不随渲染帧反复拼前缀/数块
+    nav_cache: Option<std::rc::Rc<NavData>>,
+    nav_dirty: bool,
 }
 
 impl SessionRuntime {
@@ -143,12 +182,15 @@ impl SessionRuntime {
             stream_started: None,
             agent_running: false,
             status: String::new(),
+            sound_on: crate::services::workspace::load_sound_pref(),
             state: None,
             stats: None,
             branch_tree: None,
             active_user_entry_ids: Vec::new(),
             pending_rename: false,
             compacting: false,
+            forking: false,
+            fork_source_title: None,
             commands: Vec::new(),
             sys_prompt: None,
             session_tools: None,
@@ -165,6 +207,9 @@ impl SessionRuntime {
             ext_queue: Vec::new(),
 
             pending_locate: None,
+
+            nav_cache: None,
+            nav_dirty: true,
         }
     }
 
@@ -299,6 +344,15 @@ async fn consume_runtime_events(
 // ---------------------------------------------------------------------------
 
 impl SessionRuntime {
+    /// 轮末提示音（「其他」页开关）。`stream_started` 兼作「本轮在飞」的闩：
+    /// AgentSettled 与 AgentEnd 是同一轮的两个终止事件、都会到达，所以在这里
+    /// take 掉它就恰好响一次；abort_stream() 会清掉闩，用户中止的一轮静音。
+    fn settle_turn(&mut self) {
+        if self.stream_started.take().is_some() && self.sound_on {
+            crate::services::workspace::play_notify_sound();
+        }
+    }
+
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         // MessageStart(user) 置位翻页锚点（见函数尾 page_turn）
         let mut user_arrived = false;
@@ -306,7 +360,14 @@ impl SessionRuntime {
             Event::Response { command, success, error, data, .. } => {
                 if command == "get_state" && success {
                     if let Some(data) = &data {
-                        self.state = Some(SessionState::parse(data));
+                        let st = SessionState::parse(data);
+                        // pi 换了绑定的会话文件（draft 首条 prompt 落盘 /
+                        // fork / clone 换分支）→ shell 身份必须跟着换
+                        let rebound = st.session_file.clone().map(PathBuf::from);
+                        self.state = Some(st);
+                        if let Some(f) = rebound {
+                            self.follow_session_file(f, cx);
+                        }
                     }
                     if self.pending_rename {
                         self.pending_rename = false;
@@ -328,11 +389,10 @@ impl SessionRuntime {
                     if let Some(data) = &data {
                         self.stats = Some(SessionStats::parse(data));
                         if let Some(f) = data["sessionFile"].as_str().map(PathBuf::from) {
-                            if self.file.replace(f.clone()).is_none() {
-                                // draft got persisted by its first prompt: the
-                                // shell migrates the pool key draft-N → path
-                                cx.emit(SessionEvent::FileBound(f));
-                            }
+                            // same follow-the-rebind path as get_state: a draft
+                            // persisted by its first prompt, or a fork/clone
+                            // that moved pi onto the branched file
+                            self.follow_session_file(f, cx);
                         }
                     }
                 } else if command == "set_session_name" && success {
@@ -355,24 +415,6 @@ impl SessionRuntime {
                     if let Some(data) = &data {
                         self.commands = SlashCommand::parse_list(data);
                     }
-                } else if command == "export_html" && success {
-                    if let Some(path) = data
-                        .as_ref()
-                        .and_then(|d| d["path"].as_str())
-                        .map(PathBuf::from)
-                    {
-                        if let Ok(html) = std::fs::read_to_string(&path) {
-                            let (prompt, tools) = parse_export_html(&html);
-                            if self.sys_prompt.is_none() {
-                                self.sys_prompt = prompt;
-                            }
-                            if self.session_tools.is_none() && !tools.is_empty() {
-                                self.session_tools = Some(tools);
-                            }
-                        }
-                        let _ = std::fs::remove_file(&path);
-                        cx.notify();
-                    }
                 } else if command == "get_available_models" && success {
                     if let Some(data) = &data {
                         // project-level shared catalog: forward, don't store
@@ -391,55 +433,41 @@ impl SessionRuntime {
                         }
                     }
                     self.refresh_state();
+                } else if command == "get_entries" && success {
+                    // fork 锚点的唯一可靠来源：扁平 entries + parentId 回溯。
+                    // get_tree 在长会话上会被 pi 自己拒绝（见 GetEntries 注释），
+                    // 033 导航面板因此降级为空，但「新分支」必须一直可用。
+                    if let Some(data) = &data {
+                        let (entries, leaf) = pi_link::protocol::parse_entries(data);
+                        self.active_user_entry_ids =
+                            pi_link::protocol::active_user_entry_ids(&entries, leaf.as_deref());
+                        self.apply_entry_ids();
+                    }
                 } else if command == "get_tree" && success {
                     if let Some(data) = &data {
                         let (tree, leaf) = parse_tree(data);
+                        // 树只是 033 导航面板的数据源；锚点以 get_entries 为准
+                        // （同一条链、同一顺序），这里同步一份作为短会话的兜底
                         self.active_user_entry_ids =
-                            collect_path_user_ids(&tree, leaf.as_deref());
-                        let mut ids = self.active_user_entry_ids.iter();
-                        for m in self.messages.iter_mut() {
-                            if m.role == Role::User {
-                                m.entry_id = ids.next().cloned();
-                            }
-                        }
+                            super::fork::collect_path_user_ids(&tree, leaf.as_deref());
+                        self.apply_entry_ids();
                         self.branch_tree = Some((tree, leaf));
                     }
-                } else if command == "fork" {
-                    if success {
-                        // pi rebound this process to the branched session.
-                        self.branch_tree = None;
-                        // 换了条会话（分支）：锚点必须退役——留着就会把新分支
-                        // 里「最后一条用户消息」重新钉顶（restore_anchor_after_reload
-                        // 的兜底），而分支该从尾部开始看。
-                        self.pager.release();
-                        self.messages.clear();
-                        // fresh branched file: RPC snapshot is authoritative
-                        self.disk_msg_count = 0;
-                        self.notify_list(cx);
-                        if let Some(s) = self.agent.session.as_ref() {
-                            let _ = s.send(&Command::GetState);
-                            let _ = s.send(&Command::GetMessages);
-                            let _ = s.send(&Command::GetTree);
-                        }
-                        // branch_tree was refreshed by the GetTree request below;
-                        // message entry ids re-map there as well.
-                        cx.emit(SessionEvent::ListDirty);
-                        self.status = "forked".into();
-                    } else {
-                        self.status = format!(
-                            "fork failed: {}",
-                            error.unwrap_or_default()
-                        );
-                    }
-                } else if command == "export_html" && success {
-                    self.status = format!(
-                        "exported: {}",
-                        data.and_then(|d| d["path"].as_str().map(str::to_string))
-                            .unwrap_or_default()
-                    );
+                } else if command == "fork" || command == "clone" {
+                    // clone = 整段复制（rpc clone → fork at leaf），与 fork
+                    // 的落地动作完全一样
+                    self.on_fork_response(success, error.as_deref(), cx);
                 } else if command == "get_messages" && success {
                     if let Some(data) = &data {
                         let rpc_msgs = data["messages"].as_array().cloned().unwrap_or_default();
+                        // 系统提示词 + 工具声明：pi 0.86+ 把它们写进 transcript
+                        // 的 system 消息（sections / toolsAdded），replay 是唯一读法
+                        // （pi-ai transcript.js；pi-web 的 System/Tools 面板同源）。
+                        // 在叶子链修复之前算——那份回退只喂显示用的消息。
+                        if let Some(sys) = pi_link::transcript::transcript_system(&rpc_msgs) {
+                            self.sys_prompt = Some(sys.prompt);
+                            self.session_tools = Some(sys.tools);
+                        }
                         // leaf-chain repair: pi anchors its restored leaf at the
                         // last entry of ANY type; a mis-parented custom entry
                         // (plan-mode-state 实测) strands whole turns off the
@@ -453,7 +481,7 @@ impl SessionRuntime {
                                 if msgs.len() > rpc_msgs.len() {
                                     self.messages = msgs;
                                     self.pending_echo = None;
-                                    // entry-id mapping stays the RPC/GetTree view
+                                    // entry-id mapping stays the RPC/get_entries view
                                     // (fork anchors best-effort on repaired chains)
                                     let mut ids = self.active_user_entry_ids.iter();
                                     for m in self.messages.iter_mut() {
@@ -783,25 +811,24 @@ impl SessionRuntime {
                 // 等于立刻撤销「发言钉顶」）。锚点留待用户滚轮 / 发送失败 /
                 // 快照重建 / 会话切换退役。
                 self.status = status_line(true, "idle");
-                self.stream_started = None;
+                self.settle_turn();
                 self.refresh_state();
-            }            Event::AgentEnd { .. } => {
+            }
+            Event::AgentEnd { .. } => {
                 self.agent_running = false;
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.streaming_content = false;
                 // 同上：轮末不退役锚点（短回复继续钉在屏顶）
-                self.stream_started = None;
+                self.settle_turn();
                 // our own writer advanced the file — re-baseline so the
                 // external-append tick doesn't re-read our own turn
                 self.sync_disk_baseline();
                 // the session file exists now — make the new session show up
                 // in the sidebar (pi-web refreshKey-on-agent_end parity)
                 cx.emit(SessionEvent::ListDirty);
-                // refresh branch tree so newly-sent user messages gain entry ids
-                if let Some(s) = self.agent.session.as_ref() {
-                    let _ = s.send(&Command::GetTree);
-                }
+                // refresh fork anchors so newly-sent user messages gain entry ids
+                self.refresh_anchors();
                 // agent may have written files: refresh git status
                             }
             Event::ExtensionUi(req) => cx.emit(SessionEvent::ExtUi(req)),
@@ -1099,7 +1126,102 @@ impl SessionRuntime {
     /// （chat_list.rs，pi-web useAgentSession 滚屏层的移植）。
     pub(crate) fn notify_list(&mut self, cx: &mut Context<Self>) {
         self.pager.sync(self.messages.len(), self.phase_row_visible());
+        // 消息变化（含流式 delta 路径）→ 导航摘要置脏，渲染帧惰性重建
+        self.nav_dirty = true;
         cx.notify();
+    }
+
+    // ---- 033 会话导航面板 ----
+
+    /// 导航数据（每轮摘要 + 总结栏统计，Rc 共享）。渲染层每帧调用：命中
+    /// 缓存零成本，notify_list 置脏后下一帧重建一次。
+    pub(crate) fn nav_summary(&mut self) -> std::rc::Rc<NavData> {
+        if self.nav_dirty {
+            self.nav_dirty = false;
+            let built = self.build_nav_summary();
+            self.nav_cache = Some(std::rc::Rc::new(built));
+        }
+        self.nav_cache.clone().unwrap_or_else(|| {
+            std::rc::Rc::new(NavData {
+                turns: Vec::new(),
+                users: 0,
+                assistants: 0,
+                tool_calls: 0,
+            })
+        })
+    }
+
+    fn build_nav_summary(&self) -> NavData {
+        // 总结栏统计（自洽口径）：用户/助手按消息条数，工具调用按
+        // assistant 消息内的 ToolCall 块数（结果是否合并到达不影响）；
+        // custom（压缩摘要/extension 卡）不计
+        let mut users = 0usize;
+        let mut assistants = 0usize;
+        let mut tool_calls = 0usize;
+        for m in &self.messages {
+            match m.role {
+                Role::User => users += 1,
+                Role::Assistant => {
+                    assistants += 1;
+                    tool_calls += m
+                        .blocks
+                        .iter()
+                        .filter(|b| matches!(b, Block::ToolCall { .. }))
+                        .count();
+                }
+                Role::Custom => {}
+            }
+        }
+        // turns = 用户消息锚点（ChatMinimap.tsx parity：每轮=用户消息 +
+        // 其后的全部 assistant 回复）；摘要 033：用户前 50 字 + agent
+        // 首条有正文回复首行前 50 字（定位器不是会话副本——agent 说
+        // 多少话也只摘要一行）
+        let turns: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::User)
+            .map(|(i, _)| i)
+            .collect();
+        let turns = turns
+            .iter()
+            .enumerate()
+            .map(|(ti, &ux)| {
+                let user_prefix = self
+                    .messages
+                    .get(ux)
+                    .map(|m| m.plain_text_prefix(50))
+                    .unwrap_or_default();
+                let end = turns.get(ti + 1).copied().unwrap_or(self.messages.len());
+                let agent = (ux + 1..end).find_map(|i| {
+                    let m = self.messages.get(i)?;
+                    if m.role != Role::Assistant {
+                        return None;
+                    }
+                    let head = m.plain_text_prefix(80);
+                    let line: String = head
+                        .trim_start()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(50)
+                        .collect();
+                    (!line.is_empty()).then_some((i, line))
+                });
+                TurnSummary {
+                    user_ix: ux,
+                    user_prefix,
+                    agent,
+                }
+            })
+            .collect();
+        NavData {
+            turns,
+            users,
+            assistants,
+            tool_calls,
+        }
     }
 
     /// 引导：中断当前运行并立即注入此消息（rpc steer）。乐观上屏与翻页
@@ -1318,26 +1440,6 @@ impl SessionRuntime {
     }
 
 
-    /// Fork a new session branching before the given user-message entry.
-    /// pi rebinds this process to the branched session; the "fork" response
-    /// handler reloads state/messages/tree.
-    pub(crate) fn fork_from_entry(&mut self, entry_id: String, cx: &mut Context<Self>) {
-        if self.agent_running
-            || self
-            .state
-            .as_ref()
-            .is_some_and(|s| s.is_streaming)
-        {
-            self.status = "cannot fork while running".into();
-            cx.notify();
-            return;
-        }
-        if let Some(session) = &self.agent.session {
-            let _ = session.send(&Command::Fork { entry_id });
-        }
-        cx.notify();
-    }
-
     /// LLM session title (pi-web lib/session-title.ts parity via a one-off
     /// `pi --no-session --print` run; the in-process SDK call pi-web uses is
     /// not reachable over RPC).
@@ -1405,80 +1507,4 @@ impl SessionRuntime {
 
 }
 
-// ---------------------------------------------------------------------------
-// moved from services/{title,branch}.rs (v54 sweep: those modules are gone,
-// these two helpers are still live on the export/get_tree paths)
-// ---------------------------------------------------------------------------
 
-fn html_unescape(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#x27;", "'")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-}
-
-/// Extract (systemPrompt, [(tool name, description)]) from an exported
-/// session HTML (core/export-html/template.js markers).
-fn parse_export_html(html: &str) -> (Option<String>, Vec<(String, String)>) {
-    let mut prompt = None;
-    if let Some(pos) = html.find("class=\"system-prompt-full\"") {
-        if let Some(gt) = html[pos..].find('>') {
-            let from = pos + gt + 1;
-            if let Some(close) = html[from..].find("</div>") {
-                let raw = &html[from..from + close];
-                let text = html_unescape(raw).trim().to_string();
-                if !text.is_empty() {
-                    prompt = Some(text);
-                }
-            }
-        }
-    }
-    let mut tools = Vec::new();
-    let needle = "<span class=\"tool-item-name\">";
-    let mut search_from = 0usize;
-    while let Some(rel) = html[search_from..].find(needle) {
-        let name_from = search_from + rel + needle.len();
-        let Some(name_end) = html[name_from..].find("</span>") else { break };
-        let name = html_unescape(&html[name_from..name_from + name_end]);
-        let after_name = name_from + name_end + "</span>".len();
-        let desc_needle = " - <span class=\"tool-item-desc\">";
-        let Some(drel) = html[after_name..].find(desc_needle) else { break };
-        let desc_from = after_name + drel + desc_needle.len();
-        let Some(desc_end) = html[desc_from..].find("</span>") else { break };
-        let desc = html_unescape(&html[desc_from..desc_from + desc_end]);
-        tools.push((name, desc));
-        search_from = desc_from + desc_end;
-    }
-    (prompt, tools)
-}
-
-/// User-message entry ids along the root→leaf path (fork anchors for the
-/// per-message fork button). Ordering matches the projected user messages.
-fn collect_path_user_ids(nodes: &[TreeNode], leaf_id: Option<&str>) -> Vec<String> {
-    let Some(target) = leaf_id else {
-        return Vec::new();
-    };
-    fn flatten<'a>(nodes: &'a [TreeNode], map: &mut std::collections::HashMap<String, &'a TreeNode>) {
-        for n in nodes {
-            map.insert(n.id.clone(), n);
-            flatten(&n.children, map);
-        }
-    }
-    let mut map = std::collections::HashMap::new();
-    flatten(nodes, &mut map);
-    let mut chain: Vec<TreeNode> = Vec::new();
-    let mut cur = map.get(target);
-    while let Some(n) = cur {
-        chain.push((*n).clone());
-        cur = n.parent_id.as_deref().and_then(|pid| map.get(pid));
-    }
-    chain.reverse();
-    chain
-        .into_iter()
-        .filter(|n| n.role.as_deref() == Some("user"))
-        .map(|n| n.id)
-        .collect()
-}

@@ -380,7 +380,7 @@ fn parse_last_session_info(tail: &str) -> Option<Value> {
     let line_start = tail[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let rest = &tail[line_start..];
     let line_end = rest.find('\n').unwrap_or(rest.len());
-    serde_json::from_str::<Value>(&rest[..line_end]).ok()
+    crate::json::parse_value(&rest[..line_end]).ok()
 }
 
 /// Latest `session_info` entry, growing the tail window as needed — a
@@ -407,7 +407,7 @@ fn scan_file(path: &Path, modified: SystemTime, size: u64) -> Option<IndexEntry>
     let mut cwd = String::new();
     let mut preview = String::new();
     for line in prefix.lines().take(PREVIEW_LINES) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(v) = crate::json::parse_value(line) else { continue };
         match v["type"].as_str() {
             Some("session") => {
                 id = v["id"].as_str().unwrap_or("").to_string();
@@ -529,7 +529,7 @@ pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value
     };
     let mut messages: Vec<Value> = Vec::new();
     for line in body.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(v) = crate::json::parse_value(line) else { continue };
         if let Some(m) = renderable_message(&v) {
             messages.push(m);
         }
@@ -568,7 +568,7 @@ pub fn read_leaf_messages(path: &Path, max: usize) -> Vec<Value> {
     let mut anchor: Option<String> = None;
     for line in std::io::BufReader::new(file).lines() {
         let Ok(line) = line else { break };
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(v) = crate::json::parse_value(&line) else { continue };
         if v["type"].as_str() == Some("session") {
             continue;
         }
@@ -765,7 +765,7 @@ pub fn search_sessions_in_dir(group: &Path, query: &str) -> SearchResponse {
                 resp.truncated = true;
                 continue;
             }
-            let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            let Ok(entry) = crate::json::parse_value(line) else {
                 continue;
             };
             if entry["type"] == "session_info" {

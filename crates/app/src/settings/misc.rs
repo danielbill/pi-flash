@@ -94,8 +94,8 @@ pub(crate) fn mc_misc_view(
                 let weak = weak.clone();
                 move |on, cx| {
                     let _ = weak.update(cx, |c, cx| {
-                        c.sound_on = on;
                         crate::services::workspace::save_sound_pref(on);
+                        c.broadcast_sound_on(on, cx);
                         if on {
                             crate::services::workspace::play_notify_sound();
                         }

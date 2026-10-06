@@ -182,20 +182,10 @@ pub fn save_sound_pref(on: bool) {
     save_app_settings(&s);
 }
 
-/// Agent-run finished notification sound (Windows MessageBeep; no-op elsewhere).
+/// Agent-run finished notification sound —— 复刻 pi-web 的双音 chime
+/// （见 [`crate::services::sound`]）；非 Windows 平台为 no-op。
 pub fn play_notify_sound() {
-    #[cfg(windows)]
-    {
-        // MB_ICONASTERISK = 0x40 — the system "asterisk" notification sound
-        const MB_ICONASTERISK: u32 = 0x0000_0040;
-        unsafe {
-            #[link(name = "user32")]
-            unsafe extern "system" {
-                fn MessageBeep(wtype: u32) -> i32;
-            }
-            MessageBeep(MB_ICONASTERISK);
-        }
-    }
+    crate::services::sound::play_notify_sound();
 }
 
 pub fn load_lang_pref() -> Option<usize> {

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 335 256">
+  <title>pi-flash</title>
+  <!-- A v3 final: bolt sx7/sy9.5 stretched past P top+bottom, min gap 26u (72% of stem) at y125 -->
+  <g transform="translate(15.7 0) skewX(-15)">
+    <path fill="#000" fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+    <path fill="#000" transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+  </g>
+</svg>

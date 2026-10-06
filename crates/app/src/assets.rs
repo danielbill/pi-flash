@@ -60,6 +60,7 @@ assets! {
     "icons/panel-left.svg",
     "icons/history.svg",
     "icons/pencil.svg",
+    "icons/copy.svg",
     "icons/file-text.svg",
     "icons/wrench.svg",
     "icons/download.svg",
@@ -97,6 +98,9 @@ assets! {
     "icons/arrow-down.svg",
     "icons/wand.svg",
     "icons/bot.svg",
+    // v64 topbar：会话标题 icon + ⋯ 菜单（系统提示词 / 工具）
+    "icons/message-square-more.svg",
+    "icons/file-sliders.svg",
     "icons/plug.svg",
     // v54 UI: iconfont solid set (from the design html)
     "icons/icon-project.svg",
@@ -118,6 +122,8 @@ assets! {
     "icons/minus.svg",
     "icons/square.svg",
     "icons/restore.svg",
+    // v65 品牌 logo（P+闪电，侧栏头部徽章；exe/.app 图标走 assets/icon 与 assets/macos）
+    "icons/logo-marks.svg",
 }
 
 
@@ -133,6 +139,72 @@ mod tests {
             assert!(!loaded.is_empty());
         }
         assert!(Assets.load("icons/missing.svg").expect("ok").is_none());
+    }
+
+    /// 磁盘上有 `.svg` 但没写进 `assets!()` = 资产没编进二进制：`Assets::load`
+    /// 返回 None，`gpui::svg()` **静默画空白**（不报错、不落日志）——复制图标
+    /// 当初就是这样消失的（`all_icons_load` 只遍历宏列表，漏登的文件它看不见）。
+    /// 两个方向都锁：文件↔登记一一对应；源码里 `icon("x")` 用到的名字必须有资产。
+    #[test]
+    fn every_icon_file_and_call_site_is_registered() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icons");
+        let mut files: Vec<String> = std::fs::read_dir(&dir)
+            .expect("assets/icons readable")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".svg"))
+            .collect();
+        files.sort();
+        let registered: std::collections::BTreeSet<&str> =
+            ASSETS.iter().map(|(p, _)| *p).collect();
+
+        let unregistered: Vec<&String> = files
+            .iter()
+            .filter(|n| !registered.contains(format!("icons/{n}").as_str()))
+            .collect();
+        assert!(
+            unregistered.is_empty(),
+            "assets/icons 下这些 svg 没登记进 assets!()（渲染为空白）：{unregistered:?}"
+        );
+
+        // 源码调用点：`icon("copy", …)` / `icon_hover("copy", …)`
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![src_dir];
+        let mut missing: Vec<String> = Vec::new();
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).expect("src readable") {
+                let p = e.expect("entry").path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&p).expect("read rs");
+                for line in text.lines() {
+                    let line = line.trim_start();
+                    if line.starts_with("//") {
+                        continue; // 注释里的示例不算调用点
+                    }
+                    for pat in ["icon(\"", "icon_hover(\""] {
+                        let mut rest = line;
+                        while let Some(i) = rest.find(pat) {
+                            rest = &rest[i + pat.len()..];
+                            let Some(end) = rest.find('"') else { break };
+                            let name = &rest[..end];
+                            if !registered.contains(format!("icons/{name}.svg").as_str()) {
+                                missing.push(format!("{}: icon(\"{name}\")", p.display()));
+                            }
+                            rest = &rest[end..];
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "这些 icon() 调用点的 svg 没登记（会渲染成空白）：{missing:?}"
+        );
     }
 
     #[test]

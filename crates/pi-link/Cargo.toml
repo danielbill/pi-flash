@@ -6,7 +6,15 @@ edition.workspace = true
 [dependencies]
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# unbounded_depth: pi 的 get_tree 把整条会话树按 children 嵌套返回
+# （每层 entry+children ≈ 4~5 层 JSON），实测 85 条消息的会话树深 95 →
+# serde_json 默认 128 层递归上限直接 "recursion limit exceeded"，整行被
+# parse_line 丢弃 → get_tree 永不到达，entry_id 映射（含新分支 fork
+# 锚点）全空。对齐 pi-web（JS 无此上限）。
+# preserve_order: 系统提示词的 sections 是「按名打补丁的有序表」（pi-ai
+# transcript.js），渲染顺序 = 首次插入顺序；默认 BTreeMap 会按字母重排，
+# 面板里的提示词就不是 pi 实际发送的那份了。
+serde_json = { version = "1", features = ["unbounded_depth", "preserve_order"] }
 futures = "0.3"
 
 [dev-dependencies]

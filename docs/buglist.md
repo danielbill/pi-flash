@@ -1,3 +1,21 @@
+## 待验证（本轮修复）——操作栏「复制」图标不显示
+
+用户口径：操作栏里「编辑」「新分支」图标都在，只有「复制」前面空着。
+
+- ✅ 根因：`ui::icon(name)` = `gpui::svg().path("icons/{name}.svg")`，资产靠
+  `assets.rs` 里手写的 `assets!()` 列表 + `include_str!` 编进二进制。
+  `copy.svg` 文件在磁盘上，但**没写进那个列表** → `Assets::load` 返回 `None` →
+  gpui 对取不到的 svg **静默画空白**（不报错、不 warn）。用户行与 agent 轮两处
+  复制图标同源，所以一起消失；其余图标都登记了，故正常。
+- ✅ 修法：`assets!()` 补 `"icons/copy.svg"`；新增
+  `assets::tests::every_icon_file_and_call_site_is_registered` 双向锁（磁盘 svg
+  必须全登记 + 源码每个 `icon("x")` 必须有资产）。旧测试只遍历宏列表，漏登的
+  文件它看不见——bug 正是从这个盲区漏出去的。
+- ✅ 验证：`cargo test -p app` 91 全绿；临时删掉登记行测试立刻报出
+  `["copy.svg"]`（反证有效）。真机待复验：两处操作栏「复制」前出现双矩形图标。
+
+（细节见 `docs/progress.md` 的「v63-4」。）
+
 ## 待验证（本轮修复）——用户消息操作栏悬停不显影
 
 用户口径：鼠标停在**用户消息**上看不到底部操作栏（复制/编辑/新分支 + 时间），
@@ -96,3 +114,30 @@ agent 回复的轮块却正常；同一个行为不该有两套写法。
   - 该条是设计 §13 的 `.shimmer`（260×10 圆角 + 渐变扫过），本项目判定为视觉噪音：已有「正在思考…」文案，骨架条不承载信息
   - 同步删除：`session/mod.rs` 的 `shimmer_bar()` 函数 + phase row 的 child；设计 HTML 的 `.shimmer` CSS / `@keyframes slide` / `<div class="shimmer">`；设计说明 §13 已标注作废
   - 保留：模型名 + 旋转 spark +「正在思考…」（省略号循环）
+
+## 待验证（2026-10-05 「新分支」按钮修复）
+- ✅ **用户消息下的「新分支」点了没反应**
+  - 根因①：pi-link `parse_line` 用 serde_json 默认解析（递归上限 128），
+    而 `get_tree` 按 children 嵌套整条会话（85 条消息 → 树深 95 → 整行被
+    丢弃、无事件）→ 用户消息拿不到 entry id → 按钮不挂 handler
+  - 根因②：长会话（实测 2970 条 entry）上 **pi 自己** 的 `get_tree` 就
+    `Maximum call stack size exceeded`，客户端再准也拿不到树
+  - 根因③：pi fork 是进程内 rebind 到新分支文件，旧实现没跟着换
+    `self.file`/pool key → 分支生效了但侧栏还高亮父会话
+  - 修法：`json::parse_value`（unbounded_depth）+ reader 线程 16MB 栈 +
+    非 UTF-8 行不再 break 流；新增 `get_entries` 扁平链回溯算锚点
+    （pi-web sliceActiveBranch 同源）；`follow_session_file` 跟随重绑定；
+    按钮补 pi-web forking 态（创建中…/主题色/禁用/栏常显）
+  - 验证：① 打开一条 85+ 条消息的老会话，hover 用户消息 → 「新分支」可点，
+    ② 点击后状态栏出现 forked，侧栏高亮切到新分支会话，标题改为新分支内容，
+    ③ 在新分支里发一条消息正常流转；④ 长会话（1000+ 轮）里「新分支」同样可用
+- ✅ **「新分支」入口位置反了 + 克隆出来的会话重名**（用户定案两改）
+  - ① 入口从用户消息栏移到 **agent 轮操作栏**：`fork` 只能 before，分支点 =
+    该用户消息的 parentId（这条用户消息不带过去），点自己却从它之前开始；
+    正确语义 = 从 agent 回复处 clone，保留到本轮为止、其后丢弃。尾部轮
+    （无下一条用户消息）走 rpc `clone`（整段复制）
+  - ② 分支自动改名：原名截取 20 字（超长加 "…"，按字截断），fork 前捕获
+    原 title，落地后 `set_session_name` 写到新分支文件上
+    （初版为「前 15 字 + "2"」，用户连做两次 clone 后反馈后缀叠成 `…22` 很蠢 → 去掉后缀）
+  - 验证：agent 回复 hover 出现「新分支」；点击后新分支侧栏名字为
+    「<原名前15字>2」；分支内容停在点击的那轮回复之后

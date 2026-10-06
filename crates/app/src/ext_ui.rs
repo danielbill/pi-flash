@@ -2,7 +2,7 @@
 //! parity). Free functions over Chat state; entity split lands in phase E
 //! (ARCHITECTURE.md §2).
 
-use gpui::{KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::i18n::tr;
@@ -85,29 +85,15 @@ pub(crate) fn render_ext_dialog(
     let title: SharedString = title.into();
     let is_confirm = matches!(req.method, ExtUiMethod::Confirm { .. });
     let is_select = matches!(req.method, ExtUiMethod::Select { .. });
-    let weak_cancel = weak.clone();
     let weak_ok = weak.clone();
-    div()
-        .absolute()
-        .inset_0()
-        .occlude()
-        .bg(gpui::hsla(0., 0., 0., 0.35))
-        .track_focus(&chat.dialog_focus)
-        .on_key_down({
-            let weak = weak_cancel.clone();
-            move |ev: &KeyDownEvent, _w, cx| {
-                if ev.keystroke.key == "escape" {
-                    let _ = weak.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
-                }
-            }
-        })
-        // 点卡片外 = 取消（与 ESC 同义，扩展收到 cancelled 响应）
-        .on_mouse_down(MouseButton::Left, {
-            let weak = weak_cancel.clone();
-            move |_, _, cx| {
-                let _ = weak.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
-            }
-        })
+    // 浮层公共基座：遮挡不穿透 + 点外关闭 + ESC 关闭 —— 两者都等于「取消」
+    //（扩展收到 cancelled 响应）
+    let weak_cancel = weak.clone();
+    let weak_dismiss = weak.clone();
+    let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = weak_dismiss.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
+    };
+    crate::ui::overlay::layer(true, Some(&chat.dialog_focus), dismiss)
         .flex()
         .items_center()
         .justify_center()

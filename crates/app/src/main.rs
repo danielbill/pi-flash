@@ -42,6 +42,7 @@ mod settings;
 mod status_bar;
 mod titlebar;
 mod terminal;
+mod top_panels;
 mod ui;
 pub(crate) use ui::ComposerInput;
 pub(crate) use actions_menu::slash_menu_view;
@@ -83,6 +84,17 @@ enum Dialog {
     /// composer 缩略图点击大图预览：直接持渲染源（Arc 指针拷贝，无索引
     /// 失效问题）
     ImagePreview { image: std::sync::Arc<gpui::Image> },
+    /// topbar ⋯ 菜单：系统提示词 / 工具定义（窗体 = 设置弹窗那套大卡片，
+    /// 见 top_panels / ui::overlay::big_card）
+    SessionInfo { kind: TopPanel },
+}
+
+/// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
+/// 同款窗体里（`Dialog::SessionInfo`），数据来自 transcript 重放。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopPanel {
+    System,
+    Tools,
 }
 
 /// functionPanel active view (statusbar 三 tab): mutually exclusive.
@@ -291,7 +303,6 @@ struct Chat {
     sa_settings: pi_link::subagents::SubagentSettings,
     sa_runs: Vec<SubagentRun>,
     sa_run_seq: usize,
-    sound_on: bool,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
     // ---- v54 shell state ----
     /// psp 项目组（当前项目钉顶，其余按最近会话倒序；启动只加载
@@ -326,8 +337,9 @@ struct Chat {
     nav_flyout_hovered: bool,
     /// flyout 内鼠标所在轮（选择框/比例尺亮点跟随鼠标）
     nav_hover_turn: Option<usize>,
-    /// 导航 flyout 滚动（滚动条渲染数据源；跨开合保持，随内容重夹）
-    nav_flyout_scroll: gpui::ScrollHandle,
+    /// 导航 flyout 卡片列表虚拟化句柄（v63-6：只建可视卡片；跨开合保持
+    /// 滚动位）
+    nav_flyout_list: gpui::ListState,
     /// composer 胶囊实时高度（ui::measure_height 每帧写、读到的是上一帧
     /// 值；导航刻度条「屏高 − inputpanel/2」居中用，033）
     composer_h: std::rc::Rc<std::cell::Cell<f32>>,
@@ -338,6 +350,13 @@ struct Chat {
     psp_menu: Option<PspMenu>,
     confirm_prj_del: Option<(PathBuf, f32, f32)>,
     status_toast: Option<(String, std::time::Instant)>,
+    /// topbar 会话视图的 ⋯ 更多菜单开合（打开终端 / 系统提示词 / 已加载工具）
+    top_menu_open: bool,
+    /// 该 dropdown 的收起防抖守卫（ui::dropdown 组件持有，点外收起不双触发）
+    top_dd: gpui::Entity<crate::ui::DropdownState>,
+    /// 工具定义弹窗左列表选中的工具名（pi-web ToolDefinitionsPanel 的
+    /// selectedToolName）
+    tool_sel: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -474,7 +493,6 @@ impl Chat {
             ctx_tip_ring_hover: false,
             ctx_tip_panel_hover: false,
             ctx_tip_closing: None,
-            sound_on: load_sound_pref(),
             settings: None,
             renaming: None,
             rename_input: None,
@@ -500,7 +518,7 @@ impl Chat {
             nav_hide_at: None,
             nav_flyout_hovered: false,
             nav_hover_turn: None,
-            nav_flyout_scroll: gpui::ScrollHandle::new(),
+            nav_flyout_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
             hovered_project: None,
@@ -509,6 +527,9 @@ impl Chat {
             psp_menu: None,
             confirm_prj_del: None,
             status_toast: None,
+            top_menu_open: false,
+            top_dd: cx.new(|_| crate::ui::DropdownState::new()),
+            tool_sel: None,
         };
         // new-session defaults (default model / thinking / enabledModels
         // scope) before the first frame — the draft pills render from them
@@ -670,8 +691,8 @@ impl Chat {
                 }
                 if let Some(s) = &r.agent.session {
                     let _ = s.send(&Command::GetMessages);
-                    let _ = s.send(&Command::GetTree);
                 }
+                r.refresh_anchors();
                 r.refresh_state();
             });
         })
@@ -1034,8 +1055,8 @@ impl Chat {
             }
             if let Some(s) = &r.agent.session {
                 let _ = s.send(&Command::GetMessages);
-                let _ = s.send(&Command::GetTree);
             }
+            r.refresh_anchors();
             r.refresh_state();
             r.status = crate::i18n::tf("工具预设: {k} (会话进程已重绑)", &[("k", key.to_string())]);
             cx.emit(session::runtime::SessionEvent::Changed);
@@ -1048,6 +1069,15 @@ impl Chat {
             .get(&self.active_key)
             .expect("active runtime exists")
             .clone()
+    }
+
+    /// 「其他」页提示音开关 → 全池广播。轮末提示音归 runtime 职责，每个常驻
+    /// runtime 各持一份副本，所以新开关必须扇出到**所有** runtime 而不只是活跃
+    /// 那个——后台会话同样会跑 agent、同样需要提示。
+    pub(crate) fn broadcast_sound_on(&self, on: bool, cx: &mut Context<Self>) {
+        for (_, rt) in &self.runtimes {
+            rt.update(cx, |r, _| r.sound_on = on);
+        }
     }
 
     /// Shared model catalog of one project (pi-web loadModelsWithCache(cwd)
@@ -1112,7 +1142,7 @@ impl Chat {
         self.project_files = walk_files(&self.cwd, 3, 400);
     }
 
-    /// 当前会话标题（topbar 会话视图展示；≤15 字截断）。优先 pi 会话名，
+    /// 当前会话标题（topbar 会话视图展示；≤30 字截断）。优先 pi 会话名，
     /// 回落首条用户消息。
     pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
         let file = self
@@ -1135,10 +1165,10 @@ impl Chat {
                     })
             })
             .unwrap_or_else(|| tr("新会话").to_string());
-        // 首行 + ≤15 字
+        // 首行 + ≤30 字
         let first_line = raw.lines().next().unwrap_or("").trim().to_string();
-        let mut out: String = first_line.chars().take(15).collect();
-        if first_line.chars().count() > 15 {
+        let mut out: String = first_line.chars().take(30).collect();
+        if first_line.chars().count() > 30 {
             out.push('…');
         }
         out
@@ -1331,27 +1361,19 @@ impl Render for Chat {
                         .into_any_element()
                 })
                 .collect::<Vec<_>>();
-            div()
-                .absolute()
-                .inset_0()
-                .occlude()
-                .child(
-                    // transparent backdrop: click anywhere closes the menu
-                    div()
-                        .size_full()
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, {
-                            let weak = weak_menu.clone();
-                            move |_, _, cx| {
-                                let _ = weak.update(cx, |c, cx| {
-                                    if c.pill_menu.is_some() {
-                                        c.pill_menu = None;
-                                        cx.notify();
-                                    }
-                                });
-                            }
-                        }),
-                )
+            // 浮层公共基座：遮挡不穿透 + 点外关闭（ESC 走 composer 的输入框焦点，
+            // 这里不抢焦）
+            {
+                let weak_menu = weak_menu.clone();
+                crate::ui::overlay::layer(false, None, move |_w, cx| {
+                    let _ = weak_menu.update(cx, |c, cx| {
+                        if c.pill_menu.is_some() {
+                            c.pill_menu = None;
+                            cx.notify();
+                        }
+                    });
+                })
+            }
                 .child(
                     {
                         // anchor above the clicked pill: bottom = window_h − pill_y
@@ -1383,6 +1405,8 @@ impl Render for Chat {
                             .overflow_hidden()
                             .flex()
                             .flex_col()
+                            // 浮层规则 4：点卡片本身不关（菜单项自己关）
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .children(items)
                     }
                 )
@@ -1654,6 +1678,10 @@ fn main() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
+                    // 最小宽度 900px（逻辑像素，gpui 按 scale_factor 换算再交给
+                    // WM_GETMINMAXINFO）：窗口再缩也不至于把聊天列挤到不可用。
+                    // 高度不设底（0 = 只保留边框开销），需要时再单独限。
+                    window_min_size: Some(gpui::size(px(900.), px(0.))),
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some("pi-flash".into()),
                         // client-side title bar (v54 topbar 两段, window

@@ -1,5 +1,7 @@
 # pi-flash
 
+<p align="left"><img src="crates/app/assets/icon/pi-flash-256.png" width="88" alt="pi-flash logo"></p>
+
 Zed 级速度的 pi coding agent 桌面端 —— 用 Rust 重写 [pi-web](https://github.com/agegr/pi-web) 的壳。
 
 ## 架构

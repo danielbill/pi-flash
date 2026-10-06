@@ -15,38 +15,24 @@ use crate::services::format::time_ago;
 use crate::theme;
 use crate::ui::icon_hover;
 
-/// Shared shell for modal dialogs: dimmed pass-through-blocking overlay,
-/// click-outside-to-close (unified close mechanism — clicks inside the panel
-/// stop propagation), ESC-to-close, centered panel.
+/// 弹窗公共外壳 = `ui::overlay::layer`（遮挡/外点关闭/ESC 关闭三条全局规则
+/// 的唯一实现）+ 居中排布 + 卡片停传播。参数 `chat` 只用来取浮层焦点。
 fn dialog_shell(chat: &Chat, weak: &gpui::WeakEntity<Chat>, panel: Div) -> Div {
-    let weak_esc = weak.clone();
     let weak_bg = weak.clone();
-    div()
-        .absolute()
-        .inset_0()
-        .occlude()
-        .bg(gpui::hsla(0., 0., 0., 0.35))
-        .track_focus(&chat.dialog_focus)
-        .on_key_down(move |ev: &KeyDownEvent, _w, cx| {
-            if ev.keystroke.key == "escape" {
-                let _ = weak_esc.update(cx, |this, cx| {
-                    this.dialog = None;
-                    cx.notify();
-                });
-            }
-        })
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+    crate::ui::overlay::layer(
+        true,
+        Some(&chat.dialog_focus),
+        move |_w, cx| {
             let _ = weak_bg.update(cx, |c, cx| {
                 c.dialog = None;
                 cx.notify();
             });
-        })
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(panel.on_mouse_down(MouseButton::Left, |_, _, cx| {
-            cx.stop_propagation();
-        }))
+        },
+    )
+    .flex()
+    .items_center()
+    .justify_center()
+    .child(crate::ui::overlay::stop_click(panel))
 }
 
 pub(crate) fn render_dialogs(
@@ -70,6 +56,15 @@ pub(crate) fn render_dialogs(
             }
             if let Some(Dialog::ImagePreview { image }) = chat.dialog.as_ref() {
                 root = root.child(render_image_preview(chat, weak, image, t));
+            }
+            if let Some(Dialog::SessionInfo { kind }) = chat.dialog.as_ref() {
+                root = root.child(crate::top_panels::session_info_dialog(
+                    *kind,
+                    chat,
+                    weak,
+                    t,
+                    cx,
+                ));
             }
     root
 }
@@ -309,7 +304,16 @@ fn render_image_preview(
     image: &std::sync::Arc<gpui::Image>,
     t: &theme::Theme,
 ) -> Div {
+    let weak_close = weak.clone();
+    // 图片预览也要有看得见的关闭按钮（浮层规则 5）：× 绝对定位在卡片右上角
+    let close = crate::ui::overlay::close_btn("image-preview-close", t, move |_w, cx| {
+        let _ = weak_close.update(cx, |c, cx| {
+            c.dialog = None;
+            cx.notify();
+        });
+    });
     let panel = div()
+        .relative()
         .bg(rgb(t.bg_panel))
         .border_1()
         .border_color(rgb(t.border))
@@ -321,7 +325,8 @@ fn render_image_preview(
                 .max_w(px(1040.))
                 .max_h(px(680.))
                 .rounded(px(6.)),
-        );
+        )
+        .child(div().absolute().top(px(6.)).right(px(6.)).child(close));
     dialog_shell(chat, weak, panel)
 }
 

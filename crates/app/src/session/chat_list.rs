@@ -99,6 +99,11 @@ struct Core {
     following: Cell<bool>,
     /// 结算尝试次数（渲染帧驱动，带上限防病态循环）
     settle_attempts: Cell<u32>,
+    /// 导航点击钉住的轮次（v63-7）：点击定位后选中段固定为该轮——贴底
+    /// 钳制会把视口顶改写到目标之前（layout_items 向上补条目并改写
+    /// logical），按「视口顶之上最近轮」推导会错选上一段；物理滚轮清除，
+    /// 交还位置推导
+    nav_pinned: Cell<Option<usize>>,
 }
 
 /// 聊天列表滚屏状态机。持有 gpui [`ListState`]（Bottom 对齐）+ 锚点 + 垫片
@@ -120,6 +125,7 @@ impl ChatList {
             settled: Cell::new(false),
             following: Cell::new(false),
             settle_attempts: Cell::new(0),
+            nav_pinned: Cell::new(None),
         });
         {
             let core = core.clone();
@@ -133,6 +139,8 @@ impl ChatList {
             state.set_scroll_handler(move |ev, window, _| {
                 if ev.is_scrolled {
                     core.request_detach();
+                    // 物理滚动交还位置推导（v63-7）：导航钉住的选中段失效
+                    core.nav_pinned.set(None);
                 }
                 let now = !ev.is_scrolled;
                 if core.at_bottom.replace(now) != now {
@@ -207,11 +215,22 @@ impl ChatList {
     /// 底边贴视口底，视口顶落进上一轮内容，刻度的 active 判定（视口顶之
     /// 上最近轮）会算到前一轮；置顶后视口顶即目标，刻度精确命中被点轮。
     /// 程序化定位不经过滚轮回调，at_bottom 在此补正（导航跳走即离开贴底，
-    /// 「回到最新」按钮随之出现）
-    pub(crate) fn nav_goto(&self, ix: usize) {
+    /// 「回到最新」按钮随之出现）。
+    ///
+    /// `turn` = 被点轮次，钉入 nav_pinned：目标靠近会话尾部时下方内容不
+    /// 足填满视口，layout_items 向上补条目并改写 logical_scroll_top（贴底
+    /// 钳制），视口顶不在目标轮——选中段若仍按位置推导会错选上一段
+    ///（v63-7），钉住后由点击轮次直接决定，物理滚轮清除。
+    pub(crate) fn nav_goto(&self, turn: usize, ix: usize) {
         self.state
             .scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) });
+        self.core.nav_pinned.set(Some(turn));
         self.core.at_bottom.set(false);
+    }
+
+    /// 导航点击钉住的轮次（无则按滚动位置推导选中段）
+    pub(crate) fn nav_pinned(&self) -> Option<usize> {
+        self.core.nav_pinned.get()
     }
 
     /// 「回到最新」：钉顶期（锚点仍激活）就是 `scroll_to(锚点, 0)` —— 内容短于

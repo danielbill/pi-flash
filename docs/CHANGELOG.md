@@ -1,3 +1,12 @@
+## [Unreleased]
+
+### 变更
+- **提示音换成 pi-web 原版音色**：新增 `crates/app/src/services/sound.rs`，
+  按 `pi-web/hooks/useAudio.ts` 的 Web Audio 参数（C5 523.25 Hz + E5 659.25 Hz，
+  间隔 0.18 s，20 ms 线性淡入至 0.18 再指数衰减到 0.001，单音 0.45 s）在 Rust 侧
+  合成 44.1 kHz / 16-bit mono WAV，Windows 用 `PlaySoundW(SND_MEMORY|SND_ASYNC)`
+  播放（旧实现是 `MessageBeep(MB_ICONASTERISK)` 系统提示音）；非 Windows 仍 no-op
+
 ## [0.1.1] - 2026-09-25
 
 ### 新增
@@ -35,6 +44,10 @@
   侧栏 🔍 会话文本搜索
 
 ### 修复
+- 「其他 → 提示音」此前只有开关与试听，agent 轮末从未触发：偏好副本搬进
+  `SessionRuntime`（`sound_on`），`AgentSettled`/`AgentEnd` 收尾走
+  `settle_turn()` 恰好鸣一次（用户 abort 的轮次静音），开关变更由 Chat
+  广播到全池 runtime（后台会话同样提示）
 - node 运行时解析支持 macOS/Linux 自带布局（发布包脱离系统 Node）
 
 ### 已知限制
