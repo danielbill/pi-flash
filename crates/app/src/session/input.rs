@@ -283,11 +283,14 @@ fn ctx_usage_panel(
         )
 }
 
+/// `hero` = 012 新会话页模式：胶囊走正常流（由新会话页内容簇摆位），
+/// 不再 0 高 + 绝对定位贴聊天区底。
 pub(crate) fn input_area(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     streaming: bool,
     input_focused: bool,
+    hero: bool,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
@@ -594,8 +597,9 @@ pub(crate) fn input_area(
         cx,
     ));
 
-    // 0 高 wrapper：胶囊绝对定位悬浮（聊天消息从胶囊后滚过）；/ 菜单
-    // 挂在胶囊正上方（pi-web：bottom 100% + 8px 间隙）
+    // 012 新会话页（hero）胶囊走正常流，由新会话页的内容簇摆位；会话界面
+    // 则 0 高 wrapper + 胶囊绝对定位悬浮（聊天消息从胶囊后滚过）。/ 菜单两种
+    // 模式同构：挂在测量元素正上方（pi-web：bottom 100% + 8px 间隙）
     let slash_open = chat.active_menu() == Some(MenuKind::Slash);
     // 「回到最新」按钮：不贴底且有消息时，悬浮在输入面板顶部上方 20px
     let show_scroll_btn = !chat.rt().read(cx).pager.is_at_bottom()
@@ -603,6 +607,62 @@ pub(crate) fn input_area(
     // 胶囊高度测量槽（导航刻度条 033 居中用）；先克隆引用再拼元素，
     // 避免 &chat.composer_h 与下方 slash_menu_view(&mut chat) 借用冲突
     let composer_h_slot = chat.composer_h.clone();
+    let inner = div()
+        .relative()
+        // 必须撑满父宽：为 `w_full`+`max_w(920)` 的测量元素提供宽度基准，
+        // 否则 shrink-to-fit 会把胶囊挤成窄条（会话界面实测踩坑）
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .when(slash_open, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(gpui::relative(1.))
+                    .pb(px(8.))
+                    .child(crate::slash_menu_view(chat, weak, t, cx)),
+            )
+        })
+        .child(
+            // 测量元素只包胶囊本体（不含回底按钮，按钮显隐会
+            // 引入 ±52px 抖动）；/ 菜单是 absolute 不占布局
+            crate::ui::measure_height(
+                "composer-h",
+                &composer_h_slot,
+                div()
+                    .relative()
+                    // 外层（会话界面 px(15) / 新会话页内容簇）已扣除内边距，
+                    // 此处宽度 == 消息列宽，再以 920 封顶（pi-web 单一内容列宽）
+                    .w_full()
+                    .max_w(px(920.))
+                    .child(capsule),
+            ),
+        );
+    composer_wrap(inner, hero, show_scroll_btn, weak, t)
+}
+
+/// composer 定位包装：会话界面（`hero=false`）= 0 高 wrapper + 胶囊绝对定位
+/// 悬浮在聊天区底部之上（聊天消息从胶囊后滚过）；012 新会话页（`hero=true`）
+/// = 正常流，由新会话页的内容簇摆位（012 的「下移 10%」）。
+fn composer_wrap(
+    inner: gpui::Div,
+    hero: bool,
+    show_scroll_btn: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static crate::theme::Theme,
+) -> gpui::AnyElement {
+    if hero {
+        return div()
+            .id("composer-wrap")
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .child(inner)
+            .into_any_element();
+    }
     div()
         .id("composer-wrap")
         .relative()
@@ -625,31 +685,7 @@ pub(crate) fn input_area(
                 .when(show_scroll_btn, |d| {
                     d.child(crate::session::scroll_to_bottom_button(weak, t))
                 })
-                .child(
-                    // 测量元素只包胶囊本体（不含回底按钮，按钮显隐会
-                    // 引入 ±52px 抖动）；/ 菜单是 absolute 不占布局
-                    crate::ui::measure_height(
-                        "composer-h",
-                        &composer_h_slot,
-                        div()
-                            .relative()
-                            .w_full() // 外层 px(15) 已扣除，此处宽度 == 消息列宽
-                            .max_w(px(920.)) // 与消息列同宽对齐（pi-web 单一内容列宽）
-                            // 无 min_w：窄窗下跟随消息列收缩，不溢出窗口边
-                            .when(slash_open, |d| {
-                                d.child(
-                                    div()
-                                        .absolute()
-                                        .left_0()
-                                        .right_0()
-                                        .bottom(gpui::relative(1.))
-                                        .pb(px(8.))
-                                        .child(crate::slash_menu_view(chat, weak, t, cx)),
-                                )
-                            })
-                            .child(capsule),
-                    ),
-                ),
+                .child(inner),
         )
         .into_any_element()
 }

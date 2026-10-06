@@ -35,6 +35,7 @@ mod i18n;
 mod markdown;
 mod models_config;
 mod render;
+mod startup;
 mod theme;
 mod services;
 mod session;
@@ -214,6 +215,9 @@ struct Chat {
     models_by_cwd: std::collections::HashMap<String, Vec<pi_link::protocol::ModelInfo>>,
     runtimes: std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
     active_key: String,
+    /// 010-启动：启动页闸门；揭幕帧由 pending_zoom 补 §4 最大化
+    booted: bool,
+    pending_zoom: bool,
     draft_seq: usize,
     menu_ix: usize,
     /// / 菜单滚动句柄（按键选中 scroll_to_item 行跟随；输入变化回顶）
@@ -292,6 +296,14 @@ struct Chat {
     mc_pkgs_global: Vec<serde_json::Value>,
     mc_pkgs_project: Vec<serde_json::Value>,
     mc_default_tools: Option<Vec<String>>,
+    /// models.json 编辑缓冲（设置·模型页，保存前在内存里改）
+    mc_models_json: serde_json::Value,
+    mc_mj_error: Option<String>,
+    mc_mj_dirty: bool,
+    mc_mj_saved: bool,
+    /// mcp.json 全局 + 项目服务器（设置·MCP 页）
+    mcp_servers: Vec<pi_link::mcp::ServerEntry>,
+    mcp_errors: Vec<String>,
     // extension UI surface (active session)
     ext_status: Vec<(String, String)>,
     ext_widgets: Vec<(String, Vec<String>, bool)>,
@@ -434,6 +446,8 @@ impl Chat {
             branch,
             runtimes: std::collections::HashMap::new(),
             active_key: String::new(),
+            booted: false,
+            pending_zoom: false,
             draft_seq: 0,
             models_by_cwd: std::collections::HashMap::new(),
             expanded_dirs: HashSet::new(),
@@ -468,6 +482,12 @@ impl Chat {
             mc_pkgs_global: Vec::new(),
             mc_pkgs_project: Vec::new(),
             mc_default_tools: None,
+            mc_models_json: serde_json::json!({}),
+            mc_mj_error: None,
+            mc_mj_dirty: false,
+            mc_mj_saved: false,
+            mcp_servers: Vec::new(),
+            mcp_errors: Vec::new(),
             op_tx: None,
             ext_status: Vec::new(),
             ext_widgets: Vec::new(),
@@ -694,6 +714,39 @@ impl Chat {
                 }
                 r.refresh_anchors();
                 r.refresh_state();
+            });
+        })
+        .detach();
+        // 010-启动：启动页闸门——pi 附着（或超时兜底）且最短展示 500ms 后
+        // 揭幕；揭幕帧由 render 的 pending_zoom 补 §4 默认最大化。
+        cx.spawn(async move |this, cx| {
+            let t0 = std::time::Instant::now();
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(60))
+                    .await;
+                let attached = this
+                    .update(cx, |c, cx| {
+                        c.runtimes
+                            .get(&c.active_key)
+                            .is_some_and(|r| r.read(cx).agent.session.is_some())
+                    })
+                    .unwrap_or(true); // 实体已亡（窗口关闭）：停止闸门
+                let elapsed = t0.elapsed();
+                // MIN_SPLASH 从启动页首帧起算（忙机首帧可能晚于 pi 附着）
+                let splash_shown = startup::splash_paint_age()
+                    .is_some_and(|age| age >= startup::MIN_SPLASH);
+                if (attached && splash_shown) || elapsed >= startup::SPLASH_TIMEOUT {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |c, cx| {
+                c.booted = true;
+                c.pending_zoom = true;
+                if PERF.load(std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!("[perf] splash reveal: {:?}", t0.elapsed());
+                }
+                cx.notify();
             });
         })
         .detach();
@@ -1208,6 +1261,17 @@ impl Render for Chat {
                 eprintln!("[perf] first frame: {:?}", t0.elapsed());
             }
         }
+        // 010-启动：揭幕前整幅启动页（黑底、居中 logo、非最大化）；揭幕帧
+        // 再按 §4 默认最大化（0.2.2 建窗即 Maximized 不可靠，显式 zoom 是
+        // 项目已验证路径——原建窗回调里的 zoom 后移到了这里）。
+        if !self.booted {
+            startup::mark_splash_painted();
+            return startup::splash_view();
+        }
+        if self.pending_zoom {
+            self.pending_zoom = false;
+            window.zoom_window();
+        }
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
         let dialog_input = match &self.dialog {
@@ -1669,12 +1733,12 @@ fn main() {
             // startup restore (§4)：每次启动默认最大化（位置不持久化——
             // gpui Windows 的外框/客户区坐标在存取间不对称，每个周期漂移
             // 一个边框宽）。取消最大化后的尺寸仍保存，供会话内还原参考。
+            // 010-启动：先以普通窗口呈现启动页（不全屏），揭幕后由 render
+            // 的 pending_zoom 补最大化——0.2.2 建窗即 Maximized 的延迟处理
+            // 实测不生效，显式 zoom 是项目已验证路径（从建窗回调后移）。
             let _restored = get_window_state();
             let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
-            let window_bounds = gpui::WindowBounds::Maximized(bounds);
-            // gpui 0.2.2 Windows 创建路径对 Maximized 的延迟处理依赖
-            // initial_placement/可见时序，实测不生效——回调里再显式 zoom
-            let mut force_maximize = true;
+            let window_bounds = gpui::WindowBounds::Windowed(bounds);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
@@ -1692,10 +1756,6 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    if force_maximize {
-                        window.zoom_window();
-                        force_maximize = false;
-                    }
                     // gpui-component widgets require their Root as the window
                     // root view (renders their context-menu/popover layers)
                     let chat = cx.new(Chat::new);

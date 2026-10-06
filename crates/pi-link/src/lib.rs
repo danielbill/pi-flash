@@ -16,6 +16,8 @@ pub mod sessions;
 pub mod skills;
 pub mod subagents;
 pub mod transcript;
+pub mod mcp;
+pub mod models_json;
 pub mod vendor;
 
 /// Vendored pi version this crate's types/tests are written against.

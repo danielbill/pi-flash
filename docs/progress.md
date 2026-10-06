@@ -1897,3 +1897,79 @@ i = max{i : floor(i·N/k) ≤ t} = floor(((t+1)·k − 1)/N)（ceil(x)−1 恒�
   ESC 关闭），窗框自带 ×（规则 5）。
 - 验证：app 94 全绿、零警告；check_arch 违规仍为存量 4 文件 + 既有 input_area；
   exe 已重建并启动（真机复验）。
+
+#### v70 设置五页签按 pi-web 最新版重构（导航布局不变；pi-web 源码已升级对齐）
+
+用户口径：**左导航布局不变，只重构内部页面**；另新增 MCP 页签。pi-web 最新
+SettingsPanel/ModelsConfig/SkillsConfig/AgentsConfig/PluginsConfig/McpConfig
+为蓝本（用户截图存 `docs/UI设计/pi-web UI截图/`）。
+
+- **公共件** `settings/widgets.rs`：pi-web SettingsUi 复刻 —— config_button
+  （Primary/Secondary/Danger × default/small）、config_switch 32×18、
+  group_switch（{n}/{m}+小开关）、status_dot 7px、scope_tag、section_title /
+  field / note / error_note / grid_row / check_chip、sidebar 系列、footer；
+  五处手搓开关收编为公共件。
+- **pi-link 新增**：`models_json.rs`（models.json 自定义 provider/模型
+  upsert/rename/增删改 + 测试）、`mcp.rs`（全局 + 项目 mcp.json 读取（项目
+  同名替换全局）/add/remove/set_enabled/set_exposure/粘贴解析（JSON、URL、
+  命令行、`pi|claude|codex|gemini mcp add`）+ 测试）。
+- **模型页**：路径条 `{settings.json} · enabledModels n/m` + 清理无效条目/
+  启用全部模型；侧栏 catalog provider（绿点 + 计数徽标）与 models.json 自定义
+  provider（芯片图标 + 嵌套模型行 + T 徽标 + +模型 +添加Provider）；右栏
+  API Key（眼睛/保存/断开连接）、OAuth（退出登录）、自定义 provider/模型
+  编辑器（缓冲，底部「保存」整写 models.json）；可用模型区（筛选 + 全部
+  开启/关闭 + 末模型保护 + 项目作用域只读）。
+- **技能页**：项目/全局分组组头 {可见}/{总数} + 批量开关（逐个写
+  SKILL.md，失败计数报错），休眠技能排组内尾；详情改 scope 徽标 + 路径 +
+  名称/描述字段 + 右上开关。
+- **子代理页**：顶部特性条（内置开关即时写 agents/settings.json + 并发数
+  输入保存）；新建子代理表单（全局/项目 scope + 全字段 → 写 frontmatter
+  md）；档案表单化（工具/资源/继承/后台勾选即时写盘，文本字段走「保存」；
+  内置只读），运行/中止/删除保留。
+- **插件页**：全局/项目组头批量开关（资源过滤包关组时保持启用并在组头
+  报数）；详情网格（状态/来源/资源计数/安装路径推断）；安装面板示例按钮；
+  底栏资源总计 + 刷新。
+- **MCP 页（新）**：全局/项目两组（组开关 + 已关闭徽标），详情（简介/
+  传输/命令|URL/工作目录/env·头名/exposure 四选/文件路径），添加面板
+  （scope 双选 + 目标路径 + 粘贴实时解析预览 + 名称 + 示例），底栏
+  「已开启 n/m」+ 刷新。测试连接 / OAuth 登录 / codemode / 撤销为 pi-web
+  服务端能力，暂未复刻。
+- 左导航七项：界面/模型/技能/子代理/插件/MCP/其他（misc 保留独立页）；
+  `SettingsPanel` 表单状态扩容（mj_*/sa_*/mcp_* 输入 + 快照下发筛选值）；
+  open_settings 与页签预填统一走 `prefill_section`（旧 tab 序 stale 顺手修掉）。
+- models.rs 拆出 `custom_models.rs`（mj_* 编辑器，check_arch ≤1500 行）；
+  新图标 cpu/server（路径取自 pi-web SettingsSectionIcon）入 assets!。
+- 验证：app 98 + pi-link 74 全绿（deep_tree 栈溢出为存量，已验证与本次无关）；
+  cargo check 仅存量 mc_default_tools 警告；check_arch 存量 4 文件 + 既有
+  input_area（用户并行改动），models.rs 达标。真机待复验。
+
+## 012 新会话页 newSession 落地（2026-10-06，bead pi-flash-1bk）
+
+蓝本 `docs/模块设计/012-新会话页.md` + codex 参考图 `docs/UI设计/codex-新会话页.png`。
+判据沿用 pi-web `isEmptyNew`（活动会话无消息且 agent 未跑）：启动时项目|会话列表
+为空、或「新建会话」都落这一页（原来只有 `session_hero` 头部行，已删除）。
+
+- 新模块 `crates/app/src/session/new_session.rs`：
+  - 标题「让我们做点什么！」（30px SEMIBOLD，与消息列同宽居中，落在 inputpanel 上方）
+  - app logo 6×（192px）取主题淡色 `text_faint` 当背景图：水平居中、垂直**上移 10%**
+  - **偏移 10% 的算法**：两层绝对定位带子，上带 `top_0 h(0.8)` + 带内居中 ⇒ 中线
+    0.4H；下带 `bottom_0 h(0.8)` + 带内居中 ⇒ 中线 0.6H（inputpanel 下移 10%）。
+    百分比高度由 flex 链上的确定高度解析（与 033 导航条 `h(relative(0.75))` 同机制）
+  - inputpanel 下方额外操作栏（38px、与胶囊同宽）：左 =【打开项目】（004 指定入口；
+    `icon-project` + 当前项目名 → `pick_project_folder`），右 = 会话搜索（013）
+- `inputPanel`（031）加 `hero` 参数：胶囊走**正常流**由内容簇摆位；会话界面仍是
+  0 高 wrapper + 胶囊绝对定位悬浮贴聊天区底。定位包装抽成 `composer_wrap`，
+  `input_area` 367 → 358 行（check_arch 既有违规项，未新增）
+- **踩坑**：`inner` 漏 `w_full()` → shrink-to-fit 把胶囊挤成竖排窄条（真机截图发现，
+  已修 + 注释：pack 必须在撑满父宽的容器里给 `w_full + max_w(920)` 的测量元素定宽）
+- i18n：`("让我们做点什么！", "讓我們做點什麼！", "What should we work on?")`、
+  `("打开项目", "開啟專案", "Open project")`；i18n 测试补两条断言
+- 真机验证（`target/debug/pi-flash.exe` + 截图核对）：新会话页 = 上移 10% 的 6× 背景
+  logo + 标题 + 中线 60% 的胶囊 + 操作栏（项目名 pi_work / 搜索钮）；点开会话切回
+  030 时胶囊满宽居中、悬浮贴底，无回归
+- 验证：app 98 + pi-link 75 全绿；`cargo build -p app` 仅存量 `mc_default_tools`
+  警告；check_arch 存量 4 文件 + 既有 `input_area`（行数低于原基线）
+- 顺手（用户并行 WIP 当前编译不过，新会话页无法验证）：`settings/models.rs` 末尾
+  悬空 `/// 自定义 provider 编辑器。`（拆文件残留）删除；`settings/custom_models.rs`
+  的 `mj_provider_editor` / `mj_model_editor` / `mj_add_panel` / `api_options_row`
+  补 `pub(crate)`（models.rs 顶部 `use super::custom_models::{…}` 需要）

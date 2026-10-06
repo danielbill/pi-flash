@@ -1,95 +1,94 @@
-//! Skills tab.
+//! Skills tab (pi-web SkillsConfig parity)：项目/全局分组，组头 {可见}/
+//! {总数} + 批量开关（写各 SKILL.md 的 disable-model-invocation），休眠
+//! （对模型隐藏）技能排组内最后；右栏详情 + 单技能开关。
+
+use gpui::prelude::FluentBuilder;
 
 use super::*;
 
 impl Chat {
     pub(crate) fn mc_toggle_skill(&mut self, path: String, disable: bool, cx: &mut Context<Self>) {
+        self.mc_toggle_skills_bulk(vec![path], disable, cx);
+    }
+
+    /// 批量启停（组头开关）：逐个写 SKILL.md，失败的保持原状并计数报错
+    /// (pi-web PATCH /api/skills {filePaths[]} parity)。
+    pub(crate) fn mc_toggle_skills_bulk(&mut self, paths: Vec<String>, disable: bool, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
-        let p = PathBuf::from(&path);
-        if let Err(e) = pi_link::skills::set_disable_invocation(&p, disable) {
-            self.mc_set_error(&crate::i18n::tf("写入 SKILL.md 失败: {e}", &[("e", e)]), cx);
-            return;
+        let mut failed = 0usize;
+        for path in &paths {
+            let p = PathBuf::from(path);
+            if let Err(e) = pi_link::skills::set_disable_invocation(&p, disable) {
+                failed += 1;
+                let _ = e;
+            }
+        }
+        if failed > 0 {
+            self.mc_set_error(
+                &crate::i18n::tf(
+                    "{total} 个技能中有 {count} 个未能更改",
+                    &[("total", paths.len().to_string()), ("count", failed.to_string())],
+                ),
+                cx,
+            );
         }
         self.reload_settings_panel();
         cx.notify();
     }
-
 }
 
-/// Skills tab: project/global grouped sidebar + detail with the
-/// visible-to-model switch (SKILL.md frontmatter).
+/// 休眠（对模型隐藏）技能排后面。
+fn order_by_dormancy<'a>(items: &'a [&'a pi_link::skills::SkillEntry]) -> Vec<&'a &'a pi_link::skills::SkillEntry> {
+    let mut out: Vec<&&pi_link::skills::SkillEntry> = items.iter().collect();
+    out.sort_by_key(|s| s.disable_invocation);
+    out
+}
+
+/// Skills tab: project/global groups with bulk switches + detail.
 pub(crate) fn mc_skills_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
 ) -> (gpui::AnyElement, gpui::AnyElement) {
     let t = T();
-    let mut sb = div()
-        .id("mc-sidebar")
-        .w(px(240.))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(t.bg_panel))
-        .border_r_1()
-        .border_color(rgb(t.border))
-        .p(px(6.))
-        .pt(px(8.))
-        .overflow_y_scroll();
-    for (label, scope) in [(tr("项目"), pi_link::skills::SkillScope::Project), (tr("全局"), pi_link::skills::SkillScope::Global)] {
+    let mut list = sidebar_list();
+    for (label, scope) in [
+        (tr("项目"), pi_link::skills::SkillScope::Project),
+        (tr("全局"), pi_link::skills::SkillScope::Global),
+    ] {
         let items: Vec<&pi_link::skills::SkillEntry> =
             chat.mc_skills.iter().filter(|s| s.scope == scope).collect();
         if items.is_empty() {
             continue;
         }
-        sb = sb.child(
-            div()
-                .px(px(8.))
-                .pt(px(6.))
-                .pb(px(2.))
-                .text_size(crate::appearance::ui_size(10.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(label.to_string())),
-        );
-        for sk in items {
+        let visible = items.iter().filter(|s| !s.disable_invocation).count();
+        let all_visible = visible == items.len();
+        let bulk_paths: Vec<String> = items
+            .iter()
+            .map(|s| s.path.to_string_lossy().to_string())
+            .collect();
+        list = list.child(group_header(
+            label,
+            Some(group_switch(
+                format!("skill-bulk-{}", if scope == pi_link::skills::SkillScope::Project { "p" } else { "g" }),
+                weak,
+                format!("{visible}/{}", items.len()),
+                all_visible,
+                false,
+                move |c, cx| c.mc_toggle_skills_bulk(bulk_paths.clone(), all_visible, cx),
+            )),
+        ));
+        for sk in order_by_dormancy(&items) {
             let active = sk.path.to_string_lossy() == section;
             let weak_item = weak.clone();
             let path = sk.path.to_string_lossy().to_string();
-            sb = sb.child(
-                div()
-                    .id(SharedString::from(format!("skill-{}", sk.name)))
-                    .h(px(30.))
-                    .px(px(8.))
-                    .rounded(px(5.))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .cursor_pointer()
-                    .bg(if active { rgb(t.bg_selected) } else { rgb(t.bg_panel) })
-                    .font_weight(if active { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::NORMAL })
-                    .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                    .hover(|s| s.bg(rgb(t.bg_hover)))
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let _ = weak_item.update(cx, |c, cx| {
-                            if let Some(st) = c.settings.clone() {
-                                                st.update(cx, |s, cx| {
-                                                    s.section = path.clone();
-                                                    s.error = None;
-                                                    cx.notify();
-                                                });
-                                            }
-                        });
+            list = list.child(
+                widgets::sidebar_item(format!("skill-{}", sk.name), active)
+                    .on_mouse_down(MouseButton::Left, {
+                        let handler = widgets::select_section(&weak_item, path.clone());
+                        move |_, w, cx| handler(w, cx)
                     })
-                    .child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .flex_shrink_0()
-                            .bg(if sk.disable_invocation { rgb(t.border) } else { rgb(0x4ade80) }),
-                    )
+                    .child(status_dot(if sk.disable_invocation { t.border } else { t.accent }))
                     .child(
                         div()
                             .flex_1()
@@ -97,13 +96,14 @@ pub(crate) fn mc_skills_view(
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
+                            .when(sk.disable_invocation, |d| d.text_color(rgb(t.text_dim)))
                             .child(SharedString::from(sk.name.clone())),
                     ),
             );
         }
     }
     if chat.mc_skills.is_empty() {
-        sb = sb.child(
+        list = list.child(
             div()
                 .p(px(12.))
                 .text_size(crate::appearance::ui_size(11.))
@@ -126,14 +126,9 @@ pub(crate) fn mc_skills_view(
             .child(tr("没有找到技能"))
             .into_any_element(),
         Some(sk) => {
-            let scope_tag = if sk.scope == pi_link::skills::SkillScope::Project {
-                (tr("项目"), gpui::hsla(0.63, 0.86, 0.62, 0.12), gpui::hsla(0.63, 0.86, 0.62, 0.8))
-            } else {
-                (tr("全局"), gpui::hsla(0., 0., 0.5, 0.12), rgb(t.text_dim).into())
-            };
-            let weak_sw = weak.clone();
-            let sw_path = sk.path.to_string_lossy().to_string();
+            let project = sk.scope == pi_link::skills::SkillScope::Project;
             let visible = !sk.disable_invocation;
+            let sw_path = sk.path.to_string_lossy().to_string();
             div()
                 .id("mc-detail")
                 .flex_1()
@@ -145,86 +140,45 @@ pub(crate) fn mc_skills_view(
                 .flex()
                 .flex_col()
                 .gap_4()
+                // 头部：scope 徽标 + 相对路径 + 右上单技能开关
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap_2()
+                        .gap(px(8.))
                         .min_h(px(28.))
+                        .child(scope_tag(if project { tr("项目") } else { tr("全局") }, project))
                         .child(
                             div()
-                                .text_size(crate::appearance::ui_size(13.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(t.text))
-                                .child(SharedString::from(sk.name.clone())),
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(crate::markdown::MONO_FAMILY)
+                                .text_size(crate::appearance::ui_size(11.))
+                                .text_color(rgb(t.text_dim))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(SharedString::from(sk.path.to_string_lossy().to_string())),
                         )
-                        .child(
-                            div()
-                                .px(px(5.))
-                                .py(px(1.))
-                                .rounded(px(3.))
-                                .bg(scope_tag.1)
-                                .text_size(crate::appearance::ui_size(10.))
-                                .text_color(scope_tag.2)
-                                .child(scope_tag.0),
-                        ),
+                        .child(config_switch("skill-switch", weak, visible, false, move |c, cx| {
+                            c.mc_toggle_skill(sw_path.clone(), visible, cx)
+                        })),
                 )
-                .child(
-                    div()
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(sk.path.to_string_lossy().to_string())),
-                )
-                .child(
+                .child(field(&tr("名称"), mono_text(sk.name.clone(), false)))
+                .child(field(
+                    &tr("描述"),
                     div()
                         .text_size(crate::appearance::ui_size(12.))
                         .text_color(rgb(t.text_muted))
                         .child(SharedString::from(sk.description.clone())),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .min_h(px(36.))
-                        .child(
-                            div()
-                                .text_size(crate::appearance::ui_size(11.))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(rgb(t.text_muted))
-                                .child(if visible { tr("对模型可见") } else { tr("已隐藏（仍可手动调用）") }),
-                        )
-                        .child(div().flex_1())
-                        .child(
-                            div()
-                                .id("skill-switch")
-                                .w(px(32.))
-                                .h(px(18.))
-                                .rounded(px(9.))
-                                .border_1()
-                                .border_color(if visible { rgb(t.accent) } else { rgb(t.border) })
-                                .bg(if visible { rgb(t.accent) } else { rgb(t.bg_selected) })
-                                .flex()
-                                .items_center()
-                                .cursor_pointer()
-                                .child(
-                                    div()
-                                        .ml(if visible { px(14.) } else { px(2.) })
-                                        .size(px(12.))
-                                        .rounded_full()
-                                        .bg(if visible { rgb(t.bg) } else { rgb(t.text_muted) }),
-                                )
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_sw.update(cx, |c, cx| {
-                                        c.mc_toggle_skill(sw_path.clone(), visible, cx)
-                                    });
-                                }),
-                        ),
-                )
+                ))
+                .child(note(if visible {
+                    "在模型提示词中可见；开关关闭后进入休眠（对模型隐藏，仍可手动调用）"
+                } else {
+                    "对模型隐藏，仍可手动调用；开关打开后恢复可见"
+                }))
                 .into_any_element()
         }
     };
-    (sb.into_any_element(), detail.into_any_element())
+    (sidebar_shell("mc-sidebar").child(list).into_any_element(), detail.into_any_element())
 }
-

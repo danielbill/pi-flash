@@ -1,6 +1,6 @@
-//! sessionView (v54): 聊天列（消息列表 + 空会话 hero + 悬浮 composer）+
-//! 会话导航面板（033：右缘 12px 刻度条，75% 高，悬停左弹 400px 轮次摘要
-//! 卡片列表）。无工具栏、无内嵌状态行（v54 按设计删除）。
+//! sessionView (v54): 聊天列（消息列表 + 悬浮 composer；空会话走 012 新会话页
+//! = `new_session`）+ 会话导航面板（033：右缘 10px 刻度条，75% 高，悬停左弹
+//! 400px 轮次摘要卡片列表）。无工具栏、无内嵌状态行（v54 按设计删除）。
 
 pub(crate) mod actions_bar;
 pub(crate) mod chat_list;
@@ -8,6 +8,7 @@ pub(crate) mod diff;
 pub(crate) mod fork;
 pub(crate) mod input;
 pub(crate) mod messages;
+pub(crate) mod new_session;
 pub(crate) mod runtime;
 
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, px, relative, rgb};
@@ -42,6 +43,9 @@ pub(crate) fn main_column(
     // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
     // 导致 stop 按钮永远不出现
     let streaming = rt.read(cx).agent_running;
+    // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
+    // 项目|会话列表为空、或「新建会话」都落在这里
+    let new_session_page = rt.read(cx).messages.is_empty() && !streaming;
     // composer 焦点态来自输入组件（chat.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -70,30 +74,53 @@ pub(crate) fn main_column(
                 .flex_1()
                 .min_h_0()
                 .flex()
-                .child(
-                    div()
+                .child({
+                    let mut wrap = div()
                         .id("chat-wrap")
                         .flex_1()
                         .min_w_0()
                         .relative()
                         .flex()
-                        .flex_col()
-                        // empty new-session hero (pi-web isEmptyNew)
-                        .children(session_hero(chat, t, cx))
-                        // message list（底部 135px 让位悬浮 composer）
-                        .child(session_list(chat, chat_entity, weak.clone(), rt_list, rt_entity.clone(), t))
-                        // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
-                        // 胶囊绝对定位上浮叠在聊天区上
-                        .children(ext_widget_rows(chat, t, true))
-                        .child(input::input_area(
-                            chat,
-                            weak,
-                            streaming,
-                            input_focused,
-                            cx,
-                        ))
-                        .children(ext_widget_rows(chat, t, false)),
-                )
+                        .flex_col();
+                    if new_session_page {
+                        // 012 新会话页：标题 + 6× 背景 logo + inputpanel（下移
+                        // 10%）+ 额外操作栏；扩展行照旧挂页面上下
+                        wrap = wrap
+                            .children(ext_widget_rows(chat, t, true))
+                            .child(new_session::page(
+                                chat,
+                                weak,
+                                streaming,
+                                input_focused,
+                                cx,
+                            ))
+                            .children(ext_widget_rows(chat, t, false));
+                    } else {
+                        wrap = wrap
+                            // message list（底部 135px 让位悬浮 composer）
+                            .child(session_list(
+                                chat,
+                                chat_entity,
+                                weak.clone(),
+                                rt_list,
+                                rt_entity.clone(),
+                                t,
+                            ))
+                            // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
+                            // 胶囊绝对定位上浮叠在聊天区上
+                            .children(ext_widget_rows(chat, t, true))
+                            .child(input::input_area(
+                                chat,
+                                weak,
+                                streaming,
+                                input_focused,
+                                false,
+                                cx,
+                            ))
+                            .children(ext_widget_rows(chat, t, false));
+                    }
+                    wrap
+                })
                 .child(nav_gutter(chat, rt_entity.clone(), weak.clone(), t, cx)),
         )
 }
@@ -330,85 +357,8 @@ fn session_list(
         .into_any_element()
 }
 
-/// Empty new-session hero (pi-web ChatWindow isEmptyNew; v54 极简版).
-fn session_hero(
-    chat: &Chat,
-    t: &'static crate::theme::Theme,
-    cx: &mut gpui::Context<Chat>,
-) -> Option<gpui::AnyElement> {
-    (chat.rt().read(cx).messages.is_empty()
-        && !chat.rt().read(cx).agent_running)
-        .then(|| {
-            div()
-                .w_full()
-                .px(px(34.))
-                .pt(px(22.))
-                .child(
-                    div()
-                        .max_w(px(920.))
-                        .mx_auto()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2p5()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .size(px(32.))
-                                        .rounded(px(8.))
-                                        .bg(rgb(t.accent))
-                                        .child(crate::ui::icon(
-                                            "logo-marks",
-                                            32.,
-                                            t.accent_contrast,
-                                        )),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(crate::appearance::ui_size(22.))
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(t.text))
-                                        .child("pi-flash"),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_end()
-                                .gap(px(2.))
-                                .child(
-                                    div()
-                                        .text_size(crate::appearance::ui_size(11.))
-                                        .text_color(rgb(t.text_muted))
-                                        .child(SharedString::from(format!(
-                                            "app v{}",
-                                            env!("CARGO_PKG_VERSION")
-                                        ))),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(crate::appearance::ui_size(11.))
-                                        .text_color(rgb(t.text_muted))
-                                        .child(SharedString::from(format!(
-                                            "pi v{}",
-                                            pi_link::vendor::vendored_version()
-                                                .unwrap_or_default()
-                                        ))),
-                                ),
-                        ),
-                )
-                .into_any_element()
-        })
-}
 
-/// 会话导航面板 (033)：右缘 12px 竖条，屏高 75%，按「屏高 − composer
+/// 会话导航面板 (033)：右缘 10px 竖条，屏高 75%，按「屏高 − composer
 /// 高度×50%」居中；生成算法（v63-5）：轮次均分切割整条——1 轮整条弱主
 /// 题色、N 轮切 N 段（flex_1 等分 + 2px 缝），20 轮后段高不再缩小，>20
 /// 走百分比桶映射（轮 k → 段 k×20/N，点击回桶首轮）。当前定位段 accent
@@ -463,21 +413,10 @@ fn nav_gutter(
     let mut gutter = div()
         .id("nav-gutter")
         .relative()
-        // 16 = 段宽 12 + 右侧 4px 呼吸位（不贴窗口边）
-        .w(px(16.))
+        // 14 = 段宽 10 + 右侧 4px 呼吸位（不贴窗口边）
+        .w(px(14.))
         .h_full()
-        .flex_shrink_0()
-        // gutter hover：进入即开，离开且鼠标不在 flyout 上才进入宽限
-        .on_hover(cx.listener(|this, h: &bool, _w, cx| {
-            if *h {
-                this.nav_open = true;
-                this.nav_hide_at = None;
-            } else if !this.nav_flyout_hovered {
-                this.nav_hide_at = Some(std::time::Instant::now());
-            }
-            cx.notify();
-        }));
-
+        .flex_shrink_0();
     // 悬停展开的轮次摘要列表（033：topbar 之下 100% 高、400px 宽、向左
     // 弹出、内容溢出显示滚动条）。滚动条挂在滚动容器平级的 absolute
     // 兄弟上（滚动容器内的绝对定位子元素会随内容滚走）。整包结构：
@@ -488,8 +427,8 @@ fn nav_gutter(
         let mut flyout_wrap = div()
             .id("nav-flyout-wrap")
             .absolute()
-            // 16 = 与段左缘齐平（gutter 16 = 段 12 + 右 4 呼吸位）
-            .right(px(16.))
+            // 14 = 与段左缘齐平（gutter 14 = 段 10 + 右 4 呼吸位）
+            .right(px(14.))
             .top_0()
             .bottom_0()
             .w(px(400.))
@@ -615,15 +554,15 @@ fn nav_gutter(
     // 视觉中心正好上移 composer/4。生成算法（v63-5）：轮次均分切割整条
     // ——flex_1 等分 + 2px 缝，1 轮 = 整条弱主题色、2 轮 = 上下两段……
     // 20 轮后段高不再缩小（>20 百分比桶映射）。段色 = 弱主题色常驻，
-    // 选中 = accent 边框（不整段覆盖），hover 增亮；gutter 14px = 段 12px
-    // + 右侧 2px 呼吸位
+    // 选中 = accent 边框（不整段覆盖），hover 增亮；gutter 14px = 段 10px
+    // + 右侧 4px 呼吸位
     if !summary.turns.is_empty() {
         let composer_h = chat.composer_h.get();
         let active_tick = active_turn.map(tick_of_turn);
         let mut rail = div()
-            .h(relative(0.75))
-            .mb(px(composer_h * 0.5))
-            .w(px(12.))
+            .id("nav-rail")
+            .h_full()
+            .w(px(10.))
             .flex()
             .flex_col()
             .items_center()
@@ -640,8 +579,9 @@ fn nav_gutter(
                     .min_h_0()
                     .rounded(px(2.))
                     .cursor_pointer()
-                    // 常驻 1px 边框（透明↔accent）防选中时尺寸跳动
-                    .border_1()
+                    // 常驻 2px 边框（透明↔accent）防选中时尺寸跳动；
+                    // 选中 = 2px accent 实边
+                    .border_2()
                     .bg(gpui::rgba((t.accent as u32) << 8 | 0x3d))
                     .when(on, |d| d.border_color(rgb(t.accent)))
                     .when(!on, |d| d.border_color(gpui::rgba(0x00000000)))
@@ -661,6 +601,8 @@ fn nav_gutter(
             );
         }
         gutter = gutter.child(
+            // 居中外层（与原 rail 定位一致）：h_full + justify_center 把
+            // rail 垂直居中，连 margin 盒一起算（视觉中心上移 composer/4）
             div()
                 .flex()
                 .h_full()
@@ -668,7 +610,31 @@ fn nav_gutter(
                 .flex_col()
                 .items_start()
                 .justify_center()
-                .child(rail),
+                .child(
+                    // hover 响应区 = rail 垂直带 × gutter 全宽（033「悬浮
+                    // 竖条弹出」）：高度 0.75 屏 + composer 偏移与 rail 同
+                    // 款，宽度 w_full 含右侧 4px 呼吸位——只挂 rail 本体
+                    // 的话那 4px 是死区；挂 gutter 全高又会误触上下空白区
+                    div()
+                        .id("nav-rail-hit")
+                        .h(relative(0.75))
+                        .mb(px(composer_h * 0.5))
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .on_hover(cx.listener(|this, h: &bool, _w, cx| {
+                            if *h {
+                                this.nav_open = true;
+                                this.nav_hide_at = None;
+                            } else if !this.nav_flyout_hovered {
+                                this.nav_hide_at =
+                                    Some(std::time::Instant::now());
+                            }
+                            cx.notify();
+                        }))
+                        .child(rail),
+                ),
         );
     }
     gutter.into_any_element()

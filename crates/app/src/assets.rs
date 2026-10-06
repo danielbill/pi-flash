@@ -102,6 +102,9 @@ assets! {
     "icons/message-square-more.svg",
     "icons/file-sliders.svg",
     "icons/plug.svg",
+    // v70 设置页：模型（芯片）+ MCP（服务器机架），路径取自 pi-web SettingsSectionIcon
+    "icons/cpu.svg",
+    "icons/server.svg",
     // v54 UI: iconfont solid set (from the design html)
     "icons/icon-project.svg",
     "icons/icon-new-chat.svg",
