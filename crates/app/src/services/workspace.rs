@@ -80,16 +80,12 @@ fn save_map_to(path: &Path, map: &serde_json::Map<String, Value>) -> bool {
             return false;
         }
     }
+    // 自有目录可能还没建（首启 / 迁移后）——写前确保存在
+    let _ = pi_link::paths::ensure_dir();
     let value = Value::Object(map.clone());
     pi_link::config::write_json(path, &value).is_ok()
 }
 
-fn agent_dir_file(name: &str) -> Option<PathBuf> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()?;
-    Some(Path::new(&home).join(".pi").join("agent").join(name))
-}
 
 /// Normalized workspace key: Path components joined with "\\", so
 /// "D:/a/b" and "D:\a\b" share one memory slot (Windows path parity).
@@ -108,7 +104,8 @@ fn ws_key(cwd: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn memory_path() -> Option<PathBuf> {
-    agent_dir_file("pi-flash-workspace.json")
+    // pi-flash 自有目录（010-启动.md §4）：不再往 ~/.pi/agent 写
+    pi_link::paths::workspace_file()
 }
 
 /// Shared in-process cache for the workspace memory map (one static for
@@ -402,7 +399,8 @@ pub struct AppSettings {
 }
 
 fn app_settings_path() -> Option<PathBuf> {
-    agent_dir_file("pi-flash-app-settings.json")
+    // pi-flash 自有目录（010-启动.md §4）
+    pi_link::paths::app_settings_file()
 }
 
 fn font_spec_from(v: &Value) -> Option<FontSpec> {

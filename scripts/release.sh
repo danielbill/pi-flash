@@ -67,7 +67,8 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 - 设置弹窗六个页签：模型 / 技能 / 插件 / 工具 / 子代理 / 通用（主题+语言）
 - 本版本更新内容见压缩包内 CHANGELOG 片段或仓库 CHANGELOG.md
 
-数据位置：~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）
+数据位置：pi 数据 ~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）；
+         pi-flash 自己的配置 ~/.pi-flash/（workspace / app-settings / session-index / recents / catalog-cache）
 EOF
 # 同时带上一份 CHANGELOG，方便离线看更新说明
 cp CHANGELOG.md dist/pi-flash/CHANGELOG.md

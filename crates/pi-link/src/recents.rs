@@ -78,6 +78,8 @@ impl Recents {
 
     fn save(&self) {
         let value = serde_json::json!({ "version": 1, "entries": self.entries });
+        // 自有目录可能还没建（首启 / 迁移后）——写前确保存在
+        let _ = crate::paths::ensure_dir();
         let _ = crate::config::write_json(&self.file, &value);
     }
 
@@ -234,7 +236,9 @@ fn with_recents<T>(f: impl FnOnce(&mut Recents) -> T) -> T {
     static RECENTS: Mutex<Option<Recents>> = Mutex::new(None);
     let mut guard = RECENTS.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
-        let file = crate::config::agent_dir().join("pi-flash-session-recents.json");
+        // 清单落 pi-flash 自有目录（010-启动.md §4）
+        let file = crate::paths::session_recents_file()
+            .unwrap_or_else(|| crate::config::agent_dir().join("session-recents.json"));
         *guard = Some(Recents::load(&file));
     }
     f(guard.as_mut().expect("recents just initialized"))
@@ -250,6 +254,22 @@ pub fn remove_recent(path: &Path) {
     with_recents(|r| r.remove(path));
 }
 
+/// 首启种子：清单为空（新机器，或路径迁移后新目录还空着）→ 按扫描器的
+/// mtime 序记录并落盘。startup 启动时**显式**调一次（顺序可预期、失败可见）；
+/// `recent_load_paths` 保留同样的兜底（幂等）。
+pub fn ensure_seeded() {
+    with_recents(seed_if_empty);
+}
+
+fn seed_if_empty(r: &mut Recents) {
+    if r.is_empty() {
+        for s in crate::sessions::list_sessions(RECENTS_CAPACITY) {
+            r.record(&s.path, systemtime_to_ms(s.modified));
+        }
+        r.flush();
+    }
+}
+
 /// Load-window source: every path active within `window_days`, recency
 /// order. An empty list (first run on a machine with existing sessions)
 /// seeds itself from the scanner's mtime ordering and persists, so the next
@@ -257,12 +277,7 @@ pub fn remove_recent(path: &Path) {
 /// a small prefix for tail preload.
 pub fn recent_load_paths(window_days: u64) -> Vec<PathBuf> {
     with_recents(|r| {
-        if r.is_empty() {
-            for s in crate::sessions::list_sessions(RECENTS_CAPACITY) {
-                r.record(&s.path, systemtime_to_ms(s.modified));
-            }
-            r.flush();
-        }
+        seed_if_empty(r);
         r.window_paths(window_days)
     })
 }

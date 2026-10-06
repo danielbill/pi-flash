@@ -75,14 +75,31 @@ impl Chat {
                     }
                 }
                 SessionEvent::Models(models) => {
-                    // project-level shared catalog (pi-web /api/models parity):
-                    // every runtime writes its own cwd's entry — parked sessions
-                    // of other projects refresh theirs too. The enabledModels
-                    // scope state re-resolves against the now-known refs.
+                    // 进程答案写项目槽（pi-web /api/models parity：每个 runtime 只写
+                    // 自己 cwd 的条目），同时**并进全局态并回写自有缓存**
+                    // （010-启动.md §2/§4.1：包内联 provider 只有进程答得到，
+                    // 存下来下次冷启动就有真名字）。
                     let cwd_key = rt.read(cx).cwd.to_string_lossy().to_string();
                     chat.models_by_cwd.insert(cwd_key, models.clone());
+                    if crate::startup::merge_models(&mut chat.globals, &models) {
+                        let _ = crate::startup::write_cache(
+                            &chat.globals.models,
+                            &chat.globals.commands,
+                        );
+                    }
                     chat.mc_state =
                         models_config::compute_state(chat.mc_patterns.as_ref(), &chat.mc_refs());
+                    cx.notify();
+                }
+                SessionEvent::Commands(commands) => {
+                    // 扩展命令（包内注册，磁盘没有数据文件）：并进全局清单 + 回写缓存。
+                    // `skill:` 前缀不入全局（skill 走磁盘派生，见 startup::merge_commands）。
+                    if crate::startup::merge_commands(&mut chat.globals, &commands) {
+                        let _ = crate::startup::write_cache(
+                            &chat.globals.models,
+                            &chat.globals.commands,
+                        );
+                    }
                     cx.notify();
                 }
                 SessionEvent::FileBound(path) => {

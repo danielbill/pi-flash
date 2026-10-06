@@ -34,7 +34,7 @@ impl Chat {
     /// Provider ids in available-models display order.
     pub(crate) fn mc_provider_ids(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for m in self.models_for(&self.cwd) {
+        for m in self.catalog_for(&self.cwd) {
             if !out.contains(&m.provider) {
                 out.push(m.provider.clone());
             }
@@ -45,7 +45,7 @@ impl Chat {
     /// (enabled, total) of one catalog provider under the enabledModels scope.
     pub(crate) fn mc_provider_counts(&self, provider: &str) -> (usize, usize) {
         let models: Vec<&pi_link::protocol::ModelInfo> = self
-            .models_for(&self.cwd)
+            .catalog_for(&self.cwd)
             .iter()
             .filter(|m| m.provider == provider)
             .collect();
@@ -84,7 +84,7 @@ impl Chat {
     /// composer shows "auto"). An explicit draft pick (pending_model) wins and
     /// is applied by the caller before this.
     pub(crate) fn new_session_default(&self) -> (Option<(String, String)>, Option<String>) {
-        let catalog = self.models_for(&self.cwd);
+        let catalog = self.catalog_for(&self.cwd);
         let in_scope = |m: &pi_link::protocol::ModelInfo| {
             self.mc_state.all_enabled
                 || {
@@ -131,35 +131,33 @@ impl Chat {
     /// Display name of one catalog model ("name", falling back to
     /// `provider/id` for models the catalog hasn't listed).
     pub(crate) fn model_display_name(&self, provider: &str, id: &str) -> String {
-        self.models_for(&self.cwd)
+        self.catalog_for(&self.cwd)
             .iter()
             .find(|m| m.provider == provider && m.id == id)
             .map(|m| m.label())
             .unwrap_or_else(|| format!("{provider}/{id}"))
     }
 
-    /// Re-read pi config + resources (called on open and after writes).
+    /// 把启动装载的全局态 + 当前项目的项目上下文**安装**进设置页字段
+    /// （010-启动.md §1/§5/§7）。纯内存赋值：不再逐项扫盘——skills / packages /
+    /// mcp / 子代理档案都来自启动时已装好的 `globals` 与 `project_ctx`；
+    /// 切项目命中集合就直接切，未命中时由 `project_ctx_for` 现算一次并纳入。
     pub(crate) fn reload_settings_panel(&mut self) {
         self.reload_model_defaults();
-        let settings_path = pi_link::config::settings_path();
-        let project = pi_link::config::project_settings_path(&self.cwd);
+        // 凭据（auth.json，pi 的文件，读起来便宜）
         self.mc_creds = pi_link::config::read_credential_kinds(&pi_link::config::auth_path())
             .unwrap_or_default();
-        // skills (DefaultResourceLoader dir subset)
-        let settings_value =
-            pi_link::config::read_json(&settings_path).unwrap_or_else(|_| serde_json::json!({}));
-        let agent_dir = pi_link::config::agent_dir();
-        let home_agents = agent_dir
-            .parent()
-            .map(|p| p.join("..").join(".agents").join("skills"))
-            .map(|p| p.canonicalize().unwrap_or(p))
-            .unwrap_or_else(|| agent_dir.clone());
-        self.mc_skills =
-            pi_link::skills::discover_skills(&self.cwd, &agent_dir, &home_agents, &settings_value);
-        // packages (global + project scopes)
-        self.mc_pkgs_global =
-            pi_link::config::read_packages(&settings_path).unwrap_or_default();
-        self.mc_pkgs_project = pi_link::config::read_packages(&project).unwrap_or_default();
+        // 会话预设 `configured` 对应的工具清单（settings.json defaultTools）
+        self.mc_default_tools = self.globals.default_tools.clone();
+        self.mc_pkgs_global = self.globals.packages.clone();
+        let ctx = self.project_ctx_now();
+        self.mc_skills = ctx.skills;
+        self.mc_pkgs_project = ctx.packages;
+        self.mc_project_scope = ctx.project_scope;
+        self.mcp_servers = ctx.mcp_servers;
+        self.mcp_errors = ctx.mcp_errors;
+        self.sa_settings = ctx.agents_settings;
+        self.sa_profiles = ctx.profiles;
         // models.json 编辑缓冲（面板打开/写盘后重建）
         match pi_link::models_json::read() {
             Ok(v) => {
@@ -173,13 +171,6 @@ impl Chat {
         }
         self.mc_mj_dirty = false;
         self.mc_mj_saved = false;
-        // mcp.json 全局 + 项目（项目同名替换全局）
-        let (servers, errors) = pi_link::mcp::load(Some(&self.cwd));
-        self.mcp_servers = servers;
-        self.mcp_errors = errors;
-        // subagent profiles + agents settings
-        self.sa_settings = pi_link::subagents::read_settings(&agent_dir);
-        self.sa_profiles = pi_link::subagents::list_profiles(&self.cwd, &agent_dir, &self.sa_settings);
     }
 
     pub(crate) fn mc_set_error(&mut self, msg: &str, cx: &mut Context<Self>) {
@@ -389,7 +380,7 @@ pub(crate) fn mc_models_view(
     let mut col = div().flex().flex_col().w_full().h_full().min_h_0();
 
     // ---- 路径条（EnabledModelsBanner：白名单收窄或有失配时出现） ----------
-    let total_available = chat.models_for(&chat.cwd).len();
+    let total_available = chat.catalog_for(&chat.cwd).len();
     let enabled_total = if chat.mc_state.all_enabled {
         total_available
     } else {
@@ -705,7 +696,7 @@ fn mc_models_detail(
     let dc_provider = provider.clone();
     let dc_oauth = chat.mc_oauth(&provider);
     let models: Vec<pi_link::protocol::ModelInfo> = chat
-        .models_for(&chat.cwd)
+        .catalog_for(&chat.cwd)
         .iter()
         .filter(|m| m.provider == provider)
         .cloned()

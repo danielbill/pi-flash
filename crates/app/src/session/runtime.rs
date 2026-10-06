@@ -47,6 +47,9 @@ pub(crate) enum SessionEvent {
     /// shared state (pi-web /api/models + loadModelsWithCache parity) — the
     /// runtime only forwards it, Chat stores it per cwd for every picker
     Models(Vec<pi_link::protocol::ModelInfo>),
+    /// get_commands arrived（含扩展命令；磁盘上没有包内注册命令的数据文件）：
+    /// Chat 并进全局命令清单并回写自有缓存（010-启动.md §3/§4.1）
+    Commands(Vec<pi_link::protocol::SlashCommand>),
     /// a draft got persisted: pi bound this process to a fresh session file
     /// (pi-web promoteNewSession parity — the pool key migrates draft-N → path)
     FileBound(PathBuf),
@@ -413,7 +416,10 @@ impl SessionRuntime {
                     .detach();
                 } else if command == "get_commands" && success {
                     if let Some(data) = &data {
-                        self.commands = SlashCommand::parse_list(data);
+                        let commands = SlashCommand::parse_list(data);
+                        // 转发给 Chat：并进全局清单 + 回写自有缓存（010-启动.md §3）
+                        cx.emit(SessionEvent::Commands(commands.clone()));
+                        self.commands = commands;
                     }
                 } else if command == "get_available_models" && success {
                     if let Some(data) = &data {

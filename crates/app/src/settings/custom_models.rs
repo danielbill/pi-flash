@@ -260,7 +260,7 @@ pub(crate) fn mj_provider_editor(
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
     let in_catalog = chat
-        .models_for(&chat.cwd)
+        .catalog_for(&chat.cwd)
         .iter()
         .any(|m| m.provider == name);
     let detail = detail_shell("mc-detail")

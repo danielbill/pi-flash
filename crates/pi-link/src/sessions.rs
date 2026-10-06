@@ -187,6 +187,8 @@ impl Scanner {
             })
             .collect();
         let value = serde_json::json!({ "version": 1, "entries": entries });
+        // 自有目录可能还没建（首启 / 迁移后）——写前确保存在
+        let _ = crate::paths::ensure_dir();
         let _ = crate::config::write_json(path, &value);
     }
 
@@ -613,7 +615,9 @@ fn with_scanner<T>(f: impl FnOnce(&mut Scanner) -> T) -> T {
     if guard.is_none() {
         let scanner = match sessions_root() {
             Some(root) => {
-                let index = crate::config::agent_dir().join("pi-flash-session-index.json");
+                // 索引落 pi-flash 自有目录（010-启动.md §4）
+                let index = crate::paths::session_index_file()
+                    .unwrap_or_else(|| crate::config::agent_dir().join("session-index.json"));
                 Scanner::open_persisted(&root, &index)
             }
             None => Scanner::open(Path::new("")),

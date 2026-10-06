@@ -350,8 +350,8 @@ pub(crate) fn input_area(
     composer.update(cx, |f, fcx| f.set_read_only(compacting, fcx));
     let cur = chat.input.clone();
     composer.update(cx, |f, fcx| f.set_value(cur, fcx));
-    let names: Vec<String> =
-        chat.rt().read(cx).commands.iter().map(|c| c.name.clone()).collect();
+    // 命令名同步给组件：会话进程答案优先，否则启动装载的（项目 skill + 扩展缓存）
+    let names: Vec<String> = chat.slash_commands(cx).iter().map(|c| c.name.clone()).collect();
     composer.update(cx, |f, fcx| f.set_command_names(names, fcx));
 
     // ---- 胶囊 ----

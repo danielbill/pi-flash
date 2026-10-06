@@ -27,10 +27,8 @@ impl Chat {
         match self.active_menu() {
             Some(MenuKind::Slash) => {
                 let q = self.input[1..].to_lowercase();
-                self.rt()
-                    .read(cx)
-                    .commands
-                    .iter()
+                // 命令清单 = 会话进程答案优先，否则启动装载的（项目 skill + 扩展缓存）
+                self.slash_commands(cx).iter()
                     .filter(|c| q.is_empty() || c.name.to_lowercase().starts_with(&q))
                     .take(60)
                     .map(|c| MenuItem {

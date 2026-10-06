@@ -208,11 +208,15 @@ struct Chat {
     sessions: Vec<SessionInfo>,
     cwd: PathBuf,
     branch: String,
-    /// model catalog keyed by cwd — project-level shared state (pi-web
-    /// /api/models + loadModelsWithCache parity): fetched once per project
-    /// through any live runtime's RPC and reused by every picker, including
-    /// process-less drafts. Runtimes forward their responses here.
+    /// model catalog keyed by cwd — **进程答案覆盖层**（010-启动.md §7）：活着的
+    /// runtime 的 RPC `get_available_models` 答复写这里（项目级差异），无进程时
+    /// 消费方回落 `globals.models`（启动时从磁盘 ∪ 自有缓存装载）。
     models_by_cwd: std::collections::HashMap<String, Vec<pi_link::protocol::ModelInfo>>,
+    /// 启动装载的全局态（模型清单 / 命令 / 默认项 / 插件 / 全局 mcp）：渲染只读，
+    /// 不再扫盘也不发 RPC（010-启动.md §1、§7）。
+    globals: startup::Globals,
+    /// 项目上下文（启动集合内逐项目装载；切项目命中即零扫盘，见 §5）。
+    project_ctx: std::collections::HashMap<String, startup::ProjectCtx>,
     runtimes: std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
     active_key: String,
     /// 010-启动：启动页闸门；揭幕帧由 pending_zoom 补 §4 最大化
@@ -450,6 +454,8 @@ impl Chat {
             pending_zoom: false,
             draft_seq: 0,
             models_by_cwd: std::collections::HashMap::new(),
+            globals: startup::Globals::default(),
+            project_ctx: std::collections::HashMap::new(),
             expanded_dirs: HashSet::new(),
             git_files: Vec::new(),
             git_selected: None,
@@ -551,6 +557,12 @@ impl Chat {
             top_dd: cx.new(|_| crate::ui::DropdownState::new()),
             tool_sel: None,
         };
+        // 启动阶段：全局态一次性装载（010-启动.md §1/§6）——模型清单（磁盘 ∪ 自有
+        // 缓存）、命令、默认项、插件、全局 mcp，全部先于第一帧进内存，**不 spawn 进程**。
+        chat.globals = startup::load_globals();
+        let cwd_key = chat.cwd.to_string_lossy().to_string();
+        chat.project_ctx
+            .insert(cwd_key, startup::load_project(&chat.cwd.clone()));
         // new-session defaults (default model / thinking / enabledModels
         // scope) before the first frame — the draft pills render from them
         chat.reload_model_defaults();
@@ -566,77 +578,6 @@ impl Chat {
         chat.load_project_files();
         chat.refresh_git();
 
-        // 120ms 泵：悬停卡/导航 flyout/状态条过期（光标闪烁由输入组件
-        // 自管，不再需要 2Hz 切换）。
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(120))
-                    .await;
-                let ok = this
-                    .update(cx, |c, cx| {
-                        let mut dirty = false;
-                        // 改名中：不打字时鼠标虽不在卡上，也不能清卡
-                        let renaming = c
-                            .hover_card
-                            .as_ref()
-                            .is_some_and(|h| h.renaming);
-                        if !renaming {
-                            if let Some(at) =
-                                c.hover_card.as_ref().and_then(|h| h.hide_at)
-                            {
-                                if at.elapsed()
-                                    > std::time::Duration::from_millis(300)
-                                {
-                                    c.hover_card = None;
-                                    dirty = true;
-                                }
-                            }
-                        }
-                        // 详情卡延迟显示（0.3s）：悬停期满且鼠标未在离行
-                        // 宽限时才置 shown，下一次渲染把卡画出来
-                        if let Some(card) = c.hover_card.as_mut() {
-                            if !card.shown
-                                && card.hide_at.is_none()
-                                && card.show_at.elapsed()
-                                    >= std::time::Duration::from_millis(300)
-                            {
-                                card.shown = true;
-                                dirty = true;
-                            }
-                        }
-                        // 导航 flyout 250ms 离开宽限（pi-web
-                        // PREVIEW_HIDE_DELAY parity）
-                        if c.nav_open {
-                            if let Some(at) = c.nav_hide_at {
-                                if at.elapsed()
-                                    > std::time::Duration::from_millis(250)
-                                {
-                                    c.nav_open = false;
-                                    c.nav_flyout_hovered = false;
-                                    c.nav_hover_turn = None;
-                                    c.nav_hide_at = None;
-                                    dirty = true;
-                                }
-                            }
-                        }
-                        if let Some((_, at)) = &c.status_toast {
-                            if at.elapsed() > std::time::Duration::from_millis(2500) {
-                                c.status_toast = None;
-                                dirty = true;
-                            }
-                        }
-                        if dirty {
-                            cx.notify();
-                        }
-                    })
-                    .is_ok();
-                if !ok {
-                    break;
-                }
-            }
-        })
-        .detach();
         // settings panel CLI op pump (pi install/remove runs in background)
         let (op_tx, mut op_rx) = futures::channel::mpsc::unbounded::<String>();
         chat.op_tx = Some(op_tx);
@@ -698,58 +639,15 @@ impl Chat {
         chat.runtimes.insert(rt_key.clone(), rt.clone());
         chat.active_key = rt_key.clone();
         chat.subscribe_runtime(&rt, cx);
-        // background process attach (no process kill involved; spawn is a
-        // one-time ~100ms process creation off the first frame)
-        let rt_for_spawn = rt.clone();
-        cx.spawn(async move |_this, cx| {
-            let _ = rt_for_spawn.update(cx, |r, cx| {
-                if r.agent.session.is_none() {
-                    if let Some(rx) = r.spawn() {
-                        let epoch = r.agent.epoch;
-                        session::runtime::SessionRuntime::attach_pump(&rt_for_spawn, rx, epoch, cx);
-                    }
-                }
-                if let Some(s) = &r.agent.session {
-                    let _ = s.send(&Command::GetMessages);
-                }
-                r.refresh_anchors();
-                r.refresh_state();
-            });
-        })
-        .detach();
-        // 010-启动：启动页闸门——pi 附着（或超时兜底）且最短展示 500ms 后
-        // 揭幕；揭幕帧由 render 的 pending_zoom 补 §4 默认最大化。
-        cx.spawn(async move |this, cx| {
-            let t0 = std::time::Instant::now();
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(60))
-                    .await;
-                let attached = this
-                    .update(cx, |c, cx| {
-                        c.runtimes
-                            .get(&c.active_key)
-                            .is_some_and(|r| r.read(cx).agent.session.is_some())
-                    })
-                    .unwrap_or(true); // 实体已亡（窗口关闭）：停止闸门
-                let elapsed = t0.elapsed();
-                // MIN_SPLASH 从启动页首帧起算（忙机首帧可能晚于 pi 附着）
-                let splash_shown = startup::splash_paint_age()
-                    .is_some_and(|age| age >= startup::MIN_SPLASH);
-                if (attached && splash_shown) || elapsed >= startup::SPLASH_TIMEOUT {
-                    break;
-                }
-            }
-            let _ = this.update(cx, |c, cx| {
-                c.booted = true;
-                c.pending_zoom = true;
-                if PERF.load(std::sync::atomic::Ordering::Relaxed) {
-                    eprintln!("[perf] splash reveal: {:?}", t0.elapsed());
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        // 010-启动.md §9：启动期的一切（首帧附着 / 120ms 泵 / 3s 外部追加观察 /
+        // 60s 空闲回收 / 30s recents 对账 / 启动页闸门 / 会话清单与项目集装载）
+        // 都由 startup 发起——启动阶段做了什么全在 startup.rs 里可见。
+        startup::spawn_boot_tasks(rt.clone(), cx);
+        startup::spawn_session_list_load(
+            chat.cwd.to_string_lossy().to_string(),
+            last_open.clone(),
+            cx,
+        );
         if PERF.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(t0) = T0.get() {
                 eprintln!("[perf] last-session tail rendered: {:?}", t0.elapsed());
@@ -763,140 +661,6 @@ impl Chat {
                 let _ = weak_git.update(cx, |c, cx| c.git_commit_staged(cx));
             }));
         });
-        // idle recycle (pi-web idle-timeout parity): every 60s, kill the
-        // process of any non-active session idle >10min.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(60))
-                .await;
-            let ok = this
-                .update(cx, |chat, cx| {
-                    let idle_cap = std::time::Duration::from_secs(600);
-                    for (key, rt) in &chat.runtimes {
-                        if *key == chat.active_key {
-                            continue;
-                        }
-                        let idle = {
-                            let r = rt.read(cx);
-                            !r.agent_running
-                                && r.last_activity.elapsed() > idle_cap
-                                && r.agent.session.is_some()
-                        };
-                        if idle {
-                            rt.update(cx, |r2, _| r2.shutdown_process());
-                        }
-                    }
-                })
-                .is_ok();
-            if !ok {
-                break;
-            }
-        })
-        .detach();
-        // external-append watch (pi-web session-revision parity): every 3s,
-        // re-read sessions whose files grew behind our pi process (pi-web
-        // writing the same session). Idle runtimes only — a running agent
-        // owns its file.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(3))
-                .await;
-            let ok = this
-                .update(cx, |chat, cx| {
-                    for rt in chat.runtimes.values() {
-                        rt.update(cx, |r, cx| r.check_external_append(cx));
-                    }
-                })
-                .is_ok();
-            if !ok {
-                break;
-            }
-        })
-        .detach();
-        // background fill: cross-project scan -> psp 项目组（startup budget
-        // §4 — the first frame renders the empty shell while this lands）
-        let cwd_text = chat.cwd.to_string_lossy().to_string();
-        cx.spawn(async move |this, cx| {
-            let sessions = list_sessions_for_cwd(&cwd_text, 100)
-                .into_iter()
-                .filter(|s| same_ws(&s.cwd, &cwd_text))
-                .collect::<Vec<_>>();
-            let _ = this.update(cx, |chat, cx| {
-                chat.sessions = sessions;
-                cx.notify();
-                if PERF.load(std::sync::atomic::Ordering::Relaxed) {
-                    if let Some(t0) = T0.get() {
-                        eprintln!("[perf] session list: {:?}", t0.elapsed());
-                    }
-                }
-            });
-            // psp 一体列表 + 尾部预载（003-session管理 清单驱动）：启动只
-            // 加载「加载时间窗口」内活跃的会话——清单窗口过滤，摘要查指纹
-            // 索引，无全盘枚举；首次运行清单为空时内部按 mtime 序种子
-            let days = load_window_days();
-            let paths = cx
-                .background_spawn(async move {
-                    pi_link::recents::recent_load_paths(days)
-                })
-                .await;
-            // 清单刚种子/保活，此处必命中索引：纯 stat + 内存查，不碰文件
-            let all = pi_link::sessions::sessions_for_paths(&paths);
-            let _ = this.update(cx, |chat, cx| {
-                chat.rebuild_projects(all);
-                cx.notify();
-            });
-            // tail preload（活动序前 TAIL_PRELOAD 条；active 已由首屏渲染，跳过）
-            let active = last_open.clone();
-            let preloaded = cx
-                .background_spawn(async move {
-                    let mut map = std::collections::HashMap::new();
-                    for path in paths {
-                        if map.len() >= crate::services::workspace::TAIL_PRELOAD {
-                            break;
-                        }
-                        if Some(&path) == active.as_ref() || !path.is_file() {
-                            continue;
-                        }
-                        let msgs =
-                            msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                        map.insert(path, msgs);
-                    }
-                    map
-                })
-                .await;
-            let _ = this.update(cx, |chat, _cx| {
-                chat.session_tail_cache = preloaded;
-            });
-        })
-        .detach();
-        // recents poll (003-session管理): every 30s, reconcile the recent
-        // activity list against external writers (pi-web / cli) and flush.
-        // Live runtimes' files are excluded — the event path (open / message
-        // callbacks) owns their recency, and polling them while pi appends
-        // would rescan the file every tick.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(30))
-                .await;
-            let exclude = match this.update(cx, |chat, cx| {
-                chat.runtimes
-                    .values()
-                    .filter_map(|rt| rt.read(cx).file.clone())
-                    .collect::<Vec<_>>()
-            }) {
-                Ok(v) => v,
-                Err(_) => break,
-            };
-            let changed = cx
-                .background_spawn(async move {
-                    pi_link::recents::poll_recent_sessions(&exclude)
-                })
-                .await;
-            if changed {
-                let _ = this.update(cx, |_chat, cx| cx.notify());
-            }
-        })
-        .detach();
         chat
     }
 
@@ -1133,14 +897,44 @@ impl Chat {
         }
     }
 
-    /// Shared model catalog of one project (pi-web loadModelsWithCache(cwd)
-    /// read side). Empty slice until some live runtime of that cwd answered
-    /// get_available_models.
-    pub(crate) fn models_for(&self, cwd: &std::path::Path) -> &[pi_link::protocol::ModelInfo] {
+    /// 一个项目的模型目录（010-启动.md §7）：**进程答案优先**（`models_by_cwd`
+    /// 有该 cwd 的非空条目 → 用它），否则回落启动装载的全局清单（磁盘 ∪ 自有缓存）——
+    /// 于是 lazy draft / 冷启动也有清单，不再出现「选择模型」「no models match」。
+    pub(crate) fn catalog_for(&self, cwd: &std::path::Path) -> &[pi_link::protocol::ModelInfo] {
         self.models_by_cwd
             .get(&cwd.to_string_lossy().to_string())
             .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .filter(|v| !v.is_empty())
+            .unwrap_or(self.globals.models.as_slice())
+    }
+
+    /// 当前项目的上下文（010-启动.md §5）：命中启动装载的集合就直接返回，
+    /// 未命中（新打开的项目）用同一个装载函数现算一次并纳入集合。
+    pub(crate) fn project_ctx_now(&mut self) -> startup::ProjectCtx {
+        let key = self.cwd.to_string_lossy().to_string();
+        if let Some(ctx) = self.project_ctx.get(&key) {
+            return ctx.clone();
+        }
+        let ctx = startup::load_project(&self.cwd.clone());
+        self.project_ctx.insert(key, ctx.clone());
+        ctx
+    }
+
+    /// `/` 菜单命令清单（010-启动.md §3）：会话进程答过 → 用它（含项目 skill）；
+    /// 否则 = 项目 skill 派生（`skill:<name>`）+ 全局扩展命令（内置表 + 缓存）。
+    /// 草稿态（无进程）因此也有完整菜单。
+    pub(crate) fn slash_commands(&self, cx: &gpui::App) -> Vec<pi_link::protocol::SlashCommand> {
+        let rt = self.rt().read(cx);
+        if !rt.commands.is_empty() {
+            return rt.commands.clone();
+        }
+        let mut out: Vec<pi_link::protocol::SlashCommand> = self
+            .project_ctx
+            .get(&self.cwd.to_string_lossy().to_string())
+            .map(|ctx| ctx.skill_commands.clone())
+            .unwrap_or_default();
+        out.extend(self.globals.commands.iter().cloned());
+        out
     }
 
     /// Picker fallback: catalog entry for the active session's cwd is empty →
@@ -1685,6 +1479,10 @@ impl Render for Chat {
 
 fn main() {
     let _ = T0.set(std::time::Instant::now());
+    // 启动第一步（010-启动.md §4/§10）：建 ~/.pi-flash/、旧 pi-flash-*.json 搬家、
+    // recents 首启种子。必须早于任何读盘者（workspace 记忆 / recents / 会话扫描器
+    // 都是进程级惰性单例）。
+    startup::boot();
     PERF.store(true, std::sync::atomic::Ordering::Relaxed);
     // theme: PI_FLASH_THEME (dev override) > app_settings.json（pi-flash 专
     // 属配置，绝不碰 pi 的 settings.json——pi 的 settings schema 有自己的

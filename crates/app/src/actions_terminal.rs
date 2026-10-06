@@ -126,7 +126,7 @@ impl Chat {
     /// `provider/modelId` refs of every available model, display order.
     /// Reads the shared catalog of the current project (models_by_cwd).
     pub(crate) fn mc_refs(&self) -> Vec<String> {
-        self.models_for(&self.cwd)
+        self.catalog_for(&self.cwd)
             .iter()
             .map(|m| format!("{}/{}", m.provider, m.id))
             .collect()

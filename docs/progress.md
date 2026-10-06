@@ -1973,3 +1973,69 @@ SettingsPanel/ModelsConfig/SkillsConfig/AgentsConfig/PluginsConfig/McpConfig
   悬空 `/// 自定义 provider 编辑器。`（拆文件残留）删除；`settings/custom_models.rs`
   的 `mj_provider_editor` / `mj_model_editor` / `mj_add_panel` / `api_options_row`
   补 `pub(crate)`（models.rs 顶部 `use super::custom_models::{…}` 需要）
+
+## 010-启动：全局态一次性装载 + pi-flash 自有目录（2026-10-06）
+
+设计先行：`docs/模块设计/010-启动.md` §0-§10（模块代码 startup）。本轮把设计落地。
+
+**1. pi-flash 自有目录 `~/.pi-flash/`（不污染 pi）**
+- 新增 `pi-link/src/paths.rs`：`PI_FLASH_DIR` 优先、否则 `~/.pi-flash`；文件
+  `workspace.json` / `app-settings.json` / `session-index.json` / `session-recents.json` /
+  `catalog-cache.json`；`migrate_legacy_files()` 把旧 `~/.pi/agent/pi-flash-*.json`
+  **rename** 过来（目标已在则跳过、不清理旧文件）。`main()` 最前面 `startup::boot()`
+  调用（必须早于 workspace 记忆 / recents / 扫描器三个惰性单例）
+- 四个写入方改路径：`services/workspace.rs`（memory + app-settings）、
+  `pi-link/sessions.rs`（扫描索引）、`pi-link/recents.rs`（清单），并在写入前
+  `paths::ensure_dir()`（首启/迁移后目录可能还不存在）
+- `scripts/release.sh` 启动说明文案 → 区分 pi 数据 `~/.pi/agent/` 与 pi-flash 数据 `~/.pi-flash/`
+
+**2. 磁盘目录层（不 spawn pi 问）**
+- `pi-link/src/catalog.rs`：`models-store.json` / `models.json` 解析 →
+  `ModelInfo{provider,id,name,contextWindow}`、`disk_models()`（models.json 优先、
+  按 provider/id 去重）、`skill_commands()`（`skill:<name>`）、`builtin_commands()`
+  （**pi 1.0.0 空表** —— 实测 `get_commands` 无内置命令，随 vendor 升级复核）
+
+**3. `startup` 装载全局态 + 项目集**
+- `Globals{models, commands, default_tools, packages}`（`load_globals()`：缓存 ∪ 磁盘）
+  + `ProjectCtx{project_scope, packages, skills, skill_commands, mcp, subagents}`
+  （`load_project(cwd)`）；`Chat::new` 一次装载，项目集确定后**后台线程**把集合内
+  每个项目的上下文装好（`main.rs` project-list 任务里）
+- `Chat::catalog_for(cwd)`：`models_by_cwd[cwd]` 非空 → 用它（进程答案覆盖层），
+  否则回落 `globals.models` ⇒ lazy draft / 冷启动也有清单；`new_session_default` /
+  弹窗 / 设置页 / `mc_refs` 全部改走它
+- `Chat::slash_commands()`：`rt.commands` 非空 → 用它，否则项目 skill 派生 + 全局
+  （内置 + 缓存）；`/` 菜单与 composer 命令名统一走它
+- `reload_settings_panel()` 改为**纯内存安装**（globals + 当前 ProjectCtx）：开设置页
+  不再逐项扫盘；`mc_default_tools` 死字段接上 `settings.json defaultTools`
+- RPC 只做覆盖 + 回写缓存：`SessionEvent::Models` → `merge_models` + `write_cache`；
+  新增 `SessionEvent::Commands` → `merge_commands`（`skill:` 不入全局）+ 回写缓存
+
+**4. 真机验证（截图 `tmp/屏幕截图/012-no-process.png`、`012-cold-verify.png`）**
+- 迁移：`~/.pi-flash/` 生成 4 个自有文件（旧目录 `pi-flash-session-index.json` 因目标已在保留，符合设计）
+- **无进程冷启动**（`PI_FLASH_NODE` 指向不存在的 node + 全新 `PI_FLASH_DIR`）：012 的
+  模型 pill 显示 **NVIDIA: Nemotron 3 Nano Omni (free)**、思考 `high`、工具 `configured`
+  —— 全部来自磁盘；`/` 菜单列出 beads / image-gen / jev / … （项目 skill 派生）
+- 正常启动：cache 写入 518 models（5 provider）；`session-index.json` / `session-recents.json`
+  在新目录重建（迁移后一次性全量扫描，符合 §8/§10）
+
+**5. 记一条实测事实（已写进设计 §2/§3）**：app 的 pi 进程固定带 `-ne`（不加载扩展），
+所以扩展命令与包内联 provider（pi-freeflow 之类）**不会**出现在 app 侧；磁盘目录
+（models.json + models-store.json）+ skill 派生即完整源，缓存是"等价源 + 新鲜度层"
+（`catalog-cache.json` 的 commands 在 `-ne` 下恒空，属预期，通道保留）
+
+**待办（§9 最后一项）**：把 `Chat::new` 里的启动期后台任务（120ms 泵 / 30s recents poll /
+60s idle recycle / tail preload / 首帧 spawn）与揭幕闸门收拢到 `startup`，让"启动阶段
+做的事只在 startup 里有名字"这条完全成立——本轮先完成装载类，未动这四段循环。
+
+### 续：§9 后台任务/闸门全部收进 startup（同日）
+
+- `startup::spawn_boot_tasks(rt, cx)`：首帧附着（spawn + attach_pump + GetMessages +
+  refresh_anchors/refresh_state）、120ms 泵（悬停卡/导航 flyout/状态条）、3s 外部追加
+  观察、60s 空闲回收、30s recents 对账、启动页闸门（MIN_SPLASH/SPLASH_TIMEOUT → booted
+  + pending_zoom）
+- `startup::spawn_session_list_load(cwd_text, last_open, cx)`：当前项目会话（前 100）→
+  加载窗口清单 → `rebuild_projects` → 项目上下文后台预装 → 尾部预载（TAIL_PRELOAD）
+- `Chat::new` 净减 ~270 行，只剩两行入口；启动阶段做了什么全在 `startup.rs` 可见
+- 真机复验（`tmp/屏幕截图/010-boot-tasks.png`）：启动页→揭幕→恢复上次会话→psp 两组
+  会话加载→模型 pill/思考/工具正常→cache 重写 518 models（初始附着的 RPC 链路完好）
+- 验证：app 101 + pi-link 81 全绿、0 警告、check_arch 仅存量
