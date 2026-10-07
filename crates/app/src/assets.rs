@@ -94,6 +94,7 @@ assets! {
     "icons/folder-closed.svg",
     "icons/folder-plus.svg",
     "icons/message-square.svg",
+    "icons/smartphone.svg",
     "icons/messages-square.svg",
     "icons/folder-tree.svg",
     "icons/clock.svg",

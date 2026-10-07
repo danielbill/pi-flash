@@ -105,6 +105,9 @@ enum Dialog {
     FileDirty { path: PathBuf },
     /// 023 fileView：标签栏 + 菜单「新建文件」（项目根，输入文件名）。
     NewFile { input: gpui::Entity<TextInput> },
+    /// 060 远程控制：状态栏手机图标 → 扫码弹窗（二维码 + 绑定码）。
+    /// 不持数据 —— 内容全从 `chat.remote.qr` 现读，泵更新即重绘。
+    WxQr,
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗

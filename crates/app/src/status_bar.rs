@@ -37,6 +37,31 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
                 .children(tabs(active, t, cx)),
         );
     bar = bar.child(div().flex_1());
+
+    // 060 远程控制：右侧手机图标 → 扫码弹窗（弹窗内容现读 remote.qr，
+    // 扫码 worker 的事件由 200ms 泵 drain 后 notify，弹窗自动刷新）
+    let wx_on = chat.remote.bound.is_some();
+    let wx_color = if wx_on { t.accent } else { t.text_muted };
+    bar = bar.child(
+        div()
+            .id("wx-qr-btn")
+            .w(px(46.))
+            .h(px(HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)))
+            .on_mouse_down(MouseButton::Left, cx.listener(
+                move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                    // 幂等：已在扫码/已出码时不重复发起
+                    this.remote.begin_qr();
+                    this.dialog = Some(crate::Dialog::WxQr);
+                    cx.notify();
+                },
+            ))
+            .child(crate::ui::icon_hover("smartphone", 16., wx_color)),
+    );
     bar
 }
 

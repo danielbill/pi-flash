@@ -54,6 +54,8 @@ pub mod method {
     pub const THEME_SET: &str = "theme.set";
     pub const LANG_SET: &str = "lang.set";
     pub const DIALOG_CLOSE: &str = "dialog.close";
+    /// 060 远程控制：开扫码弹窗并发起取码（UI 测试用；内容现读 remote.qr）
+    pub const WX_QR_OPEN: &str = "wx.qr_open";
     pub const PROJECT_SWITCH: &str = "project.switch";
     /// 004 打开项目菜单（psp icon / 012 操作栏同源入口；UI 测试用）
     pub const PROJECT_PICKER_OPEN: &str = "project.picker_open";

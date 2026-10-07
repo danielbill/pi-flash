@@ -9,8 +9,8 @@ use super::*;
 
 use crate::remote_control::QrState;
 
-/// 多行等宽块：QR 字符画、长状态串都走它。
-fn block(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
+/// 多行等宽块：QR 字符画、长状态串都走它。扫码弹窗（`Dialog::WxQr`）复用。
+pub(crate) fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
     let t = T();
     let mut col = div()
         .flex()
@@ -49,7 +49,7 @@ fn qr_panel(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElem
         QrState::Ready { url } => {
             match wxprobe::qr::qr_block_text(&url, 2) {
                 Ok(art) => {
-                    out.push(block(art.lines().map(str::to_string).collect(), 14., false));
+                    out.push(mono_lines(art.lines().map(str::to_string).collect(), 14., false));
                     out.push(note("用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。"));
                 }
                 Err(e) => out.push(error_note(&e)),
@@ -74,7 +74,7 @@ fn qr_panel(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElem
                 lines.push(format!("bot_id = {b}"));
             }
             lines.push("发送 /帮助 查看可用命令。".into());
-            out.push(block(lines, 12., false));
+            out.push(mono_lines(lines, 12., false));
         }
         QrState::Expired => {
             out.push(error_note("二维码已过期，请重新获取。"));
@@ -141,7 +141,7 @@ pub(crate) fn mc_remote_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> 
             },
         ),
     ];
-    col = col.child(field("状态", block(status_lines, 11., true)));
+    col = col.child(field("状态", mono_lines(status_lines, 11., true)));
 
     // ── 绑定码：设置页展示，用户在微信里 `/bind <code>` 回填 ──────────
     let active = chat.active_key.clone();
@@ -151,7 +151,7 @@ pub(crate) fn mc_remote_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> 
         Some(k) => bind_lines.push(format!("已绑定会话：{k}")),
         None => bind_lines.push("未绑定 —— 在微信里发 /bind 上面这串数字".into()),
     }
-    col = col.child(field("绑定", block(bind_lines, 11., true)));
+    col = col.child(field("绑定", mono_lines(bind_lines, 11., true)));
 
     // ── 扫码面板 ────────────────────────────────────────────────────
     for el in qr_panel(chat, weak) {

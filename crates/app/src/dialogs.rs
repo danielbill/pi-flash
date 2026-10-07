@@ -72,10 +72,155 @@ pub(crate) fn render_dialogs(
             if let Some(Dialog::FileDirty { path }) = chat.dialog.as_ref() {
                 root = root.child(render_file_dirty(chat, weak, path, t));
             }
+            if let Some(Dialog::WxQr) = chat.dialog.as_ref() {
+                root = root.child(render_wx_qr(chat, weak, t));
+            }
             if let Some(Dialog::NewFile { input }) = chat.dialog.as_ref() {
                 root = root.child(render_new_file(chat, weak, input, t));
             }
     root
+}
+
+/// 060 远程控制：状态栏手机图标 → 扫码弹窗。
+///
+/// **窗体复用设置弹窗那套大卡片**（`ui::overlay::big_card`）—— top_panels 的
+/// 头注写明「不要再自造窗体」，这里照做：`layer` 负责遮挡/外点/ESC，
+/// `big_card` 负责 chrome 顶条 + × + 0.7×0.98 尺寸。
+///
+/// **不持数据** —— 内容全从 `chat.remote.qr` 现读，扫码 worker 的事件由 200ms
+/// 泵 drain 后 `cx.notify()`，弹窗随之重绘。
+fn render_wx_qr(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &theme::Theme,
+) -> gpui::AnyElement {
+    use crate::remote_control::QrState;
+    use crate::settings::remote::mono_lines;
+
+    let body_text = |text: String, dim: bool| -> gpui::AnyElement {
+        div()
+            .text_size(crate::appearance::ui_size(12.))
+            .text_color(rgb(if dim { t.text_dim } else { t.text }))
+            .child(SharedString::from(text))
+            .into_any_element()
+    };
+    let action_btn = |id: &'static str, label: &'static str, accent: bool, go: bool| {
+        let weak_b = weak.clone();
+        div()
+            .id(id)
+            .px(px(12.))
+            .py(px(6.))
+            .rounded(px(7.))
+            .text_size(crate::appearance::ui_size(12.))
+            .cursor_pointer()
+            .when(accent, |d| {
+                d.bg(rgb(t.accent)).text_color(rgb(t.accent_contrast))
+            })
+            .when(!accent, |d| {
+                d.border_1()
+                    .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+            })
+            .hover(|s| s.bg(rgb(t.bg_hover)))
+            .child(SharedString::from(label.to_string()))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_b.update(cx, |c, cx| {
+                    if go {
+                        c.remote.begin_qr(); // 幂等：已在扫码/已出码时不重发
+                    } else {
+                        c.dialog = None;
+                    }
+                    cx.notify();
+                });
+            })
+            .into_any_element()
+    };
+
+    // QR 居中 + 限尺寸：大卡片 body 里居中，字号压到能放进 0.7 宽窗体
+    let qr_centered = |art: String| -> gpui::AnyElement {
+        div()
+            .flex()
+            .justify_center()
+            .child(mono_lines(art.lines().map(str::to_string).collect(), 13., false))
+            .into_any_element()
+    };
+
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(12.))
+        .py(px(8.))
+        .child(body_text("远程控制 · 微信".into(), true));
+
+    match &chat.remote.qr {
+        QrState::Idle => {
+            body = body.child(body_text(
+                "点下面的按钮取二维码，用手机微信扫一扫。".into(),
+                true,
+            ));
+            body = body.child(action_btn("wx-qr-begin", "获取二维码", true, true));
+        }
+        QrState::Loading => body = body.child(body_text("正在获取二维码…".into(), true)),
+        QrState::Ready { url } => match wxprobe::qr::qr_block_text(url, 2) {
+            Ok(art) => {
+                body = body.child(qr_centered(art));
+                body = body.child(body_text(
+                    "用手机微信「扫一扫」对屏扫码；二维码约 2 分钟后过期。".into(),
+                    true,
+                ));
+                body = body.child(action_btn("wx-qr-refresh", "重新获取", false, true));
+            }
+            Err(e) => body = body.child(body_text(format!("二维码生成失败：{e}"), false)),
+        },
+        QrState::Scanned => body = body.child(body_text("已扫码，请在手机上确认…".into(), true)),
+        QrState::Done { bot_id } => {
+            let mut lines = vec!["✅ 绑定成功".to_string()];
+            if let Some(b) = bot_id {
+                lines.push(format!("bot_id = {b}"));
+            }
+            body = body.child(
+                div().flex().justify_center().child(mono_lines(lines, 12., false)).into_any_element(),
+            );
+            body = body.child(body_text("发送 /帮助 查看可用命令。".into(), true));
+        }
+        QrState::Expired => {
+            body = body.child(body_text("二维码已过期，请重新获取。".into(), false));
+            body = body.child(action_btn("wx-qr-again", "获取二维码", true, true));
+        }
+        QrState::Error(m) => {
+            body = body.child(body_text(format!("状态接口：{m}"), false));
+            body = body.child(action_btn("wx-qr-retry", "重试", false, true));
+        }
+    }
+
+    // 绑定码：微信里 `/bind <code>` 用
+    let code = chat.remote.bind_code(&chat.active_key);
+    let bind_line = match chat.remote.bound.as_deref() {
+        Some(k) => format!("绑定码 {code} · 已绑定 {k}"),
+        None => format!("绑定码 {code} · 未绑定（微信里发 /bind {code}）"),
+    };
+    body = body.child(body_text(bind_line, true));
+    body = body.child(action_btn("wx-qr-close", "关闭", false, false));
+
+    let weak_dismiss = weak.clone();
+    let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = weak_dismiss.update(cx, |c, cx| {
+            c.dialog = None;
+            cx.notify();
+        });
+    };
+    crate::ui::overlay::layer(true, Some(&chat.dialog_focus), dismiss.clone())
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(crate::ui::overlay::big_card(
+            "远程控制 · 微信",
+            None,
+            body.into_any_element(),
+            t,
+            dismiss,
+        ))
+        .into_any_element()
 }
 
 /// 023 fileView：关闭带未保存修改的文件 tab 前确认（保存并关闭 / 不保存

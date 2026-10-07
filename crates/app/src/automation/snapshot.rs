@@ -419,6 +419,7 @@ fn dialogs_surface(chat: &Chat) -> Value {
         Dialog::SessionInfo { .. } => "session_info",
         Dialog::FileDirty { .. } => "file_dirty",
         Dialog::NewFile { .. } => "new_file",
+        Dialog::WxQr => "wx_qr",
     });
     // 打开项目菜单：列表数据随弹窗一起上报（扫描是异步回填，UI 测试
     // 据此轮询就绪）
@@ -439,6 +440,19 @@ fn dialogs_surface(chat: &Chat) -> Value {
         "ext_dialog": chat.ext_dialog.is_some(),
         "toast": chat.status_toast.as_ref().map(|(t, _)| truncate(t, 200)),
         "settings_open": chat.settings.is_some(),
+        // 060 远程控制：扫码弹窗的实时状态（pif-ui 可据此断言 UI 状态）
+        "wx_qr": match &chat.remote.qr {
+            crate::remote_control::QrState::Idle => "idle",
+            crate::remote_control::QrState::Loading => "loading",
+            crate::remote_control::QrState::Ready { .. } => "ready",
+            crate::remote_control::QrState::Scanned => "scanned",
+            crate::remote_control::QrState::Done { .. } => "done",
+            crate::remote_control::QrState::Expired => "expired",
+            crate::remote_control::QrState::Error(_) => "error",
+        },
+        "wx_running": chat.remote.is_running(),
+        "wx_bound": chat.remote.bound,
+        "wx_bind_code": chat.remote.bind_code(&chat.active_key),
     })
 }
 

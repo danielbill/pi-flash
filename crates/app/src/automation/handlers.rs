@@ -371,6 +371,12 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
+        method::WX_QR_OPEN => {
+            chat.remote.begin_qr();
+            chat.dialog = Some(crate::Dialog::WxQr);
+            cx.notify();
+            ok()
+        }
         method::DIALOG_CLOSE => {
             chat.dialog = None;
             cx.notify();
