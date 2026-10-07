@@ -12,13 +12,23 @@ use wxprobe::command::BOT_MENU_ORDER;
 use wxprobe::format::messages::{t, Lang};
 use wxprobe::format::status::{status_card, status_line, status_state_value, status_task_line};
 
+/// 品牌标题 —— ZCode 原文是「ZCode 机器人命令：」，产品里**换成本应用名**
+/// （2026-10-07 用户拍板）。有意的本地化偏差，**不进** ZCode 文案表，
+/// 与 `extui::LOCAL_TEXT` 同类；zh-TW 沿用 zh-CN。
+pub(crate) fn help_title(lang: Lang) -> String {
+    match lang {
+        Lang::En => "pi-flash bot commands:".to_string(),
+        _ => "pi-flash 机器人命令：".to_string(),
+    }
+}
+
 /// `/帮助`：标题 + 按 `BOT_MENU_ORDER` 的 9 条说明（每条都是文案表里的现成句子）。
 pub(crate) fn help_text(lang: Lang) -> String {
     let lines: Vec<String> = BOT_MENU_ORDER
         .iter()
         .map(|key| t(lang, help_line_key(key)))
         .collect();
-    format!("{}\n{}", t(lang, "ZCode 机器人命令："), lines.join("\n"))
+    format!("{}\n{}", help_title(lang), lines.join("\n"))
 }
 
 /// `BOT_MENU_ORDER` 的键 → 文案表的 zh-CN 源串。
@@ -101,7 +111,7 @@ mod tests {
     fn help_lists_all_nine_in_menu_order() {
         let s = help_text(Lang::ZhCn);
         let head = s.lines().next().unwrap();
-        assert_eq!(head, "ZCode 机器人命令：");
+        assert_eq!(head, help_title(Lang::ZhCn));
         let body: Vec<&str> = s.lines().skip(1).collect();
         assert_eq!(body.len(), BOT_MENU_ORDER.len(), "9 条一条不少");
         // 顺序 = BOT_MENU_ORDER
@@ -114,7 +124,7 @@ mod tests {
     #[test]
     fn help_is_localized_but_keeps_command_names() {
         let en = help_text(Lang::En);
-        assert!(en.starts_with("ZCode bot commands:"));
+        assert!(en.starts_with(&help_title(Lang::En)));
         assert!(en.lines().any(|l| l == "**/help** — Show this guide"));
         // 括号里的命令名不翻译
         assert!(en.contains("/新建 或 /clear") || en.contains("/new or /clear"));

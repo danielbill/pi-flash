@@ -749,7 +749,7 @@ mod tests {
         let mut rc = RemoteControl::new();
         match rc.route("/帮助") {
             Action::Send(s) => {
-                assert!(s.starts_with("ZCode 机器人命令："));
+                assert!(s.starts_with(&pipeline::help_title(Lang::ZhCn)));
                 assert_eq!(s.lines().count(), 10, "标题 + 9 条");
             }
             other => panic!("{other:?}"),
