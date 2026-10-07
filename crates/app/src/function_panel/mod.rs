@@ -32,8 +32,11 @@ pub(crate) enum PspRow {
     More { key: String },
 }
 
-/// 每页显示的会话标签数（学 zcode：「显示更多」每次续一页）
-const PSP_PAGE: usize = 10;
+/// 每页显示的会话标签数（学 zcode：「显示更多」每次续一页）——默认值来自
+/// 设置-其他「会话显示数」（3-10）。
+fn psp_page() -> usize {
+    crate::services::workspace::session_display_count()
+}
 
 pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
     let mut rows = vec![PspRow::Title];
@@ -52,7 +55,7 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
                         .psp_shown
                         .get(&key)
                         .copied()
-                        .unwrap_or(PSP_PAGE)
+                        .unwrap_or_else(psp_page)
                         .min(g.sessions.len());
                     for si in 0..shown {
                         rows.push(PspRow::Session { p: pi, s: si });
@@ -78,7 +81,7 @@ pub(crate) fn psp_rows(chat: &Chat) -> Vec<PspRow> {
                 });
             }
             let key = "__flat__".to_string();
-            let shown = chat.psp_shown.get(&key).copied().unwrap_or(PSP_PAGE);
+            let shown = chat.psp_shown.get(&key).copied().unwrap_or_else(psp_page);
             let total = all.len();
             all.truncate(shown);
             all.into_iter().for_each(|(p, s)| rows.push(PspRow::Session { p, s }));
@@ -218,7 +221,7 @@ pub(crate) fn psp_view(
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let key = key_more.clone();
                         let _ = weak_more.update(cx, |chat, cx| {
-                            *chat.psp_shown.entry(key).or_insert(PSP_PAGE) += PSP_PAGE;
+                            *chat.psp_shown.entry(key).or_insert_with(psp_page) += psp_page();
                             cx.notify();
                         });
                     })
@@ -332,7 +335,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .cursor_pointer()
                         .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = w_open.update(cx, |c, cx| c.pick_project_folder(cx));
+                            let _ = w_open.update(cx, |c, cx| c.open_project_picker(cx));
                         })
                         .child(icon_hover("icon-project", 18., t.text_dim)),
                 )

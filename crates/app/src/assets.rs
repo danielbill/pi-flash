@@ -54,6 +54,7 @@ stroke-dasharray=\"{arc:.2} {rest:.2}\" stroke-linecap=\"round\" transform=\"rot
 
 assets! {
     "icons/git-branch.svg",
+    "icons/eye.svg",
     "icons/plus.svg",
     "icons/search.svg",
     "icons/menu.svg",
@@ -90,6 +91,7 @@ assets! {
     "icons/ellipsis-v.svg",
     "icons/folder-open.svg",
     "icons/folder-closed.svg",
+    "icons/folder-plus.svg",
     "icons/message-square.svg",
     "icons/messages-square.svg",
     "icons/folder-tree.svg",

@@ -72,11 +72,34 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     c.selection = sel;
     // mode 与应用主题一致（此前恒为系统外观 Dark：组件内部 is_dark 分支
     // 与默认配置选择都会走错；Theme::change 按系统外观初始化后无人纠正）
-    tc.mode = if t.dark {
+    let mode = if t.dark {
         gpui_component::theme::ThemeMode::Dark
     } else {
         gpui_component::theme::ThemeMode::Light
     };
+    tc.mode = mode;
+    // 023 CodeEditor 面色：highlight_theme 是编辑器 gutter/当前行/背景的
+    // 专用 token（Theme 默认停在暗色盘——浅色主题下出现黑 gutter/黑条即此）。
+    // 语法配色取组件内置明/暗盘，编辑器面色覆写为应用主题 token。
+    let mut hl_style = (if t.dark {
+        gpui_component::highlighter::HighlightTheme::default_dark()
+    } else {
+        gpui_component::highlighter::HighlightTheme::default_light()
+    })
+    .style
+    .clone();
+    hl_style.editor_background = Some(gpui::rgb(t.bg).into());
+    hl_style.editor_foreground = Some(gpui::rgb(t.text).into());
+    hl_style.editor_line_number = Some(gpui::rgb(t.text_faint).into());
+    hl_style.editor_active_line_number = Some(gpui::rgb(t.text).into());
+    let mut active_line: gpui::Hsla = gpui::rgb(t.text).into();
+    active_line.a = 0.05;
+    hl_style.editor_active_line = Some(active_line);
+    tc.highlight_theme = std::sync::Arc::new(gpui_component::highlighter::HighlightTheme {
+        name: "pi-flash".into(),
+        appearance: mode,
+        style: hl_style,
+    });
 }
 
 use gpui::px;

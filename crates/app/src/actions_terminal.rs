@@ -18,7 +18,7 @@ impl Chat {
         if let Some(ix) = self.terminals.iter().position(|t| same_path(&t.cwd, &term_cwd)) {
             self.active_terminal = Some(ix);
             if let Some(tix) = self.panel_tabs.iter().position(|tab| matches!(tab, PanelTab::Term(id) if *id == self.terminals[ix].id)) {
-                self.active_panel_tab = Some(tix);
+                self.activate_panel_tab(tix, cx);
             }
             self.set_content_view(ContentView::Term);
             let focus = self.terminals[ix].focus.clone();
@@ -37,7 +37,8 @@ impl Chat {
                 self.terminals.push(tab);
                 self.active_terminal = Some(self.terminals.len() - 1);
                 self.panel_tabs.push(PanelTab::Term(id));
-                self.active_panel_tab = Some(self.panel_tabs.len() - 1);
+                let tix = self.panel_tabs.len() - 1;
+                self.activate_panel_tab(tix, cx);
                 self.set_content_view(ContentView::Term);
                 let focus = self.terminals[self.terminals.len() - 1].focus.clone();
                 window.focus(&focus);

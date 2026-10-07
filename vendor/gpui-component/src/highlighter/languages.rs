@@ -34,10 +34,8 @@ pub enum Language {
     MarkdownInline,
     Proto,
     Python,
-    Ruby,
     Rust,
     Scala,
-    Sql,
     Swift,
     Toml,
     Tsx,
@@ -86,10 +84,8 @@ impl Language {
             Self::MarkdownInline => "markdown_inline",
             Self::Proto => "proto",
             Self::Python => "python",
-            Self::Ruby => "ruby",
             Self::Rust => "rust",
             Self::Scala => "scala",
-            Self::Sql => "sql",
             Self::Swift => "swift",
             Self::Toml => "toml",
             Self::Tsx => "tsx",
@@ -128,10 +124,8 @@ impl Language {
             "markdown_inline" | "markdown-inline" => Self::MarkdownInline,
             "proto" | "protobuf" => Self::Proto,
             "python" | "py" => Self::Python,
-            "ruby" | "rb" => Self::Ruby,
             "rust" | "rs" => Self::Rust,
             "scala" => Self::Scala,
-            "sql" => Self::Sql,
             "swift" => Self::Swift,
             "toml" => Self::Toml,
             "tsx" => Self::Tsx,
@@ -273,12 +267,6 @@ impl Language {
                 "",
                 "",
             ),
-            Self::Ruby => (
-                tree_sitter_ruby::LANGUAGE,
-                tree_sitter_ruby::HIGHLIGHTS_QUERY,
-                "",
-                tree_sitter_ruby::LOCALS_QUERY,
-            ),
             Self::Bash => (
                 tree_sitter_bash::LANGUAGE,
                 tree_sitter_bash::HIGHLIGHT_QUERY,
@@ -303,12 +291,6 @@ impl Language {
                 tree_sitter_scala::HIGHLIGHTS_QUERY,
                 "",
                 tree_sitter_scala::LOCALS_QUERY,
-            ),
-            Self::Sql => (
-                tree_sitter_sequel::LANGUAGE,
-                tree_sitter_sequel::HIGHLIGHTS_QUERY,
-                "",
-                "",
             ),
             Self::CSharp => (tree_sitter_c_sharp::LANGUAGE, "", "", ""),
             Self::GraphQL => (tree_sitter_graphql::LANGUAGE, "", "", ""),
@@ -386,7 +368,6 @@ mod tests {
         assert_eq!(Language::Go.name(), "go");
         assert_eq!(Language::C.name(), "c");
         assert_eq!(Language::Cpp.name(), "cpp");
-        assert_eq!(Language::Sql.name(), "sql");
         assert_eq!(Language::JavaScript.name(), "javascript");
         assert_eq!(Language::Zig.name(), "zig");
         assert_eq!(Language::CSharp.name(), "csharp");

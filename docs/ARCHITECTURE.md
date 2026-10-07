@@ -1,7 +1,7 @@
 # pi-flash 架构契约(v2:ZED 框架 × pi-web 对话层 × 极速启动)
 
 本文档是架构契约。改代码前先对照本文;改完架构相关的代码要同步更新本文。
-上位规格:`docs/模块设计/`(005-032,模块边界以此为准,本文负责技术落地)。
+上位规格:`docs/模块设计/`(000-050,模块边界以此为准,本文负责技术落地)。
 
 ## 0. 对齐基准(双轨制)
 
@@ -156,6 +156,21 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
 - 父→子:方法调用;子→父:`cx.emit` + `subscribe`;
   禁止子组件持 `WeakEntity<父>` 散弹式 update(回调闭包除外)
 - 视图组件不直接碰 PiSession RPC(pi-web:ChatInput/MessageView 无网络请求)
+
+## 7.5 UI 自动化服务(pi-flash-2kq,2026-10-07)
+
+- **目的**:agent 调试不抢真实屏幕/鼠标——数据快照代替截图,方法直调代替鼠标点击。
+- **协议**:`pi_link::automation`(NDJSON over 127.0.0.1;hello→auth→auth_ok→
+  Request/Response;method 常量表 = op 清单唯一事实源;协议测试在 pi-link)。
+- **服务**:`crates/app/src/automation/`(mod=listener+unbounded channel+`cx.spawn`
+  泵+catch_unwind;snapshot=字段→JSON 只读;handlers=直调 Chat 方法)。op 在主线程
+  catch_unwind 内执行,自动化 panic 不许带崩 app。
+- **开关**:`PI_FLASH_AUTOMATION=<port|auto|1>`,缺省关;token 走
+  `<配置目录>/automation/<pid>.json`(启动时探活清理死文件,CLI `list` 同规)。
+- **CLI**:`pi-link` 的 `pif-ui` bin(list/info/snapshot/exec/keys/type/wait)。
+- **边界**:文本输入一律直调 setter(gpui-component 文本走 IME/替换路径,KeyDown
+  逐字不可靠);无头截图 gpui 0.2.2 无回读 API 不做,纯视觉问题留给人工;升级 gpui
+  时可 backport Zed 的 AccessKit a11y 树 + capture_screenshot 补上。
 
 ## 8. 守护规则(scripts/check_arch.sh,阶段 F 落地)
 

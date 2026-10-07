@@ -128,12 +128,16 @@ pub(crate) struct SessionRuntime {
     /// 消息前 50 字）。分支落地后用它命名新会话：原名截取 20 字。
     pub fork_source_title: Option<String>,
     pub commands: Vec<SlashCommand>,
-    /// 系统提示词 + 已加载工具声明（top panel）。数据来自 transcript 的
-    /// `role:"system"` 消息（pi 0.86+），由 pi_link::transcript::transcript_system
-    /// 在 get_messages 时 replay 出来 —— pi-web 的 System/Tools 面板同源。
-    /// `None` = 尚未加载（无进程或消息还没回来），`Some("")` = 真的空提示词。
-    pub sys_prompt: Option<String>,
-    pub session_tools: Option<Vec<pi_link::transcript::ToolDecl>>,
+    /// 系统提示词 + 已加载工具声明 + 分类明细（top panel / token 分析块）。
+    /// 数据来自 transcript 的 `role:"system"` 消息（pi 0.86+），由
+    /// pi_link::transcript::transcript_system replay 得出 —— pi-web 的
+    /// System/Tools 面板同源。`None` = 尚未加载（无进程或消息还没回来）。
+    pub sys: Option<pi_link::transcript::TranscriptSystem>,
+    /// transcript 里 `role:"system"` 消息原文。live `message_start`（pi 每个
+    /// run 都先追加一条，实测 RPC 全量携带 content/sections/toolsAdded）逐条
+    /// 追加；get_messages 快照到达时整表替换。`sys` 由它重放得出 —— 新会话
+    /// 第一轮即可点亮面板，不必等下一次 get_messages。
+    system_msgs: Vec<serde_json::Value>,
 
     // ---- inputPanel (031) per-session state ----
     pub input: String,
@@ -195,8 +199,8 @@ impl SessionRuntime {
             forking: false,
             fork_source_title: None,
             commands: Vec::new(),
-            sys_prompt: None,
-            session_tools: None,
+            sys: None,
+            system_msgs: Vec::new(),
             input: String::new(),
             pending_images: Vec::new(),
             history: Vec::new(),
@@ -373,6 +377,22 @@ impl SessionRuntime {
         }
     }
 
+    /// 重放 [`Self::system_msgs`] 刷新 `sys`（transcript 无 system 消息时保留
+    /// 旧值，维持「尚未加载」语义）；变了就发 Changed，让开着的信息面板当场
+    /// 点亮。
+    fn replay_system(&mut self, cx: &mut Context<Self>) {
+        if let Some(sys) = pi_link::transcript::transcript_system(&self.system_msgs) {
+            let changed = match &self.sys {
+                Some(prev) => prev.prompt != sys.prompt || prev.tools != sys.tools,
+                None => true,
+            };
+            self.sys = Some(sys);
+            if changed {
+                cx.emit(SessionEvent::Changed);
+            }
+        }
+    }
+
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         // MessageStart(user) 置位翻页锚点（见函数尾 page_turn）
         let mut user_arrived = false;
@@ -486,11 +506,16 @@ impl SessionRuntime {
                         // 系统提示词 + 工具声明：pi 0.86+ 把它们写进 transcript
                         // 的 system 消息（sections / toolsAdded），replay 是唯一读法
                         // （pi-ai transcript.js；pi-web 的 System/Tools 面板同源）。
-                        // 在叶子链修复之前算——那份回退只喂显示用的消息。
-                        if let Some(sys) = pi_link::transcript::transcript_system(&rpc_msgs) {
-                            self.sys_prompt = Some(sys.prompt);
-                            self.session_tools = Some(sys.tools);
-                        }
+                        // 快照是权威源：system 消息整表替换后重放（live 流式追加
+                        // 的增量以快照为准对齐）。在叶子链修复之前算——那份回退只
+                        // 喂显示用的消息。
+                        self.system_msgs = rpc_msgs
+                            .iter()
+                            .map(|e| e.get("message").unwrap_or(e))
+                            .filter(|m| m["role"].as_str() == Some("system"))
+                            .cloned()
+                            .collect();
+                        self.replay_system(cx);
                         // leaf-chain repair: pi anchors its restored leaf at the
                         // last entry of ANY type; a mis-parented custom entry
                         // (plan-mode-state 实测) strands whole turns off the
@@ -577,7 +602,7 @@ impl SessionRuntime {
                     }
                 }
             }
-            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type, custom_display, details } => {
+            Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type: _, custom_display: _, details, raw_system } => {
                 match role.as_str() {
                     "user" => {
                         // upgrade the optimistic send bubble in place instead
@@ -664,11 +689,22 @@ impl SessionRuntime {
                             end_ts: None,
                             stop_reason: None,
                             error_message: None,
-                            custom_type,
-                            custom_display,
+                            custom_type: None,
+                            custom_display: true,
                             details: None,
                             model: None,
                         });
+                    }
+                    "system" => {
+                        // pi 每个 run 都会先追加一条 role:"system"（content /
+                        // sections / toolsAdded 补丁），RPC message_start 全量
+                        // 携带——收进 transcript 重放缓存，面板实时点亮
+                        // （新会话第一轮就有，不必等下一次 get_messages）。
+                        // message_end 不重复处理（start 已带全量）。
+                        if let Some(raw) = raw_system {
+                            self.system_msgs.push(raw);
+                            self.replay_system(cx);
+                        }
                     }
                     _ => {}
                 }

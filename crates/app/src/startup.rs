@@ -57,24 +57,7 @@ pub(crate) fn splash_view() -> gpui::Div {
                 .h(px(40.))
                 .window_control_area(WindowControlArea::Drag),
         )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .child(crate::ui::icon("logo-marks", 88., 0xa1a1a1))
-                // logo 下划线：粗 4px，宽对齐 logo 图形（88px 方框里图形占
-                // ~69% 宽）。svg 方框在图形下方留了 ~24px 空白（256 画布
-                // 底部 71u × 88/256），负 margin 吃掉它 → 视觉间隙 ~8px。
-                .child(
-                    div()
-                        .w(px(60.))
-                        .h(px(4.))
-                        .rounded(px(2.))
-                        .mt(px(-16.))
-                        .bg(rgb(0xa1a1a1)),
-                ),
-        )
+        .child(crate::ui::icon("logo-marks", 88., 0xa1a1a1))
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +441,9 @@ fn spawn_fs_watch_pump(cx: &mut gpui::Context<Chat>) {
             let ok = this
                 .update(cx, |chat, cx| {
                     chat.refresh_git();
+                    // 023：同一信号顺带做打开文件的外部改动检测
+                    //（无未保存修改自动重载；有修改标冲突等用户裁决）
+                    chat.check_external_file_changes(cx);
                     cx.notify();
                 })
                 .is_ok();

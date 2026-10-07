@@ -106,7 +106,9 @@ pub fn big_card(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .pl(px(16.))
+        // 标题与 body 左 padding（mc-body pl30）对齐：标题文字和下方内容
+        // 共用一条左基线，不再各自缩进（用户定稿）
+        .pl(px(30.))
         .bg(rgb(t.chrome))
         // overflow_hidden 的裁剪是纯矩形（无圆角），顶条不自己倒角的话方形角
         // 会从弹窗圆角外露出来（四角尖尖角）

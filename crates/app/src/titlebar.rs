@@ -4,7 +4,8 @@
 //! Min/Max/Close 命中盒（zed platform_title_bar parity）。收起态面板全隐，
 //! 收放钮跳到右段起点（竖线镜像位）。
 
-use gpui::{MouseButton, SharedString, Window, div, prelude::*, px, rgb};
+use gpui::{MouseButton, SharedString, Window, div, prelude::*, px, relative, rgb};
+use std::path::PathBuf;
 use gpui::WindowControlArea;
 
 use crate::Chat;
@@ -126,6 +127,10 @@ pub(crate) fn topbar_r(
             .h_full()
             .window_control_area(WindowControlArea::Drag),
     );
+    // 023：文件 + 菜单（browse 态）——钉死右簇，与设置钮同 mx(6) 节奏等距
+    if chat.content_view != ContentView::Chat {
+        bar = bar.child(div().mx(px(6.)).child(file_plus_btn(chat, cx)));
+    }
     // 设置（sliders-horizontal）
     bar = bar.child(
         div().mx(px(6.)).child(icon_btn(
@@ -294,14 +299,28 @@ fn menu_row(
 /// 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
 
 
-/// 浏览操作区的 topbar tabs（终端 + 文件）。
+/// 浏览操作区的 topbar tabs：终端 + 文件（023 定案：文件 tab 并入 topbar，
+/// 与终端同形；脏点/冲突标记在 tab 行尾）。
+///
+/// 标签区限宽（flex_1 + min_w_0），超出横向滑动、不侵吞右簇操作区
+/// （对齐 Zed tab bar）；+ 菜单不在本区——钉死在 bar 右簇（023 定案③）。
 fn browse_tabs(
     chat: &mut Chat,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::Stateful<gpui::Div> {
-    let mut tabs_host = div().id("topbar-tabs").h_full().flex().items_end();
+    // 023②：标签区 = topbar 宽的 75%，超出横向滑动（对齐 Zed）；
+    // 左右各 20px 呼吸空间（右侧走流内 spacer，保证滚到底也有留白）
+    let mut tabs_host = div()
+        .id("topbar-tabs")
+        .w(relative(0.75))
+        .min_w_0()
+        .pl(px(20.))
+        .h_full()
+        .flex()
+        .items_end()
+        .overflow_x_scroll();
     for (ix, tab) in chat.panel_tabs.iter().enumerate() {
-        let (label, is_file): (SharedString, bool) = match tab {
+        let (label, path, is_file): (SharedString, Option<PathBuf>, bool) = match tab {
             crate::PanelTab::Term(id) => {
                 let title = chat
                     .terminals
@@ -316,16 +335,36 @@ fn browse_tabs(
                         format!("bash — {dir}")
                     })
                     .unwrap_or_else(|| "bash".into());
-                (title.into(), false)
+                (title.into(), None, false)
             }
             crate::PanelTab::File(p) => (
                 p.file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "file".into())
                     .into(),
+                Some(p.clone()),
                 true,
             ),
         };
+        // 文件 tab 行尾标记（023）：冲突 ! > 脏点；终端无
+        let badge: Option<gpui::AnyElement> = path.as_ref().and_then(|p| {
+            let f = chat.file_cache.get(p)?;
+            Some(
+                if f.conflict.is_some() {
+                    div()
+                        .flex_shrink_0()
+                        .text_size(crate::appearance::ui_size(11.))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(0xf87171))
+                        .child("!")
+                } else if f.dirty {
+                    div().size(px(7.)).rounded_full().flex_shrink_0().bg(rgb(0xe0a562))
+                } else {
+                    return None;
+                }
+                .into_any_element(),
+            )
+        });
         let active = chat.content_view
             == if is_file { ContentView::File } else { ContentView::Term }
             && chat.active_panel_tab == Some(ix);
@@ -335,11 +374,117 @@ fn browse_tabs(
             label,
             active,
             if ix == 0 { 10. } else { 4. },
-            is_file,
+            path,
+            badge,
             cx,
         ));
     }
+    // 流内右留白（滚到底也有 20px）
+    tabs_host = tabs_host.child(div().w(px(20.)).flex_shrink_0());
     tabs_host
+}
+
+/// 文件 + 菜单钮（bar 右簇，设置钮左侧，同 mx(6) 等距；30×30 对齐
+/// icon_btn 视觉节奏）。打开文件… / 新建文件。
+fn file_plus_btn(
+    chat: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+) -> impl gpui::IntoElement {
+    let t = T();
+    let weak_toggle = cx.entity().downgrade();
+    let weak_dismiss = cx.entity().downgrade();
+    let weak_menu = cx.entity().downgrade();
+    crate::ui::dropdown(
+        "topbar-file-plus",
+        &chat.plus_dd,
+        chat.plus_menu_open,
+        move |_w, cx| {
+            let _ = weak_toggle.update(cx, |c, cx| {
+                c.plus_menu_open = !c.plus_menu_open;
+                cx.notify();
+            });
+        },
+        move |_w, cx| {
+            let _ = weak_dismiss.update(cx, |c, cx| {
+                c.plus_menu_open = false;
+                cx.notify();
+            });
+        },
+        div()
+            .id("topbar-file-plus-btn")
+            .size(px(30.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)))
+            .child(crate::ui::icon_hover("plus", 14., t.text_muted))
+            .into_any_element(),
+        move || fv_plus_menu(&weak_menu),
+    )
+}
+
+/// + 菜单两行：打开文件… / 新建文件。
+fn fv_plus_menu(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let weak_open = weak.clone();
+    let weak_new = weak.clone();
+    div()
+        .min_w(px(170.))
+        .p(px(4.))
+        .bg(rgb(t.bg))
+        .border_1()
+        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
+        .rounded(px(9.))
+        .shadow_lg()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .id("fv-plus-open")
+                .flex()
+                .items_center()
+                .gap(px(9.))
+                .px(px(10.))
+                .py(px(7.))
+                .rounded(px(6.))
+                .text_size(crate::appearance::ui_size(12.5))
+                .text_color(rgb(t.text))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_open.update(cx, |c, cx| {
+                        c.plus_menu_open = false;
+                        c.pick_open_files(cx);
+                    });
+                })
+                .child(crate::ui::icon("folder", 14., t.text_muted))
+                .child(div().flex_1().child(SharedString::from(tr("打开文件…")))),
+        )
+        .child(
+            div()
+                .id("fv-plus-new")
+                .flex()
+                .items_center()
+                .gap(px(9.))
+                .px(px(10.))
+                .py(px(7.))
+                .rounded(px(6.))
+                .text_size(crate::appearance::ui_size(12.5))
+                .text_color(rgb(t.text))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_new.update(cx, |c, cx| {
+                        c.plus_menu_open = false;
+                        c.start_new_file(cx);
+                    });
+                })
+                .child(crate::ui::icon("file", 14., t.text_muted))
+                .child(div().flex_1().child(SharedString::from(tr("新建文件")))),
+        )
+        .into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -349,36 +494,42 @@ fn content_tab(
     label: SharedString,
     active: bool,
     ml: f32,
-    is_file: bool,
+    path: Option<PathBuf>,
+    badge: Option<gpui::AnyElement>,
     cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
     let t = T();
+    let is_file = path.is_some();
     let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        if let Some(p) = path.clone() {
+            // 文件 tab：脏缓冲走确认弹窗；干净直关（含内容区回退）
+            this.close_file_tab(&p, cx);
+            cx.notify();
+            return;
+        }
         this.close_panel_tab(ix, cx);
         // 关掉当前 tab 后内容区回退：终端→浏览区遗留→chat
-        if this.content_view
-            == if is_file { ContentView::File } else { ContentView::Term }
-            && this.active_panel_tab.is_none()
-        {
+        if this.content_view == ContentView::Term && this.active_panel_tab.is_none() {
             let v = if this.panel_tabs.is_empty() {
                 ContentView::Chat
             } else {
                 this.browse_last
             };
             this.set_content_view(v);
-            if this.content_view == ContentView::Term {
-                this.active_panel_tab = Some(this.panel_tabs.len() - 1);
+            if this.content_view == ContentView::Term && !this.panel_tabs.is_empty() {
+                let last = this.panel_tabs.len() - 1;
+                this.activate_panel_tab(last, cx);
             }
         }
         cx.notify();
     });
     let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-        this.active_panel_tab = Some(ix);
+        this.activate_panel_tab(ix, cx);
         let v = if is_file { ContentView::File } else { ContentView::Term };
         this.set_content_view(v);
         cx.notify();
     });
-    tab_shell(id, label, active, ml, t, switch, Some(close))
+    tab_shell(id, label, active, ml, t, switch, Some(close), badge)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -390,6 +541,7 @@ fn tab_shell(
     t: &'static crate::theme::Theme,
     switch: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     close: Option<impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static>,
+    badge: Option<gpui::AnyElement>,
 ) -> impl gpui::IntoElement {
     let mut tab = div()
         .id(id)
@@ -400,8 +552,10 @@ fn tab_shell(
         .text_size(crate::appearance::ui_size(12.))
         .cursor_pointer()
         .when(active, |d| {
-            // 连体态：33px 高、bg 填充、压住底线（host 已 items_end 贴底）
-            d.h(px(HEIGHT - 3.))
+            // 连体态：bg 填充、压住底线（host 已 items_end 贴底）；023①
+            // 激活/背景等高；023④ 激活 tab 限宽 300px（超长省略号截断）
+            d.max_w(px(300.))
+                .h(px(HEIGHT - 3.))
                 .mb(px(-1.))
                 .bg(rgb(t.bg))
                 .border_1()
@@ -414,7 +568,10 @@ fn tab_shell(
                 .text_color(rgb(t.text))
         })
         .when(!active, |d| {
-            d.h(px(HEIGHT))
+            // 023④ 未激活 tab 默认缩至 100px
+            d.max_w(px(100.))
+                .h(px(HEIGHT - 3.))
+                .mb(px(-1.))
                 .pl(px(12.))
                 .pr(px(12.))
                 .text_color(rgb(t.text_muted))
@@ -422,10 +579,21 @@ fn tab_shell(
         })
         .on_mouse_down(MouseButton::Left, switch);
     tab = tab
-        .child(label)
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label),
+        )
+        // 行尾标记（023 文件 tab：脏点/冲突!）；激活 × 常在——脏 tab 也要
+        // 能关（关时走 FileDirty 确认弹窗）
+        .children(badge)
         .children(active.then(|| {
             let mut x = div()
                 .id(SharedString::from(format!("{id}-x")))
+                .flex_shrink_0()
                 .size(px(20.))
                 .flex()
                 .items_center()

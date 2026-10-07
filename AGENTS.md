@@ -33,6 +33,24 @@
 - 内容块类型 camelCase `toolCall`；流式 args 起始走 `partialJson`；工具结果 `role:"toolResult"` 回灌
 - set_model 字段是 `modelId`；client 不得硬编码 `--no-session`
 
+# UI 自动化测试（pi-flash-2kq）
+
+**agent 调试 UI 一律走这条链路，禁止抢真实屏幕/鼠标/键盘，禁止 OS 截图。**
+
+- 开启：`PI_FLASH_AUTOMATION=auto target/debug/pi-flash.exe`（端口/token 写入
+  `<配置目录>/automation/<pid>.json`；`PI_FLASH_DIR` 可隔离整套配置）
+- 驱动：`target/debug/pif-ui.exe <命令>`（协议+CLI 在 `crates/pi-link/src/automation.rs`
+  与 `src/bin/pif-ui.rs`；服务在 `crates/app/src/automation/`）
+- 看界面：`pif-ui snapshot [app|sessions|session|composer|files|git|settings|dialogs]`
+  ——JSON 数据快照，直接读文本判断 UI 状态
+- 操作界面：`pif-ui exec <method> [json参数]`；文本用 `composer.set_text` /
+  `session.send`（直调方法），快捷键用 `pif-ui keys "ctrl-s"`（走真实键位表）
+- 等结果：`pif-ui wait --path session.agent_running --eq false --timeout 60`
+  （轮询快照，勿死等）
+- 事务式断言范式：`exec` → `wait` → `snapshot` 读 JSON 断言，全程 bash + 文本
+- 方法清单唯一事实源：`pi_link::automation::method`；纯视觉问题（颜色/布局错位）
+  这套看不见，需人眼确认
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 

@@ -154,6 +154,13 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     same_ws(&a.to_string_lossy(), &b.to_string_lossy())
 }
 
+/// 磁盘改动指纹 (mtime, len)（023 外部改动检测基准）：打开/保存/确认时
+/// 记录，fs 泵信号到达时对比。mtime 不支持（罕见 FS）返回 None = 永不误报。
+pub fn file_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let md = std::fs::metadata(path).ok()?;
+    Some((md.modified().ok()?, md.len()))
+}
+
 /// Remember `session_path` as the last open session for `cwd` and mark it
 /// as the globally-last active workspace (startup restore target).
 pub fn set_last_open(cwd: &str, session_path: &str) {
@@ -396,10 +403,15 @@ pub struct AppSettings {
     pub restore: Option<bool>,
     /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）
     pub show_thinking: Option<bool>,
+    /// 其他页: 文件树 git 标识（023 默认关——清爽目录树；开 = M/A/D/R/U/C
+    /// 徽标 + 目录变更点）
+    pub git_markers: Option<bool>,
     /// 其他页: 会话加载 ~/.pi/agent 扩展与 npm 插件（pi-web 同款；插件注册
     /// 的 provider 如 pi-freeflow 由此可用）。None = 开（Some(false) 隔离，
     /// 防个别扩展弄崩 RPC 会话——历史案例：系统 pi 1.0 的 auto-router.ts）。
     pub load_extensions: Option<bool>,
+    /// 其他页: 各项目默认显示的会话数量（psp 初始页大小，3-10，默认 10）
+    pub session_display_count: Option<u64>,
 }
 
 /// load_extensions 的读取口径（None = 开）。
@@ -459,7 +471,11 @@ pub fn app_settings() -> AppSettings {
                         .and_then(|v| v.as_u64()),
                     restore: map.get("startup_restore").and_then(|v| v.as_bool()),
                     show_thinking: map.get("show_thinking").and_then(|v| v.as_bool()),
+                    git_markers: map.get("git_markers").and_then(|v| v.as_bool()),
                     load_extensions: map.get("load_extensions").and_then(|v| v.as_bool()),
+                    session_display_count: map
+                        .get("session_display_count")
+                        .and_then(|v| v.as_u64()),
                 }
             }
             None => AppSettings::default(),
@@ -504,8 +520,14 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.show_thinking {
         obj.insert("show_thinking".into(), Value::Bool(v));
     }
+    if let Some(v) = s.git_markers {
+        obj.insert("git_markers".into(), Value::Bool(v));
+    }
     if let Some(v) = s.load_extensions {
         obj.insert("load_extensions".into(), Value::Bool(v));
+    }
+    if let Some(v) = s.session_display_count {
+        obj.insert("session_display_count".into(), Value::Number(v.into()));
     }
     save_map_to(&path, &obj);
 }
@@ -524,14 +546,27 @@ pub fn load_window_days() -> u64 {
 /// setting — the load window is the user-facing knob).
 pub const TAIL_PRELOAD: usize = 10;
 
-/// v54 其他: startup restore toggle (default on).
+/// v54 其他: startup restore toggle (default off).
 pub fn startup_restore() -> bool {
-    app_settings().restore.unwrap_or(true)
+    app_settings().restore.unwrap_or(false)
+}
+
+/// 其他页: 各项目默认显示的会话数量（psp 初始页大小，3-10，默认 10）。
+pub fn session_display_count() -> usize {
+    app_settings()
+        .session_display_count
+        .unwrap_or(10)
+        .clamp(3, 10) as usize
 }
 
 /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）。
 pub fn show_thinking() -> bool {
     app_settings().show_thinking.unwrap_or(false)
+}
+
+/// 文件树 git 标识开关（设置-其他；默认关 = 清爽目录树，023 定案）。
+pub fn git_markers() -> bool {
+    app_settings().git_markers.unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

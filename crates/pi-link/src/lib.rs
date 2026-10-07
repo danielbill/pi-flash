@@ -7,6 +7,7 @@
 //! - bumping the pin (vendor/pi/package.json + VERSION) is a deliberate release
 //!   act gated by the protocol conformance tests in this crate.
 
+pub mod automation;
 pub mod client;
 pub mod json;
 pub mod config;
@@ -19,6 +20,7 @@ pub mod transcript;
 pub mod mcp;
 pub mod models_json;
 pub mod catalog;
+pub mod estimate;
 pub mod paths;
 pub mod vendor;
 

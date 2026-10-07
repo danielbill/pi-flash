@@ -67,6 +67,29 @@ pub fn border_alpha(t: &Theme, a: u32) -> u32 {
     (t.border << 8) | (a & 0xff)
 }
 
+/// token 分析块 7 大类的固定类别色（系统提示词面板比例长条 + 信息块色点）。
+/// 中饱和中亮度：mist/default 浅底与 dark 深底下都可读；与主题 accent 无关
+/// （类别色要跨主题稳定，同一类永远同一颜色）。
+pub fn bucket_color(b: pi_link::transcript::SystemBucket) -> u32 {
+    use pi_link::transcript::SystemBucket::*;
+    match b {
+        // 蓝：全局提示词（最大头）
+        GlobalPrompt => 0x4c7ed9,
+        // 青：系统工具
+        SystemTools => 0x38a3c4,
+        // 紫：技能
+        Skills => 0x8e6bc7,
+        // 橙：插件
+        Plugins => 0xd08b3c,
+        // 玫红：MCP
+        Mcp => 0xc75b63,
+        // 绿：项目提示词
+        ProjectPrompt => 0x3d9e6e,
+        // 灰：其他
+        Other => 0x8a9099,
+    }
+}
+
 /// danger_hover at alpha `a`（删除确认行 wash 等）。
 pub fn danger_alpha(t: &Theme, a: u32) -> u32 {
     (t.danger_hover << 8) | (a & 0xff)

@@ -3,6 +3,43 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 023 文件编辑展示页（2026-10-07）
+
+- **底座**：gpui-component 0.2.0 Input 的 CodeEditor 模式（vendored）：
+  tree-sitter 高亮 ~30 语言 + 行号 + 内置 Ctrl+F 搜索替换。vendored 副本
+  剔除 tree-sitter-sequel（cc ~1.2.1 钉版与 gpui embed-resource 冲突）与
+  tree-sitter-ruby（parser.c 在 MSVC 编不过）；根 Cargo.toml exclude 补
+  两个 vendor 包（重解析时的 workspace 归属检查）。
+- **标签栏（定案：并入 topbar，不在 view 内自绘）**：终端/文件 tab 同形
+  混排；标签区 = topbar 75% 限宽横滑（pl20 + 流内右 spacer，滚到底有留白）；
+  激活 tab ≤300px / 未激活 ≤100px（text_ellipsis，badge/× flex_shrink_0）；
+  激活与背景 tab 等高（30px）；选中 tab 自动挪到最左（activate_panel_tab
+  统一接线：tab 点击、文件打开、终端新建/切换、关闭回退、状态栏定位）；
+  + 菜单（打开文件…/新建文件）钉 bar 右簇与设置钮同 mx(6) 等距。
+- **编辑器**：InputState 懒创建（渲染帧补 window，open_file_tab 链路无
+  window）；md 默认渲染 eye 切源码；Ctrl+S（FileSave action 绑 "Input"
+  上下文、view 容器 on_action 接）；脏标记 = 编辑器值≠磁盘真值比较
+  （set_value 也发 Change，盲标会假脏）；关闭脏 tab 三选确认弹窗
+  （保存并关闭/不保存关闭/取消）。
+- **外部改动检测（对齐 Zed）**：fs 泵合批信号 → check_external_file_changes：
+  无未保存修改自动重载（reload_pending 由渲染帧灌入 set_value）；有修改标
+  冲突横幅（重新加载/保留我的版本）。⚠ 自动化冒烟未走通（泵疑似只处理
+  1 个批次），待实机复验（bead pi-flash-rat，探针留在 files snapshot：
+  ext_probe/content_len/editor_len/pending）。
+- **导航栏**：面包屑 = cwd 相对路径段，目录段点击弹兄弟文件菜单（Zed
+  clickable breadcrumb 同款）；eye（仅 md）+ search（聚焦编辑器后派发组件
+  Search action）。
+- **废弃**：文件树点击带 git 徽标文件弹 GitDiff 的旧路径——点击一律进
+  编辑器，diff 入口收敛在 git 面板（022）。
+- **文件树 git 标识开关**：设置-其他「文件树 Git 标识」，默认关（清爽
+  目录树），持久化 app_settings.json（git_markers）；仅门控显示，git 状态
+  计算照旧（git 面板依赖）。
+- **编辑器配色**：sync_gpui_tokens 补映射 highlight_theme（编辑器
+  gutter/当前行/背景专用 token，此前停暗色默认盘 → 浅色主题黑条即此）；
+  编辑器面色覆写为应用主题 token，语法配色用组件内置明/暗盘。
+- 验证：cargo test 120 全绿、编译零警告；tab 尺寸/开关/编辑保存由用户
+  实机验收通过。
+
 ## 当前状态（2025-09，提交 816fad6）
 ## 当前状态（2025-09，分支导航 fork 完成）
 
@@ -1796,7 +1833,7 @@ i = max{i : floor(i·N/k) ≤ t} = floor(((t+1)·k − 1)/N)（ceil(x)−1 恒�
   一次只开一个：
   - `TopPanel::System` ← SystemPromptPanel.tsx：单滚动区，等宽 12px / 行高 1.6 /
     muted / pre-wrap；空态文案用 pi-web 原文（「系统提示词为空（工具已禁用）」
-    「系统提示词尚未加载」）。
+    「系统提示词加载中」）。
   - `TopPanel::Tools` ← ToolDefinitionsPanel.tsx：左 `clamp(112px,26%,220px)`
     工具名列表（单选、选中 = bg-selected + 左侧 2px accent 竖条）、右详情
     （描述 / 参数：类型 + 说明书 + 必填-可选 + 可选值 + 默认值，`formatSchemaType`
@@ -2256,3 +2293,94 @@ Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
 - 记一笔 gpui 语义（不是本轮引入）：滚轮派发给**所有**命中的可滚动 hitbox 含祖先，
   故嵌套滚动是「内外同时滚」而非「先内后外」；要 pi-web 那种先内后外需给 vlist 加
   滚轮拦截（stop_propagation + 到底才放行），等用户手感反馈。
+
+## 2026-10-07 UI 自动化测试框架（bead pi-flash-2kq）
+
+- **动机**：桌面端 UI 验证此前要 agent 抢真实屏幕/鼠标截图，与用户互抢外设。改为
+  应用内服务：数据化界面（JSON 快照）+ 进程内操作（方法直调 + 合成按键），全程
+  bash + 文本完成「操作 → 等待 → 断言」。
+- **pi-link**（协议+CLI，测试在此）：
+  - `automation.rs`：线记录 hello/auth/auth_ok/Request/Response 手写编解码（对齐
+    protocol.rs 风格，坏行 None、未知 type 落 Unknown 不静默丢）；method 常量表 =
+    op 清单唯一事实源；实例发现文件 `<配置目录>/automation/<pid>.json`
+    {pid,port,token,started_at_ms}（5 单测，含乱序/坏文件/垃圾行）。
+  - `bin/pif-ui.rs`：list/info/snapshot/exec/keys/type/wait（wait 客户端轮询
+    ui.snapshot 直至点分路径相等；实例发现支持 `PI_FLASH_AUTOMATION_FILE`、
+    `--pid`、`--addr/--token` 直连，死登记探活后顺手清）。假 TCP 服务对测过
+    握手/错误路径。
+- **app**（`src/automation/` 三件套）：
+  - `mod.rs`：TcpListener 线程 + 每连接读线程（hello→auth→auth_ok）+ 每连接写线程；
+    请求行经 futures unbounded channel 由 `cx.spawn` 泵回主线程（照 attach_pump
+    形制）；分发全程 catch_unwind，自动化触发的 panic 回 `internal` 错误不带崩
+    app。启动时探活清理死实例文件。
+  - `snapshot.rs`：8 个 surface（app/sessions/session/composer/files/git/settings/
+    dialogs）只读 `pub(crate)` 字段产 JSON；settings 走 panel 字段直读。
+  - `handlers.rs`：28 个 op 直调 Chat 方法（session.new/open/switch/delete/send/
+    steer/followup/abort、composer.set_text、panel.dock、content.view、file.open、
+    files.toggle_dir、project.switch、git.stage/unstage/commit/push/refresh/set_tab、
+    settings.open/close、theme.set、lang.set、dialog.close、input.keys、app.quit）。
+    改状态 op 一律 `cx.notify()` 收尾。
+- **接线**：`main()` 里 OnceLock 捕获 WeakEntity<Chat>，open_window 后按
+  `PI_FLASH_AUTOMATION=<port|auto|1>` 启动；缺省关闭。
+- **定案（用户确认）**：无头截图 gpui 0.2.2 无回读 API → 不做，纯视觉问题留给
+  人工；文本输入不走逐字 KeyDown（gpui-component 文本走 IME/替换路径），一律
+  直调 setter；驱动接口选 CLI（agent 天然跑 bash，MCP 留作以后薄包装）。
+- **坑**：window.update/chat.update 在本 vendored gpui 里**不 flatten**——
+  catch_unwind 包出来的层级是 Box→anyhow→anyhow→Result<Value,(code,msg)> 四层
+  （用 `let _: () = outcome;` 探针确认）；vendored gpui 的 WeakEntity::update
+  与 Zed 上游签名不同，别照抄上游模式。
+- 验证：pi-link 5 新单测全绿 + app 全量编译零警告；实机冒烟见下轮记录。
+- **实机冒烟（隔离 PI_FLASH_DIR + 临时工作区，第二实例与用户实例并存）**：
+  list 发现→info→type 改 composer→snapshot 验证回读→session.new→panel.dock files→
+  files.toggle_dir（b.txt 出现在 depth 2）→file.open（content_view=file）→
+  settings.open/close（面板真实 tab/section/error 回读）→keys escape（dispatched
+  false 如实上报）→错误路径（unknown_method/bad_params，exit 1 带可读信息）→
+  wait 命中打印命中值/超时 2s 如期→app.quit 干净退出、死登记被下次发现清理。
+- **CLI 修复（冒烟暴露）**：全局旗标只认子命令之前（--timeout 双重声明被截走）；
+  wait 成功只打印命中值（全量快照可到 MB 级）；print 忽略 EPIPE（接 head 不再 panic）。
+- 验证：`cargo test` pi-link 119 + app 119 全绿；app 编译零警告。
+
+## 012 额外操作栏按设计稿收敛（2026-10-07）
+
+`docs/模块设计/012-新会话页.md` v2：操作栏 = inputpanel 下方 5px、高 40px、
+**无边框**、与 inputpanel 同宽。左 = 目录图标（`folder`，替换笨重的
+`icon-project`）+ 当前项目名，无项目名时显示「选择项目」（i18n 已有）；
+右 = pi-flash 版本号小字 `v{CARGO_PKG_VERSION}`（**不显示 pi 版本号**；
+搜索 icon 移除——入口只保留功能面板，`open_session_search` 其余调用点不受影响）。
+验证：编译零警告；自动化实例（隔离 PI_FLASH_DIR）启动 + session.new 进新会话页
+无 panic（操作栏为纯视觉元素，快照不可见，人眼核对待真机）。
+
+## 004 打开项目菜单落地 + 012 操作栏入口（2026-10-07）
+
+蓝本 `docs/模块设计/004-project管理.md`（v2：**30 天窗口、限高 10 条**）+
+`docs/UI设计/打开项目菜单.png`。两个触发点（psp 打开项目 icon / 012 新会话页
+操作栏）统一进弹窗，不再直通目录选择器。
+
+- `Dialog::ProjectPicker { input }`（dialogs.rs `render_project_picker`）：
+  500×500 居中卡片 = 搜索框（TextInput，on_change 镜像 `project_filter`、
+  render 期 contains 过滤）+【打开文件夹】行（folder-plus 新图标，仍走
+  `pick_project_folder` 目录选择器）+ 项目列表（folder 图标 + 名字 truncate，
+  行高 40、max_h 400 限高 10 条滚动；当前项目行尾 check 打勾 = 004「从某
+  项目新建会话打开时默认选中」；行点击 `switch_project`，其自身会清 dialog）
+- 数据：`open_project_picker` 后台 `list_sessions(2000)` 按 cwd 聚合 → 30 天
+  窗口 → 字母序（`project_sort_key` 名字小写+路径稳定次序）。**聚合键必须走
+  `same_ws_key` 归一化**——真机数据踩到 Windows 盘符大小写双写（d:\ vs D:\）
+  同项目两行；当前项目无 30 天活动也兜底入选（保证勾可见）
+- i18n +4 条（搜索项目…/打开文件夹/最近 30 天没有打开过的项目/没有匹配的
+  项目）+ 测试断言；snapshot dialogs 增加 `project_hits`/`project_filter`
+  （扫描异步回填，UI 测试据此轮询）；automation 新 method
+  `project.picker_open`（handlers 直调 open_project_picker）
+- **坑（INPUT_KEYS 重入 panic）**：`keys escape` 首次暴露——自动化 op 把
+  keystroke 派发包在 `chat.update` 里，而输入框/弹层 ESC 回调里 `weak.update`
+  Chat → entity_map「already being updated」panic（真实用户按键不在
+  chat.update 里，所以生产从未炸）。修法：INPUT_KEYS 改 `window.defer` 推迟
+  到效果周期尾派发（ModelSelect Enter defer 同款），回包 `dispatched` 改
+  `{"deferred": true}`（同步拿不到结果；事务范式 exec→wait/snapshot 不变）
+- 冒烟（隔离 PI_FLASH_DIR）：picker 打开→9 项目字母序（30 天窗口）→keys p
+  filter='p'→ESC 关（不 panic）→reopen→project.switch 带弹窗切换成功→quit。
+  验证：编译零警告、app 119 测试全绿
+- 存量（非本次）：pi-link `protocol::tests::deep_tree_line_survives_parse_line`
+  Windows 栈溢出（工作区 WIP protocol.rs 的测试，与本模块无关，待处理）
+- 定稿微调（同日）：弹窗【打开文件夹】与项目列表之间加分隔线（border_alpha
+  0x66 同 psp_overlays 画法）；012 操作栏版本号 text_muted → text_faint
+  （placeholder 同款淡色）。30 天窗口/限高 10 条维持 v2 参数不变。

@@ -1,5 +1,9 @@
 # Rust
 **/target/
+target-auto/
+
+# zcode session artifacts
+.zcode/
 
 # vendored pi closure (rebuild with: cd vendor/pi && npm ci)
 vendor/pi/node_modules/

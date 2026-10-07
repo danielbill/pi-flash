@@ -126,25 +126,10 @@ pub fn mime_from_ext(path: &Path) -> String {
     }
 }
 
-/// pi-web estimateTokens: CJK chars ~1 token each, others ~4 chars/token.
-pub fn estimate_tokens(text: &str) -> u64 {
-    let mut cjk: u64 = 0;
-    let mut rest: u64 = 0;
-    for ch in text.chars() {
-        let c = ch as u32;
-        let is_cjk = (0x3000..=0x30ff).contains(&c)
-            || (0x3400..=0x9fff).contains(&c)
-            || (0xf900..=0xfaff).contains(&c)
-            || (0x20000..=0x2fa1f).contains(&c)
-            || (0xac00..=0xd7af).contains(&c);
-        if is_cjk {
-            cjk += 1;
-        } else {
-            rest += 1;
-        }
-    }
-    cjk + rest / 4
-}
+/// pi-web estimateTokens（CJK ≈1 token/字，其余 4 字符/token）——实现在
+/// `pi_link::estimate`（独立工具脚本 token-count 同源），这里转出口维持
+/// 既有调用面（session/mod.rs 的 glob use）。
+pub use pi_link::estimate::estimate_tokens;
 
 
 /// 千分位（pi-web usage 行的 toLocaleString parity）：785536 → "785,536"。

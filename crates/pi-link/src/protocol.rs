@@ -494,6 +494,11 @@ pub enum Event {
         custom_display: bool,
         /// ToolResultMessage.details (write/edit patch, apply_patch preview)
         details: Option<Value>,
+        /// Full raw message, `role:"system"` only. The system message carries
+        /// `content` / `sections` / `toolsAdded` / `toolsRemoved` patches
+        /// (transcript replay input) that the parsed `blocks` lose — pi
+        /// appends one per run and emits it complete on message_start.
+        raw_system: Option<Value>,
     },
     MessageUpdate(AssistantEvent),
     /// Authoritative final message; blocks replace any streamed reconstruction.
@@ -833,6 +838,8 @@ pub fn parse_record(v: &Value) -> Event {
             custom_type: v["message"]["customType"].as_str().map(str::to_string),
             custom_display: v["message"]["display"].as_bool().unwrap_or(true),
             details: v["message"]["details"].as_object().map(|_| v["message"]["details"].clone()),
+            raw_system: (v["message"]["role"].as_str() == Some("system"))
+                .then(|| v["message"].clone()),
         },
         Some("message_update") => {
             Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
@@ -1457,6 +1464,40 @@ mod tests {
     fn unknown_record_is_unparsed_not_dropped() {
         let e = parse_line(r#"{"type":"future_thing","a":1}"#).unwrap();
         assert!(matches!(e, Event::Unparsed(_)));
+    }
+
+    // 实测（pi 1.0.0 RPC，tmp/rpc_probe.js）：每个 run 的 turn_start 后 pi 都
+    // 会发 role:"system" 的 message_start/message_end，全量携带 transcript 补丁
+    // ——app 靠 raw_system 做 live 重放（新会话第一轮点亮系统提示词面板）。
+    #[test]
+    fn system_message_start_carries_raw_message() {
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"system","content":"base",
+"sections":{"rules":"R2"},"timestamp":1790000000000,
+"toolsAdded":[{"name":"read","description":"d","parameters":{"type":"object"}}]}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { role, raw_system, .. } => {
+                assert_eq!(role, "system");
+                let raw = raw_system.expect("system start carries raw message");
+                assert_eq!(raw["sections"]["rules"], "R2");
+                assert_eq!(raw["toolsAdded"][0]["name"], "read");
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+        // 非 system 角色不带（省掉每条 user/assistant 消息的整包 clone）
+        let e = parse_line(
+            r#"{"type":"message_start","message":{"role":"user","content":"hi","timestamp":1}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::MessageStart { role, raw_system, .. } => {
+                assert_eq!(role, "user");
+                assert!(raw_system.is_none());
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
     }
 
     #[test]

@@ -73,6 +73,12 @@ fn legacy_dir() -> Option<PathBuf> {
     Some(Path::new(&home).join(".pi").join("agent"))
 }
 
+/// pi 自己的全局目录 `~/.pi/agent`（全局 AGENTS.md / settings.json 所在，
+/// 不落 pi-flash 文件）。系统提示词 breakdown 用它判「全局 vs 项目 AGENTS.md」。
+pub fn pi_agent_dir() -> Option<PathBuf> {
+    legacy_dir()
+}
+
 /// 迁移实现（目录显式注入，便于测试且不碰进程环境）：逐个把旧文件原样搬过来。
 fn migrate_into(new_dir: &Path, legacy_dir: &Path) -> usize {
     let mut moved = 0;

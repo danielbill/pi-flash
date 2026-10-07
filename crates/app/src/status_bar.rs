@@ -103,7 +103,7 @@ fn tabs(
                                 if let Some(ix) = this.panel_tabs.iter().position(
                                     |t| matches!(t, crate::PanelTab::File(_)),
                                 ) {
-                                    this.active_panel_tab = Some(ix);
+                                    this.activate_panel_tab(ix, cx);
                                 }
                             }
                         }

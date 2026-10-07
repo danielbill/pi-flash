@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="840" viewBox="0 0 1600 840"><rect width="1600" height="840" fill="#f7f7f4"/><text x="60" y="78" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="40" font-weight="700" fill="#161616">Logo concepts</text><text x="60" y="116" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="20" fill="#6b6b6b">Concepts for review — pick a direction (or tell me what you like in each).</text><rect x="60" y="150" width="726" height="630" rx="18" fill="#fff" stroke="#161616" stroke-width="2"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 335 256" x="90" y="190" width="666" height="300" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- A v3 final: bolt sx7/sy9.5 stretched past P top+bottom, min gap 26u (72% of stem) at y125 -->
+  <g transform="translate(15.7 0) skewX(-15)">
+    <path fill="#000" fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+    <path fill="#000" transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+  </g>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 335 256" x="90" y="516" width="64" height="64" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- A v3 final: bolt sx7/sy9.5 stretched past P top+bottom, min gap 26u (72% of stem) at y125 -->
+  <g transform="translate(15.7 0) skewX(-15)">
+    <path fill="#000" fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+    <path fill="#000" transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+  </g>
+</svg>
+</g><text x="122" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 335 256" x="180" y="548" width="32" height="32" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- A v3 final: bolt sx7/sy9.5 stretched past P top+bottom, min gap 26u (72% of stem) at y125 -->
+  <g transform="translate(15.7 0) skewX(-15)">
+    <path fill="#000" fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+    <path fill="#000" transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+  </g>
+</svg>
+</g><text x="196" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 335 256" x="238" y="564" width="16" height="16" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- A v3 final: bolt sx7/sy9.5 stretched past P top+bottom, min gap 26u (72% of stem) at y125 -->
+  <g transform="translate(15.7 0) skewX(-15)">
+    <path fill="#000" fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+    <path fill="#000" transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+  </g>
+</svg>
+</g><text x="246" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="90.0" y="636" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">A · pi-flash 主标志</text><text x="90.0" y="664" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#161616" letter-spacing="1.5">RECOMMENDED</text><text x="90.0" y="698" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">斜体P+竖向拉伸闪电,上下探出P边界;16px可读</text><rect x="814" y="150" width="726" height="630" rx="18" fill="#fff" stroke="#e4e4e0" stroke-width="1"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="844" y="190" width="666" height="300" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- C v3 final: app tile cut of A v3 (stretched bolt, 26u gap), marks refitted -->
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="#000"/>
+  <g transform="translate(41 0) skewX(-15)">
+    <g transform="translate(6.7 48.9) scale(0.62)" fill="#fff">
+      <path fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+      <path transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+    </g>
+  </g>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="844" y="516" width="64" height="64" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- C v3 final: app tile cut of A v3 (stretched bolt, 26u gap), marks refitted -->
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="#000"/>
+  <g transform="translate(41 0) skewX(-15)">
+    <g transform="translate(6.7 48.9) scale(0.62)" fill="#fff">
+      <path fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+      <path transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+    </g>
+  </g>
+</svg>
+</g><text x="876" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="934" y="548" width="32" height="32" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- C v3 final: app tile cut of A v3 (stretched bolt, 26u gap), marks refitted -->
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="#000"/>
+  <g transform="translate(41 0) skewX(-15)">
+    <g transform="translate(6.7 48.9) scale(0.62)" fill="#fff">
+      <path fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+      <path transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+    </g>
+  </g>
+</svg>
+</g><text x="950" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="992" y="564" width="16" height="16" preserveAspectRatio="xMidYMid meet">
+  <title>pi-flash</title>
+  <!-- C v3 final: app tile cut of A v3 (stretched bolt, 26u gap), marks refitted -->
+  <rect x="8" y="8" width="240" height="240" rx="60" fill="#000"/>
+  <g transform="translate(41 0) skewX(-15)">
+    <g transform="translate(6.7 48.9) scale(0.62)" fill="#fff">
+      <path fill-rule="evenodd" d="M64 48H150A56 56 0 0 1 150 158H100V208H64ZM100 78H126A24 24 0 0 1 126 126H100Z"/>
+      <path transform="translate(187.364 13.6) scale(7 9.5)" d="M15.914 4a1.5 1.5 0 0 0-2.474-1.561l-9 9A1.5 1.5 0 0 0 5.5 14h4.002a.5.5 0 0 1 .471.666L8.086 20a1.5 1.5 0 0 0 2.475 1.56l9-9A1.5 1.5 0 0 0 18.5 10h-3.997a.5.5 0 0 1-.472-.667z"/>
+    </g>
+  </g>
+</svg>
+</g><text x="1000" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="844.0" y="636" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">B · 应用图标切版</text><text x="844.0" y="670" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">Big Sur网格瓦片,任务栏/dock直用</text></svg>

@@ -13,7 +13,7 @@ use crate::{ComposerDown, ComposerUp, MODEL_PICKER_ROWS};
 use crate::i18n::tr;
 use crate::services::format::time_ago;
 use crate::theme;
-use crate::ui::icon_hover;
+use crate::ui::{icon, icon_hover};
 
 /// 弹窗公共外壳 = `ui::overlay::layer`（遮挡/外点关闭/ESC 关闭三条全局规则
 /// 的唯一实现）+ 居中排布 + 卡片停传播。参数 `chat` 只用来取浮层焦点。
@@ -54,6 +54,9 @@ pub(crate) fn render_dialogs(
             if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
                 root = root.child(render_session_search(chat, weak, input, t, cx));
             }
+            if let Some(Dialog::ProjectPicker { input }) = chat.dialog.as_ref() {
+                root = root.child(render_project_picker(chat, weak, input, t, cx));
+            }
             if let Some(Dialog::ImagePreview { image }) = chat.dialog.as_ref() {
                 root = root.child(render_image_preview(chat, weak, image, t));
             }
@@ -66,7 +69,166 @@ pub(crate) fn render_dialogs(
                     cx,
                 ));
             }
+            if let Some(Dialog::FileDirty { path }) = chat.dialog.as_ref() {
+                root = root.child(render_file_dirty(chat, weak, path, t));
+            }
+            if let Some(Dialog::NewFile { input }) = chat.dialog.as_ref() {
+                root = root.child(render_new_file(chat, weak, input, t));
+            }
     root
+}
+
+/// 023 fileView：关闭带未保存修改的文件 tab 前确认（保存并关闭 / 不保存
+/// 关闭 / 取消，对齐 Zed 的三选）。
+fn render_file_dirty(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    path: &PathBuf,
+    t: &theme::Theme,
+) -> Div {
+    let _ = chat;
+    let weak_save = weak.clone();
+    let weak_drop = weak.clone();
+    let weak_cancel = weak.clone();
+    let p_save = path.clone();
+    let p_drop = path.clone();
+    let name: SharedString = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .into();
+    let btn = |id: &'static str, label: &'static str, accent: bool| {
+        div()
+            .id(id)
+            .px(px(12.))
+            .py(px(5.))
+            .rounded(px(7.))
+            .text_size(crate::appearance::ui_size(12.))
+            .cursor_pointer()
+            .when(accent, |d| {
+                d.bg(rgb(t.accent)).text_color(rgb(t.accent_contrast))
+            })
+            .when(!accent, |d| {
+                d.border_1()
+                    .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+            })
+            .hover(|s| s.bg(rgb(t.bg_hover)))
+            .child(SharedString::from(label.to_string()))
+    };
+    dialog_shell(
+        chat,
+        weak,
+        div()
+            .w(px(380.))
+            .p(px(18.))
+            .bg(rgb(t.bg))
+            .border_1()
+            .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+            .rounded(px(12.))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(13.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(tr("未保存的修改").to_string())),
+            )
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(12.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(
+                        format!("{} {name}", tr("有未保存的修改：")),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        btn("fv-dirty-cancel", tr("取消"), false).on_mouse_down(
+                            gpui::MouseButton::Left,
+                            move |_, _, cx| {
+                                let _ = weak_cancel.update(cx, |c, cx| {
+                                    c.dialog = None;
+                                    cx.notify();
+                                });
+                            },
+                        ),
+                    )
+                    .child(
+                        btn("fv-dirty-drop", tr("不保存关闭"), false).on_mouse_down(
+                            gpui::MouseButton::Left,
+                            move |_, _, cx| {
+                                let _ = weak_drop.update(cx, |c, cx| {
+                                    c.discard_file_tab(&p_drop, cx);
+                                    c.dialog = None;
+                                    cx.notify();
+                                });
+                            },
+                        ),
+                    )
+                    .child(
+                        btn("fv-dirty-save", tr("保存并关闭"), true).on_mouse_down(
+                            gpui::MouseButton::Left,
+                            move |_, _, cx| {
+                                let _ = weak_save.update(cx, |c, cx| {
+                                    c.save_file(&p_save, cx);
+                                    c.discard_file_tab(&p_save, cx);
+                                    c.dialog = None;
+                                    cx.notify();
+                                });
+                            },
+                        ),
+                    ),
+            ),
+    )
+}
+
+/// 023 fileView：新建文件名字输入（Enter 提交 / Esc 取消，提交逻辑在
+/// start_new_file 里挂的 on_submit/on_escape 上）。
+fn render_new_file(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    input: &gpui::Entity<TextInput>,
+    t: &theme::Theme,
+) -> Div {
+    let _ = weak;
+    dialog_shell(
+        chat,
+        weak,
+        div()
+            .w(px(380.))
+            .p(px(18.))
+            .bg(rgb(t.bg))
+            .border_1()
+            .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+            .rounded(px(12.))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(13.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(tr("新建文件").to_string())),
+            )
+            .child(input.clone())
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(11.))
+                    .text_color(rgb(t.text_faint))
+                    .child(SharedString::from(
+                        tr("在项目根下创建；Enter 确认，Esc 取消").to_string(),
+                    )),
+            ),
+    )
 }
 
 /// ModelSelect dialog surface (extracted from render_dialogs).
@@ -327,6 +489,126 @@ fn render_image_preview(
                 .rounded(px(6.)),
         )
         .child(div().absolute().top(px(6.)).right(px(6.)).child(close));
+    dialog_shell(chat, weak, panel)
+}
+
+
+/// 004 projectManager 打开项目菜单：500×500 居中卡片——顶部搜索框，
+/// 【打开文件夹】行（走 psp 目录选择器），下面是最近 30 天活动项目列表
+/// （字母序、行高 40 限高 10 条滚动）。当前项目行尾打勾（004：从某项目
+/// 新建会话打开时默认选中）。列表数据 `project_hits` 由打开器后台扫描
+/// 回填，本函数只做搜索词过滤。
+fn render_project_picker(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    input: &gpui::Entity<TextInput>,
+    t: &theme::Theme,
+    _cx: &App,
+) -> Div {
+    // 004：限高 10 条 = 行高 40 × 10，超出滚动（面板固定 500 高，剩余空间
+    // 不足 10 条时以剩余空间为准，仍滚动）
+    const ROW_H: f32 = 40.;
+    const ROWS_MAX: f32 = 10.;
+    let needle = chat.project_filter.trim().to_lowercase();
+    let rows: Vec<&crate::ProjectEntry> = chat
+        .project_hits
+        .iter()
+        .filter(|p| needle.is_empty() || p.name.to_lowercase().contains(&needle))
+        .collect();
+    let mut list = div().flex().flex_col();
+    if rows.is_empty() {
+        let empty = if chat.project_hits.is_empty() {
+            tr("最近 30 天没有打开过的项目")
+        } else {
+            tr("没有匹配的项目")
+        };
+        list = list.child(
+            div()
+                .py_4()
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text_dim))
+                .child(empty),
+        );
+    }
+    for (ix, p) in rows.iter().enumerate() {
+        let path = p.path.clone();
+        let weak_row = weak.clone();
+        let name: SharedString = p.name.clone().into();
+        let selected = crate::services::workspace::same_ws(
+            &p.path.to_string_lossy(),
+            &chat.cwd.to_string_lossy(),
+        );
+        list = list.child(
+            div()
+                .id(SharedString::from(format!("proj-{ix}")))
+                .h(px(ROW_H))
+                .px_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded(px(8.))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_row.update(cx, |c, cx| c.switch_project(path.clone(), cx));
+                })
+                .child(icon("folder", 16., t.text_muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(crate::appearance::ui_size(13.))
+                        .text_color(rgb(t.text))
+                        .child(name),
+                )
+                .when(selected, |d| d.child(icon("check", 14., t.accent))),
+        );
+    }
+    // 打开文件夹 = 目录选择器（psp 同款；无 30 天活动项目时的主入口）
+    let weak_open = weak.clone();
+    let open_folder = div()
+        .id("proj-open-folder")
+        .h(px(ROW_H))
+        .px_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded(px(8.))
+        .cursor_pointer()
+        .text_size(crate::appearance::ui_size(13.))
+        .text_color(rgb(t.text))
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = weak_open.update(cx, |c, cx| c.pick_project_folder(cx));
+        })
+        .child(icon("folder-plus", 16., t.text_muted))
+        .child(tr("打开文件夹"));
+    let panel = div()
+        .w(px(500.))
+        .h(px(500.))
+        .bg(rgb(t.bg_panel))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .shadow_lg()
+        .child(input.clone())
+        .child(open_folder)
+        // 打开文件夹与项目列表之间的分隔线（用户 2026-10-07 定稿）
+        .child(div().h(px(1.)).w_full().bg(gpui::rgba(crate::theme::border_alpha(t, 0x66))))
+        .child(
+            div()
+                .id("project-list")
+                .max_h(px(ROW_H * ROWS_MAX))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .child(list),
+        );
     dialog_shell(chat, weak, panel)
 }
 

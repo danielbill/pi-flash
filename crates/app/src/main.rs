@@ -18,6 +18,7 @@ use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
 
 mod actions_dialogs;
 mod agent_session;
+mod automation;
 mod actions_menu;
 mod actions_panels;
 mod actions_rename;
@@ -52,7 +53,7 @@ pub(crate) use actions_menu::slash_menu_view;
 // ↑/↓ 在菜单态导航补全、空输入态回溯历史，非空多行重新派发组件 MoveUp/
 // MoveDown；Tab 在菜单态接受补全；Ctrl+V 截获图片粘贴（composer 附件化，
 // 其余输入框经根节点兜底重派发组件 Paste）。组件默认的这些键由此被截获。
-actions!(app, [ComposerUp, ComposerDown, ComposerTab, ComposerPaste]);
+actions!(app, [ComposerUp, ComposerDown, ComposerTab, ComposerPaste, FileSave]);
 use i18n::tr;
 use models_config::EnabledState;
 use theme::theme as T;
@@ -82,12 +83,20 @@ enum Dialog {
     ModelSelect { input: gpui::Entity<TextInput>, sel: usize },
     GitDiff { path: PathBuf, patch: String },
     SessionSearch { input: gpui::Entity<TextInput> },
+    /// 004 projectManager 打开项目菜单：搜索框 + 打开文件夹 + 最近 30 天
+    /// 项目列表（列表数据在 `project_hits`，扫描完异步回填）。
+    ProjectPicker { input: gpui::Entity<TextInput> },
     /// composer 缩略图点击大图预览：直接持渲染源（Arc 指针拷贝，无索引
     /// 失效问题）
     ImagePreview { image: std::sync::Arc<gpui::Image> },
     /// topbar ⋯ 菜单：系统提示词 / 工具定义（窗体 = 设置弹窗那套大卡片，
     /// 见 top_panels / ui::overlay::big_card）
     SessionInfo { kind: TopPanel },
+    /// 023 fileView：关闭带未保存修改的文件 tab 前确认。
+    /// 持 path 不持 ix——弹窗存活期间的增删不会让索引漂移。
+    FileDirty { path: PathBuf },
+    /// 023 fileView：标签栏 + 菜单「新建文件」（项目根，输入文件名）。
+    NewFile { input: gpui::Entity<TextInput> },
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
@@ -145,6 +154,13 @@ pub(crate) struct ProjectGroup {
     pub name: String,
     pub path: PathBuf,
     pub sessions: Vec<SessionInfo>,
+}
+
+/// 004 打开项目菜单的一行：项目名（目录名）+ 路径。
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectEntry {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 /// 会话 hover 详情卡状态（300ms 离行宽限 + 进卡取消隐藏）。
@@ -293,6 +309,13 @@ struct Chat {
     term_seq: usize,
     panel_tabs: Vec<PanelTab>,
     active_panel_tab: Option<usize>,
+    // 023 fileView：标签栏 + 菜单与面包屑兄弟菜单的弹层状态
+    plus_menu_open: bool,
+    plus_dd: gpui::Entity<crate::ui::DropdownState>,
+    crumb_menu_dir: Option<PathBuf>,
+    crumb_dd: gpui::Entity<crate::ui::DropdownState>,
+    // TEMP 探针（023 调试）：外部改动检测 运行数/命中数
+    ext_probe: (u32, u32),
     // settings panel data
     mc_patterns: Option<Vec<String>>,
     mc_state: EnabledState,
@@ -332,6 +355,10 @@ struct Chat {
     /// psp 项目组（当前项目钉顶，其余按最近会话倒序；启动只加载
     /// 设置.默认加载会话数 N 个会话，组由这批会话的 cwd 自然形成）
     projects: Vec<ProjectGroup>,
+    /// 004 打开项目菜单：最近 30 天活动项目（弹窗打开时后台扫描回填）
+    project_hits: Vec<ProjectEntry>,
+    /// 004 打开项目菜单的搜索词（输入框 on_change 镜像）
+    project_filter: String,
     /// 当前活跃会话文件（psp 选中态；switch_to 时更新）
     active_file: Option<PathBuf>,
     list_mode: ListMode,
@@ -379,6 +406,10 @@ struct Chat {
     /// 工具定义弹窗左列表选中的工具名（pi-web ToolDefinitionsPanel 的
     /// selectedToolName）
     tool_sel: Option<String>,
+    /// 系统提示词弹窗的滚动 handle（psp 滚动条要跨渲染读同一份滚动位）
+    sysprompt_scroll: gpui::ScrollHandle,
+    /// 系统提示词面板各桶「调用声明」折叠块的展开态（按 SYSTEM_BUCKETS 下标）
+    decl_open: [bool; 7],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -394,9 +425,47 @@ pub(crate) enum PanelTab {
     File(PathBuf),
 }
 
-/// Cached file content for a viewer tab (read once on open).
-struct FileTab {
-    content: String,
+/// 外部改动冲突类型（023）：文件在磁盘上被改/删，而本缓冲区有未保存修改。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileConflict {
+    /// 磁盘内容已变；banner 提供重新加载
+    Changed,
+    /// 文件已从磁盘消失
+    Deleted,
+}
+
+/// 文件 tab 缓冲区状态（023 文件编辑展示页）。
+///
+/// `content` 是磁盘真值缓存（打开/保存/重载时更新）；`editor` 懒创建——
+/// `InputState::new` 要 `&mut Window`，而 `open_file_tab` 的调用链没有，
+/// 推迟到渲染帧（content.rs file_view）里补。
+pub(crate) struct FileTab {
+    pub(crate) content: String,
+    pub(crate) editor: Option<gpui::Entity<gpui_component::input::InputState>>,
+    /// 编辑器值 != content（订阅 InputEvent::Change 时比较，set_value 也发
+    /// Change 事件，盲标会假脏）
+    pub(crate) dirty: bool,
+    /// md 默认渲染预览；eye 切源码编辑（拍板 2026-10-07）
+    pub(crate) md_source: bool,
+    pub(crate) conflict: Option<FileConflict>,
+    /// 外部改动检测基准 (mtime, len)；打开/保存/确认时刷新
+    pub(crate) disk_sig: Option<(std::time::SystemTime, u64)>,
+    /// 磁盘内容已换新（自动重载路径），待渲染帧灌进 editor
+    pub(crate) reload_pending: bool,
+}
+
+impl FileTab {
+    pub(crate) fn from_disk(content: String) -> Self {
+        Self {
+            content,
+            editor: None,
+            dirty: false,
+            md_source: false,
+            conflict: None,
+            disk_sig: None,
+            reload_pending: false,
+        }
+    }
 }
 
 /// One live subagent run (child RPC session spawned with profile flags).
@@ -536,6 +605,8 @@ impl Chat {
             rename_input: None,
             confirm_delete: None,
             projects: Vec::new(),
+            project_hits: Vec::new(),
+            project_filter: String::new(),
             active_file: last_open.clone(),
             list_mode: if ui.list_mode == "flat" { ListMode::Flat } else { ListMode::Grouped },
             sort_mode: if ui.sort_mode == "manual" { SortMode::Manual } else { SortMode::Time },
@@ -566,7 +637,14 @@ impl Chat {
             status_toast: None,
             top_menu_open: false,
             top_dd: cx.new(|_| crate::ui::DropdownState::new()),
+            plus_menu_open: false,
+            plus_dd: cx.new(|_| crate::ui::DropdownState::new()),
+            crumb_menu_dir: None,
+            crumb_dd: cx.new(|_| crate::ui::DropdownState::new()),
+            ext_probe: (0, 0),
             tool_sel: None,
+            sysprompt_scroll: gpui::ScrollHandle::new(),
+            decl_open: [false; 7],
         };
         // 启动阶段：全局态一次性装载（010-启动.md §1/§6）——模型清单（磁盘 ∪ 自有
         // 缓存）、命令、默认项、插件、全局 mcp，全部先于第一帧进内存，**不 spawn 进程**。
@@ -1103,7 +1181,8 @@ impl Render for Chat {
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
         let dialog_input = match &self.dialog {
-            Some(Dialog::ModelSelect { input, .. }) | Some(Dialog::SessionSearch { input }) => {
+            Some(Dialog::ModelSelect { input, .. }) | Some(Dialog::SessionSearch { input })
+            | Some(Dialog::ProjectPicker { input }) => {
                 Some(input.clone())
             }
             _ => None,
@@ -1559,6 +1638,10 @@ fn main() {
                 // composer 内层处理图片附件，其余输入框由根节点兜底重派发
                 KeyBinding::new("ctrl-v", ComposerPaste, Some("Input")),
                 KeyBinding::new("cmd-v", ComposerPaste, Some("Input")),
+                // 023 fileView：编辑器里 Ctrl+S 保存（composer 等其他 Input
+                // 上下文内无人监听该 action，自然空转）
+                KeyBinding::new("ctrl-s", FileSave, Some("Input")),
+                KeyBinding::new("cmd-s", FileSave, Some("Input")),
             ]);
             appearance::sync_gpui_tokens(cx);
             // startup restore (§4)：每次启动默认最大化（位置不持久化——
@@ -1570,7 +1653,9 @@ fn main() {
             let _restored = get_window_state();
             let bounds = gpui::Bounds::centered(None, gpui::size(px(1180.), px(760.)), cx);
             let window_bounds = gpui::WindowBounds::Windowed(bounds);
-            cx.open_window(
+            let automation_chat: std::sync::OnceLock<gpui::WeakEntity<Chat>> =
+                std::sync::OnceLock::new();
+            let window_handle = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(window_bounds),
                     // 最小宽度 900px（逻辑像素，gpui 按 scale_factor 换算再交给
@@ -1591,6 +1676,7 @@ fn main() {
                     // root view (renders their context-menu/popover layers)
                     let chat = cx.new(Chat::new);
                     let weak = chat.downgrade();
+                    let _ = automation_chat.set(weak.clone());
                     // persist window bounds + shell layout on close so the
                     // startup restore layer has data (§4)
                     window.on_window_should_close(cx, move |window, cx| {
@@ -1611,6 +1697,18 @@ fn main() {
                 },
             )
             .unwrap();
+            // UI 自动化服务（pi-flash-2kq）：PI_FLASH_AUTOMATION=<port|auto|1>
+            // 显式开启，缺省关闭——agent 调试用，不抢真实屏幕/鼠标。
+            if let (Some(weak), Ok(spec)) = (
+                automation_chat.get(),
+                std::env::var("PI_FLASH_AUTOMATION"),
+            ) {
+                if let Err(e) =
+                    automation::start(cx, window_handle.into(), weak.clone(), &spec)
+                {
+                    eprintln!("pi-flash automation: {e}");
+                }
+            }
             cx.activate(true);
         });
 }

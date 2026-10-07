@@ -144,7 +144,7 @@ fn tree_row(
             });
         });
         // 目录圆点：子树有变更（祖先链上浮，services 层已算好）
-        if row.changed_dot {
+        if row.changed_dot && crate::services::workspace::git_markers() {
             el = el.child(changed_dot());
         }
     } else {
@@ -158,18 +158,15 @@ fn tree_row(
             .child(name_label(&row.name));
         el = el.child(inner);
         let fp = row.path.clone();
-        let is_changed = row.git.is_some();
+        // 023：文件点击一律进 fileView（编辑器区）。旧行为「带 git 变更
+        // 徽标的文件点击弹 GitDiff」废弃——diff 入口收敛在 git 面板。
         el = el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let _ = weak.update(cx, |c, cx| {
-                if is_changed {
-                    c.open_git_diff(fp.clone(), cx);
-                } else {
-                    c.open_file_tab(fp.clone(), cx);
-                }
+                c.open_file_tab(fp.clone(), cx);
             });
         });
-        // git badge on files（pi-web 徽标语义：M/A/D/R/U/C）
-        if let Some(st) = row.git {
+        // git badge on files（pi-web 徽标语义：M/A/D/R/U/C；023 默认关）
+        if let Some(st) = row.git.filter(|_| crate::services::workspace::git_markers()) {
             el = el.child(
                 div()
                     .flex_shrink_0()
@@ -382,7 +379,7 @@ fn sticky_dir_row(
         .child(div().flex_shrink_0().child(icon_path(folder, 14., t.text_dim)))
         .child(name_label(&row.name));
     el = el.child(inner);
-    if row.changed_dot {
+    if row.changed_dot && crate::services::workspace::git_markers() {
         el = el.child(changed_dot());
     }
     // 点击滚到该目录：让目录行落在钉住区里它自己的槽位（Zed

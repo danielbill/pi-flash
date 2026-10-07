@@ -139,7 +139,10 @@ impl Chat {
     }
 
     /// v54.4：文件打开路由——html/htm 交系统浏览器（webview 内嵌在 gpui
-    /// 上不可行，绕过）；其余统一打开为内容区 tab（md 渲染、源码带行号）。
+    /// 上不可行，绕过）；其余统一打开为内容区 tab。
+    ///
+    /// 023 改版：编辑器实体懒创建（InputState::new 要 window，本调用链
+    /// 没有——渲染帧在 content.rs 里补），二进制/超限文件提示不打开。
     pub(crate) fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let is_html = path
             .extension()
@@ -149,37 +152,331 @@ impl Chat {
             open_in_browser(&path);
             return;
         }
-        const MAX: u64 = 400 * 1024;
-        let too_big = std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false);
-        let content = if too_big {
-            "(file too large to preview)".to_string()
-        } else {
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    if bytes.contains(&0) {
-                        "(binary file)".to_string()
-                    } else {
-                        String::from_utf8_lossy(&bytes).to_string()
-                    }
-                }
-                Err(e) => format!("read failed: {e}"),
+        const MAX: u64 = 10 * 1024 * 1024;
+        if std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false) {
+            self.set_status(crate::i18n::tr("文件超过 10MB，不打开").to_string(), cx);
+            return;
+        }
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.set_status(format!("{}: {e}", crate::i18n::tr("读取失败")), cx);
+                return;
             }
         };
-        self.file_cache.insert(path.clone(), FileTab { content });
-        // 已打开则只切过去
+        if bytes.contains(&0) {
+            self.set_status(crate::i18n::tr("二进制文件，不打开").to_string(), cx);
+            return;
+        }
+        let content = String::from_utf8_lossy(&bytes).to_string();
+        let sig = file_sig(&path);
+        // 已打开则切过去；未脏顺手重读磁盘（可能被外部改过），脏则保留缓冲
         if let Some(ix) = self
             .panel_tabs
             .iter()
             .position(|t| matches!(t, PanelTab::File(p) if same_path(p, &path)))
         {
-            self.active_panel_tab = Some(ix);
+            self.activate_panel_tab(ix, cx);
             self.set_content_view(ContentView::File);
+            if let Some(ft) = self.file_cache.get_mut(&path) {
+                if !ft.dirty {
+                    ft.content = content;
+                    ft.reload_pending = true;
+                    ft.conflict = None;
+                    ft.disk_sig = sig;
+                }
+            }
             cx.notify();
             return;
         }
+        let mut ft = FileTab::from_disk(content);
+        ft.disk_sig = sig;
+        self.file_cache.insert(path.clone(), ft);
         self.panel_tabs.push(PanelTab::File(path));
-        self.active_panel_tab = Some(self.panel_tabs.len() - 1);
+        let ix = self.panel_tabs.len() - 1;
+        self.activate_panel_tab(ix, cx);
         self.set_content_view(ContentView::File);
+        cx.notify();
+    }
+
+    /// 关文件 tab：有未保存修改（或挂着冲突）先弹确认，否则直接关。
+    pub(crate) fn close_file_tab(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let dirty = self
+            .file_cache
+            .get(path)
+            .map(|f| f.dirty || f.conflict.is_some())
+            .unwrap_or(false);
+        if dirty {
+            self.dialog = Some(crate::Dialog::FileDirty { path: path.to_path_buf() });
+            cx.notify();
+            return;
+        }
+        self.discard_file_tab(path, cx);
+    }
+
+    /// 无条件丢弃文件 tab（确认弹窗三个按钮的公共尾）。
+    pub(crate) fn discard_file_tab(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(ix) = self
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, PanelTab::File(p) if same_path(p, path)))
+        else {
+            return;
+        };
+        let was_active = self.active_panel_tab == Some(ix);
+        self.close_panel_tab(ix, cx);
+        self.file_cache.remove(path);
+        if was_active && self.content_view == ContentView::File {
+            // 激活位可能落到终端 tab 上——优先指去最近的文件 tab；
+            // 一个文件 tab 都不剩则内容区回退（有终端回浏览区，否则回会话）
+            let any_file = self
+                .panel_tabs
+                .iter()
+                .position(|t| matches!(t, PanelTab::File(_)));
+            match any_file {
+                Some(fix)
+                    if !matches!(
+                        self.panel_tabs.get(self.active_panel_tab.unwrap_or(usize::MAX)),
+                        Some(PanelTab::File(_))
+                    ) =>
+                {
+                    self.activate_panel_tab(fix, cx);
+                }
+                None => {
+                    let v = if self.panel_tabs.is_empty() {
+                        ContentView::Chat
+                    } else {
+                        self.browse_last
+                    };
+                    self.set_content_view(v);
+                }
+                _ => {}
+            }
+        }
+        cx.notify();
+    }
+
+    /// 保存文件 tab（Ctrl+S / 关闭确认「保存并关闭」共用）：编辑器在则取
+    /// 编辑器值，写盘成功后刷新磁盘真值缓存与外部改动基准。
+    pub(crate) fn save_file(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let text = match self.file_cache.get(path).and_then(|f| f.editor.as_ref()) {
+            Some(ed) => ed.read(cx).value().to_string(),
+            None => match self.file_cache.get(path) {
+                Some(f) => f.content.clone(),
+                None => return,
+            },
+        };
+        if let Err(e) = std::fs::write(path, &text) {
+            self.set_status(format!("{}: {e}", crate::i18n::tr("保存失败")), cx);
+            return;
+        }
+        if let Some(ft) = self.file_cache.get_mut(path) {
+            ft.content = text;
+            ft.dirty = false;
+            ft.conflict = None;
+            ft.disk_sig = file_sig(path);
+        }
+        self.set_status(crate::i18n::tr("已保存").to_string(), cx);
+        cx.notify();
+    }
+
+    /// Ctrl+S（FileSave action，"Input" 上下文绑定）：保存当前文件 tab。
+    pub(crate) fn save_active_file(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = self.active_file_path() {
+            self.save_file(&path, cx);
+        }
+    }
+
+    /// 冲突 banner「重新加载」：磁盘为准，丢弃本地未保存修改。
+    pub(crate) fn file_reload_from_disk(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let bytes = match std::fs::read(path) {
+            Ok(b) if !b.contains(&0) => b,
+            _ => {
+                self.set_status(crate::i18n::tr("文件已从磁盘消失").to_string(), cx);
+                return;
+            }
+        };
+        if let Some(ft) = self.file_cache.get_mut(path) {
+            ft.content = String::from_utf8_lossy(&bytes).to_string();
+            ft.dirty = false;
+            ft.reload_pending = true;
+            ft.conflict = None;
+            ft.disk_sig = file_sig(path);
+        }
+        cx.notify();
+    }
+
+    /// 冲突 banner「忽略」：保留本地缓冲；以当前磁盘态为新基准，磁盘再变
+    /// 才会再次提示。
+    pub(crate) fn file_ignore_conflict(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(ft) = self.file_cache.get_mut(path) {
+            ft.conflict = None;
+            ft.disk_sig = file_sig(path);
+        }
+        cx.notify();
+    }
+
+    /// 023 外部改动检测（对齐 Zed）：fs 监听泵的每个合批信号跑一遍。
+    /// 无未保存修改 → 自动重载（reload_pending 由渲染帧灌进编辑器）；
+    /// 有修改 → 标冲突，等用户在 banner 上裁决。自己的保存已把基准刷到
+    /// 写后元数据，本轮信号比较为空转。
+    pub(crate) fn check_external_file_changes(&mut self, cx: &mut Context<Self>) {
+        self.ext_probe.0 += 1;
+        let mut changed = false;
+        let paths: Vec<PathBuf> = self
+            .panel_tabs
+            .iter()
+            .filter_map(|t| match t {
+                PanelTab::File(p) => Some(p.clone()),
+                _ => None,
+            })
+            .collect();
+        for path in paths {
+            let Some(ft) = self.file_cache.get_mut(&path) else {
+                continue;
+            };
+            match std::fs::metadata(&path) {
+                Err(_) => {
+                    if ft.conflict.is_none() {
+                        ft.conflict = Some(crate::FileConflict::Deleted);
+                        changed = true;
+                    }
+                }
+                Ok(md) => {
+                    let sig = md.modified().ok().map(|m| (m, md.len()));
+                    if sig.is_none() || sig == ft.disk_sig {
+                        continue;
+                    }
+                    match std::fs::read(&path) {
+                        Ok(b) if !b.contains(&0) => {
+                            self.ext_probe.1 += 1;
+                            if !ft.dirty {
+                                ft.content = String::from_utf8_lossy(&b).to_string();
+                                ft.reload_pending = true;
+                                ft.conflict = None;
+                            } else if ft.conflict.is_none() {
+                                ft.conflict = Some(crate::FileConflict::Changed);
+                            }
+                            ft.disk_sig = sig;
+                            changed = true;
+                        }
+                        _ => {
+                            if ft.conflict.is_none() {
+                                ft.conflict = Some(crate::FileConflict::Deleted);
+                            }
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// 新建文件（标签栏 + 菜单）：项目根下按输入名创建（含中间目录），
+    /// 已存在则直接打开。
+    pub(crate) fn create_new_file(&mut self, name: &str, cx: &mut Context<Self>) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let target = self.cwd.join(name);
+        if !target.starts_with(&self.cwd) {
+            self.set_status(crate::i18n::tr("路径越出项目根").to_string(), cx);
+            return;
+        }
+        if target.exists() {
+            self.open_file_tab(target, cx);
+            return;
+        }
+        if let Some(parent) = target.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                self.set_status(format!("{}: {e}", crate::i18n::tr("创建失败")), cx);
+                return;
+            }
+        }
+        if let Err(e) = std::fs::write(&target, "") {
+            self.set_status(format!("{}: {e}", crate::i18n::tr("创建失败")), cx);
+            return;
+        }
+        self.open_file_tab(target, cx);
+    }
+
+    /// 标签栏 + 菜单「打开文件…」：系统文件选择器（可多选）逐个开 tab。
+    pub(crate) fn pick_open_files(&mut self, cx: &mut Context<Self>) {
+        let opts = gpui::PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        };
+        let rx = cx.prompt_for_paths(opts);
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
+            if let Some(paths) = picked {
+                let _ = this.update(cx, |c, cx| {
+                    for p in paths {
+                        c.open_file_tab(p, cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// 标签栏 + 菜单「新建文件」：名字输入弹窗（Enter 提交 / Esc 取消）。
+    /// 提交里同步置 dialog=None，与 apply_rename 同款（established 模式）。
+    pub(crate) fn start_new_file(&mut self, cx: &mut Context<Self>) {
+        let weak_ok = cx.entity().downgrade();
+        let weak_esc = cx.entity().downgrade();
+        let input = cx.new(|cx| {
+            TextInput::new(cx)
+                .select_all_on_focus()
+                .placeholder(tr("文件名（可含子目录）"))
+        });
+        input.update(cx, |ti, _| {
+            ti.set_on_submit(Box::new(move |v, cx| {
+                let _ = weak_ok.update(cx, |c, cx| {
+                    c.create_new_file(v, cx);
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+            ti.set_on_escape(Box::new(move |cx| {
+                let _ = weak_esc.update(cx, |c, cx| {
+                    c.dialog = None;
+                    cx.notify();
+                });
+            }));
+        });
+        self.dialog = Some(crate::Dialog::NewFile { input });
+        cx.notify();
+    }
+
+    /// 当前激活的文件 tab 路径。
+    pub(crate) fn active_file_path(&self) -> Option<PathBuf> {
+        self.active_panel_tab
+            .and_then(|ix| self.panel_tabs.get(ix))
+            .and_then(|t| match t {
+                PanelTab::File(p) => Some(p.clone()),
+                _ => None,
+            })
+    }
+
+    /// 激活内容区 tab 并挪到标签流首位（023 小功能：选中标签永远在最左，
+    /// zed 没有）。Term/File 都是轻量句柄（终端实体在 terminals 按 id 索引），
+    /// 移动无副作用。
+    pub(crate) fn activate_panel_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix >= self.panel_tabs.len() {
+            return;
+        }
+        if ix != 0 {
+            let tab = self.panel_tabs.remove(ix);
+            self.panel_tabs.insert(0, tab);
+        }
+        self.active_panel_tab = Some(0);
         cx.notify();
     }
 
@@ -209,22 +506,6 @@ impl Chat {
         cx.notify();
     }
 
-    /// File viewer meta line: language · lines · size (pi-web FileViewer).
-    pub(crate) fn file_meta(path: &Path, content: &str) -> String {
-        let lang = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("txt")
-            .to_string();
-        let lines = content.lines().count();
-        let bytes = content.len();
-        let size = if bytes < 1024 {
-            format!("{bytes} B")
-        } else {
-            format!("{:.1} KB", bytes as f64 / 1024.)
-        };
-        format!("{lang} · {lines} lines · {size}")
-    }
 
     pub(crate) fn attach_images(&mut self, cx: &mut Context<Self>) {
         // 压缩锁：压缩期间不弹文件选择器

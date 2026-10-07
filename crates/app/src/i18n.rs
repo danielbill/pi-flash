@@ -55,6 +55,11 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("未连接", "未連接", "Disconnected"),
     ("生成标题", "生成標題", "Generate title"),
     // dialogs
+    // 004 打开项目菜单（projectManager）
+    ("搜索项目…", "搜尋項目…", "Search projects…"),
+    ("打开文件夹", "開啟資料夾", "Open folder"),
+    ("最近 30 天没有打开过的项目", "最近 30 天沒有開啟過的項目", "No projects opened in the last 30 days"),
+    ("没有匹配的项目", "沒有符合的項目", "No matching projects"),
     ("重命名会话", "重命名會話", "Rename session"),
     ("session name", "session name", "session name"),
     ("取消", "取消", "Cancel"),
@@ -69,6 +74,11 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("过滤模型...", "過濾模型...", "filter models..."),
     ("选择项目", "選擇項目", "Select project"),
     ("no models match", "no models match", "no models match"),
+    // 系统提示词面板 token 分析块（7 大类）
+    ("总计", "總計", "Total"),
+    ("全局提示词", "全域提示詞", "Global prompt"),
+    ("系统工具", "系統工具", "System tools"),
+    ("项目提示词", "專案提示詞", "Project prompt"),
     // settings tabs
     ("模型", "模型", "Models"),
     ("技能", "技能", "Skills"),
@@ -177,6 +187,8 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("agent 运行结束播放系统提示音", "agent 執行結束播放系統提示音", "Play a system sound when the agent run finishes"),
     ("加载时间窗口", "載入時間範圍", "Load time window"),
     ("加载最近几天内活跃的会话", "載入最近幾天內活躍的會話", "Load sessions active within the window"),
+    ("会话显示数", "會話顯示數", "Session display count"),
+    ("各项目默认显示的会话数量", "各項目預設顯示的會話數量", "Sessions shown per project by default"),
     ("显示更多", "顯示更多", "Show more"),
     // session list / relative time templates
     ("{} 条消息", "{} 條消息", "{} messages"),
@@ -189,6 +201,35 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
+    // 文件树 git 标识开关（设置-其他）
+    ("文件树 Git 标识", "檔案樹 Git 標識", "File tree Git markers"),
+    ("文件树显示 git 修改徽标与目录变更点", "檔案樹顯示 git 修改徽標與目錄變更點", "Show git modification badges and directory change dots in the file tree"),
+    // 023 fileView（标签栏 + 菜单 / 导航栏 / 冲突横幅 / 确认弹窗）
+    ("在左侧文件树中选择一个文件", "在左側檔案樹中選擇一個檔案", "Pick a file in the tree on the left"),
+    ("打开文件…", "開啟檔案…", "Open file…"),
+    ("新建文件", "新增檔案", "New file"),
+    ("文件名（可含子目录）", "檔案名（可含子目錄）", "File name (subdirs allowed)"),
+    ("在项目根下创建；Enter 确认，Esc 取消", "在專案根下建立；Enter 確認，Esc 取消", "Created under the project root; Enter to confirm, Esc to cancel"),
+    ("文件超过 10MB，不打开", "檔案超過 10MB，不開啟", "File exceeds 10MB, not opening"),
+    ("二进制文件，不打开", "二進位檔案，不開啟", "Binary file, not opening"),
+    ("读取失败", "讀取失敗", "Read failed"),
+    ("保存失败", "儲存失敗", "Save failed"),
+    ("创建失败", "建立失敗", "Create failed"),
+    ("路径越出项目根", "路徑越出專案根", "Path escapes the project root"),
+    ("已保存", "已儲存", "Saved"),
+    ("文件已在磁盘上被修改（本地有未保存修改）", "檔案已在磁碟上被修改（本地有未儲存修改）", "File changed on disk (you have unsaved edits)"),
+    ("文件已从磁盘消失", "檔案已從磁碟消失", "File disappeared from disk"),
+    ("重新加载", "重新載入", "Reload"),
+    ("保留我的版本", "保留我的版本", "Keep my version"),
+    ("保留缓冲", "保留緩衝", "Keep buffer"),
+    ("未保存的修改", "未儲存的修改", "Unsaved changes"),
+    ("有未保存的修改：", "有未儲存的修改：", "Unsaved changes:"),
+    ("取消", "取消", "Cancel"),
+    ("不保存关闭", "不儲存關閉", "Close without saving"),
+    ("保存并关闭", "儲存並關閉", "Save and close"),
+    ("（无文件）", "（無檔案）", "(no files)"),
+    ("编辑器初始化中…", "編輯器初始化中…", "Initializing editor…"),
+    ("文件已关闭", "檔案已關閉", "File closed"),
     // topbar ⋯ 更多菜单（三个入口）
     ("打开终端", "開啟終端機", "Open terminal"),
     ("此会话系统提示词", "此會話系統提示詞", "Session system prompt"),
@@ -197,13 +238,15 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("系统提示词", "系統提示詞", "System prompt"),
     ("工具定义", "工具定義", "Tool definitions"),
     ("系统提示词为空（工具已禁用）", "系統提示詞為空（工具已停用）", "System prompt is empty (tools are disabled)"),
-    ("系统提示词尚未加载", "系統提示詞尚未載入", "System prompt has not loaded yet"),
+    ("系统提示词加载中…", "系統提示詞載入中…", "Loading system prompt…"),
     // top panel：工具定义（pi-web tools.*）
     ("工具定义尚未加载", "工具定義尚未載入", "Tool definitions have not loaded yet"),
     ("没有启用的工具", "沒有啟用的工具", "No active tools"),
     ("描述", "描述", "Description"),
     ("参数", "參數", "Parameters"),
     ("{count} 个参数", "{count} 個參數", "{count} parameters"),
+    ("调用声明", "調用聲明", "Tool declarations"),
+    ("{n} 条", "{n} 條", "{n} items"),
     ("无参数", "無參數", "No parameters"),
     ("必填", "必填", "Required"),
     ("可选", "選填", "Optional"),
@@ -285,11 +328,15 @@ mod tests {
         assert_eq!(tr("新分支"), "新分支");
         assert_eq!(tr("创建中…"), "建立中…");
         assert_eq!(tr("Hi，打算让我做点什么？"), "Hi，打算讓我做點什麼？");
+        assert_eq!(tr("搜索项目…"), "搜尋項目…");
+        assert_eq!(tr("打开文件夹"), "開啟資料夾");
         set_lang(2);
         assert_eq!(tr("保存"), "Save");
         assert_eq!(tr("新分支"), "Fork");
         assert_eq!(tr("创建中…"), "Creating…");
         assert_eq!(tr("Hi，打算让我做点什么？"), "Hi, what shall we work on?");
+        assert_eq!(tr("搜索项目…"), "Search projects…");
+        assert_eq!(tr("打开文件夹"), "Open folder");
         assert_eq!(tr("not in table"), "not in table");
         set_lang(0);
     }

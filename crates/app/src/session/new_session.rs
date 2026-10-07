@@ -38,8 +38,8 @@ const LOGO_BAND: f32 = 0.5;
 const HEADING_BAND: f32 = 0.74;
 /// 内容簇带（inputpanel + 操作栏）：底对齐 88% ⇒ 簇中心 56%。
 const CONTENT_BAND: f32 = 0.88;
-/// 操作栏高度（胶囊控件行 28 + 上下 5 呼吸）。
-const ACTION_BAR_H: f32 = 38.;
+/// 操作栏高度（012：固定 40px）。
+const ACTION_BAR_H: f32 = 40.;
 
 /// 新会话页整页。占满聊天区（`flex_1`），内部两层：背景 logo（绝对、装饰）
 /// 与内容簇（绝对、可交互）。
@@ -143,9 +143,11 @@ fn heading(t: &'static crate::theme::Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// inputpanel 下方的额外操作栏（012 第 4 条）。左 = 【打开项目】+ 当前项目名
-/// （004：新会话页的打开项目入口在这里；点击走 psp 同款目录选择器），
-/// 右 = 会话搜索（013 弹窗）。
+/// inputpanel 下方的额外操作栏（012 第 4 条）：与 inputpanel 同宽、间隔
+/// 5px、高 40px、无边框。左 = 目录图标 + 当前项目名（无项目时显示
+/// 「选择项目」；004：点击进入打开项目菜单，菜单里的【打开文件夹】才是
+/// 目录选择器），右 = pi-flash 版本号小字（012：不显示 pi 版本号，搜索
+/// 入口只在功能面板）。
 fn action_bar(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -156,23 +158,18 @@ fn action_bar(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| tr("打开项目").to_string())
+        .unwrap_or_else(|| tr("选择项目").to_string())
         .into();
     let w_open = weak.clone();
-    let w_search = weak.clone();
     div()
         .id("new-session-bar")
-        .mt(px(8.))
+        .mt(px(5.))
         .w_full()
         .h(px(ACTION_BAR_H))
         .px(px(10.))
         .flex()
         .items_center()
         .gap(px(8.))
-        .rounded(px(12.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .bg(rgb(t.bg_panel))
         // 打开项目
         .child(
             div()
@@ -188,27 +185,18 @@ fn action_bar(
                 .text_color(rgb(t.text_muted))
                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = w_open.update(cx, |c, cx| c.pick_project_folder(cx));
+                    let _ = w_open.update(cx, |c, cx| c.open_project_picker(cx));
                 })
-                .child(icon("icon-project", 16., t.text_muted))
+                .child(icon("folder", 16., t.text_muted))
                 .child(project),
         )
-        // 会话搜索
+        // pi-flash 版本号（placeholder 同款淡色，用户 2026-10-07 定稿）
         .child(
             div()
-                .id("ns-session-search")
                 .ml_auto()
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(8.))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = w_search.update(cx, |c, cx| c.open_session_search(cx));
-                })
-                .child(icon("search", 16., t.text_muted)),
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(format!("v{}", env!("CARGO_PKG_VERSION")))),
         )
         .into_any_element()
 }
