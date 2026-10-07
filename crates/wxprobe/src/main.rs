@@ -12,6 +12,7 @@
 //!
 //! 所有请求/响应原样落盘到 `~/.pi-flash/wxprobe-dump/`（`PI_FLASH_DIR` 优先）。
 
+mod format;
 mod command;
 mod lock;
 mod poller;
@@ -38,6 +39,10 @@ fn main() {
         "loop" => cmd_loop(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(300)),
         "send" if args.len() > 1 => cmd_send(&args[1..].join(" ")),
         "parse" if args.len() > 1 => cmd_parse(&args[1..].join(" ")),
+        "status-demo" => cmd_status_demo(
+            args.get(1).map(String::as_str).unwrap_or("zh"),
+            args.get(2).map(String::as_str).unwrap_or("running"),
+        ),
         "state" => cmd_state(),
         "reset" => cmd_reset(),
         _ => Err(usage()),
@@ -49,7 +54,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | state | reset".into()
+    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | status-demo [zh|tw|en] [state] | state | reset".into()
 }
 
 fn wire() -> Wire {
@@ -270,6 +275,59 @@ fn cmd_parse(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+
+/// 渲染一张 /status 卡片 —— 界面层 B 的排版冒烟与「逐字节对拍」基准。
+/// 数据是写死的样例；P3 接上 pi 会话状态后，这里仍是回归用的稳定出口。
+///
+/// `state` 传 `disconnected` 时走 ZCode 的断连分支（`tf` 模板那条）。
+fn cmd_status_demo(lang_arg: &str, state: &str) -> Result<(), String> {
+    use crate::format::messages::{t, tf, Lang};
+    use crate::format::status::{
+        status_card, status_line, status_state_value, status_task_line, task_running_duration,
+    };
+
+    // 序号与 app::i18n::LANG_IX 对齐（0 zh-CN / 1 zh-TW / 2 en）
+    let lang = Lang::from_ix(match lang_arg {
+        "en" => 2,
+        "tw" => 1,
+        _ => 0,
+    });
+    let workspace = "pi-flash";
+
+    if state == "disconnected" {
+        // ZCode `buildStatusText` 的断连分支：只出 4 行 + 一句模板提示。
+        println!(
+            "{}",
+            status_card(&[
+                status_line(lang, "工作区", workspace),
+                status_line(lang, "模型", "glm-5.3"),
+                "------".to_string(),
+                status_line(lang, "任务", "task-abc"),
+                status_line(lang, "状态", &status_state_value(lang, "remote disconnected")),
+                tf(
+                    lang,
+                    "当前远端项目 {workspacePath} 未连接。请发送 **/重连** 恢复连接。",
+                    &[("workspacePath", workspace)],
+                ),
+            ])
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        status_card(&[
+            status_line(lang, "工作区", workspace),
+            status_line(lang, "模型", "glm-5.3"),
+            "------".to_string(),
+            status_task_line(&t(lang, "任务"), "重构传输层", "task-42"),
+            status_line(lang, "状态", &status_state_value(lang, state)),
+            status_line(lang, "已工作", &task_running_duration(5_400_000)),
+            status_line(lang, "进展", "正在编辑 crates/wxprobe/src/wire.rs"),
+        ])
+    );
+    Ok(())
+}
 
 fn cmd_state() -> Result<(), String> {
     let mut st = state::load();
