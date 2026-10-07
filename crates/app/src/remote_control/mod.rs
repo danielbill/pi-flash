@@ -17,6 +17,7 @@
 //! （`active_key`）。ZCode 是「一 bot 一 context + `/绑定 <code>` 选 workspace /
 //! 会话」，§4.2 的 `active_session` 要等 P3 步骤 3 的绑定码落地后才精确。
 
+mod menu;
 mod pipeline;
 use pi_link::protocol::{Command, ExtensionUiRequest};
 
@@ -44,6 +45,17 @@ enum Action {
     Status,
     /// `/新建`（含 `/clear`）—— 需要 `Chat::new_session`
     New,
+    /// 弹一个数字菜单（选项由 `Chat` 按 app 现场状态组装）；
+    /// `sub` = 第二层菜单的上下文（`/模型` 选完供应商后带 provider）
+    OpenMenu(menu::MenuKind, Option<String>),
+    /// `/思考 <level>` 直接设置（不弹菜单）
+    SetThink(String),
+    /// 菜单里选中了一项
+    Select {
+        kind: menu::MenuKind,
+        sub: Option<String>,
+        value: String,
+    },
     /// ExtUi 回填（四字段与 `Command::ExtensionUiResponse` 一一对应）
     ExtUi {
         id: String,
@@ -74,6 +86,8 @@ pub struct RemoteControl {
     buf: String,
     /// 上一拍的 `agent_running`（下降沿 = 轮次结束）
     was_running: bool,
+    /// 挂起中的数字选择菜单（060-c，对应 ZCode pendingSelectionsByContext）
+    pending_menu: Option<menu::PendingMenu>,
 }
 
 impl RemoteControl {
@@ -86,6 +100,7 @@ impl RemoteControl {
             cur_text: String::new(),
             buf: String::new(),
             was_running: false,
+            pending_menu: None,
         }
     }
 
@@ -197,12 +212,49 @@ impl RemoteControl {
         }
 
         let lang = Lang::from_ix(crate::i18n::lang_ix());
+        // 数字菜单挂起时，回数优先被它吃掉（与 ExtUi pending 同序，
+        // 对齐 ZCode pendingSelections 的拦截语义）
+        if let Some(m) = self.pending_menu.take() {
+            use menu::Outcome;
+            return match m.resolve(text) {
+                Outcome::Selected(value) => Action::Select {
+                    kind: m.kind,
+                    sub: m.sub.clone(),
+                    value,
+                },
+                Outcome::Cancelled => Action::Send(t(lang, "已取消。")),
+                Outcome::Retry => {
+                    // 还没答上：菜单留着并把提示原样重发一次
+                    let prompt = m.prompt.clone();
+                    self.pending_menu = Some(m);
+                    Action::Send(prompt)
+                }
+            };
+        }
+
         match wxprobe::command::parse_bot_command(text) {
             BotCommand::Message { text: msg } => Action::Prompt(msg),
             BotCommand::Stop => Action::Abort,
             BotCommand::Help => Action::Send(pipeline::help_text(lang)),
             BotCommand::Status => Action::Status,
             BotCommand::New => Action::New,
+            BotCommand::ThoughtLevelList => {
+                Action::OpenMenu(menu::MenuKind::Think, None)
+            }
+            BotCommand::ThoughtLevelSet { value } => Action::SetThink(value),
+            BotCommand::ModelList => Action::OpenMenu(menu::MenuKind::ModelProvider, None),
+            // WeChat 侧只先展示供应商，模型放到下一层（ZCode 原 Bugfix）
+            BotCommand::ModelProviderSet { value } => {
+                Action::OpenMenu(menu::MenuKind::Model, Some(value))
+            }
+            // 直接给 id 时 provider 由 Chat 按模型清单反查
+            BotCommand::ModelSet { value } => {
+                Action::Select { kind: menu::MenuKind::Model, sub: None, value }
+            }
+            BotCommand::TaskList => Action::OpenMenu(menu::MenuKind::Task, None),
+            BotCommand::TaskSet { value } => {
+                Action::Select { kind: menu::MenuKind::Task, sub: None, value }
+            }
             // `0` 在没有待答菜单时无意义，静默忽略（不打扰模型）
             BotCommand::SelectionCancel => Action::None,
             // 档 1 只接 Prompt/Abort；其余等 pipeline（P3 步骤 2-4）
@@ -271,6 +323,84 @@ impl RemoteControl {
         msgs
     }
 
+}
+
+/// `/思考` 的 8 档 —— 与桌面 PillMenu 完全同一张表（key/label 一一对应）。
+fn think_options() -> Vec<(String, String)> {
+    [
+        ("auto", "使用 pi 默认设置"),
+        ("off", "关闭推理"),
+        ("minimal", "最低限度推理"),
+        ("low", "低强度推理"),
+        ("medium", "中等强度推理"),
+        ("high", "高强度推理"),
+        ("xhigh", "超高强度推理"),
+        ("max", "最高强度推理"),
+    ]
+    .iter()
+    .map(|(k, d)| (crate::i18n::tr(d).to_string(), k.to_string()))
+    .collect()
+}
+
+/// `/模型` 第一层：去重后的供应商列表（全局清单 ∪ 当前项目进程答案）。
+fn provider_options(chat: &crate::Chat) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let live = chat
+        .models_by_cwd
+        .get(&chat.cwd.to_string_lossy().to_string())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    for m in live.iter().chain(chat.globals.models.iter()) {
+        if !out.iter().any(|(_, p)| p == &m.provider) {
+            out.push((m.provider.clone(), m.provider.clone()));
+        }
+    }
+    out
+}
+
+/// `/模型` 第二层：某供应商下的模型。
+fn model_options(chat: &crate::Chat, provider: &str) -> Vec<(String, String)> {
+    let live = chat
+        .models_by_cwd
+        .get(&chat.cwd.to_string_lossy().to_string())
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    let mut out: Vec<(String, String)> = Vec::new();
+    for m in live.iter().chain(chat.globals.models.iter()) {
+        if m.provider != provider || out.iter().any(|(_, id)| id == &m.id) {
+            continue;
+        }
+        let label = if m.name.is_empty() {
+            m.id.clone()
+        } else {
+            m.name.clone()
+        };
+        out.push((label, m.id.clone()));
+    }
+    out
+}
+
+/// `/任务`：会话清单，标签优先 `name`，回落首条用户消息（与侧栏同一优先级）。
+fn task_options(chat: &crate::Chat) -> Vec<(String, String)> {
+    chat.sessions
+        .iter()
+        .map(|s| {
+            let label = s
+                .name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| {
+                    let p = s.preview.replace('\n', " ");
+                    if p.chars().count() > 40 {
+                        let cut: String = p.chars().take(40).collect();
+                        format!("{cut}...")
+                    } else {
+                        p
+                    }
+                });
+            (label, s.id.clone())
+        })
+        .collect()
 }
 
 /// 200ms 轮询的微信入站泵（形态照 `startup::spawn_fs_watch_pump`：
@@ -348,6 +478,12 @@ impl crate::Chat {
                     }
                 }
             }
+            Action::OpenMenu(kind, sub) => self.open_wx_menu(kind, sub, cx),
+            Action::SetThink(level) => {
+                self.set_thinking_level(&level, cx);
+                self.reply_status(cx);
+            }
+            Action::Select { kind, sub, value } => self.apply_wx_selection(kind, sub, &value, cx),
             Action::ExtUi {
                 id,
                 value,
@@ -368,6 +504,91 @@ impl crate::Chat {
     /// 把命令投给**当前活跃会话**（1b 简化，见模块文档「会话归属」）。
     /// 没有 runtime / 进程未附着时静默丢弃 —— 微信侧拿不到回执，
     /// 但不会因为远程指令把桌面端搞崩。
+    /// 现场组装一个菜单并挂起（060-c）。
+    fn open_wx_menu(
+        &mut self,
+        kind: menu::MenuKind,
+        sub: Option<String>,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+        let lang = Lang::from_ix(crate::i18n::lang_ix());
+        let (title, options) = match kind {
+            menu::MenuKind::Think => (crate::i18n::tr("选择思考档位").to_string(), think_options()),
+            menu::MenuKind::ModelProvider => {
+                (crate::i18n::tr("选择模型供应商").to_string(), provider_options(self))
+            }
+            menu::MenuKind::Model => {
+                let p = sub.clone().unwrap_or_default();
+                (crate::i18n::tr("选择模型").to_string(), model_options(self, &p))
+            }
+            menu::MenuKind::Task => (crate::i18n::tr("切换会话").to_string(), task_options(self)),
+        };
+        if options.is_empty() {
+            // 没有可选项时给回执而不是发一张空菜单
+            self.remote.send(&t(lang, "未找到回复颗粒度。"));
+            return;
+        }
+        let (prompt, pending) = menu::PendingMenu::build(kind, sub, &title, options, lang);
+        self.remote.pending_menu = Some(pending);
+        self.remote.send(&prompt);
+    }
+
+    /// 菜单选中后的落地动作。
+    fn apply_wx_selection(
+        &mut self,
+        kind: menu::MenuKind,
+        sub: Option<String>,
+        value: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match kind {
+            menu::MenuKind::Think => {
+                self.set_thinking_level(value, cx);
+                self.reply_status(cx);
+            }
+            menu::MenuKind::ModelProvider => {
+                // 第一层选中供应商 → 直接弹第二层（不落地）
+                self.open_wx_menu(menu::MenuKind::Model, Some(value.to_string()), cx);
+            }
+            menu::MenuKind::Model => {
+                let provider = sub.clone().or_else(|| self.provider_of_model(value));
+                if let Some(p) = provider {
+                    self.rt().update(cx, |r, cx| r.select_model(p, value.to_string(), cx));
+                }
+                self.reply_status(cx);
+            }
+            menu::MenuKind::Task => {
+                if let Some(info) = self.sessions.iter().find(|s| s.id == value) {
+                    let path = info.path.clone();
+                    self.new_session_in(path, cx);
+                }
+                self.reply_status(cx);
+            }
+        }
+    }
+
+    /// 选完 / 设置完回一张状态卡（ZCode 各选择分支的 `createStatusReply`）。
+    fn reply_status(&self, cx: &gpui::App) {
+        let lang = Lang::from_ix(crate::i18n::lang_ix());
+        if let Some(text) = self.status_reply(cx, lang) {
+            self.remote.send(&text);
+        }
+    }
+
+    /// 直接给模型 id 时反查其供应商（`/模型 <id>` 不带 provider 前缀）。
+    fn provider_of_model(&self, id: &str) -> Option<String> {
+        let live = self
+            .models_by_cwd
+            .get(&self.cwd.to_string_lossy().to_string())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        live
+            .iter()
+            .chain(self.globals.models.iter())
+            .find(|m| m.id == id)
+            .map(|m| m.provider.clone())
+    }
+
     fn send_wx(&self, cmd: &Command, cx: &gpui::App) {
         let Some(rt) = self.runtimes.get(&self.active_key) else {
             return;
@@ -447,6 +668,11 @@ mod tests {
 
     /// 档 1 的命令覆盖面：只有 /停止 与纯文本真正接线，
     /// 其余一律回 ZCode 现成的「未启用」句，**不静默吞掉**。
+    /// 测试里直接塞一个挂起菜单（真实路径走 `Chat::open_wx_menu`）。
+    fn set_pending(rc: &mut RemoteControl, m: menu::PendingMenu) {
+        rc.pending_menu = Some(m);
+    }
+
     #[test]
     fn tier1_commands_are_all_wired() {
         let mut rc = RemoteControl::new();
@@ -461,11 +687,61 @@ mod tests {
         assert!(matches!(rc.route("/status"), Action::Status));
         assert!(matches!(rc.route("/新建"), Action::New));
         assert!(matches!(rc.route("/clear"), Action::New));
-        // 档 2 才接的命令仍要回执，不能静默吞掉
-        match rc.route("/模型") {
+        // 档 2 的菜单命令
+        assert!(matches!(
+            rc.route("/思考"),
+            Action::OpenMenu(menu::MenuKind::Think, None)
+        ));
+        assert!(matches!(
+            rc.route("/thoughtLevel"),
+            Action::OpenMenu(menu::MenuKind::Think, None)
+        ));
+        assert!(matches!(rc.route("/思考 low"), Action::SetThink(v) if v == "low"));
+        assert!(matches!(
+            rc.route("/模型"),
+            Action::OpenMenu(menu::MenuKind::ModelProvider, None)
+        ));
+        // ZCode 的任务命令名是 `/task`（`/任务` 是 Unknown）
+        assert!(matches!(
+            rc.route("/task"),
+            Action::OpenMenu(menu::MenuKind::Task, None)
+        ));
+        // 尚未接的命令仍要回执，不能静默吞掉
+        match rc.route("/项目") {
             Action::Send(s) => assert_eq!(s, "当前 bot 未启用这个命令。"),
             other => panic!("未接入的命令必须回执，不能静默：{other:?}"),
         }
+    }
+
+    #[test]
+    fn pending_menu_intercepts_numbers_before_the_model() {
+        use menu::{MenuKind, Outcome, PendingMenu};
+        let mut rc = RemoteControl::new();
+        let (prompt, m) = PendingMenu::build(
+            MenuKind::Think,
+            None,
+            "选择思考档位",
+            vec![("低".into(), "low".into()), ("高".into(), "high".into())],
+            Lang::ZhCn,
+        );
+        set_pending(&mut rc, m);
+
+        // 选中 → 清菜单并给出载荷
+        assert!(matches!(rc.route("1"), Action::Select { value, .. } if value == "low"));
+        assert!(rc.pending_menu.is_none(), "选中后必须清掉");
+
+        // 挂新菜单：0 = 取消、越界 = 重发提示并保留
+        let (_, m2) = PendingMenu::build(MenuKind::Task, None, "t", vec![("a".into(), "id".into())], Lang::ZhCn);
+        set_pending(&mut rc, m2);
+        assert!(matches!(rc.route("0"), Action::Send(s) if s == "已取消。"));
+        assert!(rc.pending_menu.is_none(), "取消也要清掉");
+
+        let (_, m3) = PendingMenu::build(MenuKind::Task, None, "再试", vec![("a".into(), "id".into())], Lang::ZhCn);
+        let want = m3.prompt.clone();
+        set_pending(&mut rc, m3);
+        assert!(matches!(rc.route("9"), Action::Send(s) if s == want));
+        assert!(rc.pending_menu.is_some(), "解析失败要保留菜单");
+        let _ = Outcome::Cancelled;
     }
 
     #[test]
