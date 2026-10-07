@@ -60,6 +60,14 @@ impl Chat {
                         cx.notify();
                     }
                 }
+                SessionEvent::Assistant(ev) => {
+                    // 只回推**活跃会话**的输出（与入站投递口径一致，避免串会话）
+                    if is_active {
+                        for text in chat.remote.on_assistant(&ev) {
+                            chat.remote.send(&text);
+                        }
+                    }
+                }
                 SessionEvent::Models(models) => {
                     // 进程答案写项目槽（pi-web /api/models parity：每个 runtime 只写
                     // 自己 cwd 的条目），同时**并进全局态并回写自有缓存**

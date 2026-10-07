@@ -41,6 +41,8 @@ pub(crate) enum SessionEvent {
     ListDirty,
     /// extension UI request (active session only surfaces the dialog)
     ExtUi(pi_link::protocol::ExtensionUiRequest),
+    /// assistant 流式输出（060 微信回推：文本累积 / tool_call 处 force flush）
+    Assistant(pi_link::protocol::AssistantEvent),
     /// get_state arrived with a pending rename prefill
     RenameReady(String),
     /// get_available_models arrived: the model catalog is project-level
@@ -762,6 +764,9 @@ impl SessionRuntime {
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.streaming_content = true;
+                // 060 微信回推：把流式事件原样冒给订阅方，由它自己决定何时
+                // flush（ZCode assistantReplyBuffer 语义，§6 坑1 边界不按 chunk）
+                cx.emit(SessionEvent::Assistant(assistant_event.clone()));
                 match assistant_event {
                 AssistantEvent::TextDelta { content_index, delta } => {
                     if let Block::Text { text, .. } = self.assistant_slot(

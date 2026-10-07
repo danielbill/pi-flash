@@ -60,6 +60,13 @@ pub struct RemoteControl {
     /// 一个 app 运行期内只试一次（P4 加开关与刷新）
     boot_attempted: bool,
     pending: Option<Pending>,
+    /// 当前 content index 的文本块（ZCode `assistantReplyBuffer` 的对应物）
+    cur_ix: Option<usize>,
+    cur_text: String,
+    /// 一轮内已累积、待 force flush 的完整文本
+    buf: String,
+    /// 上一拍的 `agent_running`（下降沿 = 轮次结束）
+    was_running: bool,
 }
 
 impl RemoteControl {
@@ -68,6 +75,10 @@ impl RemoteControl {
             transport: None,
             boot_attempted: false,
             pending: None,
+            cur_ix: None,
+            cur_text: String::new(),
+            buf: String::new(),
+            was_running: false,
         }
     }
 
@@ -88,7 +99,7 @@ impl RemoteControl {
         }
     }
 
-    fn send(&self, text: &str) {
+    pub fn send(&self, text: &str) {
         if let Some(t) = &self.transport {
             let _ = t.send(text);
         }
@@ -188,6 +199,68 @@ impl RemoteControl {
             _ => Action::Send(t(lang, CMD_NOT_ENABLED)),
         }
     }
+    // ── 出站：assistant 回复回推微信（060 档 1） ──────────────────────────
+
+    /// 流式事件 → 待发文本。**返回的每一段都要调用方发出去**。
+    ///
+    /// flush 边界严格照 ZCode / §6 坑 1：
+    /// * `TextDelta` 只累积，**不发**（provider chunk 常按词或子词到达）
+    /// * `TextEnd` 用权威内容**覆盖**当前块（纠正丢 delta）
+    /// * `ToolCallStart` → force flush（真正的发送边界之一）
+    /// * 轮次结束由 [`Self::on_running`] 的下降沿触发
+    pub fn on_assistant(&mut self, ev: &pi_link::protocol::AssistantEvent) -> Vec<String> {
+        use pi_link::protocol::AssistantEvent as E;
+        match ev {
+            E::TextDelta { content_index, delta } => {
+                if self.cur_ix != Some(*content_index) {
+                    self.cur_ix = Some(*content_index);
+                }
+                self.cur_text.push_str(delta);
+                Vec::new()
+            }
+            E::TextEnd { content_index, content } => {
+                self.cur_ix = Some(*content_index);
+                self.cur_text = content.clone();
+                Vec::new()
+            }
+            E::ToolCallStart { .. } => self.flush(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 轮次结束（`agent_running` 下降沿）→ 把剩下的发干净。
+    ///
+    /// 每拍都调用即可：`flush` 在缓冲为空时是 no-op，比只认下降沿更稳
+    /// （200ms 采样可能整轮跨不过一次下降沿）。
+    pub fn on_running(&mut self, running: bool) -> Vec<String> {
+        self.was_running = running;
+        if running {
+            Vec::new()
+        } else {
+            self.flush()
+        }
+    }
+
+    /// force flush：当前块并入缓冲 → 一次性切段发出。
+    ///
+    /// `extract_...(_, force=true)` = `split_long_reply_text`（>3500 字切段），
+    /// 剩余缓冲恒空。
+    fn flush(&mut self) -> Vec<String> {
+        if !self.cur_text.is_empty() {
+            self.buf.push_str(&self.cur_text);
+            self.cur_text.clear();
+        }
+        if self.buf.trim().is_empty() {
+            self.buf.clear();
+            return Vec::new();
+        }
+        let buf = std::mem::take(&mut self.buf);
+        let (msgs, rest) =
+            wxprobe::format::reply::extract_bot_assistant_response_messages(&buf, true);
+        self.buf = rest;
+        msgs
+    }
+
 }
 
 /// 200ms 轮询的微信入站泵（形态照 `startup::spawn_fs_watch_pump`：
@@ -210,6 +283,16 @@ impl crate::Chat {
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.remote.ensure_transport();
+        // 060 档 1 回推：空闲/轮次结束时把 assistant 缓冲发干净。
+        // 每拍都调，flush 在缓冲为空时是 no-op。
+        let running = self
+            .runtimes
+            .get(&self.active_key)
+            .map(|rt| rt.read(cx).agent_running)
+            .unwrap_or(false);
+        for text in self.remote.on_running(running) {
+            self.remote.send(&text);
+        }
         let batches = self.remote.take_batches();
         if batches.is_empty() {
             return;
@@ -295,5 +378,91 @@ mod tests {
         let mut rc = RemoteControl::new();
         assert!(rc.pending.is_none());
         assert!(matches!(rc.route("1"), Action::Prompt(_)));
+    }
+
+    // ── 060 档 1：assistant 回复回推的缓冲/flush 语义 ──────────────────
+
+    use pi_link::protocol::AssistantEvent as AE;
+
+    fn td(ix: usize, s: &str) -> AE {
+        AE::TextDelta {
+            content_index: ix,
+            delta: s.to_string(),
+        }
+    }
+    fn te(ix: usize, s: &str) -> AE {
+        AE::TextEnd {
+            content_index: ix,
+            content: s.to_string(),
+        }
+    }
+    fn tool_start() -> AE {
+        AE::ToolCallStart {
+            content_index: 1,
+            id: "tc_1".into(),
+            tool_name: "bash".into(),
+        }
+    }
+
+    #[test]
+    fn deltas_accumulate_and_send_nothing() {
+        // §6 坑1：provider chunk 常按词或子词到达，非终态必须留在缓冲里
+        let mut rc = RemoteControl::new();
+        assert!(rc.on_assistant(&td(0, "你好")).is_empty());
+        assert!(rc.on_assistant(&td(0, "，我是")).is_empty());
+        assert!(rc.on_assistant(&td(0, "助手")).is_empty());
+        assert_eq!(rc.cur_text, "你好，我是助手");
+        assert!(rc.buf.is_empty());
+    }
+
+    #[test]
+    fn text_end_overrides_accumulated_deltas() {
+        // TextEnd 是权威内容，用来纠正丢 delta；但不能清掉上一块
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&td(0, "块一"));
+        rc.on_assistant(&te(0, "块一（修正）"));
+        assert_eq!(rc.cur_text, "块一（修正）");
+        // 下一块的 delta 累加在后面，不被 TextEnd 抹掉
+        rc.on_assistant(&td(1, "块二"));
+        assert_eq!(rc.cur_text, "块一（修正）块二");
+    }
+
+    #[test]
+    fn tool_call_start_force_flushes() {
+        // 真正的发送边界之一 = tool_call（§6 坑1）
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&td(0, "先跑个命令"));
+        let out = rc.on_assistant(&tool_start());
+        assert_eq!(out, vec!["先跑个命令".to_string()]);
+        assert!(rc.cur_text.is_empty());
+        assert!(rc.buf.is_empty(), "flush 后缓冲必须清空");
+    }
+
+    #[test]
+    fn idle_flush_drains_remaining_text_once() {
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&td(0, "最终答复"));
+        assert!(rc.on_running(true).is_empty(), "运行中不发");
+        assert_eq!(rc.on_running(false), vec!["最终答复".to_string()]);
+        assert!(rc.on_running(false).is_empty(), "只发一次，不重复");
+    }
+
+    #[test]
+    fn nothing_is_sent_from_an_empty_buffer() {
+        let mut rc = RemoteControl::new();
+        assert!(rc.on_running(false).is_empty());
+        assert!(rc.on_assistant(&tool_start()).is_empty());
+        rc.on_assistant(&td(0, "   "));
+        assert!(rc.on_running(false).is_empty(), "纯空白不发");
+    }
+
+    #[test]
+    fn long_reply_is_split_into_chunks() {
+        let mut rc = RemoteControl::new();
+        let big: String = "很".repeat(9000);
+        rc.on_assistant(&td(0, &big));
+        let out = rc.on_running(false);
+        assert!(out.len() >= 3, "9000 字应切成多段，实际 {}", out.len());
+        assert!(out.iter().all(|s| s.chars().count() <= 4000));
     }
 }
