@@ -27,6 +27,22 @@ use wxprobe::format::messages::{t, Lang};
 
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
+/// 绑定码无效的回执。ZCode 原句写的是「在 zcode UI 重新生成」—— 品牌换成
+/// 本应用（2026-10-07 用户拍板，与 `/帮助` 标题同一决定），故**不走文案表**。
+const BIND_INVALID: &[(&str, &str, &str)] = &[(
+    "绑定码无效或已过期，请在 pi-flash 设置页重新生成。",
+    "绑定码无效或已过期，请在 pi-flash 设置页重新生成。",
+    "The bind code is invalid or expired. Generate a new one in the pi-flash settings page.",
+)];
+
+fn bind_invalid(lang: Lang) -> String {
+    let e = &BIND_INVALID[0];
+    match lang {
+        Lang::En => e.2.to_string(),
+        _ => e.0.to_string(),
+    }
+}
+
 /// `/新建` 在任务运行中时的回执 —— 同样是文案表现成句子。
 const TASK_RUNNING: &str = "当前任务正在运行，稍后再试，或使用 **/停止** 停止当前任务。";
 
@@ -50,6 +66,8 @@ enum Action {
     OpenMenu(menu::MenuKind, Option<String>),
     /// `/思考 <level>` 直接设置（不弹菜单）
     SetThink(String),
+    /// `/bind <code>` —— 需要 Chat 比对并回执
+    Bind(String),
     /// 菜单里选中了一项
     Select {
         kind: menu::MenuKind,
@@ -120,6 +138,8 @@ pub struct RemoteControl {
     pub qr: QrState,
     /// 扫码 worker 的回程（200ms 泵里 drain）
     qr_rx: Option<std::sync::mpsc::Receiver<wxprobe::register::QrEvent>>,
+    /// `/绑定 <code>` 后钉住的会话 runtime key（§4.2 `active_session`）
+    pub bound: Option<String>,
 }
 
 impl RemoteControl {
@@ -135,6 +155,7 @@ impl RemoteControl {
             pending_menu: None,
             qr: QrState::Idle,
             qr_rx: None,
+            bound: None,
         }
     }
 
@@ -153,6 +174,34 @@ impl RemoteControl {
             // 静默失败是最坏的形态（§6 坑 4），至少打一行
             Err(e) => eprintln!("[wx] 渠道未启动：{e}"),
         }
+    }
+
+    /// 当前会话的绑定码（6 位数字）。由设置页展示、用户在微信里 `/bind` 回填。
+    ///
+    /// 用 runtime key 派生 —— 同一会话稳定、换会话即变；**不入状态文件**
+    /// （draft 本来就是本运行期的，钉它没有意义）。
+    pub fn bind_code(&self, active_key: &str) -> String {
+        let mut h: u32 = 0x811c9dc5; // FNV-1a 32
+        for b in active_key.as_bytes() {
+            h ^= u32::from(*b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        format!("{:06}", (u64::from(h) % 1_000_000))
+    }
+
+    /// 校验并接受绑定码；成功时把 `active_key` 钉住（§4.2 `active_session`）。
+    pub fn accept_bind(&mut self, code: &str, active_key: &str) -> bool {
+        let want = self.bind_code(active_key);
+        if code.trim() != want {
+            return false;
+        }
+        self.bound = Some(active_key.to_string());
+        true
+    }
+
+    /// 入站/出站该投给哪个会话：绑定优先，否则当前活跃会话。
+    pub fn target_key<'a>(&'a self, active: &'a str) -> &'a str {
+        self.bound.as_deref().unwrap_or(active)
     }
 
     /// 关掉渠道：`transport = None` 触发 `Drop` → **join 两条线程 + 释放轮询锁**
@@ -315,6 +364,7 @@ impl RemoteControl {
             BotCommand::Help => Action::Send(pipeline::help_text(lang)),
             BotCommand::Status => Action::Status,
             BotCommand::New => Action::New,
+            BotCommand::Bind { code } => Action::Bind(code),
             BotCommand::ThoughtLevelList => {
                 Action::OpenMenu(menu::MenuKind::Think, None)
             }
@@ -329,6 +379,11 @@ impl RemoteControl {
                 Action::Select { kind: menu::MenuKind::Model, sub: None, value }
             }
             BotCommand::TaskList => Action::OpenMenu(menu::MenuKind::Task, None),
+            BotCommand::WorkspaceList => Action::OpenMenu(menu::MenuKind::Project, None),
+            // 直接给名字/路径，落地时由 Chat 反查
+            BotCommand::WorkspaceSet { value } => {
+                Action::Select { kind: menu::MenuKind::Project, sub: None, value }
+            }
             BotCommand::TaskSet { value } => {
                 Action::Select { kind: menu::MenuKind::Task, sub: None, value }
             }
@@ -457,6 +512,14 @@ fn model_options(chat: &crate::Chat, provider: &str) -> Vec<(String, String)> {
     out
 }
 
+/// `/项目`：工作区清单，标签 = 目录名，载荷 = 绝对路径。
+fn project_options(chat: &crate::Chat) -> Vec<(String, String)> {
+    chat.projects
+        .iter()
+        .map(|p| (p.name.clone(), p.path.to_string_lossy().to_string()))
+        .collect()
+}
+
 /// `/任务`：会话清单，标签优先 `name`，回落首条用户消息（与侧栏同一优先级）。
 fn task_options(chat: &crate::Chat) -> Vec<(String, String)> {
     chat.sessions
@@ -560,6 +623,14 @@ impl crate::Chat {
                 }
             }
             Action::OpenMenu(kind, sub) => self.open_wx_menu(kind, sub, cx),
+            Action::Bind(code) => {
+                let lang = Lang::from_ix(crate::i18n::lang_ix());
+                if self.remote.accept_bind(&code, &self.active_key) {
+                    self.remote.send(&t(lang, "绑定成功。发送 **/帮助** 查看可用命令。"));
+                } else {
+                    self.remote.send(&bind_invalid(lang));
+                }
+            }
             Action::SetThink(level) => {
                 self.set_thinking_level(&level, cx);
                 self.reply_status(cx);
@@ -603,6 +674,9 @@ impl crate::Chat {
                 (crate::i18n::tr("选择模型").to_string(), model_options(self, &p))
             }
             menu::MenuKind::Task => (crate::i18n::tr("切换会话").to_string(), task_options(self)),
+            menu::MenuKind::Project => {
+                (crate::i18n::tr("切换工作区").to_string(), project_options(self))
+            }
         };
         if options.is_empty() {
             // 没有可选项时给回执而不是发一张空菜单
@@ -635,6 +709,20 @@ impl crate::Chat {
                 let provider = sub.clone().or_else(|| self.provider_of_model(value));
                 if let Some(p) = provider {
                     self.rt().update(cx, |r, cx| r.select_model(p, value.to_string(), cx));
+                }
+                self.reply_status(cx);
+            }
+            menu::MenuKind::Project => {
+                // 菜单载荷就是路径；直接 `/项目 <名字>` 时按名字反查
+                let path = self
+                    .projects
+                    .iter()
+                    .find(|p| {
+                        p.path.to_string_lossy() == value || p.name == value
+                    })
+                    .map(|p| p.path.clone());
+                if let Some(p) = path {
+                    self.switch_project(p, cx);
                 }
                 self.reply_status(cx);
             }
@@ -671,7 +759,9 @@ impl crate::Chat {
     }
 
     fn send_wx(&self, cmd: &Command, cx: &gpui::App) {
-        let Some(rt) = self.runtimes.get(&self.active_key) else {
+        // `/bind` 钉住的会话优先，否则当前活跃会话（§4.2 active_session）
+        let key = self.remote.target_key(&self.active_key);
+        let Some(rt) = self.runtimes.get(key) else {
             return;
         };
         if let Some(session) = &rt.read(cx).agent.session {
@@ -787,8 +877,17 @@ mod tests {
             rc.route("/task"),
             Action::OpenMenu(menu::MenuKind::Task, None)
         ));
-        // 尚未接的命令仍要回执，不能静默吞掉
-        match rc.route("/项目") {
+        assert!(matches!(
+            rc.route("/项目"),
+            Action::OpenMenu(menu::MenuKind::Project, None)
+        ));
+        assert!(matches!(
+            rc.route("/workspace"),
+            Action::OpenMenu(menu::MenuKind::Project, None)
+        ));
+        // 仍未接的命令仍要回执，不能静默吞掉（/模式 /回复 是 ZCode 专有概念，
+        // pi-flash 无对应产品语义）
+        match rc.route("/模式") {
             Action::Send(s) => assert_eq!(s, "当前 bot 未启用这个命令。"),
             other => panic!("未接入的命令必须回执，不能静默：{other:?}"),
         }
@@ -836,6 +935,35 @@ mod tests {
         rc.set_enabled(false);
         assert!(!rc.is_running());
         assert!(rc.boot_attempted, "关停后必须禁止泵自动重开");
+    }
+
+    #[test]
+    fn bind_code_is_stable_six_digits_and_session_scoped() {
+        let rc = RemoteControl::new();
+        let a = rc.bind_code("draft-1");
+        assert_eq!(a.len(), 6, "6 位");
+        assert!(a.chars().all(|c| c.is_ascii_digit()), "纯数字，避免大小写歧义");
+        assert_eq!(a, rc.bind_code("draft-1"), "同会话稳定");
+        assert_ne!(a, rc.bind_code("draft-2"), "不同会话必须不同");
+    }
+
+    #[test]
+    fn bind_accepts_match_rejects_others_and_pins_target() {
+        let mut rc = RemoteControl::new();
+        let code = rc.bind_code("draft-7");
+        assert!(!rc.accept_bind("000000", "draft-7") || code == "000000", "错码不绑");
+        assert!(rc.bound.is_none());
+
+        assert!(rc.accept_bind(&code, "draft-7"));
+        assert_eq!(rc.bound.as_deref(), Some("draft-7"));
+        // 绑定后目标 = 绑定会话；解绑前一直钉着
+        assert_eq!(rc.target_key("draft-9"), "draft-7");
+    }
+
+    #[test]
+    fn unbound_routes_to_active_session() {
+        let rc = RemoteControl::new();
+        assert_eq!(rc.target_key("draft-9"), "draft-9");
     }
 
     #[test]

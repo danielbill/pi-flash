@@ -21,7 +21,10 @@ pub enum MenuKind {
     Model,
     /// `/任务` 会话列表
     Task,
+    /// `/项目` 工作区列表
+    Project,
 }
+
 
 /// 挂起中的菜单。
 #[derive(Debug, Clone)]

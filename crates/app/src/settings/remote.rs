@@ -143,6 +143,16 @@ pub(crate) fn mc_remote_view(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> 
     ];
     col = col.child(field("状态", block(status_lines, 11., true)));
 
+    // ── 绑定码：设置页展示，用户在微信里 `/bind <code>` 回填 ──────────
+    let active = chat.active_key.clone();
+    let code = chat.remote.bind_code(&active);
+    let mut bind_lines = vec![format!("绑定码：{code}")];
+    match chat.remote.bound.as_deref() {
+        Some(k) => bind_lines.push(format!("已绑定会话：{k}")),
+        None => bind_lines.push("未绑定 —— 在微信里发 /bind 上面这串数字".into()),
+    }
+    col = col.child(field("绑定", block(bind_lines, 11., true)));
+
     // ── 扫码面板 ────────────────────────────────────────────────────
     for el in qr_panel(chat, weak) {
         col = col.child(el);
