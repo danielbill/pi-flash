@@ -254,6 +254,7 @@ fn walk_block(node: &NodeRef<'_, Node>, out: &mut Vec<MdBlock>, depth: usize) {
                             .to_string(),
                         style: Style::Normal,
                     }],
+                    width: None,
                 });
             }
         }

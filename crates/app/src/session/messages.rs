@@ -22,6 +22,27 @@ pub(crate) enum Role {
     /// pi CustomMessage (compaction summary, extension messages,
     /// branch summaries) — v56-6 renders the card; skipped until then
     Custom,
+    /// 用户 `!` / `!!` 发起的 shell 命令执行（pi `role:"bashExecution"`）。
+    /// 独立角色而非 assistant 消息：不进轮分组、不计 nav 统计；pi 侧它
+    /// 由 convertToLlm 在下一次 prompt 时折叠为 user 文本
+    Bash,
+}
+
+/// 一条 shell 命令执行（Msg.bash；pi BashExecutionMessage 同名字段）。
+/// 流式阶段 output 逐步追加（bash_execution_update），final 由 bash response
+/// 回填（exit_code/cancelled/truncated/full_output_path）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct BashInfo {
+    pub(crate) command: String,
+    pub(crate) output: String,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) cancelled: bool,
+    pub(crate) truncated: bool,
+    pub(crate) full_output_path: Option<String>,
+    /// `!!` 前缀：会话有记录、模型看不到（pi excludeFromContext）
+    pub(crate) excluded: bool,
+    /// true = 乐观插入的执行中卡片（response 回填后翻 false）
+    pub(crate) running: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -61,6 +82,8 @@ pub(crate) struct Msg {
     /// AssistantMessage.model — per-message label (pi-web getModelDisplayName
     /// source); None on live-streamed messages until MessageEnd
     pub(crate) model: Option<String>,
+    /// Role::Bash 专属（其余角色恒 None）
+    pub(crate) bash: Option<BashInfo>,
 }
 
 /// Per-message display metadata computed by the list owner (needs whole-list
@@ -343,7 +366,7 @@ pub(crate) fn render_block(
 }
 
 /// 0xRRGGBB + alpha → gpui::rgba 的 0xRRGGBBAA 布局（alpha 在低字节）。
-fn rgba_a(rgb24: u32, alpha: f32) -> u32 {
+pub(crate) fn rgba_a(rgb24: u32, alpha: f32) -> u32 {
     let a = (alpha * 255.0).round().clamp(0.0, 255.0) as u32;
     ((rgb24 & 0xffffff) << 8) | a
 }
@@ -1793,6 +1816,92 @@ pub(crate) fn render_msg(
     col
 }
 
+/// Role::Bash 渲染（mod.rs 分发入口；pi-web BashExecutionView parity）：
+/// 合成 toolCall 卡片复用 render_tool_card（bash 卡 = 命令预览 + 结果体），
+/// 执行中加一行「执行中」状态。独立消息行，不进轮分组。
+pub(crate) fn render_bash_msg(
+    m: &Msg,
+    msg_ix: usize,
+    t: &theme::Theme,
+    collapsed: &HashMap<(usize, usize), bool>,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::Div {
+    let mut col = div().w_full().mb(px(16.)).flex().flex_col();
+    let Some(info) = &m.bash else {
+        return col;
+    };
+    // pi-web：excluded 的命令显示 "bash (local)"（输出仅本地，不进模型）
+    let name = if info.excluded { "bash (local)" } else { "bash" };
+    let args = serde_json::json!({ "command": info.command }).to_string();
+    // is_error 对齐 agent 的 bash 工具卡：非零退出码 = 红（取消不算）
+    let is_error = !info.cancelled && info.exit_code.is_some_and(|c| c != 0);
+    let done = !info.running;
+    // pi-web bashExecutionToText 的后缀行（展示即模型所见）
+    let mut result = info.output.trim_end().to_string();
+    if result.is_empty() {
+        result = "(no output)".into();
+    }
+    if info.cancelled {
+        result.push_str("\n(command cancelled)");
+    } else if let Some(code) = info.exit_code {
+        if code != 0 {
+            result.push_str(&format!("\nCommand exited with code {code}"));
+        }
+    }
+    if info.truncated {
+        result.push_str(&format!(
+            "\n[Output truncated. Full output: {}]",
+            info.full_output_path.as_deref().unwrap_or("")
+        ));
+    }
+    let duration_s = m.end_ts.zip(m.ts).map(|(e, s)| (e - s).max(0) / 1000);
+    col = col.child(render_tool_card(
+        msg_ix,
+        0,
+        name,
+        &args,
+        &result,
+        is_error,
+        &[],
+        None,
+        duration_s,
+        false,
+        done,
+        weak,
+        collapsed,
+        t,
+    ));
+    if info.running {
+        col = col.child(
+            div()
+                .mt(px(4.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(crate::appearance::sess_size(-3.))
+                .text_color(rgb(t.text_dim))
+                .child(
+                    gpui::svg()
+                        .path(SharedString::from("icons/loader.svg"))
+                        .text_color(rgb(t.accent))
+                        .size(px(11.))
+                        .with_animation(
+                            SharedString::from(format!("bash-spin-{msg_ix}")),
+                            Animation::new(std::time::Duration::from_millis(900)),
+                            |el, delta| {
+                                el.with_transformation(gpui::Transformation::rotate(
+                                    gpui::radians(delta * 2. * std::f32::consts::PI),
+                                ))
+                            },
+                        )
+                        .into_any_element(),
+                )
+                .child(SharedString::from(tr("执行中 · Esc 中止"))),
+        );
+    }
+    col
+}
+
 /// Block 渲染可见性（组内条目计数/过滤用；空 thinking/空 text 跳过）。
 /// 思考块永远可见（收起=一行），不随「展示思考」开关消失。
 fn block_displayable(b: &Block) -> bool {
@@ -2205,6 +2314,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
         match role {
             "user" => out.push(Msg {
                 role: Role::User,
+                bash: None,
                 blocks,
                 usage: None,
                 entry_id: None,
@@ -2219,6 +2329,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
             }),
             "assistant" => out.push(Msg {
                 role: Role::Assistant,
+                bash: None,
                 blocks,
                 usage: usage.map(|u| UsageLine {
                     input: u.input,
@@ -2239,6 +2350,7 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
             }),
             "custom" => out.push(Msg {
                 role: Role::Custom,
+                bash: None,
                 blocks,
                 usage: None,
                 entry_id: None,
@@ -2250,6 +2362,32 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 custom_display: m["display"].as_bool().unwrap_or(true),
                 details: m["details"].as_object().map(|_| m["details"].clone()),
                 model: None,
+            }),
+            // `!` 执行记录（pi role:"bashExecution"；会话文件里的 message 条目。
+            // get_messages 快照不带它——磁盘重读是唯一来源）
+            "bashExecution" => out.push(Msg {
+                role: Role::Bash,
+                blocks: Vec::new(),
+                usage: None,
+                entry_id: None,
+                ts,
+                end_ts: None,
+                stop_reason: None,
+                error_message: None,
+                custom_type: None,
+                custom_display: true,
+                details: None,
+                model: None,
+                bash: Some(BashInfo {
+                    command: m["command"].as_str().unwrap_or("").to_string(),
+                    output: m["output"].as_str().unwrap_or("").to_string(),
+                    exit_code: m["exitCode"].as_i64(),
+                    cancelled: m["cancelled"].as_bool().unwrap_or(false),
+                    truncated: m["truncated"].as_bool().unwrap_or(false),
+                    full_output_path: m["fullOutputPath"].as_str().map(str::to_string),
+                    excluded: m["excludeFromContext"].as_bool().unwrap_or(false),
+                    running: false,
+                }),
             }),
             "toolResult" => {
                 let (text, images) = result_payload(&blocks);

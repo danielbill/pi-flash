@@ -84,8 +84,15 @@ enum Dialog {
     GitDiff { path: PathBuf, patch: String },
     SessionSearch { input: gpui::Entity<TextInput> },
     /// 004 projectManager 打开项目菜单：搜索框 + 打开文件夹 + 最近 30 天
-    /// 项目列表（列表数据在 `project_hits`，扫描完异步回填）。
-    ProjectPicker { input: gpui::Entity<TextInput> },
+    /// 项目列表（列表数据在 `project_hits`，扫描完异步回填）。`fresh` =
+    /// 新会话页来源：选项目落**全新草稿**（new_session_in，不恢复
+    /// last_open）；psp 来源保持切项目恢复上次会话的既定行为。`scroll`
+    /// 挂列表自绘滚动条（须跨帧复用，vlist.rs「血案」注释）。
+    ProjectPicker {
+        input: gpui::Entity<TextInput>,
+        fresh: bool,
+        scroll: gpui::ScrollHandle,
+    },
     /// composer 缩略图点击大图预览：直接持渲染源（Arc 指针拷贝，无索引
     /// 失效问题）
     ImagePreview { image: std::sync::Arc<gpui::Image> },
@@ -209,7 +216,24 @@ enum MenuKind {
 struct MenuItem {
     insert: String,
     desc: String,
+    /// @ 菜单条目的目录形态（决定插入文本 `@dir/` 不闭合 + 图标）
+    is_dir: bool,
 }
+
+/// @ 文件索引的每-cwd 缓存条目（pi-web file-index route.ts cache parity：
+/// TTL 10s、后台构建、上限 20 条）。`files` = git ls-files 原始清单；
+/// `entries` = 派生条目（目录 + 文件，浅层优先）——菜单打分输入。
+#[derive(Clone, Default)]
+struct AtIndexState {
+    built: Option<std::time::Instant>,
+    files: std::sync::Arc<Vec<String>>,
+    entries: std::sync::Arc<Vec<crate::services::at_file::FileEntry>>,
+    building: bool,
+}
+
+/// 缓存有效期（pi-web CACHE_TTL_MS）
+const AT_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+const AT_INDEX_MAX: usize = 20;
 
 struct Chat {
     focus: FocusHandle,
@@ -275,6 +299,8 @@ struct Chat {
     pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
+    /// 「自定义」档的插件选择面板（临时勾选 + 滚动位；确认才写 runtime）
+    plugin_picker: Option<crate::session::plugin_picker::PluginPicker>,
     /// window-coords of the pill that opened the menu — the popup anchors
     /// above THIS pill instead of a fixed window corner (v57 错位修复)
     pill_anchor: Option<gpui::Point<gpui::Pixels>>,
@@ -293,6 +319,8 @@ struct Chat {
     git_commit_input: gpui::Entity<TextInput>,
     // workspace / project files
     project_files: Vec<String>,
+    /// @ 文件索引缓存（key = cwd 字符串；031 输入面板）
+    at_index: std::collections::HashMap<String, AtIndexState>,
     expanded_dirs: HashSet<PathBuf>,
     /// 文件树展平缓存（services::file_tree::flatten；渲染只读这份，
     /// 重建点 = 展开/折叠、git 刷新、fs 事件、切项目）。
@@ -316,6 +344,9 @@ struct Chat {
     crumb_dd: gpui::Entity<crate::ui::DropdownState>,
     // TEMP 探针（023 调试）：外部改动检测 运行数/命中数
     ext_probe: (u32, u32),
+    /// 023：打开文件后待聚焦的编辑器（Zed 行为：开文件即聚焦；渲染帧
+    /// 编辑器实体就绪后消费）
+    pending_focus_file: Option<PathBuf>,
     // settings panel data
     mc_patterns: Option<Vec<String>>,
     mc_state: EnabledState,
@@ -375,9 +406,12 @@ struct Chat {
     content_view: ContentView,
     /// 浏览操作区的最后视图（Term/File）：文件树标签点击时恢复
     browse_last: ContentView,
-    /// 文件查看视图的滚动（滚动条渲染数据源）
-    file_scroll: gpui::ScrollHandle,
     file_scrollbar: gpui_component::scroll::ScrollbarState,
+    /// 文件视图块级虚拟化（抄 zed thread_view 的 list 架构）：md 预览与
+    /// 超限大文件只读回退共用（同一时刻只渲染其一），ListState 只建可视
+    /// 条目；path 记当前文件，换文件时 reset 归零滚动
+    file_view_list: gpui::ListState,
+    file_view_list_path: Option<PathBuf>,
     /// psp 会话列表滚动（滚动条数据源）
     psp_scroll: gpui::ScrollHandle,
     psp_sb_state: crate::ui::psp_scrollbar::PspScrollbarState,
@@ -434,6 +468,10 @@ pub(crate) enum FileConflict {
     Deleted,
 }
 
+/// CodeEditor 单文件行数上限（gpui-component 自述 50K 行支持边界），
+/// 超限回退只读预览（行级虚拟化列表），不喂给编辑器。
+pub(crate) const EDITOR_MAX_LINES: usize = 50_000;
+
 /// 文件 tab 缓冲区状态（023 文件编辑展示页）。
 ///
 /// `content` 是磁盘真值缓存（打开/保存/重载时更新）；`editor` 懒创建——
@@ -441,6 +479,10 @@ pub(crate) enum FileConflict {
 /// 推迟到渲染帧（content.rs file_view）里补。
 pub(crate) struct FileTab {
     pub(crate) content: String,
+    /// 超限大文件的行起点字节偏移表（len = 行数+1，末项 = content.len()，
+    /// Some ⇔ 行数 > EDITOR_MAX_LINES）。只读回退视图按它 O(1) 取行；
+    /// 超限文件不创建编辑器（80K 行实测 set_value 卡 15s 而编辑器永不显示）
+    pub(crate) big_lines: Option<std::rc::Rc<Vec<usize>>>,
     pub(crate) editor: Option<gpui::Entity<gpui_component::input::InputState>>,
     /// 编辑器值 != content（订阅 InputEvent::Change 时比较，set_value 也发
     /// Change 事件，盲标会假脏）
@@ -452,18 +494,52 @@ pub(crate) struct FileTab {
     pub(crate) disk_sig: Option<(std::time::SystemTime, u64)>,
     /// 磁盘内容已换新（自动重载路径），待渲染帧灌进 editor
     pub(crate) reload_pending: bool,
+    /// 最后一次用户编辑时刻（自动保存静默期判定）
+    pub(crate) last_edit: Option<std::time::Instant>,
+}
+
+/// 超限大文件的行起点字节偏移表（≤ EDITOR_MAX_LINES 行返回 None）。
+/// 末行无换行符也占一行；空文件按 0 行算（超限判定用，偏差无害）。
+fn big_lines_for(content: &str) -> Option<std::rc::Rc<Vec<usize>>> {
+    let mut count = 0usize;
+    for b in content.bytes() {
+        if b == b'\n' {
+            count += 1;
+        }
+    }
+    if !content.is_empty() && !content.ends_with('\n') {
+        count += 1;
+    }
+    if count <= EDITOR_MAX_LINES {
+        return None;
+    }
+    let mut offsets = Vec::with_capacity(count + 2);
+    offsets.push(0usize);
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'\n' {
+            offsets.push(i + 1);
+        }
+    }
+    if offsets.last() != Some(&content.len()) {
+        offsets.push(content.len());
+    }
+    Some(std::rc::Rc::new(offsets))
 }
 
 impl FileTab {
     pub(crate) fn from_disk(content: String) -> Self {
+        // 超限判定 + 行偏移表一次扫描搞定（4.6MB ≈ 10ms，一次性）
+        let big_lines = big_lines_for(&content);
         Self {
             content,
+            big_lines,
             editor: None,
             dirty: false,
             md_source: false,
             conflict: None,
             disk_sig: None,
             reload_pending: false,
+            last_edit: None,
         }
     }
 }
@@ -546,6 +622,7 @@ impl Chat {
             },
             git_add_del: (0, 0),
             project_files: Vec::new(),
+            at_index: std::collections::HashMap::new(),
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
@@ -596,6 +673,7 @@ impl Chat {
             bar_hover: None,
             input_focused: false,
             pill_menu: None,
+            plugin_picker: None,
             pill_anchor: None,
             ctx_tip_ring_hover: false,
             ctx_tip_panel_hover: false,
@@ -618,8 +696,9 @@ impl Chat {
             slp_hover: false,
             content_view: ContentView::Chat,
             browse_last: ContentView::Term,
-            file_scroll: gpui::ScrollHandle::new(),
             file_scrollbar: gpui_component::scroll::ScrollbarState::default(),
+            file_view_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
+            file_view_list_path: None,
             psp_scroll: gpui::ScrollHandle::new(),
             psp_sb_state: crate::ui::psp_scrollbar::PspScrollbarState::new(),
             nav_open: false,
@@ -642,6 +721,7 @@ impl Chat {
             crumb_menu_dir: None,
             crumb_dd: cx.new(|_| crate::ui::DropdownState::new()),
             ext_probe: (0, 0),
+            pending_focus_file: None,
             tool_sel: None,
             sysprompt_scroll: gpui::ScrollHandle::new(),
             decl_open: [false; 7],
@@ -917,6 +997,64 @@ impl Chat {
         cx.notify();
     }
 
+    /// set_input 的光标落点版（031 @ 补全：确认后光标停在插入 token 之后）。
+    /// cursor_byte = 新值的字节偏移。
+    pub(crate) fn set_input_with_cursor(
+        &mut self,
+        v: String,
+        cursor_byte: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.input = v;
+        self.menu_dismissed = false;
+        if let Some(c) = &self.composer {
+            let v = self.input.clone();
+            c.update(cx, |f, fcx| f.set_value_with_cursor(v, cursor_byte, fcx));
+        }
+        cx.notify();
+    }
+
+    /// @ 文件索引惰性构建（031 对齐 pi-web file-index：TTL 10s 内复用，
+    /// 过期/缺失在后台线程重建；旧清单在重建期间先顶上）。
+    pub(crate) fn ensure_at_index(&mut self, cx: &mut Context<Self>) {
+        let key = self.cwd.to_string_lossy().to_string();
+        let fresh = match self.at_index.get(&key) {
+            Some(e) => {
+                e.building || e.built.is_some_and(|t| t.elapsed() < AT_INDEX_TTL)
+            }
+            None => false,
+        };
+        if fresh {
+            return;
+        }
+        let entry = self.at_index.entry(key).or_default();
+        entry.building = true;
+        entry.built = None;
+        // 缓存上限（pi-web：超限整表清空——每 cwd 一份，重建很便宜）
+        if self.at_index.len() >= AT_INDEX_MAX {
+            self.at_index.clear();
+        }
+        let cwd = self.cwd.clone();
+        let key = cwd.to_string_lossy().to_string();
+        cx.spawn(async move |this, cx| {
+            let listing = cx
+                .background_executor()
+                .spawn(async move { crate::services::file_index::load_listing(&cwd) })
+                .await;
+            let _ = this.update(cx, |chat, cx| {
+                let entries = crate::services::at_file::build_entries_from_files(&listing.files);
+                // key = 构建时的 cwd（期间切项目也不会写错条目）
+                let e = chat.at_index.entry(key).or_default();
+                e.files = std::sync::Arc::new(listing.files);
+                e.entries = std::sync::Arc::new(entries);
+                e.built = Some(std::time::Instant::now());
+                e.building = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn with_active_editor<Act: FnOnce(&mut SessionRuntime, &mut Context<SessionRuntime>)>(
         &mut self,
         cx: &mut Context<Self>,
@@ -963,6 +1101,12 @@ impl Chat {
         cx.notify();
     }
 
+    /// `!` bash 执行中 Esc / 停止按钮（031）：rpc abort_bash
+    pub(crate) fn abort_bash(&mut self, cx: &mut Context<Self>) {
+        self.rt().update(cx, |r, cx| r.abort_bash(cx));
+        cx.notify();
+    }
+
     fn set_thinking_level(&mut self, key: &str, cx: &mut Context<Self>) {
         self.rt().update(cx, |r, cx| r.set_thinking_level(key, cx));
     }
@@ -987,7 +1131,9 @@ impl Chat {
             }
             r.refresh_anchors();
             r.refresh_state();
-            r.status = crate::i18n::tf("工具预设: {k} (会话进程已重绑)", &[("k", key.to_string())]);
+            // 状态行与胶囊同文案：自定义档带会话插件数（自定义(2)）
+            let label = r.tool_preset_label();
+            r.status = crate::i18n::tf("工具预设: {k} (会话进程已重绑)", &[("k", label)]);
             cx.emit(session::runtime::SessionEvent::Changed);
         });
         cx.notify();
@@ -1142,6 +1288,20 @@ impl Chat {
     }
 }
 
+impl Chat {
+    /// 当前文件 tab 编辑器的焦点句柄（持焦时 Some）——render 帧级焦点回收
+    /// 的白名单，与终端/对话框同级（023）。
+    fn file_editor_focus(&self, window: &gpui::Window, cx: &App) -> Option<gpui::FocusHandle> {
+        if self.content_view != ContentView::File {
+            return None;
+        }
+        let path = self.active_file_path()?;
+        let ed = self.file_cache.get(&path)?.editor.clone()?;
+        let handle = ed.read(cx).focus_handle(cx);
+        handle.is_focused(window).then_some(handle)
+    }
+}
+
 impl Focusable for Chat {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         // composer 就绪后，"聚焦聊天"即落到输入组件（真输入框：光标/
@@ -1182,7 +1342,7 @@ impl Render for Chat {
         // otherwise, which would steal it back every redraw)
         let dialog_input = match &self.dialog {
             Some(Dialog::ModelSelect { input, .. }) | Some(Dialog::SessionSearch { input })
-            | Some(Dialog::ProjectPicker { input }) => {
+            | Some(Dialog::ProjectPicker { input, .. }) => {
                 Some(input.clone())
             }
             _ => None,
@@ -1227,6 +1387,9 @@ impl Render for Chat {
             {
                 window.focus(&self.dialog_focus);
             }
+        } else if self.file_editor_focus(window, cx).is_some() {
+            // 023：文件编辑器持有焦点时不回收——否则点进去下一帧就被抢回
+            // composer，打字全失效（编辑器此前不在白名单）
         } else if !self.terminals.iter().any(|t| t.focus.is_focused(window)) {
             window.focus(&self.focus_handle(cx));
         }
@@ -1259,11 +1422,13 @@ impl Render for Chat {
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
                 .collect(),
                 PillMenu::Tools => [
-                    ("configured", tr("取自 settings.json 的 defaultTools"), preset_key == "configured"),
                     ("chat-only", tr("仅聊天"), preset_key == "chat-only"),
                     ("read-only", tr("4 个只读内置工具"), preset_key == "read-only"),
                     ("default", tr("4 个内置工具"), preset_key == "default"),
-                    ("full", tr("全部内置工具"), preset_key == "full"),
+                    // full：内置 7 件 + 精确集（-ne + 个人扩展/内置扩展，插件零注入）
+                    ("full", tr("全部内置工具（不装任何插件）"), preset_key == "full"),
+                    // 自定义 = full + 本会话选中插件（默认档；清单按会话保存）
+                    ("custom", tr("自定义"), preset_key == "custom"),
                 ]
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
@@ -1317,7 +1482,12 @@ impl Render for Chat {
                                     gpui::FontWeight::NORMAL
                                 })
                                 .text_color(rgb(t.text))
-                                .child(SharedString::from(key)),
+                                // 自定义档显示中文名（其余档沿用内部键）
+                                .child(SharedString::from(if key == "custom" {
+                                    tr("自定义").to_string()
+                                } else {
+                                    key
+                                })),
                         )
                         .child(
                             div()
@@ -1512,6 +1682,19 @@ impl Render for Chat {
             .on_action(cx.listener(|_, _: &ComposerPaste, window, cx| {
                 window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
             }))
+            // 023：同款兜底 ×3——composer 绑定在 "Input" 上下文全局劫持了
+            // up/down/tab（同深度后注册者优先），焦点在文件编辑器时这四个
+            // 动作无人处理=按键全死；bubble 走到根=非 composer，重派发组件
+            // 原动作（composer 内层有更近 handler，不会到这里）
+            .on_action(cx.listener(|_, _: &ComposerUp, window, cx| {
+                window.dispatch_action(Box::new(gpui_component::input::MoveUp), cx);
+            }))
+            .on_action(cx.listener(|_, _: &ComposerDown, window, cx| {
+                window.dispatch_action(Box::new(gpui_component::input::MoveDown), cx);
+            }))
+            .on_action(cx.listener(|_, _: &ComposerTab, window, cx| {
+                window.dispatch_action(Box::new(gpui_component::input::IndentInline), cx);
+            }))
             .child(body);
 
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
@@ -1524,6 +1707,11 @@ impl Render for Chat {
         root = root.child(function_panel::psp_overlays::psp_overlays(self, cx));
         // toolbar pill popup menus
         if let Some(el) = pill_menu_el {
+            root = root.child(el);
+        }
+        // 插件勾选面板：**独立于工具菜单**。千万别再塞回上面那个 if-let ——
+        // 插件按钮点击时 pill_menu 是 None，面板会整块不渲染（"点不开"的根因）。
+        if let Some(el) = session::plugin_picker::view(self, &weak_for_dialog, window) {
             root = root.child(el);
         }
         // status toast（v54: statusbar 无状态文本，改瞬时提示）

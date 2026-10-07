@@ -55,6 +55,11 @@ pub fn session_recents_file() -> Option<PathBuf> {
     file("session-recents.json")
 }
 
+/// `~/.pi-flash/session-ext.json` — 会话级插件清单（自定义档：每个对话保存一份）。
+pub fn session_ext_file() -> Option<PathBuf> {
+    file("session-ext.json")
+}
+
 /// `~/.pi-flash/catalog-cache.json` — 模型目录 + 扩展命令缓存（010-启动.md §4.1）。
 pub fn catalog_cache_file() -> Option<PathBuf> {
     file("catalog-cache.json")

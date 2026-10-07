@@ -58,6 +58,14 @@ pub mod method {
     /// 004 打开项目菜单（psp icon / 012 操作栏同源入口；UI 测试用）
     pub const PROJECT_PICKER_OPEN: &str = "project.picker_open";
     pub const INPUT_KEYS: &str = "input.keys";
+    pub const INPUT_FOCUS: &str = "input.focus";
+    /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
+    pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
+    /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
+    pub const PLUGIN_PICKER_OPEN: &str = "plugin_picker.open";
+    pub const PLUGIN_PICKER_TOGGLE: &str = "plugin_picker.toggle";
+    pub const PLUGIN_PICKER_CONFIRM: &str = "plugin_picker.confirm";
+    pub const PLUGIN_PICKER_CANCEL: &str = "plugin_picker.cancel";
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +272,21 @@ pub fn read_instances() -> Vec<(InstanceInfo, PathBuf)> {
     match crate::paths::dir() {
         Some(base) => read_instances_in(&base),
         None => Vec::new(),
+    }
+}
+
+/// 探活判死：**只有明确没人监听（ConnectionRefused）才判死**，其余失败
+/// （超时、Winsock 起不来、防火墙…）一律保守认为活着。
+///
+/// 为什么这么严：token 只存在登记文件里，删了登记 = 实例永久失联（只能
+/// 杀进程重启）。实测踩坑：探活方脚本环境缺 `SystemRoot` 时 Winsock 报
+/// 错，实例其实活得好好的——「顺手清理」误杀了登记。误留死文件的代价
+/// （discover 跳过它试下一个）远小于误删活登记。
+pub fn port_is_definitely_dead(addr: &str) -> bool {
+    let Ok(a) = addr.parse() else { return true }; // 地址本身解析不了 = 登记坏
+    match std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300)) {
+        Ok(_) => false,
+        Err(e) => e.kind() == std::io::ErrorKind::ConnectionRefused,
     }
 }
 

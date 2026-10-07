@@ -185,7 +185,7 @@ fn action_bar(
                 .text_color(rgb(t.text_muted))
                 .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = w_open.update(cx, |c, cx| c.open_project_picker(cx));
+                    let _ = w_open.update(cx, |c, cx| c.open_project_picker(true, cx));
                 })
                 .child(icon("folder", 16., t.text_muted))
                 .child(project),

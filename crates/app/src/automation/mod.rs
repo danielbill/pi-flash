@@ -64,9 +64,11 @@ pub fn start(cx: &mut App, window: AnyWindowHandle, chat: WeakEntity<Chat>, spec
         }
     })
     .detach();
+    // token 打进启动日志：登记文件万一丢失/被误清，--addr/--token 还能救
     eprintln!(
-        "pi-flash automation: 127.0.0.1:{port} pid={} file={}",
+        "pi-flash automation: 127.0.0.1:{port} pid={} token={} file={}",
         info.pid,
+        info.token,
         file.as_ref().map(|p| p.display().to_string()).unwrap_or_default()
     );
     Ok(())
@@ -186,21 +188,13 @@ fn make_token() -> String {
     format!("{a:016x}{:016x}", h2.finish())
 }
 
-/// 清掉连不上的死登记（进程崩溃残留；活实例跳过）。
+/// 清掉明确死亡的登记（进程崩溃残留）。判死规则同 CLI：只有明确拒绝
+/// 连接（ConnectionRefused）才删——其余失败保守保留（token 只在登记里，
+/// 误删 = 实例失联）。
 fn prune_stale_instances() {
     for (info, file) in automation::read_instances() {
-        let addr = format!("127.0.0.1:{}", info.port);
-        match addr.parse() {
-            Ok(a) => {
-                if std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300))
-                    .is_err()
-                {
-                    let _ = std::fs::remove_file(&file);
-                }
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(&file);
-            }
+        if automation::port_is_definitely_dead(&format!("127.0.0.1:{}", info.port)) {
+            let _ = std::fs::remove_file(&file);
         }
     }
 }

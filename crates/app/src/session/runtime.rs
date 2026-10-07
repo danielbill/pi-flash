@@ -23,7 +23,7 @@ use pi_link::protocol::{
 
 use crate::agent_session::AgentSession;
 use crate::session::chat_list::ChatList;
-use crate::session::messages::{Msg, Role, UsageLine, merge_tool_result, msgs_from_tail, result_payload};
+use crate::session::messages::{BashInfo, Msg, Role, UsageLine, merge_tool_result, msgs_from_tail, result_payload};
 use pi_link::sessions::read_leaf_messages;
 
 /// no cap for the disk-side leaf-chain rebuild: the repair must be longer
@@ -151,6 +151,17 @@ pub(crate) struct SessionRuntime {
     /// tools preset id (configured/chat-only/read-only/default/full) —
     /// applied at spawn via CLI flags (RPC has no live tool switching)
     pub tools_preset: String,
+    /// 「自定义」档的会话插件集（`entry_source()` 字符串 = `-e` 参数）。
+    /// 只在本档 spawn 时使用；切别的档不清空，切回来还是上次的选择。
+    pub ext_sources: Vec<String>,
+
+    // ---- `!` shell 命令（031）----
+    /// rpc bash 在飞（pi isBashRunning 的客户端镜像；期间再发 bash 会被
+    /// pi 拒绝，这里提前拦）
+    pub bash_running: bool,
+    /// bash response 关联的乐观消息下标（执行中增量就地追加；快照重建后
+    /// 失效 → finalize 时校验角色，失配就补一张完成卡）
+    pending_bash: Option<usize>,
 
     /// last user-visible activity (idle recycle)
     pub last_activity: std::time::Instant,
@@ -169,6 +180,11 @@ pub(crate) struct SessionRuntime {
 
 impl SessionRuntime {
     pub(crate) fn new(key: String, cwd: PathBuf, file: Option<PathBuf>) -> Self {
+        // 会话级插件清单（034：每个对话保存一份；重启从
+        // ~/.pi-flash/session-ext.json 恢复，草稿 key 重启后自然失效）
+        let ext_sources = pi_link::session_ext::store_path()
+            .map(|p| pi_link::session_ext::read_for(&p, &key))
+            .unwrap_or_default();
         Self {
             key,
             cwd,
@@ -207,9 +223,12 @@ impl SessionRuntime {
             history_ix: None,
             thinking_override: None,
             pending_model: None,
-            // pi-web CONFIGURED_TOOL_PRESET: send no override, let pi resolve
-            // settings.json defaultTools like the CLI does
-            tools_preset: "configured".into(),
+            // 默认档 = 自定义（full 内置 + 会话插件清单）；旧 pi-web 的
+            // "configured"（什么都不发、让 pi 自己算）已按 034 决定移除
+            tools_preset: "custom".into(),
+            ext_sources,
+            bash_running: false,
+            pending_bash: None,
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
 
@@ -243,9 +262,20 @@ impl SessionRuntime {
                 extra.push("--tools".into());
                 extra.push("read,bash,edit,write".into());
             }
+            // full：内置 7 件（--tools）+ 精确集（-ne + 个人扩展 + 内置扩展）
+            // ⇒ 插件一个不装 ⇒ 系统提示词零插件注入（034 §1.2）
             "full" => {
                 extra.push("--tools".into());
                 extra.push("bash,read,edit,write,grep,find,ls".into());
+                extra.extend(crate::session::tools_recipe::full_args(&self.cwd));
+            }
+            // 自定义（原 full+plugins）：不发 --tools（注册级 allowlist 会把
+            // 插件工具挡在注册之外），走 -ne + 逐条 -e + full_activate.ts
+            "custom" => {
+                extra.extend(crate::session::tools_recipe::full_plugin_args(
+                    &self.ext_sources,
+                    &self.cwd,
+                ));
             }
             _ => {}
         }
@@ -589,6 +619,21 @@ impl SessionRuntime {
                         self.status =
                             format!("compact failed: {}", error.unwrap_or_default());
                     }
+                } else if command == "bash" {
+                    // `!` shell 命令最终结果（流式增量已就地追加；这里回填
+                    // 退出码/截断/取消并点亮完成态）。失败响应（会话忙被 pi
+                    // 拒等）同样要收尾乐观卡片，否则「执行中」永不消失。
+                    let result = if success {
+                        data.map(|d| pi_link::protocol::BashResult::parse(&d))
+                            .unwrap_or_default()
+                    } else {
+                        pi_link::protocol::BashResult {
+                            output: error.clone().unwrap_or_default(),
+                            exit_code: Some(1),
+                            ..Default::default()
+                        }
+                    };
+                    self.finalize_bash(result, cx);
                 } else if success {
                     self.status = format!("{command} ok");
                 } else {
@@ -630,6 +675,7 @@ impl SessionRuntime {
                         } else {
                             self.messages.push(Msg {
                                 role: Role::User,
+                                bash: None,
                                 blocks,
                                 usage: None,
                                 entry_id: None,
@@ -651,6 +697,7 @@ impl SessionRuntime {
                         self.streaming_content = false;
                         self.messages.push(Msg {
                             role: Role::Assistant,
+                            bash: None,
                             blocks,
                             usage: None,
                             entry_id: None,
@@ -682,6 +729,7 @@ impl SessionRuntime {
                         let _ = &details;
                         self.messages.push(Msg {
                             role: Role::Custom,
+                            bash: None,
                             blocks,
                             usage: None,
                             entry_id: None,
@@ -895,6 +943,18 @@ impl SessionRuntime {
                 // agent may have written files: refresh git status
                             }
             Event::ExtensionUi(req) => cx.emit(SessionEvent::ExtUi(req)),
+            // `!` 执行的流式输出增量：就地追加进乐观卡片（pi-web 不消费这个
+            // 事件、靠会话重载——这里直接流式渲染，严格更好）
+            Event::BashExecutionUpdate { delta, .. } => {
+                if let Some(ix) = self.pending_bash {
+                    if let Some(m) = self.messages.get_mut(ix) {
+                        if let Some(b) = m.bash.as_mut() {
+                            b.output.push_str(&delta);
+                        }
+                    }
+                    self.notify_list(cx);
+                }
+            }
             Event::Unparsed(_) => {}
         }
         // 用户消息到达（发送回显升级 / steer 推入）→ 翻页：该消息钉视口
@@ -1039,6 +1099,7 @@ impl SessionRuntime {
                 // reset 后 Bottom 对齐保持贴底；清屏只属活事件路径
                 self.messages.push(Msg {
                     role: Role::User,
+                    bash: None,
                     blocks,
                     usage: None,
                     entry_id,
@@ -1055,6 +1116,7 @@ impl SessionRuntime {
             "assistant" => {
                 self.messages.push(Msg {
                     role: Role::Assistant,
+                    bash: None,
                     blocks,
                     usage: usage.map(|u| UsageLine {
                         input: u.input,
@@ -1086,6 +1148,7 @@ impl SessionRuntime {
             "custom" => {
                 self.messages.push(Msg {
                     role: Role::Custom,
+                    bash: None,
                     blocks,
                     usage: None,
                     entry_id: None,
@@ -1099,6 +1162,34 @@ impl SessionRuntime {
                     model: None,
                 });
             }
+            // `!` 执行记录：get_messages 快照（agent 投影）不携带，快照里
+            // 出现只可能是未来 pi 行为——照磁盘口径转成 Role::Bash
+            "bashExecution" => {
+                self.messages.push(Msg {
+                    role: Role::Bash,
+                    blocks: Vec::new(),
+                    usage: None,
+                    entry_id: None,
+                    ts,
+                    end_ts: None,
+                    stop_reason: None,
+                    error_message: None,
+                    custom_type: None,
+                    custom_display: true,
+                    details: None,
+                    model: None,
+                    bash: Some(BashInfo {
+                        command: msg["command"].as_str().unwrap_or("").to_string(),
+                        output: msg["output"].as_str().unwrap_or("").to_string(),
+                        exit_code: msg["exitCode"].as_i64(),
+                        cancelled: msg["cancelled"].as_bool().unwrap_or(false),
+                        truncated: msg["truncated"].as_bool().unwrap_or(false),
+                        full_output_path: msg["fullOutputPath"].as_str().map(str::to_string),
+                        excluded: msg["excludeFromContext"].as_bool().unwrap_or(false),
+                        running: false,
+                    }),
+                });
+            }
             _ => {}
         }
         self.notify_list(cx);
@@ -1109,6 +1200,7 @@ impl SessionRuntime {
             self.messages
                 .push(Msg {
                     role: Role::Assistant,
+                    bash: None,
                     blocks: Vec::new(),
                     usage: None,
                     entry_id: None,
@@ -1233,6 +1325,8 @@ impl SessionRuntime {
                         .count();
                 }
                 Role::Custom => {}
+                // `!` shell 卡不是 assistant 消息，不计统计（034 自洽口径）
+                Role::Bash => {}
             }
         }
         // turns = 用户消息锚点（ChatMinimap.tsx parity：每轮=用户消息 +
@@ -1330,6 +1424,7 @@ impl SessionRuntime {
         self.pending_echo = Some(text.clone());
         self.messages.push(Msg {
             role: Role::User,
+            bash: None,
             blocks: vec![Block::Text { content_index: 0, text }],
             usage: None,
             entry_id: None,
@@ -1430,6 +1525,144 @@ impl SessionRuntime {
         }
     }
 
+    /// `!` / `!!` shell 命令发送（031 对齐 pi-web executeBash）：立即执行、
+    /// 不进模型；乐观卡片流式回显输出，response 回填终态。发出后
+    /// `bash_running` = true（调用方据此清空输入）。
+    fn send_bash(&mut self, text: &str, cx: &mut Context<Self>) {
+        let trimmed = text.trim_start();
+        let excluded = trimmed.starts_with("!!");
+        let command = trimmed[if excluded { 2 } else { 1 }..].trim();
+        if command.is_empty() {
+            self.status = tr("命令为空：! 后面接 shell 命令").to_string();
+            cx.notify();
+            return;
+        }
+        // pi 侧拒绝条件（rpc-mode bash：busy 即 error）——提前拦，输入保留
+        if self.bash_running || self.agent_running || self.compacting {
+            self.status = tr("会话忙，无法执行 shell 命令").to_string();
+            cx.notify();
+            return;
+        }
+        let Some(session) = &self.agent.session else {
+            self.status = tr("未连接").into();
+            cx.notify();
+            return;
+        };
+        let cmd = Command::Bash {
+            command: command.to_string(),
+            exclude_from_context: excluded,
+        };
+        match session.send(&cmd) {
+            Ok(_) => {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .ok();
+                self.pending_bash = Some(self.messages.len());
+                self.messages.push(Msg {
+                    role: Role::Bash,
+                    bash: Some(BashInfo {
+                        command: command.to_string(),
+                        excluded,
+                        running: true,
+                        ..Default::default()
+                    }),
+                    blocks: Vec::new(),
+                    usage: None,
+                    entry_id: None,
+                    ts,
+                    end_ts: None,
+                    stop_reason: None,
+                    error_message: None,
+                    custom_type: None,
+                    custom_display: true,
+                    details: None,
+                    model: None,
+                });
+                self.bash_running = true;
+                self.status = if excluded {
+                    "shell（输出仅本地）".into()
+                } else {
+                    "shell（输出发给模型）".into()
+                };
+                self.notify_list(cx);
+            }
+            Err(e) => self.status = e,
+        }
+    }
+
+    /// bash response 回填终态（pi BashResult）。乐观卡片按 pending_bash 定位，
+    /// 索引失效（快照重建/换档重读）时补一张独立完成卡。
+    fn finalize_bash(&mut self, result: pi_link::protocol::BashResult, cx: &mut Context<Self>) {
+        self.bash_running = false;
+        let end_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .ok();
+        let applied = self
+            .pending_bash
+            .take()
+            .and_then(|ix| self.messages.get_mut(ix))
+            .filter(|m| m.role == Role::Bash)
+            .map(|m| {
+                if let Some(b) = m.bash.as_mut() {
+                    b.output = result.output.clone();
+                    b.exit_code = result.exit_code;
+                    b.cancelled = result.cancelled;
+                    b.truncated = result.truncated;
+                    b.full_output_path = result.full_output_path.clone();
+                    b.running = false;
+                }
+                m.end_ts = end_ts;
+            })
+            .is_some();
+        if !applied {
+            // 卡片丢了：补一张完整卡（命令名无从找回时留空——正常链路
+            // pending_bash 不会失效）
+            self.messages.push(Msg {
+                role: Role::Bash,
+                bash: Some(BashInfo {
+                    output: result.output,
+                    exit_code: result.exit_code,
+                    cancelled: result.cancelled,
+                    truncated: result.truncated,
+                    full_output_path: result.full_output_path,
+                    ..Default::default()
+                }),
+                blocks: Vec::new(),
+                usage: None,
+                entry_id: None,
+                ts: None,
+                end_ts,
+                stop_reason: None,
+                error_message: None,
+                custom_type: None,
+                custom_display: true,
+                details: None,
+                model: None,
+            });
+        }
+        self.status = if result.cancelled {
+            "shell 中止".into()
+        } else {
+            match result.exit_code {
+                Some(0) => "shell 完成".into(),
+                Some(c) => format!("shell 退出码 {c}"),
+                None => "shell 完成".into(),
+            }
+        };
+        self.notify_list(cx);
+    }
+
+    /// Esc / 停止按钮的 bash 分支（rpc abort_bash；pi 会把已启动的命令
+    /// 取消掉，response 带 cancelled=true 收尾卡片）
+    pub(crate) fn abort_bash(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.agent.session {
+            let _ = session.send(&Command::AbortBash);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn send_input(&mut self, cx: &mut Context<Self>) {
         // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
         if self.compacting {
@@ -1466,6 +1699,21 @@ impl SessionRuntime {
             cx.notify();
             return;
         };
+        // `!` / `!!` shell 命令（031）：不经 prompt/steer，走 rpc bash。
+        // 带图片时 ! 只当普通文本（pi-web bashMode 需无附件）。
+        if self.pending_images.is_empty() && text.starts_with('!') {
+            self.send_bash(&text, cx);
+            if self.bash_running {
+                // 与普通消息同口径：进 ↑ 历史、清输入
+                if self.history.last().map(|h| h != &text).unwrap_or(true) {
+                    self.history.push(text.clone());
+                }
+                self.history_ix = None;
+                self.input.clear();
+            }
+            cx.notify();
+            return;
+        }
         // 运行中发消息 = steer（事件驱动 agent_running 优先：快照 is_streaming
         // 一轮内恒 false，会让「引导」变成新 prompt）
         let streaming = self.agent_running || self.state.as_ref().is_some_and(|s| s.is_streaming);
@@ -1572,7 +1820,14 @@ impl SessionRuntime {
 
     pub(crate) fn tool_preset_label(&self) -> String {
         let key = self.tool_preset_key();
-        if key.is_empty() { "configured".into() } else { key.to_string() }
+        if key.is_empty() {
+            return "configured".into();
+        }
+        if key == "custom" {
+            // 胶囊标签带会话插件数（数字实时来自 ext_sources）
+            return format!("{}({})", crate::i18n::tr("自定义"), self.ext_sources.len());
+        }
+        key.to_string()
     }
 
 }

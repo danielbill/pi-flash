@@ -21,7 +21,9 @@ impl Chat {
     /// 操作栏）：搜索框 + 【打开文件夹】 + 最近 30 天活动项目列表。列表后台
     /// 扫描回填（进程级持久 Scanner，索引命中不重读盘）；「从某项目新建会话
     /// 打开」的默认选中在渲染期对 same_ws 打勾，见 render_project_picker。
-    pub(crate) fn open_project_picker(&mut self, cx: &mut Context<Self>) {
+    /// `fresh`（新会话页来源）决定选项目后的落点：全新草稿 vs 恢复上次
+    /// 会话（见 Dialog::ProjectPicker 注释）。
+    pub(crate) fn open_project_picker(&mut self, fresh: bool, cx: &mut Context<Self>) {
         let weak = cx.weak_entity();
         let weak_esc = weak.clone();
         let input = cx.new(|cx| {
@@ -42,7 +44,11 @@ impl Chat {
         });
         self.project_hits.clear();
         self.project_filter.clear();
-        self.dialog = Some(Dialog::ProjectPicker { input });
+        self.dialog = Some(Dialog::ProjectPicker {
+            input,
+            fresh,
+            scroll: gpui::ScrollHandle::new(),
+        });
         cx.notify();
         // 后台聚合：全量会话按 cwd 聚合 → 30 天窗口（004 v2）→ 字母序。
         // 候选上限给足余量（索引命中，无盘读）；超深处项目极少见。

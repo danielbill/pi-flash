@@ -10,11 +10,15 @@ pub(crate) mod input;
 pub(crate) mod messages;
 pub(crate) mod new_session;
 pub(crate) mod runtime;
+pub(crate) mod plugin_picker;
+pub(crate) mod tools_recipe;
 
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, px, relative, rgb};
 use pi_link::protocol::Block;
 
-use self::messages::{Role, compute_meta, render_assistant_turn, render_custom_msg, render_msg};
+use self::messages::{
+    Role, compute_meta, render_assistant_turn, render_bash_msg, render_custom_msg, render_msg,
+};
 use crate::ext_ui::render_ext_widget;
 
 use crate::Chat;
@@ -203,6 +207,18 @@ fn session_list(
                         .child(render_custom_msg(m, ix, t, &rt_view.collapsed, &weak)),
                 )
                 .into_any_element(),
+            // `!` shell 命令卡（031）：独立消息行，不进轮分组
+            Some(m) if m.role == Role::Bash => div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(920.))
+                        .child(render_bash_msg(m, ix, t, &rt_view.collapsed, &weak)),
+                )
+                .into_any_element(),
             Some(m) if m.role == Role::User => div()
                 .w_full()
                 .flex()
@@ -238,7 +254,7 @@ fn session_list(
                 }
                 let end = rt_view.messages[ix..]
                     .iter()
-                    .position(|mm| matches!(mm.role, Role::User | Role::Custom))
+                    .position(|mm| matches!(mm.role, Role::User | Role::Custom | Role::Bash))
                     .map(|off| ix + off)
                     .unwrap_or(rt_view.messages.len());
                 let turn: Vec<&pi_link::protocol::Block> = Vec::new();

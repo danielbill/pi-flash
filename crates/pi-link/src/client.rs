@@ -83,7 +83,12 @@ pub fn spawn(
     // case: system pi 1.0's auto-router.ts fatals a 0.87.1 RPC). Keep the
     // isolation even when pins coincide. (pi hint: "pi -ne")
     cmd.arg(&cli);
-    if !load_extensions {
+    // full+plugins 档自己在 extra args 里带 -ne（精确插件集）；全局隔离
+    // 开关也开时不要发第二份（重复无害——D 组实测——但日志干净些）
+    let extra_has_ne = extra_args
+        .iter()
+        .any(|a| *a == "-ne" || *a == "--no-extensions");
+    if !load_extensions && !extra_has_ne {
         cmd.arg("-ne");
     }
     cmd.args(["--mode", "rpc"]).args(extra_args)

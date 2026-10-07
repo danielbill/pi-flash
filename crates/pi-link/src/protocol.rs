@@ -67,6 +67,18 @@ pub enum Command {
         confirmed: Option<bool>,
         cancelled: bool,
     },
+    /// Run a shell command on the session cwd (rpc `bash`; composer 的 `!` /
+    /// `!!` 前缀)。pi 立即执行并把结果记成 `role:"bashExecution"` 消息：
+    /// 流式增量走 `bash_execution_update` 事件，最终结果由本命令的 response
+    /// 携带；输出进模型上下文的时机是**下一次 prompt**（pi convertToLlm 折叠
+    /// 成 user 文本）。`exclude_from_context` = `!!`——会话文件里有记录，
+    /// 模型看不到。
+    Bash {
+        command: String,
+        exclude_from_context: bool,
+    },
+    /// Abort the running bash command (rpc `abort_bash`)
+    AbortBash,
 }
 
 impl Command {
@@ -92,6 +104,8 @@ impl Command {
             Command::Fork { .. } => "fork",
             Command::Clone => "clone",
             Command::ExtensionUiResponse { .. } => "extension_ui_response",
+            Command::Bash { .. } => "bash",
+            Command::AbortBash => "abort_bash",
         }
     }
 
@@ -164,6 +178,18 @@ impl Command {
             Command::Fork { entry_id } => {
                 json!({ "type": self.kind(), "entryId": entry_id })
             }
+            // rpc `bash`：excludeFromContext 只在 true 时发（false 是 pi 侧默认）
+            Command::Bash {
+                command,
+                exclude_from_context,
+            } => {
+                let mut v = json!({ "type": self.kind(), "command": command });
+                if *exclude_from_context {
+                    v["excludeFromContext"] = json!(true);
+                }
+                v
+            }
+            Command::AbortBash => json!({ "type": self.kind() }),
             // handled by the early return above (request-id correlation)
             Command::ExtensionUiResponse { .. } => unreachable!(),
         };
@@ -527,6 +553,12 @@ pub enum Event {
     AgentEnd { will_retry: bool },
     /// pi will not continue automatically (retries/queue drained).
     AgentSettled,
+    /// `bash_execution_update`（rpc `bash` 执行中的流式输出增量；id 关联发起
+    /// 的命令，delta 追加到已显示的输出尾部）
+    BashExecutionUpdate {
+        id: Option<String>,
+        delta: String,
+    },
     /// Extension UI protocol records (dialogs/widgets/status/notify).
     ExtensionUi(ExtensionUiRequest),
     Unparsed(Value),
@@ -624,6 +656,32 @@ pub fn parse_tree(data: &Value) -> (Vec<TreeNode>, Option<String>) {
     (tree, leaf_id)
 }
 
+
+/// Final result of the rpc `bash` command (pi `BashResult`, bash-executor.d.ts).
+/// Streaming deltas arrive earlier as [`Event::BashExecutionUpdate`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BashResult {
+    /// Combined stdout+stderr output (sanitized, possibly truncated)
+    pub output: String,
+    /// Process exit code (None if killed/cancelled)
+    pub exit_code: Option<i64>,
+    pub cancelled: bool,
+    pub truncated: bool,
+    /// Temp file with the full output (set when output exceeded pi's cap)
+    pub full_output_path: Option<String>,
+}
+
+impl BashResult {
+    pub fn parse(v: &Value) -> BashResult {
+        BashResult {
+            output: v["output"].as_str().unwrap_or("").to_string(),
+            exit_code: v["exitCode"].as_i64(),
+            cancelled: v["cancelled"].as_bool().unwrap_or(false),
+            truncated: v["truncated"].as_bool().unwrap_or(false),
+            full_output_path: v["fullOutputPath"].as_str().map(str::to_string),
+        }
+    }
+}
 
 /// One session entry as `get_entries` returns it: flat, parentId-linked.
 /// Only the fields the client acts on are lifted out (fork anchors need
@@ -862,6 +920,10 @@ pub fn parse_record(v: &Value) -> Event {
             will_retry: v["willRetry"].as_bool().unwrap_or(false),
         },
         Some("agent_settled") => Event::AgentSettled,
+        Some("bash_execution_update") => Event::BashExecutionUpdate {
+            id: v["id"].as_str().map(str::to_string),
+            delta: v["delta"].as_str().unwrap_or("").to_string(),
+        },
         Some("extension_ui_request") => {
             Event::ExtensionUi(ExtensionUiRequest::parse(v).unwrap_or(ExtensionUiRequest {
                 id: String::new(),
@@ -1503,5 +1565,67 @@ mod tests {
     #[test]
     fn garbage_line_is_none() {
         assert!(parse_line("\x1b]0;pi title\x07").is_none());
+    }
+
+    // rpc `bash`：excludeFromContext=true 才带字段（pi 侧 ?? false 默认）
+    #[test]
+    fn bash_record_shape() {
+        let c = Command::Bash { command: "ls -la".into(), exclude_from_context: false };
+        assert_eq!(c.to_record("b1"), json!({"id":"b1","type":"bash","command":"ls -la"}));
+        let c = Command::Bash { command: "ls".into(), exclude_from_context: true };
+        assert_eq!(
+            c.to_record("b2"),
+            json!({"id":"b2","type":"bash","command":"ls","excludeFromContext":true})
+        );
+        assert_eq!(Command::AbortBash.to_record("b3"), json!({"id":"b3","type":"abort_bash"}));
+    }
+
+    // bash response data = BashResult（rpc-commands.md bash 节实测形态）
+    #[test]
+    fn bash_response_parses_bash_result() {
+        let e = parse_line(
+            r#"{"id":"b1","type":"response","command":"bash","success":true,"data":{"output":"file1\nfile2\n","exitCode":0,"cancelled":false,"truncated":false}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::Response { command, data, .. } => {
+                assert_eq!(command, "bash");
+                let r = BashResult::parse(&data.expect("data"));
+                assert_eq!(r.output, "file1\nfile2\n");
+                assert_eq!(r.exit_code, Some(0));
+                assert!(!r.cancelled && !r.truncated);
+                assert!(r.full_output_path.is_none());
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+        let e = parse_line(
+            r#"{"type":"response","command":"bash","success":true,"data":{"output":"partial","exitCode":null,"cancelled":true,"truncated":true,"fullOutputPath":"/tmp/pi-bash-x.log"}}"#,
+        )
+        .unwrap();
+        match e {
+            Event::Response { data, .. } => {
+                let r = BashResult::parse(&data.expect("data"));
+                assert_eq!(r.exit_code, None);
+                assert!(r.cancelled && r.truncated);
+                assert_eq!(r.full_output_path.as_deref(), Some("/tmp/pi-bash-x.log"));
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
+    }
+
+    // 执行中的流式输出增量（agent_session._emit 原样转发，json-event 不改写）
+    #[test]
+    fn bash_execution_update_event() {
+        let e = parse_line(
+            r#"{"type":"bash_execution_update","id":"req-9","delta":"hello "}"#,
+        )
+        .unwrap();
+        match e {
+            Event::BashExecutionUpdate { id, delta } => {
+                assert_eq!(id.as_deref(), Some("req-9"));
+                assert_eq!(delta, "hello ");
+            }
+            other => panic!("wrong event: {other:?}"),
+        }
     }
 }

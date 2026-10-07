@@ -201,6 +201,9 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
+    // 自动保存开关（设置-其他）
+    ("自动保存", "自動儲存", "Auto save"),
+    ("编辑停顿约 1 秒后自动写入磁盘", "編輯停頓約 1 秒後自動寫入磁碟", "Write to disk automatically after ~1s pause in editing"),
     // 文件树 git 标识开关（设置-其他）
     ("文件树 Git 标识", "檔案樹 Git 標識", "File tree Git markers"),
     ("文件树显示 git 修改徽标与目录变更点", "檔案樹顯示 git 修改徽標與目錄變更點", "Show git modification badges and directory change dots in the file tree"),
@@ -269,6 +272,32 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("4 个只读内置工具", "4 個只讀內置工具", "4 read-only built-in tools"),
     ("4 个内置工具", "4 個內置工具", "4 built-in tools"),
     ("全部内置工具", "全部內置工具", "All built-in tools"),
+    // full+plugin 会话自定义插件（031）
+    ("全部内置工具 + 自定义插件", "全部內置工具 + 自訂外掛", "All built-in tools + custom plugins"),
+    ("选择并切换", "選擇並切換", "Select and switch"),
+    ("已禁用", "已停用", "Disabled"),
+    ("仅本会话生效，不改动设置页的全局插件开关", "僅本會話生效，不改動設定頁的全域外掛開關", "Applies to this session only; the global plugin switches in Settings stay untouched"),
+    // 034 档位改版：full（不装插件）+ 自定义（默认档）
+    ("自定义", "自訂", "Custom"),
+    ("全部内置工具（不装任何插件）", "全部內置工具（不裝任何外掛）", "All built-in tools (no plugins loaded)"),
+    ("本会话插件清单", "本會話外掛清單", "This conversation's plugin list"),
+    ("对话中途无法修改自定义", "對話中途無法修改自訂", "The custom plugin list is fixed once the conversation starts"),
+    ("插件清单保存失败: {e}", "外掛清單儲存失敗: {e}", "Failed to save the plugin list: {e}"),
+    // 034 插件按钮 + 三层勾选菜单
+    ("插件", "外掛", "Plugins"),
+    ("已选中 {n}", "已選取 {n}", "Selected {n}"),
+    ("项目 · 未选中 {n}", "專案 · 未選取 {n}", "Project · unselected {n}"),
+    ("全局 · 未选中 {n}", "全域 · 未選取 {n}", "Global · unselected {n}"),
+    ("插件只能在自定义档勾选", "外掛只能在自訂檔勾選", "Plugins can only be picked in the Custom preset"),
+    // 031 @ 文件检索 + ! shell 命令
+    ("文件", "檔案", "Files"),
+    ("斜杠命令", "斜槓命令", "Slash commands"),
+    ("没有匹配的文件", "沒有符合的檔案", "No matching files"),
+    ("Shell · 输出仅本地（!!）", "Shell · 輸出僅本機（!!）", "Shell · output stays local (!!)"),
+    ("Shell · 输出发给模型", "Shell · 輸出傳送給模型", "Shell · output sent to model"),
+    ("执行中 · Esc 中止", "執行中 · Esc 中止", "Running · Esc to abort"),
+    ("会话忙，无法执行 shell 命令", "會話忙碌，無法執行 shell 命令", "Session is busy — can't run a shell command"),
+    ("命令为空：! 后面接 shell 命令", "命令為空：! 後面接 shell 命令", "Empty command — type a shell command after !"),
     ("压缩中…", "壓縮中…", "Compacting…"),
     ("上下文压缩中，请稍等……", "上下文壓縮中，請稍等……", "Compacting context, please wait…"),
     ("生成标题…", "生成標題…", "Generating title…"),

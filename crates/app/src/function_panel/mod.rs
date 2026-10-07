@@ -335,7 +335,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                         .cursor_pointer()
                         .hover(|s| s.text_color(rgb(t.text)))
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = w_open.update(cx, |c, cx| c.open_project_picker(cx));
+                            let _ = w_open.update(cx, |c, cx| c.open_project_picker(false, cx));
                         })
                         .child(icon_hover("icon-project", 18., t.text_dim)),
                 )

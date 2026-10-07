@@ -2,7 +2,7 @@
 //! markdown 预览以 topbar tab 打开（Obsidian 式），聊天为默认视图。内容
 //! 区直通窗口底（statusbar 只在面板段）。
 
-use gpui::{Context, Entity, KeyDownEvent, MouseButton, SharedString, div, img, prelude::*, px, relative, rgb};
+use gpui::{Context, Entity, Focusable, KeyDownEvent, MouseButton, SharedString, div, img, prelude::*, px, relative, rgb};
 
 use crate::Chat;
 use crate::ContentView;
@@ -254,10 +254,6 @@ fn ts_language(ext: &str) -> &'static str {
     }
 }
 
-/// CodeEditor 单文件行数上限（gpui-component 自述 50K 行支持边界），
-/// 超限回退只读预览（旧行号拼接路径），不喂给编辑器。
-const EDITOR_MAX_LINES: usize = 50_000;
-
 /// 编辑器实体懒创建：InputState::new 要 `&mut Window`，而 open_file_tab
 /// 的调用链没有——渲染帧是唯一同时持有 window 与 Chat 可变的点。创建时
 /// 订阅 Change 事件；dirty 用「编辑器值 != 磁盘真值缓存」比较（set_value
@@ -271,7 +267,7 @@ fn ensure_file_editor(
     if chat
         .file_cache
         .get(path)
-        .map(|f| f.editor.is_some())
+        .map(|f| f.editor.is_some() || f.big_lines.is_some())
         .unwrap_or(true)
     {
         return;
@@ -296,13 +292,20 @@ fn ensure_file_editor(
         if matches!(ev, gpui_component::input::InputEvent::Change) {
             let val = ed.read(cx).value().to_string();
             let src = ed.entity_id();
-            if let Some((_, ft)) = this.file_cache.iter_mut().find(|(_, f)| {
+            if let Some((path, ft)) = this.file_cache.iter_mut().find(|(_, f)| {
                 f.editor.as_ref().map(|e| e.entity_id()) == Some(src)
             }) {
                 let dirty = ft.content != val;
+                if dirty {
+                    ft.last_edit = Some(std::time::Instant::now());
+                }
                 if ft.dirty != dirty {
                     ft.dirty = dirty;
                     cx.notify();
+                }
+                if dirty {
+                    let p = path.clone();
+                    this.autosave_later(p, cx);
                 }
             }
         }
@@ -361,6 +364,15 @@ fn file_view(
     // 渲染帧副作用区：编辑器懒创建 + 自动重载灌入（见两 fn 文档）
     ensure_file_editor(chat, &path, window, cx);
     consume_file_reload(chat, &path, window, cx);
+    // 开文件即聚焦（Zed 行为；编辑器实体就绪后消费；md 渲染态无实体则丢弃）
+    if chat.pending_focus_file.as_deref() == Some(path.as_path()) {
+        chat.pending_focus_file = None;
+        if let Some(ed) = chat.file_cache.get(&path).and_then(|f| f.editor.clone()) {
+            if !ed.read(cx).focus_handle(cx).is_focused(window) {
+                ed.update(cx, |st, scx| st.focus(window, scx));
+            }
+        }
+    }
 
     let mut host = div()
         .id("file-view")
@@ -379,12 +391,12 @@ fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
-    host.child(file_editor_body(chat, &path, md_source))
+    host.child(file_editor_body(chat, weak, &path, md_source))
         .into_any_element()
 }
 
 /// 导航操作栏：左 = 面包屑（项目根相对路径段，目录段点开兄弟文件菜单，
-/// 对齐 Zed 可点击面包屑）；右 = eye（md 源码/渲染切换）+ search（聚焦
+/// 对齐 Zed 可点击面包屑）；右 = eye/eye-off（md 源码/渲染切换）+ search（聚焦
 /// 编辑器并派发组件 Search，即 Ctrl+F 内置搜索替换弹层）。
 fn file_nav_bar(
     chat: &mut Chat,
@@ -411,7 +423,6 @@ fn file_nav_bar(
             crumbs = crumbs.child(
                 div()
                     .text_size(crate::appearance::ui_size(11.5))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
                     .child(seg_text),
@@ -488,12 +499,18 @@ fn file_nav_bar(
                             if let Some(ft) = c.file_cache.get_mut(&p) {
                                 ft.md_source = !src;
                             }
+                            // 切到源码态即聚焦编辑器（渲染帧消费）
+                            if !src {
+                                c.pending_focus_file = Some(p);
+                            }
                         }
                         cx.notify();
                     });
                 })
                 .child(icon(
-                    "eye",
+                    // 图标 = 点击后的动作：渲染态 → eye-off（关闭预览进源码），
+                    // 源码态 → eye（回到预览）
+                    if md_source { "eye" } else { "eye-off" },
                     14.,
                     if md_source { t.accent } else { t.text_muted },
                 )),
@@ -675,47 +692,77 @@ fn banner_btn(
 
 /// 编辑区主体三分支：md 渲染预览（默认）/ CodeEditor / 超行只读回退。
 fn file_editor_body(
-    chat: &Chat,
+    chat: &mut Chat,
+    weak: &gpui::WeakEntity<Chat>,
     path: &Path,
     md_source: bool,
-) -> gpui::AnyElement {
-    let t = T();
+) -> gpui::AnyElement {    let t = T();
     let is_md = md_file(path);
     let Some(ft) = chat.file_cache.get(path) else {
         return empty_hint(tr("文件已关闭"), t);
     };
     let content = ft.content.clone();
-    let too_big = content.lines().count() > EDITOR_MAX_LINES;
 
     // md 渲染预览（默认态）：复用 agent 正文的 markdown 渲染器
     if is_md && !md_source {
-        let md_font = crate::appearance::file_font();
+        // 图片相对路径解析基准：tab 路径可能来自消息文本（相对形态），
+        // 统一按工作区 cwd 绝对化再取父目录，不依赖进程 cwd
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            chat.cwd.join(path)
+        };
+        // 块级虚拟化（抄 zed thread_view 的 list 架构，v60）：ListState 每
+        // 帧只建可视块条目（progress.md 784 块全量构建 ≈ 30ms/帧，滚动必
+        // 卡）。滚动条 = v63-6 配方：ListStateHandle 适配 gpui-component
+        // Scrollbar，仅实际溢出时渲染，且必须是 list 容器的**兄弟**（同
+        // 旧滚动层——作为子元素会被连带位移，滚动了滑块跟内容漂出视口）。
+        let blocks = crate::markdown::doc_blocks(&content);
+        if chat.file_view_list_path.as_deref() != Some(path) {
+            chat.file_view_list.reset(blocks.len());
+            chat.file_view_list_path = Some(path.to_path_buf());
+        } else if chat.file_view_list.item_count() != blocks.len() {
+            chat.file_view_list.reset(blocks.len());
+        }
+        let base = abs.parent().map(|p| p.to_path_buf());
+        let blocks_for_list = blocks.clone();
         return div()
-            .id("fv-md")
             .relative()
             .flex_1()
             .min_h_0()
             .min_w_0()
-            .overflow_y_scroll()
-            .track_scroll(&chat.file_scroll)
+            .flex()
+            .flex_col()
             .bg(rgb(t.bg))
-            .font_family(md_font.family.clone())
-            .overflow_x_hidden()
             .child(
-                div()
-                    .max_w(px(760.))
-                    .mx_auto()
-                    .w_full()
-                    .pt(px(26.))
-                    .px(px(34.))
-                    .pb(px(40.))
-                    .overflow_hidden()
-                    .child(crate::markdown::render_themed(&content)),
+                gpui::list(chat.file_view_list.clone(), move |ix, _window, _cx| {
+                    crate::markdown::render_doc_item(&blocks_for_list, ix, base.as_deref())
+                })
+                // list 元素自身要 flex_1 从 flex 列父容器拿高度——Auto 尺寸
+                // 下无内容贡献、无 grow 会被 taffy 布局成 0 高（条目建了
+                // 也全画在 0 高视口外，预览全空）；session_list 同款
+                .flex_1()
+                .min_h_0(),
             )
-            .child(gpui_component::scroll::Scrollbar::vertical(
-                &chat.file_scrollbar,
-                &chat.file_scroll,
-            ))
+            .when(
+                chat.file_view_list.max_offset_for_scrollbar().height > px(0.),
+                |d| {
+                    let handle =
+                        crate::ui::list_handle::ListStateHandle(chat.file_view_list.clone());
+                    d.child(
+                        div()
+                            .absolute()
+                            .top(px(4.))
+                            .bottom(px(4.))
+                            .right(px(3.))
+                            .w(px(8.))
+                            .child(gpui_component::scroll::Scrollbar::vertical(
+                                &chat.file_scrollbar,
+                                &handle,
+                            )),
+                    )
+                },
+            )
             .into_any_element();
     }
 
@@ -755,35 +802,80 @@ fn file_editor_body(
         };
     }
 
-    // 超行只读回退：单 text 块行号拼接（旧路径，避免拖垮编辑器）
-    if too_big {
-        let numbered: String = content
-            .lines()
-            .enumerate()
-            .map(|(i, line)| {
-                let line = line.replace('\t', "    ");
-                format!("{:>4} │ {}", i + 1, line)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    // 超行只读回退：行号行虚拟化（抄 zed thread_view 的 list 架构，与 md
+    // 预览共用 file_view_list）。旧单巨 text 块每帧整文件重排——80K 行
+    // 实测帧 160ms~4s；行偏移表（big_lines）O(1) 取行，每帧只建可视行，
+    // 行文本经 weak 从 Chat 读，闭包零拷贝
+    if let Some(lines) = ft.big_lines.clone() {
+        let line_count = lines.len() - 1;
+        if chat.file_view_list_path.as_deref() != Some(path) {
+            chat.file_view_list.reset(line_count);
+            chat.file_view_list_path = Some(path.to_path_buf());
+        } else if chat.file_view_list.item_count() != line_count {
+            chat.file_view_list.reset(line_count);
+        }
+        let path_for_list = path.to_path_buf();
+        let weak_for_list = weak.clone();
+        let font_size = crate::appearance::file_font().size;
         return div()
-            .id("fv-src-big")
             .relative()
             .flex_1()
             .min_h_0()
             .min_w_0()
-            .overflow_y_scroll()
-            .track_scroll(&chat.file_scroll)
+            .flex()
+            .flex_col()
             .bg(rgb(t.bg))
-            .overflow_x_hidden()
             .child(
-                div()
-                    .font_family(crate::markdown::MONO_FAMILY)
-                    .text_size(px(crate::appearance::file_font().size))
-                    .line_height(relative(1.5))
-                    .text_color(rgb(t.text))
-                    .overflow_hidden()
-                    .child(SharedString::from(numbered)),
+                gpui::list(chat.file_view_list.clone(), move |ix, _window, cx| {
+                    // 行文本从 Chat 缓冲区按偏移表切片（offsets 是行首字节位
+                    // 置，切片边界安全）；空行给占位行高
+                    let Some(chat) = weak_for_list.upgrade() else {
+                        return div().into_any_element();
+                    };
+                    let Some(ft) = chat.read(cx).file_cache.get(&path_for_list) else {
+                        return div().into_any_element();
+                    };
+                    let (start, end) = match (lines.get(ix), lines.get(ix + 1)) {
+                        (Some(s), Some(e)) => (*s, *e),
+                        _ => return div().into_any_element(),
+                    };
+                    let text = ft.content[start..end]
+                        .trim_end_matches(['\n', '\r'])
+                        .replace('\t', "    ");
+                    div()
+                        .w_full()
+                        .min_h(px(font_size * 1.5))
+                        .pl(px(12.))
+                        .font_family(crate::markdown::MONO_FAMILY)
+                        .text_size(px(font_size))
+                        .line_height(relative(1.5))
+                        .text_color(rgb(crate::theme::theme().text))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(SharedString::from(text))
+                        .into_any_element()
+                })
+                .flex_1()
+                .min_h_0(),
+            )
+            .when(
+                chat.file_view_list.max_offset_for_scrollbar().height > px(0.),
+                |d| {
+                    let handle =
+                        crate::ui::list_handle::ListStateHandle(chat.file_view_list.clone());
+                    d.child(
+                        div()
+                            .absolute()
+                            .top(px(4.))
+                            .bottom(px(4.))
+                            .right(px(3.))
+                            .w(px(8.))
+                            .child(gpui_component::scroll::Scrollbar::vertical(
+                                &chat.file_scrollbar,
+                                &handle,
+                            )),
+                    )
+                },
             )
             .into_any_element();
     }

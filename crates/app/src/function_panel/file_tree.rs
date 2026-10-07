@@ -100,7 +100,8 @@ fn tree_row(
         // 目录树 = 面板设置值 -1（字体大小设置.md §1；text_xs 固定 12px
         // 不随设置走）
         .text_size(crate::appearance::ui_size(11.))
-        .text_color(rgb(t.text))
+        // gitignored 行置灰（Zed parity：显示但 dimmed，仍可点开浏览）
+        .text_color(rgb(if row.ignored { t.text_faint } else { t.text }))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)));
 
@@ -465,6 +466,7 @@ mod sticky_tests {
             expanded: true,
             git: None,
             changed_dot: false,
+            ignored: false,
         }
     }
 

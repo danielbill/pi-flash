@@ -54,8 +54,8 @@ pub(crate) fn render_dialogs(
             if let Some(Dialog::SessionSearch { input }) = chat.dialog.as_ref() {
                 root = root.child(render_session_search(chat, weak, input, t, cx));
             }
-            if let Some(Dialog::ProjectPicker { input }) = chat.dialog.as_ref() {
-                root = root.child(render_project_picker(chat, weak, input, t, cx));
+            if let Some(Dialog::ProjectPicker { input, fresh, scroll }) = chat.dialog.as_ref() {
+                root = root.child(render_project_picker(chat, weak, input, *fresh, scroll, t, cx));
             }
             if let Some(Dialog::ImagePreview { image }) = chat.dialog.as_ref() {
                 root = root.child(render_image_preview(chat, weak, image, t));
@@ -495,20 +495,21 @@ fn render_image_preview(
 
 /// 004 projectManager 打开项目菜单：500×500 居中卡片——顶部搜索框，
 /// 【打开文件夹】行（走 psp 目录选择器），下面是最近 30 天活动项目列表
-/// （字母序、行高 40 限高 10 条滚动）。当前项目行尾打勾（004：从某项目
+/// （字母序、行高 40、吃满剩余高度超出滚动）。当前项目行尾打勾（004：从某项目
 /// 新建会话打开时默认选中）。列表数据 `project_hits` 由打开器后台扫描
 /// 回填，本函数只做搜索词过滤。
 fn render_project_picker(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     input: &gpui::Entity<TextInput>,
+    fresh: bool,
+    scroll: &gpui::ScrollHandle,
     t: &theme::Theme,
     _cx: &App,
 ) -> Div {
-    // 004：限高 10 条 = 行高 40 × 10，超出滚动（面板固定 500 高，剩余空间
-    // 不足 10 条时以剩余空间为准，仍滚动）
+    // 004 v3：列表吃满弹窗剩余高度（面板固定 500，容纳几条就显示几条），
+    // 超出出滚动条——不再按固定行数限高
     const ROW_H: f32 = 40.;
-    const ROWS_MAX: f32 = 10.;
     let needle = chat.project_filter.trim().to_lowercase();
     let rows: Vec<&crate::ProjectEntry> = chat
         .project_hits
@@ -549,8 +550,17 @@ fn render_project_picker(
                 .rounded(px(8.))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)))
+                // fresh（新会话页来源）= 落全新草稿，不恢复 last_open——004
+                // 选项目是为了在这个项目里开新会话；psp 来源保持切项目
+                // 恢复上次会话的既定行为
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_row.update(cx, |c, cx| c.switch_project(path.clone(), cx));
+                    let _ = weak_row.update(cx, |c, cx| {
+                        if fresh {
+                            c.new_session_in(path.clone(), cx);
+                        } else {
+                            c.switch_project(path.clone(), cx);
+                        }
+                    });
                 })
                 .child(icon("folder", 16., t.text_muted))
                 .child(
@@ -565,7 +575,8 @@ fn render_project_picker(
                 .when(selected, |d| d.child(icon("check", 14., t.accent))),
         );
     }
-    // 打开文件夹 = 目录选择器（psp 同款；无 30 天活动项目时的主入口）
+    // 打开文件夹 = 目录选择器（psp 同款；无 30 天活动项目时的主入口）；
+    // 落点跟随 fresh：新会话页来源选完落新草稿，不恢复该目录的上次会话
     let weak_open = weak.clone();
     let open_folder = div()
         .id("proj-open-folder")
@@ -580,7 +591,7 @@ fn render_project_picker(
         .text_color(rgb(t.text))
         .hover(|s| s.bg(rgb(t.bg_hover)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let _ = weak_open.update(cx, |c, cx| c.pick_project_folder(cx));
+            let _ = weak_open.update(cx, |c, cx| c.pick_project_folder(fresh, cx));
         })
         .child(icon("folder-plus", 16., t.text_muted))
         .child(tr("打开文件夹"));
@@ -600,14 +611,37 @@ fn render_project_picker(
         .child(open_folder)
         // 打开文件夹与项目列表之间的分隔线（用户 2026-10-07 定稿）
         .child(div().h(px(1.)).w_full().bg(gpui::rgba(crate::theme::border_alpha(t, 0x66))))
+        // 列表吃满剩余高度：flex_1 + min_h_0 才会真的收缩滚动（工具定义
+        // 列表同款）；滚动条 = ZED Regular 移植（可滚动即常显），absolute
+        // 盖在滚动容器右缘、不随内容滚
         .child(
             div()
-                .id("project-list")
-                .max_h(px(ROW_H * ROWS_MAX))
-                .overflow_y_scroll()
+                .relative()
+                .mt_1()
+                .flex_1()
+                .min_h_0()
                 .flex()
-                .flex_col()
-                .child(list),
+                .child(
+                    div()
+                        .id("project-list")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(scroll)
+                        .flex()
+                        .flex_col()
+                        .pr(px(6.))
+                        .child(list),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right_0()
+                        .w(px(8.))
+                        .child(crate::ui::psp_scrollbar::menu_scrollbar(scroll)),
+                ),
         );
     dialog_shell(chat, weak, panel)
 }

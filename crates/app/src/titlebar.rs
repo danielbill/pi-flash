@@ -64,8 +64,12 @@ pub(crate) fn topbar_r(
         .flex()
         .items_center()
         .bg(rgb(t.chrome))
-        .border_b_1()
-        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)));
+        // 浏览态（tabs）不画底线：激活 tab 卡片直接融进下方内容区；
+        // 会话态保留底线分隔标题与消息流
+        .when(chat.content_view == ContentView::Chat, |d| {
+            d.border_b_1()
+                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)))
+        });
 
     // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）+ 内容区 tabs
     // 都住在 items_end 的 tabs host 里（激活 tab 连体贴底需要）
@@ -295,8 +299,8 @@ fn menu_row(
         .children(checked.then(|| crate::ui::icon("check", 13., t.accent)))
 }
 
-/// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、压底线、×
-/// 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
+/// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、下缘融入
+/// 内容区、× 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
 
 
 /// 浏览操作区的 topbar tabs：终端 + 文件（023 定案：文件 tab 并入 topbar，
@@ -552,8 +556,9 @@ fn tab_shell(
         .text_size(crate::appearance::ui_size(12.))
         .cursor_pointer()
         .when(active, |d| {
-            // 连体态：bg 填充、压住底线（host 已 items_end 贴底）；023①
-            // 激活/背景等高；023④ 激活 tab 限宽 300px（超长省略号截断）
+            // 连体态：bg 填充、下缘融入下方内容区（host 已 items_end 贴
+            // 底）；023① 激活/背景等高；023④ 激活 tab 限宽 300px（超长
+            // 省略号截断）
             d.max_w(px(300.))
                 .h(px(HEIGHT - 3.))
                 .mb(px(-1.))

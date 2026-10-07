@@ -21,6 +21,8 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
+use crate::ui::ScrollAxisExt;
+
 /// Syntax highlighting state (loaded once; ~100ms cold, cached for process life).
 struct Syn {
     ps: SyntaxSet,
@@ -28,6 +30,15 @@ struct Syn {
     /// 深色主题（VS Code Dark+ 近似，代码构建——syntect 默认主题集无
     /// vscDarkPlus，base16-ocean.dark 色系偏蓝灰差距大）
     dark: syntect::highlighting::Theme,
+}
+
+/// 启动期预热（startup::spawn_boot_tasks 的后台线程调用）：syntect 语法集
+/// + 主题集冷加载 ~百 ms，此前落在首次 md 渲染帧里（第一次渲染卡顿）。
+/// OnceLock 线程安全——预热未完成时 UI 线程首渲仍会等待，但启动后用户
+/// 手速开文件必然晚于后台装载完成。
+pub fn warm_up() {
+    let syn = syn();
+    let _ = syn.ps.syntaxes().len();
 }
 
 fn syn() -> &'static Syn {
@@ -163,7 +174,8 @@ pub(crate) enum MdBlock {
     Quote { blocks: Vec<MdBlock> },
     ListItem { depth: usize, marker: String, runs: Vec<Run>, task: Option<bool> },
     Table { head: Vec<Vec<Run>>, rows: Vec<Vec<Vec<Run>>> },
-    Image { url: String, alt: Vec<Run> },
+    Image { url: String, alt: Vec<Run>, width: Option<f32> },
+
     /// 块级公式（$$…$$，v57-2）
     Math { latex: String },
     /// mermaid 图代码块（v57-3）
@@ -361,11 +373,40 @@ fn collect_inline(
 // block parsing
 // ---------------------------------------------------------------------------
 
+/// HTML 块内容三路分发：doc 模式 img 提取（html_block_doc）/ 安全子集映射
+/// （html::blocks）/ 用户气泡标签原文。裸 `Event::Html` 与
+/// `Start(Tag::HtmlBlock)` 包裹层共用。
+fn html_block_dispatch(raw: &str, html: bool) -> Vec<MdBlock> {
+    if html && doc_mode() {
+        html_block_doc(raw)
+    } else if html {
+        crate::render::html::blocks(raw)
+    } else {
+        vec![MdBlock::Paragraph { runs: literal_runs(raw) }]
+    }
+}
+
 fn parse_blocks(events: &[Event], html: bool) -> Vec<MdBlock> {
     let mut out: Vec<MdBlock> = Vec::new();
     let mut i = 0;
     while i < events.len() {
         match &events[i] {
+            Event::Start(Tag::HtmlBlock) => {
+                // pulldown 0.10+ 把块级 HTML 包进 Start/End(HtmlBlock)。此前
+                // 落进 parse_block 的兜底「跳到容器尾」，内部 Event::Html 整段
+                // 被吞——README 头部 <p><img></p>+tagline 就这样消失（图片
+                // 不显示的真根因，v57-1/doc 模式两条 HTML 路径都没被走到）。
+                i += 1;
+                let mut raw = String::new();
+                while i < events.len() && !matches!(events[i], Event::End(TagEnd::HtmlBlock)) {
+                    if let Event::Html(h) | Event::InlineHtml(h) = &events[i] {
+                        raw.push_str(h);
+                    }
+                    i += 1;
+                }
+                i += 1; // End(HtmlBlock)
+                out.extend(html_block_dispatch(&raw, html));
+            }
             Event::Start(tag) => {
                 let tag = tag.clone();
                 i += 1;
@@ -382,13 +423,7 @@ fn parse_blocks(events: &[Event], html: bool) -> Vec<MdBlock> {
                 i += 1;
             }
             Event::Html(h) => {
-                if html {
-                    // v57-1: 块级 HTML → 安全子集块（此前直接丢弃）
-                    out.extend(crate::render::html::blocks(h));
-                } else {
-                    // 用户气泡：标签原文可见
-                    out.push(MdBlock::Paragraph { runs: literal_runs(h) });
-                }
+                out.extend(html_block_dispatch(h, html));
                 i += 1;
             }
             Event::DisplayMath(tex) => {
@@ -468,7 +503,7 @@ fn parse_block(
                     let alt = collect_inline(events, i, &|e| {
                         matches!(e, Event::End(TagEnd::Image))
 }, html);
-                    out.push(MdBlock::Image { url, alt });
+                    out.push(MdBlock::Image { url, alt, width: None });
                 }
                 while *i < events.len() && !matches!(events[*i], Event::End(TagEnd::Paragraph)) {
                     *i += 1;
@@ -560,7 +595,7 @@ fn parse_block(
         }
         Tag::Image { dest_url, .. } => {
             let alt = collect_inline(events, i, &|e| matches!(e, Event::End(TagEnd::Image)), html);
-            out.push(MdBlock::Image { url: dest_url.to_string(), alt });
+            out.push(MdBlock::Image { url: dest_url.to_string(), alt, width: None });
         }
         Tag::List(start) => {
             let ordered = start.is_some();
@@ -607,6 +642,23 @@ fn parse_block(
                                     }
                                     Tag::Image { .. } => {
                                         parse_block(events, i, inner_tag, &mut nested, depth + 1, html);
+                                    }
+                                    Tag::HtmlBlock => {
+                                        // 列表项内包裹式 HTML 块：收拢 chunks 走
+                                        // 统一分发（i 已过 Start，此处到 End 为止）
+                                        let mut raw = String::new();
+                                        while *i < events.len()
+                                            && !matches!(events[*i], Event::End(TagEnd::HtmlBlock))
+                                        {
+                                            if let Event::Html(h) | Event::InlineHtml(h) =
+                                                &events[*i]
+                                            {
+                                                raw.push_str(h);
+                                            }
+                                            *i += 1;
+                                        }
+                                        *i += 1; // End(HtmlBlock)
+                                        nested.extend(html_block_dispatch(&raw, html));
                                     }
                                     _ => {}
                                 }
@@ -868,8 +920,117 @@ fn render_blocks(blocks: &[MdBlock], depth: usize, t: &Theme, streaming: bool, c
     col
 }
 
+// ---------------------------------------------------------------------------
+// 代码块横向滚动句柄表——Zed Markdown::code_block_scroll_handles 的无状态
+// 等价物：渲染函数没有实体可挂句柄，仿 ui::vlist SCROLL_HANDLES 建线程
+// 局部表，按代码内容哈希键控（同内容块共享句柄=镜像滚动，罕见且无害）。
+// Scrollbar 拖拽写句柄偏移，track_scroll 的滚动容器每帧读同一偏移。
+// 哈希键无法枚举回收，超容量整表清空。
+// ---------------------------------------------------------------------------
+struct CodeScroll {
+    handle: gpui::ScrollHandle,
+    bar_state: gpui_component::scroll::ScrollbarState,
+}
+
+thread_local! {
+    static CODE_SCROLLS: std::cell::RefCell<
+        std::collections::HashMap<u64, std::rc::Rc<CodeScroll>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn code_scroll(hash: u64) -> std::rc::Rc<CodeScroll> {
+    CODE_SCROLLS.with(|cell| {
+        let mut map = cell.borrow_mut();
+        if map.len() > 256 {
+            map.clear();
+        }
+        map.entry(hash)
+            .or_insert_with(|| {
+                std::rc::Rc::new(CodeScroll {
+                    handle: gpui::ScrollHandle::new(),
+                    bar_state: gpui_component::scroll::ScrollbarState::default(),
+                })
+            })
+            .clone()
+    })
+}
+
 /// 代码块：外框圆角 7px + 头部（语言名 / 复制）+ 行号 + 高亮体（字号 =
 /// 槽位字号 -1，字体大小设置.md「代码块内容」；pi-web 行高 1.62）。
+/// 文档模式代码块（Zed/GitHub 预览形制）：无语言标签/复制/行号 chrome，
+/// 圆角框 + 语法高亮 + 横向滚动。
+fn render_code_block_doc(lang: &str, code: &str, t: &Theme) -> gpui::AnyElement {
+    let code = code.trim_end_matches('\n');
+    let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
+    let mut text = String::new();
+    let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+    for (seg, c) in highlight_segments(code, lang, t.dark) {
+        if seg.is_empty() {
+            continue;
+        }
+        let start = text.len();
+        text.push_str(&seg);
+        push_color(&mut highlights, start, text.len(), c);
+    }
+    let spec = active_md_spec();
+    let base = TextStyle {
+        color: rgb(t.text).into(),
+        font_family: MONO_FAMILY.into(),
+        font_size: px(spec.size - 1.).into(),
+        line_height: relative(1.6),
+        ..Default::default()
+    };
+    let hash = hash_str(&format!("doc\0{lang}\0{code}"));
+    let scroll = code_scroll(hash);
+    div()
+        .relative()
+        .w_full()
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded(px(8.))
+        .bg(rgb(body_bg))
+        .overflow_hidden()
+        .child(
+            div()
+                .id(SharedString::from(format!("md-code-doc-{hash:016x}")))
+                // Zed markdown 代码块同构：滚动容器必须 display:flex——gpui
+                // block 子元素被拉伸到容器宽，永远无横向溢出可滚；flex_none
+                // 内层让 nowrap 文本按自然宽度溢出成可滚内容
+                .flex()
+                .w_full()
+                .px(px(14.))
+                .py(px(12.))
+                .text_size(px(spec.size - 1.))
+                .line_height(relative(1.6))
+                .whitespace_nowrap()
+                .overflow_x_scroll()
+                // 锁轴：纵向滚轮穿透给外层页面滚动，横向滚轮只滚本块
+                .restrict_scroll_to_axis()
+                .track_scroll(&scroll.handle)
+                .child(
+                    div().flex_none().child(
+                        StyledText::new(text).with_default_highlights(&base, highlights),
+                    ),
+                ),
+        )
+        // 横向滑块：Scrollbar 必须套显式 absolute 细条（用户气泡/导航浮层
+        // 的既有配方）——直接挂容器用其自带 Absolute+100% 布局在 gpui 0.2.2
+        // 下测不出可见 thumb。内容不超宽时 Scrollbar 自隐藏，无需手动 gate。
+        .child(
+            div()
+                .absolute()
+                .left(px(3.))
+                .right(px(3.))
+                .bottom(px(3.))
+                .h(px(8.))
+                .child(gpui_component::scroll::Scrollbar::horizontal(
+                    &scroll.bar_state,
+                    &scroll.handle,
+                )),
+        )
+        .into_any_element()
+}
+
 fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui::Div {
     let code = code.trim_end_matches('\n');
     let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
@@ -979,6 +1140,8 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
         line_height: relative(1.62),
         ..Default::default()
     };
+    let hash = hash_str(&format!("chat\0{lang}\0{code}"));
+    let scroll = code_scroll(hash);
 
     div()
         .w_full()
@@ -997,17 +1160,46 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
         .child(header)
         .child(
             div()
-                .id("md-code-body")
+                .relative()
                 .w_full()
-                .px(px(13.))
-                .py(px(11.))
-                // 字号挂容器（见 sized_text 注释）：代码块 = 槽位字号 -1
-                .text_size(px(spec.size - 1.))
-                .line_height(relative(1.62))
-                // c15：长行不再裁剪——nowrap + 横向滚动（pi-web <pre> 语义）
-                .whitespace_nowrap()
-                .overflow_x_scroll()
-                .child(StyledText::new(text).with_default_highlights(&base, highlights)),
+                .child(
+                    div()
+                        .id(SharedString::from(format!("md-code-body-{hash:016x}")))
+                        // Zed 同构：flex 滚动容器 + flex_none 内层（见
+                        // render_code_block_doc 注释），块级横向滚动才有
+                        // 溢出内容可滚
+                        .flex()
+                        .w_full()
+                        .px(px(13.))
+                        .py(px(11.))
+                        // 字号挂容器（见 sized_text 注释）：代码块 = 槽位字号 -1
+                        .text_size(px(spec.size - 1.))
+                        .line_height(relative(1.62))
+                        // c15：长行不再裁剪——nowrap + 横向滚动（pi-web <pre> 语义）
+                        .whitespace_nowrap()
+                        .overflow_x_scroll()
+                        // 锁轴：纵向滚轮穿透给外层页面滚动，横向滚轮只滚本块
+                        .restrict_scroll_to_axis()
+                        .track_scroll(&scroll.handle)
+                        .child(
+                            div().flex_none().child(
+                                StyledText::new(text).with_default_highlights(&base, highlights),
+                            ),
+                        ),
+                )
+                // 横向滑块：显式 absolute 细条（同 render_code_block_doc 注释）
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(3.))
+                        .right(px(3.))
+                        .bottom(px(3.))
+                        .h(px(8.))
+                        .child(gpui_component::scroll::Scrollbar::horizontal(
+                            &scroll.bar_state,
+                            &scroll.handle,
+                        )),
+                ),
         )
 }
 
@@ -1113,7 +1305,8 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
 }
 
 /// 图片：本地文件 gpui img() 直渲染；http/不存在 → alt 文本占位。
-fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
+/// 相对路径按 md 文件目录解析（IMG_BASE，render_themed 设置）。
+fn render_image(url: &str, width: Option<f32>, alt: &[Run], t: &Theme) -> gpui::AnyElement {
     let placeholder = || {
         div()
             .w_full()
@@ -1139,7 +1332,18 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
         "webp" => Some(gpui::ImageFormat::Webp),
         _ => None,
     };
-    let Some((bytes, format)) = std::fs::read(url).ok().zip(format) else {
+    let path = std::path::Path::new(url);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        img_base()
+            .map(|base| {
+                let joined = base.join(path);
+                if joined.exists() { joined } else { path.to_path_buf() }
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    };
+    let Some((bytes, format)) = std::fs::read(&path).ok().zip(format) else {
         return placeholder();
     };
     div()
@@ -1147,6 +1351,7 @@ fn render_image(url: &str, alt: &[Run], t: &Theme) -> gpui::AnyElement {
         .child(
             gpui::img(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)))
                 .max_w_full()
+                .when_some(width, |d, w| d.w(px(w.max(24.))))
                 .rounded(px(6.)),
         )
         .into_any_element()
@@ -1224,7 +1429,15 @@ fn paragraph_element(runs: &[Run], t: &Theme, color: u32) -> AnyElement {
 fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u32) -> AnyElement {
     match b {
         MdBlock::Heading { level, runs } => {
-            let size = size_for_level(*level);
+            let doc = doc_mode();
+            let spec = active_md_spec();
+            // 文档模式 = Zed/GitHub 尺度（h1/h2 放大 + 底部分隔线）；聊天区
+            // 维持 pi-web 标题规则（h1 1.16em …）
+            let size = if doc {
+                doc_size_for_level(*level, spec.size)
+            } else {
+                size_for_level(*level)
+            };
             // pi-web 标题规则：h1/h2/h4-h6 = var(--text)（引用块内也是），
             // h3 = color-mix(text 88%, muted)
             let color = if *level == 3 {
@@ -1232,20 +1445,28 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
             } else {
                 t.text
             };
-            // 容器字号同样走绝对像素差换算（子级 StyledText 会再换算一次，
-            // 这里只为撑行高/标题容器）
-            let spec = active_md_spec();
+            let text_size = if doc { size } else { spec.size + (size - BASE) };
+            let underlined = doc && (*level <= 2);
             div()
                 .w_full()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(spec.size + (size - BASE)))
+                .font_weight(if doc && *level == 1 { FontWeight::BOLD } else { FontWeight::SEMIBOLD })
+                .text_size(px(text_size))
                 .line_height(relative(1.35))
+                .when(underlined, |d| {
+                    d.pb(px(if *level == 1 { 7. } else { 5. }))
+                        .border_b_1()
+                        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x55)))
+                })
                 .child(styled_text(runs, t, size, 1.35, color, FontWeight::SEMIBOLD))
                 .into_any_element()
         }
         MdBlock::Paragraph { runs } => paragraph_element(runs, t, color),
         MdBlock::Code { code, lang, .. } => {
-            render_code_block(lang, code, t, streaming).into_any_element()
+            if doc_mode() {
+                render_code_block_doc(lang, code, t)
+            } else {
+                render_code_block(lang, code, t, streaming).into_any_element()
+            }
         }
         MdBlock::Quote { blocks } => div()
             .w_full()
@@ -1343,7 +1564,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
                 .into_any_element()
         }
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
-        MdBlock::Image { url, alt } => render_image(url, alt, t),
+        MdBlock::Image { url, alt, width } => render_image(url, *width, alt, t),
         MdBlock::Math { latex } => crate::render::math::block_element(latex, t),
         MdBlock::Mermaid { source } => {
             // pi-web MermaidBlock parity：流式期间只显源码；失败回退源码块
@@ -1397,6 +1618,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
 }
 
 /// pi-web MAX_MARKDOWN_CHARS（v56-3 c16）：超限跳过管线，退纯文本。
+/// 只约束聊天气泡；文件预览走 doc_blocks/render_doc_item 虚拟化，不设上限。
 const MAX_MARKDOWN_CHARS: usize = 100_000;
 
 /// Render a markdown string as a vertical stack of styled GPUI elements.
@@ -1514,6 +1736,7 @@ fn render_oversize(src: &str, t: &Theme) -> AnyElement {
                 .id("md-oversize")
                 .max_h(px(420.))
                 .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .font_family(MONO_FAMILY)
                 .text_size(px(12.))
                 .line_height(relative(1.5))
@@ -1523,10 +1746,167 @@ fn render_oversize(src: &str, t: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// Render with the active global theme（文件预览：跟随「文件字体」槽位）.
-pub fn render_themed(src: &str) -> AnyElement {
-    set_md_spec(crate::appearance::file_font());
-    render_impl(src, crate::theme::theme(), false, true)
+// ---------------------------------------------------------------------------
+// 023 文档模式（fileView md 预览专用）：Zed/GitHub 式文档排版——标题放大
+// 带分隔线、代码块素装（无标签/复制/行号）、HTML 块提取 <img>、相对路径
+// 图片按 md 文件目录解析。聊天区渲染完全不受影响（doc 标志渲染前置位/
+// 后复位，元素树构建是同步的）。
+// ---------------------------------------------------------------------------
+
+static DOC_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn doc_mode() -> bool {
+    DOC_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_doc_mode(on: bool) {
+    DOC_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+static IMG_BASE: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+fn img_base() -> Option<std::path::PathBuf> {
+    IMG_BASE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// 文档模式标题字号（Zed/GitHub 尺度，相对预览正文字号）。
+fn doc_size_for_level(level: u8, base: f32) -> f32 {
+    match level {
+        1 => base * 2.05,
+        2 => base * 1.5,
+        3 => base * 1.26,
+        4 => base * 1.1,
+        _ => base,
+    }
+}
+
+/// HTML 块的文档模式兜底（html.rs 块级解析对「<p><img></p>+裸文本」这类
+/// 连排块会整段丢失——README 头部即此形态）：提取全部 <img> 为图片块，
+/// 剩余标签剥掉、内文保留为段落。
+fn html_block_doc(h: &str) -> Vec<MdBlock> {
+    fn attr(tag: &str, name: &str) -> Option<String> {
+        let lower = tag.to_ascii_lowercase();
+        let key = format!("{name}=");
+        let i = lower.find(&key)?;
+        let rest = &tag[i + key.len()..];
+        let quote = rest.chars().next()?;
+        let val = if quote == '"' || quote == '\'' {
+            let end = rest[1..].find(quote)? + 1;
+            &rest[1..end]
+        } else {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            &rest[..end]
+        };
+        Some(val.to_string())
+    }
+    let mut out = Vec::new();
+    let mut rest = h;
+    while let Some(pos) = rest.find("<img") {
+        let Some(end) = rest[pos..].find('>') else { break };
+        let tag = &rest[pos..=pos + end];
+        if let Some(url) = attr(tag, "src") {
+            let width = attr(tag, "width")
+                .map(|w| w.trim().trim_end_matches("px").trim().to_string())
+                .and_then(|w| w.parse::<f32>().ok());
+            out.push(MdBlock::Image { url, width, alt: Vec::new() });
+        }
+        rest = &rest[pos + end + 1..];
+    }
+    // 剥标签留内文
+    let mut text = String::new();
+    let mut in_tag = false;
+    for ch in h.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    let text = text.split('\n').map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
+    if !text.is_empty() {
+        out.push(MdBlock::Paragraph {
+            runs: vec![Run { text, style: Style::Normal }],
+        });
+    }
+    out
+}
+
+/// 渲染列钳制的 flex 段（gpui 0.2.2 无带参 flex_grow，直写 style 精修）：
+/// basis 0 + 指定 grow 占比 + shrink 0；min_w 用作窄面板下的保底钳制。
+pub(crate) fn flex_span(grow: f32, min_w: Option<f32>) -> gpui::Div {
+    let mut d = div().flex_basis(px(0.));
+    d.style().flex_grow = Some(grow);
+    d.style().flex_shrink = Some(0.);
+    if let Some(w) = min_w {
+        d = d.min_w(px(w));
+    }
+    d
+}
+
+/// 文档预览虚拟化（抄 zed thread_view 的 list 架构，v60）：文件预览不再
+/// 一次性构建整棵元素树（progress.md 784 块全量构建 ≈ 30ms/帧，滚动必
+/// 卡），改由 ListState 每帧只建可视条目。条目 = 单个 md 块（zed 的
+/// MarkdownElement 同样按块出元素、块自带 margins）。两步交给调用方接
+/// gpui::list：
+/// - [`doc_blocks`]：解析（LRU 缓存）+ 取块数当 item_count；
+/// - [`render_doc_item`]：list 条目闭包，懒渲染第 ix 块。
+pub fn doc_blocks(src: &str) -> std::rc::Rc<Vec<MdBlock>> {
+    set_doc_mode(true);
+    let blocks = cached_blocks(src, true);
+    set_doc_mode(false);
+    blocks
+}
+
+/// list 条目渲染。doc_mode/字体规格/img 基准在条目内自设——list 条目
+/// 懒渲染发生在调用方 render 函数返回之后，不能依赖外层的 set/reset 窗口。
+pub fn render_doc_item(
+    blocks: &std::rc::Rc<Vec<MdBlock>>,
+    ix: usize,
+    base_dir: Option<&std::path::Path>,
+) -> AnyElement {
+    let mut spec = crate::appearance::file_font();
+    spec.size = (spec.size * 1.15).round();
+    set_md_spec(spec);
+    set_doc_mode(true);
+    *IMG_BASE.lock().unwrap_or_else(|e| e.into_inner()) = base_dir.map(|p| p.to_path_buf());
+    let el = render_doc_item_inner(blocks, ix, crate::theme::theme());
+    set_doc_mode(false);
+    el
+}
+
+fn render_doc_item_inner(blocks: &[MdBlock], ix: usize, t: &Theme) -> AnyElement {
+    let Some(b) = blocks.get(ix) else {
+        return div().into_any_element();
+    };
+    // 本块的 mb 不在这里落：非末块由下一条目的 top 取用，末块弃用
+    // （文档 pb(40) 兜底）——与整树版"末块 mb 无人消费"一致
+    let mt = block_margins(b).0;
+    let first = ix == 0;
+    let last = ix + 1 == blocks.len();
+    // 块间距 = max(前块 mb, 本块 mt)——整树版 render_blocks 的合并规则，
+    // 但虚拟化后没有"上一条目的已渲染 margin"可折算，改按块数据自洽：
+    // 每条目自己算 pt（前块 margins 可查），mb 只喂给下一条目、自身不落。
+    // li→li 之间是列表容器 gap 3px；首条目额外吃文档 pt(26)；末条目弃
+    // mb、文档 pb(40) 兜底（全部与整树版逐像素同规）
+    let top = if first {
+        26. + mt
+    } else if matches!(blocks[ix - 1], MdBlock::ListItem { .. })
+        && matches!(b, MdBlock::ListItem { .. })
+    {
+        3.
+    } else {
+        block_margins(&blocks[ix - 1]).1.max(mt)
+    };
+    div()
+        .w_full()
+        .flex()
+        .pt(px(top))
+        .when(last, |d| d.pb(px(40.)))
+        .child(flex_span(4., Some(20.)))
+        .child(flex_span(92., None).child(render_block(b, 1, t, false, t.text)))
+        .child(flex_span(4., Some(20.)))
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -1566,6 +1946,88 @@ mod tests {
         }
         match &blocks[1] {
             MdBlock::Paragraph { runs } => assert_eq!(text_of(runs), "hello world"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// README 头部形（`<p><img></p>` HTML 块）：doc 模式兜底必须提取出
+    /// 图片块（src/width/alt），纯文本剥标签后保留（回归锁 pi-flash 图片
+    /// 不显示——html.rs 行内路径对块内 img 只产 🖼 占位文本）。
+    #[test]
+    fn html_block_doc_extracts_img_with_width() {
+        let blocks = html_block_doc(
+            "<p align=\"left\"><img src=\"crates/app/assets/icon/pi-flash-256.png\" width=\"88\" alt=\"pi-flash logo\"></p>",
+        );
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            MdBlock::Image { url, alt, width } => {
+                assert_eq!(url, "crates/app/assets/icon/pi-flash-256.png");
+                assert_eq!(*width, Some(88.));
+                assert_eq!(text_of(alt), "");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 同上兜底的剥标签支路：img 之外的文本内容不能丢。
+    #[test]
+    fn html_block_doc_keeps_text_after_img() {
+        let blocks = html_block_doc(
+            "<p><img src=\"a.png\">尾随文本</p>",
+        );
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(&blocks[0], MdBlock::Image { url, .. } if url == "a.png"));
+        match &blocks[1] {
+            MdBlock::Paragraph { runs } => assert_eq!(text_of(runs), "尾随文本"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// DOC_MODE 恢复 guard：断言失败也要复位，免得毒化同进程其他测试。
+    struct DocModeGuard;
+    impl Drop for DocModeGuard {
+        fn drop(&mut self) {
+            set_doc_mode(false);
+        }
+    }
+
+    /// pulldown 0.13 包裹式 HTML 块回归锁（README 头部形态）：块级 HTML 被
+    /// Start(HtmlBlock) 包裹后，此前落进 parse_block 兜底整段被吞——图片
+    /// 和 tagline 一起消失。此测锁住「包裹内容必须走到 doc 分发」；其余
+    /// 测试均不含块级 HTML，不受并行下 DOC_MODE 翻转影响。
+    #[test]
+    fn html_block_wrapped_reaches_doc_dispatch() {
+        let _g = DocModeGuard;
+        set_doc_mode(true);
+        let blocks = parse_with(
+            "# t\n\n<p align=\"left\"><img src=\"a.png\" width=\"88\" alt=\"l\"></p>\ntagline text\n\n## h\n",
+            true,
+        );
+        assert_eq!(blocks.len(), 4, "heading + Image + tagline Paragraph + heading");
+        match &blocks[1] {
+            MdBlock::Image { url, width, .. } => {
+                assert_eq!(url, "a.png");
+                assert_eq!(*width, Some(88.));
+            }
+            other => panic!("{other:?}"),
+        }
+        match &blocks[2] {
+            // CommonMark type-6 HTML 块到空行为止：下一行 tagline 同属块内，
+            // 剥标签后保留为段落（Zed 截图同款：链接语法按原文显示）
+            MdBlock::Paragraph { runs } => assert_eq!(text_of(runs), "tagline text"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 非 doc 模式（聊天 html=true 不存在，此测直打 html::blocks 分支）：
+    /// 包裹式 HTML 块不能再整段消失。
+    #[test]
+    fn html_block_wrapped_reaches_html_subset_dispatch() {
+        let blocks = parse_with("<div>hello</div>\n\nafter", true);
+        assert!(!blocks.is_empty(), "块级 HTML 不得整段丢失");
+        assert!(blocks.iter().any(|b| matches!(b, MdBlock::Paragraph { runs } if text_of(runs).contains("hello"))));
+        match &blocks[blocks.len() - 1] {
+            MdBlock::Paragraph { runs } => assert_eq!(text_of(runs), "after"),
             other => panic!("{other:?}"),
         }
     }
@@ -1644,9 +2106,10 @@ mod tests {
     fn image_parses_url_and_alt() {
         let blocks = parse("![alt text](img.png)");
         match &blocks[0] {
-            MdBlock::Image { url, alt } => {
+            MdBlock::Image { url, alt, width } => {
                 assert_eq!(url, "img.png");
                 assert_eq!(text_of(alt), "alt text");
+                assert_eq!(*width, None);
             }
             other => panic!("{other:?}"),
         }

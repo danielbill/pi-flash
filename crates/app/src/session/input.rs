@@ -283,6 +283,63 @@ fn ctx_usage_panel(
         )
 }
 
+/// 插件按钮（034 定稿）：工具胶囊右边，**仅「自定义」档激活**。
+/// 点击开合三层勾选菜单（已选中 / 项目未选中 / 全局未选中），勾选后「选择并切换」
+/// 才重绑进程；非自定义档置灰不可点。
+fn plugin_button(
+    chat: &mut Chat,
+    t: &'static crate::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
+    let ui = crate::appearance::ui_size;
+    // 激活条件只有一个：**当前档是「自定义」**（用户定稿）。运行中也能点开看，
+    // 真换绑由 `mc_set_tools_preset`/confirm 的「运行中不能更换工具预设」拦。
+    let (is_custom, n, open) = {
+        let r = chat.rt().read(cx);
+        (
+            r.tool_preset_key() == "custom",
+            r.ext_sources.len(),
+            chat.plugin_picker.is_some(),
+        )
+    };
+    let active = is_custom;
+    let label = if n > 0 {
+        format!("{}({n})", crate::i18n::tr("插件"))
+    } else {
+        crate::i18n::tr("插件").to_string()
+    };
+    let color = if !active {
+        t.text_faint
+    } else if open {
+        t.accent
+    } else {
+        t.text_muted
+    };
+    let mut el = div()
+        .id("plugins-menu")
+        .h(px(28.))
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .rounded(px(8.))
+        .text_size(ui(BAR_FONT))
+        .text_color(rgb(color))
+        .child(icon_hover("plug", 13., color))
+        .child(SharedString::from(label));
+    if active {
+        el = el
+            .cursor_pointer()
+            .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
+                    this.toggle_plugin_menu_at(event.position, cx);
+                }),
+            );
+    }
+    el.into_any_element()
+}
+
 /// `hero` = 012 新会话页模式：胶囊走正常流（由新会话页内容簇摆位），
 /// 不再 0 高 + 绝对定位贴聊天区底。
 pub(crate) fn input_area(
@@ -335,6 +392,13 @@ pub(crate) fn input_area(
 
     // 输入组件：惰性创建 + 每帧同步占位/值（set_value 同值跳过）
     let composer = ensure_composer(chat, weak, cx);
+    // `!` shell 模式（031 pi-web bashMode parity）：去前导空白后以 ! 开头且
+    // 无图片附着——边框着色 + 提示行（!! = 输出仅本地）
+    let bash_mode = chat.pending_images.is_empty() && chat.input.trim_start().starts_with('!');
+    // @ 菜单可能打开：预热/续期文件索引（TTL 内幂等，后台构建）
+    if chat.active_menu(cx) == Some(MenuKind::At) {
+        chat.ensure_at_index(cx);
+    }
     let ph: SharedString = if compacting {
         // 压缩期间输入锁死（下方 on_change/on_submit 丢弃变更），用
         // placeholder 文案告知用户系统在做什么
@@ -361,8 +425,10 @@ pub(crate) fn input_area(
         .rounded(px(16.))
         .border_1()
         // 边框不随 agent 运行变色（pi-web 的 streaming 琥珀色已去掉）：
-        // 只有焦点态用 accent，静息/工作中/排队一个样
-        .border_color(if input_focused {
+        // 焦点态用 accent；`!` shell 模式用工具绿（pi-web tool-bg parity）
+        .border_color(if bash_mode {
+            gpui::rgba(crate::session::messages::rgba_a(0x22c55e, 0.4))
+        } else if input_focused {
             rgb(t.accent)
         } else {
             rgb(t.border)
@@ -501,23 +567,26 @@ pub(crate) fn input_area(
                 if key == "escape" {
                     // 走到这说明组件的 escape 已处理（解除 IME 标记且未清
                     // 草稿）并传播；这里做 app 层语义：菜单取消 / 中止
-                    let menu = this.active_menu();
-                    let streaming = this.rt().read(cx).agent_running;
+                    let menu = this.active_menu(cx);
                     if let Some(kind) = menu {
-                        if kind == MenuKind::At {
-                            if let Some(at) = this.input.rfind('@') {
-                                let q = this.input[at + 1..].to_string();
-                                let v = format!("{}{} ", &this.input[..at], q);
-                                this.set_input(v, cx);
-                            }
-                        } else if !this.input.is_empty() {
+                        if kind == MenuKind::Slash && !this.input.is_empty() {
                             let v = format!("{} ", this.input);
                             this.set_input(v, cx);
                         }
+                        // @ 菜单 Esc = 只收起（pi-web parity：token 原样保留，
+                        // 下一次输入变化重新打开）
+                        this.menu_dismissed = true;
                         this.menu_ix = 0;
                         cx.notify();
-                    } else if streaming {
-                        this.abort_stream(cx);
+                    } else {
+                        // `!` 执行中优先中止 bash（rpc abort_bash），其次模型流
+                        let bash_running = this.rt().read(cx).bash_running;
+                        let streaming = this.rt().read(cx).agent_running;
+                        if bash_running {
+                            this.abort_bash(cx);
+                        } else if streaming {
+                            this.abort_stream(cx);
+                        }
                     }
                     cx.stop_propagation();
                 }
@@ -525,7 +594,7 @@ pub(crate) fn input_area(
         ))
         .on_action(cx.listener(|this, _: &ComposerUp, window, cx| {
             let items = this.menu_items(cx);
-            if this.active_menu().is_some() && !items.is_empty() {
+            if this.active_menu(cx).is_some() && !items.is_empty() {
                 this.menu_ix = this.menu_ix.saturating_sub(1);
                 this.menu_scroll.scroll_to_item(this.menu_ix);
                 cx.notify();
@@ -544,7 +613,7 @@ pub(crate) fn input_area(
         }))
         .on_action(cx.listener(|this, _: &ComposerDown, window, cx| {
             let items = this.menu_items(cx);
-            if this.active_menu().is_some() && !items.is_empty() {
+            if this.active_menu(cx).is_some() && !items.is_empty() {
                 this.menu_ix = (this.menu_ix + 1).min(items.len() - 1);
                 this.menu_scroll.scroll_to_item(this.menu_ix);
                 cx.notify();
@@ -565,7 +634,7 @@ pub(crate) fn input_area(
         }))
         .on_action(cx.listener(|this, _: &ComposerTab, _window, cx| {
             let items = this.menu_items(cx);
-            if this.active_menu().is_some() && !items.is_empty() {
+            if this.active_menu(cx).is_some() && !items.is_empty() {
                 let ix = this.menu_ix.min(items.len() - 1);
                 let insert = items[ix].insert.clone();
                 this.accept_menu(insert, cx);
@@ -600,7 +669,8 @@ pub(crate) fn input_area(
     // 012 新会话页（hero）胶囊走正常流，由新会话页的内容簇摆位；会话界面
     // 则 0 高 wrapper + 胶囊绝对定位悬浮（聊天消息从胶囊后滚过）。/ 菜单两种
     // 模式同构：挂在测量元素正上方（pi-web：bottom 100% + 8px 间隙）
-    let slash_open = chat.active_menu() == Some(MenuKind::Slash);
+    // 斜杠与 @ 菜单共用 slash_menu_view（视图内部按 kind 分支渲染）
+    let slash_open = chat.active_menu(cx).is_some();
     // 「回到最新」按钮：不贴底且有消息时，悬浮在输入面板顶部上方 20px
     let show_scroll_btn = !chat.rt().read(cx).pager.is_at_bottom()
         && !chat.rt().read(cx).messages.is_empty();
@@ -735,7 +805,7 @@ fn ensure_composer(
                     .map(|c| c.read(cx).chip_active())
                     .unwrap_or(false);
                 let items = chat.menu_items(cx);
-                if !chip && chat.active_menu().is_some() && !items.is_empty() {
+                if !chip && chat.active_menu(cx).is_some() && !items.is_empty() {
                     let ix = chat.menu_ix.min(items.len() - 1);
                     let insert = items[ix].insert.clone();
                     chat.accept_menu(insert, cx);
@@ -781,6 +851,12 @@ fn composer_bar(
     t: &'static crate::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::Div {
+    // `!` bash 执行中与模型流共用停止按钮形态（031）
+    let bash_running = chat.rt().read(cx).bash_running;
+    let running = streaming || bash_running;
+    // `!` shell 模式（与 input_area 边框同判定）：左组控件整组换成提示
+    let bash_mode = chat.pending_images.is_empty() && chat.input.trim_start().starts_with('!');
+    let bash_excluded = chat.input.trim_start().starts_with("!!");
     let thinking_open = chat.pill_menu == Some(PillMenu::Thinking);
     let tools_open = chat.pill_menu == Some(PillMenu::Tools);
     // 工具预设 = spawn 参数（--tools/--no-tools），换它要重绑会话进程 +
@@ -791,9 +867,30 @@ fn composer_bar(
         .flex()
         .items_center()
         .px(px(10.))
-        .child(
-            // 左侧：图片 + 工具预设（内容裸宽，组内间距 10px，与右侧一致）
-            div().flex().items_center().gap(px(10.)).child(
+        .child(if bash_mode {
+            // `!` shell 模式：左组换成模式提示（覆盖图片/工具/插件位，
+            // 不额外占一行；右侧环/模型/思考/发送照旧）
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .pl(px(8.))
+                .h(px(28.))
+                .child(icon("terminal", 13., t.text_dim))
+                .child(
+                    div()
+                        .text_size(crate::appearance::ui_size(BAR_FONT))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(if bash_excluded {
+                            tr("Shell · 输出仅本地（!!）")
+                        } else {
+                            tr("Shell · 输出发给模型")
+                        })),
+                )
+                .into_any_element()
+        } else {
+        // 左侧：图片 + 工具预设（内容裸宽，组内间距 10px，与右侧一致）
+        div().flex().items_center().gap(px(10.)).child(
             // 图片
             div()
                 .id("attach-image")
@@ -864,8 +961,13 @@ fn composer_bar(
                 .child(icon_hover("wrench", 13., if tools_open { t.accent } else { t.text_muted }))
                 .child(SharedString::from(tools_label.to_string()))
                 .child(icon("chevron-down", 10., t.text_dim)),
-            ),
-        );
+            )
+            // 插件按钮（034 定稿）：**工具胶囊的兄弟节点**，不是子节点——
+            // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「自定义」档
+            // 激活，点开三层勾选菜单（已选中 / 项目未选中 / 全局未选中）。
+            .child(plugin_button(chat, t, cx))
+            .into_any_element()
+        });
     // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 10px；操作栏左右
     // padding 10px = 发送钮距胶囊边框 10px
     let ctx_tip = ctx_tip_element(chat, t, cx);
@@ -1007,7 +1109,7 @@ fn composer_bar(
             .mr(px(2.)) // 右边距=栏padding10+2=12（与下边距对齐）
             .mt(px(-8.))
             .size(px(36.)) // 发送/停止共用直径（用户微调处）
-            .rounded(if streaming { px(9.) } else { px(18.) })
+            .rounded(if running { px(9.) } else { px(18.) })
             .flex()
             .items_center()
             .justify_center()
@@ -1015,7 +1117,7 @@ fn composer_bar(
             .bg(rgb(if locked {
                 // 压缩锁：恒灰，不给"可点"的暗示
                 t.bg_selected
-            } else if streaming {
+            } else if running {
                 t.accent // 停止态外圈=主题色（用户定稿，非深色）
             } else if can_queue {
                 t.accent
@@ -1029,15 +1131,19 @@ fn composer_bar(
                         return;
                     }
                     // 与按钮渲染同源：agent_running（事件驱动），快照
-                    // is_streaming 恒 false 会把"停止"点成"发送"
-                    if this.rt().read(cx).agent_running {
+                    // is_streaming 恒 false 会把"停止"点成"发送"；
+                    // `!` bash 执行中点它 = abort_bash
+                    let bash_running = this.rt().read(cx).bash_running;
+                    if bash_running {
+                        this.abort_bash(cx);
+                    } else if this.rt().read(cx).agent_running {
                         this.abort_stream(cx);
                     } else {
                         this.send_input(cx);
                     }
                 },
             ))
-            .child(if streaming {
+            .child(if running {
                 // 停止方块
                 div()
                     .size(px(12.))

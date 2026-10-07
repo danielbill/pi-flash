@@ -3,6 +3,113 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 031 @ 文件检索 + ! shell 命令（2026-10-07，bead pi-flash-s49）
+
+- **@ 检索**：pi-web file-fuzzy 全套移植——`services/at_file.rs`（token 提取
+  正则语义 / TUI scoreEntry 打分阶梯 / 插入文本形态）+ `services/file_index.rs`
+  （`git ls-files -z` 优先、非 git 回退 BFS、20 万硬上限）+ `Chat::at_index`
+  （每 cwd TTL 10s 后台构建）。确认插入 `@path `（目录 `@dir/` 不闭合钻取、
+  含空格加引号），光标落 token 后（composer 门面 `set_value_with_cursor` +
+  vendored InputState 新增 `set_cursor_offset`——Enter 路径没有 `&mut Window`，
+  原 `set_cursor_position` 用不了）。**协议纯文本**：pi 不展开 @path（模型自
+  己 read）。
+- **! shell**：`trimStart` 后 `!`/`!!` 开头且无图片 → rpc `bash`
+  （`excludeFromContext` = `!!`）。pi-link 新增 `Command::Bash/AbortBash` +
+  `BashResult` + `Event::BashExecutionUpdate`（执行中增量就地追加渲染，比
+  pi-web 靠整页重载实时）。乐观卡（`Role::Bash`+`BashInfo`，合成工具卡渲染）
+  → bash response 回填终态；Esc/停止按钮 bash 优先于中止模型；会话忙拒绝且
+  输入保留。进模型时机 = 下一次 prompt（pi convertToLlm 折叠 user 文本）。
+- **实测要点**：① pi 1.0 `get_messages` 快照**携带** bashExecution（追加进
+  agent state），按磁盘并轨会出双卡——已删 merge_disk_bash；② bash-only 草稿
+  不落盘（pi 首条 prompt 才写会话文件），重启不恢复 bash-only 记录（pi-web
+  同限制）；③ `@` 菜单渲染复用 slash_menu_view（`active_menu().is_some()` 挂
+  载，视图内按 kind 分支）。
+- **自动化冒烟**（隔离 `PI_FLASH_DIR`+`PI_CODING_AGENT_DIR`，全过）：`@` 触发
+  /空查询列表/子序列命中（`@pluginpick`→plugin_picker.rs）/目录钻取；`!echo`
+  输出+退出码、`!!` excluded、`!sleep 5` Esc 中止 cancelled、会话忙拒绝+输入
+  保留、重启恢复单卡不重复。快照新增 app `composer_menu{kind,items}`、
+  session `bash_running` + 消息 `bash{}`。
+
+## 034 档位改版（2026-10-07 二次定稿，用户四条）
+
+- **四条定稿**：① `full` **禁止任何插件注入**（不是限制 extensions：个人扩展照常）② 新增
+  **【自定义】** = full + 自定义插件清单 ③ **对话中途无法修改** ④ **每个对话保存一份**。
+  连带按决定**去掉 `configured`**，**默认档 = 自定义**（内部键 `custom`）。
+- **full 只能走「不装载」**（机制见 034 §1.3）：pi 侧
+  `extensionPaths = noExtensions ? cliEnabledExtensions : mergePaths(cliEnabledExtensions, enabledExtensions)`
+  ⇒ CLI `-e` 排在包**前面**，我们的 `-e` 抑制器先跑、包（agent-browser 的
+  `before_agent_start` 注入）后跑写回，`-e` 又无法排到包后面。故 full 改为
+  `-ne` + 显式 `-e` 个人扩展 + `-e builtin:<settings 里开着的>` + `--tools`（结构性零注入）。
+  实测证据：full 档命令集与 configured **一字不差**（= 包全装），agent_browser 注入
+  **36,417 字符 = 提示词 58~67%**。
+- **新增代码**：`pi_link::extensions`（复刻 pi 发现口径：顶层 `*.ts`/`*.js`、一级子目录
+  `pi.extensions[]`/`index.ts`/`index.js`，**不递归**；+ 个人扩展清单）、
+  `pi_link::session_ext`（会话清单台账）、`paths::session_ext_file()`、
+  `tools_recipe::full_args`；`runtime::new` 载入清单、`on_file_bound` 迁移草稿键、
+  `delete_session` 清条目；选择面板加「会话无消息才可开」守卫；automation 新增
+  method `session.tools_preset`。
+- **验证**：pi-link 101 / app 129 测试全绿（新增 extensions / session_ext / full_args 单测）。
+
+## 034 插件装载与工具声明（设计，2026-10-07）
+
+- **确认**：默认（`configured` 档 + `load_extensions=true`）就是 pi 自己全装 ——
+  发现扩展 + `settings.packages`（全局+项目）+ 4 个内置扩展 + skills/prompts/themes
+  + AGENTS.md。实测 `configured` 档：96 个工具注册、**39 个进模型**、35 条命令。
+  工具预设只切 `--tools`（**注册级硬 allowlist**，会把插件工具一起挡掉），与插件
+  装载正交；设置·插件页的启停是**全局**语义（settings 资源置空过滤）。
+- **关键实测（探针 `pi_work/tmp_probe/fp`）**：`-ne` **只关扩展**——个人 skills
+  照旧（14 条 `skill:*`），要关得用 `-ns/-np/--no-themes`；`--skill <dir>` 能精确
+  只装一个 skill（R1）；`setActiveTools(名单)` 能「插件全注册（23 个工具）但只声明
+  点名的 4 个」（R2）——**工具噪声与会话插件集可以解耦**。
+- **设计**：四层模型（①资源装载 ②工具声明 ③作用域/持久化 ④UI 信息）；
+  推荐下一步 S2 = 会话级显式**工具声明**名单（把 `full_activate.ts` 泛化成按名单
+  `setActiveTools`，默认档 39 → N）；S3 = 资源级（`--skill/--prompt-template/
+  --theme/-e 文件` + 隔离开关）+ 会话/项目/全局三级作用域。库存走活进程
+  `get_commands` 的 `sourceInfo{path,origin:package}`，无需复刻 pi 发现规则
+  （主题不在其中，需另扫）。文档：`docs/模块设计/034-插件装载与工具声明.md`
+  （含 4 个待拍板问题）。
+
+## full+plugin 会话自定义插件（2026-10-07，031 §full+plugin）
+
+- **交互**：工具胶囊菜单末行 `full+plugins` → 不直接换档，改弹 320px 选择
+  面板（全局/项目分组多选、10 行限高滚动、底部「取消/选择并切换」、会话级
+  文案）；确认才写 `runtime.ext_sources` 并走 `mc_set_tools_preset` 既有
+  重绑链路（运行中拦截 / `GetMessages` 整表重读 / 状态栏提示全复用）。切别
+  的档不清空 `ext_sources`（切回来还是上次选择）；胶囊标签 `full+plugins(n)`。
+- **spawn 配方（复测修订；原设计 v1 两处不成立）**：
+  `-ne -e <选中插件…> -e builtin:<settings 里开着的内置…> -e full_activate.ts`，
+  **不发 `--tools`**（注册级 allowlist 连 `getAllTools()` 都挡，A–H 实测）。
+  1. v1 的 `getAllTools() − powershell` 会把 `deferred`（MCP）与 `model-only`
+     （`tool_search`）工具拉成直接声明 —— 改「full ∪ `getActiveTools()`」，
+     与普通会话逐项一致（I2 vs 不加 `-ne` 的 C4 对照）。
+  2. v1 无条件 `-e builtin:mcp` 会**覆盖 settings 的 `-builtin:mcp`**（C2 实测）
+     —— 内置清单改由 `pi_link::config::enabled_builtin_extensions()` 解析
+     （默认四个全开；`+/-builtin:` 关开；项目 settings 覆盖用户）。
+- **实测**（探针脚本 `D:\ai_workspace\pi_work\tmp_probe\fp`；探针扩展把
+  `getAllTools()/getActiveTools()` 落盘）：B `-e npm:` 冷装 22s/209 依赖、
+  复跑 1s 命中缓存（落地 agent dir `tmp/`，不进 `npm/`）；C `-ne -e builtin:mcp`
+  连上自建 stdio MCP（`mcp__mini__mini_echo`，exposure `deferred`；⚠️ MCP
+  异步连接，探针要等 ~6s，打早了会误判）；D 重复 `-ne` 无害（顺手在
+  `client::spawn` 去重）；E 设置页 disabled 的包用 `-e` 显式加载**照常加载**
+  （对照：走正常配置加载则不加载）。
+- **已知边界（后续项）**：`-ne` 同时关「发现/配置」扩展文件
+  （`~/.pi/agent/extensions/*` 如 pi-notify、settings `extensions` 里的路径
+  条目），本档不加回 —— 复刻 pi 发现规则（含项目 `.pi/extensions` 的 trust
+  语义）不在本次范围，031 文档已记。
+- **验证**：app 123 测试 / pi-link 97 测试全绿；`cargo check --workspace
+  --all-targets` 零警告。自动化新增 method `plugin_picker.open/toggle/cancel/
+  confirm`，snapshot 加 `session.ext_sources`/`tools_preset_label` 与 app
+  `plugin_picker`/`pill_menu`/`pill_anchor`。
+- **冒烟（隔离 PI_FLASH_DIR + pif-ui 驱动）**：confirm（1 插件）→
+  `full+plugins(1)` / `ext_sources=["npm:pi-web-access"]` / `has_process=true`，
+  `PI_FLASH_RPC_LOG` 抓到的 spawn 命令行 = 设计 v2 配方逐字一致（无 `--tools`、
+  无 `-e builtin:mcp`、`-ne` 一份）；再开面板勾选种子=上次选择、cancel 丢弃
+  临时勾选、0 选中 confirm = `full+plugins(0)` 合法态，全部通过。证据：
+  `tmp/fp-smoke/EVIDENCE.md`（其中两次「无对应请求的 spawn」与一次进程退出
+  无法复现，疑与当时另一个 agent 会话持 exe 锁并发有关，留待无并发环境复验）。
+- **后续项**：`-ne` 同时关掉的「发现/配置」扩展（pi-notify 等）本档不加回，
+  另立 `pi-flash-p9h`。
+
 ## 023 文件编辑展示页（2026-10-07）
 
 - **底座**：gpui-component 0.2.0 Input 的 CodeEditor 模式（vendored）：
@@ -2384,3 +2491,44 @@ Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
 - 定稿微调（同日）：弹窗【打开文件夹】与项目列表之间加分隔线（border_alpha
   0x66 同 psp_overlays 画法）；012 操作栏版本号 text_muted → text_faint
   （placeholder 同款淡色）。30 天窗口/限高 10 条维持 v2 参数不变。
+- **bug 修（打开项目菜单选项目"偶尔"跳进旧会话）**：行点击原直通
+  `switch_project`，它内置工作区记忆恢复（`get_last_open` → open_session）
+  ——凡上次离开该项目时开着真实会话就会复现（"偶尔"的来源；psp 切换
+  语义本就如此）。修法：`Dialog::ProjectPicker` 加 `fresh` 来源标记，
+  012 新会话页 = true：选项目/打开文件夹走 `new_session_in`（切过去 +
+  强制新草稿）；psp 来源维持 `switch_project`（恢复上次会话）。自动化
+  `project.picker_open` 接受 `{"fresh": true}`。冒烟复现确认机理
+  （switch 回 pi_work 恢复旧会话）+ fresh 落点终态 = 新项目 draft。
+- **滚动修（打开项目列表超限不出滚动条）**：`max_h(10×40)` 在固定 500 高
+  弹窗里被剩余空间（~369px < 400px）顶穿——flex 收缩不够、内容照排、被
+  页面 overflow_hidden 裁掉，且 overflow_y_scroll 无自绘条等于没滚。改法：
+  列表 `flex_1 + min_h_0` 吃满剩余高度（工具定义列表同款），`track_scroll`
+  挂 ScrollHandle（存进 Dialog::ProjectPicker，跨帧复用），右缘 absolute
+  盖 `psp_scrollbar::menu_scrollbar`（ZED Regular 移植，可滚动即常显）。
+  004 v3 参数：不按固定行数限高——容纳几条显示几条，超出出滚动条。
+
+## 2026-10-07 自动化 v1.1：首轮 agent 实战反馈六条全修
+
+- **误删活登记（最疼）**：判死收紧为 `port_is_definitely_dead`（只认
+  ConnectionRefused；超时/Winsock 起不来等保守保留），CLI discover/list/clean
+  与 app 启动 prune 统一走它；token 进启动日志行，登记丢了 `--addr/--token`
+  可救。冒烟实测到死后端口回 timeout 而非 refused 的情形（成因未明，防火墙/
+  收尾竞态皆可能）——保守保留正是为这种世界。
+- **路径转义地狱**：`exec --arg k=v`（值合法 JSON 则 JSON 否则字符串）+
+  `--params-file`；文档明示正斜杠。
+- **焦点原语**：`input.focus {"target":"composer|chat|git_commit|terminal"}`
+  （window.focus 无同步回调可直调，与 keys 的 defer 异因）+ app 面 `focused`
+  字段（逐句柄 is_focused 比对，未登录报 other）。冒烟当场复现了反馈里
+  「focus git_commit 被抢回 composer」的 bug——现在 `wait --path app.focused
+  --eq git_commit` 即可抓。
+- **wait 增强**：路径支持 `[N]` 下标（与 `.N` 等价）；断言 `--eq/--contains/
+  --truthy` 三选一；`--surface` 限面；超时错误截 1.5KB。
+- **snapshot 裁剪**：`snapshot <surface> --only k`（服务端 params.only 过滤
+  顶层键）。
+- **clean 子命令**：手动清场（同一判死规则）；list 只标注不删。
+- 并发协同：修本轮时另一会话在改 dialogs.rs（ProjectPicker scroll 字段），
+  其 test-only 模式漏字段致 cargo test 红，我补 `..` 后其又自行重构——最终
+  树一致，未冲突。agent 调试期自加的 input.keys defer（entity_map 重入）与
+  project.picker_open 已在 7dc55b1 并入主线。
+- 验证：pi-link 120 + app 120 全绿；实机冒烟 --arg/--only/input.focus/wait
+  下标+contains+truthy/clean/退出全通。

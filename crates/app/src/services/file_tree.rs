@@ -141,6 +141,9 @@ pub struct TreeRow {
     pub git: Option<GitStatus>,
     /// directory row whose subtree contains changes (amber dot).
     pub changed_dot: bool,
+    /// gitignored entry（Zed parity：显示但置灰；被忽略目录内部整体继承
+    /// ignored，不再逐项匹配——git 语义下 negation 救不回被忽略目录内内容）
+    pub ignored: bool,
 }
 
 /// git 变更文件的全部祖先目录（相对 cwd 的每一级），目录圆点上浮用。
@@ -163,8 +166,8 @@ fn changed_ancestor_dirs(cwd: &Path, files: &[GitFile]) -> HashSet<PathBuf> {
 
 /// Flatten the root project row (depth 0, Zed 单根 worktree 的项目行) plus
 /// every directory in `expanded` into rows. Sorting/filtering follow Zed
-/// semantics: dot files hidden, `.git` and gitignored entries skipped,
-/// directories first, natural sort.
+/// semantics: dot files hidden, `.git` skipped, gitignored entries shown
+/// dimmed (`ignored`), directories first, natural sort.
 ///
 /// 根行的展开态同样读 `expanded`（含 cwd 即展开）；Chat 侧在新建/切项目
 /// 时把 cwd 塞进集合，保证默认展开。
@@ -206,9 +209,10 @@ pub fn flatten(
         expanded: expanded.contains(cwd),
         git: None,
         changed_dot: changed_dirs.contains(cwd),
+        ignored: false,
     });
     if expanded.contains(cwd) {
-        walk(cwd, 1, expanded, &git_map, &changed_dirs, &stack, &mut out);
+        walk(cwd, 1, expanded, &git_map, &changed_dirs, &stack, false, &mut out);
     }
     out
 }
@@ -231,12 +235,13 @@ fn walk(
     git_map: &HashMap<PathBuf, GitStatus>,
     changed_dirs: &HashSet<PathBuf>,
     stack: &IgnoreStack,
+    parent_ignored: bool,
     out: &mut Vec<TreeRow>,
 ) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut entries: Vec<(PathBuf, String, bool)> = Vec::new();
+    let mut entries: Vec<(PathBuf, String, bool, bool)> = Vec::new();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         // pi-web 语义：dot 文件不显示（Zed 的 hidden_files 设置后续再接）
@@ -246,16 +251,14 @@ fn walk(
         let Ok(ty) = e.file_type() else { continue };
         let is_dir = ty.is_dir();
         let path = e.path();
-        if stack.is_abs_path_ignored(&path, is_dir) {
-            continue;
-        }
-        entries.push((path, name, is_dir));
+        let ignored = parent_ignored || stack.is_abs_path_ignored(&path, is_dir);
+        entries.push((path, name, is_dir, ignored));
     }
 
     // Zed 排序语义：目录先、stem/扩展名两级键、自然排序（DirectoriesFirst
     // + Default；sort_mode 设置后续再接）。par_sort 换 sort：单目录条目量级
     // 下差异可忽略，保持稳定序。
-    entries.sort_by(|(pa, na, fa), (pb, nb, fb)| {
+    entries.sort_by(|(pa, na, fa, _), (pb, nb, fb, _)| {
         let ord = compare_entry_names((na, !*fa), (nb, !*fb), SortMode::DirectoriesFirst, SortOrder::Default);
         if ord == Ordering::Equal {
             pa.cmp(pb)
@@ -264,13 +267,14 @@ fn walk(
         }
     });
 
-    for (path, name, is_dir) in entries {
+    for (path, name, is_dir, ignored) in entries {
         if is_dir {
             // Zed auto_fold_dirs：只含一个子目录（且无其他子项）的目录不占
             // 行，链式折叠成「a/b/c」一行；手动展开过的目录断链；chevron
             // 逐级展开（展开集合里是真实目录路径）。根行在 flatten 已豁免。
             let mut chain_names = vec![name];
             let mut chain_paths = vec![path.clone()];
+            let mut chain_ignored = ignored;
             let mut cur = path.clone();
             while !expanded.contains(&cur) {
                 let Some((child_path, child_name)) = sole_child(&cur) else {
@@ -279,6 +283,7 @@ fn walk(
                 if !child_path.is_dir() {
                     break;
                 }
+                chain_ignored |= stack.is_abs_path_ignored(&child_path, true);
                 chain_names.push(child_name);
                 chain_paths.push(child_path.clone());
                 cur = child_path;
@@ -292,16 +297,33 @@ fn walk(
                 expanded: open,
                 git: None,
                 changed_dot: chain_paths.iter().any(|p| changed_dirs.contains(p)),
+                ignored: chain_ignored,
             });
             if open {
-                let mut child_stack = stack.clone();
-                if let Some(gi) = build_gitignore_at(&cur, ".gitignore") {
-                    child_stack = child_stack.append(
-                        IgnoreKind::Gitignore(Arc::from(cur.as_path())),
-                        Arc::new(gi),
-                    );
-                }
-                walk(&cur, depth + 1, expanded, git_map, changed_dirs, &child_stack, out);
+                // 被忽略目录内部整体继承 ignored，不再压子 .gitignore 也
+                // 不再逐项匹配（git 语义：negation 救不回被忽略目录内内容）
+                let child_stack = if chain_ignored {
+                    stack.clone()
+                } else {
+                    let mut s2 = stack.clone();
+                    if let Some(gi) = build_gitignore_at(&cur, ".gitignore") {
+                        s2 = s2.append(
+                            IgnoreKind::Gitignore(Arc::from(cur.as_path())),
+                            Arc::new(gi),
+                        );
+                    }
+                    s2
+                };
+                walk(
+                    &cur,
+                    depth + 1,
+                    expanded,
+                    git_map,
+                    changed_dirs,
+                    &child_stack,
+                    chain_ignored,
+                    out,
+                );
             }
         } else {
             let open = false;
@@ -313,6 +335,7 @@ fn walk(
                 expanded: open,
                 git: git_map.get(&path).copied(),
                 changed_dot: false,
+                ignored,
             });
         }
     }
@@ -427,20 +450,34 @@ mod tests {
         let mut expanded = HashSet::new();
         expanded.insert(t.0.clone());
         let rows = flatten(&t.0, &expanded, &[]);
-        let names: Vec<&str> = rows.iter().skip(1).map(|r| r.name.as_str()).collect();
-        assert!(!names.contains(&"build"), "gitignored dir hidden");
-        assert!(names.contains(&"keep.log"), "whitelist survives");
+        let by_name = |n: &str| {
+            rows.iter()
+                .find(|r| r.name == n)
+                .unwrap_or_else(|| panic!("row {n}"))
+        };
+        // v60 起 ignored 条目显示但置灰标记（Zed parity），不再隐藏
+        let build = by_name("build");
+        assert!(build.ignored, "gitignored dir shown dimmed");
+        let debug = by_name("debug.log");
+        assert!(debug.ignored, "gitignored file shown dimmed");
+        let keep = by_name("keep.log");
+        assert!(!keep.ignored, "whitelist survives as normal");
+        assert!(!by_name("src").ignored, "normal dir unmarked");
         // src/ 未展开不显示子文件，但目录本身在
-        assert_eq!(names, vec!["src", "keep.log"]);
+        let names: Vec<&str> = rows.iter().skip(1).map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["build", "src", "debug.log", "keep.log"]);
 
-        // .git/info/exclude 也生效
+        // .git/info/exclude 也生效（同样显示但标记）
         let git_dir = t.0.join(".git");
         std::fs::create_dir_all(git_dir.join("info")).unwrap();
         std::fs::write(git_dir.join("info").join("exclude"), "secret.txt\n").unwrap();
         t.file("secret.txt");
         let rows = flatten(&t.0, &expanded, &[]);
-        let names: Vec<&str> = rows.iter().skip(1).map(|r| r.name.as_str()).collect();
-        assert!(!names.contains(&"secret.txt"));
+        let secret = rows
+            .iter()
+            .find(|r| r.name == "secret.txt")
+            .expect("excluded file shown");
+        assert!(secret.ignored, "repo-excluded file shown dimmed");
     }
 
     #[test]

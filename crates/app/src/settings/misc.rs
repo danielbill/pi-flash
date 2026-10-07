@@ -94,6 +94,30 @@ pub(crate) fn mc_misc_view(
         t,
     ));
 
+    // 自动保存 switch（023：默认开，编辑停顿约 1s 写盘）
+    let autosave_on = crate::services::workspace::autosave();
+    col = col.child(set_row(
+        tr("自动保存"),
+        tr("编辑停顿约 1 秒后自动写入磁盘"),
+        switch(
+            "misc-autosave",
+            autosave_on,
+            {
+                let weak = weak.clone();
+                move |on, cx| {
+                    let _ = weak.update(cx, |_c, cx| {
+                        let mut s = crate::services::workspace::app_settings();
+                        s.autosave = Some(on);
+                        crate::services::workspace::save_app_settings(&s);
+                        cx.notify();
+                    });
+                }
+            },
+            t,
+        ),
+        t,
+    ));
+
     // 加载时间窗口（7/14/30 天档位）：启动按最近活动清单加载窗口内会话
     let days = crate::services::workspace::load_window_days();
     col = col.child(set_row(

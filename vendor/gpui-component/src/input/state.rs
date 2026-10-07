@@ -856,6 +856,14 @@ impl InputState {
         self.focus(window, cx);
     }
 
+    /// Set the cursor to a byte offset (UTF-8), no focus steal, no window
+    /// needed（031 @ 补全：菜单确认后光标落在插入 token 之后——Enter 路径
+    /// 没有 &mut Window，set_cursor_position 用不了）。
+    pub fn set_cursor_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.move_to(offset, cx);
+        self.update_preferred_column();
+    }
+
     /// Focus the input field.
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window);
@@ -1626,13 +1634,25 @@ impl InputState {
         self.history.ignore = false;
     }
 
-    /// v57: 是否存在纵向溢出（折行总行数超过当前可视行数）。AutoGrow 模式
-    /// 行数随内容增长到 max_rows 封顶，超出即溢出——仅此时渲染滚动条。
+    /// v57: 是否存在纵向溢出——仅此时渲染滚动条（无溢出时滚动条是噪音）。
+    /// AutoGrow 行数随内容增长、max_rows 封顶：`rows` 即可视行数，行数
+    /// 超出即溢出。CodeEditor/MultiLine 的 `rows` 会被 `update_auto_grow`
+    /// 覆写成内容行数（其 early-return 只排除 SingleLine），不能当可视
+    /// 行数用——按内容实高（折行行数×行高）对视口实高（last_bounds）
+    /// 实测比较；否则文件编辑器恒判无溢出、滚动条永不出现（v60 修）。
     pub fn has_vertical_overflow(&self) -> bool {
         if !self.mode.is_multi_line() {
             return false;
         }
-        self.text_wrapper.len() > self.mode.rows()
+        if self.mode.is_auto_grow() {
+            return self.text_wrapper.len() > self.mode.rows();
+        }
+        let (Some(bounds), Some(layout)) =
+            (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
+            return false;
+        };
+        layout.line_height * self.text_wrapper.len() as f32 > bounds.size.height
     }
 
     /// Get byte offset of the cursor.

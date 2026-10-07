@@ -40,15 +40,36 @@ pub(super) fn dispatch(
 ) -> OpResult {
     match m {
         // ---- 查 ----
-        method::APP_INFO => Ok(snapshot::app_info(chat)),
-        method::UI_SNAPSHOT => match snapshot::surface(chat, cx, params.get("surface").and_then(Value::as_str)) {
-            Some(v) => Ok(v),
-            None => Err(bad(format!(
-                "未知 surface {:?}（可用: {:?}）",
-                params.get("surface").and_then(Value::as_str),
-                snapshot::SURFACES
-            ))),
-        },
+        method::APP_INFO => Ok(snapshot::app_info(chat, window, cx)),
+        method::UI_SNAPSHOT => {
+            let name = params.get("surface").and_then(Value::as_str);
+            match snapshot::surface(chat, window, cx, name) {
+                Some(mut v) => {
+                    // --only 裁剪：只留指定顶层键（files 面整棵树能到几千行，
+                    // 断言往往只要一两个键；CLI snapshot --only 走这里）
+                    let keys: Vec<String> = match params.get("only") {
+                        Some(Value::String(s)) => vec![s.clone()],
+                        Some(Value::Array(a)) => a
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(String::from)
+                            .collect(),
+                        _ => vec![],
+                    };
+                    if !keys.is_empty() {
+                        if let Value::Object(map) = &mut v {
+                            map.retain(|k, _| keys.iter().any(|x| x == k));
+                        }
+                    }
+                    Ok(v)
+                }
+                None => Err(bad(format!(
+                    "未知 surface {:?}（可用: {:?}）",
+                    name,
+                    snapshot::SURFACES
+                ))),
+            }
+        }
 
         // ---- app ----
         method::APP_QUIT => {
@@ -93,6 +114,39 @@ pub(super) fn dispatch(
                 window.dispatch_keystroke(ks, cx);
             });
             Ok(json!({"deferred": true}))
+        }
+        method::INPUT_FOCUS => {
+            // 元素级 focus（非坐标点击）：焦点/键位类 bug 的自动化入口。
+            // window.focus 只设焦点 id + refresh，无同步回调，chat.update
+            // 内直调安全（与 dispatch_keystroke 的 defer 不同因）。
+            let target = params
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"target\": \"composer|chat|git_commit|terminal\"}"))?;
+            let handle = match target {
+                "composer" => chat
+                    .composer
+                    .as_ref()
+                    .map(|c| c.read(cx).focus_handle_in(cx))
+                    .unwrap_or_else(|| chat.focus.clone()),
+                "chat" => chat.focus.clone(),
+                "git_commit" => chat.git_commit_input.read(cx).focus_handle(),
+                "terminal" => {
+                    let ix = chat.active_terminal.unwrap_or(0);
+                    chat.terminals
+                        .get(ix)
+                        .map(|t| t.focus.clone())
+                        .ok_or_else(|| not_found("没有打开的终端"))?
+                }
+                other => {
+                    return Err(bad(format!(
+                        "未知 focus 目标: {other:?}（composer|chat|git_commit|terminal）"
+                    )))
+                }
+            };
+            window.focus(&handle);
+            cx.notify();
+            Ok(json!({"ok": true, "target": target}))
         }
 
         // ---- 会话 ----
@@ -323,7 +377,36 @@ pub(super) fn dispatch(
             ok()
         }
         method::PROJECT_PICKER_OPEN => {
-            chat.open_project_picker(cx);
+            let fresh = params.get("fresh").and_then(Value::as_bool).unwrap_or(false);
+            chat.open_project_picker(fresh, cx);
+            ok()
+        }
+        method::SESSION_TOOLS_PRESET => {
+            let preset = params
+                .get("preset")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"preset\": \"full|custom|default|read-only|chat-only\"}"))?;
+            chat.mc_set_tools_preset(preset, cx);
+            ok()
+        }
+        method::PLUGIN_PICKER_OPEN => {
+            chat.open_plugin_picker(cx);
+            ok()
+        }
+        method::PLUGIN_PICKER_TOGGLE => {
+            let src = params
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"source\": \"npm:…\"}"))?;
+            chat.plugin_picker_toggle(src, cx);
+            ok()
+        }
+        method::PLUGIN_PICKER_CONFIRM => {
+            chat.plugin_picker_confirm(cx);
+            ok()
+        }
+        method::PLUGIN_PICKER_CANCEL => {
+            chat.plugin_picker_cancel(cx);
             ok()
         }
 

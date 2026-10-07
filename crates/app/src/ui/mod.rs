@@ -16,6 +16,22 @@ pub use text_input::TextInput;
 
 use gpui::{Animation, AnimationExt, SharedString, Styled, prelude::*};
 
+/// 滚动轴锁定（Zed gpui `restrict_scroll_to_axis()` 的 0.2.2 补齐）。
+///
+/// gpui 0.2.2 div 的滚轮监听带「轴回退」：纵向滚动容器收到纯横向增量时
+/// 会把 delta.x 写进纵向偏移（横向滚轮 = 向下翻页），横向滚动容器反向
+/// 同理（纵向滚轮 = 横向平移）。`Style` 自 0.2.x 起有 `restrict_scroll_to_axis`
+/// 字段但 Styled 未暴露流式方法（0.3+ 才有），这里直写 base_style 补齐：
+/// 单轴滚动容器各自锁轴——纵向容器吃到横向滚轮不再翻页，横向代码块
+/// 吃到纵向滚轮穿透给外层列表（Zed crates/markdown 代码块同款）。
+pub trait ScrollAxisExt: gpui::InteractiveElement {
+    fn restrict_scroll_to_axis(mut self) -> Self {
+        self.interactivity().base_style.restrict_scroll_to_axis = Some(true);
+        self
+    }
+}
+impl<E: gpui::InteractiveElement> ScrollAxisExt for E {}
+
 
 /// Embedded-SVG icon (`crates/app/assets/icons/{name}.svg`).
 pub fn icon(name: &'static str, size: f32, color: u32) -> gpui::AnyElement {

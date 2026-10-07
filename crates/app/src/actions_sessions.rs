@@ -40,6 +40,15 @@ impl Chat {
             return;
         }
         rt.update(cx, |r, _| r.key = path_key.clone());
+        // 会话级插件清单跟着身份走（草稿 key → 会话文件路径）：确认时按草稿
+        // key 落盘，这里把它搬到真实会话键上，重启后按会话恢复（034）
+        if let Some(store) = pi_link::session_ext::store_path() {
+            let sources = pi_link::session_ext::read_for(&store, &old_key);
+            if !sources.is_empty() {
+                let _ = pi_link::session_ext::write_for(&store, &path_key, &sources);
+            }
+            let _ = pi_link::session_ext::remove_for(&store, &old_key);
+        }
         if let Some(entity) = self.runtimes.remove(&old_key) {
             self.runtimes.insert(path_key.clone(), entity);
         }
@@ -153,6 +162,10 @@ impl Chat {
     pub(crate) fn delete_session(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.confirm_delete = None;
         let key = path.to_string_lossy().to_string();
+        // 会话没了，它的自定义插件清单也清掉（034）
+        if let Some(store) = pi_link::session_ext::store_path() {
+            let _ = pi_link::session_ext::remove_for(&store, &key);
+        }
         let was_active = self.runtimes.get(&self.active_key)
             .map(|rt| rt.read(cx).file.as_deref() == Some(path.as_path()))
             .unwrap_or(false);

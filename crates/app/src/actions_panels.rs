@@ -6,6 +6,9 @@
 
 use crate::*;
 
+/// 自动保存静默期（023；Zed autosave after_timeout 同构）。
+const AUTOSAVE_DEBOUNCE_MS: u64 = 1000;
+
 /// 附件上限（pi-web image-attachments.ts parity）：10 张、单张解码后 10MB
 pub(crate) const MAX_ATTACHED_IMAGES: usize = 10;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
@@ -49,8 +52,10 @@ pub(crate) fn open_in_explorer(path: &std::path::Path) {
 }
 
 impl Chat {
-    /// psp「打开项目」：目录选择器 → 切换工作区。
-    pub(crate) fn pick_project_folder(&mut self, cx: &mut Context<Self>) {
+    /// 打开项目菜单的【打开文件夹】：目录选择器 → 切换工作区。`fresh`
+    /// （新会话页来源）= 选完落**全新草稿**（new_session_in，不恢复该目录
+    /// 的 last_open）；psp 来源保持恢复上次会话的既定行为。
+    pub(crate) fn pick_project_folder(&mut self, fresh: bool, cx: &mut Context<Self>) {
         let opts = gpui::PathPromptOptions {
             files: false,
             directories: true,
@@ -65,7 +70,11 @@ impl Chat {
             };
             if let Some(dir) = paths.pop() {
                 let _ = this.update(cx, |c, cx| {
-                    c.switch_project(dir, cx);
+                    if fresh {
+                        c.new_session_in(dir, cx);
+                    } else {
+                        c.switch_project(dir, cx);
+                    }
                 });
             }
         })
@@ -178,9 +187,11 @@ impl Chat {
         {
             self.activate_panel_tab(ix, cx);
             self.set_content_view(ContentView::File);
+            self.pending_focus_file = Some(path.clone());
             if let Some(ft) = self.file_cache.get_mut(&path) {
                 if !ft.dirty {
                     ft.content = content;
+                    ft.big_lines = crate::big_lines_for(&ft.content);
                     ft.reload_pending = true;
                     ft.conflict = None;
                     ft.disk_sig = sig;
@@ -192,6 +203,7 @@ impl Chat {
         let mut ft = FileTab::from_disk(content);
         ft.disk_sig = sig;
         self.file_cache.insert(path.clone(), ft);
+        self.pending_focus_file = Some(path.clone());
         self.panel_tabs.push(PanelTab::File(path));
         let ix = self.panel_tabs.len() - 1;
         self.activate_panel_tab(ix, cx);
@@ -259,25 +271,70 @@ impl Chat {
     /// 保存文件 tab（Ctrl+S / 关闭确认「保存并关闭」共用）：编辑器在则取
     /// 编辑器值，写盘成功后刷新磁盘真值缓存与外部改动基准。
     pub(crate) fn save_file(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let err = self.write_file_back(path, cx);
+        if let Some(e) = err {
+            self.set_status(format!("{}: {e}", crate::i18n::tr("保存失败")), cx);
+            return;
+        }
+        self.set_status(crate::i18n::tr("已保存").to_string(), cx);
+        cx.notify();
+    }
+
+    /// 写盘 + 刷新磁盘真值/基准/脏位。Err = 写盘失败的错误串（调用方决定
+    /// 提示方式：手动保存 toast，自动保存静默）。
+    fn write_file_back(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<String> {
         let text = match self.file_cache.get(path).and_then(|f| f.editor.as_ref()) {
             Some(ed) => ed.read(cx).value().to_string(),
             None => match self.file_cache.get(path) {
                 Some(f) => f.content.clone(),
-                None => return,
+                None => return None,
             },
         };
         if let Err(e) = std::fs::write(path, &text) {
-            self.set_status(format!("{}: {e}", crate::i18n::tr("保存失败")), cx);
-            return;
+            return Some(e.to_string());
         }
         if let Some(ft) = self.file_cache.get_mut(path) {
             ft.content = text;
+            ft.big_lines = crate::big_lines_for(&ft.content);
             ft.dirty = false;
             ft.conflict = None;
             ft.disk_sig = file_sig(path);
         }
-        self.set_status(crate::i18n::tr("已保存").to_string(), cx);
         cx.notify();
+        None
+    }
+
+    /// 023 自动保存（Zed after-timeout 同构）：编辑停顿约 1 秒写盘。每次
+    /// 脏变起一个定时器；静默期内的后续编辑各自再起定时器，先到的发现
+    /// 「最后编辑 < 1s」就让位退出，最晚的那个落盘。冲突挂着不自动写
+    /// （等用户在横幅裁决），写盘静默（不抢状态栏）。
+    pub(crate) fn autosave_later(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !crate::services::workspace::autosave() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(AUTOSAVE_DEBOUNCE_MS))
+                    .await;
+                let proceed = this.update(cx, |c, _| {
+                    c.file_cache.get(&path).is_some_and(|f| {
+                        f.dirty
+                            && f.conflict.is_none()
+                            && f.last_edit
+                                .is_some_and(|t| t.elapsed().as_millis() as u64 >= AUTOSAVE_DEBOUNCE_MS)
+                    })
+                });
+                if !proceed.unwrap_or(false) {
+                    return; // 已保存/被丢弃/冲突/仍在输入（后续定时器接管）
+                }
+                let _ = this.update(cx, |c, cx| {
+                    let _ = c.write_file_back(&path, cx);
+                });
+                return;
+            }
+        })
+        .detach();
     }
 
     /// Ctrl+S（FileSave action，"Input" 上下文绑定）：保存当前文件 tab。
@@ -298,6 +355,7 @@ impl Chat {
         };
         if let Some(ft) = self.file_cache.get_mut(path) {
             ft.content = String::from_utf8_lossy(&bytes).to_string();
+            ft.big_lines = crate::big_lines_for(&ft.content);
             ft.dirty = false;
             ft.reload_pending = true;
             ft.conflict = None;
@@ -352,6 +410,7 @@ impl Chat {
                             self.ext_probe.1 += 1;
                             if !ft.dirty {
                                 ft.content = String::from_utf8_lossy(&b).to_string();
+                                ft.big_lines = crate::big_lines_for(&ft.content);
                                 ft.reload_pending = true;
                                 ft.conflict = None;
                             } else if ft.conflict.is_none() {

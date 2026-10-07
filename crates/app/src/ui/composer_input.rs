@@ -35,6 +35,14 @@ fn split_token(value: &str, commands: &[String]) -> Option<(String, bool)> {
     Some((name.clone(), skill))
 }
 
+/// 向下取整到 UTF-8 字符边界（move_to 接受任意字节但语义要求边界）
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// placeholder 是覆盖层（面板字号，与输入框正文的会话字号可以不同），
 /// 但它必须落在组件**第一行的行框**里，才能和光标对齐。行框由三个量决定，
 /// 三者都要与 gpui-component 内部一致（Size::Medium / text_input.rs）：
@@ -67,6 +75,9 @@ pub struct ComposerInput {
     max_rows: usize,
     // config buffered until the inner state exists (needs &mut Window)
     pending_value: Option<String>,
+    /// 菜单确认后的光标落点（字节偏移；渲染帧 inner 值就位后应用——
+    /// set_value 会把光标甩到末尾，@ 补全要求光标停在插入 token 之后）
+    pending_cursor: Option<usize>,
     pending_commands: Option<Vec<String>>,
     /// mirrored inner value so `value()` works without cx
     value: String,
@@ -92,6 +103,7 @@ impl ComposerInput {
             min_rows: 3,
             max_rows: 10,
             pending_value: None,
+            pending_cursor: None,
             pending_commands: None,
             value: String::new(),
             commands: Vec::new(),
@@ -125,6 +137,25 @@ impl ComposerInput {
         self.value = v.clone();
         self.pending_value = Some(v);
         cx.notify();
+    }
+
+    /// 外部写入 + 光标落点（031 @ 补全：确认后光标停在插入 token 之后，
+    /// 而不是 set_value 用的「文本末尾」）。cursor_byte 按新值字节偏移。
+    pub fn set_value_with_cursor(&mut self, v: String, cursor_byte: usize, cx: &mut Context<Self>) {
+        let clamped = floor_char_boundary(&v, cursor_byte.min(v.len()));
+        self.set_value(v.clone(), cx);
+        // set_value 同值短路也要落光标（菜单接受常发生在同值场景外，但
+        // 防御性覆盖）：无论哪条路，渲染帧统一应用
+        self.pending_cursor = Some(clamped);
+        cx.notify();
+    }
+
+    /// 当前光标字节偏移（inner 未建时 = 值末尾）。@ token 检测用。
+    pub fn cursor(&self, cx: &App) -> usize {
+        self.state
+            .as_ref()
+            .map(|s| s.read(cx).cursor())
+            .unwrap_or(self.value.len())
     }
 
     /// The inner widget's focus handle (composer 边框焦点态/程序聚焦用)。
@@ -258,6 +289,10 @@ impl Render for ComposerInput {
         if state.read(cx).value().as_ref() != editor_value {
             let ev = editor_value.clone();
             state.update(cx, |st, scx| st.set_value(ev, window, scx));
+        }
+        // 菜单确认后的光标落点（inner 值就位后应用；set_cursor_offset 不需要 window）
+        if let Some(cb) = self.pending_cursor.take() {
+            state.update(cx, |st, scx| st.set_cursor_offset(cb, scx));
         }
         {
             let chip = self.token.is_some();

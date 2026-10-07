@@ -22,18 +22,23 @@ pub(crate) const SURFACES: [&str; 8] = [
     "dialogs",
 ];
 
-pub(crate) fn surface(chat: &Chat, cx: &Context<Chat>, name: Option<&str>) -> Option<Value> {
+pub(crate) fn surface(
+    chat: &Chat,
+    window: &gpui::Window,
+    cx: &Context<Chat>,
+    name: Option<&str>,
+) -> Option<Value> {
     match name {
         None => {
             let mut all = json!({});
             for s in SURFACES {
-                all[s] = surface_one(chat, cx, s);
+                all[s] = surface_one(chat, window, cx, s);
             }
             Some(all)
         }
         Some(n) => {
             if SURFACES.contains(&n) {
-                Some(surface_one(chat, cx, n))
+                Some(surface_one(chat, window, cx, n))
             } else {
                 None
             }
@@ -41,9 +46,9 @@ pub(crate) fn surface(chat: &Chat, cx: &Context<Chat>, name: Option<&str>) -> Op
     }
 }
 
-fn surface_one(chat: &Chat, cx: &Context<Chat>, name: &str) -> Value {
+fn surface_one(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>, name: &str) -> Value {
     match name {
-        "app" => app_surface(chat),
+        "app" => app_surface(chat, window, cx),
         "sessions" => sessions_surface(chat),
         "session" => session_surface(chat, cx),
         "composer" => composer_surface(chat),
@@ -55,14 +60,60 @@ fn surface_one(chat: &Chat, cx: &Context<Chat>, name: &str) -> Value {
     }
 }
 
-pub(crate) fn app_info(chat: &Chat) -> Value {
-    let mut v = app_surface(chat);
+pub(crate) fn app_info(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value {
+    let mut v = app_surface(chat, window, cx);
     v["pid"] = json!(std::process::id());
     v["surfaces"] = json!(SURFACES);
     v
 }
 
-fn app_surface(chat: &Chat) -> Value {
+/// 当前焦点落在谁身上（焦点类 bug 的数据化探针）：与已知句柄逐一比对。
+/// "other" = 焦点在未登记的输入上——正是不该发生时的线索。
+fn focused_str(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value {
+    if let Some(c) = &chat.composer {
+        if c.read(cx).focus_handle_in(cx).is_focused(window) {
+            return json!("composer");
+        }
+    }
+    if chat.focus.is_focused(window) {
+        return json!("chat");
+    }
+    if chat.dialog_focus.is_focused(window) {
+        return json!("dialog");
+    }
+    if chat.git_commit_input.read(cx).focus_handle().is_focused(window) {
+        return json!("git_commit");
+    }
+    if chat.ext_input.read(cx).focus_handle().is_focused(window) {
+        return json!("ext_input");
+    }
+    for t in &chat.terminals {
+        if t.focus.is_focused(window) {
+            return json!(format!("terminal:{}", t.id));
+        }
+    }
+    json!("other")
+}
+
+fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value {
+    // 斜杠/@ 补全菜单（031）：形态 + 候选（insert 值，断言模糊命中/触发条件）
+    let menu_kind = chat.active_menu(cx);
+    let composer_menu = json!({
+        "kind": match menu_kind {
+            Some(crate::MenuKind::Slash) => "slash",
+            Some(crate::MenuKind::At) => "at",
+            None => "none",
+        },
+        "items": if menu_kind.is_some() {
+            chat.menu_items(cx)
+                .iter()
+                .map(|i| i.insert.clone())
+                .take(20)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::<String>::new()
+        },
+    });
     json!({
         "app": "pi-flash",
         "version": env!("CARGO_PKG_VERSION"),
@@ -71,12 +122,59 @@ fn app_surface(chat: &Chat) -> Value {
         "cwd": chat.cwd.display().to_string(),
         "branch": chat.branch,
         "booted": chat.booted,
+        "focused": focused_str(chat, window, cx),
         "dock_panel": chat.dock_panel.as_str(),
         "content_view": content_view_str(chat.content_view),
         "active_key": chat.active_key,
         "active_file": opt_path(chat.active_file.as_ref()),
         "terminals": chat.terminals.len(),
         "active_terminal": chat.active_terminal,
+        // 031 自定义档选择面板：开合 + 临时勾选数（确认前不动 runtime）
+        // 插件菜单：按钮是否可用（自定义档 + 还没开聊）+ 三层各自条数
+        "plugin_menu": {
+            "available": chat
+                .runtimes
+                .get(&chat.active_key)
+                .map(|rt| {
+                    let r = rt.read(cx);
+                    r.tool_preset_key() == "custom" && r.messages.is_empty()
+                })
+                .unwrap_or(false),
+        },
+        "plugin_picker": chat.plugin_picker.as_ref().map(|p| {
+            let sel = |src: &str| p.pending.contains(src);
+            let count = |list: &[Value], want: bool| {
+                list.iter()
+                    .map(pi_link::skills::entry_source)
+                    .filter(|s| !s.is_empty() && sel(s) == want)
+                    .count()
+            };
+            json!({
+                "pending": p.pending.len(),
+                "selected": chat
+                    .mc_pkgs_global
+                    .iter()
+                    .chain(chat.mc_pkgs_project.iter())
+                    .map(pi_link::skills::entry_source)
+                    .filter(|s| !s.is_empty() && sel(s))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                "project_unselected": count(&chat.mc_pkgs_project, false),
+                "global_unselected": count(&chat.mc_pkgs_global, false),
+            })
+        }),
+        // 瞬时提示（set_status）：运行中拦截 / 对话中途禁改 等断言用
+        "status_toast": chat.status_toast.as_ref().map(|(m, _)| m.clone()),
+        "pill_menu": chat.pill_menu.map(|m| match m {
+            crate::PillMenu::Thinking => "thinking",
+            crate::PillMenu::Tools => "tools",
+        }),
+        // 斜杠/@ 补全菜单（031）
+        "composer_menu": composer_menu,
+        "pill_anchor": chat.pill_anchor.map(|p| json!({
+            "x": f32::from(p.x),
+            "y": f32::from(p.y),
+        })),
     })
 }
 
@@ -130,6 +228,7 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "cwd": r.cwd.display().to_string(),
         "status": truncate(&r.status, 200),
         "agent_running": r.agent_running,
+        "bash_running": r.bash_running,
         "streaming": r.streaming_content,
         "waiting": r.phase_waiting,
         "has_process": r.agent.session.is_some(),
@@ -137,6 +236,9 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "forking": r.forking,
         "input": truncate(&r.input, 400),
         "tools_preset": r.tools_preset,
+        // 031：本档的会话插件集 + 胶囊标签口径
+        "ext_sources": r.ext_sources,
+        "tools_preset_label": r.tool_preset_label(),
         "thinking_override": r.thinking_override,
         "model": model_json(&r),
         "state": state_json(&r),
@@ -187,11 +289,24 @@ fn messages_json(r: &SessionRuntime) -> Value {
                 crate::session::messages::Role::User => "user",
                 crate::session::messages::Role::Assistant => "assistant",
                 crate::session::messages::Role::Custom => "custom",
+                crate::session::messages::Role::Bash => "bash",
             };
+            // bash 卡：命令/输出/终态从 BashInfo 取（blocks 恒空）
+            let bash = m.bash.as_ref().map(|b| {
+                json!({
+                    "command": b.command,
+                    "output": truncate(b.output.trim(), 400),
+                    "exit_code": b.exit_code,
+                    "cancelled": b.cancelled,
+                    "excluded": b.excluded,
+                    "running": b.running,
+                })
+            });
             json!({
                 "role": role,
                 "text": truncate(text.trim(), 400),
                 "tool_calls": tools,
+                "bash": bash,
             })
         })
         .collect();
@@ -220,6 +335,7 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 "expanded": r.expanded,
                 "git": r.git.map(|g| format!("{g:?}")),
                 "changed_dot": r.changed_dot,
+                "ignored": r.ignored,
             })
         })
         .collect();

@@ -356,6 +356,70 @@ pub fn read_default_tools(path: &Path) -> Result<Option<Vec<String>>, String> {
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
 }
 
+// ---------------------------------------------------------------------------
+// builtin extensions (settings.json `extensions`; full+plugins spawn recipe)
+// ---------------------------------------------------------------------------
+
+/// pi 的内置扩展（settings.md「The built-in extensions are named
+/// `builtin:mcp`, `builtin:llama.cpp`, `builtin:codemode`, and
+/// `builtin:tool-search` … They load by default; `-builtin:mcp` disables one」）。
+pub const BUILTIN_EXTENSIONS: [&str; 4] = [
+    "builtin:mcp",
+    "builtin:llama.cpp",
+    "builtin:codemode",
+    "builtin:tool-search",
+];
+
+/// 生效的内置扩展清单（稳定按 [`BUILTIN_EXTENSIONS`] 顺序）。
+///
+/// full+plugins 档必须发 `-ne`（精确插件集），而 `-ne` 会连内置扩展一起关，
+/// 只能逐条 `-e builtin:<name>` 加回来 —— 清单必须跟着 settings 走：用户
+/// 用 `-builtin:mcp` 关掉的（本项目用户就用 pi-mcp-adapter 顶替内置 MCP）
+/// 不能被他档的配方强行打开，codemode/tool-search 也不能丢。
+///
+/// 规则同 pi：默认四个全开；`extensions` 数组里 `builtin:x` / `+builtin:x`
+/// 开、`-builtin:x` 关；项目 settings 的条目覆盖用户 settings。
+pub fn enabled_builtin_extensions(cwd: &Path) -> Vec<String> {
+    let user = read_json(&settings_path()).ok();
+    let project = read_json(&project_settings_path(cwd)).ok();
+    enabled_builtin_extensions_from(user.as_ref(), project.as_ref())
+}
+
+/// [`enabled_builtin_extensions`] 的纯函数内核（显式注入两侧 settings，
+/// 便于测试且不碰进程环境）。
+pub fn enabled_builtin_extensions_from(
+    user: Option<&Value>,
+    project: Option<&Value>,
+) -> Vec<String> {
+    let mut on: Vec<String> = BUILTIN_EXTENSIONS.iter().map(|s| s.to_string()).collect();
+    for value in [user, project].into_iter().flatten() {
+        let Some(entries) = value.get("extensions").and_then(Value::as_array) else {
+            continue;
+        };
+        for raw in entries.iter().filter_map(Value::as_str) {
+            let (enable, name) = match raw.strip_prefix('-') {
+                Some(rest) => (false, rest),
+                None => (true, raw.strip_prefix('+').unwrap_or(raw)),
+            };
+            if !BUILTIN_EXTENSIONS.contains(&name) {
+                continue;
+            }
+            if enable {
+                if !on.iter().any(|x| x == name) {
+                    on.push(name.to_string());
+                }
+            } else {
+                on.retain(|x| x != name);
+            }
+        }
+    }
+    BUILTIN_EXTENSIONS
+        .iter()
+        .filter(|b| on.iter().any(|x| x == *b))
+        .map(|b| b.to_string())
+        .collect()
+}
+
 /// `settings.defaultProvider` + `settings.defaultModel` — the model a new
 /// session starts with (pi-web /api/models `defaultModel`, consumed by
 /// selectInitialModelScope parity on the app side). Both keys must be present.
@@ -388,4 +452,47 @@ pub fn read_model_thinking_levels(path: &Path) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod builtin_extension_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 期望值 = 全部内置扩展（默认口径）
+    fn all_builtins() -> Vec<String> {
+        BUILTIN_EXTENSIONS.iter().map(|s| s.to_string()).collect()
+    }
+    #[test]
+    fn defaults_to_every_builtin_extension() {
+        let on = enabled_builtin_extensions_from(None, None);
+        assert_eq!(on, all_builtins());
+    }
+
+    #[test]
+    fn user_settings_can_disable_and_enable_builtins() {
+        let user = json!({ "extensions": ["-builtin:mcp", "+builtin:codemode"] });
+        let on = enabled_builtin_extensions_from(Some(&user), None);
+        assert!(!on.iter().any(|x| x == "builtin:mcp"), "-builtin:mcp 应关掉 MCP");
+        assert!(on.iter().any(|x| x == "builtin:codemode"));
+        // 其它内置扩展不受影响
+        assert!(on.iter().any(|x| x == "builtin:tool-search"));
+        assert!(on.iter().any(|x| x == "builtin:llama.cpp"));
+    }
+
+    #[test]
+    fn non_builtin_entries_are_ignored() {
+        let user = json!({ "extensions": ["npm:pi-web-access", "./local.ts", "-builtin:nope"] });
+        let on = enabled_builtin_extensions_from(Some(&user), None);
+        assert_eq!(on, all_builtins());
+    }
+
+    #[test]
+    fn project_settings_override_user_settings() {
+        let user = json!({ "extensions": ["-builtin:mcp", "-builtin:tool-search"] });
+        let project = json!({ "extensions": ["builtin:mcp"] });
+        let on = enabled_builtin_extensions_from(Some(&user), Some(&project));
+        assert!(on.iter().any(|x| x == "builtin:mcp"), "项目 settings 覆盖用户");
+        assert!(!on.iter().any(|x| x == "builtin:tool-search"), "项目没覆盖的保持用户口径");
+    }
 }

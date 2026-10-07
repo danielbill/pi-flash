@@ -41,15 +41,23 @@
   `<配置目录>/automation/<pid>.json`；`PI_FLASH_DIR` 可隔离整套配置）
 - 驱动：`target/debug/pif-ui.exe <命令>`（协议+CLI 在 `crates/pi-link/src/automation.rs`
   与 `src/bin/pif-ui.rs`；服务在 `crates/app/src/automation/`）
-- 看界面：`pif-ui snapshot [app|sessions|session|composer|files|git|settings|dialogs]`
-  ——JSON 数据快照，直接读文本判断 UI 状态
-- 操作界面：`pif-ui exec <method> [json参数]`；文本用 `composer.set_text` /
+- 看界面：`pif-ui snapshot [surface] [--only k]`——JSON 数据快照（8 个
+  surface：app/sessions/session/composer/files/git/settings/dialogs），直接读
+  文本判断 UI 状态；大面用 `--only` 裁剪
+- 操作界面：`pif-ui exec <method> --arg k=v ...`（CLI 组 JSON，**Windows 路径
+  用正斜杠**或交给 --arg 免三层转义）；文本用 `composer.set_text` /
   `session.send`（直调方法），快捷键用 `pif-ui keys "ctrl-s"`（走真实键位表）
+- 焦点类 bug：`exec input.focus '{"target":"..."}'` 元素级聚焦 + app 面的
+  `focused` 字段断言
 - 等结果：`pif-ui wait --path session.agent_running --eq false --timeout 60`
-  （轮询快照，勿死等）
+  （路径支持数组下标 `a.b[0].c`；断言 `--eq/--contains/--truthy` 三选一；
+  `--surface` 限定轮询面）
+- 清场：`pif-ui clean`（只删明确拒绝连接的死登记；token 只在登记文件里，
+  误删=失联，判死只认 ConnectionRefused；登记丢了看 app 启动日志行的
+  `token=`，用 `--addr/--token` 直连救）
 - 事务式断言范式：`exec` → `wait` → `snapshot` 读 JSON 断言，全程 bash + 文本
-- 方法清单唯一事实源：`pi_link::automation::method`；纯视觉问题（颜色/布局错位）
-  这套看不见，需人眼确认
+- 方法清单唯一事实源：`pi_link::automation::method`；纯视觉问题（颜色/布局
+  错位）这套看不见，需人眼确认
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
