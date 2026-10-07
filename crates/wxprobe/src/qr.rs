@@ -21,6 +21,60 @@ pub fn qr_block_text(url: &str, module_w: usize) -> Result<String, String> {
         .build())
 }
 
+/// 像素级二维码矩阵（含 4 模块静默区）——**给 UI 画方块用**。
+///
+/// 字符画（[`qr_block_text`」）在字体抗锯齿下会在模块间留细缝，
+/// 部分手机会因此解不出来；画实心方块没有这个毛病。
+#[derive(Debug, Clone)]
+pub struct QrGrid {
+    /// 边长（含静默区）
+    pub size: usize,
+    /// 行优先，`true` = 深色；长度 = `size * size`
+    pub cells: Vec<bool>,
+}
+
+impl QrGrid {
+    pub fn at(&self, x: usize, y: usize) -> bool {
+        self.cells.get(y * self.size + x).copied().unwrap_or(false)
+    }
+
+    /// 每行的连续深色段 `(x, len)` —— 用来把一行合并成少数几个方块，
+    /// 41×41 不会变成 1681 个元素。
+    pub fn runs(&self, y: usize) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        let mut x = 0;
+        while x < self.size {
+            if !self.at(x, y) {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < self.size && self.at(x, y) {
+                x += 1;
+            }
+            out.push((start, x - start));
+        }
+        out
+    }
+}
+
+/// 渲染成矩阵；`quiet` 是四周静默区的模块数（规范要求 4）。
+pub fn qr_grid(url: &str, quiet: usize) -> Result<QrGrid, String> {
+    let code =
+        qrcode::QrCode::new(url.as_bytes()).map_err(|e| format!("二维码编码失败: {e}"))?;
+    let w = code.width();
+    use qrcode::Color as C;
+    let src = code.to_colors(); // 行优先，长度 w*w
+    let size = w + quiet * 2;
+    let mut cells = vec![false; size * size];
+    for y in 0..w {
+        for x in 0..w {
+            cells[(y + quiet) * size + (x + quiet)] = src[y * w + x] == C::Dark;
+        }
+    }
+    Ok(QrGrid { size, cells })
+}
+
 /// 320×320 的 SVG 文本（落盘后用浏览器打开 / 交给有 SVG 能力的渲染端）。
 pub fn qr_svg(url: &str) -> Result<String, String> {
     let code = qrcode::QrCode::new(url.as_bytes())
@@ -70,6 +124,40 @@ mod tests {
             finder.starts_with("█▀▀▀▀▀█"),
             "左上角定位图案丢失：{finder:?}"
         );
+    }
+
+    #[test]
+    fn grid_matches_source_matrix_and_has_quiet_zone() {
+        let g = qr_grid(URL, 4).unwrap();
+        let w = qrcode::QrCode::new(URL.as_bytes()).unwrap().width();
+        assert_eq!(g.size, w + 4 * 2, "边长 = 模块数 + 2*静默区");
+        assert_eq!(g.cells.len(), g.size * g.size);
+        // 静默区必须全浅色，否则手机解不出来
+        for i in 0..g.size {
+            assert!(!g.at(i, 0) && !g.at(i, 1), "上静默区必须为空");
+            assert!(!g.at(0, i) && !g.at(1, i), "左静默区必须为空");
+        }
+        // 左上角定位图案（7x7，外圈实心）
+        assert!(g.at(4, 4), "定位图案左上角应为深色");
+        assert!(g.at(10, 4) && g.at(4, 10) && g.at(10, 10), "定位图案三角");
+        assert!(!g.at(5, 5), "定位图案中心应为空");
+    }
+
+    #[test]
+    fn runs_cover_exactly_the_dark_cells_of_each_row() {
+        let g = qr_grid(URL, 4).unwrap();
+        for y in 0..g.size {
+            let runs = g.runs(y);
+            // 段之间必须交替：起点有序、互不重叠
+            let mut prev_end = 0;
+            for (x, len) in &runs {
+                assert!(*x >= prev_end, "段重叠");
+                assert!(*len > 0, "空段");
+                assert!(g.at(*x, y) && g.at(x + len - 1, y), "段两端必须深色");
+                prev_end = x + len;
+            }
+            assert!(prev_end <= g.size);
+        }
     }
 
     #[test]

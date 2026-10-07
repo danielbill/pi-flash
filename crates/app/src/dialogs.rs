@@ -135,13 +135,45 @@ fn render_wx_qr(
             .into_any_element()
     };
 
-    // QR 居中 + 限尺寸：大卡片 body 里居中，字号压到能放进 0.7 宽窗体
-    let qr_centered = |art: String| -> gpui::AnyElement {
-        div()
+    // QR 用**实心方块**画，不用字符画：字形抗锯齿会在模块之间留细缝，
+    // 手机容易解不出来（用户实测扫不上）。按行把连续深色段合并成一个方块，
+    // 49x49 的网格约 600 个元素，不是 2401 个。
+    let qr_grid = |url: &str| -> gpui::AnyElement {
+        const MOD: f32 = 8.; // 8px/模块；49 模块 = 392px，正好塞进 0.7 宽大卡片
+        const DARK: u32 = 0x111827;
+        let grid = match wxprobe::qr::qr_grid(url, 4) {
+            Ok(g) => g,
+            Err(e) => return body_text(format!("二维码生成失败：{e}"), false),
+        };
+        let side = grid.size as f32 * MOD;
+        let mut canvas = div()
+            .w(px(side))
+            .h(px(side))
+            .flex_shrink_0()
+            .bg(rgb(0xff_ffff))
             .flex()
-            .justify_center()
-            .child(mono_lines(art.lines().map(str::to_string).collect(), 13., false))
-            .into_any_element()
+            .flex_col();
+        for y in 0..grid.size {
+            let mut row = div().h(px(MOD)).flex().flex_row().flex_shrink_0();
+            let mut cursor = 0usize;
+            for (x, len) in grid.runs(y) {
+                if x > cursor {
+                    row = row.child(div().w(px((x - cursor) as f32 * MOD)).h(px(MOD)));
+                }
+                row = row.child(
+                    div()
+                        .w(px(len as f32 * MOD))
+                        .h(px(MOD))
+                        .bg(rgb(DARK)),
+                );
+                cursor = x + len;
+            }
+            if cursor < grid.size {
+                row = row.child(div().w(px((grid.size - cursor) as f32 * MOD)).h(px(MOD)));
+            }
+            canvas = canvas.child(row);
+        }
+        div().flex().justify_center().child(canvas).into_any_element()
     };
 
     let mut body = div()
@@ -161,17 +193,14 @@ fn render_wx_qr(
             body = body.child(action_btn("wx-qr-begin", "获取二维码", true, true));
         }
         QrState::Loading => body = body.child(body_text("正在获取二维码…".into(), true)),
-        QrState::Ready { url } => match wxprobe::qr::qr_block_text(url, 2) {
-            Ok(art) => {
-                body = body.child(qr_centered(art));
-                body = body.child(body_text(
-                    "用手机微信「扫一扫」对屏扫码；二维码约 2 分钟后过期。".into(),
-                    true,
-                ));
-                body = body.child(action_btn("wx-qr-refresh", "重新获取", false, true));
-            }
-            Err(e) => body = body.child(body_text(format!("二维码生成失败：{e}"), false)),
-        },
+        QrState::Ready { url } => {
+            body = body.child(qr_grid(url));
+            body = body.child(body_text(
+                "用手机微信「扫一扫」对屏扫码；二维码约 2 分钟后过期。".into(),
+                true,
+            ));
+            body = body.child(action_btn("wx-qr-refresh", "重新获取", false, true));
+        }
         QrState::Scanned => body = body.child(body_text("已扫码，请在手机上确认…".into(), true)),
         QrState::Done { bot_id } => {
             let mut lines = vec!["✅ 绑定成功".to_string()];
