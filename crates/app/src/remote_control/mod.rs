@@ -199,9 +199,16 @@ impl RemoteControl {
         true
     }
 
-    /// 入站/出站该投给哪个会话：绑定优先，否则当前活跃会话。
+    /// 入站/出站该投给哪个会话 —— **始终是当前活跃会话**。
+    ///
+    /// 曾经让 `/bind` 把会话钉死，那与 ZCode 的模型冲突：ZCode 里
+    /// `/bind` 绑的是 **workspace**，选**会话**走 `/task`（选完切进那个会话）。
+    /// 钉死会让 `/task` 切了桌面却投不进去。现在两者各管各的：
+    /// `/bind` = 授权确认（记录态），`/task` = 选会话（直接 `new_session_in`
+    /// 切换活跃会话，之后 `active_key` 自然就是它）。
     pub fn target_key<'a>(&'a self, active: &'a str) -> &'a str {
-        self.bound.as_deref().unwrap_or(active)
+        let _ = &self.bound; // 保留为授权记录，见上
+        active
     }
 
     /// 关掉渠道：`transport = None` 触发 `Drop` → **join 两条线程 + 释放轮询锁**
@@ -573,8 +580,14 @@ impl crate::Chat {
         for text in self.remote.on_running(running) {
             self.remote.send(&text);
         }
-        // 设置页扫码结果
+        // 设置页扫码结果 —— **成功即关弹窗落回工作界面**（ZCode 扫完就进
+        // 工作台选会话；留个弹窗把人挡在外面是错的）
         if self.remote.poll_qr() {
+            if matches!(self.remote.qr, QrState::Done { .. })
+                && matches!(self.dialog, Some(crate::Dialog::WxQr))
+            {
+                self.dialog = None;
+            }
             cx.notify();
         }
         let batches = self.remote.take_batches();
@@ -758,14 +771,21 @@ impl crate::Chat {
             .map(|m| m.provider.clone())
     }
 
-    fn send_wx(&self, cmd: &Command, cx: &gpui::App) {
+    fn send_wx(&mut self, cmd: &Command, cx: &mut gpui::Context<Self>) {
         // `/bind` 钉住的会话优先，否则当前活跃会话（§4.2 active_session）
-        let key = self.remote.target_key(&self.active_key);
-        let Some(rt) = self.runtimes.get(key) else {
+        let key = self.remote.target_key(&self.active_key).to_string();
+        let Some(rt) = self.runtimes.get(&key).cloned() else {
+            // 找不到目标会话也要出声 —— 静默丢弃已经坑过一次（微信没回执）
+            eprintln!("[wx] 命令未送达：没有 key = {key} 的会话");
             return;
         };
-        if let Some(session) = &rt.read(cx).agent.session {
-            let _ = session.send(cmd);
+        let sent = rt.update(cx, |r, cx| match cmd {
+            // 文本要走「没进程先 spawn」，否则草稿会话永远收不到
+            Command::Prompt { message, .. } => r.send_remote_text(message.clone(), cx),
+            _ => r.send_remote_command(cmd, cx),
+        });
+        if !sent {
+            eprintln!("[wx] 命令未送达（目标会话没有 pi 进程或正在压缩）");
         }
     }
     /// 当前活跃会话是否在跑（`/新建` 的运行中分支与状态卡共用）。
@@ -955,15 +975,20 @@ mod tests {
         assert!(rc.bound.is_none());
 
         assert!(rc.accept_bind(&code, "draft-7"));
-        assert_eq!(rc.bound.as_deref(), Some("draft-7"));
-        // 绑定后目标 = 绑定会话；解绑前一直钉着
-        assert_eq!(rc.target_key("draft-9"), "draft-7");
+        assert_eq!(rc.bound.as_deref(), Some("draft-7"), "授权记录要留着");
     }
 
     #[test]
-    fn unbound_routes_to_active_session() {
+    fn routing_always_follows_the_active_session() {
+        // ZCode 模型：/bind 绑 workspace、/task 选会话（选完切进那个会话）。
+        // 让 /bind 钉死会话会和 /task 打架 —— 切了桌面却投不进去。
         let rc = RemoteControl::new();
         assert_eq!(rc.target_key("draft-9"), "draft-9");
+        // 即便授权过，路由仍然跟着活跃会话走
+        let mut rc2 = RemoteControl::new();
+        let code = rc2.bind_code("draft-7");
+        assert!(rc2.accept_bind(&code, "draft-7"));
+        assert_eq!(rc2.target_key("draft-9"), "draft-9");
     }
 
     #[test]

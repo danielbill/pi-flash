@@ -210,7 +210,10 @@ fn render_wx_qr(
             body = body.child(
                 div().flex().justify_center().child(mono_lines(lines, 12., false)).into_any_element(),
             );
-            body = body.child(body_text("发送 /帮助 查看可用命令。".into(), true));
+            body = body.child(body_text(
+                "接下来在微信里发 /task 选一个会话，即可开始聊天。".into(),
+                true,
+            ));
         }
         QrState::Expired => {
             body = body.child(body_text("二维码已过期，请重新获取。".into(), false));
@@ -224,9 +227,11 @@ fn render_wx_qr(
 
     // 绑定码：微信里 `/bind <code>` 用
     let code = chat.remote.bind_code(&chat.active_key);
+    // 上面的「绑定成功」说的是**渠道**（扫码授权）；这里说的是 `/bind`，
+    // 两者别混 —— 用户被「已绑定/未绑定」并排显示搞糊涂过
     let bind_line = match chat.remote.bound.as_deref() {
-        Some(k) => format!("绑定码 {code} · 已绑定 {k}"),
-        None => format!("绑定码 {code} · 未绑定（微信里发 /bind {code}）"),
+        Some(k) => format!("/bind 已确认 · 当前会话 {k}"),
+        None => format!("可选：微信里发 /bind {code} 确认授权（不影响选会话）"),
     };
     body = body.child(body_text(bind_line, true));
     body = body.child(action_btn("wx-qr-close", "关闭", false, false));

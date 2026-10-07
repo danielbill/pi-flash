@@ -1770,6 +1770,83 @@ impl SessionRuntime {
     }
 
 
+    /// 远程（微信）来的一条文本 —— 与 [`send_input`] **同口径**，但不碰
+    /// `self.input` / `pending_images`（那两个是 composer 专属的）。
+    ///
+    /// 关键：草稿**还没有 pi 进程**时必须先 `spawn()` + `attach_pump`，
+    /// 否则 `agent.session` 是 `None`、命令直接丢掉 —— 真机表现就是
+    /// 「发消息没有任何应答，重启后才有人回」。
+    ///
+    /// 返回是否真的发出去了（失败时写 `status`，不静默）。
+    pub(crate) fn send_remote_text(&mut self, text: String, cx: &mut Context<Self>) -> bool {
+        if self.compacting {
+            return false;
+        }
+        if self.agent.session.is_none() {
+            let this = cx.entity();
+            match self.spawn() {
+                Some(rx) => {
+                    let epoch = self.agent.epoch;
+                    Self::attach_pump(&this, rx, epoch, cx);
+                }
+                None => {
+                    self.status = tr("未连接").into();
+                    cx.notify();
+                    return false;
+                }
+            }
+            self.refresh_state();
+        }
+        let Some(session) = &self.agent.session else {
+            self.status = tr("未连接").into();
+            cx.notify();
+            return false;
+        };
+        // 运行中 = steer，否则 prompt（与 composer 完全一致）
+        let streaming =
+            self.agent_running || self.state.as_ref().is_some_and(|s| s.is_streaming);
+        let cmd = if streaming {
+            Command::Steer { message: text.clone(), images: Vec::new() }
+        } else {
+            Command::Prompt { message: text.clone(), images: Vec::new() }
+        };
+        let sent = session.send(&cmd).is_ok();
+        if sent {
+            if self.history.last().map(|h| h != &text).unwrap_or(true) {
+                self.history.push(text.clone());
+            }
+            self.history_ix = None;
+            self.status = if streaming { "steering" } else { "running" }.into();
+            // 让桌面端也看到这条消息（微信发的同样属于这轮对话）
+            if !text.starts_with("/skill:") {
+                self.optimistic_send(text, cx);
+            }
+        } else {
+            self.status = tr("发送失败").into();
+        }
+        cx.notify();
+        sent
+    }
+
+    /// 远程来的非文本命令（`/停止`、ExtUi 回填）：**不 spawn** ——
+    /// 没有进程就明确返回失败，由调用方出声。
+    pub(crate) fn send_remote_command(&mut self, cmd: &Command, cx: &mut Context<Self>) -> bool {
+        if self.compacting {
+            return false;
+        }
+        let Some(session) = &self.agent.session else {
+            self.status = tr("未连接").into();
+            cx.notify();
+            return false;
+        };
+        let ok = session.send(cmd).is_ok();
+        if !ok {
+            self.status = tr("发送失败").into();
+        }
+        cx.notify();
+        ok
+    }
+
     /// LLM session title (pi-web lib/session-title.ts parity via a one-off
     /// `pi --no-session --print` run; the in-process SDK call pi-web uses is
     /// not reachable over RPC).
