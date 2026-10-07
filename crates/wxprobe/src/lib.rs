@@ -21,6 +21,7 @@
 //! * [`parity`]   对拍 harness（Node 24 type-stripping 跑 ZCode 真实 TS）
 
 pub mod command;
+pub mod extui;
 pub mod format;
 pub mod lock;
 pub mod parity;
