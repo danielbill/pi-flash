@@ -22,6 +22,10 @@ use crate::format::reply::{
 };
 use crate::format::status::{status_task_line, task_running_duration};
 use crate::format::summary::{get_compact_tool_call_summary, ToolCallSummarySource};
+use crate::format::menu::{
+    display_kind, is_reject, option_description, option_index, option_label, render_selection,
+    sort_options, DisplayKind, MenuOption,
+};
 
 fn parity_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("parity")
@@ -39,6 +43,26 @@ fn lang_of(v: &Value) -> Lang {
         Some("en-US") => Lang::En,
         _ => Lang::ZhCn,
     }
+}
+
+/// ZCode 的 `BotPermissionOptionDisplayKind` 字符串。
+fn kind_str(kind: DisplayKind) -> &'static str {
+    match kind {
+        DisplayKind::AllowOnce => "allowOnce",
+        DisplayKind::AllowAlways => "allowAlways",
+        DisplayKind::RejectOnce => "rejectOnce",
+        DisplayKind::RejectAlways => "rejectAlways",
+        DisplayKind::Custom => "custom",
+    }
+}
+
+/// 取 `option` 对象的三元组喂给嗅探器（与 ZCode 拼串顺序一致）。
+fn display_kind_of(v: &Value) -> DisplayKind {
+    display_kind(
+        v["optionId"].as_str().unwrap_or_default(),
+        v["kind"].as_str().unwrap_or_default(),
+        v["name"].as_str().unwrap_or_default(),
+    )
 }
 
 fn status_of(v: &Value) -> Option<ToolStatus> {
@@ -211,6 +235,66 @@ fn compute(c: &Value) -> Value {
                 raw: c.get("raw").filter(|v| !v.is_null()),
             };
             summary_to_value(&get_compact_tool_call_summary(source))
+        }
+        "selection" => {
+            let sel = &c["selection"];
+            let opts: Vec<MenuOption> = sel["options"]
+                .as_array()
+                .expect("selection.options 必须是数组")
+                .iter()
+                .map(|o| match o.get("description").and_then(Value::as_str) {
+                    Some(d) => MenuOption::with_desc(o["label"].as_str().unwrap_or_default(), d),
+                    None => MenuOption::new(o["label"].as_str().unwrap_or_default()),
+                })
+                .collect();
+            Value::String(render_selection(
+                sel["title"].as_str().unwrap_or_default(),
+                &opts,
+                // ZCode: `showCancel === false` 才不出 0 行；undefined 走默认（出）
+                sel.get("showCancel").and_then(Value::as_bool) != Some(false),
+                sel.get("cancelLabel").and_then(Value::as_str),
+                lang,
+            ))
+        }
+        "opt_kind" => Value::String(kind_str(display_kind_of(&c["option"])).to_string()),
+        "opt_sort" => {
+            let mut items: Vec<(String, DisplayKind)> = c["options"]
+                .as_array()
+                .expect("options 必须是数组")
+                .iter()
+                .map(|o| {
+                    (
+                        o["optionId"].as_str().unwrap_or_default().to_string(),
+                        display_kind_of(o),
+                    )
+                })
+                .collect();
+            sort_options(&mut items, |it| it.1);
+            Value::Array(items.into_iter().map(|(id, _)| Value::String(id)).collect())
+        }
+        "opt_label" => Value::String(option_label(
+            lang,
+            display_kind_of(&c["option"]),
+            c["option"]["name"].as_str().unwrap_or_default(),
+        )),
+        "opt_desc" => {
+            // scope 走同一份 preview，与 ZCode 分支内 `getPermissionRequestPreview(request).scope` 一致
+            let preview = get_permission_request_preview(&request_of(c));
+            Value::String(option_description(
+                lang,
+                display_kind_of(&c["option"]),
+                preview.scope,
+                c["option"]["kind"].as_str().unwrap_or_default(),
+            ))
+        }
+        "opt_reject" => Value::Bool(is_reject(display_kind_of(&c["option"]))),
+        "option_index" => {
+            // ZCode: `pendingPermissionOptions[optionIndex]` 越界取到 undefined 即 expired
+            let pending = c["options"].as_array().map(|a| a.len()).unwrap_or(0);
+            match option_index(c["value"].as_str().unwrap_or_default()) {
+                Some(i) if i < pending => json!(i),
+                _ => Value::Null,
+            }
         }
         other => panic!("未知 case kind: {other}"),
     }

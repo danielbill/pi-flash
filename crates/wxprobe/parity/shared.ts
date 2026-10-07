@@ -10,3 +10,5 @@ export type BotCommand = Record<string, unknown>;
 
 export * from "./tool-call-summary.ts";
 export * from "./permission-request-preview.ts";
+export type SelectionPrompt = Record<string, unknown>;
+export type ZCodePermissionOption = Record<string, unknown>;

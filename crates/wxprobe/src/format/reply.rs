@@ -432,7 +432,7 @@ fn contains_word_case_insensitive(haystack: &str, word: &str) -> bool {
     false
 }
 
-fn contains_any_word(haystack: &str, words: &[&str]) -> bool {
+pub(crate) fn contains_any_word(haystack: &str, words: &[&str]) -> bool {
     words.iter().any(|word| contains_case_insensitive_any(haystack, word))
 }
 

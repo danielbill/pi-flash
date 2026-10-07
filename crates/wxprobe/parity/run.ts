@@ -16,6 +16,14 @@ import {
 import { formatStatusTaskLine, formatTaskRunningDuration } from "./statusFormatting.ts";
 import { getPermissionRequestPreview } from "./permission-request-preview.ts";
 import { getCompactToolCallSummary } from "./tool-call-summary.ts";
+import {
+  formatBotPermissionOptionDescription,
+  formatBotPermissionOptionLabel,
+  formatSelectionFallback,
+  getBotPermissionOptionDisplayKind,
+  isBotPermissionRejectOption,
+  sortBotPermissionOptions,
+} from "./bot-service.ts";
 
 type Case = Record<string, any>;
 
@@ -90,6 +98,39 @@ for (const c of cases) {
         raw: c.raw ?? undefined,
       });
       break;
+    case "selection":
+      out = formatSelectionFallback(c.selection, c.locale);
+      break;
+    case "opt_kind":
+      out = getBotPermissionOptionDisplayKind(c.option);
+      break;
+    case "opt_sort":
+      out = sortBotPermissionOptions(c.options).map((o: any) => o.optionId);
+      break;
+    case "opt_label":
+      out = formatBotPermissionOptionLabel(c.option, c.locale);
+      break;
+    case "opt_desc": {
+      const req = {
+        title: c.title ?? undefined,
+        description: c.description,
+        kind: c.permissionKind,
+        raw: c.raw,
+      };
+      out = formatBotPermissionOptionDescription(c.option, req, c.locale);
+      break;
+    }
+    case "opt_reject":
+      out = isBotPermissionRejectOption(c.option);
+      break;
+    // ZCode `permission.respond` 分支原文（botsService.ts:6139-6143）：
+    // optionIndex 越界取到 undefined 即视为 expired。
+    case "option_index": {
+      const optionIndex = Number.parseInt(c.value, 10) - 1;
+      const option = Number.isFinite(optionIndex) ? c.options[optionIndex] : undefined;
+      out = option === undefined ? null : optionIndex;
+      break;
+    }
     default:
       throw new Error(`未知 case kind: ${c.kind}`);
   }

@@ -40,3 +40,32 @@
 {"id":"summary.command","out":{"primaryText":"tool","secondaryText":"npm test"}}
 {"id":"summary.edit_stat","out":{"primaryText":"Edit","changeStat":{"added":3,"removed":2}}}
 {"id":"summary.from_output","out":{"primaryText":"tool","changeStat":{"added":2,"removed":1}}}
+{"id":"sel_cancel_zh","out":"选择工作区\n0. 取消\n1. pi-flash\n2. ghzw\n\n回复数字选择，0 取消。"}
+{"id":"sel_cancel_en_with_label","out":"Pick a model\n0. Abort\n1. claude\n2. gpt fast\n\nReply with a number to choose, or 0 to cancel."}
+{"id":"sel_no_cancel_permission","out":"需要权限\n1. 允许 仅允许这一次\n2. 始终允许 后续相同命令不再询问\n3. 拒绝\n\n回复数字选择。"}
+{"id":"sel_no_options","out":"空菜单\n\n\n回复数字选择。"}
+{"id":"kind_allow_once","out":"allowOnce"}
+{"id":"kind_allow_always","out":"allowAlways"}
+{"id":"kind_deny_once","out":"rejectOnce"}
+{"id":"kind_reject_always_zh","out":"rejectAlways"}
+{"id":"kind_custom","out":"custom"}
+{"id":"kind_word_boundary","out":"custom"}
+{"id":"kind_allow_wins","out":"allowOnce"}
+{"id":"sort_priority","out":["allow-2","allow-always","deny-1","deny-2","custom-1"]}
+{"id":"label_zh","out":"允许"}
+{"id":"label_en_always","out":"Always Allow"}
+{"id":"label_custom_not_localized","out":"My Option"}
+{"id":"desc_zh_allow_cmd","out":"仅允许这一次"}
+{"id":"desc_en_allow_always_file","out":"Do not ask again for the same file operation"}
+{"id":"desc_zh_reject_generic","out":"后续相同权限请求也会直接拒绝"}
+{"id":"desc_custom_returns_kind","out":"sudo"}
+{"id":"reject_true","out":true}
+{"id":"reject_false_allow","out":false}
+{"id":"idx_plain","out":0}
+{"id":"idx_leading_space","out":1}
+{"id":"idx_zero_out_of_range","out":null}
+{"id":"idx_negative","out":null}
+{"id":"idx_garbage","out":null}
+{"id":"idx_prefix_digits","out":0}
+{"id":"idx_hex_radix10","out":null}
+{"id":"idx_overflow","out":null}
