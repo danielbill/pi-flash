@@ -1,0 +1,16 @@
+[package]
+name = "wxprobe"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+# P0 探针：证伪微信 iLink 协议（docs/模块设计/060-远程控制-微信.md §5 P0）。
+# 独立于 crates/app，不引入 GPUI；P1 落地时本 crate 的 wire/register/poller
+# 会被搬进 crates/app/src/remote_control/wx/ 后删除。
+
+[dependencies]
+serde_json = "1"
+base64 = "0.22"
+pi-link = { path = "../pi-link" }
+ureq = { version = "3.4.2", features = ["json"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }

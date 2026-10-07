@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pi-link", "crates/app"]
+members = ["crates/pi-link", "crates/app", "crates/wxprobe"]
 # [patch.crates-io] 的候选包不在 members 里；Cargo 重解析时会对工作区目录
 # 内的非成员包做归属检查——显式排除（vendor/gpui 先前未报错只因锁文件
 # 一直免于重解析）。
