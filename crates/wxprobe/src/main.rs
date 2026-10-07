@@ -26,6 +26,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use serde_json::json;
 
 use crate::wire::Wire;
 
@@ -43,6 +44,9 @@ fn main() {
             args.get(1).map(String::as_str).unwrap_or("zh"),
             args.get(2).map(String::as_str).unwrap_or("running"),
         ),
+        "reply-demo" => {
+            cmd_reply_demo(args.get(1).map(String::as_str).unwrap_or("zh"))
+        }
         "state" => cmd_state(),
         "reset" => cmd_reset(),
         _ => Err(usage()),
@@ -54,7 +58,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | status-demo [zh|tw|en] [state] | state | reset".into()
+    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | status-demo [zh|tw|en] [state] | reply-demo [zh|tw|en] | state | reset".into()
 }
 
 fn wire() -> Wire {
@@ -325,6 +329,140 @@ fn cmd_status_demo(lang_arg: &str, state: &str) -> Result<(), String> {
             status_line(lang, "已工作", &task_running_duration(5_400_000)),
             status_line(lang, "进展", "正在编辑 crates/wxprobe/src/wire.rs"),
         ])
+    );
+    Ok(())
+}
+
+/// 渲染一组回复块，覆盖切片 3 的全部出口：工具摘要行、变更摘要、
+/// flush 边界、终态判定、超长分块 —— 排版冒烟 + 逐字节对拍基准。
+fn cmd_reply_demo(lang_arg: &str) -> Result<(), String> {
+    use crate::format::messages::Lang;
+    use crate::format::reply::{
+        extract_bot_assistant_response_messages, format_bot_assistant_reply_blocks,
+        format_tool_status, is_bot_tool_call_reply_terminal, split_long_reply_text,
+        BotAssistantReplyBlock, BotReplyToolCallState, ChangeSummary, FileChange, ToolStatus,
+        MAX_REPLY_MESSAGE_LENGTH,
+    };
+
+    let lang = Lang::from_ix(match lang_arg {
+        "en" => 2,
+        "tw" => 1,
+        _ => 0,
+    });
+    let workspace = "/proj/pi-flash";
+
+    let bash = BotReplyToolCallState {
+        tool_id: "call_1".into(),
+        title: Some("Bash".into()),
+        kind: Some("bash".into()),
+        input: json!({ "command": "cargo test -p wxprobe" }),
+        output: None,
+        status: Some(ToolStatus::Completed),
+        error: None,
+        raw: None,
+    };
+    let edit = BotReplyToolCallState {
+        tool_id: "call_2".into(),
+        title: Some("Edit".into()),
+        kind: Some("edit".into()),
+        input: json!({
+            "path": "/proj/pi-flash/crates/wxprobe/src/wire.rs",
+            "old_string": "fn a() {}\n",
+            "new_string": "fn a() {}\nfn b() {}\n",
+        }),
+        output: None,
+        status: Some(ToolStatus::Completed),
+        error: None,
+        raw: None,
+    };
+    let pending = BotReplyToolCallState {
+        tool_id: "call_3".into(),
+        title: Some("Grep".into()),
+        kind: Some("grep".into()),
+        input: json!({ "path": "crates/wxprobe" }),
+        output: None,
+        status: Some(ToolStatus::Pending),
+        error: None,
+        raw: None,
+    };
+
+    let blocks = vec![
+        BotAssistantReplyBlock::Content {
+            content: "我来改这两处。".into(),
+        },
+        BotAssistantReplyBlock::ToolCall {
+            tool_call: bash.clone(),
+        },
+        BotAssistantReplyBlock::ToolCall { tool_call: edit },
+        BotAssistantReplyBlock::ChangeSummary {
+            change_summary: ChangeSummary {
+                file_count: 2,
+                added: 12,
+                removed: 3,
+                files: vec![
+                    FileChange {
+                        path: "crates/wxprobe/src/wire.rs".into(),
+                        added: 8,
+                        removed: 2,
+                    },
+                    FileChange {
+                        path: "crates/wxprobe/src/poller.rs".into(),
+                        added: 4,
+                        removed: 1,
+                    },
+                ],
+            },
+        },
+    ];
+    for (index, message) in
+        format_bot_assistant_reply_blocks(&blocks, lang, Some(workspace))
+            .iter()
+            .enumerate()
+    {
+        println!("── 第 {} 条 ──", index + 1);
+        println!("{message}");
+    }
+
+    // flush 边界：非终态不发（ZCode `extractBotAssistantResponseMessages`）
+    let (pending_msgs, pending_rest) =
+        extract_bot_assistant_response_messages("正在写 wire.rs", false);
+    let (done_msgs, done_rest) = extract_bot_assistant_response_messages("写完了", true);
+    println!(
+        "\nflush 边界：非终态 {} 条(余 {} 字)，终态 {} 条(余 {} 字)",
+        pending_msgs.len(),
+        pending_rest.len(),
+        done_msgs.len(),
+        done_rest.len()
+    );
+
+    // 终态判定（stopped 也是终态，但状态文案落回「等待中」）
+    for call in [&bash, &pending] {
+        println!(
+            "终态判定 {} ({:?}) = {}",
+            call.tool_id,
+            call.status,
+            is_bot_tool_call_reply_terminal(call.status)
+        );
+    }
+
+    // 状态文案：各变体各渲染一次，顺带覆盖 ZCode「stopped 落回等待中」的原样行为
+    for status in [
+        Some(ToolStatus::Pending),
+        Some(ToolStatus::InProgress),
+        Some(ToolStatus::Completed),
+        Some(ToolStatus::Failed),
+        Some(ToolStatus::Denied),
+        Some(ToolStatus::Stopped),
+        None,
+    ] {
+        println!("状态文案 {status:?} = {}", format_tool_status(status, None, lang));
+    }
+
+    let chunks = split_long_reply_text(&"A".repeat(7200));
+    println!(
+        "\n超长分块：7200 字 → {} 块（上限 {MAX_REPLY_MESSAGE_LENGTH} 字/块，首块 {} 字）",
+        chunks.len(),
+        chunks[0].chars().count()
     );
     Ok(())
 }

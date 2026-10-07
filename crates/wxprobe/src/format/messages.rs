@@ -50,6 +50,21 @@ static TABLE: &[(&str, &str, &str)] = &[
         "目前遠端項目 {workspacePath} 未連接。請發送 **/重連** 恢復連接。",
         "The remote workspace {workspacePath} is not connected. Send **/reconnect** to restore the connection.",
     ),
+    // ── replyFormatter 的 formatterMessages（ZCode 单独一张表，此处按 zh-CN 源串合并）──
+    // 注意 en 值与 messages.ts 同名项一致（`⏳ 运行中`→Running、`失败`→Failed），
+    // 合并不会引入语义冲突。
+    ("工具调用：", "工具調用：", "Tool calls:"),
+    ("完成", "完成", "Completed"),
+    ("已拒绝", "已拒絕", "Denied"),
+    ("等待中", "等待中", "Pending"),
+    ("需要权限：", "需要權限：", "Permission required:"),
+    ("写入中", "寫入中", "Writing"),
+    ("更新中", "更新中", "Updating"),
+    ("删除中", "刪除中", "Deleting"),
+    ("编辑中", "編輯中", "Editing"),
+    ("变更摘要", "變更摘要", "Change summary"),
+    ("还有 {count} 个工具调用", "還有 {count} 個工具調用", "{count} more tool calls"),
+    ("还有 {count} 个文件", "還有 {count} 個文件", "{count} more files"),
 ];
 
 /// 查表；未命中时回退 key 本身（zh-CN 源串），永远不 panic。
