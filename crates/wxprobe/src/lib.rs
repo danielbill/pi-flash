@@ -28,4 +28,5 @@ pub mod parity;
 pub mod poller;
 pub mod register;
 pub mod state;
+pub mod transport;
 pub mod wire;
