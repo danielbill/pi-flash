@@ -17,6 +17,7 @@
 //! （`active_key`）。ZCode 是「一 bot 一 context + `/绑定 <code>` 选 workspace /
 //! 会话」，§4.2 的 `active_session` 要等 P3 步骤 3 的绑定码落地后才精确。
 
+mod pipeline;
 use pi_link::protocol::{Command, ExtensionUiRequest};
 
 use wxprobe::command::BotCommand;
@@ -25,6 +26,8 @@ use wxprobe::format::messages::{t, Lang};
 
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
+/// `/新建` 在任务运行中时的回执 —— 同样是文案表现成句子。
+const TASK_RUNNING: &str = "当前任务正在运行，稍后再试，或使用 **/停止** 停止当前任务。";
 
 /// 一条入站文本解析出的动作，由 `Chat::run_wx_action` 执行。
 #[derive(Debug)]
@@ -37,6 +40,10 @@ enum Action {
     Prompt(String),
     /// `/停止`
     Abort,
+    /// `/状态` —— 需要会话状态，交给 `Chat` 现场组装
+    Status,
+    /// `/新建`（含 `/clear`）—— 需要 `Chat::new_session`
+    New,
     /// ExtUi 回填（四字段与 `Command::ExtensionUiResponse` 一一对应）
     ExtUi {
         id: String,
@@ -193,6 +200,9 @@ impl RemoteControl {
         match wxprobe::command::parse_bot_command(text) {
             BotCommand::Message { text: msg } => Action::Prompt(msg),
             BotCommand::Stop => Action::Abort,
+            BotCommand::Help => Action::Send(pipeline::help_text(lang)),
+            BotCommand::Status => Action::Status,
+            BotCommand::New => Action::New,
             // `0` 在没有待答菜单时无意义，静默忽略（不打扰模型）
             BotCommand::SelectionCancel => Action::None,
             // 档 1 只接 Prompt/Abort；其余等 pipeline（P3 步骤 2-4）
@@ -319,6 +329,25 @@ impl crate::Chat {
                 cx,
             ),
             Action::Abort => self.send_wx(&Command::Abort, cx),
+            Action::Status => {
+                let lang = Lang::from_ix(crate::i18n::lang_ix());
+                if let Some(text) = self.status_reply(cx, lang) {
+                    self.remote.send(&text);
+                }
+            }
+            Action::New => {
+                let lang = Lang::from_ix(crate::i18n::lang_ix());
+                if self.agent_running_now(cx) {
+                    // ZCode `case "new"`：任务运行中不让新建
+                    self.remote.send(&t(lang, TASK_RUNNING));
+                } else {
+                    self.new_session(cx);
+                    // 同上：建完草稿回状态卡（`return createStatusReply(...)`）
+                    if let Some(text) = self.status_reply(cx, lang) {
+                        self.remote.send(&text);
+                    }
+                }
+            }
             Action::ExtUi {
                 id,
                 value,
@@ -347,6 +376,69 @@ impl crate::Chat {
             let _ = session.send(cmd);
         }
     }
+    /// 当前活跃会话是否在跑（`/新建` 的运行中分支与状态卡共用）。
+    fn agent_running_now(&self, cx: &gpui::App) -> bool {
+        self.runtimes
+            .get(&self.active_key)
+            .map(|rt| rt.read(cx).agent_running)
+            .unwrap_or(false)
+    }
+
+    /// 活跃会话 → `/状态` 卡片；启动瞬间没有 runtime 时返回 `None`。
+    fn status_reply(&self, cx: &gpui::App, lang: Lang) -> Option<String> {
+        let rt = self.runtimes.get(&self.active_key)?;
+        let r = rt.read(cx);
+        let workspace = r
+            .cwd
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| r.cwd.to_string_lossy().to_string());
+        let st = r.state.as_ref();
+        // 任务名：pi 的 session_name 优先；草稿期用固定标题，否则回落 runtime 状态串
+        let title = st.and_then(|s| s.session_name.clone()).unwrap_or_else(|| {
+            if r.key.starts_with("draft-") {
+                "新任务草稿".to_string()
+            } else {
+                r.status.clone()
+            }
+        });
+        let id = st
+            .and_then(|s| s.session_file.as_ref())
+            .and_then(|f| {
+                std::path::Path::new(f)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| r.key.clone());
+        // ZCode 词表里没有 idle/draft 之外的「空闲」态，这里按会话形态映射
+        let state = if r.agent_running {
+            "running"
+        } else if r.key.starts_with("draft-") {
+            "draft"
+        } else {
+            "completed"
+        };
+        let elapsed_ms = r
+            .agent_running
+            .then(|| r.stream_started.map(|i| i.elapsed().as_millis() as u64))
+            .flatten();
+        Some(pipeline::status_text(
+            lang,
+            &pipeline::StatusInput {
+                workspace,
+                model: r.model_label_text(),
+                task: Some((title, id)),
+                state,
+                elapsed_ms,
+                progress: if r.agent_running {
+                    r.status.clone()
+                } else {
+                    String::new()
+                },
+            },
+        ))
+    }
+
 }
 
 #[cfg(test)]
@@ -356,19 +448,35 @@ mod tests {
     /// 档 1 的命令覆盖面：只有 /停止 与纯文本真正接线，
     /// 其余一律回 ZCode 现成的「未启用」句，**不静默吞掉**。
     #[test]
-    fn only_prompt_and_abort_are_wired_in_tier1() {
+    fn tier1_commands_are_all_wired() {
         let mut rc = RemoteControl::new();
         assert!(matches!(rc.route("帮我看看这个报错"), Action::Prompt(_)));
         assert!(matches!(rc.route("/停止"), Action::Abort));
         assert!(matches!(rc.route("/stop"), Action::Abort));
         assert!(matches!(rc.route("0"), Action::None));
-        match rc.route("/状态") {
+        // 档 1 三条命令（含英文别名）
+        assert!(matches!(rc.route("/帮助"), Action::Send(_)));
+        assert!(matches!(rc.route("/help"), Action::Send(_)));
+        assert!(matches!(rc.route("/状态"), Action::Status));
+        assert!(matches!(rc.route("/status"), Action::Status));
+        assert!(matches!(rc.route("/新建"), Action::New));
+        assert!(matches!(rc.route("/clear"), Action::New));
+        // 档 2 才接的命令仍要回执，不能静默吞掉
+        match rc.route("/模型") {
             Action::Send(s) => assert_eq!(s, "当前 bot 未启用这个命令。"),
             other => panic!("未接入的命令必须回执，不能静默：{other:?}"),
         }
+    }
+
+    #[test]
+    fn help_reply_has_title_and_all_lines() {
+        let mut rc = RemoteControl::new();
         match rc.route("/帮助") {
-            Action::Send(_) => {}
-            other => panic!("同上：{other:?}"),
+            Action::Send(s) => {
+                assert!(s.starts_with("ZCode 机器人命令："));
+                assert_eq!(s.lines().count(), 10, "标题 + 9 条");
+            }
+            other => panic!("{other:?}"),
         }
     }
 
