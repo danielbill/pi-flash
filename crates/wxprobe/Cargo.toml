@@ -4,9 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 
-# P0 探针：证伪微信 iLink 协议（docs/模块设计/060-远程控制-微信.md §5 P0）。
-# 独立于 crates/app，不引入 GPUI；P1 落地时本 crate 的 wire/register/poller
-# 会被搬进 crates/app/src/remote_control/wx/ 后删除。
+# P0/P1/P2 已完成；P3 起 `crates/app` 直接依赖本 crate 复用渠道层与界面层。
+# 采用 **lib + bin** 双形态（060 §7 决策 7 已于 2026-10-07 修订）：lib 侧
+# pub 项不触发 dead_code，app 的 `check_arch.sh` §4 `warnings: 0` 自然满足；
+# bin 侧保留真机工具与 `wxprobe parity` 对拍 harness（P2 验收 42/42）。
 
 [dependencies]
 serde_json = "1"

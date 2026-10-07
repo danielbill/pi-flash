@@ -12,14 +12,7 @@
 //!
 //! 所有请求/响应原样落盘到 `~/.pi-flash/wxprobe-dump/`（`PI_FLASH_DIR` 优先）。
 
-mod format;
-mod command;
-mod lock;
-mod parity;
-mod poller;
-mod register;
-mod state;
-mod wire;
+use wxprobe::*;
 
 use std::fs;
 use std::io::Write;
@@ -29,7 +22,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde_json::json;
 
-use crate::wire::Wire;
+use wxprobe::wire::Wire;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,7 +41,7 @@ fn main() {
         "reply-demo" => {
             cmd_reply_demo(args.get(1).map(String::as_str).unwrap_or("zh"))
         }
-        "parity" => crate::parity::run(args.iter().any(|a| a == "--update")),
+        "parity" => wxprobe::parity::run(args.iter().any(|a| a == "--update")),
         "state" => cmd_state(),
         "reset" => cmd_reset(),
         _ => Err(usage()),
