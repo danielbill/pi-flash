@@ -38,6 +38,81 @@ pub fn begin(wire: &mut Wire) -> Result<QrBegin, String> {
     })
 }
 
+/// 设置页扫码流程发出的事件（跑在专用线程，app 侧非阻塞地 drain）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QrEvent {
+    /// 拿到二维码 —— `url` 是 `qrcode_img_content`（要拿去编码成二维码）
+    Ready { url: String },
+    /// 已扫码，等待手机确认
+    Scanned,
+    /// 扫码成功：token 已写进状态文件
+    Success { bot_id: Option<String> },
+    Expired,
+    Error(String),
+}
+
+/// 扫码全流程（阻塞，**跑在专用线程**）：`begin` → 每 3s `poll` → 落状态。
+///
+/// 与 `wxprobe qr` + `wxprobe scan` 用的是同一条路径、同一份状态文件，
+/// 所以设置页扫完码 CLI 工具立刻也能用，反之亦然。
+///
+/// `deadline_sec` = 超时秒数（ZCode/微信二维码约 120s 有效）。
+pub fn run_qr_flow(
+    tx: std::sync::mpsc::Sender<QrEvent>,
+    deadline_sec: u64,
+) {
+    let mut w = crate::wire::Wire::new(crate::state::dump_dir());
+    let begin = match begin(&mut w) {
+        Ok(b) => b,
+        Err(e) => {
+            let _ = tx.send(QrEvent::Error(e));
+            return;
+        }
+    };
+    if tx.send(QrEvent::Ready { url: begin.qr_url.clone() }).is_err() {
+        return;
+    }
+
+    let started = std::time::Instant::now();
+    let mut st = crate::state::load();
+    crate::state::set(&mut st, "qrcode", Some(&begin.qrcode));
+    crate::state::save(&st);
+
+    loop {
+        match poll(&mut w, &begin.qrcode) {
+            Ok(QrStatus::Success { bot_token, bot_id }) => {
+                crate::state::set(&mut st, "bot_token", Some(&bot_token));
+                crate::state::set(&mut st, "bot_id", bot_id.as_deref());
+                crate::state::set(&mut st, "qrcode", None);
+                crate::state::save(&st);
+                let _ = tx.send(QrEvent::Success { bot_id });
+                return;
+            }
+            Ok(QrStatus::Expired) => {
+                crate::state::set(&mut st, "qrcode", None);
+                crate::state::save(&st);
+                let _ = tx.send(QrEvent::Expired);
+                return;
+            }
+            Ok(QrStatus::Scanned) => {
+                let _ = tx.send(QrEvent::Scanned);
+            }
+            Ok(QrStatus::Pending) => {}
+            // 状态接口偶发报错不致命，退避后继续（§6 坑 4：不能让循环退出）
+            Ok(QrStatus::Error(e)) | Err(e) => {
+                let _ = tx.send(QrEvent::Error(e));
+            }
+        }
+        if started.elapsed().as_secs() >= deadline_sec {
+            crate::state::set(&mut st, "qrcode", None);
+            crate::state::save(&st);
+            let _ = tx.send(QrEvent::Expired);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
 pub enum QrStatus {
     Pending,
     Scanned,

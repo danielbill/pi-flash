@@ -73,6 +73,34 @@ struct Pending {
     prompt: String,
 }
 
+/// 设置页扫码面板的状态。
+#[derive(Debug, Clone, PartialEq)]
+pub enum QrState {
+    Idle,
+    Loading,
+    /// `url` = `qrcode_img_content`，用 [`wxprobe::qr::qr_block_text`] 渲成可扫码字符画
+    Ready { url: String },
+    /// 已扫码，等待手机确认
+    Scanned,
+    /// 成功：token 已写进状态文件
+    Done { bot_id: Option<String> },
+    Expired,
+    Error(String),
+}
+
+impl QrState {
+    fn from_event(e: wxprobe::register::QrEvent) -> Self {
+        use wxprobe::register::QrEvent as E;
+        match e {
+            E::Ready { url } => QrState::Ready { url },
+            E::Scanned => QrState::Scanned,
+            E::Success { bot_id } => QrState::Done { bot_id },
+            E::Expired => QrState::Expired,
+            E::Error(m) => QrState::Error(m),
+        }
+    }
+}
+
 /// 微信渠道句柄 + 待答请求。挂在 `Chat` 上，由 [`spawn_wx_pump`] 驱动。
 pub struct RemoteControl {
     transport: Option<wxprobe::transport::Transport>,
@@ -88,6 +116,10 @@ pub struct RemoteControl {
     was_running: bool,
     /// 挂起中的数字选择菜单（060-c，对应 ZCode pendingSelectionsByContext）
     pending_menu: Option<menu::PendingMenu>,
+    /// 设置页扫码面板状态
+    pub qr: QrState,
+    /// 扫码 worker 的回程（200ms 泵里 drain）
+    qr_rx: Option<std::sync::mpsc::Receiver<wxprobe::register::QrEvent>>,
 }
 
 impl RemoteControl {
@@ -101,6 +133,8 @@ impl RemoteControl {
             buf: String::new(),
             was_running: false,
             pending_menu: None,
+            qr: QrState::Idle,
+            qr_rx: None,
         }
     }
 
@@ -119,6 +153,49 @@ impl RemoteControl {
             // 静默失败是最坏的形态（§6 坑 4），至少打一行
             Err(e) => eprintln!("[wx] 渠道未启动：{e}"),
         }
+    }
+
+    /// 关掉渠道：`transport = None` 触发 `Drop` → **join 两条线程 + 释放轮询锁**
+    /// （P4 验收：关停即停线程，无悬挂）。
+    pub fn set_enabled(&mut self, on: bool) {
+        if on {
+            self.boot_attempted = false;
+        } else {
+            self.transport = None;
+            self.boot_attempted = true;
+        }
+    }
+
+    /// 渠道是否活着（设置页开关的回显）。
+    pub fn is_running(&self) -> bool {
+        self.transport.is_some()
+    }
+
+    /// 发起扫码：专用线程跑 `begin → 3s 轮询`，结果由泵 drain。
+    pub fn begin_qr(&mut self) {
+        if matches!(
+            self.qr,
+            QrState::Loading | QrState::Ready { .. } | QrState::Scanned
+        ) {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.qr_rx = Some(rx);
+        self.qr = QrState::Loading;
+        // 180s：二维码实际约 120s 有效，留出轮询余量
+        std::thread::spawn(move || wxprobe::register::run_qr_flow(tx, 180));
+    }
+
+    /// 把扫码 worker 的事件抽干进 `self.qr`；有变化才返回 `true`（触发重绘）。
+    pub fn poll_qr(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(rx) = &self.qr_rx {
+            while let Ok(ev) = rx.try_recv() {
+                changed = true;
+                self.qr = QrState::from_event(ev);
+            }
+        }
+        changed
     }
 
     pub fn send(&self, text: &str) {
@@ -432,6 +509,10 @@ impl crate::Chat {
             .unwrap_or(false);
         for text in self.remote.on_running(running) {
             self.remote.send(&text);
+        }
+        // 设置页扫码结果
+        if self.remote.poll_qr() {
+            cx.notify();
         }
         let batches = self.remote.take_batches();
         if batches.is_empty() {

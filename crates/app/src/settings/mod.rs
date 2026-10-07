@@ -9,6 +9,7 @@ pub(crate) mod mcp;
 pub(crate) mod misc;
 pub(crate) mod models;
 pub(crate) mod plugins;
+pub(crate) mod remote;
 pub(crate) mod skills;
 pub(crate) mod subagents;
 pub(crate) mod widgets;
@@ -32,6 +33,8 @@ pub(crate) const TAB_AGENTS: u8 = 3;
 pub(crate) const TAB_PLUGINS: u8 = 4;
 pub(crate) const TAB_MCP: u8 = 5;
 pub(crate) const TAB_MISC: u8 = 6;
+/// 8 页签：0 界面 · 1 模型 · 2 技能 · 3 子代理 · 4 插件 · 5 MCP · 6 其他 · 7 远程控制
+pub(crate) const TAB_REMOTE: u8 = 7;
 
 /// The settings modal's form state (pi-web SettingsPanel own-state parity).
 pub(crate) struct SettingsPanel {
@@ -391,6 +394,7 @@ pub(crate) fn render_settings(
             mcp_scope_project, &error,
         ),
         TAB_MISC => mc_misc_view(chat, weak),
+        TAB_REMOTE => crate::settings::remote::mc_remote_view(chat, weak),
         _ => mc_general_view(
             chat, weak, font_popup, &font_dd, &font_filter, &font_filter_value,
             size_popup, &size_dd,
@@ -500,6 +504,7 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
         (TAB_PLUGINS, "插件", "plug"),
         (TAB_MCP, "MCP", "server"),
         (TAB_MISC, "其他", "ellipsis-v"),
+        (TAB_REMOTE, "远程控制", "message-square"),
     ]
     .iter()
     .map(|(ix, label, icon_name)| {

@@ -26,6 +26,7 @@ pub mod format;
 pub mod lock;
 pub mod parity;
 pub mod poller;
+pub mod qr;
 pub mod register;
 pub mod state;
 pub mod transport;
