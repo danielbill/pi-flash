@@ -1,0 +1,64 @@
+[
+  { "kind": "tool_line", "id": "tool_line.bash.pending", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "npm test" }, "status": "pending", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.bash.completed", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "cargo   test -p wxprobe" }, "status": "completed", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.bash.completed.en", "locale": "en-US", "title": "Bash", "toolKind": "bash", "input": { "command": "cargo test" }, "status": "completed", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.failed.error", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "make" }, "status": "failed", "error": "  boom   at line 3  ", "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.stopped", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "sleep 99" }, "status": "stopped", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.denied", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "rm -rf /" }, "status": "denied", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.no_title", "locale": "zh-CN", "title": null, "toolKind": null, "input": { "path": "/proj/pi-flash/src/a.rs" }, "status": "in_progress", "error": null, "workspacePath": "/proj/pi-flash" },
+  { "kind": "tool_line", "id": "tool_line.edit.diff", "locale": "zh-CN", "title": "Edit", "toolKind": "edit", "input": { "path": "/proj/pi-flash/src/a.rs", "old_string": "1\n2\n", "new_string": "1\n2\n3\n" }, "status": "completed", "error": null, "workspacePath": "/proj/pi-flash" },
+  { "kind": "tool_line", "id": "tool_line.edit.long_command", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjkkkkkkkkkkllllllllllmmmmmmmmmmnnnnnnnnnnooooooooooppppppppppqqqqqqqqqqrrrrrrrrrrssssssssssttttttttttuuuuuuuuuuvvvvvvvvvv" }, "status": "completed", "error": null, "workspacePath": null },
+  { "kind": "tool_line", "id": "tool_line.raw_field", "locale": "zh-CN", "title": "Read", "toolKind": "read", "input": {}, "raw": { "command": "from-raw", "args": ["--flag"] }, "status": "completed", "error": null, "workspacePath": null },
+
+  { "kind": "tool_reply", "id": "tool_reply.bash", "locale": "zh-CN", "title": "Bash", "toolKind": "bash", "input": { "command": "ls -la" }, "status": "completed", "error": null, "workspacePath": null },
+  { "kind": "tool_reply", "id": "tool_reply.edit.en", "locale": "en-US", "title": "Edit", "toolKind": "edit", "input": { "path": "/proj/pi-flash/src/b.rs", "old_string": "x\n", "new_string": "x\ny\n" }, "status": "completed", "error": null, "workspacePath": "/proj/pi-flash" },
+
+  { "kind": "blocks", "id": "blocks.mixed", "locale": "zh-CN", "workspacePath": "/proj/pi-flash", "blocks": [
+    { "type": "content", "content": "我先看看测试。" },
+    { "type": "tool-call", "toolCall": { "title": "Bash", "toolKind": "bash", "input": { "command": "cargo test" }, "status": "completed", "error": null } },
+    { "type": "change-summary", "changeSummary": { "fileCount": 2, "added": 12, "removed": 3, "files": [ { "path": "/proj/pi-flash/src/a.rs", "added": 8, "removed": 2 }, { "path": "/proj/pi-flash/src/b.rs", "added": 4, "removed": 1 } ] } }
+  ] },
+  { "kind": "blocks", "id": "blocks.long_content", "locale": "zh-CN", "workspacePath": null, "blocks": [
+    { "type": "content", "content": "先来一段很长的话用来验证分块：aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv wwww xxxx yyyy zzzz " },
+    { "type": "content", "content": "" },
+    { "type": "change-summary", "changeSummary": { "fileCount": 0, "added": 0, "removed": 0, "files": [] } }
+  ] },
+  { "kind": "blocks", "id": "blocks.en", "locale": "en-US", "workspacePath": null, "blocks": [
+    { "type": "content", "content": "Line one.\r\nLine two." },
+    { "type": "tool-call", "toolCall": { "title": "Grep", "toolKind": "grep", "input": { "path": "src" }, "status": "in_progress", "error": null } }
+  ] },
+
+  { "kind": "perm_summary", "id": "perm.command", "locale": "zh-CN", "title": null, "description": "Run npm test", "permissionKind": "bash", "raw": { "input": { "command": "npm test", "args": ["--", "--run"] } }, "workspacePath": null },
+  { "kind": "perm_summary", "id": "perm.edit.add", "locale": "zh-CN", "title": null, "description": "Write a new file", "permissionKind": "edit", "raw": { "changes": { "/proj/pi-flash/src/new.rs": { "type": "add" } } }, "workspacePath": "/proj/pi-flash" },
+  { "kind": "perm_summary", "id": "perm.edit.generic.en", "locale": "en-US", "title": "Edit /proj/pi-flash/src/c.rs", "description": "edit file", "permissionKind": "edit", "raw": { "input": { "path": "/proj/pi-flash/src/c.rs" } }, "workspacePath": "/proj/pi-flash" },
+  { "kind": "perm_summary", "id": "perm.generic", "locale": "zh-CN", "title": null, "description": "Proceed?", "permissionKind": "generic", "raw": {}, "workspacePath": null },
+  { "kind": "perm_summary", "id": "perm.paths.three", "locale": "en-US", "title": null, "description": "Write files", "permissionKind": "edit", "raw": { "paths": ["/proj/a.rs", "/proj/b.rs", "/proj/c.rs", "/proj/d.rs"] }, "workspacePath": "/proj" },
+  { "kind": "perm_summary", "id": "perm.nested.command", "locale": "zh-CN", "title": null, "description": "deep", "permissionKind": "bash", "raw": { "params": { "nested": { "cmd": "pwd" } } }, "workspacePath": null },
+  { "kind": "perm_summary", "id": "perm.cwd.ignored", "locale": "zh-CN", "title": null, "description": "ls", "permissionKind": "bash", "raw": { "cwd": "/should/be/ignored", "file_path": "/proj/pi-flash/src/x.rs" }, "workspacePath": "/proj/pi-flash" },
+
+  { "kind": "perm_preview", "id": "preview.title_fallback", "locale": "zh-CN", "title": null, "description": "  desc  ", "permissionKind": "bash", "raw": { "command": "ls" }, "workspacePath": null },
+  { "kind": "perm_preview", "id": "preview.changes", "locale": "zh-CN", "title": "T", "description": "d", "permissionKind": "edit", "raw": { "changes": { "a.rs": { "type": "add" }, "b.rs": { "type": "update" } } }, "workspacePath": null },
+
+  { "kind": "flush", "id": "flush.partial", "locale": "zh-CN", "buffer": "  正在写入 wire.rs  ", "force": false },
+  { "kind": "flush", "id": "flush.terminal", "locale": "zh-CN", "buffer": "  写完了\r\n第二行  ", "force": true },
+
+  { "kind": "terminal", "id": "terminal.completed", "locale": "zh-CN", "status": "completed" },
+  { "kind": "terminal", "id": "terminal.stopped", "locale": "zh-CN", "status": "stopped" },
+  { "kind": "terminal", "id": "terminal.in_progress", "locale": "zh-CN", "status": "in_progress" },
+  { "kind": "terminal", "id": "terminal.null", "locale": "zh-CN", "status": null },
+
+  { "kind": "duration", "id": "duration.zero", "locale": "zh-CN", "ms": 0 },
+  { "kind": "duration", "id": "duration.1h30m", "locale": "zh-CN", "ms": 5400000 },
+  { "kind": "duration", "id": "duration.1d", "locale": "zh-CN", "ms": 86400000 },
+  { "kind": "duration", "id": "duration.25h", "locale": "zh-CN", "ms": 90000000 },
+  { "kind": "duration", "id": "duration.90061001", "locale": "zh-CN", "ms": 90061001 },
+  { "kind": "duration", "id": "duration.61s", "locale": "zh-CN", "ms": 61000 },
+
+  { "kind": "task_line", "id": "task_line.zh", "locale": "zh-CN", "title": "重构传输层", "taskId": "task-42", "label": "任务" },
+  { "kind": "task_line", "id": "task_line.en", "locale": "en-US", "title": "Refactor transport", "taskId": "task-42", "label": "Task" },
+
+  { "kind": "compact_summary", "id": "summary.title_only", "locale": "zh-CN", "title": "  Bash  ", "toolKind": "bash", "input": {}, "output": null, "raw": null },
+  { "kind": "compact_summary", "id": "summary.command", "locale": "zh-CN", "title": null, "toolKind": "bash", "input": { "command": "  npm   test  " }, "output": null, "raw": null },
+  { "kind": "compact_summary", "id": "summary.edit_stat", "locale": "zh-CN", "title": "Edit", "toolKind": "multi_edit", "input": { "old_string": "a\nb\n", "new_string": "a\nb\nc\n" }, "output": null, "raw": null },
+  { "kind": "compact_summary", "id": "summary.from_output", "locale": "zh-CN", "title": null, "toolKind": "edit", "input": {}, "output": { "metadata": { "filediff": { "old_string": "x\n", "new_string": "y\nz\n" } } }, "raw": null }
+]

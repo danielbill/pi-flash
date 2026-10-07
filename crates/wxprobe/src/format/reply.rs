@@ -523,7 +523,7 @@ fn format_permission_request_title(
     let title_without_edit = strip_leading_edit(&preview.title);
     let target_text = if !title_without_edit.is_empty() && title_without_edit != preview.title {
         title_without_edit
-    } else if preview.file_paths.len() == 1 || preview.file_changes.is_empty() {
+    } else if preview.file_paths.len() == 1 || preview.file_changes.len() == 1 {
         let first = preview
             .file_paths
             .first()
@@ -939,9 +939,9 @@ mod tests {
         assert_eq!(
             format_bot_permission_request_summary(&request, Lang::ZhCn, Some("/proj/pi-flash")),
             format!(
-                // ZCode 语义：`filePaths.length===1 || fileChanges.length===0` 时，
-                // target 取**第一个文件路径**（哪怕有多个），所以标题带 a.rs。
-                "{}\n写入中 a.rs\n`a.rs`, `b.rs`",
+                // ZCode `filePaths.length===1 || fileChanges.length===1`；
+                // 本 case 有 2 个 path、0 条变更 → 两边都不满足 → target 为空。
+                "{}\n写入中\n`a.rs`, `b.rs`",
                 t(Lang::ZhCn, "需要权限：")
             )
         );

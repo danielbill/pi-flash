@@ -1,0 +1,42 @@
+{"id":"tool_line.bash.pending","out":"- 等待中 · Bash · `npm test`"}
+{"id":"tool_line.bash.completed","out":"- 完成 · Bash · `cargo test -p wxprobe`"}
+{"id":"tool_line.bash.completed.en","out":"- Completed · Bash · `cargo test`"}
+{"id":"tool_line.failed.error","out":"- 失败: boom at line 3 · Bash · `make`"}
+{"id":"tool_line.stopped","out":"- 等待中 · Bash · `sleep 99`"}
+{"id":"tool_line.denied","out":"- 已拒绝 · Bash · `rm -rf /`"}
+{"id":"tool_line.no_title","out":"- ⏳ 运行中 · tool · `/proj/pi-flash/src/a.rs`"}
+{"id":"tool_line.edit.diff","out":"- 完成 · Edit · `src/a.rs` · 🟢 `+3` 🔴 `-2`"}
+{"id":"tool_line.edit.long_command","out":"- 完成 · Bash · `aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffff ... sttttttttttuuuuuuuuuuvvvvvvvvvv`"}
+{"id":"tool_line.raw_field","out":"- 完成 · Read"}
+{"id":"tool_reply.bash","out":"工具调用：\n- 完成 · Bash · `ls -la`"}
+{"id":"tool_reply.edit.en","out":"Tool calls:\n- Completed · Edit · `src/b.rs` · 🟢 `+2` 🔴 `-1`"}
+{"id":"blocks.mixed","out":["我先看看测试。","工具调用：\n- 完成 · Bash · `cargo test`","变更摘要：2 个文件，🟢 `+12` 🔴 `-3`\n- `/proj/pi-flash/src/a.rs` (🟢 `+8` 🔴 `-2`)\n- `/proj/pi-flash/src/b.rs` (🟢 `+4` 🔴 `-1`)"]}
+{"id":"blocks.long_content","out":["先来一段很长的话用来验证分块：aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv wwww xxxx yyyy zzzz"]}
+{"id":"blocks.en","out":["Line one.\nLine two.","Tool calls:\n- Running · Grep · `src`"]}
+{"id":"perm.command","out":"需要权限：\nRun npm test\n`npm test -- --run`"}
+{"id":"perm.edit.add","out":"需要权限：\n写入中 src/new.rs\n`src/new.rs`"}
+{"id":"perm.edit.generic.en","out":"Permission required:\nEditing /proj/pi-flash/src/c.rs\n`src/c.rs`"}
+{"id":"perm.generic","out":"需要权限：\nProceed?"}
+{"id":"perm.paths.three","out":"Permission required:\nWriting\n`a.rs`, `b.rs`, `c.rs`"}
+{"id":"perm.nested.command","out":"需要权限：\ndeep\n`pwd`"}
+{"id":"perm.cwd.ignored","out":"需要权限：\nls\n`src/x.rs`"}
+{"id":"preview.title_fallback","out":{"title":"desc","command":"ls","filePaths":[],"scope":"command","fileChange":null,"fileChanges":[]}}
+{"id":"preview.changes","out":{"title":"T","command":null,"filePaths":[],"scope":"generic","fileChange":null,"fileChanges":[{"path":"a.rs","type":"add"},{"path":"b.rs","type":"update"}]}}
+{"id":"flush.partial","out":{"messages":[],"rest":"  正在写入 wire.rs  "}}
+{"id":"flush.terminal","out":{"messages":["写完了\n第二行"],"rest":""}}
+{"id":"terminal.completed","out":true}
+{"id":"terminal.stopped","out":true}
+{"id":"terminal.in_progress","out":false}
+{"id":"terminal.null","out":false}
+{"id":"duration.zero","out":"0s"}
+{"id":"duration.1h30m","out":"1h 30m"}
+{"id":"duration.1d","out":"1d"}
+{"id":"duration.25h","out":"1d 1h"}
+{"id":"duration.90061001","out":"1d 1h 1m 1s"}
+{"id":"duration.61s","out":"1m 1s"}
+{"id":"task_line.zh","out":"任务: 重构传输层 (task-42)"}
+{"id":"task_line.en","out":"Task: Refactor transport (task-42)"}
+{"id":"summary.title_only","out":{"primaryText":"Bash"}}
+{"id":"summary.command","out":{"primaryText":"tool","secondaryText":"npm test"}}
+{"id":"summary.edit_stat","out":{"primaryText":"Edit","changeStat":{"added":3,"removed":2}}}
+{"id":"summary.from_output","out":{"primaryText":"tool","changeStat":{"added":2,"removed":1}}}

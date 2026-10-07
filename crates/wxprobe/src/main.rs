@@ -15,6 +15,7 @@
 mod format;
 mod command;
 mod lock;
+mod parity;
 mod poller;
 mod register;
 mod state;
@@ -47,6 +48,7 @@ fn main() {
         "reply-demo" => {
             cmd_reply_demo(args.get(1).map(String::as_str).unwrap_or("zh"))
         }
+        "parity" => crate::parity::run(args.iter().any(|a| a == "--update")),
         "state" => cmd_state(),
         "reset" => cmd_reset(),
         _ => Err(usage()),
@@ -58,7 +60,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | status-demo [zh|tw|en] [state] | reply-demo [zh|tw|en] | state | reset".into()
+    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | status-demo [zh|tw|en] [state] | reply-demo [zh|tw|en] | parity [--update] | state | reset".into()
 }
 
 fn wire() -> Wire {
