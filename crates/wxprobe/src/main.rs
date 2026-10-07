@@ -12,6 +12,7 @@
 //!
 //! 所有请求/响应原样落盘到 `~/.pi-flash/wxprobe-dump/`（`PI_FLASH_DIR` 优先）。
 
+mod command;
 mod lock;
 mod poller;
 mod register;
@@ -36,6 +37,7 @@ fn main() {
         "recv" => cmd_recv(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2)),
         "loop" => cmd_loop(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(300)),
         "send" if args.len() > 1 => cmd_send(&args[1..].join(" ")),
+        "parse" if args.len() > 1 => cmd_parse(&args[1..].join(" ")),
         "state" => cmd_state(),
         "reset" => cmd_reset(),
         _ => Err(usage()),
@@ -47,7 +49,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | state | reset".into()
+    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | parse <text> | state | reset".into()
 }
 
 fn wire() -> Wire {
@@ -261,6 +263,13 @@ fn cmd_send(text: &str) -> Result<(), String> {
     println!("✅ 已发送");
     Ok(())
 }
+/// 调试/验证用：把一句话丢给命令解析层，打印结构化结果。
+/// P3 接上 pipeline 后，这里就是「微信输入 → 会话动作」的最小可观测面。
+fn cmd_parse(text: &str) -> Result<(), String> {
+    println!("{:?}", command::parse_bot_command(text));
+    Ok(())
+}
+
 
 fn cmd_state() -> Result<(), String> {
     let mut st = state::load();
