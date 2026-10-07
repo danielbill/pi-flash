@@ -106,6 +106,8 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         if let Some(req) = self.ext_dialog.take() {
+            // 桌面端先应答 → 微信端放弃同一请求（060 §8 档 2 不重复消费）
+            self.remote.clear_pending(&req.id);
             if let Some(session) = &self.rt().read(cx).agent.session {
                 let _ = session.send(&pi_link::protocol::Command::ExtensionUiResponse {
                     id: req.id,

@@ -35,6 +35,7 @@ mod function_panel;
 mod i18n;
 mod markdown;
 mod models_config;
+mod remote_control;
 mod render;
 mod startup;
 mod theme;
@@ -427,6 +428,8 @@ struct Chat {
     /// 值；导航刻度条「屏高 − inputpanel/2」居中用，033）
     composer_h: std::rc::Rc<std::cell::Cell<f32>>,
     unread: HashSet<PathBuf>,
+    /// 微信远程控制桥（060）：transport + 待答 ExtUi 请求
+    remote: remote_control::RemoteControl,
     hovered_project: Option<usize>,
     proj_tip: Option<(PathBuf, f32, f32)>,
     hover_card: Option<HoverCard>,
@@ -708,6 +711,7 @@ impl Chat {
             nav_flyout_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
+            remote: remote_control::RemoteControl::new(),
             hovered_project: None,
             proj_tip: None,
             hover_card: None,

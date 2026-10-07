@@ -151,6 +151,7 @@ dependencies = [
  "syntect",
  "winresource",
  "wry",
+ "wxprobe",
 ]
 
 [[package]]

@@ -46,6 +46,10 @@ impl Chat {
                     cx.notify();
                 }
                 SessionEvent::ExtUi(req) => {
+                    // 微信端与桌面端**并行**拿到同一请求（060 §4.1）：两边都要
+                    // 渲染一份文本，但只有一方能应答 —— 桌面 ext_respond 会
+                    // clear_pending，pi 侧也只 resolve 一次（§8 档 2 不重复消费）
+                    chat.remote.on_ext_ui(req);
                     if is_active {
                         let req = req.clone();
                         chat.on_ext_ui(req, cx);

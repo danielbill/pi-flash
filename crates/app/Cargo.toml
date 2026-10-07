@@ -38,6 +38,9 @@ mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 # 文件树：gitignore 匹配（Zed worktree 同款）+ fs 监听（Zed fs 层同款）
 ignore = "0.4"
 notify = "7"
+# 微信远程控制（060）：渠道层 + 界面层 + transport；app 只做接线。
+# lib crate 的 pub 项不触发 dead_code，见 §7 决策 7（2026-10-07 修订）。
+wxprobe = { path = "../wxprobe" }
 
 [dev-dependencies]
 # gpui 测试夹具（TestAppContext + 真布局）——只有 app 的 test target 会带上
