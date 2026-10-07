@@ -110,9 +110,36 @@ impl Transport {
     /// 持久化在**调用方线程**同步完成 —— 这样崩溃窗口只存在于
     /// 「收到底批 → ack」之间，且方向是重复而非丢失。
     pub fn ack(&self, batch: &Batch) {
+        let mut st = state::load();
+        let mut dirty = false;
         if let Some(buf) = batch.next_buf.as_deref() {
-            let mut st = state::load();
             state::set(&mut st, "buf", Some(buf));
+            dirty = true;
+        }
+        // **路由字段**：出站 sendmessage 靠 chat_id 找对端、靠 bot_user_id 当
+        // from_user_id。P1 的 `wxprobe recv` 会写这两个，但 app 侧的入站路径
+        // 一直没写 —— 结果是 send 线程每次读到 `chat_id = None` 就 `continue`，
+        // 把所有出站**静默丢掉**（真机复现：消息进了 pi-flash，微信收不到回执）。
+        // 这里随 ack 一起回写，写在「处理完」这一步也符合 §6 坑 2 的时机。
+        if let Some(m) = batch.messages.first() {
+            if m.chat_id.is_some() {
+                state::set(&mut st, "chat_id", m.chat_id.as_deref());
+                dirty = true;
+            }
+            if !m.user_id.is_empty() {
+                state::set(&mut st, "user_id", Some(&m.user_id));
+                dirty = true;
+            }
+            if let Some(b) = m.bot_user_id.as_deref().filter(|s| !s.is_empty()) {
+                state::set(&mut st, "bot_user_id", Some(b));
+                dirty = true;
+            }
+            if let Some(c) = m.context_token.as_deref().filter(|s| !s.is_empty()) {
+                state::set(&mut st, "context_token", Some(c));
+                dirty = true;
+            }
+        }
+        if dirty {
             state::save(&st);
         }
     }
@@ -202,6 +229,17 @@ fn poll_loop(token: String, mut cursor: Option<String>, tx: Sender<Batch>, stop:
     }
 }
 
+/// 同类问题只提示一次（每条都刷会刷屏，一次不刷则永远查不出来）。
+fn warn_once(msg: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ROUTE: AtomicBool = AtomicBool::new(false);
+    static SEND: AtomicBool = AtomicBool::new(false);
+    let flag = if msg.starts_with("sendmessage") { &SEND } else { &ROUTE };
+    if !flag.swap(true, Ordering::Relaxed) {
+        eprintln!("[wx] {msg}（此提示只出现一次）");
+    }
+}
+
 /// 发送主循环：阻塞在 `out_rx` 上，收到即发，**不与长轮询抢线程**。
 fn send_loop(rx: Receiver<String>, stop: Arc<AtomicBool>) {
     let mut wire = Wire::new(state::dump_dir());
@@ -218,7 +256,10 @@ fn send_loop(rx: Receiver<String>, stop: Arc<AtomicBool>) {
             state::get_str(&st, "chat_id"),
             state::get_str(&st, "bot_user_id"),
         ) else {
-            continue; // 还没有回话对象，丢弃本条（无处可发）
+            // **必须出声**：静默丢弃正是「微信收不到回执」迟迟查不出的原因
+            // （真机只表现为「没反应」）。
+            warn_once("出站消息被丢弃：状态文件缺 chat_id / bot_user_id（首条入站后随 ack 回写）");
+            continue;
         };
         let client_id = state::ensure_client_id(&mut state::load());
         let context = state::get_str(&st, "context_token");
@@ -226,7 +267,7 @@ fn send_loop(rx: Receiver<String>, stop: Arc<AtomicBool>) {
             Ok(t) => t,
             Err(_) => break,
         };
-        let _ = poller::send_text(
+        if let Err(e) = poller::send_text(
             &mut wire,
             &token,
             &from_user,
@@ -234,7 +275,10 @@ fn send_loop(rx: Receiver<String>, stop: Arc<AtomicBool>) {
             &text,
             context.as_deref(),
             &client_id,
-        );
+        ) {
+            // 发送失败同样不能吞：对用户来说就是「发了没反应」
+            warn_once(&format!("sendmessage 失败：{e}"));
+        }
     }
 }
 

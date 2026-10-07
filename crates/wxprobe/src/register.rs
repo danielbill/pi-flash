@@ -83,6 +83,9 @@ pub fn run_qr_flow(
             Ok(QrStatus::Success { bot_token, bot_id }) => {
                 crate::state::set(&mut st, "bot_token", Some(&bot_token));
                 crate::state::set(&mut st, "bot_id", bot_id.as_deref());
+                // sendmessage 的 from_user_id 就是 bot 自己。换绑后不跟着改，
+                // 出站会带着**旧 bot** 的 id（真机复现过：84e144 → 7240ca 没同步）
+                crate::state::set(&mut st, "bot_user_id", bot_id.as_deref());
                 crate::state::set(&mut st, "qrcode", None);
                 crate::state::save(&st);
                 let _ = tx.send(QrEvent::Success { bot_id });
