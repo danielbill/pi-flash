@@ -14,3 +14,5 @@ base64 = "0.22"
 pi-link = { path = "../pi-link" }
 ureq = { version = "3.4.2", features = ["json"] }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+sha2 = "0.10"
+hex = "0.4"

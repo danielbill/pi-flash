@@ -77,7 +77,13 @@ pub fn get_updates(wire: &mut Wire, token: &str, buf: Option<&str>) -> Result<Up
         json!({ "get_updates_buf": buf.unwrap_or("") }),
     )?;
 
-    let container = &payload;
+    Ok(parse_updates(&payload, buf))
+}
+
+/// 纯解析：把 getupdates 响应映射成 `Updates`。
+/// 从传输里拆出来，才能把**真实响应**落成黄金夹具做单测（P1 验收）。
+pub fn parse_updates(payload: &Value, previous_buf: Option<&str>) -> Updates {
+    let container = payload;
     let raw_msgs = MSG_LIST_KEYS
         .iter()
         .find_map(|k| container.get(*k).and_then(Value::as_array))
@@ -91,14 +97,13 @@ pub fn get_updates(wire: &mut Wire, token: &str, buf: Option<&str>) -> Result<Up
         }
     }
 
-    let next_buf = read_next_buf(container).or_else(|| buf.map(str::to_string));
-
-    Ok(Updates {
+    Updates {
         raw_count: raw_msgs.len(),
         messages,
-        next_buf,
+        // 服务端没给新游标就沿用旧值——保证「启停不丢不重」。
+        next_buf: read_next_buf(container).or_else(|| previous_buf.map(str::to_string)),
         diagnostics: diagnose(container, &raw_msgs),
-    })
+    }
 }
 
 pub fn send_text(
@@ -353,5 +358,150 @@ impl IfEmpty for String {
         } else {
             self
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2026-10-07 真机 `getupdates` 响应，已脱敏（user id / context_token / client_id 换占位值）。
+    /// P1 黄金夹具：iLink 协议一变，这里会最先红。
+    const REAL_GETUPDATES: &str = include_str!("../tests/fixtures/getupdates-real.json");
+
+    fn real_payload() -> Value {
+        serde_json::from_str(REAL_GETUPDATES).expect("夹具必须是合法 JSON")
+    }
+
+    #[test]
+    fn parses_real_getupdates_fixture() {
+        let up = parse_updates(&real_payload(), None);
+        assert_eq!(up.raw_count, 1, "原始消息数");
+        assert_eq!(up.messages.len(), 1, "解析成功数");
+        let m = &up.messages[0];
+        assert_eq!(m.text, "测试文本");
+        assert_eq!(m.user_id, "user_sandbox@im.wechat");
+        assert_eq!(m.bot_user_id.as_deref(), Some("bot_sandbox@im.bot"));
+        assert_eq!(m.msg_id.as_deref(), Some("7513480159106982024"));
+        assert_eq!(m.context_token.as_deref(), Some("SANITIZED_CONTEXT_TOKEN"));
+        assert_eq!(m.chat_id, None, "私聊没有 room/chat 字段");
+        assert_eq!(m.attachments, 0);
+    }
+
+    #[test]
+    fn cursor_taken_from_server_on_first_poll() {
+        let expected = real_payload()["get_updates_buf"].as_str().unwrap().to_string();
+        let up = parse_updates(&real_payload(), None);
+        assert_eq!(up.next_buf.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn cursor_falls_back_to_previous_when_server_omits_it() {
+        // 服务端没给新游标（或给空串）时必须沿用旧值，否则「启停」会把游标冲掉。
+        let mut payload = real_payload();
+        payload["get_updates_buf"] = serde_json::json!("");
+        let up = parse_updates(&payload, Some("PREVIOUS_CURSOR"));
+        assert_eq!(up.next_buf.as_deref(), Some("PREVIOUS_CURSOR"));
+    }
+
+    #[test]
+    fn cursor_keeps_previous_when_field_absent_entirely() {
+        let payload = serde_json::json!({ "msgs": [] });
+        let up = parse_updates(&payload, Some("PREVIOUS_CURSOR"));
+        assert_eq!(up.next_buf.as_deref(), Some("PREVIOUS_CURSOR"));
+        assert_eq!(up.raw_count, 0);
+    }
+
+    #[test]
+    fn message_without_sender_is_dropped() {
+        // ZCode 同语义：`from_user_id` 缺失就丢弃，否则回发时 to 为空。
+        let payload = serde_json::json!({
+            "msgs": [{ "message_id": 1, "item_list": [{ "type": 1, "text_item": { "text": "hi" } }] }],
+            "get_updates_buf": "X"
+        });
+        let up = parse_updates(&payload, None);
+        assert_eq!(up.raw_count, 1, "原始数组仍计数");
+        assert!(up.messages.is_empty(), "缺发送者的消息必须被丢弃");
+    }
+
+    #[test]
+    fn attachment_item_is_counted_and_text_item_is_not() {
+        // 纯图片消息没有 text，靠附件计数才不会被当成空消息丢掉。
+        let payload = serde_json::json!({
+            "msgs": [{
+                "from_user_id": "user_sandbox@im.wechat",
+                "item_list": [{
+                    "type": 1,
+                    "image_item": { "media": { "url": "https://x/img.png", "aes_key": "K" } }
+                }]
+            }],
+            "get_updates_buf": "X"
+        });
+        let up = parse_updates(&payload, None);
+        assert_eq!(up.messages.len(), 1);
+        assert_eq!(up.messages[0].attachments, 1);
+        assert_eq!(up.messages[0].text, "");
+    }
+
+    #[test]
+    fn diagnostics_report_the_real_field_names() {
+        // 直接对拍 ZCode 的候选嗅探：命中哪个候选必须打印出来。
+        let up = parse_updates(&real_payload(), None);
+        let joined = up.diagnostics.join("\n");
+        assert!(joined.contains("消息数组键: msgs"), "候选 1 应命中：{joined}");
+        assert!(joined.contains("游标命中: get_updates_buf"), "候选 1 应命中：{joined}");
+        assert!(joined.contains("文本候选命中: 顶层.item_list[0]"), "{joined}");
+        assert!(!joined.contains("未命中任何候选"), "{joined}");
+    }
+
+    #[test]
+    fn text_item_wins_over_nested_content() {
+        // 顶层 text 与 item_list 同时存在时，顶层优先（ZCode readWeixinText 同序）。
+        let payload = serde_json::json!({
+            "msgs": [{
+                "from_user_id": "u@x",
+                "text": "顶层文本",
+                "item_list": [{ "type": 1, "text_item": { "text": "item 文本" } }]
+            }]
+        });
+        let up = parse_updates(&payload, None);
+        assert_eq!(up.messages[0].text, "顶层文本");
+    }
+
+    #[test]
+    fn twenty_start_stop_cycles_never_lose_or_duplicate_the_cursor() {
+        // 对应 P1 验收「重复启停 20 次游标不丢不重」的确定性版本：
+        // 每个周期 = load → getupdates → **处理完** → 写回，跑 20 轮。
+        let server_cursor = real_payload()["get_updates_buf"].as_str().unwrap().to_string();
+        let mut stored: Option<String> = None;
+        for cycle in 0..20 {
+            // 只有第 1 轮服务端发了新游标，其余 19 轮都是空闲（不带该字段）。
+            let payload = if cycle == 0 {
+                real_payload()
+            } else {
+                serde_json::json!({ "msgs": [] })
+            };
+            let up = parse_updates(&payload, stored.as_deref());
+            // 写回发生在本批消息全部处理完之后（ZCode weixinChannelRuntime.ts:155-163）
+            if let Some(next) = up.next_buf {
+                stored = Some(next);
+            }
+        }
+        assert_eq!(
+            stored.as_deref(),
+            Some(server_cursor.as_str()),
+            "20 次启停后游标必须恰好等于服务端最后一次下发的值——既不能丢，也不能被重复推进"
+        );
+    }
+
+    #[test]
+    fn idle_polls_do_not_advance_the_cursor() {
+        let payload = serde_json::json!({ "msgs": [], "get_updates_buf": "" });
+        let up = parse_updates(&payload, Some("CURSOR_V1"));
+        assert_eq!(
+            up.next_buf.as_deref(),
+            Some("CURSOR_V1"),
+            "空闲轮询不得改写游标"
+        );
     }
 }

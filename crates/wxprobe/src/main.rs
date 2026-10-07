@@ -12,6 +12,7 @@
 //!
 //! 所有请求/响应原样落盘到 `~/.pi-flash/wxprobe-dump/`（`PI_FLASH_DIR` 优先）。
 
+mod lock;
 mod poller;
 mod register;
 mod state;
@@ -33,6 +34,7 @@ fn main() {
         "qr" => cmd_qr(),
         "scan" => cmd_scan(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(180)),
         "recv" => cmd_recv(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2)),
+        "loop" => cmd_loop(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(300)),
         "send" if args.len() > 1 => cmd_send(&args[1..].join(" ")),
         "state" => cmd_state(),
         "reset" => cmd_reset(),
@@ -45,7 +47,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | send <text> | state | reset".into()
+    "用法: wxprobe qr | scan [max_sec] | recv [rounds] | loop [sec] | send <text> | state | reset".into()
 }
 
 fn wire() -> Wire {
@@ -179,6 +181,64 @@ fn cmd_recv(rounds: usize) -> Result<(), String> {
         state::save(&st);
         println!("  游标已落盘 ({} 字符)", state::get_str(&st, "buf").map(|s| s.len()).unwrap_or(0));
     }
+    Ok(())
+}
+
+/// P1：带租约锁的长轮询循环。
+/// 锁保证同一 `bot_token` 只有一个轮询者（ZCode 多窗口/多实例去重同款语义）；
+/// 游标**在本批消息处理完之后**才写盘，进程中途挂掉不会跳过未处理消息。
+fn cmd_loop(seconds: u64) -> Result<(), String> {
+    let mut st = state::load();
+    let token = require(&st, "bot_token", "先跑 `wxprobe qr` + `wxprobe scan`")?;
+    let bot_id = state::get_str(&st, "bot_id").unwrap_or_default();
+    let mut w = wire();
+
+    let lock = match lock::acquire("weixin-polling", &token, &bot_id)? {
+        Some(l) => l,
+        None => {
+            return Err(format!(
+                "另一个轮询者已持有该 bot 的锁，见 {}",
+                lock::lock_root_display()
+            ));
+        }
+    };
+    println!("已获取轮询锁，进入 {seconds}s 循环（超时或 Ctrl+C 结束，锁随作用域自动释放）");
+
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut rounds = 0u32;
+    let mut delivered = 0usize;
+    while Instant::now() < deadline {
+        rounds += 1;
+        let buf = state::get_str(&st, "buf");
+        let before = buf.clone();
+        let up = poller::get_updates(&mut w, &token, buf.as_deref())?;
+        for m in &up.messages {
+            delivered += 1;
+            println!(
+                "  [{rounds}] {} <{}>",
+                wire::truncate(&m.text, 200),
+                m.user_id
+            );
+            state::set(&mut st, "user_id", Some(&m.user_id));
+            state::set(&mut st, "context_token", m.context_token.as_deref());
+            if let Some(b) = &m.bot_user_id {
+                state::set(&mut st, "bot_user_id", Some(b));
+            }
+        }
+        // 游标只在服务端给了新值时改写；没给就原样保留（启停不丢不重）。
+        if let Some(nb) = up.next_buf.as_deref() {
+            if Some(nb) != before.as_deref() {
+                state::set(&mut st, "buf", Some(nb));
+            }
+        }
+        state::save(&st);
+    }
+
+    lock.release();
+    println!(
+        "循环结束：{rounds} 轮 / 收到 {delivered} 条；游标 {} 字符，锁已释放",
+        state::get_str(&st, "buf").map(|s| s.len()).unwrap_or(0)
+    );
     Ok(())
 }
 

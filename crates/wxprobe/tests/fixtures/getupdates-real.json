@@ -1,0 +1,37 @@
+{
+  "msgs": [
+    {
+      "seq": 2,
+      "message_id": 7513480159106982024,
+      "from_user_id": "user_sandbox@im.wechat",
+      "to_user_id": "bot_sandbox@im.bot",
+      "client_id": "client_sandbox",
+      "create_time_ms": 1791353263566,
+      "update_time_ms": 1791353263667,
+      "delete_time_ms": 0,
+      "session_id": "",
+      "group_id": "",
+      "message_type": 1,
+      "message_state": 2,
+      "item_list": [
+        {
+          "type": 1,
+          "create_time_ms": 1791353263566,
+          "update_time_ms": 1791353263566,
+          "is_completed": true,
+          "msg_id": "v1:7080285058697933325",
+          "button_item_list": [],
+          "at_bot_username_list": [],
+          "text_item": {
+            "text": "测试文本"
+          }
+        }
+      ],
+      "context_token": "SANITIZED_CONTEXT_TOKEN",
+      "root_id": 0,
+      "parent_id": 0
+    }
+  ],
+  "sync_buf": "CAIQxK3mp5E0GKf94KeRNA==",
+  "get_updates_buf": "ChAIAhDEreankTQYp/3gp5E0Ejo4NGUxNDQ3Y2ZmYTZAaW0uYm90OjA2MDAwMGJkNzkwMDUzMDVjMmZhY2JhNjE1NTYwNzcwNTNmMmZl"
+}
