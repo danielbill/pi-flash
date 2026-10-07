@@ -337,9 +337,11 @@ fn cmd_status_demo(lang_arg: &str, state: &str) -> Result<(), String> {
 /// flush 边界、终态判定、超长分块 —— 排版冒烟 + 逐字节对拍基准。
 fn cmd_reply_demo(lang_arg: &str) -> Result<(), String> {
     use crate::format::messages::Lang;
+    use crate::format::permission::PermissionRequest;
     use crate::format::reply::{
         extract_bot_assistant_response_messages, format_bot_assistant_reply_blocks,
-        format_tool_status, is_bot_tool_call_reply_terminal, split_long_reply_text,
+        format_bot_permission_request_summary, format_tool_status,
+        is_bot_tool_call_reply_terminal, split_long_reply_text,
         BotAssistantReplyBlock, BotReplyToolCallState, ChangeSummary, FileChange, ToolStatus,
         MAX_REPLY_MESSAGE_LENGTH,
     };
@@ -457,6 +459,19 @@ fn cmd_reply_demo(lang_arg: &str) -> Result<(), String> {
     ] {
         println!("状态文案 {status:?} = {}", format_tool_status(status, None, lang));
     }
+
+    // 权限请求排版：kind=edit，PC 端 PermissionDialog 与微信端共用同一份 preview。
+    // 这条走 ZCode 的「泛化 Edit」兜底（raw 里没有 write/delete/update 词）。
+    let permission = PermissionRequest {
+        title: None,
+        description: "edit crates/wxprobe/src/wire.rs".into(),
+        kind: "edit".into(),
+        raw: json!({ "input": { "path": "/proj/pi-flash/crates/wxprobe/src/wire.rs" } }),
+    };
+    println!(
+        "\n权限请求（kind=edit → ZCode 泛化 Edit 兜底）：\n{}",
+        format_bot_permission_request_summary(&permission, lang, Some(workspace))
+    );
 
     let chunks = split_long_reply_text(&"A".repeat(7200));
     println!(

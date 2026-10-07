@@ -5,6 +5,7 @@
 //! 数据来源（pi 会话状态）在 P3 的 `pipeline.rs` 接入。
 
 pub mod messages;
+pub mod permission;
 pub mod reply;
 pub mod status;
 pub mod summary;

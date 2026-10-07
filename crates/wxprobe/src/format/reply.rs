@@ -13,6 +13,9 @@ use super::summary::{
     get_compact_tool_call_summary, normalize_display_text, ToolCallSummary,
     ToolCallSummarySource,
 };
+use super::permission::{
+    get_permission_request_preview, ChangeKind, PermissionRequest, PermissionRequestPreview, Scope,
+};
 
 /// ZCode `replyFormatter.ts:48-52` 的四个上限。
 pub const MAX_TOOL_SUMMARY_ITEMS: usize = 10;
@@ -398,6 +401,202 @@ pub fn format_bot_assistant_reply_blocks(
     messages
 }
 
+// ── 权限请求排版 ────────────────────────────────────────────────
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// JS `\b(word)\b` 的等价判断：词的两侧必须落在 `\w`（ASCII 字母数字下划线）之外。
+///
+/// 直接在**原始字节**上做大小写不敏感比较，不做 `to_lowercase()` ——
+/// 后者会改变非 ASCII 字符的字节长度（如 `İ` → 2 字符），把下标搞乱。
+fn contains_word_case_insensitive(haystack: &str, word: &str) -> bool {
+    let hb = haystack.as_bytes();
+    let nb = word.as_bytes();
+    if nb.is_empty() || hb.len() < nb.len() {
+        return false;
+    }
+    let mut start = 0;
+    while start + nb.len() <= hb.len() {
+        if hb[start..start + nb.len()].eq_ignore_ascii_case(nb) {
+            let before_ok = start == 0 || !is_word_byte(hb[start - 1]);
+            let after = start + nb.len();
+            let after_ok = after >= hb.len() || !is_word_byte(hb[after]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        start += 1;
+    }
+    false
+}
+
+fn contains_any_word(haystack: &str, words: &[&str]) -> bool {
+    words.iter().any(|word| contains_case_insensitive_any(haystack, word))
+}
+
+fn contains_case_insensitive_any(haystack: &str, word: &str) -> bool {
+    contains_word_case_insensitive(haystack, word)
+}
+
+/// ZCode `preview.title.replace(/^edit\b[:：]?\s*/iu, "").trim()`。
+fn strip_leading_edit(title: &str) -> String {
+    if title.len() >= 4 && title.as_bytes()[..4].eq_ignore_ascii_case(b"edit") {
+        let after = title.as_bytes().get(4).copied();
+        if !after.map(is_word_byte).unwrap_or(false) {
+            let mut idx = 4;
+            if title[idx..].starts_with(':') {
+                idx += 1;
+            } else if title[idx..].starts_with('：') {
+                idx += '：'.len_utf8();
+            }
+            return title[idx..].trim().to_string();
+        }
+    }
+    title.to_string()
+}
+
+/// ZCode `formatEditPermissionKindLabel`（`replyFormatter.ts:213`）。
+///
+/// 三个词表依次判，命中即返回；`fileChange.type === "add"` 可直接判「写入」。
+pub fn format_edit_permission_kind_label(
+    request: &PermissionRequest,
+    preview: &PermissionRequestPreview,
+    lang: Lang,
+) -> String {
+    let raw_kind = request
+        .raw
+        .as_object()
+        .and_then(|m| m.get("kind"))
+        .and_then(Value::as_str);
+    let raw_title = request
+        .raw
+        .as_object()
+        .and_then(|m| m.get("title"))
+        .and_then(Value::as_str);
+    let raw_text = [
+        request.title.as_deref(),
+        Some(request.description.as_str()),
+        raw_kind,
+        raw_title,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+    let normalized = raw_text.trim().to_lowercase();
+    let file_change_type = preview.file_change.as_ref().map(|c| c.kind);
+
+    if contains_any_word(
+        &normalized,
+        &["delete", "deleted", "remove", "removed", "erase", "erased", "unlink", "rm"],
+    ) {
+        return t(lang, "删除中");
+    }
+    if file_change_type == Some(ChangeKind::Add)
+        || contains_any_word(
+            &normalized,
+            &["write", "wrote", "create", "created", "add", "added", "save", "saved", "new"],
+        )
+    {
+        return t(lang, "写入中");
+    }
+    if contains_any_word(&normalized, &["update", "updating", "updated"]) {
+        return t(lang, "更新中");
+    }
+    t(lang, "编辑中")
+}
+
+/// ZCode `formatPermissionRequestTitle`（`replyFormatter.ts:194`）。
+fn format_permission_request_title(
+    request: &PermissionRequest,
+    preview: &PermissionRequestPreview,
+    lang: Lang,
+    workspace: Option<&str>,
+) -> String {
+    if request.kind != "edit" || (preview.scope != Scope::File && preview.file_changes.is_empty())
+    {
+        return preview.title.clone();
+    }
+    let label = format_edit_permission_kind_label(request, preview, lang);
+    let title_without_edit = strip_leading_edit(&preview.title);
+    let target_text = if !title_without_edit.is_empty() && title_without_edit != preview.title {
+        title_without_edit
+    } else if preview.file_paths.len() == 1 || preview.file_changes.is_empty() {
+        let first = preview
+            .file_paths
+            .first()
+            .map(String::as_str)
+            .or_else(|| preview.file_changes.first().map(|c| c.path.as_str()))
+            .unwrap_or_default();
+        to_workspace_relative_path(first, workspace)
+    } else {
+        String::new()
+    };
+    if target_text.is_empty() {
+        label
+    } else {
+        format!("{label} {target_text}")
+    }
+}
+
+/// ZCode `formatPermissionRequestHeader`（`replyFormatter.ts:186`）。
+pub fn format_permission_request_header(
+    request: &PermissionRequest,
+    lang: Lang,
+    workspace: Option<&str>,
+) -> String {
+    let preview = get_permission_request_preview(request);
+    format!(
+        "{}\n{}",
+        t(lang, "需要权限："),
+        format_permission_request_title(request, &preview, lang, workspace)
+    )
+}
+
+/// ZCode `formatBotPermissionRequestSummary`（`replyFormatter.ts:312`）。
+///
+/// 命令 → 行内代码（中截断 96）；否则最多 3 个路径（相对化 + 行内代码 + 整体截断 160）。
+pub fn format_bot_permission_request_summary(
+    request: &PermissionRequest,
+    lang: Lang,
+    workspace: Option<&str>,
+) -> String {
+    let preview = get_permission_request_preview(request);
+    // ZCode 在这里经 `formatPermissionRequestHeader` **再解析一次** preview ——
+    // 两处各自解析、结果一致（解析无副作用），保持同构而不是复用上面那次。
+    let header = format_permission_request_header(request, lang, workspace);
+    if let Some(command) = &preview.command {
+        return format!(
+            "{header}\n{}",
+            format_markdown_inline_code(&truncate_middle_text(
+                &normalize_display_text(command),
+                MAX_COMMAND_FIELD_LENGTH
+            ))
+        );
+    }
+    let list = if preview.file_paths.is_empty() {
+        preview
+            .file_changes
+            .iter()
+            .map(|c| c.path.clone())
+            .collect::<Vec<_>>()
+    } else {
+        preview.file_paths.clone()
+    };
+    if !list.is_empty() {
+        let paths = list
+            .iter()
+            .take(3)
+            .map(|path| format_markdown_inline_code(&to_workspace_relative_path(path, workspace)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return format!("{header}\n{}", truncate_text(&paths, MAX_FIELD_LENGTH));
+    }
+    header
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,5 +842,133 @@ mod tests {
         assert_eq!(messages[0], "第一段");
         assert_eq!(messages[1], "工具调用：\n- 完成 · Bash · `ls`");
         assert_eq!(messages[2], "变更摘要：1 个文件，🟢 `+2`\n- `a.rs` (🟢 `+2`)");
+    }
+
+    #[test]
+    fn word_boundary_matches_js_b_semantics() {
+        // \brm\b 不命中 hardware，命中独立的 rm；\bupdate\b 不命中 updates
+        assert!(contains_word_case_insensitive("rm -rf /tmp", "rm"));
+        assert!(!contains_word_case_insensitive("hardware", "rm"));
+        // JS `\bupdate\b` 不命中 "Updated"（后随 d 属 \w）；ZCode 词表里另有 `updated` 项
+        assert!(contains_word_case_insensitive("Updated files", "updated"));
+        assert!(!contains_word_case_insensitive("Updated files", "update"));
+        assert!(!contains_word_case_insensitive("updates files", "update"));
+        assert!(!contains_word_case_insensitive("newer", "new"));
+    }
+
+    #[test]
+    fn edit_kind_label_priority_delete_then_add_then_update_then_generic() {
+        let mk = |desc: &str, raw: Value| PermissionRequest {
+            title: None,
+            description: desc.into(),
+            kind: "edit".into(),
+            raw,
+        };
+        let label = |request: &PermissionRequest| {
+            let preview = get_permission_request_preview(request);
+            format_edit_permission_kind_label(request, &preview, Lang::ZhCn)
+        };
+        // delete 词表排在最前，压过 fileChange.add
+        assert_eq!(
+            label(&mk(
+                "please delete a.rs",
+                json!({ "changes": { "a.rs": { "type": "add" } } })
+            )),
+            "删除中"
+        );
+        // fileChange.type = add 直接判写入
+        assert_eq!(
+            label(&mk("edit a.rs", json!({ "changes": { "a.rs": { "type": "add" } } }))),
+            "写入中"
+        );
+        // update 词表
+        assert_eq!(label(&mk("updated config", json!({}))), "更新中");
+        // 兜底：ZCode 的「泛化 Edit」注释说的就是这条
+        assert_eq!(label(&mk("edit a.rs", json!({}))), "编辑中");
+    }
+
+    #[test]
+    fn edit_title_strips_prefix_then_falls_back_to_relative_path() {
+        // title 就是 "Edit" 时，剥完为空 → 落到 file_paths 做相对化
+        let request = PermissionRequest {
+            title: Some("Edit".into()),
+            description: "d".into(),
+            kind: "edit".into(),
+            raw: json!({ "input": { "path": "/proj/pi-flash/src/a.rs" } }),
+        };
+        let preview = get_permission_request_preview(&request);
+        assert_eq!(
+            format_permission_request_title(&request, &preview, Lang::ZhCn, Some("/proj/pi-flash")),
+            "编辑中 src/a.rs"
+        );
+        // title 带 "Edit " 前缀时，剥掉前缀后的剩余文本直接当目标，**不再相对化**
+        let request = PermissionRequest {
+            title: Some("Edit src/b.rs".into()),
+            description: "d".into(),
+            kind: "edit".into(),
+            raw: json!({ "input": { "path": "/proj/pi-flash/src/b.rs" } }),
+        };
+        let preview = get_permission_request_preview(&request);
+        assert_eq!(
+            format_permission_request_title(&request, &preview, Lang::ZhCn, Some("/proj/pi-flash")),
+            "编辑中 src/b.rs"
+        );
+    }
+
+    #[test]
+    fn permission_summary_branches_on_command_then_paths_then_header_only() {
+        // 有命令 → header + 行内代码
+        let request = PermissionRequest {
+            title: None,
+            description: "Run npm test".into(),
+            kind: "bash".into(),
+            raw: json!({ "input": { "command": "npm test" } }),
+        };
+        assert_eq!(
+            format_bot_permission_request_summary(&request, Lang::ZhCn, None),
+            format!("{}\nRun npm test\n`npm test`", t(Lang::ZhCn, "需要权限："))
+        );
+
+        // 无命令但有路径 → 最多 3 个，相对化 + 行内代码
+        let request = PermissionRequest {
+            title: None,
+            description: "Write files".into(),
+            kind: "edit".into(),
+            raw: json!({ "paths": ["/proj/pi-flash/a.rs", "/proj/pi-flash/b.rs"] }),
+        };
+        assert_eq!(
+            format_bot_permission_request_summary(&request, Lang::ZhCn, Some("/proj/pi-flash")),
+            format!(
+                // ZCode 语义：`filePaths.length===1 || fileChanges.length===0` 时，
+                // target 取**第一个文件路径**（哪怕有多个），所以标题带 a.rs。
+                "{}\n写入中 a.rs\n`a.rs`, `b.rs`",
+                t(Lang::ZhCn, "需要权限：")
+            )
+        );
+
+        // 什么都没有 → 只有 header
+        let request = PermissionRequest {
+            title: None,
+            description: "Proceed?".into(),
+            kind: "generic".into(),
+            raw: json!({}),
+        };
+        assert_eq!(
+            format_bot_permission_request_summary(&request, Lang::En, None),
+            format!("Permission required:\nProceed?")
+        );
+    }
+
+    #[test]
+    fn permission_path_list_is_capped_at_three() {
+        let request = PermissionRequest {
+            title: None,
+            description: "Write files".into(),
+            kind: "edit".into(),
+            raw: json!({ "paths": ["/p/1.rs", "/p/2.rs", "/p/3.rs", "/p/4.rs"] }),
+        };
+        let text = format_bot_permission_request_summary(&request, Lang::En, Some("/p"));
+        assert!(text.contains("`1.rs`, `2.rs`, `3.rs`"), "{text}");
+        assert!(!text.contains("4.rs"), "第 4 个不该出现：{text}");
     }
 }
