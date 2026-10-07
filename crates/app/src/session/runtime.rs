@@ -281,6 +281,13 @@ impl SessionRuntime {
             }
             _ => {}
         }
+        // 060 微信远程控制：每次 spawn 都带上逐次审批扩展。它自己读
+        // `wxprobe-state.json` 决定要不要接管，所以这里不加条件 ——
+        // 扫码即生效、reset 即失效（与 P4 设置页共用同一事实源）。
+        if let Some(p) = crate::session::tools_recipe::wx_permission_script_path() {
+            extra.push("-e".into());
+            extra.push(p.to_string_lossy().into_owned());
+        }
         // draft picks made before the process existed ride the spawn flags
         // (pi CLI parity: --model provider/id, --thinking level)
         if let Some((provider, id)) = self.pending_model.take() {

@@ -47,6 +47,9 @@ use std::path::{Path, PathBuf};
 
 /// app 随包分发的激活脚本（编译进二进制；dev 直接读工作区源文件）。
 const FULL_ACTIVATE_TS: &str = include_str!("../../assets/full_activate.ts");
+/// 060 微信远程控制的逐次审批扩展（同样编译进二进制）。
+const WX_PERMISSION_TS: &str = include_str!("../../assets/wx_permission.ts");
+
 
 /// `full_activate.ts` 的磁盘绝对路径 —— `-e` 只吃真实文件路径，不吃内存。
 ///
@@ -73,6 +76,33 @@ pub(crate) fn activate_script_path() -> Option<PathBuf> {
     let path = dir.join("full_activate.ts");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(FULL_ACTIVATE_TS) {
         std::fs::write(&path, FULL_ACTIVATE_TS).ok()?;
+    }
+    Some(path)
+}
+
+/// `wx_permission.ts` 的磁盘绝对路径 —— 与 [`activate_script_path`] 同一
+/// 套三段式解析（env 覆盖 → dev 资产 → 落 `~/.pi-flash/`）。
+///
+/// 每次 spawn 都会追加 `-e <path>`；**是否真的接管审批由扩展内部自判**
+/// （读 `wxprobe-state.json` 的 `bot_token`），没扫码就是 no-op，
+/// 对既有用户零行为变化。
+pub(crate) fn wx_permission_script_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("PI_FLASH_WX_PERMISSION") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("wx_permission.ts");
+    if dev.is_file() {
+        return Some(dev);
+    }
+    let dir = pi_link::paths::ensure_dir()?;
+    let path = dir.join("wx_permission.ts");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(WX_PERMISSION_TS) {
+        std::fs::write(&path, WX_PERMISSION_TS).ok()?;
     }
     Some(path)
 }
@@ -220,4 +250,13 @@ mod tests {
             ])
         );
     }
+    /// 060：审批扩展必须**能在 dev 工作区解析到**（否则 spawn 拿不到 `-e` 路径）。
+    #[test]
+    fn wx_permission_resolves_in_dev_tree() {
+        let p = super::wx_permission_script_path().expect("assets/wx_permission.ts 存在");
+        let src = std::fs::read_to_string(&p).expect("可读");
+        assert!(src.contains("hasBotToken"), "读到的是审批扩展本体");
+        assert!(src.contains("tool_call"), "必须注册 tool_call handler");
+    }
+
 }
