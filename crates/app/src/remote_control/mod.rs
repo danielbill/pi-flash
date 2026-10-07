@@ -826,6 +826,19 @@ mod tests {
     }
 
     #[test]
+    fn set_enabled_toggles_and_drops_transport() {
+        // P4 验收：关停即停线程 —— transport 置 None 触发 Drop(join)。
+        let mut rc = RemoteControl::new();
+        assert!(!rc.is_running(), "默认未启动");
+        rc.set_enabled(true);
+        assert!(!rc.is_running(), "开只是允许下一拍去起，不会凭空有 transport");
+        assert!(!rc.boot_attempted, "开启后要允许重试");
+        rc.set_enabled(false);
+        assert!(!rc.is_running());
+        assert!(rc.boot_attempted, "关停后必须禁止泵自动重开");
+    }
+
+    #[test]
     fn help_reply_has_title_and_all_lines() {
         let mut rc = RemoteControl::new();
         match rc.route("/帮助") {
