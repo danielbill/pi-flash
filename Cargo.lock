@@ -137,6 +137,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "ignore",
+ "image",
  "lru",
  "mermaid-rs-renderer",
  "notify",

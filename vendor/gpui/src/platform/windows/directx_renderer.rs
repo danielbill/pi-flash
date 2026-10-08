@@ -284,6 +284,13 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+        self.render_scene(scene)?;
+        self.present()
+    }
+
+    /// Draws the scene into the render target without presenting it, so it can
+    /// be read back via [`Self::render_to_image`] without flashing the screen.
+    fn render_scene(&mut self, scene: &Scene) -> Result<()> {
         self.pre_draw()?;
         for batch in scene.batches() {
             match batch {
@@ -312,7 +319,66 @@ impl DirectXRenderer {
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),))?;
         }
-        self.present()
+        Ok(())
+    }
+
+    /// Renders `scene` into the render target and reads the pixels back as an
+    /// RGBA image **without presenting**. Used by pi-flash's automation
+    /// screenshots: works while the window is occluded or minimized, and the
+    /// pixels are exactly the gpui scene output (no OS-level screen capture).
+    pub(crate) fn render_to_image(&mut self, scene: &Scene) -> Result<image::RgbaImage> {
+        self.render_scene(scene)?;
+
+        let render_target: &ID3D11Texture2D = &self.resources.render_target;
+        let device = &self.devices.device;
+        let context = &self.devices.device_context;
+
+        // A CPU-readable copy of the render target.
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { render_target.GetDesc(&mut desc) };
+        let width = desc.Width;
+        let height = desc.Height;
+        let staging_desc = D3D11_TEXTURE2D_DESC {
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+            MiscFlags: 0,
+            MipLevels: 1,
+            ArraySize: 1,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            ..desc
+        };
+        let mut staging: Option<ID3D11Texture2D> = None;
+        unsafe { device.CreateTexture2D(&staging_desc, None, Some(&mut staging))? };
+        let staging = staging.context("creating staging texture")?;
+        unsafe { context.CopyResource(&staging, render_target) };
+
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe { context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))? };
+        let row_bytes = (width as usize) * 4;
+        let mut pixels = vec![0u8; row_bytes * height as usize];
+        // SAFETY: `Map` succeeded, so `pData` points at `RowPitch * height`
+        // readable bytes for as long as the mapping is held, and `RowPitch >=
+        // row_bytes` (it only ever adds trailing padding). `pixels` is sized
+        // `row_bytes * height`, so every copy stays in bounds on both sides,
+        // and the regions cannot overlap (`pixels` is a fresh allocation).
+        unsafe {
+            let src = mapped.pData as *const u8;
+            for row in 0..height as usize {
+                let s = src.add(row * mapped.RowPitch as usize);
+                let d = pixels.as_mut_ptr().add(row * row_bytes);
+                std::ptr::copy_nonoverlapping(s, d, row_bytes);
+            }
+            context.Unmap(&staging, 0);
+        }
+        // The render target is BGRA; image::RgbaImage expects RGBA.
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        image::RgbaImage::from_raw(width, height, pixels).context("building RGBA image")
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {

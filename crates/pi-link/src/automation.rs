@@ -68,6 +68,10 @@ pub mod method {
     pub const PLUGIN_PICKER_TOGGLE: &str = "plugin_picker.toggle";
     pub const PLUGIN_PICKER_CONFIRM: &str = "plugin_picker.confirm";
     pub const PLUGIN_PICKER_CANCEL: &str = "plugin_picker.cancel";
+    /// 截屏：窗口最近一帧渲染回读为 PNG（进程内 D3D11 staging readback，
+    /// 非 OS 抢屏；窗口被遮挡/最小化也能截）。params: {path?}，缺省写
+    /// <配置目录>/automation/shots/。返回 {path,width,height,bytes}。
+    pub const UI_SCREENSHOT: &str = "ui.screenshot";
 }
 
 #[derive(Debug, Clone, PartialEq)]

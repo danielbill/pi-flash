@@ -114,6 +114,10 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
             Vec::<String>::new()
         },
     });
+    // 窗口几何（0uq 截图配套）：物理像素宽高可直接对 ui.screenshot 的
+    // width/height 断言
+    let scale = window.scale_factor();
+    let viewport = window.viewport_size();
     json!({
         "app": "pi-flash",
         "version": env!("CARGO_PKG_VERSION"),
@@ -123,6 +127,11 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         "branch": chat.branch,
         "booted": chat.booted,
         "focused": focused_str(chat, window, cx),
+        "window": {
+            "width_px": (f32::from(viewport.width) * scale).round() as i64,
+            "height_px": (f32::from(viewport.height) * scale).round() as i64,
+            "scale_factor": scale,
+        },
         "dock_panel": chat.dock_panel.as_str(),
         "content_view": content_view_str(chat.content_view),
         "active_key": chat.active_key,

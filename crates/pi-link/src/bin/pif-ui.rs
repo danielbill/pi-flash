@@ -8,6 +8,7 @@
 //!   pif-ui exec <method> [--arg k=v]...    # op 执行（CLI 组 JSON，免三层转义）
 //!   pif-ui keys "ctrl-s"              # 合成按键（走真实键位表）
 //!   pif-ui type <text>                # composer.set_text 的糖
+//!   pif-ui shot [输出.png]            # 窗口截图（进程内渲染回读，非 OS 抢屏）
 //!   pif-ui wait --path a.b[0].c --eq v [--surface s] [--timeout 30]
 //!               [--contains 子串 | --truthy]    # 轮询快照直到断言成立
 //!   pif-ui clean                      # 清死登记（仅明确拒绝连接的）
@@ -44,6 +45,9 @@ pif-ui — pi-flash UI 自动化 CLI
                                 params 从文件读
   keys <组合键>                  合成按键，如 \"ctrl-s\"、\"escape\"
   type <text>                   设置 composer 文本
+  shot [输出.png]               截取窗口最近一帧为 PNG（进程内渲染回读，
+                                非 OS 抢屏，窗口被遮挡/最小化也能截；
+                                缺省写 <配置目录>/automation/shots/）
   wait --path <a.b[0].c>        轮询 ui.snapshot 直到断言成立（成功只打印
        (--eq 值 | --contains 子串 | --truthy)
        [--surface s] [--timeout 秒] [--interval 毫秒]
@@ -169,6 +173,15 @@ fn main() {
                 let text = cargs.join(" ");
                 with_conn(pid, addr, token, timeout, |c| {
                     c.call(method::COMPOSER_SET_TEXT, &json!({"text": text})).map(print_json)
+                })
+            }
+            "shot" => {
+                let mut params = json!({});
+                if let Some(out) = cargs.first() {
+                    params["path"] = json!(out);
+                }
+                with_conn(pid, addr, token, timeout, |c| {
+                    c.call(method::UI_SCREENSHOT, &params).map(print_json)
                 })
             }
             "wait" => cmd_wait(pid, addr, token, timeout, cargs),

@@ -275,7 +275,7 @@ pub(super) fn dispatch(
                 .file_cache
                 .get(&path)
                 .and_then(|f| f.editor.clone())
-                .ok_or_else(|| not_found("文件没有编辑器（未渲染或只读回退）"))?;
+                .ok_or_else(|| not_found("文件没有编辑器（未渲染）"))?;
             ed.update(cx, |st, scx| st.set_value(text, window, scx));
             // set_value 发 Change → dirty 按「编辑器值 != 磁盘真值」比较落位
             cx.notify();
@@ -415,6 +415,7 @@ pub(super) fn dispatch(
             chat.plugin_picker_cancel(cx);
             ok()
         }
+        method::UI_SCREENSHOT => super::screenshot::shot(window, params),
 
         _ => Err((
             "unknown_method".into(),

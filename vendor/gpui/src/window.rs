@@ -1467,6 +1467,15 @@ impl Window {
         self.platform_window.window_bounds()
     }
 
+    /// Renders the current frame's scene to a texture and returns the pixel data
+    /// as an RGBA image. This does not present the frame to screen - useful for
+    /// automation screenshots where we want to capture what would be rendered
+    /// without requiring the window to be visible.
+    pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
+        self.platform_window
+            .render_to_image(&self.rendered_frame.scene)
+    }
+
     /// Return the `WindowBounds` excluding insets (Wayland and X11)
     pub fn inner_window_bounds(&self) -> WindowBounds {
         self.platform_window.inner_window_bounds()

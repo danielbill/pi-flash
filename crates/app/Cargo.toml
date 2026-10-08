@@ -20,6 +20,8 @@ futures = "0.3"
 serde_json = "1"
 chrono = "0.4"
 base64 = "0.22"
+# ui.screenshot 的 PNG 编码（gpui 内部同版 0.25，共用一份编译）
+image = { version = "0.25", default-features = false, features = ["png"] }
 pulldown-cmark = "0.13"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 alacritty_terminal = "0.26"

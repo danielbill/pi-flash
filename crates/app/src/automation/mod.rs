@@ -14,6 +14,7 @@
 //! 127.0.0.1，token 随实例文件 `<配置目录>/automation/<pid>.json` 分发。
 
 mod handlers;
+mod screenshot;
 mod snapshot;
 
 use futures::StreamExt;
