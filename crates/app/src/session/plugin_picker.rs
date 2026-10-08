@@ -146,7 +146,10 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
     items.sort_by_key(|(s, _)| !selected(s));
     let rows: Vec<AnyElement> = items
         .iter()
-        .map(|(src, project)| plugin_row(weak, src, selected(src), *project, t))
+        .map(|(src, project)| {
+            let tokens = chat.ext_tokens.get(src).map(|e| e.ext.max(0) as u64);
+            plugin_row(weak, src, selected(src), *project, tokens, t)
+        })
         .collect();
     let n_rows = rows.len();
 
@@ -165,20 +168,46 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
     // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
     let list_h = if n_rows == 0 { 60. } else { (n_rows as f32 * ROW_H).min(ROW_H * 10.) };
 
+    // 标题行右侧：当前勾选集的说明 token 合计（040 延迟加载测得多少算多少）
+    let total: i64 = items
+        .iter()
+        .filter(|(s, _)| selected(s))
+        .filter_map(|(s, _)| chat.ext_tokens.get(s))
+        .map(|e| e.ext)
+        .sum();
+
     let header = div()
         .px(px(10.))
         .pt(px(10.))
         .pb(px(6.))
-        .text_size(ui(12.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(t.text))
-        .child(SharedString::from(crate::i18n::tr("选择扩展")));
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(ui(12.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text))
+                .child(SharedString::from(crate::i18n::tr("选择扩展"))),
+        )
+        .when(total > 0, |d| {
+            d.child(
+                div()
+                    .ml_auto()
+                    .text_size(ui(10.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(crate::i18n::tf(
+                        "合计约：{n}",
+                        &[("n", crate::services::format::fmt_thousand(total.max(0) as u64))],
+                    ))),
+            )
+        });
 
-    // 统一定位（用户定稿）：与扩展按钮水平居中、底缘距按钮顶缘 5px；
-    // 左右钳在视口内
+    // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
     let gap = px(5.);
-    let panel_w = px(320.);
+    // 040：列表加宽 100px 容纳右侧 token 标注（320 → 420）
+    let panel_w = px(420.);
     let (bottom, left) = match chat.pill_anchor {
         Some(a) => {
             let bottom = (vp.height - a.top + gap).max(px(8.));
@@ -226,12 +255,14 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
     Some(layer.child(card).into_any_element())
 }
 
-/// 勾选行：14px 勾选框 + 展示名（去 `npm:`，等宽字体）+ 可选「项目」小标。
+/// 勾选行：14px 勾选框 + 展示名（去 `npm:`，等宽字体）+ 可选「项目」小标
+/// + 右侧说明 token 数（040 延迟加载测得才显示，不带单位）。
 fn plugin_row(
     weak: &gpui::WeakEntity<Chat>,
     source: &str,
     checked: bool,
     project: bool,
+    tokens: Option<u64>,
     t: &'static crate::theme::Theme,
 ) -> AnyElement {
     let ui = crate::appearance::ui_size;
@@ -280,6 +311,16 @@ fn plugin_row(
         );
     if project {
         row = row.child(tag(crate::i18n::tr("项目"), crate::settings::widgets::indigo_bg(), crate::settings::widgets::indigo_fg()));
+    }
+    if let Some(n) = tokens {
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .font_family(crate::markdown::MONO_FAMILY)
+                .text_size(ui(10.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(crate::services::format::fmt_thousand(n))),
+        );
     }
     row.into_any_element()
 }

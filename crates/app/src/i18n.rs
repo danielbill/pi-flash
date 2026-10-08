@@ -285,6 +285,9 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("扩展清单保存失败: {e}", "擴展清單儲存失敗: {e}", "Failed to save the extension list: {e}"),
     // 034 扩展按钮 + 勾选菜单
     ("扩展只能在 full+ 档勾选", "擴展只能在 full+ 檔勾選", "Extensions can only be picked in the full+ preset"),
+    // 040 说明 token 预览（延迟加载）
+    ("说明大小", "說明大小", "Prompt size"),
+    ("合计约：{n}", "合計約：{n}", "Total ≈ {n}"),
     // 031 @ 文件检索 + ! shell 命令
     ("文件", "檔案", "Files"),
     ("斜杠命令", "斜槓命令", "Slash commands"),

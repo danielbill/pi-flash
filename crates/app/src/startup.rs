@@ -655,6 +655,9 @@ fn spawn_splash_gate(cx: &mut gpui::Context<Chat>) {
         let _ = this.update(cx, |c, cx| {
             c.booted = true;
             c.pending_zoom = true;
+            // 040 延迟加载：揭幕（切换启动页）后才开始测扩展/skill 说明
+            // token——非关键数据，不对启动造成任何负担
+            c.spawn_token_probe(cx);
             if crate::PERF.load(std::sync::atomic::Ordering::Relaxed) {
                 eprintln!("[perf] splash reveal: {:?}", t0.elapsed());
             }

@@ -273,6 +273,9 @@ struct Chat {
     /// 010-启动：启动页闸门；揭幕帧由 pending_zoom 补 §4 最大化
     booted: bool,
     pending_zoom: bool,
+    /// 040 延迟加载：扩展/技能说明 token 数（source → 测量值；启动时读缓存，
+    /// 揭幕后后台探针刷新）。source 缺项 = 尚未测得（UI 显示「—」）
+    ext_tokens: std::collections::HashMap<String, services::token_probe::TokenEntry>,
     draft_seq: usize,
     menu_ix: usize,
     /// / 菜单滚动句柄（按键选中 scroll_to_item 行跟随；输入变化回顶）
@@ -705,6 +708,7 @@ impl Chat {
             plugin_picker: None,
             pill_anchor: None,
             pill_btn: PillBtns::default(),
+            ext_tokens: services::token_probe::read_cache(),
             ctx_tip_ring_hover: false,
             ctx_tip_panel_hover: false,
             ctx_tip_closing: None,

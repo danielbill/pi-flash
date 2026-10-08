@@ -9,7 +9,7 @@ Pi-Flash
 # 铁律
 - **内置pi**：内置 `@earendil-works/pi-coding-agent` ，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试。开发期 `PI_FLASH_PI_BIN` 可覆盖。
 - **目标平台**：Windows + macOS（macOS 包走 GitHub Actions runner）。
-- 工作自动提交git
+- 完成任务保证编译通过后提交git，测试和验收交给用户
 
 # 路径
 

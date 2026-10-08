@@ -434,6 +434,21 @@ fn pl_detail(
                 SharedString::from(tr("已启用").to_string())
             }),
         ))
+        .child(grid_row(
+            &tr("说明大小"),
+            div()
+                .font_family(crate::markdown::MONO_FAMILY)
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                // 尚未测得（延迟加载未跑完/未安装）显示「—」
+                .child(SharedString::from(match chat.ext_tokens.get(&src) {
+                    Some(e) => format!(
+                        "{} tokens",
+                        crate::services::format::fmt_thousand(e.ext.max(0) as u64)
+                    ),
+                    None => "—".to_string(),
+                })),
+        ))
         .child(grid_row(&tr("来源"), mono_text(src.clone(), false)))
         .child(grid_row(
             &tr("路径"),

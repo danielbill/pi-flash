@@ -9,5 +9,6 @@ pub mod format;
 pub mod git;
 pub mod paths_sort;
 pub mod sound;
+pub mod token_probe;
 pub mod watcher;
 pub mod workspace;
