@@ -184,6 +184,14 @@ impl InputMode {
 
                 let mut highlighter = highlighter.borrow_mut();
                 if highlighter.is_none() {
+                    // 纯文本不建 highlighter（对齐 Zed：无语言 = 无语法树）。
+                    // gpui-component 的 Plain 语言会建 tree-sitter JSON parser
+                    // 并对**整篇文本**同步 parse 一次——.txt/.lock 这类回退到
+                    // "text" 的文件（4.6MB）光这一步就是秒级主线程冻结，而且
+                    // 注定产不出任何高亮。
+                    if language.as_ref() == "text" {
+                        return;
+                    }
                     let new_highlighter = SyntaxHighlighter::new(language);
                     highlighter.replace(new_highlighter);
                 }

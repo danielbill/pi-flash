@@ -416,7 +416,6 @@ fn pl_detail(
                 ))),
         ))
         .child(grid_row(&tr("安装路径"), mono_text(install_path_hint(&src), true)))
-        .child(note("移除/安装通过 vendored pi CLI 执行（pi remove/install），完成后自动刷新"))
         .into_any_element();
     detail
 }

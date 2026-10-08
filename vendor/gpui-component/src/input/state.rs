@@ -1511,14 +1511,20 @@ impl InputState {
         let point = self.text.offset_to_point(offset);
         let row = point.row;
 
-        let mut row_offset_y = px(0.);
-        for (ix, wrap_line) in self.text_wrapper.lines.iter().enumerate() {
-            if ix == row {
-                break;
+        // 等高行（不软换行）时行 y 有闭式解：不再从第 0 行累加行高
+        // （PageDown/光标定位到 8 万行深处原本是每次 O(行号)）
+        let row_offset_y = if self.text_wrapper.is_uniform() {
+            row as f32 * line_height
+        } else {
+            let mut y = px(0.);
+            for (ix, wrap_line) in self.text_wrapper.lines.iter().enumerate() {
+                if ix == row {
+                    break;
+                }
+                y += wrap_line.height(line_height);
             }
-
-            row_offset_y += wrap_line.height(line_height);
-        }
+            y
+        };
 
         if let Some(line) = last_layout
             .lines

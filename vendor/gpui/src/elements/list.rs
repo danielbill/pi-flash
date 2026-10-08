@@ -15,7 +15,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration, time::Instant};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
@@ -71,9 +71,6 @@ struct StateInner {
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
-    /// 进行中的滚轮平滑动画（滚轮 notched delta 走动画路径；见
-    /// `begin_smooth_scroll` / `advance_smooth`）
-    smooth: Option<SmoothScroll>,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -147,101 +144,6 @@ struct ItemLayout {
     index: usize,
     element: AnyElement,
     size: Size<Pixels>,
-}
-
-/// 滚轮平滑动画（Zed `gestures.rs` fling 同源思路，AOSP `SplineOverScroller`
-/// 转录）：轨迹是时间的**闭式函数**——位置 = 起点 + 距离 × 缓出样条(已过
-/// 时间/时长)，与帧节奏完全解耦：掉帧、帧间隔抖动都不产生轨迹误差；时长
-/// 有限、到点精确归零，无渐近爬行尾（旧指数逼近法起步慢、收尾亚像素爬行
-/// ——实测「不丝滑、总有点卡」的两因）。
-///
-/// 每次滚轮事件**重启轨迹段**（Chrome ScrollAnimator 同款）：从当前实际位置
-/// 滑向累计 target，时长按剩余距离计算——连续快滚保持巡航速度，停手后一段
-/// 定长减速精确停住。
-struct SmoothScroll {
-    /// 绝对像素滚动位目标（自列表内容顶起，滚轮事件累计）
-    target: Pixels,
-    /// 当前轨迹段起点（段启动时的实际位置）
-    segment_start: Pixels,
-    /// 当前轨迹段启动时刻
-    segment_started_at: Instant,
-    /// 当前轨迹段时长
-    segment_duration: Duration,
-}
-
-impl SmoothScroll {
-    /// 从当前位置重启轨迹段：时长 = 剩余距离 / 巡航速度，钳到上下限
-    fn restart_segment(&mut self, current: Pixels) {
-        let distance = f32::from((self.target - current).abs());
-        let secs = (distance / SMOOTH_CRUISE_PX_PER_SEC)
-            .clamp(SMOOTH_MIN_DURATION_SECS, SMOOTH_MAX_DURATION_SECS);
-        self.segment_start = current;
-        self.segment_started_at = Instant::now();
-        self.segment_duration = Duration::from_secs_f32(secs);
-    }
-}
-
-/// 轨迹段平均速度（px/s）：时长 = 剩余距离 / 此值，再钳到上下限
-const SMOOTH_CRUISE_PX_PER_SEC: f32 = 1400.;
-/// 单段时长下限：单格滚轮（~100px）不按 1400px/s 算出 70ms 的急促段，
-/// 保持 ~180ms 的完整减速曲线（Chrome 单格观感）
-const SMOOTH_MIN_DURATION_SECS: f32 = 0.18;
-/// 单段时长上限：长滑行不无限拖尾
-const SMOOTH_MAX_DURATION_SECS: f32 = 0.7;
-/// 平滑滚轮路径的行高换算：33px/行 × 系统 3 行/格 ≈ 100px/格，对齐
-/// Chrome/Windows（pi-web 手感）。precise delta（触摸板）仍走通用 20px/行。
-const SMOOTH_WHEEL_LINE_PX: f32 = 33.;
-
-/// Android `OverScroller.SplineOverScroller` 的 `SPLINE_POSITION`（经 Zed
-/// `gestures.rs` 转录，Apache-2.0）：滚轮距离随时间分数的缓出样条，100 等分
-/// 采样 + 线性插值。曲线形状由 INFLEXION=0.35 与起/末张力决定——起步快、
-/// 长尾缓出、t=1 精确到 1。
-fn spline_distance_coefficient(time: f32) -> f32 {
-    const NB_SAMPLES: usize = 100;
-    const INFLEXION: f32 = 0.35;
-    const START_TENSION: f32 = 0.5;
-    const END_TENSION: f32 = 1.0;
-    const P1: f32 = START_TENSION * INFLEXION;
-    const P2: f32 = 1.0 - END_TENSION * (1.0 - INFLEXION);
-
-    static SPLINE_POSITION: std::sync::LazyLock<Vec<f32>> =
-        std::sync::LazyLock::new(|| {
-            let mut samples = vec![0f32; NB_SAMPLES + 1];
-            for (i, sample) in samples.iter_mut().take(NB_SAMPLES).enumerate() {
-                let alpha = i as f32 / NB_SAMPLES as f32;
-                let mut x_min = 0f32;
-                let mut x_max = 1f32;
-                // 二分求贝塞尔时间参数 x：time(x) = alpha，取该参数下的位置分量
-                let (x, coefficient) = loop {
-                    let x = x_min + (x_max - x_min) / 2.;
-                    let coefficient = 3. * x * (1. - x);
-                    let time = coefficient * ((1. - x) * P1 + x * P2) + x * x * x;
-                    if (time - alpha).abs() < 1e-5 {
-                        break (x, coefficient);
-                    }
-                    if time > alpha {
-                        x_max = x;
-                    } else {
-                        x_min = x;
-                    }
-                };
-                *sample = coefficient * ((1. - x) * START_TENSION + x) + x * x * x;
-            }
-            samples[NB_SAMPLES] = 1.;
-            samples
-        });
-
-    if time >= 1. {
-        return 1.;
-    }
-    let time = time.max(0.);
-    let index = ((NB_SAMPLES as f32 * time) as usize).min(NB_SAMPLES - 1);
-    let time_lower = index as f32 / NB_SAMPLES as f32;
-    let time_upper = (index + 1) as f32 / NB_SAMPLES as f32;
-    let distance_lower = SPLINE_POSITION[index];
-    let distance_upper = SPLINE_POSITION[index + 1];
-    let velocity_coefficient = (distance_upper - distance_lower) / (time_upper - time_lower);
-    distance_lower + (time - time_lower) * velocity_coefficient
 }
 
 /// Frame state used by the [List] element after layout.
@@ -323,7 +225,6 @@ impl ListState {
             reset: false,
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
-            smooth: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -347,7 +248,6 @@ impl ListState {
             state.measuring_behavior.reset();
             state.logical_scroll_top = None;
             state.scrollbar_drag_start_height = None;
-            state.smooth = None;
             state.items.summary().count
         };
 
@@ -447,8 +347,6 @@ impl ListState {
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
-        // 程序化定位优先于进行中的滚轮动画（动画的绝对像素 target 已失效）
-        state.smooth = None;
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -461,8 +359,6 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
-        // 程序化定位优先于进行中的滚轮动画
-        state.smooth = None;
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -604,88 +500,6 @@ impl StateInner {
         let start_y = cursor.start().height + scroll_top.offset_in_item;
         cursor.seek_forward(&Height(start_y + height), Bias::Left);
         scroll_top.item_ix..cursor.start().count + 1
-    }
-
-    /// 滚轮平滑入口（非 precise delta，即 notched 滚轮）：把本次滚轮像素量
-    /// 累计进动画 target 并**重启轨迹段**（从当前实际位置滑向新 target，时长
-    /// 按剩余距离算）。precise delta（触摸板）不走这里，保持原生直滚。
-    ///
-    /// `delta` 是**本次事件**的像素量（非累计）：target 是绝对像素位，多次
-    /// 滚轮在动画中各自累加 → 连续快滚保持巡航速度，停手后一段定长减速精确
-    /// 停住（Chrome ScrollAnimator 同款分段重启）。
-    ///
-    /// 调用方负责在事件后触发一次重绘（`window.refresh()`）让动画起步——这里
-    /// 处于事件派发期，不能调 `request_animation_frame`（其内 `current_view`
-    /// 断言仅在绘制期成立）。
-    fn begin_smooth_scroll(
-        &mut self,
-        scroll_top: &ListOffset,
-        height: Pixels,
-        delta: Point<Pixels>,
-    ) {
-        // Drop scroll events after a reset, since we can't calculate
-        // the new logical scroll top without the item heights
-        if self.reset {
-            return;
-        }
-
-        let padding = self.last_padding.unwrap_or_default();
-        let scroll_max =
-            (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let current = self.scroll_top(scroll_top);
-        let smooth = self.smooth.get_or_insert(SmoothScroll {
-            target: current,
-            segment_start: current,
-            segment_started_at: Instant::now(),
-            segment_duration: Duration::ZERO,
-        });
-        smooth.target = (smooth.target - delta.y).max(px(0.)).min(scroll_max);
-        smooth.restart_segment(current);
-    }
-
-    /// 每帧推进平滑动画（[List::prepaint](List::prepaint) 内、`prepaint_items`
-    /// 之前调用，让本帧直接按推进后的位置绘制）。轨迹闭式求值：位置只依赖
-    /// (起点, 距离, 已过时间)，与帧节奏完全解耦——掉帧不产生轨迹误差。推进
-    /// 走与滚轮直滚完全相同的 [`Self::scroll`] 路径——钳制、贴底胶水转换、
-    /// scroll handler 语义全部一致。返回动画是否已结束。
-    fn advance_smooth(
-        &mut self,
-        scroll_top: &ListOffset,
-        height: Pixels,
-        current_view: EntityId,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> bool {
-        let Some(mut smooth) = self.smooth.take() else {
-            return true;
-        };
-
-        // 流式增长/条目重测会改变 scroll_max，target 每帧重新钳制
-        let padding = self.last_padding.unwrap_or_default();
-        let scroll_max =
-            (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        smooth.target = smooth.target.max(px(0.)).min(scroll_max);
-
-        let current = self.scroll_top(scroll_top);
-        let elapsed = Instant::now().duration_since(smooth.segment_started_at);
-        let progress = elapsed.as_secs_f32() / smooth.segment_duration.as_secs_f32().max(1e-6);
-        let finished = progress >= 1.;
-        let coefficient = spline_distance_coefficient(progress);
-        let position = smooth.segment_start
-            + (smooth.target - smooth.segment_start) * coefficient;
-        if !finished {
-            self.smooth = Some(smooth);
-        }
-        // scroll() 语义 new = current - delta.y：把实际位置挪到轨迹位置
-        self.scroll(
-            scroll_top,
-            height,
-            point(px(0.), current - position),
-            current_view,
-            window,
-            cx,
-        );
-        finished
     }
 
     fn scroll(
@@ -1077,8 +891,6 @@ impl StateInner {
         let Some(bounds) = self.last_layout_bounds else {
             return;
         };
-        // 滚动条拖拽优先于进行中的滚轮动画（动画的绝对像素 target 已失效）
-        self.smooth = None;
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
@@ -1229,10 +1041,10 @@ impl Element for List {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item heights
-        let width_changed = state
+        if state
             .last_layout_bounds
-            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width);
-        if width_changed {
+            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+        {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     focus_handle: item.focus_handle(),
@@ -1241,24 +1053,6 @@ impl Element for List {
             );
 
             state.items = new_items;
-        }
-
-        // 滚轮平滑动画每帧推进：必须在 prepaint_items 之前，让本帧直接按
-        // 推进后的滚动位绘制（动画未结束时请求下一帧继续）。宽度变化帧条目
-        // 高度全部失效（sum height ≈ 0），按它钳制 target 会误跳——跳过这一帧。
-        if state.smooth.is_some() && !width_changed {
-            let current_view = window.current_view();
-            let scroll_top_before = state.logical_scroll_top();
-            let finished = state.advance_smooth(
-                &scroll_top_before,
-                bounds.size.height,
-                current_view,
-                window,
-                cx,
-            );
-            if !finished {
-                window.request_animation_frame();
-            }
         }
 
         let padding = style
@@ -1304,31 +1098,16 @@ impl Element for List {
         let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
-                if event.delta.precise() {
-                    // 触摸板/高精度像素 delta：保持原生直滚（OS 已带惯性）
-                    accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
-                    let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                    list_state.0.borrow_mut().scroll(
-                        &scroll_top,
-                        height,
-                        pixel_delta,
-                        current_view,
-                        window,
-                        cx,
-                    )
-                } else {
-                    // notched 滚轮：走指数减速平滑动画。注意必须传**本次事件**
-                    // 的像素量（`begin_smooth_scroll` 内部自己往绝对 target 上
-                    // 累计）；paint 期捕获的 scroll_top 只在动画起步时用一次。
-                    let pixel_delta = event.delta.pixel_delta(px(SMOOTH_WHEEL_LINE_PX));
-                    list_state
-                        .0
-                        .borrow_mut()
-                        .begin_smooth_scroll(&scroll_top, height, pixel_delta);
-                    // 事件派发期触发首帧：下一帧 prepaint 里 advance_smooth 接管，
-                    // 之后由 scroll() 的 notify + RAF 自续
-                    window.refresh();
-                }
+                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
+                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
+                list_state.0.borrow_mut().scroll(
+                    &scroll_top,
+                    height,
+                    pixel_delta,
+                    current_view,
+                    window,
+                    cx,
+                )
             }
         });
     }
@@ -1425,35 +1204,6 @@ mod test {
     use gpui::{ScrollDelta, ScrollWheelEvent};
 
     use crate::{self as gpui, TestAppContext};
-
-    /// 缓出样条（AOSP SPLINE_POSITION 转录）几何锁：端点精确、单调、
-    /// 值域合法、起步快（缓出特征——前 10% 时间走 >10% 距离）
-    #[test]
-    fn spline_distance_coefficient_is_monotonic_ease_out() {
-        use super::spline_distance_coefficient;
-        // t=0 走二分近似（非精确 0），容差断言；t≥1 直接返回 1
-        assert!(spline_distance_coefficient(0.).abs() < 1e-3);
-        assert_eq!(spline_distance_coefficient(1.), 1.);
-        assert_eq!(spline_distance_coefficient(1.5), 1., "超界时间钳到终点");
-        let mut previous = 0.;
-        for i in 0..=100 {
-            let t = i as f32 / 100.;
-            let coefficient = spline_distance_coefficient(t);
-            assert!(
-                (0. ..=1.).contains(&coefficient),
-                "coefficient 越值域: t={t} c={coefficient}"
-            );
-            assert!(
-                coefficient >= previous,
-                "coefficient 必须非降: t={t} c={coefficient} prev={previous}"
-            );
-            previous = coefficient;
-        }
-        assert!(
-            spline_distance_coefficient(0.1) > 0.1,
-            "缓出曲线起步必须快于线性"
-        );
-    }
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {

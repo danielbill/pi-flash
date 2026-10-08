@@ -191,7 +191,6 @@ impl Chat {
             if let Some(ft) = self.file_cache.get_mut(&path) {
                 if !ft.dirty {
                     ft.content = content;
-                    ft.big_lines = crate::big_lines_for(&ft.content);
                     ft.reload_pending = true;
                     ft.conflict = None;
                     ft.disk_sig = sig;
@@ -295,7 +294,6 @@ impl Chat {
         }
         if let Some(ft) = self.file_cache.get_mut(path) {
             ft.content = text;
-            ft.big_lines = crate::big_lines_for(&ft.content);
             ft.dirty = false;
             ft.conflict = None;
             ft.disk_sig = file_sig(path);
@@ -355,7 +353,6 @@ impl Chat {
         };
         if let Some(ft) = self.file_cache.get_mut(path) {
             ft.content = String::from_utf8_lossy(&bytes).to_string();
-            ft.big_lines = crate::big_lines_for(&ft.content);
             ft.dirty = false;
             ft.reload_pending = true;
             ft.conflict = None;
@@ -410,7 +407,6 @@ impl Chat {
                             self.ext_probe.1 += 1;
                             if !ft.dirty {
                                 ft.content = String::from_utf8_lossy(&b).to_string();
-                                ft.big_lines = crate::big_lines_for(&ft.content);
                                 ft.reload_pending = true;
                                 ft.conflict = None;
                             } else if ft.conflict.is_none() {

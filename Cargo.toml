@@ -21,6 +21,19 @@ debug = 1                   # vendored 的 gpui 保留行号表，方便断点�
 [profile.dev.package.gpui-component]
 debug = 1
 
+# 帧时间热依赖在 dev 下单独 O3——对齐 Zed 自己的 Cargo.toml
+# [profile.dev.package]（taffy / tree-sitter / serde_json 三项就是 zed 的配置）。
+# pi-flash 之前 dev 全量 O0：debug 帧时间（实测 57ms/帧，空会话视图）里
+# taffy 的 flex 布局占了很大一块，热依赖优化后 debug 也接近可用手感。
+[profile.dev.package.taffy]
+opt-level = 3
+
+[profile.dev.package.tree-sitter]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
 gpui-component = { path = "vendor/gpui-component" }

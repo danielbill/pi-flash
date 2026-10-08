@@ -102,63 +102,89 @@ impl TextElement {
 
         let mut prev_lines_offset = 0;
         let mut offset_y = px(0.);
-        for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
-            let row = ix;
-            let line_origin = point(px(0.), offset_y);
 
-            // break loop if all cursor positions are found
-            if cursor_pos.is_some() && cursor_start.is_some() && cursor_end.is_some() {
-                break;
-            }
+        // 等高行（不软换行）：行 y = row × 行高、行首字节 = 该行行首偏移，
+        // 三者位置直接算，不再从第 0 行扫到光标（那是 O(光标行号)/帧，
+        // PageDown 到大文件深处时最贵；Zed 的 PositionMap 同款闭式）。
+        if text_wrapper.is_uniform() {
+            let pos_for = |offset: usize| -> (usize, Point<Pixels>) {
+                let row = state.text.offset_to_point(offset).row;
+                let mut x = px(0.);
+                if row >= visible_range.start {
+                    if let Some(line) = lines.get(row - visible_range.start) {
+                        let local = offset.saturating_sub(state.text.line_start_offset(row));
+                        if let Some(p) = line.position_for_index(local, line_height) {
+                            x = p.x;
+                        }
+                    }
+                }
+                (row, point(x, row as f32 * line_height))
+            };
 
-            let in_visible_range = ix >= visible_range.start;
-            if let Some(line) = in_visible_range
-                .then(|| lines.get(ix.saturating_sub(visible_range.start)))
-                .flatten()
-            {
-                // If in visible range lines
-                if cursor_pos.is_none() {
-                    let offset = cursor.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
+            let (cursor_row, cursor_point) = pos_for(cursor);
+            current_row = Some(cursor_row);
+            cursor_pos = Some(cursor_point);
+            cursor_start = Some(pos_for(selected_range.start).1);
+            cursor_end = Some(pos_for(selected_range.end).1);
+        } else {
+            for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
+                let row = ix;
+                let line_origin = point(px(0.), offset_y);
+
+                // break loop if all cursor positions are found
+                if cursor_pos.is_some() && cursor_start.is_some() && cursor_end.is_some() {
+                    break;
+                }
+
+                let in_visible_range = ix >= visible_range.start;
+                if let Some(line) = in_visible_range
+                    .then(|| lines.get(ix.saturating_sub(visible_range.start)))
+                    .flatten()
+                {
+                    // If in visible range lines
+                    if cursor_pos.is_none() {
+                        let offset = cursor.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            current_row = Some(row);
+                            cursor_pos = Some(line_origin + pos);
+                        }
+                    }
+                    if cursor_start.is_none() {
+                        let offset = selected_range.start.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            cursor_start = Some(line_origin + pos);
+                        }
+                    }
+                    if cursor_end.is_none() {
+                        let offset = selected_range.end.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            cursor_end = Some(line_origin + pos);
+                        }
+                    }
+
+                    offset_y += line.size(line_height).height;
+                    // +1 for the last `\n`
+                    prev_lines_offset += line.len() + 1;
+                } else {
+                    // If not in the visible range.
+
+                    // Just increase the offset_y and prev_lines_offset.
+                    // This will let the scroll_offset to track the cursor position correctly.
+                    if prev_lines_offset >= cursor && cursor_pos.is_none() {
                         current_row = Some(row);
-                        cursor_pos = Some(line_origin + pos);
+                        cursor_pos = Some(line_origin);
                     }
-                }
-                if cursor_start.is_none() {
-                    let offset = selected_range.start.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
-                        cursor_start = Some(line_origin + pos);
+                    if prev_lines_offset >= selected_range.start && cursor_start.is_none() {
+                        cursor_start = Some(line_origin);
                     }
-                }
-                if cursor_end.is_none() {
-                    let offset = selected_range.end.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
-                        cursor_end = Some(line_origin + pos);
+                    if prev_lines_offset >= selected_range.end && cursor_end.is_none() {
+                        cursor_end = Some(line_origin);
                     }
-                }
 
-                offset_y += line.size(line_height).height;
-                // +1 for the last `\n`
-                prev_lines_offset += line.len() + 1;
-            } else {
-                // If not in the visible range.
-
-                // Just increase the offset_y and prev_lines_offset.
-                // This will let the scroll_offset to track the cursor position correctly.
-                if prev_lines_offset >= cursor && cursor_pos.is_none() {
-                    current_row = Some(row);
-                    cursor_pos = Some(line_origin);
+                    offset_y += wrap_line.height(line_height);
+                    // +1 for the last `\n`
+                    prev_lines_offset += wrap_line.len() + 1;
                 }
-                if prev_lines_offset >= selected_range.start && cursor_start.is_none() {
-                    cursor_start = Some(line_origin);
-                }
-                if prev_lines_offset >= selected_range.end && cursor_end.is_none() {
-                    cursor_end = Some(line_origin);
-                }
-
-                offset_y += wrap_line.height(line_height);
-                // +1 for the last `\n`
-                prev_lines_offset += wrap_line.len() + 1;
             }
         }
 
@@ -479,6 +505,18 @@ impl TextElement {
         } else {
             state.scroll_handle.offset().y
         };
+
+        // 等高行（文件编辑器 soft_wrap(false)：每行一条显示行，行高恒定）：
+        // 可见区间闭式解，不再从第 0 行累加行高——那是 O(滚动深度)，80K 行
+        // 文件滚到底部时每帧白扫几万行（Zed 的 PositionMap 就是靠行几何闭式
+        // 算可见区间）。折行的 composer 走下面的线性路径。
+        if state.text_wrapper.is_uniform() {
+            let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
+            let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
+            let start = rows_above.min(total_lines);
+            let end = (start + visible_rows + extra_rows + 1).min(total_lines);
+            return (start..end, start as f32 * line_height);
+        }
 
         let mut visible_range = 0..total_lines;
         let mut line_bottom = px(0.);

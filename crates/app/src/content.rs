@@ -2,7 +2,7 @@
 //! markdown 预览以 topbar tab 打开（Obsidian 式），聊天为默认视图。内容
 //! 区直通窗口底（statusbar 只在面板段）。
 
-use gpui::{Context, Entity, Focusable, KeyDownEvent, MouseButton, SharedString, div, img, prelude::*, px, relative, rgb};
+use gpui::{Context, Entity, Focusable, KeyDownEvent, MouseButton, SharedString, div, img, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::ContentView;
@@ -267,7 +267,7 @@ fn ensure_file_editor(
     if chat
         .file_cache
         .get(path)
-        .map(|f| f.editor.is_some() || f.big_lines.is_some())
+        .map(|f| f.editor.is_some())
         .unwrap_or(true)
     {
         return;
@@ -391,7 +391,7 @@ fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
-    host.child(file_editor_body(chat, weak, &path, md_source))
+    host.child(file_editor_body(chat, &path, md_source))
         .into_any_element()
 }
 
@@ -690,10 +690,9 @@ fn banner_btn(
         .into_any_element()
 }
 
-/// 编辑区主体三分支：md 渲染预览（默认）/ CodeEditor / 超行只读回退。
+/// 编辑区主体：md 渲染预览（默认）或 CodeEditor（所有文件都可编辑，Zed parity）。
 fn file_editor_body(
     chat: &mut Chat,
-    weak: &gpui::WeakEntity<Chat>,
     path: &Path,
     md_source: bool,
 ) -> gpui::AnyElement {    let t = T();
@@ -800,84 +799,6 @@ fn file_editor_body(
                 .into_any_element(),
             None => empty_hint(tr("图片读取失败"), t),
         };
-    }
-
-    // 超行只读回退：行号行虚拟化（抄 zed thread_view 的 list 架构，与 md
-    // 预览共用 file_view_list）。旧单巨 text 块每帧整文件重排——80K 行
-    // 实测帧 160ms~4s；行偏移表（big_lines）O(1) 取行，每帧只建可视行，
-    // 行文本经 weak 从 Chat 读，闭包零拷贝
-    if let Some(lines) = ft.big_lines.clone() {
-        let line_count = lines.len() - 1;
-        if chat.file_view_list_path.as_deref() != Some(path) {
-            chat.file_view_list.reset(line_count);
-            chat.file_view_list_path = Some(path.to_path_buf());
-        } else if chat.file_view_list.item_count() != line_count {
-            chat.file_view_list.reset(line_count);
-        }
-        let path_for_list = path.to_path_buf();
-        let weak_for_list = weak.clone();
-        let font_size = crate::appearance::file_font().size;
-        return div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .bg(rgb(t.bg))
-            .child(
-                gpui::list(chat.file_view_list.clone(), move |ix, _window, cx| {
-                    // 行文本从 Chat 缓冲区按偏移表切片（offsets 是行首字节位
-                    // 置，切片边界安全）；空行给占位行高
-                    let Some(chat) = weak_for_list.upgrade() else {
-                        return div().into_any_element();
-                    };
-                    let Some(ft) = chat.read(cx).file_cache.get(&path_for_list) else {
-                        return div().into_any_element();
-                    };
-                    let (start, end) = match (lines.get(ix), lines.get(ix + 1)) {
-                        (Some(s), Some(e)) => (*s, *e),
-                        _ => return div().into_any_element(),
-                    };
-                    let text = ft.content[start..end]
-                        .trim_end_matches(['\n', '\r'])
-                        .replace('\t', "    ");
-                    div()
-                        .w_full()
-                        .min_h(px(font_size * 1.5))
-                        .pl(px(12.))
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(px(font_size))
-                        .line_height(relative(1.5))
-                        .text_color(rgb(crate::theme::theme().text))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(SharedString::from(text))
-                        .into_any_element()
-                })
-                .flex_1()
-                .min_h_0(),
-            )
-            .when(
-                chat.file_view_list.max_offset_for_scrollbar().height > px(0.),
-                |d| {
-                    let handle =
-                        crate::ui::list_handle::ListStateHandle(chat.file_view_list.clone());
-                    d.child(
-                        div()
-                            .absolute()
-                            .top(px(4.))
-                            .bottom(px(4.))
-                            .right(px(3.))
-                            .w(px(8.))
-                            .child(gpui_component::scroll::Scrollbar::vertical(
-                                &chat.file_scrollbar,
-                                &handle,
-                            )),
-                    )
-                },
-            )
-            .into_any_element();
     }
 
     // CodeEditor（gpui-component）：tree-sitter 高亮 + 行号 + Ctrl+F 搜索替换

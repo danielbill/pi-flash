@@ -411,9 +411,8 @@ struct Chat {
     /// 浏览操作区的最后视图（Term/File）：文件树标签点击时恢复
     browse_last: ContentView,
     file_scrollbar: gpui_component::scroll::ScrollbarState,
-    /// 文件视图块级虚拟化（抄 zed thread_view 的 list 架构）：md 预览与
-    /// 超限大文件只读回退共用（同一时刻只渲染其一），ListState 只建可视
-    /// 条目；path 记当前文件，换文件时 reset 归零滚动
+    /// 文件视图块级虚拟化（抄 zed thread_view 的 list 架构）：md 渲染预览用，
+    /// ListState 每帧只建可视块；path 记当前文件，换文件时 reset 归零滚动
     file_view_list: gpui::ListState,
     file_view_list_path: Option<PathBuf>,
     /// psp 会话列表滚动（滚动条数据源）
@@ -473,11 +472,9 @@ pub(crate) enum FileConflict {
     /// 文件已从磁盘消失
     Deleted,
 }
-
-/// CodeEditor 单文件行数上限（gpui-component 自述 50K 行支持边界），
-/// 超限回退只读预览（行级虚拟化列表），不喂给编辑器。
-pub(crate) const EDITOR_MAX_LINES: usize = 50_000;
-
+// 023 文件编辑展示页：所有文件都进 CodeEditor（Zed parity——Zed 里不分
+// 文件大小、一律可编辑）。曾按 50K 行上限加过「超限转只读虚拟化列表」的
+// 特殊分支，已删除：特殊路径既不是 Zed 行为，也让大文件不可编辑。
 /// 文件 tab 缓冲区状态（023 文件编辑展示页）。
 ///
 /// `content` 是磁盘真值缓存（打开/保存/重载时更新）；`editor` 懒创建——
@@ -485,10 +482,6 @@ pub(crate) const EDITOR_MAX_LINES: usize = 50_000;
 /// 推迟到渲染帧（content.rs file_view）里补。
 pub(crate) struct FileTab {
     pub(crate) content: String,
-    /// 超限大文件的行起点字节偏移表（len = 行数+1，末项 = content.len()，
-    /// Some ⇔ 行数 > EDITOR_MAX_LINES）。只读回退视图按它 O(1) 取行；
-    /// 超限文件不创建编辑器（80K 行实测 set_value 卡 15s 而编辑器永不显示）
-    pub(crate) big_lines: Option<std::rc::Rc<Vec<usize>>>,
     pub(crate) editor: Option<gpui::Entity<gpui_component::input::InputState>>,
     /// 编辑器值 != content（订阅 InputEvent::Change 时比较，set_value 也发
     /// Change 事件，盲标会假脏）
@@ -504,41 +497,11 @@ pub(crate) struct FileTab {
     pub(crate) last_edit: Option<std::time::Instant>,
 }
 
-/// 超限大文件的行起点字节偏移表（≤ EDITOR_MAX_LINES 行返回 None）。
-/// 末行无换行符也占一行；空文件按 0 行算（超限判定用，偏差无害）。
-fn big_lines_for(content: &str) -> Option<std::rc::Rc<Vec<usize>>> {
-    let mut count = 0usize;
-    for b in content.bytes() {
-        if b == b'\n' {
-            count += 1;
-        }
-    }
-    if !content.is_empty() && !content.ends_with('\n') {
-        count += 1;
-    }
-    if count <= EDITOR_MAX_LINES {
-        return None;
-    }
-    let mut offsets = Vec::with_capacity(count + 2);
-    offsets.push(0usize);
-    for (i, b) in content.bytes().enumerate() {
-        if b == b'\n' {
-            offsets.push(i + 1);
-        }
-    }
-    if offsets.last() != Some(&content.len()) {
-        offsets.push(content.len());
-    }
-    Some(std::rc::Rc::new(offsets))
-}
 
 impl FileTab {
     pub(crate) fn from_disk(content: String) -> Self {
-        // 超限判定 + 行偏移表一次扫描搞定（4.6MB ≈ 10ms，一次性）
-        let big_lines = big_lines_for(&content);
         Self {
             content,
-            big_lines,
             editor: None,
             dirty: false,
             md_source: false,

@@ -1358,51 +1358,33 @@ preload 退役，尾部预载内部化为常量 TAIL_PRELOAD=10）。
 （800+ 行未完成 diff）暂无法整链 build，本版改动文件零错误（check
 错误全部位于 general.rs/mod.rs）。待其收敛后统一 build 实测。
 
-### v61 滚动体验对齐 pi-web：平滑减速滚轮 + 卡顿三源治理（bead pi-flash-52q）
+### v61 会话区卡顿三源治理（bead pi-flash-52q）
 
-用户诉求：会话区内容一多上下翻页卡顿；pi-web 滚动带减速缓停效果极好。
-研究结论：pi-web **没有自己写滚动物理**——减速缓停是 Chrome 合成器原生
-ScrollAnimator（贝塞尔缓出 + ~250ms 收敛），pi-web 自做的是 scroll anchoring/
-懒加载/`scroll-behavior: smooth`。pi-flash 的 gpui `List` 则是滚轮 delta
-**直接跳变**（无动画），且每帧对可见条目全量重建元素树。
+用户诉求：会话区内容一多上下翻页卡顿（研究过 pi-web：它的减速缓停来自
+Chrome 合成器原生 ScrollAnimator，不是自己的滚动物理）。本仓库照 pi-web
+自造滚轮动画的两版实现（指数逼近 / AOSP SplineOverScroller 闭式样条）**已
+撤销**——Zed 全仓没有滚轮动画（`crates/editor/src/element/mouse.rs` 直接改
+scroll 位置），手感只由帧时间决定；详见 docs/模块设计/050-滚动优化.md §零。
 
-- **① vendored gpui List 平滑滚轮**（elements/list.rs）：非 precise delta
-  （notched 滚轮）走动画路径——`begin_smooth_scroll` 把本次事件像素量累计进
-  绝对像素 target，`advance_smooth` 在 `List::prepaint`（prepaint_items 之前，
-  本帧即按推进后位置绘制）按 `current += (target-current)·(1-e^(-dt/τ))` 指数
-  逼近（τ=70ms ≈ Chrome 手感；SNAP 0.5px 截尾；dt 上限 0.1s 防挂起跳变）。
-  推进复用 `StateInner::scroll()` 全语义（钳制/贴底胶水/handler/notify）。
-  precise delta（触摸板）保持原生直滚。程序化定位（scroll_to/scroll_to_reveal/
-  set_offset_from_scrollbar/reset）取消进行中动画。动画未结束由 RAF 自续；
-  事件派发期只 refresh() 起步（`request_animation_frame` 内 `current_view`
-  断言仅绘制期成立，事件期调用会 panic——踩过）。平滑路径行高换算单独
-  33px/行（系统 3 行/格 ≈ 100px/格，对齐 Chrome；触摸板仍 20px/行）。
-  钉顶期滚轮退役锚点 → 垫片卸载 → target 重新钳到新 scroll_max →
-  「内容下落」从瞬跳变平滑滑落。
-- **② LineLayoutCache 存档层**（text_system/line_layout.rs）：原为两帧滑动
+- **① LineLayoutCache 存档层**（text_system/line_layout.rs）：原为两帧滑动
   窗口——滚出视口的条目两帧后 shaped 布局即被清，滚动中每条重进视口 =
   数百行重新 shape（大 markdown 轮块 5-30ms/帧，卡顿主因；最新 Zed 也是
   两帧设计，编辑器靠自有 wrap map 不受害）。新增 archive（48MB 字节预算、
   插入序驱逐）：finish_frame 沉降掉出两帧窗口的布局而非丢弃；查找路径
   current → previous → archive 三级回退，命中搬回 current（自然近似 LRU）。
   字节估算 16B/字符 + 512B 常数；重复沉降/陈旧 order key 均防御处理。
-- **③ markdown 解析缓存**（app/markdown.rs）：`render_impl` 每帧重跑
+- **② markdown 解析缓存**（app/markdown.rs）：`render_impl` 每帧重跑
   pulldown-cmark（大消息数百 µs～ms）。新增 `cached_blocks`：key=(FNV-1a
   8B 块哈希, len, html 标志)、命中全等校验防碰撞、线程局部 128 项 LRU
   （Rc<Vec<MdBlock>> 共享，渲染期零拷贝）。流式末条每 delta 一变 → 命不中
   也只是队头轮换。
-- **④ 图片解码缓存**（app/session/messages.rs）：用户图/工具结果图每帧重走
+- **③ 图片解码缓存**（app/session/messages.rs）：用户图/工具结果图每帧重走
   base64 解码 + `Image::from_bytes` 内容哈希（几百 KB = ms 级）。
   `decode_image_cached`：key=(哈希, len, 格式)、Err 同样入缓存防反复重试、
   64 项 LRU；`Image.bytes` 公开字段保住 MAX_IMAGE_BYTES 校验。
 - 测试：app 88 + pi-link 62 + gpui 内部 4（scripts/test_gpui_glue.sh）全绿；
   check 0 警告。build 因运行中实例锁 exe 待重启实测（同 v60-5）。
 
-### v61-1 调参：减速滑行延长（用户实测反馈"不卡了"）
-
-`SMOOTH_TAU_SECS` 70→110ms（收手后 ~330ms 走 95%、~500ms 完全缓停），
-`SMOOTH_SNAP_PX` 0.5→0.25（尾巴多走几帧再吸附）。其余不动；app 15 项
-chat_list 测试复跑全绿。exe 被运行中实例锁定，待关闭后 build 实测。
 
 ### v61-2 字号体系整理：docs/UI设计/字体大小设置.md 落地
 
@@ -1444,25 +1426,6 @@ PANEL_PX 缓存钳 10–16）；markdown MD_SPEC 同理 `spec.size + (size-14)`�
 「设置值±N」继续精确成立；默认从 12→15 只是整窗 chrome 统一 +3px。
 app 88 测试复跑全绿。
 
-### v61-2 滚动算法重写：Zed gestures 同源闭式样条（用户反馈"不丝滑、总有点卡"）
-
-研究 D:\github\zed（gpui/gpui_windows）：Zed 的滚动物理在 `gpui/src/
-gestures.rs`（AOSP `OverScroller.SplineOverScroller` Apache-2.0 转录）——
-**轨迹闭式化**（位置 = f(速度, 已过时间)，与帧节奏解耦）+ 定长减速精确归零。
-平台层与 present（`Present(0,0)`）均无平滑，vsync 线程仅做 GPU 掉线检测
-（vendored 同构）。
-
-旧指数逼近法（τ 时间常数）两因不丝滑：①起步速度 ∝ 剩余距离，每格滚轮首帧
-只走 ~13%（发闷）②收尾亚像素爬行百余 ms（150% DPI 下肉眼可见顿挫）。
-
-重写（elements/list.rs）：`SmoothScroll{target, segment_start, started_at,
-duration}`——滚轮事件累计绝对像素 target 并**重启轨迹段**（Chrome
-ScrollAnimator 同款），位置闭式求值 `start + 距离·spline(t/duration)`，
-时长 = 剩余距离/巡航速度（钳 0.18~0.7s）。新常量：SMOOTH_CRUISE_PX_PER_SEC
-=1400、SMOOTH_MIN/MAX_DURATION_SECS=0.18/0.7（τ/SNAP/MAX_DT 废弃）。
-新增缓出样条几何锁单测（端点/单调/值域/起步快于线性）。gpui 内部 5 +
-app 88 + pi-link 62 全绿；build 成功（exe 未被锁）。设计细节归档
-docs/模块设计/050-滚动优化.md。
 
 ### v62 会话字号「改了不变」根因修复：gpui StyledText 排版字号只认容器继承
 
@@ -2532,3 +2495,17 @@ Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
   project.picker_open 已在 7dc55b1 并入主线。
 - 验证：pi-link 120 + app 120 全绿；实机冒烟 --arg/--only/input.focus/wait
   下标+contains+truthy/clean/退出全通。
+
+## 2026-10-08 文件预览：md 预览块级虚拟化
+
+- **md 预览块级虚拟化**（抄 zed thread_view 的 list 架构）：`doc_blocks`/
+  `render_doc_item` 取代整树 `render_themed`，ListState 每帧只建可视块
+  （progress.md 784 块 30ms/帧 → 27 块 ~1.9ms）。list 元素自身必须
+  `flex_1 + min_h_0`（Auto 尺寸无内容贡献，taffy 会布局成 0 高——条目
+  全画在视口外，预览全空「假快」）。
+- 变高块（md 预览 / 会话区）滚动条仍是**测量估法**——与 zed agent 面板
+  同款，属已知取舍。
+- 文件树 gitignored 条目改**暗色可见**（Zed parity，之前整目录隐藏没
+  法测 tmp/ 资产）；被忽略目录内部整体继承 ignored（git 语义 negation
+  救不回）。
+- 验证：app 测试全绿；实机 80K 文件开/滚/切 tab 不崩。

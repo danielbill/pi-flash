@@ -86,6 +86,16 @@ impl TextWrapper {
         self.soft_lines
     }
 
+    /// 是否「等高」：每行恰好一条显示行（不软换行，或软换行下没有任何行被折）。
+    ///
+    /// 文件编辑器 `soft_wrap(false)` 恒为真 → 行 y = row × 行高 有闭式解，
+    /// 每帧的可见区间/光标定位不再从第 0 行线性累加（Zed PositionMap 同款）；
+    /// 软换行的 composer 一旦有折行即为假，走原线性路径。
+    #[inline]
+    pub(super) fn is_uniform(&self) -> bool {
+        self.soft_lines == self.lines.len()
+    }
+
     /// Get the line item by row index.
     #[inline]
     pub(super) fn line(&self, row: usize) -> Option<&LineItem> {
@@ -182,27 +192,31 @@ impl TextWrapper {
             .iter_lines()
             .enumerate()
         {
-            let line_str = line.to_string();
+            let line_len = line.len();
             let mut wrapped_lines = vec![];
             let mut prev_boundary_ix = 0;
 
-            if line_str.len() > longest_row_len {
+            if line_len > longest_row_len {
                 longest_row_ix = new_start_row + ix;
-                longest_row_len = line_str.len();
+                longest_row_len = line_len;
             }
 
-            // If wrap_width is Pixels::MAX, skip wrapping to disable word wrap
+            // If wrap_width is none, skip wrapping to disable word wrap.
+            // （不软换行时不 materialize 行文本：80K 行文件每行一次
+            //   String 分配在打开时是纯浪费）
             if let Some(wrap_width) = wrap_width {
+                let line_str = line.to_string();
                 // Here only have wrapped line, if there is no wrap meet, the `line_wraps` result will empty.
                 for boundary in wrap_line(&line_str, wrap_width) {
                     wrapped_lines.push(prev_boundary_ix..boundary.ix);
                     prev_boundary_ix = boundary.ix;
                 }
-            }
-
-            // Reset of the line
-            if !line_str[prev_boundary_ix..].is_empty() || prev_boundary_ix == 0 {
-                wrapped_lines.push(prev_boundary_ix..line.len());
+                // Reset of the line
+                if !line_str[prev_boundary_ix..].is_empty() || prev_boundary_ix == 0 {
+                    wrapped_lines.push(prev_boundary_ix..line.len());
+                }
+            } else {
+                wrapped_lines.push(0..line_len);
             }
 
             new_lines.push(LineItem {
@@ -240,12 +254,17 @@ impl TextWrapper {
         let start = self.text.line_start_offset(row);
         let line = &self.lines[row];
 
-        let mut wrapped_row = self
-            .lines
-            .iter()
-            .take(row)
-            .map(|l| l.lines_len())
-            .sum::<usize>();
+        // 等高（不软换行）时显示行号 == 逻辑行号，免去从第 0 行累加
+        // （PageDown 每次按键原本是 O(行号)）
+        let wrapped_row = if self.is_uniform() {
+            row
+        } else {
+            self.lines
+                .iter()
+                .take(row)
+                .map(|l| l.lines_len())
+                .sum::<usize>()
+        };
 
         let local_offset = offset.saturating_sub(start);
         for (ix, range) in line.wrapped_lines.iter().enumerate() {
@@ -268,6 +287,15 @@ impl TextWrapper {
     ///
     /// Panics if the `point.row` is out of bounds.
     pub(crate) fn display_point_to_offset(&self, point: DisplayPoint) -> usize {
+        // 等高（不软换行）：显示行 == 逻辑行，直接定位（原来是 O(行号) 扫描）
+        if self.is_uniform() {
+            let row = point.row.min(self.lines.len().saturating_sub(1));
+            let Some(line) = self.lines.get(row) else {
+                return self.text.len();
+            };
+            let line_start = self.text.line_start_offset(row);
+            return line_start + point.column.min(line.len());
+        }
         let mut wrapped_row = 0;
         for (row, line) in self.lines.iter().enumerate() {
             if wrapped_row + line.lines_len() > point.row {
