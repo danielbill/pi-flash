@@ -147,6 +147,7 @@ dependencies = [
  "ratex-parser",
  "ratex-render",
  "ratex-types",
+ "ropey",
  "scraper",
  "serde_json",
  "syntect",

@@ -48,3 +48,6 @@ wxprobe = { path = "../wxprobe" }
 # gpui 测试夹具（TestAppContext + 真布局）——只有 app 的 test target 会带上
 # test-support 特性，正常构建不受影响。
 gpui = { version = "0.2.2", features = ["test-support"] }
+# perf_probe 基准（tests/perf_probe.rs）拆 ropey 各段成本；与
+# gpui-component 的 ropey 锁同一 beta 版，避免重复编译两个版本。
+ropey = "=2.0.0-beta.1"
