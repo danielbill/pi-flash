@@ -694,7 +694,17 @@ pub(crate) fn input_area(
                     .right_0()
                     .bottom(gpui::relative(1.))
                     .pb(px(8.))
-                    .child(crate::slash_menu_view(chat, weak, t, cx)),
+                    // 与胶囊同宽同位：inner 会话界面下是全宽（仅 px(15) 内
+                    // 边距），直接铺满会比 920 封顶的胶囊宽一截；居中约束
+                    // 与测量元素（同款 max_w 920）对齐后左右边缘贴合胶囊
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(920.))
+                            .child(crate::slash_menu_view(chat, weak, t, cx)),
+                    ),
             )
         })
         .child(
@@ -780,6 +790,9 @@ fn ensure_composer(
             let _ = weak_change.update(cx, |chat, cx| {
                 if chat.input != v {
                     chat.input = v.to_string();
+                    // 输入再次变化 = 解除点外/Esc 收起（active_menu 门控的
+                    // 声明语义；打字不走 set_input，必须在此复位）
+                    chat.menu_dismissed = false;
                     chat.menu_ix = 0;
                     // 过滤集变了回顶部，避免新列表停留在旧滚动深处
                     chat.menu_scroll

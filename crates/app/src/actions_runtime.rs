@@ -156,6 +156,9 @@ impl Chat {
         }
         self.pill_menu = None;
         self.menu_ix = 0;
+        // 「点外/Esc 收起」不能跨会话泄漏：否则上个会话收起过菜单，切过来
+        // 后 / @ 永远弹不出（active_menu 第一行就短路）
+        self.menu_dismissed = false;
         // surface queued permission requests of the incoming session
         let queued = rt.update(cx, |r, _| {
             let q = std::mem::take(&mut r.ext_queue);

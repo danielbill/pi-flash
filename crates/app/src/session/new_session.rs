@@ -58,8 +58,18 @@ pub(crate) fn page(
         .flex_1()
         .min_h_0()
         .w_full()
-        .overflow_hidden()
-        .child(logo_backdrop(t, viewport_h * LOGO_SCREEN))
+        // 根节点不裁剪（overflow_hidden 已下放到 logo 层）：/ @ 菜单从居中
+        // 的 composer 向上弹出会越过页面顶边，根上裁剪会把菜单头部切掉；
+        // 内容区在 topbar_r 之后绘制，放开后菜单自然盖在 topbar 上（与会话
+        // 界面的悬浮胶囊同行为）
+        .child(
+            // 墨迹盒 ~1.07×视口高必然越界，裁剪只作用于这层装饰
+            div()
+                .absolute()
+                .inset_0()
+                .overflow_hidden()
+                .child(logo_backdrop(t, viewport_h * LOGO_SCREEN)),
+        )
         .child(
             // 欢迎语带：顶对齐 74% 高带内居中 ⇒ 中心 37%（压墨迹下半部）
             div()
@@ -112,7 +122,8 @@ pub(crate) fn page(
 /// 背景 logo：盒子 ~1.07×视口高（墨迹达 51% 聊天区高，见 LOGO_SCREEN），
 /// 顶对齐 64% 高带内居中 ⇒ 墨迹中线 32%，下沿没人接（composer 簇 56% 居中
 /// 会盖住 45%+ 以下的部分）。text 色低 alpha（深 ~10%、浅 ~6%）。纯装饰层：
-/// 无 id/无 handler，不参与命中。
+/// 无 id/无 handler，不参与命中。越界裁剪由调用方的 inset_0 容器承担
+/// （根节点不能裁——会切掉上浮的 / @ 菜单，见 page 注释）。
 fn logo_backdrop(t: &'static crate::theme::Theme, size: f32) -> AnyElement {
     let a = if t.dark { 0x1a } else { 0x10 };
     div()

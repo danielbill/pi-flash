@@ -2579,3 +2579,24 @@ Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
   （这个弹窗此前没有任何自动化入口 = 漏测根源）。对拍：`project.switch` 到空目录
   → `has_process == false` → `model.picker_open`：根因版 0 / 修复版 5。
 - 验证：pi-link 110 + app 167 全绿；`cargo build` 通过。
+
+## 2026-10-09 fix：切会话后 / @ 菜单失效 + 菜单超宽 + 新会话页菜单被顶边裁切
+
+- **失效根因**：`menu_dismissed`（点外/Esc 收起门控）只在 `set_input`/
+  `set_input_with_cursor` 复位，而 `switch_to` 漏复位（跨会话泄漏）＋打字
+  路径（composer on_change）不经过 `set_input`（同会话收起后也弹不出）。
+  自动化 `set_text` 恰好走 `set_input` 复位 latch，故 UI 测试一直测不出。
+- **修法**：`switch_to` 补一行复位；on_change 在 `input != v` 分支复位
+  （兑现 active_menu 注释声明的「输入再次变化即重开」语义）。
+- **超宽根因**：会话界面下菜单 absolute 容器 `left_0 right_0` 铺满全宽
+  `inner`（仅 px(15) 内边距），胶囊却有 `max_w(920)`；新会话页外层簇恰有
+  920 封顶所以只有会话界面超宽。**修法**：菜单套同款 `w_full + max_w(920)`
+  并 `justify_center`，与胶囊同宽同位。
+- **裁切根因**：hero 根节点 `overflow_hidden`（为裁 1.07×视口高的 logo
+  而设）把上浮菜单头部切在页面顶边。**修法**：裁剪下放到 logo 专属
+  `inset_0` 容器，根节点放开——内容区在 topbar_r 之后绘制，菜单自然盖在
+  chrome 上（与会话界面悬浮胶囊同行为）。
+- **自动化**：`input.keys` 走真实按键链（触发 on_change）复现 latch 场景：
+  `/`→slash、Esc→none、`session.new`→`/`→slash（修复前 none）、`@`→at、
+  Esc 后再输入重开 at；hero 页 @ 菜单头部完整（shot 对拍用户截图）。
+- 验证：workspace 测试全绿（app 167 + pi-link 107 等）；`cargo build` 通过。
