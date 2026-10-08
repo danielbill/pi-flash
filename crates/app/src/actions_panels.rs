@@ -166,6 +166,21 @@ impl Chat {
             self.set_status(crate::i18n::tr("文件超过 10MB，不打开").to_string(), cx);
             return;
         }
+        // 已打开则直接切过去（Zed 行为）：不重读磁盘、不整文重灌——那会
+        // 复位滚动/光标，并在大文件上冻结数百毫秒。cwd 内文件的外部改动由
+        // fs watcher（check_external_file_changes 按 disk_sig 兜底）；cwd 外
+        // 文件（pick_open_files / 远程 FILE_OPEN）自此只在关闭重开时刷新。
+        if let Some(ix) = self
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, PanelTab::File(p) if same_path(p, &path)))
+        {
+            self.activate_panel_tab(ix, cx);
+            self.set_content_view(ContentView::File);
+            self.pending_focus_file = Some(path.clone());
+            cx.notify();
+            return;
+        }
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
@@ -179,26 +194,6 @@ impl Chat {
         }
         let content = String::from_utf8_lossy(&bytes).to_string();
         let sig = file_sig(&path);
-        // 已打开则切过去；未脏顺手重读磁盘（可能被外部改过），脏则保留缓冲
-        if let Some(ix) = self
-            .panel_tabs
-            .iter()
-            .position(|t| matches!(t, PanelTab::File(p) if same_path(p, &path)))
-        {
-            self.activate_panel_tab(ix, cx);
-            self.set_content_view(ContentView::File);
-            self.pending_focus_file = Some(path.clone());
-            if let Some(ft) = self.file_cache.get_mut(&path) {
-                if !ft.dirty {
-                    ft.content = content;
-                    ft.reload_pending = true;
-                    ft.conflict = None;
-                    ft.disk_sig = sig;
-                }
-            }
-            cx.notify();
-            return;
-        }
         let mut ft = FileTab::from_disk(content);
         ft.disk_sig = sig;
         self.file_cache.insert(path.clone(), ft);

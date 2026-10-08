@@ -635,30 +635,64 @@ impl InputState {
     /// Set the text of the input field.
     ///
     /// And the selection_range will be reset to 0..0.
+    ///
+    /// 多行走专用 reset 路径：全文灌入（打开文件/自动重载）不需要经过
+    /// 「utf16 全文 range 统计 → replace_text_in_range → InputEdit」的编辑
+    /// 管线——那条路对大文件是 O(全文) 的双程字符迭代（4.6MB ≈ 24ms×2，
+    /// 见 050 滚动优化 §二）。单行保留原路径：mask/validate 是单行特性，
+    /// 且单行不会有大文本。
     pub fn set_value(
         &mut self,
         value: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.mode.is_single_line() {
+            self.history.ignore = true;
+            self.replace_text(value, window, cx);
+            self.history.ignore = false;
+            // Ensure cursor to end when set text（v57: 菜单接受后光标应停在
+            // 插入命令之后）
+            self.selected_range = (self.text.len()..self.text.len()).into();
+            // Move scroll to top
+            self.scroll_handle.set_offset(point(px(0.), px(0.)));
+            cx.notify();
+            return;
+        }
+
+        if self.disabled {
+            // 与 replace_text_in_range 的 disabled 守卫对齐：禁用态不换文本、
+            // 不发 Change（原实现经 replace_text_in_range 的同款守卫）。
+            return;
+        }
+
         self.history.ignore = true;
-        let was_disabled = self.disabled;
-        self.replace_text(value, window, cx);
-        self.disabled = was_disabled;
-        self.history.ignore = false;
+        self.pause_blink_cursor(cx);
+
+        let text = Rope::from(value.into().as_ref());
+        if let Some(diagnostics) = self.mode.diagnostics_mut() {
+            diagnostics.reset(&text)
+        }
+        let new_len = text.len();
+        self.text = text;
+        self.text_wrapper.reset(&self.text, cx);
+        // 高亮器置 None，语法树重建延迟到渲染帧的 update_highlighter
+        // （text 语言不会建；代码语言沿用原先的全量 parse 行为）。
+        self.reset_highlighter(cx);
         // Ensure cursor to end when set text（v57: 多行同样到末尾——菜单
         // 接受后光标应停在插入命令之后）
-        if self.mode.is_single_line() {
-            self.selected_range = (self.text.len()..self.text.len()).into();
-        } else {
-            self.selected_range = (self.text.len()..self.text.len()).into();
-
-            self._pending_update = true;
-            self.lsp.reset();
-        }
+        self.selected_range = (new_len..new_len).into();
+        self.ime_marked_range = None;
+        self.update_preferred_column();
+        self.lsp.reset();
+        self._pending_update = true;
+        self.mode.update_auto_grow(&self.text_wrapper);
+        self.update_search(cx);
         // Move scroll to top
         self.scroll_handle.set_offset(point(px(0.), px(0.)));
+        self.history.ignore = false;
 
+        cx.emit(InputEvent::Change);
         cx.notify();
     }
 

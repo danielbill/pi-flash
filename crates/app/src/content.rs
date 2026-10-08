@@ -290,12 +290,14 @@ fn ensure_file_editor(
     ed.update(cx, |st, scx| st.set_value(content, window, scx));
     cx.subscribe(&ed, |this, ed, ev: &gpui_component::input::InputEvent, cx| {
         if matches!(ev, gpui_component::input::InputEvent::Change) {
-            let val = ed.read(cx).value().to_string();
             let src = ed.entity_id();
             if let Some((path, ft)) = this.file_cache.iter_mut().find(|(_, f)| {
                 f.editor.as_ref().map(|e| e.entity_id()) == Some(src)
             }) {
-                let dirty = ft.content != val;
+                // Rope 与 String 直接比较（ropey PartialEq，零分配 memcmp）；
+                // 原先 value().to_string() 每次编辑都全文物化一遍（4.6MB 文件
+                // 每次按键 ~8ms + 一次全文分配）。
+                let dirty = *ed.read(cx).text() != ft.content;
                 if dirty {
                     ft.last_edit = Some(std::time::Instant::now());
                 }

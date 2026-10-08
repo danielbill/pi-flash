@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui::{point, px, size, App, Font, LineFragment, Pixels, Point, ShapedLine, Size, Window};
-use ropey::Rope;
+use ropey::{LineType, Rope, RopeSlice};
 use smallvec::SmallVec;
 
 use crate::input::RopeExt;
@@ -9,19 +9,22 @@ use crate::input::RopeExt;
 /// A line with soft wrapped lines info.
 #[derive(Debug, Clone)]
 pub(super) struct LineItem {
-    /// The original line text, without end `\n`.
-    line: Rope,
+    /// The bytes length of the original line text, without end `\n`.
+    len: usize,
     /// The soft wrapped lines relative byte range (0..line.len) of this line (Include first line).
     ///
     /// Not contains the line end `\n`.
-    pub(super) wrapped_lines: Vec<Range<usize>>,
+    ///
+    /// 不软换行时恰 1 段（inline，零堆分配）：80K 行文件的打开路径对每行
+    /// 一次 `Vec` 分配也是纯浪费。
+    pub(super) wrapped_lines: SmallVec<[Range<usize>; 1]>,
 }
 
 impl LineItem {
     /// Get the bytes length of this line.
     #[inline]
     pub(super) fn len(&self) -> usize {
-        self.line.len()
+        self.len
     }
 
     /// Get number of soft wrapped lines of this line (include the first line).
@@ -188,12 +191,15 @@ impl TextWrapper {
         let wrap_width = self.wrap_width;
 
         // line not contains `\n`.
-        for (ix, line) in Rope::from(changed_text.slice(new_range))
-            .iter_lines()
-            .enumerate()
-        {
+        //
+        // 直接迭代 RopeSlice 的行（零拷贝）：整文 `Rope::from(slice)` 拷贝 +
+        // 逐行 `Rope::from` 物化在 80K 行文件打开时是纯浪费（一次打开约
+        // 80K 次小分配 + 一次 4.6MB 拷贝）。行语义与 `RopeExt::slice_line`
+        // 一致（去行尾 `\n`、保留 `\r`）。
+        let changed_slice = changed_text.slice(new_range);
+        for (ix, line) in iter_slice_lines(&changed_slice).enumerate() {
             let line_len = line.len();
-            let mut wrapped_lines = vec![];
+            let mut wrapped_lines = SmallVec::with_capacity(1);
             let mut prev_boundary_ix = 0;
 
             if line_len > longest_row_len {
@@ -220,7 +226,7 @@ impl TextWrapper {
             }
 
             new_lines.push(LineItem {
-                line: Rope::from(line),
+                len: line_len,
                 wrapped_lines,
             });
         }
@@ -244,6 +250,17 @@ impl TextWrapper {
     /// If the `text` is the same as the current text, do nothing.
     fn update_all(&mut self, text: &Rope, cx: &mut App) {
         self.update(text, &(0..text.len()), &text, cx);
+    }
+
+    /// 全文重置（`set_value` 打开/重载路径），等价于整文替换的全量重建。
+    ///
+    /// 先清空行表与 longest_row，避免旧文本的行定位参与本次计算（旧 longest
+    /// 行号在重置后可能越界），随后走 `_update` 全量重建。
+    pub(super) fn reset(&mut self, text: &Rope, cx: &mut App) {
+        self.lines.clear();
+        self.soft_lines = 0;
+        self.longest_row = LongestRow::default();
+        self.update(text, &(0..0), text, cx);
     }
 
     /// Return display point (with soft wrap) from the given byte offset in the text.
@@ -324,6 +341,25 @@ impl TextWrapper {
         let offset = self.text.point_to_offset(point);
         self.offset_to_display_point(offset)
     }
+}
+
+/// Iterate the lines of a [`RopeSlice`] (without end `\n`, keep `\r`).
+///
+/// Same semantics as `RopeExt::slice_line`, but walks the slice directly via
+/// ropey's native API — `RopeExt` is only implemented for `Rope`, and going
+/// through `Rope::from(slice)` would copy the whole text.
+fn iter_slice_lines<'a>(slice: &'a RopeSlice<'a>) -> impl Iterator<Item = RopeSlice<'a>> + 'a {
+    // 用流式 Lines 迭代器而非逐行 slice.line(row)：后者每次都是一次
+    // O(log N) 树遍历，80K 行文件一次全量重建要多付 ~35ms。
+    slice.lines(LineType::LF).map(|line| {
+        if line.len() > 0 {
+            let line_end = line.len() - 1;
+            if line.is_char_boundary(line_end) && line.char(line_end) == '\n' {
+                return line.slice(..line_end);
+            }
+        }
+        line
+    })
 }
 
 /// The actually display point in the text.
@@ -518,6 +554,7 @@ impl LineLayout {
 mod tests {
     use super::*;
     use gpui::{px, Boundary, FontFeatures, FontStyle, FontWeight};
+    use smallvec::smallvec;
 
     #[test]
     fn test_update() {
@@ -702,7 +739,7 @@ mod tests {
         wrapper._update(&text, &range, &Rope::from(new_text), &mut fake_wrap_line);
         assert_eq!(text.to_string(), "");
         assert_eq!(wrapper.lines.len(), 1);
-        assert_eq!(wrapper.lines[0].wrapped_lines, vec![0..0]);
+        assert_eq!(wrapper.lines[0].wrapped_lines, smallvec![0..0]);
 
         // Test update_all
         let range = 0..text.len();
@@ -745,23 +782,23 @@ mod tests {
         wrapper.lines = vec![
             // range: 0..15
             LineItem {
-                line: Rope::from("Hello, 世界!\r"),
-                wrapped_lines: vec![0..15],
+                len: "Hello, 世界!\r".len(),
+                wrapped_lines: smallvec![0..15],
             },
             // range: 16..36
             LineItem {
-                line: Rope::from("This is second line."),
-                wrapped_lines: vec![0..10, 10..20],
+                len: "This is second line.".len(),
+                wrapped_lines: smallvec![0..10, 10..20],
             },
             // range: 37..56
             LineItem {
-                line: Rope::from("This is third line."),
-                wrapped_lines: vec![0..9, 9..15, 15..20],
+                len: "This is third line.".len(),
+                wrapped_lines: smallvec![0..9, 9..15, 15..20],
             },
             // range: 57..79
             LineItem {
-                line: Rope::from("这里是第 4 行。"),
-                wrapped_lines: vec![0..22],
+                len: "这里是第 4 行。".len(),
+                wrapped_lines: smallvec![0..22],
             },
         ];
 

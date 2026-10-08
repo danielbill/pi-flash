@@ -3,6 +3,35 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 062 大文件打开提速 + 已开 tab 只切换（2026-10-08，bead pi-flash-5hf）
+
+- **目录树重开 bug（用户报告）**：`open_file_tab` 原「已打开分支」在
+  fs::read 之后才判重，不脏时还强行 `content=新值; reload_pending=true` →
+  渲染帧 `set_value` 全文替换：~220ms 冻结 + 滚动/光标复位，表现就是
+  「重新打开」。判重已提到读盘之前：已开 tab 只 `activate_panel_tab`+
+  focus。cwd 内外部改动由 watcher（disk_sig）兜底；cwd 外文件
+  （pick_open_files / 远程 FILE_OPEN）只在关闭重开时刷新（注释注明）。
+  pif-ui 验证：切走再切回，失焦截图 A/B 字节一致（滚动位保留）。
+- **set_value 专用 reset 路径**（vendor state.rs）：多行不再走
+  「utf16 全文统计 → replace_text_in_range → InputEdit」编辑管线（4.6MB
+  双程字符迭代 ≈48ms），直接换 Rope + `text_wrapper.reset`；单行保留原
+  管线（mask/validate 是单行特性）。Change 事件/滚动复位/光标到末尾/
+  history 忽略等语义逐项保真（content.rs 脏判定、automation file_write、
+  search.rs:262 预填都依赖 Change，不受影响）。
+- **TextWrapper 零物化**（vendor text_wrapper.rs）：`LineItem.line: Rope`
+  → `len: usize`（全仓唯一读者是 `len()`）；行迭代改 `RopeSlice::lines(LF)`
+  流式（逐行 `slice.line(row)` 是 80K 次 O(log N) 树遍历 ≈36ms）；
+  `wrapped_lines: Vec` → `SmallVec<[Range;1]>`（不软换行恰 1 段零分配）。
+- **脏比较免物化**（content.rs）：Change 订阅里 `value().to_string()` 全文
+  拷贝 → `*text() != content`（ropey PartialEq，零分配）。
+- **实测**（perf_probe release，4.59MB/80k 行）：set_value 首开
+  152.9→26.1ms、重载 203.2→23.9ms、脏比较 8.1→~1ms；目录树切回已开文件
+  ~220ms→0。探针新增 reset 路径拆解测试（line_wrapper 池≈0 / 逐行
+  slice.line 迭代 36ms / Vec 填充）。
+- 非目标（另立 bead）：代码语言大文件首开仍主线程同步全量 tree-sitter
+  parse（Zed：1ms 预算 + 后台 parse）；打字路径 range_from_utf16 O(偏移)；
+  composer 每帧 value() 物化。
+
 ## 031 @ 文件检索 + ! shell 命令（2026-10-07，bead pi-flash-s49）
 
 - **@ 检索**：pi-web file-fuzzy 全套移植——`services/at_file.rs`（token 提取

@@ -150,6 +150,7 @@ dependencies = [
  "ropey",
  "scraper",
  "serde_json",
+ "smallvec",
  "syntect",
  "winresource",
  "wry",
