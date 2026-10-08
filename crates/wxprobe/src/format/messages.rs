@@ -29,6 +29,24 @@ impl Lang {
 
 /// (zh-CN 源, zh-TW, en)
 static TABLE: &[(&str, &str, &str)] = &[
+    // ── 首条消息激活（ZCode `weixinActivatedWelcome`，botsService.ts:991）──
+    (
+        "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。",
+        "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。",
+        "Weixin bot is active. Send **/help** to see commands, or describe what you want to do.",
+    ),
+    // ── /task 守卫（ZCode `taskRunning` / `taskMissing`）──
+    (
+        "当前任务正在运行，稍后再试，或使用 **/停止** 停止当前任务。",
+        "当前任务正在运行，稍后再试，或使用 **/停止** 停止当前任务。",
+        "The current task is still running. Try again later, or use **/stop** to stop the current task.",
+    ),
+    (
+        "未找到任务。",
+        "未找到任务。",
+        "Task not found.",
+    ),
+
     // ── /status 状态卡（ZCode `botsService.ts:4593-4624` 的 label id）──
     ("工作区", "工作區", "Workspace"),
     ("模型", "模型", "Model"),
