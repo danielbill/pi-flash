@@ -32,6 +32,32 @@
   parse（Zed：1ms 预算 + 后台 parse）；打字路径 range_from_utf16 O(偏移)；
   composer 每帧 value() 物化。
 
+## 063 代码语言大文件高亮后台化（2026-10-08，bead pi-flash-5z6）
+
+- **全量 parse 转后台**（vendor state.rs）：新增 `InputState::update_highlighter`
+  统一入口——满足「CodeEditor + 非 text 语言 + 语法树缺失（首开/reset/
+  语言切换后）+ 全文 >256KB」时，Query 编译 + 全文 parse 整体丢进
+  `background_spawn`（LanguageRegistry 是 LazyLock+Mutex 非 gpui Global、
+  tree-sitter 各类型 Send，成品 highlighter 整树搬回主线程换入），主线程
+  只留小文件同步 parse 与树在时的增量 parse。在飞不重复 spawn；完成时
+  文本没变（ropey eq）才换入，变了作废、置 pending 下帧重发（持续编辑
+  逐轮收敛）；`set_highlighter`/reset 递增纪元作废跨语言旧成果。
+  其余路径（render `_pending_update`、两条 IME edit 路径）全部收口到
+  该入口，mode.rs 原函数不动。
+- **composer 每帧物化**（composer_input.rs）：render 里的
+  `state.value()`（全文字符串拷贝/帧）→ `*state.text() != editor_value`
+  （ropey PartialEq 零分配 memcmp，同脏比较套路）。
+- **utf16 怀疑项实测排除**：ropey `metric_utf16` 开启下
+  offset↔utf16 换算走树内 O(log N)，perf_probe 实测 ~0.1µs/次（4.6MB
+  文末），打字路径没有 O(偏移)/键 问题——bead 里的这条怀疑不成立。
+- **实测**：perf_probe 新增 `probe_code_parse_stages`（rust 1.7MB：
+  `SyntaxHighlighter::new` 81ms + 全文 parse 643ms，留档「不转后台就是
+  这个数的主线程冻结」）；pif-ui 实测 5MB .rs `file.open` 全程 69ms、
+  打开即刻截帧纯色 → 稍后截帧全彩（高亮后台换入、全程无冻结）。
+- **验证**：app 163 测试 + perf_probe 4 测试 + pi-link 107 测试全绿
+  （pi-link `deep_tree_line_survives_parse_line` 需 `RUST_MIN_STACK≥32MB`，
+  Windows 测试线程默认栈太小——已立 bead）。
+
 ## 031 @ 文件检索 + ! shell 命令（2026-10-07，bead pi-flash-s49）
 
 - **@ 检索**：pi-web file-fuzzy 全套移植——`services/at_file.rs`（token 提取

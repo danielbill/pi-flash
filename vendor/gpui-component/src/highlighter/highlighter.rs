@@ -309,6 +309,11 @@ impl SyntaxHighlighter {
         self.text.len() == 0
     }
 
+    /// Whether a syntax tree has been built (full parse finished at least once).
+    pub fn is_parsed(&self) -> bool {
+        self.tree.is_some()
+    }
+
     /// Highlight the given text, returning a map from byte ranges to highlight captures.
     ///
     /// Uses incremental parsing by `edit` to efficiently update the highlighter's state.

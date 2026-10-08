@@ -35,7 +35,10 @@ use crate::input::{
     HoverDefinition, Lsp, Position,
 };
 use crate::input::{RopeExt as _, Selection};
-use crate::{highlighter::DiagnosticSet, input::text_wrapper::LineItem};
+use crate::{
+    highlighter::{DiagnosticSet, SyntaxHighlighter},
+    input::text_wrapper::LineItem,
+};
 use crate::{history::History, scroll::ScrollbarState, Root};
 
 #[derive(Action, Clone, PartialEq, Eq, Deserialize)]
@@ -331,6 +334,10 @@ pub struct InputState {
     ///
     /// If true, will call some update (for example LSP, Syntax Highlight) before render.
     _pending_update: bool,
+    /// 大代码文件的全量语法 parse 转后台线程（Zed reparse 模式）：在飞标记 +
+    /// 纪元。纪元在语言切换/全文 reset 时递增，作废过期的后台成果。
+    bg_parse_in_flight: bool,
+    bg_parse_epoch: u64,
     /// A flag to indicate if we should ignore the next completion event.
     pub(super) silent_replace_text: bool,
 
@@ -426,6 +433,8 @@ impl InputState {
             _subscriptions,
             _context_menu_task: Task::ready(Ok(())),
             _pending_update: false,
+            bg_parse_in_flight: false,
+            bg_parse_epoch: 0,
         }
     }
 
@@ -565,6 +574,9 @@ impl InputState {
             }
             _ => {}
         }
+        // 语言变了：在飞的后台 parse 即便完成也要作废（树是旧语言的）
+        self.bg_parse_epoch += 1;
+        self.bg_parse_in_flight = false;
         cx.notify();
     }
 
@@ -576,6 +588,101 @@ impl InputState {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// 全文 parse 转后台线程的文本长度阈值（约几千行源码）。之下的文件保持
+    /// 同步 parse（数 ms，与增量路径同级）；之上的走 background_spawn，主
+    /// 线程不再冻结（Zed：sync_parse_timeout 1ms 超时转后台的同款思路）。
+    const BG_PARSE_MIN_TEXT_LEN: usize = 256 * 1024;
+
+    /// update_highlighter 的统一入口：满足「代码语言 + 语法树缺失 + 全文超
+    /// 阈值」时把全量 parse 挪到后台线程，其余原样走同步增量路径。
+    ///
+    /// 背景：`SyntaxHighlighter::new` 的 Query 编译 + 首次全文 parse 对大
+    /// 代码文件是数百 ms 的主线程冻结（text 语言早已早退，此处管 .rs/.ts
+    /// 等真实代码文件的首开与 set_value reset 后的树重建）。
+    pub(super) fn update_highlighter(
+        &mut self,
+        selected_range: &Range<usize>,
+        new_text: &str,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.highlight_bg_parse(cx) {
+            return;
+        }
+        self.mode
+            .update_highlighter(selected_range, &self.text, new_text, force, cx);
+    }
+
+    /// 大代码文件的全文 parse 转后台。返回 true 表示已接管（调用方跳过同
+    /// 步 update_highlighter）。
+    fn highlight_bg_parse(&mut self, cx: &mut Context<Self>) -> bool {
+        let (language, highlighter) = match &self.mode {
+            InputMode::CodeEditor {
+                language,
+                highlighter,
+                ..
+            } => (language.clone(), highlighter.clone()),
+            _ => return false,
+        };
+        // 纯文本不建树（同 update_highlighter 的早退）；树已在 → 走增量
+        if language.as_ref() == "text"
+            || highlighter
+                .borrow()
+                .as_ref()
+                .is_some_and(|hl| hl.is_parsed())
+        {
+            return false;
+        }
+        if self.text.len() < Self::BG_PARSE_MIN_TEXT_LEN {
+            return false;
+        }
+        // 在飞：等完成回调对比文本后决定换入还是重发，不打断也不重复 spawn
+        if self.bg_parse_in_flight {
+            return true;
+        }
+
+        let epoch = self.bg_parse_epoch;
+        self.bg_parse_in_flight = true;
+        let parse_text = self.text.clone();
+        let check_text = parse_text.clone();
+        cx.spawn(async move |this, cx| {
+            // Query 编译 + 全文 parse 都在后台线程：LanguageRegistry 是
+            // LazyLock+Mutex（非 gpui Global），tree-sitter 各类型 Send，
+            // 成品 SyntaxHighlighter 整体搬回主线程换入。
+            let parsed = cx
+                .background_spawn(async move {
+                    let mut hl = SyntaxHighlighter::new(&language);
+                    hl.update(None, &parse_text);
+                    hl
+                })
+                .await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |st, cx| {
+                    st.bg_parse_in_flight = false;
+                    // 期间语言切了或文本又动了 → 成果作废；树仍缺则标记
+                    // pending，渲染帧用最新文本重发（持续编辑下逐轮收敛）
+                    let fresh = st.bg_parse_epoch == epoch && st.text.eq(&check_text);
+                    if !fresh {
+                        if matches!(&st.mode, InputMode::CodeEditor { highlighter, .. }
+                            if highlighter.borrow().as_ref().is_none_or(|hl| !hl.is_parsed()))
+                        {
+                            st._pending_update = true;
+                            cx.notify();
+                        }
+                        return;
+                    }
+                    if let InputMode::CodeEditor { highlighter, .. } = &st.mode {
+                        *highlighter.borrow_mut() = Some(parsed);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        true
     }
 
     #[inline]
@@ -2239,8 +2346,7 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
-        self.mode
-            .update_highlighter(&range, &self.text, &new_text, true, cx);
+        self.update_highlighter(&range, new_text, true, cx);
         self.lsp.update(&self.text, window, cx);
         self.selected_range = (new_offset..new_offset).into();
         self.ime_marked_range.take();
@@ -2293,8 +2399,7 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
-        self.mode
-            .update_highlighter(&range, &self.text, &new_text, true, cx);
+        self.update_highlighter(&range, new_text, true, cx);
         self.lsp.update(&self.text, window, cx);
         if new_text.is_empty() {
             // Cancel selection, when cancel IME input.
@@ -2398,8 +2503,7 @@ impl Focusable for InputState {
 impl Render for InputState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self._pending_update {
-            self.mode
-                .update_highlighter(&(0..0), &self.text, "", false, cx);
+            self.update_highlighter(&(0..0), "", false, cx);
             self.lsp.update(&self.text, window, cx);
             self._pending_update = false;
         }

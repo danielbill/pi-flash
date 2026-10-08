@@ -286,7 +286,9 @@ impl Render for ComposerInput {
             Some((n, _)) => self.value[1 + n.len() + 1..].to_string(),
             None => self.value.clone(),
         };
-        if state.read(cx).value().as_ref() != editor_value {
+        // Rope 直接与 String 比对（ropey PartialEq，零分配 memcmp）——原先
+        // value() 每帧把全文物化成一遍 String，纯比较却付一次全文拷贝
+        if *state.read(cx).text() != editor_value {
             let ev = editor_value.clone();
             state.update(cx, |st, scx| st.set_value(ev, window, scx));
         }
