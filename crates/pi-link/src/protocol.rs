@@ -1307,6 +1307,18 @@ mod tests {
     /// → 消息下的「新分支」按钮点不动。此处造一条 400 层深的链锁死行为。
     #[test]
     fn deep_tree_line_survives_parse_line() {
+        // 400 层递归解析 debug 帧超 Windows 默认 2MB 测试线程栈（bead 0bk）：
+        // 测试自抬栈，跑 `cargo test` 的人不需要配 RUST_MIN_STACK。
+        let handle = std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(deep_tree_body)
+            .expect("spawn deep_tree_body thread");
+        if let Err(payload) = handle.join() {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    fn deep_tree_body() {
         // 从叶子往根拼：node -> {entry, children:[node]}
         let depth = 400;
         let mut node = String::from(r#"{"entry":{"id":"n0","parentId":null,"type":"message","message":{"role":"user","content":"hi"}},"children":[]}"#);
