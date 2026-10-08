@@ -66,7 +66,23 @@ impl Chat {
                     return Vec::new();
                 };
                 let query = self.at_token(cx).map(|m| m.query).unwrap_or_default();
-                crate::services::at_file::filter_file_entries(&entry.entries, &query)
+                // 记忆化：同一份 entries（Arc 身份）+ 同查询词直接复用上次
+                // 过滤——@ 菜单打开期间每次渲染都会走到这里，全量打分只该
+                // 在输入或索引变化时发生。渲染期 &self，写缓存走 RefCell
+                let hit = self.at_filter_cache.borrow().as_ref().is_some_and(
+                    |(arc, q, _)| std::sync::Arc::ptr_eq(arc, &entry.entries) && q == &query,
+                );
+                if !hit {
+                    let hits =
+                        crate::services::at_file::filter_file_entries(&entry.entries, &query);
+                    *self.at_filter_cache.borrow_mut() =
+                        Some((entry.entries.clone(), query, hits));
+                }
+                self.at_filter_cache
+                    .borrow()
+                    .as_ref()
+                    .map(|(_, _, v)| v.clone())
+                    .unwrap_or_default()
                     .into_iter()
                     .map(|e| MenuItem {
                         insert: e.path,

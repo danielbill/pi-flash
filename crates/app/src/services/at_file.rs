@@ -54,34 +54,31 @@ pub fn extract_at_query(before_cursor: &str) -> Option<AtQueryMatch> {
     None
 }
 
-fn path_depth(p: &str) -> usize {
-    p.bytes().filter(|b| *b == b'/').count()
-}
-
 /// 从扁平文件列表构建条目（文件 + 派生目录），浅层优先、同层字母序——
-/// 空 @ 查询展示的默认顺序（pi-web buildEntriesFromFiles）。
+/// 空 @ 查询展示的默认顺序（pi-web buildEntriesFromFiles）。目录去重走
+/// HashSet：原线性 `iter().any` 在大仓库（git 硬上限 20 万条）下是 O(n²)。
+/// 最终顺序完全由末尾 sort 决定，去重容器不影响结果。
 pub fn build_entries_from_files(files: &[String]) -> Vec<FileEntry> {
-    let mut dirs: Vec<String> = Vec::new();
+    let mut dirs: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for f in files {
         let bytes = f.as_bytes();
         let mut i = 0;
         while let Some(rel) = bytes[i..].iter().position(|b| *b == b'/') {
             i += rel + 1;
-            let dir = &f[..i - 1];
-            if !dirs.iter().any(|d| d == dir) {
-                dirs.push(dir.to_string());
-            }
+            dirs.insert(&f[..i - 1]);
         }
     }
     let mut entries: Vec<FileEntry> = dirs
         .into_iter()
-        .map(|path| FileEntry { path, is_dir: true })
-        .chain(files.iter().filter(|f| !f.is_empty()).map(|f| FileEntry {
-            path: f.clone(),
-            is_dir: false,
-        }))
+        .map(|d| FileEntry::new(d.to_string(), true))
+        .chain(
+            files
+                .iter()
+                .filter(|f| !f.is_empty())
+                .map(|f| FileEntry::new(f.clone(), false)),
+        )
         .collect();
-    entries.sort_by(|a, b| path_depth(&a.path).cmp(&path_depth(&b.path)).then(a.path.cmp(&b.path)));
+    entries.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.path.cmp(&b.path)));
     entries
 }
 
@@ -90,6 +87,19 @@ pub struct FileEntry {
     /// 相对 cwd 的 `/` 分隔路径，无尾随斜杠
     pub path: String,
     pub is_dir: bool,
+    /// 预计算小写路径：score_entry 常驻热路径（@ 菜单打开期间每次渲染
+    /// 全量打分），现场 to_lowercase 是逐条目逐帧的 String 分配
+    pub lower_path: String,
+    /// 预计算路径深度（`/` 计数）：构建排序与结果排序的比较器都用
+    pub depth: usize,
+}
+
+impl FileEntry {
+    pub fn new(path: String, is_dir: bool) -> Self {
+        let lower_path = path.to_lowercase();
+        let depth = path.bytes().filter(|b| *b == b'/').count();
+        Self { path, is_dir, lower_path, depth }
+    }
 }
 
 fn is_subsequence(needle: &str, haystack: &str) -> bool {
@@ -102,7 +112,8 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
 /// 钻取的机制：`@src/` 的查询 `src/` 前缀匹配 src 下全部条目，而 src 目录
 /// 自身（`src`）不以 `src/` 开头被排除（pi-web scoreEntry）。
 fn score_entry(entry: &FileEntry, lower_query: &str) -> i32 {
-    let lower_path = entry.path.to_lowercase();
+    // lower_path 构建期已算好——打分路径零分配
+    let lower_path = entry.lower_path.as_str();
     let mut score = 0;
     if lower_query.contains('/') {
         if lower_path == lower_query {
@@ -111,13 +122,13 @@ fn score_entry(entry: &FileEntry, lower_query: &str) -> i32 {
             score = 80;
         } else if lower_path.contains(lower_query) {
             score = 50;
-        } else if is_subsequence(lower_query, &lower_path) {
+        } else if is_subsequence(lower_query, lower_path) {
             score = 10;
         }
     } else {
         let lower_name = match lower_path.rfind('/') {
             Some(ix) => &lower_path[ix + 1..],
-            None => lower_path.as_str(),
+            None => lower_path,
         };
         if lower_name == lower_query {
             score = 100;
@@ -157,7 +168,7 @@ pub fn filter_file_entries_limit(entries: &[FileEntry], query: &str, limit: usiz
         .collect();
     scored.sort_by(|a, b| {
         b.0.cmp(&a.0)
-            .then_with(|| path_depth(&a.1.path).cmp(&path_depth(&b.1.path)))
+            .then_with(|| a.1.depth.cmp(&b.1.depth))
             .then_with(|| a.1.path.cmp(&b.1.path))
     });
     scored.truncate(limit);
@@ -239,6 +250,24 @@ mod tests {
         let pos = |p: &str| es.iter().position(|e| e.path == p).unwrap();
         assert!(pos("README.md") < pos("src/app/page.tsx"));
         assert!(pos("src/app/page.tsx") < pos("src/lib/util.ts"));
+    }
+
+    #[test]
+    fn entries_dedupe_shared_dirs_once() {
+        // 多文件共享目录：每级目录只出现一次（HashSet 去重 parity）
+        let files: Vec<String> = ["a/b/c.txt", "a/b/d.txt", "a/e.txt", "a/b/f/g.txt"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let es = build_entries_from_files(&files);
+        let dirs: Vec<&str> = es.iter().filter(|e| e.is_dir).map(|e| e.path.as_str()).collect();
+        assert_eq!(dirs, vec!["a", "a/b", "a/b/f"]);
+        assert_eq!(es.iter().filter(|e| !e.is_dir).count(), 4);
+        // 预计算字段与 path 一致
+        for e in &es {
+            assert_eq!(e.lower_path, e.path.to_lowercase());
+            assert_eq!(e.depth, e.path.bytes().filter(|b| *b == b'/').count());
+        }
     }
 
     #[test]

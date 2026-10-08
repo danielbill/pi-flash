@@ -414,6 +414,10 @@ pub struct AppSettings {
     pub load_extensions: Option<bool>,
     /// 其他页: 各项目默认显示的会话数量（psp 初始页大小，3-10，默认 10）
     pub session_display_count: Option<u64>,
+    /// @ 文件索引缓存有效期（秒，1-3600，默认 60）
+    pub at_index_ttl_secs: Option<u64>,
+    /// @ 文件索引缓存的最多项目数（每 cwd 一份，1-100，默认 10）
+    pub at_index_max_projects: Option<u64>,
 }
 
 /// load_extensions 的读取口径（None = 开）。
@@ -479,6 +483,12 @@ pub fn app_settings() -> AppSettings {
                     session_display_count: map
                         .get("session_display_count")
                         .and_then(|v| v.as_u64()),
+                    at_index_ttl_secs: map
+                        .get("at_index_ttl_secs")
+                        .and_then(|v| v.as_u64()),
+                    at_index_max_projects: map
+                        .get("at_index_max_projects")
+                        .and_then(|v| v.as_u64()),
                 }
             }
             None => AppSettings::default(),
@@ -535,6 +545,12 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.session_display_count {
         obj.insert("session_display_count".into(), Value::Number(v.into()));
     }
+    if let Some(v) = s.at_index_ttl_secs {
+        obj.insert("at_index_ttl_secs".into(), Value::Number(v.into()));
+    }
+    if let Some(v) = s.at_index_max_projects {
+        obj.insert("at_index_max_projects".into(), Value::Number(v.into()));
+    }
     save_map_to(&path, &obj);
 }
 
@@ -563,6 +579,16 @@ pub fn session_display_count() -> usize {
         .session_display_count
         .unwrap_or(10)
         .clamp(3, 10) as usize
+}
+
+/// @ 文件索引缓存有效期（秒；默认 60，clamp 1-3600）。
+pub fn at_index_ttl_secs() -> u64 {
+    app_settings().at_index_ttl_secs.unwrap_or(60).clamp(1, 3600)
+}
+
+/// @ 文件索引缓存的最多项目数（每 cwd 一份；默认 10，clamp 1-100）。
+pub fn at_index_max_projects() -> usize {
+    app_settings().at_index_max_projects.unwrap_or(10).clamp(1, 100) as usize
 }
 
 /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）。

@@ -2,7 +2,8 @@
 //! git 仓库走 `git ls-files --cached --others --exclude-standard`（尊重
 //! .gitignore，对齐 pi TUI 的 fd 行为），非 git 回退 BFS 目录遍历。
 //!
-//! 调用方缓存见 Chat::at_index（TTL 10s、每 cwd 一份、后台线程构建）。
+//! 调用方缓存见 Chat::at_index（每 cwd 一份、后台线程构建；TTL/容量读
+//! app-settings.json 的 at_index_ttl_secs / at_index_max_projects）。
 
 use std::path::Path;
 

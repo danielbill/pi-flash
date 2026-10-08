@@ -232,8 +232,10 @@ struct MenuItem {
 }
 
 /// @ 文件索引的每-cwd 缓存条目（pi-web file-index route.ts cache parity：
-/// TTL 10s、后台构建、上限 20 条）。`files` = git ls-files 原始清单；
-/// `entries` = 派生条目（目录 + 文件，浅层优先）——菜单打分输入。
+/// 后台构建、每 cwd 一份；TTL/容量可配置——services::workspace 的
+/// `at_index_ttl_secs`（默认 60s）/ `at_index_max_projects`（默认 10））。
+/// `files` = git ls-files 原始清单；`entries` = 派生条目（目录 + 文件，
+/// 浅层优先）——菜单打分输入。
 #[derive(Clone, Default)]
 struct AtIndexState {
     built: Option<std::time::Instant>,
@@ -242,9 +244,13 @@ struct AtIndexState {
     building: bool,
 }
 
-/// 缓存有效期（pi-web CACHE_TTL_MS）
-const AT_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(10);
-const AT_INDEX_MAX: usize = 20;
+/// @ 菜单过滤记忆化条目：entries 的 Arc 身份 + 查询词 + 上次过滤结果。
+/// 索引重建整体换新 Arc → `Arc::ptr_eq` 失配自然失效，无需手动清。
+type AtFilterCache = (
+    std::sync::Arc<Vec<crate::services::at_file::FileEntry>>,
+    String,
+    Vec<crate::services::at_file::FileEntry>,
+);
 
 struct Chat {
     focus: FocusHandle,
@@ -337,6 +343,9 @@ struct Chat {
     project_files: Vec<String>,
     /// @ 文件索引缓存（key = cwd 字符串；031 输入面板）
     at_index: std::collections::HashMap<String, AtIndexState>,
+    /// @ 菜单过滤结果记忆化（menu_items 渲染期是 &self，走 RefCell 内部
+    /// 可变性，先例 bubble_scrolls；见 AtFilterCache）
+    at_filter_cache: std::cell::RefCell<Option<AtFilterCache>>,
     expanded_dirs: HashSet<PathBuf>,
     /// 文件树展平缓存（services::file_tree::flatten；渲染只读这份，
     /// 重建点 = 展开/折叠、git 刷新、fs 事件、切项目）。
@@ -653,6 +662,7 @@ impl Chat {
             git_add_del: (0, 0),
             project_files: Vec::new(),
             at_index: std::collections::HashMap::new(),
+            at_filter_cache: std::cell::RefCell::new(None),
             history: Vec::new(),
             history_ix: None,
             menu_ix: 0,
@@ -1054,13 +1064,15 @@ impl Chat {
         cx.notify();
     }
 
-    /// @ 文件索引惰性构建（031 对齐 pi-web file-index：TTL 10s 内复用，
-    /// 过期/缺失在后台线程重建；旧清单在重建期间先顶上）。
+    /// @ 文件索引惰性构建（031 对齐 pi-web file-index：TTL 内复用，过期/
+    /// 缺失在后台线程重建；旧清单在重建期间先顶上。TTL/容量读
+    /// app-settings.json，默认 60s / 10 项目）。
     pub(crate) fn ensure_at_index(&mut self, cx: &mut Context<Self>) {
+        let ttl = std::time::Duration::from_secs(services::workspace::at_index_ttl_secs());
         let key = self.cwd.to_string_lossy().to_string();
         let fresh = match self.at_index.get(&key) {
             Some(e) => {
-                e.building || e.built.is_some_and(|t| t.elapsed() < AT_INDEX_TTL)
+                e.building || e.built.is_some_and(|t| t.elapsed() < ttl)
             }
             None => false,
         };
@@ -1071,21 +1083,26 @@ impl Chat {
         entry.building = true;
         entry.built = None;
         // 缓存上限（pi-web：超限整表清空——每 cwd 一份，重建很便宜）
-        if self.at_index.len() >= AT_INDEX_MAX {
+        if self.at_index.len() >= services::workspace::at_index_max_projects() {
             self.at_index.clear();
         }
         let cwd = self.cwd.clone();
         let key = cwd.to_string_lossy().to_string();
         cx.spawn(async move |this, cx| {
-            let listing = cx
+            // entries 派生也在后台：大仓库（20 万条）下主线程只做 Arc 换手
+            let (files, entries) = cx
                 .background_executor()
-                .spawn(async move { crate::services::file_index::load_listing(&cwd) })
+                .spawn(async move {
+                    let listing = crate::services::file_index::load_listing(&cwd);
+                    let entries =
+                        crate::services::at_file::build_entries_from_files(&listing.files);
+                    (listing.files, entries)
+                })
                 .await;
             let _ = this.update(cx, |chat, cx| {
-                let entries = crate::services::at_file::build_entries_from_files(&listing.files);
                 // key = 构建时的 cwd（期间切项目也不会写错条目）
                 let e = chat.at_index.entry(key).or_default();
-                e.files = std::sync::Arc::new(listing.files);
+                e.files = std::sync::Arc::new(files);
                 e.entries = std::sync::Arc::new(entries);
                 e.built = Some(std::time::Instant::now());
                 e.building = false;
