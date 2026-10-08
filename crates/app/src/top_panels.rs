@@ -421,7 +421,7 @@ fn bucket_label(b: pi_link::transcript::SystemBucket) -> &'static str {
         GlobalPrompt => tr("全局提示词"),
         SystemTools => tr("系统工具"),
         Skills => tr("技能"),
-        Plugins => tr("插件"),
+        Plugins => tr("扩展"),
         Mcp => tr("MCP"),
         ProjectPrompt => tr("项目提示词"),
         Other => tr("其他"),

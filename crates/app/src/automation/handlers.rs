@@ -371,6 +371,31 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
+        // 040 扩展页安装直调：走与安装按钮完全相同的 mc_install_package 链路
+        method::SETTINGS_INSTALL_EXT => {
+            let source = params
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"source\": \"npm:… 或整条 pi install …\"}"))?
+                .to_string();
+            chat.mc_install_package(source, cx);
+            ok()
+        }
+        // 040 卸载确认流：先弹居中确认浮层，再应答确认
+        method::SETTINGS_REMOVE_EXT => {
+            let source = params
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"source\": \"npm:…\"}"))?
+                .to_string();
+            chat.mc_ask_remove_package(source, cx);
+            ok()
+        }
+        method::SETTINGS_PKG_REMOVE_CONFIRM => {
+            let confirmed = params.get("ok").and_then(Value::as_bool).unwrap_or(false);
+            chat.mc_remove_dialog_close(confirmed, cx);
+            ok()
+        }
         method::WX_QR_OPEN => {
             chat.remote.begin_qr();
             chat.dialog = Some(crate::Dialog::WxQr);
@@ -405,10 +430,6 @@ pub(super) fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or_else(|| bad("需要 {\"source\": \"npm:…\"}"))?;
             chat.plugin_picker_toggle(src, cx);
-            ok()
-        }
-        method::PLUGIN_PICKER_CONFIRM => {
-            chat.plugin_picker_confirm(cx);
             ok()
         }
         method::PLUGIN_PICKER_CANCEL => {

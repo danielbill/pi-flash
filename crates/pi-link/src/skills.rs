@@ -232,6 +232,71 @@ pub fn normalize_source(raw: &str) -> String {
     s
 }
 
+/// Installed package dir, best-effort（pi CLI 约定，040）：全局
+/// `~/.pi/agent/npm/node_modules/<pkg>`（scoped 名含 `/` 直接 join）、
+/// `~/.pi/agent/git/<host>/<path>`（https / ssh / git@ 三种写法归一）、
+/// 本地包原地。
+pub fn package_install_dir_in(agent_dir: &Path, source: &str) -> PathBuf {
+    if let Some(pkg) = source.strip_prefix("npm:") {
+        return agent_dir.join("npm").join("node_modules").join(pkg);
+    }
+    if let Some(url) = source.strip_prefix("git:") {
+        let rest = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_start_matches("ssh://")
+            .trim_start_matches("git@")
+            .trim_end_matches(".git");
+        return agent_dir.join("git").join(rest.replace(':', "/"));
+    }
+    PathBuf::from(source)
+}
+
+/// [`package_install_dir_in`] at the real agent dir.
+pub fn package_install_dir(source: &str) -> PathBuf {
+    package_install_dir_in(&crate::config::agent_dir(), source)
+}
+
+/// 包内 package.json 的 `description`（040 详情「说明」行）。best-effort：
+/// 未安装 / 无字段 / 空串返回 None。
+pub fn package_description_in(agent_dir: &Path, source: &str) -> Option<String> {
+    let text = std::fs::read_to_string(package_install_dir_in(agent_dir, source).join("package.json"))
+        .ok()?;
+    let v = crate::config::parse_lenient(&text).ok()?;
+    v.get("description")
+        .and_then(|d| d.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// [`package_description_in`] at the real agent dir.
+pub fn package_description(source: &str) -> Option<String> {
+    package_description_in(&crate::config::agent_dir(), source)
+}
+
+/// 列表展示名：去掉 `npm:` 前缀（040），其余来源原样。
+pub fn display_source(source: &str) -> &str {
+    source.strip_prefix("npm:").unwrap_or(source)
+}
+
+/// settings.json `packages` 里「启用中」的包来源（040：基础扩展集——
+/// custom 档挂载与勾选面板的持续生效底座；禁用 = 对象条目四数组置空）。
+pub fn enabled_package_sources_in(settings: &Path) -> Vec<String> {
+    crate::config::read_packages(settings)
+        .unwrap_or_default()
+        .iter()
+        .filter(|e| !entry_disabled(e))
+        .map(entry_source)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// [`enabled_package_sources_in`] at the real global settings.json.
+pub fn enabled_package_sources() -> Vec<String> {
+    enabled_package_sources_in(&crate::config::settings_path())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +342,57 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "plain-skill");
         assert_eq!(skills[0].description, "");
+    }
+
+    #[test]
+    fn package_description_reads_installed_package_json() {
+        let base = std::env::temp_dir().join(format!("pkgdesc-{}", std::process::id()));
+        let pkg_dir = base.join("npm").join("node_modules").join("pi-demo");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"pi-demo","description":"  Demo pkg  "}"#,
+        )
+        .unwrap();
+        assert_eq!(package_description_in(&base, "npm:pi-demo").as_deref(), Some("Demo pkg"));
+        // scoped 名：node_modules/@scope/pkg
+        let scoped = base.join("npm").join("node_modules").join("@scope").join("pi-x");
+        std::fs::create_dir_all(&scoped).unwrap();
+        std::fs::write(scoped.join("package.json"), r#"{"description":"scoped"}"#).unwrap();
+        assert_eq!(package_description_in(&base, "npm:@scope/pi-x").as_deref(), Some("scoped"));
+        assert_eq!(package_description_in(&base, "npm:pi-missing"), None);
+        // git 三种写法归一到 git/<host>/<path>
+        let git_dir = base.join("git").join("github.com").join("user").join("repo");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("package.json"), r#"{"description":"git pkg"}"#).unwrap();
+        for src in [
+            "git:https://github.com/user/repo",
+            "git:git@github.com:user/repo.git",
+        ] {
+            assert_eq!(package_description_in(&base, src).as_deref(), Some("git pkg"));
+        }
+    }
+
+    #[test]
+    fn display_source_strips_npm_and_enabled_sources_filter_disabled() {
+        assert_eq!(display_source("npm:pi-web-access"), "pi-web-access");
+        assert_eq!(display_source("git:https://github.com/u/r"), "git:https://github.com/u/r");
+        let base = std::env::temp_dir().join(format!("pkgsrc-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("settings.json"),
+            r#"{"packages": [
+            "npm:pi-on",
+            {"source": "npm:pi-off", "extensions": [], "skills": [], "prompts": [], "themes": []},
+            {"source": "npm:pi-filtered", "extensions": ["a.ts"]}
+        ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            enabled_package_sources_in(&base.join("settings.json")),
+            vec!["npm:pi-on".to_string(), "npm:pi-filtered".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

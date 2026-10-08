@@ -79,6 +79,13 @@ static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 /// further matches are reachable by typing to filter.
 pub(crate) const MODEL_PICKER_ROWS: usize = 12;
 
+/// 扩展页后台 CLI op（040）：转圈落点不同——Install 在安装按钮，
+/// Remove 在对应包的垃圾桶上；op 泵收到完成消息即清零。
+pub(crate) enum PkgOp {
+    Install,
+    Remove(String),
+}
+
 #[derive(Debug, Clone)]
 enum Dialog {
     ModelSelect { input: gpui::Entity<TextInput>, sel: usize },
@@ -303,11 +310,13 @@ struct Chat {
     pending_locate: Option<(PathBuf, Option<i64>, String)>,
     // shell surfaces
     pill_menu: Option<PillMenu>,
-    /// 「自定义」档的插件选择面板（临时勾选 + 滚动位；确认才写 runtime）
+    /// 「full+」档的扩展选择面板（勾选即生效；滚动位跨帧复用）
     plugin_picker: Option<crate::session::plugin_picker::PluginPicker>,
-    /// window-coords of the pill that opened the menu — the popup anchors
-    /// above THIS pill instead of a fixed window corner (v57 错位修复)
-    pill_anchor: Option<gpui::Point<gpui::Pixels>>,
+    /// 打开弹窗的那个按钮的锚点（水平中点 + 顶缘）——inputpanel 全部弹窗
+    /// 统一定位：与按钮居中、距 5px、不遮按钮（用户定稿）
+    pill_anchor: Option<PillAnchor>,
+    /// 三个胶囊按钮的 paint 期 bounds（canvas 捕获，跨帧槽位）
+    pill_btn: PillBtns,
     /// ctx-ring 悬浮详情（v58 响应式）：环/面板两面悬停标志 + 淡出起始
     /// 时刻（input.rs ctx_tip_hover 状态机持有）
     ctx_tip_ring_hover: bool,
@@ -365,6 +374,11 @@ struct Chat {
     mc_skills: Vec<pi_link::skills::SkillEntry>,
     mc_pkgs_global: Vec<serde_json::Value>,
     mc_pkgs_project: Vec<serde_json::Value>,
+    /// 扩展页 CLI op（install/remove）进行中：转圈按 op 种类落按钮；op 泵
+    /// 收到完成消息即清零（泵同时重读 globals + 刷新列表面板）
+    pkg_op: Option<PkgOp>,
+    /// 卸载确认浮层（040：点垃圾桶先确认）：待卸载来源
+    pkg_confirm_remove: Option<String>,
     mc_default_tools: Option<Vec<String>>,
     /// models.json 编辑缓冲（设置·模型页，保存前在内存里改）
     mc_models_json: serde_json::Value,
@@ -455,6 +469,50 @@ struct Chat {
 enum PillMenu {
     Thinking,
     Tools,
+}
+
+/// inputpanel 弹窗的统一定位锚点（用户定稿）：弹窗与触发按钮**水平居中**、
+/// 底缘距按钮**顶缘 5px**（不遮按钮）。坐标来自按钮 paint 期的 canvas 捕获。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PillAnchor {
+    pub center_x: gpui::Pixels,
+    pub top: gpui::Pixels,
+}
+
+/// 三个胶囊按钮的 bounds 槽位：canvas 在 paint 期每帧覆盖写入，弹窗
+/// 打开时读取。Rc<RefCell> 是为了绕开 paint 闭包拿不到实体借用的限制。
+#[derive(Clone, Default)]
+pub(crate) struct PillBtns {
+    pub tools: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+}
+
+impl PillBtns {
+    /// 从槽位取锚点；未就绪则退回点击坐标（首帧竞态兜底）。
+    pub(crate) fn anchor(
+        slot: &std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+        at: gpui::Point<gpui::Pixels>,
+    ) -> PillAnchor {
+        slot.borrow()
+            .map(|b| PillAnchor { center_x: b.center().x, top: b.origin.y })
+            .unwrap_or(PillAnchor { center_x: at.x, top: at.y })
+    }
+
+    /// 抓按钮 bounds 的隐形覆盖层：absolute inset_0 的 canvas，prepaint 期
+    /// 把整颗按钮的 bounds 写进槽位（弹窗统一定位的测量端）。
+    pub(crate) fn tracker(
+        slot: &std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    ) -> gpui::AnyElement {
+        let capture = slot.clone();
+        gpui::canvas(
+            move |b, _, _| *capture.borrow_mut() = Some(b),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+        .into_any_element()
+    }
 }
 
 /// One content-area tab: a terminal session or a file viewer.
@@ -611,6 +669,8 @@ impl Chat {
             mc_skills: Vec::new(),
             mc_pkgs_global: Vec::new(),
             mc_pkgs_project: Vec::new(),
+            pkg_op: None,
+            pkg_confirm_remove: None,
             mc_default_tools: None,
             mc_models_json: serde_json::json!({}),
             mc_mj_error: None,
@@ -644,6 +704,7 @@ impl Chat {
             pill_menu: None,
             plugin_picker: None,
             pill_anchor: None,
+            pill_btn: PillBtns::default(),
             ctx_tip_ring_hover: false,
             ctx_tip_panel_hover: false,
             ctx_tip_closing: None,
@@ -726,7 +787,12 @@ impl Chat {
             while let Some(msg) = op_rx.next().await {
                 if this
                     .update(cx, |chat, cx| {
+                        chat.pkg_op = None;
                         chat.set_status(msg, cx);
+                        // CLI op 改的是盘上的 settings.json；globals 是启动时
+                        // 的内存副本，不重读则 reload_settings_panel 只会拷到
+                        // 旧列表（040：安装后列表不刷新的根因）
+                        chat.globals = startup::load_globals();
                         chat.reload_settings_panel();
                         cx.notify();
                     })
@@ -1101,7 +1167,7 @@ impl Chat {
             }
             r.refresh_anchors();
             r.refresh_state();
-            // 状态行与胶囊同文案：自定义档带会话插件数（自定义(2)）
+            // 状态行与胶囊同文案（full+）
             let label = r.tool_preset_label();
             r.status = crate::i18n::tf("工具预设: {k} (会话进程已重绑)", &[("k", label)]);
             cx.emit(session::runtime::SessionEvent::Changed);
@@ -1395,10 +1461,10 @@ impl Render for Chat {
                     ("chat-only", tr("仅聊天"), preset_key == "chat-only"),
                     ("read-only", tr("4 个只读内置工具"), preset_key == "read-only"),
                     ("default", tr("4 个内置工具"), preset_key == "default"),
-                    // full：内置 7 件 + 精确集（-ne + 个人扩展/内置扩展，插件零注入）
-                    ("full", tr("全部内置工具（不装任何插件）"), preset_key == "full"),
-                    // 自定义 = full + 本会话选中插件（默认档；清单按会话保存）
-                    ("custom", tr("自定义"), preset_key == "custom"),
+                    // full：内置 7 件 + 精确集（-ne + 个人扩展/内置扩展，包零注入）
+                    ("full", tr("全部内置工具（不装任何扩展）"), preset_key == "full"),
+                    // full+ = full + 本会话选中扩展（默认档；清单按会话保存）
+                    ("custom", tr("full + 自定义扩展"), preset_key == "custom"),
                 ]
                 .iter()
                 .map(|(k, d, on)| (k.to_string(), d.to_string(), *on))
@@ -1452,9 +1518,9 @@ impl Render for Chat {
                                     gpui::FontWeight::NORMAL
                                 })
                                 .text_color(rgb(t.text))
-                                // 自定义档显示中文名（其余档沿用内部键）
+                                // full+ 档显示自定义名（其余档沿用内部键）
                                 .child(SharedString::from(if key == "custom" {
-                                    tr("自定义").to_string()
+                                    tr("full+").to_string()
                                 } else {
                                     key
                                 })),
@@ -1484,15 +1550,15 @@ impl Render for Chat {
             }
                 .child(
                     {
-                        // anchor above the clicked pill: bottom = window_h − pill_y
-                        // + gap; left clamped so the 320px menu stays on screen
+                        // 统一定位（用户定稿）：弹窗与按钮水平居中、底缘距
+                        // 按钮顶缘 5px（不遮按钮）；左右钳在视口内
                         let vp = window.viewport_size();
-                        let gap = px(6.);
+                        let gap = px(5.);
                         let menu_w = px(320.);
                         let (anchor_bottom, anchor_left) = match self.pill_anchor {
-                            Some(p) => {
-                                let bottom = (vp.height - p.y + gap).max(px(8.));
-                                let mut left = p.x - px(8.);
+                            Some(a) => {
+                                let bottom = (vp.height - a.top + gap).max(px(8.));
+                                let mut left = a.center_x - menu_w / 2.;
                                 if left + menu_w > vp.width - px(8.) {
                                     left = vp.width - menu_w - px(8.);
                                 }
@@ -1672,6 +1738,10 @@ impl Render for Chat {
         if let Some(panel) = self.settings.clone() {
             let data = settings::SettingsFormData::snapshot(panel.read(cx), cx);
             root = root.child(settings::render_settings(self, &weak_for_dialog, &data));
+        }
+        // 040 卸载扩展确认浮层（叠在设置弹窗之上）
+        if let Some(el) = settings::plugins::remove_confirm_overlay(self, cx) {
+            root = root.child(el);
         }
         // psp 悬浮层（tooltip / 详情卡 / 菜单 / 确认）
         root = root.child(function_panel::psp_overlays::psp_overlays(self, cx));

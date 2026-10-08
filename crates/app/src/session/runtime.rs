@@ -153,9 +153,11 @@ pub(crate) struct SessionRuntime {
     /// tools preset id (configured/chat-only/read-only/default/full) —
     /// applied at spawn via CLI flags (RPC has no live tool switching)
     pub tools_preset: String,
-    /// 「自定义」档的会话插件集（`entry_source()` 字符串 = `-e` 参数）。
+    /// 「full+」档的会话扩展集（`entry_source()` 字符串 = `-e` 参数）。
     /// 只在本档 spawn 时使用；切别的档不清空，切回来还是上次的选择。
     pub ext_sources: Vec<String>,
+    /// 040：picker 在运行中确认的清单——下一轮 send_input 空闲时重绑生效
+    pub(crate) pending_ext_sources: Option<Vec<String>>,
 
     // ---- `!` shell 命令（031）----
     /// rpc bash 在飞（pi isBashRunning 的客户端镜像；期间再发 bash 会被
@@ -182,11 +184,16 @@ pub(crate) struct SessionRuntime {
 
 impl SessionRuntime {
     pub(crate) fn new(key: String, cwd: PathBuf, file: Option<PathBuf>) -> Self {
-        // 会话级插件清单（034：每个对话保存一份；重启从
-        // ~/.pi-flash/session-ext.json 恢复，草稿 key 重启后自然失效）
-        let ext_sources = pi_link::session_ext::store_path()
+        // 会话级扩展清单：**绑定会话的独立数组**（用户定稿）。全局 settings
+        // 启用集只在「新会话创建」时**复制**为初始清单（之后两者互不跟随，
+        // 设置页改动不影响已存在的会话）；台账里存的是该会话自选的清单，
+        // 重启/复接原样恢复。菜单勾选态只对齐这一份数组。
+        let mut ext_sources = pi_link::session_ext::store_path()
             .map(|p| pi_link::session_ext::read_for(&p, &key))
             .unwrap_or_default();
+        if ext_sources.is_empty() {
+            ext_sources = pi_link::skills::enabled_package_sources();
+        }
         Self {
             key,
             cwd,
@@ -225,10 +232,11 @@ impl SessionRuntime {
             history_ix: None,
             thinking_override: None,
             pending_model: None,
-            // 默认档 = 自定义（full 内置 + 会话插件清单）；旧 pi-web 的
+            // 默认档 = full+（full 内置 + 会话扩展清单）；旧 pi-web 的
             // "configured"（什么都不发、让 pi 自己算）已按 034 决定移除
             tools_preset: "custom".into(),
             ext_sources,
+            pending_ext_sources: None,
             bash_running: false,
             pending_bash: None,
             last_activity: std::time::Instant::now(),
@@ -281,13 +289,8 @@ impl SessionRuntime {
             }
             _ => {}
         }
-        // 060 微信远程控制：每次 spawn 都带上逐次审批扩展。它自己读
-        // `wxprobe-state.json` 决定要不要接管，所以这里不加条件 ——
-        // 扫码即生效、reset 即失效（与 P4 设置页共用同一事实源）。
-        if let Some(p) = crate::session::tools_recipe::wx_permission_script_path() {
-            extra.push("-e".into());
-            extra.push(p.to_string_lossy().into_owned());
-        }
+        // pi 原则：不逐次审批工具调用（vendor security.md），任何档位都
+        // 不挂 permission 门禁；扩展自己的 ctx.ui.* 请求仍照常呈现（060 翻案）。
         // draft picks made before the process existed ride the spawn flags
         // (pi CLI parity: --model provider/id, --thinking level)
         if let Some((provider, id)) = self.pending_model.take() {
@@ -1685,6 +1688,33 @@ impl SessionRuntime {
         if text.is_empty() && self.pending_images.is_empty() {
             return;
         }
+        // 040：picker 运行中确认的清单，下一轮（空闲发送）开始前生效——
+        // 换包集必须重绑进程（RPC 无运行时切换），`--session` 复接不丢消息
+        if !self.agent_running {
+            if let Some(list) = self.pending_ext_sources.take() {
+                self.ext_sources = list;
+                if let Some(p) = pi_link::session_ext::store_path() {
+                    let _ =
+                        pi_link::session_ext::write_for(&p, &self.key, &self.ext_sources);
+                }
+                let this = cx.entity();
+                match self.spawn() {
+                    Some(rx) => {
+                        let epoch = self.agent.epoch;
+                        Self::attach_pump(&this, rx, epoch, cx);
+                    }
+                    None => {
+                        self.status = tr("未连接").into();
+                        cx.notify();
+                        return;
+                    }
+                }
+                if let Some(s) = &self.agent.session {
+                    let _ = s.send(&Command::GetMessages);
+                }
+                self.refresh_state();
+            }
+        }
         if self.agent.session.is_none() {
             // lazy draft: the pi process spawns on the first prompt
             // (pi-web ensureNewSession parity). spawn_with returns the event
@@ -1913,8 +1943,8 @@ impl SessionRuntime {
             return "configured".into();
         }
         if key == "custom" {
-            // 胶囊标签带会话插件数（数字实时来自 ext_sources）
-            return format!("{}({})", crate::i18n::tr("自定义"), self.ext_sources.len());
+            // 档名 full+；扩展数量由右边的「扩展(n)」按钮承载，不重复
+            return crate::i18n::tr("full+").to_string();
         }
         key.to_string()
     }

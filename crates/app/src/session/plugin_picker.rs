@@ -1,28 +1,23 @@
-//! 插件勾选菜单（034 定稿）：输入栏「插件」按钮点开的三层勾选面板。
+//! 扩展勾选菜单（040 定稿 + 2026-10 改版：勾选即生效）。
 //!
-//! 入口 = 工具胶囊**右边**的 `plug` 按钮，**仅「自定义」档激活**（其余档置灰）。
-//! 三层结构（用户定稿）：
+//! 入口 = 工具胶囊**右边**的 `plug` 按钮，**仅「full+」档激活**（其余档
+//! 扩展本来就不挂载，置灰）。语义：
 //!
-//! ```text
-//! 已选中 n          ← 当前会话清单里的包（项目来源带「项目」小标）
-//! ── 项目 · 未选中 n  ← 项目 settings 里、还没勾的
-//! ── 全局 · 未选中 n  ← 全局 settings 里、还没勾的
-//! ```
-//!
-//! 勾选是**临时态**，底部「取消 / 选择并切换」才落地：确认 → 写
-//! `runtime.ext_sources` → 落 `~/.pi-flash/session-ext.json`（每个对话一份）→
-//! 走 `mc_set_tools_preset("custom")` 既有重绑链路（整表重读、状态栏提示复用）。
-//!
-//! 两条守卫：① 非自定义档点不动（按钮本来就置灰，这里是兜底）；② **会话一旦
-//! 有消息就不能改**（用户定稿：对话中途无法修改自定义），只能新开对话时定。
+//! - **反映管理态**：设置页启用的包是基础扩展集，打开时**自动勾选**；
+//!   按名称排序、去掉 `npm:` 前缀展示。
+//! - **勾选即生效**：没有「确认」按钮——每勾/取消一项，清单当即写入
+//!   `runtime.ext_sources`（按钮计数【扩展(n)】实时变）并落
+//!   `~/.pi-flash/session-ext.json`（每个对话一份）。重绑进程统一走
+//!   `pending_ext_sources`：下一轮 `send_input` 空闲发送前重绑
+//!   （`--session` 复接不丢消息）——连点 N 项也只重绑一次，且运行中
+//!   不掐轮（pi 的 RPC 没有运行时换包命令，重绑是唯一通路）。
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::settings::widgets::{Btn, config_button, group_header};
 use crate::theme::theme as T;
 
-/// 临时勾选 + 滚动位；确认前不碰 runtime（取消/点外 = 全丢）。
+/// 勾选集 + 滚动位（勾选当即落地，不存在「取消丢弃」）。
 pub(crate) struct PluginPicker {
     /// 勾选中的 `entry_source()` 集合
     pub(crate) pending: std::collections::HashSet<String>,
@@ -39,12 +34,11 @@ impl PluginPicker {
     }
 }
 
-/// 行高（10 行限高 = `ROW_H × 10`）；分组头高同设置页 `group_header` 节奏。
+/// 行高（10 行限高 = `ROW_H × 10`）。
 const ROW_H: f32 = 30.;
-const GROUP_H: f32 = 28.;
 
 impl Chat {
-    /// 插件按钮点击：已开则收（丢弃临时勾选），未开则按守卫打开。
+    /// 扩展按钮点击：已开则收，未开则按守卫打开。
     pub(crate) fn toggle_plugin_menu_at(
         &mut self,
         at: gpui::Point<gpui::Pixels>,
@@ -54,20 +48,20 @@ impl Chat {
             self.plugin_picker_cancel(cx);
             return;
         }
-        self.pill_anchor = Some(at);
+        self.pill_anchor = Some(crate::PillBtns::anchor(&self.pill_btn.ext, at));
         self.open_plugin_picker(cx);
     }
 
-    /// 打开菜单。守卫：档位必须是「自定义」；会话必须还没开聊（消息为空）。
+    /// 打开菜单。守卫：档位必须是「full+」（其余档扩展本来就不挂）。
+    /// 040：每轮对话前都可重调。
+    ///
+    /// 勾选态**只对齐会话数组**（`ext_sources`，用户定稿）：全局启用集只在
+    /// 「新会话创建」时复制成会话初始清单（`SessionRuntime::new`），菜单
+    /// 不再并回全局集——否则取消的勾在重开时被全局集顶回去（回显 bug）。
     pub(crate) fn open_plugin_picker(&mut self, cx: &mut gpui::Context<Self>) {
         if self.rt().read(cx).tool_preset_key() != "custom" {
             self.pill_menu = None;
-            self.set_status(crate::i18n::tr("插件只能在自定义档勾选").to_string(), cx);
-            return;
-        }
-        if !self.rt().read(cx).messages.is_empty() {
-            self.pill_menu = None;
-            self.set_status(crate::i18n::tr("对话中途无法修改自定义").to_string(), cx);
+            self.set_status(crate::i18n::tr("扩展只能在 full+ 档勾选").to_string(), cx);
             return;
         }
         let seed = self.rt().read(cx).ext_sources.clone();
@@ -86,24 +80,19 @@ impl Chat {
             if !p.pending.remove(source) {
                 p.pending.insert(source.to_string());
             }
-            cx.notify();
         }
+        self.apply_ext_selection(cx);
+        cx.notify();
     }
 
-    /// 「选择并切换」：写 runtime → 落会话台账 → 重绑进程。
-    pub(crate) fn plugin_picker_confirm(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.plugin_picker.is_none() {
-            return;
-        }
-        if self.rt().read(cx).agent_running {
-            // 面板只在空闲/未开聊时可开；真跑到这里就按既有提示语拦截
-            self.set_status(crate::i18n::tr("运行中不能更换工具预设").to_string(), cx);
-            return;
-        }
-        let Some(picker) = self.plugin_picker.take() else {
+    /// 勾选即生效：把当前勾选集写入 runtime（按钮计数实时变）并落台账。
+    /// 重绑时机 = 下一轮 `send_input` 空闲发送前（见模块注释）。
+    fn apply_ext_selection(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(picker) = self.plugin_picker.as_ref() else {
             return;
         };
-        // 表序 = 全局 → 项目，去重（同一来源出现在两个 scope 时 `-e` 只发一次）
+        // 宇宙序 = 全局 → 项目，去重（同一来源出现在两个 scope 时 `-e` 只发一次），
+        // 再按展示名排序，与面板呈现一致
         let mut sources: Vec<String> = Vec::new();
         for v in self.mc_pkgs_global.iter().chain(self.mc_pkgs_project.iter()) {
             let src = pi_link::skills::entry_source(v);
@@ -112,16 +101,24 @@ impl Chat {
             }
             sources.push(src);
         }
+        sources.sort_by_key(|s| pi_link::skills::display_source(s).to_lowercase());
         let rt = self.rt();
         let key = rt.read(cx).key.clone();
-        rt.update(cx, |r, _| r.ext_sources = sources.clone());
+        rt.update(cx, |r, _| {
+            r.ext_sources = sources.clone();
+            r.pending_ext_sources = Some(sources.clone());
+        });
         // 每个对话保存一份：落 ~/.pi-flash/session-ext.json，重启后按会话恢复
         if let Some(path) = pi_link::session_ext::store_path() {
             if let Err(e) = pi_link::session_ext::write_for(&path, &key, &sources) {
-                self.set_status(crate::i18n::tf("插件清单保存失败: {e}", &[("e", e)]), cx);
+                self.set_status(crate::i18n::tf("扩展清单保存失败: {e}", &[("e", e)]), cx);
+                return;
             }
         }
-        self.mc_set_tools_preset("custom", cx);
+        if rt.read(cx).agent_running {
+            // 运行中不掐轮，只提示生效时机
+            self.set_status(crate::i18n::tr("扩展清单将在下一轮生效").to_string(), cx);
+        }
     }
 }
 
@@ -132,164 +129,60 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
     let ui = crate::appearance::ui_size;
     let selected = |src: &str| picker.pending.contains(src);
 
-    // ---- 三层：已选中 / 项目未选中 / 全局未选中 ----
-    let mut rows: Vec<AnyElement> = Vec::new();
-    let mut n_rows = 0usize;
-    let mut n_groups = 0usize;
-
-    let section = |title: String, items: Vec<(String, bool, bool)>, rows: &mut Vec<AnyElement>, n_rows: &mut usize, n_groups: &mut usize| {
-        if items.is_empty() {
-            return;
-        }
-        *n_rows += items.len();
-        *n_groups += 1;
-        rows.push(group_header(&title, None));
-        for (src, disabled, project) in items {
-            let checked = selected(&src);
-            rows.push(plugin_row(weak, &src, checked, disabled, project, t));
-        }
-    };
-
-    // 1) 已选中（全局 + 项目表序），项目来源带「项目」小标
-    let mut sel_items: Vec<(String, bool, bool)> = Vec::new();
+    // ---- 宇宙 = 全局 ∪ 项目包去重；先按展示名排序，再稳定地把已勾选置顶 ----
+    let mut items: Vec<(String, bool)> = Vec::new(); // (来源, 项目)
     for v in chat.mc_pkgs_global.iter().chain(chat.mc_pkgs_project.iter()) {
         let src = pi_link::skills::entry_source(v);
+        if src.is_empty() || items.iter().any(|(s, _)| *s == src) {
+            continue;
+        }
         let project = chat
             .mc_pkgs_project
             .iter()
             .any(|p| pi_link::skills::entry_source(p) == src);
-        if src.is_empty() || !selected(&src) || sel_items.iter().any(|(s, _, _)| *s == src) {
-            continue;
-        }
-        sel_items.push((src, pi_link::skills::entry_disabled(v), project));
+        items.push((src, project));
     }
-    let n_sel = sel_items.len();
-    section(
-        crate::i18n::tf("已选中 {n}", &[("n", n_sel.to_string())]),
-        sel_items,
-        &mut rows,
-        &mut n_rows,
-        &mut n_groups,
-    );
-
-    // 2) 项目未选中
-    let proj_items: Vec<(String, bool, bool)> = chat
-        .mc_pkgs_project
+    items.sort_by_key(|(s, _)| pi_link::skills::display_source(s).to_lowercase());
+    items.sort_by_key(|(s, _)| !selected(s));
+    let rows: Vec<AnyElement> = items
         .iter()
-        .map(|v| {
-            (
-                pi_link::skills::entry_source(v),
-                pi_link::skills::entry_disabled(v),
-                true,
-            )
-        })
-        .filter(|(src, _, _)| !src.is_empty() && !selected(src))
+        .map(|(src, project)| plugin_row(weak, src, selected(src), *project, t))
         .collect();
-    let n_proj = proj_items.len();
-    section(
-        crate::i18n::tf("项目 · 未选中 {n}", &[("n", n_proj.to_string())]),
-        proj_items,
-        &mut rows,
-        &mut n_rows,
-        &mut n_groups,
-    );
+    let n_rows = rows.len();
 
-    // 3) 全局未选中
-    let glob_items: Vec<(String, bool, bool)> = chat
-        .mc_pkgs_global
-        .iter()
-        .map(|v| {
-            (
-                pi_link::skills::entry_source(v),
-                pi_link::skills::entry_disabled(v),
-                false,
-            )
-        })
-        .filter(|(src, _, _)| !src.is_empty() && !selected(src))
-        .collect();
-    let n_glob = glob_items.len();
-    section(
-        crate::i18n::tf("全局 · 未选中 {n}", &[("n", n_glob.to_string())]),
-        glob_items,
-        &mut rows,
-        &mut n_rows,
-        &mut n_groups,
-    );
-
-    if rows.is_empty() {
-        rows.push(
+    let mut body = rows;
+    if body.is_empty() {
+        body.push(
             div()
                 .px(px(10.))
                 .py(px(12.))
                 .text_size(ui(11.))
                 .text_color(rgb(t.text_dim))
-                .child(SharedString::from(crate::i18n::tr("没有已配置的插件")))
+                .child(SharedString::from(crate::i18n::tr("没有已配置的扩展")))
                 .into_any_element(),
         );
     }
     // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
-    let content_h = n_rows as f32 * ROW_H + n_groups as f32 * GROUP_H;
-    let list_h = if n_rows == 0 { 60. } else { content_h.min(ROW_H * 10.) };
+    let list_h = if n_rows == 0 { 60. } else { (n_rows as f32 * ROW_H).min(ROW_H * 10.) };
 
     let header = div()
         .px(px(10.))
         .pt(px(10.))
         .pb(px(6.))
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(
-            div()
-                .text_size(ui(12.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(SharedString::from(crate::i18n::tr("本会话插件清单"))),
-        )
-        .child(
-            div()
-                .text_size(ui(10.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(crate::i18n::tr(
-                    "仅本会话生效，不改动设置页的全局插件开关",
-                ))),
-        );
+        .text_size(ui(12.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(rgb(t.text))
+        .child(SharedString::from(crate::i18n::tr("选择扩展")));
 
-    let footer = div()
-        .flex()
-        .items_center()
-        .justify_end()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(8.))
-        .border_t_1()
-        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x80)))
-        .child(config_button(
-            "pp-cancel",
-            weak,
-            &crate::i18n::tr("取消"),
-            Btn::Secondary,
-            true,
-            false,
-            |c, cx| c.plugin_picker_cancel(cx),
-        ))
-        .child(config_button(
-            "pp-confirm",
-            weak,
-            &crate::i18n::tr("选择并切换"),
-            Btn::Primary,
-            true,
-            false,
-            |c, cx| c.plugin_picker_confirm(cx),
-        ));
-
-    // 锚点算法与工具胶囊菜单一致（bottom = 视口高 − 胶囊 y + gap，左缘钳制）
+    // 统一定位（用户定稿）：与扩展按钮水平居中、底缘距按钮顶缘 5px；
+    // 左右钳在视口内
     let vp = window.viewport_size();
-    let gap = px(6.);
+    let gap = px(5.);
     let panel_w = px(320.);
     let (bottom, left) = match chat.pill_anchor {
-        Some(p) => {
-            let bottom = (vp.height - p.y + gap).max(px(8.));
-            let mut left = p.x - px(8.);
+        Some(a) => {
+            let bottom = (vp.height - a.top + gap).max(px(8.));
+            let mut left = a.center_x - panel_w / 2.;
             if left + panel_w > vp.width - px(8.) {
                 left = vp.width - panel_w - px(8.);
             }
@@ -321,25 +214,23 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
             .child(
                 div()
                     .id("pp-list")
+                    .pb(px(6.))
                     .h(px(list_h))
                     .overflow_y_scroll()
                     .track_scroll(&picker.scroll)
                     .flex()
                     .flex_col()
-                    .children(rows),
-            )
-            .child(footer),
+                    .children(body),
+            ),
     );
     Some(layer.child(card).into_any_element())
 }
 
-/// 勾选行：14px 勾选框 + 来源（等宽字体）+ 可选「项目」「已禁用」小标。
-/// 禁用只是设置页的全局开关状态，`-e` 是独立加载路径（031 边界），照样可勾。
+/// 勾选行：14px 勾选框 + 展示名（去 `npm:`，等宽字体）+ 可选「项目」小标。
 fn plugin_row(
     weak: &gpui::WeakEntity<Chat>,
     source: &str,
     checked: bool,
-    disabled: bool,
     project: bool,
     t: &'static crate::theme::Theme,
 ) -> AnyElement {
@@ -382,18 +273,13 @@ fn plugin_row(
                 .text_ellipsis()
                 .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(ui(11.))
-                .text_color(rgb(if disabled { t.text_dim } else { t.text }))
-                .child(SharedString::from(source.to_string())),
+                .text_color(rgb(t.text))
+                .child(SharedString::from(
+                    pi_link::skills::display_source(source).to_string(),
+                )),
         );
     if project {
         row = row.child(tag(crate::i18n::tr("项目"), crate::settings::widgets::indigo_bg(), crate::settings::widgets::indigo_fg()));
-    }
-    if disabled {
-        row = row.child(tag(
-            crate::i18n::tr("已禁用"),
-            gpui::hsla(0., 0., 0.5, 0.12),
-            gpui::hsla(0., 0., 0.9, 0.6),
-        ));
     }
     row.into_any_element()
 }

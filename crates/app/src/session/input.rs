@@ -283,17 +283,16 @@ fn ctx_usage_panel(
         )
 }
 
-/// 插件按钮（034 定稿）：工具胶囊右边，**仅「自定义」档激活**。
-/// 点击开合三层勾选菜单（已选中 / 项目未选中 / 全局未选中），勾选后「选择并切换」
-/// 才重绑进程；非自定义档置灰不可点。
+/// 扩展按钮（040 定稿 + 2026-10 改版）：工具胶囊右边，**仅「full+」档激活**。
+/// 点击开合扩展菜单（勾选即生效，无确认按钮）；非 full+ 档置灰不可点。
 fn plugin_button(
     chat: &mut Chat,
     t: &'static crate::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let ui = crate::appearance::ui_size;
-    // 激活条件只有一个：**当前档是「自定义」**（用户定稿）。运行中也能点开看，
-    // 真换绑由 `mc_set_tools_preset`/confirm 的「运行中不能更换工具预设」拦。
+    // 激活条件只有一个：**当前档是「full+」**（内部键 custom）。运行中也能
+    // 点开勾选，清单在下一轮发送前重绑生效（pending_ext_sources 链路）。
     let (is_custom, n, open) = {
         let r = chat.rt().read(cx);
         (
@@ -304,9 +303,9 @@ fn plugin_button(
     };
     let active = is_custom;
     let label = if n > 0 {
-        format!("{}({n})", crate::i18n::tr("插件"))
+        format!("{}({n})", crate::i18n::tr("扩展"))
     } else {
-        crate::i18n::tr("插件").to_string()
+        crate::i18n::tr("扩展").to_string()
     };
     let color = if !active {
         t.text_faint
@@ -337,6 +336,8 @@ fn plugin_button(
                 }),
             );
     }
+    // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+    el = el.child(crate::PillBtns::tracker(&chat.pill_btn.ext));
     el.into_any_element()
 }
 
@@ -950,7 +951,7 @@ fn composer_bar(
                             );
                             return;
                         }
-                        this.pill_anchor = Some(event.position);
+                        this.pill_anchor = Some(crate::PillBtns::anchor(&this.pill_btn.tools, event.position));
                         this.pill_menu = match this.pill_menu {
                             Some(PillMenu::Tools) => None,
                             _ => Some(PillMenu::Tools),
@@ -960,11 +961,13 @@ fn composer_bar(
                 ))
                 .child(icon_hover("wrench", 13., if tools_open { t.accent } else { t.text_muted }))
                 .child(SharedString::from(tools_label.to_string()))
-                .child(icon("chevron-down", 10., t.text_dim)),
+                .child(icon("chevron-down", 10., t.text_dim))
+                // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+                .child(crate::PillBtns::tracker(&chat.pill_btn.tools)),
             )
-            // 插件按钮（034 定稿）：**工具胶囊的兄弟节点**，不是子节点——
-            // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「自定义」档
-            // 激活，点开三层勾选菜单（已选中 / 项目未选中 / 全局未选中）。
+            // 扩展按钮（040 定稿）：**工具胶囊的兄弟节点**，不是子节点——
+            // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「full+」档
+            // 激活，点开扩展菜单（勾选即生效，单列已勾置顶）。
             .child(plugin_button(chat, t, cx))
             .into_any_element()
         });
@@ -1079,7 +1082,7 @@ fn composer_bar(
                     if this.rt().read(cx).compacting {
                         return;
                     }
-                    this.pill_anchor = Some(event.position);
+                    this.pill_anchor = Some(crate::PillBtns::anchor(&this.pill_btn.thinking, event.position));
                     this.pill_menu = match this.pill_menu {
                         Some(PillMenu::Thinking) => None,
                         _ => Some(PillMenu::Thinking),
@@ -1099,7 +1102,9 @@ fn composer_bar(
                 },
             ))
             .child(SharedString::from(thinking_label.to_string()))
-            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim })),
+            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim }))
+            // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+            .child(crate::PillBtns::tracker(&chat.pill_btn.thinking)),
     );
     // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
     // 左移 5px、上移 8px

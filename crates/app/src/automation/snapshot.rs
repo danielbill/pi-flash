@@ -138,16 +138,12 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         "active_file": opt_path(chat.active_file.as_ref()),
         "terminals": chat.terminals.len(),
         "active_terminal": chat.active_terminal,
-        // 031 自定义档选择面板：开合 + 临时勾选数（确认前不动 runtime）
-        // 插件菜单：按钮是否可用（自定义档 + 还没开聊）+ 三层各自条数
+        // 031/040 full+ 档扩展面板：按钮可用性（full+ 档即可，勾选即生效）
         "plugin_menu": {
             "available": chat
                 .runtimes
                 .get(&chat.active_key)
-                .map(|rt| {
-                    let r = rt.read(cx);
-                    r.tool_preset_key() == "custom" && r.messages.is_empty()
-                })
+                .map(|rt| rt.read(cx).tool_preset_key() == "custom")
                 .unwrap_or(false),
         },
         "plugin_picker": chat.plugin_picker.as_ref().map(|p| {
@@ -158,8 +154,11 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
                     .filter(|s| !s.is_empty() && sel(s) == want)
                     .count()
             };
+            let mut pending_sources: Vec<String> = p.pending.iter().cloned().collect();
+            pending_sources.sort_by_key(|s| pi_link::skills::display_source(s).to_lowercase());
             json!({
                 "pending": p.pending.len(),
+                "pending_sources": pending_sources,
                 "selected": chat
                     .mc_pkgs_global
                     .iter()
@@ -180,9 +179,9 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         }),
         // 斜杠/@ 补全菜单（031）
         "composer_menu": composer_menu,
-        "pill_anchor": chat.pill_anchor.map(|p| json!({
-            "x": f32::from(p.x),
-            "y": f32::from(p.y),
+        "pill_anchor": chat.pill_anchor.map(|a| json!({
+            "center_x": f32::from(a.center_x),
+            "top": f32::from(a.top),
         })),
     })
 }
@@ -411,6 +410,13 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 "tab": p.tab,
                 "section": p.section,
                 "error": p.error,
+                // 040 扩展页：op 进行中 + 当前列表（安装后刷新断言用）
+                "busy": chat.pkg_op.is_some(),
+                "pkg_sources": chat
+                    .mc_pkgs_global
+                    .iter()
+                    .map(pi_link::skills::entry_source)
+                    .collect::<Vec<String>>(),
                 "mc_state": format!("{:?}", chat.mc_state),
                 "mc_project_scope": chat.mc_project_scope,
             })
@@ -445,6 +451,8 @@ fn dialogs_surface(chat: &Chat) -> Value {
         "project_hits": project_hits,
         "project_filter": chat.project_filter,
         "confirm_delete": opt_path(chat.confirm_delete.as_ref()),
+        // 040 扩展页卸载确认浮层（Some=开着，值为待卸载来源）
+        "pkg_confirm_remove": chat.pkg_confirm_remove.clone(),
         "renaming": opt_path(chat.renaming.as_ref()),
         "ext_dialog": chat.ext_dialog.is_some(),
         "toast": chat.status_toast.as_ref().map(|(t, _)| truncate(t, 200)),

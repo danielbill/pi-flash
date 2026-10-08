@@ -51,6 +51,11 @@ pub mod method {
     pub const GIT_SET_TAB: &str = "git.set_tab";
     pub const SETTINGS_OPEN: &str = "settings.open";
     pub const SETTINGS_CLOSE: &str = "settings.close";
+    /// 040 扩展页：直调安装（UI 测试用；source 支持整条 `pi install …`）
+    pub const SETTINGS_INSTALL_EXT: &str = "settings.install_ext";
+    /// 040 扩展页：弹卸载确认浮层 / 应答确认（UI 测试用）
+    pub const SETTINGS_REMOVE_EXT: &str = "settings.remove_ext";
+    pub const SETTINGS_PKG_REMOVE_CONFIRM: &str = "settings.pkg_remove_confirm";
     pub const THEME_SET: &str = "theme.set";
     pub const LANG_SET: &str = "lang.set";
     pub const DIALOG_CLOSE: &str = "dialog.close";
@@ -66,7 +71,6 @@ pub mod method {
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
     pub const PLUGIN_PICKER_OPEN: &str = "plugin_picker.open";
     pub const PLUGIN_PICKER_TOGGLE: &str = "plugin_picker.toggle";
-    pub const PLUGIN_PICKER_CONFIRM: &str = "plugin_picker.confirm";
     pub const PLUGIN_PICKER_CANCEL: &str = "plugin_picker.cancel";
     /// 截屏：窗口最近一帧渲染回读为 PNG（进程内 D3D11 staging readback，
     /// 非 OS 抢屏；窗口被遮挡/最小化也能截）。params: {path?}，缺省写

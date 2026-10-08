@@ -165,12 +165,12 @@ pub(crate) fn mc_misc_view(
         t,
     ));
 
-    // 加载扩展与插件（主会话 spawn 是否带 -ne；默认开 = pi-web 同款，
-    // npm 插件注册的 provider 如 pi-freeflow 由此可用）
+    // 加载扩展（主会话 spawn 是否带 -ne；默认开 = pi-web 同款，
+    // npm 包注册的 provider 如 pi-freeflow 由此可用）
     let ext_on = crate::services::workspace::load_extensions_enabled();
     col = col.child(set_row(
-        tr("加载扩展与插件"),
-        tr("会话加载 ~/.pi/agent 扩展与 npm 插件（freeflow 等插件模型由此可用）；个别扩展弄崩会话时可关闭"),
+        tr("加载扩展"),
+        tr("会话加载 ~/.pi/agent 扩展与 npm 扩展包（freeflow 等扩展注册的模型由此可用）；个别扩展弄崩会话时可关闭"),
         switch(
             "misc-load-extensions",
             ext_on,

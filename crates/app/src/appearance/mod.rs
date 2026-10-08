@@ -56,7 +56,9 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     c.accent = gpui::rgb(t.accent).into();
     c.accent_foreground = gpui::rgb(t.accent_contrast).into();
     c.muted = gpui::rgb(t.bg_hover).into();
-    c.muted_foreground = gpui::rgb(t.text_dim).into();
+    // 占位符用设计规范的 placeholder 专属色 text_faint（040：过深的
+    // text_dim 与正文难区分；composer 自绘占位同色，两处一致）
+    c.muted_foreground = gpui::rgb(t.text_faint).into();
     c.secondary = gpui::rgb(t.bg_selected).into();
     c.danger = gpui::rgb(t.danger).into();
     c.danger_hover = gpui::rgb(t.danger_hover).into();

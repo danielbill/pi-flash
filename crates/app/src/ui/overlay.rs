@@ -21,7 +21,10 @@
 //! - 悬停提示（tooltip / hover 详情卡）：跟随鼠标出现，收起由 hover 状态机
 //!   决定，没有「外点关闭」的概念。
 
-use gpui::{App, ElementId, FocusHandle, MouseButton, SharedString, Window, div, prelude::*, px, rgb};
+use gpui::{
+    App, AnyElement, ElementId, FocusHandle, FontWeight, MouseButton, SharedString, Window, div,
+    hsla, prelude::*, px, rgba, rgb,
+};
 
 use crate::theme::Theme;
 
@@ -61,6 +64,96 @@ pub fn layer(
 /// 规则 4：卡片外壳。点卡片本身不触发「外点关闭」。
 pub fn stop_click(el: gpui::Div) -> gpui::Div {
     el.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// 统一确认弹层（040 定稿）：**自动居中**、标准【取消/确认】两键、内容
+/// 可设。取消 = 点外/ESC 同语义（都走 `on_cancel`），调用方把「真正要做
+/// 的事」放进 `on_confirm`。返回整层，调用方挂 root 即可。
+pub fn confirm(
+    focus: &FocusHandle,
+    message: impl Into<SharedString>,
+    on_cancel: impl Fn(&mut Window, &mut App) + Clone + 'static,
+    on_confirm: impl Fn(&mut Window, &mut App) + Clone + 'static,
+) -> AnyElement {
+    let t = crate::theme::theme();
+    let cancel_btn = {
+        let on = on_cancel.clone();
+        div()
+            .id("confirm-cancel")
+            .h(px(28.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .text_size(crate::appearance::ui_size(12.))
+            .text_color(rgb(t.text_muted))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .child(SharedString::from(crate::i18n::tr("取消")))
+            .on_mouse_down(MouseButton::Left, move |_, w, cx| {
+                cx.stop_propagation();
+                on(w, cx);
+            })
+    };
+    let confirm_btn = {
+        let on = on_confirm;
+        div()
+            .id("confirm-ok")
+            .h(px(28.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.))
+            .border_1()
+            .border_color(hsla(0., 0.84, 0.6, 0.35))
+            .bg(hsla(0., 0.84, 0.6, 0.06))
+            .text_size(crate::appearance::ui_size(12.))
+            .text_color(rgb(t.danger))
+            .font_weight(FontWeight::SEMIBOLD)
+            .cursor_pointer()
+            .hover(|s| s.bg(hsla(0., 0.84, 0.6, 0.12)))
+            .child(SharedString::from(crate::i18n::tr("确认")))
+            .on_mouse_down(MouseButton::Left, move |_, w, cx| {
+                cx.stop_propagation();
+                on(w, cx);
+            })
+    };
+    layer(false, Some(focus), on_cancel)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(stop_click(
+            div()
+                .min_w(px(300.))
+                .p(px(14.))
+                .bg(rgb(t.bg))
+                .border_1()
+                .border_color(rgba(crate::theme::danger_alpha(t, 0x73)))
+                .rounded(px(10.))
+                .shadow_lg()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .text_size(crate::appearance::ui_size(12.5))
+                        .text_color(rgb(t.text))
+                        .child(message.into()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(6.))
+                        .child(cancel_btn)
+                        .child(confirm_btn),
+                ),
+        ))
+        .into_any_element()
 }
 
 /// 规则 5：× 关闭钮（22×22 圆角，hover 变亮）。
