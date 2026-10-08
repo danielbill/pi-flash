@@ -55,7 +55,7 @@ fn surface_one(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>, name: &st
         "files" => files_surface(chat, cx),
         "git" => git_surface(chat),
         "settings" => settings_surface(chat, cx),
-        "dialogs" => dialogs_surface(chat),
+        "dialogs" => dialogs_surface(chat, cx),
         _ => Value::Null,
     }
 }
@@ -424,7 +424,7 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     }
 }
 
-fn dialogs_surface(chat: &Chat) -> Value {
+fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     let dialog = chat.dialog.as_ref().map(|d| match d {
         Dialog::ModelSelect { .. } => "model_select",
         Dialog::GitDiff { .. } => "git_diff",
@@ -448,6 +448,11 @@ fn dialogs_surface(chat: &Chat) -> Value {
     };
     json!({
         "dialog": dialog,
+        // 模型选择弹窗的可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录）
+        "model_rows": match chat.dialog.as_ref() {
+            Some(Dialog::ModelSelect { .. }) => chat.filtered_models(cx).len(),
+            _ => 0,
+        },
         "project_hits": project_hits,
         "project_filter": chat.project_filter,
         "confirm_delete": opt_path(chat.confirm_delete.as_ref()),

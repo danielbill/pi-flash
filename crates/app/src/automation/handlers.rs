@@ -412,6 +412,14 @@ pub(super) fn dispatch(
             chat.open_project_picker(fresh, cx);
             ok()
         }
+        method::MODEL_PICKER_OPEN => {
+            // 与 input.rs「模型 ∨」的点击路径同构：先借同 cwd 的活进程补拉目录，
+            // 再开弹窗（列表内容本身来自 Chat 的共享目录，不依赖本会话进程）
+            chat.ensure_models_requested(cx);
+            chat.dialog = Some(Chat::model_select_dialog(cx));
+            cx.notify();
+            ok()
+        }
         method::SESSION_TOOLS_PRESET => {
             let preset = params
                 .get("preset")

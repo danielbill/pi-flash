@@ -1,3 +1,37 @@
+## 待验证（本轮修复）——新会话页「模型 ∨」弹窗列表空（no models match）
+
+用户口径：第一次进（启动那个项目）「模型 ∨」有列表；**换一个目录**（切项目后落到
+新会话页）再点「模型 ∨」，列表空了；而按钮上明明写着默认模型名。
+
+- ✅ 根因：`Chat::filtered_models`（`actions_rename.rs`，v57 加 ↑↓/Enter 导航时
+  抽出来的渲染+键盘同源函数）**直读 `models_by_cwd`，`.unwrap_or(&[])` 没有回落**。
+  而 010-启动 那轮把目录口径改成「进程答案优先、无则回落到启动装载的全局清单
+  （磁盘 `models.json` + `models-store.json` ∪ 自有缓存 `catalog-cache.json`）」，
+  新的共享入口是 `Chat::catalog_for`——设置页、胶囊标签、`new_session_default`、
+  微信 `/模型` 菜单**全都改走了它，只有这个弹窗漏了**（`catalog_for` 与
+  `filtered_models` 是两次提交：1cc7309 在前、773e423 在后）。
+- ✅ 触发面 = **该 cwd 没有活进程答过 `get_available_models`**。实测两条路：
+  (a) 启动那个 runtime 由 `startup::spawn_initial_attach` **首帧即拉进程**（所以
+  「第一次进有列表」）；(b) 切项目（`switch_project` → `new_session`）建的是
+  **惰性无进程草稿**，而 `ensure_models_requested` 对无进程草稿只借「同 cwd 的活
+  runtime」——新目录一个都没有，于是什么都不发（设计如此：选模型不许凭空拉进程）
+  → `models_by_cwd` 无此 cwd 条目 → 列表空。胶囊标签走 `catalog_for` 有回落，所以
+  出现「按钮有名、列表全空」的错位。
+- ✅ 修法：`filtered_models` 改走 `self.catalog_for(&cwd)`（cwd 取活跃 runtime 的
+  cwd），与其余入口同源；白名单/过滤逻辑不动（`compute_state` 对空 enabled 已有
+  「全放行」回落，不是本轮原因）。
+- ✅ 验证（pif-ui 事务式，两种构建同一条序列对拍）：隔离实例 →
+  `project.switch` 到一个空目录 → `snapshot session.has_process == false`（复现态）
+  → `exec model.picker_open` → `snapshot dialogs.model_rows`：
+  **根因版 0（列表空）/ 修复版 5**（本机 `enabledModels` 白名单命中 5 条）。
+  截图核对：弹窗列出 deepseek/DeepSeek Flash、glm/GLM 5.3 ×2、freeflow ×2。
+- 📌 顺带补断言口（此前这个弹窗**没有任何自动化入口**，所以漏测）：
+  `model.picker_open`（新 op，与「模型 ∨」点击路径同构：先 `ensure_models_requested`
+  再开窗）+ dialogs 面新增 `model_rows`（弹窗可见行数）。复验命令：
+  `pif-ui exec model.picker_open && pif-ui snapshot dialogs --only model_rows`。
+- ⏳ 真机待复验：换目录后点「模型 ∨」列表有货、能选、选完胶囊跟着变；再切回原目录
+  仍是进程答案那份目录（不能被全局清单盖掉）。
+
 ## 待验证（本轮修复）——文件树 / 设置·可用模型列表「滚不动」
 
 用户口径：左边文件树与设置·模型·「可用模型」两处鼠标滚轮毫无反应（截图里模型

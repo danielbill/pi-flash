@@ -2564,3 +2564,18 @@ Claude Fable 5 起、第一个开关右侧露出半截 thumb）。
   法测 tmp/ 资产）；被忽略目录内部整体继承 ignored（git 语义 negation
   救不回）。
 - 验证：app 测试全绿；实机 80K 文件开/滚/切 tab 不崩。
+
+## 2026-10-08 fix：换目录后「模型 ∨」弹窗列表空
+
+- **根因**：`Chat::filtered_models`（v57 抽的渲染+键盘同源函数）直读
+  `models_by_cwd`、无回落，而 010-启动 换了口径（`catalog_for` = 该 cwd 进程答案
+  优先，否则磁盘 ∪ 自有缓存），设置页 / 胶囊标签 / `new_session_default` / 微信
+  `/模型` 都改走了新入口，**只有这个弹窗漏了**（1cc7309 早于 773e423）。
+- **触发**：切项目建的是惰性无进程草稿（启动那个 runtime 有
+  `spawn_initial_attach` 拉进程，所以「第一次进有列表」），`ensure_models_requested`
+  又只借「同 cwd 的活 runtime」→ 新目录无人答过 → 列表空、胶囊却有名字。
+- **修法**：`filtered_models` 改走 `self.catalog_for(&cwd)`（一行口径修正）。
+- **自动化**：新增 op `model.picker_open` + dialogs 面 `model_rows`
+  （这个弹窗此前没有任何自动化入口 = 漏测根源）。对拍：`project.switch` 到空目录
+  → `has_process == false` → `model.picker_open`：根因版 0 / 修复版 5。
+- 验证：pi-link 110 + app 167 全绿；`cargo build` 通过。

@@ -60,6 +60,9 @@ pub mod method {
     pub const LANG_SET: &str = "lang.set";
     pub const DIALOG_CLOSE: &str = "dialog.close";
     /// 060 远程控制：开扫码弹窗并发起取码（UI 测试用；内容现读 remote.qr）
+    /// 模型选择弹窗：开（与 inputpanel「模型 ∨」同一个构造路径；UI 测试用，
+    /// 列表内容读 dialogs 面的 `model_rows`）
+    pub const MODEL_PICKER_OPEN: &str = "model.picker_open";
     pub const WX_QR_OPEN: &str = "wx.qr_open";
     pub const PROJECT_SWITCH: &str = "project.switch";
     /// 004 打开项目菜单（psp icon / 012 操作栏同源入口；UI 测试用）

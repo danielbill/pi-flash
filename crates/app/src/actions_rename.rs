@@ -76,8 +76,9 @@ impl Chat {
         Dialog::ModelSelect { input, sel: 0 }
     }
 
-    /// Models visible in the picker: the active session's cwd entry of the
-    /// shared catalog, narrowed by the enabledModels whitelist and the live
+    /// Models visible in the picker: the active project's catalog
+    /// (`catalog_for` = 该 cwd 的进程答案，无则全局磁盘 ∪ 缓存清单）, narrowed
+    /// by the enabledModels whitelist and the live
     /// filter text. Shared by rendering and keyboard navigation so ↑/↓/Enter
     /// always match what is on screen. Works for process-less drafts — the
     /// catalog belongs to Chat, not to any runtime.
@@ -87,11 +88,15 @@ impl Chat {
             _ => String::new(),
         };
         let picker_enabled = !self.mc_state.all_enabled;
-        let cwd_key = self.rt().read(cx).cwd.to_string_lossy().to_string();
-        self.models_by_cwd
-            .get(&cwd_key)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        // 目录取 Chat 的共享入口（`catalog_for`）：该 cwd 的进程答过 → 用它，否则
+        // 回落启动装载的全局清单（磁盘 models.json/models-store.json ∪ 自有缓存）。
+        // **不能直读 `models_by_cwd`**：切项目（`switch_project`）建的是**无进程
+        // 草稿**（`new_session` 惰性，不像启动那个 runtime 会被 `spawn_initial_attach`
+        // 拉进程），而 `ensure_models_requested` 对无进程草稿只借「同 cwd 的活
+        // runtime」——新目录一个都没有 → `models_by_cwd` 无此 cwd 条目 → 直读即空
+        // 列表：胶囊上写着默认模型名、弹窗里却「no models match」。
+        let cwd = self.rt().read(cx).cwd.clone();
+        self.catalog_for(&cwd)
             .iter()
             .filter(|m| {
                 if picker_enabled {
