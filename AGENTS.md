@@ -1,9 +1,15 @@
+# 项目名
+Pi-Flash 
+缩写 PF
+注意单词开头大写，UI设计以此为准。
+
 # 项目目标
 以PI-WEB为功能原型，ZED为性能原型，用Rust+GPUI编写一个极速的Pi桌面端。
 
 # 铁律
 - **内置pi**：内置 `@earendil-works/pi-coding-agent` ，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试。开发期 `PI_FLASH_PI_BIN` 可覆盖。
-- **目标平台**：Windows + macOS（macOS 包走 GitHub Actions runner，不做交叉编译）。
+- **目标平台**：Windows + macOS（macOS 包走 GitHub Actions runner）。
+- 工作自动提交git
 
 # 路径
 
@@ -21,43 +27,22 @@
 - 主题：`theme.rs`（mist 默认；`PI_FLASH_THEME` 可切 default/dark/rose）
 - gpui 0.2.2（crates.io，自包含）；0.2.2 要点：`cx.spawn(async move |weak, &mut AsyncApp|)`、prompt_for_paths 返回 oneshot Receiver、HighlightStyle 无 builder（字段赋值）
 
+# UI 自动化测试
+**agent 调试 UI 一律走 pif-ui 自动化链路，禁止抢真实屏幕/鼠标/键盘，禁止 OS 截图。**
+UI 测试技能：`.agents/skills/pi-flash-ui-test/SKILL.md` 
+
 # GPUI/Rust 陷阱
 
 - 交互 handler（on_mouse_down/on_key_down/listener）漏 `cx.notify()` = 状态变 UI 不动
 - 方法链中间插入语句后漏/多 `),` → 结构性编译错误；大补丁用脚本文件，勿用 bash heredoc（会静默截断）
 - `gen` 是 edition 2024 保留字
-- PrintWindow 对 GPU 窗口有偏移伪影（截屏用 CopyFromScreen + DPIAware）
 
 # pi 协议陷阱（详见 progress.md）
 
 - 内容块类型 camelCase `toolCall`；流式 args 起始走 `partialJson`；工具结果 `role:"toolResult"` 回灌
 - set_model 字段是 `modelId`；client 不得硬编码 `--no-session`
 
-# UI 自动化测试（pi-flash-2kq）
 
-**agent 调试 UI 一律走这条链路，禁止抢真实屏幕/鼠标/键盘，禁止 OS 截图。**
-
-- 开启：`PI_FLASH_AUTOMATION=auto target/debug/pi-flash.exe`（端口/token 写入
-  `<配置目录>/automation/<pid>.json`；`PI_FLASH_DIR` 可隔离整套配置）
-- 驱动：`target/debug/pif-ui.exe <命令>`（协议+CLI 在 `crates/pi-link/src/automation.rs`
-  与 `src/bin/pif-ui.rs`；服务在 `crates/app/src/automation/`）
-- 看界面：`pif-ui snapshot [surface] [--only k]`——JSON 数据快照（8 个
-  surface：app/sessions/session/composer/files/git/settings/dialogs），直接读
-  文本判断 UI 状态；大面用 `--only` 裁剪
-- 操作界面：`pif-ui exec <method> --arg k=v ...`（CLI 组 JSON，**Windows 路径
-  用正斜杠**或交给 --arg 免三层转义）；文本用 `composer.set_text` /
-  `session.send`（直调方法），快捷键用 `pif-ui keys "ctrl-s"`（走真实键位表）
-- 焦点类 bug：`exec input.focus '{"target":"..."}'` 元素级聚焦 + app 面的
-  `focused` 字段断言
-- 等结果：`pif-ui wait --path session.agent_running --eq false --timeout 60`
-  （路径支持数组下标 `a.b[0].c`；断言 `--eq/--contains/--truthy` 三选一；
-  `--surface` 限定轮询面）
-- 清场：`pif-ui clean`（只删明确拒绝连接的死登记；token 只在登记文件里，
-  误删=失联，判死只认 ConnectionRefused；登记丢了看 app 启动日志行的
-  `token=`，用 `--addr/--token` 直连救）
-- 事务式断言范式：`exec` → `wait` → `snapshot` 读 JSON 断言，全程 bash + 文本
-- 方法清单唯一事实源：`pi_link::automation::method`；纯视觉问题（颜色/布局
-  错位）这套看不见，需人眼确认
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
