@@ -197,8 +197,8 @@ impl Chat {
         let (mcp_servers, mcp_errors) = pi_link::mcp::load(Some(&self.cwd));
         self.mcp_servers = mcp_servers;
         self.mcp_errors = mcp_errors;
-        // models.json 编辑缓冲（面板打开/写盘后重建）
-        match pi_link::models_json::read() {
+        // 自定义 provider 编辑缓冲（PF 私有账本；面板打开/写盘后重建）
+        match pi_link::pf_providers::read() {
             Ok(v) => {
                 self.mc_models_json = v;
                 self.mc_mj_error = None;
@@ -446,7 +446,7 @@ pub(crate) fn mc_models_view(
     let enabled_set: std::collections::HashSet<String> =
         chat.mc_state.enabled.iter().cloned().collect();
     let sb = mc_models_sidebar(
-        chat, &weak.clone(), &selected, &enabled_set, enabled_filter, enabled_filter_value, t,
+        chat, &weak.clone(), &enabled_set, enabled_filter, enabled_filter_value, t,
     );
     let detail = mc_models_detail(
         chat, &weak.clone(), &selected, key_input, key_visible, model_filter,
@@ -470,11 +470,10 @@ pub(crate) fn mc_models_view(
 /// → 没模型的，档内按显示名；组内模型按显示名。模型行与 inputpanel 菜单
 /// 共用组件（缩进槽 / 五角星）；行 switch 整商启停（决策 4）。过滤框沿用
 /// MODEL_FILTER_MIN 规则（不足不渲染、文本不生效），只筛模型行，
-/// Provider 行常驻。
+/// Provider 行常驻。行不画选中底色（选中反馈在右栏详情）。
 fn mc_models_sidebar(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
-    selected: &str,
     enabled_set: &std::collections::HashSet<String>,
     enabled_filter: &gpui::Entity<crate::TextInput>,
     enabled_filter_value: &str,
@@ -541,7 +540,6 @@ fn mc_models_sidebar(
         total: usize,
         on: bool,
         switchable: bool,
-        active: bool,
         show_count: bool,
     }
     let mut prov_rows: Vec<ProvRow> = Vec::new();
@@ -553,7 +551,6 @@ fn mc_models_sidebar(
         let (en, total) = counts[ix];
         let is_custom = custom.iter().any(|(n, _)| n == p);
         let configured = is_custom || chat.mc_configured(p);
-        let prov_key = if is_custom { format!("mj:p:{p}") } else { p.clone() };
         rows.push(SbRow::Prov(prov_rows.len()));
         prov_rows.push(ProvRow {
             id: p.clone(),
@@ -562,7 +559,6 @@ fn mc_models_sidebar(
             total,
             on: chat.mc_state.all_enabled || en > 0,
             switchable: !chat.mc_project_scope && total > 0 && configured,
-            active: prov_key == *selected,
             show_count: !chat.mc_state.all_enabled,
         });
         let mut ms: Vec<pi_link::protocol::ModelInfo> = enabled_models
@@ -605,12 +601,13 @@ fn mc_models_sidebar(
                 div()
                     .id(SharedString::from(format!("mc-side-{}", d.id)))
                     .h(px(row_h))
+                    // vlist 行 fit-content：不写 w_full switch 贴着文字
+                    .w_full()
                     .px(px(15.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .cursor_pointer()
-                    .when(d.active, |el| el.bg(rgb(t.bg_selected)))
                     .hover(|s| s.bg(rgb(t.bg_hover)))
                     .text_size(crate::appearance::ui_size(12.))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {

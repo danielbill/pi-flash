@@ -3,10 +3,7 @@
 //! 明文唯一 rest 归宿是系统凭据库（Windows Credential Manager / macOS
 //! Keychain，`keyring` crate）；pf-auth.json / models.json 里只放
 //! `$PF_KEY_*` 变量名引用，spawn 时在这里解出并注入 pi 子进程环境。
-//! auth.json 是 pi 的地盘，PF 不读不写（仅首启一次性收编，startup.rs）。
-
-use crate::models_json;
-
+//! auth.json / models.json 都是 pi 的地盘，PF 零写入（仅启动一次性收编）。
 /// 凭据库抽象：生产用 [`KeyringVault`]，测试用 [`MemVault`]。
 pub trait SecretVault {
     fn set(&self, entry: &str, secret: &str) -> Result<(), String>;
@@ -154,40 +151,63 @@ pub fn env_var_name(provider: &str) -> String {
     name
 }
 
-/// 目录 provider 的 pi 官方 env 名（vendor 的 docs/providers.md 表，随
-/// vendor pin 固化）。查不到 → None：调用方改走 models.json apiKey 引用
-/// 兜底（pi 的 provider 级 key，任意 provider 通用），不硬猜。
+/// 目录 provider 的 pi 官方 env 名。**逐字照抄 vendored pi 的
+/// `getApiKeyEnvVars`**（bundle/chunks，`--help` env 段同源），随 vendor pin
+/// 固化；不猜、不加。查不到 → None：调用方记 pf-auth 并注入自身变量名，
+/// pi 不消费即诚实降级——绝不写 pi 的 models.json 兜底（051 M1.1 铁律）。
 pub fn official_env_name(provider: &str) -> Option<&'static str> {
     const TABLE: &[(&str, &str)] = &[
         ("anthropic", "ANTHROPIC_API_KEY"),
-        ("openai", "OPENAI_API_KEY"),
-        ("deepseek", "DEEPSEEK_API_KEY"),
-        ("openrouter", "OPENROUTER_API_KEY"),
-        ("google", "GEMINI_API_KEY"),
-        ("groq", "GROQ_API_KEY"),
-        ("cerebras", "CEREBRAS_API_KEY"),
-        ("mistral", "MISTRAL_API_KEY"),
-        ("xai", "XAI_API_KEY"),
-        ("nvidia-nim", "NVIDIA_API_KEY"),
-        ("github-copilot", "COPILOT_GITHUB_TOKEN"),
-        ("fireworks", "FIREWORKS_API_KEY"),
-        ("together", "TOGETHER_API_KEY"),
+        ("ant-ling", "ANT_LING_API_KEY"),
+        ("azure-openai-responses", "AZURE_OPENAI_API_KEY"),
         ("baseten", "BASETEN_API_KEY"),
-        ("moonshot", "MOONSHOT_API_KEY"),
-        ("minimax", "MINIMAX_API_KEY"),
-        ("meta", "META_API_KEY"),
-        ("typesafe", "TYPESAFE_API_KEY"),
+        ("cloudflare-ai-gateway", "CLOUDFLARE_API_KEY"),
+        ("cloudflare-workers-ai", "CLOUDFLARE_API_KEY"),
+        ("cerebras", "CEREBRAS_API_KEY"),
+        ("deepseek", "DEEPSEEK_API_KEY"),
+        ("fireworks", "FIREWORKS_API_KEY"),
+        ("github-copilot", "COPILOT_GITHUB_TOKEN"),
+        ("google", "GEMINI_API_KEY"),
+        ("google-vertex", "GOOGLE_CLOUD_API_KEY"),
+        ("groq", "GROQ_API_KEY"),
         ("huggingface", "HF_TOKEN"),
+        ("kimi-coding", "KIMI_API_KEY"),
+        ("meta", "META_API_KEY"),
+        ("minimax", "MINIMAX_API_KEY"),
+        ("minimax-cn", "MINIMAX_CN_API_KEY"),
+        ("mistral", "MISTRAL_API_KEY"),
+        ("moonshotai", "MOONSHOT_API_KEY"),
+        ("moonshotai-cn", "MOONSHOT_API_KEY"),
+        ("nvidia", "NVIDIA_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("opencode", "OPENCODE_API_KEY"),
+        ("opencode-go", "OPENCODE_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("qwen-token-plan", "QWEN_TOKEN_PLAN_API_KEY"),
+        ("qwen-token-plan-cn", "QWEN_TOKEN_PLAN_CN_API_KEY"),
+        ("qwen-token-plan-individual", "QWEN_TOKEN_PLAN_API_KEY"),
+        ("radius", "RADIUS_API_KEY"),
+        ("together", "TOGETHER_API_KEY"),
+        ("typesafe", "TYPESAFE_API_KEY"),
+        ("vercel-ai-gateway", "AI_GATEWAY_API_KEY"),
+        ("xiaomi", "XIAOMI_API_KEY"),
+        ("xiaomi-token-plan-ams", "XIAOMI_TOKEN_PLAN_AMS_API_KEY"),
+        ("xiaomi-token-plan-cn", "XIAOMI_TOKEN_PLAN_CN_API_KEY"),
+        ("xiaomi-token-plan-sgp", "XIAOMI_TOKEN_PLAN_SGP_API_KEY"),
+        ("xai", "XAI_API_KEY"),
+        ("zai", "ZAI_API_KEY"),
+        ("zai-coding-cn", "ZAI_CODING_CN_API_KEY"),
     ];
     TABLE.iter().find(|(p, _)| *p == provider).map(|(_, e)| *e)
 }
 
 /// spawn 注入表（051 §5）：解 pf-auth.json（目录 provider → `injectAs`
-/// 名；降级明文直接注入）与 models.json（自定义 provider 的 `$PF_KEY_*` →
-/// 同名）。解不出的引用跳过——该 provider 在会话里报鉴权错，不阻塞 spawn。
+/// 名；降级明文直接注入）与 pf providers.json（自定义 provider 的
+/// `$PF_KEY_*` → 同名）。解不出的引用跳过——该 provider 在会话里报鉴权
+/// 错，不阻塞 spawn。
 pub fn spawn_env_at(
     pf_path: &std::path::Path,
-    models_path: &std::path::Path,
+    providers_path: &std::path::Path,
     vault: &dyn SecretVault,
 ) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
@@ -219,8 +239,8 @@ pub fn spawn_env_at(
             }
         }
     }
-    if let Ok(doc) = models_json::read_at(models_path) {
-        for (_name, entry) in models_json::providers(&doc) {
+    if let Ok(doc) = crate::pf_providers::read_at(providers_path) {
+        for (_name, entry) in crate::models_json::providers(&doc) {
             if let Some(key) = entry.get("apiKey").and_then(|v| v.as_str()) {
                 if let Some(var) = pf_ref(key) {
                     if let Ok(Some(secret)) = vault.get(var) {
@@ -275,7 +295,8 @@ mod tests {
     fn official_env_table_hits_known_misses_unknown() {
         assert_eq!(official_env_name("deepseek"), Some("DEEPSEEK_API_KEY"));
         assert_eq!(official_env_name("anthropic"), Some("ANTHROPIC_API_KEY"));
-        assert_eq!(official_env_name("glm"), None); // 不硬猜，走 models.json 兜底
+        assert_eq!(official_env_name("zai-coding-cn"), Some("ZAI_CODING_CN_API_KEY"));
+        assert_eq!(official_env_name("glm"), None); // pi 官方表就没有 glm：诚实降级，不猜
     }
 
     #[test]

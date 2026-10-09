@@ -40,6 +40,23 @@ pub fn pf_auth_file() -> Option<PathBuf> {
     file("pf-auth.json")
 }
 
+/// `~/.pi-flash/providers.json` — PF 自定义 provider 账本（051 M1.1：PF
+/// 永不写 pi 的 models.json，自定义内容全部记在这里，spawn 经扩展注入）。
+pub fn pf_providers_file() -> Option<PathBuf> {
+    file("providers.json")
+}
+
+/// `~/.pi-flash/pf-providers.mjs` — spawn 时 `-e` 注入的官方扩展（进程内
+/// `pi.registerProvider`），由 pf_providers::ensure_extension_template 生成。
+pub fn pf_providers_ext_file() -> Option<PathBuf> {
+    file("pf-providers.mjs")
+}
+
+/// `~/.pi-flash/providers-migrated` — models.json 一次性复制迁移完成标记。
+pub fn pf_providers_migrated_file() -> Option<PathBuf> {
+    file("providers-migrated")
+}
+
 /// `~/.pi-flash/workspace.json` — 工作区记忆（每项目 last_open、布局、UI 状态）。
 pub fn workspace_file() -> Option<PathBuf> {
     file("workspace.json")

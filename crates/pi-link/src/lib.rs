@@ -13,6 +13,7 @@ pub mod json;
 pub mod config;
 pub mod credentials;
 pub mod pf_auth;
+pub mod pf_providers;
 pub mod extensions;
 pub mod protocol;
 pub mod recents;

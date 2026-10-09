@@ -39,7 +39,7 @@ impl Chat {
 
     /// 缓冲落盘（042：表单头保存即写盘；失败挂详情错误条，缓冲保留重试）。
     fn mj_flush(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = pi_link::models_json::write(&self.mc_models_json) {
+        if let Err(e) = pi_link::pf_providers::write(&self.mc_models_json) {
             self.mc_set_error(&e, cx);
         }
     }
@@ -72,7 +72,7 @@ impl Chat {
                 return self.mc_set_error(&e, cx);
             }
             // 凭据库条目跟名搬家（无旧条目则静默跳过）
-            pi_link::models_json::rename_provider_key(&old_name, &name, &pi_link::credentials::KeyringVault);
+            pi_link::pf_providers::rename_provider_key(&old_name, &name, &pi_link::credentials::KeyringVault);
         }
         pi_link::models_json::upsert_provider(&mut self.mc_models_json, &name, entry);
         self.mj_flush(cx);
@@ -114,7 +114,7 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         if let Ok(Some(pi_link::credentials::StoreMode::File)) =
-            pi_link::models_json::set_provider_key(entry, name, key, &pi_link::credentials::KeyringVault)
+            pi_link::pf_providers::set_provider_key(entry, name, key, &pi_link::credentials::KeyringVault)
         {
             self.mc_set_error(tr("系统凭据库不可用，已降级为文件存储"), cx);
         }

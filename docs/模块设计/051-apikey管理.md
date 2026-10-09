@@ -1,4 +1,4 @@
-# API Key 管理（系统安全存储 · pf-auth 独立账本）
+# API Key 管理（系统安全存储 · pf-auth / providers 双账本）
 
 模块代码：
 apikeyManager
@@ -6,170 +6,143 @@ apikeyManager
 对应界面：
 1、settings - 模型（provider 详情的 API Key 区、自定义 provider/添加 Provider 的 API Key 字段）
 
-## 核心原则（一句话）
+## 铁律
 
-**PF 的密钥记 PF 自己的账本** `~/.pi-flash/pf-auth.json`，明文只进系统凭据库；pi 的 `auth.json` PF **不读、不写、不管理**——系统 pi / pi-web 用它们自己的 auth.json，与 PF 完全无关。
+1. **PF 永不写 `~/.pi/agent/models.json`**——读只读（catalog 合并显示需要），零写入，连修复都不写（051 M1.1，用户令）。PF 对它造成的任何历史污染由用户手工清理。
+2. **PF 永不写 `~/.pi/agent/auth.json`**——pi 的凭据文件归 pi；仅首启一次性**复制**收编（复制不删）。
+3. 明文密钥唯一 rest 归宿 = OS 凭据库（Windows Credential Manager / macOS Keychain，`keyring` crate）。
 
-## 背景与现状
+## 核心架构（一句话）
 
-- 现状 PF 直接读写 `~/.pi/agent/auth.json`（与 pi 共用）——本设计**废除这一共用**。
-- pi 对 key 值的原生解析（resolve-config-value.js）：明文 / `$ENV_VAR` 模板（从 **pi 子进程环境**取值）/ `!command`（本设计不使用）。models.json 的 `apiKey` 走同一解析器。
-- pi 子进程由 PF spawn，唯一 spawn 点：`crates/pi-link/src/client.rs`（`node cli.js --mode rpc`）。
-- PF 自有目录 `~/.pi-flash/`（010-启动 §4「不污染 pi」），`pf-auth.json` 落这里。
+**PF 的东西记 PF 的账本**：目录 provider 的 key 记 `~/.pi-flash/pf-auth.json`，自定义 provider 记 `~/.pi-flash/providers.json`，两份都是 PF 私有文件（0600）；pi 侧需要什么，spawn 时**注入**进去（env 变量 + 官方扩展注册），pi 的文件一个字节都不碰。
+
+## 背景与事故记录
+
+- 现状前身：PF 曾直接读写 auth.json（与 pi 共用凭据）；M1 初版还把 models.json 当"兜底通道"写入了 `providers.{p}.apiKey` 引用，导致两个真实事故：
+  1. 双 pi 用户（系统 pi + PF 共用 agent 目录）的系统 pi 解析不了 `$PF_KEY_*` 引用，自定义 provider 直接不可用；
+  2. apiKey-only 裸条目让 catalog provider（zai-coding-cn）被侧栏误判为自定义 provider，点「+ 模型」立即落盘 `{"id": ""}` 占位条目且 flush 无校验 → pi 严格校验（`id minLength 1`）→ 整个 models.json schema 报废。
+- 结论（用户裁决）：明文本来就不该到处放；共享文件一个字节都不能写。功能存亡靠注入解决。
+
+## pi 侧事实（vendored 源码核实）
+
+- models.json 加载路径：`ModelRuntime.create({ modelsPath })` 可注入，但 **CLI 无 `--models-json` flag、无单独 env、RPC 消息不支持注册 provider**；
+- `PI_CODING_AGENT_DIR` env 是全量隔离（auth/sessions/settings/skills 全跟走），不可用于只换 models.json；
+- **官方注入通道：扩展 `-e file.js` 在 pi 进程内 `pi.registerProvider(name, config)`**（types.d.ts:1276 官方示例的 apiKey 就是 `"$PROXY_API_KEY"` 环境变量插值形态）；`-ne`（禁自动扩展）与显式 `-e` 可共存（resource-loader.js:403：noExtensions 时 extensionPaths = 显式路径集）；
+- pi 自己的 provider→env 名映射 `getApiKeyEnvVars`（bundle chunk）是官方表，PF 照抄固化。
+
+## 存储分工
+
+| 内容 | 存哪 | 保护 | pi 怎么拿到 |
+|---|---|---|---|
+| 目录 provider key（deepseek/zai-coding-cn…） | `~/.pi-flash/pf-auth.json` | 凭据库（`$PF_KEY_*` 引用） | spawn 注入官方 env 名（表随 vendor pin） |
+| 自定义 provider（含 key/模型） | `~/.pi-flash/providers.json` | 凭据库（同上） | spawn 挂 `-e pf-providers.mjs` → 进程内 `registerProvider` |
+| 系统 pi 自己的 auth.json / models.json | `~/.pi/agent/`（pi 地盘） | 不属于 PF 管辖 | 系统 pi 自己读；PF 只读 models.json 做 catalog 合并 |
 
 ## 目标
 
-1. 明文 key 只存在于三处：PF 内存、OS 凭据库、pi 子进程环境变量——**磁盘零明文**（pf-auth.json 与 models.json 都只有变量名）。
-2. `auth.json` 是 pi 的地盘：PF 不读（除首启一次性收编）、不写、不删。系统 pi / pi-web 的行为与 PF 装没装、存没存 key **完全无关**。
-3. 经 PF 注册的 key 只服务 PF 拉起的会话（spawn 注入），不外溢。
-4. 登录会话内无密码 UX：凭据随 OS 登录自动解锁。
-5. 凭据库不可用时自动降级为 pf-auth.json 明文（0600），功能不断。
+1. 磁盘零明文（两份 PF 账本只放 `$PF_KEY_*` 变量名；降级模式除外，见「降级」）。
+2. pi 的 auth.json / models.json **零写入**；系统 pi / pi-web 与 PF 互不影响。
+3. 登录会话内无密码 UX；凭据库不可用自动降级（pf-auth.json / providers.json 明文 0600），功能不断。
+4. 迁移全部**复制式**：只从 pi 文件往 PF 账本收编，绝不回写。
 
 ## 威胁模型
 
-| 场景 | 现状（明文 auth.json） | 本设计 |
-|---|---|---|
-| 其他本地低权限用户读文件 | 防（ACL） | 防（ACL） |
-| 磁盘失窃 / 备份 / 网盘同步 / 误提交 git | **不防** | **防**（凭据库不随文件走，文件里只有变量名） |
-| 同用户恶意软件 | 不防 | 不防（诚实边界） |
-| 内存扫描 / 键盘记录 | 不防 | 不防 |
-
-核心增益：**rest 状态（磁盘）零明文**。
+| 场景 | 效果 |
+|---|---|
+| 其他本地低权限用户读文件 | 防（ACL + 0600） |
+| 磁盘失窃 / 备份 / 网盘 / 误提交 | **防**（凭据库不随文件走，文件里只有变量名） |
+| 同用户恶意软件 / 内存扫描 | 不防（诚实边界） |
 
 ## 方案选型
 
-| 方案 | 评价 |
-|---|---|
-| 明文 0600（现状） | CLI 行业基线，rest 状态暴露 |
-| **OS 凭据库（选定）** | Windows Credential Manager / macOS Keychain，`keyring` crate 封装；随登录解锁、无密码、Chrome/VS Code 同款 |
-| 密码数据库（SQLCipher 或 Argon2id+AES-GCM） | 真增益仅当「每次使用都输密码且不缓存」，杀启动体验；免输则主密码又得靠 DPAPI/钥匙串包一层，绕回凭据库。留作 M2 可选强化层 |
-
-## 总体架构
-
-```
-【保存】PF 输入框明文（目录 provider / 自定义 provider 同一分流）
-          │ keyring set（service="PiFlash", entry=provider id）
-          ▼
-     Windows 凭据管理器 / macOS 钥匙串            ← 明文唯一 rest 归宿
-          │ 成功后
-          ▼
-     ~/.pi-flash/pf-auth.json  目录 provider 的账本（只有变量名 + 注入目标名）
-     ~/.pi/agent/models.json   自定义 provider 的 apiKey（$PF_KEY_* 引用）
-     ~/.pi/agent/auth.json     ← PF 不碰（pi / pi-web 的地盘）
-
-【spawn】PF 读 pf-auth.json + models.json → 收集 $PF_KEY_* → 凭据库解出
-          → 按条目注入：目录 provider 注 pi 官方 env 名；自定义 provider 注自身变量名
-          → client.rs spawn 点 cmd.envs(...)
-
-【请求】pi 从 process.env 拿 key：
-        目录 provider → 官方 env 名（DEEPSEEK_API_KEY 等，pi 原生认）
-        自定义 provider → models.json apiKey 的 $VAR 解析
-```
+OS 凭据库（选定）> 明文 0600（CLI 基线，rest 暴露）> 密码数据库（真增益仅当每次输密码且不缓存，免输则主密码又得靠 DPAPI/钥匙串包一层，绕回凭据库；留作 M2 可选叠加层）。
 
 ## 设计细节
 
-### 1. pf-auth.json（PF 独立账本，目录 provider）
-
-- 位置：`~/.pi-flash/pf-auth.json`（`PI_FLASH_DIR` 隔离覆盖同样生效）
-- 格式：
+### 1. pf-auth.json（目录 provider 账本）
 
 ```json
-{
-  "deepseek": { "type": "api_key", "key": "$PF_KEY_DEEPSEEK", "injectAs": "DEEPSEEK_API_KEY" },
-  "openai":   { "type": "api_key", "key": "$PF_KEY_OPENAI",   "injectAs": "OPENAI_API_KEY" }
+{ "deepseek": { "type": "api_key", "key": "$PF_KEY_DEEPSEEK", "injectAs": "DEEPSEEK_API_KEY", "mode": "vault" } }
+```
+
+- `injectAs` = pi 官方 env 名，逐字照抄 vendored `getApiKeyEnvVars` 表（含 zai→ZAI_API_KEY、zai-coding-cn→ZAI_CODING_CN_API_KEY 等 40 项）；查不到的 provider 记自身变量名——pi 不消费即不可用，**诚实降级，不再写 models.json 兜底**。
+- `mode`：`vault`（凭据库）/ `ref`（用户手写 `$VAR`/`!cmd`，PF 不掺和）/ `file`（降级明文，PF 直接注入 env）。
+
+### 2. providers.json（自定义 provider 账本）
+
+- schema 沿用 models.json 的 providers 形状（编辑器缓冲零改动成本）；
+- **落盘净化**：空 id / 缺 id 的模型条目、空模型数组、无有效内容（含 apiKey-only 裸条目）的 provider，写前一律丢弃——schema 报废事故根治点；
+- 自定义 key 走同款分流：明文 → 凭据库 + 引用；高级引用原样；库失败降级明文。
+
+### 3. 扩展注入（pf-providers.mjs）
+
+- `~/.pi-flash/pf-providers.mjs` 由 PF 生成（版本化，内容变化即重写）：
+
+```js
+import { readFileSync } from "node:fs";
+const providers = (() => { try { return JSON.parse(readFileSync(new URL("./providers.json", import.meta.url), "utf8")).providers ?? {}; } catch { return {}; } })();
+export default function (pi) {
+  for (const [id, cfg] of Object.entries(providers)) {
+    try { pi.registerProvider(id, cfg); } catch (e) { console.error(...); }
+  }
 }
 ```
 
-- `key`：变量名引用，明文在凭据库；
-- `injectAs`：spawn 时注入的目标变量名 = **pi 官方 env 名**（docs/providers.md 的映射表，随 vendor pin 固化进 PF，pi-link 符合性测试看护）；pi 对官方 env 名有原生支持，无需 auth.json 条目；
-- 权限：`write_json_private`（0600，Unix；与 auth.json 同待遇）。
+- client.rs spawn：账本非空且模板存在 → `cmd.arg("-e").arg(ext)`；与 `-ne` 隔离兼容（显式 `-e` 照常加载）；
+- spawn 同时注入 env（`credentials::spawn_env_at`）：pf-auth（injectAs / 降级明文）+ providers.json（`$PF_KEY_*` 引用）→ 凭据库解出 → `cmd.envs(...)`；解不出的引用跳过，不阻塞 spawn。
 
-### 2. 凭据库条目规范
+### 4. 凭据库条目规范
 
-- service：`PiFlash`（常量）；条目名（user）：provider id 原样
-- 平台映射：Windows → Credential Manager（单条 2560 字节上限，足够）；macOS → Keychain（自建自读，静默）
-- 依赖：`keyring = { version = "3", features = ["windows-native", "apple-native"] }`
+- service `PiFlash`；条目名 = provider id 原样；Windows Credential Manager / macOS Keychain（keyring v3，`windows-native`/`apple-native` features）。
 
-### 3. 变量名规范
+### 5. 变量名规范
 
-- `PF_KEY_<大写净化provider>`：非 `[A-Z0-9]` 字符替换为 `_` 后大写（`my-gw` → `PF_KEY_MY_GW`）
-- 净化后冲突：追加原始 id 短哈希后缀
-- `PF_KEY_` 前缀为 PF 保留；用户手写的其他 `$VAR` / `!cmd` 原样尊重，不注入、不迁移
-
-### 4. 引用格式（pf-auth.json 与 models.json 分工）
-
-| provider 类型 | key 记在哪 | pi 怎么拿到 |
-|---|---|---|
-| 目录 provider（deepseek/openai/glm…） | `~/.pi-flash/pf-auth.json` | spawn 注入官方 env 名 |
-| 自定义 provider（models.json 条目） | models.json 的 `apiKey` 字段 | spawn 注入 `PF_KEY_*`，pi 解析 `$VAR` |
-
-- models.json 的 `apiKey` 是 pi 原生字段，协议层零改动；系统 pi 看到引用但无 env 时该 provider 不可用（即「不外溢」）；若用户在系统 pi 自己的 auth.json 里配了同一 provider，credential 优先级更高，互不干扰。
-- 自定义 provider 不写 pf-auth.json（models.json 就是它的账本），目录 provider 不动 models.json。
-
-### 5. spawn 注入（client.rs 唯一 spawn 点）
-
-- 读 pf-auth.json（`injectAs` 目标）+ models.json（`PF_KEY_*` 引用），去重后从凭据库解出 → `cmd.envs(map)` 一次性注入；
-- 解不出的引用：跳过注入，给对应会话上报提示「provider X 的密钥不在系统凭据库，请在设置-模型中重新保存」；
-- env 只写进子进程，PF 自身 `process.env` 不碰；不写日志。
+- `PF_KEY_<大写净化provider>`，非 `[A-Za-z0-9]` 字符净化为 `_` 且整体追加 6 位 FNV 短哈希（`my-gw` → `PF_KEY_MY_GW_XXXXXX`，`a-b`/`a.b` 不冲突）；纯字母数字 id 保持干净（`deepseek` → `PF_KEY_DEEPSEEK`）。
+- `PF_KEY_` 前缀 PF 保留；用户手写的其他 `$VAR` / `!cmd` 原样落盘、不注入不迁移。
 
 ### 6. 保存 / 替换 / 断开 / 改名
 
-- **保存**（统一分流，两处界面共用）：
-  - 输入以 `!` 或 `$` 开头 → 高级引用，原样落盘（不碰凭据库）；
-  - 否则视为明文 → `vault.set` 成功 → 目录 provider 写 pf-auth.json / 自定义 provider 写 models.json 引用；
-  - `vault.set` 失败 → 降级：明文写 pf-auth.json（目录）或 models.json（自定义）+ 错误条提示「系统凭据库不可用，已降级为文件存储」。
-- **替换**：同名条目 `set` 天然覆盖。
-- **断开连接**：删自己的账本条目（pf-auth.json 或 models.json 字段置空）+ `vault.delete`（幂等）。**不碰 auth.json。**
-- **自定义 provider 改名**：凭据条目以 provider id 为 key → vault 条目搬家 + models.json 引用重写。
-- **显示**：不回显明文；输入框回显变量名引用（或空 +「系统凭据库」徽标），输入新值即替换。
+- 保存（目录 → pf-auth；自定义 → providers.json 缓冲，净化落盘）：`$`/`!` 高级引用原样；明文 → vault + 引用；vault 失败 → 降级明文 + 错误条提示。
+- 断开：删自己账本的条目 + vault delete（幂等）。**不碰 pi 文件。**
+- 自定义 provider 改名：vault 条目跟名搬家。
+- 显示：不回显明文；状态文案 `已配置 · 系统凭据库` / `已配置 · 文件存储`。
 
-### 7. 迁移（存量收编——复制式，一次性）
+### 7. 迁移（全部复制式，一次性，先于任何 spawn）
 
-- **auth.json 里的旧 key**（老版本 PF 写入的）：首启一次性**复制**进 pf-auth.json + 凭据库；auth.json 原文不动——那是 pi 的文件，PF 从此不再碰，用户想清理自己删。
-- **models.json 里的明文 apiKey**（PF UI 写入的）：原址迁移 vault + 改引用（该文件本就是 PF 维护自定义 provider 的地方）。
-- 判定（幂等）：值不以 `$` 开头 → 收编；`$`/`!` 引用与 `type: oauth` 跳过。
-- 时机：应用启动后台、**先于任何 spawn**；任一步失败停在原状，下次重试。
-- 升级场景：PF 更新需重启应用，旧 pi 进程随应用退出，无「老进程 + 新文件」窗口。
+- auth.json 明文 api_key → vault + pf-auth（复制不删；oauth/引用跳过；已有条目跳过）；
+- pi models.json 有真自定义内容（有 baseUrl 或有非空 id 模型）的条目 → providers.json（复制不删；apiKey-only 垃圾跳过；复制后明文立即凭据库化）；标记文件 `~/.pi-flash/providers-migrated` 防重跑；
+- models.json / auth.json **字节不动**，单测断言。
 
 ### 8. 行为变化（需在 UI 告知用户）
 
-- **换 key 生效时机**：env 按子进程固定，换 key 需重启会话生效；设置保存时提示。
-- **PF 模型页「已配置」口径改为自有账本**（pf-auth.json + models.json 引用）；auth.json 里用户给系统 pi 配的 key 不再显示在 PF 页面（互不归属）。
-- **系统 pi / pi-web：零变化。**
-
-### 9. UI 变化（settings - 模型）
-
-- 状态文案：`已配置` → `已配置 · 系统凭据库` / `已配置 · 文件存储`（降级时）
-- note：「密钥存入 Windows 凭据管理器 / macOS 钥匙串；pf-auth.json 只留变量名，auth.json 归 pi」
+- 换 key 需重启会话生效（env/扩展按子进程固定）。
+- PF 注册的内容只服务 PF 会话（用户裁决的架构）：系统 pi 想用同款 provider 就写它自己的 models.json。
+- OAuth 归 pi：PF 模型页不再显示/管理 auth.json 里的 OAuth 登录态。
 
 ## 代码落点
 
-| 文件 | 改动 |
+| 文件 | 职责 |
 |---|---|
-| `crates/pi-link/src/credentials.rs`（新） | `trait SecretVault` + `KeyringVault` + 测试内存 Fake；`env_var_name()`、官方 env 名映射表（随 vendor pin）、引用识别、双文件迁移扫描 |
-| `crates/pi-link/src/pf_auth.rs`（新） | pf-auth.json 读写（`write_json_private`） |
-| `crates/pi-link/src/config.rs` | 现 auth.json 读写函数退役为迁移专用；新保存/断开走 pf-auth |
-| `crates/pi-link/src/client.rs` | spawn 点读双账本收集引用 + `envs()` 注入 |
-| `crates/pi-link/src/models_json.rs` | `set_api_key` 帮手（分流）；`rename_provider` 同步 vault 搬家 + 引用重写 |
-| `crates/app/src/startup.rs` | 一次性收编（后台，先于 spawn） |
-| `crates/app/src/settings/custom_models.rs` | `mj_save_provider` / `mj_add_provider` 接新帮手；回显改引用/徽标 |
-| `crates/app/src/settings/models.rs` | 保存/断开/状态口径切 pf-auth；文案更新 |
-| 会话层（spawn 调用方） | 缺钥提示透传 |
+| `pi-link/src/credentials.rs` | SecretVault trait + KeyringVault/MemVault/FailVault；`$PF_KEY_*` 识别、env_var_name、官方 env 表（照抄 getApiKeyEnvVars）、spawn_env_at |
+| `pi-link/src/pf_auth.rs` | pf-auth.json 账本 + 目录 key 保存/断开/收编 |
+| `pi-link/src/pf_providers.rs` | providers.json 账本（净化落盘）+ key 分流 + 扩展模板 + models.json 复制迁移 |
+| `pi-link/src/models_json.rs` | **只读视图 + 纯 JSON 手术**（编辑器缓冲用），无任何 I/O |
+| `pi-link/src/client.rs` | spawn：envs 注入 + `-e` 扩展挂载 |
+| `pi-link/src/catalog.rs` | disk_models 合并 pf 账本（只读，PF 自定义模型免会话即可见） |
+| `app/src/startup.rs` | boot：扩展模板 → 复制迁移 → auth 收编 |
+| `app/src/settings/custom_models.rs`、`models.rs` | 编辑器/侧栏/状态切自有账本 |
 
 ## 测试
 
-- 单测（pi-link）：变量名净化/冲突哈希、injectAs 映射表、引用识别、迁移判定矩阵（明文→收编、`$OTHER`/`!`/oauth→跳过、auth.json 复制不删）、FakeVault 全流程、降级路径、改名联动。
-- 集成：真实 keyring roundtrip 标 `#[ignore]`（本机手动跑）。
-- pif-ui：保存后断言 pf-auth.json/models.json 含 `$PF_KEY_*` 且无明文、**auth.json 字节不变**；断开后条目消失；高级引用不被劫持。
-- 手工验收：Windows 凭据管理器目视条目；macOS 钥匙串访问；系统 pi / pi-web 行为回归（装 PF 前后对比）；降级注入。
+- pi-link 123+：引用识别、变量名/冲突哈希、官方表（zai-coding-cn 等）、分流路由、降级、断开、收编（复制不删、字节不变断言）、**sanitize（空 id 永不落盘）**、复制迁移（筛选/幂等/字节不变/标记）、spawn_env 合并跳过、扩展模板稳定性。
+- 手工验收：models.json 前后 diff 字节不变；PF 新建自定义 provider → 只出现 providers.json + 会话内可用；系统 pi 不受影响；降级注入。
 
 ## 分期
 
-- **M1（本设计落地范围）**：credentials/pf_auth 模块 + 保存/断开/改名切自有账本 + spawn 注入 + 一次性收编 + 降级 + UI 文案。
-- **M2（可选）**：「复制到剪贴板」导出；存储方式设置项；保存后自动重启受影响会话；主密码保险库（Argon2id + AES-256-GCM，主密码可 DPAPI/钥匙串包装免输）——叠加层。
+- **M1/M1.1（已落地）**：上述全部。
+- **M2（可选）**：剪贴板导出；存储方式设置项；保存后自动重启受影响会话；主密码保险库（Argon2id + AES-256-GCM 叠加层）；models.json 只读条目的「导入到 PF」按钮。
 
 ## 开放问题
 
-1. 官方 env 名映射表与 vendor pin 的同步：pi 升级（bump vendor）时新增/改名 provider 的 env 名由 pi-link 符合性测试看护。
-2. glm 等多 plan provider 的 env 歧义（如 ZAI 有 Global/China 两个变量名）：实现时按 catalog 条目定，表里允许一名多写。
-3. keyring v3 在 GitHub Actions runner 的可用性（不阻塞 M1）。
+1. 扩展注册的 provider 在 `get_available_models` 的呈现与 catalog 缓存合并的时序（实现已留 catalog 合并路径，验收确认）。
+2. keyring v3 在 GitHub Actions runner 的可用性（集成测试 `#[ignore]`，不阻塞）。

@@ -100,10 +100,14 @@ pub fn store_path() -> PathBuf {
     crate::config::agent_dir().join("models-store.json")
 }
 
-/// 磁盘模型目录 = `models.json`（用户自定义优先）+ `models-store.json`（pi 缓存），
-/// 按 `provider/id` 去重、保持 provider 出现顺序。任一文件缺失/坏掉都只是少一份。
+/// 磁盘模型目录 = `providers.json`（PF 自定义账本，最优先）+ `models.json`
+/// （pi 的文件，只读）+ `models-store.json`（pi 缓存），按 `provider/id` 去重、
+/// 保持 provider 出现顺序。任一文件缺失/坏掉都只是少一份。
 pub fn disk_models() -> Vec<ModelInfo> {
     let mut out = Vec::new();
+    if let Ok(v) = crate::pf_providers::read() {
+        out.extend(parse_models_json(&v));
+    }
     if let Ok(v) = crate::models_json::read() {
         out.extend(parse_models_json(&v));
     }

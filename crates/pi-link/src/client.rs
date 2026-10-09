@@ -102,15 +102,33 @@ pub fn spawn(
     } else {
         cmd.stderr(Stdio::null());
     }
-    // 051：pf-auth.json（目录 provider 的 injectAs / 降级明文）+ models.json
+    // 051：pf-auth.json（目录 provider 的 injectAs / 降级明文）+ providers.json
     // （自定义 provider 的 `$PF_KEY_*`）解出的密钥注入子进程环境。解不出
     // 的引用跳过（该 provider 会话内报鉴权错），凭据库故障不阻塞 spawn。
     if let Some(pf_auth_path) = crate::pf_auth::path() {
-        cmd.envs(crate::credentials::spawn_env_at(
-            &pf_auth_path,
-            &crate::models_json::path(),
-            &crate::credentials::KeyringVault,
-        ));
+        if let Some(providers_path) = crate::pf_providers::path() {
+            cmd.envs(crate::credentials::spawn_env_at(
+                &pf_auth_path,
+                &providers_path,
+                &crate::credentials::KeyringVault,
+            ));
+        }
+    }
+    // 051 M1.1：PF 自定义 provider 经官方扩展在 pi 进程内 registerProvider，
+    // **不写 pi 的 models.json**。-ne 隔离下显式 -e 照常加载（resource-loader
+    // 把 additionalExtensionPaths 与启用集合并），账本为空则不挂扩展。
+    if let Some(ext) = crate::pf_providers::ext_path() {
+        let has_providers = crate::pf_providers::read()
+            .ok()
+            .and_then(|doc| {
+                doc.get("providers")
+                    .and_then(|p| p.as_object())
+                    .map(|o| !o.is_empty())
+            })
+            .unwrap_or(false);
+        if has_providers && ext.is_file() {
+            cmd.arg("-e").arg(ext);
+        }
     }
     #[cfg(windows)]
     {
