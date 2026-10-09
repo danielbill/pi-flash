@@ -204,6 +204,7 @@ fn session_more_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyE
         div()
             .id("topbar-more-btn")
             .size(px(22.))
+            .flex_shrink_0()
             .flex()
             .items_center()
             .justify_center()
@@ -515,8 +516,12 @@ fn tab_shell(
         })
         .on_mouse_down(MouseButton::Left, switch);
     tab = tab
-        // 前置 icon（会话 tab = bot-message-square；文件/终端 tab 无）
-        .children(icon_name.map(|n| crate::ui::icon(n, 15., t.text_muted)))
+        // 前置 icon（会话 tab = bot-message-square；文件/终端 tab 无）。
+        // flex_shrink_0 必须显式：非激活 tab 限宽 100px 溢出时默认 shrink
+        // 会把 svg 连带宽一起压扁（icon 缩成团的 bug）
+        .children(icon_name.map(|n| {
+            div().flex_shrink_0().child(crate::ui::icon(n, 15., t.text_muted))
+        }))
         .child(
             div()
                 .min_w_0()
