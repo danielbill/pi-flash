@@ -378,10 +378,11 @@ fn set_row(
                 .flex_col()
                 .gap(px(2.))
                 .child(
+                    // 标题与「界面」页 section_label 同款（13 semibold text_muted）
                     div()
                         .text_size(crate::appearance::ui_size(13.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text))
+                        .text_color(rgb(t.text_muted))
                         .child(SharedString::from(title.to_string())),
                 )
                 .child(
