@@ -17,7 +17,7 @@
 | 按钮高度 | 18/22/28/32 | 24/32/40 | 40 | shadcn 32/36/40 | **24 / 28 / 32** |
 | 图标 | 10/12/14/16/48（菜单默认 14） | 12/16/20/24 | 20（密）/24 | Primer 16/24；shadcn 16 | **10/12/14/16/18** |
 | 圆角 | 2/4/6/8/12/16/24 | 2/4/8 | — | shadcn 4/8/12 | **3/6/8/10/12** |
-| Switch | 32×20，knob 12 | 40×20，thumb 12 | 52×32（触屏） | — | **32×18，knob 12**（小档 24×14） |
+| Switch | 32×20，knob 12 | 40×20，thumb 12 | 52×32（触屏） | — | **28×16，knob 10**（小档 24×14） |
 | Checkbox | 16，r2，勾 14 | 20 | — | Primer 16 | **14，r3，勾 10**（12px 密度取小一档） |
 | 弹窗 | 宽 544/640，r8，标题 16 | r8 | — | shadcn max-w 512，r8 | **宽 380/500/620/760，r10** |
 | 菜单 | r8，min-w 200，图标 14 | — | — | shadcn 行 py6 | **r8，p4，行 px10·py7，图标 14** |
@@ -159,11 +159,11 @@
 
 | 尺寸 | 轨道 | 圆角 | knob | 位置（关/开） |
 |---|---|---|---|---|
-| SW_MD（默认） | 32×18 | 9（半高） | 12 | ml2 / ml14 |
+| SW_MD（默认） | 28×16 | 8（半高） | 10 | ml2 / ml14 |
 | SW_SM | 24×14 | 7 | 8 | ml2 / ml10 |
 
 - 选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用整体 opacity 0.5。
-- 与 Zed（32×20/knob12）、Fluent（40×20/thumb12）同族，取密一档。状态直切、无动画——GPUI 现状即无插值，规范不虚构动画。
+- 与 Zed（32×20/knob12）、Fluent（40×20/thumb12）同族，按 12px 密度再收半档（2026-10-09 定夺）。存量 config_switch 32×18 收敛到 28×16；24×14 仅密集小场景（group_switch）。状态直切、无动画——GPUI 现状即无插值，规范不虚构动画。
 
 ### 5.4 复选框 / 单选
 
@@ -288,7 +288,14 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | 9 | 次要按钮描边 border_alpha(0x8c) 与 t.border 并存 | t.border | dialogs.rs、overlay.rs |
 | 10 | 文档-实现漂移（发送钮 28↔36、设置导航 200↔160、statusbar 30↔36） | 以本文为准回写实现 | input.rs、settings/mod.rs、status_bar.rs |
 
-落地方式建议：新建 `crates/app/src/ui/tokens.rs`，把 §1–§5 的令牌表落成 `pub const`（SP*、ICON_*、R_*、BTN_*、SW_*、DLG_*），调用点逐模块替换；`settings/widgets.rs` 的 Config* 系列改造为基于 tokens 的通用组件（Button/Switch/Checkbox/NavRow），向全项目推广。
+落地建议（四阶段滚动，每阶段独立 commit + pif-ui 截图走查）：
+
+- **P0 地基（约半天）**：新建 `crates/app/src/ui/tokens.rs` 落全部令牌常量（SP*、ICON_*、R_*、BTN_*、SW_*、DLG_*）+ 单测锁定数值（仿 `theme.rs` 的不变量测试）。零视觉变化；此后禁止新增硬编码尺寸。
+- **P1 低风险值替换（约 1 天，一个 commit）**：#8 checkbox 勾色（2 处 2 行）→ #9 次要钮描边（2 处）→ #7 滚动条容器 w10（4 处）→ #4 danger 唯一化（4 文件）。全是近等值替换，视觉几乎无感，先销 4 条。
+- **P2 样板收敛（2–3 天）**：#1 文字按钮——把 `settings/widgets.rs` 的 config_button 升级为基于 tokens 的通用按钮组件（三高三变体），先在 043 MCP 设置页试点走查，再替换 overlay/dialogs/psp_overlays/git_panel 其余组合；随后 #5 弹窗圆角三语义、#3 图标档位（先统一"关闭×=12""菜单图标=14"两个高频语义，其余按模块滚动）。
+- **P3 视觉敏感项 + 文档回写（约半天 + 走查）**：#6 行高四档、废 mb 补偿（项目行 33→32 有 1px 变化，需走查）；#2 裸字号——markdown/终端按规范本就是固定特例，值入册 tokens 即可，其余换 ui()；#10 文档漂移以本文为准回写实现。
+
+优先级理由：#1/#4 是后续新页面（042/043 一类设置页正密集产出）会照抄的样板，最优先统一，否则每新一个页面多欠一笔债；#2 带 bug 性质（用户调界面字号时那 11 处不动）；icon 全量 66 处不做一次性大扫除，改到哪个模块顺手收敛哪个模块。`settings/widgets.rs` 的 Config* 系列在 P2 改造为基于 tokens 的通用组件（Button/Switch/Checkbox/NavRow）向全项目推广。
 
 ---
 

@@ -246,24 +246,20 @@ th.pf { color:var(--accent); }
 .sw input { position:absolute; opacity:0; pointer-events:none; }
 .sw .tr {
   display:block; position:relative;
-  width:32px; height:18px; border-radius:9px;
+  width:28px; height:16px; border-radius:8px;
   background:var(--bg-selected); border:1px solid var(--border);
   transition:background .15s ease, border-color .15s ease;
 }
 .sw .tr::after {
   content:""; position:absolute; top:2px; left:2px;
-  width:12px; height:12px; border-radius:50%; background:var(--bg);
+  width:10px; height:10px; border-radius:50%; background:var(--bg);
   transition:left .15s ease; box-shadow:0 1px 2px rgba(0,0,0,.18);
 }
 .sw input:checked + .tr { background:var(--accent); border-color:var(--accent); }
-.sw input:checked + .tr::after { left:16px; }
+.sw input:checked + .tr::after { left:14px; }
 .sw.sw-sm .tr { width:24px; height:14px; border-radius:7px; }
 .sw.sw-sm .tr::after { width:8px; height:8px; }
 .sw.sw-sm input:checked + .tr::after { left:12px; }
-/* 28×16 候选档（待定夺） */
-.sw.sw-mid .tr { width:28px; height:16px; border-radius:8px; }
-.sw.sw-mid .tr::after { width:10px; height:10px; }
-.sw.sw-mid input:checked + .tr::after { left:14px; }
 .sw.dis { opacity:.5; pointer-events:none; }
 
 /* 复选 / 单选 */
@@ -497,7 +493,7 @@ footer a:hover { text-decoration:underline; }
         <tr><td>按钮高度</td><td>18/22/28/32</td><td>24/32/40</td><td>40</td><td>shadcn 32/36/40</td><td class="pf">24 / 28 / 32</td></tr>
         <tr><td>图标</td><td>10/12/14/16/48</td><td>12/16/20/24</td><td>20（密）/24</td><td>Primer 16/24</td><td class="pf">10/12/14/16/18</td></tr>
         <tr><td>圆角</td><td>2/4/6/8/12/16/24</td><td>2/4/8</td><td>—</td><td>shadcn 4/8/12</td><td class="pf">3/6/8/10/12</td></tr>
-        <tr><td>Switch</td><td>32×20 · knob 12</td><td>40×20 · thumb 12</td><td>52×32（触屏）</td><td>—</td><td class="pf">32×18 · knob 12</td></tr>
+        <tr><td>Switch</td><td>32×20 · knob 12</td><td>40×20 · thumb 12</td><td>52×32（触屏）</td><td>—</td><td class="pf">28×16 · knob 10</td></tr>
         <tr><td>Checkbox</td><td>16 · r2 · 勾 14</td><td>20</td><td>—</td><td>Primer 16</td><td class="pf">14 · r3 · 勾 10</td></tr>
         <tr><td>弹窗</td><td>宽 544/640 · r8</td><td>r8</td><td>—</td><td>shadcn 512 · r8</td><td class="pf">宽 380/500/620/760 · r10</td></tr>
         <tr><td>菜单</td><td>r8 · min-w 200 · 图标 14</td><td>—</td><td>—</td><td>shadcn 行 py6</td><td class="pf">r8 · p4 · 行 px10·py7</td></tr>
@@ -639,8 +635,8 @@ footer a:hover { text-decoration:underline; }
     <h3>5.3 开关 / 复选 / 单选</h3>
     <div class="demo-grid">
       <div class="demo-card">
-        <div class="cap">Switch <span class="tag">SW_MD · 32×18 · r9 · knob 12</span></div>
-        <div style="display:flex;gap:16px;align-items:center;height:32px">
+        <div class="cap">Switch <span class="tag" style="color:var(--accent);font-weight:700">SW_MD · 28×16 · r8 · knob 10 ★ 已选定默认</span></div>
+        <div style="display:flex;gap:16px;align-items:center;height:28px">
           <label class="sw"><input type="checkbox" checked><span class="tr"></span></label>
           <label class="sw"><input type="checkbox"><span class="tr"></span></label>
           <label class="sw dis"><input type="checkbox" checked><span class="tr"></span></label>
@@ -651,14 +647,7 @@ footer a:hover { text-decoration:underline; }
           <label class="sw sw-sm"><input type="checkbox" checked><span class="tr"></span></label>
           <label class="sw sw-sm"><input type="checkbox"><span class="tr"></span></label>
         </div>
-        <div class="cap" style="margin-top:12px">候选 28×16 <span class="tag" style="color:var(--accent);font-weight:700">28×16 · r8 · knob 10 · 待定夺</span></div>
-        <div style="display:flex;gap:16px;align-items:center;height:28px">
-          <label class="sw sw-mid"><input type="checkbox" checked><span class="tr"></span></label>
-          <label class="sw sw-mid"><input type="checkbox"><span class="tr"></span></label>
-          <label class="sw sw-mid dis"><input type="checkbox" checked><span class="tr"></span></label>
-          <span style="font-size:11px;color:var(--text-soft)">开 / 关 / 禁用</span>
-        </div>
-        <div class="note">选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用 opacity .5。状态直切无动画。</div>
+        <div class="note">2026-10-09 定夺 28×16 为默认档。选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用 opacity .5。状态直切无动画。存量 config_switch 32×18 收敛到 28×16；24×14 仅密集小场景（group_switch）。</div>
       </div>
       <div class="demo-card">
         <div class="cap">Checkbox <span class="tag">14×14 · r3 · 勾 10</span></div>
@@ -835,20 +824,31 @@ footer a:hover { text-decoration:underline; }
   <!-- ============ §9 收敛清单 ============ -->
   <section id="sec-mig">
     <div class="sec-head"><span class="sec-no">09</span><h2>存量收敛清单</h2></div>
-    <p class="sec-desc">按同语义异值频次排序。落地方式：新建 <code>crates/app/src/ui/tokens.rs</code> 落常量（SP* · ICON_* · R_* · BTN_* · SW_* · DLG_*），<code>settings/widgets.rs</code> 的 Config* 系列改造为通用组件推广。跟踪：<span class="tag">bead pi-flash-rmd</span></p>
+    <p class="sec-desc">按同语义异值频次排序。跟踪：<span class="tag">bead pi-flash-rmd</span></p>
+    <div class="panel" style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px">落地建议 · 四阶段滚动，每阶段独立 commit + pif-ui 截图走查</div>
+      <table>
+        <tr><th style="width:64px">阶段</th><th>内容</th><th style="width:150px">规模 / 风险</th></tr>
+        <tr><td><span class="tag" style="color:var(--accent);font-weight:700">P0 地基</span></td><td>新建 <code>ui/tokens.rs</code> 落全部令牌常量 + 单测锁定数值（仿 theme.rs 不变量测试）。零视觉变化；此后禁止新增硬编码尺寸。</td><td>约半天 · 无风险</td></tr>
+        <tr><td><span class="tag" style="color:var(--accent);font-weight:700">P1 值替换</span></td><td>#8 勾色 → #9 次要钮描边 → #7 滚动条容器 → #4 danger 唯一化。全是近等值替换，视觉几乎无感，先销 4 条。</td><td>约 1 天 · 低风险，一个 commit</td></tr>
+        <tr><td><span class="tag" style="color:var(--accent);font-weight:700">P2 样板收敛</span></td><td>#1 文字按钮：config_button 升级为通用按钮组件，先在 043 MCP 设置页试点走查再铺开；随后 #5 弹窗圆角、#3 图标档位（先统一关闭×=12、菜单图标=14 两个高频语义）。</td><td>2–3 天 · 中风险</td></tr>
+        <tr><td><span class="tag" style="color:var(--accent);font-weight:700">P3 收尾</span></td><td>#6 行高四档、废 mb 补偿（项目行 33→32 有 1px 变化需走查）；#2 裸字号（markdown/终端为固定特例入册 tokens，不硬改 ui()）；#10 文档漂移回写。</td><td>约半天 · 需走查</td></tr>
+      </table>
+      <div class="note"><b>优先级理由：</b>#1/#4 是后续新页面（042/043 一类设置页正密集产出）会照抄的样板，最优先统一，否则每新一个页面多欠一笔债；#2 带 bug 性质（调界面字号时那 11 处不动）；icon 全量 66 处不做一次性大扫除，改到哪个模块顺手收敛哪个模块。</div>
+    </div>
     <div class="panel">
       <table>
         <tr><th>#</th><th>问题</th><th>收敛目标</th><th>主要位置</th><th></th></tr>
-        <tr><td>1</td><td>文字按钮 6 种尺寸组合</td><td>§5.1（SM24/MD28/LG32 · r6）</td><td class="mig-loc">overlay / dialogs / psp_overlays / git_panel</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>2</td><td>裸 px 字号绕过双轨（text_sm/xs ×11 等）</td><td>换 ui() / 特例入册</td><td class="mig-loc">dialogs · titlebar · content · ext_ui · text_input · markdown</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>3</td><td>图标尺寸散点（× 8/11/12/13；菜单 13/15）</td><td>§3 五档</td><td class="mig-loc">icon 调用点全量</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>4</td><td>Danger 三套红</td><td>theme.rs danger 系唯一表达</td><td class="mig-loc">widgets · overlay · psp_overlays · titlebar</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>5</td><td>弹窗圆角 8/10/12 混用</td><td>8=菜单壳 / 10=弹窗 / 12=大卡</td><td class="mig-loc">dialogs · overlay · actions_menu</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>6</td><td>列表行高 5 种 + mb 补偿</td><td>§5.8 四档；废 mb 补偿</td><td class="mig-loc">function_panel · file_tree · mcp_picker · dialogs</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>7</td><td>滚动条容器 8/10/12</td><td>统一 w10</td><td class="mig-loc">function_panel · actions_menu · top_panels · dialogs</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>8</td><td>checkbox 勾色白/accent_contrast 分裂</td><td>accent_contrast</td><td class="mig-loc">mcp_picker · plugin_picker</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>9</td><td>次要按钮描边两套</td><td>t.border</td><td class="mig-loc">dialogs · overlay</td><td><span class="todo">待落地</span></td></tr>
-        <tr><td>10</td><td>文档-实现漂移（发送钮 28↔36 等）</td><td>以本文为准回写实现</td><td class="mig-loc">input · settings/mod · status_bar</td><td><span class="todo">待落地</span></td></tr>
+        <tr><td>1</td><td>文字按钮 6 种尺寸组合</td><td>§5.1（SM24/MD28/LG32 · r6）</td><td class="mig-loc">overlay / dialogs / psp_overlays / git_panel</td><td><span class="todo">P2 待落地</span></td></tr>
+        <tr><td>2</td><td>裸 px 字号绕过双轨（text_sm/xs ×11 等）</td><td>换 ui() / 特例入册</td><td class="mig-loc">dialogs · titlebar · content · ext_ui · text_input · markdown</td><td><span class="todo">P3 待落地</span></td></tr>
+        <tr><td>3</td><td>图标尺寸散点（× 8/11/12/13；菜单 13/15）</td><td>§3 五档</td><td class="mig-loc">icon 调用点全量</td><td><span class="todo">P2 待落地</span></td></tr>
+        <tr><td>4</td><td>Danger 三套红</td><td>theme.rs danger 系唯一表达</td><td class="mig-loc">widgets · overlay · psp_overlays · titlebar</td><td><span class="todo">P1 待落地</span></td></tr>
+        <tr><td>5</td><td>弹窗圆角 8/10/12 混用</td><td>8=菜单壳 / 10=弹窗 / 12=大卡</td><td class="mig-loc">dialogs · overlay · actions_menu</td><td><span class="todo">P2 待落地</span></td></tr>
+        <tr><td>6</td><td>列表行高 5 种 + mb 补偿</td><td>§5.8 四档；废 mb 补偿</td><td class="mig-loc">function_panel · file_tree · mcp_picker · dialogs</td><td><span class="todo">P3 待落地</span></td></tr>
+        <tr><td>7</td><td>滚动条容器 8/10/12</td><td>统一 w10</td><td class="mig-loc">function_panel · actions_menu · top_panels · dialogs</td><td><span class="todo">P1 待落地</span></td></tr>
+        <tr><td>8</td><td>checkbox 勾色白/accent_contrast 分裂</td><td>accent_contrast</td><td class="mig-loc">mcp_picker · plugin_picker</td><td><span class="todo">P1 待落地</span></td></tr>
+        <tr><td>9</td><td>次要按钮描边两套</td><td>t.border</td><td class="mig-loc">dialogs · overlay</td><td><span class="todo">P1 待落地</span></td></tr>
+        <tr><td>10</td><td>文档-实现漂移（发送钮 28↔36 等）</td><td>以本文为准回写实现</td><td class="mig-loc">input · settings/mod · status_bar</td><td><span class="todo">P3 待落地</span></td></tr>
       </table>
     </div>
   </section>
