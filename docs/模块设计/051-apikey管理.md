@@ -4,21 +4,27 @@
 apikeyManager
 
 对应界面：
-1、settings - 模型（provider 详情的 API Key 区）
+1、settings - 模型（provider 详情的 API Key 区、自定义 provider/添加 Provider 的 API Key 字段）
 
 ## 背景与现状
 
-- API key 明文存 `~/.pi/agent/auth.json`（`{ "<provider>": { "type": "api_key", "key": "..." } }`），与 pi 共用；f61d2a7 已保证写入不放宽 0600 权限。
-- pi 原生支持 key 值三种形态（resolve-config-value.js）：
-  1. 明文字符串；
-  2. `$ENV_VAR` / `${ENV_VAR}` 模板——发请求时从 **pi 子进程的环境变量**取值，取不到则 key 未解析；
-  3. `!command` 间接引用（本设计不使用）。
-- pi 子进程由 PF spawn，唯一 spawn 点：`crates/pi-link/src/client.rs`（`node cli.js --mode rpc`）。
+明文落盘的有两处，本设计**一并收编**：
+
+1. `~/.pi/agent/auth.json`：`{ "<provider>": { "type": "api_key", "key": "..." } }`，与 pi 共用；f61d2a7 已保证写入不放宽 0600 权限。
+2. `~/.pi/agent/models.json`：自定义 provider 条目的 `"apiKey"` 字段（settings-模型 的编辑器/添加面板写入，custom_models.rs 的 `set_opt_str(&mut entry, "apiKey", ...)`），可含明文 key。
+
+pi 对两种文件的 key 值走**同一个解析器**（resolve-config-value.js）：
+
+1. 明文字符串；
+2. `$ENV_VAR` / `${ENV_VAR}` 模板——发请求时从 **pi 子进程的环境变量**取值，取不到则 key 未解析（models.json 的 apiKey 同样经 `resolveConfigValueOrThrow`，`$VAR` 完全等效）；
+3. `!command` 间接引用（本设计不使用）。
+
+pi 子进程由 PF spawn，唯一 spawn 点：`crates/pi-link/src/client.rs`（`node cli.js --mode rpc`）。
 
 ## 目标
 
-1. 明文 key 只存在于三处：PF 内存、OS 凭据库、pi 子进程环境变量——**磁盘上零明文**。
-2. auth.json 只放变量名（`$PF_KEY_*`），继续与 pi 共用，格式仍是 pi 原生模板形态，不引入私有魔法。
+1. 明文 key 只存在于三处：PF 内存、OS 凭据库、pi 子进程环境变量——**磁盘上零明文**（auth.json 与 models.json 一律不放明文）。
+2. auth.json 与 models.json 的 key 字段只放变量名（`$PF_KEY_*`），继续与 pi 共用，格式是 pi 原生模板形态，不引入私有魔法。
 3. 登录会话内无密码 UX：凭据随 OS 登录自动解锁，不新增任何密码。
 4. 存量明文自动迁移；凭据库不可用时自动降级回文件存储，功能不中断。
 
@@ -51,18 +57,21 @@ apikeyManager
 ## 总体架构
 
 ```
-【保存】PF 输入框明文
+【保存】PF 输入框明文（auth.json 的 provider 详情 / models.json 的自定义 provider）
           │ keyring set（service="PiFlash", entry=provider id）
           ▼
      Windows 凭据管理器 / macOS 钥匙串          ← 明文唯一 rest 归宿
           │ 成功后
           ▼
-     auth.json: { "glm": { "type": "api_key", "key": "$PF_KEY_GLM" } }   ← 只有变量名
+     auth.json:   { "glm": { "type": "api_key", "key": "$PF_KEY_GLM" } }
+     models.json: { "providers": { "my-gw": { "apiKey": "$PF_KEY_MY_GW", ... } } }
+                  ← 两处都只有变量名
 
-【spawn】PF 读 auth.json → 收集 $PF_KEY_* 引用 → 凭据库逐个解出
-          → cmd.envs(...) 注入 pi 子进程（client.rs spawn 点）
+【spawn】PF 扫 auth.json + models.json → 收集全部 $PF_KEY_* 引用
+          → 凭据库逐个解出 → cmd.envs(...) 注入 pi 子进程（client.rs spawn 点）
 
 【请求】pi resolveConfigValue("$PF_KEY_GLM") → process.env → Authorization 头
+        （auth.json 与 models.json 的 apiKey 同一解析器，行为一致）
 ```
 
 ## 设计细节
@@ -89,43 +98,51 @@ apikeyManager
 - 净化后冲突（如 `a-b` 与 `a.b` 同为 `A_B`）：追加原始 id 短哈希后缀 `PF_KEY_A_B_X1Y2`。映射函数确定性，同名必同条目。
 - `PF_KEY_` 前缀为 PF 保留命名空间：spawn 注入、迁移只认它；用户手写的其他 `$VAR` 一律不注入、不迁移。
 
-### 3. auth.json 引用格式
+### 3. 引用格式（auth.json 与 models.json 一致）
 
 ```json
+// auth.json
 { "glm": { "type": "api_key", "key": "$PF_KEY_GLM" } }
+
+// models.json
+{ "providers": { "my-gw": { "baseUrl": "...", "api": "...", "apiKey": "$PF_KEY_MY_GW", "models": [...] } } }
 ```
 
-- `type` 仍是 `api_key`：`read_credential_kinds`、详情页状态点、「断开连接」的 OAuth 保护逻辑全部零改动。
-- 高级形态共存：用户在输入框写 `!cmd` 或 `$VAR` 时按现状原样落盘（见「保存」分流）。
+- auth.json 的 `type` 仍是 `api_key`：`read_credential_kinds`、详情页状态点、「断开连接」的 OAuth 保护逻辑全部零改动。
+- models.json 的 `apiKey` 是 pi 原生字段，`$VAR` 由 pi 自己解析，协议层无任何改动。
+- 高级形态共存：用户在输入框写 `!cmd` 或 `$VAR` 时按现状原样落盘（见「保存」分流），两个文件同规则。
 
 ### 4. spawn 注入（client.rs 唯一 spawn 点）
 
-- spawn 前读 auth.json，收集值匹配 `^\$PF_KEY_[A-Z0-9_]+$` 的引用；
-- 逐个从凭据库解出 → `cmd.envs(map)` 一次性注入；
+- spawn 前扫 **两个文件**：auth.json 各条目的 `key` + models.json 各 provider 条目的 `apiKey`，收集值匹配 `^\$PF_KEY_[A-Z0-9_]+$` 的引用；
+- 去重后逐个从凭据库解出 → `cmd.envs(map)` 一次性注入（同一 provider 在两处都有引用时解一次）；
 - 解不出的引用：跳过注入，并给对应会话上报提示「provider X 的密钥不在系统凭据库，请在设置-模型中重新保存」；
 - env 只写进子进程，PF 自身 `process.env` 不碰；不写日志。
 
-### 5. 保存 / 替换 / 断开
+### 5. 保存 / 替换 / 断开 / 改名
 
-- **保存**（模型页 & 自定义 provider 编辑器共用）：
-  - 输入以 `!` 或 `$` 开头 → 视为高级引用，原样写 auth.json（现状行为，不碰凭据库）；
-  - 否则视为明文 → `vault.set` 成功 → auth.json 写 `$PF_KEY_*` 引用；
-  - `vault.set` 失败 → 降级：明文写 auth.json + 错误条提示「系统凭据库不可用，已降级为文件存储」。
+- **保存**（auth.json 的 provider 详情、models.json 的 provider 编辑器 `mj_save_provider`、添加面板 `mj_add_provider`，共用同一分流）：
+  - 输入以 `!` 或 `$` 开头 → 视为高级引用，原样落盘（现状行为，不碰凭据库）；
+  - 否则视为明文 → `vault.set` 成功 → 对应字段写 `$PF_KEY_*` 引用；
+  - `vault.set` 失败 → 降级：明文落盘 + 错误条提示「系统凭据库不可用，已降级为文件存储」。
 - **替换**：同名条目 `set` 天然覆盖；无需先删。
-- **断开连接**：删 auth.json 条目 + `vault.delete`（幂等，不存在忽略）。降级存储的条目同样适用。
-- **显示按钮**：改为「系统凭据库」徽标，不再回看明文（不可导出是特性）。输入新 key 即替换，语义不变。
+- **断开连接**（auth.json 侧）：删 auth.json 条目 + `vault.delete`（幂等，不存在忽略）。降级存储的条目同样适用。models.json 侧清空 apiKey 字段时同样尝试 `vault.delete`。
+- **自定义 provider 改名**（`rename_provider`）：凭据条目以 provider id 为 key，改名须同步 `vault` 条目搬家 + 引用字段重写（`PF_KEY_MY_GW` → 新名），改名失败不动 vault。
+- **显示**：编辑器/详情页不回显明文；输入框回显变量名引用（或空 + 「系统凭据库」徽标），输入新值即替换。显示按钮改为「系统凭据库」徽标——不可导出是特性。
 
 ### 6. 迁移（存量明文 → 凭据库）
 
-- 时机：应用启动后台执行一次（startup.rs），**先于任何会话 spawn**——否则老进程读到的 auth.json 已变成 `$VAR` 而 env 未注入，请求会挂。
-- 判定（幂等）：`type == "api_key"` 且值不以 `$` 开头 → 迁移；`$`/`!` 引用与 `type: oauth` 跳过。
-- 步骤：`vault.set(明文)` → 成功后重写 auth.json 为引用；任一步失败停在原状，下次启动重试。
-- 升级场景：PF 更新需重启应用，旧 pi 进程随应用退出，不存在「老进程 + 新 auth.json」窗口。
+- 范围：auth.json 各条目的 `key` + models.json 各 provider 条目的 `apiKey`，两处同等处理。
+- 时机：应用启动后台执行一次（startup.rs），**先于任何会话 spawn**——否则老进程读到的引用没有 env 注入，请求会挂。
+- 判定（幂等）：`api_key`（auth.json）/ `apiKey`（models.json）值不以 `$` 开头 → 迁移；`$`/`!` 引用与 `type: oauth` 跳过。
+- 步骤：`vault.set(明文)` → 成功后原文件重写为引用（auth.json / models.json 各自原子写）；任一步失败停在原状，下次启动重试。
+- 编辑器缓冲时序：迁移只在启动时执行，models.json 编辑器的内存缓冲不跨迁移存在，无陈旧回写风险。
+- 升级场景：PF 更新需重启应用，旧 pi 进程随应用退出，不存在「老进程 + 新文件」窗口。
 
 ### 7. 行为变化（需在 UI 告知用户）
 
-- **换 key 生效时机**：现状明文由 pi 每请求重读 auth.json（立即生效）；改后 env 按子进程固定，**换 key 需重启会话生效**。设置保存时提示。
-- **裸跑 pi CLI**：PF 管的 key 不可见（env 未注入）；需两栖时自行 `export PF_KEY_GLM=...` 或在 auth.json 手写明文/引用。
+- **换 key 生效时机**：现状明文由 pi 每请求重读文件（立即生效）；改后 env 按子进程固定，**换 key 需重启会话生效**。设置保存时提示。
+- **裸跑 pi CLI**：PF 管的 key 不可见（env 未注入）；需两栖时自行 `export PF_KEY_GLM=...` 或在文件里手写明文/引用。
 
 ### 8. UI 变化（settings - 模型）
 
@@ -137,24 +154,26 @@ apikeyManager
 
 | 文件 | 改动 |
 |---|---|
-| `crates/pi-link/src/credentials.rs`（新） | `trait SecretVault` + `KeyringVault` 实现 + 测试用内存 Fake；`env_var_name(provider)`、引用生成/识别、迁移判定纯函数 |
+| `crates/pi-link/src/credentials.rs`（新） | `trait SecretVault` + `KeyringVault` 实现 + 测试用内存 Fake；`env_var_name(provider)`、引用生成/识别、双文件迁移扫描纯函数 |
 | `crates/pi-link/Cargo.toml` | keyring 依赖 |
-| `crates/pi-link/src/client.rs` | spawn 点收集引用 + `envs()` 注入 |
-| `crates/pi-link/src/config.rs` | `set_api_key` 分流（明文→凭据库+引用；高级引用→原样）；降级路径 |
+| `crates/pi-link/src/client.rs` | spawn 点扫双文件收集引用 + `envs()` 注入 |
+| `crates/pi-link/src/config.rs` | auth.json `set_api_key` 分流（明文→凭据库+引用；高级引用→原样）；降级路径 |
+| `crates/pi-link/src/models_json.rs` | `set_api_key(entry, provider, key)` 帮手：同一分流；`rename_provider` 同步 vault 条目搬家 + 引用重写 |
 | `crates/app/src/startup.rs` | 启动迁移（后台，先于 spawn） |
-| `crates/app/src/settings/models.rs`、`custom_models.rs` | 保存/断开接新路径、状态与 note 文案 |
+| `crates/app/src/settings/custom_models.rs` | `mj_save_provider` / `mj_add_provider` 接新帮手；apiKey 回显改引用/徽标 |
+| `crates/app/src/settings/models.rs` | 保存/断开接新路径、状态与 note 文案 |
 | 会话层（spawn 调用方） | 缺钥提示透传到会话 UI |
 
 ## 测试
 
-- 单测（pi-link，铁律测试位）：变量名净化/冲突哈希、引用生成与识别、迁移判定矩阵（明文→迁、`$OTHER`/`!`→跳过、oauth→跳过）、FakeVault 全流程、降级路径。
+- 单测（pi-link，铁律测试位）：变量名净化/冲突哈希、引用生成与识别、**双文件**迁移判定矩阵（明文→迁、`$OTHER`/`!`→跳过、oauth→跳过）、FakeVault 全流程、降级路径、provider 改名的 vault 搬家与引用重写。
 - 集成：真实 keyring roundtrip 标 `#[ignore]`（默认跳，本机手动跑；CI runner 凭据库可用性见开放问题）。
-- pif-ui：保存后断言 auth.json 含 `$PF_KEY_*` 且无明文；断开后条目消失；高级引用不被劫持。
+- pif-ui：保存后断言 auth.json 与 models.json 均含 `$PF_KEY_*` 且无明文；断开/清空后条目消失；高级引用不被劫持。
 - 手工验收：Windows 凭据管理器目视条目；macOS 钥匙串访问；降级注入（临时禁用 CM）。
 
 ## 分期
 
-- **M1（本设计落地范围）**：credentials 模块 + 保存/断开改道 + spawn 注入 + 启动迁移 + 降级 + UI 文案。
+- **M1（本设计落地范围）**：credentials 模块 + auth.json/models.json 双文件保存/断开/改名改道 + spawn 注入 + 双文件启动迁移 + 降级 + UI 文案。
 - **M2（可选）**：「复制到剪贴板」显式导出；存储方式设置项（凭据库/仅文件）；保存后自动重启受影响会话的 pi 进程（消除重启生效）；主密码保险库（Argon2id + AES-256-GCM，主密码可 DPAPI/钥匙串包装免输）——叠加层，不替代凭据库。
 
 ## 开放问题
