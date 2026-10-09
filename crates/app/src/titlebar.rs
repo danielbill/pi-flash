@@ -1,8 +1,10 @@
-//! topbar 两段 (v54): 左段在 panel-col 内（仅收放钮 + 拖拽区），右段在
-//! content-col 内（内容区 term/md tabs + 设置 + 窗口控制钮）。整条是客户
-//! 区自绘标题栏——空段挂 `WindowControlArea::Drag` 命中盒，三个窗口钮注册
-//! Min/Max/Close 命中盒（zed platform_title_bar parity）。收起态面板全隐，
-//! 收放钮跳到右段起点（竖线镜像位）。
+//! topbar 三段 (016): 左段在 panel-col 内（收放钮 + 手机遥控，左右 padding
+//! 对称），右段在 content-col 内（中段标签栏 + 窗口控制钮）。中段标签栏 =
+//! 置顶会话 tab（第一位，无 × 无 icon）+ 自由标签区（终端/文件，023 规则），
+//! 激活 tab Obsidian 卡片融底、条上不画横线。设置钮下放 018 状态栏、+ 已删
+//! （016 定案）。整条是客户区自绘标题栏——空段挂 `WindowControlArea::Drag`
+//! 命中盒，三个窗口钮注册 Min/Max/Close 命中盒（zed platform_title_bar
+//! parity）。收起态面板全隐，收放钮跳到右段起点（竖线镜像位）。
 
 use gpui::{MouseButton, SharedString, Window, div, prelude::*, px, relative, rgb};
 use std::path::PathBuf;
@@ -19,9 +21,11 @@ pub(crate) const HEIGHT: f32 = 36.;
 /// Caption-button glyph font (Win11; MDL2 covers Win10).
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
-/// 左段：收放钮（贴左 5px）+ 拖拽填充。
-pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+/// 左段（015 功能面板侧）：收放钮（贴左 5px）+ 拖拽填充 + 手机遥控
+/// （贴右 5px，左右 padding 对称——016）。
+pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
+    let wx_on = chat.remote.bound.is_some();
     div()
         .id("topbar-l")
         .h(px(HEIGHT))
@@ -45,9 +49,36 @@ pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl g
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
+        .child(wx_btn(wx_on, cx))
 }
 
-/// 右段：内容区 tabs + 设置 + 竖线 + 窗口控制。
+/// 手机遥控钮（016 左段右钮，原 018 状态栏右槽迁此）：点开扫码弹窗；
+/// 已绑定时 accent 常亮（原状态栏着色规则）。
+fn wx_btn(wx_on: bool, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    let t = T();
+    let color = if wx_on { t.accent } else { t.text_muted };
+    div()
+        .id("wx-qr-btn")
+        .size(px(30.))
+        .mr(px(5.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(7.))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(MouseButton::Left, cx.listener(
+            move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                // 幂等：已在扫码/已出码时不重复发起
+                this.remote.begin_qr();
+                this.dialog = Some(crate::Dialog::WxQr);
+                cx.notify();
+            },
+        ))
+        .child(crate::ui::icon_hover("smartphone", 16., color))
+}
+
+/// 右段：中段标签栏 + 窗口控制。
 pub(crate) fn topbar_r(
     chat: &mut Chat,
     window: &mut Window,
@@ -63,17 +94,9 @@ pub(crate) fn topbar_r(
         .relative()
         .flex()
         .items_center()
-        .bg(rgb(t.chrome))
-        // 浏览态（tabs）不画底线：激活 tab 卡片直接融进下方内容区；
-        // 会话态保留底线分隔标题与消息流
-        .when(chat.content_view == ContentView::Chat, |d| {
-            d.border_b_1()
-                .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)))
-        });
+        .bg(rgb(t.chrome));
 
-    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）+ 内容区 tabs
-    // 都住在 items_end 的 tabs host 里（激活 tab 连体贴底需要）
-    // 收起态：收放钮在 bar 主层（垂直居中），tabs host 只装内容区 tabs
+    // 收起态：收放钮跳到右段起点（4px 等距，竖线镜像位）
     if chat.panes_hidden {
         bar = bar
             .child(
@@ -91,39 +114,10 @@ pub(crate) fn topbar_r(
             )
             .child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(4.)));
     }
-    // topbar 状态与内容区绑定：会话视图=会话标题（message-square-more +
-    // ≤30 字标题 + ⋯ 更多菜单）；浏览操作区=终端/文件 tabs（切回会话视图
-    // tabs 即消失）
-    if chat.content_view == ContentView::Chat {
-        let title: SharedString = chat.session_title(cx).into();
-        bar = bar.child(
-            div()
-                .h_full()
-                .flex()
-                .items_center()
-                .gap(px(7.))
-                .pl(px(15.))
-                .min_w_0()
-                .flex_shrink()
-                .max_w(px(460.))
-                .overflow_hidden()
-                .child(crate::ui::icon("message-square-more", 15., t.text_muted))
-                .child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        // topbar = 面板设置值（字体大小设置.md §1）
-                        .text_size(crate::appearance::ui_size(12.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text))
-                        .child(title),
-                )
-                .child(session_more_btn(chat, cx)),
-        );
-    } else {
-        bar = bar.child(browse_tabs(chat, cx));
-    }
+
+    // 016 中段标签栏：置顶会话 tab + 自由标签区（终端/文件），激活 tab
+    // 卡片融底（Obsidian 式，条上不画横线）
+    bar = bar.child(tab_strip(chat, cx));
 
     bar = bar.child(
         div()
@@ -131,23 +125,8 @@ pub(crate) fn topbar_r(
             .h_full()
             .window_control_area(WindowControlArea::Drag),
     );
-    // 023：文件 + 菜单（browse 态）——钉死右簇，与设置钮同 mx(6) 节奏等距
-    if chat.content_view != ContentView::Chat {
-        bar = bar.child(div().mx(px(6.)).child(file_plus_btn(chat, cx)));
-    }
-    // 设置（sliders-horizontal）
-    bar = bar.child(
-        div().mx(px(6.)).child(icon_btn(
-            "topbar-settings",
-            "sliders-horizontal",
-            tr("设置"),
-            cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                this.open_settings(0, cx);
-            }),
-        )),
-    );
-    bar = bar.child(div().w(px(1.)).h(px(18.)).bg(gpui::rgba(crate::theme::border_alpha(t, 0x8c))).mx(px(6.)));
 
+    // 016 右段：仅窗口控制钮（设置下放 018 状态栏、+ 删除）
     // v55: min/max switch to SVG icons via HoverIcon; close keeps red-bg exemption
     for (area, icon_name) in [
         (WindowControlArea::Min, "minus"),
@@ -303,26 +282,25 @@ fn menu_row(
 /// 内容区、× 可见）；非激活 = 平铺文字。`ml` = 距分隔线/前一 tab 的间距。
 
 
-/// 浏览操作区的 topbar tabs：终端 + 文件（023 定案：文件 tab 并入 topbar，
-/// 与终端同形；脏点/冲突标记在 tab 行尾）。
+/// 中段标签栏（016）：置顶会话 tab（第一位，距条左缘 10px）+ 自由标签区
+/// （终端/文件，023 规则：脏点/冲突标记在 tab 行尾）。
 ///
-/// 标签区限宽（flex_1 + min_w_0），超出横向滑动、不侵吞右簇操作区
-/// （对齐 Zed tab bar）；+ 菜单不在本区——钉死在 bar 右簇（023 定案③）。
-fn browse_tabs(
+/// 标签区限宽 topbar 的 75%，超出横向滑动、不侵吞右段窗口钮（对齐 Zed
+/// tab bar）；左缘 10px、右走流内 20px spacer（滚到底也有留白）。
+fn tab_strip(
     chat: &mut Chat,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::Stateful<gpui::Div> {
-    // 023②：标签区 = topbar 宽的 75%，超出横向滑动（对齐 Zed）；
-    // 左右各 20px 呼吸空间（右侧走流内 spacer，保证滚到底也有留白）
     let mut tabs_host = div()
         .id("topbar-tabs")
         .w(relative(0.75))
         .min_w_0()
-        .pl(px(20.))
+        .pl(px(10.))
         .h_full()
         .flex()
         .items_end()
         .overflow_x_scroll();
+    tabs_host = tabs_host.child(session_tab(chat, cx));
     for (ix, tab) in chat.panel_tabs.iter().enumerate() {
         let (label, path, is_file): (SharedString, Option<PathBuf>, bool) = match tab {
             crate::PanelTab::Term(id) => {
@@ -377,118 +355,41 @@ fn browse_tabs(
             ix,
             label,
             active,
-            if ix == 0 { 10. } else { 4. },
+            4.,
             path,
             badge,
             cx,
         ));
     }
     // 流内右留白（滚到底也有 20px）
-    tabs_host = tabs_host.child(div().w(px(20.)).flex_shrink_0());
-    tabs_host
+    tabs_host.child(div().w(px(20.)).flex_shrink_0())
 }
 
-/// 文件 + 菜单钮（bar 右簇，设置钮左侧，同 mx(6) 等距；30×30 对齐
-/// icon_btn 视觉节奏）。打开文件… / 新建文件。
-fn file_plus_btn(
-    chat: &mut Chat,
-    cx: &mut gpui::Context<Chat>,
-) -> impl gpui::IntoElement {
+/// 置顶会话 tab（016）：中段第一位（距条左缘 10px），无 ×，label = 会话
+/// 标题（≤30 字截断不变），前置 bot-message-square icon。激活 = 会话视图
+/// （Obsidian 卡片融底），卡片内右缘保留原标题行的 ⋯ 菜单（仅会话态
+/// 显示，与旧标题行一致）；点击回会话视图（status_bar 会话 tab 同语义）。
+fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    let weak_toggle = cx.entity().downgrade();
-    let weak_dismiss = cx.entity().downgrade();
-    let weak_menu = cx.entity().downgrade();
-    crate::ui::dropdown(
-        "topbar-file-plus",
-        &chat.plus_dd,
-        chat.plus_menu_open,
-        move |_w, cx| {
-            let _ = weak_toggle.update(cx, |c, cx| {
-                c.plus_menu_open = !c.plus_menu_open;
-                cx.notify();
-            });
-        },
-        move |_w, cx| {
-            let _ = weak_dismiss.update(cx, |c, cx| {
-                c.plus_menu_open = false;
-                cx.notify();
-            });
-        },
-        div()
-            .id("topbar-file-plus-btn")
-            .size(px(30.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)))
-            .child(crate::ui::icon_hover("plus", 14., t.text_muted))
-            .into_any_element(),
-        move || fv_plus_menu(&weak_menu),
+    let active = chat.content_view == ContentView::Chat;
+    let title: SharedString = chat.session_title(cx).into();
+    let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.set_content_view(crate::ContentView::Chat);
+        cx.notify();
+    });
+    let more = active.then(|| session_more_btn(chat, cx));
+    tab_shell(
+        "ctab-session",
+        Some("bot-message-square"),
+        title,
+        active,
+        0.,
+        t,
+        switch,
+        more,
+        None,
     )
-}
-
-/// + 菜单两行：打开文件… / 新建文件。
-fn fv_plus_menu(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
-    let t = T();
-    let weak_open = weak.clone();
-    let weak_new = weak.clone();
-    div()
-        .min_w(px(170.))
-        .p(px(4.))
-        .bg(rgb(t.bg))
-        .border_1()
-        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
-        .rounded(px(9.))
-        .shadow_lg()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .id("fv-plus-open")
-                .flex()
-                .items_center()
-                .gap(px(9.))
-                .px(px(10.))
-                .py(px(7.))
-                .rounded(px(6.))
-                .text_size(crate::appearance::ui_size(12.5))
-                .text_color(rgb(t.text))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)))
-                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_open.update(cx, |c, cx| {
-                        c.plus_menu_open = false;
-                        c.pick_open_files(cx);
-                    });
-                })
-                .child(crate::ui::icon("folder", 14., t.text_muted))
-                .child(div().flex_1().child(SharedString::from(tr("打开文件…")))),
-        )
-        .child(
-            div()
-                .id("fv-plus-new")
-                .flex()
-                .items_center()
-                .gap(px(9.))
-                .px(px(10.))
-                .py(px(7.))
-                .rounded(px(6.))
-                .text_size(crate::appearance::ui_size(12.5))
-                .text_color(rgb(t.text))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)))
-                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_new.update(cx, |c, cx| {
-                        c.plus_menu_open = false;
-                        c.start_new_file(cx);
-                    });
-                })
-                .child(crate::ui::icon("file", 14., t.text_muted))
-                .child(div().flex_1().child(SharedString::from(tr("新建文件")))),
-        )
-        .into_any_element()
+    .into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -533,18 +434,48 @@ fn content_tab(
         this.set_content_view(v);
         cx.notify();
     });
-    tab_shell(id, label, active, ml, t, switch, Some(close), badge)
+    // 行尾 ×（仅激活态由 tab_shell 渲染）——脏 tab 也要能关（关时走
+    // FileDirty 确认弹窗）
+    let close_x = div()
+        .id(SharedString::from(format!("{id}-x")))
+        .flex_shrink_0()
+        .size(px(20.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .text_color(rgb(t.text_dim))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .on_mouse_down(MouseButton::Left, move |ev, w, cx| {
+            cx.stop_propagation();
+            close(ev, w, cx);
+        })
+        .child(crate::ui::icon_hover("x", 12., t.text_dim))
+        .into_any_element();
+    tab_shell(
+        id,
+        None,
+        label,
+        active,
+        ml,
+        t,
+        switch,
+        Some(close_x),
+        badge,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn tab_shell(
     id: &'static str,
+    icon_name: Option<&'static str>,
     label: SharedString,
     active: bool,
     ml: f32,
     t: &'static crate::theme::Theme,
     switch: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
-    close: Option<impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static>,
+    trailing: Option<gpui::AnyElement>,
     badge: Option<gpui::AnyElement>,
 ) -> impl gpui::IntoElement {
     let mut tab = div()
@@ -584,6 +515,8 @@ fn tab_shell(
         })
         .on_mouse_down(MouseButton::Left, switch);
     tab = tab
+        // 前置 icon（会话 tab = bot-message-square；文件/终端 tab 无）
+        .children(icon_name.map(|n| crate::ui::icon(n, 15., t.text_muted)))
         .child(
             div()
                 .min_w_0()
@@ -592,29 +525,10 @@ fn tab_shell(
                 .text_ellipsis()
                 .child(label),
         )
-        // 行尾标记（023 文件 tab：脏点/冲突!）；激活 × 常在——脏 tab 也要
-        // 能关（关时走 FileDirty 确认弹窗）
+        // 行尾标记（023 文件 tab：脏点/冲突!）；行尾交互钮（文件/终端 tab
+        // = × 关闭，会话 tab = ⋯ 菜单）仅激活态显示
         .children(badge)
-        .children(active.then(|| {
-            let mut x = div()
-                .id(SharedString::from(format!("{id}-x")))
-                .flex_shrink_0()
-                .size(px(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(5.))
-                .text_color(rgb(t.text_dim))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)));
-            if let Some(close) = close {
-                x = x.on_mouse_down(MouseButton::Left, move |ev, w, cx| {
-                    cx.stop_propagation();
-                    close(ev, w, cx);
-                });
-            }
-            x.child(crate::ui::icon_hover("x", 12., t.text_dim))
-        }));
+        .when(active, |d| d.children(trailing));
     tab
 }
 

@@ -107,6 +107,8 @@ assets! {
     "icons/bot.svg",
     // v64 topbar：会话标题 icon + ⋯ 菜单（系统提示词 / 工具）
     "icons/message-square-more.svg",
+    // 016 topbar：置顶会话标签 icon（lucide bot-message-square）
+    "icons/bot-message-square.svg",
     "icons/file-sliders.svg",
     "icons/plug.svg",
     // v70 设置页：模型（芯片）+ MCP（服务器机架），路径取自 pi-web SettingsSectionIcon

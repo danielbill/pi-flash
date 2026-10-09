@@ -74,9 +74,6 @@ pub(crate) fn render_dialogs(
             if let Some(Dialog::WxQr) = chat.dialog.as_ref() {
                 root = root.child(render_wx_qr(chat, weak, t));
             }
-            if let Some(Dialog::NewFile { input }) = chat.dialog.as_ref() {
-                root = root.child(render_new_file(chat, weak, input, t));
-            }
     root
 }
 
@@ -361,48 +358,6 @@ fn render_file_dirty(
                             },
                         ),
                     ),
-            ),
-    )
-}
-
-/// 023 fileView：新建文件名字输入（Enter 提交 / Esc 取消，提交逻辑在
-/// start_new_file 里挂的 on_submit/on_escape 上）。
-fn render_new_file(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    input: &gpui::Entity<TextInput>,
-    t: &theme::Theme,
-) -> Div {
-    let _ = weak;
-    dialog_shell(
-        chat,
-        weak,
-        div()
-            .w(px(380.))
-            .p(px(18.))
-            .bg(rgb(t.bg))
-            .border_1()
-            .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
-            .rounded(px(10.))
-            .shadow_lg()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(13.5))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text))
-                    .child(SharedString::from(tr("新建文件").to_string())),
-            )
-            .child(input.clone())
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(11.))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(
-                        tr("在项目根下创建；Enter 确认，Esc 取消").to_string(),
-                    )),
             ),
     )
 }

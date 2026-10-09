@@ -1,6 +1,7 @@
 //! statusbar (v54): 36px，只在面板段（panel-col 内），三个面板 tab
 //! （psp / 文件树 / Git）46px 宽 icon 即标签。激活 tab = nav 色连体卡
-//! （顶无边、底圆角、accent 色），与 dock 背景连成一体。收起态整个隐藏
+//! （顶无边、底圆角、accent 色），与 dock 背景连成一体。右端 = 设置钮
+//! （016 下放，原手机图标位；手机遥控迁 topbar 左段）。收起态整个隐藏
 //! （panel-col 随 panes_hidden 不渲染）。
 
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
@@ -38,13 +39,10 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
         );
     bar = bar.child(div().flex_1());
 
-    // 060 远程控制：右侧手机图标 → 扫码弹窗（弹窗内容现读 remote.qr，
-    // 扫码 worker 的事件由 200ms 泵 drain 后 notify，弹窗自动刷新）
-    let wx_on = chat.remote.bound.is_some();
-    let wx_color = if wx_on { t.accent } else { t.text_muted };
+    // 016：设置钮下放状态栏右槽（原手机图标位；手机遥控迁 topbar 左段）
     bar = bar.child(
         div()
-            .id("wx-qr-btn")
+            .id("statusbar-settings")
             .w(px(46.))
             .h(px(HEIGHT))
             .flex()
@@ -54,13 +52,10 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
             .hover(|s| s.bg(rgb(t.bg_hover)))
             .on_mouse_down(MouseButton::Left, cx.listener(
                 move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                    // 幂等：已在扫码/已出码时不重复发起
-                    this.remote.begin_qr();
-                    this.dialog = Some(crate::Dialog::WxQr);
-                    cx.notify();
+                    this.open_settings(0, cx);
                 },
             ))
-            .child(crate::ui::icon_hover("smartphone", 16., wx_color)),
+            .child(crate::ui::icon_hover("sliders-horizontal", 16., t.text_muted)),
     );
     bar
 }
