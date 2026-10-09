@@ -46,7 +46,7 @@ pub(crate) struct SettingsPanel {
     pub key_input: gpui::Entity<TextInput>,
     pub key_visible: bool,
     pub model_filter: gpui::Entity<TextInput>,
-    /// 042：下列表（启用的模型）常驻筛选
+    /// 042：合并列表的模型筛选（启用总数 ≥ MODEL_FILTER_MIN 才显示）
     pub enabled_filter: gpui::Entity<TextInput>,
     pub mj_name: gpui::Entity<TextInput>,
     pub mj_base: gpui::Entity<TextInput>,

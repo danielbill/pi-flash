@@ -1,8 +1,9 @@
-//! Models tab（042 定稿）：无顶部 banner、无页面 footer。左栏分割上下
-//! 两个**等高**列表——上 = 登记的 Providers（图标 + 显示名 + x/N + 整商
-//! switch，头行【+添加Provider】开清单弹窗），下 = 启用的模型平铺
-//! （Provider/model + 五角星设默认，常驻筛选）；右栏详情 = API KEY 表单 +
-//! 通路探查行 + 可用模型区（内置商）/ 自定义编辑器（表单头保存即写盘）。
+//! Models tab（042 定稿）：无顶部 banner、无页面 footer。左栏**单一列表**：
+//! Provider 行下直接平铺该商已启用的模型（自动展开）；排序三档——默认模型
+//! 所在 Provider → 有启用模型的 → 没模型的，档内按显示名。头行
+//! 【+添加Provider】开清单弹窗，行 switch 整商启停；模型行与 inputpanel
+//! 菜单共用组件（缩进 / 五角星设默认）。右栏详情 = API KEY 表单 + 通路
+//! 探查行 + 可用模型区（内置商）/ 自定义编辑器（表单头保存即写盘）。
 
 use super::*;
 use super::custom_models::{mj_add_panel, mj_model_editor, mj_provider_editor};
@@ -65,8 +66,8 @@ impl Chat {
         (enabled, models.len())
     }
 
-    /// 042 显示名排序键：`Provider显示名/model` 小写——下列表视觉顺序与
-    /// 「无默认回落取第一」用同一函数（文档：算法和列表视觉保持统一）。
+    /// 042 显示名排序键：`Provider显示名/model` 小写——菜单与「无默认回落
+    /// 取第一」用同一把尺（设置页合并列表展示为三档分组，回落仍用本键）。
     pub(crate) fn mc_sort_key(m: &pi_link::protocol::ModelInfo) -> String {
         format!(
             "{}/{}",
@@ -464,7 +465,12 @@ pub(crate) fn mc_models_view(
         .into_any_element()
 }
 
-/// 左栏：上 = Providers（头行添加钮 + 行 switch），下 = 启用的模型（五角星）。
+/// 左栏（合并后的单一列表）：Provider 行下直接平铺该商已启用的模型行
+/// （常开，无折叠态）。排序三档——默认模型所在 Provider → 有启用模型的
+/// → 没模型的，档内按显示名；组内模型按显示名。模型行与 inputpanel 菜单
+/// 共用组件（缩进槽 / 五角星）；行 switch 整商启停（决策 4）。过滤框沿用
+/// MODEL_FILTER_MIN 规则（不足不渲染、文本不生效），只筛模型行，
+/// Provider 行常驻。
 fn mc_models_sidebar(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -474,154 +480,194 @@ fn mc_models_sidebar(
     enabled_filter_value: &str,
     t: &'static crate::theme::Theme,
 ) -> gpui::AnyElement {
-    // ---- 上半：登记的 Providers -------------------------------------------
+    // ---- Provider 全集（内置目录 + models.json 自定义）与计数 -------------
     let custom: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&chat.mc_models_json);
-    let mut builtin: Vec<String> = chat
+    let mut provs: Vec<String> = chat
         .mc_provider_ids()
         .into_iter()
         .filter(|p| !custom.iter().any(|(n, _)| n == p))
         .collect();
-    // 显示名字典序（内置段；自定义段按注册名排序在后面）
-    builtin.sort_by_key(|p| crate::ui::provider_display_name(p).to_lowercase());
-    let mut custom_names: Vec<String> = custom.iter().map(|(n, _)| n.clone()).collect();
-    custom_names.sort_by_key(|n| n.to_lowercase());
+    provs.extend(custom.iter().map(|(n, _)| n.clone()));
+    let counts: Vec<(usize, usize)> = provs
+        .iter()
+        .map(|p| chat.mc_provider_counts(p, enabled_set))
+        .collect();
 
-    let mut rows: Vec<gpui::AnyElement> = Vec::new();
-    for p in builtin.iter().chain(custom_names.iter()) {
-        let is_custom = custom_names.contains(p);
-        let (enabled_n, total) = chat.mc_provider_counts(p, enabled_set);
-        let on = chat.mc_state.all_enabled || enabled_n > 0;
-        let configured = is_custom || chat.mc_configured(p);
-        // 行可切的前提：有模型可管（0 模型行只是展示凭据存在）
-        let switchable = !chat.mc_project_scope && total > 0 && configured;
-        let prov_key = if is_custom { format!("mj:p:{p}") } else { p.clone() };
-        let active = prov_key == *selected;
-        let weak_row = weak.clone();
-        let weak_sw = weak.clone();
-        let pid = p.clone();
-        let pid_sw = p.clone();
-        rows.push(
-            widgets::sidebar_item(format!("mc-side-{p}"), active)
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_row.update(cx, |c, cx| {
-                        if is_custom {
-                            c.mj_select(format!("mj:p:{pid}"), cx);
-                        } else {
-                            c.mc_select_provider(pid.clone(), cx);
-                        }
-                    });
-                })
-                .child(crate::ui::provider_icon(p, 16., t.text_muted))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(SharedString::from(
-                            crate::ui::provider_display_name(p).to_string(),
-                        )),
-                )
-                .children((!chat.mc_state.all_enabled).then(|| {
-                    div()
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(10.))
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(format!("{enabled_n}/{total}")))
-                        .into_any_element()
-                }))
-                // 整商 switch（决策 4：enabledModels 整商开关，凭据不动）；
-                // 未配置/零模型的内置商恒关禁用，点行进详情配 key
-                .child(config_switch(
-                    format!("mc-prov-sw-{p}"),
-                    &weak_sw,
-                    on,
-                    !switchable,
-                    move |c, cx| c.mc_toggle_provider(&pid_sw, !on, cx),
-                ))
-                .into_any_element(),
-        );
-    }
+    // 三档：0 = 默认模型所在商，1 = 有启用模型，2 = 无；档内显示名字典序
+    let default_prov = chat.mc_default_model.as_ref().map(|(p, _)| p.clone());
+    let mut order: Vec<usize> = (0..provs.len()).collect();
+    order.sort_by_key(|&ix| {
+        let tier = match default_prov.as_deref() {
+            Some(dp) if dp == provs[ix] => 0u8,
+            _ if counts[ix].0 > 0 => 1,
+            _ => 2,
+        };
+        (
+            tier,
+            crate::ui::provider_display_name(&provs[ix]).to_lowercase(),
+        )
+    });
 
-    let upper = div()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .child(mc_add_action(weak))
-        .child(
-            div()
-                .id("mc-up-list")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .px(px(7.))
-                .pb(px(6.))
-                .children(rows),
-        );
-
-    // ---- 下半：启用的模型（分组 + 五角星，组件与 inputpanel 菜单共用） ----
-    let sorted = chat.mc_sorted_enabled();
-    // 过滤框与菜单同一规则：总数 < MODEL_FILTER_MIN 不渲染，文本也不参与过滤
-    let show_filter =
-        sorted.len() >= crate::session::model_picker::MODEL_FILTER_MIN;
+    // ---- 过滤（菜单同规则）：只筛模型行，Provider 行常驻 ------------------
+    let total_enabled: usize = counts.iter().map(|(en, _)| *en).sum();
+    let show_filter = total_enabled >= crate::session::model_picker::MODEL_FILTER_MIN;
     let q = if show_filter {
         enabled_filter_value.trim().to_lowercase()
     } else {
         String::new()
     };
-    let shown: Vec<pi_link::protocol::ModelInfo> = sorted
-        .iter()
-        .filter(|m| {
-            q.is_empty()
-                || m.id.to_lowercase().contains(&q)
-                || m.name.to_lowercase().contains(&q)
-                || crate::ui::provider_display_name(&m.provider).to_lowercase().contains(&q)
-        })
-        .cloned()
-        .collect();
+    let label = |m: &pi_link::protocol::ModelInfo| {
+        if m.name.is_empty() { m.id.clone() } else { m.name.clone() }
+    };
+    let hits = |m: &pi_link::protocol::ModelInfo, p: &str| {
+        q.is_empty()
+            || m.id.to_lowercase().contains(&q)
+            || m.name.to_lowercase().contains(&q)
+            || crate::ui::provider_display_name(p).to_lowercase().contains(&q)
+    };
+
+    // ---- 行序：Provider 行 + 其下启用模型行（组内显示名序）----------------
+    enum SbRow {
+        /// `prov_rows` 下标
+        Prov(usize),
+        /// `flat` 下标
+        Model(usize),
+    }
+    struct ProvRow {
+        id: String,
+        is_custom: bool,
+        enabled_n: usize,
+        total: usize,
+        on: bool,
+        switchable: bool,
+        active: bool,
+        show_count: bool,
+    }
+    let mut prov_rows: Vec<ProvRow> = Vec::new();
+    let mut flat: Vec<pi_link::protocol::ModelInfo> = Vec::new();
+    let mut rows: Vec<SbRow> = Vec::new();
+    let enabled_models = chat.mc_sorted_enabled();
+    for &ix in &order {
+        let p = &provs[ix];
+        let (en, total) = counts[ix];
+        let is_custom = custom.iter().any(|(n, _)| n == p);
+        let configured = is_custom || chat.mc_configured(p);
+        let prov_key = if is_custom { format!("mj:p:{p}") } else { p.clone() };
+        rows.push(SbRow::Prov(prov_rows.len()));
+        prov_rows.push(ProvRow {
+            id: p.clone(),
+            is_custom,
+            enabled_n: en,
+            total,
+            on: chat.mc_state.all_enabled || en > 0,
+            switchable: !chat.mc_project_scope && total > 0 && configured,
+            active: prov_key == *selected,
+            show_count: !chat.mc_state.all_enabled,
+        });
+        let mut ms: Vec<pi_link::protocol::ModelInfo> = enabled_models
+            .iter()
+            .filter(|m| &m.provider == p && hits(m, p))
+            .cloned()
+            .collect();
+        ms.sort_by_key(|m| label(m).to_lowercase());
+        for m in ms {
+            flat.push(m);
+            rows.push(SbRow::Model(flat.len() - 1));
+        }
+    }
+
+    // 行距统一：全表（Provider 行 + 模型行）同一行高，严格等距
+    let row_h = (f32::from(crate::appearance::ui_size(11.)) + 19.).max(30.);
     let default_ref = chat
         .mc_default_model
         .as_ref()
         .map(|(p, id)| format!("{p}/{id}"));
     let pins = chat.mc_state.pins.clone();
-    // 行距与菜单统一：组头、模型行同一行高（单行紧凑 30px 基准，随界面
-    // 字号抬升），严格等距
-    let row_h = (f32::from(crate::appearance::ui_size(11.)) + 19.).max(30.);
-    let enabled_count = chat.mc_state.enabled.len();
-
-    let entries = Chat::group_entries(&shown);
-    let entries_len = entries.len();
     let weak_rows = weak.clone();
-    let shown_for_rows = shown.clone();
-    let default_ref_rows = default_ref.clone();
-    let pins_rows = pins.clone();
-    let lower = div()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .border_t_1()
-        .border_color(rgb(t.border))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .px(px(15.))
-                .pt(px(8.))
-                .pb(px(4.))
-                .child(section_title(&tr("启用的模型")))
-                .child(
-                    div()
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(10.))
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(enabled_count.to_string())),
-                ),
-        )
+
+    let list = vlist(
+        "mc-merged-list",
+        rows.len(),
+        row_h,
+        VListHeight::Fill,
+        false,
+        true,
+        "没有已登记的 Provider",
+        None,
+        move |ix, _window, _cx| match &rows[ix] {
+            SbRow::Prov(pr) => {
+                let d = &prov_rows[*pr];
+                let pid = d.id.clone();
+                let pid_sw = d.id.clone();
+                let (is_custom, on) = (d.is_custom, d.on);
+                let row_weak = weak_rows.clone();
+                div()
+                    .id(SharedString::from(format!("mc-side-{}", d.id)))
+                    .h(px(row_h))
+                    .px(px(15.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .when(d.active, |el| el.bg(rgb(t.bg_selected)))
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .text_size(crate::appearance::ui_size(12.))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = row_weak.update(cx, |c, cx| {
+                            if is_custom {
+                                c.mj_select(format!("mj:p:{pid}"), cx);
+                            } else {
+                                c.mc_select_provider(pid.clone(), cx);
+                            }
+                        });
+                    })
+                    .child(crate::ui::provider_icon(&d.id, 16., t.text_muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(
+                                crate::ui::provider_display_name(&d.id).to_string(),
+                            )),
+                    )
+                    .children(d.show_count.then(|| {
+                        div()
+                            .font_family(crate::markdown::MONO_FAMILY)
+                            .text_size(crate::appearance::ui_size(10.))
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(format!("{}/{}", d.enabled_n, d.total)))
+                            .into_any_element()
+                    }))
+                    // 整商 switch（决策 4：enabledModels 整商开关，凭据不动）；
+                    // 未配置/零模型的内置商恒关禁用，点行进详情配 key
+                    .child(config_switch(
+                        format!("mc-prov-sw-{}", d.id),
+                        &weak_rows,
+                        on,
+                        !d.switchable,
+                        move |c, cx| c.mc_toggle_provider(&pid_sw, !on, cx),
+                    ))
+                    .into_any_element()
+            }
+            SbRow::Model(fx) => {
+                let m = &flat[*fx];
+                let r = format!("{}/{}", m.provider, m.id);
+                let is_default = default_ref.as_deref() == Some(r.as_str());
+                let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
+                crate::session::model_picker::group_model_row(
+                    &weak_rows, m, is_default, false, false, false, row_h, 15., pin, None, t,
+                )
+            }
+        },
+    );
+
+    sidebar_shell("mc-sidebar")
+        .w(px(LIST_W))
+        .child(mc_add_action(weak))
         .when(show_filter, |d| {
             d.child(
                 div()
@@ -630,48 +676,7 @@ fn mc_models_sidebar(
                     .child(enabled_filter.clone()),
             )
         })
-        .child(vlist(
-            "mc-enabled-list",
-            entries_len,
-            row_h,
-            VListHeight::Fill,
-            false,
-            true,
-            "没有启用的模型",
-            None,
-            move |ix, _window, _cx| match &entries[ix] {
-                crate::session::model_picker::ModelGroupEntry::Header(provider) => {
-                    crate::session::model_picker::group_header_row(provider.as_str(), 15., row_h, t)
-                }
-                crate::session::model_picker::ModelGroupEntry::Model(model_ix) => {
-                    let m = &shown_for_rows[*model_ix];
-                    let r = format!("{}/{}", m.provider, m.id);
-                    let is_default = default_ref_rows.as_deref() == Some(r.as_str());
-                    let pin = pins_rows
-                        .iter()
-                        .find(|(p, _)| p == &r)
-                        .map(|(_, l)| l.clone());
-                    crate::session::model_picker::group_model_row(
-                        &weak_rows,
-                        m,
-                        is_default,
-                        false,
-                        false,
-                        false,
-                        row_h,
-                        15.,
-                        pin,
-                        None,
-                        t,
-                    )
-                }
-            },
-        ));
-
-    sidebar_shell("mc-sidebar")
-        .w(px(LIST_W))
-        .child(upper)
-        .child(lower)
+        .child(list)
         .into_any_element()
 }
 
