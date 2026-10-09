@@ -22,8 +22,8 @@
 //!   决定，没有「外点关闭」的概念。
 
 use gpui::{
-    App, AnyElement, ElementId, FocusHandle, FontWeight, MouseButton, SharedString, Window, div,
-    prelude::*, px, rgba, rgb,
+    App, AnyElement, ElementId, FocusHandle, MouseButton, SharedString, Window, div, prelude::*,
+    px, rgba, rgb,
 };
 
 use crate::theme::Theme;

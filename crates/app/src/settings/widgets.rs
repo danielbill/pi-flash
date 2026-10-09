@@ -66,18 +66,17 @@ pub(crate) fn config_button(
 // switch / dot / tag
 // ---------------------------------------------------------------------------
 
-/// ConfigSwitch：SW_MD 28×16，knob 10（ui::tokens::switch，2026-10-09 定夺；
-/// 存量 32×18 收敛于此）。
-pub(crate) fn config_switch(
+/// 开关视觉唯一实现（SW_MD 28×16·knob10，`ui::tokens::switch`）。
+/// `apply` 收到新状态 bool 由调用方自行解释；Chat 场景走 [`config_switch`]。
+pub(crate) fn switch_base(
     id: impl Into<SharedString>,
-    weak: &gpui::WeakEntity<Chat>,
     on: bool,
     disabled: bool,
-    on_toggle: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
+    apply: impl Fn(bool, &mut gpui::App) + 'static,
 ) -> AnyElement {
     use crate::ui::tokens::switch as sw;
     let t = T();
-    let mut sw_el = div()
+    let mut el = div()
         .id(id.into())
         .w(px(sw::MD_W))
         .h(px(sw::MD_H))
@@ -100,16 +99,28 @@ pub(crate) fn config_switch(
                 .bg(if on { rgb(t.bg) } else { rgb(t.text_muted) }),
         );
     if disabled {
-        return sw_el.opacity(0.5).into_any_element();
+        return el.opacity(0.5).into_any_element();
     }
-    sw_el = sw_el.cursor_pointer();
+    el = el.cursor_pointer();
+    el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+        cx.stop_propagation();
+        apply(!on, cx);
+    })
+    .into_any_element()
+}
+
+/// ConfigSwitch：设置页行内开关（Chat 回调形态）。
+pub(crate) fn config_switch(
+    id: impl Into<SharedString>,
+    weak: &gpui::WeakEntity<Chat>,
+    on: bool,
+    disabled: bool,
+    on_toggle: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
+) -> AnyElement {
     let weak = weak.clone();
-    sw_el
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-            let _ = weak.update(cx, |c, cx| on_toggle(c, cx));
-        })
-        .into_any_element()
+    switch_base(id, on, disabled, move |_, cx| {
+        let _ = weak.update(cx, |c, cx| on_toggle(c, cx));
+    })
 }
 
 /// 组头小开关（ConfigSidebarGroupSwitch）：{enabled}/{total} + 24×14 开关。

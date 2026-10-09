@@ -434,35 +434,14 @@ fn mono_value(text: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 34×19 开关。
+/// 开关（原 34×19 私有实现 → 委托 [`switch_base`]，SW_MD 28×16 全局统一）。
 fn switch(
     id: &'static str,
     on: bool,
     apply: impl Fn(bool, &mut gpui::App) + 'static,
     t: &'static crate::theme::Theme,
 ) -> gpui::AnyElement {
-    div()
-        .id(id)
-        .w(px(34.))
-        .h(px(19.))
-        .rounded_full()
-        .bg(rgb(if on { t.accent } else { t.border }))
-        .relative()
-        .cursor_pointer()
-        .child(
-            div()
-                .absolute()
-                .top(px(2.))
-                .when(on, |d| d.left(px(17.)))
-                .when(!on, |d| d.left(px(2.)))
-                .size(px(15.))
-                .rounded_full()
-                .bg(rgb(0xffffff)),
-        )
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-            apply(!on, cx);
-        })
-        .into_any_element()
+    let _ = t; // 配色统一走 theme 语义，入参保留兼容既有调用点
+    switch_base(id, on, false, apply)
 }
 
