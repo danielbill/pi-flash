@@ -257,6 +257,10 @@ pub(crate) fn mono_text(text: String, dim: bool) -> AnyElement {
 // sidebar pieces
 // ---------------------------------------------------------------------------
 
+/// 设置页左列表列宽（Providers / 扩展 / MCP 清单 / 技能）：四页统一 350，
+/// 基准 = 扩展页（2026-10-09 用户定稿「全部和扩展的列表宽度对齐」）。
+pub(crate) const LIST_W: f32 = 350.;
+
 /// ConfigSidebar 基座（240px 列，bg_panel + 右边框）。
 pub(crate) fn sidebar_shell(id: &'static str) -> gpui::Stateful<gpui::Div> {
     let t = T();

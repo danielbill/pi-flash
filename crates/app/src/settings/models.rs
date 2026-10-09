@@ -714,6 +714,7 @@ fn mc_models_sidebar(
         ));
 
     sidebar_shell("mc-sidebar")
+        .w(px(LIST_W))
         .child(upper)
         .child(lower)
         .into_any_element()

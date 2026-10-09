@@ -263,7 +263,8 @@ fn mcp_sidebar(
     }
 
     // 列表底色压平（040：与页面同色，选中态只靠字重字色）
-    let mut shell = sidebar_shell("mc-sidebar").bg(rgb(t.bg)).child(list);
+    let mut shell =
+        sidebar_shell("mc-sidebar").w(px(LIST_W)).bg(rgb(t.bg)).child(list);
     // 空态：placeholder 色，水平垂直居中
     if empty {
         shell = shell.child(

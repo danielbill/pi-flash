@@ -206,7 +206,7 @@ pub(crate) fn mc_skills_view(
         }
     };
     (
-        sidebar_shell("mc-sidebar")
+        sidebar_shell("mc-sidebar").w(px(LIST_W))
             // 列表底色压平（040：与页面同色，选中态只靠字重字色）
             .bg(rgb(t.bg))
             .child(list)

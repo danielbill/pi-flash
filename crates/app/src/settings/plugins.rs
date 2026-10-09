@@ -358,7 +358,7 @@ fn pl_sidebar(
         );
     }
     sidebar_shell("mc-sidebar")
-        .w(px(350.))
+        .w(px(LIST_W))
         .bg(rgb(t.bg))
         .child(list)
         .into_any_element()
