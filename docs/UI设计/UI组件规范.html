@@ -260,6 +260,10 @@ th.pf { color:var(--accent); }
 .sw.sw-sm .tr { width:24px; height:14px; border-radius:7px; }
 .sw.sw-sm .tr::after { width:8px; height:8px; }
 .sw.sw-sm input:checked + .tr::after { left:12px; }
+/* 28×16 候选档（待定夺） */
+.sw.sw-mid .tr { width:28px; height:16px; border-radius:8px; }
+.sw.sw-mid .tr::after { width:10px; height:10px; }
+.sw.sw-mid input:checked + .tr::after { left:14px; }
 .sw.dis { opacity:.5; pointer-events:none; }
 
 /* 复选 / 单选 */
@@ -596,11 +600,11 @@ footer a:hover { text-decoration:underline; }
         <button class="btn danger b-sm">删除</button>
         <span class="tag">BTN_SM · h24 · px8 · ui(11) · r6</span>
       </div>
-      <div class="btn-row">
+      <div class="btn-row" style="position:relative;outline:1.5px solid var(--accent);outline-offset:8px;border-radius:var(--r-ctrl);margin:10px 0">
         <button class="btn primary b-md">保存配置</button>
         <button class="btn secondary b-md">取消</button>
         <button class="btn danger b-md">删除会话</button>
-        <span class="tag">BTN_MD · h28 · px12 · ui(12) · r6（默认）</span>
+        <span class="tag" style="color:var(--accent);font-weight:700">BTN_MD · h28 · px12 · ui(12) · r6 ★ 已选定默认</span>
       </div>
       <div class="btn-row">
         <button class="btn primary b-lg">应用全部</button>
@@ -646,6 +650,13 @@ footer a:hover { text-decoration:underline; }
         <div style="display:flex;gap:16px;align-items:center;height:24px">
           <label class="sw sw-sm"><input type="checkbox" checked><span class="tr"></span></label>
           <label class="sw sw-sm"><input type="checkbox"><span class="tr"></span></label>
+        </div>
+        <div class="cap" style="margin-top:12px">候选 28×16 <span class="tag" style="color:var(--accent);font-weight:700">28×16 · r8 · knob 10 · 待定夺</span></div>
+        <div style="display:flex;gap:16px;align-items:center;height:28px">
+          <label class="sw sw-mid"><input type="checkbox" checked><span class="tr"></span></label>
+          <label class="sw sw-mid"><input type="checkbox"><span class="tr"></span></label>
+          <label class="sw sw-mid dis"><input type="checkbox" checked><span class="tr"></span></label>
+          <span style="font-size:11px;color:var(--text-soft)">开 / 关 / 禁用</span>
         </div>
         <div class="note">选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用 opacity .5。状态直切无动画。</div>
       </div>
