@@ -295,7 +295,8 @@ fn stepper(
                 .justify_center()
                 .text_size(crate::appearance::ui_size(12.5))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
+                // §5.4：与页内其他文字同色，层级只由加粗表达
+                .text_color(rgb(t.text_muted))
                 .child(SharedString::from(value.to_string())),
         )
         .child(step_btn(
