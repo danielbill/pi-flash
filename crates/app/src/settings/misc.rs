@@ -246,7 +246,9 @@ fn window_row(
                 } else {
                     gpui::FontWeight::NORMAL
                 })
-                .text_color(rgb(if active { t.text } else { t.text_muted }))
+                // §5.4：选项文字统一 text_muted，选中只加粗不变色
+                // （选中感由 accent 描边 + bg_selected 承担）
+                .text_color(rgb(t.text_muted))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(t.bg_hover)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
