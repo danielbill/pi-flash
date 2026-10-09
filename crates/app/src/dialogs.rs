@@ -117,8 +117,7 @@ fn render_wx_qr(
                 d.bg(rgb(t.accent)).text_color(rgb(t.accent_contrast))
             })
             .when(!accent, |d| {
-                d.border_1()
-                    .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+                d.border_1().border_color(rgb(t.border))
             })
             .hover(|s| s.bg(rgb(t.bg_hover)))
             .child(SharedString::from(label.to_string()))
@@ -288,8 +287,7 @@ fn render_file_dirty(
                 d.bg(rgb(t.accent)).text_color(rgb(t.accent_contrast))
             })
             .when(!accent, |d| {
-                d.border_1()
-                    .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
+                d.border_1().border_color(rgb(t.border))
             })
             .hover(|s| s.bg(rgb(t.bg_hover)))
             .child(SharedString::from(label.to_string()))
@@ -818,7 +816,7 @@ fn render_project_picker(
                         .top_0()
                         .bottom_0()
                         .right_0()
-                        .w(px(8.))
+                        .w(px(10.))
                         .child(crate::ui::psp_scrollbar::menu_scrollbar(scroll)),
                 ),
         );

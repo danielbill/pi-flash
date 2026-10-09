@@ -23,7 +23,7 @@
 
 use gpui::{
     App, AnyElement, ElementId, FocusHandle, FontWeight, MouseButton, SharedString, Window, div,
-    hsla, prelude::*, px, rgba, rgb,
+    prelude::*, px, rgba, rgb,
 };
 
 use crate::theme::Theme;
@@ -109,13 +109,12 @@ pub fn confirm(
             .justify_center()
             .rounded(px(5.))
             .border_1()
-            .border_color(hsla(0., 0.84, 0.6, 0.35))
-            .bg(hsla(0., 0.84, 0.6, 0.06))
-            .text_size(crate::appearance::ui_size(12.))
+            .border_color(rgba(crate::theme::danger_alpha(t, 0x59)))
+            .bg(rgba(crate::theme::danger_alpha(t, 0x0f)))            .text_size(crate::appearance::ui_size(12.))
             .text_color(rgb(t.danger))
             .font_weight(FontWeight::SEMIBOLD)
             .cursor_pointer()
-            .hover(|s| s.bg(hsla(0., 0.84, 0.6, 0.12)))
+            .hover(|s| s.bg(rgba(crate::theme::danger_wash(t))))
             .child(SharedString::from(crate::i18n::tr("确认")))
             .on_mouse_down(MouseButton::Left, move |_, w, cx| {
                 cx.stop_propagation();

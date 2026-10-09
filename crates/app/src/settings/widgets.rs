@@ -1,14 +1,12 @@
 //! 设置面板公共件 —— pi-web `SettingsUi.tsx` 的 GPUI 复刻（Config* 系列）。
-//! 尺寸节奏与 pi-web 对齐：侧栏行 30px、按钮 small 28 / default 32、开关
-//! 32×18（small 24×14）、状态点 7px、scope 徽标 10px；颜色走主题 + 语义色
-//! （绿 0x4ade80 / 红 0xef4444 / 警 0xd97706 / 靛蓝徽标 hsla）。
+//! 尺寸走 `crate::ui::tokens`（UI 组件规范）；颜色走主题语义色
+//! （danger 系见 theme.rs；状态色绿 0x4ade80 / 警 0xd97706 / 靛蓝徽标 hsla）。
 
 use gpui::{AnyElement, SharedString, FontWeight, MouseButton, Window, div, px, rgb};
 
 use super::*;
 
 pub(crate) const GREEN: u32 = 0x4ade80;
-pub(crate) const RED: u32 = 0xef4444;
 pub(crate) const WARN: u32 = 0xd97706;
 
 /// 靛蓝小徽标（reasoning "T"、项目 scope）——pi-web rgba(99,102,241,…)。
@@ -69,9 +67,9 @@ pub(crate) fn config_button(
             .text_color(rgb(t.text_muted)),
         Btn::Danger => el
             .border_1()
-            .border_color(gpui::hsla(0., 0.84, 0.6, 0.35))
-            .bg(gpui::hsla(0., 0.84, 0.6, 0.06))
-            .text_color(rgb(RED)),
+            .border_color(gpui::rgba(crate::theme::danger_alpha(t, 0x59)))
+            .bg(gpui::rgba(crate::theme::danger_alpha(t, 0x0f)))
+            .text_color(rgb(t.danger)),
     };
     if disabled {
         return el.opacity(0.5).into_any_element();
@@ -79,7 +77,7 @@ pub(crate) fn config_button(
     el = el.cursor_pointer().hover(move |s| {
         match variant {
             Btn::Primary => s.bg(rgb(t.accent_hover)),
-            Btn::Danger => s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)),
+            Btn::Danger => s.bg(gpui::rgba(crate::theme::danger_wash(t))),
             _ => s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)),
         }
     });
@@ -254,7 +252,7 @@ pub(crate) fn note(text: &str) -> AnyElement {
 pub(crate) fn error_note(text: &str) -> AnyElement {
     div()
         .text_size(crate::appearance::ui_size(11.))
-        .text_color(rgb(RED))
+        .text_color(rgb(T().danger))
         .child(SharedString::from(text.to_string()))
         .into_any_element()
 }

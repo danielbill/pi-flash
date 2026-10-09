@@ -282,7 +282,7 @@ pub(crate) fn psp_view(
                     .top(px(0.))
                     .bottom(px(0.))
                     .right(px(-10.))
-                    .w(px(12.))
+                    .w(px(10.))
                     .child(crate::ui::psp_scrollbar::psp_scrollbar(
                         &chat.psp_sb_state,
                         &chat.psp_scroll,

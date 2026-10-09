@@ -404,19 +404,29 @@ fn pl_detail(
         .justify_center()
         .rounded(px(5.))
         .border_1()
-        .border_color(gpui::hsla(0., 0.84, 0.6, 0.35))
-        .bg(gpui::hsla(0., 0.84, 0.6, 0.06));
+        .border_color(gpui::rgba(crate::theme::danger_alpha(
+            crate::theme::theme(),
+            0x59,
+        )))
+        .bg(gpui::rgba(crate::theme::danger_alpha(
+            crate::theme::theme(),
+            0x0f,
+        )));
     if removing_this {
-        trash = trash.child(crate::ui::spinner(12., widgets::RED));
+        trash = trash.child(crate::ui::spinner(12., crate::theme::theme().danger));
     } else {
-        trash = trash.child(crate::ui::icon("icon-trash-solid", 14., widgets::RED));
+        trash = trash.child(crate::ui::icon(
+            "icon-trash-solid",
+            14.,
+            crate::theme::theme().danger,
+        ));
     }
     if removing_this || chat.pkg_op.is_some() {
         trash = trash.opacity(0.5);
     } else {
         trash = trash
             .cursor_pointer()
-            .hover(|s| s.bg(gpui::hsla(0., 0.84, 0.6, 0.12)))
+            .hover(|s| s.bg(gpui::rgba(crate::theme::danger_wash(crate::theme::theme()))))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let _ = weak_trash.update(cx, |c, cx| {
                     c.mc_ask_remove_package(trash_src.clone(), cx)

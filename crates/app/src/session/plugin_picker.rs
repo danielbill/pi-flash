@@ -302,7 +302,10 @@ fn plugin_row(
                 .flex()
                 .items_center()
                 .justify_center()
-                .when(checked, |d| d.child(crate::ui::icon("check", 10., 0xffffff))),
+                .when(
+                    checked,
+                    |d| d.child(crate::ui::icon("check", 10., t.accent_contrast)),
+                ),
         )
         .child(
             div()
