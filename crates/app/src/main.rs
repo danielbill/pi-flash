@@ -1919,17 +1919,14 @@ fn main() {
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
-            // 随二进制打包两组 mono：JetBrains Mono（会话区 mono 用途；三档
-            // 字重 + Italic 覆盖 400/600/700）+ Noto Sans Mono（终端专用，
-            // pi-web --font-mono 首选；官方无 Italic，italic run 走系统合成）。
+            // JetBrains Mono 随二进制打包：全应用唯一内置 mono（会话区 mono
+            // + 终端网格；三档字重 + Italic 覆盖 400/600/700 与斜体）。
             // 注册失败仅回退系统字体，不致命。
             cx.text_system().add_fonts(vec![
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice()),
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-SemiBold.ttf").as_slice()),
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice()),
                 std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/JetBrainsMono-Italic.ttf").as_slice()),
-                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/NotoSansMono-Regular.ttf").as_slice()),
-                std::borrow::Cow::Borrowed(include_bytes!("../../../assets/fonts/NotoSansMono-Bold.ttf").as_slice()),
             ])
             .expect("embedded mono fonts are valid TTF");
             // 系统字体目录（设置页字体下拉数据源，字母序；一次性枚举）
