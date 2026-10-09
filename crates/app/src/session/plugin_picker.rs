@@ -191,16 +191,25 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
                 .child(SharedString::from(crate::i18n::tr("选择扩展"))),
         )
         .when(total > 0, |d| {
-            d.child(
-                div()
-                    .ml_auto()
-                    .text_size(ui(10.))
-                    .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(crate::i18n::tf(
-                        "合计约：{n}",
-                        &[("n", crate::services::format::fmt_thousand(total.max(0) as u64))],
-                    ))),
-            )
+            // 不用 ml_auto（实测 CJK 标签参与测量时 auto margin 收不满，合计
+            // 墨缘差 8px）——数字作**最后一个子元素**，同下方行一样的机制
+            // 被 flex 顶到内容右缘，与行内 token 列共线
+            d.child(div().flex_1())
+                .child(
+                    div()
+                        .text_size(ui(10.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(crate::i18n::tr("合计："))),
+                )
+                .child(
+                    div()
+                        .font_family(crate::markdown::MONO_FAMILY)
+                        .text_size(ui(10.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(crate::services::format::fmt_thousand(
+                            total.max(0) as u64,
+                        ))),
+                )
         });
 
     // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 5px）

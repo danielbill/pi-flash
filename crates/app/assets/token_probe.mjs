@@ -237,6 +237,11 @@ for (const pkg of input.packages) {
       instruct_tokens: instructTokensN,
       ext_tokens: promptTokensN + declTokensN + instructTokensN,
       skills_tokens: skillsTokensN,
+      // 懒注册信号：任一扩展挂了 session_start（工具/说明可能在会话期才进
+      // 上下文，静态数只是下限）——Rust 侧据此决定要不要跑 dump 会话
+      lazy: extensions.some((e) => e.handlers.has("session_start")),
+      // 实际装载的扩展入口：dump 会话原样用作 -e 参数
+      entries,
     });
   } catch (e) {
     results.push({ source: pkg.source, error: String(e?.message ?? e) });

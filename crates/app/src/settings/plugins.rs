@@ -1,8 +1,8 @@
 //! Extensions tab（040-Pi的扩展管理）：「扩展」= pi 的 package（settings.json
 //! `packages` 条目）。顶部安装区（整条 `pi install …` 命令可直接粘贴，全局
-//! only）+ 左侧已装列表（300px，行内开关 + 组头总开关）+ 右侧五行详情
-//! （说明取包内 package.json 的 description）。安装/卸载走 vendored pi CLI
-//! 后台线程，完成后 op 泵清 busy 并刷新列表（main.rs）。
+//! only）+ 左侧已装列表（350px，行内开关 + 组头总开关，内容左右各留 15px）+
+//! 右侧五行详情（说明取包内 package.json 的 description）。安装/卸载走
+//! vendored pi CLI 后台线程，完成后 op 泵清 busy 并刷新列表（main.rs）。
 
 use super::*;
 
@@ -191,8 +191,8 @@ fn pl_install_bar(
         .flex()
         .flex_col()
         .gap(px(6.))
-        // pl 14 = 列表内容左缘（sidebar_list 6 + 行内 8），安装区与列表左对齐
-        .pl(px(14.))
+        // pl 15 = 列表内容左缘（list px7 + 行内 8），安装区与列表文字左对齐
+        .pl(px(15.))
         .pr(px(20.))
         .pt(px(14.))
         .pb(px(10.))
@@ -240,14 +240,38 @@ fn pl_install_bar(
                     )
                 }),
         )
-        .child(note("从 https://pi.dev/packages 复制安装命令，做全局安装"))
+        // 提示行：pi.dev/packages 做成下划线链接（accent 色），点击开浏览器
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child("从 ")
+                .child(
+                    div()
+                        .id("pkg-pi-dev-link")
+                        .text_color(rgb(t.accent))
+                        .underline()
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.75))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                            cx.open_url("https://pi.dev/packages");
+                        })
+                        .child("https://pi.dev/packages"),
+                )
+                .child(" 复制安装命令，做全局安装"),
+        )
         .children(error.as_ref().map(|e| error_note(e)))
         .into_any_element()
 }
 
-/// 左列表（300px，040，无底色）：标题行【全局扩展包】+ {enabled}/{total} +
-/// 总开关（与行内开关同规格 32×18，标题字号同列表行）；行 = 展示名（去
-/// npm:）+ 行内启停开关。
+/// 左列表（350px，040，无底色）：标题行【配置全局默认扩展】+ {enabled}/{total}
+/// + 总开关（与行内开关同规格 32×18，标题字号同列表行）；行 = 展示名（去
+/// npm:）+ 行内启停开关。列表内容左右各留 15px（list px7 + 行内 px8 等距，
+/// 与右侧详情 p15 一致），上方安装栏 pl15 与之对齐。
 fn pl_sidebar(
     _chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -255,7 +279,7 @@ fn pl_sidebar(
     entries: &[(usize, &serde_json::Value)],
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
-    let mut list = sidebar_list();
+    let mut list = sidebar_list().px(px(7.));
     let enabled = entries
         .iter()
         .filter(|(_, v)| !pi_link::skills::entry_disabled(v))
@@ -276,7 +300,7 @@ fn pl_sidebar(
                     .text_size(crate::appearance::ui_size(12.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text_dim))
-                    .child(tr("全局扩展包")),
+                    .child(tr("配置全局默认扩展")),
             )
             .child(
                 div()
@@ -334,7 +358,7 @@ fn pl_sidebar(
         );
     }
     sidebar_shell("mc-sidebar")
-        .w(px(300.))
+        .w(px(350.))
         .bg(rgb(t.bg))
         .child(list)
         .into_any_element()
@@ -356,6 +380,7 @@ fn pl_detail(
         .map(|(i, v)| (*i, *v))
     else {
         return detail_shell("mc-detail")
+            .p(px(15.))
             .child(
                 div()
                     .text_size(crate::appearance::ui_size(12.))
@@ -398,7 +423,9 @@ fn pl_detail(
                 });
             });
     }
+    // 本页详情内边距与列表 15px 统一（detail_shell 默认 p20）
     detail_shell("mc-detail")
+        .p(px(15.))
         .child(
             div()
                 .flex()
@@ -417,8 +444,9 @@ fn pl_detail(
                 .child(div().flex_1())
                 .child(trash),
         )
-        .child(grid_row(
+        .child(grid_row_w(
             &tr("说明"),
+            px(80.),
             div()
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
@@ -426,16 +454,18 @@ fn pl_detail(
                     description.unwrap_or_else(|| "—".to_string()),
                 )),
         ))
-        .child(grid_row(
+        .child(grid_row_w(
             &tr("状态"),
+            px(80.),
             div().child(if disabled {
                 SharedString::from(tr("已停用").to_string())
             } else {
                 SharedString::from(tr("已启用").to_string())
             }),
         ))
-        .child(grid_row(
+        .child(grid_row_w(
             &tr("说明大小"),
+            px(80.),
             div()
                 .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(11.))
@@ -449,9 +479,10 @@ fn pl_detail(
                     None => "—".to_string(),
                 })),
         ))
-        .child(grid_row(&tr("来源"), mono_text(src.clone(), false)))
-        .child(grid_row(
+        .child(grid_row_w(&tr("来源"), px(80.), mono_text(src.clone(), false)))
+        .child(grid_row_w(
             &tr("路径"),
+            px(80.),
             div()
                 .font_family(crate::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(11.))

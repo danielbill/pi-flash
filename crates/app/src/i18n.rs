@@ -119,7 +119,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("安装", "安裝", "Install"),
     ("安装中", "安裝中", "Installing…"),
     ("从 https://pi.dev/packages 复制安装命令，做全局安装", "從 https://pi.dev/packages 複製安裝命令，做全域安裝", "Copy an install command from https://pi.dev/packages and install globally"),
-    ("全局扩展包", "全域擴展包", "Global extensions"),
+    ("配置全局默认扩展", "配置全域預設擴展", "Global default extensions"),
     ("说明", "說明", "Description"),
     ("路径", "路徑", "Path"),
     ("来源", "來源", "Source"),
@@ -287,7 +287,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("扩展只能在 full+ 档勾选", "擴展只能在 full+ 檔勾選", "Extensions can only be picked in the full+ preset"),
     // 040 说明 token 预览（延迟加载）
     ("说明大小", "說明大小", "Prompt size"),
-    ("合计约：{n}", "合計約：{n}", "Total ≈ {n}"),
+    ("合计：", "合計：", "Total:"),
     // 031 @ 文件检索 + ! shell 命令
     ("文件", "檔案", "Files"),
     ("斜杠命令", "斜槓命令", "Slash commands"),

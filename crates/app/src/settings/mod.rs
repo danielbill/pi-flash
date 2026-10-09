@@ -21,8 +21,8 @@ use super::*;
 pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
     check_chip, config_button, config_switch, detail_shell, error_note, field, footer, grid_row,
-    group_header, group_switch, list_action, mono_text, note, scope_tag, section_title,
-    sidebar_list, sidebar_shell, status_dot, Btn, GREEN, WARN,
+    grid_row_w, group_header, group_switch, list_action, mono_text, note, scope_tag,
+    section_title, sidebar_list, sidebar_shell, status_dot, Btn, GREEN, WARN,
 };
 
 /// 页签序：0 界面 · 1 模型 · 2 技能 · 3 子代理 · 4 扩展 · 5 MCP · 6 其他。
@@ -414,13 +414,15 @@ pub(crate) fn render_settings(
             .child(pane)
             .into_any_element()
     } else {
+        // 分栏页：扩展页的列表与详情统一 15px 内边距（与内容缘等距），
+        // 包装层不再另加 20（否则左侧多出 20 不对称）；其余分栏页保持 20
+        let hpad = if tab == TAB_PLUGINS { 0. } else { 20. };
         div()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .pt(px(14.))
-            .pl(px(20.))
-            .pr(px(20.))
+            .px(px(hpad))
             .pb(px(16.))
             .child(pane)
             .into_any_element()
