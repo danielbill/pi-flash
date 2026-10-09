@@ -409,16 +409,20 @@ pub(crate) fn mc_subagents_view(
     let fea_on = chat.sa_settings.builtin_enabled;
 
     let mut col = div().flex().flex_col().w_full().h_full().min_h_0();
-    // 特性条（pi-web agents-feature-setting）
+    // 特性条（pi-web agents-feature-setting）；与扩展页安装栏同款：
+    // pl15/pr20 与列表/详情内容缘对齐，底部划线
     col = col.child(
         div()
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(12.))
-            .px(px(2.))
-            .py(px(6.))
-            .mb(px(10.))
+            .pl(px(15.))
+            .pr(px(20.))
+            .pt(px(6.))
+            .pb(px(10.))
+            .border_b_1()
+            .border_color(rgb(t.border))
             .child(
                 div()
                     .flex_1()
@@ -496,7 +500,8 @@ fn sa_sidebar(
     section: &str,
 ) -> gpui::AnyElement {
     let t = T();
-    let mut list = sidebar_list();
+    // px7 + 行内 px8 = 内容左右 15px（与右侧详情 p15 等距，040 扩展页定稿）
+    let mut list = sidebar_list().px(px(7.));
     if !chat.sa_runs.is_empty() {
         list = list.child(group_header(&tr("运行"), None));
         for run in &chat.sa_runs {
@@ -511,6 +516,8 @@ fn sa_sidebar(
             let sel = format!("run-{}", run.id);
             list = list.child(
                 widgets::sidebar_item(format!("sa-run-{}", run.id), active)
+                    // 行背景压平（040：列表无底色，选中态只靠加粗+深字色，hover 保留）
+                    .bg(rgb(t.bg))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| {
                             if let Some(st) = c.settings.clone() {
@@ -559,6 +566,7 @@ fn sa_sidebar(
             let name = p.name.clone();
             list = list.child(
                 widgets::sidebar_item(format!("sa-prof-{}", p.name), active)
+                    .bg(rgb(t.bg))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| c.sa_select(name.clone(), cx));
                     })
@@ -584,7 +592,9 @@ fn sa_sidebar(
             );
         }
     }
+    // 列表底色压平（040：与页面同色，选中态只靠字重字色）
     sidebar_shell("mc-sidebar")
+        .bg(rgb(t.bg))
         .child(list)
         .child(list_action("sa-new", weak, &tr("新建子代理"), section == "__new__", |c, cx| {
             c.sa_begin_create(cx)
@@ -612,7 +622,7 @@ fn sa_detail(
         return match run {
             None => div()
                 .flex_1()
-                .p(px(20.))
+                .p(px(15.))
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t_dim()))
                 .child(tr("运行已结束"))
@@ -628,7 +638,7 @@ fn sa_detail(
     }
     div()
         .flex_1()
-        .p(px(20.))
+        .p(px(15.))
         .text_size(crate::appearance::ui_size(12.))
         .text_color(rgb(t_dim()))
         .child(tr("选择或创建一个子代理配置"))
@@ -654,7 +664,9 @@ fn sa_create_form(
 ) -> gpui::AnyElement {
     let t = T();
     let weak_scope = weak.clone();
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     detail_shell("mc-detail")
+        .p(px(15.))
         .child(section_title(&tr("新建子代理")))
         .child(
             // scope 双选 + 路径预览
@@ -770,7 +782,9 @@ fn sa_profile_form(
         }),
     );
 
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let mut detail = detail_shell("mc-detail")
+        .p(px(15.))
         // header：scope + 名称 + 路径 | 启用开关 + 运行 + 删除
         .child(
             div()
@@ -963,7 +977,10 @@ fn sa_run_body(run: &SubagentRun, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEle
         2 => (tr("失败"), 0xf87171),
         _ => (tr("已中止"), 0xfacc15),
     };
-    let mut detail = detail_shell("mc-detail").child(
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
+    let mut detail = detail_shell("mc-detail")
+        .p(px(15.))
+        .child(
         div()
             .flex()
             .items_center()

@@ -394,14 +394,18 @@ pub(crate) fn mc_models_view(
     let scoped = !chat.mc_state.all_enabled;
     let stale = chat.mc_state.stale.len();
     if scoped || stale > 0 {
+        // 顶条与扩展页安装栏同款：pl15/pr20 与列表/详情内容缘对齐，底部划线
         let mut banner = div()
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(8.))
-            .px(px(2.))
-            .py(px(6.))
-            .mb(px(10.))
+            .pl(px(15.))
+            .pr(px(20.))
+            .pt(px(6.))
+            .pb(px(10.))
+            .border_b_1()
+            .border_color(rgb(t.border))
             .child(
                 div()
                     .font_family(crate::markdown::MONO_FAMILY)
@@ -514,7 +518,8 @@ fn mc_models_sidebar(
     enabled_set: &std::collections::HashSet<String>,
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
-    let mut list = sidebar_list();
+    // px7 + 行内 px8 = 内容左右 15px（与右侧详情 p15 等距，040 扩展页定稿）
+    let mut list = sidebar_list().px(px(7.));
 
     // catalog providers（pi-web 侧栏同款：provider logo，未命中走首字母方块）
     for p in provider_ids {
@@ -524,6 +529,8 @@ fn mc_models_sidebar(
         let pid = p.clone();
         list = list.child(
             widgets::sidebar_item(format!("mc-side-{p}"), active)
+                // 行背景压平（040：列表无底色，选中态只靠加粗+深字色，hover 保留）
+                .bg(rgb(t.bg))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| c.mc_select_provider(pid.clone(), cx));
                 })
@@ -568,6 +575,7 @@ fn mc_models_sidebar(
         let key = prov_key.clone();
         list = list.child(
             widgets::sidebar_item(format!("mj-side-{name}"), active)
+                .bg(rgb(t.bg))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_item.update(cx, |c, cx| c.mj_select(key.clone(), cx));
                 })
@@ -590,6 +598,7 @@ fn mc_models_sidebar(
             let weak_row = weak.clone();
             list = list.child(
                 widgets::sidebar_item(format!("mj-m-{name}-{ix}"), active)
+                    .bg(rgb(t.bg))
                     .pl(px(26.))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_row.update(cx, |c, cx| c.mj_select(model_key.clone(), cx));
@@ -626,6 +635,7 @@ fn mc_models_sidebar(
         let pname = name.clone();
         list = list.child(
             widgets::sidebar_item(format!("mj-addm-{name}"), false)
+                .bg(rgb(t.bg))
                 .pl(px(26.))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_add.update(cx, |c, cx| c.mj_add_model(pname.clone(), cx));
@@ -639,7 +649,9 @@ fn mc_models_sidebar(
         );
     }
 
+    // 列表底色压平（040：与页面同色，选中态只靠字重字色）
     sidebar_shell("mc-sidebar")
+        .bg(rgb(t.bg))
         .child(list)
         .child(list_action(
             "mj-add-provider",
@@ -712,7 +724,9 @@ fn mc_models_detail(
         .collect();
     let configured = chat.mc_configured(&provider);
     let oauth = dc_oauth;
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
+        .p(px(15.))
         .when(error.is_some(), |d| {
             d.child(error_note(error.as_deref().unwrap_or("")))
         });

@@ -51,7 +51,8 @@ pub(crate) fn mc_skills_view(
     section: &str,
 ) -> (gpui::AnyElement, gpui::AnyElement) {
     let t = T();
-    let mut list = sidebar_list();
+    // px7 + 行内 px8 = 内容左右 15px（与右侧详情 p15 等距，040 扩展页定稿）
+    let mut list = sidebar_list().px(px(7.));
     for (label, scope) in [
         (tr("项目"), pi_link::skills::SkillScope::Project),
         (tr("全局"), pi_link::skills::SkillScope::Global),
@@ -84,6 +85,8 @@ pub(crate) fn mc_skills_view(
             let path = sk.path.to_string_lossy().to_string();
             list = list.child(
                 widgets::sidebar_item(format!("skill-{}", sk.name), active)
+                    // 行背景压平（040：列表无底色，选中态只靠加粗+深字色，hover 保留）
+                    .bg(rgb(t.bg))
                     .on_mouse_down(MouseButton::Left, {
                         let handler = widgets::select_section(&weak_item, path.clone());
                         move |_, w, cx| handler(w, cx)
@@ -120,7 +123,7 @@ pub(crate) fn mc_skills_view(
     let detail = match selected {
         None => div()
             .flex_1()
-            .p(px(20.))
+            .p(px(15.))
             .text_size(crate::appearance::ui_size(12.))
             .text_color(rgb(t.text_dim))
             .child(tr("没有找到技能"))
@@ -135,7 +138,7 @@ pub(crate) fn mc_skills_view(
                 .min_w_0()
                 .h_full()
                 .overflow_y_scroll()
-                .p(px(20.))
+                .p(px(15.))
                 .text_size(crate::appearance::ui_size(12.))
                 .flex()
                 .flex_col()
@@ -180,5 +183,12 @@ pub(crate) fn mc_skills_view(
                 .into_any_element()
         }
     };
-    (sidebar_shell("mc-sidebar").child(list).into_any_element(), detail.into_any_element())
+    (
+        sidebar_shell("mc-sidebar")
+            // 列表底色压平（040：与页面同色，选中态只靠字重字色）
+            .bg(rgb(t.bg))
+            .child(list)
+            .into_any_element(),
+        detail.into_any_element(),
+    )
 }

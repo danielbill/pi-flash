@@ -263,7 +263,9 @@ pub(crate) fn mj_provider_editor(
         .catalog_for(&chat.cwd)
         .iter()
         .any(|m| m.provider == name);
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
+        .p(px(15.))
         .child(
             div()
                 .flex()
@@ -336,7 +338,9 @@ pub(crate) fn mj_model_editor(
     t: &crate::theme::Theme,
 ) -> gpui::AnyElement {
     let _ = t;
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
+        .p(px(15.))
         .child(
             div()
                 .flex()
@@ -455,7 +459,9 @@ pub(crate) fn mj_add_panel(
     }
 
     // 自定义端点表单
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
+        .p(px(15.))
         .child(section_title(&tr("添加 Provider")))
         .child(note("从目录选择（写入 auth.json），或创建 OpenAI / Anthropic 兼容的自定义端点（写入 models.json）"))
         .when(!known.is_empty(), |d| d.child(grid))

@@ -196,7 +196,8 @@ fn mcp_sidebar(
     section: &str,
 ) -> gpui::AnyElement {
     let t = T();
-    let mut list = sidebar_list();
+    // px7 + 行内 px8 = 内容左右 15px（与右侧详情 p15 等距，040 扩展页定稿）
+    let mut list = sidebar_list().px(px(7.));
     for (label, scope) in [(tr("全局"), Scope::Global), (tr("项目"), Scope::Project)] {
         let items: Vec<&ServerEntry> = chat.mcp_servers.iter().filter(|s| s.scope == scope).collect();
         let enabled = items.iter().filter(|s| s.enabled).count();
@@ -230,6 +231,8 @@ fn mcp_sidebar(
             let row_key = key.clone();
             list = list.child(
                 widgets::sidebar_item(format!("mcp-{}", key), active)
+                    // 行背景压平（040：列表无底色，选中态只靠加粗+深字色，hover 保留）
+                    .bg(rgb(t.bg))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         let _ = weak_item.update(cx, |c, cx| c.mcp_select(row_key.clone(), cx));
                     })
@@ -260,7 +263,9 @@ fn mcp_sidebar(
         }
     }
 
+    // 列表底色压平（040：与页面同色，选中态只靠字重字色）
     sidebar_shell("mc-sidebar")
+        .bg(rgb(t.bg))
         .child(list)
         .child(list_action("mcp-add", weak, &tr("添加 MCP"), section == "__mcp_add__", |c, cx| {
             c.mcp_select("__mcp_add__".into(), cx)
@@ -298,7 +303,7 @@ fn mcp_detail(
                 .flex()
                 .items_center()
                 .justify_center()
-                .p(px(20.))
+                .p(px(15.))
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(crate::i18n::tf(
@@ -319,7 +324,10 @@ fn mcp_server_detail(
 ) -> gpui::AnyElement {
     let t = T();
     let project = entry.scope == Scope::Project;
-    let mut detail = detail_shell("mc-detail").child(
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
+    let mut detail = detail_shell("mc-detail")
+        .p(px(15.))
+        .child(
         div()
             .flex()
             .items_center()
@@ -453,7 +461,9 @@ fn mcp_add_panel(
         pi_link::mcp::global_path()
     };
 
+    // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let mut detail = detail_shell("mc-detail")
+        .p(px(15.))
         .child(section_title(&tr("添加 MCP")))
         .child(note("粘贴 JSON / http(s) URL / 命令行，或 `pi mcp add …`；添加后写入 mcp.json"))
         .child(mcp_add_input.clone())

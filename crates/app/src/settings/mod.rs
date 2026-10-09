@@ -414,9 +414,17 @@ pub(crate) fn render_settings(
             .child(pane)
             .into_any_element()
     } else {
-        // 分栏页：扩展页的列表与详情统一 15px 内边距（与内容缘等距），
-        // 包装层不再另加 20（否则左侧多出 20 不对称）；其余分栏页保持 20
-        let hpad = if tab == TAB_PLUGINS { 0. } else { 20. };
+        // 分栏页：列表与详情统一 15px 内边距（与内容缘等距），包装层不再
+        // 另加 20（否则左侧多出 20 不对称）；分栏页全部全出血，顶条/底栏
+        // 的横线与侧栏竖线直通卡缘（040 扩展页定稿样式推广到各分栏页）
+        let hpad = if matches!(
+            tab,
+            TAB_PLUGINS | TAB_MODELS | TAB_SKILLS | TAB_AGENTS | TAB_MCP
+        ) {
+            0.
+        } else {
+            20.
+        };
         div()
             .flex_1()
             .min_w_0()
