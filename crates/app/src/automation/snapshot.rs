@@ -441,7 +441,7 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
 
 fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     let dialog = chat.dialog.as_ref().map(|d| match d {
-        Dialog::ModelSelect { .. } => "model_select",
+        Dialog::ProviderPicker { .. } => "provider_picker",
         Dialog::GitDiff { .. } => "git_diff",
         Dialog::SessionSearch { .. } => "session_search",
         Dialog::ProjectPicker { .. } => "project_picker",
@@ -463,10 +463,11 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     };
     json!({
         "dialog": dialog,
-        // 模型选择弹窗的可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录）
-        "model_rows": match chat.dialog.as_ref() {
-            Some(Dialog::ModelSelect { .. }) => chat.filtered_models(cx).len(),
-            _ => 0,
+        // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；
+        // 042 起数据源 = pill 化模型菜单的 picker_models）
+        "model_rows": match chat.model_picker.as_ref() {
+            Some(_) => chat.picker_models(cx).len(),
+            None => 0,
         },
         "project_hits": project_hits,
         "project_filter": chat.project_filter,

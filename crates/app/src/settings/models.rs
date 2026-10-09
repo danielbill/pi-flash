@@ -1,8 +1,8 @@
-//! Models tab (pi-web ModelsConfig + EnabledModelsSection parity): 路径条
-//! （enabledModels n/m + 清理无效条目/启用全部模型）、左栏 catalog provider
-//! 与 models.json 自定义 provider（嵌套模型行 + 加模型）、右栏 API Key /
-//! OAuth / 自定义编辑器（保存前缓冲在 mc_models_json）、可用模型区（筛选 +
-//! 全部开启/关闭）、底部 models.json 保存。
+//! Models tab（042 定稿）：无顶部 banner、无页面 footer。左栏分割上下
+//! 两个**等高**列表——上 = 登记的 Providers（图标 + 显示名 + x/N + 整商
+//! switch，头行【+添加Provider】开清单弹窗），下 = 启用的模型平铺
+//! （Provider/model + 五角星设默认，常驻筛选）；右栏详情 = API KEY 表单 +
+//! 通路探查行 + 可用模型区（内置商）/ 自定义编辑器（表单头保存即写盘）。
 
 use super::*;
 use super::custom_models::{mj_add_panel, mj_model_editor, mj_provider_editor};
@@ -65,10 +65,55 @@ impl Chat {
         (enabled, models.len())
     }
 
-    /// Re-read the model-related settings.json defaults a new session starts
-    /// with (pi-web /api/models `defaultModel`/`defaultThinkingLevel` inputs).
-    /// Cheap (one settings.json read) — also called at startup, not just when
-    /// the settings panel is open.
+    /// 042 显示名排序键：`Provider显示名/model` 小写——下列表视觉顺序与
+    /// 「无默认回落取第一」用同一函数（文档：算法和列表视觉保持统一）。
+    pub(crate) fn mc_sort_key(m: &pi_link::protocol::ModelInfo) -> String {
+        format!(
+            "{}/{}",
+            crate::ui::provider_display_name(&m.provider),
+            m.id
+        )
+        .to_lowercase()
+    }
+
+    /// Display name of one catalog model ("name", falling back to
+    /// `provider/id` for models the catalog hasn't listed).
+    pub(crate) fn model_display_name(&self, provider: &str, id: &str) -> String {
+        self.catalog_for(&self.cwd)
+            .iter()
+            .find(|m| m.provider == provider && m.id == id)
+            .map(|m| m.label())
+            .unwrap_or_else(|| format!("{provider}/{id}"))
+    }
+
+    /// 启用模型按显示名序（下列表数据源）。
+    pub(crate) fn mc_sorted_enabled(&self) -> Vec<pi_link::protocol::ModelInfo> {
+        let all_enabled = self.mc_state.all_enabled;
+        let enabled: std::collections::HashSet<&str> = self
+            .mc_state
+            .enabled
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let mut list: Vec<pi_link::protocol::ModelInfo> = self
+            .catalog_for(&self.cwd)
+            .iter()
+            .filter(|m| {
+                all_enabled || {
+                    let r = format!("{}/{}", m.provider, m.id);
+                    enabled.contains(r.as_str())
+                }
+            })
+            .cloned()
+            .collect();
+        list.sort_by_key(|m| Self::mc_sort_key(m));
+        list
+    }
+
+    /// Re-read the model-related defaults a new session starts with. 042：
+    /// 默认模型只认 PF 自己的 app-settings.json（五角星写入，不读 pi
+    /// settings.json 的同名键——系统 pi / pi-web 的地盘）；思考档仍读 pi。
+    /// Cheap (one settings.json read) — also called at startup.
     pub(crate) fn reload_model_defaults(&mut self) {
         let settings_path = pi_link::config::settings_path();
         self.mc_patterns =
@@ -76,7 +121,7 @@ impl Chat {
         let project = pi_link::config::project_settings_path(&self.cwd);
         self.mc_project_scope =
             pi_link::config::read_enabled_models(&project).unwrap_or_else(|_| None).is_some();
-        self.mc_default_model = pi_link::config::read_default_model(&settings_path);
+        self.mc_default_model = services::workspace::default_model_pref();
         self.mc_default_thinking = pi_link::config::read_default_thinking_level(&settings_path);
         self.mc_model_thinking = pi_link::config::read_model_thinking_levels(&settings_path);
         self.mc_state =
@@ -97,6 +142,8 @@ impl Chat {
             let scoped: Vec<_> = catalog.iter().filter(|m| in_scope(m)).collect();
             if scoped.is_empty() { catalog.iter().collect() } else { scoped }
         };
+        // PF 默认在 scope 内才用；无默认/默认失效 → 显示名序第一个（与
+        // 下列表排序同一把尺子）
         let default = self
             .mc_default_model
             .as_ref()
@@ -108,7 +155,8 @@ impl Chat {
             })
             .or_else(|| {
                 scope
-                    .first()
+                    .iter()
+                    .min_by_key(|m| Self::mc_sort_key(m))
                     .map(|m| (m.provider.clone(), m.id.clone()))
             });
         let thinking = default.as_ref().and_then(|(p, id)| {
@@ -126,16 +174,6 @@ impl Chat {
                 })
         }).or_else(|| self.mc_default_thinking.clone());
         (default, thinking)
-    }
-
-    /// Display name of one catalog model ("name", falling back to
-    /// `provider/id` for models the catalog hasn't listed).
-    pub(crate) fn model_display_name(&self, provider: &str, id: &str) -> String {
-        self.catalog_for(&self.cwd)
-            .iter()
-            .find(|m| m.provider == provider && m.id == id)
-            .map(|m| m.label())
-            .unwrap_or_else(|| format!("{provider}/{id}"))
     }
 
     /// 把启动装载的全局态 + 当前项目的项目上下文**安装**进设置页字段
@@ -169,8 +207,6 @@ impl Chat {
                 self.mc_mj_error = Some(e);
             }
         }
-        self.mc_mj_dirty = false;
-        self.mc_mj_saved = false;
     }
 
     pub(crate) fn mc_set_error(&mut self, msg: &str, cx: &mut Context<Self>) {
@@ -229,34 +265,21 @@ impl Chat {
         }
     }
 
-    /// 启用全部模型（enabledModels 白名单一键清空 → 删除该键）。
-    pub(crate) fn mc_clear_scope(&mut self, cx: &mut Context<Self>) {
-        if self.mc_project_scope {
-            self.mc_set_error(tr("项目级 .pi/settings.json 覆盖了 enabledModels，面板只读"), cx);
-            return;
-        }
-        if let Err(e) = pi_link::config::write_enabled_models(&pi_link::config::settings_path(), None) {
-            self.mc_set_error(&e, cx);
-            return;
-        }
-        self.reload_model_defaults();
-        cx.notify();
-    }
-
-    /// 清理无效条目（匹配不到任何可用模型的 pattern）。
-    pub(crate) fn mc_prune_stale(&mut self, cx: &mut Context<Self>) {
-        if self.mc_project_scope {
-            self.mc_set_error(tr("项目级 .pi/settings.json 覆盖了 enabledModels，面板只读"), cx);
-            return;
-        }
-        let Some(patterns) = self.mc_patterns.clone() else { return };
-        let stale: Vec<String> = self.mc_state.stale.clone();
-        let next: Vec<String> = patterns.into_iter().filter(|p| !stale.contains(p)).collect();
-        let edit = models_config::Edit {
-            changed: !stale.is_empty(),
-            patterns: Some(next),
+    /// 042 五角星：设/取消 PF 默认模型（设置页下列表与 inputpanel 菜单
+    /// 共用）。落 app-settings.json，并扇出到全部 runtime——全新 draft
+    /// spawn 时以 `--model` 带上（重绑/恢复的会话不动）。
+    pub(crate) fn mc_set_default(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
+        let next = if self.mc_default_model.as_ref() == Some(&(provider.clone(), id.clone())) {
+            None
+        } else {
+            Some((provider, id))
         };
-        self.apply_pattern_edit(edit, cx);
+        services::workspace::set_default_model_pref(next.clone());
+        self.mc_default_model = next;
+        for (_, rt) in &self.runtimes {
+            rt.update(cx, |r, _| r.default_model = self.mc_default_model.clone());
+        }
+        cx.notify();
     }
 
     pub(crate) fn mc_save_key(&mut self, provider: String, key: String, cx: &mut Context<Self>) {
@@ -283,6 +306,8 @@ impl Chat {
             let input = st.read(cx).key_input.clone();
             input.update(cx, |ti, cx| ti.set_value(String::new(), cx));
         }
+        // 042 决策 3：保存后自动探查通路（表外商跳过——探查行不渲染）
+        self.mc_probe_start(provider, cx);
         cx.notify();
     }
 
@@ -294,8 +319,42 @@ impl Chat {
             self.mc_set_error(&e, cx);
             return;
         }
+        self.mc_probe.remove(&provider);
         self.reload_settings_panel();
         cx.notify();
+    }
+
+    /// 042 决策 3：通路探查——后台线程 GET 该 provider 列模型端点，三态
+    /// 结果落 `mc_probe`（只驱动 UI 状态点，不回滚保存）。
+    pub(crate) fn mc_probe_start(&mut self, provider: String, cx: &mut Context<Self>) {
+        let Some(target) = pi_link::probe::catalog_target(&provider) else {
+            return;
+        };
+        self.mc_probe.insert(provider.clone(), McProbe::Running);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let provider_bg = provider.clone();
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let Some(key) = pi_link::probe::catalog_probe_key(
+                        &provider_bg,
+                        &pi_link::credentials::KeyringVault,
+                    ) else {
+                        return pi_link::probe::ProbeOutcome::Unreachable {
+                            error: crate::i18n::tr("密钥不在系统凭据库，请重新保存").to_string(),
+                        };
+                    };
+                    let (url, auth) = target;
+                    pi_link::probe::probe(url, auth, &key)
+                })
+                .await;
+            let _ = this.update(cx, |c, cx| {
+                c.mc_probe.insert(provider, McProbe::Done(outcome));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Whether the provider has an api_key credential（detail 头部状态点用；
@@ -337,30 +396,14 @@ impl Chat {
             });
         }
     }
-
-    // -- models.json 自定义 provider / 模型编辑器（缓冲，底部保存落盘） ------
-
 }
 
-
-// ---------------------------------------------------------------------------
-/// `C:\Users\x\.pi\agent\...` → `~\.pi\agent\...`（banner 路径缩短）。
-fn shorten_home(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().to_string();
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_default();
-    home.is_empty()
-        .then_some(text.clone())
-        .unwrap_or_else(|| text.replacen(&home, "~", 1))
-}
 
 // ---------------------------------------------------------------------------
 // view
 // ---------------------------------------------------------------------------
 
-/// The models tab: banner + sidebar/detail + footer (pi-web ConfigPanelShell
-/// 内的 EnabledModelsBanner → SplitView → Footer 结构)。
+/// The models tab: 左栏上下两等高列表 + 右栏详情（无 banner / footer）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mc_models_view(
     chat: &mut Chat,
@@ -370,6 +413,8 @@ pub(crate) fn mc_models_view(
     key_visible: bool,
     model_filter: &gpui::Entity<crate::TextInput>,
     model_filter_value: &str,
+    enabled_filter: &gpui::Entity<crate::TextInput>,
+    enabled_filter_value: &str,
     mj_name: &gpui::Entity<crate::TextInput>,
     mj_base: &gpui::Entity<crate::TextInput>,
     mj_key: &gpui::Entity<crate::TextInput>,
@@ -381,157 +426,104 @@ pub(crate) fn mc_models_view(
     error: &Option<String>,
 ) -> gpui::AnyElement {
     let t = T();
-    let mut col = div().flex().flex_col().w_full().h_full().min_h_0();
-
-    // ---- 路径条（EnabledModelsBanner：白名单收窄或有失配时出现） ----------
-    let total_available = chat.catalog_for(&chat.cwd).len();
-    let enabled_total = if chat.mc_state.all_enabled {
-        total_available
-    } else {
-        chat.mc_state.enabled.len()
-    };
-    let scoped = !chat.mc_state.all_enabled;
-    let stale = chat.mc_state.stale.len();
-    if scoped || stale > 0 {
-        // 顶条与扩展页安装栏同款：pl15/pr20 与列表/详情内容缘对齐，底部划线
-        let mut banner = div()
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(15.))
-            .pr(px(20.))
-            .pt(px(6.))
-            .pb(px(10.))
-            .border_b_1()
-            .border_color(rgb(t.border))
-            .child(
-                div()
-                    .font_family(crate::markdown::MONO_FAMILY)
-                    .text_size(crate::appearance::ui_size(10.5))
-                    .text_color(rgb(t.text_dim))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .flex_shrink()
-                    .child(SharedString::from(format!(
-                        "{} · enabledModels {enabled_total}/{total_available}",
-                        shorten_home(&pi_link::config::settings_path()),
-                    ))),
-            );
-        if stale > 0 {
-            banner = banner
-                .child(
-                    div()
-                        .font_family(crate::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(10.5))
-                        .text_color(rgb(WARN))
-                        .child(SharedString::from(format!("{stale} 条失配"))),
-                )
-                .child(config_button(
-                    "mj-prune",
-                    weak,
-                    &tr("清理无效条目"),
-                    Btn::Secondary,
-                    true,
-                    chat.mc_project_scope,
-                    |c, cx| c.mc_prune_stale(cx),
-                ));
-        }
-        if scoped {
-            banner = banner.child(config_button(
-                "mj-clear",
-                weak,
-                &tr("启用全部模型"),
-                Btn::Secondary,
-                true,
-                chat.mc_project_scope,
-                |c, cx| c.mc_clear_scope(cx),
-            ));
-        }
-        col = col.child(banner);
+    // models.json 不可读：错误条常挂详情区顶部（无页面级 footer 了）
+    let mut detail_error = error.clone();
+    if let Some(e) = &chat.mc_mj_error {
+        detail_error = Some(crate::i18n::tf(
+            "无法读取 models.json，为避免覆盖已禁用保存：{e}",
+            &[("e", e.clone())],
+        ));
     }
 
     // ---- split view -------------------------------------------------------
-    let provider_ids = chat.mc_provider_ids();
     let selected = if section.is_empty() {
-        provider_ids.first().cloned().unwrap_or_default()
+        chat.mc_provider_ids().first().cloned().unwrap_or_default()
     } else {
         section.to_string()
     };
-    // 本帧的启用集合（O(1) 行查询；一次构建，sidebar/detail 共用）
+    // 本帧的启用集合（O(1) 行查询；一次构建，上下列表/详情共用）
     let enabled_set: std::collections::HashSet<String> =
         chat.mc_state.enabled.iter().cloned().collect();
-    let sb = mc_models_sidebar(chat, &weak.clone(), &selected, &provider_ids, &enabled_set, t);
+    let sb = mc_models_sidebar(
+        chat, &weak.clone(), &selected, &enabled_set, enabled_filter, enabled_filter_value, t,
+    );
     let detail = mc_models_detail(
         chat, &weak.clone(), &selected, key_input, key_visible, model_filter,
         model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx,
-        mj_api, mj_reasoning, error, &enabled_set, t,
+        mj_api, mj_reasoning, &detail_error, &enabled_set, t,
     );
-    col = col.child(two_pane_outer(sb, detail));
-
-    // ---- footer（models.json 缓冲保存） ------------------------------------
-    let mut status: Option<gpui::AnyElement> = None;
-    if let Some(e) = &chat.mc_mj_error {
-        status = Some(error_note(&crate::i18n::tf(
-            "无法读取 models.json，为避免覆盖已禁用保存：{e}",
-            &[("e", e.clone())],
-        )));
-    } else if chat.mc_mj_saved {
-        status = Some(
-            div()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(GREEN))
-                .child(tr("已保存"))
-                .into_any_element(),
-        );
-    } else if chat.mc_mj_dirty {
-        status = Some(note("更改已缓冲，点「保存」写入 ~/.pi/agent/models.json"));
-    }
-    col = col.child(footer(
-        status,
-        vec![config_button("mj-save", weak, &tr("保存"), Btn::Primary, false, chat.mc_mj_error.is_some(), |c, cx| {
-            c.mj_save(cx)
-        })],
-    ));
-    col.into_any_element()
-}
-
-/// banner/底栏夹着的分栏（外层 body 不滚动，h_full 内部各自滚）。
-fn two_pane_outer(sidebar: gpui::AnyElement, detail: gpui::AnyElement) -> gpui::AnyElement {
     div()
-        .flex_1()
-        .min_h_0()
         .flex()
-        .child(sidebar)
+        .w_full()
+        .h_full()
+        .min_h_0()
+        .flex_1()
+        .min_w_0()
+        .child(sb)
         .child(detail)
         .into_any_element()
 }
 
-/// Models sidebar: catalog providers + custom providers with nested models.
+/// 左栏：上 = Providers（头行添加钮 + 行 switch），下 = 启用的模型（五角星）。
 fn mc_models_sidebar(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     selected: &str,
-    provider_ids: &[String],
     enabled_set: &std::collections::HashSet<String>,
-    t: &crate::theme::Theme,
+    enabled_filter: &gpui::Entity<crate::TextInput>,
+    enabled_filter_value: &str,
+    t: &'static crate::theme::Theme,
 ) -> gpui::AnyElement {
-    // px7 + 行内 px8 = 内容左右 15px（与右侧详情 p15 等距，040 扩展页定稿）
-    let mut list = sidebar_list().px(px(7.));
+    // ---- 上半：登记的 Providers -------------------------------------------
+    let custom: Vec<(String, &serde_json::Value)> =
+        pi_link::models_json::providers(&chat.mc_models_json);
+    let mut builtin: Vec<String> = chat
+        .mc_provider_ids()
+        .into_iter()
+        .filter(|p| !custom.iter().any(|(n, _)| n == p))
+        .collect();
+    // 显示名字典序（内置段；自定义段按注册名排序在后面）
+    builtin.sort_by_key(|p| crate::ui::provider_display_name(p).to_lowercase());
+    let mut custom_names: Vec<String> = custom.iter().map(|(n, _)| n.clone()).collect();
+    custom_names.sort_by_key(|n| n.to_lowercase());
+    let mut is_custom_done = false;
 
-    // catalog providers（pi-web 侧栏同款：provider logo，未命中走首字母方块）
-    for p in provider_ids {
-        let active = *p == selected;
-        let (enabled, total) = chat.mc_provider_counts(p, enabled_set);
-        let weak_item = weak.clone();
+    let mut rows: Vec<gpui::AnyElement> = Vec::new();
+    for p in builtin.iter().chain(custom_names.iter()) {
+        // 内置段与自定义段之间插分隔线（功能盘点：区分 PI 内置和用户自定义）
+        if !is_custom_done && custom_names.iter().any(|n| n == p) {
+            is_custom_done = true;
+            rows.push(
+                div()
+                    .mx(px(8.))
+                    .my(px(4.))
+                    .h(px(1.))
+                    .bg(rgb(t.border))
+                    .into_any_element(),
+            );
+        }
+        let is_custom = custom_names.contains(p);
+        let (enabled_n, total) = chat.mc_provider_counts(p, enabled_set);
+        let on = chat.mc_state.all_enabled || enabled_n > 0;
+        let configured = is_custom || chat.mc_configured(p);
+        // 行可切的前提：有模型可管（0 模型行只是展示凭据存在）
+        let switchable = !chat.mc_project_scope && total > 0 && configured;
+        let prov_key = if is_custom { format!("mj:p:{p}") } else { p.clone() };
+        let active = prov_key == *selected;
+        let weak_row = weak.clone();
+        let weak_sw = weak.clone();
         let pid = p.clone();
-        list = list.child(
+        let pid_sw = p.clone();
+        rows.push(
             widgets::sidebar_item(format!("mc-side-{p}"), active)
-                // 行背景压平（040：列表无底色，选中态只靠加粗+深字色，hover 保留）
-                .bg(rgb(t.bg))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_item.update(cx, |c, cx| c.mc_select_provider(pid.clone(), cx));
+                    let _ = weak_row.update(cx, |c, cx| {
+                        if is_custom {
+                            c.mj_select(format!("mj:p:{pid}"), cx);
+                        } else {
+                            c.mc_select_provider(pid.clone(), cx);
+                        }
+                    });
                 })
                 .child(crate::ui::provider_icon(p, 16., t.text_muted))
                 .child(
@@ -541,132 +533,224 @@ fn mc_models_sidebar(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(SharedString::from(p.clone())),
+                        .child(SharedString::from(
+                            crate::ui::provider_display_name(p).to_string(),
+                        )),
                 )
                 .children((!chat.mc_state.all_enabled).then(|| {
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(format!("{enabled}/{total}")))
+                        .child(SharedString::from(format!("{enabled_n}/{total}")))
                         .into_any_element()
-                })),
+                }))
+                // 整商 switch（决策 4：enabledModels 整商开关，凭据不动）；
+                // 未配置/零模型的内置商恒关禁用，点行进详情配 key
+                .child(config_switch(
+                    format!("mc-prov-sw-{p}"),
+                    &weak_sw,
+                    on,
+                    !switchable,
+                    move |c, cx| c.mc_toggle_provider(&pid_sw, !on, cx),
+                ))
+                .into_any_element(),
         );
     }
 
-    // 分隔线（有 catalog provider 且有自定义 provider 时）
-    let custom: Vec<(String, &serde_json::Value)> = pi_link::models_json::providers(&chat.mc_models_json);
-    if !provider_ids.is_empty() && !custom.is_empty() {
-        list = list.child(
+    let upper = div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(mc_add_action(weak))
+        .child(
             div()
-                .mx(px(8.))
-                .my(px(4.))
-                .h(px(1.))
-                .bg(rgb(t.border)),
+                .id("mc-up-list")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(px(7.))
+                .pb(px(6.))
+                .children(rows),
         );
-    }
 
-    // 自定义 provider（嵌套模型行 + 加模型）
-    for (name, entry) in &custom {
-        let prov_key = format!("mj:p:{name}");
-        let active = prov_key == selected;
-        let weak_item = weak.clone();
-        let key = prov_key.clone();
-        list = list.child(
-            widgets::sidebar_item(format!("mj-side-{name}"), active)
-                .bg(rgb(t.bg))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_item.update(cx, |c, cx| c.mj_select(key.clone(), cx));
-                })
-                .child(crate::ui::icon("cpu", 11., t.text_dim))
+    // ---- 下半：启用的模型（平铺 + 五角星） ---------------------------------
+    let sorted = chat.mc_sorted_enabled();
+    let q = enabled_filter_value.trim().to_lowercase();
+    let shown: Vec<pi_link::protocol::ModelInfo> = sorted
+        .iter()
+        .filter(|m| {
+            q.is_empty()
+                || m.id.to_lowercase().contains(&q)
+                || m.name.to_lowercase().contains(&q)
+                || crate::ui::provider_display_name(&m.provider).to_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect();
+    let default_ref = chat
+        .mc_default_model
+        .as_ref()
+        .map(|(p, id)| format!("{p}/{id}"));
+    let pins = chat.mc_state.pins.clone();
+    let row_h = (f32::from(crate::appearance::ui_size(11.))
+        + f32::from(crate::appearance::ui_size(10.)))
+        * 1.25
+        + 12.;
+    let weak_rows = weak.clone();
+    let enabled_count = chat.mc_state.enabled.len();
+    let lower = div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .border_t_1()
+        .border_color(rgb(t.border))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(15.))
+                .pt(px(8.))
+                .pb(px(4.))
+                .child(section_title(&tr("启用的模型")))
                 .child(
                     div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(SharedString::from(name.clone())),
+                        .font_family(crate::markdown::MONO_FAMILY)
+                        .text_size(crate::appearance::ui_size(10.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(enabled_count.to_string())),
                 ),
-        );
-        for (ix, m) in pi_link::models_json::provider_models(entry).into_iter().enumerate() {
-            let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let reasoning = m.get("reasoning").and_then(|v| v.as_bool()).unwrap_or(false);
-            let model_key = format!("mj:m:{name}:{ix}");
-            let active = model_key == selected;
-            let weak_row = weak.clone();
-            list = list.child(
-                widgets::sidebar_item(format!("mj-m-{name}-{ix}"), active)
-                    .bg(rgb(t.bg))
-                    .pl(px(26.))
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let _ = weak_row.update(cx, |c, cx| c.mj_select(model_key.clone(), cx));
-                    })
+        )
+        .child(
+            div()
+                .px(px(9.))
+                .pb(px(4.))
+                .child(enabled_filter.clone()),
+        )
+        .child(vlist(
+            "mc-enabled-list",
+            shown.len(),
+            row_h,
+            VListHeight::Fill,
+            false,
+            true,
+            "没有启用的模型",
+            None,
+            move |ix, _window, _cx| {
+                let m = &shown[ix];
+                let r = format!("{}/{}", m.provider, m.id);
+                let is_default = default_ref.as_deref() == Some(r.as_str());
+                let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
+                let weak_star = weak_rows.clone();
+                let (dp, di) = (m.provider.clone(), m.id.clone());
+                div()
+                    .id(SharedString::from(format!("mc-en-{ix}")))
+                    .w_full()
+                    .h(px(row_h))
+                    .px(px(15.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(rgb(if id.is_empty() { t.text_dim } else { t.text_muted }))
-                            .child(SharedString::from(if id.is_empty() {
-                                tr("新模型").to_string()
-                            } else {
-                                id.to_string()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .text_size(crate::appearance::ui_size(11.))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_color(rgb(if is_default { t.text } else { t.text_muted }))
+                                    .font_weight(if is_default {
+                                        gpui::FontWeight::SEMIBOLD
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .child(SharedString::from(format!(
+                                        "{}/{}",
+                                        crate::ui::provider_display_name(&m.provider),
+                                        m.id
+                                    ))),
+                            )
+                            .children(pin.map(|p| {
+                                div()
+                                    .px(px(4.))
+                                    .py(px(1.))
+                                    .rounded(px(3.))
+                                    .bg(widgets::indigo_bg())
+                                    .text_size(crate::appearance::ui_size(9.))
+                                    .text_color(widgets::indigo_fg())
+                                    .child(SharedString::from(p))
+                                    .into_any_element()
                             })),
                     )
-                    .children(reasoning.then(|| {
+                    .child(
+                        // 五角星：实心 = 当前默认（全局唯一）；再点取消
                         div()
-                            .px(px(4.))
-                            .py(px(1.))
-                            .rounded(px(3.))
-                            .bg(widgets::indigo_bg())
-                            .text_size(crate::appearance::ui_size(9.))
-                            .text_color(widgets::indigo_fg())
-                            .child("T")
-                            .into_any_element()
-                    })),
-            );
-        }
-        // + 模型
-        let weak_add = weak.clone();
-        let pname = name.clone();
-        list = list.child(
-            widgets::sidebar_item(format!("mj-addm-{name}"), false)
-                .bg(rgb(t.bg))
-                .pl(px(26.))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_add.update(cx, |c, cx| c.mj_add_model(pname.clone(), cx));
-                })
-                .child(
-                    div()
-                        .text_color(rgb(t.text_dim))
-                        .hover(|s| s.text_color(rgb(t.accent)))
-                        .child(SharedString::from(format!("+ {}", tr("模型")))),
-                ),
-        );
-    }
+                            .id(SharedString::from(format!("mc-star-{ix}")))
+                            .flex_shrink_0()
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.8))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                cx.stop_propagation();
+                                let _ = weak_star.update(cx, |c, cx| {
+                                    c.mc_set_default(dp.clone(), di.clone(), cx)
+                                });
+                            })
+                            .child(crate::ui::icon(
+                                if is_default { "star-filled" } else { "star" },
+                                13.,
+                                if is_default { 0xf5a623 } else { t.text_faint },
+                            )),
+                    )
+                    .into_any_element()
+            },
+        ));
 
-    // 列表底色压平（040：与页面同色，选中态只靠字重字色）
     sidebar_shell("mc-sidebar")
-        .bg(rgb(t.bg))
-        .child(list)
-        .child(list_action(
-            "mj-add-provider",
-            weak,
-            &tr("添加 Provider"),
-            selected == "__add_provider__",
-            |c, cx| {
-                if let Some(st) = c.settings.clone() {
-                    st.update(cx, |s, cx| {
-                        s.section = "__add_provider__".into();
-                        s.error = None;
+        .child(upper)
+        .child(lower)
+        .into_any_element()
+}
+
+/// 上列表头行【+添加Provider】（原底部钮上移；开两组清单弹窗）。
+fn mc_add_action(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let weak = weak.clone();
+    div()
+        .id("mc-add-provider")
+        .flex_shrink_0()
+        .px(px(6.))
+        .pt(px(8.))
+        .pb(px(6.))
+        .child(
+            div()
+                .id("mc-add-provider-go")
+                .h(px(30.))
+                .px(px(8.))
+                .rounded(px(5.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(crate::appearance::ui_size(12.))
+                .cursor_pointer()
+                .text_color(rgb(t.text_dim))
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .child(crate::ui::icon_hover("plus", 13., t.text_dim))
+                .child(tr("添加 Provider"))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.dialog = Some(Chat::provider_picker_dialog(cx));
                         cx.notify();
                     });
-                }
-            },
-        ))
+                }),
+        )
         .into_any_element()
 }
 
@@ -827,12 +911,79 @@ fn mc_models_detail(
             "密钥存入系统凭据库（Windows 凭据管理器 / macOS 钥匙串）；pf-auth.json 只留变量名，auth.json 归 pi",
         ));
 
+    // 通路探查行（042 决策 3；表外商整行不渲染）
+    let detail = match mc_probe_row(chat, weak, &provider, t) {
+        Some(row) => detail.child(row),
+        None => detail,
+    };
+
     // 可用模型区 + 底部（detail_shell 收尾）
     mc_enabled_section(
         chat, weak, &provider, &models, enabled_set, model_filter, model_filter_value, detail,
     )
         .into_any_element()
 }
+
+/// 通路探查行：状态点 + 三态文案 +【重新探查】（保存后自动跑过一次）。
+fn mc_probe_row(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    provider: &str,
+    t: &crate::theme::Theme,
+) -> Option<gpui::AnyElement> {
+    pi_link::probe::catalog_target(provider)?;
+    let running = matches!(chat.mc_probe.get(provider), Some(McProbe::Running));
+    let (color, text) = match chat.mc_probe.get(provider) {
+        None => (None, tr("保存后自动探查通路").to_string()),
+        Some(McProbe::Running) => (None, tr("探查中…").to_string()),
+        Some(McProbe::Done(pi_link::probe::ProbeOutcome::Ok { models, latency_ms })) => (
+            Some(GREEN),
+            crate::i18n::tf(
+                "通路正常 · {ms}ms · {n} 个模型 · 新会话生效；运行中会话需重启后可用",
+                &[("ms", latency_ms.to_string()), ("n", models.to_string())],
+            ),
+        ),
+        Some(McProbe::Done(pi_link::probe::ProbeOutcome::AuthRejected { status })) => (
+            // 0xef4444 = widgets::RED 同值（widgets 正被 UI 规范重构，不引它的语义色）
+            Some(0xef4444),
+            crate::i18n::tf("key 被拒（HTTP {s}）", &[("s", status.to_string())]),
+        ),
+        Some(McProbe::Done(pi_link::probe::ProbeOutcome::Unreachable { error })) => (
+            Some(WARN),
+            crate::i18n::tf("网络不可达：{e}", &[("e", error.clone())]),
+        ),
+    };
+    let pid = provider.to_string();
+    let row = div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .min_h(px(28.))
+        .child(section_title(&tr("通路")))
+        .children(color.map(|c| status_dot(c)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(color.unwrap_or(t.text_dim)))
+                .child(SharedString::from(text)),
+        )
+        .child(config_button(
+            "mc-probe",
+            weak,
+            if running { tr("探查中…") } else { tr("重新探查") },
+            Btn::Secondary,
+            true,
+            running,
+            move |c, cx| c.mc_probe_start(pid.clone(), cx),
+        ));
+    Some(row.into_any_element())
+}
+
 /// 可用模型区（EnabledModelsSection parity）：标题+计数+批量钮+筛选+行开关。
 ///
 /// 列表用 uniform_list 虚拟化——只构建可见的 ~12 行。overflow div 全量

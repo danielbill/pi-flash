@@ -570,7 +570,7 @@ pub(crate) fn input_area(
                                     cx.notify();
                                 });
                             })
-                            .child(icon("x", 8., t.text_muted)),
+                            .child(icon("x", 12., t.text_muted)),
                     )
                     .into_any_element()
             })
@@ -1109,20 +1109,20 @@ fn composer_bar(
                 if locked { s } else { s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)) }
             })
             .on_mouse_down(MouseButton::Left, cx.listener(
-                |this, _: &gpui::MouseDownEvent, _w, cx| {
+                |this, event: &gpui::MouseDownEvent, _w, cx| {
                     if this.rt().read(cx).compacting {
                         return;
                     }
-                    // 目录缺失（该项目还没有任何带进程的 runtime 答过）→
-                    // 借同 cwd 的活进程补拉一次；草稿无进程也照常弹出，
-                    // 列表来自 Chat 共享目录，不依赖本会话进程
-                    this.ensure_models_requested(cx);
-                    this.dialog = Some(Chat::model_select_dialog(cx));
-                    cx.notify();
+                    // 042：模型菜单锚定本按钮（原居中 ModelSelect 弹窗退役）；
+                    // 目录缺失时 ensure_models_requested 借同 cwd 活进程补拉，
+                    // 草稿无进程也照常弹出（列表来自 Chat 共享目录）
+                    this.toggle_model_menu_at(event.position, cx);
                 },
             ))
             .child(SharedString::from(model_label.to_string()))
-            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim })),
+            .child(icon("chevron-down", 10., if locked { t.text_faint } else { t.text_dim }))
+            // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+            .child(crate::PillBtns::tracker(&chat.pill_btn.model)),
     );
     // 思考强度 ∨
     right = right.child(

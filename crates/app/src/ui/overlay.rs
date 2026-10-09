@@ -75,52 +75,30 @@ pub fn confirm(
     on_cancel: impl Fn(&mut Window, &mut App) + Clone + 'static,
     on_confirm: impl Fn(&mut Window, &mut App) + Clone + 'static,
 ) -> AnyElement {
-    let t = crate::theme::theme();
+    // 两键走 ui::button（§5.1）；点击不冒泡由外层 stop_click 的卡片兜住
     let cancel_btn = {
         let on = on_cancel.clone();
-        div()
-            .id("confirm-cancel")
-            .h(px(28.))
-            .px(px(12.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(5.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .text_size(crate::appearance::ui_size(12.))
-            .text_color(rgb(t.text_muted))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-            .child(SharedString::from(crate::i18n::tr("取消")))
-            .on_mouse_down(MouseButton::Left, move |_, w, cx| {
-                cx.stop_propagation();
-                on(w, cx);
-            })
+        crate::ui::button(
+            "confirm-cancel",
+            crate::i18n::tr("取消"),
+            crate::ui::BtnSize::Md,
+            crate::ui::BtnVariant::Secondary,
+            false,
+            move |_, w, cx| on(w, cx),
+        )
     };
     let confirm_btn = {
         let on = on_confirm;
-        div()
-            .id("confirm-ok")
-            .h(px(28.))
-            .px(px(12.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(5.))
-            .border_1()
-            .border_color(rgba(crate::theme::danger_alpha(t, 0x59)))
-            .bg(rgba(crate::theme::danger_alpha(t, 0x0f)))            .text_size(crate::appearance::ui_size(12.))
-            .text_color(rgb(t.danger))
-            .font_weight(FontWeight::SEMIBOLD)
-            .cursor_pointer()
-            .hover(|s| s.bg(rgba(crate::theme::danger_wash(t))))
-            .child(SharedString::from(crate::i18n::tr("确认")))
-            .on_mouse_down(MouseButton::Left, move |_, w, cx| {
-                cx.stop_propagation();
-                on(w, cx);
-            })
+        crate::ui::button(
+            "confirm-ok",
+            crate::i18n::tr("确认"),
+            crate::ui::BtnSize::Md,
+            crate::ui::BtnVariant::Danger,
+            false,
+            move |_, w, cx| on(w, cx),
+        )
     };
+    let t = crate::theme::theme();
     layer(false, Some(focus), on_cancel)
         .flex()
         .items_center()
@@ -203,8 +181,8 @@ pub fn big_card(
         .pl(px(30.))
         .bg(rgb(t.chrome))
         // overflow_hidden 的裁剪是纯矩形（无圆角），顶条不自己倒角的话方形角
-        // 会从弹窗圆角外露出来（四角尖尖角）
-        .rounded_t(px(10.))
+        // 会从弹窗圆角外露出来（四角尖尖角）；R_SHEET 12 = 大卡语义
+        .rounded_t(px(12.))
         .border_b_1()
         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x73)));
     if !title.is_empty() {
@@ -229,7 +207,7 @@ pub fn big_card(
             .cursor_pointer()
             .hover(|s| s.bg(rgb(0xd8626a)).text_color(rgb(0xffffff)))
             .on_mouse_down(MouseButton::Left, move |_, w, cx| dismiss(w, cx))
-            .child(crate::ui::icon_hover("x", 13., t.text_muted)),
+            .child(crate::ui::icon_hover("x", 12., t.text_muted)),
     );
 
     let mut row = div().flex_1().min_h_0().flex();
@@ -242,7 +220,7 @@ pub fn big_card(
         .bg(rgb(t.bg))
         .border_1()
         .border_color(rgb(t.border))
-        .rounded(px(10.))
+        .rounded(px(12.))
         .shadow_lg()
         .flex()
         .flex_col()

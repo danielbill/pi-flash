@@ -204,7 +204,7 @@ pub(crate) fn slash_menu_view(
             .child(if is_at {
                 crate::ui::icon(
                     if c.is_dir { "folder" } else { "file" },
-                    13.,
+                    14.,
                     if active { t.accent } else { t.text_dim },
                 )
                 .into_any_element()

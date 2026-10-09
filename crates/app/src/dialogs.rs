@@ -4,12 +4,11 @@
 
 use std::path::PathBuf;
 
-use gpui::{App, Div, KeyDownEvent, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
+use gpui::{App, Div, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 
 use crate::Dialog;
 use crate::Chat;
 use crate::TextInput;
-use crate::{ComposerDown, ComposerUp, MODEL_PICKER_ROWS};
 use crate::i18n::tr;
 use crate::services::format::time_ago;
 use crate::theme;
@@ -45,8 +44,8 @@ pub(crate) fn render_dialogs(
         // dialogs mount as a CHILD of the chat root — on top of the content,
         // never replacing it (replacing the root blanks the whole UI behind
         // the dialog; settings parity = content stays visible beneath)
-            if let Some(Dialog::ModelSelect { input: filter_input, .. }) = chat.dialog.as_ref() {
-                root = root.child(render_model_select(chat, weak, filter_input, t, cx));
+            if let Some(Dialog::ProviderPicker { input }) = chat.dialog.as_ref() {
+                root = root.child(render_provider_picker(chat, weak, input, t, cx));
             }
             if let Some(Dialog::GitDiff { path, patch }) = chat.dialog.as_ref() {
                 root = root.child(render_git_diff(chat, weak, path, patch, t, cx));
@@ -301,7 +300,7 @@ fn render_file_dirty(
             .bg(rgb(t.bg))
             .border_1()
             .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
-            .rounded(px(12.))
+            .rounded(px(10.))
             .shadow_lg()
             .flex()
             .flex_col()
@@ -384,7 +383,7 @@ fn render_new_file(
             .bg(rgb(t.bg))
             .border_1()
             .border_color(gpui::rgba(theme::border_alpha(t, 0x8c)))
-            .rounded(px(12.))
+            .rounded(px(10.))
             .shadow_lg()
             .flex()
             .flex_col()
@@ -408,154 +407,238 @@ fn render_new_file(
     )
 }
 
-/// ModelSelect dialog surface (extracted from render_dialogs).
-fn render_model_select(chat: &Chat, weak: &gpui::WeakEntity<Chat>, filter_input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
-                let sel = match &chat.dialog {
-                    Some(Dialog::ModelSelect { sel, .. }) => *sel,
-                    _ => 0,
-                };
-                let models = chat.filtered_models(cx);
-                let rows: Vec<gpui::AnyElement> = models
-                    .iter()
-                    .enumerate()
-                    .take(MODEL_PICKER_ROWS)
-                    .map(|(ix, m)| {
-                        let provider = m.provider.clone();
-                        let id = m.id.clone();
-                        let weak_row = weak.clone();
-                        let label: SharedString =
-                            format!("{} / {}", m.provider, m.label()).into();
-                        let ctx: SharedString = m
-                            .context_window
-                            .map(|c| format!("{}k", c / 1000))
-                            .unwrap_or_default()
-                            .into();
+/// 042 ProviderPicker（对齐 pi-web AddProviderPicker，两组）：顶部搜索 +
+/// 「自定义」一张卡（OpenAI / Anthropic compatible → 详情区空白表单）+
+/// 「API KEY」网格（未配置的内置商，catalog 现数 N models → 详情区
+/// API KEY 表单）。订阅服务组全为 OAuth 登录，本期缓行（051 边界）。
+fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
+    let q = input.read(cx).value().trim().to_lowercase();
+    let matches = |name: &str| {
+        q.is_empty()
+            || name.to_lowercase().contains(&q)
+            || crate::ui::provider_display_name(name).to_lowercase().contains(&q)
+    };
+
+    // API KEY 组：catalog provider 里未配置（无 pf-auth 凭据）、非 OAuth、
+    // 有模型可激活的；按显示名序
+    let mut api_cards: Vec<(String, usize)> = Vec::new();
+    for p in chat.mc_provider_ids() {
+        let total = chat
+            .catalog_for(&chat.cwd)
+            .iter()
+            .filter(|m| m.provider == p)
+            .count();
+        if total == 0 || chat.mc_configured(&p) || chat.mc_oauth(&p) {
+            continue;
+        }
+        api_cards.push((p, total));
+    }
+    api_cards.sort_by_key(|(p, _)| crate::ui::provider_display_name(p).to_lowercase());
+    let api_cards: Vec<_> = api_cards
+        .into_iter()
+        .filter(|(p, _)| matches(p))
+        .collect();
+
+    let custom_card = {
+        let weak_card = weak.clone();
+        div()
+            .id("pp-custom")
+            .w(px(220.))
+            .px(px(12.))
+            .py(px(10.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .bg(rgb(t.bg))
+            .cursor_pointer()
+            .hover(|h| h.border_color(rgb(t.accent)).bg(rgb(t.bg_hover)))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_card.update(cx, |c, cx| {
+                    c.dialog = None;
+                    if let Some(st) = c.settings.clone() {
+                        st.update(cx, |s, cx| {
+                            s.section = "__add_provider__".into();
+                            s.error = None;
+                            s.mj_name.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+                            s.mj_base.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+                            s.mj_key.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+                            s.mj_api = 0;
+                            cx.notify();
+                        });
+                    }
+                    cx.notify();
+                });
+            })
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
                         div()
-                            .id(SharedString::from(format!("model-{provider}-{id}")))
-                            .w_full()
-                            .px_3()
-                            .py_1p5()
-                            .cursor_pointer()
-                            .rounded_md()
-                            .when(ix == sel, |d| d.bg(rgb(t.bg_selected)))
-                            .hover(|s| s.bg(rgb(t.bg_selected)))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let (p, mid) = (provider.clone(), id.clone());
-                                let _ = weak_row.update(cx, |c, cx| {
-                                    c.rt().update(cx, |r, cx| r.select_model(p, mid, cx));
-                                    // picking is also the dismissal gesture
+                            .text_size(crate::appearance::ui_size(12.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text))
+                            .child(tr("OpenAI / Anthropic compatible")),
+                    )
+                    .child(
+                        div()
+                            .text_size(crate::appearance::ui_size(10.))
+                            .text_color(rgb(t.text_dim))
+                            .child(tr("自定义端点格式")),
+                    ),
+            )
+            .child(icon("plus", 14., t.text_dim))
+    };
+
+    let mut body = div().flex().flex_col().gap(px(2.));
+    // 自定义组
+    body = body
+        .child(
+            div()
+                .pt(px(2.))
+                .pb(px(4.))
+                .text_size(crate::appearance::ui_size(10.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text_dim))
+                .child(tr("自定义")),
+        )
+        .child(custom_card);
+    // API KEY 组
+    body = body.child(
+        div()
+            .pt(px(10.))
+            .pb(px(4.))
+            .text_size(crate::appearance::ui_size(10.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(t.text_dim))
+            .child(tr("API KEY")),
+    );
+    if api_cards.is_empty() {
+        body = body.child(
+            div()
+                .py(px(12.))
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child(tr("没有匹配的 Provider")),
+        );
+    } else {
+        let mut grid = div().flex().flex_wrap().gap(px(8.));
+        for (p, total) in &api_cards {
+            let weak_card = weak.clone();
+            let pid = p.clone();
+            let total = *total;
+            grid = grid.child(
+                div()
+                    .id(SharedString::from(format!("pp-{p}")))
+                    .w(px(220.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .bg(rgb(t.bg))
+                    .cursor_pointer()
+                    .hover(|h| h.border_color(rgb(t.accent)).bg(rgb(t.bg_hover)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let pid = pid.clone();
+                        let _ = weak_card.update(cx, |c, cx| {
+                            c.dialog = None;
+                            c.mc_select_provider(pid, cx);
+                            cx.notify();
+                        });
+                    })
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(crate::ui::provider_icon(p, 18., t.text_muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(crate::appearance::ui_size(12.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(t.text))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(SharedString::from(
+                                        crate::ui::provider_display_name(p).to_string(),
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(crate::appearance::ui_size(10.))
+                                    .text_color(rgb(t.text_dim))
+                                    .child(SharedString::from(crate::i18n::tf(
+                                        "{n} models",
+                                        &[("n", total.to_string())],
+                                    ))),
+                            ),
+                    ),
+            );
+        }
+        body = body.child(grid);
+    }
+
+    let panel = div()
+        .w(px(560.))
+        .max_h(px(560.))
+        .bg(rgb(t.bg_panel))
+        .border_1()
+        .border_color(rgb(t.border))
+        .rounded_lg()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .shadow_lg()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(tr("添加 Provider")),
+                )
+                .child(
+                    div()
+                        .id("pp-close")
+                        .px_2()
+                        .cursor_pointer()
+                        .text_color(rgb(t.text_muted))
+                        .hover(|s| s.text_color(rgb(t.text)))
+                        .on_mouse_down(MouseButton::Left, {
+                            let weak = weak.clone();
+                            move |_, _, cx| {
+                                let _ = weak.update(cx, |c, cx| {
                                     c.dialog = None;
                                     cx.notify();
                                 });
-                            })
-                            .flex()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(crate::appearance::ui_size(14.))
-                                    .text_color(rgb(t.text))
-                                    .child(label),
-                            )
-                            .child(
-                                div()
-                                    .text_size(crate::appearance::ui_size(14.))
-                                    .text_color(rgb(t.text_dim))
-                                    .child(ctx),
-                            )
-                            .into_any_element()
-                    })
-                    .collect();
-                let list_panel = if rows.is_empty() {
-                    div()
-                        .py_2()
-                        .text_size(crate::appearance::ui_size(14.))
-                        .text_color(rgb(t.text_dim))
-                        .child(tr("no models match"))
-                        .into_any_element()
-                } else {
-                    div().flex().flex_col().gap_0p5().children(rows).into_any_element()
-                };
-                let panel = div()
-                    .w(px(620.))
-                    .max_h(px(560.))
-                    .bg(rgb(t.bg_panel))
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .rounded_lg()
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .shadow_lg()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(t.text))
-                                    .child(tr("选择模型")),
-                            )
-                            .child(
-                                div()
-                                    .id("model-close")
-                                    .px_2()
-                                    .cursor_pointer()
-                                    .text_color(rgb(t.text_muted))
-                                    .hover(|s| s.text_color(rgb(t.text)))
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let weak = weak.clone();
-                                        move |_, _, cx| {
-                                            let _ = weak.update(cx, |c, cx| {
-                                                c.dialog = None;
-                                                cx.notify();
-                                            });
-                                        }
-                                    })
-                                    .child(icon_hover("x", 12., t.text_muted)),
-                            ),
-                    )
-                    .child(filter_input.clone())
-                    .child(list_panel);
-                // Enter: caught at the overlay as a bubbled key event — the
-                // same layer the ESC and ↑/↓ handling lives on (all three
-                // proven paths; the filter input's PressEnter subscription
-                // chain did not fire reliably). InputState::enter propagates
-                // the keystroke in single-line mode, so the event reaches
-                // this handler.
-                dialog_shell(chat, weak, panel)
-                    .on_key_down({
-                        let weak = weak.clone();
-                        move |ev: &KeyDownEvent, _w, cx| {
-                            if ev.keystroke.key != "enter" {
-                                return;
                             }
-                            cx.stop_propagation();
-                            // applying drops the dispatching entities
-                            // (dialog = None) — defer out of the dispatch
-                            let weak = weak.clone();
-                            cx.defer(move |cx| {
-                                let _ = weak.update(cx, |c, cx| c.apply_model_sel(cx));
-                            });
-                        }
-                    })
-                    .on_action({
-                        let weak = weak.clone();
-                        move |_: &ComposerUp, _w, cx| {
-                            let _ = weak.update(cx, |c, cx| c.move_model_sel(-1, cx));
-                        }
-                    })
-                    .on_action({
-                        let weak = weak.clone();
-                        move |_: &ComposerDown, _w, cx| {
-                            let _ = weak.update(cx, |c, cx| c.move_model_sel(1, cx));
-                        }
-                    })
+                        })
+                        .child(icon_hover("x", 12., t.text_muted)),
+                ),
+        )
+        .child(input.clone())
+        .child(
+            div()
+                .id("pp-body")
+                .overflow_y_scroll()
+                .max_h(px(440.))
+                .pr(px(2.))
+                .child(body),
+        );
+    dialog_shell(chat, weak, panel)
 }
-
 
 /// 013 sessionSearchDialog + sessionSearchResultView: query on top, results
 /// grouped by session below; a row click switches sessions and reveals the
@@ -573,7 +656,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                 .bg(rgb(t.bg_panel))
                                 .border_1()
                                 .border_color(rgb(t.border))
-                                .rounded(px(8.))
+                                .rounded(px(10.))
                                 .p_4()
                                 .flex()
                                 .flex_col()
@@ -656,7 +739,7 @@ fn render_image_preview(
         .bg(rgb(t.bg_panel))
         .border_1()
         .border_color(rgb(t.border))
-        .rounded_lg()
+        .rounded(px(10.))
         .p_2()
         .shadow_lg()
         .child(
@@ -778,7 +861,7 @@ fn render_project_picker(
         .bg(rgb(t.bg_panel))
         .border_1()
         .border_color(rgb(t.border))
-        .rounded_lg()
+        .rounded(px(10.))
         .p_4()
         .flex()
         .flex_col()
@@ -927,7 +1010,7 @@ fn render_session_search(
                     .bg(rgb(t.bg_panel))
                     .border_1()
                     .border_color(rgb(t.border))
-                    .rounded(px(8.))
+                    .rounded(px(10.))
                     .p_3()
                     .flex()
                     .flex_col()

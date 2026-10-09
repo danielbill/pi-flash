@@ -232,16 +232,16 @@ fn session_more_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyE
             .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-            .child(crate::ui::icon_hover("ellipsis", 15., t.text_muted))
+            .child(crate::ui::icon_hover("ellipsis", 14., t.text_muted))
             .into_any_element(),
         move || {
             div()
-                .min_w(px(214.))
+                .min_w(px(200.))
                 .p(px(4.))
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
-                .rounded(px(9.))
+                .rounded(px(8.))
                 .shadow_lg()
                 .flex()
                 .flex_col()
@@ -285,18 +285,18 @@ fn menu_row(
         .id(id)
         .flex()
         .items_center()
-        .gap(px(9.))
+        .gap(px(8.))
         .px(px(10.))
         .py(px(7.))
         .rounded(px(6.))
-        .text_size(crate::appearance::ui_size(12.5))
+        .text_size(crate::appearance::ui_size(12.))
         .text_color(rgb(t.text))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)))
         .on_mouse_down(MouseButton::Left, handler)
-        .child(crate::ui::icon(icon_name, 15., t.text_muted))
+        .child(crate::ui::icon(icon_name, 14., t.text_muted))
         .child(div().flex_1().child(SharedString::from(label)))
-        .children(checked.then(|| crate::ui::icon("check", 13., t.accent)))
+        .children(checked.then(|| crate::ui::icon("check", 12., t.accent)))
 }
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、下缘融入
@@ -613,7 +613,7 @@ fn tab_shell(
                     close(ev, w, cx);
                 });
             }
-            x.child(crate::ui::icon_hover("x", 11., t.text_dim))
+            x.child(crate::ui::icon_hover("x", 12., t.text_dim))
         }));
     tab
 }

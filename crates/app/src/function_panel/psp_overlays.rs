@@ -283,30 +283,18 @@ fn ghost_btn(
     danger: bool,
     handler: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl gpui::IntoElement {
-    let t = T();
-    div()
-        .id(id)
-        .px(px(10.))
-        .py(px(3.))
-        .rounded(px(7.))
-        .border_1()
-        .border_color(if danger {
-            gpui::rgba(crate::theme::danger_alpha(t, 0x73))
+    crate::ui::button(
+        id,
+        label.to_string(),
+        crate::ui::BtnSize::Sm,
+        if danger {
+            crate::ui::BtnVariant::Danger
         } else {
-            rgb(t.border).into()
-        })
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(if danger { rgb(t.danger) } else { rgb(t.text_dim) })
-        .cursor_pointer()
-        .hover(|s| {
-            if danger {
-                s.bg(gpui::rgba(danger_wash(t)))
-            } else {
-                s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
-            }
-        })
-        .on_mouse_down(MouseButton::Left, handler)
-        .child(SharedString::from(label.to_string()))
+            crate::ui::BtnVariant::Secondary
+        },
+        false,
+        handler,
+    )
 }
 
 fn solid_danger_btn(
@@ -314,19 +302,15 @@ fn solid_danger_btn(
     label: &str,
     handler: impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl gpui::IntoElement {
-    let t = T();
-    div()
-        .id(id)
-        .px(px(11.))
-        .py(px(3.5))
-        .rounded(px(7.))
-        .bg(rgb(t.danger))
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(rgb(0xffffff))
-        .cursor_pointer()
-        .hover(|s| s.opacity(0.9))
-        .on_mouse_down(MouseButton::Left, handler)
-        .child(SharedString::from(label.to_string()))
+    // §5.1 唯一按钮表：实心红不存在，破坏性主行动 = Danger 描边款
+    crate::ui::button(
+        id,
+        label.to_string(),
+        crate::ui::BtnSize::Sm,
+        crate::ui::BtnVariant::Danger,
+        false,
+        handler,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -502,12 +486,12 @@ fn menu_card(x: f32, y: f32, t: &'static Theme) -> gpui::Div {
         .absolute()
         .left(px(x))
         .top(px(y))
-        .min_w(px(214.))
+        .min_w(px(200.))
         .p(px(4.))
         .bg(rgb(t.bg))
         .border_1()
         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
-        .rounded(px(9.))
+        .rounded(px(8.))
         .shadow_lg()
         .flex()
         .flex_col()
@@ -528,11 +512,11 @@ fn menu_item<S: Into<SharedString>>(
         .id(id.into())
         .flex()
         .items_center()
-        .gap(px(9.))
+        .gap(px(8.))
         .px(px(10.))
         .py(px(7.))
         .rounded(px(6.))
-        .text_size(crate::appearance::ui_size(12.5))
+        .text_size(crate::appearance::ui_size(12.))
         .text_color(if danger { rgb(t.danger) } else { rgb(t.text) })
         .cursor_pointer()
         .hover(|s| {
@@ -542,9 +526,9 @@ fn menu_item<S: Into<SharedString>>(
                 s.bg(rgb(t.bg_hover))
             }
         })
-        .child(icon(icon_name, 15., if danger { t.danger } else { t.text_muted }))
+        .child(icon(icon_name, 14., if danger { t.danger } else { t.text_muted }))
         .child(div().flex_1().child(SharedString::from(label.to_string())))
-        .children(checked.then(|| icon("check", 13., t.accent)))
+        .children(checked.then(|| icon("check", 12., t.accent)))
 }
 
 fn menu_chev(t: &'static Theme) -> impl gpui::IntoElement {
@@ -578,8 +562,8 @@ fn confirm_project_del(
                 .absolute()
                 .left(px(x))
                 .top(px(y))
-                .min_w(px(260.))
-                .p(px(12.))
+                .min_w(px(380.))
+                .p(px(16.))
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_color(gpui::rgba(crate::theme::danger_alpha(t, 0x73)))
@@ -587,7 +571,7 @@ fn confirm_project_del(
                 .shadow_lg()
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(px(8.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
@@ -604,7 +588,7 @@ fn confirm_project_del(
                     div()
                         .flex()
                         .justify_end()
-                        .gap(px(6.))
+                        .gap(px(8.))
                         .child(ghost_btn("pd-cancel", tr("取消"), false, cx.listener(
                             |this, _: &gpui::MouseDownEvent, _w, cx| {
                                 this.confirm_prj_del = None;

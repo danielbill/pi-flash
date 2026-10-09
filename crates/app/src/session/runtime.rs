@@ -150,6 +150,10 @@ pub(crate) struct SessionRuntime {
     /// model picked while the draft had no process yet (pi-web
     /// newSessionModelOverrideRef parity) — applied as a `--model` spawn flag
     pub pending_model: Option<(String, String)>,
+    /// 042：PF 默认模型（app-settings 五角星；Chat 在默认变化/建会话时
+    /// 填充）。仅**全新 draft** spawn 时落 `--model`（`file` 为空）——重绑
+    /// / 恢复的会话不强行切模型。用户手选（pending_model）优先于默认。
+    pub default_model: Option<(String, String)>,
     /// tools preset id (configured/chat-only/read-only/default/full) —
     /// applied at spawn via CLI flags (RPC has no live tool switching)
     pub tools_preset: String,
@@ -235,6 +239,7 @@ impl SessionRuntime {
             history_ix: None,
             thinking_override: None,
             pending_model: None,
+            default_model: None,
             // 默认档 = full+（full 内置 + 会话扩展清单）；旧 pi-web 的
             // "configured"（什么都不发、让 pi 自己算）已按 034 决定移除
             tools_preset: "custom".into(),
@@ -297,7 +302,14 @@ impl SessionRuntime {
         // 不挂 permission 门禁；扩展自己的 ctx.ui.* 请求仍照常呈现（060 翻案）。
         // draft picks made before the process existed ride the spawn flags
         // (pi CLI parity: --model provider/id, --thinking level)
-        if let Some((provider, id)) = self.pending_model.take() {
+        // 042：无手选时落 PF 默认模型——只在全新 draft（`file` 空）生效，
+        // 重绑/恢复的会话不强行切模型
+        let model = match self.pending_model.take() {
+            Some(m) => Some(m),
+            None if self.file.is_none() => self.default_model.clone(),
+            None => None,
+        };
+        if let Some((provider, id)) = model {
             extra.push("--model".into());
             extra.push(format!("{provider}/{id}"));
         }

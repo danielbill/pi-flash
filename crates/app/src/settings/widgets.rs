@@ -29,6 +29,7 @@ pub(crate) enum Btn {
 }
 
 /// ConfigButton：variant × size，点击回调直接拿到 Chat（动作都在 Chat 上）。
+/// 尺寸/配色委托 `ui::button`（§5.1 唯一按钮表）：small→MD(28)，default→LG(32)。
 pub(crate) fn config_button(
     id: impl Into<SharedString>,
     weak: &gpui::WeakEntity<Chat>,
@@ -38,61 +39,35 @@ pub(crate) fn config_button(
     disabled: bool,
     on_click: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
 ) -> AnyElement {
-    let t = T();
-    let (h, hpad, ts) = if small {
-        (px(28.), px(10.), 11.)
+    let size = if small {
+        crate::ui::BtnSize::Md
     } else {
-        (px(32.), px(14.), 12.)
+        crate::ui::BtnSize::Lg
     };
-    let mut el = div()
-        .id(id.into())
-        .h(h)
-        .px(hpad)
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.))
-        .text_size(crate::appearance::ui_size(ts))
-        .child(SharedString::from(label.to_string()));
-    el = match variant {
-        Btn::Primary => el
-            .border_1()
-            .border_color(rgb(t.accent))
-            .bg(rgb(t.accent))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(rgb(t.accent_contrast)),
-        Btn::Secondary => el
-            .border_1()
-            .border_color(rgb(t.border))
-            .text_color(rgb(t.text_muted)),
-        Btn::Danger => el
-            .border_1()
-            .border_color(gpui::rgba(crate::theme::danger_alpha(t, 0x59)))
-            .bg(gpui::rgba(crate::theme::danger_alpha(t, 0x0f)))
-            .text_color(rgb(t.danger)),
+    let variant = match variant {
+        Btn::Primary => crate::ui::BtnVariant::Primary,
+        Btn::Secondary => crate::ui::BtnVariant::Secondary,
+        Btn::Danger => crate::ui::BtnVariant::Danger,
     };
-    if disabled {
-        return el.opacity(0.5).into_any_element();
-    }
-    el = el.cursor_pointer().hover(move |s| {
-        match variant {
-            Btn::Primary => s.bg(rgb(t.accent_hover)),
-            Btn::Danger => s.bg(gpui::rgba(crate::theme::danger_wash(t))),
-            _ => s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)),
-        }
-    });
     let weak = weak.clone();
-    el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-        let _ = weak.update(cx, |c, cx| on_click(c, cx));
-    })
-    .into_any_element()
+    crate::ui::button(
+        id,
+        label.to_string(),
+        size,
+        variant,
+        disabled,
+        move |_, _, cx| {
+            let _ = weak.update(cx, |c, cx| on_click(c, cx));
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
 // switch / dot / tag
 // ---------------------------------------------------------------------------
 
-/// ConfigSwitch 32×18，knob 12。
+/// ConfigSwitch：SW_MD 28×16，knob 10（ui::tokens::switch，2026-10-09 定夺；
+/// 存量 32×18 收敛于此）。
 pub(crate) fn config_switch(
     id: impl Into<SharedString>,
     weak: &gpui::WeakEntity<Chat>,
@@ -100,13 +75,14 @@ pub(crate) fn config_switch(
     disabled: bool,
     on_toggle: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
 ) -> AnyElement {
+    use crate::ui::tokens::switch as sw;
     let t = T();
-    let mut sw = div()
+    let mut sw_el = div()
         .id(id.into())
-        .w(px(32.))
-        .h(px(18.))
+        .w(px(sw::MD_W))
+        .h(px(sw::MD_H))
         .flex_shrink_0()
-        .rounded(px(9.))
+        .rounded(px(sw::MD_H / 2.))
         .border_1()
         .border_color(if on { rgb(t.accent) } else { rgb(t.border) })
         .bg(if on { rgb(t.accent) } else { rgb(t.bg_selected) })
@@ -114,21 +90,26 @@ pub(crate) fn config_switch(
         .items_center()
         .child(
             div()
-                .ml(if on { px(14.) } else { px(2.) })
-                .size(px(12.))
+                .ml(px(if on {
+                    sw::MD_ON_ML
+                } else {
+                    sw::MD_OFF_ML
+                }))
+                .size(px(sw::MD_KNOB))
                 .rounded_full()
                 .bg(if on { rgb(t.bg) } else { rgb(t.text_muted) }),
         );
     if disabled {
-        return sw.opacity(0.5).into_any_element();
+        return sw_el.opacity(0.5).into_any_element();
     }
-    sw = sw.cursor_pointer();
+    sw_el = sw_el.cursor_pointer();
     let weak = weak.clone();
-    sw.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-        cx.stop_propagation();
-        let _ = weak.update(cx, |c, cx| on_toggle(c, cx));
-    })
-    .into_any_element()
+    sw_el
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = weak.update(cx, |c, cx| on_toggle(c, cx));
+        })
+        .into_any_element()
 }
 
 /// 组头小开关（ConfigSidebarGroupSwitch）：{enabled}/{total} + 24×14 开关。
@@ -367,48 +348,6 @@ pub(crate) fn group_header(label: &str, aside: Option<AnyElement>) -> AnyElement
         .into_any_element()
 }
 
-/// ConfigListAction：列表底部固定「+ 添加 …」行。
-pub(crate) fn list_action(
-    id: &'static str,
-    weak: &gpui::WeakEntity<Chat>,
-    label: &str,
-    active: bool,
-    on_click: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
-) -> AnyElement {
-    let t = T();
-    div()
-        .id(id)
-        .flex_shrink_0()
-        .px(px(6.))
-        .pt(px(8.))
-        .pb(px(6.))
-        .border_t_1()
-        .border_color(rgb(t.border))
-        .child(
-            div()
-                .id(SharedString::from(format!("{id}-go")))
-                .h(px(30.))
-                .px(px(8.))
-                .rounded(px(5.))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_size(crate::appearance::ui_size(12.))
-                .cursor_pointer()
-                .text_color(rgb(if active { t.accent } else { t.text_dim }))
-                .hover(|s| s.bg(rgb(t.bg_hover)))
-                .child(crate::ui::icon_hover("plus", 13., t.text_dim))
-                .child(SharedString::from(label.to_string()))
-                .on_mouse_down(MouseButton::Left, {
-                    let weak = weak.clone();
-                    move |_, _, cx| {
-                        let _ = weak.update(cx, |c, cx| on_click(c, cx));
-                    }
-                }),
-        )
-        .into_any_element()
-}
-
 // ---------------------------------------------------------------------------
 // detail + footer
 // ---------------------------------------------------------------------------
@@ -426,32 +365,4 @@ pub(crate) fn detail_shell(id: &'static str) -> gpui::Stateful<gpui::Div> {
         .flex()
         .flex_col()
         .gap_4()
-}
-
-/// ConfigFooter：min-height 52px，status 左 / actions 右。
-pub(crate) fn footer(
-    status: Option<AnyElement>,
-    actions: Vec<AnyElement>,
-) -> AnyElement {
-    let t = T();
-    div()
-        .flex_shrink_0()
-        .min_h(px(52.))
-        .px(px(14.))
-        .py(px(9.))
-        .border_t_1()
-        .border_color(rgb(t.border))
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .children(status),
-        )
-        .children(actions)
-        .into_any_element()
 }

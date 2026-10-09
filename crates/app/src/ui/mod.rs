@@ -1,6 +1,7 @@
 //! UI primitives shared across all components (pi-web's icon-level layer:
 //! ThinkingIcon / ThemeIcon / spinner etc. + the app-wide TextInput).
 
+pub mod button;
 pub mod composer_input;
 pub mod dropdown;
 pub mod list_handle;
@@ -10,6 +11,7 @@ pub mod text_input;
 pub mod tokens;
 pub mod vlist;
 
+pub use button::{BtnSize, BtnVariant, button, button_base};
 pub use composer_input::ComposerInput;
 pub use dropdown::{dropdown, DropdownState};
 pub use vlist::{VListHeight, vlist};
@@ -99,6 +101,52 @@ fn provider_symbol(id: &str) -> Option<&'static str> {
         "together" => "together",
         _ => return None,
     })
+}
+
+/// provider id → 显示名（042 上列表/下列表/inputpanel 组头；ModelInfo 只有
+/// id，显示名静态表与图标表同处维护、同款兜底——表外回落 id 原样）。
+pub fn provider_display_name(id: &str) -> &str {
+    match id {
+        "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        "openai-codex" => "ChatGPT",
+        "google" => "Google",
+        "google-vertex" => "Google Vertex",
+        "deepseek" => "DeepSeek",
+        "openrouter" => "OpenRouter",
+        "groq" => "Groq",
+        "mistral" => "Mistral",
+        "xai" | "grok" => "xAI",
+        "moonshotai" | "moonshot" => "Moonshot",
+        "moonshotai-cn" => "Moonshot CN",
+        "minimax" => "MiniMax",
+        "minimax-cn" => "MiniMax CN",
+        "kimi-coding" => "Kimi",
+        "zai" => "Z.AI",
+        "zai-coding-cn" => "Z.AI Coding CN",
+        "zhipu" => "Zhipu",
+        "qwen" => "Qwen",
+        "github-copilot" => "GitHub Copilot",
+        "amazon-bedrock" => "Amazon Bedrock",
+        "azure-openai-responses" => "Azure OpenAI",
+        "vercel-ai-gateway" => "Vercel",
+        "cloudflare-ai-gateway" | "cloudflare-workers-ai" => "Cloudflare",
+        "cerebras" => "Cerebras",
+        "fireworks" => "Fireworks",
+        "huggingface" => "Hugging Face",
+        "nvidia" | "nvidia-nim" => "NVIDIA",
+        "together" => "Together",
+        "perplexity" => "Perplexity",
+        "cohere" => "Cohere",
+        "opencode" => "OpenCode",
+        "opencode-go" => "OpenCode Go",
+        "ant-ling" => "Ant Ling",
+        "xiaomi" => "Xiaomi",
+        "meta" => "Meta",
+        "typesafe" => "TypeSafe",
+        "baseten" => "Baseten",
+        _ => id,
+    }
 }
 
 /// Provider logo（设置-模型页侧栏等处）：已知 provider 渲染对应

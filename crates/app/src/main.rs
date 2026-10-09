@@ -88,7 +88,8 @@ pub(crate) enum PkgOp {
 
 #[derive(Debug, Clone)]
 enum Dialog {
-    ModelSelect { input: gpui::Entity<TextInput>, sel: usize },
+    /// 042：新增 Provider 清单弹窗（两组：自定义 / API KEY；订阅组缓行）
+    ProviderPicker { input: gpui::Entity<TextInput> },
     GitDiff { path: PathBuf, patch: String },
     SessionSearch { input: gpui::Entity<TextInput> },
     /// 004 projectManager 打开项目菜单：搜索框 + 打开文件夹 + 最近 30 天
@@ -252,6 +253,13 @@ type AtFilterCache = (
     Vec<crate::services::at_file::FileEntry>,
 );
 
+/// 042：provider 通路探查状态（保存 key 自动一次 + 详情页【重新探查】）。
+#[derive(Debug, Clone)]
+pub(crate) enum McProbe {
+    Running,
+    Done(pi_link::probe::ProbeOutcome),
+}
+
 struct Chat {
     focus: FocusHandle,
     dialog_focus: FocusHandle,
@@ -394,11 +402,13 @@ struct Chat {
     /// 卸载确认浮层（040：点垃圾桶先确认）：待卸载来源
     pkg_confirm_remove: Option<String>,
     mc_default_tools: Option<Vec<String>>,
-    /// models.json 编辑缓冲（设置·模型页，保存前在内存里改）
+    /// models.json 编辑缓冲（设置·模型页；表单头保存即写盘，无页面级 footer）
     mc_models_json: serde_json::Value,
     mc_mj_error: Option<String>,
-    mc_mj_dirty: bool,
-    mc_mj_saved: bool,
+    /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
+    mc_probe: std::collections::HashMap<String, McProbe>,
+    /// 042：inputpanel 模型菜单（锚定 pill 卡片，替代原居中 ModelSelect 弹窗）
+    model_picker: Option<crate::session::model_picker::ModelPicker>,
     /// mcp.json 全局 + 项目服务器（设置·MCP 页）
     mcp_servers: Vec<pi_link::mcp::ServerEntry>,
     mcp_errors: Vec<String>,
@@ -497,6 +507,8 @@ pub(crate) struct PillBtns {
     pub ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// MCP 按钮（043：扩展按钮右边的勾选菜单入口）
     pub mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// 模型按钮（042：模型菜单锚定）
+    pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl PillBtns {
@@ -677,8 +689,8 @@ impl Chat {
             mc_default_tools: None,
             mc_models_json: serde_json::json!({}),
             mc_mj_error: None,
-            mc_mj_dirty: false,
-            mc_mj_saved: false,
+            mc_probe: std::collections::HashMap::new(),
+            model_picker: None,
             mcp_servers: Vec::new(),
             mcp_errors: Vec::new(),
             op_tx: None,
@@ -835,6 +847,7 @@ impl Chat {
                 cwd.clone(),
                 last_open.clone(),
             );
+            r.default_model = services::workspace::default_model_pref();
             if let Some(path) = &last_open {
                 r.messages = msgs_from_tail(read_tail_messages(path, 256 * 1024, 100));
                 r.disk_msg_count = pi_link::sessions::count_message_entries(path) as usize;
@@ -1385,12 +1398,16 @@ impl Render for Chat {
         // keep terminal focus alive across frames (render focuses chat input
         // otherwise, which would steal it back every redraw)
         let dialog_input = match &self.dialog {
-            Some(Dialog::ModelSelect { input, .. }) | Some(Dialog::SessionSearch { input })
+            Some(Dialog::ProviderPicker { input }) | Some(Dialog::SessionSearch { input })
             | Some(Dialog::ProjectPicker { input, .. }) => {
                 Some(input.clone())
             }
             _ => None,
-        };
+        }
+        .or_else(|| {
+            // 042：模型菜单的过滤输入同享焦点保持（每帧不被 composer 抢回）
+            self.model_picker.as_ref().map(|p| p.input.clone())
+        });
         // 详情卡的原地改名输入框也要持有焦点——否则每帧的焦点回收
         // 会把它抢回主输入框，键盘输入进不去
         let card_rename_focus = self
@@ -1764,6 +1781,10 @@ impl Render for Chat {
         }
         // MCP 勾选面板（043）：同上，独立挂载，锚点 = 扩展按钮右边的 MCP 按钮
         if let Some(el) = session::mcp_picker::view(self, &weak_for_dialog, window) {
+            root = root.child(el);
+        }
+        // 模型菜单（042）：同上，独立挂载，锚点 = 输入面板的模型按钮
+        if let Some(el) = session::model_picker::view(self, &weak_for_dialog, window, cx) {
             root = root.child(el);
         }
         // status toast（v54: statusbar 无状态文本，改瞬时提示）

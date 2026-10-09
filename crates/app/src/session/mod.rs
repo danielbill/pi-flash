@@ -7,6 +7,7 @@ pub(crate) mod chat_list;
 pub(crate) mod diff;
 pub(crate) mod fork;
 pub(crate) mod input;
+pub(crate) mod model_picker;
 pub(crate) mod messages;
 pub(crate) mod new_session;
 pub(crate) mod runtime;

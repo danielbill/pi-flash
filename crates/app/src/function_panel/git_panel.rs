@@ -243,21 +243,14 @@ fn changes_body(
                 )
                 .child(div().flex_1())
                 .child(
-                    div()
-                        .id("git-stage-all")
+                    crate::ui::button_base(
+                        "git-stage-all",
+                        crate::ui::BtnSize::Sm,
+                        crate::ui::BtnVariant::Secondary,
+                    )
                         .flex()
                         .items_center()
                         .gap(px(5.))
-                        .px(px(9.))
-                        .py(px(3.5))
-                        .rounded(px(7.))
-                        .border_1()
-                        .border_color(rgb(t.border))
-                        .bg(rgb(t.bg))
-                        .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(t.text))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
                         .on_mouse_down(MouseButton::Left, cx.listener(
                             |this, _: &gpui::MouseDownEvent, _w, cx| {
                                 this.git_error = git::git_stage_all(&this.cwd).err();
@@ -302,22 +295,15 @@ fn changes_body(
                         .child(icon("git-branch", 14., t.text_muted))
                         .child(SharedString::from(branch))
                         .child(
-                            div()
-                                .id("git-push")
+                            crate::ui::button_base(
+                                "git-push",
+                                crate::ui::BtnSize::Sm,
+                                crate::ui::BtnVariant::Secondary,
+                            )
                                 .ml_auto()
                                 .flex()
                                 .items_center()
                                 .gap(px(5.))
-                                .px(px(9.))
-                                .py(px(3.5))
-                                .rounded(px(7.))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .bg(rgb(t.bg))
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(t.text))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(t.bg_hover)))
                                 .on_mouse_down(MouseButton::Left, cx.listener(
                                     |this, _: &gpui::MouseDownEvent, _w, cx| {
                                         this.git_push_branch(cx);
@@ -336,22 +322,15 @@ fn changes_body(
                         .items_center()
                         .gap(px(8.))
                         .child(
-                            div()
-                                .id("git-commit-btn")
+                            crate::ui::button_base(
+                                "git-commit-btn",
+                                crate::ui::BtnSize::Sm,
+                                crate::ui::BtnVariant::Secondary,
+                            )
                                 .ml_auto()
                                 .flex()
                                 .items_center()
                                 .gap(px(5.))
-                                .px(px(9.))
-                                .py(px(3.5))
-                                .rounded(px(7.))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .bg(rgb(t.bg))
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(t.text))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(t.bg_hover)))
                                 .on_mouse_down(MouseButton::Left, cx.listener(
                                     |this, _: &gpui::MouseDownEvent, _w, cx| {
                                         this.git_commit_staged(cx);

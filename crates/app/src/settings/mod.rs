@@ -20,8 +20,8 @@ use misc::mc_misc_view;
 use super::*;
 pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
-    config_button, config_switch, detail_shell, error_note, field, footer,
-    group_header, group_switch, list_action, mono_text, note, scope_tag,
+    config_button, config_switch, detail_shell, error_note, field,
+    group_header, group_switch, mono_text, note, scope_tag,
     section_title, sidebar_list, sidebar_shell, status_dot, Btn, GREEN, WARN,
 };
 
@@ -46,6 +46,8 @@ pub(crate) struct SettingsPanel {
     pub key_input: gpui::Entity<TextInput>,
     pub key_visible: bool,
     pub model_filter: gpui::Entity<TextInput>,
+    /// 042：下列表（启用的模型）常驻筛选
+    pub enabled_filter: gpui::Entity<TextInput>,
     pub mj_name: gpui::Entity<TextInput>,
     pub mj_base: gpui::Entity<TextInput>,
     pub mj_key: gpui::Entity<TextInput>,
@@ -134,6 +136,7 @@ impl SettingsPanel {
             }),
             key_visible: false,
             model_filter: panel_live_input("筛选模型…", cx),
+            enabled_filter: panel_live_input("筛选启用的模型…", cx),
             mj_name: panel_input("provider-name", cx),
             mj_base: panel_input("https://api.example.com/v1", cx),
             mj_key: cx.new(|cx| {
@@ -207,6 +210,7 @@ impl SettingsPanel {
         let inputs = [
             &self.key_input,
             &self.model_filter,
+            &self.enabled_filter,
             &self.mj_name,
             &self.mj_base,
             &self.mj_key,
@@ -254,6 +258,8 @@ pub(crate) struct SettingsFormData {
     pub key_input: gpui::Entity<TextInput>,
     pub key_visible: bool,
     pub model_filter: gpui::Entity<TextInput>,
+    pub enabled_filter: gpui::Entity<TextInput>,
+    pub enabled_filter_value: String,
     pub model_filter_value: String,
     pub mj_name: gpui::Entity<TextInput>,
     pub mj_base: gpui::Entity<TextInput>,
@@ -288,6 +294,8 @@ impl SettingsFormData {
             key_visible: p.key_visible,
             model_filter: p.model_filter.clone(),
             model_filter_value: p.model_filter.read(cx).value().to_string(),
+            enabled_filter: p.enabled_filter.clone(),
+            enabled_filter_value: p.enabled_filter.read(cx).value().to_string(),
             mj_name: p.mj_name.clone(),
             mj_base: p.mj_base.clone(),
             mj_key: p.mj_key.clone(),
@@ -317,7 +325,7 @@ pub(crate) fn render_settings(
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
-    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, enabled_filter, enabled_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
         d.clone();
     let weak_close = weak.clone();
 
@@ -326,6 +334,7 @@ pub(crate) fn render_settings(
     let pane: gpui::AnyElement = match tab {
         TAB_MODELS => crate::settings::models::mc_models_view(
             chat, weak, &section, &key_input, key_visible, &model_filter, &model_filter_value,
+            &enabled_filter, &enabled_filter_value,
             &mj_name, &mj_base, &mj_key, &mj_id, &mj_mname, &mj_ctx,
             mj_api, mj_reasoning, &error,
         ),

@@ -24,6 +24,7 @@ pub mod mcp;
 pub mod models_json;
 pub mod catalog;
 pub mod estimate;
+pub mod probe;
 pub mod paths;
 pub mod vendor;
 

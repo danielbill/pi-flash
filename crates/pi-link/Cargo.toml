@@ -18,6 +18,8 @@ serde_json = { version = "1", features = ["unbounded_depth", "preserve_order"] }
 futures = "0.3"
 # OS 凭据库（051-apikey管理.md）：明文只进 Credential Manager / Keychain
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
+# 042 通路探查：阻塞式轻量 HTTP（rustls，不走系统 OpenSSL）
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs", "gzip"] }
 
 [dev-dependencies]
 futures-timer = "3.0.4"

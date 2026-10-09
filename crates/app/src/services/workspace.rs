@@ -418,6 +418,11 @@ pub struct AppSettings {
     pub at_index_ttl_secs: Option<u64>,
     /// @ 文件索引缓存的最多项目数（每 cwd 一份，1-100，默认 10）
     pub at_index_max_projects: Option<u64>,
+    /// 042：默认模型（设置-模型页下列表五角星）。PF 自有默认——不写 pi 的
+    /// settings.json（系统 pi / pi-web 的地盘），spawn 时以 `--model` 落到
+    /// 新会话。两键齐才算设置了默认。
+    pub default_provider: Option<String>,
+    pub default_model: Option<String>,
 }
 
 /// load_extensions 的读取口径（None = 开）。
@@ -489,6 +494,14 @@ pub fn app_settings() -> AppSettings {
                     at_index_max_projects: map
                         .get("at_index_max_projects")
                         .and_then(|v| v.as_u64()),
+                    default_provider: map
+                        .get("default_provider")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                    default_model: map
+                        .get("default_model")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                 }
             }
             None => AppSettings::default(),
@@ -551,7 +564,36 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.at_index_max_projects {
         obj.insert("at_index_max_projects".into(), Value::Number(v.into()));
     }
+    if let Some(v) = &s.default_provider {
+        obj.insert("default_provider".into(), Value::String(v.clone()));
+    }
+    if let Some(v) = &s.default_model {
+        obj.insert("default_model".into(), Value::String(v.clone()));
+    }
     save_map_to(&path, &obj);
+}
+
+/// 042：默认模型读取（两键齐生效；键不存在 = 未设置默认）。
+pub fn default_model_pref() -> Option<(String, String)> {
+    let s = app_settings();
+    Some((s.default_provider?, s.default_model?))
+}
+
+/// 042：默认模型写入（设置页五角星 / inputpanel 星标共用；None = 取消）。
+/// 落盘即生效——新会话 spawn 读最新值。
+pub fn set_default_model_pref(pref: Option<(String, String)>) {
+    let mut s = app_settings();
+    match pref {
+        Some((p, m)) => {
+            s.default_provider = Some(p);
+            s.default_model = Some(m);
+        }
+        None => {
+            s.default_provider = None;
+            s.default_model = None;
+        }
+    }
+    save_app_settings(&s);
 }
 
 /// Startup load time window in days (settings-其他「加载时间窗口」档位

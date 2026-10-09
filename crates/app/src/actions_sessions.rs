@@ -13,6 +13,7 @@ impl Chat {
         self.draft_seq += 1;
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key.clone(), self.cwd.clone(), None);
+            r.default_model = services::workspace::default_model_pref();
             r.status = tr("新会话").to_string();
             r
         });
@@ -109,6 +110,7 @@ impl Chat {
         };
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
+            r.default_model = services::workspace::default_model_pref();
             // leaf-chain integrity probe for the get_messages guard
             r.disk_msg_count = pi_link::sessions::count_message_entries(&path) as usize;
             r.messages = tail;

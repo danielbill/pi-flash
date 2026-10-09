@@ -85,6 +85,9 @@ assets! {
     "icons/loader.svg",
     "icons/trash.svg",
     "icons/check.svg",
+    // 042 模型管理：默认模型五角星（空心/实心）
+    "icons/star.svg",
+    "icons/star-filled.svg",
     "icons/terminal.svg",
     // v54 UI: lucide additions
     "icons/sliders-horizontal.svg",
