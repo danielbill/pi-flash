@@ -7,6 +7,7 @@ pub mod list_handle;
 pub mod overlay;
 pub mod psp_scrollbar;
 pub mod text_input;
+pub mod tokens;
 pub mod vlist;
 
 pub use composer_input::ComposerInput;
