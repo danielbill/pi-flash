@@ -432,7 +432,7 @@ fn pl_detail(
                 .items_center()
                 .gap(px(8.))
                 .min_h(px(28.))
-                .child(scope_tag(&tr("全局"), false))
+                // 范围标在后：title 在前（与技能页「路径 + 开关」同为名前标后）
                 .child(
                     div()
                         .font_family(crate::markdown::MONO_FAMILY)
@@ -441,54 +441,51 @@ fn pl_detail(
                         .text_color(rgb(t.text))
                         .child(SharedString::from(pi_link::skills::display_source(&src).to_string())),
                 )
+                .child(scope_tag(&tr("全局"), false))
                 .child(div().flex_1())
                 .child(trash),
         )
-        .child(grid_row_w(
-            &tr("说明"),
-            px(80.),
-            div()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(
-                    description.unwrap_or_else(|| "—".to_string()),
-                )),
-        ))
-        .child(grid_row_w(
-            &tr("状态"),
-            px(80.),
-            div().child(if disabled {
-                SharedString::from(tr("已停用").to_string())
-            } else {
-                SharedString::from(tr("已启用").to_string())
-            }),
-        ))
-        .child(grid_row_w(
-            &tr("说明大小"),
-            px(80.),
-            div()
-                .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                // 尚未测得（延迟加载未跑完/未安装）显示「—」
-                .child(SharedString::from(match chat.ext_tokens.get(&src) {
-                    Some(e) => format!(
-                        "{} tokens",
-                        crate::services::format::fmt_thousand(e.ext.max(0) as u64)
-                    ),
-                    None => "—".to_string(),
-                })),
-        ))
-        .child(grid_row_w(&tr("来源"), px(80.), mono_text(src.clone(), false)))
-        .child(grid_row_w(
-            &tr("路径"),
-            px(80.),
-            div()
-                .font_family(crate::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(breakable_path(&pi_link::skills::package_install_dir(&src).to_string_lossy()))),
-        ))
+    // 详情排版与技能页同款：field = 标签在上、内容在下（040 定稿）
+    .child(field(
+        &tr("说明"),
+        div()
+            .text_size(crate::appearance::ui_size(12.))
+            .text_color(rgb(t.text_muted))
+            .child(SharedString::from(
+                description.unwrap_or_else(|| "—".to_string()),
+            )),
+    ))
+    .child(field(
+        &tr("状态"),
+        div().child(if disabled {
+            SharedString::from(tr("已停用").to_string())
+        } else {
+            SharedString::from(tr("已启用").to_string())
+        }),
+    ))
+    .child(field(
+        &tr("说明大小"),
+        // 尚未测得（延迟加载未跑完/未安装）显示「—」
+        mono_text(
+            match chat.ext_tokens.get(&src) {
+                Some(e) => format!(
+                    "{} tokens",
+                    crate::services::format::fmt_thousand(e.ext.max(0) as u64)
+                ),
+                None => "—".to_string(),
+            },
+            true,
+        ),
+    ))
+    .child(field(&tr("来源"), mono_text(src.clone(), false)))
+    .child(field(
+        &tr("路径"),
+        div()
+            .font_family(crate::markdown::MONO_FAMILY)
+            .text_size(crate::appearance::ui_size(11.))
+            .text_color(rgb(t.text_dim))
+            .child(SharedString::from(breakable_path(&pi_link::skills::package_install_dir(&src).to_string_lossy()))),
+    ))
         .into_any_element()
 }
 

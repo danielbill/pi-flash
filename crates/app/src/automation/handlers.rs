@@ -444,6 +444,42 @@ pub(super) fn dispatch(
             chat.plugin_picker_cancel(cx);
             ok()
         }
+        method::MCP_PICKER_OPEN => {
+            chat.open_mcp_picker(cx);
+            ok()
+        }
+        method::MCP_PICKER_TOGGLE => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"name\": \"…\"}"))?;
+            chat.mcp_picker_toggle(name, cx);
+            ok()
+        }
+        method::MCP_PICKER_CANCEL => {
+            chat.mcp_picker = None;
+            cx.notify();
+            ok()
+        }
+        method::SETTINGS_MCP_SAVE => {
+            let text = params
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"text\": \"粘贴内容\"}"))?
+                .to_string();
+            let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let exposure = params.get("exposure").and_then(Value::as_u64).unwrap_or(0) as u8;
+            if let Some(st) = chat.settings.clone() {
+                st.update(cx, |s, cx| {
+                    s.mcp_add.update(cx, |ti, cx| ti.set_value(text, cx));
+                    s.mcp_name.update(cx, |ti, cx| ti.set_value(name, cx));
+                    s.mcp_exposure = exposure;
+                    cx.notify();
+                });
+            }
+            chat.mcp_save_submit(cx);
+            ok()
+        }
         method::UI_SCREENSHOT => super::screenshot::shot(window, params),
 
         _ => Err((

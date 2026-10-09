@@ -158,6 +158,9 @@ pub(crate) struct SessionRuntime {
     pub ext_sources: Vec<String>,
     /// 040：picker 在运行中确认的清单——下一轮 send_input 空闲时重绑生效
     pub(crate) pending_ext_sources: Option<Vec<String>>,
+    /// 043：MCP 菜单在运行中改过 mcp.json——下一轮 send_input 空闲时重绑
+    /// 生效（新进程 session_start 重读清单；空闲 spawn 本就直接读盘，无需标记）
+    pub(crate) pending_mcp_reload: bool,
 
     // ---- `!` shell 命令（031）----
     /// rpc bash 在飞（pi isBashRunning 的客户端镜像；期间再发 bash 会被
@@ -237,6 +240,7 @@ impl SessionRuntime {
             tools_preset: "custom".into(),
             ext_sources,
             pending_ext_sources: None,
+            pending_mcp_reload: false,
             bash_running: false,
             pending_bash: None,
             last_activity: std::time::Instant::now(),
@@ -1689,13 +1693,17 @@ impl SessionRuntime {
             return;
         }
         // 040：picker 运行中确认的清单，下一轮（空闲发送）开始前生效——
-        // 换包集必须重绑进程（RPC 无运行时切换），`--session` 复接不丢消息
+        // 换包集必须重绑进程（RPC 无运行时切换），`--session` 复接不丢消息。
+        // 043：MCP 运行中改过 mcp.json 同走这条重绑通路（新进程重读清单）。
         if !self.agent_running {
-            if let Some(list) = self.pending_ext_sources.take() {
-                self.ext_sources = list;
-                if let Some(p) = pi_link::session_ext::store_path() {
-                    let _ =
-                        pi_link::session_ext::write_for(&p, &self.key, &self.ext_sources);
+            let pending_ext = self.pending_ext_sources.take();
+            if pending_ext.is_some() || self.pending_mcp_reload {
+                self.pending_mcp_reload = false;
+                if let Some(list) = pending_ext {
+                    self.ext_sources = list;
+                    if let Some(p) = pi_link::session_ext::store_path() {
+                        let _ = pi_link::session_ext::write_for(&p, &self.key, &self.ext_sources);
+                    }
                 }
                 let this = cx.entity();
                 match self.spawn() {

@@ -341,6 +341,59 @@ fn plugin_button(
     el.into_any_element()
 }
 
+/// MCP 按钮（043 定稿）：扩展按钮右边的兄弟节点。**不设档位守卫**——
+/// 扩展只在 full+ 档挂载，MCP 各档都装载；全局 mcp.json 无条目时整个
+/// 不渲染。点击开合 MCP 勾选菜单（勾选即生效，写盘 + 运行中标记重绑）。
+fn mcp_button(
+    chat: &mut Chat,
+    t: &'static crate::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
+    let ui = crate::appearance::ui_size;
+    let has_global = chat
+        .mcp_servers
+        .iter()
+        .any(|s| s.scope == pi_link::mcp::Scope::Global);
+    if !has_global {
+        return div().into_any_element();
+    }
+    let (n, open) = (
+        chat.mcp_servers
+            .iter()
+            .filter(|s| s.scope == pi_link::mcp::Scope::Global && s.enabled)
+            .count(),
+        chat.mcp_picker.is_some(),
+    );
+    let label = if n > 0 {
+        format!("{}({n})", crate::i18n::tr("MCP"))
+    } else {
+        crate::i18n::tr("MCP").to_string()
+    };
+    let color = if open { t.accent } else { t.text_muted };
+    let mut el = div()
+        .id("mcp-menu")
+        .h(px(28.))
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .rounded(px(8.))
+        .text_size(ui(BAR_FONT))
+        .text_color(rgb(color))
+        .cursor_pointer()
+        .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
+                this.toggle_mcp_menu_at(event.position, cx);
+            }),
+        )
+        .child(icon_hover("server", 13., color))
+        .child(SharedString::from(label));
+    // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+    el = el.child(crate::PillBtns::tracker(&chat.pill_btn.mcp));
+    el.into_any_element()
+}
+
 /// `hero` = 012 新会话页模式：胶囊走正常流（由新会话页内容簇摆位），
 /// 不再 0 高 + 绝对定位贴聊天区底。
 pub(crate) fn input_area(
@@ -982,6 +1035,8 @@ fn composer_bar(
             // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「full+」档
             // 激活，点开扩展菜单（勾选即生效，单列已勾置顶）。
             .child(plugin_button(chat, t, cx))
+            // MCP 按钮（043）：扩展按钮右边的兄弟节点（无条目时自隐藏）
+            .child(mcp_button(chat, t, cx))
             .into_any_element()
         });
     // 右侧：环 + 模型 + 思考 + 发送，按钮间距统一 10px；操作栏左右

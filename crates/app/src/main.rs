@@ -321,6 +321,8 @@ struct Chat {
     pill_menu: Option<PillMenu>,
     /// 「full+」档的扩展选择面板（勾选即生效；滚动位跨帧复用）
     plugin_picker: Option<crate::session::plugin_picker::PluginPicker>,
+    /// MCP 勾选菜单（043：全局 mcp.json 无条目时按钮不渲染，菜单自然不开）
+    mcp_picker: Option<crate::session::mcp_picker::McpPicker>,
     /// 打开弹窗的那个按钮的锚点（水平中点 + 顶缘）——inputpanel 全部弹窗
     /// 统一定位：与按钮居中、距 5px、不遮按钮（用户定稿）
     pill_anchor: Option<PillAnchor>,
@@ -493,6 +495,8 @@ pub(crate) struct PillBtns {
     pub tools: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// MCP 按钮（043：扩展按钮右边的勾选菜单入口）
+    pub mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl PillBtns {
@@ -698,6 +702,7 @@ impl Chat {
             input_focused: false,
             pill_menu: None,
             plugin_picker: None,
+            mcp_picker: None,
             pill_anchor: None,
             pill_btn: PillBtns::default(),
             ext_tokens: services::token_probe::read_cache(),
@@ -1755,6 +1760,10 @@ impl Render for Chat {
         // 插件勾选面板：**独立于工具菜单**。千万别再塞回上面那个 if-let ——
         // 插件按钮点击时 pill_menu 是 None，面板会整块不渲染（"点不开"的根因）。
         if let Some(el) = session::plugin_picker::view(self, &weak_for_dialog, window) {
+            root = root.child(el);
+        }
+        // MCP 勾选面板（043）：同上，独立挂载，锚点 = 扩展按钮右边的 MCP 按钮
+        if let Some(el) = session::mcp_picker::view(self, &weak_for_dialog, window) {
             root = root.child(el);
         }
         // status toast（v54: statusbar 无状态文本，改瞬时提示）

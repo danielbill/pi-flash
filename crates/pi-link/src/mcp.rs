@@ -131,6 +131,16 @@ pub fn load_with_paths(global: &Path, project: Option<&Path>) -> (Vec<ServerEntr
     (out, errors)
 }
 
+/// Raw config object of one server as stored in `file` (edit-form backfill;
+/// unlike `ServerEntry` this keeps env/header *values* and unknown fields).
+pub fn raw_entry(path: &Path, name: &str) -> Result<Option<Value>, String> {
+    let value = read_json(path)?;
+    Ok(value
+        .get("mcpServers")
+        .and_then(|s| s.get(name))
+        .cloned())
+}
+
 /// Serialize a server config object back from an entry (add/edit writes).
 pub fn config_object(entry: &ServerEntry) -> Value {
     let mut obj = serde_json::Map::new();
@@ -483,6 +493,23 @@ mod tests {
         assert!(!raw.contains("\"enabled\""));
         assert!(remove(&path, "fs").unwrap());
         assert!(!remove(&path, "fs").unwrap());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn raw_entry_keeps_values_and_unknown_fields() {
+        let path = tmpfile("mcp-raw.json");
+        let _ = std::fs::remove_file(&path);
+        add(
+            &path,
+            "fs",
+            json!({"command":"npx","env":{"TOKEN":"secret"},"custom":1}),
+        )
+        .unwrap();
+        let raw = raw_entry(&path, "fs").unwrap().unwrap();
+        assert_eq!(raw["env"]["TOKEN"], "secret");
+        assert_eq!(raw["custom"], 1);
+        assert!(raw_entry(&path, "nope").unwrap().is_none());
         let _ = std::fs::remove_file(&path);
     }
 

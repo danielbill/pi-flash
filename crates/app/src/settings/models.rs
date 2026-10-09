@@ -15,9 +15,14 @@ impl Chat {
         let panel = cx.new(|cx| {
             let mut panel = SettingsPanel::new(cx);
             panel.tab = tab;
-            panel.section = section;
+            panel.section = section.clone();
             panel
         });
+        // 043 MCP 页：打开即回填选中行的编辑表单（与点行同一条链路）
+        if tab == super::TAB_MCP {
+            let data = self.mcp_backfill_data(&section);
+            panel.update(cx, |s, cx| super::mcp::mcp_apply_backfill(s, data, cx));
+        }
         self.settings = Some(panel);
         cx.notify();
     }
@@ -148,8 +153,11 @@ impl Chat {
         self.mc_skills = ctx.skills;
         self.mc_pkgs_project = ctx.packages;
         self.mc_project_scope = ctx.project_scope;
-        self.mcp_servers = ctx.mcp_servers;
-        self.mcp_errors = ctx.mcp_errors;
+        // 043：MCP 盘上现读——project_ctx 是启动缓存，本页写盘后重读只会
+        // 拷到旧列表（040 globals 内存副本同款教训）
+        let (mcp_servers, mcp_errors) = pi_link::mcp::load(Some(&self.cwd));
+        self.mcp_servers = mcp_servers;
+        self.mcp_errors = mcp_errors;
         // models.json 编辑缓冲（面板打开/写盘后重建）
         match pi_link::models_json::read() {
             Ok(v) => {

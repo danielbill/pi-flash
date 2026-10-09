@@ -75,6 +75,12 @@ pub mod method {
     pub const PLUGIN_PICKER_OPEN: &str = "plugin_picker.open";
     pub const PLUGIN_PICKER_TOGGLE: &str = "plugin_picker.toggle";
     pub const PLUGIN_PICKER_CANCEL: &str = "plugin_picker.cancel";
+    /// 043 MCP 勾选面板：打开 / 勾选 / 收起（UI 测试用）
+    pub const MCP_PICKER_OPEN: &str = "mcp_picker.open";
+    pub const MCP_PICKER_TOGGLE: &str = "mcp_picker.toggle";
+    pub const MCP_PICKER_CANCEL: &str = "mcp_picker.cancel";
+    /// 043 设置页 MCP 表单：填字段并走真实 mcp_save_submit 保存链路
+    pub const SETTINGS_MCP_SAVE: &str = "settings.mcp_save";
     /// 截屏：窗口最近一帧渲染回读为 PNG（进程内 D3D11 staging readback，
     /// 非 OS 抢屏；窗口被遮挡/最小化也能截）。params: {path?}，缺省写
     /// <配置目录>/automation/shots/。返回 {path,width,height,bytes}。

@@ -34,6 +34,7 @@ pub struct TextInput {
     placeholder: Option<SharedString>,
     masked: bool,
     numeric: bool,
+    multiline: bool,
     select_all_on_focus: bool,
     select_all_done: bool,
     want_focus: bool,
@@ -57,6 +58,7 @@ impl TextInput {
             placeholder: None,
             masked: false,
             numeric: false,
+            multiline: false,
             select_all_on_focus: false,
             select_all_done: false,
             want_focus: false,
@@ -85,6 +87,12 @@ impl TextInput {
     /// Reject non-ASCII-digit input (numeric fields).
     pub fn numeric(mut self, numeric: bool) -> Self {
         self.numeric = numeric;
+        self
+    }
+
+    /// 多行模式（Enter 换行不提交；渲染高度约 8 行，MCP 粘贴框用）。
+    pub fn multiline(mut self) -> Self {
+        self.multiline = true;
         self
     }
 
@@ -183,6 +191,9 @@ impl TextInput {
             if masked {
                 st = st.masked(true);
             }
+            if self.multiline {
+                st = st.multi_line();
+            }
             st
         });
         cx.subscribe(&state, |this, entity, event: &InputEvent, cx| {
@@ -270,7 +281,7 @@ impl Render for TextInput {
         let focused = state.read(cx).focus_handle(cx).is_focused(window);
         div()
             .w_full()
-            .h(gpui::px(30.))
+            .h(gpui::px(if self.multiline { 170. } else { 30. }))
             // inherit into the inner widget's text shaping
             .font_family(crate::markdown::MONO_FAMILY)
             .text_size(gpui::px(12.))

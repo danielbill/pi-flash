@@ -273,36 +273,6 @@ pub(crate) fn mono_text(text: String, dim: bool) -> AnyElement {
         .into_any_element()
 }
 
-/// ConfigDetailGrid 一行：左 label 固定宽，右 value。
-pub(crate) fn grid_row(label: &str, value: impl gpui::IntoElement) -> AnyElement {
-    grid_row_w(label, px(120.), value)
-}
-
-/// 同 [`grid_row`]，label 列宽可调（040 扩展详情：说明标签列缩窄）。
-pub(crate) fn grid_row_w(label: &str, label_w: gpui::Pixels, value: impl gpui::IntoElement) -> AnyElement {
-    let t = T();
-    div()
-        .flex()
-        .gap(px(14.))
-        .child(
-            div()
-                .w(label_w)
-                .flex_shrink_0()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(label.to_string())),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text))
-                .child(value),
-        )
-        .into_any_element()
-}
-
 /// 复选小块（工具/资源勾选）：14px 方框 + 标签，点击即切换。
 // ---------------------------------------------------------------------------
 // sidebar pieces

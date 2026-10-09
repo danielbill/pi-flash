@@ -11,6 +11,7 @@ pub(crate) mod messages;
 pub(crate) mod new_session;
 pub(crate) mod runtime;
 pub(crate) mod plugin_picker;
+pub(crate) mod mcp_picker;
 pub(crate) mod tools_recipe;
 
 use gpui::{Animation, AnimationExt, MouseButton, SharedString, div, list, prelude::*, px, relative, rgb};

@@ -20,8 +20,8 @@ use misc::mc_misc_view;
 use super::*;
 pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
-    config_button, config_switch, detail_shell, error_note, field, footer, grid_row,
-    grid_row_w, group_header, group_switch, list_action, mono_text, note, scope_tag,
+    config_button, config_switch, detail_shell, error_note, field, footer,
+    group_header, group_switch, list_action, mono_text, note, scope_tag,
     section_title, sidebar_list, sidebar_shell, status_dot, Btn, GREEN, WARN,
 };
 
@@ -56,10 +56,12 @@ pub(crate) struct SettingsPanel {
     pub mj_reasoning: bool,
     // -- 扩展页安装表单（040：整条 pi install 命令可直接粘贴）
     pub install_input: gpui::Entity<TextInput>,
-    // -- MCP 页添加表单
+    // -- MCP 页【配置MCP】表单（043：粘贴框 + 名称 + exposure 四选，全局 only）
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
-    pub mcp_scope_project: bool,
+    /// exposure 四选索引（0 codemode / 1 deferred / 2 direct / 3 hidden），
+    /// 保存时写进 config（codemode 删键），编辑选中行时回填
+    pub mcp_exposure: u8,
     pub error: Option<String>,
     /// 界面页：打开的字体下拉（槽位 ix；None=全关）
     pub font_popup: Option<usize>,
@@ -150,9 +152,21 @@ impl SettingsPanel {
             install_input: cx.new(|cx| {
                 TextInput::new(cx).placeholder(tr("例：pi install npm:pi-web-access"))
             }),
-            mcp_add: panel_live_input("JSON、http(s) URL、命令行，或 `pi mcp add …`", cx),
-            mcp_name: panel_live_input("服务器名称（字母数字_-）", cx),
-            mcp_scope_project: false,
+            mcp_add: {
+                let weak_add = cx.weak_entity();
+                cx.new(|cx| {
+                    TextInput::new(cx)
+                        .placeholder(tr("粘贴 JSON / url / 命令行 / pi mcp add..."))
+                        .on_change(Box::new(move |_, cx| {
+                            if let Some(p) = weak_add.upgrade() {
+                                p.update(cx, |_, cx| cx.notify());
+                            }
+                        }))
+                        .multiline()
+                })
+            },
+            mcp_name: panel_live_input("MCP名称", cx),
+            mcp_exposure: 0,
             error: None,
             font_popup: None,
             font_dd: cx.new(|_| DropdownState::new()),
@@ -225,11 +239,10 @@ impl SettingsPanel {
                 .first()
                 .map(pi_link::skills::entry_source)
                 .unwrap_or_default(),
-            TAB_MCP => chat
-                .mcp_servers
-                .first()
-                .map(|s| mcp::section_key(s))
-                .unwrap_or_else(|| "__mcp_add__".into()),
+            // 043：MCP 页打开**一律进新增模式**——section 预选第一行会让
+            // 「新增」误走编辑改名路径（静默删掉被预选的条目，实测踩过）；
+            // 编辑只能由点行进入
+            TAB_MCP => "__mcp_add__".into(),
             _ => String::new(),
         }
     }
@@ -259,7 +272,7 @@ pub(crate) struct SettingsFormData {
     pub mcp_name: gpui::Entity<TextInput>,
     pub mcp_add_value: String,
     pub mcp_name_value: String,
-    pub mcp_scope_project: bool,
+    pub mcp_exposure: u8,
     pub error: Option<String>,
     pub font_popup: Option<usize>,
     pub font_dd: gpui::Entity<DropdownState>,
@@ -294,7 +307,7 @@ impl SettingsFormData {
             mcp_name: p.mcp_name.clone(),
             mcp_add_value: p.mcp_add.read(cx).value().to_string(),
             mcp_name_value: p.mcp_name.read(cx).value().to_string(),
-            mcp_scope_project: p.mcp_scope_project,
+            mcp_exposure: p.mcp_exposure,
             error: p.error.clone(),
             font_popup: p.font_popup,
             font_dd: p.font_dd.clone(),
@@ -312,7 +325,7 @@ pub(crate) fn render_settings(
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
-    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, mcp_name_value, mcp_scope_project, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, mcp_name_value, mcp_exposure, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
         d.clone();
     let weak_close = weak.clone();
 
@@ -333,7 +346,7 @@ pub(crate) fn render_settings(
         ),
         TAB_MCP => crate::settings::mcp::mc_mcp_view(
             chat, weak, &section, &mcp_add, &mcp_add_value, &mcp_name, &mcp_name_value,
-            mcp_scope_project, &error,
+            mcp_exposure, &error,
         ),
         TAB_MISC => mc_misc_view(chat, weak),
         TAB_REMOTE => crate::settings::remote::mc_remote_view(chat, weak),
@@ -477,13 +490,20 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let _ = weak_tab.update(cx, |c, cx| {
                     let next_section = SettingsPanel::prefill_section(c, *ix);
+                    let is_mcp = *ix == TAB_MCP;
                     if let Some(st) = c.settings.clone() {
                         st.update(cx, |s, cx| {
                             s.tab = *ix;
-                            s.section = next_section;
                             s.error = None;
+                            // MCP 页 section 连带回填走 mcp_select（下同）
+                            if !is_mcp {
+                                s.section = next_section.clone();
+                            }
                             cx.notify();
                         });
+                    }
+                    if is_mcp {
+                        c.mcp_select(next_section, cx);
                     }
                 });
             })

@@ -128,8 +128,8 @@ pub(crate) struct ProjectCtx {
     pub skills: Vec<pi_link::skills::SkillEntry>,
     /// `skill:<name>` 命令（由 `skills` 派生，草稿态 `/` 菜单用）。
     pub skill_commands: Vec<SlashCommand>,
-    pub mcp_servers: Vec<pi_link::mcp::ServerEntry>,
-    pub mcp_errors: Vec<String>,
+    // 043：MCP 不进 ProjectCtx——mcp.json 会被设置页/勾选菜单随时改盘，
+    // 缓存副本只会拿到旧列表；消费方（reload_settings_panel）一律盘上现读
 }
 
 /// 装载全局态：模型清单（缓存 ∪ 磁盘）、命令（内置 + 扩展缓存）、默认项、插件、全局 mcp。
@@ -165,7 +165,6 @@ pub(crate) fn load_project(cwd: &Path) -> ProjectCtx {
         .unwrap_or_else(|| agent_dir.clone());
     let skills = pi_link::skills::discover_skills(cwd, &agent_dir, &home_agents, &settings_value);
     let skill_commands = pi_link::catalog::skill_commands(&skills);
-    let (mcp_servers, mcp_errors) = pi_link::mcp::load(Some(cwd));
     ProjectCtx {
         project_scope: pi_link::config::read_enabled_models(&project_settings)
             .unwrap_or_else(|_| None)
@@ -173,8 +172,6 @@ pub(crate) fn load_project(cwd: &Path) -> ProjectCtx {
         packages: pi_link::config::read_packages(&project_settings).unwrap_or_default(),
         skills,
         skill_commands,
-        mcp_servers,
-        mcp_errors,
     }
 }
 

@@ -419,6 +419,22 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                     .collect::<Vec<String>>(),
                 "mc_state": format!("{:?}", chat.mc_state),
                 "mc_project_scope": chat.mc_project_scope,
+                // 043 MCP 页：列表 + 表单字段快照（列表断言 / 保存回读用）
+                "mcp_servers": chat
+                    .mcp_servers
+                    .iter()
+                    .map(|s| {
+                        json!({
+                            "name": s.name,
+                            "scope": format!("{:?}", s.scope),
+                            "enabled": s.enabled,
+                            "exposure": s.exposure,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                "mcp_name_value": p.mcp_name.read(cx).value().to_string(),
+                "mcp_add_value": p.mcp_add.read(cx).value().to_string(),
+                "mcp_exposure": p.mcp_exposure,
             })
         }
     }
