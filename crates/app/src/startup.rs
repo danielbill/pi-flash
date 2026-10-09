@@ -105,8 +105,6 @@ pub(crate) struct ProjectCtx {
     pub skill_commands: Vec<SlashCommand>,
     pub mcp_servers: Vec<pi_link::mcp::ServerEntry>,
     pub mcp_errors: Vec<String>,
-    pub profiles: Vec<pi_link::subagents::SubagentProfile>,
-    pub agents_settings: pi_link::subagents::SubagentSettings,
 }
 
 /// 装载全局态：模型清单（缓存 ∪ 磁盘）、命令（内置 + 扩展缓存）、默认项、插件、全局 mcp。
@@ -142,8 +140,6 @@ pub(crate) fn load_project(cwd: &Path) -> ProjectCtx {
         .unwrap_or_else(|| agent_dir.clone());
     let skills = pi_link::skills::discover_skills(cwd, &agent_dir, &home_agents, &settings_value);
     let skill_commands = pi_link::catalog::skill_commands(&skills);
-    let agents_settings = pi_link::subagents::read_settings(&agent_dir);
-    let profiles = pi_link::subagents::list_profiles(cwd, &agent_dir, &agents_settings);
     let (mcp_servers, mcp_errors) = pi_link::mcp::load(Some(cwd));
     ProjectCtx {
         project_scope: pi_link::config::read_enabled_models(&project_settings)
@@ -154,8 +150,6 @@ pub(crate) fn load_project(cwd: &Path) -> ProjectCtx {
         skill_commands,
         mcp_servers,
         mcp_errors,
-        profiles,
-        agents_settings,
     }
 }
 
@@ -700,7 +694,7 @@ pub(crate) fn spawn_session_list_load(
         let _ = this.update(cx, |chat, cx| {
             chat.rebuild_projects(all);
             // 项目集确定后，后台把集合内每个项目的项目上下文装好
-            // （settings/mcp/skills/子代理）——首帧不等它；切项目/开设置页直接命中
+            // （settings/mcp/skills）——首帧不等它；切项目/开设置页直接命中
             let pending: Vec<PathBuf> = chat
                 .projects
                 .iter()

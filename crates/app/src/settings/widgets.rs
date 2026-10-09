@@ -3,7 +3,6 @@
 //! 32×18（small 24×14）、状态点 7px、scope 徽标 10px；颜色走主题 + 语义色
 //! （绿 0x4ade80 / 红 0xef4444 / 警 0xd97706 / 靛蓝徽标 hsla）。
 
-use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, SharedString, FontWeight, MouseButton, Window, div, px, rgb};
 
 use super::*;
@@ -305,50 +304,6 @@ pub(crate) fn grid_row_w(label: &str, label_w: gpui::Pixels, value: impl gpui::I
 }
 
 /// 复选小块（工具/资源勾选）：14px 方框 + 标签，点击即切换。
-pub(crate) fn check_chip(
-    id: impl Into<SharedString>,
-    weak: &gpui::WeakEntity<Chat>,
-    label: &str,
-    checked: bool,
-    disabled: bool,
-    on_click: impl Fn(&mut Chat, &mut Context<Chat>) + 'static,
-) -> AnyElement {
-    let t = T();
-    let mut row = div()
-        .id(id.into())
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .child(
-            div()
-                .size(px(14.))
-                .rounded(px(3.))
-                .border_1()
-                .border_color(rgb(if checked { t.accent } else { t.border }))
-                .bg(rgb(if checked { t.accent } else { t.bg_panel }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(checked, |d| d.child(crate::ui::icon("check", 10., 0xffffff))),
-        )
-        .child(
-            div()
-                .text_size(crate::appearance::ui_size(12.))
-                .text_color(rgb(if disabled { t.text_dim } else { t.text_muted }))
-                .child(SharedString::from(label.to_string())),
-        );
-    if disabled {
-        return row.opacity(0.55).into_any_element();
-    }
-    row = row.cursor_pointer();
-    let weak = weak.clone();
-    row.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-        cx.stop_propagation();
-        let _ = weak.update(cx, |c, cx| on_click(c, cx));
-    })
-    .into_any_element()
-}
-
 // ---------------------------------------------------------------------------
 // sidebar pieces
 // ---------------------------------------------------------------------------

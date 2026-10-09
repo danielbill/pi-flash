@@ -406,11 +406,6 @@ struct Chat {
     ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
     ext_input: gpui::Entity<TextInput>,
     ext_notice: Option<(String, u8)>,
-    // subagent test runs (settings panel)
-    sa_profiles: Vec<pi_link::subagents::SubagentProfile>,
-    sa_settings: pi_link::subagents::SubagentSettings,
-    sa_runs: Vec<SubagentRun>,
-    sa_run_seq: usize,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
     // ---- v54 shell state ----
     /// psp 项目组（当前项目钉顶，其余按最近会话倒序；启动只加载
@@ -583,15 +578,6 @@ impl FileTab {
     }
 }
 
-/// One live subagent run (child RPC session spawned with profile flags).
-struct SubagentRun {
-    id: usize,
-    profile: String,
-    status: u8,
-    last_text: String,
-    session: Option<pi_link::client::PiSession>,
-}
-
 impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
@@ -697,10 +683,6 @@ impl Chat {
             ext_dialog: None,
             ext_input: cx.new(|cx| TextInput::new(cx)),
             ext_notice: None,
-            sa_profiles: Vec::new(),
-            sa_settings: pi_link::subagents::SubagentSettings::default(),
-            sa_runs: Vec::new(),
-            sa_run_seq: 0,
             panel_tabs: Vec::new(),
             active_panel_tab: None,
             file_cache: std::collections::HashMap::new(),

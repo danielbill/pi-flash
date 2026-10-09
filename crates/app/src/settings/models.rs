@@ -12,22 +12,13 @@ impl Chat {
     pub(crate) fn open_settings(&mut self, tab: u8, cx: &mut Context<Self>) {
         self.reload_settings_panel();
         let section = super::SettingsPanel::prefill_section(self, tab);
-        // subagents tab: prefill the max-concurrent input from saved settings
-        let max_prefill = self.sa_settings.max_concurrent.to_string();
         let panel = cx.new(|cx| {
             let mut panel = SettingsPanel::new(cx);
             panel.tab = tab;
             panel.section = section;
-            panel.sa_input.update(cx, |ti, cx| ti.set_value(max_prefill, cx));
             panel
         });
         self.settings = Some(panel);
-        // 子代理页打开即填充编辑器（否则表单输入为空，须点一次行）
-        if tab == super::TAB_AGENTS {
-            if let Some(p) = self.sa_profiles.iter().find(|p| p.file_path.is_some()).cloned() {
-                self.sa_fill_editor(&p, cx);
-            }
-        }
         cx.notify();
     }
 
@@ -144,7 +135,7 @@ impl Chat {
 
     /// 把启动装载的全局态 + 当前项目的项目上下文**安装**进设置页字段
     /// （010-启动.md §1/§5/§7）。纯内存赋值：不再逐项扫盘——skills / packages /
-    /// mcp / 子代理档案都来自启动时已装好的 `globals` 与 `project_ctx`；
+    /// mcp 都来自启动时已装好的 `globals` 与 `project_ctx`；
     /// 切项目命中集合就直接切，未命中时由 `project_ctx_for` 现算一次并纳入。
     pub(crate) fn reload_settings_panel(&mut self) {
         self.reload_model_defaults();
@@ -160,8 +151,6 @@ impl Chat {
         self.mc_project_scope = ctx.project_scope;
         self.mcp_servers = ctx.mcp_servers;
         self.mcp_errors = ctx.mcp_errors;
-        self.sa_settings = ctx.agents_settings;
-        self.sa_profiles = ctx.profiles;
         // models.json 编辑缓冲（面板打开/写盘后重建）
         match pi_link::models_json::read() {
             Ok(v) => {

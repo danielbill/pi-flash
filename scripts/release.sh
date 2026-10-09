@@ -64,7 +64,7 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 - 底部导航：模型 / 技能 / 插件
 - 侧栏底部：文件浏览器（>_ 图标打开内置终端）
 - 工具栏：完整历史 / 分支 / 系统提示词 / 工具
-- 设置弹窗六个页签：模型 / 技能 / 插件 / 工具 / 子代理 / 通用（主题+语言）
+- 设置弹窗页签：界面 / 模型 / 技能 / 扩展 / MCP / 其他 / 远程控制
 - 本版本更新内容见压缩包内 CHANGELOG 片段或仓库 CHANGELOG.md
 
 数据位置：pi 数据 ~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）；

@@ -17,7 +17,6 @@ pub mod recents;
 pub mod session_ext;
 pub mod sessions;
 pub mod skills;
-pub mod subagents;
 pub mod transcript;
 pub mod mcp;
 pub mod models_json;

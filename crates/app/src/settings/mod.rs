@@ -1,7 +1,8 @@
-//! Settings panel (v70)：保持左导航 200px 七页签（界面/模型/技能/子代理/
-//! 扩展/MCP/其他）不变，内部页面按 pi-web 最新版重构（路径条/分组侧栏/
-//! 详情表单/底栏）。表单状态由 SettingsPanel entity 持有；mc_*/sa_*/mcp_*
-//! 动作仍在 Chat 上（单一 RPC 属主）。
+//! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他/远程控制），
+//! 内部页面按 pi-web 最新版重构（路径条/分组侧栏/详情表单/底栏）。表单
+//! 状态由 SettingsPanel entity 持有；mc_*/mcp_* 动作仍在 Chat 上（单一
+//! RPC 属主）。子代理页已移除——社区子代理扩展经「扩展」页安装即用，
+//! 不再建模任何 subagent 配置。
 
 pub(crate) mod custom_models;
 pub(crate) mod general;
@@ -11,7 +12,6 @@ pub(crate) mod models;
 pub(crate) mod plugins;
 pub(crate) mod remote;
 pub(crate) mod skills;
-pub(crate) mod subagents;
 pub(crate) mod widgets;
 
 use general::mc_general_view;
@@ -20,21 +20,19 @@ use misc::mc_misc_view;
 use super::*;
 pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
-    check_chip, config_button, config_switch, detail_shell, error_note, field, footer, grid_row,
+    config_button, config_switch, detail_shell, error_note, field, footer, grid_row,
     grid_row_w, group_header, group_switch, list_action, mono_text, note, scope_tag,
     section_title, sidebar_list, sidebar_shell, status_dot, Btn, GREEN, WARN,
 };
 
-/// 页签序：0 界面 · 1 模型 · 2 技能 · 3 子代理 · 4 扩展 · 5 MCP · 6 其他。
+/// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 6 远程控制。
 pub(crate) const TAB_GENERAL: u8 = 0;
 pub(crate) const TAB_MODELS: u8 = 1;
 pub(crate) const TAB_SKILLS: u8 = 2;
-pub(crate) const TAB_AGENTS: u8 = 3;
-pub(crate) const TAB_PLUGINS: u8 = 4;
-pub(crate) const TAB_MCP: u8 = 5;
-pub(crate) const TAB_MISC: u8 = 6;
-/// 8 页签：0 界面 · 1 模型 · 2 技能 · 3 子代理 · 4 扩展 · 5 MCP · 6 其他 · 7 远程控制
-pub(crate) const TAB_REMOTE: u8 = 7;
+pub(crate) const TAB_PLUGINS: u8 = 3;
+pub(crate) const TAB_MCP: u8 = 4;
+pub(crate) const TAB_MISC: u8 = 5;
+pub(crate) const TAB_REMOTE: u8 = 6;
 
 /// The settings modal's form state (pi-web SettingsPanel own-state parity).
 pub(crate) struct SettingsPanel {
@@ -58,16 +56,6 @@ pub(crate) struct SettingsPanel {
     pub mj_reasoning: bool,
     // -- 扩展页安装表单（040：整条 pi install 命令可直接粘贴）
     pub install_input: gpui::Entity<TextInput>,
-    // -- 子代理页：maxConcurrent 输入 + 新建表单（scope 切换）
-    pub sa_input: gpui::Entity<TextInput>,
-    pub sa_new: bool,
-    pub sa_scope_project: bool,
-    pub sa_name: gpui::Entity<TextInput>,
-    pub sa_display: gpui::Entity<TextInput>,
-    pub sa_desc: gpui::Entity<TextInput>,
-    pub sa_prompt: gpui::Entity<TextInput>,
-    pub sa_model: gpui::Entity<TextInput>,
-    pub sa_turns: gpui::Entity<TextInput>,
     // -- MCP 页添加表单
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
@@ -162,15 +150,6 @@ impl SettingsPanel {
             install_input: cx.new(|cx| {
                 TextInput::new(cx).placeholder(tr("例：pi install npm:pi-web-access"))
             }),
-            sa_input: cx.new(|cx| TextInput::new(cx).numeric(true)),
-            sa_new: false,
-            sa_scope_project: false,
-            sa_name: panel_input("子代理 ID", cx),
-            sa_display: panel_input("显示名称", cx),
-            sa_desc: panel_input("描述", cx),
-            sa_prompt: panel_input("系统指令（留空继承）", cx),
-            sa_model: panel_input("provider/model（留空跟随父会话）", cx),
-            sa_turns: cx.new(|cx| TextInput::new(cx).numeric(true)),
             mcp_add: panel_live_input("JSON、http(s) URL、命令行，或 `pi mcp add …`", cx),
             mcp_name: panel_live_input("服务器名称（字母数字_-）", cx),
             mcp_scope_project: false,
@@ -225,13 +204,6 @@ impl SettingsPanel {
             &self.mj_mname,
             &self.mj_ctx,
             &self.install_input,
-            &self.sa_input,
-            &self.sa_name,
-            &self.sa_display,
-            &self.sa_desc,
-            &self.sa_prompt,
-            &self.sa_model,
-            &self.sa_turns,
             &self.mcp_add,
             &self.mcp_name,
             &self.font_filter,
@@ -247,11 +219,6 @@ impl SettingsPanel {
                 .mc_skills
                 .first()
                 .map(|s| s.path.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            TAB_AGENTS => chat
-                .sa_profiles
-                .first()
-                .map(|p| p.name.clone())
                 .unwrap_or_default(),
             TAB_PLUGINS => chat
                 .mc_pkgs_global
@@ -288,15 +255,6 @@ pub(crate) struct SettingsFormData {
     pub mj_api: u8,
     pub mj_reasoning: bool,
     pub install_input: gpui::Entity<TextInput>,
-    pub sa_input: gpui::Entity<TextInput>,
-    pub sa_new: bool,
-    pub sa_scope_project: bool,
-    pub sa_name: gpui::Entity<TextInput>,
-    pub sa_display: gpui::Entity<TextInput>,
-    pub sa_desc: gpui::Entity<TextInput>,
-    pub sa_prompt: gpui::Entity<TextInput>,
-    pub sa_model: gpui::Entity<TextInput>,
-    pub sa_turns: gpui::Entity<TextInput>,
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
     pub mcp_add_value: String,
@@ -332,15 +290,6 @@ impl SettingsFormData {
             mj_api: p.mj_api,
             mj_reasoning: p.mj_reasoning,
             install_input: p.install_input.clone(),
-            sa_input: p.sa_input.clone(),
-            sa_new: p.sa_new,
-            sa_scope_project: p.sa_scope_project,
-            sa_name: p.sa_name.clone(),
-            sa_display: p.sa_display.clone(),
-            sa_desc: p.sa_desc.clone(),
-            sa_prompt: p.sa_prompt.clone(),
-            sa_model: p.sa_model.clone(),
-            sa_turns: p.sa_turns.clone(),
             mcp_add: p.mcp_add.clone(),
             mcp_name: p.mcp_name.clone(),
             mcp_add_value: p.mcp_add.read(cx).value().to_string(),
@@ -363,7 +312,7 @@ pub(crate) fn render_settings(
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
-    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, sa_input, sa_new, sa_scope_project, sa_name, sa_display, sa_desc, sa_prompt, sa_model, sa_turns, mcp_add, mcp_add_value, mcp_name, mcp_name_value, mcp_scope_project, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, mcp_name_value, mcp_scope_project, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
         d.clone();
     let weak_close = weak.clone();
 
@@ -379,10 +328,6 @@ pub(crate) fn render_settings(
             let (sidebar, detail) = crate::settings::skills::mc_skills_view(chat, weak, &section);
             two_pane(sidebar, detail)
         }
-        TAB_AGENTS => crate::settings::subagents::mc_subagents_view(
-            chat, weak, &section, &sa_input, sa_new, sa_scope_project,
-            &sa_name, &sa_display, &sa_desc, &sa_prompt, &sa_model, &sa_turns,
-        ),
         TAB_PLUGINS => crate::settings::plugins::mc_plugins_view(
             chat, weak, &section, &install_input, &error,
         ),
@@ -417,10 +362,7 @@ pub(crate) fn render_settings(
         // 分栏页：列表与详情统一 15px 内边距（与内容缘等距），包装层不再
         // 另加 20（否则左侧多出 20 不对称）；分栏页全部全出血，顶条/底栏
         // 的横线与侧栏竖线直通卡缘（040 扩展页定稿样式推广到各分栏页）
-        let hpad = if matches!(
-            tab,
-            TAB_PLUGINS | TAB_MODELS | TAB_SKILLS | TAB_AGENTS | TAB_MCP
-        ) {
+        let hpad = if matches!(tab, TAB_PLUGINS | TAB_MODELS | TAB_SKILLS | TAB_MCP) {
             0.
         } else {
             20.
@@ -507,7 +449,6 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
         (TAB_GENERAL, "界面", "monitor"),
         (TAB_MODELS, "模型", "cpu"),
         (TAB_SKILLS, "技能", "layers"),
-        (TAB_AGENTS, "子代理", "bot"),
         (TAB_PLUGINS, "扩展", "plug"),
         (TAB_MCP, "MCP", "server"),
         (TAB_MISC, "其他", "ellipsis-v"),
