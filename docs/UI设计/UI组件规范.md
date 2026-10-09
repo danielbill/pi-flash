@@ -163,7 +163,7 @@
 | SW_SM | 24×14 | 7 | 8 | ml2 / ml10 |
 
 - 选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用整体 opacity 0.5。
-- 与 Zed（32×20/knob12）、Fluent（40×20/thumb12）同族，按 12px 密度再收半档（2026-10-09 定夺）。存量 config_switch 32×18 收敛到 28×16；24×14 仅密集小场景（group_switch）。状态直切、无动画——GPUI 现状即无插值，规范不虚构动画。
+- 与 Zed（32×20/knob12）、Fluent（40×20/thumb12）同族，按 12px 密度再收半档（2026-10-09 定夺）。存量 config_switch 32×18、misc 34×19、组头 24×14 全部收敛到 28×16（`settings/widgets.rs::switch_el` 为唯一画法，组头行内开关同尺寸）。SW_SM 24×14 为**预留档**（当前无消费方；需要更小开关必须用它，禁止自造第三种尺寸）。状态直切、无动画——GPUI 现状即无插值，规范不虚构动画。
 
 ### 5.4 复选框 / 单选
 

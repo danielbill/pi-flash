@@ -66,18 +66,12 @@ pub(crate) fn config_button(
 // switch / dot / tag
 // ---------------------------------------------------------------------------
 
-/// 开关视觉唯一实现（SW_MD 28×16·knob10，`ui::tokens::switch`）。
-/// `apply` 收到新状态 bool 由调用方自行解释；Chat 场景走 [`config_switch`]。
-pub(crate) fn switch_base(
-    id: impl Into<SharedString>,
-    on: bool,
-    disabled: bool,
-    apply: impl Fn(bool, &mut gpui::App) + 'static,
-) -> AnyElement {
+/// 开关视觉（SW_MD 28×16·knob10，`ui::tokens::switch`）：无 id/无事件，
+/// [`switch_base`]（独立开关）与 [`group_switch`]（组头行内）共用。
+fn switch_el(on: bool) -> gpui::Div {
     use crate::ui::tokens::switch as sw;
     let t = T();
-    let mut el = div()
-        .id(id.into())
+    div()
         .w(px(sw::MD_W))
         .h(px(sw::MD_H))
         .flex_shrink_0()
@@ -97,16 +91,27 @@ pub(crate) fn switch_base(
                 .size(px(sw::MD_KNOB))
                 .rounded_full()
                 .bg(if on { rgb(t.bg) } else { rgb(t.text_muted) }),
-        );
+        )
+}
+
+/// 开关视觉唯一入口（独立开关）。`apply` 收到新状态 bool 由调用方自行
+/// 解释；Chat 场景走 [`config_switch`]。
+pub(crate) fn switch_base(
+    id: impl Into<SharedString>,
+    on: bool,
+    disabled: bool,
+    apply: impl Fn(bool, &mut gpui::App) + 'static,
+) -> AnyElement {
+    let mut el = switch_el(on).id(id.into());
     if disabled {
         return el.opacity(0.5).into_any_element();
     }
-    el = el.cursor_pointer();
-    el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-        cx.stop_propagation();
-        apply(!on, cx);
-    })
-    .into_any_element()
+    el.cursor_pointer()
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            apply(!on, cx);
+        })
+        .into_any_element()
 }
 
 /// ConfigSwitch：设置页行内开关（Chat 回调形态）。
@@ -123,7 +128,8 @@ pub(crate) fn config_switch(
     })
 }
 
-/// 组头小开关（ConfigSidebarGroupSwitch）：{enabled}/{total} + 24×14 开关。
+/// 组头小开关行（ConfigSidebarGroupSwitch）：{enabled}/{total} + 开关。
+/// 开关尺寸随 2026-10-09 定稿与全局统一为 SW_MD 28×16（原 24×14 小档废除）。
 pub(crate) fn group_switch(
     id: impl Into<SharedString>,
     weak: &gpui::WeakEntity<Chat>,
@@ -146,22 +152,7 @@ pub(crate) fn group_switch(
                 .child(SharedString::from(count_text)),
         )
         .child({
-            let mut sw = div()
-                .w(px(24.))
-                .h(px(14.))
-                .rounded(px(7.))
-                .border_1()
-                .border_color(if checked { rgb(t.accent) } else { rgb(t.border) })
-                .bg(if checked { rgb(t.accent) } else { rgb(t.bg_selected) })
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .ml(if checked { px(10.) } else { px(2.) })
-                        .size(px(8.))
-                        .rounded_full()
-                        .bg(if checked { rgb(t.bg) } else { rgb(t.text_muted) }),
-                );
+            let mut sw = switch_el(checked);
             if !disabled {
                 sw = sw.cursor_pointer();
             } else {
