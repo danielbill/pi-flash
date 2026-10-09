@@ -434,7 +434,6 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                     .collect::<Vec<_>>(),
                 "mcp_name_value": p.mcp_name.read(cx).value().to_string(),
                 "mcp_add_value": p.mcp_add.read(cx).value().to_string(),
-                "mcp_exposure": p.mcp_exposure,
             })
         }
     }

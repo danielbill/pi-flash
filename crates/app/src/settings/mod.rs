@@ -56,12 +56,9 @@ pub(crate) struct SettingsPanel {
     pub mj_reasoning: bool,
     // -- 扩展页安装表单（040：整条 pi install 命令可直接粘贴）
     pub install_input: gpui::Entity<TextInput>,
-    // -- MCP 页【配置MCP】表单（043：粘贴框 + 名称 + exposure 四选，全局 only）
+    // -- MCP 页【配置MCP】表单（043：粘贴框 + 名称，全局 only）
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
-    /// exposure 四选索引（0 codemode / 1 deferred / 2 direct / 3 hidden），
-    /// 保存时写进 config（codemode 删键），编辑选中行时回填
-    pub mcp_exposure: u8,
     pub error: Option<String>,
     /// 界面页：打开的字体下拉（槽位 ix；None=全关）
     pub font_popup: Option<usize>,
@@ -166,7 +163,6 @@ impl SettingsPanel {
                 })
             },
             mcp_name: panel_live_input("MCP名称", cx),
-            mcp_exposure: 0,
             error: None,
             font_popup: None,
             font_dd: cx.new(|_| DropdownState::new()),
@@ -271,8 +267,6 @@ pub(crate) struct SettingsFormData {
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
     pub mcp_add_value: String,
-    pub mcp_name_value: String,
-    pub mcp_exposure: u8,
     pub error: Option<String>,
     pub font_popup: Option<usize>,
     pub font_dd: gpui::Entity<DropdownState>,
@@ -306,8 +300,6 @@ impl SettingsFormData {
             mcp_add: p.mcp_add.clone(),
             mcp_name: p.mcp_name.clone(),
             mcp_add_value: p.mcp_add.read(cx).value().to_string(),
-            mcp_name_value: p.mcp_name.read(cx).value().to_string(),
-            mcp_exposure: p.mcp_exposure,
             error: p.error.clone(),
             font_popup: p.font_popup,
             font_dd: p.font_dd.clone(),
@@ -325,7 +317,7 @@ pub(crate) fn render_settings(
     d: &SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
-    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, mcp_name_value, mcp_exposure, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
+    let SettingsFormData { focus: _focus, tab, section, key_input, key_visible, model_filter, model_filter_value, mj_name, mj_base, mj_key, mj_id, mj_mname, mj_ctx, mj_api, mj_reasoning, install_input, mcp_add, mcp_add_value, mcp_name, error, font_popup, font_dd, font_filter, font_filter_value, size_popup, size_dd } =
         d.clone();
     let weak_close = weak.clone();
 
@@ -345,8 +337,7 @@ pub(crate) fn render_settings(
             chat, weak, &section, &install_input, &error,
         ),
         TAB_MCP => crate::settings::mcp::mc_mcp_view(
-            chat, weak, &section, &mcp_add, &mcp_add_value, &mcp_name, &mcp_name_value,
-            mcp_exposure, &error,
+            chat, weak, &section, &mcp_add, &mcp_add_value, &mcp_name, &error,
         ),
         TAB_MISC => mc_misc_view(chat, weak),
         TAB_REMOTE => crate::settings::remote::mc_remote_view(chat, weak),

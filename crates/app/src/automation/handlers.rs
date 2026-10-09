@@ -468,12 +468,10 @@ pub(super) fn dispatch(
                 .ok_or_else(|| bad("需要 {\"text\": \"粘贴内容\"}"))?
                 .to_string();
             let name = params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-            let exposure = params.get("exposure").and_then(Value::as_u64).unwrap_or(0) as u8;
             if let Some(st) = chat.settings.clone() {
                 st.update(cx, |s, cx| {
                     s.mcp_add.update(cx, |ti, cx| ti.set_value(text, cx));
                     s.mcp_name.update(cx, |ti, cx| ti.set_value(name, cx));
-                    s.mcp_exposure = exposure;
                     cx.notify();
                 });
             }

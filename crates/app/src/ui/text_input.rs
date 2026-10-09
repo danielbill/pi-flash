@@ -279,9 +279,29 @@ impl Render for TextInput {
 
         let t = T();
         let focused = state.read(cx).focus_handle(cx).is_focused(window);
+        // 多行：容器给足高度，内件 h_full 撑满（单行保持固定 30px）
+        let (h, fill) = if self.multiline {
+            (gpui::px(170.), true)
+        } else {
+            (gpui::px(30.), false)
+        };
+        let input = GpInput::new(&state)
+            .appearance(true)
+            .bordered(true)
+            .map(|input| {
+                let input = input
+                    .bg(gpui::rgb(t.bg_panel))
+                    .border_color(gpui::rgb(if focused { t.accent } else { t.border }))
+                    .rounded(gpui::px(5.));
+                if fill {
+                    input.h_full()
+                } else {
+                    input
+                }
+            });
         div()
             .w_full()
-            .h(gpui::px(if self.multiline { 170. } else { 30. }))
+            .h(h)
             // inherit into the inner widget's text shaping
             .font_family(crate::markdown::MONO_FAMILY)
             .text_size(gpui::px(12.))
@@ -298,16 +318,6 @@ impl Render for TextInput {
                     }
                 }
             }))
-            .child(
-                GpInput::new(&state)
-                    .appearance(true)
-                    .bordered(true)
-                    .map(|input| {
-                        input
-                            .bg(gpui::rgb(t.bg_panel))
-                            .border_color(gpui::rgb(if focused { t.accent } else { t.border }))
-                            .rounded(gpui::px(5.))
-                    }),
-            )
+            .child(input)
     }
 }
