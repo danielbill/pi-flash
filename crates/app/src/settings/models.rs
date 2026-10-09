@@ -580,10 +580,9 @@ fn mc_models_sidebar(
         .as_ref()
         .map(|(p, id)| format!("{p}/{id}"));
     let pins = chat.mc_state.pins.clone();
-    let row_h = (f32::from(crate::appearance::ui_size(11.))
-        + f32::from(crate::appearance::ui_size(10.)))
-        * 1.25
-        + 12.;
+    // 下列表节奏与 inputpanel 菜单统一：组头、模型行**同一行高**（单行
+    // 紧凑 30px 基准，随界面字号抬升），严格等距——组头不再单独占矮行
+    let row_h = (f32::from(crate::appearance::ui_size(11.)) + 19.).max(30.);
     let weak_rows = weak.clone();
     let enabled_count = chat.mc_state.enabled.len();
 
