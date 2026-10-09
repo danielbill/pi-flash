@@ -663,12 +663,17 @@ fn session_row_view(
         underline: None,
         strikethrough: None,
     };
-    let title_w = window
-        .text_system()
-        .layout_line(&title, px(13.), &[measure_run], None)
-        .width;
-    let available = px(chat.slp_w - 24. - 14. - 15. - 16. - 38.);
-    let title_overflows = title_w > available;
+    // 量宽字号必须 = 渲染字号（ui_size(12.)，随界面字号设置缩放）。
+    // 曾经写死 px(13.)：设置 ≥14 时低估标题宽 → 溢出不挂渐隐、生硬截断。
+    let title_overflows = {
+        let measure_size = crate::appearance::ui_size(12.);
+        let title_w = window
+            .text_system()
+            .layout_line(&title, measure_size, &[measure_run], None)
+            .width;
+        let available = px(chat.slp_w - 24. - 14. - 15. - 16. - 38.);
+        title_w > available
+    };
 
     // 行顶对齐钩子：详情卡的 top = 本行 bounds.origin.y（ZCode 用
     // getBoundingClientRect；gpui 等价物 = wrapper 的 children_prepainted）。
