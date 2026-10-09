@@ -448,7 +448,6 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         Dialog::ImagePreview { .. } => "image_preview",
         Dialog::SessionInfo { .. } => "session_info",
         Dialog::FileDirty { .. } => "file_dirty",
-        Dialog::NewFile { .. } => "new_file",
         Dialog::WxQr => "wx_qr",
     });
     // 打开项目菜单：列表数据随弹窗一起上报（扫描是异步回填，UI 测试
@@ -466,7 +465,7 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；
         // 042 起数据源 = pill 化模型菜单的 picker_models）
         "model_rows": match chat.model_picker.as_ref() {
-            Some(_) => chat.picker_models(cx).len(),
+            Some(_) => chat.picker_models(cx).0.len(),
             None => 0,
         },
         "project_hits": project_hits,

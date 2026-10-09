@@ -111,9 +111,7 @@ enum Dialog {
     /// 023 fileView：关闭带未保存修改的文件 tab 前确认。
     /// 持 path 不持 ix——弹窗存活期间的增删不会让索引漂移。
     FileDirty { path: PathBuf },
-    /// 023 fileView：标签栏 + 菜单「新建文件」（项目根，输入文件名）。
-    NewFile { input: gpui::Entity<TextInput> },
-    /// 060 远程控制：状态栏手机图标 → 扫码弹窗（二维码 + 绑定码）。
+    /// 060 远程控制：手机图标 → 扫码弹窗（二维码 + 绑定码）。
     /// 不持数据 —— 内容全从 `chat.remote.qr` 现读，泵更新即重绘。
     WxQr,
 }
@@ -372,9 +370,7 @@ struct Chat {
     term_seq: usize,
     panel_tabs: Vec<PanelTab>,
     active_panel_tab: Option<usize>,
-    // 023 fileView：标签栏 + 菜单与面包屑兄弟菜单的弹层状态
-    plus_menu_open: bool,
-    plus_dd: gpui::Entity<crate::ui::DropdownState>,
+    // 023 fileView：菜单与面包屑兄弟菜单的弹层状态
     crumb_menu_dir: Option<PathBuf>,
     crumb_dd: gpui::Entity<crate::ui::DropdownState>,
     // TEMP 探针（023 调试）：外部改动检测 运行数/命中数
@@ -760,8 +756,6 @@ impl Chat {
             status_toast: None,
             top_menu_open: false,
             top_dd: cx.new(|_| crate::ui::DropdownState::new()),
-            plus_menu_open: false,
-            plus_dd: cx.new(|_| crate::ui::DropdownState::new()),
             crumb_menu_dir: None,
             crumb_dd: cx.new(|_| crate::ui::DropdownState::new()),
             ext_probe: (0, 0),
@@ -1405,8 +1399,12 @@ impl Render for Chat {
             _ => None,
         }
         .or_else(|| {
-            // 042：模型菜单的过滤输入同享焦点保持（每帧不被 composer 抢回）
-            self.model_picker.as_ref().map(|p| p.input.clone())
+            // 042：模型菜单的过滤输入同享焦点保持（每帧不被 composer 抢回）；
+            // 过滤框未渲染（<10 条）时不抢——菜单退化为纯鼠标操作
+            self.model_picker
+                .as_ref()
+                .filter(|_| self.picker_filter_shown(cx))
+                .map(|p| p.input.clone())
         });
         // 详情卡的原地改名输入框也要持有焦点——否则每帧的焦点回收
         // 会把它抢回主输入框，键盘输入进不去
