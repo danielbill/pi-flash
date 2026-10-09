@@ -313,7 +313,12 @@ pub(crate) fn view(
                 let _ = weak_down.update(cx, |c, cx| c.move_model_sel(1, cx));
             })
             .child(header)
-            .child(picker.input.clone())
+            .child(
+                div()
+                    .px(px(10.))
+                    .pb(px(6.))
+                    .child(picker.input.clone()),
+            )
             .child(
                 div()
                     .id("model-picker-list")

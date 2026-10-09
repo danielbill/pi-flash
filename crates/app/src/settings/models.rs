@@ -486,22 +486,9 @@ fn mc_models_sidebar(
     builtin.sort_by_key(|p| crate::ui::provider_display_name(p).to_lowercase());
     let mut custom_names: Vec<String> = custom.iter().map(|(n, _)| n.clone()).collect();
     custom_names.sort_by_key(|n| n.to_lowercase());
-    let mut is_custom_done = false;
 
     let mut rows: Vec<gpui::AnyElement> = Vec::new();
     for p in builtin.iter().chain(custom_names.iter()) {
-        // 内置段与自定义段之间插分隔线（功能盘点：区分 PI 内置和用户自定义）
-        if !is_custom_done && custom_names.iter().any(|n| n == p) {
-            is_custom_done = true;
-            rows.push(
-                div()
-                    .mx(px(8.))
-                    .my(px(4.))
-                    .h(px(1.))
-                    .bg(rgb(t.border))
-                    .into_any_element(),
-            );
-        }
         let is_custom = custom_names.contains(p);
         let (enabled_n, total) = chat.mc_provider_counts(p, enabled_set);
         let on = chat.mc_state.all_enabled || enabled_n > 0;
@@ -599,6 +586,29 @@ fn mc_models_sidebar(
         + 12.;
     let weak_rows = weak.clone();
     let enabled_count = chat.mc_state.enabled.len();
+
+    // 分组条目（与 inputpanel 菜单同款：provider 组头 + 模型行交错）；
+    // shown 已按显示名全序排列，组头顺序/组内顺序自然成立
+    enum LowEntry {
+        Header(String),
+        Model(usize),
+    }
+    let mut entries: Vec<LowEntry> = Vec::new();
+    {
+        let mut last_provider: Option<&str> = None;
+        for (ix, m) in shown.iter().enumerate() {
+            if last_provider != Some(m.provider.as_str()) {
+                entries.push(LowEntry::Header(m.provider.to_uppercase()));
+                last_provider = Some(m.provider.as_str());
+            }
+            entries.push(LowEntry::Model(ix));
+        }
+    }
+    let entries_len = entries.len();
+    let weak_rows2 = weak.clone();
+    let shown_for_rows = shown.clone();
+    let default_ref_rows = default_ref.clone();
+    let pins_rows = pins.clone();
     let lower = div()
         .flex_1()
         .min_h_0()
@@ -625,91 +635,110 @@ fn mc_models_sidebar(
         )
         .child(
             div()
-                .px(px(9.))
+                .px(px(15.))
                 .pb(px(4.))
                 .child(enabled_filter.clone()),
         )
         .child(vlist(
             "mc-enabled-list",
-            shown.len(),
+            entries_len,
             row_h,
             VListHeight::Fill,
             false,
             true,
             "没有启用的模型",
             None,
-            move |ix, _window, _cx| {
-                let m = &shown[ix];
-                let r = format!("{}/{}", m.provider, m.id);
-                let is_default = default_ref.as_deref() == Some(r.as_str());
-                let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-                let weak_star = weak_rows.clone();
-                let (dp, di) = (m.provider.clone(), m.id.clone());
-                div()
-                    .id(SharedString::from(format!("mc-en-{ix}")))
+            move |ix, _window, _cx| match &entries[ix] {
+                LowEntry::Header(provider) => div()
                     .w_full()
                     .h(px(row_h))
                     .px(px(15.))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(
-                                div()
-                                    .text_size(crate::appearance::ui_size(11.))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_color(rgb(if is_default { t.text } else { t.text_muted }))
-                                    .font_weight(if is_default {
-                                        gpui::FontWeight::SEMIBOLD
-                                    } else {
-                                        gpui::FontWeight::NORMAL
-                                    })
-                                    .child(SharedString::from(format!(
-                                        "{}/{}",
-                                        crate::ui::provider_display_name(&m.provider),
-                                        m.id
-                                    ))),
-                            )
-                            .children(pin.map(|p| {
-                                div()
-                                    .px(px(4.))
-                                    .py(px(1.))
-                                    .rounded(px(3.))
-                                    .bg(widgets::indigo_bg())
-                                    .text_size(crate::appearance::ui_size(9.))
-                                    .text_color(widgets::indigo_fg())
-                                    .child(SharedString::from(p))
-                                    .into_any_element()
-                            })),
+                            .text_size(crate::appearance::ui_size(9.5))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(t.text_dim))
+                            .child(SharedString::from(provider.clone())),
                     )
-                    .child(
-                        // 五角星：实心 = 当前默认（全局唯一）；再点取消
-                        div()
-                            .id(SharedString::from(format!("mc-star-{ix}")))
-                            .flex_shrink_0()
-                            .cursor_pointer()
-                            .hover(|s| s.opacity(0.8))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                cx.stop_propagation();
-                                let _ = weak_star.update(cx, |c, cx| {
-                                    c.mc_set_default(dp.clone(), di.clone(), cx)
-                                });
-                            })
-                            .child(crate::ui::icon(
-                                if is_default { "star-filled" } else { "star" },
-                                13.,
-                                if is_default { 0xf5a623 } else { t.text_faint },
-                            )),
-                    )
-                    .into_any_element()
+                    .into_any_element(),
+                LowEntry::Model(model_ix) => {
+                    let m = &shown_for_rows[*model_ix];
+                    let r = format!("{}/{}", m.provider, m.id);
+                    let is_default = default_ref_rows.as_deref() == Some(r.as_str());
+                    let pin = pins_rows
+                        .iter()
+                        .find(|(p, _)| p == &r)
+                        .map(|(_, l)| l.clone());
+                    let weak_star = weak_rows2.clone();
+                    let (dp, di) = (m.provider.clone(), m.id.clone());
+                    div()
+                        .id(SharedString::from(format!("mc-en-{ix}")))
+                        .w_full()
+                        .h(px(row_h))
+                        .px(px(15.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .text_size(crate::appearance::ui_size(11.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_color(rgb(if is_default {
+                                            t.text
+                                        } else {
+                                            t.text_muted
+                                        }))
+                                        .font_weight(if is_default {
+                                            gpui::FontWeight::SEMIBOLD
+                                        } else {
+                                            gpui::FontWeight::NORMAL
+                                        })
+                                        .child(SharedString::from(m.id.clone())),
+                                )
+                                .children(pin.map(|p| {
+                                    div()
+                                        .px(px(4.))
+                                        .py(px(1.))
+                                        .rounded(px(3.))
+                                        .bg(widgets::indigo_bg())
+                                        .text_size(crate::appearance::ui_size(9.))
+                                        .text_color(widgets::indigo_fg())
+                                        .child(SharedString::from(p))
+                                        .into_any_element()
+                                })),
+                        )
+                        .child(
+                            // 五角星：实心 = 当前默认（全局唯一）；再点取消
+                            div()
+                                .id(SharedString::from(format!("mc-star-{ix}")))
+                                .flex_shrink_0()
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.8))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let _ = weak_star.update(cx, |c, cx| {
+                                        c.mc_set_default(dp.clone(), di.clone(), cx)
+                                    });
+                                })
+                                .child(crate::ui::icon(
+                                    if is_default { "star-filled" } else { "star" },
+                                    13.,
+                                    if is_default { 0xf5a623 } else { t.text_faint },
+                                )),
+                        )
+                        .into_any_element()
+                }
             },
         ));
 
