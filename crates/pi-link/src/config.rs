@@ -102,12 +102,51 @@ pub fn read_json(path: &Path) -> Result<Value, String> {
 
 /// Atomic write (tmp + rename), parent dirs created.
 pub fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+    write_json_mode(path, value, false)
+}
+
+/// `write_json` for credential-bearing files (auth.json, models.json):
+/// lands 0600 on Unix, matching pi's auth-storage (`mode: 0o600`, parent
+/// dir 0o700 on creation). No-op on Windows — NTFS ACLs come from the
+/// user-profile directory.
+pub fn write_json_private(path: &Path, value: &Value) -> Result<(), String> {
+    write_json_mode(path, value, true)
+}
+
+fn write_json_mode(path: &Path, value: &Value, private: bool) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            // Tighten only dirs we create ourselves; leave existing
+            // (admin-managed) modes untouched, like pi does.
+            let absent = !parent.exists();
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            if private && absent {
+                use std::os::unix::fs::PermissionsExt;
+                let _ =
+                    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = private;
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
     }
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(value).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        // rename replaces the whole file and the new file inherits the
+        // tmp's mode: without this, a default-mode tmp silently widens a
+        // 0600 auth.json pi created. Always chmod'ing also self-heals
+        // files widened by earlier non-private writes.
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+    }
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -183,7 +222,7 @@ pub fn set_api_key(path: &Path, provider: &str, key: &str) -> Result<(), String>
         provider.to_string(),
         serde_json::json!({ "type": "api_key", "key": key }),
     );
-    write_json(path, &value)
+    write_json_private(path, &value)
 }
 
 /// DELETE /api/auth/api-key/[provider] parity: refuse to drop an OAuth
@@ -202,7 +241,7 @@ pub fn remove_credential_if_api_key(path: &Path, provider: &str) -> Result<bool,
     }
     let removed = obj.remove(provider).is_some();
     if removed {
-        write_json(path, &value)?;
+        write_json_private(path, &value)?;
     }
     Ok(removed)
 }
@@ -494,5 +533,61 @@ mod builtin_extension_tests {
         let on = enabled_builtin_extensions_from(Some(&user), Some(&project));
         assert!(on.iter().any(|x| x == "builtin:mcp"), "项目 settings 覆盖用户");
         assert!(!on.iter().any(|x| x == "builtin:tool-search"), "项目没覆盖的保持用户口径");
+    }
+}
+
+/// write_json_private lands 0600 on Unix (auth.json / models.json parity
+/// with pi's auth-storage). Unix-only: on Windows mode bits are inert.
+#[cfg(all(test, unix))]
+mod write_mode_tests {
+    use super::*;
+    use serde_json::json;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("pf-write-mode-{}-{}", tag, std::process::id()))
+    }
+
+    fn mode_of(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn private_write_lands_0600_and_dir_0700() {
+        let dir = tmp_dir("fresh");
+        std::fs::remove_dir_all(&dir).ok();
+        let path = dir.join("auth.json");
+        write_json_private(&path, &json!({ "glm": { "type": "api_key", "key": "k" } })).unwrap();
+        assert_eq!(mode_of(&path), 0o600);
+        assert_eq!(mode_of(&dir), 0o700);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn private_write_tightens_existing_world_readable() {
+        let dir = tmp_dir("heal");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("auth.json");
+        // simulate a file widened by an earlier non-private write
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_json_private(&path, &json!({})).unwrap();
+        assert_eq!(mode_of(&path), 0o600);
+        // pre-existing dir mode is left alone (admin-managed), like pi
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plain_write_stays_default() {
+        let dir = tmp_dir("plain");
+        std::fs::remove_dir_all(&dir).ok();
+        let path = dir.join("settings.json");
+        write_json(&path, &json!({})).unwrap();
+        // umask-independent: same perms as a plain std::fs::write control
+        let control = dir.join("control.json");
+        std::fs::write(&control, "{}").unwrap();
+        assert_eq!(mode_of(&path), mode_of(&control));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

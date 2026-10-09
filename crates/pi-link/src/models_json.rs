@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::config::{parse_lenient, read_json, write_json};
+use crate::config::{parse_lenient, read_json, write_json_private};
 
 pub fn path() -> PathBuf {
     crate::config::agent_dir().join("models.json")
@@ -22,7 +22,8 @@ pub fn read() -> Result<Value, String> {
 }
 
 pub fn write(value: &Value) -> Result<(), String> {
-    write_json(&path(), value)
+    // providers can carry `apiKey` — same 0600-on-Unix treatment as auth.json
+    write_json_private(&path(), value)
 }
 
 pub fn providers(value: &Value) -> Vec<(String, &Value)> {

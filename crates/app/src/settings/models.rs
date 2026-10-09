@@ -304,7 +304,7 @@ impl Chat {
         if let Some(obj) = value.as_object_mut() {
             obj.remove(&provider);
         }
-        if let Err(e) = pi_link::config::write_json(&path, &value) {
+        if let Err(e) = pi_link::config::write_json_private(&path, &value) {
             self.mc_set_error(&e, cx);
             return;
         }
