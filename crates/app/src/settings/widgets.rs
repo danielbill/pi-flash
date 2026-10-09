@@ -102,7 +102,7 @@ pub(crate) fn switch_base(
     disabled: bool,
     apply: impl Fn(bool, &mut gpui::App) + 'static,
 ) -> AnyElement {
-    let mut el = switch_el(on).id(id.into());
+    let el = switch_el(on).id(id.into());
     if disabled {
         return el.opacity(0.5).into_any_element();
     }
