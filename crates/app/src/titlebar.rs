@@ -303,22 +303,20 @@ fn tab_strip(
         .overflow_x_scroll();
     tabs_host = tabs_host.child(session_tab(chat, cx));
     for (ix, tab) in chat.panel_tabs.iter().enumerate() {
-        let (label, path, is_file): (SharedString, Option<PathBuf>, bool) = match tab {
+        let (label, path, is_file, tab_icon): (SharedString, Option<PathBuf>, bool, Option<&'static str>) = match tab {
             crate::PanelTab::Term(id) => {
                 let title = chat
                     .terminals
                     .iter()
                     .find(|t| t.id == *id)
                     .map(|t| {
-                        let dir = t
-                            .cwd
+                        t.cwd
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                        format!("bash — {dir}")
+                            .unwrap_or_default()
                     })
-                    .unwrap_or_else(|| "bash".into());
-                (title.into(), None, false)
+                    .unwrap_or_default();
+                (title.into(), None, false, Some("terminal"))
             }
             crate::PanelTab::File(p) => (
                 p.file_name()
@@ -327,6 +325,7 @@ fn tab_strip(
                     .into(),
                 Some(p.clone()),
                 true,
+                None,
             ),
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点；终端无
@@ -358,6 +357,7 @@ fn tab_strip(
             active,
             4.,
             path,
+            tab_icon,
             badge,
             cx,
         ));
@@ -401,6 +401,7 @@ fn content_tab(
     active: bool,
     ml: f32,
     path: Option<PathBuf>,
+    tab_icon: Option<&'static str>,
     badge: Option<gpui::AnyElement>,
     cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
@@ -456,7 +457,7 @@ fn content_tab(
         .into_any_element();
     tab_shell(
         id,
-        None,
+        tab_icon,
         label,
         active,
         ml,
@@ -516,9 +517,9 @@ fn tab_shell(
         })
         .on_mouse_down(MouseButton::Left, switch);
     tab = tab
-        // 前置 icon（会话 tab = bot-message-square；文件/终端 tab 无）。
-        // flex_shrink_0 必须显式：非激活 tab 限宽 100px 溢出时默认 shrink
-        // 会把 svg 连带宽一起压扁（icon 缩成团的 bug）
+        // 前置 icon（会话 tab = bot-message-square；终端 tab = terminal；
+        // 文件 tab 无）。flex_shrink_0 必须显式：非激活 tab 限宽 100px 溢出
+        // 时默认 shrink 会把 svg 连带宽一起压扁（icon 缩成团的 bug）
         .children(icon_name.map(|n| {
             div().flex_shrink_0().child(crate::ui::icon(n, 15., t.text_muted))
         }))
