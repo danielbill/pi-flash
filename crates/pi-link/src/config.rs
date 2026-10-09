@@ -189,6 +189,8 @@ pub fn write_enabled_models(path: &Path, patterns: Option<Vec<String>>) -> Resul
 // auth.json (per-provider credentials)
 // ---------------------------------------------------------------------------
 
+/// 051 起：凭据清单来自 pf-auth.json（pf_auth::kinds）；本枚举保留给
+/// 旧 auth.json 视角（read_credential_kinds，迁移诊断用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialKind {
     ApiKey,
@@ -213,6 +215,9 @@ pub fn read_credential_kinds(path: &Path) -> Result<Vec<(String, CredentialKind)
 }
 
 /// Store an API key for a provider: `{ "<provider>": { type: "api_key", key } }`.
+///
+/// 051 起退役：PF 的 key 走 pf_auth::store_catalog_key（凭据库 + 自有账本），
+/// auth.json 归 pi。保留仅为库 API 兼容，勿在新代码调用。
 pub fn set_api_key(path: &Path, provider: &str, key: &str) -> Result<(), String> {
     let mut value = read_json(path)?;
     let obj = value
@@ -227,6 +232,8 @@ pub fn set_api_key(path: &Path, provider: &str, key: &str) -> Result<(), String>
 
 /// DELETE /api/auth/api-key/[provider] parity: refuse to drop an OAuth
 /// credential ("is authenticated with OAuth, not an API key").
+///
+/// 051 起退役：断开连接走 pf_auth::delete_catalog_key；auth.json 归 pi。
 pub fn remove_credential_if_api_key(path: &Path, provider: &str) -> Result<bool, String> {
     let mut value = read_json(path)?;
     let obj = value

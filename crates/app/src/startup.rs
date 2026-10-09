@@ -68,12 +68,37 @@ pub(crate) fn splash_view() -> gpui::Div {
 /// recents 单例 / sessions 扫描器都是进程级惰性单例）：
 /// 1. 建 `~/.pi-flash/`；旧 `~/.pi/agent/pi-flash-*.json` 原样搬家
 /// 2. recents 清单仍为空 → 显式种子（按会话 mtime 序落盘）
+/// 3. 密钥收编（051）：auth.json 明文复制进凭据库 + pf-auth.json、models.json
+///    明文 apiKey 原址迁移——必须先于任何会话 spawn（注入依赖凭据库就绪）
 pub(crate) fn boot() {
     let moved = pi_link::paths::migrate_legacy_files();
     if moved > 0 {
         eprintln!("[startup] migrated {moved} legacy pi-flash file(s) → ~/.pi-flash/");
     }
     pi_link::recents::ensure_seeded();
+    adopt_legacy_credentials();
+}
+
+/// 051 一次性收编：复制式（auth.json 原文不动，归 pi）；失败停在原状下次
+/// 重试，绝不阻塞启动。此后 PF 与 auth.json 零接触。
+fn adopt_legacy_credentials() {
+    let Some(pf_path) = pi_link::pf_auth::path() else { return };
+    let vault = pi_link::credentials::KeyringVault;
+    match pi_link::pf_auth::adopt_from_auth_at(
+        &pf_path,
+        &pi_link::models_json::path(),
+        &pi_link::config::auth_path(),
+        &vault,
+    ) {
+        Ok(n) if n > 0 => eprintln!("[startup] adopted {n} legacy key(s) → credential vault + pf-auth.json"),
+        Ok(_) => {}
+        Err(e) => eprintln!("[startup] pf-auth adoption skipped: {e}"),
+    }
+    match pi_link::pf_auth::migrate_models_json_at(&pi_link::models_json::path(), &vault) {
+        Ok(n) if n > 0 => eprintln!("[startup] migrated {n} plaintext models.json apiKey(s) → vault refs"),
+        Ok(_) => {}
+        Err(e) => eprintln!("[startup] models.json key migration skipped: {e}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

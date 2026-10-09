@@ -139,9 +139,8 @@ impl Chat {
     /// 切项目命中集合就直接切，未命中时由 `project_ctx_for` 现算一次并纳入。
     pub(crate) fn reload_settings_panel(&mut self) {
         self.reload_model_defaults();
-        // 凭据（auth.json，pi 的文件，读起来便宜）
-        self.mc_creds = pi_link::config::read_credential_kinds(&pi_link::config::auth_path())
-            .unwrap_or_default();
+        // 凭据（PF 自有账本 pf-auth.json；auth.json 归 pi，PF 不读）
+        self.mc_creds = pi_link::pf_auth::kinds();
         // 会话预设 `configured` 对应的工具清单（settings.json defaultTools）
         self.mc_default_tools = self.globals.default_tools.clone();
         self.mc_pkgs_global = self.globals.packages.clone();
@@ -258,12 +257,19 @@ impl Chat {
             self.mc_set_error(tr("API Key 不能为空"), cx);
             return;
         }
-        if let Err(e) = pi_link::config::set_api_key(&pi_link::config::auth_path(), &provider, key.trim()) {
-            self.mc_set_error(&crate::i18n::tf("保存失败: {e}", &[("e", e)]), cx);
-            return;
+        // 051：明文 → 凭据库 + pf-auth.json 引用；高级引用原样；库不可用降级明文
+        match pi_link::pf_auth::store_catalog_key(&provider, key.trim(), &pi_link::credentials::KeyringVault)
+        {
+            Ok(pi_link::credentials::StoreMode::File) => {
+                self.mc_set_error(tr("系统凭据库不可用，已降级为文件存储"), cx);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                self.mc_set_error(&crate::i18n::tf("保存失败: {e}", &[("e", e)]), cx);
+                return;
+            }
         }
-        // pi resolves auth.json per request; only a brand-new provider's
-        // catalog needs a process restart to appear in available models
+        // 换 key 注入的是子进程环境，重启会话才生效（051 §8）
         self.reload_settings_panel();
         if let Some(st) = self.settings.clone() {
             let input = st.read(cx).key_input.clone();
@@ -274,26 +280,9 @@ impl Chat {
 
     pub(crate) fn mc_delete_key(&mut self, provider: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
-        if let Err(e) = pi_link::config::remove_credential_if_api_key(&pi_link::config::auth_path(), &provider) {
-            self.mc_set_error(&e, cx);
-            return;
-        }
-        self.reload_settings_panel();
-        cx.notify();
-    }
-
-    pub(crate) fn mc_logout(&mut self, provider: String, cx: &mut Context<Self>) {
-        self.mc_clear_error(cx);
-        // OAuth logout: dropping the credential entry (no revocation flow)
-        let path = pi_link::config::auth_path();
-        let mut value = match pi_link::config::read_json(&path) {
-            Ok(v) => v,
-            Err(e) => return self.mc_set_error(&e, cx),
-        };
-        if let Some(obj) = value.as_object_mut() {
-            obj.remove(&provider);
-        }
-        if let Err(e) = pi_link::config::write_json_private(&path, &value) {
+        if let Err(e) =
+            pi_link::pf_auth::delete_catalog_key(&provider, &pi_link::credentials::KeyringVault)
+        {
             self.mc_set_error(&e, cx);
             return;
         }
@@ -309,10 +298,23 @@ impl Chat {
             .any(|(p, k)| p == provider && *k == pi_link::config::CredentialKind::ApiKey)
     }
 
-    pub(crate) fn mc_oauth(&self, provider: &str) -> bool {
-        self.mc_creds
-            .iter()
-            .any(|(p, k)| p == provider && *k == pi_link::config::CredentialKind::OAuth)
+    /// 051：OAuth 归 pi（auth.json），PF 页面只管自有账本，一律按无 OAuth 处理。
+    pub(crate) fn mc_oauth(&self, _provider: &str) -> bool {
+        false
+    }
+
+    /// 「已配置」状态文案：自有账本的落点（凭据库 / 文件存储 / 高级引用）。
+    pub(crate) fn mc_store_label(&self, provider: &str) -> Option<String> {
+        match pi_link::pf_auth::store_mode(provider) {
+            Some(pi_link::credentials::StoreMode::Vault) => {
+                Some(tr("已配置 · 系统凭据库").to_string())
+            }
+            Some(pi_link::credentials::StoreMode::Ref) => Some(tr("已配置").to_string()),
+            Some(pi_link::credentials::StoreMode::File) => {
+                Some(tr("已配置 · 文件存储").to_string())
+            }
+            None => None,
+        }
     }
 
     /// 选中一个 catalog provider：清 key 输入与筛选（pi-web 换 provider 重置表单）。
@@ -701,10 +703,9 @@ fn mc_models_detail(
         return mj_add_panel(chat, weak, mj_name, mj_base, mj_key, mj_api, t);
     }
 
-    // catalog provider detail（OAuth / API Key）
+    // catalog provider detail（API Key；OAuth 归 pi，PF 只管自有账本）
     let provider = selected.to_string();
     let dc_provider = provider.clone();
-    let dc_oauth = chat.mc_oauth(&provider);
     let models: Vec<pi_link::protocol::ModelInfo> = chat
         .catalog_for(&chat.cwd)
         .iter()
@@ -712,7 +713,6 @@ fn mc_models_detail(
         .cloned()
         .collect();
     let configured = chat.mc_configured(&provider);
-    let oauth = dc_oauth;
     // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
         .p(px(15.))
@@ -720,32 +720,35 @@ fn mc_models_detail(
             d.child(error_note(error.as_deref().unwrap_or("")))
         });
 
-    // header：API Key / 订阅 + 状态 + 断开连接
+    // header：API Key + 状态（落点）+ 断开连接
     let mut head = div()
         .flex()
         .items_center()
         .gap(px(8.))
         .min_h(px(28.))
-        .child(section_title(if oauth { tr("订阅") } else { "API Key" }))
+        .child(section_title("API Key"))
         .child(div().flex_1())
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .child(status_dot(if oauth || configured { GREEN } else { t.border }))
+                .child(status_dot(if configured { GREEN } else { t.border }))
                 .child(
                     div()
                         .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(if oauth || configured { GREEN } else { t.text_dim }))
-                        .child(if oauth || configured {
-                            SharedString::from(tr("已配置").to_string())
+                        .text_color(rgb(if configured { GREEN } else { t.text_dim }))
+                        .child(if configured {
+                            SharedString::from(
+                                chat.mc_store_label(&provider)
+                                    .unwrap_or_else(|| tr("已配置").to_string()),
+                            )
                         } else {
                             SharedString::from(tr("未配置").to_string())
                         }),
                 ),
         );
-    if oauth || configured {
+    if configured {
         head = head.child(config_button(
             "mc-disconnect",
             weak,
@@ -753,80 +756,68 @@ fn mc_models_detail(
             Btn::Danger,
             true,
             false,
-            move |c, cx| {
-                if dc_oauth {
-                    c.mc_logout(dc_provider.clone(), cx)
-                } else {
-                    c.mc_delete_key(dc_provider.clone(), cx)
-                }
-            },
+            move |c, cx| c.mc_delete_key(dc_provider.clone(), cx),
         ));
     }
     let detail = detail.child(head);
 
-    // 凭据输入区（OAuth 无输入；API key：输入+眼睛+保存）
-    let detail = if oauth {
-        detail.child(note("登录凭据存储于 ~/.pi/agent/auth.json（与 pi 共用）"))
-    } else {
-        let weak_eye = weak.clone();
-        let save_provider = provider.clone();
-        detail
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(key_input.clone()),
-                    )
-                    .child(
-                        div()
-                            .id("mc-key-eye")
-                            .w(px(36.))
-                            .h(px(36.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(5.))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .text_size(crate::appearance::ui_size(11.))
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_eye.update(cx, |c, cx| {
-                                    if let Some(st) = c.settings.clone() {
-                                        let input = st.read(cx).key_input.clone();
-                                        let visible = st.update(cx, |s, cx| {
-                                            s.key_visible = !s.key_visible;
-                                            cx.notify();
-                                            s.key_visible
-                                        });
-                                        input.update(cx, |ti, cx| ti.set_masked(!visible, cx));
-                                    }
-                                });
-                            })
-                            .child(if key_visible { tr("隐藏") } else { tr("显示") }),
-                    )
-                    .child(config_button("mc-key-save", weak, &tr("保存"), Btn::Primary, false, false, move |c, cx| {
-                        let key = c
-                            .settings
-                            .as_ref()
-                            .map(|st| st.read(cx).key_input.clone())
-                            .map(|input| input.read(cx).value().to_string())
-                            .unwrap_or_default();
-                        c.mc_save_key(save_provider.clone(), key, cx);
-                    })),
-            )
-            .child(note(if configured {
-                "输入新 key 以替换；密钥写入 ~/.pi/agent/auth.json（与 pi 共用）"
-            } else {
-                "输入 API Key 以启用该 provider 的模型；密钥写入 ~/.pi/agent/auth.json"
-            }))
-    };
+    // 凭据输入区（API key：输入+眼睛+保存）
+    let weak_eye = weak.clone();
+    let save_provider = provider.clone();
+    let detail = detail
+        .child(
+            div()
+                .flex()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(key_input.clone()),
+                )
+                .child(
+                    div()
+                        .id("mc-key-eye")
+                        .w(px(36.))
+                        .h(px(36.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(rgb(t.border))
+                        .text_size(crate::appearance::ui_size(11.))
+                        .text_color(rgb(t.text_muted))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(t.bg_hover)))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_eye.update(cx, |c, cx| {
+                                if let Some(st) = c.settings.clone() {
+                                    let input = st.read(cx).key_input.clone();
+                                    let visible = st.update(cx, |s, cx| {
+                                        s.key_visible = !s.key_visible;
+                                        cx.notify();
+                                        s.key_visible
+                                    });
+                                    input.update(cx, |ti, cx| ti.set_masked(!visible, cx));
+                                }
+                            });
+                        })
+                        .child(if key_visible { tr("隐藏") } else { tr("显示") }),
+                )
+                .child(config_button("mc-key-save", weak, &tr("保存"), Btn::Primary, false, false, move |c, cx| {
+                    let key = c
+                        .settings
+                        .as_ref()
+                        .map(|st| st.read(cx).key_input.clone())
+                        .map(|input| input.read(cx).value().to_string())
+                        .unwrap_or_default();
+                    c.mc_save_key(save_provider.clone(), key, cx);
+                })),
+        )
+        .child(note(
+            "密钥存入系统凭据库（Windows 凭据管理器 / macOS 钥匙串）；pf-auth.json 只留变量名，auth.json 归 pi",
+        ));
 
     // 可用模型区 + 底部（detail_shell 收尾）
     mc_enabled_section(

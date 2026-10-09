@@ -35,6 +35,11 @@ fn file(name: &str) -> Option<PathBuf> {
     Some(dir()?.join(name))
 }
 
+/// `~/.pi-flash/pf-auth.json` — PF 独立密钥账本（051-apikey管理.md）。
+pub fn pf_auth_file() -> Option<PathBuf> {
+    file("pf-auth.json")
+}
+
 /// `~/.pi-flash/workspace.json` — 工作区记忆（每项目 last_open、布局、UI 状态）。
 pub fn workspace_file() -> Option<PathBuf> {
     file("workspace.json")

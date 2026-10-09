@@ -2,6 +2,7 @@
 //! mj_* 分支）：缓冲在 Chat.mc_models_json，底部「保存」整文件落盘。
 
 use super::*;
+use pi_link::credentials::SecretVault;
 
 impl Chat {
     pub(crate) fn mj_select(&mut self, section: String, cx: &mut Context<Self>) {
@@ -55,11 +56,15 @@ impl Chat {
             .unwrap_or_else(|| serde_json::json!({}));
         entry["api"] = serde_json::Value::String(api);
         set_opt_str(&mut entry, "baseUrl", &base);
-        set_opt_str(&mut entry, "apiKey", &key);
+        // apiKey 分流（051）：明文 → 凭据库 + $PF_KEY_* 引用；高级引用原样；
+        // 库不可用降级明文。落盘仍走底部「保存」（缓冲只改内存）。
+        self.mj_store_key(&mut entry, &name, &key, cx);
         if name != old_name {
             if let Err(e) = pi_link::models_json::rename_provider(&mut self.mc_models_json, &old_name, &name) {
                 return self.mc_set_error(&e, cx);
             }
+            // 凭据库条目跟名搬家（无旧条目则静默跳过）
+            pi_link::models_json::rename_provider_key(&old_name, &name, &pi_link::credentials::KeyringVault);
         }
         pi_link::models_json::upsert_provider(&mut self.mc_models_json, &name, entry);
         self.mc_mj_dirty = true;
@@ -75,6 +80,9 @@ impl Chat {
 
     pub(crate) fn mj_delete_provider(&mut self, name: String, cx: &mut Context<Self>) {
         pi_link::models_json::remove_provider(&mut self.mc_models_json, &name);
+        // 凭据库条目一并清（幂等；条目不存在是 Ok）
+        let _ = pi_link::credentials::KeyringVault
+            .delete(&pi_link::credentials::env_var_name(&name));
         self.mc_mj_dirty = true;
         self.mc_mj_saved = false;
         if let Some(st) = self.settings.clone() {
@@ -88,6 +96,22 @@ impl Chat {
             });
         }
         cx.notify();
+    }
+
+    /// apiKey 分流（051）：明文 → 凭据库 + `$PF_KEY_*` 引用；`$`/`!` 高级
+    /// 引用原样；凭据库失败 → 降级明文并提示。空串清除字段。
+    fn mj_store_key(
+        &mut self,
+        entry: &mut serde_json::Value,
+        name: &str,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(Some(pi_link::credentials::StoreMode::File)) =
+            pi_link::models_json::set_provider_key(entry, name, key, &pi_link::credentials::KeyringVault)
+        {
+            self.mc_set_error(tr("系统凭据库不可用，已降级为文件存储"), cx);
+        }
     }
 
     /// 新建自定义 provider（添加面板表单）。
@@ -109,7 +133,7 @@ impl Chat {
         }
         let mut entry = serde_json::json!({ "api": mj_api_name(api) });
         set_opt_str(&mut entry, "baseUrl", base.trim());
-        set_opt_str(&mut entry, "apiKey", key.trim());
+        self.mj_store_key(&mut entry, &name, key.trim(), cx);
         pi_link::models_json::upsert_provider(&mut self.mc_models_json, &name, entry);
         self.mc_mj_dirty = true;
         self.mc_mj_saved = false;

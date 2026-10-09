@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::config::{parse_lenient, read_json, write_json_private};
+use crate::credentials::{env_var_name, SecretVault, StoreMode};
 
 pub fn path() -> PathBuf {
     crate::config::agent_dir().join("models.json")
@@ -21,9 +22,130 @@ pub fn read() -> Result<Value, String> {
     read_json(&path())
 }
 
+/// 指定路径读（测试注入 / spawn 注入扫描用）。无文件 → 空对象。
+pub fn read_at(path: &std::path::Path) -> Result<Value, String> {
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    read_json(path)
+}
+
 pub fn write(value: &Value) -> Result<(), String> {
     // providers can carry `apiKey` — same 0600-on-Unix treatment as auth.json
     write_json_private(&path(), value)
+}
+
+/// 指定路径写（测试注入）。
+pub fn write_at(path: &std::path::Path, value: &Value) -> Result<(), String> {
+    write_json_private(path, value)
+}
+
+/// providers 里的 provider 条目拿可变对象。
+fn entry_mut<'a>(
+    value: &'a mut Value,
+    provider: &str,
+) -> Option<&'a mut serde_json::Map<String, Value>> {
+    value
+        .get_mut("providers")?
+        .as_object_mut()?
+        .get_mut(provider)?
+        .as_object_mut()
+}
+
+/// 自定义 provider 的 apiKey 写入分流（051 §6，编辑器/添加面板共用）：
+/// 明文 → 凭据库 + `$PF_KEY_*` 引用；`$`/`!` 高级引用原样；凭据库失败 →
+/// 降级明文（整文件 0600）。空串清除字段 → Ok(None)。返回落点供 UI 文案。
+/// 注意：只改传入的 entry（编辑器缓冲的 providers.{p}），落盘仍走底部「保存」。
+pub fn set_provider_key(
+    entry: &mut Value,
+    provider: &str,
+    raw: &str,
+    vault: &dyn SecretVault,
+) -> Result<Option<StoreMode>, String> {
+    let var = env_var_name(provider);
+    let mode = if raw.is_empty() {
+        None
+    } else if raw.starts_with('$') || raw.starts_with('!') {
+        Some(StoreMode::Ref)
+    } else {
+        match vault.set(&var, raw) {
+            Ok(()) => Some(StoreMode::Vault),
+            Err(_) => Some(StoreMode::File),
+        }
+    };
+    let map = entry
+        .as_object_mut()
+        .ok_or("provider entry is not an object")?;
+    match mode {
+        None => {
+            map.remove("apiKey");
+        }
+        Some(StoreMode::Vault) => {
+            map.insert("apiKey".into(), Value::String(format!("${var}")));
+        }
+        Some(_) => {
+            map.insert("apiKey".into(), Value::String(raw.to_string()));
+        }
+    }
+    Ok(mode)
+}
+
+/// 自定义 provider 改名时同步凭据库条目（vault get→set→delete，幂等）。
+pub fn rename_provider_key(old: &str, new: &str, vault: &dyn SecretVault) {
+    let (old_var, new_var) = (env_var_name(old), env_var_name(new));
+    if old_var == new_var {
+        return;
+    }
+    if let Ok(Some(secret)) = vault.get(&old_var) {
+        if vault.set(&new_var, &secret).is_ok() {
+            let _ = vault.delete(&old_var);
+        }
+    }
+}
+
+/// 目录 provider 无官方 env 名时的兜底通道：providers.{p}.apiKey 写引用
+/// （pi 的 provider 级 key，任意 provider 通用）。已有条目只补 apiKey。
+pub fn upsert_provider_key_ref_at(
+    path: &std::path::Path,
+    provider: &str,
+    key_ref: &str,
+) -> Result<(), String> {
+    let mut doc = if path.exists() {
+        parse_lenient(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?
+    } else {
+        serde_json::json!({})
+    };
+    let obj = doc.as_object_mut().ok_or("models.json is not an object")?;
+    let providers = obj
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}));
+    let entry = providers
+        .as_object_mut()
+        .ok_or("providers is not an object")?
+        .entry(provider.to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    entry
+        .as_object_mut()
+        .ok_or("provider entry is not an object")?
+        .insert("apiKey".into(), Value::String(key_ref.to_string()));
+    write_json_private(path, &doc)
+}
+
+/// 清掉 providers.{p}.apiKey（断开连接的兜底通道清理）+ 凭据库条目（幂等）。
+pub fn clear_provider_key_at(
+    path: &std::path::Path,
+    provider: &str,
+    vault: &dyn SecretVault,
+) -> Result<(), String> {
+    if path.exists() {
+        let mut doc = parse_lenient(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?;
+        if let Some(map) = entry_mut(&mut doc, provider) {
+            map.remove("apiKey");
+        }
+        write_json_private(path, &doc)?;
+    }
+    let _ = vault.delete(&env_var_name(provider));
+    Ok(())
 }
 
 pub fn providers(value: &Value) -> Vec<(String, &Value)> {

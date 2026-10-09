@@ -16,6 +16,8 @@ serde = { version = "1", features = ["derive"] }
 # 面板里的提示词就不是 pi 实际发送的那份了。
 serde_json = { version = "1", features = ["unbounded_depth", "preserve_order"] }
 futures = "0.3"
+# OS 凭据库（051-apikey管理.md）：明文只进 Credential Manager / Keychain
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
 
 [dev-dependencies]
 futures-timer = "3.0.4"

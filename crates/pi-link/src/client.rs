@@ -102,6 +102,16 @@ pub fn spawn(
     } else {
         cmd.stderr(Stdio::null());
     }
+    // 051：pf-auth.json（目录 provider 的 injectAs / 降级明文）+ models.json
+    // （自定义 provider 的 `$PF_KEY_*`）解出的密钥注入子进程环境。解不出
+    // 的引用跳过（该 provider 会话内报鉴权错），凭据库故障不阻塞 spawn。
+    if let Some(pf_auth_path) = crate::pf_auth::path() {
+        cmd.envs(crate::credentials::spawn_env_at(
+            &pf_auth_path,
+            &crate::models_json::path(),
+            &crate::credentials::KeyringVault,
+        ));
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

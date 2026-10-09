@@ -203,6 +203,10 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("二进制文件，不打开", "二進位檔案，不開啟", "Binary file, not opening"),
     ("读取失败", "讀取失敗", "Read failed"),
     ("保存失败", "儲存失敗", "Save failed"),
+    // 051-apikey管理
+    ("已配置 · 系统凭据库", "已設定 · 系統憑證庫", "Configured · OS vault"),
+    ("已配置 · 文件存储", "已設定 · 檔案儲存", "Configured · file storage"),
+    ("系统凭据库不可用，已降级为文件存储", "系統憑證庫不可用，已降級為檔案儲存", "Credential vault unavailable — fell back to file storage"),
     ("创建失败", "建立失敗", "Create failed"),
     ("路径越出项目根", "路徑越出專案根", "Path escapes the project root"),
     ("已保存", "已儲存", "Saved"),
