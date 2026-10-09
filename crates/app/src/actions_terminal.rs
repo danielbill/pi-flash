@@ -28,11 +28,20 @@ impl Chat {
         }
         let Some(tx) = self.term_events.clone() else { return };
         let (cell_w, line_h) = terminal::measure_cell(window);
+        let font_size = terminal::font_size();
         self.term_seq += 1;
         let id = self.term_seq;
         let focus = cx.focus_handle();
         let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, term_cwd.clone(), cell_w, line_h, focus, proxy) {
+        match terminal::spawn_terminal(
+            id,
+            term_cwd.clone(),
+            cell_w,
+            line_h,
+            font_size,
+            focus,
+            proxy,
+        ) {
             Ok(tab) => {
                 self.terminals.push(tab);
                 self.active_terminal = Some(self.terminals.len() - 1);
@@ -58,13 +67,14 @@ impl Chat {
         if old.status == TermStatus::Ready {
             let _ = old.pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
         }
-        let (cols, rows, cell_w, line_h) = (old.cols, old.rows, old.cell_w, old.line_h);
+        let (cols, rows, cell_w, line_h, font_size) =
+            (old.cols, old.rows, old.cell_w, old.line_h, old.font_size);
         let cwd = old.cwd.clone();
         self.term_seq += 1;
         let id = self.term_seq;
         let focus = cx.focus_handle();
         let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, cwd, cell_w, line_h, focus, proxy) {
+        match terminal::spawn_terminal(id, cwd, cell_w, line_h, font_size, focus, proxy) {
             Ok(mut tab) => {
                 tab.cols = cols;
                 tab.rows = rows;

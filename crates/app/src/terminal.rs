@@ -24,7 +24,7 @@ use futures::channel::mpsc::UnboundedSender;
 use gpui::{
     px, Font, FontStyle, FontWeight, Hsla, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, SharedString, UnderlineStyle,
-    WeakEntity, Window,
+    UTF16Selection, WeakEntity, Window,
 };
 
 use crate::Chat;
@@ -44,10 +44,19 @@ const ANSI16: [u32; 16] = [
 
 /// xterm `scrollback: 8000`
 const SCROLLBACK: usize = 8000;
-/// xterm `fontSize: 13, lineHeight: 1.25` on --font-mono
+/// xterm `fontFamily` on --font-mono。字号不再是常量：继任设计 = 面板字号 − 1，
+/// 见 [`font_size`]。
 pub const FONT_FAMILY: &str = "Consolas";
-pub const FONT_SIZE: f32 = 13.;
-pub const LINE_HEIGHT: f32 = FONT_SIZE * 1.25;
+
+/// 终端字号 = 面板字号 − 1（面板档位 14/15/16/17 → 终端 13/14/15/16）。
+pub fn font_size() -> f32 {
+    crate::appearance::panel_font().size - 1.
+}
+
+/// xterm `lineHeight: 1.25` 比例不变，随字号走。
+fn line_height() -> f32 {
+    font_size() * 1.25
+}
 /// `.terminal-xterm` padding: 10px 8px 22px 12px
 pub const PAD_L: f32 = 12.;
 pub const PAD_T: f32 = 10.;
@@ -123,10 +132,15 @@ pub struct TerminalTab {
     pub rows: usize,
     pub cell_w: f32,
     pub line_h: f32,
+    /// cell 尺寸所按的字号戳；prepaint 发现与当前 [`font_size`] 不符即重测重排
+    pub font_size: f32,
     /// grid-coordinate selection (Line includes display offset)
     pub selection: Option<(SelPt, SelPt)>,
     /// drag anchor while a selection is in progress
     pub sel_anchor: Option<SelPt>,
+    /// IME composition string shown as an overlay at the caret (written by
+    /// TermInput during WM_IME_COMPOSITION, cleared on commit/unmark)
+    pub preedit: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -136,13 +150,15 @@ pub struct SelPt {
 }
 
 /// Spawn the PTY + alacritty event loop for one tab.
-/// `cell_w`/`line_h` come from measuring the mono font in the opening window.
+/// `cell_w`/`line_h` come from measuring the mono font in the opening window;
+/// `font_size` 是它们所按的字号戳（restart 沿用旧 tab 时一并继承）。
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_terminal(
     id: usize,
     cwd: PathBuf,
     cell_w: f32,
     line_h: f32,
+    font_size: f32,
     focus: gpui::FocusHandle,
     proxy: Proxy,
 ) -> Result<TerminalTab, String> {
@@ -181,8 +197,10 @@ pub fn spawn_terminal(
         rows: DEFAULT_ROWS,
         cell_w,
         line_h,
+        font_size,
         selection: None,
         sel_anchor: None,
+        preedit: None,
     })
 }
 
@@ -462,6 +480,8 @@ pub struct TerminalElement {
     pub rows: usize,
     pub cell_w: f32,
     pub line_h: f32,
+    pub font_size: f32,
+    pub preedit: Option<String>,
     pub weak: WeakEntity<Chat>,
     interactivity: gpui::Interactivity,
 }
@@ -478,6 +498,8 @@ impl TerminalElement {
             rows: tab.rows,
             cell_w: tab.cell_w,
             line_h: tab.line_h,
+            font_size: tab.font_size,
+            preedit: tab.preedit.clone(),
             weak,
             interactivity: gpui::Interactivity::new(),
         }
@@ -542,20 +564,32 @@ impl gpui::Element for TerminalElement {
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> Self::PrepaintState {
+        // 面板字号变化 → 戳不符时重测 cell（平时零测量成本），下方 fit 用新值
+        let font_changed = font_size() != self.font_size;
+        if font_changed {
+            let (cw, lh) = measure_cell(window);
+            self.cell_w = cw;
+            self.line_h = lh;
+            self.font_size = font_size();
+        }
         // fit: cols/rows from the laid-out area (FitAddon parity), resize the
-        // term + PTY once per actual change
+        // term + PTY once per actual change（字号变化也触发：PTY 的 cell 像素
+        // 随 WindowSize 下发）
         let avail_w = f32::from(bounds.size.width - px(PAD_L + PAD_R)).max(self.cell_w);
         let avail_h = f32::from(bounds.size.height - px(PAD_T + PAD_B)).max(self.line_h);
         let cols = ((avail_w / self.cell_w) as usize).max(2);
         let rows = ((avail_h / self.line_h) as usize).max(2);
-        if cols != self.cols || rows != self.rows {
+        if cols != self.cols || rows != self.rows || font_changed {
             let tab_id = self.tab_id;
             let pty = self.pty.clone();
-            let (cell_w, line_h) = (self.cell_w, self.line_h);
+            let (cell_w, line_h, font_size) = (self.cell_w, self.line_h, self.font_size);
             let _ = self.weak.update(cx, |chat, cx| {
                 if let Some(tab) = chat.terminals.iter_mut().find(|t| t.id == tab_id) {
                     tab.cols = cols;
                     tab.rows = rows;
+                    tab.cell_w = cell_w;
+                    tab.line_h = line_h;
+                    tab.font_size = font_size;
                     tab.term.lock().resize(CellDims { cols, rows });
                     let _ = pty.send(Msg::Resize(WindowSize {
                         num_cols: cols as u16,
@@ -595,6 +629,8 @@ impl gpui::Element for TerminalElement {
         let grid_rows = self.rows;
         let selection = self.selection;
         let line_h = self.line_h;
+        let font_size = px(self.font_size);
+        let preedit = self.preedit.clone();
         let shared = self.clone_shared();
         self.interactivity.paint(
             global_id,
@@ -604,9 +640,19 @@ impl gpui::Element for TerminalElement {
             window,
             cx,
             move |_, window, cx| {
-                // snapshot the grid while locked, then paint styled runs
-                let rows = snapshot(&term.lock(), grid_rows, selection, focused);
-                let font_size = px(FONT_SIZE);
+                // snapshot the grid while locked, then paint styled runs;
+                // caret viewport position rides along for the preedit overlay
+                let (rows, caret) = {
+                    let locked = term.lock();
+                    let rows = snapshot(&locked, grid_rows, selection, focused);
+                    let offset = locked.grid().display_offset() as i32;
+                    let content = locked.renderable_content();
+                    let row = content.cursor.point.line.0 + offset;
+                    let col = content.cursor.point.column.0;
+                    let caret = (row >= 0 && (row as usize) < grid_rows)
+                        .then(|| (col, row as usize));
+                    (rows, caret)
+                };
                 let line_h = px(line_h);
                 for (r, row) in rows.iter().enumerate() {
                     if row.text.is_empty() {
@@ -624,6 +670,61 @@ impl gpui::Element for TerminalElement {
                         bounds.origin.y + px(PAD_T) + line_h * r as f32,
                     );
                     let _ = line.paint(origin, line_h, window, cx);
+                }
+
+                // IME composition: underline the preedit string at the caret
+                // cell (xterm draws composition inline; same affordance here)
+                if focused && let (Some(pre), Some((col, row))) = (&preedit, caret) {
+                    let run = gpui::TextRun {
+                        len: pre.len(),
+                        font: cell_font(&CellStyle {
+                            fg: hsl(TERM_FG),
+                            bg: None,
+                            bold: false,
+                            italic: false,
+                            underline: true,
+                            strike: false,
+                        }),
+                        color: hsl(TERM_FG),
+                        background_color: None,
+                        underline: Some(UnderlineStyle { thickness: px(1.), ..Default::default() }),
+                        strikethrough: None,
+                    };
+                    let line = window.text_system().shape_line(
+                        SharedString::from(pre.clone()),
+                        font_size,
+                        &[run],
+                        None,
+                    );
+                    let origin = gpui::point(
+                        bounds.origin.x + px(PAD_L + shared.cell_w * col as f32),
+                        bounds.origin.y + px(PAD_T) + line_h * row as f32,
+                    );
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds { origin, size: gpui::size(line.width, line_h) },
+                        hsl(0x1d222b),
+                    ));
+                    let _ = line.paint(origin, line_h, window, cx);
+                }
+
+                // IME target for this frame: composition → preedit overlay,
+                // commit → PTY bytes. Without a registered handler the
+                // Windows IME path drops composition/commit silently, so
+                // 输入法 can never type into the terminal.
+                if focused {
+                    window.handle_input(
+                        &shared.focus,
+                        TermInput {
+                            tab_id: shared.tab_id,
+                            term: shared.term.clone(),
+                            pty: shared.pty.clone(),
+                            weak: shared.weak.clone(),
+                            element_bounds: bounds,
+                            cell_w: shared.cell_w,
+                            line_h: shared.line_h,
+                        },
+                        cx,
+                    );
                 }
 
                 // mouse: selection drag + wheel scroll (hit-tested manually)
@@ -667,6 +768,7 @@ impl TerminalElement {
             tab_id: self.tab_id,
             term: self.term.clone(),
             pty: self.pty.clone(),
+            focus: self.focus.clone(),
             weak: self.weak.clone(),
             cell_w: self.cell_w,
             line_h: self.line_h,
@@ -679,6 +781,7 @@ struct TermShared {
     tab_id: usize,
     term: Arc<FairMutex<Term<Proxy>>>,
     pty: EventLoopSender,
+    focus: gpui::FocusHandle,
     weak: WeakEntity<Chat>,
     cell_w: f32,
     line_h: f32,
@@ -846,12 +949,12 @@ pub fn measure_cell(window: &Window) -> (f32, f32) {
     };
     let line = window.text_system().shape_line(
         SharedString::from("M".repeat(8)),
-        px(FONT_SIZE),
+        px(font_size()),
         &[run],
         None,
     );
     let cw = (f32::from(line.width) / 8.).max(1.);
-    (cw, LINE_HEIGHT)
+    (cw, line_height())
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1139,149 @@ pub fn paste_bytes(text: &str, mode: &TermMode) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// IME input handler (window.handle_input target)
+// ---------------------------------------------------------------------------
+
+/// IME committed text → PTY bytes: CR-normalized UTF-8 with the ESC byte
+/// stripped (commit is typed input, not paste — no bracketed-paste markers).
+pub fn ime_commit_bytes(text: &str) -> Vec<u8> {
+    text.replace("\r\n", "\r")
+        .replace('\n', "\r")
+        .replace('\x1b', "")
+        .into_bytes()
+}
+
+/// The terminal's `InputHandler`: without a handler registered for the
+/// focused frame, the Windows IME path (`with_input_handler` in
+/// WM_IME_COMPOSITION handling) drops composition and commit silently.
+/// The terminal has no document model, so ranges are ignored (the Windows
+/// path always passes None) — same shape as zed's terminal input handler.
+struct TermInput {
+    tab_id: usize,
+    term: Arc<FairMutex<Term<Proxy>>>,
+    pty: EventLoopSender,
+    weak: WeakEntity<Chat>,
+    /// element bounds, captured at paint — base for caret-cell coordinates
+    element_bounds: gpui::Bounds<Pixels>,
+    cell_w: f32,
+    line_h: f32,
+}
+
+impl TermInput {
+    /// Caret cell in viewport coordinates `(col, row)`, None when scrolled
+    /// out of view.
+    fn caret_cell(&self) -> Option<(usize, usize)> {
+        let term = self.term.lock();
+        let offset = term.grid().display_offset() as i32;
+        let content = term.renderable_content();
+        let row = content.cursor.point.line.0 + offset;
+        let rows = term.grid().screen_lines();
+        (row >= 0 && (row as usize) < rows)
+            .then(|| (content.cursor.point.column.0, row as usize))
+    }
+
+    fn set_preedit(&self, text: Option<String>, cx: &mut gpui::App) {
+        let _ = self.weak.update(cx, |chat, cx| {
+            if let Some(tab) = chat.terminals.iter_mut().find(|t| t.id == self.tab_id) {
+                if tab.preedit != text {
+                    tab.preedit = text;
+                    cx.notify();
+                }
+            }
+        });
+    }
+
+    fn commit(&self, text: &str, cx: &mut gpui::App) {
+        use alacritty_terminal::event_loop::Msg;
+        self.set_preedit(None, cx);
+        if !text.is_empty() {
+            let _ = self.pty.send(Msg::Input(ime_commit_bytes(text).into()));
+        }
+    }
+}
+
+impl gpui::InputHandler for TermInput {
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Option<UTF16Selection> {
+        // caret = empty selection at a virtual document origin
+        Some(UTF16Selection { range: 0..0, reversed: false })
+    }
+
+    fn marked_text_range(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Option<std::ops::Range<usize>> {
+        None
+    }
+
+    fn text_for_range(
+        &mut self,
+        _range_utf16: std::ops::Range<usize>,
+        _adjusted_range: &mut Option<std::ops::Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Option<String> {
+        None
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _replacement_range: Option<std::ops::Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        self.commit(text, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range_utf16: Option<std::ops::Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<std::ops::Range<usize>>,
+        _window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        self.set_preedit(if new_text.is_empty() { None } else { Some(new_text.to_string()) }, cx);
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut gpui::App) {
+        self.set_preedit(None, cx);
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: std::ops::Range<usize>,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Option<gpui::Bounds<Pixels>> {
+        // IME candidate window placement: the caret cell, in window coords
+        let (col, row) = self.caret_cell()?;
+        Some(gpui::Bounds {
+            origin: gpui::point(
+                self.element_bounds.origin.x + px(PAD_L) + px(self.cell_w * col as f32),
+                self.element_bounds.origin.y + px(PAD_T) + px(self.line_h * row as f32),
+            ),
+            size: gpui::size(px(self.cell_w), px(self.line_h)),
+        })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut gpui::App,
+    ) -> Option<usize> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
 
@@ -1151,6 +1397,14 @@ mod tests {
         );
     }
 
+    /// IME commit: CR-normalized UTF-8, ESC stripped, no bracket markers.
+    #[test]
+    fn ime_commit_bytes_path() {
+        assert_eq!(ime_commit_bytes("你好"), "你好".as_bytes().to_vec());
+        assert_eq!(ime_commit_bytes("a\nb\r\nc"), b"a\rb\rc".to_vec());
+        assert_eq!(ime_commit_bytes("x\x1by"), b"xy".to_vec());
+    }
+
     /// Real ConPTY smoke test (no gpui): spawn cmd.exe through the same
     /// tty::new + EventLoop bridge the terminal tabs use, echo a marker, and
     /// read it back off the grid.
@@ -1215,5 +1469,71 @@ mod tests {
         }
         let _ = notifier.send(Msg::Shutdown);
         assert!(saw_output, "conpty round-trip never produced echo output");
+    }
+
+    /// Scratch probe: dump cursor point/shape/mode + snapshot rows from a real
+    /// ConPTY cmd session to debug cursor visibility.
+    #[test]
+    #[cfg(windows)]
+    fn conpty_cursor_probe() {
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        struct Chan(mpsc::Sender<Event>);
+        impl EventListener for Chan {
+            fn send_event(&self, e: Event) {
+                let _ = self.0.send(e);
+            }
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let term = Arc::new(FairMutex::new(Term::new(
+            Config { scrolling_history: 100, ..Config::default() },
+            &CellDims { cols: 80, rows: 24 },
+            Chan(tx.clone()),
+        )));
+        let mut options = tty::Options::default();
+        options.shell = Some(Shell::new("cmd.exe".into(), Vec::new()));
+        options.drain_on_exit = false;
+        let pty = tty::new(
+            &options,
+            WindowSize { num_cols: 80, num_lines: 24, cell_width: 7, cell_height: 16 },
+            0,
+        )
+        .expect("conpty spawn");
+        let event_loop =
+            EventLoop::new(term.clone(), Chan(tx), pty, false, false).expect("event loop");
+        let notifier = event_loop.channel();
+        event_loop.spawn();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(Event::Wakeup) => {
+                    let locked = term.lock();
+                    if locked.grid()[Line(0)][Column(0)].c != '\0' || locked.grid()[Line(1)][Column(0)].c != '\0' {
+                        let content = locked.renderable_content();
+                        println!("mode show_cursor: {}", locked.mode().contains(TermMode::SHOW_CURSOR));
+                        println!("cursor point: line={} col={}", content.cursor.point.line.0, content.cursor.point.column.0);
+                        println!("cursor shape: {:?}", content.cursor.shape);
+                        println!("display_offset: {}", locked.grid().display_offset());
+                        drop(locked);
+                        let rows = { let l = term.lock(); snapshot(&l, 4, None, true) };
+                        for (i, r) in rows.iter().enumerate() {
+                            let bgs: Vec<bool> = r.styles.iter().map(|s| s.bg.is_some()).collect();
+                            println!("row{i}: {:?} bg_any={}", r.text, bgs.iter().any(|&b| b));
+                            if let Some(pos) = bgs.iter().position(|&b| b) {
+                                println!("   first bg at col {pos}");
+                            }
+                        }
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => break,
+            }
+        }
+        let _ = notifier.send(Msg::Shutdown);
     }
 }
