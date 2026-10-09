@@ -44,13 +44,13 @@ const ANSI16: [u32; 16] = [
 
 /// xterm `scrollback: 8000`
 const SCROLLBACK: usize = 8000;
-/// xterm `fontFamily` on --font-mono。字号不再是常量：继任设计 = 面板字号 − 1，
-/// 见 [`font_size`]。
-pub const FONT_FAMILY: &str = "Consolas";
+/// 终端等宽字体 = pi-web `--font-mono` 首选 **Noto Sans Mono**，随二进制
+/// 打包（main.rs add_fonts；官方无 Italic 字重，italic run 由系统合成）。
+pub const FONT_FAMILY: &str = "Noto Sans Mono";
 
-/// 终端字号 = 面板字号 − 1（面板档位 14/15/16/17 → 终端 13/14/15/16）。
+/// 终端字号 = 面板字号（档位 14/15/16/17 即终端值，2026-10-10 定夺去掉 -1）。
 pub fn font_size() -> f32 {
-    crate::appearance::panel_font().size - 1.
+    crate::appearance::panel_font().size
 }
 
 /// xterm `lineHeight: 1.25` 比例不变，随字号走。
