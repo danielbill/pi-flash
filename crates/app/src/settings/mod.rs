@@ -452,8 +452,7 @@ pub(crate) fn render_settings(
             "",
             Some(
                 div()
-                    // 不定宽：贴最宽项（「远程控制」）自适应，随面板字号
-                    // 缩放（文字经 ui_size 取值，宽度跟着内容走）
+                    .w(px(160.))
                     .flex_shrink_0()
                     .bg(rgb(t.nav))
                     // 左导航贴弹窗左下角，同理自己倒左下角
