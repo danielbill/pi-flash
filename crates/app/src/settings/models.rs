@@ -680,6 +680,9 @@ fn mc_models_sidebar(
                         .flex()
                         .items_center()
                         .gap(px(8.))
+                        // 层级缩进与菜单同款：✓ 槽位宽度（12px+8px 间距），
+                        // 模型文本相对组头缩进 20px
+                        .child(div().w(px(12.)).flex_shrink_0())
                         .child(
                             div()
                                 .flex_1()
