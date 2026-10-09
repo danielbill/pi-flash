@@ -174,6 +174,7 @@
 | 方框 | 14×14，圆角 3，边框 1px（选中 accent 底，未选 border） |
 | 勾 | icon CHECK @ ICON_INDICATOR(10)，色 **accent_contrast**（统一；清掉 mcp/plugin picker 里硬编码 0xffffff） |
 | 单选 | 14 圆圈 + 6 内点，选中描边 accent |
+| 选项/分项文字 | 统一 `text_muted`，**选中只加粗（SEMIBOLD）不变色**；分项标签比节标题小一档（ui12 常规，节标题 ui13 semibold），层级靠字号字重表达（2026-10-10 定夺） |
 
 ### 5.5 输入框
 

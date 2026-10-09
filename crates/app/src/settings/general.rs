@@ -208,8 +208,7 @@ fn font_row(
                 .w(px(130.))
                 .flex_shrink_0()
                 .whitespace_nowrap()
-                .text_size(crate::appearance::ui_size(13.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(label.to_string())),
         )
@@ -560,8 +559,8 @@ fn font_popup_card(
     .into_any_element()
 }
 
-/// 语言：三个 radio（14px 圆圈，无边框无底色）。文字用色对齐【其他】页
-/// 选项按钮：选中 = text + SEMIBOLD，未选中 = text_muted；圆圈 accent。
+/// 语言：三个 radio（14px 圆圈，无边框无底色）。文字统一 text_muted，
+/// 选中只加粗（SEMIBOLD）不变色；圆圈 accent 描边 + 内点。
 fn lang_row(weak: &gpui::WeakEntity<Chat>, t: &'static crate::theme::Theme) -> gpui::AnyElement {
     let lang_current = i18n::lang_ix();
     div()
@@ -581,7 +580,7 @@ fn lang_row(weak: &gpui::WeakEntity<Chat>, t: &'static crate::theme::Theme) -> g
                 } else {
                     gpui::FontWeight::NORMAL
                 })
-                .text_color(rgb(if active { t.text } else { t.text_muted }))
+                .text_color(rgb(t.text_muted))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_lang.update(cx, |_c, cx| {
                         i18n::set_lang(ix);
