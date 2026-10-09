@@ -151,6 +151,44 @@ pub fn set_disable_invocation(path: &Path, disable: bool) -> Result<(), String> 
     std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
+/// pi 系统提示词里单个可见技能的注入块（`formatSkillsForPrompt` 的逐条
+/// 格式，vendor pi core/skills.js）——「说明大小」的计算基准：技能只有
+/// name/description/location 三行进上下文，正文要在调用时才由 read 装载。
+pub fn prompt_block(skill: &SkillEntry) -> String {
+    // 与 pi 的 escapeXml 同款（& < > " ' 五实体）
+    fn esc(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+    format!(
+        "  <skill>\n    <name>{}</name>\n    <description>{}</description>\n    <location>{}</location>\n  </skill>",
+        esc(&skill.name),
+        esc(&skill.description),
+        esc(&skill.path.to_string_lossy())
+    )
+}
+
+/// 该技能对模型上下文的说明开销（pi 的 `<available_skills>` 逐条块；
+/// 休眠技能不进提示词，计 0）。共享段头（引导语 + 标签壳）不摊入。
+pub fn prompt_tokens(skill: &SkillEntry) -> u64 {
+    if skill.disable_invocation {
+        return 0;
+    }
+    crate::estimate::estimate_tokens(&prompt_block(skill))
+}
+
+/// SKILL.md 全文估算 —— 技能被调用时由 read 装载的一次性开销（进对话
+/// 记录、随压缩回收，非系统提示词常驻）。读不到（文件被删等）按 0。
+pub fn body_tokens(skill: &SkillEntry) -> u64 {
+    match std::fs::read_to_string(&skill.path) {
+        Ok(text) => crate::estimate::estimate_tokens(&text),
+        Err(_) => 0,
+    }
+}
+
 fn edit_frontmatter(text: &str, disable: bool) -> String {
     let ends_fm = text.starts_with("---") && text[3..].contains("\n---");
     if !ends_fm {
@@ -442,5 +480,32 @@ mod tests {
         assert_eq!(normalize_source("$ pi install npm:foo"), "npm:foo");
         assert_eq!(normalize_source("pi install git:https://x"), "git:https://x");
         assert_eq!(normalize_source(" npm:bar "), "npm:bar");
+    }
+
+    #[test]
+    fn prompt_block_matches_pi_format() {
+        let sk = SkillEntry {
+            name: "demo".into(),
+            description: "Does <things> & more".into(),
+            path: PathBuf::from("C:/x/.pi/skills/demo/SKILL.md"),
+            scope: SkillScope::Project,
+            disable_invocation: false,
+        };
+        assert_eq!(
+            prompt_block(&sk),
+            "  <skill>\n    <name>demo</name>\n    <description>Does &lt;things&gt; &amp; more</description>\n    <location>C:/x/.pi/skills/demo/SKILL.md</location>\n  </skill>"
+        );
+        assert!(prompt_tokens(&sk) > 0);
+
+        // 正文 = 全文估算：真实文件非零；文件不存在按 0
+        let real = write_skill(&std::env::temp_dir(), "tok-body", None);
+        let on_disk = SkillEntry { path: real, ..sk.clone() };
+        assert!(body_tokens(&on_disk) > 0);
+        let missing = SkillEntry { path: PathBuf::from("Z:/no/such/SKILL.md"), ..sk.clone() };
+        assert_eq!(body_tokens(&missing), 0);
+
+        // 休眠技能不进提示词 → 0
+        let dormant = SkillEntry { disable_invocation: true, ..sk };
+        assert_eq!(prompt_tokens(&dormant), 0);
     }
 }

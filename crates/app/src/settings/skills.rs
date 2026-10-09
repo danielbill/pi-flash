@@ -175,6 +175,28 @@ pub(crate) fn mc_skills_view(
                         .text_color(rgb(t.text_muted))
                         .child(SharedString::from(sk.description.clone())),
                 ))
+                .child(field(
+                    &tr("说明大小"),
+                    // 描述 = pi 注入提示词的常驻块（休眠为「—」）；
+                    // 正文 = SKILL.md 全文，调用时 read 的一次性开销
+                    div()
+                        .font_family(crate::markdown::MONO_FAMILY)
+                        .text_size(crate::appearance::ui_size(11.))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(format!(
+                            "描述：{} · 正文：{} tokens",
+                            if visible {
+                                crate::services::format::fmt_thousand(
+                                    pi_link::skills::prompt_tokens(sk),
+                                )
+                            } else {
+                                "—".to_string()
+                            },
+                            crate::services::format::fmt_thousand(
+                                pi_link::skills::body_tokens(sk)
+                            ),
+                        ))),
+                ))
                 .child(note(if visible {
                     "在模型提示词中可见；开关关闭后进入休眠（对模型隐藏，仍可手动调用）"
                 } else {
