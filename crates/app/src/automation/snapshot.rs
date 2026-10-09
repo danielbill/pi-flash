@@ -11,7 +11,7 @@ use pi_link::protocol::Block;
 use serde_json::{json, Value};
 use std::time::UNIX_EPOCH;
 
-pub(crate) const SURFACES: [&str; 8] = [
+pub(crate) const SURFACES: [&str; 9] = [
     "app",
     "sessions",
     "session",
@@ -20,6 +20,7 @@ pub(crate) const SURFACES: [&str; 8] = [
     "git",
     "settings",
     "dialogs",
+    "term",
 ];
 
 pub(crate) fn surface(
@@ -56,6 +57,7 @@ fn surface_one(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>, name: &st
         "git" => git_surface(chat),
         "settings" => settings_surface(chat, cx),
         "dialogs" => dialogs_surface(chat, cx),
+        "term" => term_surface(chat, window, cx),
         _ => Value::Null,
     }
 }
@@ -93,6 +95,50 @@ fn focused_str(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         }
     }
     json!("other")
+}
+
+/// 终端网格快照：每个 tab 的状态/焦点/可见网格前若干行文本（键入回显、
+/// 提示符出现与否的断言载体）。rows 截前 6 行、cols 全宽；只读不写。
+fn term_surface(chat: &Chat, window: &gpui::Window, _cx: &Context<Chat>) -> Value {
+    let tabs = chat
+        .terminals
+        .iter()
+        .map(|t| {
+            let focused = t.focus.is_focused(window);
+            let mode = *t.term.lock().mode();
+            let (show_cursor, alt_screen) = (
+                mode.contains(alacritty_terminal::term::TermMode::SHOW_CURSOR),
+                mode.contains(alacritty_terminal::term::TermMode::ALT_SCREEN),
+            );
+            let rows = crate::terminal::snapshot(&t.term.lock(), t.rows, None);
+            let text: Vec<String> = rows
+                .into_iter()
+                .take(6)
+                .map(|r| r.text.trim_end().to_string())
+                .collect();
+            let status = match &t.status {
+                crate::terminal::TermStatus::Ready => json!("ready"),
+                crate::terminal::TermStatus::Exited(c) => json!({ "exited": c }),
+            };
+            json!({
+                "id": t.id,
+                "cwd": t.cwd.display().to_string(),
+                "status": status,
+                "focused": focused,
+                "cols": t.cols,
+                "rows": t.rows,
+                "preedit": t.preedit,
+                "show_cursor": show_cursor,
+                "alt_screen": alt_screen,
+                "grid": text,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "terminals": tabs,
+        "active_terminal": chat.active_terminal,
+        "content_view": content_view_str(chat.content_view),
+    })
 }
 
 fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value {

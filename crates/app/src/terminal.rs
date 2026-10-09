@@ -117,7 +117,6 @@ impl Dimensions for CellDims {
 pub enum TermStatus {
     Ready,
     Exited(Option<i32>),
-    Failed(String),
 }
 
 pub struct TerminalTab {
@@ -326,19 +325,12 @@ fn cell_selected(sel: (SelPt, SelPt), line: i32, col: usize) -> bool {
 
 /// Snapshot the visible grid (rows tall) into styled rows.
 /// The cursor is folded in as a cell style (block = bg swap, unfocused = dim).
-pub fn snapshot(
-    term: &Term<Proxy>,
-    rows: usize,
-    selection: Option<(SelPt, SelPt)>,
-    focused: bool,
-) -> Vec<SnapRow> {
+/// Snapshot the visible grid (rows tall) into styled rows. The cursor is
+/// NOT folded in here — it paints as a caret bar overlay in the element.
+pub fn snapshot(term: &Term<Proxy>, rows: usize, selection: Option<(SelPt, SelPt)>) -> Vec<SnapRow> {
     let grid = term.grid();
     let offset = grid.display_offset() as i32;
     let cols = grid.columns();
-    let content = term.renderable_content();
-    let cursor_line = content.cursor.point.line.0;
-    let cursor_col = content.cursor.point.column.0;
-    let cursor_shape = content.cursor.shape;
 
     let mut out = Vec::with_capacity(rows);
     for r in 0..rows {
@@ -370,7 +362,7 @@ pub fn snapshot(
                 }
             }
             let bg_rgb = color_to_rgb(&cell.bg);
-            let (mut fg_rgb, mut bg_rgb) = if cell.flags.contains(Flags::INVERSE) {
+            let (fg_rgb, mut bg_rgb) = if cell.flags.contains(Flags::INVERSE) {
                 (bg_rgb, fg_rgb)
             } else {
                 (fg_rgb, bg_rgb)
@@ -381,47 +373,22 @@ pub fn snapshot(
                 bg_rgb = TERM_SEL;
             }
 
-            // cursor: block swaps fg/bg; hollow (unfocused) is a dim fill
-            let on_cursor = line == cursor_line
-                && c == cursor_col
-                && cursor_shape != CursorShape::Hidden
-                && !cell.flags.contains(Flags::WIDE_CHAR_SPACER);
-            let mut cursor_underline = false;
-            if on_cursor {
-                if focused {
-                    match cursor_shape {
-                        CursorShape::Block => {
-                            bg_rgb = TERM_CURSOR;
-                            fg_rgb = TERM_BG;
-                        }
-                        _ => cursor_underline = true,
-                    }
-                } else {
-                    bg_rgb = TERM_CURSOR;
-                }
-            }
-
             let mut fg = hsl(fg_rgb);
-            if cell.flags.contains(Flags::DIM) && !on_cursor {
+            if cell.flags.contains(Flags::DIM) {
                 fg = hsl_a(fg_rgb, 0.55);
             }
-            let bg: Option<Hsla> = if on_cursor && !focused {
-                Some(hsl_a(TERM_CURSOR, 0.35))
-            } else if bg_rgb == TERM_BG && !selected && !on_cursor {
+            let bg: Option<Hsla> = if bg_rgb == TERM_BG && !selected {
                 None
             } else {
                 Some(hsl(bg_rgb))
             };
-            if on_cursor && focused && cursor_underline {
-                fg = hsl(TERM_CURSOR);
-            }
 
             let style = CellStyle {
                 fg,
                 bg,
                 bold: cell.flags.contains(Flags::BOLD),
                 italic: cell.flags.contains(Flags::ITALIC),
-                underline: cell.flags.contains(Flags::ALL_UNDERLINES) || cursor_underline,
+                underline: cell.flags.contains(Flags::ALL_UNDERLINES),
                 strike: cell.flags.contains(Flags::STRIKEOUT),
             };
             text.push(ch);
@@ -482,6 +449,8 @@ pub struct TerminalElement {
     pub line_h: f32,
     pub font_size: f32,
     pub preedit: Option<String>,
+    /// blink phase for the caret bar (Chat `term_cursor_on`, 1Hz heartbeat)
+    pub blink_on: bool,
     pub weak: WeakEntity<Chat>,
     interactivity: gpui::Interactivity,
 }
@@ -500,9 +469,16 @@ impl TerminalElement {
             line_h: tab.line_h,
             font_size: tab.font_size,
             preedit: tab.preedit.clone(),
+            blink_on: false,
             weak,
             interactivity: gpui::Interactivity::new(),
         }
+    }
+
+    /// Blink phase for the caret bar — Chat's 1Hz `term_cursor_on`.
+    pub fn blink_on(mut self, on: bool) -> Self {
+        self.blink_on = on;
+        self
     }
 
 }
@@ -631,6 +607,7 @@ impl gpui::Element for TerminalElement {
         let line_h = self.line_h;
         let font_size = px(self.font_size);
         let preedit = self.preedit.clone();
+        let blink_on = self.blink_on;
         let shared = self.clone_shared();
         self.interactivity.paint(
             global_id,
@@ -641,16 +618,20 @@ impl gpui::Element for TerminalElement {
             cx,
             move |_, window, cx| {
                 // snapshot the grid while locked, then paint styled runs;
-                // caret viewport position rides along for the preedit overlay
+                // caret viewport position rides along for the caret bar and
+                // the preedit overlay
                 let (rows, caret) = {
                     let locked = term.lock();
-                    let rows = snapshot(&locked, grid_rows, selection, focused);
+                    let rows = snapshot(&locked, grid_rows, selection);
                     let offset = locked.grid().display_offset() as i32;
                     let content = locked.renderable_content();
                     let row = content.cursor.point.line.0 + offset;
                     let col = content.cursor.point.column.0;
-                    let caret = (row >= 0 && (row as usize) < grid_rows)
-                        .then(|| (col, row as usize));
+                    // Hidden = app hid the cursor (DECTCEM); bar stays off
+                    let caret = (row >= 0
+                        && (row as usize) < grid_rows
+                        && content.cursor.shape != CursorShape::Hidden)
+                    .then(|| (col, row as usize));
                     (rows, caret)
                 };
                 let line_h = px(line_h);
@@ -669,7 +650,36 @@ impl gpui::Element for TerminalElement {
                         bounds.origin.x + px(PAD_L),
                         bounds.origin.y + px(PAD_T) + line_h * r as f32,
                     );
+                    // ShapedLine::paint only draws glyphs + decorations; run
+                    // backgrounds (cursor block / selection / ANSI bg) need
+                    // the explicit paint_background pass first
+                    let _ = line.paint_background(origin, line_h, window, cx);
                     let _ = line.paint(origin, line_h, window, cx);
+                }
+
+                // caret bar: 2px vertical line in the fg color at the cursor
+                // cell's left edge, ~1Hz blink while focused (heartbeat from
+                // the term_cursor task); dim static bar when unfocused
+                let _ = shared.weak.update(cx, |chat, _| chat.term_cursor_focused = focused);
+                if let Some((col, row)) = caret {
+                    let (alpha, visible) = if focused {
+                        (1.0, blink_on)
+                    } else {
+                        (0.35, true)
+                    };
+                    if visible {
+                        let bar_origin = gpui::point(
+                            bounds.origin.x + px(PAD_L + shared.cell_w * col as f32),
+                            bounds.origin.y + px(PAD_T) + line_h * row as f32 + px(1.),
+                        );
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds {
+                                origin: bar_origin,
+                                size: gpui::size(px(2.), line_h - px(2.)),
+                            },
+                            hsl_a(TERM_FG, alpha),
+                        ));
+                    }
                 }
 
                 // IME composition: underline the preedit string at the caret
@@ -1316,7 +1326,7 @@ mod tests {
     #[test]
     fn snapshot_plain_text_rows() {
         let term = test_term(10, 2, b"hello");
-        let rows = snapshot(&term, 2, None, true);
+        let rows = snapshot(&term, 2, None);
         assert_eq!(rows[0].text, "hello     ");
         assert_eq!(rows[1].text, " ".repeat(10));
         // default fg/bg: no background run needed
@@ -1328,7 +1338,7 @@ mod tests {
     fn snapshot_sgr_colors_and_inverse() {
         // red text, then inverse space
         let term = test_term(10, 2, b"\x1b[31mR\x1b[7m \x1b[0m ");
-        let rows = snapshot(&term, 2, None, true);
+        let rows = snapshot(&term, 2, None);
         assert_eq!(rows[0].text, "R         ");
         assert_eq!(rows[0].styles[0].fg, hsl(0xf87171));
         // inverse: fg/bg swap — fg becomes default bg, bg becomes the
@@ -1341,7 +1351,7 @@ mod tests {
     fn snapshot_selection_band() {
         let term = test_term(10, 2, b"abcdef");
         let sel = (SelPt { line: 0, col: 1 }, SelPt { line: 0, col: 3 });
-        let rows = snapshot(&term, 2, Some(sel), true);
+        let rows = snapshot(&term, 2, Some(sel));
         assert!(!rows[0].styles[0].bg.is_some());
         assert!(rows[0].styles[1].bg.is_some());
         assert!(rows[0].styles[3].bg.is_some());
@@ -1469,71 +1479,5 @@ mod tests {
         }
         let _ = notifier.send(Msg::Shutdown);
         assert!(saw_output, "conpty round-trip never produced echo output");
-    }
-
-    /// Scratch probe: dump cursor point/shape/mode + snapshot rows from a real
-    /// ConPTY cmd session to debug cursor visibility.
-    #[test]
-    #[cfg(windows)]
-    fn conpty_cursor_probe() {
-        use std::sync::mpsc;
-        use std::time::{Duration, Instant};
-
-        struct Chan(mpsc::Sender<Event>);
-        impl EventListener for Chan {
-            fn send_event(&self, e: Event) {
-                let _ = self.0.send(e);
-            }
-        }
-
-        let (tx, rx) = mpsc::channel();
-        let term = Arc::new(FairMutex::new(Term::new(
-            Config { scrolling_history: 100, ..Config::default() },
-            &CellDims { cols: 80, rows: 24 },
-            Chan(tx.clone()),
-        )));
-        let mut options = tty::Options::default();
-        options.shell = Some(Shell::new("cmd.exe".into(), Vec::new()));
-        options.drain_on_exit = false;
-        let pty = tty::new(
-            &options,
-            WindowSize { num_cols: 80, num_lines: 24, cell_width: 7, cell_height: 16 },
-            0,
-        )
-        .expect("conpty spawn");
-        let event_loop =
-            EventLoop::new(term.clone(), Chan(tx), pty, false, false).expect("event loop");
-        let notifier = event_loop.channel();
-        event_loop.spawn();
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            match rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(Event::Wakeup) => {
-                    let locked = term.lock();
-                    if locked.grid()[Line(0)][Column(0)].c != '\0' || locked.grid()[Line(1)][Column(0)].c != '\0' {
-                        let content = locked.renderable_content();
-                        println!("mode show_cursor: {}", locked.mode().contains(TermMode::SHOW_CURSOR));
-                        println!("cursor point: line={} col={}", content.cursor.point.line.0, content.cursor.point.column.0);
-                        println!("cursor shape: {:?}", content.cursor.shape);
-                        println!("display_offset: {}", locked.grid().display_offset());
-                        drop(locked);
-                        let rows = { let l = term.lock(); snapshot(&l, 4, None, true) };
-                        for (i, r) in rows.iter().enumerate() {
-                            let bgs: Vec<bool> = r.styles.iter().map(|s| s.bg.is_some()).collect();
-                            println!("row{i}: {:?} bg_any={}", r.text, bgs.iter().any(|&b| b));
-                            if let Some(pos) = bgs.iter().position(|&b| b) {
-                                println!("   first bg at col {pos}");
-                            }
-                        }
-                        break;
-                    }
-                }
-                Ok(_) => {}
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(_) => break,
-            }
-        }
-        let _ = notifier.send(Msg::Shutdown);
     }
 }

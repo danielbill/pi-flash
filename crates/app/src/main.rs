@@ -368,6 +368,10 @@ struct Chat {
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
     term_seq: usize,
+    /// caret-blink heartbeat phase (1Hz, term_cursor task) + paint-time
+    /// "a focused terminal is on screen" flag that gates the heartbeat
+    term_cursor_on: bool,
+    term_cursor_focused: bool,
     panel_tabs: Vec<PanelTab>,
     active_panel_tab: Option<usize>,
     // 023 fileView：菜单与面包屑兄弟菜单的弹层状态
@@ -669,6 +673,8 @@ impl Chat {
             terminals: Vec::new(),
             active_terminal: None,
             term_seq: 0,
+            term_cursor_on: true,
+            term_cursor_focused: false,
             term_events: None,
             mc_patterns: None,
             mc_state: EnabledState::default(),
@@ -821,6 +827,28 @@ impl Chat {
                     .update(cx, |chat, cx| chat.on_term_event(tab_id, event, cx))
                     .is_err()
                 {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // terminal caret blink (~1Hz): 500ms heartbeat flips the phase and
+        // repaints only while a focused terminal is on screen (paint writes
+        // term_cursor_focused); phase lives on Chat so repaints stay
+        // tick-aligned instead of drifting against the wall clock
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let focused = this.update(cx, |chat, cx| {
+                    if chat.term_cursor_focused {
+                        chat.term_cursor_on = !chat.term_cursor_on;
+                        cx.notify();
+                    }
+                    chat.term_cursor_focused
+                });
+                if focused.is_err() {
                     break;
                 }
             }
@@ -1376,6 +1404,29 @@ impl Render for Chat {
         {
             if let Some(t0) = T0.get() {
                 eprintln!("[perf] first frame: {:?}", t0.elapsed());
+            }
+        }
+        // [perf] 临时仪器：Chat 每秒实际渲染次数（idle 应≈0，编辑/拖选时≈事件数；
+        // 常驻 >30/s = 存在自持重绘循环）。验收后移除。
+        static RENDER_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static RENDER_T: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+        if PERF.load(std::sync::atomic::Ordering::Relaxed) {
+            let n = RENDER_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            let mut slot = RENDER_T.lock().unwrap();
+            let report = match *slot {
+                Some(t0) if t0.elapsed().as_secs_f32() >= 1.0 => {
+                    Some(n as f32 / t0.elapsed().as_secs_f32())
+                }
+                Some(_) => None,
+                None => {
+                    *slot = Some(std::time::Instant::now());
+                    None
+                }
+            };
+            if let Some(rate) = report {
+                eprintln!("[perf] chat renders/s: {rate:.0}");
+                RENDER_N.store(0, std::sync::atomic::Ordering::Relaxed);
+                *slot = Some(std::time::Instant::now());
             }
         }
         // 010-启动：揭幕前整幅启动页（黑底、居中 logo、非最大化）；揭幕帧

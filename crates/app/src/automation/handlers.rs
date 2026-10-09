@@ -148,6 +148,20 @@ pub(super) fn dispatch(
             cx.notify();
             Ok(json!({"ok": true, "target": target}))
         }
+        method::TERMINAL_OPEN => {
+            // 打开（或聚焦）工作区终端；键入回显断言读 term 快照面
+            chat.open_terminal(None, window, cx);
+            Ok(json!({
+                "ok": true,
+                "terminals": chat.terminals.len(),
+                "active_terminal": chat.active_terminal,
+                "content_view": match chat.content_view {
+                    ContentView::Chat => "chat",
+                    ContentView::Term => "term",
+                    ContentView::File => "file",
+                },
+            }))
+        }
 
         // ---- 会话 ----
         method::SESSION_NEW => {

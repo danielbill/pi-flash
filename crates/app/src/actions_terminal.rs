@@ -60,34 +60,6 @@ impl Chat {
         }
     }
 
-    /// Close a tab: shutdown the PTY, drop state (DELETE /api/terminal/:id).
-    pub(crate) fn restart_terminal(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(tx) = self.term_events.clone() else { return };
-        let Some(old) = self.terminals.get(ix) else { return };
-        if old.status == TermStatus::Ready {
-            let _ = old.pty.send(alacritty_terminal::event_loop::Msg::Shutdown);
-        }
-        let (cols, rows, cell_w, line_h, font_size) =
-            (old.cols, old.rows, old.cell_w, old.line_h, old.font_size);
-        let cwd = old.cwd.clone();
-        self.term_seq += 1;
-        let id = self.term_seq;
-        let focus = cx.focus_handle();
-        let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(id, cwd, cell_w, line_h, font_size, focus, proxy) {
-            Ok(mut tab) => {
-                tab.cols = cols;
-                tab.rows = rows;
-                self.terminals[ix] = tab;
-                self.active_terminal = Some(ix);
-            }
-            Err(e) => {
-                self.terminals[ix].status = TermStatus::Failed(e);
-            }
-        }
-        cx.notify();
-    }
-
     /// Active terminal index helper.
     pub(crate) fn active_term(&mut self) -> Option<&mut TerminalTab> {
         self.active_terminal

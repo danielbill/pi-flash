@@ -72,88 +72,8 @@ pub(crate) fn term_view(
                     return div().into_any_element();
                 };
                 let tab = &chat.terminals[tix];
-                let (dot, _status) = match &tab.status {
-                    crate::terminal::TermStatus::Ready => (0x4ade80, ""),
-                    crate::terminal::TermStatus::Exited(_) | crate::terminal::TermStatus::Failed(_) => {
-                        (0xf87171, "")
-                    }
-                };
-                let cwd_text: SharedString = tab.cwd.to_string_lossy().to_string().into();
-                let weak_restart = weak.clone();
-                let mut col = div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .h(px(32.))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .pl(px(13.))
-                            .pr(px(10.))
-                            .bg(rgb(0x141a17))
-                            .child(
-                                div()
-                                    .size(px(7.))
-                                    .rounded_full()
-                                    .flex_shrink_0()
-                                    .bg(rgb(dot)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(crate::appearance::ui_size(11.))
-                                    .font_family(crate::terminal::FONT_FAMILY)
-                                    .text_color(rgb(0x6e8a7d))
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .overflow_hidden()
-                                    .child(cwd_text),
-                            )
-                            .child(
-                                div()
-                                    .id("term-restart")
-                                    .h(px(24.))
-                                    .w(px(28.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(5.))
-                                    .text_color(rgb(0x6e8a7d))
-                                    .cursor_pointer()
-                                    .hover(|s| {
-                                        s.bg(rgb(0x242932)).text_color(rgb(0xe5e7eb))
-                                    })
-                                    .on_mouse_down(MouseButton::Left, {
-                                        let rix = tix;
-                                        move |_, _, cx| {
-                                            let _ = weak_restart.update(cx, |c, cx| {
-                                                c.restart_terminal(rix, cx);
-                                            });
-                                        }
-                                    })
-                                    .child(icon("refresh", 12., 0x6e8a7d)),
-                            ),
-                    );
+                let mut col = div().flex_1().min_h_0().flex().flex_col();
                 match &tab.status {
-                    crate::terminal::TermStatus::Failed(e) => {
-                        col = col.child(
-                            div()
-                                .py(px(7.))
-                                .px(px(12.))
-                                .bg(rgb(0x321b1b))
-                                .border_b_1()
-                                .border_color(rgb(0x5f2424))
-                                .text_size(crate::appearance::ui_size(11.))
-                                .font_family(crate::terminal::FONT_FAMILY)
-                                .text_color(rgb(0xfca5a5))
-                                .child(SharedString::from(e.clone())),
-                        );
-                    }
                     crate::terminal::TermStatus::Exited(code) => {
                         let code_text = code
                             .map(|c| c.to_string())
@@ -180,6 +100,7 @@ pub(crate) fn term_view(
                         .bg(rgb(0x141a17))
                         .child(
                             crate::terminal::TerminalElement::new(tab, weak.clone())
+                                .blink_on(chat.term_cursor_on)
                                 .track_focus(&tab.focus)
                                 .flex_1()
                                 .h_full()

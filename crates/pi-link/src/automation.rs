@@ -69,6 +69,9 @@ pub mod method {
     pub const PROJECT_PICKER_OPEN: &str = "project.picker_open";
     pub const INPUT_KEYS: &str = "input.keys";
     pub const INPUT_FOCUS: &str = "input.focus";
+    /// 打开（或聚焦）工作区终端（UI 测试用；状态读 app 面的
+    /// focused/terminals/active_terminal，网格读 term 面）
+    pub const TERMINAL_OPEN: &str = "terminal.open";
     /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
     pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
