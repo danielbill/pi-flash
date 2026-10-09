@@ -607,6 +607,7 @@ impl gpui::Element for TerminalElement {
         let selection = self.selection;
         let line_h = self.line_h;
         let font_size = px(self.font_size);
+        let self_font_size = self.font_size;
         let preedit = self.preedit.clone();
         let blink_on = self.blink_on;
         let shared = self.clone_shared();
@@ -628,14 +629,27 @@ impl gpui::Element for TerminalElement {
                     let content = locked.renderable_content();
                     let row = content.cursor.point.line.0 + offset;
                     let col = content.cursor.point.column.0;
-                    // Hidden = app hid the cursor (DECTCEM); bar stays off
+                    // Hidden = app hid the cursor (DECTCEM); bar stays off.
+                    // chars_before = snapshot-text chars left of the cursor
+                    // (wide spacers are skipped there), resolved against the
+                    // shaped row below: CJK fallback glyphs don't advance
+                    // exactly 2 cells, so col*cell_w drifts off the painted
+                    // text the more wide chars sit before the caret
+                    let chars_before = (0..col)
+                        .filter(|c| {
+                            !locked.grid()[Line(content.cursor.point.line.0)][Column(*c)]
+                                .flags
+                                .contains(Flags::WIDE_CHAR_SPACER)
+                        })
+                        .count();
                     let caret = (row >= 0
                         && (row as usize) < grid_rows
                         && content.cursor.shape != CursorShape::Hidden)
-                    .then(|| (col, row as usize));
+                    .then(|| (row as usize, chars_before));
                     (rows, caret)
                 };
                 let line_h = px(line_h);
+                let mut caret_x: Option<Pixels> = None;
                 for (r, row) in rows.iter().enumerate() {
                     if row.text.is_empty() {
                         continue;
@@ -656,13 +670,24 @@ impl gpui::Element for TerminalElement {
                     // the explicit paint_background pass first
                     let _ = line.paint_background(origin, line_h, window, cx);
                     let _ = line.paint(origin, line_h, window, cx);
+                    if let Some((ri, chars_before)) = &caret {
+                        if *ri == r {
+                            let byte_ix = row
+                                .text
+                                .chars()
+                                .take(*chars_before)
+                                .map(|c| c.len_utf8())
+                                .sum::<usize>();
+                            caret_x = Some(line.x_for_index(byte_ix));
+                        }
+                    }
                 }
 
-                // caret bar: 2px vertical line in the fg color at the cursor
-                // cell's left edge, ~1Hz blink while focused (heartbeat from
-                // the term_cursor task); dim static bar when unfocused
+                // caret bar: 2px vertical line in the fg color at the shaped
+                // pixel x of the cursor, ~1Hz blink while focused (heartbeat
+                // from the term_cursor task); dim static bar when unfocused
                 let _ = shared.weak.update(cx, |chat, _| chat.term_cursor_focused = focused);
-                if let Some((col, row)) = caret {
+                if let (Some((row_ix, _)), Some(x)) = (caret, caret_x) {
                     let (alpha, visible) = if focused {
                         (1.0, blink_on)
                     } else {
@@ -670,8 +695,8 @@ impl gpui::Element for TerminalElement {
                     };
                     if visible {
                         let bar_origin = gpui::point(
-                            bounds.origin.x + px(PAD_L + shared.cell_w * col as f32),
-                            bounds.origin.y + px(PAD_T) + line_h * row as f32 + px(1.),
+                            bounds.origin.x + px(PAD_L) + x,
+                            bounds.origin.y + px(PAD_T) + line_h * row_ix as f32 + px(1.),
                         );
                         window.paint_quad(gpui::fill(
                             gpui::Bounds {
@@ -684,8 +709,10 @@ impl gpui::Element for TerminalElement {
                 }
 
                 // IME composition: underline the preedit string at the caret
-                // cell (xterm draws composition inline; same affordance here)
-                if focused && let (Some(pre), Some((col, row))) = (&preedit, caret) {
+                // pixel x (xterm draws composition inline; same affordance)
+                if focused
+                    && let (Some(pre), Some((row_ix, _)), Some(x)) = (&preedit, caret, caret_x)
+                {
                     let run = gpui::TextRun {
                         len: pre.len(),
                         font: cell_font(&CellStyle {
@@ -708,8 +735,8 @@ impl gpui::Element for TerminalElement {
                         None,
                     );
                     let origin = gpui::point(
-                        bounds.origin.x + px(PAD_L + shared.cell_w * col as f32),
-                        bounds.origin.y + px(PAD_T) + line_h * row as f32,
+                        bounds.origin.x + px(PAD_L) + x,
+                        bounds.origin.y + px(PAD_T) + line_h * row_ix as f32,
                     );
                     window.paint_quad(gpui::fill(
                         gpui::Bounds { origin, size: gpui::size(line.width, line_h) },
@@ -733,6 +760,7 @@ impl gpui::Element for TerminalElement {
                             element_bounds: bounds,
                             cell_w: shared.cell_w,
                             line_h: shared.line_h,
+                            font_size: self_font_size,
                         },
                         cx,
                     );
@@ -1176,6 +1204,7 @@ struct TermInput {
     element_bounds: gpui::Bounds<Pixels>,
     cell_w: f32,
     line_h: f32,
+    font_size: f32,
 }
 
 impl TermInput {
@@ -1189,6 +1218,28 @@ impl TermInput {
         let rows = term.grid().screen_lines();
         (row >= 0 && (row as usize) < rows)
             .then(|| (content.cursor.point.column.0, row as usize))
+    }
+
+    /// Text left of the grid cursor on its row (snapshot rules: wide spacers
+    /// skipped, empty/control cells render as spaces). Shaped, this gives the
+    /// pixel-true caret x — CJK fallback glyphs don't advance exactly
+    /// 2 cells, so col*cell_w drifts off the painted text.
+    fn caret_prefix_text(term: &Term<Proxy>) -> String {
+        let content = term.renderable_content();
+        let grid_row = &term.grid()[Line(content.cursor.point.line.0)];
+        let mut s = String::new();
+        for c in 0..content.cursor.point.column.0 {
+            let cell = &grid_row[Column(c)];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let mut ch = if cell.flags.contains(Flags::HIDDEN) { ' ' } else { cell.c };
+            if ch == '\0' || ch == '\n' || ch == '\r' {
+                ch = ' ';
+            }
+            s.push(ch);
+        }
+        s
     }
 
     fn set_preedit(&self, text: Option<String>, cx: &mut gpui::App) {
@@ -1268,14 +1319,41 @@ impl gpui::InputHandler for TermInput {
     fn bounds_for_range(
         &mut self,
         _range_utf16: std::ops::Range<usize>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut gpui::App,
     ) -> Option<gpui::Bounds<Pixels>> {
-        // IME candidate window placement: the caret cell, in window coords
-        let (col, row) = self.caret_cell()?;
+        // IME candidate window placement at the caret: shape the row text
+        // left of the cursor for the pixel-true x (col*cell_w drifts with
+        // wide chars — see caret_prefix_text)
+        let (_, row) = self.caret_cell()?;
+        let prefix = {
+            let term = self.term.lock();
+            Self::caret_prefix_text(&term)
+        };
+        let run = gpui::TextRun {
+            len: prefix.len(),
+            font: cell_font(&CellStyle {
+                fg: hsl(TERM_FG),
+                bg: None,
+                bold: false,
+                italic: false,
+                underline: false,
+                strike: false,
+            }),
+            color: hsl(TERM_FG),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let line = window.text_system().shape_line(
+            SharedString::from(prefix),
+            px(self.font_size),
+            &[run],
+            None,
+        );
         Some(gpui::Bounds {
             origin: gpui::point(
-                self.element_bounds.origin.x + px(PAD_L) + px(self.cell_w * col as f32),
+                self.element_bounds.origin.x + px(PAD_L) + line.width,
                 self.element_bounds.origin.y + px(PAD_T) + px(self.line_h * row as f32),
             ),
             size: gpui::size(px(self.cell_w), px(self.line_h)),
