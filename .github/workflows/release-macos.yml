@@ -99,7 +99,15 @@ jobs:
           </plist>
           PLIST
           # ad-hoc signature so the bundle launches even without Apple secrets
-          codesign --force --deep --sign - "$APP"
+          # 禁用 codesign --deep：它会把 node_modules 里带点号的目录（.bin、ts3.4…）
+          # 误判成 bundle 报 "bundle format unrecognized"（Apple TN2206 亦不推荐 --deep）。
+          # 改为由内而外：先签 bundle 内所有 Mach-O，再签最外层。
+          while IFS= read -r -d '' f; do
+            case "$(file -b "$f")" in
+              Mach-O*) codesign --force --sign - "$f" || exit 1 ;;
+            esac
+          done < <(find "$APP" -type f \( -perm -u+x -o -name '*.node' -o -name '*.dylib' \) -print0)
+          codesign --force --sign - "$APP"
           zip -qry pi-flash-macos-arm64.zip "$APP"
 
       # real signing/notarization only when the repo has the secrets
@@ -119,7 +127,13 @@ jobs:
         run: |
           IDENTITY=$(security find-identity -v -p codesigning build.keychain | awk '/Developer ID Application/ {print $2; exit}')
           test -n "$IDENTITY" || { echo "no Developer ID identity in keychain"; exit 1; }
-          codesign --force --deep --sign "$IDENTITY" --options runtime --timestamp pi-flash.app
+          # 同上，避免 --deep 误判 node_modules 目录；由内而外逐个签 Mach-O
+          while IFS= read -r -d '' f; do
+            case "$(file -b "$f")" in
+              Mach-O*) codesign --force --options runtime --timestamp --sign "$IDENTITY" "$f" || exit 1 ;;
+            esac
+          done < <(find pi-flash.app -type f \( -perm -u+x -o -name '*.node' -o -name '*.dylib' \) -print0)
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" pi-flash.app
 
       - name: Notarize + staple
         if: ${{ env.APPLE_CERTIFICATE_P12 != '' && env.APPLE_ID != '' }}
