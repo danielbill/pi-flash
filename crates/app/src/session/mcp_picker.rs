@@ -239,7 +239,7 @@ fn mcp_row(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(ui(11.))
                 .text_color(rgb(t.text))
                 .child(SharedString::from(name.to_string())),

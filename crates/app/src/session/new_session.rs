@@ -146,7 +146,7 @@ fn logo_backdrop(t: &'static crate::theme::Theme, size: f32) -> AnyElement {
 fn heading(t: &'static crate::theme::Theme) -> AnyElement {
     div()
         .text_size(crate::appearance::ui_size(40.))
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .italic()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(rgb(t.text))

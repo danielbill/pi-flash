@@ -13,6 +13,7 @@
 //!   Prism vscDarkPlus）
 
 pub mod render;
+pub mod wysiwyg;
 
 use gpui::{
     AnyElement, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString, StyledText,
@@ -393,8 +394,8 @@ fn collect_inline(
                 // 开/闭标签跨事件维持样式栈（配对标签样式不丢）
                 flush(&mut text, cur, &cur_url, &mut runs);
                 if html {
-                    use crate::markdown::render::html::InlineHtmlEffect as E;
-                    match crate::markdown::render::html::fragment_effect(h) {
+                    use crate::editor::markdown::render::html::InlineHtmlEffect as E;
+                    match crate::editor::markdown::render::html::fragment_effect(h) {
                         E::StylePush(st, url) => styles.push((st, url)),
                         E::StylePop => {
                             styles.pop();
@@ -455,7 +456,7 @@ fn html_block_dispatch(raw: &str, html: bool) -> Vec<MdBlock> {
     if html && doc_mode() {
         html_block_doc(raw)
     } else if html {
-        crate::markdown::render::html::blocks(raw)
+        crate::editor::markdown::render::html::blocks(raw)
     } else {
         vec![MdBlock::Paragraph { runs: literal_runs(raw) }]
     }
@@ -508,7 +509,7 @@ fn parse_blocks(events: &[Event], html: bool) -> Vec<MdBlock> {
             }
             Event::InlineHtml(h) => {
                 if html {
-                    let runs = crate::markdown::render::html::inline_runs(h);
+                    let runs = crate::editor::markdown::render::html::inline_runs(h);
                     if !runs.is_empty() {
                         out.push(MdBlock::Paragraph { runs });
                     }
@@ -1692,12 +1693,12 @@ fn paragraph_element(runs: &[Run], t: &Theme, color: u32) -> AnyElement {
             }
             Style::Math => {
                 row = flush(row, &mut text_run, t, color);
-                row = row.child(crate::markdown::render::math::inline_element(&r.text, t));
+                row = row.child(crate::editor::markdown::render::math::inline_element(&r.text, t));
             }
             Style::DisplayMath => {
                 row = flush(row, &mut text_run, t, color);
                 // 块级公式：flex_wrap 下 w_full 独占一行
-                row = row.child(div().w_full().child(crate::markdown::render::math::block_element(&r.text, t)));
+                row = row.child(div().w_full().child(crate::editor::markdown::render::math::block_element(&r.text, t)));
             }
             _ => text_run.push(r.clone()),
         }
@@ -1845,11 +1846,11 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
         }
         MdBlock::Table { head, rows } => render_table(head, rows, t).into_any_element(),
         MdBlock::Image { url, alt, width } => render_image(url, *width, alt, t),
-        MdBlock::Math { latex } => crate::markdown::render::math::block_element(latex, t),
+        MdBlock::Math { latex } => crate::editor::markdown::render::math::block_element(latex, t),
         MdBlock::Mermaid { source } => {
             // pi-web MermaidBlock parity：流式期间只显源码；失败回退源码块
             if !streaming {
-                if let Some(el) = crate::markdown::render::mermaid::diagram_element(source, t.dark) {
+                if let Some(el) = crate::editor::markdown::render::mermaid::diagram_element(source, t.dark) {
                     return el;
                 }
             }

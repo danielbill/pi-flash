@@ -431,7 +431,7 @@ pub(crate) fn spawn_boot_tasks(
     crate::remote_control::spawn_wx_pump(cx);
     // syntect 语法引擎冷加载 ~百 ms 挪出首个 md 渲染帧（第一次渲染卡顿）：
     // 后台线程预热 OnceLock，命中后首渲零成本
-    std::thread::spawn(|| crate::markdown::warm_up());
+    std::thread::spawn(|| crate::editor::markdown::warm_up());
 }
 
 /// fs 监听泵（Zed worktree 扫描器的轻量对应物）：watcher 事件经后台

@@ -167,7 +167,7 @@ pub(crate) fn slash_menu_view(
         let display_name = name_part.strip_prefix("skill:").unwrap_or(&name_part).to_string();
         let dir_el = dir_part.map(|dir| {
             div()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(13.))
                 .text_color(rgb(t.text_dim))
                 .whitespace_nowrap()
@@ -219,7 +219,7 @@ pub(crate) fn slash_menu_view(
             .children(dir_el)
             .child(
                 div()
-                    .font_family(crate::markdown::MONO_FAMILY)
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
                     .text_size(crate::appearance::ui_size(13.))
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
@@ -228,7 +228,7 @@ pub(crate) fn slash_menu_view(
             .when(is_at && c.is_dir, |d| {
                 d.child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(13.))
                         .text_color(rgb(t.text_dim))
                         .child("/"),
@@ -297,7 +297,7 @@ pub(crate) fn slash_menu_view(
                 }))
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .child(tr("Tab / Enter 插入")),
                 ),
         )

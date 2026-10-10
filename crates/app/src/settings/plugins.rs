@@ -304,7 +304,7 @@ fn pl_sidebar(
             )
             .child(
                 div()
-                    .font_family(crate::markdown::MONO_FAMILY)
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
                     .text_size(crate::appearance::ui_size(10.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(format!("{enabled}/{total}"))),
@@ -445,7 +445,7 @@ fn pl_detail(
                 // 范围标在后：title 在前（与技能页「路径 + 开关」同为名前标后）
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(12.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
@@ -491,7 +491,7 @@ fn pl_detail(
     .child(field(
         &tr("路径"),
         div()
-            .font_family(crate::markdown::MONO_FAMILY)
+            .font_family(crate::editor::markdown::MONO_FAMILY)
             .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text_dim))
             .child(SharedString::from(breakable_path(&pi_link::skills::package_install_dir(&src).to_string_lossy()))),

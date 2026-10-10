@@ -203,7 +203,7 @@ pub(crate) fn view(chat: &Chat, weak: &gpui::WeakEntity<Chat>, window: &gpui::Wi
                 )
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(ui(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(crate::services::format::fmt_thousand(
@@ -314,7 +314,7 @@ fn plugin_row(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(ui(11.))
                 .text_color(rgb(t.text))
                 .child(SharedString::from(
@@ -328,7 +328,7 @@ fn plugin_row(
         row = row.child(
             div()
                 .flex_shrink_0()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(ui(10.))
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(crate::services::format::fmt_thousand(n))),

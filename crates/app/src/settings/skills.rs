@@ -155,7 +155,7 @@ pub(crate) fn mc_skills_view(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .font_family(crate::markdown::MONO_FAMILY)
+                                .font_family(crate::editor::markdown::MONO_FAMILY)
                                 .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_dim))
                                 .overflow_hidden()
@@ -180,7 +180,7 @@ pub(crate) fn mc_skills_view(
                     // 描述 = pi 注入提示词的常驻块（休眠为「—」）；
                     // 正文 = SKILL.md 全文，调用时 read 的一次性开销
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(format!(

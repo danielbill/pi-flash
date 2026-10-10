@@ -357,7 +357,7 @@ fn mcp_form(
                 .children(EXAMPLES.iter().map(|line| {
                     div()
                         .w_full()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .overflow_hidden()

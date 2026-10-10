@@ -157,7 +157,7 @@ fn ctx_usage_panel(
                 div()
                     .ml_auto()
                     .text_size(crate::appearance::ui_size(12.))
-                    .font_family(crate::markdown::MONO_FAMILY)
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
                     .text_color(rgb(t.text))
                     .child(SharedString::from(value)),
             )

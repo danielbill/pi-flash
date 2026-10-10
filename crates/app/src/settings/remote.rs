@@ -15,7 +15,7 @@ pub(crate) fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyE
     let mut col = div()
         .flex()
         .flex_col()
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::ui_size(size))
         .text_color(if dim { rgb(t.text_dim) } else { rgb(t.text) });
     for l in lines {

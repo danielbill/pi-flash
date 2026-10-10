@@ -137,7 +137,7 @@ fn system_prompt_panel(
                         .px(px(8.))
                         .py(px(5.))
                         .mb(if i + 1 < n { px(10.) } else { px(0.) })
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(12.))
                         .line_height(relative(1.6))
                         .text_color(rgb(t.text_muted))
@@ -293,7 +293,7 @@ fn decl_block(
                         .flex()
                         .flex_col()
                         .text_size(crate::appearance::ui_size(10.))
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .line_height(relative(1.5))
                         .child(
                             div()
@@ -617,7 +617,7 @@ fn tool_row(
         })
         .rounded(px(8.))
         .text_size(crate::appearance::ui_size(12.))
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_color(rgb(if active { t.text } else { t.text_muted }))
         .when(active, |d| {
             d.bg(rgb(t.bg_selected)).font_weight(gpui::FontWeight::SEMIBOLD)
@@ -736,7 +736,7 @@ fn param_row(f: &ParamField, t: &Theme) -> gpui::AnyElement {
         .child(
             div()
                 .mb(px(3.))
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_color(rgb(t.text))
                 .child(SharedString::from(f.type_text.clone())),
         );
@@ -767,7 +767,7 @@ fn param_row(f: &ParamField, t: &Theme) -> gpui::AnyElement {
                 .text_color(rgb(t.text))
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .child(SharedString::from(f.name.clone())),
                 )
                 .child(
@@ -788,7 +788,7 @@ fn meta_line(label: &str, value: &str, t: &Theme) -> gpui::Div {
         .child(SharedString::from(format!("{label}: ")))
         .child(
             div()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(value.to_string())),
         )

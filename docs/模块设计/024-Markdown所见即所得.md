@@ -3,8 +3,9 @@
 给 md 文件编辑做 Obsidian Live Preview 效果：**一个可编辑视图里，正文即渲染、
 语法被隐藏、光标进入哪段哪段语法显现**。不再是"预览态 ↔ 源码态"两块切换。
 
-模块代码：`crates/app/src/editor/wysiwyg/`（新 `editor` 模块域——编辑器能力
-归编辑器，WYSIWYG 不挂 markdown 渲染器下）+ `vendor/gpui-component/src/input/`
+模块代码：`crates/app/src/editor/markdown/wysiwyg/`（层级定案：editor →
+markdown → wysiwyg——WYSIWYG 挂渲染器之下，渲染器整体归 editor 域）+
+`vendor/gpui-component/src/input/`
 （补丁点，升级需重放，同 IME/剪贴板/screenshot 补丁惯例）。
 
 调研依据：Obsidian Live Preview 实现原理调研（本次会话，2026）——核心结论：
@@ -35,7 +36,7 @@ InputState 补丁（样式 run + 折叠 range + 光标映射）。
 |---|---|---|
 | 缓冲区真值（dirty 时预览渲染 buffer 非磁盘） | `editor/view.rs file_editor_body` | **架构铁律已成立**：文档 = rope 源码，装饰只改视图 |
 | 双态切换（eye：`doc_blocks` 预览 ↔ CodeEditor 源码） | `editor/view.rs file_editor_body` | 改造对象：`!md_source` 分支由"只读预览"改为 Live Preview |
-| Markdown 渲染器（样式规格：字号/字重/混色/行高） | `markdown/mod.rs`（含 `render/` 子模块） | 样式规格唯一来源，`style.rs` 引用而非复制 |
+| Markdown 渲染器（样式规格：字号/字重/混色/行高） | `editor/markdown/mod.rs`（含 `render/` 子模块） | 样式规格唯一来源，`style.rs` 引用而非复制 |
 | pulldown-cmark 0.13 | `crates/app/Cargo.toml` | 增量解析 → 行模型（等价 lezer 角色） |
 | CodeEditor 底座：rope/光标/undo/IME/搜索 | `vendor/gpui-component/src/input/` | **全部保留**，本模块只加装饰层，不碰编辑内核语义 |
 
@@ -76,18 +77,21 @@ reveal 因此是免费的：selection 变了 paint 自然拿到新 cursor，无�
 crates/app/src/editor/             # 编辑器模块域（024 重构：fileView 视图已
 ├── mod.rs                         #  自 content.rs 拆入 view.rs；file_cache/打开
 ├── view.rs                        #  编排状态仍在 Chat，后置收拢）
-└── wysiwyg/                       # Markdown 所见即所得（本设计主体）
-    ├── mod.rs     装配：MdLiveProvider、md 模式开关（view.rs 调）
-    ├── parse.rs   pulldown → Vec<LineModel>（容错：未闭合标记不折叠，保守露源码）
-    ├── style.rs   MdStyle → HighlightStyle（规格引用 markdown/ 渲染器，不复制常量）
-    ├── fold.rs    FoldSet：doc↔vis 映射、atomic 跳过、reveal 决策（纯函数，主力测试区）
-    └── widget.rs  P3 预留：块级折叠/占位（图/表/mermaid/公式）
+└── markdown/                      # Markdown 渲染器（聊天正文 + md 预览）
+    ├── mod.rs     渲染器主体（原 markdown.rs）+ pub mod wysiwyg
+    ├── render/    html / math / mermaid 富渲染组件
+    └── wysiwyg/                   # Markdown 所见即所得（本设计主体）
+        ├── mod.rs     装配：MdLiveProvider、md 模式开关（view.rs 调）
+        ├── parse.rs   pulldown → Vec<LineModel>（容错：未闭合标记不折叠，保守露源码）
+        ├── style.rs   MdStyle → HighlightStyle（规格引用同域渲染器，不复制常量）
+        ├── fold.rs    FoldSet：doc↔vis 映射、atomic 跳过、reveal 决策（纯函数，主力测试区）
+        └── widget.rs  P3 预留：块级折叠/占位（图/表/mermaid/公式）
 ```
 
 vendor 侧（薄补丁，每处 ~20-50 行）：
 
 - `state.rs`：新增 `decorations: Option<Rc<dyn DecorationProvider>>` 字段
-  （trait 定义放 editor::wysiwyg，vendor 只持有，避免反向依赖）
+  （trait 定义放 editor::markdown::wysiwyg，vendor 只持有，避免反向依赖）
 - `element.rs`：`layout_lines`/`highlight_lines`/`layout_cursor` 三分支接入
 - `movement.rs`：左右/词移动经 `FoldSet::next_atomic`
 - `mode.rs`：`InputMode` 增 md 变体（或复用 CodeEditor 关 highlighter）
@@ -193,7 +197,7 @@ md 模式下关 ts highlighter（源码态 eye 切换时恢复），行内样式
 
 ## 9. 测试
 
-- **单元（editor/wysiwyg/fold.rs 为主，纯函数）**：`doc_to_vis∘vis_to_doc` 往返、
+- **单元（editor/markdown/wysiwyg/fold.rs 为主，纯函数）**：`doc_to_vis∘vis_to_doc` 往返、
   单调性 property test；parse fixtures（嵌套/未闭合/转义/中英混排/长行）
 - **UI（pif-ui 自动化链路）**：三态快照（live preview / 光标行 / 源码）+
   合成按键后光标位置断言；复制往返断言

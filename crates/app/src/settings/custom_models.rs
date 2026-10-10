@@ -404,7 +404,7 @@ pub(crate) fn mj_model_editor(
                 .child(section_title(&tr("模型")))
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .child(SharedString::from(name.to_string())),
@@ -515,7 +515,7 @@ pub(crate) fn api_options_row(
                 .border_1()
                 .border_color(rgb(if active { t.accent } else { t.border }))
                 .bg(rgb(if active { t.bg_selected } else { t.bg_panel }))
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(if active { t.text } else { t.text_muted }))
                 .cursor_pointer()

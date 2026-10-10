@@ -34,7 +34,6 @@ mod ext_ui;
 mod ext_ui_actions;
 mod function_panel;
 mod i18n;
-mod markdown;
 mod models_config;
 mod remote_control;
 mod startup;

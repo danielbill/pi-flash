@@ -430,7 +430,7 @@ fn dir_row(key: &str, path: &str, t: &'static crate::theme::Theme) -> gpui::AnyE
 fn mono_value(text: &str) -> gpui::AnyElement {
     let t = T();
     div()
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::ui_size(12.))
         .text_color(rgb(t.text_dim))
         .child(SharedString::from(text.to_string()))

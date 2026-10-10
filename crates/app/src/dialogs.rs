@@ -694,7 +694,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                                     div()
                                                         // §2 mono 辅助标签档（原 text_xs 裸字号）
                                                         .text_size(crate::appearance::ui_size(11.))
-                                                        .font_family(crate::markdown::MONO_FAMILY)
+                                                        .font_family(crate::editor::markdown::MONO_FAMILY)
                                                         .text_color(rgb(t.text_muted))
                                                         .child(path_text),
                                                 ),
@@ -726,7 +726,7 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                         .p_2()
                                         .rounded(px(6.))
                                         .bg(rgb(t.bg))
-                                        .font_family(crate::markdown::MONO_FAMILY)
+                                        .font_family(crate::editor::markdown::MONO_FAMILY)
                                         .text_size(crate::appearance::ui_size(11.))
                                         .text_color(rgb(t.text))
                                         .child(SharedString::from(body)),

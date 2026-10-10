@@ -4,7 +4,7 @@
 //! 简化对齐 zed」——见 023 设计文档。
 //!
 //! 编排边界：文件打开/缓冲区/file_cache 状态仍在 Chat（main.rs），本文件
-//! 只管视图渲染与交互；md 所见即所得见 `super::wysiwyg`。
+//! 只管视图渲染与交互；md 所见即所得见 `super::markdown::wysiwyg`。
 
 use gpui::{Context, Focusable, MouseButton, SharedString, div, img, prelude::*, px, rgb};
 
@@ -563,7 +563,7 @@ fn file_editor_body(
         // 卡）。滚动条 = v63-6 配方：ListStateHandle 适配 gpui-component
         // Scrollbar，仅实际溢出时渲染，且必须是 list 容器的**兄弟**（同
         // 旧滚动层——作为子元素会被连带位移，滚动了滑块跟内容漂出视口）。
-        let blocks = crate::markdown::doc_blocks(&content);
+        let blocks = crate::editor::markdown::doc_blocks(&content);
         if chat.file_view_list_path.as_deref() != Some(path) {
             chat.file_view_list.reset(blocks.len());
             chat.file_view_list_path = Some(path.to_path_buf());
@@ -592,8 +592,8 @@ fn file_editor_body(
             .child(
                 gpui::list(chat.file_view_list.clone(), move |ix, _window, _cx| {
                     // 预览内路径点击基准 = 预览文件所在目录（pi-web baseDir 同型）
-                    crate::markdown::set_link_target(weak_preview.clone(), base.clone());
-                    crate::markdown::render_doc_item(&blocks_for_list, ix, base.as_deref())
+                    crate::editor::markdown::set_link_target(weak_preview.clone(), base.clone());
+                    crate::editor::markdown::render_doc_item(&blocks_for_list, ix, base.as_deref())
                 })
                 // list 元素自身要 flex_1 从 flex 列父容器拿高度——Auto 尺寸
                 // 下无内容贡献、无 grow 会被 taffy 布局成 0 高（条目建了
@@ -672,7 +672,7 @@ fn file_editor_body(
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(px(crate::appearance::file_font().size))
         .child(
             gpui_component::input::TextInput::new(&ed)

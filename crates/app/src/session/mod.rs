@@ -718,7 +718,7 @@ fn nav_card(
                     div()
                         .w(px(18.))
                         .text_right()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(10.))
                         .line_height(relative(1.7))
                         .text_color(rgb(t.text_dim))

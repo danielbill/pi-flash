@@ -11,7 +11,7 @@ use super::actions_bar::{self, user_action_bar};
 use super::fork::ForkAnchor;
 use crate::Chat;
 use crate::i18n::{tf, tr};
-use crate::markdown;
+use crate::editor::markdown;
 use crate::theme;
 use crate::ui::icon;
 
@@ -303,7 +303,7 @@ pub(crate) fn render_block(
                 .border_1()
                 .border_color(rgb(t.border))
                 .bg(rgb(t.bg))
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 // 思考块字号 = 会话字号 -2（字体大小设置.md §2；族保持等宽）
                 .text_size(crate::appearance::sess_size(-2.))
                 .line_height(relative(1.5))
@@ -541,7 +541,7 @@ fn render_tool_card(
         .child(
             div()
                 .flex_shrink_0()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(name_c))
@@ -554,7 +554,7 @@ fn render_tool_card(
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(preview)),
@@ -608,7 +608,7 @@ fn render_tool_card(
                 .bg(rgba(t.bg_subtle))
                 .px(px(10.))
                 .py(px(8.))
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-2.))
                 .line_height(relative(1.5))
                 .text_color(rgb(t.text_muted))
@@ -663,7 +663,7 @@ fn alert_box(text: String, color: u32, border_rgb: u32, _t: &theme::Theme) -> gp
         .rounded(px(6.))
         .bg(gpui::rgba(rgba_a(border_rgb, 0.07)))
         .text_color(rgb(color))
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::ui_size(12.))
         .line_height(relative(1.5))
         .child(SharedString::from(text))
@@ -795,7 +795,7 @@ pub(crate) fn render_custom_msg(
                     .text_color(rgb(t.text_muted))
                     .child(
                         div()
-                            .font_family(crate::markdown::MONO_FAMILY)
+                            .font_family(crate::editor::markdown::MONO_FAMILY)
                             .text_size(crate::appearance::ui_size(11.))
                             .child(SharedString::from(if custom_type.is_empty() {
                                 "extension".to_string()
@@ -835,7 +835,7 @@ pub(crate) fn render_custom_msg(
                         .text_color(rgb(t.text_muted))
                         .child(
                             div()
-                                .font_family(crate::markdown::MONO_FAMILY)
+                                .font_family(crate::editor::markdown::MONO_FAMILY)
                                 .text_size(crate::appearance::ui_size(11.))
                                 .child(SharedString::from(if custom_type.is_empty() {
                                     "extension".to_string()
@@ -884,7 +884,7 @@ fn render_compaction_card(
                 .text_color(rgb(t.text_muted))
                 .child(
                     div()
-                        .font_family(crate::markdown::MONO_FAMILY)
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(11.))
                         .child(SharedString::from("compaction")),
                 )
@@ -1016,7 +1016,7 @@ fn render_compaction_card(
                     .gap(px(3.)) // li + li { margin-top: 3px }
                     .children(files.iter().map(|f| {
                         div()
-                            .font_family(crate::markdown::MONO_FAMILY)
+                            .font_family(crate::editor::markdown::MONO_FAMILY)
                             .text_size(crate::appearance::ui_size(11.))
                             .line_height(relative(1.45))
                             .text_color(rgb(t.text_muted))
@@ -1188,7 +1188,7 @@ fn paired_result(
         })
         .px(px(10.))
         .py(px(8.))
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.5))
         .when(empty, |d| d.italic().text_color(rgb(t.text_dim)).opacity(0.6))
@@ -1279,7 +1279,7 @@ pub(crate) fn decode_image_cached(
     data: &str,
     format: gpui::ImageFormat,
 ) -> Result<std::sync::Arc<gpui::Image>, ()> {
-    let key = (crate::markdown::hash_str(data), data.len(), format as u8);
+    let key = (crate::editor::markdown::hash_str(data), data.len(), format as u8);
     IMAGE_DECODE_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
         if let Some(pos) = cache.iter().rposition(|(k, _)| *k == key) {
@@ -1310,7 +1310,7 @@ fn split_files_view(files: &[crate::session::diff::DiffFile], t: &theme::Theme) 
         .max_h(px(560.))
         .overflow_y_scroll()
         .min_w_0()
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.55));
     for (fix, file) in files.iter().enumerate() {
@@ -1449,7 +1449,7 @@ fn patch_text_view(text: &str, t: &theme::Theme) -> gpui::AnyElement {
         .max_h(px(520.))
         .overflow_y_scroll()
         .min_w_0()
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::sess_size(-2.))
         .line_height(relative(1.55))
         .children(text.lines().enumerate().map(|(i, line)| {
@@ -1676,7 +1676,7 @@ pub(crate) fn render_msg(
                             .items_center()
                             .gap(px(6.))
                             .flex_shrink_0()
-                            .font_family(crate::markdown::MONO_FAMILY)
+                            .font_family(crate::editor::markdown::MONO_FAMILY)
                             .text_size(crate::appearance::ui_size(13.))
                             .text_color(rgb(t.accent))
                             .cursor_pointer()
@@ -2268,7 +2268,7 @@ pub(crate) fn render_assistant_turn(
                     .bg(rgba(t.bg_subtle))
                     .border_1()
                     .border_color(rgb(t.border))
-                    .font_family(crate::markdown::MONO_FAMILY)
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
                     .text_size(crate::appearance::sess_size(-2.))
                     .text_color(rgb(t.text))
                     .cursor_pointer()

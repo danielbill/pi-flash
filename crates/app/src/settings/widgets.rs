@@ -146,7 +146,7 @@ pub(crate) fn group_switch(
         .gap(px(6.))
         .child(
             div()
-                .font_family(crate::markdown::MONO_FAMILY)
+                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(10.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(count_text)),
@@ -244,7 +244,7 @@ pub(crate) fn error_note(text: &str) -> AnyElement {
 pub(crate) fn mono_text(text: String, dim: bool) -> AnyElement {
     let t = T();
     div()
-        .font_family(crate::markdown::MONO_FAMILY)
+        .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::ui_size(11.))
         .text_color(if dim { rgb(t.text_dim) } else { rgb(t.text) })
         .overflow_hidden()

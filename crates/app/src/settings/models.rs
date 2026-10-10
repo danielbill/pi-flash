@@ -628,7 +628,7 @@ fn mc_models_sidebar(
                     )
                     .children(d.show_count.then(|| {
                         div()
-                            .font_family(crate::markdown::MONO_FAMILY)
+                            .font_family(crate::editor::markdown::MONO_FAMILY)
                             .text_size(crate::appearance::ui_size(10.))
                             .text_color(rgb(t.text_dim))
                             .child(SharedString::from(format!("{}/{}", d.enabled_n, d.total)))
@@ -974,7 +974,7 @@ fn mc_enabled_section(
             .child(section_title(&tr("可用模型")))
             .child(
                 div()
-                    .font_family(crate::markdown::MONO_FAMILY)
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
                     .text_size(crate::appearance::ui_size(10.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(crate::i18n::tf(
@@ -1071,7 +1071,7 @@ fn mc_enabled_section(
                         )
                         .child(
                             div()
-                                .font_family(crate::markdown::MONO_FAMILY)
+                                .font_family(crate::editor::markdown::MONO_FAMILY)
                                 .text_size(crate::appearance::ui_size(10.))
                                 .line_height(gpui::relative(1.25))
                                 .text_color(rgb(t.text_dim))

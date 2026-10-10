@@ -16,7 +16,7 @@ use ego_tree::NodeRef;
 use scraper::Html;
 use scraper::Node;
 
-use crate::markdown::{MdBlock, Run, Style};
+use crate::editor::markdown::{MdBlock, Run, Style};
 
 /// 行内片段 → Run 列表（markdown collect_inline 的 InlineHtml 分支用）。
 pub(crate) fn inline_runs(html: &str) -> Vec<Run> {
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn fragment_effects_for_paired_tags() {
         // pulldown 把 <b>x</b> 拆成三个事件：开标签/文本/闭标签
-        use crate::markdown::Style;
+        use crate::editor::markdown::Style;
         match fragment_effect("<b>") {
             InlineHtmlEffect::StylePush(st, href) => {
                 assert_eq!(st, Style::Bold);
