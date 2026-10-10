@@ -12,6 +12,7 @@
 //! - 语法高亮：浅色 InspiredGitHub / 深色 VS Dark+（代码构建，pi-web 用
 //!   Prism vscDarkPlus）
 
+pub mod attachments;
 pub mod render;
 pub mod wysiwyg;
 

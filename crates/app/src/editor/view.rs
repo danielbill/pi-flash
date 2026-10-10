@@ -83,7 +83,16 @@ fn ensure_file_editor(
             .code_editor(ts_language(&ext))
             .soft_wrap(true)
     });
-    ed.update(cx, |st, scx| st.set_value(content, window, scx));
+    ed.update(cx, |st, scx| {
+        st.set_value(content, window, scx);
+        // 025 插图（P0）：仅 md 文件挂剪贴板图片粘贴钩子——非 md 自动
+        // 不做（文本粘贴照旧）。落盘/引用串见 markdown::attachments。
+        if ext == "md" {
+            st.on_image_paste = Some(
+                crate::editor::markdown::attachments::image_paste_hook(path.to_path_buf()),
+            );
+        }
+    });
     cx.subscribe(&ed, |this, ed, ev: &gpui_component::input::InputEvent, cx| {
         if matches!(ev, gpui_component::input::InputEvent::Change) {
             let src = ed.entity_id();

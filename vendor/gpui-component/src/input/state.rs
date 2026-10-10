@@ -304,6 +304,11 @@ pub struct InputState {
     /// 编辑器文本为空时按退格 = 删除整个 chip（经 on_chip_backspace 回调）
     pub chip_active: bool,
     pub on_chip_backspace: Option<std::rc::Rc<dyn Fn(&mut gpui::App)>>,
+    /// PF-025（Markdown 插图）：剪贴板图片粘贴钩子——paste 检测到
+    /// `ClipboardEntry::Image` 时优先回调；返回 true = 已消费，
+    /// false/无图/无钩子回落原文本粘贴。宿主按文件类型自行决定是否挂载
+    /// （如仅 markdown 编辑器）。
+    pub on_image_paste: Option<ImagePasteHook>,
     pub(super) pattern: Option<regex::Regex>,
     pub(super) validate: Option<Box<dyn Fn(&str, &mut Context<Self>) -> bool + 'static>>,
     pub(crate) scroll_handle: ScrollHandle,
@@ -352,6 +357,11 @@ pub struct InputState {
 }
 
 impl EventEmitter<InputEvent> for InputState {}
+
+/// PF-025（Markdown 插图）：图片粘贴钩子签名——(剪贴板图片, cx, window)
+/// 返回是否已消费本次粘贴。
+pub type ImagePasteHook =
+    std::rc::Rc<dyn Fn(gpui::Image, &mut Context<InputState>, &mut Window) -> bool>;
 
 impl InputState {
     /// Create a Input state with default [`InputMode::SingleLine`] mode.
@@ -407,6 +417,7 @@ impl InputState {
             soft_wrap: true,
             chip_active: false,
             on_chip_backspace: None,
+            on_image_paste: None,
             loading: false,
             pattern: None,
             validate: None,
@@ -1760,6 +1771,21 @@ impl InputState {
     }
 
     pub(super) fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        // PF-025：宿主挂了图片粘贴钩子且剪贴板含图时优先走图片路径；
+        // 钩子返回 false（格式不支持/落盘失败）回落文本粘贴。
+        if let Some(hook) = self.on_image_paste.clone() {
+            let image = cx.read_from_clipboard().and_then(|item| {
+                item.entries().iter().find_map(|e| match e {
+                    gpui::ClipboardEntry::Image(img) => Some(img.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(img) = image {
+                if hook(img, cx, window) {
+                    return;
+                }
+            }
+        }
         if let Some(clipboard) = cx.read_from_clipboard() {
             let mut new_text = clipboard.text().unwrap_or_default();
             // v57: Windows 剪贴板 CRLF 归一为 LF（bare CR 进塑形管线 fail-fast）
@@ -2281,6 +2307,17 @@ impl InputState {
         self.silent_replace_text = true;
         self.replace_text_in_range(range_utf16, new_text, window, cx);
         self.silent_replace_text = false;
+    }
+
+    /// PF-025：图片粘贴钩子把生成的 markdown 引用串插到光标处
+    ///（走 replace_text_in_range，入 undo 栈）。
+    pub fn insert_image_ref(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_text_in_range_silent(None, text, window, cx);
     }
 }
 
