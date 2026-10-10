@@ -1,6 +1,6 @@
 {
   "name": "pi-flash",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "description": "Pi-Flash (PF) — 极速 pi coding agent 桌面端。npm 薄壳包：安装时从 GitHub Releases 拉取平台载荷。",
   "homepage": "https://github.com/danielbill/pi-flash#readme",
   "repository": {
