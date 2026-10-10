@@ -166,7 +166,10 @@ impl Chat {
         }
         const MAX: u64 = 10 * 1024 * 1024;
         if std::fs::metadata(&path).map(|m| m.len() > MAX).unwrap_or(false) {
-            self.set_status(crate::i18n::tr("文件超过 10MB，不打开").to_string(), cx);
+            self.set_status(
+                format!("{}：{}", crate::i18n::tr("文件超过 10MB，不打开"), path.display()),
+                cx,
+            );
             return;
         }
         // 已打开则直接切过去（Zed 行为）：不重读磁盘、不整文重灌——那会
@@ -187,12 +190,20 @@ impl Chat {
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
-                self.set_status(format!("{}: {e}", crate::i18n::tr("读取失败")), cx);
+                // 带上完整路径：消息里的路径点击失败（相对解析/拼写/盘符），
+                // 没有路径无法定位是哪个文件没打开
+                self.set_status(
+                    format!("{} {}: {e}", crate::i18n::tr("读取失败"), path.display()),
+                    cx,
+                );
                 return;
             }
         };
         if bytes.contains(&0) {
-            self.set_status(crate::i18n::tr("二进制文件，不打开").to_string(), cx);
+            self.set_status(
+                format!("{}：{}", crate::i18n::tr("二进制文件，不打开"), path.display()),
+                cx,
+            );
             return;
         }
         let content = String::from_utf8_lossy(&bytes).to_string();
