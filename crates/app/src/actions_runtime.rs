@@ -42,11 +42,12 @@ impl Chat {
                     cx.notify();
                 }
                 SessionEvent::TurnSettled => {
-                    // 轮次终点（2026-10-10 规则）：**agent 结束时窗口没有
-                    // 焦点就给点**——出错 → 红点，正常完成 → 未读绿点；
-                    // 窗口有焦点 = 用户在场看见，不给。focus 快照由 render
-                    // 每帧维护（焦点变化必触发重绘，不陈旧）
-                    if !chat.window_active {
+                    // 轮次终点（2026-10-10 规则修订）：agent 结束时**窗口没
+                    // 焦点、或本会话已转后台**（用户切到同一窗口的别的对话）
+                    // 就给点——出错 → 红点，正常完成 → 未读绿点；在场看见
+                    // 不给。is_active = 该 runtime key vs 当前活跃 key，
+                    // 结算时刻现算即前台/后台判定
+                    if !chat.window_active || !is_active {
                         let (file, turn_error) = {
                             let r = rt.read(cx);
                             (r.file.clone(), r.turn_error)
