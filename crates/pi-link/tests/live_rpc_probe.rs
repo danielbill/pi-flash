@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 #[ignore]
 fn probe_vendored_pi_handshake() {
     let cwd = std::env::current_dir().unwrap();
-    // 探测复现应用默认路径：load_extensions = true（v70.3 起，主会话带扩展）
-    let (session, mut rx) = match pi_link::client::spawn(&cwd, &[], true) {
+    // 探测复现应用默认路径：主会话带扩展（v70.3 起；全局开关已删）
+    let (session, mut rx) = match pi_link::client::spawn(&cwd, &[]) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("SPAWN FAILED: {e}");

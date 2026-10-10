@@ -416,12 +416,6 @@ pub struct AppSettings {
     /// 其他页: 文件树 git 标识（023 默认关——清爽目录树；开 = M/A/D/R/U/C
     /// 徽标 + 目录变更点）
     pub git_markers: Option<bool>,
-    /// 其他页: 自动保存（023，默认开）：编辑停顿约 1s 自动写盘
-    pub autosave: Option<bool>,
-    /// 其他页: 会话加载 ~/.pi/agent 扩展与 npm 插件（pi-web 同款；插件注册
-    /// 的 provider 如 pi-freeflow 由此可用）。None = 开（Some(false) 隔离，
-    /// 防个别扩展弄崩 RPC 会话——历史案例：系统 pi 1.0 的 auto-router.ts）。
-    pub load_extensions: Option<bool>,
     /// 其他页: 各项目默认显示的会话数量（psp 初始页大小，3-10，默认 10）
     pub session_display_count: Option<u64>,
     /// @ 文件索引缓存有效期（秒，1-3600，默认 60）
@@ -433,11 +427,6 @@ pub struct AppSettings {
     /// 新会话。两键齐才算设置了默认。
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
-}
-
-/// load_extensions 的读取口径（None = 开）。
-pub fn load_extensions_enabled() -> bool {
-    app_settings().load_extensions.unwrap_or(true)
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -493,8 +482,6 @@ pub fn app_settings() -> AppSettings {
                     restore: map.get("startup_restore").and_then(|v| v.as_bool()),
                     show_thinking: map.get("show_thinking").and_then(|v| v.as_bool()),
                     git_markers: map.get("git_markers").and_then(|v| v.as_bool()),
-                    autosave: map.get("autosave").and_then(|v| v.as_bool()),
-                    load_extensions: map.get("load_extensions").and_then(|v| v.as_bool()),
                     session_display_count: map
                         .get("session_display_count")
                         .and_then(|v| v.as_u64()),
@@ -558,12 +545,6 @@ pub fn save_app_settings(s: &AppSettings) {
     }
     if let Some(v) = s.git_markers {
         obj.insert("git_markers".into(), Value::Bool(v));
-    }
-    if let Some(v) = s.autosave {
-        obj.insert("autosave".into(), Value::Bool(v));
-    }
-    if let Some(v) = s.load_extensions {
-        obj.insert("load_extensions".into(), Value::Bool(v));
     }
     if let Some(v) = s.session_display_count {
         obj.insert("session_display_count".into(), Value::Number(v.into()));
@@ -651,11 +632,6 @@ pub fn show_thinking() -> bool {
 /// 文件树 git 标识开关（设置-其他；默认关 = 清爽目录树，023 定案）。
 pub fn git_markers() -> bool {
     app_settings().git_markers.unwrap_or(false)
-}
-
-/// 自动保存开关（023；默认开）。
-pub fn autosave() -> bool {
-    app_settings().autosave.unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------

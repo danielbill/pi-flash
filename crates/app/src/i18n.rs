@@ -188,9 +188,6 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
-    // 自动保存开关（设置-其他）
-    ("自动保存", "自動儲存", "Auto save"),
-    ("编辑停顿约 1 秒后自动写入磁盘", "編輯停頓約 1 秒後自動寫入磁碟", "Write to disk automatically after ~1s pause in editing"),
     // 文件树 git 标识开关（设置-其他）
     ("文件树 Git 标识", "檔案樹 Git 標識", "File tree Git markers"),
     ("文件树显示 git 修改徽标与目录变更点", "檔案樹顯示 git 修改徽標與目錄變更點", "Show git modification badges and directory change dots in the file tree"),

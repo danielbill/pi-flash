@@ -26,16 +26,14 @@ pub struct PiSession {
 ///
 /// Only the vendored pi is ever used (never PATH); see [`crate::vendor`].
 ///
-/// `load_extensions = false` spawns with `-ne`: the isolation mode. pi-web
-/// loads extensions (npm plugins register providers/tools — freeflow etc.),
-/// and the app follows that by default (`AppSettings.load_extensions`,
-/// settings·misc switch); `false` is the escape hatch when some extension
-/// fatals the RPC session (historical case: system pi 1.0's auto-router.ts).
-pub fn spawn(
-    cwd: &Path,
-    extra_args: &[&str],
-    load_extensions: bool,
-) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
+/// 扩展装载归 spawn 参数（工具预设档）管：full/full+ 档自带 `-ne` + 显式
+/// `-e` 精确集；default/read-only/chat-only 档不发 `-ne`（加载
+/// `~/.pi/agent` 扩展与 npm 包，pi-web parity，v70.3 拍板）。全局开关已删
+/// （2026-10-10 用户定夺）：它在默认档路径（自定义/full）上本就无效，
+/// 逃生口语义由档位系统承担。历史背景：曾恒定 `-ne` 防宿主扩展崩钉版
+/// pi（系统 pi 1.0 的 auto-router.ts fatal 0.87.1 RPC），v70.3 改默认
+/// 加载并把隔离降级为设置页开关。
+pub fn spawn(cwd: &Path, extra_args: &[&str]) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
     let cli = vendor::cli_path()
         .ok_or_else(|| "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string())?;
 
@@ -77,20 +75,7 @@ pub fn spawn(
     let mut cmd = StdCommand::new(node);
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
-    // -ne (no extensions): vendored pin = self-contained distribution;
-    // extensions belong to the host's own ~/.pi/agent (written against
-    // whatever pi the host happens to run) and can crash OUR pin (real
-    // case: system pi 1.0's auto-router.ts fatals a 0.87.1 RPC). Keep the
-    // isolation even when pins coincide. (pi hint: "pi -ne")
     cmd.arg(&cli);
-    // full+plugins 档自己在 extra args 里带 -ne（精确插件集）；全局隔离
-    // 开关也开时不要发第二份（重复无害——D 组实测——但日志干净些）
-    let extra_has_ne = extra_args
-        .iter()
-        .any(|a| *a == "-ne" || *a == "--no-extensions");
-    if !load_extensions && !extra_has_ne {
-        cmd.arg("-ne");
-    }
     cmd.args(["--mode", "rpc"]).args(extra_args)
         .current_dir(cwd)
         .stdin(Stdio::piped())

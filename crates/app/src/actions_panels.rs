@@ -320,10 +320,8 @@ impl Chat {
     /// 脏变起一个定时器；静默期内的后续编辑各自再起定时器，先到的发现
     /// 「最后编辑 < 1s」就让位退出，最晚的那个落盘。冲突挂着不自动写
     /// （等用户在横幅裁决），写盘静默（不抢状态栏）。
+    /// （2026-10-10 用户定夺：恒开，无开关——默认行为即唯一行为）
     pub(crate) fn autosave_later(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if !crate::services::workspace::autosave() {
-            return;
-        }
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()

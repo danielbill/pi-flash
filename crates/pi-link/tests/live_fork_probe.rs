@@ -70,9 +70,9 @@ fn field(data: &Option<serde_json::Value>, key: &str) -> String {
 fn probe_fork() {
     let path = std::env::var("PROBE_SESSION").expect("PROBE_SESSION=<session.jsonl>");
     let cwd = std::env::current_dir().unwrap();
-    // 探测复现应用默认路径：load_extensions = true（v70.3 起，主会话带扩展）
+    // 探测复现应用默认路径：主会话带扩展（v70.3 起；全局开关已删）
     let (session, mut rx) =
-        pi_link::client::spawn(&cwd, &["--session", &path], true).expect("spawn pi");
+        pi_link::client::spawn(&cwd, &["--session", &path]).expect("spawn pi");
     eprintln!("spawned pi pid={} session={path}", session.id());
 
     session.send(&pi_link::protocol::Command::GetState).unwrap();
