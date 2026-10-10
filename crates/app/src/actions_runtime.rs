@@ -44,17 +44,20 @@ impl Chat {
                 SessionEvent::TurnSettled => {
                     // 轮次终点（2026-10-10 规则修订）：agent 结束时**窗口没
                     // 焦点、或本会话已转后台**（用户切到同一窗口的别的对话）
-                    // 就给点——出错 → 红点，正常完成 → 未读绿点；在场看见
-                    // 不给。is_active = 该 runtime key vs 当前活跃 key，
-                    // 结算时刻现算即前台/后台判定
+                    // 就给点——三色分类：外部错误/崩溃 → 红；内部中断
+                    // （length/aborted）→ 黄；正常完成 → 青蓝。在场看见不给。
+                    // is_active = 该 runtime key vs 当前活跃 key，结算时刻
+                    // 现算即前台/后台判定
                     if !chat.window_active || !is_active {
-                        let (file, turn_error) = {
+                        let (file, turn_error, turn_interrupted) = {
                             let r = rt.read(cx);
-                            (r.file.clone(), r.turn_error)
+                            (r.file.clone(), r.turn_error, r.turn_interrupted)
                         };
                         if let Some(f) = file {
                             if turn_error {
                                 chat.turn_errors.insert(f);
+                            } else if turn_interrupted {
+                                chat.turn_warnings.insert(f);
                             } else {
                                 chat.unread.insert(f);
                             }
@@ -175,6 +178,7 @@ impl Chat {
             // v54: 切入会话清除未读/出错红点
             self.unread.remove(f);
             self.turn_errors.remove(f);
+            self.turn_warnings.remove(f);
         }
         self.pill_menu = None;
         self.menu_ix = 0;

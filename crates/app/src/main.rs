@@ -475,6 +475,8 @@ struct Chat {
     /// 出错红点（agent 结束时窗口无焦点就点亮，重新获得焦点后切入清除）——
     /// 与 unread 同生命周期管理，区别只是颜色语义
     turn_errors: HashSet<PathBuf>,
+    /// 内部中断黄点（stopReason = length/aborted：上限截断、中止）
+    turn_warnings: HashSet<PathBuf>,
     /// 窗口焦点快照（render 每帧写；焦点变化本身会触发重绘所以不陈旧）。
     /// 「agent 结束时窗口没焦点就给点」的判定依据（2026-10-10 定夺）
     window_active: bool,
@@ -804,6 +806,7 @@ impl Chat {
             composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
             turn_errors: HashSet::new(),
+            turn_warnings: HashSet::new(),
             window_active: true,
             remote: remote_control::RemoteControl::new(),
             hovered_project: None,

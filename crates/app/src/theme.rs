@@ -49,6 +49,12 @@ pub struct Theme {
 /// Unread green dot (--unread; works on light and dark surfaces).
 pub const UNREAD: u32 = 0x2fa356;
 
+/// 通知点三色（2026-10-10 定夺）：完成通知青蓝 / 内部中断黄 / 外部错误红
+/// （红 = `t.danger`，不设常量）。绿色只表达正确性（终端就绪点等），
+/// 不作通知点——青蓝语义是「跑完了回来看」，不承载对错判断。
+pub const NOTICE: u32 = 0x3aa6d0;
+pub const WARN: u32 = 0xfacc15;
+
 /// Linear RGB channel mix: `wa` = weight of a (0..1). pi-web 的
 /// `color-mix(in srgb, a X%, b)` 等价物（代码块底、strong/marker 混色等）。
 pub fn mix_rgb(a: u32, b: u32, wa: f32) -> u32 {

@@ -113,10 +113,13 @@ pub(crate) struct SessionRuntime {
     pub pending_echo: Option<String>,
     pub stream_started: Option<std::time::Instant>,
     pub agent_running: bool,
-    /// 本轮是否出错：is_error 消息 / prompt 发送失败置位；AgentEnd 带
-    /// will_retry（自动重试，错误已恢复）清位。AgentSettled 时随 Changed
-    /// 冒泡给订阅方（psp 会话行的出错红点）。
+    /// 本轮是否出错：is_error 消息 / prompt 发送失败 / stopReason=="error"
+    /// 置位；AgentEnd 带 will_retry（自动重试，错误已恢复）清位。
+    /// AgentSettled 时随 TurnSettled 冒泡给订阅方（出错红点）。
     pub turn_error: bool,
+    /// 本轮内部中断（stopReason = length/aborted：上限截断、中止——非外部
+    /// 错误也非正常完成，通知点黄色档）
+    pub turn_interrupted: bool,
     pub status: String,
     /// 「其他」页提示音开关的运行时副本（app_settings.json `sound` 是真值
     /// 来源）：轮末提示音是 runtime 的职责——只有它知道自己这一轮何时结
@@ -235,6 +238,7 @@ impl SessionRuntime {
             stream_started: None,
             agent_running: false,
             turn_error: false,
+            turn_interrupted: false,
             status: String::new(),
             sound_on: crate::services::workspace::load_sound_pref(),
             state: None,
@@ -950,6 +954,16 @@ impl SessionRuntime {
                             m.error_message = error_message;
                             m.model = model;
                             self.streaming_content = false;
+                            // 通知点三色分类（2026-10-10）：error → 红
+                            // （外部错误/崩溃）；length/aborted → 黄（内部
+                            // 中断：上限截断/中止）；其余 = 正常完成青蓝
+                            match m.stop_reason.as_deref() {
+                                Some("error") => self.turn_error = true,
+                                Some("length" | "aborted") => {
+                                    self.turn_interrupted = true;
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -957,6 +971,7 @@ impl SessionRuntime {
             Event::AgentStart => {
                 self.agent_running = true;
                 self.turn_error = false;
+                self.turn_interrupted = false;
                 self.status = "running".into();
                 if self.stream_started.is_none() {
                     self.stream_started = Some(std::time::Instant::now());
@@ -989,6 +1004,7 @@ impl SessionRuntime {
                 // 自动重试 = 本轮错误已被恢复路径接管，不记红点
                 if will_retry {
                     self.turn_error = false;
+                    self.turn_interrupted = false;
                 }
                 self.phase_waiting = false;
                 self.pending_echo = None;

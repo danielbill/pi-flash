@@ -145,6 +145,11 @@ impl Chat {
                 .iter()
                 .all(|s| !same_path(s, p))
         });
+        self.turn_warnings.retain(|p| {
+            sessions
+                .iter()
+                .all(|s| !same_path(s, p))
+        });
         self.set_status(
             crate::i18n::tf("项目已删除（{n} 个会话）", &[("n", sessions.len().to_string())]),
             cx,

@@ -183,6 +183,7 @@ impl Chat {
         }
         self.unread.remove(&path);
         self.turn_errors.remove(&path);
+        self.turn_warnings.remove(&path);
         // recents (003-session管理): the file is gone, drop the entry
         pi_link::recents::remove_recent(&path);
         if was_active {

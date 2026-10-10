@@ -772,18 +772,25 @@ fn session_row_view(
                 .child(if running {
                     spinner(15., t.accent)
                 } else if chat.turn_errors.contains(&info.path) {
-                    // 出错红点 = t.danger（§6 danger 系唯一表达），7px 与
-                    // 未读绿点同径（§8 会话状态槽）
+                    // 红 = 外部错误/崩溃（t.danger，§6 danger 系唯一表达）
                     div()
                         .size(px(7.))
                         .rounded_full()
                         .bg(rgb(t.danger))
                         .into_any_element()
-                } else if chat.unread.contains(&info.path) {
+                } else if chat.turn_warnings.contains(&info.path) {
+                    // 黄 = 内部中断（上限截断/中止）
                     div()
                         .size(px(7.))
                         .rounded_full()
-                        .bg(rgb(crate::theme::UNREAD))
+                        .bg(rgb(crate::theme::WARN))
+                        .into_any_element()
+                } else if chat.unread.contains(&info.path) {
+                    // 青蓝 = 完成通知（绿色退出通知语义，仅表达正确性）
+                    div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(rgb(crate::theme::NOTICE))
                         .into_any_element()
                 } else {
                     div().into_any_element()
