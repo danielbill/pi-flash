@@ -23,7 +23,8 @@ pub(crate) use crate::ui::{VListHeight, DropdownState, icon, vlist};
 pub(crate) use widgets::{
     config_button, config_switch, detail_shell, error_note, field,
     group_header, group_switch, mono_text, note, scope_tag,
-    section_title, sidebar_list, sidebar_shell, switch_base, status_dot, Btn, GREEN, LIST_W, WARN,
+    section_title, set_row, sidebar_list, sidebar_shell, switch_base, status_dot, Btn, GREEN,
+    LIST_W, WARN,
 };
 
 /// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他（6 远程控制

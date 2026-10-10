@@ -1,5 +1,6 @@
-//! 设置「其他」页 (v54): pi 版本 / 启动恢复 / 默认加载会话数 / 工作区数据
-//! 目录。set-row 版式（标题+描述左，控件右）。
+//! 设置「其他」页 (v54): pi 版本 / 启动恢复 / 加载时间窗口 / 会话显示数 /
+//! 提示音 / 工作区数据目录。set-row 版式（标题+描述左，控件右）。
+//! 展示思考 / 文件树 Git 标识已挪至「界面」页。
 
 use super::*;
 
@@ -35,55 +36,6 @@ pub(crate) fn mc_misc_view(
                     let _ = weak.update(cx, |_c, cx| {
                         let mut s = crate::services::workspace::app_settings();
                         s.restore = Some(on);
-                        crate::services::workspace::save_app_settings(&s);
-                        cx.notify();
-                    });
-                }
-            },
-            t,
-        ),
-        t,
-    ));
-
-    // 展示思考 switch（思考块始终渲染；关（默认）=新思考块收成一行，
-    // 开=默认展开全文。用户手动开合过的块以显式状态为准）
-    let show_thinking = crate::services::workspace::show_thinking();
-    col = col.child(set_row(
-        tr("展示思考"),
-        tr("开启时思考块默认展开全文，关闭时默认收起为一行"),
-        switch(
-            "misc-show-thinking",
-            show_thinking,
-            {
-                let weak = weak.clone();
-                move |on, cx| {
-                    let _ = weak.update(cx, |_c, cx| {
-                        let mut s = crate::services::workspace::app_settings();
-                        s.show_thinking = Some(on);
-                        crate::services::workspace::save_app_settings(&s);
-                        cx.notify();
-                    });
-                }
-            },
-            t,
-        ),
-        t,
-    ));
-
-    // 文件树 git 标识 switch（023：默认关 = 清爽目录树；开 = 徽标+变更点）
-    let git_markers_on = crate::services::workspace::git_markers();
-    col = col.child(set_row(
-        tr("文件树 Git 标识"),
-        tr("文件树显示 git 修改徽标与目录变更点"),
-        switch(
-            "misc-git-markers",
-            git_markers_on,
-            {
-                let weak = weak.clone();
-                move |on, cx| {
-                    let _ = weak.update(cx, |_c, cx| {
-                        let mut s = crate::services::workspace::app_settings();
-                        s.git_markers = Some(on);
                         crate::services::workspace::save_app_settings(&s);
                         cx.notify();
                     });
@@ -307,46 +259,6 @@ fn step_btn(
         base
     };
     btn.child(SharedString::from(label.to_string()))
-        .into_any_element()
-}
-
-/// set-row：标题+描述在左，控件在右，底分隔线。
-fn set_row(
-    title: &str,
-    desc: &str,
-    control: gpui::AnyElement,
-    t: &'static crate::theme::Theme,
-) -> gpui::AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(14.))
-        .py(px(13.))
-        .border_b_1()
-        .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x40)))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
-                .child(
-                    // 标题与「界面」页 section_label 同款（13 semibold text_muted）
-                    div()
-                        .text_size(crate::appearance::ui_size(13.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text_muted))
-                        .child(SharedString::from(title.to_string())),
-                )
-                .child(
-                    div()
-                        .text_size(crate::appearance::ui_size(11.5))
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(desc.to_string())),
-                ),
-        )
-        .child(control)
         .into_any_element()
 }
 

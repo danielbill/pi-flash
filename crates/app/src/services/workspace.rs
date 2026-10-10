@@ -411,9 +411,9 @@ pub struct AppSettings {
     pub load_window_days: Option<u64>,
     /// v54 其他页: restore last workspace + session on startup
     pub restore: Option<bool>,
-    /// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）
+    /// 界面页: 展示思考（关（默认）=新思考块收成一行；开=默认展开全文）
     pub show_thinking: Option<bool>,
-    /// 其他页: 文件树 git 标识（023 默认关——清爽目录树；开 = M/A/D/R/U/C
+    /// 界面页: 文件树 git 标识（023 默认关——清爽目录树；开 = M/A/D/R/U/C
     /// 徽标 + 目录变更点）
     pub git_markers: Option<bool>,
     /// 其他页: 各项目默认显示的会话数量（psp 初始页大小，3-10，默认 10）
@@ -624,12 +624,12 @@ pub fn at_index_max_projects() -> usize {
     app_settings().at_index_max_projects.unwrap_or(10).clamp(1, 100) as usize
 }
 
-/// 其他页: 展示思考块（默认不展示；开启时思考块默认收起）。
+/// 界面页: 展示思考（关（默认）=新思考块收成一行；开=默认展开全文）。
 pub fn show_thinking() -> bool {
     app_settings().show_thinking.unwrap_or(false)
 }
 
-/// 文件树 git 标识开关（设置-其他；默认关 = 清爽目录树，023 定案）。
+/// 文件树 git 标识开关（设置-界面；默认关 = 清爽目录树，023 定案）。
 pub fn git_markers() -> bool {
     app_settings().git_markers.unwrap_or(false)
 }

@@ -188,7 +188,11 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
-    // 文件树 git 标识开关（设置-其他）
+    // 界面页「内容显示」节（自「其他」页挪入）
+    ("内容显示", "內容顯示", "Content display"),
+    ("展示思考", "展示思考", "Show thinking"),
+    ("开启时思考块默认展开全文，关闭时默认收起为一行", "開啟時思考塊預設展開全文，關閉時預設收起為一行", "When on, thinking blocks expand by default; when off, they collapse to one line"),
+    // 文件树 git 标识开关（设置-界面）
     ("文件树 Git 标识", "檔案樹 Git 標識", "File tree Git markers"),
     ("文件树显示 git 修改徽标与目录变更点", "檔案樹顯示 git 修改徽標與目錄變更點", "Show git modification badges and directory change dots in the file tree"),
     // 023 fileView（标签栏 + 菜单 / 导航栏 / 冲突横幅 / 确认弹窗）
