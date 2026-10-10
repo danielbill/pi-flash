@@ -2170,8 +2170,11 @@ pub fn doc_blocks(src: &str) -> std::rc::Rc<Vec<MdBlock>> {
 
 /// 把源码里的 wiki 图片引用展开为标准 markdown（逐行，fence 感知）。
 /// `![[a.png]]` → `![](a.png)`；`![[a.png|300]]` 取尺寸前的文件名。
+/// 另：独占一行的图片引用（wiki 或标准式）前后补空行——Obsidian 习惯
+/// 回车即图（图与文字间常无空行），GFM 同段落不产图片块，不补分割
+/// 预览就不出图（025 P1 实翻车）。
 fn expand_wiki_images(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
+    let mut out = String::with_capacity(src.len() + 32);
     let mut in_fence = false;
     for line in src.split_inclusive('\n') {
         let t = line.trim_start();
@@ -2182,11 +2185,38 @@ fn expand_wiki_images(src: &str) -> String {
         }
         if in_fence {
             out.push_str(line);
+            continue;
+        }
+        let expanded = expand_wiki_line(line);
+        let trimmed = expanded.trim();
+        if is_standalone_image_ref(trimmed) {
+            let blank_before = out.is_empty() || out.ends_with("\n\n");
+            if !blank_before {
+                out.push('\n');
+            }
+            out.push_str(&expanded);
+            if !expanded.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
         } else {
-            out.push_str(&expand_wiki_line(line));
+            out.push_str(&expanded);
         }
     }
     out
+}
+
+/// 整行恰为一条图片引用：`![[…]]` 或 `![](…)`（闭合到行尾）。
+fn is_standalone_image_ref(line: &str) -> bool {
+    if let Some(rest) = line.strip_prefix("![[") {
+        return rest.ends_with("]]" ) && !rest.contains('\n');
+    }
+    if let Some(rest) = line.strip_prefix("![](") {
+        return rest.ends_with(')')
+            && !rest.contains("![](")
+            && !rest.contains('\n');
+    }
+    false
 }
 
 fn expand_wiki_line(line: &str) -> String {
@@ -2808,5 +2838,42 @@ $$");
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod real_file_tests {
+    /// 真实文章回归（025 P1）：12 个引用全展开 + 磁盘能找到图片文件。
+    #[test]
+    fn real_article_all_refs_expand_and_resolve() {
+        let p = std::path::Path::new(
+            r"D:\my_obsidian\gitee_vault\mynotes\20观宏知微\文章\1 每日博文\一块RTX5070跑Qwen3.8-next-flash 150B飚速90TS！算力自由降临了？.md",
+        );
+        let Ok(src) = std::fs::read_to_string(p) else {
+            eprintln!("skip: 真实文章不在本机");
+            return;
+        };
+        let refs = src.matches("![[").count() + src.matches("![](").count();
+        let blocks = super::doc_blocks(&src);
+        let imgs: Vec<&str> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                super::MdBlock::Image { url, .. } => Some(url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(imgs.len(), refs, "引用应全展开: {imgs:?}");
+        // 每个 url：md 目录直查 或 assets/<子目录>/同名命中（render 出图前提）
+        let base = p.parent().unwrap();
+        for u in &imgs {
+            let name = std::path::Path::new(u).file_name().unwrap();
+            let direct = base.join(u);
+            let hit = direct.exists()
+                || std::fs::read_dir(base.join("assets"))
+                    .map(|rd| rd.flatten().any(|e| e.path().join(name).is_file()))
+                    .unwrap_or(false);
+            assert!(hit, "找不到图片文件: {u}");
+        }
+        eprintln!("全部 {refs} 个引用展开且磁盘命中");
     }
 }
