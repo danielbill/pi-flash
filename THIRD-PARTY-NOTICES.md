@@ -32,18 +32,11 @@ pi-flash 集成/参考了以下第三方软件。各部分版权归其各自权�
 
 - 来源：https://github.com/zed-industries/zed
 - 版权：Copyright Zed Industries, Inc.
-- 派生/移植文件（以源码注释为准）：
-  - `crates/app/src/ui/psp_scrollbar.rs` — 移植自 `crates/ui/src/components/scrollbar.rs`
-  - `crates/app/src/theme.rs` — One Dark/One Light/Nord/Ayu 主题移植自 `crates/theme`
-  - `crates/app/src/terminal.rs` — 终端模式参考 `crates/terminal`
-  - `crates/app/src/automation/screenshot.rs` — 走 gpui `Window::render_to_image()`
-  - `crates/app/src/dialogs.rs`、`crates/app/src/function_panel/mod.rs` — 滚动条样式同源
+- 本项目编辑器模块大部分参考Zed实现。
 
-## 参考（无代码复制）
-
-### pi-web — MIT License
+## pi-web — MIT License
 
 - 来源：https://github.com/agegr/pi-web
 - 版权：Copyright (c) 2026 agegr
-- 本项目的产品规格/交互对齐以其为原型；代码为 Rust/GPUI 独立实现，
+- 本项目的agent对话、设置页以其为原型开发；代码为 Rust/GPUI 独立实现，
   未复制其源码。许可证：MIT（见上游仓库 `LICENSE`）。
