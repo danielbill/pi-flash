@@ -112,6 +112,19 @@ pub mod scrollbar {
     pub const THUMB_ACTIVE: f32 = 10.;
 }
 
+/// §2 渲染特例固定字号（px）：markdown 内部 chrome 不经 ui_size（§2 禁止
+/// 事项的"值入册"落点），改动 = 改规范再改这里。
+pub mod fixed {
+    /// 代码块语言标签条
+    pub const MD_LANG_BAR: f32 = 11.;
+    /// 任务列表勾选 ✓
+    pub const MD_CHECK_GLYPH: f32 = 10.;
+    /// 超限降级提示 ⚠ 行
+    pub const MD_WARN: f32 = 12.;
+    /// 超限降级正文（mono）
+    pub const MD_OVERSIZE: f32 = 12.;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +202,16 @@ mod tests {
         assert_eq!(
             [scrollbar::W, scrollbar::THUMB, scrollbar::THUMB_ACTIVE],
             [10., 6., 10.]
+        );
+        // §2 渲染特例固定字号（markdown chrome）
+        assert_eq!(
+            [
+                fixed::MD_LANG_BAR,
+                fixed::MD_CHECK_GLYPH,
+                fixed::MD_WARN,
+                fixed::MD_OVERSIZE,
+            ],
+            [11., 10., 12., 12.]
         );
     }
 }

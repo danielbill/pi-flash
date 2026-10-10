@@ -1166,7 +1166,7 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
         .bg(rgb(t.bg_panel))
         .border_b_1()
         .border_color(rgb(t.border))
-        .text_size(px(11.))
+        .text_size(px(crate::ui::tokens::fixed::MD_LANG_BAR))
         .child(
             div()
                 .font_family(MONO_FAMILY)
@@ -1650,7 +1650,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
                             .when(checked, |b| {
                                 b.child(
                                     div()
-                                        .text_size(px(10.))
+                                        .text_size(px(crate::ui::tokens::fixed::MD_CHECK_GLYPH))
                                         .font_weight(FontWeight::BOLD)
                                         .text_color(rgb(t.accent))
                                         .child(SharedString::from("✓")),
@@ -1843,7 +1843,7 @@ fn render_oversize(src: &str, t: &Theme) -> AnyElement {
         .child(
             div()
                 .text_color(rgb(0xca8a04))
-                .text_size(px(12.))
+                .text_size(px(crate::ui::tokens::fixed::MD_WARN))
                 .child(SharedString::from(format!(
                     "⚠ {} ({}KB)",
                     crate::i18n::tr("消息内容过大，已按纯文本显示"),
@@ -1857,7 +1857,7 @@ fn render_oversize(src: &str, t: &Theme) -> AnyElement {
                 .overflow_y_scroll()
                 .restrict_scroll_to_axis()
                 .font_family(MONO_FAMILY)
-                .text_size(px(12.))
+                .text_size(px(crate::ui::tokens::fixed::MD_OVERSIZE))
                 .line_height(relative(1.5))
                 .text_color(rgb(t.text_muted))
                 .child(SharedString::from(src.to_string())),

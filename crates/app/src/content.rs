@@ -44,7 +44,8 @@ fn empty_hint(text: &str, t: &'static crate::theme::Theme) -> gpui::AnyElement {
         .flex()
         .items_center()
         .justify_center()
-        .text_xs()
+        // §2：空态提示 = 辅助说明档（随界面字号缩放，原 text_xs 裸字号）
+        .text_size(crate::appearance::ui_size(11.))
         .text_color(rgb(t.text_dim))
         .child(SharedString::from(text.to_string()))
         .into_any_element()

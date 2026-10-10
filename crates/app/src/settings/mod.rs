@@ -415,7 +415,8 @@ pub(crate) fn render_settings(
             "",
             Some(
                 div()
-                    .w(px(160.))
+                    // §7 设置导航列 240（原 160，2026-10-10 回写实现）
+                    .w(px(240.))
                     .flex_shrink_0()
                     .bg(rgb(t.nav))
                     // 左导航贴弹窗左下角，同理自己倒左下角

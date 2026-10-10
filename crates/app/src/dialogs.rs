@@ -559,7 +559,8 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
                 .justify_between()
                 .child(
                     div()
-                        .text_sm()
+                        // §2 弹窗标题档（原 text_sm 裸字号）
+                        .text_size(crate::appearance::ui_size(14.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
                         .child(tr("添加 Provider")),
@@ -630,7 +631,8 @@ fn render_git_diff(chat: &Chat, weak: &gpui::WeakEntity<Chat>, path: &PathBuf, p
                                                 .child(icon_hover("git-branch", 12., t.accent))
                                                 .child(
                                                     div()
-                                                        .text_xs()
+                                                        // §2 mono 辅助标签档（原 text_xs 裸字号）
+                                                        .text_size(crate::appearance::ui_size(11.))
                                                         .font_family(crate::markdown::MONO_FAMILY)
                                                         .text_color(rgb(t.text_muted))
                                                         .child(path_text),
@@ -904,7 +906,8 @@ fn render_session_search(
                     .px_3()
                     .pt_2()
                     .pb_1()
-                    .text_xs()
+                    // §2 组头辅助档（原 text_xs 裸字号）
+                    .text_size(crate::appearance::ui_size(11.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(t.text))
                     .flex()
@@ -936,7 +939,8 @@ fn render_session_search(
                 })
                 .child(
                     div()
-                        .text_xs()
+                        // §2 结果正文档（原 text_xs 裸字号）
+                        .text_size(crate::appearance::ui_size(12.))
                         .line_height(relative(1.5))
                         .text_color(rgb(t.text_muted))
                         .flex()
@@ -983,7 +987,8 @@ fn render_session_search(
                         };
                         div()
                             .px_1()
-                            .text_xs()
+                            // §2 状态辅助档（原 text_xs 裸字号）
+                            .text_size(crate::appearance::ui_size(11.))
                             .text_color(rgb(t.text_dim))
                             .child(label)
                     })

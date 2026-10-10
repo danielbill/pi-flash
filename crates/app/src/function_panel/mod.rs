@@ -432,8 +432,8 @@ fn project_row(
 
     div()
         .id(SharedString::from(format!("prj-{pi}")))
-        .h(px(33.))
-        .mb(px(2.))
+        // §5.8 主列表档真行高 32（原 33=32+mb2 补偿，mb 写法废除）
+        .h(px(crate::ui::tokens::row::MAIN))
         .flex()
         .items_center()
         .gap(px(8.))
@@ -703,8 +703,8 @@ fn session_row_view(
         .relative()
         .group("psrow")
         .w_full()
-        .h(px(32.))
-        .mb(px(2.))
+        // §5.8：mb 补间距写法废除，真行高 32
+        .h(px(crate::ui::tokens::row::MAIN))
         .flex()
         .items_center()
         .gap(px(8.))

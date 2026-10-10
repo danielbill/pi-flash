@@ -554,7 +554,8 @@ fn caption_button(
             .items_center()
             .justify_center()
             .font_family(CAPTION_FONT)
-            .text_sm()
+            // §2：随界面字号缩放（原 text_sm 裸字号；默认档下与旧 14px 等值）
+            .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .hover(move |s| s.bg(rgb(t.danger_hover)).text_color(rgb(0xffffff)))

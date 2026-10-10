@@ -113,7 +113,8 @@ pub(crate) fn render_ext_dialog(
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
-                        .text_sm()
+                        // §2 卡片标题档（原 text_sm 裸字号）
+                        .text_size(crate::appearance::ui_size(14.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(rgb(t.text))
                         .child(title),
@@ -132,7 +133,8 @@ pub(crate) fn render_ext_dialog(
                                 .rounded_md()
                                 .border_1()
                                 .border_color(rgb(t.border))
-                                .text_xs()
+                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_muted))
                                 .cursor_pointer()
                                 .hover(|s| s.text_color(rgb(t.text)))
@@ -155,7 +157,8 @@ pub(crate) fn render_ext_dialog(
                                 .rounded_md()
                                 .border_1()
                                 .border_color(rgb(t.border))
-                                .text_xs()
+                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.bg_hover)))
@@ -178,7 +181,8 @@ pub(crate) fn render_ext_dialog(
                                 .py_1()
                                 .rounded_md()
                                 .bg(rgb(t.accent))
-                                .text_xs()
+                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.accent_contrast))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(rgb(t.accent_hover)))
