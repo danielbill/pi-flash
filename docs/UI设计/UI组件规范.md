@@ -102,6 +102,7 @@
 规则：
 - 图标↔文字 gap 8（SP4）；图标在按钮内默认 ICON_SM，图标按钮走 §5.2 的方形槽。
 - 关闭 × 全项目统一 ICON_XS（12）——存量 8/11/13 三种杂值收敛掉。
+- **「更多」图标全项目唯一 = lucide circle-ellipsis（带圈三点）**，横/竖 ellipsis 两枚已废除（2026-10-10 定夺）；禁止再引入第二种 more 变体。
 - iconfont「新建会话」19px 等**品牌特例**仅限 startup logo（88）与该处，不得扩散。
 - icon hover 动效（scale 1.06 + 上抬 1px）按 v55 既有规格，见 `docs/UI设计/主界面UI设计说明.md` §14。
 
@@ -247,6 +248,7 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | 主色底 | accent / accent_hover |
 | 破坏性 | danger 系（见 §5.1，唯一表达） |
 | 占位/最弱文字 | text_faint |
+| 通知点三色 | NOTICE(0x3AA6D0 青蓝=完成) / WARN(0xFACC15 黄=内部中断) / danger(红=外部错误)——语义见 §8 会话状态槽 |
 | 工具卡/代码底 | tool_bg（bg ±3%） |
 | 细微洗色 | bg_subtle |
 
@@ -275,6 +277,7 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | 图标 hover | scale 1.06 + 上抬 1px（v55 规格，paint 期矩阵实现） |
 | toast | 全项目两处（status 居中 / ext notice 右上）统一主题配色：`bg_panel` 底 + 1px 边框（status 用 `t.border`，ext 用类型色）+ `t.text` 文字；尺寸自适应内容，max 600×200，超高滚动，自动换行，左右 padding 20（2026-10-10 定夺） |
 | 会话状态槽 | 15px 槽：运行 = spinner(accent)；agent 结束时**窗口无焦点或本会话已转后台** → 通知点三色（2026-10-10 定夺）：**外部错误/崩溃 = 7px 红 `t.danger`**、**内部中断（stopReason length/aborted，超时/上限停止）= 7px 黄 `WARN`**、**正常完成 = 7px 青蓝 `NOTICE`**（只是"跑完了回来看"，不承载对错）；绿色不作通知点（绿色只表达正确性）；点径统一 7px，切入会话即清 |
+| psp 会话行局部字号 | 标题 = 面板设置值（ui12 基准）；时间 = **面板−2** `ui(10)` text_faint 右对齐列；「显示更多」= **面板−1** `ui(11)` **text_faint（placeholder 色）**，hover 回正文（2026-10-10 定夺） |
 
 ---
 
