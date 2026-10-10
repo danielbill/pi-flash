@@ -1,5 +1,6 @@
-//! topbar 三段 (016): 左段在 panel-col 内（收放钮 + 手机遥控，左右 padding
-//! 对称），右段在 content-col 内（中段标签栏 + 窗口控制钮）。中段标签栏 =
+//! topbar 三段 (016): 左段在 panel-col 内（收放钮；手机遥控钮已隐藏——
+//! 2026-10-10 定，060 管线保留），右段在 content-col 内（中段标签栏 +
+//! 窗口控制钮）。中段标签栏 =
 //! 置顶会话 tab（第一位，无 × 无 icon）+ 自由标签区（终端/文件，023 规则），
 //! 激活 tab Obsidian 卡片融底、条上不画横线。设置钮下放 018 状态栏、+ 已删
 //! （016 定案）。整条是客户区自绘标题栏——空段挂 `WindowControlArea::Drag`
@@ -21,11 +22,10 @@ pub(crate) const HEIGHT: f32 = 38.;
 /// Caption-button glyph font (Win11; MDL2 covers Win10).
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
-/// 左段（015 功能面板侧）：收放钮（贴左 5px）+ 拖拽填充 + 手机遥控
-/// （贴右 5px，左右 padding 对称——016）。
-pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+/// 左段（015 功能面板侧）：收放钮（贴左 5px）+ 拖拽填充。原右端手机遥控
+/// 钮已隐藏（2026-10-10 用户定夺；重开走 git 历史找回 wx_btn）。
+pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
-    let wx_on = chat.remote.bound.is_some();
     div()
         .id("topbar-l")
         .h(px(HEIGHT))
@@ -49,33 +49,6 @@ pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gp
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
-        .child(wx_btn(wx_on, cx))
-}
-
-/// 手机遥控钮（016 左段右钮，原 018 状态栏右槽迁此）：点开扫码弹窗；
-/// 已绑定时 accent 常亮（原状态栏着色规则）。
-fn wx_btn(wx_on: bool, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
-    let t = T();
-    let color = if wx_on { t.accent } else { t.text_muted };
-    div()
-        .id("wx-qr-btn")
-        .size(px(30.))
-        .mr(px(5.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(7.))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
-        .on_mouse_down(MouseButton::Left, cx.listener(
-            move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                // 幂等：已在扫码/已出码时不重复发起
-                this.remote.begin_qr();
-                this.dialog = Some(crate::Dialog::WxQr);
-                cx.notify();
-            },
-        ))
-        .child(crate::ui::icon_hover("smartphone", 16., color))
 }
 
 /// 右段：中段标签栏 + 窗口控制。
