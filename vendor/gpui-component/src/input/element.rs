@@ -664,9 +664,22 @@ impl TextElement {
                 };
 
                 let sub_line: SharedString = line[range.clone()].to_string().into();
+                // PF-024 P1：行级字号上浮（标题行）——倍数来自装饰，
+                // cap 在行高内（行高 uniform，行级行高缝留 P2）。
+                let line_size = last_layout
+                    .decorations
+                    .as_ref()
+                    .and_then(|dec| {
+                        dec.line_scale
+                            .iter()
+                            .find(|(l, _)| *l == visible_range.start + ix)
+                            .map(|(_, s)| *s)
+                    })
+                    .map(|s| font_size * s.min(1.7))
+                    .unwrap_or(font_size);
                 let shaped_line = window
                     .text_system()
-                    .shape_line(sub_line, font_size, &line_runs, None);
+                    .shape_line(sub_line, line_size, &line_runs, None);
 
                 wrapped_lines.push(shaped_line);
             }

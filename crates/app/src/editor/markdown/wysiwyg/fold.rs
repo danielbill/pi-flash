@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn next_atomic_skips_hidden_run() {
-        let dec = Decorations::new(Rope::from("x"), vec![], ranges(&[(6, 8), (10, 12)]));
+        let dec = Decorations::new(Rope::from("x"), vec![], ranges(&[(6, 8), (10, 12)]), vec![]);
         // 右移：停在段后
         assert_eq!(dec.next_atomic(6, 1), 8);
         // 左移：停在段前

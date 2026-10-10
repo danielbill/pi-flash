@@ -24,14 +24,24 @@ pub struct Decorations {
     pub styles: Vec<(Range<usize>, HighlightStyle)>,
     /// 折叠集：doc 绝对字节偏移，升序、互不重叠（app 侧保证）。
     pub folds: Vec<Range<usize>>,
+    /// 行级字号倍数（doc 行号 == vis 行号——folds 不含换行、行数不变）：
+    /// 标题行按倍数上浮 shaping，行高保持 uniform（024 P1：大标题观感在
+    /// 行高允许范围内上浮，行级行高缝留 P2）。
+    pub line_scale: Vec<(usize, f32)>,
 }
 
 impl Decorations {
-    pub fn new(display: Rope, styles: Vec<(Range<usize>, HighlightStyle)>, folds: Vec<Range<usize>>) -> Self {
+    pub fn new(
+        display: Rope,
+        styles: Vec<(Range<usize>, HighlightStyle)>,
+        folds: Vec<Range<usize>>,
+        line_scale: Vec<(usize, f32)>,
+    ) -> Self {
         Self {
             display,
             styles,
             folds,
+            line_scale,
         }
     }
 

@@ -201,6 +201,9 @@ pub(crate) enum Style {
     Code,
     Link,
     Strike,
+    /// 标题（024 P1）：level 1-6——源码态装饰用（字重 + 行级字号上浮），
+    /// 预览渲染走 Heading 块不经过此样式。
+    Heading(u8),
     /// 行内公式标记（v57-2）：Run.text 存 LaTeX 源码，渲染期拆段成图
     Math,
     /// 块级公式标记（$$…$$ 可能出现在段落事件流内，多行块 pulldown 也发在
@@ -874,6 +877,13 @@ pub(crate) fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
                 color: Some(gpui::rgba((t.accent << 8) | 0x73).into()),
                 ..Default::default()
             }),
+            ..Default::default()
+        },
+        // 024 P1 标题：正文色 + 字重（字号上浮由 Decorations.line_scale
+        // 行级 shaping 承担，行高 uniform 内 cap）
+        Style::Heading(_) => HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            color: Some(rgb(t.text).into()),
             ..Default::default()
         },
         Style::Strike => HighlightStyle {

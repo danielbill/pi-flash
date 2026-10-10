@@ -101,7 +101,7 @@ crates/app/src/editor/
 | 期 | 内容 | 验收 |
 |---|---|---|
 | **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
-| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false；preview 往返快照**逐字节一致**；源码态折叠/样式/行号 pif-ui 截图验证 |
+| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
 | **P2 光标打磨** | atomic 跳词、点击反算、选区强制 reveal、元素级 reveal、列表续行 | pif-ui 合成按键断言光标 offset 序列；fold 性质测试 |
 | **P3 块级** | 图/表/公式折叠占位（`widget.rs`）——025 插图源码态可视的第一批客户 | 手测 + 快照 |
 

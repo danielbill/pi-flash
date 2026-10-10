@@ -49,7 +49,7 @@ impl DecorationProvider for MdLiveProvider {
             return None;
         }
         let src = text.to_string();
-        let (spans, raw_folds) = parse::parse(&src);
+        let (spans, raw_folds, line_scale) = parse::parse(&src);
         let merged = fold::merge(raw_folds);
 
         // P0 行级 reveal（024 §6.2）：光标所在行 folds 全部显现，其余行隐藏
@@ -86,6 +86,11 @@ impl DecorationProvider for MdLiveProvider {
         }
         let styles = style::partition(overlaps, total);
 
-        Some(Decorations::new(Rope::from(display), styles, folds))
+        Some(Decorations::new(
+            Rope::from(display),
+            styles,
+            folds,
+            line_scale,
+        ))
     }
 }

@@ -63,25 +63,42 @@ impl Frame {
     }
 }
 
-/// 解析行内 span 与全部语法标记 folds。
+/// 解析行内 span、全部语法标记 folds 与行级字号倍数。
 ///
-/// 返回 `(spans, folds)`，两者均为 doc 字节坐标；folds 可能重叠
-/// （嵌套强调），由 `fold::merge` 归一。
-pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>) {
+/// 返回 `(spans, folds, line_scale)`：前两者为 doc 字节坐标（folds 可能
+/// 重叠，由 `fold::merge` 归一）；`line_scale` 为 (doc 行号, 倍数)，
+/// folds 不含换行 → 行号与 vis 一一对应。
+pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>, Vec<(usize, f32)>) {
     let mut spans = Vec::new();
     let mut folds = Vec::new();
+    let mut line_scale: Vec<(usize, f32)> = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
+    // 链接起点（`[` 字节位）；活动期内 Text 产 Link span
+    let mut link_open: Option<usize> = None;
 
     for (ev, range) in Parser::new_ext(src, parse_options()).into_offset_iter() {
         match ev {
             Event::Start(Tag::Strong) => stack.push(Frame::new(Style::Bold)),
             Event::Start(Tag::Emphasis) => stack.push(Frame::new(Style::Italic)),
+            Event::Start(Tag::Link { .. }) => link_open = Some(range.start),
             Event::End(TagEnd::Strong | TagEnd::Emphasis) => {
                 if let Some(frame) = stack.pop() {
                     close_frame(&frame, src, &mut folds);
                 }
             }
+            Event::End(TagEnd::Link) => {
+                if let Some(open) = link_open.take() {
+                    link_folds(src, open, &range, &mut folds);
+                }
+            }
             Event::Text(_) => {
+                // 链接文本：Link 样式（与嵌套 bold 等字段级合并）
+                if link_open.is_some() {
+                    spans.push(Span {
+                        range: range.clone(),
+                        style: Style::Link,
+                    });
+                }
                 if !stack.is_empty() {
                     let style = combine(&stack);
                     spans.push(Span {
@@ -100,8 +117,24 @@ pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>) {
         }
     }
 
-    scan_headings(src, &mut folds);
-    (spans, folds)
+    scan_headings(src, &mut folds, &mut spans, &mut line_scale);
+    (spans, folds, line_scale)
+}
+
+/// 链接定界折叠：`[text](url)` → 保 text（Link 样式），折 `[` 与
+/// `](url)`。逐字节验证（`[` 开头 / `)` 结尾向前找 `]`）——存疑不折。
+/// autolink `<http://…>`（无 `[]`）验证失败自然不折，保守露源码。
+fn link_folds(src: &str, open: usize, end: &Range<usize>, folds: &mut Vec<Range<usize>>) {
+    let b = src.as_bytes();
+    if b.get(open) != Some(&b'[') || end.end > b.len() || end.end == 0 {
+        return;
+    }
+    folds.push(open..open + 1);
+    if b[end.end - 1] == b')' {
+        if let Some(rb) = b[end.start..end.end].iter().rposition(|&c| c == b']') {
+            folds.push(end.start + rb..end.end);
+        }
+    }
 }
 
 /// 叶子内容推进所有活动容器的内容边界。
@@ -198,13 +231,22 @@ fn combine(stack: &[Frame]) -> Style {
     }
 }
 
-/// 逐行扫描 ATX 标题（`#{1,6}` + 空格/行尾）→ 折叠前缀。
+/// 逐行扫描：ATX 标题（`#{1,6}` + 空格/行尾）→ 折叠前缀 + 整行样式
+/// span + 行级字号倍数；围栏行（``` / ~~~ + 语言名）→ 整段折叠
+/// （Obsidian 式：fence 标记不可见，块级 widget 留 P3）。
 /// 感知 ``` / ~~~ 围栏（围栏内不认标题）；缩进 >3 空格视为代码不认。
-/// 不做 setext（`===` 下划线标题）与引用块内标题——P0 保守漏折。
-fn scan_headings(src: &str, folds: &mut Vec<Range<usize>>) {
+/// 不做 setext 与引用块内标题——保守漏折。
+fn scan_headings(
+    src: &str,
+    folds: &mut Vec<Range<usize>>,
+    spans: &mut Vec<Span>,
+    line_scale: &mut Vec<(usize, f32)>,
+) {
+    const HEADING_SCALE: [f32; 6] = [1.62, 1.42, 1.26, 1.12, 1.0, 1.0];
     let b = src.as_bytes();
     let mut in_fence: Option<u8> = None;
     let mut i = 0usize;
+    let mut line_no = 0usize;
     while i < b.len() {
         let mut j = i;
         while j < b.len() && b[j] != b'\n' {
@@ -218,12 +260,15 @@ fn scan_headings(src: &str, folds: &mut Vec<Range<usize>>) {
             if c0 == b'`' || c0 == b'~' {
                 let run = line[indent..].iter().take_while(|&&c| c == c0).count();
                 if run >= 3 {
+                    // 围栏标记行整段折叠（含语言名，保留空行）
+                    folds.push(i + indent..j);
                     match in_fence {
                         Some(fc) if fc == c0 => in_fence = None,
                         None => in_fence = Some(c0),
                         _ => {}
                     }
                     i = if j < b.len() { j + 1 } else { b.len() };
+                    line_no += 1;
                     continue;
                 }
             }
@@ -237,17 +282,30 @@ fn scan_headings(src: &str, folds: &mut Vec<Range<usize>>) {
                 .count();
             if (1..=6).contains(&hashes) {
                 let after = indent + hashes;
-                if after == line.len() {
-                    // 仅 `###`（空标题）
+                let content_start = if after == line.len() {
                     folds.push(i + indent..i + after);
+                    after
                 } else if line[after] == b' ' || line[after] == b'\t' {
-                    // `# ` 前缀（含一个空白）
                     folds.push(i + indent..i + after + 1);
+                    after + 1
+                } else {
+                    usize::MAX
+                };
+                if content_start != usize::MAX {
+                    // 整行文本样式 + 行级字号上浮（element 按倍数 shaping）
+                    if content_start < j {
+                        spans.push(Span {
+                            range: i + content_start..j,
+                            style: Style::Heading(hashes as u8),
+                        });
+                    }
+                    line_scale.push((line_no, HEADING_SCALE[hashes - 1]));
                 }
             }
         }
 
         i = if j < b.len() { j + 1 } else { b.len() };
+        line_no += 1;
     }
 }
 
@@ -257,7 +315,7 @@ mod tests {
 
     /// 折叠集渲染：应用 folds 后的文本（模拟隐藏语法）。
     fn folded(src: &str) -> String {
-        let (_, mut folds) = parse(src);
+        let (_, mut folds, _) = parse(src);
         folds.sort_by_key(|f| f.start);
         let mut out = src.to_string();
         for f in folds.iter().rev() {
@@ -267,7 +325,7 @@ mod tests {
     }
 
     fn has_fold_covering(src: &str, needle: Range<usize>) -> bool {
-        let (_, folds) = parse(src);
+        let (_, folds, _) = parse(src);
         // parse 产出单字符 fold（由 fold::merge 归一后再判断覆盖）
         let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
         merged
@@ -280,7 +338,7 @@ mod tests {
         let src = "hello **world** bye";
         assert_eq!(folded(src), "hello world bye");
         // 样式 span 覆盖 world
-        let (spans, _) = parse(src);
+        let (spans, _, _) = parse(src);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].range, 8..13);
         assert!(matches!(spans[0].style, Style::Bold));
@@ -294,7 +352,7 @@ mod tests {
     #[test]
     fn emphasis_single() {
         assert_eq!(folded("a *b* c"), "a b c");
-        let (spans, _) = parse("a *b* c");
+        let (spans, _, _) = parse("a *b* c");
         assert!(matches!(spans[0].style, Style::Italic));
     }
 
@@ -302,14 +360,14 @@ mod tests {
     fn nested_bold_italic_triple_marker() {
         // `***a***` → 三枚星号全折（em 拿 1、strong 拿满 2，dedupe 后并集）
         assert_eq!(folded("***a***"), "a");
-        let (spans, _) = parse("***a***");
+        let (spans, _, _) = parse("***a***");
         assert!(matches!(spans[0].style, Style::BoldItalic));
     }
 
     #[test]
     fn unclosed_strong_conservative() {
         // 未闭合 → pulldown 不产生 Strong 容器 → 不折不样式
-        let (spans, folds) = parse("**abc");
+        let (spans, folds, _) = parse("**abc");
         assert!(spans.is_empty());
         assert!(folds.is_empty());
         assert_eq!(folded("**abc"), "**abc");
@@ -324,7 +382,7 @@ mod tests {
     #[test]
     fn inline_code() {
         assert_eq!(folded("run `cargo test` now"), "run cargo test now");
-        let (spans, _) = parse("run `cargo test` now");
+        let (spans, _, _) = parse("run `cargo test` now");
         assert_eq!(spans.len(), 1);
         assert!(matches!(spans[0].style, Style::Code));
     }
@@ -342,8 +400,9 @@ mod tests {
 
     #[test]
     fn heading_inside_fence_not_folded() {
+        // P1：围栏标记行整段折叠（``` 不可见），围栏内 heading 不折
         let src = "```\n# not heading\n```\n# real";
-        assert_eq!(folded(src), "```\n# not heading\n```\nreal");
+        assert_eq!(folded(src), "\n# not heading\n\nreal");
     }
 
     #[test]
@@ -362,7 +421,7 @@ mod tests {
     fn no_fold_crosses_newline() {
         // 强调跨行：定界符各自贴着本行内容，fold 不得含 \n
         let src = "**line1\nline2**";
-        let (_, folds) = parse(src);
+        let (_, folds, _) = parse(src);
         for f in &folds {
             assert!(!src[f.clone()].contains('\n'), "fold {f:?} 跨行了");
         }
@@ -372,7 +431,7 @@ mod tests {
     #[test]
     fn plain_text_untouched() {
         for src in ["", "hello", "a_b_c", "1 * 2 * 3", "snake_case_name"] {
-            let (spans, folds) = parse(src);
+            let (spans, folds, _) = parse(src);
             assert!(spans.is_empty(), "{src} 不该有 span");
             assert!(folds.is_empty(), "{src} 不该有 fold");
         }
@@ -383,5 +442,67 @@ mod tests {
         let src = "x **y** z";
         assert!(has_fold_covering(src, 2..4)); // 左 `**`
         assert!(has_fold_covering(src, 5..7)); // 右 `**`
+    }
+
+    /// P1：标题整行样式 + 行级字号倍数 + 前缀折叠。
+    #[test]
+    fn heading_spans_scale_and_folds() {
+        let src = "# 一级\n正文\n## 二级\n";
+        let (spans, _folds, scale) = parse(src);
+        let heads: Vec<(Range<usize>, u8)> = spans
+            .iter()
+            .filter_map(|s| match s.style {
+                Style::Heading(l) => Some((s.range.clone(), l)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(heads.len(), 2);
+        assert_eq!(heads[0].1, 1);
+        assert_eq!(heads[1].1, 2);
+        assert_eq!(&src[heads[0].0.clone()], "一级");
+        assert_eq!(&src[heads[1].0.clone()], "二级");
+        // 行号 → 倍数（folds 不含换行，行号对齐）
+        assert!(scale.contains(&(0, 1.62)), "{scale:?}");
+        assert!(scale.contains(&(2, 1.42)), "{scale:?}");
+        // 前缀折叠覆盖 `# ` 与 `## `
+        assert!(has_fold_covering(src, 0..2));
+        let h2 = src.find("## ").unwrap();
+        assert!(has_fold_covering(src, h2..h2 + 3));
+    }
+
+    /// P1：链接折叠 `[` 与 `](url)`，文本保留 + Link 样式。
+    #[test]
+    fn link_folds_brackets_and_url() {
+        let src = "见 [pi-web](https://x.com) 主页";
+        let (spans, folds, _) = parse(src);
+        let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
+        let lb = src.find('[').unwrap();
+        let rb = src.find(']').unwrap();
+        let end = src.find(')').unwrap() + 1;
+        let mut out = src.to_string();
+        for f in merged.iter().rev() {
+            out.replace_range(f.clone(), "");
+        }
+        assert_eq!(out, "见 pi-web 主页", "折叠后应只剩可见文本");
+        assert!(merged.iter().any(|f| f.start == lb && f.end == lb + 1));
+        assert!(merged.iter().any(|f| f.start == rb && f.end == end));
+        assert!(
+            spans
+                .iter()
+                .any(|s| matches!(s.style, Style::Link) && &src[s.range.clone()] == "pi-web")
+        );
+    }
+
+    /// P1：围栏标记行整段折叠（含语言名），代码内容保留。
+    #[test]
+    fn fence_marker_lines_folded() {
+        let src = "```bash\nnpm i\n```\n";
+        let (_, folds, _) = parse(src);
+        let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
+        let mut out = src.to_string();
+        for f in merged.iter().rev() {
+            out.replace_range(f.clone(), "");
+        }
+        assert_eq!(out, "\nnpm i\n\n");
     }
 }
