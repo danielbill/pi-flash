@@ -1,3 +1,41 @@
+## 待验证（本轮修复）——023 fileView：面包屑 `D:\` 拆两段 + 预览/编辑器都不自动回行
+
+用户口径（编辑器窗口截图）：①面包屑把 `D:\` 拆成 `D:` 与 `\` 两段；②不论
+markdown 预览还是源码编辑，长行都不自动回行（右缘溢出被裁）。参考 zed 修。
+
+- ✅ 根因 ①（面包屑）：`file_nav_bar` 用 `Path::components()` 逐组件出 crumb，
+  Windows 上 `Prefix("D:")` 与 `RootDir` 是**两个**组件 → 两个 crumb。且分段累积
+  路径 `acc` 固定从 `chat.cwd` 起 join，工作区外文件（截图里 `D:\my_obsidian\…`
+  ≠ cwd）每段都拼成 `cwd\D:\…`，**面包屑目录段的兄弟文件菜单指向错目录**。
+- ✅ 根因 ②（预览不回行）：`render_doc_item_inner` 的内容段是 flex 项
+  `flex_span(92., None)`（basis 0 + grow 92 + shrink 0，min_w 未设）。flex 项的
+  **自动最小尺寸 = min-content**，而 gpui 文本在 `AvailableSpace::MinContent` 下
+  `wrap_width = None`（`elements/text.rs` 实测路径）→ min-content = **整段单行宽**，
+  于是 92% 段被撑到整段宽、正文永远拿不到可用宽（一行到底）。
+- ✅ 根因 ③（编辑器不回行）：`ensure_file_editor` 显式 `.soft_wrap(false)`（当初为
+  vendored gpui-component 的「等高行」快路径：行 y = row×行高 闭式解）。
+- ✅ 修法（对齐 zed：预览块 `min_w_0`、编辑器 soft wrap 可开）：
+  1. 面包屑分段抽成 `content::breadcrumb_segments(cwd, path) -> Vec<(文本, 段绝对路径)>`：
+     前缀组件与紧随的 `RootDir` **合成一段**（`D:\` / `\\server\share\`），累积路径
+     从空 PathBuf 起按组件真累积（相对 cwd 时起点仍是 cwd）；渲染与自动化快照共用。
+  2. 内容段补 `.min_w(px(0.))` → 段宽 = 字面 92/100 容器宽，StyledText 得 definite
+     宽自然折行（zed markdown 里同样到处 `min_w_0()`）。
+  3. 文件编辑器 `.soft_wrap(true)`：vendored text_wrapper 的折行是**增量**的（只重算
+     改动行范围），未折行时 `is_uniform()` 仍走等高快路径，折行后走线性可见区间。
+- ✅ 验证（`cargo test -p app`，179 全绿）+ pif-ui 事务式对拍（隔离实例，直接开
+  截图那个工作区外文件）：
+  - `snapshot files --only crumbs` = `["D:\\", "my_obsidian", "gitee_vault", …]`
+    （修复前是 `["D:", "\\", "my_obsidian", …]`）；新增 3 条单测锁分段与累积路径
+    （相对/盘符+根合并/POSIX 根）。
+  - `exec file.view_mode --arg mode=source|preview` + `shot`：源码态折行、预览态
+    段落折行都可见（`tmp/ui-test-bc/source2.png`、`tmp/ui-test-bc/preview.png`）。
+  - 自动化口：files 面新增 `crumbs`（渲染同一个 `breadcrumb_segments`，防两边漂移）。
+- ⏳ 真机待复验：打开工作区外文件看面包屑是 `D:\ › my_obsidian › …`（点目录段
+  列出的同级文件正确）；md 预览与源码态长行都回行、折行后光标/Ctrl+F 命中正常。
+- 📌 取舍：编辑器**全部语言**开 soft wrap（不只 md）——用户口径「预览和编辑状态
+  都要回行」；超长单行文件（如压缩过的 js）折行会走线性可见区间路径，比之前的
+  等高快路径慢一点，换来的是不回行就不成立的可读性。
+
 ## 待验证（本轮修复）——新会话页「模型 ∨」弹窗列表空（no models match）
 
 用户口径：第一次进（启动那个项目）「模型 ∨」有列表；**换一个目录**（切项目后落到

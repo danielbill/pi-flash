@@ -2182,7 +2182,15 @@ fn render_doc_item_inner(blocks: &[MdBlock], ix: usize, t: &Theme) -> AnyElement
         .pt(px(top))
         .when(last, |d| d.pb(px(40.)))
         .child(flex_span(4., Some(20.)))
-        .child(flex_span(92., None).child(render_block(b, 1, t, false, t.text)))
+        // 内容段必须显式 min_w(0)：flex 项的自动最小尺寸 = min-content，而
+        // gpui 的文本在 MinContent 下不折行（wrap_width = None，单行宽度），
+        // 于是 92% 段被撑到整段单行宽、正文永远不回行（右缘溢出）。min_w(0)
+        // 后段宽 = 字面 92/100 容器宽，StyledText 拿到 definite 宽自然折行
+        .child(
+            flex_span(92., None)
+                .min_w(px(0.))
+                .child(render_block(b, 1, t, false, t.text)),
+        )
         .child(flex_span(4., Some(20.)))
         .into_any_element()
 }

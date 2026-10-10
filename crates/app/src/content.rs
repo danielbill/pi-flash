@@ -207,7 +207,7 @@ fn ensure_file_editor(
     let ed = cx.new(|scx| {
         gpui_component::input::InputState::new(window, scx)
             .code_editor(ts_language(&ext))
-            .soft_wrap(false)
+            .soft_wrap(true)
     });
     ed.update(cx, |st, scx| st.set_value(content, window, scx));
     cx.subscribe(&ed, |this, ed, ev: &gpui_component::input::InputEvent, cx| {
@@ -319,6 +319,43 @@ fn file_view(
         .into_any_element()
 }
 
+/// 导航操作栏面包屑的路径分段：`(显示文本, 该段绝对路径)`。
+///
+/// - 在 `cwd` 下 = 相对分段（累积起点 cwd）；工作区外 = 绝对分段。
+/// - 目录段路径供点开「兄弟文件菜单」，所以分段必须累积出真实绝对路径
+///   （此前盘符段从 cwd 拼起 → `D:` 后面全是错目录）。
+/// - Windows 盘符前缀与根分隔符合成一段：`D:` + `\` = `D:\`（UNC 共享名
+///   `\\server\share` 同理），Zed 面包屑里它是一个 crumb 而不是两个。
+/// - POSIX 根 `/` 无前缀可合，自成一段。
+///
+/// 自动化快照（files 面 crumbs）与本文件渲染共用，防止两边漂移。
+pub(crate) fn breadcrumb_segments(
+    cwd: &Path,
+    path: &Path,
+) -> Vec<(SharedString, std::path::PathBuf)> {
+    let under_cwd = path.strip_prefix(cwd).is_ok();
+    let rel = path.strip_prefix(cwd).unwrap_or(path);
+    let mut segments: Vec<(SharedString, std::path::PathBuf)> = Vec::new();
+    let mut acc = if under_cwd { cwd.to_path_buf() } else { std::path::PathBuf::new() };
+    for c in rel.components() {
+        if c == std::path::Component::RootDir
+            && let Some((text, p)) = segments.last_mut()
+        {
+            // 前缀段（盘符 / UNC 共享名）+ 根："D:\" / "\\\\server\\share\\"
+            let mut joined = text.to_string();
+            joined.push(std::path::MAIN_SEPARATOR);
+            *text = joined.into();
+            p.push(std::path::MAIN_SEPARATOR_STR);
+            // 累积路径跟着走（后续 Normal 段从本段续拼）
+            acc.push(std::path::MAIN_SEPARATOR_STR);
+            continue;
+        }
+        acc.push(c.as_os_str());
+        segments.push((c.as_os_str().to_string_lossy().to_string().into(), acc.clone()));
+    }
+    segments
+}
+
 /// 导航操作栏：左 = 面包屑（项目根相对路径段，目录段点开兄弟文件菜单，
 /// 对齐 Zed 可点击面包屑）；右 = eye/eye-off（md 源码/渲染切换）+ search（聚焦
 /// 编辑器并派发组件 Search，即 Ctrl+F 内置搜索替换弹层）。
@@ -331,18 +368,15 @@ fn file_nav_bar(
     let t = T();
     let is_md = md_file(path);
 
-    // 面包屑段：cwd 相对路径
-    let rel = path.strip_prefix(&chat.cwd).unwrap_or(path);
-    let segments: Vec<std::ffi::OsString> = rel
-        .components()
-        .map(|c| c.as_os_str().to_os_string())
-        .collect();
+    // 面包屑段：cwd 相对路径；不在 cwd 下（工作区外/别的盘打开的文件）退化
+    // 为绝对路径。Windows 盘符前缀与根分隔符合成一段——Zed 面包屑同款：
+    // `D:\` 是一个 crumb，此前拆成 `D:` 与 `\` 两段（且目录累积 acc 从 cwd
+    // 拼起，盘符段后的兄弟菜单指向错误目录）。
+    let segments = breadcrumb_segments(&chat.cwd, path);
     let mut crumbs = div().min_w_0().flex().items_center().overflow_hidden();
-    let mut acc = chat.cwd.clone();
-    for (i, seg) in segments.iter().enumerate() {
-        acc = acc.join(seg);
+    for (i, (seg_text, dir)) in segments.iter().enumerate() {
         let last = i + 1 == segments.len();
-        let seg_text: SharedString = seg.to_string_lossy().to_string().into();
+        let seg_text = seg_text.clone();
         if last {
             crumbs = crumbs.child(
                 div()
@@ -352,7 +386,7 @@ fn file_nav_bar(
                     .child(seg_text),
             );
         } else {
-            let dir = acc.clone();
+            let dir = dir.clone();
             let weak_crumb = weak.clone();
             let weak_off = weak.clone();
             let dd = chat.crumb_dd.clone();
@@ -764,7 +798,46 @@ fn md_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::ts_language;
+    use super::{breadcrumb_segments, ts_language};
+    use std::path::{Path, PathBuf};
+
+    /// 在 cwd 下的相对分段：每段路径累积正确，最后一段 = 全路径。
+    #[test]
+    fn crumbs_relative_under_cwd() {
+        let cwd = PathBuf::from("C:\\proj");
+        let segs = breadcrumb_segments(&cwd, Path::new("C:\\proj\\src\\a.rs"));
+        let texts: Vec<String> = segs.iter().map(|(t, _)| t.to_string()).collect();
+        assert_eq!(texts, vec!["src", "a.rs"]);
+        assert_eq!(segs[0].1, PathBuf::from("C:\\proj\\src"));
+        assert_eq!(segs[1].1, PathBuf::from("C:\\proj\\src\\a.rs"));
+    }
+
+    /// 工作区外绝对路径：Windows 盘符 + 根合成 "D:\\" 一段（此前拆成
+    /// "D:" 与 "\\" 两段，且后续段的累积路径从 cwd 拼起是错的）。
+    #[cfg(windows)]
+    #[test]
+    fn crumbs_absolute_merges_drive_root() {
+        let cwd = PathBuf::from("C:\\proj");
+        let segs = breadcrumb_segments(&cwd, Path::new("D:\\my_obsidian\\gitee_vault\\x.md"));
+        let texts: Vec<String> = segs.iter().map(|(t, _)| t.to_string()).collect();
+        assert_eq!(texts, vec!["D:\\", "my_obsidian", "gitee_vault", "x.md"]);
+        // 兄弟菜单目标 = 真实绝对目录（不是 "C:\\proj\\D:"）
+        assert_eq!(segs[0].1, PathBuf::from("D:\\"));
+        assert_eq!(segs[1].1, PathBuf::from("D:\\my_obsidian"));
+        assert_eq!(segs[2].1, PathBuf::from("D:\\my_obsidian\\gitee_vault"));
+    }
+
+    /// POSIX 根："" 无前缀可合，根自成一段，累积路径仍绝对。
+    #[cfg(not(windows))]
+    #[test]
+    fn crumbs_absolute_keeps_posix_root() {
+        let cwd = PathBuf::from("/home/u/proj");
+        let segs = breadcrumb_segments(&cwd, Path::new("/etc/pi/x.conf"));
+        let texts: Vec<String> = segs.iter().map(|(t, _)| t.to_string()).collect();
+        assert_eq!(texts, vec!["/", "etc", "pi", "x.conf"]);
+        assert_eq!(segs[0].1, PathBuf::from("/"));
+        assert_eq!(segs[1].1, PathBuf::from("/etc"));
+    }
 
     /// 扩展名 → tree-sitter 语言名映射（023 编辑器高亮）；未收录回退 text。
     #[test]

@@ -110,7 +110,10 @@ fn probe_input_state_open(cx: &mut TestAppContext) {
         let input = cx.new(|scx| {
             gpui_component::input::InputState::new(window, scx)
                 .code_editor("text")
-                .soft_wrap(false)
+                // 与生产同参（023 fileView 2026-10-10 起默认 soft wrap）——
+                // 注：本段量的是 set_value/reset，此时 wrap_width 未知（未布局）
+                // 故折行计算不在此发生，开不开对这几个数字无影响
+                .soft_wrap(true)
         });
         let d_new = t.elapsed();
 
@@ -214,7 +217,7 @@ fn probe_reset_path_pieces(cx: &mut TestAppContext) {
             _input: cx.new(|scx| {
                 gpui_component::input::InputState::new(window, scx)
                     .code_editor("text")
-                    .soft_wrap(false)
+                    .soft_wrap(true)
             }),
         }
     });

@@ -495,10 +495,11 @@ impl TextElement {
             state.scroll_handle.offset().y
         };
 
-        // 等高行（文件编辑器 soft_wrap(false)：每行一条显示行，行高恒定）：
-        // 可见区间闭式解，不再从第 0 行累加行高——那是 O(滚动深度)，80K 行
-        // 文件滚到底部时每帧白扫几万行（Zed 的 PositionMap 就是靠行几何闭式
-        // 算可见区间）。折行的 composer 走下面的线性路径。
+        // 等高行（每个逻辑行恰一条显示行，行高恒定；不软换行、或软换行下无行
+        // 被折——文件编辑器通常是后者）：可见区间闭式解，不再从第 0 行累加
+        // 行高——那是 O(滚动深度)，80K 行文件滚到底部时每帧白扫几万行
+        // （Zed 的 PositionMap 就是靠行几何闭式算可见区间）。有折行即
+        // is_uniform()=false，走下面的线性路径。
         if state.text_wrapper.is_uniform() {
             let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
             let visible_rows = (input_height / line_height).ceil().max(0.) as usize;

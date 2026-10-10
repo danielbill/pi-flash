@@ -398,6 +398,17 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     expanded.sort();
     // 文件 tab 明细（023）：编辑器状态事务断言用（dirty/conflict/预览态）
     let active_file = chat.active_file_path();
+    // 面包屑分段文本（023 导航栏）：与渲染共用 breadcrumb_segments（防漂移），
+    // 盘符/根合成一段的回归就靠这条断言
+    let crumbs: Vec<String> = active_file
+        .as_ref()
+        .map(|p| {
+            crate::content::breadcrumb_segments(&chat.cwd, p)
+                .iter()
+                .map(|(t, _)| t.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     let file_tabs: Vec<Value> = chat
         .panel_tabs
         .iter()
@@ -421,6 +432,7 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         .collect();
     json!({
         "cwd": chat.cwd.display().to_string(),
+        "crumbs": crumbs,
         "expanded": expanded,
         "rows": rows,
         "file_tabs": file_tabs,

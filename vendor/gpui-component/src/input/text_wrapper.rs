@@ -91,9 +91,9 @@ impl TextWrapper {
 
     /// 是否「等高」：每行恰好一条显示行（不软换行，或软换行下没有任何行被折）。
     ///
-    /// 文件编辑器 `soft_wrap(false)` 恒为真 → 行 y = row × 行高 有闭式解，
-    /// 每帧的可见区间/光标定位不再从第 0 行线性累加（Zed PositionMap 同款）；
-    /// 软换行的 composer 一旦有折行即为假，走原线性路径。
+    /// 文件编辑器默认 `soft_wrap(true)`：无行被折时也为真 → 行 y = row × 行高
+    /// 有闭式解，每帧的可见区间/光标定位不再从第 0 行线性累加（Zed PositionMap
+    /// 同款）；一旦有行折了即为假，走原线性路径。
     #[inline]
     pub(super) fn is_uniform(&self) -> bool {
         self.soft_lines == self.lines.len()
