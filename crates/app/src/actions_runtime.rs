@@ -24,24 +24,38 @@ impl Chat {
                     }
                     if !is_active {
                         // v54 未读绿点：非活跃会话在跑/在流式 → 记未读，
-                        // 切换到它时清除。2026-10-10 增：轮次以错误收尾
-                        // （AgentSettled 冒泡的 turn_error）→ 记红点
-                        let (file, running, turn_error) = {
+                        // 切换到它时清除
+                        let (file, running) = {
                             let r = rt.read(cx);
                             (
                                 r.file.clone(),
                                 r.agent_running
                                     || r.state.as_ref().is_some_and(|s| s.is_streaming),
-                                r.turn_error,
                             )
                         };
                         if let Some(f) = file {
-                            if running {
-                                if !chat.unread.contains(&f) {
-                                    chat.unread.insert(f);
-                                }
-                            } else if turn_error && !chat.turn_errors.contains(&f) {
+                            if running && !chat.unread.contains(&f) {
+                                chat.unread.insert(f);
+                            }
+                        }
+                    }
+                    cx.notify();
+                }
+                SessionEvent::TurnSettled => {
+                    // 轮次终点（2026-10-10 规则）：**agent 结束时窗口没有
+                    // 焦点就给点**——出错 → 红点，正常完成 → 未读绿点；
+                    // 窗口有焦点 = 用户在场看见，不给。focus 快照由 render
+                    // 每帧维护（焦点变化必触发重绘，不陈旧）
+                    if !chat.window_active {
+                        let (file, turn_error) = {
+                            let r = rt.read(cx);
+                            (r.file.clone(), r.turn_error)
+                        };
+                        if let Some(f) = file {
+                            if turn_error {
                                 chat.turn_errors.insert(f);
+                            } else {
+                                chat.unread.insert(f);
                             }
                         }
                     }

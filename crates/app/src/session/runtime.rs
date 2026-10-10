@@ -37,6 +37,10 @@ use crate::services::format::status_line;
 pub(crate) enum SessionEvent {
     /// repaint-worthy state change
     Changed,
+    /// 一轮终点（AgentSettled，2026-10-10）：订阅方据此给**不在场**的会话
+    /// 点亮完成绿点/出错红点——结算时 agent_running 已复位，走 Changed 的
+    /// 「running 时记未读」通路永远轮不到它
+    TurnSettled,
     /// sidebar list should refresh (rename flush, fork, file landed)
     ListDirty,
     /// extension UI request (active session only surfaces the dialog)
@@ -975,9 +979,10 @@ impl SessionRuntime {
                 self.status = status_line(true, "idle");
                 self.settle_turn();
                 self.refresh_state();
-                // 轮次终点冒泡（turn_error 终值随行）：订阅方据此把出错会话
-                // 点亮红点（不冒泡的话后台会话跑完无人知晓）
-                cx.emit(SessionEvent::Changed);
+                // 轮次终点专用事件（turn_error 终值随行）：订阅方按「窗口
+                // 没焦点」规则给点——走 Changed 的话 running 已复位，永远
+                // 轮不到记点
+                cx.emit(SessionEvent::TurnSettled);
             }
             Event::AgentEnd { will_retry } => {
                 self.agent_running = false;

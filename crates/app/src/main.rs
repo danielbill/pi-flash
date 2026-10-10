@@ -472,9 +472,12 @@ struct Chat {
     /// 值；导航刻度条「屏高 − inputpanel/2」居中用，033）
     composer_h: std::rc::Rc<std::cell::Cell<f32>>,
     unread: HashSet<PathBuf>,
-    /// 出错红点（非活跃会话轮次以错误收尾时点亮，切入即清）——与 unread
-    /// 同生命周期管理，区别只是颜色语义
+    /// 出错红点（agent 结束时窗口无焦点就点亮，重新获得焦点后切入清除）——
+    /// 与 unread 同生命周期管理，区别只是颜色语义
     turn_errors: HashSet<PathBuf>,
+    /// 窗口焦点快照（render 每帧写；焦点变化本身会触发重绘所以不陈旧）。
+    /// 「agent 结束时窗口没焦点就给点」的判定依据（2026-10-10 定夺）
+    window_active: bool,
     /// 微信远程控制桥（060）：transport + 待答 ExtUi 请求
     remote: remote_control::RemoteControl,
     hovered_project: Option<usize>,
@@ -801,6 +804,7 @@ impl Chat {
             composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
             turn_errors: HashSet::new(),
+            window_active: true,
             remote: remote_control::RemoteControl::new(),
             hovered_project: None,
             proj_tip: None,
@@ -1478,6 +1482,9 @@ impl Focusable for Chat {
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 焦点快照（给「agent 结束时窗口没焦点就给点」用）：平台层在每次
+        // 激活变化都会 window.refresh() 强制重绘，所以这里的值总是新鲜的
+        self.window_active = window.is_window_active();
         static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if PERF.load(std::sync::atomic::Ordering::Relaxed)
             && !FIRST.swap(true, std::sync::atomic::Ordering::Relaxed)
