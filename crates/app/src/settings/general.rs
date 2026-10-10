@@ -1,8 +1,9 @@
 //! 设置「界面」页 (v60)：主题（淡色5 + 深色2 各一排）/ 字体（三槽位：族
-//! 下拉 + 字号三档下拉）/ 语言（三个一排）/ 内容显示（展示思考、文件树
-//! Git 标识两开关，自「其他」页挪入）。主题持久化只写
-//! pi-flash 自己的 app_settings.json——pi 的 settings.json 有同名的 theme
-//! 键（值域 dark/light），写入 pi-flash 主题 id 会让 pi 每次启动报错。
+//! 下拉 + 字号三档下拉）/ 内容显示（展示思考、文件树 Git 标识两开关，
+//! 无小节标题——用户定夺多余）/ 语言（三个一排，置底——用户定夺）。
+//! 主题持久化只写 pi-flash 自己的 app_settings.json——pi 的 settings.json
+//! 有同名的 theme 键（值域 dark/light），写入 pi-flash 主题 id 会让 pi
+//! 每次启动报错。
 
 use super::*;
 use crate::appearance::{FontSlot, ThemeEntry};
@@ -64,37 +65,36 @@ pub(crate) fn mc_general_view(
         ));
     }
 
-    // ---- 语言：三个一排，左对齐 ------------------------------------------
-    col = col.child(section_label(tr("语言")));
-    col = col.child(lang_row(weak, t));
-
-    // ---- 内容显示：会话/文件树的显示开关（自「其他」页挪入） --------------
-    col = col.child(section_label(tr("内容显示")));
-
+    // ---- 内容显示：会话/文件树的显示开关（自「其他」页挪入；不加小节
+    // 标题——用户定夺多余，行内标题+描述已自明） ----------------------------
+    // 首行外包 mt(7)：补齐与 section_label mt(20) 同款的小节间距（set_row
+    // 自带 py(13)）
     // 展示思考 switch（思考块始终渲染；关（默认）=新思考块收成一行，
     // 开=默认展开全文。用户手动开合过的块以显式状态为准）
     let show_thinking = crate::services::workspace::show_thinking();
-    col = col.child(set_row(
-        tr("展示思考"),
-        tr("开启时思考块默认展开全文，关闭时默认收起为一行"),
-        switch_base(
-            "general-show-thinking",
-            show_thinking,
-            false,
-            {
-                let weak = weak.clone();
-                move |on, cx| {
-                    let _ = weak.update(cx, |_c, cx| {
-                        let mut s = crate::services::workspace::app_settings();
-                        s.show_thinking = Some(on);
-                        crate::services::workspace::save_app_settings(&s);
-                        cx.notify();
-                    });
-                }
-            },
-        ),
-        t,
-    ));
+    col = col.child(
+        div().mt(px(7.)).child(set_row(
+            tr("展示思考"),
+            tr("开启时思考块默认展开全文，关闭时默认收起为一行"),
+            switch_base(
+                "general-show-thinking",
+                show_thinking,
+                false,
+                {
+                    let weak = weak.clone();
+                    move |on, cx| {
+                        let _ = weak.update(cx, |_c, cx| {
+                            let mut s = crate::services::workspace::app_settings();
+                            s.show_thinking = Some(on);
+                            crate::services::workspace::save_app_settings(&s);
+                            cx.notify();
+                        });
+                    }
+                },
+            ),
+            t,
+        )),
+    );
 
     // 文件树 git 标识 switch（023：默认关 = 清爽目录树；开 = 徽标+变更点）
     let git_markers_on = crate::services::workspace::git_markers();
@@ -119,6 +119,10 @@ pub(crate) fn mc_general_view(
         ),
         t,
     ));
+
+    // ---- 语言：三个一排，左对齐（置底——用户定夺） ------------------------
+    col = col.child(section_label(tr("语言")));
+    col = col.child(lang_row(weak, t));
 
     col.into_any_element()
 }

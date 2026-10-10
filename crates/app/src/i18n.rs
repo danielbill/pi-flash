@@ -188,8 +188,7 @@ const TABLE: &[(&str, &str, &str)] = &[
     // misc
     ("（无）", "（無）", "(none)"),
     ("退出登录", "退出登入", "Sign out"),
-    // 界面页「内容显示」节（自「其他」页挪入）
-    ("内容显示", "內容顯示", "Content display"),
+    // 界面页显示开关（自「其他」页挪入，无小节标题——用户定夺）
     ("展示思考", "展示思考", "Show thinking"),
     ("开启时思考块默认展开全文，关闭时默认收起为一行", "開啟時思考塊預設展開全文，關閉時預設收起為一行", "When on, thinking blocks expand by default; when off, they collapse to one line"),
     // 文件树 git 标识开关（设置-界面）
