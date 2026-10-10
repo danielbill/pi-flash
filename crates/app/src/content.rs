@@ -315,7 +315,7 @@ fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
-    host.child(file_editor_body(chat, &path, md_source))
+    host.child(file_editor_body(chat, &path, md_source, weak))
         .into_any_element()
 }
 
@@ -619,6 +619,7 @@ fn file_editor_body(
     chat: &mut Chat,
     path: &Path,
     md_source: bool,
+    weak: &gpui::WeakEntity<Chat>,
 ) -> gpui::AnyElement {    let t = T();
     let is_md = md_file(path);
     let Some(ft) = chat.file_cache.get(path) else {
@@ -649,6 +650,7 @@ fn file_editor_body(
         }
         let base = abs.parent().map(|p| p.to_path_buf());
         let blocks_for_list = blocks.clone();
+        let weak_preview = weak.clone();
         return div()
             .relative()
             .flex_1()
@@ -659,6 +661,8 @@ fn file_editor_body(
             .bg(rgb(t.bg))
             .child(
                 gpui::list(chat.file_view_list.clone(), move |ix, _window, _cx| {
+                    // 预览内路径点击基准 = 预览文件所在目录（pi-web baseDir 同型）
+                    crate::markdown::set_link_target(weak_preview.clone(), base.clone());
                     crate::markdown::render_doc_item(&blocks_for_list, ix, base.as_deref())
                 })
                 // list 元素自身要 flex_1 从 flex 列父容器拿高度——Auto 尺寸

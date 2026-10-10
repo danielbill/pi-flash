@@ -153,6 +153,9 @@ impl Chat {
     /// 023 改版：编辑器实体懒创建（InputState::new 要 window，本调用链
     /// 没有——渲染帧在 content.rs 里补），二进制/超限文件提示不打开。
     pub(crate) fn open_file_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // 消息文本/远程控制可能传来相对路径：统一按 cwd 绝对化（已开复用
+        // 的 same_path 比较与磁盘读取都基于绝对形态）
+        let path = if path.is_absolute() { path } else { self.cwd.join(path) };
         let is_html = path
             .extension()
             .and_then(|e| e.to_str())

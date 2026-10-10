@@ -1579,6 +1579,9 @@ pub(crate) fn render_msg(
 ) -> gpui::Div {
     // pi-web 消息间距 marginBottom 16（v 此前 22 偏大）
     let mut col = div().w_full().mb(px(16.)).flex().flex_col();
+    // 消息内文件路径/本地文件链接点击的目标（markdown 渲染构建期捕获进
+    // 事件闭包；文件 md 预览走 content.rs 自设 base）
+    markdown::set_link_target(weak.clone(), None);
     if m.role == Role::User {
         // v56-4 c18-c22（pi-web UserMessageView parity）：右对齐 85% 宽、
         // user_bg 底 + 1px 蓝边框 rgba(59,130,246,.2)、圆角 12、pad 8/12、
