@@ -14,7 +14,7 @@ use crate::{
     ActiveTheme as _, Colorize, Root,
 };
 
-use super::{mode::InputMode, InputState, LastLayout};
+use super::{mode::InputMode, Decorations, InputState, LastLayout};
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
@@ -112,7 +112,15 @@ impl TextElement {
                 let mut x = px(0.);
                 if row >= visible_range.start {
                     if let Some(line) = lines.get(row - visible_range.start) {
-                        let local = offset.saturating_sub(state.text.line_start_offset(row));
+                        let line_start = state.text.line_start_offset(row);
+                        let mut local = offset.saturating_sub(line_start);
+                        // PF-024: 折叠态 doc→vis 换算（FoldSet 单点收口，
+                        // 光标 x 与绘制行文本同一坐标系，不错位）。
+                        if let Some(dec) = &last_layout.decorations {
+                            local = dec
+                                .doc_to_vis(line_start + local)
+                                .saturating_sub(dec.doc_to_vis(line_start));
+                        }
                         if let Some(p) = line.position_for_index(local, line_height) {
                             x = p.x;
                         }
@@ -621,12 +629,29 @@ impl TextElement {
                 .get(visible_range.start + ix)
                 .expect("line should exists in text_wrapper");
 
-            debug_assert_eq!(line_item.len(), line.len());
+            // PF-024: 折叠态按折叠后行长单段 shaping——text_wrapper 是 doc
+            // 文本的行模型（含软换行），折叠后长度不再相等；md Live Preview
+            // 关软换行（wrap 与折叠正交），单段即全行。
+            let folded = last_layout.decorations.is_some();
+            if folded {
+                debug_assert!(
+                    last_layout.wrap_width.is_none(),
+                    "折叠态必须关软换行（024 §6.1 P1 定案）"
+                );
+            } else {
+                debug_assert_eq!(line_item.len(), line.len());
+            }
 
             let mut line_layout = LineLayout::new();
             let mut wrapped_lines = SmallVec::with_capacity(1);
 
-            for range in &line_item.wrapped_lines {
+            let wrapped_ranges: SmallVec<[Range<usize>; 1]> = if folded {
+                smallvec::smallvec![0..line.len()]
+            } else {
+                line_item.wrapped_lines.clone()
+            };
+
+            for range in &wrapped_ranges {
                 let line_runs = runs_for_range(runs, offset, &range);
                 let line_runs = if bg_segments.is_empty() {
                     line_runs
@@ -798,12 +823,25 @@ impl Element for TextElement {
             .text
             .line_end_offset(visible_range.end.saturating_sub(1));
 
-        let highlight_styles = self.highlight_lines(
-            &visible_range,
-            visible_top,
-            visible_start_offset..visible_end_offset,
-            cx,
-        );
+        // PF-024: 装饰 provider（md Live Preview）每帧纯函数现算——折叠文本 +
+        // 折叠坐标系样式；None = 走原路径（tree-sitter 高亮 + doc 文本）。
+        let decorations: Option<Rc<Decorations>> = state
+            .decorations
+            .as_ref()
+            .and_then(|p| p.decorate(&state.text, visible_range.clone(), state.cursor()))
+            .map(Rc::new);
+
+        let highlight_styles = if let Some(dec) = decorations.as_ref() {
+            // 折叠坐标系样式（可见区按序全覆盖），替代 ts 高亮（两者不叠加）
+            Some(dec.styles.clone())
+        } else {
+            self.highlight_lines(
+                &visible_range,
+                visible_top,
+                visible_start_offset..visible_end_offset,
+                cx,
+            )
+        };
 
         let state = self.state.read(cx);
         let multi_line = state.mode.is_multi_line();
@@ -824,6 +862,9 @@ impl Element for TextElement {
                 &Rope::from("*".repeat(text.chars().count())),
                 cx.theme().foreground,
             )
+        } else if let Some(dec) = decorations.as_ref() {
+            // PF-024: 折叠后显示文本（行数与 doc 严格一致，折叠只在行内）
+            (&dec.display, cx.theme().foreground)
         } else {
             (&text, cx.theme().foreground)
         };
@@ -849,6 +890,7 @@ impl Element for TextElement {
             line_number_width,
             lines: Rc::new(vec![]),
             cursor_bounds: None,
+            decorations: decorations.as_ref().map(Rc::clone),
         };
 
         let run = TextRun {
@@ -935,7 +977,12 @@ impl Element for TextElement {
         let mut longest_line_width = wrap_width.unwrap_or(px(0.));
         if state.mode.is_multi_line() && !state.soft_wrap && lines.len() > 1 {
             let longest_row = state.text_wrapper.longest_row.row;
-            let longtest_line: SharedString = state.text.slice_line(longest_row).to_string().into();
+            let longtest_line: SharedString = if let Some(dec) = &last_layout.decorations {
+                // PF-024: 横向滚动宽度按折叠后最长行（doc 最长行可能已折叠）
+                dec.display.slice_line(longest_row).to_string().into()
+            } else {
+                state.text.slice_line(longest_row).to_string().into()
+            };
             longest_line_width = window
                 .text_system()
                 .shape_line(

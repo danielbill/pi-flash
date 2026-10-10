@@ -21,6 +21,7 @@ use unicode_segmentation::*;
 use super::{
     blink_cursor::BlinkCursor,
     change::Change,
+    decorations::{DecorationProvider, Decorations},
     element::TextElement,
     mask_pattern::MaskPattern,
     mode::{InputMode, TabSize},
@@ -246,6 +247,10 @@ pub(super) struct LastLayout {
     pub(super) line_height: Pixels,
     /// The wrap width of text layout, this will change will InputElement painted.
     pub(super) wrap_width: Option<Pixels>,
+    /// PF-024: 本帧装饰结果（折叠文本 + 样式 + 折叠集）。光标/方向键/点击
+    /// 反算共用同一套 doc↔vis 换算（provider 结果存这里，paint 后保留供
+    /// 鼠标命中使用）。
+    pub(super) decorations: Option<Rc<Decorations>>,
     /// The line number area width of text layout, if not line number, this will be 0px.
     pub(super) line_number_width: Pixels,
     /// The cursor position (top, left) in pixels.
@@ -271,6 +276,9 @@ impl LastLayout {
 pub struct InputState {
     pub(super) focus_handle: FocusHandle,
     pub(super) mode: InputMode,
+    /// PF-024: Markdown 所见即所得装饰 provider（None = 原路径：doc 文本 +
+    /// tree-sitter；非 md 文件/源码态恒为 None，零开销）。
+    pub(super) decorations: Option<Rc<dyn DecorationProvider>>,
     pub(super) text: Rope,
     pub(super) text_wrapper: TextWrapper,
     pub(super) history: History<Change>,
@@ -411,6 +419,7 @@ impl InputState {
             pattern: None,
             validate: None,
             mode: InputMode::SingleLine,
+            decorations: None,
             last_layout: None,
             last_bounds: None,
             last_selected_range: None,
@@ -934,6 +943,23 @@ impl InputState {
             self.text_wrapper.set_wrap_width(None, cx);
         }
         cx.notify();
+    }
+
+    /// PF-024: 挂/摘 Markdown 所见即所得装饰 provider。挂上后每帧 prepaint
+    /// 调 `decorate` 拿折叠文本与样式；摘掉（None）立即回到原路径。无需
+    /// window：下一帧 prepaint 自然读到（切换方自行 `cx.notify()` 重绘）。
+    pub fn set_decorations(&mut self, decorations: Option<Rc<dyn DecorationProvider>>) {
+        self.decorations = decorations;
+    }
+
+    /// PF-024: 是否挂着装饰 provider（app 渲染帧幂等同步用）。
+    pub fn has_decorations(&self) -> bool {
+        self.decorations.is_some()
+    }
+
+    /// PF-024: 行号开关读取（非 CodeEditor 恒 false）。
+    pub fn show_line_number(&self) -> bool {
+        self.mode.line_number()
     }
 
     /// Set the regular expression pattern of the input field.

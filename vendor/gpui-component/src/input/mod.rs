@@ -2,6 +2,7 @@ mod blink_cursor;
 mod change;
 mod clear_button;
 mod cursor;
+mod decorations;
 mod element;
 mod lsp;
 mod mask_pattern;
@@ -18,6 +19,7 @@ mod text_wrapper;
 
 pub(crate) use clear_button::*;
 pub use cursor::*;
+pub use decorations::*;
 pub use lsp::*;
 pub use mask_pattern::MaskPattern;
 pub use mode::TabSize;
@@ -28,4 +30,5 @@ pub use text_input::*;
 
 pub use lsp_types::Position;
 pub use rope_ext::*;
-pub use ropey::Rope;
+// PF-024: LineType 供 app 侧 provider 数行数（ropey 在 app 只是 dev-dep）
+pub use ropey::{LineType, Rope};
