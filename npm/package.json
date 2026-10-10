@@ -1,0 +1,35 @@
+{
+  "name": "pi-flash",
+  "version": "0.1.1",
+  "description": "Pi-Flash (PF) — 极速 pi coding agent 桌面端。npm 薄壳包：安装时从 GitHub Releases 拉取平台载荷。",
+  "homepage": "https://github.com/danielbill/pi-flash#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielbill/pi-flash.git"
+  },
+  "bugs": {
+    "url": "https://github.com/danielbill/pi-flash/issues"
+  },
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "pi-flash": "bin/pi-flash.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {
+    "postinstall": "node bin/fetch-payload.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "pi",
+    "pi-flash",
+    "coding-agent",
+    "gpui"
+  ]
+}

@@ -3,6 +3,30 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 080 软件分发 P0+P1：npm 薄壳 + GitHub Releases 载荷（2026-10-10，bead pi-flash-xnl）
+
+- **目标**：像 pi-web 一样一条命令完成下载与更新
+  `npm install -g pi-flash@latest`（装=更=卸=回滚，npm 语义白拿）。
+  设计 `docs/模块设计/080-软件分发.md`，调研存档 `docs/INSTALL_UPDATE.md`。
+- **npm/ 薄壳**（零依赖）：`bin/lib.js` 探测/下载/校验/解压/落位、
+  `bin/pi-flash.js` 启动器（版本戳自愈：兜底 --ignore-scripts/镜像剥钩子）、
+  `bin/fetch-payload.js` postinstall 入口。载荷落包目录 `payload/`，npm 卸载自动清。
+  校验取用 sidecar `<资产>.sha256` → `SHA256SUMS` 双层（macOS CI 与本地
+  release.sh 各写各的，避免互覆盖）；解压首选 System32 绝对路径 bsdtar
+  （git-bash GNU tar 抢 PATH，把 `D:` 当远程主机名）→ PowerShell 兜底。
+- **体积**：release.sh/workflow 裁非宿主 esbuild（vendor/pi 416MB 里 284MB 是
+  26 平台副本）→ 下载 200MB+ → ≈120MB；资产改名
+  `pi-flash-<版本>-{win32-x64,darwin-arm64}.zip`。
+- **release.sh**：版本三处同步（Cargo + npm/package.json）、SHA256SUMS 生成、
+  尾部手动块补 `gh release create` 挂资产 + `npm publish`；macOS workflow 同步
+  裁剪/改名/sidecar/双文件挂载（YAML 解析过）。
+- **实测**：`node npm/test/e2e.js` 本地回环 **19/19**（安装/stdio 退出码透传/
+  三种自愈/SUMS 兜底/损坏拦截/0.1.1→0.1.2 更新=同一条命令/快路径不重下）；
+  npm 11.19 install-scripts 警告当前不阻断 postinstall（未来可能默认拦，自愈兜底）。
+  门禁：cargo check ✓、pi-link 127+3 ✓、bash -n ✓。
+- **待发布动作**（非代码）：release.sh 实跑（尾部自带 gh release + npm publish
+  指引）；本机 npm ENEEDAUTH，发布前需 `npm adduser`。
+
 ## 065 文本编辑卡顿治理Ⅱ：选区绘制对齐 Zed——逐行 quad 去 lyon 曲面细分（2026-10-10，bead pi-flash-zr8）
 
 - **症状**（用户复验）：光标移动已顺；拖选多行要「稍稍停顿才画出选区」，

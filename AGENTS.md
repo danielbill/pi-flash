@@ -18,6 +18,7 @@ Pi-Flash
 - zed 性能原型：`D:\github\zed` → gpui、markdown、theme、ui、terminal、agent_ui
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
 - 架构设计：`docs/ARCHITECTURE.md`
+- 软件分发（一条命令装/更）：`docs/模块设计/080-软件分发.md`（npm 薄壳 + GitHub Releases；本地自测 `node npm/test/e2e.js`）
 - bug 追踪：`docs/bugs.md`
 - 进度：`docs/progress.md`；复刻计划：`docs/PORT_PLAN.md`
 - 截图：`tmp/屏幕截图/`
