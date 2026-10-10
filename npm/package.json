@@ -24,7 +24,8 @@
     "postinstall": "node bin/fetch-payload.js"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "keywords": [
     "pi",

@@ -129,5 +129,5 @@ cat <<EOF
   gh release create "v${VERSION}" --verify-tag --title "v${VERSION}" \\
     --notes-file "${NOTES_FILE}" \\
     "dist/${ZIP_NAME}" "dist/${ZIP_NAME}.sha256" "dist/SHA256SUMS"
-  (cd npm && npm publish)       # 薄壳包（首次需 npm adduser 登录；publishConfig 已设 access=public）
+  (cd npm && npm publish)       # 薄壳包（首次需 npm login --registry=https://registry.npmjs.org/；publishConfig 已钉官方源）
 EOF

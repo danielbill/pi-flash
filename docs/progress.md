@@ -25,7 +25,8 @@
   npm 11.19 install-scripts 警告当前不阻断 postinstall（未来可能默认拦，自愈兜底）。
   门禁：cargo check ✓、pi-link 127+3 ✓、bash -n ✓。
 - **待发布动作**（非代码）：release.sh 实跑（尾部自带 gh release + npm publish
-  指引）；本机 npm ENEEDAUTH，发布前需 `npm adduser`。
+  指引）；本机 npm 默认源为 npmmirror 只读镜像，发布前需
+  `npm login --registry=https://registry.npmjs.org/`（publishConfig 已钉官方源）。
 
 ## 065 文本编辑卡顿治理Ⅱ：选区绘制对齐 Zed——逐行 quad 去 lyon 曲面细分（2026-10-10，bead pi-flash-zr8）
 
