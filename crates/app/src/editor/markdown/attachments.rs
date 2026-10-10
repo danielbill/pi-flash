@@ -46,11 +46,17 @@ pub(crate) fn unique_png_path(dir: &Path, now: DateTime<Local>) -> PathBuf {
 }
 
 /// 光标处插入串：相对 md 文件的 `/` 分隔路径（图片就在 md 同级 assets 下，
-/// strip 基准 = md 父目录；失败退化为绝对路径，仍可渲染）。
+/// strip 基准 = md 父目录；失败退化为绝对路径，仍可渲染）。含空格/括号
+/// 的路径用 `<>` 包裹——否则 pulldown 在空格处截断、整条解析失败（025 P1）。
 pub(crate) fn image_ref_markdown(md_path: &Path, img_path: &Path) -> String {
     let base = md_path.parent().unwrap_or_else(|| Path::new("."));
     let rel = img_path.strip_prefix(base).unwrap_or(img_path);
-    format!("![]({})", rel.to_string_lossy().replace('\\', "/"))
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel.contains([' ', '(', ')', '<', '>']) {
+        format!("![](<{rel}>)")
+    } else {
+        format!("![]({rel})")
+    }
 }
 
 /// 剪贴板图 → png 字节：png 直存；jpg/gif/webp/bmp 经 image crate 转码；
@@ -146,6 +152,16 @@ mod tests {
             Path::new("D:/vault/posts/assets/a/file-1.png"),
         );
         assert_eq!(s, "![](assets/a/file-1.png)");
+    }
+
+    #[test]
+    fn insert_ref_wraps_spaced_path_in_angle_brackets() {
+        // md 文件名含空格 → 归档目录含空格 → 引用必须 <> 包裹
+        let s = image_ref_markdown(
+            Path::new("D:/vault/文章 一.md"),
+            Path::new("D:/vault/assets/文章 一/file-2.png"),
+        );
+        assert_eq!(s, "![](<assets/文章 一/file-2.png>)");
     }
 
     #[test]

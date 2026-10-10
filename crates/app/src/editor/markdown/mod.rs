@@ -1575,8 +1575,7 @@ fn render_table(head: &[Vec<Run>], rows: &[Vec<Vec<Run>>], t: &Theme) -> gpui::D
 
 /// 图片：本地文件 gpui img() 直渲染；http/不存在 → alt 文本占位。
 /// 相对路径按 md 文件目录解析（IMG_BASE，render_themed 设置）。
-fn render_image(url: &str, width: Option<f32>, alt: &[Run], t: &Theme) -> gpui::AnyElement {
-    let placeholder = || {
+fn render_image(url: &str, width: Option<f32>, alt: &[Run], t: &Theme) -> gpui::AnyElement {    let placeholder = || {
         div()
             .w_full()
             .text_color(rgb(t.text_dim))
@@ -1605,12 +1604,7 @@ fn render_image(url: &str, width: Option<f32>, alt: &[Run], t: &Theme) -> gpui::
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        img_base()
-            .map(|base| {
-                let joined = base.join(path);
-                if joined.exists() { joined } else { path.to_path_buf() }
-            })
-            .unwrap_or_else(|| path.to_path_buf())
+        resolve_relative_image(path)
     };
     let Some((bytes, format)) = std::fs::read(&path).ok().zip(format) else {
         return placeholder();
@@ -2051,6 +2045,36 @@ fn img_base() -> Option<std::path::PathBuf> {
     IMG_BASE.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// 相对图片路径解析（025 P1）：md 目录直查 → md 同级 `assets/` 直层 →
+/// `assets/<子目录>/`同名匹配（Obsidian 归档结构 assets/文章名/file.png，
+/// wiki 引用多为裸文件名）→ 都找不到回退原路径（占位）。
+fn resolve_relative_image(url: &std::path::Path) -> std::path::PathBuf {
+    let Some(base) = img_base() else {
+        return url.to_path_buf();
+    };
+    let direct = base.join(url);
+    if direct.exists() {
+        return direct;
+    }
+    let assets = base.join("assets");
+    if let Ok(rd) = std::fs::read_dir(&assets) {
+        let flat = assets.join(url);
+        if flat.exists() {
+            return flat;
+        }
+        let Some(name) = url.file_name() else {
+            return url.to_path_buf();
+        };
+        for e in rd.flatten() {
+            let cand = e.path().join(name);
+            if cand.is_file() {
+                return cand;
+            }
+        }
+    }
+    url.to_path_buf()
+}
+
 /// 文档模式标题字号（Zed/GitHub 尺度，相对预览正文字号）。
 fn doc_size_for_level(level: u8, base: f32) -> f32 {
     match level {
@@ -2134,10 +2158,65 @@ pub(crate) fn flex_span(grow: f32, min_w: Option<f32>) -> gpui::Div {
 /// - [`doc_blocks`]：解析（LRU 缓存）+ 取块数当 item_count；
 /// - [`render_doc_item`]：list 条目闭包，懒渲染第 ix 块。
 pub fn doc_blocks(src: &str) -> std::rc::Rc<Vec<MdBlock>> {
+    // 025 P1：Obsidian wiki 图片 `![[file.png]]` → 标准 `![](file.png)`。
+    // pulldown-cmark 不认 wiki 语法（Obsidian 迁移库大量存在）；在解析
+    // 前统一展开（fence 代码块内不碰，纯 `[[wiki链接]]` 不碰）。
+    let expanded = expand_wiki_images(src);
     set_doc_mode(true);
-    let blocks = cached_blocks(src, true);
+    let blocks = cached_blocks(&expanded, true);
     set_doc_mode(false);
     blocks
+}
+
+/// 把源码里的 wiki 图片引用展开为标准 markdown（逐行，fence 感知）。
+/// `![[a.png]]` → `![](a.png)`；`![[a.png|300]]` 取尺寸前的文件名。
+fn expand_wiki_images(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut in_fence = false;
+    for line in src.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            continue;
+        }
+        if in_fence {
+            out.push_str(line);
+        } else {
+            out.push_str(&expand_wiki_line(line));
+        }
+    }
+    out
+}
+
+fn expand_wiki_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    loop {
+        let Some(s) = rest.find("![[") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..s]);
+        let after = &rest[s + 3..];
+        let Some(e) = after.find("]]" ) else {
+            // 无闭合：原样保留剩余部分
+            out.push_str(&rest[s..]);
+            break;
+        };
+        let name = &after[..e];
+        if name.is_empty() || name.contains('[') || name.contains(']') || name.contains('\n') {
+            out.push_str(&rest[s..s + 3 + e + 2]);
+        } else {
+            // Obsidian 尺寸语法 `![[a.png|300]]`：取管道前文件名
+            let file = name.split('|').next().unwrap_or(name).trim();
+            out.push_str("![](");
+            out.push_str(file);
+            out.push(')');
+        }
+        rest = &after[e + 2..];
+    }
+    out
 }
 
 /// list 条目渲染。doc_mode/字体规格/img 基准在条目内自设——list 条目
@@ -2201,6 +2280,37 @@ fn render_doc_item_inner(blocks: &[MdBlock], ix: usize, t: &Theme) -> AnyElement
 
 #[cfg(test)]
 mod tests {
+    /// 025 P1：wiki 图片展开——fence 外展开、fence 内不碰、尺寸语法取文件名。
+    #[test]
+    fn wiki_images_expanded_outside_fence_only() {
+        let src = "看图\n\n![[file-a.png]]\n\n```\n![[code.png]]\n```\n\n![[b.png|300]]\n";
+        let blocks = super::doc_blocks(src);
+        let imgs: Vec<&str> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                MdBlock::Image { url, .. } => Some(url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(imgs, vec!["file-a.png", "b.png"]);
+    }
+
+    /// 025 P1：含空格路径用 <> 包裹后 pulldown 能正常解析为图片。
+    #[test]
+    fn spaced_path_in_angle_brackets_parses_as_image() {
+        let blocks = super::doc_blocks("![](<assets/文章 一/file-1.png>)");
+        assert!(matches!(
+            blocks.first(),
+            Some(MdBlock::Image { url, .. }) if url == "assets/文章 一/file-1.png"
+        ));
+    }
+
+    /// 裸空格路径（不包 <>）解析失败作为对照——证明包裹必要性。
+    #[test]
+    fn bare_spaced_path_fails_to_parse_as_image() {
+        let blocks = super::doc_blocks("![](assets/文章 一/file-1.png)");
+        assert!(!matches!(blocks.first(), Some(MdBlock::Image { .. })));
+    }
     use super::*;
 
     fn text_of(runs: &[Run]) -> String {
