@@ -37,7 +37,6 @@ mod i18n;
 mod markdown;
 mod models_config;
 mod remote_control;
-mod render;
 mod startup;
 mod theme;
 mod services;

@@ -2,7 +2,9 @@
 //! `content.rs` 的 `ensure_file_editor` / `file_editor_body`，后置收拢）
 //! 与编辑能力子模块。
 //!
-//! 当前仅有 wysiwyg 一个子模块；vendor 编辑底座见
+//! 当前子模块：view（023 fileView 视图，自 content.rs 拆入）+ wysiwyg
+//! （Markdown 所见即所得）；vendor 编辑底座见
 //! `vendor/gpui-component/src/input/`（rope/光标/undo/IME），本域不碰内核。
 
+pub mod view;
 pub mod wysiwyg;

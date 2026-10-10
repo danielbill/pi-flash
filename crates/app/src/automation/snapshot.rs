@@ -403,7 +403,7 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     let crumbs: Vec<String> = active_file
         .as_ref()
         .map(|p| {
-            crate::content::breadcrumb_segments(&chat.cwd, p)
+            crate::editor::view::breadcrumb_segments(&chat.cwd, p)
                 .iter()
                 .map(|(t, _)| t.to_string())
                 .collect()

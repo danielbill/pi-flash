@@ -33,9 +33,9 @@ InputState 补丁（样式 run + 折叠 range + 光标映射）。
 
 | 现有 | 位置 | 本模块角色 |
 |---|---|---|
-| 缓冲区真值（dirty 时预览渲染 buffer 非磁盘） | `content.rs:666` | **架构铁律已成立**：文档 = rope 源码，装饰只改视图 |
-| 双态切换（eye：`doc_blocks` 预览 ↔ CodeEditor 源码） | `content.rs:653 file_editor_body` | 改造对象：`!md_source` 分支由"只读预览"改为 Live Preview |
-| Markdown 渲染器（样式规格：字号/字重/混色/行高） | `markdown.rs`（2698 行） | 样式规格唯一来源，`style.rs` 引用而非复制 |
+| 缓冲区真值（dirty 时预览渲染 buffer 非磁盘） | `editor/view.rs file_editor_body` | **架构铁律已成立**：文档 = rope 源码，装饰只改视图 |
+| 双态切换（eye：`doc_blocks` 预览 ↔ CodeEditor 源码） | `editor/view.rs file_editor_body` | 改造对象：`!md_source` 分支由"只读预览"改为 Live Preview |
+| Markdown 渲染器（样式规格：字号/字重/混色/行高） | `markdown/mod.rs`（含 `render/` 子模块） | 样式规格唯一来源，`style.rs` 引用而非复制 |
 | pulldown-cmark 0.13 | `crates/app/Cargo.toml` | 增量解析 → 行模型（等价 lezer 角色） |
 | CodeEditor 底座：rope/光标/undo/IME/搜索 | `vendor/gpui-component/src/input/` | **全部保留**，本模块只加装饰层，不碰编辑内核语义 |
 
@@ -73,12 +73,13 @@ reveal 因此是免费的：selection 变了 paint 自然拿到新 cursor，无�
 ## 4. 模块划分
 
 ```
-crates/app/src/editor/             # 编辑器模块域（新立；编辑编排从 content.rs
-├── mod.rs                         #  的 ensure_file_editor/file_editor_body 后置收拢）
+crates/app/src/editor/             # 编辑器模块域（024 重构：fileView 视图已
+├── mod.rs                         #  自 content.rs 拆入 view.rs；file_cache/打开
+├── view.rs                        #  编排状态仍在 Chat，后置收拢）
 └── wysiwyg/                       # Markdown 所见即所得（本设计主体）
-    ├── mod.rs     装配：MdLiveProvider、md 模式开关（content.rs 调）
+    ├── mod.rs     装配：MdLiveProvider、md 模式开关（view.rs 调）
     ├── parse.rs   pulldown → Vec<LineModel>（容错：未闭合标记不折叠，保守露源码）
-    ├── style.rs   MdStyle → HighlightStyle（规格引用 markdown.rs，不复制常量）
+    ├── style.rs   MdStyle → HighlightStyle（规格引用 markdown/ 渲染器，不复制常量）
     ├── fold.rs    FoldSet：doc↔vis 映射、atomic 跳过、reveal 决策（纯函数，主力测试区）
     └── widget.rs  P3 预留：块级折叠/占位（图/表/mermaid/公式）
 ```
@@ -91,7 +92,7 @@ vendor 侧（薄补丁，每处 ~20-50 行）：
 - `movement.rs`：左右/词移动经 `FoldSet::next_atomic`
 - `mode.rs`：`InputMode` 增 md 变体（或复用 CodeEditor 关 highlighter）
 
-`content.rs file_editor_body`：`is_md && !md_source` 分支从只读预览改为
+`editor/view.rs file_editor_body`：`is_md && !md_source` 分支从只读预览改为
 Live Preview 的 `TextInput`（关行号、开 provider）；原 `doc_blocks` 预览路径
 保留给 P3 的块占位与未来阅读态。
 
