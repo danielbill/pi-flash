@@ -3,15 +3,15 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     fill, point, px, relative, size, App, Bounds, Corners, Element, ElementId, ElementInputHandler,
     Entity, GlobalElementId, Half, HighlightStyle, Hitbox, Hsla, IntoElement, LayoutId,
-    MouseButton, MouseMoveEvent, Path, Pixels, Point, ShapedLine, SharedString, Size, Style,
-    TextRun, TextStyle, UnderlineStyle, Window,
+    MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine, SharedString, Size, Style, TextRun,
+    TextStyle, UnderlineStyle, Window,
 };
 use ropey::Rope;
 use smallvec::SmallVec;
 
 use crate::{
     input::{blink_cursor::CURSOR_WIDTH, text_wrapper::LineLayout, RopeExt as _},
-    ActiveTheme as _, Colorize, PixelsExt, Root,
+    ActiveTheme as _, Colorize, Root,
 };
 
 use super::{mode::InputMode, InputState, LastLayout};
@@ -259,12 +259,12 @@ impl TextElement {
         (cursor_bounds, scroll_offset, current_row)
     }
 
-    /// Layout the match range to a Path.
-    pub(crate) fn layout_match_range(
+    /// Layout the match range to per-row rect quads (Zed-style).
+    pub(crate) fn layout_match_quads(
         range: Range<usize>,
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
-    ) -> Option<Path<Pixels>> {
+    ) -> Option<Vec<Bounds<Pixels>>> {
         if range.is_empty() {
             return None;
         }
@@ -351,7 +351,6 @@ impl TextElement {
             prev_lines_offset += line.len() + 1;
         }
 
-        let mut points = vec![];
         if line_corners.is_empty() {
             return None;
         }
@@ -364,33 +363,23 @@ impl TextElement {
             }
         }
 
-        for corners in &line_corners {
-            points.push(corners.top_right);
-            points.push(corners.bottom_right);
-            points.push(corners.bottom_left);
-        }
-
-        let mut rev_line_corners = line_corners.iter().rev().peekable();
-        while let Some(corners) = rev_line_corners.next() {
-            points.push(corners.top_left);
-            if let Some(next) = rev_line_corners.peek() {
-                if next.top_left.x > corners.top_left.x {
-                    points.push(point(next.top_left.x, corners.top_left.y));
-                }
-            }
-        }
-
-        // print_points_as_svg_path(&line_corners, &points);
-
+        // v62: Zed 同款逐行矩形（每显示行一个 quad，paint_quad 直绘）。
+        // 原实现把各行拼成阶梯多边形走 PathBuilder::build()——那是同步
+        // lyon CPU tessellation，拖选时每帧白打几 ms～几十 ms（debug 更甚），
+        // 多行选区表现为「停顿一下才画出来」。逐行 quad 与 Zed 编辑器选区
+        // 同形（软换行逐显示行独立高亮），视觉差异只在异宽行的接缝处。
         let path_origin = bounds.origin + point(line_number_width, px(0.));
-        let first_p = *points.get(0).unwrap();
-        let mut builder = gpui::PathBuilder::fill();
-        builder.move_to(path_origin + first_p);
-        for p in points.iter().skip(1) {
-            builder.line_to(path_origin + *p);
-        }
+        let quads = line_corners
+            .iter()
+            .map(|corners| {
+                Bounds::from_corners(
+                    path_origin + corners.top_left,
+                    path_origin + corners.bottom_right,
+                )
+            })
+            .collect();
 
-        builder.build().ok()
+        Some(quads)
     }
 
     fn layout_search_matches(
@@ -398,7 +387,7 @@ impl TextElement {
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
         cx: &mut App,
-    ) -> Vec<(Path<Pixels>, bool)> {
+    ) -> Vec<(Vec<Bounds<Pixels>>, bool)> {
         let search_panel = self.state.read(cx).search_panel.clone();
         let Some((ranges, current_match_ix)) = search_panel.and_then(|panel| {
             if let Some(matcher) = panel.read(cx).matcher() {
@@ -410,14 +399,14 @@ impl TextElement {
             return vec![];
         };
 
-        let mut paths = Vec::new();
+        let mut matches = Vec::new();
         for (index, range) in ranges.as_ref().iter().enumerate() {
-            if let Some(path) = Self::layout_match_range(range.clone(), last_layout, bounds) {
-                paths.push((path, current_match_ix == index));
+            if let Some(quads) = Self::layout_match_quads(range.clone(), last_layout, bounds) {
+                matches.push((quads, current_match_ix == index));
             }
         }
 
-        paths
+        matches
     }
 
     fn layout_hover_highlight(
@@ -425,14 +414,14 @@ impl TextElement {
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
         cx: &mut App,
-    ) -> Option<Path<Pixels>> {
+    ) -> Option<Vec<Bounds<Pixels>>> {
         let hover_popover = self.state.read(cx).hover_popover.clone();
         let Some(symbol_range) = hover_popover.map(|popover| popover.read(cx).symbol_range.clone())
         else {
             return None;
         };
 
-        Self::layout_match_range(symbol_range, last_layout, bounds)
+        Self::layout_match_quads(symbol_range, last_layout, bounds)
     }
 
     fn layout_document_colors(
@@ -440,15 +429,15 @@ impl TextElement {
         document_colors: &[(Range<usize>, Hsla)],
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
-    ) -> Vec<(Path<Pixels>, Hsla)> {
-        let mut paths = vec![];
+    ) -> Vec<(Vec<Bounds<Pixels>>, Hsla)> {
+        let mut colors = vec![];
         for (range, color) in document_colors.iter() {
-            if let Some(path) = Self::layout_match_range(range.clone(), last_layout, bounds) {
-                paths.push((path, *color));
+            if let Some(quads) = Self::layout_match_quads(range.clone(), last_layout, bounds) {
+                colors.push((quads, *color));
             }
         }
 
-        paths
+        colors
     }
 
     fn layout_selections(
@@ -456,7 +445,7 @@ impl TextElement {
         last_layout: &LastLayout,
         bounds: &mut Bounds<Pixels>,
         cx: &mut App,
-    ) -> Option<Path<Pixels>> {
+    ) -> Vec<Bounds<Pixels>> {
         let state = self.state.read(cx);
         let mut selected_range = state.selected_range;
         if let Some(ime_marked_range) = &state.ime_marked_range {
@@ -465,7 +454,7 @@ impl TextElement {
             }
         }
         if selected_range.is_empty() {
-            return None;
+            return vec![];
         }
 
         let (start_ix, end_ix) = if selected_range.start < selected_range.end {
@@ -477,7 +466,7 @@ impl TextElement {
         let range = start_ix.max(last_layout.visible_range_offset.start)
             ..end_ix.min(last_layout.visible_range_offset.end);
 
-        Self::layout_match_range(range, &last_layout, bounds)
+        Self::layout_match_quads(range, &last_layout, bounds).unwrap_or_default()
     }
 
     /// Calculate the visible range of lines in the viewport.
@@ -731,10 +720,10 @@ pub(super) struct PrepaintState {
     cursor_scroll_offset: Point<Pixels>,
     /// row index (zero based), no wrap, same line as the cursor.
     current_row: Option<usize>,
-    selection_path: Option<Path<Pixels>>,
-    hover_highlight_path: Option<Path<Pixels>>,
-    search_match_paths: Vec<(Path<Pixels>, bool)>,
-    document_color_paths: Vec<(Path<Pixels>, Hsla)>,
+    selection_quads: Vec<Bounds<Pixels>>,
+    hover_highlight_quads: Option<Vec<Bounds<Pixels>>>,
+    search_match_quads: Vec<(Vec<Bounds<Pixels>>, bool)>,
+    document_color_quads: Vec<(Vec<Bounds<Pixels>>, Hsla)>,
     hover_definition_hitbox: Option<Hitbox>,
     bounds: Bounds<Pixels>,
 }
@@ -744,38 +733,6 @@ impl IntoElement for TextElement {
 
     fn into_element(self) -> Self::Element {
         self
-    }
-}
-
-/// A debug function to print points as SVG path.
-#[allow(unused)]
-fn print_points_as_svg_path(
-    line_corners: &Vec<Corners<Point<Pixels>>>,
-    points: &Vec<Point<Pixels>>,
-) {
-    for corners in line_corners {
-        println!(
-            "tl: ({}, {}), tr: ({}, {}), bl: ({}, {}), br: ({}, {})",
-            corners.top_left.x.as_f32() as i32,
-            corners.top_left.y.as_f32() as i32,
-            corners.top_right.x.as_f32() as i32,
-            corners.top_right.y.as_f32() as i32,
-            corners.bottom_left.x.as_f32() as i32,
-            corners.bottom_left.y.as_f32() as i32,
-            corners.bottom_right.x.as_f32() as i32,
-            corners.bottom_right.y.as_f32() as i32,
-        );
-    }
-
-    if points.len() > 0 {
-        println!(
-            "M{},{}",
-            points[0].x.as_f32() as i32,
-            points[0].y.as_f32() as i32
-        );
-        for p in points.iter().skip(1) {
-            println!("L{},{}", p.x.as_f32() as i32, p.y.as_f32() as i32);
-        }
     }
 }
 
@@ -1048,10 +1005,10 @@ impl Element for TextElement {
             self.layout_cursor(&last_layout, &mut bounds, window, cx);
         last_layout.cursor_bounds = cursor_bounds;
 
-        let search_match_paths = self.layout_search_matches(&last_layout, &mut bounds, cx);
-        let selection_path = self.layout_selections(&last_layout, &mut bounds, cx);
-        let hover_highlight_path = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
-        let document_color_paths =
+        let search_match_quads = self.layout_search_matches(&last_layout, &mut bounds, cx);
+        let selection_quads = self.layout_selections(&last_layout, &mut bounds, cx);
+        let hover_highlight_quads = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
+        let document_color_quads =
             self.layout_document_colors(&document_colors, &last_layout, &bounds);
 
         let state = self.state.read(cx);
@@ -1111,11 +1068,11 @@ impl Element for TextElement {
             cursor_bounds,
             cursor_scroll_offset,
             current_row,
-            selection_path,
-            search_match_paths,
-            hover_highlight_path,
+            selection_quads,
+            search_match_quads,
+            hover_highlight_quads,
             hover_definition_hitbox,
-            document_color_paths,
+            document_color_quads,
         }
     }
 
@@ -1211,27 +1168,32 @@ impl Element for TextElement {
         // Paint selections
         if window.is_window_active() {
             let secondary_selection = cx.theme().selection.saturation(0.1);
-            for (path, is_active) in prepaint.search_match_paths.iter() {
-                window.paint_path(path.clone(), secondary_selection);
-
-                if *is_active {
-                    window.paint_path(path.clone(), cx.theme().selection);
+            for (quads, is_active) in prepaint.search_match_quads.iter() {
+                let color = if *is_active {
+                    cx.theme().selection
+                } else {
+                    secondary_selection
+                };
+                for quad in quads {
+                    window.paint_quad(fill(*quad, color));
                 }
             }
 
-            if let Some(path) = prepaint.selection_path.take() {
-                window.paint_path(path, cx.theme().selection);
+            for quad in &prepaint.selection_quads {
+                window.paint_quad(fill(*quad, cx.theme().selection));
             }
 
             // Paint hover highlight
-            if let Some(path) = prepaint.hover_highlight_path.take() {
-                window.paint_path(path, secondary_selection);
+            for quad in prepaint.hover_highlight_quads.iter().flatten() {
+                window.paint_quad(fill(*quad, secondary_selection));
             }
         }
 
         // Paint document colors
-        for (path, color) in prepaint.document_color_paths.iter() {
-            window.paint_path(path.clone(), *color);
+        for (quads, color) in prepaint.document_color_quads.iter() {
+            for quad in quads {
+                window.paint_quad(fill(*quad, *color));
+            }
         }
 
         // Paint text

@@ -3,6 +3,26 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 065 文本编辑卡顿治理Ⅱ：选区绘制对齐 Zed——逐行 quad 去 lyon 曲面细分（2026-10-10，bead pi-flash-zr8）
+
+- **症状**（用户复验）：光标移动已顺；拖选多行要「稍稍停顿才画出选区」，
+  手感与 Zed 明显不同。
+- **根因**（vendor element.rs `layout_match_range`）：选区/搜索匹配/hover
+  高亮/document colors 共用这条路径——把各显示行的行角点拼成阶梯多边形
+  交给 `PathBuilder::build()`，那里同步跑 lyon CPU tessellation（vendor
+  gpui path_builder.rs `tessellate_fill`），拖选时每帧重排重填，debug 下
+  几 ms～几十 ms/帧，多行选区就是「停顿一下才画出来」。Zed 编辑器选区
+  从不走 Path：每显示行一个矩形 quad 直绘。
+- **重写**（对齐 Zed）：`layout_match_range` → `layout_match_quads` 返回
+  逐显示行 `Vec<Bounds>`（行角点计算原样保留：选区续行尾延伸全宽/空行
+  6px 最小宽/软换行续行/反向选择交换），paint 侧 `window.paint_quad(fill(
+  quad, color))`——quad 是 gpui 最便宜原语，无曲面细分、无每帧多边形
+  分配。selections / search matches / hover highlight / document colors
+  四处共用路径一并切换；顺删只服务多边形调试的 `print_points_as_svg_path`。
+- **验证**：app 173 + pi-link 123 测试全绿；pif-ui 多行输入 ctrl-a 全选
+  截帧目检——三行选区逐行矩形正确（1/2 行到行尾文本、末行到 end）。
+  **拖选手感待用户实测**（pif-ui 无鼠标拖拽合成能力）。
+
 ## 064 文本编辑卡顿治理Ⅰ：常驻全量重绘 + syntect 零缓存 + 伪 notify（2026-10-10，bead pi-flash-zr8）
 
 - **诊断**（PI_FLASH_PERF 仪器 + 读码证实）：编辑器 TextElement paint 尾
