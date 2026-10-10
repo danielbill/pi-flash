@@ -241,6 +241,9 @@ pub(crate) fn group_model_row(
     let mut row = div()
         .id(SharedString::from(format!("mp-{}-{}", m.provider, m.id)))
         .h(px(row_h))
+        // uniform_list/vlist 的行是 fit-content：不写 w_full 右侧星标会贴
+        // 着文字（flex_1 无处可撑）；菜单 flex-col 里天然满宽，写了也无害
+        .w_full()
         .px(px(pad_x))
         .flex()
         .items_center()
