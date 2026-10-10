@@ -1964,7 +1964,12 @@ fn main() {
     // recents 首启种子。必须早于任何读盘者（workspace 记忆 / recents / 会话扫描器
     // 都是进程级惰性单例）。
     startup::boot();
-    PERF.store(true, std::sync::atomic::Ordering::Relaxed);
+    // [perf] 仪器总开关：PI_FLASH_PERF=1 才开（1452 RENDER_ON 同款门控）。
+    // 此处曾被无条件 store(true)，每次启动都往 stderr 打 [perf] 行，release 烟测必炸。
+    PERF.store(
+        std::env::var("PI_FLASH_PERF").is_ok(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // theme: PI_FLASH_THEME (dev override) > app_settings.json（pi-flash 专
     // 属配置，绝不碰 pi 的 settings.json——pi 的 settings schema 有自己的
     // theme 键，写入未知主题名会让 pi 每次启动报错）
