@@ -179,6 +179,11 @@ fn dump() -> Result<RegistryDump, String> {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut dump: RegistryDump =
         serde_json::from_str(stdout.trim()).map_err(|e| format!("registry dump 解析失败: {e}"))?;
+    // 旧版 SDK（≤1.0.0）refreshOnCreate:false 下 getModels() 返回空——计数
+    // 全空 = dump 无效，按失败处理（不落缓存，下次弹窗重试）
+    if !dump.providers.is_empty() && dump.model_counts.is_empty() {
+        return Err("registry dump 缺少模型计数（vendor SDK 过旧）".to_string());
+    }
     dump.version = vendored_version().unwrap_or_default();
     Ok(dump)
 }

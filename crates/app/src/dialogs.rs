@@ -368,11 +368,12 @@ fn render_file_dirty(
 /// 大面板 + 顶部全宽搜索（分隔线压底）+ 滚动卡片网格。数据 = SDK 全量
 /// 注册表 dump（registry.rs：打开弹窗时后台拉起，vendor VERSION 缓存）：
 /// 「API KEY」= 声明 apiKey.login 且无 api_key 凭据，副标题 N models（全量
-/// registry 计数）；「订阅服务」= 声明 oauth 且无 oauth 凭据，副标题
-/// OAuth，点击提示未接入（OAuth 登录缓行，051/beads pi-flash-1cb）；
-/// 「自定义」固定一张卡（虚线加号框 → 详情区空白表单）。组序 2026-10-10
-/// 用户定稿：API KEY → 订阅服务 → 自定义；组内保持 registry 原始顺序不
-/// 排序，已配置的 provider 不列（pi-web !configured / !loggedIn 同款）。
+/// registry 计数）→ 点击进详情区 API KEY 表单；「订阅服务」= 声明 oauth
+/// 且无 oauth 凭据，副标题 OAuth，点击提示未接入（OAuth 登录缓行，
+/// 051/beads pi-flash-1cb）。组序 2026-10-10 用户定稿：API KEY → 订阅
+/// 服务（自定义组已移除：PF 只提供内置 + 订阅，存量自定义商走左栏合并
+/// 列表既有编辑器）；组内保持 registry 原始顺序不排序，已配置的 provider
+/// 不列（pi-web !configured / !loggedIn 同款）。
 fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
     let q = input.read(cx).value().trim().to_lowercase();
 
@@ -432,76 +433,8 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
             .child(tr(label))
     };
 
-    let custom_hit = q.is_empty()
-        || "openai anthropic compatible".contains(&q)
-        || tr("自定义端点格式").to_lowercase().contains(&q)
-        || tr("自定义").to_lowercase().contains(&q);
-    let custom_card = {
-        let weak_card = weak.clone();
-        div()
-            .id("pp-custom")
-            .w(px(292.))
-            .p(px(14.))
-            .rounded(px(10.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.bg))
-            .cursor_pointer()
-            .hover(|h| h.border_color(rgb(t.accent)).bg(rgb(t.bg_hover)))
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let _ = weak_card.update(cx, |c, cx| {
-                    c.dialog = None;
-                    if let Some(st) = c.settings.clone() {
-                        st.update(cx, |s, cx| {
-                            s.section = "__add_provider__".into();
-                            s.error = None;
-                            s.mj_name.update(cx, |ti, cx| ti.set_value(String::new(), cx));
-                            s.mj_base.update(cx, |ti, cx| ti.set_value(String::new(), cx));
-                            s.mj_key.update(cx, |ti, cx| ti.set_value(String::new(), cx));
-                            s.mj_api = 0;
-                            cx.notify();
-                        });
-                    }
-                    cx.notify();
-                });
-            })
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_size(crate::appearance::ui_size(12.5))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(t.text))
-                            .child(tr("OpenAI / Anthropic compatible")),
-                    )
-                    .child(
-                        div()
-                            .mt(px(2.))
-                            .text_size(crate::appearance::ui_size(10.5))
-                            .text_color(rgb(t.text_dim))
-                            .child(tr("自定义端点格式")),
-                    ),
-            )
-            // pi-web 同款：右侧虚线圆角方块 + 加号
-            .child(
-                div()
-                    .size(px(28.))
-                    .flex_shrink_0()
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_dashed()
-                    .border_color(rgb(t.border))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon("plus", 13., t.text_dim)),
-            )
-    };
+    // 自定义组已移除（2026-10-10 用户定稿：PF 只提供内置 + 订阅；存量自定义
+    // 商仍走左栏合并列表的既有编辑器）
 
     let status_row = |text: String| {
         div()
@@ -548,7 +481,7 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
     };
 
     let mut body = div().flex().flex_col();
-    // 注册表未就绪/失败：自定义卡照常可用，清单区给状态行
+    // 注册表未就绪/失败：清单区给状态行
     match (&dump, &reg_state) {
         (None, state) if !matches!(state, RegistryState::Failed(_)) => {
             body = body.child(status_row(tr("正在读取 Provider 注册表…").to_string()));
@@ -562,7 +495,7 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
         _ => {}
     }
 
-    // 组序（2026-10-10 用户定稿）：API KEY → 订阅服务 → 自定义
+    // 组序（2026-10-10 用户定稿）：API KEY → 订阅服务（自定义组已移除）
     if !api_cards.is_empty() {
         body = body.child(group_header("API KEY", 0.));
         let mut grid = div().flex().flex_wrap().gap(px(10.));
@@ -615,12 +548,7 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
         }
         body = body.child(grid);
     }
-    // 自定义组（最后；搜索不中整卡隐藏）
-    body = body.child(group_header("自定义", 14.));
-    if custom_hit {
-        body = body.child(custom_card);
-    }
-    if dump.is_some() && api_cards.is_empty() && oauth_cards.is_empty() && !custom_hit {
+    if dump.is_some() && api_cards.is_empty() && oauth_cards.is_empty() {
         body = body.child(status_row(tr("没有匹配的 Provider").to_string()));
     }
 
