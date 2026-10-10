@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use chrono::{DateTime, Local};
-use gpui::{Context, Image, ImageFormat, Window};
-use gpui_component::input::{ImagePasteHook, InputState};
+use gpui::{Image, ImageFormat};
+use gpui_component::input::ImagePasteHook;
 
 /// 目标目录：`<md同级>/assets/<md文件名去扩展>/`（各目录各自归档，
 /// 不上浮到根——拍板，搬运文章时图随文走）。
@@ -73,25 +73,17 @@ pub(crate) fn to_png_bytes(img: &Image) -> Option<Vec<u8>> {
 }
 
 /// 生成挂在 md 编辑器 `InputState` 上的图片粘贴钩子（PF-025 vendor 缝）。
-/// 链路：转 png → 逐级建目录 → 写盘 → 光标处插相对引用（undo 栈）。
+/// 链路：转 png → 逐级建目录 → 写盘 → 返回光标处插入串（undo 栈由
+/// vendor paste 自行处理——钩子是纯函数，不碰 cx/entity 防重入崩溃）。
 pub(crate) fn image_paste_hook(md_path: PathBuf) -> ImagePasteHook {
-    Rc::new(move |img: Image, cx: &mut Context<InputState>, window: &mut Window| {
-        let Some(png) = to_png_bytes(&img) else {
-            return false;
-        };
+    Rc::new(move |img: &Image| {
+        let png = to_png_bytes(img)?;
         let dir = target_dir(&md_path);
-        if std::fs::create_dir_all(&dir).is_err() {
-            return false;
-        }
+        std::fs::create_dir_all(&dir).ok()?;
         let file = unique_png_path(&dir, Local::now());
-        // 先写盘后插文本：写失败不插（不留悬空引用）
-        if std::fs::write(&file, &png).is_err() {
-            return false;
-        }
-        let text = image_ref_markdown(&md_path, &file);
-        let this = cx.entity().clone();
-        this.update(cx, |state, cx| state.insert_image_ref(&text, window, cx));
-        true
+        // 写失败不返回引用串（不留悬空引用）
+        std::fs::write(&file, &png).ok()?;
+        Some(image_ref_markdown(&md_path, &file))
     })
 }
 
