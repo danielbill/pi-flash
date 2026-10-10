@@ -177,7 +177,12 @@ impl ComposerInput {
     }
 
     /// 注册命令名（不含 "/" 前缀；供 token 高亮/整体退格/类别图标）。
+    /// input_area 每帧调用，仅在真变化时 notify——否则 Chat 每帧渲染都把
+    /// ComposerInput 标脏，下一帧又连坐回 Chat，永不停歇。
     pub fn set_command_names(&mut self, names: Vec<String>, cx: &mut Context<Self>) {
+        if self.commands == names {
+            return;
+        }
         self.commands = names;
         cx.notify();
     }

@@ -1406,11 +1406,13 @@ impl Render for Chat {
                 eprintln!("[perf] first frame: {:?}", t0.elapsed());
             }
         }
-        // [perf] 临时仪器：Chat 每秒实际渲染次数（idle 应≈0，编辑/拖选时≈事件数；
-        // 常驻 >30/s = 存在自持重绘循环）。验收后移除。
+        // [perf] 仪器：Chat 每秒实际渲染次数（PI_FLASH_PERF=1 开启）。idle
+        // 应≈1（光标闪烁）；编辑/拖选时≈事件率；无事件却持续 >30/s = 存在
+        // 自持重绘循环（v62 排查文本编辑卡顿的探针，留作常备仪器）。
         static RENDER_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         static RENDER_T: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-        if PERF.load(std::sync::atomic::Ordering::Relaxed) {
+        static RENDER_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *RENDER_ON.get_or_init(|| std::env::var("PI_FLASH_PERF").is_ok()) {
             let n = RENDER_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             let mut slot = RENDER_T.lock().unwrap();
             let report = match *slot {

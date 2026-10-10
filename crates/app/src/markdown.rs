@@ -13,10 +13,13 @@
 //!   Prism vscDarkPlus）
 
 use gpui::{
-    AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString, StyledText, TextStyle,
-    div, prelude::*, px, relative, rgb, rgba,
+    AnyElement, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString, StyledText,
+    TextStyle, div, prelude::*, px, relative, rgb, rgba,
 };
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
+use std::ops::Range;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -136,6 +139,47 @@ fn highlight_segments(code: &str, lang: &str, dark: bool) -> Vec<(String, [u8; 3
     out
 }
 
+// 高亮结果缓存：gpui List 每帧对可见条目重建元素树，syntect 正则状态机
+// 对大代码块是 ms 级纯 CPU，输入不变时每帧白打（打字/拖选/流式动画/光标
+// 闪烁任一原因的重绘都会连坐）。key = 代码哈希 + 长度 + 语言哈希 + 明暗，
+// 命中后源文全等校验防碰撞；线程局部 VecDeque LRU（与 MD_PARSE_CACHE
+// 同款，元素构建只在主线程）。流式期间代码块逐 delta 变化，最多占满队头
+// 被挤出，不影响命中态。
+thread_local! {
+    static HL_CACHE: std::cell::RefCell<
+        std::collections::VecDeque<
+            ((u64, usize, u64, bool), (String, String, std::rc::Rc<Vec<(String, [u8; 3])>>)),
+        >,
+    > = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+const HL_CACHE_CAP: usize = 128;
+
+/// [`highlight_segments`] 的 LRU 包装（渲染热路径一律走这里）。
+fn cached_highlight_segments(
+    code: &str,
+    lang: &str,
+    dark: bool,
+) -> std::rc::Rc<Vec<(String, [u8; 3])>> {
+    let key = (hash_str(code), code.len(), hash_str(lang), dark);
+    HL_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(pos) = cache.iter().rposition(|(k, _)| *k == key) {
+            let entry = cache.remove(pos).expect("pos 来自刚才的迭代");
+            if entry.1 .0.as_str() == code && entry.1 .1.as_str() == lang {
+                let segs = std::rc::Rc::clone(&entry.1 .2);
+                cache.push_back(entry); // 刷新到队尾（LRU）
+                return segs;
+            }
+        }
+        let segs = std::rc::Rc::new(highlight_segments(code, lang, dark));
+        cache.push_back((key, (code.to_string(), lang.to_string(), std::rc::Rc::clone(&segs))));
+        if cache.len() > HL_CACHE_CAP {
+            cache.pop_front();
+        }
+        segs
+    })
+}
+
 /// 等宽字体（pi-web --font-mono 首选 JetBrains Mono；三档字重随二进制打包，
 /// main.rs 注册。gpui 单 family 参数，无回退链——打包保证可解析）
 pub(crate) const MONO_FAMILY: &str = "JetBrains Mono";
@@ -164,6 +208,9 @@ pub(crate) enum Style {
 pub(crate) struct Run {
     pub(crate) text: String,
     pub(crate) style: Style,
+    /// `Style::Link` 的跳转目标（autolink = 文本本身），其余样式恒 None。
+    /// 渲染层据此接 InteractiveText → cx.open_url。
+    pub(crate) url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -183,25 +230,38 @@ pub(crate) enum MdBlock {
     Rule,
 }
 
-fn style_push(styles: &mut Vec<Style>, tag: &Tag) {
-    let base = styles.last().copied().unwrap_or(Style::Normal);
+/// 样式栈元素：(样式, 链接目标)。URL 随样式进栈——链接内嵌粗体等嵌套
+/// 场景不丢跳转目标，渲染层按 run.url 接点击。
+pub(crate) type StyleEntry = (Style, Option<String>);
+
+fn style_push(styles: &mut Vec<StyleEntry>, tag: &Tag) {
+    let (base, base_url) = styles
+        .last()
+        .map(|(s, u)| (*s, u.clone()))
+        .unwrap_or((Style::Normal, None));
     let next = match tag {
-        Tag::Strong => match base {
-            Style::Italic | Style::BoldItalic => Style::BoldItalic,
-            _ => Style::Bold,
-        },
-        Tag::Emphasis => match base {
-            Style::Bold | Style::BoldItalic => Style::BoldItalic,
-            _ => Style::Italic,
-        },
-        Tag::Link { .. } => Style::Link,
-        Tag::Strikethrough => Style::Strike,
-        _ => base,
+        Tag::Strong => (
+            match base {
+                Style::Italic | Style::BoldItalic => Style::BoldItalic,
+                _ => Style::Bold,
+            },
+            base_url,
+        ),
+        Tag::Emphasis => (
+            match base {
+                Style::Bold | Style::BoldItalic => Style::BoldItalic,
+                _ => Style::Italic,
+            },
+            base_url,
+        ),
+        Tag::Link { dest_url, .. } => (Style::Link, Some(dest_url.to_string())),
+        Tag::Strikethrough => (Style::Strike, base_url),
+        _ => (base, base_url),
     };
     styles.push(next);
 }
 
-fn style_pop(styles: &mut Vec<Style>, end: &TagEnd) {
+fn style_pop(styles: &mut Vec<StyleEntry>, end: &TagEnd) {
     match end {
         TagEnd::Strong | TagEnd::Emphasis | TagEnd::Link | TagEnd::Strikethrough => {
             styles.pop();
@@ -280,78 +340,91 @@ fn collect_inline(
     html: bool,
 ) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
-    let mut styles: Vec<Style> = Vec::new();
+    let mut styles: Vec<StyleEntry> = Vec::new();
     let mut text = String::new();
     let mut cur = Style::Normal;
+    let mut cur_url: Option<String> = None;
 
-    fn flush(text: &mut String, cur: Style, runs: &mut Vec<Run>) {
+    fn flush(text: &mut String, cur: Style, cur_url: &Option<String>, runs: &mut Vec<Run>) {
         if text.is_empty() {
             return;
         }
         let taken = std::mem::take(text);
         if cur == Style::Normal {
-            // GFM 自动链接：普通文本里的裸 URL 提为 Link run
+            // GFM 自动链接：普通文本里的裸 URL 提为 Link run（目标 = 文本本身）
             for (seg, is_link) in split_links(&taken) {
                 if !seg.is_empty() {
+                    let url = is_link.then(|| seg.clone());
                     runs.push(Run {
                         text: seg,
                         style: if is_link { Style::Link } else { Style::Normal },
+                        url,
                     });
                 }
             }
         } else {
-            runs.push(Run { text: taken, style: cur });
+            runs.push(Run { text: taken, style: cur, url: cur_url.clone() });
         }
     }
 
     while *i < events.len() {
-        let style_now = *styles.last().unwrap_or(&Style::Normal);
         match &events[*i] {
             e if is_end(e) => {
                 *i += 1;
-                flush(&mut text, cur, &mut runs);
+                flush(&mut text, cur, &cur_url, &mut runs);
                 return runs;
             }
             Event::Text(t) => {
-                if style_now != cur {
-                    flush(&mut text, cur, &mut runs);
-                    cur = style_now;
+                let (s, u) = styles
+                    .last()
+                    .map(|(s, u)| (*s, u.clone()))
+                    .unwrap_or((Style::Normal, None));
+                if s != cur || u != cur_url {
+                    flush(&mut text, cur, &cur_url, &mut runs);
+                    cur = s;
+                    cur_url = u;
                 }
                 text.push_str(t);
             }
             Event::InlineHtml(h) => {
                 // v57-1: 行内 HTML；html=false（用户气泡）时标签原文可见。
                 // 开/闭标签跨事件维持样式栈（配对标签样式不丢）
-                flush(&mut text, cur, &mut runs);
+                flush(&mut text, cur, &cur_url, &mut runs);
                 if html {
                     use crate::render::html::InlineHtmlEffect as E;
                     match crate::render::html::fragment_effect(h) {
-                        E::StylePush(st) => styles.push(st),
+                        E::StylePush(st, url) => styles.push((st, url)),
                         E::StylePop => {
                             styles.pop();
                         }
                         E::Runs(rs) => runs.extend(rs),
                     }
-                    cur = *styles.last().unwrap_or(&Style::Normal);
+                    let (s, u) = styles
+                        .last()
+                        .map(|(s, u)| (*s, u.clone()))
+                        .unwrap_or((Style::Normal, None));
+                    cur = s;
+                    cur_url = u;
                 } else {
                     runs.extend(literal_runs(h));
                     cur = Style::Normal;
+                    cur_url = None;
                     styles.clear();
                 }
             }
             Event::InlineMath(tex) => {
                 // v57-2: 行内公式标记 run（渲染期拆段成图）
-                flush(&mut text, cur, &mut runs);
-                runs.push(Run { text: tex.to_string(), style: Style::Math });
+                flush(&mut text, cur, &cur_url, &mut runs);
+                runs.push(Run { text: tex.to_string(), style: Style::Math, url: None });
             }
             Event::DisplayMath(tex) => {
                 // 多行 $$…$$ 的 DisplayMath 事件发在段落流内（实测），同用标记
-                flush(&mut text, cur, &mut runs);
-                runs.push(Run { text: tex.to_string(), style: Style::DisplayMath });
+                flush(&mut text, cur, &cur_url, &mut runs);
+                runs.push(Run { text: tex.to_string(), style: Style::DisplayMath, url: None });
             }
             Event::Code(c) => {
-                flush(&mut text, cur, &mut runs);
-                runs.push(Run { text: c.to_string(), style: Style::Code });
+                flush(&mut text, cur, &cur_url, &mut runs);
+                runs.push(Run { text: c.to_string(), style: Style::Code, url: None });
             }
             // html=false 即用户气泡路径（render_user 唯一调用方）：段内软
             // 换行保留 \n（pi-web parity：.markdown-user-message p 的
@@ -365,7 +438,7 @@ fn collect_inline(
         }
         *i += 1;
     }
-    flush(&mut text, cur, &mut runs);
+    flush(&mut text, cur, &cur_url, &mut runs);
     runs
 }
 
@@ -418,7 +491,7 @@ fn parse_blocks(events: &[Event], html: bool) -> Vec<MdBlock> {
             }
             Event::Text(t) => {
                 out.push(MdBlock::Paragraph {
-                    runs: vec![Run { text: t.to_string(), style: Style::Normal }],
+                    runs: vec![Run { text: t.to_string(), style: Style::Normal, url: None }],
                 });
                 i += 1;
             }
@@ -664,7 +737,7 @@ fn parse_block(
                                 }
                             }
                             Event::Text(t) => {
-                                runs.push(Run { text: t.to_string(), style: Style::Normal });
+                                runs.push(Run { text: t.to_string(), style: Style::Normal, url: None });
                                 *i += 1;
                             }
                             _ => *i += 1,
@@ -832,6 +905,52 @@ fn styled_text(
     StyledText::new(s).with_default_highlights(&base_style(size, line_h, color, weight), highlights)
 }
 
+/// 链接 run 的（拼接后字节区间, URL）平行列表，供 InteractiveText 命中。
+fn link_ranges(runs: &[Run]) -> (Vec<Range<usize>>, Vec<String>) {
+    let mut ranges = Vec::new();
+    let mut urls = Vec::new();
+    let mut pos = 0usize;
+    for r in runs {
+        let end = pos + r.text.len();
+        if let Some(url) = &r.url {
+            ranges.push(pos..end);
+            urls.push(url.clone());
+        }
+        pos = end;
+    }
+    (ranges, urls)
+}
+
+/// runs → 文本元素：含链接 run 时包 InteractiveText（点击 = cx.open_url 调
+/// 系统默认浏览器；悬停手型光标由 InteractiveText 自动处理），否则纯
+/// StyledText（多数块零开销）。element id 用拼接文本哈希——渲染无状态，
+/// 靠内容稳定性保住 InteractiveText 跨帧的 mouse down/up 状态（流式中
+/// 正在增长的段落点击可能失效，定稿即恢复）。
+fn runs_element(
+    runs: &[Run],
+    t: &Theme,
+    size: f32,
+    line_h: f32,
+    color: u32,
+    weight: FontWeight,
+) -> AnyElement {
+    let text = styled_text(runs, t, size, line_h, color, weight);
+    let (ranges, urls) = link_ranges(runs);
+    if ranges.is_empty() {
+        return text.into_any_element();
+    }
+    let mut hasher = DefaultHasher::new();
+    hasher.write(runs_text(runs).as_bytes());
+    let id = gpui::ElementId::named_usize("md-link", hasher.finish() as usize);
+    InteractiveText::new(id, text)
+        .on_click(ranges, move |ix, _window, cx| {
+            if let Some(url) = urls.get(ix) {
+                cx.open_url(url);
+            }
+        })
+        .into_any_element()
+}
+
 /// 正文块（段落/表格/代码等）：字号必须挂在容器 div 上——gpui 0.2.2 的
 /// StyledText 排版字号取 `window.text_style()`（容器继承链），runs 里的
 /// font_size 只决定字族/字重/颜色，对字形尺寸无效。此前 base_style 里算好
@@ -851,7 +970,7 @@ fn sized_text(
         .text_size(px(spec.size + (size - BASE)))
         .line_height(relative(line_h))
         .font_weight(weight)
-        .child(styled_text(runs, t, size, line_h, color, weight))
+        .child(runs_element(runs, t, size, line_h, color, weight))
         .into_any_element()
 }
 
@@ -964,13 +1083,13 @@ fn render_code_block_doc(lang: &str, code: &str, t: &Theme) -> gpui::AnyElement 
     let body_bg = crate::theme::mix_rgb(t.bg, t.bg_panel, 0.92);
     let mut text = String::new();
     let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
-    for (seg, c) in highlight_segments(code, lang, t.dark) {
+    for (seg, c) in cached_highlight_segments(code, lang, t.dark).iter() {
         if seg.is_empty() {
             continue;
         }
         let start = text.len();
-        text.push_str(&seg);
-        push_color(&mut highlights, start, text.len(), c);
+        text.push_str(seg);
+        push_color(&mut highlights, start, text.len(), *c);
     }
     let spec = active_md_spec();
     let base = TextStyle {
@@ -1091,8 +1210,8 @@ fn render_code_block(lang: &str, code: &str, t: &Theme, streaming: bool) -> gpui
     } else {
         let n_digits = lines.len().to_string().len();
         let dim = rgb(t.text_dim);
-        let mut segs = highlight_segments(code, lang, t.dark);
-        segs.push((String::new(), [0, 0, 0])); // sentinel：保证末行 flush
+        // LRU 命中返回 Rc 借用，不再每帧 clone 全部高亮段
+        let segs = cached_highlight_segments(code, lang, t.dark);
         let mut seg_ix = 0usize;
         for (i, _) in lines.iter().enumerate() {
             // 行号 gutter
@@ -1457,7 +1576,7 @@ fn render_block(b: &MdBlock, depth: usize, t: &Theme, streaming: bool, color: u3
                         .border_b_1()
                         .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x55)))
                 })
-                .child(styled_text(runs, t, size, 1.35, color, FontWeight::SEMIBOLD))
+                .child(runs_element(runs, t, size, 1.35, color, FontWeight::SEMIBOLD))
                 .into_any_element()
         }
         MdBlock::Paragraph { runs } => paragraph_element(runs, t, color),
@@ -1709,7 +1828,7 @@ fn cached_blocks(src: &str, html: bool) -> std::rc::Rc<Vec<MdBlock>> {
 
 /// Html/InlineHtml 的字面显示（html=false 路径）：标签原文可见。
 fn literal_runs(html_src: &str) -> Vec<Run> {
-    vec![Run { text: html_src.to_string(), style: Style::Normal }]
+    vec![Run { text: html_src.to_string(), style: Style::Normal, url: None }]
 }
 
 /// 超长消息（pi-web ⚠ Message content is very large）：提示行 + 纯文本
@@ -1826,7 +1945,7 @@ fn html_block_doc(h: &str) -> Vec<MdBlock> {
     let text = text.split('\n').map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
     if !text.is_empty() {
         out.push(MdBlock::Paragraph {
-            runs: vec![Run { text, style: Style::Normal }],
+            runs: vec![Run { text, style: Style::Normal, url: None }],
         });
     }
     out
@@ -1983,6 +2102,67 @@ mod tests {
         }
     }
 
+    /// 链接可点击的前提：`[text](url)` 的 dest_url 必须随 run 保留
+    /// （此前 Tag::Link{..} 直接丢弃，链接只有样式没有目标）。
+    #[test]
+    fn link_keeps_dest_url() {
+        let blocks = parse("see [网易转载原文](https://example.com/a?b=1) here");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert_eq!(runs.len(), 3);
+                assert_eq!(runs[0].url, None);
+                assert_eq!(runs[1].style, Style::Link);
+                assert_eq!(runs[1].text, "网易转载原文");
+                assert_eq!(runs[1].url.as_deref(), Some("https://example.com/a?b=1"));
+                assert_eq!(runs[2].url, None);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// GFM autolink：裸 URL 提为 Link run，目标 = 文本本身。
+    #[test]
+    fn autolink_url_is_text() {
+        let blocks = parse("visit https://example.com/x. ok");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert_eq!(runs.len(), 3);
+                assert_eq!(runs[1].style, Style::Link);
+                assert_eq!(runs[1].text, "https://example.com/x");
+                assert_eq!(runs[1].url.as_deref(), Some("https://example.com/x"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 链接内嵌粗体：样式合成 Bold，但 URL 随样式栈保留（点击不丢）。
+    #[test]
+    fn nested_bold_in_link_keeps_url() {
+        let blocks = parse("[**bold link**](https://example.com)");
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert_eq!(runs.len(), 1);
+                assert_eq!(runs[0].style, Style::Bold);
+                assert_eq!(runs[0].url.as_deref(), Some("https://example.com"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 行内 `<a href>`：href 经 InlineHtml 分支随 run 保留。
+    #[test]
+    fn inline_html_link_keeps_href() {
+        let blocks = parse_with("<a href=\"https://x.example\">y</a>", true);
+        match &blocks[0] {
+            MdBlock::Paragraph { runs } => {
+                assert_eq!(runs.len(), 1);
+                assert_eq!(runs[0].style, Style::Link);
+                assert_eq!(runs[0].url.as_deref(), Some("https://x.example"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     /// DOC_MODE 恢复 guard：断言失败也要复位，免得毒化同进程其他测试。
     struct DocModeGuard;
     impl Drop for DocModeGuard {
@@ -2086,6 +2266,47 @@ mod tests {
             assert!(segs.iter().any(|(t, _)| t.contains("fn")));
             assert!(segs.len() > 1, "expected multiple colored segments, dark={dark}");
         }
+    }
+
+    #[test]
+    fn highlight_cache_hits_return_identical_segments() {
+        let code = "fn main() {\n    let x = 1;\n}\nlet y = 2;\n";
+        let direct = highlight_segments(code, "rust", true);
+        let first = cached_highlight_segments(code, "rust", true);
+        let second = cached_highlight_segments(code, "rust", true); // 应命中
+        assert_eq!(&direct, &first[..]);
+        assert_eq!(&direct, &second[..]);
+        // 明暗/语言不串缓存
+        let light = cached_highlight_segments(code, "rust", false);
+        assert_eq!(&highlight_segments(code, "rust", false), &light[..]);
+        let py = cached_highlight_segments(code, "python", true);
+        assert_eq!(&highlight_segments(code, "python", true), &py[..]);
+    }
+
+    /// 开销留档（--nocapture 看）：大代码块 syntect 冷跑 vs 缓存命中。
+    /// Chat 每帧重建可见元素树，此差值就是原先编辑/拖选时每帧白打的成本。
+    #[test]
+    fn highlight_cache_cost_probe() {
+        let unit = "fn generated_item(n: usize) -> usize {\n    let mut acc = n ^ 0x9E37_79B9;\n    for i in 0..8 {\n        acc = acc.rotate_left(7).wrapping_mul(0x100_0000_001B3);\n    }\n    match acc % 5 { 0 => acc, 1 => acc + 1, 2 => !acc, 3 => acc >> 2, _ => acc << 2 }\n}\n";
+        let code = unit.repeat(40); // ~320 行，AI 回复常见体量
+        warm_up(); // syn() 一次性语法集装载不计入
+        let t = std::time::Instant::now();
+        let cold = highlight_segments(&code, "rust", true);
+        let d_cold = t.elapsed();
+        let _ = cached_highlight_segments(&code, "rust", true);
+        let t = std::time::Instant::now();
+        for _ in 0..100 {
+            let _ = cached_highlight_segments(&code, "rust", true);
+        }
+        let d_hot = t.elapsed();
+        eprintln!(
+            "[perf] highlight {}B/{}lines: syntect {:.2} ms, cached hit {:.4} ms",
+            code.len(),
+            cold.iter().filter(|(s, _)| s.contains('\n')).count(),
+            d_cold.as_secs_f64() * 1e3,
+            d_hot.as_secs_f64() * 1e3 / 100.
+        );
+        assert!(d_cold > d_hot / 100, "缓存命中应显著快于 syntect 冷跑");
     }
 
     #[test]

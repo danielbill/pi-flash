@@ -3,6 +3,39 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 064 文本编辑卡顿治理Ⅰ：常驻全量重绘 + syntect 零缓存 + 伪 notify（2026-10-10，bead pi-flash-zr8）
+
+- **诊断**（PI_FLASH_PERF 仪器 + 读码证实）：编辑器 TextElement paint 尾
+  无条件 notify（gpui-component 上游行为），而 draw 期间的 notify 只标脏
+  不调度新帧（vendor gpui window.rs `invalidate_view` 仅 DrawPhase::None
+  分支置 dirty）——idle 并非满帧率自旋（实测 1/s = 光标闪烁），但编辑器
+  永远躺在 dirty 集，**任何原因的帧**（闪烁/流式动画/终端输出）都重建编辑
+  器并沿祖先链连坐整个 Chat；拖选与纯 hover 每 mouse-move 事件、移动光标
+  每键各 notify 一次 = Chat 全量重建一次。重建里最贵段：markdown.rs
+  `highlight_segments` 零缓存，syntect 正则状态机每帧对每个可见代码块
+  重跑——280 行块 release **92ms**（debug 876ms），帧预算才 12ms，这就是
+  「挪光标迟缓/拖选卡顿」主因。
+- **syntect 高亮 LRU**（markdown.rs）：`cached_highlight_segments` 与
+  MD_PARSE_CACHE 同款（key=代码哈希+长度+语言哈希+明暗，命中全等校验，
+  VecDeque LRU 128），两个调用点（doc 块/聊天块）改走；聊天块的行尾
+  sentinel 经推演为无操作一并去除。实测 280 行块 92.10→**0.017ms**
+  （release，≈5500×）。新增测试：命中一致性（明暗/语言不串）+ 开销探针
+  （`highlight_cache_cost_probe`，--nocapture 留档）。
+- **paint 尾 notify 门控**（vendor element.rs）：稳态（布局 bounds/光标/
+  选区/滚动偏移/内容尺寸全未变）跳过 notify；真实变化路径（replace/
+  move_to/set_font/set_input_bounds 折行宽变化/blink 定时器）本就自带
+  notify。编辑器不再永久脏，无关帧不再连坐。
+- **hover 伪 notify**（vendor lsp/mod.rs `handle_mouse_move`）：无 hover
+  provider 且无 hover-definition 态迁移时不再 notify——原先鼠标扫过输入框
+  即每事件全量重建 Chat。
+- **set_command_names 判等**（composer_input.rs）：input_area 每帧调用，
+  原无条件 notify 把 ComposerInput 每帧标脏再连坐回 Chat。
+- **仪器**：Chat::render 加 renders/s 计数（`PI_FLASH_PERF=1` 开启，留作
+  常备仪器——无事件持续 >30/s 即自持重绘循环）。
+- **验证**：pif-ui 全回归（打字/多行/方向键/shift 选区/ctrl-a 删除；闪烁
+  相位 1.2s 前后截帧不同=仍重绘；整页截图目检无异常）；app 172 + pi-link
+  123 测试全绿。
+
 ## 062 大文件打开提速 + 已开 tab 只切换（2026-10-08，bead pi-flash-5hf）
 
 - **目录树重开 bug（用户报告）**：`open_file_tab` 原「已打开分支」在

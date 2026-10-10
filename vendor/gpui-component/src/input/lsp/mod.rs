@@ -141,12 +141,22 @@ impl InputState {
         window: &mut Window,
         cx: &mut Context<InputState>,
     ) {
+        // v62: 纯悬停移动原先也无条件 notify——无 hover provider 时本事件
+        // 没有任何状态变化，白标一次脏（编辑器在宿主视图内，notify 沿祖先
+        // 链连坐整棵重渲染；pi-flash 里鼠标扫过输入框即全量重建 Chat）。
+        // 仅 hover 定义态真实迁移或存在 provider（popover 异步上路）时重绘。
+        let had_hover_definition = !self.hover_definition.is_empty();
         if event.modifiers.secondary() {
             self.handle_hover_definition(offset, window, cx);
+            cx.notify();
         } else {
             self.hover_definition.clear();
-            self.handle_hover_popover(offset, window, cx);
+            if self.lsp.hover_provider.is_some() {
+                self.handle_hover_popover(offset, window, cx);
+                cx.notify();
+            } else if had_hover_definition {
+                cx.notify();
+            }
         }
-        cx.notify();
     }
 }

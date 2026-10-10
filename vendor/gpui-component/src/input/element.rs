@@ -1296,9 +1296,24 @@ impl Element for TextElement {
         }
 
         self.state.update(cx, |state, cx| {
+            let next_cursor = state.cursor();
+            // v62: paint 尾原先无条件 notify——draw 期间的 notify 不调度新帧
+            // （window.rs invalidate_view 的 DrawPhase::None 分支才置 dirty），
+            // 但会把本视图写进 dirty 集合，于是「任何原因触发的帧」（光标
+            // 闪烁/流式动画/终端输出）都要重建编辑器并沿祖先链连坐整个宿主
+            // 视图（pi-flash 的 Chat 全量重渲染）。稳态（布局 bounds/光标/
+            // 选区/滚动/内容尺寸均未变）跳过；真实变化路径（replace_text_
+            // in_range、move_to、set_font、set_input_bounds 折行宽变化、
+            // blink 定时器）都自带 notify，不依赖此处。
+            let changed = state.last_bounds != Some(bounds)
+                || state.last_cursor != Some(next_cursor)
+                || state.last_selected_range != Some(selected_range)
+                || state.scroll_size != prepaint.scroll_size
+                || state.input_bounds != input_bounds
+                || state.scroll_handle.offset() != prepaint.cursor_scroll_offset;
             state.last_layout = Some(prepaint.last_layout.clone());
             state.last_bounds = Some(bounds);
-            state.last_cursor = Some(state.cursor());
+            state.last_cursor = Some(next_cursor);
             state.set_input_bounds(input_bounds, cx);
             state.last_selected_range = Some(selected_range);
             state.scroll_size = prepaint.scroll_size;
@@ -1307,7 +1322,9 @@ impl Element for TextElement {
                 .set_offset(prepaint.cursor_scroll_offset);
             state.deferred_scroll_offset = None;
 
-            cx.notify();
+            if changed {
+                cx.notify();
+            }
         });
 
         if let Some(hitbox) = prepaint.hover_definition_hitbox.as_ref() {
