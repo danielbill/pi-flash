@@ -29,12 +29,29 @@ pub fn merge(mut folds: Vec<Range<usize>>) -> Vec<Range<usize>> {
     out
 }
 
-/// 行级 reveal：丢弃与 `line` 相交的 folds（该行语法全部显现）。
-/// `line` = 行首..行尾（不含 `\n`，由调用方 `line_start/line_end_offset` 产出）。
-pub fn reveal_line(folds: &[Range<usize>], line: Range<usize>) -> Vec<Range<usize>> {
-    folds
+/// 容器级 reveal（024 P2）：选区/光标与容器 content **相交或接触**
+/// → 该容器全部定界 folds 显现（`**粗体**` 整对标记同进退，不会
+/// 左显右不显）；merge 段与任一命中容器的 folds 相交即丢。空选区
+/// （光标）落在段内/两端停靠位同样触发（编辑进入态）；选区强制
+/// reveal：选中的文本必须可见原文（Obsidian 行为）。
+pub fn reveal_containers(
+    containers: &[super::parse::Container],
+    merged: &[Range<usize>],
+    sel: Range<usize>,
+) -> Vec<Range<usize>> {
+    let touched: Vec<&super::parse::Container> = containers
         .iter()
-        .filter(|f| f.end <= line.start || f.start >= line.end)
+        .filter(|c| c.content.end >= sel.start && c.content.start <= sel.end)
+        .collect();
+    merged
+        .iter()
+        .filter(|m| {
+            !touched.iter().any(|c| {
+                c.folds
+                    .iter()
+                    .any(|f| f.start < m.end && m.start < f.end)
+            })
+        })
         .cloned()
         .collect()
 }
@@ -74,13 +91,21 @@ mod tests {
     }
 
     #[test]
-    fn reveal_line_drops_intersecting_folds_only() {
-        let folds = ranges(&[(0, 2), (10, 12), (20, 22)]);
-        // 光标行 = 8..15 → 丢 10..12，保留其余
-        let kept = reveal_line(&folds, 8..15);
-        assert_eq!(kept, ranges(&[(0, 2), (20, 22)]));
-        // 光标行无 folds → 原样
-        assert_eq!(reveal_line(&folds, 30..40), folds);
+    fn reveal_containers_drop_whole_container() {
+        use super::super::parse::Container;
+        // `**粗体**`：左标记 0..2、内容 2..6、右标记 6..8 —— 一个容器
+        let containers = vec![Container {
+            content: 2..6,
+            folds: vec![0..2, 6..8],
+        }];
+        let merged = ranges(&[(0, 2), (6, 8), (20, 22)]);
+        // 光标落在内容/停靠位 → 整容器（两枚标记）同显
+        for sel in [3..3, 2..2, 6..6, 1..7] {
+            let kept = reveal_containers(&containers, &merged, sel.clone());
+            assert_eq!(kept, ranges(&[(20, 22)]), "sel {sel:?} 应整容器显现");
+        }
+        // 光标在段外 → 原样折叠
+        assert_eq!(reveal_containers(&containers, &merged, 12..12), merged);
     }
 
     #[test]

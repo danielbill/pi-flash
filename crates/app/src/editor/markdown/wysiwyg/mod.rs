@@ -39,7 +39,7 @@ impl DecorationProvider for MdLiveProvider {
         &self,
         text: &Rope,
         visible_lines: Range<usize>,
-        cursor: usize,
+        selection: Range<usize>,
     ) -> Option<Decorations> {
         if text.len() == 0 {
             return None;
@@ -49,14 +49,13 @@ impl DecorationProvider for MdLiveProvider {
             return None;
         }
         let src = text.to_string();
-        let (spans, raw_folds, line_scale) = parse::parse(&src);
-        let merged = fold::merge(raw_folds);
+        let (spans, containers, line_scale) = parse::parse(&src);
+        let merged = fold::merge(parse::flat_folds(&containers));
 
-        // P0 行级 reveal（024 §6.2）：光标所在行 folds 全部显现，其余行隐藏
-        let cursor = cursor.min(text.len());
-        let row = text.offset_to_point(cursor).row;
-        let line = text.line_start_offset(row)..text.line_end_offset(row);
-        let folds = fold::reveal_line(&merged, line);
+        // P2 容器级 reveal（024）：折叠段与选区相交/接触即整容器显现
+        //（`**粗体**` 整对标记同进退），其余容器保持折叠
+        let selection = selection.start.min(text.len())..selection.end.min(text.len());
+        let folds = fold::reveal_containers(&containers, &merged, selection);
 
         // 折叠后显示文本：folds 不含 \n（parse 保证），行数严格一致
         let mut display = src;

@@ -118,7 +118,16 @@ impl InputState {
     pub(super) fn left(&mut self, _: &MoveLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.pause_blink_cursor(cx);
         if self.selected_range.is_empty() {
-            self.move_to(self.previous_boundary(self.cursor()), cx);
+            let mut off = self.previous_boundary(self.cursor());
+            // PF-024 P2：原子跳过折叠段——光标永不停在隐藏语法字符之间
+            if let Some(dec) = self
+                .last_layout
+                .as_ref()
+                .and_then(|l| l.decorations.as_ref())
+            {
+                off = dec.next_atomic(off, -1);
+            }
+            self.move_to(off, cx);
         } else {
             self.move_to(self.selected_range.start, cx)
         }
@@ -127,7 +136,16 @@ impl InputState {
     pub(super) fn right(&mut self, _: &MoveRight, _: &mut Window, cx: &mut Context<Self>) {
         self.pause_blink_cursor(cx);
         if self.selected_range.is_empty() {
-            self.move_to(self.next_boundary(self.selected_range.end), cx);
+            let mut off = self.next_boundary(self.selected_range.end);
+            // PF-024 P2：原子跳过折叠段
+            if let Some(dec) = self
+                .last_layout
+                .as_ref()
+                .and_then(|l| l.decorations.as_ref())
+            {
+                off = dec.next_atomic(off, 1);
+            }
+            self.move_to(off, cx);
         } else {
             self.move_to(self.selected_range.end, cx)
         }

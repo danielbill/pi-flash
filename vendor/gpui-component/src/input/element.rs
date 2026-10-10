@@ -841,7 +841,13 @@ impl Element for TextElement {
         let decorations: Option<Rc<Decorations>> = state
             .decorations
             .as_ref()
-            .and_then(|p| p.decorate(&state.text, visible_range.clone(), state.cursor()))
+            .and_then(|p| {
+                p.decorate(
+                    &state.text,
+                    visible_range.clone(),
+                    state.selected_range.start..state.selected_range.end,
+                )
+            })
             .map(Rc::new);
 
         let highlight_styles = if let Some(dec) = decorations.as_ref() {

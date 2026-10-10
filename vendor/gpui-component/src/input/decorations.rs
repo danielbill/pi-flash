@@ -63,17 +63,18 @@ impl Decorations {
     }
 
     /// 方向键原子跳过：给定 doc 偏移与方向（-1/1），返回跨过紧邻折叠段后的
-    /// doc 偏移。光标永不停在看不见的语法标记中间。
+    /// doc 偏移。光标永不停在看不见的语法标记中间——停靠位（段两端）或
+    /// 段内（点击/插入产生）均跨到段另一侧。
     pub fn next_atomic(&self, off: usize, dir: i8) -> usize {
         let mut off = off;
         loop {
             let hit = self.folds.iter().find(|f| {
                 if dir < 0 {
-                    // 左移：紧邻段尾（off == f.end，停靠位在段前）
-                    f.end == off
+                    // 左移：段后停靠位 或 段内 → 跨到段首
+                    f.end == off || (f.start < off && off < f.end)
                 } else {
-                    // 右移：紧邻段首（off == f.start，停靠位在段后）
-                    f.start == off
+                    // 右移：段前停靠位 或 段内 → 跨到段尾
+                    f.start == off || (f.start < off && off < f.end)
                 }
             });
             match hit {
@@ -131,6 +132,12 @@ impl Decorations {
 /// （doc 文本 + tree-sitter 高亮，零开销——非 md 文件/源码态恒为 None）。
 pub trait DecorationProvider {
     /// `text`：文档本体 rope；`visible_lines`：视口行区间（0-based，行号）；
-    /// `cursor`：光标 doc 字节偏移（reveal 决策入参）。
-    fn decorate(&self, text: &Rope, visible_lines: Range<usize>, cursor: usize) -> Option<Decorations>;
+    /// `selection`：当前选区 doc 字节偏移（空选区 start==end == 光标位；
+    /// reveal 决策入参——段级 reveal + 选区强制 reveal）。
+    fn decorate(
+        &self,
+        text: &Rope,
+        visible_lines: Range<usize>,
+        selection: Range<usize>,
+    ) -> Option<Decorations>;
 }

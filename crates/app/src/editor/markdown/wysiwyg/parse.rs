@@ -26,6 +26,27 @@ pub struct Span {
     pub style: Style,
 }
 
+/// 语法容器（024 P2 段级 reveal 单位）：一个语法结构（strong/em/行内
+/// code/链接/标题前缀/围栏标记）的内容区间与其全部定界 folds——
+/// reveal 时整容器同进退（`**粗体**` 光标触碰即整对标记同显，
+/// 不会左显右不显）。
+pub struct Container {
+    /// 内容区间（定界符之外的正文；选区/光标相交判定用）
+    pub content: Range<usize>,
+    /// 该容器的全部定界 folds（标记字节天然互斥，跨容器不重叠）
+    pub folds: Vec<Range<usize>>,
+}
+
+/// 平铺全部 folds（升序）——vendor 映射输入。
+pub fn flat_folds(containers: &[Container]) -> Vec<Range<usize>> {
+    let mut out: Vec<Range<usize>> = containers
+        .iter()
+        .flat_map(|c| c.folds.iter().cloned())
+        .collect();
+    out.sort_by_key(|f| f.start);
+    out
+}
+
 /// 与渲染器完全一致的解析选项（复制此处以保同步；渲染器改选项时同改）。
 fn parse_options() -> Options {
     let mut opts = Options::empty();
@@ -43,6 +64,8 @@ struct Frame {
     style: Style,
     first_content: Option<usize>,
     last_content_end: usize,
+    /// 本容器已收集的定界 folds（闭合时随 Container 一并产出）
+    folds: Vec<Range<usize>>,
 }
 
 impl Frame {
@@ -51,6 +74,7 @@ impl Frame {
             style,
             first_content: None,
             last_content_end: 0,
+            folds: Vec::new(),
         }
     }
 
@@ -63,14 +87,14 @@ impl Frame {
     }
 }
 
-/// 解析行内 span、全部语法标记 folds 与行级字号倍数。
+/// 解析行内 span、语法容器（段级 reveal 单位）与行级字号倍数。
 ///
-/// 返回 `(spans, folds, line_scale)`：前两者为 doc 字节坐标（folds 可能
-/// 重叠，由 `fold::merge` 归一）；`line_scale` 为 (doc 行号, 倍数)，
+/// 返回 `(spans, containers, line_scale)`：容器带 folds（平铺用
+/// [`flat_folds`]，整体升序不重叠）；`line_scale` 为 (doc 行号, 倍数)，
 /// folds 不含换行 → 行号与 vis 一一对应。
-pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>, Vec<(usize, f32)>) {
+pub fn parse(src: &str) -> (Vec<Span>, Vec<Container>, Vec<(usize, f32)>) {
     let mut spans = Vec::new();
-    let mut folds = Vec::new();
+    let mut containers: Vec<Container> = Vec::new();
     let mut line_scale: Vec<(usize, f32)> = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
     // 链接起点（`[` 字节位）；活动期内 Text 产 Link span
@@ -82,13 +106,30 @@ pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>, Vec<(usize, f32)>) {
             Event::Start(Tag::Emphasis) => stack.push(Frame::new(Style::Italic)),
             Event::Start(Tag::Link { .. }) => link_open = Some(range.start),
             Event::End(TagEnd::Strong | TagEnd::Emphasis) => {
-                if let Some(frame) = stack.pop() {
-                    close_frame(&frame, src, &mut folds);
+                if let Some(mut frame) = stack.pop() {
+                    // 全局已收定界（已闭容器 + 祖先活动 frames）——collect
+                    // 跳过且不计入需求（嵌套 `***a***` 外层靠这条拿满）
+                    let taken: Vec<Range<usize>> = containers
+                        .iter()
+                        .flat_map(|c| c.folds.iter().cloned())
+                        .chain(stack.iter().flat_map(|f| f.folds.iter().cloned()))
+                        .collect();
+                    close_frame(&mut frame, src, &taken);
+                    if let (Some(first), last) = (frame.first_content, frame.last_content_end) {
+                        if last > first {
+                            containers.push(Container {
+                                content: first..last,
+                                folds: std::mem::take(&mut frame.folds),
+                            });
+                        }
+                    }
                 }
             }
             Event::End(TagEnd::Link) => {
                 if let Some(open) = link_open.take() {
-                    link_folds(src, open, &range, &mut folds);
+                    if let Some(c) = link_container(src, open, &range) {
+                        containers.push(c);
+                    }
                 }
             }
             Event::Text(_) => {
@@ -109,7 +150,8 @@ pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>, Vec<(usize, f32)>) {
                 }
             }
             Event::Code(_) => {
-                if code_span(src, &range, &mut spans, &mut folds) {
+                if let Some(c) = code_container(src, &range, &mut spans) {
+                    containers.push(c);
                     touch_frames(&mut stack, range.start, range.end);
                 }
             }
@@ -117,24 +159,31 @@ pub fn parse(src: &str) -> (Vec<Span>, Vec<Range<usize>>, Vec<(usize, f32)>) {
         }
     }
 
-    scan_headings(src, &mut folds, &mut spans, &mut line_scale);
-    (spans, folds, line_scale)
+    scan_headings(src, &mut containers, &mut spans, &mut line_scale);
+    (spans, containers, line_scale)
 }
 
-/// 链接定界折叠：`[text](url)` → 保 text（Link 样式），折 `[` 与
-/// `](url)`。逐字节验证（`[` 开头 / `)` 结尾向前找 `]`）——存疑不折。
+/// 链接容器：`[text](url)` → 保 text（Link 样式），折 `[` 与 `](url)`。
+/// 逐字节验证（`[` 开头 / `)` 结尾向前找 `]`）——存疑不折（None）。
 /// autolink `<http://…>`（无 `[]`）验证失败自然不折，保守露源码。
-fn link_folds(src: &str, open: usize, end: &Range<usize>, folds: &mut Vec<Range<usize>>) {
+fn link_container(src: &str, open: usize, end: &Range<usize>) -> Option<Container> {
     let b = src.as_bytes();
     if b.get(open) != Some(&b'[') || end.end > b.len() || end.end == 0 {
-        return;
+        return None;
     }
-    folds.push(open..open + 1);
+    let mut folds = vec![open..open + 1];
+    let mut content_end = end.end;
     if b[end.end - 1] == b')' {
         if let Some(rb) = b[end.start..end.end].iter().rposition(|&c| c == b']') {
-            folds.push(end.start + rb..end.end);
+            let rb_abs = end.start + rb;
+            folds.push(rb_abs..end.end);
+            content_end = rb_abs;
         }
     }
+    Some(Container {
+        content: open + 1..content_end,
+        folds,
+    })
 }
 
 /// 叶子内容推进所有活动容器的内容边界。
@@ -147,21 +196,29 @@ fn touch_frames(stack: &mut [Frame], start: usize, end: usize) {
     }
 }
 
-/// 容器闭合：从内容两缘向外各收集 `demand()` 个相邻定界符字符。
+/// 容器闭合：从内容两缘向外各收集 `demand()` 个相邻定界符字符，
+/// 收集结果落进 `frame.folds`（随 Container 产出）。
 ///
 /// 只认 `*` / `_`，撞到其他字符（含 `\n`）即停——天然保证 fold 不跨行。
 /// 已在其他 fold 中的位置跳过但**不计入**需求（嵌套 `***a***` 的
 /// 外层定界符靠这条拿满）。
-fn close_frame(frame: &Frame, src: &str, folds: &mut Vec<Range<usize>>) {
+fn close_frame(frame: &mut Frame, src: &str, taken: &[Range<usize>]) {
     let (Some(first), last) = (frame.first_content, frame.last_content_end) else {
         return;
     };
     let demand = frame.demand();
-    collect_edge(src, first, -1, demand, folds);
-    collect_edge(src, last, 1, demand, folds);
+    collect_edge(src, first, -1, demand, &mut frame.folds, taken);
+    collect_edge(src, last, 1, demand, &mut frame.folds, taken);
 }
 
-fn collect_edge(src: &str, from: usize, dir: i64, demand: usize, folds: &mut Vec<Range<usize>>) {
+fn collect_edge(
+    src: &str,
+    from: usize,
+    dir: i64,
+    demand: usize,
+    folds: &mut Vec<Range<usize>>,
+    taken: &[Range<usize>],
+) {
     let b = src.as_bytes();
     // 左走从内容首字符的前一字节开始；右走从内容末（排他）开始。
     let mut pos = if dir < 0 { from as i64 - 1 } else { from as i64 };
@@ -175,7 +232,7 @@ fn collect_edge(src: &str, from: usize, dir: i64, demand: usize, folds: &mut Vec
             return; // 撞到正文/空白/换行 → 收集结束
         }
         let p = pos as usize;
-        if !folds.iter().any(|f| f.contains(&p)) {
+        if !folds.iter().any(|f| f.contains(&p)) && !taken.iter().any(|f| f.contains(&p)) {
             folds.push(p..p + 1);
             got += 1;
         }
@@ -185,12 +242,11 @@ fn collect_edge(src: &str, from: usize, dir: i64, demand: usize, folds: &mut Vec
 
 /// 行内 code：双假设验证 range 语义（含反引号 / 不含反引号）。
 /// 验证失败 → 不折叠不加样式（保守）。返回是否成立。
-fn code_span(
+fn code_container(
     src: &str,
     range: &Range<usize>,
     spans: &mut Vec<Span>,
-    folds: &mut Vec<Range<usize>>,
-) -> bool {
+) -> Option<Container> {
     let b = src.as_bytes();
     if range.len() >= 2 && b[range.start] == b'`' && b[range.end - 1] == b'`' {
         // range 含定界符
@@ -198,9 +254,10 @@ fn code_span(
             range: range.start + 1..range.end - 1,
             style: Style::Code,
         });
-        folds.push(range.start..range.start + 1);
-        folds.push(range.end - 1..range.end);
-        true
+        Some(Container {
+            content: range.start + 1..range.end - 1,
+            folds: vec![range.start..range.start + 1, range.end - 1..range.end],
+        })
     } else if range.start > 0
         && range.end < b.len()
         && b[range.start - 1] == b'`'
@@ -211,11 +268,12 @@ fn code_span(
             range: range.clone(),
             style: Style::Code,
         });
-        folds.push(range.start - 1..range.start);
-        folds.push(range.end..range.end + 1);
-        true
+        Some(Container {
+            content: range.clone(),
+            folds: vec![range.start - 1..range.start, range.end..range.end + 1],
+        })
     } else {
-        false
+        None
     }
 }
 
@@ -238,7 +296,7 @@ fn combine(stack: &[Frame]) -> Style {
 /// 不做 setext 与引用块内标题——保守漏折。
 fn scan_headings(
     src: &str,
-    folds: &mut Vec<Range<usize>>,
+    containers: &mut Vec<Container>,
     spans: &mut Vec<Span>,
     line_scale: &mut Vec<(usize, f32)>,
 ) {
@@ -261,7 +319,10 @@ fn scan_headings(
                 let run = line[indent..].iter().take_while(|&&c| c == c0).count();
                 if run >= 3 {
                     // 围栏标记行整段折叠（含语言名，保留空行）
-                    folds.push(i + indent..j);
+                    containers.push(Container {
+                        content: i..j,
+                        folds: vec![i + indent..j],
+                    });
                     match in_fence {
                         Some(fc) if fc == c0 => in_fence = None,
                         None => in_fence = Some(c0),
@@ -282,14 +343,12 @@ fn scan_headings(
                 .count();
             if (1..=6).contains(&hashes) {
                 let after = indent + hashes;
-                let content_start = if after == line.len() {
-                    folds.push(i + indent..i + after);
-                    after
+                let (prefix, content_start) = if after == line.len() {
+                    (i + indent..i + after, after)
                 } else if line[after] == b' ' || line[after] == b'\t' {
-                    folds.push(i + indent..i + after + 1);
-                    after + 1
+                    (i + indent..i + after + 1, after + 1)
                 } else {
-                    usize::MAX
+                    (0..0, usize::MAX) // 非标题
                 };
                 if content_start != usize::MAX {
                     // 整行文本样式 + 行级字号上浮（element 按倍数 shaping）
@@ -299,6 +358,10 @@ fn scan_headings(
                             style: Style::Heading(hashes as u8),
                         });
                     }
+                    containers.push(Container {
+                        content: i..j,
+                        folds: vec![prefix],
+                    });
                     line_scale.push((line_no, HEADING_SCALE[hashes - 1]));
                 }
             }
@@ -315,7 +378,8 @@ mod tests {
 
     /// 折叠集渲染：应用 folds 后的文本（模拟隐藏语法）。
     fn folded(src: &str) -> String {
-        let (_, mut folds, _) = parse(src);
+        let (_, cs, _) = parse(src);
+        let mut folds = flat_folds(&cs);
         folds.sort_by_key(|f| f.start);
         let mut out = src.to_string();
         for f in folds.iter().rev() {
@@ -325,9 +389,9 @@ mod tests {
     }
 
     fn has_fold_covering(src: &str, needle: Range<usize>) -> bool {
-        let (_, folds, _) = parse(src);
+        let (_, cs, _) = parse(src);
         // parse 产出单字符 fold（由 fold::merge 归一后再判断覆盖）
-        let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
+        let merged = crate::editor::markdown::wysiwyg::fold::merge(flat_folds(&cs));
         merged
             .iter()
             .any(|f| f.start <= needle.start && f.end >= needle.end)
@@ -367,7 +431,8 @@ mod tests {
     #[test]
     fn unclosed_strong_conservative() {
         // 未闭合 → pulldown 不产生 Strong 容器 → 不折不样式
-        let (spans, folds, _) = parse("**abc");
+        let (spans, cs, _) = parse("**abc");
+        let folds = flat_folds(&cs);
         assert!(spans.is_empty());
         assert!(folds.is_empty());
         assert_eq!(folded("**abc"), "**abc");
@@ -421,7 +486,8 @@ mod tests {
     fn no_fold_crosses_newline() {
         // 强调跨行：定界符各自贴着本行内容，fold 不得含 \n
         let src = "**line1\nline2**";
-        let (_, folds, _) = parse(src);
+        let (_, cs, _) = parse(src);
+        let folds = flat_folds(&cs);
         for f in &folds {
             assert!(!src[f.clone()].contains('\n'), "fold {f:?} 跨行了");
         }
@@ -431,7 +497,8 @@ mod tests {
     #[test]
     fn plain_text_untouched() {
         for src in ["", "hello", "a_b_c", "1 * 2 * 3", "snake_case_name"] {
-            let (spans, folds, _) = parse(src);
+            let (spans, cs, _) = parse(src);
+        let folds = flat_folds(&cs);
             assert!(spans.is_empty(), "{src} 不该有 span");
             assert!(folds.is_empty(), "{src} 不该有 fold");
         }
@@ -474,7 +541,8 @@ mod tests {
     #[test]
     fn link_folds_brackets_and_url() {
         let src = "见 [pi-web](https://x.com) 主页";
-        let (spans, folds, _) = parse(src);
+        let (spans, cs, _) = parse(src);
+        let folds = flat_folds(&cs);
         let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
         let lb = src.find('[').unwrap();
         let rb = src.find(']').unwrap();
@@ -497,7 +565,8 @@ mod tests {
     #[test]
     fn fence_marker_lines_folded() {
         let src = "```bash\nnpm i\n```\n";
-        let (_, folds, _) = parse(src);
+        let (_, cs, _) = parse(src);
+        let folds = flat_folds(&cs);
         let merged = crate::editor::markdown::wysiwyg::fold::merge(folds);
         let mut out = src.to_string();
         for f in merged.iter().rev() {

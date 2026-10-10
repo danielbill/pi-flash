@@ -424,6 +424,8 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                     "has_editor": f.map(|f| f.editor.is_some()).unwrap_or(false),
                     "content_len": f.map(|f| f.content.len()).unwrap_or(0),
                     "editor_len": f.and_then(|f| f.editor.as_ref()).map(|e| e.read(cx).value().len()).unwrap_or(0),
+                    // 024 P2：光标 doc 字节偏移（pif-ui 原子跳词/reveal 断言）
+                    "editor_cursor": f.and_then(|f| f.editor.as_ref()).map(|e| e.read(cx).cursor()).unwrap_or(0),
                     "pending": f.map(|f| f.reload_pending).unwrap_or(false),
                 }))
             }
