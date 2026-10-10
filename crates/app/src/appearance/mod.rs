@@ -164,10 +164,11 @@ pub fn save_font(slot: FontSlot, spec: FontSpec) {
 /// 文字（含设置页自身）立刻变化（所见即所得）。
 static PANEL_PX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(15.0f32.to_bits());
 
-/// Startup + save_font 后重算缓存的面板字号（钳 10–17：与字号档位上限
-/// 一致；历史存档超界按边界值生效）。
+/// Startup + save_font 后重算缓存的面板字号（钳 10–18：与字号档位上限
+/// 一致——2026-10-10 档位改 15–18 后上限同步放宽，否则特大 18 被钳回 17
+/// 与大档无差别；历史存档超界按边界值生效）。
 pub fn sync_ui_scale() {
-    let v = panel_font().size.clamp(10.0, 17.0);
+    let v = panel_font().size.clamp(10.0, 18.0);
     std::sync::atomic::AtomicU32::store(&PANEL_PX, v.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 

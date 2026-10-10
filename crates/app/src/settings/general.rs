@@ -47,7 +47,7 @@ pub(crate) fn mc_general_view(
     for (ix, label) in [
         (0usize, tr("会话字体")),
         (1, tr("面板字体")),
-        (2, tr("文件字体")),
+        (2, tr("文档字体")),
     ] {
         col = col.child(font_row(
             ix,
@@ -226,8 +226,8 @@ fn font_row(
         .into_any_element()
 }
 
-/// 字号下拉：三槽共用同一组档位 小 14 / 中 15 / 大 16 / 特大 17（默认
-/// 15 = 中，默认档可选）。触发按钮 100px 显示当前档位；历史存档不在档位
+/// 字号下拉：三槽共用同一组档位 小 15 / 中 16 / 大 17 / 特大 18（默认
+/// 15 = 小，默认档可选）。触发按钮 100px 显示当前档位；历史存档不在档位
 /// 内时按就近档位显示/高亮，点任意档即落位。选中只改字号，字体族沿用
 /// 当前值。
 fn size_trigger(
@@ -239,10 +239,10 @@ fn size_trigger(
     t: &'static crate::theme::Theme,
 ) -> gpui::AnyElement {
     let sizes: &[(f32, &'static str)] = &[
-        (14., tr("小")),
-        (15., tr("中")),
-        (16., tr("大")),
-        (17., tr("特大")),
+        (15., tr("小")),
+        (16., tr("中")),
+        (17., tr("大")),
+        (18., tr("特大")),
     ];
     let current_label = |v: f32| -> &'static str {
         let mut best = sizes[0];
