@@ -179,6 +179,12 @@ pub(crate) struct SessionRuntime {
     /// queued ext requests while not active (G+ surfaces a badge)
     pub ext_queue: Vec<pi_link::protocol::ExtensionUiRequest>,
 
+    /// (下标, 点亮时刻) — 复制 pill 的「已复制」反馈（032 恢复）：下标对
+    /// 用户栏是 msg_ix、对 agent 轮栏是轮头 start_ix（两者互不重叠）。
+    /// `spawn_flash_clear` 1.5s 后清空。渲染侧经
+    /// `copy_flash.is_some_and(...elapsed < 1500ms)` 判定 copied 态。
+    pub copy_flash: Option<(usize, std::time::Instant)>,
+
     /// 013: jump target waiting for the message snapshot to land
     pub pending_locate: Option<(Option<i64>, String)>,
 
@@ -255,6 +261,7 @@ impl SessionRuntime {
 
             nav_cache: None,
             nav_dirty: true,
+            copy_flash: None,
         }
     }
 
@@ -1315,6 +1322,21 @@ impl SessionRuntime {
         // 消息变化（含流式 delta 路径）→ 导航摘要置脏，渲染帧惰性重建
         self.nav_dirty = true;
         cx.notify();
+    }
+
+    /// 清除复制反馈（032 恢复）：点亮 ~1.5s 后把 copy_flash 复位并重绘
+    /// （pi-web copied-reset parity）。
+    pub(crate) fn spawn_flash_clear(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1500))
+                .await;
+            let _ = this.update(cx, |r, cx| {
+                r.copy_flash = None;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     // ---- 033 会话导航面板 ----

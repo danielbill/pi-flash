@@ -1576,6 +1576,8 @@ pub(crate) fn render_msg(
     _meta: MsgMeta,
     // 操作栏悬停显影（Chat.bar_hover，pi-web hovered state parity）
     bar_revealed: bool,
+    // 复制反馈（032 恢复）：runtime.copy_flash 点亮中 → 栏换 ✓ 已复制
+    copied: bool,
 ) -> gpui::Div {
     // pi-web 消息间距 marginBottom 16（v 此前 22 偏大）
     let mut col = div().w_full().mb(px(16.)).flex().flex_col();
@@ -1726,7 +1728,7 @@ pub(crate) fn render_msg(
             (h, st)
         };
 
-        let bottom = user_action_bar(msg_ix, weak, &text, m.ts, bar_revealed, t);
+        let bottom = user_action_bar(msg_ix, weak, &text, m.ts, bar_revealed, copied, t);
         // 纯图片消息（空文本）不渲染空泡；缩略图行在气泡上方
         let has_text = !text.trim().is_empty();
         let mut row = bar_hover_wired(
@@ -2052,6 +2054,8 @@ pub(crate) fn render_assistant_turn(
     meta: MsgMeta,
     // 操作栏悬停显影（Chat.bar_hover，pi-web hovered state parity）
     bar_revealed: bool,
+    // 复制反馈（032 恢复）：runtime.copy_flash 点亮中 → 栏换 ✓ 已复制
+    copied: bool,
     // 「新分支」目标（None = 锚点还没回来，按钮不出）
     fork: Option<ForkAnchor>,
 ) -> gpui::AnyElement {
@@ -2293,6 +2297,7 @@ pub(crate) fn render_assistant_turn(
         meta.turn_user_ts,
         is_working,
         bar_revealed,
+        copied,
         fork,
         t,
     ));

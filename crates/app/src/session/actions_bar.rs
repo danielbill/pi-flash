@@ -26,6 +26,7 @@ pub(crate) fn user_action_bar(
     text: &str,
     ts: Option<i64>,
     bar_revealed: bool,
+    copied: bool,
     t: &theme::Theme,
 ) -> gpui::Div {
     let weak_copy = weak.clone();
@@ -35,9 +36,9 @@ pub(crate) fn user_action_bar(
     // 操作栏 act（主界面UI设计-2.html .msg-actions）：图标 12 + 文字
     // gap 4。图标用 icon()（工具卡同款 gpui::svg+显式色，唯一被证明
     // 在列表内稳定渲染的路径；svg 上的 group_hover 会让 copy.svg 丢失）
-    let action = |id: String, icon_name: &'static str, label: SharedString, busy: bool| {
-        // busy = fork 在飞（pi-web forking 态）：主题色 + not-allowed + 无 hover
-        let fg = if busy { t.accent } else { t.text_dim };
+    // fg 显式传入：copied 反馈态要连图标一起换主题色（t.accent）
+    let action = |id: String, icon_name: &'static str, label: SharedString, fg: u32, busy: bool| {
+        // busy = fork 在飞（pi-web forking 态）：not-allowed + 无 hover
         let mut b = div()
             .id(SharedString::from(id))
             .flex()
@@ -60,17 +61,34 @@ pub(crate) fn user_action_bar(
         .items_center()
         .gap(px(12.))
         .text_size(crate::appearance::ui_size(11.5));
-    // 设计稿无「已复制」反馈态：点击即写剪贴板，栏不变
-    let copy_pill = action(
-        format!("copy-{msg_ix}"),
-        "copy",
-        SharedString::from(tr("复制")),
-        false,
-    )
+    // 复制反馈（032 恢复，pi-web copied parity）：点亮后 pill 换 ✓ 已复制
+    // （主题色），1.5s 后复位（runtime.spawn_flash_clear）；期间栏保持显影，
+    // 不然鼠标已移开时反馈看不见
+    let copy_pill = if copied {
+        action(
+            format!("copy-{msg_ix}"),
+            "check",
+            SharedString::from(tr("已复制")),
+            t.accent,
+            false,
+        )
+    } else {
+        action(
+            format!("copy-{msg_ix}"),
+            "copy",
+            SharedString::from(tr("复制")),
+            t.text_dim,
+            false,
+        )
+    }
     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
         let text = copy_text.clone();
-        let _ = weak_copy.update(cx, |_c, cx| {
+        let _ = weak_copy.update(cx, |c, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+            c.rt().update(cx, |r, cx| {
+                r.copy_flash = Some((msg_ix, std::time::Instant::now()));
+                r.spawn_flash_clear(cx);
+            });
         });
     });
     actions = actions.child(copy_pill);
@@ -79,6 +97,7 @@ pub(crate) fn user_action_bar(
             format!("edit-{msg_ix}"),
             "pencil",
             SharedString::from(tr("编辑")),
+            t.text_dim,
             false,
         )
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -96,7 +115,7 @@ pub(crate) fn user_action_bar(
         .flex()
         .items_center()
         .gap(px(12.))
-        .opacity(if bar_revealed { 1. } else { 0. })
+        .opacity(if bar_revealed || copied { 1. } else { 0. })
         .child(actions);
     if let Some(ts) = ts {
         actions_wrap = actions_wrap.child(
@@ -131,6 +150,7 @@ pub(crate) fn assistant_action_bar(
     turn_user_ts: Option<i64>,
     is_working: bool,
     bar_revealed: bool,
+    copied: bool,
     fork: Option<ForkAnchor>,
     t: &theme::Theme,
 ) -> gpui::Div {
@@ -143,25 +163,37 @@ pub(crate) fn assistant_action_bar(
         .text_size(crate::appearance::ui_size(11.5))
         .text_color(rgb(t.text_dim))
         // pi-web: `hovered || forking` —— 分支在飞时栏不许消失，否则
-        // 「创建中…」提示连同 disabled 态一起看不见
-        .opacity(if bar_revealed || forking { 1. } else { 0. });
+        // 「创建中…」提示连同 disabled 态一起看不见；复制反馈亮起同理
+        .opacity(if bar_revealed || forking || copied { 1. } else { 0. });
     if !turn_text.trim().is_empty() {
         let weak_copy = weak.clone();
         let copy_text = turn_text.to_string();
+        // 复制反馈（032 恢复）：点亮后 pill 换 ✓ 已复制（主题色，图标同色），
+        // 1.5s 后由 runtime.spawn_flash_clear 复位
+        let (copy_icon, copy_color, copy_label) = if copied {
+            ("check", t.accent, tr("已复制"))
+        } else {
+            ("copy", t.text_dim, tr("复制"))
+        };
         bar = bar.child(
             div()
                 .id(SharedString::from(format!("acopy-{start_ix}")))
                 .flex()
                 .items_center()
                 .gap(px(4.))
+                .text_color(rgb(copy_color))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(t.text)))
                 // icon()（工具卡同款显式色 svg）——列表内唯一稳定渲染路径
-                .child(icon("copy", 12., t.text_dim))
-                .child(SharedString::from(tr("复制")))
+                .child(icon(copy_icon, 12., copy_color))
+                .child(copy_label)
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_copy.update(cx, |_c, cx| {
+                    let _ = weak_copy.update(cx, |c, cx| {
                         cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy_text.clone()));
+                        c.rt().update(cx, |r, cx| {
+                            r.copy_flash = Some((start_ix, std::time::Instant::now()));
+                            r.spawn_flash_clear(cx);
+                        });
                     });
                 }),
         );

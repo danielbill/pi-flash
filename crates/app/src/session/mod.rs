@@ -240,6 +240,10 @@ fn session_list(
                             None,
                             compute_meta(&rt_view.messages, ix),
                             chat.bar_hover == Some(ix),
+                            // 复制反馈（032 恢复）：copy_flash 点亮且未超 1.5s
+                            rt_view.copy_flash.is_some_and(|(cix, at)| {
+                                cix == ix && at.elapsed().as_millis() < 1500
+                            }),
                         )),
                 )
                 .into_any_element(),
@@ -329,6 +333,11 @@ fn session_list(
                                 stream_tps,
                                 compute_meta(&rt_view.messages, ix),
                                 chat.bar_hover == Some(ix),
+                                // 复制反馈（032 恢复）：copy_flash 点亮且未超 1.5s
+                                // （键 = 轮头 start_ix，与用户栏的 msg_ix 互不重叠）
+                                rt_view.copy_flash.is_some_and(|(cix, at)| {
+                                    cix == ix && at.elapsed().as_millis() < 1500
+                                }),
                                 fork,
                             )),
                     )
