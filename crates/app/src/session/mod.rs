@@ -729,9 +729,8 @@ fn nav_card(
                         .flex_1()
                         .min_w_0()
                         // 会话导航面板：用户发言 = 面板字号 -1
-                        //（字体大小设置.md §1）
+                        //（字体大小设置.md §1）；不加粗（2026-10-10 定夺）
                         .text_size(crate::appearance::ui_size(11.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .line_height(relative(1.55))
                         .text_color(rgb(t.text))
                         .max_h(px(58.))
