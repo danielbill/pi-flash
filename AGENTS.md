@@ -19,6 +19,7 @@ Pi-Flash
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
 - 架构设计：`docs/ARCHITECTURE.md`
 - 软件分发（一条命令装/更）：`docs/模块设计/080-软件分发.md`（npm 薄壳 + GitHub Releases；本地自测 `node npm/test/e2e.js`）
+- 发版规范（唯一操作路径）：`docs/RELEASE.md`——版本号由所有者拍板，禁止擅自变更/建议
 - bug 追踪：`docs/bugs.md`
 - 进度：`docs/progress.md`；复刻计划：`docs/PORT_PLAN.md`
 - 截图：`tmp/屏幕截图/`

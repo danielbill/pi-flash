@@ -3,6 +3,22 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## 080-2 发版收口：v0.1.0 完整上线 + OIDC 自动发布 + RELEASE.md 规范（2026-10-10）
+
+- **v0.1.0 全链路发布完成**：GitHub Release 三资产（win zip 86MB + sidecar +
+  SHA256SUMS）；npm 官方源 `pi-flash@0.1.0` 上线（首发手动浏览器 2FA——npm 不支持
+  OIDC 发首版，npm/cli#8544）；真机链路实测 34s 装完（官方源元数据 + 真实 GH 载荷
+  + SHA-256 校验 + 299MB 落位）；发布中途三坑已修入铁律：
+  `[perf]` 无条件输出炸烟测（bfd8bcd 恢复 PI_FLASH_PERF 门控）、CHANGELOG 路径漂移
+  （9f10e46）、并行会话 staged 被卷提交（手术拆回，后改为 pathspec 提交纪律）。
+- **publish-npm.yml**（OIDC trusted publishing）：tag 触发、`id-token: write`、
+  零长效 token、自动 provenance；待 npmjs 配 Trusted Publisher（workflow 文件名逐字、
+  勾 `npm publish`、配置后 2 天绑定窗口），配好后发版不再碰 npm。
+- **docs/RELEASE.md 发版规范入库**：版本纪律（号由所有者拍板/三处单点同步/已发
+  封存/只前向修复）+ 产物通道表 + 前置 checklist + 八步序列与尾部块顺序敏感点
+  （tag 先推、gh release 紧跟防 CI 自建撞名）+ 异常处置表 + 速查命令。
+- 门禁：release.sh 8/8 实跑 ✓、e2e 19/19 ✓、cargo check/pi-link 127+3 ✓。
+
 ## 080 软件分发 P0+P1：npm 薄壳 + GitHub Releases 载荷（2026-10-10，bead pi-flash-xnl）
 
 - **目标**：像 pi-web 一样一条命令完成下载与更新
