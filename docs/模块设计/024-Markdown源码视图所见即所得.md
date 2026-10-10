@@ -100,10 +100,10 @@ crates/app/src/editor/
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | 实测通过：折叠/样式/reveal/编辑 undo/双态切换全通 |
-| **P1 接线纠偏** | 按本文 §2 接线：装饰挂 `ensure_file_editor`（md 恒挂，源码视图生效）；**preview 分支零改动** | 打开 md → preview 与改造前逐帧一致；eye 切源码 → 折叠感官生效；`git diff` 不含 preview 分支 |
+| **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
+| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false；preview 往返快照**逐字节一致**；源码态折叠/样式/行号 pif-ui 截图验证 |
 | **P2 光标打磨** | atomic 跳词、点击反算、选区强制 reveal、元素级 reveal、列表续行 | pif-ui 合成按键断言光标 offset 序列；fold 性质测试 |
-| **P3 块级** | 图/表/公式折叠占位（`widget.rs`） | 手测 + 快照 |
+| **P3 块级** | 图/表/公式折叠占位（`widget.rs`）——025 插图源码态可视的第一批客户 | 手测 + 快照 |
 
 **P1 验收红线（防复发）**：
 1. `git show --stat` 不得包含 `file_editor_body` preview 分支的删除/替换

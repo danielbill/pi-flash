@@ -79,9 +79,12 @@ fn ensure_file_editor(
         .unwrap_or("")
         .to_ascii_lowercase();
     let ed = cx.new(|scx| {
+        // 024：md 关软换行（wrap 与折叠正交，024 §6.1 定案）；装饰 provider
+        // 由 file_view 的 sync_md_live_state 幂等同步（鼠标 eye 与
+        // file.view_mode op 同路径），preview 渲染页不渲染编辑器零影响。
         gpui_component::input::InputState::new(window, scx)
             .code_editor(ts_language(&ext))
-            .soft_wrap(true)
+            .soft_wrap(!md_file(path))
     });
     ed.update(cx, |st, scx| {
         st.set_value(content, window, scx);
@@ -200,8 +203,41 @@ pub(crate) fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
+    // 024: md 源码态装饰幂等对账（装饰 provider 收口；preview 分支不受影响）
+    sync_md_live_state(chat, &path, md_source, cx);
     host.child(file_editor_body(chat, &path, md_source, weak, cx))
         .into_any_element()
+}
+
+/// 024: md 源码态 WYSIWYG 装饰幂等同步——`md_source=true`（eye 切源码）
+/// 挂装饰 provider（非光标行折叠语法字符 + 渲染器同款着色；preview
+/// 渲染页不渲染编辑器，无需装饰）。行号保持默认（024 新设计：源码视图
+/// 既有能力不丢）。鼠标 eye 与 `file.view_mode` op 都只改 ft.md_source，
+/// 状态差异在此收口防漂移。
+fn sync_md_live_state(
+    chat: &mut Chat,
+    path: &Path,
+    md_source: bool,
+    cx: &mut Context<Chat>,
+) {
+    if !md_file(path) {
+        return;
+    }
+    let Some(ed) = chat.file_cache.get(path).and_then(|f| f.editor.clone()) else {
+        return;
+    };
+    if ed.read(cx).has_decorations() == md_source {
+        return;
+    }
+    ed.update(cx, |st, _| {
+        st.set_decorations(if md_source {
+            Some(std::rc::Rc::new(
+                crate::editor::markdown::wysiwyg::MdLiveProvider,
+            ))
+        } else {
+            None
+        });
+    });
 }
 
 /// 导航操作栏面包屑的路径分段：`(显示文本, 该段绝对路径)`。
