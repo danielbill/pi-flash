@@ -8,7 +8,7 @@ Pi-Flash
 
 # 铁律
 - **内置pi**：内置 `@earendil-works/pi-coding-agent` ，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试。开发期 `PI_FLASH_PI_BIN` 可覆盖。
-- **目标平台**：Windows + macOS（macOS 包走 GitHub Actions runner）。
+- **目标平台**：Windows + macOS。**macOS CI 已停用**（2026-10-10 定）：Apple 签名/公证要 99 美元/年 Developer Program，免费软件不买——ad-hoc 包无法过 Gatekeeper 分发，构建了也白搭。恢复方式：`gh workflow enable release-macos.yml`（workflow 文件保留在 `.github/workflows/`，构建本身已修绿：winresource 门控 / 无 --deep / node+vendor 在 Contents/Resources）。
 - 完成任务保证编译通过后提交git，测试和验收交给用户
 - **GitHub 推送**：远端 `https://github.com/danielbill/pi-flash.git` 间歇被墙（github.com 不通、api.github.com 通）。`git push` 失败时直接走 SSH over 443，勿反复重试 HTTPS：`GIT_SSH_COMMAND="ssh -i ~/.ssh/id_rsa_github -o StrictHostKeyChecking=no" git push ssh://git@ssh.github.com:443/danielbill/pi-flash.git main`（key 已认证；若远端 URL 改为 SSH 可省略此长命令）。gh CLI 走 api.github.com，一般不受影响。
 - UI绘制遵循 docs\UI设计\UI组件规范.md
