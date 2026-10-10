@@ -185,7 +185,7 @@ fn session_more_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyE
             .text_color(rgb(t.text_muted))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-            .child(crate::ui::icon_hover("ellipsis", 14., t.text_muted))
+            .child(crate::ui::icon_hover("circle-ellipsis", 14., t.text_muted))
             .into_any_element(),
         move || {
             div()

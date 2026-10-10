@@ -470,7 +470,7 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
         (TAB_SKILLS, "技能", "layers"),
         (TAB_PLUGINS, "扩展", "plug"),
         (TAB_MCP, "MCP", "server"),
-        (TAB_MISC, "其他", "ellipsis-v"),
+        (TAB_MISC, "其他", "circle-ellipsis"),
     ]
     .iter()
     .map(|(ix, label, icon_name)| {

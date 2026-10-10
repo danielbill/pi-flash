@@ -395,7 +395,7 @@ fn title_row(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> g
                                 cx.notify();
                             });
                         })
-                        .child(icon_hover("ellipsis", 18., t.text_dim)),
+                        .child(icon_hover("circle-ellipsis", 18., t.text_dim)),
                 ),
         )
         .into_any_element()
@@ -542,7 +542,7 @@ fn project_row(
                                     });
                                 },
                             )
-                            .child(icon_hover("ellipsis", 18., t.text_dim)),
+                            .child(icon_hover("circle-ellipsis", 18., t.text_dim)),
                     )
                     // ＋ 新会话入组
                     .child(

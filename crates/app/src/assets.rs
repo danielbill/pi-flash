@@ -91,8 +91,9 @@ assets! {
     "icons/terminal.svg",
     // v54 UI: lucide additions
     "icons/sliders-horizontal.svg",
-    "icons/ellipsis.svg",
-    "icons/ellipsis-v.svg",
+    // 「更多」唯一图标：lucide circle-ellipsis（2026-10-10 统一，
+    // 原横/竖 ellipsis 两枚废除）
+    "icons/circle-ellipsis.svg",
     "icons/folder-open.svg",
     "icons/folder-closed.svg",
     "icons/folder-plus.svg",
