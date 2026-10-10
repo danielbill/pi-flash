@@ -7,7 +7,9 @@
 > ③ 陷阱与用户定案沉淀进下方「持久参考」两节，长期保留、随踩随补。
 >
 > 2026-10-10 压缩：2716 行 → 现行规模。详版全文在 git 历史——压缩提交的
-> 父提交是最后全量版（`git log -p -- docs/progress.md`）。
+> 父提交是最后全量版（`git log -p -- docs/progress.md`）。旧文件「当前状态
+> （2025-09，…）」两节的 2025 日期为早期 agent 幻觉，已随压缩删除——
+> **项目实际始于 2026-09-24**（首次提交 80d80d2）。
 
 ## 当前状态（2026-10-10）
 
@@ -78,12 +80,13 @@
 - 2026-09-30 **v54 主界面按设计稿全量重构**（布局骨架/psp 一体列表/composer
   胶囊/消息区/设置弹窗/七主题）；收尾验收；10-01 v54.6 IME panic 修复 +
   v54.7 主题一致性。
-- 2026-09-25~28 **M1-M6 PORT_PLAN 全交付**：骨架 + pi-link 协议层；分支导航；
-  文件树；git 面板；内置终端（alacritty 0.26 + ConPTY）；模型/Provider 面板；
-  插件/技能/工具面板；扩展 UI 协议；子代理面板；主题运行时切换；i18n 三语；
-  LLM 生成标题；check_arch 收官（a1bfff0/b68faca）。
-- 2026-09 初 **M0 骨架**（0b7a9c2）：workspace + pi-link（typed RPC + fixture
-  测试）+ vendor 钉版 0.87.1 + markdown 渲染。
+- 2026-09-24~28 **M1-M6 PORT_PLAN 全交付**：pi-link 协议层；分支导航；文件树；
+  git 面板；内置终端（alacritty 0.26 + ConPTY）；模型/Provider 面板；插件/技能/
+  工具面板；扩展 UI 协议；子代理面板；主题运行时切换；i18n 三语；LLM 生成
+  标题；check_arch 收官（a1bfff0/b68faca，09-27）。
+- 2026-09-24 **项目起点**：GPUI smoke + pi rpc 桥接 spike（80d80d2）→ 复刻
+  pi-web 策略 + 钉版 vendor 决策 + PORT_PLAN（d0c4a87）→ M1 骨架 workspace +
+  pi-link（typed RPC + fixture 测试）+ vendor 0.87.1 + markdown 渲染（0b7a9c2）。
 
 ## 产品定案与已知行为（勿当 bug 修）
 
