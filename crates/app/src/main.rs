@@ -1862,14 +1862,15 @@ impl Render for Chat {
                             .px(px(20.))
                             .py(px(7.))
                             .rounded(px(8.))
-                            .border_1()
+                            // 2px 边框 + 加大阴影：与内容区拉开（2026-10-10 定夺）
+                            .border_2()
                             .border_color(rgb(t.border))
                             .bg(rgb(t.bg_panel))
-                            .shadow_lg()
+                            .shadow_xl()
                             .text_size(crate::appearance::ui_size(12.))
                             .text_color(rgb(t.text))
-                            .flex()
-                            .justify_center()
+                            // 非 flex 块级容器：文本按容器宽度自动换行
+                            //（flex 会让文本 item 按最大内容宽撑开不换行）
                             .child(text),
                     ),
             );
