@@ -78,14 +78,10 @@ fn ensure_file_editor(
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    // 024 WYSIWYG：md 关软换行（wrap 与折叠正交，024 §6.1 定案）；行号与
-    // 装饰 provider 由 file_view 的 sync_md_live_state 每帧幂等同步（鼠标
-    // eye 与 file.view_mode op 同路径）。
-    let is_md = matches!(ext.as_str(), "md" | "markdown");
     let ed = cx.new(|scx| {
         gpui_component::input::InputState::new(window, scx)
             .code_editor(ts_language(&ext))
-            .soft_wrap(!is_md)
+            .soft_wrap(true)
     });
     ed.update(cx, |st, scx| st.set_value(content, window, scx));
     cx.subscribe(&ed, |this, ed, ev: &gpui_component::input::InputEvent, cx| {
@@ -195,8 +191,6 @@ pub(crate) fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
-    // 024: md Live Preview 状态幂等对账（行号 + 装饰 provider 收口）
-    sync_md_live_state(chat, &path, md_source, window, cx);
     host.child(file_editor_body(chat, &path, md_source, weak, cx))
         .into_any_element()
 }
@@ -337,7 +331,6 @@ fn file_nav_bar(
                     let _ = weak_eye.update(cx, |c, cx| {
                         if let Some(p) = c.active_file_path() {
                             if let Some(ft) = c.file_cache.get_mut(&p) {
-                                // 024: 行号/装饰由 sync_md_live_state 下帧幂等同步
                                 ft.md_source = !src;
                             }
                             // 切到源码态即聚焦编辑器（渲染帧消费）
@@ -531,42 +524,6 @@ fn banner_btn(
         .into_any_element()
 }
 
-/// 024: md Live Preview 状态幂等同步——行号开关与装饰 provider 每帧对账，
-/// 只在漂移时 update。鼠标 eye 点击与 `file.view_mode` 自动化 op 都只改
-/// `ft.md_source`，状态差异在此收口，防两条路径漂移。
-fn sync_md_live_state(
-    chat: &mut Chat,
-    path: &Path,
-    md_source: bool,
-    window: &mut gpui::Window,
-    cx: &mut Context<Chat>,
-) {
-    if !md_file(path) {
-        return;
-    }
-    let Some(ed) = chat.file_cache.get(path).and_then(|f| f.editor.clone()) else {
-        return;
-    };
-    let want_dec = !md_source;
-    let drift = {
-        let cur = ed.read(cx);
-        cur.show_line_number() != md_source || cur.has_decorations() != want_dec
-    };
-    if !drift {
-        return;
-    }
-    ed.update(cx, |st, ecx| {
-        st.set_line_number(md_source, window, ecx);
-        st.set_decorations(if want_dec {
-            Some(std::rc::Rc::new(
-                crate::editor::markdown::wysiwyg::MdLiveProvider,
-            ))
-        } else {
-            None
-        });
-    });
-}
-
 /// 编辑区主体：md 渲染预览（默认）或 CodeEditor（所有文件都可编辑，Zed parity）。
 fn file_editor_body(
     chat: &mut Chat,
@@ -592,10 +549,8 @@ fn file_editor_body(
         ft.content.clone()
     };
 
-    // Live Preview（024）：md 默认态 = 可编辑 TextInput + 装饰 provider
-    // （ensure_file_editor 已按 md 态挂上）。旧 doc_blocks 预览只在编辑器
-    // 尚未创建的首帧兑底（P3 块占位继续用 doc_blocks）。
-    if is_md && !md_source && ft.editor.is_none() {
+    // md 渲染预览（默认态）：复用 agent 正文的 markdown 渲染器
+    if is_md && !md_source {
         // 图片相对路径解析基准：tab 路径可能来自消息文本（相对形态），
         // 统一按工作区 cwd 绝对化再取父目录，不依赖进程 cwd
         let abs = if path.is_absolute() {

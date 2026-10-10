@@ -20,17 +20,7 @@ impl InputState {
             return;
         };
 
-        // PF-024: 折叠态下 point.column 是 doc 列，显示行按折叠列量取 x
-        // （x 存进 preferred_column，column 仍存 doc 供非可见行兑底）。
-        let mut col = point.column;
-        if let Some(dec) = &last_layout.decorations {
-            let line_start = self.text.line_start_offset(point.row);
-            col = dec
-                .doc_to_vis(line_start + col)
-                .saturating_sub(dec.doc_to_vis(line_start));
-        }
-
-        let Some(pos) = line.position_for_index(col, last_layout.line_height) else {
+        let Some(pos) = line.position_for_index(point.column, last_layout.line_height) else {
             self.preferred_column = None;
             return;
         };
@@ -93,13 +83,7 @@ impl InputState {
                     },
                     last_layout.line_height,
                 ) {
-                    // PF-024: closest 返回折叠列 → 经 FoldSet 换回 doc 偏移
-                    // （直接 line_start + x 会把折叠坐标当 doc 用，光标漂移）
-                    new_offset = if let Some(dec) = &last_layout.decorations {
-                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x)
-                    } else {
-                        line_start_offset + x
-                    };
+                    new_offset = line_start_offset + x;
                 }
             } else {
                 // Not in visible range, use column directly.

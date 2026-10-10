@@ -88,21 +88,13 @@ crates/app/src/editor/             # 编辑器模块域（024 重构：fileView 
         └── widget.rs  P3 预留：块级折叠/占位（图/表/mermaid/公式）
 ```
 
-vendor 侧（实际落地，升级需重放；每处 ~20-50 行）：
+vendor 侧（薄补丁，每处 ~20-50 行）：
 
-- `decorations.rs`（**新文件**）：`DecorationProvider` trait + `Decorations`
-  帧结果 + doc↔vis 映射核心——**trait 必须定义在 vendor**（app 依赖
-  vendor，反向不可能；原文写反已修正），app 的 `wysiwyg::MdLiveProvider`
-  实现它；映射单点收口，element/movement 就地同用
-- `state.rs`：`decorations` 字段 + `set/has_decorations`、`show_line_number`
-  getter + `LastLayout.decorations`（帧结果，paint 后保留供鼠标反算 P2）
-- `element.rs`：prepaint 调 provider（优先于 ts）、display 折叠分支、
-  `layout_lines` 折叠单段 shaping、`layout_cursor` pos_for 经映射、
-  longest_line 取折叠行
-- `movement.rs`：preferred_column 取折叠列、move_vertical 结果经
-  `vis_to_doc` 换回 doc（左右/词的 `next_atomic` 跳过 = P2）
-- `input/mod.rs`：导出 decorations + `LineType` re-export；**`mode.rs` 未动**
-  （复用 CodeEditor，md 态 provider 优先绕过 ts highlighter）
+- `state.rs`：新增 `decorations: Option<Rc<dyn DecorationProvider>>` 字段
+  （trait 定义放 editor::markdown::wysiwyg，vendor 只持有，避免反向依赖）
+- `element.rs`：`layout_lines`/`highlight_lines`/`layout_cursor` 三分支接入
+- `movement.rs`：左右/词移动经 `FoldSet::next_atomic`
+- `mode.rs`：`InputMode` 增 md 变体（或复用 CodeEditor 关 highlighter）
 
 `editor/view.rs file_editor_body`：`is_md && !md_source` 分支从只读预览改为
 Live Preview 的 `TextInput`（关行号、开 provider）；原 `doc_blocks` 预览路径
@@ -188,7 +180,7 @@ md 模式下关 ts highlighter（源码态 eye 切换时恢复），行内样式
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P0 spike**（先杀风险） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet 换算、光标行 reveal 一个元素 | ✅ **已完成**（2026-10-10）：pif-ui 实测 `**粗体**` 隐藏、光标行显现、光标对齐、编辑/undo 往返、eye 双态切换全通；新增单测 28 个 |
+| **P0 spike**（先杀风险） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet 换算、光标行 reveal 一个元素 | 手测：打开 md，`**粗体**` 隐藏-光标进入显现；**光标不错位**（头号风险指标） |
 | **P1 效果主体** | parse/style/fold 全量：标题/粗体/斜体/行内码/链接/列表/引用/围栏折叠；行级 reveal；关行号；eye 双态保留 | pif-ui 快照：渲染态断言无 `**`；光标行断言有 `**`；复制粘贴往返 = 原文 |
 | **P2 光标打磨** | atomic 跳词、点击反算、选区强制 reveal、元素级 reveal、Backspace 边界、列表续行、软换行 | pif-ui 合成按键序列断言光标 offset 序列；fold 映射 property test |
 | **P3 块 widget** | 图/表/公式折叠占位 + 进入展开（`widget.rs`，复用 `doc_blocks` 渲染） | 手测 + 快照 |
@@ -222,17 +214,5 @@ md 模式下关 ts highlighter（源码态 eye 切换时恢复），行内样式
 | vendor 补丁随 gpui-component 升级丢失 | 补丁面薄 + 三缝集中在 element/state/movement；升级 checklist 追加 |
 | IME 组合输入跨折叠段 | 组合期间强制 reveal 光标处 folds（P2）；spike 观察 |
 
-**开放问题（原 P0 待定，已有结论）**：revision 缓存键——**P0/P1 不做缓存**，
-provider 每帧全文解析现算（纯函数、无状态，reveal 因此免费）；典型笔记
-<1ms 达标，若实测热再按可见区文本 hash 或 edit 计数加（§8 预案不变）。
-
-**P0 实测发现的已知缺口**（不阻塞，P1/P2 处理）：
-
-| 缺口 | 影响 | 期 |
-|---|---|---|
-| 强调内嵌异种定界符（`**_a_**`）外层可能漏折 | 标记露源码（样式仍在），不崩溃不改文档 | P1 |
-| reveal 行样式保留（`**粗体文字**` 显源码但文字仍加粗） | 与 Obsidian 行级 reveal 略异 | P1 调 |
-| 选区/搜索高亮 quad 未经折叠映射 | 折叠行上选区盒偏移 | P2 |
-| 左右键 `next_atomic` 已实现未接线 | 光标可停在隐藏段（行级 reveal 下仍可见，无损） | P2 |
-| 引用块内围栏/标题不感知；setext 标题不折 | 保守漏折 | P1 |
-| provider 每帧 `to_string()` 全文拷贝 | 大文件（>1MB）开销 | P1 窗口化 |
+**开放问题（P0 定）**：revision 缓存键——`change.rs` 的 Change 事件能否挂
+edit 计数，还是按可见区文本 hash（见 §8）。

@@ -841,7 +841,7 @@ fn base_style(size: f32, line_h: f32, color: u32, weight: FontWeight) -> TextSty
     }
 }
 
-pub(crate) fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
+fn highlight(style: Style, t: &Theme) -> Option<HighlightStyle> {
     let h = match style {
         Style::Normal => return None,
         // pi-web strong: 700 字重 + color-mix(text 88%, accent)
