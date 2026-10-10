@@ -75,11 +75,15 @@ jobs:
           APP=pi-flash.app
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp target/release/pi-flash "$APP/Contents/MacOS/pi-flash"
-          cp node "$APP/Contents/MacOS/node"
+          # node 与 vendor 必须放 Contents/Resources：Contents/MacOS 只允许主
+          # 可执行文件，放多余文件会让外层 codesign 报 "code object is not
+          # signed at all"（同 electron-builder #2522/#8616）。运行时解析见
+          # pi_link::vendor（Resources 在搜索路径里）。
+          cp node "$APP/Contents/Resources/node"
           # brand icon (Big Sur grid master -> .icns)
           cp crates/app/assets/macos/pi-flash.icns "$APP/Contents/Resources/pi-flash.icns"
-          # release layout: vendor/pi lives next to the executable
-          cp -R vendor "$APP/Contents/MacOS/vendor"
+          # release layout: vendor/pi lives in Contents/Resources
+          cp -R vendor "$APP/Contents/Resources/vendor"
           cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

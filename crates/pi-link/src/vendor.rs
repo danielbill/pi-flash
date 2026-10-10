@@ -10,9 +10,11 @@ pub const NODE_MODULES_REL: &str =
 ///
 /// Search order:
 /// 1. `PI_FLASH_VENDOR_DIR` (explicit override; dev/testing)
-/// 2. next to the executable (`<exe_dir>/vendor/pi`, release layout)
+/// 2. next to the executable (`<exe_dir>/vendor/pi`, Windows release layout)
 /// 3. one level up (`<exe_dir>/../vendor/pi`, `target/debug/` during dev)
-/// 4. this crate's workspace layout (compile-time fallback)
+/// 4. macOS .app bundle (`<exe_dir>/../Resources/vendor/pi`; vendor must NOT
+///    live in `Contents/MacOS/` — codesign rejects extra files there)
+/// 5. this crate's workspace layout (compile-time fallback)
 pub fn vendor_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("PI_FLASH_VENDOR_DIR") {
         let p = PathBuf::from(d);
@@ -38,10 +40,15 @@ pub fn node_bin() -> String {
         std::env::current_exe().ok().and_then(|d| {
             let dir = d.parent()?;
             #[cfg(windows)]
-            let candidate = dir.join("node.exe");
+            let candidates = vec![dir.join("node.exe")];
             #[cfg(not(windows))]
-            let candidate = dir.join("node");
-            candidate.is_file().then(|| candidate.to_string_lossy().to_string())
+            // release .app: node sits in Contents/Resources (next to vendor/pi);
+            // dev/zip layout: node sits next to the executable
+            let candidates = vec![dir.join("node"), dir.join("../Resources/node")];
+            candidates
+                .into_iter()
+                .find(|c| c.is_file())
+                .map(|c| c.to_string_lossy().to_string())
         })
     })
     .unwrap_or_else(|| "node".to_string())
@@ -127,6 +134,8 @@ fn base_candidates() -> Vec<PathBuf> {
             v.push(d.to_path_buf());
             if let Some(p) = d.parent() {
                 v.push(p.to_path_buf());
+                // Contents/MacOS -> Contents/Resources (macOS .app layout)
+                v.push(p.join("Resources"));
             }
         }
     }
