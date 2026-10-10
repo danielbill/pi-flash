@@ -26,6 +26,7 @@ pub mod models_json;
 pub mod catalog;
 pub mod estimate;
 pub mod probe;
+pub mod registry;
 pub mod paths;
 pub mod vendor;
 

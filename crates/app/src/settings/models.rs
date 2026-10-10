@@ -366,11 +366,6 @@ impl Chat {
             .any(|(p, k)| p == provider && *k == pi_link::config::CredentialKind::ApiKey)
     }
 
-    /// 051：OAuth 归 pi（auth.json），PF 页面只管自有账本，一律按无 OAuth 处理。
-    pub(crate) fn mc_oauth(&self, _provider: &str) -> bool {
-        false
-    }
-
     /// 「已配置」状态文案：自有账本的落点（凭据库 / 文件存储 / 高级引用）。
     pub(crate) fn mc_store_label(&self, provider: &str) -> Option<String> {
         match pi_link::pf_auth::store_mode(provider) {
@@ -704,7 +699,7 @@ fn mc_add_action(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
                 .child(tr("添加 Provider"))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak.update(cx, |c, cx| {
-                        c.dialog = Some(Chat::provider_picker_dialog(cx));
+                        c.dialog = Some(c.provider_picker_dialog(cx));
                         cx.notify();
                     });
                 }),

@@ -105,6 +105,13 @@ pub fn cli_path() -> Option<PathBuf> {
     cli.is_file().then_some(cli)
 }
 
+/// SDK 包入口 `dist/index.js`（registry dump 用：按文件路径 import 可绕过
+/// package exports 限制，且 `ModelRuntime` 从这里导出）。
+pub fn pkg_entry() -> Option<PathBuf> {
+    let entry = cli_path()?.parent()?.parent()?.join("index.js");
+    entry.is_file().then_some(entry)
+}
+
 /// The vendored pi version recorded in `vendor/pi/VERSION`.
 pub fn vendored_version() -> Option<String> {
     let dir = vendor_dir()?;

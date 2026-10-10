@@ -35,7 +35,9 @@ impl Chat {
 
     /// 042 ProviderPicker 弹窗构造：搜索输入每敲一字通知重渲染（清单按值
     /// 过滤在渲染期读取快照）。ESC 交给浮层公共基座，这里只兜输入框内路径。
-    pub(crate) fn provider_picker_dialog(cx: &mut Context<Self>) -> Dialog {
+    /// 打开即确保全量注册表在拉（缓存命中则同步可用）。
+    pub(crate) fn provider_picker_dialog(&mut self, cx: &mut Context<Self>) -> Dialog {
+        self.ensure_registry(cx);
         let weak_esc = cx.entity().downgrade();
         let input = cx.new(|cx| TextInput::new(cx).placeholder(tr("搜索 Provider...")));
         input.update(cx, |ti, _| {

@@ -26,6 +26,54 @@ pub(crate) struct ModelPicker {
     pub(crate) scroll: gpui::ScrollHandle,
 }
 
+/// 全量 provider 注册表（新增 Provider 弹窗数据源）的拉取状态。
+#[derive(Default, Clone, Debug)]
+pub(crate) enum RegistryState {
+    #[default]
+    /// 未拉取（可拉）
+    Idle,
+    /// 后台 dump 进行中
+    Loading,
+    /// 上次 dump 失败（附原因；可重试）
+    Failed(String),
+}
+
+impl Chat {
+    /// 确保全量注册表可用：盘上缓存（vendor VERSION 校验）命中即用；
+    /// 否则后台起一次性 node 走 SDK dump 并落缓存。幂等——Loading 中
+    /// 重复调用直接返回。失败置 [`RegistryState::Failed`]，下次调用重试。
+    pub(crate) fn ensure_registry(&mut self, cx: &mut Context<Self>) {
+        if self.provider_registry.is_some() || matches!(self.registry_state, RegistryState::Loading)
+        {
+            return;
+        }
+        if let Some(d) = pi_link::registry::read_cache() {
+            self.provider_registry = Some(std::sync::Arc::new(d));
+            cx.notify();
+            return;
+        }
+        self.registry_state = RegistryState::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { pi_link::registry::dump_and_cache() })
+                .await;
+            let _ = this.update(cx, |c, cx| {
+                match outcome {
+                    Ok(d) => {
+                        c.provider_registry = Some(std::sync::Arc::new(d));
+                        c.registry_state = RegistryState::Idle;
+                    }
+                    Err(e) => c.registry_state = RegistryState::Failed(e),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
 /// 分组列表的一个可见行：组头或模型（Model(ix) 索引进模型 vec——键盘
 /// ↑/↓ 只在模型行间移动，组头自动跳过）。
 pub(crate) enum ModelGroupEntry {

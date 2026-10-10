@@ -10,6 +10,7 @@ use crate::Dialog;
 use crate::Chat;
 use crate::TextInput;
 use crate::i18n::tr;
+use crate::session::model_picker::RegistryState;
 use crate::services::format::time_ago;
 use crate::theme;
 use crate::ui::{icon, icon_hover};
@@ -362,44 +363,63 @@ fn render_file_dirty(
     )
 }
 
-/// 042 ProviderPicker（对齐 pi-web AddProviderPicker 版式）：大面板（近满
-/// 窗）+ 顶部全宽搜索（分隔线压底）+ 滚动卡片网格。组 =「自定义」一张卡
-/// （OpenAI / Anthropic compatible，右侧虚线加号框 → 详情区空白表单）+
-/// 「API KEY」三列网格（**全部**有模型的内置商，卡 = 左名称+N models、
-/// 右 provider 图标，与 pi-web 同款；已配置的也照列）。订阅服务组全为
-/// OAuth 登录，本期缓行（051 边界，beads pi-flash-1cb）。
+/// 042 ProviderPicker（对齐 pi-web AddProviderPicker 内容与版式）：近满窗
+/// 大面板 + 顶部全宽搜索（分隔线压底）+ 滚动卡片网格。数据 = SDK 全量
+/// 注册表 dump（registry.rs：打开弹窗时后台拉起，vendor VERSION 缓存）：
+/// 「API KEY」= 声明 apiKey.login 且无 api_key 凭据，副标题 N models（全量
+/// registry 计数）；「订阅服务」= 声明 oauth 且无 oauth 凭据，副标题
+/// OAuth，点击提示未接入（OAuth 登录缓行，051/beads pi-flash-1cb）；
+/// 「自定义」固定一张卡（虚线加号框 → 详情区空白表单）。组序 2026-10-10
+/// 用户定稿：API KEY → 订阅服务 → 自定义；组内保持 registry 原始顺序不
+/// 排序，已配置的 provider 不列（pi-web !configured / !loggedIn 同款）。
 fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
     let q = input.read(cx).value().trim().to_lowercase();
-    let matches = |name: &str| {
-        q.is_empty()
-            || name.to_lowercase().contains(&q)
-            || crate::ui::provider_display_name(name).to_lowercase().contains(&q)
-    };
 
-    // models.json 自定义商不走 API KEY 网格（pi-web 同款：自定义入口只有
-    // 「自定义」卡）
+    let dump = chat.provider_registry.clone();
+    let reg_state = chat.registry_state.clone();
+
+    // PF 自定义账本的 provider 不进 API KEY 网格（pi-web 排除 custom
+    // sources 同款：自定义入口只有「自定义」卡）
     let custom_names: Vec<String> = pi_link::models_json::providers(&chat.mc_models_json)
         .into_iter()
         .map(|(n, _)| n)
         .collect();
 
-    // API KEY 组：catalog 里有模型的内置商（含已配置），按显示名序
-    let mut api_cards: Vec<(String, usize)> = Vec::new();
-    for p in chat.mc_provider_ids() {
-        if custom_names.iter().any(|n| n == &p) || chat.mc_oauth(&p) {
-            continue;
-        }
-        let total = chat
-            .catalog_for(&chat.cwd)
+    // API KEY 组：registry 原始顺序（不排序，对齐 pi-web）；匹配显示名或 id
+    let api_cards: Vec<(String, String, usize)> = match &dump {
+        Some(d) => d
+            .api_key_providers()
             .iter()
-            .filter(|m| m.provider == p)
-            .count();
-        if total == 0 || !matches(&p) {
-            continue;
-        }
-        api_cards.push((p, total));
-    }
-    api_cards.sort_by_key(|(p, _)| crate::ui::provider_display_name(p).to_lowercase());
+            .filter(|p| !custom_names.iter().any(|n| n == &p.id))
+            .filter(|p| {
+                q.is_empty()
+                    || p.name.to_lowercase().contains(&q)
+                    || p.id.to_lowercase().contains(&q)
+            })
+            .map(|p| (p.id.clone(), p.name.clone(), d.model_count(&p.id)))
+            .collect(),
+        None => Vec::new(),
+    };
+    // 订阅服务组：只匹配 OAuth 显示名（pi-web 同款）
+    let oauth_cards: Vec<(String, String)> = match &dump {
+        Some(d) => d
+            .oauth_providers()
+            .iter()
+            .filter(|p| {
+                q.is_empty()
+                    || pi_link::registry::RegistryDump::oauth_display_name(p)
+                        .to_lowercase()
+                        .contains(&q)
+            })
+            .map(|p| {
+                (
+                    p.id.clone(),
+                    pi_link::registry::RegistryDump::oauth_display_name(p).to_string(),
+                )
+            })
+            .collect(),
+        None => Vec::new(),
+    };
 
     let group_header = |label: &'static str, top_pad: f32| {
         div()
@@ -482,81 +502,125 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
             )
     };
 
+    let status_row = |text: String| {
+        div()
+            .py(px(8.))
+            .text_size(crate::appearance::ui_size(11.))
+            .text_color(rgb(t.text_dim))
+            .child(SharedString::from(text))
+    };
+    // 卡片公共 chrome（pi-web cardStyle）：w292 圆角10 边框，hover 描边强调
+    let card = |id: String| {
+        div()
+            .id(SharedString::from(id))
+            .w(px(292.))
+            .p(px(14.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(rgb(t.border))
+            .bg(rgb(t.bg))
+            .cursor_pointer()
+            .hover(|h| h.border_color(rgb(t.accent)).bg(rgb(t.bg_hover)))
+    };
+    // 卡片文本块：标题 + 副标题（左侧 flex_1）
+    let card_text = |title: &str, sub: String| {
+        div()
+            .flex_1()
+            .min_w_0()
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(12.5))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(SharedString::from(title.to_string())),
+            )
+            .child(
+                div()
+                    .mt(px(2.))
+                    .text_size(crate::appearance::ui_size(10.5))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(sub)),
+            )
+    };
+
     let mut body = div().flex().flex_col();
-    // 自定义组（搜索不中时整卡隐藏，组头保留与 pi-web 一致的节奏）
-    body = body.child(group_header("自定义", 0.));
+    // 注册表未就绪/失败：自定义卡照常可用，清单区给状态行
+    match (&dump, &reg_state) {
+        (None, state) if !matches!(state, RegistryState::Failed(_)) => {
+            body = body.child(status_row(tr("正在读取 Provider 注册表…").to_string()));
+        }
+        (None, RegistryState::Failed(e)) => {
+            body = body.child(status_row(crate::i18n::tf(
+                "读取 Provider 注册表失败：{e}",
+                &[("e", e.clone())],
+            )));
+        }
+        _ => {}
+    }
+
+    // 组序（2026-10-10 用户定稿）：API KEY → 订阅服务 → 自定义
+    if !api_cards.is_empty() {
+        body = body.child(group_header("API KEY", 0.));
+        let mut grid = div().flex().flex_wrap().gap(px(10.));
+        for (p, name, total) in &api_cards {
+            let weak_card = weak.clone();
+            let pid = p.clone();
+            let el = card(format!("pp-{p}"))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let pid = pid.clone();
+                    let _ = weak_card.update(cx, |c, cx| {
+                        c.dialog = None;
+                        c.mc_select_provider(pid, cx);
+                        cx.notify();
+                    });
+                })
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(card_text(
+                    name,
+                    crate::i18n::tf("{n} models", &[("n", total.to_string())]),
+                ))
+                .child(crate::ui::provider_icon(p, 24., t.text_muted));
+            grid = grid.child(el);
+        }
+        body = body.child(grid);
+    }
+    if !oauth_cards.is_empty() {
+        body = body.child(group_header("订阅服务", 14.));
+        let mut grid = div().flex().flex_wrap().gap(px(10.));
+        for (p, name) in &oauth_cards {
+            let weak_card = weak.clone();
+            let el = card(format!("pp-oauth-{p}"))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_card.update(cx, |c, cx| {
+                        // OAuth 登录缓行（051/beads pi-flash-1cb）：提示不关弹窗
+                        c.set_status(
+                            crate::i18n::tr("OAuth 登录暂未接入，订阅服务商暂时无法在此配置")
+                                .to_string(),
+                            cx,
+                        );
+                    });
+                })
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(card_text(name, "OAuth".to_string()))
+                .child(crate::ui::provider_icon(p, 24., t.text_muted));
+            grid = grid.child(el);
+        }
+        body = body.child(grid);
+    }
+    // 自定义组（最后；搜索不中整卡隐藏）
+    body = body.child(group_header("自定义", 14.));
     if custom_hit {
         body = body.child(custom_card);
     }
-    // API KEY 组
-    body = body.child(group_header("API KEY", 14.));
-    if api_cards.is_empty() {
-        body = body.child(
-            div()
-                .py(px(12.))
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(tr("没有匹配的 Provider")),
-        );
-    } else {
-        let mut grid = div().flex().flex_wrap().gap(px(10.));
-        for (p, total) in &api_cards {
-            let weak_card = weak.clone();
-            let pid = p.clone();
-            let total = *total;
-            grid = grid.child(
-                div()
-                    .id(SharedString::from(format!("pp-{p}")))
-                    .w(px(292.))
-                    .p(px(14.))
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.bg))
-                    .cursor_pointer()
-                    .hover(|h| h.border_color(rgb(t.accent)).bg(rgb(t.bg_hover)))
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let pid = pid.clone();
-                        let _ = weak_card.update(cx, |c, cx| {
-                            c.dialog = None;
-                            c.mc_select_provider(pid, cx);
-                            cx.notify();
-                        });
-                    })
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(crate::appearance::ui_size(12.5))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(t.text))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(SharedString::from(
-                                        crate::ui::provider_display_name(p).to_string(),
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(2.))
-                                    .text_size(crate::appearance::ui_size(10.5))
-                                    .text_color(rgb(t.text_dim))
-                                    .child(SharedString::from(crate::i18n::tf(
-                                        "{n} models",
-                                        &[("n", total.to_string())],
-                                    ))),
-                            ),
-                    )
-                    .child(crate::ui::provider_icon(p, 24., t.text_muted)),
-            );
-        }
-        body = body.child(grid);
+    if dump.is_some() && api_cards.is_empty() && oauth_cards.is_empty() && !custom_hit {
+        body = body.child(status_row(tr("没有匹配的 Provider").to_string()));
     }
 
     // 近满窗大面板：搜索条压顶（分隔线），下方滚动区吃满剩余高度

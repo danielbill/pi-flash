@@ -46,6 +46,17 @@ pub fn pf_providers_file() -> Option<PathBuf> {
     file("providers.json")
 }
 
+/// `~/.pi-flash/registry-cache.json` — 全量 provider 注册表缓存（registry.rs，
+/// vendor VERSION 为有效性键）。
+pub fn registry_cache_file() -> Option<PathBuf> {
+    file("registry-cache.json")
+}
+
+/// `~/.pi-flash/registry-dump.mjs` — 注册表 dump 一次性脚本（每次 dump 重写）。
+pub fn registry_dump_script_file() -> Option<PathBuf> {
+    file("registry-dump.mjs")
+}
+
 /// `~/.pi-flash/pf-providers.mjs` — spawn 时 `-e` 注入的官方扩展（进程内
 /// `pi.registerProvider`），由 pf_providers::ensure_extension_template 生成。
 pub fn pf_providers_ext_file() -> Option<PathBuf> {
