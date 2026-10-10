@@ -407,6 +407,10 @@ struct Chat {
     mc_mj_error: Option<String>,
     /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
     mc_probe: std::collections::HashMap<String, McProbe>,
+    /// 042 新增 Provider 弹窗的全量注册表（registry.rs dump；None = 未加载）
+    provider_registry: Option<std::sync::Arc<pi_link::registry::RegistryDump>>,
+    /// dump 拉取状态（Idle = 待拉/可拉，Loading = 后台进行中，Failed = 上次失败）
+    registry_state: crate::session::model_picker::RegistryState,
     /// 042：inputpanel 模型菜单（锚定 pill 卡片，替代原居中 ModelSelect 弹窗）
     model_picker: Option<crate::session::model_picker::ModelPicker>,
     /// mcp.json 全局 + 项目服务器（设置·MCP 页）
@@ -692,6 +696,8 @@ impl Chat {
             mc_models_json: serde_json::json!({}),
             mc_mj_error: None,
             mc_probe: std::collections::HashMap::new(),
+            provider_registry: None,
+            registry_state: crate::session::model_picker::RegistryState::Idle,
             model_picker: None,
             mcp_servers: Vec::new(),
             mcp_errors: Vec::new(),
@@ -1866,7 +1872,7 @@ impl Render for Chat {
                             .border_2()
                             .border_color(rgb(t.border))
                             .bg(rgb(t.bg_panel))
-                            .shadow_xl()
+                            .shadow_2xl()
                             .text_size(crate::appearance::ui_size(12.))
                             .text_color(rgb(t.text))
                             // 非 flex 块级容器：文本按容器宽度自动换行
