@@ -443,7 +443,7 @@ fn nav_gutter(
     let mut gutter = div()
         .id("nav-gutter")
         .relative()
-        // 14 = 段宽 10 + 右侧 4px 呼吸位（不贴窗口边）
+        // 14 = 段命中区宽（实体 10 + 右侧 4px 透明可点，不贴窗口边）
         .w(px(14.))
         .h_full()
         .flex_shrink_0();
@@ -457,7 +457,7 @@ fn nav_gutter(
         let mut flyout_wrap = div()
             .id("nav-flyout-wrap")
             .absolute()
-            // 14 = 与段左缘齐平（gutter 14 = 段 10 + 右 4 呼吸位）
+            // 14 = 与段左缘齐平（gutter 14 = 段命中区 10 实体 + 右 4 透明）
             .right(px(14.))
             .top_0()
             .bottom_0()
@@ -583,19 +583,21 @@ fn nav_gutter(
     // 后居中——rail 挂 mb(0.5×composer高)，flex 连 margin 盒一起居中，
     // 视觉中心正好上移 composer/4。生成算法（v63-5）：轮次均分切割整条
     // ——flex_1 等分 + 2px 缝，1 轮 = 整条弱主题色、2 轮 = 上下两段……
-    // 20 轮后段高不再缩小（>20 百分比桶映射）。段色 = 弱主题色常驻，
-    // 选中 = accent 边框（不整段覆盖），hover 增亮；gutter 14px = 段 10px
-    // + 右侧 4px 呼吸位
+    // 10 轮后段高不再缩小（>10 百分比桶映射）。段色 = 弱主题色常驻，
+    // 选中 = accent 边框（不整段覆盖），hover 增亮；段命中区 14px = 实体
+    // 10px + 右侧 4px 透明可点（2026-10-10：命中不满宽会点穿下方内容
+    // 误收面板）
     if !summary.turns.is_empty() {
         let composer_h = chat.composer_h.get();
         let active_tick = active_turn.map(tick_of_turn);
         let mut rail = div()
             .id("nav-rail")
             .h_full()
-            .w(px(10.))
+            .w(px(14.))
             .flex()
             .flex_col()
-            .items_center()
+            // 实体段贴左，右侧留 4px 透明命中区
+            .items_start()
             .gap(px(2.));
         for i in 0..tick_count {
             let on = active_tick == Some(i);
@@ -604,19 +606,12 @@ fn nav_gutter(
             rail = rail.child(
                 div()
                     .id(SharedString::from(format!("nav-node-{i}")))
+                    // 命中区吃满 rail 14px：左 10px 实体 + 右 4px 透明同权
                     .w_full()
                     .flex_1()
                     .min_h_0()
-                    .rounded(px(2.))
+                    .group("navtick")
                     .cursor_pointer()
-                    // 常驻 2px 边框（透明↔accent）防选中时尺寸跳动；
-                    // 选中 = 2px accent 实边
-                    .border_2()
-                    .bg(gpui::rgba((t.accent as u32) << 8 | 0x3d))
-                    .when(on, |d| d.border_color(rgb(t.accent)))
-                    .when(!on, |d| d.border_color(gpui::rgba(0x00000000)))
-                    // 段 hover：整段增亮到实色（低透明底色上很显眼）
-                    .hover(|s| s.bg(rgb(t.accent)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
@@ -627,6 +622,22 @@ fn nav_gutter(
                             rt_scroll.read(cx).pager.nav_goto(turn_of_tick(i), target_ix);
                             window.refresh();
                         }),
+                    )
+                    // 可见段体只有左 10px；右 4px 透明但同属命中区
+                    .child(
+                        div()
+                            .w(px(10.))
+                            .h_full()
+                            .rounded(px(2.))
+                            // 常驻 2px 边框（透明↔accent）防选中时尺寸跳动；
+                            // 选中 = 2px accent 实边
+                            .border_2()
+                            .bg(gpui::rgba((t.accent as u32) << 8 | 0x3d))
+                            .when(on, |d| d.border_color(rgb(t.accent)))
+                            .when(!on, |d| d.border_color(gpui::rgba(0x00000000)))
+                            // 段 hover：整段增亮到实色（navtick 组联动——
+                            // 4px 透明区悬停同样增亮）
+                            .group_hover("navtick", |s| s.bg(rgb(t.accent))),
                     ),
             );
         }
