@@ -102,8 +102,18 @@ crates/app/src/editor/
 |---|---|---|
 | **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
 | **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
-| **P2 光标打磨** | atomic 跳词、点击反算、选区强制 reveal、元素级 reveal、列表续行 | pif-ui 合成按键断言光标 offset 序列；fold 性质测试 |
-| **P3 块级** | 图/表/公式折叠占位（`widget.rs`）——025 插图源码态可视的第一批客户 | 手测 + 快照 |
+| **P2 光标与交互打磨** | 1. **元素级 reveal**：光标落在哪段哪段显现（现为光标行整行还原，Obsidian 为段级）
+2. **atomic 跳词接线**：left/right 遇折叠段原子跳过（`next_atomic` 已实现未接线，现会走进隐藏字符）
+3. **点击反算**：鼠标点折叠区 → doc 偏移（`vis_to_doc` 已备）
+4. **选区强制 reveal**：选区跨折叠段时显示原文
+5. **列表/引用样式**：`- ` 标记着色缩进、`> ` 引用竖条
+6. **行级行高缝**：标题真正独立行高（h1 两倍行高）——需突破 vendor uniform line_height 假设（scroll/cursor/selection 全链路），大工程高价值
+7. parse 覆盖：删除线 `~~`、公式 `$…$` | pif-ui 合成按键断言光标 offset 序列；fold 性质测试 |
+| **P3 块级 widget** | 1. widget 机制：源码态块渲染（可变行高内容）
+2. **图片行**：`![]()` 显示真图（025 源码态可视等此项）
+3. **表格块**：源码态渲染对齐表格
+4. 代码块灰底圆角块样式；5. 公式块 `$$…$$` | 手测 + 快照 |
+| **P2+ 性能** | 大文件窗口化 parse（>1MB 只解析可见区±余量）；edit 计数器缓存（P0 拍板无缓存，实测慢再上） | 大文件滚动帧耗基准 |
 
 **P1 验收红线（防复发）**：
 1. `git show --stat` 不得包含 `file_editor_body` preview 分支的删除/替换
