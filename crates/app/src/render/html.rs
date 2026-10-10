@@ -33,8 +33,8 @@ pub(crate) fn inline_runs(html: &str) -> Vec<Run> {
 /// 闭标签三个事件——开闭标签需要跨事件维持样式栈）。
 #[derive(Debug)]
 pub(crate) enum InlineHtmlEffect {
-    /// 开标签：把样式压入调用方的样式栈
-    StylePush(Style),
+    /// 开标签：把样式压入调用方的样式栈（`<a href>` 同时携带跳转目标）
+    StylePush(Style, Option<String>),
     /// 闭标签：弹出样式栈
     StylePop,
     /// 自带内容（文本/br/img/完整片段）：直接产出 runs
@@ -59,6 +59,7 @@ fn tag_style(tag: &str) -> Option<Style> {
 pub(crate) fn fragment_effect(html: &str) -> InlineHtmlEffect {
     let frag = Html::parse_fragment(html);
     let mut style_tag: Option<Style> = None;
+    let mut href: Option<String> = None;
     let mut has_content = false;
     for node in frag.tree.root().descendants() {
         match node.value() {
@@ -73,7 +74,13 @@ pub(crate) fn fragment_effect(html: &str) -> InlineHtmlEffect {
                     "br" | "img" => has_content = true,
                     _ => {
                         if let Some(st) = tag_style(&name) {
-                            style_tag = style_tag.or(Some(st));
+                            if style_tag.is_none() {
+                                style_tag = Some(st);
+                                // `<a href="…">`：目标随样式一并交给调用方样式栈
+                                if name == "a" {
+                                    href = el.attr("href").map(|h| h.to_string());
+                                }
+                            }
                         }
                     }
                 }
@@ -84,7 +91,7 @@ pub(crate) fn fragment_effect(html: &str) -> InlineHtmlEffect {
     if has_content {
         InlineHtmlEffect::Runs(inline_runs(html))
     } else if let Some(st) = style_tag {
-        InlineHtmlEffect::StylePush(st)
+        InlineHtmlEffect::StylePush(st, href)
     } else {
         InlineHtmlEffect::StylePop
     }
@@ -111,8 +118,13 @@ pub(crate) fn blocks(html: &str) -> Vec<MdBlock> {
 // 行内遍历
 // ---------------------------------------------------------------------------
 
-fn push_style(styles: &mut Vec<Style>, tag: &str) {
-    let base = styles.last().copied().unwrap_or(Style::Normal);
+/// 样式栈元素：(样式, 链接目标)，与 markdown::StyleEntry 同构——透传标签
+/// （span/u/mark 等）继承链接目标，保证 `<a href><span>x</span></a>` 可点。
+fn push_style(styles: &mut Vec<(Style, Option<String>)>, tag: &str, href: Option<String>) {
+    let (base, base_url) = styles
+        .last()
+        .map(|(s, u)| (*s, u.clone()))
+        .unwrap_or((Style::Normal, None));
     let next = match tag {
         "b" | "strong" => match base {
             Style::Italic | Style::BoldItalic => Style::BoldItalic,
@@ -127,15 +139,23 @@ fn push_style(styles: &mut Vec<Style>, tag: &str) {
         "del" | "s" | "strike" => Style::Strike,
         _ => base,
     };
-    styles.push(next);
+    let url = if tag == "a" { href } else { base_url };
+    styles.push((next, url));
 }
 
-fn walk_inline(node: &NodeRef<'_, Node>, styles: &mut Vec<Style>, runs: &mut Vec<Run>) {
+fn walk_inline(
+    node: &NodeRef<'_, Node>,
+    styles: &mut Vec<(Style, Option<String>)>,
+    runs: &mut Vec<Run>,
+) {
     match node.value() {
         Node::Text(text) => {
             if !text.text.is_empty() {
-                let style = *styles.last().unwrap_or(&Style::Normal);
-                runs.push(Run { text: text.text.to_string(), style });
+                let (style, url) = styles
+                    .last()
+                    .map(|(s, u)| (*s, u.clone()))
+                    .unwrap_or((Style::Normal, None));
+                runs.push(Run { text: text.text.to_string(), style, url });
             }
         }
         Node::Element(el) => {
@@ -144,19 +164,28 @@ fn walk_inline(node: &NodeRef<'_, Node>, styles: &mut Vec<Style>, runs: &mut Vec
                 "script" | "style" | "iframe" | "object" | "embed" | "form" | "head"
                 | "svg" | "template" => return,
                 "br" => {
-                    let style = *styles.last().unwrap_or(&Style::Normal);
-                    runs.push(Run { text: "\n".to_string(), style });
+                    let (style, url) = styles
+                        .last()
+                        .map(|(s, u)| (*s, u.clone()))
+                        .unwrap_or((Style::Normal, None));
+                    runs.push(Run { text: "\n".to_string(), style, url });
                 }
                 "img" => {
                     let alt = el.attr("alt").unwrap_or("");
-                    let style = *styles.last().unwrap_or(&Style::Normal);
+                    let (style, url) = styles
+                        .last()
+                        .map(|(s, u)| (*s, u.clone()))
+                        .unwrap_or((Style::Normal, None));
                     runs.push(Run {
                         text: format!("🖼 {alt}"),
                         style: if style == Style::Normal { Style::Italic } else { style },
+                        url,
                     });
                 }
                 _ => {
-                    push_style(styles, &tag);
+                    let href =
+                        if tag == "a" { el.attr("href").map(|h| h.to_string()) } else { None };
+                    push_style(styles, &tag, href);
                     for child in node.children() {
                         walk_inline(&child, styles, runs);
                     }
@@ -253,6 +282,7 @@ fn walk_block(node: &NodeRef<'_, Node>, out: &mut Vec<MdBlock>, depth: usize) {
                             .unwrap_or("")
                             .to_string(),
                         style: Style::Normal,
+                        url: None,
                     }],
                     width: None,
                 });
@@ -484,7 +514,10 @@ mod tests {
         // pulldown 把 <b>x</b> 拆成三个事件：开标签/文本/闭标签
         use crate::markdown::Style;
         match fragment_effect("<b>") {
-            InlineHtmlEffect::StylePush(st) => assert_eq!(st, Style::Bold),
+            InlineHtmlEffect::StylePush(st, href) => {
+                assert_eq!(st, Style::Bold);
+                assert_eq!(href, None);
+            }
             other => panic!("{other:?}"),
         }
         match fragment_effect("</b>") {
@@ -502,5 +535,19 @@ mod tests {
         let runs = inline_runs("<a href=\"https://x.example\">link</a>");
         assert_eq!(runs[0].style, Style::Link);
         assert_eq!(runs[0].text, "link");
+        // href 随 run 保留（渲染层据此接点击）
+        assert_eq!(runs[0].url.as_deref(), Some("https://x.example"));
+    }
+
+    #[test]
+    fn link_effect_carries_href() {
+        // 纯开标签 <a>：StylePush 携带 href，供跨事件样式栈保留目标
+        match fragment_effect("<a href=\"https://y.example\">") {
+            InlineHtmlEffect::StylePush(st, href) => {
+                assert_eq!(st, Style::Link);
+                assert_eq!(href.as_deref(), Some("https://y.example"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }
