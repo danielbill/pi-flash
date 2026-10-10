@@ -575,7 +575,8 @@ pub(crate) struct FileTab {
     /// 编辑器值 != content（订阅 InputEvent::Change 时比较，set_value 也发
     /// Change 事件，盲标会假脏）
     pub(crate) dirty: bool,
-    /// md 默认渲染预览；eye 切源码编辑（拍板 2026-10-07）
+    /// md 默认展示源码；eye 切 Live Preview（024 拍板 2026-10-10：
+    /// 默认源码，所见即所得按需切换）
     pub(crate) md_source: bool,
     pub(crate) conflict: Option<FileConflict>,
     /// 外部改动检测基准 (mtime, len)；打开/保存/确认时刷新
@@ -593,7 +594,7 @@ impl FileTab {
             content,
             editor: None,
             dirty: false,
-            md_source: false,
+            md_source: true,
             conflict: None,
             disk_sig: None,
             reload_pending: false,
