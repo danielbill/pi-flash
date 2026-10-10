@@ -78,13 +78,13 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 - 侧栏底部：文件浏览器（>_ 图标打开内置终端）
 - 工具栏：完整历史 / 分支 / 系统提示词 / 工具
 - 设置弹窗页签：界面 / 模型 / 技能 / 扩展 / MCP / 其他 / 远程控制
-- 本版本更新内容见压缩包内 CHANGELOG 片段或仓库 CHANGELOG.md
+- 本版本更新内容见压缩包内 CHANGELOG 片段或仓库 docs/CHANGELOG.md
 
 数据位置：pi 数据 ~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）；
          pi-flash 自己的配置 ~/.pi-flash/（workspace / app-settings / session-index / recents / catalog-cache）
 EOF
-# 同时带上一份 CHANGELOG，方便离线看更新说明
-cp CHANGELOG.md dist/pi-flash/CHANGELOG.md
+# 同时带上一份 CHANGELOG，方便离线看说明
+cp docs/CHANGELOG.md dist/pi-flash/CHANGELOG.md
 
 echo "==> 4/8 包内烟测（独立目录启动）"
 SMOKE_LOG="$ROOT/dist/smoke.log"
@@ -107,9 +107,9 @@ echo "==> 5/8 更新 CHANGELOG.md"
   echo
   cat "$NOTES_FILE"
   echo
-  tail -n +2 CHANGELOG.md 2>/dev/null || true
-} > CHANGELOG.md.new
-mv CHANGELOG.md.new CHANGELOG.md
+  tail -n +2 docs/CHANGELOG.md 2>/dev/null || true
+} > docs/CHANGELOG.md.new
+mv docs/CHANGELOG.md.new docs/CHANGELOG.md
 
 echo "==> 6/8 压缩 $ZIP_NAME"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\pi-flash' -DestinationPath 'dist\\${ZIP_NAME}' -Force"
@@ -122,7 +122,7 @@ ls -lh "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
 cat <<EOF
 
 后续（按序手动执行；gh release 紧跟 tag 推送、别等 CI——CI 遇到无 release 会自建）：
-  git add crates/app/Cargo.toml npm/package.json Cargo.lock CHANGELOG.md
+  git add crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md
   git commit -m "release v${VERSION}"
   git tag v${VERSION}
   git push && git push --tags   # 推送 tag 触发 macOS CI（darwin-arm64 资产 + .sha256 自动挂载）
