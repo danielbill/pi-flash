@@ -1,5 +1,7 @@
 # 一条安装命令完成下载与更新（对标 pi-web）——调研
 
+> **定稿设计见 `docs/模块设计/080-软件分发.md`（冲突以该文为准）**；本文为调研过程与先例数据存档。
+>
 > 结论先行：**推荐「npm 薄壳 + GitHub Releases 载荷」方案**——
 > `npm install -g pi-flash@latest` 一条命令既是首次安装也是更新，
 > 与 pi-web 的体验逐字相同，但把 ~120MB 载荷放在 GitHub Releases 而非 npm tarball 里。
