@@ -472,6 +472,9 @@ struct Chat {
     /// 值；导航刻度条「屏高 − inputpanel/2」居中用，033）
     composer_h: std::rc::Rc<std::cell::Cell<f32>>,
     unread: HashSet<PathBuf>,
+    /// 出错红点（非活跃会话轮次以错误收尾时点亮，切入即清）——与 unread
+    /// 同生命周期管理，区别只是颜色语义
+    turn_errors: HashSet<PathBuf>,
     /// 微信远程控制桥（060）：transport + 待答 ExtUi 请求
     remote: remote_control::RemoteControl,
     hovered_project: Option<usize>,
@@ -797,6 +800,7 @@ impl Chat {
             nav_flyout_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             composer_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
             unread: HashSet::new(),
+            turn_errors: HashSet::new(),
             remote: remote_control::RemoteControl::new(),
             hovered_project: None,
             proj_tip: None,

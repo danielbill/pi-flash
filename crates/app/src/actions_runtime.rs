@@ -24,18 +24,24 @@ impl Chat {
                     }
                     if !is_active {
                         // v54 未读绿点：非活跃会话在跑/在流式 → 记未读，
-                        // 切换到它时清除
-                        let (file, running) = {
+                        // 切换到它时清除。2026-10-10 增：轮次以错误收尾
+                        // （AgentSettled 冒泡的 turn_error）→ 记红点
+                        let (file, running, turn_error) = {
                             let r = rt.read(cx);
                             (
                                 r.file.clone(),
                                 r.agent_running
                                     || r.state.as_ref().is_some_and(|s| s.is_streaming),
+                                r.turn_error,
                             )
                         };
                         if let Some(f) = file {
-                            if running && !chat.unread.contains(&f) {
-                                chat.unread.insert(f);
+                            if running {
+                                if !chat.unread.contains(&f) {
+                                    chat.unread.insert(f);
+                                }
+                            } else if turn_error && !chat.turn_errors.contains(&f) {
+                                chat.turn_errors.insert(f);
                             }
                         }
                     }
@@ -151,8 +157,9 @@ impl Chat {
         self.active_file = file.clone();
         if let Some(f) = &file {
             set_last_open(&self.cwd.to_string_lossy(), &f.to_string_lossy());
-            // v54: 切入会话清除未读
+            // v54: 切入会话清除未读/出错红点
             self.unread.remove(f);
+            self.turn_errors.remove(f);
         }
         self.pill_menu = None;
         self.menu_ix = 0;

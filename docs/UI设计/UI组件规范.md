@@ -274,6 +274,7 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | disabled | opacity 0.5，去掉 hover 响应 |
 | 图标 hover | scale 1.06 + 上抬 1px（v55 规格，paint 期矩阵实现） |
 | toast | 全项目两处（status 居中 / ext notice 右上）统一主题配色：`bg_panel` 底 + 1px 边框（status 用 `t.border`，ext 用类型色）+ `t.text` 文字；尺寸自适应内容，max 600×200，超高滚动，自动换行，左右 padding 20（2026-10-10 定夺） |
+| 会话状态槽 | 15px 槽三态：运行 = spinner(accent)；出错 = **7px 红点 `t.danger`**；完成/未读 = **7px 绿点 `UNREAD`**（0x2FA356）；点径统一 7px，切入会话即清（2026-10-10 定夺） |
 
 ---
 

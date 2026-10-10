@@ -109,6 +109,10 @@ pub(crate) struct SessionRuntime {
     pub pending_echo: Option<String>,
     pub stream_started: Option<std::time::Instant>,
     pub agent_running: bool,
+    /// 本轮是否出错：is_error 消息 / prompt 发送失败置位；AgentEnd 带
+    /// will_retry（自动重试，错误已恢复）清位。AgentSettled 时随 Changed
+    /// 冒泡给订阅方（psp 会话行的出错红点）。
+    pub turn_error: bool,
     pub status: String,
     /// 「其他」页提示音开关的运行时副本（app_settings.json `sound` 是真值
     /// 来源）：轮末提示音是 runtime 的职责——只有它知道自己这一轮何时结
@@ -226,6 +230,7 @@ impl SessionRuntime {
             pending_echo: None,
             stream_started: None,
             agent_running: false,
+            turn_error: false,
             status: String::new(),
             sound_on: crate::services::workspace::load_sound_pref(),
             state: None,
@@ -679,10 +684,17 @@ impl SessionRuntime {
                         self.phase_waiting = false;
                         self.pending_echo = None;
                         self.pager.release();
+                        // 发送失败 = 本轮未跑成，红点
+                        self.turn_error = true;
                     }
                 }
             }
             Event::MessageStart { role, blocks, timestamp, is_error, tool_call_id, custom_type: _, custom_display: _, details, raw_system } => {
+                // 出错消息（agent 错误 / toolResult error）点亮本轮错误旗；
+                // 是否被重试恢复由 AgentEnd(will_retry) 裁决
+                if is_error {
+                    self.turn_error = true;
+                }
                 match role.as_str() {
                     "user" => {
                         // upgrade the optimistic send bubble in place instead
@@ -940,6 +952,7 @@ impl SessionRuntime {
             }
             Event::AgentStart => {
                 self.agent_running = true;
+                self.turn_error = false;
                 self.status = "running".into();
                 if self.stream_started.is_none() {
                     self.stream_started = Some(std::time::Instant::now());
@@ -962,9 +975,16 @@ impl SessionRuntime {
                 self.status = status_line(true, "idle");
                 self.settle_turn();
                 self.refresh_state();
+                // 轮次终点冒泡（turn_error 终值随行）：订阅方据此把出错会话
+                // 点亮红点（不冒泡的话后台会话跑完无人知晓）
+                cx.emit(SessionEvent::Changed);
             }
-            Event::AgentEnd { .. } => {
+            Event::AgentEnd { will_retry } => {
                 self.agent_running = false;
+                // 自动重试 = 本轮错误已被恢复路径接管，不记红点
+                if will_retry {
+                    self.turn_error = false;
+                }
                 self.phase_waiting = false;
                 self.pending_echo = None;
                 self.streaming_content = false;

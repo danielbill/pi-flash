@@ -771,6 +771,14 @@ fn session_row_view(
                 .justify_center()
                 .child(if running {
                     spinner(15., t.accent)
+                } else if chat.turn_errors.contains(&info.path) {
+                    // 出错红点 = t.danger（§6 danger 系唯一表达），7px 与
+                    // 未读绿点同径（§8 会话状态槽）
+                    div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(rgb(t.danger))
+                        .into_any_element()
                 } else if chat.unread.contains(&info.path) {
                     div()
                         .size(px(7.))
