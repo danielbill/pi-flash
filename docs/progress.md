@@ -29,6 +29,14 @@
 
 ## 里程碑索引（新 → 旧；一行一条，细节看对应提交）
 
+- 2026-10-11 **full+ 档 `-e` 源消重**（bead `pi-flash-v2g`）：spawn 配方里
+  `npm:x` 先解析成 managed 安装路径（`~/.pi/agent/npm/node_modules/<pkg>`，
+  user 根优先、项目根兜底，未安装回退 `-e npm:x`）——消除
+  `~/.pi/agent/tmp/extensions` 第二份 node_modules（同一插件双份 + 版本漂移 +
+  spec 变化重装）。pi 对本地目录包根 `collectPackageResources` 全套挂载，
+  资源面与 `-e npm:x` 等价。实现：`pi_link::extensions::managed_npm_source_path`
+  + `tools_recipe::resolve_ext_sources_at`；存量 tmp 可随手清，下次不再生成。
+
 - 2026-10-10 **060 远程控制入口隐藏**（用户定夺）：topbar 手机钮删除 + 设置
   「远程控制」页签撤出导航；060 管线/扫码弹窗/自动化 WX_QR_OPEN 原样保留，
   重开 = 导航数组加回一行（或 git revert）。

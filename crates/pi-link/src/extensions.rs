@@ -126,6 +126,53 @@ pub fn personal_extensions() -> Vec<String> {
     seen
 }
 
+/// `npm:` 源 → managed 安装路径（user 根 `<agent dir>/npm` 优先，项目根
+/// `<cwd>/.pi/npm` 兜底；对齐 pi `getNpmInstallRoot` 的 user/project 两档）。
+///
+/// 为什么：full+ 档 spawn 配方用 `-e` 精确集，而 `-e npm:x` 在 pi 里按
+/// temporary scope 解析 → 装一份到 `~/.pi/agent/tmp/extensions`（0700 私有
+/// 临时安装）——同一插件 managed 根 / tmp 各一份 node_modules，版本还会漂移
+/// （tmp 侧按 spec reconcile，`installedNpmMatchesConfiguredVersion` 不匹配
+/// 就重装）。picker 列表本就来自已安装的 settings packages，把源换成
+/// managed 安装路径后 pi 走 `resolveLocalExtensionSource`：目录 →
+/// `collectPackageResources` 全套挂载（extensions+skills+prompts+themes），
+/// 零复制、零临时安装、零版本检查。
+///
+/// 规则：
+/// - 只改写 `npm:<name>[@spec]`（含 `@scope/name[@spec]`）；
+/// - 安装路径不存在（没装/装坏）→ None，调用方原样回退 `-e npm:x`；
+/// - `git:` / 本地路径 / `builtin:` 一律 None（原样传递，pi 自己会处理）。
+pub fn managed_npm_source_path(source: &str, agent_dir: &Path, cwd: &Path) -> Option<PathBuf> {
+    fn clean_segment(s: &str) -> bool {
+        !s.is_empty() && s != "." && s != ".." && !s.contains('/') && !s.contains('\\')
+    }
+    let rest = source.trim().strip_prefix("npm:")?.trim();
+    let name = if let Some(stripped) = rest.strip_prefix('@') {
+        // scoped：`@scope/name[@spec]` —— 最后一个 '/' 之后剥版本 spec
+        let (scope, tail) = stripped.split_once('/')?;
+        let name = tail.split('@').next().unwrap_or_default();
+        if !clean_segment(scope) || !clean_segment(name) {
+            return None;
+        }
+        format!("@{scope}/{name}")
+    } else {
+        // unscoped：`pi-freeflow[@^1.34]` —— 第一个 '@' 之后剥版本 spec
+        let name = rest.split('@').next().unwrap_or_default();
+        if !clean_segment(name) {
+            return None;
+        }
+        name.to_string()
+    };
+    // user 根优先：picker 宇宙序 = 全局 → 项目（同源去重时也是全局先）
+    for root in [agent_dir.join("npm"), cwd.join(".pi").join("npm")] {
+        let candidate = root.join("node_modules").join(&name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +219,59 @@ mod tests {
             !paths.iter().any(|p| p.to_string_lossy().contains("nested")),
             "嵌套目录不递归发现（与 pi 一致）"
         );
+    }
+
+    fn npm_tree(agent: &Path, project: &Path) {
+        let _ = std::fs::remove_dir_all(agent);
+        let _ = std::fs::remove_dir_all(project);
+        std::fs::create_dir_all(agent.join("npm").join("node_modules").join("pi-freeflow")).unwrap();
+        std::fs::create_dir_all(
+            agent
+                .join("npm")
+                .join("node_modules")
+                .join("@ff-labs")
+                .join("pi-fff"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.join(".pi").join("npm").join("node_modules").join("pi-goal"))
+            .unwrap();
+    }
+
+    #[test]
+    fn npm_source_resolves_to_managed_install_path() {
+        let base = std::env::temp_dir().join(format!("pi-flash-npmroot-{}", std::process::id()));
+        let agent = base.join("agent");
+        let project = base.join("proj");
+        npm_tree(&agent, &project);
+
+        // 命中 user 根（带/不带版本 spec 同解）
+        let got = managed_npm_source_path("npm:pi-freeflow", &agent, &project).unwrap();
+        assert_eq!(got, agent.join("npm").join("node_modules").join("pi-freeflow"));
+        let got = managed_npm_source_path("npm:pi-freeflow@^1.34", &agent, &project).unwrap();
+        assert_eq!(got, agent.join("npm").join("node_modules").join("pi-freeflow"));
+        // scoped 包
+        let got = managed_npm_source_path("npm:@ff-labs/pi-fff@0.11.0", &agent, &project).unwrap();
+        assert_eq!(
+            got,
+            agent
+                .join("npm")
+                .join("node_modules")
+                .join("@ff-labs")
+                .join("pi-fff")
+        );
+        // user 根没有 → 项目根兜底
+        let got = managed_npm_source_path("npm:pi-goal", &agent, &project).unwrap();
+        assert_eq!(got, project.join(".pi").join("npm").join("node_modules").join("pi-goal"));
+        // 两边都没有 → None（调用方回退 -e npm:x）
+        assert!(managed_npm_source_path("npm:pi-missing", &agent, &project).is_none());
+        // 非 npm: 源一律不改写
+        assert!(managed_npm_source_path("git:github.com/x/y@v1", &agent, &project).is_none());
+        assert!(managed_npm_source_path("C:/u/ext/notify.ts", &agent, &project).is_none());
+        assert!(managed_npm_source_path("builtin:mcp", &agent, &project).is_none());
+        assert!(managed_npm_source_path("npm:", &agent, &project).is_none());
+        // 路径穿越拒绝
+        assert!(managed_npm_source_path("npm:../..", &agent, &project).is_none());
+        assert!(managed_npm_source_path("npm:@scope/..", &agent, &project).is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

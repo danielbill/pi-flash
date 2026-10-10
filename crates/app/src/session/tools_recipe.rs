@@ -18,6 +18,16 @@
 //! **full+ 档（`custom`）**：`-ne` + 会话选中的包 + 内置 + `full_activate.ts`，
 //! 不发 `--tools` —— 见 [`full_plugin_args`]。
 //!
+//! **源消重（2026-10，bead pi-flash-v2g）**：会话清单里的 `npm:x` 在拼装前
+//! 先换成 managed 安装路径（`~/.pi/agent/npm/node_modules/<pkg>`，见
+//! [`pi_link::extensions::managed_npm_source_path`]）。直接发 `-e npm:x` 会让
+//! pi 按 temporary scope 又装一份到 `~/.pi/agent/tmp/extensions`（0700 私有
+//! 临时安装）——同一插件 managed 根 / tmp 双份 node_modules + 版本漂移；
+//! 而本地路径源 pi 走 `resolveLocalExtensionSource` → `collectPackageResources`
+//! 全套挂载（extensions+skills+prompts+themes），零复制零安装。未安装/
+//! 装坏的源原样回退 `-e npm:x`（让 pi 自己装）。
+//!
+//!
 //! 为什么 full 不能「装着包只抑制注入」：pi 的扩展加载顺序是
 //! `mergePaths(cliEnabledExtensions, enabledExtensions)`（CLI `-e` 在前），
 //! 即我们的 `-e` 抑制器**先于**包加载，包的 `before_agent_start`
@@ -30,7 +40,7 @@
 //! ```text
 //! pi --mode rpc --session <file>
 //!   -ne                                # 精确集：关掉已配置/发现/内置扩展
-//!   -e <会话选中的插件…>                # 只加载选中的（`-e` 在 -ne 下仍生效）
+//!   -e <会话选中的插件…>                # npm:x 优先换成 managed 安装路径（消重）
 //!   -e builtin:<settings 里开着的内置…>  # -ne 连内置扩展一起关，逐条加回
 //!   -e <full_activate.ts>              # session_start 里 setActiveTools
 //! ```
@@ -88,7 +98,30 @@ pub(crate) fn full_plugin_args(ext_sources: &[String], cwd: &Path) -> Vec<String
              本会话只发 -ne + -e 插件，active 会退回 defaultTools + 插件工具"
         );
     }
-    args_from(ext_sources, &builtins, script.as_deref())
+    let resolved = resolve_ext_sources(ext_sources, cwd);
+    args_from(&resolved, &builtins, script.as_deref())
+}
+
+/// `-e` 源消重：`npm:x` 换成 managed 安装路径（pi 对本地目录全套挂载、
+/// 不再触发 tmp 临时安装）；未安装的源原样保留（pi 临时安装兼做兑底）。
+pub(crate) fn resolve_ext_sources(ext_sources: &[String], cwd: &Path) -> Vec<String> {
+    resolve_ext_sources_at(ext_sources, &pi_link::config::agent_dir(), cwd)
+}
+
+/// 纯内核（显式注入 agent dir，便于断言）。
+pub(crate) fn resolve_ext_sources_at(
+    ext_sources: &[String],
+    agent_dir: &Path,
+    cwd: &Path,
+) -> Vec<String> {
+    ext_sources
+        .iter()
+        .map(|src| {
+            pi_link::extensions::managed_npm_source_path(src, agent_dir, cwd)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| src.clone())
+        })
+        .collect()
 }
 
 /// full 档要追加的 CLI 参数：`-ne` + 个人扩展 + settings 里开着的内置扩展。
@@ -220,6 +253,35 @@ mod tests {
                 "/s.ts"
             ])
         );
+    }
+
+    #[test]
+    fn npm_sources_rewrite_to_managed_paths_with_fallback() {
+        let base = std::env::temp_dir().join(format!("pi-flash-recipe-{}", std::process::id()));
+        let agent = base.join("agent");
+        let cwd = base.join("proj");
+        std::fs::create_dir_all(agent.join("npm").join("node_modules").join("pi-freeflow"))
+            .unwrap();
+        std::fs::create_dir_all(cwd.join(".pi").join("npm").join("node_modules").join("pi-goal"))
+            .unwrap();
+
+        let out = resolve_ext_sources_at(
+            &srcs(&[
+                "npm:pi-freeflow",        // user 根命中 → 路径
+                "npm:pi-goal",            // 项目根命中 → 路径
+                "npm:pi-missing",         // 没装 → 原样回退
+                "git:github.com/x/y@v1",  // 非 npm: 原样
+                "C:/u/.pi/agent/extensions/pi-notify.ts", // 本地路径原样
+            ]),
+            &agent,
+            &cwd,
+        );
+        assert_eq!(out[0], agent.join("npm").join("node_modules").join("pi-freeflow").to_string_lossy());
+        assert_eq!(out[1], cwd.join(".pi").join("npm").join("node_modules").join("pi-goal").to_string_lossy());
+        assert_eq!(out[2], "npm:pi-missing");
+        assert_eq!(out[3], "git:github.com/x/y@v1");
+        assert_eq!(out[4], "C:/u/.pi/agent/extensions/pi-notify.ts");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
 }
