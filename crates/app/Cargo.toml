@@ -2,6 +2,7 @@
 name = "app"
 version = "0.1.1"
 edition.workspace = true
+license.workspace = true
 # workspace 根是虚拟清单且成员里还有 pi-link 的 token-count 调试 bin，
 # 不指名的话根目录 `cargo run` 报“could not determine which binary to run”
 default-run = "pi-flash"

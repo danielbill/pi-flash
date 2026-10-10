@@ -25,3 +25,14 @@
 | `vendor/pi` | 内置钉版 pi 0.87.1（package.json+lockfile 入库；`npm ci` 生成 node_modules，不入库）|
 | `AGENTS.md` | 项目记忆：架构决策、协议要点、已验证结论 |
 
+## 许可证
+
+本项目以 **GPL-3.0-or-later** 许可证发布（见 [LICENSE](LICENSE)），继承 Zed
+（crates/ui、theme、terminal 等派生代码）的 copyleft 语义：你可以自由使用、
+修改、分发本软件（含商用），但任何基于本软件的衍生作品**必须**以
+GPL-3.0-or-later 开源。不接受未经 Copyright Holder 同意的闭源分发。
+
+第三方组件的版权与许可证声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
+本仓库不接受 Pull Request（已在仓库设置中禁用）。
+

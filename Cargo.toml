@@ -8,6 +8,9 @@ exclude = ["vendor/gpui", "vendor/gpui-component"]
 
 [workspace.package]
 edition = "2024"
+# 继承 Zed 生态（crates/ui、theme、terminal 均 GPL-3.0-or-later，派生代码在库）；
+# 第三方来源清单见 THIRD-PARTY-NOTICES.md
+license = "GPL-3.0-or-later"
 
 [profile.dev]
 debug = 1
