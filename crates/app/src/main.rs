@@ -29,6 +29,7 @@ mod appearance;
 mod assets;
 mod content;
 mod dialogs;
+mod editor;
 mod ext_ui;
 mod ext_ui_actions;
 mod function_panel;
