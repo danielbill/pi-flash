@@ -1,7 +1,7 @@
 # pi-flash 发版规范（RELEASE）
 
 > 本文是发版的**唯一操作规范**。机制与设计见 `docs/模块设计/080-软件分发.md`
-> （调研存档 `docs/INSTALL_UPDATE.md`）；用户可见变更史见 `docs/CHANGELOG.md`。
+> 用户可见变更史见 `docs/CHANGELOG.md`。
 > 实操命令均已在 v0.1.0 发版中验证通过（2026-10-10）。
 
 ---
@@ -132,6 +132,5 @@ npm view pi-flash version dist-tags --registry=https://registry.npmjs.org/
 ## 8. 关联
 
 - 设计：`docs/模块设计/080-软件分发.md`（方案、包结构、风险预案、实施状态）
-- 调研：`docs/INSTALL_UPDATE.md`（先例数据、方案对比）
 - 变更史：`docs/CHANGELOG.md`
 - 先例参考：pi-web `docs/release.md`（npm 版发布清单）
