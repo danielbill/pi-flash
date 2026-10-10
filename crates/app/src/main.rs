@@ -610,9 +610,38 @@ impl Chat {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         let dialog_focus = cx.focus_handle();
-        let cwd = std::env::var("PI_FLASH_CWD")
+        // PI_FLASH_CWD 显式指定优先；否则用进程 cwd——但**双击 exe 启动**
+        // （资源管理器/任务栏）时进程 cwd = exe 所在目录，构建产物目录
+        // （如 target\debug）不是项目：rebuild_projects 会把工作区钉成
+        // 常驻项目组（0 会话也显示），于是每次这样启动都凭空多出一个
+        // 「debug」空项目、删了下次启动又回来。此场景不采纳进程 cwd，
+        // 回退上次工作区（startup_restore 只管恢复上次会话，工作区仍要
+        // 有合理起点；memory 的 __last 一直有记），再兜底用户主目录。
+        let raw_cwd = std::env::var("PI_FLASH_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let cwd_is_exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+            .is_some_and(|exe_dir| {
+                // Windows 路径大小写不敏感（workspace.json 里 __last 就是小写盘符）
+                exe_dir.to_string_lossy().to_lowercase()
+                    == raw_cwd.to_string_lossy().to_lowercase()
+            });
+        let cwd = if cwd_is_exe_dir {
+            get_last_workspace()
+                .map(PathBuf::from)
+                .filter(|p| p.is_dir())
+                .or_else(|| {
+                    std::env::var("USERPROFILE")
+                        .or_else(|_| std::env::var("HOME"))
+                        .map(PathBuf::from)
+                        .ok()
+                })
+                .unwrap_or(raw_cwd)
+        } else {
+            raw_cwd
+        };
         // startup restore decides workspace + last session BEFORE the first
         // spawn — exactly one pi process (ARCHITECTURE.md §4, was two)
         let last_ws = if startup_restore() { get_last_workspace() } else { None };

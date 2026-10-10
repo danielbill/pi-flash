@@ -29,6 +29,13 @@
 
 ## 里程碑索引（新 → 旧；一行一条，细节看对应提交）
 
+- 2026-10-10 **032 复制反馈动画恢复**：会话区操作栏复制 → ✓ 已复制（主题色，
+  图标同色）1.5s 复位（runtime `copy_flash` + `spawn_flash_clear`，用户/agent
+  两栏均接，点亮期间栏保持显影）；aac8fe0 曾按当时设计稿删除。
+- 2026-10-10 **修复：双击 exe 启动凭空多出「debug」项目**：进程 cwd = exe
+  所在目录（target\debug）被采纳为工作区，rebuild_projects 把它钉成常驻
+  空组、删了下次启动又回来；现 cwd==exe 目录时不采纳，回退上次工作区
+  （`__last`，startup_restore 关也用——那只管恢复会话），再兜底主目录。
 - 2026-10-11 **full+ 档 `-e` 源消重**（bead `pi-flash-v2g`）：spawn 配方里
   `npm:x` 先解析成 managed 安装路径（`~/.pi/agent/npm/node_modules/<pkg>`，
   user 根优先、项目根兜底，未安装回退 `-e npm:x`）——消除
