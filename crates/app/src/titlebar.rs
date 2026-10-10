@@ -15,8 +15,8 @@ use crate::ContentView;
 use crate::i18n::tr;
 use crate::theme::theme as T;
 
-/// topbar 高（两段同高；窗口控制钮高度跟随）。
-pub(crate) const HEIGHT: f32 = 36.;
+/// topbar 高（两段同高；窗口控制钮高度跟随；2026-10-10 定夺 36→38）。
+pub(crate) const HEIGHT: f32 = 38.;
 
 /// Caption-button glyph font (Win11; MDL2 covers Win10).
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
@@ -496,8 +496,9 @@ fn tab_shell(
                 .h(px(HEIGHT - 3.))
                 .mb(px(-1.))
                 .bg(rgb(t.bg))
-                .border_1()
-                .border_b_0()
+                // 上沿不画线（2026-10-10 定夺）：只留左右两道与内容区分隔
+                .border_l_1()
+                .border_r_1()
                 .border_color(gpui::rgba(crate::theme::border_alpha(t, 0x8c)))
                 .rounded_tl(px(9.))
                 .rounded_tr(px(9.))
