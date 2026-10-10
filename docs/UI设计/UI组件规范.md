@@ -273,6 +273,7 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | focus | accent 1px 边框（仅输入框类）；按钮不做 focus ring，键盘焦点走 hover 同款底 |
 | disabled | opacity 0.5，去掉 hover 响应 |
 | 图标 hover | scale 1.06 + 上抬 1px（v55 规格，paint 期矩阵实现） |
+| toast | 全项目两处（status 居中 / ext notice 右上）统一主题配色：`bg_panel` 底 + 1px 边框（status 用 `t.border`，ext 用类型色）+ `t.text` 文字；尺寸自适应内容，max 600×200，超高滚动，自动换行，左右 padding 20（2026-10-10 定夺） |
 
 ---
 

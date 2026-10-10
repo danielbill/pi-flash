@@ -1840,32 +1840,42 @@ impl Render for Chat {
         if let Some(el) = session::model_picker::view(self, &weak_for_dialog, window, cx) {
             root = root.child(el);
         }
-        // status toast（v54: statusbar 无状态文本，改瞬时提示）
+        // status toast（v54: statusbar 无状态文本，改瞬时提示）。2026-10-10
+        // 定夺：配色并入主题系（与 ext notice 同族 bg_panel+border+text），
+        // 尺寸自适应——内容撑宽、max 600×200、超高滚动、自动换行、左右 padding 20
         if let Some((msg, _)) = &self.status_toast {
             let text: SharedString = msg.clone().into();
             root = root.child(
                 div()
                     .absolute()
                     .top(px(44.))
-                    .left_1_2()
-                    .ml(px(-160.))
-                    .w(px(320.))
-                    .px(px(12.))
-                    .py(px(7.))
-                    .rounded(px(8.))
-                    .bg(rgb(0x22312d))
-                    .shadow_lg()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .text_color(rgb(0xeef4f1))
+                    .left_0()
+                    .right_0()
                     .flex()
                     .justify_center()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(text),
+                    .child(
+                        div()
+                            .id("status-toast")
+                            .max_w(px(600.))
+                            .max_h(px(200.))
+                            .overflow_y_scroll()
+                            .px(px(20.))
+                            .py(px(7.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(rgb(t.border))
+                            .bg(rgb(t.bg_panel))
+                            .shadow_lg()
+                            .text_size(crate::appearance::ui_size(12.))
+                            .text_color(rgb(t.text))
+                            .flex()
+                            .justify_center()
+                            .child(text),
+                    ),
             );
         }
-        // extension notify toast (top-right)
+        // extension notify toast (top-right)。上限与 status toast 对齐
+        // （max 600×200、超高滚动、自动换行；2026-10-10 定夺）
         if let Some((message, ty)) = &self.ext_notice {
             let color = match ty {
                 1 => 0xfacc15,
@@ -1875,11 +1885,14 @@ impl Render for Chat {
             let text: SharedString = message.clone().into();
             root = root.child(
                 div()
+                    .id("ext-notice")
                     .absolute()
                     .top(px(12.))
                     .right(px(12.))
-                    .max_w(px(420.))
-                    .px(px(12.))
+                    .max_w(px(600.))
+                    .max_h(px(200.))
+                    .overflow_y_scroll()
+                    .px(px(20.))
                     .py(px(8.))
                     .rounded(px(8.))
                     .border_1()
