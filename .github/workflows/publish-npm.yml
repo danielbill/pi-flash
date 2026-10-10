@@ -1,0 +1,41 @@
+# npm 薄壳包发布：OIDC trusted publishing（零长效 token；设计见 docs/模块设计/080-软件分发.md §4）
+#
+# ⚠️ 文件名 publish-npm.yml 必须与 npmjs.com → pi-flash → Trusted Publisher 配置
+#    里的 Workflow filename 逐字一致（含扩展名、大小写），错了只在发布时报 ENEEDAUTH。
+#
+# 前置（一次性）：包须已手动首发过（npm 不支持 OIDC 发首版，npm/cli#8544），
+# 且 npmjs 上已配置 GitHub Actions trusted publisher 并勾选 Allowed action = npm publish
+# （2026-09-03 后新建的配置默认只给 stage publish，必须手动勾直接发布）。
+# 配置创建后 2 天内要有一次成功发布完成绑定，否则配置过期需删除重建。
+name: publish-npm
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write # OIDC 换票的唯一凭据（trusted publishing 的核心要求）
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # 仅支持 GitHub 托管 runner（self-hosted 不支持）
+    defaults:
+      run:
+        working-directory: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24" # trusted publishing 要求 Node ≥ 22.14
+          registry-url: "https://registry.npmjs.org"
+
+      # trusted publishing 要求 npm ≥ 11.5.1（OIDC 探测与换票逻辑在这里面）
+      - run: npm install -g npm@^11.15.0 --no-audit --no-fund
+      - run: npm --version
+
+      # 薄壳包零依赖、无构建步骤：checkout 后直接发。
+      # npm CLI 检测到 OIDC 环境自动换票，先于任何 token；
+      # 成功后自动附 provenance 供应链签名（公有仓库 + 公有包，默认开启）。
+      - run: npm publish
