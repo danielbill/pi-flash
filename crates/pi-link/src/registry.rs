@@ -49,8 +49,8 @@ pub struct RegistryDump {
     pub version: String,
     #[serde(default)]
     pub providers: Vec<RegistryProvider>,
-    /// provider id → 全量 registry 模型数。
-    #[serde(default)]
+    /// provider id → 全量 registry 模型数（dump 脚本输出的键名是 `counts`）。
+    #[serde(default, rename = "counts")]
     pub model_counts: BTreeMap<String, usize>,
     /// provider id → auth.json 凭据类型（"api_key" | "oauth"）。
     #[serde(default)]
