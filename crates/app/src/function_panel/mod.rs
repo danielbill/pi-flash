@@ -214,8 +214,9 @@ pub(crate) fn psp_view(
                     .id(SharedString::from(format!("psp-more-{key}")))
                     .pl(px(45.))
                     .py(px(5.5))
-                    .text_size(crate::appearance::ui_size(12.5))
-                    .text_color(rgb(t.text_dim))
+                    // placeholder 色 + 面板字号−1（2026-10-10 定夺）
+                    .text_size(crate::appearance::ui_size(11.))
+                    .text_color(rgb(t.text_faint))
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.text)))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -832,7 +833,8 @@ fn session_row_view(
                 .flex()
                 .items_center()
                 .justify_end()
-                .text_size(crate::appearance::ui_size(11.))
+                // 时间 = 面板字号−2（2026-10-10 定夺，原 −1）
+                .text_size(crate::appearance::ui_size(10.))
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(crate::services::format::fmt_ago(
                     info.modified,
