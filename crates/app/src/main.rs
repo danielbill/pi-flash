@@ -364,6 +364,11 @@ struct Chat {
     fs_watch_tx: std::sync::mpsc::Sender<()>,
     fs_watch_rx: Option<std::sync::mpsc::Receiver<()>>,
     fs_watch: Option<services::watcher::FsWatcher>,
+    /// 023：**cwd 外**打开文件的单文件监听（key = 文件所在目录，非递归）。
+    /// Zed 对不在任何 worktree 里的文件建 single-file worktree（只监听其
+    /// 所在目录）同款；事件走同一条 fs 通道。打开/关闭/切项目后由
+    /// `retain_file_watches` 重算，不再被需要的目录即卸载。
+    file_watches: std::collections::HashMap<PathBuf, services::watcher::FsWatcher>,
     // terminals (content-area tabs)
     terminals: Vec<TerminalTab>,
     active_terminal: Option<usize>,
@@ -713,6 +718,7 @@ impl Chat {
             fs_watch_tx,
             fs_watch_rx: Some(fs_watch_rx_ch),
             fs_watch: None,
+            file_watches: std::collections::HashMap::new(),
             composer: None,
             expanded_skills: std::collections::HashSet::new(),
             bubble_scrolls: std::rc::Rc::new(std::cell::RefCell::new(
@@ -979,6 +985,36 @@ impl Chat {
         self.fs_watch = services::watcher::watch(&self.cwd, self.fs_watch_tx.clone()).ok();
     }
 
+    /// 023 外部改动检测的监听面维护（对齐 Zed 的 worktree 监听面）：
+    /// - cwd 内文件：cwd 的**递归** watch 已覆盖；
+    /// - cwd 外文件（Obsidian 库 / pick_open_files / 远程 FILE_OPEN）：此前
+    ///   完全没监听——磁盘怎么改都没有信号，编辑器不跟随。现按**所在目录**
+    ///   挂非递归 watch（Zed single-file worktree 同款），事件与 cwd 事件
+    ///   走同一条通道合批，`check_external_file_changes` 按 disk_sig 复查。
+    ///
+    /// 打开/关闭文件 tab、切项目后调用；不再被任何打开文件需要的目录卸掉
+    /// （句柄 drop = 停止监听），避免长期持有无关目录的监听。
+    fn retain_file_watches(&mut self) {
+        let mut wanted: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        for t in &self.panel_tabs {
+            if let PanelTab::File(p) = t
+                && let Some(dir) = p.parent()
+                && !services::workspace::is_under(dir, &self.cwd)
+            {
+                wanted.insert(dir.to_path_buf());
+            }
+        }
+        self.file_watches.retain(|dir, _| wanted.contains(dir));
+        for dir in wanted {
+            if self.file_watches.contains_key(&dir) {
+                continue;
+            }
+            if let Ok(w) = services::watcher::watch_dir(&dir, self.fs_watch_tx.clone()) {
+                self.file_watches.insert(dir, w);
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // built-in terminal (pi-web TerminalPanel parity)
     // -----------------------------------------------------------------------
@@ -1051,6 +1087,8 @@ impl Chat {
         self.refresh_git();
         self.load_project_files();
         self.attach_fs_watch();
+        // cwd 变了：cwd 外单文件监听面跟着重算（旧 cwd 下的文件现在要单挂）
+        self.retain_file_watches();
         if let Some(p) = get_last_open(&self.cwd.to_string_lossy()) {
             let path = PathBuf::from(&p);
             if path.exists() {

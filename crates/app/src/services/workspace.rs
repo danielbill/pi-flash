@@ -154,6 +154,16 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     same_ws(&a.to_string_lossy(), &b.to_string_lossy())
 }
 
+/// `path` 是否在 `root` 之下（含 root 本身）：与 same_path 同一套字符串级
+/// 规范化（分隔符统一为 `\`、去尾分隔符、大小写折叠），所以 Windows 上
+/// `d:/a\b` 与 `D:\A` 的层级关系判得对。023 用它决定「这个目录是否已被
+/// workspace 的递归 watch 覆盖」，从而决定要不要给 cwd 外文件单挂监听。
+pub fn is_under(path: &Path, root: &Path) -> bool {
+    let p = ws_key(&path.to_string_lossy());
+    let r = ws_key(&root.to_string_lossy());
+    p == r || p.starts_with(&format!("{r}\\"))
+}
+
 /// 磁盘改动指纹 (mtime, len)（023 外部改动检测基准）：打开/保存/确认时
 /// 记录，fs 泵信号到达时对比。mtime 不支持（罕见 FS）返回 None = 永不误报。
 pub fn file_sig(path: &Path) -> Option<(std::time::SystemTime, u64)> {
@@ -714,6 +724,18 @@ mod tests {
         let d = loaded.get("__ui").unwrap();
         assert_eq!(d.get("panel").unwrap(), "git");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn is_under_normalizes_separators_and_case() {
+        // cwd 内（正/反斜杠、大小写都要判对）
+        assert!(is_under(Path::new("D:\\proj\\src"), Path::new("D:\\proj")));
+        assert!(is_under(Path::new("d:/proj/src"), Path::new("D:\\PROJ")));
+        assert!(is_under(Path::new("D:\\proj"), Path::new("D:\\proj\\")));
+        // 前缀像但不是子目录（proj2 不能被 proj 覆盖）
+        assert!(!is_under(Path::new("D:\\proj2"), Path::new("D:\\proj")));
+        // 工作区外（另一个盘/目录）
+        assert!(!is_under(Path::new("D:\\my_obsidian\\vault"), Path::new("D:\\ai_workspace")));
     }
 
     #[test]

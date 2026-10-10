@@ -803,6 +803,35 @@ impl InputState {
         cx.notify();
     }
 
+    /// 外部改动重载（023 watcher 自动重载 / 冲突横幅「重新加载」）：整文
+    /// 换新，但**保留视图位置与光标**。
+    ///
+    /// Zed 的外部 reload 保留 anchor：缓冲区文本是 diff 就地改的，光标/
+    /// 选区/滚动自然跟随改动之外的区域。gpui-component 没有 diff 管线，
+    /// 这里用「字节偏移 + 滚动像素」近似，越界部分由 clip_offset /
+    /// update_scroll_offset 钳制。
+    ///
+    /// 不能用 set_value 充数：它的「光标到末尾 + 滚动归零」是给程序化赋值
+    /// （菜单/草稿/切换）用的语义——拿它灌外部改动，磁盘每存一次就跳一次
+    /// 屏，阅读位置全丢。
+    pub fn reload_value(
+        &mut self,
+        value: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cursor = self.cursor();
+        let scroll = self.scroll_handle.offset();
+        self.set_value(value, window, cx);
+        // 光标锚点：字符边界钳制（外部新文本可能在锚点处被改）
+        let cursor = self.text.clip_offset(cursor, Bias::Left);
+        self.set_cursor_offset(cursor, cx);
+        // set_cursor_offset → scroll_to 会挪滚动位：还原到重载前的视图位置，
+        // 再让 update_scroll_offset 把它钳进新的滚动范围内
+        self.scroll_handle.set_offset(scroll);
+        self.update_scroll_offset(None, cx);
+    }
+
     /// Insert text at the current cursor position.
     ///
     /// And the cursor will be moved to the end of inserted text.

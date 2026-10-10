@@ -42,6 +42,9 @@ pub mod method {
     pub const FILE_CLOSE: &str = "file.close";
     pub const FILE_SET_TEXT: &str = "file.set_text";
     pub const FILE_VIEW_MODE: &str = "file.view_mode";
+    /// 023 冲突横幅「重新加载」（磁盘为准，丢弃本地未保存修改）：
+    /// 与横幅按钮同一条方法（file_reload_from_disk），UI 测试用
+    pub const FILE_RELOAD: &str = "file.reload";
     pub const FILES_TOGGLE_DIR: &str = "files.toggle_dir";
     pub const GIT_STAGE: &str = "git.stage";
     pub const GIT_UNSTAGE: &str = "git.unstage";

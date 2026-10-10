@@ -295,6 +295,16 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
+        // 冲突横幅「重新加载」：磁盘为准（丢弃本地未保存修改）——与 banner
+        // 按钮同一方法，让冲突裁决路径可被自动化断言
+        method::FILE_RELOAD => {
+            let path = params_path(params, "path")?;
+            if !chat.file_cache.contains_key(&path) {
+                return Err(not_found(format!("文件 tab 未打开: {}", path.display())));
+            }
+            chat.file_reload_from_disk(&path, cx);
+            ok()
+        }
         method::FILE_VIEW_MODE => {
             let path = params_path(params, "path")?;
             let mode = params

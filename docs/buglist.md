@@ -1,3 +1,45 @@
+## 待验证（本轮修复）——外部改动不同步：cwd 外文件根本没挂监听
+
+用户口径：在 Obsidian 里改了文件，pf 编辑器窗口不同步（预览/源码都不变）。
+要求变化检测对齐 zed。
+
+- ✅ 根因：`attach_fs_watch` 只递归 watch `self.cwd`——**cwd 外打开的文件
+  （Obsidian 库、pick_open_files、远程 FILE_OPEN）从未被监听**，notify 没
+  事件 → `check_external_file_changes`（disk_sig 复查 + 自动重载/标冲突）
+  一次都不会被触发。实测：开工作区外文件后外部写入，`files.watch_roots`
+  为空、`ext_probe.runs` 不涨、`content_len/editor_len` 不变（完全无感）；
+  同一动作在 cwd 内文件上正常（hits=1，自动重载）。
+- ✅ 修法（对齐 Zed 的监听面）：Zed 对不在任何 worktree 里的文件建
+  **single-file worktree**（只监听该文件所在目录）；这里等价实现：
+  `services::watcher::watch_dir`（非递归）+ `Chat::retain_file_watches`——
+  为每个「不在 cwd 下」的打开文件按父目录挂一条监听（共享同一条 fs 信号
+  通道），打开/关闭/切项目后重算，不再被需要的目录卸掉（句柄 drop = 停
+  监听）。目录级信号不区分具体文件（事件类型/原子替换/临时文件都不必猜），
+  统一交给 `check_external_file_changes` 按 (mtime,len) 复查。
+- ✅ 顺带对齐 zed 的两个「重载语义」缺口（同一个用户场景直接撞上）：
+  1. `set_value` 把光标扔到文末 + 滚动归零，外部每存一次就跳一次屏；
+     新增 `InputState::reload_value`（vendored gpui-component）：整文换新但
+     保留光标字节偏移与滚动像素（越界钳制）——Zed 的外部 reload 靠 diff
+     保留 anchor，这里是位置近似的轻量版。
+  2. markdown 预览不跳顶且读的是**缓冲区**：块数变化（外部改动/编辑动了
+     段落结构）时先把 `list.logical_scroll_top()` 锚点记下、`reset` 后
+     `scroll_to` 还原；有未保存修改时预览取编辑器文本而非磁盘真值（Zed
+     的 preview 渲染 buffer，不是文件）——冲突挂着时预览不再显示磁盘旧文。
+- ✅ 验证（`cargo test -p app` 181 全绿 + pif-ui 事务式，全在隔离实例里
+  对**工作区外**文件跑）：
+  - 开文件 → `files.watch_roots` = 其所在目录；外部写入 → `ext_probe.hits`
+    1、`content_len/editor_len` 同步跟上（截图 `tmp/ui-w3/synced.png`）。
+  - 缓冲区脏 + 外部写入 → `conflict = "Changed"`（本地缓冲保留，banner
+    两个按钮可见，截图 `tmp/ui-watch2/conflict.png`）；`file.reload`（新
+    op，与横幅「重新加载」同一方法）→ conflict 清、内容 = 磁盘
+    （截图 `tmp/ui-w4/after-reload.png`）。
+  - 预览态 + 未保存修改：预览显示本地缓冲区文本
+    （`tmp/ui-w4/preview-live-buffer.png`）。
+  - 外部删文件 → `conflict = "Deleted"`；文件重新出现 → 自动重载回同步。
+- ⏳ 真机待复验：Obsidian 里改文件，pf 预览/源码应自动跟随（源码态光标与
+  阅读滚动位置保留）；正在输入（脏缓冲）时改文件 → 顶部横幅提示，点
+  「重新加载」变磁盘版、点「保留我的版本」继续用本地版。
+
 ## 待验证（本轮修复）——023 fileView：面包屑 `D:\` 拆两段 + 预览/编辑器都不自动回行
 
 用户口径（编辑器窗口截图）：①面包屑把 `D:\` 拆成 `D:` 与 `\` 两段；②不论

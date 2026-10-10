@@ -173,9 +173,10 @@ impl Chat {
             return;
         }
         // 已打开则直接切过去（Zed 行为）：不重读磁盘、不整文重灌——那会
-        // 复位滚动/光标，并在大文件上冻结数百毫秒。cwd 内文件的外部改动由
-        // fs watcher（check_external_file_changes 按 disk_sig 兜底）；cwd 外
-        // 文件（pick_open_files / 远程 FILE_OPEN）自此只在关闭重开时刷新。
+        // 复位滚动/光标，并在大文件上冻结数百毫秒。外部改动由 fs watcher
+        // 负责：cwd 内文件走 cwd 的递归 watch，cwd 外文件由
+        // retain_file_watches 按所在目录单挂监听，两边信号都经
+        // check_external_file_changes 按 disk_sig 复查后自动重载/标冲突。
         if let Some(ix) = self
             .panel_tabs
             .iter()
@@ -213,6 +214,8 @@ impl Chat {
         self.file_cache.insert(path.clone(), ft);
         self.pending_focus_file = Some(path.clone());
         self.panel_tabs.push(PanelTab::File(path));
+        // cwd 外文件：按所在目录补一条单文件监听（否则磁盘改了不同步）
+        self.retain_file_watches();
         let ix = self.panel_tabs.len() - 1;
         self.activate_panel_tab(ix, cx);
         self.set_content_view(ContentView::File);
@@ -246,6 +249,8 @@ impl Chat {
         let was_active = self.active_panel_tab == Some(ix);
         self.close_panel_tab(ix, cx);
         self.file_cache.remove(path);
+        // 关掉后可能没人再需要这个目录的监听：卸掉
+        self.retain_file_watches();
         if was_active && self.content_view == ContentView::File {
             // 激活位可能落到终端 tab 上——优先指去最近的文件 tab；
             // 一个文件 tab 都不剩则内容区回退（有终端回浏览区，否则回会话）

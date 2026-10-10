@@ -433,6 +433,14 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     json!({
         "cwd": chat.cwd.display().to_string(),
         "crumbs": crumbs,
+        // 023 外部改动检测的监听面：cwd 递归 watch + cwd 外打开文件的
+        // 单文件目录 watch（Zed single-file worktree 同款）——断言「工作区外
+        // 文件也有监听」就靠这条
+        "watch_roots": chat
+            .file_watches
+            .keys()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<String>>(),
         "expanded": expanded,
         "rows": rows,
         "file_tabs": file_tabs,

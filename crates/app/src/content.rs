@@ -240,8 +240,10 @@ fn ensure_file_editor(
     }
 }
 
-/// 消费 reload_pending（自动重载路径）：磁盘新内容灌进编辑器。set_value
-/// 绕过 undo 历史、复位滚动——正合「磁盘为准」的重载语义。
+/// 消费 reload_pending（自动重载路径）：磁盘新内容灌进编辑器。用
+/// `reload_value` 而非 `set_value`——外部改动要保留阅读位置/光标（Zed 的
+/// 外部 reload 保留 anchor）；set_value 是程序化赋值语义（光标到末尾、
+/// 滚动归零），拿它灌外部改动会每存一次跳一次屏。
 fn consume_file_reload(
     chat: &mut Chat,
     path: &Path,
@@ -262,7 +264,7 @@ fn consume_file_reload(
         .map(|f| f.content.clone())
         .unwrap_or_default();
     if let Some(ed) = chat.file_cache.get(path).and_then(|f| f.editor.clone()) {
-        ed.update(cx, |st, scx| st.set_value(content, window, scx));
+        ed.update(cx, |st, scx| st.reload_value(content, window, scx));
     }
     if let Some(ft) = chat.file_cache.get_mut(path) {
         ft.reload_pending = false;
@@ -315,7 +317,7 @@ fn file_view(
     if let Some(c) = conflict.as_ref() {
         host = host.child(conflict_banner(weak, &path, c));
     }
-    host.child(file_editor_body(chat, &path, md_source, weak))
+    host.child(file_editor_body(chat, &path, md_source, weak, cx))
         .into_any_element()
 }
 
@@ -654,12 +656,24 @@ fn file_editor_body(
     path: &Path,
     md_source: bool,
     weak: &gpui::WeakEntity<Chat>,
-) -> gpui::AnyElement {    let t = T();
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
+    let t = T();
     let is_md = md_file(path);
     let Some(ft) = chat.file_cache.get(path) else {
         return empty_hint(tr("文件已关闭"), t);
     };
-    let content = ft.content.clone();
+    // 预览内容真值 = **缓冲区**（Zed 的 markdown preview 渲染 buffer 文本，
+    // 不是磁盘文件）：有未保存修改（源码态改完切预览 / 冲突挂着 / 自动保存
+    // 还没落地）时取编辑器值，否则用磁盘真值缓存（省一次 Rope 物化）。
+    let content = if ft.dirty {
+        ft.editor
+            .as_ref()
+            .map(|e| e.read(cx).text().to_string())
+            .unwrap_or_else(|| ft.content.clone())
+    } else {
+        ft.content.clone()
+    };
 
     // md 渲染预览（默认态）：复用 agent 正文的 markdown 渲染器
     if is_md && !md_source {
@@ -680,7 +694,15 @@ fn file_editor_body(
             chat.file_view_list.reset(blocks.len());
             chat.file_view_list_path = Some(path.to_path_buf());
         } else if chat.file_view_list.item_count() != blocks.len() {
+            // 块数变了（外部改动/编辑动了段落结构）也不能跳回顶部：记下
+            // 当前阅读锚点（条目 + 条目内偏移），重建后原样恢复（Zed 的
+            // preview 由 buffer anchor 驱动，滚动位跨 reload 不掉）。
+            let anchor = chat.file_view_list.logical_scroll_top();
             chat.file_view_list.reset(blocks.len());
+            chat.file_view_list.scroll_to(gpui::ListOffset {
+                item_ix: anchor.item_ix.min(blocks.len().saturating_sub(1)),
+                offset_in_item: anchor.offset_in_item,
+            });
         }
         let base = abs.parent().map(|p| p.to_path_buf());
         let blocks_for_list = blocks.clone();
