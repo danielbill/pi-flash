@@ -593,7 +593,10 @@ impl FileTab {
             content,
             editor: None,
             dirty: false,
-            md_source: false,
+            // 024 用户拍板（2026-10-10 二改）：md 默认打开 = 源码态（WYSIWYG
+            // 感官完整：折叠/样式/容器 reveal/原子跳词），eye 切回 preview
+            // 渲染页（两者均完好）。
+            md_source: true,
             conflict: None,
             disk_sig: None,
             reload_pending: false,

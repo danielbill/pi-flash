@@ -10,9 +10,9 @@
 >    分支（`doc_blocks` 只读渲染页）是既有 preview 代码，**一行不改**。
 >    024 曾把该分支替换为可编辑视图、架空 preview——已全部撤回
 >    （git `5a7a7fe` 实现 → `30a4a4d` 撤回），不许重演。
-> 2. **默认态不变**：打开 md 自动进 preview 渲染页（023 既有行为）。
->    024 曾翻转 `md_source` 默认值制造"默认进 Live Preview/默认源码"两轮摇摆
->    （`0eab265`/`c3824b9` 已抵消）——不许再动默认态。
+> 2. **默认态**：初版拍板"不变（进 preview）"；**2026-10-10 用户二改拍板：
+>    md 默认打开 = 源码态**（WYSIWYG 感官完整后便于日常测试），eye 一键
+>    切 preview 渲染页——两者均完好，非事故勿撤回。
 
 ## 1. 目标与非目标
 
@@ -29,7 +29,7 @@
 **非目标**
 
 - **不动 preview**（铁律 1）
-- 不改默认态（铁律 2）
+- 不动默认态机制（铁律 2：现拍板默认源码态，eye 双态切换不变）
 - 表格 WYSIWYG 编辑、frontmatter、嵌入笔记、阅读模式（原 024 砍掉项沿用）
 - 不新增第三种视图态——eye 仍是二态：preview 渲染页 ↔ 源码视图
 
@@ -38,7 +38,7 @@
 | 现状 | 位置 | 024 态度 |
 |---|---|---|
 | preview 渲染页（`doc_blocks` 只读 + ListState 虚拟化） | `editor/view.rs file_editor_body` 的 `is_md && !md_source` 分支 | **禁改区** |
-| eye 双态切换（`ft.md_source`） | `file_nav_bar` + `FileTab.md_source`（默认 false） | **禁改区**（默认值铁律 2） |
+| eye 双态切换（`ft.md_source`） | `file_nav_bar` + `FileTab.md_source`（默认 true，024 二改拍板：默认源码态） | **双态机制禁改**（默认值按铁律 2） |
 | 源码态 CodeEditor（行号/ts/搜索，`.code_editor()` 创建） | `ensure_file_editor` + `file_editor_body` 通用分支 | **改造对象**（只挂装饰，不改结构） |
 | 渲染器样式规格（strong=700+88% accent 混色…） | `editor/markdown/mod.rs highlight()` | 引用不复制 |
 | pulldown-cmark 0.13 | `crates/app/Cargo.toml` | 源码态装饰的解析器 |
@@ -101,7 +101,7 @@ crates/app/src/editor/
 | 期 | 内容 | 验收 |
 |---|---|---|
 | **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
-| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
+| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false（当时；后用户二改拍板默认源码态）；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
 | **P2 光标与交互打磨** | 1. **元素级 reveal**：光标落在哪段哪段显现（现为光标行整行还原，Obsidian 为段级）
 2. **atomic 跳词接线**：left/right 遇折叠段原子跳过（`next_atomic` 已实现未接线，现会走进隐藏字符）
 3. **点击反算**：鼠标点折叠区 → doc 偏移（`vis_to_doc` 已备）
