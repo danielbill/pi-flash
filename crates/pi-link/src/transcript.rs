@@ -82,7 +82,7 @@ pub const SYSTEM_BUCKETS: [SystemBucket; 7] = [
     SystemBucket::Other,
 ];
 
-/// pi 核心内置工具名（dist/core/tools，钉 1.0.0）。声明无来源字段，以此
+/// pi 核心内置工具名（dist/core/tools，钉 1.1.0）。声明无来源字段，以此
 /// 名单差集分桶：核心 → 系统工具，`mcp` → MCP，其余 → 插件。vendor bump
 /// 时由协议符合性测试把关。
 const CORE_TOOLS: &[&str] = &["bash", "read", "write", "edit", "find", "grep", "ls", "powershell"];

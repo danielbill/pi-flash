@@ -3,6 +3,6 @@
   "private": true,
   "description": "Pinned pi runtime vendored into pi-flash. NEVER resolve pi from PATH. Bump = deliberate release act, see PORT_PLAN.md.",
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.0"
+    "@earendil-works/pi-coding-agent": "1.1.0"
   }
 }

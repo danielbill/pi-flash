@@ -1540,7 +1540,7 @@ mod tests {
         assert!(matches!(e, Event::Unparsed(_)));
     }
 
-    // 实测（pi 1.0.0 RPC，tmp/rpc_probe.js）：每个 run 的 turn_start 后 pi 都
+    // 实测（pi 1.0.0/1.1.0 RPC，tmp/rpc_probe.js）：每个 run 的 turn_start 后 pi 都
     // 会发 role:"system" 的 message_start/message_end，全量携带 transcript 补丁
     // ——app 靠 raw_system 做 live 重放（新会话第一轮点亮系统提示词面板）。
     #[test]

@@ -36,7 +36,7 @@ pub enum ProbeOutcome {
     Unreachable { error: String },
 }
 
-/// 内置商探查端点表（vendor pin 1.0.0）。只收高置信条目——表外商跳过
+/// 内置商探查端点表（vendor pin 1.1.0）。只收高置信条目——表外商跳过
 /// 探查（UI 直接呈现已配置态），宁缺勿错报。
 pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
     const TABLE: &[(&str, &str, Auth)] = &[

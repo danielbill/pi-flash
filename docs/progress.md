@@ -3,6 +3,26 @@
 > 本文件是唯一进度台账（AGENTS.md 只保留铁律与路径）。
 > 每轮工作后更新「当前状态」与「里程碑历史」。
 
+## vendor pi 1.0.0 → 1.1.0（2026-10-10）
+
+- 升级动作按铁律序列：`vendor/pi` package.json + lock 1.0.0→1.1.0（npm install）、
+  VERSION 同步、`PI_VENDOR_VERSION` 同步；全 workspace 编译通过。
+- 上游 1.0.0（10-01）→ 1.1.0（10-07）间含 1.0.1~1.0.4：RPC 面**纯增量**无破坏——
+  `agent_settled` 新增 `aborted` 字段（区分取消/正常结束，app 后续可用）、
+  `tool_execution_end` 新增 `durationMs`；其余为 provider/CLI/MCP OAuth 修复。
+- 协议面核对：Command 枚举 22 个命令名逐一 grep 1.1.0 bundle（chunks/ 目录，
+  cli.js 本体已是 160B stub 转发 cli-runtime.js，入口路径不变）全部在；
+  CORE_TOOLS 八个核心工具（dist/core/tools）无增减（新文件均为辅助模块）。
+- catalog.rs 复核结论（模块头注的升级提醒）：1.1.0 `get_commands` 实测仍只返回
+  扩展 + skill 命令（21 = 11 扩展 + 10 skill），内置表维持空常量。
+- 实机探针：tmp/rpc_probe.js 全流程绿（turn_start 后仍发 role:"system" 的
+  message_start/end 携带 transcript 补丁，新增 `toolsAdded` 字段无碍）；
+  live_rpc_probe 走应用真实 spawn 路径三连 success，get_available_models
+  解析 488 模型（1.0.0 时 447，同形）。
+- 注释钉版号同步：probe.rs / transcript.rs / protocol.rs（1.0.0/1.1.0 双实测
+  表述）；catalog 测试更名 builtin_table_is_empty（不再绑具体版本号）。
+- 门禁：pi-link 127+3 全绿、live_rpc_probe ✓、cargo build ✓。待用户实机验收。
+
 ## 080-2 发版收口：v0.1.0 完整上线 + OIDC 自动发布 + RELEASE.md 规范（2026-10-10）
 
 - **v0.1.0 全链路发布完成**：GitHub Release 三资产（win zip 86MB + sidecar +
