@@ -362,10 +362,12 @@ fn render_file_dirty(
     )
 }
 
-/// 042 ProviderPicker（对齐 pi-web AddProviderPicker，两组）：顶部搜索 +
-/// 「自定义」一张卡（OpenAI / Anthropic compatible → 详情区空白表单）+
-/// 「API KEY」网格（未配置的内置商，catalog 现数 N models → 详情区
-/// API KEY 表单）。订阅服务组全为 OAuth 登录，本期缓行（051 边界）。
+/// 042 ProviderPicker（对齐 pi-web AddProviderPicker 版式）：大面板（近满
+/// 窗）+ 顶部全宽搜索（分隔线压底）+ 滚动卡片网格。组 =「自定义」一张卡
+/// （OpenAI / Anthropic compatible，右侧虚线加号框 → 详情区空白表单）+
+/// 「API KEY」三列网格（**全部**有模型的内置商，卡 = 左名称+N models、
+/// 右 provider 图标，与 pi-web 同款；已配置的也照列）。订阅服务组全为
+/// OAuth 登录，本期缓行（051 边界，beads pi-flash-1cb）。
 fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gpui::Entity<TextInput>, t: &theme::Theme, cx: &App) -> Div {
     let q = input.read(cx).value().trim().to_lowercase();
     let matches = |name: &str| {
@@ -374,34 +376,52 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
             || crate::ui::provider_display_name(name).to_lowercase().contains(&q)
     };
 
-    // API KEY 组：catalog provider 里未配置（无 pf-auth 凭据）、非 OAuth、
-    // 有模型可激活的；按显示名序
+    // models.json 自定义商不走 API KEY 网格（pi-web 同款：自定义入口只有
+    // 「自定义」卡）
+    let custom_names: Vec<String> = pi_link::models_json::providers(&chat.mc_models_json)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+
+    // API KEY 组：catalog 里有模型的内置商（含已配置），按显示名序
     let mut api_cards: Vec<(String, usize)> = Vec::new();
     for p in chat.mc_provider_ids() {
+        if custom_names.iter().any(|n| n == &p) || chat.mc_oauth(&p) {
+            continue;
+        }
         let total = chat
             .catalog_for(&chat.cwd)
             .iter()
             .filter(|m| m.provider == p)
             .count();
-        if total == 0 || chat.mc_configured(&p) || chat.mc_oauth(&p) {
+        if total == 0 || !matches(&p) {
             continue;
         }
         api_cards.push((p, total));
     }
     api_cards.sort_by_key(|(p, _)| crate::ui::provider_display_name(p).to_lowercase());
-    let api_cards: Vec<_> = api_cards
-        .into_iter()
-        .filter(|(p, _)| matches(p))
-        .collect();
 
+    let group_header = |label: &'static str, top_pad: f32| {
+        div()
+            .pt(px(top_pad))
+            .pb(px(6.))
+            .text_size(crate::appearance::ui_size(11.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(t.text_dim))
+            .child(tr(label))
+    };
+
+    let custom_hit = q.is_empty()
+        || "openai anthropic compatible".contains(&q)
+        || tr("自定义端点格式").to_lowercase().contains(&q)
+        || tr("自定义").to_lowercase().contains(&q);
     let custom_card = {
         let weak_card = weak.clone();
         div()
             .id("pp-custom")
-            .w(px(220.))
-            .px(px(12.))
-            .py(px(10.))
-            .rounded(px(8.))
+            .w(px(292.))
+            .p(px(14.))
+            .rounded(px(10.))
             .border_1()
             .border_color(rgb(t.border))
             .bg(rgb(t.bg))
@@ -426,51 +446,50 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
             })
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(10.))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .child(
                         div()
-                            .text_size(crate::appearance::ui_size(12.))
+                            .text_size(crate::appearance::ui_size(12.5))
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .text_color(rgb(t.text))
                             .child(tr("OpenAI / Anthropic compatible")),
                     )
                     .child(
                         div()
-                            .text_size(crate::appearance::ui_size(10.))
+                            .mt(px(2.))
+                            .text_size(crate::appearance::ui_size(10.5))
                             .text_color(rgb(t.text_dim))
                             .child(tr("自定义端点格式")),
                     ),
             )
-            .child(icon("plus", 14., t.text_dim))
+            // pi-web 同款：右侧虚线圆角方块 + 加号
+            .child(
+                div()
+                    .size(px(28.))
+                    .flex_shrink_0()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_dashed()
+                    .border_color(rgb(t.border))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("plus", 13., t.text_dim)),
+            )
     };
 
-    let mut body = div().flex().flex_col().gap(px(2.));
-    // 自定义组
-    body = body
-        .child(
-            div()
-                .pt(px(2.))
-                .pb(px(4.))
-                .text_size(crate::appearance::ui_size(10.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text_dim))
-                .child(tr("自定义")),
-        )
-        .child(custom_card);
+    let mut body = div().flex().flex_col();
+    // 自定义组（搜索不中时整卡隐藏，组头保留与 pi-web 一致的节奏）
+    body = body.child(group_header("自定义", 0.));
+    if custom_hit {
+        body = body.child(custom_card);
+    }
     // API KEY 组
-    body = body.child(
-        div()
-            .pt(px(10.))
-            .pb(px(4.))
-            .text_size(crate::appearance::ui_size(10.))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(rgb(t.text_dim))
-            .child(tr("API KEY")),
-    );
+    body = body.child(group_header("API KEY", 14.));
     if api_cards.is_empty() {
         body = body.child(
             div()
@@ -480,7 +499,7 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
                 .child(tr("没有匹配的 Provider")),
         );
     } else {
-        let mut grid = div().flex().flex_wrap().gap(px(8.));
+        let mut grid = div().flex().flex_wrap().gap(px(10.));
         for (p, total) in &api_cards {
             let weak_card = weak.clone();
             let pid = p.clone();
@@ -488,10 +507,9 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
             grid = grid.child(
                 div()
                     .id(SharedString::from(format!("pp-{p}")))
-                    .w(px(220.))
-                    .px(px(12.))
-                    .py(px(10.))
-                    .rounded(px(8.))
+                    .w(px(292.))
+                    .p(px(14.))
+                    .rounded(px(10.))
                     .border_1()
                     .border_color(rgb(t.border))
                     .bg(rgb(t.bg))
@@ -507,15 +525,14 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
                     })
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .child(crate::ui::provider_icon(p, 18., t.text_muted))
+                    .gap(px(10.))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .child(
                                 div()
-                                    .text_size(crate::appearance::ui_size(12.))
+                                    .text_size(crate::appearance::ui_size(12.5))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .text_color(rgb(t.text))
                                     .overflow_hidden()
@@ -527,70 +544,50 @@ fn render_provider_picker(chat: &Chat, weak: &gpui::WeakEntity<Chat>, input: &gp
                             )
                             .child(
                                 div()
-                                    .text_size(crate::appearance::ui_size(10.))
+                                    .mt(px(2.))
+                                    .text_size(crate::appearance::ui_size(10.5))
                                     .text_color(rgb(t.text_dim))
                                     .child(SharedString::from(crate::i18n::tf(
                                         "{n} models",
                                         &[("n", total.to_string())],
                                     ))),
                             ),
-                    ),
+                    )
+                    .child(crate::ui::provider_icon(p, 24., t.text_muted)),
             );
         }
         body = body.child(grid);
     }
 
+    // 近满窗大面板：搜索条压顶（分隔线），下方滚动区吃满剩余高度
     let panel = div()
-        .w(px(560.))
-        .max_h(px(560.))
+        .w(px(980.))
+        .h(relative(0.88))
         .bg(rgb(t.bg_panel))
         .border_1()
         .border_color(rgb(t.border))
-        .rounded_lg()
-        .p_4()
+        .rounded(px(12.))
+        .overflow_hidden()
         .flex()
         .flex_col()
-        .gap_3()
         .shadow_lg()
         .child(
             div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        // §2 弹窗标题档（原 text_sm 裸字号）
-                        .text_size(crate::appearance::ui_size(14.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(rgb(t.text))
-                        .child(tr("添加 Provider")),
-                )
-                .child(
-                    div()
-                        .id("pp-close")
-                        .px_2()
-                        .cursor_pointer()
-                        .text_color(rgb(t.text_muted))
-                        .hover(|s| s.text_color(rgb(t.text)))
-                        .on_mouse_down(MouseButton::Left, {
-                            let weak = weak.clone();
-                            move |_, _, cx| {
-                                let _ = weak.update(cx, |c, cx| {
-                                    c.dialog = None;
-                                    cx.notify();
-                                });
-                            }
-                        })
-                        .child(icon_hover("x", 12., t.text_muted)),
-                ),
+                .px(px(16.))
+                .py(px(10.))
+                .border_b_1()
+                .border_color(rgb(t.border))
+                .child(input.clone()),
         )
-        .child(input.clone())
         .child(
             div()
                 .id("pp-body")
+                .flex_1()
+                .min_h_0()
                 .overflow_y_scroll()
-                .max_h(px(440.))
-                .pr(px(2.))
+                .px(px(20.))
+                .pt(px(12.))
+                .pb(px(16.))
                 .child(body),
         );
     dialog_shell(chat, weak, panel)

@@ -1809,12 +1809,14 @@ impl Render for Chat {
             }))
             .child(body);
 
-        root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
-
         if let Some(panel) = self.settings.clone() {
             let data = settings::SettingsFormData::snapshot(panel.read(cx), cx);
             root = root.child(settings::render_settings(self, &weak_for_dialog, &data));
         }
+        // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
+        // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉
+        // 全部点击（"看得见点不着"）。弹窗永远是顶层模态，统一放 settings 上。
+        root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
         // 040 卸载扩展确认浮层（叠在设置弹窗之上）
         if let Some(el) = settings::plugins::remove_confirm_overlay(self, cx) {
             root = root.child(el);
