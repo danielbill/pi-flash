@@ -1,134 +1,30 @@
+# 更新日志
+
+所有对外发布的版本变化记录于此，格式见 `docs/CHANGELOG规范.md`。
+
 ## [0.1.0] - 2026-10-10
 
 pi-flash 首个正式对外版本：Rust + GPUI 实现的极速 pi coding agent 桌面端。
 
-### 安装与更新（一条命令）
+### 安装与更新
 
 ```bash
-npm install -g pi-flash@latest   # 首次安装；以后更新重跑同一条命令
+npm install -g pi-flash@latest   # 首次安装与更新同命令
 pi-flash
 ```
 
-需要 Node.js ≥ 22.19。npm 薄壳安装时从本 Release 下载平台载荷（exe + 内置 node + 钉版 pi），SHA-256 校验后落位；卸载 `npm uninstall -g pi-flash`。
+需要 Node.js ≥ 22.19。
+也可直接下载 zip 绿色包，解压后双击 `pi-flash.exe` 即用，无需 Node。
 
-也可直接下载本页 zip 绿色包，解压后双击 `pi-flash.exe` 即用（无需 Node）。
-
-### 本版本要点
-
+### 新增
 - 会话核心：流式渲染、多轮对话、中断、分支与完整历史
 - 输入与编辑：Markdown 源码/预览双态、插图自动落盘、内置终端、文件树与 git 面板
-- 扩展管理：模型 / 技能 / 插件 / MCP（钉版 pi 随应用分发，绝不读 PATH）
+- 扩展管理：模型 / 技能 / 插件 / MCP（钉版 pi 随应用分发，不读系统 PATH）
 - 设置：界面 / 主题 / 多语言 / 远程控制（微信）
-- 分发：npm 一条命令安装与更新；macOS arm64 包由 CI 构建并挂载至本 Release
-
-English: First public release. Install with `npm install -g pi-flash@latest` (Node ≥ 22.19), or download the green zip below.
-
-
-### 变更
-- **提示音换成 pi-web 原版音色**：新增 `crates/app/src/services/sound.rs`，
-  按 `pi-web/hooks/useAudio.ts` 的 Web Audio 参数（C5 523.25 Hz + E5 659.25 Hz，
-  间隔 0.18 s，20 ms 线性淡入至 0.18 再指数衰减到 0.001，单音 0.45 s）在 Rust 侧
-  合成 44.1 kHz / 16-bit mono WAV，Windows 用 `PlaySoundW(SND_MEMORY|SND_ASYNC)`
-  播放（旧实现是 `MessageBeep(MB_ICONASTERISK)` 系统提示音）；非 Windows 仍 no-op
+- 分发：npm 一条命令安装与更新；macOS arm64 包由 CI 构建并挂载至 Release
 
 ### 修复
-- **文件树 / 设置·可用模型列表滚不动**：`ui::vlist` 每帧重建
-  `UniformListScrollHandle` → 滚轮写进上一帧的句柄、下一帧归零，列表纹丝不动
-  （滚动条 thumb 也钉在顶端）。改为 vlist 持有的句柄表按 id 复用（同一 id 同屏
-  只出现一次；字体弹层/文件树/模型列表三个调用点同一修法）。新增真布局回归测试
-  （滚轮 → 下一帧视口按新偏移构建）
+- 文件树 / 设置·可用模型列表滚不动：滚动句柄每帧重建导致偏移归零，改为按 id 复用
 
-## [0.1.1] - 2026-09-25
-
-### 新增
-- **内置终端**（M3）：右侧面板终端标签页，alacritty_terminal + ConPTY；
-  拖选复制（Ctrl+C/Ctrl+Shift+C）、粘贴（Ctrl+V）、滚轮回滚、独立重启按钮；
-  从文件浏览器工具行「>_」打开
-- **模型配置面板**（M4）：底部「模型」打开——已启用模型启停（enabledModels
-  白名单，带最后一模型保护）、按 provider 管理 API Key（写入 auth.json，与
-  pi 共用）；启停结果实时作用于模型选择器
-- **技能 / 插件面板**（M4）：技能列表 + 「对模型可见」开关（SKILL.md 前言）；
-  插件列表 / 启停 / 安装 / 移除（通过 vendored pi CLI）；agents 全局设置
-  （内置开关、最大并发）
-- **工具选择**（M4）：defaultTools 预设（全部/默认/只读/无），新会话生效
-- **扩展 UI 协议**（M5）：扩展弹窗（选择/确认/输入）、状态栏条目、右上角
-  通知 toast、编辑器文本注入
-- **子代理面板**（M5）：四 scope profile 发现与启停、内置子代理管理、
-  面板手动运行子会话（状态/中止/输出查看）
-- **主题运行时切换**（M6）：四主题（mist/default/dark/rose）即时切换，
-  持久化到 settings.json 的 theme 键（与 pi TUI 共用）
-- **界面三语**（M6）：简体中文 / 繁體中文 / English，通用页切换并记忆
-- **LLM 会话标题**：工具栏「生成标题」，一次性 pi 会话生成，替换启发式截断
-- **macOS CI**：tag 推送自动出 .app 包（自带 node + vendored pi，可选签名公证）
-
-### 修复（0.1.0 反馈，buglist 全清）
-- 切换项目后会话列表不显示（ListState 未随过滤结果重置）
-- 「新建」后无空态：新增 Logo + app/pi 版本号 hero 区（pi-web ChatWindow 对齐）
-- 文件浏览器改为侧栏一半高度，且会话/文件分栏可拖动调节
-- 输入框点击聚焦有高亮边框与闪烁光标（自绘编辑器补 caret）
-- 思考强度改为弹出菜单（auto/low/high/max + 说明，pi-web 菜单对齐）
-- 工具预设改为弹出菜单（configured/chat-only/read-only/default/full）
-- 「压缩」按钮生效（rpc compact）；「声音提示」开关生效（持久化 + 完成提示音）
-- 右侧面板：文件/终端混合多标签、宽度可拖动、可关闭；点文件树在面板内打开
-  文件（Source/Preview 切换、大小/行数元信息），替代原预览弹窗
-- 顶部「系统/工具」下拉面板实现（经 export_html 提取系统提示词与工具定义）；
-  侧栏 🔍 会话文本搜索
-
-### 修复
-- 「其他 → 提示音」此前只有开关与试听，agent 轮末从未触发：偏好副本搬进
-  `SessionRuntime`（`sound_on`），`AgentSettled`/`AgentEnd` 收尾走
-  `settle_turn()` 恰好鸣一次（用户 abort 的轮次静音），开关变更由 Chat
-  广播到全池 runtime（后台会话同样提示）
-- node 运行时解析支持 macOS/Linux 自带布局（发布包脱离系统 Node）
-
-### 已知限制
-- 子代理由面板手动运行（模型自动派发的 Agent 工具属 pi-web 服务端层，
-  不在 RPC 协议面内）
-- 系统提示词查看面板暂缺（RPC get_state 未暴露 systemPrompt）
-- 终端宽字符（CJK）列对齐受回退字体影响，与 xterm.js 回退行为一致
-
-
-### 新增
-- **内置终端**（M3）：右侧面板终端标签页，alacritty_terminal + ConPTY；
-  拖选复制（Ctrl+C/Ctrl+Shift+C）、粘贴（Ctrl+V）、滚轮回滚、独立重启按钮；
-  从文件浏览器工具行「>_」打开
-- **模型配置面板**（M4）：底部「模型」打开——已启用模型启停（enabledModels
-  白名单，带最后一模型保护）、按 provider 管理 API Key（写入 auth.json，与
-  pi 共用）；启停结果实时作用于模型选择器
-- **技能 / 插件面板**（M4）：技能列表 + 「对模型可见」开关（SKILL.md 前言）；
-  插件列表 / 启停 / 安装 / 移除（通过 vendored pi CLI）；agents 全局设置
-  （内置开关、最大并发）
-- **工具选择**（M4）：defaultTools 预设（全部/默认/只读/无），新会话生效
-- **扩展 UI 协议**（M5）：扩展弹窗（选择/确认/输入）、状态栏条目、右上角
-  通知 toast、编辑器文本注入
-- **子代理面板**（M5）：四 scope profile 发现与启停、内置子代理管理、
-  面板手动运行子会话（状态/中止/输出查看）
-- **主题运行时切换**（M6）：四主题（mist/default/dark/rose）即时切换，
-  持久化到 settings.json 的 theme 键（与 pi TUI 共用）
-- **界面三语**（M6）：简体中文 / 繁體中文 / English，通用页切换并记忆
-- **LLM 会话标题**：工具栏「生成标题」，一次性 pi 会话生成，替换启发式截断
-- **macOS CI**：tag 推送自动出 .app 包（自带 node + vendored pi，可选签名公证）
-
-### 修复
-- node 运行时解析支持 macOS/Linux 自带布局（发布包脱离系统 Node）
-
-### 已知限制
-- 子代理由面板手动运行（模型自动派发的 Agent 工具属 pi-web 服务端层，
-  不在 RPC 协议面内）
-- 系统提示词查看面板暂缺（RPC get_state 未暴露 systemPrompt）
-- 终端宽字符（CJK）列对齐受回退字体影响，与 xterm.js 回退行为一致
-
-
-所有对外发布的版本变化记录在此。格式参照 Keep a Changelog；
-版本号从 0.1.0 起小版本递增（0.1.1、0.1.2 …），每次发布 +1。
-
-## [0.1.0] - 2026-09-24（内部初版）
-
-### 新增
-- 聊天核心：流式对话 / steer / 中断 / 图片发送，Markdown + 语法高亮，
-  thinking 折叠，工具卡片（M1）
-- 会话工作区：会话列表（过滤/改名/删除）、workspace 记忆与启动恢复、
-  分支导航 fork/tree（M2）
-- 文件能力：递归文件树、文件预览、git status/diff 面板、长文件名图标修复
-  （M3 前半，2b2eeb6）
-- 钉版 pi 0.87.1 内置分发 + pi-link RPC 协议层（含协议陷阱 fixture 测试）
+### 改进
+- 提示音换成 pi-web 原版音色（Rust 侧合成 WAV 播放，替代系统提示音）

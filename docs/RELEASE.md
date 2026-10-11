@@ -23,7 +23,7 @@
 | `pi-flash-<v>-win32-x64.zip` + `.sha256` + `SHA256SUMS` | GitHub Release | 本地 `scripts/release.sh` | ≈86MB；解压 299MB（esbuild 已裁非宿主平台） |
 | `pi-flash-<v>-darwin-arm64.zip` + `.sha256` | GitHub Release | macOS CI（tag 自动触发） | 资产名仅 tag 时带版本；sidecar 独立避免与 SHA256SUMS 互踩 |
 | `pi-flash` npm 薄壳（7.4kB，仅 bin/） | npm 官方源 | **首发手动一次（0.1.0 已完成）→ 此后 `publish-npm.yml` OIDC 自动** | 薄壳安装时从 Release 拉载荷并 SHA-256 校验 |
-| `docs/CHANGELOG.md` 新版本段 | 仓库 | release.sh 5/8：说明文件 + `[Unreleased]` 收编 | 说明文件同时作 GitHub Release 正文 |
+| `docs/CHANGELOG.md` + `docs/CHANGELOG_EN.md` 新版本段 | 仓库 | release.sh 5/8：说明文件中文段收编中文版、`<!-- EN -->` 后英文段收编英文版 | 说明文件全文（双语）作 GitHub Release 正文，同一 tag 下中英同页 |
 | provenance 签名 | npm 包页 | OIDC 发布自动生成 | 供应链徽章，免配置 |
 
 **依赖关系**：npm 包本身不装载荷，安装成败取决于 Release 资产是否已挂 → 资产先行。
@@ -35,7 +35,9 @@
       勿 stash、勿代提交）
 - [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（19 项）
 - [ ] `pi-flash.exe` 未运行（烟测会 `taskkill` 全部实例；且 debug 实例正在运行会让 debug 构建撞 exe 锁）
-- [ ] 发布说明就绪：`tmp/release-notes-<v>.md`（安装/更新命令 + 本版要点；并入 CHANGELOG 段与 Release 正文）
+- [ ] 发布说明就绪：`tmp/release-notes-<v>.md`（安装/更新命令 + 本版要点；**双语**：中文段在上、
+      单独一行 `<!-- EN -->`、下接英文段，见 `docs/CHANGELOG规范.md`；中文段收编 CHANGELOG.md、
+      英文段收编 CHANGELOG_EN.md、全文作 Release 正文。纯中文可发版，英文后补走 `gh release edit`）
 - [ ] 网络：github.com 可达（推送 + 资产上传）；npm 已登录（**仅首发/回退需要**）
 - [ ] Trusted Publisher 若已配置：确认本次发版落在其 **2 天绑定窗口**内（见 §4）
 - [ ] 说明文件在 `tmp/` 下（untracked，不触门禁）
@@ -55,7 +57,8 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 3. 组装 `dist/pi-flash`：exe + node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
    查 `PI_FLASH_PERF`）；结束 taskkill
-5. CHANGELOG：新版本段 = 说明文件 + `[Unreleased]` 收编
+5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
+   （双语以单独一行 `<!-- EN -->` 分隔；无英文段则只收中文，英文版不动）
 6. 压缩 `pi-flash-<v>-win32-x64.zip`（PowerShell Compress-Archive，根带 `pi-flash/` 包装目录）
 7. 生成 `SHA256SUMS` + `<资产>.sha256`（薄壳校验取用顺序：sidecar → SHA256SUMS）
 8. 完成，打印尾部块
@@ -63,8 +66,8 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 ### 3.2 按脚本尾部块依序执行（顺序敏感）
 
 ```bash
-git add crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md
-git commit -m "release v<v>" -- crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md
+git add crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md docs/CHANGELOG_EN.md
+git commit -m "release v<v>" -- crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md docs/CHANGELOG_EN.md
 git tag v<v>
 git push && git push --tags                       # ① 先推 tag（触发 macOS CI）
 gh release create "v<v>" --verify-tag --title "v<v>" \
@@ -96,6 +99,8 @@ darwin 资产 + sidecar 由 CI 自动挂上同一 release（分钟级），无�
 ## 5. 发版后验收
 
 - [ ] `gh release view v<v>`：win zip + sidecar + SHA256SUMS 三资产在
+- [ ] `gh release view v<v>` 正文双语（`<!-- EN -->` 为 HTML 注释不渲染；纯中文发版的用
+      `gh release edit v<v> --notes-file <双语文件>` 补挂英文）
 - [ ] `npm view pi-flash version --registry=https://registry.npmjs.org/` == `<v>`
       （OIDC 自动发时另看 Actions `publish-npm` 绿）
 - [ ] 真机：`npm install -g pi-flash@latest --registry=https://registry.npmjs.org/`
@@ -131,6 +136,6 @@ npm view pi-flash version dist-tags --registry=https://registry.npmjs.org/
 
 ## 8. 关联
 
-- 设计：`docs/模块设计/080-软件分发.md`（方案、包结构、风险预案、实施状态）
-- 变更史：`docs/CHANGELOG.md`
-- 先例参考：pi-web `docs/release.md`（npm 版发布清单）
+- 设计：`docs/模块设计/080-软件分发.md`（方案、包结构、运行机制、限制）
+- 变更史：`docs/CHANGELOG.md` 、 `docs/CHANGELOG_EN.md`
+- CHANGELOG编写规范：`docs/CHANGELOG规范.md`

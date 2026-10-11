@@ -8,7 +8,7 @@
 ```
 ┌──────────────────────────┐      ACP / pi RPC (JSONL over stdio)      ┌─────────────────┐
 │  pi-flash (Rust + GPUI)  │ ────────────────────────────────────────  │  pi sidecar     │
-│  原生 UI / 流式渲染      │   vendor 钉版 pi，spawn 其 cli.js       │  agent core     │
+│  原生 UI / 流式渲染        │   vendor 钉版 pi，spawn 其 cli.js          │  agent core     │
 └──────────────────────────┘                                           └─────────────────┘
 ```
 

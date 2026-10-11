@@ -7,7 +7,7 @@
 #
 # 步骤：校验工作区 → 更新版本号（Cargo + npm 薄壳同同步）→ release 构建 →
 # 组装 dist/pi-flash（exe + node.exe + vendor/pi 裁非宿主 esbuild + 启动说明）
-# → 包内烟测 → 更新 CHANGELOG.md → 压缩 dist/pi-flash-<版本>-win32-x64.zip
+# → 包内烟测 → 更新 CHANGELOG.md / CHANGELOG_EN.md → 压缩 dist/pi-flash-<版本>-win32-x64.zip
 # → 生成 SHA256SUMS 与 <资产>.sha256（npm 薄壳下载校验用，080-软件分发 §4）。
 #
 # 结束后执行尾部「后续（手动执行）」块：提交 → tag 推送（触发 macOS CI）
@@ -83,8 +83,11 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 数据位置：pi 数据 ~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）；
          pi-flash 自己的配置 ~/.pi-flash/（workspace / app-settings / session-index / recents / catalog-cache）
 EOF
-# 同时带上一份 CHANGELOG，方便离线看说明
+# 同时带上一份 CHANGELOG，方便离线看说明（英文版存在且非空才带上）
 cp docs/CHANGELOG.md dist/pi-flash/CHANGELOG.md
+if [[ -s docs/CHANGELOG_EN.md ]]; then
+  cp docs/CHANGELOG_EN.md dist/pi-flash/CHANGELOG_EN.md
+fi
 
 echo "==> 4/8 包内烟测（独立目录启动）"
 SMOKE_LOG="$ROOT/dist/smoke.log"
@@ -101,15 +104,32 @@ fi
 rm -f "$SMOKE_LOG"
 echo "    启动正常"
 
-echo "==> 5/8 更新 CHANGELOG.md"
+TODAY=$(date +%F)
+echo "==> 5/8 更新 CHANGELOG.md / CHANGELOG_EN.md"
+# 说明文件双语约定：中文段在上，单独一行 <!-- EN --> 分隔，下接英文段。
+# 中文段收编 docs/CHANGELOG.md（权威版），英文段收编 docs/CHANGELOG_EN.md，
+# 全文作 GitHub Release 正文（<!-- EN --> 为 HTML 注释，渲染不可见）→ 同一 tag 下中英同页对齐。
 {
-  echo "## [$VERSION] - $(date +%F)"
+  echo "## [$VERSION] - $TODAY"
   echo
-  cat "$NOTES_FILE"
+  sed '/^<!-- EN -->\r\?$/,$d' "$NOTES_FILE"
   echo
   tail -n +2 docs/CHANGELOG.md 2>/dev/null || true
 } > docs/CHANGELOG.md.new
 mv docs/CHANGELOG.md.new docs/CHANGELOG.md
+if grep -q '^<!-- EN -->\r\?$' "$NOTES_FILE"; then
+  {
+    echo "## [$VERSION] - $TODAY"
+    echo
+    sed -n '/^<!-- EN -->\r\?$/,$p' "$NOTES_FILE" | tail -n +2
+    echo
+    tail -n +2 docs/CHANGELOG_EN.md 2>/dev/null || true
+  } > docs/CHANGELOG_EN.md.new
+  mv docs/CHANGELOG_EN.md.new docs/CHANGELOG_EN.md
+  echo "    英文段已收编 CHANGELOG_EN.md"
+else
+  echo "    说明文件无 <!-- EN --> 英文段，CHANGELOG_EN.md 本次不收编"
+fi
 
 echo "==> 6/8 压缩 $ZIP_NAME"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\pi-flash' -DestinationPath 'dist\\${ZIP_NAME}' -Force"
@@ -122,7 +142,7 @@ ls -lh "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
 cat <<EOF
 
 后续（按序手动执行；gh release 紧跟 tag 推送、别等 CI——CI 遇到无 release 会自建）：
-  git add crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md
+  git add crates/app/Cargo.toml npm/package.json Cargo.lock docs/CHANGELOG.md docs/CHANGELOG_EN.md
   git commit -m "release v${VERSION}"
   git tag v${VERSION}
   git push && git push --tags   # 推送 tag 触发 macOS CI（darwin-arm64 资产 + .sha256 自动挂载）
