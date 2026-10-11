@@ -276,7 +276,13 @@ fn tab_strip(
         .overflow_x_scroll();
     tabs_host = tabs_host.child(session_tab(chat, cx));
     for (ix, tab) in chat.panel_tabs.iter().enumerate() {
-        let (label, path, is_file, tab_icon): (SharedString, Option<PathBuf>, bool, Option<&'static str>) = match tab {
+        let (label, path, is_file, tab_icon, tab_view): (
+            SharedString,
+            Option<PathBuf>,
+            bool,
+            Option<&'static str>,
+            ContentView,
+        ) = match tab {
             crate::PanelTab::Term(id) => {
                 let title = chat
                     .terminals
@@ -289,7 +295,7 @@ fn tab_strip(
                             .unwrap_or_default()
                     })
                     .unwrap_or_default();
-                (title.into(), None, false, Some("terminal"))
+                (title.into(), None, false, Some("terminal"), ContentView::Term)
             }
             crate::PanelTab::File(p) => (
                 p.file_name()
@@ -299,6 +305,15 @@ fn tab_strip(
                 Some(p.clone()),
                 true,
                 None,
+                ContentView::File,
+            ),
+            // 081 更新日志 tab（新版本首启自动打开）
+            crate::PanelTab::Changelog => (
+                tr("更新日志").into(),
+                None,
+                false,
+                Some("history"),
+                ContentView::Changelog,
             ),
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点；终端无
@@ -320,9 +335,7 @@ fn tab_strip(
                 .into_any_element(),
             )
         });
-        let active = chat.content_view
-            == if is_file { ContentView::File } else { ContentView::Term }
-            && chat.active_panel_tab == Some(ix);
+        let active = chat.content_view == tab_view && chat.active_panel_tab == Some(ix);
         tabs_host = tabs_host.child(content_tab(
             if is_file { "ctab-file" } else { "ctab-term" },
             ix,
@@ -332,6 +345,7 @@ fn tab_strip(
             path,
             tab_icon,
             badge,
+            tab_view,
             cx,
         ));
     }
@@ -376,10 +390,10 @@ fn content_tab(
     path: Option<PathBuf>,
     tab_icon: Option<&'static str>,
     badge: Option<gpui::AnyElement>,
+    view: ContentView,
     cx: &mut gpui::Context<Chat>,
 ) -> impl gpui::IntoElement {
     let t = T();
-    let is_file = path.is_some();
     let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         if let Some(p) = path.clone() {
             // 文件 tab：脏缓冲走确认弹窗；干净直关（含内容区回退）
@@ -387,26 +401,41 @@ fn content_tab(
             cx.notify();
             return;
         }
+        let was_active = this.active_panel_tab == Some(ix) && this.content_view == view;
         this.close_panel_tab(ix, cx);
-        // 关掉当前 tab 后内容区回退：终端→浏览区遗留→chat
-        if this.content_view == ContentView::Term && this.active_panel_tab.is_none() {
-            let v = if this.panel_tabs.is_empty() {
-                ContentView::Chat
-            } else {
-                this.browse_last
-            };
-            this.set_content_view(v);
-            if this.content_view == ContentView::Term && !this.panel_tabs.is_empty() {
-                let last = this.panel_tabs.len() - 1;
-                this.activate_panel_tab(last, cx);
+        // 关掉当前 tab 后内容区回退：终端→浏览区遗留→chat；
+        // 更新日志（081）→ 剩余 tab 激活最近的，没有则回会话
+        if was_active && this.content_view == view {
+            if view == ContentView::Changelog {
+                match this.active_panel_tab {
+                    Some(nix) => {
+                        let v = this
+                            .panel_tabs
+                            .get(nix)
+                            .map(|tab| tab.view())
+                            .unwrap_or(ContentView::Chat);
+                        this.set_content_view(v);
+                    }
+                    None => this.set_content_view(ContentView::Chat),
+                }
+            } else if this.active_panel_tab.is_none() {
+                let v = if this.panel_tabs.is_empty() {
+                    ContentView::Chat
+                } else {
+                    this.browse_last
+                };
+                this.set_content_view(v);
+                if this.content_view == ContentView::Term && !this.panel_tabs.is_empty() {
+                    let last = this.panel_tabs.len() - 1;
+                    this.activate_panel_tab(last, cx);
+                }
             }
         }
         cx.notify();
     });
     let switch = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.activate_panel_tab(ix, cx);
-        let v = if is_file { ContentView::File } else { ContentView::Term };
-        this.set_content_view(v);
+        this.set_content_view(view);
         cx.notify();
     });
     // 行尾 ×（仅激活态由 tab_shell 渲染）——脏 tab 也要能关（关时走

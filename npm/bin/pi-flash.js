@@ -2,9 +2,12 @@
 "use strict";
 // pi-flash 启动器（npm 薄壳的 bin 入口）：
 //   1. Node 版本检查（对齐 pi-web 的门槛与文案）
-//   2. 载荷自愈——版本戳不符/缺失就先补齐（兜底 --ignore-scripts、镜像剥 postinstall、半途断网）
-//   3. spawn 平台载荷，stdio 透传、信号转发、退出码透传
-// 设计蓝本：docs/模块设计/080-软件分发.md §3.1。
+//   2. 应用内更新落位——exe 下载好的 staging swap 到 payload（081；无标记
+//      即零成本直过）
+//   3. 载荷自愈——版本戳不符/缺失就先补齐（兜底 --ignore-scripts、镜像剥
+//      postinstall、半途断网；戳比包版本新 = 应用内更新先行，不降级）
+//   4. spawn 平台载荷，stdio 透传、信号转发、退出码透传
+// 设计蓝本：docs/模块设计/080-软件分发.md §3.1、081-软件自动更新.md。
 const { spawn } = require("child_process");
 const {
   pkgVersion,
@@ -15,6 +18,7 @@ const {
   exePath,
   ensure,
   busyMessage,
+  applyStagedUpdate,
 } = require("./lib");
 
 if (!isNodeVersionSupported(process.versions.node)) {
@@ -29,6 +33,14 @@ if (!isNodeVersionSupported(process.versions.node)) {
   } catch (error) {
     console.error(`✗ ${error.message}`);
     process.exit(1);
+  }
+
+  // 081：应用内更新已把新载荷下到 staging → 先 swap 再启动
+  try {
+    const applied = applyStagedUpdate();
+    if (applied) console.error(`   已应用更新：v${applied.from} → v${applied.to}`);
+  } catch (error) {
+    console.error(`✗ 更新落位失败（使用当前载荷启动）：${error.message}`);
   }
 
   if (!payloadOk(tag)) {

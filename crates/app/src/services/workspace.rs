@@ -427,6 +427,8 @@ pub struct AppSettings {
     /// 新会话。两键齐才算设置了默认。
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
+    /// 081 其他页: 自动更新（默认 on——off 时只提示新版本号 ↑ 不下载）
+    pub auto_update: Option<bool>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -499,6 +501,7 @@ pub fn app_settings() -> AppSettings {
                         .get("default_model")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
+                    auto_update: map.get("auto_update").and_then(|v| v.as_bool()),
                 }
             }
             None => AppSettings::default(),
@@ -560,6 +563,9 @@ pub fn save_app_settings(s: &AppSettings) {
     }
     if let Some(v) = &s.default_model {
         obj.insert("default_model".into(), Value::String(v.clone()));
+    }
+    if let Some(v) = s.auto_update {
+        obj.insert("auto_update".into(), Value::Bool(v));
     }
     save_map_to(&path, &obj);
 }
@@ -632,6 +638,11 @@ pub fn show_thinking() -> bool {
 /// 文件树 git 标识开关（设置-界面；默认关 = 清爽目录树，023 定案）。
 pub fn git_markers() -> bool {
     app_settings().git_markers.unwrap_or(false)
+}
+
+/// 081 其他页: 自动更新开关（默认 on）。
+pub fn auto_update() -> bool {
+    app_settings().auto_update.unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------

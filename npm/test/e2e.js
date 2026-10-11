@@ -11,6 +11,8 @@
 //   ⑤ --ignore-scripts 首启自愈                   ⑥ SHA256SUMS 兜底
 //   ⑦ 损坏载荷被 SHA-256 拦截                      ⑧ 0.1.1→0.1.2 更新=同一条命令
 //   ⑨ 同版本快路径不重复下载
+//   ⑩ 081 应用内更新落位：staging+标记 → 启动时 swap
+//   ⑪ 载荷比薄壳新（应用内更新先行）→ 不降级、不重复下载
 //
 // 夹具：把 node 可执行文件冒充 pi-flash.exe（spawn 语义与真 exe 等价），
 // 载荷 zip 复刻 release.sh 的 Compress-Archive 包装目录布局（根为 pi-flash/）。
@@ -196,7 +198,8 @@ async function main() {
   fs.rmSync(payloadDirOf(prefix1), { recursive: true, force: true });
   r = await nodeRun(launcherOf(prefix1), ["--version"], { PI_FLASH_MIRROR: mirror });
   check("删除后首启补下", r.status === 0 && stampOf(prefix1) === "0.1.1", r.stderr);
-  fs.writeFileSync(path.join(payloadDirOf(prefix1), ".payload-version"), "9.9.9\n");
+  // 081 语义：戳比包版本新 = 应用内更新先行，不修；戳更旧才补下 → 用 0.0.9
+  fs.writeFileSync(path.join(payloadDirOf(prefix1), ".payload-version"), "0.0.9\n");
   await nodeRun(launcherOf(prefix1), ["--version"], { PI_FLASH_MIRROR: mirror });
   check("戳修复回 0.1.1", stampOf(prefix1) === "0.1.1", `实际 ${stampOf(prefix1)}`);
 
@@ -238,6 +241,48 @@ async function main() {
   r = await nodeRun(launcherOf(prefix1), ["--version"], { PI_FLASH_MIRROR: "http://127.0.0.1:1" });
   const ms = Date.now() - t0;
   check(`直接启动（${ms}ms）`, r.status === 0 && ms < 5000, r.stderr);
+
+  console.log("\n⑩ 081 应用内更新落位：staging + 标记 → 启动时 swap");
+  const prefix5 = path.join(WORK, "prefix5");
+  r = await npm(["install", "-g", "--prefix", prefix5, tgz], { PI_FLASH_MIRROR: mirror });
+  check("安装 0.1.1 成功", r.status === 0 && stampOf(prefix5) === "0.1.1", (r.stderr || ""));
+  const pkg5 = path.join(prefix5, "node_modules", "pi-flash");
+  const stageDir = path.join(pkg5, "payload.stage-0.1.2");
+  fs.mkdirSync(stageDir, { recursive: true });
+  fs.copyFileSync(process.execPath, path.join(stageDir, "pi-flash.exe"));
+  fs.writeFileSync(path.join(stageDir, "marker.txt"), "payload-v0.1.2\n");
+  fs.writeFileSync(path.join(stageDir, ".payload-version"), "0.1.2\n");
+  fs.writeFileSync(
+    path.join(pkg5, "update-staged.json"),
+    JSON.stringify({ version: "0.1.2", staged_at: 1 }),
+  );
+  r = await nodeRun(launcherOf(prefix5), ["--version"], { PI_FLASH_MIRROR: mirror });
+  check("swap 后启动成功", r.status === 0, r.stderr);
+  check("版本戳 = 0.1.2", stampOf(prefix5) === "0.1.2", `实际 ${stampOf(prefix5)}`);
+  check(
+    "载荷内容已换新",
+    fs.readFileSync(path.join(payloadDirOf(prefix5), "marker.txt"), "utf8").includes("payload-v0.1.2"),
+  );
+  check("标记已清除", !fs.existsSync(path.join(pkg5, "update-staged.json")));
+  check(
+    "staging/old 目录无残留",
+    fs
+      .readdirSync(pkg5)
+      .filter((e) => e.startsWith("payload.stage-") || e.startsWith("payload.old-"))
+      .length === 0,
+  );
+  check("更新日志行打印", /已应用更新/.test(r.stderr), r.stderr);
+
+  console.log("\n⑪ 载荷比薄壳新：不降级、不重复下载");
+  const t1 = Date.now();
+  r = await nodeRun(launcherOf(prefix5), ["--version"], { PI_FLASH_MIRROR: "http://127.0.0.1:1" });
+  const ms1 = Date.now() - t1;
+  check(`直接启动（${ms1}ms）`, r.status === 0 && ms1 < 5000, r.stderr);
+  check("载荷未被降级回 0.1.1", stampOf(prefix5) === "0.1.2", `实际 ${stampOf(prefix5)}`);
+  check(
+    "载荷内容保持 0.1.2",
+    fs.readFileSync(path.join(payloadDirOf(prefix5), "marker.txt"), "utf8").includes("payload-v0.1.2"),
+  );
 
   siteSrv.close();
   badSrv.close();

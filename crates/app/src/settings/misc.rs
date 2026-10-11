@@ -93,6 +93,35 @@ pub(crate) fn mc_misc_view(
         t,
     ));
 
+    // 自动更新 switch（081：默认 on——启动后台检查 release，on=下载 staging
+    // 待重启，off=只在新会话页提示新版本号 ↑ 可点击开 release 页）
+    let auto_on = crate::services::workspace::auto_update();
+    col = col.child(set_row(
+        tr("自动更新"),
+        tr("允许Pi-Flash自动更新"),
+        switch(
+            "misc-auto-update",
+            auto_on,
+            {
+                let weak = weak.clone();
+                move |on, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        let mut s = crate::services::workspace::app_settings();
+                        s.auto_update = Some(on);
+                        crate::services::workspace::save_app_settings(&s);
+                        // 关→开：立即补一次检查（Idle 才发，避免与进行中的流程叠加）
+                        if on && matches!(c.update, crate::services::updater::UpdateState::Idle) {
+                            c.spawn_update_check(cx);
+                        }
+                        cx.notify();
+                    });
+                }
+            },
+            t,
+        ),
+        t,
+    ));
+
     // 工作区数据目录：pf 自有目录（~/.pi-flash）在上、pi 目录（~/.pi/agent）
     // 在下，上下两行；每行右侧「打开」按钮（系统文件浏览器打开，右对齐）
     let pf_dir = pi_link::paths::dir()

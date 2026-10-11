@@ -149,6 +149,8 @@ pub(crate) enum ContentView {
     Term,
     /// 文件查看 tab（PanelTab::File；md/html 渲染、其余源码）
     File,
+    /// 081 更新日志 tab（PanelTab::Changelog；markdown 渲染）
+    Changelog,
 }
 
 /// psp 列表方式（⋯ 菜单）。
@@ -428,6 +430,12 @@ struct Chat {
     ext_input: gpui::Entity<TextInput>,
     ext_notice: Option<(String, u8)>,
     settings: Option<gpui::Entity<settings::SettingsPanel>>,
+    /// 081 自动更新状态（新会话页 inputpanel 右下版本号位消费）
+    pub(crate) update: services::updater::UpdateState,
+    /// 081 更新日志 tab 数据（新版本首启自动打开；None = 无页）
+    pub(crate) changelog: Option<services::updater::ChangelogPage>,
+    /// 更新日志页滚动句柄
+    changelog_scroll: gpui::ScrollHandle,
     // ---- v54 shell state ----
     /// psp 项目组（当前项目钉顶，其余按最近会话倒序；启动只加载
     /// 设置.默认加载会话数 N 个会话，组由这批会话的 cwd 自然形成）
@@ -555,11 +563,24 @@ impl PillBtns {
     }
 }
 
-/// One content-area tab: a terminal session or a file viewer.
+/// One content-area tab: a terminal session, a file viewer, or the changelog.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PanelTab {
     Term(usize),
     File(PathBuf),
+    /// 081 更新日志（新版本首启自动打开；无外部资源，纯渲染）
+    Changelog,
+}
+
+impl PanelTab {
+    /// 该 tab 对应的内容区视图（切换/关闭回退共用）。
+    pub(crate) fn view(&self) -> ContentView {
+        match self {
+            PanelTab::Term(_) => ContentView::Term,
+            PanelTab::File(_) => ContentView::File,
+            PanelTab::Changelog => ContentView::Changelog,
+        }
+    }
 }
 
 /// 外部改动冲突类型（023）：文件在磁盘上被改/删，而本缓冲区有未保存修改。
@@ -776,6 +797,10 @@ impl Chat {
             ctx_tip_panel_hover: false,
             ctx_tip_closing: None,
             settings: None,
+            // 081：已有合法 staging = Ready（不花网络），否则 Idle
+            update: services::updater::initial_state(),
+            changelog: None,
+            changelog_scroll: gpui::ScrollHandle::new(),
             renaming: None,
             rename_input: None,
             confirm_delete: None,

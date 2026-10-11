@@ -100,14 +100,125 @@ function exePath(tag = platformTag()) {
   return path.join(PAYLOAD_DIR, exeRelPath(tag));
 }
 
-// 载荷可信 = 版本戳吻合 且 exe 存在（任何一项不满足就走 ensure 补齐）
+// x.y.z 逐段数值比较（081：应用内更新后载荷可能比薄壳新）
+function compareVersions(a, b) {
+  const ka = String(a).trim().replace(/^v/, "").split(".").map((p) => parseInt(p, 10) || 0);
+  const kb = String(b).trim().replace(/^v/, "").split(".").map((p) => parseInt(p, 10) || 0);
+  const n = Math.max(ka.length, kb.length);
+  for (let i = 0; i < n; i += 1) {
+    const x = ka[i] || 0;
+    const y = kb[i] || 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+// 载荷可信 = 版本戳与包版本一致、或戳比包版本**新**（应用内自动更新先行，
+// 薄壳还是旧版），且 exe 存在。戳更旧/缺失才走 ensure 补齐（不降级）。
 function payloadOk(tag = platformTag()) {
   try {
-    if (fs.readFileSync(STAMP_FILE, "utf8").trim() !== pkgVersion) return false;
+    const stamp = fs.readFileSync(STAMP_FILE, "utf8").trim();
+    if (compareVersions(stamp, pkgVersion) < 0) return false;
     return fs.existsSync(exePath(tag));
   } catch {
     return false;
   }
+}
+
+// --- 应用内更新落位（081）：exe 把新载荷下到 staging + 标记，swap 在这里做
+// （彼时旧进程已退出、目录无锁）。布局：
+//   <pkg>/payload.stage-<ver>/    新载荷（exe 自带 .payload-version 戳）
+//   <pkg>/update-staged.json      {"version","staged_at"}
+const STAGE_MARKER = path.join(pkgDir, "update-staged.json");
+const STAGE_PREFIX = "payload.stage-";
+const OLD_PREFIX = "payload.old-";
+
+function readStaged() {
+  try {
+    const staged = JSON.parse(fs.readFileSync(STAGE_MARKER, "utf8"));
+    if (staged && typeof staged.version === "string" && staged.version.trim()) {
+      return { version: staged.version.trim().replace(/^v/, "") };
+    }
+  } catch {}
+  return null;
+}
+
+// 清残留：上次 swap 中断的 payload.old-* / 缺文件的 staging + 标记
+function cleanupStale() {
+  for (const entry of fs.readdirSync(pkgDir)) {
+    if (entry.startsWith(OLD_PREFIX)) {
+      try {
+        fs.rmSync(path.join(pkgDir, entry), { recursive: true, force: true });
+      } catch {}
+    }
+  }
+  const staged = readStaged();
+  if (!staged) {
+    try {
+      fs.rmSync(STAGE_MARKER, { force: true });
+    } catch {}
+    return;
+  }
+  const dir = path.join(pkgDir, `${STAGE_PREFIX}${staged.version}`);
+  const complete =
+    fs.existsSync(path.join(dir, exeRelPath(platformTag()))) &&
+    fs.existsSync(path.join(dir, ".payload-version"));
+  if (!complete) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(STAGE_MARKER, { force: true });
+    } catch {}
+  }
+}
+
+// swap：rename payload→old → rename staging→payload → 删标记 → 删 old。
+// 旧实例仍在跑（rename EBUSY/EPERM）则跳过，标记留给下次启动再试。
+function applyStagedUpdate() {
+  let staged;
+  try {
+    staged = readStaged();
+  } catch {}
+  if (!staged) return null;
+  cleanupStale();
+  const stageDir = path.join(pkgDir, `${STAGE_PREFIX}${staged.version}`);
+  if (!fs.existsSync(stageDir)) {
+    try {
+      fs.rmSync(STAGE_MARKER, { force: true });
+    } catch {}
+    return null;
+  }
+  // 已应用过（戳不旧于 staging）→ 清标记走正常启动
+  let stamp = null;
+  try {
+    stamp = fs.readFileSync(STAMP_FILE, "utf8").trim();
+  } catch {}
+  if (stamp && compareVersions(staged.version, stamp) <= 0) {
+    try {
+      fs.rmSync(STAGE_MARKER, { force: true });
+    } catch {}
+    return null;
+  }
+  const oldDir = path.join(pkgDir, `${OLD_PREFIX}${Date.now()}`);
+  try {
+    fs.renameSync(PAYLOAD_DIR, oldDir);
+  } catch (err) {
+    if (isBusyError(err)) return null; // 旧实例在跑：下次启动再换
+    throw err;
+  }
+  try {
+    fs.renameSync(stageDir, PAYLOAD_DIR);
+    fs.rmSync(STAGE_MARKER, { force: true });
+  } catch (err) {
+    // swap 半途失败：payload 可能已不在——把 old 搬回来兜底
+    try {
+      if (!fs.existsSync(PAYLOAD_DIR)) fs.renameSync(oldDir, PAYLOAD_DIR);
+    } catch {}
+    throw err;
+  }
+  try {
+    fs.rmSync(oldDir, { recursive: true, force: true });
+  } catch {}
+  return { from: stamp || "(缺失)", to: staged.version };
 }
 
 // --- 网络 -------------------------------------------------------------------
@@ -353,6 +464,9 @@ module.exports = {
   exeRelPath,
   exePath,
   payloadOk,
+  compareVersions,
+  readStaged,
+  applyStagedUpdate,
   retry,
   sha256File,
   parseHashFor,

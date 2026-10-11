@@ -229,6 +229,23 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
             "center_x": f32::from(a.center_x),
             "top": f32::from(a.top),
         })),
+        // 081 自动更新（新会话页版本号位状态断言）
+        "update": {
+            "state": match &chat.update {
+                crate::services::updater::UpdateState::Idle => "idle",
+                crate::services::updater::UpdateState::Downloading { .. } => "downloading",
+                crate::services::updater::UpdateState::Ready { .. } => "ready",
+                crate::services::updater::UpdateState::Available { .. } => "available",
+            },
+            "target": match &chat.update {
+                crate::services::updater::UpdateState::Downloading { version }
+                | crate::services::updater::UpdateState::Ready { version }
+                | crate::services::updater::UpdateState::Available { version } => Some(version.clone()),
+                crate::services::updater::UpdateState::Idle => None,
+            },
+            "auto_update": crate::services::workspace::auto_update(),
+            "changelog_open": chat.changelog.as_ref().map(|p| p.version.clone()),
+        },
     })
 }
 
@@ -450,6 +467,7 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "open_tabs": chat.panel_tabs.iter().map(|t| match t {
             crate::PanelTab::Term(i) => json!({"term": i}),
             crate::PanelTab::File(p) => json!({"file": p.display().to_string()}),
+            crate::PanelTab::Changelog => json!({"changelog": true}),
         }).collect::<Vec<_>>(),
     })
 }
@@ -566,6 +584,7 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::Chat => "chat",
         crate::ContentView::Term => "term",
         crate::ContentView::File => "file",
+        crate::ContentView::Changelog => "changelog",
     }
 }
 

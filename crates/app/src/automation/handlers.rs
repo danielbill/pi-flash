@@ -159,6 +159,7 @@ pub(super) fn dispatch(
                     ContentView::Chat => "chat",
                     ContentView::Term => "term",
                     ContentView::File => "file",
+                    ContentView::Changelog => "changelog",
                 },
             }))
         }

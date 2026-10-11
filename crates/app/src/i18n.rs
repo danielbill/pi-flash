@@ -191,6 +191,14 @@ const TABLE: &[(&str, &str, &str)] = &[
     // 界面页显示开关（自「其他」页挪入，无小节标题——用户定夺）
     ("展示思考", "展示思考", "Show thinking"),
     ("开启时思考块默认展开全文，关闭时默认收起为一行", "開啟時思考塊預設展開全文，關閉時預設收起為一行", "When on, thinking blocks expand by default; when off, they collapse to one line"),
+    // 081 自动更新（其他页开关 + 新会话页版本号位 + 更新日志 tab）
+    ("自动更新", "自動更新", "Auto-update"),
+    ("允许Pi-Flash自动更新", "允許Pi-Flash自動更新", "Let Pi-Flash update itself automatically"),
+    ("下载 {v} 版本中…", "下載 {v} 版本中…", "Downloading v{v}…"),
+    ("请重启软件切换至 {v} 版本", "請重啟軟體切換至 {v} 版本", "Restart to switch to v{v}"),
+    ("更新日志", "更新日誌", "Changelog"),
+    ("正在获取更新日志…", "正在獲取更新日誌…", "Fetching changelog…"),
+    ("暂无更新日志", "暫無更新日誌", "No changelog available"),
     // 文件树 git 标识开关（设置-界面）
     ("文件树 Git 标识", "檔案樹 Git 標識", "File tree Git markers"),
     ("文件树显示 git 修改徽标与目录变更点", "檔案樹顯示 git 修改徽標與目錄變更點", "Show git modification badges and directory change dots in the file tree"),

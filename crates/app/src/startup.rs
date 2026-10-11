@@ -687,6 +687,9 @@ fn spawn_splash_gate(cx: &mut gpui::Context<Chat>) {
             // 040 延迟加载：揭幕（切换启动页）后才开始测扩展/skill 说明
             // token——非关键数据，不对启动造成任何负担
             c.spawn_token_probe(cx);
+            // 081 延迟加载：新版本首启开「更新日志」tab + 后台检查更新
+            // （timeout 30s、失败重试 2 次间隔 10min，全程后台线程不阻塞）
+            c.spawn_startup_update_hooks(cx);
             if crate::PERF.load(std::sync::atomic::Ordering::Relaxed) {
                 eprintln!("[perf] splash reveal: {:?}", t0.elapsed());
             }

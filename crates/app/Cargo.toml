@@ -44,6 +44,10 @@ notify = "7"
 # 微信远程控制（060）：渠道层 + 界面层 + transport；app 只做接线。
 # lib crate 的 pub 项不触发 dead_code，见 §7 决策 7（2026-10-07 修订）。
 wxprobe = { path = "../wxprobe" }
+# 081 自动更新：GitHub release 检查/下载（与 pi-link 同版同特性，共用一份编译）
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs", "gzip"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 # gpui 测试夹具（TestAppContext + 真布局）——只有 app 的 test target 会带上

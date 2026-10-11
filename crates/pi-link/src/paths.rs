@@ -98,6 +98,22 @@ pub fn catalog_cache_file() -> Option<PathBuf> {
     file("catalog-cache.json")
 }
 
+/// `~/.pi-flash/update-state.json` — 自动更新状态（081）：last_seen_version
+/// （新版本首启判定，开更新日志 tab 的依据）。
+pub fn update_state_file() -> Option<PathBuf> {
+    file("update-state.json")
+}
+
+/// `~/.pi-flash/changelog-cache/<version>.md` — 各版本更新日志缓存（081：
+/// 检查更新时随 release body 落盘；更新日志页读这里，缺失再按 tag 现拉）。
+pub fn changelog_cache_file(version: &str) -> Option<PathBuf> {
+    Some(
+        dir()?
+            .join("changelog-cache")
+            .join(format!("{}.md", version.trim_start_matches('v'))),
+    )
+}
+
 /// 迁移表：新文件名 ← 旧文件名（`~/.pi/agent/pi-flash-<旧>`）。
 const MIGRATION: &[(&str, &str)] = &[
     ("workspace.json", "workspace.json"),

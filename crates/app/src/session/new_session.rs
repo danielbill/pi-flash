@@ -172,7 +172,7 @@ fn action_bar(
         .unwrap_or_else(|| tr("选择项目").to_string())
         .into();
     let w_open = weak.clone();
-    div()
+    let mut bar = div()
         .id("new-session-bar")
         .mt(px(5.))
         .w_full()
@@ -180,34 +180,85 @@ fn action_bar(
         .px(px(10.))
         .flex()
         .items_center()
-        .gap(px(8.))
-        // 打开项目
-        .child(
-            div()
-                .id("ns-open-project")
-                .h(px(28.))
-                .px(px(9.))
+        .gap(px(8.));
+    // 打开项目
+    bar = bar.child(
+        div()
+            .id("ns-open-project")
+            .h(px(28.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .gap(px(7.))
+            .rounded(px(8.))
+            .cursor_pointer()
+            .text_size(crate::appearance::ui_size(12.))
+            .text_color(rgb(t.text_muted))
+            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = w_open.update(cx, |c, cx| c.open_project_picker(true, cx));
+            })
+            .child(icon("folder", 16., t.text_muted))
+            .child(project),
+    );
+    // pi-flash 版本号（placeholder 同款淡色，用户 2026-10-07 定稿）。
+    // 081：状态化——下载中转圈（faint）、就绪提示重启（青蓝 NOTICE）、
+    // 关自动更新且有新版 = 可点击「↑」开 release 页（青蓝）。
+    {
+        use crate::services::updater::UpdateState;
+        let version_el: gpui::AnyElement = match &chat.update {
+            UpdateState::Downloading { version } => div()
                 .flex()
                 .items_center()
-                .gap(px(7.))
-                .rounded(px(8.))
-                .cursor_pointer()
-                .text_size(crate::appearance::ui_size(12.))
-                .text_color(rgb(t.text_muted))
-                .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = w_open.update(cx, |c, cx| c.open_project_picker(true, cx));
-                })
-                .child(icon("folder", 16., t.text_muted))
-                .child(project),
-        )
-        // pi-flash 版本号（placeholder 同款淡色，用户 2026-10-07 定稿）
-        .child(
+                .gap(px(5.))
+                .child(crate::ui::spinner(11., t.text_faint))
+                .child(SharedString::from(crate::i18n::tf(
+                    "下载 {v} 版本中…",
+                    &[("v", version.clone())],
+                )))
+                .into_any_element(),
+            UpdateState::Ready { version } => SharedString::from(crate::i18n::tf(
+                "请重启软件切换至 {v} 版本",
+                &[("v", version.clone())],
+            ))
+            .into_any_element(),
+            UpdateState::Available { version } => {
+                let ver = version.clone();
+                div()
+                    .id("ns-update-available")
+                    .flex()
+                    .items_center()
+                    .gap(px(3.))
+                    .cursor_pointer()
+                    .child(SharedString::from(format!("v{ver}")))
+                    .child(crate::ui::icon("arrow-up", 11., crate::theme::NOTICE))
+                    .hover(|s| s.text_color(rgb(t.text)))
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        cx.stop_propagation();
+                        crate::services::updater::open_release_page(&ver);
+                    })
+                    .into_any_element()
+            }
+            UpdateState::Idle => {
+                SharedString::from(format!("v{}", env!("CARGO_PKG_VERSION"))).into_any_element()
+            }
+        };
+        let version_color = match &chat.update {
+            // 下载中保持淡色（设计文档：下载信息仍为 faint 字体颜色）；
+            // 就绪/有新版 = 青蓝（NOTICE，通知点三色之「完成通知」）
+            UpdateState::Ready { .. } | UpdateState::Available { .. } => crate::theme::NOTICE,
+            _ => t.text_faint,
+        };
+        bar = bar.child(
             div()
                 .ml_auto()
+                .flex()
+                .items_center()
+                .gap(px(5.))
                 .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_faint))
-                .child(SharedString::from(format!("v{}", env!("CARGO_PKG_VERSION")))),
-        )
-        .into_any_element()
+                .text_color(rgb(version_color))
+                .child(version_el),
+        );
+    }
+    bar.into_any_element()
 }

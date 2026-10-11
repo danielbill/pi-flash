@@ -8,6 +8,7 @@ use crate::Chat;
 use crate::ContentView;
 use crate::i18n::tr;
 use crate::theme::theme as T;
+use crate::ui::ScrollAxisExt;
 
 /// 内容主视图：按 content_view 切换（flex-1，占满 topbar-r 以下）。
 pub(crate) fn content_main(
@@ -25,6 +26,8 @@ pub(crate) fn content_main(
             .map(|d| d.into_any_element())
             .unwrap_or_else(|| empty_hint(tr("暂无终端会话"), t)),
         ContentView::File => crate::editor::view::file_view(chat, weak, window, cx).into_any_element(),
+        // 081 更新日志 tab（新版本首启自动打开）
+        ContentView::Changelog => changelog_view(chat).into_any_element(),
     };
     div()
         .id("content-main")
@@ -37,8 +40,7 @@ pub(crate) fn content_main(
         .into_any_element()
 }
 
-pub(crate) fn empty_hint(text: &str, t: &'static crate::theme::Theme) -> gpui::AnyElement {
-    div()
+pub(crate) fn empty_hint(text: &str, t: &'static crate::theme::Theme) -> gpui::AnyElement {    div()
         .flex_1()
         .flex()
         .items_center()
@@ -48,6 +50,79 @@ pub(crate) fn empty_hint(text: &str, t: &'static crate::theme::Theme) -> gpui::A
         .text_color(rgb(t.text_dim))
         .child(SharedString::from(text.to_string()))
         .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// 更新日志 tab（081）：markdown 渲染 release notes，阅读列居中
+// ---------------------------------------------------------------------------
+
+fn changelog_view(chat: &mut Chat) -> gpui::AnyElement {
+    let t = T();
+    let Some(page) = &chat.changelog else {
+        return empty_hint(tr("暂无更新日志"), t);
+    };
+    let version = page.version.clone();
+    let body = page.body.clone();
+    let fetching = page.fetching;
+    let mut col = div().flex_1().min_h_0().flex().flex_col();
+    // 头：更新日志 + 版本号（滚动跟随外层，不参与内层滚动）
+    col = col.child(
+        div()
+            .px(px(32.))
+            .pt(px(20.))
+            .flex()
+            .items_baseline()
+            .gap(px(10.))
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(17.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(tr("更新日志").to_string()),
+            )
+            .child(
+                div()
+                    .font_family(crate::editor::markdown::MONO_FAMILY)
+                    .text_size(crate::appearance::ui_size(12.))
+                    .text_color(rgb(t.text_muted))
+                    .child(SharedString::from(format!("v{version}"))),
+            ),
+    );
+    if let Some(body) = body {
+        col = col.child(
+            div()
+                .id("changelog-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&chat.changelog_scroll)
+                .restrict_scroll_to_axis()
+                .child(
+                    div()
+                        .max_w(px(820.))
+                        .mx_auto()
+                        .px(px(32.))
+                        .pb(px(40.))
+                        .child(crate::editor::markdown::render(&body, t, false)),
+                ),
+        );
+    } else if fetching {
+        col = col.child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(8.))
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child(crate::ui::spinner(14., t.text_dim))
+                .child(tr("正在获取更新日志…").to_string()),
+        );
+    } else {
+        col = col.child(empty_hint(tr("暂无更新日志"), t));
+    }
+    col.into_any_element()
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +141,7 @@ pub(crate) fn term_view(
         .and_then(|ix| chat.panel_tabs.get(ix).cloned())
         .map(|tab| match tab {
             crate::PanelTab::File(_) => div().into_any_element(),
+            crate::PanelTab::Changelog => div().into_any_element(),
             crate::PanelTab::Term(id) => {
                 let tix = chat.terminals.iter().position(|t| t.id == id);
                 let Some(tix) = tix else {
