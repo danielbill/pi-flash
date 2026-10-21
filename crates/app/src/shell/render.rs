@@ -162,6 +162,16 @@ impl Render for Chat {
         } else if self.file_editor_focus(window, cx).is_some() {
             // 023：文件编辑器持有焦点时不回收——否则点进去下一帧就被抢回
             // composer，打字全失效（编辑器此前不在白名单）
+        } else if self.layout.content_view == crate::ContentView::PiNativeMarket
+            && self
+                .aux
+                .market
+                .native
+                .input
+                .as_ref()
+                .is_some_and(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
+        {
+            // 040-2：原生市场搜索框持焦不回收（同下面 040-1）
         } else if self.layout.content_view == crate::ContentView::PiExtMarket
             && self
                 .aux
@@ -760,7 +770,7 @@ impl Render for Chat {
         if self.dlg.market_menu.is_some() {
             let vp = window.viewport_size();
             let vp = (f32::from(vp.width), f32::from(vp.height));
-            root = root.child(market::pi_ext_market::menu_layer(self, vp, t, cx));
+            root = root.child(market::menu::menu_layer(self, vp, t, cx));
         }
         // psp 悬浮层（tooltip / 详情卡 / 菜单 / 确认）
         root = root.child(function_panel::psp_overlays::psp_overlays(self, window, cx));

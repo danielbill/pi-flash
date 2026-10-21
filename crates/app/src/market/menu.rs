@@ -1,0 +1,66 @@
+//! market 域入口菜单 —— topbar「菜单」三横钮的浮层（040-1 / 040-2 共用）。
+//!
+//! 与 psp 的各种菜单同层：渲染挂 `shell/render.rs` 根，点卡片外 / ESC 关。
+//! **菜单是多入口的壳**：哪一个市场页开着，对应项才出现（各自 dev flag 管），
+//! 壳本身在 `market_menu_enabled()`（任一开）为真时由 titlebar 渲染按钮。
+
+use gpui::prelude::*;
+use gpui::{AnyElement, IntoElement, MouseButton};
+
+use crate::Chat;
+use crate::appearance::theme::Theme;
+use crate::i18n::tr;
+
+/// 菜单浮层。
+pub(crate) fn menu_layer(
+    chat: &mut Chat,
+    vp: (f32, f32),
+    t: &'static Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> AnyElement {
+    let weak = cx.entity().downgrade();
+    let (x, y) = chat.dlg.market_menu.expect("checked by caller");
+    let edges = crate::ui::popup::PopupEdges::around((x, y), vp, 0., 12.);
+    let weak_layer = weak.clone();
+    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
+        let _ = weak_layer.update(cx, |c, cx| {
+            c.dlg.market_menu = None;
+            cx.notify();
+        });
+    });
+    let mut card = crate::function_panel::psp_overlays::menu_card(edges, t);
+
+    if crate::services::workspace::pi_ext_market_enabled() {
+        let weak_item = weak.clone();
+        card = card.child(
+            crate::function_panel::psp_overlays::menu_item(
+                "market-menu-pi-ext",
+                "plug",
+                tr("market.tab"),
+                false,
+                false,
+            )
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+                let _ = weak_item.update(cx, |c, cx| c.open_pi_ext_market(cx));
+            }),
+        );
+    }
+    if crate::services::workspace::pi_native_market_enabled() {
+        let weak_item = weak.clone();
+        card = card.child(
+            crate::function_panel::psp_overlays::menu_item(
+                "market-menu-pi-native",
+                "globe",
+                tr("market.native_tab"),
+                false,
+                false,
+            )
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+                let _ = weak_item.update(cx, |c, cx| c.open_pi_native_market(cx));
+            }),
+        );
+    }
+    layer.child(card).into_any_element()
+}

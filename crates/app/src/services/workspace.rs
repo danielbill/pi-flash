@@ -1078,6 +1078,17 @@ pub fn pi_ext_market_enabled() -> bool {
     dev_flag_enabled("pi_ext_market")
 }
 
+/// 040-2 Pi 原生扩展市场（pi.dev 目录页移植）入口开关（开发旗标，默认关）。
+/// 关态 = topbar 菜单里不出现该项、`open_pi_native_market` 直接返回。
+pub fn pi_native_market_enabled() -> bool {
+    dev_flag_enabled("pi_native_market")
+}
+
+/// topbar「菜单」三横钮是否渲染：任一市场页开着就要出（菜单是多入口的壳）。
+pub fn market_menu_enabled() -> bool {
+    pi_ext_market_enabled() || pi_native_market_enabled()
+}
+
 /// 文件树 git 标识开关（设置-界面；默认关 = 清爽目录树，023 定案）。
 pub fn git_markers() -> bool {
     app_settings().git_markers.unwrap_or(false)

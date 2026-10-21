@@ -46,6 +46,18 @@ impl MarketKind {
         ("subagents", MarketKind::Subagent),
     ];
 
+    /// 清单键名（单数形式，`extensions` → `extension`）：040-2 pi.dev 目录页的
+    /// 类型徽标 / 类型筛选按这个口径对齐 npm 侧 `kinds`。
+    pub fn key(self) -> &'static str {
+        match self {
+            MarketKind::Extension => "extension",
+            MarketKind::Skill => "skill",
+            MarketKind::Prompt => "prompt",
+            MarketKind::Theme => "theme",
+            MarketKind::Subagent => "subagent",
+        }
+    }
+
     /// i18n 键（app 侧 `tr()` 直接吃）。
     pub fn i18n_key(self) -> &'static str {
         match self {
@@ -292,6 +304,20 @@ pub fn parse_latest_manifest(body: &str) -> Result<Vec<MarketKind>, String> {
 pub fn search(query: &str, from: usize, size: usize) -> Result<MarketPage, String> {
     let body = crate::market::http_get_json(&search_url(query, from, size))?;
     parse_search_page(&body)
+}
+
+/// npm 搜索的 size 上限（服务端钳制，超了也只会回 250）。
+pub const SEARCH_SIZE_MAX: usize = 250;
+
+/// 「最近发布」一栏的数据面（040-2）：npm 搜索**没有排序参数**（`sort=` 被忽略，
+/// 实测 `sort=updated` 与默认同序），所以只能取一页上限 250 条、本地按发布时间
+/// 倒序后截前 N 条。语义 = 「按相关度取到的这一批里最近发布的」，不是全库最新
+/// ——页面文案按这个口径写，不装懂。
+pub fn search_recent(take: usize) -> Result<Vec<MarketEntry>, String> {
+    let mut page = search("", 0, SEARCH_SIZE_MAX)?;
+    page.entries.sort_by(|a, b| b.updated.cmp(&a.updated));
+    page.entries.truncate(take);
+    Ok(page.entries)
 }
 
 /// 单包资源类型。失败 = `Err`（调用方**不写缓存**，下次自然重试）。

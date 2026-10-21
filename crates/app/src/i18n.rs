@@ -81,6 +81,12 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.type.prompt", "提示词", "提示詞", "Prompt"),
     ("market.type.theme", "主题", "主題", "Theme"),
     ("market.type.subagent", "子代理", "子代理", "Subagent"),
+    // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案本身照抄
+    // 设计稿英文，这里只收需要跟随界面的那几个词）
+    ("market.native_tab", "Pi原生扩展市场", "Pi原生擴展市場", "Pi Native Market"),
+    // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
+    ("market.install", "install", "install", "install"),
+    ("market.copied", "copied", "copied", "copied"),
     ("market.type.unknown", "—", "—", "—"),
     ("market.empty", "没有匹配的扩展，换个关键词试试", "沒有符合的擴展，換個關鍵字試試", "No matching extensions — try another keyword"),
     ("market.installed_summary", "个已安装", "個已安裝", "installed"),

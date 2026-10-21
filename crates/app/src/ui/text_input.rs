@@ -49,6 +49,9 @@ pub struct TextInput {
     /// 平面档（无组件底色/边框）：行内编辑的 chrome（边框/底色）由所在
     /// 行提供，Zed project_panel 编辑行同款——行 = 唯一的框
     flat: bool,
+    /// 设计稿表单档（040-2 pi.dev 目录页）：44px 高 + 等宽 15px + 零圆角。
+    /// 只改「高度/字号/族」，chrome 仍由宿主给（配 flat 用）。
+    form: bool,
     select_all_on_focus: bool,
     select_all_done: bool,
     want_focus: bool,
@@ -80,6 +83,7 @@ impl TextInput {
             lines: None,
             compact: false,
             flat: false,
+            form: false,
             select_all_on_focus: false,
             select_all_done: false,
             want_focus: false,
@@ -137,6 +141,13 @@ impl TextInput {
     /// 平面档：内件不出底色/边框，由宿主行提供 chrome（行内编辑用）。
     pub fn flat(mut self) -> Self {
         self.flat = true;
+        self
+    }
+
+    /// 设计稿表单档（040-2）：44px 高、等宽字体 15px、零圆角。**只**用于
+    /// 照抄设计稿的表单行；配 `flat()` 让宿主（设计稿的 44px 框）出 chrome。
+    pub fn form(mut self) -> Self {
+        self.form = true;
         self
     }
 
@@ -388,6 +399,8 @@ impl Render for TextInput {
             (gpui::px(0.), false)
         } else if self.multiline {
             (gpui::px(170.), true)
+        } else if self.form {
+            (gpui::px(44.), false)
         } else if self.compact {
             (gpui::px(20.), false)
         } else {
@@ -425,23 +438,33 @@ impl Render for TextInput {
             .when(!auto_h, |d| d.h(h))
             // compact：槽高与 XSmall 内件（vendor input_h 20px）同高、零富余
             //（曾 22px，stretch 对定高子件退化为 top-align，2px 全落底部把
-            // 输入基线顶高 1px——改名行文字上跳根因）；items_center 兜底
+            // 输入基线顶高 1px——改名行文字上跳根因）；items_center 兜底。
+            // form（040-2）：44px 槽 + 30px 内件，同样必须居中，否则 placeholder
+            // 贴着上边（用户实测「文字没垂直居中」）。
             .when(self.compact, |d| d.items_center())
+            // form：items_center 对 vendor 内件不生效（内件 layout 高被
+            // stretch 成槽高，文字仍按行盒顶对齐），直接用 padding 把 30px
+            // 内件压到 44px 槽的垂直正中（(44-30)/2 = 7）
+            .when(self.form, |d| d.pt(gpui::px(5.)).pb(gpui::px(5.)))
             // 文字轨 = Zed create_style 同款（editor.rs：SingleLine/AutoHeight →
             // ui_font + UI 字号，Full → buffer font）：单行走面板 UI 字体（文件树
             // 行内改名与行标签同族同号，Zed project_panel 对编辑器零覆盖的同款
             // 效果），多行走内置 mono（MCP 粘贴框等 buffer 轨）。字号 ui() 双轨
             //（§5.5 ui(12)，compact 档随宿主行 ui(11)），销债表 #2 的裸 px。
-            .font_family(if self.multiline {
+            .font_family(if self.multiline || self.form {
                 SharedString::from(crate::editor::markdown::MONO_FAMILY)
             } else {
                 crate::appearance::panel_font().family.clone().into()
             })
-            .text_size(crate::appearance::ui_size(if self.compact {
-                11.
+            .text_size(if self.form {
+                gpui::px(15.)
             } else {
-                12.
-            }))
+                crate::appearance::ui_size(if self.compact { 11. } else { 12. })
+            })
+            // form（040-2）：内件行高**取整行高**（默认 1.5em = 22.5 → 22.5px
+            // 非"整"，44 槽居中后文字偏上 5px——用户实测「placeholder 没有垂直
+            // 居中」）。指定 20px 行高后文字在 44px 槽里几何居中。
+            .when(self.form, |d| d.line_height(gpui::px(20.)))
             // escape bubbles up from the inner widget (it only unmarks IME
             // composition and propagates) — turn it into the app callback
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {

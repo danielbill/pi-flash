@@ -118,7 +118,7 @@ pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl g
     // 一项，浮层渲染挂 render.rs 根（dlg.market_menu = 按钮锚点）。
     // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
     // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
-    if crate::services::workspace::pi_ext_market_enabled() {
+    if crate::services::workspace::market_menu_enabled() {
         bar = bar.child(div().ml(px(space::SP2)).child(icon_btn(
             "market-menu",
             "menu",
@@ -327,6 +327,14 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 false,
                 Some("menu"),
                 ContentView::PiExtMarket,
+            ),
+            // 040-2 Pi 原生扩展市场（pi.dev 目录页移植）
+            crate::PanelTab::PiNativeMarket => (
+                tr("market.native_tab").into(),
+                None,
+                false,
+                Some("menu"),
+                ContentView::PiNativeMarket,
             ),
             // 083 项目搜索（Zed 同级 tab：ProjectSearchView 就是 pane item）
             crate::PanelTab::Search => (

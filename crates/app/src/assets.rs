@@ -56,6 +56,13 @@ stroke-dasharray=\"{arc:.2} {rest:.2}\" stroke-linecap=\"round\" transform=\"rot
 }
 
 assets! {
+    // 040-2 Pi 原生扩展市场：设计稿 pi-packages.html 三枚行内 symbol 落成资产
+    // （npm/github 取自 simple-icons，report=Tabler flag）
+    "icons/npm.svg",
+    "icons/github.svg",
+    "icons/flag.svg",
+    // 原生市场下拉箭头（设计稿 `.select-control-caret` 的实心三角）
+    "icons/caret-down.svg",
     "icons/git-branch.svg",
     "icons/eye.svg",
     "icons/eye-off.svg",

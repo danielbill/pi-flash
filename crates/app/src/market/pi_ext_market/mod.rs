@@ -1300,44 +1300,6 @@ fn ago_label(iso: &str, now_unix: i64) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// topbar 三横菜单（入口）：目前一项——「Pi扩展市场」
-// ---------------------------------------------------------------------------
-
-/// 菜单浮层（渲染挂 render.rs 根，与 psp_overlays 同层）：点卡片外 / ESC 关。
-pub(crate) fn menu_layer(
-    chat: &mut Chat,
-    vp: (f32, f32),
-    t: &'static Theme,
-    cx: &mut gpui::Context<Chat>,
-) -> AnyElement {
-    let weak = cx.entity().downgrade();
-    let (x, y) = chat.dlg.market_menu.expect("checked by caller");
-    let edges = crate::ui::popup::PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.market_menu = None;
-            cx.notify();
-        });
-    });
-    let weak_item = weak.clone();
-    let card = crate::function_panel::psp_overlays::menu_card(edges, t).child(
-        crate::function_panel::psp_overlays::menu_item(
-            "market-menu-pi-ext",
-            "plug",
-            tr("market.tab"),
-            false,
-            false,
-        )
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-            let _ = weak_item.update(cx, |c, cx| c.open_pi_ext_market(cx));
-        }),
-    );
-    layer.child(card).into_any_element()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

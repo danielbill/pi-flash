@@ -20,6 +20,20 @@ pub(crate) fn open_in_browser(path: &std::path::Path) {
     }
 }
 
+/// 用系统默认浏览器打开 URL（040-2 市场页的 npm/repo/report 链接）。
+pub(crate) fn open_url(url: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+}
+
 /// 用系统默认应用打开文件（editor「无法打开」灰屏的兜底动作）：cmd start /
 /// macOS open 本就按文件关联选应用，与 open_in_browser 同实现异名——
 /// 调用点语义是「默认应用」而非「浏览器」。

@@ -176,6 +176,7 @@ impl Chat {
                 view,
                 ContentView::Changelog
                     | ContentView::PiExtMarket
+                    | ContentView::PiNativeMarket
                     | ContentView::Search
                     | ContentView::SessionSearch
             ) {
@@ -578,6 +579,7 @@ impl Chat {
             Some(PanelTab::Term(_)) => ContentView::Term,
             Some(PanelTab::Changelog) => ContentView::Changelog,
             Some(PanelTab::PiExtMarket) => ContentView::PiExtMarket,
+            Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,
             Some(PanelTab::File(_)) => ContentView::File,
