@@ -2,6 +2,33 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.2.3] - 2026-10-22
+
+This release ships the Pi Extension Market: browse, search and install pi extensions without leaving PF;
+it also fixes markdown table narrow-column wrapping and revamps the input panel's MCP capsule.
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19.
+You can also download the zip, unzip it and double-click `pi-flash.exe` — no Node needed.
+Windows x64 only.
+
+### New
+
+- Pi Extension Market (040-2): a port of pi.dev's Package Catalog page — browse and search pi extensions on npm, sort by most downloads / recently updated / name, with paged browsing; the entry lives in the top-bar "Menu". (768da6e, 5f3f634, c16607a)
+
+### Bug fixes
+
+- Markdown tables in sessions could wrap long tokens in narrow columns: column widths were purely proportional with no minimum, so a wide column squeezed narrow ones until a number like 002068 broke into 00206 / 8; table columns now have a pixel floor (minimum width) plus a safety margin absorbing layout-vs-paint stepping differences. (7c4f13e, 53b3e65)
+
+### Improvements
+
+- Input-panel MCP capsule revamped: the "MCP" label is replaced by a server icon + enabled count (e.g. [2]), matching the extensions button; it stays visible even when the count is 0. (52ccd42)
 ## [0.2.2] - 2026-10-21
 
 I'm quite fond of this release myself —
