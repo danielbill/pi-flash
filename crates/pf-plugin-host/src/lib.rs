@@ -5,9 +5,10 @@
 //! 动作类 import（open-file/run-script/toast...）走通道，由调用方消费，
 //! 避免在 gpui 借用栈里嵌套重入。
 
+pub mod js;
+
 use std::path::Path;
 use std::sync::mpsc;
-
 use wasmtime::component::{Component, Linker, ResourceTable, bindgen};
 use wasmtime::{Config, Engine, Store};
 

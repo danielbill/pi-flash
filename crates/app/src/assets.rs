@@ -15,6 +15,12 @@ macro_rules! assets {
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        // 插件资产（beads 360 ②：`plugins/<slug>/<assets 相对路径>`）：
+        // gpui AssetSource 只有内嵌清单，插件包在磁盘上——转 pf_plugin 的
+        // 缓存读（首读后内存命中，帧路径零盘 IO）
+        if let Some(rel) = path.strip_prefix("plugins/") {
+            return Ok(crate::pf_plugin::plugin_asset(rel).map(Cow::Owned));
+        }
         if let Some(pct) = path
             .strip_prefix("icons/ring-p")
             .and_then(|s| s.strip_suffix(".svg"))

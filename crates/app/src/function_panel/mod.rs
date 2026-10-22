@@ -16,6 +16,7 @@ pub(crate) mod psp_menus;
 pub(crate) mod psp_overlays;
 pub(crate) mod psp_row_views;
 pub(crate) mod tab_menu;
+pub(crate) mod tree_menu;
 
 use gpui::{Context, Entity, MouseButton, SharedString, div, prelude::*, px, rgb};
 
@@ -1036,7 +1037,7 @@ pub(crate) fn dock(
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
-    // git 面板保留独立视图（022；状态栏 tab 已隐藏，恢复走 git 历史找回）
+    // git 面板保留独立视图（022；状态栏 tab 已隐藏，automation panel.dock 可达）
     if chat.layout.dock_panel == DockPanel::Git {
         return div()
             .id("dock")
@@ -1047,6 +1048,19 @@ pub(crate) fn dock(
             .flex_col()
             .bg(rgb(t.nav))
             .child(git_panel::view(chat, weak, cx))
+            .into_any_element();
+    }
+    // 插件面板（beads 360 反馈②）：左列格子视图，互斥于整合面板/git
+    if let DockPanel::Plugin(ix) = chat.layout.dock_panel {
+        return div()
+            .id("dock")
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .flex()
+            .flex_col()
+            .bg(rgb(t.nav))
+            .child(crate::pf_plugin::plugin_panel_view(chat, ix, weak))
             .into_any_element();
     }
     // 020-1 整合面板：会话列表(上) + 文件树(下)，默认 50/50；分隔线拖拽

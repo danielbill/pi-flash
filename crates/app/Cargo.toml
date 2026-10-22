@@ -19,6 +19,8 @@ wasmtime = { version = "36", default-features = false, features = ["runtime", "c
 wasmtime-wasi = { version = "36", default-features = false }
 gpui = "0.2.2"
 pi-link = { path = "../pi-link" }
+# QuickJS 插件运行时（pf_plugin 模块；wasm 侧依赖本 crate 的 wasmtime 已并列）
+pf-plugin-host = { path = "../pf-plugin-host" }
 futures = "0.3"
 serde_json = "1"
 chrono = "0.4"

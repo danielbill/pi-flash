@@ -99,15 +99,13 @@ fn set_process_aumid() {
             eprintln!("[win-pin] shell32 未加载，AUMID 没设上");
             return;
         }
-        let Some(farproc) = GetProcAddress(
-            module,
-            b"SetCurrentProcessExplicitAppModelID\0".as_ptr(),
-        ) else {
+        let Some(farproc) =
+            GetProcAddress(module, b"SetCurrentProcessExplicitAppModelID\0".as_ptr())
+        else {
             eprintln!("[win-pin] shell32 缺 SetCurrentProcessExplicitAppModelID，AUMID 没设上");
             return;
         };
-        let set_aumid: unsafe extern "system" fn(*const u16) -> i32 =
-            std::mem::transmute(farproc);
+        let set_aumid: unsafe extern "system" fn(*const u16) -> i32 = std::mem::transmute(farproc);
         let hr = set_aumid(wide.as_ptr());
         if hr.is_negative() {
             eprintln!("[win-pin] AUMID 设置失败 hr=0x{hr:08x}");

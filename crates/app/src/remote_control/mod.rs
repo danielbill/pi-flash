@@ -1,4 +1,11 @@
-//! 远程控制 —— 微信 ⇄ 会话 桥（`docs/模块设计/060-远程控制-微信.md` §3、§4.1）。
+//! 微信 Bot 桥 —— 微信 ⇄ 会话（`docs/模块设计/060-远程控制-微信.md` §3、§4.1）。
+//!
+//! **正名（2026-10-22）**：本模块曾因早期调研误判被称作「远程控制」——把
+//! ZCode 的 H5 工作台远控（扫码 → `/remote/v4` 页 + zcode relay 服务器透传）
+//! 与它的微信 Bot 渠道（iLink 直连腾讯，无中间服务器）混为一谈。实核 ZCode
+//! 源码后确认二者是两个独立功能；本模块对齐的是后者（Bot 渠道），故用户
+//! 可见文案一律称「微信 Bot」。模块名 `remote_control` 与 i18n key 前缀
+//! `remote.*` 系历史名保留（重命名纯属 diff 噪音，语义已由本注释锚定）。
 //!
 //! ```text
 //! [出站] SessionEvent::ExtUi ──► extui::render ──► transport.send ──► 微信
@@ -219,6 +226,14 @@ impl RemoteControl {
         if !Self::SELF_START {
             return;
         }
+        self.start_transport_from_state();
+    }
+
+    /// 显式启用（设置页开关 / 扫码成功）——**不受 SELF_START 门控**。
+    /// SELF_START 只断「随启动自拉起」（2026-10-15 定夺）；开关与扫码是
+    /// 用户当场明示意图，照常起渠道。修复：曾因一刀切早退，扫码成功后
+    /// 轮询永不启动——弹窗正常关、消息永远收不到。
+    fn start_transport_from_state(&mut self) {
         let st = wxprobe::state::load();
         // 有 chat_id = 之前已经建立过投递目标，跳过激活欢迎（等价于 ZCode
         // 持久化的 `weixinActivatedAt`）
@@ -267,11 +282,15 @@ impl RemoteControl {
         active
     }
 
-    /// 关掉渠道：`transport = None` 触发 `Drop` → **join 两条线程 + 释放轮询锁**
-    /// （P4 验收：关停即停线程，无悬挂）。
+    /// 开/关渠道。开 = **立即**走显式路径拉起（无 token 时起不来并打一行
+    /// 日志，不留死状态）；关 = `transport = None` 触发 `Drop` →
+    /// **join 两条线程 + 释放轮询锁**（P4 验收：关停即停线程，无悬挂）。
     pub fn set_enabled(&mut self, on: bool) {
         if on {
-            self.boot_attempted = false;
+            // 泵的自动路径关掉：ensure_transport 是 SELF_START 门控的开机自启，
+            // 显式启用不走它
+            self.boot_attempted = true;
+            self.start_transport_from_state();
         } else {
             self.transport = None;
             self.boot_attempted = true;
@@ -675,6 +694,11 @@ impl crate::Chat {
             {
                 self.dlg.dialog = None;
             }
+            // 扫码成功 → **立即起渠道**（显式路径，不受 SELF_START 门控）：
+            // 扫完即可收发，不用再摸一下设置页开关
+            if matches!(self.aux.remote.qr, QrState::Done { .. }) && !self.aux.remote.is_running() {
+                self.aux.remote.start_transport_from_state();
+            }
             cx.notify();
         }
         let batches = self.aux.remote.take_batches();
@@ -976,9 +1000,9 @@ impl crate::Chat {
     }
 }
 
-/// 060 远程控制：扫码弹窗（原手机图标入口已隐藏 2026-10-10，自动化
+/// 060 微信 Bot：扫码弹窗（原手机图标入口已隐藏 2026-10-10，自动化
 /// WX_QR_OPEN 仍可打开）。渲染自 dialogs.rs 内切迁入（check_arch 文件
-/// 1500 行上限）——弹窗本体就是远程控制域的 UI，归位。
+/// 1500 行上限）——弹窗本体就是微信 Bot 域的 UI，归位。
 ///
 /// **窗体复用设置弹窗那套大卡片**（`ui::overlay::big_card`）—— top_panels 的
 /// 头注写明「不要再自造窗体」，这里照做：`layer` 负责遮挡/外点/ESC，
@@ -1158,7 +1182,7 @@ pub(crate) fn render_wx_qr(
         .items_center()
         .justify_center()
         .child(crate::ui::overlay::big_card(
-            "远程控制 · 微信",
+            tr("remote.dlg_title"),
             None,
             body.into_any_element(),
             t,
@@ -1276,14 +1300,16 @@ mod tests {
     #[test]
     fn set_enabled_toggles_and_drops_transport() {
         // P4 验收：关停即停线程 —— transport 置 None 触发 Drop(join)。
+        // 2026-10-22 起：开 = 立即走显式路径（无 token 时起不来，但不再
+        // 依赖泵下一拍的 ensure_transport——那条路被 SELF_START 门控死了）。
         let mut rc = RemoteControl::new();
         assert!(!rc.is_running(), "默认未启动");
         rc.set_enabled(true);
+        assert!(rc.boot_attempted, "显式开启即关掉泵的自动路径");
         assert!(
             !rc.is_running(),
-            "开只是允许下一拍去起，不会凭空有 transport"
+            "无 token 起不来（config_from_state 报错打日志）"
         );
-        assert!(!rc.boot_attempted, "开启后要允许重试");
         rc.set_enabled(false);
         assert!(!rc.is_running());
         assert!(rc.boot_attempted, "关停后必须禁止泵自动重开");

@@ -1,4 +1,4 @@
-//! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他；「远程控制」
+//! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他；「微信 Bot」
 //! 页代码保留、导航入口已隐藏——2026-10-10 用户定夺），
 //! 内部页面按 pi-web 最新版重构（路径条/分组侧栏/详情表单/底栏）。表单
 //! 状态由 SettingsPanel entity 持有；mc_*/mcp_* 动作仍在 Chat 上（单一
@@ -30,7 +30,7 @@ pub(crate) use widgets::{
 };
 
 /// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 8 快捷键
-/// （6 远程控制的 match 分支保留，导航入口已隐藏——2026-10-10 定）。
+/// （6 微信 Bot 的 match 分支保留，导航入口已隐藏——2026-10-10 定）。
 pub(crate) const TAB_GENERAL: u8 = 0;
 pub(crate) const TAB_MODELS: u8 = 1;
 pub(crate) const TAB_SKILLS: u8 = 2;
@@ -645,9 +645,9 @@ fn two_pane(sidebar: gpui::AnyElement, detail: gpui::AnyElement) -> gpui::AnyEle
 }
 
 /// 左导航七项（icon + label；激活 = bg_selected + 600 + icon accent）。
-/// 原第七项「远程控制」（TAB_REMOTE）入口已隐藏——2026-10-10 用户定夺；
+/// 原第七项「微信 Bot」（TAB_REMOTE，历史名「远程控制」）入口已隐藏——2026-10-10 用户定夺；
 /// 页面渲染分支仍在，重开只需往数组加回
-/// `(TAB_REMOTE, "远程控制", "message-square")`。
+/// `(TAB_REMOTE, "微信 Bot", "message-square")`。
 fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElement> {
     let t = T();
     // tr() 传 &'static 键返回 &'static；显式标注避免数组被推断成临时生命周期

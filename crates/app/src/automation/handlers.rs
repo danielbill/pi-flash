@@ -418,13 +418,10 @@ pub(super) fn dispatch(
             let panel = params
                 .get("panel")
                 .and_then(Value::as_str)
-                .ok_or_else(|| bad("需要 {\"panel\": \"sessions|files|git\"}"))?;
-            chat.layout.dock_panel = match panel {
-                "sessions" => DockPanel::Sessions,
-                "files" => DockPanel::Files,
-                "git" => DockPanel::Git,
-                other => return Err(bad(format!("未知 dock 面板: {other:?}"))),
-            };
+                .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin\"}"))?;
+            let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
+                .ok_or_else(|| bad(format!("未知 dock 面板: {panel:?}")))?;
             cx.notify();
             ok()
         }

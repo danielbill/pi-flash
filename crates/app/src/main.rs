@@ -37,6 +37,7 @@ mod i18n;
 mod i18n_audit;
 mod market;
 mod models_config;
+mod pf_plugin;
 mod remote_control;
 mod search;
 mod services;

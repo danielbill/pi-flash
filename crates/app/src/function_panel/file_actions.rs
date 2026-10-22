@@ -164,7 +164,7 @@ impl Chat {
         self.dlg.tree_menu = None;
         self.dlg.editor_menu = None;
         if reveal {
-            self.layout.dock_panel = DockPanel::Files;
+            // dock_panel 不再切 Files（与 Default 渲染无差别，020-1 遗留已清）
             self.reveal_tree_row(&path);
         }
         let name = path

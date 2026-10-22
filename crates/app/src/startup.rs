@@ -494,13 +494,16 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
-    // 微信远程控制入站泵（060）：**自启已断开**（remote_control::SELF_START
+    // 微信 Bot 入站泵（060）：**自启已断开**（remote_control::SELF_START
     // = false，2026-10-15 所有者定夺，插件化前不再拉起）——泵在空转，
     // ensure_transport 直接返回，不碰轮询锁
     crate::remote_control::spawn_wx_pump(cx);
     // syntect 语法引擎冷加载 ~百 ms 挪出首个 md 渲染帧（第一次渲染卡顿）：
     // 后台线程预热 OnceLock，命中后首渲零成本
     std::thread::spawn(|| crate::editor::markdown::warm_up());
+    // PF 插件清单扫描（beads 360 ①；02 §4：启动只承担清单，store/ctx 懒加载
+    // ——微秒级/个，后台落位后状态栏 tab / 右键【插件】即出现）
+    crate::pf_plugin::spawn_plugin_scan(cx);
 }
 
 /// fs 监听泵（Zed worktree 扫描器的轻量对应物）：watcher 事件经后台

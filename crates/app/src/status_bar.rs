@@ -6,18 +6,89 @@
 
 use gpui::{MouseButton, div, prelude::*, px, rgb};
 
+use gpui::SharedString;
+
 use crate::Chat;
 use crate::appearance::theme::theme as T;
 use crate::services::workspace::{dock_max_from_min, save_ui_state, ui_state};
 use crate::ui::tokens::align;
+use crate::ui::tooltip::WithTip;
 
 const HEIGHT: f32 = 40.;
 
-pub(crate) fn control_bar(
-    _chat: &mut Chat,
-    cx: &mut gpui::Context<Chat>,
-) -> impl gpui::IntoElement {
+pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
+
+    // PF 插件 tab（beads 360 ②）：清单 contributes.status_bar 声明 → 46px
+    // 连体卡（「项目」tab 同形），点击 open_plugin_panel（懒加载链 02 §4）。
+    // icon = 插件 assets/ 相对路径（磁盘经 Assets 缓存）或宿主内置名；
+    // active 跟随 content_view（accent 图标），禁用插件不出 tab。
+    let mut tabs = div()
+        .flex()
+        .items_center()
+        .gap(px(2.))
+        // 首 tab 卡片左缘落在图标对齐线（§7 / tokens::align，与上方
+        // psp 列表图标同线；2026-10-13 定夺）
+        .ml(px(align::ICON_LINE))
+        // 020-1：面板 tab 只剩「项目」一个（briefcase 图标；文件树
+        // tab 隐藏——文件树已并入上方整合面板）。tab 位保留，后续
+        // 新面板在此续可点 tab。
+        .child(project_tab(chat, cx));
+    for (pix, p) in chat.plugins.plugins.iter().enumerate() {
+        let Some(sb) = p.manifest.status_bar.as_ref() else {
+            continue;
+        };
+        if p.disabled {
+            continue;
+        }
+        let Some(icon_path) = crate::pf_plugin::status_bar_icon_path(p) else {
+            continue;
+        };
+        // active = 左列正显示该插件面板（互斥切换，同「项目」tab 口径）
+        let active = chat.layout.dock_panel == crate::DockPanel::Plugin(pix);
+        let color = if active { t.accent } else { t.text_muted };
+        let title = sb.title_zh.clone();
+        tabs = tabs.child(
+            // 样式对齐 topbar（beads 360 反馈①）：未激活融入 chrome 背景
+            //（无卡底无边框、图标 muted），激活才出连体卡 + accent 图标
+            div()
+                .id(SharedString::from(format!("plugin-tab-{}", p.manifest.id)))
+                // ui-raw: ok 与「项目」tab 同形的 46px tab（w46/mt−4），
+                // 尺寸待 tab 体系 token 化时一并收编（§10.8）
+                .w(px(46.))
+                // tab 高 = bar 高 −4（2026-10-13 定夺，上下两 bar 同规则）
+                .h(px(HEIGHT - 4.))
+                // 连体卡顶贴 dock（同「项目」tab）
+                .mt(px(-4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .when(active, |d| {
+                    d.bg(rgb(t.nav))
+                        .border_1()
+                        .border_t_0()
+                        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+                        .rounded_bl(px(9.))
+                        .rounded_br(px(9.))
+                })
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .with_tip_text(title)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                        this.open_plugin_dock(pix, cx);
+                    }),
+                )
+                .child(
+                    gpui::svg()
+                        .path(icon_path)
+                        .text_color(rgb(color))
+                        // 大图标档 LG18（020-1 图标两档定夺）
+                        .size(px(18.)),
+                ),
+        );
+    }
 
     let mut bar = div()
         .id("status-bar")
@@ -30,19 +101,7 @@ pub(crate) fn control_bar(
         // 右缘不画线：slp|内容分隔线 = content-col 的 border_l 一条全高线，
         // statusbar 再画 border_r 会与其相邻成 2px 双线（设计稿 ::before 在
         // 浏览器亚像素下糊成一条，gpui 锐利像素下显形）
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                // 首 tab 卡片左缘落在图标对齐线（§7 / tokens::align，与上方
-                // psp 列表图标同线；2026-10-13 定夺）
-                .ml(px(align::ICON_LINE))
-                // 020-1：面板 tab 只剩「项目」一个（briefcase 图标；文件树
-                // tab 隐藏——文件树已并入上方整合面板）。tab 位保留，后续
-                // 新面板在此续 tab。
-                .child(project_tab(t)),
-        );
+        .child(tabs);
     bar = bar.child(div().flex_1());
 
     // 016：设置钮下放状态栏右槽（原手机图标位；手机遥控迁 topbar 左段）。
@@ -79,25 +138,49 @@ pub(crate) fn control_bar(
 /// 「项目」tab（020-1）：常亮连体卡（nav 底 + 顶无边 + 底圆角 + accent
 /// 图标），与上方 dock 连成一体。整合面板常驻后无可切换对象，暂为纯
 /// 指示位；后续新面板在此续可点 tab（切换走 layout.dock_panel）。
-fn project_tab(t: &'static crate::appearance::theme::Theme) -> impl gpui::IntoElement {
+/// 「项目」tab（020-1）：连体卡（nav 底 + 顶无边 + 底圆角），点击回整合
+/// 面板（DockPanel::Default）。active = 左列正是整合面板（accent 图标）。
+fn project_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    let t = T();
+    let active = chat.layout.dock_panel == crate::DockPanel::Default;
     div()
         .id("project-tab")
+        // ui-raw: ok 020-1 连体卡原形制（w46/mt−4）升级为可点 tab；
+        // 与插件 tab 同形同源，尺寸待 tab 体系 token 化时一并收编（§10.8）
         .w(px(46.))
         // tab 高 = bar 高 −4（2026-10-13 定夺，上下两 bar 同规则）
         .h(px(HEIGHT - 4.))
         .flex()
         .items_center()
         .justify_center()
-        .bg(rgb(t.nav))
-        .border_1()
-        .border_t_0()
-        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
-        .rounded_bl(px(9.))
-        .rounded_br(px(9.))
+        // 样式对齐 topbar（beads 360 反馈①）：未激活融入 chrome 背景
+        .when(active, |d| {
+            d.bg(rgb(t.nav))
+                .border_1()
+                .border_t_0()
+                .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+                .rounded_bl(px(9.))
+                .rounded_br(px(9.))
+        })
         // 连体卡顶贴 dock（mt = −(bar−tab) = −4 时卡片顶缘 y=0）
         .mt(px(-4.))
-        // 大图标档 LG18（2026-10-14 用户定夺：与设置钮同档）
-        .child(crate::ui::icon("icon-project", 18., t.accent))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                if this.layout.dock_panel != crate::DockPanel::Default {
+                    this.layout.dock_panel = crate::DockPanel::Default;
+                    cx.notify();
+                }
+            }),
+        )
+        // 大图标档 LG18（020-1 图标两档定夺：与设置钮同档）
+        .child(crate::ui::icon(
+            "icon-project",
+            18.,
+            if active { t.accent } else { t.text_muted },
+        ))
 }
 
 /// Persist the current shell layout (panel/width/modes/collapse).

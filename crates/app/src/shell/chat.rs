@@ -27,10 +27,12 @@ pub(crate) struct Chat {
     pub(crate) layout: LayoutUi,
     /// 工作区簇（4ea）：文件树/编辑器/终端/git
     pub(crate) ws: WsUi,
+    /// PF 插件（090-4/02 规范）：清单注册表 + 懒加载运行时 + 面板行缓存
+    pub(crate) plugins: pf_plugin::PluginUi,
 }
 
 /// 周边面板状态簇（4ea 字段重组）：扩展 UI 面 / 081 自动更新与更新日志 /
-/// 060 远程控制桥 / 系统提示词·工具定义弹窗。
+/// 060 微信 Bot 桥 / 系统提示词·工具定义弹窗。
 pub(crate) struct AuxUi {
     // extension UI surface (active session)
     pub(crate) ext_status: Vec<(String, String)>,
@@ -52,7 +54,7 @@ pub(crate) struct AuxUi {
     pub(crate) pi_extension_updates: services::pi_extension_updates::UpdatesState,
     /// 040-1 市场域状态簇（Pi 扩展市场页；后续多个市场在此并列）
     pub(crate) market: crate::market::MarketUi,
-    /// 微信远程控制桥（060）：transport + 待答 ExtUi 请求
+    /// 微信 Bot 桥（060）：transport + 待答 ExtUi 请求
     pub(crate) remote: remote_control::RemoteControl,
     /// 工具定义弹窗左列表选中的工具名（pi-web ToolDefinitionsPanel 的
     /// selectedToolName）
@@ -257,6 +259,9 @@ pub(crate) struct DlgUi {
     /// 渲染挂 render.rs 根（与 psp_overlays 同层），菜单项目前只有
     /// 「Pi扩展市场」。
     pub(crate) market_menu: Option<(f32, f32)>,
+    /// 文件右键【扩展菜单】hover 子菜单展开态（tree_menu.rs；子项 hover
+    /// 离开或菜单整体关闭时归 false）
+    pub(crate) plugin_submenu: bool,
 }
 
 /// 会话池簇（4ea 字段重组）：常驻 runtime 池 + 注意力指针 + 索引缓存
@@ -546,7 +551,7 @@ impl Chat {
             },
             layout: LayoutUi {
                 focus,
-                dock_panel: DockPanel::Sessions,
+                dock_panel: DockPanel::Default,
                 slp_w: ui.slp_w,
                 panes_hidden: ui.panes_hidden,
                 slp_drag: None,
@@ -636,6 +641,7 @@ impl Chat {
                 pending_send: None,
                 subagent_panel: None,
                 market_menu: None,
+                plugin_submenu: false,
             },
             psp: PspUi {
                 projects: Vec::new(),
@@ -705,6 +711,7 @@ impl Chat {
                 mcp_errors: Vec::new(),
                 op_tx: None,
             },
+            plugins: pf_plugin::PluginUi::default(),
             aux: AuxUi {
                 ext_status: Vec::new(),
                 ext_widgets: Vec::new(),

@@ -846,7 +846,7 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "ext_dialog": chat.aux.ext_dialog.is_some(),
         "toast": chat.dlg.status_toast.as_ref().map(|(t, _)| truncate(t, 200)),
         "settings_open": chat.dlg.settings.is_some(),
-        // 060 远程控制：扫码弹窗的实时状态（pif-ui 可据此断言 UI 状态）
+        // 060 微信 Bot：扫码弹窗的实时状态（pif-ui 可据此断言 UI 状态）
         "wx_qr": match &chat.aux.remote.qr {
             crate::remote_control::QrState::Idle => "idle",
             crate::remote_control::QrState::Loading => "loading",

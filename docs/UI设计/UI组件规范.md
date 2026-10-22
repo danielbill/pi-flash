@@ -464,6 +464,8 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `search/results.rs` `card_header` 收展钮 | 28×28 / rounded 2 | Zed `rems_from_px(28)`；不套 `ui_size`（12 基准会放大成 31） |
 | `market/pi_native_market/controls.rs` `select_box`/`menu_shell`/`bracket_button` 链 | select 箭头右隙 7.56 / menu py 4 / `[ ]` 括号内距 4.6 | pi.dev Package Catalog 逐值复刻，非 PF 档位 |
 | `market/pi_native_market/mod.rs` `dropdown_row` | py 7 | pi.dev select 选项逐值复刻 |
+| `status_bar.rs` 插件 tab（`plugin-tab-*`） | 46px 宽连体卡（w 46 / mt −4 / 底圆角 9） | 与「项目」tab 同形继承（020-1 tab 卡形制）；尺寸待 tab 体系 token 化时一并收编（beads 360） |
+| `status_bar.rs` 项目 tab（`project-tab`） | 同上 46px 连体卡 | 020-1 纯指示位升级为可点 tab（回 DockPanel::Default），与插件 tab 同形同源（beads 360） |
 
 ---
 

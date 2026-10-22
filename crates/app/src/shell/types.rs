@@ -51,8 +51,8 @@ pub(crate) enum Dialog {
     FileDirty {
         paths: Vec<PathBuf>,
     },
-    /// 060 远程控制：扫码弹窗（二维码 + 绑定码）。topbar 手机图标与设置
-    /// 「远程控制」页签入口已隐藏（2026-10-10 定），自动化 WX_QR_OPEN 仍可打开。
+    /// 060 微信 Bot：扫码弹窗（二维码 + 绑定码）。topbar 手机图标与设置
+    /// 「微信 Bot」页签入口已隐藏（2026-10-10 定），自动化 WX_QR_OPEN 仍可打开。
     /// 不持数据 —— 内容全从 `chat.aux.remote.qr` 现读，泵更新即重绘。
     WxQr,
 }
@@ -65,20 +65,37 @@ pub(crate) enum TopPanel {
     Tools,
 }
 
-/// functionPanel active view (statusbar 三 tab): mutually exclusive.
+/// 左列面板（statusbar tab 互斥切换）。020-1 曾有三态 sessions/files/git，
+/// 简化后 sessions/files 渲染已无差别（文件树并入整合面板）——2026-10
+/// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
+/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {
-    Sessions,
-    Files,
+    /// 整合面板：会话列表(上) + 文件树(下)
+    Default,
+    /// git 独立视图（022；UI 入口已隐藏，automation panel.dock 可达）
     Git,
+    /// 插件面板（ix = pf_plugin::PluginUi.plugins 下标；不跨重启持久化）
+    Plugin(usize),
 }
 
 impl DockPanel {
+    /// 持久化串。Plugin 态不落盘（重启回落默认整合面板）。
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
-            DockPanel::Sessions => "sessions",
-            DockPanel::Files => "files",
+            DockPanel::Default => "sessions", // 旧键名，读回兼容
             DockPanel::Git => "git",
+            DockPanel::Plugin(_) => "sessions",
+        }
+    }
+
+    /// automation `panel.dock` 入参 → 态（旧值 sessions/files 兼容映射）。
+    pub(crate) fn from_dock_arg(panel: &str, plugin_ix: usize) -> Option<Self> {
+        match panel {
+            "sessions" | "files" | "default" => Some(DockPanel::Default),
+            "git" => Some(DockPanel::Git),
+            "plugin" => Some(DockPanel::Plugin(plugin_ix)),
+            _ => None,
         }
     }
 }
