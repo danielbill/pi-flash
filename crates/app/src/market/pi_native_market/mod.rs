@@ -696,6 +696,7 @@ pub(crate) fn dropdown_row(
 ) -> AnyElement {
     let mut row = gpui::div()
         .id(SharedString::from(id))
+        // ui-raw: ok pi.dev select 选项 py7 逐值复刻（§10.8 登记）
         .w_full()
         .px(gpui::px(sp::CONTROL_PAD_X))
         .py(gpui::px(7.))

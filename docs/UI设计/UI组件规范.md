@@ -462,6 +462,8 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `search/results.rs` `landing_row` | 行高 22 / px 4 / gap 4 / rounded 4 | Zed search landing 行逐值复刻，非 PF 档位 |
 | `search/results.rs` `card_header` 外壳 | 块 p 4 / 内条 pl 4 pr 8 gap 6 rounded 4 | Zed `render_buffer_header` 逐值复刻（083 定案） |
 | `search/results.rs` `card_header` 收展钮 | 28×28 / rounded 2 | Zed `rems_from_px(28)`；不套 `ui_size`（12 基准会放大成 31） |
+| `market/pi_native_market/controls.rs` `select_box`/`menu_shell`/`bracket_button` 链 | select 箭头右隙 7.56 / menu py 4 / `[ ]` 括号内距 4.6 | pi.dev Package Catalog 逐值复刻，非 PF 档位 |
+| `market/pi_native_market/mod.rs` `dropdown_row` | py 7 | pi.dev select 选项逐值复刻 |
 
 ---
 

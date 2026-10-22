@@ -16,6 +16,9 @@ crates/app/src/function_panel/psp_overlays.rs 8
 crates/app/src/function_panel/psp_row_views.rs 2
 crates/app/src/function_panel/tab_menu.rs 1
 crates/app/src/market/pi_ext_market/mod.rs 2
+# market/pi_native_market：0 违规 / 2 豁免（pi.dev Package Catalog 逐值复刻，§10.8 登记）
+crates/app/src/market/pi_native_market/controls.rs 0
+crates/app/src/market/pi_native_market/mod.rs 0
 crates/app/src/remote_control/mod.rs 1
 # search/results.rs：0 违规 / 3 豁免（Zed ProjectSearch 逐值复刻，§10.8 登记）
 crates/app/src/search/results.rs 0
@@ -31,7 +34,8 @@ crates/app/src/session/messages/turn.rs 4
 crates/app/src/session/mod.rs 6
 crates/app/src/session/model_picker.rs 1
 crates/app/src/session/new_session.rs 2
-crates/app/src/session/plugin_picker.rs 1
+# pi_extension_picker.rs：plugin_picker.rs 改名随迁（pp-row 链几何未动，v0.2.2 存量 1 原样跟着新路径）
+crates/app/src/session/pi_extension_picker.rs 1
 crates/app/src/session/subagent_panel.rs 1
 crates/app/src/settings/agents.rs 2
 crates/app/src/settings/custom_models.rs 3

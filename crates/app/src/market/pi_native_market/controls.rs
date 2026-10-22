@@ -201,6 +201,7 @@ pub(super) fn action_bar(st: BarModel, weak: &gpui::WeakEntity<Chat>, m: &Metric
 /// 下拉触发块（设计 `.select-control`：44 高 / mono 15 / 右侧箭头）。
 fn select_box(text: &str) -> AnyElement {
     gpui::div()
+        // ui-raw: ok pi.dev Package Catalog 逐值复刻（本链含 select 箭头右隙 7.56 / menu py4 / [ ] 括号内距 4.6，§10.8 登记）
         .relative()
         .w_full()
         .h(gpui::px(sp::CONTROL_H))
