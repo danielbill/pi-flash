@@ -294,6 +294,7 @@ pub(super) fn package_card(
     weak: &gpui::WeakEntity<Chat>,
     m: &Metrics,
     busy: bool,
+    installed: bool,
 ) -> AnyElement {
     let kind = primary_kind(e);
 
@@ -423,51 +424,66 @@ pub(super) fn package_card(
         weak,
     ));
 
-    // install 按钮：busy = 转圈 + 禁 hover；命令文本仍展示（可选中抄走）
+    // 命令条右端三态：已装 = ✓（success 绿，不可点）；busy = 转圈；其余 = install。
     let w = weak.clone();
     let name = e.name.clone();
-    let mut install_btn = gpui::div()
-        .id(SharedString::from(format!("pi-native-install-{}", e.name)))
-        .flex()
-        .items_center()
-        .justify_center()
-        .flex_shrink_0()
-        .h(gpui::px(sp::COPY_H))
-        .min_w(gpui::px(72.))
-        .px(gpui::px(sp::COPY_PAD_X))
-        .border_1()
-        .border_color(d::line())
-        .text_size(gpui::px(sp::COPY_FS))
-        .font_family(d::MONO)
-        .text_color(gpui::rgba(crate::appearance::theme::rgba_a(0xd5d8db, 0.8)))
-        .child(if busy {
-            crate::ui::spinner(11., d::ACCENT).into_any_element()
-        } else {
-            gpui::div()
-                .flex()
-                .items_center()
-                .cursor_pointer()
-                .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()))
-                .on_mouse_down(MouseButton::Left, {
-                    let w = w.clone();
-                    let name = name.clone();
-                    move |_, _, cx| {
-                        let name = name.clone();
-                        let _ = w.update(cx, |c, cx| c.native_install(name, cx));
-                    }
-                })
-                .child(bracket("["))
-                .child(install_label())
-                .child(bracket("]"))
-                .into_any_element()
-        });
-    if busy {
-        install_btn = install_btn.border_color(d::accent_alpha(0.52));
+    let install_btn: AnyElement = if installed {
+        gpui::div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .h(gpui::px(sp::COPY_H))
+            .px(gpui::px(sp::COPY_PAD_X))
+            .font_family(d::MONO)
+            .text_size(gpui::px(sp::COPY_FS))
+            .text_color(gpui::rgb(0x5db87a))
+            .child(SharedString::from("\u{2713}"))
+            .into_any_element()
     } else {
-        install_btn = install_btn
-            .cursor_pointer()
-            .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()));
-    }
+        let mut btn = gpui::div()
+            .id(SharedString::from(format!("pi-native-install-{}", e.name)))
+            .flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .h(gpui::px(sp::COPY_H))
+            .min_w(gpui::px(72.))
+            .px(gpui::px(sp::COPY_PAD_X))
+            .border_1()
+            .border_color(d::line())
+            .text_size(gpui::px(sp::COPY_FS))
+            .font_family(d::MONO)
+            .text_color(gpui::rgba(crate::appearance::theme::rgba_a(0xd5d8db, 0.8)))
+            .child(if busy {
+                crate::ui::spinner(11., d::ACCENT).into_any_element()
+            } else {
+                gpui::div()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, {
+                        let w = w.clone();
+                        let name = name.clone();
+                        move |_, _, cx| {
+                            let name = name.clone();
+                            let _ = w.update(cx, |c, cx| c.native_install(name, cx));
+                        }
+                    })
+                    .child(bracket("["))
+                    .child(install_label())
+                    .child(bracket("]"))
+                    .into_any_element()
+            });
+        if busy {
+            btn = btn.border_color(d::accent_alpha(0.52));
+        } else {
+            btn = btn
+                .cursor_pointer()
+                .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()));
+        }
+        btn.into_any_element()
+    };
 
     let info = gpui::div()
         .flex_1()
@@ -588,7 +604,7 @@ pub(super) fn package_card(
 fn name_link(e: &MarketEntry, weak: &gpui::WeakEntity<Chat>) -> AnyElement {
     let url = format!("https://pi.dev/packages/{}", e.name);
     let w = weak.clone();
-    gpui::div()
+    let mut el = gpui::div()
         .id(SharedString::from(format!("pi-native-name-{}", e.name)))
         .cursor_pointer()
         .font_family(d::MONO)
@@ -596,15 +612,24 @@ fn name_link(e: &MarketEntry, weak: &gpui::WeakEntity<Chat>) -> AnyElement {
         .text_size(gpui::px(px18::NAME_FS))
         .line_height(gpui::px(px18::NAME_FS * 1.35))
         .text_color(d::text())
-        // 设计稿 `.packages-name a` 常显下划线（1px，accent 淡色）
-        .underline()
         .hover(|s| s.text_color(gpui::rgb(d::ACCENT)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let url = url.clone();
             let _ = w.update(cx, |_, _| crate::services::shell_open::open_url(&url));
         })
-        .child(SharedString::from(e.name.clone()))
-        .into_any_element()
+        .child(SharedString::from(e.name.clone()));
+    // 设计稿 `.packages-name a` 常显下划线，色 = --accent-underline-muted
+    //（accent 暗蓝；token 的 0.22 在深底上隐身，按用户截图取 0.55）。
+    // gpui 的 div 没有带色下划线的 builder，走 Styled::text_style 裸改。
+    {
+        let st = gpui::Styled::text_style(&mut el).get_or_insert_with(Default::default);
+        st.underline = Some(gpui::UnderlineStyle {
+            thickness: gpui::px(1.),
+            color: Some(d::accent_alpha(0.55).into()),
+            ..Default::default()
+        });
+    }
+    el.into_any_element()
 }
 
 /// 按钮括号（设计 `::before/::after` = `[` `]`，accent 色，0.7ch 内距）。

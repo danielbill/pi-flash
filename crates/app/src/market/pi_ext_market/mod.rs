@@ -476,7 +476,7 @@ impl Chat {
     }
 
     /// 已装来源集合（渲染与过滤共用；`cfg.mc_pkgs_global` 是 op 泵维护的活数据）。
-    fn pi_ext_installed_sources(&self) -> HashSet<String> {
+    pub(crate) fn pi_ext_installed_sources(&self) -> HashSet<String> {
         self.cfg
             .mc_pkgs_global
             .iter()

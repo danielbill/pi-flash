@@ -562,6 +562,7 @@ pub(crate) fn page(
     let filtered = !st.filter.trim().is_empty() || st.kind != NativeKind::All;
     let total_pages = st.total_pages();
     let pending = st.pending.clone();
+    let installed_set = chat.pi_ext_installed_sources();
     let weak_c = weak.clone();
     let m_c = m;
     let list = gpui::list(st.list.clone(), move |ix, _w, _cx| {
@@ -592,7 +593,8 @@ pub(crate) fn page(
             let start = r * cols;
             for e in visible.iter().skip(start).take(cols) {
                 let busy = pending.as_deref() == Some(e.source().as_str());
-                row = row.child(card::package_card(e, &weak_c, &m_c, busy));
+                let installed = installed_set.contains(&e.source());
+                row = row.child(card::package_card(e, &weak_c, &m_c, busy, installed));
             }
             if visible.len().saturating_sub(start) < cols {
                 row = row.child(gpui::div().flex_1());
