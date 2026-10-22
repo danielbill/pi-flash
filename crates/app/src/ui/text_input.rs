@@ -52,6 +52,11 @@ pub struct TextInput {
     /// 设计稿表单档（040-2 pi.dev 目录页）：44px 高 + 等宽 15px + 零圆角。
     /// 只改「高度/字号/族」，chrome 仍由宿主给（配 flat 用）。
     form: bool,
+    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）。深肤页（040-2
+    /// 原生市场）需要浅色光标，而主题 token 是按 PF 主题算的。
+    caret_color: Option<u32>,
+    /// 占位符色覆盖（None = 主题 `muted_foreground`）：同理，深肤页要用页内灰。
+    placeholder_color: Option<u32>,
     select_all_on_focus: bool,
     select_all_done: bool,
     want_focus: bool,
@@ -84,6 +89,8 @@ impl TextInput {
             compact: false,
             flat: false,
             form: false,
+            caret_color: None,
+            placeholder_color: None,
             select_all_on_focus: false,
             select_all_done: false,
             want_focus: false,
@@ -151,6 +158,19 @@ impl TextInput {
         self
     }
 
+    /// 光标色覆盖（None = 跟 gpui-component 主题 `caret`）：深肤页（040-2
+    /// 原生市场）需浅色光标，而主题 token 是按 PF 主题算的。
+    pub fn caret_color(mut self, rgb24: u32) -> Self {
+        self.caret_color = Some(rgb24);
+        self
+    }
+
+    /// 占位符色覆盖（None = 主题 `muted_foreground`）：深肤页用页内灰。
+    pub fn placeholder_color(mut self, rgb24: u32) -> Self {
+        self.placeholder_color = Some(rgb24);
+        self
+    }
+
     /// pi-web rename parity: when focus first lands, the whole value is
     /// selected so typing replaces it（光标锚在选区**起点**——头部可见，
     /// vendor `set_selected_range_reversed` 缝，2026-10-13 用户定夺）.
@@ -198,6 +218,7 @@ impl TextInput {
         self.on_blur = Some(cb);
     }
 
+    /// 下拉字段用：设置占位符（下次 render 应用）。
     pub fn set_placeholder(&mut self, ph: Option<SharedString>) {
         self.placeholder = ph.clone();
         if self.state.is_some() {
@@ -365,6 +386,15 @@ impl Render for TextInput {
         }
         if let Some(ph) = self.pending_placeholder.take() {
             state.update(cx, |st, scx| st.set_placeholder(ph, window, scx));
+        }
+        // 颜色覆盖（幂等重设：vendor 侧值不变不 notify）
+        let caret = self.caret_color.map(|c| gpui::rgb(c).into());
+        let ph_color = self.placeholder_color.map(|c| gpui::rgb(c).into());
+        if caret.is_some() || ph_color.is_some() {
+            state.update(cx, |st, scx| {
+                st.set_caret_color(caret, scx);
+                st.set_placeholder_color(ph_color, scx);
+            });
         }
         if let Some(m) = self.pending_masked.take() {
             state.update(cx, |st, scx| st.set_masked(m, window, scx));

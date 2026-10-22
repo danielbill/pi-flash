@@ -1084,9 +1084,11 @@ pub fn pi_native_market_enabled() -> bool {
     dev_flag_enabled("pi_native_market")
 }
 
-/// topbar「菜单」三横钮是否渲染：任一市场页开着就要出（菜单是多入口的壳）。
+/// topbar「菜单」三横钮是否渲染：**恒显**（2026-10-23 用户禁令：不许删菜单 icon）。
+/// 菜单是多入口的壳，里面 090-4「Pi-Flash 插件」是主线常驻项，按钮不能跟着
+/// 别的页面的 dev-flag 一起消失；各市场项自己的显隐照旧由 menu.rs 管。
 pub fn market_menu_enabled() -> bool {
-    pi_ext_market_enabled() || pi_native_market_enabled()
+    true
 }
 
 /// 文件树 git 标识开关（设置-界面；默认关 = 清爽目录树，023 定案）。

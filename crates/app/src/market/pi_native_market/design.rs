@@ -16,6 +16,11 @@
 //!    无 `box-shadow`——字距用 [`spaced`] 插细空格模拟、预览框按设计公式**自己算
 //!    宽高**（[`Metrics::frame`]）、投影省略（20px 半径的黑 25%，深底上几乎不可见）。
 //!    这三处是唯一有意偏离，改设计稿时若要动字距/预览比例，改这里。
+//!
+//! **共享约定（090-4）**：本文件的**几何部分**（[`Metrics`] / `sp` / `px18` /
+//! [`spaced`] / `MONO`）同时被 PF 插件市场页（`crate::market::pf_market`）复用
+//! ——那边只要求 layout 对齐本页，因此几何真值只落这一处；**色板不共享**（PF 页
+//! 走主题语义 token，见该文件头的映射表）。改几何时两页同时生效，属预期。
 
 use gpui::Rgba;
 
@@ -47,8 +52,8 @@ pub const TEXT_A: f32 = 0.960;
 /// 段落正文（实测 `#d5d8db @0.84`，对应 `--copy`）
 pub const COPY: u32 = 0xd5d8db;
 pub const COPY_A: f32 = 0.840;
-/// 弱化文字 `--muted: #9fa4abad`
-const MUTED_RGB: u32 = 0x9fa4ab;
+/// 弱化文字 `--muted: #9fa4abad`（占比符/页内灰；深肤页的占位符也用这支）
+pub const MUTED: u32 = 0x9fa4ab;
 const MUTED_A: f32 = 0.678;
 /// 次级文字 `--muted-strong: #d5d8dbcc`
 const MUTED_STRONG_RGB: u32 = 0xd5d8db;
@@ -69,7 +74,7 @@ const ERROR: u32 = 0xe8704f;
 
 /// npm / github / report 三个链接图标色 = `--muted`
 pub fn muted() -> Rgba {
-    gpui::rgba(rgba_a(MUTED_RGB, MUTED_A))
+    gpui::rgba(rgba_a(MUTED, MUTED_A))
 }
 
 /// 正文色

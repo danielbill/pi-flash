@@ -92,6 +92,8 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.removed", "已卸载 {name}", "已卸載 {name}", "Uninstalled {name}"),
     ("market.pf.failed", "操作失败：{err}", "操作失敗：{err}", "Operation failed: {err}"),
     ("market.pf.need_newer_pf", "该插件需要 PF {min}，当前 {cur}", "該插件需要 PF {min}，當前 {cur}", "This plugin requires PF {min}, current {cur}"),
+    // 090-4 v3：布局对齐 pi market 页后的页内文案（三语齐全）
+    ("market.pf.head", "所有插件", "所有外掛", "All plugins"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),

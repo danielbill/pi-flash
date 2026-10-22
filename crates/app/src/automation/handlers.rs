@@ -440,6 +440,8 @@ pub(super) fn dispatch(
                 // 040-1：市场页走真开页路径（建搜索框 + ensure_loaded 拉首页）
                 "pi-ext-market" => chat.open_pi_ext_market(cx),
                 "pi-native-market" => chat.open_pi_native_market(cx),
+                // 090-4：PF 插件市场同口径（建输入框 + 重读台账）
+                "pf-market" => chat.open_pf_market(cx),
                 "search" => chat.open_project_search(cx),
                 other => return Err(bad(format!("未知内容视图: {other:?}"))),
             }

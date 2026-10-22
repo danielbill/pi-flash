@@ -693,6 +693,22 @@ pub(crate) fn menu_item<S: Into<SharedString>>(
     danger: bool,
     checked: bool,
 ) -> gpui::Stateful<gpui::Div> {
+    menu_item_sized(id, icon_name, 14., label, danger, checked)
+}
+
+/// 带图标尺寸的菜单条（`menu_item` 的通用体）。
+///
+/// **图标档位**：菜单默认 14（`ICON_SM`）；市场菜单传 12（`ICON_XS`）——
+/// 菜单项的图标与 topbar 同名标签的图标（040-2 定夺 = 12）必须同尺寸，
+/// 否则同一个 plug 在标签里一个样、在菜单里一个样（2026-10-23 用户定夺）。
+pub(crate) fn menu_item_sized<S: Into<SharedString>>(
+    id: S,
+    icon_name: &'static str,
+    icon_size: f32,
+    label: &str,
+    danger: bool,
+    checked: bool,
+) -> gpui::Stateful<gpui::Div> {
     let t = T();
     div()
         .id(id.into())
@@ -714,7 +730,7 @@ pub(crate) fn menu_item<S: Into<SharedString>>(
         })
         .child(icon(
             icon_name,
-            14.,
+            icon_size,
             if danger { t.danger } else { t.text_muted },
         ))
         .child(div().flex_1().child(SharedString::from(label.to_string())))

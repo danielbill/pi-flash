@@ -13,9 +13,12 @@
 - 关态三处闸门，**新增入口必须一起想**：`titlebar::topbar_l` 不渲染「菜单」三横钮
   / `open_pi_ext_market()` 直接 return（覆盖 pif-ui 自动化 `pi-ext-market`，
   `automation/handlers.rs`）/ `spawn_pi_ext_market_prefetch` 直接 return（不为看不见的
-  页面偷跑网络）。
+  页面偷跑网络）。**菜单钮与菜单项的上线取舍 2026-10-23 用户否决过一版改动，别再动**
+  （只该碰市场页本体）。
 - `open_pi_ext_market` 是**唯一**打开路径（菜单项、自动化、将来的快捷键都打这里）；它
   自己 push `PanelTab::PiExtMarket` + `set_content_view` + 建输入框 + 首装载。
+  自动化开页走 `content.view` 的 `pi-ext-market` / `pi-native-market` /
+  `pf-market` 三个键（都打各自 open 口）。
 
 ## 页状态机（`aux.market.pi_ext`）
 
@@ -50,6 +53,14 @@
 
 ## 布局踩点
 
+- **090-4 PF 插件市场页（v3）只对齐 pi 页的 layout**：复用 `pi_native_market::design`
+  的 `Metrics/sp/px18`，外壳/分段骨架/双列网格/行距/页码条同源。**无「最近发布」段、
+  无工具栏**（不出输入框·搜索钮·状态/排序下拉·重置·字段标签行，用户 2026-10-23 定夺）；
+  **首段自带 `pt(shell_pad)`**（pi 页那份上内距挂在「最近发布」段上，删段后必须
+  自己补，否则贴顶边）；卡行段自带 `pt(card_pad_body)`（原由工具栏容器给）。
+  **卡片内部是 PF v1 定稿，不许改成 pi 卡版式**（72 预览槽 / 名称 16 semibold /
+  描述 / meta 行含安装钮）。色板走 theme 语义 token（映射表在 pf_market.rs 文件头），
+  不共享 pi 的深色字面量。
 - **vlist 行高 = card_h + SP4，卡片自己带 `mt(SP4)`**：所以「摘要行 ↔ 列表」想得到 N，
   `SUMMARY_PB` 必须写 `N − SP4`（现在是 `10 − 8`）。直接写 N 会凭空多 8。
 - `card_metrics` 全部**派生**（head/desc/bottom → card_h → row_h），禁止写死字面量：

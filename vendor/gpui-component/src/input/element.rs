@@ -79,6 +79,10 @@ fn viewport_byte_window(
 pub(super) struct TextElement {
     pub(crate) state: Entity<InputState>,
     placeholder: SharedString,
+    /// pi-flash 追加：光标色覆盖（None = 主题 `caret`）
+    caret_color: Option<Hsla>,
+    /// pi-flash 追加：占位符色覆盖（None = 主题 `muted_foreground`）
+    placeholder_color: Option<Hsla>,
 }
 
 impl TextElement {
@@ -86,12 +90,26 @@ impl TextElement {
         Self {
             state,
             placeholder: SharedString::default(),
+            caret_color: None,
+            placeholder_color: None,
         }
     }
 
     /// Set the placeholder text of the input field.
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// pi-flash 追加：光标色覆盖（None = 主题 `caret`）。
+    pub fn caret_color(mut self, color: Option<Hsla>) -> Self {
+        self.caret_color = color;
+        self
+    }
+
+    /// pi-flash 追加：占位符色覆盖（None = 主题 `muted_foreground`）。
+    pub fn placeholder_color(mut self, color: Option<Hsla>) -> Self {
+        self.placeholder_color = color;
         self
     }
 
@@ -1028,7 +1046,8 @@ impl Element for TextElement {
         let (display_text, text_color) = if is_empty {
             (
                 &Rope::from(placeholder.as_str()),
-                cx.theme().muted_foreground,
+                self.placeholder_color
+                    .unwrap_or(cx.theme().muted_foreground),
             )
         } else if state.masked {
             (
@@ -1433,7 +1452,10 @@ impl Element for TextElement {
         if focused && show_cursor {
             if let Some(mut cursor_bounds) = prepaint.cursor_bounds.take() {
                 cursor_bounds.origin.y += prepaint.cursor_scroll_offset.y;
-                window.paint_quad(fill(cursor_bounds, cx.theme().caret));
+                window.paint_quad(fill(
+                    cursor_bounds,
+                    self.caret_color.unwrap_or(cx.theme().caret),
+                ));
             }
         }
 

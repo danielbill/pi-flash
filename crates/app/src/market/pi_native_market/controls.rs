@@ -37,17 +37,11 @@ pub(super) fn action_bar(st: BarModel, weak: &gpui::WeakEntity<Chat>, m: &Metric
         .w_full()
         .flex()
         .flex_col()
-        .gap(gpui::px(sp::FIELD_GAP))
-        .child(field_label(
-            "Filter packages by name, description, or author",
-        ))
         .child(input);
 
     let kind_col = gpui::div()
         .w(gpui::px(216.))
         .flex_col()
-        .gap(gpui::px(sp::FIELD_GAP))
-        .child(field_label("Filter by package type"))
         .child(if st.kind_guard.is_none() {
             // 守卫只在 `native_ensure_input` 里建；找不到就画静态框（标签页
             // 恢复等边角路径宁可不给下拉，也不能 panic）
@@ -102,8 +96,6 @@ pub(super) fn action_bar(st: BarModel, weak: &gpui::WeakEntity<Chat>, m: &Metric
     let sort_col = gpui::div()
         .w(gpui::px(234.))
         .flex_col()
-        .gap(gpui::px(sp::FIELD_GAP))
-        .child(field_label("Sort packages"))
         .child(if st.sort_guard.is_none() {
             select_box(NativeSort::label(st.sort))
         } else {
@@ -204,19 +196,6 @@ pub(super) fn action_bar(st: BarModel, weak: &gpui::WeakEntity<Chat>, m: &Metric
             .child(buttons)
     };
     bar.into_any_element()
-}
-
-/// 字段标签（设计稿里其实是 `visually-hidden` 的 sr-only 文本，但**浏览器实测
-/// 可见**——`@layer utilities` 的 .visually-hidden 在导出里被丢掉了。既然设计
-/// 稿渲染出来就是可见的衬线标签，这里照渲染结果做）。
-fn field_label(text: &str) -> AnyElement {
-    gpui::div()
-        .font_family(d::SERIF)
-        .text_size(gpui::px(px18::BODY_FS))
-        .line_height(gpui::px(28.8))
-        .text_color(d::text())
-        .child(label(text))
-        .into_any_element()
 }
 
 /// 下拉触发块（设计 `.select-control`：44 高 / mono 15 / 右侧箭头）。

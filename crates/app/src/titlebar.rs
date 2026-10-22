@@ -73,6 +73,16 @@ impl gpui::Render for TabDragGhost {
     }
 }
 
+/// topbar 标签图标档位：默认 ICON_XS(12)；`plug` 参照 ICON_SM(14)（光学尺寸
+/// 补偿：该图形墨迹只占 ~13/24 宽，12 档下和方形图标并排显小）。
+/// 菜单项同名图标走同一档（`market::menu`），两处必须一致。
+fn tab_icon_size(name: &str) -> f32 {
+    match name {
+        "plug" => 14.,
+        _ => 12.,
+    }
+}
+
 /// 拖拽幽灵的图标元素：文件 tab → 文件类型图标（`ui::icon_path` 口径）；
 /// 终端/更新日志 → tab 自身的命名图标（`ui::icon`）。
 fn drag_icon(drag: &TabDrag, size: f32, color: u32) -> Option<gpui::AnyElement> {
@@ -562,8 +572,11 @@ fn content_tab(
     tab_shell(
         tab_id,
         // 040-2：topbar 标签图标统一 ICON_XS(12)（2026-10-22 用户定夺；
-        // 原值 15 是非法档，规范 §3 五档之外）
-        tab_icon.map(|n| crate::ui::icon(n, 12., t.text_muted).into_any_element()),
+        // 原值 15 是非法档，规范 §3 五档之外）。
+        // 例外：`plug` 图形本身细长（墨迹只占 ~13/24 宽），12 档下与方形图标
+        // 并排显得小一圈，光学上补到 ICON_SM(14)（2026-10-23 用户定夺，
+        // 与 cmd 菜单里的 plug 同档）。
+        tab_icon.map(|n| crate::ui::icon(n, tab_icon_size(n), t.text_muted).into_any_element()),
         label,
         active,
         ml,

@@ -6,7 +6,7 @@ use anyhow::Result;
 use gpui::{
     actions, div, point, prelude::FluentBuilder as _, px, Action, App, AppContext, Bounds,
     ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
+    Hsla, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollHandle,
     ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, UTF16Selection, Window,
 };
@@ -332,6 +332,10 @@ pub struct InputState {
     /// The mask pattern for formatting the input text
     pub(crate) mask_pattern: MaskPattern,
     pub(super) placeholder: SharedString,
+    /// pi-flash 追加：光标色覆盖（None = 读主题 `caret`）
+    pub(super) caret_color: Option<Hsla>,
+    /// pi-flash 追加：占位符色覆盖（None = 读主题 `muted_foreground`）
+    pub(super) placeholder_color: Option<Hsla>,
 
     /// Popover
     diagnostic_popover: Option<Entity<DiagnosticPopover>>,
@@ -448,6 +452,8 @@ impl InputState {
             deferred_scroll_offset: None,
             preferred_column: None,
             placeholder: SharedString::default(),
+            caret_color: None,
+            placeholder_color: None,
             mask_pattern: MaskPattern::default(),
             lsp: Lsp::default(),
             diagnostic_popover: None,
@@ -530,6 +536,34 @@ impl InputState {
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
         self
+    }
+
+    /// pi-flash 追加：光标色（盖过主题 `caret`）。None = 跟随主题。
+    pub fn caret_color(mut self, color: Option<Hsla>) -> Self {
+        self.caret_color = color;
+        self
+    }
+
+    /// pi-flash 追加：运行时改光标色。
+    pub fn set_caret_color(&mut self, color: Option<Hsla>, cx: &mut Context<Self>) {
+        if self.caret_color != color {
+            self.caret_color = color;
+            cx.notify();
+        }
+    }
+
+    /// pi-flash 追加：占位符色（盖过主题 `muted_foreground`）。None = 跟随主题。
+    pub fn placeholder_color(mut self, color: Option<Hsla>) -> Self {
+        self.placeholder_color = color;
+        self
+    }
+
+    /// pi-flash 追加：运行时改占位符色。
+    pub fn set_placeholder_color(&mut self, color: Option<Hsla>, cx: &mut Context<Self>) {
+        if self.placeholder_color != color {
+            self.placeholder_color = color;
+            cx.notify();
+        }
     }
 
     /// Set enable/disable line number, only for [`InputMode::CodeEditor`] mode.
@@ -2669,7 +2703,12 @@ impl Render for InputState {
             .when(self.mode.is_multi_line(), |this| this.h_full())
             .flex_grow()
             .overflow_x_hidden()
-            .child(TextElement::new(cx.entity().clone()).placeholder(self.placeholder.clone()))
+            .child(
+                TextElement::new(cx.entity().clone())
+                    .placeholder(self.placeholder.clone())
+                    .caret_color(self.caret_color)
+                    .placeholder_color(self.placeholder_color),
+            )
             .children(self.diagnostic_popover.clone())
             .children(self.context_menu.as_ref().map(|menu| menu.render()))
             .children(self.hover_popover.clone())

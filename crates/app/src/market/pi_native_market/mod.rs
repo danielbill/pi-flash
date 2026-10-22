@@ -22,7 +22,7 @@
 
 mod card;
 mod controls;
-mod design;
+pub(crate) mod design;
 
 use std::time::Duration;
 
@@ -236,10 +236,10 @@ pub(crate) fn primary_kind(e: &MarketEntry) -> &'static str {
 
 impl Chat {
     /// 打开「Pi 扩展市场」标准页（菜单项、自动化动作都走这里）。
+    /// **不加 dev-flag 闸门**（2026-10-23 用户定夺）：菜单里恒有这一项，就必须
+    /// 恒能打开——否则项在、点了没反应（旗标关的数据目录曾整页点不开）。
+    /// `pi_native_market` 旗标只剩「启动预热要不要偷跑网络」的意义（见 prefetch）。
     pub(crate) fn open_pi_native_market(&mut self, cx: &mut gpui::Context<Self>) {
-        if !crate::services::workspace::pi_native_market_enabled() {
-            return;
-        }
         self.dlg.market_menu = None;
         match self
             .ws
@@ -275,6 +275,11 @@ impl Chat {
         let input = cx.new(|cx| {
             let mut ti = TextInput::new(cx)
                 .placeholder("Filter packages…")
+                // 深肤页：主题 token 是按 PF 主题算的（浅色主题下光标=墨黑、
+                // 占位=深棕），在本页深底上几乎看不见——按页内色板覆盖：
+                // 光标 = 页正文白（design TEXT），占位 = 页内灰（design muted）。
+                .caret_color(design::TEXT)
+                .placeholder_color(design::MUTED)
                 .flat()
                 .form();
             // 打字 = 页内过滤（0 网络，160ms 去抖）；回车 = 服务端搜索。
