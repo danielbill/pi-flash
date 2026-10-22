@@ -43,7 +43,7 @@ pub(crate) enum PkgUpdateState {
     Error,
 }
 
-/// 检测状态（`aux.plugin_updates`）：checking=true 时 results 是上一轮旧值。
+/// 检测状态（`aux.pi_extension_updates`）：checking=true 时 results 是上一轮旧值。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct UpdatesState {
     pub(crate) results: Vec<PkgUpdateResult>,
@@ -444,13 +444,13 @@ fn home_dir() -> PathBuf {
 
 impl Chat {
     /// 揭幕后延迟加载（startup.rs 钩子）：后台检测全部扩展更新，结果进
-    /// `aux.plugin_updates`。只读 + 网络，零写入，不阻塞揭幕；op 泵收尾
+    /// `aux.pi_extension_updates`。只读 + 网络，零写入，不阻塞揭幕；op 泵收尾
     ///（装/卸/更后）也会再调一次刷新。
-    pub(crate) fn spawn_plugin_updates_check(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.aux.plugin_updates.checking {
+    pub(crate) fn spawn_pi_extension_updates_check(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.aux.pi_extension_updates.checking {
             return;
         }
-        self.aux.plugin_updates.checking = true;
+        self.aux.pi_extension_updates.checking = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let results = cx
@@ -458,8 +458,8 @@ impl Chat {
                 .spawn(async move { check_all() })
                 .await;
             let _ = this.update(cx, |c, cx| {
-                c.aux.plugin_updates.results = results;
-                c.aux.plugin_updates.checking = false;
+                c.aux.pi_extension_updates.results = results;
+                c.aux.pi_extension_updates.checking = false;
                 cx.notify();
             });
         })
@@ -473,7 +473,7 @@ impl Chat {
             return;
         }
         self.mc_clear_error(cx);
-        self.cfg.pkg_op = Some(crate::settings::plugins::PkgOp::Update(Some(
+        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Update(Some(
             source.clone(),
         )));
         self.mc_cli_op(
@@ -489,7 +489,7 @@ impl Chat {
             return;
         }
         self.mc_clear_error(cx);
-        self.cfg.pkg_op = Some(crate::settings::plugins::PkgOp::Update(None));
+        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Update(None));
         self.mc_cli_op(
             vec!["update".into(), "--extensions".into()],
             tr("extensions.updated_all").to_string(),

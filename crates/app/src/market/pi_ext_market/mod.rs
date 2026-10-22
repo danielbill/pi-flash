@@ -214,8 +214,10 @@ impl Chat {
         }
         self.pi_ext_ensure_loaded(cx);
         // 已装条目的「有新版」依赖 082 的检测结果：还没跑过就顺手补一次
-        if self.aux.plugin_updates.results.is_empty() && !self.aux.plugin_updates.checking {
-            self.spawn_plugin_updates_check(cx);
+        if self.aux.pi_extension_updates.results.is_empty()
+            && !self.aux.pi_extension_updates.checking
+        {
+            self.spawn_pi_extension_updates_check(cx);
         }
         cx.notify();
     }
@@ -586,8 +588,8 @@ pub(crate) fn page(
             }
             let name = pi_link::skills::display_source(&source).to_string();
             let cached = st.entries.iter().find(|e| e.name == name);
-            let status = if chat.aux.plugin_updates.state_of(&source)
-                == Some(crate::services::plugin_updates::PkgUpdateState::UpdateAvailable)
+            let status = if chat.aux.pi_extension_updates.state_of(&source)
+                == Some(crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
             {
                 RowStatus::UpdateAvailable
             } else {
@@ -638,8 +640,8 @@ pub(crate) fn page(
                 let source = e.source();
                 let status = if !installed.contains(&source) {
                     RowStatus::NotInstalled
-                } else if chat.aux.plugin_updates.state_of(&source)
-                    == Some(crate::services::plugin_updates::PkgUpdateState::UpdateAvailable)
+                } else if chat.aux.pi_extension_updates.state_of(&source)
+                    == Some(crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
                 {
                     RowStatus::UpdateAvailable
                 } else {
@@ -1060,13 +1062,13 @@ fn update_all_button(
     busy_any: bool,
     side_w: f32,
 ) -> AnyElement {
-    let n = chat.aux.plugin_updates.available();
+    let n = chat.aux.pi_extension_updates.available();
     let label = if n > 0 {
         format!("{} {n}", tr("market.update_all"))
     } else {
         tr("market.update_all").to_string()
     };
-    let disabled = n == 0 || busy_any || chat.aux.plugin_updates.checking;
+    let disabled = n == 0 || busy_any || chat.aux.pi_extension_updates.checking;
     let weak_all = weak.clone();
     // 走 button_base 才能带 w_full（ui::button 不支持自加宽度）
     let el = crate::ui::button_base("pi-ext-update-all", BtnSize::Md, BtnVariant::Secondary)

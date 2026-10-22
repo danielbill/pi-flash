@@ -41,6 +41,12 @@ pub struct IndexEntry {
     /// 一句话描述（列表卡片副标题；缺省 = 不渲染描述行）。
     #[serde(default)]
     pub desc: Option<IndexDisplay>,
+    /// 发布人（v1 恒 "Pi-Flash"，第三方开放时为作者名）。
+    #[serde(default)]
+    pub publisher: String,
+    /// 发布日期（ISO 字符串，直接展示）。
+    #[serde(default)]
+    pub published_at: String,
 }
 
 #[derive(Deserialize, Default)]

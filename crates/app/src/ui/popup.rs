@@ -11,7 +11,7 @@
 //! 实现取巧：返回「贴哪条边」而非坐标——向下弹给 `top`、向上弹给
 //! `bottom`（相对视口），调用方原样喂给 `.left()/.right()/.top()/.bottom()`。
 //! 弹层自身多高多宽无关紧要：bottom/right 锚定天然向上/向左生长，不需要
-//! 事先量内容尺寸（plugin_picker 同款手法，收拢到此）。
+//! 事先量内容尺寸（pi_extension_picker 同款手法，收拢到此）。
 
 use gpui::{Pixels, Styled, px};
 

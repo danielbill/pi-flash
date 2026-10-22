@@ -9,7 +9,7 @@ pub mod file_tree;
 pub mod format;
 pub mod git;
 pub mod paths_sort;
-pub mod plugin_updates;
+pub mod pi_extension_updates;
 pub(crate) mod script_exec;
 pub(crate) mod session_clean;
 pub(crate) mod shell_open;

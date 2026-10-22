@@ -5,17 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PF 插件市场 — 原型</title>
 <!--
-  PF-Market v1 原型（090-4）
-  配色 = theme.rs MIST（默认主题）语义 token，逐值对齐，禁止 pi.dev 色板：
-    bg #f4f8f7 · bg_panel #e9f0ee · bg_hover #e0eae7 · border #afc4ba
-    text #202e2b · text_dim #52685f · text_faint #a3b0aa
-    accent #1e6559 · accent_hover #174f46 · accent_contrast #fff
-    tool_bg #ecf3f0 · danger #c25460 · danger_hover #d8626a
-    danger_alpha(0x59)=#d8626a59 · danger_alpha(0x0f)=#d8626a0f · wash=#d8626a1f
-  布局 = UI组件规范：工具行 40 · BTN_MD 28/px12 · 卡片 p12 · gap 8 · r6/8 · body 12
-  卡片 100px 高 · padding 10 · 垃圾桶顶部对齐 · 安装/更新底部对齐
-     垃圾桶 = 宿主 040-1 card.rs:448 定稿：icon-trash-solid@12 · 28×28 danger 键
-  已装状态 = 版本号前 ✓（ICON_INDICATOR 10，绿色只表达正确性）
+  PF-Market v1 原型（090-4）——按 pi market page（040-2）当前实现重排。
+  卡片信息组织（自上而下）：名称 → 描述（两行截断）→ 发布时间 + [安装]（同行）。
+  双列卡片网格；无卸载/更新按钮，只保留安装。
+  不渲染（数据没有也不暴露）：类型徽标 / npm·repo·report 链接 / 安装命令框。
+  配色 = theme.rs MIST 语义 token；尺寸 = UI组件规范（BTN_MD 28 · 卡片 p12 · r8）。
 -->
 <style>
   :root { color-scheme: light; }
@@ -30,76 +24,83 @@
     min-height: 100vh;
     padding: 24px 0;
   }
-  .page { width: 720px; display: flex; flex-direction: column; }
+  .page { width: 1080px; display: flex; flex-direction: column; }
 
-  .list { display: flex; flex-direction: column; gap: 8px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;   /* 双排卡片 */
+    gap: 12px;
+  }
+
   .card {
-    height: 100px;
-    padding: 10px;
+    height: 150px;
     display: flex;
     gap: 12px;
+    padding: 12px;
     background: #e9f0ee;              /* t.bg_panel */
     border: 1px solid #afc4ba;        /* t.border */
     border-radius: 8px;
   }
   .card:hover { background: #e0eae7; } /* t.bg_hover（规范 §6） */
 
-  .p-icon {
-    align-self: flex-start;
-    width: 36px; height: 36px; flex-shrink: 0;
+  /* 预览槽（pi market 卡左列的位；v1 用图标 tile） */
+  .preview {
+    width: 72px; height: 72px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     background: #ecf3f0;              /* t.tool_bg */
-    border-radius: 6px;
+    border-radius: 8px;
     color: #1e6559;                   /* t.accent */
   }
-  .p-icon svg { width: 18px; height: 18px; }
+  .preview svg { width: 28px; height: 28px; }
 
-  .p-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-  .p-titlerow { display: flex; align-items: center; gap: 8px; }
-  .p-name { font-weight: 600; }
-  .p-ver {
-    display: inline-flex; align-items: center; gap: 4px;
-    color: #a3b0aa;                   /* t.text_faint */
-    font-size: 11px;
+  .body {
+    flex: 1; min-width: 0;
+    align-self: stretch;              /* 拉满卡高：名称/描述顶部，时间+安装底部 */
+    display: flex; flex-direction: column; gap: 2px;
   }
-  .ver-ok { color: #1e6559; }         /* t.accent（绿=正确性，规范 §8）*/
-  .ver-ok svg { width: 10px; height: 10px; display: block; }  /* ICON_INDICATOR */
-  .p-desc { color: #52685f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  /* t.text_dim */
-
-  /* 右侧动作列 = 单一垂直列：垃圾桶顶部对齐，安装/更新底部对齐，右缘永远同列 */
-  .p-side {
-    flex-shrink: 0;
-    display: flex; flex-direction: column; align-items: flex-end;
+  .name { font-weight: 600; font-size: 13px; }
+  .desc {
+    color: #52685f;                   /* t.text_dim */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;            /* 两行截断 */
+    overflow: hidden;
   }
-  /* 主按钮（安装/更新）压底：margin-top:auto——未装态没有垃圾桶也在底部；
-     垃圾桶永远顶部。 */
-  .p-side > .btn { margin-top: auto; }
 
-  .btn {
-    height: 24px; padding: 0 8px;
-    font: 600 11px var(--font, inherit);
-    border-radius: 6px; border: 1px solid transparent;
+  /* 发布时间 + 安装 同行，贴底（卡高变化时唯一随动的是中段空白） */
+  .meta {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: auto;
+  }
+  .time { color: #a3b0aa; font-size: 11px; }  /* t.text_faint */
+  .pub  { color: #52685f; font-size: 11px; }  /* t.text_dim：发布人（pi market 同位 publisher） */
+  .meta .spacer { flex: 1; }
+
+  /* 安装钮 = 宿主 pi_native_market card.rs:430-476 同款：
+     边框盒（h33.3/min-w72/px9.36 · line 色 · mono 11 · 文字 dim）内 [ 括号+label+括号 ]，
+     括号 accent 色；busy = 转圈；已装 = ✓ 绿（accent，不可点） */
+  .install {
+    height: 33.3px; min-width: 72px; padding: 0 9.36px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    border: 1px solid #afc4ba;        /* t.border = d::line() 的 mist 语义 */
+    font: 400 11px "JetBrains Mono", Consolas, monospace;   /* d::MONO 同款，字重 400=源码未设 */
+    color: #52685f;                   /* t.text_dim（源码 0xd5d8db@0.8 的语义位） */
     cursor: pointer; white-space: nowrap;
   }
-  .btn-primary { background: #1e6559; color: #ffffff; }        /* t.accent / t.accent_contrast */
-  .btn-primary:hover { background: #174f46; }                  /* t.accent_hover */
-  .btn.busy { pointer-events: none; opacity: 0.75; }
-
-  /* 垃圾桶钮 = 宿主 040-1 card.rs:448 定稿：28×28 · danger 描边 35%/底 6% · hover 红 12%
-     · 字形 icon-trash-solid @12px · 卸载恒在最左 · 无「已安装」文字键 */
-  .btn-trash {
-    width: 28px; height: 28px; border-radius: 6px;
-    display: inline-flex; align-items: center; justify-content: center;
-    background: #d8626a0f;            /* danger_alpha(0x0f) */
-    border: 1px solid #d8626a59;      /* danger_alpha(0x59) */
-    cursor: pointer; color: #c25460;  /* t.danger */
+  .install:hover { color: #1e6559; }  /* t.accent */
+  .install .bkt { color: #1e6559; padding: 0 4.6px; }  /* 括号 accent（bracket()） */
+  .install:disabled { cursor: default; color: #7fb28a; }  /* 已装 ✓ 绿（源码 0x5db87a → mist accent 系） */
+  .spinner {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 1.5px solid #afc4ba; border-top-color: #1e6559;
+    animation: spin 0.8s linear infinite;
   }
-  .btn-trash:hover { background: #d8626a1f; }  /* danger_wash */
-  .btn-trash svg { width: 12px; height: 12px; display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .empty {
+    grid-column: 1 / -1;
     padding: 32px; text-align: center;
-    color: #455f56;                   /* t.text_muted */
+    color: #455f56;
     background: #e9f0ee;
     border: 1px dashed #afc4ba; border-radius: 8px;
   }
@@ -107,105 +108,80 @@
 </head>
 <body>
 <div class="page">
-
-
-  <div class="list" id="list"></div>
-  <div class="empty" id="empty" style="display:none">已全部安装，没有可更新的插件</div>
+  <div class="grid" id="grid"></div>
 </div>
 
 <script>
-const TRASH = '<svg viewBox="0 0 1024 1024" fill="currentColor"><path d="M92.748283 203.507071h838.503434v44.140606H92.748283zM644.402424 115.238788v44.127677h44.127677V115.238788c0-24.384646-19.75596-44.127677-43.998384-44.127677h-265.050505a43.97899 43.97899 0 0 0-31.172525 12.916364 43.918222 43.918222 0 0 0-12.825859 31.211313v44.127677h44.127677V115.238788h264.791919z m0 0"/><path d="M203.073939 909.614545v-661.979798H158.946263V909.575758c0 24.410505 19.639596 44.179394 44.179394 44.179394h617.761616c24.410505 0 44.179394-19.639596 44.179394-44.179394V247.634747H820.926061v661.979798H203.073939z m0 0"/><path d="M313.412525 335.90303h44.127677V733.090909h-44.127677V335.90303z m176.523637 0h44.127676V733.090909H489.936162V335.90303z m176.523636 0h44.127677V733.090909h-44.127677V335.90303z m0 0"/></svg>';
-const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4 10-11"/></svg>';
 const ICONS = {
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/></svg>',
   git:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4.5 3.5-8 5"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>',
+  wx:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3C5 3 2 5.6 2 8.9c0 1.8.9 3.4 2.3 4.5L3.6 16l2.8-1.4c.7.2 1.4.3 2.1.3"/><path d="M13 7c3 0 6 2.2 6 5.2 0 1.6-.8 3-2.1 4l.6 2.3-2.5-1.2c-.6.2-1.3.3-2 .3-3 0-6-2.2-6-5.2S10 7 13 7Z"/></svg>',
 };
 
 const plugins = [
   {
     name: "快捷面板",
     icon: "bolt",
-    desc: "会话与常用提问的快捷入口面板",
-    installed: "0.1.0",   // 台账版本；null = 未装
-    latest:  "0.2.0",     // 索引版本
+    desc: "会话与常用提问的快捷入口面板，一键新建会话、打开文件夹、发送常用提问",
+    time: "2026-10-22",
   },
   {
     name: "Git 面板",
     icon: "git",
-    desc: "本地 git 状态一览与常用操作",
-    installed: "0.1.0",
-    latest:  "0.1.0",
+    desc: "本地 git 状态一览与常用操作，分支/暂存/提交一目了然",
+    time: "2026-10-18",
   },
   {
     name: "搜索增强",
-    icon: "bolt",
+    icon: "search",
     desc: "跨文件关键词搜索的快捷入口",
-    installed: null,
-    latest:  "0.1.0",
+    time: "2026-10-15",
+  },
+  {
+    name: "微信远程",
+    icon: "wx",
+    desc: "微信扫码远程控制会话，手机上随时给 PF 派活",
+    time: "2026-10-11",
   },
 ];
 
-const stateOf = (p) => p.installed === null ? "install" : p.installed !== p.latest ? "update" : "ok";
-const verText = (p) => {
-  const st = stateOf(p);
-  return st === "update" ? `${p.installed} → ${p.latest}` : p.installed ?? p.latest;
-};
-
 function render() {
-  const list = document.getElementById("list");
-  list.innerHTML = "";
-  let quiet = 0;
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
 
   for (const p of plugins) {
-    const st = stateOf(p);
-    if (st === "ok") quiet++;
-
-    const actions =
-      st === "install" ? `<button class="btn btn-primary" data-act="install">安装</button>` :
-      st === "update"  ? `<button class="btn btn-primary" data-act="update">更新</button>` : "";
-    const trash =
-      st === "install" ? "" :
-                         `<button class="btn-trash btn-trash-top" data-act="uninstall" title="卸载">${TRASH}</button>`;
-
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
-      <div class="p-icon">${ICONS[p.icon]}</div>
-      <div class="p-main">
-        <div class="p-titlerow">
-          <span class="p-name">${p.name}</span>
-          <span class="p-ver ${st === "ok" ? "ver-ok" : ""}">${st === "ok" ? CHECK : ""}${verText(p)}</span>
+      <div class="preview">${ICONS[p.icon]}</div>
+      <div class="body">
+        <div class="name">${p.name}</div>
+        <div class="desc">${p.desc}</div>
+        <div class="meta">
+          <span class="pub">Pi-Flash</span>
+          <span class="time">${p.time}</span>
+          <span class="spacer"></span>
+          <button class="install" data-act="install"><span class="bkt">[</span>安装<span class="bkt">]</span></button>
         </div>
-        <div class="p-desc">${p.desc}</div>
-      </div>
-      <div class="p-side">${trash}${actions}</div>`;
-    list.appendChild(card);
+      </div>`;
+    grid.appendChild(card);
   }
-
-  document.getElementById("empty").style.display = quiet === plugins.length ? "" : "none";
 }
 
-document.getElementById("list").addEventListener("click", (e) => {
+document.getElementById("grid").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-act]");
   if (!btn) return;
-  const name = btn.closest(".card").querySelector(".p-name").textContent;
-  const p = plugins.find((x) => x.name === name);
-  const act = btn.dataset.act;
-
-  if (act === "install" || act === "update") {
-    btn.classList.add("busy");
-    btn.textContent = act === "update" ? "更新中…" : "安装中…";
-    setTimeout(() => { p.installed = p.latest; render(); }, 900);
-  }
-
-  if (act === "uninstall") {
-    if (btn.dataset.confirm) { p.installed = null; render(); }
-    else {
-      btn.dataset.confirm = "1";
-      btn.title = "再点一次确认卸载";
-      setTimeout(() => { delete btn.dataset.confirm; btn.title = "卸载"; }, 2000);
-    }
-  }
+  btn.classList.add("busy");
+  
+  if (btn.dataset.busy) return;      // busy = 转圈（源码同款），无文字变化
+  btn.dataset.busy = "1";
+  btn.innerHTML = '<span class="spinner"></span>';
+  setTimeout(() => {           // 演示：真实实现走 npm pack → 校验 → 落盘 → 台账
+    delete btn.dataset.busy;
+    btn.disabled = true;
+    btn.innerHTML = '✓';
+  }, 900);
 });
 
 render();

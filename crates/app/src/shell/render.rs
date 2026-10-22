@@ -759,7 +759,7 @@ impl Render for Chat {
         // 全部点击（"看得见点不着"）。弹窗永远是顶层模态，统一放 settings 上。
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
         // 040 卸载扩展确认浮层（叠在设置弹窗之上）
-        if let Some(el) = settings::plugins::remove_confirm_overlay(self, cx) {
+        if let Some(el) = settings::pi_extensions::remove_confirm_overlay(self, cx) {
             root = root.child(el);
         }
         // 042 移除内置商确认浮层（同款机制，叠在设置弹窗之上）
@@ -780,7 +780,7 @@ impl Render for Chat {
         }
         // 插件勾选面板：**独立于工具菜单**。千万别再塞回上面那个 if-let ——
         // 插件按钮点击时 pill_menu 是 None，面板会整块不渲染（"点不开"的根因）。
-        if let Some(el) = session::plugin_picker::view(self, &weak_for_dialog, window) {
+        if let Some(el) = session::pi_extension_picker::view(self, &weak_for_dialog, window) {
             root = root.child(el);
         }
         // MCP 勾选面板（043）：同上，独立挂载，锚点 = 扩展按钮右边的 MCP 按钮

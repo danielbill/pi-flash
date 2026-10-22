@@ -14,7 +14,7 @@ use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 use super::Chat;
 use crate::appearance::theme::theme as T;
 
-/// 行高（10 行限高 = `ROW_H × 10`，与 plugin_picker 一致）。
+/// 行高（10 行限高 = `ROW_H × 10`，与 pi_extension_picker 一致）。
 const ROW_H: f32 = 30.;
 
 /// 打开时的滚动位（勾选当即落盘，无「取消丢弃」态可存）。

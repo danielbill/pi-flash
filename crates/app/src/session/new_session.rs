@@ -326,20 +326,20 @@ fn plugin_update_notice(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static crate::appearance::theme::Theme,
 ) -> Option<AnyElement> {
-    let n = chat.aux.plugin_updates.available();
+    let n = chat.aux.pi_extension_updates.available();
     if n == 0 {
         return None;
     }
     let updating_all = matches!(
         chat.cfg.pkg_op.as_ref(),
-        Some(crate::settings::plugins::PkgOp::Update(None))
+        Some(crate::settings::pi_extensions::PkgOp::Update(None))
     );
-    let rows: Vec<&crate::services::plugin_updates::PkgUpdateResult> = chat
+    let rows: Vec<&crate::services::pi_extension_updates::PkgUpdateResult> = chat
         .aux
-        .plugin_updates
+        .pi_extension_updates
         .results
         .iter()
-        .filter(|r| r.state == crate::services::plugin_updates::PkgUpdateState::UpdateAvailable)
+        .filter(|r| r.state == crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
         .collect();
     // 更新全部按钮：与设置·扩展页同一 config_button（ui::button 规范件）
     let label = if updating_all {
@@ -437,7 +437,7 @@ fn plugin_update_notice(
                                             .text_size(crate::appearance::ui_size(11.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .text_color(rgb(t.text_dim))
-                                            .child(tr("new_session.plugin_updates")),
+                                            .child(tr("new_session.pi_extension_updates")),
                                     )
                                     .child(btn),
                             )

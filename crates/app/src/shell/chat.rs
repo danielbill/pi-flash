@@ -7,7 +7,7 @@
 use crate::function_panel::{HoverCard, ProjCard, TreeEdit, TreeMenu};
 use crate::session::input::{AtFilterCache, AtIndexState};
 use crate::settings::models::McProbe;
-use crate::settings::plugins::PkgOp;
+use crate::settings::pi_extensions::PkgOp;
 use crate::*;
 
 pub(crate) struct Chat {
@@ -49,7 +49,7 @@ pub(crate) struct AuxUi {
     /// 更新日志页滚动句柄
     pub(crate) changelog_scroll: gpui::ScrollHandle,
     /// 082 Pi 扩展更新检测状态（新会话页通知 + 设置·扩展页箭头/按钮消费）
-    pub(crate) plugin_updates: services::plugin_updates::UpdatesState,
+    pub(crate) pi_extension_updates: services::pi_extension_updates::UpdatesState,
     /// 040-1 市场域状态簇（Pi 扩展市场页；后续多个市场在此并列）
     pub(crate) market: crate::market::MarketUi,
     /// 微信远程控制桥（060）：transport + 待答 ExtUi 请求
@@ -191,7 +191,7 @@ pub(crate) struct DlgUi {
     // shell surfaces
     pub(crate) pill_menu: Option<PillMenu>,
     /// 「full+」档的扩展选择面板（勾选即生效；滚动位跨帧复用）
-    pub(crate) plugin_picker: Option<crate::session::plugin_picker::PluginPicker>,
+    pub(crate) pi_extension_picker: Option<crate::session::pi_extension_picker::PiExtensionPicker>,
     /// MCP 勾选菜单（043；按钮常驻渲染，菜单从按钮开合）
     pub(crate) mcp_picker: Option<crate::session::mcp_picker::McpPicker>,
     /// 042：inputpanel 模型菜单（锚定 pill 卡片，替代原居中 ModelSelect 弹窗）
@@ -606,7 +606,7 @@ impl Chat {
                 dialog_focus,
                 dialog: None,
                 pill_menu: None,
-                plugin_picker: None,
+                pi_extension_picker: None,
                 mcp_picker: None,
                 model_picker: None,
                 pill_anchor: None,
@@ -715,7 +715,7 @@ impl Chat {
                 update: services::updater::initial_state(),
                 changelog: None,
                 changelog_scroll: gpui::ScrollHandle::new(),
-                plugin_updates: services::plugin_updates::UpdatesState::default(),
+                pi_extension_updates: services::pi_extension_updates::UpdatesState::default(),
                 market: crate::market::MarketUi::default(),
                 remote: remote_control::RemoteControl::new(),
                 tool_sel: None,
@@ -770,7 +770,7 @@ impl Chat {
                         chat.reload_settings_panel();
                         // 082：CLI op（装/卸/更）动了包 → 重跑扩展更新检测，
                         // 刷新新会话页通知与扩展页箭头
-                        chat.spawn_plugin_updates_check(cx);
+                        chat.spawn_pi_extension_updates_check(cx);
                         cx.notify();
                     })
                     .is_err()

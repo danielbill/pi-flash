@@ -30,7 +30,7 @@ fn plugin_button(
         (
             r.tool_preset_key() == "custom",
             r.ext_sources.len(),
-            chat.dlg.plugin_picker.is_some(),
+            chat.dlg.pi_extension_picker.is_some(),
         )
     };
     let active = is_custom;

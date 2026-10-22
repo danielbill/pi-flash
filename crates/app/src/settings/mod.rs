@@ -12,7 +12,7 @@ pub(crate) mod general;
 pub(crate) mod mcp;
 pub(crate) mod misc;
 pub(crate) mod models;
-pub(crate) mod plugins;
+pub(crate) mod pi_extensions;
 pub(crate) mod remote;
 pub(crate) mod shortcuts;
 pub(crate) mod skills;
@@ -509,9 +509,13 @@ pub(crate) fn render_settings(
                 crate::settings::agents::mc_agents_view(chat, weak, &section, d);
             two_pane(sidebar, detail)
         }
-        TAB_PLUGINS => {
-            crate::settings::plugins::mc_plugins_view(chat, weak, &section, &install_input, &error)
-        }
+        TAB_PLUGINS => crate::settings::pi_extensions::mc_pi_extensions_view(
+            chat,
+            weak,
+            &section,
+            &install_input,
+            &error,
+        ),
         TAB_MCP => crate::settings::mcp::mc_mcp_view(
             chat,
             weak,

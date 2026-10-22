@@ -791,20 +791,20 @@ pub(super) fn dispatch(
             chat.mc_set_tools_preset(preset, cx);
             ok()
         }
-        method::PLUGIN_PICKER_OPEN => {
-            chat.open_plugin_picker(cx);
+        method::PI_EXTENSION_PICKER_OPEN => {
+            chat.open_pi_extension_picker(cx);
             ok()
         }
-        method::PLUGIN_PICKER_TOGGLE => {
+        method::PI_EXTENSION_PICKER_TOGGLE => {
             let src = params
                 .get("source")
                 .and_then(Value::as_str)
                 .ok_or_else(|| bad("需要 {\"source\": \"npm:…\"}"))?;
-            chat.plugin_picker_toggle(src, cx);
+            chat.pi_extension_picker_toggle(src, cx);
             ok()
         }
-        method::PLUGIN_PICKER_CANCEL => {
-            chat.plugin_picker_cancel(cx);
+        method::PI_EXTENSION_PICKER_CANCEL => {
+            chat.pi_extension_picker_cancel(cx);
             ok()
         }
         method::MCP_PICKER_OPEN => {

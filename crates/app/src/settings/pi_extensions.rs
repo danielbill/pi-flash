@@ -95,7 +95,7 @@ impl Chat {
             self.mc_set_error(&tr("extensions.source_placeholder"), cx);
             return;
         }
-        self.cfg.pkg_op = Some(crate::settings::plugins::PkgOp::Install);
+        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Install);
         self.mc_cli_op(
             vec!["install".to_string(), source.clone()],
             crate::i18n::tf("extensions.installed", &[("source", source.clone())]),
@@ -109,7 +109,7 @@ impl Chat {
             return;
         }
         self.mc_clear_error(cx);
-        self.cfg.pkg_op = Some(crate::settings::plugins::PkgOp::Remove(source.clone()));
+        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Remove(source.clone()));
         self.mc_cli_op(
             vec!["remove".to_string(), source.clone()],
             crate::i18n::tf("extensions.removed", &[("source", source.clone())]),
@@ -140,7 +140,7 @@ impl Chat {
 }
 
 /// 扩展页：顶部安装区 + 下方 左列表（300px）/ 右详情。
-pub(crate) fn mc_plugins_view(
+pub(crate) fn mc_pi_extensions_view(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
@@ -162,7 +162,7 @@ pub(crate) fn mc_plugins_view(
             error,
             matches!(
                 chat.cfg.pkg_op,
-                Some(crate::settings::plugins::PkgOp::Install)
+                Some(crate::settings::pi_extensions::PkgOp::Install)
             ),
             t,
         ))
@@ -260,7 +260,7 @@ fn pl_install_bar(
                 .items_center()
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
-                .child(format!("{} ", tr("plugins.from")))
+                .child(format!("{} ", tr("pi_extensions.from")))
                 .child(
                     div()
                         .id("pkg-pi-dev-link")
@@ -274,7 +274,7 @@ fn pl_install_bar(
                         })
                         .child("https://pi.dev/packages"),
                 )
-                .child(format!(" {}", tr("plugins.copy_install"))),
+                .child(format!(" {}", tr("pi_extensions.copy_install"))),
         )
         .children(error.as_ref().map(|e| error_note(e)))
         .into_any_element()
@@ -360,8 +360,8 @@ fn pl_sidebar(
                     )),
             );
         // 082：有更新的包在标签右侧加 ↑
-        if chat.aux.plugin_updates.state_of(&src)
-            == Some(crate::services::plugin_updates::PkgUpdateState::UpdateAvailable)
+        if chat.aux.pi_extension_updates.state_of(&src)
+            == Some(crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
         {
             item = item.child(
                 div()
@@ -415,7 +415,7 @@ fn pl_detail(
     let weak_trash = weak.clone();
     let trash_src = src.clone();
     // 转圈落点：正在卸载本包 → 垃圾桶转圈；有任一 op → 垃圾桶禁用
-    let removing_this = matches!(chat.cfg.pkg_op.as_ref(), Some(crate::settings::plugins::PkgOp::Remove(s)) if *s == src);
+    let removing_this = matches!(chat.cfg.pkg_op.as_ref(), Some(crate::settings::pi_extensions::PkgOp::Remove(s)) if *s == src);
     let mut trash = div()
         .id("pkg-remove")
         .size(px(28.))
@@ -495,7 +495,7 @@ fn pl_detail(
                 )),
         ))
         .child(field(
-            &tr("plugins.state"),
+            &tr("pi_extensions.state"),
             div().flex().flex_col().gap(px(2.)).child(if disabled {
                 SharedString::from(tr("status.disabled").to_string())
             } else {
@@ -543,9 +543,9 @@ fn pl_update_all_button(
 ) -> Option<gpui::AnyElement> {
     let updating_all = matches!(
         chat.cfg.pkg_op.as_ref(),
-        Some(crate::settings::plugins::PkgOp::Update(None))
+        Some(crate::settings::pi_extensions::PkgOp::Update(None))
     );
-    let n = chat.aux.plugin_updates.available();
+    let n = chat.aux.pi_extension_updates.available();
     let label = if updating_all {
         tr("extensions.updating_all").to_string()
     } else {
@@ -574,11 +574,11 @@ fn pl_update_button(
 ) -> Option<gpui::AnyElement> {
     let updating_this = matches!(
         chat.cfg.pkg_op.as_ref(),
-        Some(crate::settings::plugins::PkgOp::Update(Some(s))) if *s == src
+        Some(crate::settings::pi_extensions::PkgOp::Update(Some(s))) if *s == src
     );
     if !updating_this
-        && chat.aux.plugin_updates.state_of(src)
-            != Some(crate::services::plugin_updates::PkgUpdateState::UpdateAvailable)
+        && chat.aux.pi_extension_updates.state_of(src)
+            != Some(crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
     {
         return None;
     }

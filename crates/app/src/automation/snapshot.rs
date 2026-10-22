@@ -220,7 +220,8 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
                 .map(|rt| rt.read(cx).tool_preset_key() == "custom")
                 .unwrap_or(false),
         },
-        "plugin_picker": chat.dlg.plugin_picker.as_ref().map(|p| {
+        // 快照键沿用 pi-web 契约名 plugin_picker（Rust 标识符已改 pi_extension_picker）
+        "plugin_picker": chat.dlg.pi_extension_picker.as_ref().map(|p| {
             let sel = |src: &str| p.pending.contains(src);
             let count = |list: &[Value], want: bool| {
                 list.iter()

@@ -139,9 +139,9 @@ pub mod method {
     /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
     pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
-    pub const PLUGIN_PICKER_OPEN: &str = "plugin_picker.open";
-    pub const PLUGIN_PICKER_TOGGLE: &str = "plugin_picker.toggle";
-    pub const PLUGIN_PICKER_CANCEL: &str = "plugin_picker.cancel";
+    pub const PI_EXTENSION_PICKER_OPEN: &str = "plugin_picker.open";
+    pub const PI_EXTENSION_PICKER_TOGGLE: &str = "plugin_picker.toggle";
+    pub const PI_EXTENSION_PICKER_CANCEL: &str = "plugin_picker.cancel";
     /// 043 MCP 勾选面板：打开 / 勾选 / 收起（UI 测试用）
     pub const MCP_PICKER_OPEN: &str = "mcp_picker.open";
     pub const MCP_PICKER_TOGGLE: &str = "mcp_picker.toggle";

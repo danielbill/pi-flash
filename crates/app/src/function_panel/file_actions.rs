@@ -228,7 +228,7 @@ impl Chat {
         self.dlg.dialog.is_some()
             || self.dlg.settings.is_some()
             || self.dlg.pill_menu.is_some()
-            || self.dlg.plugin_picker.is_some()
+            || self.dlg.pi_extension_picker.is_some()
             || self.dlg.mcp_picker.is_some()
             || self.dlg.model_picker.is_some()
             || self.dlg.hover_card.is_some()

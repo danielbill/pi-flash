@@ -6,6 +6,8 @@
       "version": "0.0.1",
       "integrity": "sha512-k2oIQwpA3ajtbAvA0zSd8lmzgulD7IdlqOObjKvMENdWkrCil89cS95ATtWl6p42OnBkgQK9NeyoqH4QAXkxDQ==",
       "min_pf": ">=0.2",
+      "publisher": "Pi-Flash",
+      "published_at": "2026-10-22",
       "display": {
         "zh": "快捷面板",
         "en": "Quick Panel"

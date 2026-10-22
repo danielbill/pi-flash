@@ -18,14 +18,14 @@ use crate::Chat;
 use crate::appearance::theme::theme as T;
 
 /// 勾选集 + 滚动位（勾选当即落地，不存在「取消丢弃」）。
-pub(crate) struct PluginPicker {
+pub(crate) struct PiExtensionPicker {
     /// 勾选中的 `entry_source()` 集合
     pub(crate) pending: std::collections::HashSet<String>,
     /// 限高滚动位置（跨帧复用，参照 vlist「血案」：滚动句柄不能每帧重建）
     pub(crate) scroll: gpui::ScrollHandle,
 }
 
-impl PluginPicker {
+impl PiExtensionPicker {
     fn new(selected: impl IntoIterator<Item = String>) -> Self {
         Self {
             pending: selected.into_iter().collect(),
@@ -44,12 +44,12 @@ impl Chat {
         at: gpui::Point<gpui::Pixels>,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.dlg.plugin_picker.is_some() {
-            self.plugin_picker_cancel(cx);
+        if self.dlg.pi_extension_picker.is_some() {
+            self.pi_extension_picker_cancel(cx);
             return;
         }
         self.dlg.pill_anchor = Some(crate::PillBtns::anchor(&self.dlg.pill_btn.ext, at));
-        self.open_plugin_picker(cx);
+        self.open_pi_extension_picker(cx);
     }
 
     /// 打开菜单。守卫：档位必须是「full+」（其余档扩展本来就不挂）。
@@ -58,7 +58,7 @@ impl Chat {
     /// 勾选态**只对齐会话数组**（`ext_sources`，用户定稿）：全局启用集只在
     /// 「新会话创建」时复制成会话初始清单（`SessionRuntime::new`），菜单
     /// 不再并回全局集——否则取消的勾在重开时被全局集顶回去（回显 bug）。
-    pub(crate) fn open_plugin_picker(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn open_pi_extension_picker(&mut self, cx: &mut gpui::Context<Self>) {
         if self.rt().read(cx).tool_preset_key() != "custom" {
             self.dlg.pill_menu = None;
             self.set_status(
@@ -69,17 +69,17 @@ impl Chat {
         }
         let seed = self.rt().read(cx).ext_sources.clone();
         self.dlg.pill_menu = None;
-        self.dlg.plugin_picker = Some(PluginPicker::new(seed));
+        self.dlg.pi_extension_picker = Some(PiExtensionPicker::new(seed));
         cx.notify();
     }
 
-    pub(crate) fn plugin_picker_cancel(&mut self, cx: &mut gpui::Context<Self>) {
-        self.dlg.plugin_picker = None;
+    pub(crate) fn pi_extension_picker_cancel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.dlg.pi_extension_picker = None;
         cx.notify();
     }
 
-    pub(crate) fn plugin_picker_toggle(&mut self, source: &str, cx: &mut gpui::Context<Self>) {
-        if let Some(p) = self.dlg.plugin_picker.as_mut() {
+    pub(crate) fn pi_extension_picker_toggle(&mut self, source: &str, cx: &mut gpui::Context<Self>) {
+        if let Some(p) = self.dlg.pi_extension_picker.as_mut() {
             if !p.pending.remove(source) {
                 p.pending.insert(source.to_string());
             }
@@ -91,7 +91,7 @@ impl Chat {
     /// 勾选即生效：把当前勾选集写入 runtime（按钮计数实时变）并落台账。
     /// 重绑时机 = 下一轮 `send_input` 空闲发送前（见模块注释）。
     fn apply_ext_selection(&mut self, cx: &mut gpui::Context<Self>) {
-        let Some(picker) = self.dlg.plugin_picker.as_ref() else {
+        let Some(picker) = self.dlg.pi_extension_picker.as_ref() else {
             return;
         };
         // 宇宙序 = 全局 → 项目，去重（同一来源出现在两个 scope 时 `-e` 只发一次），
@@ -139,7 +139,7 @@ pub(crate) fn view(
     weak: &gpui::WeakEntity<Chat>,
     window: &gpui::Window,
 ) -> Option<AnyElement> {
-    let picker = chat.dlg.plugin_picker.as_ref()?;
+    let picker = chat.dlg.pi_extension_picker.as_ref()?;
     let t = T();
     let ui = crate::appearance::ui_size;
     let selected = |src: &str| picker.pending.contains(src);
@@ -260,7 +260,7 @@ pub(crate) fn view(
 
     let dismiss_weak = weak.clone();
     let layer = crate::ui::overlay::layer(false, None, move |_w, cx| {
-        let _ = dismiss_weak.update(cx, |c, cx| c.plugin_picker_cancel(cx));
+        let _ = dismiss_weak.update(cx, |c, cx| c.pi_extension_picker_cancel(cx));
     });
 
     let card = crate::ui::overlay::stop_click(
@@ -318,7 +318,7 @@ fn plugin_row(
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             // 行内点击不冒泡到「点外关闭」
             cx.stop_propagation();
-            let _ = row_weak.update(cx, |c, cx| c.plugin_picker_toggle(&src, cx));
+            let _ = row_weak.update(cx, |c, cx| c.pi_extension_picker_toggle(&src, cx));
         })
         .child(
             div()
