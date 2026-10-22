@@ -17,4 +17,6 @@ pub mod sound;
 pub mod token_probe;
 pub mod updater;
 pub mod watcher;
+#[cfg(windows)]
+pub(crate) mod win_pin;
 pub mod workspace;

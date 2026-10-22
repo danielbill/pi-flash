@@ -180,6 +180,10 @@ fn main() {
     if services::updater::handoff_if_newer() {
         return;
     }
+    // 任务栏固定稳定性（win_pin）：显式 AUMID 必须在首个窗口创建前设置；
+    // 开始菜单稳定入口 lnk + 任务栏死链自愈走后台线程，不占启动路径。
+    #[cfg(windows)]
+    services::win_pin::prepare();
     // 启动第一步（010-启动.md §4/§10）：建 ~/.pi-flash/、旧 pi-flash-*.json 搬家、
     // recents 首启种子。必须早于任何读盘者（workspace 记忆 / recents / 会话扫描器
     // 都是进程级惰性单例）。

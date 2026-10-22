@@ -158,3 +158,32 @@
 | 基线本身要撤掉 | `git revert b36f9b2`，并把该行从 `.git-blame-ignore-revs` 删掉，然后 `git config --unset blame.ignoreRevsFile` |
 | 想确认基线是否完好 | `scripts/fmt.sh --check --all`（期望：`0 个不符合`） |
 
+## 任务栏固定随更新失效（081 布局 × Windows pin 语义，2026-10-23）
+
+机制与修复主体在 `services/win_pin.rs` 的 `//!` 头注释：pin lnk 记录**固定那
+一刻**窗口进程的 exe 绝对路径，而 081 启动链让窗口常年跑在 `payload-<版本>\`，
+cleanup 删旧版本目录 → pin 死。修复三件套 = 显式 AUMID + 开始菜单稳定入口
+lnk + `User Pinned\TaskBar` 死链自愈。这里只记工程陷阱：
+
+- **`SetCurrentProcessExplicitAppModelID` 静态链接必炸**：windows 0.61 与
+  windows-sys 0.52 的元数据都没生成它，且**SDK 的 shell32.lib 符号表里根本没有**
+  （MSDN 标的导入库名有误；`grep` 过 10.0.26100 的 lib 实锤）→ 手写
+  `#[link(name="shell32")]` 声明必报 `LNK2019: __imp_SetCurrentProcessExplicitAppModelID`。
+  唯一稳路 = windows-sys `GetModuleHandleA` + `GetProcAddress` 运行时绑定
+  （`win_pin::set_process_aumid`，HMODULE 在 0.52 里是 `isize`，判 `== 0`）。
+- **AUMID（`dev.piflash.app`）发布后永不可改**：用户的 pin lnk / 跳转列表里
+  记着它，改 = 全体用户固定全失效。
+- **explorer「固定运行中窗口」的身份认领机制**：窗口带显式 AUMID 时，优先
+  认领开始菜单里**同 AUMID** 的现成 lnk（Chrome 跨版本固定不坏的同款机制）；
+  没有才现场造一个指向当前 exe 的 lnk——所以「开始菜单稳定入口」是修复的支点，
+  只设 AUMID 不建 lnk 没用。
+- **PROPVARIANT 手构造的释放陷阱**：windows 0.61 的 `PROPVARIANT` 实现 Drop
+  （`PropVariantClear` 按 VT_LPWSTR 释放 `pwszVal`）。`IPropertyStore::SetValue`
+  内部已拷贝 → 构造后必须 `mem::forget`，否则 Drop 会对 Vec 缓冲区 `CoTaskMemFree`
+  二次释放（UB）。读取侧（`GetValue` 返回系统分配的）则走 Drop 正常清。
+- **`PKEY_AppUserModel_ID` 在 windows 0.61 挪到了 `Win32::Storage::EnhancedStorage`**
+  （元数据错位；去 PropertiesSystem 找不到）。
+- **CLSID_ShellLink 无 CoClass 包装**：0.61 没生成 `ShellLink` 类，`CoCreateInstance`
+  直接喂 GUID `00021401-0000-0000-C000-000000000046`。
+
+

@@ -178,6 +178,7 @@ dependencies = [
  "ureq 2.12.1",
  "wasmtime",
  "wasmtime-wasi",
+ "windows 0.61.3",
  "windows-sys 0.52.0",
  "winresource",
  "wry",

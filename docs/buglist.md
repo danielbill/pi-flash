@@ -1,3 +1,26 @@
+## 待验证（本轮修复）——固定到任务栏的图标，更新一次就点不开（「找不到 pi-flash」）
+
+用户口径：PF 启动后固定到任务栏，好几次更新之后点固定图标就找不到 PF，只剩
+terminal 窗口能启动（npm 薄壳 `pi-flash`）。
+
+- ✅ 根因：任务栏固定 lnk 记录的是**固定那一刻**窗口进程的 exe 绝对路径，而
+  081 启动链（薄壳挑最高版本 / 点击重启更新 / 启动交接）让窗口常年运行在
+  `payload-<版本>\pi-flash.exe`；下次更新落位后 `cleanup_older` 删掉旧版本
+  目录 → pin 目标消失。terminal 能启动是因为薄壳每次重新挑「版本最高的存活
+  载荷」。非 PF 独有：凡「按版本装目录 + 无稳定入口快捷方式」的 Windows 应用
+  都会踩。
+- ✅ 修法（`services/win_pin.rs`，Chrome 同款三件套）：① 开窗前设进程级显式
+  AUMID `dev.piflash.app`（该 shell32 出口不在任何导入库符号表里，
+  GetProcAddress 运行时绑定）；② 启动时确保开始菜单有同 AUMID 的稳定入口
+  lnk → `payload\pi-flash.exe`（081 布局永不改名的路径；explorer 固定运行中
+  窗口时优先认领开始菜单里同 AUMID 的现成快捷方式，固定住的就是稳定入口）；
+  ③ 启动后台自愈 `User Pinned\TaskBar`：指向版本化载荷目录的 pi-flash pin
+  原地改写到稳定入口，老用户的坏 pin 升级后**原地复活**，无需重新固定。
+- ✅ 验证：`win_pin::tests::shortcut_roundtrip_with_aumid`（真 COM：写 lnk 读回
+  目标一致 + AUMID 属性读回）+ `pin_matching_scope`（只修版本化载荷目录里的
+  pin，稳定入口/开发 exe/别人的 lnk 不碰）；updater 16 测全绿。debug 构建与
+  非安装布局一律不碰用户的开始菜单/任务栏。
+
 ## 待验证（本轮修复）——思考中插话，整屏消息落到屏幕下半部分
 
 用户口径：首条消息发出后已钉顶，agent 思考中再发一条 steer（插话），结果所有

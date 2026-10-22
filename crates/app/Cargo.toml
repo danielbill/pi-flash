@@ -80,7 +80,19 @@ anyhow = "1"
 # 021 右键【执行】：PATH 扫描按驱动器类型过滤（GetDriveTypeW）——UNC/网络/
 # 可移动盘整目录跳过，焊死死网络路径 SMB 超时这一唯一慢源
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming"] }
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_System_LibraryLoader"] }
+# 任务栏固定稳定性（win_pin）：IShellLink 写稳定入口 lnk + 任务栏死链自愈
+# （IShellLink/IPropertyStore COM）。版本对齐依赖树里已有的 0.61，不新增编译副本
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 [dev-dependencies]
 # gpui 测试夹具（TestAppContext + 真布局）——只有 app 的 test target 会带上

@@ -123,7 +123,7 @@ fn version_key_string(v: &str) -> String {
 }
 
 /// `x.y.z` 形状（≥2 段、全数字）。用来在目录名里认出「版本」段。
-fn is_version(s: &str) -> bool {
+pub(crate) fn is_version(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
     parts.len() >= 2
         && parts
@@ -203,6 +203,30 @@ fn pick_next(root: &Path, cur: &str, me: &Path) -> Option<(String, PathBuf)> {
 pub(crate) fn next_payload() -> Option<(String, PathBuf)> {
     let me = my_exe_dir()?;
     pick_next(me.parent()?, current_version(), &me)
+}
+
+/// 稳定入口 exe：081 布局里**永不改名的启动路径**——npm 薄壳与快捷方式的
+/// 固定入口 `payload\pi-flash.exe`（版本化载荷 `payload-<版本>\` 剥掉版本段
+/// 就是它，cleanup 只删带版本号的目录）。任务栏固定稳定性（win_pin）拿它
+/// 当快捷方式目标，pin 才不会随版本目录消亡。
+/// 只认安装布局：目录名既不是 `payload`、也不是带完整版本戳的
+/// `payload-<版本>`（开发构建 / 绿色解压包）一律 None；debug 构建恒 None
+/// ——开发跑多少遍都不许碰用户的开始菜单与任务栏。
+pub(crate) fn stable_entry_exe() -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let me = my_exe_dir()?;
+    let name = me.file_name()?.to_str()?;
+    let stable_dir = if name == "payload" {
+        me
+    } else if payload_version_of(&me).is_some() {
+        me.parent()?.join(base_name(name))
+    } else {
+        return None;
+    };
+    let exe = stable_dir.join(exe_rel());
+    exe.is_file().then_some(exe)
 }
 
 /// 我所在载荷目录自证一致：目录名里的版本（若有）必须等于我自己的版本。
