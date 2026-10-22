@@ -98,6 +98,8 @@ pub(crate) enum ContentView {
     PiExtMarket,
     /// 040-2 Pi 原生扩展市场 tab（PanelTab::PiNativeMarket；pi.dev 目录页移植）
     PiNativeMarket,
+    /// 090-4 PF 插件市场 tab（PanelTab::PfMarket；内置索引 + 台账）
+    PfMarket,
     /// 083 项目搜索 tab（PanelTab::Search；搜索面板 + 结果列表）
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
@@ -255,6 +257,8 @@ pub(crate) enum PanelTab {
     PiExtMarket,
     /// 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；菜单-三横按钮打开）
     PiNativeMarket,
+    /// 090-4 PF 插件市场（内置索引 + 台账；菜单-三横按钮打开）
+    PfMarket,
     /// 083 项目搜索（单例 tab；Ctrl+Shift+F 打开，Zed ProjectSearchView 同位）
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
@@ -271,6 +275,7 @@ pub(crate) enum TabKey {
     Changelog,
     PiExtMarket,
     PiNativeMarket,
+    PfMarket,
     Search,
     SessionSearch,
 }
@@ -283,6 +288,7 @@ impl PanelTab {
             PanelTab::Changelog => TabKey::Changelog,
             PanelTab::PiExtMarket => TabKey::PiExtMarket,
             PanelTab::PiNativeMarket => TabKey::PiNativeMarket,
+            PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
         }
@@ -307,6 +313,7 @@ impl PanelTab {
             PanelTab::Changelog => ContentView::Changelog,
             PanelTab::PiExtMarket => ContentView::PiExtMarket,
             PanelTab::PiNativeMarket => ContentView::PiNativeMarket,
+            PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
         }

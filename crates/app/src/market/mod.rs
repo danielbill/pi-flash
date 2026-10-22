@@ -10,6 +10,7 @@
 //! 加市场 = 加字段 + 加一支 `ContentView`，`Chat` 的簇数量不变。
 
 pub(crate) mod menu;
+pub(crate) mod pf_market;
 pub(crate) mod pi_ext_market;
 pub(crate) mod pi_native_market;
 pub(crate) mod prefetch;
@@ -21,4 +22,6 @@ pub(crate) struct MarketUi {
     pub(crate) pi_ext: pi_ext_market::PiExtState,
     /// Pi 原生扩展市场页状态（040-2）
     pub(crate) native: pi_native_market::NativeState,
+    /// PF 插件市场页状态（090-4）
+    pub(crate) pf: pf_market::PfState,
 }

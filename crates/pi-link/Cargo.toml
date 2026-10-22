@@ -21,6 +21,9 @@ futures = "0.3"
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
 # 042 通路探查：阻塞式轻量 HTTP（rustls，不走系统 OpenSSL）
 ureq = { version = "2", default-features = false, features = ["tls", "native-certs", "gzip"] }
+# 090-4 插件安装：tarball sha512 SRI + base64 编码
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 futures-timer = "3.0.4"

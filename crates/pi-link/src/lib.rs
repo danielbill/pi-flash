@@ -22,6 +22,7 @@ pub mod mcp;
 pub mod models_json;
 pub mod paths;
 pub mod pf_auth;
+pub mod pf_plugins;
 pub mod pf_providers;
 pub mod probe;
 pub mod projects;

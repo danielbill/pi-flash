@@ -604,7 +604,7 @@ pub(super) fn package_card(
 fn name_link(e: &MarketEntry, weak: &gpui::WeakEntity<Chat>) -> AnyElement {
     let url = format!("https://pi.dev/packages/{}", e.name);
     let w = weak.clone();
-    let mut el = gpui::div()
+    gpui::div()
         .id(SharedString::from(format!("pi-native-name-{}", e.name)))
         .cursor_pointer()
         .font_family(d::MONO)
@@ -612,24 +612,15 @@ fn name_link(e: &MarketEntry, weak: &gpui::WeakEntity<Chat>) -> AnyElement {
         .text_size(gpui::px(px18::NAME_FS))
         .line_height(gpui::px(px18::NAME_FS * 1.35))
         .text_color(d::text())
-        .hover(|s| s.text_color(gpui::rgb(d::ACCENT)))
+        // 常显 1px 下划线，色 = --accent-underline-muted 的 accent 暗蓝（0.55）
+        .text_decoration_1()
+        .text_decoration_color(d::accent_alpha(0.55))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let url = url.clone();
             let _ = w.update(cx, |_, _| crate::services::shell_open::open_url(&url));
         })
-        .child(SharedString::from(e.name.clone()));
-    // 设计稿 `.packages-name a` 常显下划线，色 = --accent-underline-muted
-    //（accent 暗蓝；token 的 0.22 在深底上隐身，按用户截图取 0.55）。
-    // gpui 的 div 没有带色下划线的 builder，走 Styled::text_style 裸改。
-    {
-        let st = gpui::Styled::text_style(&mut el).get_or_insert_with(Default::default);
-        st.underline = Some(gpui::UnderlineStyle {
-            thickness: gpui::px(1.),
-            color: Some(d::accent_alpha(0.55).into()),
-            ..Default::default()
-        });
-    }
-    el.into_any_element()
+        .child(SharedString::from(e.name.clone()))
+        .into_any_element()
 }
 
 /// 按钮括号（设计 `::before/::after` = `[` `]`，accent 色，0.7ch 内距）。
@@ -659,7 +650,17 @@ fn link_item(kind: &'static str, url: String, weak: &gpui::WeakEntity<Chat>) -> 
         .line_height(gpui::px(px18::META_FS))
         .font_family(d::MONO)
         .text_color(d::muted())
-        .hover(|s| s.text_color(gpui::rgb(d::ACCENT)))
+        // hover：文字与下划线一齐提到 accent 实色（用户定夺 2026-10-22）
+        .hover(|mut s| {
+            let st = s.text.get_or_insert_with(Default::default);
+            st.color = Some(gpui::rgb(d::ACCENT).into());
+            st.underline = Some(gpui::UnderlineStyle {
+                thickness: gpui::px(1.),
+                color: Some(gpui::rgb(d::ACCENT).into()),
+                ..Default::default()
+            });
+            s
+        })
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let url = url.clone();
             let _ = w.update(cx, |_, _| crate::services::shell_open::open_url(&url));

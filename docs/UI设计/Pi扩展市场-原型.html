@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi-flash · Pi扩展市场（040-1 设计稿 v29 · 摘要行左对齐 · 全部更新在摘要行 · 工具栏上20下15 · 注释下15）</title>
+<style>
+/* ===================== 设计系统（mist / one-dark 双主题） ===================== */
+:root {
+  --bg: #f4f8f7;          --bg-panel: #e9f0ee;   --bg-hover: #e0eae7;
+  --bg-selected: #d7e4df; --border: #afc4ba;     --chrome: #dfe9e5;
+  --text: #202e2b;        --text-muted: #455f56; --text-dim: #52685f;
+  --text-soft: #8a9d95;   --text-faint: #a3b0aa;
+  --accent: #1e6559;      --accent-hover: #174f46; --accent-contrast: #ffffff;
+  --danger: #c25460;      --danger-hover: #d8626a;
+  --accent-wash: rgba(30,101,89,.10);
+  --hairline: rgba(175,196,186,.45);
+  --shadow-card: 0 1px 2px rgba(24,50,42,.05);
+  --shadow-hover: 0 6px 20px rgba(24,50,42,.10);
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --ui: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --thumb-grid: rgba(30,101,89,.16);
+}
+html[data-theme="dark"] {
+  --bg: #22252b;          --bg-panel: #282c33;   --bg-hover: #343843;
+  --bg-selected: #3b3f4a; --border: #353a45;     --chrome: #23262c;
+  --text: #d7dadf;        --text-muted: #9ea4af; --text-dim: #828996;
+  --text-soft: #767d8a;   --text-faint: #6b7280;
+  --accent: #6189eb;      --accent-hover: #7ba0f0; --accent-contrast: #ffffff;
+  --danger: #df5561;      --danger-hover: #e0666f;
+  --accent-wash: rgba(97,137,235,.14);
+  --hairline: rgba(53,58,69,.9);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35);
+  --shadow-hover: 0 8px 24px rgba(0,0,0,.42);
+  --thumb-grid: rgba(97,137,235,.22);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ui); background: #cfd9d5; color: var(--text);
+  padding: 26px 20px 56px; display: flex; flex-direction: column; align-items: center; gap: 20px;
+  -webkit-font-smoothing: antialiased; }
+html[data-theme="dark"] body { background: #14171b; }
+
+.sheet-head { width: 1180px; display: flex; align-items: baseline; gap: 10px; font-size: 12px; color: #3c4a45; }
+html[data-theme="dark"] .sheet-head { color: #8b949e; }
+.sheet-head b { font-size: 13px; font-weight: 600; color: #26332f; }
+html[data-theme="dark"] .sheet-head b { color: #cfd6dd; }
+.sheet-head .spacer { flex: 1; }
+.sheet-head button { font: inherit; font-size: 11px; padding: 4px 10px; border-radius: 6px;
+  border: 1px solid rgba(60,74,69,.35); background: transparent; color: inherit; cursor: pointer; }
+.sheet-head button:hover { background: rgba(255,255,255,.5); }
+html[data-theme="dark"] .sheet-head button:hover { background: rgba(255,255,255,.08); }
+
+/* ===================== 窗口 ===================== */
+.win { width: 1180px; height: 760px; flex: none; background: var(--bg);
+  border-radius: 10px; overflow: hidden; border: 1px solid rgba(0,0,0,.08);
+  box-shadow: 0 24px 60px rgba(20,35,30,.22); display: flex; flex-direction: column; }
+.topbar { height: 40px; background: var(--chrome); display: flex; align-items: center; flex: none;
+  border-bottom: 1px solid var(--hairline); }
+.tb-btn { width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center; color: var(--text-muted); }
+.tb-btn:hover { background: var(--bg-hover); color: var(--text); }
+.tb-btn svg { width: 18px; height: 18px; }
+.tb-left { margin-left: 6px; display: flex; }
+.tb-btn + .tb-btn { margin-left: 4px; }
+.tabs { flex: 1; display: flex; align-items: flex-end; gap: 4px; padding-left: 10px; height: 100%; min-width: 0; }
+.tab { height: 36px; padding: 0 12px; display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.tab svg { width: 15px; height: 15px; flex: none; }
+.tab.act { background: var(--bg); color: var(--text); font-weight: 600; border: 1px solid var(--hairline);
+  border-bottom-color: var(--bg); border-radius: 9px 9px 0 0; margin-bottom: -1px; height: 37px; }
+.tab .x { opacity: 0; display: grid; place-items: center; }
+.tab.act .x { opacity: .55; }
+.wctrl { display: flex; margin-left: auto; }
+.wctrl div { width: 44px; height: 40px; display: grid; place-items: center; color: var(--text-muted); }
+.wctrl div:hover { background: var(--bg-hover); }
+.wctrl .close:hover { background: #c94a4a; color: #fff; }
+.wctrl svg { width: 10px; height: 10px; }
+
+/* ===================== 页面 ===================== */
+/* 对齐三常量（改一处全页跟随）：
+   --pad-l   = 10  左缘：工具栏/摘要/列表/翻页条 ⊥ 卡片外框，同一条竖线
+   --list-p  = 18  列表右内距 = 滚动条 8 + 10 间隙（滚动条不压卡片边框）
+   --pad-r   = 26  右缘：工具栏按钮/摘要/翻页条 ⊥ **卡片外框**
+                   （18 列表右内距 + 8 滚动条槽，不再往里缩卡片内距） */
+.page { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center;
+  --pad-l: 10px; --list-p: 18px; --pad-r: 26px; }
+/* 整页内容栏：限宽 + 居中。超宽窗口不再把卡片拉成横贯全屏的白条 */
+.col { flex: 1; min-height: 0; width: 100%; max-width: 1114px;
+  display: flex; flex-direction: column; }
+
+.toolbar { flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 20px var(--pad-r) 15px var(--pad-l); }
+.search { position: relative; width: 340px; flex: none; }
+.search svg.ico { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--text-soft); pointer-events: none; }
+.search input { width: 100%; height: 28px; border-radius: 6px; border: 1px solid var(--hairline);
+  background: var(--bg); color: var(--text); font: inherit; font-size: 12px; padding: 0 10px 0 30px; outline: none; }
+.search input::placeholder { color: var(--text-soft); }
+.search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+
+.select { position: relative; height: 28px; display: flex; align-items: center; gap: 8px;
+  padding: 0 24px 0 10px; border: 1px solid var(--hairline); border-radius: 6px;
+  font-size: 12px; color: var(--text-muted); background: var(--bg); cursor: pointer; }
+.select:hover { color: var(--text); border-color: var(--text-faint); }
+.select > svg.chev { position: absolute; right: 8px; width: 12px; height: 12px; opacity: .7; }
+.select.on { color: var(--text); border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash); }
+.select.on > svg.chev { transform: rotate(180deg); }
+/* 下拉菜单：三个值 + 选中打勾（贴着触发器左缘、宽于触发器） */
+.menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 148px; z-index: 30;
+  display: none; padding: 4px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow-hover); }
+.menu.open { display: block; }
+.menu button { width: 100%; height: 28px; display: flex; align-items: center; gap: 8px;
+  padding: 0 8px; border: 0; border-radius: 6px; background: transparent; font: inherit;
+  font-size: 12px; color: var(--text-muted); text-align: left; cursor: pointer; white-space: nowrap; }
+.menu button:hover { background: var(--bg-hover); color: var(--text); }
+.menu button.act { background: var(--accent-wash); color: var(--accent); font-weight: 600; }
+.menu button .tick { width: 12px; height: 12px; flex: none; opacity: 0; }
+.menu button.act .tick { opacity: 1; }
+
+.spacer { flex: 1; }
+.seg { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--bg-panel);
+  border: 1px solid var(--hairline); height: 28px; align-items: center; }
+.seg button { font: inherit; font-size: 11px; height: 24px; padding: 0 8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-muted); cursor: pointer; }
+.seg button:hover { color: var(--text); }
+.seg button.act { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
+
+.btn { font: inherit; font-size: 12px; height: 28px; padding: 0 12px; border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent;
+  cursor: pointer; white-space: nowrap; }
+.btn svg { width: 13px; height: 13px; }
+.btn.primary { background: var(--accent-wash); color: var(--accent); font-weight: 600;
+  border-color: rgba(30,101,89,.32); }
+.btn.primary:hover { background: rgba(30,101,89,.18); border-color: rgba(30,101,89,.45); }
+html[data-theme="dark"] .btn.primary { border-color: rgba(97,137,235,.38); }
+html[data-theme="dark"] .btn.primary:hover { background: rgba(97,137,235,.22);
+  border-color: rgba(97,137,235,.5); }
+.btn.ghost { border-color: var(--hairline); color: var(--text); background: transparent; }
+.btn.ghost:hover { background: var(--bg-hover); }
+.btn.quiet { color: var(--text-dim); background: transparent; }
+.btn[disabled] { opacity: .45; cursor: default; }
+.btn.sm { height: 24px; padding: 0 8px; border-radius: 6px; font-size: 11px; }
+.btn.icon { width: 24px; height: 24px; padding: 0; justify-content: center; }
+.btn.del { border-color: rgba(194,84,96,.35); background: rgba(194,84,96,.06); color: var(--danger); }
+.btn.del:hover { background: rgba(194,84,96,.13); }
+.btn .n { font-variant-numeric: tabular-nums; opacity: .85; }
+
+.summary { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 0 var(--pad-r) 15px var(--pad-l); font-size: 11px; color: var(--text-soft); }
+.summary .s-left { display: flex; align-items: baseline; gap: 10px; }
+.summary .count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.summary .dot { width: 2px; height: 2px; border-radius: 50%; background: var(--text-faint); }
+
+/* ===================== 单列卡片（两段式） ===================== */
+/* 列表：一屏高度（不把整页撑长），一页 50 条在这一屏里滚，
+   滚动条细且淡、自带 10px 间隙不压卡片边框 */
+.list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 8px; padding: 0 var(--list-p) 6px var(--pad-l);
+  scrollbar-gutter: stable; overscroll-behavior: contain; }
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-track { background: transparent; }
+.list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.list::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+.list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+
+.pkg { flex: none; display: grid; grid-template-columns: 88px minmax(0,1fr);
+  align-items: start; gap: 16px;
+  padding: 10px 14px 10px 16px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--bg); box-shadow: var(--shadow-card);
+  transition: border-color .12s ease, box-shadow .12s ease; }
+.pkg:hover { border-color: rgba(30,101,89,.42); box-shadow: var(--shadow-hover); }
+html[data-theme="dark"] .pkg:hover { border-color: rgba(97,137,235,.45); }
+/* 缩略槽：格子纸底纹 + accent 细线（88×72，图片位占位） */
+.thumb { width: 88px; height: 72px; border-radius: 7px; border: 1px solid var(--hairline);
+  background:
+    repeating-linear-gradient(0deg, var(--thumb-grid) 0 1px, transparent 1px 12px),
+    repeating-linear-gradient(90deg, var(--thumb-grid) 0 1px, transparent 1px 12px),
+    var(--bg-panel);
+  flex: none; position: relative; overflow: hidden; }
+.thumb::after { content: ""; position: absolute; left: 0; right: 0; bottom: 26%; height: 1px;
+  background: var(--accent); opacity: .5; }
+
+.body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.ver { font-family: var(--mono); font-size: 10px; color: var(--text-faint); padding: 1px 5px;
+  border: 1px solid var(--hairline); border-radius: 4px; flex: none; }
+/* 已装启停开关：switch::SM 小档 24×14 / knob 8（配方同 switch_base） */
+.sw { width: 24px; height: 14px; border-radius: 7px; flex: none;
+  display: flex; align-items: center; background: var(--bg-panel); border: 1px solid var(--border);
+  cursor: pointer; transition: background .12s ease, border-color .12s ease; }
+.sw > i { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-soft);
+  margin-left: 2px; transition: margin-left .12s ease, background .12s ease; }
+.sw.on { background: var(--accent-wash); border-color: var(--accent); }
+.sw.on > i { background: var(--accent); margin-left: 12px; }
+.sw:hover { filter: brightness(1.08); }
+
+.desc { font-size: 12.5px; line-height: 19px; color: var(--text-muted); max-width: 640px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.meta { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--text-soft);
+  font-variant-numeric: tabular-nums; }
+.meta b { color: var(--text-dim); font-weight: 600; }
+.meta .sep { width: 2px; height: 2px; border-radius: 50%; background: var(--text-faint); }
+
+/* 下段：链接 …… 命令胶囊 动作（间距统一 8） */
+.pkg-bot { display: flex; align-items: center; gap: 8px; }
+.pkg-bot .grow { flex: 1; }
+.links { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--text-soft); flex: none; }
+.links a { display: inline-flex; align-items: center; gap: 4px; color: inherit; text-decoration: none; }
+.links a:hover { color: var(--accent); }
+.links svg { width: 12px; height: 12px; opacity: .85; }
+
+.cmd { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px;
+  max-width: 360px; border-radius: 6px; background: var(--bg-panel);
+  border: 1px solid var(--hairline); flex: none; }
+.cmd .prompt { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.cmd code { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg:hover .cmd code { color: var(--text); }
+
+.acts { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; }
+/* 右侧只有一条竖线：标题行右端(开关) / 底行右端(命令胶囊+动作) 都贴卡片内容右缘 */
+
+/* 底栏条：翻页（左缘 10 / 右缘 26） */
+.foot { flex: none; display: flex; align-items: center; gap: 8px; height: 44px;
+  padding: 0 var(--pad-r) 0 var(--pad-l);
+  border-top: 1px solid var(--hairline); font-size: 12px; color: var(--text-muted); }
+.pager { font: inherit; font-size: 12px; height: 28px; padding: 0 12px; border-radius: 6px;
+  border: 1px solid var(--hairline); background: transparent; color: var(--text-muted); cursor: pointer; }
+.pager:hover { background: var(--bg-hover); color: var(--text); }
+.pager[disabled] { opacity: .38; cursor: default; }
+.foot .pages { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.pg { font: inherit; font-size: 12px; width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid var(--hairline); background: transparent; color: var(--text-muted);
+  cursor: pointer; font-variant-numeric: tabular-nums; }
+.pg:hover { background: var(--bg-hover); color: var(--text); }
+.pg.act { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+html[data-theme="dark"] .pg.act { color: var(--accent-hover); }
+.foot .dots { color: var(--text-faint); padding: 0 2px; }
+
+.banner { display: flex; align-items: center; gap: 8px; margin: 0 var(--pad-r) 10px var(--pad-l); padding: 7px 10px;
+  border-radius: 7px; font-size: 11px; }
+.banner svg { width: 13px; height: 13px; flex: none; }
+.banner.warn { background: rgba(224,169,98,.16); color: #8a5a13; }
+html[data-theme="dark"] .banner.warn { background: rgba(224,169,98,.14); color: #e0a562; }
+.banner.err { background: rgba(194,84,96,.13); color: var(--danger); }
+.banner .grow { flex: 1; }
+
+/* ===================== 状态变体 ===================== */
+.states { width: 1180px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.card2 { background: var(--bg); border-radius: 10px; border: 1px solid rgba(0,0,0,.08);
+  box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column; height: 300px; }
+.card2 h4 { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-soft); padding: 12px 14px 10px; border-bottom: 1px solid var(--hairline); }
+.card2 .bodyc { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px; gap: 8px; }
+.skel { display: flex; gap: 12px; padding: 12px 10px; border: 1px solid var(--hairline); border-radius: 10px; }
+.skel .bar { background: var(--bg-panel); border-radius: 4px; height: 10px; }
+.skel .stack { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--text-soft); font-size: 12px; gap: 6px; }
+.empty .big { font-size: 13px; color: var(--text-dim); font-weight: 600; }
+.mini { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<div class="sheet-head">
+  <b>040-1 Pi扩展市场 · v29（摘要行左对齐 · 「全部更新」在摘要行右端 · 工具栏上20下15 · 注释下15）</b>
+  <span>单列卡片（88 缩略 + 文本两列：标题行右端开关 / 底行右端命令胶囊+动作，全部贴同一条右缘）· 1180×760 · mist</span>
+  <span class="spacer"></span>
+  <button id="themeBtn">切换到 one-dark</button>
+</div>
+
+<div class="win">
+  <div class="topbar">
+    <div class="tb-left">
+      <div class="tb-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></div>
+      <div class="tb-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
+    </div>
+    <div class="tabs">
+      <div class="tab"><span>对比一下p</span></div>
+      <div class="tab act">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        <span>Pi扩展市场</span>
+        <span class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><path d="M6 6l12 12M18 6 6 18"/></svg></span>
+      </div>
+    </div>
+    <div class="wctrl">
+      <div><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.2"><path d="M2 6h8"/></svg></div>
+      <div><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="7" height="7"/></svg></div>
+      <div class="close"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.3"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></div>
+    </div>
+  </div>
+
+  <div class="page">
+   <div class="col">
+    <div class="toolbar">
+      <div class="search">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <input placeholder="搜索扩展名称或说明">
+      </div>
+      <div class="select on" id="sortSel">
+        <span id="sortLabel">最多下载</span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        <div class="menu open" id="sortMenu">
+          <button class="act" data-v="最多下载"><svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7"/></svg>最多下载</button>
+          <button data-v="最近更新"><svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7"/></svg>最近更新</button>
+          <button data-v="名称 A–Z"><svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7"/></svg>名称 A–Z</button>
+        </div>
+      </div>
+      <button class="btn ghost">搜索</button>
+      <div class="spacer"></div>
+      <div class="seg"><button class="act">未安装</button><button>已安装</button></div>
+    </div>
+
+    <div class="summary">
+      <span class="s-left">
+        <span class="count">12,365</span><span>个结果</span>
+        <span class="dot"></span><span>只展示扩展（技能/提示词/主题不列出）</span>
+      </span>
+      <button class="btn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg>全部更新 <span class="n">2</span></button>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <div class="foot">
+      <button class="pager" disabled>← 上一页</button>
+      <div class="pages">
+        <button class="pg act">1</button><button class="pg">2</button><button class="pg">3</button>
+        <button class="pg">4</button><button class="pg">5</button><button class="pg">6</button>
+        <span class="dots">…</span><button class="pg">248</button>
+      </div>
+      <button class="pager">下一页 →</button>
+    </div>
+   </div>
+  </div>
+</div>
+
+<div class="states">
+  <div class="card2">
+    <h4>加载中（骨架 + 分批上屏）</h4>
+    <div class="bodyc">
+      <div class="skel"><div class="bar" style="width:88px;height:72px;border-radius:7px"></div>
+        <div class="stack"><div class="bar" style="width:42%;height:12px"></div><div class="bar" style="width:88%"></div><div class="bar" style="width:64%"></div><div class="bar" style="width:36%"></div></div></div>
+      <div class="skel"><div class="bar" style="width:88px;height:72px;border-radius:7px"></div>
+        <div class="stack"><div class="bar" style="width:34%;height:12px"></div><div class="bar" style="width:80%"></div><div class="bar" style="width:52%"></div><div class="bar" style="width:40%"></div></div></div>
+      <div class="foot" style="border:0;padding:0 4px;margin-top:auto">
+        <span>第 <b>1</b> / 248 页 · 12,365 条</span><div class="spacer"></div>
+        <span style="display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:12px;height:12px"><path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round"/></svg>载入中…</span>
+      </div>
+    </div>
+  </div>
+  <div class="card2">
+    <h4>离线降级（首页快照可用）</h4>
+    <div class="bodyc">
+      <div class="banner warn" style="margin:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 21 20H3L12 3.5Z"/><path d="M12 9.5v4.5M12 16.6v.1"/></svg>
+        <span class="grow">网络不可用，显示本地缓存的 50 条</span>
+        <button class="btn ghost sm" style="height:24px">重试</button>
+      </div>
+      <div class="mini"><span style="font-size:12.5px;font-weight:600">billion-context</span><button class="btn primary sm">安装</button></div>
+      <div class="mini"><span style="font-size:12.5px;font-weight:600">pi-mcp-adapter</span><button class="btn primary sm">安装</button></div>
+      <div class="mini"><span style="font-size:12.5px;font-weight:600">pi-web-access</span><button class="btn primary sm">安装</button></div>
+    </div>
+  </div>
+  <div class="card2">
+    <h4>空 / 错误</h4>
+    <div class="bodyc" style="gap:12px">
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="width:26px;height:26px;opacity:.6"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+        <div class="big">没有匹配的扩展</div><div>换个关键词，或清空搜索看热门</div>
+      </div>
+      <div class="banner err" style="margin:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v6M12 16.6v.1"/></svg>
+        <span class="grow">加载失败：network: connection refused</span>
+        <button class="btn ghost sm" style="height:24px">重试</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 演示数据（演示 50 条，滚动 + 状态齐全）
+const POOL = [
+  ['billion-context','v0.1.202','ranxianglei','A context-compression plugin — small context windows are enough, 5× fewer tokens, month-long single sessions, and better compression quality.','1.8M','12 小时前',''],
+  ['pi-mcp-adapter','v5.3.2','nicopreme','MCP (Model Context Protocol) adapter extension for Pi coding agent — add MCP servers and their tools to a session.','1.5M','2 天前','update'],
+  ['pi-web-access','v0.42.0','nicopreme','Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi.','792.8K','2 天前','installed'],
+  ['pi-subagents','v0.79.1','nicopreme','Single-agent delegation and scripted multi-agent workflows, with a live widget and fleet view.','573.0K','1 天前',''],
+  ['pi-mcp-extension','v1.9.11','irahardianto','MCP client extension for the Pi coding agent — connect Pi to any MCP server.','390.3K','21 小时前',''],
+  ['@langfuse/pi-observability-plugin','v0.1.2','bezbac','Traces prompts, agent turns, model generations, and tool calls to Langfuse.','323.8K','1 月前',''],
+  ['@juicesharp/rpiv-ask-user-question','v2.13.9','juicesharp','A structured questionnaire the model can put to you when it would otherwise guess, with typed options instead of free-form replies.','272.5K','2 天前','installed'],
+  ['openwiki','v0.7.2','basproul','A CLI that uses a DeepAgents documentation agent to generate and maintain an OpenWiki for a codebase.','185.2K','10 天前',''],
+];
+
+const TRASH = '<button class="btn ghost icon" title="卸载"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Z"/></svg></button>';
+const swHtml = '<span class="sw on" title="启用/停用"><i></i></span>';
+
+function cardHtml(i) {
+  const [name, ver, author, desc, dl, ago, state] = POOL[i % POOL.length];
+  const suffix = i >= POOL.length ? '-' + Math.floor(i / POOL.length) : '';
+  const full = name + suffix;
+  const installed = state !== '';
+  const acts = installed
+    ? TRASH + (state === 'update' ? '<button class="btn ghost sm">更新</button>' : '')
+    : '<button class="btn ghost sm">安装</button>';
+  const cmd = installed ? '' :
+    `<span class="cmd"><span class="prompt">$</span><code>pi install npm:${full}</code></span>`;
+  return `<div class="pkg">
+    <div class="thumb"></div>
+    <div class="body">
+      <div class="head">
+        <span class="name">${full}</span>
+        <span class="ver">${ver}</span>
+        <span class="spacer"></span>
+        ${installed ? (i % 4 !== 3 ? swHtml : '<span class="sw" title="on"><i></i></span>') : ''}
+      </div>
+      <div class="desc">${desc}</div>
+      <div class="pkg-bot">
+        <div class="meta"><b>${author}</b><span class="sep"></span><span><b>${dl}</b>/mo</span><span class="sep"></span><span>${ago}</span></div>
+        <span class="sep" style="margin:0 2px"></span>
+        <div class="links">
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16v13H4z"/><path d="M4 7V4h16v3"/></svg>npm</a>
+          <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 3.5-6 3.5"/></svg>repo</a>
+        </div>
+        <span class="grow"></span>
+        ${cmd}
+        <div class="acts">${acts}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+const list = document.getElementById('list');
+list.innerHTML = Array.from({ length: 50 }, (_, i) => cardHtml(i)).join('');
+list.querySelectorAll('.sw').forEach(sw => sw.addEventListener('click', () => sw.classList.toggle('on')));
+
+// 排序下拉：点触发器展开/收起，选项写回标签，点外面 / ESC 收起
+const sel = document.getElementById('sortSel');
+const menu = document.getElementById('sortMenu');
+const label = document.getElementById('sortLabel');
+sel.addEventListener('click', (e) => {
+  e.stopPropagation();
+  menu.classList.toggle('open');
+  sel.classList.toggle('on', menu.classList.contains('open'));
+});
+menu.querySelectorAll('button').forEach(b => b.addEventListener('click', (e) => {
+  e.stopPropagation();
+  menu.querySelectorAll('button').forEach(x => x.classList.remove('act'));
+  b.classList.add('act');
+  label.textContent = b.dataset.v;
+  menu.classList.remove('open');
+  sel.classList.remove('on');
+}));
+document.addEventListener('click', () => {
+  menu.classList.remove('open');
+  sel.classList.remove('on');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { menu.classList.remove('open'); sel.classList.remove('on'); }
+});
+
+const btn = document.getElementById('themeBtn');
+btn.addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? '' : 'dark';
+  btn.textContent = dark ? '切换到 one-dark' : '切换到 mist';
+});
+</script>
+</body>
+</html>

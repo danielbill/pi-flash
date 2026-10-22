@@ -96,7 +96,7 @@
 | 令牌 | px | 用途 | 禁止用途 |
 |---|---|---|---|
 | ICON_INDICATOR | 10 | checkbox 勾、状态点、行内 meta 小图标 | — |
-| ICON_XS | 12 | 行内关闭 ×、工具卡小图标、面包屑 chevron | — |
+| ICON_XS | 12 | 行内关闭 ×、工具卡小图标、面包屑 chevron、**topbar 标签**（2026-10-22 定夺，原值 15 非法档收敛） | — |
 | ICON_SM（默认） | 14 | **菜单项、列表行、按钮内、文件树** | — |
 | ICON_MD | 16 | 独立强调图标、statusbar tab、空态图标 | — |
 | ICON_LG | 18 | 图标按钮内部（psp 行操作钮、topbar 图标钮） | — |

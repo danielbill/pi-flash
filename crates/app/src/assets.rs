@@ -63,6 +63,8 @@ assets! {
     "icons/flag.svg",
     // 原生市场下拉箭头（设计稿 `.select-control-caret` 的实心三角）
     "icons/caret-down.svg",
+    // 090-4 PF 插件市场页内图标（lucide package）
+    "icons/package.svg",
     "icons/git-branch.svg",
     "icons/eye.svg",
     "icons/eye-off.svg",
@@ -159,6 +161,7 @@ assets! {
     "icons/bot-message-square.svg",
     "icons/file-sliders.svg",
     "icons/plug.svg",
+    "icons/puzzle.svg",
     // v70 设置页：模型（芯片）+ MCP（服务器机架），路径取自 pi-web SettingsSectionIcon
     "icons/cpu.svg",
     "icons/server.svg",

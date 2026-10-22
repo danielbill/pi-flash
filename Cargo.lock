@@ -5668,11 +5668,13 @@ dependencies = [
 name = "pi-link"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures",
  "futures-timer",
  "keyring",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "ureq 2.12.1",
 ]
 

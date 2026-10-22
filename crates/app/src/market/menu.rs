@@ -34,10 +34,10 @@ pub(crate) fn menu_layer(
     // 040-1「Pi扩展市场」已退役（2026-10-22 用户定夺）：菜单只留原生市场。
     // 旧页代码保留（open_pi_ext_market 仍可从自动化口进入），不再上菜单。
     let weak_item = weak.clone();
-    let card = crate::function_panel::psp_overlays::menu_card(edges, t).child(
+    let mut card = crate::function_panel::psp_overlays::menu_card(edges, t).child(
         crate::function_panel::psp_overlays::menu_item(
             "market-menu-pi-native",
-            "globe",
+            "plug",
             tr("market.native_tab"),
             false,
             false,
@@ -45,6 +45,21 @@ pub(crate) fn menu_layer(
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             cx.stop_propagation();
             let _ = weak_item.update(cx, |c, cx| c.open_pi_native_market(cx));
+        }),
+    );
+    // 090-4 PF 插件市场（主线功能，常驻菜单）
+    let weak_pf = weak.clone();
+    card = card.child(
+        crate::function_panel::psp_overlays::menu_item(
+            "market-menu-pf",
+            "puzzle",
+            tr("market.pf.tab"),
+            false,
+            false,
+        )
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = weak_pf.update(cx, |c, cx| c.open_pf_market(cx));
         }),
     );
     layer.child(card).into_any_element()

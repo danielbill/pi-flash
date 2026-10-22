@@ -83,7 +83,15 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.type.subagent", "子代理", "子代理", "Subagent"),
     // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案本身照抄
     // 设计稿英文，这里只收需要跟随界面的那几个词）
-    ("market.native_tab", "Pi原生扩展市场", "Pi原生擴展市場", "Pi Native Market"),
+    ("market.native_tab", "Pi 扩展市场", "Pi 擴展市場", "Pi Market"),
+    ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
+    ("market.pf.empty", "已全部安装，没有可更新的插件", "已全部安裝，沒有可更新的插件", "Everything is installed and up to date"),
+    ("market.pf.installing", "安装中…", "安裝中…", "Installing…"),
+    ("market.pf.updating", "更新中…", "更新中…", "Updating…"),
+    ("market.pf.confirm", "再点一次确认卸载", "再點一次確認卸載", "Click again to confirm uninstall"),
+    ("market.pf.removed", "已卸载 {name}", "已卸載 {name}", "Uninstalled {name}"),
+    ("market.pf.failed", "操作失败：{err}", "操作失敗：{err}", "Operation failed: {err}"),
+    ("market.pf.need_newer_pf", "该插件需要 PF {min}，当前 {cur}", "該插件需要 PF {min}，當前 {cur}", "This plugin requires PF {min}, current {cur}"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),

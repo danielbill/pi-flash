@@ -580,6 +580,7 @@ impl Chat {
             Some(PanelTab::Changelog) => ContentView::Changelog,
             Some(PanelTab::PiExtMarket) => ContentView::PiExtMarket,
             Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
+            Some(PanelTab::PfMarket) => ContentView::PfMarket,
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,
             Some(PanelTab::File(_)) => ContentView::File,

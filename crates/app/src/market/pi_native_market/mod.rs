@@ -2,7 +2,7 @@
 //!
 //! 设计稿：`docs/UI设计/仿-pi.dev-Packages-页面设计/pi-packages.html`
 //! （同目录 `DESIGN-HANDOFF.md` 是导出工具给的视觉契约：**像素优先**）。
-//! 规格：`docs/模块设计/040-2-Pi原生扩展市场.md`。
+//! 规格：`docs/模块设计/040-2-Pi 扩展市场.md`。
 //!
 //! 与 040-1「Pi 扩展市场」的关系：**数据面同一个**（npm registry，见
 //! [`pi_link::market::pi_ext_market`]），**界面与信息组织完全不同**——040-1 是
@@ -235,7 +235,7 @@ pub(crate) fn primary_kind(e: &MarketEntry) -> &'static str {
 // ---------------------------------------------------------------------------
 
 impl Chat {
-    /// 打开「Pi原生扩展市场」标准页（菜单项、自动化动作都走这里）。
+    /// 打开「Pi 扩展市场」标准页（菜单项、自动化动作都走这里）。
     pub(crate) fn open_pi_native_market(&mut self, cx: &mut gpui::Context<Self>) {
         if !crate::services::workspace::pi_native_market_enabled() {
             return;

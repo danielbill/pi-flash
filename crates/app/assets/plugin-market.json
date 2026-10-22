@@ -1,0 +1,19 @@
+{
+  "schema": "pf-market/1",
+  "packages": [
+    {
+      "name": "@pf-plugins-origin/quick-panel-demo",
+      "version": "0.0.1",
+      "integrity": "sha512-k2oIQwpA3ajtbAvA0zSd8lmzgulD7IdlqOObjKvMENdWkrCil89cS95ATtWl6p42OnBkgQK9NeyoqH4QAXkxDQ==",
+      "min_pf": ">=0.2",
+      "display": {
+        "zh": "快捷面板",
+        "en": "Quick Panel"
+      },
+      "desc": {
+        "zh": "会话与常用提问的快捷入口面板",
+        "en": "Quick access panel for sessions and common prompts"
+      }
+    }
+  ]
+}

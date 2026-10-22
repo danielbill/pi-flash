@@ -162,6 +162,18 @@ pub fn pi_ext_market_cache_file() -> Option<PathBuf> {
     file("pi-ext-market-cache.json")
 }
 
+/// `~/.pi-flash/plugins.json` — PF 插件台账（090-4：安装/卸载记账，唯一落盘物）。
+pub fn plugins_ledger_file() -> Option<PathBuf> {
+    file("plugins.json")
+}
+
+/// `~/.pi-flash/plugins/` — PF 插件安装根（`<name>/<version>/`，写前建目录）。
+pub fn plugins_dir() -> Option<PathBuf> {
+    let d = ensure_dir()?.join("plugins");
+    let _ = std::fs::create_dir_all(&d);
+    Some(d)
+}
+
 /// `~/.pi-flash/registry-dump.mjs` — 注册表 dump 一次性脚本（每次 dump 重写）。
 pub fn registry_dump_script_file() -> Option<PathBuf> {
     file("registry-dump.mjs")

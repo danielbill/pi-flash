@@ -681,6 +681,7 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::PanelTab::Changelog => json!({"changelog": true}),
             crate::PanelTab::PiExtMarket => json!({"pi_ext_market": true}),
             crate::PanelTab::PiNativeMarket => json!({"pi_native_market": true}),
+            crate::PanelTab::PfMarket => json!({"pf_market": true}),
             crate::PanelTab::Search => json!({"search": true}),
             crate::PanelTab::SessionSearch => json!({"session_search": true}),
         }).collect::<Vec<_>>(),
@@ -868,6 +869,7 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::Changelog => "changelog",
         crate::ContentView::PiExtMarket => "pi-ext-market",
         crate::ContentView::PiNativeMarket => "pi-native-market",
+        crate::ContentView::PfMarket => "pf-market",
         crate::ContentView::Search => "search",
         crate::ContentView::SessionSearch => "session_search",
     }

@@ -57,7 +57,7 @@ impl gpui::Render for TabDragGhost {
         let t = T();
         let active = self.drag.active;
         tab_body(
-            drag_icon(&self.drag, 15., t.text_muted),
+            drag_icon(&self.drag, 12., t.text_muted),
             self.drag.label.clone(),
             active,
             0.,
@@ -119,10 +119,11 @@ pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl g
     // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
     // `pi_ext_market` 开关（默认关 = 发版不可见），开才渲染这个钮。
     if crate::services::workspace::market_menu_enabled() {
-        bar = bar.child(div().ml(px(space::SP2)).child(icon_btn(
+        bar = bar.child(div().ml(px(space::SP2)).child(icon_btn_sized(
             "market-menu",
             "menu",
             tr("titlebar.menu"),
+            20.,
             cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
                 this.dlg.market_menu = Some((f32::from(ev.position.x), f32::from(ev.position.y)));
                 cx.notify();
@@ -213,6 +214,19 @@ fn icon_btn(
     _tip: &'static str,
     handler: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> impl gpui::IntoElement {
+    icon_btn_sized(id, icon_name, _tip, align::TOGGLE_ICON, handler)
+}
+
+/// 同 [`icon_btn`]，图标尺寸可指定（040-2：菜单三横是细线图形，18 档视觉
+/// 质量比收放钮的 18×18 实心盒小一圈——用户定夺升 20 光学对齐）。
+#[allow(clippy::too_many_arguments)]
+fn icon_btn_sized(
+    id: &'static str,
+    icon_name: &'static str,
+    _tip: &'static str,
+    icon_size: f32,
+    handler: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl gpui::IntoElement {
     let t = T();
     div()
         .id(id)
@@ -225,11 +239,7 @@ fn icon_btn(
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
         .on_mouse_down(MouseButton::Left, handler)
-        .child(crate::ui::icon_hover(
-            icon_name,
-            align::TOGGLE_ICON,
-            t.text_muted,
-        ))
+        .child(crate::ui::icon_hover(icon_name, icon_size, t.text_muted))
 }
 
 /// 内容区 tab（Obsidian 式）：激活 = 凸起卡片（bg 色、顶圆角、下缘融入
@@ -333,8 +343,16 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 tr("market.native_tab").into(),
                 None,
                 false,
-                Some("menu"),
+                Some("plug"),
                 ContentView::PiNativeMarket,
+            ),
+            // 090-4 PF 插件市场（内置索引 + 台账）
+            crate::PanelTab::PfMarket => (
+                tr("market.pf.tab").into(),
+                None,
+                false,
+                Some("puzzle"),
+                ContentView::PfMarket,
             ),
             // 083 项目搜索（Zed 同级 tab：ProjectSearchView 就是 pane item）
             crate::PanelTab::Search => (
@@ -442,7 +460,7 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
     });
     tab_shell(
         "ctab-session".into(),
-        Some(crate::ui::icon("bot-message-square", 15., t.text_muted).into_any_element()),
+        Some(crate::ui::icon("bot-message-square", 12., t.text_muted).into_any_element()),
         title,
         active,
         0.,
@@ -543,7 +561,9 @@ fn content_tab(
     let ghost = drag.clone();
     tab_shell(
         tab_id,
-        tab_icon.map(|n| crate::ui::icon(n, 15., t.text_muted).into_any_element()),
+        // 040-2：topbar 标签图标统一 ICON_XS(12)（2026-10-22 用户定夺；
+        // 原值 15 是非法档，规范 §3 五档之外）
+        tab_icon.map(|n| crate::ui::icon(n, 12., t.text_muted).into_any_element()),
         label,
         active,
         ml,
