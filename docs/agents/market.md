@@ -61,6 +61,13 @@
   **卡片内部是 PF v1 定稿，不许改成 pi 卡版式**（72 预览槽 / 名称 16 semibold /
   描述 / meta 行含安装钮）。色板走 theme 语义 token（映射表在 pf_market.rs 文件头），
   不共享 pi 的深色字面量。
+- **工具栏不出字段标签行（两页都已删，2026-10-23）**：设计稿里控件的 `<span
+  class="visually-hidden">Filter packages by name…</span>` 三枚标签，原意是
+  sr-only，但 `.visually-hidden` 定义在 `@layer utilities` 里、而
+  `.action-bar-field` / `label.stack` 的长相规则是 **unlayered**（unlayered 优先于
+  任何 layer）→ 浏览器里它们真的可见，成为控件上方那排「注释」。已在
+  `pi-packages.html` 删掉三个 span、`controls.rs` 删掉 `field_label()`；
+  **别照旧设计稿把它加回来**。
 - **vlist 行高 = card_h + SP4，卡片自己带 `mt(SP4)`**：所以「摘要行 ↔ 列表」想得到 N，
   `SUMMARY_PB` 必须写 `N − SP4`（现在是 `10 − 8`）。直接写 N 会凭空多 8。
 - `card_metrics` 全部**派生**（head/desc/bottom → card_h → row_h），禁止写死字面量：
