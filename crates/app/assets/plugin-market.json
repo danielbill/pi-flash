@@ -16,6 +16,22 @@
         "zh": "会话与常用提问的快捷入口面板",
         "en": "Quick access panel for sessions and common prompts"
       }
+    },
+    {
+      "name": "@pf-plugins-origin/remote-control",
+      "version": "0.0.1",
+      "integrity": "sha512-9oPlNLHVNWrsMxStXAA18n59h+p8SrG8kifOnJKaccvVK/BuREvYROv+AyzXtyt1yDtQgRJw73obZILQpsc/jQ==",
+      "min_pf": ">=0.2",
+      "publisher": "Pi-Flash",
+      "published_at": "2026-10-22",
+      "display": {
+        "zh": "远程控制",
+        "en": "Remote Control"
+      },
+      "desc": {
+        "zh": "微信 ⇄ 会话桥，手机上远程查看与操控会话",
+        "en": "WeChat ⇄ session bridge for remote monitoring and control"
+      }
     }
   ]
 }

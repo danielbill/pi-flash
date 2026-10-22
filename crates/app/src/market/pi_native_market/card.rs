@@ -277,15 +277,20 @@ pub(super) fn pager_block(pager: AnyElement, m: &Metrics) -> AnyElement {
     .into_any_element()
 }
 
-/// 空态 / 加载态行（设计 `.packages-empty`：纯文本，无插图）。
-pub(super) fn empty_line(text: &'static str) -> AnyElement {
-    gpui::div()
+/// 空态 / 加载态行（设计 `.packages-empty`：纯文本，无插图）；加载态在文字前挂转圈。
+pub(super) fn empty_line(text: &'static str, loading: bool) -> AnyElement {
+    let mut line = gpui::div()
+        .flex()
+        .items_center()
+        .gap(gpui::px(9.))
         .py(gpui::px(24.))
         .font_family(d::SERIF)
         .text_size(gpui::px(px18::BODY_FS))
-        .text_color(d::muted())
-        .child(label(text))
-        .into_any_element()
+        .text_color(d::muted());
+    if loading {
+        line = line.child(crate::ui::spinner(14., d::ACCENT));
+    }
+    line.child(label(text)).into_any_element()
 }
 
 /// 单张包卡：左预览块（16:10 占位图）| 右信息列（名/描述/元信息/徽标/链接/命令条）。
@@ -436,7 +441,9 @@ pub(super) fn package_card(
             .h(gpui::px(sp::COPY_H))
             .px(gpui::px(sp::COPY_PAD_X))
             .font_family(d::MONO)
-            .text_size(gpui::px(sp::COPY_FS))
+            // ✓ 已装态：字号 24（12.96/16 两档都被用户否过——看不清「已装」）。
+            .text_size(gpui::px(24.))
+            .line_height(gpui::px(24.))
             .text_color(gpui::rgb(0x5db87a))
             .child(SharedString::from("\u{2713}"))
             .into_any_element()

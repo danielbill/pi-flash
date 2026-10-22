@@ -553,7 +553,7 @@ pub(crate) fn page(
 
     let recent_src = st.recent.clone();
     let loading = st.loading;
-    let empty_text: &'static str = if st.loading {
+    let empty_text: &'static str = if loading {
         "Loading packages…"
     } else if st.error.is_some() {
         "Failed to load. Try Reset."
@@ -593,7 +593,7 @@ pub(crate) fn page(
         let r = ix - 2;
         let mut row = card::row_shell(&m_c);
         if visible.is_empty() {
-            row = row.child(card::empty_line(empty_text));
+            row = row.child(card::empty_line(empty_text, loading));
         } else {
             let start = r * cols;
             for e in visible.iter().skip(start).take(cols) {
