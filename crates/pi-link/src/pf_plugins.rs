@@ -236,8 +236,8 @@ fn pack(name: &str, version: &str, dest: &Path) -> Result<PathBuf, String> {
             err.lines().last().unwrap_or("未知错误")
         ));
     }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("npm pack 输出解析失败: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("npm pack 输出解析失败: {e}"))?;
     let filename = json[0]["filename"]
         .as_str()
         .ok_or("npm pack 输出缺少 filename")?
@@ -252,7 +252,10 @@ fn pack(name: &str, version: &str, dest: &Path) -> Result<PathBuf, String> {
 fn sha512_sri(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("读 tarball 失败: {e}"))?;
     let digest = Sha512::digest(&bytes);
-    Ok(format!("sha512-{}", base64::engine::general_purpose::STANDARD.encode(digest)))
+    Ok(format!(
+        "sha512-{}",
+        base64::engine::general_purpose::STANDARD.encode(digest)
+    ))
 }
 
 /// 系统 tar 解包（Win10+ 自带 bsdtar；Unix 恒有）。剥掉顶层 `package/`。
@@ -271,7 +274,10 @@ fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
     if !out.status.success() {
         return Err(format!(
             "解包失败: {}",
-            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("")
         ));
     }
     Ok(())

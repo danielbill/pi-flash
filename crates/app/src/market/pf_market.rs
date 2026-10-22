@@ -15,14 +15,14 @@
 use std::sync::OnceLock;
 
 use gpui::prelude::*;
-use gpui::{px, AnyElement, FontWeight, MouseButton, SharedString};
+use gpui::{AnyElement, FontWeight, MouseButton, SharedString, px};
 
 use pi_link::pf_plugins::{self, IndexEntry};
 
-use crate::appearance::theme::Theme;
-use crate::ui::tooltip::WithTip;
 use crate::Chat;
+use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
+use crate::ui::tooltip::WithTip;
 
 // ---------------------------------------------------------------------------
 // 内置索引（单例）
@@ -31,10 +31,8 @@ use crate::i18n::{tf, tr};
 fn index() -> &'static pi_link::pf_plugins::MarketIndex {
     static IDX: OnceLock<pi_link::pf_plugins::MarketIndex> = OnceLock::new();
     IDX.get_or_init(|| {
-        pi_link::pf_plugins::MarketIndex::parse(include_str!(
-            "../../assets/plugin-market.json"
-        ))
-        .unwrap_or_default()
+        pi_link::pf_plugins::MarketIndex::parse(include_str!("../../assets/plugin-market.json"))
+            .unwrap_or_default()
     })
 }
 
@@ -203,34 +201,32 @@ pub(crate) fn page(
 
     if entries.is_empty() {
         col = col.child(
-            gpui::div()
-                .max_w(px(720.))
-                .mx_auto()
-                .child(
-                    gpui::div()
-                        .m(px(12.))
-                        .p(px(32.))
-                        .flex().justify_center()
-                        .text_color(rgb(t.text_muted))
-                        .border_1().border_color(rgb(t.border)).rounded(px(8.))
-                        .child(tr("market.pf.empty")),
-                ),
+            gpui::div().max_w(px(720.)).mx_auto().child(
+                gpui::div()
+                    .m(px(12.))
+                    .p(px(32.))
+                    .flex()
+                    .justify_center()
+                    .text_color(rgb(t.text_muted))
+                    .border_1()
+                    .border_color(rgb(t.border))
+                    .rounded(px(8.))
+                    .child(tr("market.pf.empty")),
+            ),
         );
     }
 
     // 最近一次失败原因（下一次动作自动清除）
     if let Some(err) = &pf.error {
         col = col.child(
-            gpui::div()
-                .max_w(px(720.))
-                .mx_auto()
-                .child(
-                    gpui::div()
-                        .mx(px(12.)).mb(px(8.))
-                        .text_size(px(11.))
-                        .text_color(rgb(t.danger))
-                        .child(err.clone()),
-                ),
+            gpui::div().max_w(px(720.)).mx_auto().child(
+                gpui::div()
+                    .mx(px(12.))
+                    .mb(px(8.))
+                    .text_size(px(11.))
+                    .text_color(rgb(t.danger))
+                    .child(err.clone()),
+            ),
         );
     }
 
@@ -277,7 +273,11 @@ fn card(
         .items_center()
         .gap(px(4.))
         .text_size(px(11.))
-        .text_color(if st == "ok" { rgb(t.accent) } else { rgb(t.text_faint) })
+        .text_color(if st == "ok" {
+            rgb(t.accent)
+        } else {
+            rgb(t.text_faint)
+        })
         .children(if st == "ok" {
             Some(crate::ui::icon("check", 10., t.accent))
         } else {
@@ -341,11 +341,10 @@ fn card(
             .rounded(px(6.))
             .border_1()
             .border_color(gpui::rgba(crate::appearance::theme::danger_alpha(t, 0x59)))
-            .bg(gpui::rgba(crate::appearance::theme::danger_alpha(t, if confirming {
-                0x1f
-            } else {
-                0x0f
-            })))
+            .bg(gpui::rgba(crate::appearance::theme::danger_alpha(
+                t,
+                if confirming { 0x1f } else { 0x0f },
+            )))
             .text_color(rgb(t.danger))
             .cursor_pointer()
             .hover(|s| s.bg(gpui::rgba(crate::appearance::theme::danger_wash(t))))
