@@ -1,0 +1,11 @@
+[package]
+name = "pf-plugin-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "PF 插件运行时：wasmtime 加载插件 wasm 组件，执行协议调用"
+
+[dependencies]
+wasmtime = { version = "36", default-features = false, features = ["runtime", "cranelift", "component-model"] }
+wasmtime-wasi = { version = "36", default-features = false }
+anyhow = "1"

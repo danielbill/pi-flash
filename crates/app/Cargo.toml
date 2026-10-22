@@ -15,6 +15,8 @@ path = "src/main.rs"
 winresource = "0.1"
 
 [dependencies]
+wasmtime = { version = "36", default-features = false, features = ["runtime", "cranelift", "component-model"] }
+wasmtime-wasi = { version = "36", default-features = false }
 gpui = "0.2.2"
 pi-link = { path = "../pi-link" }
 futures = "0.3"

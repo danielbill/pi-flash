@@ -1,0 +1,39 @@
+package pf:plugin;
+
+interface types {
+    variant paint { rect(rect), text(text) }
+    record rect {
+        x: f32, y: f32, w: f32, h: f32,
+        corner: f32,
+        r: f32, g: f32, b: f32, a: f32,
+    }
+    record text {
+        x: f32, y: f32, size: f32,
+        r: f32, g: f32, b: f32, a: f32,
+        content: string,
+    }
+    enum phase { move, down, up }
+    enum button { left, right }
+}
+
+interface host {
+    measure-text: func(content: string, size: f32) -> f32;
+    toast: func(msg: string);
+    open-file: func(path: string);
+    run-script: func(path: string);
+    toggle-quick-pin: func(path: string);
+    quick-pins: func() -> list<string>;
+}
+
+world plugin {
+    use types.{paint, phase, button};
+
+    import host;
+
+    export init: func(plugin-name: string);
+    export on-resize: func(w: f32, h: f32);
+    export on-mouse: func(phase: phase, button: button, x: f32, y: f32);
+    export on-key: func(key: string);
+    export wants-repaint: func() -> bool;
+    export render: func() -> list<paint>;
+}
