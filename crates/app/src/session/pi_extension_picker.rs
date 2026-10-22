@@ -78,7 +78,11 @@ impl Chat {
         cx.notify();
     }
 
-    pub(crate) fn pi_extension_picker_toggle(&mut self, source: &str, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn pi_extension_picker_toggle(
+        &mut self,
+        source: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
         if let Some(p) = self.dlg.pi_extension_picker.as_mut() {
             if !p.pending.remove(source) {
                 p.pending.insert(source.to_string());

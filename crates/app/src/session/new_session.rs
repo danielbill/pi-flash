@@ -339,7 +339,9 @@ fn plugin_update_notice(
         .pi_extension_updates
         .results
         .iter()
-        .filter(|r| r.state == crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable)
+        .filter(|r| {
+            r.state == crate::services::pi_extension_updates::PkgUpdateState::UpdateAvailable
+        })
         .collect();
     // 更新全部按钮：与设置·扩展页同一 config_button（ui::button 规范件）
     let label = if updating_all {

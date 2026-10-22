@@ -109,7 +109,9 @@ impl Chat {
             return;
         }
         self.mc_clear_error(cx);
-        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Remove(source.clone()));
+        self.cfg.pkg_op = Some(crate::settings::pi_extensions::PkgOp::Remove(
+            source.clone(),
+        ));
         self.mc_cli_op(
             vec!["remove".to_string(), source.clone()],
             crate::i18n::tf("extensions.removed", &[("source", source.clone())]),
