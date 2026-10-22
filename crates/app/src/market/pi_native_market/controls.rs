@@ -11,12 +11,7 @@ use super::{BarModel, NativeKind, NativeSort, dropdown_row, label};
 use crate::Chat;
 
 /// 工具栏：三字段 + 两按钮。字段宽 12rem / 13rem（= 216 / 234）。
-pub(super) fn action_bar(
-    st: BarModel,
-    weak: &gpui::WeakEntity<Chat>,
-    m: &Metrics,
-) -> AnyElement {
-
+pub(super) fn action_bar(st: BarModel, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> AnyElement {
     // 搜索框：设计稿的 44px 框（外框由我这里出，内件 flat+form）
     let input: AnyElement = match st.input.as_ref() {
         Some(ix) => gpui::div()
@@ -43,7 +38,9 @@ pub(super) fn action_bar(
         .flex()
         .flex_col()
         .gap(gpui::px(sp::FIELD_GAP))
-        .child(field_label("Filter packages by name, description, or author"))
+        .child(field_label(
+            "Filter packages by name, description, or author",
+        ))
         .child(input);
 
     let kind_col = gpui::div()
@@ -57,49 +54,50 @@ pub(super) fn action_bar(
             select_box(NativeKind::label(st.kind))
         } else {
             crate::ui::dropdown(
-            "pi-native-kind-dd",
-            st.kind_guard.as_ref().expect("guard ensured on open"),
-            st.kind_open,
-            {
-                let weak = weak.clone();
-                move |_, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.aux.market.native.kind_open = !c.aux.market.native.kind_open;
-                        c.aux.market.native.sort_open = false;
-                        cx.notify();
-                    });
-                }
-            },
-            {
-                let weak = weak.clone();
-                move |_, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.aux.market.native.kind_open = false;
-                        cx.notify();
-                    });
-                }
-            },
-            select_box(NativeKind::label(st.kind)),
-            {
-                let weak = weak.clone();
-                let cur = st.kind;
-                move || {
-                    let mut menu = menu_shell();
-                    for k in NativeKind::ALL {
-                        let w = weak.clone();
-                        menu = menu.child(dropdown_row(
-                            format!("pi-native-kind-{k:?}"),
-                            k.label(),
-                            k == cur,
-                            move |cx| {
-                                let _ = w.update(cx, |c, cx| c.native_set_kind(k, cx));
-                            },
-                        ));
+                "pi-native-kind-dd",
+                st.kind_guard.as_ref().expect("guard ensured on open"),
+                st.kind_open,
+                {
+                    let weak = weak.clone();
+                    move |_, cx| {
+                        let _ = weak.update(cx, |c, cx| {
+                            c.aux.market.native.kind_open = !c.aux.market.native.kind_open;
+                            c.aux.market.native.sort_open = false;
+                            cx.notify();
+                        });
                     }
-                    menu.into_any_element()
-                }
-            },
-        )});
+                },
+                {
+                    let weak = weak.clone();
+                    move |_, cx| {
+                        let _ = weak.update(cx, |c, cx| {
+                            c.aux.market.native.kind_open = false;
+                            cx.notify();
+                        });
+                    }
+                },
+                select_box(NativeKind::label(st.kind)),
+                {
+                    let weak = weak.clone();
+                    let cur = st.kind;
+                    move || {
+                        let mut menu = menu_shell();
+                        for k in NativeKind::ALL {
+                            let w = weak.clone();
+                            menu = menu.child(dropdown_row(
+                                format!("pi-native-kind-{k:?}"),
+                                k.label(),
+                                k == cur,
+                                move |cx| {
+                                    let _ = w.update(cx, |c, cx| c.native_set_kind(k, cx));
+                                },
+                            ));
+                        }
+                        menu.into_any_element()
+                    }
+                },
+            )
+        });
 
     let sort_col = gpui::div()
         .w(gpui::px(234.))
@@ -110,49 +108,50 @@ pub(super) fn action_bar(
             select_box(NativeSort::label(st.sort))
         } else {
             crate::ui::dropdown(
-            "pi-native-sort-dd",
-            st.sort_guard.as_ref().expect("guard ensured on open"),
-            st.sort_open,
-            {
-                let weak = weak.clone();
-                move |_, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.aux.market.native.sort_open = !c.aux.market.native.sort_open;
-                        c.aux.market.native.kind_open = false;
-                        cx.notify();
-                    });
-                }
-            },
-            {
-                let weak = weak.clone();
-                move |_, cx| {
-                    let _ = weak.update(cx, |c, cx| {
-                        c.aux.market.native.sort_open = false;
-                        cx.notify();
-                    });
-                }
-            },
-            select_box(NativeSort::label(st.sort)),
-            {
-                let weak = weak.clone();
-                let cur = st.sort;
-                move || {
-                    let mut menu = menu_shell();
-                    for s in NativeSort::ALL {
-                        let w = weak.clone();
-                        menu = menu.child(dropdown_row(
-                            format!("pi-native-sort-{s:?}"),
-                            s.label(),
-                            s == cur,
-                            move |cx| {
-                                let _ = w.update(cx, |c, cx| c.native_set_sort(s, cx));
-                            },
-                        ));
+                "pi-native-sort-dd",
+                st.sort_guard.as_ref().expect("guard ensured on open"),
+                st.sort_open,
+                {
+                    let weak = weak.clone();
+                    move |_, cx| {
+                        let _ = weak.update(cx, |c, cx| {
+                            c.aux.market.native.sort_open = !c.aux.market.native.sort_open;
+                            c.aux.market.native.kind_open = false;
+                            cx.notify();
+                        });
                     }
-                    menu.into_any_element()
-                }
-            },
-        )});
+                },
+                {
+                    let weak = weak.clone();
+                    move |_, cx| {
+                        let _ = weak.update(cx, |c, cx| {
+                            c.aux.market.native.sort_open = false;
+                            cx.notify();
+                        });
+                    }
+                },
+                select_box(NativeSort::label(st.sort)),
+                {
+                    let weak = weak.clone();
+                    let cur = st.sort;
+                    move || {
+                        let mut menu = menu_shell();
+                        for s in NativeSort::ALL {
+                            let w = weak.clone();
+                            menu = menu.child(dropdown_row(
+                                format!("pi-native-sort-{s:?}"),
+                                s.label(),
+                                s == cur,
+                                move |cx| {
+                                    let _ = w.update(cx, |c, cx| c.native_set_sort(s, cx));
+                                },
+                            ));
+                        }
+                        menu.into_any_element()
+                    }
+                },
+            )
+        });
 
     // 按钮组：Search（提交）/ Reset（清空）
     let buttons = gpui::div()
@@ -160,26 +159,28 @@ pub(super) fn action_bar(
         .items_end()
         .gap(gpui::px(9.9))
         .child(bracket_button(
-        "pi-native-search",
-        label(&d::spaced("SEARCH", false)),
-        {
-        let weak = weak.clone();
-        move |cx| {
-            let _ = weak.update(cx, |c, cx| {
-                let v = c.aux.market.native.filter.clone();
-                c.native_search_with(v, cx);
-            });
-        }
-    }))
+            "pi-native-search",
+            label(&d::spaced("SEARCH", false)),
+            {
+                let weak = weak.clone();
+                move |cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        let v = c.aux.market.native.filter.clone();
+                        c.native_search_with(v, cx);
+                    });
+                }
+            },
+        ))
         .child(bracket_button(
-        "pi-native-reset",
-        label(&d::spaced("RESET", false)),
-        {
-        let weak = weak.clone();
-        move |cx| {
-            let _ = weak.update(cx, |c, cx| c.native_reset(cx));
-        }
-    }));
+            "pi-native-reset",
+            label(&d::spaced("RESET", false)),
+            {
+                let weak = weak.clone();
+                move |cx| {
+                    let _ = weak.update(cx, |c, cx| c.native_reset(cx));
+                }
+            },
+        ));
 
     let bar = if m.stacked_bar {
         gpui::div()
@@ -351,18 +352,20 @@ pub(super) fn pager(
         .flex_wrap();
     for b in page_window(page, total_pages) {
         match b {
-            PageBtn::Gap => pages = pages.child(
-                gpui::div()
-                    .min_w(gpui::px(sp::PAGER_CELL))
-                    .h(gpui::px(sp::PAGER_CELL))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(d::muted())
-                    .font_family(d::MONO)
-                    .text_size(gpui::px(px18::PAGER_FS))
-                    .child(SharedString::from("…")),
-            ),
+            PageBtn::Gap => {
+                pages = pages.child(
+                    gpui::div()
+                        .min_w(gpui::px(sp::PAGER_CELL))
+                        .h(gpui::px(sp::PAGER_CELL))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(d::muted())
+                        .font_family(d::MONO)
+                        .text_size(gpui::px(px18::PAGER_FS))
+                        .child(SharedString::from("…")),
+                )
+            }
             PageBtn::Num(p) => {
                 let w = weak.clone();
                 let active = p == page;
@@ -465,10 +468,8 @@ fn nav_button(
             .on_mouse_down(MouseButton::Left, move |_, _, cx| on_click(cx))
             .into_any_element()
     } else {
-        base.text_color(gpui::rgba(crate::appearance::theme::rgba_a(
-            0xc5c2c9, 0.36,
-        )))
-        .into_any_element()
+        base.text_color(gpui::rgba(crate::appearance::theme::rgba_a(0xc5c2c9, 0.36)))
+            .into_any_element()
     }
 }
 

@@ -24,7 +24,7 @@ mod card;
 mod controls;
 mod design;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyElement, IntoElement, MouseButton, SharedString, Styled};
@@ -45,8 +45,6 @@ pub(crate) const RECENT_N: usize = 8;
 const MAX_PAGES: usize = 20;
 /// 打字过滤去抖（设计稿 JS 160ms）。
 const FILTER_DEBOUNCE_MS: u64 = 160;
-/// 复制反馈停留（设计稿 1200ms）。
-const COPY_FLASH_MS: u64 = 1200;
 
 /// 类型筛选（设计稿 `<select name="type">` 的选项集）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -139,8 +137,8 @@ pub(crate) struct NativeState {
     /// 请求代际（换词/翻页/重置 ++；回包不符即丢）
     pub(crate) gen_ix: u64,
     pub(crate) loaded_once: bool,
-    /// 复制反馈：包名 + 时刻（1.2s 后回落）
-    pub(crate) copied: Option<(String, Instant)>,
+    /// 行内安装中的包来源（`npm:<name>`）：按钮转圈 + 全卡动作禁用
+    pub(crate) pending: Option<String>,
     /// 过滤去抖代际（每键 ++；到点的旧轮次不再 notify）
     pub(crate) filter_gen: u64,
     /// 变高虚拟列表（整页分段：最近发布 / 头+工具栏 / 卡行×N / 页码条）
@@ -169,7 +167,7 @@ impl Default for NativeState {
             error: None,
             gen_ix: 0,
             loaded_once: false,
-            copied: None,
+            pending: None,
             filter_gen: 0,
             list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2000.)),
             sb: gpui_component::scroll::ScrollbarState::default(),
@@ -216,7 +214,9 @@ impl NativeState {
         match self.sort {
             NativeSort::Downloads => {}
             NativeSort::Recent => list.sort_by(|a, b| b.updated.cmp(&a.updated)),
-            NativeSort::Name => list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            NativeSort::Name => {
+                list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            }
         }
         list
     }
@@ -263,12 +263,10 @@ impl Chat {
     /// 搜索框 + 两个下拉的守卫懒创建（都要 `&mut Context`）。
     fn native_ensure_input(&mut self, cx: &mut gpui::Context<Self>) {
         if self.aux.market.native.kind_guard.is_none() {
-            self.aux.market.native.kind_guard =
-                Some(cx.new(|_| crate::ui::DropdownState::new()));
+            self.aux.market.native.kind_guard = Some(cx.new(|_| crate::ui::DropdownState::new()));
         }
         if self.aux.market.native.sort_guard.is_none() {
-            self.aux.market.native.sort_guard =
-                Some(cx.new(|_| crate::ui::DropdownState::new()));
+            self.aux.market.native.sort_guard = Some(cx.new(|_| crate::ui::DropdownState::new()));
         }
         if self.aux.market.native.input.is_some() {
             return;
@@ -387,27 +385,16 @@ impl Chat {
         cx.notify();
     }
 
-    /// 「安装」= 复制 `pi install npm:<name>`（设计稿 data-copy 语义）。
-    pub(crate) fn native_copy_install(
-        &mut self,
-        name: String,
-        cmd: String,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(cmd));
-        self.aux.market.native.copied = Some((name, Instant::now()));
-        cx.notify();
-        // 1.2s 后回落（设计稿 setTimeout；浮窗关闭后 update 失败即自然丢弃）
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(COPY_FLASH_MS))
-                .await;
-            let _ = this.update(cx, |c, cx| {
-                c.aux.market.native.copied = None;
-                cx.notify();
-            });
-        })
-        .detach();
+    /// 「install」= **真安装**：走 040 设置页同一条 `pi install npm:<name>`
+    /// CLI 管线（`mc_install_package` → `pkg_op` 单飞 → op pump 收尾刷新）。
+    /// 运行中按钮转圈（`pkg_op` 全局单飞，与设置页/040-1 共用）。
+    pub(crate) fn native_install(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        if self.cfg.pkg_op.is_some() {
+            return;
+        }
+        let source = format!("npm:{name}");
+        self.aux.market.native.pending = Some(source.clone());
+        self.mc_install_package(source, cx);
     }
 
     /// 类型徽标所需的 `pi` 清单类型（后台补齐，到齐后整页刷新一次）。
@@ -427,8 +414,7 @@ impl Chat {
             let fetched = cx
                 .background_executor()
                 .spawn(async move {
-                    let page =
-                        pi_link::market::pi_ext_market::search(&query, from, PAGE_SIZE)?;
+                    let page = pi_link::market::pi_ext_market::search(&query, from, PAGE_SIZE)?;
                     let recent = if want_recent {
                         pi_link::market::pi_ext_market::search_recent(RECENT_N).unwrap_or_default()
                     } else {
@@ -447,7 +433,9 @@ impl Chat {
             let total = page.total;
             let entries = page.entries;
             let ok = this
-                .update(cx, |c, cx| c.native_land(gen_ix, total, entries, recent, cx))
+                .update(cx, |c, cx| {
+                    c.native_land(gen_ix, total, entries, recent, cx)
+                })
                 .is_ok();
             if !ok {
                 return;
@@ -510,7 +498,12 @@ impl Chat {
         cx.notify();
     }
 
-    fn native_kinds_land(&mut self, gen_ix: u64, entries: Vec<MarketEntry>, cx: &mut gpui::Context<Self>) {
+    fn native_kinds_land(
+        &mut self,
+        gen_ix: u64,
+        entries: Vec<MarketEntry>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         if gen_ix != self.aux.market.native.gen_ix
             || entries.len() != self.aux.market.native.entries.len()
         {
@@ -568,11 +561,7 @@ pub(crate) fn page(
     let page_ix = st.page;
     let filtered = !st.filter.trim().is_empty() || st.kind != NativeKind::All;
     let total_pages = st.total_pages();
-    let copied = st
-        .copied
-        .as_ref()
-        .filter(|(_, t)| t.elapsed().as_millis() < 1200)
-        .map(|(n, _)| n.clone());
+    let pending = st.pending.clone();
     let weak_c = weak.clone();
     let m_c = m;
     let list = gpui::list(st.list.clone(), move |ix, _w, _cx| {
@@ -602,7 +591,8 @@ pub(crate) fn page(
         } else {
             let start = r * cols;
             for e in visible.iter().skip(start).take(cols) {
-                row = row.child(card::package_card(e, &weak_c, &m_c, copied.as_deref()));
+                let busy = pending.as_deref() == Some(e.source().as_str());
+                row = row.child(card::package_card(e, &weak_c, &m_c, busy));
             }
             if visible.len().saturating_sub(start) < cols {
                 row = row.child(gpui::div().flex_1());
@@ -685,13 +675,9 @@ pub(crate) fn label(s: &str) -> SharedString {
     SharedString::from(s.to_string())
 }
 
-/// 页内「安装」按钮的两种态文案。
-pub(crate) fn install_label(copied: bool) -> SharedString {
-    SharedString::from(if copied {
-        tr("market.copied").to_string()
-    } else {
-        tr("market.install").to_string()
-    })
+/// 页内「install」按钮文案（busy 时改「…」由 card 侧处理）。
+pub(crate) fn install_label() -> SharedString {
+    SharedString::from(tr("market.install").to_string())
 }
 
 /// 类型/排序下拉的一行（设计稿 select 选项：全小写 + 大写化由渲染做）。

@@ -758,8 +758,10 @@ impl Chat {
                 if this
                     .update(cx, |chat, cx| {
                         chat.cfg.pkg_op = None;
-                        // 040-1：市场页行内按钮的转圈随 op 收尾清零
+                        // 040-1 / 040-2：市场页行内按钮的转圈随 op 收尾清零
+                        //（漏清哪一项，哪个页的按钮就永远转圈——040-2 首踩）
                         chat.aux.market.pi_ext.pending = None;
+                        chat.aux.market.native.pending = None;
                         chat.set_status(msg, cx);
                         // CLI op 改的是盘上的 settings.json；globals 是启动时
                         // 的内存副本，不重读则 reload_settings_panel 只会拷到

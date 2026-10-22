@@ -293,10 +293,8 @@ pub(super) fn package_card(
     e: &MarketEntry,
     weak: &gpui::WeakEntity<Chat>,
     m: &Metrics,
-    copied: Option<&str>,
+    busy: bool,
 ) -> AnyElement {
-    let copied = copied == Some(e.name.as_str());
-    let cmd = e.install_command();
     let kind = primary_kind(e);
 
     // 预览块：底色 + 网格纹理 + 三条底纹（设计 74%/46%/61% 宽的三根 1px 线）
@@ -355,23 +353,18 @@ pub(super) fn package_card(
                         gpui::div()
                             .h(gpui::px(1.))
                             .w(gpui::relative(0.46))
-                            .bg(gpui::rgba(crate::appearance::theme::rgba_a(
-                                0x9fa4ab, 0.7,
-                            ))),
+                            .bg(gpui::rgba(crate::appearance::theme::rgba_a(0x9fa4ab, 0.7))),
                     )
                     .child(
                         gpui::div()
                             .h(gpui::px(1.))
                             .w(gpui::relative(0.61))
-                            .bg(gpui::rgba(crate::appearance::theme::rgba_a(
-                                0x9fa4ab, 0.7,
-                            ))),
+                            .bg(gpui::rgba(crate::appearance::theme::rgba_a(0x9fa4ab, 0.7))),
                     ),
             )
     };
 
-    let (badge_border, badge_bg, badge_fg) =
-        d::badge_colors((kind != "package").then_some(kind));
+    let (badge_border, badge_bg, badge_fg) = d::badge_colors((kind != "package").then_some(kind));
     let badge = gpui::div()
         .flex()
         .items_center()
@@ -430,30 +423,51 @@ pub(super) fn package_card(
         weak,
     ));
 
+    // install 按钮：busy = 转圈 + 禁 hover；命令文本仍展示（可选中抄走）
     let w = weak.clone();
     let name = e.name.clone();
-    let copy_cmd = cmd.clone();
-    let copy_btn = gpui::div()
-        .id(SharedString::from(format!("pi-native-copy-{}", e.name)))
+    let mut install_btn = gpui::div()
+        .id(SharedString::from(format!("pi-native-install-{}", e.name)))
         .flex()
         .items_center()
+        .justify_center()
         .flex_shrink_0()
         .h(gpui::px(sp::COPY_H))
+        .min_w(gpui::px(72.))
         .px(gpui::px(sp::COPY_PAD_X))
         .border_1()
         .border_color(d::line())
-        .cursor_pointer()
         .text_size(gpui::px(sp::COPY_FS))
         .font_family(d::MONO)
         .text_color(gpui::rgba(crate::appearance::theme::rgba_a(0xd5d8db, 0.8)))
-        .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let (name, cmd) = (name.clone(), copy_cmd.clone());
-            let _ = w.update(cx, |c, cx| c.native_copy_install(name, cmd, cx));
-        })
-        .child(bracket("["))
-        .child(install_label(copied))
-        .child(bracket("]"));
+        .child(if busy {
+            crate::ui::spinner(11., d::ACCENT).into_any_element()
+        } else {
+            gpui::div()
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()))
+                .on_mouse_down(MouseButton::Left, {
+                    let w = w.clone();
+                    let name = name.clone();
+                    move |_, _, cx| {
+                        let name = name.clone();
+                        let _ = w.update(cx, |c, cx| c.native_install(name, cx));
+                    }
+                })
+                .child(bracket("["))
+                .child(install_label())
+                .child(bracket("]"))
+                .into_any_element()
+        });
+    if busy {
+        install_btn = install_btn.border_color(d::accent_alpha(0.52));
+    } else {
+        install_btn = install_btn
+            .cursor_pointer()
+            .hover(|s| s.border_color(d::accent_alpha(0.52)).text_color(d::text()));
+    }
 
     let info = gpui::div()
         .flex_1()
@@ -512,13 +526,10 @@ pub(super) fn package_card(
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .text_color(d::text())
-                                .child(SharedString::from(format!(
-                                    " pi install npm:{}",
-                                    e.name
-                                ))),
+                                .child(SharedString::from(format!(" pi install npm:{}", e.name))),
                         ),
                 )
-                .child(copy_btn),
+                .child(install_btn),
         );
 
     let card = if m.narrow {
@@ -585,6 +596,8 @@ fn name_link(e: &MarketEntry, weak: &gpui::WeakEntity<Chat>) -> AnyElement {
         .text_size(gpui::px(px18::NAME_FS))
         .line_height(gpui::px(px18::NAME_FS * 1.35))
         .text_color(d::text())
+        // 设计稿 `.packages-name a` 常显下划线（1px，accent 淡色）
+        .underline()
         .hover(|s| s.text_color(gpui::rgb(d::ACCENT)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             let url = url.clone();

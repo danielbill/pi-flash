@@ -382,7 +382,6 @@ impl Metrics {
             stacked_bar: w < 1024.,
         }
     }
-
 }
 
 /// 最近发布条目高：内距 + 名字行（1.6 行高）+ 摘要行 + 时间行 + 间隙 + 边框
@@ -426,7 +425,11 @@ mod tests {
     #[test]
     fn recent_item_height_is_stable() {
         // 最近发布条目自然高 ≈93.3（设计实测 93.31）；骨架屏用它占位
-        assert!((recent_item_h() - 93.3).abs() < 2.0, "h={}", recent_item_h());
+        assert!(
+            (recent_item_h() - 93.3).abs() < 2.0,
+            "h={}",
+            recent_item_h()
+        );
     }
 
     #[test]

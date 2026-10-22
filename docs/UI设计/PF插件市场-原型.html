@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PF 插件市场 — 原型</title>
+<!--
+  PF-Market v1 原型（090-4）
+  布局契约：
+  · 顶部信息栏 + 操作 = 一行（40px，与 topbar/statusbar 同高的 chrome 层）
+  · 卡片 = 插件唯一展示单元：名称/官方标/版本 + 描述 + 能力摘要
+  · 卡片右缘两钮：安装/更新（Primary）· 卸载（Danger 文字钮）
+  · 无搜索、无"全部升级"、无评分/下载量
+  尺寸全部取自 docs/UI设计/UI组件规范.md：
+  · chrome 行高 40 · BTN_MD 28/px12/ui(12)/r6 · BTN_SM 24/px8/ui(11)/r6
+  · 卡片 p12 · 行 gap 8 · 列表行间距 8 · 圆角 6/8
+  · caption ui(10) · body ui(12) · 行高 22
+  色板取 040-2 已定案的 pi.dev 暗色系（PF 不跟随主题，单档暗色）：
+  bg-deep #0d1116 · canvas #161d27 · panel #212730e6 · line #49505980
+  text #d5d8db · muted #9fa4abad · accent #6a9fcc · danger #d8626a
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-deep: #0d1116;
+    --bg-canvas: #161d27;
+    --panel: rgba(33, 39, 48, 0.90);
+    --panel-soft: rgba(37, 47, 61, 0.82);
+    --line: rgba(73, 80, 89, 0.50);
+    --line-strong: rgba(117, 125, 137, 0.46);
+    --text: #d5d8db;
+    --text-dim: rgba(213, 216, 219, 0.84);
+    --muted: #9fa4ab;
+    --accent: #6a9fcc;
+    --accent-hover: #7fb0d8;
+    --accent-contrast: #0d1116;
+    --danger: #d8626a;
+    --ok: #7fb285;
+    --font: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg-deep);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    line-height: 22px;
+    display: flex; justify-content: center;
+    min-height: 100vh;
+    padding: 24px 0;
+  }
+  .page { width: 720px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── 顶部信息栏：一行搞定（信息左 · 操作右）────────────── */
+  .toolbar {
+    height: 40px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .toolbar .title { font-weight: 600; font-size: 12px; }
+  .toolbar .meta { color: var(--muted); font-size: 11px; margin-left: 4px; }
+  .toolbar .spacer { flex: 1; }
+  .idx-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ok); margin-right: 2px; flex-shrink: 0;
+  }
+  .idx-line { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+
+  /* ── 按钮（规范 §5.1）────────────────────────────────── */
+  .btn {
+    height: 28px; padding: 0 12px;
+    font: 600 12px var(--font);
+    border-radius: 6px; border: 1px solid transparent;
+    cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-sm { height: 24px; padding: 0 8px; font-size: 11px; }
+  .btn-primary { background: var(--accent); color: var(--accent-contrast); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { background: var(--panel-soft); color: var(--muted); cursor: default; }
+  .btn-danger {
+    background: transparent; color: var(--danger);
+    border-color: rgba(216, 98, 106, 0.35);
+  }
+  .btn-danger:hover { background: rgba(216, 98, 106, 0.12); }
+  .btn.busy { pointer-events: none; opacity: 0.75; }
+
+  /* ── 卡片列表 ───────────────────────────────────────── */
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .card:hover { border-color: var(--line-strong); background: rgba(37, 47, 61, 0.55); }
+
+  .p-icon {
+    width: 36px; height: 36px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-soft);
+    border: 1px solid var(--line); border-radius: 6px;
+    color: var(--accent);
+  }
+  .p-icon svg { width: 18px; height: 18px; }
+
+  .p-main { flex: 1; min-width: 0; }
+  .p-titleline { display: flex; align-items: center; gap: 8px; height: 22px; }
+  .p-name { font-weight: 600; font-size: 12px; }
+  .p-pkg { color: var(--muted); font: 11px var(--mono); }
+  .tag-official {
+    font-size: 10px; font-weight: 600; line-height: 1;
+    padding: 3px 5px; border-radius: 3px;
+    color: var(--accent); background: rgba(106, 159, 204, 0.12);
+    border: 1px solid rgba(106, 159, 204, 0.35);
+  }
+  .p-desc { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-cap { color: var(--muted); font-size: 10px; letter-spacing: 0.2px; }
+  .p-cap b { color: var(--text-dim); font-weight: 600; }
+
+  .p-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+  /* 卡片内嵌说明（详情折叠，可点"详情"展开——v1 可省） */
+  .card .detail {
+    display: none;
+    flex-basis: 100%;
+    border-top: 1px solid var(--line);
+    padding-top: 8px; margin-top: 2px;
+  }
+  .card.open { flex-wrap: wrap; }
+  .card.open .detail { display: block; }
+  .detail .cap-row { display: flex; gap: 16px; color: var(--muted); font-size: 11px; }
+  .detail .cap-row b { color: var(--text-dim); font-family: var(--mono); font-weight: 500; }
+
+  /* 状态徽标（已安装/有更新） */
+  .st { font-size: 10px; color: var(--muted); }
+  .st.upd { color: var(--accent); }
+  .st.ok  { color: var(--ok); }
+
+  /* 空态 */
+  .empty {
+    padding: 32px; text-align: center;
+    color: var(--muted); font-size: 12px;
+    background: var(--panel);
+    border: 1px dashed var(--line); border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ═══ 顶部信息栏：一行 = 状态 + 索引 + 操作 ═══ -->
+  <div class="toolbar">
+    <span class="title">插件市场</span>
+    <span class="meta">已装 <b id="cnt-installed">1</b> · 共 <b id="cnt-total">2</b></span>
+    <span class="spacer"></span>
+    <span class="idx-line">
+      <span class="idx-dot"></span>索引 pf-market/1 · 2026-10-22 · 官方签名 ✓
+    </span>
+  </div>
+
+  <!-- ═══ 卡片列表 ═══ -->
+  <div class="list" id="list"></div>
+
+  <div class="empty" id="empty" style="display:none">
+    已全部安装且为最新版本
+  </div>
+</div>
+
+<script>
+// ── 数据（v1 与 index/market.json + plugins.json 台账对齐）────────
+const plugins = [
+  {
+    slug: "quick-panel-demo",
+    pkg: "@pf-plugins-origin/quick-panel-demo",
+    icon: "bolt",
+    desc: "会话与常用提问的快捷入口面板",
+    caps: "1 个面板 · 4 个动作",
+    installed: "0.1.0",   // 台账版本；null = 未安装
+    latest:  "0.1.0",     // 索引版本
+    actions: ["new_session", "open_folder", "ask_pi", "open_url"],
+  },
+  {
+    slug: "git-panel",
+    pkg: "@pf-plugins-origin/git-panel",
+    icon: "git",
+    desc: "本地 git 状态一览与常用操作",
+    caps: "1 个面板 · 3 个动作",
+    installed: null,
+    latest:  "0.1.0",
+    actions: ["open_folder", "ask_pi", "open_url"],
+  },
+];
+
+const ICONS = {
+  bolt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/></svg>',
+  git:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4.5 3.5-8 5"/></svg>',
+};
+
+function stateOf(p) {
+  if (p.installed === null)        return "install";   // 未装
+  if (p.installed !== p.latest)    return "update";    // 有新版
+  return "ok";                                          // 已最新
+}
+
+function render() {
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  let installed = 0;
+  let actionable = 0;
+
+  for (const p of plugins) {
+    const st = stateOf(p);
+    if (st === "ok") installed++; else actionable++;
+
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="p-icon">${ICONS[p.icon]}</div>
+      <div class="p-main">
+        <div class="p-titleline">
+          <span class="p-name">${p.desc ? "" : ""}${p.pkg.split("/")[1]}</span>
+          <span class="tag-official">官方</span>
+          <span class="p-pkg">${p.pkg}</span>
+          <span class="st ${st === "update" ? "upd" : st === "ok" ? "ok" : ""}">
+            ${st === "update" ? `有更新 → ${p.latest}` : st === "ok" ? `已装 ${p.installed}` : `v${p.latest}`}
+          </span>
+        </div>
+        <div class="p-desc">${p.desc}</div>
+        <div class="p-cap"><b>${p.caps.split(" · ")[0]}</b> · ${p.caps.split(" · ")[1]}</div>
+      </div>
+      <div class="p-actions">
+        ${st === "install" ? `<button class="btn btn-primary" data-act="install">安装</button>` : ""}
+        ${st === "update"  ? `<button class="btn btn-primary" data-act="update">更新</button>` : ""}
+        ${st === "ok"      ? `<button class="btn btn-primary" disabled>已安装</button>` : ""}
+        ${st !== "install" ? `<button class="btn btn-danger btn-sm" data-act="uninstall">卸载</button>` : ""}
+      </div>`;
+    list.appendChild(card);
+  }
+
+  document.getElementById("cnt-installed").textContent = installed;
+  document.getElementById("cnt-total").textContent = plugins.length;
+  document.getElementById("empty").style.display = actionable === 0 ? "" : "none";
+}
+
+// ── 交互三态：安装/更新 → busy → 完成；卸载 → 确认 → 移除 ────────
+document.getElementById("list").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const card = btn.closest(".card");
+  const name = card.querySelector(".p-pkg").textContent;
+  const p = plugins.find((x) => x.pkg === name);
+  const act = btn.dataset.act;
+
+  if (act === "install" || act === "update") {
+    btn.classList.add("busy");
+    btn.textContent = act === "update" ? "更新中…" : "安装中…";
+    setTimeout(() => {           // 演示：真实实现走 npm pack → 校验 → 落盘 → 台账
+      p.installed = p.latest;
+      render();
+    }, 900);
+  }
+
+  if (act === "uninstall") {
+    if (btn.dataset.confirm) {   // 二次点击确认（Danger 语义，规范 §5.1）
+      p.installed = null;
+      render();
+    } else {
+      btn.dataset.confirm = "1";
+      btn.textContent = "确认卸载？";
+      setTimeout(() => { delete btn.dataset.confirm; btn.textContent = "卸载"; }, 2000);
+    }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
