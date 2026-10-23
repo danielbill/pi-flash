@@ -439,17 +439,6 @@ impl RemoteControl {
         changed
     }
 
-    /// 停止扫码等待（页面状态卡「停止」）：丢回程通道 → worker 下次 send
-    /// 失败即自行退出并清 state 里的 qrcode（`register::run_qr_flow` 对
-    /// Scanned/Error 检查发送结果，最坏等一个轮询周期）。注意二维码在服务端
-    /// 仍有约 2 分钟有效期：取消后真扫了旧码，token 照常落 state（绑定事实
-    /// 成立），只是 UI 不再追进度，需要时手动「启动」渠道。
-    pub fn cancel_qr(&mut self) {
-        self.qr_rx = None;
-        self.qr_url = None;
-        self.qr = QrState::Idle;
-    }
-
     pub fn send(&self, text: &str) {
         if let Some(t) = &self.transport {
             let _ = t.send(text);
@@ -805,6 +794,15 @@ impl crate::Chat {
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
+        // 二维码常显（2026-10-24 用户定夺「不让用户点，直接显示二维码」）：
+        // 微信通信页在屏上且码不在流程中（Idle/Expired）→ 自动取/续码，
+        // `begin_qr` 幂等不会打断进行中的流程；Error 不自动重试（网络故障时
+        // 避免 ~15s 一轮的无效打点），留给页面上唯一的「重新获取」钮
+        if matches!(self.layout.content_view, crate::ContentView::Wx)
+            && matches!(self.aux.remote.qr, QrState::Idle | QrState::Expired)
+        {
+            self.aux.remote.begin_qr();
+        }
         // 显式启用（设置页开关 / wx.enable / 扫码成功）→ 泵这一拍统一执行；
         // 200ms 延迟不可感，换来测试可断言意图而不真起线程
         if self.aux.remote.wants_start && !self.aux.remote.is_running() {

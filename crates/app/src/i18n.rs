@@ -743,7 +743,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.bot_title", "使用 Bot Channel", "使用 Bot Channel", "Use a Bot Channel"),
     ("remote.bot_desc", "连接聊天 Bot，适合更长时间的移动端访问。", "連接聊天 Bot，適合更長時間的移動端存取。", "Connect a chat bot for longer mobile access."),
     ("remote.wx_name", "微信", "微信", "WeChat"),
-    ("remote.wx_desc", "在微信上安装「微信ClawBot」插件，和Pi-Flash进行通话", "在微信上安裝「微信ClawBot」外掛，和Pi-Flash進行通話", "Install the \"WeChat ClawBot\" plugin on WeChat to talk with Pi-Flash."),
+    ("remote.wx_desc", "在微信上安装「微信ClawBot」插件，使用微信远程指挥Pi-Flash工作。", "在微信上安裝「微信ClawBot」外掛，和Pi-Flash進行通話", "Install the \"WeChat ClawBot\" plugin on WeChat to talk with Pi-Flash."),
     ("remote.channel_enable", "启用渠道", "啟用頻道", "Enable channel"),
     ("remote.channel_disable", "停用渠道", "停用頻道", "Disable channel"),
     ("remote.bot_mgmt", "机器人管理", "機器人管理", "Bot management"),

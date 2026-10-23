@@ -55,11 +55,8 @@ fn col_header(icon: &'static str, title: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 状态卡右缘的动作钮。
+/// 状态卡右缘的动作钮（渠道级停启）。
 enum CardAction {
-    /// 扫码等待中「停止」= 取消扫码（worker 自行退出，见 `cancel_qr`）
-    CancelQr,
-    /// 渠道级停启（与右栏渠道卡同一动作，两处入口）
     Stop,
     Start,
 }
@@ -90,14 +87,14 @@ fn scan_status_card(
                 tr("remote.st_ready"),
                 crate::appearance::theme::WARN,
                 tr("remote.qr_hint").to_string(),
-                Some(CardAction::CancelQr),
+                running.then_some(CardAction::Stop),
             ),
             QrState::Scanned => (
                 tr("remote.scan_wait"),
                 tr("remote.bound_scanned"),
                 crate::appearance::theme::WARN,
                 tr("remote.qr_confirm").to_string(),
-                Some(CardAction::CancelQr),
+                running.then_some(CardAction::Stop),
             ),
             QrState::Done { .. } => (
                 tr("remote.qr_done"),
@@ -145,18 +142,6 @@ fn scan_status_card(
             },
         };
     let action_btn = action.map(|a| match a {
-        CardAction::CancelQr => kit::config_button(
-            "wx-qr-stop",
-            weak,
-            &tr("remote.scan_stop"),
-            Btn::Secondary,
-            true,
-            false,
-            |c, cx| {
-                c.aux.remote.cancel_qr();
-                cx.notify();
-            },
-        ),
         CardAction::Stop => kit::config_button(
             "wx-channel-stop",
             weak,
@@ -208,7 +193,7 @@ fn scan_status_card(
 }
 
 /// 左栏二维码区：虚线框（R_CARD 8 + dashed），内容随 `QrState` 变化。
-/// 「获取 / 重新获取」钮住在这里（扫码流程的动作出口）。
+/// 取码由泵自动驱动（页在屏上即出码，用户零点击），Idle 与 Loading 同显示。
 fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let mut inner: Vec<gpui::AnyElement> = Vec::new();
@@ -221,24 +206,7 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
             }
             inner.push(kit::note(&tr("remote.qr_confirm")));
         }
-        QrState::Loading => inner.push(kit::note(&tr("remote.qr_loading"))),
-        QrState::Idle => {
-            inner.push(kit::note(&tr("remote.qr_desc")));
-            inner.push(kit::config_button(
-                "wx-qr-begin",
-                weak,
-                // 过期=重取，其余（含 Ready/Scanned 复看）=获取/重开
-                &tr("remote.qr_begin"),
-                Btn::Secondary,
-                false,
-                false,
-                |c, cx| {
-                    // 幂等：已在扫码/已出码时不重发
-                    c.aux.remote.begin_qr();
-                    cx.notify();
-                },
-            ));
-        }
+        QrState::Idle | QrState::Loading => inner.push(kit::note(&tr("remote.qr_loading"))),
         QrState::Done { bot_id } => {
             let mut lines = vec![tr("remote.qr_done").to_string()];
             if let Some(b) = bot_id {
@@ -247,10 +215,8 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
             lines.push(tr("remote.qr_help").into());
             inner.push(mono_lines(lines, 11., true));
         }
-        QrState::Expired => {
-            inner.push(kit::error_note(&tr("remote.qr_expired")));
-            inner.push(qr_refresh_button(weak));
-        }
+        // 过期后泵下一拍自动续码，无需用户操作
+        QrState::Expired => inner.push(kit::error_note(&tr("remote.qr_expired"))),
         QrState::Error(m) => {
             inner.push(kit::error_note(m));
             inner.push(qr_refresh_button(weak));
@@ -273,7 +239,7 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 「重新获取」钮（Expired / Error 共用；`begin_qr` 幂等）。
+/// 「重新获取」钮（Error 专用；`begin_qr` 幂等——Expired 走泵自动续码）。
 fn qr_refresh_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     kit::config_button(
         "wx-qr-refresh",
@@ -345,20 +311,14 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 右栏微信渠道卡：品牌 icon + 说明 + 渠道状态（含最近错误）。启停动作只在
-/// 左栏状态卡（「停止/启动」），此处不重复放钮。
-fn wechat_card(chat: &Chat, status_txt: &str) -> gpui::AnyElement {
+/// 右栏微信渠道卡：品牌 icon + 说明。启停动作只在左栏状态卡。
+fn wechat_card() -> gpui::AnyElement {
     let t = T();
     let title_el = div()
         .text_size(crate::appearance::ui_size(13.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(t.text))
         .child(SharedString::from(tr("remote.wx_name").to_string()));
-    let mut lines = vec![status_txt.to_string()];
-    // 「运行中」≠ 收得到消息：长轮询最近一拍的错误跟着亮出来（治状态撒谎）
-    if let Some(err) = chat.aux.remote.poll_error.as_deref() {
-        lines.push(tr("remote.poll_error").replace("{err}", err));
-    }
     kit::card()
         .p(px(12.))
         .flex()
@@ -373,7 +333,6 @@ fn wechat_card(chat: &Chat, status_txt: &str) -> gpui::AnyElement {
                 .child(title_el),
         )
         .child(kit::note(&tr("remote.wx_desc")))
-        .child(mono_lines(lines, 11., true))
         .into_any_element()
 }
 
@@ -384,14 +343,6 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
     let running = chat.aux.remote.is_running();
     let token = wxprobe::state::load();
     let has_token = wxprobe::transport::require_token(&token).is_ok();
-    let status_txt = tr("remote.channel").replace(
-        "{status}",
-        match running {
-            true => tr("remote.status_running"),
-            false if has_token => tr("remote.status_stopped"),
-            _ => tr("remote.status_not_started"),
-        },
-    );
 
     let left = div()
         .flex_1()
@@ -410,7 +361,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
         .flex_col()
         .gap(px(12.))
         .child(col_header("bot", &tr("remote.bot_title")))
-        .child(wechat_card(chat, &status_txt));
+        .child(wechat_card());
 
     div()
         .id("wx-panel")
