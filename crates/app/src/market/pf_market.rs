@@ -22,14 +22,11 @@
 //! muted_strong（页码字）= theme.text_dim
 //! panel（段盒底）        = theme.bg_panel
 //! panel_soft（控件底）   = theme.tool_bg
-//! control_bg_hover      = theme.bg_hover
 //! accent / text         = 同名 token
 //! ```
 //!
 //! 数据面：内置索引（`assets/plugin-market.json`）+ 台账 `plugins.json`；
 //! 单页全量；「安装」是**真安装**（`pf_plugins::install`）。
-
-use std::sync::OnceLock;
 
 use gpui::prelude::*;
 use gpui::{AnyElement, FontWeight, IntoElement, MouseButton, SharedString, Styled, px, rgb};
@@ -55,10 +52,6 @@ fn line(t: &Theme) -> gpui::Rgba {
 
 fn muted(t: &Theme) -> gpui::Rgba {
     gpui::rgb(t.text_faint)
-}
-
-fn hover_bg(t: &Theme) -> gpui::Rgba {
-    gpui::rgb(t.bg_hover)
 }
 
 fn accent_alpha(t: &Theme, a: f32) -> gpui::Rgba {

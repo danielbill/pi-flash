@@ -66,7 +66,8 @@
   sr-only，但 `.visually-hidden` 定义在 `@layer utilities` 里、而
   `.action-bar-field` / `label.stack` 的长相规则是 **unlayered**（unlayered 优先于
   任何 layer）→ 浏览器里它们真的可见，成为控件上方那排「注释」。已在
-  `pi-packages.html` 删掉三个 span、`controls.rs` 删掉 `field_label()`；
+  `pi-packages.html` 删掉三个 span、`controls.rs` 删掉 `field_label()`、
+  `design.rs` 删掉 `FIELD_GAP`（2026-10-24 清死码 warning）；
   **别照旧设计稿把它加回来**。
 - **vlist 行高 = card_h + SP4，卡片自己带 `mt(SP4)`**：所以「摘要行 ↔ 列表」想得到 N，
   `SUMMARY_PB` 必须写 `N − SP4`（现在是 `10 − 8`）。直接写 N 会凭空多 8。

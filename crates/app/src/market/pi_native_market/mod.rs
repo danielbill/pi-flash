@@ -238,7 +238,9 @@ impl Chat {
     /// 打开「Pi 扩展市场」标准页（菜单项、自动化动作都走这里）。
     /// **不加 dev-flag 闸门**（2026-10-23 用户定夺）：菜单里恒有这一项，就必须
     /// 恒能打开——否则项在、点了没反应（旗标关的数据目录曾整页点不开）。
-    /// `pi_native_market` 旗标只剩「启动预热要不要偷跑网络」的意义（见 prefetch）。
+    /// `pi_native_market` 旗标自此已无读取点（workspace 侧闸门函数 2026-10-24
+    /// 随死码清掉；prefetch 只预取 040-1 页、读的是 `pi_ext_market`；
+    /// pi-link `KNOWN` 暂留该键，仅为启动状态行不缺项）。
     pub(crate) fn open_pi_native_market(&mut self, cx: &mut gpui::Context<Self>) {
         self.dlg.market_menu = None;
         match self
