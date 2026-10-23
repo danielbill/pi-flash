@@ -41,3 +41,26 @@ pub(crate) fn scope_tag(label: &str, project: bool) -> AnyElement {
         .child(SharedString::from(label.to_string()))
         .into_any_element()
 }
+
+/// 状态徽标：灰底胶囊 + 7px 状态点 + 10px 文本（scope_tag 同槽位家族，
+/// 点色由调用方按语义给：等待 = WARN 黄、就绪/运行 = UNREAD 绿、
+/// 失败 = t.danger、中性 = text_faint）。见 §10.4。
+pub(crate) fn state_badge(label: &str, dot: u32) -> AnyElement {
+    let t = T();
+    div()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .px(px(5.))
+        .py(px(1.))
+        .rounded(px(3.))
+        .bg(gpui::hsla(0., 0., 0.5, 0.12))
+        .child(status_dot(dot))
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(10.))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(label.to_string())),
+        )
+        .into_any_element()
+}

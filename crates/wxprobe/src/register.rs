@@ -109,12 +109,24 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
                 return;
             }
             Ok(QrStatus::Scanned) => {
-                let _ = tx.send(QrEvent::Scanned);
+                // 接收端被丢（UI「停止」= cancel_qr）→ 清 qrcode 后退出；
+                // 不检查的话 worker 会空转到 180s 死线（2026-10-24 页面重构
+                // 加的取消语义，与开头 Ready send 的 is_err 同约定）
+                if tx.send(QrEvent::Scanned).is_err() {
+                    crate::state::set(&mut st, "qrcode", None);
+                    crate::state::save(&st);
+                    return;
+                }
             }
             Ok(QrStatus::Pending) => {}
-            // 状态接口偶发报错不致命，退避后继续（§6 坑 4：不能让循环退出）
+            // 状态接口偶发报错不致命，退避后继续（§6 坑 4：不能让循环退出）；
+            // 接收端已丢（UI 取消）时同样退出
             Ok(QrStatus::Error(e)) | Err(e) => {
-                let _ = tx.send(QrEvent::Error(e));
+                if tx.send(QrEvent::Error(e)).is_err() {
+                    crate::state::set(&mut st, "qrcode", None);
+                    crate::state::save(&st);
+                    return;
+                }
             }
         }
         if started.elapsed().as_secs() >= deadline_sec {

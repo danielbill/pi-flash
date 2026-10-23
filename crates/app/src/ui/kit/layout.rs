@@ -98,3 +98,15 @@ pub(crate) fn detail_shell(id: &'static str) -> gpui::Stateful<gpui::Div> {
         .flex_col()
         .gap_4()
 }
+
+/// 页面卡片基座：`bg_panel` + 1px `t.border` + R_CARD(8)（§4 / §10.1 卡片
+/// 配方）。返回基座，调用方 `.child()` 拼内容与内边距。
+pub(crate) fn card() -> gpui::Div {
+    let t = T();
+    div()
+        .w_full()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .bg(rgb(t.bg_panel))
+}

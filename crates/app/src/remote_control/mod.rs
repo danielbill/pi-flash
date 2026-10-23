@@ -166,6 +166,11 @@ pub struct RemoteControl {
     pub qr: QrState,
     /// 扫码 worker 的回程（200ms 泵里 drain）
     qr_rx: Option<std::sync::mpsc::Receiver<wxprobe::register::QrEvent>>,
+    /// 最近一次出码的 URL（`QrEvent::Ready` 的 `url`）。`QrState::Scanned`
+    /// 不携带 url，页面靠它把二维码保持可见到确认完成；`cancel_qr` 清除。
+    pub(crate) qr_url: Option<String>,
+    /// 「机器人管理」块展开态（页面右列，默认收起；仅本运行期有效）
+    pub(crate) mgmt_open: bool,
     /// `/绑定 <code>` 后钉住的会话 runtime key（§4.2 `active_session`）
     pub bound: Option<String>,
     /// **微信默认会话**（bot 语境，2026-10-23）：微信消息的固定归属，独立于
@@ -206,6 +211,8 @@ impl RemoteControl {
             pending_menu: None,
             qr: QrState::Idle,
             qr_rx: None,
+            qr_url: None,
+            mgmt_open: false,
             bound: None,
             wx_session: None,
             wants_start: false,
@@ -426,10 +433,24 @@ impl RemoteControl {
         if let Some(rx) = &self.qr_rx {
             while let Ok(ev) = rx.try_recv() {
                 changed = true;
+                if let wxprobe::register::QrEvent::Ready { url } = &ev {
+                    self.qr_url = Some(url.clone());
+                }
                 self.qr = QrState::from_event(ev);
             }
         }
         changed
+    }
+
+    /// 停止扫码等待（页面状态卡「停止」）：丢回程通道 → worker 下次 send
+    /// 失败即自行退出并清 state 里的 qrcode（`register::run_qr_flow` 对
+    /// Scanned/Error 检查发送结果，最坏等一个轮询周期）。注意二维码在服务端
+    /// 仍有约 2 分钟有效期：取消后真扫了旧码，token 照常落 state（绑定事实
+    /// 成立），只是 UI 不再追进度，需要时手动「启动」渠道。
+    pub fn cancel_qr(&mut self) {
+        self.qr_rx = None;
+        self.qr_url = None;
+        self.qr = QrState::Idle;
     }
 
     pub fn send(&self, text: &str) {

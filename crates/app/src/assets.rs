@@ -161,6 +161,8 @@ assets! {
     "icons/arrow-down.svg",
     "icons/wand.svg",
     "icons/bot.svg",
+    // 060 微信通信页：微信渠道卡 icon（simple-icons wechat，与 npm/github 同源）
+    "icons/wechat.svg",
     // v64 topbar：会话标题 icon + ⋯ 菜单（系统提示词 / 工具）
     "icons/message-square-more.svg",
     // 016 topbar：置顶会话标签 icon（lucide bot-message-square）

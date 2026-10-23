@@ -393,6 +393,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 详情区 `detail_shell` | `p 20`、`gap 16`（`gap_4`）、ui(12)、纵向滚动 |
 | 详情内区块 | 常见 `p 15`（技能/MCP/自定义模型/子代理表单）；区块内行距 **8**、次级行距 **12** |
 | 列宽常量 | `LIST_W = 400`、主导航列 160、侧栏 240、工具定义左列 200 |
+| 页面卡片基座 `card` | `bg_panel` 底 + 1px `t.border` + **R_CARD(8)**、`w_full`；内容内边距调用方给（常用 `p 12`）（060 微信通信页起） | `kit/layout.rs::card` |
 
 ### 10.3 行与文本块
 
@@ -417,6 +418,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 单选 | **14** 圆 + **6** 内点（选中：accent 边框 + accent 点），标签 ui(12)、间距 7 | general 语言行 |
 | 徽标 scope_tag | `px 5 / py 1`、r**3**、ui(10)；项目 = indigo `hsla(.63,.86,.62, .12/.85)`，其他 = 中性 12% 纱 | `scope_tag` |
 | 状态点 | **7** 圆 `rounded_full` | `status_dot` |
+| 状态徽标 `state_badge` | scope_tag 同槽（`px 5 / py 1`、r**3**、ui(10)）+ 7px 状态点 + gap 5；点色按语义：等待 = WARN 黄、就绪/运行/已绑 = UNREAD 绿、失败 = `t.danger`、中性 = `text_faint`（060 微信通信页起） | `kit/badge.rs::state_badge` |
 | 行内小图标钮 | **24×24** r5（其他页）、垃圾桶 **28×28** r5（danger 35% 边 + 6% 红底） | misc / plugins |
 | 工具条开关钮 `icon_toggle` | **24×24** r**6**、图标 **14**；按 = accent 16% 洗底 + accent 图标，否则透明 + `text_muted`，hover `bg_hover`，禁用 0.4 | kit/toggle.rs（083 搜索条） |
 | 工具条文字开关 `text_toggle` | 同槽（h**24**、`px 6`、r**6**），文字 mono ui(11) BOLD；按 = accent 16% 洗底 + accent 字 | kit/toggle.rs（083 搜索条 Aa/ab\|/.*） |
