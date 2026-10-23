@@ -11,7 +11,7 @@
 //! 控件取 ui/kit（card / state_badge / note / config_button / button_base）；
 //! [`mono_lines`] 供状态串与 bot_id 共用。
 
-use gpui::{FontWeight, MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{FontWeight, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::appearance::theme::{Theme, theme as T};
@@ -38,8 +38,8 @@ fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
     col.into_any_element()
 }
 
-/// 栏头：图标 + 标题 + 一句说明（两栏同构）。
-fn col_header(icon: &'static str, title: &str, desc: &str) -> gpui::AnyElement {
+/// 栏头：图标 + 标题（两栏同构）。
+fn col_header(icon: &'static str, title: &str) -> gpui::AnyElement {
     let t = T();
     let title_el = div()
         .text_size(crate::appearance::ui_size(14.))
@@ -48,17 +48,10 @@ fn col_header(icon: &'static str, title: &str, desc: &str) -> gpui::AnyElement {
         .child(SharedString::from(title.to_string()));
     div()
         .flex()
-        .flex_col()
-        .gap(px(4.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(crate::ui::icon(icon, 16., t.text))
-                .child(title_el),
-        )
-        .child(kit::note(desc))
+        .items_center()
+        .gap(px(8.))
+        .child(crate::ui::icon(icon, 16., t.text))
+        .child(title_el)
         .into_any_element()
 }
 
@@ -384,64 +377,6 @@ fn wechat_card(chat: &Chat, status_txt: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 「机器人管理」展开块：绑定码 / 绑定会话 / bot_id + 存活约束（§3）。
-/// `token` 复用 `page` 已加载的 state（渲染帧路径不二次读盘）。
-fn mgmt_block(chat: &Chat, token: &serde_json::Value) -> gpui::AnyElement {
-    let bot_id = wxprobe::state::get_str(token, "bot_id").unwrap_or_default();
-    let active = chat.pool.active_key.clone();
-    let code = chat.aux.remote.bind_code(&active);
-    let mut lines = vec![tr("remote.bind_code").replace("{code}", &code)];
-    match chat.aux.remote.bound.as_deref() {
-        Some(k) => lines.push(tr("remote.bound_session").replace("{k}", k)),
-        None => lines.push(tr("remote.bound_unbound").to_string()),
-    }
-    if !bot_id.is_empty() {
-        lines.push(format!("bot_id = {bot_id}"));
-    }
-    kit::card()
-        .p(px(12.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(mono_lines(lines, 11., true))
-        .child(kit::note(&tr("remote.alive_hint")))
-        .into_any_element()
-}
-
-/// 「机器人管理」钮（截图右栏底部的通栏按钮）：展开/收起 [`mgmt_block`]。
-/// 链内不出现裸几何（check_ui_raw）：icon/label 各自成链，基座来自 ui/。
-fn mgmt_button(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
-    let t = T();
-    let open = chat.aux.remote.mgmt_open;
-    let weak = weak.clone();
-    let chevron = crate::ui::icon(
-        if open { "chevron-up" } else { "chevron-down" },
-        12.,
-        t.text_dim,
-    );
-    let bot_icon = crate::ui::icon("bot", 14., t.text_dim);
-    let label = div()
-        .text_size(crate::appearance::ui_size(12.))
-        .child(SharedString::from(tr("remote.bot_mgmt").to_string()));
-    crate::ui::button_base(
-        "wx-mgmt",
-        crate::ui::BtnSize::Lg,
-        crate::ui::BtnVariant::Secondary,
-    )
-    .w_full()
-    .child(bot_icon)
-    .child(label)
-    .child(div().flex_1())
-    .child(chevron)
-    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-        let _ = weak.update(cx, |c, cx| {
-            c.aux.remote.mgmt_open = !c.aux.remote.mgmt_open;
-            cx.notify();
-        });
-    })
-    .into_any_element()
-}
-
 /// 页面主体：两栏（左「扫码连接」弹性 + 右「Bot 渠道」`LIST_W` 定宽），
 /// 纵向滚动。页头即两栏栏头（tab 条已有「微信通信」标题，无全局控制栏）。
 pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
@@ -464,11 +399,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
         .flex()
         .flex_col()
         .gap(px(12.))
-        .child(col_header(
-            "smartphone",
-            &tr("remote.scan_title"),
-            &tr("remote.scan_desc"),
-        ))
+        .child(col_header("smartphone", &tr("remote.scan_title")))
         .child(scan_status_card(chat, weak, t, running, has_token))
         .child(qr_area(chat, weak));
 
@@ -478,14 +409,8 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
         .flex()
         .flex_col()
         .gap(px(12.))
-        .child(col_header(
-            "bot",
-            &tr("remote.bot_title"),
-            &tr("remote.bot_desc"),
-        ))
-        .child(wechat_card(chat, &status_txt))
-        .children(chat.aux.remote.mgmt_open.then(|| mgmt_block(chat, &token)))
-        .child(mgmt_button(chat, weak));
+        .child(col_header("bot", &tr("remote.bot_title")))
+        .child(wechat_card(chat, &status_txt));
 
     div()
         .id("wx-panel")

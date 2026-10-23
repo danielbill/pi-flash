@@ -169,8 +169,6 @@ pub struct RemoteControl {
     /// 最近一次出码的 URL（`QrEvent::Ready` 的 `url`）。`QrState::Scanned`
     /// 不携带 url，页面靠它把二维码保持可见到确认完成；`cancel_qr` 清除。
     pub(crate) qr_url: Option<String>,
-    /// 「机器人管理」块展开态（页面右列，默认收起；仅本运行期有效）
-    pub(crate) mgmt_open: bool,
     /// `/绑定 <code>` 后钉住的会话 runtime key（§4.2 `active_session`）
     pub bound: Option<String>,
     /// **微信默认会话**（bot 语境，2026-10-23）：微信消息的固定归属，独立于
@@ -212,7 +210,6 @@ impl RemoteControl {
             qr: QrState::Idle,
             qr_rx: None,
             qr_url: None,
-            mgmt_open: false,
             bound: None,
             wx_session: None,
             wants_start: false,
