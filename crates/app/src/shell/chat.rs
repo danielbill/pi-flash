@@ -262,6 +262,10 @@ pub(crate) struct DlgUi {
     /// 文件右键【扩展菜单】hover 子菜单展开态（tree_menu.rs；子项 hover
     /// 离开或菜单整体关闭时归 false）
     pub(crate) plugin_submenu: bool,
+    /// 文件右键主菜单实测高度（px）：扩展子菜单 `max_h` 取它，超长内部滚动
+    pub(crate) tree_menu_h: std::rc::Rc<std::cell::Cell<f32>>,
+    /// 扩展子菜单滚动位置（跨帧保持，不能用临时 handle）
+    pub(crate) tree_sub_scroll: gpui::ScrollHandle,
 }
 
 /// 会话池簇（4ea 字段重组）：常驻 runtime 池 + 注意力指针 + 索引缓存
@@ -642,6 +646,8 @@ impl Chat {
                 subagent_panel: None,
                 market_menu: None,
                 plugin_submenu: false,
+                tree_menu_h: std::rc::Rc::new(std::cell::Cell::new(0.)),
+                tree_sub_scroll: gpui::ScrollHandle::new(),
             },
             psp: PspUi {
                 projects: Vec::new(),

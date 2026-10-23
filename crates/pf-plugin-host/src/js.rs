@@ -33,6 +33,12 @@ pub trait JsHost {
     fn fs_write(&mut self, name: &str, data: &str);
     /// `ctx.fs.list()`：目录下文件名。
     fn fs_list(&mut self) -> Vec<String>;
+    /// `ctx.hostProof` 的材料源（090-5 L3）：构建期注入的官方宿主证明，
+    /// 紧凑 JSON `{"kid":"…","proof":"…"}`。**默认 = 占位符（fail-closed）**：
+    /// 未覆写的宿主实现（含 fork 自建）只会递出验签必失败的占位符。
+    fn host_proof(&mut self) -> String {
+        "{\"kid\":\"\",\"proof\":\"PROOF_PLACEHOLDER\"}".into()
+    }
     /// 动作入队：JS 调用返回后由宿主消费（见 [`JsAction`]）。
     fn queue(&mut self, action: JsAction);
 }
@@ -110,6 +116,28 @@ impl JsPlugin {
                     serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
                 }),
             )?;
+            // 宿主证明交付（090-5 L3）：宿主只递数据不判定；nonceTag 在此派生，
+            // 插件 wasm 内按同一算法复算比对（算法见 nonce_tag 注释，公开）。
+            let h = glue_host.clone();
+            g.set(
+                "__pf_host_proof",
+                Func::from(move |nonce: String| -> String {
+                    let base = h.borrow_mut().host_proof();
+                    let v: serde_json::Value =
+                        serde_json::from_str(&base).unwrap_or(serde_json::Value::Null);
+                    let kid = v["kid"].as_str().unwrap_or("").to_string();
+                    let proof = v["proof"]
+                        .as_str()
+                        .unwrap_or("PROOF_PLACEHOLDER")
+                        .to_string();
+                    serde_json::json!({
+                        "kid": kid,
+                        "proof": proof,
+                        "nonceTag": nonce_tag(&proof, &nonce),
+                    })
+                    .to_string()
+                }),
+            )?;
             for (name, ctor) in [
                 ("__pf_run", JsAction::Run as fn(String) -> JsAction),
                 ("__pf_edit", JsAction::Edit as fn(String) -> JsAction),
@@ -157,6 +185,7 @@ globalThis.__pf_ctx = {{
   }},
   isExecutive: (p) => globalThis.__pf_is_executive(p),
   fileIcon: (p) => globalThis.__pf_file_icon(p),
+  hostProof: (n) => JSON.parse(globalThis.__pf_host_proof(n == null ? "" : String(n))),
   run: (p) => globalThis.__pf_run(p),
   edit: (p) => globalThis.__pf_edit(p),
   revealInExplorer: (p) => globalThis.__pf_reveal(p),
@@ -256,6 +285,18 @@ globalThis.__pf_fire_panel_open = () => {{
 }
 
 /// 注入 JS 字符串字面量的最小转义（`\ " ` 与控制符；清单路径是本地明文，够用）。
+/// nonceTag 派生（090-5 L3.3 多点校验：activate / render / onCommand 各带一次，
+/// 插件 wasm 内按同一算法复算比对）：hex(sha256(proof ‖ 0x00 ‖ nonce))。
+/// 算法公开——防「dump 一段静态串硬编码」，线性抬价非绝对防护。
+fn nonce_tag(proof: &str, nonce: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(proof.as_bytes());
+    h.update([0u8]);
+    h.update(nonce.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -336,6 +377,34 @@ export function render(ctx) {
   })) };
 }
 "#;
+
+    #[test]
+    fn host_proof_placeholder_and_nonce_tag() {
+        // 未覆写 host_proof 的宿主（TestHost 同 fork 自建款）：占位符 fail-closed
+        let dir = std::env::temp_dir().join("pf-js-proof-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(
+            &entry,
+            r#"export function render(ctx) {
+  const p = ctx.hostProof("n1");
+  return { type: "text", value: p.kid + "|" + p.proof + "|" + p.nonceTag };
+}"#,
+        )
+        .unwrap();
+        let host = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host).expect("load");
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        let parts: Vec<&str> = v["value"].as_str().unwrap().split('|').collect();
+        assert_eq!(parts[0], ""); // 未覆写 → kid 空
+        assert_eq!(parts[1], "PROOF_PLACEHOLDER"); // fail-closed：验签必失败
+        assert_eq!(parts[2], nonce_tag("PROOF_PLACEHOLDER", "n1")); // 派生一致
+        assert_ne!(nonce_tag("P", "n1"), nonce_tag("P", "n2")); // 不同 nonce 不同 tag
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn activate_menu_render_and_command() {

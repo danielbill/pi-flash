@@ -5821,6 +5821,7 @@ dependencies = [
  "anyhow",
  "rquickjs",
  "serde_json",
+ "sha2 0.10.9",
  "wasmtime",
  "wasmtime-wasi",
 ]

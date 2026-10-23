@@ -283,7 +283,11 @@ pub(crate) fn tree_menu_layer(
                 ));
         }
     }
-    layer.child(card).into_any_element()
+    // 主菜单实测高度 → 扩展子菜单的高度上限（超出内部滚动）
+    let slot = chat.dlg.tree_menu_h.clone();
+    layer
+        .child(crate::ui::measure_height("ftm-card-h", &slot, card))
+        .into_any_element()
 }
 
 /// 菜单项公共接线：点击 = 应用动作 + 收菜单（同 psp 菜单项语义）。
@@ -438,10 +442,16 @@ fn ext_menu_entry(
     let open = chat.dlg.plugin_submenu;
 
     // 子卡：各插件贡献的 file_menu 项（menu_card 同形制，右浮于主行旁）
+    // 高度上限 = 主菜单实测高度（measure_height 每帧写入），条目超出则内部滚动
+    let cap = (chat.dlg.tree_menu_h.get() - 10.).max(120.);
     let mut sub = div()
         .id("ftm-plugin-ext-sub")
+        .max_h(px(cap))
+        .overflow_y_scroll()
+        .track_scroll(&chat.dlg.tree_sub_scroll)
         .absolute()
-        .left(px(208.))
+        // 与主菜单的间隙 2px（用户定夺）：主卡宽 200 + 2
+        .left(px(202.))
         .top(px(-5.))
         .min_w(px(180.))
         .p(px(crate::ui::tokens::space::SP2))
@@ -467,14 +477,15 @@ fn ext_menu_entry(
         for fm in &entry.manifest.file_menu {
             let item_label = crate::pf_plugin::pick_lang(&fm.title_zh, &fm.title_en);
             let item_id = SharedString::from(format!("ftm-plugin-{}-{}", entry.manifest.id, fm.id));
-            let icon: &'static str = Box::leak(fm.icon.clone().into_boxed_str());
+            // 图标可以是插件包内资产（`assets:bolt.svg` / `assets/x.svg`）——
+            // 之前只认宿主内置名，插件想用自带图标就得往 PF 里塞 SVG
+            let icon = crate::pf_plugin::plugin_icon_asset(&entry.manifest.id, &fm.icon);
             let weak_item = weak.clone();
             let item_path = path.clone();
             let menu_id = fm.id.clone();
             sub = sub.child(
-                menu_item(item_id, icon, &item_label, false, false).on_mouse_down(
-                    MouseButton::Left,
-                    move |_, window, cx| {
+                super::psp_overlays::menu_item_asset(item_id, icon, 14., &item_label, false, false)
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         cx.stop_propagation();
                         let _ = weak_item.update(cx, |c, cx| {
                             c.plugin_menu_fire(pix, &menu_id, &item_path, window, cx);
@@ -482,8 +493,7 @@ fn ext_menu_entry(
                             c.dlg.plugin_submenu = false;
                             cx.notify();
                         });
-                    },
-                ),
+                    }),
             );
         }
     }

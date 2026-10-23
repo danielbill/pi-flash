@@ -536,6 +536,13 @@ impl ChatHost {
 }
 
 impl JsHost for ChatHost {
+    fn host_proof(&mut self) -> String {
+        // 090-5 L3：官方构建由 build.rs 注入（PF_BUILD_PROOF → 常量 PF_HOST_PROOF）；
+        // 无注入构建 option_env! 为 None → 占位符（fail-closed，与 fork 自建同款）。
+        let proof = option_env!("PF_HOST_PROOF").unwrap_or("PROOF_PLACEHOLDER");
+        let kid = option_env!("PF_HOST_PROOF_KID").unwrap_or("");
+        serde_json::json!({ "kid": kid, "proof": proof }).to_string()
+    }
     fn is_executive(&mut self, path: &str) -> bool {
         crate::services::script_exec::exec_kind(Path::new(path)).is_some()
     }
@@ -827,6 +834,24 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     .detach();
 }
 
+/// 插件声明的图标引用 → 可渲染资产路径（内置名 / `assets:x.svg` / 完整路径）。
+/// 与面板内 `button.icon` 同一套规则，供清单 `file_menu.icon` 等复用。
+pub(crate) fn plugin_icon_asset(plugin_id: &str, icon: &str) -> Option<String> {
+    if icon.is_empty() {
+        return None;
+    }
+    if icon.contains('/') {
+        return Some(icon.to_string());
+    }
+    if let Some(name) = icon.strip_prefix("assets:") {
+        return Some(format!("plugins/{plugin_id}/assets/{name}"));
+    }
+    if let Some(name) = icon.strip_prefix("assets/") {
+        return Some(format!("plugins/{plugin_id}/{name}"));
+    }
+    Some(format!("icons/{icon}.svg"))
+}
+
 /// 状态栏 tab 图标的共享串（`plugins/<slug>/<assets 相对路径>` 或宿主内置名）。
 pub(crate) fn status_bar_icon_path(entry: &PluginEntry) -> Option<SharedString> {
     let sb = entry.manifest.status_bar.as_ref()?;
@@ -848,7 +873,7 @@ pub(crate) fn status_bar_icon_path(entry: &PluginEntry) -> Option<SharedString> 
     }
 }
 
-pub(crate) use panel::plugin_panel_view;
+pub(crate) use panel::{cell_menu_layer, plugin_panel_view};
 
 #[cfg(test)]
 mod tests {

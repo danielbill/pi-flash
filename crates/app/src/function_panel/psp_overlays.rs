@@ -59,6 +59,10 @@ pub(crate) fn psp_overlays(
         // 项目行右键详情卡：同 hover_card 语义（点卡外/再右键别行收换）
         el = el.child(project_card(chat, vp, t, cx));
     }
+    // 插件格子右键菜单：同一浮层挂载点，样式与文件树菜单同源
+    if chat.plugins.plugins.iter().any(|p| p.cell_menu.is_some()) {
+        el = el.child(crate::pf_plugin::cell_menu_layer(chat, vp, t, cx));
+    }
     if chat.dlg.tree_menu.is_some() {
         el = el.child(super::tree_menu::tree_menu_layer(chat, vp, t, cx));
     }
@@ -709,6 +713,27 @@ pub(crate) fn menu_item_sized<S: Into<SharedString>>(
     danger: bool,
     checked: bool,
 ) -> gpui::Stateful<gpui::Div> {
+    menu_item_asset(
+        id,
+        Some(format!("icons/{icon_name}.svg")),
+        icon_size,
+        label,
+        danger,
+        checked,
+    )
+}
+
+/// 菜单条（**任意资产路径**）：内置图标走 `icons/x.svg`，插件图标走
+/// `plugins/<id>/assets/x.svg`。样式与 `menu_item` 同源——插件面板的右键菜单
+/// 必须和文件树右键菜单长得一样（同一卡座 `menu_card` + 同一行样式）。
+pub(crate) fn menu_item_asset<S: Into<SharedString>>(
+    id: S,
+    asset: Option<String>,
+    icon_size: f32,
+    label: &str,
+    danger: bool,
+    checked: bool,
+) -> gpui::Stateful<gpui::Div> {
     let t = T();
     div()
         .id(id.into())
@@ -728,11 +753,13 @@ pub(crate) fn menu_item_sized<S: Into<SharedString>>(
                 s.bg(rgb(t.bg_hover))
             }
         })
-        .child(icon(
-            icon_name,
-            icon_size,
-            if danger { t.danger } else { t.text_muted },
-        ))
+        .children(asset.map(|a| {
+            gpui::svg()
+                .path(SharedString::from(a))
+                .text_color(rgb(if danger { t.danger } else { t.text_muted }))
+                .size(px(icon_size))
+                .into_any_element()
+        }))
         .child(div().flex_1().child(SharedString::from(label.to_string())))
         .children(checked.then(|| icon("check", 12., t.accent)))
 }
