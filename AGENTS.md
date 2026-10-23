@@ -12,8 +12,7 @@ cargo run -p app                                # 运行（bin: pi-flash）
 RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-link
 ```
 
-- 环境变量：`PI_FLASH_PI_BIN` 覆盖内置 pi；`PI_FLASH_THEME` 切主题（default/dark/rose）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；**`PI_FLASH_DIR` 显式指定永远优先；未设时按构建档位取默认——debug/test（cargo run/cargo test）自动落 `./pi-flash-dev`，release 才落 `~/.pi-flash`**（2026-10-18 起 paths 层焊死，裸跑测试摸不到正式目录；dev home 已进 `.gitignore`）；**dev-flags（重型模块发版排除，2026-10-19 起）默认全关**：`<PF数据目录>/dev-flags.json`（支持 // 注释）按键控模块，false/缺省=关、改动重启生效；键住址 = pi-link `dev_flags::KNOWN`（现仅 `subagents`），env 覆盖 `PI_FLASH_<键大写>=1/0` 最高优先，启动 stderr 打 `[startup] dev-flags:` 状态行（仅 debug 构建——release 包零输出是烟测门禁）。子代理关 = 不加载扩展 + 隐藏设置页与面板按钮
-- UI 验证一律走 pif-ui 自动化链路，禁止抢真实屏幕
+- 环境变量：`PI_FLASH_PI_BIN` 覆盖内置 pi；`PI_FLASH_THEME` 切主题（default/dark/rose）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；**`PI_FLASH_DIR` 显式指定永远优先；未设时按构建档位取默认——debug/test（cargo run/cargo test）自动落 `./pi-flash-dev`，release 才落 `~/.pi-flash`**（2026-10-18 起 paths 层焊死，裸跑测试摸不到正式目录；**dev-flags（重型模块发版排除）默认全关**：`<PF数据目录>/dev-flags.json`（支持 // 注释）按键控模块，false/缺省=关、改动重启生效；键住址 = pi-link `dev_flags::KNOWN`，env 覆盖 `PI_FLASH_<键大写>=1/0` 最高优先，启动 stderr 打 `[startup] dev-flags:` 状态行（仅 debug 构建——release 包零输出是烟测门禁）。子代理关 = 不加载扩展 + 隐藏设置页与面板按钮
 
 # 铁律
 - **内置pi**：内置 `@earendil-works/pi-coding-agent`，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试（wire 陷阱与升级复核点见 `docs/agents/pi-rpc.md`）。开发期 `PI_FLASH_PI_BIN` 可覆盖。
@@ -28,13 +27,13 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 # 路径
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
 - 架构设计：`docs/ARCHITECTURE.md`；复刻计划：`docs/PORT_PLAN.md`
-- 模块设计：`docs/模块设计/`（编号即模块，正文里的 0xx/vNN 引用都指这里）
-- 领域陷阱笔记：`docs/agents/`（见下方「领域笔记」节）
-- 调研笔记：本地 `docs/调研/`（外部项目调研报告；**已 gitignore，不入库**，正文别再用链接引它）
+- 模块设计：`docs/模块设计/`（编号即模块）
+- 领域笔记：`docs/agents/`（见后「领域笔记」节）
+- 调研笔记：本地 `docs/调研/`（外部项目调研报告ignore不入库，正文勿引用）
 - 软件分发：`docs/模块设计/080-软件分发.md`；发版唯一路径：`docs/RELEASE.md`
 - bug 追踪：`docs/buglist.md`；
 - 进度：`docs/progress.md`；
-- 截图：`tmp/屏幕截图/`
+- 临时文件入`tmp/`
 
 # 架构
 - workspace：`crates/pi-link`（钉版 pi RPC 协议层，测试在此）+ `crates/app`（GPUI 界面）
@@ -46,8 +45,6 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 UI测试技能：`.agents/skills/pi-flash-ui-test/SKILL.md`
 
 # File Map
-
-一行一个职责；细粒度见各文件 `//!` 头注释。
 
 ```
 crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
