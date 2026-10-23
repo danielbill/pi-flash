@@ -526,11 +526,7 @@ impl SessionRuntime {
     ///
     /// 返回三态：微信回执要区分「排队中」（正常，等当前轮结束）与
     /// 「失败」（必须出声），不能都按 bool 的 false 静默吞掉。
-    pub(crate) fn send_remote_text(
-        &mut self,
-        text: String,
-        cx: &mut Context<Self>,
-    ) -> RemoteSend {
+    pub(crate) fn send_remote_text(&mut self, text: String, cx: &mut Context<Self>) -> RemoteSend {
         if self.compacting {
             return RemoteSend::Failed;
         }
