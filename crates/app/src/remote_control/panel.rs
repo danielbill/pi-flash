@@ -352,14 +352,9 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 右栏微信渠道卡：品牌 icon + 说明 + 渠道状态（含最近错误）+ 启停动作
-/// （原 ctrl_bar 开关的继任者，id 仍叫 wx-enable）。
-fn wechat_card(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    running: bool,
-    status_txt: &str,
-) -> gpui::AnyElement {
+/// 右栏微信渠道卡：品牌 icon + 说明 + 渠道状态（含最近错误）。启停动作只在
+/// 左栏状态卡（「停止/启动」），此处不重复放钮。
+fn wechat_card(chat: &Chat, status_txt: &str) -> gpui::AnyElement {
     let t = T();
     let title_el = div()
         .text_size(crate::appearance::ui_size(13.))
@@ -371,11 +366,6 @@ fn wechat_card(
     if let Some(err) = chat.aux.remote.poll_error.as_deref() {
         lines.push(tr("remote.poll_error").replace("{err}", err));
     }
-    let enable_label = if running {
-        tr("remote.channel_disable")
-    } else {
-        tr("remote.channel_enable")
-    };
     kit::card()
         .p(px(12.))
         .flex()
@@ -391,19 +381,6 @@ fn wechat_card(
         )
         .child(kit::note(&tr("remote.wx_desc")))
         .child(mono_lines(lines, 11., true))
-        .child(kit::config_button(
-            "wx-enable",
-            weak,
-            &enable_label,
-            Btn::Secondary,
-            true,
-            false,
-            |c, cx| {
-                let on = !c.aux.remote.is_running();
-                c.aux.remote.set_enabled(on);
-                cx.notify();
-            },
-        ))
         .into_any_element()
 }
 
@@ -506,7 +483,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
             &tr("remote.bot_title"),
             &tr("remote.bot_desc"),
         ))
-        .child(wechat_card(chat, weak, running, &status_txt))
+        .child(wechat_card(chat, &status_txt))
         .children(chat.aux.remote.mgmt_open.then(|| mgmt_block(chat, &token)))
         .child(mgmt_button(chat, weak));
 
