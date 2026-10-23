@@ -1024,7 +1024,12 @@ pub(crate) fn cell_menu_layer(
     t: &'static Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
-    let Some(ix) = chat.plugins.plugins.iter().position(|p| p.cell_menu.is_some()) else {
+    let Some(ix) = chat
+        .plugins
+        .plugins
+        .iter()
+        .position(|p| p.cell_menu.is_some())
+    else {
         return div().into_any_element();
     };
     let Some(menu) = chat.plugins.plugins[ix].cell_menu.clone() else {
