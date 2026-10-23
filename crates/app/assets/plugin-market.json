@@ -1,10 +1,11 @@
 {
   "schema": "pf-market/1",
+  "generated_at": "2026-10-23T21:47:14.379Z",
   "packages": [
     {
       "name": "@pf-plugins-origin/quick-panel",
       "version": "0.2.0",
-      "integrity": "sha512-yeh2MEiVtpUf5D/dOguNO6WEH+u4G1APm634/6YbKbHvsBdQqHmRvENsnWm4E55z8ZQ3xD49n23dipG4cWcQXQ==",
+      "integrity": "sha512-gtApA9NzKjU3gmkErMOZh38NhbrU+A12cgaKY3BbvIjVZZkL2OOLTfkDe9yA8COmYW+K6s9NDWo9LCpcuChhDg==",
       "min_pf": ">=0.2",
       "publisher": "Pi-Flash",
       "published_at": "2026-10-23",
@@ -22,7 +23,7 @@
     {
       "name": "@pf-plugins-origin/demo-inner",
       "version": "0.1.0",
-      "integrity": "sha512-L7HYtyRXo2AzWf7cgHgKisnPlQmw3U3EFkThNhKw87eHr4cy08QPCOXSxpbDcOVcU1JXgLkr5gCxlUffXN1+Ew==",
+      "integrity": "sha512-yMwzpMlGe6eqtVHrQZ+/ZsKAh7ie8ge41pmaSQbb/7QH6UKrjT5qpouScQXbEvX8h4zQsrpTgQyJ7uTT27ucBw==",
       "min_pf": ">=0.2",
       "publisher": "Pi-Flash",
       "published_at": "2026-10-23",

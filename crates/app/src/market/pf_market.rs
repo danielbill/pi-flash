@@ -74,12 +74,35 @@ fn spaced_label(s: &str) -> SharedString {
 // 内置索引（单例）
 // ---------------------------------------------------------------------------
 
-fn index() -> &'static pi_link::pf_plugins::MarketIndex {
-    static IDX: OnceLock<pi_link::pf_plugins::MarketIndex> = OnceLock::new();
-    IDX.get_or_init(|| {
+/// 索引（090-3 §3.2 双轨）：内置索引起步 + 私域索引后台刷新（只认签名，见
+/// pf_plugins::verify_signed_index）。源 URL = 环境变量 PI_FLASH_MARKET_INDEX，
+/// 未配置 = 纯内置（零请求）。刷新在后台线程：失败静默退回内置，成功直接换表，
+/// 下一次交互自然重绘（v1 不做主动通知）。
+fn index() -> pi_link::pf_plugins::MarketIndex {
+    static IDX: std::sync::RwLock<Option<pi_link::pf_plugins::MarketIndex>> =
+        std::sync::RwLock::new(None);
+    if let Some(ix) = IDX.read().unwrap().as_ref() {
+        return ix.clone();
+    }
+    let builtin =
         pi_link::pf_plugins::MarketIndex::parse(include_str!("../../assets/plugin-market.json"))
-            .unwrap_or_default()
-    })
+            .unwrap_or_default();
+    *IDX.write().unwrap() = Some(builtin.clone());
+    if let Some(url) = pi_link::pf_plugins::index_url() {
+        const PUB_PEM: &str = include_str!("../../assets/market-index-pub.pem");
+        std::thread::spawn(move || {
+            match pi_link::market::http_get_json(&url)
+                .and_then(|raw| pi_link::pf_plugins::verify_signed_index(&raw, PUB_PEM))
+            {
+                Ok(ix) => {
+                    eprintln!("[pf-market] 私域索引已刷新（{} 包）", ix.packages.len());
+                    *IDX.write().unwrap() = Some(ix);
+                }
+                Err(e) => eprintln!("[pf-market] 私域索引拉取失败，退回内置：{e}"),
+            }
+        });
+    }
+    builtin
 }
 
 fn installed_in(ledger: &[pi_link::pf_plugins::LedgerEntry], name: &str) -> bool {

@@ -24,6 +24,8 @@ ureq = { version = "2", default-features = false, features = ["tls", "native-cer
 # 090-4 插件安装：tarball sha512 SRI + base64 编码
 sha2 = "0.10"
 base64 = "0.22"
+# 私域索引验签（090-3 §3.2 只认签名；仅 VerifyingKey，无随机源）
+ed25519-dalek = { version = "2", default-features = false }
 
 [dev-dependencies]
 futures-timer = "3.0.4"
