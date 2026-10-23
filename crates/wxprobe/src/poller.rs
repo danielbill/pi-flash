@@ -132,7 +132,7 @@ pub fn send_text(
     client_id: &str,
 ) -> Result<(), String> {
     // ZCode `buildWeixinText`：微信各客户端对 LF 处理不一致，统一 CRLF。
-    let normalized = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    let normalized = strip_ansi(text).replace("\r\n", "\n").replace('\n', "\r\n");
     let mut msg = json!({
         "from_user_id": from_user,
         "to_user_id": to_user,
@@ -151,6 +151,41 @@ pub fn send_text(
         json!({ "msg": msg }),
     )?;
     Ok(())
+}
+
+/// 剥掉 ANSI 转义序列（CSI，如 SGR 色码 `\x1b[38;5;5m`）。微信是纯文本
+/// 通道，控制符会原样显示成乱码——真机 dump 见 `sendmessage` 把
+/// `\u001b[38;5;5m🔌 MCP: …` 直达用户（2026-10-23）。
+pub fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            // CSI：参数 0x30–0x3F、中间 0x20–0x2F，终止字节 0x40–0x7E
+            Some('[') => {
+                chars.next();
+                while let Some(&n) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&n) {
+                        break;
+                    }
+                }
+            }
+            // nF 转义：ESC + 中间字节(0x20–0x2F)* + 终止字节(0x30–0x7E)，
+            // 如 `\x1b(B`（选字符集）——中间字节后再吃一个终止字节
+            Some(_) => {
+                if chars.next().is_some_and(|c| (' '..='/').contains(&c)) {
+                    chars.next();
+                }
+            }
+            None => {}
+        }
+    }
+    out
 }
 
 /// ZCode `readNextBuf`（`weixinProvider.ts:448-461`）：6 个候选字段名。
@@ -558,5 +593,24 @@ mod tests {
             Some("CURSOR_V1"),
             "空闲轮询不得改写游标"
         );
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_color_codes() {
+        // 2026-10-23 真机 sendmessage 实发内容：色码直达微信用户
+        let s = "\u{1b}[38;5;5m🔌 MCP: 1 server enabled\u{1b}[39m";
+        assert_eq!(strip_ansi(s), "🔌 MCP: 1 server enabled");
+    }
+
+    #[test]
+    fn strip_ansi_keeps_plain_text_and_newlines() {
+        let s = "第一行\n第二行 with emoji ✅ no escapes";
+        assert_eq!(strip_ansi(s), s);
+    }
+
+    #[test]
+    fn strip_ansi_handles_trailing_escape_and_two_byte_forms() {
+        assert_eq!(strip_ansi("ab\x1b"), "ab", "悬尾 ESC 直接丢弃");
+        assert_eq!(strip_ansi("a\x1b(Bb"), "ab", "两字节转义整对丢弃");
     }
 }

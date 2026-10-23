@@ -257,11 +257,18 @@ pub fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// dump 响应文件名形如 `001-getupdates.res.txt`——`Path::extension()` 对它
+/// 返回 `"txt"`，按扩展名比对 `"res.txt"` 永远不命中：曾导致每条 Wire 都从
+/// 001 起编号互相覆盖、prune 永不清理（2026-10-23 发现）。按后缀判断。
+fn is_res_dump(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|n| n.ends_with(".res.txt"))
+}
+
 fn next_seq(dir: &PathBuf) -> u32 {
     fs::read_dir(dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().is_some_and(|x| x == "res.txt"))
+                .filter(|e| is_res_dump(&e.file_name()))
                 .filter_map(|e| {
                     e.file_name()
                         .to_str()?
@@ -281,7 +288,7 @@ fn prune_dump(dir: &PathBuf) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|x| x == "res.txt"))
+        .filter(|e| is_res_dump(&e.file_name()))
         .collect();
     if entries.len() <= DUMP_KEEP {
         return;
@@ -291,5 +298,55 @@ fn prune_dump(dir: &PathBuf) {
         let p = e.path();
         let _ = fs::remove_file(&p);
         let _ = fs::remove_file(p.with_extension("req.json"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `next_seq` 必须数得到既有 `.res.txt`（曾因按 `Path::extension()` 比对
+    /// `"res.txt"` 永远不命中而恒回 1，所有 Wire 从 001 起互相覆盖）。
+    #[test]
+    fn next_seq_continues_after_existing_res_dumps() {
+        let dir = std::env::temp_dir().join(format!("wxprobe-wire-seq-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for n in [1u32, 7, 42] {
+            fs::write(
+                dir.join(format!("{n:03}-getupdates.res.txt")),
+                "HTTP 200\n{}",
+            )
+            .unwrap();
+        }
+        // req 文件不参与计数
+        fs::write(dir.join("043-getupdates.req.json"), "{}").unwrap();
+        assert_eq!(next_seq(&dir), 43);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_keeps_only_the_newest_keep_res_dumps() {
+        let dir = std::env::temp_dir().join(format!("wxprobe-wire-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for n in 1..=(DUMP_KEEP as u32 + 5) {
+            fs::write(
+                dir.join(format!("{n:03}-getupdates.res.txt")),
+                "HTTP 200\n{}",
+            )
+            .unwrap();
+        }
+        prune_dump(&dir);
+        let left = fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .map(|d| is_res_dump(&d.file_name()))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(left, DUMP_KEEP, "只保留最近 {DUMP_KEEP} 对");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

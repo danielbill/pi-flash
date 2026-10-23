@@ -709,6 +709,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.status_running", "运行中", "運行中", "Running"),
     ("remote.status_stopped", "已停止（有 token）", "已停止（有 token）", "Stopped (has token)"),
     ("remote.status_not_started", "未启动", "未啟動", "Not started"),
+    ("remote.poll_error", "最近错误：{err}", "最近錯誤：{err}", "Last error: {err}"),
     ("remote.binding", "绑定：{status}", "綁定：{status}", "Binding: {status}"),
     ("remote.bound_scanned", "已扫码", "已掃碼", "Scanned"),
     ("remote.bound_not_scanned", "未扫码", "未掃碼", "Not scanned"),

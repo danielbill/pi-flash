@@ -96,6 +96,7 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
                 // sendmessage 的 from_user_id 就是 bot 自己。换绑后不跟着改，
                 // 出站会带着**旧 bot** 的 id（真机复现过：84e144 → 7240ca 没同步）
                 crate::state::set(&mut st, "bot_user_id", bot_id.as_deref());
+                reset_session_fields(&mut st);
                 crate::state::set(&mut st, "qrcode", None);
                 crate::state::save(&st);
                 let _ = tx.send(QrEvent::Success { bot_id });
@@ -123,6 +124,46 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reset_clears_old_bot_routing_fields() {
+        let mut st = json!({
+            "bot_token": "new-token",
+            "bot_id": "new@im.bot",
+            "buf": "OLD-BOT-CURSOR",
+            "chat_id": "room@im.wechat",
+            "user_id": "u@im.wechat",
+            "context_token": "CT",
+            "session_key": "C:\\sess\\a.jsonl",
+        });
+        reset_session_fields(&mut st);
+        for k in ["buf", "chat_id", "user_id", "context_token"] {
+            assert!(
+                st.get(k).map_or(true, Value::is_null),
+                "{k} 必须被清掉——留着就是旧 bot 会话的游标/对端"
+            );
+        }
+        assert_eq!(st["session_key"], "C:\\sess\\a.jsonl", "PF 侧会话归属保留");
+        assert_eq!(st["bot_token"], "new-token", "新 bot 字段不受影响");
+    }
+}
+
+/// 扫码成功后清掉属于**上一个 bot 会话**的路由字段。
+///
+/// 游标/对端/上下文都绑在旧 token 上：换绑后带着它们用新 token 去
+/// `getupdates`，iLink 以 `errcode:-14 session timeout` 拒之（2026-10-23
+/// 真机事故：`buf` 里嵌着旧 bot `2b296a82465` 的游标，长轮询全天 -14，
+/// 微信发消息没反应）。`session_key` 是 PF 侧会话归属，与 bot 无关，保留。
+fn reset_session_fields(st: &mut Value) {
+    for k in ["buf", "chat_id", "user_id", "context_token"] {
+        crate::state::set(st, k, None);
     }
 }
 

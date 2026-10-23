@@ -1,3 +1,30 @@
+## 待验证（本轮修复）——微信 Bot「渠道运行中、扫码成功」却收不到任何消息
+
+用户口径：面板显示渠道运行中、扫码绑定成功（bot_id = ce6a2ed…），在微信里发
+消息毫无反应；且面板同时显示「绑定： bot_id」与「未绑定」（后者是 `/bind`
+会话授权，与收发无关，非本次原因）。
+
+- ✅ 根因（三层，dump + 状态文件 + 源码互证）：渠道在扫码**前**被开关拉起，
+  轮询线程 spawn 时一次性捕获旧 bot token；用户重扫码（每次注册会让同账号旧
+  bot 会话在服务端失效）后 getupdates 全部 `errcode:-14 session timeout`；扫码
+  成功后 pump 的 `wants_start && !is_running()` 见渠道活着就跳过，新 token 永远
+  装不进去；`register.rs` 成功分支不清 `buf/chat_id/user_id/context_token`，
+  state 游标里嵌的还是旧 bot（`2b296a82465@im.bot`），重启也救不回来。三重
+  不可见（Err 分支 `let _ = e;`、面板只看 `transport.is_some()`、传输层失败连
+  dump 都不落）让它成了「运行中却没反应」的哑弹。
+- ✅ 修法：`register.rs` 扫码成功即 `reset_session_fields` 清旧 bot 路由字段；
+  app 泵 QR Done 时 `force_restart_if_token_changed`（运行中渠道 token ≠ state
+  现值 → drop 重拉）；`Transport.last_poll_error` 每拍同步面板「最近错误：…」
+  + `warn_once` stderr。顺手修两枚次生 bug：出站文本剥 ANSI 色码
+  （`poller::strip_ansi`，真机色码直达微信）；`wire.rs` 的 `next_seq`/`prune_dump`
+  按 `Path::extension()` 比对 `"res.txt"` 永不命中（实际是 `txt`），Wire 从 001
+  起互相覆盖、清理永不执行，改按文件名后缀。
+- ✅ 验证：`cargo test -p wxprobe` 115 全绿（新增 reset 清场 / next_seq 编号 /
+  prune 保留 / strip_ansi ×3）；`cargo test -p app --bin pi-flash` 382 全绿；
+  `cargo test -p pi-link` 185 全绿。出站半程已真机验证（sendmessage 拿到
+  message_id）。**待用户复验**：更新后重新扫码一次（清掉磁盘残留旧游标），
+  微信发消息应恢复响应。
+
 ## 待验证（本轮修复）——固定到任务栏的图标，更新一次就点不开（「找不到 pi-flash」）
 
 用户口径：PF 启动后固定到任务栏，好几次更新之后点固定图标就找不到 PF，只剩

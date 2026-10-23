@@ -17,6 +17,7 @@
 //! 反过来「先写游标再回复」正是 ZCode 注释里点名的坑：失败会跳过未完成消息。
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -77,6 +78,10 @@ pub struct Transport {
     inbound: Receiver<Batch>,
     outbound: Sender<String>,
     stop: Arc<AtomicBool>,
+    /// 最近一拍长轮询的错误（成功即清）。「运行中」只代表线程活着，不代表
+    /// 收得到消息——2026-10-23 真机：换绑后旧 token 长轮询全天 -14，面板
+    /// 却一直显示运行中。app 的泵每拍取走它显示到面板。
+    last_poll_error: Arc<Mutex<Option<String>>>,
     handles: Vec<JoinHandle<()>>,
     /// 释放轮询锁（单持有者，放在结构体里随 drop 释放）
     _lock: BotRuntimeLock,
@@ -148,6 +153,11 @@ impl Transport {
     pub fn is_closed(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
     }
+
+    /// 最近一拍 `getupdates` 的错误；成功轮询后为 `None`。
+    pub fn poll_error(&self) -> Option<String> {
+        self.last_poll_error.lock().ok().and_then(|g| g.clone())
+    }
 }
 
 /// 起渠道。失败（未扫码 / 已被别的轮询者持有锁）时不产生任何线程。
@@ -170,14 +180,16 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (in_tx, in_rx) = mpsc::channel::<Batch>();
     let (out_tx, out_rx) = mpsc::channel::<String>();
+    let last_poll_error = Arc::new(Mutex::new(None));
 
     // ── poll 线程 ──
     let p_stop = stop.clone();
     let p_token = cfg.token.clone();
+    let p_last_err = last_poll_error.clone();
     let start_cursor = state::get_str(&st, "buf");
     let poll_handle = std::thread::Builder::new()
         .name("wx-poll".into())
-        .spawn(move || poll_loop(p_token, start_cursor, in_tx, p_stop))
+        .spawn(move || poll_loop(p_token, start_cursor, in_tx, p_stop, p_last_err))
         .map_err(|e| format!("起 poll 线程失败: {e}"))?;
 
     // ── send 线程 ──
@@ -191,19 +203,29 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
         inbound: in_rx,
         outbound: out_tx,
         stop,
+        last_poll_error,
         handles: vec![poll_handle, send_handle],
         _lock: lock,
     })
 }
 
 /// 长轮询主循环。错误退避重试，**不退出**（§6 坑 4：一次失败退出 = bot 静默死掉）。
-fn poll_loop(token: String, mut cursor: Option<String>, tx: Sender<Batch>, stop: Arc<AtomicBool>) {
+fn poll_loop(
+    token: String,
+    mut cursor: Option<String>,
+    tx: Sender<Batch>,
+    stop: Arc<AtomicBool>,
+    last_err: Arc<Mutex<Option<String>>>,
+) {
     let mut wire = Wire::new(state::dump_dir());
     let mut failures = 0u32;
     while !stop.load(Ordering::Relaxed) {
         match poller::get_updates(&mut wire, &token, cursor.as_deref()) {
             Ok(up) => {
                 failures = 0;
+                if let Ok(mut g) = last_err.lock() {
+                    *g = None;
+                }
                 // 游标只在内存推进；落盘交给 app 的 ack()
                 cursor = up.next_buf.clone();
                 if !up.messages.is_empty()
@@ -219,10 +241,15 @@ fn poll_loop(token: String, mut cursor: Option<String>, tx: Sender<Batch>, stop:
             }
             Err(e) => {
                 failures = failures.saturating_add(1);
+                if let Ok(mut g) = last_err.lock() {
+                    *g = Some(e.clone());
+                }
+                // 至少出一次声：2026-10-23 真机 -14 session timeout 静默重试
+                // 了几小时，stderr 一行没有，只能靠 dump 逆推（§6 坑 4 的另一面）
+                warn_once(&format!("getupdates 失败：{e}"));
                 // 指数退避，封顶 30s；每次只睡一小段以便及时响应 stop
                 let wait =
                     Duration::from_millis(500u64 << failures.min(6)).min(Duration::from_secs(30));
-                let _ = e; // 诊断串落盘见 Wire；此处只按退避重试
                 let mut left = wait;
                 while left > Duration::ZERO && !stop.load(Ordering::Relaxed) {
                     let step = Duration::from_millis(100).min(left);
@@ -239,8 +266,11 @@ fn warn_once(msg: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static ROUTE: AtomicBool = AtomicBool::new(false);
     static SEND: AtomicBool = AtomicBool::new(false);
+    static POLL: AtomicBool = AtomicBool::new(false);
     let flag = if msg.starts_with("sendmessage") {
         &SEND
+    } else if msg.starts_with("getupdates") {
+        &POLL
     } else {
         &ROUTE
     };

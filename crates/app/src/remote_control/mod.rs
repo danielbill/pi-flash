@@ -177,6 +177,14 @@ pub struct RemoteControl {
     /// 泵下一拍统一执行 [`Self::start_transport_from_state`]）。绕开
     /// SELF_START 门控的同时，让测试可以断言意图而不真起线程。
     pub(crate) wants_start: bool,
+    /// 渠道所用 bot token（`start_transport_from_state` 时记录）。扫码换绑
+    /// 后与 state 现值不一致即触发强制重启——否则渠道拿着被服务端作废的
+    /// 旧 token 干转（2026-10-23 真机事故，详见
+    /// [`Self::force_restart_if_token_changed`]）。
+    active_token: Option<String>,
+    /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
+    /// 面板「运行中」下追加一行，治「状态撒谎」。
+    pub(crate) poll_error: Option<String>,
 }
 
 impl RemoteControl {
@@ -197,6 +205,8 @@ impl RemoteControl {
             bound: None,
             wx_session: None,
             wants_start: false,
+            active_token: None,
+            poll_error: None,
         }
     }
 
@@ -254,13 +264,46 @@ impl RemoteControl {
         // 有 chat_id = 之前已经建立过投递目标，跳过激活欢迎（等价于 ZCode
         // 持久化的 `weixinActivatedAt`）
         self.activated = wxprobe::state::get_str(&st, "chat_id").is_some();
-        let started = wxprobe::transport::config_from_state(&st)
-            .and_then(|cfg| wxprobe::transport::spawn(&cfg));
+        let started = wxprobe::transport::config_from_state(&st).and_then(|cfg| {
+            self.active_token = Some(cfg.token.clone());
+            wxprobe::transport::spawn(&cfg)
+        });
         match started {
             Ok(t) => self.transport = Some(t),
             // 静默失败是最坏的形态（§6 坑 4），至少打一行
             Err(e) => eprintln!("[wx] 渠道未启动：{e}"),
         }
+    }
+
+    /// 扫码换绑检测：运行中渠道的 token 与 state 现值不一致时停掉重拉。
+    ///
+    /// 2026-10-23 真机事故：渠道在扫码**前**被开关拉起（拿着即将作废的旧
+    /// token），扫码成功后 pump 的 `wants_start && !is_running()` 见渠道还
+    /// 活着就跳过——新 token 永远装不进去；旧 token 被新注册踢成
+    /// `errcode:-14 session timeout`，长轮询死循环重试，消息一条进不来。
+    /// 没在跑时直接返回（常规 `wants_start` 路径已覆盖）。
+    pub(crate) fn force_restart_if_token_changed(&mut self) {
+        if cfg!(test) {
+            return; // 测试不起真渠道，也不碰真实 state 文件
+        }
+        if !self.is_running() {
+            return;
+        }
+        let st = wxprobe::state::load();
+        let Some(new) = wxprobe::transport::require_token(&st).ok() else {
+            return;
+        };
+        if self.active_token.as_deref() != Some(new.as_str()) {
+            // Drop：join 线程 + 释放旧锁。坏 token 的请求即时失败，join 几乎
+            // 不等；健康长轮询里最坏等一个 90s 超时（与开关「关」同代价）。
+            self.transport = None;
+            self.wants_start = true;
+        }
+    }
+
+    /// 泵每拍同步最近轮询错误（面板显示）；渠道不在时为 `None`。
+    fn sync_poll_error(&mut self) {
+        self.poll_error = self.transport.as_ref().and_then(|t| t.poll_error());
     }
 
     /// 当前会话的绑定码（6 位数字）。由设置页展示、用户在微信里 `/bind` 回填。
@@ -742,6 +785,8 @@ impl crate::Chat {
             self.aux.remote.wants_start = false;
             self.aux.remote.start_transport_from_state();
         }
+        // 面板健康度：「运行中」背后可能正拿着死 token 干转
+        self.aux.remote.sync_poll_error();
         // 微信默认会话认领（幂等）：启用后第一拍即有归属，重启后从 state 恢复
         self.aux.remote.claim_default_session(&self.pool.active_key);
         // 060 档 1 回推：空闲/轮次结束时把 assistant 缓冲发干净。
@@ -768,8 +813,10 @@ impl crate::Chat {
                 self.dlg.dialog = None;
             }
             // 扫码成功 → 渠道起（wants_start 置位，本拍上方统一执行；
-            // 不受 SELF_START 门控，不用再摸设置页开关）
+            // 不受 SELF_START 门控，不用再摸设置页开关）。若渠道已在跑且
+            // 拿的是换绑前的旧 token，这里强制停掉、下一拍用新 token 重拉。
             if matches!(self.aux.remote.qr, QrState::Done { .. }) {
+                self.aux.remote.force_restart_if_token_changed();
                 self.aux.remote.wants_start = true;
             }
             cx.notify();

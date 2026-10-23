@@ -75,7 +75,7 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
     let token = wxprobe::state::load();
     let has_token = wxprobe::transport::require_token(&token).is_ok();
     let bot_id = wxprobe::state::get_str(&token, "bot_id").unwrap_or_default();
-    let status_lines = vec![
+    let mut status_lines = vec![
         tr("remote.channel").replace(
             "{status}",
             match running {
@@ -93,6 +93,10 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
             },
         ),
     ];
+    // 「运行中」≠ 收得到消息：长轮询最近一拍的错误跟着亮出来
+    if let Some(err) = chat.aux.remote.poll_error.as_deref() {
+        status_lines.push(tr("remote.poll_error").replace("{err}", err));
+    }
     body = body.child(section(
         &tr("remote.field_status"),
         vec![mono_lines(status_lines, 11., true)],
