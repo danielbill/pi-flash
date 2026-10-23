@@ -10,7 +10,7 @@
 //! - [`resolve`]：组件树 JSON → [`ResolvedNode`]（纯逻辑，可单测，不碰 gpui）
 //! - gpui 渲染层：ResolvedNode → 元素
 
-use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
+use gpui::{MouseButton, SharedString, anchored, div, prelude::*, px, rgb};
 use serde_json::Value;
 
 use pf_plugin_host::js::JsAction;
@@ -46,9 +46,27 @@ fn sp(node: &Value, key: &str, default: f32) -> f32 {
 }
 
 /// 格子尺寸（图标落底板的整卡；图标 24 居中于 36 底板）。
-const CELL: f32 = 72.;
-const CELL_ICON_PLATE: f32 = 26.;
-const CELL_ICON: f32 = 22.;
+const CELL: f32 = 76.;
+/// 列数上限（再多就不像 dock 了）
+const GRID_MAX_COLS: u16 = 6;
+
+/// `grid.minItem` 档位 → 最小格宽（实现值，插件不可见：01 §2.4）
+fn min_item_width(min_item: &str) -> f32 {
+    match min_item {
+        "LG" => 160.,
+        "MD" => 120.,
+        _ => 88., // SM 默认
+    }
+}
+
+/// 列数全由宿主算：`clamp(floor(可用宽 / 档位宽), 1, 6)`（01 §2.4 布局裁决权）
+fn grid_cols(panel_w: f32, min_item: &str) -> u16 {
+    // 扣两侧内边距（SP5×2）+ 格子流 px(8)×2
+    let usable = (panel_w - 2. * crate::ui::tokens::space::SP5 - 16.).max(1.);
+    ((usable / min_item_width(min_item)).floor() as u16).clamp(1, GRID_MAX_COLS)
+}
+const CELL_ICON_PLATE: f32 = 36.;
+const CELL_ICON: f32 = 36.;
 
 // ---------------------------------------------------------------------------
 // 解析层：组件树 JSON → ResolvedNode（纯逻辑，可单测）
@@ -63,6 +81,16 @@ pub(crate) enum CellAction {
     Toast(String),
     /// 白名单内但宿主未接 → 渲染禁用 + 日志（01 §8）
     Unsupported(String),
+}
+
+/// 一个格子的右键菜单（待渲染的弹出层；窗口坐标由鼠标事件给出）。
+#[derive(Debug, Clone)]
+pub(crate) struct CellMenuState {
+    pub x: f32,
+    pub y: f32,
+    /// 该格子对应的路径（回调插件时作为 `{ path }` 递回）
+    pub path: String,
+    pub items: Vec<MenuItem>,
 }
 
 /// 右键菜单项（01 §4.2）：带 action = 宿主执行；不带 = 回调插件 onCommand。
@@ -88,6 +116,11 @@ pub(crate) enum ResolvedNode {
     },
     Group {
         title: String,
+        children: Vec<ResolvedNode>,
+    },
+    /// 等宽格子流（通用原语）：列数/格宽归宿主，插件只给档位
+    Grid {
+        min_item: String,
         children: Vec<ResolvedNode>,
     },
     Divider,
@@ -185,6 +218,14 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
         }),
         "group" => Some(ResolvedNode::Group {
             title: i18n(node.get("title")),
+            children: resolve_children(node),
+        }),
+        "grid" => Some(ResolvedNode::Grid {
+            min_item: node
+                .get("minItem")
+                .and_then(Value::as_str)
+                .unwrap_or("SM")
+                .to_string(),
             children: resolve_children(node),
         }),
         "divider" => Some(ResolvedNode::Divider),
@@ -324,8 +365,11 @@ pub(crate) fn plugin_panel_view(
         _ => crate::ui::tokens::space::SP5,
     };
     let id = entry.manifest.id.clone();
-    div()
+    let cell_menu = entry.cell_menu.clone();
+    let panel_w = chat.layout.slp_w;
+    let mut root = div()
         .id("pf-panel")
+        .relative()
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
@@ -334,51 +378,37 @@ pub(crate) fn plugin_panel_view(
         .px(px(top_pad))
         .pt(px(top_pad))
         .pb(px(4.))
-        .child(render_node(&tree, ix, weak, t, &id))
-        .into_any_element()
+                .child(render_node(&tree, ix, weak, t, &id, panel_w));
+    if let Some(menu) = cell_menu {
+        let close_weak = weak.clone();
+        root = root
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = close_weak.update(cx, |c, cx| {
+                    if let Some(entry) = c.plugins.plugins.get_mut(ix) {
+                        entry.cell_menu = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .child(render_cell_menu(&menu, ix, weak, t));
+    }
+    root.into_any_element()
 }
 
-/// 子节点渲染：**连续的 button 收进一个横向换行容器**（格子流式排布，
-/// 01 §2 的 grid 语义），其余节点各占一行。
+/// 子节点渲染：**纯结构**，宿主不按组件组合猜布局（契约 layout_ownership）。
+/// 想要格子就让插件显式写 `grid`。
 fn render_children(
     children: &[ResolvedNode],
     ix: usize,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     plugin_id: &str,
+    panel_w: f32,
 ) -> Vec<gpui::AnyElement> {
-    let mut out = Vec::new();
-    let mut run: Vec<gpui::AnyElement> = Vec::new();
-    for c in children {
-        if matches!(c, ResolvedNode::Button { .. }) {
-            run.push(render_node(c, ix, weak, t, plugin_id));
-            continue;
-        }
-        if !run.is_empty() {
-            out.push(flow_row(std::mem::take(&mut run)));
-        }
-        out.push(render_node(c, ix, weak, t, plugin_id));
-    }
-    if !run.is_empty() {
-        out.push(flow_row(run));
-    }
-    out
-}
-
-/// 格子流：横向换行、居中、呼吸边（原来 v1 render_grid 的形态）
-fn flow_row(cells: Vec<gpui::AnyElement>) -> gpui::AnyElement {
-    let mut flow = div()
-        .flex()
-        .flex_wrap()
-        .justify_center()
-        .gap(px(crate::ui::tokens::space::SP3))
-        .px(px(8.))
-        .pt(px(4.))
-        .pb(px(6.));
-    for el in cells {
-        flow = flow.child(el);
-    }
-    flow.into_any_element()
+    children
+        .iter()
+        .map(|c| render_node(c, ix, weak, t, plugin_id, panel_w))
+        .collect()
 }
 
 fn render_node(
@@ -387,6 +417,7 @@ fn render_node(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     plugin_id: &str,
+    panel_w: f32,
 ) -> gpui::AnyElement {
     match node {
         ResolvedNode::Column {
@@ -405,7 +436,7 @@ fn render_node(
             if *align_center {
                 col = col.items_center();
             }
-            for c in render_children(children, ix, weak, t, plugin_id) {
+            for c in render_children(children, ix, weak, t, plugin_id, panel_w) {
                 col = col.child(c);
             }
             col.into_any_element()
@@ -426,7 +457,7 @@ fn render_node(
                 row = row.justify_between();
             }
             for c in children {
-                row = row.child(render_node(c, ix, weak, t, plugin_id));
+                row = row.child(render_node(c, ix, weak, t, plugin_id, panel_w));
             }
             row.into_any_element()
         }
@@ -435,16 +466,33 @@ fn render_node(
             if !title.is_empty() {
                 col = col.child(group_header(title, t));
             }
-            for c in render_children(children, ix, weak, t, plugin_id) {
+            for c in render_children(children, ix, weak, t, plugin_id, panel_w) {
                 col = col.child(c);
             }
             col.into_any_element()
         }
+        ResolvedNode::Grid {
+            min_item,
+            children,
+        } => {
+            let cols = grid_cols(panel_w, min_item);
+            let mut grid = div()
+                .grid()
+                .grid_cols(cols)
+                .gap(px(crate::ui::tokens::space::SP2))
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(8.));
+            for c in children {
+                grid = grid.child(render_node(c, ix, weak, t, plugin_id, panel_w));
+            }
+            grid.into_any_element()
+        }
         ResolvedNode::Divider => div()
             .mx(px(10.))
-            .my(px(4.))
+            .my(px(6.))
             .h(px(1.))
-            .bg(rgb(t.border))
+            .bg(hairline(t))
             .into_any_element(),
         ResolvedNode::Text { text, tone, size } => div()
             .px(px(10.))
@@ -466,6 +514,7 @@ fn render_node(
             action,
             menu,
         } => render_button(label, icon, tip, arg, action, menu, ix, weak, t, plugin_id),
+        // cols 只对格子流有意义，其余节点忽略
         ResolvedNode::Unknown(ty) => div()
             .px(px(10.))
             .child(placeholder_center(&format!("[{ty}]"), t))
@@ -516,7 +565,7 @@ fn render_button(
         if !menu.is_empty() {
             el = el.on_mouse_down(
                 MouseButton::Right,
-                right_click_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
+                open_cell_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
             );
         }
         return el
@@ -527,12 +576,13 @@ fn render_button(
     // 有图标 = 格子卡（图标上、短名下）
     let mut cell = div()
         .id(SharedString::from(format!("pf-cell-{ix}-{label}")))
-        .w(px(CELL))
+        .w_full()
+        .h(px(CELL))
         .flex()
         .flex_col()
         .items_center()
+        .justify_center()
         .gap(px(crate::ui::tokens::space::SP1))
-        .py(px(crate::ui::tokens::space::SP2))
         .rounded(px(crate::ui::tokens::radius::CTRL));
     if !matches!(action, None | Some(CellAction::Unsupported(_))) {
         cell = cell.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
@@ -549,7 +599,7 @@ fn render_button(
     if !menu.is_empty() {
         cell = cell.on_mouse_down(
             MouseButton::Right,
-            right_click_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
+            open_cell_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
         );
     }
     cell.child(
@@ -568,7 +618,8 @@ fn render_button(
     )
     .child(
         div()
-            .max_w(px(CELL))
+            .w_full()
+            .px(px(2.))
             .text_size(ui_size(10.5))
             .text_center()
             .text_color(rgb(t.text_muted))
@@ -593,33 +644,87 @@ fn click_action(
     }
 }
 
-/// 右键菜单：v2 暂用「点哪项执行哪项」的降级形态——只执行宿主动作类项，
-/// 插件回调类（无 action）在状态栏提示（完整弹出菜单见 beads 后续任务）。
-fn right_click_menu(
+/// 右键：把菜单项连同鼠标位置记进 `PluginEntry::cell_menu`，由面板渲染弹出层。
+fn open_cell_menu(
     weak: gpui::WeakEntity<Chat>,
     ix: usize,
     menu: Vec<MenuItem>,
     cell_path: String,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static {
-    move |_, window, cx| {
+    move |ev: &gpui::MouseDownEvent, _window, cx| {
+        cx.stop_propagation();
         let menu = menu.clone();
         let path = cell_path.clone();
+        let (x, y) = (f32::from(ev.position.x), f32::from(ev.position.y));
         let _ = weak.update(cx, |c, cx| {
-            // 纯插件回调菜单（如「移除快捷」）：唯一一项时直接执行，多项则提示
-            let callbacks: Vec<&MenuItem> = menu.iter().filter(|m| m.action.is_none()).collect();
-            let host_actions: Vec<&MenuItem> = menu.iter().filter(|m| m.action.is_some()).collect();
-            if callbacks.len() == 1 && host_actions.is_empty() {
-                let id = callbacks[0].id.clone();
-                c.plugin_command_fire(ix, &id, &path, window, cx);
-            } else if callbacks.len() == 1 && host_actions.len() == 1 {
-                // 常见组合：定位文件 + 移除快捷 → 右键 = 定位，Shift/后续再补弹层
-                let a = host_actions[0].action.clone().unwrap();
-                c.plugin_dispatch(ix, vec![to_js_action(a)], window, cx);
-            } else {
-                c.set_status("插件菜单项见后续版本（v2 未接弹出层）".to_string(), cx);
+            if let Some(entry) = c.plugins.plugins.get_mut(ix) {
+                entry.cell_menu = Some(CellMenuState {
+                    x,
+                    y,
+                    path,
+                    items: menu,
+                });
+                cx.notify();
             }
         });
     }
+}
+
+/// 右键弹出层（窗口坐标锚定；点项即执行并收起）。
+fn render_cell_menu(
+    menu: &CellMenuState,
+    ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> gpui::AnyElement {
+    let mut card = div()
+        .w(px(168.))
+        .flex()
+        .flex_col()
+        .p(px(4.))
+        .bg(rgb(t.bg_panel))
+        .border_1()
+        .border_color(hairline(t))
+        .rounded(px(crate::ui::tokens::radius::CARD))
+        .shadow_sm();
+    for (i, item) in menu.items.iter().enumerate() {
+        let id = item.id.clone();
+        let title = item.title.clone();
+        let action = item.action.clone();
+        let path = menu.path.clone();
+        let weak = weak.clone();
+        card = card.child(
+            div()
+                .id(SharedString::from(format!("pf-menu-{ix}-{i}")))
+                .h(px(28.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .rounded(px(crate::ui::tokens::radius::XS))
+                .text_size(ui_size(11.5))
+                .text_color(rgb(t.text))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    let (id, action, path) = (id.clone(), action.clone(), path.clone());
+                    let _ = weak.update(cx, |c, cx| {
+                        if let Some(entry) = c.plugins.plugins.get_mut(ix) {
+                            entry.cell_menu = None;
+                        }
+                        match action {
+                            Some(a) => c.plugin_dispatch(ix, vec![to_js_action(a)], window, cx),
+                            None => c.plugin_command_fire(ix, &id, &path, window, cx),
+                        }
+                        cx.notify();
+                    });
+                })
+                .child(SharedString::from(title)),
+        );
+    }
+    anchored()
+        .position(gpui::point(px(menu.x), px(menu.y)))
+        .child(card)
+        .into_any_element()
 }
 
 fn to_js_action(a: CellAction) -> JsAction {
@@ -646,6 +751,11 @@ fn group_header(label: &str, t: &'static Theme) -> gpui::AnyElement {
                 .child(SharedString::from(label.to_string())),
         )
         .into_any_element()
+}
+
+/// 发丝线：主题 border 在暗色下与底色太近（看不清），统一用 text 的低透明度。
+fn hairline(t: &'static Theme) -> gpui::Rgba {
+    gpui::rgba(crate::appearance::theme::rgba_a(t.text, 0.18))
 }
 
 fn tone_color(tone: &str, t: &'static Theme) -> u32 {
@@ -677,19 +787,21 @@ mod tests {
 
     #[test]
     fn resolve_inline_tree() {
-        // v2 内联树：没有 rows / filter / $auto
+        // v2.1 内联树：grid 显式声明格子流，没有 rows / filter / $auto
         let v = tree(
             r#"{
               "type":"column","pad":"SP4","gap":"SP2","children":[
                 {"type":"group","title":{"zh":"可执行文件"},"children":[
-                  {"type":"button","icon":"icons/file_icons/terminal.svg","label":"build.ps1",
-                   "tip":"D:\\p\\build.ps1","action":"run","arg":"D:\\p\\build.ps1",
-                   "menu":[{"id":"reveal","title":{"zh":"定位"},"action":"reveal_in_explorer","arg":"D:\\p\\build.ps1"},
-                           {"id":"unpin","title":{"zh":"移除快捷"}}]} ]},
+                  {"type":"grid","minItem":"SM","children":[
+                    {"type":"button","icon":"icons/file_icons/terminal.svg","label":"build.ps1",
+                     "tip":"D:/p/build.ps1","action":"run","arg":"D:/p/build.ps1",
+                     "menu":[{"id":"reveal","title":{"zh":"定位"},"action":"reveal_in_explorer","arg":"D:/p/build.ps1"},
+                             {"id":"unpin","title":{"zh":"移除快捷"}}]} ]} ]},
                 {"type":"divider"},
                 {"type":"group","title":{"zh":"文档与代码"},"children":[
-                  {"type":"button","icon":"icons/file_icons/book.svg","label":"README.md",
-                   "action":"edit","arg":"D:\\p\\README.md"} ]} ]}"#,
+                  {"type":"grid","minItem":"SM","children":[
+                    {"type":"button","icon":"icons/file_icons/book.svg","label":"README.md",
+                     "action":"edit","arg":"D:/p/README.md"} ]} ]} ]}"#,
         );
         let node = resolve(&v).expect("树应解析");
         let ResolvedNode::Column { children, .. } = node else {
@@ -704,24 +816,39 @@ mod tests {
             panic!("第一项应为 group")
         };
         assert_eq!(title, "可执行文件");
-        let ResolvedNode::Button {
-            label,
-            action,
-            menu,
-            ..
+        let ResolvedNode::Grid {
+            min_item,
+            children: cells,
         } = &group_children[0]
         else {
-            panic!("组内应为 button")
+            panic!("组内应为 grid")
+        };
+        assert_eq!(min_item, "SM");
+        let ResolvedNode::Button {
+            label, action, menu, ..
+        } = &cells[0]
+        else {
+            panic!("格内应为 button")
         };
         assert_eq!(label, "build.ps1");
-        assert_eq!(action, &Some(CellAction::Run(r"D:\p\build.ps1".into())));
+        assert_eq!(action, &Some(CellAction::Run("D:/p/build.ps1".into())));
         assert_eq!(menu.len(), 2);
         assert!(menu[0].action.is_some()); // 宿主执行
         assert!(menu[1].action.is_none()); // 回调插件
-        // 根节点第三项是第二个 group（divider 在根上）
         let ResolvedNode::Divider = children[1] else {
             panic!("第二项应为 divider")
         };
+    }
+
+    #[test]
+    fn grid_columns_follow_panel_width() {
+        // 布局裁决权归宿主：面板越宽列数越多，但封顶 6
+        assert_eq!(grid_cols(220., "SM"), 2);
+        assert_eq!(grid_cols(340., "SM"), 3); // 默认 dock 宽
+        assert_eq!(grid_cols(600., "SM"), 6);
+        assert_eq!(grid_cols(900., "SM"), 6); // 封顶
+        assert_eq!(grid_cols(340., "LG"), 1);
+        assert_eq!(grid_cols(900., "LG"), 5);
     }
 
     #[test]

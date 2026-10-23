@@ -478,6 +478,8 @@ pub(crate) struct PluginEntry {
     /// 最近一次 render 的组件树（01 规范；渲染器消费。v2 无 rows）
     pub body: Option<serde_json::Value>,
     pub tree_loaded: bool,
+    /// 右键菜单弹层（None = 收起；面板渲染时消费）
+    pub cell_menu: Option<crate::pf_plugin::panel::CellMenuState>,
     /// 面板滚动（左列格子容器；跨帧存续）
     /// 面板滚动（要求⑤：上下两分栏各自管理；跨帧存续）
     /// 分栏滚动句柄 + psp 滚动条状态（要求⑤：每 group 一对；渲染期按序
@@ -783,6 +785,7 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                         js: None,
                         host: None,
                         tree_loaded: false,
+                        cell_menu: None,
                         scrolls: std::cell::RefCell::new(Vec::new()),
                         scroll_orphan: gpui::ScrollHandle::new(),
                         body: None,
