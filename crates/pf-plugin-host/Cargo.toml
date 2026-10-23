@@ -11,6 +11,6 @@ wasmtime-wasi = { version = "36", default-features = false }
 anyhow = "1"
 # QuickJS 路线（beads 1im 双轨之一；js.rs）：内嵌 quickjs-ng，插件逻辑层入口
 rquickjs = "0.14"
+serde_json = "1"
 
 [dev-dependencies]
-serde_json = "1"

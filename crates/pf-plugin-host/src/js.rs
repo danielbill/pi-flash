@@ -1,15 +1,16 @@
-//! QuickJS 插件运行时（beads 1im 双轨之一；契约 docs/PF组件规范/02 §3–§5）。
+//! QuickJS 插件运行时（契约 docs/PF组件规范/01+02 v2、schema/plugin-contract.json）。
 //!
-//! 与同 crate 的 wasm 路线（lib.rs，原样保留）并行：这里加载清单 `entry`
-//! 指向的 main.js（ESM、零 import、唯一能力面 = ctx），调 activate / render，
-//! 右键与面板事件回灌插件。设计取向：**编排在 JS 胶水，Rust 只过原语**——
-//! ctx 对象、onMenu 注册表、render 结果序列化全在一段 eval 的胶水里完成，
-//! Rust 侧只暴露 String/bool 形状的宿主函数，rquickjs API 面积最小。
+//! 加载清单 `entry` 指向的 main.js（ESM、零 import、唯一能力面 = ctx），
+//! 调 activate / render，右键与面板命令回灌插件。
 //!
-//! 线程模型：rquickjs Runtime 非 Send，实例固定在 gpui 主线程（挂在 app
-//! 的插件注册表上）；宿主动作类调用（run/edit/…）**入队不执行**，由调用方
-//! 在 JS 返回后统一消费——同 wasm 侧 `PluginAction` 通道先例，避免在 gpui
-//! 借用栈里嵌套重入。
+//! v2 与 v1 的差别（090-9）：
+//! - **没有 store.json**：插件数据自管，`ctx.dir` + `ctx.fs.read/write/list`，
+//!   Rust 侧只保证目录、原子写、越界拒绝，**从不解析内容**
+//! - 新增 `ctx.onCommand`：组件 `menu` 项（不带 action 的）回调插件
+//! - `render` 返回**已算好的组件树**，没有 rows / filter / `$auto`
+//!
+//! 线程模型：rquickjs Runtime 非 Send，实例固定在 gpui 主线程；动作类调用
+//! 入队不执行，由调用方在 JS 返回后统一消费。
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -18,16 +19,20 @@ use std::rc::Rc;
 use rquickjs::function::Func;
 use rquickjs::{Context, Function, Module, Runtime};
 
-/// 宿主能力面（02 规范 §3）。app 侧实现；提问类同步应答，动作类只入队。
+/// 宿主能力面（02 §3）。app 侧实现；提问类同步应答，动作类只入队。
 pub trait JsHost {
     /// `ctx.isExecutive`：宿主按后缀/平台判定（script_exec 同表）。
     fn is_executive(&mut self, path: &str) -> bool;
     /// `ctx.fileIcon`：不透明引用，宿主解析，插件只透传。
     fn file_icon(&mut self, path: &str) -> String;
-    /// `ctx.store.read`：整读 store.json 文本；缺失/坏文件 → "{}"。
-    fn store_read(&mut self) -> String;
-    /// `ctx.store.write`：整写（宿主保证原子：临时文件 + rename）。
-    fn store_write(&mut self, json: String);
+    /// `ctx.dir`：插件私有目录（绝对路径）。
+    fn dir(&mut self) -> String;
+    /// `ctx.fs.read(name)`：整读；缺失/不可读 → 空串（插件自己兜底）。
+    fn fs_read(&mut self, name: &str) -> String;
+    /// `ctx.fs.write(name, data)`：原子写（临时文件 + rename），只限 `ctx.dir` 内。
+    fn fs_write(&mut self, name: &str, data: &str);
+    /// `ctx.fs.list()`：目录下文件名。
+    fn fs_list(&mut self) -> Vec<String>;
     /// 动作入队：JS 调用返回后由宿主消费（见 [`JsAction`]）。
     fn queue(&mut self, action: JsAction);
 }
@@ -45,7 +50,7 @@ pub enum JsAction {
     Toast(String),
 }
 
-/// 一个已装载的 JS 插件实例（全局单例：面板开着时右键复用同一份 store）。
+/// 一个已装载的 JS 插件实例（全局单例：面板开着时右键复用同一份 ctx）。
 pub struct JsPlugin {
     _rt: Runtime,
     ctx: Context,
@@ -55,17 +60,13 @@ pub struct JsPlugin {
 
 impl JsPlugin {
     /// 装载：读 entry 源码 → 声明为 ES 模块并求值 → 注入宿主原语与胶水。
-    /// `store_path` 注入 `ctx.store.path`（只读字符串）。
-    pub fn load(
-        entry: &Path,
-        store_path: &str,
-        host: Rc<RefCell<dyn JsHost>>,
-    ) -> Result<Self, String> {
+    /// `dir` 注入 `ctx.dir`（插件私有目录，绝对路径）。
+    pub fn load(entry: &Path, dir: &str, host: Rc<RefCell<dyn JsHost>>) -> Result<Self, String> {
         let src = std::fs::read_to_string(entry)
             .map_err(|e| format!("entry 不可读（{}）: {e}", entry.display()))?;
 
         let rt = Runtime::new().map_err(|e| e.to_string())?;
-        // v1 内存上限：插件逻辑是清单/store 级小计算，32MB 足够宽裕
+        // v1 内存上限：插件逻辑是清单级小计算，32MB 足够宽裕
         rt.set_memory_limit(32 * 1024 * 1024);
         let ctx = Context::full(&rt).map_err(|e| e.to_string())?;
 
@@ -85,14 +86,20 @@ impl JsPlugin {
             )?;
             let h = glue_host.clone();
             g.set(
-                "__pf_store_read",
-                Func::from(move || -> String { h.borrow_mut().store_read() }),
+                "__pf_fs_read",
+                Func::from(move |name: String| -> String { h.borrow_mut().fs_read(&name) }),
             )?;
             let h = glue_host.clone();
             g.set(
-                "__pf_store_write",
-                Func::from(move |json: String| {
-                    h.borrow_mut().store_write(json);
+                "__pf_fs_write",
+                Func::from(move |name: String, data: String| h.borrow_mut().fs_write(&name, &data)),
+            )?;
+            let h = glue_host.clone();
+            g.set(
+                "__pf_fs_list",
+                Func::from(move || -> String {
+                    let names = h.borrow_mut().fs_list();
+                    serde_json::to_string(&names).unwrap_or_else(|_| "[]".into())
                 }),
             )?;
             for (name, ctor) in [
@@ -119,23 +126,25 @@ impl JsPlugin {
             let ns = evaluated.namespace();
             g.set("__pf_exports", ns)?;
 
-            // —— 胶水：ctx 对象 + 事件注册表 + 宿主入口 ——
-            let store_path_js = json_escape(store_path);
+            // —— 胶水：ctx 对象 + 注册表 + 宿主入口 ——
+            let dir_js = json_escape(dir);
             let _: () = ctx.eval(format!(
                 r#"
 globalThis.__pf_ctx = {{
+  dir: "{dir_js}",
+  fs: {{
+    read: (n) => globalThis.__pf_fs_read(String(n)),
+    write: (n, v) => {{ globalThis.__pf_fs_write(String(n), v == null ? "" : String(v)); }},
+    list: () => JSON.parse(globalThis.__pf_fs_list()),
+  }},
   isExecutive: (p) => globalThis.__pf_is_executive(p),
   fileIcon: (p) => globalThis.__pf_file_icon(p),
-  store: {{
-    read: () => JSON.parse(globalThis.__pf_store_read() || "{{}}"),
-    write: (o) => globalThis.__pf_store_write(JSON.stringify(o)),
-    path: "{store_path_js}",
-  }},
   run: (p) => globalThis.__pf_run(p),
   edit: (p) => globalThis.__pf_edit(p),
   revealInExplorer: (p) => globalThis.__pf_reveal(p),
   toast: (m) => globalThis.__pf_toast(m == null ? "" : String(m)),
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
+  onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
   onPanelOpen: (fn) => {{ globalThis.__pf_panel_open_fn = fn; }},
 }};
 globalThis.__pf_activate = () => {{
@@ -147,6 +156,10 @@ globalThis.__pf_render_str = () =>
 globalThis.__pf_fire_menu = (id, path, fileIcon) => {{
   const fn = globalThis["__pf_menu_" + id];
   if (typeof fn === "function") fn({{ path, fileIcon }});
+}};
+globalThis.__pf_fire_cmd = (id, path) => {{
+  const fn = globalThis["__pf_cmd_" + id];
+  if (typeof fn === "function") fn({{ path }});
 }};
 globalThis.__pf_fire_panel_open = () => {{
   if (typeof globalThis.__pf_panel_open_fn === "function")
@@ -165,7 +178,7 @@ globalThis.__pf_fire_panel_open = () => {{
         })
     }
 
-    /// `activate(ctx)`：注册 onMenu / onPanelOpen（无 activate 导出 = 纯渲染插件，放行）。
+    /// `activate(ctx)`：注册 onMenu / onCommand / onPanelOpen（无 activate 导出 = 纯渲染插件，放行）。
     pub fn activate(&self) -> Result<(), String> {
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
@@ -176,7 +189,7 @@ globalThis.__pf_fire_panel_open = () => {{
             .map_err(|e| e.to_string())
     }
 
-    /// `render(ctx)` → `{body, rows}` 的 JSON 文本（01 规范组件树 + 数据行）。
+    /// `render(ctx)` → 组件树 JSON（01 规范；v2 无 rows）。
     pub fn render_json(&self) -> Result<String, String> {
         self.ctx
             .with(|ctx| -> Result<String, rquickjs::Error> {
@@ -192,6 +205,17 @@ globalThis.__pf_fire_panel_open = () => {{
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_menu")?;
                 f.call::<(&str, &str, &str), ()>((id, path, file_icon))?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    /// 触发组件菜单回调 `onCommand(id, {path})`（未注册 = no-op）。
+    pub fn fire_command(&self, id: &str, path: &str) -> Result<(), String> {
+        self.ctx
+            .with(|ctx| -> Result<(), rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fire_cmd")?;
+                f.call::<(&str, &str), ()>((id, path))?;
                 Ok(())
             })
             .map_err(|e| e.to_string())
@@ -229,9 +253,9 @@ fn json_escape(s: &str) -> String {
 mod tests {
     use super::*;
 
-    /// 测试宿主：store 内存态 + 动作入队（同 app 侧 ChatHost 形状）。
+    /// 测试宿主：私有目录内存态 + 动作入队（同 app 侧 ChatHost 形状）。
     struct TestHost {
-        store: String,
+        files: std::collections::HashMap<String, String>,
         actions: Vec<JsAction>,
     }
     impl JsHost for TestHost {
@@ -245,55 +269,70 @@ mod tests {
                 "terminal".into()
             }
         }
-        fn store_read(&mut self) -> String {
-            self.store.clone()
+        fn dir(&mut self) -> String {
+            "/tmp/pf".into()
         }
-        fn store_write(&mut self, json: String) {
-            self.store = json;
+        fn fs_read(&mut self, name: &str) -> String {
+            self.files.get(name).cloned().unwrap_or_default()
+        }
+        fn fs_write(&mut self, name: &str, data: &str) {
+            self.files.insert(name.to_string(), data.to_string());
+        }
+        fn fs_list(&mut self) -> Vec<String> {
+            self.files.keys().cloned().collect()
         }
         fn queue(&mut self, action: JsAction) {
             self.actions.push(action);
         }
     }
 
-    /// 与插件仓 service/plugin/main.js 同契约的最小插件源码。
+    /// 与插件仓 packages/quick-panel/main.js 同契约的最小插件源码（v2：内联树）。
     const PLUGIN: &str = r#"
-let opened = false;
+const KEY = "pins.json";
+const load = (ctx) => { try { const a = JSON.parse(ctx.fs.read(KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
+const save = (ctx, pins) => ctx.fs.write(KEY, JSON.stringify(pins));
 export function activate(ctx) {
-  ctx.onMenu("set-quick", ({ path, fileIcon }) => {
-    const store = ctx.store.read();
-    const pins = Array.isArray(store.pins) ? store.pins : [];
-    if (pins.some((p) => p.path === path)) { ctx.toast("dup"); return; }
-    pins.push({ path, fileIcon, isExec: ctx.isExecutive(path) });
-    ctx.store.write({ ...store, pins });
+  ctx.onMenu("set-quick", ({ path }) => {
+    const pins = load(ctx);
+    if (pins.includes(path)) { ctx.toast("dup"); return; }
+    save(ctx, [...pins, path]);
     ctx.toast("pinned");
   });
-  ctx.onPanelOpen(() => { opened = true; });
+  ctx.onCommand("unpin", ({ path }) => {
+    save(ctx, load(ctx).filter((p) => p !== path));
+    ctx.toast("unpinned");
+  });
 }
 export function render(ctx) {
-  const pins = ctx.store.read().pins ?? [];
-  return {
-    body: { type: "list", layout: "grid",
-            item: { icon: "$fileIcon", label: "$name", tip: "$path",
-                    action: "$auto", arg: "$path" } },
-    rows: pins.map((p) => ({ path: p.path, name: p.path.split(/[\\/]/).pop(),
-                             fileIcon: p.fileIcon, isExec: p.isExec })),
-  };
+  const pins = load(ctx);
+  if (pins.length === 0)
+    return { type: "text", value: { zh: "空" }, tone: "text.faint" };
+  return { type: "column", pad: "SP4", gap: "SP2", children: pins.map((p) => ({
+    type: "button", icon: ctx.fileIcon(p), label: p.split(/[\\/]/).pop(), tip: p,
+    action: ctx.isExecutive(p) ? "run" : "edit", arg: p,
+    menu: [ { id: "unpin", title: { zh: "移除快捷" } } ],
+  })) };
 }
 "#;
 
     #[test]
-    fn quickjs_full_chain() {
+    fn activate_menu_render_and_command() {
+        let dir = std::env::temp_dir().join("pf-js-v2-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(&entry, PLUGIN).unwrap();
         let host = Rc::new(RefCell::new(TestHost {
-            store: "{}".into(),
-            actions: vec![],
+            files: Default::default(),
+            actions: Vec::new(),
         }));
-        let dir = std::env::temp_dir().join("pf-js-test-main.js");
-        std::fs::write(&dir, PLUGIN).unwrap();
-        let plugin = JsPlugin::load(&dir, r"C:\store\store.json", host.clone()).expect("load");
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host.clone()).expect("load");
         plugin.activate().expect("activate");
 
-        // 右键设为快捷（exe + 文档各一）+ 去重
+        // 空面板
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["type"], "text");
+
+        // 右键设为快捷 ×3（含重复）
         plugin
             .fire_menu("set-quick", r"D:\p\build.ps1", "terminal")
             .expect("menu1");
@@ -313,26 +352,34 @@ export function render(ctx) {
             })
             .collect();
         assert_eq!(toasts, ["pinned", "pinned", "dup"]);
-        assert!(host.borrow().store.contains("build.ps1"));
+        // 只存路径，派生值不落盘
+        let stored = host.borrow().files.get("pins.json").cloned().unwrap();
+        assert_eq!(stored, r#"["D:\\p\\build.ps1","D:\\p\\README.md"]"#);
 
-        // 面板打开 + render
+        // 渲染：值内联 + 动作显式
         plugin.fire_panel_open().expect("panel open");
-        let json = plugin.render_json().expect("render");
-        let v: serde_json::Value = serde_json::from_str(&json).expect("render 返回合法 JSON");
-        assert_eq!(v["body"]["layout"], "grid");
-        assert_eq!(v["body"]["item"]["action"], "$auto");
-        let rows = v["rows"].as_array().unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["name"], "build.ps1");
-        assert_eq!(rows[0]["isExec"], true);
-        assert_eq!(rows[1]["isExec"], false);
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["type"], "column");
+        assert_eq!(v["children"].as_array().unwrap().len(), 2);
+        assert_eq!(v["children"][0]["action"], "run");
+        assert_eq!(v["children"][0]["label"], "build.ps1");
+        assert_eq!(v["children"][1]["action"], "edit");
+        assert!(v.get("rows").is_none());
+
+        // onCommand：插件改自己的数据
+        plugin
+            .fire_command("unpin", r"D:\p\build.ps1")
+            .expect("cmd");
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["children"].as_array().unwrap().len(), 1);
+        assert_eq!(v["children"][0]["label"], "README.md");
 
         // 异常插件：render 抛错 → Err（app 侧 toast + 会话级禁用）
-        let bad = std::env::temp_dir().join("pf-js-test-bad.js");
+        let bad = std::env::temp_dir().join("pf-js-v2-bad.js");
         std::fs::write(&bad, "export function render(ctx) { no_such_fn(); }").unwrap();
-        let plugin = JsPlugin::load(&bad, "{}", host.clone()).expect("load bad");
+        let plugin = JsPlugin::load(&bad, "/tmp/pf", host.clone()).expect("load bad");
         assert!(plugin.render_json().is_err());
-        let _ = std::fs::remove_file(&dir);
         let _ = std::fs::remove_file(&bad);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

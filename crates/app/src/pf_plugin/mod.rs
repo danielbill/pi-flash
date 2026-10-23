@@ -6,7 +6,7 @@
 //! 组件树先硬编码快捷面板这棵，解析器后续抽象）；⑤ctx/懒加载/异常隔离
 //! （本文件，引擎 = `pf_plugin_host::js::JsPlugin`）。
 //!
-//! 时序（02 §4）：清单启动读（spawn_plugin_scan，后台），store + ctx 首用时
+//! 时序（02 §4）：清单启动读（spawn_plugin_scan，后台），ctx 首用时
 //! 建；插件异常 → toast + 会话级禁用，不影响宿主。
 
 mod panel;
@@ -59,9 +59,7 @@ pub(crate) struct FileMenuContrib {
 pub(crate) struct PanelContrib {
     pub id: String,
     pub title_zh: String,
-    /// `row | grid`（v1 快捷面板用 grid；nfx 回写 01 后为正式规范）
-    pub layout: String,
-    pub store: String,
+    /// 逻辑入口（02 §2；固定 main.js）
     pub entry: String,
 }
 
@@ -267,8 +265,6 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     m.panels.push(PanelContrib {
                         id: String::new(),
                         title_zh: String::new(),
-                        layout: "row".into(),
-                        store: "store.json".into(),
                         entry: "main.js".into(),
                     });
                     "panels".to_string()
@@ -322,9 +318,17 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 m.panels.last_mut().unwrap().title_zh = val.as_i18n("title", n)?.0
             }
             ("panels", "layout") => {
-                m.panels.last_mut().unwrap().layout = val.as_str("layout", n)?
+                return Err(format!(
+                    "pf-plugin.toml 行 {}：字段 layout 已废弃（契约 v2，见 02 §2）",
+                    n + 1
+                ));
             }
-            ("panels", "store") => m.panels.last_mut().unwrap().store = val.as_str("store", n)?,
+            ("panels", "store") => {
+                return Err(format!(
+                    "pf-plugin.toml 行 {}：字段 store 已废弃，数据由插件自管（ctx.dir，见 02 §3）",
+                    n + 1
+                ));
+            }
             ("panels", "entry") => m.panels.last_mut().unwrap().entry = val.as_str("entry", n)?,
             (sec, key) => return Err(format!("pf-plugin.toml 行 {}：{sec} 段未知键 {key}", n + 1)),
         }
@@ -380,9 +384,6 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 "pf-plugin.toml：panel「{}」缺 title.zh（M5）",
                 p.id
             ));
-        }
-        if p.layout != "row" && p.layout != "grid" {
-            return Err(format!("pf-plugin.toml：layout「{}」∉ row|grid", p.layout));
         }
         if !dir.join(&p.entry).is_file() {
             return Err(format!(
@@ -465,15 +466,6 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
 // Chat 侧状态 + ctx 宿主实现
 // ---------------------------------------------------------------------------
 
-/// 面板数据行（02 §5：path / name / fileIcon / isExec）。
-#[derive(Debug, Clone)]
-pub(crate) struct PanelRow {
-    pub path: String,
-    pub name: String,
-    pub file_icon: String,
-    pub is_exec: bool,
-}
-
 /// 单个插件条目：清单 + 懒加载运行时 + 面板行缓存。
 pub(crate) struct PluginEntry {
     pub manifest: PluginManifest,
@@ -483,13 +475,20 @@ pub(crate) struct PluginEntry {
     pub js: Option<JsPlugin>,
     /// 宿主能力载体（与 js 同生；fire 前清 actions）
     pub host: Option<Rc<RefCell<ChatHost>>>,
-    /// 最近一次 render 的数据行（帧路径不进 JS）
-    pub rows: Vec<PanelRow>,
-    pub rows_loaded: bool,
+    /// 最近一次 render 的组件树（01 规范；渲染器消费。v2 无 rows）
+    pub body: Option<serde_json::Value>,
+    pub tree_loaded: bool,
     /// 面板滚动（左列格子容器；跨帧存续）
     /// 面板滚动（要求⑤：上下两分栏各自管理；跨帧存续）
-    pub scroll_exec: gpui::ScrollHandle,
-    pub scroll_docs: gpui::ScrollHandle,
+    /// 分栏滚动句柄 + psp 滚动条状态（要求⑤：每 group 一对；渲染期按序
+    /// 懒扩容——渲染期 &self 内部可变性，先例 at_filter_cache/bubble_scrolls。
+    /// 滚动条 = psp_scrollbar：hover 常显 / 3s 淡出 / 无轨道底，平时隐形，
+    /// 面板静止即纯居中排版）
+    pub scrolls: std::cell::RefCell<Vec<gpui::ScrollHandle>>,
+    /// 顶层孤儿内容（不在 group 下）的滚动句柄——**禁止复用组序懒扩容**：
+    /// 曾以 usize::MAX 作组序传进去，`while len <= usize::MAX` 无限分配，
+    /// 点开面板即崩（2026-10-23）
+    pub scroll_orphan: gpui::ScrollHandle,
 }
 
 /// Chat 上的插件簇（与 aux/ws 等并列的最小簇）。
@@ -501,8 +500,25 @@ pub(crate) struct PluginUi {
 /// JsHost 实现（02 §3 提问类同步、动作类入队）。
 /// 纯数据，不持 Chat——动作由 Chat 方法在 JS 返回后消费。
 pub(crate) struct ChatHost {
-    store_path: PathBuf,
+    /// 插件私有目录（`plugins/<id>/data/`）——插件自管，宿主不解析内容
+    dir: PathBuf,
     pub actions: Vec<JsAction>,
+}
+
+impl ChatHost {
+    /// `name` 只许是本目录下的文件名：拒绝分隔符、`..`、隐藏文件（02 §3 越界拒绝）
+    fn safe_path(&self, name: &str) -> Option<PathBuf> {
+        let bad = name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || name.contains("..")
+            || name.starts_with('.');
+        if bad {
+            eprintln!("[pf-plugin] fs 越界拒绝: {name}");
+            return None;
+        }
+        Some(self.dir.join(name))
+    }
 }
 
 impl JsHost for ChatHost {
@@ -512,58 +528,46 @@ impl JsHost for ChatHost {
     fn file_icon(&mut self, path: &str) -> String {
         crate::services::file_icons::get_icon(Path::new(path)).to_string()
     }
-    fn store_read(&mut self) -> String {
-        // 缺失 → ""（JS 胶水落 {}）；坏文件 → "" 同落 {}（02 §3 契约）
-        match std::fs::read_to_string(&self.store_path) {
-            Ok(s) if serde_json::from_str::<serde_json::Value>(&s).is_ok() => s,
-            _ => String::new(),
-        }
+    fn dir(&mut self) -> String {
+        self.dir.to_string_lossy().into_owned()
     }
-    fn store_write(&mut self, json: String) {
-        // 原子写 = 临时文件 + rename（设计定案）
-        let tmp = self.store_path.with_extension("json.tmp");
+    fn fs_read(&mut self, name: &str) -> String {
+        // 缺失/不可读 → ""（02 §3：兜底是插件的责任，不是宿主的）
+        self.safe_path(name)
+            .and_then(|f| std::fs::read_to_string(f).ok())
+            .unwrap_or_default()
+    }
+    fn fs_write(&mut self, name: &str, data: &str) {
+        let Some(path) = self.safe_path(name) else {
+            return;
+        };
+        // 原子写 = 临时文件 + rename（插件管内容，原子性归宿主）
+        let tmp = path.with_extension("tmp");
         if let Err(e) = (|| -> std::io::Result<()> {
             if let Some(p) = tmp.parent() {
                 std::fs::create_dir_all(p)?;
             }
-            std::fs::write(&tmp, json.as_bytes())?;
-            std::fs::rename(&tmp, &self.store_path)
+            std::fs::write(&tmp, data.as_bytes())?;
+            std::fs::rename(&tmp, &path)
         })() {
-            eprintln!(
-                "[pf-plugin] store 写入失败（{}）: {e}",
-                self.store_path.display()
-            );
+            eprintln!("[pf-plugin] fs 写入失败（{}）: {e}", path.display());
         }
+    }
+    fn fs_list(&mut self) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(&self.dir)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.path().is_file())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort();
+        out
     }
     fn queue(&mut self, action: JsAction) {
         self.actions.push(action);
     }
-}
-
-/// rows JSON（`{body, rows}` 的 rows 段）→ PanelRow。body v1 不解析
-///（组件树硬编码快捷面板这棵，见 panel.rs）。
-fn parse_rows(json: &str) -> Vec<PanelRow> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Vec::new();
-    };
-    v["rows"]
-        .as_array()
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|r| {
-                    Some(PanelRow {
-                        path: r["path"].as_str()?.to_string(),
-                        name: r["name"].as_str().map(str::to_string).unwrap_or_default(),
-                        file_icon: r["fileIcon"]
-                            .as_str()
-                            .map(str::to_string)
-                            .unwrap_or_default(),
-                        is_exec: r["isExec"].as_bool().unwrap_or(false),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -595,25 +599,22 @@ impl Chat {
         if entry.js.is_some() {
             return true;
         }
-        // 首用建 ctx：store / entry 路径取第一个 panel 声明（v1 单面板）
+        // 首用建 ctx：entry 取第一个 panel 声明（v1 单面板）；私有目录 data/
         let panel = entry.manifest.panels.first().cloned();
-        let store_rel = panel
-            .as_ref()
-            .map(|p| p.store.clone())
-            .unwrap_or_else(|| "store.json".into());
         let entry_rel = panel
             .as_ref()
             .map(|p| p.entry.clone())
             .unwrap_or_else(|| "main.js".into());
-        let store_path = entry.manifest.dir.join(&store_rel);
-        let store_path_str = store_path.to_string_lossy().into_owned();
+        let dir = entry.manifest.dir.join("data");
+        let _ = std::fs::create_dir_all(&dir); // 插件自管目录：PF 只建，不解析
+        let dir_str = dir.to_string_lossy().into_owned();
         let host = Rc::new(RefCell::new(ChatHost {
-            store_path,
+            dir,
             actions: Vec::new(),
         }));
         let entry_path = entry.manifest.dir.join(&entry_rel);
         let id = entry.manifest.id.clone();
-        match JsPlugin::load(&entry_path, &store_path_str, host.clone()) {
+        match JsPlugin::load(&entry_path, &dir_str, host.clone()) {
             Ok(js) => {
                 let mut failed = None;
                 if let Err(e) = js.activate() {
@@ -656,8 +657,11 @@ impl Chat {
         match result {
             Ok(json) => {
                 let entry = &mut self.plugins.plugins[ix];
-                entry.rows = parse_rows(&json);
-                entry.rows_loaded = true;
+                let v: serde_json::Value =
+                    serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                // v2：render 直接返回组件树（根节点），没有 { body, rows } 外壳
+                entry.body = Some(v);
+                entry.tree_loaded = true;
                 cx.notify();
             }
             Err(e) => self.plugin_broken(ix, e, cx),
@@ -692,6 +696,34 @@ impl Chat {
         }
     }
 
+    /// 组件菜单项回调（01 §4.2：不带 action 的 menu 项 → 插件改自己的数据）。
+    /// 返回后由 `plugin_dispatch` 统一 `plugin_refresh` 重渲染（02 §3 重渲染规则）。
+    pub(crate) fn plugin_command_fire(
+        &mut self,
+        ix: usize,
+        command_id: &str,
+        path: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        let (result, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let host = entry.host.as_ref().unwrap().clone();
+            host.borrow_mut().actions.clear();
+            let js = entry.js.as_ref().unwrap();
+            let r = js.fire_command(command_id, path);
+            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+            (r, drained)
+        };
+        match result {
+            Ok(()) => self.plugin_dispatch(ix, actions, window, cx),
+            Err(e) => self.plugin_broken(ix, e, cx),
+        }
+    }
+
     /// 动作分派（02 §3 动作类 → 宿主实现；run 目标不可执行 → toast 报错）。
     pub(crate) fn plugin_dispatch(
         &mut self,
@@ -716,7 +748,7 @@ impl Chat {
                 JsAction::Toast(m) => self.set_status(m, cx),
             }
         }
-        // store 可能被 onMenu 改过：无条件重 render 刷新行缓存（独立窗口
+        // 插件数据可能被 onMenu/onCommand 改过：无条件重 render（独立窗口
         // 靠 observe(Chat) 自动重渲，02 §4）
         self.plugin_refresh(ix, cx);
     }
@@ -750,10 +782,10 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                         disabled: false,
                         js: None,
                         host: None,
-                        rows: Vec::new(),
-                        rows_loaded: false,
-                        scroll_exec: gpui::ScrollHandle::new(),
-                        scroll_docs: gpui::ScrollHandle::new(),
+                        tree_loaded: false,
+                        scrolls: std::cell::RefCell::new(Vec::new()),
+                        scroll_orphan: gpui::ScrollHandle::new(),
+                        body: None,
                     })
                     .collect(),
                 cx,
@@ -815,8 +847,6 @@ icon = "pin"
 [[contributes.panels]]
 id = "quick"
 title = { zh = "快捷" }
-layout = "grid"
-store = "store.json"
 entry = "main.js"
 "#;
 
@@ -836,7 +866,6 @@ entry = "main.js"
         assert_eq!(m.status_bar.as_ref().unwrap().icon, "assets/bolt.svg");
         assert_eq!(m.file_menu.len(), 1);
         assert_eq!(m.file_menu[0].id, "set-quick");
-        assert_eq!(m.panels[0].layout, "grid");
         assert_eq!(m.panels[0].entry, "main.js");
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -893,22 +922,5 @@ entry = \"main.js\" # 入口
         assert_eq!(m.title_zh, "快捷#面板"); // 引号内 # 保留
         assert_eq!(m.panels[0].entry, "main.js");
         let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn rows_parse() {
-        let rows = parse_rows(
-            r#"{"body":{"type":"list"},"rows":[
-                {"path":"D:\\a\\b.ps1","name":"b.ps1","fileIcon":"terminal","isExec":true},
-                {"path":"D:\\a\\c.md","name":"c.md","fileIcon":"file-text","isExec":false}
-            ]}"#,
-        );
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].name, "b.ps1");
-        assert!(rows[0].is_exec);
-        assert!(!rows[1].is_exec);
-        // 坏 JSON / 缺 rows → 空
-        assert!(parse_rows("{oops").is_empty());
-        assert!(parse_rows(r#"{"body":{}}"#).is_empty());
     }
 }
