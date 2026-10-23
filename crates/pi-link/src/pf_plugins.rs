@@ -56,7 +56,7 @@ pub struct IndexEntry {
     pub url: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Clone, Default)]
 pub struct MarketIndex {
     #[serde(default)]
     pub packages: Vec<IndexEntry>,
