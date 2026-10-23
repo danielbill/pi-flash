@@ -195,3 +195,86 @@ pub(crate) fn hl_cache_probe() -> (usize, usize) {
         (cache.len(), cache.iter().map(|(k, _)| k.1).sum::<usize>())
     })
 }
+
+/// gpui-component 组件盘语法色（issue#4 续）：chat 的 TextView 代码块与
+/// 023 CodeEditor 都吃 `sync_gpui_tokens` 注入的这一份。与上面 syntect
+/// 两盘**同源同值**——暗盘 = vs_dark_plus（=pi-web 的 vscDarkPlus），浅盘
+/// = InspiredGitHub（syntect 默认主题集，色值实测 dump）。全应用代码一个
+/// 色语言，与 pi-web 同思路（isDark ? vscDarkPlus : vs），无每主题配色。
+///
+/// SyntaxColors/ThemeStyle 字段私有，走 serde 直构造（与组件
+/// default-theme.json 同构，未知字段忽略，组件加槽位不破此处）。
+pub(crate) fn component_syntax_colors(dark: bool) -> gpui_component::highlighter::SyntaxColors {
+    const DARK: &str = r##"{
+        "primary":            {"color": "#d4d4d4"},
+        "keyword":            {"color": "#569cd6"},
+        "function":           {"color": "#dcdcaa"},
+        "string":             {"color": "#ce9178"},
+        "string.escape":      {"color": "#d7ba7d"},
+        "string.regex":       {"color": "#d16969"},
+        "string.special":     {"color": "#d7ba7d"},
+        "string.special.symbol": {"color": "#d7ba7d"},
+        "comment":            {"color": "#6a9955"},
+        "comment.doc":        {"color": "#6a9955"},
+        "number":             {"color": "#b5cea8"},
+        "constant":           {"color": "#b5cea8"},
+        "boolean":            {"color": "#569cd6"},
+        "type":               {"color": "#4ec9b0"},
+        "enum":               {"color": "#4ec9b0"},
+        "constructor":        {"color": "#4ec9b0"},
+        "variable":           {"color": "#9cdcfe"},
+        "variable.special":   {"color": "#569cd6"},
+        "property":           {"color": "#9cdcfe"},
+        "attribute":          {"color": "#9cdcfe"},
+        "tag":                {"color": "#569cd6"},
+        "title":              {"color": "#dcdcaa"},
+        "text.literal":       {"color": "#ce9178"},
+        "operator":           {"color": "#d4d4d4"},
+        "punctuation":        {"color": "#d4d4d4"},
+        "punctuation.bracket": {"color": "#d4d4d4"},
+        "punctuation.delimiter": {"color": "#d4d4d4"},
+        "punctuation.list_marker": {"color": "#d4d4d4"},
+        "punctuation.special": {"color": "#d4d4d4"},
+        "link_text":          {"color": "#569cd6"},
+        "link_uri":           {"color": "#9cdcfe"},
+        "label":              {"color": "#c8c8c8"},
+        "preproc":            {"color": "#c586c0"}
+    }"##;
+    const LIGHT: &str = r##"{
+        "primary":            {"color": "#323232"},
+        "keyword":            {"color": "#a71d5d"},
+        "function":           {"color": "#795da3"},
+        "string":             {"color": "#183691"},
+        "string.escape":      {"color": "#a71d5d"},
+        "string.regex":       {"color": "#a71d5d"},
+        "string.special":     {"color": "#a71d5d"},
+        "string.special.symbol": {"color": "#a71d5d"},
+        "comment":            {"color": "#969896"},
+        "comment.doc":        {"color": "#969896"},
+        "number":             {"color": "#0086b3"},
+        "constant":           {"color": "#0086b3"},
+        "boolean":            {"color": "#0086b3"},
+        "type":               {"color": "#0086b3"},
+        "enum":               {"color": "#0086b3"},
+        "constructor":        {"color": "#0086b3"},
+        "variable":           {"color": "#323232"},
+        "variable.special":   {"color": "#323232"},
+        "property":           {"color": "#323232"},
+        "attribute":          {"color": "#795da3"},
+        "tag":                {"color": "#63a35c"},
+        "title":              {"color": "#795da3"},
+        "text.literal":       {"color": "#183691"},
+        "operator":           {"color": "#323232"},
+        "punctuation":        {"color": "#323232"},
+        "punctuation.bracket": {"color": "#323232"},
+        "punctuation.delimiter": {"color": "#323232"},
+        "punctuation.list_marker": {"color": "#323232"},
+        "punctuation.special": {"color": "#323232"},
+        "link_text":          {"color": "#795da3"},
+        "link_uri":           {"color": "#183691"},
+        "label":              {"color": "#323232"},
+        "preproc":            {"color": "#a71d5d"}
+    }"##;
+    serde_json::from_str(if dark { DARK } else { LIGHT })
+        .expect("component_syntax_colors: 内置 JSON 必须合法")
+}

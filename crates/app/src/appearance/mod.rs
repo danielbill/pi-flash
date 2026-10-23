@@ -128,6 +128,10 @@ pub fn sync_gpui_tokens(cx: &mut App) {
     })
     .style
     .clone();
+    // 语法色换 PF 两盘（issue#4 续，用户定夺：组件内置金/蓝盘一个比一个
+    // 难看）——色值与 markdown/highlight.rs 的 syntect 两盘同源同值，chat
+    // 代码块 / CodeEditor / md 预览从此同一个色语言（pi-web 同思路）。
+    hl_style.syntax = crate::editor::markdown::highlight::component_syntax_colors(t.dark);
     hl_style.editor_background = Some(gpui::rgb(t.bg).into());
     hl_style.editor_foreground = Some(gpui::rgb(t.text).into());
     hl_style.editor_line_number = Some(gpui::rgb(t.text_faint).into());
