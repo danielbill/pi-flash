@@ -299,7 +299,10 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 .and_then(Value::as_str)
                 .unwrap_or("regular")
                 .to_string(),
-            ellipsis: node.get("ellipsis").and_then(Value::as_bool).unwrap_or(true),
+            ellipsis: node
+                .get("ellipsis")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
         }),
         "icon" => Some(ResolvedNode::Icon {
             name: node
@@ -681,7 +684,8 @@ fn render_node(
             if *ellipsis {
                 el = el.text_ellipsis();
             }
-            el.child(SharedString::from(text.clone())).into_any_element()
+            el.child(SharedString::from(text.clone()))
+                .into_any_element()
         }
         ResolvedNode::Icon { name, size, tone } => gpui::svg()
             .path(SharedString::from(icon_asset(name, ctx.plugin_id)))
