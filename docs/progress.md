@@ -32,6 +32,13 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-10-23 060 微信 Bot 真机联调：正名（历史误称「远程控制」，实为对齐
+  ZCode Bot 渠道，iLink 直连腾讯）；修两断链——显式启用被 SELF_START 一刀切
+  误杀（扫码成功/开关/wx.enable 全拉不起渠道）、私聊出站全丢（send_loop
+  硬要 chat_id，私聊恒 None）；新增微信默认会话（bot 语境独立于桌面选中
+  态：泵第一拍认领 + session_key 持久化 + /新建 detached 草稿不抢焦点 +
+  /task 改指向 + 删除自愈 + 草稿键迁移跟随）+ 自动化 wx.enable +
+  scripts/pif_auto.mjs；真机入站半程全通，出站待复验
 - 2026-10-19 subagent M2/M3/044核心：codemode fan-out + usage 回流 + 子会话
   codemode 装配；后台投递/控制工具三件/孤儿对账；PF 专属卡（状态徽标/耗时/
   tokens/成本/打开子会话跳转）。full 档 --tools 纳入 agent；子会话判定改
@@ -370,3 +377,12 @@
   `search::results::card_header`（2 行块 + 4px 留白 + 28×28 收展钮）、正文复用
   `match_highlights`（单色 + 中性命中底色）、滚动条常显；查询框 flat、打开当帧
   聚焦（`focus_soon`）；引擎与防抖/代际丢弃沿用 013（`search_sessions_for_cwd`）。
+- **060 微信 Bot 设置页迁左列面板**（2026-10-23 用户定夺）：设置里的微信 Bot
+  内容实现为左侧面板【微信】，设置页签**永久删除**。`DockPanel::Wx` 新面板态；
+  状态栏「项目」旁新增【微信】tab（smartphone 图标，激活/运行态 accent）；
+  面板本体 `remote_control::panel`（控制栏 = 标题+启用开关，body = 状态/绑定码/
+  扫码绑定三节），二维码本体仍走 `Dialog::WxQr` 大卡弹窗（面板 250–500 宽放不下
+  49 模块方块码），面板按钮 = `begin_qr`（幂等）+ 开窗；titlebar 手机钮已绑路径
+  改开左列面板（原开设置页），未绑路径不变（扫码弹窗）；automation `panel.dock wx`
+  同步可达；`settings/remote.rs` 删除、TAB_REMOTE(6) 清干净，`mono_lines` 迁
+  `remote_control::panel`（扫码弹窗共用）。

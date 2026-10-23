@@ -261,13 +261,17 @@ fn send_loop(rx: Receiver<String>, stop: Arc<AtomicBool>) {
         };
         // 每次发送前重读状态：chat_id / bot_user_id 可能在首条入站后才被发现
         let st = state::load();
-        let (Some(to_user), Some(from_user)) = (
-            state::get_str(&st, "chat_id"),
-            state::get_str(&st, "bot_user_id"),
-        ) else {
+        // 对端解析：群聊 = chat_id（room id）；**私聊 = user_id**（入站
+        // from_user_id 随 ack 回写）。曾只认 chat_id —— 而私聊（决策 5：
+        // 唯一支持形态）chat_id 恒为 None，所有回执被静默丢弃（真机表现
+        // 「发了没反应」）。修复（2026-10-23）。
+        let to_user = state::get_str(&st, "chat_id").or_else(|| state::get_str(&st, "user_id"));
+        let (Some(to_user), Some(from_user)) = (to_user, state::get_str(&st, "bot_user_id")) else {
             // **必须出声**：静默丢弃正是「微信收不到回执」迟迟查不出的原因
             // （真机只表现为「没反应」）。
-            warn_once("出站消息被丢弃：状态文件缺 chat_id / bot_user_id（首条入站后随 ack 回写）");
+            warn_once(
+                "出站消息被丢弃：状态文件缺 chat_id/user_id / bot_user_id（首条入站后随 ack 回写）",
+            );
             continue;
         };
         let client_id = state::ensure_client_id(&mut state::load());

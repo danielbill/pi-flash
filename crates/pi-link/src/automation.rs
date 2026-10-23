@@ -109,6 +109,9 @@ pub mod method {
     /// 列表内容读 dialogs 面的 `model_rows`）
     pub const MODEL_PICKER_OPEN: &str = "model.picker_open";
     pub const WX_QR_OPEN: &str = "wx.qr_open";
+    /// 显式启用微信渠道（与设置页开关同一条 set_enabled 路径）。SELF_START=false
+    /// 后，重启实例没有 UI 入口能起渠道（页签已隐藏），自动化是唯一无 UI 启动路径。
+    pub const WX_ENABLE: &str = "wx.enable";
     pub const PROJECT_SWITCH: &str = "project.switch";
     /// psp 项目行 ＋ 按钮同源入口（切到该项目并新建会话）；UI 测试用
     pub const PROJECT_NEW_SESSION_IN: &str = "project.new_session_in";

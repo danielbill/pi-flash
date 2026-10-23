@@ -1,9 +1,9 @@
-//! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他；「微信 Bot」
-//! 页代码保留、导航入口已隐藏——2026-10-10 用户定夺），
+//! Settings panel：左导航页签（界面/模型/技能/扩展/MCP/其他）。
 //! 内部页面按 pi-web 最新版重构（路径条/分组侧栏/详情表单/底栏）。表单
 //! 状态由 SettingsPanel entity 持有；mc_*/mcp_* 动作仍在 Chat 上（单一
 //! RPC 属主）。子代理页已移除——社区子代理扩展经「扩展」页安装即用，
-//! 不再建模任何 subagent 配置。
+//! 不再建模任何 subagent 配置。原「微信 Bot」页签已删除——内容迁左列
+//! 「微信」面板（`remote_control::panel`，060，2026-10-23 定夺）。
 
 pub(crate) mod about;
 pub(crate) mod agents;
@@ -13,7 +13,6 @@ pub(crate) mod mcp;
 pub(crate) mod misc;
 pub(crate) mod models;
 pub(crate) mod pi_extensions;
-pub(crate) mod remote;
 pub(crate) mod shortcuts;
 pub(crate) mod skills;
 pub(crate) mod widgets;
@@ -30,7 +29,7 @@ pub(crate) use widgets::{
 };
 
 /// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 8 快捷键
-/// （6 微信 Bot 的 match 分支保留，导航入口已隐藏——2026-10-10 定）。
+/// （原 6 微信 Bot 页签已删除，内容迁左列「微信」面板——2026-10-23 定）。
 pub(crate) const TAB_GENERAL: u8 = 0;
 pub(crate) const TAB_MODELS: u8 = 1;
 pub(crate) const TAB_SKILLS: u8 = 2;
@@ -39,7 +38,6 @@ pub(crate) const TAB_MCP: u8 = 4;
 /// 子代理页（044-1 §2）：Agent 定义管理（内置/自定义）。
 pub(crate) const TAB_AGENTS: u8 = 9;
 pub(crate) const TAB_MISC: u8 = 5;
-pub(crate) const TAB_REMOTE: u8 = 6;
 pub(crate) const TAB_ABOUT: u8 = 7;
 pub(crate) const TAB_SHORTCUTS: u8 = 8;
 
@@ -526,7 +524,6 @@ pub(crate) fn render_settings(
             &error,
         ),
         TAB_MISC => mc_misc_view(chat, weak),
-        TAB_REMOTE => crate::settings::remote::mc_remote_view(chat, weak),
         TAB_ABOUT => crate::settings::about::mc_about_view(),
         TAB_SHORTCUTS => crate::settings::shortcuts::mc_shortcuts_view(window),
         _ => mc_general_view(
@@ -644,10 +641,10 @@ fn two_pane(sidebar: gpui::AnyElement, detail: gpui::AnyElement) -> gpui::AnyEle
         .into_any_element()
 }
 
-/// 左导航七项（icon + label；激活 = bg_selected + 600 + icon accent）。
-/// 原第七项「微信 Bot」（TAB_REMOTE，历史名「远程控制」）入口已隐藏——2026-10-10 用户定夺；
-/// 页面渲染分支仍在，重开只需往数组加回
-/// `(TAB_REMOTE, "微信 Bot", "message-square")`。
+/// 左导航（icon + label；激活 = bg_selected + 600 + icon accent）。
+/// 原「微信 Bot」页签（TAB_REMOTE，历史名「远程控制」）已永久删除
+///（2026-10-23 定夺）——内容迁左列「微信」面板（`remote_control::panel`），
+/// 不留死分支；要恢复只能重写页面。
 fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElement> {
     let t = T();
     // tr() 传 &'static 键返回 &'static；显式标注避免数组被推断成临时生命周期
@@ -663,7 +660,7 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
         (TAB_SHORTCUTS, tr("settings.tab.shortcuts"), "keyboard"),
     ];
     // 子代理页随功能总开关隐藏（开发旗标默认关；渲染分支保留，重开=删掉
-    // 本行过滤，同 TAB_REMOTE 先例）
+    // 本行过滤）
     if !crate::services::workspace::subagents_enabled() {
         items.retain(|(ix, _, _)| *ix != TAB_AGENTS);
     }

@@ -20,11 +20,14 @@
 //! | ExtUi 请求 → 微信文本 / 回数 → 回填 | `wxprobe::extui::{render,parse}` |
 //! | 长轮询收发 | `wxprobe::transport::{spawn,Batch}` |
 //!
-//! **会话归属（1b 的已知简化）**：入站一律投给**当前活跃会话**
-//! （`active_key`）。ZCode 是「一 bot 一 context + `/绑定 <code>` 选 workspace /
-//! 会话」，§4.2 的 `active_session` 要等 P3 步骤 3 的绑定码落地后才精确。
+//! **会话归属（2026-10-23 定案）**：入站/出站投给**微信默认会话**
+//! （`wx_session`，bot 语境独立于桌面选中态，对齐 ZCode「bot 自己的
+//! activeTask」）。启用后第一拍认领当前活跃会话并持久化（state 的
+//! `session_key`），重启后跟同一条线；`/新建` 给微信线开新草稿（不抢
+//! 桌面焦点），`/task` 选会话改指向；目标被删回退活跃重新认领。
 
 mod menu;
+pub(crate) mod panel;
 mod pipeline;
 use pi_link::protocol::{Command, ExtensionUiRequest};
 
@@ -165,6 +168,15 @@ pub struct RemoteControl {
     qr_rx: Option<std::sync::mpsc::Receiver<wxprobe::register::QrEvent>>,
     /// `/绑定 <code>` 后钉住的会话 runtime key（§4.2 `active_session`）
     pub bound: Option<String>,
+    /// **微信默认会话**（bot 语境，2026-10-23）：微信消息的固定归属，独立于
+    /// 桌面选中态——否则 PF 一重启/一切会话，微信就不知道在跟谁说话。
+    /// 首拍认领当前活跃会话并持久化到 state 的 `session_key`；`/新建` 换新线；
+    /// `/task` 选会话改指向；目标被删则回退活跃。
+    pub wx_session: Option<String>,
+    /// 显式启用待执行标记（设置页开关 / `wx.enable` / 扫码成功置位，
+    /// 泵下一拍统一执行 [`Self::start_transport_from_state`]）。绕开
+    /// SELF_START 门控的同时，让测试可以断言意图而不真起线程。
+    pub(crate) wants_start: bool,
 }
 
 impl RemoteControl {
@@ -183,6 +195,8 @@ impl RemoteControl {
             qr: QrState::Idle,
             qr_rx: None,
             bound: None,
+            wx_session: None,
+            wants_start: false,
         }
     }
 
@@ -235,6 +249,8 @@ impl RemoteControl {
     /// 轮询永不启动——弹窗正常关、消息永远收不到。
     fn start_transport_from_state(&mut self) {
         let st = wxprobe::state::load();
+        // 微信默认会话归属随渠道恢复（重启后微信仍跟同一条线说话）
+        self.wx_session = wxprobe::state::get_str(&st, "session_key");
         // 有 chat_id = 之前已经建立过投递目标，跳过激活欢迎（等价于 ZCode
         // 持久化的 `weixinActivatedAt`）
         self.activated = wxprobe::state::get_str(&st, "chat_id").is_some();
@@ -270,28 +286,67 @@ impl RemoteControl {
         true
     }
 
-    /// 入站/出站该投给哪个会话 —— **始终是当前活跃会话**。
-    ///
-    /// 曾经让 `/bind` 把会话钉死，那与 ZCode 的模型冲突：ZCode 里
-    /// `/bind` 绑的是 **workspace**，选**会话**走 `/task`（选完切进那个会话）。
-    /// 钉死会让 `/task` 切了桌面却投不进去。现在两者各管各的：
-    /// `/bind` = 授权确认（记录态），`/task` = 选会话（直接 `new_session_in`
-    /// 切换活跃会话，之后 `active_key` 自然就是它）。
-    pub fn target_key<'a>(&'a self, active: &'a str) -> &'a str {
-        let _ = &self.bound; // 保留为授权记录，见上
-        active
+    /// 入站/出站的投递目标：**微信默认会话**优先（bot 语境，独立于桌面
+    /// 选中态，对齐 ZCode「bot 自己的 activeTask」）；`/bind` 授权记录次之；
+    /// 都没有（认领前）回落活跃会话。认领由泵第一拍完成（见
+    /// [`Self::claim_default_session`]）。
+    pub(crate) fn target_key(&self, active: &str) -> String {
+        if let Some(k) = &self.wx_session {
+            return k.clone();
+        }
+        if let Some(k) = &self.bound {
+            return k.clone();
+        }
+        active.to_string()
     }
 
-    /// 开/关渠道。开 = **立即**走显式路径拉起（无 token 时起不来并打一行
-    /// 日志，不留死状态）；关 = `transport = None` 触发 `Drop` →
-    /// **join 两条线程 + 释放轮询锁**（P4 验收：关停即停线程，无悬挂）。
+    /// 设置微信默认会话并持久化（state 的 `session_key`），重启后跟同一条线。
+    pub(crate) fn set_wx_session(&mut self, key: impl Into<String>) {
+        let k = key.into();
+        self.wx_session = Some(k.clone());
+        if cfg!(test) {
+            return; // 测试不碰真实 state 文件（live 实例正持着它）
+        }
+        let mut st = wxprobe::state::load();
+        wxprobe::state::set(&mut st, "session_key", Some(&k));
+        wxprobe::state::save(&st);
+    }
+
+    /// 启动认领：微信线还没有归属时认当前活跃会话（幂等，每拍调用安全）。
+    /// 「PF 启动时应有一个默认的微信对话，否则微信跟谁说话」——归属在
+    /// 渠道启用后的第一拍就有，之后桌面切换不再牵动微信线。
+    pub(crate) fn claim_default_session(&mut self, active: &str) {
+        if self.wx_session.is_some() {
+            return;
+        }
+        self.set_wx_session(active.to_string());
+    }
+
+    /// 目标会话被删时清空微信线归属（下次投递回退活跃并重新认领）
+    pub(crate) fn clear_wx_session_if(&mut self, key: &str) {
+        if self.wx_session.as_deref() == Some(key) {
+            self.wx_session = None;
+            if cfg!(test) {
+                return; // 同 set_wx_session
+            }
+            let mut st = wxprobe::state::load();
+            wxprobe::state::set(&mut st, "session_key", None);
+            wxprobe::state::save(&st);
+        }
+    }
+
+    /// 开/关渠道。开 = 置 `wants_start`，泵下一拍统一走显式路径拉起
+    /// （无 token 时起不来并打一行日志，不留死状态）；关 = `transport = None`
+    /// 触发 `Drop` → **join 两条线程 + 释放轮询锁**（P4 验收：关停即停线程，
+    /// 无悬挂）。
     pub fn set_enabled(&mut self, on: bool) {
         if on {
             // 泵的自动路径关掉：ensure_transport 是 SELF_START 门控的开机自启，
-            // 显式启用不走它
+            // 显式启用走 wants_start → 泵下一拍 start_transport_from_state
             self.boot_attempted = true;
-            self.start_transport_from_state();
+            self.wants_start = true;
         } else {
+            self.wants_start = false;
             self.transport = None;
             self.boot_attempted = true;
         }
@@ -670,15 +725,33 @@ pub(crate) fn spawn_wx_pump(cx: &mut gpui::Context<crate::Chat>) {
 }
 
 impl crate::Chat {
+    /// 打开左列「微信」面板（titlebar 手机钮已绑路径 / automation
+    /// `panel.dock wx`）。面板列收起时先展开——否则切了 dock 也看不见。
+    pub(crate) fn open_wx_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.layout.panes_hidden = false;
+        self.layout.dock_panel = crate::DockPanel::Wx;
+        cx.notify();
+    }
+
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
+        // 显式启用（设置页开关 / wx.enable / 扫码成功）→ 泵这一拍统一执行；
+        // 200ms 延迟不可感，换来测试可断言意图而不真起线程
+        if self.aux.remote.wants_start && !self.aux.remote.is_running() {
+            self.aux.remote.wants_start = false;
+            self.aux.remote.start_transport_from_state();
+        }
+        // 微信默认会话认领（幂等）：启用后第一拍即有归属，重启后从 state 恢复
+        self.aux.remote.claim_default_session(&self.pool.active_key);
         // 060 档 1 回推：空闲/轮次结束时把 assistant 缓冲发干净。
         // 每拍都调，flush 在缓冲为空时是 no-op。
+        // 运行态读**目标会话**（微信线 ≠ 桌面活跃时，/新建 /task 的守卫要看微信线的）
+        let wx_target = self.aux.remote.target_key(&self.pool.active_key);
         let running = self
             .pool
             .runtimes
-            .get(&self.pool.active_key)
+            .get(&wx_target)
             .map(|rt| rt.read(cx).agent_running)
             .unwrap_or(false);
         // 回填给 route() —— /task 的两个守卫要用（route 拿不到 cx）
@@ -694,10 +767,10 @@ impl crate::Chat {
             {
                 self.dlg.dialog = None;
             }
-            // 扫码成功 → **立即起渠道**（显式路径，不受 SELF_START 门控）：
-            // 扫完即可收发，不用再摸一下设置页开关
-            if matches!(self.aux.remote.qr, QrState::Done { .. }) && !self.aux.remote.is_running() {
-                self.aux.remote.start_transport_from_state();
+            // 扫码成功 → 渠道起（wants_start 置位，本拍上方统一执行；
+            // 不受 SELF_START 门控，不用再摸设置页开关）
+            if matches!(self.aux.remote.qr, QrState::Done { .. }) {
+                self.aux.remote.wants_start = true;
             }
             cx.notify();
         }
@@ -746,8 +819,12 @@ impl crate::Chat {
                     // ZCode `case "new"`：任务运行中不让新建
                     self.aux.remote.send(&t(lang, TASK_RUNNING));
                 } else {
-                    self.new_session(cx);
-                    // 同上：建完草稿回状态卡（`return createStatusReply(...)`）
+                    // 微信 /新建 = 给 bot 语境开一条新线，**不抢桌面焦点**
+                    //（微信线的 activeTask 独立于桌面选中态，对齐 ZCode）
+                    if let Some(key) = self.new_draft_detached(cx) {
+                        self.aux.remote.set_wx_session(key);
+                    }
+                    // 建完草稿回状态卡（`return createStatusReply(...)`）
                     if let Some(text) = self.status_reply(cx, lang) {
                         self.aux.remote.send(&text);
                     }
@@ -881,8 +958,17 @@ impl crate::Chat {
                     return;
                 }
                 if let Some(info) = self.pool.sessions.iter().find(|s| s.id == value) {
-                    let path = info.path.clone();
-                    self.new_session_in(path, cx);
+                    let path_key = info.path.to_string_lossy().to_string();
+                    if self.pool.runtimes.contains_key(&path_key) {
+                        // 已开着 → 只改微信线归属，桌面不动（bot 语境独立）
+                        self.aux.remote.set_wx_session(path_key);
+                    } else {
+                        // 没开着 → 打开即活跃（现存唯一无焦打开路径），
+                        // 微信线跟到新活跃
+                        let path = info.path.clone();
+                        self.new_session_in(path, cx);
+                        self.aux.remote.set_wx_session(self.pool.active_key.clone());
+                    }
                 }
                 self.reply_status(cx);
             }
@@ -915,16 +1001,24 @@ impl crate::Chat {
     }
 
     fn send_wx(&mut self, cmd: &Command, cx: &mut gpui::Context<Self>) {
-        // `/bind` 钉住的会话优先，否则当前活跃会话（§4.2 active_session）
-        let key = self
-            .aux
-            .remote
-            .target_key(&self.pool.active_key)
-            .to_string();
-        let Some(rt) = self.pool.runtimes.get(&key).cloned() else {
-            // 找不到目标会话也要出声 —— 静默丢弃已经坑过一次（微信没回执）
-            eprintln!("[wx] 命令未送达：没有 key = {key} 的会话");
-            return;
+        // 微信默认会话优先（bot 语境），/bind 记录次之，认领前回落活跃
+        let key = self.aux.remote.target_key(&self.pool.active_key);
+        let rt = match self.pool.runtimes.get(&key).cloned() {
+            Some(rt) => rt,
+            None => {
+                // 目标会话（微信线）已被删 → 清归属、重新认领活跃，重试一次。
+                // 静默丢弃已经坑过一次（微信没回执），这里必须自愈。
+                self.aux.remote.clear_wx_session_if(&key);
+                self.aux.remote.claim_default_session(&self.pool.active_key);
+                let fallback = self.aux.remote.target_key(&self.pool.active_key);
+                match self.pool.runtimes.get(&fallback).cloned() {
+                    Some(rt) => rt,
+                    None => {
+                        eprintln!("[wx] 命令未送达：没有 key = {key} 的会话，且无活跃会话可兜底");
+                        return;
+                    }
+                }
+            }
         };
         let sent = rt.update(cx, |r, cx| match cmd {
             // 文本要走「没进程先 spawn」，否则草稿会话永远收不到
@@ -937,16 +1031,19 @@ impl crate::Chat {
     }
     /// 当前活跃会话是否在跑（`/新建` 的运行中分支与状态卡共用）。
     fn agent_running_now(&self, cx: &gpui::App) -> bool {
+        // 读微信线的目标会话（≠ 桌面活跃时，/新建 的守卫要看微信线的）
+        let key = self.aux.remote.target_key(&self.pool.active_key);
         self.pool
             .runtimes
-            .get(&self.pool.active_key)
+            .get(&key)
             .map(|rt| rt.read(cx).agent_running)
             .unwrap_or(false)
     }
 
-    /// 活跃会话 → `/状态` 卡片；启动瞬间没有 runtime 时返回 `None`。
+    /// 微信线目标会话 → `/状态` 卡片；没有 runtime 时返回 `None`。
     fn status_reply(&self, cx: &gpui::App, lang: Lang) -> Option<String> {
-        let rt = self.pool.runtimes.get(&self.pool.active_key)?;
+        let key = self.aux.remote.target_key(&self.pool.active_key);
+        let rt = self.pool.runtimes.get(&key)?;
         let r = rt.read(cx);
         let workspace = r
             .cwd
@@ -1015,7 +1112,7 @@ pub(crate) fn render_wx_qr(
     weak: &gpui::WeakEntity<crate::Chat>,
     t: &theme::Theme,
 ) -> gpui::AnyElement {
-    use crate::settings::remote::mono_lines;
+    use crate::remote_control::panel::mono_lines;
 
     let body_text = |text: String, dim: bool| -> gpui::AnyElement {
         div()
@@ -1343,16 +1440,37 @@ mod tests {
     }
 
     #[test]
-    fn routing_always_follows_the_active_session() {
-        // ZCode 模型：/bind 绑 workspace、/task 选会话（选完切进那个会话）。
-        // 让 /bind 钉死会话会和 /task 打架 —— 切了桌面却投不进去。
-        let rc = RemoteControl::new();
+    fn routing_prefers_wx_session_then_bound_then_active() {
+        // 微信默认会话（bot 语境）优先 —— 独立于桌面选中态；
+        // /bind 记录次之；都没有 → 活跃会话（认领前的兑底）。
+        let mut rc = RemoteControl::new();
         assert_eq!(rc.target_key("draft-9"), "draft-9");
-        // 即便授权过，路由仍然跟着活跃会话走
-        let mut rc2 = RemoteControl::new();
-        let code = rc2.bind_code("draft-7");
-        assert!(rc2.accept_bind(&code, "draft-7"));
-        assert_eq!(rc2.target_key("draft-9"), "draft-9");
+
+        // 认领后固定指向微信线，桌面切换不再牵动
+        rc.claim_default_session("draft-9");
+        assert_eq!(rc.target_key("draft-11"), "draft-9", "认领后不跟桌面活跃");
+
+        // /bind 是授权记录，不抢占微信线的路由地位（ZCode：绑 workspace，
+        // 选会话走 /task）；此处仅验证优先级次序
+        rc.wx_session = None;
+        let code = rc.bind_code("draft-7");
+        assert!(rc.accept_bind(&code, "draft-7"));
+        assert_eq!(rc.target_key("draft-11"), "draft-7");
+    }
+
+    #[test]
+    fn clear_wx_session_only_clears_the_wx_line() {
+        let mut rc = RemoteControl::new();
+        rc.claim_default_session("draft-9");
+        assert!(rc.wx_session.is_some());
+        // 删的不是微信线 → 不动
+        rc.clear_wx_session_if("draft-5");
+        assert!(rc.wx_session.is_some());
+        // 删的正是微信线 → 清空，下拍重新认领
+        rc.clear_wx_session_if("draft-9");
+        assert!(rc.wx_session.is_none());
+        rc.claim_default_session("draft-11");
+        assert_eq!(rc.target_key("draft-11"), "draft-11");
     }
 
     #[test]

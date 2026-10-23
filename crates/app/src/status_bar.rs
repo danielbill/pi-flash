@@ -10,6 +10,7 @@ use gpui::SharedString;
 
 use crate::Chat;
 use crate::appearance::theme::theme as T;
+use crate::i18n::tr;
 use crate::services::workspace::{dock_max_from_min, save_ui_state, ui_state};
 use crate::ui::tokens::align;
 use crate::ui::tooltip::WithTip;
@@ -33,7 +34,9 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
         // 020-1：面板 tab 只剩「项目」一个（briefcase 图标；文件树
         // tab 隐藏——文件树已并入上方整合面板）。tab 位保留，后续
         // 新面板在此续可点 tab。
-        .child(project_tab(chat, cx));
+        .child(project_tab(chat, cx))
+        // 「微信」tab（060）：自设置页迁移的微信 Bot 面板入口
+        .child(wx_tab(chat, cx));
     for (pix, p) in chat.plugins.plugins.iter().enumerate() {
         let Some(sb) = p.manifest.status_bar.as_ref() else {
             continue;
@@ -180,6 +183,54 @@ fn project_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElem
             "icon-project",
             18.,
             if active { t.accent } else { t.text_muted },
+        ))
+}
+
+/// 「微信」tab（060）：连体卡（与「项目」tab 同形同源），点击切左列
+/// 微信 Bot 面板（DockPanel::Wx）。图标随渠道运行态着色（运行 = accent）。
+fn wx_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+    let t = T();
+    let active = chat.layout.dock_panel == crate::DockPanel::Wx;
+    let running = chat.aux.remote.is_running();
+    div()
+        .id("wx-tab")
+        // ui-raw: ok 与「项目」tab 同形的 46px tab（w46/mt−4），尺寸待
+        // tab 体系 token 化时一并收编（§10.8）
+        .w(px(46.))
+        // tab 高 = bar 高 −4（2026-10-13 定夺，上下两 bar 同规则）
+        .h(px(HEIGHT - 4.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(active, |d| {
+            d.bg(rgb(t.nav))
+                .border_1()
+                .border_t_0()
+                .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+                .rounded_bl(px(9.))
+                .rounded_br(px(9.))
+        })
+        .mt(px(-4.))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .with_tip_text(tr("remote.panel_title"))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                if this.layout.dock_panel != crate::DockPanel::Wx {
+                    this.open_wx_panel(cx);
+                }
+            }),
+        )
+        // 大图标档 LG18（020-1 图标两档定夺：与「项目」tab 同档）
+        .child(crate::ui::icon(
+            "smartphone",
+            18.,
+            if active || running {
+                t.accent
+            } else {
+                t.text_muted
+            },
         ))
 }
 

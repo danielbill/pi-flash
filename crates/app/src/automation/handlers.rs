@@ -418,7 +418,7 @@ pub(super) fn dispatch(
             let panel = params
                 .get("panel")
                 .and_then(Value::as_str)
-                .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin\"}"))?;
+                .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin|wx\"}"))?;
             let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
             chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
                 .ok_or_else(|| bad(format!("未知 dock 面板: {panel:?}")))?;
@@ -733,6 +733,12 @@ pub(super) fn dispatch(
             chat.dlg.dialog = Some(crate::Dialog::WxQr);
             cx.notify();
             ok()
+        }
+        method::WX_ENABLE => {
+            // 显式启用微信渠道（与设置页开关同一条 set_enabled 路径）。
+            // 返回渠道是否真的起来了 —— 无 token 时起不来，调用方看 running 字段。
+            chat.aux.remote.set_enabled(true);
+            Ok(json!({ "ok": true, "running": chat.aux.remote.is_running() }))
         }
         method::DIALOG_CLOSE => {
             chat.dlg.dialog = None;

@@ -68,7 +68,8 @@ pub(crate) enum TopPanel {
 /// 左列面板（statusbar tab 互斥切换）。020-1 曾有三态 sessions/files/git，
 /// 简化后 sessions/files 渲染已无差别（文件树并入整合面板）——2026-10
 /// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
-/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
+/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起），`Wx` 为微信 Bot
+/// 面板（060，自设置页迁移）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {
     /// 整合面板：会话列表(上) + 文件树(下)
@@ -77,6 +78,8 @@ pub(crate) enum DockPanel {
     Git,
     /// 插件面板（ix = pf_plugin::PluginUi.plugins 下标；不跨重启持久化）
     Plugin(usize),
+    /// 微信 Bot 面板（060；开关/状态/绑定/扫码入口）
+    Wx,
 }
 
 impl DockPanel {
@@ -86,6 +89,7 @@ impl DockPanel {
             DockPanel::Default => "sessions", // 旧键名，读回兼容
             DockPanel::Git => "git",
             DockPanel::Plugin(_) => "sessions",
+            DockPanel::Wx => "wx",
         }
     }
 
@@ -95,6 +99,7 @@ impl DockPanel {
             "sessions" | "files" | "default" => Some(DockPanel::Default),
             "git" => Some(DockPanel::Git),
             "plugin" => Some(DockPanel::Plugin(plugin_ix)),
+            "wx" => Some(DockPanel::Wx),
             _ => None,
         }
     }

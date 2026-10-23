@@ -291,6 +291,25 @@ impl Chat {
         self.new_session_with(cx, true);
     }
 
+    /// 微信 `/新建`：建草稿**不切桌面**（bot 语境自己的会话线，对齐 ZCode
+    /// 「bot 的 activeTask 独立于桌面选中态」）。返回新草稿 key；焦点、
+    /// 活跃态、per-project 会话记忆全不动。首条 prompt 后草稿键经
+    /// `on_file_bound` 迁移到会话文件路径，微信线跟随。
+    pub(crate) fn new_draft_detached(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let cwd = self.ws.cwd.clone()?;
+        let key = format!("draft-{}", self.pool.draft_seq);
+        self.pool.draft_seq += 1;
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(key.clone(), cwd, None);
+            r.default_model = services::workspace::default_model_pref();
+            r.status = tr("session.new").to_string();
+            r
+        });
+        self.pool.runtimes.insert(key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        Some(key)
+    }
+
     /// 启动落草稿（restore=off / 该项目无会话）：**不清 per-project 会话
     /// 记忆**——旧会话还在盘上，下次开 restore 仍应能直接加载（010）。
     pub(crate) fn boot_new_session(&mut self, cx: &mut Context<Self>) {
@@ -355,6 +374,11 @@ impl Chat {
         }
         if self.pool.active_key == old_key {
             self.pool.active_key = path_key.clone();
+        }
+        // 微信线跟随迁移：草稿键 → 会话文件路径键（否则微信 /新建 后第一条
+        // 消息一落地，归属就指向已退役的 draft-N，后续全部回退活跃会话）
+        if self.aux.remote.wx_session.as_deref() == Some(old_key.as_str()) {
+            self.aux.remote.set_wx_session(path_key.clone());
         }
         self.psp.active_file = Some(path.clone());
         // recents (003-session管理): a fresh session file just landed
