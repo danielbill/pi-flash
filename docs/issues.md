@@ -1,10 +1,23 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-10-22 21:14 ｜ 共 3 条（open 1）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-10-23 20:51 ｜ 共 4 条（open 2）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
 
-## 🔴 Open（1）
+## 🔴 Open（2）
+
+### #4 显示的md渲染颜色可以自定义最好
+- 状态：open ｜ 标签：— ｜ 作者：zhoujun681 ｜ 创建：2026-10-23 ｜ 更新：2026-10-23
+- https://github.com/danielbill/pi-flash/issues/4
+
+<img width="1975" height="549" alt="Image" src="https://github.com/user-attachments/assets/8d95053d-0f02-465c-a411-8dc6958d7155" />
+暗主题这些字颜色太不好看了，可以自定义最好。代码块最好带代码框显示。图上源码为：
+```bash
+  cd /opt/projects/daily-report-test/daily-report-src
+  bash deploy/build-image.sh --root /opt/projects/daily-report-test
+  bash deploy/upgrade.sh --root /opt/projects/daily-report-test "$(bash deploy/version.sh read)"
+  curl -fsS http://127.0.0.1:8091/api/system/health
+```
 
 ### #2 add release build for mac?
 - 状态：open ｜ 标签：— ｜ 作者：mungowang ｜ 创建：2026-10-20 ｜ 更新：2026-10-21

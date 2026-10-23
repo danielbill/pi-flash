@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务管理 · 原型（046 自动任务）</title>
+<style>
+html,body{margin:0;padding:0;background:#f4f8f7;overflow:hidden}
+</style>
+</head>
+<body>
+<div id="pf-tasks-mock">
+<style>
+/* ── mist 主题(与 docs/UI设计/主界面UI设计-2.html 同源) ── */
+#pf-tasks-mock{--bg:#f4f8f7;--bg-panel:#e9f0ee;--bg-hover:#e0eae7;--bg-selected:#d7e4df;--border:#afc4ba;
+--text:#202e2b;--text-muted:#455f56;--text-dim:#52685f;--text-soft:#8a9d95;--text-faint:#a3b0aa;
+--accent:#1e6559;--accent-hover:#174f46;--chrome:#dfe9e5;--nav:#eef4f1;--green:#2fa356;
+--notice:#3aa6d0;--warn:#facc15;--danger:#c25460;--danger-hover:#d8626a;
+--bd:rgba(175,196,186,.55);--bd-soft:rgba(175,196,186,.45);
+font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;color:var(--text)}
+#pf-tasks-mock *{box-sizing:border-box;margin:0;padding:0}
+#pf-tasks-mock button{font-family:inherit}
+#pf-tasks-mock svg{display:block}
+
+/* ── 应用壳 ── */
+#pf-tasks-mock .app{width:100vw;height:100vh;background:var(--bg);overflow:hidden;display:flex;flex-direction:column;position:relative}
+#pf-tasks-mock .app-body{flex:1;min-height:0;display:flex}
+#pf-tasks-mock .panel-col{width:300px;flex:none;display:flex;flex-direction:column;min-height:0;background:var(--chrome)}
+#pf-tasks-mock .panel-row{flex:1;min-height:0;display:flex}
+#pf-tasks-mock .content-col{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--bd-soft);background:var(--bg)}
+#pf-tasks-mock .topbar-l,#pf-tasks-mock .topbar-r{height:40px;flex:none;display:flex;align-items:center;user-select:none}
+#pf-tasks-mock .topbar-l{background:var(--chrome)}
+#pf-tasks-mock .topbar-r{background:var(--chrome);border-bottom:1px solid var(--bd-soft);padding-right:6px}
+#pf-tasks-mock .tb-icon-btn{width:30px;height:30px;border:0;border-radius:7px;background:transparent;color:var(--text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer}
+#pf-tasks-mock .tb-icon-btn svg{width:18px;height:18px}
+#pf-tasks-mock .tb-icon-btn:hover{color:var(--text)}
+#pf-tasks-mock .tb-divider{width:1px;height:18px;background:var(--bd);margin:0 6px}
+#pf-tasks-mock .tb-spacer{flex:1}
+#pf-tasks-mock .tb-win{display:flex;align-items:center}
+#pf-tasks-mock .tb-win>div{width:42px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .tb-win svg{width:13px;height:13px}
+#pf-tasks-mock .tb-win>div:not(.close):hover{color:var(--text)}
+#pf-tasks-mock .tb-win>div.close:hover{background:var(--danger-hover);color:#fff}
+
+/* 顶栏标签条:激活 = Obsidian 融底卡 */
+#pf-tasks-mock .tab-strip{flex:1;min-width:0;display:flex;align-items:flex-end;gap:4px;padding-left:10px;align-self:stretch;overflow:hidden}
+#pf-tasks-mock .c-tab{flex:none;display:flex;align-items:center;gap:9px;height:36px;max-width:120px;background:transparent;border:0;border-radius:0;padding:0 12px;font-size:12px;color:var(--text-muted);white-space:nowrap;cursor:pointer;overflow:hidden}
+#pf-tasks-mock .c-tab svg{width:15px;height:15px;flex:none}
+#pf-tasks-mock .c-tab:hover{color:var(--text)}
+#pf-tasks-mock .c-tab.act{max-width:300px;margin-bottom:-1px;background:var(--bg);border:1px solid var(--bd);border-top:0;border-radius:9px 9px 0 0;color:var(--text);padding:0 5px 0 12px}
+#pf-tasks-mock .c-tab .x{width:20px;height:20px;flex:none;border-radius:5px;display:none;align-items:center;justify-content:center;color:var(--text-dim)}
+#pf-tasks-mock .c-tab .x svg{width:12px;height:12px}
+#pf-tasks-mock .c-tab .x:hover{background:var(--bg-hover);color:var(--text)}
+#pf-tasks-mock .c-tab.act .x{display:flex}
+
+/* ── dock:psp 会话/文件树 ── */
+#pf-tasks-mock .dock{flex:1;min-width:0;background:var(--nav);display:flex;flex-direction:column;min-height:0}
+#pf-tasks-mock .sub-panel{display:flex;flex-direction:column;min-height:0;position:relative}
+#pf-tasks-mock .sp-divider{flex:none;height:7px;cursor:row-resize;position:relative}
+#pf-tasks-mock .sp-divider::after{content:"";position:absolute;left:10px;right:10px;top:3px;height:1px;background:var(--bd-soft)}
+#pf-tasks-mock .psp-ctrl{flex:none;height:38px;display:flex;align-items:center;gap:2px;padding:0 10px 0 4px}
+#pf-tasks-mock .pc-btn{border:0;background:transparent;border-radius:8px;padding:0 8px;height:30px;display:flex;align-items:center;gap:6px;color:var(--text-dim);font-size:12.5px;font-weight:600;cursor:pointer}
+#pf-tasks-mock .pc-btn:hover{background:var(--bg-hover);color:var(--text)}
+#pf-tasks-mock .pc-btn svg{width:18px;height:18px}
+#pf-tasks-mock .pc-btn.icon{width:28px;padding:0;justify-content:center}
+#pf-tasks-mock .pc-btn.icon svg{width:16px;height:16px}
+#pf-tasks-mock .pc-spacer{flex:1}
+#pf-tasks-mock .panel-view{flex:1;min-height:0;overflow-y:auto;padding:6px 10px;scrollbar-width:none}
+#pf-tasks-mock .panel-view::-webkit-scrollbar{display:none}
+#pf-tasks-mock .prj-row{position:relative;flex:none;width:100%;border:0;cursor:pointer;text-align:left;background:transparent;color:var(--text-dim);border-radius:8px;height:32px;padding:0 10px 0 2px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+#pf-tasks-mock .prj-row svg{width:15px;height:15px;flex:none}
+#pf-tasks-mock .prj-row.active{color:var(--accent);font-weight:700}
+#pf-tasks-mock .ps-row{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px 0 2px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text)}
+#pf-tasks-mock .ps-row:hover{background:color-mix(in srgb,var(--text) 5%,transparent)}
+#pf-tasks-mock .ps-row .slot{width:15px;height:15px;flex:none;display:flex;align-items:center;justify-content:center}
+#pf-tasks-mock .ps-row .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden}
+#pf-tasks-mock .ps-row .time{flex:none;width:38px;text-align:right;font-size:11px;color:var(--text-faint)}
+#pf-tasks-mock .spin{width:9px;height:9px;border-radius:50%;flex:none;border:1.5px solid var(--accent);border-top-color:transparent;animation:pfrot 1s linear infinite}
+@keyframes pfrot{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#pf-tasks-mock .spin{animation:none}}
+#pf-tasks-mock .gdot,#pf-tasks-mock .wdot,#pf-tasks-mock .edot{width:7px;height:7px;border-radius:50%;flex:none}
+#pf-tasks-mock .gdot{background:var(--notice);box-shadow:0 0 0 2.5px rgba(58,166,208,.16)}
+#pf-tasks-mock .wdot{background:var(--warn);box-shadow:0 0 0 2.5px rgba(250,204,21,.18)}
+#pf-tasks-mock .edot{background:var(--danger);box-shadow:0 0 0 2.5px rgba(194,84,96,.16)}
+#pf-tasks-mock .ft-actions{flex:none;height:38px;display:flex;align-items:center;padding:0 10px 0 12px}
+#pf-tasks-mock .ft-proj{font-size:12px;font-weight:700;color:var(--accent)}
+#pf-tasks-mock .ft-btns{margin-left:auto;display:flex;gap:2px}
+#pf-tasks-mock .ft-act{width:26px;height:26px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer;border:0;background:transparent}
+#pf-tasks-mock .ft-act:hover{background:var(--bg-hover);color:var(--text)}
+#pf-tasks-mock .ft-act svg{width:16px;height:16px}
+#pf-tasks-mock .ft-list{flex:1;min-height:0;overflow:hidden;padding:4px 6px}
+#pf-tasks-mock .ft-row{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px 0 6px;border-radius:4px;font-size:12px;color:var(--text-dim);cursor:default;white-space:nowrap}
+#pf-tasks-mock .ft-row svg{width:14px;height:14px;flex:none;color:var(--text-dim)}
+#pf-tasks-mock .ft-row.l1{padding-left:32px}
+
+/* ── 状态栏(左 dock 底) ── */
+#pf-tasks-mock .statusbar{position:relative;width:300px;height:40px;flex:none;background:var(--chrome);display:flex;align-items:flex-end;font-size:11px;color:var(--text-dim)}
+#pf-tasks-mock .sb-btns{display:flex;align-items:flex-end;gap:2px;padding-left:12px}
+#pf-tasks-mock .sb-tab{height:36px;width:46px;flex:none;display:flex;align-items:center;justify-content:center;border:0;background:transparent;padding:0;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .sb-tab.on{height:40px;margin-top:-4px;background:var(--nav);border:1px solid var(--bd);border-top:0;border-radius:0 0 9px 9px;color:var(--accent)}
+#pf-tasks-mock .sb-tab svg{width:16px;height:16px}
+#pf-tasks-mock .sb-settings{margin-left:auto;margin-right:12px;width:46px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;border:0;background:transparent;padding:0;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .sb-settings svg{width:18px;height:18px}
+#pf-tasks-mock .sb-settings:hover{background:var(--bg-hover);color:var(--text)}
+
+/* ── 任务管理页(内容区视图) ── */
+#pf-tasks-mock .tasks-page{flex:1;min-height:0;display:none;flex-direction:column}
+#pf-tasks-mock .tasks-page.on{display:flex}
+/* 页头:左【任务】【日志】两表头 + 右【新建】按钮 */
+#pf-tasks-mock .tk-head{flex:none;height:40px;background:var(--nav);border-bottom:1px solid var(--bd-soft);display:flex;align-items:flex-end;padding:0 12px 0 16px}
+#pf-tasks-mock .tk-tabs{display:flex;gap:4px;align-self:stretch;align-items:flex-end}
+#pf-tasks-mock .tk-tab{flex:none;display:flex;align-items:center;gap:7px;height:34px;padding:0 16px;border:1px solid transparent;border-top:0;border-radius:9px 9px 0 0;margin-bottom:-1px;background:transparent;font-size:12.5px;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .tk-tab:hover{color:var(--text)}
+#pf-tasks-mock .tk-tab.on{background:var(--bg);border-color:var(--bd);border-bottom:0;color:var(--text);font-weight:600}
+#pf-tasks-mock .tk-new{margin-left:auto;align-self:center;display:flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:1px solid var(--bd);border-radius:7px;background:var(--bg);font-size:12px;color:var(--text);cursor:pointer}
+#pf-tasks-mock .tk-new:hover{background:var(--bg-hover)}
+#pf-tasks-mock .tk-new svg{width:14px;height:14px;color:var(--text-dim)}
+#pf-tasks-mock .tk-body{flex:1;min-height:0;display:none}
+#pf-tasks-mock .tk-body.on{display:flex}
+
+/* ── 任务 tab:set-split 两栏(设置-MCP 页同款骨架) ── */
+#pf-tasks-mock .set-split{display:flex;gap:0;min-height:0;flex:1}
+#pf-tasks-mock .sp-list{width:350px;flex:none;border-right:1px solid var(--bd-soft);padding:10px 10px 14px 4px;overflow-y:auto;scrollbar-width:none}
+#pf-tasks-mock .sp-list::-webkit-scrollbar{display:none}
+#pf-tasks-mock .sp-detail{flex:1;min-width:0;padding:14px 20px 16px 15px;overflow-y:auto}
+#pf-tasks-mock .sp-li{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;font-size:12.5px;color:var(--text);cursor:pointer}
+#pf-tasks-mock .sp-li:hover{background:var(--bg-hover)}
+#pf-tasks-mock .sp-li.sel{background:var(--bg-selected)}
+#pf-tasks-mock .sp-li .tico{width:15px;height:15px;flex:none;color:var(--text-dim)}
+#pf-tasks-mock .sp-li .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* agent 任务名:下划线可点击 = 打开对话窗口 */
+#pf-tasks-mock .sp-li .t.link{text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+#pf-tasks-mock .sp-li .t.link:hover{color:var(--accent)}
+#pf-tasks-mock .sp-li.off .t{color:var(--text-faint)}
+/* 条目右侧:最后运行时间 + 执行状态点(纯点,圆圈在列内左对齐) */
+#pf-tasks-mock .sp-li .time{flex:none;font-size:11px;color:var(--text-faint);font-family:Consolas,monospace}
+#pf-tasks-mock .dotcol{width:16px;flex:none;display:flex;align-items:center;justify-content:flex-start}
+#pf-tasks-mock .okdot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--green);box-shadow:0 0 0 2.5px rgba(47,163,86,.16)}
+
+/* 表单(sp-detail / 设置页 field 语言);无标题,右上仅动作 */
+#pf-tasks-mock .frm-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+#pf-tasks-mock .name-input{flex:1;min-width:0;height:34px;border:1px solid transparent;background:transparent;border-radius:6px;padding:0 8px;margin-left:-8px;font-size:14px;font-weight:600;color:var(--text);font-family:inherit;outline:0}
+#pf-tasks-mock .name-input::placeholder{color:var(--text-faint);font-weight:400}
+#pf-tasks-mock .name-input:hover{background:var(--bg-panel);border-color:var(--bd-soft)}
+#pf-tasks-mock .name-input:focus{background:var(--bg-panel);border-color:var(--accent)}
+#pf-tasks-mock .ghost-btn{border:0;background:transparent;padding:3px 8px;border-radius:6px;font-size:12px;color:var(--text-dim);cursor:pointer;font-family:inherit}
+#pf-tasks-mock .ghost-btn:hover{background:var(--bg-hover);color:var(--text)}
+#pf-tasks-mock .ghost-btn.danger{color:var(--danger)}
+#pf-tasks-mock .ghost-btn.danger:hover{background:rgba(216,98,106,.1);color:var(--danger)}
+#pf-tasks-mock .g-btn{border:1px solid var(--bd);border-radius:7px;background:var(--bg);padding:4px 14px;font-size:12px;color:var(--text);cursor:pointer;font-family:inherit}
+#pf-tasks-mock .g-btn:hover{background:var(--bg-hover)}
+#pf-tasks-mock .field{margin-top:14px}
+#pf-tasks-mock .field .fl2{font-size:11.5px;color:var(--text-dim);margin-bottom:5px}
+#pf-tasks-mock .field .fr{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#pf-tasks-mock input[type=text]{height:30px;border:1px solid var(--bd);background:var(--bg-panel);border-radius:6px;padding:0 10px;font-size:12px;color:var(--text);font-family:inherit;outline:0}
+#pf-tasks-mock input[type=text]:focus{border-color:var(--accent)}
+#pf-tasks-mock input[type=text]::placeholder{color:var(--text-faint)}
+#pf-tasks-mock textarea{width:100%;max-width:620px;height:150px;resize:vertical;border:1px solid var(--bd);border-radius:6px;background:var(--bg-panel);padding:8px 10px;font-size:12px;line-height:1.65;color:var(--text);font-family:inherit;outline:0}
+#pf-tasks-mock textarea:focus{border-color:var(--accent)}
+#pf-tasks-mock .composer{width:100%;max-width:620px;border:1px solid var(--bd);border-radius:10px;background:var(--bg-panel);display:flex;flex-direction:column;overflow:hidden}
+#pf-tasks-mock .composer:focus-within{border-color:var(--accent)}
+#pf-tasks-mock .cm-area{border:0;border-radius:0;background:transparent;height:auto;min-height:120px;resize:vertical;padding:10px 12px;font-size:12.5px;line-height:1.65;color:var(--text);font-family:inherit;outline:0}
+#pf-tasks-mock .cm-area::placeholder{color:var(--text-faint)}
+#pf-tasks-mock .cm-bar{display:flex;align-items:center;gap:2px;padding:4px 6px}
+#pf-tasks-mock .cm-sp{flex:1}
+#pf-tasks-mock .pill{display:flex;align-items:center;gap:6px;border:0;background:transparent;border-radius:6px;padding:4px 8px;font-size:12px;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .pill:hover{background:var(--bg-hover);color:var(--text)}
+#pf-tasks-mock .pill svg{width:14px;height:14px;color:var(--text-dim);flex:none}
+#pf-tasks-mock .pill .chev{width:10px;height:10px}
+#pf-tasks-mock .pill.stat{cursor:default}
+#pf-tasks-mock .pill .cnt{font-family:Consolas,monospace;font-size:11.5px}
+#pf-tasks-mock .sel-btn.sm{height:28px;padding:0 8px;font-size:12px}
+#pf-tasks-mock .sw{font-size:12.5px;color:var(--text)}
+#pf-tasks-mock .sched-sum{font-size:11.5px;color:var(--text-faint);margin-left:4px}
+#pf-tasks-mock .tpick{position:fixed;z-index:99;display:none;background:var(--bg);border:1px solid var(--bd);border-radius:8px;box-shadow:0 10px 34px rgba(20,40,34,.16)}
+#pf-tasks-mock .tpick.open{display:flex}
+#pf-tasks-mock .tp-col{width:64px;max-height:252px;overflow-y:auto;scrollbar-width:none;border-right:1px solid var(--bd-soft)}
+#pf-tasks-mock .tp-col:last-child{border-right:0}
+#pf-tasks-mock .tp-col::-webkit-scrollbar{display:none}
+#pf-tasks-mock .tp-it{height:36px;display:flex;align-items:center;justify-content:center;font-family:Consolas,monospace;font-size:13px;color:var(--text-dim);cursor:pointer}
+#pf-tasks-mock .tp-it:hover{background:var(--bg-hover)}
+#pf-tasks-mock .tp-it.on{background:var(--bg-selected);color:var(--text);font-weight:600}
+#pf-tasks-mock .scfg{position:fixed;z-index:99;width:372px;display:none;background:var(--bg);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 34px rgba(20,40,34,.16);padding:12px 14px}
+#pf-tasks-mock .scfg.open{display:block}
+#pf-tasks-mock .scfg-t{font-size:13px;font-weight:600}
+#pf-tasks-mock .scfg-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--text-muted)}
+#pf-tasks-mock .scfg-row .lab{width:60px;flex:none}
+#pf-tasks-mock .scfg input.num{width:44px;height:28px;text-align:center;padding:0 6px}
+#pf-tasks-mock .scfg .sel-btn{height:28px}
+#pf-tasks-mock .w250{width:250px}
+#pf-tasks-mock .note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.6}
+#pf-tasks-mock .sel-btn{height:30px;border:1px solid var(--bd);border-radius:6px;background:var(--bg-panel);padding:0 10px;font-size:12px;color:var(--text);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+#pf-tasks-mock .sel-btn:hover{border-color:var(--accent)}
+#pf-tasks-mock .sel-btn>span{flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pf-tasks-mock .sel-btn .chev{width:10px;height:10px;color:var(--text-dim);flex:none}
+#pf-tasks-mock .seg{display:flex;align-items:stretch;flex:none;border:1px solid var(--bd);border-radius:6px;overflow:hidden;background:var(--bg-panel)}
+#pf-tasks-mock .seg button{border:0;background:transparent;height:28px;padding:0 16px;font-size:12px;color:var(--text-muted);cursor:pointer}
+#pf-tasks-mock .seg button.on{background:var(--bg-selected);color:var(--text);font-weight:600}
+
+/* ── 日志 tab:纯运行记录(结束才落一条) ── */
+#pf-tasks-mock .log-wrap{flex:1;min-height:0;overflow-y:auto;padding:14px 20px 20px}
+#pf-tasks-mock .log-list{max-width:860px}
+#pf-tasks-mock .log-row{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px 0 2px;border-radius:8px;cursor:default}
+#pf-tasks-mock .log-row:hover{background:color-mix(in srgb,var(--text) 5%,transparent)}
+#pf-tasks-mock .log-row .slot{width:15px;height:15px;flex:none;display:flex;align-items:center;justify-content:center}
+#pf-tasks-mock .log-row .t{font-size:12.5px;white-space:nowrap}
+#pf-tasks-mock .log-row .meta{font-size:11px;color:var(--text-faint);white-space:nowrap}
+#pf-tasks-mock .log-row .end{margin-left:auto;font-size:11px;color:var(--text-dim)}
+#pf-tasks-mock .log-row.fail .end{color:var(--danger)}
+
+/* ── 会话视图(agent 任务名点击打开) ── */
+#pf-tasks-mock .chatview{flex:1;min-height:0;display:none;flex-direction:column}
+#pf-tasks-mock .chatview.on{display:flex}
+#pf-tasks-mock .cm-body{flex:1;min-height:0;overflow-y:auto;padding:26px 30px;display:flex;flex-direction:column;gap:18px;width:100%;max-width:860px;margin:0 auto}
+#pf-tasks-mock .cm-user{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+#pf-tasks-mock .cm-user .bubble{max-width:70%;background:var(--bg-panel);border:1px solid var(--bd-soft);border-radius:14px;padding:9px 13px;font-size:13px;line-height:1.6}
+#pf-tasks-mock .cm-user .when{font-size:11px;color:var(--text-faint)}
+#pf-tasks-mock .cm-as{display:flex;flex-direction:column;gap:5px;max-width:80%}
+#pf-tasks-mock .cm-as .as-name{font-size:11px;color:var(--text-faint)}
+#pf-tasks-mock .cm-as .as-body{font-size:13px;line-height:1.7}
+#pf-tasks-mock .cm-input{flex:none;padding:12px 30px 18px}
+#pf-tasks-mock .cm-pill{max-width:860px;margin:0 auto;height:44px;border:1px solid var(--bd);border-radius:16px;background:var(--bg-panel);display:flex;align-items:center;gap:10px;padding:0 8px 0 16px;color:var(--text-faint);font-size:13px}
+#pf-tasks-mock .cm-pill .send{margin-left:auto;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+#pf-tasks-mock .cm-pill .send svg{width:15px;height:15px}
+
+/* ── 浮层菜单(主界面 pmenu 同款) ── */
+#pf-tasks-mock .pmenu{position:fixed;z-index:99;min-width:214px;background:var(--bg);border:1px solid var(--bd);border-radius:9px;box-shadow:0 10px 34px rgba(20,40,34,.16);padding:4px;display:none}
+#pf-tasks-mock .pmenu.open{display:block}
+#pf-tasks-mock .pmenu .scroll{max-height:246px;overflow-y:auto}
+#pf-tasks-mock .pm-item{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;padding:7px 10px;border-radius:6px;font-size:12.5px;color:var(--text);cursor:pointer;text-align:left}
+#pf-tasks-mock .pm-item>svg{width:15px;height:15px;flex:none;color:var(--text-dim)}
+#pf-tasks-mock .pm-item>span{flex:1}
+#pf-tasks-mock .pm-item .d{flex:none;margin-left:auto;font-size:11px;color:var(--text-faint)}
+#pf-tasks-mock .pm-item .ck{width:13px;height:13px;flex:none;margin-left:auto;color:var(--accent)}
+#pf-tasks-mock .pm-item:hover{background:var(--bg-hover)}
+#pf-tasks-mock .pm-item.danger{color:var(--danger)}
+#pf-tasks-mock .pm-item.danger>svg{color:var(--danger)}
+#pf-tasks-mock .pm-item.danger:hover{background:rgba(216,98,106,.12)}
+#pf-tasks-mock .pm-sep{height:1px;margin:4px 0;background:var(--bd-soft)}
+#pf-tasks-mock .sel-btn.sm{height:28px;padding:0 8px;font-size:12px}
+#pf-tasks-mock .sw{font-size:12.5px;color:var(--text)}
+#pf-tasks-mock .sched-sum{font-size:11.5px;color:var(--text-faint);margin-left:4px}
+#pf-tasks-mock .tpick{position:fixed;z-index:99;display:none;background:var(--bg);border:1px solid var(--bd);border-radius:8px;box-shadow:0 10px 34px rgba(20,40,34,.16)}
+#pf-tasks-mock .tpick.open{display:flex}
+#pf-tasks-mock .tp-col{width:64px;max-height:252px;overflow-y:auto;scrollbar-width:none;border-right:1px solid var(--bd-soft)}
+#pf-tasks-mock .tp-col:last-child{border-right:0}
+#pf-tasks-mock .tp-col::-webkit-scrollbar{display:none}
+#pf-tasks-mock .tp-it{height:36px;display:flex;align-items:center;justify-content:center;font-family:Consolas,monospace;font-size:13px;color:var(--text-dim);cursor:pointer}
+#pf-tasks-mock .tp-it:hover{background:var(--bg-hover)}
+#pf-tasks-mock .tp-it.on{background:var(--bg-selected);color:var(--text);font-weight:600}
+#pf-tasks-mock .scfg{position:fixed;z-index:99;width:372px;display:none;background:var(--bg);border:1px solid var(--bd);border-radius:10px;box-shadow:0 10px 34px rgba(20,40,34,.16);padding:12px 14px}
+#pf-tasks-mock .scfg.open{display:block}
+#pf-tasks-mock .scfg-t{font-size:13px;font-weight:600}
+#pf-tasks-mock .scfg-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--text-muted)}
+#pf-tasks-mock .scfg-row .lab{width:60px;flex:none}
+#pf-tasks-mock .scfg input.num{width:44px;height:28px;text-align:center;padding:0 6px}
+#pf-tasks-mock .scfg .sel-btn{height:28px}
+</style>
+
+<div class="app">
+  <div class="app-body">
+    <!-- ══ 左列:psp 项目面板(dock) ══ -->
+    <div class="panel-col">
+      <div class="topbar-l">
+        <button class="tb-icon-btn" style="margin-left:6px" title="收起 / 展开侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg></button>
+        <button class="tb-icon-btn" title="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg></button>
+      </div>
+      <div class="panel-row">
+        <aside class="dock">
+          <section class="sub-panel" style="flex:0 0 46%">
+            <div class="psp-ctrl">
+              <button class="pc-btn" title="打开项目 (Ctrl+P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg>项目</button>
+              <button class="pc-btn" title="新建会话 (Ctrl+N)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>会话</button>
+              <button class="pc-btn" id="entryTasks" title="打开任务管理"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v3"/><path d="M21 7.338V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2.338"/><path d="M3 9h5.859"/><path d="M8 2v3"/><circle cx="16" cy="16" r="6"/></svg>任务</button>
+              <button class="pc-btn" title="搜索会话 (Ctrl+K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>搜索</button>
+              <span class="pc-spacer"></span>
+              <button class="pc-btn icon" title="切换为最近会话列表"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></button>
+              <button class="pc-btn icon" title="最大化"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+            </div>
+            <div class="panel-view">
+              <button class="prj-row active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg><span class="t" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">pi-flash</span></button>
+              <div class="ps-row"><span class="slot"><span class="spin"></span></span><span class="t">修复 psp 滚动回跳</span><span class="time">刚刚</span></div>
+              <div class="ps-row"><span class="slot"><span class="gdot"></span></span><span class="t">生成模块架构图</span><span class="time">10分</span></div>
+              <div class="ps-row"><span class="slot"><span class="edot"></span></span><span class="t">个股财报调研</span><span class="time">3天</span></div>
+            </div>
+          </section>
+          <div class="sp-divider"></div>
+          <section class="sub-panel" style="flex:1 1 0">
+            <div class="ft-actions">
+              <span class="ft-proj">pi-flash</span>
+              <span class="ft-btns">
+                <button class="ft-act" title="只看变更"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></svg></button>
+                <button class="ft-act" title="搜索文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+                <button class="ft-act" title="最大化"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+              </span>
+            </div>
+            <div class="ft-list">
+              <div class="ft-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg>crates</div>
+              <div class="ft-row l1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>Cargo.toml</div>
+              <div class="ft-row l1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>main.rs</div>
+              <div class="ft-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg>docs</div>
+              <div class="ft-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>Cargo.lock</div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <!-- ══ 右列:内容区 ══ -->
+    <div class="content-col">
+      <div class="topbar-r">
+        <button class="tb-icon-btn" title="展开侧栏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg></button>
+        <div class="tb-divider"></div>
+        <div class="tab-strip">
+          <button class="c-tab" id="tabChat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>会话</span></button>
+          <button class="c-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg><span>终端</span></button>
+          <button class="c-tab act" id="tabTasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v3"/><path d="M21 7.338V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2.338"/><path d="M3 9h5.859"/><path d="M8 2v3"/><circle cx="16" cy="16" r="6"/></svg><span>任务管理</span><span class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span></button>
+        </div>
+        <div class="tb-spacer"></div>
+        <div class="tb-win">
+          <div><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1 6h10"/></svg></div>
+          <div><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5"/></svg></div>
+          <div class="close"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 2l8 8M10 2l-8 8"/></svg></div>
+        </div>
+      </div>
+
+      <!-- ── 视图①:任务管理页 ── -->
+      <main class="tasks-page on">
+        <!-- 页头:左【任务】【日志】,右【新建】 -->
+        <div class="tk-head">
+          <div class="tk-tabs">
+            <button class="tk-tab on" data-t="tasks" type="button">任务</button>
+            <button class="tk-tab" data-t="log" type="button">日志</button>
+          </div>
+          <button class="tk-new" id="goNew" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>新建</button>
+        </div>
+
+        <!-- ① 任务 tab:左列表(点击=详情回填右侧表单) + 右表单 -->
+        <div class="tk-body on" data-p="tasks">
+          <div class="set-split">
+            <div class="sp-list">
+              <div class="sp-li sel" data-task="每日备份">
+                <svg class="tico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg>
+                <span class="t">每日备份</span>
+                <span class="dotcol"><span class="spin" title="运行中"></span></span>
+                <span class="time">10-23 14:32:05</span>
+              </div>
+              <div class="sp-li" data-task="日报生成">
+                <svg class="tico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                <span class="t link" data-open="日报生成" title="打开会话">日报生成</span>
+                <span class="dotcol"><span class="edot" title="失败:provider 401 未授权"></span></span>
+                <span class="time">10-23 08:00:32</span>
+              </div>
+              <div class="sp-li off" data-task="清理临时">
+                <svg class="tico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 12.5 8 15l2 2.5"/><path d="m14 12.5 2 2.5-2 2.5"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></svg>
+                <span class="t">清理临时</span>
+                <span class="dotcol"></span>
+                <span class="time">10-23 08:00:03</span>
+              </div>
+              <div class="sp-li" data-task="周报汇总">
+                <svg class="tico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                <span class="t link" data-open="周报汇总" title="打开会话">周报汇总</span>
+                <span class="dotcol"><span class="okdot" title="完成"></span></span>
+                <span class="time">10-21 09:00:00</span>
+              </div>
+            </div>
+            <div class="sp-detail">
+              <div class="frm">
+                <div class="frm-head">
+                  <input type="text" id="inName" class="name-input" placeholder="任务名称" value="">
+                  <button class="ghost-btn danger" id="frmDel" hidden type="button">移除</button>
+                  <button class="g-btn" type="button">保存</button>
+                </div>
+                <div class="field"><div class="fl2">任务类型</div><div class="fr">
+                  <div class="seg" id="segType"><button data-v="script" type="button">脚本</button><button class="on" data-v="agent" type="button">Agent</button></div>
+                </div></div>
+                <div class="field"><div class="fl2">调度</div><div class="fr" id="schedRow"></div></div>
+
+                <div id="blk-agent">
+                  <div class="field">
+                    <div class="fl2">指令</div>
+                    <div class="composer">
+                      <textarea class="cm-area" spellcheck="false" id="inDesc" placeholder="例如:Review 最近 24 小时的提交,总结可能引入的 bug 和修复建议"></textarea>
+                      <div class="cm-bar">
+                        <button class="pill" id="ddProject" data-dd="project" data-v="piflash" type="button" title="项目"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg><span>pi-flash</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+                        <button class="pill" id="ddTools" data-dd="tools" data-v="full+" type="button" title="工具档位"><svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg><span>full+</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+                        <span class="pill stat" title="MCP 服务器"><svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M15 8V2"/><path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/><path d="M9 8V2"/></svg><span class="cnt">[4]</span></span>
+                        <span class="pill stat" title="MCP 服务器"><svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></svg><span class="cnt">[1]</span></span>
+                        <span class="cm-sp"></span>
+                        <button class="pill" id="ddModel" data-dd="model" data-v="dsv41" type="button"><span>DeepSeek V4.1 Flash</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+                        <button class="pill" id="ddThink" data-dd="think" data-v="high" type="button" title="思考强度"><svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg><span>high</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg></button>
+                        </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="blk-script" hidden>
+                  <div class="field"><div class="fl2">脚本文件</div><div class="fr">
+                    <button class="sel-btn" style="width:340px" id="spPath" type="button"><span>选择可执行脚本…</span></button>
+                    <button class="g-btn" type="button">浏览…</button>
+                  </div>
+                  <div class="note">运行目录 = 脚本所在目录;超时 30 分钟自动终止。支持 exe / bat / cmd / ps1 / js / py / sh。</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ② 日志 tab:纯运行记录(结束才落一条) -->
+        <div class="tk-body" data-p="log">
+          <div class="log-wrap">
+            <div class="log-list">
+              <div class="log-row">
+                <span class="slot"><span class="okdot" title="exit 0"></span></span>
+                <span class="t">每日备份</span><span class="meta">手动 · 今天 10:15:07</span>
+                <span class="end">14s</span>
+              </div>
+              <div class="log-row">
+                <span class="slot"><span class="gdot" style="background:var(--text-faint);box-shadow:none" title="跳过:电脑休眠错过窗口(落后 47 分钟)"></span></span>
+                <span class="t">清理临时</span><span class="meta">定时 · 今天 08:00:03</span>
+                <span class="end">跳过</span>
+              </div>
+              <div class="log-row">
+                <span class="slot"><span class="okdot"></span></span>
+                <span class="t">日报生成</span><span class="meta">定时 · 今天 08:00:32</span>
+                <span class="end">2m11s</span>
+              </div>
+              <div class="log-row">
+                <span class="slot"><span class="wdot" title="超时:30 分钟未结束,已终止"></span></span>
+                <span class="t">周报汇总</span><span class="meta">定时 · 周一 09:00:00</span>
+                <span class="end">超时 30m</span>
+              </div>
+              <div class="log-row fail">
+                <span class="slot"><span class="edot" title="python: command not found (exit 9009)"></span></span>
+                <span class="t">日报生成</span><span class="meta">定时 · 周一 08:00:29</span>
+                <span class="end">失败</span>
+              </div>
+              <div class="log-row">
+                <span class="slot"><span class="okdot"></span></span>
+                <span class="t">每日备份</span><span class="meta">定时 · 周日 12:00:00</span>
+                <span class="end">3s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- ── 视图②:会话(agent 任务名点击打开) ── -->
+      <div class="chatview" id="chatView">
+        <div class="cm-body">
+          <div class="cm-user">
+            <div class="bubble">汇总今日会话要点,生成日报到 reports/2026-10-23.md,结尾附三条待办。</div>
+            <span class="when">定时 · 08:00:32</span>
+          </div>
+          <div class="cm-as">
+            <span class="as-name">GLM-4.7</span>
+            <div class="as-body">日报已生成:<span style="font-family:Consolas,monospace;font-size:12px">reports/2026-10-23.md</span> — 今日 12 条会话要点已归档,文末附 3 条待办建议。</div>
+          </div>
+        </div>
+        <div class="cm-input">
+          <div class="cm-pill"><span>发消息…</span><span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18V6"/><path d="m7 11 5-5 5 5"/></svg></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏(左 dock 底) -->
+  <div class="statusbar">
+    <div class="sb-btns">
+      <button class="sb-tab on" title="项目面板" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg></button>
+    </div>
+    <button class="sb-settings" title="设置" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg></button>
+  </div>
+</div>
+
+<!-- 全局浮层菜单 -->
+<div class="pmenu" id="pmenu"></div>
+
+<script>
+(function(){
+  var root=document.getElementById('pf-tasks-mock');
+  if(!root)return;
+  function qa(s){return Array.prototype.slice.call(root.querySelectorAll(s))}
+  function q(s){return root.querySelector(s)}
+  var pmenu=document.getElementById('pmenu'),curAnchor=null;
+
+  /* ── 任务数据(点击条目回填右侧表单 = 详情) ── */
+  var TASKS={
+    '每日备份':{type:'script',schedState:{freq:'cmin',interval:30},project:'piflash',tools:'full+',script:'D:\scripts\backup.ps1'},
+    '日报生成':{type:'agent',schedState:{freq:'daily',hour:8,min:30},project:'demo',desc:'汇总今日会话要点,生成日报到 reports/ 目录,结尾附三条待办建议。',tools:'full+',model:'dsv41',think:'high'},
+    '清理临时':{type:'script',schedState:{freq:'daily',hour:8,min:0},project:'piflash',tools:'default',script:'D:\scripts\clean.ps1'},
+    '周报汇总':{type:'agent',schedState:{freq:'weekly',wd:3,hour:9,min:0},project:'demo',desc:'汇总本周会话与提交,生成周报到 reports/weekly/。',tools:'full+',model:'glm-5.3',think:'high'}
+  };
+  var PROJ={piflash:'pi-flash',demo:'demo'};
+  var TOOLS={'full+':'full+','full':'full','default':'default','read-only':'read-only','chat-only':'chat-only'};
+  var MODEL={'dsv41':'DeepSeek V4.1 Flash','glm-5.3':'GLM-5.3','kimi-k2.5':'Kimi K2.5','qwen3-max':'Qwen3-Max'};
+  var THINK={off:'off',low:'low',medium:'medium',high:'high',xhigh:'xhigh'};
+
+  function setSeg(v){
+    qa('#segType button').forEach(function(m){m.classList.toggle('on',m.getAttribute('data-v')===v)});
+    q('#blk-agent').hidden=(v!=='agent');
+    q('#blk-script').hidden=(v!=='script');
+  }
+  function setDd(btn,v,label){
+    btn.setAttribute('data-v',v);
+    btn.querySelector('span').textContent=label;
+  }
+  function fillForm(d){
+    q('#inName').value=d.name;
+    root.__sched.set(d.schedState||null);
+    setSeg(d.type);
+    setDd(q('#ddProject'),d.project||'piflash',PROJ[d.project||'piflash']);
+    q('#inDesc').value=d.desc||'';    setDd(q('#ddTools'),d.tools,TOOLS[d.tools]||d.tools);
+    setDd(q('#ddModel'),d.model,MODEL[d.model]||d.model);
+    setDd(q('#ddThink'),d.think,THINK[d.think]||d.think);
+    if(d.script)q('#spPath span').textContent=d.script;
+  }
+  function clearForm(){
+    fillForm({name:'',sched:'',type:'agent',desc:'',project:'piflash',tools:'full+',model:'dsv41',think:'high'});
+  }
+
+  /* ── 页头两表头:任务 / 日志 ── */
+  qa('.tk-tab').forEach(function(t){t.addEventListener('click',function(){
+    qa('.tk-tab').forEach(function(m){m.classList.toggle('on',m===t)});
+    qa('.tk-body').forEach(function(p){p.classList.toggle('on',p.getAttribute('data-p')===t.getAttribute('data-t'))});
+  })});
+
+  /* ── 条目点击 = 详情回填;新建 = 清空表单 ── */
+  function selectTask(name){
+    qa('.sp-li').forEach(function(r){r.classList.toggle('sel',r.getAttribute('data-task')===name)});
+    var d=TASKS[name]||{};d.name=name;
+    fillForm(d);
+    q('#frmDel').hidden=false;
+  }
+  qa('.sp-li').forEach(function(r){
+    r.addEventListener('click',function(e){
+      if(e.target.closest('.more')||e.target.closest('.t.link'))return;
+      selectTask(r.getAttribute('data-task'));
+    });
+  });
+  q('#goNew').addEventListener('click',function(){
+    qa('.sp-li').forEach(function(r){r.classList.remove('sel')});
+    clearForm();
+    q('#frmDel').hidden=true;
+  });
+
+  /* ── 视图切换:任务管理页 ⇄ 会话(agent 任务名下划线点击) ── */
+  function showView(v){
+    q('.tasks-page').classList.toggle('on',v==='tasks');
+    q('#chatView').classList.toggle('on',v==='chat');
+    q('#tabTasks').classList.toggle('act',v==='tasks');
+    q('#tabChat').classList.toggle('act',v==='chat');
+  }
+  qa('.t.link').forEach(function(t){
+    t.addEventListener('click',function(e){
+      e.stopPropagation();
+      showView('chat');
+    });
+  });
+  q('#tabTasks').addEventListener('click',function(){showView('tasks')});
+  q('#tabChat').addEventListener('click',function(){showView('chat')});
+
+  /* ── 浮层菜单(主界面 pmenu 同款) ── */
+  var IC={
+    pencil:'<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+    play:'<polygon points="6 3 20 12 6 21 6 3"/>',
+    pause:'<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+    trash:'<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>'
+  };
+  function openMenu(anchor,items,onPick){
+    if(curAnchor===anchor&&pmenu.classList.contains('open')){closeMenu();return}
+    curAnchor=anchor;pmenu.innerHTML='';
+    var wrap=document.createElement('div');wrap.className='scroll';
+    items.forEach(function(it){
+      if(it.sep){var s=document.createElement('div');s.className='pm-sep';wrap.appendChild(s);return}
+      var b=document.createElement('button');b.className='pm-item'+(it.danger?' danger':'');b.type='button';
+      b.innerHTML=(it.icon?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+IC[it.icon]+'</svg>':'')+
+        '<span>'+it.label+'</span>'+
+        (it.sub?'<span class="d">'+it.sub+'</span>':'')+
+        (it.on?'<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>':'');
+      b.addEventListener('click',function(){closeMenu();if(onPick)onPick(it)});
+      wrap.appendChild(b);
+    });
+    pmenu.appendChild(wrap);pmenu.classList.add('open');
+    var r=anchor.getBoundingClientRect(),h=pmenu.offsetHeight,w=pmenu.offsetWidth;
+    var top=r.bottom+4,left=r.left;
+    if(top+h>window.innerHeight-8)top=r.top-h-4;
+    if(left+w>window.innerWidth-8)left=window.innerWidth-8-w;
+    pmenu.style.top=top+'px';pmenu.style.left=left+'px';
+  }
+  function closeMenu(){pmenu.classList.remove('open');curAnchor=null}
+  root.__menu={open:openMenu,close:closeMenu};
+  document.addEventListener('mousedown',function(e){
+    if(pmenu.classList.contains('open')&&curAnchor&&!pmenu.contains(e.target)&&e.target!==curAnchor&&!curAnchor.contains(e.target))closeMenu();
+  });
+
+  /* ── 通用下拉触发器 ── */
+  var MENUS={
+    project:{items:[['piflash','pi-flash'],['demo','demo']],fmt:PROJ},
+    tools:{items:[['full+','full+','完整+插件'],['full','full','完整'],['default','default','默认'],['read-only','read-only','只读'],['chat-only','chat-only','纯对话']],sub:true},
+    model:{items:[['dsv41','DeepSeek V4.1 Flash'],['glm-5.3','GLM-5.3'],['kimi-k2.5','Kimi K2.5'],['qwen3-max','Qwen3-Max']]},
+    think:{items:[['off','off','关闭'],['low','low','低'],['medium','medium','中'],['high','high','高'],['xhigh','xhigh','最高']],sub:true}
+  };
+  qa('[data-dd]').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var key=btn.getAttribute('data-dd'),cfg=MENUS[key];if(!cfg)return;
+      var cur=btn.getAttribute('data-v');
+      var items=cfg.items.map(function(it){
+        return {v:it[0],label:it[1],sub:(cfg.sub?it[2]||'':''),on:String(it[0])===String(cur)};
+      });
+      openMenu(btn,items,function(it){
+        btn.setAttribute('data-v',String(it.v));
+        btn.querySelector('span').textContent=cfg.fmt?(cfg.fmt[it.v]||it.label):it.label;
+      });
+    });
+  });
+
+  /* 类型分段切换 */
+  qa('#segType button').forEach(function(b){
+    b.addEventListener('click',function(){
+      setSeg(b.getAttribute('data-v'));
+    });
+  });
+
+})();
+</script>
+<script>
+(function(){
+  var root=document.getElementById('pf-tasks-mock');if(!root||!root.__menu)return;
+  function q(s){return root.querySelector(s)}
+  var row=q('#schedRow');
+  if(!row)return;
+  var WD=['日','一','二','三','四','五','六'];
+  var FL={hourly:'每小时',daily:'每天',weekdays:'每工作日',weekly:'每周',monthly:'每月'};
+  var U={minute:'分钟',hour:'小时',day:'天',week:'周',month:'个月',year:'年'};
+  var DEF={freq:null,minute:0,hour:9,min:0,wd:3,mday:1,interval:2,unit:'week',rule:'wd',end:'never'};
+  var S=null;
+  function pad(n){return (n<10?'0':'')+n}
+  function hm(){return pad(S.hour)+':'+pad(S.min)}
+  function cvg(){return '<svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5L6 8l3.5-3.5"/></svg>'}
+  function freqPill(){return '<button class="sel-btn sm" data-sact="freq" type="button"><span>'+FL[S.freq]+'</span>'+cvg()+'</button>'}
+  function tbtn(){return '<button class="sel-btn sm" data-sact="time" type="button"><span>'+hm()+'</span>'+cvg()+'</button>'}
+  function summary(){
+    switch(S.freq){
+      case 'hourly':return 'GMT+8 每小时的第 '+pad(S.minute)+' 分';
+      case 'daily':return 'GMT+8 每天 '+hm();
+      case 'weekdays':return 'GMT+8 每工作日 '+hm();
+      case 'weekly':return 'GMT+8 每周'+WD[S.wd]+' '+hm();
+      case 'monthly':return 'GMT+8 每月 '+S.mday+' 号 '+hm();
+      case 'cmin':return 'GMT+8 每 '+S.interval+' 分钟';
+      case 'custom':return 'GMT+8 每 '+S.interval+U[S.unit]+'的'+(S.rule==='wd'?('周'+WD[S.wd]):(S.mday+' 号'))+'，'+hm();
+    }
+    return '';
+  }
+  function render(){
+    if(!S||!S.freq){row.innerHTML='<button class="tk-new" data-sact="add" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>添加计划</button>';return}
+    var h='';
+    if(S.freq==='cmin'){
+      h+='<button class="sel-btn sm" data-sact="cfg" type="button"><span>每 '+S.interval+' 分钟</span>'+cvg()+'</button>';
+    }else if(S.freq==='custom'){
+      var body=S.rule==='wd'?('周'+WD[S.wd]):(S.mday+' 号');
+      h+='<button class="sel-btn sm" data-sact="cfg" type="button"><span>每 '+S.interval+U[S.unit]+' '+body+' '+hm()+'</span>'+cvg()+'</button>';
+    }else{
+      h+=freqPill();
+      if(S.freq==='hourly')h+='<span class="sw">第</span><button class="sel-btn sm" data-sact="minute" type="button"><span>'+pad(S.minute)+'</span>'+cvg()+'</button><span class="sw">分</span>';
+      if(S.freq==='daily'||S.freq==='weekdays')h+='<span class="sw">于</span>'+tbtn();
+      if(S.freq==='weekly')h+='<button class="sel-btn sm" data-sact="wd" type="button"><span>周'+WD[S.wd]+'</span>'+cvg()+'</button><span class="sw">于</span>'+tbtn();
+      if(S.freq==='monthly')h+='<button class="sel-btn sm" data-sact="mday" type="button"><span>'+S.mday+' 号</span>'+cvg()+'</button><span class="sw">于</span>'+tbtn();
+    }
+    h+='<span class="sched-sum">'+summary()+'</span>';
+    row.innerHTML=h;
+  }
+  function setS(st){S=st?Object.assign({},DEF,st):Object.assign({},DEF,{freq:null});render()}
+  root.__sched={set:setS};
+
+  var tp=document.createElement('div');tp.className='tpick';root.appendChild(tp);
+  var cfgEl=document.createElement('div');cfgEl.className='scfg';root.appendChild(cfgEl);
+  function place(el,anchor){
+    var r=anchor.getBoundingClientRect(),top=r.bottom+4,left=r.left,h=el.offsetHeight,w=el.offsetWidth;
+    if(top+h>window.innerHeight-8)top=r.top-h-4;
+    if(left+w>window.innerWidth-8)left=window.innerWidth-8-w;
+    el.style.top=top+'px';el.style.left=left+'px';
+  }
+  function setFreq(f){
+    if(f==='custom'){
+      S.freq='custom';
+      if(!S.interval)S.interval=2;
+      render();
+      openCfg(row.querySelector('[data-sact=cfg]'));
+      return;
+    }
+    S.freq=f;
+    if(f==='hourly')S.minute=0;
+    if(f==='daily'||f==='weekdays'){S.hour=9;S.min=0}
+    if(f==='weekly'){S.wd=3;S.hour=9;S.min=0}
+    if(f==='monthly'){S.mday=1;S.hour=9;S.min=0}
+    render();
+  }
+  function freqMenu(anchor){
+    root.__menu.open(anchor,['hourly','daily','weekdays','weekly','monthly','custom'].map(function(v){
+      return {v:v,label:(v==='custom'?'自定义':FL[v]),on:S&&S.freq===v};
+    }),function(it){setFreq(it.v)});
+  }
+  function minuteMenu(anchor){
+    var items=[];for(var i=0;i<60;i++)items.push({v:i,label:pad(i),on:i===S.minute});
+    root.__menu.open(anchor,items,function(it){S.minute=it.v;render()});
+  }
+  function wdMenu(anchor){
+    var items=[];for(var i=0;i<7;i++)items.push({v:i,label:'周'+WD[i],on:i===S.wd});
+    root.__menu.open(anchor,items,function(it){S.wd=it.v;render()});
+  }
+  function mdayMenu(anchor){
+    var items=[];for(var i=1;i<=31;i++)items.push({v:i,label:i+' 号',on:i===S.mday});
+    root.__menu.open(anchor,items,function(it){S.mday=it.v;render()});
+  }
+  function tpCol(kind,count,sel){
+    var h='<div class="tp-col">';
+    for(var i=0;i<count;i++)h+='<div class="tp-it'+(i===sel?' on':'')+'" data-tp="'+kind+':'+i+'">'+pad(i)+'</div>';
+    return h+'</div>';
+  }
+  function openTP(anchor){
+    tp.innerHTML=tpCol('h',24,S.hour)+tpCol('m',60,S.min);
+    tp.classList.add('open');place(tp,anchor);
+    tp.querySelectorAll('.tp-col').forEach(function(col,i){col.scrollTop=Math.max(0,(i===0?S.hour:S.min)*36-108)});
+  }
+  tp.addEventListener('click',function(e){
+    var it=e.target.closest('[data-tp]');if(!it)return;
+    var kv=it.getAttribute('data-tp').split(':');
+    if(kv[0]==='h')S.hour=+kv[1];else S.min=+kv[1];
+    var btn=row.querySelector('[data-sact="time"] span');if(btn)btn.textContent=hm();
+    var sumEl=row.querySelector('.sched-sum');if(sumEl)sumEl.textContent=summary();
+    tp.innerHTML=tpCol('h',24,S.hour)+tpCol('m',60,S.min);
+    tp.querySelectorAll('.tp-col').forEach(function(col,i){col.scrollTop=Math.max(0,(i===0?S.hour:S.min)*36-108)});
+  });
+
+  function openCfg(anchor){
+    var unitOps=[['minute','分钟'],['hour','小时'],['day','天'],['week','周'],['month','个月'],['year','年']];
+    var ruleSeg='<div class="seg" id="sRuleSeg"><button data-rv="date" type="button"'+(S.rule==='date'?' class="on"':'')+'>按日期</button><button data-rv="wd" type="button"'+(S.rule==='wd'?' class="on"':'')+'>按星期</button></div>';
+    var endSeg='<div class="seg" id="sEndSeg"><button data-ev="never" type="button"'+(S.end==='never'?' class="on"':'')+'>永不结束</button><button data-ev="date" type="button"'+(S.end==='date'?' class="on"':'')+'>指定日期</button></div>';
+    cfgEl.innerHTML='<div class="scfg-t">自定义重复</div>'
+      +'<div class="scfg-row"><span class="lab">重复频率</span><span>每</span><input type="text" class="num" id="sCi" value="'+S.interval+'"><button class="sel-btn" id="sUnit" type="button"><span>'+U[S.unit]+'</span>'+cvg()+'</button></div>'
+      +'<div class="scfg-row"><span class="lab">重复规则</span>'+ruleSeg+'<span id="sRuleVal"></span></div>'
+      +'<div class="scfg-row"><span class="lab">时间</span><button class="sel-btn" id="sTime" type="button"><span>'+hm()+'</span>'+cvg()+'</button></div>'
+      +'<div class="scfg-row"><span class="lab">结束</span>'+endSeg+'</div>'
+      +'<div class="scfg-row" style="justify-content:flex-end"><button class="g-btn" id="sOk" type="button">确定</button></div>';
+    cfgEl.classList.add('open');place(cfgEl,anchor||row);
+    function ruleVal(){
+      var el=q('#sRuleVal');
+      el.innerHTML=S.rule==='wd'
+        ?'<button class="sel-btn" id="sWd" type="button"><span>周'+WD[S.wd]+'</span>'+cvg()+'</button>'
+        :'<button class="sel-btn" id="sMd" type="button"><span>'+S.mday+' 号</span>'+cvg()+'</button>';
+      var w=q('#sWd'),md=q('#sMd');
+      if(w)w.addEventListener('click',function(){
+        var items=[];for(var i=0;i<7;i++)items.push({v:i,label:'周'+WD[i],on:i===S.wd});
+        root.__menu.open(w,items,function(it){S.wd=it.v;ruleVal()});
+      });
+      if(md)md.addEventListener('click',function(){
+        var items=[];for(var i=1;i<=31;i++)items.push({v:i,label:i+' 号',on:i===S.mday});
+        root.__menu.open(md,items,function(it){S.mday=it.v;ruleVal()});
+      });
+    }
+    ruleVal();
+    q('#sUnit').addEventListener('click',function(){
+      var b=this;
+      root.__menu.open(b,unitOps.map(function(o){return {v:o[0],label:o[1],on:o[0]===S.unit}}),function(it){
+        S.unit=it.v;b.querySelector('span').textContent=U[it.v];
+      });
+    });
+    q('#sTime').addEventListener('click',function(){openTP(this)});
+    q('#sRuleSeg').addEventListener('click',function(e){
+      var b=e.target.closest('button');if(!b)return;
+      q('#sRuleSeg').querySelectorAll('button').forEach(function(m){m.classList.toggle('on',m===b)});
+      S.rule=b.getAttribute('data-rv');ruleVal();
+    });
+    q('#sEndSeg').addEventListener('click',function(e){
+      var b=e.target.closest('button');if(!b)return;
+      q('#sEndSeg').querySelectorAll('button').forEach(function(m){m.classList.toggle('on',m===b)});
+      S.end=b.getAttribute('data-ev');
+    });
+    q('#sOk').addEventListener('click',function(){
+      S.interval=Math.max(1,parseInt(q('#sCi').value)||1);
+      S.freq=(S.unit==='minute')?'cmin':'custom';
+      cfgEl.classList.remove('open');render();
+    });
+  }
+
+  row.addEventListener('click',function(e){
+    var b=e.target.closest('[data-sact]');if(!b)return;
+    var act=b.getAttribute('data-sact');
+    if(act==='add'||act==='freq')freqMenu(b);
+    else if(act==='minute')minuteMenu(b);
+    else if(act==='wd')wdMenu(b);
+    else if(act==='mday')mdayMenu(b);
+    else if(act==='time')openTP(b);
+    else if(act==='cfg'){
+      if(S.freq==='cmin'){
+        var items=[];for(var i=1;i<=12;i++)items.push({v:i,label:'每 '+i+' 分钟',on:i===S.interval});
+        root.__menu.open(b,items,function(it){S.interval=it.v;render()});
+      }else openCfg(b);
+    }
+  });
+  document.addEventListener('mousedown',function(e){
+    [tp,cfgEl].forEach(function(el){
+      if(el.classList.contains('open')&&!el.contains(e.target)&&!row.contains(e.target))el.classList.remove('open');
+    });
+  });
+  setS(null);
+})();
+</script>
+</div>
+</body>
+</html>
