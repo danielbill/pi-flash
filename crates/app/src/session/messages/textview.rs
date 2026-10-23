@@ -27,9 +27,17 @@ pub(crate) struct AgentMarkdown {
 impl AgentMarkdown {
     /// id 必须带文本哈希：use_keyed_state 按全局 id 存解析树，会话切换/
     /// 分支跳转后同位同 id 会先画 200ms 旧内容（异步重解析防抖期）。
-    pub(crate) fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+    /// 还必须带主题名（issue#4）：gpui-component CodeBlock 在解析期把
+    /// highlight_theme 烘进逐 span 样式，id 不含主题时文本不变就不重
+    /// 解析——浅色主题下渲染过的消息切到暗主题后，代码块永远停在浅色
+    /// 语法盘上（暗底配 #0433ff/#0000A2，即用户截图的难读色）。
+    pub(crate) fn new(id: SharedString, text: impl Into<SharedString>) -> Self {
         Self {
-            id: id.into(),
+            id: ElementId::from(SharedString::from(format!(
+                "{}#{}",
+                id,
+                crate::appearance::theme::theme_name()
+            ))),
             text: text.into(),
         }
     }
@@ -61,10 +69,14 @@ impl RenderOnce for AgentMarkdown {
 fn text_view_style(cx: &App) -> gpui_component::text::TextViewStyle {
     let t = T();
     // Styled 方法是 move 链式（self -> Self），只能整体一条链不能逐语句调
+    // 边框对齐 pi-web .markdown-code-block（1px var(--border) + 圆角）——
+    // 语言栏/复制/行号是 vendor 级活（pi-flash-lamn 二期），此处先补框
     let code_block = gpui::StyleRefinement::default()
         .bg(gpui::rgb(crate::appearance::theme::mix_rgb(
             t.bg, t.bg_panel, 0.92,
         )))
+        .border_1()
+        .border_color(rgb(t.border))
         .rounded(px(7.))
         .font_family(markdown::MONO_FAMILY)
         .text_size(crate::appearance::sess_size(-1.));
