@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::nonce_tag;
 use rquickjs::function::Func;
 use rquickjs::{Context, Function, Module, Runtime};
 
@@ -288,14 +289,7 @@ globalThis.__pf_fire_panel_open = () => {{
 /// nonceTag 派生（090-5 L3.3 多点校验：activate / render / onCommand 各带一次，
 /// 插件 wasm 内按同一算法复算比对）：hex(sha256(proof ‖ 0x00 ‖ nonce))。
 /// 算法公开——防「dump 一段静态串硬编码」，线性抬价非绝对防护。
-fn nonce_tag(proof: &str, nonce: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(proof.as_bytes());
-    h.update([0u8]);
-    h.update(nonce.as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
-}
+/// nonceTag 派生已上移 `crate::nonce_tag`（js / wasm 两路共用同一实现）。
 
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

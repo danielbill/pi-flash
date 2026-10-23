@@ -23,6 +23,15 @@ interface host {
     run-script: func(path: string);
     toggle-quick-pin: func(path: string);
     quick-pins: func() -> list<string>;
+
+    // 090-5 L3：官方宿主证明。宿主只递数据不判定（nonceTag 现算，算法公开，
+    // 插件 wasm 内用 pf-inner-verify 同算法复算比对）。
+    record host-proof {
+        kid: string,
+        proof: string,
+        nonce-tag: string,
+    }
+    get-host-proof: func(nonce: string) -> host-proof;
 }
 
 world plugin {
@@ -30,7 +39,8 @@ world plugin {
 
     import host;
 
-    export init: func(plugin-name: string);
+    // 返回 Err = 插件自拒（如宿主证明验签失败）→ 宿主拒载并透传原因（失败不静默）。
+    export init: func(plugin-name: string) -> result<_, string>;
     export on-resize: func(w: f32, h: f32);
     export on-mouse: func(phase: phase, button: button, x: f32, y: f32);
     export on-key: func(key: string);

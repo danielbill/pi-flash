@@ -52,6 +52,22 @@ impl pf::plugin::host::Host for HostState {
     fn quick_pins(&mut self) -> Vec<String> {
         quick_pin_list()
     }
+    fn get_host_proof(&mut self, nonce: String) -> pf::plugin::host::HostProof {
+        // 090-5 L3：宿主只递数据不判定；nonceTag 现算（算法公开，插件 wasm 内复算）。
+        let v: serde_json::Value =
+            serde_json::from_str(&proof_material()).unwrap_or(serde_json::Value::Null);
+        let kid = v["kid"].as_str().unwrap_or("").to_string();
+        let proof = v["proof"]
+            .as_str()
+            .unwrap_or("PROOF_PLACEHOLDER")
+            .to_string();
+        let nonce_tag = nonce_tag(&proof, &nonce);
+        pf::plugin::host::HostProof {
+            kid,
+            proof,
+            nonce_tag,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,16 +84,44 @@ pub enum PluginAction {
 
 pub type QuickPinListFn = fn() -> Vec<String>;
 pub type MeasureTextFn = fn(&str, f32) -> f32;
+/// 090-5 L3：官方宿主证明材料钩子，返回紧凑 JSON `{"kid":"…","proof":"…"}`。
+pub type HostProofFn = fn() -> String;
 
 thread_local! {
     static QUICK_PINS_FN: std::cell::RefCell<Option<QuickPinListFn>> = const { std::cell::RefCell::new(None) };
     static MEASURE_FN: std::cell::RefCell<Option<MeasureTextFn>> = const { std::cell::RefCell::new(None) };
+    static PROOF_FN: std::cell::RefCell<Option<HostProofFn>> = const { std::cell::RefCell::new(None) };
 }
 
 /// app 启动时注入宿主能力实现。
 pub fn install_host_hooks(quick: QuickPinListFn, measure: MeasureTextFn) {
     QUICK_PINS_FN.with(|c| *c.borrow_mut() = Some(quick));
     MEASURE_FN.with(|c| *c.borrow_mut() = Some(measure));
+}
+
+/// 注入官方构建证明材料（app 侧从 build.rs 注入的常量组装；见 crates/app/build.rs）。
+/// **未注入 = 占位符（fail-closed）**：内层插件 init 验签必失败 → 拒载。
+pub fn install_proof_hook(f: HostProofFn) {
+    PROOF_FN.with(|c| *c.borrow_mut() = Some(f));
+}
+
+fn proof_material() -> String {
+    PROOF_FN.with(|c| {
+        c.borrow()
+            .map(|f| f())
+            .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
+    })
+}
+
+/// nonceTag 派生（js.rs / 内层插件 pf-inner-verify 同算法，公开）：
+/// `hex(sha256(proof ‖ 0x00 ‖ nonce))`。防静态硬编码 dump，线性抬价非绝对防护。
+pub fn nonce_tag(proof: &str, nonce: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(proof.as_bytes());
+    h.update([0u8]);
+    h.update(nonce.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn quick_pin_list() -> Vec<String> {
@@ -142,9 +186,15 @@ impl PluginInstance {
         let _ = &self.engine;
         let _ = &self.component;
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            b.call_init(store, name)?;
+            // WIT：init 返回 Err = 插件自拒（如宿主证明验签失败）→ 拒载并透传原因（失败不静默）。
+            match b.call_init(store, name) {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(reason)) => Err(anyhow::anyhow!("插件拒载: {reason}")),
+                Err(e) => Err(e.into()),
+            }
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     pub fn on_resize(&mut self, w: f32, h: f32) -> anyhow::Result<()> {
@@ -248,4 +298,56 @@ pub fn scan_plugins_dir(dir: &Path) -> Vec<PluginMeta> {
 fn unquote(v: &str) -> String {
     let v = v.trim();
     v.trim_matches('"').trim_matches('\'').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proof_official() -> String {
+        std::env::var("PF_TEST_PROOF_OFFICIAL").unwrap_or_default()
+    }
+    fn proof_placeholder() -> String {
+        r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into()
+    }
+    fn proof_forged() -> String {
+        std::env::var("PF_TEST_PROOF_FORGED").unwrap_or_default()
+    }
+
+    /// 内层插件证明门（cq9）：官方 proof → init Ok；占位符/伪造 → Err 带可读原因。
+    /// 由 inner/scripts/e2e.mjs 注入 PF_TEST_INNER_WASM 等环境后运行；缺环境直接跳过。
+    #[test]
+    fn inner_plugin_proof_gate() {
+        let Ok(wasm) = std::env::var("PF_TEST_INNER_WASM") else {
+            return;
+        };
+        let Ok(_official) = std::env::var("PF_TEST_PROOF_OFFICIAL") else {
+            return;
+        };
+        let forged = std::env::var("PF_TEST_PROOF_FORGED").unwrap_or_default();
+        install_proof_hook(proof_official);
+        let path = std::path::PathBuf::from(wasm);
+        let name = "demo-inner";
+
+        // ① 官方 proof → 正常激活
+
+        let mut inst = PluginInstance::load(&path).expect("load");
+        inst.init(name).expect("官方 proof 必须激活成功");
+        // 激活后 render 应有产出（多点校验过的路径）
+        assert!(!inst.render().is_empty(), "激活后应有渲染输出");
+
+        // ② 占位符（fork 自建/无 key 构建）→ 拒载 + 原因
+        install_proof_hook(proof_placeholder);
+        let mut inst = PluginInstance::load(&path).expect("load");
+        let err = inst.init(name).expect_err("占位符必须拒载");
+        assert!(err.to_string().contains("官方构建"), "原因要可读: {err}");
+
+        // ③ 伪造（换钥签名）→ 拒载 + 原因
+        if !forged.is_empty() {
+            install_proof_hook(proof_forged);
+            let mut inst = PluginInstance::load(&path).expect("load");
+            let err = inst.init(name).expect_err("伪造必须拒载");
+            assert!(err.to_string().contains("验签失败"), "原因要可读: {err}");
+        }
+    }
 }
