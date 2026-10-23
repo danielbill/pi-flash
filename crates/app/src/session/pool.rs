@@ -114,9 +114,16 @@ impl Chat {
                     }
                 }
                 SessionEvent::Assistant(ev) => {
-                    // 只回推**活跃会话**的输出（与入站投递口径一致，避免串会话）
-                    if is_active {
-                        for text in chat.aux.remote.on_assistant(&ev) {
+                    // 回推口径与入站对齐（2026-10-23）：桌面活跃会话**或微信
+                    // 线**。微信线是后台会话——桌面切到别的项目/会话，模型
+                    // 回复照样发回微信（此前只认桌面活跃，用户一切换，回复
+                    // 全部静默丢失，真机实测坐实）。且只在**发送轮内**转发：
+                    // pi 空闲期吐的启动横幅之类不得混进回复通道。
+                    let key = rt.read(cx).key.clone();
+                    let running = rt.read(cx).agent_running;
+                    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(key.as_str());
+                    if (is_active || is_wx_line) && running {
+                        for text in chat.aux.remote.on_assistant(&ev, &key) {
                             chat.aux.remote.send(&text);
                         }
                     }
@@ -308,6 +315,60 @@ impl Chat {
         self.pool.runtimes.insert(key.clone(), rt.clone());
         self.subscribe_runtime(&rt, cx);
         Some(key)
+    }
+
+    /// 后台唤醒既有会话（微信线投递用）：建 runtime + 订阅 + 尾窗快照，
+    /// **不动桌面注意力**——`active_key`/`ws.cwd`/侧栏选中/last-open 全部
+    /// 原样。进程不在这里 spawn（懒 spawn 惯例，与草稿同）：调用方随后的
+    /// 首条投递经 `ensure_spawned` 同步拉起。已在池中直接返回。
+    pub(crate) fn open_session_detached(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
+        let path = pi_link::sessions::canonical_session_path(&path);
+        let key = path.to_string_lossy().to_string();
+        if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+            return Some(rt);
+        }
+        // cwd 解析口径同 open_session：现项目 → 项目组 → 当前工作区兜底
+        let cwd = self
+            .pool
+            .sessions
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| PathBuf::from(s.cwd.clone()))
+            .or_else(|| {
+                self.psp
+                    .projects
+                    .iter()
+                    .find(|g| g.sessions.iter().any(|s| s.path == path))
+                    .map(|g| g.path.clone())
+            })
+            .or_else(|| self.ws.cwd.clone())?;
+        let tail = match self.pool.session_tail_cache.get(&path).cloned() {
+            Some(msgs) => msgs,
+            None => {
+                let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
+                self.pool
+                    .session_tail_cache
+                    .insert(path.clone(), msgs.clone());
+                msgs
+            }
+        };
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(key, cwd, Some(path));
+            r.default_model = services::workspace::default_model_pref();
+            r.messages = tail;
+            r.pager.reload(r.messages.len());
+            r.status = "resuming".into();
+            r
+        });
+        self.pool
+            .runtimes
+            .insert(rt.read(cx).key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        Some(rt)
     }
 
     /// 启动落草稿（restore=off / 该项目无会话）：**不清 per-project 会话

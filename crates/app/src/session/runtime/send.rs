@@ -9,6 +9,13 @@ use crate::session::messages::{BashInfo, Msg, Role};
 
 use super::*;
 
+/// 远程（微信）投递结果：排队 ≠ 失败——只有 Failed 才向微信发出失败回执。
+pub(crate) enum RemoteSend {
+    Sent,
+    Queued,
+    Failed,
+}
+
 impl SessionRuntime {
     /// 发送后进 ↑ 历史：**上限截断**。此前无上限——长会话里每次发送的全文
     /// （含粘贴的大段日志）都永久留底，内存随消息条数线性涨，且
@@ -510,25 +517,36 @@ impl SessionRuntime {
     /// 否则 `agent.session` 是 `None`、命令直接丢掉 —— 真机表现就是
     /// 「发消息没有任何应答，重启后才有人回」。
     ///
-    /// 返回是否真的发出去了（失败时写 `status`，不静默）。
-    pub(crate) fn send_remote_text(&mut self, text: String, cx: &mut Context<Self>) -> bool {
+    /// 远程（微信）来的一条文本 —— 与 [`send_input`] **同口径**，但不碰
+    /// `self.input` / `pending_images`（那两个是 composer 专属的）。
+    ///
+    /// 关键：草稿**还没有 pi 进程**时必须先 `spawn()` + `attach_pump`，
+    /// 否则 `agent.session` 是 `None`、命令直接丢掉 —— 真机表现就是
+    /// 「发消息没有任何应答，重启后才有人回」。
+    ///
+    /// 返回三态：微信回执要区分「排队中」（正常，等当前轮结束）与
+    /// 「失败」（必须出声），不能都按 bool 的 false 静默吞掉。
+    pub(crate) fn send_remote_text(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) -> RemoteSend {
         if self.compacting {
-            return false;
+            return RemoteSend::Failed;
         }
         if !self.ensure_spawned(cx) {
-            return false;
+            return RemoteSend::Failed;
         }
         if self.agent.session.is_none() {
             self.status = tr("status.disconnected").into();
             cx.notify();
-            return false;
+            return RemoteSend::Failed;
         }
         // 规则 1+2：仅**运行中**才入缓冲（空闲直接发送，不经过缓冲）。
         if self.queue_mode() && self.agent_running {
-            let queued = !self.queued_inputs.is_empty();
             self.enqueue_remote(text.clone(), cx);
             cx.notify();
-            return !queued;
+            return RemoteSend::Queued;
         }
         // steer 模式运行中（规则 3）：打断投递——中止当前轮，本条作为新一轮。
         if !self.queue_mode() && self.agent_running {
@@ -544,7 +562,7 @@ impl SessionRuntime {
                 },
                 cx,
             );
-            return true;
+            return RemoteSend::Sent;
         }
         // 空闲（两模式同条）：直接发送，pi 原子判定。
         let cmd = Command::Prompt {
@@ -567,7 +585,11 @@ impl SessionRuntime {
             self.status = tr("status.send_failed").into();
         }
         cx.notify();
-        sent
+        if sent {
+            RemoteSend::Sent
+        } else {
+            RemoteSend::Failed
+        }
     }
 
     /// 远程来的非文本命令（`/停止`、ExtUi 回填）：**不 spawn** ——

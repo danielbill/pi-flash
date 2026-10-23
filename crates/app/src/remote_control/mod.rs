@@ -39,11 +39,15 @@ use wxprobe::format::messages::{Lang, t};
 
 use crate::appearance::theme;
 use crate::i18n::{tf, tr};
+use crate::session::runtime::RemoteSend;
 
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
 /// ZCode `weixinActivatedWelcome`（首条消息激活回执的抬头）。
 const ACTIVATED_WELCOME: &str = "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。";
+/// 投递失败回执（wxprobe 文案表同名条目）。失败必须让微信端看见——
+/// 静默丢弃正是「发消息没反应」屡查不出的原因。
+const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi 进程，稍后重试。";
 /// 绑定码无效的回执。ZCode 原句写的是「在 zcode UI 重新生成」—— 品牌换成
 /// 本应用（2026-10-07 用户拍板，与 `/帮助` 标题同一决定），故**不走文案表**。
 const BIND_INVALID: &[(&str, &str, &str)] = &[(
@@ -185,6 +189,10 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 回复缓冲当前的来源会话 key。桌面活跃会话与微信线可能**并行流式**
+    /// （出站门对两者都放行，2026-10-23），换来源时必须先把旧来源冲干净，
+    /// 否则两个会话的回复会拼成一条发出去。
+    buf_key: Option<String>,
 }
 
 impl RemoteControl {
@@ -207,6 +215,7 @@ impl RemoteControl {
             wants_start: false,
             active_token: None,
             poll_error: None,
+            buf_key: None,
         }
     }
 
@@ -595,13 +604,25 @@ impl RemoteControl {
 
     /// 流式事件 → 待发文本。**返回的每一段都要调用方发出去**。
     ///
+    /// `key` = 事件来源会话；与 [`Self::buf_key`] 不同源时先把旧来源冲干净
+    /// （桌面活跃会话与微信线并行流式，回复各回各家）。
+    ///
     /// flush 边界严格照 ZCode / §6 坑 1：
     /// * `TextDelta` 只累积，**不发**（provider chunk 常按词或子词到达）
     /// * `TextEnd` 用权威内容**覆盖**当前块（纠正丢 delta）
     /// * `ToolCallStart` → force flush（真正的发送边界之一）
     /// * 轮次结束由 [`Self::on_running`] 的下降沿触发
-    pub fn on_assistant(&mut self, ev: &pi_link::protocol::AssistantEvent) -> Vec<String> {
+    pub fn on_assistant(
+        &mut self,
+        ev: &pi_link::protocol::AssistantEvent,
+        key: &str,
+    ) -> Vec<String> {
         use pi_link::protocol::AssistantEvent as E;
+        let mut out = Vec::new();
+        if self.buf_key.as_deref() != Some(key) {
+            out.extend(self.flush());
+            self.buf_key = Some(key.to_string());
+        }
         match ev {
             E::TextDelta {
                 content_index,
@@ -611,7 +632,6 @@ impl RemoteControl {
                     self.cur_ix = Some(*content_index);
                 }
                 self.cur_text.push_str(delta);
-                Vec::new()
             }
             E::TextEnd {
                 content_index,
@@ -619,11 +639,11 @@ impl RemoteControl {
             } => {
                 self.cur_ix = Some(*content_index);
                 self.cur_text = content.clone();
-                Vec::new()
             }
-            E::ToolCallStart { .. } => self.flush(),
-            _ => Vec::new(),
+            E::ToolCallStart { .. } => out.extend(self.flush()),
+            _ => {}
         }
+        out
     }
 
     /// 轮次结束（`agent_running` 下降沿）→ 把剩下的发干净。
@@ -801,7 +821,18 @@ impl crate::Chat {
             .unwrap_or(false);
         // 回填给 route() —— /task 的两个守卫要用（route 拿不到 cx）
         self.aux.remote.active_running = running;
-        for text in self.aux.remote.on_running(running) {
+        // 冲刷看**缓冲来源**的运行态：出站门放开后缓冲可能来自桌面活跃
+        // 会话（轮内照常回推微信）。若仍按微信线判 idle，桌面流式中的文本
+        // 会被 200ms 一拍地冲出去成碎片。
+        let buf_running = self
+            .aux
+            .remote
+            .buf_key
+            .as_deref()
+            .and_then(|k| self.pool.runtimes.get(k))
+            .map(|rt| rt.read(cx).agent_running)
+            .unwrap_or(running);
+        for text in self.aux.remote.on_running(buf_running) {
             self.aux.remote.send(&text);
         }
         // 设置页扫码结果 —— **成功即关弹窗落回工作界面**（ZCode 扫完就进
@@ -1050,10 +1081,20 @@ impl crate::Chat {
     fn send_wx(&mut self, cmd: &Command, cx: &mut gpui::Context<Self>) {
         // 微信默认会话优先（bot 语境），/bind 记录次之，认领前回落活跃
         let key = self.aux.remote.target_key(&self.pool.active_key);
-        let rt = match self.pool.runtimes.get(&key).cloned() {
+        // 目标只是「没打开」（会话文件还在盘上）→ **后台唤醒**再投递，不动
+        // 桌面选中态。2026-10-23 真机：重启后微信线的会话没有 runtime，
+        // 投递全靠回退活跃兜底——微信跟谁说话被桌面牵着漂移。
+        let mut rt = match self.pool.runtimes.get(&key).cloned() {
+            Some(rt) => Some(rt),
+            None if std::path::Path::new(&key).is_file() => {
+                self.open_session_detached(std::path::PathBuf::from(&key), cx)
+            }
+            None => None,
+        };
+        let rt = match rt.take() {
             Some(rt) => rt,
             None => {
-                // 目标会话（微信线）已被删 → 清归属、重新认领活跃，重试一次。
+                // 会话真被删了 → 清归属、重新认领活跃，重试一次。
                 // 静默丢弃已经坑过一次（微信没回执），这里必须自愈。
                 self.aux.remote.clear_wx_session_if(&key);
                 self.aux.remote.claim_default_session(&self.pool.active_key);
@@ -1062,6 +1103,7 @@ impl crate::Chat {
                     Some(rt) => rt,
                     None => {
                         eprintln!("[wx] 命令未送达：没有 key = {key} 的会话，且无活跃会话可兜底");
+                        self.deliver_failed_reply();
                         return;
                     }
                 }
@@ -1069,12 +1111,20 @@ impl crate::Chat {
         };
         let sent = rt.update(cx, |r, cx| match cmd {
             // 文本要走「没进程先 spawn」，否则草稿会话永远收不到
-            Command::Prompt { message, .. } => r.send_remote_text(message.clone(), cx),
-            _ => r.send_remote_command(cmd, cx),
+            Command::Prompt { message, .. } => Some(r.send_remote_text(message.clone(), cx)),
+            _ => r.send_remote_command(cmd, cx).then_some(RemoteSend::Sent),
         });
-        if !sent {
+        if matches!(sent, Some(RemoteSend::Failed) | None) {
             eprintln!("[wx] 命令未送达（目标会话没有 pi 进程或正在压缩）");
+            self.deliver_failed_reply();
         }
+        // Queued = 已入队等当前轮结束，正常路径不发回执（避免刷屏）
+    }
+
+    /// 投递失败的微信端回执——静默丢弃正是「发消息没反应」屡查不出的原因。
+    fn deliver_failed_reply(&mut self) {
+        let lang = Lang::from_ix(crate::i18n::lang_ix());
+        self.aux.remote.send(&t(lang, DELIVER_FAILED));
     }
     /// 当前活跃会话是否在跑（`/新建` 的运行中分支与状态卡共用）。
     fn agent_running_now(&self, cx: &gpui::App) -> bool {
@@ -1617,9 +1667,9 @@ mod tests {
     fn deltas_accumulate_and_send_nothing() {
         // §6 坑1：provider chunk 常按词或子词到达，非终态必须留在缓冲里
         let mut rc = RemoteControl::new();
-        assert!(rc.on_assistant(&td(0, "你好")).is_empty());
-        assert!(rc.on_assistant(&td(0, "，我是")).is_empty());
-        assert!(rc.on_assistant(&td(0, "助手")).is_empty());
+        assert!(rc.on_assistant(&td(0, "你好"), "s").is_empty());
+        assert!(rc.on_assistant(&td(0, "，我是"), "s").is_empty());
+        assert!(rc.on_assistant(&td(0, "助手"), "s").is_empty());
         assert_eq!(rc.cur_text, "你好，我是助手");
         assert!(rc.buf.is_empty());
     }
@@ -1628,11 +1678,11 @@ mod tests {
     fn text_end_overrides_accumulated_deltas() {
         // TextEnd 是权威内容，用来纠正丢 delta；但不能清掉上一块
         let mut rc = RemoteControl::new();
-        rc.on_assistant(&td(0, "块一"));
-        rc.on_assistant(&te(0, "块一（修正）"));
+        rc.on_assistant(&td(0, "块一"), "s");
+        rc.on_assistant(&te(0, "块一（修正）"), "s");
         assert_eq!(rc.cur_text, "块一（修正）");
         // 下一块的 delta 累加在后面，不被 TextEnd 抹掉
-        rc.on_assistant(&td(1, "块二"));
+        rc.on_assistant(&td(1, "块二"), "s");
         assert_eq!(rc.cur_text, "块一（修正）块二");
     }
 
@@ -1640,17 +1690,31 @@ mod tests {
     fn tool_call_start_force_flushes() {
         // 真正的发送边界之一 = tool_call（§6 坑1）
         let mut rc = RemoteControl::new();
-        rc.on_assistant(&td(0, "先跑个命令"));
-        let out = rc.on_assistant(&tool_start());
+        rc.on_assistant(&td(0, "先跑个命令"), "s");
+        let out = rc.on_assistant(&tool_start(), "s");
         assert_eq!(out, vec!["先跑个命令".to_string()]);
         assert!(rc.cur_text.is_empty());
         assert!(rc.buf.is_empty(), "flush 后缓冲必须清空");
     }
 
     #[test]
+    fn source_switch_flushes_previous_buffer() {
+        // 双源防串线（2026-10-23 出站门放开后）：桌面活跃会话与微信线可能
+        // 并行流式——换来源必须先把旧来源冲干净，两个会话的回复各回各家，
+        // 不能拼成一条。
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&td(0, "微信线的回复"), "wx");
+        let out = rc.on_assistant(&td(0, "桌面会话的"), "desktop");
+        assert_eq!(out, vec!["微信线的回复".to_string()], "切换来源先冲旧来源");
+        assert_eq!(rc.cur_text, "桌面会话的", "新来源从零累积");
+        let out = rc.on_assistant(&tool_start(), "desktop");
+        assert_eq!(out, vec!["桌面会话的".to_string()]);
+    }
+
+    #[test]
     fn idle_flush_drains_remaining_text_once() {
         let mut rc = RemoteControl::new();
-        rc.on_assistant(&td(0, "最终答复"));
+        rc.on_assistant(&td(0, "最终答复"), "s");
         assert!(rc.on_running(true).is_empty(), "运行中不发");
         assert_eq!(rc.on_running(false), vec!["最终答复".to_string()]);
         assert!(rc.on_running(false).is_empty(), "只发一次，不重复");
@@ -1660,8 +1724,8 @@ mod tests {
     fn nothing_is_sent_from_an_empty_buffer() {
         let mut rc = RemoteControl::new();
         assert!(rc.on_running(false).is_empty());
-        assert!(rc.on_assistant(&tool_start()).is_empty());
-        rc.on_assistant(&td(0, "   "));
+        assert!(rc.on_assistant(&tool_start(), "s").is_empty());
+        rc.on_assistant(&td(0, "   "), "s");
         assert!(rc.on_running(false).is_empty(), "纯空白不发");
     }
 
@@ -1669,7 +1733,7 @@ mod tests {
     fn long_reply_is_split_into_chunks() {
         let mut rc = RemoteControl::new();
         let big: String = "很".repeat(9000);
-        rc.on_assistant(&td(0, &big));
+        rc.on_assistant(&td(0, &big), "s");
         let out = rc.on_running(false);
         assert!(out.len() >= 3, "9000 字应切成多段，实际 {}", out.len());
         assert!(out.iter().all(|s| s.chars().count() <= 4000));

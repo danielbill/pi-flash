@@ -639,6 +639,8 @@ mod nav;
 mod queue;
 mod send;
 
+pub(crate) use send::RemoteSend;
+
 #[cfg(test)]
 mod turn_outcome_tests {
     //! 轮末结局（三色通知点）的定义锁：结局 = **最后一条 assistant 消息的

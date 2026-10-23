@@ -42,6 +42,12 @@ static TABLE: &[(&str, &str, &str)] = &[
         "The current task is still running. Try again later, or use **/stop** to stop the current task.",
     ),
     ("未找到任务。", "未找到任务。", "Task not found."),
+    // ── 投递失败回执（2026-10-23：静默丢弃正是「发消息没反应」屡查不出的原因）──
+    (
+        "消息未送达：目标会话没有可用的 pi 进程，稍后重试。",
+        "消息未送達：目標會話沒有可用的 pi 進程，稍後重試。",
+        "Not delivered: the target session has no pi process. Try again later.",
+    ),
     // ── /status 状态卡（ZCode `botsService.ts:4593-4624` 的 label id）──
     ("工作区", "工作區", "Workspace"),
     ("模型", "模型", "Model"),
