@@ -46,9 +46,9 @@ fn sp(node: &Value, key: &str, default: f32) -> f32 {
 }
 
 /// 格子尺寸（图标落底板的整卡；图标 24 居中于 36 底板）。
-const CELL: f32 = 88.;
-const CELL_ICON_PLATE: f32 = 36.;
-const CELL_ICON: f32 = 24.;
+const CELL: f32 = 72.;
+const CELL_ICON_PLATE: f32 = 26.;
+const CELL_ICON: f32 = 22.;
 
 // ---------------------------------------------------------------------------
 // 解析层：组件树 JSON → ResolvedNode（纯逻辑，可单测）
@@ -338,6 +338,49 @@ pub(crate) fn plugin_panel_view(
         .into_any_element()
 }
 
+/// 子节点渲染：**连续的 button 收进一个横向换行容器**（格子流式排布，
+/// 01 §2 的 grid 语义），其余节点各占一行。
+fn render_children(
+    children: &[ResolvedNode],
+    ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    plugin_id: &str,
+) -> Vec<gpui::AnyElement> {
+    let mut out = Vec::new();
+    let mut run: Vec<gpui::AnyElement> = Vec::new();
+    for c in children {
+        if matches!(c, ResolvedNode::Button { .. }) {
+            run.push(render_node(c, ix, weak, t, plugin_id));
+            continue;
+        }
+        if !run.is_empty() {
+            out.push(flow_row(std::mem::take(&mut run)));
+        }
+        out.push(render_node(c, ix, weak, t, plugin_id));
+    }
+    if !run.is_empty() {
+        out.push(flow_row(run));
+    }
+    out
+}
+
+/// 格子流：横向换行、居中、呼吸边（原来 v1 render_grid 的形态）
+fn flow_row(cells: Vec<gpui::AnyElement>) -> gpui::AnyElement {
+    let mut flow = div()
+        .flex()
+        .flex_wrap()
+        .justify_center()
+        .gap(px(crate::ui::tokens::space::SP3))
+        .px(px(8.))
+        .pt(px(4.))
+        .pb(px(6.));
+    for el in cells {
+        flow = flow.child(el);
+    }
+    flow.into_any_element()
+}
+
 fn render_node(
     node: &ResolvedNode,
     ix: usize,
@@ -362,8 +405,8 @@ fn render_node(
             if *align_center {
                 col = col.items_center();
             }
-            for c in children {
-                col = col.child(render_node(c, ix, weak, t, plugin_id));
+            for c in render_children(children, ix, weak, t, plugin_id) {
+                col = col.child(c);
             }
             col.into_any_element()
         }
@@ -392,8 +435,8 @@ fn render_node(
             if !title.is_empty() {
                 col = col.child(group_header(title, t));
             }
-            for c in children {
-                col = col.child(render_node(c, ix, weak, t, plugin_id));
+            for c in render_children(children, ix, weak, t, plugin_id) {
+                col = col.child(c);
             }
             col.into_any_element()
         }
@@ -484,13 +527,12 @@ fn render_button(
     // 有图标 = 格子卡（图标上、短名下）
     let mut cell = div()
         .id(SharedString::from(format!("pf-cell-{ix}-{label}")))
-        .group("pf-cell")
         .w(px(CELL))
         .flex()
         .flex_col()
         .items_center()
-        .pt(px(crate::ui::tokens::space::SP2))
-        .pb(px(crate::ui::tokens::space::SP1))
+        .gap(px(crate::ui::tokens::space::SP1))
+        .py(px(crate::ui::tokens::space::SP2))
         .rounded(px(crate::ui::tokens::radius::CTRL));
     if !matches!(action, None | Some(CellAction::Unsupported(_))) {
         cell = cell.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
@@ -514,12 +556,9 @@ fn render_button(
         div()
             .w(px(CELL_ICON_PLATE))
             .h(px(CELL_ICON_PLATE))
-            .rounded(px(crate::ui::tokens::radius::CTRL))
-            .bg(rgb(t.bg_subtle))
             .flex()
             .items_center()
             .justify_center()
-            .group_hover("pf-cell", |s| s.bg(rgb(t.bg_selected)))
             .child(
                 gpui::svg()
                     .path(SharedString::from(icon_asset(icon, plugin_id)))
@@ -531,6 +570,7 @@ fn render_button(
         div()
             .max_w(px(CELL))
             .text_size(ui_size(10.5))
+            .text_center()
             .text_color(rgb(t.text_muted))
             .text_ellipsis()
             .child(SharedString::from(label.to_string())),
