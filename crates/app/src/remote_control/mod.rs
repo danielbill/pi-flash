@@ -794,16 +794,14 @@ impl crate::Chat {
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
-        // 二维码常显（2026-10-24 用户定夺「不让用户点，直接显示二维码」）：
-        // **仅在未绑定（无 token）时**，微信通信页在屏上且码不在流程中
-        // （Idle/Expired）→ 自动取/续码，`begin_qr` 幂等不打断进行中的流程。
-        // 已绑定绝不出码：自动出码会诱导重扫，而每次扫码注册新 bot 都会让
-        // 旧 bot 在服务端失效——正在聊天的链路就被自己人踹断了（2026-10-24
-        // 实录）。Error 不自动重试（网络故障时避免 ~15s 一轮的无效打点），
+        // 二维码常显（2026-10-24 用户定夺「不让用户点，直接显示二维码」，
+        // 且**随时可扫**——重复扫码 = 重绑，扫码成功泵即强制换新 token 重拉
+        // 渠道，见 force_restart_if_token_changed）：微信通信页在屏上且码不在
+        // 流程中（Idle/Expired）→ 自动取/续码，`begin_qr` 幂等不打断进行中的
+        // 流程。Error 不自动重试（网络故障时避免 ~15s 一轮的无效打点），
         // 留给页面上唯一的「重新获取」钮。
         if matches!(self.layout.content_view, crate::ContentView::Wx)
             && matches!(self.aux.remote.qr, QrState::Idle | QrState::Expired)
-            && !wxprobe::transport::require_token(&wxprobe::state::load()).is_ok()
         {
             self.aux.remote.begin_qr();
         }

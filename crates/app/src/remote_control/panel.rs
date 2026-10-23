@@ -352,8 +352,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
         .gap(px(12.))
         .child(col_header("smartphone", &tr("remote.scan_title")))
         .child(scan_status_card(chat, weak, t, running, has_token))
-        // 已绑定不渲染码区：自动出码会诱导重扫、作废正在聊天的 bot
-        .children((!has_token).then(|| qr_area(chat, weak)));
+        .child(qr_area(chat, weak));
 
     let right = div()
         .w(px(kit::LIST_W))
