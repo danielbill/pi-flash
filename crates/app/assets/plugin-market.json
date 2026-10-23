@@ -2,36 +2,40 @@
   "schema": "pf-market/1",
   "packages": [
     {
-      "name": "@pf-plugins-origin/quick-panel-demo",
-      "version": "0.0.1",
-      "integrity": "sha512-k2oIQwpA3ajtbAvA0zSd8lmzgulD7IdlqOObjKvMENdWkrCil89cS95ATtWl6p42OnBkgQK9NeyoqH4QAXkxDQ==",
+      "name": "@pf-plugins-origin/quick-panel",
+      "version": "0.2.0",
+      "integrity": "sha512-yeh2MEiVtpUf5D/dOguNO6WEH+u4G1APm634/6YbKbHvsBdQqHmRvENsnWm4E55z8ZQ3xD49n23dipG4cWcQXQ==",
       "min_pf": ">=0.2",
       "publisher": "Pi-Flash",
-      "published_at": "2026-10-22",
+      "published_at": "2026-10-23",
       "display": {
         "zh": "快捷面板",
         "en": "Quick Panel"
       },
       "desc": {
         "zh": "会话与常用提问的快捷入口面板",
-        "en": "Quick access panel for sessions and common prompts"
-      }
+        "en": "Quick access panel"
+      },
+      "source": "url",
+      "url": "http://127.0.0.1:8089/quick-panel-0.2.0.tgz"
     },
     {
-      "name": "@pf-plugins-origin/remote-control",
-      "version": "0.0.1",
-      "integrity": "sha512-9oPlNLHVNWrsMxStXAA18n59h+p8SrG8kifOnJKaccvVK/BuREvYROv+AyzXtyt1yDtQgRJw73obZILQpsc/jQ==",
+      "name": "@pf-plugins-origin/demo-inner",
+      "version": "0.1.0",
+      "integrity": "sha512-L7HYtyRXo2AzWf7cgHgKisnPlQmw3U3EFkThNhKw87eHr4cy08QPCOXSxpbDcOVcU1JXgLkr5gCxlUffXN1+Ew==",
       "min_pf": ">=0.2",
       "publisher": "Pi-Flash",
-      "published_at": "2026-10-22",
+      "published_at": "2026-10-23",
       "display": {
-        "zh": "远程控制",
-        "en": "Remote Control"
+        "zh": "演示内层插件",
+        "en": "Demo Inner"
       },
       "desc": {
-        "zh": "微信 ⇄ 会话桥，手机上远程查看与操控会话",
-        "en": "WeChat ⇄ session bridge for remote monitoring and control"
-      }
+        "zh": "wasm 内层插件：装载期验官方宿主证明（090-5 L3）",
+        "en": "Inner wasm plugin, proof-gated"
+      },
+      "source": "url",
+      "url": "http://127.0.0.1:8089/demo-inner-0.1.0.tgz"
     }
   ]
 }

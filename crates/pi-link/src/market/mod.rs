@@ -71,6 +71,23 @@ fn agent() -> &'static ureq::Agent {
 
 /// GET 一个 JSON 端点，返回响应体文本（≤2MB，UTF-8 宽松解码）。
 /// 错误串面向用户：`HTTP 404` / `network: ...` / `offline`。
+/// GET 一个二进制端点，返回响应体字节（上限 max_bytes；tarball/包体下载用）。
+pub fn http_get_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+    if offline() {
+        return Err("offline".to_string());
+    }
+    let resp = agent().get(url).call().map_err(|e| match e {
+        ureq::Error::Status(st, _) => format!("HTTP {st}"),
+        other => format!("network: {other}"),
+    })?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(max_bytes)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("network: {e}"))?;
+    Ok(buf)
+}
+
 pub fn http_get_json(url: &str) -> Result<String, String> {
     if offline() {
         return Err("offline".to_string());

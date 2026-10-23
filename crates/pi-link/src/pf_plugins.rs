@@ -47,6 +47,13 @@ pub struct IndexEntry {
     /// 发布日期（ISO 字符串，直接展示）。
     #[serde(default)]
     pub published_at: String,
+    /// 下载档：`"npm"`（默认，按 registry 约定隐式解析）| `"url"`（索引自描述路径，
+    /// 直连拉取——私有渠道/内层 wasm 包用，090-3 §3.1 source 双档）。
+    #[serde(default)]
+    pub source: String,
+    /// `source = "url"` 时的 tarball 直链（http/https）。
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -296,9 +303,23 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
         .ok_or("无法定位插件安装目录")?
         .join(".tmp-pack");
     let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {e}"))?;
 
     let result = (|| {
-        let tarball = pack(&entry.name, &entry.version, &tmp)?;
+        // 下载档：npm 档按 registry 约定解析（npm pack）；url 档索引自描述路径直连拉取
+        // （私有渠道/内层 wasm 包，090-3 §3.1 source 双档）。后续 integrity 对账同一条。
+        let tarball = match entry.source.as_str() {
+            "url" => {
+                if entry.url.is_empty() {
+                    return Err("url 档条目缺 url 字段".into());
+                }
+                let out = tmp.join("pkg.tgz");
+                let bytes = crate::market::http_get_bytes(&entry.url, 32 * 1024 * 1024)?;
+                std::fs::write(&out, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+                out
+            }
+            _ => pack(&entry.name, &entry.version, &tmp)?,
+        };
         let actual = sha512_sri(&tarball)?;
         if actual != entry.integrity {
             std::fs::remove_file(&tarball).ok();
