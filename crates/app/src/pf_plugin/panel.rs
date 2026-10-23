@@ -46,10 +46,9 @@ fn sp(node: &Value, key: &str, default: f32) -> f32 {
         .unwrap_or(default)
 }
 
-/// 格子高度（图标 36 + 一行短名）
-const CELL: f32 = 76.;
-const CELL_ICON_PLATE: f32 = 36.;
-const CELL_ICON: f32 = 36.;
+/// 格子流的内边距/间距（**唯一来源**：元素与列数公式共用，别再各写一份）
+const GRID_PAD: f32 = 8.;
+const GRID_GAP: f32 = 4.;
 /// 列数上限（再多就不像 dock 了）
 const GRID_MAX_COLS: u16 = 6;
 /// 分区最小占比（拖到极限也不让某个分区消失）
@@ -66,8 +65,17 @@ fn min_item_width(min_item: &str) -> f32 {
 
 /// 列数全由宿主算：`clamp(floor(可用宽 / 档位宽), 1, 6)`（01 §2.4）
 fn grid_cols(panel_w: f32, min_item: &str) -> u16 {
-    let usable = (panel_w - 2. * crate::ui::tokens::space::SP5 - 16.).max(1.);
+    let usable = (panel_w - 2. * GRID_PAD).max(1.);
     ((usable / min_item_width(min_item)).floor() as u16).clamp(1, GRID_MAX_COLS)
+}
+
+/// 格子尺寸/图标尺寸：`button.size` 档位（SM/MD/LG），格子与文字按钮共用
+fn button_dims(size: &str) -> (f32, f32) {
+    match size {
+        "SM" => (64., 30.),
+        "LG" => (92., 44.),
+        _ => (76., 36.), // MD 默认
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +149,8 @@ pub(crate) enum ResolvedNode {
     },
     Row {
         gap: f32,
+        pad: f32,
+        align: String,
         justify_between: bool,
         children: Vec<ResolvedNode>,
     },
@@ -158,6 +168,8 @@ pub(crate) enum ResolvedNode {
         text: String,
         tone: String,
         size: gpui::Pixels,
+        weight: String,
+        ellipsis: bool,
     },
     Icon {
         name: String,
@@ -172,6 +184,9 @@ pub(crate) enum ResolvedNode {
         arg: String,
         action: Option<CellAction>,
         menu: Vec<MenuItem>,
+        variant: String,
+        size: String,
+        disabled: bool,
     },
     /// 未知组件：占位 + 日志（01 §1）
     Unknown(String),
@@ -253,6 +268,12 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
         }),
         "row" => Some(ResolvedNode::Row {
             gap: sp(node, "gap", crate::ui::tokens::space::SP3),
+            pad: sp(node, "pad", 0.),
+            align: node
+                .get("align")
+                .and_then(Value::as_str)
+                .unwrap_or("stretch")
+                .to_string(),
             justify_between: node.get("justify").and_then(Value::as_str) == Some("between"),
             children: resolve_children(node),
         }),
@@ -273,6 +294,12 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
             text: i18n(node.get("value")),
             tone: tone(node),
             size: text_size(node),
+            weight: node
+                .get("weight")
+                .and_then(Value::as_str)
+                .unwrap_or("regular")
+                .to_string(),
+            ellipsis: node.get("ellipsis").and_then(Value::as_bool).unwrap_or(true),
         }),
         "icon" => Some(ResolvedNode::Icon {
             name: node
@@ -302,6 +329,20 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 .to_string(),
             action: parse_action(node),
             menu: parse_menu(node),
+            variant: node
+                .get("variant")
+                .and_then(Value::as_str)
+                .unwrap_or("text")
+                .to_string(),
+            size: node
+                .get("size")
+                .and_then(Value::as_str)
+                .unwrap_or("MD")
+                .to_string(),
+            disabled: node
+                .get("disabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }),
         other => {
             eprintln!("[pf-plugin] 未知组件已占位: {other}");
@@ -419,7 +460,7 @@ pub(crate) fn plugin_panel_view(
     }
     let ratios = entry.split_ratios.borrow().clone();
     let scrolls = {
-        let mut s = entry.scrolls.borrow_mut();
+        let mut s = entry.section_scrolls.borrow_mut();
         while s.len() < n {
             s.push(gpui::ScrollHandle::new());
         }
@@ -551,7 +592,13 @@ fn render_node(
             align_center,
             children,
         } => {
-            let mut col = div().flex().flex_col().flex_1().min_h_0().gap(px(*gap)).p(px(*pad));
+            let mut col = div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap(px(*gap))
+                .p(px(*pad));
             if *align_center {
                 col = col.items_center();
             }
@@ -562,18 +609,22 @@ fn render_node(
         }
         ResolvedNode::Row {
             gap,
+            pad,
+            align,
             justify_between,
             children,
         } => {
-            let mut row = div()
-                .flex()
-                .flex_wrap()
-                .gap(px(*gap))
-                .pt(px(4.))
-                .pb(px(6.))
-                .justify_center();
+            let mut row = div().flex().flex_wrap().gap(px(*gap)).p(px(*pad));
+            row = match align.as_str() {
+                "start" => row.items_start(),
+                "center" => row.items_center(),
+                "end" => row.items_end(),
+                _ => row, // stretch = 默认
+            };
             if *justify_between {
                 row = row.justify_between();
+            } else {
+                row = row.justify_center();
             }
             for c in render_children(children, ix, weak, t, ctx) {
                 row = row.child(c);
@@ -590,16 +641,13 @@ fn render_node(
             }
             col.into_any_element()
         }
-        ResolvedNode::Grid {
-            min_item,
-            children,
-        } => {
+        ResolvedNode::Grid { min_item, children } => {
             let cols = grid_cols(ctx.panel_w, min_item);
             let mut grid = div()
                 .grid()
                 .grid_cols(cols)
-                .gap(px(crate::ui::tokens::space::SP2))
-                .px(px(8.))
+                .gap(px(GRID_GAP))
+                .px(px(GRID_PAD))
                 .pt(px(6.))
                 .pb(px(8.));
             for c in render_children(children, ix, weak, t, ctx) {
@@ -613,13 +661,28 @@ fn render_node(
             .h(px(1.))
             .bg(hairline(t))
             .into_any_element(),
-        ResolvedNode::Text { text, tone, size } => div()
-            .px(px(10.))
-            .pt(px(4.))
-            .text_size(*size)
-            .text_color(rgb(tone_color(tone, t)))
-            .child(SharedString::from(text.clone()))
-            .into_any_element(),
+        ResolvedNode::Text {
+            text,
+            tone,
+            size,
+            weight,
+            ellipsis,
+        } => {
+            let mut el = div()
+                .px(px(10.))
+                .pt(px(4.))
+                .text_size(*size)
+                .font_weight(match weight.as_str() {
+                    "medium" => gpui::FontWeight::MEDIUM,
+                    "semibold" => gpui::FontWeight::SEMIBOLD,
+                    _ => gpui::FontWeight::NORMAL,
+                })
+                .text_color(rgb(tone_color(tone, t)));
+            if *ellipsis {
+                el = el.text_ellipsis();
+            }
+            el.child(SharedString::from(text.clone())).into_any_element()
+        }
         ResolvedNode::Icon { name, size, tone } => gpui::svg()
             .path(SharedString::from(icon_asset(name, ctx.plugin_id)))
             .text_color(rgb(tone_color(tone, t)))
@@ -632,7 +695,12 @@ fn render_node(
             arg,
             action,
             menu,
-        } => render_button(label, icon, tip, arg, action, menu, ix, weak, t, ctx),
+            variant,
+            size,
+            disabled,
+        } => render_button(
+            label, icon, tip, arg, action, menu, variant, size, *disabled, ix, weak, t, ctx,
+        ),
         ResolvedNode::Unknown(ty) => div()
             .px(px(10.))
             .child(placeholder_center(&format!("[{ty}]"), t))
@@ -719,37 +787,31 @@ fn render_button(
     arg: &str,
     action: &Option<CellAction>,
     menu: &[MenuItem],
+    variant: &str,
+    size: &str,
+    disabled: bool,
     ix: usize,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     ctx: &RenderCtx,
 ) -> gpui::AnyElement {
-    // 无图标 = 文字按钮（列内整行）
-    if icon.is_empty() {
-        let disabled = matches!(action, None | Some(CellAction::Unsupported(_)));
-        let mut el = div()
-            .id(SharedString::from(format!("pf-btn-{ix}-{label}")))
-            .flex()
-            .items_center()
-            .h(px(24.))
-            .px(px(8.))
-            .rounded(px(crate::ui::tokens::radius::CTRL))
-            .text_size(ui_size(11.))
-            .text_color(rgb(if disabled { t.text_dim } else { t.text }));
-        if !disabled {
+    let dead = disabled || matches!(action, None | Some(CellAction::Unsupported(_)));
+    let (cell_h, icon_px) = button_dims(size);
+    let icon_only = variant == "icon";
+
+    // 点/右键 都只在"活"按钮上挂
+    let with_clicks = |mut el: gpui::Stateful<gpui::Div>| -> gpui::Stateful<gpui::Div> {
+        if !dead {
             el = el.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
-        }
-        if !tip.is_empty() {
-            el = el.with_tip_text(tip.to_string());
-        }
-        if matches!(
-            action,
-            Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_))
-        ) {
-            el = el.on_mouse_down(
-                MouseButton::Left,
-                click_action(weak.clone(), ix, action.clone()),
-            );
+            if matches!(
+                action,
+                Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_))
+            ) {
+                el = el.on_mouse_down(
+                    MouseButton::Left,
+                    click_action(weak.clone(), ix, action.clone()),
+                );
+            }
         }
         if !menu.is_empty() {
             el = el.on_mouse_down(
@@ -757,55 +819,87 @@ fn render_button(
                 open_cell_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
             );
         }
+        el
+    };
+
+    // 纯图标按钮：方形，label 退成 tooltip
+    if icon_only {
+        let side = match size {
+            "SM" => 28.,
+            "LG" => 40.,
+            _ => 34.,
+        };
+        let mut el = div()
+            .id(SharedString::from(format!("pf-icobtn-{ix}-{label}")))
+            .w(px(side))
+            .h(px(side))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(crate::ui::tokens::radius::CTRL));
+        el = with_clicks(el);
+        let tip_text = if tip.is_empty() { label } else { tip };
+        if !tip_text.is_empty() {
+            el = el.with_tip_text(tip_text.to_string());
+        }
+        return el
+            .child(
+                gpui::svg()
+                    .path(SharedString::from(icon_asset(icon, ctx.plugin_id)))
+                    .text_color(rgb(if dead { t.text_dim } else { t.text }))
+                    .size(px(icon_px.min(side - 8.))),
+            )
+            .into_any_element();
+    }
+
+    // 无图标 = 文字按钮（列内整行）
+    if icon.is_empty() {
+        let mut el = div()
+            .id(SharedString::from(format!("pf-btn-{ix}-{label}")))
+            .flex()
+            .items_center()
+            .h(px(cell_h * 0.34))
+            .px(px(8.))
+            .rounded(px(crate::ui::tokens::radius::CTRL))
+            .text_size(ui_size(11.))
+            .text_ellipsis()
+            .text_color(rgb(if dead { t.text_dim } else { t.text }));
+        el = with_clicks(el);
+        if !tip.is_empty() {
+            el = el.with_tip_text(tip.to_string());
+        }
         return el
             .child(SharedString::from(label.to_string()))
             .into_any_element();
     }
 
-    // 有图标 = 格子（图标上、短名下；格子尺寸由 grid 决定）
+    // 有图标 = 格子（图标上、短名下；尺寸随 button.size）
     let mut cell = div()
         .id(SharedString::from(format!("pf-cell-{ix}-{label}")))
         .w_full()
-        .h(px(CELL))
+        .h(px(cell_h))
         .flex()
         .flex_col()
         .items_center()
         .justify_center()
         .gap(px(crate::ui::tokens::space::SP1))
         .rounded(px(crate::ui::tokens::radius::CTRL));
-    if !matches!(action, None | Some(CellAction::Unsupported(_))) {
-        cell = cell.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
-    }
+    cell = with_clicks(cell);
     if !tip.is_empty() {
         cell = cell.with_tip_text(tip.to_string());
     }
-    if matches!(
-        action,
-        Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_))
-    ) {
-        cell = cell.on_mouse_down(
-            MouseButton::Left,
-            click_action(weak.clone(), ix, action.clone()),
-        );
-    }
-    if !menu.is_empty() {
-        cell = cell.on_mouse_down(
-            MouseButton::Right,
-            open_cell_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
-        );
-    }
     cell.child(
         div()
-            .w(px(CELL_ICON_PLATE))
-            .h(px(CELL_ICON_PLATE))
+            .w(px(icon_px))
+            .h(px(icon_px))
             .flex()
             .items_center()
             .justify_center()
             .child(
                 gpui::svg()
                     .path(SharedString::from(icon_asset(icon, ctx.plugin_id)))
-                    .text_color(rgb(t.text))
-                    .size(px(CELL_ICON)),
+                    .text_color(rgb(if dead { t.text_dim } else { t.text }))
+                    .size(px(icon_px)),
             ),
     )
     .child(
@@ -1003,11 +1097,21 @@ mod tests {
             panic!("分区应为 section")
         };
         assert_eq!(title.as_deref(), Some("可执行文件"));
-        let ResolvedNode::Grid { min_item, children: cells } = &children[0] else {
+        let ResolvedNode::Grid {
+            min_item,
+            children: cells,
+        } = &children[0]
+        else {
             panic!("分区内容应为 grid")
         };
         assert_eq!(min_item, "SM");
-        let ResolvedNode::Button { label, action, menu, .. } = &cells[0] else {
+        let ResolvedNode::Button {
+            label,
+            action,
+            menu,
+            ..
+        } = &cells[0]
+        else {
             panic!("格内应为 button")
         };
         assert_eq!(label, "build.ps1");

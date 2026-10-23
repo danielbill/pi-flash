@@ -26,6 +26,10 @@ use crate::Chat;
 // 清单（02 §2；手写极简解析，不引 toml 库——设计定案）
 // ---------------------------------------------------------------------------
 
+/// 本版 PF 支持的清单契约大版本（与插件仓 schema/plugin-contract.json 的
+/// `manifest_schema` 对齐；加/删原语时一并升）
+pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 2;
+
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
     /// 安装目录 = `<数据目录>/plugins/<id>/`
@@ -286,8 +290,16 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         let val = parse_val(v, n)?;
         match (section.as_str(), k) {
             ("", "schema") => {
-                if val.as_raw("schema", n)? != "1" {
-                    return Err("pf-plugin.toml：schema 必须 = 1（M1）".into());
+                // 契约大版本协商（schema/plugin-contract.json 的 manifest_schema）：
+                // 高于宿主支持的版本一律拒装，**不降级运行**
+                let got: u32 = val
+                    .as_raw("schema", n)?
+                    .parse()
+                    .map_err(|_| format!("pf-plugin.toml 行 {}：schema 必须是整数", n + 1))?;
+                if got != SUPPORTED_MANIFEST_SCHEMA {
+                    return Err(format!(
+                        "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（只支持 {SUPPORTED_MANIFEST_SCHEMA}）"
+                    ));
                 }
             }
             ("", "id") => m.id = val.as_str("id", n)?,
@@ -490,11 +502,7 @@ pub(crate) struct PluginEntry {
     /// 懒扩容——渲染期 &self 内部可变性，先例 at_filter_cache/bubble_scrolls。
     /// 滚动条 = psp_scrollbar：hover 常显 / 3s 淡出 / 无轨道底，平时隐形，
     /// 面板静止即纯居中排版）
-    pub scrolls: std::cell::RefCell<Vec<gpui::ScrollHandle>>,
-    /// 顶层孤儿内容（不在 group 下）的滚动句柄——**禁止复用组序懒扩容**：
-    /// 曾以 usize::MAX 作组序传进去，`while len <= usize::MAX` 无限分配，
-    /// 点开面板即崩（2026-10-23）
-    pub scroll_orphan: gpui::ScrollHandle,
+    pub section_scrolls: std::cell::RefCell<Vec<gpui::ScrollHandle>>,
 }
 
 /// Chat 上的插件簇（与 aux/ws 等并列的最小簇）。
@@ -792,8 +800,7 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                         cell_menu: None,
                         split_ratios: std::cell::RefCell::new(Vec::new()),
                         split_drag: std::cell::RefCell::new(None),
-                        scrolls: std::cell::RefCell::new(Vec::new()),
-                        scroll_orphan: gpui::ScrollHandle::new(),
+                        section_scrolls: std::cell::RefCell::new(Vec::new()),
                         body: None,
                     })
                     .collect(),
@@ -839,7 +846,7 @@ mod tests {
     }
 
     const GOOD: &str = r#"
-schema = 1
+schema = 2
 id = "quick-panel"
 title = { zh = "快捷面板", en = "Quick Panel" }
 version = "0.1.0"
@@ -891,7 +898,7 @@ entry = "main.js"
         assert!(parse_manifest(&dir).is_err());
         // schema ≠ 1
         let dir = tmp.join("quick-panel");
-        write_manifest(&dir, &GOOD.replace("schema = 1", "schema = 2"));
+        write_manifest(&dir, &GOOD.replace("schema = 2", "schema = 3"));
         assert!(parse_manifest(&dir).is_err());
         // 纯库包（无 contributes）
         let dir = tmp.join("quick-panel");
@@ -915,7 +922,7 @@ entry = "main.js"
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 1  # 顶部注释
+            "schema = 2  # 顶部注释
 id = \"quick-panel\"   
 title = { zh = \"快捷#面板\" } # 行内
 version = \"0.1.0\"
