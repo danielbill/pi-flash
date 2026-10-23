@@ -352,7 +352,13 @@ fn render_node(
             align_center,
             children,
         } => {
-            let mut col = div().flex().flex_col().flex_1().min_h_0().gap(px(*gap)).p(px(*pad));
+            let mut col = div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap(px(*gap))
+                .p(px(*pad));
             if *align_center {
                 col = col.items_center();
             }
@@ -458,7 +464,10 @@ fn render_button(
             el = el.with_tip_text(tip.to_string());
         }
         if let Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_)) = action {
-            el = el.on_mouse_down(MouseButton::Left, click_action(weak.clone(), ix, action.clone()));
+            el = el.on_mouse_down(
+                MouseButton::Left,
+                click_action(weak.clone(), ix, action.clone()),
+            );
         }
         // 右键：菜单项（宿主动作类直接可用；插件回调类走 onCommand）
         if !menu.is_empty() {
@@ -467,7 +476,9 @@ fn render_button(
                 right_click_menu(weak.clone(), ix, menu.to_vec(), arg.to_string()),
             );
         }
-        return el.child(SharedString::from(label.to_string())).into_any_element();
+        return el
+            .child(SharedString::from(label.to_string()))
+            .into_any_element();
     }
 
     // 有图标 = 格子卡（图标上、短名下）
@@ -488,7 +499,10 @@ fn render_button(
         cell = cell.with_tip_text(tip.to_string());
     }
     if let Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_)) = action {
-        cell = cell.on_mouse_down(MouseButton::Left, click_action(weak.clone(), ix, action.clone()));
+        cell = cell.on_mouse_down(
+            MouseButton::Left,
+            click_action(weak.clone(), ix, action.clone()),
+        );
     }
     if !menu.is_empty() {
         cell = cell.on_mouse_down(
@@ -574,9 +588,7 @@ fn to_js_action(a: CellAction) -> JsAction {
         CellAction::Edit(p) => JsAction::Edit(p),
         CellAction::Reveal(p) => JsAction::RevealInExplorer(p),
         CellAction::Toast(m) => JsAction::Toast(m),
-        CellAction::Unsupported(name) => {
-            JsAction::Toast(format!("宿主不支持的动作：{name}"))
-        }
+        CellAction::Unsupported(name) => JsAction::Toast(format!("宿主不支持的动作：{name}")),
     }
 }
 
@@ -653,16 +665,16 @@ mod tests {
         };
         assert_eq!(title, "可执行文件");
         let ResolvedNode::Button {
-            label, action, menu, ..
+            label,
+            action,
+            menu,
+            ..
         } = &group_children[0]
         else {
             panic!("组内应为 button")
         };
         assert_eq!(label, "build.ps1");
-        assert_eq!(
-            action,
-            &Some(CellAction::Run(r"D:\p\build.ps1".into()))
-        );
+        assert_eq!(action, &Some(CellAction::Run(r"D:\p\build.ps1".into())));
         assert_eq!(menu.len(), 2);
         assert!(menu[0].action.is_some()); // 宿主执行
         assert!(menu[1].action.is_none()); // 回调插件
@@ -681,9 +693,15 @@ mod tests {
 
     #[test]
     fn icon_paths() {
-        assert_eq!(icon_asset("icons/file_icons/ps1.svg", "p"), "icons/file_icons/ps1.svg");
+        assert_eq!(
+            icon_asset("icons/file_icons/ps1.svg", "p"),
+            "icons/file_icons/ps1.svg"
+        );
         assert_eq!(icon_asset("terminal", "p"), "icons/terminal.svg");
-        assert_eq!(icon_asset("assets:bolt.svg", "quick-panel"), "plugins/quick-panel/assets/bolt.svg");
+        assert_eq!(
+            icon_asset("assets:bolt.svg", "quick-panel"),
+            "plugins/quick-panel/assets/bolt.svg"
+        );
         assert_eq!(icon_asset("", "p"), "icons/file.svg");
     }
 }
