@@ -35,6 +35,13 @@
 - pi 侧新 settings 键 `sessionShareDestination`（auto/gist/radius，/share 用）——PF 设置页不消费，无需动。
 - `kimi-coding` provider 改走 Chat Completions，`models.json` 里它的 baseUrl 覆盖**必须带 `/v1`**（PF 只读透传该文件，用户自己改）。
 
+## 1.4.0 升级复核（2026-10-24，npm tarball dist diff）
+
+- **wire 层零变化**：RPC 三件套 + `jsonl.js` 与 1.3.0 **逐字节一致**；`agent-session.js` 字符串集零增删；`AgentSessionEvent` 联合类型无新事件（pi-rpc 上述口径全部沿用）；内置工具名仍 8 个；`formatDimensionNote` 未变（image-resize.js 逐字节一致，PF 剥除照旧）。protocol.rs / catalog.rs 未动。
+- 行为变化（不破 wire，app 可见）：压缩/分支摘要改用模型输出上限，"generation hit the token cap" 失败消除；输出上限截断后恢复的会话不再因孤儿 toolResult 被 provider 拒；resume/分支导航的扩展工具不再失活（`#11062`）；grep 工具改跑 `rg --no-config`（不再吃 `RIPGREP_CONFIG_PATH`）。
+- Windows 相关修复利好本仓用户：shell 检测接受 MS Store 别名 + 非 `C:\Windows` 安装下找 PowerShell/WSL（`#9504`/`#9501`）；`mcp.json` 带 UTF-8 BOM 可解析（`#11191`）。
+- pi 侧新键（PF 只读透传，无需动）：classifier `images` 输入、provider `compat.imageInput`/`sendImageOptInHeader`、`MiniMax-M3.1-Flash`、`PI_CODEMODE_MAX_WORKERS`；Copilot 默认模型 `gpt-5.4`→`gpt-6.1-sol`。
+
 ## transcript 重放
 
 - 系统提示词与工具声明在 transcript 的 `role:"system"` 消息里（content 追加 + sections 补丁 + toolsAdded/Removed），重放对齐 pi-ai `utils/transcript.js`。
