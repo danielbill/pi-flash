@@ -168,9 +168,10 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
     let grid = match wxprobe::qr::qr_grid(url, 4) {
         Ok(g) => g,
         Err(e) => {
-            return kit::error_note(&crate::i18n::tf("remote.qr_gen_failed", &[
-                ("e", e.to_string()),
-            ]))
+            return kit::error_note(&crate::i18n::tf(
+                "remote.qr_gen_failed",
+                &[("e", e.to_string())],
+            ));
         }
     };
     let side = grid.size as f32 * MOD;
@@ -188,8 +189,7 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
             if x > cursor {
                 row = row.child(div().w(px((x - cursor) as f32 * MOD)).h(px(MOD)));
             }
-            row = row
-                .child(div().w(px(len as f32 * MOD)).h(px(MOD)).bg(rgb(DARK)));
+            row = row.child(div().w(px(len as f32 * MOD)).h(px(MOD)).bg(rgb(DARK)));
             cursor = x + len;
         }
         if cursor < grid.size {
