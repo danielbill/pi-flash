@@ -105,12 +105,11 @@ pub(crate) const HEIGHT: f32 = 40.;
 pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
 /// 左段（015 功能面板侧）：收放钮贴左 = `tokens::align::TOGGLE_ML`（图标
-/// 视觉线 ICON_LINE 与 psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。原
-/// 右端手机遥控钮已隐藏（2026-10-10 用户定夺；重开走 git 历史找回 wx_btn）。
-pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+/// 视觉线 ICON_LINE 与 psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。
+/// 微信手机钮**已撤**（2026-10-23 定夺：入口只留三横菜单【微信通信】，
+/// 内容区全屏页），旧钮走 git 历史找回。
+pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
-    // 微信 Bot 钮着色：渠道在跑 = accent 常亮（原 018 状态栏着色规则）
-    let wx_on = chat.aux.remote.is_running();
     let mut bar = div()
         .id("topbar-l")
         .h(px(HEIGHT))
@@ -125,8 +124,7 @@ pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gp
             cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
                 this.toggle_panes(cx);
             }),
-        )))
-        .child(div().ml(px(space::SP2)).child(wx_btn(wx_on, cx)));
+        )));
     // 040-1 「菜单」三横钮（紧贴收放钮右侧）：目前只有「Pi扩展市场」
     // 一项，浮层渲染挂 render.rs 根（dlg.market_menu = 按钮锚点）。
     // **本版隐藏**：市场页还没收拾干净，入口走 dev-flags
@@ -152,43 +150,6 @@ pub(crate) fn topbar_l(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gp
                 .h_full()
                 .window_control_area(WindowControlArea::Drag),
         )
-}
-
-/// 手机钮（016 左段第二钮，2026-10-23 复活）：**未绑定** → 扫码弹窗；
-/// **已绑定** → 左列「微信」面板（开关/状态/绑定；设置页页签已删，
-/// 迁 `DockPanel::Wx`）。旧版无条件 begin_qr —— 绑定后再点会注册出
-/// 新的孤儿 bot，不再犯。
-fn wx_btn(wx_on: bool, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
-    let t = T();
-    let color = if wx_on { t.accent } else { t.text_muted };
-    div()
-        .id("wx-qr-btn")
-        .size(px(30.))
-        .mr(px(5.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(7.))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                if wxprobe::state::get_str(&wxprobe::state::load(), "bot_token").is_some() {
-                    // 已绑定：开左列微信面板（开关/状态都在那），渠道没起就顺手拉起
-                    if !this.aux.remote.is_running() {
-                        this.aux.remote.set_enabled(true);
-                    }
-                    this.open_wx_panel(cx);
-                } else {
-                    // 未绑定：幂等扫码（已在扫码/已出码时不重复发起）
-                    this.aux.remote.begin_qr();
-                    this.dlg.dialog = Some(crate::Dialog::WxQr);
-                }
-                cx.notify();
-            }),
-        )
-        .child(crate::ui::icon_hover("smartphone", 16., color))
 }
 
 /// 右段：中段标签栏 + 窗口控制。
@@ -420,6 +381,14 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 false,
                 Some("search"),
                 ContentView::SessionSearch,
+            ),
+            // 微信通信页（060；三横菜单唯一入口，内容区全屏）
+            crate::PanelTab::Wx => (
+                tr("remote.panel_title").into(),
+                None,
+                false,
+                Some("smartphone"),
+                ContentView::Wx,
             ),
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点。zed parity（DiskState::

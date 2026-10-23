@@ -31,14 +31,10 @@ pub(crate) mod panel;
 mod pipeline;
 use pi_link::protocol::{Command, ExtensionUiRequest};
 
-use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
-
 use wxprobe::command::BotCommand;
 use wxprobe::extui::{self, ExtUiReply};
 use wxprobe::format::messages::{Lang, t};
 
-use crate::appearance::theme;
-use crate::i18n::{tf, tr};
 use crate::session::runtime::RemoteSend;
 
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
@@ -788,14 +784,6 @@ pub(crate) fn spawn_wx_pump(cx: &mut gpui::Context<crate::Chat>) {
 }
 
 impl crate::Chat {
-    /// 打开左列「微信」面板（titlebar 手机钮已绑路径 / automation
-    /// `panel.dock wx`）。面板列收起时先展开——否则切了 dock 也看不见。
-    pub(crate) fn open_wx_panel(&mut self, cx: &mut gpui::Context<Self>) {
-        self.layout.panes_hidden = false;
-        self.layout.dock_panel = crate::DockPanel::Wx;
-        cx.notify();
-    }
-
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
@@ -835,14 +823,9 @@ impl crate::Chat {
         for text in self.aux.remote.on_running(buf_running) {
             self.aux.remote.send(&text);
         }
-        // 设置页扫码结果 —— **成功即关弹窗落回工作界面**（ZCode 扫完就进
-        // 工作台选会话；留个弹窗把人挡在外面是错的）
+        // 扫码结果（码已内联在【微信通信】页内，弹窗已废——泵只管
+        // 事件回填与重绘，成功落页可见）
         if self.aux.remote.poll_qr() {
-            if matches!(self.aux.remote.qr, QrState::Done { .. })
-                && matches!(self.dlg.dialog, Some(crate::Dialog::WxQr))
-            {
-                self.dlg.dialog = None;
-            }
             // 扫码成功 → 渠道起（wants_start 置位，本拍上方统一执行；
             // 不受 SELF_START 门控，不用再摸设置页开关）。若渠道已在跑且
             // 拿的是换绑前的旧 token，这里强制停掉、下一拍用新 token 重拉。
@@ -1192,197 +1175,6 @@ impl crate::Chat {
             },
         ))
     }
-}
-
-/// 060 微信 Bot：扫码弹窗（原手机图标入口已隐藏 2026-10-10，自动化
-/// WX_QR_OPEN 仍可打开）。渲染自 dialogs.rs 内切迁入（check_arch 文件
-/// 1500 行上限）——弹窗本体就是微信 Bot 域的 UI，归位。
-///
-/// **窗体复用设置弹窗那套大卡片**（`ui::overlay::big_card`）—— top_panels 的
-/// 头注写明「不要再自造窗体」，这里照做：`layer` 负责遮挡/外点/ESC，
-/// `big_card` 负责 chrome 顶条 + × + 0.7×0.98 尺寸。
-///
-/// **不持数据** —— 内容全从 `chat.aux.remote.qr` 现读，扫码 worker 的事件由 200ms
-/// 泵 drain 后 `cx.notify()`，弹窗随之重绘。
-pub(crate) fn render_wx_qr(
-    chat: &crate::Chat,
-    weak: &gpui::WeakEntity<crate::Chat>,
-    t: &theme::Theme,
-) -> gpui::AnyElement {
-    use crate::remote_control::panel::mono_lines;
-
-    let body_text = |text: String, dim: bool| -> gpui::AnyElement {
-        div()
-            .text_size(crate::appearance::ui_size(12.))
-            .text_color(rgb(if dim { t.text_dim } else { t.text }))
-            .child(SharedString::from(text))
-            .into_any_element()
-    };
-    let action_btn = |id: &'static str, label: &'static str, accent: bool, go: bool| {
-        let weak_b = weak.clone();
-        div()
-            .id(id)
-            .px(px(12.))
-            .py(px(6.))
-            .rounded(px(7.))
-            .text_size(crate::appearance::ui_size(12.))
-            .cursor_pointer()
-            .when(accent, |d| {
-                d.bg(rgb(t.accent)).text_color(rgb(t.accent_contrast))
-            })
-            .when(!accent, |d| d.border_1().border_color(rgb(t.border)))
-            .hover(|s| s.bg(rgb(t.bg_hover)))
-            .child(SharedString::from(label.to_string()))
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let _ = weak_b.update(cx, |c, cx| {
-                    if go {
-                        c.aux.remote.begin_qr(); // 幂等：已在扫码/已出码时不重发
-                    } else {
-                        c.dlg.dialog = None;
-                    }
-                    cx.notify();
-                });
-            })
-            .into_any_element()
-    };
-
-    // QR 用**实心方块**画，不用字符画：字形抗锯齿会在模块之间留细缝，
-    // 手机容易解不出来（用户实测扫不上）。按行把连续深色段合并成一个方块，
-    // 49x49 的网格约 600 个元素，不是 2401 个。
-    let qr_grid = |url: &str| -> gpui::AnyElement {
-        const MOD: f32 = 8.; // 8px/模块；49 模块 = 392px，正好塞进 0.7 宽大卡片
-        const DARK: u32 = 0x111827;
-        let grid = match wxprobe::qr::qr_grid(url, 4) {
-            Ok(g) => g,
-            Err(e) => return body_text(tf("remote.qr_gen_failed", &[("e", e.to_string())]), false),
-        };
-        let side = grid.size as f32 * MOD;
-        let mut canvas = div()
-            .w(px(side))
-            .h(px(side))
-            .flex_shrink_0()
-            .bg(rgb(0xff_ffff))
-            .flex()
-            .flex_col();
-        for y in 0..grid.size {
-            let mut row = div().h(px(MOD)).flex().flex_row().flex_shrink_0();
-            let mut cursor = 0usize;
-            for (x, len) in grid.runs(y) {
-                if x > cursor {
-                    row = row.child(div().w(px((x - cursor) as f32 * MOD)).h(px(MOD)));
-                }
-                row = row.child(div().w(px(len as f32 * MOD)).h(px(MOD)).bg(rgb(DARK)));
-                cursor = x + len;
-            }
-            if cursor < grid.size {
-                row = row.child(div().w(px((grid.size - cursor) as f32 * MOD)).h(px(MOD)));
-            }
-            canvas = canvas.child(row);
-        }
-        div()
-            .flex()
-            .justify_center()
-            .child(canvas)
-            .into_any_element()
-    };
-
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(12.))
-        .py(px(8.))
-        .child(body_text(tr("remote.dlg_title").into(), true));
-
-    match &chat.aux.remote.qr {
-        QrState::Idle => {
-            body = body.child(body_text(tr("remote.dlg_idle_hint").into(), true));
-            body = body.child(action_btn(
-                "wx-qr-begin",
-                tr("remote.dlg_qr_begin"),
-                true,
-                true,
-            ));
-        }
-        QrState::Loading => body = body.child(body_text(tr("remote.qr_loading").into(), true)),
-        QrState::Ready { url } => {
-            body = body.child(qr_grid(url));
-            body = body.child(body_text(tr("remote.dlg_qr_hint").into(), true));
-            body = body.child(action_btn(
-                "wx-qr-refresh",
-                tr("remote.dlg_qr_refresh"),
-                false,
-                true,
-            ));
-        }
-        QrState::Scanned => body = body.child(body_text(tr("remote.qr_scanned").into(), true)),
-        QrState::Done { bot_id } => {
-            let mut lines = vec![tr("remote.qr_done").to_string()];
-            if let Some(b) = bot_id {
-                lines.push(format!("bot_id = {b}"));
-            }
-            body = body.child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .child(mono_lines(lines, 12., false))
-                    .into_any_element(),
-            );
-            body = body.child(body_text(tr("remote.dlg_done_hint").into(), true));
-        }
-        QrState::Expired => {
-            body = body.child(body_text(tr("remote.qr_expired").into(), false));
-            body = body.child(action_btn("wx-qr-again", tr("remote.qr_begin"), true, true));
-        }
-        QrState::Error(m) => {
-            body = body.child(body_text(
-                format!("{}", tr("remote.dlg_error")).replace("{m}", m),
-                false,
-            ));
-            body = body.child(action_btn(
-                "wx-qr-retry",
-                tr("remote.dlg_retry"),
-                false,
-                true,
-            ));
-        }
-    }
-
-    // 绑定码：微信里 `/bind <code>` 用
-    let code = chat.aux.remote.bind_code(&chat.pool.active_key);
-    // 上面的「绑定成功」说的是**渠道**（扫码授权）；这里说的是 `/bind`，
-    // 两者别混 —— 用户被「已绑定/未绑定」并排显示搞糊涂过
-    let bind_line = match chat.aux.remote.bound.as_deref() {
-        Some(k) => tr("remote.dlg_bind_confirmed").replace("{k}", k),
-        None => tr("remote.dlg_bind_optional").replace("{code}", &code),
-    };
-    body = body.child(body_text(bind_line, true));
-    body = body.child(action_btn(
-        "wx-qr-close",
-        tr("remote.dlg_close"),
-        false,
-        false,
-    ));
-
-    let weak_dismiss = weak.clone();
-    let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
-        let _ = weak_dismiss.update(cx, |c, cx| {
-            c.dlg.dialog = None;
-            cx.notify();
-        });
-    };
-    crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss.clone())
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(crate::ui::overlay::big_card(
-            tr("remote.dlg_title"),
-            None,
-            body.into_any_element(),
-            t,
-            dismiss,
-        ))
-        .into_any_element()
 }
 
 #[cfg(test)]

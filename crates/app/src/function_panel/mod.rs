@@ -1063,19 +1063,8 @@ pub(crate) fn dock(
             .child(crate::pf_plugin::plugin_panel_view(chat, ix, weak))
             .into_any_element();
     }
-    // 微信 Bot 面板（060）：自设置页迁移的开关/状态/绑定/扫码入口
-    if chat.layout.dock_panel == DockPanel::Wx {
-        return div()
-            .id("dock")
-            .flex_1()
-            .min_h_0()
-            .relative()
-            .flex()
-            .flex_col()
-            .bg(rgb(t.nav))
-            .child(crate::remote_control::panel::panel_view(chat, weak))
-            .into_any_element();
-    }
+    // 微信面板已迁出 dock（2026-10-23）：入口收三横菜单【微信通信】，
+    // 内容区全屏页（ContentView::Wx，remote_control::panel::page）。
     // 020-1 整合面板：会话列表(上) + 文件树(下)，默认 50/50；分隔线拖拽
     // 改占比（拖拽即退出两侧最小态、双击复位 50%），各自可收起到控制栏
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）

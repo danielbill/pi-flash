@@ -325,6 +325,7 @@ pub(super) fn dispatch(
                     ContentView::PfMarket => "pf-market",
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
+                    ContentView::Wx => "wx",
                 },
             }))
         }
@@ -419,6 +420,12 @@ pub(super) fn dispatch(
                 .get("panel")
                 .and_then(Value::as_str)
                 .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin|wx\"}"))?;
+            // "wx" 已非 dock 面板（2026-10-23 迁内容区全屏页）：重定向到
+            // 开页，老脚本不破。
+            if panel == "wx" {
+                chat.open_wx(cx);
+                return ok();
+            }
             let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
             chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
                 .ok_or_else(|| bad(format!("未知 dock 面板: {panel:?}")))?;
@@ -439,6 +446,8 @@ pub(super) fn dispatch(
                 "pi-native-market" => chat.open_pi_native_market(cx),
                 // 090-4：PF 插件市场同口径（建输入框 + 重读台账）
                 "pf-market" => chat.open_pf_market(cx),
+                // 060：微信通信全屏页（三横菜单唯一 UI 入口）
+                "wx" => chat.open_wx(cx),
                 "search" => chat.open_project_search(cx),
                 other => return Err(bad(format!("未知内容视图: {other:?}"))),
             }
@@ -729,9 +738,10 @@ pub(super) fn dispatch(
             ok()
         }
         method::WX_QR_OPEN => {
+            // 扫码弹窗已废（2026-10-23：码直接绘在【微信通信】页内）——
+            // 动作改道：开页 + 幂等起扫码，老脚本语义不变。
             chat.aux.remote.begin_qr();
-            chat.dlg.dialog = Some(crate::Dialog::WxQr);
-            cx.notify();
+            chat.open_wx(cx);
             ok()
         }
         method::WX_ENABLE => {

@@ -51,10 +51,6 @@ pub(crate) enum Dialog {
     FileDirty {
         paths: Vec<PathBuf>,
     },
-    /// 060 微信 Bot：扫码弹窗（二维码 + 绑定码）。topbar 手机图标与设置
-    /// 「微信 Bot」页签入口已隐藏（2026-10-10 定），自动化 WX_QR_OPEN 仍可打开。
-    /// 不持数据 —— 内容全从 `chat.aux.remote.qr` 现读，泵更新即重绘。
-    WxQr,
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
@@ -68,8 +64,9 @@ pub(crate) enum TopPanel {
 /// 左列面板（statusbar tab 互斥切换）。020-1 曾有三态 sessions/files/git，
 /// 简化后 sessions/files 渲染已无差别（文件树并入整合面板）——2026-10
 /// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
-/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起），`Wx` 为微信 Bot
-/// 面板（060，自设置页迁移）。
+/// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
+/// 微信面板**已迁出 dock**（2026-10-23 定夺）：入口收三横菜单，内容区
+/// 全屏页（`ContentView::Wx`），不再占侧栏。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {
     /// 整合面板：会话列表(上) + 文件树(下)
@@ -78,8 +75,6 @@ pub(crate) enum DockPanel {
     Git,
     /// 插件面板（ix = pf_plugin::PluginUi.plugins 下标；不跨重启持久化）
     Plugin(usize),
-    /// 微信 Bot 面板（060；开关/状态/绑定/扫码入口）
-    Wx,
 }
 
 impl DockPanel {
@@ -89,17 +84,17 @@ impl DockPanel {
             DockPanel::Default => "sessions", // 旧键名，读回兼容
             DockPanel::Git => "git",
             DockPanel::Plugin(_) => "sessions",
-            DockPanel::Wx => "wx",
         }
     }
 
     /// automation `panel.dock` 入参 → 态（旧值 sessions/files 兼容映射）。
     pub(crate) fn from_dock_arg(panel: &str, plugin_ix: usize) -> Option<Self> {
+        // "wx" 不再是 dock 面板（2026-10-23 迁内容区全屏页），automation
+        // 侧在 PANEL_DOCK 入口先行截获重定向到 `Chat::open_wx`。
         match panel {
             "sessions" | "files" | "default" => Some(DockPanel::Default),
             "git" => Some(DockPanel::Git),
             "plugin" => Some(DockPanel::Plugin(plugin_ix)),
-            "wx" => Some(DockPanel::Wx),
             _ => None,
         }
     }
@@ -126,6 +121,9 @@ pub(crate) enum ContentView {
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
     SessionSearch,
+    /// 微信通信页（PanelTab::Wx；三横菜单唯一入口，内容区全屏，
+    /// 2026-10-23 自 DockPanel::Wx 侧栏迁出）
+    Wx,
 }
 
 /// psp 列表方式（⋯ 菜单）。
@@ -285,6 +283,8 @@ pub(crate) enum PanelTab {
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
     SessionSearch,
+    /// 微信通信（单例 tab；三横菜单打开，060 全屏页）
+    Wx,
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -300,6 +300,7 @@ pub(crate) enum TabKey {
     PfMarket,
     Search,
     SessionSearch,
+    Wx,
 }
 
 impl PanelTab {
@@ -313,6 +314,7 @@ impl PanelTab {
             PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
+            PanelTab::Wx => TabKey::Wx,
         }
     }
 }
@@ -338,6 +340,7 @@ impl PanelTab {
             PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
+            PanelTab::Wx => ContentView::Wx,
         }
     }
 }

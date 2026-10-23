@@ -1,13 +1,10 @@
-//! 微信 Bot 左列面板（060，dock 的 `DockPanel::Wx` 分支）：启用开关 +
-//! 渠道状态 + 绑定信息 + 扫码入口。自设置页「微信 Bot」页签迁移
-//!（2026-10-23 定夺：页签永久删除）。
-//!
-//! 二维码本体**不在这渲染**：面板宽 250–500 放不下 49 模块实体方块码，
-//! 扫码走 [`super::render_wx_qr`] 的大卡弹窗（居中 8px/模块，扫码成功
-//! 自动关窗落回工作界面）；面板按钮只负责 `begin_qr`（幂等）+ 开窗。
+//! 微信通信页（060；`ContentView::Wx` 内容区全屏页，三横菜单唯一入口）。
+//! 2026-10-23 定夺：自 dock 侧栏迁出，topbar/statusbar 图标全撤；
+//! **扫码弹窗（`Dialog::WxQr`）同步废除**——二维码直接绘在本页内。
+//! 启用开关 + 渠道状态 + 绑定信息 + 扫码（内联）。
 //!
 //! 控件取 ui/kit（config_switch / section_title / note / error_note）；
-//! 多行等宽块 [`mono_lines`] 由扫码弹窗共用。
+//! 多行等宽块 [`mono_lines`] 供状态/绑定小节与扫码结果共用。
 
 use gpui::{SharedString, div, prelude::*, px, rgb};
 
@@ -18,8 +15,8 @@ use crate::ui::kit::{self, Btn};
 
 use super::QrState;
 
-/// 多行等宽块：QR 字符画、长状态串都走它。扫码弹窗（`Dialog::WxQr`）复用。
-pub(crate) fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
+/// 多行等宽块：QR 结果、状态串、长 bot_id 都走它。
+fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
     let t = T();
     let mut col = div()
         .flex()
@@ -46,8 +43,8 @@ fn section(title: &str, content: Vec<gpui::AnyElement>) -> gpui::AnyElement {
     col.into_any_element()
 }
 
-/// 面板主体：控制栏（标题 + 启用开关）+ 滚动 body（状态/绑定/扫码）。
-pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+/// 页面主体：控制栏（标题 + 启用开关）+ 滚动 body（状态/绑定/扫码）。
+pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let mut col = div()
         .id("wx-panel")
@@ -55,6 +52,7 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
         .min_h_0()
         .flex()
         .flex_col()
+        .bg(rgb(t.bg))
         .child(ctrl_bar(chat, weak, t));
 
     let mut body = div()
@@ -115,12 +113,15 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
         vec![mono_lines(bind_lines, 11., true)],
     ));
 
-    // ── 扫码绑定：按钮开 `Dialog::WxQr` 大卡弹窗（头注：码在弹窗渲染） ──
+    // ── 扫码绑定：二维码**内联绘在本页**（2026-10-23 定夺，弹窗已废）──
     let mut qr_content: Vec<gpui::AnyElement> = Vec::new();
     match &chat.aux.remote.qr {
         QrState::Idle => qr_content.push(kit::note(&tr("remote.qr_desc"))),
         QrState::Loading => qr_content.push(kit::note(&tr("remote.qr_loading"))),
-        QrState::Ready { .. } => qr_content.push(kit::note(&tr("remote.qr_hint"))),
+        QrState::Ready { url } => {
+            qr_content.push(qr_grid(url));
+            qr_content.push(kit::note(&tr("remote.qr_hint")));
+        }
         QrState::Scanned => qr_content.push(kit::note(&tr("remote.qr_confirm"))),
         QrState::Done { bot_id } => {
             let mut lines = vec![tr("remote.qr_done").to_string()];
@@ -136,7 +137,7 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
     qr_content.push(kit::config_button(
         "wx-qr-begin",
         weak,
-        // 过期=重取，其余（含弹窗被关后的 Ready/Scanned 复看）=获取/重开
+        // 过期=重取，其余（含 Ready/Scanned 复看）=获取/重开
         if matches!(chat.aux.remote.qr, QrState::Expired) {
             tr("remote.qr_refresh")
         } else {
@@ -146,9 +147,8 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
         true,
         false,
         |c, cx| {
-            // 幂等：已在扫码/已出码时不重发；弹窗内扫码成功自动关窗
+            // 幂等：已在扫码/已出码时不重发
             c.aux.remote.begin_qr();
-            c.dlg.dialog = Some(crate::Dialog::WxQr);
             cx.notify();
         },
     ));
@@ -156,6 +156,52 @@ pub(crate) fn panel_view(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::An
 
     col = col.child(body);
     col.into_any_element()
+}
+
+/// 二维码**实心方块**绘制（自扫码弹窗迁入，2026-10-23 弹窗废除）。
+/// 不用字符画：字形抗锯齿会在模块之间留细缝，手机容易解不出来
+/// （用户实测扫不上）。按行把连续深色段合并成一个方块，49x49 的
+/// 网格约 600 个元素，不是 2401 个。
+fn qr_grid(url: &str) -> gpui::AnyElement {
+    const MOD: f32 = 8.; // 8px/模块；49 模块 = 392px
+    const DARK: u32 = 0x111827;
+    let grid = match wxprobe::qr::qr_grid(url, 4) {
+        Ok(g) => g,
+        Err(e) => {
+            return kit::error_note(&crate::i18n::tf("remote.qr_gen_failed", &[
+                ("e", e.to_string()),
+            ]))
+        }
+    };
+    let side = grid.size as f32 * MOD;
+    let mut canvas = div()
+        .w(px(side))
+        .h(px(side))
+        .flex_shrink_0()
+        .bg(rgb(0xff_ffff))
+        .flex()
+        .flex_col();
+    for y in 0..grid.size {
+        let mut row = div().h(px(MOD)).flex().flex_row().flex_shrink_0();
+        let mut cursor = 0usize;
+        for (x, len) in grid.runs(y) {
+            if x > cursor {
+                row = row.child(div().w(px((x - cursor) as f32 * MOD)).h(px(MOD)));
+            }
+            row = row
+                .child(div().w(px(len as f32 * MOD)).h(px(MOD)).bg(rgb(DARK)));
+            cursor = x + len;
+        }
+        if cursor < grid.size {
+            row = row.child(div().w(px((grid.size - cursor) as f32 * MOD)).h(px(MOD)));
+        }
+        canvas = canvas.child(row);
+    }
+    div()
+        .flex()
+        .justify_center()
+        .child(canvas)
+        .into_any_element()
 }
 
 /// 控制栏（38px，psp 控制栏同档）：「微信」标签 + 右缘启用开关。
@@ -198,4 +244,27 @@ fn ctrl_bar(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> gp
             },
         ))
         .into_any_element()
+}
+
+impl Chat {
+    /// 打开「微信通信」全屏页（三横菜单是唯一入口；automation
+    /// `content.view wx` / `panel.dock wx` 也落到这里）。
+    pub(crate) fn open_wx(&mut self, cx: &mut gpui::Context<Self>) {
+        self.dlg.market_menu = None;
+        match self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Wx))
+        {
+            Some(ix) => self.activate_panel_tab(ix, cx),
+            None => {
+                self.ws.panel_tabs.push(crate::PanelTab::Wx);
+                let ix = self.ws.panel_tabs.len() - 1;
+                self.activate_panel_tab(ix, cx);
+            }
+        }
+        self.set_content_view(crate::ContentView::Wx);
+        cx.notify();
+    }
 }
