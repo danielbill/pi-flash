@@ -480,6 +480,10 @@ pub(crate) struct PluginEntry {
     pub tree_loaded: bool,
     /// 右键菜单弹层（None = 收起；面板渲染时消费）
     pub cell_menu: Option<crate::pf_plugin::panel::CellMenuState>,
+    /// 分区比例（宿主 UI 状态，内存态；重启回等分）
+    pub split_ratios: std::cell::RefCell<Vec<f32>>,
+    /// 正在拖动分隔线的瞬时状态
+    pub split_drag: std::cell::RefCell<Option<crate::pf_plugin::panel::SplitDrag>>,
     /// 面板滚动（左列格子容器；跨帧存续）
     /// 面板滚动（要求⑤：上下两分栏各自管理；跨帧存续）
     /// 分栏滚动句柄 + psp 滚动条状态（要求⑤：每 group 一对；渲染期按序
@@ -786,6 +790,8 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                         host: None,
                         tree_loaded: false,
                         cell_menu: None,
+                        split_ratios: std::cell::RefCell::new(Vec::new()),
+                        split_drag: std::cell::RefCell::new(None),
                         scrolls: std::cell::RefCell::new(Vec::new()),
                         scroll_orphan: gpui::ScrollHandle::new(),
                         body: None,
