@@ -6,6 +6,8 @@
 //! - 游标 6 候选：`get_updates_buf | buf | next_buf | nextBuf | getUpdatesBuf | syncKey`（`:448-461`）
 //! - 文本/用户/会话/昵称/消息 id 各自的多级候选（`:345-440`）
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde_json::{Value, json};
 
 use crate::wire::{Wire, first_str, num, str_of};
@@ -131,12 +133,23 @@ pub fn send_text(
     context_token: Option<&str>,
     client_id: &str,
 ) -> Result<(), String> {
+    // iLink 协议参考（epiral/weixin-bot PROTOCOL.md）：`client_id` = "unique_id"
+    // ——**每条消息唯一**。state 里存的是稳定实例 id，这里拼上毫秒 + 序列号
+    // 成每条唯一（2026-10-23 真机排障：受理返回 message_id 但手机不投递，
+    // 按 ZCode 语义逐项对拍时唯一的协议违规点）。
+    static SEND_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEND_SEQ.fetch_add(1, Ordering::Relaxed);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let unique_client_id = format!("{client_id}-{millis}-{seq}");
     // ZCode `buildWeixinText`：微信各客户端对 LF 处理不一致，统一 CRLF。
     let normalized = strip_ansi(text).replace("\r\n", "\n").replace('\n', "\r\n");
     let mut msg = json!({
         "from_user_id": from_user,
         "to_user_id": to_user,
-        "client_id": client_id,
+        "client_id": unique_client_id,
         "message_type": 2,
         "message_state": 2,
         "item_list": [{ "type": 1, "text_item": { "text": normalized } }],

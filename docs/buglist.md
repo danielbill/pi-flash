@@ -1,3 +1,19 @@
+## 待验证（本轮修复）——微信 Bot 出站「受理不投递」：client_id 固定复用被 iLink 去重吞掉
+
+用户口径：消息进了 PF、模型也回复了、`sendmessage` 返回 message_id——手机永远
+收不到；CLI 直发探针同样石沉大海（「连这个都没搞定」）。
+
+- ✅ 根因：`sendmessage` 的 `client_id` 在协议里是 **unique_id（每条消息唯一）**
+  （epiral/weixin-bot PROTOCOL.md），PF 却用 state 里写死的稳定实例 id，跨消息、
+  跨 bot 会话长期复用——iLink 受理（返回新 message_id）但不投递。此前「拿到
+  message_id = 出站已通」的验证结论是错的：message_id 只是受理回执。
+- ✅ 修法：`poller::send_text` 内部把 client_id 拼成
+  `{client_id}-{millis}-{seq}`（毫秒 + 进程内序列号），app send 线程与 CLI
+  同走此路径。对照实验钉死：同 ctx、同分钟——固定 client_id 不达，唯一
+  client_id 送达（含 from_user_id 照填 bot id 的变体，无需留空）；getconfig
+  同 ctx 返回 ret:0 + typing_ticket，排除 token/会话过期。
+- ✅ 验证：用户真机确认「已经全部连通」。`cargo test -p wxprobe` 115 全绿。
+
 ## 待验证（本轮修复）——微信 Bot 回复石沉大海：出站只认桌面选中态 + 投递静默丢 + 启动横幅泄漏
 
 用户口径：换绑修复后复测，发「刚刚」只回了一句「MCP: 1 server enabled」（不是回复），
