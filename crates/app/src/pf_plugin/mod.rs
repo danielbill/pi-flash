@@ -760,6 +760,22 @@ impl Chat {
                     crate::services::shell_open::reveal_in_explorer(Path::new(&p))
                 }
                 JsAction::Toast(m) => self.set_status(m, cx),
+                JsAction::OpenUrl(u) => crate::services::shell_open::open_url(&u),
+                JsAction::OpenFolder(p) => {
+                    crate::services::shell_open::open_in_explorer(std::path::Path::new(&p))
+                }
+                JsAction::NewSession => self.new_session(cx),
+                // 只预填 + 聚焦：发不发由用户按发送键决定（插件不代发）
+                JsAction::AskPi(text) => match self.composer.composer.clone() {
+                    Some(input) => {
+                        let fh = input.update(cx, |i, cx| {
+                            i.set_value(&text, cx);
+                            i.focus_handle_in(cx)
+                        });
+                        fh.focus(window);
+                    }
+                    None => self.set_status(text, cx),
+                },
             }
         }
         // 插件数据可能被 onMenu/onCommand 改过：无条件重 render（独立窗口
@@ -896,7 +912,7 @@ entry = "main.js"
             &GOOD.replace("id = \"quick-panel\"", "id = \"quick-panel-x\""),
         );
         assert!(parse_manifest(&dir).is_err());
-        // schema ≠ 1
+        // schema ≠ 支持的契约大版本
         let dir = tmp.join("quick-panel");
         write_manifest(&dir, &GOOD.replace("schema = 2", "schema = 3"));
         assert!(parse_manifest(&dir).is_err());
@@ -904,7 +920,7 @@ entry = "main.js"
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 1\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
+            "schema = 2\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
         );
         let e = parse_manifest(&dir).unwrap_err();
         assert!(e.contains("纯库"));

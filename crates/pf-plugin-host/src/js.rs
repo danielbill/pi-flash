@@ -48,6 +48,14 @@ pub enum JsAction {
     RevealInExplorer(String),
     /// 轻提示
     Toast(String),
+    /// 系统浏览器打开 URL（01 §8；插件不拼 shell 命令）
+    OpenUrl(String),
+    /// 资源管理器打开目录
+    OpenFolder(String),
+    /// 新建会话（不携带内容）
+    NewSession,
+    /// 把文本填进输入框（**只预填、不代发**：发不发由用户决定）
+    AskPi(String),
 }
 
 /// 一个已装载的 JS 插件实例（全局单例：面板开着时右键复用同一份 ctx）。
@@ -110,6 +118,16 @@ impl JsPlugin {
                     JsAction::RevealInExplorer as fn(String) -> JsAction,
                 ),
                 ("__pf_toast", JsAction::Toast as fn(String) -> JsAction),
+                ("__pf_open_url", JsAction::OpenUrl as fn(String) -> JsAction),
+                (
+                    "__pf_open_folder",
+                    JsAction::OpenFolder as fn(String) -> JsAction,
+                ),
+                (
+                    "__pf_new_session",
+                    (|_s: String| JsAction::NewSession) as fn(String) -> JsAction,
+                ),
+                ("__pf_ask_pi", JsAction::AskPi as fn(String) -> JsAction),
             ] {
                 let h = glue_host.clone();
                 g.set(
@@ -143,6 +161,10 @@ globalThis.__pf_ctx = {{
   edit: (p) => globalThis.__pf_edit(p),
   revealInExplorer: (p) => globalThis.__pf_reveal(p),
   toast: (m) => globalThis.__pf_toast(m == null ? "" : String(m)),
+  openUrl: (u) => globalThis.__pf_open_url(String(u)),
+  openFolder: (p) => globalThis.__pf_open_folder(String(p)),
+  newSession: () => globalThis.__pf_new_session(""),
+  askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
   onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
   onPanelOpen: (fn) => {{ globalThis.__pf_panel_open_fn = fn; }},

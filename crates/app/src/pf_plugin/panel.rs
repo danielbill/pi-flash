@@ -89,6 +89,11 @@ pub(crate) enum CellAction {
     Edit(String),
     Reveal(String),
     Toast(String),
+    OpenUrl(String),
+    OpenFolder(String),
+    NewSession,
+    /// 预填输入框（不代发）
+    AskPi(String),
     /// 白名单内但宿主未接 → 渲染禁用 + 日志（01 §8）
     Unsupported(String),
 }
@@ -225,6 +230,10 @@ fn parse_action(node: &Value) -> Option<CellAction> {
         "edit" => CellAction::Edit(arg),
         "reveal_in_explorer" => CellAction::Reveal(arg),
         "toast" => CellAction::Toast(arg),
+        "open_url" => CellAction::OpenUrl(arg),
+        "open_folder" => CellAction::OpenFolder(arg),
+        "new_session" => CellAction::NewSession,
+        "ask_pi" => CellAction::AskPi(arg),
         other => CellAction::Unsupported(other.to_string()),
     })
 }
@@ -807,10 +816,7 @@ fn render_button(
     let with_clicks = |mut el: gpui::Stateful<gpui::Div>| -> gpui::Stateful<gpui::Div> {
         if !dead {
             el = el.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
-            if matches!(
-                action,
-                Some(CellAction::Run(_) | CellAction::Edit(_) | CellAction::Reveal(_))
-            ) {
+            if !matches!(action, None | Some(CellAction::Unsupported(_))) {
                 el = el.on_mouse_down(
                     MouseButton::Left,
                     click_action(weak.clone(), ix, action.clone()),
@@ -1023,6 +1029,10 @@ fn to_js_action(a: CellAction) -> JsAction {
         CellAction::Edit(p) => JsAction::Edit(p),
         CellAction::Reveal(p) => JsAction::RevealInExplorer(p),
         CellAction::Toast(m) => JsAction::Toast(m),
+        CellAction::OpenUrl(u) => JsAction::OpenUrl(u),
+        CellAction::OpenFolder(p) => JsAction::OpenFolder(p),
+        CellAction::NewSession => JsAction::NewSession,
+        CellAction::AskPi(t) => JsAction::AskPi(t),
         CellAction::Unsupported(name) => JsAction::Toast(format!("宿主不支持的动作：{name}")),
     }
 }
@@ -1131,7 +1141,8 @@ mod tests {
         assert_eq!(grid_cols(340., "SM"), 3);
         assert_eq!(grid_cols(600., "SM"), 6);
         assert_eq!(grid_cols(900., "SM"), 6);
-        assert_eq!(grid_cols(340., "LG"), 1);
+        assert_eq!(grid_cols(200., "LG"), 1);
+        assert_eq!(grid_cols(340., "LG"), 2);
         assert_eq!(grid_cols(900., "LG"), 5);
     }
 
