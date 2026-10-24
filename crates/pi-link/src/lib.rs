@@ -16,6 +16,7 @@ pub mod credentials;
 pub mod dev_flags;
 pub mod estimate;
 pub mod extensions;
+pub mod hidden_sessions;
 pub mod json;
 pub mod market;
 pub mod mcp;

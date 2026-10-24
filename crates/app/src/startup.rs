@@ -879,7 +879,12 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
             None => Vec::new(),
         };
         let _ = this.update(cx, |chat, cx| {
-            chat.pool.sessions = sessions;
+            // 影子会话（微信线 pf-wxbot-*）不进列表：过滤清单读一次
+            let hidden = pi_link::hidden_sessions::load();
+            chat.pool.sessions = sessions
+                .into_iter()
+                .filter(|s| !hidden.hides(s.name.as_deref(), &s.path))
+                .collect();
             cx.notify();
             if crate::PERF.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Some(t0) = crate::T0.get() {

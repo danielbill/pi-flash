@@ -15,6 +15,8 @@
 
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
+use pi_link::protocol::Command;
+
 use crate::Chat;
 use crate::appearance::theme::{Theme, UNREAD, WARN, theme as T};
 use crate::i18n::tr;
@@ -460,19 +462,11 @@ impl Chat {
         self.dlg.market_menu = None;
         let st = wxprobe::state::load();
         let has_token = wxprobe::transport::require_token(&st).is_ok();
-        // 线不存在：有 token 认领绑定的会话文件；没有则开专属草稿
-        //（2026-10-24 定夺：微信线不再认领桌面活跃会话）
+        // 线不存在：开一条**全新**影子会话（pf-wxbot-<ts>）。绝不认领桌面
+        // 会话、也不复活 state 里的历史 session_key——微信线的会话只由本模块
+        // 自己建、自己删（2026-10-24 用户定夺）。
         if self.aux.remote.wx_session.is_none() {
-            if has_token {
-                if let Some(key) = wxprobe::state::get_str(&st, "session_key") {
-                    self.aux.remote.set_wx_session(key);
-                }
-            }
-            if self.aux.remote.wx_session.is_none() {
-                if let Some(key) = self.new_draft_detached(cx) {
-                    self.aux.remote.set_wx_session(key);
-                }
-            }
+            self.wx_new_session(cx);
         }
         // 激活为普通会话 tab（文件 → 后台唤醒 + switch_to；草稿 → 直接
         // switch_to 池内 runtime）。进微信线前把桌面活跃记入 desktop_key：
@@ -495,5 +489,98 @@ impl Chat {
             self.dlg.dialog = Some(crate::Dialog::WxQr);
         }
         cx.notify();
+    }
+}
+
+// ── 影子会话轮换（2026-10-24 用户定夺）─────────────────────────────────
+//
+// 微信线**不复用任何会话**：每次重新链接（含第一次）新建一条
+// `pf-wxbot-<15 位时间戳>` 会话，并把老的那条删掉（回收站）。它不进 PF 的
+// 会话列表——模块启动时往 `hidden-sessions.json`（pi-link::hidden_sessions）
+// 注入自己的一条，列表/项目分组按清单过滤。
+//
+// 为什么要隔离：微信线此前「认领」桌面会话（甚至一度按「桌面活跃会话」
+// 回推），结果是两个通道共用一份会话与一份回复缓冲——桌面聊什么微信就收
+// 什么。串台在架构上就不该可能：微信只许碰自己那条影子会话。
+
+impl Chat {
+    /// 微信线会话名：`pf-wxbot-` + 15 位时间戳（`YYMMDDHHMMSS` + 3 位毫秒）。
+    fn wx_session_name() -> String {
+        format!(
+            "pf-wxbot-{}",
+            chrono::Local::now().format("%y%m%d%H%M%S%.3f")
+        )
+    }
+
+    /// 渠道（重新）连上：老影子会话下线 + 删除，新开一条并命名、注入过滤清单。
+    /// 桌面会话与项目完全不受影响（新会话是 detached 草稿）。
+    pub(crate) fn wx_rotate_session(&mut self, cx: &mut gpui::Context<Self>) {
+        let old = self.aux.remote.wx_session.take();
+        let old_active = old.as_deref() == Some(self.pool.active_key.as_str());
+        if let Some(key) = old {
+            self.wx_forget_session(&key, cx);
+        }
+        let Some(new_key) = self.wx_new_session(cx) else {
+            return; // 无项目态：等有工作区再建（open_wx 也会兜底）
+        };
+        // 老会话正被看着：焦点挪到新会话（active_key 已指向被删的旧 runtime，
+        // 不挪的话下一次 rt() 会拿到空）
+        if old_active {
+            if let Some(rt) = self.pool.runtimes.get(&new_key).cloned() {
+                self.switch_to(rt, cx);
+            }
+        }
+        self.refresh_sessions();
+        cx.notify();
+    }
+
+    /// 建一条新的影子会话（`pf-wxbot-<ts>`）：detached 草稿 + pi 侧命名 +
+    /// 过滤清单注入。返回 key；无工作区时 `None`。
+    pub(crate) fn wx_new_session(&mut self, cx: &mut gpui::Context<Self>) -> Option<String> {
+        let name = Self::wx_session_name();
+        let key = self.new_draft_detached(cx)?;
+        if let Some(rt) = self.pool.runtimes.get(&key) {
+            rt.read(cx).rpc(&Command::SetSessionName { name: name.clone() });
+        }
+        self.aux.remote.set_wx_session(key.clone());
+        self.aux.remote.wx_session_name = Some(name.clone());
+        pi_link::hidden_sessions::set_owned(
+            pi_link::hidden_sessions::OWNER_WX,
+            Some(&name),
+            None,
+        );
+        Some(key)
+    }
+
+    /// 摘掉一条（影子）会话：runtime 下线、文件进回收站、各处缓存/清单同步。
+    /// 与公开的 `delete_session` 区别：**不**改桌面焦点、不出 toast、不新建桌面会话。
+    fn wx_forget_session(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
+        if let Some(rt) = self.pool.runtimes.remove(key) {
+            rt.update(cx, |r, _| {
+                r.rpc(&Command::Abort);
+                r.shutdown_process();
+            });
+        }
+        let path = std::path::PathBuf::from(key);
+        if path.is_file() {
+            if trash::delete(&path).is_err() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        let same = |a: &std::path::PathBuf| crate::services::workspace::same_path(a, &path);
+        self.pool.sessions.retain(|s| !same(&s.path));
+        self.pool.session_tail_cache.remove(&path);
+        for g in &mut self.psp.projects {
+            g.sessions.retain(|s| !same(&s.path));
+        }
+        self.psp.unread.remove(&path);
+        self.psp.turn_errors.remove(&path);
+        self.psp.turn_warnings.remove(&path);
+        self.psp.session_pins.retain(|p| !same(p));
+        self.psp.pending_tabs.retain(|e| e.key != key);
+        if self.psp.active_file.as_ref().is_some_and(same) {
+            self.psp.active_file = None;
+        }
+        pi_link::recents::remove_recent(&path);
     }
 }

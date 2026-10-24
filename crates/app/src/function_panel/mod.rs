@@ -237,7 +237,12 @@ impl Chat {
                 .unwrap_or(0)
         };
         let mut groups: Vec<crate::ProjectGroup> = Vec::new();
+        // 影子会话（微信线 pf-wxbot-*）不建行：过滤清单由模块注入
+        let hidden = pi_link::hidden_sessions::load();
         for s in all {
+            if hidden.hides(s.name.as_deref(), &s.path) {
+                continue;
+            }
             let cwd = PathBuf::from(s.cwd.clone());
             // 应用自有目录（载荷目录/npm 包根）不建组：污染期落在 payload
             // 的历史脏会话不得把安装目录钉成常驻项目组（注册表已由 boot
@@ -1050,8 +1055,16 @@ pub(crate) fn dock(
             .child(git_panel::view(chat, weak, cx))
             .into_any_element();
     }
-    // 插件面板（beads 360 反馈②）：左列格子视图，互斥于整合面板/git
-    if let DockPanel::Plugin(ix) = chat.layout.dock_panel {
+    // 插件面板（beads 360 反馈②）：左列格子视图，互斥于整合面板/git。
+    // **停用/条目不在（已被摘掉）时直接漏到下面的默认 psp 列表**——
+    // 左列是「停用后仍旧挂着旧面板」的最后一道口，不能只倚靠状态侧去撤 dock。
+    if let DockPanel::Plugin(ix) = chat.layout.dock_panel
+        && chat
+            .plugins
+            .plugins
+            .get(ix)
+            .is_some_and(|e| !e.disabled)
+    {
         return div()
             .id("dock")
             .flex_1()

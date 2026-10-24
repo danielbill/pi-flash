@@ -190,6 +190,11 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 影子会话名（`pf-wxbot-<15 位时间戳>`，落盘后随 FileBound 一起记进
+    /// 过滤清单）。
+    pub(crate) wx_session_name: Option<String>,
+    /// 渠道刚（重新）连上 → 泵这一拍轮换影子会话（老会话删除、新会话命名）。
+    pub(crate) needs_new_session: bool,
     /// 本运行期是否已给微信推过「Pi-Flash 已启动」开机通知（每次起进程一条）。
     startup_notice_sent: bool,
     /// 微信会话已过期（`errcode:-14 session timeout` 洗完旧游标仍是它）。
@@ -226,6 +231,8 @@ impl RemoteControl {
             wants_start: false,
             active_token: None,
             poll_error: None,
+            wx_session_name: None,
+            needs_new_session: false,
             startup_notice_sent: false,
             session_expired: false,
             start_error: None,
@@ -260,14 +267,18 @@ impl RemoteControl {
     fn start_transport_from_state(&mut self) {
         self.start_error = None;
         let st = wxprobe::state::load();
-        // 微信默认会话归属随渠道恢复（重启后微信仍跟同一条线说话）
-        self.wx_session = wxprobe::state::get_str(&st, "session_key");
+        // **不恢复** state 里的 `session_key`：影子会话按"每次连上就换新"的
+        // 口径重建（老会话的文件此刻正被删除），恢复它只会指向一个死文件。
         let started = wxprobe::transport::config_from_state(&st).and_then(|cfg| {
             self.active_token = Some(cfg.token.clone());
             wxprobe::transport::spawn(&cfg)
         });
         match started {
-            Ok(t) => self.transport = Some(t),
+            Ok(t) => {
+                self.transport = Some(t);
+                // 每次（重新）连上 = 一条全新的影子会话（002 隔离要求）
+                self.needs_new_session = true;
+            }
             // 静默失败是最坏的形态（§6 坑 4）：stderr 一行 + 状态卡④可显示
             Err(e) => {
                 self.start_error = Some(format!("渠道未启动：{e}"));
@@ -878,6 +889,11 @@ impl crate::Chat {
             self.aux.remote.start_transport_from_state();
         }
         self.aux.remote.maybe_send_startup_notice();
+        // 渠道刚连上 → 轮换影子会话（老会话删除、新建并命名 pf-wxbot-<ts>）
+        if self.aux.remote.needs_new_session {
+            self.aux.remote.needs_new_session = false;
+            self.wx_rotate_session(cx);
+        }
         // 面板健康度：「运行中」背后可能正拿着死 token 干转
         self.aux.remote.sync_poll_error();
         // 微信线**专属会话**（2026-10-24 定夺）：不再认领桌面活跃会话——
