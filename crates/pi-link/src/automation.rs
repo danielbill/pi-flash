@@ -141,6 +141,9 @@ pub mod method {
     pub const TERMINAL_OPEN: &str = "terminal.open";
     /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
     pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
+    /// PF 插件（090-4）驱动：状态栏 tab 开面板 / 文件树右键项回调（UI 测试用）
+    pub const PLUGIN_DOCK: &str = "plugin.dock";
+    pub const PLUGIN_MENU: &str = "plugin.menu";
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
     pub const PI_EXTENSION_PICKER_OPEN: &str = "plugin_picker.open";
     pub const PI_EXTENSION_PICKER_TOGGLE: &str = "plugin_picker.toggle";

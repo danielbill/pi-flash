@@ -442,6 +442,25 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
+        method::PLUGIN_MENU => {
+            // 文件树右键贡献项回调（与右键菜单点击同一条路：plugin_menu_fire）
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let id = params
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"id\": \"set-quick\"}"))?;
+            let path = params_path(params, "path")?;
+            chat.plugin_menu_fire(ix, id, &path, window, cx);
+            ok()
+        }
+        method::PLUGIN_DOCK => {
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if chat.plugins.plugins.get(ix).is_none_or(|e| e.disabled) {
+                return Err(bad(format!("插件 ix={ix} 不存在或已停用")));
+            }
+            chat.open_plugin_dock(ix, cx);
+            ok()
+        }
         method::CONTENT_VIEW => {
             let view = params
                 .get("view")
