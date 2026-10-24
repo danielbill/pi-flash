@@ -512,6 +512,12 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.available_count", "可用模型 {enabled}/{total}", "可用模型 {enabled}/{total}", "Available models {enabled}/{total}"),
     ("models.free_only", "只看free", "只看free", "Free only"),
     ("models.json_read_failed", "无法读取 models.json，为避免覆盖已禁用保存：{e}", "無法讀取 models.json，為避免覆蓋已停用儲存：{e}", "Cannot read models.json; save skipped to avoid overwriting disabled entries: {e}"),
+    // 模型页空目录占位（2026-10 用户反馈：保存 key 后刷不出列表也"没动静"）
+    ("models.fetch_hint_no_key", "保存 API Key 后将自动获取该 Provider 的模型列表", "保存 API Key 後將自動獲取該 Provider 的模型列表", "The model list is fetched automatically after saving an API key"),
+    ("models.fetch_hint", "点击「获取模型」拉取该 Provider 的模型目录", "點擊「獲取模型」拉取該 Provider 的模型目錄", "Click \"Fetch models\" to pull this provider's catalog"),
+    ("models.no_auto_fetch", "该 Provider 暂不支持自动获取模型目录；模型列表将随会话启动由 pi 提供", "該 Provider 暫不支援自動獲取模型目錄；模型列表將隨會話啟動由 pi 提供", "Automatic catalog fetch is not available for this provider; its model list comes from pi when a session starts"),
+    ("models.probe_empty_catalog", "已获取，但响应中未解析到模型条目（响应形状可能不符）", "已獲取，但回應中未解析到模型條目（回應形狀可能不符）", "Fetched, but no model entries could be parsed from the response"),
+    ("models.proxy_hint", "若该 Provider 需代理访问，请为 pi-flash 设置 http_proxy/https_proxy 环境变量后重试", "若該 Provider 需代理存取，請為 pi-flash 設定 http_proxy/https_proxy 環境變數後重試", "If this provider needs a proxy, set http_proxy/https_proxy for pi-flash and retry"),
     ("skills.failed_to_toggle_count", "{total} 个技能中有 {count} 个未能更改", "{total} 個技能中有 {count} 個未能更改", "{count} of {total} skills failed to toggle"),
     ("status.running_tools_with_extra", "正在运行 {names}（另有 {count} 个）...", "正在運行 {names}（另有 {count} 個）...", "Running {names} (and {count} more)..."),
     ("messages.no_output", "（无输出）", "（無輸出）", "(no output)"),
