@@ -14,6 +14,18 @@ interface types {
     }
     enum phase { move, down, up }
     enum button { left, right }
+
+    // 宿主→插件事件：契约里每种 `contributes.*` 回调都走这一条通道，
+    // 以后加贡献项不用再改 WIT。
+    //   kind = "panel-open"（tab/面板打开） | "menu"（文件树右键项） |
+    //          "command"（组件菜单项）
+    record plugin-event {
+        kind: string,
+        // contributes 里的 id（file_menu.id / panels.id）；panel-open 为空
+        id: string,
+        // 目标路径（file_menu/command 带；其余为空）
+        path: string,
+    }
 }
 
 interface host {
@@ -40,12 +52,13 @@ interface host {
 }
 
 world plugin {
-    use types.{paint, phase, button};
+    use types.{paint, phase, button, plugin-event};
 
     import host;
 
     // 返回 Err = 插件自拒（如宿主证明验签失败）→ 宿主拒载并透传原因（失败不静默）。
     export init: func(plugin-name: string) -> result<_, string>;
+    export on-event: func(ev: plugin-event);
     export on-resize: func(w: f32, h: f32);
     export on-mouse: func(phase: phase, button: button, x: f32, y: f32);
     export on-key: func(key: string);

@@ -383,6 +383,20 @@ impl PluginInstance {
         Ok(())
     }
 
+    /// 宿主→插件事件（WIT `on-event`）：`kind` = panel-open / menu / command。
+    /// 契约里所有 `contributes.*` 回调都汇到这一条，以后加贡献项不改 WIT。
+    pub fn on_event(&mut self, kind: &str, id: &str, path: &str) -> anyhow::Result<()> {
+        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
+            let ev = pf::plugin::types::PluginEvent {
+                kind: kind.to_string(),
+                id: id.to_string(),
+                path: path.to_string(),
+            };
+            b.call_on_event(store, &ev)?;
+        }
+        Ok(())
+    }
+
     pub fn on_mouse(
         &mut self,
         phase: pf::plugin::types::Phase,

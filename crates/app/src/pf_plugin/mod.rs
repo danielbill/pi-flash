@@ -963,7 +963,8 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
-        // 内层 wasm 插件：render() → Paint 缓存（画布路径，与 JS 组件树分叉）
+        // 内层 wasm 插件：render() → Paint 缓存（画布路径，与 JS 组件树分叉）。
+        // 不需要 panel-open 事件：render 每次都现读插件自己的存储。
         if self.plugins.plugins[ix].wasm.is_some() {
             self.plugin_wasm_render(ix, cx);
             self.plugin_wasm_repaint_loop(ix, cx);
@@ -1007,6 +1008,12 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
+        // 内层 wasm 插件：同一事件通道（on-event kind=menu）
+        if self.plugins.plugins[ix].wasm.is_some() {
+            let p = path.to_string_lossy().into_owned();
+            self.plugin_wasm_event(ix, "menu", menu_id, &p, window, cx);
+            return;
+        }
         let (result, actions) = {
             let entry = &mut self.plugins.plugins[ix];
             let host = entry.host.as_ref().unwrap().clone();
@@ -1034,6 +1041,10 @@ impl Chat {
         cx: &mut gpui::Context<Self>,
     ) {
         if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_event(ix, "command", command_id, path, window, cx);
             return;
         }
         let (result, actions) = {
@@ -1111,6 +1122,34 @@ impl Chat {
         entry.paints = paints;
         entry.tree_loaded = true;
         cx.notify();
+    }
+
+    /// wasm 面板事件回灌（`contributes.*` 回调统一走这里 → on-event）。
+    /// 事件处理完必重渲染（插件数据可能改了）。
+    pub(crate) fn plugin_wasm_event(
+        &mut self,
+        ix: usize,
+        kind: &str,
+        id: &str,
+        path: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.plugin_sync_quick_pins();
+        let (res, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let Some(inst) = entry.wasm.as_mut() else {
+                return;
+            };
+            (inst.on_event(kind, id, path), inst.pump_actions())
+        };
+        match res {
+            Ok(()) => {
+                self.plugin_wasm_dispatch(ix, actions, window, cx);
+                self.plugin_wasm_render(ix, cx);
+            }
+            Err(e) => self.plugin_broken(ix, format!("{e}"), cx),
+        }
     }
 
     /// 重绘循环（仅 wasm 面板装载后跑）：每 100ms 问一次 `wants-repaint`
