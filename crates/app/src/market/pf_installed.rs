@@ -5,7 +5,7 @@
 //! 数据源 = PF 插件台账 `plugins.json`（市场安装的唯一落点），**不是**
 //! pi 扩展 settings.json——所以 settings 页的行内启停开关 / 总开关 /
 //! 更新全部不出（PF 插件没有持久启停概念，加载在启动扫描定死）。
-//! 展示名 / 发布人 / 描述补全查市场索引（`pf_market::index()`），索引
+//! 展示名 / 发布人 / 描述补全查市场索引（`pf_market::index_snapshot()`），索引
 //! 拉不到时回落包名。
 //!
 //! 头段沿用 [`super::pf_market`] 的段骨架（居中外壳 + 页签行 + 计数 +
@@ -20,7 +20,7 @@ use pi_link::pf_plugins;
 use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
-use crate::market::pf_market::{MONO, PfTab, centered, index, slice_shell};
+use crate::market::pf_market::{MONO, PfTab, centered, index_snapshot, slice_shell};
 use crate::market::pi_native_market::design::{Metrics, sp};
 use crate::ui::kit::{
     LIST_W, detail_shell, field, mono_text, scope_tag, sidebar_item, sidebar_list, sidebar_shell,
@@ -92,7 +92,7 @@ pub(crate) fn remove_confirm_overlay(
     cx: &mut gpui::Context<Chat>,
 ) -> Option<gpui::AnyElement> {
     let name = chat.aux.market.pf.confirm_remove.as_ref()?;
-    let display = index()
+    let display = index_snapshot()
         .entry(name)
         .map(|e| e.display.zh.clone())
         .unwrap_or_else(|| name.clone());
@@ -120,7 +120,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
     let st = &chat.aux.market.pf;
 
     let items: Vec<InstalledItem> = {
-        let ix = index();
+        let ix = index_snapshot();
         st.ledger
             .iter()
             .map(|l| {
@@ -317,7 +317,7 @@ fn detail_pane(
     }
 
     // 来源：索引上有发布人用发布人（卡片 meta 同口径），否则台账 source
-    let source_display = match index().entry(&item.name) {
+    let source_display = match index_snapshot().entry(&item.name) {
         Some(e) if !e.publisher.is_empty() => e.publisher.clone(),
         Some(_) => "Pi-Flash".to_string(),
         None => item.source.clone(),

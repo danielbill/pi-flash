@@ -40,7 +40,7 @@ use crate::market::pi_native_market::design::{self as pnd, Metrics, px18, sp};
 use crate::market::pi_native_market::thousands;
 
 /// mono 字体（与 040-2 design::MONO 同值；该常量在私有 mod 里不可引）。
-const MONO: &str = "JetBrains Mono";
+pub(crate) const MONO: &str = "JetBrains Mono";
 
 // ---------------------------------------------------------------------------
 // 色板映射
@@ -50,7 +50,7 @@ fn line(t: &Theme) -> gpui::Rgba {
     gpui::rgba(border_alpha(t, 0xB4))
 }
 
-fn muted(t: &Theme) -> gpui::Rgba {
+pub(crate) fn muted(t: &Theme) -> gpui::Rgba {
     gpui::rgb(t.text_faint)
 }
 
@@ -102,14 +102,36 @@ fn installed_in(ledger: &[pi_link::pf_plugins::LedgerEntry], name: &str) -> bool
     ledger.iter().any(|l| l.name == name)
 }
 
+/// 索引快照（pub 口子给 pf_installed；整表克隆一次后本地连查）。
+pub(crate) fn index_snapshot() -> pi_link::pf_plugins::MarketIndex {
+    index()
+}
+
 // ---------------------------------------------------------------------------
 // 状态（挂 Chat.aux.market.pf）
 // ---------------------------------------------------------------------------
 
+/// 页内页签（090-4 v4）：所有插件 = 市场卡列表；已安装 = 管理视图
+/// （[`super::pf_installed`]，版式对齐 settings-扩展）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PfTab {
+    #[default]
+    All,
+    Installed,
+}
+
 /// 页面状态。台账在打开页面时从磁盘重读（唯一真相在文件，内存不缓存写）。
 pub struct PfState {
+    /// 页内页签（所有插件 / 已安装）
+    pub tab: PfTab,
+    /// 已安装页签选中的插件名（None = 首个）
+    pub section: Option<String>,
     /// 安装进行中的包名（该卡按钮转 spinner，其余动作忽略）
     pub pending: Option<String>,
+    /// 卸载进行中的插件名（详情垃圾桶转 spinner）
+    pub removing: Option<String>,
+    /// 卸载确认浮层挂起的插件名（040 同款机制）
+    pub confirm_remove: Option<String>,
     /// 最近一次失败原因（显示在头段下方，下一次动作自动清除）
     pub error: Option<String>,
     /// 台账镜像（open 时重读；安装完成后重读）
@@ -123,7 +145,11 @@ pub struct PfState {
 impl Default for PfState {
     fn default() -> Self {
         Self {
+            tab: PfTab::All,
+            section: None,
             pending: None,
+            removing: None,
+            confirm_remove: None,
             error: None,
             ledger: Vec::new(),
             list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2000.)),
@@ -155,6 +181,19 @@ impl Chat {
         }
         self.set_content_view(crate::ContentView::PfMarket);
         self.aux.market.pf.ledger = pf_plugins::load_ledger();
+        cx.notify();
+    }
+
+    /// 页内页签切换（所有插件 ⇄ 已安装）。进出都重读台账：安装/卸载的
+    /// 唯一真相在 plugins.json，切换是零成本的同步点；选中项复位（列表可能已变）。
+    pub(crate) fn pf_switch_tab(&mut self, tab: PfTab, cx: &mut gpui::Context<Self>) {
+        if self.aux.market.pf.tab == tab {
+            return;
+        }
+        let pf = &mut self.aux.market.pf;
+        pf.tab = tab;
+        pf.section = None;
+        pf.ledger = pf_plugins::load_ledger();
         cx.notify();
     }
 
@@ -230,6 +269,11 @@ pub(crate) fn page(
     let m = Metrics::new(content_w);
     let st = &chat.aux.market.pf;
 
+    // 【已安装】页签 = 管理视图（pf_installed，版式对齐 settings-扩展）
+    if st.tab == PfTab::Installed {
+        return super::pf_installed::page(chat, weak, &m);
+    }
+
     // 卡片数据（闭包要 'static，故整表 own 一份）
     let entries: Vec<IndexEntry> = index().packages.clone();
     let cols = if m.narrow { 1 } else { 2 };
@@ -244,12 +288,22 @@ pub(crate) fn page(
     let error = st.error.clone();
     let pending = st.pending.clone();
     let ledger = st.ledger.clone();
+    let tab = st.tab;
+    let installed_total = st.ledger.len();
     let weak_c = weak.clone();
     let m_c = m;
     let list = gpui::list(st.list.clone(), move |ix, _w, _cx| {
         let t = crate::appearance::theme::theme();
         if ix == 0 {
-            return head_segment(error.clone(), total, &m_c, t);
+            return head_segment(
+                error.clone(),
+                total,
+                tab,
+                installed_total,
+                &weak_c,
+                &m_c,
+                t,
+            );
         }
         if ix == 1 + rows {
             return pager_block(&m_c, t);
@@ -305,7 +359,7 @@ pub(crate) fn page(
 // ---------------------------------------------------------------------------
 
 /// 居中外壳：定宽段盒子显式左右留白（列表项里 `mx_auto` 不可靠，pi 页同款）。
-fn centered(inner: gpui::Div, m: &Metrics) -> gpui::Div {
+pub(crate) fn centered(inner: gpui::Div, m: &Metrics) -> gpui::Div {
     gpui::div()
         .pl(px(m.side_pad()))
         .pr(px(m.side_pad()))
@@ -313,7 +367,7 @@ fn centered(inner: gpui::Div, m: &Metrics) -> gpui::Div {
 }
 
 /// 段外壳：两侧描边 + 面板底；`top/bottom` = 首/末段补边。
-fn slice_shell(m: &Metrics, top: bool, bottom: bool, t: &Theme) -> gpui::Div {
+pub(crate) fn slice_shell(m: &Metrics, top: bool, bottom: bool, t: &Theme) -> gpui::Div {
     let mut boxed = gpui::div()
         // 定宽（`w_full()` 在变高列表项里拿不到父宽，会整段塌掉——pi 页同坑）
         .w(px(m.shell_inner_w()))
@@ -332,9 +386,9 @@ fn slice_shell(m: &Metrics, top: bool, bottom: bool, t: &Theme) -> gpui::Div {
     boxed
 }
 
-/// 卡片头（标题 + 可选右端件）。pi 页 `.content-card-header` 同构。
+/// 卡片头（标题件 + 可选右端件）。pi 页 `.content-card-header` 同构。
 fn card_header(
-    title: SharedString,
+    title: AnyElement,
     right: Option<AnyElement>,
     m: &Metrics,
     t: &'static Theme,
@@ -348,22 +402,86 @@ fn card_header(
         .py(px(sp::HEADER_PAD_Y))
         .border_b_1()
         .border_color(line(t))
-        .child(
-            gpui::div()
-                .font_family(MONO)
-                .text_size(px(px18::TITLE_FS))
-                .text_color(rgb(t.text))
-                .child(title),
-        )
+        .child(title)
         .children(right)
         .into_any_element()
 }
 
-/// ① 头段：标题 + 计数（+ 安装错误行）。**首段自带 `pt(shell_pad)`**——
+/// 页签行：`所有插件 | 已安装`（090-4 v4）。活动页签全亮，另一签
+/// text_dim + hover 回亮，点击页内切换（pf_switch_tab）。
+fn tab_row(tab: PfTab, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> AnyElement {
+    gpui::div()
+        .flex()
+        .items_baseline()
+        .gap(px(10.))
+        .child(tab_label(
+            "pf-tab-all",
+            spaced_label(tr("market.pf.head")),
+            tab == PfTab::All,
+            weak,
+            PfTab::All,
+            t,
+        ))
+        .child(
+            gpui::div()
+                .font_family(MONO)
+                .text_size(px(px18::TITLE_FS))
+                .text_color(muted(t))
+                .child(SharedString::from("|")),
+        )
+        .child(tab_label(
+            "pf-tab-installed",
+            spaced_label(tr("market.pf.tab_installed")),
+            tab == PfTab::Installed,
+            weak,
+            PfTab::Installed,
+            t,
+        ))
+        .into_any_element()
+}
+
+fn tab_label(
+    id: &'static str,
+    label: SharedString,
+    active: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    target: PfTab,
+    t: &'static Theme,
+) -> AnyElement {
+    let weak = weak.clone();
+    let mut el = gpui::div()
+        .id(id)
+        .font_family(MONO)
+        .text_size(px(px18::TITLE_FS))
+        .cursor_pointer()
+        .text_color(rgb(if active { t.text } else { t.text_dim }))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = weak.update(cx, |c, cx| c.pf_switch_tab(target, cx));
+        });
+    if !active {
+        el = el.hover(|s| s.text_color(rgb(t.text)));
+    }
+    el.child(label).into_any_element()
+}
+
+/// ① 头段：页签行 + 计数（+ 安装错误行）。**首段自带 `pt(shell_pad)`**——
 /// pi 页这个上内距原本挂在「最近发布」段上，本页没有那段，必须自己补，
 /// 否则头段贴着内容区顶边（用户原话：上边距没了）。
-fn head_segment(err: Option<String>, total: usize, m: &Metrics, t: &'static Theme) -> AnyElement {
-    let count_text = format!("1-{} / {}", total, thousands(total));
+pub(crate) fn head_segment(
+    err: Option<String>,
+    total: usize,
+    tab: PfTab,
+    installed_total: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    m: &Metrics,
+    t: &'static Theme,
+) -> AnyElement {
+    let count_text = match tab {
+        // 市场页签沿用 pi 页的「页内条目 / 总数」口径；已安装无分页，只报总数
+        PfTab::All => format!("1-{} / {}", total, thousands(total)),
+        PfTab::Installed => thousands(installed_total),
+    };
     let count = gpui::div()
         .font_family(MONO)
         .text_size(px(px18::COUNT_FS))
@@ -379,12 +497,7 @@ fn head_segment(err: Option<String>, total: usize, m: &Metrics, t: &'static Them
     });
     centered(
         slice_shell(m, true, false, t)
-            .child(card_header(
-                spaced_label(tr("market.pf.head")),
-                Some(count.into_any_element()),
-                m,
-                t,
-            ))
+            .child(card_header(tab_row(tab, weak, t), Some(count.into_any_element()), m, t))
             .children(err_el),
         m,
     )
