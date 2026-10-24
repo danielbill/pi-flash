@@ -2,6 +2,20 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.3.1] - 2026-10-25
+
+### Install & update
+
+```bash
+npm install -g pi-flash@latest
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Or download the zip portable build and double-click `pi-flash.exe`. Windows x64 only.
+
+### Fixed
+
+- Fixed PF plugin center error: plugins installed from the plugin center failed to load in 0.3.0.
 ## [0.3.0] - 2026-10-24
 
 This release updates the bundled pi core to 1.4;
