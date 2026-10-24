@@ -1,3 +1,24 @@
+## 待验证（本轮修复）——微信 Bot 开关/扫码成功后主进程卡死最长 90 秒：Transport drop 在 UI 线程 join 长轮询
+
+用户口径：启动后点「重新获取」二维码或拨启用开关，主进程（整只窗口）卡住。
+
+- ✅ 根因：`Transport::drop` 逐个 `join` poll/send 线程；`stop` 只在长轮询两拍
+  之间检查，poll 线程大概率正阻塞在 `getupdates` 的 90s 服务端挂住里
+  （`wire.rs POLL_TIMEOUT=90s`）——join 在 UI 线程上最坏等满 90s。触发路径
+  ①`set_enabled(false)` → `transport = None`；②扫码成功后泵每拍
+  `force_restart_if_token_changed` 检测 token 变化 → `transport = None`
+  （`mod.rs:862`，泵在 UI 线程 200ms 一拍）。原注释已自认
+  「健康长轮询里最坏等一个 90s 超时」。
+- ✅ 修法：drop 改「信号 + 自杀」——置 stop 后 `handles.clear()` detach
+  （poll 这一拍收完见 stop 退出 / inbound 断开 break；send ≤100ms 见 stop /
+  Disconnected 退出），UI 不再等在途长轮询；游标未 ack，下个轮询者重收这批
+  （重复而非丢失，与既有崩溃窗口同方向）。锁释放不受影响（心跳本就 channel 秒退）。
+  顺手：`force_restart_if_token_changed` 的 state 读按 1s 节流（原 200ms 一拍
+  同步文件读，杀软下抖 UI）。
+- ✅ 验证：`cargo test -p wxprobe` 117 全绿；`cargo test -p app --bin pi-flash`
+  383 全绿。**待真机复验**：扫码成功瞬间与开关「关」不再冻结；关掉后 90s 内
+  重开，新旧渠道交接期间消息不丢（重复可容忍）。
+
 ## 待验证（本轮修复）——微信 Bot 出站「受理不投递」：client_id 固定复用被 iLink 去重吞掉
 
 用户口径：消息进了 PF、模型也回复了、`sendmessage` 返回 message_id——手机永远
@@ -13,6 +34,32 @@
   client_id 送达（含 from_user_id 照填 bot id 的变体，无需留空）；getconfig
   同 ctx 返回 ret:0 + typing_ticket，排除 token/会话过期。
 - ✅ 验证：用户真机确认「已经全部连通」。`cargo test -p wxprobe` 115 全绿。
+
+## 待验证（本轮修复）——启动卡死数秒：内层 wasm 插件验签把 wasmtime 编译放在主线程
+
+用户口径：启动页之后主窗口僵住数秒才活。
+
+- ✅ 根因：`pf_plugin::spawn_plugin_scan` 只把清单扫描放进后台，内层 wasm 插件的
+  `PluginInstance::load` + `init` 却在**主线程 `this.update` 闭包**里跑——
+  `Component::from_file` 是 cranelift 全量编译（本机 4.6 MB 组件 debug 实测
+  **7.2 s**；旧代码每个插件还各建一个 `Engine`）。同闭包末尾才 `plugins_set`，
+  状态栏插件 tab 也被一起拖到秒级之后。
+- ✅ 修法：拆两段——① 清单扫描后台落位，JS 插件条目立即可见；② wasm 验签等揭幕
+  （`pool.booted`）后交 `background_executor` 后台线程，编译/实例化/init 全在
+  后台，结果回主线程只写状态栏。配套 `pf-plugin-host`：proof 钩子
+  `thread_local` → 进程级 `RwLock`（否则后台线程 init 时插件回调
+  `get_host_proof` 取不到材料 → 正常插件被误判拒载）；`Engine` 进程内共享。
+- ✅ 第二刀（为什么还要反复编）：wasm 是字节码，`Component::from_file` 每次都做
+  cranelift 全量编译，产物只活在进程内存——**第二次启动照样重编**。新增
+  `PluginInstance::load_cached`：产物按 wasm sha256 落
+  `<数据目录>/cache/pf-plugin/<sha>.cwasm`（原子写、只留最近 8 份），命中 =
+  `deserialize_file`（mmap）+ instantiate + init；产物自带 wasmtime 版本/配置
+  校验，失配自动重编；安装/启用即后台预热，首次启动也命中。**语义不变——每次
+  启动仍真跑 init 验签门**。
+- ✅ 验证：`cargo check -p app` 通过；本机 4.6 MB 组件实测——冷 9.24 s(debug) /
+  0.62 s(release) → **热 7–10 ms（release 三次，含实例化+init）**，init 单独
+  0.1–0.2 ms，产物 1.4 MB。**待真机复验**：启动到可操作无停顿；**验签结论
+  一律不展示**（不弹提示、不写状态栏，只进 stderr）。
 
 ## 待验证（本轮修复）——微信 Bot 回复石沉大海：出站只认桌面选中态 + 投递静默丢 + 启动横幅泄漏
 

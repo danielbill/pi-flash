@@ -217,9 +217,8 @@ pub mod sp {
     pub const HEADER_PAD_Y: f32 = 14.04;
     /// index 卡体内 grid gap 0.9rem
     pub const BODY_GAP: f32 = 16.2;
-    /// 工具栏 gap 0.7rem / 字段标签 gap 0.5rem
+    /// 工具栏 gap 0.7rem
     pub const BAR_GAP: f32 = 12.6;
-    pub const FIELD_GAP: f32 = 9.;
     /// 控件高 44px（设计 `--action-bar-control-height`）
     pub const CONTROL_H: f32 = 44.;
     /// 表单控件内距 8 / 13

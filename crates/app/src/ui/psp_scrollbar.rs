@@ -12,6 +12,7 @@
 //! track。`menu_scrollbar` = / 菜单变体（v58）：可滚动即常显，无 hover 门。
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -198,6 +199,14 @@ impl Element for ScrollbarElement {
             return;
         };
         let t = crate::appearance::theme::theme();
+        // 实例身份：scroll handle 的 Rc 地址（跨帧持久）。gpui 的
+        // on_mouse_event 全局派发、同屏所有滚动条实例的监听器都会收到同一批
+        // 事件，DRAG/THUMB_HOVER/LAST_OFFSET 三份 thread_local 若不分实例，
+        // 在 A 面板滚动条上按下/拖拽，B 面板的 handler 也会看到 is_some()
+        // 且 dragging() 成立，把自己的列表拉到同一比例位（两面板滚动条
+        // “联动”bug 根因）。
+        let my_id = self.scroll.ptr_id();
+
         let parent_hovered = self.always_visible
             || (self.state.parent_hovered.get() && layout.parent_hitbox.is_hovered(window));
 
@@ -207,9 +216,10 @@ impl Element for ScrollbarElement {
         // autohide 计时（淡出后滚轮一动立刻复现）
         let off_now = self.scroll.offset().y.to_f64() as f32;
         let max_now = self.scroll.max_offset().height.to_f64() as f32;
+        // 按实例分槽：同屏多个滚动条交替 paint，共用一槽会把别人的上帧值
+        // 当自己的 prev，scrolled 永远误判（autohide 被无关滚动续命）。
         let scrolled = LAST_OFFSET.with(|c| {
-            let prev = c.get();
-            c.set(Some((off_now, max_now)));
+            let prev = c.borrow_mut().insert(my_id, (off_now, max_now));
             prev.is_some_and(|(po, pm)| (po - off_now).abs() > 0.5 || (pm - max_now).abs() > 0.5)
         });
         if scrolled {
@@ -233,9 +243,12 @@ impl Element for ScrollbarElement {
             0.
         };
 
-        // thumb 上悬停（zed update_hovered_thumb）
+        // thumb 上悬停（zed update_hovered_thumb）；拖拽 = 本实例在拖
         let thumb_hovered = layout.thumb_bounds.contains(&window.mouse_position());
-        let dragging = DRAG.with(|c| c.borrow().is_some());
+        let dragging = DRAG.with(|c| {
+            c.borrow()
+                .is_some_and(|(owner, _)| owner == my_id)
+        });
 
         if opacity > 0. {
             // 悬停/拖拽加宽 4px（用户定稿）：右缘锚定不动，向左扩
@@ -278,6 +291,7 @@ impl Element for ScrollbarElement {
             let st = self.state.clone();
             let hit = layout.hit_bounds.clone();
             let thumb = layout.thumb_bounds.clone();
+            let my_id = self.scroll.ptr_id();
             window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
                 if phase != capture || ev.button != gpui::MouseButton::Left {
                     return;
@@ -288,7 +302,7 @@ impl Element for ScrollbarElement {
                 cx.stop_propagation();
                 if thumb.contains(&ev.position) {
                     let offset = ev.position.y - thumb.origin.y;
-                    DRAG.with(|c| *c.borrow_mut() = Some(offset.to_f64() as f32));
+                    DRAG.with(|c| *c.borrow_mut() = Some((my_id, offset.to_f64() as f32)));
                     st.last_active.set(Some(Instant::now()));
                 } else {
                     // zed compute_click_offset(TrackClick)：thumb 中心对准点击
@@ -320,12 +334,18 @@ impl Element for ScrollbarElement {
             let st = self.state.clone();
             let hit = layout.hit_bounds.clone();
             let parent = layout.parent_hitbox.clone();
+            let my_id = self.scroll.ptr_id();
             window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                 if phase != capture {
                     return;
                 }
-                let drag_y: Option<f32> = DRAG.with(|c| *c.borrow());
-                if let Some(drag_off) = drag_y {
+                let drag = DRAG.with(|c| c.borrow().clone());
+                if let Some((owner, drag_off)) = drag {
+                    // 别人的拖拽：完全不响应（含 hover 刷新），否则 B 面板
+                    // 会被 A 面板的拖拽拽着走（联动 bug 根因）
+                    if owner != my_id {
+                        return;
+                    }
                     if ev.dragging() {
                         let viewport_h = scroll.bounds().size.height.to_f64() as f32;
                         let max_off = scroll.max_offset().height.to_f64() as f32;
@@ -354,22 +374,25 @@ impl Element for ScrollbarElement {
                     st.last_active.set(Some(Instant::now()));
                 }
                 let now_hover = hit.contains(&window.mouse_position());
-                let was = THUMB_HOVER.with(|c| c.get());
-                if now_hover != was {
-                    THUMB_HOVER.with(|c| c.set(now_hover));
+                let changed = THUMB_HOVER.with(|c| c.borrow_mut().insert(my_id, now_hover))
+                    != Some(now_hover);
+                if changed {
                     window.refresh();
                 }
             });
         }
 
-        // mouseup：结束拖拽 + 离开 parent 时启动 autohide
+        // mouseup：结束拖拽 + 离开 parent 时启动 autohide（身份匹配才清，
+        // 防止无关实例把别人的拖拽态摘走）
         {
             let st = self.state.clone();
+            let my_id = self.scroll.ptr_id();
             window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _| {
                 if phase != capture {
                     return;
                 }
-                if DRAG.with(|c| c.borrow().is_some()) {
+                let mine = DRAG.with(|c| c.borrow().is_some_and(|(owner, _)| owner == my_id));
+                if mine {
                     DRAG.with(|c| c.borrow_mut().take());
                     st.last_active.set(Some(Instant::now()));
                     window.refresh();
@@ -379,10 +402,14 @@ impl Element for ScrollbarElement {
     }
 }
 
-// 拖拽上下文（thumb 内偏移, px）。thread_local：与 gpui 事件单线程模型一致。
+// 拖拽上下文：(实例身份 = scroll handle 的 Rc 地址, thumb 内偏移 px)。
+// thread_local：与 gpui 事件单线程模型一致；身份分槽见 paint 内注释。
 thread_local! {
-    static DRAG: std::cell::RefCell<Option<f32>> = const { std::cell::RefCell::new(None) };
-    static THUMB_HOVER: Cell<bool> = const { Cell::new(false) };
+    static DRAG: std::cell::RefCell<Option<(usize, f32)>> =
+        const { std::cell::RefCell::new(None) };
+    static THUMB_HOVER: std::cell::RefCell<HashMap<usize, bool>> =
+        std::cell::RefCell::new(HashMap::new());
     /// 上帧 (offset.y, max_offset.height)——zed ScrollbarPosition reveal 检测
-    static LAST_OFFSET: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    static LAST_OFFSET: std::cell::RefCell<HashMap<usize, (f32, f32)>> =
+        std::cell::RefCell::new(HashMap::new());
 }

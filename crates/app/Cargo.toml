@@ -12,6 +12,7 @@ name = "pi-flash"
 path = "src/main.rs"
 
 [target.'cfg(windows)'.build-dependencies]
+serde_json = "1"
 winresource = "0.1"
 
 [dependencies]

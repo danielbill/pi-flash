@@ -237,7 +237,12 @@ impl Chat {
                 .unwrap_or(0)
         };
         let mut groups: Vec<crate::ProjectGroup> = Vec::new();
+        // 影子会话（微信线 pf-wxbot-*）不建行：过滤清单由模块注入
+        let hidden = pi_link::hidden_sessions::load();
         for s in all {
+            if hidden.hides(s.name.as_deref(), &s.path) {
+                continue;
+            }
             let cwd = PathBuf::from(s.cwd.clone());
             // 应用自有目录（载荷目录/npm 包根）不建组：污染期落在 payload
             // 的历史脏会话不得把安装目录钉成常驻项目组（注册表已由 boot
@@ -1050,8 +1055,12 @@ pub(crate) fn dock(
             .child(git_panel::view(chat, weak, cx))
             .into_any_element();
     }
-    // 插件面板（beads 360 反馈②）：左列格子视图，互斥于整合面板/git
-    if let DockPanel::Plugin(ix) = chat.layout.dock_panel {
+    // 插件面板（beads 360 反馈②）：左列格子视图，互斥于整合面板/git。
+    // **停用/条目不在（已被摘掉）时直接漏到下面的默认 psp 列表**——
+    // 左列是「停用后仍旧挂着旧面板」的最后一道口，不能只倚靠状态侧去撤 dock。
+    if let DockPanel::Plugin(ix) = chat.layout.dock_panel
+        && chat.plugins.plugins.get(ix).is_some_and(|e| !e.disabled)
+    {
         return div()
             .id("dock")
             .flex_1()
@@ -1069,7 +1078,10 @@ pub(crate) fn dock(
     // 改占比（拖拽即退出两侧最小态、双击复位 50%），各自可收起到控制栏
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）
     let bounds_slot = chat.layout.dock_bounds.clone();
+    // §5.12 统一分隔线：常驻 1px；**hover 与拖拽同为 4px accent**
     let split_drag = chat.layout.split_drag;
+    let split_active = split_drag || chat.layout.split_hover;
+    let d_hit = crate::ui::tokens::divider::HIT;
     div()
         .id("dock")
         .flex_1()
@@ -1089,17 +1101,30 @@ pub(crate) fn dock(
             .inset_0(),
         )
         .child(psp_view(chat, entity, weak.clone(), window, cx))
-        // 子面板分隔线：7px 命中带 + 1px 视觉线（左右缩进 10 = 列表右线），
-        // hover/拖拽变 accent
+        // 子面板分隔线：7px 命中带 + 常驻 1px 视觉线（左右缩进 10 = 列表
+        // 右线），hover/拖拽按 §5.12 统一规范换 4px accent 覆盖线（absolute
+        // 改 top/h 不占布局零推挤，带内居中 = 与常驻线同一中线）
         .child(
             div()
                 .id("sp-divider")
                 .with_tip("psp.split_tip")
-                .h(px(crate::ui::tokens::panel_ctrl::DIV_H))
+                .h(px(d_hit))
                 .flex_shrink_0()
                 .relative()
-                .group("spdiv")
                 .cursor_row_resize()
+                // hover 状态存进字段（与 content 侧 slp_hover 同一机制），
+                // 不用 group_hover——后者受 has_active_drag 门控，粗细拿不到
+                .on_hover({
+                    let weak_hv = weak.clone();
+                    move |h: &bool, _, cx| {
+                        let _ = weak_hv.update(cx, |c, cx| {
+                            if c.layout.split_hover != *h {
+                                c.layout.split_hover = *h;
+                                cx.notify();
+                            }
+                        });
+                    }
+                })
                 .on_mouse_down(MouseButton::Left, {
                     let weak_dz = weak.clone();
                     move |ev: &gpui::MouseDownEvent, _, cx| {
@@ -1116,17 +1141,13 @@ pub(crate) fn dock(
                         });
                     }
                 })
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(10.))
-                        .right(px(10.))
-                        .top(px(3.))
-                        .h(px(1.))
-                        .bg(rgb(t.border))
-                        .when(split_drag, |d| d.bg(rgb(t.accent)))
-                        .group_hover("spdiv", |d| d.bg(rgb(t.accent))),
-                ),
+                // 线形交给统一实现（ui::divider）：1px 常驻 / 4px accent
+                // 高亮，带内垂直居中 = 两种粗细同一中线
+                .child(crate::ui::divider::line(
+                    crate::ui::divider::LineSpec::horizontal(10., d_hit),
+                    split_active,
+                    t,
+                )),
         )
         .child(files_view(chat, weak, cx))
         .into_any_element()

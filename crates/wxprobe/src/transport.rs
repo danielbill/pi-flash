@@ -90,10 +90,17 @@ pub struct Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for h in self.handles.drain(..) {
-            let _ = h.join();
-        }
-        // _lock 在此 drop → 心跳停、租约目录拆除
+        // **不 join**（2026-10-24 UI 冻结修复，docs/buglist.md）：drop 几乎总在
+        // app 主线程发生（开关「关」/ 换绑 force_restart → `transport = None`），
+        // 而 poll 线程大概率正阻塞在 getupdates 的 90s 长轮询里（POLL_TIMEOUT，
+        // stop 只在两拍之间检查）——join 会把 UI 线程拖住最长 90s（真机：
+        // 扫码成功瞬间/关开关即整只卡死）。改「信号 + 自杀」：两线程都具备
+        // 退出条件——poll 这一拍收完后见 stop 退出（inbound 断开也 break），
+        // send ≤100ms 见 stop / Disconnected 退出；JoinHandle 落地即 detach。
+        // 旧 poll 的在途长轮询最多再挂 90s，但在后台不碰 UI；游标未 ack，
+        // 下个轮询者会重收这批消息（重复而非丢失，与既有崩溃窗口同方向）。
+        self.handles.clear();
+        // _lock 在此 drop → 心跳停、租约目录拆除（心跳本就 channel 秒退，不拖）
     }
 }
 
@@ -114,18 +121,28 @@ impl Transport {
     ///
     /// 持久化在**调用方线程**同步完成 —— 这样崩溃窗口只存在于
     /// 「收到底批 → ack」之间，且方向是重复而非丢失。
-    pub fn ack(&self, batch: &Batch) {
+    pub fn ack_cursor(&self, batch: &Batch) {
         let mut st = state::load();
-        let mut dirty = false;
         if let Some(buf) = batch.next_buf.as_deref() {
             state::set(&mut st, "buf", Some(buf));
-            dirty = true;
+            state::save(&st);
         }
-        // **路由字段**：出站 sendmessage 靠 chat_id 找对端、靠 bot_user_id 当
-        // from_user_id。P1 的 `wxprobe recv` 会写这两个，但 app 侧的入站路径
-        // 一直没写 —— 结果是 send 线程每次读到 `chat_id = None` 就 `continue`，
-        // 把所有出站**静默丢掉**（真机复现：消息进了 pi-flash，微信收不到回执）。
-        // 这里随 ack 一起回写，写在「处理完」这一步也符合 §6 坑 2 的时机。
+    }
+
+    /// **处理动作之前**先落路由字段（chat_id/user_id/bot_user_id/
+    /// context_token）：出站 sendmessage 靠 chat_id/user_id 找对端、靠
+    /// bot_user_id 当 from_user_id、靠 context_token 定位会话。P1 的
+    /// `wxprobe recv` 会写这两个，但 app 侧的入站路径一直没写 —— 结果是
+    /// send 线程每次读到 `chat_id = None` 就 `continue`，把所有出站**静默
+    /// 丢掉**（真机复现：消息进了 pi-flash，微信收不到回执）。
+    ///
+    /// 为什么必须在处理**前**写：首条消息的回执（激活欢迎）在 route 时就
+    /// 进了出站队列，send 线程随即读状态文件——若等「处理完才写」，首条
+    /// 回执永远找不到对端（2026-10-24 真机：重绑后第一条没反应即此）。
+    /// 游标不在此处写，仍由 [`Self::ack_cursor`] 处理后落盘（§6 坑 2）。
+    pub fn ack_routing(&self, batch: &Batch) {
+        let mut st = state::load();
+        let mut dirty = false;
         if let Some(m) = batch.messages.first() {
             if m.chat_id.is_some() {
                 state::set(&mut st, "chat_id", m.chat_id.as_deref());
@@ -147,6 +164,12 @@ impl Transport {
         if dirty {
             state::save(&st);
         }
+    }
+
+    /// 兼容入口：路由 + 游标一次完成（CLI 单批处理用）。
+    pub fn ack(&self, batch: &Batch) {
+        self.ack_routing(batch);
+        self.ack_cursor(batch);
     }
 
     /// 通道是否已断（send/poll 线程退出）。
@@ -209,6 +232,15 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
     })
 }
 
+/// `errcode:-14 session timeout`：iLink 判这是**过期会话**而非网络抖动。
+///
+/// 两种来源（都真机踩过）：①换绑后 `buf` 里嵌着旧 bot 的游标（2026-10-23）；
+/// ②PF 重启后拿上一进程的游标续会话、旧长轮询还挂在服务端（2026-10-24：
+/// 重启即全天 -14，微信发消息没反应，开关却还是「启用」）。
+pub fn is_session_timeout(msg: &str) -> bool {
+    msg.contains("session timeout") || msg.contains("errcode=Some(-14")
+}
+
 /// 长轮询主循环。错误退避重试，**不退出**（§6 坑 4：一次失败退出 = bot 静默死掉）。
 fn poll_loop(
     token: String,
@@ -219,6 +251,8 @@ fn poll_loop(
 ) {
     let mut wire = Wire::new(state::dump_dir());
     let mut failures = 0u32;
+    // 会话过期自愈次数（见下方 -14 分支）：只洗一次游标，洗完还 -14 = 真得重扫
+    let mut healed = false;
     while !stop.load(Ordering::Relaxed) {
         match poller::get_updates(&mut wire, &token, cursor.as_deref()) {
             Ok(up) => {
@@ -240,6 +274,23 @@ fn poll_loop(
                 }
             }
             Err(e) => {
+                // -14 = 会话游标过期：游标是新旧会话的分界，洗掉它用**同一个
+                // token** 重新建会话（换绑同理，见 register::reset_session_fields）。
+                // 不清就会拿着死游标无限重试——开关亮着、消息一条进不来。
+                // 只自愈一次：洗完仍 -14 说明 token 本身失效，必须重新扫码。
+                if is_session_timeout(&e) && cursor.is_some() && !healed {
+                    healed = true;
+                    cursor = None;
+                    let mut st = state::load();
+                    state::set(&mut st, "buf", None);
+                    state::save(&st);
+                    failures = 0;
+                    if let Ok(mut g) = last_err.lock() {
+                        *g = Some(format!("{e}（已清旧游标重建会话）"));
+                    }
+                    eprintln!("[wx] getupdates 会话过期，清旧游标后重建：{e}");
+                    continue;
+                }
                 failures = failures.saturating_add(1);
                 if let Ok(mut g) = last_err.lock() {
                     *g = Some(e.clone());

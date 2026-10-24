@@ -63,6 +63,10 @@ pub(crate) fn main_column(
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
     // 项目|会话列表为空、或「新建会话」都落在这里
     let new_session_page = rt.read(cx).messages.is_empty() && !streaming;
+    // 微信线即使还是空会话也必须出操作栏：002 把信息/控制三件套（微信 icon /
+    // 开关 / 刷新二维码）放在「标签页下方的控制栏右侧」，空会话页把它藏了
+    // 就没有任何入口（状态①未创建时正是空会话）
+    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -86,7 +90,9 @@ pub(crate) fn main_column(
         .bg(rgb(t.bg))
         .text_color(rgb(t.text))
         .font_family(sf.family.clone())
-        .when(!new_session_page, |d| d.child(session_fn_bar(chat, cx)))
+        .when(!new_session_page || is_wx_line, |d| {
+            d.child(session_fn_bar(chat, cx))
+        })
         .child(
             div()
                 .id("chat-and-nav")
@@ -255,6 +261,9 @@ fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEle
         .when(crate::services::workspace::subagents_enabled(), |d| {
             d.child(subagent_fn_bar_btn(chat, cx))
         })
+        // 微信线状态簇（060）：仅活跃会话是微信线时右对齐显示
+        //（微信 icon 三色 + 启停开关/说明文字 + 刷新二维码；002 操作栏三件）
+        .children(crate::remote_control::panel::fn_bar_status(chat, cx))
         .into_any_element()
 }
 

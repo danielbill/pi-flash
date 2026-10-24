@@ -450,8 +450,11 @@ fn ext_menu_entry(
         .overflow_y_scroll()
         .track_scroll(&chat.dlg.tree_sub_scroll)
         .absolute()
-        // 与主菜单的间隙 2px（用户定夺）：主卡宽 200 + 2
-        .left(px(202.))
+        // 子卡锚定（§5.6：沿父卡右缘 +4）：left 100% 锚主行右缘，
+        // ml 8 = 主卡右留白 4 + 规范偏移 4 → 间隙恒 4px，不随主卡实宽
+        // 浮动（原 left(202) 相对行定位、主卡被长文案撑宽即穿帮）
+        .left(gpui::relative(1.))
+        .ml(px(8.))
         .top(px(-5.))
         .min_w(px(180.))
         .p(px(crate::ui::tokens::space::SP2))

@@ -68,6 +68,10 @@ pub(crate) fn render_dialogs(
     if let Some(Dialog::FileDirty { paths }) = chat.dlg.dialog.as_ref() {
         root = root.child(render_file_dirty(chat, weak, paths, t));
     }
+    if let Some(Dialog::WxQr) = chat.dlg.dialog.as_ref() {
+        let panel = crate::remote_control::panel::wx_qr_panel(chat, weak, t);
+        root = root.child(dialog_shell(chat, weak, panel));
+    }
     root
 }
 

@@ -179,7 +179,6 @@ impl Chat {
                     | ContentView::PiNativeMarket
                     | ContentView::Search
                     | ContentView::SessionSearch
-                    | ContentView::Wx
             ) {
                 match self.ws.active_panel_tab {
                     Some(nix) => {
@@ -584,7 +583,6 @@ impl Chat {
             Some(PanelTab::PfMarket) => ContentView::PfMarket,
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,
-            Some(PanelTab::Wx) => ContentView::Wx,
             Some(PanelTab::File(_)) => ContentView::File,
             None => return,
         };

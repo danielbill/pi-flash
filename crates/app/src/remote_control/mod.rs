@@ -37,10 +37,11 @@ use wxprobe::format::messages::{Lang, t};
 
 use crate::session::runtime::RemoteSend;
 
+/// 开机通知（微信侧唯一该主动看到的一句）。`[pf icon]` 在微信文本通道里
+/// 用 ⚡ 代替（sendmessage 只走文本 item，图片要先上传拿 media id）。
+const STARTUP_NOTICE: &str = "⚡ **Pi-Flash 已启动**";
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
-/// ZCode `weixinActivatedWelcome`（首条消息激活回执的抬头）。
-const ACTIVATED_WELCOME: &str = "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。";
 /// 投递失败回执（wxprobe 文案表同名条目）。失败必须让微信端看见——
 /// 静默丢弃正是「发消息没反应」屡查不出的原因。
 const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi 进程，稍后重试。";
@@ -149,9 +150,6 @@ pub struct RemoteControl {
     /// 活跃会话这会儿是否在跑（pump 每拍回填）。`route()` 没有 `cx`，
     /// 拿不到 runtime，所以在这儿留一份 —— `/task` 的两个守卫要读它。
     active_running: bool,
-    /// 本运行期是否已确认过「激活」状态（真正事实来源是状态文件里的
-    /// `activated_at`，这里只是省掉每条消息一次文件读）。
-    activated: bool,
     pending: Option<Pending>,
     /// 当前 content index 的文本块（ZCode `assistantReplyBuffer` 的对应物）
     cur_ix: Option<usize>,
@@ -169,8 +167,6 @@ pub struct RemoteControl {
     /// 最近一次出码的 URL（`QrEvent::Ready` 的 `url`）。`QrState::Scanned`
     /// 不携带 url，页面靠它把二维码保持可见到确认完成；`cancel_qr` 清除。
     pub(crate) qr_url: Option<String>,
-    /// 「机器人管理」块展开态（页面右列，默认收起；仅本运行期有效）
-    pub(crate) mgmt_open: bool,
     /// `/绑定 <code>` 后钉住的会话 runtime key（§4.2 `active_session`）
     pub bound: Option<String>,
     /// **微信默认会话**（bot 语境，2026-10-23）：微信消息的固定归属，独立于
@@ -178,6 +174,10 @@ pub struct RemoteControl {
     /// 首拍认领当前活跃会话并持久化到 state 的 `session_key`；`/新建` 换新线；
     /// `/task` 选会话改指向；目标被删则回退活跃。
     pub wx_session: Option<String>,
+    /// 最近一个**非微信线**的活跃会话 key（switch_to 维护）：微信线是单开
+    /// tab（2026-10-24 定夺），查看微信时 topbar 第一格（会话 tab）继续
+    /// 显示并回到桌面会话，不被微信占用。
+    pub desktop_key: Option<String>,
     /// 显式启用待执行标记（设置页开关 / `wx.enable` / 扫码成功置位，
     /// 泵下一拍统一执行 [`Self::start_transport_from_state`]）。绕开
     /// SELF_START 门控的同时，让测试可以断言意图而不真起线程。
@@ -190,10 +190,27 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 影子会话名（`pf-wxbot-<15 位时间戳>`，落盘后随 FileBound 一起记进
+    /// 过滤清单）。
+    pub(crate) wx_session_name: Option<String>,
+    /// 渠道刚（重新）连上 → 泵这一拍轮换影子会话（老会话删除、新会话命名）。
+    pub(crate) needs_new_session: bool,
+    /// 本运行期是否已给微信推过「Pi-Flash 已启动」开机通知（每次起进程一条）。
+    startup_notice_sent: bool,
+    /// 微信会话已过期（`errcode:-14 session timeout` 洗完旧游标仍是它）。
+    /// 2026-10-24 真机：PF 重启后渠道照旧「启用中」，微信发消息一条进不来——
+    /// 开关撒谎。置位即停渠道，操作栏亮出「请重新绑定」，扫码成功后清。
+    pub(crate) session_expired: bool,
+    /// 最近一次渠道启动失败的错误（成功即清）。状态卡④「我方创建出错」
+    /// 的数据源——扫码成功但渠道没起来的唯一可观察出口。
+    pub(crate) start_error: Option<String>,
     /// 回复缓冲当前的来源会话 key。桌面活跃会话与微信线可能**并行流式**
     /// （出站门对两者都放行，2026-10-23），换来源时必须先把旧来源冲干净，
     /// 否则两个会话的回复会拼成一条发出去。
     buf_key: Option<String>,
+    /// token 比对节流闸（泵 200ms 一拍，state 文件读不必每拍都做——
+    /// Windows 实时杀软下偶发 IO 抖动直接打在 UI 线程上）。
+    token_check_at: Option<std::time::Instant>,
 }
 
 impl RemoteControl {
@@ -201,7 +218,6 @@ impl RemoteControl {
         Self {
             transport: None,
             active_running: false,
-            activated: false,
             boot_attempted: false,
             pending: None,
             cur_ix: None,
@@ -212,48 +228,31 @@ impl RemoteControl {
             qr: QrState::Idle,
             qr_rx: None,
             qr_url: None,
-            mgmt_open: false,
             bound: None,
             wx_session: None,
+            desktop_key: None,
             wants_start: false,
             active_token: None,
             poll_error: None,
+            wx_session_name: None,
+            needs_new_session: false,
+            startup_notice_sent: false,
+            session_expired: false,
+            start_error: None,
             buf_key: None,
+            token_check_at: None,
         }
     }
+
+    /// 微信桥自启开关。**true = 2026-10-24 产品语义**：bot 随本应用存活，
+    /// PF 关闭重启后自动接上微信线（关停态才是用户主动选择）。发版排除
+    /// 不在这里——总开关是 dev-flag `wx`（默认关，workspace::wx_enabled）：
+    /// 关 = 入口全隐 + 入站泵不挂，本常量根本不被问到。多实例冲突由轮询锁
+    /// + `start_error` 状态④兜底显示，显式启用（设置页开关/扫码）不受门控。
+    const SELF_START: bool = true;
 
     /// 惰性起渠道。没扫码 / 被别的轮询者持锁都只是**记一条日志**，
     /// 不 panic 不重试 —— 桌面端该干什么还干什么。
-    /// ZCode `handleWeixinFirstActivation`（botsService.ts:957）。
-    ///
-    /// 源码注释的原话：微信扫码**只返回 bot token/id，不返回可投递的用户 id**；
-    /// 第一条微信入站消息用于建立会话目标，因此只回激活说明，
-    /// **不把「你好」这类激活文本误当成任务 prompt**。
-    ///
-    /// 只对**普通消息**触发（`command.type === "message"`），命令照常分发；
-    /// **事实来源是 `chat_id`**（`ensure_transport` 里回填到 `self.activated`）：
-    /// 这正是 ZCode 那段注释说的「还没有可投递的用户 id」；`ack` 落了
-    /// `chat_id` 之后重启就不会重复欢迎，**不需要新增状态字段** ——
-    /// 更重要的是避免和 `ack` 在同一文件上读改写互踩。
-    /// 成功建立时返回要回的文案。
-    fn take_first_activation(&mut self, lang: Lang) -> Option<String> {
-        if self.activated {
-            return None;
-        }
-        self.activated = true;
-        // welcome + 帮助（ZCode: [msg(weixinActivatedWelcome), buildHelpText].join("\n\n")）
-        Some(format!(
-            "{}\n\n{}",
-            t(lang, ACTIVATED_WELCOME),
-            crate::remote_control::pipeline::help_text(lang)
-        ))
-    }
-
-    /// 微信桥自启开关。**已断开**（2026-10-15 所有者定夺：回头抽成插件，
-    /// 插件落地前不再随启动拉起——配置存在也不再碰轮询锁，多实例也不再有
-    /// 「另一个轮询者」报错）。060 机器件全保留，恢复自启改回 true。
-    const SELF_START: bool = false;
-
     fn ensure_transport(&mut self) {
         if self.boot_attempted {
             return;
@@ -270,20 +269,25 @@ impl RemoteControl {
     /// 用户当场明示意图，照常起渠道。修复：曾因一刀切早退，扫码成功后
     /// 轮询永不启动——弹窗正常关、消息永远收不到。
     fn start_transport_from_state(&mut self) {
+        self.start_error = None;
         let st = wxprobe::state::load();
-        // 微信默认会话归属随渠道恢复（重启后微信仍跟同一条线说话）
-        self.wx_session = wxprobe::state::get_str(&st, "session_key");
-        // 有 chat_id = 之前已经建立过投递目标，跳过激活欢迎（等价于 ZCode
-        // 持久化的 `weixinActivatedAt`）
-        self.activated = wxprobe::state::get_str(&st, "chat_id").is_some();
+        // **不恢复** state 里的 `session_key`：影子会话按"每次连上就换新"的
+        // 口径重建（老会话的文件此刻正被删除），恢复它只会指向一个死文件。
         let started = wxprobe::transport::config_from_state(&st).and_then(|cfg| {
             self.active_token = Some(cfg.token.clone());
             wxprobe::transport::spawn(&cfg)
         });
         match started {
-            Ok(t) => self.transport = Some(t),
-            // 静默失败是最坏的形态（§6 坑 4），至少打一行
-            Err(e) => eprintln!("[wx] 渠道未启动：{e}"),
+            Ok(t) => {
+                self.transport = Some(t);
+                // 每次（重新）连上 = 一条全新的影子会话（002 隔离要求）
+                self.needs_new_session = true;
+            }
+            // 静默失败是最坏的形态（§6 坑 4）：stderr 一行 + 状态卡④可显示
+            Err(e) => {
+                self.start_error = Some(format!("渠道未启动：{e}"));
+                eprintln!("[wx] 渠道未启动：{e}");
+            }
         }
     }
 
@@ -301,6 +305,16 @@ impl RemoteControl {
         if !self.is_running() {
             return;
         }
+        // 节流：泵 200ms 一拍都同步读 state 文件太勤，1s 一次足够（换绑感知
+        // 延迟人眼无感），杀软扫描的 IO 抖动也别想打上 UI 线程。
+        let now = std::time::Instant::now();
+        if self
+            .token_check_at
+            .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_secs(1))
+        {
+            return;
+        }
+        self.token_check_at = Some(now);
         let st = wxprobe::state::load();
         let Some(new) = wxprobe::transport::require_token(&st).ok() else {
             return;
@@ -313,9 +327,46 @@ impl RemoteControl {
         }
     }
 
+    /// 开机通知（2026-10-24 用户定夺）：微信那边**只该收到一句**「Pi-Flash
+    /// 已启动」，而不是 pi 进程的冷启动横幅（「🔌 MCP: 1 server enabled」——
+    /// 对微信用户毫无意义，且每启一次刷一条）。横幅本体照旧在
+    /// [`is_startup_banner`]/[`strip_startup_banner`] 内部消化。
+    ///
+    /// 每进程一条：渠道起来 + 状态文件里有投递路由（`chat_id`，首条入站才写）
+    /// 才发；没有路由就等下一拍（`send` 线程读不到对端会静默丢弃）。
+    fn maybe_send_startup_notice(&mut self) {
+        if self.startup_notice_sent || self.transport.is_none() {
+            return;
+        }
+        let st = wxprobe::state::load();
+        if wxprobe::state::get_str(&st, "chat_id").is_none() {
+            return;
+        }
+        let sent = self
+            .transport
+            .as_ref()
+            .is_some_and(|t| t.send(STARTUP_NOTICE).is_ok());
+        if sent {
+            self.startup_notice_sent = true;
+        }
+    }
+
     /// 泵每拍同步最近轮询错误（面板显示）；渠道不在时为 `None`。
+    ///
+    /// `-14 session timeout` 洗完旧游标仍在 = token 本身失效（wxprobe 侧只
+    /// 自愈一次）：这里**把渠道停掉**并亮「会话已过期」——继续长轮询只是
+    /// 空转，而开关亮着会让人以为链路是通的（2026-10-24 真机）。
     fn sync_poll_error(&mut self) {
-        self.poll_error = self.transport.as_ref().and_then(|t| t.poll_error());
+        let err = self.transport.as_ref().and_then(|t| t.poll_error());
+        if let Some(e) = err.as_deref() {
+            if wxprobe::transport::is_session_timeout(e) && !self.session_expired {
+                self.session_expired = true;
+                self.wants_start = false;
+                self.transport = None; // Drop 只发停止信号，不 join（不卡 UI）
+                eprintln!("[wx] 会话已过期，渠道已停：请重新绑定扫码");
+            }
+        }
+        self.poll_error = err;
     }
 
     /// 当前会话的绑定码（6 位数字）。由设置页展示、用户在微信里 `/bind` 回填。
@@ -367,9 +418,10 @@ impl RemoteControl {
         wxprobe::state::save(&st);
     }
 
-    /// 启动认领：微信线还没有归属时认当前活跃会话（幂等，每拍调用安全）。
-    /// 「PF 启动时应有一个默认的微信对话，否则微信跟谁说话」——归属在
-    /// 渠道启用后的第一拍就有，之后桌面切换不再牵动微信线。
+    /// 认领语义锚点（**仅测试**）：wx_session 为空时置为给定 key。运行时的
+    /// 归属创建已改为 pump 建专属草稿（2026-10-24 定夺：不再认领桌面活跃
+    /// 会话），此处保留 set-if-none 语义供单测表达优先级规则。
+    #[cfg(test)]
     pub(crate) fn claim_default_session(&mut self, active: &str) {
         if self.wx_session.is_some() {
             return;
@@ -400,9 +452,12 @@ impl RemoteControl {
             // 显式启用走 wants_start → 泵下一拍 start_transport_from_state
             self.boot_attempted = true;
             self.wants_start = true;
+            // 显式再启用 = 重试一次（旧失败不再预先否定结果；真过期会再置位）
+            self.session_expired = false;
         } else {
             self.wants_start = false;
             self.transport = None;
+            self.start_error = None;
             self.boot_attempted = true;
         }
     }
@@ -427,6 +482,18 @@ impl RemoteControl {
         std::thread::spawn(move || wxprobe::register::run_qr_flow(tx, 180));
     }
 
+    /// 强制换一张新码（002 操作栏第 3 件「重新绑定」/ 码方框内的
+    /// 【刷新二维码】）。与 [`Self::begin_qr`] 的幂等早退相反：手里那张码
+    /// （Loading/Ready/Scanned）一律丢掉再起一轮，否则用户点「刷新」看到的
+    /// 还是同一张旧码。被丢下的 worker 在下一次 `tx.send` 失败时自行退出
+    ///（`wxprobe::register::run_qr_flow` 的取消约定）。
+    pub fn refresh_qr(&mut self) {
+        self.qr_rx = None;
+        self.qr_url = None;
+        self.qr = QrState::Idle;
+        self.begin_qr();
+    }
+
     /// 把扫码 worker 的事件抽干进 `self.qr`；有变化才返回 `true`（触发重绘）。
     pub fn poll_qr(&mut self) -> bool {
         let mut changed = false;
@@ -440,17 +507,6 @@ impl RemoteControl {
             }
         }
         changed
-    }
-
-    /// 停止扫码等待（页面状态卡「停止」）：丢回程通道 → worker 下次 send
-    /// 失败即自行退出并清 state 里的 qrcode（`register::run_qr_flow` 对
-    /// Scanned/Error 检查发送结果，最坏等一个轮询周期）。注意二维码在服务端
-    /// 仍有约 2 分钟有效期：取消后真扫了旧码，token 照常落 state（绑定事实
-    /// 成立），只是 UI 不再追进度，需要时手动「启动」渠道。
-    pub fn cancel_qr(&mut self) {
-        self.qr_rx = None;
-        self.qr_url = None;
-        self.qr = QrState::Idle;
     }
 
     pub fn send(&self, text: &str) {
@@ -471,10 +527,19 @@ impl RemoteControl {
         out
     }
 
-    /// 游标落盘（§6 坑 2：**处理完才写**）。
-    fn ack(&self, batch: &wxprobe::transport::Batch) {
+    /// **处理动作之前**落路由字段——首条消息的回执（激活欢迎）在 route 时
+    /// 就进了出站队列，send 线程随即读状态文件；对端没写好 = 「第一条没反应」
+    /// （2026-10-24 真机）。
+    fn ack_routing(&self, batch: &wxprobe::transport::Batch) {
         if let Some(t) = &self.transport {
-            t.ack(batch);
+            t.ack_routing(batch);
+        }
+    }
+
+    /// 游标落盘（§6 坑 2：**处理完才写**）。
+    fn ack_cursor(&self, batch: &wxprobe::transport::Batch) {
+        if let Some(t) = &self.transport {
+            t.ack_cursor(batch);
         }
     }
 
@@ -565,13 +630,7 @@ impl RemoteControl {
         }
 
         match wxprobe::command::parse_bot_command(text) {
-            BotCommand::Message { text: msg } => {
-                // 激活只拦「普通消息」，命令照常走（与 ZCode 同序）
-                if let Some(reply) = self.take_first_activation(lang) {
-                    return Action::Send(reply);
-                }
-                Action::Prompt(msg)
-            }
+            BotCommand::Message { text: msg } => Action::Prompt(msg),
             BotCommand::Stop => Action::Abort,
             BotCommand::Help => Action::Send(pipeline::help_text(lang)),
             BotCommand::Status => Action::Status,
@@ -655,7 +714,13 @@ impl RemoteControl {
                 content,
             } => {
                 self.cur_ix = Some(*content_index);
-                self.cur_text = content.clone();
+                // pi 冷启动横幅（「🔌 MCP: N server(s) enabled」）整条到达时
+                // 直接内部消化，不进回复缓冲（2026-10-24 用户定夺）
+                if is_startup_banner(content) {
+                    self.cur_text.clear();
+                } else {
+                    self.cur_text = content.clone();
+                }
             }
             E::ToolCallStart { .. } => out.extend(self.flush()),
             _ => {}
@@ -681,6 +746,8 @@ impl RemoteControl {
             self.buf.push_str(&self.cur_text);
             self.cur_text.clear();
         }
+        // 横幅行兜底剔除：delta 分片拼进缓冲时按行再滤一遍
+        self.buf = strip_startup_banner(&self.buf);
         if self.buf.trim().is_empty() {
             self.buf.clear();
             return Vec::new();
@@ -691,6 +758,23 @@ impl RemoteControl {
         self.buf = rest;
         msgs
     }
+}
+
+/// pi 冷启动横幅识别（如「🔌 MCP: 1 server enabled」）：会话冷启动的第一轮
+/// 会把它混进 assistant 文本通道，对微信用户毫无意义——内部消化
+/// （2026-10-24 用户定夺）。按内容特征识别，不锚定 emoji/ANSI（发送侧已剥）。
+fn is_startup_banner(s: &str) -> bool {
+    let low = s.to_lowercase();
+    low.contains("mcp") && low.contains("server") && low.contains("enabled")
+}
+
+/// 缓冲按行剔除横幅（delta 分片与后续回复拼在同一行时无法分离——实测横幅
+/// 以独立 TextEnd 到达，TextEnd 过滤是主路径，此处兜底整行场景）。
+fn strip_startup_banner(buf: &str) -> String {
+    buf.lines()
+        .filter(|l| !is_startup_banner(l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `/思考` 的 8 档 —— 与桌面 PillMenu 完全同一张表（key/label 一一对应）。
@@ -808,16 +892,30 @@ impl crate::Chat {
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
+        // 取码改为**按需**（2026-10-24 版式定夺）：信息栏【重制二维码】/
+        // 未创建自动弹窗触发 `begin_qr`，泵不再自动取码
         // 显式启用（设置页开关 / wx.enable / 扫码成功）→ 泵这一拍统一执行；
         // 200ms 延迟不可感，换来测试可断言意图而不真起线程
         if self.aux.remote.wants_start && !self.aux.remote.is_running() {
             self.aux.remote.wants_start = false;
             self.aux.remote.start_transport_from_state();
         }
+        self.aux.remote.maybe_send_startup_notice();
+        // 渠道刚连上 → 轮换影子会话（老会话删除、新建并命名 pf-wxbot-<ts>）
+        if self.aux.remote.needs_new_session {
+            self.aux.remote.needs_new_session = false;
+            self.wx_rotate_session(cx);
+        }
         // 面板健康度：「运行中」背后可能正拿着死 token 干转
         self.aux.remote.sync_poll_error();
-        // 微信默认会话认领（幂等）：启用后第一拍即有归属，重启后从 state 恢复
-        self.aux.remote.claim_default_session(&self.pool.active_key);
+        // 微信线**专属会话**（2026-10-24 定夺）：不再认领桌面活跃会话——
+        // 为空时开一条专属草稿（不抢桌面焦点），桌面与微信从第一天就分叉，
+        // 双线操作被限定在专属会话内。历史 session_key 照常恢复。
+        if self.aux.remote.wx_session.is_none() {
+            if let Some(key) = self.new_draft_detached(cx) {
+                self.aux.remote.set_wx_session(key);
+            }
+        }
         // 060 档 1 回推：空闲/轮次结束时把 assistant 缓冲发干净。
         // 每拍都调，flush 在缓冲为空时是 no-op。
         // 运行态读**目标会话**（微信线 ≠ 桌面活跃时，/新建 /task 的守卫要看微信线的）
@@ -844,15 +942,22 @@ impl crate::Chat {
         for text in self.aux.remote.on_running(buf_running) {
             self.aux.remote.send(&text);
         }
-        // 扫码结果（码已内联在【微信通信】页内，弹窗已废——泵只管
-        // 事件回填与重绘，成功落页可见）
+        // 扫码结果（二维码在 Dialog::WxQr 弹窗内展示——泵只管事件回填、
+        // 重绘与成功关窗）
         if self.aux.remote.poll_qr() {
             // 扫码成功 → 渠道起（wants_start 置位，本拍上方统一执行；
             // 不受 SELF_START 门控，不用再摸设置页开关）。若渠道已在跑且
             // 拿的是换绑前的旧 token，这里强制停掉、下一拍用新 token 重拉。
             if matches!(self.aux.remote.qr, QrState::Done { .. }) {
+                // 扫到新 token = 会话重生：过期标记与旧错一并清掉
+                self.aux.remote.session_expired = false;
+                self.aux.remote.poll_error = None;
                 self.aux.remote.force_restart_if_token_changed();
                 self.aux.remote.wants_start = true;
+                // 扫码成功 → 关二维码弹窗（002 自动展示流程的收尾）
+                if matches!(self.dlg.dialog, Some(crate::Dialog::WxQr)) {
+                    self.dlg.dialog = None;
+                }
             }
             cx.notify();
         }
@@ -861,11 +966,15 @@ impl crate::Chat {
             return;
         }
         for batch in &batches {
+            // 路由字段先行：回执在 route 时就出队，send 线程马上读状态文件，
+            // 对端没写好 = 首条回执被静默丢弃（「第一条没反应」根因）
+            self.aux.remote.ack_routing(batch);
             for m in &batch.messages {
                 let action = self.aux.remote.route(&m.text);
                 self.run_wx_action(action, cx);
             }
-            self.aux.remote.ack(batch);
+            // 游标处理完才写（§6 坑 2）
+            self.aux.remote.ack_cursor(batch);
         }
         cx.notify();
     }
@@ -1098,10 +1207,10 @@ impl crate::Chat {
         let rt = match rt.take() {
             Some(rt) => rt,
             None => {
-                // 会话真被删了 → 清归属、重新认领活跃，重试一次。
-                // 静默丢弃已经坑过一次（微信没回执），这里必须自愈。
+                // 会话真被删了 → 清归属后本条按活跃会话兜底投递（target_key
+                // 回退），专属草稿由泵下一拍重建。静默丢弃已经坑过一次
+                // （微信没回执），这里必须自愈。
                 self.aux.remote.clear_wx_session_if(&key);
-                self.aux.remote.claim_default_session(&self.pool.active_key);
                 let fallback = self.aux.remote.target_key(&self.pool.active_key);
                 match self.pool.runtimes.get(&fallback).cloned() {
                     Some(rt) => rt,
@@ -1212,9 +1321,8 @@ mod tests {
     #[test]
     fn tier1_commands_are_all_wired() {
         let mut rc = RemoteControl::new();
-        // 首条普通消息 = 激活回执，不进模型（ZCode handleWeixinFirstActivation）
-        assert!(matches!(rc.route("你好"), Action::Send(_)));
-        rc.activated = true;
+        // 普通消息直接进模型（2026-10-24 定夺：撤自动欢迎+帮助菜单）
+        assert!(matches!(rc.route("你好"), Action::Prompt(_)));
         assert!(matches!(rc.route("帮我看看这个报错"), Action::Prompt(_)));
         assert!(matches!(rc.route("/停止"), Action::Abort));
         assert!(matches!(rc.route("/stop"), Action::Abort));
@@ -1400,46 +1508,24 @@ mod tests {
     fn no_pending_means_plain_command_routing() {
         let mut rc = RemoteControl::new();
         assert!(rc.pending.is_none());
-        rc.activated = true; // 跳过首条消息的激活回执，直接看路由
         assert!(matches!(rc.route("1"), Action::Prompt(_)));
     }
 
-    // ── 首条消息激活（ZCode botsService.ts:957）────────────────────────
+    // ── 普通消息不再有自动欢迎/帮助菜单（2026-10-24 所有者定夺）─────
 
-    /// 源码注释的原话：扫码只给 bot token/id、**不给投递目标**；
-    /// 第一条入站消息用于建立目标，只回欢迎+帮助，**不把文本当 prompt**。
+    /// 之前每启动一次都会在首条消息上推一整份命令菜单（用户实测「每次
+    /// 打开都弹」）——现在普通消息一律直接进模型，菜单只由 `/帮助` 拉。
     #[test]
-    fn first_plain_message_activates_instead_of_prompting() {
+    fn first_plain_message_goes_straight_to_the_model() {
         let mut rc = RemoteControl::new();
-        assert!(!rc.activated);
-        match rc.route("你好") {
-            Action::Send(text) => {
-                assert!(
-                    text.contains("已激活"),
-                    "激活回执要带 weixinActivatedWelcome，实际: {text}"
-                );
-                assert!(
-                    text.contains("/帮助"),
-                    "要跟 ZCode 一样把 helpText 拼在欢迎后面，实际: {text}"
-                );
-            }
-            other => panic!("首条普通消息应回激活文案，实际 {other:?}"),
-        }
-        // 只回这一次：运行期内部标记 + 后续正常进模型
-        assert!(rc.activated);
-        assert!(matches!(rc.route("第二条"), Action::Prompt(_)));
-        // 激活只拦普通消息，命令照常分发
-        let mut rc2 = RemoteControl::new();
-        assert!(matches!(rc2.route("/帮助"), Action::Send(_)));
-        // 命令不消耗激活：等第一条普通消息仍然欢迎
-        assert!(!rc2.activated);
+        assert!(matches!(rc.route("你好"), Action::Prompt(_)));
+        assert!(matches!(rc.route("/帮助"), Action::Send(_)));
     }
 
     /// 活跃会话在跑时 `/task` 既不给列表也不许切换（ZCode 两处 Bugfix）。
     #[test]
     fn task_menu_is_refused_while_running() {
         let mut rc = RemoteControl::new();
-        rc.activated = true;
         rc.active_running = true;
         match rc.route("/task") {
             Action::Send(t) => assert!(t.contains("正在运行"), "应拒，实际: {t}"),
@@ -1550,5 +1636,52 @@ mod tests {
         let out = rc.on_running(false);
         assert!(out.len() >= 3, "9000 字应切成多段，实际 {}", out.len());
         assert!(out.iter().all(|s| s.chars().count() <= 4000));
+    }
+
+    /// pi 冷启动横幅内部消化（2026-10-24）：与真实回复混轮时横幅整行剔除、
+    /// 回复照发；只剩横幅时什么都不发。
+    #[test]
+    fn startup_banner_is_swallowed_not_sent() {
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&te(0, "🔌 MCP: 1 server enabled"), "s");
+        rc.on_assistant(&td(1, "你好，我是助手"), "s");
+        let out = rc.on_running(false);
+        assert_eq!(out, vec!["你好，我是助手".to_string()], "横幅不得出站");
+
+        let mut rc2 = RemoteControl::new();
+        rc2.on_assistant(&te(0, "MCP: 2 servers enabled"), "s");
+        assert!(rc2.on_running(false).is_empty(), "纯横幅 = 静默");
+
+        // 缓冲行兜底：横幅以 delta 形式单独成行时同样剔除
+        let mut rc3 = RemoteControl::new();
+        rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"), "s");
+        assert_eq!(rc3.on_running(false), vec!["后续回复".to_string()]);
+
+        // 变体：`server(s)`、大写、带色码残留都算横幅（只认 mcp+server+enabled）
+        let mut rc4 = RemoteControl::new();
+        rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"), "s");
+        assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
+    }
+
+    /// 影子会话名（用户定夺）：`pf-wxbot-` + **15 位**时间戳（纯数字）。
+    #[test]
+    fn wx_shadow_session_name_is_pf_wxbot_plus_15_digits() {
+        let n = crate::Chat::wx_session_name();
+        let suffix = n
+            .strip_prefix("pf-wxbot-")
+            .unwrap_or_else(|| panic!("名字必须以 pf-wxbot- 开头，实际 {n}"));
+        assert_eq!(suffix.len(), 15, "15 位时间戳，实际 {suffix}");
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_digit()),
+            "纯数字，实际 {suffix}"
+        );
+    }
+
+    /// 开机通知文案（用户定夺）：微信侧只该收到这一句，不是 MCP 横幅。
+    #[test]
+    fn startup_notice_text_is_pf_branded() {
+        assert!(STARTUP_NOTICE.contains("Pi-Flash"));
+        assert!(STARTUP_NOTICE.contains("已启动"));
+        assert!(!STARTUP_NOTICE.contains("MCP"), "不得泄漏 pi 横幅内容");
     }
 }

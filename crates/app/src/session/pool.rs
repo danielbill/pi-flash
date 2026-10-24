@@ -114,15 +114,20 @@ impl Chat {
                     }
                 }
                 SessionEvent::Assistant(ev) => {
-                    // 回推口径与入站对齐（2026-10-23）：桌面活跃会话**或微信
-                    // 线**。微信线是后台会话——桌面切到别的项目/会话，模型
-                    // 回复照样发回微信（此前只认桌面活跃，用户一切换，回复
-                    // 全部静默丢失，真机实测坐实）。且只在**发送轮内**转发：
-                    // pi 空闲期吐的启动横幅之类不得混进回复通道。
+                    // 回推口径（2026-10-24 修正）：**只认微信线**。
+                    // 2026-10-23 那版放的是「桌面活跃会话**或**微信线」——
+                    // 当时微信线就是桌面活跃会话，放行 is_active 才收得到
+                    // 回复；微信线升格独立会话后，这条规则变成把桌面会话
+                    // 的回复（乃至别的会话的启动横幅）原样灌进微信，用户
+                    // 实测「别的对话进入了微信会话」。
+                    //
+                    // 桌面与微信已经**各是一条会话**：微信只该收到微信线
+                    // 自己的回复。且只在**发送轮内**转发：pi 空闲期吐的
+                    // 启动横幅之类不得混进回复通道。
                     let key = rt.read(cx).key.clone();
                     let running = rt.read(cx).agent_running;
                     let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(key.as_str());
-                    if (is_active || is_wx_line) && running {
+                    if is_wx_line && running {
                         for text in chat.aux.remote.on_assistant(&ev, &key) {
                             chat.aux.remote.send(&text);
                         }
@@ -242,6 +247,11 @@ impl Chat {
         self.composer.pending_images = images;
         self.composer.history = history;
         self.composer.history_ix = None;
+        // 非微信线的活跃会话记为「桌面会话」：微信线单开 tab（2026-10-24
+        // 定夺），查看微信时 topbar 第一格继续显示并回到它
+        if self.aux.remote.wx_session.as_deref() != Some(key.as_str()) {
+            self.aux.remote.desktop_key = Some(key.clone());
+        }
         self.pool.active_key = key;
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
@@ -440,6 +450,20 @@ impl Chat {
         // 消息一落地，归属就指向已退役的 draft-N，后续全部回退活跃会话）
         if self.aux.remote.wx_session.as_deref() == Some(old_key.as_str()) {
             self.aux.remote.set_wx_session(path_key.clone());
+            // 影子会话落盘：名字补进过滤清单（按 path 精确，重启后仍藏得住）
+            let name = self.aux.remote.wx_session_name.clone();
+            pi_link::hidden_sessions::set_owned(
+                pi_link::hidden_sessions::OWNER_WX,
+                name.as_deref(),
+                Some(&path),
+                Some("pf-wxbot-"),
+            );
+            // 落盘后名字再钉一次（草稿期 pi 可能只记在内存里）
+            if let Some(n) = name {
+                if let Some(rt) = self.pool.runtimes.get(&path_key) {
+                    rt.read(cx).rpc(&Command::SetSessionName { name: n });
+                }
+            }
         }
         self.psp.active_file = Some(path.clone());
         // recents (003-session管理): a fresh session file just landed
@@ -737,9 +761,12 @@ impl Chat {
             return;
         };
         let cwd = cwd.to_string_lossy().to_string();
+        // 影子会话（微信线 pf-wxbot-*）不进任何列表：过滤清单由模块自己注入
+        let hidden = pi_link::hidden_sessions::load();
         let full = list_sessions_for_cwd(&cwd, 500)
             .into_iter()
             .filter(|s| same_ws(&s.cwd, &cwd))
+            .filter(|s| !hidden.hides(s.name.as_deref(), &s.path))
             .collect::<Vec<_>>();
         // v60: 加载语义 = 时间窗口（设置.加载时间窗口）——当前项目只保留
         // 窗口内活跃的会话（mtime 近似清单 last_active）+ 当前激活会话
@@ -874,10 +901,15 @@ impl Chat {
     /// 当前会话标题（topbar 会话视图展示；≤30 字截断）。优先 pi 会话名，
     /// 回落首条用户消息。
     pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
+        self.session_title_of(&self.pool.active_key.clone(), cx)
+    }
+
+    /// 指定池 key 的会话标题（topbar 第一格在查看微信 tab 时显示桌面会话用）。
+    pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {
         let file = self
             .pool
             .runtimes
-            .get(&self.pool.active_key)
+            .get(key)
             .and_then(|rt| rt.read(cx).file.clone());
         let raw = file
             .and_then(|f| {

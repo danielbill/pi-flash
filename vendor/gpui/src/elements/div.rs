@@ -3080,6 +3080,17 @@ impl ScrollHandle {
         Self(Rc::default())
     }
 
+    /// Stable per-instance identity: the address of the inner `Rc`
+    /// allocation. Handles persist across frames, so this value identifies
+    /// one scrollable instance for its whole lifetime (pi-flash: scrollbar
+    /// widgets key their per-instance drag/hover state on it — gpui
+    /// dispatches mouse events to every registered listener, so without an
+    /// instance id a scrollbar cannot tell "my drag" from "another
+    /// scrollbar's drag").
+    pub fn ptr_id(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
+
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
         *self.0.borrow().offset.borrow()

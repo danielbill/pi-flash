@@ -83,9 +83,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.type.subagent", "子代理", "子代理", "Subagent"),
     // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案本身照抄
     // 设计稿英文，这里只收需要跟随界面的那几个词）
-    ("market.native_tab", "Pi 扩展市场", "Pi 擴展市場", "Pi Market"),
+    ("market.native_tab", "Pi Dev 扩展社区", "Pi Dev 擴展社区", "Pi Dev Packages"),
     ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
-    ("market.pf.empty", "已全部安装，没有可更新的插件", "已全部安裝，沒有可更新的插件", "Everything is installed and up to date"),
+    ("market.pf.empty", "无可用PF插件", "無可用PF外掛", "No PF plugins available"),
+    ("market.pf.scanning", "扫描 Pi-Flash 插件……", "掃描 Pi-Flash 外掛……", "Scanning Pi-Flash plugins…"),
     ("market.pf.installing", "安装中…", "安裝中…", "Installing…"),
     ("market.pf.updating", "更新中…", "更新中…", "Updating…"),
     ("market.pf.confirm", "再点一次确认卸载", "再點一次確認卸載", "Click again to confirm uninstall"),
@@ -94,6 +95,11 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.need_newer_pf", "该插件需要 PF {min}，当前 {cur}", "該插件需要 PF {min}，當前 {cur}", "This plugin requires PF {min}, current {cur}"),
     // 090-4 v3：布局对齐 pi market 页后的页内文案（三语齐全）
     ("market.pf.head", "所有插件", "所有外掛", "All plugins"),
+    // 090-4 v4：【已安装】页签（管理视图，版式对齐 settings-扩展）
+    ("market.pf.tab_installed", "已安装", "已安裝", "Installed"),
+    ("market.pf.none_installed", "尚未安装任何插件", "尚未安裝任何外掛", "No plugins installed yet"),
+    ("market.pf.uninstall_confirm", "卸载插件 {name}？", "卸載外掛 {name}？", "Uninstall plugin {name}?"),
+    ("market.pf.enable_failed", "启用失败：未找到插件清单（{name}）", "啟用失敗：未找到外掛清單（{name}）", "Enable failed: manifest not found ({name})"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),
@@ -512,6 +518,12 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.available_count", "可用模型 {enabled}/{total}", "可用模型 {enabled}/{total}", "Available models {enabled}/{total}"),
     ("models.free_only", "只看free", "只看free", "Free only"),
     ("models.json_read_failed", "无法读取 models.json，为避免覆盖已禁用保存：{e}", "無法讀取 models.json，為避免覆蓋已停用儲存：{e}", "Cannot read models.json; save skipped to avoid overwriting disabled entries: {e}"),
+    // 模型页空目录占位（2026-10 用户反馈：保存 key 后刷不出列表也"没动静"）
+    ("models.fetch_hint_no_key", "保存 API Key 后将自动获取该 Provider 的模型列表", "保存 API Key 後將自動獲取該 Provider 的模型列表", "The model list is fetched automatically after saving an API key"),
+    ("models.fetch_hint", "点击「获取模型」拉取该 Provider 的模型目录", "點擊「獲取模型」拉取該 Provider 的模型目錄", "Click \"Fetch models\" to pull this provider's catalog"),
+    ("models.no_auto_fetch", "该 Provider 暂不支持自动获取模型目录；模型列表将随会话启动由 pi 提供", "該 Provider 暫不支援自動獲取模型目錄；模型列表將隨會話啟動由 pi 提供", "Automatic catalog fetch is not available for this provider; its model list comes from pi when a session starts"),
+    ("models.probe_empty_catalog", "已获取，但响应中未解析到模型条目（响应形状可能不符）", "已獲取，但回應中未解析到模型條目（回應形狀可能不符）", "Fetched, but no model entries could be parsed from the response"),
+    ("models.proxy_hint", "若该 Provider 需代理访问，请为 pi-flash 设置 http_proxy/https_proxy 环境变量后重试", "若該 Provider 需代理存取，請為 pi-flash 設定 http_proxy/https_proxy 環境變數後重試", "If this provider needs a proxy, set http_proxy/https_proxy for pi-flash and retry"),
     ("skills.failed_to_toggle_count", "{total} 个技能中有 {count} 个未能更改", "{total} 個技能中有 {count} 個未能更改", "{count} of {total} skills failed to toggle"),
     ("status.running_tools_with_extra", "正在运行 {names}（另有 {count} 个）...", "正在運行 {names}（另有 {count} 個）...", "Running {names} (and {count} more)..."),
     ("messages.no_output", "（无输出）", "（無輸出）", "(no output)"),
@@ -634,10 +646,45 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("psp.switch_to_grouped", "切换为项目分组列表", "切換為專案分組列表", "Switch to project groups"),
     ("psp.unpin", "取消置顶", "取消置頂", "Unpin"),
     ("remote.panel_title", "微信通信", "微信通信", "WeChat"),
+    // 002-微信通信：插件单开标签页的标签名（与面板/弹窗标题的「微信通信」
+    // 区分——002 定名【微信通话】）
+    ("remote.tab_title", "微信通话", "微信通話", "WeChat Chat"),
+    // 操作栏第 2 件：开关旁的说明文字（on/off 两态）
+    ("remote.toggle_on", "启用微信通话", "啟用微信通話", "WeChat chat on"),
+    ("remote.toggle_off", "停用微信通话", "停用微信通話", "WeChat chat off"),
+    // 操作栏第 3 件：刷新二维码钮文案（refresh icon + 重新绑定）
+    ("remote.rebind", "重新绑定", "重新綁定", "Rebind"),
+    // 微信通话页的欢迎语（002 插件注入语，替代桌面新会话页的"Hi，打算让我
+    // 做点什么？"）
+    ("remote.page_greeting", "使用PF微信机器人进行远程控制", "使用PF微信機器人進行遠端控制", "Remote control with the Pi-Flash WeChat bot"),
     ("remote.qr_confirm", "已扫码，请在手机上确认…", "已掃碼，請在手機上確認…", "Scanned, please confirm on your phone…"),
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
+    // 002-微信通信（pi-flash-plugins）版式文案。二维码弹窗唯一提示文案
+    //（2026-10-24 用户定夺：三步走，码区下方再无别的说明行）
+    ("remote.qr_steps", "1、在微信上安装「微信ClawBot」插件\n2、用微信扫描二维码激活PF微信机器人\n3、使用微信聊天指挥Pi-Flash干活", "1、在微信上安裝「微信ClawBot」外掛\n2、用微信掃描二維碼啟用PF微信機器人\n3、使用微信聊天指揮Pi-Flash幹活", "1. Install the \"WeChat ClawBot\" plugin in WeChat\n2. Scan the QR code with WeChat to activate the Pi-Flash bot\n3. Chat with WeChat to put Pi-Flash to work"),
+    // 060 七态生命周期（2026-10-24 用户定夺）：①未扫描 ②微信侧出错
+    // ③重新扫码更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中
+    ("remote.st_absent", "未创建", "未建立", "Not created"),
+    ("remote.st_rebinding", "更新中", "更新中", "Updating"),
+    ("remote.st_write_failed", "状态写入失败", "狀態寫入失敗", "State write failed"),
+    ("remote.title_error", "扫码出错", "掃碼出錯", "Scan failed"),
+    ("remote.title_rebind", "更新绑定", "更新綁定", "Rebinding"),
+    ("remote.title_create_failed", "创建出错", "建立出錯", "Creation failed"),
+    ("remote.title_running", "渠道运行中", "頻道運行中", "Channel running"),
+    ("remote.hint_rebind", "重新扫码后自动替换旧 Bot 并重启渠道。", "重新掃碼後自動替換舊 Bot 並重啟頻道。", "After a re-scan the old bot is replaced and the channel restarts automatically."),
+    ("remote.hint_starting", "pf-wxbot 创建成功，正在启动渠道…", "pf-wxbot 建立成功，正在啟動頻道…", "pf-wxbot created. Starting the channel…"),
+    ("remote.hint_create_failed", "pf-wxbot 创建失败：{err}", "pf-wxbot 建立失敗：{err}", "pf-wxbot creation failed: {err}"),
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
+    ("remote.qr_retry", "扫码连接失败，请刷新重扫。", "掃碼連接失敗，請刷新重掃。", "Scan connection failed. Refresh and try again."),
+    // 002-微信通信（pi-flash-plugins）版式文案
+    // 二维码方框内的三态提示（002 §二维码弹窗：提示信息一律写在方框里）
+    ("remote.refresh_qr", "刷新二维码", "刷新二維碼", "Refresh QR code"),
+    ("remote.rebind_desc", "重新绑定PF微信机器人", "重新綁定PF微信機器人", "Rebind the Pi-Flash WeChat bot"),
+    // 会话过期（errcode:-14）：操作栏提示 + 弹窗框内说明
+    ("remote.session_expired", "会话已过期，请重新绑定", "會話已過期，請重新綁定", "Session expired — rebind required"),
+    ("remote.session_expired_desc", "微信会话已过期，重新扫码绑定", "微信會話已過期，重新掃碼綁定", "The WeChat session expired. Scan again to rebind."),
+    ("remote.qr_timeout", "扫描超时，刷新重新扫码", "掃描逾時，刷新重新掃碼", "Scan timed out. Refresh and scan again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),
@@ -719,10 +766,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.field_status", "状态", "狀態", "Status"),
     ("remote.field_binding", "绑定", "綁定", "Binding"),
     ("remote.qr_begin", "获取二维码", "取得二維碼", "Get QR code"),
-    ("remote.qr_refresh", "重新获取", "重新獲取", "Refresh"),
+    ("remote.qr_refresh", "刷新重扫", "刷新重掃", "Refresh & rescan"),
     ("remote.qr_done", "✅ 绑定成功", "✅ 綁定成功", "✅ Bound successfully"),
     ("remote.qr_help", "发送 /帮助 查看可用命令。", "發送 /幫助 查看可用命令。", "Send /help to see available commands."),
-    ("remote.qr_expired", "二维码已过期，请重新获取。", "二維碼已過期，請重新獲取。", "QR code expired, please refresh."),
+    ("remote.qr_expired", "二维码已过期，请刷新重扫", "二維碼已過期，請刷新重掃", "QR code expired. Refresh and rescan."),
     // 060 微信通信页两栏重构（2026-10-24）：左「扫码连接」/右「Bot 渠道」；
     // 渠道卡只保留微信（060 范围无飞书/Lark/Telegram）
     ("remote.scan_title", "手机扫码连接", "手機掃碼連接", "Scan with Phone"),
@@ -743,7 +790,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.bot_title", "使用 Bot Channel", "使用 Bot Channel", "Use a Bot Channel"),
     ("remote.bot_desc", "连接聊天 Bot，适合更长时间的移动端访问。", "連接聊天 Bot，適合更長時間的移動端存取。", "Connect a chat bot for longer mobile access."),
     ("remote.wx_name", "微信", "微信", "WeChat"),
-    ("remote.wx_desc", "从微信会话打开这个工作区。", "從微信會話打開這個工作區。", "Open this workspace from a WeChat chat."),
     ("remote.channel_enable", "启用渠道", "啟用頻道", "Enable channel"),
     ("remote.channel_disable", "停用渠道", "停用頻道", "Disable channel"),
     ("remote.bot_mgmt", "机器人管理", "機器人管理", "Bot management"),

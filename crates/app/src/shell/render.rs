@@ -487,7 +487,7 @@ impl Render for Chat {
                             let dock_h = f32::from(b.size.height);
                             if dock_h > 100. {
                                 let bar = crate::ui::tokens::panel_ctrl::BAR_H;
-                                let div_h = crate::ui::tokens::panel_ctrl::DIV_H;
+                                let div_h = crate::ui::tokens::divider::HIT;
                                 let r = (f32::from(ev.position.y) - f32::from(b.origin.y)) / dock_h;
                                 c.layout.sess_min = false;
                                 c.layout.files_min = false;
@@ -526,8 +526,9 @@ impl Render for Chat {
             // 轮不到这里。
             .on_drop::<crate::titlebar::TabDrag>(move |_, _, _| {});
         if !panes_hidden {
-            // 分隔线响应区（跨线）：panel 内 3px + 内容区 9px（避开滚动条
-            // 命中区）；可视线由 content-col 的 border 承担（hover 2px 深线）
+            // 分隔线响应区（跨线）：统一感应厚度 divider::HIT=7，面板侧只
+            // 占 3px（避让列表滚动条命中区），其余落在内容侧；可视线由
+            // ui::divider 统一画（§5.12）
             body = body.child(
                 div()
                     .id("slp-resizer")
@@ -535,7 +536,7 @@ impl Render for Chat {
                     .top_0()
                     .bottom_0()
                     .left(px(self.layout.slp_w - 3.))
-                    .w(px(12.))
+                    .w(px(crate::ui::tokens::divider::HIT))
                     .cursor_col_resize()
                     .on_hover(cx.listener(|this, h: &bool, _w, cx| {
                         if this.layout.slp_hover != *h {
@@ -593,20 +594,6 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                .when(
-                    !panes_hidden && !slp_dragging && !self.layout.slp_hover,
-                    |d| {
-                        d.border_l_1().border_color(gpui::rgba(
-                            crate::appearance::theme::border_alpha(t, 0x99),
-                        ))
-                    },
-                )
-                // hover/拖拽：2px 深色线替换 1px 常驻线（画在左缘 = 交界，
-                // content-col 在 panel-col 之后渲染，z 序安全）
-                .when(slp_hovered || slp_dragging, |d| {
-                    d.border_l_2()
-                        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0xc8)))
-                })
                 .child(titlebar::topbar_r(self, window, cx))
                 .child(content::content_main(
                     self,
@@ -614,7 +601,17 @@ impl Render for Chat {
                     &weak,
                     window,
                     cx,
-                )),
+                ))
+                // §5.12 统一分隔线：常驻 1px / hover·拖拽 4px accent，线形由
+                // ui::divider 统一算（与 dock 上下分区同一条代码）；overlay
+                // 不占布局 = hover 零推挤。作为最后 child 保证 z 序在最上
+                .when(!panes_hidden, |d| {
+                    d.child(crate::ui::divider::line(
+                        crate::ui::divider::LineSpec::vertical(),
+                        slp_hovered || slp_dragging,
+                        t,
+                    ))
+                }),
         );
 
         let mut root = div()
@@ -760,6 +757,10 @@ impl Render for Chat {
         root = dialogs::render_dialogs(root, self, &weak_for_dialog, t, cx);
         // 040 卸载扩展确认浮层（叠在设置弹窗之上）
         if let Some(el) = settings::pi_extensions::remove_confirm_overlay(self, cx) {
+            root = root.child(el);
+        }
+        // 090-4 PF 插件市场【已安装】卸载确认浮层（同款机制）
+        if let Some(el) = market::pf_installed::remove_confirm_overlay(self, cx) {
             root = root.child(el);
         }
         // 042 移除内置商确认浮层（同款机制，叠在设置弹窗之上）

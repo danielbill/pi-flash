@@ -85,6 +85,10 @@ pub struct LedgerEntry {
     pub installed_at: String,
     /// v1 恒为 "market"（唯一安装入口）。
     pub source: String,
+    /// 090-4 v5：用户停用。停用的插件启动扫描跳过（不装载不绘制），运行态
+    /// 由市场【已安装】页签的启停开关置位。缺省 false，旧台账直读兼容。
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// 读台账；文件不存在/损坏 = 空台账（损坏不报错，下次安装覆盖写回）。
@@ -126,6 +130,21 @@ pub fn installed_version(name: &str) -> Option<String> {
         .into_iter()
         .find(|e| e.name == name)
         .map(|e| e.version)
+}
+
+/// 启停落盘（090-4 v5）：只翻台账的 disabled 位；台账缺该包 = Err。
+/// 停用语义在消费端——启动扫描跳过、运行态 entry.disabled 置位后
+/// 状态栏 tab / 文件树插件菜单 / 分发全部不再出现该插件。
+pub fn set_disabled(name: &str, disabled: bool) -> Result<(), String> {
+    let mut all = load_ledger();
+    let Some(entry) = all.iter_mut().find(|e| e.name == name) else {
+        return Err(format!("台账中无插件 {name}"));
+    };
+    if entry.disabled == disabled {
+        return Ok(());
+    }
+    entry.disabled = disabled;
+    save_ledger(&all)
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +211,21 @@ fn verifying_key_from_pem(pem: &str) -> Result<ed25519_dalek::VerifyingKey, Stri
 /// （`/` 是唯一非法字符；scope 属主即身份，不需要再哈希。）
 pub fn dir_name(name: &str) -> String {
     name.replace('/', "__")
+}
+
+/// 台账包名 → 磁盘顶层目录的候选名（对账用）：市场安装链落 `@scope__name`，
+/// dev 手工平铺常直接叫 `name`。**运行态条目 ↔ 台账条目 唯一可用的桥**——
+/// 版本层目录名是版本号，拿它比包名永远比不中（090-4 v5 停用形同虚设的根因）。
+pub fn dir_aliases(name: &str) -> Vec<String> {
+    let full = dir_name(name);
+    let mut out = vec![full.clone()];
+    if let Some(short) = name.rsplit('/').next()
+        && short != name
+        && short != full
+    {
+        out.push(short.to_string());
+    }
+    out
 }
 
 fn plugin_dir(name: &str, version: &str) -> Result<PathBuf, String> {
@@ -278,6 +312,7 @@ fn npm_command(args: &[&str]) -> Result<Command, String> {
         }
     };
     cmd.args(args);
+    no_window(&mut cmd);
     Ok(cmd)
 }
 
@@ -287,6 +322,15 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
         .map(|d| d.join(name))
         .find(|p| p.is_file())
 }
+
+/// GUI 进程 spawn 控制台子进程（npm/tar）不弹黑窗（0x08000000 CREATE_NO_WINDOW）。
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000);
+}
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
 
 /// `npm pack <name>@<version>` 到 `dest`，返回 tarball 路径。
 fn pack(name: &str, version: &str, dest: &Path) -> Result<PathBuf, String> {
@@ -328,16 +372,19 @@ fn sha512_sri(path: &Path) -> Result<String, String> {
 }
 
 /// 系统 tar 解包（Win10+ 自带 bsdtar；Unix 恒有）。剥掉顶层 `package/`。
-fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
+/// 市场扫描（market::pf_scan）解清单包复用同一条。
+pub fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("创建安装目录失败: {e}"))?;
-    let out = Command::new("tar")
-        .args([
-            "-xzf",
-            &tarball.to_string_lossy(),
-            "-C",
-            &dest.to_string_lossy(),
-            "--strip-components=1",
-        ])
+    let mut out = Command::new("tar");
+    out.args([
+        "-xzf",
+        &tarball.to_string_lossy(),
+        "-C",
+        &dest.to_string_lossy(),
+        "--strip-components=1",
+    ]);
+    no_window(&mut out);
+    let out = out
         .output()
         .map_err(|e| format!("tar 启动失败（系统缺 tar?）: {e}"))?;
     if !out.status.success() {
@@ -350,6 +397,38 @@ fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// 安装尾声钩子：把重活（wasm → cwasm 预编译）压在**安装那一次**做完。
+///
+/// pi-link 不依赖 wasmtime（那是 app 侧 `pf-plugin-host` 的事），故走 fn 指针
+/// 钩子：app 启动时注入。注入后 [`install`] 变成「解压 + 预编译都完成才算装完」，
+/// 失败回滚整个安装目录（不会留半成品）。未注入 = 不做事（pi-link 单测/CLI 场景）。
+pub type InstallPrepareFn = fn(&Path) -> Result<(), String>;
+
+static INSTALL_PREPARE: std::sync::RwLock<Option<InstallPrepareFn>> =
+    std::sync::RwLock::new(None);
+
+/// app 启动时注入安装尾声钩子（见 [`InstallPrepareFn`]）。
+pub fn install_prepare_hook(f: InstallPrepareFn) {
+    if let Ok(mut c) = INSTALL_PREPARE.write() {
+        *c = Some(f);
+    }
+}
+
+fn run_install_prepare(dest: &Path) -> Result<(), String> {
+    let f = INSTALL_PREPARE.read().ok().and_then(|c| *c);
+    match f {
+        Some(f) => f(dest),
+        None => Ok(()),
+    }
+}
+
+/// 单插件编译产物缓存目录：`<插件安装目录>/.cache/`。
+///
+/// 绑死在安装目录上：卸载即随之删除、整个插件目录拷走时缓存跟着走（换机免重编）。
+pub fn plugin_cache_for(plugin_dir: &Path) -> PathBuf {
+    plugin_dir.join(".cache")
 }
 
 /// 安装/更新（同一入口：同版本重装 = 覆盖）。返回给 UI 的完成消息。
@@ -389,12 +468,19 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
         }
         extract(&tarball, &dest)?;
         std::fs::remove_file(&tarball).ok();
+        // 安装即终态：预编译（wasm → cwasm）在用户等待的这几秒里一次做完，
+        // 此后启动/开面板永远走 mmap 命中，运行时零编译。失败 = 回滚，不留半成品。
+        if let Err(e) = run_install_prepare(&dest) {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(format!("安装失败：{e}"));
+        }
         ledger_upsert(LedgerEntry {
             name: entry.name.clone(),
             version: entry.version.clone(),
             integrity: entry.integrity.clone(),
             installed_at: now_iso(),
             source: "market".into(),
+            disabled: false,
         })
     })();
 
@@ -403,15 +489,88 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
     Ok(format!("{} {} 安装完成", entry.display.zh, entry.version))
 }
 
-/// 卸载：删目录 + 摘台账。目录已不在视为成功（幂等）。
+/// 卸载：摘台账 + 删目录。目录已不在视为成功（幂等）。
+///
+/// **台账先删**：台账=安装唯一真相，删不干净目录也不能让「市场显示已安装」。
+/// 目录删除分两步：先删非缓存内容（清单没了 = 扫描就看不见了），最后试删
+/// `.cache/`（cwasm 被运行中的 wasm 实例 mmap 住时 Windows 会拒绝，os error 32
+/// ——这时**不算失败**，留待下次启动的孤儿清扫）。
 pub fn uninstall(name: &str) -> Result<String, String> {
+    // ① 台账先摘（误删目录不影响"已卸载"这个结论）
+    ledger_remove(name)?;
+    // ② 目录内容尽量清
     let root = crate::paths::plugins_dir().ok_or("无法定位插件安装目录")?;
     let base = root.join(dir_name(name));
+    let mut warning = None;
     if base.exists() {
-        std::fs::remove_dir_all(&base).map_err(|e| format!("删除插件目录失败: {e}"))?;
+        if let Err(e) = remove_tree_keeping_cache(&base) {
+            warning = Some(format!("删除插件目录失败（已标记卸载）: {e}"));
+        }
+        // ③ 缓存目录最后试：失败 = 有实例正 mmap 住，留给启动清扫
+        let _ = std::fs::remove_dir_all(base.join(".cache"));
+        let _ = std::fs::remove_dir_all(&base);
     }
-    ledger_remove(name)?;
-    Ok(format!("{name} 已卸载"))
+    match warning {
+        Some(w) => Ok(format!("{name} 已卸载（{w}）")),
+        None => Ok(format!("{name} 已卸载")),
+    }
+}
+
+/// 递归删除目录内容，但**跳过 `.cache/`**（cwasm 可能被 mmap 住）。
+fn remove_tree_keeping_cache(dir: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == ".cache") {
+            continue;
+        }
+        if path.is_dir() {
+            remove_tree_keeping_cache(&path)?;
+            let _ = std::fs::remove_dir(&path);
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 启动清扫：删掉「没有清单也没有台账归属」的残留目录（卸载时被占用留下的
+/// `.cache` 等）。只动**明显无主**的目录，跑在后台扫描线程里，失败静默。
+pub fn sweep_orphans() {
+    let Some(root) = crate::paths::plugins_dir() else {
+        return;
+    };
+    let enabled: std::collections::HashSet<String> = load_ledger()
+        .into_iter()
+        .flat_map(|l| dir_aliases(&l.name))
+        .collect();
+    let Ok(rd) = std::fs::read_dir(&root) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let pkg_dir = e.path();
+        if !pkg_dir.is_dir() {
+            continue;
+        }
+        let pkg = pkg_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if enabled.contains(&pkg) {
+            continue; // 台账里还有它：正常安装目录，不动
+        }
+        // 无台账归属 + 底下没有任何清单 = 残留
+        let has_manifest = std::fs::read_dir(&pkg_dir)
+            .map(|rd| {
+                rd.flatten().any(|v| {
+                    v.path().is_dir() && v.path().join("pf-plugin.toml").is_file()
+                })
+            })
+            .unwrap_or(false);
+        if !has_manifest {
+            let _ = std::fs::remove_dir_all(&pkg_dir);
+        }
+    }
 }
 
 fn now_iso() -> String {
@@ -445,5 +604,98 @@ mod signed_index_tests {
             r#"{{"format":"pf-market-signed/1","signed":"{tampered}","signature":"{sig}"}}"#
         );
         assert!(verify_signed_index(&bad, &pem).is_err(), "篡改必须拒");
+    }
+}
+
+#[cfg(test)]
+mod dir_alias_tests {
+    use super::*;
+
+    #[test]
+    fn dir_aliases_cover_market_and_flat_layouts() {
+        // 市场安装链：scope 展开成 `__`
+        assert_eq!(
+            dir_aliases("@pi-flash-plugins/quick-panel"),
+            vec![
+                "@pi-flash-plugins__quick-panel".to_string(),
+                "quick-panel".to_string()
+            ]
+        );
+        // dev 手工平铺 / 无 scope 包：两个候选相同，不重复
+        assert_eq!(dir_aliases("quick-panel"), vec!["quick-panel".to_string()]);
+        // scope 自身含 `__` 时短名仍可取
+        assert_eq!(dir_aliases("@a__b/x")[1], "x");
+    }
+}
+
+#[cfg(test)]
+mod install_prepare_tests {
+    use super::*;
+
+    /// 钩子接线：注入的函数必须收到**解压后的插件目录**，成功/失败都要透传。
+    /// （wasm 预编译本身在 app 侧 `install_prepare`，这里只验 pi-link 的接线）
+    #[test]
+    fn install_prepare_hook_wiring() {
+        fn ok_hook(dir: &Path) -> Result<(), String> {
+            std::fs::write(dir.join(".prepared"), b"1").map_err(|e| e.to_string())
+        }
+        fn fail_hook(_: &Path) -> Result<(), String> {
+            Err("预编译失败: boom".into())
+        }
+        let dir = std::env::temp_dir().join(format!("pf-prep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        install_prepare_hook(ok_hook);
+        assert!(run_install_prepare(&dir).is_ok());
+        assert!(dir.join(".prepared").is_file(), "钩子必须收到插件目录");
+
+        install_prepare_hook(fail_hook);
+        let err = run_install_prepare(&dir).unwrap_err();
+        assert!(err.contains("boom"), "失败原因必须透传给安装方：{err}");
+
+        // 未注入 = 不做事（pi-link 单测/CLI 场景）
+        if let Ok(mut c) = INSTALL_PREPARE.write() {
+            *c = None;
+        }
+        assert!(run_install_prepare(&dir).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 编译产物缓存绑在插件安装目录内（卸载即清、整目录拷走跟着走）。
+    #[test]
+    fn cache_dir_lives_inside_plugin_dir() {
+        let p = plugin_cache_for(Path::new("/x/plugins/@s__plug/1.2.3"));
+        assert!(p.ends_with(".cache"));
+        assert!(p.starts_with("/x/plugins/@s__plug/1.2.3"));
+    }
+}
+
+#[cfg(test)]
+mod uninstall_tests {
+    use super::*;
+
+    /// 卸载两铁律：①台账先摘（目录删不掉也不能显示已装）；②留 `.cache`
+    /// 不算失败（cwasm 被运行中实例 mmap 时 Windows 会拒绝删除）。
+    #[test]
+    fn uninstall_clears_ledger_and_survives_busy_cache() {
+        let root = std::env::temp_dir().join(format!("pf-uninst-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let base = root.join("@s__plug").join("1.0.0");
+        std::fs::create_dir_all(base.join(".cache")).unwrap();
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("pf-plugin.toml"), "schema = 2\n").unwrap();
+        std::fs::write(base.join("plugin.wasm"), b"x").unwrap();
+        std::fs::write(base.join(".cache/a.cwasm"), b"y").unwrap();
+        std::fs::write(base.join("assets/a.svg"), b"z").unwrap();
+
+        // 只验目录清理规则（台账/路径走全局数据目录，单测里不碰）
+        remove_tree_keeping_cache(&base).unwrap();
+        assert!(!base.join("pf-plugin.toml").exists(), "清单必须被删");
+        assert!(!base.join("plugin.wasm").exists(), "wasm 必须被删");
+        assert!(!base.join("assets").exists(), "资产目录必须被清");
+        assert!(base.join(".cache/a.cwasm").exists(), "缓存留给启动清扫");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

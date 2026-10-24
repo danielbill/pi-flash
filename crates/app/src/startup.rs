@@ -494,10 +494,12 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
-    // 微信 Bot 入站泵（060）：**自启已断开**（remote_control::SELF_START
-    // = false，2026-10-15 所有者定夺，插件化前不再拉起）——泵在空转，
-    // ensure_transport 直接返回，不碰轮询锁
-    crate::remote_control::spawn_wx_pump(cx);
+    // 微信 Bot 入站泵（060）：dev-flag `wx` 关（默认，发版排除）= 泵都
+    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态（dev 环境
+    // dev-flags.json `"wx": true`）自启语义由 SELF_START（true）管
+    if crate::services::workspace::wx_enabled() {
+        crate::remote_control::spawn_wx_pump(cx);
+    }
     // syntect 语法引擎冷加载 ~百 ms 挪出首个 md 渲染帧（第一次渲染卡顿）：
     // 后台线程预热 OnceLock，命中后首渲零成本
     std::thread::spawn(|| crate::editor::markdown::warm_up());
@@ -879,7 +881,12 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
             None => Vec::new(),
         };
         let _ = this.update(cx, |chat, cx| {
-            chat.pool.sessions = sessions;
+            // 影子会话（微信线 pf-wxbot-*）不进列表：过滤清单读一次
+            let hidden = pi_link::hidden_sessions::load();
+            chat.pool.sessions = sessions
+                .into_iter()
+                .filter(|s| !hidden.hides(s.name.as_deref(), &s.path))
+                .collect();
             cx.notify();
             if crate::PERF.load(std::sync::atomic::Ordering::Relaxed) {
                 if let Some(t0) = crate::T0.get() {

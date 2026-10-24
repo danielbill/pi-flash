@@ -51,6 +51,9 @@ pub(crate) enum Dialog {
     FileDirty {
         paths: Vec<PathBuf>,
     },
+    /// 060 二维码弹窗（微信线扫码绑定/重建）：信息栏【重制二维码】触发，
+    /// 未创建时打开微信线会话自动弹出；扫码成功泵自动关窗。
+    WxQr,
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
@@ -66,7 +69,7 @@ pub(crate) enum TopPanel {
 /// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
 /// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
 /// 微信面板**已迁出 dock**（2026-10-23 定夺）：入口收三横菜单，内容区
-/// 全屏页（`ContentView::Wx`），不再占侧栏。
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {
     /// 整合面板：会话列表(上) + 文件树(下)
@@ -121,9 +124,6 @@ pub(crate) enum ContentView {
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
     SessionSearch,
-    /// 微信通信页（PanelTab::Wx；三横菜单唯一入口，内容区全屏，
-    /// 2026-10-23 自 DockPanel::Wx 侧栏迁出）
-    Wx,
 }
 
 /// psp 列表方式（⋯ 菜单）。
@@ -283,8 +283,6 @@ pub(crate) enum PanelTab {
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
     SessionSearch,
-    /// 微信通信（单例 tab；三横菜单打开，060 全屏页）
-    Wx,
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -300,7 +298,6 @@ pub(crate) enum TabKey {
     PfMarket,
     Search,
     SessionSearch,
-    Wx,
 }
 
 impl PanelTab {
@@ -314,7 +311,6 @@ impl PanelTab {
             PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
-            PanelTab::Wx => TabKey::Wx,
         }
     }
 }
@@ -340,7 +336,6 @@ impl PanelTab {
             PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
-            PanelTab::Wx => ContentView::Wx,
         }
     }
 }

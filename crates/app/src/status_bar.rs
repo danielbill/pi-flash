@@ -73,7 +73,10 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
                         .rounded_bl(px(9.))
                         .rounded_br(px(9.))
                 })
-                .hover(|s| s.bg(rgb(t.bg_hover)))
+                // hover 只给未激活态（topbar tab 同款口径）：激活连体卡已有
+                // nav 卡底，换 bg_hover 会在 light 主题下猛然变暗（nav 近白
+                // → bg_hover 深），看起来像 bug
+                .when(!active, |d| d.hover(|s| s.bg(rgb(t.bg_hover))))
                 .with_tip_text(title)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -166,7 +169,9 @@ fn project_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElem
         // 连体卡顶贴 dock（mt = −(bar−tab) = −4 时卡片顶缘 y=0）
         .mt(px(-4.))
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
+        // hover 只给未激活态：理由同插件 tab（激活连体卡不吃 hover 底色，
+        // light 主题下 nav→bg_hover 变暗像 bug）
+        .when(!active, |d| d.hover(|s| s.bg(rgb(t.bg_hover))))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {

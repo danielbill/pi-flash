@@ -76,9 +76,35 @@ pub struct JsPlugin {
 impl JsPlugin {
     /// 装载：读 entry 源码 → 声明为 ES 模块并求值 → 注入宿主原语与胶水。
     /// `dir` 注入 `ctx.dir`（插件私有目录，绝对路径）。
+    /// 从源码加载（明文标准包）。
     pub fn load(entry: &Path, dir: &str, host: Rc<RefCell<dyn JsHost>>) -> Result<Self, String> {
         let src = std::fs::read_to_string(entry)
             .map_err(|e| format!("entry 不可读（{}）: {e}", entry.display()))?;
+        Self::load_src(src, dir, host)
+    }
+
+    /// 从 QuickJS **字节码**加载（分发态：源码编译成 `plugin.qbc`，落盘无明文）。
+    /// 引擎、ctx 能力面、渲染路径与源码版**完全相同**——同一份 JS 编出来的。
+    pub fn load_bytecode(
+        entry: &Path,
+        dir: &str,
+        host: Rc<RefCell<dyn JsHost>>,
+    ) -> Result<Self, String> {
+        let bytes = std::fs::read(entry)
+            .map_err(|e| format!("字节码不可读（{}）: {e}", entry.display()))?;
+        Self::load_parts(None, Some(bytes), dir, host)
+    }
+
+    fn load_src(src: String, dir: &str, host: Rc<RefCell<dyn JsHost>>) -> Result<Self, String> {
+        Self::load_parts(Some(src), None, dir, host)
+    }
+
+    fn load_parts(
+        src: Option<String>,
+        bytecode: Option<Vec<u8>>,
+        dir: &str,
+        host: Rc<RefCell<dyn JsHost>>,
+    ) -> Result<Self, String> {
 
         let rt = Runtime::new().map_err(|e| e.to_string())?;
         // v1 内存上限：插件逻辑是清单级小计算，32MB 足够宽裕
@@ -168,7 +194,13 @@ impl JsPlugin {
             }
 
             // —— 插件模块（ESM）——
-            let module = Module::declare(ctx.clone(), "pf-plugin-entry", src.into_bytes())?;
+            let module = match (src.clone(), bytecode.clone()) {
+                (Some(src), _) => Module::declare(ctx.clone(), "pf-plugin-entry", src.into_bytes())?,
+                // SAFETY：字节码由本仓 `qjsc`（同一 quickjs-ng 版本）产出；
+                // 版本不符 QuickJS 自身会拒读（JS_ReadObject 校验版本魔数）。
+                (None, Some(bc)) => unsafe { Module::load(ctx.clone(), &bc)? },
+                (None, None) => return Err(rquickjs::Error::Unknown),
+            };
             let (evaluated, _promise) = module.eval()?;
             let ns = evaluated.namespace();
             g.set("__pf_exports", ns)?;

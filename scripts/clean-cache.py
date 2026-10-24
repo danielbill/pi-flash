@@ -36,7 +36,7 @@
 
 ## 安全阀
 
-- **默认 dry-run**，只打印将删什么、能省多少；真删要 `--apply`。
+- **默认真删**；只打印将删什么、能省多少用 `--dry-run`。
 - 删除清单逐条写入 `target/clean-cache.log`（dry-run 写 `.dry.log`）。
 - `--trash`：tmp 部分改走回收站（PowerShell Shell.Application），防手滑；
   注意回收站仍在同一块盘上，**不清空回收站不返还空间**。
@@ -44,15 +44,13 @@
 ## 用法
 
 ```bash
-python scripts/clean-cache.py                  # 体检：看看能省多少
-python scripts/clean-cache.py --apply          # 真清（安全档）
-python scripts/clean-cache.py --apply --tmp-only        # 只清 tmp（最安全）
-python scripts/clean-cache.py --apply --target-only     # 只清 target
-python scripts/clean-cache.py --apply --aggressive      # 连过期 rlib/rmeta 一起清
-python scripts/clean-cache.py --apply --min-age-days 7 --tmp-age-days 7
+python scripts/clean-cache.py                  # 真清（安全档）
+python scripts/clean-cache.py --dry-run        # 体检：看看能省多少
+python scripts/clean-cache.py --tmp-only       # 只清 tmp（最安全）
+python scripts/clean-cache.py --target-only    # 只清 target
+python scripts/clean-cache.py --aggressive     # 连过期 rlib/rmeta 一起清
+python scripts/clean-cache.py --min-age-days 7 --tmp-age-days 7
 ```
-
-双击入口：仓库根的 `clean_cache.bat`（= `--apply` 安全档，末尾 pause 留屏）。
 
 删完如果下次构建明显变慢，说明删到了活产物（cargo 会自己重编，不会坏），
 把 `--min-age-days` / `--keep` 调大即可。
@@ -265,13 +263,14 @@ def scan_tmp(cl: Cleaner, tmp_dir: str, age_days: float) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="清理 target 过期产物与 tmp 一次性草稿（默认 dry-run）",
+        description="清理 target 过期产物与 tmp 一次性草稿（默认真删，--dry-run 只体检）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("## 用法")[-1],
     )
-    ap.add_argument("--apply", action="store_true", help="真删（不加则只体检）")
+    ap.add_argument("--apply", action="store_true", default=True,
+                    help="真删（默认行为；保留该参数仅为兼容旧用法）")
     ap.add_argument("--dry-run", action="store_true",
-                    help="强制只体检（覆盖 --apply，给 .bat 双击入口用）")
+                    help="只体检不删（覆盖默认的 apply 行为）")
     ap.add_argument("--min-age-days", type=float, default=3.0,
                     help="target 产物的最小年龄（天），默认 3")
     ap.add_argument("--tmp-age-days", type=float, default=3.0,
@@ -340,7 +339,7 @@ def main() -> int:
     print("-" * 62)
 
     if not args.apply:
-        print(f"预计可回收 {human(total)}  → 加 --apply 真清")
+        print(f"预计可回收 {human(total)}  → 加 --dry-run 才是体检模式；去掉即真清（本次未删）")
     else:
         if do_tmp and args.trash:
             send_to_recycle_bin([p for p, _s, _w in tmp_cl.items])

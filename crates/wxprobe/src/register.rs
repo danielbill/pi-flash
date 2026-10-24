@@ -84,37 +84,28 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
     }
 
     let started = std::time::Instant::now();
-    let mut st = crate::state::load();
-    crate::state::set(&mut st, "qrcode", Some(&begin.qrcode));
-    crate::state::save(&st);
+    set_qrcode_fresh(Some(&begin.qrcode));
 
     loop {
         match poll(&mut w, &begin.qrcode) {
             Ok(QrStatus::Success { bot_token, bot_id }) => {
-                crate::state::set(&mut st, "bot_token", Some(&bot_token));
-                crate::state::set(&mut st, "bot_id", bot_id.as_deref());
-                // sendmessage 的 from_user_id 就是 bot 自己。换绑后不跟着改，
-                // 出站会带着**旧 bot** 的 id（真机复现过：84e144 → 7240ca 没同步）
-                crate::state::set(&mut st, "bot_user_id", bot_id.as_deref());
-                reset_session_fields(&mut st);
-                crate::state::set(&mut st, "qrcode", None);
+                let mut st = crate::state::load();
+                apply_success(&mut st, &bot_token, bot_id.as_deref());
                 crate::state::save(&st);
                 let _ = tx.send(QrEvent::Success { bot_id });
                 return;
             }
             Ok(QrStatus::Expired) => {
-                crate::state::set(&mut st, "qrcode", None);
-                crate::state::save(&st);
+                set_qrcode_fresh(None);
                 let _ = tx.send(QrEvent::Expired);
                 return;
             }
             Ok(QrStatus::Scanned) => {
-                // 接收端被丢（UI「停止」= cancel_qr）→ 清 qrcode 后退出；
+                // 接收端被丢（UI 取消扫码）→ 清 qrcode 后退出；
                 // 不检查的话 worker 会空转到 180s 死线（2026-10-24 页面重构
                 // 加的取消语义，与开头 Ready send 的 is_err 同约定）
                 if tx.send(QrEvent::Scanned).is_err() {
-                    crate::state::set(&mut st, "qrcode", None);
-                    crate::state::save(&st);
+                    set_qrcode_fresh(None);
                     return;
                 }
             }
@@ -123,15 +114,13 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
             // 接收端已丢（UI 取消）时同样退出
             Ok(QrStatus::Error(e)) | Err(e) => {
                 if tx.send(QrEvent::Error(e)).is_err() {
-                    crate::state::set(&mut st, "qrcode", None);
-                    crate::state::save(&st);
+                    set_qrcode_fresh(None);
                     return;
                 }
             }
         }
         if started.elapsed().as_secs() >= deadline_sec {
-            crate::state::set(&mut st, "qrcode", None);
-            crate::state::save(&st);
+            set_qrcode_fresh(None);
             let _ = tx.send(QrEvent::Expired);
             return;
         }
@@ -143,6 +132,49 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// 重绑 = 清旧信息 + 换新 bot（2026-10-24 用户定夺）；session_key 是
+    /// PF 侧归属，不在清理范围。
+    #[test]
+    fn rebind_clears_old_routing_fields_and_swaps_bot() {
+        let mut st = json!({
+            "bot_token": "OLD-TOKEN",
+            "bot_id": "old@im.bot",
+            "bot_user_id": "old@im.bot",
+            "buf": "OLD-CURSOR",
+            "chat_id": "old@im.wechat",
+            "user_id": "old@im.wechat",
+            "context_token": "OLD-CTX",
+            "session_key": "C:\\s.jsonl",
+            "qrcode": "deadbeef",
+        });
+        apply_success(&mut st, "NEW-TOKEN", Some("new@im.bot"));
+        assert_eq!(st["bot_token"], "NEW-TOKEN");
+        assert_eq!(st["bot_id"], "new@im.bot");
+        assert_eq!(
+            st["bot_user_id"], "new@im.bot",
+            "from_user_id 必须跟新 bot 走"
+        );
+        for k in ["buf", "chat_id", "user_id", "context_token", "qrcode"] {
+            assert!(st.get(k).map_or(true, Value::is_null), "{k} 必须被清掉");
+        }
+        assert_eq!(st["session_key"], "C:\\s.jsonl", "PF 侧会话归属保留");
+    }
+
+    /// 词表外字符串状态必须带安装指引透传（2026-10-24：用户要求识别
+    /// 「微信未装插件」并告知，不能再吞成无限等待）。
+    #[test]
+    fn unknown_status_messages_carry_install_guidance() {
+        // 含 install 关键词 → 直接判定未安装并给行动指引
+        let m = unknown_status_message(Some(&json!("not_install"))).unwrap();
+        assert!(m.contains("未安装") && m.contains("ClawBot"), "{m}");
+        // 其它未知字符串 → 原文透传 + 同样的指引（首次出现即被看见）
+        let m = unknown_status_message(Some(&json!("weird_state"))).unwrap();
+        assert!(m.contains("weird_state") && m.contains("未安装"), "{m}");
+        // 数字码与缺失 → 不产生错误（ZCode 语义归 pending）
+        assert!(unknown_status_message(Some(&json!(5))).is_none());
+        assert!(unknown_status_message(None).is_none());
+    }
 
     #[test]
     fn reset_clears_old_bot_routing_fields() {
@@ -177,6 +209,28 @@ fn reset_session_fields(st: &mut Value) {
     for k in ["buf", "chat_id", "user_id", "context_token"] {
         crate::state::set(st, k, None);
     }
+}
+
+/// 重绑落地：**清旧路由字段 + 写新 bot 三件**（2026-10-24 用户定夺
+/// 「重新绑定时就清理旧信息」）。必须喂**当场 `state::load()`** 的内容——
+/// worker 里严禁攥着旧快照整文件回写：自动续码时代每个到期 worker 都把
+/// begin 时的快照原样 save，把换绑刚写好的 bot_token/bot_id 盖回旧值、
+/// 把旧 bot 的 user_id/context_token 复活，出站 sendmessage 全部
+/// `errcode:-14 session timeout`——「重绑就废、消息发不回微信」的根因。
+fn apply_success(st: &mut Value, bot_token: &str, bot_id: Option<&str>) {
+    crate::state::set(st, "bot_token", Some(bot_token));
+    crate::state::set(st, "bot_id", bot_id);
+    // sendmessage 的 from_user_id 就是 bot 自己，必须随换绑同步
+    crate::state::set(st, "bot_user_id", bot_id);
+    reset_session_fields(st);
+    crate::state::set(st, "qrcode", None);
+}
+
+/// 只动 `qrcode` 一个字段的最小写入口：当场新读-改-写，不碰其它字段。
+fn set_qrcode_fresh(v: Option<&str>) {
+    let mut st = crate::state::load();
+    crate::state::set(&mut st, "qrcode", v);
+    crate::state::save(&st);
 }
 
 pub enum QrStatus {
@@ -218,11 +272,39 @@ pub fn poll(wire: &mut Wire, qrcode: &str) -> Result<QrStatus, String> {
         other => {
             if other == "scanned" {
                 QrStatus::Scanned
+            } else if let Some(msg) = unknown_status_message(raw) {
+                // 词表外且非等待态的字符串：ZCode 静默按 pending 吞掉，但那会把
+                // 「微信侧未装插件」这类新状态吞成无限等待——用户扫了码、微信
+                // 提示未安装，PF 却永远显示「等待手机连接」（2026-10-24 用户
+                // 要求识别并告知）。原文透传给 UI；流程照常轮询，后续状态正常
+                // 翻转不受影响。
+                QrStatus::Error(msg)
             } else {
                 QrStatus::Pending
             }
         }
     })
+}
+
+/// 词表外的**字符串**状态 → 给 UI 的错误文案（含安装指引）。
+/// - 含 `install` 关键词：直接判定为微信侧未装插件，给行动指引
+/// - 其余：原文透传 + 同样的指引（我们只有 `wait`/词表词的实测样本，
+///   「未安装」的真实词形还没见过——透传保证它第一次出现就被看见）
+/// 数字码表外（None）按 ZCode 语义仍归 pending，不产生错误。
+fn unknown_status_message(raw: Option<&Value>) -> Option<String> {
+    let s = match raw {
+        Some(Value::String(s)) => s.clone(),
+        _ => return None,
+    };
+    if s.to_lowercase().contains("install") {
+        Some(format!(
+            "微信侧未安装「微信ClawBot」插件：请先在微信安装/启用插件，再重新扫码。（原始状态：{s}）"
+        ))
+    } else {
+        Some(format!(
+            "未识别的扫码状态：{s} —— 若微信提示未安装，请先安装「微信ClawBot」插件再扫。"
+        ))
+    }
 }
 
 /// ZCode `normalizeQrStatus`（`weixinRegistration.ts:103-130`）逐条对应。
@@ -247,6 +329,11 @@ fn normalize(status: Option<&Value>) -> String {
                 "expired".into()
             } else if ["error", "failed", "fail"].contains(&s.as_str()) {
                 "error".into()
+            } else if ["wait", "waiting", "pending", "created"].contains(&s.as_str()) {
+                // 实测（2026-10-24 dump 503）：等待态返回 "wait"，不在 ZCode
+                // 词表里，此前靠 unknown→pending 兜底；显式归一并在此挡住，
+                // 让 unknown 分支只接真正的新状态
+                "pending".into()
             } else {
                 "pending".into()
             }

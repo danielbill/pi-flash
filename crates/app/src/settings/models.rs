@@ -376,30 +376,43 @@ impl Chat {
                 })
                 .await;
             let _ = this.update(cx, |c, cx| {
-                if let pi_link::probe::ProbeOutcome::Ok { catalog, .. } = &outcome {
-                    if !catalog.is_empty() {
-                        if let Err(e) = pi_link::catalog::save_catalog(&provider_bg, catalog) {
-                            c.mc_set_error(&e, cx);
+                // 失败不再落 Done：Failed 态让空目录占位区有据可显（错误条
+                // 在保存/获取后短暂可见，占位区常驻到下次探查）
+                let state = match &outcome {
+                    pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
+                        match pi_link::catalog::save_catalog(&provider_bg, catalog) {
+                            Ok(()) => {
+                                c.refresh_provider_catalog(&provider_bg);
+                                McProbe::Done
+                            }
+                            Err(e) => {
+                                c.mc_set_error(&e, cx);
+                                McProbe::Failed(e)
+                            }
                         }
-                        c.refresh_provider_catalog(&provider_bg);
                     }
-                }
-                // 失败原因走详情错误条（错误条在保存/获取后短暂可见）
-                match &outcome {
-                    pi_link::probe::ProbeOutcome::AuthRejected { status } => c.mc_set_error(
-                        &crate::i18n::tf(
+                    // 200 但解析不出模型条目：此前完全静默，用户只见"没动静"
+                    pi_link::probe::ProbeOutcome::Ok { .. } => {
+                        let msg = tr("models.probe_empty_catalog").to_string();
+                        c.mc_set_error(&msg, cx);
+                        McProbe::Failed(msg)
+                    }
+                    pi_link::probe::ProbeOutcome::AuthRejected { status } => {
+                        let msg = crate::i18n::tf(
                             "extensions.fetch_key_rejected",
                             &[("s", status.to_string())],
-                        ),
-                        cx,
-                    ),
-                    pi_link::probe::ProbeOutcome::Unreachable { error } => c.mc_set_error(
-                        &crate::i18n::tf("extensions.fetch_failed", &[("e", error.clone())]),
-                        cx,
-                    ),
-                    pi_link::probe::ProbeOutcome::Ok { .. } => {}
-                }
-                c.cfg.mc_probe.insert(provider, McProbe::Done);
+                        );
+                        c.mc_set_error(&msg, cx);
+                        McProbe::Failed(msg)
+                    }
+                    pi_link::probe::ProbeOutcome::Unreachable { error } => {
+                        let msg =
+                            crate::i18n::tf("extensions.fetch_failed", &[("e", error.clone())]);
+                        c.mc_set_error(&msg, cx);
+                        McProbe::Failed(msg)
+                    }
+                };
+                c.cfg.mc_probe.insert(provider, state);
                 cx.notify();
             });
         })
@@ -1018,6 +1031,59 @@ fn mc_models_detail(
     .into_any_element()
 }
 
+/// 空目录占位：模型数为 0 时模型区不再整体消失（原来连同「获取模型」钮、
+/// Running 指示一起被藏掉，保存 key 后"没动静"也无处重试）。表内商给状态
+/// 行 + 常驻获取钮；表外商（无列模型端点）说明列表从何而来。
+fn mc_empty_models_section(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    provider: &str,
+    detail: gpui::Stateful<gpui::Div>,
+) -> gpui::Stateful<gpui::Div> {
+    if pi_link::probe::catalog_target(provider).is_none() {
+        return detail.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .pt(px(10.))
+                .child(note(&tr("models.no_auto_fetch"))),
+        );
+    }
+    let status: gpui::AnyElement = match chat.cfg.mc_probe.get(provider) {
+        Some(McProbe::Running) => note(&tr("extensions.fetching")),
+        Some(McProbe::Failed(e)) => div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(error_note(e))
+            .child(note(&tr("models.proxy_hint")))
+            .into_any_element(),
+        Some(McProbe::Done) => note(&tr("models.probe_empty_catalog")).into_any_element(),
+        None if chat.mc_configured(provider) => note(&tr("models.fetch_hint")).into_any_element(),
+        None => note(&tr("models.fetch_hint_no_key")).into_any_element(),
+    };
+    let fetch_provider = provider.to_string();
+    let detail = detail.child(
+        div().flex().flex_col().gap(px(8.)).pt(px(10.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().flex_1().min_w_0().child(status))
+                .child(detail_button(
+                    "mc-fetch-empty",
+                    weak,
+                    &tr("extensions.fetch_models"),
+                    crate::ui::button::BtnVariant::Secondary,
+                    matches!(chat.cfg.mc_probe.get(provider), Some(McProbe::Running)),
+                    move |c, cx| c.mc_fetch_models(fetch_provider.clone(), cx),
+                )),
+        ),
+    );
+    detail
+}
+
 /// 可用模型区（EnabledModelsSection parity）：标题+计数+只看free开关+批量钮
 /// +筛选+行开关。
 ///
@@ -1038,7 +1104,7 @@ fn mc_enabled_section(
     detail: gpui::Stateful<gpui::Div>,
 ) -> gpui::Stateful<gpui::Div> {
     if models.is_empty() {
-        return detail;
+        return mc_empty_models_section(chat, weak, provider, detail);
     }
     let t = T();
     let enabled_count = models
@@ -1408,8 +1474,10 @@ impl Chat {
 }
 
 /// 042：provider 通路探查状态（保存 key 自动一次 + 详情页【重新探查】）。
+/// Failed 带已格式化的失败文案（与详情错误条同文，空目录占位复用）。
 #[derive(Debug, Clone)]
 pub(crate) enum McProbe {
     Running,
     Done,
+    Failed(String),
 }

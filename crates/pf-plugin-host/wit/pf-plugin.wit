@@ -1,19 +1,18 @@
+// PF 插件契约（wasm 形态）——**与 JS 插件同一份契约**：插件返回组件树 JSON，
+// 宿主解释器统一渲染（01 规范）。wasm 只是另一种载体，不另立渲染模型。
 package pf:plugin;
 
 interface types {
-    variant paint { rect(rect), text(text) }
-    record rect {
-        x: f32, y: f32, w: f32, h: f32,
-        corner: f32,
-        r: f32, g: f32, b: f32, a: f32,
+    // 宿主→插件事件：契约里每种 `contributes.*` 回调都走这一条通道，
+    // 以后加贡献项不用再改 WIT（JS 的 onMenu / onCommand / onPanelOpen 同源）。
+    //   kind = "panel-open" | "menu" | "command" | "action"
+    //   id   = contributes 里的 id（file_menu.id / panels.id / 组件动作 id）
+    //   path = 目标路径（file_menu/command/action 带；其余为空）
+    record plugin-event {
+        kind: string,
+        id: string,
+        path: string,
     }
-    record text {
-        x: f32, y: f32, size: f32,
-        r: f32, g: f32, b: f32, a: f32,
-        content: string,
-    }
-    enum phase { move, down, up }
-    enum button { left, right }
 }
 
 interface host {
@@ -21,8 +20,15 @@ interface host {
     toast: func(msg: string);
     open-file: func(path: string);
     run-script: func(path: string);
-    toggle-quick-pin: func(path: string);
     quick-pins: func() -> list<string>;
+    // 与 JS 插件 ctx.fileIcon / ctx.isExecutive 同一能力面（派生值现算，不落盘）
+    file-icon: func(path: string) -> string;
+    is-executive: func(path: string) -> bool;
+
+    // 02 §3 自管存储的 wasm 面：读写插件私有 data 目录下的单文件（key = 文件名，
+    // 宿主拒绝分隔符/.. /隐藏文件）。missing → 空串，由插件兜底。
+    storage-read: func(key: string) -> string;
+    storage-write: func(key: string, data: string);
 
     // 090-5 L3：官方宿主证明。宿主只递数据不判定（nonceTag 现算，算法公开，
     // 插件 wasm 内用 pf-inner-verify 同算法复算比对）。
@@ -35,15 +41,14 @@ interface host {
 }
 
 world plugin {
-    use types.{paint, phase, button};
+    use types.{plugin-event};
 
     import host;
 
     // 返回 Err = 插件自拒（如宿主证明验签失败）→ 宿主拒载并透传原因（失败不静默）。
     export init: func(plugin-name: string) -> result<_, string>;
-    export on-resize: func(w: f32, h: f32);
-    export on-mouse: func(phase: phase, button: button, x: f32, y: f32);
-    export on-key: func(key: string);
-    export wants-repaint: func() -> bool;
-    export render: func() -> list<paint>;
+    // contributes.* 回调（文件树右键 / 组件动作 / 面板打开）
+    export on-event: func(ev: plugin-event);
+    // 01 规范组件树 JSON（与 JS `render(ctx)` 返回值逐字段一致；值内联、动作显式）
+    export render: func() -> string;
 }

@@ -66,7 +66,8 @@
   sr-only，但 `.visually-hidden` 定义在 `@layer utilities` 里、而
   `.action-bar-field` / `label.stack` 的长相规则是 **unlayered**（unlayered 优先于
   任何 layer）→ 浏览器里它们真的可见，成为控件上方那排「注释」。已在
-  `pi-packages.html` 删掉三个 span、`controls.rs` 删掉 `field_label()`；
+  `pi-packages.html` 删掉三个 span、`controls.rs` 删掉 `field_label()`、
+  `design.rs` 删掉 `FIELD_GAP`（2026-10-24 清死码 warning）；
   **别照旧设计稿把它加回来**。
 - **vlist 行高 = card_h + SP4，卡片自己带 `mt(SP4)`**：所以「摘要行 ↔ 列表」想得到 N，
   `SUMMARY_PB` 必须写 `N − SP4`（现在是 `10 − 8`）。直接写 N 会凭空多 8。
@@ -115,3 +116,49 @@
   及翻页单测），跑
   `cargo test -p app --bin pi-flash market`（本机 vendored gpui-component 的 dev 配置会
   先报无关错误，见 engineering.md）。
+
+## PF 插件市场页（090-4，pf_market.rs + pf_installed.rs）
+
+- **头段是页签行**（v4）：`所有插件 | 已安装` 两签都可点（`tab_row`/`tab_label`，
+  `PfTab`），`card_header` 的 title 已从 SharedString 改成 AnyElement——别照旧
+  签名往里塞字符串。已安装签计数只报总数（无分页），All 签沿用 `1-N / total`。
+- **【已安装】视图（`pf_installed.rs`）的数据源 = PF 插件台账 `plugins.json`，
+  不是 pi 扩展 settings.json**。详情 = 说明（索引 desc，三语取词，缺 = —）/
+  状态（随启停）/ 来源（索引 publisher，缺索引回落台账 source）/ 路径 + 卸载
+  垃圾桶（确认浮层挂 shell/render 顶层，`remove_confirm_overlay`）。用户明确
+  砍掉提示词大小行。总开关/更新全部仍不出。
+- **启停（v5）**：列表行内 config_switch → `pf_toggle_plugin`：①台账
+  `disabled` 位落盘（pi-link `set_disabled`，serde default 兼容旧台账）；
+  ②启动 `scan_manifests` 跳过停用包（不装载不绘制）；③运行态 `plugin_evict`
+  ——丢 JS 运行时 + 组件树缓存，状态栏 tab / 文件树插件菜单随即隐身，**左
+  dock 正显示它就退回 `DockPanel::Default`**；启用时若无条目（启动被跳过）
+  后台重扫**只补装这一个**（整体替换 `plugins_set` 会清掉别的插件运行态、还会
+  打乱 dock 存的 `Plugin(ix)` 位置）。段盒全高：底部 padding = 顶部
+  `shell_pad`（SHELL_PAD_BOTTOM 72px 太阔，v5 定夺弃用）。
+- **装载白名单 = 台账**（`scan_manifests` 只装台账里 `disabled=false` 的包按顶层
+  包目录名匹配）：磁盘上多出来的目录（手拷 / 卸载残留 / 历史野包）一律不装载。
+  2026-10-25 bug「没安装但 panel 还显示」= dev 数据目录 `plugins/quick-panel/`
+  手拷一份、台账却是空的 → 市场【已安装】0 条，左 dock 照样挂着它的面板。
+  **dev 手写插件要上手工作流就补一条台账**（`<PF数据目录>/plugins.json`：
+  `{"name":"quick-panel","version":"0.1.0","integrity":"","source":"market"}`
+  ——扫描不校验 integrity，只有安装链接管它）。安装 / 更新 / 启用跑完都走
+  `reload_plugin_by_pkg`（后台重扫这一个包 → `plugin_replace_by_pkg` 撤旧建新），
+  **装完即出现，不用重启**；别再写「整体 `plugins_set` 重扫结果」那种替换。
+- **「台账名 ↔ 运行态条目」只能靠 `PluginManifest::pkg`（顶层包目录名）对账，
+  别拿 `manifest.dir.file_name()`**：市场安装链落 `plugins/<pkg>/<version>/`，
+  那是**版本号**。2026-10-25 bug（停用/删除后插件仍在左面板且照旧可用）三个根因：
+  ①`pf_toggle_plugin` 用 `dir.file_name()` 找条目 → 永远命不中 → 台账写了
+  disabled、运行态一个字节没动（走了「未装载」分支静默 return）；
+  ②`scan_manifests` 停用过滤同一拍错 → 重启后照旧装载；
+  ③`pf_uninstall` 只删目录 + 摘台账、**从不摘 `Chat.plugins.plugins` 条目** → 删掉
+  的插件 tab/面板/JS 全活到重启。另：`plugin_panel_view` 只认 `tree_loaded` +
+  缓存树、不看 `disabled`，所以撤运行态必须清 `body`/`tree_loaded`（已加 disabled
+  兜底占位）。台账名 → 目录别名走 `pf_plugins::dir_aliases`（`@scope__name` 与
+  dev 平铺 `name` 都认）。卸载成功还要 `plugin_forget(id)` 清 `PLUGIN_DIRS` /
+  `PLUGIN_ASSETS`，否则同名重装读旧字节。
+- 展示名/发布人补全查市场索引走 `pf_market::index_snapshot()`（**pub 口子是
+  纯新增函数**，不去改 `fn index()` 那行——GitButler 下该行被「公域扫描」提交
+  占有，后置提交改它会被 hunk 所有权拒绝；同理要给老代码开 pub，优先在旁边
+  干净位置加包装函数）。
+- 台账重读时机：open、安装/卸载完成、页签切换（`pf_switch_tab`，进出都重读，
+  零成本同步点）；选中项 `section` 在切换与卸载后复位。

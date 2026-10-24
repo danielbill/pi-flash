@@ -345,8 +345,11 @@ pub(crate) struct LayoutUi {
     pub(crate) slp_w: f32,
     pub(crate) panes_hidden: bool,
     pub(crate) slp_drag: Option<(f32, f32)>,
-    /// 分隔线响应区悬停（线加深加粗 + col_resize 光标已由 resizer 承担）
+    /// 分隔线响应区悬停（§5.12 分隔线统一规范：hover 与拖拽同为 4px
+    /// accent 粗线，线形计算见 `ui::divider`）
     pub(crate) slp_hover: bool,
+    /// dock 上下分区（横分隔线）悬停——与 slp_hover 同一机制，两处对称
+    pub(crate) split_hover: bool,
     /// 020-1 整合面板：会话子面板高度占比（0..1，分隔线拖拽/双击复位 0.5，
     /// 持久化在 UiState.dock_split）
     pub(crate) dock_split: f32,
@@ -560,6 +563,7 @@ impl Chat {
                 panes_hidden: ui.panes_hidden,
                 slp_drag: None,
                 slp_hover: false,
+                split_hover: false,
                 dock_split: ui.dock_split.unwrap_or(0.5),
                 // dock_max = 哪个子面板最大化（映射见 workspace::min_from_dock_max）
                 sess_min: crate::services::workspace::min_from_dock_max(&ui.dock_max).0,

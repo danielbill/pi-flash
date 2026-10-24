@@ -3,6 +3,8 @@
 
 pub mod button;
 pub mod composer_input;
+/// §5.12 分隔线统一实现（两处可拖拽分隔线共用）
+pub mod divider;
 pub mod dropdown;
 /// 页面级组件库（页面只从这里取控件；见 kit/mod.rs 头注释）
 pub(crate) mod kit;

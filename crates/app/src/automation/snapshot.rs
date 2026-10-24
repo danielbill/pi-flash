@@ -680,7 +680,6 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::PanelTab::Term(i) => json!({"term": i}),
             crate::PanelTab::File(p) => json!({"file": p.display().to_string()}),
             crate::PanelTab::Changelog => json!({"changelog": true}),
-            crate::PanelTab::Wx => json!({"wx": true}),
             crate::PanelTab::PiExtMarket => json!({"pi_ext_market": true}),
             crate::PanelTab::PiNativeMarket => json!({"pi_native_market": true}),
             crate::PanelTab::PfMarket => json!({"pf_market": true}),
@@ -790,6 +789,7 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         Dialog::ImagePreview { .. } => "image_preview",
         Dialog::SessionInfo { .. } => "session_info",
         Dialog::FileDirty { .. } => "file_dirty",
+        Dialog::WxQr => "wx_qr",
     });
     // 打开项目菜单：列表数据随弹窗一起上报（扫描是异步回填，UI 测试
     // 据此轮询就绪）
@@ -873,7 +873,6 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::PfMarket => "pf-market",
         crate::ContentView::Search => "search",
         crate::ContentView::SessionSearch => "session_search",
-        crate::ContentView::Wx => "wx",
     }
 }
 

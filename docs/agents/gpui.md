@@ -20,6 +20,7 @@
   3. **亚像素抖动**：行高默认 1.5×字号，非整倍缩放下是小数（1.5× 缩放、14px → 设备 31.5px），滚轮步进 = N×行高 → 整屏行落在小数设备像素 → `snap_line_height`（element.rs，request_layout/prepaint/paint 三处同一纯函数）吸附整设备像素。Zed 对应物是 editor element 的 pixel_snap。
   仍未对齐（结构性，另立项）：每次 notify 全 Chat 重建（见「交互与实体」节）；PF 侧 wheel 是 Lines 量化（WM_MOUSEWHEEL 系统行为，Zed Windows 同款），无 trackpad 像素路径。
 - vendor 测试目标跑不了：`cargo test -p gpui-component` 报 "requires dev-dependencies and is not a member of the workspace"（workspace 排除所致，非编译错误）→ vendor 纯函数回归测试放 app 侧（见 crates/app/tests/vendor_highlight_diff.rs 模式：旧实现照抄做参照 + 差分）。
+- **psp_scrollbar 多实例的事件状态必须按实例身份分槽（2026-10-24，两面板滚动条“联动”bug）**：gpui `on_mouse_event` 全局派发，同屏所有滚动条实例的监听器都收到同一批 mouse 事件；`ui/psp_scrollbar.rs` 的拖拽态曾是 thread_local 单例，在文件树滚动条上按下 thumb 后，会话列表滚动条的 mousemove handler 也看到 `is_some()` 且 `dragging()`（左键按住）成立，用自己的 hit_bounds + scroll handle 把自己的列表拉到同一比例位——点 A 条 B 条跟着跳。修法：vendor 给 `ScrollHandle` 加 `ptr_id()`（内部 Rc 地址，跨帧稳定的实例身份），DRAG/THUMB_HOVER/LAST_OFFSET 三份 thread_local 全按 ptr_id 分槽，mousemove/mouseup 身份不匹配直接 return。**升级 vendor 复核 `elements/div.rs` 的 `ScrollHandle::ptr_id`**。zed 无此问题：其拖拽态在 per-scrollbar 的 ScrollbarState Entity 里。
 
 ## 拖拽（窗口内 DnD）
 

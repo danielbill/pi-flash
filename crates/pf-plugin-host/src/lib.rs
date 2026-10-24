@@ -7,7 +7,7 @@
 
 pub mod js;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use wasmtime::component::{Component, Linker, ResourceTable, bindgen};
 use wasmtime::{Config, Engine, Store};
@@ -22,6 +22,8 @@ pub struct HostState {
     pub table: ResourceTable,
     pub ctx: wasmtime_wasi::WasiCtx,
     pub tx: mpsc::Sender<PluginAction>,
+    /// 插件私有数据目录（02 §3 自管存储：`<插件目录>/data/`，宿主只建不解析）
+    pub data_dir: std::path::PathBuf,
 }
 
 impl wasmtime_wasi::WasiView for HostState {
@@ -46,11 +48,26 @@ impl pf::plugin::host::Host for HostState {
     fn run_script(&mut self, path: String) {
         let _ = self.tx.send(PluginAction::RunScript(path));
     }
-    fn toggle_quick_pin(&mut self, path: String) {
-        let _ = self.tx.send(PluginAction::ToggleQuickPin(path));
-    }
     fn quick_pins(&mut self) -> Vec<String> {
         quick_pin_list()
+    }
+    fn file_icon(&mut self, path: String) -> String {
+        file_icon_of(&path)
+    }
+    fn is_executive(&mut self, path: String) -> bool {
+        is_exec_of(&path)
+    }
+    fn storage_read(&mut self, key: String) -> String {
+        match storage_path(&self.data_dir, &key) {
+            Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+    fn storage_write(&mut self, key: String, data: String) {
+        if let Some(p) = storage_path(&self.data_dir, &key) {
+            let _ = std::fs::create_dir_all(&self.data_dir);
+            let _ = std::fs::write(p, data);
+        }
     }
     fn get_host_proof(&mut self, nonce: String) -> pf::plugin::host::HostProof {
         // 090-5 L3：宿主只递数据不判定；nonceTag 现算（算法公开，插件 wasm 内复算）。
@@ -75,7 +92,6 @@ pub enum PluginAction {
     Toast(String),
     OpenFile(String),
     RunScript(String),
-    ToggleQuickPin(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +99,9 @@ pub enum PluginAction {
 // ---------------------------------------------------------------------------
 
 pub type QuickPinListFn = fn() -> Vec<String>;
+/// 路径派生能力（与 JS 插件 ctx.fileIcon / ctx.isExecutive 同源）
+pub type FileIconFn = fn(&str) -> String;
+pub type IsExecFn = fn(&str) -> bool;
 pub type MeasureTextFn = fn(&str, f32) -> f32;
 /// 090-5 L3：官方宿主证明材料钩子，返回紧凑 JSON `{"kid":"…","proof":"…"}`。
 pub type HostProofFn = fn() -> String;
@@ -90,8 +109,17 @@ pub type HostProofFn = fn() -> String;
 thread_local! {
     static QUICK_PINS_FN: std::cell::RefCell<Option<QuickPinListFn>> = const { std::cell::RefCell::new(None) };
     static MEASURE_FN: std::cell::RefCell<Option<MeasureTextFn>> = const { std::cell::RefCell::new(None) };
-    static PROOF_FN: std::cell::RefCell<Option<HostProofFn>> = const { std::cell::RefCell::new(None) };
+    static FILE_ICON_FN: std::cell::RefCell<Option<FileIconFn>> = const { std::cell::RefCell::new(None) };
+    static IS_EXEC_FN: std::cell::RefCell<Option<IsExecFn>> = const { std::cell::RefCell::new(None) };
 }
+
+/// 090-5 L3：官方宿主证明材料钩子——**进程级，不是 thread_local**。
+///
+/// 组件编译是秒级重活（4.6 MB 组件实测 ~2s），插件装载必须在后台线程跑，
+/// UI 线程零阻塞；而 init 验签时插件会回调 `get_host_proof`，钩子若按线程
+/// 存，后台线程取不到材料 → 正常插件被误判拒载。故材料钩子存全局；
+/// measure/quick-pin 仍按线程（贴 gpui 文本系统与 UI 状态，只许主线程调）。
+static PROOF_FN: std::sync::RwLock<Option<HostProofFn>> = std::sync::RwLock::new(None);
 
 /// app 启动时注入宿主能力实现。
 pub fn install_host_hooks(quick: QuickPinListFn, measure: MeasureTextFn) {
@@ -101,16 +129,20 @@ pub fn install_host_hooks(quick: QuickPinListFn, measure: MeasureTextFn) {
 
 /// 注入官方构建证明材料（app 侧从 build.rs 注入的常量组装；见 crates/app/build.rs）。
 /// **未注入 = 占位符（fail-closed）**：内层插件 init 验签必失败 → 拒载。
+/// 钩子进程级：可从任意线程注入（后台验签线程同样生效）。
 pub fn install_proof_hook(f: HostProofFn) {
-    PROOF_FN.with(|c| *c.borrow_mut() = Some(f));
+    if let Ok(mut c) = PROOF_FN.write() {
+        *c = Some(f);
+    }
 }
 
 fn proof_material() -> String {
-    PROOF_FN.with(|c| {
-        c.borrow()
-            .map(|f| f())
-            .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
-    })
+    PROOF_FN
+        .read()
+        .ok()
+        .and_then(|c| *c)
+        .map(|f| f())
+        .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
 }
 
 /// nonceTag 派生（js.rs / 内层插件 pf-inner-verify 同算法，公开）：
@@ -124,8 +156,37 @@ pub fn nonce_tag(proof: &str, nonce: &str) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// 路径派生能力注入（app 启动时；与 JS 插件同一套服务实现）。
+pub fn install_path_hooks(file_icon: FileIconFn, is_exec: IsExecFn) {
+    FILE_ICON_FN.with(|c| *c.borrow_mut() = Some(file_icon));
+    IS_EXEC_FN.with(|c| *c.borrow_mut() = Some(is_exec));
+}
+
+fn file_icon_of(path: &str) -> String {
+    FILE_ICON_FN.with(|c| c.borrow().map(|f| f(path)).unwrap_or_default())
+}
+
+fn is_exec_of(path: &str) -> bool {
+    IS_EXEC_FN.with(|c| c.borrow().map(|f| f(path)).unwrap_or(false))
+}
+
 fn quick_pin_list() -> Vec<String> {
     QUICK_PINS_FN.with(|c| c.borrow().map(|f| f()).unwrap_or_default())
+}
+
+/// 存储 key 安全化（02 §3 越界拒绝，与 app 侧 ChatHost::safe_path 同规则）：
+/// 只许本目录下的普通文件名。
+fn storage_path(data_dir: &Path, key: &str) -> Option<PathBuf> {
+    let bad = key.is_empty()
+        || key.contains('/')
+        || key.contains('\\')
+        || key.contains("..")
+        || key.starts_with('.');
+    if bad {
+        eprintln!("[pf-plugin-host] storage key 越界拒绝: {key}");
+        return None;
+    }
+    Some(data_dir.join(key))
 }
 
 fn measure_text_width(text: &str, size: f32) -> f32 {
@@ -144,14 +205,140 @@ pub struct PluginInstance {
     rx: mpsc::Receiver<PluginAction>,
 }
 
-impl PluginInstance {
-    /// 加载插件 wasm 组件（首次调用会做编译，耗时一次性）。
-    pub fn load(wasm_path: &Path) -> anyhow::Result<Self> {
-        let mut config = Config::new();
-        config.wasm_component_model(true);
-        let engine = Engine::new(&config)?;
-        let component = Component::from_file(&engine, wasm_path)?;
+/// 进程内共享的 wasmtime 引擎：`Engine::new` 要建 cranelift ISA/寄存器分配器，
+/// 每插件一份纯属浪费（且编译本身已是秒级，别再叠一层）。缺省配置即可——
+/// wasmtime 36 默认开 component model（原代码显式开的设置保持等价）。
+fn shared_engine() -> anyhow::Result<&'static Engine> {
+    if let Some(e) = SHARED_ENGINE.get() {
+        return Ok(e);
+    }
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    let engine = Engine::new(&config)?;
+    Ok(SHARED_ENGINE.get_or_init(|| engine))
+}
 
+static SHARED_ENGINE: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
+
+/// wasm 内容指纹（缓存键）：sha256 十六进制。
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in Sha256::digest(bytes) {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// 编译产物落盘（原子写：tmp + rename，崩溃不留半截产物）。
+/// 并发写同一份 = rename 失败即放弃（对方那份同样有效）；写完顺手淘汰旧产物。
+fn write_artifact(cache_dir: &Path, bytes: &[u8], artifact: &Path) {
+    let _ = std::fs::create_dir_all(cache_dir);
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = cache_dir.join(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    if std::fs::write(&tmp, bytes)
+        .and_then(|_| std::fs::rename(&tmp, artifact))
+        .is_err()
+    {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    prune_artifacts(cache_dir);
+}
+
+/// 只留最近 8 份产物（按 mtime）：插件换版后旧产物自然淘汰，缓存目录不无限涨。
+fn prune_artifacts(dir: &Path) {
+    const KEEP: usize = 8;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut items: Vec<(std::time::SystemTime, PathBuf)> = rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
+        .filter_map(|e| {
+            let t = e.metadata().ok()?.modified().ok()?;
+            Some((t, e.path()))
+        })
+        .collect();
+    if items.len() <= KEEP {
+        return;
+    }
+    items.sort_by_key(|(t, _)| std::cmp::Reverse(*t)); // 新 → 旧
+    for (_, p) in items.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+impl PluginInstance {
+    /// 加载插件 wasm 组件。**重活**：`Component::from_file` 是 cranelift 全量
+    /// 编译（4.6 MB 组件秒级），**只许在后台线程调用**——落在 UI 线程就是
+    /// 启动卡死数秒（app 侧曾踩）。热路径请用 [`Self::load_cached`]。
+    pub fn load(wasm_path: &Path) -> anyhow::Result<Self> {
+        let engine = shared_engine()?.clone();
+        let component = Component::from_file(&engine, wasm_path)?;
+        Self::instantiate(engine, component, wasm_path)
+    }
+
+    /// 带编译缓存的加载（启动/热路径）。命中 = **mmap 反序列化**（毫秒级，
+    /// 不读不编译）；未命中 = 编译一次、产物落进 `cache_dir`，此后一直命中。
+    ///
+    /// 缓存键 = wasm 内容 sha256；产物自身还带着 wasmtime 的
+    /// 版本/编译配置/目标校验（不符即 `Err`）——失配就重编，不会用错产物。
+    /// 语义不变：每次仍 `instantiate + init`（验签门照跑）。
+    pub fn load_cached(wasm_path: &Path, cache_dir: &Path) -> anyhow::Result<Self> {
+        let engine = shared_engine()?.clone();
+        let wasm = std::fs::read(wasm_path)?;
+        let artifact = cache_dir.join(format!("{}.cwasm", sha256_hex(&wasm)));
+        // SAFETY：产物只由本方 `precompile_component` 写出，路径在 PF 自有目录
+        let component = match unsafe { Component::deserialize_file(&engine, &artifact) } {
+            Ok(c) => c,
+            Err(e) => {
+                if artifact.is_file() {
+                    eprintln!(
+                        "[pf-plugin-host] 编译缓存失效，重编 {}：{e}",
+                        artifact.display()
+                    );
+                }
+                let bytes = engine.precompile_component(&wasm)?;
+                write_artifact(cache_dir, &bytes, &artifact);
+                // SAFETY：同一份自产产物字节（刚编译，形态即 precompile 输出）
+                unsafe { Component::deserialize(&engine, &bytes) }?
+            }
+        };
+        Self::instantiate(engine, component, wasm_path)
+    }
+
+    /// 缓存命中判定（懒装载热路径用）：wasm 内容 sha256 对应的产物是否已在
+    /// 盘。命中 = 主线程 `load_cached` 毫秒级同步装；未命中 = 编译秒级重活，
+    /// 调用方必须转后台。
+    pub fn has_cached_artifact(wasm_path: &Path, cache_dir: &Path) -> bool {
+        let Ok(wasm) = std::fs::read(wasm_path) else {
+            return false;
+        };
+        cache_dir
+            .join(format!("{}.cwasm", sha256_hex(&wasm)))
+            .is_file()
+    }
+
+    /// 预编译进缓存（安装后预热用；任意线程可调）。返回是否真的编了。
+    /// 目的在于让**首次启动**也走缓存命中，不现场编一秒级。
+    pub fn precompile_to_cache(wasm_path: &Path, cache_dir: &Path) -> anyhow::Result<bool> {
+        let wasm = std::fs::read(wasm_path)?;
+        let artifact = cache_dir.join(format!("{}.cwasm", sha256_hex(&wasm)));
+        if artifact.is_file() {
+            return Ok(false);
+        }
+        let bytes = shared_engine()?.precompile_component(&wasm)?;
+        write_artifact(cache_dir, &bytes, &artifact);
+        Ok(true)
+    }
+
+    /// 引擎 + 组件 → 实例（链接宿主 import、建 store、实例化）。
+    fn instantiate(engine: Engine, component: Component, wasm_path: &Path) -> anyhow::Result<Self> {
         let mut linker: Linker<HostState> = Linker::new(&engine);
         pf::plugin::host::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
             &mut linker,
@@ -160,12 +347,17 @@ impl PluginInstance {
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
 
         let (tx, rx) = mpsc::channel();
+        let data_dir = wasm_path
+            .parent()
+            .map(|d| d.join("data"))
+            .unwrap_or_else(|| std::path::PathBuf::from("data"));
         let mut store = Store::new(
             &engine,
             HostState {
                 table: ResourceTable::new(),
                 ctx: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 tx,
+                data_dir,
             },
         );
 
@@ -197,41 +389,27 @@ impl PluginInstance {
         }
     }
 
-    pub fn on_resize(&mut self, w: f32, h: f32) -> anyhow::Result<()> {
+    /// 宿主→插件事件（WIT `on-event`）：`kind` = panel-open / menu / command / action。
+    /// 契约里所有 `contributes.*` 回调都汇到这一条，以后加贡献项不改 WIT。
+    pub fn on_event(&mut self, kind: &str, id: &str, path: &str) -> anyhow::Result<()> {
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            b.call_on_resize(store, w, h)?;
+            let ev = pf::plugin::types::PluginEvent {
+                kind: kind.to_string(),
+                id: id.to_string(),
+                path: path.to_string(),
+            };
+            b.call_on_event(store, &ev)?;
         }
         Ok(())
     }
 
-    pub fn on_mouse(&mut self, phase: i32, button: i32, x: f32, y: f32) -> anyhow::Result<()> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            let ph = match phase {
-                1 => pf::plugin::types::Phase::Down,
-                2 => pf::plugin::types::Phase::Up,
-                _ => pf::plugin::types::Phase::Move,
-            };
-            let bt = match button {
-                1 => pf::plugin::types::Button::Right,
-                _ => pf::plugin::types::Button::Left,
-            };
-            b.call_on_mouse(store, ph, bt, x, y)?;
+    /// 组件树 JSON（WIT `render` → string，与 JS `render(ctx)` 返回值同一 schema）。
+    /// 宿主侧 `panel::resolve` 统一解释——wasm 不另立渲染模型。
+    pub fn render_json(&mut self) -> anyhow::Result<String> {
+        match (self.store.as_mut(), self.bindings.as_mut()) {
+            (Some(store), Some(b)) => Ok(b.call_render(store)?),
+            _ => Ok(String::new()),
         }
-        Ok(())
-    }
-
-    pub fn wants_repaint(&mut self) -> bool {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            return b.call_wants_repaint(store).unwrap_or(false);
-        }
-        false
-    }
-
-    pub fn render(&mut self) -> Vec<pf::plugin::types::Paint> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            return b.call_render(store).unwrap_or_default();
-        }
-        Vec::new()
     }
 
     pub fn pump_actions(&self) -> Vec<PluginAction> {
