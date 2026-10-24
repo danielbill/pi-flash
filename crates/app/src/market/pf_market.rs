@@ -79,14 +79,12 @@ fn index() -> pi_link::pf_plugins::MarketIndex {
         return ix.clone();
     }
     *PF_INDEX.write().unwrap() = Some(Default::default());
-    std::thread::spawn(|| {
-        match pi_link::market::pf_scan::fetch() {
-            Ok(ix) => {
-                eprintln!("[pf-market] 公域扫描完成（{} 包）", ix.packages.len());
-                *PF_INDEX.write().unwrap() = Some(ix);
-            }
-            Err(e) => eprintln!("[pf-market] 公域扫描失败：{e}"),
+    std::thread::spawn(|| match pi_link::market::pf_scan::fetch() {
+        Ok(ix) => {
+            eprintln!("[pf-market] 公域扫描完成（{} 包）", ix.packages.len());
+            *PF_INDEX.write().unwrap() = Some(ix);
         }
+        Err(e) => eprintln!("[pf-market] 公域扫描失败：{e}"),
     });
     Default::default()
 }
@@ -125,14 +123,12 @@ pub struct PfState {
     pub removing: Option<String>,
     /// 卸载确认浮层挂起的插件名（040 同款机制）
     pub confirm_remove: Option<String>,
+    /// 公域扫描进行中（进页先转圈，扫完才落空态/卡片）
+    pub loading: bool,
     /// 最近一次失败原因（显示在头段下方，下一次动作自动清除）
     pub error: Option<String>,
     /// 台账镜像（open 时重读；安装完成后重读）
     pub ledger: Vec<pi_link::pf_plugins::LedgerEntry>,
-    /// 变高虚拟列表（分段：头段 / 卡行×N / 页码条）
-    pub list: gpui::ListState,
-    /// 列表竖向滚动条状态
-    pub sb: gpui_component::scroll::ScrollbarState,
 }
 
 impl Default for PfState {
@@ -143,10 +139,9 @@ impl Default for PfState {
             pending: None,
             removing: None,
             confirm_remove: None,
+            loading: false,
             error: None,
             ledger: Vec::new(),
-            list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2000.)),
-            sb: gpui_component::scroll::ScrollbarState::default(),
         }
     }
 }
@@ -174,7 +169,9 @@ impl Chat {
         }
         self.set_content_view(crate::ContentView::PfMarket);
         self.aux.market.pf.ledger = pf_plugins::load_ledger();
-        // 公域扫描（分发规范 §2）：后台拉取，完成换表 + 重绘；失败保持空清单
+        // 公域扫描（分发规范 §2）：后台拉取，完成换表 + 重绘；失败保持空清单。
+        // 进页先置 loading：页面正中转圈「扫描 Pi-Flash 插件……」，扫完才落空态/卡片
+        self.aux.market.pf.loading = true;
         let scan = cx
             .background_executor()
             .spawn(async { pi_link::market::pf_scan::fetch() });
@@ -184,6 +181,7 @@ impl Chat {
                 if let Ok(ix) = scanned {
                     *PF_INDEX.write().unwrap() = Some(ix);
                 }
+                c.aux.market.pf.loading = false;
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
                 cx.notify();
             });
@@ -283,89 +281,150 @@ pub(crate) fn page(
     let m = Metrics::new(content_w);
     let st = &chat.aux.market.pf;
 
-    // 【已安装】页签 = 管理视图（pf_installed，版式对齐 settings-扩展）
-    if st.tab == PfTab::Installed {
-        return super::pf_installed::page(chat, weak, &m);
-    }
+    // **两个页签共用一套骨架**（2026-10-24 用户定夺）：头段在这里画一次，
+    // body 按页签分派；各页签只提供内容，不许再各画一套根容器。
+    let loading = st.loading;
+    let entries: Vec<IndexEntry> = if st.tab == PfTab::All && !loading {
+        index().packages.clone()
+    } else {
+        Vec::new()
+    };
+    let total = if st.tab == PfTab::All {
+        entries.len()
+    } else {
+        st.ledger.len()
+    };
+    let head = head_segment(
+        st.error.clone(),
+        total,
+        st.tab,
+        st.ledger.len(),
+        weak,
+        &m,
+        t,
+    );
+    let body: AnyElement = if st.tab == PfTab::Installed {
+        super::pf_installed::body(chat, weak, &m)
+    } else {
+        all_body(chat, weak, &m, t, entries)
+    };
+    page_frame(head, body, &m, t)
+}
 
-    // 卡片数据（闭包要 'static，故整表 own 一份）
-    let entries: Vec<IndexEntry> = index().packages.clone();
-    let cols = if m.narrow { 1 } else { 2 };
-    let rows = entries.len().div_ceil(cols).max(1);
-    let items = 1 + rows + 1;
-    if st.list.item_count() != items {
-        // 项高只跟项数走（卡定高、头段定高）→ 只按项数判断 reset，否则丢滚动位
-        st.list.reset(items);
-    }
-
-    let total = entries.len();
-    let error = st.error.clone();
+/// 【所有插件】body：扫描中整块居中；否则卡片区（可滚、吃满中间）+ 页码器贴底。
+fn all_body(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    m: &Metrics,
+    t: &'static Theme,
+    entries: Vec<IndexEntry>,
+) -> AnyElement {
+    let st = &chat.aux.market.pf;
+    let loading = st.loading;
     let pending = st.pending.clone();
     let ledger = st.ledger.clone();
-    let tab = st.tab;
-    let installed_total = st.ledger.len();
+    // 插件卡预览图标：优先用**插件自己的状态栏图标**（`plugins/<id>/assets/…`，
+    // 与状态栏 tab 同一个资产），未装载 / 无 status_bar 才回通用 package。
+    let icons: Vec<(String, SharedString)> = chat
+        .plugins
+        .plugins
+        .iter()
+        .filter_map(|p| {
+            crate::pf_plugin::status_bar_icon_path(p)
+                .map(|icon| (p.manifest.pkg.clone(), icon))
+        })
+        .collect();
+    let cols = if m.narrow { 1 } else { 2 };
     let weak_c = weak.clone();
-    let m_c = m;
-    let list = gpui::list(st.list.clone(), move |ix, _w, _cx| {
-        let t = crate::appearance::theme::theme();
-        if ix == 0 {
-            return head_segment(
-                error.clone(),
-                total,
-                tab,
-                installed_total,
-                &weak_c,
-                &m_c,
-                t,
-            );
-        }
-        if ix == 1 + rows {
-            return pager_block(&m_c, t);
-        }
-        let r = ix - 1;
-        let mut row = row_shell(&m_c);
-        if entries.is_empty() {
-            row = row.child(empty_line(tr("market.pf.empty"), t));
-        } else {
-            let start = r * cols;
-            for e in entries.iter().skip(start).take(cols) {
-                let busy = pending.as_deref() == Some(e.name.as_str());
-                row = row.child(card(&weak_c, e, &m_c, t, busy, &ledger));
-            }
-            if entries.len().saturating_sub(start) < cols {
-                row = row.child(gpui::div().flex_1());
-            }
-        }
-        row_slice(row, &m_c, t)
-    })
-    .flex_1()
-    .min_h_0();
+    let m = *m;
 
-    let mut root = gpui::div()
-        .id("pf-market-list")
-        .relative()
+    let mut col = gpui::div()
+        .id("pf-market-body")
         .flex_1()
         .min_h_0()
+        .min_w_0()
         .w_full()
+        .flex()
+        .flex_col();
+    if loading {
+        // 扫描中：整块居中（转圈 + 提示）；空态只在扫完且真为空时才出
+        col = col.child(
+            centered(
+                slice_shell(&m, false, true, t)
+                    .h_full()
+                    .child(scanning_area(t)),
+                &m,
+            )
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex(),
+        );
+    } else {
+        // 卡片区：吃满中间剩余高度（可滚），页码器固定贴底
+        let mut cards = gpui::div()
+            .id("pf-market-cards")
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll();
+        if entries.is_empty() {
+            let mut row = row_shell(&m);
+            row = row.child(empty_line(tr("market.pf.empty"), t));
+            cards = cards.child(row_slice(row, &m, t));
+        } else {
+            for chunk in entries.chunks(cols) {
+                let mut row = row_shell(&m);
+                for e in chunk {
+                    let busy = pending.as_deref() == Some(e.name.as_str());
+                    row = row.child(card(&weak_c, e, &m, t, busy, &icons, &ledger));
+                }
+                if chunk.len() < cols {
+                    row = row.child(gpui::div().flex_1());
+                }
+                cards = cards.child(row_slice(row, &m, t));
+            }
+        }
+        col = col.child(
+            centered(
+                slice_shell(&m, false, false, t)
+                    .flex_1()
+                    .min_h_0()
+                    .child(cards),
+                &m,
+            )
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex(),
+        );
+        // 页码器：末段（上分隔线 + 底描边），始终贴面板底部
+        col = col.child(pager_block(&m, t));
+    }
+    col.into_any_element()
+}
+
+/// 页面骨架（**两个页签共用**）：头段 + body + 底部 `shell_pad`（与顶部对称）。
+fn page_frame(
+    head: AnyElement,
+    body: AnyElement,
+    m: &Metrics,
+    t: &'static Theme,
+) -> AnyElement {
+    gpui::div()
+        .w_full()
+        .flex_1()
+        .min_h_0()
         .flex()
         .flex_col()
         .bg(rgb(t.bg))
-        .child(list);
-
-    // 竖向滚动条（变高 ListState：与 pi market 页同挂法）
-    if st.list.max_offset_for_scrollbar().height > px(0.) {
-        let handle = crate::ui::list_handle::ListStateHandle(st.list.clone());
-        root = root.child(
-            gpui::div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right(px(2.))
-                .w(px(8.))
-                .child(gpui_component::scroll::Scrollbar::vertical(&st.sb, &handle)),
-        );
-    }
-    root.into_any_element()
+        .child(head)
+        .child(body)
+        .pb(px(m.shell_pad))
+        .into_any_element()
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +432,8 @@ pub(crate) fn page(
 // ---------------------------------------------------------------------------
 
 /// 居中外壳：定宽段盒子显式左右留白（列表项里 `mx_auto` 不可靠，pi 页同款）。
-pub(crate) fn centered(inner: gpui::Div, m: &Metrics) -> gpui::Div {
+/// 收 `impl IntoElement`：`Stateful<Div>`（带 id 的滚动列）也能直接包。
+pub(crate) fn centered(inner: impl gpui::IntoElement, m: &Metrics) -> gpui::Div {
     gpui::div()
         .pl(px(m.side_pad()))
         .pr(px(m.side_pad()))
@@ -511,7 +571,12 @@ pub(crate) fn head_segment(
     });
     centered(
         slice_shell(m, true, false, t)
-            .child(card_header(tab_row(tab, weak, t), Some(count.into_any_element()), m, t))
+            .child(card_header(
+                tab_row(tab, weak, t),
+                Some(count.into_any_element()),
+                m,
+                t,
+            ))
             .children(err_el),
         m,
     )
@@ -536,6 +601,24 @@ fn row_slice(row: gpui::Div, m: &Metrics, t: &'static Theme) -> AnyElement {
     centered(slice_shell(m, false, false, t).child(row), m).into_any_element()
 }
 
+/// 扫描中：居中转圈 + 提示。字号对齐 Pi 市场的扫描提示（`px18::BODY_FS`）。
+fn scanning_area(t: &'static Theme) -> AnyElement {
+    gpui::div()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(9.))
+        .text_size(px(px18::BODY_FS))
+        .text_color(muted(t))
+        .child(crate::ui::spinner(16., t.text_dim))
+        .child(tr("market.pf.scanning").to_string())
+        .into_any_element()
+}
+
 /// 空态行（pi 页 `.packages-empty` 同构：纯文本，无插图）；水平居中。
 fn empty_line(text: &'static str, t: &'static Theme) -> AnyElement {
     gpui::div()
@@ -552,7 +635,7 @@ fn empty_line(text: &'static str, t: &'static Theme) -> AnyElement {
 /// ③ 页码段（末尾带上外壳 4rem 底留白）。PF 本地索引恒单页。
 fn pager_block(m: &Metrics, t: &'static Theme) -> AnyElement {
     centered(
-        slice_shell(m, false, true, t).child(
+        slice_shell(m, true, true, t).child(
             gpui::div()
                 .px(px(m.card_pad_body))
                 .pt(px(sp::BODY_GAP))
@@ -561,7 +644,6 @@ fn pager_block(m: &Metrics, t: &'static Theme) -> AnyElement {
         ),
         m,
     )
-    .pb(px(sp::SHELL_PAD_BOTTOM))
     .into_any_element()
 }
 
@@ -569,12 +651,25 @@ fn pager_block(m: &Metrics, t: &'static Theme) -> AnyElement {
 // 卡片：**PF v1 定稿内部设计**（不得擅自发挥）
 // ---------------------------------------------------------------------------
 
+/// 卡片作者行：**域与包名**，从 npm 全名派生（不写死发布人）。
+/// `@pi-flash-plugins/quick-panel` → `pi-flash-plugins · quick-panel`；
+/// 无 scope 的包名原样返回。
+fn owner_line(name: &str) -> String {
+    match name.strip_prefix('@').and_then(|rest| rest.split_once('/')) {
+        Some((scope, slug)) if !scope.is_empty() && !slug.is_empty() => {
+            format!("{scope} · {slug}")
+        }
+        _ => name.to_string(),
+    }
+}
+
 fn card(
     weak: &gpui::WeakEntity<Chat>,
     e: &IndexEntry,
     m: &Metrics,
     t: &'static Theme,
     busy: bool,
+    icons: &[(String, SharedString)],
     ledger: &[pi_link::pf_plugins::LedgerEntry],
 ) -> AnyElement {
     let installed = installed_in(ledger, &e.name);
@@ -586,7 +681,27 @@ fn card(
     };
 
     // ── 预览槽：72×72 顶部对齐 · 底色跟卡片（t.bg，不抢眼）· 无边框 ──
-    // icon 用 hint 档（text_faint）= 非行动信息，不抢标题/安装钮的注意力
+    // icon 用 hint 档（text_faint）= 非行动信息，不抢标题/安装钮的注意力。
+    // 装了就用**插件自己的图标**（与状态栏 tab 同一资产，`plugins/<id>/assets/…`），
+    // 未装/无 status_bar 的包回通用 package。
+    let plugin_icon = pi_link::pf_plugins::dir_aliases(&e.name)
+        .into_iter()
+        .find_map(|alias| {
+            icons
+                .iter()
+                .find(|(pkg, _)| *pkg == alias)
+                .map(|(_, icon)| icon.clone())
+        });
+    // 插件自己的图标用**正常图标色**（text_muted）；还没装的包没有图标资产，
+    // 回通用 package 时才降成 hint 档（text_faint），不抢标题/安装钮
+    let icon_el: AnyElement = match plugin_icon {
+        Some(path) => gpui::svg()
+            .path(path)
+            .text_color(rgb(t.text_muted))
+            .size(px(30.))
+            .into_any_element(),
+        None => crate::ui::icon("package", 28., t.text_faint),
+    };
     let preview = gpui::div()
         .size(px(72.))
         .flex_shrink_0()
@@ -595,14 +710,26 @@ fn card(
         .justify_center()
         .bg(rgb(t.bg))
         .rounded(px(8.))
-        .text_color(rgb(t.text_faint))
-        .child(crate::ui::icon("package", 28., t.text_faint));
+        .child(icon_el);
 
-    // ── 名称（16 semibold —— 源码层级：标题明显大于内容）──
+    // ── 名称（16 semibold）+ 版本号（mono，跟在标题后）──
     let name = gpui::div()
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_size(px(16.))
-        .child(e.display.zh.clone());
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            gpui::div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(16.))
+                .child(e.display.zh.clone()),
+        )
+        .children((!e.version.is_empty()).then(|| {
+            gpui::div()
+                .font_family(MONO)
+                .text_size(px(11.))
+                .text_color(rgb(t.text_faint))
+                .child(SharedString::from(format!("v{}", e.version)))
+        }));
 
     // ── 描述（无则不渲染；卡宽自然约束换行）──
     let desc = e
@@ -620,11 +747,7 @@ fn card(
             gpui::div()
                 .text_size(px(11.))
                 .text_color(rgb(t.text_dim))
-                .child(if e.publisher.is_empty() {
-                    "Pi-Flash".to_string()
-                } else {
-                    e.publisher.clone()
-                }),
+                .child(SharedString::from(owner_line(&e.name))),
         )
         .child(
             gpui::div()
