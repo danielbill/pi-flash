@@ -48,6 +48,12 @@ static TABLE: &[(&str, &str, &str)] = &[
         "消息未送達：目標會話沒有可用的 pi 進程，稍後重試。",
         "Not delivered: the target session has no pi process. Try again later.",
     ),
+    // ── 无项目态引导（cwd 未选时不建会话不投递，统一指向 /项目 自救入口）──
+    (
+        "请先设置项目：回复 **/项目** 选择工作区后再发消息。",
+        "請先設置項目：回覆 **/項目** 選擇工作區後再發消息。",
+        "No workspace yet: reply **/workspace** to pick a project, then send your message.",
+    ),
     // ── /status 状态卡（ZCode `botsService.ts:4593-4624` 的 label id）──
     ("工作区", "工作區", "Workspace"),
     ("模型", "模型", "Model"),
@@ -535,6 +541,14 @@ mod tests {
     #[test]
     fn unknown_key_falls_back_to_source_literal() {
         assert_eq!(t(Lang::En, "不存在的 key"), "不存在的 key");
+    }
+
+    #[test]
+    fn no_project_guidance_is_in_table_for_all_langs() {
+        let key = "请先设置项目：回复 **/项目** 选择工作区后再发消息。";
+        assert_eq!(t(Lang::ZhCn, key), key);
+        assert_ne!(t(Lang::ZhTw, key), key, "zh-TW 必须入表");
+        assert_ne!(t(Lang::En, key), key, "en 必须入表，不能回退源串");
     }
 
     #[test]

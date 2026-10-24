@@ -45,6 +45,9 @@ const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
 /// 投递失败回执（wxprobe 文案表同名条目）。失败必须让微信端看见——
 /// 静默丢弃正是「发消息没反应」屡查不出的原因。
 const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi 进程，稍后重试。";
+/// 无项目态回执（wxprobe 文案表同名条目）：cwd 未选时需要会话的动作
+/// 统一引导设项目，不建会话、不投递（用户定夺）。
+const NO_PROJECT: &str = "请先设置项目：回复 **/项目** 选择工作区后再发消息。";
 /// 绑定码无效的回执。ZCode 原句写的是「在 zcode UI 重新生成」—— 品牌换成
 /// 本应用（2026-10-07 用户拍板，与 `/帮助` 标题同一决定），故**不走文案表**。
 const BIND_INVALID: &[(&str, &str, &str)] = &[(
@@ -911,7 +914,9 @@ impl crate::Chat {
         // 微信线**专属会话**（2026-10-24 定夺）：不再认领桌面活跃会话——
         // 为空时开一条专属草稿（不抢桌面焦点），桌面与微信从第一天就分叉，
         // 双线操作被限定在专属会话内。历史 session_key 照常恢复。
-        if self.aux.remote.wx_session.is_none() {
+        // cwd 未选时**不尝试建会话**（用户定夺）：入站消息由 run_wx_action
+        // 统一引导「请先设置项目」；打开项目后下一拍这里自动补建。
+        if self.aux.remote.wx_session.is_none() && self.ws.cwd.is_some() {
             if let Some(key) = self.new_draft_detached(cx) {
                 self.aux.remote.set_wx_session(key);
             }
@@ -980,6 +985,20 @@ impl crate::Chat {
     }
 
     fn run_wx_action(&mut self, action: Action, cx: &mut gpui::Context<Self>) {
+        // 无项目态统一引导（用户定夺）：cwd 未选时不建会话、不投递，
+        // 需要会话的动作（正文/状态/新建/停止）一律回「请先设置项目」。
+        // 纯文案与菜单（/帮助 /项目 /绑定…）不在此列——/项目 正是微信侧
+        // 的自救入口，从这里把工作区选上，下一拍影子会话自动补建。
+        if self.ws.cwd.is_none()
+            && matches!(
+                action,
+                Action::Prompt(_) | Action::Status | Action::New | Action::Abort
+            )
+        {
+            let lang = Lang::from_ix(crate::i18n::lang_ix());
+            self.aux.remote.send(&t(lang, NO_PROJECT));
+            return;
+        }
         match action {
             Action::None => {}
             Action::Send(text) => self.aux.remote.send(&text),
@@ -1683,5 +1702,12 @@ mod tests {
         assert!(STARTUP_NOTICE.contains("Pi-Flash"));
         assert!(STARTUP_NOTICE.contains("已启动"));
         assert!(!STARTUP_NOTICE.contains("MCP"), "不得泄漏 pi 横幅内容");
+    }
+
+    /// 无项目态回执（用户定夺）：cwd 未选时需要会话的动作统一引导设项目。
+    #[test]
+    fn no_project_text_points_to_workspace_menu() {
+        assert!(NO_PROJECT.contains("请先设置项目"));
+        assert!(NO_PROJECT.contains("/项目"), "必须指出自救入口");
     }
 }
