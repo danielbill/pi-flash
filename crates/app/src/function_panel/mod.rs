@@ -1070,6 +1070,10 @@ pub(crate) fn dock(
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）
     let bounds_slot = chat.layout.dock_bounds.clone();
     let split_drag = chat.layout.split_drag;
+    // §5.12 统一分隔线：常驻 1px；hover/拖拽 4px accent（7px 带内垂直居中）
+    let d_line = crate::ui::tokens::divider::LINE;
+    let d_hover = crate::ui::tokens::divider::HOVER;
+    let d_hit = crate::ui::tokens::panel_ctrl::DIV_H;
     div()
         .id("dock")
         .flex_1()
@@ -1089,13 +1093,14 @@ pub(crate) fn dock(
             .inset_0(),
         )
         .child(psp_view(chat, entity, weak.clone(), window, cx))
-        // 子面板分隔线：7px 命中带 + 1px 视觉线（左右缩进 10 = 列表右线），
-        // hover/拖拽变 accent
+        // 子面板分隔线：7px 命中带 + 常驻 1px 视觉线（左右缩进 10 = 列表
+        // 右线），hover/拖拽按 §5.12 统一规范换 4px accent 覆盖线（absolute
+        // 改 top/h 不占布局零推挤，带内居中 = 与常驻线同一中线）
         .child(
             div()
                 .id("sp-divider")
                 .with_tip("psp.split_tip")
-                .h(px(crate::ui::tokens::panel_ctrl::DIV_H))
+                .h(px(d_hit))
                 .flex_shrink_0()
                 .relative()
                 .group("spdiv")
@@ -1121,11 +1126,19 @@ pub(crate) fn dock(
                         .absolute()
                         .left(px(10.))
                         .right(px(10.))
-                        .top(px(3.))
-                        .h(px(1.))
+                        .top(px((d_hit - d_line) / 2.))
+                        .h(px(d_line))
                         .bg(rgb(t.border))
-                        .when(split_drag, |d| d.bg(rgb(t.accent)))
-                        .group_hover("spdiv", |d| d.bg(rgb(t.accent))),
+                        .when(split_drag, |d| {
+                            d.top(px((d_hit - d_hover) / 2.))
+                                .h(px(d_hover))
+                                .bg(rgb(t.accent))
+                        })
+                        .group_hover("spdiv", |d| {
+                            d.top(px((d_hit - d_hover) / 2.))
+                                .h(px(d_hover))
+                                .bg(rgb(t.accent))
+                        }),
                 ),
         )
         .child(files_view(chat, weak, cx))

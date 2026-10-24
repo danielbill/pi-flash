@@ -594,7 +594,9 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                // 常驻 1px 细线（panes 可见时才有分隔线）
+                // 常驻 1px 细线（§5.12 divider::LINE，panes 可见时才有分隔
+                // 线；gpui border 宏只有固定档位 border_l_1，值由 tokens
+                // 锁定测试看护）
                 .when(!panes_hidden, |d| {
                     d.border_l_1()
                         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x99)))
@@ -607,9 +609,10 @@ impl Render for Chat {
                     window,
                     cx,
                 ))
-                // hover/拖拽：4px accent 粗线盖在左缘（absolute overlay，
-                // 不占布局 = hover 不推挤内容；content-col 在 panel-col
-                // 之后渲染，盖得住交界），作为最后 child 保证 z 序在最上
+                // hover/拖拽：4px accent 粗线盖在左缘（§5.12 统一分隔线
+                // 规范，与 dock 上下分区同款；absolute overlay 不占布局 =
+                // hover 零推挤；content-col 在 panel-col 之后渲染，盖得住
+                // 交界），作为最后 child 保证 z 序在最上
                 .when(!panes_hidden && (slp_hovered || slp_dragging), |d| {
                     d.child(
                         div()
@@ -618,7 +621,7 @@ impl Render for Chat {
                             .left_0()
                             .top_0()
                             .bottom_0()
-                            .w(px(4.))
+                            .w(px(crate::ui::tokens::divider::HOVER))
                             .bg(rgb(t.accent)),
                     )
                 }),
