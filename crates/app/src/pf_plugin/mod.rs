@@ -19,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 use gpui::SharedString;
 use pf_plugin_host::js::{JsAction, JsHost, JsPlugin};
+use pf_plugin_host::{PluginAction, PluginInstance};
 
 use crate::Chat;
 
@@ -600,6 +601,14 @@ pub(crate) struct PluginEntry {
     pub disabled: bool,
     /// QuickJS 运行时（懒建；主线程独占）
     pub js: Option<JsPlugin>,
+    /// 内层 wasm 实例（加密包；懒装载——首次开面板时主线程 `load_cached`
+    /// 毫秒级实例化，cwasm 缓存由启动预热。验签门在启动后台线程已过一次，
+    /// 这里 init 再跑一遍是全新实例的自拒门，语义不变）
+    pub wasm: Option<PluginInstance>,
+    /// 最近一次 wasm `render()` 的 Paint 缓存（渲染器消费）
+    pub paints: Vec<pf_plugin_host::Paint>,
+    /// wasm 面板键盘焦点（点击面板时抢入；键盘回灌只在其聚焦时收）
+    pub wasm_focus: Option<gpui::FocusHandle>,
     /// 宿主能力载体（与 js 同生；fire 前清 actions）
     pub host: Option<Rc<RefCell<ChatHost>>>,
     /// 最近一次 render 的组件树（01 规范；渲染器消费。v2 无 rows）
@@ -753,6 +762,9 @@ impl Chat {
         if let Some(entry) = self.plugins.plugins.get_mut(ix) {
             entry.disabled = true;
             entry.js = None;
+            entry.wasm = None;
+            entry.paints.clear();
+            entry.wasm_focus = None;
             entry.host = None;
             entry.body = None;
             entry.tree_loaded = false;
@@ -821,6 +833,12 @@ impl Chat {
         if entry.disabled {
             return false;
         }
+        if entry.manifest.wasm.is_some() {
+            if entry.wasm.is_some() {
+                return true;
+            }
+            return self.plugin_wasm_ready(ix, cx);
+        }
         if entry.js.is_some() {
             return true;
         }
@@ -862,9 +880,51 @@ impl Chat {
         }
     }
 
+    /// 内层 wasm 插件懒装载（加密包渲染面）：主线程 `load_cached` —— cwasm
+    /// 缓存命中 = mmap 反序列化 + 实例化，毫秒级（启动预热已把编译搬走），
+    /// 首次开面板是用户显式动作，这个量级无感。失败 = 会话级禁用（与 JS 同款）。
+    fn plugin_wasm_ready(&mut self, ix: usize, cx: &mut gpui::Context<Self>) -> bool {
+        ensure_wasm_hooks(cx);
+        self.plugin_sync_quick_pins();
+        let Some(entry) = self.plugins.plugins.get_mut(ix) else {
+            return false;
+        };
+        let id = entry.manifest.id.clone();
+        let wasm_path = entry
+            .manifest
+            .dir
+            .join(entry.manifest.wasm.as_deref().unwrap_or("plugin.wasm"));
+        let loaded = match pi_link::paths::plugin_cache_dir() {
+            Some(cache) => PluginInstance::load_cached(&wasm_path, cache.as_ref()),
+            None => PluginInstance::load(&wasm_path),
+        };
+        let mut inst = match loaded {
+            Ok(i) => i,
+            Err(e) => {
+                entry.disabled = true;
+                self.set_status(format!("插件 {id} 出错：{e}"), cx);
+                return false;
+            }
+        };
+        if let Err(e) = inst.init(&id) {
+            entry.disabled = true;
+            self.set_status(format!("插件 {id} 拒载：{e}"), cx);
+            return false;
+        }
+        entry.wasm = Some(inst);
+        entry.wasm_focus = Some(cx.focus_handle());
+        true
+    }
+
     /// onPanelOpen + render → rows 缓存（02 §4 懒加载链）。
     fn plugin_refresh(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
         if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        // 内层 wasm 插件：render() → Paint 缓存（画布路径，与 JS 组件树分叉）
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_render(ix, cx);
+            self.plugin_wasm_repaint_loop(ix, cx);
             return;
         }
         let (result, actions) = {
@@ -994,6 +1054,166 @@ impl Chat {
         self.plugin_refresh(ix, cx);
     }
 
+    // -------------------------------------------------------------------
+    // 内层 wasm 插件（加密包渲染面；渲染 = panel.rs 画 Paint 列表，
+    // 交互 = 鼠标/键盘/resize 回灌 + 动作泵，全部主线程）
+    // -------------------------------------------------------------------
+
+    /// wasm `render()` → Paint 缓存（打开/重绘共用；空画布兜底不炸）。
+    fn plugin_wasm_render(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        let paints = {
+            let entry = &mut self.plugins.plugins[ix];
+            entry.wasm.as_mut().map(|i| i.render()).unwrap_or_default()
+        };
+        let entry = &mut self.plugins.plugins[ix];
+        entry.paints = paints;
+        entry.tree_loaded = true;
+        cx.notify();
+    }
+
+    /// 重绘循环（仅 wasm 面板装载后跑）：每 100ms 问一次 `wants-repaint`
+    /// （布尔 wasm 调用，微秒级），要重绘才 render。实例丢/停用即停——
+    /// 面板不 open 时循环也在，但只是无感布尔轮询；关掉面板不收锁
+    /// （插件可能靠 import 异步干活后置 repaint 位，宿主不猜）。
+    fn plugin_wasm_repaint_loop(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+                let cont = this
+                    .update(cx, |chat, cx| {
+                        let Some(entry) = chat.plugins.plugins.get_mut(ix) else {
+                            return false;
+                        };
+                        let Some(inst) = entry.wasm.as_mut() else {
+                            return false;
+                        };
+                        if entry.disabled {
+                            return false;
+                        }
+                        if !inst.wants_repaint() {
+                            return true;
+                        }
+                        entry.paints = inst.render();
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !cont {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// wasm 面板鼠标回灌（panel.rs 事件层换算好面板内相对坐标后调）。
+    pub(crate) fn plugin_wasm_mouse(
+        &mut self,
+        ix: usize,
+        phase: pf_plugin_host::Phase,
+        button: pf_plugin_host::Button,
+        x: f32,
+        y: f32,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let (actions, repaint) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let Some(inst) = entry.wasm.as_mut() else {
+                return;
+            };
+            let _ = inst.on_mouse(phase, button, x, y);
+            (inst.pump_actions(), inst.wants_repaint())
+        };
+        self.plugin_wasm_dispatch(ix, actions, window, cx);
+        if repaint {
+            self.plugin_wasm_render(ix, cx);
+        }
+    }
+
+    /// wasm 面板键盘回灌（panel.rs 在面板聚焦时转发；`key` 为宿主键名）。
+    pub(crate) fn plugin_wasm_key(
+        &mut self,
+        ix: usize,
+        key: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let (actions, repaint) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let Some(inst) = entry.wasm.as_mut() else {
+                return;
+            };
+            let _ = inst.on_key(key);
+            (inst.pump_actions(), inst.wants_repaint())
+        };
+        self.plugin_wasm_dispatch(ix, actions, window, cx);
+        if repaint {
+            self.plugin_wasm_render(ix, cx);
+        }
+    }
+
+    /// wasm 面板尺寸回灌（panel.rs canvas prepaint 检测 bounds 变化后异步调）。
+    /// 插件要重排会置 repaint 位；不置就只回调（画布变大露底色，插件自己决定）。
+    pub(crate) fn plugin_wasm_resize(
+        &mut self,
+        ix: usize,
+        w: f32,
+        h: f32,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let repaint = {
+            let entry = &mut self.plugins.plugins[ix];
+            let Some(inst) = entry.wasm.as_mut() else {
+                return;
+            };
+            let _ = inst.on_resize(w, h);
+            inst.wants_repaint()
+        };
+        if repaint {
+            self.plugin_wasm_render(ix, cx);
+        }
+    }
+
+    /// wasm `PluginAction` → 宿主实现（与 JS 动作同款落点，复用实现不复制逻辑）。
+    fn plugin_wasm_dispatch(
+        &mut self,
+        _ix: usize,
+        actions: Vec<PluginAction>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        for a in actions {
+            match a {
+                PluginAction::Toast(m) => self.set_status(m, cx),
+                PluginAction::OpenFile(p) => self.open_file_tab(PathBuf::from(&p), cx),
+                PluginAction::RunScript(p) => {
+                    let path = PathBuf::from(&p);
+                    match crate::services::script_exec::resolve(&path, self.ws.cwd.as_deref()) {
+                        Some(plan) => self.open_script_terminal(path, plan, window, cx),
+                        None => self.set_status(format!("无法执行：{p}"), cx),
+                    }
+                }
+                PluginAction::ToggleQuickPin(p) => self.tree_pin_toggle(PathBuf::from(&p), cx),
+            }
+        }
+        // 动作可能改了插件数据（如 toggle pin）：同步快照给后续 render
+        self.plugin_sync_quick_pins();
+    }
+
+    /// 快照当前项目收藏 → host 钩子（fn 指针拿不到 Chat，走 thread_local 桥）。
+    fn plugin_sync_quick_pins(&self) {
+        let pins: Vec<String> = self
+            .ws
+            .pinned
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        QUICK_PIN_SNAP.with(|c| *c.borrow_mut() = pins);
+    }
+
     /// 插件异常隔离（02 §4）：捕获 → toast → 会话级禁用，不影响宿主。
     fn plugin_broken(&mut self, ix: usize, err: String, cx: &mut gpui::Context<Self>) {
         let Some(entry) = self.plugins.plugins.get_mut(ix) else {
@@ -1001,6 +1221,9 @@ impl Chat {
         };
         entry.disabled = true;
         entry.js = None;
+        entry.wasm = None;
+        entry.paints.clear();
+        entry.wasm_focus = None;
         entry.host = None;
         let id = entry.manifest.id.clone();
         self.set_status(format!("插件 {id} 出错：{err}"), cx);
@@ -1016,6 +1239,9 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
             manifest,
             disabled: false,
             js: None,
+            wasm: None,
+            paints: Vec::new(),
+            wasm_focus: None,
             host: None,
             tree_loaded: false,
             cell_menu: None,
@@ -1063,6 +1289,62 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
             .await;
     })
     .detach();
+}
+
+// ---------------------------------------------------------------------------
+// 内层 wasm 插件：宿主能力钩子桥（fn 指针拿不到 Chat/文本系统 → thread_local）
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// 当前项目收藏快照（插件 `quick-pins` import 的数据源；fn 指针拿不到
+    /// Chat，每次 wasm 面板装载/动作后由 `plugin_sync_quick_pins` 重灌）
+    static QUICK_PIN_SNAP: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// gpui 文本系统（`measure-text` import 用；`Arc`，首装后全程存活）
+    static TEXT_SYSTEM: std::cell::RefCell<Option<std::sync::Arc<gpui::TextSystem>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn quick_pin_snap() -> Vec<String> {
+    QUICK_PIN_SNAP.with(|c| c.borrow().clone())
+}
+
+/// `measure-text`：App 级文本系统逐字符 advance 求和（无 window 依赖；
+/// kerning 不计入，插件排版够准）。字体未注册 → 0.0（兑底是插件的责任，
+/// 与 fs 缺失同款）。
+fn wasm_measure_text(content: &str, size: f32) -> f32 {
+    let Some(ts) = TEXT_SYSTEM.with(|c| c.borrow().clone()) else {
+        return 0.0;
+    };
+    let font = gpui::Font {
+        family: crate::appearance::panel_font().family.into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: gpui::FontWeight::NORMAL,
+        style: gpui::FontStyle::Normal,
+    };
+    let id = ts.resolve_font(&font);
+    let size = gpui::px(size);
+    let mut w = 0.0f32;
+    for ch in content.chars() {
+        if ch == '\n' {
+            continue;
+        }
+        if let Ok(a) = ts.advance(id, size, ch) {
+            w += f32::from(a.width);
+        }
+    }
+    w
+}
+
+/// wasm 宿主钩子懒注入（首次 wasm 装载前，主线程）：文本系统 + 快照读口。
+static WASM_HOOKS: OnceLock<()> = OnceLock::new();
+fn ensure_wasm_hooks(cx: &gpui::App) {
+    if WASM_HOOKS.set(()).is_err() {
+        return;
+    }
+    TEXT_SYSTEM.with(|c| *c.borrow_mut() = Some(cx.text_system().clone()));
+    pf_plugin_host::install_host_hooks(quick_pin_snap, wasm_measure_text);
 }
 
 /// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
@@ -1277,6 +1559,40 @@ entry = \"main.js\" # 入口
         let m = parse_manifest(&dir).expect("带行内注释的清单应通过");
         assert_eq!(m.title_zh, "快捷#面板"); // 引号内 # 保留
         assert_eq!(m.panels[0].entry, "main.js");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn manifest_inner_package_parse() {
+        // 加密包（inner_package）：无 entry 面板声明跳过文件校验；tab icon
+        // 走宿主内置名（无 assets 文件也可过）——发版脚本 dist.mjs 的产物形态
+        let tmp = std::env::temp_dir().join(format!("pf-inner-test-{}", std::process::id()));
+        let dir = tmp.join("quick-panel");
+        write_manifest(
+            &dir,
+            r#"
+schema = 2
+id = "quick-panel"
+title = { zh = "快捷面板", en = "Quick Panel" }
+version = "0.1.3"
+
+wasm = "plugin.wasm"
+
+[[contributes.status_bar]]
+icon = "plug"
+title = { zh = "快捷面板" }
+
+[[contributes.panels]]
+id = "quick-panel"
+title = { zh = "快捷面板" }
+"#,
+        );
+        std::fs::write(dir.join("plugin.wasm"), b"\0wasm-fake").unwrap();
+
+        let m = parse_manifest(&dir).expect("加密包清单应通过（无 entry 文件）");
+        assert_eq!(m.wasm.as_deref(), Some("plugin.wasm"));
+        assert_eq!(m.status_bar.as_ref().unwrap().icon, "plug");
+        assert_eq!(m.panels.len(), 1);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
