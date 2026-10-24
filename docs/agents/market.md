@@ -135,6 +135,15 @@
   后台重扫**只补装这一个**（整体替换 `plugins_set` 会清掉别的插件运行态、还会
   打乱 dock 存的 `Plugin(ix)` 位置）。段盒全高：底部 padding = 顶部
   `shell_pad`（SHELL_PAD_BOTTOM 72px 太阔，v5 定夺弃用）。
+- **装载白名单 = 台账**（`scan_manifests` 只装台账里 `disabled=false` 的包按顶层
+  包目录名匹配）：磁盘上多出来的目录（手拷 / 卸载残留 / 历史野包）一律不装载。
+  2026-10-25 bug「没安装但 panel 还显示」= dev 数据目录 `plugins/quick-panel/`
+  手拷一份、台账却是空的 → 市场【已安装】0 条，左 dock 照样挂着它的面板。
+  **dev 手写插件要上手工作流就补一条台账**（`<PF数据目录>/plugins.json`：
+  `{"name":"quick-panel","version":"0.1.0","integrity":"","source":"market"}`
+  ——扫描不校验 integrity，只有安装链接管它）。安装 / 更新 / 启用跑完都走
+  `reload_plugin_by_pkg`（后台重扫这一个包 → `plugin_replace_by_pkg` 撤旧建新），
+  **装完即出现，不用重启**；别再写「整体 `plugins_set` 重扫结果」那种替换。
 - **「台账名 ↔ 运行态条目」只能靠 `PluginManifest::pkg`（顶层包目录名）对账，
   别拿 `manifest.dir.file_name()`**：市场安装链落 `plugins/<pkg>/<version>/`，
   那是**版本号**。2026-10-25 bug（停用/删除后插件仍在左面板且照旧可用）三个根因：
