@@ -84,37 +84,28 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
     }
 
     let started = std::time::Instant::now();
-    let mut st = crate::state::load();
-    crate::state::set(&mut st, "qrcode", Some(&begin.qrcode));
-    crate::state::save(&st);
+    set_qrcode_fresh(Some(&begin.qrcode));
 
     loop {
         match poll(&mut w, &begin.qrcode) {
             Ok(QrStatus::Success { bot_token, bot_id }) => {
-                crate::state::set(&mut st, "bot_token", Some(&bot_token));
-                crate::state::set(&mut st, "bot_id", bot_id.as_deref());
-                // sendmessage 的 from_user_id 就是 bot 自己。换绑后不跟着改，
-                // 出站会带着**旧 bot** 的 id（真机复现过：84e144 → 7240ca 没同步）
-                crate::state::set(&mut st, "bot_user_id", bot_id.as_deref());
-                reset_session_fields(&mut st);
-                crate::state::set(&mut st, "qrcode", None);
+                let mut st = crate::state::load();
+                apply_success(&mut st, &bot_token, bot_id.as_deref());
                 crate::state::save(&st);
                 let _ = tx.send(QrEvent::Success { bot_id });
                 return;
             }
             Ok(QrStatus::Expired) => {
-                crate::state::set(&mut st, "qrcode", None);
-                crate::state::save(&st);
+                set_qrcode_fresh(None);
                 let _ = tx.send(QrEvent::Expired);
                 return;
             }
             Ok(QrStatus::Scanned) => {
-                // 接收端被丢（UI「停止」= cancel_qr）→ 清 qrcode 后退出；
+                // 接收端被丢（UI 取消扫码）→ 清 qrcode 后退出；
                 // 不检查的话 worker 会空转到 180s 死线（2026-10-24 页面重构
                 // 加的取消语义，与开头 Ready send 的 is_err 同约定）
                 if tx.send(QrEvent::Scanned).is_err() {
-                    crate::state::set(&mut st, "qrcode", None);
-                    crate::state::save(&st);
+                    set_qrcode_fresh(None);
                     return;
                 }
             }
@@ -123,15 +114,13 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
             // 接收端已丢（UI 取消）时同样退出
             Ok(QrStatus::Error(e)) | Err(e) => {
                 if tx.send(QrEvent::Error(e)).is_err() {
-                    crate::state::set(&mut st, "qrcode", None);
-                    crate::state::save(&st);
+                    set_qrcode_fresh(None);
                     return;
                 }
             }
         }
         if started.elapsed().as_secs() >= deadline_sec {
-            crate::state::set(&mut st, "qrcode", None);
-            crate::state::save(&st);
+            set_qrcode_fresh(None);
             let _ = tx.send(QrEvent::Expired);
             return;
         }
@@ -143,6 +132,34 @@ pub fn run_qr_flow(tx: std::sync::mpsc::Sender<QrEvent>, deadline_sec: u64) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// 重绑 = 清旧信息 + 换新 bot（2026-10-24 用户定夺）；session_key 是
+    /// PF 侧归属，不在清理范围。
+    #[test]
+    fn rebind_clears_old_routing_fields_and_swaps_bot() {
+        let mut st = json!({
+            "bot_token": "OLD-TOKEN",
+            "bot_id": "old@im.bot",
+            "bot_user_id": "old@im.bot",
+            "buf": "OLD-CURSOR",
+            "chat_id": "old@im.wechat",
+            "user_id": "old@im.wechat",
+            "context_token": "OLD-CTX",
+            "session_key": "C:\\s.jsonl",
+            "qrcode": "deadbeef",
+        });
+        apply_success(&mut st, "NEW-TOKEN", Some("new@im.bot"));
+        assert_eq!(st["bot_token"], "NEW-TOKEN");
+        assert_eq!(st["bot_id"], "new@im.bot");
+        assert_eq!(
+            st["bot_user_id"], "new@im.bot",
+            "from_user_id 必须跟新 bot 走"
+        );
+        for k in ["buf", "chat_id", "user_id", "context_token", "qrcode"] {
+            assert!(st.get(k).map_or(true, Value::is_null), "{k} 必须被清掉");
+        }
+        assert_eq!(st["session_key"], "C:\\s.jsonl", "PF 侧会话归属保留");
+    }
 
     /// 词表外字符串状态必须带安装指引透传（2026-10-24：用户要求识别
     /// 「微信未装插件」并告知，不能再吞成无限等待）。
@@ -192,6 +209,28 @@ fn reset_session_fields(st: &mut Value) {
     for k in ["buf", "chat_id", "user_id", "context_token"] {
         crate::state::set(st, k, None);
     }
+}
+
+/// 重绑落地：**清旧路由字段 + 写新 bot 三件**（2026-10-24 用户定夺
+/// 「重新绑定时就清理旧信息」）。必须喂**当场 `state::load()`** 的内容——
+/// worker 里严禁攥着旧快照整文件回写：自动续码时代每个到期 worker 都把
+/// begin 时的快照原样 save，把换绑刚写好的 bot_token/bot_id 盖回旧值、
+/// 把旧 bot 的 user_id/context_token 复活，出站 sendmessage 全部
+/// `errcode:-14 session timeout`——「重绑就废、消息发不回微信」的根因。
+fn apply_success(st: &mut Value, bot_token: &str, bot_id: Option<&str>) {
+    crate::state::set(st, "bot_token", Some(bot_token));
+    crate::state::set(st, "bot_id", bot_id);
+    // sendmessage 的 from_user_id 就是 bot 自己，必须随换绑同步
+    crate::state::set(st, "bot_user_id", bot_id);
+    reset_session_fields(st);
+    crate::state::set(st, "qrcode", None);
+}
+
+/// 只动 `qrcode` 一个字段的最小写入口：当场新读-改-写，不碰其它字段。
+fn set_qrcode_fresh(v: Option<&str>) {
+    let mut st = crate::state::load();
+    crate::state::set(&mut st, "qrcode", v);
+    crate::state::save(&st);
 }
 
 pub enum QrStatus {
