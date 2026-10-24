@@ -28,9 +28,17 @@
   后台，结果回主线程只写状态栏。配套 `pf-plugin-host`：proof 钩子
   `thread_local` → 进程级 `RwLock`（否则后台线程 init 时插件回调
   `get_host_proof` 取不到材料 → 正常插件被误判拒载）；`Engine` 进程内共享。
-- ✅ 验证：`cargo check -p app` 通过；单独计时 `load()` = 7.2 s（debug）证实
-  原阻塞量级。**待真机复验**：启动到可操作无停顿；验签结论（已激活/拒载）在
-  揭幕后 1–3 s 出现在状态栏。
+- ✅ 第二刀（为什么还要反复编）：wasm 是字节码，`Component::from_file` 每次都做
+  cranelift 全量编译，产物只活在进程内存——**第二次启动照样重编**。新增
+  `PluginInstance::load_cached`：产物按 wasm sha256 落
+  `<数据目录>/cache/pf-plugin/<sha>.cwasm`（原子写、只留最近 8 份），命中 =
+  `deserialize_file`（mmap）+ instantiate + init；产物自带 wasmtime 版本/配置
+  校验，失配自动重编；安装/启用即后台预热，首次启动也命中。**语义不变——每次
+  启动仍真跑 init 验签门**。
+- ✅ 验证：`cargo check -p app` 通过；本机 4.6 MB 组件实测——冷 9.24 s(debug) /
+  0.62 s(release) → **热 7–10 ms（release 三次，含实例化+init）**，init 单独
+  0.1–0.2 ms，产物 1.4 MB。**待真机复验**：启动到可操作无停顿；验签结论
+  （已激活/拒载）在揭幕后出现。
 
 ## 待验证（本轮修复）——微信 Bot 回复石沉大海：出站只认桌面选中态 + 投递静默丢 + 启动横幅泄漏
 
