@@ -144,6 +144,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// 词表外字符串状态必须带安装指引透传（2026-10-24：用户要求识别
+    /// 「微信未装插件」并告知，不能再吞成无限等待）。
+    #[test]
+    fn unknown_status_messages_carry_install_guidance() {
+        // 含 install 关键词 → 直接判定未安装并给行动指引
+        let m = unknown_status_message(Some(&json!("not_install"))).unwrap();
+        assert!(m.contains("未安装") && m.contains("ClawBot"), "{m}");
+        // 其它未知字符串 → 原文透传 + 同样的指引（首次出现即被看见）
+        let m = unknown_status_message(Some(&json!("weird_state"))).unwrap();
+        assert!(m.contains("weird_state") && m.contains("未安装"), "{m}");
+        // 数字码与缺失 → 不产生错误（ZCode 语义归 pending）
+        assert!(unknown_status_message(Some(&json!(5))).is_none());
+        assert!(unknown_status_message(None).is_none());
+    }
+
     #[test]
     fn reset_clears_old_bot_routing_fields() {
         let mut st = json!({
@@ -218,11 +233,39 @@ pub fn poll(wire: &mut Wire, qrcode: &str) -> Result<QrStatus, String> {
         other => {
             if other == "scanned" {
                 QrStatus::Scanned
+            } else if let Some(msg) = unknown_status_message(raw) {
+                // 词表外且非等待态的字符串：ZCode 静默按 pending 吞掉，但那会把
+                // 「微信侧未装插件」这类新状态吞成无限等待——用户扫了码、微信
+                // 提示未安装，PF 却永远显示「等待手机连接」（2026-10-24 用户
+                // 要求识别并告知）。原文透传给 UI；流程照常轮询，后续状态正常
+                // 翻转不受影响。
+                QrStatus::Error(msg)
             } else {
                 QrStatus::Pending
             }
         }
     })
+}
+
+/// 词表外的**字符串**状态 → 给 UI 的错误文案（含安装指引）。
+/// - 含 `install` 关键词：直接判定为微信侧未装插件，给行动指引
+/// - 其余：原文透传 + 同样的指引（我们只有 `wait`/词表词的实测样本，
+///   「未安装」的真实词形还没见过——透传保证它第一次出现就被看见）
+/// 数字码表外（None）按 ZCode 语义仍归 pending，不产生错误。
+fn unknown_status_message(raw: Option<&Value>) -> Option<String> {
+    let s = match raw {
+        Some(Value::String(s)) => s.clone(),
+        _ => return None,
+    };
+    if s.to_lowercase().contains("install") {
+        Some(format!(
+            "微信侧未安装「微信ClawBot」插件：请先在微信安装/启用插件，再重新扫码。（原始状态：{s}）"
+        ))
+    } else {
+        Some(format!(
+            "未识别的扫码状态：{s} —— 若微信提示未安装，请先安装「微信ClawBot」插件再扫。"
+        ))
+    }
 }
 
 /// ZCode `normalizeQrStatus`（`weixinRegistration.ts:103-130`）逐条对应。
@@ -247,6 +290,11 @@ fn normalize(status: Option<&Value>) -> String {
                 "expired".into()
             } else if ["error", "failed", "fail"].contains(&s.as_str()) {
                 "error".into()
+            } else if ["wait", "waiting", "pending", "created"].contains(&s.as_str()) {
+                // 实测（2026-10-24 dump 503）：等待态返回 "wait"，不在 ZCode
+                // 词表里，此前靠 unknown→pending 兜底；显式归一并在此挡住，
+                // 让 unknown 分支只接真正的新状态
+                "pending".into()
             } else {
                 "pending".into()
             }

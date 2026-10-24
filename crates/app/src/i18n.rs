@@ -637,6 +637,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_confirm", "已扫码，请在手机上确认…", "已掃碼，請在手機上確認…", "Scanned, please confirm on your phone…"),
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
+    ("remote.qr_install_hint", "若微信提示未安装：请先在微信安装「微信ClawBot」插件，再重新扫码。", "若微信提示未安裝：請先在微信安裝「微信ClawBot」外掛，再重新掃碼。", "If WeChat says the bot is not installed: install the \"WeChat ClawBot\" plugin in WeChat first, then scan again."),
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),

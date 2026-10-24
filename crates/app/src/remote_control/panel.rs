@@ -198,7 +198,12 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let mut inner: Vec<gpui::AnyElement> = Vec::new();
     match &chat.aux.remote.qr {
-        QrState::Ready { url } => inner.push(qr_white_card(url)),
+        QrState::Ready { url } => {
+            inner.push(qr_white_card(url));
+            // 前置告知（2026-10-24 用户要求）：微信侧没装 ClawBot 插件时，
+            // 扫码会被微信拦下——把出路提前亮出来
+            inner.push(kit::note(&tr("remote.qr_install_hint")));
+        }
         QrState::Scanned => {
             // 码保持可见（qr_url 缓存）：确认期间手机端可能要重扫
             if let Some(url) = &chat.aux.remote.qr_url {
