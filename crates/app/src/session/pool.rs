@@ -242,6 +242,11 @@ impl Chat {
         self.composer.pending_images = images;
         self.composer.history = history;
         self.composer.history_ix = None;
+        // 非微信线的活跃会话记为「桌面会话」：微信线单开 tab（2026-10-24
+        // 定夺），查看微信时 topbar 第一格继续显示并回到它
+        if self.aux.remote.wx_session.as_deref() != Some(key.as_str()) {
+            self.aux.remote.desktop_key = Some(key.clone());
+        }
         self.pool.active_key = key;
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
@@ -874,10 +879,15 @@ impl Chat {
     /// 当前会话标题（topbar 会话视图展示；≤30 字截断）。优先 pi 会话名，
     /// 回落首条用户消息。
     pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
+        self.session_title_of(&self.pool.active_key.clone(), cx)
+    }
+
+    /// 指定池 key 的会话标题（topbar 第一格在查看微信 tab 时显示桌面会话用）。
+    pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {
         let file = self
             .pool
             .runtimes
-            .get(&self.pool.active_key)
+            .get(key)
             .and_then(|rt| rt.read(cx).file.clone());
         let raw = file
             .and_then(|f| {

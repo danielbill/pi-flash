@@ -176,6 +176,10 @@ pub struct RemoteControl {
     /// 首拍认领当前活跃会话并持久化到 state 的 `session_key`；`/新建` 换新线；
     /// `/task` 选会话改指向；目标被删则回退活跃。
     pub wx_session: Option<String>,
+    /// 最近一个**非微信线**的活跃会话 key（switch_to 维护）：微信线是单开
+    /// tab（2026-10-24 定夺），查看微信时 topbar 第一格（会话 tab）继续
+    /// 显示并回到桌面会话，不被微信占用。
+    pub desktop_key: Option<String>,
     /// 显式启用待执行标记（设置页开关 / `wx.enable` / 扫码成功置位，
     /// 泵下一拍统一执行 [`Self::start_transport_from_state`]）。绕开
     /// SELF_START 门控的同时，让测试可以断言意图而不真起线程。
@@ -215,6 +219,7 @@ impl RemoteControl {
             qr_url: None,
             bound: None,
             wx_session: None,
+            desktop_key: None,
             wants_start: false,
             active_token: None,
             poll_error: None,

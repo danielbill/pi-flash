@@ -338,8 +338,12 @@ impl Chat {
             }
         }
         // 激活为普通会话 tab（文件 → 后台唤醒 + switch_to；草稿 → 直接
-        // switch_to 池内 runtime）
+        // switch_to 池内 runtime）。进微信线前把桌面活跃记入 desktop_key：
+        // 微信是单开 tab，topbar 第一格继续显示桌面会话（2026-10-24 定夺）
         if let Some(key) = self.aux.remote.wx_session.clone() {
+            if self.pool.active_key != key {
+                self.aux.remote.desktop_key = Some(self.pool.active_key.clone());
+            }
             if std::path::Path::new(&key).is_file() {
                 if let Some(rt) = self.open_session_detached(std::path::PathBuf::from(&key), cx) {
                     self.switch_to(rt, cx);

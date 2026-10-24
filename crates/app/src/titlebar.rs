@@ -275,6 +275,11 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
         .items_end();
     // 固定段：置顶会话 tab（滚动区外，永不滚走）
     strip = strip.child(session_tab(chat, cx));
+    // 固定段：微信线 tab（060 单开 tab，2026-10-24 定夺）——微信线会话
+    // 自占一格，不占用第一格会话 tab
+    if chat.aux.remote.wx_session.is_some() {
+        strip = strip.child(wx_tab(chat, cx));
+    }
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
     // `track_scroll` 挂上句柄（zed tab bar 同款）后 gpui 每帧记 child
     // bounds → `ScrollHandle::scroll_to_item(ix)` 才能把激活 tab 滚进视口
@@ -454,9 +459,30 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
 /// 会话视图（Obsidian 卡片融底）；点击回会话视图。
 fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    let active = chat.layout.content_view == ContentView::Chat;
-    let title: SharedString = chat.session_title(cx).into();
+    // 微信线是单开 tab（2026-10-24 定夺）：查看微信时第一格不被占用——
+    // 继续显示桌面会话，点击回到它
+    let viewing_wx = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let desktop_key = if viewing_wx {
+        chat.aux.remote.desktop_key.clone()
+    } else {
+        None
+    };
+    let active = chat.layout.content_view == ContentView::Chat && !viewing_wx;
+    let title: SharedString = match &desktop_key {
+        Some(k) => chat.session_title_of(k, cx).into(),
+        None => chat.session_title(cx).into(),
+    };
+    let switch_desktop = desktop_key.clone();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+        // 查看微信时点击第一格 = 回桌面会话（而非空操作地切视图）
+        if let Some(k) = &switch_desktop {
+            if this.pool.active_key != *k {
+                if let Some(rt) = this.pool.runtimes.get(k).cloned() {
+                    this.switch_to(rt, cx);
+                    return;
+                }
+            }
+        }
         this.set_content_view(crate::ContentView::Chat);
         cx.notify();
     });
@@ -483,6 +509,32 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
         false,
     )
     .on_mouse_down(MouseButton::Right, ctx_menu)
+    .into_any_element()
+}
+
+/// 微信线 tab（060 单开 tab）：紧随会话 tab 的固定段，label = 微信通信，
+/// 无 × 无右键菜单（线常驻，关停走操作栏开关）。点击 = `open_wx`——激活
+/// 微信线会话；桌面活跃会话由 `switch_to` 记入 `desktop_key`，不被顶走。
+fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let active = chat.layout.content_view == ContentView::Chat
+        && chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let title: SharedString = tr("remote.panel_title").to_string().into();
+    let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+        this.open_wx(cx);
+    });
+    tab_shell(
+        "ctab-wx".into(),
+        Some(crate::ui::icon("smartphone", 12., t.text_muted).into_any_element()),
+        title,
+        active,
+        0.,
+        t,
+        switch,
+        None,
+        None,
+        false,
+    )
     .into_any_element()
 }
 
