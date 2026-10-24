@@ -63,7 +63,7 @@ pub(crate) fn fn_bar_status(
     };
     let icon_btn = {
         let weak = weak.clone();
-        div()
+        div() // ui-raw: ok 002 微信操作栏图标钮固定形制（060 发版隐藏模块，尺寸随设计稿钉死）
             .id("sfbar-wx-icon")
             .flex()
             .items_center()
@@ -114,7 +114,7 @@ pub(crate) fn fn_bar_status(
     // 刷新二维码（第 3 件）：强制换新码 + 开弹窗看码（002「重新绑定」）。
     let refresh_btn = {
         let weak = weak.clone();
-        div()
+        div() // ui-raw: ok 002 操作栏刷新二维码钮固定形制（同上）
             .id("sfbar-wx-qr")
             .flex()
             .items_center()
@@ -222,7 +222,7 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
     };
     // 紧凑小卡：header（标题 + 关闭）+ 居中 body（R_MODAL 10）
     let weak_close = weak.clone();
-    let header = div()
+    let header = div() // ui-raw: ok 002 二维码弹窗 header 36px 固定形制（同上）
         .h(px(36.))
         .flex_shrink_0()
         .flex()
@@ -320,7 +320,7 @@ fn rebind_hint(chat: &Chat) -> &'static str {
 ///（白底框 + 蓝字蓝边，与码方框的白衬同一套固定色，不跟主题走）。
 fn qr_refresh_link(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let weak = weak.clone();
-    div()
+    div() // ui-raw: ok 002 码方框内【刷新二维码】边框钮——用户定案白底蓝字蓝边不跟主题
         .id("wx-qr-refresh")
         .flex()
         .items_center()

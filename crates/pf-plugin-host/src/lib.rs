@@ -511,8 +511,11 @@ mod tests {
 
         let mut inst = PluginInstance::load(&path).expect("load");
         inst.init(name).expect("官方 proof 必须激活成功");
-        // 激活后 render 应有产出（多点校验过的路径）
-        assert!(!inst.render().is_empty(), "激活后应有渲染输出");
+        // 激活后渲染应有产出（多点校验过的路径；090-5 起 Paint 直绘面退役，回归组件树契约）
+        assert!(
+            !inst.render_json().expect("render").is_empty(),
+            "激活后应有渲染输出"
+        );
 
         // ② 占位符（fork 自建/无 key 构建）→ 拒载 + 原因
         install_proof_hook(proof_placeholder);

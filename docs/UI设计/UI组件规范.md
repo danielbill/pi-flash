@@ -484,6 +484,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | `market/pi_native_market/mod.rs` `dropdown_row` | py 7 | pi.dev select 选项逐值复刻 |
 | `status_bar.rs` 插件 tab（`plugin-tab-*`） | 46px 宽连体卡（w 46 / mt −4 / 底圆角 9） | 与「项目」tab 同形继承（020-1 tab 卡形制）；尺寸待 tab 体系 token 化时一并收编（beads 360） |
 | `status_bar.rs` 项目 tab（`project-tab`） | 同上 46px 连体卡 | 020-1 纯指示位升级为可点 tab（回 DockPanel::Default），与插件 tab 同形同源（beads 360） |
+| `remote_control/panel.rs` 操作栏图标钮 / 刷新钮 / 二维码弹窗 header / 码框内边框钮 | 图标钮 24×24 r6 / 刷新钮 px 8 gap 6 / header h 36 pl 12 / 边框钮 h 28 | 002-微信通信设计稿钉死形制（用户定案：白底蓝字蓝边固定色不跟主题；060 发版隐藏模块） |
 
 ---
 

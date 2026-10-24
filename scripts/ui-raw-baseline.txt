@@ -2,7 +2,7 @@
 # 格式: <相对路径> <命中数>；只允许人工 --update-baseline 重写。
 # 目标：逐模块把这些数字清零（先搬 ui/kit，再删行）。
 crates/app/src/ask_card.rs 7
-crates/app/src/dialogs.rs 8
+crates/app/src/dialogs.rs 6
 crates/app/src/editor/markdown/mod.rs 1
 crates/app/src/editor/view.rs 4
 crates/app/src/ext_ui.rs 2
@@ -47,3 +47,4 @@ crates/app/src/shell/render.rs 1
 crates/app/src/status_bar.rs 1
 crates/app/src/titlebar.rs 5
 crates/app/src/top_panels.rs 2
+crates/app/src/remote_control/panel.rs 0
