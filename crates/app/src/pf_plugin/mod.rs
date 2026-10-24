@@ -32,8 +32,12 @@ pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
-    /// 安装目录 = `<数据目录>/plugins/<id>/`
+    /// 安装目录 = `<数据目录>/plugins/<pkg>/[<version>/]`
     pub dir: PathBuf,
+    /// 顶层包目录名（`plugins/<pkg>/`）——台账 name 经 `pf_plugins::dir_name`
+    /// 转写的形态。**运行态条目 ↔ 台账条目对账靠它**（停用/卸载），版本层
+    /// 目录名是版本号，不能当身份用（090-4 v5 踩过：停用形同虚设）。
+    pub pkg: String,
     pub id: String,
     pub title_zh: String,
     pub title_en: Option<String>,
@@ -228,6 +232,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 
     let mut m = PluginManifest {
         dir: dir.to_path_buf(),
+        pkg: String::new(), // 扫描期回填（顶层包目录名）
         id: String::new(),
         title_zh: String::new(),
         title_en: None,
@@ -436,53 +441,28 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 
 /// 扫描 `<数据目录>/plugins/*/` 只出清单（后台线程可调——PluginEntry 持
 /// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过；
-/// 台账标了停用的目录整个跳过（不装载不绘制，090-4 v5）。
+/// 台账标了停用的包整个跳过（不装载不绘制，090-4 v5）。
 pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
     let Some(root) = pi_link::paths::plugins_dir() else {
         return Vec::new();
     };
+    // 停用名单按台账包名的目录别名收（`@scope__name` 与平铺 `name` 都认）
     let disabled: std::collections::HashSet<String> = pi_link::pf_plugins::load_ledger()
         .into_iter()
         .filter(|l| l.disabled)
-        .map(|l| pi_link::pf_plugins::dir_name(&l.name))
+        .flat_map(|l| pi_link::pf_plugins::dir_aliases(&l.name))
         .collect();
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(&root) else {
-        return out;
-    };
-    // 布局两档：`plugins/<dir>/pf-plugin.toml`（dev 手工平铺）与
-    // `plugins/<dir>/<version>/pf-plugin.toml`（market 安装链落盘，带版本层）。
-    // 一层没有清单就下钻一层收版本目录——安装台账决定启停，这里只认清单。
-    let mut dirs: Vec<_> = rd
-        .flatten()
-        .flat_map(|e| {
-            let d = e.path();
-            if !d.is_dir() {
-                return Vec::new();
-            }
-            if d.join("pf-plugin.toml").is_file() {
-                return vec![d];
-            }
-            std::fs::read_dir(&d)
-                .map(|rd| {
-                    rd.flatten()
-                        .map(|v| v.path())
-                        .filter(|v| v.is_dir() && v.join("pf-plugin.toml").is_file())
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-        .collect();
-    dirs.sort();
-    for dir in dirs {
-        if dir
-            .file_name()
-            .is_some_and(|f| disabled.contains(f.to_string_lossy().as_ref()))
-        {
+    let mut candidates = scan_candidates(&root);
+    candidates.sort_by(|a, b| a.1.cmp(&b.1));
+    for (pkg, dir) in candidates {
+        // 停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比包名
+        // 永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
+        if disabled.contains(&pkg) {
             continue; // 停用（台账 disabled 位）
         }
         match parse_manifest(&dir) {
-            Ok(m) => {
+            Ok(mut m) => {
                 // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
                 if m.wasm.is_none()
                     && m.status_bar.is_none()
@@ -491,6 +471,7 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
                 {
                     continue; // 纯库包
                 }
+                m.pkg = pkg;
                 register_plugin_dir(&m.id, &dir);
                 out.push(m);
             }
@@ -498,6 +479,41 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
         }
     }
     out
+}
+
+/// 扫插件根目录出 `(顶层包目录名, 清单所在目录)` 候选。
+///
+/// 布局两档：`plugins/<pkg>/pf-plugin.toml`（dev 手工平铺）与
+/// `plugins/<pkg>/<version>/pf-plugin.toml`（market 安装链落盘，带版本层）。
+/// 顶层没有清单就下钻一层收版本目录。**顶层包目录名才是可对账的身份**，
+/// 下钻出来的版本目录只是装载位置。
+fn scan_candidates(root: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    rd.flatten()
+        .flat_map(|e| {
+            let d = e.path();
+            if !d.is_dir() {
+                return Vec::new();
+            }
+            let Some(pkg) = d.file_name().map(|f| f.to_string_lossy().into_owned()) else {
+                return Vec::new();
+            };
+            if d.join("pf-plugin.toml").is_file() {
+                return vec![(pkg, d)];
+            }
+            std::fs::read_dir(&d)
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|v| v.path())
+                        .filter(|v| v.is_dir() && v.join("pf-plugin.toml").is_file())
+                        .map(|v| (pkg.clone(), v))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +527,29 @@ static PLUGIN_ASSETS: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLo
 static PLUGIN_DIRS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
 
 fn register_plugin_dir(id: &str, dir: &Path) {
-    if let Ok(mut c) = PLUGIN_DIRS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+    if let Ok(mut c) = PLUGIN_DIRS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
         c.insert(id.to_string(), dir.to_path_buf());
+    }
+}
+
+/// 卸载后清插件 id 的进程级残留：目录登记 + 资产缓存（否则同名重装读到
+/// 旧字节 / 旧路径，图标永远是死链）。
+pub(crate) fn plugin_forget(id: &str) {
+    if let Ok(mut c) = PLUGIN_DIRS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        c.remove(id);
+    }
+    if let Ok(mut c) = PLUGIN_ASSETS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        let prefix = format!("plugins/{id}/");
+        c.retain(|k, _| !k.starts_with(&prefix));
     }
 }
 
@@ -684,8 +721,44 @@ impl Chat {
     /// 状态栏插件 tab 点击：左列切到该插件面板（懒加载链 02 §4：
     /// 建 ctx → onPanelOpen → render → 行缓存）。重复点击 = 重新激活（刷新）。
     pub(crate) fn open_plugin_dock(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        // 已停用的插件不开面板（tab 本身已隐藏，这里只是兼作硬门）
+        if self.plugins.plugins.get(ix).is_none_or(|e| e.disabled) {
+            return;
+        }
         self.layout.dock_panel = crate::DockPanel::Plugin(ix);
         self.plugin_refresh(ix, cx);
+    }
+
+    /// 台账包名 → 运行态条目下标。对账走清单的**顶层包目录名**
+    /// （市场布局 `@scope__name` 与 dev 平铺 `name` 两种别名都认）——
+    /// 拿 `manifest.dir.file_name()` 比是版本号，永远比不中。
+    pub(crate) fn plugin_ix_by_pkg(&self, name: &str) -> Option<usize> {
+        let aliases = pi_link::pf_plugins::dir_aliases(name);
+        self.plugins
+            .plugins
+            .iter()
+            .position(|e| aliases.iter().any(|a| *a == e.manifest.pkg))
+    }
+
+    /// 运行态就地撤下（停用 / 卸载共用）：丢 JS 运行时与组件树缓存、收起右键
+    /// 菜单；**左 dock 正显示它就退回默认面板**。
+    ///
+    /// 不撤组件树就是「停用了左面板还在照旧渲染」：`plugin_panel_view` 只认
+    /// `tree_loaded` + 缓存树，不看 disabled 位（090-4 v5 踩过）。
+    pub(crate) fn plugin_evict(&mut self, ix: usize) {
+        let docked = self.layout.dock_panel == crate::DockPanel::Plugin(ix);
+        if let Some(entry) = self.plugins.plugins.get_mut(ix) {
+            entry.disabled = true;
+            entry.js = None;
+            entry.host = None;
+            entry.body = None;
+            entry.tree_loaded = false;
+            entry.cell_menu = None;
+            entry.section_scrolls.borrow_mut().clear();
+        }
+        if docked {
+            self.layout.dock_panel = crate::DockPanel::Default;
+        }
     }
 
     /// 懒加载就绪：runtime 已建或现建；禁用/失败返回 false（已 toast）。
@@ -1152,6 +1225,46 @@ entry = \"main.js\" # 入口
         let m = parse_manifest(&dir).expect("带行内注释的清单应通过");
         assert_eq!(m.title_zh, "快捷#面板"); // 引号内 # 保留
         assert_eq!(m.panels[0].entry, "main.js");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 两档布局都必须给出**同一个顶层包目录名**——停用过滤与「台账 ↔ 运行态」
+    /// 对账都靠它；下钻出来的版本目录名只是装载位置，不是身份。
+    #[test]
+    fn scan_candidates_keeps_top_pkg() {
+        let tmp = std::env::temp_dir().join(format!("pf-scan-pkg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // market 安装链布局：plugins/<pkg>/<version>/pf-plugin.toml
+        write_manifest(
+            &tmp.join("@scope__quick/0.1.0"),
+            &GOOD.replace("id = \"quick-panel\"", "id = \"quick\""),
+        );
+        // dev 手工平铺布局：plugins/<pkg>/pf-plugin.toml
+        write_manifest(&tmp.join("flat"), &GOOD);
+
+        let mut got: Vec<(String, String)> = scan_candidates(&tmp)
+            .into_iter()
+            .map(|(pkg, dir)| {
+                (
+                    pkg,
+                    dir.strip_prefix(&tmp)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                )
+            })
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "@scope__quick".to_string(),
+                    "@scope__quick/0.1.0".to_string()
+                ),
+                ("flat".to_string(), "flat".to_string()),
+            ]
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
