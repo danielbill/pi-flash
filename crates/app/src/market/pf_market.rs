@@ -534,9 +534,12 @@ fn row_slice(row: gpui::Div, m: &Metrics, t: &'static Theme) -> AnyElement {
     centered(slice_shell(m, false, false, t).child(row), m).into_any_element()
 }
 
-/// 空态行（pi 页 `.packages-empty` 同构：纯文本，无插图）。
+/// 空态行（pi 页 `.packages-empty` 同构：纯文本，无插图）；水平居中。
 fn empty_line(text: &'static str, t: &'static Theme) -> AnyElement {
     gpui::div()
+        .flex()
+        .justify_center()
+        .w_full()
         .py(px(24.))
         .text_size(px(px18::BODY_FS))
         .text_color(muted(t))
