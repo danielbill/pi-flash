@@ -459,6 +459,11 @@ impl Chat {
     /// tab** 激活——桌面与微信同权同视图（2026-10-24 定夺）。未创建时自动
     /// 弹出二维码（002「插件自动展示二维码」）。
     pub(crate) fn open_wx(&mut self, cx: &mut gpui::Context<Self>) {
+        // 发版排除总开关（dev-flag `wx` 默认关）：菜单/tab 已不渲染，
+        // 自动化 `content.view wx` / `panel.dock wx` 兑底在这里吃掉
+        if !crate::services::workspace::wx_enabled() {
+            return;
+        }
         self.dlg.market_menu = None;
         let st = wxprobe::state::load();
         let has_token = wxprobe::transport::require_token(&st).is_ok();

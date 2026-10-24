@@ -276,8 +276,8 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
     // 固定段：置顶会话 tab（滚动区外，永不滚走）
     strip = strip.child(session_tab(chat, cx));
     // 固定段：微信线 tab（060 单开 tab，2026-10-24 定夺）——微信线会话
-    // 自占一格，不占用第一格会话 tab
-    if chat.aux.remote.wx_session.is_some() {
+    // 自占一格，不占用第一格会话 tab；dev-flag `wx` 关（默认）= 不渲染
+    if crate::services::workspace::wx_enabled() && chat.aux.remote.wx_session.is_some() {
         strip = strip.child(wx_tab(chat, cx));
     }
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
