@@ -403,3 +403,19 @@
   快照（fn 指针拿不到 Chat，装载/动作后重灌）；measure-text 用 App 级 TextSystem
   逐字符 advance 求和（WindowTextSystem.layout_line 需 window，fn 指针不可达）
 - 提交：栈顶 `wasm-render` 分支（含 branch-2/3 两枚先行 hunks）；测试 9+3 全绿
+
+## 090-5 加密插件端到端跑通（2026-10-24 晚）
+- **契约收敛**：wasm `render()` 回到 01 规范组件树 JSON（与 `main.js` 逐字段一致），
+  宿主 `panel::resolve` 单一解释器渲染——wasm/JS 两种载体视觉必然一致；Paint 直绘面退役
+- **事件通道**：WIT `on-event(plugin-event{kind,id,path})`，`contributes.*` 回调
+  （panel-open / menu / command）全走一条；宿主 `plugin_menu_fire`/`plugin_command_fire`
+  双路分发；wasm 补 `file-icon`/`is-executive` 两个与 JS `ctx` 对等的宿主能力
+- **安装即终态**：预编译 cwasm 压在安装里（pi-link 安装尾声钩子 + 失败回滚），
+  缓存改绑 `<插件目录>/.cache/`（卸载随删、拷走跟走、启动 sweep_orphans 收尾）
+- **卸载 bug 修复**：先就地撤运行态释放 cwasm mmap，再删目录；台账先摘，
+  目录删不掉也不会「显示已卸装又复活」（os error 32）
+- **开发构建自签 proof**：build.rs 仅 `PROFILE=debug` 时调 `proof.mjs` 用本机 dev
+  私钥现签，`cargo run -p app` 即可装加密插件；release 仍只认流水线注入；
+  另修「证明钩子只在后台验签线程注入 → 面板先 init 读 fallback 拒载」的竞态
+- 实测：市场装 `quick-panel@0.1.4` → 验签通过（装载 3.2s/init 2.7ms，缓存命中毫秒级）
+  → tab 闪电图标 → 面板分区/图标/色调与 JS 版一致 → 右键「设为快捷」写收藏可用
