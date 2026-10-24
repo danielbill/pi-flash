@@ -2,6 +2,38 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.3.0] - 2026-10-24
+
+This release updates the bundled pi core to 1.4;
+ships the "Pi-Flash Plugins" market along with the first "Quick Panel" plugin;
+plus a batch of stability and UI fixes.
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19.
+You can also download the zip, unzip it and double-click `pi-flash.exe` — no Node needed.
+Windows x64 only.
+
+### New
+- Pi-Flash plugin market (090-4): a new "Pi-Flash Plugins" page in the top-bar menu — browse and install Pi-Flash plugins; "All plugins | Installed" tab switch; the Installed tab shows details, uninstall confirmation and an inline enable/disable switch (a disabled plugin disappears from the status bar / file tree / distribution immediately). (e3d62a2, 1454b4d, d6293d3, 9545e84, 1f73360, e1311a5, ff98d1a)
+- New "Quick Panel" feature
+
+### Bug fixes
+- The PF icon pinned to the taskbar broke after updates: stable AUMID + Start Menu entry with dead-link self-healing. (efa5394)
+- Model list silently not refreshing after saving an API key: empty-catalog placeholder + a persistent fetch button + a Failed probe state. (7a7b2dd)
+- Two code-block fixes in sessions: stale syntax highlighting after switching themes; add the missing 1px code frame. (be6b17b, ad94775)
+- Status-bar tab hover darkened the active card in light theme. (936c3b7)
+- Scrollbar cross-talk between the two left-panel areas: dragging one scrollbar moved the other. (4ee6512)
+- Gap drift between the "Settings → Extensions" submenu and its parent menu (when long labels widen the card). (72fe285)
+
+### Improvements
+- Bundled pi 1.3.0 → 1.4.0. (7a838ff)
+- Divider specification unified: 1px resting line, 4px accent hover/drag overlay line (one shared implementation behind the content-area left edge / left dock split / plugin panel), hover hit thickness settled at 12px. (c451b62, e58755c, c8743ec)
 ## [0.2.3] - 2026-10-22
 
 This release ships the Pi Extension Market: browse, search and install pi extensions without leaving PF;
