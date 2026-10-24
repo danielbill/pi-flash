@@ -1,285 +1,163 @@
 //! 微信通信页（060；`ContentView::Wx` 内容区全屏页，三横菜单唯一入口）。
-//! 2026-10-24 两栏重构（截图驱动，对齐 ZCode 远控入口版式）：
-//! 左「手机扫码连接」= 状态卡 + 内联二维码（虚线框）；右「使用 Bot Channel」
-//! = 微信渠道卡 + 机器人管理（展开绑定码 / bot_id）。
-//!
-//! **刻意不搬**（与截图的差异，均为定夺非遗漏）：
-//! - 飞书 / Lark / Telegram 渠道卡 —— 060 范围只有微信（§0）；
-//! - 「无法扫码？可以在手机上打开链接 + 复制链接」行 —— PF 的码只能扫，
-//!   没有 H5 工作区链接可复制。
-//!
-//! 控件取 ui/kit（card / state_badge / note / config_button / button_base）；
-//! [`mono_lines`] 供状态串与 bot_id 共用。
+//! 2026-10-24 按 `pi-flash-plugins/docs/插件设计/002-微信通信.md` 重绘：
+//! 上下两区（**状态说明区** + **二维码生成展示区**），单列布局为插件化
+//! （pf-wxbot）铺路。状态判定沿用七态生命周期（①未创建 ②微信侧出错
+//! ③更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中）。
 
 use gpui::{FontWeight, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::appearance::theme::{Theme, theme as T};
+use crate::appearance::theme::theme as T;
 use crate::i18n::tr;
 use crate::ui::kit::{self, Btn};
 
 use super::QrState;
 
-/// 微信品牌绿（simple-icons wechat 主色，渠道卡 icon 着色）。
+/// 微信品牌绿（simple-icons wechat 主色，链路行微信 icon 着色）。
 const WX_GREEN: u32 = 0x07c160;
 
-/// 多行等宽块：QR 结果、状态串、长 bot_id 都走它。
-fn mono_lines(lines: Vec<String>, size: f32, dim: bool) -> gpui::AnyElement {
-    let t = T();
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .font_family(crate::editor::markdown::MONO_FAMILY)
-        .text_size(crate::appearance::ui_size(size))
-        .text_color(if dim { rgb(t.text_dim) } else { rgb(t.text) });
-    for l in lines {
-        col = col.child(div().whitespace_nowrap().child(l));
-    }
-    col.into_any_element()
-}
-
-/// 栏头：图标 + 标题（两栏同构）。
-fn col_header(icon: &'static str, title: &str) -> gpui::AnyElement {
-    let t = T();
-    let title_el = div()
-        .text_size(crate::appearance::ui_size(14.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(t.text))
-        .child(SharedString::from(title.to_string()));
-    div()
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .child(crate::ui::icon(icon, 16., t.text))
-        .child(title_el)
-        .into_any_element()
-}
-
-/// 状态卡右缘的动作钮（渠道级停启）。
-enum CardAction {
-    Stop,
-    Start,
-}
-
-/// 左栏状态卡：标题 + 状态徽标 + 右缘动作钮 + 一句提示。
-/// 七态生命周期（2026-10-24 用户定夺，状态号标在各分支）：
-/// ①未扫描（pf-wxbot 不存在）②扫码微信侧出错 ③重新扫码更新重建
-/// ④微信已返回但我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中。
-/// 判定优先级：扫码流程 Error > 流程进行中（有 token = ③，无 = ①）>
-/// Done 的落地结果（④/⑤/⑥/⑦）> Idle 的渠道启停态（⑥/⑦/①）。
-fn scan_status_card(
+/// 状态说明区（002 §状态说明区）：第一行 `Pi-Flash ⟷ 微信` 链路标识 +
+/// 启停开关（仅已创建显示），第二行固定说明 + 随七态变化的提示。
+fn status_area(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
-    t: &'static Theme,
     running: bool,
     has_token: bool,
 ) -> gpui::AnyElement {
-    // 徽标点色：就绪/更新/已绑 = WARN 黄，运行/绑定成功 = UNREAD 绿，
-    // 出错/失败/过期 = danger，中性（获取中/未创建/未启用）= text_faint
-    let running_state = || {
-        (
-            tr("remote.title_running"),
-            tr("remote.status_running").to_string(),
-            crate::appearance::theme::UNREAD,
-            tr("remote.scan_wait_hint").to_string(),
-            Some(CardAction::Stop),
-        )
+    let t = T();
+    let name = |s: &str| {
+        div()
+            .text_size(crate::appearance::ui_size(13.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(t.text))
+            .child(SharedString::from(s.to_string()))
     };
-    let stopped_state = || {
-        (
-            tr("remote.scan_stopped"),
-            tr("remote.st_disabled").to_string(),
-            t.text_faint,
-            tr("remote.scan_stopped_hint").to_string(),
-            Some(CardAction::Start),
-        )
+    // linked/unlink = 是否扫码创建成功（状态①为 unlink，其余为 link）
+    let link = if has_token {
+        crate::ui::icon("link-2", 14., crate::appearance::theme::UNREAD)
+    } else {
+        crate::ui::icon("link-2-off", 14., t.text_faint)
     };
-    let (title, badge, dot, hint, action): (&str, String, u32, String, Option<CardAction>) =
-        match &chat.aux.remote.qr {
-            // ② 扫码微信侧出错（原文只进日志，界面给行动指引）
-            QrState::Error(m) => (
-                tr("remote.title_error"),
-                tr("remote.st_failed").to_string(),
-                t.danger,
-                friendly_qr_error(m),
-                None,
-            ),
-            // ③ 重新扫码 = pf-wxbot 更新重建（旧 bot 还在服务，扫完自动换新）
-            QrState::Loading | QrState::Ready { .. } | QrState::Scanned if has_token => (
-                tr("remote.title_rebind"),
-                tr("remote.st_rebinding").to_string(),
-                crate::appearance::theme::WARN,
-                tr("remote.hint_rebind").to_string(),
-                running.then_some(CardAction::Stop),
-            ),
-            // ① 未扫描：扫码进行中的三个形态
-            QrState::Loading => (
-                tr("remote.qr_title"),
-                tr("remote.st_getting").to_string(),
-                t.text_faint,
-                tr("remote.qr_loading").to_string(),
-                None,
-            ),
-            QrState::Ready { .. } => (
-                tr("remote.scan_wait"),
-                tr("remote.st_ready").to_string(),
-                crate::appearance::theme::WARN,
-                tr("remote.qr_hint").to_string(),
-                None,
-            ),
-            QrState::Scanned => (
-                tr("remote.scan_wait"),
-                tr("remote.bound_scanned").to_string(),
-                crate::appearance::theme::WARN,
-                tr("remote.qr_confirm").to_string(),
-                None,
-            ),
-            // ④⑤ 微信已正常返回 → 看我方落地结果
-            QrState::Done { .. } => {
-                if !has_token {
-                    // ④ 状态写入失败（pf-wxbot 没落盘）
-                    (
-                        tr("remote.title_create_failed"),
-                        tr("remote.st_failed").to_string(),
-                        t.danger,
-                        tr("remote.hint_create_failed")
-                            .replace("{err}", &tr("remote.st_write_failed")),
-                        Some(CardAction::Start),
-                    )
-                } else if running {
-                    // ⑥ 创建完成且渠道已起 —— 生命周期已推进到启用中
-                    running_state()
-                } else if chat.aux.remote.wants_start {
-                    // ⑤ 创建成功，泵下一拍自动拉渠道（瞬态）
-                    (
-                        tr("remote.qr_done"),
-                        tr("remote.st_bound").to_string(),
-                        crate::appearance::theme::UNREAD,
-                        tr("remote.hint_starting").to_string(),
-                        None,
-                    )
-                } else if let Some(err) = chat.aux.remote.start_error.as_deref() {
-                    // ④ 我方创建出错（渠道没能起来）
-                    (
-                        tr("remote.title_create_failed"),
-                        tr("remote.st_failed").to_string(),
-                        t.danger,
-                        tr("remote.hint_create_failed").replace("{err}", err),
-                        Some(CardAction::Start),
-                    )
-                } else {
-                    // ⑦ 关停中（用户主动停的，start_error 已随关停清掉）
-                    stopped_state()
-                }
-            }
-            // 码过期：泵下一拍自动续码（瞬态），归在①的扫码循环里
-            QrState::Expired => (
-                tr("remote.qr_title"),
-                tr("remote.st_expired").to_string(),
-                t.danger,
-                tr("remote.qr_expired").to_string(),
-                None,
-            ),
-            QrState::Idle => {
-                if running {
-                    running_state()
-                } else if has_token {
-                    stopped_state()
-                } else {
-                    // ① 未扫描：pf-wxbot 不存在
-                    (
-                        tr("remote.qr_title"),
-                        tr("remote.st_absent").to_string(),
-                        t.text_faint,
-                        tr("remote.scan_begin_hint").to_string(),
-                        None,
-                    )
-                }
-            }
-        };
-    let action_btn = action.map(|a| match a {
-        CardAction::Stop => kit::config_button(
-            "wx-channel-stop",
-            weak,
-            &tr("remote.scan_stop"),
-            Btn::Secondary,
-            true,
-            false,
-            |c, cx| {
-                c.aux.remote.set_enabled(false);
-                cx.notify();
-            },
-        ),
-        CardAction::Start => kit::config_button(
-            "wx-channel-start",
-            weak,
-            &tr("remote.scan_start"),
-            Btn::Secondary,
-            true,
-            false,
-            |c, cx| {
-                c.aux.remote.set_enabled(true);
-                cx.notify();
-            },
-        ),
-    });
-    let title_el = div()
-        .text_size(crate::appearance::ui_size(13.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(t.text))
-        .child(SharedString::from(title.to_string()));
     let mut row = div()
         .flex()
         .items_center()
-        .gap(px(8.))
-        .child(title_el)
-        .child(kit::state_badge(&badge, dot))
-        .child(div().flex_1());
-    if let Some(b) = action_btn {
-        row = row.child(b);
+        .gap(px(6.))
+        // logo-marks 的字形只占画布 ~2/3，放大到 20 与 14px lucide 邻居对齐
+        .child(crate::ui::icon_path("icons/logo-marks.svg", 20., t.text))
+        .child(name("Pi-Flash"))
+        .child(link)
+        .child(crate::ui::icon("wechat", 16., WX_GREEN))
+        .child(name("微信"));
+    // phone icon 仅已创建显示：accent = 启用中，faint = 停用
+    if has_token {
+        row = row.child(crate::ui::icon(
+            "smartphone",
+            14.,
+            if running { t.accent } else { t.text_faint },
+        ));
+    }
+    row = row.child(div().flex_1());
+    // switch 仅已创建显示（002：linked 状态下才显示）
+    if has_token {
+        row = row.child(kit::config_switch(
+            "wx-enable",
+            weak,
+            running,
+            false,
+            |c, cx| {
+                let on = !c.aux.remote.is_running();
+                c.aux.remote.set_enabled(on);
+                cx.notify();
+            },
+        ));
     }
     kit::card()
         .p(px(12.))
         .flex()
         .flex_col()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(row)
-        .child(kit::note(&hint))
+        .child(kit::note(&tr("remote.wx_desc")))
+        .child(kit::note(&state_hint(chat, running, has_token)))
         .into_any_element()
 }
 
-/// 左栏二维码区：虚线框（R_CARD 8 + dashed），内容随 `QrState` 变化。
-/// 取码由泵自动驱动（页在屏上即出码，用户零点击），Idle 与 Loading 同显示。
-fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+/// 第二行提示：随七态生命周期变化（002 §状态说明区）。
+fn state_hint(chat: &Chat, running: bool, has_token: bool) -> String {
+    match &chat.aux.remote.qr {
+        // ② 微信侧出错
+        QrState::Error(_) => tr("remote.hint_wx_error").to_string(),
+        // ③ 更新重建（重新扫码中，旧 bot 仍在服务，成功后自动替换重启）
+        QrState::Loading | QrState::Ready { .. } | QrState::Scanned | QrState::Expired
+            if has_token =>
+        {
+            tr("remote.hint_rebind").to_string()
+        }
+        // ④⑤⑥⑦ 微信已正常返回 → 看我方落地结果
+        QrState::Done { .. } => {
+            if !has_token {
+                // ④ 状态写入失败
+                tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed"))
+            } else if running {
+                // ⑥ 启用中
+                tr("remote.scan_wait_hint").to_string()
+            } else if chat.aux.remote.wants_start {
+                // ⑤ 创建成功，泵下一拍自动拉渠道（瞬态）
+                tr("remote.hint_starting").to_string()
+            } else if let Some(err) = chat.aux.remote.start_error.as_deref() {
+                // ④ 我方创建出错（渠道没能起来）
+                tr("remote.hint_create_failed").replace("{err}", err)
+            } else {
+                // ⑦ 关停中
+                tr("remote.scan_stopped_hint").to_string()
+            }
+        }
+        QrState::Idle => {
+            if running {
+                // ⑥ 启用中
+                tr("remote.scan_wait_hint").to_string()
+            } else if has_token {
+                // ⑦ 关停中
+                tr("remote.scan_stopped_hint").to_string()
+            } else {
+                // ① 未创建：pf-wxbot 不存在
+                tr("remote.hint_absent").to_string()
+            }
+        }
+        // ① 未创建：取码/扫码进行中（过期自动续码，同属创建流程）
+        _ => tr("remote.hint_absent").to_string(),
+    }
+}
+
+/// 二维码生成展示区（002 §二维码生成展示区）：三态——未创建/换绑中出码、
+/// 已创建不展示、超时蒙白。虚线框（R_CARD 8 + dashed），取码由泵自动驱动。
+fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>, has_token: bool) -> gpui::AnyElement {
     let t = T();
     let mut inner: Vec<gpui::AnyElement> = Vec::new();
     match &chat.aux.remote.qr {
-        QrState::Ready { url } => {
-            inner.push(qr_white_card(url));
-            // 前置告知（2026-10-24 用户要求）：微信侧没装 ClawBot 插件时，
-            // 扫码会被微信拦下——把出路提前亮出来
-            inner.push(kit::note(&tr("remote.qr_install_hint")));
+        // 已创建（且不在换绑流程中）：不展示二维码，给重建入口
+        QrState::Idle | QrState::Done { .. } if has_token => {
+            inner.push(kit::note(&tr("remote.qr_created")));
+            inner.push(qr_regen_button(weak));
         }
+        // ④ 微信已返回但我方没写进状态：按出错蒙白处理
+        QrState::Done { .. } => inner.push(qr_masked(
+            chat,
+            weak,
+            tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
+        )),
+        // 扫码超时：白蒙旧码（002：『扫描超时，请点击重新扫码』）
+        QrState::Expired => inner.push(qr_masked(chat, weak, tr("remote.qr_timeout").to_string())),
+        QrState::Error(m) => inner.push(qr_masked(chat, weak, friendly_qr_error(m))),
+        // 未创建/换绑中：二维码本体（Scanned 保持可见，确认期间可重扫）
+        QrState::Ready { url } => inner.push(qr_white_card(url)),
         QrState::Scanned => {
-            // 码保持可见（qr_url 缓存）：确认期间手机端可能要重扫
             if let Some(url) = &chat.aux.remote.qr_url {
                 inner.push(qr_white_card(url));
             }
             inner.push(kit::note(&tr("remote.qr_confirm")));
         }
         QrState::Idle | QrState::Loading => inner.push(kit::note(&tr("remote.qr_loading"))),
-        QrState::Done { bot_id } => {
-            let mut lines = vec![tr("remote.qr_done").to_string()];
-            if let Some(b) = bot_id {
-                lines.push(format!("bot_id = {b}"));
-            }
-            lines.push(tr("remote.qr_help").into());
-            inner.push(mono_lines(lines, 11., true));
-        }
-        // 过期/出错：**码上蒙白**，提示与按钮直接压在码上（2026-10-24 用户
-        // 定夺）；过期后泵下一拍自动续码，出错才需要点「刷新重扫」
-        QrState::Expired => inner.push(qr_masked(chat, weak, tr("remote.qr_expired").to_string())),
-        QrState::Error(m) => inner.push(qr_masked(chat, weak, friendly_qr_error(m))),
     }
     div()
         .w_full()
@@ -303,8 +181,8 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
 fn friendly_qr_error(m: &str) -> String {
     let low = m.to_lowercase();
     if low.contains("timeout") || m.contains("超时") {
-        // 超时按过期口径显示（用户定夺）
-        tr("remote.qr_expired").to_string()
+        // 超时按 002 的超时口径显示
+        tr("remote.qr_timeout").to_string()
     } else if m.contains("未安装") || m.contains("未识别的扫码状态") {
         // worker 拼好的行动指引，保留
         m.to_string()
@@ -313,8 +191,8 @@ fn friendly_qr_error(m: &str) -> String {
     }
 }
 
-/// 码上蒙白：二维码（有缓存就画）+ 不透明白色蒙层 + 居中提示与「刷新重扫」。
-/// 没有缓存（取码就失败）时用同尺寸白底占位，蒙层文案不变。
+/// 码上蒙白：二维码（有缓存就画）+ 不透明白色蒙层 + 居中提示与「重新生成
+/// 二维码」。没有缓存（取码就失败）时用同尺寸白底占位，文案不变。
 fn qr_masked(chat: &Chat, weak: &gpui::WeakEntity<Chat>, message: String) -> gpui::AnyElement {
     let t = T();
     let mut wrap = div().relative();
@@ -342,16 +220,16 @@ fn qr_masked(chat: &Chat, weak: &gpui::WeakEntity<Chat>, message: String) -> gpu
         .justify_center()
         .gap(px(10.))
         .child(message_el)
-        .child(qr_refresh_button(weak));
+        .child(qr_regen_button(weak));
     wrap.child(overlay).into_any_element()
 }
 
-/// 「刷新重扫」钮（过期/出错共用的重取入口；`begin_qr` 幂等）。
-fn qr_refresh_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+/// 「重新生成二维码」钮（重建机器人；`begin_qr` 幂等）。
+fn qr_regen_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     kit::config_button(
         "wx-qr-refresh",
         weak,
-        &tr("remote.qr_refresh"),
+        &tr("remote.qr_regen"),
         Btn::Secondary,
         false,
         false,
@@ -362,7 +240,7 @@ fn qr_refresh_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     )
 }
 
-/// 二维码白卡：白色圆角衬底（R_SHEET 12，截图样式），内装实心方块码。
+/// 二维码白卡：白色圆角衬底（R_SHEET 12），内装实心方块码。
 fn qr_white_card(url: &str) -> gpui::AnyElement {
     div()
         .rounded(px(12.))
@@ -418,58 +296,12 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 右栏微信渠道卡：品牌 icon + 说明。启停动作只在左栏状态卡。
-fn wechat_card() -> gpui::AnyElement {
-    let t = T();
-    let title_el = div()
-        .text_size(crate::appearance::ui_size(13.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(t.text))
-        .child(SharedString::from(tr("remote.wx_name").to_string()));
-    kit::card()
-        .p(px(12.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(crate::ui::icon("wechat", 20., WX_GREEN))
-                .child(title_el),
-        )
-        .child(kit::note(&tr("remote.wx_desc")))
-        .into_any_element()
-}
-
-/// 页面主体：两栏（左「扫码连接」弹性 + 右「Bot 渠道」`LIST_W` 定宽），
-/// 纵向滚动。页头即两栏栏头（tab 条已有「微信通信」标题，无全局控制栏）。
+/// 页面主体：单列上下两区（002 §UI设计）——上「状态说明区」、下「二维码
+/// 生成展示区」，纵向滚动，为插件化（pf-wxbot）铺路。
 pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let running = chat.aux.remote.is_running();
-    let token = wxprobe::state::load();
-    let has_token = wxprobe::transport::require_token(&token).is_ok();
-
-    let left = div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(12.))
-        .child(col_header("smartphone", &tr("remote.scan_title")))
-        .child(scan_status_card(chat, weak, t, running, has_token))
-        .child(qr_area(chat, weak));
-
-    let right = div()
-        .w(px(kit::LIST_W))
-        .flex_shrink_0()
-        .flex()
-        .flex_col()
-        .gap(px(12.))
-        .child(col_header("bot", &tr("remote.bot_title")))
-        .child(wechat_card());
-
+    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
     div()
         .id("wx-panel")
         .flex_1()
@@ -481,13 +313,13 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEleme
         .child(
             div()
                 .flex()
-                .items_start()
-                .gap(px(16.))
+                .flex_col()
+                .gap(px(12.))
                 .px(px(20.))
                 .pt(px(16.))
                 .pb(px(20.))
-                .child(left)
-                .child(right),
+                .child(status_area(chat, weak, running, has_token))
+                .child(qr_area(chat, weak, has_token)),
         )
         .into_any_element()
 }
