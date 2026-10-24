@@ -98,6 +98,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.tab_installed", "已安装", "已安裝", "Installed"),
     ("market.pf.none_installed", "尚未安装任何插件", "尚未安裝任何外掛", "No plugins installed yet"),
     ("market.pf.uninstall_confirm", "卸载插件 {name}？", "卸載外掛 {name}？", "Uninstall plugin {name}?"),
+    ("market.pf.enable_failed", "启用失败：未找到插件清单（{name}）", "啟用失敗：未找到外掛清單（{name}）", "Enable failed: manifest not found ({name})"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),
