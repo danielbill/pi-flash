@@ -229,25 +229,8 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
     let weak_c = weak.clone();
 
     // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
+    // 列表头不再画「已安装」——页签行就在正上方，同一个词不重复（2026-10-24 定夺）
     let mut list = sidebar_list().px(px(7.));
-    list = list.child(
-        gpui::div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(3.))
-            .child(
-                gpui::div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("market.pf.tab_installed")),
-            )
-    );
     for (n, item) in items.iter().enumerate() {
         let active = selected_name.as_deref() == Some(item.name.as_str());
         let weak_item = weak_c.clone();
