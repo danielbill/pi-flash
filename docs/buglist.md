@@ -14,6 +14,24 @@
   同 ctx 返回 ret:0 + typing_ticket，排除 token/会话过期。
 - ✅ 验证：用户真机确认「已经全部连通」。`cargo test -p wxprobe` 115 全绿。
 
+## 待验证（本轮修复）——启动卡死数秒：内层 wasm 插件验签把 wasmtime 编译放在主线程
+
+用户口径：启动页之后主窗口僵住数秒才活。
+
+- ✅ 根因：`pf_plugin::spawn_plugin_scan` 只把清单扫描放进后台，内层 wasm 插件的
+  `PluginInstance::load` + `init` 却在**主线程 `this.update` 闭包**里跑——
+  `Component::from_file` 是 cranelift 全量编译（本机 4.6 MB 组件 debug 实测
+  **7.2 s**；旧代码每个插件还各建一个 `Engine`）。同闭包末尾才 `plugins_set`，
+  状态栏插件 tab 也被一起拖到秒级之后。
+- ✅ 修法：拆两段——① 清单扫描后台落位，JS 插件条目立即可见；② wasm 验签等揭幕
+  （`pool.booted`）后交 `background_executor` 后台线程，编译/实例化/init 全在
+  后台，结果回主线程只写状态栏。配套 `pf-plugin-host`：proof 钩子
+  `thread_local` → 进程级 `RwLock`（否则后台线程 init 时插件回调
+  `get_host_proof` 取不到材料 → 正常插件被误判拒载）；`Engine` 进程内共享。
+- ✅ 验证：`cargo check -p app` 通过；单独计时 `load()` = 7.2 s（debug）证实
+  原阻塞量级。**待真机复验**：启动到可操作无停顿；验签结论（已激活/拒载）在
+  揭幕后 1–3 s 出现在状态栏。
+
 ## 待验证（本轮修复）——微信 Bot 回复石沉大海：出站只认桌面选中态 + 投递静默丢 + 启动横幅泄漏
 
 用户口径：换绑修复后复测，发「刚刚」只回了一句「MCP: 1 server enabled」（不是回复），
