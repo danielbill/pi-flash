@@ -1651,6 +1651,20 @@ mod tests {
         assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
     }
 
+    /// 影子会话名（用户定夺）：`pf-wxbot-` + **15 位**时间戳（纯数字）。
+    #[test]
+    fn wx_shadow_session_name_is_pf_wxbot_plus_15_digits() {
+        let n = crate::Chat::wx_session_name();
+        let suffix = n
+            .strip_prefix("pf-wxbot-")
+            .unwrap_or_else(|| panic!("名字必须以 pf-wxbot- 开头，实际 {n}"));
+        assert_eq!(suffix.len(), 15, "15 位时间戳，实际 {suffix}");
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_digit()),
+            "纯数字，实际 {suffix}"
+        );
+    }
+
     /// 开机通知文案（用户定夺）：微信侧只该收到这一句，不是 MCP 横幅。
     #[test]
     fn startup_notice_text_is_pf_branded() {
