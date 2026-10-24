@@ -52,6 +52,15 @@ pub(crate) fn page(
     cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let t = T();
+    // 插件定制页（002-微信通信，2026-10-24 定夺）：微信线的新会话页不复用
+    // 桌面「Hi，打算让我做点什么？」那一套 ——① 欢迎语换成插件注入语；
+    // ② 不加载 Pi 扩展更新表（那张表只属于真正的新会话页）。
+    let wx_page = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let welcome = if wx_page {
+        tr("remote.page_greeting")
+    } else {
+        tr("new_session.greeting")
+    };
     div()
         .id("new-session")
         .relative()
@@ -83,7 +92,7 @@ pub(crate) fn page(
                 .flex_col()
                 .justify_center()
                 .items_center()
-                .child(heading(t)),
+                .child(heading(t, welcome)),
         )
         .child(
             // 内容簇带：底对齐 88% 高带内居中 ⇒ 簇中心 56%
@@ -117,8 +126,13 @@ pub(crate) fn page(
                         .child(action_bar(chat, weak, t))
                         // 082：Pi 扩展更新通知 = 零高锚点（不占流空间），卡片
                         // absolute 下移固定 20px（验收定稿），欢迎语/inputpanel
-                        // 定位零改动
-                        .children(plugin_update_notice(chat, weak, t)),
+                        // 定位零改动。**只属于新会话页**：插件定制页
+                        //（微信通话）不渲染也不触发加载。
+                        .children(if wx_page {
+                            None
+                        } else {
+                            plugin_update_notice(chat, weak, t)
+                        }),
                 ),
         )
         .into_any_element()
@@ -146,17 +160,17 @@ fn logo_backdrop(t: &'static crate::appearance::theme::Theme, size: f32) -> AnyE
         .into_any_element()
 }
 
-/// 欢迎语「Hi，打算让我做点什么？」——zcode 参考图问候语同款关系（中心
+/// 欢迎语：「Hi，打算让我做点什么？」——zcode 参考图问候语同款关系（中心
 /// 37%，压水印下半部）：加大字号、斜体、内置 JetBrains Mono（中文回退
-/// 系统字体，italic 由回退链合成）。
-fn heading(t: &'static crate::appearance::theme::Theme) -> AnyElement {
+/// 系统字体，italic 由回退链合成）。文案由调用方给（插件定制页可注入）。
+fn heading(t: &'static crate::appearance::theme::Theme, text: &str) -> AnyElement {
     div()
         .text_size(crate::appearance::ui_size(40.))
         .font_family(crate::editor::markdown::MONO_FAMILY)
         .italic()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(rgb(t.text))
-        .child(SharedString::from(tr("new_session.greeting")))
+        .child(SharedString::from(text.to_string()))
         .into_any_element()
 }
 
