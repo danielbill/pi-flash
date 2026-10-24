@@ -1271,6 +1271,14 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
     // wasmtime，故由 app 注入）。纯函数指针，零开销。
     pi_link::pf_plugins::install_prepare_hook(install_prepare);
+    // 宿主证明钩子**启动即注入**（进程级，线程无关）：晚注入会让先加载的
+    // wasm 插件读到 fallback 占位符 → 误判「fork/无证明构建」而拒载。
+    pf_plugin_host::install_proof_hook(host_proof_material);
+    // 路径派生能力（与 JS 插件 ctx.fileIcon / ctx.isExecutive 同一套服务）
+    pf_plugin_host::install_path_hooks(
+        |p| crate::services::file_icons::get_icon(Path::new(p)).to_string(),
+        |p| crate::services::script_exec::exec_kind(Path::new(p)).is_some(),
+    );
     cx.spawn(async move |this, cx| {
         let manifests = cx
             .background_executor()
@@ -1367,11 +1375,8 @@ fn ensure_wasm_hooks(cx: &gpui::App) {
     }
     TEXT_SYSTEM.with(|c| *c.borrow_mut() = Some(cx.text_system().clone()));
     pf_plugin_host::install_host_hooks(quick_pin_snap, wasm_measure_text);
-    // 路径派生能力：与 JS 插件 ctx.fileIcon / ctx.isExecutive 同一套服务
-    pf_plugin_host::install_path_hooks(
-        |p| crate::services::file_icons::get_icon(Path::new(p)).to_string(),
-        |p| crate::services::script_exec::exec_kind(Path::new(p)).is_some(),
-    );
+    // 幂等再兜一次（启动路径已装；这里保证任何入口先于 init 都有证明材料）
+    pf_plugin_host::install_proof_hook(host_proof_material);
 }
 
 /// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
