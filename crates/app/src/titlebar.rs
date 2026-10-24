@@ -512,14 +512,15 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
     .into_any_element()
 }
 
-/// 微信线 tab（060 单开 tab）：紧随会话 tab 的固定段，label = 微信通信，
-/// 无 × 无右键菜单（线常驻，关停走操作栏开关）。点击 = `open_wx`——激活
-/// 微信线会话；桌面活跃会话由 `switch_to` 记入 `desktop_key`，不被顶走。
+/// 微信线 tab（060 单开 tab）：紧随会话 tab 的固定段，label = 微信通话
+///（`remote.tab_title`，002-微信通信 定名），无 × 无右键菜单（线常驻，关停
+/// 走操作栏开关）。点击 = `open_wx`——激活微信线会话；桌面活跃会话由
+/// `switch_to` 记入 `desktop_key`，不被顶走。
 fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     let active = chat.layout.content_view == ContentView::Chat
         && chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
-    let title: SharedString = tr("remote.panel_title").to_string().into();
+    let title: SharedString = tr("remote.tab_title").to_string().into();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
         this.open_wx(cx);
     });

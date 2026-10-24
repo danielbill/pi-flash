@@ -441,6 +441,18 @@ impl RemoteControl {
         std::thread::spawn(move || wxprobe::register::run_qr_flow(tx, 180));
     }
 
+    /// 强制换一张新码（002 操作栏第 3 件「重新绑定」/ 码方框内的
+    /// 【刷新二维码】）。与 [`Self::begin_qr`] 的幂等早退相反：手里那张码
+    /// （Loading/Ready/Scanned）一律丢掉再起一轮，否则用户点「刷新」看到的
+    /// 还是同一张旧码。被丢下的 worker 在下一次 `tx.send` 失败时自行退出
+    ///（`wxprobe::register::run_qr_flow` 的取消约定）。
+    pub fn refresh_qr(&mut self) {
+        self.qr_rx = None;
+        self.qr_url = None;
+        self.qr = QrState::Idle;
+        self.begin_qr();
+    }
+
     /// 把扫码 worker 的事件抽干进 `self.qr`；有变化才返回 `true`（触发重绘）。
     pub fn poll_qr(&mut self) -> bool {
         let mut changed = false;

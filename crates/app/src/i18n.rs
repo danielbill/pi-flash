@@ -634,6 +634,14 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("psp.switch_to_grouped", "切换为项目分组列表", "切換為專案分組列表", "Switch to project groups"),
     ("psp.unpin", "取消置顶", "取消置頂", "Unpin"),
     ("remote.panel_title", "微信通信", "微信通信", "WeChat"),
+    // 002-微信通信：插件单开标签页的标签名（与面板/弹窗标题的「微信通信」
+    // 区分——002 定名【微信通话】）
+    ("remote.tab_title", "微信通话", "微信通話", "WeChat Chat"),
+    // 操作栏第 2 件：开关旁的说明文字（on/off 两态）
+    ("remote.toggle_on", "启用微信通话", "啟用微信通話", "WeChat chat on"),
+    ("remote.toggle_off", "停用微信通话", "停用微信通話", "WeChat chat off"),
+    // 操作栏第 3 件：刷新二维码钮文案（refresh icon + 重新绑定）
+    ("remote.rebind", "重新绑定", "重新綁定", "Rebind"),
     ("remote.qr_confirm", "已扫码，请在手机上确认…", "已掃碼，請在手機上確認…", "Scanned, please confirm on your phone…"),
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
@@ -655,10 +663,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
     ("remote.qr_retry", "扫码连接失败，请刷新重扫。", "掃碼連接失敗，請刷新重掃。", "Scan connection failed. Refresh and try again."),
     // 002-微信通信（pi-flash-plugins）版式文案
-    ("remote.qr_created", "Pi-Flash微信机器人已创建", "Pi-Flash微信機器人已建立", "The Pi-Flash WeChat bot has been created"),
-    ("remote.qr_timeout", "扫描超时，请点击重新扫码", "掃描逾時，請點擊重新掃碼", "Scan timed out. Tap to scan again"),
-    ("remote.qr_regen", "重新生成二维码", "重新產生二維碼", "Regenerate QR code"),
-    ("remote.qr_reset", "重制二维码", "重制二維碼", "Reset QR code"),
+    // 二维码方框内的三态提示（002 §二维码弹窗：提示信息一律写在方框里）
+    ("remote.refresh_qr", "刷新二维码", "刷新二維碼", "Refresh QR code"),
+    ("remote.rebind_desc", "重新绑定PF微信机器人", "重新綁定PF微信機器人", "Rebind the Pi-Flash WeChat bot"),
+    ("remote.qr_timeout", "扫描超时，刷新重新扫码", "掃描逾時，刷新重新掃碼", "Scan timed out. Refresh and scan again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),
