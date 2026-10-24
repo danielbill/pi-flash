@@ -105,7 +105,6 @@ impl JsPlugin {
         dir: &str,
         host: Rc<RefCell<dyn JsHost>>,
     ) -> Result<Self, String> {
-
         let rt = Runtime::new().map_err(|e| e.to_string())?;
         // v1 内存上限：插件逻辑是清单级小计算，32MB 足够宽裕
         rt.set_memory_limit(32 * 1024 * 1024);
@@ -195,7 +194,9 @@ impl JsPlugin {
 
             // —— 插件模块（ESM）——
             let module = match (src.clone(), bytecode.clone()) {
-                (Some(src), _) => Module::declare(ctx.clone(), "pf-plugin-entry", src.into_bytes())?,
+                (Some(src), _) => {
+                    Module::declare(ctx.clone(), "pf-plugin-entry", src.into_bytes())?
+                }
                 // SAFETY：字节码由本仓 `qjsc`（同一 quickjs-ng 版本）产出；
                 // 版本不符 QuickJS 自身会拒读（JS_ReadObject 校验版本魔数）。
                 (None, Some(bc)) => unsafe { Module::load(ctx.clone(), &bc)? },

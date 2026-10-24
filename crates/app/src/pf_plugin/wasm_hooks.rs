@@ -121,7 +121,10 @@ pub(super) fn install_prepare(plugin_dir: &Path) -> Result<(), String> {
 /// 新安装已由 [`install_prepare`] 在安装时做完，这里通常全部命中、立刻返回。
 pub(crate) fn spawn_precompile_installed() {
     std::thread::spawn(|| {
-        for m in super::scan_manifests().into_iter().filter(|m| m.wasm.is_some()) {
+        for m in super::scan_manifests()
+            .into_iter()
+            .filter(|m| m.wasm.is_some())
+        {
             let wasm = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
             let cache = pi_link::pf_plugins::plugin_cache_for(&m.dir);
             let t0 = std::time::Instant::now();
