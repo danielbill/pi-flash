@@ -187,6 +187,10 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 微信会话已过期（`errcode:-14 session timeout` 洗完旧游标仍是它）。
+    /// 2026-10-24 真机：PF 重启后渠道照旧「启用中」，微信发消息一条进不来——
+    /// 开关撒谎。置位即停渠道，操作栏亮出「请重新绑定」，扫码成功后清。
+    pub(crate) session_expired: bool,
     /// 最近一次渠道启动失败的错误（成功即清）。状态卡④「我方创建出错」
     /// 的数据源——扫码成功但渠道没起来的唯一可观察出口。
     pub(crate) start_error: Option<String>,
@@ -217,6 +221,7 @@ impl RemoteControl {
             wants_start: false,
             active_token: None,
             poll_error: None,
+            session_expired: false,
             start_error: None,
             buf_key: None,
         }
@@ -292,8 +297,21 @@ impl RemoteControl {
     }
 
     /// 泵每拍同步最近轮询错误（面板显示）；渠道不在时为 `None`。
+    ///
+    /// `-14 session timeout` 洗完旧游标仍在 = token 本身失效（wxprobe 侧只
+    /// 自愈一次）：这里**把渠道停掉**并亮「会话已过期」——继续长轮询只是
+    /// 空转，而开关亮着会让人以为链路是通的（2026-10-24 真机）。
     fn sync_poll_error(&mut self) {
-        self.poll_error = self.transport.as_ref().and_then(|t| t.poll_error());
+        let err = self.transport.as_ref().and_then(|t| t.poll_error());
+        if let Some(e) = err.as_deref() {
+            if wxprobe::transport::is_session_timeout(e) && !self.session_expired {
+                self.session_expired = true;
+                self.wants_start = false;
+                self.transport = None; // Drop 只发停止信号，不 join（不卡 UI）
+                eprintln!("[wx] 会话已过期，渠道已停：请重新绑定扫码");
+            }
+        }
+        self.poll_error = err;
     }
 
     /// 当前会话的绑定码（6 位数字）。由设置页展示、用户在微信里 `/bind` 回填。
@@ -379,6 +397,8 @@ impl RemoteControl {
             // 显式启用走 wants_start → 泵下一拍 start_transport_from_state
             self.boot_attempted = true;
             self.wants_start = true;
+            // 显式再启用 = 重试一次（旧失败不再预先否定结果；真过期会再置位）
+            self.session_expired = false;
         } else {
             self.wants_start = false;
             self.transport = None;
@@ -870,6 +890,9 @@ impl crate::Chat {
             // 不受 SELF_START 门控，不用再摸设置页开关）。若渠道已在跑且
             // 拿的是换绑前的旧 token，这里强制停掉、下一拍用新 token 重拉。
             if matches!(self.aux.remote.qr, QrState::Done { .. }) {
+                // 扫到新 token = 会话重生：过期标记与旧错一并清掉
+                self.aux.remote.session_expired = false;
+                self.aux.remote.poll_error = None;
                 self.aux.remote.force_restart_if_token_changed();
                 self.aux.remote.wants_start = true;
                 // 扫码成功 → 关二维码弹窗（002 自动展示流程的收尾）

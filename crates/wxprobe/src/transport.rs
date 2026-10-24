@@ -225,6 +225,15 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
     })
 }
 
+/// `errcode:-14 session timeout`：iLink 判这是**过期会话**而非网络抖动。
+///
+/// 两种来源（都真机踩过）：①换绑后 `buf` 里嵌着旧 bot 的游标（2026-10-23）；
+/// ②PF 重启后拿上一进程的游标续会话、旧长轮询还挂在服务端（2026-10-24：
+/// 重启即全天 -14，微信发消息没反应，开关却还是「启用」）。
+pub fn is_session_timeout(msg: &str) -> bool {
+    msg.contains("session timeout") || msg.contains("errcode=Some(-14")
+}
+
 /// 长轮询主循环。错误退避重试，**不退出**（§6 坑 4：一次失败退出 = bot 静默死掉）。
 fn poll_loop(
     token: String,
@@ -235,6 +244,8 @@ fn poll_loop(
 ) {
     let mut wire = Wire::new(state::dump_dir());
     let mut failures = 0u32;
+    // 会话过期自愈次数（见下方 -14 分支）：只洗一次游标，洗完还 -14 = 真得重扫
+    let mut healed = false;
     while !stop.load(Ordering::Relaxed) {
         match poller::get_updates(&mut wire, &token, cursor.as_deref()) {
             Ok(up) => {
@@ -256,6 +267,23 @@ fn poll_loop(
                 }
             }
             Err(e) => {
+                // -14 = 会话游标过期：游标是新旧会话的分界，洗掉它用**同一个
+                // token** 重新建会话（换绑同理，见 register::reset_session_fields）。
+                // 不清就会拿着死游标无限重试——开关亮着、消息一条进不来。
+                // 只自愈一次：洗完仍 -14 说明 token 本身失效，必须重新扫码。
+                if is_session_timeout(&e) && cursor.is_some() && !healed {
+                    healed = true;
+                    cursor = None;
+                    let mut st = state::load();
+                    state::set(&mut st, "buf", None);
+                    state::save(&st);
+                    failures = 0;
+                    if let Ok(mut g) = last_err.lock() {
+                        *g = Some(format!("{e}（已清旧游标重建会话）"));
+                    }
+                    eprintln!("[wx] getupdates 会话过期，清旧游标后重建：{e}");
+                    continue;
+                }
                 failures = failures.saturating_add(1);
                 if let Ok(mut g) = last_err.lock() {
                     *g = Some(e.clone());

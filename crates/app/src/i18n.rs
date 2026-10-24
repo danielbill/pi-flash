@@ -669,6 +669,9 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     // 二维码方框内的三态提示（002 §二维码弹窗：提示信息一律写在方框里）
     ("remote.refresh_qr", "刷新二维码", "刷新二維碼", "Refresh QR code"),
     ("remote.rebind_desc", "重新绑定PF微信机器人", "重新綁定PF微信機器人", "Rebind the Pi-Flash WeChat bot"),
+    // 会话过期（errcode:-14）：操作栏提示 + 弹窗框内说明
+    ("remote.session_expired", "会话已过期，请重新绑定", "會話已過期，請重新綁定", "Session expired — rebind required"),
+    ("remote.session_expired_desc", "微信会话已过期，重新扫码绑定", "微信會話已過期，重新掃碼綁定", "The WeChat session expired. Scan again to rebind."),
     ("remote.qr_timeout", "扫描超时，刷新重新扫码", "掃描逾時，刷新重新掃碼", "Scan timed out. Refresh and scan again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),

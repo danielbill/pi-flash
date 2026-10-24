@@ -148,6 +148,15 @@ pub(crate) fn fn_bar_status(
             .into_any_element()
     };
 
+    // 会话过期（-14）：渠道已被泵停掉，光看开关只会以为「关着」，这里把
+    // 原因亮出来（2026-10-24 真机：开关亮着却一条消息都进不来）。
+    let expired_note = chat.aux.remote.session_expired.then(|| {
+        div()
+            .text_size(crate::appearance::ui_size(11.5))
+            .text_color(rgb(t.danger))
+            .child(SharedString::from(tr("remote.session_expired").to_string()))
+    });
+
     Some(
         div()
             .flex_1()
@@ -155,6 +164,7 @@ pub(crate) fn fn_bar_status(
             .items_center()
             .justify_end()
             .gap(px(8.))
+            .children(expired_note)
             .child(icon_btn)
             .child(sw_group)
             .child(refresh_btn)
@@ -184,7 +194,7 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         // 手机确认中的码留在屏幕上（`Scanned` 不带 url，靠 `qr_url` 续命）
         QrState::Scanned => match live.as_deref() {
             Some(url) => qr_white_card(url),
-            None if has_token => qr_prompt_box(None, tr("remote.rebind_desc"), weak),
+            None if has_token => qr_prompt_box(None, rebind_hint(chat), weak),
             None => qr_note_box(&tr("remote.qr_confirm")),
         },
         // 状态 3：超时 → 旧码上蒙白（已建过的机器人重建超时同样走这里：
@@ -205,7 +215,7 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         }
         // 状态 2：已创建（已建成功 / 刚开弹窗还没取新码）→ 空框 + 重新绑定提示
         QrState::Done { .. } | QrState::Idle | QrState::Loading if has_token => {
-            qr_prompt_box(None, tr("remote.rebind_desc"), weak)
+            qr_prompt_box(None, rebind_hint(chat), weak)
         }
         QrState::Done { .. } | QrState::Idle | QrState::Loading => {
             qr_note_box(&tr("remote.qr_loading"))
@@ -293,6 +303,16 @@ fn friendly_qr_error(m: &str) -> String {
         m.to_string()
     } else {
         tr("remote.qr_retry").to_string()
+    }
+}
+
+/// 状态 2 的框内说明：会话过期时别再说「重新绑定 PF 微信机器人」——
+/// 用户要的是原因（会话已过期）与动作（重新扫码）。
+fn rebind_hint(chat: &Chat) -> &'static str {
+    if chat.aux.remote.session_expired {
+        tr("remote.session_expired_desc")
+    } else {
+        tr("remote.rebind_desc")
     }
 }
 
