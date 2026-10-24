@@ -1059,11 +1059,7 @@ pub(crate) fn dock(
     // **停用/条目不在（已被摘掉）时直接漏到下面的默认 psp 列表**——
     // 左列是「停用后仍旧挂着旧面板」的最后一道口，不能只倚靠状态侧去撤 dock。
     if let DockPanel::Plugin(ix) = chat.layout.dock_panel
-        && chat
-            .plugins
-            .plugins
-            .get(ix)
-            .is_some_and(|e| !e.disabled)
+        && chat.plugins.plugins.get(ix).is_some_and(|e| !e.disabled)
     {
         return div()
             .id("dock")

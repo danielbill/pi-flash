@@ -616,9 +616,7 @@ impl RemoteControl {
         }
 
         match wxprobe::command::parse_bot_command(text) {
-            BotCommand::Message { text: msg } => {
-                Action::Prompt(msg)
-            }
+            BotCommand::Message { text: msg } => Action::Prompt(msg),
             BotCommand::Stop => Action::Abort,
             BotCommand::Help => Action::Send(pipeline::help_text(lang)),
             BotCommand::Status => Action::Status,

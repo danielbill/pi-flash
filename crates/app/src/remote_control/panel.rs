@@ -104,17 +104,12 @@ pub(crate) fn fn_bar_status(
     } else {
         tr("remote.toggle_off")
     };
-    let sw_group = div()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .child(sw)
-        .child(
-            div()
-                .text_size(crate::appearance::ui_size(11.5))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(label)),
-        );
+    let sw_group = div().flex().items_center().gap(px(6.)).child(sw).child(
+        div()
+            .text_size(crate::appearance::ui_size(11.5))
+            .text_color(rgb(t.text_muted))
+            .child(SharedString::from(label)),
+    );
 
     // 刷新二维码（第 3 件）：强制换新码 + 开弹窗看码（002「重新绑定」）。
     let refresh_btn = {
@@ -201,9 +196,11 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         },
         // 状态 3：超时 → 旧码上蒙白（已建过的机器人重建超时同样走这里：
         // 用户刚扫完一轮，最要紧的信息是「码过期了」，不是「已创建」）
-        QrState::Expired => {
-            qr_prompt_box(chat.aux.remote.qr_url.as_deref(), tr("remote.qr_timeout"), weak)
-        }
+        QrState::Expired => qr_prompt_box(
+            chat.aux.remote.qr_url.as_deref(),
+            tr("remote.qr_timeout"),
+            weak,
+        ),
         // 微信侧出错（②）：同蒙白口径，文案换成行动指引
         QrState::Error(m) => {
             let msg = friendly_qr_error(m);
@@ -355,7 +352,11 @@ fn qr_refresh_link(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
 
 /// 提示态方框：白衬（`old` 有值就先铺旧码）+ 白蒙层 + 居中【刷新二维码】
 /// 链接与消息（002：所有提示信息显示在二维码方框中）。
-fn qr_prompt_box(old: Option<&str>, message: &str, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+fn qr_prompt_box(
+    old: Option<&str>,
+    message: &str,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::AnyElement {
     let mut wrap = div().relative().w(px(QR_BOX)).h(px(QR_BOX));
     if let Some(url) = old {
         wrap = wrap.child(qr_white_card(url));
@@ -545,7 +546,8 @@ impl Chat {
         let name = Self::wx_session_name();
         let key = self.new_draft_detached(cx)?;
         if let Some(rt) = self.pool.runtimes.get(&key) {
-            rt.read(cx).rpc(&Command::SetSessionName { name: name.clone() });
+            rt.read(cx)
+                .rpc(&Command::SetSessionName { name: name.clone() });
         }
         self.aux.remote.set_wx_session(key.clone());
         self.aux.remote.wx_session_name = Some(name.clone());
