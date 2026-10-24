@@ -659,6 +659,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_timeout", "扫描超时，请点击重新扫码", "掃描逾時，請點擊重新掃碼", "Scan timed out. Tap to scan again"),
     ("remote.qr_regen", "重新生成二维码", "重新產生二維碼", "Regenerate QR code"),
     ("remote.qr_reset", "重制二维码", "重制二維碼", "Reset QR code"),
+    ("remote.qr_ready_scan", "已就绪，请用微信扫码", "已就緒，請用微信掃碼", "Ready. Scan with WeChat"),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),

@@ -100,58 +100,134 @@ pub(crate) fn fn_bar_status(
 }
 
 /// 二维码弹窗面板（`Dialog::WxQr`，dialogs.rs 用 dialog_shell 包壳）：
-/// 三态（出码+安装提示 / 已创建 / 超时蒙白+重新生成）+ 底部三态提示行
-/// （002 §状态说明区收敛于此）。
+/// 紧凑居中小卡（对齐微信登录弹窗形制）——header（标题+关闭）+ 码居中 +
+/// 状态文案居中彩字 + 两行左对齐提示。三态：出码 / 已创建 / 超时蒙白。
 pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::Div {
     let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(12.))
-        .py(px(8.));
-    match &chat.aux.remote.qr {
-        QrState::Ready { url } => {
-            body = body
-                .child(qr_white_card(url))
-                .child(kit::note(&tr("remote.qr_install_hint")));
-        }
+    // 居中内容随状态切换；颜色：就绪/已创建 = UNREAD 绿，出错 = danger
+    let (content, caption, caption_color) = match &chat.aux.remote.qr {
+        QrState::Ready { url } => (
+            qr_white_card(url).into_any_element(),
+            tr("remote.qr_ready_scan").to_string(),
+            crate::appearance::theme::UNREAD,
+        ),
         QrState::Scanned => {
-            if let Some(url) = &chat.aux.remote.qr_url {
-                body = body.child(qr_white_card(url));
-            }
-            body = body.child(kit::note(&tr("remote.qr_confirm")));
+            let content = match &chat.aux.remote.qr_url {
+                Some(url) => qr_white_card(url),
+                None => kit::note(&tr("remote.qr_confirm")),
+            };
+            (
+                content.into_any_element(),
+                tr("remote.qr_confirm").to_string(),
+                crate::appearance::theme::UNREAD,
+            )
         }
-        QrState::Expired => {
-            body = body.child(qr_masked(chat, weak, tr("remote.qr_timeout").to_string()))
-        }
-        QrState::Error(m) => body = body.child(qr_masked(chat, weak, friendly_qr_error(m))),
+        QrState::Expired => (
+            qr_masked(chat, weak, tr("remote.qr_timeout").to_string()).into_any_element(),
+            tr("remote.qr_timeout").to_string(),
+            t.danger,
+        ),
+        QrState::Error(m) => (
+            qr_masked(chat, weak, friendly_qr_error(m)).into_any_element(),
+            friendly_qr_error(m),
+            t.danger,
+        ),
         // ④ 微信已返回但我方没写进状态：按出错蒙白处理
-        QrState::Done { .. } if !has_token => {
-            body = body.child(qr_masked(
+        QrState::Done { .. } if !has_token => (
+            qr_masked(
                 chat,
                 weak,
                 tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
-            ))
-        }
-        QrState::Done { .. } => body = body.child(kit::note(&tr("remote.qr_created"))),
-        QrState::Idle | QrState::Loading => body = body.child(kit::note(&tr("remote.qr_loading"))),
-    }
-    // 底部提示行：三态（未创建 / 微信侧出错 / 已创建）
-    body = body.child(kit::note(&state_hint(chat, has_token)));
+            )
+            .into_any_element(),
+            tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
+            t.danger,
+        ),
+        QrState::Done { .. } => (
+            kit::note(&tr("remote.qr_created")).into_any_element(),
+            tr("remote.qr_created").to_string(),
+            crate::appearance::theme::UNREAD,
+        ),
+        QrState::Idle | QrState::Loading => (
+            kit::note(&tr("remote.qr_loading")).into_any_element(),
+            tr("remote.qr_loading").to_string(),
+            t.text_dim,
+        ),
+    };
+    // 底部提示两行（左对齐）：安装前提 + 固定说明
+    let hints = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(kit::note(&tr("remote.qr_install_hint")))
+        .child(kit::note(&tr("remote.wx_desc")));
+    // 紧凑小卡：header（标题 + 关闭）+ 居中 body（R_MODAL 10）
     let weak_close = weak.clone();
-    crate::ui::overlay::big_card(
-        tr("remote.panel_title"),
-        None,
-        body.into_any_element(),
-        t,
-        move |_w, cx| {
-            let _ = weak_close.update(cx, |c, cx| {
-                c.dlg.dialog = None;
-                cx.notify();
-            });
-        },
-    )
+    let header = div()
+        .h(px(36.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .pl(px(12.))
+        .pr(px(6.))
+        .bg(rgb(t.chrome))
+        .border_b_1()
+        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x73)))
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(12.5))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(tr("remote.panel_title").to_string())),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .id("wx-qr-close")
+                .size(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    move |_: &gpui::MouseDownEvent, _w, cx| {
+                        let _ = weak_close.update(cx, |c, cx| {
+                            c.dlg.dialog = None;
+                            cx.notify();
+                        });
+                    },
+                )
+                .child(crate::ui::icon("close", 14., t.text_dim)),
+        );
+    let body = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(10.))
+        .p(px(16.))
+        .child(content)
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(12.5))
+                .text_color(rgb(caption_color))
+                .child(SharedString::from(caption)),
+        )
+        .child(hints);
+    div()
+        .w(px(460.))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .rounded(px(10.))
+        .border_1()
+        .border_color(rgb(t.border))
+        .bg(rgb(t.bg_panel))
+        .child(header)
+        .child(body)
 }
 
 /// 弹窗底部提示：只有三态（002 §状态说明区，2026-10-24 修订）——
