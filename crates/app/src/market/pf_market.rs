@@ -234,7 +234,11 @@ impl Chat {
                 let pf = &mut c.aux.market.pf;
                 pf.pending = None;
                 match result {
-                    Ok(_) => pf.error = None,
+                    Ok(_) => {
+                        pf.error = None;
+                        // 首启不等编译：装完立刻后台预热编译产物（pf_plugin 编译缓存）
+                        crate::pf_plugin::spawn_precompile_installed();
+                    }
                     Err(e) => pf.error = Some(e),
                 }
                 pf.ledger = pf_plugins::load_ledger();

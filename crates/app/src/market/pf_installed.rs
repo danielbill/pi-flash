@@ -86,6 +86,8 @@ impl Chat {
                     });
                 })
                 .detach();
+                // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
+                crate::pf_plugin::spawn_precompile_installed();
             }
             (false, None) => cx.notify(), // 未装载，无运行态可翻
         }
