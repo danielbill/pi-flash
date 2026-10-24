@@ -23,7 +23,7 @@ use crate::i18n::{tf, tr};
 use crate::market::pf_market::{MONO, centered, index_snapshot, slice_shell};
 use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
-    LIST_W, config_switch, detail_shell, field, mono_text, sidebar_item, sidebar_list, sidebar_shell,
+    LIST_W, config_switch, detail_shell, field, sidebar_item, sidebar_list, sidebar_shell,
 };
 
 /// 一条已装插件（台账 × 索引 display 补全后的展示行）。
@@ -319,11 +319,11 @@ fn detail_pane(
     let removing_this = removing == Some(item.name.as_str());
     let mut trash = gpui::div()
         .id("pf-installed-remove")
-        .size(px(28.))
+        .size(px(20.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(5.))
+        .rounded(px(4.))
         .border_1()
         .border_color(gpui::rgba(crate::appearance::theme::danger_alpha(
             crate::appearance::theme::theme(),
@@ -396,7 +396,6 @@ fn detail_pane(
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .min_h(px(28.))
                 // 名前标后（与技能页 / settings-扩展 同款）
                 .child(
                     gpui::div()
@@ -419,9 +418,8 @@ fn detail_pane(
         .child(field(
             &tr("pi_extensions.state"),
             gpui::div()
-                .flex()
-                .flex_col()
-                .gap(px(2.))
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text_muted))
                 .child(SharedString::from(if item.disabled {
                     tr("status.disabled").to_string()
                 } else {
@@ -430,7 +428,10 @@ fn detail_pane(
         ))
         .child(field(
             &tr("extensions.source"),
-            mono_text(source_display, false),
+            gpui::div()
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(source_display)),
         ))
         .child(field(
             &tr("extensions.path"),
