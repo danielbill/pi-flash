@@ -24,6 +24,11 @@ interface host {
     toggle-quick-pin: func(path: string);
     quick-pins: func() -> list<string>;
 
+    // 02 §3 自管存储的 wasm 面：读写插件私有 data 目录下的单文件（key = 文件名，
+    // 宿主拒绝分隔符/.. /隐藏文件）。missing → 空串，由插件兜底。
+    storage-read: func(key: string) -> string;
+    storage-write: func(key: string, data: string);
+
     // 090-5 L3：官方宿主证明。宿主只递数据不判定（nonceTag 现算，算法公开，
     // 插件 wasm 内用 pf-inner-verify 同算法复算比对）。
     record host-proof {
