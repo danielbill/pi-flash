@@ -21,9 +21,10 @@ use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
 use crate::market::pf_market::{MONO, PfTab, centered, index_snapshot, slice_shell};
-use crate::market::pi_native_market::design::{Metrics, sp};
+use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
-    LIST_W, detail_shell, field, mono_text, scope_tag, sidebar_item, sidebar_list, sidebar_shell,
+    LIST_W, config_switch, detail_shell, field, mono_text, scope_tag, sidebar_item, sidebar_list,
+    sidebar_shell,
 };
 
 /// 一条已装插件（台账 × 索引 display 补全后的展示行）。
@@ -32,9 +33,64 @@ struct InstalledItem {
     display: String,
     version: String,
     source: String,
+    disabled: bool,
 }
 
 impl Chat {
+    /// 启停单插件（090-4 v5）：台账 disabled 位落盘 + 运行态立即生效——
+    /// 停用 = 现场条目翻 disabled 位（状态栏 tab / 文件树插件菜单 / 分发
+    /// 全部消费该标志，立即隐身）；启用 = 有条目则复位，无条目（启动时
+    /// 被扫描跳过）后台重扫补装。失败进头段错误行。
+    pub(crate) fn pf_toggle_plugin(
+        &mut self,
+        name: String,
+        enable: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Err(e) = pf_plugins::set_disabled(&name, !enable) {
+            self.aux.market.pf.error = Some(e);
+            cx.notify();
+            return;
+        }
+        if let Some(l) = self
+            .aux
+            .market
+            .pf
+            .ledger
+            .iter_mut()
+            .find(|l| l.name == name)
+        {
+            l.disabled = !enable;
+        }
+        let dir = pf_plugins::dir_name(&name);
+        let hit = self.plugins.plugins.iter_mut().find(|e| {
+            e.manifest
+                .dir
+                .file_name()
+                .is_some_and(|f| f.to_string_lossy() == dir)
+        });
+        match (enable, hit) {
+            (_, Some(entry)) => {
+                entry.disabled = !enable;
+                cx.notify();
+            }
+            (true, None) => {
+                // 启动时被停用过滤、从未装载：重扫补装（台账此刻已复用）
+                let scan = cx
+                    .background_executor()
+                    .spawn(async { crate::pf_plugin::scan_manifests() });
+                cx.spawn(async move |this, cx| {
+                    let manifests = scan.await;
+                    let _ = this.update(cx, |c, cx| {
+                        c.plugins_set(crate::pf_plugin::plugin_entries(manifests), cx);
+                    });
+                })
+                .detach();
+            }
+            (false, None) => cx.notify(), // 未装载，无运行态可翻
+        }
+    }
+
     /// 点垃圾桶：弹确认浮层（040 统一确认组件；渲染在 shell/render 顶层）。
     pub(crate) fn pf_ask_remove(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         if self.aux.market.pf.removing.is_some() {
@@ -113,8 +169,8 @@ pub(crate) fn remove_confirm_overlay(
     ))
 }
 
-/// 已安装页主体。头段 + 定宽段盒子内两栅（列表 / 详情），段盒底贴
-/// 内容区底（留 SHELL_PAD_BOTTOM 呼吸位）。
+/// 已安装页主体。头段 + 定宽段盒子内两栅（列表 / 详情），段盒吃满全高，
+/// 底部留白与顶部 shell_pad 对称。
 pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> AnyElement {
     let t = crate::appearance::theme::theme();
     let st = &chat.aux.market.pf;
@@ -133,6 +189,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                     display,
                     version: l.version.clone(),
                     source: l.source.clone(),
+                    disabled: l.disabled,
                 }
             })
             .collect()
@@ -186,6 +243,9 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         let active = selected_name.as_deref() == Some(item.name.as_str());
         let weak_item = weak_c.clone();
         let name = item.name.clone();
+        let weak_sw = weak_c.clone();
+        let sw_name = item.name.clone();
+        let enable = item.disabled;
         list = list.child(
             sidebar_item(format!("pf-installed-{n}-{}", item.name), active)
                 .bg(rgb(t.bg))
@@ -210,7 +270,16 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                         .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_faint))
                         .child(SharedString::from(item.version.clone())),
-                ),
+                )
+                // 启停开关（090-4 v5）：停用 = PF 不装载不绘制（台账 disabled
+                // 位 + 运行态 entry.disabled，状态栏/文件树/分发全部隐身）
+                .child(config_switch(
+                    SharedString::from(format!("pf-installed-sw-{n}")),
+                    &weak_sw,
+                    !item.disabled,
+                    removing.is_some(),
+                    move |c, cx| c.pf_toggle_plugin(sw_name.clone(), enable, cx),
+                )),
         );
     }
     if items.is_empty() {
@@ -240,6 +309,8 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
     .flex_1()
     .min_h_0();
 
+    // 底部留白与顶部 shell_pad 对称（v5 定夺：SHELL_PAD_BOTTOM 太阔，
+    // 段盒要吃满全高）
     gpui::div()
         .w_full()
         .flex_1()
@@ -249,7 +320,7 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .bg(rgb(t.bg))
         .child(head)
         .child(body)
-        .pb(px(sp::SHELL_PAD_BOTTOM))
+        .pb(px(m.shell_pad))
         .into_any_element()
 }
 
@@ -316,12 +387,24 @@ fn detail_pane(
             });
     }
 
-    // 来源：索引上有发布人用发布人（卡片 meta 同口径），否则台账 source
-    let source_display = match index_snapshot().entry(&item.name) {
+    // 索引补全：发布人（来源行）+ 一句话描述（说明行，缺索引/无描述 = —）
+    let ix = index_snapshot();
+    let entry = ix.entry(&item.name);
+    let source_display = match &entry {
         Some(e) if !e.publisher.is_empty() => e.publisher.clone(),
         Some(_) => "Pi-Flash".to_string(),
         None => item.source.clone(),
     };
+    let description = entry
+        .and_then(|e| e.desc.as_ref())
+        .map(|d| {
+            if crate::i18n::lang_ix() == 2 && !d.en.is_empty() {
+                d.en.clone()
+            } else {
+                d.zh.clone()
+            }
+        })
+        .unwrap_or_else(|| "—".to_string());
     // 安装路径（版本化目录，与 install 落点一致）；索引/版本缺失退插件根目录
     let path = match pi_link::paths::plugins_dir() {
         Some(root) => {
@@ -357,12 +440,25 @@ fn detail_pane(
                 .child(trash),
         )
         .child(field(
+            &tr("about.description"),
+            gpui::div()
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(description)),
+        ))
+        .child(field(
             &tr("pi_extensions.state"),
             gpui::div()
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(SharedString::from(tr("status.enabled").to_string())),
+                .child(SharedString::from(
+                    if item.disabled {
+                        tr("status.disabled").to_string()
+                    } else {
+                        tr("status.enabled").to_string()
+                    },
+                )),
         ))
         .child(field(
             &tr("extensions.source"),

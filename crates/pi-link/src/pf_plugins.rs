@@ -85,6 +85,10 @@ pub struct LedgerEntry {
     pub installed_at: String,
     /// v1 恒为 "market"（唯一安装入口）。
     pub source: String,
+    /// 090-4 v5：用户停用。停用的插件启动扫描跳过（不装载不绘制），运行态
+    /// 由市场【已安装】页签的启停开关置位。缺省 false，旧台账直读兼容。
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// 读台账；文件不存在/损坏 = 空台账（损坏不报错，下次安装覆盖写回）。
@@ -126,6 +130,21 @@ pub fn installed_version(name: &str) -> Option<String> {
         .into_iter()
         .find(|e| e.name == name)
         .map(|e| e.version)
+}
+
+/// 启停落盘（090-4 v5）：只翻台账的 disabled 位；台账缺该包 = Err。
+/// 停用语义在消费端——启动扫描跳过、运行态 entry.disabled 置位后
+/// 状态栏 tab / 文件树插件菜单 / 分发全部不再出现该插件。
+pub fn set_disabled(name: &str, disabled: bool) -> Result<(), String> {
+    let mut all = load_ledger();
+    let Some(entry) = all.iter_mut().find(|e| e.name == name) else {
+        return Err(format!("台账中无插件 {name}"));
+    };
+    if entry.disabled == disabled {
+        return Ok(());
+    }
+    entry.disabled = disabled;
+    save_ledger(&all)
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +414,7 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
             integrity: entry.integrity.clone(),
             installed_at: now_iso(),
             source: "market".into(),
+            disabled: false,
         })
     })();
 

@@ -41,6 +41,9 @@ pub(crate) struct PluginManifest {
     pub status_bar: Option<StatusBarContrib>,
     pub file_menu: Vec<FileMenuContrib>,
     pub panels: Vec<PanelContrib>,
+    /// 内层 wasm 插件（契约 inner_package）：`wasm = "plugin.wasm"` 声明即启用；
+    /// 装载 = pf_plugin_host::PluginInstance（init 即验签门，090-5 L3）
+    pub wasm: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +235,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         status_bar: None,
         file_menu: Vec::new(),
         panels: Vec::new(),
+        wasm: None,
     };
     let mut section = String::new();
     for (n, raw) in src.lines().enumerate() {
@@ -304,6 +308,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             }
             ("", "id") => m.id = val.as_str("id", n)?,
             ("", "version") => m.version = val.as_str("version", n)?,
+            ("", "wasm") => m.wasm = Some(val.as_str("wasm", n)?),
             ("", "title") => {
                 let (zh, en) = val.as_i18n("title", n)?;
                 m.title_zh = zh;
@@ -417,11 +422,17 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 }
 
 /// 扫描 `<数据目录>/plugins/*/` 只出清单（后台线程可调——PluginEntry 持
-/// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过。
+/// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过；
+/// 台账标了停用的目录整个跳过（不装载不绘制，090-4 v5）。
 pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
     let Some(root) = pi_link::paths::plugins_dir() else {
         return Vec::new();
     };
+    let disabled: std::collections::HashSet<String> = pi_link::pf_plugins::load_ledger()
+        .into_iter()
+        .filter(|l| l.disabled)
+        .map(|l| pi_link::pf_plugins::dir_name(&l.name))
+        .collect();
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(&root) else {
         return out;
@@ -432,9 +443,20 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
         if !dir.is_dir() || !dir.join("pf-plugin.toml").is_file() {
             continue;
         }
+        if dir
+            .file_name()
+            .is_some_and(|f| disabled.contains(f.to_string_lossy().as_ref()))
+        {
+            continue; // 停用（台账 disabled 位）
+        }
         match parse_manifest(&dir) {
             Ok(m) => {
-                if m.status_bar.is_none() && m.file_menu.is_empty() && m.panels.is_empty() {
+                // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
+                if m.wasm.is_none()
+                    && m.status_bar.is_none()
+                    && m.file_menu.is_empty()
+                    && m.panels.is_empty()
+                {
                     continue; // 纯库包
                 }
                 out.push(m);
@@ -804,6 +826,26 @@ impl Chat {
     }
 }
 
+/// 清单 → 运行条目（disabled 一律 false 起步：停用已在扫描层被台账过滤；
+/// 运行中的禁用/复用走原地翻 entry.disabled 位，090-4 v5）。
+pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry> {
+    manifests
+        .into_iter()
+        .map(|manifest| PluginEntry {
+            manifest,
+            disabled: false,
+            js: None,
+            host: None,
+            tree_loaded: false,
+            cell_menu: None,
+            split_ratios: std::cell::RefCell::new(Vec::new()),
+            split_drag: std::cell::RefCell::new(None),
+            section_scrolls: std::cell::RefCell::new(Vec::new()),
+            body: None,
+        })
+        .collect()
+}
+
 /// 启动扫描（spawn_boot_tasks 调；首帧后异步落位，微秒级/个）。
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
@@ -812,27 +854,50 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
             .spawn(async move { scan_manifests() })
             .await;
         let _ = this.update(cx, |c, cx| {
-            c.plugins_set(
-                manifests
-                    .into_iter()
-                    .map(|manifest| PluginEntry {
-                        manifest,
-                        disabled: false,
-                        js: None,
-                        host: None,
-                        tree_loaded: false,
-                        cell_menu: None,
-                        split_ratios: std::cell::RefCell::new(Vec::new()),
-                        split_drag: std::cell::RefCell::new(None),
-                        section_scrolls: std::cell::RefCell::new(Vec::new()),
-                        body: None,
-                    })
-                    .collect(),
-                cx,
-            );
+            // ---- 内层 wasm 插件（090-5 L3）：主线程装载，init 即验签门 ----
+            // wasmtime 编译与线程局部 proof 钩子都要求主线程；结果经 set_status
+            // 面向用户（失败不静默，02 §7.2）。实例即验即弃——wasm 渲染面是
+            // 后续切片，本片只验门。
+            pf_plugin_host::install_proof_hook(host_proof_material);
+            let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
+            for m in wasm {
+                let id = m.id.clone();
+                let title = pick_lang(&m.title_zh, &m.title_en);
+                let wasm_path = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
+                let mut inst = match pf_plugin_host::PluginInstance::load(&wasm_path) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        let msg = format!("插件 {title} 装载失败：{e}");
+                        eprintln!("[pf-plugin] {msg}");
+                        c.set_status(msg, cx);
+                        continue;
+                    }
+                };
+                match inst.init(&id) {
+                    Ok(()) => {
+                        let msg = format!("插件 {title}：官方验证通过，已激活");
+                        eprintln!("[pf-plugin] {msg}");
+                        c.set_status(msg, cx);
+                    }
+                    Err(e) => {
+                        let msg = format!("插件 {title} 拒载：{e}");
+                        eprintln!("[pf-plugin] {msg}");
+                        c.set_status(msg, cx);
+                    }
+                }
+            }
+            c.plugins_set(plugin_entries(js), cx);
         });
     })
     .detach();
+}
+
+/// 官方构建证明材料（build.rs 把 PF_BUILD_PROOF/KID 烙成二进制常量，见
+/// crates/app/build.rs；未设置的构建 = 占位符 → init 验签必败 → 拒载）。
+fn host_proof_material() -> String {
+    let proof = option_env!("PF_HOST_PROOF").unwrap_or("PROOF_PLACEHOLDER");
+    let kid = option_env!("PF_HOST_PROOF_KID").unwrap_or("");
+    serde_json::json!({ "kid": kid, "proof": proof }).to_string()
 }
 
 /// 插件声明的图标引用 → 可渲染资产路径（内置名 / `assets:x.svg` / 完整路径）。
