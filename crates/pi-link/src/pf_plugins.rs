@@ -399,6 +399,38 @@ pub fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 安装尾声钩子：把重活（wasm → cwasm 预编译）压在**安装那一次**做完。
+///
+/// pi-link 不依赖 wasmtime（那是 app 侧 `pf-plugin-host` 的事），故走 fn 指针
+/// 钩子：app 启动时注入。注入后 [`install`] 变成「解压 + 预编译都完成才算装完」，
+/// 失败回滚整个安装目录（不会留半成品）。未注入 = 不做事（pi-link 单测/CLI 场景）。
+pub type InstallPrepareFn = fn(&Path) -> Result<(), String>;
+
+static INSTALL_PREPARE: std::sync::RwLock<Option<InstallPrepareFn>> =
+    std::sync::RwLock::new(None);
+
+/// app 启动时注入安装尾声钩子（见 [`InstallPrepareFn`]）。
+pub fn install_prepare_hook(f: InstallPrepareFn) {
+    if let Ok(mut c) = INSTALL_PREPARE.write() {
+        *c = Some(f);
+    }
+}
+
+fn run_install_prepare(dest: &Path) -> Result<(), String> {
+    let f = INSTALL_PREPARE.read().ok().and_then(|c| *c);
+    match f {
+        Some(f) => f(dest),
+        None => Ok(()),
+    }
+}
+
+/// 单插件编译产物缓存目录：`<插件安装目录>/.cache/`。
+///
+/// 绑死在安装目录上：卸载即随之删除、整个插件目录拷走时缓存跟着走（换机免重编）。
+pub fn plugin_cache_for(plugin_dir: &Path) -> PathBuf {
+    plugin_dir.join(".cache")
+}
+
 /// 安装/更新（同一入口：同版本重装 = 覆盖）。返回给 UI 的完成消息。
 pub fn install(entry: &IndexEntry) -> Result<String, String> {
     let dest = plugin_dir(&entry.name, &entry.version)?;
@@ -436,6 +468,12 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
         }
         extract(&tarball, &dest)?;
         std::fs::remove_file(&tarball).ok();
+        // 安装即终态：预编译（wasm → cwasm）在用户等待的这几秒里一次做完，
+        // 此后启动/开面板永远走 mmap 命中，运行时零编译。失败 = 回滚，不留半成品。
+        if let Err(e) = run_install_prepare(&dest) {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(format!("安装失败：{e}"));
+        }
         ledger_upsert(LedgerEntry {
             name: entry.name.clone(),
             version: entry.version.clone(),
@@ -514,5 +552,48 @@ mod dir_alias_tests {
         assert_eq!(dir_aliases("quick-panel"), vec!["quick-panel".to_string()]);
         // scope 自身含 `__` 时短名仍可取
         assert_eq!(dir_aliases("@a__b/x")[1], "x");
+    }
+}
+
+#[cfg(test)]
+mod install_prepare_tests {
+    use super::*;
+
+    /// 钩子接线：注入的函数必须收到**解压后的插件目录**，成功/失败都要透传。
+    /// （wasm 预编译本身在 app 侧 `install_prepare`，这里只验 pi-link 的接线）
+    #[test]
+    fn install_prepare_hook_wiring() {
+        fn ok_hook(dir: &Path) -> Result<(), String> {
+            std::fs::write(dir.join(".prepared"), b"1").map_err(|e| e.to_string())
+        }
+        fn fail_hook(_: &Path) -> Result<(), String> {
+            Err("预编译失败: boom".into())
+        }
+        let dir = std::env::temp_dir().join(format!("pf-prep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        install_prepare_hook(ok_hook);
+        assert!(run_install_prepare(&dir).is_ok());
+        assert!(dir.join(".prepared").is_file(), "钩子必须收到插件目录");
+
+        install_prepare_hook(fail_hook);
+        let err = run_install_prepare(&dir).unwrap_err();
+        assert!(err.contains("boom"), "失败原因必须透传给安装方：{err}");
+
+        // 未注入 = 不做事（pi-link 单测/CLI 场景）
+        if let Ok(mut c) = INSTALL_PREPARE.write() {
+            *c = None;
+        }
+        assert!(run_install_prepare(&dir).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 编译产物缓存绑在插件安装目录内（卸载即清、整目录拷走跟着走）。
+    #[test]
+    fn cache_dir_lives_inside_plugin_dir() {
+        let p = plugin_cache_for(Path::new("/x/plugins/@s__plug/1.2.3"));
+        assert!(p.ends_with(".cache"));
+        assert!(p.starts_with("/x/plugins/@s__plug/1.2.3"));
     }
 }

@@ -427,6 +427,16 @@ pub(super) fn dispatch(
                 return ok();
             }
             let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if panel == "plugin" {
+                // 走 open_plugin_dock（与点状态栏 tab 同语义）：触发插件懒加载链
+                // （建 ctx/装 wasm → onPanelOpen → render 缓存）；直接赋值
+                // dock_panel 会绕过它，插件面板永远停在「…」占位。
+                if chat.plugins.plugins.get(plugin_ix).is_none_or(|e| e.disabled) {
+                    return Err(bad(format!("插件 ix={plugin_ix} 不存在或已停用")));
+                }
+                chat.open_plugin_dock(plugin_ix, cx);
+                return ok();
+            }
             chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
                 .ok_or_else(|| bad(format!("未知 dock 面板: {panel:?}")))?;
             cx.notify();
