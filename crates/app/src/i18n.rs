@@ -651,6 +651,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.hint_starting", "pf-wxbot 创建成功，正在启动渠道…", "pf-wxbot 建立成功，正在啟動頻道…", "pf-wxbot created. Starting the channel…"),
     ("remote.hint_create_failed", "pf-wxbot 创建失败：{err}", "pf-wxbot 建立失敗：{err}", "pf-wxbot creation failed: {err}"),
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
+    ("remote.qr_retry", "扫码连接失败，请刷新重扫。", "掃碼連接失敗，請刷新重掃。", "Scan connection failed. Refresh and try again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),
@@ -732,10 +733,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.field_status", "状态", "狀態", "Status"),
     ("remote.field_binding", "绑定", "綁定", "Binding"),
     ("remote.qr_begin", "获取二维码", "取得二維碼", "Get QR code"),
-    ("remote.qr_refresh", "重新获取", "重新獲取", "Refresh"),
+    ("remote.qr_refresh", "刷新重扫", "刷新重掃", "Refresh & rescan"),
     ("remote.qr_done", "✅ 绑定成功", "✅ 綁定成功", "✅ Bound successfully"),
     ("remote.qr_help", "发送 /帮助 查看可用命令。", "發送 /幫助 查看可用命令。", "Send /help to see available commands."),
-    ("remote.qr_expired", "二维码已过期，请重新获取。", "二維碼已過期，請重新獲取。", "QR code expired, please refresh."),
+    ("remote.qr_expired", "二维码已过期，请刷新重扫", "二維碼已過期，請刷新重掃", "QR code expired. Refresh and rescan."),
     // 060 微信通信页两栏重构（2026-10-24）：左「扫码连接」/右「Bot 渠道」；
     // 渠道卡只保留微信（060 范围无飞书/Lark/Telegram）
     ("remote.scan_title", "手机扫码连接", "手機掃碼連接", "Scan with Phone"),

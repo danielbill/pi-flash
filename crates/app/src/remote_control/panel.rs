@@ -96,12 +96,12 @@ fn scan_status_card(
     };
     let (title, badge, dot, hint, action): (&str, String, u32, String, Option<CardAction>) =
         match &chat.aux.remote.qr {
-            // ② 扫码微信侧出错（原文透传；未装插件的指引由 worker 拼在文内）
+            // ② 扫码微信侧出错（原文只进日志，界面给行动指引）
             QrState::Error(m) => (
                 tr("remote.title_error"),
                 tr("remote.st_failed").to_string(),
                 t.danger,
-                m.clone(),
+                friendly_qr_error(m),
                 None,
             ),
             // ③ 重新扫码 = pf-wxbot 更新重建（旧 bot 还在服务，扫完自动换新）
@@ -276,12 +276,10 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
             lines.push(tr("remote.qr_help").into());
             inner.push(mono_lines(lines, 11., true));
         }
-        // 过期后泵下一拍自动续码，无需用户操作
-        QrState::Expired => inner.push(kit::error_note(&tr("remote.qr_expired"))),
-        QrState::Error(m) => {
-            inner.push(kit::error_note(m));
-            inner.push(qr_refresh_button(weak));
-        }
+        // 过期/出错：**码上蒙白**，提示与按钮直接压在码上（2026-10-24 用户
+        // 定夺）；过期后泵下一拍自动续码，出错才需要点「刷新重扫」
+        QrState::Expired => inner.push(qr_masked(chat, weak, tr("remote.qr_expired").to_string())),
+        QrState::Error(m) => inner.push(qr_masked(chat, weak, friendly_qr_error(m))),
     }
     div()
         .w_full()
@@ -300,7 +298,55 @@ fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 「重新获取」钮（Error 专用；`begin_qr` 幂等——Expired 走泵自动续码）。
+/// 用户可读的扫码错误：原始诊断（HTTP 细节/字段名）只进 stderr 与 dump，
+/// 界面上只留行动指引（2026-10-24 用户定夺「对用户没有帮助的信息不展示」）。
+fn friendly_qr_error(m: &str) -> String {
+    let low = m.to_lowercase();
+    if low.contains("timeout") || m.contains("超时") {
+        // 超时按过期口径显示（用户定夺）
+        tr("remote.qr_expired").to_string()
+    } else if m.contains("未安装") || m.contains("未识别的扫码状态") {
+        // worker 拼好的行动指引，保留
+        m.to_string()
+    } else {
+        tr("remote.qr_retry").to_string()
+    }
+}
+
+/// 码上蒙白：二维码（有缓存就画）+ 不透明白色蒙层 + 居中提示与「刷新重扫」。
+/// 没有缓存（取码就失败）时用同尺寸白底占位，蒙层文案不变。
+fn qr_masked(chat: &Chat, weak: &gpui::WeakEntity<Chat>, message: String) -> gpui::AnyElement {
+    let t = T();
+    let mut wrap = div().relative();
+    match &chat.aux.remote.qr_url {
+        Some(url) => wrap = wrap.child(qr_white_card(url)),
+        None => {
+            wrap = wrap
+                .w(px(416.))
+                .h(px(416.))
+                .bg(rgb(0xffffff))
+                .rounded(px(12.))
+        }
+    }
+    let message_el = div()
+        .text_size(crate::appearance::ui_size(12.5))
+        .text_color(rgb(t.danger))
+        .child(SharedString::from(message));
+    let overlay = div()
+        .absolute()
+        .inset_0()
+        .bg(rgb(0xffffff))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(10.))
+        .child(message_el)
+        .child(qr_refresh_button(weak));
+    wrap.child(overlay).into_any_element()
+}
+
+/// 「刷新重扫」钮（过期/出错共用的重取入口；`begin_qr` 幂等）。
 fn qr_refresh_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     kit::config_button(
         "wx-qr-refresh",
