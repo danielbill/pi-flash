@@ -39,8 +39,6 @@ use crate::session::runtime::RemoteSend;
 
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
-/// ZCode `weixinActivatedWelcome`（首条消息激活回执的抬头）。
-const ACTIVATED_WELCOME: &str = "微信 Bot 已激活。发送 **/帮助** 查看命令，或直接描述你要做的事。";
 /// 投递失败回执（wxprobe 文案表同名条目）。失败必须让微信端看见——
 /// 静默丢弃正是「发消息没反应」屡查不出的原因。
 const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi 进程，稍后重试。";
@@ -149,9 +147,6 @@ pub struct RemoteControl {
     /// 活跃会话这会儿是否在跑（pump 每拍回填）。`route()` 没有 `cx`，
     /// 拿不到 runtime，所以在这儿留一份 —— `/task` 的两个守卫要读它。
     active_running: bool,
-    /// 本运行期是否已确认过「激活」状态（真正事实来源是状态文件里的
-    /// `activated_at`，这里只是省掉每条消息一次文件读）。
-    activated: bool,
     pending: Option<Pending>,
     /// 当前 content index 的文本块（ZCode `assistantReplyBuffer` 的对应物）
     cur_ix: Option<usize>,
@@ -206,7 +201,6 @@ impl RemoteControl {
         Self {
             transport: None,
             active_running: false,
-            activated: false,
             boot_attempted: false,
             pending: None,
             cur_ix: None,
@@ -228,33 +222,6 @@ impl RemoteControl {
         }
     }
 
-    /// 惰性起渠道。没扫码 / 被别的轮询者持锁都只是**记一条日志**，
-    /// 不 panic 不重试 —— 桌面端该干什么还干什么。
-    /// ZCode `handleWeixinFirstActivation`（botsService.ts:957）。
-    ///
-    /// 源码注释的原话：微信扫码**只返回 bot token/id，不返回可投递的用户 id**；
-    /// 第一条微信入站消息用于建立会话目标，因此只回激活说明，
-    /// **不把「你好」这类激活文本误当成任务 prompt**。
-    ///
-    /// 只对**普通消息**触发（`command.type === "message"`），命令照常分发；
-    /// **事实来源是 `chat_id`**（`ensure_transport` 里回填到 `self.activated`）：
-    /// 这正是 ZCode 那段注释说的「还没有可投递的用户 id」；`ack` 落了
-    /// `chat_id` 之后重启就不会重复欢迎，**不需要新增状态字段** ——
-    /// 更重要的是避免和 `ack` 在同一文件上读改写互踩。
-    /// 成功建立时返回要回的文案。
-    fn take_first_activation(&mut self, lang: Lang) -> Option<String> {
-        if self.activated {
-            return None;
-        }
-        self.activated = true;
-        // welcome + 帮助（ZCode: [msg(weixinActivatedWelcome), buildHelpText].join("\n\n")）
-        Some(format!(
-            "{}\n\n{}",
-            t(lang, ACTIVATED_WELCOME),
-            crate::remote_control::pipeline::help_text(lang)
-        ))
-    }
-
     /// 微信桥自启开关。**已恢复**（2026-10-24 所有者定夺：bot 随本应用
     /// 存活是产品语义，PF 关闭重启后必须自动接上微信线——关停态才是用户
     /// 主动选择）。2026-10-15 曾因「回头抽成插件」断开过，现插件化未落地、
@@ -262,6 +229,8 @@ impl RemoteControl {
     /// `start_error` 状态④兜底显示。
     const SELF_START: bool = true;
 
+    /// 惰性起渠道。没扫码 / 被别的轮询者持锁都只是**记一条日志**，
+    /// 不 panic 不重试 —— 桌面端该干什么还干什么。
     fn ensure_transport(&mut self) {
         if self.boot_attempted {
             return;
@@ -282,9 +251,6 @@ impl RemoteControl {
         let st = wxprobe::state::load();
         // 微信默认会话归属随渠道恢复（重启后微信仍跟同一条线说话）
         self.wx_session = wxprobe::state::get_str(&st, "session_key");
-        // 有 chat_id = 之前已经建立过投递目标，跳过激活欢迎（等价于 ZCode
-        // 持久化的 `weixinActivatedAt`）
-        self.activated = wxprobe::state::get_str(&st, "chat_id").is_some();
         let started = wxprobe::transport::config_from_state(&st).and_then(|cfg| {
             self.active_token = Some(cfg.token.clone());
             wxprobe::transport::spawn(&cfg)
@@ -590,10 +556,6 @@ impl RemoteControl {
 
         match wxprobe::command::parse_bot_command(text) {
             BotCommand::Message { text: msg } => {
-                // 激活只拦「普通消息」，命令照常走（与 ZCode 同序）
-                if let Some(reply) = self.take_first_activation(lang) {
-                    return Action::Send(reply);
-                }
                 Action::Prompt(msg)
             }
             BotCommand::Stop => Action::Abort,
@@ -1277,9 +1239,8 @@ mod tests {
     #[test]
     fn tier1_commands_are_all_wired() {
         let mut rc = RemoteControl::new();
-        // 首条普通消息 = 激活回执，不进模型（ZCode handleWeixinFirstActivation）
-        assert!(matches!(rc.route("你好"), Action::Send(_)));
-        rc.activated = true;
+        // 普通消息直接进模型（2026-10-24 定夺：撤自动欢迎+帮助菜单）
+        assert!(matches!(rc.route("你好"), Action::Prompt(_)));
         assert!(matches!(rc.route("帮我看看这个报错"), Action::Prompt(_)));
         assert!(matches!(rc.route("/停止"), Action::Abort));
         assert!(matches!(rc.route("/stop"), Action::Abort));
@@ -1465,46 +1426,24 @@ mod tests {
     fn no_pending_means_plain_command_routing() {
         let mut rc = RemoteControl::new();
         assert!(rc.pending.is_none());
-        rc.activated = true; // 跳过首条消息的激活回执，直接看路由
         assert!(matches!(rc.route("1"), Action::Prompt(_)));
     }
 
-    // ── 首条消息激活（ZCode botsService.ts:957）────────────────────────
+    // ── 普通消息不再有自动欢迎/帮助菜单（2026-10-24 所有者定夺）─────
 
-    /// 源码注释的原话：扫码只给 bot token/id、**不给投递目标**；
-    /// 第一条入站消息用于建立目标，只回欢迎+帮助，**不把文本当 prompt**。
+    /// 之前每启动一次都会在首条消息上推一整份命令菜单（用户实测「每次
+    /// 打开都弹」）——现在普通消息一律直接进模型，菜单只由 `/帮助` 拉。
     #[test]
-    fn first_plain_message_activates_instead_of_prompting() {
+    fn first_plain_message_goes_straight_to_the_model() {
         let mut rc = RemoteControl::new();
-        assert!(!rc.activated);
-        match rc.route("你好") {
-            Action::Send(text) => {
-                assert!(
-                    text.contains("已激活"),
-                    "激活回执要带 weixinActivatedWelcome，实际: {text}"
-                );
-                assert!(
-                    text.contains("/帮助"),
-                    "要跟 ZCode 一样把 helpText 拼在欢迎后面，实际: {text}"
-                );
-            }
-            other => panic!("首条普通消息应回激活文案，实际 {other:?}"),
-        }
-        // 只回这一次：运行期内部标记 + 后续正常进模型
-        assert!(rc.activated);
-        assert!(matches!(rc.route("第二条"), Action::Prompt(_)));
-        // 激活只拦普通消息，命令照常分发
-        let mut rc2 = RemoteControl::new();
-        assert!(matches!(rc2.route("/帮助"), Action::Send(_)));
-        // 命令不消耗激活：等第一条普通消息仍然欢迎
-        assert!(!rc2.activated);
+        assert!(matches!(rc.route("你好"), Action::Prompt(_)));
+        assert!(matches!(rc.route("/帮助"), Action::Send(_)));
     }
 
     /// 活跃会话在跑时 `/task` 既不给列表也不许切换（ZCode 两处 Bugfix）。
     #[test]
     fn task_menu_is_refused_while_running() {
         let mut rc = RemoteControl::new();
-        rc.activated = true;
         rc.active_running = true;
         match rc.route("/task") {
             Action::Send(t) => assert!(t.contains("正在运行"), "应拒，实际: {t}"),
