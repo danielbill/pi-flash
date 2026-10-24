@@ -1274,7 +1274,11 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let manifests = cx
             .background_executor()
-            .spawn(async move { scan_manifests() })
+            .spawn(async move {
+                // 先清无主残留（卸载时被占用留下的 .cache 等），再扫
+                pi_link::pf_plugins::sweep_orphans();
+                scan_manifests()
+            })
             .await;
         let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
         // ① 全部落位（JS+wasm）：状态栏 tab 立即可见；wasm 实例本身仍是懒装载

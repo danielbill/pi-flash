@@ -489,15 +489,88 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
     Ok(format!("{} {} 安装完成", entry.display.zh, entry.version))
 }
 
-/// 卸载：删目录 + 摘台账。目录已不在视为成功（幂等）。
+/// 卸载：摘台账 + 删目录。目录已不在视为成功（幂等）。
+///
+/// **台账先删**：台账=安装唯一真相，删不干净目录也不能让「市场显示已安装」。
+/// 目录删除分两步：先删非缓存内容（清单没了 = 扫描就看不见了），最后试删
+/// `.cache/`（cwasm 被运行中的 wasm 实例 mmap 住时 Windows 会拒绝，os error 32
+/// ——这时**不算失败**，留待下次启动的孤儿清扫）。
 pub fn uninstall(name: &str) -> Result<String, String> {
+    // ① 台账先摘（误删目录不影响"已卸载"这个结论）
+    ledger_remove(name)?;
+    // ② 目录内容尽量清
     let root = crate::paths::plugins_dir().ok_or("无法定位插件安装目录")?;
     let base = root.join(dir_name(name));
+    let mut warning = None;
     if base.exists() {
-        std::fs::remove_dir_all(&base).map_err(|e| format!("删除插件目录失败: {e}"))?;
+        if let Err(e) = remove_tree_keeping_cache(&base) {
+            warning = Some(format!("删除插件目录失败（已标记卸载）: {e}"));
+        }
+        // ③ 缓存目录最后试：失败 = 有实例正 mmap 住，留给启动清扫
+        let _ = std::fs::remove_dir_all(base.join(".cache"));
+        let _ = std::fs::remove_dir_all(&base);
     }
-    ledger_remove(name)?;
-    Ok(format!("{name} 已卸载"))
+    match warning {
+        Some(w) => Ok(format!("{name} 已卸载（{w}）")),
+        None => Ok(format!("{name} 已卸载")),
+    }
+}
+
+/// 递归删除目录内容，但**跳过 `.cache/`**（cwasm 可能被 mmap 住）。
+fn remove_tree_keeping_cache(dir: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == ".cache") {
+            continue;
+        }
+        if path.is_dir() {
+            remove_tree_keeping_cache(&path)?;
+            let _ = std::fs::remove_dir(&path);
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 启动清扫：删掉「没有清单也没有台账归属」的残留目录（卸载时被占用留下的
+/// `.cache` 等）。只动**明显无主**的目录，跑在后台扫描线程里，失败静默。
+pub fn sweep_orphans() {
+    let Some(root) = crate::paths::plugins_dir() else {
+        return;
+    };
+    let enabled: std::collections::HashSet<String> = load_ledger()
+        .into_iter()
+        .flat_map(|l| dir_aliases(&l.name))
+        .collect();
+    let Ok(rd) = std::fs::read_dir(&root) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let pkg_dir = e.path();
+        if !pkg_dir.is_dir() {
+            continue;
+        }
+        let pkg = pkg_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if enabled.contains(&pkg) {
+            continue; // 台账里还有它：正常安装目录，不动
+        }
+        // 无台账归属 + 底下没有任何清单 = 残留
+        let has_manifest = std::fs::read_dir(&pkg_dir)
+            .map(|rd| {
+                rd.flatten().any(|v| {
+                    v.path().is_dir() && v.path().join("pf-plugin.toml").is_file()
+                })
+            })
+            .unwrap_or(false);
+        if !has_manifest {
+            let _ = std::fs::remove_dir_all(&pkg_dir);
+        }
+    }
 }
 
 fn now_iso() -> String {
@@ -595,5 +668,34 @@ mod install_prepare_tests {
         let p = plugin_cache_for(Path::new("/x/plugins/@s__plug/1.2.3"));
         assert!(p.ends_with(".cache"));
         assert!(p.starts_with("/x/plugins/@s__plug/1.2.3"));
+    }
+}
+
+#[cfg(test)]
+mod uninstall_tests {
+    use super::*;
+
+    /// 卸载两铁律：①台账先摘（目录删不掉也不能显示已装）；②留 `.cache`
+    /// 不算失败（cwasm 被运行中实例 mmap 时 Windows 会拒绝删除）。
+    #[test]
+    fn uninstall_clears_ledger_and_survives_busy_cache() {
+        let root = std::env::temp_dir().join(format!("pf-uninst-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let base = root.join("@s__plug").join("1.0.0");
+        std::fs::create_dir_all(base.join(".cache")).unwrap();
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("pf-plugin.toml"), "schema = 2\n").unwrap();
+        std::fs::write(base.join("plugin.wasm"), b"x").unwrap();
+        std::fs::write(base.join(".cache/a.cwasm"), b"y").unwrap();
+        std::fs::write(base.join("assets/a.svg"), b"z").unwrap();
+
+        // 只验目录清理规则（台账/路径走全局数据目录，单测里不碰）
+        remove_tree_keeping_cache(&base).unwrap();
+        assert!(!base.join("pf-plugin.toml").exists(), "清单必须被删");
+        assert!(!base.join("plugin.wasm").exists(), "wasm 必须被删");
+        assert!(!base.join("assets").exists(), "资产目录必须被清");
+        assert!(base.join(".cache/a.cwasm").exists(), "缓存留给启动清扫");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -117,6 +117,15 @@ impl Chat {
         }
         self.aux.market.pf.removing = Some(name.clone());
         self.aux.market.pf.error = None;
+        // 先就地撤运行态（drop wasm 实例 → 释放 .cache/*.cwasm 的 mmap），
+        // 否则后台删目录必被 Windows 拒绝（os error 32，文件被占用）。
+        if let Some(ix) = self.plugin_ix_by_pkg(&name) {
+            self.plugin_evict(ix);
+            self.plugins.plugins.remove(ix);
+            if matches!(self.layout.dock_panel, crate::DockPanel::Plugin(_)) {
+                self.layout.dock_panel = crate::DockPanel::Default;
+            }
+        }
         let pkg_name = name.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
