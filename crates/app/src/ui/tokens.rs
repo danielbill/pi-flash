@@ -135,23 +135,29 @@ pub mod scrollbar {
 }
 
 /// §5.10 面板控制栏（020-1 整合面板）：上下子面板控制栏统一高、一律无
-/// 下 border；分隔线总高含上下各 3px 命中带（视觉线 1px 居中，hover
-/// 高亮见 §5.12 divider）；钮盒高 30。
+/// 下 border；分隔线感应厚度归 §5.12 divider::HIT（原 DIV_H 已并入）；
+/// 钮盒高 30。
 pub mod panel_ctrl {
     pub const BAR_H: f32 = 38.;
-    pub const DIV_H: f32 = 7.;
     pub const BTN_H: f32 = 30.;
 }
 
-/// §5.12 分隔线（统一规范，2026-10-23 定夺）：常驻 1px 细线；hover/拖拽
-/// 换 4px accent 粗线。高亮线一律 absolute 覆盖、不占布局 = hover 零推挤
-/// （border 占布局，换粗细会抖）。两处适用：content-col ⇆ panel-col 交界
-/// （竖，全高贴缘）与 dock 上下分区（横，缩进 10 带内居中）。
+/// §5.12 分隔线（统一规范，2026-10-23 定夺）：常驻 1px 细线；hover 与拖拽
+/// 同款 4px accent 粗线；感应厚度三处统一。高亮线一律 absolute 覆盖、不占
+/// 布局 = hover 零推挤（border 占布局，换粗细会抖）。唯一实现
+/// `ui::divider`（LineSpec + line），调用方禁止就地手画；hover 用显式状态
+/// 位，不得用 gpui hover/group_hover 改粗细（refine 受 has_active_drag
+/// 门控，会渲染成两种结果）。三处：content-col ⇆ panel-col 交界（竖，
+/// 全高贴缘）、dock 上下分区（横，缩进 10 带内居中）、插件面板分区
+/// （横，全宽）。
 pub mod divider {
     /// 常驻视觉线
     pub const LINE: f32 = 1.;
     /// hover/拖拽高亮粗线
     pub const HOVER: f32 = 4.;
+    /// 感应带厚度（三处统一；竖直分隔线的摆位另定：面板侧 3px 避让列表
+    /// 滚动条，其余落在内容侧）
+    pub const HIT: f32 = 7.;
 }
 
 /// §2 渲染特例固定字号（px）：markdown 内部 chrome 不经 ui_size（§2 禁止
@@ -274,11 +280,8 @@ mod tests {
             [10., 6., 10.]
         );
         // §5.10 面板控制栏（020-1） / §5.12 分隔线（统一规范）
-        assert_eq!(
-            [panel_ctrl::BAR_H, panel_ctrl::DIV_H, panel_ctrl::BTN_H],
-            [38., 7., 30.]
-        );
-        assert_eq!([divider::LINE, divider::HOVER], [1., 4.]);
+        assert_eq!([panel_ctrl::BAR_H, panel_ctrl::BTN_H], [38., 30.]);
+        assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 4., 7.]);
         // §7 图标对齐线（含推导值）
         assert_eq!(
             [

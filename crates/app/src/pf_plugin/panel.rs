@@ -1023,7 +1023,7 @@ fn render_splitter(
     let weak = weak.clone();
     // 高亮态 = 悬停本条 ‖ 正在拖本条（§5.12：hover 与拖拽同款 4px accent）
     let active = ctx.split_hover == Some(index) || ctx.split_drag == Some(index);
-    let band = crate::ui::tokens::panel_ctrl::DIV_H;
+    let band = crate::ui::tokens::divider::HIT;
     div()
         .id(SharedString::from(format!("pf-split-{ix}-{index}")))
         .h(px(band))

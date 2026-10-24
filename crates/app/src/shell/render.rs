@@ -487,7 +487,7 @@ impl Render for Chat {
                             let dock_h = f32::from(b.size.height);
                             if dock_h > 100. {
                                 let bar = crate::ui::tokens::panel_ctrl::BAR_H;
-                                let div_h = crate::ui::tokens::panel_ctrl::DIV_H;
+                                let div_h = crate::ui::tokens::divider::HIT;
                                 let r = (f32::from(ev.position.y) - f32::from(b.origin.y)) / dock_h;
                                 c.layout.sess_min = false;
                                 c.layout.files_min = false;
@@ -526,9 +526,9 @@ impl Render for Chat {
             // 轮不到这里。
             .on_drop::<crate::titlebar::TabDrag>(move |_, _, _| {});
         if !panes_hidden {
-            // 分隔线响应区（跨线）：panel 内 3px + 内容区 9px（避开滚动条
-            // 命中区）；常驻 1px 细线由 content-col 的 border 承担（占位，
-            // hover 前后零布局位移）；hover/拖拽另画 4px accent 覆盖线
+            // 分隔线响应区（跨线）：统一感应厚度 divider::HIT=7，面板侧只
+            // 占 3px（避让列表滚动条命中区），其余落在内容侧；可视线由
+            // ui::divider 统一画（§5.12）
             body = body.child(
                 div()
                     .id("slp-resizer")
@@ -536,7 +536,7 @@ impl Render for Chat {
                     .top_0()
                     .bottom_0()
                     .left(px(self.layout.slp_w - 3.))
-                    .w(px(12.))
+                    .w(px(crate::ui::tokens::divider::HIT))
                     .cursor_col_resize()
                     .on_hover(cx.listener(|this, h: &bool, _w, cx| {
                         if this.layout.slp_hover != *h {

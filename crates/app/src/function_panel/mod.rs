@@ -1072,7 +1072,7 @@ pub(crate) fn dock(
     // §5.12 统一分隔线：常驻 1px；**hover 与拖拽同为 4px accent**
     let split_drag = chat.layout.split_drag;
     let split_active = split_drag || chat.layout.split_hover;
-    let d_hit = crate::ui::tokens::panel_ctrl::DIV_H;
+    let d_hit = crate::ui::tokens::divider::HIT;
     div()
         .id("dock")
         .flex_1()
