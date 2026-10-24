@@ -456,6 +456,7 @@ impl Chat {
                 pi_link::hidden_sessions::OWNER_WX,
                 name.as_deref(),
                 Some(&path),
+                Some("pf-wxbot-"),
             );
             // 落盘后名字再钉一次（草稿期 pi 可能只记在内存里）
             if let Some(n) = name {

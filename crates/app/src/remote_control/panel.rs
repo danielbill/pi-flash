@@ -548,12 +548,13 @@ impl Chat {
             pi_link::hidden_sessions::OWNER_WX,
             Some(&name),
             None,
+            Some("pf-wxbot-"),
         );
         Some(key)
     }
 
-    /// 摘掉一条（影子）会话：runtime 下线、文件进回收站、各处缓存/清单同步。
-    /// 与公开的 `delete_session` 区别：**不**改桌面焦点、不出 toast、不新建桌面会话。
+    /// 让一条旧影子会话下线（**不删文件**——2026-10-24 用户定夺：删除一律不做，
+    /// 老会话留盘、由过滤清单按 `pf-wxbot-*` 前缀挡住）。只清内存态与列表缓存。
     fn wx_forget_session(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
         if let Some(rt) = self.pool.runtimes.remove(key) {
             rt.update(cx, |r, _| {
@@ -562,15 +563,6 @@ impl Chat {
             });
         }
         let path = std::path::PathBuf::from(key);
-        // 文件删除下沉后台（见 wx_trash_session_file；UI 线程碰 trash 会 panic）
-        let to_trash = path.is_file().then(|| path.clone());
-        if let Some(p) = to_trash {
-            // **绝不**在 UI 线程调 trash：windows 实现要 CoInitializeEx(MTA)，
-            // 而主线程已被 GPUI 初始化成 STA（HRESULT 0x80010106）→ trash
-            // 5.2.9 直接 panic；panic 发生在事件回调（extern "C"）里无法
-            // unwind → 进程 0xC0000409「重新绑定即崩」。
-            std::thread::spawn(move || wx_trash_session_file(p));
-        }
         let same = |a: &std::path::PathBuf| crate::services::workspace::same_path(a, &path);
         self.pool.sessions.retain(|s| !same(&s.path));
         self.pool.session_tail_cache.remove(&path);
@@ -586,19 +578,5 @@ impl Chat {
             self.psp.active_file = None;
         }
         pi_link::recents::remove_recent(&path);
-    }
-}
-
-/// 影子会话文件 → 回收站（后台线程专用）。
-///
-/// `trash` 在 Windows 上要求 MTA apartment，主线程是 STA——所以这里只在
-/// 独立线程跑；真失败（占用/权限）退回整删，绝不让异常冒到 UI。
-fn wx_trash_session_file(path: std::path::PathBuf) {
-    let trashed = std::panic::catch_unwind(|| trash::delete(&path).is_ok()).unwrap_or(false);
-    if trashed {
-        return;
-    }
-    if let Err(e) = std::fs::remove_file(&path) {
-        eprintln!("[wx] 老会话文件删除失败 {}: {e}", path.display());
     }
 }

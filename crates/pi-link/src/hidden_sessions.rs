@@ -13,8 +13,9 @@
 //! pi 的 sessions 目录里（微信线要能被 pi 打开/续写），只是 PF 的列表
 //! （psp 会话侧栏 / 最近会话 / 项目分组）按本清单过滤掉。
 //!
-//! 匹配口径：`path` 精确（大小写/分隔符归一）**或** `name` 精确（pi 会话的
-//! `session_info.name`）。影子会话在落盘前只有名字（草稿态），落盘后补 path。
+//! 匹配口径三选一（任一命中即隐藏）：`path` 精确（大小写/分隔符归一）、
+//! `name` 精确（pi 的 `session_info.name`）、`prefix` 前缀（同名族的旧会话
+//! 也不进列表——微信线不复用旧会话、也不再删旧文件，靠前缀兜住历史）。
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,7 @@ pub struct Entry {
     pub owner: Option<String>,
     pub name: Option<String>,
     pub path: Option<String>,
+    pub prefix: Option<String>,
 }
 
 /// 过滤清单快照。
@@ -49,6 +51,7 @@ impl Hidden {
         self.entries.iter().any(|e| {
             e.path.as_deref().is_some_and(|ep| norm(ep) == p)
                 || matches!((e.name.as_deref(), name), (Some(a), Some(b)) if a == b)
+                || matches!((e.prefix.as_deref(), name), (Some(pre), Some(b)) if b.starts_with(pre))
         })
     }
 
@@ -84,6 +87,7 @@ pub fn load() -> Hidden {
                     owner: e["owner"].as_str().map(str::to_string),
                     name: e["name"].as_str().map(str::to_string),
                     path: e["path"].as_str().map(str::to_string),
+                    prefix: e["prefix"].as_str().map(str::to_string),
                 })
                 .collect()
         })
@@ -107,6 +111,9 @@ pub fn save(h: &Hidden) {
             if let Some(pa) = &e.path {
                 m.insert("path".into(), json!(pa));
             }
+            if let Some(pre) = &e.prefix {
+                m.insert("prefix".into(), json!(pre));
+            }
             Value::Object(m)
         })
         .collect();
@@ -117,8 +124,14 @@ pub fn save(h: &Hidden) {
     }
 }
 
-/// 模块注入/替换自己的一条（`owner` 决定替换范围）。
-pub fn set_owned(owner: &str, name: Option<&str>, path: Option<&Path>) {
+/// 模块注入/替换自己的一条（`owner` 决定替换范围）。`prefix` 可选：同族
+/// 旧会话（如历史 `pf-wxbot-*`）一并挡住。
+pub fn set_owned(
+    owner: &str,
+    name: Option<&str>,
+    path: Option<&Path>,
+    prefix: Option<&str>,
+) {
     let mut h = load();
     h.entries
         .retain(|e| e.owner.as_deref() != Some(owner));
@@ -126,6 +139,7 @@ pub fn set_owned(owner: &str, name: Option<&str>, path: Option<&Path>) {
         owner: Some(owner.to_string()),
         name: name.map(str::to_string),
         path: path.map(|p| p.to_string_lossy().to_string()),
+        prefix: prefix.map(str::to_string),
     });
     save(&h);
 }
@@ -153,11 +167,19 @@ mod tests {
                     owner: Some(OWNER_WX.into()),
                     name: Some("pf-wxbot-1".into()),
                     path: None,
+                    prefix: None,
                 },
                 Entry {
                     owner: None,
                     name: None,
                     path: Some("C:/Users/x/SESSIONS/a.jsonl".into()),
+                    prefix: None,
+                },
+                Entry {
+                    owner: None,
+                    name: None,
+                    path: None,
+                    prefix: Some("pf-wxbot-".into()),
                 },
             ],
         };
