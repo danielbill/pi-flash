@@ -194,6 +194,9 @@ pub struct RemoteControl {
     /// （出站门对两者都放行，2026-10-23），换来源时必须先把旧来源冲干净，
     /// 否则两个会话的回复会拼成一条发出去。
     buf_key: Option<String>,
+    /// token 比对节流闸（泵 200ms 一拍，state 文件读不必每拍都做——
+    /// Windows 实时杀软下偶发 IO 抖动直接打在 UI 线程上）。
+    token_check_at: Option<std::time::Instant>,
 }
 
 impl RemoteControl {
@@ -219,6 +222,7 @@ impl RemoteControl {
             active_token: None,
             poll_error: None,
             buf_key: None,
+            token_check_at: None,
         }
     }
 
@@ -301,6 +305,16 @@ impl RemoteControl {
         if !self.is_running() {
             return;
         }
+        // 节流：泵 200ms 一拍都同步读 state 文件太勤，1s 一次足够（换绑感知
+        // 延迟人眼无感），杀软扫描的 IO 抖动也别想打上 UI 线程。
+        let now = std::time::Instant::now();
+        if self
+            .token_check_at
+            .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_secs(1))
+        {
+            return;
+        }
+        self.token_check_at = Some(now);
         let st = wxprobe::state::load();
         let Some(new) = wxprobe::transport::require_token(&st).ok() else {
             return;

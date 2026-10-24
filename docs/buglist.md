@@ -1,3 +1,24 @@
+## 待验证（本轮修复）——微信 Bot 开关/扫码成功后主进程卡死最长 90 秒：Transport drop 在 UI 线程 join 长轮询
+
+用户口径：启动后点「重新获取」二维码或拨启用开关，主进程（整只窗口）卡住。
+
+- ✅ 根因：`Transport::drop` 逐个 `join` poll/send 线程；`stop` 只在长轮询两拍
+  之间检查，poll 线程大概率正阻塞在 `getupdates` 的 90s 服务端挂住里
+  （`wire.rs POLL_TIMEOUT=90s`）——join 在 UI 线程上最坏等满 90s。触发路径
+  ①`set_enabled(false)` → `transport = None`；②扫码成功后泵每拍
+  `force_restart_if_token_changed` 检测 token 变化 → `transport = None`
+  （`mod.rs:862`，泵在 UI 线程 200ms 一拍）。原注释已自认
+  「健康长轮询里最坏等一个 90s 超时」。
+- ✅ 修法：drop 改「信号 + 自杀」——置 stop 后 `handles.clear()` detach
+  （poll 这一拍收完见 stop 退出 / inbound 断开 break；send ≤100ms 见 stop /
+  Disconnected 退出），UI 不再等在途长轮询；游标未 ack，下个轮询者重收这批
+  （重复而非丢失，与既有崩溃窗口同方向）。锁释放不受影响（心跳本就 channel 秒退）。
+  顺手：`force_restart_if_token_changed` 的 state 读按 1s 节流（原 200ms 一拍
+  同步文件读，杀软下抖 UI）。
+- ✅ 验证：`cargo test -p wxprobe` 117 全绿；`cargo test -p app --bin pi-flash`
+  383 全绿。**待真机复验**：扫码成功瞬间与开关「关」不再冻结；关掉后 90s 内
+  重开，新旧渠道交接期间消息不丢（重复可容忍）。
+
 ## 待验证（本轮修复）——微信 Bot 出站「受理不投递」：client_id 固定复用被 iLink 去重吞掉
 
 用户口径：消息进了 PF、模型也回复了、`sendmessage` 返回 message_id——手机永远

@@ -90,10 +90,17 @@ pub struct Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for h in self.handles.drain(..) {
-            let _ = h.join();
-        }
-        // _lock 在此 drop → 心跳停、租约目录拆除
+        // **不 join**（2026-10-24 UI 冻结修复，docs/buglist.md）：drop 几乎总在
+        // app 主线程发生（开关「关」/ 换绑 force_restart → `transport = None`），
+        // 而 poll 线程大概率正阻塞在 getupdates 的 90s 长轮询里（POLL_TIMEOUT，
+        // stop 只在两拍之间检查）——join 会把 UI 线程拖住最长 90s（真机：
+        // 扫码成功瞬间/关开关即整只卡死）。改「信号 + 自杀」：两线程都具备
+        // 退出条件——poll 这一拍收完后见 stop 退出（inbound 断开也 break），
+        // send ≤100ms 见 stop / Disconnected 退出；JoinHandle 落地即 detach。
+        // 旧 poll 的在途长轮询最多再挂 90s，但在后台不碰 UI；游标未 ack，
+        // 下个轮询者会重收这批消息（重复而非丢失，与既有崩溃窗口同方向）。
+        self.handles.clear();
+        // _lock 在此 drop → 心跳停、租约目录拆除（心跳本就 channel 秒退，不拖）
     }
 }
 
