@@ -255,6 +255,9 @@ fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEle
         .when(crate::services::workspace::subagents_enabled(), |d| {
             d.child(subagent_fn_bar_btn(chat, cx))
         })
+        // 微信线状态簇（060）：仅活跃会话是微信线时右对齐显示
+        //（链路/手机图标 + 重制二维码 + 启停开关）
+        .children(crate::remote_control::panel::fn_bar_status(chat, cx))
         .into_any_element()
 }
 

@@ -325,7 +325,6 @@ pub(super) fn dispatch(
                     ContentView::PfMarket => "pf-market",
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
-                    ContentView::Wx => "wx",
                 },
             }))
         }

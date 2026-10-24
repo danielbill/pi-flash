@@ -41,7 +41,6 @@ pub(crate) fn content_main(
         // 会话查询（同版式，只查询）
         ContentView::SessionSearch => crate::search::session_view(chat, weak, t),
         // 微信通信全屏页（060；三横菜单唯一入口）
-        ContentView::Wx => crate::remote_control::panel::page(chat, weak),
     };
     div()
         .id("content-main")
@@ -178,7 +177,6 @@ pub(crate) fn term_view(
             crate::PanelTab::Changelog => div().into_any_element(),
             crate::PanelTab::PiExtMarket => div().into_any_element(),
             crate::PanelTab::PiNativeMarket => div().into_any_element(),
-            crate::PanelTab::Wx => div().into_any_element(),
             crate::PanelTab::PfMarket => div().into_any_element(),
             crate::PanelTab::Search => div().into_any_element(),
             crate::PanelTab::SessionSearch => div().into_any_element(),

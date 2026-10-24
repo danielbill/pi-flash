@@ -658,6 +658,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_created", "Pi-Flash微信机器人已创建", "Pi-Flash微信機器人已建立", "The Pi-Flash WeChat bot has been created"),
     ("remote.qr_timeout", "扫描超时，请点击重新扫码", "掃描逾時，請點擊重新掃碼", "Scan timed out. Tap to scan again"),
     ("remote.qr_regen", "重新生成二维码", "重新產生二維碼", "Regenerate QR code"),
+    ("remote.qr_reset", "重制二维码", "重制二維碼", "Reset QR code"),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),

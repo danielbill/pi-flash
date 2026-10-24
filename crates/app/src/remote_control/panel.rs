@@ -1,67 +1,84 @@
-//! 微信通信页（060；`ContentView::Wx` 内容区全屏页，三横菜单唯一入口）。
-//! 2026-10-24 按 `pi-flash-plugins/docs/插件设计/002-微信通信.md` 重绘：
-//! 上下两区（**状态说明区** + **二维码生成展示区**），单列布局为插件化
-//! （pf-wxbot）铺路。状态判定沿用七态生命周期（①未创建 ②微信侧出错
-//! ③更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中）。
+//! 微信通信（060）：「微信线会话」已升格为**普通会话 tab**（桌面与微信
+//! 同权同视图，2026-10-24 定夺），本文件只剩三件套——
+//! 1. [`fn_bar_status`]：会话操作栏右侧状态簇（仅活跃会话是微信线时）
+//! 2. [`wx_qr_panel`]：二维码弹窗（Dialog::WxQr，dialogs.rs 调用）
+//! 3. [`Chat::open_wx`]：入口（确保微信线会话存在并激活；未创建自动弹码）
+//!
+//! UI 语义收敛于 `pi-flash-plugins/docs/插件设计/002-微信通信.md`（提示行
+//! 三态、展示区三态）。
 
-use gpui::{FontWeight, SharedString, div, prelude::*, px, rgb};
+use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::appearance::theme::theme as T;
+use crate::appearance::theme::{Theme, theme as T};
 use crate::i18n::tr;
 use crate::ui::kit::{self, Btn};
 
 use super::QrState;
 
-/// 微信品牌绿（simple-icons wechat 主色，链路行微信 icon 着色）。
-const WX_GREEN: u32 = 0x07c160;
-
-/// 状态说明区（002 §状态说明区）：第一行 `Pi-Flash ⟷ 微信` 链路标识 +
-/// 启停开关（仅已创建显示），第二行固定说明 + 随七态变化的提示。
-fn status_area(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    running: bool,
-    has_token: bool,
-) -> gpui::AnyElement {
+/// 会话操作栏右侧状态簇（仅活跃会话是微信线时显示，`session_fn_bar` 调
+/// 用）：[链路 icon] [手机 icon] [重制二维码] [启停开关]，右对齐。
+pub(crate) fn fn_bar_status(
+    chat: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+) -> Option<gpui::AnyElement> {
+    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    if !is_wx_line {
+        return None;
+    }
     let t = T();
-    let name = |s: &str| {
-        div()
-            .text_size(crate::appearance::ui_size(13.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(rgb(t.text))
-            .child(SharedString::from(s.to_string()))
-    };
-    // linked/unlink = 是否扫码创建成功（状态①为 unlink，其余为 link）
+    let running = chat.aux.remote.is_running();
+    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
+    let weak = cx.entity().downgrade();
+    // linked/unlink = 是否扫码创建成功
     let link = if has_token {
-        crate::ui::icon("link-2", 20., crate::appearance::theme::UNREAD)
+        crate::ui::icon("link-2", 16., crate::appearance::theme::UNREAD)
     } else {
-        crate::ui::icon("link-2-off", 20., t.text_faint)
+        crate::ui::icon("link-2-off", 16., t.text_faint)
     };
-    let mut row = div()
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        // logo-marks 的字形只占画布 ~2/3，放大到 24 与 20px 邻居光学对齐
-        .child(crate::ui::icon_path("icons/logo-marks.svg", 24., t.text))
-        .child(name("Pi-Flash"))
-        .child(link)
-        .child(crate::ui::icon("wechat", 20., WX_GREEN))
-        .child(name("微信"));
+    let mut cluster = div().flex().items_center().gap(px(6.)).child(link);
     // phone icon 仅已创建显示：accent = 启用中，faint = 停用
     if has_token {
-        row = row.child(crate::ui::icon(
+        cluster = cluster.child(crate::ui::icon(
             "smartphone",
-            20.,
+            16.,
             if running { t.accent } else { t.text_faint },
         ));
     }
-    row = row.child(div().flex_1());
-    // switch 仅已创建显示（002：linked 状态下才显示）
+    // 【重制二维码】：取码 + 开弹窗
+    cluster = cluster.child(
+        div()
+            .id("sfbar-wx-qr")
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .text_size(crate::appearance::ui_size(11.5))
+            .text_color(rgb(t.text_muted))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                    this.aux.remote.begin_qr();
+                    this.dlg.dialog = Some(crate::Dialog::WxQr);
+                    cx.notify();
+                }),
+            )
+            .child(crate::ui::icon(
+                "refresh",
+                crate::ui::tokens::icon::MD,
+                t.text_muted,
+            ))
+            .child(SharedString::from(tr("remote.qr_reset").to_string())),
+    );
+    // 启停开关（仅已创建显示；关停即停长轮询线程，060 P4 验收项）
     if has_token {
-        row = row.child(kit::config_switch(
+        cluster = cluster.child(kit::config_switch(
             "wx-enable",
-            weak,
+            &weak,
             running,
             false,
             |c, cx| {
@@ -71,18 +88,73 @@ fn status_area(
             },
         ));
     }
-    kit::card()
-        .p(px(12.))
-        .flex()
-        .flex_col()
-        .gap(px(8.))
-        .child(row)
-        .child(kit::note(&tr("remote.wx_desc")))
-        .child(kit::note(&state_hint(chat, has_token)))
-        .into_any_element()
+    Some(
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(cluster)
+            .into_any_element(),
+    )
 }
 
-/// 第二行提示：只有三态（002 §状态说明区，2026-10-24 修订）——
+/// 二维码弹窗面板（`Dialog::WxQr`，dialogs.rs 用 dialog_shell 包壳）：
+/// 三态（出码+安装提示 / 已创建 / 超时蒙白+重新生成）+ 底部三态提示行
+/// （002 §状态说明区收敛于此）。
+pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::Div {
+    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(12.))
+        .py(px(8.));
+    match &chat.aux.remote.qr {
+        QrState::Ready { url } => {
+            body = body
+                .child(qr_white_card(url))
+                .child(kit::note(&tr("remote.qr_install_hint")));
+        }
+        QrState::Scanned => {
+            if let Some(url) = &chat.aux.remote.qr_url {
+                body = body.child(qr_white_card(url));
+            }
+            body = body.child(kit::note(&tr("remote.qr_confirm")));
+        }
+        QrState::Expired => {
+            body = body.child(qr_masked(chat, weak, tr("remote.qr_timeout").to_string()))
+        }
+        QrState::Error(m) => body = body.child(qr_masked(chat, weak, friendly_qr_error(m))),
+        // ④ 微信已返回但我方没写进状态：按出错蒙白处理
+        QrState::Done { .. } if !has_token => {
+            body = body.child(qr_masked(
+                chat,
+                weak,
+                tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
+            ))
+        }
+        QrState::Done { .. } => body = body.child(kit::note(&tr("remote.qr_created"))),
+        QrState::Idle | QrState::Loading => body = body.child(kit::note(&tr("remote.qr_loading"))),
+    }
+    // 底部提示行：三态（未创建 / 微信侧出错 / 已创建）
+    body = body.child(kit::note(&state_hint(chat, has_token)));
+    let weak_close = weak.clone();
+    crate::ui::overlay::big_card(
+        tr("remote.panel_title"),
+        None,
+        body.into_any_element(),
+        t,
+        move |_w, cx| {
+            let _ = weak_close.update(cx, |c, cx| {
+                c.dlg.dialog = None;
+                cx.notify();
+            });
+        },
+    )
+}
+
+/// 弹窗底部提示：只有三态（002 §状态说明区，2026-10-24 修订）——
 /// ①未创建 / ②微信侧出错 / 已创建（③④⑤⑥⑦全部归位为「已创建」）。
 fn state_hint(chat: &Chat, has_token: bool) -> String {
     match &chat.aux.remote.qr {
@@ -105,54 +177,6 @@ fn state_hint(chat: &Chat, has_token: bool) -> String {
         // ① 未创建：pf-wxbot 不存在
         _ => tr("remote.hint_absent").to_string(),
     }
-}
-
-/// 二维码生成展示区（002 §二维码生成展示区，2026-10-24 修订）：三态——
-/// ①未创建/换绑中出码 ②已创建不展示 ③超时蒙白。取码由泵自动驱动
-/// （仅未创建时，见 pump 门禁）；虚线框（R_CARD 8 + dashed）。
-fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>, has_token: bool) -> gpui::AnyElement {
-    let t = T();
-    let mut inner: Vec<gpui::AnyElement> = Vec::new();
-    match &chat.aux.remote.qr {
-        // 已创建（且不在换绑流程中）：不展示二维码——【刷新二维码】+ 已创建
-        QrState::Idle | QrState::Done { .. } if has_token => {
-            inner.push(qr_regen_button(weak));
-            inner.push(kit::note(&tr("remote.qr_created")));
-        }
-        // ④ 微信已返回但我方没写进状态：按出错蒙白处理
-        QrState::Done { .. } => inner.push(qr_masked(
-            chat,
-            weak,
-            tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
-        )),
-        // 扫码超时：白蒙旧码（002：『扫描超时，请点击重新扫码』）
-        QrState::Expired => inner.push(qr_masked(chat, weak, tr("remote.qr_timeout").to_string())),
-        QrState::Error(m) => inner.push(qr_masked(chat, weak, friendly_qr_error(m))),
-        // 未创建/换绑中：二维码本体（Scanned 保持可见，确认期间可重扫）
-        QrState::Ready { url } => inner.push(qr_white_card(url)),
-        QrState::Scanned => {
-            if let Some(url) = &chat.aux.remote.qr_url {
-                inner.push(qr_white_card(url));
-            }
-            inner.push(kit::note(&tr("remote.qr_confirm")));
-        }
-        QrState::Idle | QrState::Loading => inner.push(kit::note(&tr("remote.qr_loading"))),
-    }
-    div()
-        .w_full()
-        .min_h(px(440.))
-        .rounded(px(8.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .border_dashed()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap(px(10.))
-        .p(px(16.))
-        .children(inner)
-        .into_any_element()
 }
 
 /// 用户可读的扫码错误：原始诊断（HTTP 细节/字段名）只进 stderr 与 dump，
@@ -206,7 +230,7 @@ fn qr_masked(chat: &Chat, weak: &gpui::WeakEntity<Chat>, message: String) -> gpu
 /// 「重新生成二维码」钮（重建机器人；`begin_qr` 幂等）。
 fn qr_regen_button(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     kit::config_button(
-        "wx-qr-refresh",
+        "wx-qr-regen",
         weak,
         &tr("remote.qr_regen"),
         Btn::Secondary,
@@ -229,10 +253,9 @@ fn qr_white_card(url: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 二维码**实心方块**绘制（自扫码弹窗迁入，2026-10-23 弹窗废除）。
-/// 不用字符画：字形抗锯齿会在模块之间留细缝，手机容易解不出来
-/// （用户实测扫不上）。按行把连续深色段合并成一个方块，49x49 的
-/// 网格约 600 个元素，不是 2401 个。
+/// 二维码**实心方块**绘制。不用字符画：字形抗锯齿会在模块之间留细缝，
+/// 手机容易解不出来（用户实测扫不上）。按行把连续深色段合并成一个方块，
+/// 49x49 的网格约 600 个元素，不是 2401 个。
 fn qr_grid(url: &str) -> gpui::AnyElement {
     const MOD: f32 = 8.; // 8px/模块；49 模块 = 392px
     const DARK: u32 = 0x111827;
@@ -275,53 +298,45 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 页面主体：单列上下两区（002 §UI设计）——上「状态说明区」、下「二维码
-/// 生成展示区」，纵向滚动，为插件化（pf-wxbot）铺路。
-pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
-    let t = T();
-    let running = chat.aux.remote.is_running();
-    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
-    div()
-        .id("wx-panel")
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .bg(rgb(t.bg))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .px(px(20.))
-                .pt(px(16.))
-                .pb(px(20.))
-                .child(status_area(chat, weak, running, has_token))
-                .child(qr_area(chat, weak, has_token)),
-        )
-        .into_any_element()
-}
-
 impl Chat {
-    /// 打开「微信通信」全屏页（三横菜单是唯一入口；automation
-    /// `content.view wx` / `panel.dock wx` 也落到这里）。
+    /// 打开微信线会话（三横菜单唯一入口；automation `content.view wx` /
+    /// `panel.dock wx` 也落到这里）：确保微信线会话存在并作为**普通会话
+    /// tab** 激活——桌面与微信同权同视图（2026-10-24 定夺）。未创建时自动
+    /// 弹出二维码（002「插件自动展示二维码」）。
     pub(crate) fn open_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.dlg.market_menu = None;
-        match self
-            .ws
-            .panel_tabs
-            .iter()
-            .position(|t| matches!(t, crate::PanelTab::Wx))
-        {
-            Some(ix) => self.activate_panel_tab(ix, cx),
-            None => {
-                self.ws.panel_tabs.push(crate::PanelTab::Wx);
-                let ix = self.ws.panel_tabs.len() - 1;
-                self.activate_panel_tab(ix, cx);
+        let st = wxprobe::state::load();
+        let has_token = wxprobe::transport::require_token(&st).is_ok();
+        // 线不存在：有 token 认领绑定的会话文件；没有则开专属草稿
+        //（2026-10-24 定夺：微信线不再认领桌面活跃会话）
+        if self.aux.remote.wx_session.is_none() {
+            if has_token {
+                if let Some(key) = wxprobe::state::get_str(&st, "session_key") {
+                    self.aux.remote.set_wx_session(key);
+                }
+            }
+            if self.aux.remote.wx_session.is_none() {
+                if let Some(key) = self.new_draft_detached(cx) {
+                    self.aux.remote.set_wx_session(key);
+                }
             }
         }
-        self.set_content_view(crate::ContentView::Wx);
+        // 激活为普通会话 tab（文件 → 后台唤醒 + switch_to；草稿 → 直接
+        // switch_to 池内 runtime）
+        if let Some(key) = self.aux.remote.wx_session.clone() {
+            if std::path::Path::new(&key).is_file() {
+                if let Some(rt) = self.open_session_detached(std::path::PathBuf::from(&key), cx) {
+                    self.switch_to(rt, cx);
+                }
+            } else if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+                self.switch_to(rt, cx);
+            }
+        }
+        // 未创建：自动展示二维码
+        if !has_token {
+            self.aux.remote.begin_qr();
+            self.dlg.dialog = Some(crate::Dialog::WxQr);
+        }
         cx.notify();
     }
 }

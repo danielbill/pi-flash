@@ -374,9 +374,10 @@ impl RemoteControl {
         wxprobe::state::save(&st);
     }
 
-    /// 启动认领：微信线还没有归属时认当前活跃会话（幂等，每拍调用安全）。
-    /// 「PF 启动时应有一个默认的微信对话，否则微信跟谁说话」——归属在
-    /// 渠道启用后的第一拍就有，之后桌面切换不再牵动微信线。
+    /// 认领语义锚点（**仅测试**）：wx_session 为空时置为给定 key。运行时的
+    /// 归属创建已改为 pump 建专属草稿（2026-10-24 定夺：不再认领桌面活跃
+    /// 会话），此处保留 set-if-none 语义供单测表达优先级规则。
+    #[cfg(test)]
     pub(crate) fn claim_default_session(&mut self, active: &str) {
         if self.wx_session.is_some() {
             return;
@@ -839,18 +840,8 @@ impl crate::Chat {
     /// 收一批 → 逐条解析并执行 → **整批处理完才 ack 游标**。
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
-        // 二维码常显（2026-10-24 用户定夺「不让用户点，直接显示二维码」，
-        // **仅未创建时**；002 修订：已创建不展示二维码，重建走「刷新二维码」
-        // 钮——自动出码会让已创建态永远摆着一个待扫的码）：微信通信页在屏上
-        // 且码不在流程中（Idle/Expired）→ 自动取/续码，`begin_qr` 幂等不打断
-        // 进行中的流程。Error 不自动重试（网络故障时避免 ~15s 一轮的无效
-        // 打点），留给蒙层上的「重新生成二维码」钮。
-        if matches!(self.layout.content_view, crate::ContentView::Wx)
-            && matches!(self.aux.remote.qr, QrState::Idle | QrState::Expired)
-            && !wxprobe::transport::require_token(&wxprobe::state::load()).is_ok()
-        {
-            self.aux.remote.begin_qr();
-        }
+        // 取码改为**按需**（2026-10-24 版式定夺）：信息栏【重制二维码】/
+        // 未创建自动弹窗触发 `begin_qr`，泵不再自动取码
         // 显式启用（设置页开关 / wx.enable / 扫码成功）→ 泵这一拍统一执行；
         // 200ms 延迟不可感，换来测试可断言意图而不真起线程
         if self.aux.remote.wants_start && !self.aux.remote.is_running() {
@@ -859,8 +850,14 @@ impl crate::Chat {
         }
         // 面板健康度：「运行中」背后可能正拿着死 token 干转
         self.aux.remote.sync_poll_error();
-        // 微信默认会话认领（幂等）：启用后第一拍即有归属，重启后从 state 恢复
-        self.aux.remote.claim_default_session(&self.pool.active_key);
+        // 微信线**专属会话**（2026-10-24 定夺）：不再认领桌面活跃会话——
+        // 为空时开一条专属草稿（不抢桌面焦点），桌面与微信从第一天就分叉，
+        // 双线操作被限定在专属会话内。历史 session_key 照常恢复。
+        if self.aux.remote.wx_session.is_none() {
+            if let Some(key) = self.new_draft_detached(cx) {
+                self.aux.remote.set_wx_session(key);
+            }
+        }
         // 060 档 1 回推：空闲/轮次结束时把 assistant 缓冲发干净。
         // 每拍都调，flush 在缓冲为空时是 no-op。
         // 运行态读**目标会话**（微信线 ≠ 桌面活跃时，/新建 /task 的守卫要看微信线的）
@@ -887,8 +884,8 @@ impl crate::Chat {
         for text in self.aux.remote.on_running(buf_running) {
             self.aux.remote.send(&text);
         }
-        // 扫码结果（码已内联在【微信通信】页内，弹窗已废——泵只管
-        // 事件回填与重绘，成功落页可见）
+        // 扫码结果（二维码在 Dialog::WxQr 弹窗内展示——泵只管事件回填、
+        // 重绘与成功关窗）
         if self.aux.remote.poll_qr() {
             // 扫码成功 → 渠道起（wants_start 置位，本拍上方统一执行；
             // 不受 SELF_START 门控，不用再摸设置页开关）。若渠道已在跑且
@@ -896,6 +893,10 @@ impl crate::Chat {
             if matches!(self.aux.remote.qr, QrState::Done { .. }) {
                 self.aux.remote.force_restart_if_token_changed();
                 self.aux.remote.wants_start = true;
+                // 扫码成功 → 关二维码弹窗（002 自动展示流程的收尾）
+                if matches!(self.dlg.dialog, Some(crate::Dialog::WxQr)) {
+                    self.dlg.dialog = None;
+                }
             }
             cx.notify();
         }
@@ -1145,10 +1146,10 @@ impl crate::Chat {
         let rt = match rt.take() {
             Some(rt) => rt,
             None => {
-                // 会话真被删了 → 清归属、重新认领活跃，重试一次。
-                // 静默丢弃已经坑过一次（微信没回执），这里必须自愈。
+                // 会话真被删了 → 清归属后本条按活跃会话兜底投递（target_key
+                // 回退），专属草稿由泵下一拍重建。静默丢弃已经坑过一次
+                // （微信没回执），这里必须自愈。
                 self.aux.remote.clear_wx_session_if(&key);
-                self.aux.remote.claim_default_session(&self.pool.active_key);
                 let fallback = self.aux.remote.target_key(&self.pool.active_key);
                 match self.pool.runtimes.get(&fallback).cloned() {
                     Some(rt) => rt,

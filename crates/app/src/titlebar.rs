@@ -382,14 +382,6 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 Some("search"),
                 ContentView::SessionSearch,
             ),
-            // 微信通信页（060；三横菜单唯一入口，内容区全屏）
-            crate::PanelTab::Wx => (
-                tr("remote.panel_title").into(),
-                None,
-                false,
-                Some("smartphone"),
-                ContentView::Wx,
-            ),
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点。zed parity（DiskState::
         // Deleted）：文件已从磁盘消失不标 !——删除线是唯一标记，脏点照常
