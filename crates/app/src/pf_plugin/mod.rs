@@ -519,6 +519,10 @@ pub(crate) struct PluginEntry {
     pub split_ratios: std::cell::RefCell<Vec<f32>>,
     /// 正在拖动分隔线的瞬时状态
     pub split_drag: std::cell::RefCell<Option<crate::pf_plugin::panel::SplitDrag>>,
+    /// 悬停中的分隔线序号（§5.12 统一分隔线：hover 与拖拽同款 4px accent。
+    /// hover 走字段而非 gpui hover 样式——后者改布局属性不可靠，且与其他
+    /// 两处分隔线会成两套逻辑）
+    pub split_hover: std::cell::RefCell<Option<usize>>,
     /// 面板滚动（左列格子容器；跨帧存续）
     /// 面板滚动（要求⑤：上下两分栏各自管理；跨帧存续）
     /// 分栏滚动句柄 + psp 滚动条状态（要求⑤：每 group 一对；渲染期按序
@@ -840,6 +844,7 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
             cell_menu: None,
             split_ratios: std::cell::RefCell::new(Vec::new()),
             split_drag: std::cell::RefCell::new(None),
+            split_hover: std::cell::RefCell::new(None),
             section_scrolls: std::cell::RefCell::new(Vec::new()),
             body: None,
         })

@@ -594,13 +594,6 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                // 常驻 1px 细线（§5.12 divider::LINE，panes 可见时才有分隔
-                // 线；gpui border 宏只有固定档位 border_l_1，值由 tokens
-                // 锁定测试看护）
-                .when(!panes_hidden, |d| {
-                    d.border_l_1()
-                        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x99)))
-                })
                 .child(titlebar::topbar_r(self, window, cx))
                 .child(content::content_main(
                     self,
@@ -609,21 +602,15 @@ impl Render for Chat {
                     window,
                     cx,
                 ))
-                // hover/拖拽：4px accent 粗线盖在左缘（§5.12 统一分隔线
-                // 规范，与 dock 上下分区同款；absolute overlay 不占布局 =
-                // hover 零推挤；content-col 在 panel-col 之后渲染，盖得住
-                // 交界），作为最后 child 保证 z 序在最上
-                .when(!panes_hidden && (slp_hovered || slp_dragging), |d| {
-                    d.child(
-                        div()
-                            .id("slp-edge")
-                            .absolute()
-                            .left_0()
-                            .top_0()
-                            .bottom_0()
-                            .w(px(crate::ui::tokens::divider::HOVER))
-                            .bg(rgb(t.accent)),
-                    )
+                // §5.12 统一分隔线：常驻 1px / hover·拖拽 4px accent，线形由
+                // ui::divider 统一算（与 dock 上下分区同一条代码）；overlay
+                // 不占布局 = hover 零推挤。作为最后 child 保证 z 序在最上
+                .when(!panes_hidden, |d| {
+                    d.child(crate::ui::divider::line(
+                        crate::ui::divider::LineSpec::vertical(),
+                        slp_hovered || slp_dragging,
+                        t,
+                    ))
                 }),
         );
 

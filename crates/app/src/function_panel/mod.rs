@@ -1069,10 +1069,9 @@ pub(crate) fn dock(
     // 改占比（拖拽即退出两侧最小态、双击复位 50%），各自可收起到控制栏
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）
     let bounds_slot = chat.layout.dock_bounds.clone();
+    // §5.12 统一分隔线：常驻 1px；**hover 与拖拽同为 4px accent**
     let split_drag = chat.layout.split_drag;
-    // §5.12 统一分隔线：常驻 1px；hover/拖拽 4px accent（7px 带内垂直居中）
-    let d_line = crate::ui::tokens::divider::LINE;
-    let d_hover = crate::ui::tokens::divider::HOVER;
+    let split_active = split_drag || chat.layout.split_hover;
     let d_hit = crate::ui::tokens::panel_ctrl::DIV_H;
     div()
         .id("dock")
@@ -1103,8 +1102,20 @@ pub(crate) fn dock(
                 .h(px(d_hit))
                 .flex_shrink_0()
                 .relative()
-                .group("spdiv")
                 .cursor_row_resize()
+                // hover 状态存进字段（与 content 侧 slp_hover 同一机制），
+                // 不用 group_hover——后者受 has_active_drag 门控，粗细拿不到
+                .on_hover({
+                    let weak_hv = weak.clone();
+                    move |h: &bool, _, cx| {
+                        let _ = weak_hv.update(cx, |c, cx| {
+                            if c.layout.split_hover != *h {
+                                c.layout.split_hover = *h;
+                                cx.notify();
+                            }
+                        });
+                    }
+                })
                 .on_mouse_down(MouseButton::Left, {
                     let weak_dz = weak.clone();
                     move |ev: &gpui::MouseDownEvent, _, cx| {
@@ -1121,25 +1132,13 @@ pub(crate) fn dock(
                         });
                     }
                 })
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(10.))
-                        .right(px(10.))
-                        .top(px((d_hit - d_line) / 2.))
-                        .h(px(d_line))
-                        .bg(rgb(t.border))
-                        .when(split_drag, |d| {
-                            d.top(px((d_hit - d_hover) / 2.))
-                                .h(px(d_hover))
-                                .bg(rgb(t.accent))
-                        })
-                        .group_hover("spdiv", |d| {
-                            d.top(px((d_hit - d_hover) / 2.))
-                                .h(px(d_hover))
-                                .bg(rgb(t.accent))
-                        }),
-                ),
+                // 线形交给统一实现（ui::divider）：1px 常驻 / 4px accent
+                // 高亮，带内垂直居中 = 两种粗细同一中线
+                .child(crate::ui::divider::line(
+                    crate::ui::divider::LineSpec::horizontal(10., d_hit),
+                    split_active,
+                    t,
+                )),
         )
         .child(files_view(chat, weak, cx))
         .into_any_element()

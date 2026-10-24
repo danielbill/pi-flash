@@ -143,6 +143,10 @@ pub(crate) struct RenderCtx<'a> {
     pub ratios: Vec<f32>,
     /// 分区滚动句柄（每个 section 一个，跨帧存续）
     pub scrolls: Vec<gpui::ScrollHandle>,
+    /// 悬停中的分隔线序号（§5.12 统一分隔线的高亮源）
+    pub split_hover: Option<usize>,
+    /// 拖拽中的分隔线序号（同上：hover 与拖拽同款 4px accent）
+    pub split_drag: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -524,6 +528,8 @@ pub(crate) fn plugin_panel_view(
         panel_w: chat.layout.slp_w,
         ratios,
         scrolls,
+        split_hover: *entry.split_hover.borrow(),
+        split_drag: entry.split_drag.borrow().as_ref().map(|d| d.index),
     };
 
     // 外层是"平整卡片"：与 project panel 同款留白，滚动在分区内部
@@ -803,7 +809,7 @@ fn render_node(
                 .pb(px(PANEL_PAD));
             for (i, sec) in sections.iter().enumerate() {
                 if i > 0 {
-                    col = col.child(render_splitter(ix, i - 1, weak, t));
+                    col = col.child(render_splitter(ix, i - 1, weak, t, ctx));
                 }
                 let ratio = ctx.ratios.get(i).copied().unwrap_or(1. / n as f32);
                 col = col.child(
@@ -1004,22 +1010,50 @@ fn render_section(
     col.child(body).into_any_element()
 }
 
-/// 分区之间的分隔线：6px 命中区，按下后进入拖拽（比例归宿主）。
+/// 分区之间的分隔线：7px 命中区，按下后进入拖拽（比例归宿主）。
+/// 线形走 §5.12 统一实现 `ui::divider`（与 dock 上下分区、内容区左缘同一条
+/// 代码）：常驻 1px / hover·拖拽 4px accent，不再自开一套 hover 底色块。
 fn render_splitter(
     ix: usize,
     index: usize,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
+    ctx: &RenderCtx,
 ) -> gpui::AnyElement {
     let weak = weak.clone();
+    // 高亮态 = 悬停本条 ‖ 正在拖本条（§5.12：hover 与拖拽同款 4px accent）
+    let active = ctx.split_hover == Some(index) || ctx.split_drag == Some(index);
+    let band = crate::ui::tokens::panel_ctrl::DIV_H;
     div()
         .id(SharedString::from(format!("pf-split-{ix}-{index}")))
-        .h(px(7.))
+        .h(px(band))
         .flex_none()
-        .flex()
-        .items_center()
+        .relative()
         .cursor(gpui::CursorStyle::ResizeUpDown)
-        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_hover({
+            let weak_hv = weak.clone();
+            move |h: &bool, _, cx| {
+                let _ = weak_hv.update(cx, |c, cx| {
+                    let Some(e) = c.plugins.plugins.get_mut(ix) else {
+                        return;
+                    };
+                    // 进：本序号；出：只清自己（另一条分隔线接住 hover 时
+                    // 不被误清）
+                    let cur = *e.split_hover.borrow();
+                    let next = if *h {
+                        Some(index)
+                    } else if cur == Some(index) {
+                        None
+                    } else {
+                        cur
+                    };
+                    if next != cur {
+                        *e.split_hover.borrow_mut() = next;
+                        cx.notify();
+                    }
+                });
+            }
+        })
         .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
             cx.stop_propagation();
             let y = f32::from(ev.position.y);
@@ -1035,7 +1069,11 @@ fn render_splitter(
                 }
             });
         })
-        .child(div().flex_1().h(px(1.)).bg(hairline(t)))
+        .child(crate::ui::divider::line(
+            crate::ui::divider::LineSpec::horizontal(0., band),
+            active,
+            t,
+        ))
         .into_any_element()
 }
 
