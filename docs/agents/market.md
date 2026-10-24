@@ -129,11 +129,24 @@
   砍掉提示词大小行。总开关/更新全部仍不出。
 - **启停（v5）**：列表行内 config_switch → `pf_toggle_plugin`：①台账
   `disabled` 位落盘（pi-link `set_disabled`，serde default 兼容旧台账）；
-  ②启动 `scan_manifests` 跳过停用目录（不装载不绘制）；③运行态翻
-  `entry.disabled`——状态栏 tab / 文件树插件菜单 / 分发全消费该标志，立即
-  隐身；启用时若无条目（启动被跳过）后台重扫 `plugin_entries` 补装。
-  段盒全高：底部 padding = 顶部 `shell_pad`（SHELL_PAD_BOTTOM 72px 太阔，
-  v5 定夺弃用）。
+  ②启动 `scan_manifests` 跳过停用包（不装载不绘制）；③运行态 `plugin_evict`
+  ——丢 JS 运行时 + 组件树缓存，状态栏 tab / 文件树插件菜单随即隐身，**左
+  dock 正显示它就退回 `DockPanel::Default`**；启用时若无条目（启动被跳过）
+  后台重扫**只补装这一个**（整体替换 `plugins_set` 会清掉别的插件运行态、还会
+  打乱 dock 存的 `Plugin(ix)` 位置）。段盒全高：底部 padding = 顶部
+  `shell_pad`（SHELL_PAD_BOTTOM 72px 太阔，v5 定夺弃用）。
+- **「台账名 ↔ 运行态条目」只能靠 `PluginManifest::pkg`（顶层包目录名）对账，
+  别拿 `manifest.dir.file_name()`**：市场安装链落 `plugins/<pkg>/<version>/`，
+  那是**版本号**。2026-10-25 bug（停用/删除后插件仍在左面板且照旧可用）三个根因：
+  ①`pf_toggle_plugin` 用 `dir.file_name()` 找条目 → 永远命不中 → 台账写了
+  disabled、运行态一个字节没动（走了「未装载」分支静默 return）；
+  ②`scan_manifests` 停用过滤同一拍错 → 重启后照旧装载；
+  ③`pf_uninstall` 只删目录 + 摘台账、**从不摘 `Chat.plugins.plugins` 条目** → 删掉
+  的插件 tab/面板/JS 全活到重启。另：`plugin_panel_view` 只认 `tree_loaded` +
+  缓存树、不看 `disabled`，所以撤运行态必须清 `body`/`tree_loaded`（已加 disabled
+  兜底占位）。台账名 → 目录别名走 `pf_plugins::dir_aliases`（`@scope__name` 与
+  dev 平铺 `name` 都认）。卸载成功还要 `plugin_forget(id)` 清 `PLUGIN_DIRS` /
+  `PLUGIN_ASSETS`，否则同名重装读旧字节。
 - 展示名/发布人补全查市场索引走 `pf_market::index_snapshot()`（**pub 口子是
   纯新增函数**，不去改 `fn index()` 那行——GitButler 下该行被「公域扫描」提交
   占有，后置提交改它会被 hunk 所有权拒绝；同理要给老代码开 pub，优先在旁边

@@ -478,6 +478,19 @@ pub(crate) fn plugin_panel_view(
     let Some(entry) = chat.plugins.plugins.get(ix) else {
         return placeholder_center("plugin", t);
     };
+    // 停用兜底：面板只认 tree_loaded + 缓存树，不看 disabled 位（停用时
+    // `plugin_evict` 已清缓存 + 退 dock，这里再招一道，防止其他路径漏撤）
+    if entry.disabled {
+        return div()
+            .id("pf-panel")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(placeholder_center("plugin", t))
+            .into_any_element();
+    }
     if !entry.tree_loaded {
         return div()
             .id("pf-panel")

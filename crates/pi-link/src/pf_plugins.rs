@@ -213,6 +213,21 @@ pub fn dir_name(name: &str) -> String {
     name.replace('/', "__")
 }
 
+/// 台账包名 → 磁盘顶层目录的候选名（对账用）：市场安装链落 `@scope__name`，
+/// dev 手工平铺常直接叫 `name`。**运行态条目 ↔ 台账条目 唯一可用的桥**——
+/// 版本层目录名是版本号，拿它比包名永远比不中（090-4 v5 停用形同虚设的根因）。
+pub fn dir_aliases(name: &str) -> Vec<String> {
+    let full = dir_name(name);
+    let mut out = vec![full.clone()];
+    if let Some(short) = name.rsplit('/').next()
+        && short != name
+        && short != full
+    {
+        out.push(short.to_string());
+    }
+    out
+}
+
 fn plugin_dir(name: &str, version: &str) -> Result<PathBuf, String> {
     let root = crate::paths::plugins_dir().ok_or("无法定位插件安装目录")?;
     Ok(root.join(dir_name(name)).join(version))
@@ -478,5 +493,26 @@ mod signed_index_tests {
             r#"{{"format":"pf-market-signed/1","signed":"{tampered}","signature":"{sig}"}}"#
         );
         assert!(verify_signed_index(&bad, &pem).is_err(), "篡改必须拒");
+    }
+}
+
+#[cfg(test)]
+mod dir_alias_tests {
+    use super::*;
+
+    #[test]
+    fn dir_aliases_cover_market_and_flat_layouts() {
+        // 市场安装链：scope 展开成 `__`
+        assert_eq!(
+            dir_aliases("@pi-flash-plugins/quick-panel"),
+            vec![
+                "@pi-flash-plugins__quick-panel".to_string(),
+                "quick-panel".to_string()
+            ]
+        );
+        // dev 手工平铺 / 无 scope 包：两个候选相同，不重复
+        assert_eq!(dir_aliases("quick-panel"), vec!["quick-panel".to_string()]);
+        // scope 自身含 `__` 时短名仍可取
+        assert_eq!(dir_aliases("@a__b/x")[1], "x");
     }
 }
