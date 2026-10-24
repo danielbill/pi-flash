@@ -10,7 +10,7 @@
 //! - [`resolve`]：组件树 JSON → [`ResolvedNode`]（纯逻辑，可单测，不碰 gpui）
 //! - gpui 渲染层：ResolvedNode → 元素
 
-use gpui::{MouseButton, SharedString, canvas, div, prelude::*, px, rgb, rgba};
+use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 use serde_json::Value;
 
 use pf_plugin_host::js::JsAction;
@@ -502,10 +502,6 @@ pub(crate) fn plugin_panel_view(
             .child(placeholder_center("…", t))
             .into_any_element();
     }
-    // 内层 wasm 插件（加密包）：渲染面 = Paint 画布，与 JS 组件树分叉
-    if entry.wasm.is_some() {
-        return wasm_canvas_view(chat, ix, weak);
-    }
     let Some(tree) = entry.body.as_ref().and_then(resolve) else {
         return div()
             .id("pf-panel")
@@ -612,192 +608,6 @@ fn render_children(
         .iter()
         .map(|c| render_node(c, ix, weak, t, ctx))
         .collect()
-}
-
-// ---------------------------------------------------------------------------
-// 内层 wasm 插件（加密包渲染面）：Paint 列表 → 绝对定位元素 + 事件回灌
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    /// wasm 画布最近一次布局的 bounds（origin.x, origin.y, w, h）——渲染时
-    /// canvas prepaint 写，鼠标事件回调读换算面板内相对坐标。单面板可见 = 单槽。
-    static WASM_BOUNDS: std::cell::Cell<(f32, f32, f32, f32)> =
-        const { std::cell::Cell::new((0.0, 0.0, 0.0, 0.0)) };
-    /// resize 检测对照值（防每帧重复触发 on_resize）
-    static WASM_LAST_SIZE: std::cell::Cell<(f32, f32)> =
-        const { std::cell::Cell::new((0.0, 0.0)) };
-}
-
-/// wasm Paint → 绝对定位元素（rect = 色块/圆角；text = 定位文本）。
-fn render_paint(p: &pf_plugin_host::Paint) -> gpui::AnyElement {
-    let c = |v: f32| ((v.clamp(0.0, 1.0)) * 255.0).round() as u32;
-    let color =
-        |r: f32, g: f32, b: f32, a: f32| rgba((c(r) << 24) | (c(g) << 16) | (c(b) << 8) | c(a));
-    match p {
-        pf_plugin_host::Paint::Rect(r) => div()
-            .absolute()
-            .left(px(r.x))
-            .top(px(r.y))
-            .w(px(r.w))
-            .h(px(r.h))
-            .bg(color(r.r, r.g, r.b, r.a))
-            .when(r.corner > 0.0, |d| d.rounded(px(r.corner)))
-            .into_any_element(),
-        pf_plugin_host::Paint::Text(t) => div()
-            .absolute()
-            .left(px(t.x))
-            .top(px(t.y))
-            .text_size(px(t.size))
-            .text_color(color(t.r, t.g, t.b, t.a))
-            .child(SharedString::from(t.content.clone()))
-            .into_any_element(),
-    }
-}
-
-/// wasm 面板主体：Paint 画布（无分区/无滚动，插件自排）。事件全量回灌：
-/// 鼠标（hover 内）→ 相对坐标；点击抢焦点后键盘；尺寸变化 → on_resize。
-fn wasm_canvas_view(chat: &Chat, ix: usize, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
-    let entry = &chat.plugins.plugins[ix];
-    let paints = entry.paints.clone();
-    let focus = entry.wasm_focus.clone();
-
-    let weak_move = weak.clone();
-    let weak_down_l = weak.clone();
-    let weak_down_r = weak.clone();
-    let weak_up_l = weak.clone();
-    let weak_up_r = weak.clone();
-    let weak_key = weak.clone();
-    let weak_resize = weak.clone();
-
-    let canvas_el = canvas(
-        move |bounds, _window, cx| {
-            WASM_BOUNDS.set((
-                bounds.origin.x.into(),
-                bounds.origin.y.into(),
-                bounds.size.width.into(),
-                bounds.size.height.into(),
-            ));
-            let new = (bounds.size.width.into(), bounds.size.height.into());
-            if WASM_LAST_SIZE.get() != new {
-                WASM_LAST_SIZE.set(new);
-                let (w, h) = new;
-                cx.spawn(async move |cx| {
-                    let _ = weak_resize.update(cx, |c, cx| c.plugin_wasm_resize(ix, w, h, cx));
-                })
-                .detach();
-            }
-        },
-        |_, _, _, _| {},
-    );
-
-    let root = div()
-        .id("pf-wasm-panel")
-        .relative()
-        .flex_1()
-        .min_h_0()
-        .overflow_hidden()
-        .when_some(focus, |d, f| d.track_focus(&f).key_context("WasmPanel"))
-        .child(canvas_el)
-        .children(paints.iter().map(render_paint))
-        .on_mouse_move(move |ev, window, cx| {
-            let (ox, oy, _, _) = WASM_BOUNDS.get();
-            let x = f32::from(ev.position.x) - ox;
-            let y = f32::from(ev.position.y) - oy;
-            let _ = weak_move.update(cx, |c, cx| {
-                c.plugin_wasm_mouse(
-                    ix,
-                    pf_plugin_host::Phase::Move,
-                    pf_plugin_host::Button::Left,
-                    x,
-                    y,
-                    window,
-                    cx,
-                );
-            });
-        })
-        .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
-            let (ox, oy, _, _) = WASM_BOUNDS.get();
-            let x = f32::from(ev.position.x) - ox;
-            let y = f32::from(ev.position.y) - oy;
-            let _ = weak_down_l.update(cx, |c, cx| {
-                // 点击面板 = 抢键盘焦点（不抢启动时输入框焦点）
-                if let Some(entry) = c.plugins.plugins.get(ix)
-                    && let Some(f) = &entry.wasm_focus
-                {
-                    window.focus(f);
-                }
-                c.plugin_wasm_mouse(
-                    ix,
-                    pf_plugin_host::Phase::Down,
-                    pf_plugin_host::Button::Left,
-                    x,
-                    y,
-                    window,
-                    cx,
-                );
-            });
-        })
-        .on_mouse_down(MouseButton::Right, move |ev, window, cx| {
-            let (ox, oy, _, _) = WASM_BOUNDS.get();
-            let x = f32::from(ev.position.x) - ox;
-            let y = f32::from(ev.position.y) - oy;
-            let _ = weak_down_r.update(cx, |c, cx| {
-                if let Some(entry) = c.plugins.plugins.get(ix)
-                    && let Some(f) = &entry.wasm_focus
-                {
-                    window.focus(f);
-                }
-                c.plugin_wasm_mouse(
-                    ix,
-                    pf_plugin_host::Phase::Down,
-                    pf_plugin_host::Button::Right,
-                    x,
-                    y,
-                    window,
-                    cx,
-                );
-            });
-        })
-        .on_mouse_up(MouseButton::Left, move |ev, window, cx| {
-            let (ox, oy, _, _) = WASM_BOUNDS.get();
-            let x = f32::from(ev.position.x) - ox;
-            let y = f32::from(ev.position.y) - oy;
-            let _ = weak_up_l.update(cx, |c, cx| {
-                c.plugin_wasm_mouse(
-                    ix,
-                    pf_plugin_host::Phase::Up,
-                    pf_plugin_host::Button::Left,
-                    x,
-                    y,
-                    window,
-                    cx,
-                );
-            });
-        })
-        .on_mouse_up(MouseButton::Right, move |ev, window, cx| {
-            let (ox, oy, _, _) = WASM_BOUNDS.get();
-            let x = f32::from(ev.position.x) - ox;
-            let y = f32::from(ev.position.y) - oy;
-            let _ = weak_up_r.update(cx, |c, cx| {
-                c.plugin_wasm_mouse(
-                    ix,
-                    pf_plugin_host::Phase::Up,
-                    pf_plugin_host::Button::Right,
-                    x,
-                    y,
-                    window,
-                    cx,
-                );
-            });
-        })
-        .on_key_down(move |ev, window, cx| {
-            let key = ev.keystroke.key.clone();
-            let _ = weak_key.update(cx, |c, cx| {
-                c.plugin_wasm_key(ix, &key, window, cx);
-            });
-        });
-
-    root.into_any_element()
 }
 
 fn render_node(
