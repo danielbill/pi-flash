@@ -123,11 +123,17 @@
   `PfTab`），`card_header` 的 title 已从 SharedString 改成 AnyElement——别照旧
   签名往里塞字符串。已安装签计数只报总数（无分页），All 签沿用 `1-N / total`。
 - **【已安装】视图（`pf_installed.rs`）的数据源 = PF 插件台账 `plugins.json`，
-  不是 pi 扩展 settings.json**。所以 settings-扩展 的行内启停开关 / 总开关 /
-  更新全部**不出**（PF 插件无持久启停，加载在启动扫描定死）；详情 = 状态（恒
-  已启用）/ 来源（索引 publisher，缺索引回落台账 source）/ 路径 + 卸载垃圾桶
-  （确认浮层挂 shell/render 顶层，`remove_confirm_overlay`）。用户明确砍掉
-  说明 / 提示词大小两行。
+  不是 pi 扩展 settings.json**。详情 = 说明（索引 desc，三语取词，缺 = —）/
+  状态（随启停）/ 来源（索引 publisher，缺索引回落台账 source）/ 路径 + 卸载
+  垃圾桶（确认浮层挂 shell/render 顶层，`remove_confirm_overlay`）。用户明确
+  砍掉提示词大小行。总开关/更新全部仍不出。
+- **启停（v5）**：列表行内 config_switch → `pf_toggle_plugin`：①台账
+  `disabled` 位落盘（pi-link `set_disabled`，serde default 兼容旧台账）；
+  ②启动 `scan_manifests` 跳过停用目录（不装载不绘制）；③运行态翻
+  `entry.disabled`——状态栏 tab / 文件树插件菜单 / 分发全消费该标志，立即
+  隐身；启用时若无条目（启动被跳过）后台重扫 `plugin_entries` 补装。
+  段盒全高：底部 padding = 顶部 `shell_pad`（SHELL_PAD_BOTTOM 72px 太阔，
+  v5 定夺弃用）。
 - 展示名/发布人补全查市场索引走 `pf_market::index_snapshot()`（**pub 口子是
   纯新增函数**，不去改 `fn index()` 那行——GitButler 下该行被「公域扫描」提交
   占有，后置提交改它会被 hunk 所有权拒绝；同理要给老代码开 pub，优先在旁边
