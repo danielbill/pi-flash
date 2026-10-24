@@ -1060,33 +1060,26 @@ fn mc_empty_models_section(
             .child(note(&tr("models.proxy_hint")))
             .into_any_element(),
         Some(McProbe::Done) => note(&tr("models.probe_empty_catalog")).into_any_element(),
-        None if chat.mc_configured(provider) => {
-            note(&tr("models.fetch_hint")).into_any_element()
-        }
+        None if chat.mc_configured(provider) => note(&tr("models.fetch_hint")).into_any_element(),
         None => note(&tr("models.fetch_hint_no_key")).into_any_element(),
     };
     let fetch_provider = provider.to_string();
     let detail = detail.child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .pt(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(div().flex_1().min_w_0().child(status))
-                    .child(detail_button(
-                        "mc-fetch-empty",
-                        weak,
-                        &tr("extensions.fetch_models"),
-                        crate::ui::button::BtnVariant::Secondary,
-                        matches!(chat.cfg.mc_probe.get(provider), Some(McProbe::Running)),
-                        move |c, cx| c.mc_fetch_models(fetch_provider.clone(), cx),
-                    )),
-            ),
+        div().flex().flex_col().gap(px(8.)).pt(px(10.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().flex_1().min_w_0().child(status))
+                .child(detail_button(
+                    "mc-fetch-empty",
+                    weak,
+                    &tr("extensions.fetch_models"),
+                    crate::ui::button::BtnVariant::Secondary,
+                    matches!(chat.cfg.mc_probe.get(provider), Some(McProbe::Running)),
+                    move |c, cx| c.mc_fetch_models(fetch_provider.clone(), cx),
+                )),
+        ),
     );
     detail
 }
