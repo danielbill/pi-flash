@@ -386,3 +386,20 @@
   改开左列面板（原开设置页），未绑路径不变（扫码弹窗）；automation `panel.dock wx`
   同步可达；`settings/remote.rs` 删除、TAB_REMOTE(6) 清干净，`mono_lines` 迁
   `remote_control::panel`（扫码弹窗共用）。
+
+## 090-5 wasm 渲染面切片（加密包面板全链，2026-10-24）
+- tab 入口：插件仓 `dist.mjs` 加密包清单模板补 `[[contributes.status_bar]]`（宿主内置
+  icon，加密包无 assets）+ `[[contributes.panels]]`（id=slug，无 entry）；PF 侧
+  `parse_manifest` 对 wasm 包跳过 entry 文件校验——加密包装上不再「无门可点」
+- 懒装载：`PluginEntry.wasm`（主线程 `load_cached`，cwasm 缓存毫秒级；验签门与
+  启动后台那次解耦，init 二跑=全新实例自拒门）+ `paints`/`wasm_focus` 字段
+- 渲染：`panel.rs` `wasm_canvas_view`——Paint(rect/text) → absolute div 画布，
+  canvas prepaint 检测尺寸变化异步回灌 `on_resize`
+- 交互：鼠标（move/down/up×左右键，面板内相对坐标）/键盘（点击抢焦后 on_key，
+  host 补 `on_key` 导出 + `on_mouse` 改收 WIT 枚举）/`wants_repaint` 100ms 轮询
+  循环（仅装载后，实例丢即停）；`pump_actions` 四动作复用 JS 同款落点
+  （Toast/OpenFile/RunScript/ToggleQuickPin→tree_pin_toggle）
+- 宿主钩子：`install_host_hooks` 首次装载时懒注入——quick-pins 走 thread_local
+  快照（fn 指针拿不到 Chat，装载/动作后重灌）；measure-text 用 App 级 TextSystem
+  逐字符 advance 求和（WindowTextSystem.layout_line 需 window，fn 指针不可达）
+- 提交：栈顶 `wasm-render` 分支（含 branch-2/3 两枚先行 hunks）；测试 9+3 全绿
