@@ -468,10 +468,19 @@ impl RemoteControl {
         out
     }
 
-    /// 游标落盘（§6 坑 2：**处理完才写**）。
-    fn ack(&self, batch: &wxprobe::transport::Batch) {
+    /// **处理动作之前**落路由字段——首条消息的回执（激活欢迎）在 route 时
+    /// 就进了出站队列，send 线程随即读状态文件；对端没写好 = 「第一条没反应」
+    /// （2026-10-24 真机）。
+    fn ack_routing(&self, batch: &wxprobe::transport::Batch) {
         if let Some(t) = &self.transport {
-            t.ack(batch);
+            t.ack_routing(batch);
+        }
+    }
+
+    /// 游标落盘（§6 坑 2：**处理完才写**）。
+    fn ack_cursor(&self, batch: &wxprobe::transport::Batch) {
+        if let Some(t) = &self.transport {
+            t.ack_cursor(batch);
         }
     }
 
@@ -652,7 +661,13 @@ impl RemoteControl {
                 content,
             } => {
                 self.cur_ix = Some(*content_index);
-                self.cur_text = content.clone();
+                // pi 冷启动横幅（「🔌 MCP: N server(s) enabled」）整条到达时
+                // 直接内部消化，不进回复缓冲（2026-10-24 用户定夺）
+                if is_startup_banner(content) {
+                    self.cur_text.clear();
+                } else {
+                    self.cur_text = content.clone();
+                }
             }
             E::ToolCallStart { .. } => out.extend(self.flush()),
             _ => {}
@@ -678,6 +693,8 @@ impl RemoteControl {
             self.buf.push_str(&self.cur_text);
             self.cur_text.clear();
         }
+        // 横幅行兜底剔除：delta 分片拼进缓冲时按行再滤一遍
+        self.buf = strip_startup_banner(&self.buf);
         if self.buf.trim().is_empty() {
             self.buf.clear();
             return Vec::new();
@@ -688,6 +705,23 @@ impl RemoteControl {
         self.buf = rest;
         msgs
     }
+}
+
+/// pi 冷启动横幅识别（如「🔌 MCP: 1 server enabled」）：会话冷启动的第一轮
+/// 会把它混进 assistant 文本通道，对微信用户毫无意义——内部消化
+/// （2026-10-24 用户定夺）。按内容特征识别，不锚定 emoji/ANSI（发送侧已剥）。
+fn is_startup_banner(s: &str) -> bool {
+    let low = s.to_lowercase();
+    low.contains("mcp") && (low.contains("server enabled") || low.contains("servers enabled"))
+}
+
+/// 缓冲按行剔除横幅（delta 分片与后续回复拼在同一行时无法分离——实测横幅
+/// 以独立 TextEnd 到达，TextEnd 过滤是主路径，此处兜底整行场景）。
+fn strip_startup_banner(buf: &str) -> String {
+    buf.lines()
+        .filter(|l| !is_startup_banner(l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `/思考` 的 8 档 —— 与桌面 PillMenu 完全同一张表（key/label 一一对应）。
@@ -870,11 +904,15 @@ impl crate::Chat {
             return;
         }
         for batch in &batches {
+            // 路由字段先行：回执在 route 时就出队，send 线程马上读状态文件，
+            // 对端没写好 = 首条回执被静默丢弃（「第一条没反应」根因）
+            self.aux.remote.ack_routing(batch);
             for m in &batch.messages {
                 let action = self.aux.remote.route(&m.text);
                 self.run_wx_action(action, cx);
             }
-            self.aux.remote.ack(batch);
+            // 游标处理完才写（§6 坑 2）
+            self.aux.remote.ack_cursor(batch);
         }
         cx.notify();
     }
@@ -1559,5 +1597,25 @@ mod tests {
         let out = rc.on_running(false);
         assert!(out.len() >= 3, "9000 字应切成多段，实际 {}", out.len());
         assert!(out.iter().all(|s| s.chars().count() <= 4000));
+    }
+
+    /// pi 冷启动横幅内部消化（2026-10-24）：与真实回复混轮时横幅整行剔除、
+    /// 回复照发；只剩横幅时什么都不发。
+    #[test]
+    fn startup_banner_is_swallowed_not_sent() {
+        let mut rc = RemoteControl::new();
+        rc.on_assistant(&te(0, "🔌 MCP: 1 server enabled"), "s");
+        rc.on_assistant(&td(1, "你好，我是助手"), "s");
+        let out = rc.on_running(false);
+        assert_eq!(out, vec!["你好，我是助手".to_string()], "横幅不得出站");
+
+        let mut rc2 = RemoteControl::new();
+        rc2.on_assistant(&te(0, "MCP: 2 servers enabled"), "s");
+        assert!(rc2.on_running(false).is_empty(), "纯横幅 = 静默");
+
+        // 缓冲行兜底：横幅以 delta 形式单独成行时同样剔除
+        let mut rc3 = RemoteControl::new();
+        rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"), "s");
+        assert_eq!(rc3.on_running(false), vec!["后续回复".to_string()]);
     }
 }

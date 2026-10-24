@@ -114,18 +114,28 @@ impl Transport {
     ///
     /// 持久化在**调用方线程**同步完成 —— 这样崩溃窗口只存在于
     /// 「收到底批 → ack」之间，且方向是重复而非丢失。
-    pub fn ack(&self, batch: &Batch) {
+    pub fn ack_cursor(&self, batch: &Batch) {
         let mut st = state::load();
-        let mut dirty = false;
         if let Some(buf) = batch.next_buf.as_deref() {
             state::set(&mut st, "buf", Some(buf));
-            dirty = true;
+            state::save(&st);
         }
-        // **路由字段**：出站 sendmessage 靠 chat_id 找对端、靠 bot_user_id 当
-        // from_user_id。P1 的 `wxprobe recv` 会写这两个，但 app 侧的入站路径
-        // 一直没写 —— 结果是 send 线程每次读到 `chat_id = None` 就 `continue`，
-        // 把所有出站**静默丢掉**（真机复现：消息进了 pi-flash，微信收不到回执）。
-        // 这里随 ack 一起回写，写在「处理完」这一步也符合 §6 坑 2 的时机。
+    }
+
+    /// **处理动作之前**先落路由字段（chat_id/user_id/bot_user_id/
+    /// context_token）：出站 sendmessage 靠 chat_id/user_id 找对端、靠
+    /// bot_user_id 当 from_user_id、靠 context_token 定位会话。P1 的
+    /// `wxprobe recv` 会写这两个，但 app 侧的入站路径一直没写 —— 结果是
+    /// send 线程每次读到 `chat_id = None` 就 `continue`，把所有出站**静默
+    /// 丢掉**（真机复现：消息进了 pi-flash，微信收不到回执）。
+    ///
+    /// 为什么必须在处理**前**写：首条消息的回执（激活欢迎）在 route 时就
+    /// 进了出站队列，send 线程随即读状态文件——若等「处理完才写」，首条
+    /// 回执永远找不到对端（2026-10-24 真机：重绑后第一条没反应即此）。
+    /// 游标不在此处写，仍由 [`Self::ack_cursor`] 处理后落盘（§6 坑 2）。
+    pub fn ack_routing(&self, batch: &Batch) {
+        let mut st = state::load();
+        let mut dirty = false;
         if let Some(m) = batch.messages.first() {
             if m.chat_id.is_some() {
                 state::set(&mut st, "chat_id", m.chat_id.as_deref());
@@ -147,6 +157,12 @@ impl Transport {
         if dirty {
             state::save(&st);
         }
+    }
+
+    /// 兼容入口：路由 + 游标一次完成（CLI 单批处理用）。
+    pub fn ack(&self, batch: &Batch) {
+        self.ack_routing(batch);
+        self.ack_cursor(batch);
     }
 
     /// 通道是否已断（send/poll 线程退出）。
