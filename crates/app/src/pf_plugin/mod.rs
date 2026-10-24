@@ -397,7 +397,8 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 p.id
             ));
         }
-        if !dir.join(&p.entry).is_file() {
+        // 内层 wasm 包面板无 entry 文件（渲染面 = wasm render），跳过文件校验
+        if m.wasm.is_none() && !dir.join(&p.entry).is_file() {
             return Err(format!(
                 "pf-plugin.toml：entry「{}」不存在（02 §2）",
                 p.entry
