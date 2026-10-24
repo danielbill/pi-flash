@@ -3,7 +3,7 @@
 //! 三处共用本文件的 [`line`]：内容区 ⇆ 左面板（竖，content-col 左缘）、
 //! dock 上下分区（横，会话列表 ⇆ 文件树之间）与插件面板分区（横）。契约：
 //! 常驻 1px 细线；**hover 与拖拽同款 4px accent 粗线**；感应厚度三处统一
-//! `tokens::divider::HIT`（7px，调用方自取作命中带高）。
+//! `tokens::divider::HIT`（调用方自取作命中带高）。
 //!
 //! 为什么不用 gpui 的 `group_hover`：它在 `div.rs` 的 paint 里被
 //! `if !cx.has_active_drag()` 包着、且要求元素自身带 hitbox 才 refine，

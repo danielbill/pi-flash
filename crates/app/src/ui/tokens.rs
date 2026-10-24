@@ -157,7 +157,7 @@ pub mod divider {
     pub const HOVER: f32 = 4.;
     /// 感应带厚度（三处统一；竖直分隔线的摆位另定：面板侧 3px 避让列表
     /// 滚动条，其余落在内容侧）
-    pub const HIT: f32 = 7.;
+    pub const HIT: f32 = 12.;
 }
 
 /// §2 渲染特例固定字号（px）：markdown 内部 chrome 不经 ui_size（§2 禁止
@@ -281,7 +281,7 @@ mod tests {
         );
         // §5.10 面板控制栏（020-1） / §5.12 分隔线（统一规范）
         assert_eq!([panel_ctrl::BAR_H, panel_ctrl::BTN_H], [38., 30.]);
-        assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 4., 7.]);
+        assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 4., 12.]);
         // §7 图标对齐线（含推导值）
         assert_eq!(
             [

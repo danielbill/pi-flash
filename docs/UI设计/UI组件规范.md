@@ -280,11 +280,11 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 ### 5.11 面板控制栏（020-1 整合面板）
 
-上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**（2026-10-14 定夺，视觉统一清晰）；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 7px、视觉与交互全按 §5.12 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
+上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**（2026-10-14 定夺，视觉统一清晰）；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 12px、视觉与交互全按 §5.12 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
 
 ### 5.12 分隔线（统一规范，2026-10-23 定夺）
 
-壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 4px accent 粗线；感应厚度统一 7px**（`tokens::divider::HIT`，原 panel_ctrl::DIV_H 并入；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局——gpui border 占布局，改 border 粗细会推挤内容（hover 抖动），覆盖线方案 hover 前后零位移。
+壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 4px accent 粗线；感应厚度统一 12px**（`tokens::divider::HIT`，原 panel_ctrl::DIV_H 并入；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局——gpui border 占布局，改 border 粗细会推挤内容（hover 抖动），覆盖线方案 hover 前后零位移。
 
 **唯一实现**：`ui::divider`（`LineSpec::{vertical,horizontal}` + `line`）。新增可拖拽分隔线一律调它，禁止就地手画。常驻线/highlight 颜色也由该函数按主题语义 token 统一取（细线灰 `border_alpha(0x99)` / accent），调用方不各传一种灰。
 
@@ -292,9 +292,9 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 | 分隔线 | 位置 | 感应带 | 两端缩进 | 高亮状态位 |
 |---|---|---|---|---|
-| 内容区 ⇆ 左面板（竖） | content-col 左缘 | 7px（板内 3 + 内容侧 4） | 0（全高贴缘） | `LayoutUi::slp_hover` / `slp_drag` |
-| dock 上下分区（横） | 会话列表 ⇆ 文件树之间 | 7px | 10（对齐列表右线） | `LayoutUi::split_hover` / `split_drag` |
-| 插件面板分区（横） | 快捷面板各 section 之间 | 7px | 0 | `PluginEntry::split_hover` / `split_drag` |
+| 内容区 ⇆ 左面板（竖） | content-col 左缘 | 12px（板内 3 + 内容侧 9） | 0（全高贴缘） | `LayoutUi::slp_hover` / `slp_drag` |
+| dock 上下分区（横） | 会话列表 ⇆ 文件树之间 | 12px | 10（对齐列表右线） | `LayoutUi::split_hover` / `split_drag` |
+| 插件面板分区（横） | 快捷面板各 section 之间 | 12px | 0 | `PluginEntry::split_hover` / `split_drag` |
 
 横线在感应带内垂直居中（`(band - thick) / 2`）= 1px↔4px 中线不动；拖拽跟踪各自在壳层/面板层做（内容区在 `app-body`、dock 在 `app-body`、插件在面板透明覆层），不进本组件。代码落点 `tokens::divider`（LINE=1 / HOVER=4 / HIT=7）。
 
