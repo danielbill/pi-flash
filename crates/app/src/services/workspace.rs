@@ -1078,6 +1078,15 @@ pub fn pi_ext_market_enabled() -> bool {
     dev_flag_enabled("pi_ext_market")
 }
 
+/// 060 微信通信模块总开关（开发旗标，**默认关 = 发版不可见**）。关态 =
+/// 三横菜单【微信通信】项与 topbar 微信线 tab 不渲染、`open_wx` 直接
+/// 返回、入站泵不挂（`SELF_START` 根本不被问到——模块整死）。发版排除
+/// 语义同 040-1 市场：dev 环境用 dev-flags.json `"wx": true` 或
+/// `PI_FLASH_WX=1` 打开。
+pub fn wx_enabled() -> bool {
+    dev_flag_enabled("wx")
+}
+
 /// topbar「菜单」三横钮是否渲染：**恒显**（2026-10-23 用户禁令：不许删菜单 icon）。
 /// 菜单是多入口的壳，里面 090-4「Pi-Flash 插件」是主线常驻项，按钮不能跟着
 /// 别的页面的 dev-flag 一起消失；各市场项自己的显隐照旧由 menu.rs 管。
