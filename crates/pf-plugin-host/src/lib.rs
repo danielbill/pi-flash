@@ -291,6 +291,18 @@ impl PluginInstance {
         Self::instantiate(engine, component, wasm_path)
     }
 
+    /// 缓存命中判定（懒装载热路径用）：wasm 内容 sha256 对应的产物是否已在
+    /// 盘。命中 = 主线程 `load_cached` 毫秒级同步装；未命中 = 编译秒级重活，
+    /// 调用方必须转后台。
+    pub fn has_cached_artifact(wasm_path: &Path, cache_dir: &Path) -> bool {
+        let Ok(wasm) = std::fs::read(wasm_path) else {
+            return false;
+        };
+        cache_dir
+            .join(format!("{}.cwasm", sha256_hex(&wasm)))
+            .is_file()
+    }
+
     /// 预编译进缓存（安装后预热用；任意线程可调）。返回是否真的编了。
     /// 目的在于让**首次启动**也走缓存命中，不现场编一秒级。
     pub fn precompile_to_cache(wasm_path: &Path, cache_dir: &Path) -> anyhow::Result<bool> {

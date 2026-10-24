@@ -174,15 +174,6 @@ pub fn plugins_dir() -> Option<PathBuf> {
     Some(d)
 }
 
-/// `~/.pi-flash/cache/pf-plugin/` — 内层 wasm 插件的**编译产物缓存**（`.cwasm`）。
-/// 刻意不落 `plugins/` 下：插件扫描只认 `plugins/<dir>/pf-plugin.toml`，缓存
-/// 不掺进发现路径；删掉整个目录也只是回到「重编一次」。
-pub fn plugin_cache_dir() -> Option<PathBuf> {
-    let d = ensure_dir()?.join("cache").join("pf-plugin");
-    let _ = std::fs::create_dir_all(&d);
-    Some(d)
-}
-
 /// `~/.pi-flash/registry-dump.mjs` — 注册表 dump 一次性脚本（每次 dump 重写）。
 pub fn registry_dump_script_file() -> Option<PathBuf> {
     file("registry-dump.mjs")

@@ -894,11 +894,44 @@ impl Chat {
             .manifest
             .dir
             .join(entry.manifest.wasm.as_deref().unwrap_or("plugin.wasm"));
-        let loaded = match pi_link::paths::plugin_cache_dir() {
-            Some(cache) => PluginInstance::load_cached(&wasm_path, cache.as_ref()),
-            None => PluginInstance::load(&wasm_path),
-        };
-        let mut inst = match loaded {
+        // 编译产物缓存绑在插件安装目录（卸载即清、整目录拷走跟着走）。
+        // 安装时已预编译过 → 这里命中是常态（mmap 反序列化，毫秒级）。
+        let cache = pi_link::pf_plugins::plugin_cache_for(&entry.manifest.dir);
+        // 缓存未命中（手工摆包/旧版安装）：编译秒级重活不许进主线程 →
+        // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」
+        let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
+        if !cached {
+            cx.spawn(async move |this, cx| {
+                let res = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let inst = PluginInstance::load_cached(&wasm_path, &cache);
+                        inst.and_then(|mut i| i.init(&id).map(|()| i))
+                    })
+                    .await;
+                let _ = this.update(cx, |c, cx| {
+                    let Some(entry) = c.plugins.plugins.get_mut(ix) else {
+                        return;
+                    };
+                    match res {
+                        Ok(inst) => {
+                            entry.wasm = Some(inst);
+                            entry.wasm_focus = Some(cx.focus_handle());
+                            c.plugin_wasm_render(ix, cx);
+                            c.plugin_wasm_repaint_loop(ix, cx);
+                        }
+                        Err(e) => {
+                            entry.disabled = true;
+                            let id = entry.manifest.id.clone();
+                            c.set_status(format!("插件 {id} 出错：{e}"), cx);
+                        }
+                    }
+                });
+            })
+            .detach();
+            return false;
+        }
+        let mut inst = match PluginInstance::load_cached(&wasm_path, &cache) {
             Ok(i) => i,
             Err(e) => {
                 entry.disabled = true;
@@ -914,6 +947,15 @@ impl Chat {
         entry.wasm = Some(inst);
         entry.wasm_focus = Some(cx.focus_handle());
         true
+    }
+
+    /// 后台验签门拒载的包 → 会话级禁用（tab 隐藏、面板点不开；090-5 L3 fail-closed）。
+    fn plugin_mark_rejected(&mut self, ids: &[String]) {
+        for e in &mut self.plugins.plugins {
+            if e.manifest.wasm.is_some() && ids.contains(&e.manifest.id) {
+                e.disabled = true;
+            }
+        }
     }
 
     /// onPanelOpen + render → rows 缓存（02 §4 懒加载链）。
@@ -1264,14 +1306,22 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 /// **验签结论不向用户展示**（正版校验/激活/拒载一类提示一律不出）——插件
 /// 能不能用看它自己的面板表现，启动不播报；结论只进 stderr 供开发查。
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
+    // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
+    // wasmtime，故由 app 注入）。纯函数指针，零开销。
+    pi_link::pf_plugins::install_prepare_hook(install_prepare);
     cx.spawn(async move |this, cx| {
         let manifests = cx
             .background_executor()
             .spawn(async move { scan_manifests() })
             .await;
         let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
-        // ① JS 插件先落位：不等 wasm 验签（否则状态栏 tab 被秒级编译拖死）
-        let _ = this.update(cx, |c, cx| c.plugins_set(plugin_entries(js), cx));
+        // ① 全部落位（JS+wasm）：状态栏 tab 立即可见；wasm 实例本身仍是懒装载
+        //   （首次开面板才建，见 plugin_wasm_ready），落位只是清单/入口
+        let _ = this.update(cx, |c, cx| {
+            let mut entries = plugin_entries(js);
+            entries.extend(plugin_entries(wasm.clone()));
+            c.plugins_set(entries, cx);
+        });
         if wasm.is_empty() {
             return;
         }
@@ -1284,9 +1334,15 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                 .timer(std::time::Duration::from_millis(100))
                 .await;
         }
-        cx.background_executor()
+        // ③ 验签门：拒载的包置 disabled（tab 隐藏，面板点不开）；通过的无事
+        //   （实例是懒装载的，这里只做安全把关 + stderr 播报）
+        let rejected = cx
+            .background_executor()
             .spawn(async move { verify_wasm_plugins(wasm) })
             .await;
+        if !rejected.is_empty() {
+            let _ = this.update(cx, |c, _| c.plugin_mark_rejected(&rejected));
+        }
     })
     .detach();
 }
@@ -1349,25 +1405,25 @@ fn ensure_wasm_hooks(cx: &gpui::App) {
 
 /// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
 ///
-/// init 即验签门，实例即验即弃（wasm 渲染面是后续切片）；结论**只进 stderr**，
-/// 不碰 UI（不 set_status、不 toast）——不向用户播报任何正版校验提示。
+/// init 即验签门；实例即验即弃（运行实例是懒装载的另一份，见
+/// plugin_wasm_ready）。返回**拒载包 id**：结论只进 stderr + 回传主线程置
+/// disabled，不向用户播报任何正版校验提示。
 ///
-/// 速度：装载走编译产物缓存（`<数据目录>/cache/pf-plugin/<sha256>.cwasm`）——
-/// 编译只发生在 wasm 字节变化后的第一次；之后每次 = mmap 反序列化 + 实例化 +
-/// init（毫秒级，验签照跑）。旧的 `load()` 每次启动重编（4.6 MB 组件 7.2 s debug）。
-fn verify_wasm_plugins(manifests: Vec<PluginManifest>) {
+/// 速度：装载走**插件目录内的**编译产物缓存（`<插件目录>/.cache/<sha256>.cwasm`）——
+/// 安装时已预编译（见 [`install_prepare`]），故这里恒命中；之后每次 =
+/// mmap 反序列化 + 实例化 + init（毫秒级）。旧的 `load()` 每次启动重编
+/// （4.6 MB 组件 7.2 s debug）。
+fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String> {
     // 证明材料钩子是进程级（pf-plugin-host 里从 thread_local 改成全局），
     // 后台线程 init 时插件回调 get_host_proof 同样取得到材料
     pf_plugin_host::install_proof_hook(host_proof_material);
-    let cache = pi_link::paths::plugin_cache_dir();
+    let mut rejected = Vec::new();
     for m in manifests {
         let id = m.id.clone();
         let wasm_path = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
+        let cache = pi_link::pf_plugins::plugin_cache_for(&m.dir);
         let t0 = std::time::Instant::now();
-        let loaded = match cache.as_deref() {
-            Some(dir) => pf_plugin_host::PluginInstance::load_cached(&wasm_path, dir),
-            None => pf_plugin_host::PluginInstance::load(&wasm_path),
-        };
+        let loaded = pf_plugin_host::PluginInstance::load_cached(&wasm_path, &cache);
         let load_elapsed = t0.elapsed();
         let t1 = std::time::Instant::now();
         match loaded {
@@ -1376,25 +1432,51 @@ fn verify_wasm_plugins(manifests: Vec<PluginManifest>) {
                     "[pf-plugin] {id} 验签通过（装载 {load_elapsed:?} / init {:?}，后台线程）",
                     t1.elapsed()
                 ),
-                Err(e) => eprintln!("[pf-plugin] {id} 拒载：{e}"),
+                Err(e) => {
+                    eprintln!("[pf-plugin] {id} 拒载：{e}");
+                    rejected.push(id);
+                }
             },
-            Err(e) => eprintln!("[pf-plugin] {id} 装载失败：{e}"),
+            Err(e) => {
+                eprintln!("[pf-plugin] {id} 装载失败：{e}");
+                rejected.push(id);
+            }
         }
+    }
+    rejected
+}
+
+/// 安装尾声钩子实现：wasm 包在**安装时**就把 cwasm 编译产物做好，落进
+/// `<插件目录>/.cache/`。此后启动、开面板一律 mmap 命中（毫秒级）。
+///
+/// 非 wasm 包（无 `wasm =` 声明）= 无需预编译；清单解析失败也不在此判死
+/// （安装链路已校验过，这里只负责把重活搬完）。
+fn install_prepare(plugin_dir: &Path) -> Result<(), String> {
+    let Ok(m) = parse_manifest(plugin_dir) else {
+        return Ok(());
+    };
+    let Some(wasm) = m.wasm.as_deref() else {
+        return Ok(());
+    };
+    let wasm_path = plugin_dir.join(wasm);
+    let cache = pi_link::pf_plugins::plugin_cache_for(plugin_dir);
+    let t0 = std::time::Instant::now();
+    match pf_plugin_host::PluginInstance::precompile_to_cache(&wasm_path, &cache) {
+        Ok(_) => {
+            eprintln!("[pf-plugin] 安装预编译 {} 完成（{:?}）", m.id, t0.elapsed());
+            Ok(())
+        }
+        Err(e) => Err(format!("预编译失败: {e}")),
     }
 }
 
-/// 安装/启用后预热：后台把插件的 wasm 预编译进缓存，让**首次启动**也走
-/// 缓存命中（否则首启仍要现场编一次秒级）。
-///
-/// 独立 std 线程 fire-and-forget：不占 gpui 执行器、不必持有 Chat（引擎/缓存
-/// 层都是线程安全的）；本来已命中就立即返——重复调用零代价。
+/// 旧版安装预热（编译产物不在插件目录的历史包）：后台补编一次。
+/// 新安装已由 [`install_prepare`] 在安装时做完，这里通常全部命中、立刻返回。
 pub(crate) fn spawn_precompile_installed() {
     std::thread::spawn(|| {
-        let Some(cache) = pi_link::paths::plugin_cache_dir() else {
-            return;
-        };
         for m in scan_manifests().into_iter().filter(|m| m.wasm.is_some()) {
             let wasm = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
+            let cache = pi_link::pf_plugins::plugin_cache_for(&m.dir);
             let t0 = std::time::Instant::now();
             match pf_plugin_host::PluginInstance::precompile_to_cache(&wasm, &cache) {
                 Ok(true) => {
