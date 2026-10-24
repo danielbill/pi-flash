@@ -23,8 +23,7 @@ use crate::i18n::{tf, tr};
 use crate::market::pf_market::{MONO, centered, index_snapshot, slice_shell};
 use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
-    LIST_W, config_switch, detail_shell, field, mono_text, scope_tag, sidebar_item, sidebar_list,
-    sidebar_shell,
+    LIST_W, config_switch, detail_shell, field, mono_text, sidebar_item, sidebar_list, sidebar_shell,
 };
 
 /// 一条已装插件（台账 × 索引 display 补全后的展示行）。
@@ -406,7 +405,6 @@ fn detail_pane(
                         .text_color(rgb(t.text))
                         .child(SharedString::from(item.display.clone())),
                 )
-                .child(scope_tag(&tr("scope.global"), false))
                 .child(gpui::div().flex_1())
                 .child(trash),
         )
