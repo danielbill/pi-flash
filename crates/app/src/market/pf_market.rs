@@ -371,10 +371,12 @@ fn all_body(
             .flex()
             .flex_col()
             .overflow_y_scroll();
+        // 卡行**不再各自包段盒**：外层已经是全高段盒（两侧描边），行里再画
+        // 一层 slice_shell 就会多出一条内线（2026-10-24 实测「左边两道竖线」）
         if entries.is_empty() {
             let mut row = row_shell(&m);
             row = row.child(empty_line(tr("market.pf.empty"), t));
-            cards = cards.child(row_slice(row, &m, t));
+            cards = cards.child(row);
         } else {
             for chunk in entries.chunks(cols) {
                 let mut row = row_shell(&m);
@@ -385,7 +387,7 @@ fn all_body(
                 if chunk.len() < cols {
                     row = row.child(gpui::div().flex_1());
                 }
-                cards = cards.child(row_slice(row, &m, t));
+                cards = cards.child(row);
             }
         }
         col = col.child(
@@ -594,11 +596,6 @@ fn row_shell(m: &Metrics) -> gpui::Div {
         .px(px(m.card_pad_body))
         .pt(px(m.card_pad_body))
         .pb(px(sp::BLOCK_GAP))
-}
-
-/// 卡行 → 外壳（两侧描边 + 居中）。
-fn row_slice(row: gpui::Div, m: &Metrics, t: &'static Theme) -> AnyElement {
-    centered(slice_shell(m, false, false, t).child(row), m).into_any_element()
 }
 
 /// 扫描中：居中转圈 + 提示。字号对齐 Pi 市场的扫描提示（`px18::BODY_FS`）。
