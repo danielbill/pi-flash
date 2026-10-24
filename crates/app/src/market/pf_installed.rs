@@ -37,10 +37,11 @@ struct InstalledItem {
 }
 
 impl Chat {
-    /// 启停单插件（090-4 v5）：台账 disabled 位落盘 + 运行态立即生效——
-    /// 停用 = 现场条目翻 disabled 位（状态栏 tab / 文件树插件菜单 / 分发
-    /// 全部消费该标志，立即隐身）；启用 = 有条目则复位，无条目（启动时
-    /// 被扫描跳过）后台重扫补装。失败进头段错误行。
+    /// 启停单插件（090-4 v5）：台账 disabled 位落盘 + 运行态立即生效。
+    /// 停用 = 台账落盘 + `plugin_evict`（丢 JS 运行时与组件树缓存、左 dock
+    /// 正显示它就退默认）——状态栏 tab / 文件树插件菜单 / 左面板全部隐身；
+    /// 启用 = 有条目则复位，无条目（启动时被扫描跳过）只补装这一个。
+    /// 失败进头段错误行。
     pub(crate) fn pf_toggle_plugin(
         &mut self,
         name: String,
@@ -62,35 +63,50 @@ impl Chat {
         {
             l.disabled = !enable;
         }
-        let dir = pf_plugins::dir_name(&name);
-        let hit = self.plugins.plugins.iter_mut().find(|e| {
-            e.manifest
-                .dir
-                .file_name()
-                .is_some_and(|f| f.to_string_lossy() == dir)
-        });
+        // 台账包名 → 运行态条目：只认顶层包目录名（版本层目录名是版本号，
+        // 拿它比永远比不中——上一版停用点了没反应就是因为这个）
+        let hit = self.plugin_ix_by_pkg(&name);
         match (enable, hit) {
-            (_, Some(entry)) => {
-                entry.disabled = !enable;
-                cx.notify();
+            (true, Some(ix)) => {
+                if let Some(entry) = self.plugins.plugins.get_mut(ix) {
+                    entry.disabled = false;
+                }
             }
             (true, None) => {
-                // 启动时被停用过滤、从未装载：重扫补装（台账此刻已复用）
-                let scan = cx
-                    .background_executor()
-                    .spawn(async { crate::pf_plugin::scan_manifests() });
+                // 启动时被停用过滤、从未装载：**只补装这一个**。整体替换
+                // `plugins_set(全部重扫结果)` 会清掉其他插件的运行态，还会
+                // 打乱 dock 下标（`DockPanel::Plugin(ix)` 是位置）
+                let pkg_name = name.clone();
+                let scan = cx.background_executor().spawn(async move {
+                    let aliases = pi_link::pf_plugins::dir_aliases(&pkg_name);
+                    crate::pf_plugin::scan_manifests()
+                        .into_iter()
+                        .filter(|m| aliases.iter().any(|a| *a == m.pkg))
+                        .collect::<Vec<_>>()
+                });
                 cx.spawn(async move |this, cx| {
                     let manifests = scan.await;
                     let _ = this.update(cx, |c, cx| {
-                        c.plugins_set(crate::pf_plugin::plugin_entries(manifests), cx);
+                        if manifests.is_empty() {
+                            c.aux.market.pf.error =
+                                Some(tf("market.pf.enable_failed", &[("name", name.clone())]));
+                        } else {
+                            c.plugins
+                                .plugins
+                                .extend(crate::pf_plugin::plugin_entries(manifests));
+                        }
+                        cx.notify();
                     });
                 })
                 .detach();
                 // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
                 crate::pf_plugin::spawn_precompile_installed();
             }
-            (false, None) => cx.notify(), // 未装载，无运行态可翻
+            // 停用：运行态就地撤下（含左 dock 退默认），否则面板还照旧渲染
+            (false, Some(ix)) => self.plugin_evict(ix),
+            (false, None) => {} // 未装载，无运行态可撤
         }
+        cx.notify();
     }
 
     /// 点垃圾桶：弹确认浮层（040 统一确认组件；渲染在 shell/render 顶层）。
@@ -114,7 +130,9 @@ impl Chat {
         }
     }
 
-    /// 卸载：后台线程删目录 + 摘台账（幂等），完成重读台账刷新列表。
+    /// 卸载：后台线程删目录 + 摘台账（幂等），完成重读台账刷新列表；
+    /// **成功则同账号把运行态条目一并摘掉**（否则状态栏 tab / 左 dock 面板 /
+    /// 文件树菜单 / JS 运行时全活着，删了还能用直到重启）。
     /// 失败原因进头段错误行（pf_install 同款通道）。
     fn pf_uninstall(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         if self.aux.market.pf.removing.is_some() {
@@ -122,20 +140,35 @@ impl Chat {
         }
         self.aux.market.pf.removing = Some(name.clone());
         self.aux.market.pf.error = None;
+        let pkg_name = name.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { pf_plugins::uninstall(&name) })
                 .await;
             let _ = this.update(cx, |c, cx| {
-                let pf = &mut c.aux.market.pf;
-                pf.removing = None;
-                pf.error = result.err();
-                pf.ledger = pf_plugins::load_ledger();
-                if pf.section.as_deref().is_some_and(|s| {
-                    !pf.ledger.iter().any(|l| l.name == s)
-                }) {
-                    pf.section = None;
+                let ok = result.is_ok();
+                c.aux.market.pf.removing = None;
+                c.aux.market.pf.error = result.err();
+                c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                if c.aux
+                    .market
+                    .pf
+                    .section
+                    .as_deref()
+                    .is_some_and(|s| !c.aux.market.pf.ledger.iter().any(|l| l.name == s))
+                {
+                    c.aux.market.pf.section = None;
+                }
+                if ok && let Some(ix) = c.plugin_ix_by_pkg(&pkg_name) {
+                    let id = c.plugins.plugins[ix].manifest.id.clone();
+                    c.plugin_evict(ix);
+                    c.plugins.plugins.remove(ix);
+                    crate::pf_plugin::plugin_forget(&id);
+                    // 下标位移：插件面板存的是位置，任何一条被摘都退默认
+                    if matches!(c.layout.dock_panel, crate::DockPanel::Plugin(_)) {
+                        c.layout.dock_panel = crate::DockPanel::Default;
+                    }
                 }
                 cx.notify();
             });
