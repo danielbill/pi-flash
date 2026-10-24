@@ -856,9 +856,10 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 /// 两段式，**主线程零重活**：
 /// ① 清单扫描（后台线程）→ JS 插件条目立即落位（状态栏 tab / 右键【插件】可见）；
 /// ② 内层 wasm 插件验签门（090-5 L3）：**揭幕后**才在后台线程发起，且走
-///    编译产物缓存（`load_cached`，命中 = mmap 反序列化 → 毫秒级），结果回
-///    主线程只写状态栏。旧实现把 load+init 放在主线程 `update` 里直接跑，
-///    UI 卡死数秒（本次修复）。
+///    编译产物缓存（`load_cached`，命中 = mmap 反序列化 → 毫秒级）。
+///
+/// **验签结论不向用户展示**（正版校验/激活/拒载一类提示一律不出）——插件
+/// 能不能用看它自己的面板表现，启动不播报；结论只进 stderr 供开发查。
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let manifests = cx
@@ -880,58 +881,47 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                 .timer(std::time::Duration::from_millis(100))
                 .await;
         }
-        let msgs = cx
-            .background_executor()
+        cx.background_executor()
             .spawn(async move { verify_wasm_plugins(wasm) })
             .await;
-        let _ = this.update(cx, |c, cx| {
-            for msg in msgs {
-                c.set_status(msg, cx);
-            }
-            cx.notify();
-        });
     })
     .detach();
 }
 
 /// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
-/// init 即验签门，实例即验即弃（wasm 渲染面是后续切片），结论由调用方经
-/// `set_status` 面向用户（失败不静默，02 §7.2）。
+///
+/// init 即验签门，实例即验即弃（wasm 渲染面是后续切片）；结论**只进 stderr**，
+/// 不碰 UI（不 set_status、不 toast）——不向用户播报任何正版校验提示。
 ///
 /// 速度：装载走编译产物缓存（`<数据目录>/cache/pf-plugin/<sha256>.cwasm`）——
 /// 编译只发生在 wasm 字节变化后的第一次；之后每次 = mmap 反序列化 + 实例化 +
 /// init（毫秒级，验签照跑）。旧的 `load()` 每次启动重编（4.6 MB 组件 7.2 s debug）。
-fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String> {
+fn verify_wasm_plugins(manifests: Vec<PluginManifest>) {
     // 证明材料钩子是进程级（pf-plugin-host 里从 thread_local 改成全局），
     // 后台线程 init 时插件回调 get_host_proof 同样取得到材料
     pf_plugin_host::install_proof_hook(host_proof_material);
     let cache = pi_link::paths::plugin_cache_dir();
-    let mut msgs = Vec::new();
     for m in manifests {
         let id = m.id.clone();
-        let title = pick_lang(&m.title_zh, &m.title_en);
         let wasm_path = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
         let t0 = std::time::Instant::now();
         let loaded = match cache.as_deref() {
             Some(dir) => pf_plugin_host::PluginInstance::load_cached(&wasm_path, dir),
             None => pf_plugin_host::PluginInstance::load(&wasm_path),
         };
-        let load_ms = t0.elapsed();
+        let load_elapsed = t0.elapsed();
         let t1 = std::time::Instant::now();
-        let msg = match loaded {
+        match loaded {
             Ok(mut inst) => match inst.init(&id) {
-                Ok(()) => format!("插件 {title}：官方验证通过，已激活"),
-                Err(e) => format!("插件 {title} 拒载：{e}"),
+                Ok(()) => eprintln!(
+                    "[pf-plugin] {id} 验签通过（装载 {load_elapsed:?} / init {:?}，后台线程）",
+                    t1.elapsed()
+                ),
+                Err(e) => eprintln!("[pf-plugin] {id} 拒载：{e}"),
             },
-            Err(e) => format!("插件 {title} 装载失败：{e}"),
-        };
-        eprintln!(
-            "[pf-plugin] {msg}（装载 {load_ms:?} / init {:?}，后台线程）",
-            t1.elapsed()
-        );
-        msgs.push(msg);
+            Err(e) => eprintln!("[pf-plugin] {id} 装载失败：{e}"),
+        }
     }
-    msgs
 }
 
 /// 安装/启用后预热：后台把插件的 wasm 预编译进缓存，让**首次启动**也走
