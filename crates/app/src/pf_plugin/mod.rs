@@ -49,6 +49,9 @@ pub(crate) struct PluginManifest {
     /// 内层 wasm 插件（契约 inner_package）：`wasm = "plugin.wasm"` 声明即启用；
     /// 装载 = pf_plugin_host::PluginInstance（init 即验签门，090-5 L3）
     pub wasm: Option<String>,
+    /// 分发态 JS **字节码**（`plugin.qbc`，由 `qjsc` 从同一份 main.js 编出）：
+    /// 与源码包同一引擎、同一 ctx、同一渲染路径，落盘无明文源码。
+    pub bytecode: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +245,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         file_menu: Vec::new(),
         panels: Vec::new(),
         wasm: None,
+        bytecode: None,
     };
     let mut section = String::new();
     for (n, raw) in src.lines().enumerate() {
@@ -315,6 +319,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             ("", "id") => m.id = val.as_str("id", n)?,
             ("", "version") => m.version = val.as_str("version", n)?,
             ("", "wasm") => m.wasm = Some(val.as_str("wasm", n)?),
+            ("", "bytecode") => m.bytecode = Some(val.as_str("bytecode", n)?),
             ("", "title") => {
                 let (zh, en) = val.as_i18n("title", n)?;
                 m.title_zh = zh;
@@ -387,6 +392,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
     }
     // 内层 wasm 插件（090-5 L3）无 contributes 也合法——验签在 wasm 内
     if m.wasm.is_none()
+        && m.bytecode.is_none()
         && m.status_bar.is_none()
         && m.file_menu.is_empty()
         && m.panels.is_empty()
@@ -422,7 +428,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             ));
         }
         // 内层 wasm 包面板无 entry 文件（渲染面 = wasm render），跳过文件校验
-        if m.wasm.is_none() && !dir.join(&p.entry).is_file() {
+        if m.wasm.is_none() && m.bytecode.is_none() && !dir.join(&p.entry).is_file() {
             return Err(format!(
                 "pf-plugin.toml：entry「{}」不存在（02 §2）",
                 p.entry
@@ -469,6 +475,7 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
             Ok(mut m) => {
                 // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
                 if m.wasm.is_none()
+                    && m.bytecode.is_none()
                     && m.status_bar.is_none()
                     && m.file_menu.is_empty()
                     && m.panels.is_empty()
@@ -605,8 +612,6 @@ pub(crate) struct PluginEntry {
     /// 毫秒级实例化，cwasm 缓存由启动预热。验签门在启动后台线程已过一次，
     /// 这里 init 再跑一遍是全新实例的自拒门，语义不变）
     pub wasm: Option<PluginInstance>,
-    /// 最近一次 wasm `render()` 的 Paint 缓存（渲染器消费）
-    pub paints: Vec<pf_plugin_host::Paint>,
     /// wasm 面板键盘焦点（点击面板时抢入；键盘回灌只在其聚焦时收）
     pub wasm_focus: Option<gpui::FocusHandle>,
     /// 宿主能力载体（与 js 同生；fire 前清 actions）
@@ -763,7 +768,6 @@ impl Chat {
             entry.disabled = true;
             entry.js = None;
             entry.wasm = None;
-            entry.paints.clear();
             entry.wasm_focus = None;
             entry.host = None;
             entry.body = None;
@@ -855,9 +859,27 @@ impl Chat {
             dir,
             actions: Vec::new(),
         }));
-        let entry_path = entry.manifest.dir.join(&entry_rel);
+        // 分发态字节码包：entry 换成 plugin.qbc，加载器走 QuickJS 字节码
+        let bytecode_rel = entry.manifest.bytecode.clone();
+        let entry_path = entry
+            .manifest
+            .dir
+            .join(bytecode_rel.as_deref().unwrap_or(&entry_rel));
         let id = entry.manifest.id.clone();
-        match JsPlugin::load(&entry_path, &dir_str, host.clone()) {
+        // 正版门（分发态）：字节码包只在官方构建里加载（非官方 = 占位证明 → 拒载）
+        if bytecode_rel.is_some() && !has_official_proof() {
+            entry.disabled = true;
+            self.set_status(
+                format!("插件 {id} 拒载：需要官方构建的 PF"),
+                cx,
+            );
+            return false;
+        }
+        let loaded = match bytecode_rel {
+            Some(_) => JsPlugin::load_bytecode(&entry_path, &dir_str, host.clone()),
+            None => JsPlugin::load(&entry_path, &dir_str, host.clone()),
+        };
+        match loaded {
             Ok(js) => {
                 let mut failed = None;
                 if let Err(e) = js.activate() {
@@ -918,7 +940,6 @@ impl Chat {
                             entry.wasm = Some(inst);
                             entry.wasm_focus = Some(cx.focus_handle());
                             c.plugin_wasm_render(ix, cx);
-                            c.plugin_wasm_repaint_loop(ix, cx);
                         }
                         Err(e) => {
                             entry.disabled = true;
@@ -967,7 +988,6 @@ impl Chat {
         // 不需要 panel-open 事件：render 每次都现读插件自己的存储。
         if self.plugins.plugins[ix].wasm.is_some() {
             self.plugin_wasm_render(ix, cx);
-            self.plugin_wasm_repaint_loop(ix, cx);
             return;
         }
         let (result, actions) = {
@@ -1108,20 +1128,32 @@ impl Chat {
     }
 
     // -------------------------------------------------------------------
-    // 内层 wasm 插件（加密包渲染面；渲染 = panel.rs 画 Paint 列表，
-    // 交互 = 鼠标/键盘/resize 回灌 + 动作泵，全部主线程）
+    // 内层 wasm 插件（加密包）：**与 JS 插件同一条渲染管线**——`render()` 返回
+    // 01 规范组件树 JSON，宿主 `panel::resolve` 统一解释；事件走 on-event。
+    // wasm 不另立渲染模型（Paint 直绘已废）。
     // -------------------------------------------------------------------
 
-    /// wasm `render()` → Paint 缓存（打开/重绘共用；空画布兜底不炸）。
+    /// wasm `render()` → 组件树（与 JS 同一 schema，`panel::resolve` 统一渲染）。
     fn plugin_wasm_render(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
-        let paints = {
+        let result = {
             let entry = &mut self.plugins.plugins[ix];
-            entry.wasm.as_mut().map(|i| i.render()).unwrap_or_default()
+            entry
+                .wasm
+                .as_mut()
+                .map(|i| i.render_json())
+                .unwrap_or_else(|| Ok(String::new()))
         };
-        let entry = &mut self.plugins.plugins[ix];
-        entry.paints = paints;
-        entry.tree_loaded = true;
-        cx.notify();
+        match result {
+            Ok(json) => {
+                let v: serde_json::Value =
+                    serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                let entry = &mut self.plugins.plugins[ix];
+                entry.body = Some(v);
+                entry.tree_loaded = true;
+                cx.notify();
+            }
+            Err(e) => self.plugin_broken(ix, format!("{e}"), cx),
+        }
     }
 
     /// wasm 面板事件回灌（`contributes.*` 回调统一走这里 → on-event）。
@@ -1152,112 +1184,6 @@ impl Chat {
         }
     }
 
-    /// 重绘循环（仅 wasm 面板装载后跑）：每 100ms 问一次 `wants-repaint`
-    /// （布尔 wasm 调用，微秒级），要重绘才 render。实例丢/停用即停——
-    /// 面板不 open 时循环也在，但只是无感布尔轮询；关掉面板不收锁
-    /// （插件可能靠 import 异步干活后置 repaint 位，宿主不猜）。
-    fn plugin_wasm_repaint_loop(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(100))
-                    .await;
-                let cont = this
-                    .update(cx, |chat, cx| {
-                        let Some(entry) = chat.plugins.plugins.get_mut(ix) else {
-                            return false;
-                        };
-                        let Some(inst) = entry.wasm.as_mut() else {
-                            return false;
-                        };
-                        if entry.disabled {
-                            return false;
-                        }
-                        if !inst.wants_repaint() {
-                            return true;
-                        }
-                        entry.paints = inst.render();
-                        cx.notify();
-                        true
-                    })
-                    .unwrap_or(false);
-                if !cont {
-                    return;
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// wasm 面板鼠标回灌（panel.rs 事件层换算好面板内相对坐标后调）。
-    pub(crate) fn plugin_wasm_mouse(
-        &mut self,
-        ix: usize,
-        phase: pf_plugin_host::Phase,
-        button: pf_plugin_host::Button,
-        x: f32,
-        y: f32,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let (actions, repaint) = {
-            let entry = &mut self.plugins.plugins[ix];
-            let Some(inst) = entry.wasm.as_mut() else {
-                return;
-            };
-            let _ = inst.on_mouse(phase, button, x, y);
-            (inst.pump_actions(), inst.wants_repaint())
-        };
-        self.plugin_wasm_dispatch(ix, actions, window, cx);
-        if repaint {
-            self.plugin_wasm_render(ix, cx);
-        }
-    }
-
-    /// wasm 面板键盘回灌（panel.rs 在面板聚焦时转发；`key` 为宿主键名）。
-    pub(crate) fn plugin_wasm_key(
-        &mut self,
-        ix: usize,
-        key: &str,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let (actions, repaint) = {
-            let entry = &mut self.plugins.plugins[ix];
-            let Some(inst) = entry.wasm.as_mut() else {
-                return;
-            };
-            let _ = inst.on_key(key);
-            (inst.pump_actions(), inst.wants_repaint())
-        };
-        self.plugin_wasm_dispatch(ix, actions, window, cx);
-        if repaint {
-            self.plugin_wasm_render(ix, cx);
-        }
-    }
-
-    /// wasm 面板尺寸回灌（panel.rs canvas prepaint 检测 bounds 变化后异步调）。
-    /// 插件要重排会置 repaint 位；不置就只回调（画布变大露底色，插件自己决定）。
-    pub(crate) fn plugin_wasm_resize(
-        &mut self,
-        ix: usize,
-        w: f32,
-        h: f32,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let repaint = {
-            let entry = &mut self.plugins.plugins[ix];
-            let Some(inst) = entry.wasm.as_mut() else {
-                return;
-            };
-            let _ = inst.on_resize(w, h);
-            inst.wants_repaint()
-        };
-        if repaint {
-            self.plugin_wasm_render(ix, cx);
-        }
-    }
-
     /// wasm `PluginAction` → 宿主实现（与 JS 动作同款落点，复用实现不复制逻辑）。
     fn plugin_wasm_dispatch(
         &mut self,
@@ -1277,7 +1203,6 @@ impl Chat {
                         None => self.set_status(format!("无法执行：{p}"), cx),
                     }
                 }
-                PluginAction::ToggleQuickPin(p) => self.tree_pin_toggle(PathBuf::from(&p), cx),
             }
         }
         // 动作可能改了插件数据（如 toggle pin）：同步快照给后续 render
@@ -1303,7 +1228,6 @@ impl Chat {
         entry.disabled = true;
         entry.js = None;
         entry.wasm = None;
-        entry.paints.clear();
         entry.wasm_focus = None;
         entry.host = None;
         let id = entry.manifest.id.clone();
@@ -1321,7 +1245,6 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
             disabled: false,
             js: None,
             wasm: None,
-            paints: Vec::new(),
             wasm_focus: None,
             host: None,
             tree_loaded: false,
@@ -1440,6 +1363,11 @@ fn ensure_wasm_hooks(cx: &gpui::App) {
     }
     TEXT_SYSTEM.with(|c| *c.borrow_mut() = Some(cx.text_system().clone()));
     pf_plugin_host::install_host_hooks(quick_pin_snap, wasm_measure_text);
+    // 路径派生能力：与 JS 插件 ctx.fileIcon / ctx.isExecutive 同一套服务
+    pf_plugin_host::install_path_hooks(
+        |p| crate::services::file_icons::get_icon(Path::new(p)).to_string(),
+        |p| crate::services::script_exec::exec_kind(Path::new(p)).is_some(),
+    );
 }
 
 /// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
@@ -1526,6 +1454,11 @@ pub(crate) fn spawn_precompile_installed() {
             }
         }
     });
+}
+
+/// 本机构建是否带官方宿主证明（build.rs 注入；占位符 = 非官方）。
+fn has_official_proof() -> bool {
+    option_env!("PF_HOST_PROOF").is_some_and(|p| !p.is_empty() && p != "PROOF_PLACEHOLDER")
 }
 
 /// 官方构建证明材料（build.rs 把 PF_BUILD_PROOF/KID 烙成二进制常量，见

@@ -48,11 +48,14 @@ impl pf::plugin::host::Host for HostState {
     fn run_script(&mut self, path: String) {
         let _ = self.tx.send(PluginAction::RunScript(path));
     }
-    fn toggle_quick_pin(&mut self, path: String) {
-        let _ = self.tx.send(PluginAction::ToggleQuickPin(path));
-    }
     fn quick_pins(&mut self) -> Vec<String> {
         quick_pin_list()
+    }
+    fn file_icon(&mut self, path: String) -> String {
+        file_icon_of(&path)
+    }
+    fn is_executive(&mut self, path: String) -> bool {
+        is_exec_of(&path)
     }
     fn storage_read(&mut self, key: String) -> String {
         match storage_path(&self.data_dir, &key) {
@@ -89,7 +92,6 @@ pub enum PluginAction {
     Toast(String),
     OpenFile(String),
     RunScript(String),
-    ToggleQuickPin(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,9 @@ pub enum PluginAction {
 // ---------------------------------------------------------------------------
 
 pub type QuickPinListFn = fn() -> Vec<String>;
+/// 路径派生能力（与 JS 插件 ctx.fileIcon / ctx.isExecutive 同源）
+pub type FileIconFn = fn(&str) -> String;
+pub type IsExecFn = fn(&str) -> bool;
 pub type MeasureTextFn = fn(&str, f32) -> f32;
 /// 090-5 L3：官方宿主证明材料钩子，返回紧凑 JSON `{"kid":"…","proof":"…"}`。
 pub type HostProofFn = fn() -> String;
@@ -104,6 +109,8 @@ pub type HostProofFn = fn() -> String;
 thread_local! {
     static QUICK_PINS_FN: std::cell::RefCell<Option<QuickPinListFn>> = const { std::cell::RefCell::new(None) };
     static MEASURE_FN: std::cell::RefCell<Option<MeasureTextFn>> = const { std::cell::RefCell::new(None) };
+    static FILE_ICON_FN: std::cell::RefCell<Option<FileIconFn>> = const { std::cell::RefCell::new(None) };
+    static IS_EXEC_FN: std::cell::RefCell<Option<IsExecFn>> = const { std::cell::RefCell::new(None) };
 }
 
 /// 090-5 L3：官方宿主证明材料钩子——**进程级，不是 thread_local**。
@@ -147,6 +154,20 @@ pub fn nonce_tag(proof: &str, nonce: &str) -> String {
     h.update([0u8]);
     h.update(nonce.as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 路径派生能力注入（app 启动时；与 JS 插件同一套服务实现）。
+pub fn install_path_hooks(file_icon: FileIconFn, is_exec: IsExecFn) {
+    FILE_ICON_FN.with(|c| *c.borrow_mut() = Some(file_icon));
+    IS_EXEC_FN.with(|c| *c.borrow_mut() = Some(is_exec));
+}
+
+fn file_icon_of(path: &str) -> String {
+    FILE_ICON_FN.with(|c| c.borrow().map(|f| f(path)).unwrap_or_default())
+}
+
+fn is_exec_of(path: &str) -> bool {
+    IS_EXEC_FN.with(|c| c.borrow().map(|f| f(path)).unwrap_or(false))
 }
 
 fn quick_pin_list() -> Vec<String> {
@@ -368,22 +389,7 @@ impl PluginInstance {
         }
     }
 
-    pub fn on_resize(&mut self, w: f32, h: f32) -> anyhow::Result<()> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            b.call_on_resize(store, w, h)?;
-        }
-        Ok(())
-    }
-
-    /// 键盘回灌（WIT `on-key`）：`key` 为宿主键名（如 "arrow-down"）。
-    pub fn on_key(&mut self, key: &str) -> anyhow::Result<()> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            b.call_on_key(store, key)?;
-        }
-        Ok(())
-    }
-
-    /// 宿主→插件事件（WIT `on-event`）：`kind` = panel-open / menu / command。
+    /// 宿主→插件事件（WIT `on-event`）：`kind` = panel-open / menu / command / action。
     /// 契约里所有 `contributes.*` 回调都汇到这一条，以后加贡献项不改 WIT。
     pub fn on_event(&mut self, kind: &str, id: &str, path: &str) -> anyhow::Result<()> {
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
@@ -397,31 +403,13 @@ impl PluginInstance {
         Ok(())
     }
 
-    pub fn on_mouse(
-        &mut self,
-        phase: pf::plugin::types::Phase,
-        button: pf::plugin::types::Button,
-        x: f32,
-        y: f32,
-    ) -> anyhow::Result<()> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            b.call_on_mouse(store, phase, button, x, y)?;
+    /// 组件树 JSON（WIT `render` → string，与 JS `render(ctx)` 返回值同一 schema）。
+    /// 宿主侧 `panel::resolve` 统一解释——wasm 不另立渲染模型。
+    pub fn render_json(&mut self) -> anyhow::Result<String> {
+        match (self.store.as_mut(), self.bindings.as_mut()) {
+            (Some(store), Some(b)) => Ok(b.call_render(store)?),
+            _ => Ok(String::new()),
         }
-        Ok(())
-    }
-
-    pub fn wants_repaint(&mut self) -> bool {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            return b.call_wants_repaint(store).unwrap_or(false);
-        }
-        false
-    }
-
-    pub fn render(&mut self) -> Vec<pf::plugin::types::Paint> {
-        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            return b.call_render(store).unwrap_or_default();
-        }
-        Vec::new()
     }
 
     pub fn pump_actions(&self) -> Vec<PluginAction> {
