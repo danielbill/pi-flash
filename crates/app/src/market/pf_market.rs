@@ -294,15 +294,7 @@ pub(crate) fn page(
     } else {
         st.ledger.len()
     };
-    let head = head_segment(
-        st.error.clone(),
-        total,
-        st.tab,
-        st.ledger.len(),
-        weak,
-        &m,
-        t,
-    );
+    let head = head_segment(st.error.clone(), total, st.tab, weak, &m, t);
     let body: AnyElement = if st.tab == PfTab::Installed {
         super::pf_installed::body(chat, weak, &m)
     } else {
@@ -548,21 +540,22 @@ pub(crate) fn head_segment(
     err: Option<String>,
     total: usize,
     tab: PfTab,
-    installed_total: usize,
     weak: &gpui::WeakEntity<Chat>,
     m: &Metrics,
     t: &'static Theme,
 ) -> AnyElement {
-    let count_text = match tab {
-        // 市场页签沿用 pi 页的「页内条目 / 总数」口径；已安装无分页，只报总数
-        PfTab::All => format!("1-{} / {}", total, thousands(total)),
-        PfTab::Installed => thousands(installed_total),
-    };
-    let count = gpui::div()
-        .font_family(MONO)
-        .text_size(px(px18::COUNT_FS))
-        .text_color(muted(t))
-        .child(SharedString::from(count_text));
+    // 计数只服务【所有插件】（页内条目 / 总数）；【已安装】不显示任何数字
+    let count = (tab == PfTab::All).then(|| {
+        gpui::div()
+            .font_family(MONO)
+            .text_size(px(px18::COUNT_FS))
+            .text_color(muted(t))
+            .child(SharedString::from(format!(
+                "1-{} / {}",
+                total,
+                thousands(total)
+            )))
+    });
     let err_el = err.map(|e| {
         gpui::div()
             .px(px(m.card_pad_body))
@@ -575,7 +568,7 @@ pub(crate) fn head_segment(
         slice_shell(m, true, false, t)
             .child(card_header(
                 tab_row(tab, weak, t),
-                Some(count.into_any_element()),
+                count.map(IntoElement::into_any_element),
                 m,
                 t,
             ))
