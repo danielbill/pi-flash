@@ -12,6 +12,7 @@
 //! 铁律：这里不碰 UI 状态、不写 pi 的 settings.json；安装/卸载/更新一律回落
 //! 到 vendored pi CLI（`vendor::run_cli`，见 040/082 的既有管道）。
 
+pub mod pf_scan;
 pub mod pi_ext_market;
 
 use std::io::Read;

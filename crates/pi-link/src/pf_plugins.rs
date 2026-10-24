@@ -347,7 +347,8 @@ fn sha512_sri(path: &Path) -> Result<String, String> {
 }
 
 /// 系统 tar 解包（Win10+ 自带 bsdtar；Unix 恒有）。剥掉顶层 `package/`。
-fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
+/// 市场扫描（market::pf_scan）解清单包复用同一条。
+pub fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("创建安装目录失败: {e}"))?;
     let out = Command::new("tar")
         .args([
