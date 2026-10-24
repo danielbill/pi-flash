@@ -297,6 +297,7 @@ fn npm_command(args: &[&str]) -> Result<Command, String> {
         }
     };
     cmd.args(args);
+    no_window(&mut cmd);
     Ok(cmd)
 }
 
@@ -306,6 +307,15 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
         .map(|d| d.join(name))
         .find(|p| p.is_file())
 }
+
+/// GUI 进程 spawn 控制台子进程（npm/tar）不弹黑窗（0x08000000 CREATE_NO_WINDOW）。
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x0800_0000);
+}
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
 
 /// `npm pack <name>@<version>` 到 `dest`，返回 tarball 路径。
 fn pack(name: &str, version: &str, dest: &Path) -> Result<PathBuf, String> {
@@ -350,14 +360,16 @@ fn sha512_sri(path: &Path) -> Result<String, String> {
 /// 市场扫描（market::pf_scan）解清单包复用同一条。
 pub fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("创建安装目录失败: {e}"))?;
-    let out = Command::new("tar")
-        .args([
-            "-xzf",
-            &tarball.to_string_lossy(),
-            "-C",
-            &dest.to_string_lossy(),
-            "--strip-components=1",
-        ])
+    let mut out = Command::new("tar");
+    out.args([
+        "-xzf",
+        &tarball.to_string_lossy(),
+        "-C",
+        &dest.to_string_lossy(),
+        "--strip-components=1",
+    ]);
+    no_window(&mut out);
+    let out = out
         .output()
         .map_err(|e| format!("tar 启动失败（系统缺 tar?）: {e}"))?;
     if !out.status.success() {

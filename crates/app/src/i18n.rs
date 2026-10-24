@@ -85,7 +85,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     // 设计稿英文，这里只收需要跟随界面的那几个词）
     ("market.native_tab", "Pi 扩展市场", "Pi 擴展市場", "Pi Market"),
     ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
-    ("market.pf.empty", "已全部安装，没有可更新的插件", "已全部安裝，沒有可更新的插件", "Everything is installed and up to date"),
+    ("market.pf.empty", "暂无可用PF插件", "暫無可用PF插件", "No PF plugins available"),
     ("market.pf.installing", "安装中…", "安裝中…", "Installing…"),
     ("market.pf.updating", "更新中…", "更新中…", "Updating…"),
     ("market.pf.confirm", "再点一次确认卸载", "再點一次確認卸載", "Click again to confirm uninstall"),

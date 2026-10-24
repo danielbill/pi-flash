@@ -84,7 +84,7 @@ pub fn entry_from(m: &ManifestEntry, integrity: String, tarball: String) -> Opti
             en: String::new(),
         }),
         desc: m.desc.clone(),
-        publisher: PF_SCOPE.to_string(),
+        publisher: "Pi-Flash".into(),
         published_at: String::new(),
         source: "url".into(),
         url: tarball,
