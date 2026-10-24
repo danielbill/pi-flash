@@ -363,18 +363,23 @@ impl PluginInstance {
         Ok(())
     }
 
-    pub fn on_mouse(&mut self, phase: i32, button: i32, x: f32, y: f32) -> anyhow::Result<()> {
+    /// 键盘回灌（WIT `on-key`）：`key` 为宿主键名（如 "arrow-down"）。
+    pub fn on_key(&mut self, key: &str) -> anyhow::Result<()> {
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            let ph = match phase {
-                1 => pf::plugin::types::Phase::Down,
-                2 => pf::plugin::types::Phase::Up,
-                _ => pf::plugin::types::Phase::Move,
-            };
-            let bt = match button {
-                1 => pf::plugin::types::Button::Right,
-                _ => pf::plugin::types::Button::Left,
-            };
-            b.call_on_mouse(store, ph, bt, x, y)?;
+            b.call_on_key(store, key)?;
+        }
+        Ok(())
+    }
+
+    pub fn on_mouse(
+        &mut self,
+        phase: pf::plugin::types::Phase,
+        button: pf::plugin::types::Button,
+        x: f32,
+        y: f32,
+    ) -> anyhow::Result<()> {
+        if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
+            b.call_on_mouse(store, phase, button, x, y)?;
         }
         Ok(())
     }
