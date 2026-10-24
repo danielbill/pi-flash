@@ -20,7 +20,7 @@ use pi_link::pf_plugins;
 use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
-use crate::market::pf_market::{MONO, PfTab, centered, index_snapshot, slice_shell};
+use crate::market::pf_market::{MONO, centered, index_snapshot, slice_shell};
 use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
     LIST_W, config_switch, detail_shell, field, mono_text, scope_tag, sidebar_item, sidebar_list,
@@ -190,9 +190,9 @@ pub(crate) fn remove_confirm_overlay(
     ))
 }
 
-/// 已安装页主体。头段 + 定宽段盒子内两栅（列表 / 详情），段盒吃满全高，
-/// 底部留白与顶部 shell_pad 对称。
-pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> AnyElement {
+/// 【已安装】body：定宽段盒子内两栅（列表 / 详情），吃满骨架剩余高度。
+/// 头段与底留白由 `pf_market::page_frame` 统一提供（两个页签共用一套骨架）。
+pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> AnyElement {
     let t = crate::appearance::theme::theme();
     let st = &chat.aux.market.pf;
 
@@ -226,12 +226,8 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .find(|i| Some(&i.name) == selected_name.as_ref());
 
     let total = items.len();
-    let err = st.error.clone();
     let removing = st.removing.clone();
     let weak_c = weak.clone();
-
-    let head =
-        super::pf_market::head_segment(err, total, PfTab::Installed, total, weak, m, t);
 
     // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
     let mut list = sidebar_list().px(px(7.));
@@ -320,29 +316,25 @@ pub(crate) fn page(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
     let detail = detail_pane(selected, removing.as_deref(), weak, t);
 
+    // 段盒吃满全高：centered 外壳必须是 flex（否则 flex_1 的 shell 在块级父里
+    // 拿不到剩余高度 → 段盒只到内容高度，和【所有插件】页不一样高）
     let body = centered(
-        slice_shell(m, false, true, t)
-            .flex_1()
-            .min_h_0()
-            .child(gpui::div().flex_1().min_h_0().flex().child(sidebar).child(detail)),
+        slice_shell(m, false, true, t).flex_1().min_h_0().child(
+            gpui::div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .child(sidebar)
+                .child(detail),
+        ),
         m,
     )
     .flex_1()
-    .min_h_0();
+    .min_h_0()
+    .min_w_0()
+    .flex();
 
-    // 底部留白与顶部 shell_pad 对称（v5 定夺：SHELL_PAD_BOTTOM 太阔，
-    // 段盒要吃满全高）
-    gpui::div()
-        .w_full()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .bg(rgb(t.bg))
-        .child(head)
-        .child(body)
-        .pb(px(m.shell_pad))
-        .into_any_element()
+    body.into_any_element()
 }
 
 /// 右详情（040 五行裁掉说明/提示词大小 → 状态 / 来源 / 路径）：
@@ -473,13 +465,11 @@ fn detail_pane(
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(SharedString::from(
-                    if item.disabled {
-                        tr("status.disabled").to_string()
-                    } else {
-                        tr("status.enabled").to_string()
-                    },
-                )),
+                .child(SharedString::from(if item.disabled {
+                    tr("status.disabled").to_string()
+                } else {
+                    tr("status.enabled").to_string()
+                })),
         ))
         .child(field(
             &tr("extensions.source"),
@@ -491,9 +481,7 @@ fn detail_pane(
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
-                .child(SharedString::from(breakable_path(
-                    &path.to_string_lossy(),
-                ))),
+                .child(SharedString::from(breakable_path(&path.to_string_lossy()))),
         ))
         .into_any_element()
 }
