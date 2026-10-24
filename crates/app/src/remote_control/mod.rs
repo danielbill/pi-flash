@@ -37,6 +37,9 @@ use wxprobe::format::messages::{Lang, t};
 
 use crate::session::runtime::RemoteSend;
 
+/// 开机通知（微信侧唯一该主动看到的一句）。`[pf icon]` 在微信文本通道里
+/// 用 ⚡ 代替（sendmessage 只走文本 item，图片要先上传拿 media id）。
+const STARTUP_NOTICE: &str = "⚡ **Pi-Flash 已启动**";
 /// 档 1 尚未接入的命令回执 —— ZCode 文案表里的现成句子，不新造。
 const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
 /// 投递失败回执（wxprobe 文案表同名条目）。失败必须让微信端看见——
@@ -187,6 +190,8 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 本运行期是否已给微信推过「Pi-Flash 已启动」开机通知（每次起进程一条）。
+    startup_notice_sent: bool,
     /// 微信会话已过期（`errcode:-14 session timeout` 洗完旧游标仍是它）。
     /// 2026-10-24 真机：PF 重启后渠道照旧「启用中」，微信发消息一条进不来——
     /// 开关撒谎。置位即停渠道，操作栏亮出「请重新绑定」，扫码成功后清。
@@ -221,6 +226,7 @@ impl RemoteControl {
             wants_start: false,
             active_token: None,
             poll_error: None,
+            startup_notice_sent: false,
             session_expired: false,
             start_error: None,
             buf_key: None,
@@ -293,6 +299,30 @@ impl RemoteControl {
             // 不等；健康长轮询里最坏等一个 90s 超时（与开关「关」同代价）。
             self.transport = None;
             self.wants_start = true;
+        }
+    }
+
+    /// 开机通知（2026-10-24 用户定夺）：微信那边**只该收到一句**「Pi-Flash
+    /// 已启动」，而不是 pi 进程的冷启动横幅（「🔌 MCP: 1 server enabled」——
+    /// 对微信用户毫无意义，且每启一次刷一条）。横幅本体照旧在
+    /// [`is_startup_banner`]/[`strip_startup_banner`] 内部消化。
+    ///
+    /// 每进程一条：渠道起来 + 状态文件里有投递路由（`chat_id`，首条入站才写）
+    /// 才发；没有路由就等下一拍（`send` 线程读不到对端会静默丢弃）。
+    fn maybe_send_startup_notice(&mut self) {
+        if self.startup_notice_sent || self.transport.is_none() {
+            return;
+        }
+        let st = wxprobe::state::load();
+        if wxprobe::state::get_str(&st, "chat_id").is_none() {
+            return;
+        }
+        let sent = self
+            .transport
+            .as_ref()
+            .is_some_and(|t| t.send(STARTUP_NOTICE).is_ok());
+        if sent {
+            self.startup_notice_sent = true;
         }
     }
 
@@ -712,7 +742,7 @@ impl RemoteControl {
 /// （2026-10-24 用户定夺）。按内容特征识别，不锚定 emoji/ANSI（发送侧已剥）。
 fn is_startup_banner(s: &str) -> bool {
     let low = s.to_lowercase();
-    low.contains("mcp") && (low.contains("server enabled") || low.contains("servers enabled"))
+    low.contains("mcp") && low.contains("server") && low.contains("enabled")
 }
 
 /// 缓冲按行剔除横幅（delta 分片与后续回复拼在同一行时无法分离——实测横幅
@@ -847,6 +877,7 @@ impl crate::Chat {
             self.aux.remote.wants_start = false;
             self.aux.remote.start_transport_from_state();
         }
+        self.aux.remote.maybe_send_startup_notice();
         // 面板健康度：「运行中」背后可能正拿着死 token 干转
         self.aux.remote.sync_poll_error();
         // 微信线**专属会话**（2026-10-24 定夺）：不再认领桌面活跃会话——
@@ -1597,5 +1628,18 @@ mod tests {
         let mut rc3 = RemoteControl::new();
         rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"), "s");
         assert_eq!(rc3.on_running(false), vec!["后续回复".to_string()]);
+
+        // 变体：`server(s)`、大写、带色码残留都算横幅（只认 mcp+server+enabled）
+        let mut rc4 = RemoteControl::new();
+        rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"), "s");
+        assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
+    }
+
+    /// 开机通知文案（用户定夺）：微信侧只该收到这一句，不是 MCP 横幅。
+    #[test]
+    fn startup_notice_text_is_pf_branded() {
+        assert!(STARTUP_NOTICE.contains("Pi-Flash"));
+        assert!(STARTUP_NOTICE.contains("已启动"));
+        assert!(!STARTUP_NOTICE.contains("MCP"), "不得泄漏 pi 横幅内容");
     }
 }
