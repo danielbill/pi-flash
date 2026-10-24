@@ -7,7 +7,7 @@
 
 pub mod js;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use wasmtime::component::{Component, Linker, ResourceTable, bindgen};
 use wasmtime::{Config, Engine, Store};
@@ -22,6 +22,8 @@ pub struct HostState {
     pub table: ResourceTable,
     pub ctx: wasmtime_wasi::WasiCtx,
     pub tx: mpsc::Sender<PluginAction>,
+    /// 插件私有数据目录（02 §3 自管存储：`<插件目录>/data/`，宿主只建不解析）
+    pub data_dir: std::path::PathBuf,
 }
 
 impl wasmtime_wasi::WasiView for HostState {
@@ -51,6 +53,18 @@ impl pf::plugin::host::Host for HostState {
     }
     fn quick_pins(&mut self) -> Vec<String> {
         quick_pin_list()
+    }
+    fn storage_read(&mut self, key: String) -> String {
+        match storage_path(&self.data_dir, &key) {
+            Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+    fn storage_write(&mut self, key: String, data: String) {
+        if let Some(p) = storage_path(&self.data_dir, &key) {
+            let _ = std::fs::create_dir_all(&self.data_dir);
+            let _ = std::fs::write(p, data);
+        }
     }
     fn get_host_proof(&mut self, nonce: String) -> pf::plugin::host::HostProof {
         // 090-5 L3：宿主只递数据不判定；nonceTag 现算（算法公开，插件 wasm 内复算）。
@@ -137,6 +151,21 @@ pub fn nonce_tag(proof: &str, nonce: &str) -> String {
 
 fn quick_pin_list() -> Vec<String> {
     QUICK_PINS_FN.with(|c| c.borrow().map(|f| f()).unwrap_or_default())
+}
+
+/// 存储 key 安全化（02 §3 越界拒绝，与 app 侧 ChatHost::safe_path 同规则）：
+/// 只许本目录下的普通文件名。
+fn storage_path(data_dir: &Path, key: &str) -> Option<PathBuf> {
+    let bad = key.is_empty()
+        || key.contains('/')
+        || key.contains('\\')
+        || key.contains("..")
+        || key.starts_with('.');
+    if bad {
+        eprintln!("[pf-plugin-host] storage key 越界拒绝: {key}");
+        return None;
+    }
+    Some(data_dir.join(key))
 }
 
 fn measure_text_width(text: &str, size: f32) -> f32 {
@@ -285,12 +314,17 @@ impl PluginInstance {
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
 
         let (tx, rx) = mpsc::channel();
+        let data_dir = wasm_path
+            .parent()
+            .map(|d| d.join("data"))
+            .unwrap_or_else(|| std::path::PathBuf::from("data"));
         let mut store = Store::new(
             &engine,
             HostState {
                 table: ResourceTable::new(),
                 ctx: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 tx,
+                data_dir,
             },
         );
 
