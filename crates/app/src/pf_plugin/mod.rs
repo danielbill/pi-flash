@@ -358,10 +358,18 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
     if !is_kebab(&m.id) {
         return Err(format!("pf-plugin.toml：id「{}」非 kebab-case", m.id));
     }
-    let dir_name = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-    if m.id != dir_name {
+    // 目录名对账（02 §6 布局两档）：平铺 dev = `<id>/`；market 安装 =
+    // `@<scope>__<id>/<version>/`。版本层取父目录名；scope 前缀剥掉后对账。
+    let mut base = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    if base.starts_with(|c: char| c.is_ascii_digit())
+        && let Some(p) = dir.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str())
+    {
+        base = p; // 版本目录 → 上钻到插件目录
+    }
+    let expected = base.rsplit("__").next().unwrap_or(base);
+    if m.id != expected {
         return Err(format!(
-            "pf-plugin.toml：id「{}」≠ 目录名「{dir_name}」",
+            "pf-plugin.toml：id「{}」≠ 目录名「{base}」",
             m.id
         ));
     }
@@ -371,7 +379,12 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
     if m.version.is_empty() {
         return Err("pf-plugin.toml：缺 version".into());
     }
-    if m.status_bar.is_none() && m.file_menu.is_empty() && m.panels.is_empty() {
+    // 内层 wasm 插件（090-5 L3）无 contributes 也合法——验签在 wasm 内
+    if m.wasm.is_none()
+        && m.status_bar.is_none()
+        && m.file_menu.is_empty()
+        && m.panels.is_empty()
+    {
         return Err("纯库包（三项都没申请），不加载".into());
     }
     if let Some(sb) = &m.status_bar {
@@ -437,12 +450,31 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
     let Ok(rd) = std::fs::read_dir(&root) else {
         return out;
     };
-    let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+    // 布局两档：`plugins/<dir>/pf-plugin.toml`（dev 手工平铺）与
+    // `plugins/<dir>/<version>/pf-plugin.toml`（market 安装链落盘，带版本层）。
+    // 一层没有清单就下钻一层收版本目录——安装台账决定启停，这里只认清单。
+    let mut dirs: Vec<_> = rd
+        .flatten()
+        .flat_map(|e| {
+            let d = e.path();
+            if !d.is_dir() {
+                return Vec::new();
+            }
+            if d.join("pf-plugin.toml").is_file() {
+                return vec![d];
+            }
+            std::fs::read_dir(&d)
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|v| v.path())
+                        .filter(|v| v.is_dir() && v.join("pf-plugin.toml").is_file())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
     dirs.sort();
     for dir in dirs {
-        if !dir.is_dir() || !dir.join("pf-plugin.toml").is_file() {
-            continue;
-        }
         if dir
             .file_name()
             .is_some_and(|f| disabled.contains(f.to_string_lossy().as_ref()))
@@ -459,6 +491,7 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
                 {
                     continue; // 纯库包
                 }
+                register_plugin_dir(&m.id, &dir);
                 out.push(m);
             }
             Err(e) => eprintln!("[pf-plugin] 跳过 {}：{e}", dir.display()),
@@ -473,6 +506,16 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
 
 static PLUGIN_ASSETS: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
 
+/// 插件 id → 实际安装目录（扫描时登记）。market 版本层布局下资产不在
+/// `plugins/<id>/` 平铺位，解析走这里。
+static PLUGIN_DIRS: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+fn register_plugin_dir(id: &str, dir: &Path) {
+    if let Ok(mut c) = PLUGIN_DIRS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        c.insert(id.to_string(), dir.to_path_buf());
+    }
+}
+
 /// `rel` = `<slug>/<assets 相对路径>`（assets.rs 的 `plugins/` 前缀段）。
 pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
     let cache = PLUGIN_ASSETS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -481,16 +524,25 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
             return hit.clone();
         }
     }
-    let bytes = pi_link::paths::plugins_dir().and_then(|d| {
-        let full = d.join(rel);
-        let r = std::fs::read(&full);
-        eprintln!(
-            "[pf-plugin] asset {rel} -> {} bytes ({:?})",
-            r.as_ref().map(|b| b.len()).unwrap_or(0),
-            r.as_ref().err()
-        );
-        r.ok()
-    });
+    // 平铺位优先（dev 手工拷贝）；未中则查扫描登记的实际目录（版本层布局）
+    let mut bytes = pi_link::paths::plugins_dir().and_then(|d| std::fs::read(d.join(rel)).ok());
+    if bytes.is_none()
+        && let Some((id, rest)) = rel.split_once('/')
+        && let Some(dir) = PLUGIN_DIRS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok()
+            .and_then(|c| c.get(id).cloned())
+    {
+        bytes = std::fs::read(dir.join(rest)).ok();
+    }
+    if let Some(b) = &bytes {
+        eprintln!("[pf-plugin] asset {rel} -> {} bytes", b.len());
+    } else {
+        // 未找到不缓存：扫描登记晚于首帧渲染时，下帧重查即中
+        eprintln!("[pf-plugin] asset {rel} -> 未找到");
+        return None;
+    }
     if let Ok(mut c) = cache.lock() {
         c.insert(rel.to_string(), bytes.clone());
     }
