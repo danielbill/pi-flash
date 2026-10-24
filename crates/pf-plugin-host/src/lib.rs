@@ -90,8 +90,15 @@ pub type HostProofFn = fn() -> String;
 thread_local! {
     static QUICK_PINS_FN: std::cell::RefCell<Option<QuickPinListFn>> = const { std::cell::RefCell::new(None) };
     static MEASURE_FN: std::cell::RefCell<Option<MeasureTextFn>> = const { std::cell::RefCell::new(None) };
-    static PROOF_FN: std::cell::RefCell<Option<HostProofFn>> = const { std::cell::RefCell::new(None) };
 }
+
+/// 090-5 L3：官方宿主证明材料钩子——**进程级，不是 thread_local**。
+///
+/// 组件编译是秒级重活（4.6 MB 组件实测 ~2s），插件装载必须在后台线程跑，
+/// UI 线程零阻塞；而 init 验签时插件会回调 `get_host_proof`，钩子若按线程
+/// 存，后台线程取不到材料 → 正常插件被误判拒载。故材料钩子存全局；
+/// measure/quick-pin 仍按线程（贴 gpui 文本系统与 UI 状态，只许主线程调）。
+static PROOF_FN: std::sync::RwLock<Option<HostProofFn>> = std::sync::RwLock::new(None);
 
 /// app 启动时注入宿主能力实现。
 pub fn install_host_hooks(quick: QuickPinListFn, measure: MeasureTextFn) {
@@ -101,16 +108,20 @@ pub fn install_host_hooks(quick: QuickPinListFn, measure: MeasureTextFn) {
 
 /// 注入官方构建证明材料（app 侧从 build.rs 注入的常量组装；见 crates/app/build.rs）。
 /// **未注入 = 占位符（fail-closed）**：内层插件 init 验签必失败 → 拒载。
+/// 钩子进程级：可从任意线程注入（后台验签线程同样生效）。
 pub fn install_proof_hook(f: HostProofFn) {
-    PROOF_FN.with(|c| *c.borrow_mut() = Some(f));
+    if let Ok(mut c) = PROOF_FN.write() {
+        *c = Some(f);
+    }
 }
 
 fn proof_material() -> String {
-    PROOF_FN.with(|c| {
-        c.borrow()
-            .map(|f| f())
-            .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
-    })
+    PROOF_FN
+        .read()
+        .ok()
+        .and_then(|c| *c)
+        .map(|f| f())
+        .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
 }
 
 /// nonceTag 派生（js.rs / 内层插件 pf-inner-verify 同算法，公开）：
@@ -144,12 +155,27 @@ pub struct PluginInstance {
     rx: mpsc::Receiver<PluginAction>,
 }
 
+/// 进程内共享的 wasmtime 引擎：`Engine::new` 要建 cranelift ISA/寄存器分配器，
+/// 每插件一份纯属浪费（且编译本身已是秒级，别再叠一层）。缺省配置即可——
+/// wasmtime 36 默认开 component model（原代码显式开的设置保持等价）。
+fn shared_engine() -> anyhow::Result<&'static Engine> {
+    if let Some(e) = SHARED_ENGINE.get() {
+        return Ok(e);
+    }
+    let mut config = Config::new();
+    config.wasm_component_model(true);
+    let engine = Engine::new(&config)?;
+    Ok(SHARED_ENGINE.get_or_init(|| engine))
+}
+
+static SHARED_ENGINE: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
+
 impl PluginInstance {
-    /// 加载插件 wasm 组件（首次调用会做编译，耗时一次性）。
+    /// 加载插件 wasm 组件。**重活**：`Component::from_file` 是 cranelift 全量
+    /// 编译（4.6 MB 组件秒级），**只许在后台线程调用**——落在 UI 线程就是
+    /// 启动卡死数秒（app 侧曾踩）。
     pub fn load(wasm_path: &Path) -> anyhow::Result<Self> {
-        let mut config = Config::new();
-        config.wasm_component_model(true);
-        let engine = Engine::new(&config)?;
+        let engine = shared_engine()?.clone();
         let component = Component::from_file(&engine, wasm_path)?;
 
         let mut linker: Linker<HostState> = Linker::new(&engine);
