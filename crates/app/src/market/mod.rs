@@ -4,12 +4,15 @@
 //!
 //! - [`pi_ext_market`]：Pi 扩展市场（数据源 npm registry），标准页 + topbar 标签；
 //! - [`pi_native_market`]：Pi 原生扩展市场（pi.dev Package Catalog 页面移植，040-2）；
+//! - [`pf_market`] + [`pf_installed`]：PF 插件市场页（090-4）+ 其【已安装】
+//!   管理页签（版式对齐 settings-扩展）；
 //! - [`prefetch`]：启动【延迟加载】阶段的市场预热（只预取首页，写首页快照）。
 //!
 //! 状态挂载：`Chat.aux.market`（[`MarketUi`]），各市场在内部各占一个子状态；
 //! 加市场 = 加字段 + 加一支 `ContentView`，`Chat` 的簇数量不变。
 
 pub(crate) mod menu;
+pub(crate) mod pf_installed;
 pub(crate) mod pf_market;
 pub(crate) mod pi_ext_market;
 pub(crate) mod pi_native_market;

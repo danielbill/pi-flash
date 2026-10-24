@@ -94,6 +94,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.need_newer_pf", "该插件需要 PF {min}，当前 {cur}", "該插件需要 PF {min}，當前 {cur}", "This plugin requires PF {min}, current {cur}"),
     // 090-4 v3：布局对齐 pi market 页后的页内文案（三语齐全）
     ("market.pf.head", "所有插件", "所有外掛", "All plugins"),
+    // 090-4 v4：【已安装】页签（管理视图，版式对齐 settings-扩展）
+    ("market.pf.tab_installed", "已安装", "已安裝", "Installed"),
+    ("market.pf.none_installed", "尚未安装任何插件", "尚未安裝任何外掛", "No plugins installed yet"),
+    ("market.pf.uninstall_confirm", "卸载插件 {name}？", "卸載外掛 {name}？", "Uninstall plugin {name}?"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),

@@ -762,6 +762,10 @@ impl Render for Chat {
         if let Some(el) = settings::pi_extensions::remove_confirm_overlay(self, cx) {
             root = root.child(el);
         }
+        // 090-4 PF 插件市场【已安装】卸载确认浮层（同款机制）
+        if let Some(el) = market::pf_installed::remove_confirm_overlay(self, cx) {
+            root = root.child(el);
+        }
         // 042 移除内置商确认浮层（同款机制，叠在设置弹窗之上）
         if let Some(el) = settings::models::remove_provider_confirm_overlay(self, cx) {
             root = root.child(el);
