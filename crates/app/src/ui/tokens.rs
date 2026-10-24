@@ -28,6 +28,9 @@ pub mod icon {
     pub const SM: f32 = 14.;
     pub const MD: f32 = 16.;
     pub const LG: f32 = 18.;
+    /// 卡片「已启用/已安装」✓——语义特例，全局唯一尺寸无第二档；
+    /// 下拉/菜单行选中勾不归它（归各通用档），不得挪用
+    pub const CHECK_CARD: f32 = 24.;
 }
 
 /// §4 圆角（px）。同语义同值：8=菜单壳/列表行，10=弹窗，12=大卡。
@@ -202,8 +205,15 @@ mod tests {
         }
         // §3 图标
         assert_eq!(
-            [icon::INDICATOR, icon::XS, icon::SM, icon::MD, icon::LG],
-            [10., 12., 14., 16., 18.]
+            [
+                icon::INDICATOR,
+                icon::XS,
+                icon::SM,
+                icon::MD,
+                icon::LG,
+                icon::CHECK_CARD
+            ],
+            [10., 12., 14., 16., 18., 24.]
         );
         // §4 圆角
         assert_eq!(

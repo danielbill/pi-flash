@@ -669,7 +669,11 @@ fn install_btn(
             .justify_center()
             .flex_shrink_0()
             .text_color(rgb(t.accent))
-            .child(crate::ui::icon("check", 12., t.accent))
+            .child(crate::ui::icon(
+                "check",
+                crate::ui::tokens::icon::CHECK_CARD,
+                t.accent,
+            ))
             .into_any_element();
     }
 
