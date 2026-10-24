@@ -34,25 +34,25 @@ fn status_area(
     };
     // linked/unlink = 是否扫码创建成功（状态①为 unlink，其余为 link）
     let link = if has_token {
-        crate::ui::icon("link-2", 14., crate::appearance::theme::UNREAD)
+        crate::ui::icon("link-2", 20., crate::appearance::theme::UNREAD)
     } else {
-        crate::ui::icon("link-2-off", 14., t.text_faint)
+        crate::ui::icon("link-2-off", 20., t.text_faint)
     };
     let mut row = div()
         .flex()
         .items_center()
-        .gap(px(6.))
-        // logo-marks 的字形只占画布 ~2/3，放大到 20 与 14px lucide 邻居对齐
-        .child(crate::ui::icon_path("icons/logo-marks.svg", 20., t.text))
+        .gap(px(8.))
+        // logo-marks 的字形只占画布 ~2/3，放大到 24 与 20px 邻居光学对齐
+        .child(crate::ui::icon_path("icons/logo-marks.svg", 24., t.text))
         .child(name("Pi-Flash"))
         .child(link)
-        .child(crate::ui::icon("wechat", 16., WX_GREEN))
+        .child(crate::ui::icon("wechat", 20., WX_GREEN))
         .child(name("微信"));
     // phone icon 仅已创建显示：accent = 启用中，faint = 停用
     if has_token {
         row = row.child(crate::ui::icon(
             "smartphone",
-            14.,
+            20.,
             if running { t.accent } else { t.text_faint },
         ));
     }
@@ -78,67 +78,46 @@ fn status_area(
         .gap(px(8.))
         .child(row)
         .child(kit::note(&tr("remote.wx_desc")))
-        .child(kit::note(&state_hint(chat, running, has_token)))
+        .child(kit::note(&state_hint(chat, has_token)))
         .into_any_element()
 }
 
-/// 第二行提示：随七态生命周期变化（002 §状态说明区）。
-fn state_hint(chat: &Chat, running: bool, has_token: bool) -> String {
+/// 第二行提示：只有三态（002 §状态说明区，2026-10-24 修订）——
+/// ①未创建 / ②微信侧出错 / 已创建（③④⑤⑥⑦全部归位为「已创建」）。
+fn state_hint(chat: &Chat, has_token: bool) -> String {
     match &chat.aux.remote.qr {
-        // ② 微信侧出错
-        QrState::Error(_) => tr("remote.hint_wx_error").to_string(),
-        // ③ 更新重建（重新扫码中，旧 bot 仍在服务，成功后自动替换重启）
-        QrState::Loading | QrState::Ready { .. } | QrState::Scanned | QrState::Expired
-            if has_token =>
-        {
-            tr("remote.hint_rebind").to_string()
-        }
-        // ④⑤⑥⑦ 微信已正常返回 → 看我方落地结果
-        QrState::Done { .. } => {
-            if !has_token {
-                // ④ 状态写入失败
-                tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed"))
-            } else if running {
-                // ⑥ 启用中
-                tr("remote.scan_wait_hint").to_string()
-            } else if chat.aux.remote.wants_start {
-                // ⑤ 创建成功，泵下一拍自动拉渠道（瞬态）
-                tr("remote.hint_starting").to_string()
-            } else if let Some(err) = chat.aux.remote.start_error.as_deref() {
-                // ④ 我方创建出错（渠道没能起来）
-                tr("remote.hint_create_failed").replace("{err}", err)
+        QrState::Error(m) => {
+            let low = m.to_lowercase();
+            if low.contains("timeout") || m.contains("超时") {
+                // 超时只是创建/重建流程被打断：有 bot 归「已创建」，没有归「未创建」
+                if has_token {
+                    tr("remote.qr_created").to_string()
+                } else {
+                    tr("remote.hint_absent").to_string()
+                }
             } else {
-                // ⑦ 关停中
-                tr("remote.scan_stopped_hint").to_string()
+                // ② 微信侧出错（未装插件等）
+                tr("remote.hint_wx_error").to_string()
             }
         }
-        QrState::Idle => {
-            if running {
-                // ⑥ 启用中
-                tr("remote.scan_wait_hint").to_string()
-            } else if has_token {
-                // ⑦ 关停中
-                tr("remote.scan_stopped_hint").to_string()
-            } else {
-                // ① 未创建：pf-wxbot 不存在
-                tr("remote.hint_absent").to_string()
-            }
-        }
-        // ① 未创建：取码/扫码进行中（过期自动续码，同属创建流程）
+        // ③④⑤⑥⑦：bot 已存在（含更新重建中/启停中，一切已创建形态）
+        _ if has_token => tr("remote.qr_created").to_string(),
+        // ① 未创建：pf-wxbot 不存在
         _ => tr("remote.hint_absent").to_string(),
     }
 }
 
-/// 二维码生成展示区（002 §二维码生成展示区）：三态——未创建/换绑中出码、
-/// 已创建不展示、超时蒙白。虚线框（R_CARD 8 + dashed），取码由泵自动驱动。
+/// 二维码生成展示区（002 §二维码生成展示区，2026-10-24 修订）：三态——
+/// ①未创建/换绑中出码 ②已创建不展示 ③超时蒙白。取码由泵自动驱动
+/// （仅未创建时，见 pump 门禁）；虚线框（R_CARD 8 + dashed）。
 fn qr_area(chat: &Chat, weak: &gpui::WeakEntity<Chat>, has_token: bool) -> gpui::AnyElement {
     let t = T();
     let mut inner: Vec<gpui::AnyElement> = Vec::new();
     match &chat.aux.remote.qr {
-        // 已创建（且不在换绑流程中）：不展示二维码，给重建入口
+        // 已创建（且不在换绑流程中）：不展示二维码——【刷新二维码】+ 已创建
         QrState::Idle | QrState::Done { .. } if has_token => {
-            inner.push(kit::note(&tr("remote.qr_created")));
             inner.push(qr_regen_button(weak));
+            inner.push(kit::note(&tr("remote.qr_created")));
         }
         // ④ 微信已返回但我方没写进状态：按出错蒙白处理
         QrState::Done { .. } => inner.push(qr_masked(

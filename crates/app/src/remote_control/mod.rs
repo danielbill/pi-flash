@@ -806,13 +806,14 @@ impl crate::Chat {
     pub(crate) fn pump_wx(&mut self, cx: &mut gpui::Context<Self>) {
         self.aux.remote.ensure_transport();
         // 二维码常显（2026-10-24 用户定夺「不让用户点，直接显示二维码」，
-        // 且**随时可扫**——重复扫码 = 重绑，扫码成功泵即强制换新 token 重拉
-        // 渠道，见 force_restart_if_token_changed）：微信通信页在屏上且码不在
-        // 流程中（Idle/Expired）→ 自动取/续码，`begin_qr` 幂等不打断进行中的
-        // 流程。Error 不自动重试（网络故障时避免 ~15s 一轮的无效打点），
-        // 留给页面上唯一的「重新获取」钮。
+        // **仅未创建时**；002 修订：已创建不展示二维码，重建走「刷新二维码」
+        // 钮——自动出码会让已创建态永远摆着一个待扫的码）：微信通信页在屏上
+        // 且码不在流程中（Idle/Expired）→ 自动取/续码，`begin_qr` 幂等不打断
+        // 进行中的流程。Error 不自动重试（网络故障时避免 ~15s 一轮的无效
+        // 打点），留给蒙层上的「重新生成二维码」钮。
         if matches!(self.layout.content_view, crate::ContentView::Wx)
             && matches!(self.aux.remote.qr, QrState::Idle | QrState::Expired)
+            && !wxprobe::transport::require_token(&wxprobe::state::load()).is_ok()
         {
             self.aux.remote.begin_qr();
         }
