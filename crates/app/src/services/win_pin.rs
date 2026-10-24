@@ -10,7 +10,7 @@
 //! 随之消失。terminal 能启动，是因为薄壳每次重新挑「版本最高的存活载荷」。
 //!
 //! **修复**（Windows 标准姿势，Chrome 同款三件套）：
-//! 1. 进程级显式 AUMID（`SetCurrentProcessExplicitAppModelID`，必须在首个
+//! 1. 进程级显式 AUMID（`SetCurrentProcessExplicitAppUserModelID`，必须在首个
 //!    窗口创建前调用）——所有版本的 PF 窗口共用同一任务栏身份；
 //! 2. 启动时确保开始菜单里有**带同一 AUMID 的稳定入口 lnk**（指向永不
 //!    被清理的 `payload\pi-flash.exe`，见 updater::stable_entry_exe）——
@@ -99,10 +99,11 @@ fn set_process_aumid() {
             eprintln!("[win-pin] shell32 未加载，AUMID 没设上");
             return;
         }
-        let Some(farproc) =
-            GetProcAddress(module, b"SetCurrentProcessExplicitAppModelID\0".as_ptr())
-        else {
-            eprintln!("[win-pin] shell32 缺 SetCurrentProcessExplicitAppModelID，AUMID 没设上");
+        let Some(farproc) = GetProcAddress(
+            module,
+            b"SetCurrentProcessExplicitAppUserModelID\0".as_ptr(),
+        ) else {
+            eprintln!("[win-pin] shell32 缺 SetCurrentProcessExplicitAppUserModelID，AUMID 没设上");
             return;
         };
         let set_aumid: unsafe extern "system" fn(*const u16) -> i32 = std::mem::transmute(farproc);
