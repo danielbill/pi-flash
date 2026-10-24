@@ -83,7 +83,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.type.subagent", "子代理", "子代理", "Subagent"),
     // 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；页面文案本身照抄
     // 设计稿英文，这里只收需要跟随界面的那几个词）
-    ("market.native_tab", "Pi Dev扩展社区", "Pi Dev擴展社区", "Pi Dev Market"),
+    ("market.native_tab", "Pi Dev 扩展社区", "Pi Dev 擴展社区", "Pi Dev Packages"),
     ("market.pf.tab", "Pi-Flash 插件", "Pi-Flash 外掛", "Pi-Flash Plugins"),
     ("market.pf.empty", "无可用PF插件", "無可用PF外掛", "No PF plugins available"),
     ("market.pf.scanning", "扫描 Pi-Flash 插件……", "掃描 Pi-Flash 外掛……", "Scanning Pi-Flash plugins…"),
