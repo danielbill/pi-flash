@@ -73,32 +73,9 @@ impl Chat {
                 }
             }
             (true, None) => {
-                // 启动时被停用过滤、从未装载：**只补装这一个**。整体替换
-                // `plugins_set(全部重扫结果)` 会清掉其他插件的运行态，还会
-                // 打乱 dock 下标（`DockPanel::Plugin(ix)` 是位置）
-                let pkg_name = name.clone();
-                let scan = cx.background_executor().spawn(async move {
-                    let aliases = pi_link::pf_plugins::dir_aliases(&pkg_name);
-                    crate::pf_plugin::scan_manifests()
-                        .into_iter()
-                        .filter(|m| aliases.iter().any(|a| *a == m.pkg))
-                        .collect::<Vec<_>>()
-                });
-                cx.spawn(async move |this, cx| {
-                    let manifests = scan.await;
-                    let _ = this.update(cx, |c, cx| {
-                        if manifests.is_empty() {
-                            c.aux.market.pf.error =
-                                Some(tf("market.pf.enable_failed", &[("name", name.clone())]));
-                        } else {
-                            c.plugins
-                                .plugins
-                                .extend(crate::pf_plugin::plugin_entries(manifests));
-                        }
-                        cx.notify();
-                    });
-                })
-                .detach();
+                // 启动时被停用过滤、运行态无条目：后台重扫**只补装这一个**
+                // （内建 `plugin_replace_by_pkg`，不整体替换 plugins_set）
+                self.reload_plugin_by_pkg(name.clone(), cx);
                 // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
                 crate::pf_plugin::spawn_precompile_installed();
             }

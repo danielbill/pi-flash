@@ -440,26 +440,29 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 }
 
 /// 扫描 `<数据目录>/plugins/*/` 只出清单（后台线程可调——PluginEntry 持
-/// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过；
-/// 台账标了停用的包整个跳过（不装载不绘制，090-4 v5）。
+/// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过。
+///
+/// **装载白名单 = 台账**（唯一安装真相）：只有台账里登记且未停用的包才装载，
+/// 磁盘上多出来的目录（手拷 / 卸载残留 / 历史野包）一律不装载——否则就会
+/// 「市场说未安装、左面板却挂着它」（090-4 v5b 踩过）。
 pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
     let Some(root) = pi_link::paths::plugins_dir() else {
         return Vec::new();
     };
-    // 停用名单按台账包名的目录别名收（`@scope__name` 与平铺 `name` 都认）
-    let disabled: std::collections::HashSet<String> = pi_link::pf_plugins::load_ledger()
+    // 台账包名 → 目录别名（`@scope__name` 与平铺 `name` 都认）
+    let enabled: std::collections::HashSet<String> = pi_link::pf_plugins::load_ledger()
         .into_iter()
-        .filter(|l| l.disabled)
+        .filter(|l| !l.disabled)
         .flat_map(|l| pi_link::pf_plugins::dir_aliases(&l.name))
         .collect();
     let mut out = Vec::new();
     let mut candidates = scan_candidates(&root);
     candidates.sort_by(|a, b| a.1.cmp(&b.1));
     for (pkg, dir) in candidates {
-        // 停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比包名
-        // 永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
-        if disabled.contains(&pkg) {
-            continue; // 停用（台账 disabled 位）
+        // 准入/停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比
+        // 包名永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
+        if !enabled.contains(&pkg) {
+            continue; // 未安装（台账无此包）或已停用，不装载不绘制
         }
         match parse_manifest(&dir) {
             Ok(mut m) => {
@@ -759,6 +762,55 @@ impl Chat {
         if docked {
             self.layout.dock_panel = crate::DockPanel::Default;
         }
+    }
+
+    /// 运行态（重）装载单个插件：撤旧条目 + 按新清单重建（安装 / 更新 / 启用
+    /// 共用）。返回 false = 清单为空（调用方决定报错文案）。
+    ///
+    /// **不整体替换 `plugins.plugins`**：那会清掉其他插件的 JS 运行态，还会让
+    /// dock 存的 `Plugin(ix)` 位置错位。
+    pub(crate) fn plugin_replace_by_pkg(
+        &mut self,
+        name: &str,
+        manifests: Vec<PluginManifest>,
+    ) -> bool {
+        if let Some(ix) = self.plugin_ix_by_pkg(name) {
+            self.plugin_evict(ix);
+            self.plugins.plugins.remove(ix);
+            // 下标位移：插件面板存的是位置，任何一条被摘都退默认
+            if matches!(self.layout.dock_panel, crate::DockPanel::Plugin(_)) {
+                self.layout.dock_panel = crate::DockPanel::Default;
+            }
+        }
+        if manifests.is_empty() {
+            return false;
+        }
+        self.plugins.plugins.extend(plugin_entries(manifests));
+        true
+    }
+
+    /// 后台按台账包名重扫清单（只出这一个包）→ 主线程 `plugin_replace_by_pkg`
+    /// 落位。安装完 / 启用即生效，不靠重启；扫不到就走市场页头段错误行。
+    pub(crate) fn reload_plugin_by_pkg(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        let pkg = name.clone();
+        let scan = cx.background_executor().spawn(async move {
+            let aliases = pi_link::pf_plugins::dir_aliases(&pkg);
+            scan_manifests()
+                .into_iter()
+                .filter(|m| aliases.iter().any(|a| *a == m.pkg))
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let manifests = scan.await;
+            let _ = this.update(cx, |c, cx| {
+                if !c.plugin_replace_by_pkg(&name, manifests) {
+                    let msg = crate::i18n::tf("market.pf.enable_failed", &[("name", name.clone())]);
+                    c.aux.market.pf.error = Some(msg);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 懒加载就绪：runtime 已建或现建；禁用/失败返回 false（已 toast）。

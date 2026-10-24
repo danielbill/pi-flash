@@ -233,23 +233,25 @@ impl Chat {
         }
         self.aux.market.pf.pending = Some(name.clone());
         self.aux.market.pf.error = None;
+        let pkg = name.clone(); // 装完成功后要按包名落运行态
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { pf_plugins::install(&entry) })
                 .await;
             let _ = this.update(cx, |c, cx| {
-                let pf = &mut c.aux.market.pf;
-                pf.pending = None;
+                c.aux.market.pf.pending = None;
                 match result {
                     Ok(_) => {
-                        pf.error = None;
+                        c.aux.market.pf.error = None;
+                        // 装完立即落运行态（台账=安装真相，扫描只认台账；不靠重启）
+                        c.reload_plugin_by_pkg(pkg.clone(), cx);
                         // 首启不等编译：装完立刻后台预热编译产物（pf_plugin 编译缓存）
                         crate::pf_plugin::spawn_precompile_installed();
                     }
-                    Err(e) => pf.error = Some(e),
+                    Err(e) => c.aux.market.pf.error = Some(e),
                 }
-                pf.ledger = pf_plugins::load_ledger();
+                c.aux.market.pf.ledger = pf_plugins::load_ledger();
                 cx.notify();
             });
         })
