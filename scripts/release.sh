@@ -47,8 +47,30 @@ grep -q "version = \"$VERSION\"" crates/app/Cargo.toml || { echo "✗ 版本号�
 sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" npm/package.json
 grep -q "\"version\": \"$VERSION\"" npm/package.json || { echo "✗ npm 薄壳版本号替换失败"; exit 1; }
 
-echo "==> 2/8 release 构建"
+echo "==> 2/8 release 构建（先签宿主证明，再构建）"
+# 090-5 L3：官方构建必须带 PF_BUILD_PROOF——占位符包的内层 wasm 插件全部拒载。
+# 签名端在插件仓（inner/scripts/proof.mjs，Node 内置 crypto 零依赖）；
+# build.rs 只做 env→常量（rerun-if-env-changed 已声明，env 从无到有必触发重编）。
+# kid 默认 dev-2026（当前唯一密钥，公钥已随插件编译）；生成正式密钥后
+# PF_RELEASE_KID=<new-kid> 覆盖，私钥缺失 = 硬失败，绝不静默出占位符包。
+PF_PLUGINS_DIR="${PF_PLUGINS_DIR:-$(cd "$ROOT/.." && pwd)/pi-flash-plugins}"
+PROOF_KID="${PF_RELEASE_KID:-dev-2026}"
+PROOF_KEY="${PF_BUILD_KEY:-$PF_PLUGINS_DIR/inner/keys/priv/$PROOF_KID.pk8.pem}"
+PROOF_SCRIPT="$PF_PLUGINS_DIR/inner/scripts/proof.mjs"
+[[ -f "$PROOF_SCRIPT" ]] || { echo "✗ 找不到 proof.mjs: $PROOF_SCRIPT（PF_PLUGINS_DIR 可覆盖，默认仓旁 pi-flash-plugins）"; exit 1; }
+[[ -f "$PROOF_KEY" ]] || { echo "✗ 宿主证明私钥缺失: $PROOF_KEY（插件仓跑 proof.mjs keygen --kid $PROOF_KID；流程见 pi-flash-plugins/inner/README.md）"; exit 1; }
+# proof.mjs 输出两行 export（PF_BUILD_PROOF=<b64(payload).b64(sig)> / PF_BUILD_KID=<kid>；
+# 纯 base64 字符集，eval 安全）。签名失败时 substitution 为空 → 下方非空校验拦截。
+eval "$(PF_BUILD_KEY="$PROOF_KEY" node "$PROOF_SCRIPT" sign --kid "$PROOF_KID" --build-id "v$VERSION" --version "$VERSION")"
+[[ -n "${PF_BUILD_PROOF:-}" && -n "${PF_BUILD_KID:-}" ]] || { echo "✗ 宿主证明签名失败（proof.mjs 无输出）"; exit 1; }
+export PF_BUILD_PROOF PF_BUILD_KID
+echo "    宿主证明已签：kid=$PF_BUILD_KID build-id=v$VERSION"
 cargo build --release -p app
+# 产物自检：b64("pf-official|") = cGYtb2ZmaWNpYWx8，注入成功则 proof 常量必在
+# exe 字符串段（占位符字面量散布多处回退路径，不能作阴性信号，只验阳性）。
+grep -aq "cGYtb2ZmaWNpYWx8" target/release/pi-flash.exe \
+  || { echo "✗ exe 中未找到宿主证明（env 未生效或构建缓存异常），拒绝打包"; exit 1; }
+echo "    宿主证明已烙入 exe（自检通过）"
 
 echo "==> 3/8 组装 dist/pi-flash"
 rm -rf dist/pi-flash "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
