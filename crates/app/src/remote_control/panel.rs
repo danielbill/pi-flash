@@ -62,8 +62,11 @@ enum CardAction {
 }
 
 /// 左栏状态卡：标题 + 状态徽标 + 右缘动作钮 + 一句提示。
-/// 状态优先级：扫码流程进行中 > 渠道启停态；「等待手机连接 / 已就绪 /
-/// 停止」的默认形态与截图对齐（Ready 分支）。
+/// 七态生命周期（2026-10-24 用户定夺，状态号标在各分支）：
+/// ①未扫描（pf-wxbot 不存在）②扫码微信侧出错 ③重新扫码更新重建
+/// ④微信已返回但我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中。
+/// 判定优先级：扫码流程 Error > 流程进行中（有 token = ③，无 = ①）>
+/// Done 的落地结果（④/⑤/⑥/⑦）> Idle 的渠道启停态（⑥/⑦/①）。
 fn scan_status_card(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -71,75 +74,128 @@ fn scan_status_card(
     running: bool,
     has_token: bool,
 ) -> gpui::AnyElement {
-    // 徽标点色：等待 = WARN 黄、就绪/运行/已绑 = UNREAD 绿、
-    // 过期/失败 = danger、中性（获取中/未启用）= text_faint
-    let (title, badge, dot, hint, action): (&str, &str, u32, String, Option<CardAction>) =
+    // 徽标点色：就绪/更新/已绑 = WARN 黄，运行/绑定成功 = UNREAD 绿，
+    // 出错/失败/过期 = danger，中性（获取中/未创建/未启用）= text_faint
+    let running_state = || {
+        (
+            tr("remote.title_running"),
+            tr("remote.status_running").to_string(),
+            crate::appearance::theme::UNREAD,
+            tr("remote.scan_wait_hint").to_string(),
+            Some(CardAction::Stop),
+        )
+    };
+    let stopped_state = || {
+        (
+            tr("remote.scan_stopped"),
+            tr("remote.st_disabled").to_string(),
+            t.text_faint,
+            tr("remote.scan_stopped_hint").to_string(),
+            Some(CardAction::Start),
+        )
+    };
+    let (title, badge, dot, hint, action): (&str, String, u32, String, Option<CardAction>) =
         match &chat.aux.remote.qr {
+            // ② 扫码微信侧出错（原文透传；未装插件的指引由 worker 拼在文内）
+            QrState::Error(m) => (
+                tr("remote.title_error"),
+                tr("remote.st_failed").to_string(),
+                t.danger,
+                m.clone(),
+                None,
+            ),
+            // ③ 重新扫码 = pf-wxbot 更新重建（旧 bot 还在服务，扫完自动换新）
+            QrState::Loading | QrState::Ready { .. } | QrState::Scanned if has_token => (
+                tr("remote.title_rebind"),
+                tr("remote.st_rebinding").to_string(),
+                crate::appearance::theme::WARN,
+                tr("remote.hint_rebind").to_string(),
+                running.then_some(CardAction::Stop),
+            ),
+            // ① 未扫描：扫码进行中的三个形态
             QrState::Loading => (
-                tr("remote.scan_wait"),
-                tr("remote.st_getting"),
+                tr("remote.qr_title"),
+                tr("remote.st_getting").to_string(),
                 t.text_faint,
                 tr("remote.qr_loading").to_string(),
                 None,
             ),
             QrState::Ready { .. } => (
                 tr("remote.scan_wait"),
-                tr("remote.st_ready"),
+                tr("remote.st_ready").to_string(),
                 crate::appearance::theme::WARN,
                 tr("remote.qr_hint").to_string(),
-                running.then_some(CardAction::Stop),
+                None,
             ),
             QrState::Scanned => (
                 tr("remote.scan_wait"),
-                tr("remote.bound_scanned"),
+                tr("remote.bound_scanned").to_string(),
                 crate::appearance::theme::WARN,
                 tr("remote.qr_confirm").to_string(),
-                running.then_some(CardAction::Stop),
+                None,
             ),
-            QrState::Done { .. } => (
-                tr("remote.qr_done"),
-                tr("remote.st_bound"),
-                crate::appearance::theme::UNREAD,
-                tr("remote.qr_help").to_string(),
-                running.then_some(CardAction::Stop),
-            ),
+            // ④⑤ 微信已正常返回 → 看我方落地结果
+            QrState::Done { .. } => {
+                if !has_token {
+                    // ④ 状态写入失败（pf-wxbot 没落盘）
+                    (
+                        tr("remote.title_create_failed"),
+                        tr("remote.st_failed").to_string(),
+                        t.danger,
+                        tr("remote.hint_create_failed")
+                            .replace("{err}", &tr("remote.st_write_failed")),
+                        Some(CardAction::Start),
+                    )
+                } else if running {
+                    // ⑥ 创建完成且渠道已起 —— 生命周期已推进到启用中
+                    running_state()
+                } else if chat.aux.remote.wants_start {
+                    // ⑤ 创建成功，泵下一拍自动拉渠道（瞬态）
+                    (
+                        tr("remote.qr_done"),
+                        tr("remote.st_bound").to_string(),
+                        crate::appearance::theme::UNREAD,
+                        tr("remote.hint_starting").to_string(),
+                        None,
+                    )
+                } else if let Some(err) = chat.aux.remote.start_error.as_deref() {
+                    // ④ 我方创建出错（渠道没能起来）
+                    (
+                        tr("remote.title_create_failed"),
+                        tr("remote.st_failed").to_string(),
+                        t.danger,
+                        tr("remote.hint_create_failed").replace("{err}", err),
+                        Some(CardAction::Start),
+                    )
+                } else {
+                    // ⑦ 关停中（用户主动停的，start_error 已随关停清掉）
+                    stopped_state()
+                }
+            }
+            // 码过期：泵下一拍自动续码（瞬态），归在①的扫码循环里
             QrState::Expired => (
                 tr("remote.qr_title"),
-                tr("remote.st_expired"),
+                tr("remote.st_expired").to_string(),
                 t.danger,
                 tr("remote.qr_expired").to_string(),
                 None,
             ),
-            QrState::Error(m) => (
-                tr("remote.qr_title"),
-                tr("remote.st_failed"),
-                t.danger,
-                m.clone(),
-                None,
-            ),
-            QrState::Idle => match running {
-                true => (
-                    tr("remote.scan_wait"),
-                    tr("remote.status_running"),
-                    crate::appearance::theme::UNREAD,
-                    tr("remote.scan_wait_hint").to_string(),
-                    Some(CardAction::Stop),
-                ),
-                false if has_token => (
-                    tr("remote.scan_stopped"),
-                    tr("remote.st_disabled"),
-                    t.text_faint,
-                    tr("remote.scan_stopped_hint").to_string(),
-                    Some(CardAction::Start),
-                ),
-                false => (
-                    tr("remote.qr_title"),
-                    tr("remote.bound_not_scanned"),
-                    crate::appearance::theme::WARN,
-                    tr("remote.scan_begin_hint").to_string(),
-                    None,
-                ),
-            },
+            QrState::Idle => {
+                if running {
+                    running_state()
+                } else if has_token {
+                    stopped_state()
+                } else {
+                    // ① 未扫描：pf-wxbot 不存在
+                    (
+                        tr("remote.qr_title"),
+                        tr("remote.st_absent").to_string(),
+                        t.text_faint,
+                        tr("remote.scan_begin_hint").to_string(),
+                        None,
+                    )
+                }
+            }
         };
     let action_btn = action.map(|a| match a {
         CardAction::Stop => kit::config_button(
@@ -177,7 +233,7 @@ fn scan_status_card(
         .items_center()
         .gap(px(8.))
         .child(title_el)
-        .child(kit::state_badge(badge, dot))
+        .child(kit::state_badge(&badge, dot))
         .child(div().flex_1());
     if let Some(b) = action_btn {
         row = row.child(b);

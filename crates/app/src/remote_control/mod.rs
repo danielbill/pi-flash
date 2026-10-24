@@ -188,6 +188,9 @@ pub struct RemoteControl {
     /// 最近一拍长轮询错误（泵每拍从 transport 同步；`None` = 通信正常）。
     /// 面板「运行中」下追加一行，治「状态撒谎」。
     pub(crate) poll_error: Option<String>,
+    /// 最近一次渠道启动失败的错误（成功即清）。状态卡④「我方创建出错」
+    /// 的数据源——扫码成功但渠道没起来的唯一可观察出口。
+    pub(crate) start_error: Option<String>,
     /// 回复缓冲当前的来源会话 key。桌面活跃会话与微信线可能**并行流式**
     /// （出站门对两者都放行，2026-10-23），换来源时必须先把旧来源冲干净，
     /// 否则两个会话的回复会拼成一条发出去。
@@ -215,6 +218,7 @@ impl RemoteControl {
             wants_start: false,
             active_token: None,
             poll_error: None,
+            start_error: None,
             buf_key: None,
         }
     }
@@ -267,6 +271,7 @@ impl RemoteControl {
     /// 用户当场明示意图，照常起渠道。修复：曾因一刀切早退，扫码成功后
     /// 轮询永不启动——弹窗正常关、消息永远收不到。
     fn start_transport_from_state(&mut self) {
+        self.start_error = None;
         let st = wxprobe::state::load();
         // 微信默认会话归属随渠道恢复（重启后微信仍跟同一条线说话）
         self.wx_session = wxprobe::state::get_str(&st, "session_key");
@@ -279,8 +284,11 @@ impl RemoteControl {
         });
         match started {
             Ok(t) => self.transport = Some(t),
-            // 静默失败是最坏的形态（§6 坑 4），至少打一行
-            Err(e) => eprintln!("[wx] 渠道未启动：{e}"),
+            // 静默失败是最坏的形态（§6 坑 4）：stderr 一行 + 状态卡④可显示
+            Err(e) => {
+                self.start_error = Some(format!("渠道未启动：{e}"));
+                eprintln!("[wx] 渠道未启动：{e}");
+            }
         }
     }
 
@@ -400,6 +408,7 @@ impl RemoteControl {
         } else {
             self.wants_start = false;
             self.transport = None;
+            self.start_error = None;
             self.boot_attempted = true;
         }
     }

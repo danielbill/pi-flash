@@ -638,6 +638,18 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
     ("remote.qr_install_hint", "若微信提示未安装：请先在微信安装「微信ClawBot」插件，再重新扫码。", "若微信提示未安裝：請先在微信安裝「微信ClawBot」外掛，再重新掃碼。", "If WeChat says the bot is not installed: install the \"WeChat ClawBot\" plugin in WeChat first, then scan again."),
+    // 060 七态生命周期（2026-10-24 用户定夺）：①未扫描 ②微信侧出错
+    // ③重新扫码更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中
+    ("remote.st_absent", "未创建", "未建立", "Not created"),
+    ("remote.st_rebinding", "更新中", "更新中", "Updating"),
+    ("remote.st_write_failed", "状态写入失败", "狀態寫入失敗", "State write failed"),
+    ("remote.title_error", "扫码出错", "掃碼出錯", "Scan failed"),
+    ("remote.title_rebind", "更新绑定", "更新綁定", "Rebinding"),
+    ("remote.title_create_failed", "创建出错", "建立出錯", "Creation failed"),
+    ("remote.title_running", "渠道运行中", "頻道運行中", "Channel running"),
+    ("remote.hint_rebind", "重新扫码后自动替换旧 Bot 并重启渠道。", "重新掃碼後自動替換舊 Bot 並重啟頻道。", "After a re-scan the old bot is replaced and the channel restarts automatically."),
+    ("remote.hint_starting", "pf-wxbot 创建成功，正在启动渠道…", "pf-wxbot 建立成功，正在啟動頻道…", "pf-wxbot created. Starting the channel…"),
+    ("remote.hint_create_failed", "pf-wxbot 创建失败：{err}", "pf-wxbot 建立失敗：{err}", "pf-wxbot creation failed: {err}"),
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
