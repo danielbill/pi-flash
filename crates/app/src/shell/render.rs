@@ -527,7 +527,8 @@ impl Render for Chat {
             .on_drop::<crate::titlebar::TabDrag>(move |_, _, _| {});
         if !panes_hidden {
             // 分隔线响应区（跨线）：panel 内 3px + 内容区 9px（避开滚动条
-            // 命中区）；可视线由 content-col 的 border 承担（hover 2px 深线）
+            // 命中区）；常驻 1px 细线由 content-col 的 border 承担（占位，
+            // hover 前后零布局位移）；hover/拖拽另画 4px accent 覆盖线
             body = body.child(
                 div()
                     .id("slp-resizer")
@@ -593,19 +594,10 @@ impl Render for Chat {
                 .flex_col()
                 .relative()
                 .bg(rgb(t.bg))
-                .when(
-                    !panes_hidden && !slp_dragging && !self.layout.slp_hover,
-                    |d| {
-                        d.border_l_1().border_color(gpui::rgba(
-                            crate::appearance::theme::border_alpha(t, 0x99),
-                        ))
-                    },
-                )
-                // hover/拖拽：2px 深色线替换 1px 常驻线（画在左缘 = 交界，
-                // content-col 在 panel-col 之后渲染，z 序安全）
-                .when(slp_hovered || slp_dragging, |d| {
-                    d.border_l_2()
-                        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0xc8)))
+                // 常驻 1px 细线（panes 可见时才有分隔线）
+                .when(!panes_hidden, |d| {
+                    d.border_l_1()
+                        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x99)))
                 })
                 .child(titlebar::topbar_r(self, window, cx))
                 .child(content::content_main(
@@ -614,7 +606,22 @@ impl Render for Chat {
                     &weak,
                     window,
                     cx,
-                )),
+                ))
+                // hover/拖拽：4px accent 粗线盖在左缘（absolute overlay，
+                // 不占布局 = hover 不推挤内容；content-col 在 panel-col
+                // 之后渲染，盖得住交界），作为最后 child 保证 z 序在最上
+                .when(!panes_hidden && (slp_hovered || slp_dragging), |d| {
+                    d.child(
+                        div()
+                            .id("slp-edge")
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(4.))
+                            .bg(rgb(t.accent)),
+                    )
+                }),
         );
 
         let mut root = div()
