@@ -28,6 +28,13 @@ fn inject_host_proof() {
             println!("cargo:rustc-env=PF_HOST_PROOF_KID={kid}");
         }
         _ => {
+            // 开发构建自签：本机有 dev 私钥就现场签一份（**仅 debug**）
+            if let Some((kid, proof)) = dev_sign_proof() {
+                println!("cargo:rustc-env=PF_HOST_PROOF={proof}");
+                println!("cargo:rustc-env=PF_HOST_PROOF_KID={kid}");
+                println!("cargo:warning=开发构建已自带宿主证明（kid={kid}，本机 dev 私钥现签）");
+                return;
+            }
             println!("cargo:rustc-env=PF_HOST_PROOF=PROOF_PLACEHOLDER");
             println!("cargo:rustc-env=PF_HOST_PROOF_KID=");
             println!(
@@ -50,3 +57,48 @@ fn embed_windows_icon() {
 
 #[cfg(not(windows))]
 fn embed_windows_icon() {}
+
+/// 开发构建自签宿主证明（**仅 debug**）：调用插件仓 `inner/scripts/proof.mjs sign`，
+/// 用本机 dev 私钥现签。私钥默认 `<PF仓>/../pi-flash-plugins/inner/keys/priv/<kid>.pk8.pem`，
+/// 可用 `PF_DEV_KEY` / `PF_DEV_KID` 覆盖；私钥或脚本缺失 → None（回退占位符）。
+///
+/// 意义：日常 `cargo run -p app` 就能装加密插件，不必每次手拼环境变量。
+/// release 构建不自动签（`PROFILE != "debug"`），发布包仍由流水线显式注入。
+fn dev_sign_proof() -> Option<(String, String)> {
+    println!("cargo:rerun-if-env-changed=PF_DEV_KEY");
+    println!("cargo:rerun-if-env-changed=PF_DEV_KID");
+    if std::env::var("PROFILE").ok().as_deref() != Some("debug") {
+        return None;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let kid = std::env::var("PF_DEV_KID").unwrap_or_else(|_| "dev-2026".into());
+    let key = std::env::var("PF_DEV_KEY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            root.join("../pi-flash-plugins/inner/keys/priv")
+                .join(format!("{kid}.pk8.pem"))
+        });
+    let script = root.join("../pi-flash-plugins/inner/scripts/proof.mjs");
+    if !key.is_file() || !script.is_file() {
+        return None;
+    }
+    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    let out = std::process::Command::new("node")
+        .arg(&script)
+        .args(["sign", "--kid", &kid, "--build-id", "dev-local", "--version", &version, "--json"])
+        .env("PF_BUILD_KEY", &key)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        println!(
+            "cargo:warning=dev proof 签名失败：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    Some((
+        v.get("kid")?.as_str()?.to_string(),
+        v.get("proof")?.as_str()?.to_string(),
+    ))
+}
