@@ -319,11 +319,15 @@ fn detail_pane(
     let removing_this = removing == Some(item.name.as_str());
     let mut trash = gpui::div()
         .id("pf-installed-remove")
-        .size(px(20.))
+        .size(px(28.))
+        // 视觉微调：标题是 mono 12px（字形重心偏下），垃圾桶要跟标题垂直居中对齐，
+        // 整体下挪 6px（relative 不占布局，不动行高）
+        .relative()
+        .top(px(6.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(4.))
+        .rounded(px(5.))
         .border_1()
         .border_color(gpui::rgba(crate::appearance::theme::danger_alpha(
             crate::appearance::theme::theme(),
@@ -396,6 +400,7 @@ fn detail_pane(
                 .flex()
                 .items_center()
                 .gap(px(8.))
+                .min_h(px(28.))
                 // 名前标后（与技能页 / settings-扩展 同款）
                 .child(
                     gpui::div()
