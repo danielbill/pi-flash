@@ -170,14 +170,113 @@ fn shared_engine() -> anyhow::Result<&'static Engine> {
 
 static SHARED_ENGINE: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
 
+/// wasm 内容指纹（缓存键）：sha256 十六进制。
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in Sha256::digest(bytes) {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// 编译产物落盘（原子写：tmp + rename，崩溃不留半截产物）。
+/// 并发写同一份 = rename 失败即放弃（对方那份同样有效）；写完顺手淘汰旧产物。
+fn write_artifact(cache_dir: &Path, bytes: &[u8], artifact: &Path) {
+    let _ = std::fs::create_dir_all(cache_dir);
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = cache_dir.join(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    if std::fs::write(&tmp, bytes)
+        .and_then(|_| std::fs::rename(&tmp, artifact))
+        .is_err()
+    {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    prune_artifacts(cache_dir);
+}
+
+/// 只留最近 8 份产物（按 mtime）：插件换版后旧产物自然淘汰，缓存目录不无限涨。
+fn prune_artifacts(dir: &Path) {
+    const KEEP: usize = 8;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut items: Vec<(std::time::SystemTime, PathBuf)> = rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
+        .filter_map(|e| {
+            let t = e.metadata().ok()?.modified().ok()?;
+            Some((t, e.path()))
+        })
+        .collect();
+    if items.len() <= KEEP {
+        return;
+    }
+    items.sort_by_key(|(t, _)| std::cmp::Reverse(*t)); // 新 → 旧
+    for (_, p) in items.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 impl PluginInstance {
     /// 加载插件 wasm 组件。**重活**：`Component::from_file` 是 cranelift 全量
     /// 编译（4.6 MB 组件秒级），**只许在后台线程调用**——落在 UI 线程就是
-    /// 启动卡死数秒（app 侧曾踩）。
+    /// 启动卡死数秒（app 侧曾踩）。热路径请用 [`Self::load_cached`]。
     pub fn load(wasm_path: &Path) -> anyhow::Result<Self> {
         let engine = shared_engine()?.clone();
         let component = Component::from_file(&engine, wasm_path)?;
+        Self::instantiate(engine, component, wasm_path)
+    }
 
+    /// 带编译缓存的加载（启动/热路径）。命中 = **mmap 反序列化**（毫秒级，
+    /// 不读不编译）；未命中 = 编译一次、产物落进 `cache_dir`，此后一直命中。
+    ///
+    /// 缓存键 = wasm 内容 sha256；产物自身还带着 wasmtime 的
+    /// 版本/编译配置/目标校验（不符即 `Err`）——失配就重编，不会用错产物。
+    /// 语义不变：每次仍 `instantiate + init`（验签门照跑）。
+    pub fn load_cached(wasm_path: &Path, cache_dir: &Path) -> anyhow::Result<Self> {
+        let engine = shared_engine()?.clone();
+        let wasm = std::fs::read(wasm_path)?;
+        let artifact = cache_dir.join(format!("{}.cwasm", sha256_hex(&wasm)));
+        // SAFETY：产物只由本方 `precompile_component` 写出，路径在 PF 自有目录
+        let component = match unsafe { Component::deserialize_file(&engine, &artifact) } {
+            Ok(c) => c,
+            Err(e) => {
+                if artifact.is_file() {
+                    eprintln!(
+                        "[pf-plugin-host] 编译缓存失效，重编 {}：{e}",
+                        artifact.display()
+                    );
+                }
+                let bytes = engine.precompile_component(&wasm)?;
+                write_artifact(cache_dir, &bytes, &artifact);
+                // SAFETY：同一份自产产物字节（刚编译，形态即 precompile 输出）
+                unsafe { Component::deserialize(&engine, &bytes) }?
+            }
+        };
+        Self::instantiate(engine, component, wasm_path)
+    }
+
+    /// 预编译进缓存（安装后预热用；任意线程可调）。返回是否真的编了。
+    /// 目的在于让**首次启动**也走缓存命中，不现场编一秒级。
+    pub fn precompile_to_cache(wasm_path: &Path, cache_dir: &Path) -> anyhow::Result<bool> {
+        let wasm = std::fs::read(wasm_path)?;
+        let artifact = cache_dir.join(format!("{}.cwasm", sha256_hex(&wasm)));
+        if artifact.is_file() {
+            return Ok(false);
+        }
+        let bytes = shared_engine()?.precompile_component(&wasm)?;
+        write_artifact(cache_dir, &bytes, &artifact);
+        Ok(true)
+    }
+
+    /// 引擎 + 组件 → 实例（链接宿主 import、建 store、实例化）。
+    fn instantiate(engine: Engine, component: Component, wasm_path: &Path) -> anyhow::Result<Self> {
         let mut linker: Linker<HostState> = Linker::new(&engine);
         pf::plugin::host::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
             &mut linker,
