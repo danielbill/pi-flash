@@ -852,49 +852,72 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 }
 
 /// 启动扫描（spawn_boot_tasks 调；首帧后异步落位，微秒级/个）。
+///
+/// 两段式，**主线程零重活**：
+/// ① 清单扫描（后台线程）→ JS 插件条目立即落位（状态栏 tab / 右键【插件】可见）；
+/// ② 内层 wasm 插件验签门（090-5 L3）：组件编译是秒级成本（4.6 MB 组件实测
+///    ~2s），且**揭幕后**才发起——编译/实例化/init 全在后台线程，结果回主
+///    线程只写状态栏。旧实现把 load+init 放在主线程 `update` 里直接跑，
+///    UI 卡死数秒（本次修复）。
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let manifests = cx
             .background_executor()
             .spawn(async move { scan_manifests() })
             .await;
-        let _ = this.update(cx, |c, cx| {
-            // ---- 内层 wasm 插件（090-5 L3）：主线程装载，init 即验签门 ----
-            // wasmtime 编译与线程局部 proof 钩子都要求主线程；结果经 set_status
-            // 面向用户（失败不静默，02 §7.2）。实例即验即弃——wasm 渲染面是
-            // 后续切片，本片只验门。
-            pf_plugin_host::install_proof_hook(host_proof_material);
-            let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
-            for m in wasm {
-                let id = m.id.clone();
-                let title = pick_lang(&m.title_zh, &m.title_en);
-                let wasm_path = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
-                let mut inst = match pf_plugin_host::PluginInstance::load(&wasm_path) {
-                    Ok(i) => i,
-                    Err(e) => {
-                        let msg = format!("插件 {title} 装载失败：{e}");
-                        eprintln!("[pf-plugin] {msg}");
-                        c.set_status(msg, cx);
-                        continue;
-                    }
-                };
-                match inst.init(&id) {
-                    Ok(()) => {
-                        let msg = format!("插件 {title}：官方验证通过，已激活");
-                        eprintln!("[pf-plugin] {msg}");
-                        c.set_status(msg, cx);
-                    }
-                    Err(e) => {
-                        let msg = format!("插件 {title} 拒载：{e}");
-                        eprintln!("[pf-plugin] {msg}");
-                        c.set_status(msg, cx);
-                    }
-                }
+        let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
+        // ① JS 插件先落位：不等 wasm 验签（否则状态栏 tab 被秒级编译拖死）
+        let _ = this.update(cx, |c, cx| c.plugins_set(plugin_entries(js), cx));
+        if wasm.is_empty() {
+            return;
+        }
+        // ② 等揭幕：验签是秒级 CPU 重活，不和启动抢核（揭幕前只有启动页）
+        loop {
+            if this.update(cx, |c, _| c.pool.booted).unwrap_or(true) {
+                break;
             }
-            c.plugins_set(plugin_entries(js), cx);
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(100))
+                .await;
+        }
+        let msgs = cx
+            .background_executor()
+            .spawn(async move { verify_wasm_plugins(wasm) })
+            .await;
+        let _ = this.update(cx, |c, cx| {
+            for msg in msgs {
+                c.set_status(msg, cx);
+            }
+            cx.notify();
         });
     })
     .detach();
+}
+
+/// 内层 wasm 插件验签门（090-5 L3）——**只许后台线程调用**。
+/// init 即验签门，实例即验即弃（wasm 渲染面是后续切片），结论由调用方经
+/// `set_status` 面向用户（失败不静默，02 §7.2）。
+fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String> {
+    // 证明材料钩子是进程级（pf-plugin-host 里从 thread_local 改成全局），
+    // 后台线程 init 时插件回调 get_host_proof 同样取得到材料
+    pf_plugin_host::install_proof_hook(host_proof_material);
+    let mut msgs = Vec::new();
+    for m in manifests {
+        let id = m.id.clone();
+        let title = pick_lang(&m.title_zh, &m.title_en);
+        let wasm_path = m.dir.join(m.wasm.as_deref().unwrap_or("plugin.wasm"));
+        let t0 = std::time::Instant::now();
+        let msg = match pf_plugin_host::PluginInstance::load(&wasm_path) {
+            Ok(mut inst) => match inst.init(&id) {
+                Ok(()) => format!("插件 {title}：官方验证通过，已激活"),
+                Err(e) => format!("插件 {title} 拒载：{e}"),
+            },
+            Err(e) => format!("插件 {title} 装载失败：{e}"),
+        };
+        eprintln!("[pf-plugin] {msg}（验签 {:?}，后台线程）", t0.elapsed());
+        msgs.push(msg);
+    }
+    msgs
 }
 
 /// 官方构建证明材料（build.rs 把 PF_BUILD_PROOF/KID 烙成二进制常量，见
