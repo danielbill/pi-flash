@@ -225,7 +225,6 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .iter()
         .find(|i| Some(&i.name) == selected_name.as_ref());
 
-    let total = items.len();
     let removing = st.removing.clone();
     let weak_c = weak.clone();
 
@@ -248,13 +247,6 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                     .text_color(rgb(t.text_dim))
                     .child(tr("market.pf.tab_installed")),
             )
-            .child(
-                gpui::div()
-                    .font_family(MONO)
-                    .text_size(crate::appearance::ui_size(10.))
-                    .text_color(rgb(t.text_faint))
-                    .child(SharedString::from(total.to_string())),
-            ),
     );
     for (n, item) in items.iter().enumerate() {
         let active = selected_name.as_deref() == Some(item.name.as_str());
@@ -299,16 +291,6 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                 )),
         );
     }
-    if items.is_empty() {
-        list = list.child(
-            gpui::div()
-                .px(px(8.))
-                .pt(px(12.))
-                .text_size(crate::appearance::ui_size(12.))
-                .text_color(rgb(t.text_dim))
-                .child(tr("market.pf.none_installed")),
-        );
-    }
     let sidebar = sidebar_shell("pf-installed-sidebar")
         .w(px(LIST_W))
         .bg(rgb(t.bg))
@@ -345,16 +327,9 @@ fn detail_pane(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
 ) -> AnyElement {
+    // 没有选中/没有安装：详情栏留空（不加任何提示文案）
     let Some(item) = item else {
-        return detail_shell("pf-installed-detail")
-            .p(px(15.))
-            .child(
-                gpui::div()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("market.pf.none_installed")),
-            )
-            .into_any_element();
+        return detail_shell("pf-installed-detail").into_any_element();
     };
 
     // 垃圾桶（settings-扩展同款 danger 盒；卸载本插件 → spinner，任一卸载中禁用）
