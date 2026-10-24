@@ -229,7 +229,8 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
     // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
     // 列表头不再画「已安装」——页签行就在正上方，同一个词不重复（2026-10-24 定夺）
-    let mut list = sidebar_list().px(px(7.));
+    // 上内距对齐右详情（detail_shell 的 p(15)）：左列表首行不再贴着段盒顶边
+    let mut list = sidebar_list().px(px(7.)).pt(px(15.));
     for (n, item) in items.iter().enumerate() {
         let active = selected_name.as_deref() == Some(item.name.as_str());
         let weak_item = weak_c.clone();
