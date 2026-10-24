@@ -637,7 +637,9 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_confirm", "已扫码，请在手机上确认…", "已掃碼，請在手機上確認…", "Scanned, please confirm on your phone…"),
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
-    ("remote.qr_install_hint", "若微信提示未安装：请先在微信安装「微信ClawBot」插件，再重新扫码。", "若微信提示未安裝：請先在微信安裝「微信ClawBot」外掛，再重新掃碼。", "If WeChat says the bot is not installed: install the \"WeChat ClawBot\" plugin in WeChat first, then scan again."),
+    // 002-微信通信（pi-flash-plugins）版式文案。二维码弹窗唯一提示文案
+    //（2026-10-24 用户定夺：三步走，码区下方再无别的说明行）
+    ("remote.qr_steps", "1、在微信上安装「微信ClawBot」插件\n2、用微信扫描二维码激活PF微信机器人\n3、使用微信聊天指挥Pi-Flash干活", "1、在微信上安裝「微信ClawBot」外掛\n2、用微信掃描二維碼啟用PF微信機器人\n3、使用微信聊天指揮Pi-Flash幹活", "1. Install the \"WeChat ClawBot\" plugin in WeChat\n2. Scan the QR code with WeChat to activate the Pi-Flash bot\n3. Chat with WeChat to put Pi-Flash to work"),
     // 060 七态生命周期（2026-10-24 用户定夺）：①未扫描 ②微信侧出错
     // ③重新扫码更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中
     ("remote.st_absent", "未创建", "未建立", "Not created"),
@@ -653,13 +655,10 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_loading", "正在获取二维码…", "正在獲取二維碼…", "Getting QR code…"),
     ("remote.qr_retry", "扫码连接失败，请刷新重扫。", "掃碼連接失敗，請刷新重掃。", "Scan connection failed. Refresh and try again."),
     // 002-微信通信（pi-flash-plugins）版式文案
-    ("remote.hint_absent", "请用微信扫描二维码，创建Pi-Flash微信机器人", "請用微信掃描二維碼，建立Pi-Flash微信機器人", "Scan the QR code with WeChat to create the Pi-Flash bot"),
-    ("remote.hint_wx_error", "微信侧返回错误，请确认微信已安装「ClawBot插件」", "微信側返回錯誤，請確認微信已安裝「ClawBot外掛」", "WeChat returned an error. Make sure the ClawBot plugin is installed in WeChat"),
     ("remote.qr_created", "Pi-Flash微信机器人已创建", "Pi-Flash微信機器人已建立", "The Pi-Flash WeChat bot has been created"),
     ("remote.qr_timeout", "扫描超时，请点击重新扫码", "掃描逾時，請點擊重新掃碼", "Scan timed out. Tap to scan again"),
     ("remote.qr_regen", "重新生成二维码", "重新產生二維碼", "Regenerate QR code"),
     ("remote.qr_reset", "重制二维码", "重制二維碼", "Reset QR code"),
-    ("remote.qr_ready_scan", "已就绪，请用微信扫码", "已就緒，請用微信掃碼", "Ready. Scan with WeChat"),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),
     ("remote.select_thinking", "选择思考档位", "選擇思考檔位", "Select thinking tier"),
@@ -765,7 +764,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.bot_title", "使用 Bot Channel", "使用 Bot Channel", "Use a Bot Channel"),
     ("remote.bot_desc", "连接聊天 Bot，适合更长时间的移动端访问。", "連接聊天 Bot，適合更長時間的移動端存取。", "Connect a chat bot for longer mobile access."),
     ("remote.wx_name", "微信", "微信", "WeChat"),
-    ("remote.wx_desc", "在微信上安装「微信ClawBot」插件，使用微信远程指挥Pi-Flash工作。", "在微信上安裝「微信ClawBot」外掛，使用微信遠程指揮Pi-Flash工作。", "Install the \"WeChat ClawBot\" plugin on WeChat to command Pi-Flash remotely."),
     ("remote.channel_enable", "启用渠道", "啟用頻道", "Enable channel"),
     ("remote.channel_disable", "停用渠道", "停用頻道", "Disable channel"),
     ("remote.bot_mgmt", "机器人管理", "機器人管理", "Bot management"),

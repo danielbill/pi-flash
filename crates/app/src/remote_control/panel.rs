@@ -101,67 +101,30 @@ pub(crate) fn fn_bar_status(
 
 /// 二维码弹窗面板（`Dialog::WxQr`，dialogs.rs 用 dialog_shell 包壳）：
 /// 紧凑居中小卡（对齐微信登录弹窗形制）——header（标题+关闭）+ 码居中 +
-/// 状态文案居中彩字 + 两行左对齐提示。三态：出码 / 已创建 / 超时蒙白。
+/// 底部三步提示（2026-10-24 用户定夺文案，码区内状态文案不重复第二遍）。
+/// 三态：出码 / 已创建 / 超时蒙白。
 pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::Div {
     let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
-    // 居中内容随状态切换；颜色：就绪/已创建 = UNREAD 绿，出错 = danger
-    let (content, caption, caption_color) = match &chat.aux.remote.qr {
-        QrState::Ready { url } => (
-            qr_white_card(url).into_any_element(),
-            tr("remote.qr_ready_scan").to_string(),
-            crate::appearance::theme::UNREAD,
-        ),
-        QrState::Scanned => {
-            let content = match &chat.aux.remote.qr_url {
-                Some(url) => qr_white_card(url),
-                None => kit::note(&tr("remote.qr_confirm")),
-            };
-            (
-                content.into_any_element(),
-                tr("remote.qr_confirm").to_string(),
-                crate::appearance::theme::UNREAD,
-            )
+    let content = match &chat.aux.remote.qr {
+        QrState::Ready { url } => qr_white_card(url).into_any_element(),
+        QrState::Scanned => match &chat.aux.remote.qr_url {
+            Some(url) => qr_white_card(url).into_any_element(),
+            None => kit::note(&tr("remote.qr_confirm")).into_any_element(),
+        },
+        QrState::Expired => {
+            qr_masked(chat, weak, tr("remote.qr_timeout").to_string()).into_any_element()
         }
-        QrState::Expired => (
-            qr_masked(chat, weak, tr("remote.qr_timeout").to_string()).into_any_element(),
-            tr("remote.qr_timeout").to_string(),
-            t.danger,
-        ),
-        QrState::Error(m) => (
-            qr_masked(chat, weak, friendly_qr_error(m)).into_any_element(),
-            friendly_qr_error(m),
-            t.danger,
-        ),
+        QrState::Error(m) => qr_masked(chat, weak, friendly_qr_error(m)).into_any_element(),
         // ④ 微信已返回但我方没写进状态：按出错蒙白处理
-        QrState::Done { .. } if !has_token => (
-            qr_masked(
-                chat,
-                weak,
-                tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
-            )
-            .into_any_element(),
+        QrState::Done { .. } if !has_token => qr_masked(
+            chat,
+            weak,
             tr("remote.hint_create_failed").replace("{err}", &tr("remote.st_write_failed")),
-            t.danger,
-        ),
-        QrState::Done { .. } => (
-            kit::note(&tr("remote.qr_created")).into_any_element(),
-            tr("remote.qr_created").to_string(),
-            crate::appearance::theme::UNREAD,
-        ),
-        QrState::Idle | QrState::Loading => (
-            kit::note(&tr("remote.qr_loading")).into_any_element(),
-            tr("remote.qr_loading").to_string(),
-            t.text_dim,
-        ),
+        )
+        .into_any_element(),
+        QrState::Done { .. } => kit::note(&tr("remote.qr_created")).into_any_element(),
+        QrState::Idle | QrState::Loading => kit::note(&tr("remote.qr_loading")).into_any_element(),
     };
-    // 底部提示两行（左对齐）：安装前提 + 固定说明
-    let hints = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(kit::note(&tr("remote.qr_install_hint")))
-        .child(kit::note(&tr("remote.wx_desc")));
     // 紧凑小卡：header（标题 + 关闭）+ 居中 body（R_MODAL 10）
     let weak_close = weak.clone();
     let header = div()
@@ -209,13 +172,15 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         .gap(px(10.))
         .p(px(16.))
         .child(content)
+        // 底部三步提示（左对齐，每行一条）
         .child(
             div()
-                .text_size(crate::appearance::ui_size(12.5))
-                .text_color(rgb(caption_color))
-                .child(SharedString::from(caption)),
-        )
-        .child(hints);
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .children(tr("remote.qr_steps").lines().map(|l| kit::note(l))),
+        );
     div()
         .w(px(460.))
         .flex_shrink_0()
@@ -228,31 +193,6 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         .bg(rgb(t.bg_panel))
         .child(header)
         .child(body)
-}
-
-/// 弹窗底部提示：只有三态（002 §状态说明区，2026-10-24 修订）——
-/// ①未创建 / ②微信侧出错 / 已创建（③④⑤⑥⑦全部归位为「已创建」）。
-fn state_hint(chat: &Chat, has_token: bool) -> String {
-    match &chat.aux.remote.qr {
-        QrState::Error(m) => {
-            let low = m.to_lowercase();
-            if low.contains("timeout") || m.contains("超时") {
-                // 超时只是创建/重建流程被打断：有 bot 归「已创建」，没有归「未创建」
-                if has_token {
-                    tr("remote.qr_created").to_string()
-                } else {
-                    tr("remote.hint_absent").to_string()
-                }
-            } else {
-                // ② 微信侧出错（未装插件等）
-                tr("remote.hint_wx_error").to_string()
-            }
-        }
-        // ③④⑤⑥⑦：bot 已存在（含更新重建中/启停中，一切已创建形态）
-        _ if has_token => tr("remote.qr_created").to_string(),
-        // ① 未创建：pf-wxbot 不存在
-        _ => tr("remote.hint_absent").to_string(),
-    }
 }
 
 /// 用户可读的扫码错误：原始诊断（HTTP 细节/字段名）只进 stderr 与 dump，
