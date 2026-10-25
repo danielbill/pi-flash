@@ -676,7 +676,7 @@ fn render_project_picker(
         let path = p.path.clone();
         let weak_row = weak.clone();
         let name: SharedString = p.name.clone().into();
-        let selected = chat.ws.cwd.as_deref().is_some_and(|cur| {
+        let selected = chat.picker_current_cwd().is_some_and(|cur| {
             crate::services::workspace::same_ws(&p.path.to_string_lossy(), &cur.to_string_lossy())
         });
         rows.push(
@@ -905,8 +905,8 @@ impl Chat {
                 .await;
             let _ = weak.update(cx, |c, cx| {
                 // 当前项目兜底入选（无 30 天活动也显示，004：默认选中该项目）；
-                // 无项目态没有「当前项目」，不兜底
-                if let Some(cwd) = c.ws.cwd.clone() {
+                // 无项目态没有「当前项目」，不兜底。微信设置页当前 = wx_cwd
+                if let Some(cwd) = c.picker_current_cwd() {
                     let cwd_key = cwd.to_string_lossy().to_string();
                     if !entries.iter().any(|p| {
                         crate::services::workspace::same_ws(&p.path.to_string_lossy(), &cwd_key)
@@ -970,13 +970,14 @@ impl Chat {
         }
     }
 
-    /// 打开项目菜单的默认选中：当前项目（同 ws）在过滤结果里的行号 +1；
+    /// 打开项目菜单的默认选中：当前项目（微信设置页 = wx_cwd，其余 =
+    /// ws.cwd，见 `picker_current_cwd`）在过滤结果里的行号 +1；
     /// 不在列（列表未回填 / 被搜索词滤掉）但有项目行时取首个项目行，连
     /// 项目行都没有才落【打开文件夹】。打开、列表回填、改过滤词三处共用。
     pub(crate) fn project_sel_default(&self) -> usize {
         let visible = project_visible(self);
         let cur = visible.iter().position(|&ix| {
-            self.ws.cwd.as_deref().is_some_and(|cur| {
+            self.picker_current_cwd().is_some_and(|cur| {
                 crate::services::workspace::same_ws(
                     &self.psp.project_hits[ix].path.to_string_lossy(),
                     &cur.to_string_lossy(),

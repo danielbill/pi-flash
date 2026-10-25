@@ -333,6 +333,11 @@ impl Chat {
         });
         self.pool.runtimes.insert(key.clone(), rt.clone());
         self.subscribe_runtime(&rt, cx);
+        // 设置页先选的模型（`wx_cwd` 未定时暂存在模块状态）在这里下沉：
+        // 用户先选模型后选项目的顺序也能接住（002：两项齐才 ready）
+        if let Some((provider, id)) = self.aux.remote.pending_model.take() {
+            rt.update(cx, |r, cx| r.select_model(provider, id, cx));
+        }
         Some(key)
     }
 

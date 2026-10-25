@@ -576,7 +576,13 @@ impl Chat {
             let path = std::path::PathBuf::from(&key);
             let opened = match self.aux.remote.wx_cwd().cloned() {
                 Some(cwd) => self.open_session_detached_with(path, cwd, cx),
-                None => self.open_session_detached(path, cx),
+                // wx_cwd 未定：**绝不落桌面 cwd**（002 §6 用户定夺），回设置页
+                // 让用户选项目（选完由 wx_after_setup_change 建线并回来）
+                None => {
+                    self.set_content_view(crate::ContentView::Wx);
+                    cx.notify();
+                    return;
+                }
             };
             if let Some(rt) = opened {
                 self.wx_adopt_line_cwd(&rt, cx);
@@ -731,6 +737,19 @@ impl Chat {
             .is_some_and(|c| crate::services::workspace::same_path(c, &path));
         if changed {
             self.wx_rotate_session(cx);
+        }
+        // 同目录重选不轮换，但可能残留早期用桌面 cwd 建出来的运行时：
+        // 选了哪个目录就在哪个目录干活，失配一律归位（002 §6）
+        if let Some(rt) = self
+            .aux
+            .remote
+            .line
+            .key
+            .as_ref()
+            .and_then(|k| self.pool.runtimes.get(k))
+            .cloned()
+        {
+            self.wx_adopt_line_cwd(&rt, cx);
         }
         if let Some(key) = self.aux.remote.line.key.clone() {
             let in_setup = self.layout.content_view == crate::ContentView::Wx;
