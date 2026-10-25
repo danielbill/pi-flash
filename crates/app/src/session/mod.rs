@@ -193,7 +193,7 @@ fn session_fn_bar(
     // 淡色 chevron（编辑器面包屑同款 ">"），再接原有三钮。（2026-10-20
     // 用户定案：改回一直展示，不再随功能面板收拢态切换）。无项目态显示占位名。
     let project: Option<SharedString> = Some(
-            chat.project()
+            chat.ui_project()
                 .map(|p| {
                     p.file_name()
                         .map(|n| n.to_string_lossy().to_string())
@@ -204,9 +204,10 @@ fn session_fn_bar(
     );
     // 会话组目录（sfbar-sessdir）：pi sessions 根下按 cwd 编码的组目录，
     // 还没建（无落盘会话）退回 sessions 根——与 psp 项目详情卡同口径；
-    // 无项目态直接开 sessions 根
+    // 无项目态直接开 sessions 根（微信前台时按 `wx_cwd` 定位——旧实现读
+    // `ws.cwd`，微信页点「会话目录」打开的是桌面项目的会话组）
     let sess_dir_btn = {
-        let cwd = chat.ws.cwd.clone();
+        let cwd = chat.ui_project().map(|p| p.to_path_buf());
         move |_: &gpui::MouseDownEvent, _w: &mut gpui::Window, _cx: &mut gpui::App| {
             let dir = pi_link::sessions::sessions_root().map(|root| {
                 match cwd.as_deref() {
@@ -262,9 +263,14 @@ fn session_fn_bar(
             "icon-terminal-solid",
             tr("session.open_terminal"),
             chat.layout.content_view == crate::ContentView::Term,
-            cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
-                this.open_terminal(None, window, cx);
-                cx.notify();
+            cx.listener({
+                // 终端起点跟界面当前项目（微信前台 = wx_cwd）——旧实现开在
+                // 桌面项目里，微信页点「打开终端」看到的是别的目录
+                let term_cwd = chat.ui_project().map(|p| p.to_path_buf());
+                move |this, _: &gpui::MouseDownEvent, window, cx| {
+                    this.open_terminal(term_cwd.clone(), window, cx);
+                    cx.notify();
+                }
             }),
         ))
         .child(fn_bar_sep(t))

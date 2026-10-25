@@ -694,81 +694,77 @@ impl Chat {
         cx.notify();
     }
 
-    /// 002 §6 [新建会话]（确认后）：**清空 `wx_cwd` + 清微信线指针（含状态
-    /// 文件里的 `session_key`，防重启复活）**，跳转[设置会话]页。不现场建
-    /// 会话——用户重选项目/模型后由 `wx_after_setup_change` 建新线。
-    /// 旧影子会话下线不删文件（口径同轮换，前缀过滤挡住）。
+    /// 002 §6 [新建会话]（确认后）：清空 `wx_cwd` + 清微信线指针 + 回[设置会话]页。
+    /// 赋值不在本文——全在 [`Self::wx_choose_cwd`]（唯一赋值点）。
     pub(crate) fn wx_new_session_reset(&mut self, cx: &mut gpui::Context<Self>) {
+        self.wx_choose_cwd(None, cx);
+    }
+
+    /// `wx_cwd` 的**唯一赋值点**（002 §6，用户定夺：除了用户选择，禁止复制）——
+    /// 两个入口都只是把用户动作原样交进来：
+    /// - `Some(path)` = 用户在设置页选了这个项目 → 赋值 + 按它重建会话 + 进去；
+    /// - `None` = 用户点了【新建会话】→ 清空 + 停在设置页，等用户手动选。
+    ///
+    /// 其他任何地方都不准写 `wx_cwd`（尤其禁止把 PF/桌面 cwd 复制进来）。
+    pub(crate) fn wx_choose_cwd(
+        &mut self,
+        choice: Option<PathBuf>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let old = self.aux.remote.line.key.clone();
         let old_active = old.as_deref() == Some(self.pool.active_key.as_str());
+        // 模型承接读在忘线之前（忘线后 rt() 悬空）
+        let inherit = self.rt().read(cx).default_model.clone();
         if let Some(key) = old {
             self.forget_session(&key, cx);
         }
         self.aux.remote.clear_wx_line();
-        self.aux.remote.set_wx_cwd(None); // 持久化一并清（重启不再恢复旧目录）
-        // 焦点在被删的影子会话上：挪到落地会话，避免 rt() 悬空
-        if old_active {
-            if let Some(rt) = self.landing_session(cx) {
-                self.switch_to(rt, cx);
+        // ★ 唯一赋值点：除了用户选择，禁止赋值 cwd 给 wx_cwd
+        self.aux.remote.set_wx_cwd_from_user(choice.clone());
+
+        match choice {
+            // 选了项目：按该目录重建一条微信会话并直接进去（不等桌面消息驱动）
+            Some(_) => {
+                self.wx_rotate_session(cx);
+                if let Some(rt) = self
+                    .aux
+                    .remote
+                    .line
+                    .key
+                    .as_ref()
+                    .and_then(|k| self.pool.runtimes.get(k))
+                    .cloned()
+                {
+                    // cwd 就是刚选的目录（防池里复用旧运行时把 cwd 带回来）
+                    self.wx_adopt_line_cwd(&rt, cx);
+                    if let Some(m) = inherit {
+                        rt.update(cx, |r, _| r.default_model = Some(m));
+                    }
+                    self.switch_to(rt, cx);
+                }
+                self.wx_after_setup_change(cx);
+            }
+            // 新建会话：清空后停在设置页（老会话下线不删文件，前缀过滤挡住）
+            None => {
+                // 焦点在被删的影子会话上：挪到落地会话，避免 rt() 悬空
+                if old_active {
+                    if let Some(rt) = self.landing_session(cx) {
+                        self.switch_to(rt, cx);
+                    }
+                }
+                self.wx_open_tab();
+                // 走 set_content_view：顺带 persist_tabs——裸写字段不落盘，重启后
+                // tab 恢复读到 switch_to 刚落的 Chat，就会回到桌面会话对话页
+                self.set_content_view(crate::ContentView::Wx); // [设置会话] 页
+                self.refresh_sessions();
             }
         }
-        self.wx_open_tab();
-        // 走 set_content_view：顺带 persist_tabs——裸写字段不落盘，重启后
-        // tab 恢复读到 switch_to 刚落的 Chat，就会「蹿回桌面会话对话页」
-        self.set_content_view(crate::ContentView::Wx); // [设置会话] 页
-        self.refresh_sessions();
         cx.notify();
     }
 
-    /// 建一条新的影子会话（`pf-wxbot-<ts>`）：detached 草稿 + pi 侧命名 +
-    /// 过滤清单注入。返回 key；无工作区时 `None`。
-    /// 设置会话页选项目（002 §2，用户定夺）：只写微信**独立工作目录**
-    /// `wx_cwd`，禁止联动桌面 `cwd`；目录变了 → 轮换新影子会话（同目录
-    /// 只落归属不打断当前会话），Setup 页上下文把活跃会话切到微信线
-    /// （composer/模型 pill 才编辑微信线），模型承接不再丢失。
+    /// 设置会话页选项目：只转发用户动作，赋值与建会话都在 [`Self::wx_choose_cwd`]。
     pub(crate) fn wx_pick_project(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
-        let inherit = self.rt().read(cx).default_model.clone();
-        self.aux.remote.set_wx_cwd(Some(path.clone()));
-        let cur = self.aux.remote.line.key.as_ref().and_then(|key| {
-            self.pool.runtimes.get(key).map(|rt| rt.read(cx).cwd.clone())
-        });
-        let changed = !cur
-            .as_ref()
-            .is_some_and(|c| crate::services::workspace::same_path(c, &path));
-        if changed {
-            self.wx_rotate_session(cx);
-        }
-        // 同目录重选不轮换，但可能残留早期用桌面 cwd 建出来的运行时：
-        // 选了哪个目录就在哪个目录干活，失配一律归位（002 §6）
-        if let Some(rt) = self
-            .aux
-            .remote
-            .line
-            .key
-            .as_ref()
-            .and_then(|k| self.pool.runtimes.get(k))
-            .cloned()
-        {
-            self.wx_adopt_line_cwd(&rt, cx);
-        }
-        if let Some(key) = self.aux.remote.line.key.clone() {
-            let in_setup = self.layout.content_view == crate::ContentView::Wx;
-            if in_setup {
-                if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
-                    // switch_to 会把内容区带回 Chat 视图：微信线空草稿渲染
-                    // 的正是欢迎（设置会话）页，视觉不变、归属已切到微信线
-                    self.switch_to(rt, cx);
-                }
-            }
-            if let Some(m) = inherit {
-                if let Some(rt) = self.pool.runtimes.get(&key) {
-                    rt.update(cx, |r, _| r.default_model = Some(m));
-                }
-            }
-        }
-        // 设置齐（wx_cwd + 模型）→ 立即建会话并跳聊天页（不靠桌面消息驱动）
-        self.wx_after_setup_change(cx);
-        cx.notify();
+        self.wx_choose_cwd(Some(path), cx);
     }
 
     pub(crate) fn wx_new_session(&mut self, cx: &mut gpui::Context<Self>) -> Option<String> {

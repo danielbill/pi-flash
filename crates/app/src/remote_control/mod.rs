@@ -326,11 +326,44 @@ impl RemoteControl {
         self.snap.refresh(true);
     }
 
-    /// 设置微信**独立工作目录**并持久化（模块独立：不碰桌面 `ws.cwd`，也不
-    /// 回写）。重启后自动恢复，`wx_cwd` + 模型齐即 ready。
-    pub(crate) fn set_wx_cwd(&mut self, path: Option<PathBuf>) {
-        self.snap.wx_cwd = path.clone();
-        self.set_disk("wx_cwd", path.as_deref().and_then(|p| p.to_str()));
+    /// `wx_cwd` 的**唯一写入口**（002 §6 用户定抟）：`Some(path)` = 用户在
+    /// 设置页选了这个项目；`None` = 用户点新建会话（清空）。
+    /// 除此之外**任何代码都不准写这个值**——禁止把 PF/桌面 cwd 复制进来。
+    pub(crate) fn set_wx_cwd_from_user(&mut self, choice: Option<PathBuf>) {
+        self.snap.wx_cwd = choice.clone();
+        // 新建会话（None）= 上锁：进设置页不得自动用 PF cwd 赋值；
+        // 用户选项目（Some）= 解锁。
+        self.snap.wx_cwd_lock = choice.is_none();
+        if !self.persist {
+            return;
+        }
+        // 两个键同一次落盘（分开写会出现「目录清了、锁没上」的中间态）
+        let value = choice.as_deref().and_then(|p| p.to_str());
+        let mut st = wxprobe::state::load();
+        wxprobe::state::set(&mut st, "wx_cwd", value);
+        wxprobe::state::set(
+            &mut st,
+            "wx_cwd_lock",
+            if self.snap.wx_cwd_lock { Some("1") } else { None },
+        );
+        wxprobe::state::save(&st);
+        self.snap.refresh(true);
+    }
+
+    /// 进入设置页的自动赋值（002：`wx_cwd` 为空就用 PF cwd）：
+    /// **上锁（新建会话之后）不赋**——定夺的铁律。
+    pub(crate) fn auto_fill_wx_cwd(&mut self, desktop_cwd: Option<PathBuf>) {
+        if self.snap.wx_cwd.is_some() || self.snap.wx_cwd_lock {
+            return;
+        }
+        if let Some(cwd) = desktop_cwd {
+            self.set_wx_cwd_from_user(Some(cwd));
+        }
+    }
+
+    /// 工作目录是否上锁（新建会话后 = true：禁止自动赋值）。
+    pub(crate) fn wx_cwd_locked(&self) -> bool {
+        self.snap.wx_cwd_lock
     }
 
     /// 微信线（影子会话）指针改指向 `key`（草稿键或会话文件路径）。
@@ -964,11 +997,10 @@ impl crate::Chat {
         // 不跟上就会出现「内容已是微信、却没有任何 tab 高亮」的空高亮态）
         self.ws.active_panel_tab = Some(ix);
         self.layout.tabs_scroll.scroll_to_item(ix);
-        // **绝不预填工作目录**（002 §6 用户定夺 2026-10-25）：`wx_cwd` 只能由
-        // 用户在设置页显式选项目时写入（`wx_pick_project`）。旧的「为空就继承
-        // 桌面 cwd」造成两宗事故：①「项目必选」被默认值凑满——设置页一进来就
-        // 显示已选、直接放行进会话；②新建会话清空 `wx_cwd` 后，同一笔调用里
-        // 又被 app cwd 填回，用户选的目录看起来被 PF cwd 顶掉（2026-10-25 报障）。
+        // 002 独立工作目录：进设置页时 `wx_cwd` 为空就自动用当前项目赋值——
+        // **但新建会话上锁后不赋**（`wx_cwd_lock = 1`，必须用户手动选）。
+        // 赋值全在 `set_wx_cwd_from_user` 一处，这里只给「来路」。
+        self.aux.remote.auto_fill_wx_cwd(self.ws.cwd.clone());
     }
 
     // ── 微信线（影子会话）就位 ───────────────────────────────────────
@@ -1022,24 +1054,27 @@ impl crate::Chat {
         &mut self,
         rt: &gpui::Entity<crate::session::runtime::SessionRuntime>,
         cx: &mut gpui::Context<Self>,
-    ) {
+    ) -> bool {
         let Some(cwd) = self.aux.remote.wx_cwd().cloned() else {
-            return;
+            return false;
         };
+        let mut fixed = false;
         rt.update(cx, |r, _| {
             if r.cwd == cwd {
                 return;
             }
             if r.agent.session.is_some() {
                 eprintln!(
-                    "[wx] 影子会话 cwd 失配（{:?} != {:?}）：停进程按 wx_cwd 重建",
+                    "[wx] 影子会话 cwd 失配（{:?} -> {:?}）：停进程按 wx_cwd 重拉",
                     r.cwd, cwd
                 );
                 r.rpc(&Command::Abort);
                 r.shutdown_process();
             }
             r.cwd = cwd;
+            fixed = true;
         });
+        fixed
     }
 
     // ── 泵：每拍五个幂等 step，末尾统一 notify 一次 ──────────────────
@@ -1069,6 +1104,21 @@ impl crate::Chat {
         }
         // ⑤ 启停通知派发（对端路由未就绪则留到下一拍，迟到不丢）
         self.aux.remote.flush_notice();
+        // ⑥ 硬不变量（002 §6，用户定夺）：微信线的运行时 cwd 必须恒等于
+        // `wx_cwd`。选哪个目录就在哪个目录干活——历史遗留、并发路径、旧
+        // 进程留下的失配都在这里每拍自愈（已附着进程则停进程按 wx_cwd 重拉），
+        // 不再靠「只在打开时校一次」。
+        if let Some(rt) = self
+            .aux
+            .remote
+            .line
+            .key
+            .as_ref()
+            .and_then(|k| self.pool.runtimes.get(k))
+            .cloned()
+        {
+            dirty |= self.wx_adopt_line_cwd(&rt, cx);
+        }
         if dirty {
             cx.notify();
         }
