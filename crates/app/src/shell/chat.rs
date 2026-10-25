@@ -468,9 +468,6 @@ pub(crate) struct WsUi {
     /// tab 带落盘抑制（pi-flash-weia）：启动恢复期/恢复应用中不许中间态
     /// 写穿存档（open_session 的 set_content_view(Chat) 会触发 persist）
     pub(crate) tab_restore_busy: bool,
-    /// tab 带当前归属项目（ws_key）：换项目 remount 时把带子归档到旧主；
-    /// None = 本会话还没落过盘（启动初期/无项目态）
-    pub(crate) tabs_owner: Option<String>,
     // 023 fileView：菜单与面包屑兄弟菜单的弹层状态
     pub(crate) crumb_menu_dir: Option<PathBuf>,
     pub(crate) crumb_dd: gpui::Entity<crate::ui::DropdownState>,
@@ -544,7 +541,6 @@ impl Chat {
                 ext_probe: (0, 0),
                 pending_focus_file: None,
                 tab_restore_busy: false,
-                tabs_owner: None,
                 terminals: Vec::new(),
                 active_terminal: None,
                 term_seq: 0,
