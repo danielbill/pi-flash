@@ -6,7 +6,10 @@
 //! credential-blind）。auth 声明（`auth.oauth` / `auth.apiKey.login`）长在
 //! pi-ai 的 JS 里，Rust 没法直读——所以起**一次性 node** 走 SDK 自己的 API
 //! dump JSON（`ModelRuntime.create({ refreshOnCreate: false })`：不联网刷
-//! 新，静态注册表 + 盘上目录缓存照常装配），结果落 `registry-cache.json`，
+//! 新，静态注册表 + 盘上目录缓存照常装配；credentials 传 `ReadOnlyAuthStorage`
+//! ——默认存储的 `listCredentials` 会等 auth.json 的 proper-lockfile 锁，
+//! 孤儿锁耗满 30s stale 死线才放行，曾致弹窗"读取注册表"挂几十秒），
+//! 结果落 `registry-cache.json`，
 //! 以 [`crate::vendor::vendored_version`] 为缓存键，bump vendor 自动失效。
 //!
 //! 分组/过滤语义照抄 pi-web：
@@ -151,7 +154,14 @@ const DUMP_SCRIPT: &str = r#"
 import { pathToFileURL } from "node:url";
 const entry = pathToFileURL(process.argv[2]).href;
 const { ModelRuntime } = await import(entry);
-const rt = await ModelRuntime.create({ refreshOnCreate: false });
+// credentials 必须传只读存储：默认 AuthStorage.list 走 proper-lockfile 等
+// auth.json 锁，孤儿锁要耗满 30s stale 死线才放行（弹窗"几十秒"根因）。
+// 只读版裸读文件零锁，且本 dump 本来只消费 providerId→type 元数据。
+const { ReadOnlyAuthStorage } = await import(new URL("./core/auth-storage.js", entry));
+const rt = await ModelRuntime.create({
+    refreshOnCreate: false,
+    credentials: new ReadOnlyAuthStorage(),
+});
 const providers = rt.getProviders().map((p) => ({
     id: p.id,
     name: p.name,
