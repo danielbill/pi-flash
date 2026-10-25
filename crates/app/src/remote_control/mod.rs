@@ -573,13 +573,6 @@ impl RemoteControl {
     }
 
     pub fn send(&self, text: &str) {
-        // 横幅总闸（2026-10-25 真机复漏）：TextEnd 过滤与 flush 行剔除是前
-        // 两道，这里按「整条消息即横幅」最后拦一道——不管上游哪条路径拼出
-        // 来的，pi 冷启动横幅绝不进微信出站队列。
-        if is_pure_banner_msg(text) {
-            eprintln!("[wx] 拦截 MCP 横幅出站：{text:?}");
-            return;
-        }
         if let Some(t) = self.svc.transport() {
             let _ = t.send(text);
         }
@@ -776,13 +769,7 @@ impl RemoteControl {
                 content,
             } => {
                 self.cur_ix = Some(*content_index);
-                // pi 冷启动横幅（「🔌 MCP: N server(s) enabled」）整条到达时
-                // 直接内部消化，不进回复缓冲（2026-10-24 用户定夺）
-                if is_startup_banner(content) {
-                    self.cur_text.clear();
-                } else {
-                    self.cur_text = content.clone();
-                }
+                self.cur_text = content.clone();
             }
             E::ToolCallStart { .. } => out.extend(self.flush()),
             _ => {}
@@ -807,8 +794,6 @@ impl RemoteControl {
             self.buf.push_str(&self.cur_text);
             self.cur_text.clear();
         }
-        // 横幅行兜底剔除：delta 分片拼进缓冲时按行再滤一遍
-        self.buf = strip_startup_banner(&self.buf);
         if self.buf.trim().is_empty() {
             self.buf.clear();
             return Vec::new();
@@ -819,36 +804,6 @@ impl RemoteControl {
         self.buf = rest;
         msgs
     }
-}
-
-/// pi 冷启动横幅识别（如「🔌 MCP: 1 server enabled」）：会话冷启动的第一轮
-/// 会把它混进 assistant 文本通道，对微信用户毫无意义——内部消化
-/// （2026-10-24 用户定夺）。按内容特征识别，不锚定 emoji/ANSI（发送侧已剥）。
-fn is_startup_banner(s: &str) -> bool {
-    let low = s.to_lowercase();
-    low.contains("mcp") && low.contains("server") && low.contains("enabled")
-}
-
-/// 缓冲按行剔除横幅（delta 分片与后续回复拼在同一行时无法分离——实测横幅
-/// 以独立 TextEnd 到达，TextEnd 过滤是主路径，此处兜底整行场景）。
-fn strip_startup_banner(buf: &str) -> String {
-    buf.lines()
-        .filter(|l| !is_startup_banner(l))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// 横幅总闸判据（[`RemoteControl::send`] 用）：整条消息就是横幅才拦——
-/// 单行 + `mcp:`/`server` 命中 + `enabled` 收尾（桌面侧 `is_mcp_banner`
-/// 同款收紧口径，避免误杀真在聊 MCP 的多行回复）。先剥 ANSI，色码残留
-/// 不影响识别。
-fn is_pure_banner_msg(text: &str) -> bool {
-    let low = wxprobe::poller::strip_ansi(text).trim().to_lowercase();
-    !low.is_empty()
-        && !low.contains('\n')
-        && low.contains("mcp:")
-        && low.contains("server")
-        && low.ends_with("enabled")
 }
 
 /// `/思考` 的 8 档 —— 与桌面 PillMenu 完全同一张表（key/label 一一对应）。
@@ -1920,56 +1875,6 @@ mod tests {
         assert!(out.iter().all(|s| s.chars().count() <= 4000));
     }
 
-    /// pi 冷启动横幅内部消化（2026-10-24）：与真实回复混轮时横幅整行剔除、
-    /// 回复照发；只剩横幅时什么都不发。
-    #[test]
-    fn startup_banner_is_swallowed_not_sent() {
-        let mut rc = RemoteControl::detached();
-        rc.on_assistant(&te(0, "🔌 MCP: 1 server enabled"));
-        rc.on_assistant(&td(1, "你好，我是助手"));
-        let out = rc.on_running(false);
-        assert_eq!(out, vec!["你好，我是助手".to_string()], "横幅不得出站");
-
-        let mut rc2 = RemoteControl::detached();
-        rc2.on_assistant(&te(0, "MCP: 2 servers enabled"));
-        assert!(rc2.on_running(false).is_empty(), "纯横幅 = 静默");
-
-        // 缓冲行兜底：横幅以 delta 形式单独成行时同样剔除
-        let mut rc3 = RemoteControl::detached();
-        rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"));
-        assert_eq!(rc3.on_running(false), vec!["后续回复".to_string()]);
-
-        // 变体：`server(s)`、大写、带色码残留都算横幅（只认 mcp+server+enabled）
-        let mut rc4 = RemoteControl::detached();
-        rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"));
-        assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
-    }
-
-    /// 横幅总闸（2026-10-25 真机复漏）：`send` 是微信出站唯一内容出口，
-    /// 整条即横幅的文本在此内部消化——dump 实抓文案 + 变体全盖，真回复
-    /// （单行问句、多行讨论 MCP）不得误杀。
-    #[test]
-    fn send_gate_swallows_pure_banner_messages() {
-        // dump 2717 实抓原文及各变体
-        for t in [
-            "🔌 MCP: 1 server enabled",
-            "MCP: 2 servers enabled",
-            "\u{1b}[38;5;5m🔌 MCP: 1 server enabled\u{1b}[39m",
-            "  mcp: 1 server(s) enabled\r\n",
-        ] {
-            assert!(is_pure_banner_msg(t), "应识别为横幅：{t:?}");
-        }
-        // 真回复不得拦：多行讨论、单行无冒号/不以 enabled 收尾、固定文案
-        assert!(!is_pure_banner_msg(
-            "MCP: 1 server enabled\n不过你真正问的是配置问题，我来说明："
-        ));
-        assert!(!is_pure_banner_msg("我的 MCP server 已经 enabled，还需要别的吗"));
-        assert!(!is_pure_banner_msg("怎么确认 mcp: 是否已经 enabled"));
-        assert!(!is_pure_banner_msg("⚡ Pi-Flash 通信已开启"));
-        // 无 transport 也不 panic（detached）
-        RemoteControl::detached().send("🔌 MCP: 1 server enabled");
-    }
-
     /// 影子会话名（用户定夺）：`pf-wxbot-` + **15 位**时间戳（纯数字）。
     #[test]
     fn wx_shadow_session_name_is_pf_wxbot_plus_15_digits() {
@@ -1989,7 +1894,7 @@ mod tests {
     fn wx_link_notice_texts() {
         assert!(WX_LINK_ON.contains("Pi-Flash") && WX_LINK_ON.contains("已开启"));
         assert!(WX_LINK_OFF.contains("Pi-Flash") && WX_LINK_OFF.contains("已关闭"));
-        assert!(!WX_LINK_ON.contains("MCP"), "不得泄漏 pi 横幅内容");
+
     }
 
     /// 无项目/模型态回执（用户定夺）：放行条件未满足时需要会话的动作

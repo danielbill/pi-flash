@@ -106,10 +106,13 @@ pub fn render(method: &ExtUiMethod, lang: Lang) -> Option<String> {
             })
         }
         ExtUiMethod::Notify { message, .. } => Some(message.clone()),
-        ExtUiMethod::SetStatus { status_text, .. } => status_text.clone(),
-        ExtUiMethod::SetWidget { widget_lines, .. } => widget_lines.as_ref().map(|l| l.join("\n")),
-        ExtUiMethod::SetTitle { title } => Some(title.clone()),
-        ExtUiMethod::SetEditorText { text } => Some(text.clone()),
+        // 桌面编辑器的侧效应：状态行 / 组件 / 标题 / 输入框内容都不是「一条
+        // 要发给人的消息」。以前这里把它们的文本也返回 → 微信端收到各种扩展
+        // 状态碎片（`setStatus` 的每况更新、`setTitle` 的会话标题）。
+        ExtUiMethod::SetStatus { .. }
+        | ExtUiMethod::SetWidget { .. }
+        | ExtUiMethod::SetTitle { .. }
+        | ExtUiMethod::SetEditorText { .. } => None,
     }
 }
 
