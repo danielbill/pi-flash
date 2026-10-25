@@ -4,7 +4,8 @@
 //! (models/credentials/tools — pi's domain) / `pi-flash-app-settings.json`
 //! (app appearance: theme, icon theme, fonts, plus lang/sound preferences,
 //! 006 界面设置) / `pi-flash-workspace.json` (runtime state: last-open
-//! session per workspace, globally-last workspace, window/dock layout).
+//! session per workspace, globally-last workspace, window/dock layout,
+//! per-project tab strip `__tabs`（启动恢复 tab 带）).
 //!
 //! IO rules: every write is atomic (tmp + rename via pi_link::config),
 //! each file is read once per process (in-process cache), and saves that
@@ -25,6 +26,14 @@ const WS_LANG_KEY: &str = "__lang";
 
 /// Persisted sound preference (legacy home, same migration as lang).
 const WS_SOUND_KEY: &str = "__sound";
+
+/// 内容区 tab 带存档（`__tabs`）：一个项目关停/离开时的自由 tab 清单 +
+/// 激活位 + 前台视图。启动恢复（startup::spawn_boot_restore）按 cwd 读回。
+const WS_TABS_KEY: &str = "__tabs";
+
+/// tab 带存档条目上限（防手滑开几十个终端后重启 = 几十个 conpty 进程，
+/// 启动铁律不许）。超限截尾（先保打开序靠前的）。
+pub const TABS_SAVE_CAP: usize = 32;
 
 /// Window bounds / maximized flag (schema landed in phase A, consumed by
 /// the phase-D shell).
@@ -286,6 +295,107 @@ fn purge_app_paths_in_map(map: &mut serde_json::Map<String, Value>, root: Option
         }
     });
     before - map.len()
+}
+
+// ---------------------------------------------------------------------------
+// 内容区 tab 带持久化（`__tabs`：{ ws_key: { tabs, active, chat } }）
+//
+// 启动恢复的第二条腿（会话之外）：文件/终端 tab 跨重启复原。终端进程不
+// 保活（PTY 随进程亡），恢复 = 按 cwd 重开；Changelog/市场/搜索页属瞬态
+// 页不持久化。写入时机 = tab 带变更点（开关/激活/拖位）+ remount 换项目
+// 归档 + 关窗，内容相同自动跳过写盘。
+// ---------------------------------------------------------------------------
+
+/// 一条持久化的 tab（pi-flash-weia）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SavedTab {
+    /// "file" | "term"
+    pub kind: String,
+    /// file = 文件绝对路径；term = 终端 cwd（重开时进程已亡，按 cwd 重生）
+    pub path: String,
+}
+
+/// 一个项目的 tab 带存档。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TabsState {
+    pub tabs: Vec<SavedTab>,
+    /// 关停时自由区激活 tab 下标（None = 未激活/越界，恢复时落默认）
+    pub active: Option<usize>,
+    /// 关停时内容区前台是会话 tab（false = 前台是激活 tab 的视图）
+    pub chat: bool,
+}
+
+/// 纯内核：从 map 读一个项目的 tab 带存档（无记录 = None）。
+fn tabs_state_from_map(map: &serde_json::Map<String, Value>, cwd: &str) -> Option<TabsState> {
+    let v = map.get(WS_TABS_KEY)?.get(&ws_key(cwd))?.clone();
+    let tabs: Vec<SavedTab> = v
+        .get("tabs")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let kind = e.get("k")?.as_str()?.to_string();
+                    let path = e.get("p")?.as_str()?.to_string();
+                    match kind.as_str() {
+                        "file" | "term" if !path.is_empty() => Some(SavedTab { kind, path }),
+                        _ => None,
+                    }
+                })
+                .take(TABS_SAVE_CAP)
+                .collect()
+        })
+        .unwrap_or_default();
+    let active = v
+        .get("active")
+        .and_then(|a| a.as_u64())
+        .map(|a| a as usize)
+        .filter(|a| *a < tabs.len());
+    let chat = v.get("chat").and_then(|b| b.as_bool()).unwrap_or(true);
+    Some(TabsState { tabs, active, chat })
+}
+
+/// 读取当前进程安装根无关的一个项目的 tab 带存档。
+pub fn tabs_state_for(cwd: &str) -> Option<TabsState> {
+    tabs_state_from_map(&memory(), cwd)
+}
+
+/// 纯内核：把 tab 带存档写进传入 map（空带 = 移除槽位）。**绝不碰全局
+/// 缓存/落盘**——落盘职责归调用方（测试用内核，不写任何盘）。
+fn tabs_state_into_map(map: &mut serde_json::Map<String, Value>, key: &str, state: &TabsState) {
+    let entry = map
+        .entry(WS_TABS_KEY.to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !entry.is_object() {
+        *entry = Value::Object(serde_json::Map::new());
+    }
+    if let Some(obj) = entry.as_object_mut() {
+        if state.tabs.is_empty() {
+            obj.remove(key);
+        } else {
+            let tabs: Vec<Value> = state
+                .tabs
+                .iter()
+                .take(TABS_SAVE_CAP)
+                .map(|t| serde_json::json!({ "k": t.kind, "p": t.path }))
+                .collect();
+            obj.insert(
+                key.to_string(),
+                serde_json::json!({
+                    "tabs": tabs,
+                    "active": state.active,
+                    "chat": state.chat,
+                }),
+            );
+        }
+    }
+}
+
+/// 按 ws_key（已规范化）写一个项目的 tab 带存档；空带 = 移除槽位。
+/// 调用方传 [`crate::services::workspace::same_ws_key`] 产物。
+pub fn save_tabs_state_key(key: &str, state: &TabsState) {
+    let mut map = memory();
+    tabs_state_into_map(&mut map, key, state);
+    set_memory(&map);
 }
 
 // ---------------------------------------------------------------------------
@@ -1382,5 +1492,62 @@ mod tests {
             "lang/sound live in app_settings.json, not the workspace map"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// tab 带存档：纯内核往返 + 空带删槽位 + 越界 active 过滤。
+    #[test]
+    fn tabs_state_roundtrip_and_prune() {
+        let mut map = serde_json::Map::new();
+        let state = TabsState {
+            tabs: vec![
+                SavedTab {
+                    kind: "file".into(),
+                    path: "D:\\a\\b.rs".into(),
+                },
+                SavedTab {
+                    kind: "term".into(),
+                    path: "D:\\a".into(),
+                },
+            ],
+            active: Some(1),
+            chat: false,
+        };
+        tabs_state_into_map(&mut map, "d:\\a", &state);
+        // 大小写/斜杠变体同槽（ws_key 归一）
+        let back = tabs_state_from_map(&map, "d:/A").unwrap();
+        assert_eq!(back, state);
+
+        // 越界 active 被读侧滤掉
+        tabs_state_into_map(
+            &mut map,
+            "d:\\a",
+            &TabsState {
+                active: Some(9),
+                ..state.clone()
+            },
+        );
+        let back = tabs_state_from_map(&map, "d:\\a").unwrap();
+        assert_eq!(back.active, None, "越界下标不采信");
+
+        // 空带 = 移除槽位（不留壳）
+        tabs_state_into_map(&mut map, "d:\\a", &TabsState::default());
+        assert!(tabs_state_from_map(&map, "d:\\a").is_none());
+        assert!(
+            map.get(WS_TABS_KEY)
+                .and_then(|v| v.as_object())
+                .is_some_and(|o| o.is_empty())
+        );
+
+        // 非法条目读侧丢弃（kind 不识 / 空 path）
+        map.insert(
+            WS_TABS_KEY.into(),
+            serde_json::json!({ "d:\\a": { "tabs": [
+                {"k": "file", "p": "D:\\x.rs"},
+                {"k": "market", "p": ""},
+                {"k": "term", "p": ""},
+            ], "active": 0, "chat": true }}),
+        );
+        let back = tabs_state_from_map(&map, "d:\\a").unwrap();
+        assert_eq!(back.tabs.len(), 1, "非法条目丢弃");
     }
 }

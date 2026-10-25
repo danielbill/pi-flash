@@ -27,6 +27,19 @@ pub(crate) const SPLASH_TIMEOUT: Duration = Duration::from_millis(3000);
 
 static SPLASH_PAINT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
+/// 主窗口句柄（main.rs 建窗即登记，pi-flash-weia）：启动恢复的终端 tab
+/// 要 window（测字宽/焦点），异步恢复任务经它进 window 上下文——与
+/// automation 同款模式。
+static MAIN_WINDOW: std::sync::OnceLock<gpui::AnyWindowHandle> = std::sync::OnceLock::new();
+
+pub(crate) fn note_main_window(handle: gpui::AnyWindowHandle) {
+    let _ = MAIN_WINDOW.set(handle);
+}
+
+pub(crate) fn main_window() -> Option<gpui::AnyWindowHandle> {
+    MAIN_WINDOW.get().copied()
+}
+
 /// 启动页首帧绘制时刻（splash 渲染分支调用；OnceLock 只记第一次）。
 pub(crate) fn mark_splash_painted() {
     let _ = SPLASH_PAINT.set(std::time::Instant::now());
@@ -780,10 +793,9 @@ pub(crate) enum BootTarget {
 /// 最近活动项目 = **最后一次 cwd 切换的项目**（cwd 切换总有时刻，简单可靠）。
 ///
 /// 时刻来源只有一个：`projects.json.last_opened_ms`——由 `register_project`
-/// 在**每次进入项目**时写入。切 cwd 的路径都汇到 `remount_workspace`
-/// （switch_project / 打开老会话 open_session / 跨项目会话直切
-/// switch_pool_rt），所以「最近打开」就是「最后切换到的 cwd」，不需要再聚
-/// 合会话活动；跨项目开文件不切 cwd（2026-12-06），不算进入项目。
+/// 在**每次进入项目**时写入。三条切 cwd 的路径都汇到 `remount_workspace`
+/// （switch_project / 打开老会话 open_session / 文件树切 sync_tree_to_file），
+/// 所以「最近打开」就是「最后切换到的 cwd」，不需要再聚合会话活动。
 /// 目录已删 / 落在应用自有目录（历史污染）的记录跳过。
 fn recent_project() -> Option<PathBuf> {
     pi_link::projects::project_records()
@@ -838,6 +850,16 @@ fn boot_target() -> BootTarget {
 pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let target = cx.background_spawn(async move { boot_target() }).await;
+        // tab 带存档先读（pi-flash-weia）：会话恢复路径会 set_content_view
+        // (Chat) 触发 persist_tabs——先读后写，落位不受污染；restore=off
+        // 不回放也不覆写（存档留给下次开启）
+        let saved_tabs = match &target {
+            BootTarget::Project { cwd, .. } if crate::services::workspace::startup_restore() => {
+                crate::services::workspace::tabs_state_for(&cwd.to_string_lossy())
+                    .filter(|s| !s.tabs.is_empty())
+            }
+            _ => None,
+        };
         let (active_cwd, active_session) = match &target {
             BootTarget::Project { cwd, session } => {
                 (Some(cwd.to_string_lossy().to_string()), session.clone())
@@ -845,6 +867,10 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
             BootTarget::None => (None, None),
         };
         let _ = this.update(cx, |chat, cx| {
+            // 启动期 tab 带落盘抑制：开偏空带/回放中间态不许写穿存档；
+            // 回放路（apply_saved_tabs）自持，结束即解；无存档的空带启动
+            // 也抑制到本块结束——避免把别名的存量存档误抹掉
+            chat.ws.tab_restore_busy = true;
             match target {
                 BootTarget::Project { cwd, session } => {
                     chat.ws.cwd = Some(cwd.clone());
@@ -871,6 +897,30 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
             }
             cx.notify();
         });
+        // —— tab 带回放（pi-flash-weia）：文件/终端/激活位/前台视图按存档
+        // 复原，在会话恢复之后（switch_to 会把前台拽回 Chat，回放覆盖它）。
+        // 终端重开要 window：经主窗口句柄进 window 上下文（automation 同款）。
+        // 句柄缺失（建窗早于本任务首帧，理论不可达）降级为只恢复文件 tab。
+        if let Some(saved) = saved_tabs {
+            let _ = cx.update(|cx| {
+                let _ = main_window().map(|win| {
+                    let _ = win.update(cx, |_view, window, cx| {
+                        let _ = this.update(cx, |chat, cx| {
+                            chat.apply_saved_tabs(&saved, Some(window), cx)
+                        });
+                    });
+                });
+                // 无窗口降级：文件 tab 不需要 window，照旧回放
+                let _ = this.update(cx, |chat, cx| {
+                    if !chat.ws.panel_tabs.is_empty() {
+                        return;
+                    }
+                    chat.apply_saved_tabs(&saved, None, cx);
+                });
+            });
+        } else {
+            let _ = this.update(cx, |chat, _| chat.ws.tab_restore_busy = false);
+        }
         // —— 会话清单装载（全部在后台线程，首帧只画空壳）：当前项目会话
         //（前 100；无项目态跳过）→ 「加载时间窗口」内活跃会话 → 项目分组 →
         // 集合内每个项目的项目上下文预装 → tail 预载 ——

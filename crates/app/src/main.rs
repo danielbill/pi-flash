@@ -369,6 +369,9 @@ fn main() {
                     },
                 )
                 .unwrap();
+            // 登记主窗口句柄（pi-flash-weia）：启动恢复的终端 tab 重开要
+            // window，异步恢复任务经它进 window 上下文（automation 同款）
+            startup::note_main_window(window_handle.into());
             // UI 自动化服务（pi-flash-2kq）：PI_FLASH_AUTOMATION=<port|auto|1>
             // 显式开启，缺省关闭——agent 调试用，不抢真实屏幕/鼠标。
             if let (Some(weak), Ok(spec)) =

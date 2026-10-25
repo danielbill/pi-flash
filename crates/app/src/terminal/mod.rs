@@ -1338,8 +1338,31 @@ impl Chat {
                 None => return,
             },
         };
-        let Some(tx) = self.ws.term_events.clone() else {
+        // 生 tab（PTY + alacritty 事件泵），不激活不聚焦——启动 tab 恢复
+        //（pi-flash-weia）共用这条路，回放后按存档统一复位激活位
+        if !self.spawn_terminal_tab(term_cwd, window, cx) {
+            cx.notify();
             return;
+        }
+        let tix = self.ws.panel_tabs.len() - 1;
+        self.activate_panel_tab(tix, cx);
+        self.set_content_view(ContentView::Term);
+        let focus = self.ws.terminals[self.ws.terminals.len() - 1].focus.clone();
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    /// 终端 tab 装载核心：spawn PTY + 入 terminals + 带尾挂 `PanelTab::Term`
+    ///（open_terminal 与启动恢复共用；**不激活、不切视图、不聚焦**，调用
+    /// 方自行接续）。失败落状态条返回 false。
+    pub(crate) fn spawn_terminal_tab(
+        &mut self,
+        term_cwd: PathBuf,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(tx) = self.ws.term_events.clone() else {
+            return false;
         };
         let (cell_w, line_h) = terminal::measure_cell(window);
         let font_size = terminal::font_size();
@@ -1347,30 +1370,17 @@ impl Chat {
         let id = self.ws.term_seq;
         let focus = cx.focus_handle();
         let proxy = terminal::Proxy { tab: id, tx };
-        match terminal::spawn_terminal(
-            id,
-            term_cwd.clone(),
-            cell_w,
-            line_h,
-            font_size,
-            focus,
-            proxy,
-            None,
-        ) {
+        match terminal::spawn_terminal(id, term_cwd, cell_w, line_h, font_size, focus, proxy, None)
+        {
             Ok(tab) => {
                 self.ws.terminals.push(tab);
                 self.ws.active_terminal = Some(self.ws.terminals.len() - 1);
                 self.ws.panel_tabs.push(PanelTab::Term(id));
-                let tix = self.ws.panel_tabs.len() - 1;
-                self.activate_panel_tab(tix, cx);
-                self.set_content_view(ContentView::Term);
-                let focus = self.ws.terminals[self.ws.terminals.len() - 1].focus.clone();
-                window.focus(&focus);
-                cx.notify();
+                true
             }
             Err(e) => {
                 self.set_status(format!("terminal spawn failed: {e}"), cx);
-                cx.notify();
+                false
             }
         }
     }

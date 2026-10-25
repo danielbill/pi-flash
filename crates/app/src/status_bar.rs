@@ -221,6 +221,9 @@ impl Chat {
         save_ui_state(&st);
         // 文件树状态（展开集合 + Pin 视图）跟着 UI 持久化时机落盘：关窗/退出
         self.archive_tree_state();
+        // tab 带存档跟着落盘：关窗时最后一 snapshot（pi-flash-weia；变更点
+        // 已实时落盘，这里只是关停前的最后保险）
+        self.persist_tabs();
     }
 
     pub(crate) fn toggle_panes(&mut self, cx: &mut gpui::Context<Self>) {
