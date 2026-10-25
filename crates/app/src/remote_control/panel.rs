@@ -29,10 +29,9 @@ use crate::ui::kit;
 
 use super::{QrState, TASK_RUNNING, wx_lang};
 
-/// 操作栏启停开关是否展示（2026-10-25 用户定夺：**隐藏但不删功能**——
-/// `RemoteControl::set_enabled` 仍是关停/启用服务的唯一入口：微信端
-/// `/启` `/停`、自动化 `wx.enable`、扫码成功都走它；服务状态机与 002 §4
-/// 启停通知不受展示与否影响）。
+/// 操作栏启停开关是否展示（2026-10-25 用户定夺：**隐藏**）。开关语义 =
+/// 开/关【微信通话】标签（002：开 = on，关 = off），功能不删：自动化
+/// `wx.enable` / 微信端 `/启` `/停` 走同一条开合标签的路。
 const SHOW_WX_SWITCH: bool = false;
 
 /// 二维码方框边长：码 49 模块 × 8px = 392 + 白衬 12×2 = 416。三态共用同一
@@ -168,16 +167,17 @@ pub(crate) fn wx_fn_bar(
     // 开关 + 说明文字（第 2 件，002 §1）：动作式文案——on 时点之则关停
     // 服务，off 时点之则启用；未创建时禁用（只能扫码创建）。
     //
-    // **暂不展示**（2026-10-25 用户定夺：别摆在操作栏上；功能一个都不删）：
-    // `set_enabled` 照旧是「关停/启用服务」的入口（微信端 `/启` `/停`、
-    // 自动化 `wx.enable`、扫码成功都走它），服务状态机与通知不受影响。
-    // 恢复展示 = 把 `SHOW_WX_SWITCH` 改 true（`.then(|| …)` 只在真展示时
-    // 构造控件，隐藏态零渲染成本）。
+    // **暂不展示**（2026-10-25 用户定夺）：开关 = 标签开合，功能不删。
+    // 恢复展示 = `SHOW_WX_SWITCH` 改 true（隐藏态零渲染成本）。
     let sw_group = SHOW_WX_SWITCH.then(|| {
         let on = has_token && running;
         let sw = kit::config_switch("wx-enable", &weak, on, !has_token, |c, cx| {
-            let on = !c.aux.remote.is_running();
-            c.aux.remote.set_enabled(on);
+            // 开关 = 标签开合（002：开 = on，关 = off）
+            if c.wx_tab_open() {
+                c.close_wx_tab(cx);
+            } else {
+                c.open_wx(cx);
+            }
             cx.notify();
         });
         let label = if on {
@@ -197,22 +197,6 @@ pub(crate) fn wx_fn_bar(
                     .child(SharedString::from(label)),
             )
     });
-    // 状态卡④（我方创建出错）/ 链路错误：有错才亮一行，没有就零占位。
-    // 数据源 = 服务状态机与健康度（静默失败是最坏的形态，§6 坑 4）。
-    let err_line: Option<SharedString> = chat
-        .aux
-        .remote
-        .start_error()
-        .map(str::to_string)
-        .or_else(|| {
-            chat.aux
-                .remote
-                .health()
-                .poll_error()
-                .map(|e| tr("remote.poll_error").replace("{err}", e))
-        })
-        .map(SharedString::from);
-
     // 新建会话（第 3 件，W1）：002 §3——弹确认框「丢弃当前会话创建新会话？」，
     // 确认后走 wx_rotate_session（= 微信 /新建 同语义）。运行中不开确认框，
     // 回执与微信命令同文案（防串线，ZCode botsService.ts:6039 同款）。
@@ -270,13 +254,6 @@ pub(crate) fn wx_fn_bar(
         .gap(px(4.))
         // 重新绑定视觉右边距 20px = 整行 pr8 + 钮 px8 + 这里 4
         .pr(px(4.))
-        .children(err_line.map(|e| {
-            div()
-                .mr(px(8.))
-                .text_size(crate::appearance::ui_size(11.5))
-                .text_color(rgb(t.danger))
-                .child(e)
-        }))
         .child(icon_btn)
         .children(sw_group)
         .child(new_session_btn)
@@ -592,11 +569,6 @@ impl Chat {
             cx.notify();
             return;
         };
-        // 微信线是单开 tab：看微信时 topbar 第一格继续显示桌面会话
-        if self.pool.active_key != key {
-            let active = self.pool.active_key.clone();
-            self.aux.remote.remember_desktop(&active);
-        }
         if std::path::Path::new(&key).is_file() {
             // **必须用 `_with(wx_cwd)`**：影子会话被过滤清单藏在会话列表外，
             // 通用 `open_session_detached` 的 cwd 兜底会落到桌面 cwd——微信
@@ -620,11 +592,9 @@ impl Chat {
     /// 关【微信通话】标签（× / 中键）：收起标签、收前台、收专属模态、落盘。
     /// 服务与影子会话**不动**——关的只是这个「窗口」。
     ///
-    /// 「收前台」的判据要把 **活跃会话就是微信线** 也算进去：前台可能是文件/
-    /// 终端页（`wx_ui()` 只报 Tab），但活跃位仍是微信线——标签一收就变成
-    /// 「有内容没入口」的幻影页（2026-10-25 真机）。
+    /// 关标签 = off：微信内容（功能页 / 微信会话）必须一起收掉，不留幻影。
     pub(crate) fn close_wx_tab(&mut self, cx: &mut gpui::Context<Self>) {
-        let front = self.wx_ui().front() || self.wx_line_active();
+        let front = self.wx_front_active();
         self.aux.remote.tab_open = false;
         // 标签与它的弹窗一体（2026-10-25 定夺）：微信专属模态（二维码 /
         // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码盖在
@@ -643,15 +613,16 @@ impl Chat {
         cx.notify();
     }
 
-    /// 关闭微信内容时收回前台（2026-10-25 用户定夺：标签与内容一体，不许
-    /// 「标签关了、微信会话页还挂着」）。去处优先级：
-    /// ① `desktop_key` 记忆的桌面会话（池内活着直接用；磁盘还在则唤回）
-    /// ② 失效/缺失 → 无项目态占位 `PLACEHOLDER_KEY`（恒在、永不 spawn、非
-    ///    微信线）：欢迎/空态由渲染层按 cwd 缺席自解释
-    /// `switch_to` 内含 `set_content_view(Chat)`（含 persist_tabs）。微信线
-    /// 服务与影子会话不动——关的只是这个「窗口」。
+    /// 关闭微信内容时收回前台（标签与内容一体，不许「标签关了、微信会话页
+    /// 还挂着」）。去处 = 当前项目「最后打开的会话」；没有会话/文件没了 →
+    /// [`Chat::landing_session`] 保底。微信会话与服务本身不动。
     pub(crate) fn wx_leave_front(&mut self, cx: &mut gpui::Context<Self>) {
-        let target = self.aux.remote.take_desktop().and_then(|k| {
+        let target = self
+            .ws
+            .cwd
+            .as_ref()
+            .and_then(|cwd| crate::services::workspace::get_last_open(&cwd.to_string_lossy()))
+            .and_then(|k| {
             if let Some(rt) = self.pool.runtimes.get(&k).cloned() {
                 Some(rt)
             } else if std::path::Path::new(&k).is_file() {
@@ -717,12 +688,10 @@ impl Chat {
         }
         self.aux.remote.clear_wx_line();
         self.aux.remote.set_wx_cwd(None); // 持久化一并清（重启不再恢复旧目录）
-        // 焦点在被删的影子会话上：挪回桌面会话，避免 rt() 悬空
+        // 焦点在被删的影子会话上：挪到落地会话，避免 rt() 悬空
         if old_active {
-            if let Some(dk) = self.aux.remote.desktop().map(str::to_string) {
-                if let Some(rt) = self.pool.runtimes.get(&dk).cloned() {
-                    self.switch_to(rt, cx);
-                }
+            if let Some(rt) = self.landing_session(cx) {
+                self.switch_to(rt, cx);
             }
         }
         self.aux.remote.tab_open = true;
@@ -753,10 +722,6 @@ impl Chat {
         }
         if let Some(key) = self.aux.remote.line.key.clone() {
             let in_setup = self.layout.content_view == crate::ContentView::Wx;
-            if in_setup && self.pool.active_key != key {
-                let active = self.pool.active_key.clone();
-                self.aux.remote.remember_desktop(&active);
-            }
             if in_setup {
                 if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
                     // switch_to 会把内容区带回 Chat 视图：微信线空草稿渲染

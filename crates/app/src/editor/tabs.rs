@@ -752,15 +752,10 @@ impl Chat {
     /// 当前 tab 带的存档快照（含激活位映射：瞬态页不进存档，原下标在
     /// 存档里可能前移）。
     pub(crate) fn snapshot_tabs_state(&self) -> services::workspace::TabsState {
-        // 【微信通话】两条腿都进存档（2026-10-25 事故修复）：① 标签开合态
-        // ——开着就还回来，用户点 × 关掉就存成关着；② 前台归属——功能页
-        // （ContentView::Wx）或 Chat 视图里的微信线会话。只存「前台视图 =
-        // Wx」一条腿的时候，收窄在微信会话页关窗口的那次，标签和线一起丢
-        //（重启变成孤儿「新会话」）。
-        // 判据只有 `Chat::wx_ui`：标签开合（存的）+ 前台归属（现算）
-        let ui = self.wx_ui();
-        let wx_open = services::workspace::wx_enabled() && ui.open();
-        let wx_front = ui.front();
+        // 【微信通话】存档只有一条腿：**标签开还是关**（002：开 = on，关 = off）。
+        // 开着就还回来、关掉就存成关着；恢复时由 `open_wx` 自己决定落到绑定页
+        // 还是会话页，不需要另存「前台归属」。
+        let wx_open = services::workspace::wx_enabled() && self.wx_tab_open();
         tabs_state_from_parts(
             &self.ws.panel_tabs,
             |id| {
@@ -773,7 +768,6 @@ impl Chat {
             self.ws.active_panel_tab,
             self.layout.content_view == ContentView::Chat,
             wx_open,
-            wx_front,
         )
     }
 
@@ -800,7 +794,7 @@ impl Chat {
         mut window: Option<&mut gpui::Window>,
         cx: &mut Context<Self>,
     ) {
-        if saved.tabs.is_empty() && !saved.wx_open && !saved.wx_front {
+        if saved.tabs.is_empty() && !saved.wx_open {
             return;
         }
         self.ws.tab_restore_busy = true;
@@ -839,14 +833,9 @@ impl Chat {
                 self.ws.active_terminal = Some(tix);
             }
         }
-        // 【微信通话】标签开合态复原（002：标签跨重启复原）。开着 =
-        // 还原标签（前台另算）；关着 = 保持关闭（启动初值就是关）。
+        // 【微信通话】标签复原（002 模块跳转：重启恢复 = 打开后前往绑定页
+        // 或会话页）。关着的标签就是 off，不做任何事。
         if saved.wx_open && services::workspace::wx_enabled() {
-            self.aux.remote.tab_open = true;
-        }
-        if saved.wx_front && self.aux.remote.tab_open {
-            // 前台是微信内容：整条链重走一遍（未绑定 → 绑定页；已绑定 →
-            // 续上影子会话的会话页），优先级高于 chat/激活 tab
             self.open_wx(cx);
         } else if saved.chat {
             self.set_content_view(ContentView::Chat);
@@ -889,7 +878,6 @@ fn tabs_state_from_parts(
     active: Option<usize>,
     chat_front: bool,
     wx_open: bool,
-    wx_front: bool,
 ) -> services::workspace::TabsState {
     let mut tabs = Vec::new();
     let mut orig_ix = Vec::new();
@@ -919,7 +907,6 @@ fn tabs_state_from_parts(
         active,
         chat: chat_front,
         wx_open,
-        wx_front,
     }
 }
 
@@ -970,24 +957,24 @@ mod tests {
         let term_cwd = |id: usize| (id == 7).then(|| PathBuf::from("D:\\a"));
 
         // 激活位指向瞬态 Search：存档里无对应条目 → active=None
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false, false, false);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false, false);
         assert_eq!(st.tabs.len(), 3, "瞬态页不进存档");
         assert_eq!(st.active, None, "指向瞬态页的激活位不采信");
         assert!(!st.chat);
 
         // 激活位指向 Term(7)：映射到存档下标 1；激活位是 term → chat=false
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false, false, false);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false, false);
         assert_eq!(st.active, Some(1));
         assert_eq!(st.tabs[1].kind, "term");
         assert_eq!(st.tabs[1].path, "D:\\a");
 
         // 前台是会话 → chat=true，激活位照存（回到会话一键）
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true, false, false);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true, false);
         assert!(st.chat);
         assert_eq!(st.active, Some(2), "瞬态页剪掉后 y.rs 前移到 2");
 
         // 未知终端 id（terminals 已丢）：条目整体跳过
-        let st = tabs_state_from_parts(&strip, |_| None, None, true, false, false);
+        let st = tabs_state_from_parts(&strip, |_| None, None, true, false);
         assert_eq!(st.tabs.len(), 2, "无 cwd 的终端不进存档");
 
         // CAP 截尾：截到 TABS_SAVE_CAP 条，不多不少
@@ -995,7 +982,7 @@ mod tests {
         let many: Vec<PanelTab> = (0..cap + 5)
             .map(|i| file(&format!("D:\\a\\f{i}.rs")))
             .collect();
-        let st = tabs_state_from_parts(&many, |_| None, None, true, false, false);
+        let st = tabs_state_from_parts(&many, |_| None, None, true, false);
         assert_eq!(st.tabs.len(), cap);
     }
 }

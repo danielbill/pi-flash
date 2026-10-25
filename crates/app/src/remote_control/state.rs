@@ -8,7 +8,7 @@
 //! - 会话指针 = 内存 `wx_session` + state 的 `session_key` + 过滤清单 path +
 //!   `wx_session_name` 四处 → [`WxLine`]（落盘只剩 `session_key` 一个字段）
 //! - UI 位置 = `wx_tab_closed` + `content_view == Wx` + `is_wx_line` + 存档两个
-//!   bool 五处编码 → [`WxUi`]（只有「标签开合」是存的，前台三态现算）
+//!   bool 五处编码 → 一个 `tab_open`（002：标签开 = on、关 = off，没有第三态）
 //! - state.json 每帧 `load()` 读盘解析（一次渲染最多 4 次 IO）→ [`Snapshot`]
 //!   进程内镜像，泵一拍刷一次，渲染只读镜像
 
@@ -98,12 +98,6 @@ impl Health {
         matches!(self, Health::Expired)
     }
 
-    pub(crate) fn poll_error(&self) -> Option<&str> {
-        match self {
-            Health::Poll(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 /// 微信线（影子会话）指针。`key` = runtime key（草稿 `draft-N` 或会话文件
@@ -126,35 +120,6 @@ impl WxLine {
 
     pub(crate) fn is(&self, key: &str) -> bool {
         self.key.as_deref() == Some(key)
-    }
-}
-
-/// 微信 UI 位置（取代 `wx_tab_closed` + `is_wx_line` + 存档两个 bool）。
-///
-/// **只有标签开合是存的状态**（`RemoteControl::tab_open`）；前台三态每帧从
-/// 路由状态现算，见 [`crate::Chat::wx_ui`]——所以标签、前台、归属不可能
-/// 各说各话（2026-10-25 事故的形状）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WxUi {
-    /// 标签收起（功能收在菜单里）
-    Closed,
-    /// 标签开着，但前台不是微信（在桌面会话 / 文件 / 终端…）
-    Tab,
-    /// 前台是微信功能页（绑定页 / 设置会话页）
-    Page,
-    /// 前台是微信线会话
-    Line,
-}
-
-impl WxUi {
-    /// 标签展开着（Closed 以外）。
-    pub(crate) fn open(self) -> bool {
-        self != WxUi::Closed
-    }
-
-    /// 前台是微信内容（功能页或微信线会话）。
-    pub(crate) fn front(self) -> bool {
-        matches!(self, WxUi::Page | WxUi::Line)
     }
 }
 

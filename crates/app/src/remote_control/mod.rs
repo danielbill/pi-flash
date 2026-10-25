@@ -41,7 +41,7 @@ use wxprobe::command::BotCommand;
 use wxprobe::extui::{self, ExtUiReply};
 use wxprobe::format::messages::{Lang, t};
 
-use self::state::{Health, Service, Snapshot, WxLine, WxUi};
+use self::state::{Health, Service, Snapshot, WxLine};
 use crate::session::runtime::RemoteSend;
 
 /// 启停通知（002 §4，W4）：每次启用/关停各一条。⚡ 顶替【pf icon】——
@@ -57,14 +57,6 @@ const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi �
 /// 未满足时，需要会话的动作统一引导设置，不建会话、不投递（用户定夺）。
 const NO_SETUP: &str = "请先设置项目和模型：回复 **/项目** 选择工作区、**/模型** 选择模型后再发消息。";
 
-/// 绑定码无效的回执。ZCode 原句写的是「在 zcode UI 重新生成」—— 品牌换成
-/// 本应用（2026-10-07 用户拍板，与 `/帮助` 标题同一决定），故**不走文案表**。
-const BIND_INVALID: &[(&str, &str, &str)] = &[(
-    "绑定码无效或已过期，请在 pi-flash 设置页重新生成。",
-    "绑定码无效或已过期，请在 pi-flash 设置页重新生成。",
-    "The bind code is invalid or expired. Generate a new one in the pi-flash settings page.",
-)];
-
 /// wxprobe 文案表（002 的微信侧用词）的唯一入口。语言索引只在这里读一次——
 /// 旧实现 `wx_lang()` 在 10 个地方各写一遍。
 fn wx_lang() -> Lang {
@@ -76,13 +68,6 @@ fn wx_text(s: &str) -> String {
     t(wx_lang(), s)
 }
 
-fn bind_invalid(lang: Lang) -> String {
-    let e = &BIND_INVALID[0];
-    match lang {
-        Lang::En => e.2.to_string(),
-        _ => e.0.to_string(),
-    }
-}
 
 /// ZCode `taskRunning`。`/新建` 与 `/task`（列表、切换）共用 —— 同一个语义
 /// 同一句话，ZCode 三处也都是 `msg(locale, "taskRunning")`。
@@ -108,8 +93,6 @@ enum Action {
     OpenMenu(menu::MenuKind, Option<String>),
     /// `/思考 <level>` 直接设置（不弹菜单）
     SetThink(String),
-    /// `/bind <code>` —— 需要 Chat 比对并回执
-    Bind(String),
     /// 菜单里选中了一项
     Select {
         kind: menu::MenuKind,
@@ -183,25 +166,13 @@ pub struct RemoteControl {
     line: WxLine,
     /// state.json 的进程内镜像：泵一拍刷一次，**渲染只读镜像**（不碰盘）
     snap: Snapshot,
-    /// 用户开关意图（002 §3 第 2 件「switch + 说明文字」）：on = 允许服务跑；
-    /// **能不能真跑还要看窗口激活**（002 §关于微信通话服务激活：不激活窗口
-    /// 就不后台收消息，这是设计取舍）。
-    enabled: bool,
-    /// 【微信通话】标签是否展开——**唯一存下来的 UI 位**。前台三态
-    /// （Closed/Tab/Page/Line）由 [`crate::Chat::wx_ui`] 现算，不再有第二份
-    /// 状态可以撒谎（2026-10-25 事故：标签藏了、前台还停在微信页）。
+    /// 【微信通话】标签是否展开——**on/off 的唯一状态**（002：标签开 = on，
+    /// 关 = off；没有「开关」「前台归属」这些第二真相源）。
     pub(crate) tab_open: bool,
-    /// 最近一个**非微信线**的活跃会话 key：微信线是单开 tab，看微信时
-    /// topbar 第一格（会话 tab）继续显示桌面会话；关标签也回它。
-    /// **只许走 remember/take/desktop 三个方法**——别处直接读写会让「回桌面」
-    /// 的去向莫名其妙。
-    desktop_key: Option<String>,
     /// 设置页扫码面板状态（url 与阶段合一）
     pub qr: QrState,
     /// 扫码 worker 的回程（200ms 泵里 drain）
     qr_rx: Option<std::sync::mpsc::Receiver<wxprobe::register::QrEvent>>,
-    /// `/bind <code>` 后钉住的会话 runtime key（§4.2 active_session）
-    pub bound: Option<String>,
     /// 活跃会话这会儿是否在跑（泵每拍回填；`route()` 没有 `cx`，拿不到
     /// runtime——`/task` 的两个守卫要读它）。
     pub(crate) active_running: bool,
@@ -212,16 +183,11 @@ pub struct RemoteControl {
     /// 当前 content index 的文本块
     cur_ix: Option<usize>,
     cur_text: String,
-    /// 回复缓冲 + 来源会话 key。出站门对桌面与微信线都放行，换来源时必须
-    /// 先把旧来源冲干净，否则两条线的回复会拼成一条发出去。
+    /// 回复缓冲（只装微信线的回复，不存在「来源切换」）
     buf: String,
-    buf_src: Option<String>,
     /// 待发的启停通知：`Some(true)` = 待发「已开启」，`Some(false)` = 待发
     /// 「已关闭」。**由服务状态迁移点置位**（不再靠每拍沿检测 + 手工造假前态）。
     notice: Option<bool>,
-    /// 「首进继承桌面 cwd」只许一次（002 §6：[新建会话] 清空 cwd 后不得被
-    /// 设置页的「为空即继承」悄悄填回，否则更换工作目录失效）。
-    pub(crate) cwd_inherited: bool,
     /// token 比对节流闸（换绑感知 1s 一次足够，别每拍读盘）
     token_check_at: Option<std::time::Instant>,
     /// 是否落盘。测试实例（[`Self::detached`]）= false：不碰真实 state 文件、
@@ -233,39 +199,33 @@ impl RemoteControl {
     pub fn new() -> Self {
         let mut snap = Snapshot::empty();
         snap.refresh(true);
-        let cwd_inherited = snap.wx_cwd.is_some();
-        Self::with_snapshot(snap, true, cwd_inherited)
+        Self::with_snapshot(snap, true)
     }
 
     /// 测试实例：不读盘、不落盘、不起真渠道。生产分支里不再有 `cfg!(test)`
     /// 分叉——测试想知道的行为就是生产行为，只是没有副作用。
     #[cfg(test)]
     pub(crate) fn detached() -> Self {
-        Self::with_snapshot(Snapshot::empty(), false, false)
+        Self::with_snapshot(Snapshot::empty(), false)
     }
 
-    fn with_snapshot(snap: Snapshot, persist: bool, cwd_inherited: bool) -> Self {
+    fn with_snapshot(snap: Snapshot, persist: bool) -> Self {
         Self {
             // 待启动：泵一拍按「开关 on 且窗口激活」决定起不起（002 §服务激活）
-            enabled: true,
             svc: Service::Pending,
             health: Health::Ok,
             line: WxLine::default(),
             snap,
             tab_open: false,
-            desktop_key: None,
             qr: QrState::Idle,
             qr_rx: None,
-            bound: None,
             active_running: false,
             pending_menu: None,
             pending: None,
             cur_ix: None,
             cur_text: String::new(),
             buf: String::new(),
-            buf_src: None,
             notice: None,
-            cwd_inherited,
             token_check_at: None,
             persist,
         }
@@ -273,15 +233,10 @@ impl RemoteControl {
 
     // ── 服务状态机（唯一启动/关停路径）──────────────────────────────
 
-    /// 泵一拍：服务要不要在跑 = **用户开关 on 且窗口激活**（002 §关于微信通话
-    /// 服务激活：低频功能，不激活桌面窗口就不后台收消息，这是设计取舍——
-    /// 「哪怕设置为 on」）。顺带采样健康度。
-    ///
-    /// 关窗 = 静默停收发（**不是**「关停服务」，不发关停通知），重开窗口下一
-    /// 拍自动重连；`Failed` 到点重试也只在激活期间进行。
-    /// 返回 true = 有 UI 可见变化（调用方统一 notify 一次）。
-    fn step_service(&mut self, activated: bool) -> bool {
-        let want = self.enabled && activated;
+    /// 泵一拍：**标签开 = on，标签关 = off**（002 服务激活：不激活窗口就不后台
+    /// 收消息）。顺带采样健康度。返回 true = 有 UI 可见变化。
+    fn step_service(&mut self, on: bool) -> bool {
+        let want = on;
         let mut changed = false;
         if !want {
             if self.svc.is_running() {
@@ -522,40 +477,10 @@ impl RemoteControl {
         changed
     }
 
-    /// 当前会话的绑定码（6 位数字）。由设置页展示、用户在微信里 `/bind` 回填。
-    ///
-    /// 用 runtime key 派生 —— 同一会话稳定、换会话即变；**不入状态文件**
-    /// （draft 本来就是本运行期的，钉它没有意义）。
-    pub fn bind_code(&self, active_key: &str) -> String {
-        let mut h: u32 = 0x811c9dc5; // FNV-1a 32
-        for b in active_key.as_bytes() {
-            h ^= u32::from(*b);
-            h = h.wrapping_mul(0x0100_0193);
-        }
-        format!("{:06}", (u64::from(h) % 1_000_000))
-    }
-
-    /// 校验并接受绑定码；成功时把 `active_key` 钉住（§4.2 `active_session`）。
-    pub fn accept_bind(&mut self, code: &str, active_key: &str) -> bool {
-        let want = self.bind_code(active_key);
-        if code.trim() != want {
-            return false;
-        }
-        self.bound = Some(active_key.to_string());
-        true
-    }
-
-    /// 入站/出站的投递目标：**微信线**优先（bot 语境，独立于桌面选中态，
-    /// 对齐 ZCode「bot 自己的 activeTask」）；`/bind` 授权记录次之；都没有
-    /// （线还没建）回落活跃会话。
+    /// 投递目标 = 微信会话（唯一）；会话还没建时回落活跃（随后被
+    /// `wx_chat_ready` 的门挡住，不会往桌面会话投递）。
     pub(crate) fn target_key(&self, active: &str) -> String {
-        if let Some(k) = self.line.key() {
-            return k.to_string();
-        }
-        if let Some(k) = &self.bound {
-            return k.clone();
-        }
-        active.to_string()
+        self.line.key().unwrap_or(active).to_string()
     }
 
     /// 认领语义锚点（**仅测试**）：线为空时钉住给定 key。运行时建线走
@@ -567,41 +492,9 @@ impl RemoteControl {
         }
     }
 
-    /// 开/关渠道（操作栏开关 · 自动化 `wx.enable` · 微信端 `/启` `/停`）。
-    ///
-    /// 开 = 落 `Pending`，泵下一拍起（仍要求窗口激活；无 token 起不来 →
-    /// `Failed` 文案 + 30s 后重试，不留死状态）；关 = 句柄释放（`Drop` →
-    /// **join 两条线程 + 释放轮询锁**，P4 验收：关停即停线程，无悬挂），
-    /// 并给微信端发一条「通信已关闭」（002 §4）。
-    pub fn set_enabled(&mut self, on: bool) {
-        self.enabled = on;
-        if on {
-            self.svc = Service::Pending;
-            self.notice = None;
-            self.health = Health::Ok;
-        } else {
-            self.stop(true);
-        }
-    }
-
     /// 渠道是否活着（设置页开关的回显）。
     pub fn is_running(&self) -> bool {
         self.svc.is_running()
-    }
-
-    /// 记下桌面会话（切进微信线之前调用）。
-    pub(crate) fn remember_desktop(&mut self, key: &str) {
-        self.desktop_key = Some(key.to_string());
-    }
-
-    /// 取走桌面会话记忆（关微信内容、回桌面的唯一去处来源）。
-    pub(crate) fn take_desktop(&mut self) -> Option<String> {
-        self.desktop_key.take()
-    }
-
-    /// 看一眼桌面会话记忆（topbar 第一格的标题来源）。
-    pub(crate) fn desktop(&self) -> Option<&str> {
-        self.desktop_key.as_deref()
     }
 
     /// 盘镜像里是否已有 bot token（面板三态 / 绑定段判据）。
@@ -627,11 +520,6 @@ impl RemoteControl {
     /// 影子会话名（`pf-wxbot-*`；FileBound 时补进过滤清单用）。
     pub(crate) fn line_name(&self) -> Option<&str> {
         self.line.name.as_deref()
-    }
-
-    /// 失败文案（状态卡④）；成功即清（`Service` 状态本身就是清）。
-    pub(crate) fn start_error(&self) -> Option<&str> {
-        self.svc.error()
     }
 
     /// 重启判定节流用的记录（泵不需要直接读）。
@@ -819,7 +707,8 @@ impl RemoteControl {
             BotCommand::Help => Action::Send(pipeline::help_text(lang)),
             BotCommand::Status => Action::Status,
             BotCommand::New => Action::New,
-            BotCommand::Bind { code } => Action::Bind(code),
+            // `/bind` 绑定码不在设计里（绑定只走扫码）：回执未启用，不静默
+            BotCommand::Bind { .. } => Action::Send(t(lang, CMD_NOT_ENABLED)),
             BotCommand::ThoughtLevelList => Action::OpenMenu(menu::MenuKind::Think, None),
             BotCommand::ThoughtLevelSet { value } => Action::SetThink(value),
             BotCommand::ModelList => Action::OpenMenu(menu::MenuKind::ModelProvider, None),
@@ -864,25 +753,16 @@ impl RemoteControl {
 
     /// 流式事件 → 待发文本。**返回的每一段都要调用方发出去**。
     ///
-    /// `key` = 事件来源会话；与 [`Self::buf_src`] 不同源时先把旧来源冲干净
-    /// （桌面活跃会话与微信线并行流式，回复各回各家）。
+    /// 只接微信会话自己的流式事件（出站门在 `session::pool` 按会话过滤）。
     ///
     /// flush 边界严格照 ZCode / §6 坑 1：
     /// * `TextDelta` 只累积，**不发**（provider chunk 常按词或子词到达）
     /// * `TextEnd` 用权威内容**覆盖**当前块（纠正丢 delta）
     /// * `ToolCallStart` → force flush（真正的发送边界之一）
     /// * 轮次结束由 [`Self::on_running`] 的下降沿触发
-    pub fn on_assistant(
-        &mut self,
-        ev: &pi_link::protocol::AssistantEvent,
-        key: &str,
-    ) -> Vec<String> {
+    pub fn on_assistant(&mut self, ev: &pi_link::protocol::AssistantEvent) -> Vec<String> {
         use pi_link::protocol::AssistantEvent as E;
         let mut out = Vec::new();
-        if self.buf_src.as_deref() != Some(key) {
-            out.extend(self.flush());
-            self.buf_src = Some(key.to_string());
-        }
         match ev {
             E::TextDelta {
                 content_index,
@@ -1079,29 +959,25 @@ impl crate::Chat {
         self.aux.remote.line.is(&self.pool.active_key)
     }
 
-    /// 微信 UI 现状。**只有标签开合是存的**（`RemoteControl::tab_open`），
-    /// 前台三态每帧现算——所以标签、前台、归属不可能各说各话
-    /// （2026-10-25 事故：标签被藏、前台还停在微信页 = 孤儿页）。
-    pub(crate) fn wx_ui(&self) -> WxUi {
-        if !self.aux.remote.tab_open {
-            return WxUi::Closed;
-        }
-        match self.layout.content_view {
-            crate::ContentView::Wx => WxUi::Page,
-            crate::ContentView::Chat if self.wx_line_active() => WxUi::Line,
-            _ => WxUi::Tab,
-        }
+    /// 【微信通话】标签开着？（002：标签开 = on，关 = off，没有第三态）
+    pub(crate) fn wx_tab_open(&self) -> bool {
+        self.aux.remote.tab_open
+    }
+
+    /// 前台是微信内容：功能页（绑定/设置会话），或正在看的微信会话。
+    pub(crate) fn wx_front_active(&self) -> bool {
+        self.layout.content_view == crate::ContentView::Wx || self.wx_line_active()
     }
 
     /// 展开【微信通话】标签（幂等，不动前台）。独立工作目录首进从桌面 cwd
     /// 继承一次（002 模块独立：此后两边 cwd 互不联动）。
     pub(crate) fn wx_open_tab(&mut self) {
         self.aux.remote.tab_open = true;
-        if !self.aux.remote.cwd_inherited && self.aux.remote.snap.wx_cwd.is_none() {
+        // 002 独立工作目录：为空就继承当前项目一次；此后两边互不联动
+        if self.aux.remote.wx_cwd().is_none() {
             if let Some(cwd) = self.ws.cwd.clone() {
                 self.aux.remote.set_wx_cwd(Some(cwd));
             }
-            self.aux.remote.cwd_inherited = true;
         }
     }
 
@@ -1163,21 +1039,6 @@ impl crate::Chat {
         });
     }
 
-    /// 不变量：**标签收起时，微信线不得占着活跃位或前台内容**。
-    ///
-    /// 幻影页的最后一道防线（2026-10-25 真机：只有内容没入口）。正常路径由
-    /// `close_wx_tab` 收前台；这里兜住「落地失败 / 状态半途被改」的每一拍。
-    fn wx_enforce_closed_invariant(&mut self, cx: &mut gpui::Context<Self>) -> bool {
-        if self.aux.remote.tab_open {
-            return false;
-        }
-        if !self.wx_line_active() && self.layout.content_view != crate::ContentView::Wx {
-            return false;
-        }
-        self.wx_leave_front(cx);
-        true
-    }
-
     // ── 泵：每拍五个幂等 step，末尾统一 notify 一次 ──────────────────
 
     /// 200ms 一拍（`spawn_wx_pump`）。旧实现是 120 行流水账，每段各自
@@ -1186,9 +1047,8 @@ impl crate::Chat {
         let mut dirty = false;
         // ① 盘 → 镜像（mtime 没变就不真读；渲染只读镜像，永不碰盘）
         dirty |= self.aux.remote.snap.refresh(false);
-        // ② 服务状态机：用户开关 on 且窗口激活才在跑（002 §服务激活）
-        let activated = self.aux.remote.tab_open;
-        dirty |= self.aux.remote.step_service(activated);
+        // ② 服务状态机：标签开 = on / 关 = off（002 服务激活）
+        dirty |= self.aux.remote.step_service(self.aux.remote.tab_open);
         // ③ 换绑检测：扫码换了 token → 停旧句柄，下一拍用新 token 重拉
         self.aux.remote.force_restart_if_token_changed();
         // ④ 入站 → 线就位 → 逐批执行（标签关着时只在有入站时才建线）
@@ -1204,9 +1064,7 @@ impl crate::Chat {
             self.wx_run_batches(&batches, cx);
             dirty = true;
         }
-        // ⑤ 幻影页防线：标签收起时微信线不许占前台/活跃位
-        dirty |= self.wx_enforce_closed_invariant(cx);
-        // ⑥ 启停通知派发（对端路由未就绪则留到下一拍，迟到不丢）
+        // ⑤ 启停通知派发（对端路由未就绪则留到下一拍，迟到不丢）
         self.aux.remote.flush_notice();
         if dirty {
             cx.notify();
@@ -1225,18 +1083,8 @@ impl crate::Chat {
             .unwrap_or(false);
         // 回填给 route()：`/task` 的两个守卫要读它（route 拿不到 cx）
         self.aux.remote.active_running = running;
-        // 冲刷看**缓冲来源**的运行态：桌面流式中的文本不该被 200ms 一拍
-        // 冲成碎片（两条线并行流式时各回各家）。
-        let src_running = self
-            .aux
-            .remote
-            .buf_src
-            .as_deref()
-            .and_then(|k| self.pool.runtimes.get(k))
-            .map(|rt| rt.read(cx).agent_running)
-            .unwrap_or(running);
         let mut sent = false;
-        for text in self.aux.remote.on_running(src_running) {
+        for text in self.aux.remote.on_running(running) {
             self.aux.remote.send(&text);
             sent = true;
         }
@@ -1336,16 +1184,6 @@ impl crate::Chat {
                 }
             }
             Action::OpenMenu(kind, sub) => self.open_wx_menu(kind, sub, cx),
-            Action::Bind(code) => {
-                let lang = wx_lang();
-                if self.aux.remote.accept_bind(&code, &self.pool.active_key) {
-                    self.aux
-                        .remote
-                        .send(&t(lang, "绑定成功。发送 **/帮助** 查看可用命令。"));
-                } else {
-                    self.aux.remote.send(&bind_invalid(lang));
-                }
-            }
             Action::SetThink(level) => {
                 self.set_thinking_level(&level, cx);
                 self.reply_status(cx);
@@ -1574,10 +1412,10 @@ impl crate::Chat {
             .unwrap_or(false)
     }
 
-    /// 微信设置会话上下文：功能页前台，或活跃会话即微信线。项目选择在此
-    /// 上下文一律写独立工作目录 `wx_cwd`（禁止联动桌面 cwd）。
+    /// 微信设置会话上下文：前台是微信内容。项目选择在此上下文一律写
+    /// 独立工作目录 `wx_cwd`（禁止联动桌面 cwd）。
     pub(crate) fn wx_setup_ctx(&self) -> bool {
-        self.wx_ui().front()
+        self.wx_front_active()
     }
 
     /// 微信聊天放行条件（002 §2，用户定夺：项目和模型都是必选项）：
@@ -1779,27 +1617,16 @@ mod tests {
     }
 
     #[test]
-    fn set_enabled_drives_the_service_state_machine() {
-        // 开 = 落 Pending（泵下一拍起）；关 = 落 Stopped（本进程不再自动拉起）。
-        // 旧实现这两个意图挤在 boot_attempted + wants_start 两个 bool 里。
+    fn service_follows_the_tab_switch() {
+        // 002：标签开 = on，标签关 = off（没有第二个开关字段）
         let mut rc = RemoteControl::detached();
         assert!(!rc.is_running(), "默认没在跑");
-        rc.set_enabled(true);
-        assert!(matches!(rc.svc, Service::Pending), "开启 = 待启动");
-        assert!(rc.svc.wants_start(std::time::Instant::now()));
-        rc.set_enabled(false);
-        assert!(matches!(rc.svc, Service::Stopped), "关停 = 用户显式表态");
-        assert!(
-            !rc.svc.wants_start(std::time::Instant::now()),
-            "关停后泵不得自动重开"
-        );
-        // 窗口不激活时，「开关 on」也不跑（002 §服务激活：低频功能不后台收消息）
-        rc.set_enabled(true);
+        // 标签关：不启动
         rc.step_service(false);
-        assert!(
-            matches!(rc.svc, Service::Pending),
-            "未激活窗口绝不启动渠道"
-        );
+        assert!(matches!(rc.svc, Service::Pending), "标签关 = off，不启动渠道");
+        // 标签开：进入待启动（真起渠道要 token，测试实例不起线程）
+        rc.step_service(true);
+        assert!(!matches!(rc.svc, Service::Pending), "标签开 = on，泵会去启动");
     }
 
     #[test]
@@ -1832,49 +1659,13 @@ mod tests {
     }
 
     #[test]
-    fn bind_code_is_stable_six_digits_and_session_scoped() {
-        let rc = RemoteControl::detached();
-        let a = rc.bind_code("draft-1");
-        assert_eq!(a.len(), 6, "6 位");
-        assert!(
-            a.chars().all(|c| c.is_ascii_digit()),
-            "纯数字，避免大小写歧义"
-        );
-        assert_eq!(a, rc.bind_code("draft-1"), "同会话稳定");
-        assert_ne!(a, rc.bind_code("draft-2"), "不同会话必须不同");
-    }
-
-    #[test]
-    fn bind_accepts_match_rejects_others_and_pins_target() {
-        let mut rc = RemoteControl::detached();
-        let code = rc.bind_code("draft-7");
-        assert!(
-            !rc.accept_bind("000000", "draft-7") || code == "000000",
-            "错码不绑"
-        );
-        assert!(rc.bound.is_none());
-
-        assert!(rc.accept_bind(&code, "draft-7"));
-        assert_eq!(rc.bound.as_deref(), Some("draft-7"), "授权记录要留着");
-    }
-
-    #[test]
-    fn routing_prefers_wx_session_then_bound_then_active() {
-        // 微信默认会话（bot 语境）优先 —— 独立于桌面选中态；
-        // /bind 记录次之；都没有 → 活跃会话（认领前的兑底）。
+    fn routing_targets_the_wx_session_only() {
+        // 投递目标 = 微信会话（唯一）；还没建会时才回落活跃——回落只是
+        // 兜底，真正的门在 `wx_chat_ready`，不会往桌面会话投递。
         let mut rc = RemoteControl::detached();
         assert_eq!(rc.target_key("draft-9"), "draft-9");
-
-        // 认领后固定指向微信线，桌面切换不再牵动
         rc.claim_default_session("draft-9");
-        assert_eq!(rc.target_key("draft-11"), "draft-9", "认领后不跟桌面活跃");
-
-        // /bind 是授权记录，不抢占微信线的路由地位（ZCode：绑 workspace，
-        // 选会话走 /task）；此处仅验证优先级次序
-        rc.line.key = None;
-        let code = rc.bind_code("draft-7");
-        assert!(rc.accept_bind(&code, "draft-7"));
-        assert_eq!(rc.target_key("draft-11"), "draft-7");
+        assert_eq!(rc.target_key("draft-11"), "draft-9", "建线后不跟桌面活跃");
     }
 
     #[test]
@@ -1967,9 +1758,9 @@ mod tests {
     fn deltas_accumulate_and_send_nothing() {
         // §6 坑1：provider chunk 常按词或子词到达，非终态必须留在缓冲里
         let mut rc = RemoteControl::detached();
-        assert!(rc.on_assistant(&td(0, "你好"), "s").is_empty());
-        assert!(rc.on_assistant(&td(0, "，我是"), "s").is_empty());
-        assert!(rc.on_assistant(&td(0, "助手"), "s").is_empty());
+        assert!(rc.on_assistant(&td(0, "你好")).is_empty());
+        assert!(rc.on_assistant(&td(0, "，我是")).is_empty());
+        assert!(rc.on_assistant(&td(0, "助手")).is_empty());
         assert_eq!(rc.cur_text, "你好，我是助手");
         assert!(rc.buf.is_empty());
     }
@@ -1978,11 +1769,11 @@ mod tests {
     fn text_end_overrides_accumulated_deltas() {
         // TextEnd 是权威内容，用来纠正丢 delta；但不能清掉上一块
         let mut rc = RemoteControl::detached();
-        rc.on_assistant(&td(0, "块一"), "s");
-        rc.on_assistant(&te(0, "块一（修正）"), "s");
+        rc.on_assistant(&td(0, "块一"));
+        rc.on_assistant(&te(0, "块一（修正）"));
         assert_eq!(rc.cur_text, "块一（修正）");
         // 下一块的 delta 累加在后面，不被 TextEnd 抹掉
-        rc.on_assistant(&td(1, "块二"), "s");
+        rc.on_assistant(&td(1, "块二"));
         assert_eq!(rc.cur_text, "块一（修正）块二");
     }
 
@@ -1990,31 +1781,17 @@ mod tests {
     fn tool_call_start_force_flushes() {
         // 真正的发送边界之一 = tool_call（§6 坑1）
         let mut rc = RemoteControl::detached();
-        rc.on_assistant(&td(0, "先跑个命令"), "s");
-        let out = rc.on_assistant(&tool_start(), "s");
+        rc.on_assistant(&td(0, "先跑个命令"));
+        let out = rc.on_assistant(&tool_start());
         assert_eq!(out, vec!["先跑个命令".to_string()]);
         assert!(rc.cur_text.is_empty());
         assert!(rc.buf.is_empty(), "flush 后缓冲必须清空");
     }
 
     #[test]
-    fn source_switch_flushes_previous_buffer() {
-        // 双源防串线（2026-10-23 出站门放开后）：桌面活跃会话与微信线可能
-        // 并行流式——换来源必须先把旧来源冲干净，两个会话的回复各回各家，
-        // 不能拼成一条。
-        let mut rc = RemoteControl::detached();
-        rc.on_assistant(&td(0, "微信线的回复"), "wx");
-        let out = rc.on_assistant(&td(0, "桌面会话的"), "desktop");
-        assert_eq!(out, vec!["微信线的回复".to_string()], "切换来源先冲旧来源");
-        assert_eq!(rc.cur_text, "桌面会话的", "新来源从零累积");
-        let out = rc.on_assistant(&tool_start(), "desktop");
-        assert_eq!(out, vec!["桌面会话的".to_string()]);
-    }
-
-    #[test]
     fn idle_flush_drains_remaining_text_once() {
         let mut rc = RemoteControl::detached();
-        rc.on_assistant(&td(0, "最终答复"), "s");
+        rc.on_assistant(&td(0, "最终答复"));
         assert!(rc.on_running(true).is_empty(), "运行中不发");
         assert_eq!(rc.on_running(false), vec!["最终答复".to_string()]);
         assert!(rc.on_running(false).is_empty(), "只发一次，不重复");
@@ -2024,8 +1801,8 @@ mod tests {
     fn nothing_is_sent_from_an_empty_buffer() {
         let mut rc = RemoteControl::detached();
         assert!(rc.on_running(false).is_empty());
-        assert!(rc.on_assistant(&tool_start(), "s").is_empty());
-        rc.on_assistant(&td(0, "   "), "s");
+        assert!(rc.on_assistant(&tool_start()).is_empty());
+        rc.on_assistant(&td(0, "   "));
         assert!(rc.on_running(false).is_empty(), "纯空白不发");
     }
 
@@ -2033,7 +1810,7 @@ mod tests {
     fn long_reply_is_split_into_chunks() {
         let mut rc = RemoteControl::detached();
         let big: String = "很".repeat(9000);
-        rc.on_assistant(&td(0, &big), "s");
+        rc.on_assistant(&td(0, &big));
         let out = rc.on_running(false);
         assert!(out.len() >= 3, "9000 字应切成多段，实际 {}", out.len());
         assert!(out.iter().all(|s| s.chars().count() <= 4000));
@@ -2044,23 +1821,23 @@ mod tests {
     #[test]
     fn startup_banner_is_swallowed_not_sent() {
         let mut rc = RemoteControl::detached();
-        rc.on_assistant(&te(0, "🔌 MCP: 1 server enabled"), "s");
-        rc.on_assistant(&td(1, "你好，我是助手"), "s");
+        rc.on_assistant(&te(0, "🔌 MCP: 1 server enabled"));
+        rc.on_assistant(&td(1, "你好，我是助手"));
         let out = rc.on_running(false);
         assert_eq!(out, vec!["你好，我是助手".to_string()], "横幅不得出站");
 
         let mut rc2 = RemoteControl::detached();
-        rc2.on_assistant(&te(0, "MCP: 2 servers enabled"), "s");
+        rc2.on_assistant(&te(0, "MCP: 2 servers enabled"));
         assert!(rc2.on_running(false).is_empty(), "纯横幅 = 静默");
 
         // 缓冲行兜底：横幅以 delta 形式单独成行时同样剔除
         let mut rc3 = RemoteControl::detached();
-        rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"), "s");
+        rc3.on_assistant(&td(0, "mcp: 1 server enabled\n后续回复"));
         assert_eq!(rc3.on_running(false), vec!["后续回复".to_string()]);
 
         // 变体：`server(s)`、大写、带色码残留都算横幅（只认 mcp+server+enabled）
         let mut rc4 = RemoteControl::detached();
-        rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"), "s");
+        rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"));
         assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
     }
 
