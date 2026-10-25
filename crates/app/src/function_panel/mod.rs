@@ -1201,9 +1201,10 @@ pub(crate) enum TreeMenu {
 
 /// 文件树标题项目下拉（树根跨项目快切）：一览 psp.projects（会话列表里
 /// 的全部项目），↑/↓ 高亮 + Enter 切换、点击直切。`sel` = 键盘高亮行
-/// （psp.projects 下标，打开时默认落当前项目）。切换语义与激活文件标签
-/// 的跨项目同步（file_tree::sync_tree_to_file）一致：只重挂工作区（树根/
-/// git/fs watcher/侧栏当前项目），活跃会话不动、不写 last_workspace。
+/// （psp.projects 下标，打开时默认落当前项目）。切换 = **switch_project
+/// 完整切项目**：树/侧栏全套随新 cwd 重挂；会话标签去留见 switch_project
+/// 的 2026-12-06 保留规则（有上次会话则恢复；没有则进行中的原会话原地
+/// 保留，不落新草稿）。内容视图保持不动。
 #[derive(Debug, Clone)]
 pub(crate) struct TreeProjMenu {
     pub(crate) sel: usize,

@@ -780,9 +780,10 @@ pub(crate) enum BootTarget {
 /// 最近活动项目 = **最后一次 cwd 切换的项目**（cwd 切换总有时刻，简单可靠）。
 ///
 /// 时刻来源只有一个：`projects.json.last_opened_ms`——由 `register_project`
-/// 在**每次进入项目**时写入。三条切 cwd 的路径都汇到 `remount_workspace`
-/// （switch_project / 打开老会话 open_session / 文件树切 sync_tree_to_file），
-/// 所以「最近打开」就是「最后切换到的 cwd」，不需要再聚合会话活动。
+/// 在**每次进入项目**时写入。切 cwd 的路径都汇到 `remount_workspace`
+/// （switch_project / 打开老会话 open_session / 跨项目会话直切
+/// switch_pool_rt），所以「最近打开」就是「最后切换到的 cwd」，不需要再聚
+/// 合会话活动；跨项目开文件不切 cwd（2026-12-06），不算进入项目。
 /// 目录已删 / 落在应用自有目录（历史污染）的记录跳过。
 fn recent_project() -> Option<PathBuf> {
     pi_link::projects::project_records()
