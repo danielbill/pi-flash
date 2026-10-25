@@ -709,6 +709,11 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
                         if is_mcp {
                             c.mcp_select(next_section, cx);
                         }
+                        // 模型页签：面板内切入同样确保 registry（静态目录保底）
+                        // 在拉（幂等；open_settings 与 provider 弹窗同款挂点）
+                        if ix == TAB_MODELS {
+                            c.ensure_registry(cx);
+                        }
                     });
                 })
                 .child(icon(

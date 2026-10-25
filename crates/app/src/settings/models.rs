@@ -23,6 +23,11 @@ impl Chat {
             let data = self.mcp_backfill_data(&section);
             panel.update(cx, |s, cx| super::mcp::mcp_apply_backfill(s, data, cx));
         }
+        // 模型页：确保全量 registry（含静态模型目录保底）在拉——缓存命中
+        // 同步可用，否则后台起一次性 node dump（幂等；provider 弹窗同款）
+        if tab == super::TAB_MODELS {
+            self.ensure_registry(cx);
+        }
         self.dlg.settings = Some(panel);
         cx.notify();
     }
@@ -854,6 +859,29 @@ fn detail_button(
 
 /// Models detail by section kind (catalog provider / custom editor / add).
 #[allow(clippy::too_many_arguments)]
+/// 详情可用模型区取数合并：基础列表（catalog_for 按商过滤）+ registry 静态
+/// 目录**保底**——表外内置商（无探查端点）保存 key 后进程答案未到时列表
+/// 为空，静态条目只补 id 不重复的缺；实拉目录/进程答案/models.json 优先
+/// 级全在前。registry 为 None（dump 进行中/失败）时行为与现状完全一致。
+/// 静态目录**不并入** `catalog_for`/`Globals.models`——会话 picker 非虚拟
+/// 化且无已配置商过滤，全量灌入踩性能铁律（042 决策）。
+fn merge_registry_models(
+    base: Vec<pi_link::protocol::ModelInfo>,
+    registry: Option<&pi_link::registry::RegistryDump>,
+    provider: &str,
+) -> Vec<pi_link::protocol::ModelInfo> {
+    let Some(registry) = registry else {
+        return base;
+    };
+    let mut models = base;
+    for m in registry.models_for(provider) {
+        if !models.iter().any(|x| x.id == m.id) {
+            models.push(m.clone());
+        }
+    }
+    models
+}
+
 fn mc_models_detail(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -902,12 +930,15 @@ fn mc_models_detail(
 
     // catalog provider detail（API Key；OAuth 归 pi，PF 只管自有账本）
     let provider = selected.to_string();
-    let models: Vec<pi_link::protocol::ModelInfo> = chat
-        .catalog_for(chat.project())
-        .iter()
-        .filter(|m| m.provider == provider)
-        .cloned()
-        .collect();
+    let models: Vec<pi_link::protocol::ModelInfo> = merge_registry_models(
+        chat.catalog_for(chat.project())
+            .iter()
+            .filter(|m| m.provider == provider)
+            .cloned()
+            .collect(),
+        chat.cfg.provider_registry.as_deref(),
+        &provider,
+    );
     // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
         .p(px(15.))
@@ -1480,4 +1511,60 @@ pub(crate) enum McProbe {
     Running,
     Done,
     Failed(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_registry_models;
+    use pi_link::protocol::ModelInfo;
+    use pi_link::registry::RegistryDump;
+
+    fn model(id: &str, provider: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            name: id.into(),
+            provider: provider.into(),
+            context_window: Some(128_000),
+        }
+    }
+
+    fn dump(models: Vec<ModelInfo>) -> RegistryDump {
+        RegistryDump {
+            models,
+            ..RegistryDump::default()
+        }
+    }
+
+    #[test]
+    fn merge_appends_only_missing_ids_for_provider() {
+        let base = vec![model("glm-5.3", "zai"), model("glm-4.7", "zai")];
+        let registry = dump(vec![
+            model("glm-5.3", "zai"), // 已在实拉目录里 → 不重复
+            model("glm-5.2", "zai"), // 静态补缺 → 追加
+            model("kimi-k3", "moonshotai"), // 他商条目 → 不混入
+        ]);
+        let merged = merge_registry_models(base, Some(&registry), "zai");
+        let ids: Vec<_> = merged.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["glm-5.3", "glm-4.7", "glm-5.2"]);
+    }
+
+    #[test]
+    fn merge_without_registry_returns_base_unchanged() {
+        let base = vec![model("glm-5.3", "zai")];
+        let merged = merge_registry_models(base.clone(), None, "zai");
+        assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn merge_into_empty_base_fills_static_catalog() {
+        // 表外商保存 key 后、进程答案未到：基础列表空，静态目录整商补齐
+        let registry = dump(vec![
+            model("glm-5.3", "zai"),
+            model("glm-5.2", "zai"),
+            model("kimi-k3", "moonshotai"),
+        ]);
+        let merged = merge_registry_models(Vec::new(), Some(&registry), "zai");
+        assert_eq!(merged.len(), 2);
+        assert!(merged.iter().all(|m| m.provider == "zai"));
+    }
 }
