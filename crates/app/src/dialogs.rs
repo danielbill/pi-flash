@@ -214,13 +214,15 @@ fn render_file_dirty(
 /// 042 ProviderPicker（对齐 pi-web AddProviderPicker 内容与版式）：近满窗
 /// 大面板 + 顶部全宽搜索（分隔线压底）+ 滚动卡片网格。数据 = SDK 全量
 /// 注册表 dump（registry.rs：打开弹窗时后台拉起，vendor VERSION 缓存）：
-/// 「API KEY」= 声明 apiKey.login 且无 api_key 凭据，副标题 N models（全量
-/// registry 计数）→ 点击进详情区 API KEY 表单；「订阅服务」= 声明 oauth
-/// 且无 oauth 凭据，副标题 OAuth，点击提示未接入（OAuth 登录缓行，
-/// 051/beads pi-flash-1cb）。组序 2026-10-10 用户定稿：API KEY → 订阅
-/// 服务（自定义组已移除：PF 只提供内置 + 订阅，存量自定义商走左栏合并
-/// 列表既有编辑器）；组内保持 registry 原始顺序不排序，已配置的 provider
-/// 不列（pi-web !configured / !loggedIn 同款）。
+/// 「自定义」= OpenAI/Anthropic 兼容端点卡（042 M2 恢复，pi-web 同款）→
+/// 空白新建表单；「API KEY」= 声明 apiKey.login 且无 api_key 凭据，副标题
+/// N models（全量 registry 计数）→ 点击进详情区 API KEY 表单；「订阅服务」
+/// = 声明 oauth 且无 oauth 凭据，副标题 OAuth，点击提示未接入（OAuth 登录
+/// 缓行，051/beads pi-flash-1cb）。组序 2026-10-10 用户定稿 + 042 M2：
+/// 自定义 → API KEY → 订阅服务；组内保持 registry 原始顺序不排序，已配置
+/// 的 provider 不列（pi-web !configured / !loggedIn 同款）。自定义卡点击 =
+/// 直接创建 new-provider（重名 -N）进详情表单（042-1，pi-web
+/// addCustomProvider parity）。
 fn render_provider_picker(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -358,7 +360,44 @@ fn render_provider_picker(
         _ => {}
     }
 
-    // 组序（2026-10-10 用户定稿）：API KEY → 订阅服务（自定义组已移除）
+    // 自定义组（pi-web AddProviderPicker「自定义」卡恢复，042 M2）：OpenAI /
+    // Anthropic 兼容端点 → 空白新建表单。搜索词命中 "custom"/端点字样才显示
+    let show_custom = q.is_empty()
+        || "custom".contains(&q)
+        || "openai-compatible".contains(&q)
+        || "anthropic-compatible".contains(&q);
+
+    // 组序：自定义 → API KEY → 订阅服务
+    if show_custom {
+        let weak_card = weak.clone();
+        body = body
+            .child(group_header(tr("model.picker_custom"), 0.))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap(px(10.))
+                    .child(
+                        card("pp-custom".into())
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_card.update(cx, |c, cx| {
+                                    c.dlg.dialog = None;
+                                    c.mj_open_add(cx);
+                                    cx.notify();
+                                });
+                            })
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .child(card_text(
+                                &tr("model.picker_custom_card"),
+                                tr("model.picker_custom_sub").to_string(),
+                            ))
+                            .child(crate::ui::icon("plus", 18., t.text_muted)),
+                    ),
+            );
+    }
     if !api_cards.is_empty() {
         body = body.child(group_header("API KEY", 0.));
         let mut grid = div().flex().flex_wrap().justify_center().gap(px(10.));
@@ -407,7 +446,7 @@ fn render_provider_picker(
         }
         body = body.child(grid);
     }
-    if dump.is_some() && api_cards.is_empty() && oauth_cards.is_empty() {
+    if dump.is_some() && !show_custom && api_cards.is_empty() && oauth_cards.is_empty() {
         body = body.child(status_row(tr("model.no_provider_match").to_string()));
     }
 

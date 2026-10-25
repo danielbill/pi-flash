@@ -17,6 +17,8 @@ pub(crate) mod shortcuts;
 pub(crate) mod skills;
 pub(crate) mod widgets;
 
+pub(crate) use models::{MjCatalogState, MjSpeedState, MjTestState};
+
 use general::mc_general_view;
 use misc::mc_misc_view;
 
@@ -40,6 +42,33 @@ pub(crate) const TAB_AGENTS: u8 = 9;
 pub(crate) const TAB_MISC: u8 = 5;
 pub(crate) const TAB_ABOUT: u8 = 7;
 pub(crate) const TAB_SHORTCUTS: u8 = 8;
+
+/// 思考等级映射的档位（pi-web THINKING_LEVELS 顺序与配色）。
+pub(crate) const TLM_LEVELS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+pub(crate) const TLM_LEVEL_COUNT: usize = 7;
+
+/// 思考档映射一行的档位态：不设（Default）/ 禁用（null）/ 自定义映射（字符串）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MjTlmMode {
+    Omit,
+    Null,
+    Custom,
+}
+
+/// 思考档映射一行（档位态 + 自定义值输入；输入仅在 Custom 态读值）。
+#[derive(Clone)]
+pub(crate) struct MjTlmRow {
+    pub mode: MjTlmMode,
+    pub value: gpui::Entity<TextInput>,
+}
+
+/// headers 编辑一行（name/value 两个输入框）。
+#[derive(Clone)]
+pub(crate) struct MjHeaderRow {
+    pub name: gpui::Entity<TextInput>,
+    pub value: gpui::Entity<TextInput>,
+}
 
 /// The settings modal's form state (pi-web SettingsPanel own-state parity).
 pub(crate) struct SettingsPanel {
@@ -66,6 +95,37 @@ pub(crate) struct SettingsPanel {
     pub mj_ctx: gpui::Entity<TextInput>,
     pub mj_api: u8,
     pub mj_reasoning: bool,
+    // -- 042 M2 自定义 provider/model 编辑器扩展（pi-web parity）
+    /// headers 编辑行（name, value 输入框对；provider/model 编辑器共用槽，
+    /// mj_select 按当前 section 回填）
+    pub mj_headers: Vec<MjHeaderRow>,
+    /// 思考等级映射 7 档行状态（顺序 = [`TLM_LEVELS`]）
+    pub mj_tlm: [MjTlmRow; TLM_LEVEL_COUNT],
+    /// 模型编辑器：高级折叠区展开态
+    pub mj_adv_open: bool,
+    /// 模型级 API 覆盖（4 = 沿用 Provider；0..=3 = API_OPTIONS 档位）
+    pub mj_api_override: u8,
+    /// 兼容：DeepSeek 思考兼容
+    pub mj_deepseek: bool,
+    /// 兼容：developer role（effective 默认 true；取消勾选才落显式 false）
+    pub mj_devrole: bool,
+    /// 能力：图片输入
+    pub mj_image: bool,
+    /// 最大输出 tokens
+    pub mj_max_tokens: gpui::Entity<TextInput>,
+    /// 价格编辑态 + 四输入（每百万）
+    pub mj_cost_edit: bool,
+    pub mj_cost_in: gpui::Entity<TextInput>,
+    pub mj_cost_out: gpui::Entity<TextInput>,
+    pub mj_cost_cr: gpui::Entity<TextInput>,
+    pub mj_cost_cw: gpui::Entity<TextInput>,
+    /// API 下拉（pi-web Select 对齐）：0 = Provider 表单，1 = 模型 API 覆盖；
+    /// None = 全关（两处不同帧出现，共享一个开关槽即可）
+    pub mj_api_popup: Option<u8>,
+    /// API 下拉的外点收起守卫
+    pub mj_api_dd: gpui::Entity<DropdownState>,
+    /// 自定义商 API Key 的显隐（掩码眼睛；mj_select 回填即回掩码态）
+    pub mj_key_visible: bool,
     // -- 扩展页安装表单（040：整条 pi install 命令可直接粘贴）
     pub install_input: gpui::Entity<TextInput>,
     // -- MCP 页【配置MCP】表单（043：粘贴框 + 名称，全局 only）
@@ -164,16 +224,31 @@ impl SettingsPanel {
             model_free_only: false,
             mj_name: panel_input("provider-name", cx),
             mj_base: panel_input("https://api.example.com/v1", cx),
-            mj_key: cx.new(|cx| {
-                TextInput::new(cx)
-                    .masked(true)
-                    .placeholder(tr("custom_models.key_hint"))
-            }),
+            mj_key: cx.new(|cx| TextInput::new(cx).masked(true)),
             mj_id: panel_input("model-id", cx),
             mj_mname: panel_input(tr("settings.model_display_name"), cx),
             mj_ctx: cx.new(|cx| TextInput::new(cx).numeric(true)),
             mj_api: 0,
             mj_reasoning: false,
+            mj_headers: Vec::new(),
+            mj_tlm: std::array::from_fn(|_| MjTlmRow {
+                mode: MjTlmMode::Omit,
+                value: cx.new(|cx| TextInput::new(cx)),
+            }),
+            mj_adv_open: false,
+            mj_api_override: 4,
+            mj_deepseek: false,
+            mj_devrole: true,
+            mj_image: false,
+            mj_max_tokens: cx.new(|cx| TextInput::new(cx).numeric(true)),
+            mj_cost_edit: false,
+            mj_cost_in: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_out: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_cr: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_cw: cx.new(|cx| TextInput::new(cx)),
+            mj_api_popup: None,
+            mj_api_dd: cx.new(|_| DropdownState::new()),
+            mj_key_visible: false,
             install_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("extensions.source_example"))),
             mcp_add: {
@@ -257,22 +332,12 @@ impl SettingsPanel {
         }
     }
 
-    /// 添加 Provider 表单的字段快照（创建动作读取）。
-    pub(crate) fn editor_snapshot(&self, cx: &gpui::App) -> (String, String, String, u8) {
-        (
-            self.mj_name.read(cx).value().to_string(),
-            self.mj_base.read(cx).value().to_string(),
-            self.mj_key.read(cx).value().to_string(),
-            self.mj_api,
-        )
-    }
-
     /// 焦点是否落在面板（含其全部输入框）内 —— Chat 焦点策略链用它判断
     /// 要不要把焦点拽回 dialog_focus。**新增输入框自动覆盖**，不再维护
     /// 白名单（v60 字体筛选、v70 模型/MCP 各输入框先后被"每帧抢焦点"
     /// 咬过的教训：白名单必漏）。
     pub(crate) fn focus_within(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
-        let inputs = [
+        let mut inputs: Vec<&gpui::Entity<TextInput>> = vec![
             &self.key_input,
             &self.model_filter,
             &self.enabled_filter,
@@ -282,6 +347,11 @@ impl SettingsPanel {
             &self.mj_id,
             &self.mj_mname,
             &self.mj_ctx,
+            &self.mj_max_tokens,
+            &self.mj_cost_in,
+            &self.mj_cost_out,
+            &self.mj_cost_cr,
+            &self.mj_cost_cw,
             &self.install_input,
             &self.mcp_add,
             &self.mcp_name,
@@ -291,6 +361,13 @@ impl SettingsPanel {
             &self.ag_prompt,
             &self.ag_turns_n,
         ];
+        for row in &self.mj_headers {
+            inputs.push(&row.name);
+            inputs.push(&row.value);
+        }
+        for row in &self.mj_tlm {
+            inputs.push(&row.value);
+        }
         self.focus.is_focused(window)
             || inputs
                 .iter()
@@ -353,6 +430,22 @@ pub(crate) struct SettingsFormData {
     pub mj_ctx: gpui::Entity<TextInput>,
     pub mj_api: u8,
     pub mj_reasoning: bool,
+    pub mj_headers: Vec<MjHeaderRow>,
+    pub mj_tlm: [MjTlmRow; TLM_LEVEL_COUNT],
+    pub mj_adv_open: bool,
+    pub mj_api_override: u8,
+    pub mj_deepseek: bool,
+    pub mj_devrole: bool,
+    pub mj_image: bool,
+    pub mj_max_tokens: gpui::Entity<TextInput>,
+    pub mj_cost_edit: bool,
+    pub mj_cost_in: gpui::Entity<TextInput>,
+    pub mj_cost_out: gpui::Entity<TextInput>,
+    pub mj_cost_cr: gpui::Entity<TextInput>,
+    pub mj_cost_cw: gpui::Entity<TextInput>,
+    pub mj_api_popup: Option<u8>,
+    pub mj_api_dd: gpui::Entity<DropdownState>,
+    pub mj_key_visible: bool,
     pub install_input: gpui::Entity<TextInput>,
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
@@ -404,6 +497,22 @@ impl SettingsFormData {
             mj_ctx: p.mj_ctx.clone(),
             mj_api: p.mj_api,
             mj_reasoning: p.mj_reasoning,
+            mj_headers: p.mj_headers.clone(),
+            mj_tlm: p.mj_tlm.clone(),
+            mj_adv_open: p.mj_adv_open,
+            mj_api_override: p.mj_api_override,
+            mj_deepseek: p.mj_deepseek,
+            mj_devrole: p.mj_devrole,
+            mj_image: p.mj_image,
+            mj_max_tokens: p.mj_max_tokens.clone(),
+            mj_cost_edit: p.mj_cost_edit,
+            mj_cost_in: p.mj_cost_in.clone(),
+            mj_cost_out: p.mj_cost_out.clone(),
+            mj_cost_cr: p.mj_cost_cr.clone(),
+            mj_cost_cw: p.mj_cost_cw.clone(),
+            mj_api_popup: p.mj_api_popup,
+            mj_api_dd: p.mj_api_dd.clone(),
+            mj_key_visible: p.mj_key_visible,
             install_input: p.install_input.clone(),
             mcp_add: p.mcp_add.clone(),
             mcp_name: p.mcp_name.clone(),
@@ -444,21 +553,6 @@ pub(crate) fn render_settings(
         focus: _focus,
         tab,
         section,
-        key_input,
-        key_visible,
-        model_filter,
-        model_filter_value,
-        enabled_filter,
-        enabled_filter_value,
-        model_free_only,
-        mj_name,
-        mj_base,
-        mj_key,
-        mj_id,
-        mj_mname,
-        mj_ctx,
-        mj_api,
-        mj_reasoning,
         install_input,
         mcp_add,
         mcp_add_value,
@@ -477,27 +571,7 @@ pub(crate) fn render_settings(
     // 页内容：界面/其他=单列 rows（滚动在 body）；其余页自带左右分栏 +
     // 可选顶条/底栏（自身 h_full，body 不滚动）
     let pane: gpui::AnyElement = match tab {
-        TAB_MODELS => crate::settings::models::mc_models_view(
-            chat,
-            weak,
-            &section,
-            &key_input,
-            key_visible,
-            &model_filter,
-            &model_filter_value,
-            &enabled_filter,
-            &enabled_filter_value,
-            &mj_name,
-            &mj_base,
-            &mj_key,
-            &mj_id,
-            &mj_mname,
-            &mj_ctx,
-            mj_api,
-            mj_reasoning,
-            &error,
-            model_free_only,
-        ),
+        TAB_MODELS => crate::settings::models::mc_models_view(chat, weak, d),
         TAB_SKILLS => {
             let (sidebar, detail) = crate::settings::skills::mc_skills_view(chat, weak, &section);
             two_pane(sidebar, detail)

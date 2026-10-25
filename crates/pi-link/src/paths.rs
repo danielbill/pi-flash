@@ -156,6 +156,12 @@ pub fn registry_cache_file() -> Option<PathBuf> {
     file("registry-cache.json")
 }
 
+/// `~/.pi-flash/models-dev-cache.json` — models.dev 目录缓存（models_dev.rs，
+/// 「填入模型信息」用；TTL 1h，网络失败回陈旧）。
+pub fn models_dev_cache_file() -> Option<PathBuf> {
+    file("models-dev-cache.json")
+}
+
 /// `~/.pi-flash/pi-ext-market-cache.json` — Pi 扩展市场首页快照（040-1：
 /// 单文件、≤50 条、<100KB；启动延迟加载只预取首页写它）。
 pub fn pi_ext_market_cache_file() -> Option<PathBuf> {
