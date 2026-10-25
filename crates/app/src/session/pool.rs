@@ -99,10 +99,19 @@ impl Chat {
                     cx.notify();
                 }
                 SessionEvent::ExtUi(req) => {
-                    // 微信端与桌面端**并行**拿到同一请求（060 §4.1）：两边都要
-                    // 渲染一份文本，但只有一方能应答 —— 桌面 ext_respond 会
-                    // clear_pending，pi 侧也只 resolve 一次（§8 档 2 不重复消费）
-                    chat.aux.remote.on_ext_ui(req);
+                    // **只接微信线自己的请求**（与下面 Assistant 同一条闸）。
+                    // 扩展的 ui 广播是全局的：任何会话里任何扩展调
+                    // `ui.notify` / `setStatus` / `setTitle` 都走这条事件，
+                    // 对 `remote` 无条件转发就是「微信订阅了扩展模块的广播」
+                    // ——桌面会话里取消/切换一个扩展，微信立刻收到那条通知。
+                    //
+                    // 闸内仍是并行语义（060 §4.1）：微信与桌面各渲染一份，
+                    // 只有一方能应答——桌面 ext_respond 会 clear_pending，
+                    // pi 侧也只 resolve 一次（§8 档 2 不重复消费）。
+                    let key = rt.read(cx).key.clone();
+                    if chat.aux.remote.on_wx_line(&key) {
+                        chat.aux.remote.on_ext_ui(req);
+                    }
                     if is_active {
                         let req = req.clone();
                         chat.on_ext_ui(req, cx);
