@@ -29,6 +29,12 @@ use crate::ui::kit;
 
 use super::{QrState, TASK_RUNNING, wx_lang};
 
+/// 操作栏启停开关是否展示（2026-10-25 用户定夺：**隐藏但不删功能**——
+/// `RemoteControl::set_enabled` 仍是关停/启用服务的唯一入口：微信端
+/// `/启` `/停`、自动化 `wx.enable`、扫码成功都走它；服务状态机与 002 §4
+/// 启停通知不受展示与否影响）。
+const SHOW_WX_SWITCH: bool = false;
+
 /// 二维码方框边长：码 49 模块 × 8px = 392 + 白衬 12×2 = 416。三态共用同一
 /// 方框，状态切换时弹窗不跳尺寸（002「所有提示信息显示在二维码方框中」）。
 const QR_BOX: f32 = 416.;
@@ -160,30 +166,37 @@ pub(crate) fn wx_fn_bar(
     };
 
     // 开关 + 说明文字（第 2 件，002 §1）：动作式文案——on 时点之则关停
-    // 服务，off 时点之则启用；未创建时禁用（只能扫码创建）。这是「关停
-    // 服务」的桌面显式出口（另有微信端 `/启` `/停` 与自动化 `wx.enable`）。
-    let on = has_token && running;
-    let sw = kit::config_switch("wx-enable", &weak, on, !has_token, |c, cx| {
-        let on = !c.aux.remote.is_running();
-        c.aux.remote.set_enabled(on);
-        cx.notify();
+    // 服务，off 时点之则启用；未创建时禁用（只能扫码创建）。
+    //
+    // **暂不展示**（2026-10-25 用户定夺：别摆在操作栏上；功能一个都不删）：
+    // `set_enabled` 照旧是「关停/启用服务」的入口（微信端 `/启` `/停`、
+    // 自动化 `wx.enable`、扫码成功都走它），服务状态机与通知不受影响。
+    // 恢复展示 = 把 `SHOW_WX_SWITCH` 改 true（`.then(|| …)` 只在真展示时
+    // 构造控件，隐藏态零渲染成本）。
+    let sw_group = SHOW_WX_SWITCH.then(|| {
+        let on = has_token && running;
+        let sw = kit::config_switch("wx-enable", &weak, on, !has_token, |c, cx| {
+            let on = !c.aux.remote.is_running();
+            c.aux.remote.set_enabled(on);
+            cx.notify();
+        });
+        let label = if on {
+            tr("remote.toggle_on")
+        } else {
+            tr("remote.toggle_off")
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(sw)
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(11.5))
+                    .text_color(rgb(t.text_muted))
+                    .child(SharedString::from(label)),
+            )
     });
-    let label = if on {
-        tr("remote.toggle_on")
-    } else {
-        tr("remote.toggle_off")
-    };
-    let sw_group = div()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .child(sw)
-        .child(
-            div()
-                .text_size(crate::appearance::ui_size(11.5))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(label)),
-        );
     // 状态卡④（我方创建出错）/ 链路错误：有错才亮一行，没有就零占位。
     // 数据源 = 服务状态机与健康度（静默失败是最坏的形态，§6 坑 4）。
     let err_line: Option<SharedString> = chat
@@ -265,7 +278,7 @@ pub(crate) fn wx_fn_bar(
                 .child(e)
         }))
         .child(icon_btn)
-        .child(sw_group)
+        .children(sw_group)
         .child(new_session_btn)
         .child(refresh_btn)
         .into_any_element()
@@ -585,7 +598,16 @@ impl Chat {
             self.aux.remote.remember_desktop(&active);
         }
         if std::path::Path::new(&key).is_file() {
-            if let Some(rt) = self.open_session_detached(std::path::PathBuf::from(&key), cx) {
+            // **必须用 `_with(wx_cwd)`**：影子会话被过滤清单藏在会话列表外，
+            // 通用 `open_session_detached` 的 cwd 兜底会落到桌面 cwd——微信
+            // 线就「工作在错误项目里」（2026-10-25 报障：一直在 pi_work）。
+            let path = std::path::PathBuf::from(&key);
+            let opened = match self.aux.remote.wx_cwd().cloned() {
+                Some(cwd) => self.open_session_detached_with(path, cwd, cx),
+                None => self.open_session_detached(path, cx),
+            };
+            if let Some(rt) = opened {
+                self.wx_adopt_line_cwd(&rt, cx);
                 self.switch_to(rt, cx);
             }
         } else if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
@@ -597,8 +619,12 @@ impl Chat {
 
     /// 关【微信通话】标签（× / 中键）：收起标签、收前台、收专属模态、落盘。
     /// 服务与影子会话**不动**——关的只是这个「窗口」。
+    ///
+    /// 「收前台」的判据要把 **活跃会话就是微信线** 也算进去：前台可能是文件/
+    /// 终端页（`wx_ui()` 只报 Tab），但活跃位仍是微信线——标签一收就变成
+    /// 「有内容没入口」的幻影页（2026-10-25 真机）。
     pub(crate) fn close_wx_tab(&mut self, cx: &mut gpui::Context<Self>) {
-        let front = self.wx_ui().front();
+        let front = self.wx_ui().front() || self.wx_line_active();
         self.aux.remote.tab_open = false;
         // 标签与它的弹窗一体（2026-10-25 定夺）：微信专属模态（二维码 /
         // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码盖在
@@ -634,12 +660,12 @@ impl Chat {
                 None
             }
         });
-        let rt = target.or_else(|| {
-            self.pool
-                .runtimes
-                .get(crate::Chat::PLACEHOLDER_KEY)
-                .cloned()
-        });
+        // 落地保底：桌面会话不在了也要有地方去（否则活跃位留在微信线 =
+        // 「新会话」标题 + 微信内容的幻影页）
+        let rt = match target {
+            Some(rt) => Some(rt),
+            None => self.landing_session(cx),
+        };
         if let Some(rt) = rt {
             self.switch_to(rt, cx);
         }
