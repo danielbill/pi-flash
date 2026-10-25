@@ -337,18 +337,15 @@ impl Chat {
     }
 
     /// 保证有一个「落地会话」可回：关微信内容/关标签时不许出现「无处可去 →
-    /// 活跃位留在微信线」的幻影页（2026-10-25 真机）。顺序：
-    /// ① 占位会话 `PLACEHOLDER_KEY`（恒在、永不 spawn）→ ② 当前项目新草稿 →
-    /// ③ 重建占位（占位被何人清掉时兜底，cwd 空、渲染成无项目态）。
+    /// 活跃位留在微信会话」的幻影页（2026-10-25 真机）。顺序：
+    /// ① 当前项目新草稿（有项目时正常落点）→ ② 占位会话 `PLACEHOLDER_KEY`
+    /// （无项目态）→ ③ 重建占位（极端兜底，cwd 空、渲染成无项目态）。
     pub(crate) fn landing_session(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
-        if let Some(rt) = self.pool.runtimes.get(crate::Chat::PLACEHOLDER_KEY).cloned() {
-            return Some(rt);
-        }
-        // 占位被清掉了：当前项目拉一条普通草稿（**不**走 `new_draft_detached`
-        // ——那条是微信线专用，建在 wx_cwd 下）
+        // 有项目 → 先给一条本项目的新会话草稿（**不**走 `new_draft_detached`
+        // ——那条是微信会话专用，建在 wx_cwd 下）；无项目态才回占位会话。
         if let Some(cwd) = self.ws.cwd.clone() {
             let key = format!("draft-{}", self.pool.draft_seq);
             self.pool.draft_seq += 1;
@@ -360,6 +357,9 @@ impl Chat {
             });
             self.pool.runtimes.insert(key.clone(), rt.clone());
             self.subscribe_runtime(&rt, cx);
+            return Some(rt);
+        }
+        if let Some(rt) = self.pool.runtimes.get(crate::Chat::PLACEHOLDER_KEY).cloned() {
             return Some(rt);
         }
         let rt = cx.new(|_| {
@@ -1016,6 +1016,18 @@ impl Chat {
     /// 回落首条用户消息。
     pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
         self.session_title_of(&self.pool.active_key.clone(), cx)
+    }
+
+    /// 桌面会话 key = 当前项目「最后打开的会话」（排除微信会话）。会话 tab 在
+    /// 微信聊天页前台时用它取标题/做去处——**现算不存状态**，所以不会出现
+    /// 「记忆过期 → 标题回落新会话」的幻影（2026-10-25）。
+    pub(crate) fn desktop_session_key(&self) -> Option<String> {
+        let cwd = self.ws.cwd.as_ref()?;
+        let k = crate::services::workspace::get_last_open(&cwd.to_string_lossy())?;
+        if self.aux.remote.on_wx_line(&k) || !std::path::Path::new(&k).is_file() {
+            return None;
+        }
+        Some(k)
     }
 
     /// 指定池 key 的会话标题（topbar 第一格在查看微信 tab 时显示桌面会话用）。

@@ -211,6 +211,16 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         // 【微信通话】tab 关闭态（2026-10-25 用户定夺：关闭跨重启保持）——
         // 启动回放/关 tab 落盘的断言载体（pif-ui wait --path app.wx_tab_closed）
         "wx_tab_closed": !chat.wx_tab_open(),
+        // 微信会话归属（排障）：工作目录 / 会话指针 / 会话运行时 cwd
+        "wx_cwd": chat.aux.remote.wx_cwd().map(|p| p.to_string_lossy().to_string()),
+        "wx_line_key": chat.aux.remote.line_key().map(str::to_string),
+        "wx_line_cwd": chat
+            .aux
+            .remote
+            .line_key()
+            .and_then(|k| chat.pool.runtimes.get(k))
+            .map(|rt| rt.read(cx).cwd.to_string_lossy().to_string()),
+        "wx_running": chat.aux.remote.is_running(),
         "active_key": chat.pool.active_key,
         "active_file": opt_path(chat.psp.active_file.as_ref()),
         "terminals": chat.ws.terminals.len(),
@@ -860,17 +870,6 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::remote_control::QrState::Expired { .. } => "expired",
             crate::remote_control::QrState::Error { .. } => "error",
         },
-        // 微信线归属（排障用）：工作目录 / 线指针 / 线运行时 cwd——「微信在
-        // 哪个项目里干活」必须一眼可查（2026-10-25 报障：一直在 pi_work）
-        "wx_cwd": chat.aux.remote.wx_cwd().map(|p| p.to_string_lossy().to_string()),
-        "wx_line_key": chat.aux.remote.line_key().map(str::to_string),
-        "wx_line_cwd": chat
-            .aux
-            .remote
-            .line_key()
-            .and_then(|k| chat.pool.runtimes.get(k))
-            .map(|rt| rt.read(cx).cwd.to_string_lossy().to_string()),
-        "wx_running": chat.aux.remote.is_running(),
     })
 }
 
