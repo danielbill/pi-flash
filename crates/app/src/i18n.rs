@@ -715,7 +715,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.new_session", "新建会话", "新建會話", "New Session"),
     // 微信通话页的欢迎语（002 插件注入语，替代桌面新会话页的"Hi，打算让我
     // 做点什么？"）
-    ("remote.page_greeting", "使用PF微信机器人进行远程控制", "使用PF微信機器人進行遠端控制", "Remote control with the Pi-Flash WeChat bot"),
+    ("remote.page_greeting", "用微信控制 Pi-Flash 干活吧", "用微信控制 Pi-Flash 干活吧", "Remote control with the Pi-Flash WeChat bot"),
     ("remote.qr_confirm", "已扫码，请在手机上确认…", "已掃碼，請在手機上確認…", "Scanned, please confirm on your phone…"),
     ("remote.qr_desc", "用手机微信扫码，绑定这台机器的 pi-flash。", "用手機微信掃碼，綁定這台機器的 pi-flash。", "Scan with WeChat to bind this pi-flash machine."),
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),

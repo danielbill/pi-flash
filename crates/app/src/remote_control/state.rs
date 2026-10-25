@@ -127,6 +127,9 @@ impl WxLine {
 pub(crate) struct Snapshot {
     pub token: Option<String>,
     pub wx_cwd: Option<PathBuf>,
+    /// `wx_cwd` 上锁：新建会话后置 true —— 进设置页**不得**拿 PF/桌面 cwd
+    /// 自动赋值，必须用户手动选（002 §6）。用户选定项目后解锁。
+    pub wx_cwd_lock: bool,
     pub session_key: Option<String>,
     pub chat_id: Option<String>,
     pub user_id: Option<String>,
@@ -139,6 +142,7 @@ impl Snapshot {
         Self {
             token: None,
             wx_cwd: None,
+            wx_cwd_lock: false,
             session_key: None,
             chat_id: None,
             user_id: None,
@@ -161,6 +165,7 @@ impl Snapshot {
         // 与 `wxprobe::transport::require_token` 同口径（空串 = 没 token）
         self.token = s("bot_token").filter(|t| !t.trim().is_empty());
         self.wx_cwd = s("wx_cwd").map(PathBuf::from);
+        self.wx_cwd_lock = s("wx_cwd_lock").as_deref() == Some("1");
         self.session_key = s("session_key");
         self.chat_id = s("chat_id");
         self.user_id = s("user_id");
