@@ -74,3 +74,29 @@ terminal打开也在这里
   10px（2026-10-10 追加，替代初稿"去掉会话icon"口径）；会话 tab 为固定
   段、不随自由标签滚动（2026-10-14 追加：超多标签旧实现会把它滚出视野）。
 
+
+## 【微信通话】tab 归队自由标签区（2026-10-26 用户定夺）
+
+历史：060 的微信通话 tab 曾是紧贴会话 tab 的**第二固定段特例**，理由是
+「一个 tab 两种内容（绑定管理页 ⇄ 微信线会话）装不进 PanelTab」。用户指出
+这是倒因为果——tab 是视窗，视窗下挂几个 view 都不是标准问题；会话 tab
+底下本来就轮换 N 个会话视图。归队后的口径：
+
+- `PanelTab::Wx` + `TabKey::Wx`：微信 tab 就是普通自由 tab，**右键菜单
+  （Close / Others / Left / Right / All）、拖拽换位、中键关闭、批量关闭
+  全套直接继承**，不再有特例代码路径。
+- 内容归属判据：`PanelTab::owns_view(to, wx_line)`——微信 tab 同时拥有
+  `ContentView::Wx`（管理页）与 `ContentView::Chat`（微信线会话聊天），
+  激活高亮/关闭回退不再用 `content_view == tab.view()` 的枚举相等（微信
+  会话在类型上是 Chat，枚举相等永远认不出它）。
+- 开关真身收敛：删掉 `RemoteControl::tab_open` 这个与 `panel_tabs` 并列的
+  第二真相源，`wx_tab_open()` = `panel_tabs` 里有没有 `PanelTab::Wx`。
+  服务泵门控、自动化 `wx_tab_closed`、存档 `wx_open` 全从它派生。
+- 关闭 = 「标签与内容一体」：摘 tab → 收专属模态（二维码/新建会话）→
+  收前台（`wx_leave_front`）。服务与影子会话不动。
+- Ctrl+←/→：微信 tab 按它在 `panel_tabs` 的真下标参与邻位切换；往左回到
+  会话 tab 时若微信线在前台，走 `wx_leave_front` 真正离开（微信会话也是
+  Chat 视图，只 `set_content_view(Chat)` 会原地不动且无 tab 高亮）。
+- 中键关闭统一给所有自由 tab（原先只有微信 tab 有）。
+- 存档仍只存「开/关」一条腿（`wx_open`），微信 tab 在 `tabs` 数组里按
+  瞬态页跳过——老档格式不变，重启后回到标签带尾部。

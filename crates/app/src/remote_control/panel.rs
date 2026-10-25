@@ -594,8 +594,21 @@ impl Chat {
     ///
     /// 关标签 = off：微信内容（功能页 / 微信会话）必须一起收掉，不留幻影。
     pub(crate) fn close_wx_tab(&mut self, cx: &mut gpui::Context<Self>) {
+        // 真身 = panel_tabs 里的 `PanelTab::Wx`：摘了才算关（走 close_panel_tab
+        // 正常移除 + 落盘，与任何 tab 同一路径）
+        if let Some(ix) = self.wx_tab_index() {
+            self.close_panel_tab(ix, cx);
+        }
+        self.wx_after_tab_removed(cx);
+        cx.notify();
+    }
+
+    /// 【微信通话】tab 已从 `panel_tabs` 摘掉之后的收场（单关与批量关共用）：
+    /// 收专属模态 + 收前台（标签与内容一体）。
+    ///
+    /// 服务与影子会话**不动**——关的只是这个「窗口」。
+    pub(crate) fn wx_after_tab_removed(&mut self, cx: &mut gpui::Context<Self>) {
         let front = self.wx_front_active();
-        self.aux.remote.tab_open = false;
         // 标签与它的弹窗一体（2026-10-25 定夺）：微信专属模态（二维码 /
         // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码盖在
         // 桌面会话上、功能入口却没了（真机踩到）
@@ -610,7 +623,6 @@ impl Chat {
         } else {
             self.persist_tabs();
         }
-        cx.notify();
     }
 
     /// 关闭微信内容时收回前台（标签与内容一体，不许「标签关了、微信会话页
@@ -694,7 +706,7 @@ impl Chat {
                 self.switch_to(rt, cx);
             }
         }
-        self.aux.remote.tab_open = true;
+        self.wx_open_tab();
         // 走 set_content_view：顺带 persist_tabs——裸写字段不落盘，重启后
         // tab 恢复读到 switch_to 刚落的 Chat，就会「蹿回桌面会话对话页」
         self.set_content_view(crate::ContentView::Wx); // [设置会话] 页

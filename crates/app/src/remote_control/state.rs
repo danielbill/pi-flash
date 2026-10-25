@@ -7,8 +7,8 @@
 //!   [`Health`]
 //! - 会话指针 = 内存 `wx_session` + state 的 `session_key` + 过滤清单 path +
 //!   `wx_session_name` 四处 → [`WxLine`]（落盘只剩 `session_key` 一个字段）
-//! - UI 位置 = `wx_tab_closed` + `content_view == Wx` + `is_wx_line` + 存档两个
-//!   bool 五处编码 → 一个 `tab_open`（002：标签开 = on、关 = off，没有第三态）
+//! - UI 位置 = 标签真身在 `ws.panel_tabs` 的 `PanelTab::Wx`（开/关就
+//!   是 tab 在不在，2026-10-26 归队后不再有独立 `tab_open` bool）
 //! - state.json 每帧 `load()` 读盘解析（一次渲染最多 4 次 IO）→ [`Snapshot`]
 //!   进程内镜像，泵一拍刷一次，渲染只读镜像
 

@@ -181,6 +181,12 @@ impl Chat {
             cx.notify();
             return;
         }
+        // 微信 tab：关闭 = 「标签与内容一体」的全套收场（收前台 + 收专属
+        // 模态 + 落盘），与×/中键同一入口。服务与影子会话不动。
+        if matches!(tab, PanelTab::Wx) {
+            self.close_wx_tab(cx);
+            return;
+        }
         let view = tab.view();
         let was_active = self.ws.active_panel_tab == Some(ix) && self.layout.content_view == view;
         self.close_panel_tab(ix, cx);
@@ -234,6 +240,9 @@ impl Chat {
         // focus 按身份追踪：批量移除会让下标平移，事后按下标找必指错
         let focus_tab = focus.and_then(|f| self.ws.panel_tabs.get(f).cloned());
         let mut dirty: Vec<PathBuf> = Vec::new();
+        // 微信 tab 被批掉时，摘完再统一收前台（不能用 close_wx_tab：它按
+        // 现查下标移除，会打乱本轮正在倒序消耗的 targets 下标）
+        let mut wx_closed = false;
         // 倒序移除：前面的下标不因删除漂移
         for ix in targets.iter().rev() {
             let Some(tab) = self.ws.panel_tabs.get(*ix).cloned() else {
@@ -257,8 +266,17 @@ impl Chat {
                         self.discard_file_tab(&p, cx);
                     }
                 }
+                // 微信 tab 参与批量关闭（归队后它就是个普通可关 tab）：
+                // 只摘 tab，前台收场放到循环外（服务/影子会话不受影响）
+                PanelTab::Wx => {
+                    self.close_panel_tab(*ix, cx);
+                    wx_closed = true;
+                }
                 _ => self.close_panel_tab(*ix, cx),
             }
+        }
+        if wx_closed {
+            self.wx_after_tab_removed(cx);
         }
         if !dirty.is_empty() {
             dirty.reverse(); // 回正序：与标签视觉一致（左→右）
@@ -590,6 +608,19 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
+        // 微信 tab 的激活不走「枚举 → 视图」直映：它的两副面孔（绑定管理
+        // 页 / 微信线会话）由领域状态决定，`open_wx` 是那个域的唯一导航
+        // 入口（内部自己 set_content_view + 线就位）
+        if matches!(self.ws.panel_tabs.get(ix), Some(PanelTab::Wx)) {
+            let changed = !self.wx_front_active();
+            self.activate_panel_tab(ix, cx);
+            self.open_wx(cx);
+            if changed {
+                window.focus(&self.layout.focus);
+                cx.notify();
+            }
+            return;
+        }
         let view = match self.ws.panel_tabs.get(ix) {
             Some(PanelTab::Term(_)) => ContentView::Term,
             Some(PanelTab::Changelog) => ContentView::Changelog,
@@ -599,7 +630,7 @@ impl Chat {
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,
             Some(PanelTab::File(_)) => ContentView::File,
-            None => return,
+            Some(PanelTab::Wx) | None => return,
         };
         let changed = self.layout.content_view != view || self.ws.active_panel_tab != Some(ix);
         self.activate_panel_tab(ix, cx);
@@ -624,9 +655,13 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        // 当前位置：会话 tab = None；自由区 = active_panel_tab 下标。
-        // 非会话视图但下标悬空（理论不可达）按自由区 0 处理
-        let cur = if self.layout.content_view == ContentView::Chat {
+        // 当前位置：微信 tab = 它在 panel_tabs 里的真下标（它的会话聊天
+        // 视图在类型上是 Chat，不能当「会话 tab」）；会话 tab = None；
+        // 其余 = active_panel_tab 下标。非会话视图但下标悬空（理论不可达）
+        // 按自由区 0 处理
+        let cur = if self.wx_front_active() && self.wx_tab_open() {
+            self.wx_tab_index()
+        } else if self.layout.content_view == ContentView::Chat {
             None
         } else {
             Some(self.ws.active_panel_tab.unwrap_or(0))
@@ -650,8 +685,15 @@ impl Chat {
         match target {
             Some(ix) => self.activate_content_tab(ix, window, cx),
             None => {
-                let changed = self.layout.content_view != ContentView::Chat;
-                self.set_content_view(ContentView::Chat);
+                // 回会话 tab：微信线正在前台时必须真的离开它（它自己也是
+                // Chat 视图，只 set_content_view 会原地不动、还无 tab 高亮）
+                let changed = self.layout.content_view != ContentView::Chat
+                    || self.wx_line_active();
+                if self.wx_line_active() {
+                    self.wx_leave_front(cx);
+                } else {
+                    self.set_content_view(ContentView::Chat);
+                }
                 if changed {
                     // 焦点收回锚点；仲裁 Chat 分支随后回 composer
                     window.focus(&self.layout.focus);
@@ -755,6 +797,10 @@ impl Chat {
         // 【微信通话】存档只有一条腿：**标签开还是关**（002：开 = on，关 = off）。
         // 开着就还回来、关掉就存成关着；恢复时由 `open_wx` 自己决定落到绑定页
         // 还是会话页，不需要另存「前台归属」。
+        //
+        // 归队后 `wx_tab_open` 就是「panel_tabs 里有没有 PanelTab::Wx」，
+        // 标签自身在 `tabs` 数组里当瞬态页跳过（位置不存档，重启回到尾部）——
+        // 开关态这一条腿与老档格式兼容。
         let wx_open = services::workspace::wx_enabled() && self.wx_tab_open();
         tabs_state_from_parts(
             &self.ws.panel_tabs,
