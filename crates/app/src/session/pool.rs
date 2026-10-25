@@ -128,7 +128,7 @@ impl Chat {
                     let running = rt.read(cx).agent_running;
                     let is_wx_line = chat.aux.remote.on_wx_line(&key);
                     if is_wx_line && running {
-                        for text in chat.aux.remote.on_assistant(&ev, &key) {
+                        for text in chat.aux.remote.on_assistant(&ev) {
                             chat.aux.remote.send(&text);
                         }
                     }
@@ -250,9 +250,6 @@ impl Chat {
         // 非微信线的活跃会话记为「桌面会话」：微信线单开 tab（2026-10-24
         // 定夺），查看微信时 topbar 第一格继续显示并回到它
         let is_wx_line = self.aux.remote.on_wx_line(&key);
-        if !is_wx_line {
-            self.aux.remote.remember_desktop(&key);
-        }
         self.pool.active_key = key;
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑

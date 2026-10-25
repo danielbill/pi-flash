@@ -774,11 +774,15 @@ pub(super) fn dispatch(
             ok()
         }
         method::WX_ENABLE => {
-            // 显式启用/停用微信渠道（与操作栏开关同一条 set_enabled 路径）。
-            // 缺省 on=true；返回渠道是否真的起来了 —— 无 token 时起不来，
-            // 调用方看 running 字段。
+            // 开/关微信渠道 = 开/关【微信通话】标签（002：标签开 = on，
+            // 关 = off）。缺省 on=true；返回渠道是否真的起来了（无 token
+            // 起不来，调用方看 running 字段）。
             let on = params.get("on").and_then(Value::as_bool).unwrap_or(true);
-            chat.aux.remote.set_enabled(on);
+            if on {
+                chat.open_wx(cx);
+            } else {
+                chat.close_wx_tab(cx);
+            }
             Ok(json!({ "ok": true, "running": chat.aux.remote.is_running() }))
         }
         method::WX_NEW_SESSION => {
