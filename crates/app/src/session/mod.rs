@@ -61,12 +61,14 @@ pub(crate) fn main_column(
     // 导致 stop 按钮永远不出现
     let streaming = rt.read(cx).agent_running;
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
-    // 项目|会话列表为空、或「新建会话」都落在这里
-    let new_session_page = rt.read(cx).messages.is_empty() && !streaming;
-    // 微信线即使还是空会话也必须出操作栏：002 把信息/控制三件套（微信 icon /
-    // 开关 / 刷新二维码）放在「标签页下方的控制栏右侧」，空会话页把它藏了
-    // 就没有任何入口（状态①未创建时正是空会话）
+    // 项目|会话列表为空、或「新建会话」都落在这里。
+    // **微信线例外**（用户定夺）：微信通话永远直接进会话页——空会话也不出
+    // 欢迎页（设置页由 ContentView::Wx 承担，二者不再共用同一个欢迎版式）
     let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let new_session_page = rt.read(cx).messages.is_empty() && !streaming && !is_wx_line;
+    // 设置会话页**不出操作栏**（用户定夺，交互克制）：页面只做会话设置，
+    // 微信控制簇（icon/开关/新建/重绑）只在聊天视图出现——管理入口归
+    // 【微信通话】功能页的分段，不再依赖空会话页的操作栏
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -90,7 +92,7 @@ pub(crate) fn main_column(
         .bg(rgb(t.bg))
         .text_color(rgb(t.text))
         .font_family(sf.family.clone())
-        .when(!new_session_page || is_wx_line, |d| {
+        .when(!new_session_page, |d| {
             d.child(session_fn_bar(chat, cx))
         })
         .child(
@@ -167,18 +169,17 @@ pub(crate) fn main_column(
 }
 
 /// 会话功能栏（2026-10-11：topbar ⋯ 菜单撤下拉改常驻条）：会话 tab 下方
-/// 32px 操作条，版式对齐文件标签下方的 file_nav_bar（同高、同下边框、同
-/// pl12/pr8）。2026-10-16 系统提示词 / 会话工具集两钮迁入上下文用量面板
+/// 36px 操作条，版式对齐文件标签下方的 file_nav_bar（同下边框、同
+/// pl12/pr8；2026-10-21 用户定案：栏高 36，不再与 file_nav_bar 32px 同高）。2026-10-16 系统提示词 / 会话工具集两钮迁入上下文用量面板
 /// （session/input/ctx_tip.rs）；新增「会话目录」（资源管理器打开当前项目
 /// 的 pi 会话组目录，动作同 psp 项目详情卡 explorer 钮）+「打开终端」，
 /// 钮间淡色 `|` 区隔。终端视图开着时终端钮点亮 accent。
 fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     // 栏首项目名（2026-10-14）：当前工作区基名（ws.cwd），粗体亮色，后随
-    // 淡色 chevron（编辑器面包屑同款 ">"），再接原有三钮。功能面板打开时
-    // 不显示（面板里已有项目名，重复），收拢时才补位。无项目态显示占位名。
-    let project: Option<SharedString> = if chat.layout.panes_hidden {
-        Some(
+    // 淡色 chevron（编辑器面包屑同款 ">"），再接原有三钮。（2026-10-20
+    // 用户定案：改回一直展示，不再随功能面板收拢态切换）。无项目态显示占位名。
+    let project: Option<SharedString> = Some(
             chat.project()
                 .map(|p| {
                     p.file_name()
@@ -187,10 +188,7 @@ fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEle
                 })
                 .unwrap_or_else(|| tr("statusbar.no_project").to_string())
                 .into(),
-        )
-    } else {
-        None
-    };
+    );
     // 会话组目录（sfbar-sessdir）：pi sessions 根下按 cwd 编码的组目录，
     // 还没建（无落盘会话）退回 sessions 根——与 psp 项目详情卡同口径；
     // 无项目态直接开 sessions 根
@@ -215,7 +213,7 @@ fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEle
     };
     div()
         .id("session-fn-bar")
-        .h(px(32.))
+        .h(px(36.))
         .flex_shrink_0()
         .flex()
         .items_center()
