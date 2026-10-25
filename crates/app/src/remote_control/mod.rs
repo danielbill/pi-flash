@@ -192,6 +192,10 @@ pub struct RemoteControl {
     notice: Option<bool>,
     /// token 比对节流闸（换绑感知 1s 一次足够，别每拍读盘）
     token_check_at: Option<std::time::Instant>,
+    /// 设置页里先选的模型 `(provider, id)`：`wx_cwd` 还没定时没有微信线
+    /// 草稿可承载（草稿只能建在 `wx_cwd` 下），又不能写进桌面会话（否则会
+    /// 把微信设置页的模型选择沾到桌面上）。在模块里暂存，建线时下沉。
+    pub(crate) pending_model: Option<(String, String)>,
     /// 是否落盘。测试实例（[`Self::detached`]）= false：不碰真实 state 文件、
     /// 不起真渠道——**生产逻辑里不再有 `cfg!(test)` 分叉**。
     persist: bool,
@@ -228,6 +232,7 @@ impl RemoteControl {
             buf: String::new(),
             notice: None,
             token_check_at: None,
+            pending_model: None,
             persist,
         }
     }
@@ -1004,12 +1009,11 @@ impl crate::Chat {
         // 不跟上就会出现「内容已是微信、却没有任何 tab 高亮」的空高亮态）
         self.ws.active_panel_tab = Some(ix);
         self.layout.tabs_scroll.scroll_to_item(ix);
-        // 002 独立工作目录：为空就继承当前项目一次；此后两边互不联动
-        if self.aux.remote.wx_cwd().is_none() {
-            if let Some(cwd) = self.ws.cwd.clone() {
-                self.aux.remote.set_wx_cwd(Some(cwd));
-            }
-        }
+        // **绝不预填工作目录**（002 §6 用户定夺 2026-10-25）：`wx_cwd` 只能由
+        // 用户在设置页显式选项目时写入（`wx_pick_project`）。旧的「为空就继承
+        // 桌面 cwd」造成两宗事故：①「项目必选」被默认值凑满——设置页一进来就
+        // 显示已选、直接放行进会话；②新建会话清空 `wx_cwd` 后，同一笔调用里
+        // 又被 app cwd 填回，用户选的目录看起来被 PF cwd 顶掉（2026-10-25 报障）。
     }
 
     // ── 微信线（影子会话）就位 ───────────────────────────────────────
@@ -1054,7 +1058,11 @@ impl crate::Chat {
     /// 微信线工作目录归位：影子会话的 cwd **必须**是模块独立工作目录
     /// `wx_cwd`。历史上通用 `open_session_detached` 的 cwd 兜底把它落成桌面
     /// cwd（微信就在错误项目里干活，2026-10-25 报障「一直在 pi_work」）。
-    /// 只修**还没附着 pi 进程**的运行时——已经在跑的会话改了 cwd 只会骗自己。
+    ///
+    /// 失配就修到对为止（用户定夺：选哪个目录就在哪个目录干活）：
+    /// - 没附着 pi 进程 → 直接改 cwd（下次 spawn 就落在正确目录）；
+    /// - 已附着进程 → 改字段只会骗自己（会话写着 pi_work、pi 实则在桌面 cwd
+    ///   干活），必须停掉进程，让下一次投递按正确 cwd 重新拉起。
     pub(crate) fn wx_adopt_line_cwd(
         &mut self,
         rt: &gpui::Entity<crate::session::runtime::SessionRuntime>,
@@ -1064,9 +1072,18 @@ impl crate::Chat {
             return;
         };
         rt.update(cx, |r, _| {
-            if r.cwd != cwd && r.agent.session.is_none() {
-                r.cwd = cwd;
+            if r.cwd == cwd {
+                return;
             }
+            if r.agent.session.is_some() {
+                eprintln!(
+                    "[wx] 影子会话 cwd 失配（{:?} != {:?}）：停进程按 wx_cwd 重建",
+                    r.cwd, cwd
+                );
+                r.rpc(&Command::Abort);
+                r.shutdown_process();
+            }
+            r.cwd = cwd;
         });
     }
 
@@ -1392,7 +1409,9 @@ impl crate::Chat {
                 let path = std::path::PathBuf::from(&key);
                 match self.aux.remote.wx_cwd().cloned() {
                     Some(cwd) => self.open_session_detached_with(path, cwd, cx),
-                    None => self.open_session_detached(path, cx),
+                    // wx_cwd 未定：不拿桌面 cwd 兑底（002 §6）——宁可不送达
+                    // 也不能在错误项目里建会话，入站已由 NO_SETUP 引导重选
+                    None => None,
                 }
             }
             None => None,
@@ -1400,6 +1419,13 @@ impl crate::Chat {
         let rt = match rt.take() {
             Some(rt) => rt,
             None => {
+                // 没有 wx_cwd 就没有微信线：绝不下落到桌面活跃会话（那是 app
+                // cwd，2026-10-25 报障「在错误项目里干活」的来源之一）
+                if self.aux.remote.wx_cwd().is_none() {
+                    eprintln!("[wx] 命令未送达：wx_cwd 未定（需在设置页选项目）");
+                    self.deliver_failed_reply();
+                    return;
+                }
                 // 会话真被删了 → 清归属后本条按活跃会话兜底投递（target_key
                 // 回退），专属草稿由泵下一拍重建。静默丢弃已经坑过一次
                 // （微信没回执），这里必须自愈。
@@ -1415,6 +1441,9 @@ impl crate::Chat {
                 }
             }
         };
+        // 投递前再校一次影子会话 cwd（002 §6：微信线只认 `wx_cwd`）——
+        // 早期用桌面 cwd 建出来的运行时必须在这里被纠正，否则选好的项目白选
+        self.wx_adopt_line_cwd(&rt, cx);
         let sent = rt.update(cx, |r, cx| match cmd {
             // 文本要走「没进程先 spawn」，否则草稿会话永远收不到
             Command::Prompt { message, .. } => Some(r.send_remote_text(message.clone(), cx)),
@@ -1461,6 +1490,36 @@ impl crate::Chat {
         } else {
             self.ws.cwd.clone()
         }
+    }
+
+    /// 设置页选模型（微信线口径）：线已就位 → 写微信线；还没有线（`wx_cwd`
+    /// 未定，草稿无从建）→ 暂存到模块状态，建线时下沉（`new_draft_detached`）。
+    /// 返回 false = 不是微信设置页语境，调用方走通用路径。
+    ///
+    /// 为什么不直接写 `rt()`：`wx_cwd` 未定时活跃会话是**桌面**草稿，直写会
+    /// 把微信设置页的模型选择沾到桌面上（两条线禁止联动）。
+    pub(crate) fn wx_setup_select_model(
+        &mut self,
+        provider: String,
+        id: String,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if !self.wx_setup_ctx() {
+            return false;
+        }
+        match self
+            .aux
+            .remote
+            .line
+            .key
+            .as_ref()
+            .and_then(|k| self.pool.runtimes.get(k))
+            .cloned()
+        {
+            Some(rt) => rt.update(cx, |r, cx| r.select_model(provider, id, cx)),
+            None => self.aux.remote.pending_model = Some((provider, id)),
+        }
+        true
     }
 
     /// 微信聊天放行条件（002 §2，用户定夺：项目和模型都是必选项）：
