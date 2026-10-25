@@ -862,6 +862,16 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::remote_control::QrState::Expired { .. } => "expired",
             crate::remote_control::QrState::Error { .. } => "error",
         },
+        // 微信线归属（排障用）：工作目录 / 线指针 / 线运行时 cwd——「微信在
+        // 哪个项目里干活」必须一眼可查（2026-10-25 报障：一直在 pi_work）
+        "wx_cwd": chat.aux.remote.wx_cwd().map(|p| p.to_string_lossy().to_string()),
+        "wx_line_key": chat.aux.remote.line_key().map(str::to_string),
+        "wx_line_cwd": chat
+            .aux
+            .remote
+            .line_key()
+            .and_then(|k| chat.pool.runtimes.get(k))
+            .map(|rt| rt.read(cx).cwd.to_string_lossy().to_string()),
         "wx_running": chat.aux.remote.is_running(),
         "wx_bound": chat.aux.remote.bound,
         "wx_bind_code": chat.aux.remote.bind_code(&chat.pool.active_key),

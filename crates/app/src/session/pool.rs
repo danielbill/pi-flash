@@ -339,6 +339,46 @@ impl Chat {
         Some(key)
     }
 
+    /// 保证有一个「落地会话」可回：关微信内容/关标签时不许出现「无处可去 →
+    /// 活跃位留在微信线」的幻影页（2026-10-25 真机）。顺序：
+    /// ① 占位会话 `PLACEHOLDER_KEY`（恒在、永不 spawn）→ ② 当前项目新草稿 →
+    /// ③ 重建占位（占位被何人清掉时兜底，cwd 空、渲染成无项目态）。
+    pub(crate) fn landing_session(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
+        if let Some(rt) = self.pool.runtimes.get(crate::Chat::PLACEHOLDER_KEY).cloned() {
+            return Some(rt);
+        }
+        // 占位被清掉了：当前项目拉一条普通草稿（**不**走 `new_draft_detached`
+        // ——那条是微信线专用，建在 wx_cwd 下）
+        if let Some(cwd) = self.ws.cwd.clone() {
+            let key = format!("draft-{}", self.pool.draft_seq);
+            self.pool.draft_seq += 1;
+            let rt = cx.new(|_| {
+                let mut r = session::runtime::SessionRuntime::new(key.clone(), cwd, None);
+                r.default_model = services::workspace::default_model_pref();
+                r.status = tr("session.new").to_string();
+                r
+            });
+            self.pool.runtimes.insert(key.clone(), rt.clone());
+            self.subscribe_runtime(&rt, cx);
+            return Some(rt);
+        }
+        let rt = cx.new(|_| {
+            session::runtime::SessionRuntime::new(
+                crate::Chat::PLACEHOLDER_KEY.to_string(),
+                std::path::PathBuf::new(),
+                None,
+            )
+        });
+        self.pool
+            .runtimes
+            .insert(crate::Chat::PLACEHOLDER_KEY.to_string(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        Some(rt)
+    }
+
     /// 让一条会话从池里彻底下线：停进程 + 清 10 处并行状态。
     ///
     /// 会话态散在 10 个容器里（池、尾窗缓存、项目分组、未读/错误/告警、

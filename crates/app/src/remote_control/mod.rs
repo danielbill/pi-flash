@@ -619,6 +619,11 @@ impl RemoteControl {
         self.line.is(key)
     }
 
+    /// 微信线指针 key（草稿键或会话文件路径；排障/自动化只读）。
+    pub(crate) fn line_key(&self) -> Option<&str> {
+        self.line.key()
+    }
+
     /// 影子会话名（`pf-wxbot-*`；FileBound 时补进过滤清单用）。
     pub(crate) fn line_name(&self) -> Option<&str> {
         self.line.name.as_deref()
@@ -1130,12 +1135,47 @@ impl crate::Chat {
             if let Some(rt) = self.open_session_detached_with(path, cwd, cx) {
                 let key = rt.read(cx).key.clone();
                 self.aux.remote.set_wx_line(key);
+                self.wx_adopt_line_cwd(&rt, cx);
                 return;
             }
         }
         if let Some(key) = self.new_draft_detached(cx) {
             self.aux.remote.set_wx_line(key);
         }
+    }
+
+    /// 微信线工作目录归位：影子会话的 cwd **必须**是模块独立工作目录
+    /// `wx_cwd`。历史上通用 `open_session_detached` 的 cwd 兜底把它落成桌面
+    /// cwd（微信就在错误项目里干活，2026-10-25 报障「一直在 pi_work」）。
+    /// 只修**还没附着 pi 进程**的运行时——已经在跑的会话改了 cwd 只会骗自己。
+    pub(crate) fn wx_adopt_line_cwd(
+        &mut self,
+        rt: &gpui::Entity<crate::session::runtime::SessionRuntime>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(cwd) = self.aux.remote.wx_cwd().cloned() else {
+            return;
+        };
+        rt.update(cx, |r, _| {
+            if r.cwd != cwd && r.agent.session.is_none() {
+                r.cwd = cwd;
+            }
+        });
+    }
+
+    /// 不变量：**标签收起时，微信线不得占着活跃位或前台内容**。
+    ///
+    /// 幻影页的最后一道防线（2026-10-25 真机：只有内容没入口）。正常路径由
+    /// `close_wx_tab` 收前台；这里兜住「落地失败 / 状态半途被改」的每一拍。
+    fn wx_enforce_closed_invariant(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+        if self.aux.remote.tab_open {
+            return false;
+        }
+        if !self.wx_line_active() && self.layout.content_view != crate::ContentView::Wx {
+            return false;
+        }
+        self.wx_leave_front(cx);
+        true
     }
 
     // ── 泵：每拍五个幂等 step，末尾统一 notify 一次 ──────────────────
@@ -1164,7 +1204,9 @@ impl crate::Chat {
             self.wx_run_batches(&batches, cx);
             dirty = true;
         }
-        // ⑤ 启停通知派发（对端路由未就绪则留到下一拍，迟到不丢）
+        // ⑤ 幻影页防线：标签收起时微信线不许占前台/活跃位
+        dirty |= self.wx_enforce_closed_invariant(cx);
+        // ⑥ 启停通知派发（对端路由未就绪则留到下一拍，迟到不丢）
         self.aux.remote.flush_notice();
         if dirty {
             cx.notify();
@@ -1476,7 +1518,13 @@ impl crate::Chat {
         let mut rt = match self.pool.runtimes.get(&key).cloned() {
             Some(rt) => Some(rt),
             None if std::path::Path::new(&key).is_file() => {
-                self.open_session_detached(std::path::PathBuf::from(&key), cx)
+                // 影子会话不在会话列表里，通用 detached 的 cwd 兜底会落桌面
+                // cwd——投递前唤醒必须显式给 `wx_cwd`（同续线口径）
+                let path = std::path::PathBuf::from(&key);
+                match self.aux.remote.wx_cwd().cloned() {
+                    Some(cwd) => self.open_session_detached_with(path, cwd, cx),
+                    None => self.open_session_detached(path, cx),
+                }
             }
             None => None,
         };
