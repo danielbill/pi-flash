@@ -461,10 +461,21 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
 /// 会话视图（Obsidian 卡片融底）；点击回会话视图。
 fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    // 会话 tab = 当前活跃会话（微信内容归【微信通话】标签管，不占这一格）
-    let active = chat.layout.content_view == ContentView::Chat;
-    let title: SharedString = chat.session_title(cx).into();
+    // 会话 tab = 桌面会话。**微信聊天页在前台时它不指向微信会话**（否则
+    // 影子会话不在会话列表里，标题回落成「新会话」= 幻影标签）：标题与点击
+    // 都指向「当前项目最后打开的桌面会话」，没有就落到落地会话。
+    let wechat_front = chat.wx_line_active();
+    let desktop = wechat_front.then(|| chat.desktop_session_key());
+    let active = chat.layout.content_view == ContentView::Chat && !wechat_front;
+    let title: SharedString = match &desktop {
+        Some(Some(k)) => chat.session_title_of(k, cx).into(),
+        _ => chat.session_title(cx).into(),
+    };
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+        if this.wx_line_active() {
+            this.wx_leave_front(cx); // 回桌面会话（微信标签保持开着）
+            return;
+        }
         this.set_content_view(crate::ContentView::Chat);
         cx.notify();
     });

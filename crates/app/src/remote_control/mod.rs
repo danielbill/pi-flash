@@ -447,34 +447,19 @@ impl RemoteControl {
     /// 泵一拍采样链路健康度（唯一真身：`Health`）。
     ///
     /// `Expired` 是**粘性**的：`-14 session timeout` 洗完旧游标仍是它 =
-    /// 微信服务端已作废这个 bot 会话，继续长轮询只是空转（而开关亮着会让
-    /// 人以为链路是通的，2026-10-24 真机），只有重新扫码能解。
-    /// 过期**只在用户主动打开模块时**才落地成 UI 跳转（002 原文「发送消息前
-    /// 检测到过期」）——泵只置旗标，绝不把用户正在看的界面掰走。
+    /// 微信服务端已作废这个 bot 会话，继续长轮询只是空转，只有重新扫码能解。
+    /// 过期**只在用户主动打开模块时**落地成 UI 跳转（002 原文「发送消息前
+    /// 检测到过期」）——泵只置旗标，不掰用户正在看的界面。
     fn sample_health(&mut self) -> bool {
         if self.health.expired() {
             return false;
         }
-        let next = match self.svc.transport() {
-            None => Health::Ok,
-            Some(tr) if tr.session_dead() => Health::Expired,
-            Some(tr) => match tr.poll_error() {
-                Some(e) => Health::Poll(e),
-                None => Health::Ok,
-            },
-        };
-        let changed = match (&self.health, &next) {
-            (Health::Ok, Health::Ok) => false,
-            (Health::Poll(a), Health::Poll(b)) => a != b,
-            _ => true,
-        };
-        if changed {
-            if let Health::Expired = next {
-                eprintln!("[wx] 会话已过期，需重新扫码绑定");
-            }
-            self.health = next;
+        let dead = self.svc.transport().is_some_and(|t| t.session_dead());
+        if dead {
+            eprintln!("[wx] 会话已过期，需重新扫码绑定");
+            self.health = Health::Expired;
         }
-        changed
+        dead
     }
 
     /// 投递目标 = 微信会话（唯一）；会话还没建时回落活跃（随后被

@@ -84,11 +84,10 @@ pub(crate) fn stop_notice(user_stop: bool, was_on: bool, announced: bool) -> Opt
     (user_stop && was_on && announced).then_some(false)
 }
 
-/// 链路健康度（取代 `start_error` / `poll_error` / `expired_rebind` 三通道）。
+/// 链路健康度：只有「正常 / 服务端已作废本 bot 会话」两态。
+/// （长轮询的偶发报错只进 stderr，不是产品状态——2026-10-25 定。）
 pub(crate) enum Health {
     Ok,
-    /// 长轮询最近一拍报错（服务还在跑，面板诊断行显示）
-    Poll(String),
     /// 服务侧已作废本 bot 会话（`-14` 洗完旧游标仍是它）：只能重新扫码
     Expired,
 }
