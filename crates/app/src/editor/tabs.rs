@@ -752,6 +752,15 @@ impl Chat {
     /// 当前 tab 带的存档快照（含激活位映射：瞬态页不进存档，原下标在
     /// 存档里可能前移）。
     pub(crate) fn snapshot_tabs_state(&self) -> services::workspace::TabsState {
+        // 【微信通话】两条腿都进存档（2026-10-25 事故修复）：① 标签开合态
+        // ——开着就还回来，用户点 × 关掉就存成关着；② 前台归属——功能页
+        // （ContentView::Wx）或 Chat 视图里的微信线会话。只存「前台视图 =
+        // Wx」一条腿的时候，收窄在微信会话页关窗口的那次，标签和线一起丢
+        //（重启变成孤儿「新会话」）。
+        // 判据只有 `Chat::wx_ui`：标签开合（存的）+ 前台归属（现算）
+        let ui = self.wx_ui();
+        let wx_open = services::workspace::wx_enabled() && ui.open();
+        let wx_front = ui.front();
         tabs_state_from_parts(
             &self.ws.panel_tabs,
             |id| {
@@ -763,15 +772,16 @@ impl Chat {
             },
             self.ws.active_panel_tab,
             self.layout.content_view == ContentView::Chat,
-            self.layout.content_view == ContentView::Wx,
+            wx_open,
+            wx_front,
         )
     }
 
     /// tab 带落盘（单槽全局）：变更点即写（内容相同自动跳过写盘）。启动
     /// 恢复期/回放中被 tab_restore_busy 抑制，回放完成后统一回写。
     pub(crate) fn persist_tabs(&mut self) {
-        // 「启动恢复」关 = 不写存档（2026-11-01 用户定夺：关闭时存储清空、
-        // 开启时才存 tabs）。写侧唯一门口就在这里，别在调用点各加判断。
+        // 「启动恢复」关 = 不写存档（关着就什么都不恢复：存档清空、全程不写）。
+        // 写侧唯一门口就在这里，别在调用点各加判断。
         if self.ws.tab_restore_busy || !services::workspace::startup_restore() {
             return;
         }
@@ -790,7 +800,7 @@ impl Chat {
         mut window: Option<&mut gpui::Window>,
         cx: &mut Context<Self>,
     ) {
-        if saved.tabs.is_empty() && !saved.wx {
+        if saved.tabs.is_empty() && !saved.wx_open && !saved.wx_front {
             return;
         }
         self.ws.tab_restore_busy = true;
@@ -829,9 +839,15 @@ impl Chat {
                 self.ws.active_terminal = Some(tix);
             }
         }
-        if saved.wx {
-            // 微信通话页跨重启复原（002）：优先级高于 chat/激活 tab
-            self.set_content_view(ContentView::Wx);
+        // 【微信通话】标签开合态复原（002：标签跨重启复原）。开着 =
+        // 还原标签（前台另算）；关着 = 保持关闭（启动初值就是关）。
+        if saved.wx_open && services::workspace::wx_enabled() {
+            self.aux.remote.tab_open = true;
+        }
+        if saved.wx_front && self.aux.remote.tab_open {
+            // 前台是微信内容：整条链重走一遍（未绑定 → 绑定页；已绑定 →
+            // 续上影子会话的会话页），优先级高于 chat/激活 tab
+            self.open_wx(cx);
         } else if saved.chat {
             self.set_content_view(ContentView::Chat);
         } else if let Some(view) = active
@@ -872,6 +888,7 @@ fn tabs_state_from_parts(
     term_cwd: impl Fn(usize) -> Option<PathBuf>,
     active: Option<usize>,
     chat_front: bool,
+    wx_open: bool,
     wx_front: bool,
 ) -> services::workspace::TabsState {
     let mut tabs = Vec::new();
@@ -901,7 +918,8 @@ fn tabs_state_from_parts(
         tabs,
         active,
         chat: chat_front,
-        wx: wx_front,
+        wx_open,
+        wx_front,
     }
 }
 

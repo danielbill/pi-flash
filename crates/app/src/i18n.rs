@@ -704,19 +704,13 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     // 002-微信通信：插件单开标签页的标签名（与面板/弹窗标题的「微信通信」
     // 区分——002 定名【微信通话】）
     ("remote.tab_title", "微信通话", "微信通話", "WeChat Chat"),
-    // 操作栏第 2 件：开关旁的说明文字（on/off 两态）
     // 操作栏第 2 件：开关旁的说明文字（动作式文案：on 时点之则关、off 时点之则启）
     ("remote.toggle_on", "关停服务", "關停服務", "Stop service"),
     ("remote.toggle_off", "启用服务", "啟用服務", "Start service"),
     // 操作栏第 3 件：刷新二维码钮文案（refresh icon + 重新绑定）
     ("remote.rebind", "重新绑定", "重新綁定", "Rebind"),
     // 操作栏第 3 件：[新建会话] 确认框（002 §3，W1）
-    (
-        "remote.new_confirm",
-        "丢弃当前会话创建新会话？",
-        "丟棄當前會話創建新會話？",
-        "Discard the current session and start a new one?",
-    ),
+    ("remote.new_confirm", "丢弃当前会话创建新会话？", "丟棄當前會話創建新會話？", "Discard the current session and start a new one?"),
     // 操作栏第 3 件按钮文案（plus icon + 新建会话）
     ("remote.new_session", "新建会话", "新建會話", "New Session"),
     // 微信通话页的欢迎语（002 插件注入语，替代桌面新会话页的"Hi，打算让我
@@ -748,7 +742,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.rebind_desc", "重新绑定PF微信机器人", "重新綁定PF微信機器人", "Rebind the Pi-Flash WeChat bot"),
     // 会话过期（errcode:-14）：操作栏提示 + 弹窗框内说明
     ("remote.wx_expired", "微信会话已过期", "微信會話已過期", "WeChat session expired"),
-    ("remote.new_confirm", "丢弃当前会话，新建会话？", "丟棄當前會話，新建會話？", "Discard the current session and start a new one?"),
     ("remote.qr_timeout", "扫描超时，刷新重新扫码", "掃描逾時，刷新重新掃碼", "Scan timed out. Refresh and scan again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),

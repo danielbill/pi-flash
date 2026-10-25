@@ -46,22 +46,17 @@ const ACTION_BAR_H: f32 = 40.;
 pub(crate) fn page(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
+    skin: &crate::session::template::SessionPageSkin,
     streaming: bool,
     input_focused: bool,
     viewport_h: f32,
     cx: &mut gpui::Context<Chat>,
 ) -> AnyElement {
     let t = T();
-    // 插件定制页（002-微信通信，2026-10-24 定夺）：微信线的新会话页不复用
-    // 桌面「Hi，打算让我做点什么？」那一套 ——① 欢迎语换成插件注入语；
-    // ② 不加载 Pi 扩展更新表（那张表只属于真正的新会话页）。
-    let wx_page = chat.layout.content_view == crate::ContentView::Wx
-        || chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
-    let welcome = if wx_page {
-        tr("remote.page_greeting")
-    } else {
-        tr("new_session.greeting")
-    };
+    // 新会话页也是模版页的一部分：欢迎语与扩展更新卡由**线皮肤**注入，
+    // 本文件不自己判「是不是微信线」（002 微信线的欢迎语 = 插件注入语；
+    // 扩展更新表只属真正的新会话页）
+    let welcome = tr(skin.greeting_key);
     div()
         .id("new-session")
         .relative()
@@ -125,14 +120,14 @@ pub(crate) fn page(
                             cx,
                         ))
                         .child(action_bar(chat, weak, t))
-                        // 082：Pi 扩展更新通知 = 零高锚点（不占流空间），卡片
+                        // 扩展更新通知 = 零高锚点（不占流空间），卡片
                         // absolute 下移固定 20px（验收定稿），欢迎语/inputpanel
-                        // 定位零改动。**只属于新会话页**：插件定制页
-                        //（微信通话）不渲染也不触发加载。
-                        .children(if wx_page {
-                            None
-                        } else {
+                        // 定位零改动。**只属于真正的新会话页**（皮肤开关）：
+                        // 微信线不渲染也不触发加载。
+                        .children(if skin.plugin_updates {
                             plugin_update_notice(chat, weak, t)
+                        } else {
+                            None
                         }),
                 ),
         )
@@ -189,8 +184,7 @@ fn action_bar(
         // 微信设置会话页：展示独立工作目录 `wx_cwd`（与桌面项目无联动）
         chat.aux
             .remote
-            .wx_cwd
-            .as_deref()
+            .wx_cwd()
             .map(|p| {
                 p.file_name()
                     .map(|n| n.to_string_lossy().to_string())

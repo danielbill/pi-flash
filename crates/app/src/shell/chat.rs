@@ -860,14 +860,19 @@ impl Chat {
         // 文件树/git/终端空态）。占位只为让 rt() 全路径安全（rpc 对未附着
         // 进程是 no-op）；真正的恢复/挂载在 spawn_boot_restore。
         let rt = cx.new(|_| {
-            let mut r =
-                session::runtime::SessionRuntime::new("draft-0".to_string(), PathBuf::new(), None);
+            let mut r = session::runtime::SessionRuntime::new(
+                crate::Chat::PLACEHOLDER_KEY.to_string(),
+                PathBuf::new(),
+                None,
+            );
             r.default_model = services::workspace::default_model_pref();
             r
         });
-        chat.pool.draft_seq = 1; // "draft-0" is taken by the initial runtime above
-        chat.pool.runtimes.insert("draft-0".to_string(), rt.clone());
-        chat.pool.active_key = "draft-0".to_string();
+        chat.pool.draft_seq = 1; // PLACEHOLDER_KEY 已被上面的初始 runtime 占用
+        chat.pool
+            .runtimes
+            .insert(crate::Chat::PLACEHOLDER_KEY.to_string(), rt.clone());
+        chat.pool.active_key = crate::Chat::PLACEHOLDER_KEY.to_string();
         chat.subscribe_runtime(&rt, cx);
         // 010-启动.md §9：启动期的一切（120ms 泵 / 3s 外部追加观察 / 60s 空闲
         // 回收 / 30s recents 对账 / 启动页闸门）都由 startup 发起；恢复最后

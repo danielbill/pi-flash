@@ -750,7 +750,7 @@ impl SessionRuntime {
                 if role == "assistant" {
                     // pi 冷启动横幅（🔌 MCP: N server(s) enabled）作为独立
                     // assistant 消息到达（也会落盘，下次 tail 解码同样滤），
-                    // 渲染成气泡毫无意义（2026-11-01 定夺：桌面侧消化）
+                    // 渲染成气泡毫无意义（2026-10-25 定夺：桌面侧消化）
                     let banner_probe = Msg {
                         role: Role::Assistant,
                         bash: None,

@@ -1,6 +1,8 @@
 //! 微信通信（060）：「微信线会话」已升格为**普通会话 tab**（桌面与微信
-//! 同权同视图，2026-10-24 定夺），本文件只剩三件套——
-//! 1. [`fn_bar_status`]：会话操作栏右侧信息/控制簇（仅活跃会话是微信线时）
+//! 同权同视图，2026-10-24 定夺）。会话页**不复制**——它走 `session::template`
+//! 模版页，本文件以 [`WX_SKIN`] 注入微信线的全部差异：
+//! 1. [`wx_fn_bar`]：操作栏右侧注入簇（微信 icon 三态 / 启停开关 + 说明 /
+//!    新建会话 / 重新绑定）
 //! 2. [`wx_qr_layer`] / [`wx_qr_panel`]：绑定层（Dialog::WxQr，render.rs
 //!    挂 content-col）与二维码卡
 //! 3. [`Chat::open_wx`]：入口（确保微信线会话存在并激活；未创建自动弹码）
@@ -17,7 +19,6 @@
 use gpui::{MouseButton, Rgba, SharedString, div, prelude::*, px, rgb, rgba};
 
 use pi_link::protocol::Command;
-use wxprobe::format::messages::Lang;
 
 use std::path::PathBuf;
 
@@ -26,7 +27,7 @@ use crate::appearance::theme::{Theme, UNREAD, WARN, theme as T};
 use crate::i18n::tr;
 use crate::ui::kit;
 
-use super::{QrState, TASK_RUNNING};
+use super::{QrState, TASK_RUNNING, wx_lang};
 
 /// 二维码方框边长：码 49 模块 × 8px = 392 + 白衬 12×2 = 416。三态共用同一
 /// 方框，状态切换时弹窗不跳尺寸（002「所有提示信息显示在二维码方框中」）。
@@ -55,31 +56,15 @@ pub(crate) fn page(
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let t = T();
-    // 独立工作目录：首次进入从 PF 当前 cwd 继承一次（与 open_wx 同一口径，
-    // 覆盖不经 open_wx 的渲染路径）
-    if !chat.aux.remote.wx_cwd_inherited && chat.aux.remote.wx_cwd.is_none() {
-        if let Some(cwd) = chat.ws.cwd.clone() {
-            chat.aux.remote.set_wx_cwd(Some(cwd));
-        }
-        chat.aux.remote.wx_cwd_inherited = true;
-    }
-    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
+    let has_token = chat.aux.remote.has_token();
     // 002：服务侧会话过期 → 自动返回绑定页（与未绑定同段，码卡下带标注）
-    if !has_token || chat.aux.remote.expired_rebind {
-        // Bind 段：蒙层覆盖内容区（002「背景覆盖至 topbar」，颜色跟主题），
-        // 码卡原尺寸居中
-        return div()
-            .id("wx-page-bind")
-            .size_full()
-            .bg(veil(t))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(wx_qr_panel(chat, weak, t))
-            .into_any_element();
+    if !has_token || chat.aux.remote.health().expired() {
+        // Bind 段 = 绑定票面（与强制模态层同一个构造器，002「背景覆盖至
+        // topbar」，颜色跟主题）
+        return wx_bind_surface(chat, weak, t);
     }
-    // Setup 段：新会话页 wx 变体（欢迎语 + 选项目/模型；无扩展更新表，
-    // wx_page 判定含 content_view == Wx）。composer 焦点态同 main_column 口径
+    // Setup 段：走会话页模版的新会话页皮肤（微信线：插件欢迎语 + 选项目/
+    // 模型，不挂扩展更新卡）。composer 焦点态同 main_column 口径
     let input_focused = chat
         .composer
         .composer
@@ -90,6 +75,7 @@ pub(crate) fn page(
     crate::session::new_session::page(
         chat,
         weak,
+        &WX_SKIN,
         false,
         input_focused,
         f32::from(window.viewport_size().height),
@@ -98,22 +84,31 @@ pub(crate) fn page(
     .into_any_element()
 }
 
-/// 会话操作栏右侧信息/控制簇（仅活跃会话是微信线时显示，`session_fn_bar`
-/// 调用）。顺序按 002 定死，从左到右：
-/// 1. 微信 icon —— 灰（未创建）/ 绿（已创建且启用）/ 黄（已创建但停用），
+/// 微信线皮肤（会话页模版注入面，见 `session::template`）：
+/// - 空会话仍留在会话页（设置页由功能页 ContentView::Wx 承担）；
+/// - 新会话页欢迎语换插件注入语、不挂 Pi 扩展更新卡；
+/// - 操作栏右侧注入微信专属簇（[`wx_fn_bar`]）。
+pub(crate) static WX_SKIN: crate::session::template::SessionPageSkin =
+    crate::session::template::SessionPageSkin {
+        keep_on_empty: true,
+        greeting_key: "remote.page_greeting",
+        plugin_updates: false,
+        fn_bar: Some(wx_fn_bar),
+    };
+
+/// 微信线操作栏簇（模版注入点 ①，002 定序，从左到右）：
+/// 1. 微信 icon —— 灰（未创建）/ 绿（已创建并启用）/ 黄（已创建但停用），
 ///    点击开二维码弹窗（未创建时顺带取码）；
 /// 2. 开关 + 说明文字 —— 启用/停用微信通话（未创建时禁用，只能扫码创建）；
-/// 3. 刷新二维码 —— refresh icon +「重新绑定」，强制换一张新码。
-pub(crate) fn fn_bar_status(
+/// 3. 新建会话 —— 丢弃当前会话重建（= 微信端 `/新建` 同语义）；
+/// 4. 刷新二维码 —— refresh icon +「重新绑定」，强制换一张新码。
+pub(crate) fn wx_fn_bar(
     chat: &mut Chat,
     cx: &mut gpui::Context<Chat>,
-) -> Option<gpui::AnyElement> {
-    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
-    if !is_wx_line {
-        return None;
-    }
+) -> gpui::AnyElement {
     let t = T();
-    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
+    // 镜像读（泵一拍刷一次）：渲染路径不碰盘
+    let has_token = chat.aux.remote.has_token();
     let running = chat.aux.remote.is_running();
     let weak = cx.entity().downgrade();
 
@@ -133,20 +128,19 @@ pub(crate) fn fn_bar_status(
             .justify_center()
             .size(px(24.))
             .rounded(px(6.))
-            // 微信 icon 单独再让 10px（2026-11-01 定夺）：它无 px8 内边距，
-            // 与右侧钮的视觉间隙 = gap4 + 钮px8 = 12，补 10 → 22
+            // 微信 icon 单独再让 10px：它无 px8 内边距，与右侧钮的
+            // 视觉间隙 = gap4 + 钮px8 = 12，补 10 → 22
             .mr(px(10.))
             .cursor_pointer()
             .hover(|s| s.bg(rgb(t.bg_hover)))
             .on_mouse_down(
                 MouseButton::Left,
                 move |_: &gpui::MouseDownEvent, _w, cx| {
-                    let has_token =
-                        wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
                     let _ = weak.update(cx, |this, cx| {
+                        let has_token = this.aux.remote.has_token();
                         // 未创建：自动取码 + 绑定弹窗（002 状态①）；已创建：
-                        // 回微信通话页——标签关闭后的重开入口（用户定夺
-                        // 2026-10-25「标签必须可关」）；换码归第 4 件刷新钮。
+                        // 回微信通话页（标签关闭后的重开入口，2026-10-25
+                        // 用户定夺「标签必须可关」）；换码归第 4 件刷新钮。
                         if !has_token {
                             this.aux.remote.begin_qr();
                             this.dlg.dialog = Some(crate::Dialog::WxQr);
@@ -165,27 +159,46 @@ pub(crate) fn fn_bar_status(
             .into_any_element()
     };
 
-    // 开关 + 说明文字（第 2 件）——**暂隐**（2026-11-01 用户定夺：暂时找
-    // 不到存在理由；功能保留：`set_enabled` 仍是 wx.enable/自动化与
-    // 「关停服务」语义的入口，恢复显示 = 解开下方注释并挂回 children）。
-    // 启用服务的现行出口 = 微信端 `/停` `/启` 命令 + 自动化 `wx.enable`。
-    // let on = has_token && running;
-    // let sw = kit::config_switch("wx-enable", &weak, on, !has_token, |c, cx| {
-    //     let on = !c.aux.remote.is_running();
-    //     c.aux.remote.set_enabled(on);
-    //     cx.notify();
-    // });
-    // let label = if on {
-    //     tr("remote.toggle_on")
-    // } else {
-    //     tr("remote.toggle_off")
-    // };
-    // let sw_group = div().flex().items_center().gap(px(6.)).child(sw).child(
-    //     div()
-    //         .text_size(crate::appearance::ui_size(11.5))
-    //         .text_color(rgb(t.text_muted))
-    //         .child(SharedString::from(label)),
-    // );
+    // 开关 + 说明文字（第 2 件，002 §1）：动作式文案——on 时点之则关停
+    // 服务，off 时点之则启用；未创建时禁用（只能扫码创建）。这是「关停
+    // 服务」的桌面显式出口（另有微信端 `/启` `/停` 与自动化 `wx.enable`）。
+    let on = has_token && running;
+    let sw = kit::config_switch("wx-enable", &weak, on, !has_token, |c, cx| {
+        let on = !c.aux.remote.is_running();
+        c.aux.remote.set_enabled(on);
+        cx.notify();
+    });
+    let label = if on {
+        tr("remote.toggle_on")
+    } else {
+        tr("remote.toggle_off")
+    };
+    let sw_group = div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .child(sw)
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(11.5))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(label)),
+        );
+    // 状态卡④（我方创建出错）/ 链路错误：有错才亮一行，没有就零占位。
+    // 数据源 = 服务状态机与健康度（静默失败是最坏的形态，§6 坑 4）。
+    let err_line: Option<SharedString> = chat
+        .aux
+        .remote
+        .start_error()
+        .map(str::to_string)
+        .or_else(|| {
+            chat.aux
+                .remote
+                .health()
+                .poll_error()
+                .map(|e| tr("remote.poll_error").replace("{err}", e))
+        })
+        .map(SharedString::from);
 
     // 新建会话（第 3 件，W1）：002 §3——弹确认框「丢弃当前会话创建新会话？」，
     // 确认后走 wx_rotate_session（= 微信 /新建 同语义）。运行中不开确认框，
@@ -201,7 +214,7 @@ pub(crate) fn fn_bar_status(
             move |_: &gpui::MouseDownEvent, _w, cx: &mut gpui::App| {
                 let _ = weak.update(cx, |this, cx| {
                     if running {
-                        let lang = Lang::from_ix(crate::i18n::lang_ix());
+                        let lang = wx_lang();
                         this.aux
                             .remote
                             .send(&wxprobe::format::messages::t(lang, TASK_RUNNING));
@@ -233,23 +246,29 @@ pub(crate) fn fn_bar_status(
         )
     };
 
-    Some(
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_end()
-            // 视觉间距 20px（2026-11-01 定夺）。**账要算上钮自带的 px8**：
-            // 视觉间隙 = gap + 8 + 8，故 gap = 20-16 = 4（不是 20，写 20 会
-            // 得到 36 的视觉间距——已踩过）
-            .gap(px(4.))
-            // 重新绑定视觉右边距 20px = 整行 pr8 + 钮 px8 + 这里 4
-            .pr(px(4.))
-            .child(icon_btn)
-            .child(new_session_btn)
-            .child(refresh_btn)
-            .into_any_element(),
-    )
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_end()
+        // 簇内间距 20px 视觉。**账要算上钮自带的 px8**：视觉间隙 =
+        // gap + 8 + 8，故 gap = 20-16 = 4（不是 20，写 20 会得到 36 的
+        // 视觉间距——已踩过）
+        .gap(px(4.))
+        // 重新绑定视觉右边距 20px = 整行 pr8 + 钮 px8 + 这里 4
+        .pr(px(4.))
+        .children(err_line.map(|e| {
+            div()
+                .mr(px(8.))
+                .text_size(crate::appearance::ui_size(11.5))
+                .text_color(rgb(t.danger))
+                .child(e)
+        }))
+        .child(icon_btn)
+        .child(sw_group)
+        .child(new_session_btn)
+        .child(refresh_btn)
+        .into_any_element()
 }
 
 /// 二维码卡（[`wx_qr_layer`] 的居中内容）：无标题栏——二维码方框 + 底部
@@ -266,34 +285,20 @@ fn veil(t: &Theme) -> Rgba {
 }
 
 pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::Div {
-    let has_token = wxprobe::transport::require_token(&wxprobe::state::load()).is_ok();
-    // 在手的活性二维码：Ready 带 url；Scanned 不带（靠 qr_url 续命），
-    // 手机确认前码必须留在屏幕上。
-    let live = match &chat.aux.remote.qr {
-        QrState::Ready { url } => Some(url.clone()),
-        QrState::Scanned => chat.aux.remote.qr_url.clone(),
-        _ => None,
-    };
-    let content: gpui::AnyElement = match &chat.aux.remote.qr {
+    let has_token = chat.aux.remote.has_token();
+    let qr = &chat.aux.remote.qr;
+    let content: gpui::AnyElement = match qr {
         // 状态 1：出码，框内不放任何提示
         QrState::Ready { url } => qr_white_card(url),
-        // 手机确认中的码留在屏幕上（`Scanned` 不带 url，靠 `qr_url` 续命）
-        QrState::Scanned => match live.as_deref() {
-            Some(url) => qr_white_card(url),
-            None if has_token => qr_prompt_box(None, rebind_hint(chat), weak),
-            None => qr_note_box(&tr("remote.qr_confirm")),
-        },
+        // 手机确认中：码留在屏幕上（url 就在状态里，不靠旁路字段续命）
+        QrState::Scanned { url } => qr_white_card(url),
         // 状态 3：超时 → 旧码上蒙白（已建过的机器人重建超时同样走这里：
         // 用户刚扫完一轮，最要紧的信息是「码过期了」，不是「已创建」）
-        QrState::Expired => qr_prompt_box(
-            chat.aux.remote.qr_url.as_deref(),
-            tr("remote.qr_timeout"),
-            weak,
-        ),
+        QrState::Expired { url } => qr_prompt_box(url.as_deref(), tr("remote.qr_timeout"), weak),
         // 微信侧出错（②）：同蒙白口径，文案换成行动指引
-        QrState::Error(m) => {
-            let msg = friendly_qr_error(m);
-            qr_prompt_box(chat.aux.remote.qr_url.as_deref(), &msg, weak)
+        QrState::Error { msg, url } => {
+            let msg = friendly_qr_error(msg);
+            qr_prompt_box(url.as_deref(), &msg, weak)
         }
         // ④ 微信已返回但我方没写进状态：按出错蒙白处理
         QrState::Done { .. } if !has_token => {
@@ -317,13 +322,13 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
         .p(px(16.))
         .child(content)
         // 002：服务侧会话过期 → 二维码下方标注解释
-        .children(chat.aux.remote.expired_rebind.then(|| {
+        .children(chat.aux.remote.health().expired().then(|| {
             div()
                 .text_size(crate::appearance::ui_size(11.5))
                 .text_color(rgb(t.danger))
                 .child(SharedString::from(tr("remote.wx_expired").to_string()))
         }))
-        // 底部三步提示（固定文案，左对齐，每行一条）
+        // 底部提示（固定文案，左对齐，每行一条）
         .child(
             div()
                 .w_full()
@@ -354,7 +359,6 @@ pub(crate) fn wx_qr_layer(
     weak: &gpui::WeakEntity<Chat>,
     t: &Theme,
 ) -> gpui::Div {
-    let card = wx_qr_panel(chat, weak, t);
     crate::ui::overlay::layer_blocking(&chat.dlg.dialog_focus)
         // topbar 不盖住（用户定夺「覆盖至 topbar」）；content-col 是
         // relative 容器，40px = titlebar::HEIGHT
@@ -363,7 +367,25 @@ pub(crate) fn wx_qr_layer(
         .flex()
         .items_center()
         .justify_center()
-        .child(crate::ui::overlay::stop_click(card))
+        .child(crate::ui::overlay::stop_click(wx_qr_panel(chat, weak, t)))
+}
+
+/// 绑定票面：蒙层（跟主题）+ 居中二维码卡。**一份**——功能页 Bind 段（内容区
+/// 内）与强制模态层（Dialog::WxQr，挂 content-col）都用它，别各画一份布局。
+fn wx_bind_surface(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &Theme,
+) -> gpui::AnyElement {
+    div()
+        .id("wx-bind-surface")
+        .size_full()
+        .bg(veil(t))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(wx_qr_panel(chat, weak, t))
+        .into_any_element()
 }
 
 /// 用户可读的扫码错误：原始诊断（HTTP 细节/字段名）只进 stderr 与 dump，
@@ -527,82 +549,83 @@ fn qr_grid(url: &str) -> gpui::AnyElement {
 }
 
 impl Chat {
-    /// 打开微信线会话（三横菜单唯一入口；automation `content.view wx` /
-    /// `panel.dock wx` 也落到这里）：确保微信线会话存在并作为**普通会话
-    /// tab** 激活——桌面与微信同权同视图（2026-10-24 定夺）。未创建时自动
-    /// 弹出二维码（002「插件自动展示二维码」）。
+    /// 微信通话入口（三横菜单 / topbar 标签 / 操作栏 icon / 自动化 / 启动恢复
+    /// 共用）。只做两件事：**把入口摆出来**（幂等展开标签）+ **把内容导航到
+    /// 微信自己的位置**（未绑定 → 绑定页；已绑定 → 微信线会话）。渠道起停
+    /// 与它无关——那是泵里的服务状态机（开关 on 且窗口激活才在跑）。
     pub(crate) fn open_wx(&mut self, cx: &mut gpui::Context<Self>) {
-        // 发版排除总开关（dev-flag `wx` 默认关）：菜单/tab 已不渲染，
-        // 自动化 `content.view wx` / `panel.dock wx` 兑底在这里吃掉
+        // 发版排除总开关（dev-flag `wx` 默认关）：入口全隐时自动化兜底也
+        // 在这里吃掉
         if !crate::services::workspace::wx_enabled() {
             return;
         }
         self.dlg.market_menu = None;
-        // 独立工作目录（002 模块独立）：首次进入从 PF 当前 cwd 继承一次，
-        // 之后 cwd 变化不再赋值、wx_cwd 变化也不回写 cwd（双向禁止联动）
-        if !self.aux.remote.wx_cwd_inherited && self.aux.remote.wx_cwd.is_none() {
-            if let Some(cwd) = self.ws.cwd.clone() {
-                self.aux.remote.set_wx_cwd(Some(cwd));
-            }
-            self.aux.remote.wx_cwd_inherited = true;
-        }
-        self.aux.remote.wx_tab_closed = false; // 打开即重开标签
-        let st = wxprobe::state::load();
-        let has_token = wxprobe::transport::require_token(&st).is_ok();
-        // 跳转 ①（002 模块跳转）：菜单点击 / 重启恢复 —— 未绑定，或服务侧
-        // 会话已过期（-14，泵只置旗标不动 UI，2026-11-01 定夺：过期检测
-        // 在用户打开模块时才落地）→ bind_wxbot 视图（自动出码）；二维码下
-        // 过期标注由 expired_rebind 承担，重绑成功（QrState::Done）即清
-        if !has_token || self.aux.remote.expired_rebind {
+        self.wx_open_tab();
+        self.wx_goto_front(cx);
+    }
+
+    /// 微信前台落地（002 模块跳转）：未绑定 / 服务侧会话过期 → 绑定页（自动
+    /// 出码）；否则微信线会话页；线建不出来（独立工作目录未定）→ 设置会话页。
+    fn wx_goto_front(&mut self, cx: &mut gpui::Context<Self>) {
+        if !self.aux.remote.snap.has_token() || self.aux.remote.health().expired() {
             self.aux.remote.begin_qr();
             self.set_content_view(crate::ContentView::Wx);
             cx.notify();
             return;
         }
-        // 跳转 ①：已绑定 → 微信会话页。归属恢复顺序见 `wx_ensure_session`
-        //（state.session_key → 过滤清单 path → 新开草稿）；无线可续且
-        // 工作目录未定 → 设置会话段
         self.wx_ensure_session(cx);
-        if let Some(key) = self.aux.remote.wx_session.clone() {
-            if self.pool.active_key != key {
-                self.aux.remote.desktop_key = Some(self.pool.active_key.clone());
-            }
-            if std::path::Path::new(&key).is_file() {
-                if let Some(rt) = self.open_session_detached(std::path::PathBuf::from(&key), cx) {
-                    self.switch_to(rt, cx);
-                }
-            } else if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+        let Some(key) = self.aux.remote.line.key.clone() else {
+            self.set_content_view(crate::ContentView::Wx);
+            cx.notify();
+            return;
+        };
+        // 微信线是单开 tab：看微信时 topbar 第一格继续显示桌面会话
+        if self.pool.active_key != key {
+            let active = self.pool.active_key.clone();
+            self.aux.remote.remember_desktop(&active);
+        }
+        if std::path::Path::new(&key).is_file() {
+            if let Some(rt) = self.open_session_detached(std::path::PathBuf::from(&key), cx) {
                 self.switch_to(rt, cx);
             }
-            self.set_content_view(crate::ContentView::Chat);
+        } else if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+            self.switch_to(rt, cx);
+        }
+        self.set_content_view(crate::ContentView::Chat);
+        cx.notify();
+    }
+
+    /// 关【微信通话】标签（× / 中键）：收起标签、收前台、收专属模态、落盘。
+    /// 服务与影子会话**不动**——关的只是这个「窗口」。
+    pub(crate) fn close_wx_tab(&mut self, cx: &mut gpui::Context<Self>) {
+        let front = self.wx_ui().front();
+        self.aux.remote.tab_open = false;
+        // 标签与它的弹窗一体（2026-10-25 定夺）：微信专属模态（二维码 /
+        // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码盖在
+        // 桌面会话上、功能入口却没了（真机踩到）
+        if matches!(
+            self.dlg.dialog,
+            Some(crate::Dialog::WxQr) | Some(crate::Dialog::WxNewSession)
+        ) {
+            self.dlg.dialog = None;
+        }
+        if front {
+            self.wx_leave_front(cx); // 内含 set_content_view + persist_tabs
         } else {
-            self.set_content_view(crate::ContentView::Wx);
+            self.persist_tabs();
         }
         cx.notify();
     }
-}
 
-// ── 影子会话轮换（2026-10-24 用户定夺）─────────────────────────────────
-//
-// 微信线**不复用任何会话**：每次重新链接（含第一次）新建一条
-// `pf-wxbot-<15 位时间戳>` 会话，并把老的那条删掉（回收站）。它不进 PF 的
-// 会话列表——模块启动时往 `hidden-sessions.json`（pi-link::hidden_sessions）
-// 注入自己的一条，列表/项目分组按清单过滤。
-//
-// 为什么要隔离：微信线此前「认领」桌面会话（甚至一度按「桌面活跃会话」
-// 回推），结果是两个通道共用一份会话与一份回复缓冲——桌面聊什么微信就收
-// 什么。串台在架构上就不该可能：微信只许碰自己那条影子会话。
-
-impl Chat {
-    /// 关闭微信标签时收回前台（2026-11-01 用户定夺：标签与内容一体，不许
+    /// 关闭微信内容时收回前台（2026-10-25 用户定夺：标签与内容一体，不许
     /// 「标签关了、微信会话页还挂着」）。去处优先级：
     /// ① `desktop_key` 记忆的桌面会话（池内活着直接用；磁盘还在则唤回）
-    /// ② 失效/缺失 → 无项目态占位 `draft-0`（恒在、永不 spawn、非微信
-    ///    线）：欢迎/空态由渲染层按 cwd 缺席自解释
-    /// switch_to 内含 set_content_view(Chat)（含 persist_tabs）。微信线
+    /// ② 失效/缺失 → 无项目态占位 `PLACEHOLDER_KEY`（恒在、永不 spawn、非
+    ///    微信线）：欢迎/空态由渲染层按 cwd 缺席自解释
+    /// `switch_to` 内含 `set_content_view(Chat)`（含 persist_tabs）。微信线
     /// 服务与影子会话不动——关的只是这个「窗口」。
-    pub(crate) fn wx_leave_front(&mut self, cx: &mut Context<Self>) {
-        let target = self.aux.remote.desktop_key.take().and_then(|k| {
+    pub(crate) fn wx_leave_front(&mut self, cx: &mut gpui::Context<Self>) {
+        let target = self.aux.remote.take_desktop().and_then(|k| {
             if let Some(rt) = self.pool.runtimes.get(&k).cloned() {
                 Some(rt)
             } else if std::path::Path::new(&k).is_file() {
@@ -611,13 +634,18 @@ impl Chat {
                 None
             }
         });
-        let rt = target.or_else(|| self.pool.runtimes.get("draft-0").cloned());
+        let rt = target.or_else(|| {
+            self.pool
+                .runtimes
+                .get(crate::Chat::PLACEHOLDER_KEY)
+                .cloned()
+        });
         if let Some(rt) = rt {
             self.switch_to(rt, cx);
         }
-        // 无条件落盘：switch_to 只在跨视图时才经 set_content_view 顺手
+        // 无条件落盘：`switch_to` 只在跨视图时才经 set_content_view 顺手
         // persist——「Chat 视图 + 微信线会话」关标签时前台视图没变，
-        // 不补这一笔 wxc 就从未进过盘，重启必复开（真机踩坑）
+        // 不补这一笔，标签开合态就没进过盘（重启必复开，真机踩坑）
         self.persist_tabs();
     }
 
@@ -632,10 +660,10 @@ impl Chat {
     /// 渠道（重新）连上：老影子会话下线 + 删除，新开一条并命名、注入过滤清单。
     /// 桌面会话与项目完全不受影响（新会话是 detached 草稿）。
     pub(crate) fn wx_rotate_session(&mut self, cx: &mut gpui::Context<Self>) {
-        let old = self.aux.remote.wx_session.take();
+        let old = self.aux.remote.line.key.clone();
         let old_active = old.as_deref() == Some(self.pool.active_key.as_str());
         if let Some(key) = old {
-            self.wx_forget_session(&key, cx);
+            self.forget_session(&key, cx);
         }
         let Some(new_key) = self.wx_new_session(cx) else {
             return; // 无项目态：等有工作区再建（open_wx 也会兜底）
@@ -651,32 +679,27 @@ impl Chat {
         cx.notify();
     }
 
-    /// 002 §6 [新建会话]（确认后）：**清空 `wx_cwd` + 清 `wx_session` 引用
-    /// （含状态文件里的 `session_key`，防重启复活）**，跳转[设置会话]页。
-    /// 不现场建会话——用户重选项目/模型后由 `wx_after_setup_change` 建新线。
+    /// 002 §6 [新建会话]（确认后）：**清空 `wx_cwd` + 清微信线指针（含状态
+    /// 文件里的 `session_key`，防重启复活）**，跳转[设置会话]页。不现场建
+    /// 会话——用户重选项目/模型后由 `wx_after_setup_change` 建新线。
     /// 旧影子会话下线不删文件（口径同轮换，前缀过滤挡住）。
     pub(crate) fn wx_new_session_reset(&mut self, cx: &mut gpui::Context<Self>) {
-        let old = self.aux.remote.wx_session.take();
+        let old = self.aux.remote.line.key.clone();
         let old_active = old.as_deref() == Some(self.pool.active_key.as_str());
         if let Some(key) = old {
-            self.wx_forget_session(&key, cx);
+            self.forget_session(&key, cx);
         }
-        self.aux.remote.wx_session_name = None;
+        self.aux.remote.clear_wx_line();
         self.aux.remote.set_wx_cwd(None); // 持久化一并清（重启不再恢复旧目录）
-        if !cfg!(test) {
-            let mut st = wxprobe::state::load();
-            wxprobe::state::set(&mut st, "session_key", None);
-            wxprobe::state::save(&st);
-        }
-        // 焦点在被删的影子会话上：挪回桌面会话（若有），避免 rt() 悬空
+        // 焦点在被删的影子会话上：挪回桌面会话，避免 rt() 悬空
         if old_active {
-            if let Some(dk) = self.aux.remote.desktop_key.clone() {
+            if let Some(dk) = self.aux.remote.desktop().map(str::to_string) {
                 if let Some(rt) = self.pool.runtimes.get(&dk).cloned() {
                     self.switch_to(rt, cx);
                 }
             }
         }
-        self.aux.remote.wx_tab_closed = false;
+        self.aux.remote.tab_open = true;
         // 走 set_content_view：顺带 persist_tabs——裸写字段不落盘，重启后
         // tab 恢复读到 switch_to 刚落的 Chat，就会「蹿回桌面会话对话页」
         self.set_content_view(crate::ContentView::Wx); // [设置会话] 页
@@ -693,7 +716,7 @@ impl Chat {
     pub(crate) fn wx_pick_project(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
         let inherit = self.rt().read(cx).default_model.clone();
         self.aux.remote.set_wx_cwd(Some(path.clone()));
-        let cur = self.aux.remote.wx_session.as_ref().and_then(|key| {
+        let cur = self.aux.remote.line.key.as_ref().and_then(|key| {
             self.pool.runtimes.get(key).map(|rt| rt.read(cx).cwd.clone())
         });
         let changed = !cur
@@ -702,10 +725,11 @@ impl Chat {
         if changed {
             self.wx_rotate_session(cx);
         }
-        if let Some(key) = self.aux.remote.wx_session.clone() {
+        if let Some(key) = self.aux.remote.line.key.clone() {
             let in_setup = self.layout.content_view == crate::ContentView::Wx;
             if in_setup && self.pool.active_key != key {
-                self.aux.remote.desktop_key = Some(self.pool.active_key.clone());
+                let active = self.pool.active_key.clone();
+                self.aux.remote.remember_desktop(&active);
             }
             if in_setup {
                 if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
@@ -732,8 +756,8 @@ impl Chat {
             rt.read(cx)
                 .rpc(&Command::SetSessionName { name: name.clone() });
         }
-        self.aux.remote.set_wx_session(key.clone());
-        self.aux.remote.wx_session_name = Some(name.clone());
+        self.aux.remote.line.name = Some(name.clone());
+        self.aux.remote.set_wx_line(key.clone());
         pi_link::hidden_sessions::set_owned(
             pi_link::hidden_sessions::OWNER_WX,
             Some(&name),
@@ -741,32 +765,5 @@ impl Chat {
             Some("pf-wxbot-"),
         );
         Some(key)
-    }
-
-    /// 让一条旧影子会话下线（**不删文件**——2026-10-24 用户定夺：删除一律不做，
-    /// 老会话留盘、由过滤清单按 `pf-wxbot-*` 前缀挡住）。只清内存态与列表缓存。
-    fn wx_forget_session(&mut self, key: &str, cx: &mut gpui::Context<Self>) {
-        if let Some(rt) = self.pool.runtimes.remove(key) {
-            rt.update(cx, |r, _| {
-                r.rpc(&Command::Abort);
-                r.shutdown_process();
-            });
-        }
-        let path = std::path::PathBuf::from(key);
-        let same = |a: &std::path::PathBuf| crate::services::workspace::same_path(a, &path);
-        self.pool.sessions.retain(|s| !same(&s.path));
-        self.pool.session_tail_cache.remove(&path);
-        for g in &mut self.psp.projects {
-            g.sessions.retain(|s| !same(&s.path));
-        }
-        self.psp.unread.remove(&path);
-        self.psp.turn_errors.remove(&path);
-        self.psp.turn_warnings.remove(&path);
-        self.psp.session_pins.retain(|p| !same(p));
-        self.psp.pending_tabs.retain(|e| e.key != key);
-        if self.psp.active_file.as_ref().is_some_and(same) {
-            self.psp.active_file = None;
-        }
-        pi_link::recents::remove_recent(&path);
     }
 }

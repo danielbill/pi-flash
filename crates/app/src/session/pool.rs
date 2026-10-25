@@ -126,7 +126,7 @@ impl Chat {
                     // 启动横幅之类不得混进回复通道。
                     let key = rt.read(cx).key.clone();
                     let running = rt.read(cx).agent_running;
-                    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(key.as_str());
+                    let is_wx_line = chat.aux.remote.on_wx_line(&key);
                     if is_wx_line && running {
                         for text in chat.aux.remote.on_assistant(&ev, &key) {
                             chat.aux.remote.send(&text);
@@ -249,10 +249,10 @@ impl Chat {
         self.composer.history_ix = None;
         // 非微信线的活跃会话记为「桌面会话」：微信线单开 tab（2026-10-24
         // 定夺），查看微信时 topbar 第一格继续显示并回到它
-        if self.aux.remote.wx_session.as_deref() != Some(key.as_str()) {
-            self.aux.remote.desktop_key = Some(key.clone());
+        let is_wx_line = self.aux.remote.on_wx_line(&key);
+        if !is_wx_line {
+            self.aux.remote.remember_desktop(&key);
         }
-        let is_wx_line = self.aux.remote.wx_session.as_deref() == Some(key.as_str());
         self.pool.active_key = key;
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
@@ -265,7 +265,7 @@ impl Chat {
         }
         if let Some(f) = &file {
             // 无项目态不存在可切会话（switch_pool_rt 已先重挂），防御式取 Some。
-            // 微信线**不记 last_open**（2026-11-01 定夺）：影子会话归【微信通话】
+            // 微信线**不记 last_open**（2026-10-25 定夺）：影子会话归【微信通话】
             // 窗口管，绝不能成为桌面「最后会话」——否则启动恢复把它当桌面
             // 会话打开，渲染出没有归属（无 tab 无操作栏）的孤儿页面
             if let Some(cwd) = &self.ws.cwd {
@@ -308,6 +308,10 @@ impl Chat {
 }
 
 impl Chat {
+    /// 无项目态占位会话：恒在、永不 spawn、非微信线。`shell::chat` 建它，
+    /// 「关掉微信标签回桌面」也回它——不再到处写字面量 `"draft-0"`。
+    pub(crate) const PLACEHOLDER_KEY: &'static str = "draft-0";
+
     /// 新会话草稿（用户显式新建：psp ＋、新建按钮、删会话后归位）。
     /// `clear_last_open` 跟在这里：用户明确要空白会话 ⇒ 该项目不再恢复旧会话。
     pub(crate) fn new_session(&mut self, cx: &mut Context<Self>) {
@@ -321,7 +325,7 @@ impl Chat {
     /// 微信线专属草稿：**一律建在独立工作目录 `wx_cwd` 下**（与桌面 cwd
     /// 解耦，用户定夺）；`wx_cwd` 未定 → None（调用方各自兜底）。
     pub(crate) fn new_draft_detached(&mut self, cx: &mut Context<Self>) -> Option<String> {
-        let cwd = self.aux.remote.wx_cwd.clone()?;
+        let cwd = self.aux.remote.wx_cwd()?.clone();
         let key = format!("draft-{}", self.pool.draft_seq);
         self.pool.draft_seq += 1;
         let rt = cx.new(|_| {
@@ -333,6 +337,37 @@ impl Chat {
         self.pool.runtimes.insert(key.clone(), rt.clone());
         self.subscribe_runtime(&rt, cx);
         Some(key)
+    }
+
+    /// 让一条会话从池里彻底下线：停进程 + 清 10 处并行状态。
+    ///
+    /// 会话态散在 10 个容器里（池、尾窗缓存、项目分组、未读/错误/告警、
+    /// 置顶、待处理 tab、当前文件、recents），任何生命周期操作都得把这 10
+    /// 处抄一遍、漏一个就留幽灵。**下线只写这一份**（微信线换线走它）。
+    /// 不删文件（用户定夺：删除一律不做，影子会话由过滤前缀挡住）。
+    pub(crate) fn forget_session(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(rt) = self.pool.runtimes.remove(key) {
+            rt.update(cx, |r, _| {
+                r.rpc(&Command::Abort);
+                r.shutdown_process();
+            });
+        }
+        let path = std::path::PathBuf::from(key);
+        let same = |a: &std::path::PathBuf| crate::services::workspace::same_path(a, &path);
+        self.pool.sessions.retain(|s| !same(&s.path));
+        self.pool.session_tail_cache.remove(&path);
+        for g in &mut self.psp.projects {
+            g.sessions.retain(|s| !same(&s.path));
+        }
+        self.psp.unread.remove(&path);
+        self.psp.turn_errors.remove(&path);
+        self.psp.turn_warnings.remove(&path);
+        self.psp.session_pins.retain(|p| !same(p));
+        self.psp.pending_tabs.retain(|e| e.key != key);
+        if self.psp.active_file.as_ref().is_some_and(same) {
+            self.psp.active_file = None;
+        }
+        pi_link::recents::remove_recent(&path);
     }
 
     /// 后台唤醒既有会话（微信线投递用）：建 runtime + 订阅 + 尾窗快照，
@@ -470,10 +505,10 @@ impl Chat {
         }
         // 微信线跟随迁移：草稿键 → 会话文件路径键（否则微信 /新建 后第一条
         // 消息一落地，归属就指向已退役的 draft-N，后续全部回退活跃会话）
-        if self.aux.remote.wx_session.as_deref() == Some(old_key.as_str()) {
-            self.aux.remote.set_wx_session(path_key.clone());
+        if self.aux.remote.on_wx_line(&old_key) {
+            self.aux.remote.set_wx_line(path_key.clone());
             // 影子会话落盘：名字补进过滤清单（按 path 精确，重启后仍藏得住）
-            let name = self.aux.remote.wx_session_name.clone();
+            let name = self.aux.remote.line_name().map(str::to_string);
             pi_link::hidden_sessions::set_owned(
                 pi_link::hidden_sessions::OWNER_WX,
                 name.as_deref(),
@@ -491,7 +526,7 @@ impl Chat {
         // recents (003-session管理): a fresh session file just landed
         pi_link::recents::touch_recent(&path);
         // 微信线不记 last_open（同 switch_to：影子会话不进桌面恢复线）
-        if self.aux.remote.wx_session.as_deref() != Some(path_key.as_str()) {
+        if !self.aux.remote.on_wx_line(&path_key) {
             set_last_open(&rt.read(cx).cwd.to_string_lossy(), &path_key);
         }
         // 新会话落地的项目组若处于折叠态则自动展开：伪标签（draft）在折叠

@@ -1,6 +1,7 @@
 //! 探针状态：扫码会话、bot_token、长轮询游标、上次入站会话标识。
 //!
-//! 落盘位置跟 `pi_link::paths`（`PI_FLASH_DIR` 优先，见 `060-远程控制-微信.md` §3）。
+//! 落盘位置跟 `pi_link::paths`（`PI_FLASH_DIR` 优先，见 `pi_link::paths` 与
+//! `pi-flash-plugins/docs/插件设计/002-微信通信.md`）。
 //! 游标持久化遵循 ZCode 的 bugfix：**等本批消息全部处理完再写**，
 //! 先写游标会让进程中途失败时跳过未处理消息（`weixinChannelRuntime.ts:155-163`）。
 

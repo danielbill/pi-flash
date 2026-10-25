@@ -18,6 +18,7 @@ pub(crate) mod pi_extension_picker;
 pub(crate) mod pool;
 pub(crate) mod runtime;
 pub(crate) mod subagent_panel;
+pub(crate) mod template;
 pub(crate) mod tools_recipe;
 
 use gpui::{
@@ -37,6 +38,17 @@ use crate::appearance::theme::theme as T;
 use crate::services::format::*;
 
 pub(crate) use subagent_panel::SubagentPanel;
+
+/// 当前活跃会话所属「线」的皮肤 = 会话页模版注入面的**唯一取值处**。
+/// 新增一条功能线 = 在它自己的模块里给一份 `SessionPageSkin`，这里加一个
+/// 分支；页面骨架保持零判定。
+pub(crate) fn skin(chat: &Chat) -> &'static template::SessionPageSkin {
+    if chat.wx_line_active() {
+        &crate::remote_control::panel::WX_SKIN
+    } else {
+        &template::DESKTOP
+    }
+}
 
 pub(crate) fn main_column(
     chat: &mut Chat,
@@ -60,13 +72,13 @@ pub(crate) fn main_column(
     // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
     // 导致 stop 按钮永远不出现
     let streaming = rt.read(cx).agent_running;
+    // 会话页模版（030）：桌面线与微信线共用本骨架，差异全部由皮肤注入
+    // （操作栏右侧簇 / 空会话策略 / 新会话页皮肤）——骨架里不写任何线判定。
+    let page_skin = skin(chat);
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
-    // 项目|会话列表为空、或「新建会话」都落在这里
-    let new_session_page = rt.read(cx).messages.is_empty() && !streaming;
-    // 微信线即使还是空会话也必须出操作栏：002 把信息/控制三件套（微信 icon /
-    // 开关 / 刷新二维码）放在「标签页下方的控制栏右侧」，空会话页把它藏了
-    // 就没有任何入口（状态①未创建时正是空会话）
-    let is_wx_line = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    // 项目|会话列表为空、或「新建会话」都落在这里。微信线除外（皮肤
+    // `keep_on_empty`）：它空会话也停在会话页，设置页由功能页分段承担。
+    let new_session_page = rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -90,9 +102,7 @@ pub(crate) fn main_column(
         .bg(rgb(t.bg))
         .text_color(rgb(t.text))
         .font_family(sf.family.clone())
-        .when(!new_session_page || is_wx_line, |d| {
-            d.child(session_fn_bar(chat, cx))
-        })
+        .when(!new_session_page, |d| d.child(session_fn_bar(chat, page_skin, cx)))
         .child(
             div()
                 .id("chat-and-nav")
@@ -115,6 +125,7 @@ pub(crate) fn main_column(
                             .child(new_session::page(
                                 chat,
                                 weak,
+                                page_skin,
                                 streaming,
                                 input_focused,
                                 f32::from(window.viewport_size().height),
@@ -172,7 +183,11 @@ pub(crate) fn main_column(
 /// （session/input/ctx_tip.rs）；新增「会话目录」（资源管理器打开当前项目
 /// 的 pi 会话组目录，动作同 psp 项目详情卡 explorer 钮）+「打开终端」，
 /// 钮间淡色 `|` 区隔。终端视图开着时终端钮点亮 accent。
-fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+fn session_fn_bar(
+    chat: &mut Chat,
+    skin: &template::SessionPageSkin,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
     let t = T();
     // 栏首项目名（2026-10-14）：当前工作区基名（ws.cwd），粗体亮色，后随
     // 淡色 chevron（编辑器面包屑同款 ">"），再接原有三钮。功能面板打开时
@@ -261,9 +276,9 @@ fn session_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEle
         .when(crate::services::workspace::subagents_enabled(), |d| {
             d.child(subagent_fn_bar_btn(chat, cx))
         })
-        // 微信线状态簇（060）：仅活跃会话是微信线时右对齐显示
-        //（微信 icon 三色 + 启停开关/说明文字 + 刷新二维码；002 操作栏三件）
-        .children(crate::remote_control::panel::fn_bar_status(chat, cx))
+        // 线的操作栏注入簇（模版注入点 ①，060 微信线 = 微信 icon 三色 +
+        // 启停开关/说明文字 + 新建会话 + 重新绑定；002 操作栏定序）
+        .children(skin.fn_bar.map(|f| f(chat, cx)))
         .into_any_element()
 }
 
