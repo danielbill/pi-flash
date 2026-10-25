@@ -275,13 +275,9 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
         .items_end();
     // 固定段：置顶会话 tab（滚动区外，永不滚走）
     strip = strip.child(session_tab(chat, cx));
-    // 固定段：【微信通话】功能页 tab（060/002；dev-flag `wx` 关 = 不渲染）。
-    // **可关闭**（用户定夺 2026-10-25，002 只说「单独起一个标签页」，常驻
-    // 是加戏）：× 仅激活态显示，中键同义；重开入口 = 微信 icon（已绑）/
-    // 重新绑定 / 新建会话 / 过期自动回绑定页
-    if crate::services::workspace::wx_enabled() && chat.wx_tab_open() {
-        strip = strip.child(wx_tab(chat, cx));
-    }
+    // 【微信通话】已归队 `PanelTab::Wx`（跟自由区一起渲染/拖拽/右键）——
+    // 它曾作为固定段特例活在会话 tab 旁，代价是右键菜单/拖拽/批量关闭
+    // 全套缺失（同规则见 shell/types.rs::PanelTab::Wx 注释）。
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
     // `track_scroll` 挂上句柄（zed tab bar 同款）后 gpui 每帧记 child
     // bounds → `ScrollHandle::scroll_to_item(ix)` 才能把激活 tab 滚进视口
@@ -389,6 +385,16 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 Some("search"),
                 ContentView::SessionSearch,
             ),
+            // 060/002【微信通话】：tab 归队后与别的 tab 同构——标题固定，
+            // 内容是「管理页 ⇄ 微信线会话」两副面孔（归属判据见
+            // `PanelTab::owns_view` / `Chat::wx_front_active`）。
+            crate::PanelTab::Wx => (
+                tr("remote.tab_title").into(),
+                None,
+                false,
+                Some("smartphone"),
+                ContentView::Wx,
+            ),
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点。zed parity（DiskState::
         // Deleted）：文件已从磁盘消失不标 !——删除线是唯一标记，脏点照常
@@ -419,7 +425,16 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 .into_any_element(),
             )
         });
-        let active = chat.layout.content_view == tab_view && chat.ws.active_panel_tab == Some(ix);
+        // 激活判据不能用 `content_view == tab_view` 枚举相等：微信 tab 的
+        // 「微信线会话」在类型上是 Chat（见 PanelTab::owns_view），拿\.view()
+        // 的名义值（Wx）去比会永远认不出它自己的聊天视图。
+        let wx_line = chat.wx_line_active();
+        let active = chat
+            .ws
+            .panel_tabs
+            .get(ix)
+            .is_some_and(|t| t.owns_view(chat.layout.content_view, wx_line))
+            && chat.ws.active_panel_tab == Some(ix);
         tabs_host = tabs_host.child(content_tab(
             if is_file { "ctab-file" } else { "ctab-term" },
             ix,
@@ -505,62 +520,6 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
     .into_any_element()
 }
 
-/// 微信线 tab（060 单开 tab）：紧随会话 tab 的固定段，label = 微信通话
-///（`remote.tab_title`，002-微信通信 定名），无 × 无右键菜单（线常驻，关停
-/// 走操作栏开关）。点击 = `open_wx`——激活微信线会话；桌面活跃会话由
-/// 桌面会话与微信会话互不顶替：微信内容只在本标签内展示。
-fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
-    let t = T();
-    // 高亮 = 前台是微信内容（功能页，或正在看的微信会话）
-    let active = chat.wx_front_active();
-    let title: SharedString = tr("remote.tab_title").to_string().into();
-    let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-        this.open_wx(cx);
-    });
-    // 关闭 = 收起标签 + 收前台 + 收专属模态 + 落盘，全在 `Chat::close_wx_tab`
-    // 一处（2026-10-25 用户定夺：标签与内容一体，不许「标签关了、微信会话页
-    // 还挂着」）。服务与影子会话不受影响——关的只是这个「窗口」。
-    let do_close = |this: &mut Chat, cx: &mut gpui::Context<Chat>| {
-        this.close_wx_tab(cx);
-    };
-    let close_x = cx.listener(move |this, ev: &gpui::MouseDownEvent, w, cx| {
-        cx.stop_propagation();
-        do_close(this, cx);
-        let _ = (ev, w);
-    });
-    let close_mid = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-        do_close(this, cx);
-    });
-    let x_btn = div()
-        .id("ctab-wx-x")
-        .flex_shrink_0()
-        .size(px(20.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.))
-        .text_color(rgb(t.text_dim))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-        .on_mouse_down(MouseButton::Left, close_x)
-        .child(crate::ui::icon_hover("x", 12., t.text_dim))
-        .into_any_element();
-    tab_shell(
-        "ctab-wx".into(),
-        Some(crate::ui::icon("smartphone", 12., t.text_muted).into_any_element()),
-        title,
-        active,
-        0.,
-        t,
-        switch,
-        Some(x_btn),
-        None,
-        false,
-    )
-    .on_mouse_down(MouseButton::Middle, close_mid)
-    .into_any_element()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn content_tab(
     id: &'static str,
@@ -629,6 +588,11 @@ fn content_tab(
         ));
         cx.notify();
     });
+    // 中键关闭（浏览器/zed 同款；原仅微信 tab 有，归队后全 tab 统一）
+    let close_mid = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        this.close_tab_at(ix, cx);
+        cx.notify();
+    });
     // zed pane tab 拖拽换位：on_drag 发起（ghost = tab 本体自克隆）+
     // drag_over 插入侧指示 + on_drop 落位（按稳定 key 现查 from，防拖拽
     // 中列表漂移）。会话 tab 不接线（固定段禁拖）。
@@ -667,6 +631,7 @@ fn content_tab(
     // pointer；拖拽中由 tabs_host 的 on_drag_move 覆写成 ClosedHand
     .cursor(gpui::CursorStyle::OpenHand)
     .on_mouse_down(MouseButton::Right, ctx_menu)
+    .on_mouse_down(MouseButton::Middle, close_mid)
     .on_drag(drag, move |_, _, _, cx| {
         cx.new(|_| TabDragGhost {
             drag: ghost.clone(),

@@ -290,6 +290,15 @@ pub(crate) enum PanelTab {
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
     SessionSearch,
+    /// 060/002【微信通话】：一个 tab 底下两种内容（未绑定/过期 → 绑定管理
+    /// 页 `ContentView::Wx`；就绪 → 微信影子会话聊天视图 `ContentView::Chat`
+    /// + 微信皮肤）。当年因为「一个 tab 两种 view」被排挤成固定段特例，
+    /// 但它和会话 tab 完全同构（会话 tab 底下也是 N 个会话视图轮换）——
+    /// 归队后右键菜单/拖拽换位/批量关闭全套免费继承。
+    ///
+    /// 归属判据（真身在 `Chat::wx_front_active`）：
+    /// `content_view == Wx || wx_line_active()`。
+    Wx,
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -305,6 +314,7 @@ pub(crate) enum TabKey {
     PfMarket,
     Search,
     SessionSearch,
+    Wx,
 }
 
 impl PanelTab {
@@ -318,6 +328,7 @@ impl PanelTab {
             PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
+            PanelTab::Wx => TabKey::Wx,
         }
     }
 }
@@ -343,6 +354,31 @@ impl PanelTab {
             PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
+            // 微信 tab 有两副面孔：`view()` 只给「菜单/回退」用的名义视图
+            //（管理页）。真归属判据见 `PanelTab::owns_view`——微信线会话在
+            // 类型上是 `ContentView::Chat`，单靠枚举相等认不出来。
+            PanelTab::Wx => ContentView::Wx,
+        }
+    }
+
+    /// 该 tab 是否「拥有」某个内容视图（激活高亮/关闭回退/视图归属的唯一
+    /// 判据）。绝大多数 tab 就是 `view() == to` 的同义反复；微信 tab 例外：
+    /// 它同时拥有管理页（`Wx`）与微信线会话聊天视图（`Chat` + 微信线），
+    /// 这两副面孔都属于它，不能让它以外的东西认领 `ContentView::Chat`。
+    ///
+    /// `wx_line` = 当前活跃会话是不是微信线（`Chat::wx_line_active`），由
+    /// 调用方传入——纯枚举函数摸不到 Chat 状态。
+    pub(crate) fn owns_view(&self, to: ContentView, wx_line: bool) -> bool {
+        match self {
+            PanelTab::Wx => to == ContentView::Wx || (to == ContentView::Chat && wx_line),
+            PanelTab::Term(_) => to == ContentView::Term,
+            PanelTab::File(_) => to == ContentView::File,
+            PanelTab::Changelog => to == ContentView::Changelog,
+            PanelTab::PiExtMarket => to == ContentView::PiExtMarket,
+            PanelTab::PiNativeMarket => to == ContentView::PiNativeMarket,
+            PanelTab::PfMarket => to == ContentView::PfMarket,
+            PanelTab::Search => to == ContentView::Search,
+            PanelTab::SessionSearch => to == ContentView::SessionSearch,
         }
     }
 }

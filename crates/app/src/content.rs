@@ -182,6 +182,8 @@ pub(crate) fn term_view(
             crate::PanelTab::PfMarket => div().into_any_element(),
             crate::PanelTab::Search => div().into_any_element(),
             crate::PanelTab::SessionSearch => div().into_any_element(),
+            // 微信 tab 不是终端，body 走 content.rs 的 ContentView 分支
+            crate::PanelTab::Wx => div().into_any_element(),
             crate::PanelTab::Term(id) => {
                 let tix = chat.ws.terminals.iter().position(|t| t.id == id);
                 let Some(tix) = tix else {

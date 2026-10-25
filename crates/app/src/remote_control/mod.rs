@@ -166,9 +166,11 @@ pub struct RemoteControl {
     line: WxLine,
     /// state.json 的进程内镜像：泵一拍刷一次，**渲染只读镜像**（不碰盘）
     snap: Snapshot,
-    /// 【微信通话】标签是否展开——**on/off 的唯一状态**（002：标签开 = on，
-    /// 关 = off；没有「开关」「前台归属」这些第二真相源）。
-    pub(crate) tab_open: bool,
+    /// 【微信通话】标签的**真身就在 `ws.panel_tabs` 里**（`PanelTab::Wx`
+    /// 存在 = 开，不存在 = 关），本结构不再存第二份 bool——历史上这里
+    /// 有个 `tab_open` 与 panel_tabs 两份状态，关标签时两边同时写才有
+    /// 资格说「标签关着」，漏写一处就长出幻影标签（归队后废）。
+    /// 读侧一律走 [`crate::Chat::wx_tab_open`]。
     /// 设置页扫码面板状态（url 与阶段合一）
     pub qr: QrState,
     /// 扫码 worker 的回程（200ms 泵里 drain）
@@ -216,7 +218,6 @@ impl RemoteControl {
             health: Health::Ok,
             line: WxLine::default(),
             snap,
-            tab_open: false,
             qr: QrState::Idle,
             qr_rx: None,
             active_running: false,
@@ -567,6 +568,13 @@ impl RemoteControl {
     }
 
     pub fn send(&self, text: &str) {
+        // 横幅总闸（2026-10-25 真机复漏）：TextEnd 过滤与 flush 行剔除是前
+        // 两道，这里按「整条消息即横幅」最后拦一道——不管上游哪条路径拼出
+        // 来的，pi 冷启动横幅绝不进微信出站队列。
+        if is_pure_banner_msg(text) {
+            eprintln!("[wx] 拦截 MCP 横幅出站：{text:?}");
+            return;
+        }
         if let Some(t) = self.svc.transport() {
             let _ = t.send(text);
         }
@@ -825,6 +833,19 @@ fn strip_startup_banner(buf: &str) -> String {
         .join("\n")
 }
 
+/// 横幅总闸判据（[`RemoteControl::send`] 用）：整条消息就是横幅才拦——
+/// 单行 + `mcp:`/`server` 命中 + `enabled` 收尾（桌面侧 `is_mcp_banner`
+/// 同款收紧口径，避免误杀真在聊 MCP 的多行回复）。先剥 ANSI，色码残留
+/// 不影响识别。
+fn is_pure_banner_msg(text: &str) -> bool {
+    let low = wxprobe::poller::strip_ansi(text).trim().to_lowercase();
+    !low.is_empty()
+        && !low.contains('\n')
+        && low.contains("mcp:")
+        && low.contains("server")
+        && low.ends_with("enabled")
+}
+
 /// `/思考` 的 8 档 —— 与桌面 PillMenu 完全同一张表（key/label 一一对应）。
 fn think_options() -> Vec<(String, String)> {
     [
@@ -945,8 +966,22 @@ impl crate::Chat {
     }
 
     /// 【微信通话】标签开着？（002：标签开 = on，关 = off，没有第三态）
+    ///
+    /// **唯一真身 = `panel_tabs` 里有没有 `PanelTab::Wx`**（归队后不再有
+    /// 独立的 `tab_open` bool 与它并列）。
     pub(crate) fn wx_tab_open(&self) -> bool {
-        self.aux.remote.tab_open
+        self.ws
+            .panel_tabs
+            .iter()
+            .any(|t| matches!(t, crate::PanelTab::Wx))
+    }
+
+    /// 【微信通话】tab 在标签条上的下标（排列可拖拽换位，不能假定位置）。
+    pub(crate) fn wx_tab_index(&self) -> Option<usize> {
+        self.ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Wx))
     }
 
     /// 前台是微信内容：功能页（绑定/设置会话），或正在看的微信会话。
@@ -957,7 +992,18 @@ impl crate::Chat {
     /// 展开【微信通话】标签（幂等，不动前台）。独立工作目录首进从桌面 cwd
     /// 继承一次（002 模块独立：此后两边 cwd 互不联动）。
     pub(crate) fn wx_open_tab(&mut self) {
-        self.aux.remote.tab_open = true;
+        // 幂等挂 tab：与别的 tab 同一条带子、同一个拖拽/右键体系
+        let ix = match self.wx_tab_index() {
+            Some(ix) => ix,
+            None => {
+                self.ws.panel_tabs.push(crate::PanelTab::Wx);
+                self.ws.panel_tabs.len() - 1
+            }
+        };
+        // 微信内容就属于这颗 tab：激活位跟上（高亮判据看 active_panel_tab，
+        // 不跟上就会出现「内容已是微信、却没有任何 tab 高亮」的空高亮态）
+        self.ws.active_panel_tab = Some(ix);
+        self.layout.tabs_scroll.scroll_to_item(ix);
         // 002 独立工作目录：为空就继承当前项目一次；此后两边互不联动
         if self.aux.remote.wx_cwd().is_none() {
             if let Some(cwd) = self.ws.cwd.clone() {
@@ -1033,12 +1079,12 @@ impl crate::Chat {
         // ① 盘 → 镜像（mtime 没变就不真读；渲染只读镜像，永不碰盘）
         dirty |= self.aux.remote.snap.refresh(false);
         // ② 服务状态机：标签开 = on / 关 = off（002 服务激活）
-        dirty |= self.aux.remote.step_service(self.aux.remote.tab_open);
+        dirty |= self.aux.remote.step_service(self.wx_tab_open());
         // ③ 换绑检测：扫码换了 token → 停旧句柄，下一拍用新 token 重拉
         self.aux.remote.force_restart_if_token_changed();
         // ④ 入站 → 线就位 → 逐批执行（标签关着时只在有入站时才建线）
         let batches = self.aux.remote.take_batches();
-        if !batches.is_empty() || self.aux.remote.tab_open {
+        if !batches.is_empty() || self.wx_tab_open() {
             let before = self.aux.remote.line.key.clone();
             self.wx_ensure_session(cx);
             dirty |= before != self.aux.remote.line.key;
@@ -1401,6 +1447,20 @@ impl crate::Chat {
     /// 独立工作目录 `wx_cwd`（禁止联动桌面 cwd）。
     pub(crate) fn wx_setup_ctx(&self) -> bool {
         self.wx_front_active()
+    }
+
+    /// 「当前项目」按上下文取值（002 模块独立）：微信设置会话页 = 独立
+    /// 工作目录 `wx_cwd`；其余 = 桌面项目 `ws.cwd`。项目选择器的**勾选、
+    /// 默认高亮、兜底入选**三处统一走这里——2026-10-25 报障根因：三处
+    /// 直读 `ws.cwd`，微信设置页选完 pi_work 后重开选择器，勾还打在桌面
+    /// 项目（pi-flash）上，看起来「用户的选择被 PF cwd 替换」（实际
+    /// `wx_cwd` 落盘无误，纯显示层）。
+    pub(crate) fn picker_current_cwd(&self) -> Option<PathBuf> {
+        if self.wx_setup_ctx() {
+            self.aux.remote.wx_cwd().cloned()
+        } else {
+            self.ws.cwd.clone()
+        }
     }
 
     /// 微信聊天放行条件（002 §2，用户定夺：项目和模型都是必选项）：
@@ -1824,6 +1884,31 @@ mod tests {
         let mut rc4 = RemoteControl::detached();
         rc4.on_assistant(&td(0, "🔌 MCP: 1 server(s) enabled"));
         assert!(rc4.on_running(false).is_empty(), "变体同样不出站");
+    }
+
+    /// 横幅总闸（2026-10-25 真机复漏）：`send` 是微信出站唯一内容出口，
+    /// 整条即横幅的文本在此内部消化——dump 实抓文案 + 变体全盖，真回复
+    /// （单行问句、多行讨论 MCP）不得误杀。
+    #[test]
+    fn send_gate_swallows_pure_banner_messages() {
+        // dump 2717 实抓原文及各变体
+        for t in [
+            "🔌 MCP: 1 server enabled",
+            "MCP: 2 servers enabled",
+            "\u{1b}[38;5;5m🔌 MCP: 1 server enabled\u{1b}[39m",
+            "  mcp: 1 server(s) enabled\r\n",
+        ] {
+            assert!(is_pure_banner_msg(t), "应识别为横幅：{t:?}");
+        }
+        // 真回复不得拦：多行讨论、单行无冒号/不以 enabled 收尾、固定文案
+        assert!(!is_pure_banner_msg(
+            "MCP: 1 server enabled\n不过你真正问的是配置问题，我来说明："
+        ));
+        assert!(!is_pure_banner_msg("我的 MCP server 已经 enabled，还需要别的吗"));
+        assert!(!is_pure_banner_msg("怎么确认 mcp: 是否已经 enabled"));
+        assert!(!is_pure_banner_msg("⚡ Pi-Flash 通信已开启"));
+        // 无 transport 也不 panic（detached）
+        RemoteControl::detached().send("🔌 MCP: 1 server enabled");
     }
 
     /// 影子会话名（用户定夺）：`pf-wxbot-` + **15 位**时间戳（纯数字）。
