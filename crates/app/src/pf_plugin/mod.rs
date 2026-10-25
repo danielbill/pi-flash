@@ -9,7 +9,8 @@
 //! 时序（02 §4）：清单启动读（spawn_plugin_scan，后台），ctx 首用时
 //! 建；插件异常 → toast + 会话级禁用，不影响宿主。
 
-mod panel;
+mod broadcast;
+pub(crate) mod panel;
 mod wasm_hooks;
 
 pub(crate) use wasm_hooks::spawn_precompile_installed;
@@ -24,9 +25,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
-use gpui::SharedString;
+use gpui::{AppContext, SharedString};
 use pf_plugin_host::js::{JsAction, JsHost, JsPlugin};
 use pf_plugin_host::{PluginAction, PluginInstance};
+use serde_json::json;
 
 use crate::Chat;
 
@@ -59,6 +61,10 @@ pub(crate) struct PluginManifest {
     /// 分发态 JS **字节码**（`plugin.qbc`，由 `qjsc` 从同一份 main.js 编出）：
     /// 与源码包同一引擎、同一 ctx、同一渲染路径，落盘无明文源码。
     pub bytecode: Option<String>,
+    /// 包内 pi 扩展文件（契约 v2.4 contributes.pi_extensions，相对包根）。
+    /// 认领会话 spawn 时以 `-e` 挂入，插件逻辑在会话进程内运行。
+    /// **Tier 2 门**：仅官方验签包可携带（安装链执行，见 002 §W5）。
+    pub pi_extensions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +89,29 @@ pub(crate) struct PanelContrib {
     pub title_zh: String,
     /// 逻辑入口（02 §2；固定 main.js）
     pub entry: String,
+    /// 展示形态（契约 v2.4）：dock 面板（缺省）或内容区预览页签
+    pub dock: PluginDock,
+}
+
+/// 插件面板展示形态（契约 v2.4 `panels[].dock`）。平台语义命名，
+/// 宿主不解释哪个插件用什么形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PluginDock {
+    /// 左列 dock 面板（缺省，老插件零迁移）
+    Panel,
+    /// 内容区预览页签（单例、整页声明式树；认领会话线模式随会话槽交付）
+    Tab,
+}
+
+impl PluginManifest {
+    /// 声明为预览页签的面板（契约 v2.4 dock="tab"）。当前取第一个：
+    /// 多 page 页签支持随认领会话线（W5）一起开。
+    pub(crate) fn tab_page(&self) -> Option<(&str, &str)> {
+        self.panels
+            .iter()
+            .find(|p| p.dock == PluginDock::Tab)
+            .map(|p| (self.pkg.as_str(), p.id.as_str()))
+    }
 }
 
 /// 当前语言取标题（i18n 0=简中 1=繁中 2=EN；繁中走 zh 文案）。
@@ -251,6 +280,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         status_bar: None,
         file_menu: Vec::new(),
         panels: Vec::new(),
+        pi_extensions: Vec::new(),
         wasm: None,
         bytecode: None,
     };
@@ -291,8 +321,13 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                         id: String::new(),
                         title_zh: String::new(),
                         entry: "main.js".into(),
+                        dock: PluginDock::Panel,
                     });
                     "panels".to_string()
+                }
+                "contributes.pi_extensions" => {
+                    m.pi_extensions.push(String::new());
+                    "pi_extensions".to_string()
                 }
                 other => return Err(format!("pf-plugin.toml 行 {}：未知段 [[{other}]]", n + 1)),
             };
@@ -365,6 +400,21 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 ));
             }
             ("panels", "entry") => m.panels.last_mut().unwrap().entry = val.as_str("entry", n)?,
+            ("panels", "dock") => {
+                m.panels.last_mut().unwrap().dock = match val.as_str("dock", n)?.as_str() {
+                    "panel" => PluginDock::Panel,
+                    "tab" => PluginDock::Tab,
+                    other => {
+                        return Err(format!(
+                            "pf-plugin.toml 行 {}：dock 只认 \"panel\" | \"tab\"，得到 {other}",
+                            n + 1
+                        ))
+                    }
+                };
+            }
+            ("pi_extensions", "path") => {
+                *m.pi_extensions.last_mut().unwrap() = val.as_str("path", n)?;
+            },
             (sec, key) => return Err(format!("pf-plugin.toml 行 {}：{sec} 段未知键 {key}", n + 1)),
         }
     }
@@ -649,6 +699,29 @@ pub(crate) struct PluginEntry {
 #[derive(Default)]
 pub(crate) struct PluginUi {
     pub plugins: Vec<PluginEntry>,
+    /// 组件状态广播的上次已发快照（None = 从未发过/面板刚开，下一拍必发）。
+    /// 类型 = broadcast::Snap：(project, model)。见 `broadcast.rs`。
+    pub broadcast_last: Option<(Option<String>, Option<(String, String)>)>,
+    /// 认领槽：插件实例 × 进行中会话（002 wx_session_id 的泛化；一个插件
+    /// 同时只有一条进行中线，新建即换绑）。见 `Claim`。
+    pub claims: Vec<Claim>,
+}
+
+/// 插件认领槽记录（匿名归属：宿主只认识 "某插件 × 某 key"）。
+#[derive(Debug, Clone)]
+pub(crate) struct Claim {
+    pub plugin_id: String,
+    pub prefix: String,
+    pub key: String,
+}
+
+/// 认领会话名：`{prefix}YYMMDDHHMMSSmmm`（与 wx 线同款 15 位时间戳口径，
+/// 002 §5）。纯函数便于单测。
+pub(crate) fn claim_session_name(prefix: &str) -> String {
+    format!(
+        "{prefix}{}",
+        chrono::Local::now().format("%y%m%d%H%M%S%3f")
+    )
 }
 
 /// JsHost 实现（02 §3 提问类同步、动作类入队）。
@@ -750,6 +823,152 @@ impl Chat {
             return;
         }
         self.layout.dock_panel = crate::DockPanel::Plugin(ix);
+        // 广播「面板打开首拍」语义：清快照 → 下一拍必发当前状态
+        broadcast::reset(&mut self.plugins);
+        self.plugin_refresh(ix, cx);
+    }
+
+    /// 该插件的（第一个）面板是否声明为内容区预览页签（契约 v2.4 dock）。
+    pub(crate) fn plugin_dock_is_tab(&self, ix: usize) -> bool {
+        self.plugins
+            .plugins
+            .get(ix)
+            .is_some_and(|e| e.manifest.tab_page().is_some())
+    }
+
+    /// 某会话 key 是否被任一插件认领（过滤/last_open 排除的唯一判据）。
+    pub(crate) fn plugin_claimed(&self, key: &str) -> bool {
+        self.plugins.claims.iter().any(|c| c.key == key)
+    }
+
+    /// 新建插件认领会话（契约 v2.4 sessions；002「设置会话」步骤的泛化）。
+    /// 名字 = 前缀 + 15 位时间戳（唯一性归宿主）；过滤清单 owner = 插件 id
+    /// （hidden_sessions 天然 owner 泛化，消费方零改动）；包内 pi 扩展挂到
+    /// 该会话的 session_ext（spawn 时 `-e` 装载）。cwd = 插件自持的工作
+    /// 目录（002 模块独立：与桌面 cwd 互不联动，错误项目问题无从发生）。
+    /// 建完经 broadcast "claim" 回推 key（插件存指针）。
+    pub(crate) fn plugin_new_draft(
+        &mut self,
+        ix: usize,
+        prefix: &str,
+        cwd: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> Result<String, String> {
+        if prefix.is_empty() {
+            return Err("prefix 不能为空".into());
+        }
+        let cwd_path = std::path::PathBuf::from(cwd);
+        if !cwd_path.is_dir() {
+            return Err(format!("cwd 不是目录：{cwd}"));
+        }
+        let Some(entry) = self.plugins.plugins.get(ix) else {
+            return Err("插件不存在".into());
+        };
+        if entry.disabled {
+            return Err("插件已停用".into());
+        }
+        // 先取值再动 self（借用分离）：pi 扩展绝对路径 + 插件 id + 形态门
+        let pi_exts: Vec<String> = entry
+            .manifest
+            .pi_extensions
+            .iter()
+            .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
+            .collect();
+        let plugin_id = entry.manifest.id.clone();
+        let is_wasm = entry.manifest.wasm.is_some();
+        let pkg_dir = entry.manifest.dir.clone();
+        let name = claim_session_name(prefix);
+        let key = format!("draft-{}", self.pool.draft_seq);
+        self.pool.draft_seq += 1;
+        let rt = cx.new(|_| {
+            let mut r = crate::session::runtime::SessionRuntime::new(key.clone(), cwd_path.clone(), None);
+            r.default_model = crate::services::workspace::default_model_pref();
+            r.status = crate::i18n::tr("session.new").to_string();
+            r
+        });
+        self.pool.runtimes.insert(key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        // 包内 pi 扩展挂到该会话（spawn 时 `-e`；路径 = 包根 + 相对路径）。
+        // **Tier 2 门**：pi ext 是会话进程内全权代码，仅官方验签包（wasm 形态，
+        // init 即验签门）可携带；JS 形态声明了也不挂（fail-closed + 告警）。
+        // 同时写 claim.json 到插件 data 目录：ext 在 session_start 自读交接
+        //（ext 自定位：__dirname/../data/，与宿主 ChatHost dir 同源）。
+        if !pi_exts.is_empty() {
+            if !is_wasm {
+                eprintln!(
+                    "[pf-plugin] Tier2 拒绝：非验签包（JS 形态）声明 pi_extensions，不挂载（{plugin_id}）"
+                );
+            } else if let Some(store) = pi_link::session_ext::store_path() {
+                if let Err(e) = pi_link::session_ext::write_for(&store, &key, &pi_exts) {
+                    eprintln!("[pf-plugin] pi 扩展挂载失败（{key}）: {e}");
+                }
+            }
+        }
+        // 认领槽替换（一个插件同时只有一条进行中线）+ 过滤清单（owner = 插件 id）
+        let prefix = prefix.to_string();
+        self.plugins.claims.retain(|c| c.plugin_id != plugin_id);
+        self.plugins.claims.push(Claim {
+            plugin_id: plugin_id.clone(),
+            prefix: prefix.clone(),
+            key: key.clone(),
+        });
+        pi_link::hidden_sessions::set_owned(&plugin_id, Some(&name), None, Some(&prefix));
+        // 结果回推（契约 broadcast_events.claim）：插件存指针（wx_session_id 泛化）
+        // 交接文件：ext 在 session_start 自读（data 目录 = 包根/data/，
+        // 与宿主 ChatHost dir 同源；卸载随目录删，更新随包走）
+        if !pi_exts.is_empty() {
+            let claim_file = Some(pkg_dir.join("data").join("claim.json"));
+            if let Some(f) = claim_file {
+                if let Some(p) = f.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                if let Err(e) = std::fs::write(
+                    &f,
+                    json!({"key": key, "name": name, "cwd": cwd, "prefix": prefix, "plugin_id": plugin_id})
+                        .to_string(),
+                ) {
+                    eprintln!("[pf-plugin] claim.json 写入失败: {e}");
+                }
+            }
+        }
+        let payload = json!({"key": key, "name": name, "cwd": cwd}).to_string();
+        self.plugin_broadcast_fire(ix, broadcast::CLAIM, &payload, cx);
+        Ok(key)
+    }
+
+    /// 打开插件预览页签（契约 v2.4 `dock = "tab"`）：单例（同 pkg+page
+    /// 已开 → 激活）、整页声明式树。懒加载链与 dock 同源（plugin_refresh），
+    /// 广播首拍同步复位。入口 = 状态栏点击（清单 dock 归宿主解释，
+    /// 插件不感知形态）。
+    pub(crate) fn open_plugin_tab(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        // 已停用的插件不开页签（同 dock 硬门）
+        let Some(entry) = self.plugins.plugins.get(ix) else {
+            return;
+        };
+        if entry.disabled {
+            return;
+        };
+        let Some((pkg, page)) = entry.manifest.tab_page().map(|(p, g)| (p.to_string(), g.to_string()))
+        else {
+            return;
+        };
+        // 单例：同 pkg+page 已开 → 激活既有页签（不重排，082 顺序稳定）
+        let tix = self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Plugin { pkg: p, page: g } if p == &pkg && g == &page));
+        let tix = match tix {
+            Some(tix) => tix,
+            None => {
+                self.ws.panel_tabs.push(crate::PanelTab::Plugin { pkg, page });
+                self.ws.panel_tabs.len() - 1
+            }
+        };
+        self.activate_panel_tab(tix, cx);
+        self.set_content_view(crate::ContentView::Plugin);
+        // 广播首拍 + 懒加载链（与 dock 同源）
+        broadcast::reset(&mut self.plugins);
         self.plugin_refresh(ix, cx);
     }
 
@@ -771,6 +990,12 @@ impl Chat {
     /// `tree_loaded` + 缓存树，不看 disabled 位（090-4 v5 踩过）。
     pub(crate) fn plugin_evict(&mut self, ix: usize) {
         let docked = self.layout.dock_panel == crate::DockPanel::Plugin(ix);
+        // 认领槽随停用一井撤：过滤清单同步摘除（会话文件保留，靠前缀仍藏得住）
+        if let Some(entry) = self.plugins.plugins.get(ix) {
+            let id = entry.manifest.id.clone();
+            self.plugins.claims.retain(|c| c.plugin_id != id);
+            pi_link::hidden_sessions::clear_owned(&id);
+        }
         if let Some(entry) = self.plugins.plugins.get_mut(ix) {
             entry.disabled = true;
             entry.js = None;
@@ -1113,6 +1338,13 @@ impl Chat {
                     crate::services::shell_open::open_in_explorer(std::path::Path::new(&p))
                 }
                 JsAction::NewSession => self.new_session(cx),
+                // 意图调用：新建插件认领会话（契约 v2.4 sessions）。同步无返回值，
+                // 建线后经 broadcast "claim" 事件回推 key（动作队列模型）
+                JsAction::NewDraft { prefix, cwd } => {
+                    if let Err(e) = self.plugin_new_draft(ix, &prefix, &cwd, cx) {
+                        self.set_status(format!("newDraft 失败：{e}"), cx);
+                    }
+                }
                 // 只预填 + 聚焦：发不发由用户按发送键决定（插件不代发）
                 JsAction::AskPi(text) => match self.composer.composer.clone() {
                     Some(input) => {
@@ -1157,6 +1389,62 @@ impl Chat {
                 cx.notify();
             }
             Err(e) => self.plugin_broken(ix, format!("{e}"), cx),
+        }
+    }
+
+    /// 组件状态广播派发（契约 v2.4 broadcast_events）。纯数据回调：
+    /// 窗口相关动作（run/edit/终端）在无窗口面不可达即丢弃，Toast 照走；
+    /// 处理完照重渲染规则刷新面板（wasm = render 回灌）。
+    pub(crate) fn plugin_broadcast_fire(
+        &mut self,
+        ix: usize,
+        name: &str,
+        payload: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        if self.plugins.plugins[ix].wasm.is_some() {
+            let (res, actions) = {
+                let entry = &mut self.plugins.plugins[ix];
+                let Some(inst) = entry.wasm.as_mut() else {
+                    return;
+                };
+                (inst.on_event("broadcast", name, payload), inst.pump_actions())
+            };
+            match res {
+                Ok(()) => {
+                    for a in actions {
+                        if let PluginAction::Toast(m) = a {
+                            self.set_status(m, cx);
+                        }
+                    }
+                    self.plugin_wasm_render(ix, cx);
+                }
+                Err(e) => self.plugin_broken(ix, format!("{e}"), cx),
+            }
+            return;
+        }
+        let (result, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let host = entry.host.as_ref().unwrap().clone();
+            host.borrow_mut().actions.clear();
+            let js = entry.js.as_ref().unwrap();
+            let r = js.fire_broadcast(name, payload);
+            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+            (r, drained)
+        };
+        match result {
+            Ok(()) => {
+                for a in actions {
+                    if let JsAction::Toast(m) = a {
+                        self.set_status(m, cx);
+                    }
+                }
+                self.plugin_refresh(ix, cx);
+            }
+            Err(e) => self.plugin_broken(ix, e, cx),
         }
     }
 
@@ -1272,6 +1560,8 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 /// **验签结论不向用户展示**（正版校验/激活/拒载一类提示一律不出）——插件
 /// 能不能用看它自己的面板表现，启动不播报；结论只进 stderr 供开发查。
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
+    // 组件状态广播（契约 v2.4）：observe Chat 自身，差分派发给订阅插件
+    broadcast::attach(cx);
     // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
     // wasmtime，故由 app 注入）。纯函数指针，零开销。
     pi_link::pf_plugins::install_prepare_hook(install_prepare);
@@ -1433,6 +1723,74 @@ entry = "main.js"
         assert_eq!(m.file_menu.len(), 1);
         assert_eq!(m.file_menu[0].id, "set-quick");
         assert_eq!(m.panels[0].entry, "main.js");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 契约 v2.4 dock 解析：tab/panel/缺省/非法值四路
+    /// 认领会话名：前缀 + 15 位时间戳（002 §5 口径，与 wx 线同构）
+    #[test]
+    fn claim_session_name_format() {
+        let n = claim_session_name("mybot-");
+        assert!(n.starts_with("mybot-"), "{n}");
+        let ts = n.trim_start_matches("mybot-");
+        assert_eq!(ts.len(), 15, "YYMMDDHHMMSS + 3位毫秒 = 15 位：{n}");
+        assert!(ts.chars().all(|c| c.is_ascii_digit()), "{n}");
+        // 唯一性由「前缀 + 毫秒」联合保证；同毫秒重名由认领槽替换语义吸收
+        //（新建即换绑，旧名随换绑退役），不做 flaky 的跨调用断言
+    }
+
+    #[test]
+    fn manifest_panel_dock_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-dock-test-{}", std::process::id()));
+        // tab 形态
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"tab\""));
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+        let mut m = parse_manifest(&dir).expect("tab 清单应通过");
+        assert_eq!(m.panels[0].dock, PluginDock::Tab);
+        m.pkg = "quick-panel".into(); // pkg 是扫描期回填字段，单测手工补
+        assert_eq!(m.tab_page(), Some(("quick-panel", "quick")));
+
+        // 缺省 = panel（老插件零迁移）
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, GOOD);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        let m = parse_manifest(&dir).expect("缺省清单应通过");
+        assert_eq!(m.panels[0].dock, PluginDock::Panel);
+        assert_eq!(m.tab_page(), None);
+
+        // 非法值拒装（封闭词表）
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"sidebar\""));
+        let e = parse_manifest(&dir).unwrap_err();
+        assert!(e.contains("dock"), "错误应提及 dock：{e}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 契约 v2.4 pi_extensions 解析：路径清单进 manifest（Tier 2 门在 new_draft）
+    #[test]
+    fn manifest_pi_extensions_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-piext-test-{}", std::process::id()));
+        let body = GOOD.replace(
+            "entry = \"main.js\"",
+            "entry = \"main.js\"\n\n[[contributes.pi_extensions]]\npath = \"pi/bridge.js\"",
+        );
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &body);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+        let m = parse_manifest(&dir).expect("pi_extensions 清单应通过");
+        assert_eq!(m.pi_extensions, vec!["pi/bridge.js".to_string()]);
+        // 未声明 → 空
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, GOOD);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        let m = parse_manifest(&dir).expect("无 pi_extensions 应通过");
+        assert!(m.pi_extensions.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

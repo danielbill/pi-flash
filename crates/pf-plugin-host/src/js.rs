@@ -61,6 +61,9 @@ pub enum JsAction {
     OpenFolder(String),
     /// 新建会话（不携带内容）
     NewSession,
+    /// 意图调用：新建插件认领会话（契约 v2.4 sessions）。ctx 同步无返回值
+    /// （动作队列模型），宿主建线后经 broadcast "claim" 事件回推 key。
+    NewDraft { prefix: String, cwd: String },
     /// 把文本填进输入框（**只预填、不代发**：发不发由用户决定）
     AskPi(String),
 }
@@ -191,6 +194,14 @@ impl JsPlugin {
                     }),
                 )?;
             }
+            // 双参动作（契约 v2.4 sessions）：新建插件认领会话
+            let h = glue_host.clone();
+            g.set(
+                "__pf_new_draft",
+                Func::from(move |prefix: String, cwd: String| {
+                    h.borrow_mut().queue(JsAction::NewDraft { prefix, cwd });
+                }),
+            )?;
 
             // —— 插件模块（ESM）——
             let module = match (src.clone(), bytecode.clone()) {
@@ -227,10 +238,14 @@ globalThis.__pf_ctx = {{
   openUrl: (u) => globalThis.__pf_open_url(String(u)),
   openFolder: (p) => globalThis.__pf_open_folder(String(p)),
   newSession: () => globalThis.__pf_new_session(""),
+  newDraft: (p, c) => {{
+    globalThis.__pf_new_draft(p == null ? "" : String(p), c == null ? "" : String(c));
+  }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
   onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
   onPanelOpen: (fn) => {{ globalThis.__pf_panel_open_fn = fn; }},
+  onBroadcast: (name, fn) => {{ globalThis["__pf_bc_" + name] = fn; }},
 }};
 globalThis.__pf_activate = () => {{
   if (typeof globalThis.__pf_exports.activate === "function")
@@ -249,6 +264,10 @@ globalThis.__pf_fire_cmd = (id, path) => {{
 globalThis.__pf_fire_panel_open = () => {{
   if (typeof globalThis.__pf_panel_open_fn === "function")
     globalThis.__pf_panel_open_fn();
+}};
+globalThis.__pf_fire_broadcast = (name, json) => {{
+  const fn = globalThis["__pf_bc_" + name];
+  if (typeof fn === "function") fn(JSON.parse(json || "null"));
 }};
 "#,
             ))?;
@@ -316,8 +335,19 @@ globalThis.__pf_fire_panel_open = () => {{
             })
             .map_err(|e| e.to_string())
     }
-}
 
+    /// 触发组件状态广播回调 `onBroadcast(name, payload)`（未注册 = no-op）。
+    /// payload = 负载 JSON 串（契约 v2.4 broadcast_events）。
+    pub fn fire_broadcast(&self, name: &str, payload: &str) -> Result<(), String> {
+        self.ctx
+            .with(|ctx| -> Result<(), rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fire_broadcast")?;
+                f.call::<(&str, &str), ()>((name, payload))?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+}
 /// 注入 JS 字符串字面量的最小转义（`\ " ` 与控制符；清单路径是本地明文，够用）。
 /// nonceTag 派生（090-5 L3.3 多点校验：activate / render / onCommand 各带一次，
 /// 插件 wasm 内按同一算法复算比对）：hex(sha256(proof ‖ 0x00 ‖ nonce))。
@@ -430,6 +460,64 @@ export function render(ctx) {
         assert_eq!(parts[1], "PROOF_PLACEHOLDER"); // fail-closed：验签必失败
         assert_eq!(parts[2], nonce_tag("PROOF_PLACEHOLDER", "n1")); // 派生一致
         assert_ne!(nonce_tag("P", "n1"), nonce_tag("P", "n2")); // 不同 nonce 不同 tag
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn broadcast_reaches_registered_handler() {
+        // 契约 v2.4 broadcast_events：onBroadcast 注册 → fire_broadcast 负载直达
+        // → 插件自存状态 → render 可读（差分/派发时序在宿主 broadcast.rs 测）
+        let dir = std::env::temp_dir().join("pf-js-broadcast-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(
+            &entry,
+            r#"
+let last = null;
+export function activate(ctx) {
+  ctx.onBroadcast("inputpanel", (payload) => { last = payload; });
+}
+export function render(ctx) {
+  if (!last) return { type: "text", value: "no-broadcast" };
+  return { type: "text",
+           value: (last.project || "-") + "|" + (last.model ? last.model.provider + "/" + last.model.id : "-") };
+}
+"#,
+        )
+        .unwrap();
+        let host = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host).expect("load");
+        plugin.activate().expect("activate");
+
+        // 未广播 → 无负载
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["value"], "no-broadcast");
+
+        // 广播带项目无模型 → 负载直达（可空字段走 null）
+        plugin
+            .fire_broadcast(
+                "inputpanel",
+                r#"{"project":"D:/work","model":null}"#,
+            )
+            .expect("fire");
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["value"], "D:/work|-");
+
+        // 广播项目+模型齐 → 负载更新
+        plugin
+            .fire_broadcast(
+                "inputpanel",
+                r#"{"project":"D:/work","model":{"provider":"prov","id":"m1"}}"#,
+            )
+            .expect("fire");
+        let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
+        assert_eq!(v["value"], "D:/work|prov/m1");
+
+        // 未注册的事件名 → no-op 不报错
+        plugin.fire_broadcast("other", r#"{}"#).expect("noop");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
