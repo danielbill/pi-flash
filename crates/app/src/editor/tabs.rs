@@ -562,9 +562,9 @@ impl Chat {
         if let Some(tix) = self.shown_terminal_index() {
             self.ws.active_terminal = Some(tix);
         }
-        // 文件标签驱动树同步：同项目定位选中；跨项目文件只开查看 tab
-        // （树/项目/活跃会话都不动，2026-12-06 定案，进项目走显式入口）。
-        // 点标签/开文件/键盘切 tab 都经这里；关标签回退不经（无新激活文件）
+        // 文件标签驱动树同步：同项目定位选中，跨项目切工作区（点标签/开
+        // 文件/键盘切 tab 都经这里，语义 = 激活的文件标签就是树的当前项目；
+        // 会话标签去留见 switch_project 的 2026-12-06 保留规则）
         if let Some(crate::PanelTab::File(p)) = self.ws.panel_tabs.get(ix).cloned() {
             self.sync_tree_to_file(&p, cx);
         }
@@ -685,6 +685,8 @@ impl Chat {
         // 换位同 zed：drop 落位后把被拖 tab 滚进视口（拖到条尾/条头时它
         // 可能本身就在屏外）
         self.layout.tabs_scroll.scroll_to_item(to);
+        // 带序变了：落盘（内容相同自动跳过；启动恢复期被抑制）
+        self.persist_tabs();
         cx.notify();
     }
 
@@ -735,7 +737,188 @@ impl Chat {
         if let Some(tix) = self.shown_terminal_index() {
             self.ws.active_terminal = Some(tix);
         }
+        // 带子变了：落盘（内容相同自动跳过写盘；启动恢复期被抑制）
+        self.persist_tabs();
         cx.notify();
+    }
+
+    // -----------------------------------------------------------------------
+    // tab 带持久化（pi-flash-weia）：启动恢复的第二条腿。快照/归档/回放
+    // 三段：变更点即快照落盘，remount 换项目归档到旧主，启动按存档回放。
+    // 文件/终端进存档；Changelog/市场/搜索页属瞬态页不持久化。
+    // -----------------------------------------------------------------------
+
+    /// 当前 tab 带的存档快照（含激活位映射：瞬态页不进存档，原下标在
+    /// 存档里可能前移）。
+    pub(crate) fn snapshot_tabs_state(&self) -> services::workspace::TabsState {
+        tabs_state_from_parts(
+            &self.ws.panel_tabs,
+            |id| {
+                self.ws
+                    .terminals
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map(|t| t.cwd.clone())
+            },
+            self.ws.active_panel_tab,
+            self.layout.content_view == ContentView::Chat,
+        )
+    }
+
+    /// tab 带落盘（当前项目名下）：变更点即写（内容相同自动跳过写盘）。
+    /// 启动恢复期/回放中被 tab_restore_busy 抑制，回放完成后统一回写。
+    pub(crate) fn persist_tabs(&mut self) {
+        if self.ws.tab_restore_busy {
+            return;
+        }
+        let Some(cwd) = self.ws.cwd.clone() else {
+            return;
+        };
+        let key = services::workspace::same_ws_key(&cwd.to_string_lossy());
+        let state = self.snapshot_tabs_state();
+        services::workspace::save_tabs_state_key(&key, &state);
+        self.ws.tabs_owner = Some(key);
+    }
+
+    /// 换项目归档：tab 带是全局内存态（切项目不清带），remount 到新项目
+    /// 时把当前带存回 tabs_owner（上个项目）名下——各项目记住自己上次
+    /// 离开时的带子（与文件树 __tree 同一归档语义）。启动恢复期跳过。
+    pub(crate) fn archive_tabs_to_owner(&mut self) {
+        if self.ws.tab_restore_busy {
+            return;
+        }
+        let new_key = self
+            .ws
+            .cwd
+            .as_deref()
+            .map(|c| services::workspace::same_ws_key(&c.to_string_lossy()));
+        if let (Some(owner), Some(new_key)) = (self.ws.tabs_owner.clone(), new_key.clone()) {
+            if owner != new_key {
+                let state = self.snapshot_tabs_state();
+                services::workspace::save_tabs_state_key(&owner, &state);
+            }
+        }
+        self.ws.tabs_owner = new_key;
+    }
+
+    /// 启动回放：按存档重建 tab 带。文件重读磁盘（消失的条目丢弃）；
+    /// 终端按 cwd 重生（PTY 进程不保活）；最后按存档复位激活位与前台
+    /// 视图。`window` = 主窗口（终端 spawn 要测字宽；automation 同款经
+    /// 句柄进 window 上下文），None 只恢复文件 tab。调用方保证启动期
+    /// 落盘抑制已开（否则回放中间态会写穿存档）。
+    pub(crate) fn apply_saved_tabs(
+        &mut self,
+        saved: &services::workspace::TabsState,
+        mut window: Option<&mut gpui::Window>,
+        cx: &mut Context<Self>,
+    ) {
+        if saved.tabs.is_empty() {
+            return;
+        }
+        self.ws.tab_restore_busy = true;
+        for tab in &saved.tabs {
+            match tab.kind.as_str() {
+                "file" => {
+                    let p = PathBuf::from(&tab.path);
+                    // 已装订（重复）/磁盘已消失的条目跳过；装载核心不激活
+                    // 不切视图，激活位最后统一复位
+                    let dup = self
+                        .ws
+                        .panel_tabs
+                        .iter()
+                        .any(|t| matches!(t, PanelTab::File(q) if same_path(q, &p)));
+                    if !dup && p.is_file() {
+                        self.load_file_tab_core(p, cx);
+                    }
+                }
+                "term" => {
+                    let p = PathBuf::from(&tab.path);
+                    if p.is_dir()
+                        && let Some(w) = window.as_deref_mut()
+                    {
+                        self.spawn_terminal_tab(p, w, cx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        // 激活位与前台视图按存档复位（回放装载路不激活，这里是唯一复位
+        // 点）；复位后焦点尾巴只留给「存档激活位是文本文件」的情况
+        let active = saved.active.filter(|a| *a < self.ws.panel_tabs.len());
+        if let Some(ix) = active {
+            self.ws.active_panel_tab = Some(ix);
+            if let Some(tix) = self.shown_terminal_index() {
+                self.ws.active_terminal = Some(tix);
+            }
+        }
+        if saved.chat {
+            self.set_content_view(ContentView::Chat);
+        } else if let Some(view) = active
+            .and_then(|ix| self.ws.panel_tabs.get(ix))
+            .map(|t| t.view())
+        {
+            self.set_content_view(view);
+        }
+        self.ws.pending_focus_file = match self.active_file_path() {
+            Some(p)
+                if self
+                    .ws
+                    .file_cache
+                    .get(&p)
+                    .map(|f| !f.binary)
+                    .unwrap_or(false) =>
+            {
+                Some(p)
+            }
+            _ => None,
+        };
+        self.ws.tab_restore_busy = false;
+        // 存档对账回写（剪后的清单落盘，下次启动不再重剪；全剪空 = 移除
+        // 槽位）。降级路（无 window，终端没法重生）**不回写**——免得把
+        // 存档里的终端抹掉，下次正常启动还能回放
+        if window.is_some() {
+            self.persist_tabs();
+        }
+        cx.notify();
+    }
+}
+
+/// 纯内核（单测直达）：从 tab 带构件算存档。`term_cwd` 查终端 cwd
+///（PanelTab::Term 只存运行期 id，落盘要换 cwd）；瞬态页（Changelog/
+/// 市场/搜索）不进存档；超 [`services::workspace::TABS_SAVE_CAP`] 截尾。
+fn tabs_state_from_parts(
+    panel_tabs: &[PanelTab],
+    term_cwd: impl Fn(usize) -> Option<PathBuf>,
+    active: Option<usize>,
+    chat_front: bool,
+) -> services::workspace::TabsState {
+    let mut tabs = Vec::new();
+    let mut orig_ix = Vec::new();
+    for (ix, t) in panel_tabs.iter().enumerate() {
+        let rec = match t {
+            PanelTab::File(p) => Some(services::workspace::SavedTab {
+                kind: "file".into(),
+                path: p.to_string_lossy().to_string(),
+            }),
+            PanelTab::Term(id) => term_cwd(*id).map(|cwd| services::workspace::SavedTab {
+                kind: "term".into(),
+                path: cwd.to_string_lossy().to_string(),
+            }),
+            _ => None,
+        };
+        if let Some(rec) = rec {
+            orig_ix.push(ix);
+            tabs.push(rec);
+        }
+        if tabs.len() >= services::workspace::TABS_SAVE_CAP {
+            break;
+        }
+    }
+    let active = active.and_then(|a| orig_ix.iter().position(|&o| o == a));
+    services::workspace::TabsState {
+        tabs,
+        active,
+        chat: chat_front,
     }
 }
 
@@ -766,5 +949,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 存档快照（pi-flash-weia）：瞬态页不进存档且激活位随之前移映射；
+    /// 终端 id 换 cwd；CAP 截尾后激活位越界被读侧滤掉。
+    #[test]
+    fn tabs_state_snapshot_maps_active_past_transient() {
+        use super::tabs_state_from_parts;
+        use crate::PanelTab;
+        use std::path::PathBuf;
+
+        let file = |s: &str| PanelTab::File(PathBuf::from(s));
+        let strip = [
+            file("D:\\a\\x.rs"),
+            PanelTab::Search, // 瞬态：不进存档
+            PanelTab::Term(7),
+            file("D:\\a\\y.rs"),
+        ];
+        let term_cwd = |id: usize| (id == 7).then(|| PathBuf::from("D:\\a"));
+
+        // 激活位指向瞬态 Search：存档里无对应条目 → active=None
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false);
+        assert_eq!(st.tabs.len(), 3, "瞬态页不进存档");
+        assert_eq!(st.active, None, "指向瞬态页的激活位不采信");
+        assert!(!st.chat);
+
+        // 激活位指向 Term(7)：映射到存档下标 1；激活位是 term → chat=false
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false);
+        assert_eq!(st.active, Some(1));
+        assert_eq!(st.tabs[1].kind, "term");
+        assert_eq!(st.tabs[1].path, "D:\\a");
+
+        // 前台是会话 → chat=true，激活位照存（回到会话一键）
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true);
+        assert!(st.chat);
+        assert_eq!(st.active, Some(2), "瞬态页剪掉后 y.rs 前移到 2");
+
+        // 未知终端 id（terminals 已丢）：条目整体跳过
+        let st = tabs_state_from_parts(&strip, |_| None, None, true);
+        assert_eq!(st.tabs.len(), 2, "无 cwd 的终端不进存档");
+
+        // CAP 截尾：截到 TABS_SAVE_CAP 条，不多不少
+        let cap = crate::services::workspace::TABS_SAVE_CAP;
+        let many: Vec<PanelTab> = (0..cap + 5)
+            .map(|i| file(&format!("D:\\a\\f{i}.rs")))
+            .collect();
+        let st = tabs_state_from_parts(&many, |_| None, None, true);
+        assert_eq!(st.tabs.len(), cap);
     }
 }

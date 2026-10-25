@@ -508,14 +508,18 @@ impl Chat {
         let Some(cwd) = self.ws.cwd.clone() else {
             return;
         };
+        // ⓪ tab 带归档（pi-flash-weia）：带子是全局内存态（切项目不清带），
+        //     先把当前带存回 tabs_owner（上个项目）名下，各项目记住自己
+        //     上次离开时的带子；启动恢复期被 busy 抑制（存档刚读过，不
+        //     能被空带/半带写穿）
+        self.archive_tabs_to_owner();
         // ① 归档旧项目的文件树状态（展开集合 + Pin 视图）：对齐 Zed 的
         // per-worktree 内存表，切回来不丢；同时落盘（`__tree`）
         self.archive_tree_state();
-        // ①.5 「进入项目」即 touch 项目注册表：切项目路径（switch_project /
-        //     点会话行 open_session / 跨项目会话直切 switch_pool_rt）都要算
-        //     活动，否则最近活动项目会停在别处（用户实测：点观宏知微的会话
-        //     后重启回到 pi-flash——那条路漏了 touch）。跨项目**开文件**不算
-        //     进项目（sync_tree_to_file 已不切 cwd，2026-12-06）
+        // ①.5 「进入项目」即 touch 项目注册表：切项目三条路（switch_project /
+        //     点会话行 open_session / 树选文件 sync_tree_to_file）都要算活动，
+        //     否则最近活动项目会停在别处（用户实测：点观宏知微的会话后重启
+        //     回到 pi-flash——那条路漏了 touch）
         pi_link::projects::register_project(&cwd);
         self.ws.branch = read_branch(&cwd);
         // ② Pin 收藏清单先装载（下面恢复树状态时要判断 Pin 视图是否可用）
@@ -836,6 +840,23 @@ impl Chat {
             .map(|path| self.open_session(path, false, cx))
             .is_some();
         if resumed {
+            cx.notify();
+            return;
+        }
+        // 2026-12-06 用户定夺：项目切了 ≠ 要新开会话。新项目没有可恢复的
+        // 上次会话时，当前会话若**进行中**（已绑定会话文件、非空白草稿）则
+        // 原地保留：树/侧栏已随新 cwd 重挂，注意力与 composer 仍连原会话，
+        // 用户看完新项目文档点会话标签即回原对话（切回原项目/点会话行也
+        // 能靠 last-open 记忆归位）。只有当前本身就是空白草稿才落新草稿
+        // ——空白换空白无感知，且发送目标跟着落到可见的新项目，不会重演
+        // 2026-10-18「会话落错项目且列表隐形」（那次正是空白草稿跨项目
+        // 发消息，新会话落进启动时旧项目的缓存组）。
+        let in_progress = self
+            .pool
+            .runtimes
+            .get(&self.pool.active_key)
+            .is_some_and(|rt| rt.read(cx).file.is_some());
+        if in_progress {
             cx.notify();
             return;
         }
