@@ -240,7 +240,7 @@ pub(crate) fn compute_meta(messages: &[Msg], ix: usize) -> MsgMeta {
 /// back to the entry's ISO `timestamp` (032 发送时间).
 /// pi 冷启动横幅（「🔌 MCP: 1 server enabled」）：进程每次冷启动都会作为
 /// **独立 assistant 消息**发进会话流并落盘，渲染成聊天气泡毫无意义
-/// （2026-11-01 定夺：桌面侧同样消化，识别与微信侧同源但收紧——
+/// （2026-10-25 定夺：桌面侧同样消化，识别与微信侧同源但收紧——
 /// 「含 mcp: 且 enabled 结尾」，避免误杀真在聊 MCP 的长回复）。
 pub(crate) fn is_mcp_banner(s: &str) -> bool {
     let low = s.trim().to_lowercase();

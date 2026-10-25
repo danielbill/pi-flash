@@ -508,8 +508,9 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
     // 微信 Bot 入站泵（060）：dev-flag `wx` 关（默认，发版排除）= 泵都
-    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态渠道**随窗口**
-    // 激活（2026-11-01 定夺，泵内 ensure_service；开机不自启）
+    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态渠道由泵里的
+    // 服务状态机决定：**开关 on 且【微信通话】窗口激活**才在跑（002
+    // 「关于微信通话服务激活」的设计取舍：低频功能不激活就不后台收消息）
     if crate::services::workspace::wx_enabled() {
         crate::remote_control::spawn_wx_pump(cx);
     }
@@ -836,8 +837,9 @@ fn boot_target() -> BootTarget {
         let hidden = pi_link::hidden_sessions::load();
         crate::services::workspace::get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
-            // 影子会话（微信线）不做桌面恢复目标：历史遗留指针一律按
-            // 「无会话可恢复」处理，落新会话页（2026-11-01 定夺）
+            // 影子会话（微信线）不做桌面恢复目标（2026-10-25 孤儿页事故）：
+            // 微信线归【微信通话】标签管，历史遗留指针一律按「无会话可
+            // 恢复」处理，落新会话页
             .filter(|p| p.exists() && !hidden.hides(None, p))
     } else {
         None
@@ -853,10 +855,9 @@ fn boot_target() -> BootTarget {
 pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let target = cx.background_spawn(async move { boot_target() }).await;
-        // tab 带存档（pi-flash-weia，单槽全局）。语义只有两条（用户定夺
-        // 2026-11-01，别再加特例）：**「启动恢复」开 = 存 + 回放；关 = 存档
-        // 清空、整个会话不写**。开关本身在 persist_tabs 里把门（写侧），
-        // 这里只管读。
+        // tab 带存档（pi-flash-weia，单槽全局）。语义只有两条，别再加
+        // 特例：**「启动恢复」开 = 存 + 回放；关 = 存档清空、整个会话不写**。
+        // 开关本身在 persist_tabs 里把门（写侧），这里只管读。
         let restore_on = crate::services::workspace::startup_restore();
         if !restore_on {
             // 关态：清掉存量存档（含上一个开关周期留下的），确保「关着就
@@ -865,7 +866,8 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
         }
         let saved_tabs = match &target {
             BootTarget::Project { .. } if restore_on => {
-                crate::services::workspace::tabs_state_for().filter(|s| !s.tabs.is_empty() || s.wx)
+                crate::services::workspace::tabs_state_for()
+                    .filter(|s| !s.tabs.is_empty() || s.wx_open || s.wx_front)
             }
             _ => None,
         };

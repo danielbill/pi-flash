@@ -32,6 +32,17 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-10-25 060 微信通话事故整改：**状态收口 + 会话页模版化**。事故=开着
+  【微信通话】关窗口重启后标签/操作栏/渠道全丢，换来一个「新会话」孤儿页。
+  根因：同一件事五处编码（wx_tab_closed / content_view==Wx / is_wx_line / 存档
+  两 bool），且「标签开合」压根没进存档；影子会话又被当桌面 last_open 恢复。
+  整改：新增 `remote_control/state.rs`（Service 状态机带句柄与 token、Health
+  三合一、WxLine 单指针、Snapshot 盘镜像=渲染不再读盘、`Chat::wx_ui` 唯一
+  位置判据）+ `session/template.rs`（会话页模版 `SessionPageSkin`，微信线只
+  注入操作栏簇/欢迎语/空会话策略，骨架零线判定）；TabsState 存 `wx_open` +
+  `wx_front`；服务按 002 语义「开关 on 且窗口激活」才在跑（关窗静默停收发，
+  重开自动重连）；顺带 16 项打补丁痕迹清理（qr_url 暗渠、沿检测造假前态、
+  cfg!(test) 分叉、10 处并行会话态清理、desktop_key 手工存取、魔键 draft-0）
 - 2026-10-23 060 微信 Bot 真机联调：正名（历史误称「远程控制」，实为对齐
   ZCode Bot 渠道，iLink 直连腾讯）；修两断链——显式启用被 SELF_START 一刀切
   误杀（扫码成功/开关/wx.enable 全拉不起渠道）、私聊出站全丢（send_loop

@@ -279,7 +279,7 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
     // **可关闭**（用户定夺 2026-10-25，002 只说「单独起一个标签页」，常驻
     // 是加戏）：× 仅激活态显示，中键同义；重开入口 = 微信 icon（已绑）/
     // 重新绑定 / 新建会话 / 过期自动回绑定页
-    if crate::services::workspace::wx_enabled() && !chat.aux.remote.wx_tab_closed {
+    if crate::services::workspace::wx_enabled() && chat.wx_ui().open() {
         strip = strip.child(wx_tab(chat, cx));
     }
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
@@ -463,9 +463,9 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
     let t = T();
     // 微信线是单开 tab（2026-10-24 定夺）：查看微信时第一格不被占用——
     // 继续显示桌面会话，点击回到它
-    let viewing_wx = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let viewing_wx = chat.wx_line_active();
     let desktop_key = if viewing_wx {
-        chat.aux.remote.desktop_key.clone()
+        chat.aux.remote.desktop().map(str::to_string)
     } else {
         None
     };
@@ -520,37 +520,18 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
 /// `switch_to` 记入 `desktop_key`，不被顶走。
 fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    // 高亮两态：功能页管理段（绑定/设置会话），或 Chat 视图下的微信线会话
-    let active = chat.layout.content_view == ContentView::Wx
-        || (chat.layout.content_view == ContentView::Chat
-            && chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str()));
+    // 高亮 = 前台是微信内容（功能页管理段，或 Chat 视图下的微信线会话）——
+    // 判据只有 `Chat::wx_ui` 一处
+    let active = chat.wx_ui().front();
     let title: SharedString = tr("remote.tab_title").to_string().into();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
         this.open_wx(cx);
     });
-    // 关闭 = 收前台（服务与影子会话不受影响）。前台是微信内容——功能页
-    // （Wx）**或聊天页正看着微信线会话**（wx_session == active_key，
-    // 2026-11-01 用户定夺：标签与内容一体，不许「标签关了、微信会话页
-    // 还挂着」）→ wx_leave_front 回桌面会话；否则关闭态单独落盘
+    // 关闭 = 收起标签 + 收前台 + 收专属模态 + 落盘，全在 `Chat::close_wx_tab`
+    // 一处（2026-10-25 用户定夺：标签与内容一体，不许「标签关了、微信会话页
+    // 还挂着」）。服务与影子会话不受影响——关的只是这个「窗口」。
     let do_close = |this: &mut Chat, cx: &mut gpui::Context<Chat>| {
-        this.aux.remote.wx_tab_closed = true;
-        // 标签与它的弹窗一体（2026-11-01 定夺）：微信专属模态（二维码 /
-        // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码
-        // 盖在桌面会话上，功能入口却没了（真机踩到）
-        if matches!(
-            this.dlg.dialog,
-            Some(crate::Dialog::WxQr) | Some(crate::Dialog::WxNewSession)
-        ) {
-            this.dlg.dialog = None;
-        }
-        let wx_front = this.layout.content_view == ContentView::Wx
-            || this.aux.remote.wx_session.as_deref() == Some(this.pool.active_key.as_str());
-        if wx_front {
-            this.wx_leave_front(cx); // 内含 set_content_view/persist_tabs
-        } else {
-            this.persist_tabs(); // 前台不是微信内容，关闭态单独落盘
-        }
-        cx.notify();
+        this.close_wx_tab(cx);
     };
     let close_x = cx.listener(move |this, ev: &gpui::MouseDownEvent, w, cx| {
         cx.stop_propagation();

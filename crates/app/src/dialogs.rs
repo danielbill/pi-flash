@@ -70,7 +70,7 @@ pub(crate) fn render_dialogs(
     }
     if let Some(Dialog::WxNewSession) = chat.dlg.dialog.as_ref() {
         // 002 §6 [新建会话] 确认：统一 overlay::confirm 两键。
-        // 确认 = wx_new_session_reset（清 wx_cwd + wx_session 引用 → 跳
+        // 确认 = wx_new_session_reset（清 wx_cwd + 微信线指针 → 跳
         // [设置会话]页，不现场建线）；取消/点外/ESC 同义。
         let weak_cancel = weak.clone();
         let weak_ok = weak.clone();

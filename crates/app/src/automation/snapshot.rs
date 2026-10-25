@@ -210,7 +210,9 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         "content_view": content_view_str(chat.layout.content_view),
         // 【微信通话】tab 关闭态（2026-10-25 用户定夺：关闭跨重启保持）——
         // 启动回放/关 tab 落盘的断言载体（pif-ui wait --path app.wx_tab_closed）
-        "wx_tab_closed": chat.aux.remote.wx_tab_closed,
+        "wx_tab_closed": !chat.aux.remote.tab_open,
+        // 微信 UI 位置（Closed/Tab/Page/Line）：标签、前台、归属三合一的唯一判据
+        "wx_ui": format!("{:?}", chat.wx_ui()),
         "active_key": chat.pool.active_key,
         "active_file": opt_path(chat.psp.active_file.as_ref()),
         "terminals": chat.ws.terminals.len(),
@@ -855,10 +857,10 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::remote_control::QrState::Idle => "idle",
             crate::remote_control::QrState::Loading => "loading",
             crate::remote_control::QrState::Ready { .. } => "ready",
-            crate::remote_control::QrState::Scanned => "scanned",
+            crate::remote_control::QrState::Scanned { .. } => "scanned",
             crate::remote_control::QrState::Done { .. } => "done",
-            crate::remote_control::QrState::Expired => "expired",
-            crate::remote_control::QrState::Error(_) => "error",
+            crate::remote_control::QrState::Expired { .. } => "expired",
+            crate::remote_control::QrState::Error { .. } => "error",
         },
         "wx_running": chat.aux.remote.is_running(),
         "wx_bound": chat.aux.remote.bound,

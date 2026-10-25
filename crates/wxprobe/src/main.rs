@@ -1,4 +1,4 @@
-//! wxprobe — P0 iLink 协议证伪探针（`docs/模块设计/060-远程控制-微信.md` §5 P0）。
+//! wxprobe — P0 iLink 协议证伪探针（设计文档：`pi-flash-plugins/docs/插件设计/002-微信通信.md`）。
 //!
 //! 用法：
 //! ```text
