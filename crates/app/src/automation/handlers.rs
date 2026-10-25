@@ -325,6 +325,7 @@ pub(super) fn dispatch(
                     ContentView::PfMarket => "pf-market",
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
+                    ContentView::Wx => "wx",
                 },
             }))
         }
@@ -773,10 +774,42 @@ pub(super) fn dispatch(
             ok()
         }
         method::WX_ENABLE => {
-            // 显式启用微信渠道（与设置页开关同一条 set_enabled 路径）。
-            // 返回渠道是否真的起来了 —— 无 token 时起不来，调用方看 running 字段。
-            chat.aux.remote.set_enabled(true);
+            // 显式启用/停用微信渠道（与操作栏开关同一条 set_enabled 路径）。
+            // 缺省 on=true；返回渠道是否真的起来了 —— 无 token 时起不来，
+            // 调用方看 running 字段。
+            let on = params.get("on").and_then(Value::as_bool).unwrap_or(true);
+            chat.aux.remote.set_enabled(on);
             Ok(json!({ "ok": true, "running": chat.aux.remote.is_running() }))
+        }
+        method::WX_NEW_SESSION => {
+            // 002 §6 [新建会话]：confirm=false = 按钮同路径（运行守卫 + 弹
+            // 确认框）；confirm=true = 确认按钮同路径（清 wx_cwd + wx_session
+            // 引用 → 设置会话页）。
+            let confirm = params.get("confirm").and_then(Value::as_bool).unwrap_or(false);
+            let dialog_opened = if confirm {
+                chat.wx_new_session_reset(cx);
+                false
+            } else {
+                if chat.aux.remote.active_running {
+                    let lang = wxprobe::format::messages::Lang::from_ix(crate::i18n::lang_ix());
+                    chat.aux
+                        .remote
+                        .send(&wxprobe::format::messages::t(
+                            lang,
+                            crate::remote_control::TASK_RUNNING,
+                        ));
+                    false
+                } else {
+                    chat.dlg.dialog = Some(crate::Dialog::WxNewSession);
+                    true
+                }
+            };
+            cx.notify();
+            Ok(json!({
+                "ok": true,
+                "dialog_opened": dialog_opened,
+                "active_key": chat.pool.active_key,
+            }))
         }
         method::DIALOG_CLOSE => {
             chat.dlg.dialog = None;

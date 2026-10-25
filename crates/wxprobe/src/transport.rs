@@ -82,6 +82,11 @@ pub struct Transport {
     /// 收得到消息——2026-10-23 真机：换绑后旧 token 长轮询全天 -14，面板
     /// 却一直显示运行中。app 的泵每拍取走它显示到面板。
     last_poll_error: Arc<Mutex<Option<String>>>,
+    /// 微信服务侧会话过期标识（002）：清游标后**空游标仍被 -14 拒** = 服务端
+    /// 已作废该 bot 会话（长期不活动）。置位后由 app 泵读走 → 自动回绑定页
+    /// 要求重新绑定；轮询本身保持低频重试，重绑换新 token 后 transport 重建、
+    /// 标识随旧实例消失。
+    session_dead: Arc<AtomicBool>,
     handles: Vec<JoinHandle<()>>,
     /// 释放轮询锁（单持有者，放在结构体里随 drop 释放）
     _lock: BotRuntimeLock,
@@ -181,6 +186,11 @@ impl Transport {
     pub fn poll_error(&self) -> Option<String> {
         self.last_poll_error.lock().ok().and_then(|g| g.clone())
     }
+
+    /// 服务侧会话已过期（空游标仍 -14）。002：模块检测到过期 → 自动回绑定页。
+    pub fn session_dead(&self) -> bool {
+        self.session_dead.load(Ordering::Relaxed)
+    }
 }
 
 /// 起渠道。失败（未扫码 / 已被别的轮询者持有锁）时不产生任何线程。
@@ -204,15 +214,17 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
     let (in_tx, in_rx) = mpsc::channel::<Batch>();
     let (out_tx, out_rx) = mpsc::channel::<String>();
     let last_poll_error = Arc::new(Mutex::new(None));
+    let session_dead = Arc::new(AtomicBool::new(false));
 
     // ── poll 线程 ──
     let p_stop = stop.clone();
     let p_token = cfg.token.clone();
     let p_last_err = last_poll_error.clone();
+    let p_dead = session_dead.clone();
     let start_cursor = state::get_str(&st, "buf");
     let poll_handle = std::thread::Builder::new()
         .name("wx-poll".into())
-        .spawn(move || poll_loop(p_token, start_cursor, in_tx, p_stop, p_last_err))
+        .spawn(move || poll_loop(p_token, start_cursor, in_tx, p_stop, p_last_err, p_dead))
         .map_err(|e| format!("起 poll 线程失败: {e}"))?;
 
     // ── send 线程 ──
@@ -227,6 +239,7 @@ pub fn spawn(cfg: &Config) -> Result<Transport, String> {
         outbound: out_tx,
         stop,
         last_poll_error,
+        session_dead,
         handles: vec![poll_handle, send_handle],
         _lock: lock,
     })
@@ -248,11 +261,10 @@ fn poll_loop(
     tx: Sender<Batch>,
     stop: Arc<AtomicBool>,
     last_err: Arc<Mutex<Option<String>>>,
+    dead: Arc<AtomicBool>,
 ) {
     let mut wire = Wire::new(state::dump_dir());
     let mut failures = 0u32;
-    // 会话过期自愈次数（见下方 -14 分支）：只洗一次游标，洗完还 -14 = 真得重扫
-    let mut healed = false;
     while !stop.load(Ordering::Relaxed) {
         match poller::get_updates(&mut wire, &token, cursor.as_deref()) {
             Ok(up) => {
@@ -274,22 +286,28 @@ fn poll_loop(
                 }
             }
             Err(e) => {
-                // -14 = 会话游标过期：游标是新旧会话的分界，洗掉它用**同一个
-                // token** 重新建会话（换绑同理，见 register::reset_session_fields）。
-                // 不清就会拿着死游标无限重试——开关亮着、消息一条进不来。
-                // 只自愈一次：洗完仍 -14 说明 token 本身失效，必须重新扫码。
-                if is_session_timeout(&e) && cursor.is_some() && !healed {
-                    healed = true;
+                // -14 分两档（002「服务侧会话过期」）：
+                // 一档·游标失配：拿着旧游标被拒 = 会话还活着，洗掉 buf 用同
+                //   一个 token 重新接洽即可（模块内部自愈，不打扰用户）；
+                // 二档·会话作废：**空游标仍被拒** = 微信服务侧已把 bot 会话
+                //   作废（长期不活动过期）。置位 `dead` 交 app 自动回绑定页；
+                //   轮询保持低频重试（failures 不清零 → 退避涨至 30s 封顶）。
+                if is_session_timeout(&e) && cursor.is_some() {
                     cursor = None;
                     let mut st = state::load();
                     state::set(&mut st, "buf", None);
                     state::save(&st);
                     failures = 0;
-                    if let Ok(mut g) = last_err.lock() {
-                        *g = Some(format!("{e}（已清旧游标重建会话）"));
+                    // 停 1 秒再试：服务端持续拒绝时别打成热循环（可被 stop 打断）
+                    let mut left = Duration::from_secs(1);
+                    while left > Duration::ZERO && !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(100));
+                        left = left.saturating_sub(Duration::from_millis(100));
                     }
-                    eprintln!("[wx] getupdates 会话过期，清旧游标后重建：{e}");
                     continue;
+                }
+                if is_session_timeout(&e) {
+                    dead.store(true, Ordering::Relaxed);
                 }
                 failures = failures.saturating_add(1);
                 if let Ok(mut g) = last_err.lock() {

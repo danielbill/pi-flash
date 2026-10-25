@@ -208,6 +208,9 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         },
         "dock_panel": chat.layout.dock_panel.as_str(),
         "content_view": content_view_str(chat.layout.content_view),
+        // 【微信通话】tab 关闭态（2026-10-25 用户定夺：关闭跨重启保持）——
+        // 启动回放/关 tab 落盘的断言载体（pif-ui wait --path app.wx_tab_closed）
+        "wx_tab_closed": chat.aux.remote.wx_tab_closed,
         "active_key": chat.pool.active_key,
         "active_file": opt_path(chat.psp.active_file.as_ref()),
         "terminals": chat.ws.terminals.len(),
@@ -790,6 +793,7 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         Dialog::SessionInfo { .. } => "session_info",
         Dialog::FileDirty { .. } => "file_dirty",
         Dialog::WxQr => "wx_qr",
+        Dialog::WxNewSession => "wx_new_session",
     });
     // 打开项目菜单：列表数据随弹窗一起上报（扫描是异步回填，UI 测试
     // 据此轮询就绪）
@@ -873,6 +877,7 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::PfMarket => "pf-market",
         crate::ContentView::Search => "search",
         crate::ContentView::SessionSearch => "session_search",
+        crate::ContentView::Wx => "wx",
     }
 }
 

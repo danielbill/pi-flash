@@ -275,9 +275,11 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
         .items_end();
     // 固定段：置顶会话 tab（滚动区外，永不滚走）
     strip = strip.child(session_tab(chat, cx));
-    // 固定段：微信线 tab（060 单开 tab，2026-10-24 定夺）——微信线会话
-    // 自占一格，不占用第一格会话 tab；dev-flag `wx` 关（默认）= 不渲染
-    if crate::services::workspace::wx_enabled() && chat.aux.remote.wx_session.is_some() {
+    // 固定段：【微信通话】功能页 tab（060/002；dev-flag `wx` 关 = 不渲染）。
+    // **可关闭**（用户定夺 2026-10-25，002 只说「单独起一个标签页」，常驻
+    // 是加戏）：× 仅激活态显示，中键同义；重开入口 = 微信 icon（已绑）/
+    // 重新绑定 / 新建会话 / 过期自动回绑定页
+    if crate::services::workspace::wx_enabled() && !chat.aux.remote.wx_tab_closed {
         strip = strip.child(wx_tab(chat, cx));
     }
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
@@ -518,12 +520,60 @@ fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElemen
 /// `switch_to` 记入 `desktop_key`，不被顶走。
 fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    let active = chat.layout.content_view == ContentView::Chat
-        && chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    // 高亮两态：功能页管理段（绑定/设置会话），或 Chat 视图下的微信线会话
+    let active = chat.layout.content_view == ContentView::Wx
+        || (chat.layout.content_view == ContentView::Chat
+            && chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str()));
     let title: SharedString = tr("remote.tab_title").to_string().into();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
         this.open_wx(cx);
     });
+    // 关闭 = 收前台（服务与影子会话不受影响）。前台是微信内容——功能页
+    // （Wx）**或聊天页正看着微信线会话**（wx_session == active_key，
+    // 2026-11-01 用户定夺：标签与内容一体，不许「标签关了、微信会话页
+    // 还挂着」）→ wx_leave_front 回桌面会话；否则关闭态单独落盘
+    let do_close = |this: &mut Chat, cx: &mut gpui::Context<Chat>| {
+        this.aux.remote.wx_tab_closed = true;
+        // 标签与它的弹窗一体（2026-11-01 定夺）：微信专属模态（二维码 /
+        // 新建会话确认）归微信线上下文，标签一关就跟着收——否则二维码
+        // 盖在桌面会话上，功能入口却没了（真机踩到）
+        if matches!(
+            this.dlg.dialog,
+            Some(crate::Dialog::WxQr) | Some(crate::Dialog::WxNewSession)
+        ) {
+            this.dlg.dialog = None;
+        }
+        let wx_front = this.layout.content_view == ContentView::Wx
+            || this.aux.remote.wx_session.as_deref() == Some(this.pool.active_key.as_str());
+        if wx_front {
+            this.wx_leave_front(cx); // 内含 set_content_view/persist_tabs
+        } else {
+            this.persist_tabs(); // 前台不是微信内容，关闭态单独落盘
+        }
+        cx.notify();
+    };
+    let close_x = cx.listener(move |this, ev: &gpui::MouseDownEvent, w, cx| {
+        cx.stop_propagation();
+        do_close(this, cx);
+        let _ = (ev, w);
+    });
+    let close_mid = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        do_close(this, cx);
+    });
+    let x_btn = div()
+        .id("ctab-wx-x")
+        .flex_shrink_0()
+        .size(px(20.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .text_color(rgb(t.text_dim))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+        .on_mouse_down(MouseButton::Left, close_x)
+        .child(crate::ui::icon_hover("x", 12., t.text_dim))
+        .into_any_element();
     tab_shell(
         "ctab-wx".into(),
         Some(crate::ui::icon("smartphone", 12., t.text_muted).into_any_element()),
@@ -532,10 +582,11 @@ fn wx_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
         0.,
         t,
         switch,
-        None,
+        Some(x_btn),
         None,
         false,
     )
+    .on_mouse_down(MouseButton::Middle, close_mid)
     .into_any_element()
 }
 

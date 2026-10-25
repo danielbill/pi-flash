@@ -48,11 +48,23 @@ static TABLE: &[(&str, &str, &str)] = &[
         "消息未送達：目標會話沒有可用的 pi 進程，稍後重試。",
         "Not delivered: the target session has no pi process. Try again later.",
     ),
-    // ── 无项目态引导（cwd 未选时不建会话不投递，统一指向 /项目 自救入口）──
+    // ── 无项目/模型态引导（002 §2 项目+模型必选：放行条件未满足时不建
+    // 会话不投递，统一指向 /项目 /模型 自救入口）──
     (
-        "请先设置项目：回复 **/项目** 选择工作区后再发消息。",
-        "請先設置項目：回覆 **/項目** 選擇工作區後再發消息。",
-        "No workspace yet: reply **/workspace** to pick a project, then send your message.",
+        "请先设置项目和模型：回复 **/项目** 选择工作区、**/模型** 选择模型后再发消息。",
+        "請先設置項目和模型：回覆 **/項目** 選擇工作區、**/模型** 選擇模型後再發消息。",
+        "Set a workspace and a model first: reply **/workspace** to pick a project and **/model** to choose a model, then send your message.",
+    ),
+    // ── 启停通知（002 §4）：每次启用/关停各一条，⚡ 顶替【pf icon】──
+    (
+        "⚡ Pi-Flash 通信已开启",
+        "⚡ Pi-Flash 通訊已開啟",
+        "⚡ Pi-Flash link is on",
+    ),
+    (
+        "⚡ Pi-Flash 通信已关闭",
+        "⚡ Pi-Flash 通訊已關閉",
+        "⚡ Pi-Flash link is off",
     ),
     // ── /status 状态卡（ZCode `botsService.ts:4593-4624` 的 label id）──
     ("工作区", "工作區", "Workspace"),
@@ -544,8 +556,8 @@ mod tests {
     }
 
     #[test]
-    fn no_project_guidance_is_in_table_for_all_langs() {
-        let key = "请先设置项目：回复 **/项目** 选择工作区后再发消息。";
+    fn no_setup_guidance_is_in_table_for_all_langs() {
+        let key = "请先设置项目和模型：回复 **/项目** 选择工作区、**/模型** 选择模型后再发消息。";
         assert_eq!(t(Lang::ZhCn, key), key);
         assert_ne!(t(Lang::ZhTw, key), key, "zh-TW 必须入表");
         assert_ne!(t(Lang::En, key), key, "en 必须入表，不能回退源串");

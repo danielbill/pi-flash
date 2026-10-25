@@ -763,13 +763,16 @@ impl Chat {
             },
             self.ws.active_panel_tab,
             self.layout.content_view == ContentView::Chat,
+            self.layout.content_view == ContentView::Wx,
         )
     }
 
     /// tab 带落盘（单槽全局）：变更点即写（内容相同自动跳过写盘）。启动
     /// 恢复期/回放中被 tab_restore_busy 抑制，回放完成后统一回写。
     pub(crate) fn persist_tabs(&mut self) {
-        if self.ws.tab_restore_busy {
+        // 「启动恢复」关 = 不写存档（2026-11-01 用户定夺：关闭时存储清空、
+        // 开启时才存 tabs）。写侧唯一门口就在这里，别在调用点各加判断。
+        if self.ws.tab_restore_busy || !services::workspace::startup_restore() {
             return;
         }
         let state = self.snapshot_tabs_state();
@@ -787,7 +790,7 @@ impl Chat {
         mut window: Option<&mut gpui::Window>,
         cx: &mut Context<Self>,
     ) {
-        if saved.tabs.is_empty() {
+        if saved.tabs.is_empty() && !saved.wx {
             return;
         }
         self.ws.tab_restore_busy = true;
@@ -826,7 +829,10 @@ impl Chat {
                 self.ws.active_terminal = Some(tix);
             }
         }
-        if saved.chat {
+        if saved.wx {
+            // 微信通话页跨重启复原（002）：优先级高于 chat/激活 tab
+            self.set_content_view(ContentView::Wx);
+        } else if saved.chat {
             self.set_content_view(ContentView::Chat);
         } else if let Some(view) = active
             .and_then(|ix| self.ws.panel_tabs.get(ix))
@@ -866,6 +872,7 @@ fn tabs_state_from_parts(
     term_cwd: impl Fn(usize) -> Option<PathBuf>,
     active: Option<usize>,
     chat_front: bool,
+    wx_front: bool,
 ) -> services::workspace::TabsState {
     let mut tabs = Vec::new();
     let mut orig_ix = Vec::new();
@@ -894,6 +901,7 @@ fn tabs_state_from_parts(
         tabs,
         active,
         chat: chat_front,
+        wx: wx_front,
     }
 }
 
@@ -944,24 +952,24 @@ mod tests {
         let term_cwd = |id: usize| (id == 7).then(|| PathBuf::from("D:\\a"));
 
         // 激活位指向瞬态 Search：存档里无对应条目 → active=None
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false, false, false);
         assert_eq!(st.tabs.len(), 3, "瞬态页不进存档");
         assert_eq!(st.active, None, "指向瞬态页的激活位不采信");
         assert!(!st.chat);
 
         // 激活位指向 Term(7)：映射到存档下标 1；激活位是 term → chat=false
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false, false, false);
         assert_eq!(st.active, Some(1));
         assert_eq!(st.tabs[1].kind, "term");
         assert_eq!(st.tabs[1].path, "D:\\a");
 
         // 前台是会话 → chat=true，激活位照存（回到会话一键）
-        let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true);
+        let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true, false, false);
         assert!(st.chat);
         assert_eq!(st.active, Some(2), "瞬态页剪掉后 y.rs 前移到 2");
 
         // 未知终端 id（terminals 已丢）：条目整体跳过
-        let st = tabs_state_from_parts(&strip, |_| None, None, true);
+        let st = tabs_state_from_parts(&strip, |_| None, None, true, false, false);
         assert_eq!(st.tabs.len(), 2, "无 cwd 的终端不进存档");
 
         // CAP 截尾：截到 TABS_SAVE_CAP 条，不多不少
@@ -969,7 +977,7 @@ mod tests {
         let many: Vec<PanelTab> = (0..cap + 5)
             .map(|i| file(&format!("D:\\a\\f{i}.rs")))
             .collect();
-        let st = tabs_state_from_parts(&many, |_| None, None, true);
+        let st = tabs_state_from_parts(&many, |_| None, None, true, false, false);
         assert_eq!(st.tabs.len(), cap);
     }
 }

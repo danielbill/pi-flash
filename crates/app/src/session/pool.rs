@@ -312,8 +312,10 @@ impl Chat {
     /// 「bot 的 activeTask 独立于桌面选中态」）。返回新草稿 key；焦点、
     /// 活跃态、per-project 会话记忆全不动。首条 prompt 后草稿键经
     /// `on_file_bound` 迁移到会话文件路径，微信线跟随。
+    /// 微信线专属草稿：**一律建在独立工作目录 `wx_cwd` 下**（与桌面 cwd
+    /// 解耦，用户定夺）；`wx_cwd` 未定 → None（调用方各自兜底）。
     pub(crate) fn new_draft_detached(&mut self, cx: &mut Context<Self>) -> Option<String> {
-        let cwd = self.ws.cwd.clone()?;
+        let cwd = self.aux.remote.wx_cwd.clone()?;
         let key = format!("draft-{}", self.pool.draft_seq);
         self.pool.draft_seq += 1;
         let rt = cx.new(|_| {
@@ -337,11 +339,9 @@ impl Chat {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
         let path = pi_link::sessions::canonical_session_path(&path);
-        let key = path.to_string_lossy().to_string();
-        if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
-            return Some(rt);
-        }
-        // cwd 解析口径同 open_session：现项目 → 项目组 → 当前工作区兜底
+        // cwd 解析口径同 open_session：现项目 → 项目组 → 当前工作区兜底。
+        // 影子会话不在池清单里（被过滤清单藏掉），走不到前两级——微信线
+        // 续线请用 [`Self::open_session_detached_with`] 显式给 wx_cwd
         let cwd = self
             .pool
             .sessions
@@ -356,6 +356,22 @@ impl Chat {
                     .map(|g| g.path.clone())
             })
             .or_else(|| self.ws.cwd.clone())?;
+        self.open_session_detached_with(path, cwd, cx)
+    }
+
+    /// cwd 显式给定版：微信线重启续线用——影子会话被过滤清单藏住，
+    /// 项目/清单里查不到，cwd 归属模块独立工作目录而非桌面 cwd。
+    pub(crate) fn open_session_detached_with(
+        &mut self,
+        path: PathBuf,
+        cwd: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
+        let path = pi_link::sessions::canonical_session_path(&path);
+        let key = path.to_string_lossy().to_string();
+        if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+            return Some(rt);
+        }
         let tail = match self.pool.session_tail_cache.get(&path).cloned() {
             Some(msgs) => msgs,
             None => {

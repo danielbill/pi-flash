@@ -604,13 +604,22 @@ impl Render for Chat {
                 ))
                 // §5.12 统一分隔线：常驻 1px / hover·拖拽 4px accent，线形由
                 // ui::divider 统一算（与 dock 上下分区同一条代码）；overlay
-                // 不占布局 = hover 零推挤。作为最后 child 保证 z 序在最上
+                // 不占布局 = hover 零推挤。
                 .when(!panes_hidden, |d| {
                     d.child(crate::ui::divider::line(
                         crate::ui::divider::LineSpec::vertical(),
                         slp_hovered || slp_dragging,
                         t,
                     ))
+                })
+                // 002-微信通信 绑定层（W2）：白蒙层覆盖内容区至 topbar、
+                // 无关闭出口；放最后保证盖过 content 与分隔线
+                .children({
+                    let wx_qr = matches!(self.dlg.dialog, Some(crate::Dialog::WxQr));
+                    wx_qr.then(|| {
+                        crate::remote_control::panel::wx_qr_layer(self, &weak, &t)
+                            .into_any_element()
+                    })
                 }),
         );
 

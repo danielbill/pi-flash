@@ -40,6 +40,8 @@ pub(crate) fn content_main(
         ContentView::Search => crate::search::view(chat, weak, window, cx),
         // 会话查询（同版式，只查询）
         ContentView::SessionSearch => crate::search::session_view(chat, weak, t),
+        // 060/002【微信通话】功能页（管理段：绑定 / 设置会话；就绪切回 Chat）
+        ContentView::Wx => crate::remote_control::panel::page(chat, weak, window, cx),
         // 微信通信全屏页（060；三横菜单唯一入口）
     };
     div()

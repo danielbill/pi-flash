@@ -304,7 +304,7 @@ fn subagent_fn_bar_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::A
 
 /// 功能栏按钮：icon 在前 + 文案，段内对称 padding（内容居中）；`on` =
 /// 对应面板/视图开着（accent 点亮）。
-fn fn_bar_btn(
+pub(crate) fn fn_bar_btn(
     id: &'static str,
     icon_name: &'static str,
     label: &'static str,

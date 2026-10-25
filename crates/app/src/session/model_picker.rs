@@ -379,6 +379,8 @@ impl Chat {
                 .update(cx, |r, cx| r.select_model(provider, id, cx));
         }
         self.dlg.model_picker = None;
+        // 微信设置页：模型选定后若 wx_cwd 也已定 → 建会话并跳聊天页
+        self.wx_after_setup_change(cx);
         cx.notify();
     }
 }
@@ -582,6 +584,8 @@ pub(crate) fn view(
                             .update(cx, |r, cx| r.select_model(dp.clone(), di.clone(), cx));
                         // picking is also the dismissal gesture
                         c.dlg.model_picker = None;
+                        // 微信设置页：模型选定后若 wx_cwd 也已定 → 建会话并跳聊天页
+                        c.wx_after_setup_change(cx);
                         cx.notify();
                     })),
                     t,

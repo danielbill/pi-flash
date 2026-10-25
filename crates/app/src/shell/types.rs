@@ -54,6 +54,9 @@ pub(crate) enum Dialog {
     /// 060 二维码弹窗（微信线扫码绑定/重建）：信息栏【重制二维码】触发，
     /// 未创建时打开微信线会话自动弹出；扫码成功泵自动关窗。
     WxQr,
+    /// 002 §3 [新建会话] 确认（W1）：丢弃当前会话创建新会话？确认后走
+    /// `wx_rotate_session`（老影子下线不删文件、新影子 `pf-wxbot-*`）。
+    WxNewSession,
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
@@ -124,6 +127,10 @@ pub(crate) enum ContentView {
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
     SessionSearch,
+    /// 060/002【微信通话】功能页：从管理（绑定/设置会话）到内部自管会话
+    /// 的完整页（remote_control::panel::page）。就绪后由 open_wx/泵切回
+    /// Chat 视图的微信线会话（wx_tab 依旧高亮）。
+    Wx,
 }
 
 /// psp 列表方式（⋯ 菜单）。
