@@ -1,3 +1,23 @@
+## 已验证（本轮修复）——新建 Provider 弹窗偶发「读取注册表」几十秒
+
+用户口径：新建 Provider，有时「正在读取 Provider 注册表…」要挂几十秒。
+
+- ✅ 根因（复现实测）：弹窗缓存未命中时起一次性 node dump（pi-link
+  `registry.rs`），脚本尾 `rt.listCredentials()` 走默认 AuthStorage →
+  proper-lockfile 等 `~/.pi/agent/auth.json` 锁，等待死线 30s（SDK
+  auth-storage.js `staleMs = 30_000`）。`auth.json.lock` 目录有孤儿残留
+  （持锁 pi 进程被杀；Windows 下 unlock EPERM 被 `withLockAsync` finally
+  的 catch 静默吞掉）时，dump 要等锁 mtime 老满 30s 才按 stale 砸开放行。
+  实测：干净 1.78s / 造孤儿锁 30.8s（卡点全在 listCredentials，
+  +2.0s→+30.7s）。「有时候」= 缓存未命中**且**恰有孤儿锁；慢一次后缓存
+  落盘、孤儿锁也被砸开，之后又快——下次 bump vendor / 换机才复现。
+- ✅ 修法：DUMP_SCRIPT 给 `ModelRuntime.create` 传只读凭据存储
+  `ReadOnlyAuthStorage`（按文件路径 import `core/auth-storage.js`，
+  index.js 不导出它）——裸读 auth.json 零锁；dump 本就只消费
+  providerId→type 元数据，语义刚好。实测同场景 30.8s → 2.1s，42
+  providers / 1599 models / 4 凭据无损。陷阱与升级复核点记入
+  docs/agents/pi-rpc.md。
+
 ## 已验证（本轮修复）——「🔌 MCP: 1 server enabled」反复出现在 PF 发往微信的消息里
 
 用户口径：横幅一直混在微信收到的消息里；别的会话没有，偏偏微信端能收到。

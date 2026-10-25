@@ -71,6 +71,10 @@
 
 图片超限缩放展示时，pi 把 `[Image: original WxH, displayed at WxH. Multiply coordinates by N to map to original image.]` **无开关**拼进消息 text 块尾（生成于 `dist/utils/image-resize.js formatDimensionNote`；user 附件拼 `\n\n` + 标注、read 工具图结果拼 `Read image file [mime]\n` + 标注，多图多条连排）。会话 jsonl 存的就是带标注的最终文本，RPC 回显同文。这是给模型的元数据、非消息原文：PF 在 wire 解码出口统一剥除（`protocol.rs content_blocks → strip_image_dimension_note`，尾部连续标注、形状严格校验）。升级 pi 若改了该格式，剥除静默失效（不误剥），以新版 image-resize.js 为准复核。
 
+## registry dump 凭据只读闸（auth.json 锁陷阱，升级复核点）
+
+`registry.rs` DUMP_SCRIPT 给 `ModelRuntime.create` 传 `credentials: new ReadOnlyAuthStorage()`——类**按文件路径**从 `<entry>/../core/auth-storage.js` import（`dist/index.js` 只导出 `readStoredCredential`，不走包名 import 是同一绕过手法）。不能省：默认 `AuthStorage` 的 `listCredentials` 走 proper-lockfile 等 `~/.pi/agent/auth.json` 锁，等待死线 30s（auth-storage.js `staleMs = 30_000`）；孤儿锁目录（持锁 pi 进程被杀、Windows unlock EPERM 被静默吞）会让 dump 挂满 30s 才按 stale 砸锁（2026-10-26 实测 30.8s，只读版 2.1s）。dump 只消费 providerId→type 元数据，只读裸读零锁语义刚好。升级复核：`core/auth-storage.js` 仍导出 `ReadOnlyAuthStorage` 且构造默认 authPath 同源；若 SDK 改名/搬家，弹窗退回 30s 挂起（非报错，不易察觉）。
+
 ## 调试
 
 - `PI_FLASH_RPC_LOG` 开线缆日志。
