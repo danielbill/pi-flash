@@ -5,7 +5,6 @@
 //! 菜单共用组件（缩进 / 五角星设默认）。右栏详情 = API KEY 表单 + 通路
 //! 探查行 + 可用模型区（内置商）/ 自定义编辑器（表单头保存即写盘）。
 
-use super::custom_models::{mj_add_panel, mj_model_editor, mj_provider_editor};
 use super::*;
 
 impl Chat {
@@ -501,29 +500,14 @@ impl Chat {
 // ---------------------------------------------------------------------------
 
 /// The models tab: 左栏上下两等高列表 + 右栏详情（无 banner / footer）。
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn mc_models_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
-    section: &str,
-    key_input: &gpui::Entity<crate::TextInput>,
-    key_visible: bool,
-    model_filter: &gpui::Entity<crate::TextInput>,
-    model_filter_value: &str,
-    enabled_filter: &gpui::Entity<crate::TextInput>,
-    enabled_filter_value: &str,
-    mj_name: &gpui::Entity<crate::TextInput>,
-    mj_base: &gpui::Entity<crate::TextInput>,
-    mj_key: &gpui::Entity<crate::TextInput>,
-    mj_id: &gpui::Entity<crate::TextInput>,
-    mj_mname: &gpui::Entity<crate::TextInput>,
-    mj_ctx: &gpui::Entity<crate::TextInput>,
-    mj_api: u8,
-    mj_reasoning: bool,
-    error: &Option<String>,
-    free_only: bool,
+    d: &super::SettingsFormData,
 ) -> gpui::AnyElement {
     let t = T();
+    let section = d.section.as_str();
+    let error = &d.error;
     // models.json 不可读：错误条常挂详情区顶部（无页面级 footer 了）
     let mut detail_error = error.clone();
     if let Some(e) = &chat.cfg.mc_mj_error {
@@ -546,31 +530,11 @@ pub(crate) fn mc_models_view(
         chat,
         &weak.clone(),
         &enabled_set,
-        enabled_filter,
-        enabled_filter_value,
+        &d.enabled_filter,
+        &d.enabled_filter_value,
         t,
     );
-    let detail = mc_models_detail(
-        chat,
-        &weak.clone(),
-        &selected,
-        key_input,
-        key_visible,
-        model_filter,
-        model_filter_value,
-        mj_name,
-        mj_base,
-        mj_key,
-        mj_id,
-        mj_mname,
-        mj_ctx,
-        mj_api,
-        mj_reasoning,
-        &detail_error,
-        &enabled_set,
-        free_only,
-        t,
-    );
+    let detail = mc_models_detail(chat, &weak.clone(), &selected, d, &detail_error, &enabled_set);
     div()
         .flex()
         .w_full()
@@ -835,7 +799,7 @@ fn mc_add_action(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
 /// 详情页文字按钮：统一 [`ui::button`] 规范样式（BTN_LG 32 高，设置页表单
 /// 主按钮档；Danger/Primary/Secondary 三变体），回调签名为 Chat 动作的糖。
 #[allow(clippy::too_many_arguments)]
-fn detail_button(
+pub(crate) fn detail_button(
     id: &'static str,
     weak: &gpui::WeakEntity<Chat>,
     label: &str,
@@ -886,48 +850,22 @@ fn mc_models_detail(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     selected: &str,
-    key_input: &gpui::Entity<crate::TextInput>,
-    key_visible: bool,
-    model_filter: &gpui::Entity<crate::TextInput>,
-    model_filter_value: &str,
-    mj_name: &gpui::Entity<crate::TextInput>,
-    mj_base: &gpui::Entity<crate::TextInput>,
-    mj_key: &gpui::Entity<crate::TextInput>,
-    mj_id: &gpui::Entity<crate::TextInput>,
-    mj_mname: &gpui::Entity<crate::TextInput>,
-    mj_ctx: &gpui::Entity<crate::TextInput>,
-    mj_api: u8,
-    mj_reasoning: bool,
+    d: &super::SettingsFormData,
     error: &Option<String>,
     enabled_set: &std::collections::HashSet<String>,
-    free_only: bool,
-    t: &crate::appearance::theme::Theme,
 ) -> gpui::AnyElement {
+    let t = T();
     // custom provider / model editors
     if let Some(name) = selected.strip_prefix("mj:p:") {
-        return mj_provider_editor(chat, weak, name, mj_name, mj_base, mj_key, mj_api, error, t);
+        return super::custom_models::mj_provider_editor(chat, weak, name, d, error, t);
     }
     if let Some(rest) = selected.strip_prefix("mj:m:") {
         if let Some((name, ix)) = rest.rsplit_once(':') {
             if let Ok(ix) = ix.parse::<usize>() {
-                return mj_model_editor(
-                    weak,
-                    name,
-                    ix,
-                    mj_id,
-                    mj_mname,
-                    mj_ctx,
-                    mj_reasoning,
-                    error,
-                    t,
-                );
+                return super::custom_models::mj_model_editor(chat, weak, name, ix, d, error, t);
             }
         }
     }
-    if selected == "__add_provider__" {
-        return mj_add_panel(chat, weak, mj_name, mj_base, mj_key, mj_api, t);
-    }
-
     // catalog provider detail（API Key；OAuth 归 pi，PF 只管自有账本）
     let provider = selected.to_string();
     let models: Vec<pi_link::protocol::ModelInfo> = merge_registry_models(
@@ -989,7 +927,7 @@ fn mc_models_detail(
                         .relative()
                         .flex_1()
                         .min_w_0()
-                        .child(key_input.clone())
+                        .child(d.key_input.clone())
                         .child(
                             div()
                                 .id("mc-key-eye")
@@ -1015,7 +953,7 @@ fn mc_models_detail(
                                     });
                                 })
                                 .child(crate::ui::icon(
-                                    if key_visible { "eye-off" } else { "eye" },
+                                    if d.key_visible { "eye-off" } else { "eye" },
                                     14.,
                                     t.text_muted,
                                 )),
@@ -1054,9 +992,9 @@ fn mc_models_detail(
         &provider,
         &models,
         enabled_set,
-        model_filter,
-        model_filter_value,
-        free_only,
+        &d.model_filter,
+        &d.model_filter_value,
+        d.model_free_only,
         detail,
     )
     .into_any_element()
@@ -1511,6 +1449,55 @@ pub(crate) enum McProbe {
     Running,
     Done,
     Failed(String),
+}
+
+/// 042-1 自定义商「测速」状态（单槽：详情页同屏只有一个）。测速通过 =
+/// 自动保存表单 + 自动拉模型落目录；通过前【保存】【+模型】禁用。
+/// `seeded` = 打开已有商时的初始通过态（非实测，不显示结果行）。
+#[derive(Debug, Clone)]
+pub(crate) enum MjSpeedState {
+    Running,
+    Passed {
+        latency_ms: u64,
+        models: usize,
+        seeded: bool,
+    },
+    /// 通了但没解出模型条目：已保存，提示手动 +模型
+    PassedEmpty,
+    Failed(String),
+}
+
+impl MjSpeedState {
+    /// 保存 / +模型 的可用判据（042-1：测速未通过前禁用）。
+    pub(crate) fn allows_edit(&self) -> bool {
+        matches!(
+            self,
+            MjSpeedState::Passed { .. } | MjSpeedState::PassedEmpty { .. }
+        )
+    }
+}
+
+/// 042 M2 自定义模型「测试」状态（pi-web ModelDetail test 同款：进行中 /
+/// 通过（延迟 + HTTP 状态 + 回复文本）/ 失败文案）。
+#[derive(Debug, Clone)]
+pub(crate) enum MjTestState {
+    Running,
+    Ok {
+        latency_ms: u64,
+        status: u16,
+        text: String,
+    },
+    Err(String),
+}
+
+/// 042 M2 models.dev 目录拉取状态（「填入模型信息」按钮与结果行）。
+#[derive(Debug, Clone)]
+pub(crate) enum MjCatalogState {
+    Idle,
+    Running,
+    /// Done：applied = 回填字段数；note = 价格可靠度提示（已格式化）
+    Done { applied: usize, note: String },
+    Err(String),
 }
 
 #[cfg(test)]
