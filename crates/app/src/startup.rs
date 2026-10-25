@@ -833,9 +833,12 @@ fn boot_target() -> BootTarget {
 
     // ③ restore 只决定要不要连带加载该项目的最后会话
     let session = if restore {
+        let hidden = pi_link::hidden_sessions::load();
         crate::services::workspace::get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
-            .filter(|p| p.exists())
+            // 影子会话（微信线）不做桌面恢复目标：历史遗留指针一律按
+            // 「无会话可恢复」处理，落新会话页（2026-11-01 定夺）
+            .filter(|p| p.exists() && !hidden.hides(None, p))
     } else {
         None
     };

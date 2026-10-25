@@ -252,6 +252,7 @@ impl Chat {
         if self.aux.remote.wx_session.as_deref() != Some(key.as_str()) {
             self.aux.remote.desktop_key = Some(key.clone());
         }
+        let is_wx_line = self.aux.remote.wx_session.as_deref() == Some(key.as_str());
         self.pool.active_key = key;
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
@@ -263,9 +264,14 @@ impl Chat {
             self.set_content_view(crate::ContentView::Chat);
         }
         if let Some(f) = &file {
-            // 无项目态不存在可切会话（switch_pool_rt 已先重挂），防御式取 Some
+            // 无项目态不存在可切会话（switch_pool_rt 已先重挂），防御式取 Some。
+            // 微信线**不记 last_open**（2026-11-01 定夺）：影子会话归【微信通话】
+            // 窗口管，绝不能成为桌面「最后会话」——否则启动恢复把它当桌面
+            // 会话打开，渲染出没有归属（无 tab 无操作栏）的孤儿页面
             if let Some(cwd) = &self.ws.cwd {
-                set_last_open(&cwd.to_string_lossy(), &f.to_string_lossy());
+                if !is_wx_line {
+                    set_last_open(&cwd.to_string_lossy(), &f.to_string_lossy());
+                }
             }
             // v54: 切入会话清除未读/出错红点
             self.psp.unread.remove(f);
@@ -484,7 +490,10 @@ impl Chat {
         self.psp.active_file = Some(path.clone());
         // recents (003-session管理): a fresh session file just landed
         pi_link::recents::touch_recent(&path);
-        set_last_open(&rt.read(cx).cwd.to_string_lossy(), &path_key);
+        // 微信线不记 last_open（同 switch_to：影子会话不进桌面恢复线）
+        if self.aux.remote.wx_session.as_deref() != Some(path_key.as_str()) {
+            set_last_open(&rt.read(cx).cwd.to_string_lossy(), &path_key);
+        }
         // 新会话落地的项目组若处于折叠态则自动展开：伪标签（draft）在折叠
         // 组里照常显示，FileBound 一换真身就被折叠藏掉——用户眼里刚发的
         // 会话凭空消失。fork / 微信端新会话同经此处（2026-10-15 用户报障）。
