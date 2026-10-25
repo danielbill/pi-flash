@@ -215,9 +215,38 @@ pub(crate) enum ResolvedNode {
         size: String,
         disabled: bool,
     },
+    /// 通用画布（契约 v2.4）：paint list 逐条绝对定位绘制，坐标裁剪在节点框内。
+    /// 宿主不解释图形含义（rect 实心方块、text 主题色文字）；未知 op 解析期丢弃。
+    Canvas {
+        width: f32,
+        height: f32,
+        paints: Vec<CanvasPaint>,
+    },
     /// 未知组件：占位 + 日志（01 §1）
     Unknown(String),
 }
+
+/// canvas paint 项（契约 v2.4）。fill 允许字面色（图形语义 ≠ 主题语义）。
+#[derive(Debug, Clone)]
+pub(crate) enum CanvasPaint {
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        fill: String,
+    },
+    Text {
+        x: f32,
+        y: f32,
+        size: f32,
+        tone: String,
+        value: String,
+    },
+}
+
+/// 单画布 paint 上限（防护：QR ≈600 条足够，防异常树把面板拖死）。
+const CANVAS_PAINT_CAP: usize = 4096;
 
 /// 文案取值：`{"zh","en"}` 走宿主语言；纯字符串原样返回（数据文案）。
 fn i18n(v: Option<&Value>) -> String {
@@ -396,6 +425,46 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         }),
+        "canvas" => {
+            let paints = node
+                .get("paint")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|p| {
+                            let f = |k: &str| p.get(k).and_then(Value::as_f64).unwrap_or(0.) as f32;
+                            let s = |k: &str| {
+                                p.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+                            };
+                            match p.get("op").and_then(Value::as_str) {
+                                Some("rect") => Some(CanvasPaint::Rect {
+                                    x: f("x"),
+                                    y: f("y"),
+                                    w: f("w"),
+                                    h: f("h"),
+                                    fill: s("fill"),
+                                }),
+                                Some("text") => Some(CanvasPaint::Text {
+                                    x: f("x"),
+                                    y: f("y"),
+                                    size: f("size"),
+                                    tone: s("tone"),
+                                    value: s("value"),
+                                }),
+                                // 未知 op：静默丢弃（画布是纯数据面，不占位不报错）
+                                _ => None,
+                            }
+                        })
+                        .take(CANVAS_PAINT_CAP)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ResolvedNode::Canvas {
+                width: node.get("width").and_then(Value::as_f64).unwrap_or(0.) as f32,
+                height: node.get("height").and_then(Value::as_f64).unwrap_or(0.) as f32,
+                paints,
+            })
+        }
         other => {
             eprintln!("[pf-plugin] 未知组件已占位: {other}");
             Some(ResolvedNode::Unknown(other.to_string()))
@@ -788,6 +857,42 @@ fn render_node(
         } => render_button(
             label, icon, tip, arg, action, menu, variant, size, *disabled, ix, weak, t, ctx,
         ),
+        ResolvedNode::Canvas {
+            width,
+            height,
+            paints,
+        } => {
+            // 画布容器：定宽高 + 裁剪（契约：paint 坐标不许逃逸出节点框）
+            let mut canvas = div()
+                .relative()
+                .w(px(*width))
+                .h(px(*height))
+                .overflow_hidden();
+            for p in paints {
+                canvas = canvas.child(match p {
+                    CanvasPaint::Rect { x, y, w, h, fill } => {
+                        let mut d = div()
+                            .absolute()
+                            .left(px(*x))
+                            .top(px(*y))
+                            .w(px(*w))
+                            .h(px(*h));
+                        if let Some(c) = hex_color(fill) {
+                            d = d.bg(rgb(c));
+                        }
+                        d
+                    }
+                    CanvasPaint::Text { x, y, size, tone, value } => div()
+                        .absolute()
+                        .left(px(*x))
+                        .top(px(*y))
+                        .text_size(px(*size))
+                        .text_color(rgb(tone_color(tone, t)))
+                        .child(SharedString::from(value.clone())),
+                });
+            }
+            canvas.into_any_element()
+        }
         ResolvedNode::Unknown(ty) => div()
             .px(px(10.))
             .child(placeholder_center(&format!("[{ty}]"), t))
@@ -1223,6 +1328,26 @@ fn section_header(
     .into_any_element()
 }
 
+/// `#rrggbb` / `#rgb` → 0xRRGGBB；非法 fill 返回 None（跳过上色，不留黑块）。
+fn hex_color(s: &str) -> Option<u32> {
+    let h = s.strip_prefix('#')?;
+    let (r, g, b) = match h.len() {
+        6 => (
+            u8::from_str_radix(&h[0..2], 16).ok()?,
+            u8::from_str_radix(&h[2..4], 16).ok()?,
+            u8::from_str_radix(&h[4..6], 16).ok()?,
+        ),
+        3 => {
+            let c = |i: usize| -> Option<u8> {
+                Some(u8::from_str_radix(&h[i..i + 1], 16).ok()? * 17)
+            };
+            (c(0)?, c(1)?, c(2)?)
+        }
+        _ => return None,
+    };
+    Some(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+}
+
 fn group_header(label: &str, t: &'static Theme) -> gpui::AnyElement {
     div()
         .h(px(24.))
@@ -1361,5 +1486,65 @@ mod tests {
             "plugins/quick-panel/assets/bolt.svg"
         );
         assert_eq!(icon_asset("", "p"), "icons/file.svg");
+    }
+
+    // ---- canvas（契约 v2.4）----
+
+    #[test]
+    fn canvas_resolves_paint_list() {
+        let v = tree(
+            r##"{"type":"canvas","width":392,"height":392,"paint":[
+                {"op":"rect","x":0,"y":0,"w":8,"h":8,"fill":"#111827"},
+                {"op":"text","x":12,"y":24,"size":11,"tone":"text.dim","value":"hi"},
+                {"op":"circle","x":1,"y":1}
+            ]}"##,
+        );
+        match resolve(&v) {
+            Some(ResolvedNode::Canvas {
+                width,
+                height,
+                paints,
+            }) => {
+                assert_eq!((width, height), (392., 392.));
+                // 未知 op（circle）解析期丢弃，不占位不报错
+                assert_eq!(paints.len(), 2);
+                assert!(matches!(
+                    paints[0],
+                    CanvasPaint::Rect { ref fill, .. } if fill == "#111827"
+                ));
+                assert!(matches!(paints[1], CanvasPaint::Text { ref value, .. } if value == "hi"));
+            }
+            other => panic!("期望 Canvas，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn canvas_paint_cap_and_defaults() {
+        // 超 CAP 截断：4096 + 冗余 → 只取前 4096
+        let paints: Vec<String> = (0..CANVAS_PAINT_CAP + 100)
+            .map(|_| r##"{"op":"rect","x":1,"y":1,"w":1,"h":1,"fill":"#000000"}"##.to_string())
+            .collect();
+        let v = tree(&format!(
+            r##"{{"type":"canvas","paint":[{}]}}"##,
+            paints.join(",")
+        ));
+        match resolve(&v) {
+            Some(ResolvedNode::Canvas { paints, .. }) => {
+                assert_eq!(paints.len(), CANVAS_PAINT_CAP)
+            }
+            other => panic!("期望 Canvas，实际 {other:?}"),
+        }
+        // 无 paint / 缺宽高 → 兜底空画布不炸
+        let v = tree(r#"{"type":"canvas"}"#);
+        assert!(matches!(resolve(&v), Some(ResolvedNode::Canvas { .. })));
+    }
+
+    #[test]
+    fn hex_color_parses_and_rejects() {
+        assert_eq!(hex_color("#111827"), Some(0x111827));
+        assert_eq!(hex_color("#abc"), Some(0xaabbcc));
+        assert_eq!(hex_color("red"), None);
+        assert_eq!(hex_color("#12345"), None);
+        assert_eq!(hex_color(""), None);
     }
 }
