@@ -511,10 +511,11 @@ impl Chat {
         // ① 归档旧项目的文件树状态（展开集合 + Pin 视图）：对齐 Zed 的
         // per-worktree 内存表，切回来不丢；同时落盘（`__tree`）
         self.archive_tree_state();
-        // ①.5 「进入项目」即 touch 项目注册表：切项目三条路（switch_project /
-        //     点会话行 open_session / 树选文件 sync_tree_to_file）都要算活动，
-        //     否则最近活动项目会停在别处（用户实测：点观宏知微的会话后重启
-        //     回到 pi-flash——那条路漏了 touch）
+        // ①.5 「进入项目」即 touch 项目注册表：切项目路径（switch_project /
+        //     点会话行 open_session / 跨项目会话直切 switch_pool_rt）都要算
+        //     活动，否则最近活动项目会停在别处（用户实测：点观宏知微的会话
+        //     后重启回到 pi-flash——那条路漏了 touch）。跨项目**开文件**不算
+        //     进项目（sync_tree_to_file 已不切 cwd，2026-12-06）
         pi_link::projects::register_project(&cwd);
         self.ws.branch = read_branch(&cwd);
         // ② Pin 收藏清单先装载（下面恢复树状态时要判断 Pin 视图是否可用）

@@ -71,6 +71,22 @@ impl Chat {
             cx.notify();
             return;
         }
+        // 装载 + 挂带（读盘/解码/入缓存/单文件监听），不激活不切视图
+        // ——与启动 tab 恢复共用同一条装载路（pi-flash-weia）
+        if !self.load_file_tab_core(path.clone(), cx) {
+            return;
+        }
+        let ix = self.ws.panel_tabs.len() - 1;
+        self.activate_panel_tab(ix, cx);
+        self.set_content_view(ContentView::File);
+        cx.notify();
+    }
+
+    /// 文件 tab 装载核心：读盘 + kind 认领/文本解码 + 入 file_cache +
+    /// cwd 外单文件监听重算 + tab 带挂尾。**不激活、不切视图、不落盘**
+    ///（open_file_tab 与启动恢复共用；激活语义两路不同：用户点开要
+    /// 前台+焦点，恢复路最后按存档统一复位）。读失败落状态条返回 false。
+    fn load_file_tab_core(&mut self, path: PathBuf, cx: &mut Context<Self>) -> bool {
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
@@ -84,7 +100,7 @@ impl Chat {
                     ),
                     cx,
                 );
-                return;
+                return false;
             }
         };
         // 打开路由对齐 zed ProjectItemRegistry 逆序尝试：图片类 kind 先认领
@@ -112,23 +128,22 @@ impl Chat {
                 }
             }
         }
-        if ft.binary {
+        let binary = ft.binary;
+        if binary {
             // 二进制（图片/无法打开）没有行可跳：搜索结果里点到它时清掉
             // 待跳请求，免得滞留在同路径的下一次文本打开上
             self.ws.pending_jump = None;
-            self.ws.file_cache.insert(path.clone(), ft);
         } else {
             ft.disk_sig = file_sig(&path);
-            self.ws.file_cache.insert(path.clone(), ft);
+        }
+        self.ws.file_cache.insert(path.clone(), ft);
+        if !binary {
             self.ws.pending_focus_file = Some(path.clone());
         }
         self.ws.panel_tabs.push(PanelTab::File(path));
         // cwd 外文件：按所在目录补一条单文件监听（否则磁盘改了不同步）
         self.retain_file_watches();
-        let ix = self.ws.panel_tabs.len() - 1;
-        self.activate_panel_tab(ix, cx);
-        self.set_content_view(ContentView::File);
-        cx.notify();
+        true
     }
 
     /// 关文件 tab：有未保存修改（或挂着外部改动冲突）先弹确认，否则直接
@@ -547,9 +562,9 @@ impl Chat {
         if let Some(tix) = self.shown_terminal_index() {
             self.ws.active_terminal = Some(tix);
         }
-        // 文件标签驱动树同步：同项目定位选中，跨项目切工作区（点标签/开
-        // 文件/键盘切 tab/关标签回退都经这里，语义 = 激活的文件标签就是
-        // 树的当前项目）
+        // 文件标签驱动树同步：同项目定位选中；跨项目文件只开查看 tab
+        // （树/项目/活跃会话都不动，2026-12-06 定案，进项目走显式入口）。
+        // 点标签/开文件/键盘切 tab 都经这里；关标签回退不经（无新激活文件）
         if let Some(crate::PanelTab::File(p)) = self.ws.panel_tabs.get(ix).cloned() {
             self.sync_tree_to_file(&p, cx);
         }
