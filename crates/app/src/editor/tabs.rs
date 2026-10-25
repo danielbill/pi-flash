@@ -743,9 +743,10 @@ impl Chat {
     }
 
     // -----------------------------------------------------------------------
-    // tab 带持久化（pi-flash-weia）：启动恢复的第二条腿。快照/归档/回放
-    // 三段：变更点即快照落盘，remount 换项目归档到旧主，启动按存档回放。
-    // 文件/终端进存档；Changelog/市场/搜索页属瞬态页不持久化。
+    // tab 带持久化（pi-flash-weia）：启动恢复的第二条腿。快照/回放两段：
+    // 变更点即快照落盘（**单槽全局**——panel_tabs 本就是全局态，按项目
+    // 分槽会存出多份漂移拷贝，关一个槽另一槽复活，实测踩坑），启动按存
+    // 档回放。文件/终端进存档；Changelog/市场/搜索页属瞬态页不持久化。
     // -----------------------------------------------------------------------
 
     /// 当前 tab 带的存档快照（含激活位映射：瞬态页不进存档，原下标在
@@ -765,40 +766,14 @@ impl Chat {
         )
     }
 
-    /// tab 带落盘（当前项目名下）：变更点即写（内容相同自动跳过写盘）。
-    /// 启动恢复期/回放中被 tab_restore_busy 抑制，回放完成后统一回写。
+    /// tab 带落盘（单槽全局）：变更点即写（内容相同自动跳过写盘）。启动
+    /// 恢复期/回放中被 tab_restore_busy 抑制，回放完成后统一回写。
     pub(crate) fn persist_tabs(&mut self) {
         if self.ws.tab_restore_busy {
             return;
         }
-        let Some(cwd) = self.ws.cwd.clone() else {
-            return;
-        };
-        let key = services::workspace::same_ws_key(&cwd.to_string_lossy());
         let state = self.snapshot_tabs_state();
-        services::workspace::save_tabs_state_key(&key, &state);
-        self.ws.tabs_owner = Some(key);
-    }
-
-    /// 换项目归档：tab 带是全局内存态（切项目不清带），remount 到新项目
-    /// 时把当前带存回 tabs_owner（上个项目）名下——各项目记住自己上次
-    /// 离开时的带子（与文件树 __tree 同一归档语义）。启动恢复期跳过。
-    pub(crate) fn archive_tabs_to_owner(&mut self) {
-        if self.ws.tab_restore_busy {
-            return;
-        }
-        let new_key = self
-            .ws
-            .cwd
-            .as_deref()
-            .map(|c| services::workspace::same_ws_key(&c.to_string_lossy()));
-        if let (Some(owner), Some(new_key)) = (self.ws.tabs_owner.clone(), new_key.clone()) {
-            if owner != new_key {
-                let state = self.snapshot_tabs_state();
-                services::workspace::save_tabs_state_key(&owner, &state);
-            }
-        }
-        self.ws.tabs_owner = new_key;
+        services::workspace::save_tabs_state(&state);
     }
 
     /// 启动回放：按存档重建 tab 带。文件重读磁盘（消失的条目丢弃）；

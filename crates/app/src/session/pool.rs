@@ -508,11 +508,6 @@ impl Chat {
         let Some(cwd) = self.ws.cwd.clone() else {
             return;
         };
-        // ⓪ tab 带归档（pi-flash-weia）：带子是全局内存态（切项目不清带），
-        //     先把当前带存回 tabs_owner（上个项目）名下，各项目记住自己
-        //     上次离开时的带子；启动恢复期被 busy 抑制（存档刚读过，不
-        //     能被空带/半带写穿）
-        self.archive_tabs_to_owner();
         // ① 归档旧项目的文件树状态（展开集合 + Pin 视图）：对齐 Zed 的
         // per-worktree 内存表，切回来不丢；同时落盘（`__tree`）
         self.archive_tree_state();

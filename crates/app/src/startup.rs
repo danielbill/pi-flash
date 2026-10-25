@@ -850,13 +850,12 @@ fn boot_target() -> BootTarget {
 pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let target = cx.background_spawn(async move { boot_target() }).await;
-        // tab 带存档先读（pi-flash-weia）：会话恢复路径会 set_content_view
-        // (Chat) 触发 persist_tabs——先读后写，落位不受污染；restore=off
-        // 不回放也不覆写（存档留给下次开启）
+        // tab 带存档先读（pi-flash-weia，单槽全局）：会话恢复路径会
+        // set_content_view(Chat) 触发 persist_tabs——先读后写，落位不受
+        // 污染；restore=off 不回放也不覆写（存档留给下次开启）
         let saved_tabs = match &target {
-            BootTarget::Project { cwd, .. } if crate::services::workspace::startup_restore() => {
-                crate::services::workspace::tabs_state_for(&cwd.to_string_lossy())
-                    .filter(|s| !s.tabs.is_empty())
+            BootTarget::Project { .. } if crate::services::workspace::startup_restore() => {
+                crate::services::workspace::tabs_state_for().filter(|s| !s.tabs.is_empty())
             }
             _ => None,
         };
