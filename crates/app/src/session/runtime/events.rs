@@ -8,7 +8,9 @@ use pi_link::protocol::{
 };
 
 use crate::i18n::tr;
-use crate::session::messages::{Msg, Role, UsageLine, merge_tool_result, result_payload};
+use crate::session::messages::{
+    Msg, Role, UsageLine, merge_tool_result, msg_is_mcp_banner, result_payload,
+};
 
 use super::*;
 
@@ -746,6 +748,34 @@ impl SessionRuntime {
                 ..
             } => {
                 if role == "assistant" {
+                    // pi 冷启动横幅（🔌 MCP: N server(s) enabled）作为独立
+                    // assistant 消息到达（也会落盘，下次 tail 解码同样滤），
+                    // 渲染成气泡毫无意义（2026-11-01 定夺：桌面侧消化）
+                    let banner_probe = Msg {
+                        role: Role::Assistant,
+                        bash: None,
+                        blocks: blocks.clone(),
+                        usage: None,
+                        entry_id: None,
+                        ts: None,
+                        end_ts: None,
+                        stop_reason: None,
+                        error_message: None,
+                        custom_type: None,
+                        custom_display: true,
+                        details: None,
+                        model: None,
+                    };
+                    if msg_is_mcp_banner(&banner_probe) {
+                        if let Some(m) = self.messages.last() {
+                            if m.role == Role::Assistant && msg_is_mcp_banner(m) {
+                                self.messages.pop();
+                                self.streaming_content = false;
+                                cx.emit(SessionEvent::Changed);
+                                return;
+                            }
+                        }
+                    }
                     if let Some(m) = self.messages.last_mut() {
                         if m.role == Role::Assistant {
                             m.blocks = blocks;

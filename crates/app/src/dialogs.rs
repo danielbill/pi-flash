@@ -68,10 +68,32 @@ pub(crate) fn render_dialogs(
     if let Some(Dialog::FileDirty { paths }) = chat.dlg.dialog.as_ref() {
         root = root.child(render_file_dirty(chat, weak, paths, t));
     }
-    if let Some(Dialog::WxQr) = chat.dlg.dialog.as_ref() {
-        let panel = crate::remote_control::panel::wx_qr_panel(chat, weak, t);
-        root = root.child(dialog_shell(chat, weak, panel));
+    if let Some(Dialog::WxNewSession) = chat.dlg.dialog.as_ref() {
+        // 002 §6 [新建会话] 确认：统一 overlay::confirm 两键。
+        // 确认 = wx_new_session_reset（清 wx_cwd + wx_session 引用 → 跳
+        // [设置会话]页，不现场建线）；取消/点外/ESC 同义。
+        let weak_cancel = weak.clone();
+        let weak_ok = weak.clone();
+        root = root.child(crate::ui::overlay::confirm(
+            &chat.dlg.dialog_focus,
+            tr("remote.new_confirm"),
+            move |_, cx| {
+                let _ = weak_cancel.update(cx, |c, cx| {
+                    c.dlg.dialog = None;
+                    cx.notify();
+                });
+            },
+            move |_, cx| {
+                let _ = weak_ok.update(cx, |c, cx| {
+                    c.dlg.dialog = None;
+                    c.wx_new_session_reset(cx);
+                    cx.notify();
+                });
+            },
+        ));
     }
+    // Dialog::WxQr 不走这里：绑定层是强制模态（白蒙层、无关闭出口），
+    // 由 render.rs 挂在 content-col 内、只盖 topbar 以下（panel.rs:wx_qr_layer）
     root
 }
 
@@ -675,11 +697,18 @@ fn render_project_picker(
                 // 恢复上次会话的既定行为
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = weak_row.update(cx, |c, cx| {
-                        if fresh {
+                        // 菜单关闭是 UI 入口的职责（业务函数只管业务）
+                        c.dlg.dialog = None;
+                        if c.wx_setup_ctx() {
+                            // 微信设置会话页：选项目写独立工作目录 wx_cwd，
+                            // 禁止联动桌面项目（002 模块独立）
+                            c.wx_pick_project(path.clone(), cx);
+                        } else if fresh {
                             c.new_session_in(path.clone(), cx);
                         } else {
                             c.switch_project(path.clone(), cx);
                         }
+                        cx.notify();
                     });
                 })
                 .child(icon("folder", 16., t.text_muted))
@@ -714,7 +743,12 @@ fn render_project_picker(
         .when(sel == 0, |d| d.bg(rgb(t.bg_selected)))
         .hover(|s| s.bg(rgb(t.bg_hover)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let _ = weak_open.update(cx, |c, cx| c.pick_project_folder(fresh, cx));
+            let _ = weak_open.update(cx, |c, cx| {
+                // 菜单关闭归 UI 入口（系统目录选择器接管之前的收尾）
+                c.dlg.dialog = None;
+                c.pick_project_folder(fresh, cx);
+                cx.notify();
+            });
         })
         .child(icon("folder-plus", 16., t.text_muted))
         .child(tr("action.open_folder"));
@@ -924,7 +958,12 @@ impl Chat {
             return;
         }
         let path = self.psp.project_hits[visible[sel - 1]].path.clone();
-        if fresh {
+        // 键盘 Enter 同一条 UI 收尾（菜单关闭不归业务函数管）
+        self.dlg.dialog = None;
+        if self.wx_setup_ctx() {
+            // 微信设置会话页：选项目写独立工作目录 wx_cwd（禁止联动）
+            self.wx_pick_project(path, cx);
+        } else if fresh {
             self.new_session_in(path, cx);
         } else {
             self.switch_project(path, cx);

@@ -328,6 +328,9 @@ pub struct TabsState {
     pub active: Option<usize>,
     /// 关停时内容区前台是会话 tab（false = 前台是激活 tab 的视图）
     pub chat: bool,
+    /// 关停时内容区前台是微信通话页（002 §2/§6：跨重启回到微信页）。
+    /// 与 `chat` 互斥 precedence：wx > chat > 激活 tab 视图。
+    pub wx: bool,
 }
 
 /// 纯内核：从 JSON 值读 tab 带存档（无记录/旧版 per-project 嵌套形态 =
@@ -353,7 +356,8 @@ fn tabs_state_from_value(v: &Value) -> Option<TabsState> {
         .map(|a| a as usize)
         .filter(|a| *a < tabs.len());
     let chat = v.get("chat").and_then(|b| b.as_bool()).unwrap_or(true);
-    Some(TabsState { tabs, active, chat })
+    let wx = v.get("wx").and_then(|b| b.as_bool()).unwrap_or(false);
+    Some(TabsState { tabs, active, chat, wx })
 }
 
 /// 读取全局 tab 带存档。
@@ -363,7 +367,10 @@ pub fn tabs_state_for() -> Option<TabsState> {
 
 /// 纯内核：存档 → JSON 值（空带 = None，调用方据此移除槽位）。
 fn tabs_state_to_value(state: &TabsState) -> Option<Value> {
-    if state.tabs.is_empty() {
+    // 空带通常 = 移除槽位（启动落默认 chat）；唯独微信前台要单独能存活
+    // ——002 §6 清会话后前台停在[设置会话]页，tab 带本就为空，若这里
+    // 返回 None，重启就「蹿回桌面会话对话页」（2026-10-25 真机事故）
+    if state.tabs.is_empty() && !state.wx {
         return None;
     }
     let tabs: Vec<Value> = state
@@ -376,7 +383,16 @@ fn tabs_state_to_value(state: &TabsState) -> Option<Value> {
         "tabs": tabs,
         "active": state.active,
         "chat": state.chat,
+        "wx": state.wx,
     }))
+}
+
+/// 清空 tab 带存档槽（「启动恢复」关 = 存档一律不存，2026-11-01 定夺）。
+pub fn clear_tabs_state() {
+    let mut map = memory();
+    if map.remove(WS_TABS_KEY).is_some() {
+        set_memory(&map);
+    }
 }
 
 /// 写全局 tab 带存档；空带 = 移除槽位。
@@ -1181,7 +1197,7 @@ pub fn pi_ext_market_enabled() -> bool {
 
 /// 060 微信通信模块总开关（开发旗标，**默认关 = 发版不可见**）。关态 =
 /// 三横菜单【微信通信】项与 topbar 微信线 tab 不渲染、`open_wx` 直接
-/// 返回、入站泵不挂（`SELF_START` 根本不被问到——模块整死）。发版排除
+/// 返回、入站泵不挂（渠道随窗口的服务门根本不被问到——模块整死）。发版排除
 /// 语义同 040-1 市场：dev 环境用 dev-flags.json `"wx": true` 或
 /// `PI_FLASH_WX=1` 打开。
 pub fn wx_enabled() -> bool {
@@ -1502,6 +1518,7 @@ mod tests {
             ],
             active: Some(1),
             chat: false,
+            wx: false,
         };
         let v = tabs_state_to_value(&state).unwrap();
         assert_eq!(tabs_state_from_value(&v).unwrap(), state);
@@ -1518,8 +1535,15 @@ mod tests {
             "越界下标不采信"
         );
 
-        // 空带 = None（写侧据此移除槽位）
+        // 空带 = None（写侧据此移除槽位）；微信前台例外（可单独存活）
         assert!(tabs_state_to_value(&TabsState::default()).is_none());
+        let wx_only = TabsState {
+            tabs: vec![],
+            active: None,
+            chat: false,
+            wx: true,
+        };
+        assert!(tabs_state_to_value(&wx_only).is_some());
 
         // 非法条目读侧丢弃（kind 不识 / 空 path）
         let v = serde_json::json!({ "tabs": [

@@ -19,11 +19,11 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 - **内置pi**：内置 `@earendil-works/pi-coding-agent`，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试（wire 陷阱与升级复核点见 `docs/agents/pi-rpc.md`）。开发期 `PI_FLASH_PI_BIN` 可覆盖。
 - 完成任务保证编译通过后提交git并push，验收交给用户，禁止UI测试
 - **GitHub 推送**：origin 已直连 SSH over 443（`~/.ssh/config` 的 `Host github.com-443` 别名 → ssh.github.com:443，已配 IdentityFile），`git push`/`git fetch` 直接推拉即可。github HTTPS(443) 与 SSH(22) 间歇被墙，勿走 HTTPS 远端、勿手拼 GIT_SSH_COMMAND。
-- UI绘制遵循 docs\UI设计\UI组件规范.md
-- **发布产物不落本机**：构建产物只留在 `target/`（如 `target/release/pi-flash.exe`），禁止复制/替换本机已安装的 `D:\softwares\...\payload\pi-flash.exe`，也不要在 payload 目录生成 `.new` 之类的暂存文件——装不装、何时装由用户自己决定
-- CHANGELOG发版驱动，平时勿碰！
+- UI绘制遵循 docs\UI设计\UI组件规范.md，禁手写参数造新组件
+- 构建产物只留在 `target/`（如 `target/release/pi-flash.exe`），禁止替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
+- CHANGELOG发版驱动，勿碰！
 - 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt
-- 如非用户授权，禁止修改Settings模块！
+- 禁止修改“Settings”模块！
 
 # 路径
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）

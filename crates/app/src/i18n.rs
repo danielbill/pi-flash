@@ -705,10 +705,20 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     // 区分——002 定名【微信通话】）
     ("remote.tab_title", "微信通话", "微信通話", "WeChat Chat"),
     // 操作栏第 2 件：开关旁的说明文字（on/off 两态）
-    ("remote.toggle_on", "启用微信通话", "啟用微信通話", "WeChat chat on"),
-    ("remote.toggle_off", "停用微信通话", "停用微信通話", "WeChat chat off"),
+    // 操作栏第 2 件：开关旁的说明文字（动作式文案：on 时点之则关、off 时点之则启）
+    ("remote.toggle_on", "关停服务", "關停服務", "Stop service"),
+    ("remote.toggle_off", "启用服务", "啟用服務", "Start service"),
     // 操作栏第 3 件：刷新二维码钮文案（refresh icon + 重新绑定）
     ("remote.rebind", "重新绑定", "重新綁定", "Rebind"),
+    // 操作栏第 3 件：[新建会话] 确认框（002 §3，W1）
+    (
+        "remote.new_confirm",
+        "丢弃当前会话创建新会话？",
+        "丟棄當前會話創建新會話？",
+        "Discard the current session and start a new one?",
+    ),
+    // 操作栏第 3 件按钮文案（plus icon + 新建会话）
+    ("remote.new_session", "新建会话", "新建會話", "New Session"),
     // 微信通话页的欢迎语（002 插件注入语，替代桌面新会话页的"Hi，打算让我
     // 做点什么？"）
     ("remote.page_greeting", "使用PF微信机器人进行远程控制", "使用PF微信機器人進行遠端控制", "Remote control with the Pi-Flash WeChat bot"),
@@ -717,7 +727,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.qr_hint", "用手机微信「扫一扫」对屏扫码；约 2 分钟后过期。", "用手機微信「掃一掃」對屏掃碼；約 2 分鐘後過期。", "Scan the on-screen QR code with WeChat; expires in about 2 minutes."),
     // 002-微信通信（pi-flash-plugins）版式文案。二维码弹窗唯一提示文案
     //（2026-10-24 用户定夺：三步走，码区下方再无别的说明行）
-    ("remote.qr_steps", "1、在微信上安装「微信ClawBot」插件\n2、用微信扫描二维码激活PF微信机器人\n3、使用微信聊天指挥Pi-Flash干活", "1、在微信上安裝「微信ClawBot」外掛\n2、用微信掃描二維碼啟用PF微信機器人\n3、使用微信聊天指揮Pi-Flash幹活", "1. Install the \"WeChat ClawBot\" plugin in WeChat\n2. Scan the QR code with WeChat to activate the Pi-Flash bot\n3. Chat with WeChat to put Pi-Flash to work"),
+    ("remote.qr_steps", "1、在微信上安装「微信ClawBot」插件\n2、用微信扫描二维码激活PF微信机器人\n3、设置工作项目和模型\n4、使用微信聊天指挥Pi-Flash干活吧", "1、在微信上安裝「微信ClawBot」外掛\n2、用微信掃描二維碼啟用PF微信機器人\n3、設定工作項目和模型\n4、使用微信聊天指揮Pi-Flash幹活吧", "1. Install the \"WeChat ClawBot\" plugin in WeChat\n2. Scan the QR code with WeChat to activate the Pi-Flash bot\n3. Set the working project and model\n4. Chat with WeChat to put Pi-Flash to work"),
     // 060 七态生命周期（2026-10-24 用户定夺）：①未扫描 ②微信侧出错
     // ③重新扫码更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中
     ("remote.st_absent", "未创建", "未建立", "Not created"),
@@ -737,8 +747,8 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("remote.refresh_qr", "刷新二维码", "刷新二維碼", "Refresh QR code"),
     ("remote.rebind_desc", "重新绑定PF微信机器人", "重新綁定PF微信機器人", "Rebind the Pi-Flash WeChat bot"),
     // 会话过期（errcode:-14）：操作栏提示 + 弹窗框内说明
-    ("remote.session_expired", "会话已过期，请重新绑定", "會話已過期，請重新綁定", "Session expired — rebind required"),
-    ("remote.session_expired_desc", "微信会话已过期，重新扫码绑定", "微信會話已過期，重新掃碼綁定", "The WeChat session expired. Scan again to rebind."),
+    ("remote.wx_expired", "微信会话已过期", "微信會話已過期", "WeChat session expired"),
+    ("remote.new_confirm", "丢弃当前会话，新建会话？", "丟棄當前會話，新建會話？", "Discard the current session and start a new one?"),
     ("remote.qr_timeout", "扫描超时，刷新重新扫码", "掃描逾時，刷新重新掃碼", "Scan timed out. Refresh and scan again."),
     ("remote.qr_title", "扫码绑定", "掃碼綁定", "Scan to bind"),
     ("remote.select_provider", "选择模型供应商", "選擇模型供應商", "Select model provider"),

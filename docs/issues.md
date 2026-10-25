@@ -1,10 +1,19 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-10-23 20:51 ｜ 共 4 条（open 2）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-10-25 06:23 ｜ 共 5 条（open 3）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
 
-## 🔴 Open（2）
+## 🔴 Open（3）
+
+### #5 建议支持自定义供应商
+- 状态：open ｜ 标签：— ｜ 作者：easyeda2021 ｜ 创建：2026-10-23 ｜ 更新：2026-10-23
+- https://github.com/danielbill/pi-flash/issues/5
+
+抖音刷到找来的
+1、不支持自定义provider，导致企业统一内部中转站的路由用不了
+2、界面看起来有些粗糙，建议可以让AI再美化一下
+3、可以配套vscdoe插件使用
 
 ### #4 显示的md渲染颜色可以自定义最好
 - 状态：open ｜ 标签：— ｜ 作者：zhoujun681 ｜ 创建：2026-10-23 ｜ 更新：2026-10-23
@@ -18,6 +27,23 @@
   bash deploy/upgrade.sh --root /opt/projects/daily-report-test "$(bash deploy/version.sh read)"
   curl -fsS http://127.0.0.1:8091/api/system/health
 ```
+
+<details><summary>评论（1）</summary>
+
+**@danielbill**（2026-10-23）：
+
+eidtor markdown：
+
+<!-- Failed to upload "ScreenShot_2026-10-23_211741_932.png" -->
+
+session markdown：
+
+<!-- Failed to upload "ScreenShot_2026-10-23_211852_561.png" -->
+
+这很奇怪，我的editor md渲染是白色， session内容渲染是黄色的， 很可惜截图上传失败。
+我会先让agent定位颜色差异问题。
+
+</details>
 
 ### #2 add release build for mac?
 - 状态：open ｜ 标签：— ｜ 作者：mungowang ｜ 创建：2026-10-20 ｜ 更新：2026-10-21

@@ -112,6 +112,10 @@ pub mod method {
     /// 显式启用微信渠道（与设置页开关同一条 set_enabled 路径）。SELF_START=false
     /// 后，重启实例没有 UI 入口能起渠道（页签已隐藏），自动化是唯一无 UI 启动路径。
     pub const WX_ENABLE: &str = "wx.enable";
+    /// 002 §3 [新建会话]（W1）：confirm=false 走按钮同路径（运行守卫 + 弹
+    /// Dialog::WxNewSession）；confirm=true 走确认按钮同路径（直接
+    /// wx_rotate_session）。返回 active_key 供断言轮换。
+    pub const WX_NEW_SESSION: &str = "wx.new_session";
     pub const PROJECT_SWITCH: &str = "project.switch";
     /// psp 项目行 ＋ 按钮同源入口（切到该项目并新建会话）；UI 测试用
     pub const PROJECT_NEW_SESSION_IN: &str = "project.new_session_in";

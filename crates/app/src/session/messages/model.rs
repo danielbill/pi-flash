@@ -238,6 +238,33 @@ pub(crate) fn compute_meta(messages: &[Msg], ix: usize) -> MsgMeta {
 /// push, toolResult merges into the last assistant's tool call, other roles
 /// skipped. Timestamps: the message object's epoch-ms `timestamp`, falling
 /// back to the entry's ISO `timestamp` (032 发送时间).
+/// pi 冷启动横幅（「🔌 MCP: 1 server enabled」）：进程每次冷启动都会作为
+/// **独立 assistant 消息**发进会话流并落盘，渲染成聊天气泡毫无意义
+/// （2026-11-01 定夺：桌面侧同样消化，识别与微信侧同源但收紧——
+/// 「含 mcp: 且 enabled 结尾」，避免误杀真在聊 MCP 的长回复）。
+pub(crate) fn is_mcp_banner(s: &str) -> bool {
+    let low = s.trim().to_lowercase();
+    low.contains("mcp:") && low.ends_with("enabled")
+}
+
+/// assistant 消息是否纯横幅（所有非空 text 块都是横幅、且无别的块型）。
+pub(crate) fn msg_is_mcp_banner(m: &Msg) -> bool {
+    let mut saw_text = false;
+    for b in &m.blocks {
+        match b {
+            Block::Text { text, .. } if !text.trim().is_empty() => {
+                if !is_mcp_banner(text) {
+                    return false;
+                }
+                saw_text = true;
+            }
+            Block::Text { .. } => {}
+            _ => return false,
+        }
+    }
+    saw_text
+}
+
 pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
     let mut out: Vec<Msg> = Vec::new();
     for v in values {
@@ -339,6 +366,8 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
             _ => {}
         }
     }
+    // 历史里的纯横幅 assistant 消息（pi 每次冷启动都会落盘一条）不渲染
+    out.retain(|m| !(m.role == Role::Assistant && msg_is_mcp_banner(m)));
     out
 }
 

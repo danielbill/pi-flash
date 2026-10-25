@@ -55,7 +55,8 @@ pub(crate) fn page(
     // 插件定制页（002-微信通信，2026-10-24 定夺）：微信线的新会话页不复用
     // 桌面「Hi，打算让我做点什么？」那一套 ——① 欢迎语换成插件注入语；
     // ② 不加载 Pi 扩展更新表（那张表只属于真正的新会话页）。
-    let wx_page = chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
+    let wx_page = chat.layout.content_view == crate::ContentView::Wx
+        || chat.aux.remote.wx_session.as_deref() == Some(chat.pool.active_key.as_str());
     let welcome = if wx_page {
         tr("remote.page_greeting")
     } else {
@@ -184,16 +185,32 @@ fn action_bar(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static crate::appearance::theme::Theme,
 ) -> AnyElement {
-    let project: SharedString = chat
-        .project()
-        .map(|p| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| p.to_string_lossy().to_string())
-        })
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| tr("action.select_project").to_string())
-        .into();
+    let project: SharedString = if chat.wx_setup_ctx() {
+        // 微信设置会话页：展示独立工作目录 `wx_cwd`（与桌面项目无联动）
+        chat.aux
+            .remote
+            .wx_cwd
+            .as_deref()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string())
+            })
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| tr("action.select_project").to_string())
+            .into()
+    } else {
+        chat
+            .project()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string())
+            })
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| tr("action.select_project").to_string())
+            .into()
+    };
     let w_open = weak.clone();
     let mut bar = div()
         .id("new-session-bar")

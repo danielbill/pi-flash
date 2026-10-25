@@ -508,8 +508,8 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
     // 微信 Bot 入站泵（060）：dev-flag `wx` 关（默认，发版排除）= 泵都
-    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态（dev 环境
-    // dev-flags.json `"wx": true`）自启语义由 SELF_START（true）管
+    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态渠道**随窗口**
+    // 激活（2026-11-01 定夺，泵内 ensure_service；开机不自启）
     if crate::services::workspace::wx_enabled() {
         crate::remote_control::spawn_wx_pump(cx);
     }
@@ -850,12 +850,19 @@ fn boot_target() -> BootTarget {
 pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
         let target = cx.background_spawn(async move { boot_target() }).await;
-        // tab 带存档先读（pi-flash-weia，单槽全局）：会话恢复路径会
-        // set_content_view(Chat) 触发 persist_tabs——先读后写，落位不受
-        // 污染；restore=off 不回放也不覆写（存档留给下次开启）
+        // tab 带存档（pi-flash-weia，单槽全局）。语义只有两条（用户定夺
+        // 2026-11-01，别再加特例）：**「启动恢复」开 = 存 + 回放；关 = 存档
+        // 清空、整个会话不写**。开关本身在 persist_tabs 里把门（写侧），
+        // 这里只管读。
+        let restore_on = crate::services::workspace::startup_restore();
+        if !restore_on {
+            // 关态：清掉存量存档（含上一个开关周期留下的），确保「关着就
+            // 什么都不恢复」；本次会话 persist_tabs 全部 no-op
+            crate::services::workspace::clear_tabs_state();
+        }
         let saved_tabs = match &target {
-            BootTarget::Project { .. } if crate::services::workspace::startup_restore() => {
-                crate::services::workspace::tabs_state_for().filter(|s| !s.tabs.is_empty())
+            BootTarget::Project { .. } if restore_on => {
+                crate::services::workspace::tabs_state_for().filter(|s| !s.tabs.is_empty() || s.wx)
             }
             _ => None,
         };
@@ -917,9 +924,10 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
                     chat.apply_saved_tabs(&saved, None, cx);
                 });
             });
-        } else {
-            let _ = this.update(cx, |chat, _| chat.ws.tab_restore_busy = false);
         }
+        // 回放结束**无条件**解锁（finally 语义）：apply_saved_tabs 在空带形态
+        // 会提前 return，锁一旦泄漏整个进程的 persist_tabs 全部静默跳过
+        let _ = this.update(cx, |chat, _| chat.ws.tab_restore_busy = false);
         // —— 会话清单装载（全部在后台线程，首帧只画空壳）：当前项目会话
         //（前 100；无项目态跳过）→ 「加载时间窗口」内活跃会话 → 项目分组 →
         // 集合内每个项目的项目上下文预装 → tail 预载 ——
