@@ -4,6 +4,7 @@
 //! Unknown record shapes are preserved as [`Event::Other`] / raw JSON so a pi
 //! upgrade never silently drops data — conformance tests fail loudly instead.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// One pi RPC record kind we send. Correlated via `id` where a response is expected.
@@ -1039,11 +1040,16 @@ pub struct SessionState {
     pub pending_message_count: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+/// serde 形状对齐 pi RPC 的 camelCase（`contextWindow`）——registry dump
+/// 直接以 `Vec<ModelInfo>` 落 `registry-cache.json`（042 静态目录保底）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub provider: String,
+    #[serde(default, rename = "contextWindow")]
     pub context_window: Option<u64>,
 }
 

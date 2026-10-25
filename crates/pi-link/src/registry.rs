@@ -16,6 +16,10 @@
 //! - modelCount = 全量 registry 按 provider 计数，与启用开关无关
 //! - OAuth 显示名 = 覆盖表 → `auth.oauth.name` → provider.name
 //! - 组内**不排序**，保持 SDK `getProviders()` 原始顺序
+//!
+//! dump 同时携带全量模型条目（`models`，credential-blind 静态目录）——
+//! 表外内置商（无探查端点）保存 key 后可用模型区的保底数据源，见
+//! [`RegistryDump::models`] 字段注。
 
 use std::collections::BTreeMap;
 
@@ -55,6 +59,12 @@ pub struct RegistryDump {
     /// provider id → auth.json 凭据类型（"api_key" | "oauth"）。
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
+    /// 全量 registry 模型条目（静态目录，credential-blind）。表外内置商
+    /// （无探查端点）可用模型区的保底数据源——只喂设置页详情
+    /// （`merge_registry_models`），**不并入 `catalog_for`/`Globals.models`**
+    /// （会话 picker 非虚拟化，全量灌入踩性能铁律）。
+    #[serde(default)]
+    pub models: Vec<crate::protocol::ModelInfo>,
 }
 
 impl RegistryDump {
@@ -91,6 +101,15 @@ impl RegistryDump {
         }
         p.oauth_name.as_deref().unwrap_or(&p.name)
     }
+
+    /// 指定 provider 的静态模型条目（registry 顺序）。线性扫过滤——1599
+    /// 条微秒级，消费方（设置页详情）非每帧热路径，无需分组索引。
+    pub fn models_for<'a>(
+        &'a self,
+        provider: &'a str,
+    ) -> impl Iterator<Item = &'a crate::protocol::ModelInfo> + 'a {
+        self.models.iter().filter(move |m| m.provider == provider)
+    }
 }
 
 /// `~/.pi-flash/registry-cache.json`。
@@ -98,12 +117,16 @@ fn cache_file() -> Option<std::path::PathBuf> {
     paths::registry_cache_file()
 }
 
-/// 读盘上缓存；vendor VERSION 不一致（或字段缺失）视为失效。
+/// 读盘上缓存；vendor VERSION 不一致（或字段缺失）视为失效。旧格式缓存
+/// （无 `models` 键，serde default 为空）同样失效——重 dump 补全静态目录。
 pub fn read_cache() -> Option<RegistryDump> {
     let path = cache_file()?;
     let text = std::fs::read_to_string(path).ok()?;
     let dump: RegistryDump = serde_json::from_str(&text).ok()?;
-    if dump.version != vendored_version().unwrap_or_default() || dump.providers.is_empty() {
+    if dump.version != vendored_version().unwrap_or_default()
+        || dump.providers.is_empty()
+        || dump.models.is_empty()
+    {
         return None;
     }
     Some(dump)
@@ -137,10 +160,17 @@ const providers = rt.getProviders().map((p) => ({
     oauthName: (p.auth && p.auth.oauth && p.auth.oauth.name) || null,
 }));
 const counts = {};
-for (const m of rt.getModels()) counts[m.provider] = (counts[m.provider] || 0) + 1;
+const allModels = rt.getModels();
+for (const m of allModels) counts[m.provider] = (counts[m.provider] || 0) + 1;
+const models = allModels.map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    provider: m.provider,
+    contextWindow: m.contextWindow ?? null,
+}));
 const credentials = {};
 for (const c of await rt.listCredentials()) credentials[c.providerId] = c.type;
-process.stdout.write(JSON.stringify({ providers, counts, credentials }));
+process.stdout.write(JSON.stringify({ providers, counts, credentials, models }));
 "#;
 
 /// 同步执行 dump 并落缓存——**只在后台线程调用**（阻塞一次 node 进程）。
@@ -183,9 +213,11 @@ fn dump() -> Result<RegistryDump, String> {
     let mut dump: RegistryDump =
         serde_json::from_str(stdout.trim()).map_err(|e| format!("registry dump 解析失败: {e}"))?;
     // 旧版 SDK（≤1.0.0）refreshOnCreate:false 下 getModels() 返回空——计数
-    // 全空 = dump 无效，按失败处理（不落缓存，下次弹窗重试）
-    if !dump.providers.is_empty() && dump.model_counts.is_empty() {
-        return Err("registry dump 缺少模型计数（vendor SDK 过旧）".to_string());
+    // 或模型条目任一为空 = dump 无效，按失败处理（不落缓存，下次弹窗重试）
+    if !dump.providers.is_empty()
+        && (dump.model_counts.is_empty() || dump.models.is_empty())
+    {
+        return Err("registry dump 缺少模型清单/计数（vendor SDK 过旧）".to_string());
     }
     dump.version = vendored_version().unwrap_or_default();
     Ok(dump)
@@ -204,6 +236,14 @@ mod tests {
                       "hasOAuth": true, "oauthName": "Claude Pro/Max" },
                     { "id": "deepseek", "name": "DeepSeek", "hasApiKeyLogin": true },
                     { "id": "github-copilot", "name": "GitHub Copilot", "hasOAuth": true }
+                ],
+                "counts": { "anthropic": 2, "deepseek": 1 },
+                "models": [
+                    { "id": "claude-opus-4-8", "name": "Claude Opus 4.8",
+                      "provider": "anthropic", "contextWindow": 200000 },
+                    { "id": "claude-sonnet-4-6", "provider": "anthropic" },
+                    { "id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro",
+                      "provider": "deepseek", "contextWindow": 128000 }
                 ]
             }"#,
         )
@@ -218,6 +258,33 @@ mod tests {
         assert!(d.providers[0].has_oauth);
         assert_eq!(d.providers[0].oauth_name.as_deref(), Some("Claude Pro/Max"));
         assert!(!d.providers[1].has_oauth);
+    }
+
+    #[test]
+    fn models_parse_with_defaults_and_models_for_filters_by_provider() {
+        let d = sample();
+        assert_eq!(d.models.len(), 3);
+        // 缺 name 的条目回退空串、缺 contextWindow 回退 None（serde default）
+        let sonnet = d.models.iter().find(|m| m.id == "claude-sonnet-4-6").unwrap();
+        assert_eq!(sonnet.name, "");
+        assert_eq!(sonnet.context_window, None);
+        let ids: Vec<_> = d.models_for("anthropic").map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["claude-opus-4-8", "claude-sonnet-4-6"]);
+        // 无条目的 provider → 空
+        assert_eq!(d.models_for("github-copilot").count(), 0);
+    }
+
+    #[test]
+    fn old_cache_without_models_key_parses_to_empty() {
+        // 旧格式缓存（本改动之前落盘）没有 models 键：serde default 解析成功
+        // 但 models 为空——read_cache 按失效处理，重 dump 补全
+        let d: RegistryDump = serde_json::from_str(
+            r#"{ "version": "1.1.0", "providers": [ { "id": "zai", "name": "ZAI" } ],
+                "counts": { "zai": 7 } }"#,
+        )
+        .unwrap();
+        assert_eq!(d.providers.len(), 1);
+        assert!(d.models.is_empty());
     }
 
     #[test]
