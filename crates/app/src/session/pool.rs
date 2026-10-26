@@ -574,7 +574,7 @@ impl Chat {
             }
         }
         // 插件认领线跟随迁移（同语义，泛化形态）：草稿键 → 会话文件键，
-        // 过滤清单按真身补一条（path 精确，重启后仍藏得住）
+        // 过滤清单按真身补一条（path 精确，重启后仍藏得住）；交接文件同步
         if let Some(c) = self
             .plugins
             .claims
@@ -596,6 +596,17 @@ impl Chat {
                 Some(&path),
                 Some(&prefix),
             );
+            // 交接文件同步（ext 读的是 key，草稿键已退役）
+            if let Some(e) = self.plugins.plugins.iter().find(|e| e.manifest.id == plugin_id) {
+                let f = e.manifest.dir.join("data").join("claim.json");
+                if f.exists() {
+                    let _ = std::fs::write(
+                        &f,
+                        serde_json::json!({"key": path_key, "name": name.as_deref().unwrap_or(""), "cwd": "", "prefix": prefix, "plugin_id": plugin_id})
+                            .to_string(),
+                    );
+                }
+            }
         }
         self.psp.active_file = Some(path.clone());
         // recents (003-session管理): a fresh session file just landed
