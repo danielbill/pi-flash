@@ -178,8 +178,8 @@ pub(crate) fn main_column(
 }
 
 /// 会话功能栏（2026-10-11：topbar ⋯ 菜单撤下拉改常驻条）：会话 tab 下方
-/// 32px 操作条，版式对齐文件标签下方的 file_nav_bar（同高、同下边框、同
-/// pl12/pr8）。2026-10-16 系统提示词 / 会话工具集两钮迁入上下文用量面板
+/// 36px 操作条，版式对齐文件标签下方的 file_nav_bar（同下边框、同
+/// pl12/pr8；2026-10-21 用户定案：栏高 36，不再与 file_nav_bar 32px 同高）。2026-10-16 系统提示词 / 会话工具集两钮迁入上下文用量面板
 /// （session/input/ctx_tip.rs）；新增「会话目录」（资源管理器打开当前项目
 /// 的 pi 会话组目录，动作同 psp 项目详情卡 explorer 钮）+「打开终端」，
 /// 钮间淡色 `|` 区隔。终端视图开着时终端钮点亮 accent。
@@ -201,10 +201,7 @@ fn session_fn_bar(
                 })
                 .unwrap_or_else(|| tr("statusbar.no_project").to_string())
                 .into(),
-        )
-    } else {
-        None
-    };
+    );
     // 会话组目录（sfbar-sessdir）：pi sessions 根下按 cwd 编码的组目录，
     // 还没建（无落盘会话）退回 sessions 根——与 psp 项目详情卡同口径；
     // 无项目态直接开 sessions 根（微信前台时按 `wx_cwd` 定位——旧实现读
@@ -230,7 +227,7 @@ fn session_fn_bar(
     };
     div()
         .id("session-fn-bar")
-        .h(px(32.))
+        .h(px(36.))
         .flex_shrink_0()
         .flex()
         .items_center()
