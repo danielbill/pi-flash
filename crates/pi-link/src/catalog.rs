@@ -49,9 +49,14 @@ pub fn parse_store(value: &Value) -> Vec<ModelInfo> {
     };
     let mut out = Vec::new();
     for (provider, entry) in map {
-        let Some(models) = entry.get("models").and_then(Value::as_array) else {
-            continue;
-        };
+        // models-store 形状 {"models":[...]}；provider-catalog 042 期的
+        // 数组形状兼容（老文件自愈，免迁移）
+        let empty: Vec<Value> = Vec::new();
+        let models = entry
+            .get("models")
+            .and_then(Value::as_array)
+            .or_else(|| entry.as_array())
+            .unwrap_or(&empty);
         for m in models {
             let Some(id) = m
                 .get("id")
@@ -172,7 +177,10 @@ pub fn save_catalog(provider: &str, models: &[ModelInfo]) -> Result<(), String> 
                 })
             })
             .collect();
-        root.insert(provider.to_string(), serde_json::Value::Array(items));
+        // 与 models-store 同形（{"models":[...]}）：disk_models 的读取端
+        // parse_store 按此形状解析——042 曾直接落数组导致写读不一致，
+        // 自定义商目录恒 0 条（内置商有 models-store 兑底未暴露）
+        root.insert(provider.to_string(), serde_json::json!({ "models": items }));
     }
     let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))
         .map_err(|e| e.to_string())?;
@@ -208,6 +216,23 @@ pub fn skill_commands(skills: &[SkillEntry]) -> Vec<SlashCommand> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_store_accepts_store_and_legacy_array_shapes() {
+        // models-store 同形（save_catalog 现行写入）
+        let store = json!({"ds": {"models": [{"id": "a", "provider": "ds", "name": "A"}]}});
+        let got = parse_store(&store);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "a");
+        // provider-catalog 042 期数组形状（写读不一致期的落盘，老文件自愈）
+        let legacy = json!({"ds": [{"id": "b", "provider": "ds"}]});
+        let got = parse_store(&legacy);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "b");
+        assert_eq!(got[0].provider, "ds");
+        // 非数组非对象条目跳过
+        assert!(parse_store(&json!({"ds": "junk"})).is_empty());
+    }
 
     #[test]
     fn store_parses_providers_and_context() {
