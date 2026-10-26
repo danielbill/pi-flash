@@ -17,8 +17,7 @@ impl Chat {
         let model = ix
             .and_then(|ix| entry.get("models").and_then(|m| m.get(ix)).cloned())
             .unwrap_or_else(|| serde_json::json!({}));
-        // 042-1：api 缺省 = auto（保存时省略 api 键，端点按 openai 形状猜）
-        let api_opt = entry.get("api").and_then(|v| v.as_str()).map(str::to_string);
+        // 042-1 改版：api 由 PF 推断落盘，表单不再读取/展示
         let reasoning = model
             .get("reasoning")
             .and_then(|v| v.as_bool())
@@ -87,12 +86,6 @@ impl Chat {
             st.update(cx, |s, cx| {
                 s.section = section.clone();
                 s.error = None;
-                // openai-completions 与 auto 行为等价（pi 缺省即它）：旧数据
-                // 里写死的该值一律显示为 auto，下次保存自动清键归一
-                s.mj_api = match api_opt.as_deref() {
-                    Some("openai-completions") | None => 4,
-                    Some(a) => mj_api_ix(a),
-                };
                 s.mj_reasoning = reasoning;
                 s.mj_headers = header_pairs
                     .iter()
@@ -262,13 +255,12 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let (name, base, key, api_ix) = {
+        let (name, base, key) = {
             let s = st.read(cx);
             (
                 s.mj_name.read(cx).value().trim().to_string(),
                 s.mj_base.read(cx).value().trim().to_string(),
                 s.mj_key.read(cx).value().trim().to_string(),
-                s.mj_api,
             )
         };
         let headers = st.read(cx).mj_headers_value(cx);
@@ -278,15 +270,11 @@ impl Chat {
         let mut entry = pi_link::models_json::provider_entry(&self.cfg.mc_models_json, &old_name)
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        // 042-1：auto（4）= 端点形状由 pi 侧定，条目省略 api 键
-        if api_ix >= 4 {
-            entry
-                .as_object_mut()
-                .expect("entry is an object")
-                .remove("api");
-        } else {
-            entry["api"] = serde_json::Value::String(mj_api_name(api_ix));
-        }
+        // API 形状 PF 推断（042-1 改版：baseUrl 决定协议，用户零选择）。
+        // pi 对缺 api 硬 throw，必须写具体值；空 base 先落 openai 形状，
+        // 填好 base 再保存即随推断更新
+        entry["api"] =
+            serde_json::Value::String(pi_link::probe::infer_api(&base).to_string());
         // name 字段随输入同步（顺带保证新建条目 sanitize 不丢）
         set_opt_str(&mut entry, "name", &name);
         set_opt_str(&mut entry, "baseUrl", &base);
@@ -539,17 +527,6 @@ impl Chat {
         }
     }
 
-    /// API 下拉选值并收起（Provider 表单槽）。
-    pub(crate) fn mj_api_pick(&mut self, ix: u8, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                s.mj_api = ix;
-                s.mj_api_popup = None;
-                cx.notify();
-            });
-        }
-    }
-
     pub(crate) fn mj_set_api_override(&mut self, ix: u8, cx: &mut Context<Self>) {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
@@ -624,19 +601,14 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let (base, api_ix) = {
+        let base = {
             let s = st.read(cx);
-            (
-                s.mj_base.read(cx).value().trim().to_string(),
-                s.mj_api,
-            )
+            s.mj_base.read(cx).value().trim().to_string()
         };
         let key_text = st.read(cx).mj_key.read(cx).value().trim().to_string();
-        let api = if api_ix >= 4 {
-            "openai-completions".to_string()
-        } else {
-            mj_api_name(api_ix)
-        };
+        // API 形状随 baseUrl 推断（042-1 改版）：anthropic 兼容端点自动获得
+        // 目录优先 + messages POST 兜底的组合探查
+        let api = pi_link::probe::infer_api(&base);
         self.mc_clear_error(cx);
         let Some((url, auth)) = pi_link::probe::custom_target(&base, &api) else {
             return self.mc_set_error(tr("models.import_base_url_required"), cx);
@@ -728,16 +700,13 @@ impl Chat {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let api_ix = entry
+        // 存量显式 api 尊重保留，缺省按 baseUrl 推断（042-1 改版）
+        let api = entry
             .get("api")
             .and_then(|v| v.as_str())
-            .map(mj_api_ix)
-            .unwrap_or(4);
-        let api = if api_ix >= 4 {
-            "openai-completions".to_string()
-        } else {
-            mj_api_name(api_ix)
-        };
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| pi_link::probe::infer_api(&base).to_string());
         let key_text = entry
             .get("apiKey")
             .and_then(|v| v.as_str())
@@ -817,7 +786,8 @@ impl Chat {
             )
         };
         let api = if model_api >= 4 {
-            mj_api_name(st.read(cx).mj_api)
+            // 沿用 Provider：随表单 baseUrl 推断（042-1 改版，与测速同源）
+            pi_link::probe::infer_api(&base).to_string()
         } else {
             mj_api_name(model_api)
         };
@@ -1269,16 +1239,12 @@ pub(crate) fn mj_provider_editor(
                 .into_any_element(),
         ));
 
-    // Base URL 行（全宽）+ API 类型行（半宽下拉，默认 auto）
-    let detail = detail
-        .child(form_row(
-            &tr("custom_models.base_url"),
-            d.mj_base.clone().into_any_element(),
-        ))
-        .child(form_row(
-            &tr("custom_models.api"),
-            api_options_dropdown(weak, d),
-        ));
+    // Base URL 行（全宽）。API 类型已下线（042-1 改版）：形状由 baseUrl
+    // 推断落盘，用户零选择；误判走模型编辑器的 API 覆盖逃生门
+    let detail = detail.child(form_row(
+        &tr("custom_models.base_url"),
+        d.mj_base.clone().into_any_element(),
+    ));
 
     // 操作栏 [测速][保存][+模型]（042-1）：测速 = 连通后自动保存 + 自动
     // 拉模型；通过前保存/+模型禁用。结果行/失败提示紧跟其下。
@@ -2271,80 +2237,6 @@ fn mj_dd_item(
         })
         .child(SharedString::from(label))
         .into_any_element()
-}
-
-/// Provider 表单的 API 下拉（pi-web ProviderDetail `<Select>` 对齐）。
-pub(crate) fn api_options_dropdown(
-    weak: &gpui::WeakEntity<Chat>,
-    d: &super::SettingsFormData,
-) -> gpui::AnyElement {
-    let t = T();
-    let open = d.mj_api_popup == Some(0);
-    // 042-1：auto（4）= 缺省档（条目省略 api 键，端点形状 pi 侧自定）
-    let label = if d.mj_api >= 4 {
-        tr("models.api_auto").to_string()
-    } else {
-        MJ_API_OPTIONS
-            .iter()
-            .find(|(ix, _)| *ix == d.mj_api)
-            .map(|(_, name)| (*name).to_string())
-            .unwrap_or_else(|| "openai-completions".into())
-    };
-    let weak_toggle = weak.clone();
-    let weak_dismiss = weak.clone();
-    crate::ui::dropdown(
-        "mj-api-dd",
-        &d.mj_api_dd,
-        open,
-        move |_, cx| {
-            let _ = weak_toggle.update(cx, |c, cx| {
-                if let Some(st) = c.dlg.settings.clone() {
-                    st.update(cx, |s, cx| {
-                        s.mj_api_popup = if s.mj_api_popup == Some(0) { None } else { Some(0) };
-                        cx.notify();
-                    });
-                }
-            });
-        },
-        move |_, cx| {
-            let _ = weak_dismiss.update(cx, |c, cx| {
-                if let Some(st) = c.dlg.settings.clone() {
-                    st.update(cx, |s, cx| {
-                        if s.mj_api_popup.take().is_some() {
-                            cx.notify();
-                        }
-                    });
-                }
-            });
-        },
-        mj_sel_trigger(&label, open, gpui::relative(0.5), false),
-        move || {
-            let mut menu = div()
-                .w(px(300.))
-                .py(px(3.))
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(t.border))
-                .rounded(px(8.))
-                .shadow_lg()
-                .overflow_hidden();
-            menu = menu.child(mj_dd_item(
-                weak.clone(),
-                tr("models.api_auto").to_string(),
-                d.mj_api >= 4,
-                |c, cx| c.mj_api_pick(4, cx),
-            ));
-            for (ix, name) in MJ_API_OPTIONS {
-                menu = menu.child(mj_dd_item(
-                    weak.clone(),
-                    name.to_string(),
-                    ix == d.mj_api,
-                    move |c, cx| c.mj_api_pick(ix, cx),
-                ));
-            }
-            menu.into_any_element()
-        },
-    )
 }
 
 /// 模型 API 覆盖下拉（pi-web ModelDetail 高级区 `<Select>` 对齐：非 required

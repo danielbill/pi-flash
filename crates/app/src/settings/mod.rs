@@ -93,7 +93,6 @@ pub(crate) struct SettingsPanel {
     pub mj_id: gpui::Entity<TextInput>,
     pub mj_mname: gpui::Entity<TextInput>,
     pub mj_ctx: gpui::Entity<TextInput>,
-    pub mj_api: u8,
     pub mj_reasoning: bool,
     // -- 042 M2 自定义 provider/model 编辑器扩展（pi-web parity）
     /// headers 编辑行（name, value 输入框对；provider/model 编辑器共用槽，
@@ -228,7 +227,6 @@ impl SettingsPanel {
             mj_id: panel_input("model-id", cx),
             mj_mname: panel_input(tr("settings.model_display_name"), cx),
             mj_ctx: cx.new(|cx| TextInput::new(cx).numeric(true)),
-            mj_api: 0,
             mj_reasoning: false,
             mj_headers: Vec::new(),
             mj_tlm: std::array::from_fn(|_| MjTlmRow {
@@ -428,7 +426,6 @@ pub(crate) struct SettingsFormData {
     pub mj_id: gpui::Entity<TextInput>,
     pub mj_mname: gpui::Entity<TextInput>,
     pub mj_ctx: gpui::Entity<TextInput>,
-    pub mj_api: u8,
     pub mj_reasoning: bool,
     pub mj_headers: Vec<MjHeaderRow>,
     pub mj_tlm: [MjTlmRow; TLM_LEVEL_COUNT],
@@ -495,7 +492,6 @@ impl SettingsFormData {
             mj_id: p.mj_id.clone(),
             mj_mname: p.mj_mname.clone(),
             mj_ctx: p.mj_ctx.clone(),
-            mj_api: p.mj_api,
             mj_reasoning: p.mj_reasoning,
             mj_headers: p.mj_headers.clone(),
             mj_tlm: p.mj_tlm.clone(),

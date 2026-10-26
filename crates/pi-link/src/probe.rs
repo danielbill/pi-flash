@@ -105,10 +105,10 @@ pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
         .map(|(_, url, auth)| (*url, *auth))
 }
 
-/// 自定义商的列模型 URL：models.json 的 `baseUrl` + `api` 走同一构造规则
-/// （对齐 pi-web buildModelsListUrl：按 api 补版本段，不重复补）。
-/// base 带 /anthropic 段时本函数返回的是 messages 连通目标；目录拉取应配
-/// [`anthropic_compat_urls`] + [`probe_anthropic_compat`]（目录优先）。
+/// 自定义商的列模型 URL：`baseUrl` + `api`（042-1 改版：api 由 [`infer_api`]
+/// 从 baseUrl 推断，UI 不再让用户选）按同一构造规则（对齐 pi-web
+/// buildModelsListUrl：按 api 补版本段，不重复补）。Anthropic 兼容端点的
+/// messages 连通兑底见 [`anthropic_compat_urls`] + [`probe_anthropic_compat`]。
 pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
@@ -117,19 +117,33 @@ pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
     let (url, auth) = match api {
         "anthropic-messages" => (join_version(base, "v1"), Auth::Anthropic),
         "google-generative-ai" => (join_version(base, "v1beta"), Auth::Google),
-        // auto / 末明确：base 带 /anthropic 时按 Anthropic 兼容格式（对齐 cc-switch 端点）
-        _ => if api == "auto" || base.ends_with("/anthropic") || base.contains("/anthropic/") {
-            (format!("{base}/v1/messages"), Auth::Anthropic)
+        // openai 系（completions/responses）：base 已含 /v1 则直接接 /models，
+        // 否则补 /v1（通用自定义商）
+        _ => if base.ends_with("/v1") || base.contains("/v1/") {
+            (format!("{base}/models"), Auth::Bearer)
         } else {
-            // openai 默认：base 已含 /v1 则直接接 /models，否则补 /v1（通用自定义商）
-            if base.ends_with("/v1") || base.contains("/v1/") {
-                (format!("{base}/models"), Auth::Bearer)
-            } else {
-                (format!("{base}/v1/models"), Auth::Bearer)
-            }
+            (format!("{base}/v1/models"), Auth::Bearer)
         },
     };
     Some((url, auth))
+}
+
+/// baseUrl → pi wire 协议形状（042-1 改版：Provider = baseUrl + apiKey，
+/// API 形状用户不选，PF 推断后随条目落盘——pi 侧 modelFromJson /
+/// extensionModelFromDefinition 对缺 api 硬 throw，绝不留空）。
+/// `*/anthropic` / 含 `/anthropic/` → anthropic-messages（DeepSeek /anthropic、
+/// GLM、Kimi 等兼容端点）；`*/v1beta` → google-generative-ai；其余 →
+/// openai-completions（最大公约数）。openai-responses 与 completions 在 URL
+/// 上不可区分，一律默认 completions，误判走模型级 API 覆盖逃生门。
+pub fn infer_api(base_url: &str) -> &'static str {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.ends_with("/anthropic") || base.contains("/anthropic/") {
+        "anthropic-messages"
+    } else if base.ends_with("/v1beta") || base.contains("/v1beta/") {
+        "google-generative-ai"
+    } else {
+        "openai-completions"
+    }
 }
 
 /// base 已带该版本段就只接 /models，否则补上版本段再接。
@@ -141,9 +155,9 @@ fn join_version(base: &str, version: &str) -> String {
     }
 }
 
-/// base 指向 Anthropic 兼容端点（custom_target `_` 分支的 base 判定同款：
-/// 带 `/anthropic` 段）→ 返回 (models_url, messages_url)，供
-/// [`probe_anthropic_compat`] 目录优先 + 连通兜底。
+/// base 指向 Anthropic 兼容端点（[`infer_api`] 同款判定：带 `/anthropic` 段）
+/// → 返回 (models_url, messages_url)，供 [`probe_anthropic_compat`]
+/// 目录优先 + 连通兑底。
 pub fn anthropic_compat_urls(base_url: &str) -> Option<(String, String)> {
     let base = base_url.trim().trim_end_matches('/');
     let implies = base.ends_with("/anthropic") || base.contains("/anthropic/");
@@ -346,6 +360,35 @@ mod tests {
         assert!(anthropic_compat_urls("https://api.deepseek.com").is_none());
         assert!(anthropic_compat_urls("https://api.deepseek.com/v1").is_none());
         assert_eq!(anthropic_compat_urls(""), None);
+    }
+
+    #[test]
+    fn infer_api_routes_by_base_shape() {
+        assert_eq!(
+            infer_api("https://api.deepseek.com/anthropic"),
+            "anthropic-messages"
+        );
+        assert_eq!(
+            infer_api("https://gw.example.com/api/anthropic/"),
+            "anthropic-messages"
+        );
+        assert_eq!(
+            infer_api("https://generativelanguage.googleapis.com/v1beta"),
+            "google-generative-ai"
+        );
+        assert_eq!(infer_api("https://api.openai.com/v1"), "openai-completions");
+        assert_eq!(infer_api("https://api.deepseek.com"), "openai-completions");
+        assert_eq!(infer_api(""), "openai-completions");
+        // 推断值必须被 custom_target 原样消化（形状闭环，目录 URL 不落 messages）
+        for base in [
+            "https://api.deepseek.com/anthropic",
+            "https://x.example.com/v1",
+            "https://g.example.com/v1beta",
+        ] {
+            let (url, _) = custom_target(base, infer_api(base)).unwrap();
+            assert!(url.starts_with(base.trim_end_matches('/')), "{url}");
+            assert!(url.ends_with("/models"), "{url}");
+        }
     }
 
     #[test]

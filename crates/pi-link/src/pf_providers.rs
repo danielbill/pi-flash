@@ -120,6 +120,55 @@ pub fn write(value: &Value) -> Result<(), String> {
     write_at(&p, value)
 }
 
+/// 存量账本补 `api`（042-1 改版伴随迁移）：旧 auto 档条目省略 api 键，而
+/// pi 侧注册对缺 api 硬 throw（extensionModelFromDefinition）→ provider
+/// 静默注册失败。按 [`crate::probe::infer_api`] 从 baseUrl 推断补写
+/// （无 baseUrl 的半建条目跳过；显式 api 尊重保留）。幂等，返回补写条数。
+pub fn migrate_infer_api_at(path: &Path) -> usize {
+    let Ok(doc) = read_at(path) else {
+        return 0;
+    };
+    let mut doc = doc;
+    let mut fixed = 0;
+    // 先克隆收集，避免边遍历边改 doc
+    let entries: Vec<(String, serde_json::Value)> = crate::models_json::providers(&doc)
+        .into_iter()
+        .map(|(n, e)| (n, e.clone()))
+        .collect();
+    for (name, mut entry) in entries {
+        if entry
+            .get("api")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+        {
+            continue;
+        }
+        let base = entry
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if base.is_empty() {
+            continue;
+        }
+        entry["api"] =
+            serde_json::Value::String(crate::probe::infer_api(base).to_string());
+        crate::models_json::upsert_provider(&mut doc, &name, entry);
+        fixed += 1;
+    }
+    if fixed > 0 && write_at(path, &doc).is_err() {
+        return 0;
+    }
+    fixed
+}
+
+/// 默认路径版 [`migrate_infer_api_at`]。
+pub fn migrate_infer_api() -> usize {
+    match path() {
+        Some(p) => migrate_infer_api_at(&p),
+        None => 0,
+    }
+}
+
 /// 自定义 provider 的 apiKey 写入分流（编辑器/添加面板共用）：明文 → 凭据
 /// 库 + `$PF_KEY_*` 引用；`$`/`!` 高级引用原样；凭据库失败 → 降级明文
 /// （账本 0600，PF 私有，可降级）。空串清除字段 → Ok(None)。
@@ -324,6 +373,30 @@ mod tests {
 
     fn clean(p: &Path) {
         let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
+    fn migrate_infer_api_fills_missing_keeps_explicit() {
+        let p = tmp("mig-api");
+        write_at(
+            &p,
+            &json!({
+                "providers": {
+                    "my-ds": { "name": "my-ds", "baseUrl": "https://api.deepseek.com/anthropic" },
+                    "legacy": { "name": "l", "baseUrl": "https://api.openai.com/v1", "api": "openai-responses" },
+                    "wip": { "name": "n" }
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(migrate_infer_api_at(&p), 1, "只补缺 api 且有 baseUrl 的");
+        let doc = read_at(&p).unwrap();
+        let get = |n: &str| crate::models_json::provider_entry(&doc, n).unwrap().clone();
+        assert_eq!(get("my-ds")["api"], "anthropic-messages");
+        assert_eq!(get("legacy")["api"], "openai-responses", "显式 api 尊重保留");
+        assert!(get("wip").get("api").is_none(), "无 baseUrl 半建条目跳过");
+        assert_eq!(migrate_infer_api_at(&p), 0, "幂等");
+        clean(&p);
     }
 
     #[test]
