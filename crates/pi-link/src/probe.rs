@@ -117,15 +117,25 @@ pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
     let (url, auth) = match api {
         "anthropic-messages" => (join_version(base, "v1"), Auth::Anthropic),
         "google-generative-ai" => (join_version(base, "v1beta"), Auth::Google),
-        // openai 系（completions/responses）：base 已含 /v1 则直接接 /models，
-        // 否则补 /v1（通用自定义商）
-        _ => if base.ends_with("/v1") || base.contains("/v1/") {
+        // openai 系（completions/responses）：base 末段已是版本号（/v1、/v4…
+        // GLM coding 端点即 /v4）则直接接 /models，否则补 /v1（通用自定义商）
+        _ => if base_has_version_segment(base) {
             (format!("{base}/models"), Auth::Bearer)
         } else {
             (format!("{base}/v1/models"), Auth::Bearer)
         },
     };
     Some((url, auth))
+}
+
+/// base 是否已含 openai 版本段：末段为 /v<数字>（v1/v4/v1beta 不算——那是
+/// google 段）或路径中含 /v1/。决定接 /models 还是补 /v1。
+fn base_has_version_segment(base: &str) -> bool {
+    let last = base.rsplit('/').next().unwrap_or("");
+    let tail_is_version = last.len() >= 2
+        && last.starts_with('v')
+        && last[1..].bytes().all(|b| b.is_ascii_digit());
+    tail_is_version || base.contains("/v1/")
 }
 
 /// baseUrl → pi wire 协议形状（042-1 改版：Provider = baseUrl + apiKey，
@@ -345,6 +355,19 @@ mod tests {
             Some(("https://gw.example.com/v1beta/models".into(), Auth::Google))
         );
         assert_eq!(custom_target("", "openai-completions"), None);
+        // 末段版本号任意 /vN 都直接接 /models（GLM coding /v4 实测样本）
+        assert_eq!(
+            custom_target("https://open.bigmodel.cn/api/coding/paas/v4", "openai-completions"),
+            Some((
+                "https://open.bigmodel.cn/api/coding/paas/v4/models".into(),
+                Auth::Bearer
+            ))
+        );
+        // /v1beta 不是 openai 版本段（google 专用），不误判
+        assert_eq!(
+            custom_target("https://g.example.com/v1beta", "openai-completions"),
+            Some(("https://g.example.com/v1beta/v1/models".into(), Auth::Bearer))
+        );
     }
 
     #[test]
