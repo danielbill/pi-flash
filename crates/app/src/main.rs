@@ -127,6 +127,17 @@ use ui::icon;
 static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// [perf] 启动阶段打点（PI_FLASH_PERF=1 才输出；时刻基准 = T0 = main 起点）。
+/// 启动热路径排查用：在可疑段落前后各打一行，差值就是该段耗时。
+pub(crate) fn perf_mark(label: &str) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var("PI_FLASH_PERF").is_ok())
+        && let Some(t0) = T0.get()
+    {
+        eprintln!("[perf] {label}: +{:?}", t0.elapsed());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------
@@ -181,14 +192,17 @@ fn main() {
     if services::updater::handoff_if_newer() {
         return;
     }
+    perf_mark("handoff check");
     // 任务栏固定稳定性（win_pin）：显式 AUMID 必须在首个窗口创建前设置；
     // 开始菜单稳定入口 lnk + 任务栏死链自愈走后台线程，不占启动路径。
     #[cfg(windows)]
     services::win_pin::prepare();
+    perf_mark("win_pin");
     // 启动第一步（010-启动.md §4/§10）：建 ~/.pi-flash/、旧 pi-flash-*.json 搬家、
     // recents 首启种子。必须早于任何读盘者（workspace 记忆 / recents / 会话扫描器
     // 都是进程级惰性单例）。
     startup::boot();
+    perf_mark("boot() (migrate+seed+adopt)");
     // [perf] 仪器总开关：PI_FLASH_PERF=1 才开（1452 RENDER_ON 同款门控）。
     // 此处曾被无条件 store(true)，每次启动都往 stderr 打 [perf] 行，release 烟测必炸。
     PERF.store(
@@ -213,6 +227,7 @@ fn main() {
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
+            perf_mark("Application::run start");
             // JetBrains Mono 随二进制打包：全应用唯一内置 mono（会话区 mono
             // + 终端网格；三档字重 + Italic 覆盖 400/600/700 与斜体）。
             // 注册失败仅回退系统字体，不致命。
@@ -234,6 +249,7 @@ fn main() {
                     ),
                 ])
                 .expect("embedded mono fonts are valid TTF");
+            perf_mark("embedded fonts parsed");
             // 系统字体目录（设置页字体下拉数据源，字母序；一次性枚举）
             crate::appearance::init_font_catalog(cx);
             // 面板字号 → 全局 UI 缩放（ui_size 基准）
@@ -313,6 +329,7 @@ fn main() {
                 KeyBinding::new("alt-1", MaximizeSessionList, None),
                 KeyBinding::new("alt-2", MaximizeFileTree, None),
             ]);
+            perf_mark("font catalog + component init + keymap");
             appearance::sync_gpui_tokens(cx);
             // startup restore (§4)：每次启动默认最大化（位置不持久化——
             // gpui Windows 的外框/客户区坐标在存取间不对称，每个周期漂移
@@ -344,6 +361,7 @@ fn main() {
                         ..Default::default()
                     },
                     |window, cx| {
+                        perf_mark("win32 window + swapchain up");
                         // gpui-component widgets require their Root as the window
                         // root view (renders their context-menu/popover layers)
                         let chat = cx.new(Chat::new);
@@ -369,6 +387,7 @@ fn main() {
                     },
                 )
                 .unwrap();
+            perf_mark("open_window returned (incl. Chat::new)");
             // 登记主窗口句柄（pi-flash-weia）：启动恢复的终端 tab 重开要
             // window，异步恢复任务经它进 window 上下文（automation 同款）
             startup::note_main_window(window_handle.into());
