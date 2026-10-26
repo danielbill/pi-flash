@@ -559,14 +559,17 @@ pub fn sweep_orphans() {
         if enabled.contains(&pkg) {
             continue; // 台账里还有它：正常安装目录，不动
         }
-        // 无台账归属 + 底下没有任何清单 = 残留
-        let has_manifest = std::fs::read_dir(&pkg_dir)
-            .map(|rd| {
-                rd.flatten().any(|v| {
-                    v.path().is_dir() && v.path().join("pf-plugin.toml").is_file()
+        // 无台账归属 + 没有任何清单 = 残留。清单两档布局都要认（02 §6）：
+        // market 版本层 = 清单在版本子目录；**平铺 dev = 清单在包目录顶层**
+        //（漏认顶层曾把 link:dev 部署、尚未登记台账的 dev 插件当残留删掉）
+        let has_manifest = pkg_dir.join("pf-plugin.toml").is_file()
+            || std::fs::read_dir(&pkg_dir)
+                .map(|rd| {
+                    rd.flatten().any(|v| {
+                        v.path().is_dir() && v.path().join("pf-plugin.toml").is_file()
+                    })
                 })
-            })
-            .unwrap_or(false);
+                .unwrap_or(false);
         if !has_manifest {
             let _ = std::fs::remove_dir_all(&pkg_dir);
         }
