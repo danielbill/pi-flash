@@ -53,6 +53,9 @@ pub(crate) struct PluginManifest {
     pub title_en: Option<String>,
     pub version: String,
     pub status_bar: Option<StatusBarContrib>,
+    /// topbar「菜单」三横浮层条目申请（契约 v2.5；props 同 status_bar）。
+    /// 点击语义与 status_bar tab 同构（按 panels[].dock 解释形态）。
+    pub topbar_menu: Option<TopbarMenuContrib>,
     pub file_menu: Vec<FileMenuContrib>,
     pub panels: Vec<PanelContrib>,
     /// 内层 wasm 插件（契约 inner_package）：`wasm = "plugin.wasm"` 声明即启用；
@@ -70,6 +73,13 @@ pub(crate) struct PluginManifest {
 #[derive(Debug, Clone)]
 pub(crate) struct StatusBarContrib {
     /// 三来源之一：宿主内置名 / `assets:<名>` / `assets/` 相对路径
+    pub icon: String,
+    pub title_zh: String,
+}
+
+/// topbar「菜单」三横浮层条目（契约 v2.5；一个插件至多一条）。
+#[derive(Debug, Clone)]
+pub(crate) struct TopbarMenuContrib {
     pub icon: String,
     pub title_zh: String,
 }
@@ -278,6 +288,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         title_en: None,
         version: String::new(),
         status_bar: None,
+        topbar_menu: None,
         file_menu: Vec::new(),
         panels: Vec::new(),
         pi_extensions: Vec::new(),
@@ -315,6 +326,18 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                         icon: "puzzle".into(),
                     });
                     "file_menu".to_string()
+                }
+                "contributes.topbar_menu" => {
+                    if m.topbar_menu
+                        .replace(TopbarMenuContrib {
+                            icon: String::new(),
+                            title_zh: String::new(),
+                        })
+                        .is_some()
+                    {
+                        return Err("pf-plugin.toml：topbar_menu 只能声明一个".into());
+                    }
+                    "topbar_menu".to_string()
                 }
                 "contributes.panels" => {
                     m.panels.push(PanelContrib {
@@ -372,6 +395,12 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             }
             ("status_bar", "title") => {
                 m.status_bar.as_mut().unwrap().title_zh = val.as_i18n("title", n)?.0
+            }
+            ("topbar_menu", "icon") => {
+                m.topbar_menu.as_mut().unwrap().icon = val.as_str("icon", n)?
+            }
+            ("topbar_menu", "title") => {
+                m.topbar_menu.as_mut().unwrap().title_zh = val.as_i18n("title", n)?.0
             }
             ("file_menu", "id") => m.file_menu.last_mut().unwrap().id = val.as_str("id", n)?,
             ("file_menu", "title") => {
@@ -1669,21 +1698,25 @@ pub(crate) fn plugin_icon_asset(plugin_id: &str, icon: &str) -> Option<String> {
 /// 状态栏 tab 图标的共享串（`plugins/<slug>/<assets 相对路径>` 或宿主内置名）。
 pub(crate) fn status_bar_icon_path(entry: &PluginEntry) -> Option<SharedString> {
     let sb = entry.manifest.status_bar.as_ref()?;
-    let icon = sb.icon.as_str();
+    Some(contrib_icon_path(&entry.manifest.id, &sb.icon))
+}
+
+/// topbar「菜单」条目图标路径（契约 v2.5，eb6）：与 status_bar 同一映射。
+pub(crate) fn topbar_menu_icon_path(entry: &PluginEntry) -> Option<SharedString> {
+    let tb = entry.manifest.topbar_menu.as_ref()?;
+    Some(contrib_icon_path(&entry.manifest.id, &tb.icon))
+}
+
+/// 贡献项图标三来源映射：宿主内置名 / `assets:<名>` / `assets/` 相对路径。
+fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
     // `assets/` 是目录结构的一段，**不能剥**——曾剥掉导致
     // plugins/<slug>/bolt.svg NotFound（图标空白，还进负缓存）
     if icon.starts_with("assets/") {
-        Some(SharedString::from(format!(
-            "plugins/{}/{}",
-            entry.manifest.id, icon
-        )))
+        SharedString::from(format!("plugins/{id}/{icon}"))
     } else if let Some(name) = icon.strip_prefix("assets:") {
-        Some(SharedString::from(format!(
-            "plugins/{}/assets/{}",
-            entry.manifest.id, name
-        )))
+        SharedString::from(format!("plugins/{id}/assets/{name}"))
     } else {
-        Some(SharedString::from(format!("icons/{icon}.svg")))
+        SharedString::from(format!("icons/{icon}.svg"))
     }
 }
 
@@ -1738,6 +1771,39 @@ entry = "main.js"
         assert_eq!(m.file_menu.len(), 1);
         assert_eq!(m.file_menu[0].id, "set-quick");
         assert_eq!(m.panels[0].entry, "main.js");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 契约 v2.5 topbar_menu 解析（eb6）：条目入清单；重复声明拒绝
+    #[test]
+    fn manifest_topbar_menu_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-topbar-test-{}", std::process::id()));
+        let body = format!(
+            "{GOOD}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"微信通话\" }}\nicon = \"assets/wx.svg\"\n"
+        );
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &body);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/wx.svg"), "<svg/>").unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+        let m = parse_manifest(&dir).expect("topbar_menu 清单应通过");
+        let tb = m.topbar_menu.as_ref().expect("条目应入清单");
+        assert_eq!(tb.title_zh, "微信通话");
+        assert_eq!(tb.icon, "assets/wx.svg");
+        // 图标三来源映射（与 status_bar 共用 contrib_icon_path）
+        assert_eq!(
+            topbar_menu_icon_path(&plugin_entries(vec![m]).remove(0)).map(|s| s.to_string()),
+            Some("plugins/quick-panel/assets/wx.svg".to_string())
+        );
+        // 重复段 = 拒绝
+        let dir2 = tmp.join("dup");
+        write_manifest(
+            &dir2,
+            &format!("{body}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"第二条\" }}\nicon = \"bolt\"\n"),
+        );
+        std::fs::write(dir2.join("main.js"), "export function render(){{}}").unwrap();
+        assert!(parse_manifest(&dir2).is_err(), "topbar_menu 只能声明一个");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

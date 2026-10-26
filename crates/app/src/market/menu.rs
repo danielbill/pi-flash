@@ -86,5 +86,45 @@ pub(crate) fn menu_layer(
             let _ = weak_pf.update(cx, |c, cx| c.open_pf_market(cx));
         }),
     );
+    // 插件 topbar_menu 条目（契约 v2.5，eb6）：读各插件清单自动生成，
+    // 零插件名（宿主不认识订阅者，红线）。点击语义与 status_bar tab 同构
+    // （按 panels[].dock 解释形态）；禁用插件不出条目。
+    let items: Vec<(usize, String, gpui::SharedString)> = chat
+        .plugins
+        .plugins
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.disabled && p.manifest.topbar_menu.is_some())
+        .filter_map(|(pix, p)| {
+            let icon = crate::pf_plugin::topbar_menu_icon_path(p)?;
+            let title = p.manifest.topbar_menu.as_ref()?.title_zh.clone();
+            Some((pix, title, icon))
+        })
+        .collect();
+    for (pix, title, icon) in items {
+        let weak_item = weak.clone();
+        card = card.child(
+            crate::function_panel::psp_overlays::menu_item_asset(
+                format!("plugin-topbar-{}", pix),
+                Some(icon.to_string()),
+                14.,
+                &title,
+                false,
+                false,
+            )
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+                let _ = weak_item.update(cx, |c, cx| {
+                    // 清单 dock 归宿主解释（契约 v2.4）：tab 形态开预览页签，
+                    // 否则开左列 dock 面板（插件不感知形态）
+                    if c.plugin_dock_is_tab(pix) {
+                        c.open_plugin_tab(pix, cx);
+                    } else {
+                        c.open_plugin_dock(pix, cx);
+                    }
+                });
+            }),
+        );
+    }
     layer.child(card).into_any_element()
 }
