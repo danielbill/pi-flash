@@ -29,5 +29,7 @@ UI复用当前settings-模型页的Provider详情面板
 - 用户点击测速，能通则：1、自动保存自定义Provider 2、自动从base url拉取模型列表 
 - 自动拉取如果失败，提示用户：“无法自动获取该Provider模型列表，请点击[+模型]手动添加模型”
 - base 带 /anthropic 段（Anthropic 兼容端点，如 DeepSeek /anthropic）：目录优先 GET /v1/models（Anthropic 官方列模型端点，网关多有实现）；拉不到再回退 POST /v1/messages 判连通（通 = 空目录 → 手动 +模型兜底）
+- 测速/刷新拉到的目录**自动合并进账本 models[]**（按 id 去重，手调过的条目原样保留）——展示缓存（provider-catalog.json）不进账本的话，pi 注册的 provider 零模型，会话无模型可选（「测速有模型但聊天没反应」根因）
+- 模型条目必带 pi 运行时形状 input/reasoning/cost：pi 对扩展注册模型不做 models.dev 缺省合并，缺字段聊天即崩（实测 reading 'includes' / reading 'tiers'）。`models_json::ensure_model_defaults` 统一补齐（缺省 input=["text"]、reasoning=false、cost 全 0）；boot 迁移 `migrate_model_defaults` 兑存量
 
 

@@ -169,6 +169,56 @@ pub fn migrate_infer_api() -> usize {
     }
 }
 
+/// 存量模型条目补 pi 运行时必需形状（[`crate::models_json::ensure_model_defaults`]：
+/// 缺 input/reasoning/cost 的自定义模型聊天即崩，表现「会话无反应」）。
+/// 幂等，返回补写模型数。
+pub fn migrate_model_defaults_at(path: &Path) -> usize {
+    let Ok(doc) = read_at(path) else {
+        return 0;
+    };
+    let mut doc = doc;
+    let mut fixed = 0;
+    let providers: Vec<(String, serde_json::Value)> = crate::models_json::providers(&doc)
+        .into_iter()
+        .map(|(n, e)| (n, e.clone()))
+        .collect();
+    for (name, entry) in providers {
+        let models = entry.get("models").and_then(|m| m.as_array()).cloned();
+        let Some(models) = models else { continue };
+        let mut entry = entry;
+        let mut changed = 0;
+        let shaped: Vec<serde_json::Value> = models
+            .into_iter()
+            .map(|mut m| {
+                let before = m.clone();
+                crate::models_json::ensure_model_defaults(&mut m);
+                if m != before {
+                    changed += 1;
+                }
+                m
+            })
+            .collect();
+        if changed == 0 {
+            continue;
+        }
+        entry["models"] = serde_json::Value::Array(shaped);
+        crate::models_json::upsert_provider(&mut doc, &name, entry);
+        fixed += changed;
+    }
+    if fixed > 0 && write_at(path, &doc).is_err() {
+        return 0;
+    }
+    fixed
+}
+
+/// 默认路径版 [`migrate_model_defaults_at`]。
+pub fn migrate_model_defaults() -> usize {
+    match path() {
+        Some(p) => migrate_model_defaults_at(&p),
+        None => 0,
+    }
+}
+
 /// 自定义 provider 的 apiKey 写入分流（编辑器/添加面板共用）：明文 → 凭据
 /// 库 + `$PF_KEY_*` 引用；`$`/`!` 高级引用原样；凭据库失败 → 降级明文
 /// （账本 0600，PF 私有，可降级）。空串清除字段 → Ok(None)。
@@ -396,6 +446,28 @@ mod tests {
         assert_eq!(get("legacy")["api"], "openai-responses", "显式 api 尊重保留");
         assert!(get("wip").get("api").is_none(), "无 baseUrl 半建条目跳过");
         assert_eq!(migrate_infer_api_at(&p), 0, "幂等");
+        clean(&p);
+    }
+
+    #[test]
+    fn migrate_model_defaults_fills_bare_models() {
+        let p = tmp("mig-model");
+        write_at(
+            &p,
+            &json!({"providers": {"my-ds": {"name": "my-ds",
+                "baseUrl": "https://api.deepseek.com", "api": "openai-completions",
+                "models": [{"id": "deepseek-flash", "name": "F"}]}}}),
+        )
+        .unwrap();
+        assert_eq!(migrate_model_defaults_at(&p), 1);
+        let doc = read_at(&p).unwrap();
+        let m = &crate::models_json::provider_entry(&doc, "my-ds")
+            .unwrap()["models"][0];
+        assert_eq!(m["input"], json!(["text"]));
+        assert_eq!(m["reasoning"], json!(false));
+        assert_eq!(m["cost"]["output"], json!(0));
+        assert_eq!(m["name"], "F", "原有字段保留");
+        assert_eq!(migrate_model_defaults_at(&p), 0, "幂等");
         clean(&p);
     }
 

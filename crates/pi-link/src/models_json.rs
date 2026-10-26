@@ -50,6 +50,22 @@ pub fn provider_models<'a>(entry: &'a Value) -> Vec<&'a Value> {
         .unwrap_or_default()
 }
 
+/// 自定义模型条目补 pi 运行时必需的缺省形状。实测 042-1（扩展注册模型不
+/// 走 models.dev 缺省合并）：缺 input → 聊天报 `reading 'includes'`、
+/// 缺 reasoning → `reading 'tiers'`、缺 cost 同崩——表现即「会话无反应」。
+/// 幂等：已有值（手调过的 input/reasoning/cost）一律保留。
+pub fn ensure_model_defaults(model: &mut Value) {
+    let Some(map) = model.as_object_mut() else {
+        return;
+    };
+    map.entry("input")
+        .or_insert_with(|| serde_json::json!(["text"]));
+    map.entry("reasoning").or_insert(serde_json::json!(false));
+    map.entry("cost").or_insert_with(|| {
+        serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0})
+    });
+}
+
 /// Ensure `providers` exists and return the provider object for `name`,
 /// creating an empty entry when missing.
 fn provider_entry_mut<'a>(value: &'a mut Value, name: &str) -> &'a mut Value {
@@ -161,6 +177,26 @@ pub fn parse(text: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn ensure_model_defaults_fills_missing_keeps_existing() {
+        let mut m = json!({"id": "x"});
+        ensure_model_defaults(&mut m);
+        assert_eq!(m["input"], json!(["text"]));
+        assert_eq!(m["reasoning"], json!(false));
+        assert_eq!(m["cost"]["input"], json!(0));
+        // 已有值保留
+        let mut m = json!({"id": "x", "input": ["text", "image"], "reasoning": true,
+            "cost": {"input": 1.5, "output": 6.0, "cacheRead": 0.1, "cacheWrite": 0.2}});
+        ensure_model_defaults(&mut m);
+        assert_eq!(m["input"], json!(["text", "image"]));
+        assert_eq!(m["reasoning"], json!(true));
+        assert_eq!(m["cost"]["input"], json!(1.5));
+        // 非对象条目无害
+        let mut junk = json!("str");
+        ensure_model_defaults(&mut junk);
+        assert_eq!(junk, json!("str"));
+    }
 
     #[test]
     fn upsert_add_and_update_models() {
