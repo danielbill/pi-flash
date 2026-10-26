@@ -275,7 +275,7 @@ impl Chat {
             // 窗口管，绝不能成为桌面「最后会话」——否则启动恢复把它当桌面
             // 会话打开，渲染出没有归属（无 tab 无操作栏）的孤儿页面
             if let Some(cwd) = &self.ws.cwd {
-                if !is_wx_line {
+                if !is_wx_line && !self.plugin_claimed(&f.to_string_lossy()) {
                     set_last_open(&cwd.to_string_lossy(), &f.to_string_lossy());
                 }
             }
@@ -573,11 +573,36 @@ impl Chat {
                 }
             }
         }
+        // 插件认领线跟随迁移（同语义，泛化形态）：草稿键 → 会话文件键，
+        // 过滤清单按真身补一条（path 精确，重启后仍藏得住）
+        if let Some(c) = self
+            .plugins
+            .claims
+            .iter_mut()
+            .find(|c| c.key == old_key)
+            .map(|c| (c.key.clone(), c.prefix.clone(), c.plugin_id.clone()))
+        {
+            let (_old, prefix, plugin_id) = c;
+            self.plugins.claims
+                .iter_mut()
+                .find(|c| c.plugin_id == plugin_id)
+                .map(|c| c.key = path_key.clone());
+            let name = std::path::Path::new(&path_key)
+                .file_stem()
+                .map(|n| n.to_string_lossy().into_owned());
+            pi_link::hidden_sessions::set_owned(
+                &plugin_id,
+                name.as_deref(),
+                Some(&path),
+                Some(&prefix),
+            );
+        }
         self.psp.active_file = Some(path.clone());
         // recents (003-session管理): a fresh session file just landed
         pi_link::recents::touch_recent(&path);
-        // 微信线不记 last_open（同 switch_to：影子会话不进桌面恢复线）
-        if !self.aux.remote.on_wx_line(&path_key) {
+        // 微信线不记 last_open（同 switch_to：影子会话不进桌面恢复线）；
+        // 插件认领线同口径（002：影子会话永不进桌面恢复线）
+        if !self.aux.remote.on_wx_line(&path_key) && !self.plugin_claimed(&path_key) {
             set_last_open(&rt.read(cx).cwd.to_string_lossy(), &path_key);
         }
         // 新会话落地的项目组若处于折叠态则自动展开：伪标签（draft）在折叠
@@ -730,7 +755,10 @@ impl Chat {
             self.remount_workspace(cx);
         }
         if let Some(cur) = &self.ws.cwd {
-            set_last_open(&cur.to_string_lossy(), &path.to_string_lossy());
+            // 插件认领线不进桌面恢复线（与微信线同口径）
+            if !self.plugin_claimed(&path.to_string_lossy()) {
+                set_last_open(&cur.to_string_lossy(), &path.to_string_lossy());
+            }
         }
         self.dlg.renaming = None;
         self.dlg.rename_input = None;
