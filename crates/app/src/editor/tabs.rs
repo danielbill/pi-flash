@@ -198,8 +198,10 @@ impl Chat {
                 ContentView::Changelog
                     | ContentView::PiExtMarket
                     | ContentView::PiNativeMarket
+                    | ContentView::PfMarket
                     | ContentView::Search
                     | ContentView::SessionSearch
+                    | ContentView::Plugin
             ) {
                 match self.ws.active_panel_tab {
                     Some(nix) => {
@@ -630,6 +632,8 @@ impl Chat {
             Some(PanelTab::Search) => ContentView::Search,
             Some(PanelTab::SessionSearch) => ContentView::SessionSearch,
             Some(PanelTab::File(_)) => ContentView::File,
+            // 插件预览页签（契约 v2.4）：内容渲染按活跃标签 pkg 现查（content.rs）
+            Some(PanelTab::Plugin { .. }) => ContentView::Plugin,
             Some(PanelTab::Wx) | None => return,
         };
         let changed = self.layout.content_view != view || self.ws.active_panel_tab != Some(ix);

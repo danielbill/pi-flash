@@ -468,6 +468,29 @@ fn section_count(tree: &ResolvedNode) -> usize {
 // gpui 渲染层
 // ---------------------------------------------------------------------------
 
+/// 插件预览页签内容（契约 v2.4 dock="tab"，`ContentView::Plugin` 分支）：
+/// 归属 = 活跃标签携带的 pkg（重装/重载后 ix 漂移安全，经 by_pkg 现查），
+/// 主体复用 dock 的 `plugin_panel_view`（同一解释器，同一渲染契约）。
+pub(crate) fn plugin_tab_page(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+) -> gpui::AnyElement {
+    let t = T();
+    let active = chat
+        .ws
+        .active_panel_tab
+        .and_then(|ix| chat.ws.panel_tabs.get(ix));
+    let Some(crate::PanelTab::Plugin { pkg, .. }) = active else {
+        // 归属失配（幻影页防护，002 硬规则同源）：无主不渲染
+        return placeholder_center("plugin", t);
+    };
+    let Some(ix) = chat.plugin_ix_by_pkg(pkg) else {
+        // 插件已被卸载/停用：占位而非崩溃（页签残留由卸载链清理）
+        return placeholder_center("plugin", t);
+    };
+    plugin_panel_view(chat, ix, weak)
+}
+
 /// 插件面板主体（dock 的 `DockPanel::Plugin` 分支）。
 pub(crate) fn plugin_panel_view(
     chat: &Chat,

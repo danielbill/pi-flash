@@ -395,6 +395,18 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 Some("smartphone"),
                 ContentView::Wx,
             ),
+            // 090 插件预览页签（契约 v2.4 dock="tab"）：标题 = 清单 title
+            //（随语言，宿主解释清单；零插件名硬编码），图标通用 puzzle
+            crate::PanelTab::Plugin { pkg, .. } => {
+                let label = chat
+                    .plugins
+                    .plugins
+                    .iter()
+                    .find(|e| e.manifest.pkg == *pkg)
+                    .map(|e| e.manifest.title_zh.clone())
+                    .unwrap_or_else(|| pkg.clone());
+                (label.into(), None, false, Some("puzzle"), ContentView::Plugin)
+            }
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点。zed parity（DiskState::
         // Deleted）：文件已从磁盘消失不标 !——删除线是唯一标记，脏点照常
