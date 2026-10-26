@@ -131,6 +131,10 @@ pub(crate) enum ContentView {
     /// 的完整页（remote_control::panel::page）。就绪后由 open_wx/泵切回
     /// Chat 视图的微信线会话（wx_tab 依旧高亮）。
     Wx,
+    /// 090 插件预览页签（契约 v2.4 `panels[].dock = "tab"`）：单例、
+    /// 整页声明式树，与 Changelog/Market 同位同姿态。归属 = 标签携带的
+    /// pkg+page（`PanelTab::Plugin`），内容渲染统一走插件树解释器。
+    Plugin,
 }
 
 /// psp 列表方式（⋯ 菜单）。
@@ -299,6 +303,11 @@ pub(crate) enum PanelTab {
     /// 归属判据（真身在 `Chat::wx_front_active`）：
     /// `content_view == Wx || wx_line_active()`。
     Wx,
+    /// 090 插件预览页签（契约 v2.4 dock="tab"）：pkg = 顶层包目录名
+    /// （重装/重载后 ix 漂移安全的稳定身份，渲染时经 `plugin_ix_by_pkg`
+    /// 现查），page = `panels[].id`。瞬态页不进存档；声明式树模式
+    /// （认领会话线模式随 W5 会话槽交付）。
+    Plugin { pkg: String, page: String },
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -315,6 +324,7 @@ pub(crate) enum TabKey {
     Search,
     SessionSearch,
     Wx,
+    Plugin { pkg: String, page: String },
 }
 
 impl PanelTab {
@@ -329,6 +339,10 @@ impl PanelTab {
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
             PanelTab::Wx => TabKey::Wx,
+            PanelTab::Plugin { pkg, page } => TabKey::Plugin {
+                pkg: pkg.clone(),
+                page: page.clone(),
+            },
         }
     }
 }
@@ -358,6 +372,7 @@ impl PanelTab {
             //（管理页）。真归属判据见 `PanelTab::owns_view`——微信线会话在
             // 类型上是 `ContentView::Chat`，单靠枚举相等认不出来。
             PanelTab::Wx => ContentView::Wx,
+            PanelTab::Plugin { .. } => ContentView::Plugin,
         }
     }
 
@@ -379,6 +394,7 @@ impl PanelTab {
             PanelTab::PfMarket => to == ContentView::PfMarket,
             PanelTab::Search => to == ContentView::Search,
             PanelTab::SessionSearch => to == ContentView::SessionSearch,
+            PanelTab::Plugin { .. } => to == ContentView::Plugin,
         }
     }
 }

@@ -326,6 +326,7 @@ pub(super) fn dispatch(
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
                     ContentView::Wx => "wx",
+                    ContentView::Plugin => "plugin",
                 },
             }))
         }
@@ -431,10 +432,15 @@ pub(super) fn dispatch(
                 // 走 open_plugin_dock（与点状态栏 tab 同语义）：触发插件懒加载链
                 // （建 ctx/装 wasm → onPanelOpen → render 缓存）；直接赋值
                 // dock_panel 会绕过它，插件面板永远停在「…」占位。
+                // dock="tab" 形态同步路由到预览页签（与状态栏点击同口径）
                 if chat.plugins.plugins.get(plugin_ix).is_none_or(|e| e.disabled) {
                     return Err(bad(format!("插件 ix={plugin_ix} 不存在或已停用")));
                 }
-                chat.open_plugin_dock(plugin_ix, cx);
+                if chat.plugin_dock_is_tab(plugin_ix) {
+                    chat.open_plugin_tab(plugin_ix, cx);
+                } else {
+                    chat.open_plugin_dock(plugin_ix, cx);
+                }
                 return ok();
             }
             chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
@@ -458,7 +464,12 @@ pub(super) fn dispatch(
             if chat.plugins.plugins.get(ix).is_none_or(|e| e.disabled) {
                 return Err(bad(format!("插件 ix={ix} 不存在或已停用")));
             }
-            chat.open_plugin_dock(ix, cx);
+            // dock="tab" 形态路由到预览页签（与状态栏点击同口径）
+            if chat.plugin_dock_is_tab(ix) {
+                chat.open_plugin_tab(ix, cx);
+            } else {
+                chat.open_plugin_dock(ix, cx);
+            }
             ok()
         }
         method::CONTENT_VIEW => {

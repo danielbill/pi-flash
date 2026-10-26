@@ -81,7 +81,13 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                        this.open_plugin_dock(pix, cx);
+                        // 清单 dock 归宿主解释（契约 v2.4）：tab 形态开预览页签，
+                        // 否则开左列 dock 面板（插件不感知形态）
+                        if this.plugin_dock_is_tab(pix) {
+                            this.open_plugin_tab(pix, cx);
+                        } else {
+                            this.open_plugin_dock(pix, cx);
+                        }
                     }),
                 )
                 .child(
