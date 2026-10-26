@@ -250,6 +250,53 @@ impl Chat {
         }
     }
 
+    /// 测速/刷新落目录后，把目录模型合并进账本 provider.models[]（042-1
+    /// 改版：Provider = baseUrl + apiKey 即含模型）。pi 注册的 provider
+    /// 若零模型，会话无模型可选——展示缓存（provider-catalog）不进账本
+    /// 正是「测速拿到模型但聊天没反应」的根因。按 id 去重：已有条目
+    /// （手调过参数的）原样保留，缺的目录 id 追加 {id, name?, contextWindow?}。
+    fn mj_merge_catalog_into_ledger(
+        doc: &mut serde_json::Value,
+        provider: &str,
+        catalog: &[pi_link::protocol::ModelInfo],
+    ) {
+        let Some(mut entry) = pi_link::models_json::provider_entry(doc, provider).cloned() else {
+            return;
+        };
+        let existing: Vec<String> = pi_link::models_json::provider_models(&entry)
+            .into_iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        let mut fresh: Vec<serde_json::Value> = Vec::new();
+        for m in catalog {
+            if existing.contains(&m.id) || fresh.iter().any(|e| e["id"] == m.id) {
+                continue;
+            }
+            let mut obj = serde_json::Map::new();
+            obj.insert("id".into(), serde_json::Value::String(m.id.clone()));
+            if !m.name.is_empty() {
+                obj.insert("name".into(), serde_json::Value::String(m.name.clone()));
+            }
+            if let Some(cw) = m.context_window {
+                obj.insert("contextWindow".into(), serde_json::json!(cw));
+            }
+            // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）
+            let mut model = serde_json::Value::Object(obj);
+            pi_link::models_json::ensure_model_defaults(&mut model);
+            fresh.push(model);
+        }
+        if fresh.is_empty() {
+            return;
+        }
+        if !entry.get("models").is_some_and(|m| m.is_array()) {
+            entry["models"] = serde_json::json!([]);
+        }
+        if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
+            arr.extend(fresh);
+        }
+        pi_link::models_json::upsert_provider(doc, provider, entry);
+    }
+
     /// 把编辑器字段应用进缓冲并落盘（provider 名称改动走重命名）。
     pub(crate) fn mj_apply_provider(&mut self, old_name: String, cx: &mut Context<Self>) {
         let Some(st) = self.dlg.settings.clone() else {
@@ -277,7 +324,9 @@ impl Chat {
             serde_json::Value::String(pi_link::probe::infer_api(&base).to_string());
         // name 字段随输入同步（顺带保证新建条目 sanitize 不丢）
         set_opt_str(&mut entry, "name", &name);
-        set_opt_str(&mut entry, "baseUrl", &base);
+        // 尾斜杠规范化（pi 运行时直接拼 base+path，避免 /key//path）；
+        // 探测端本就 trim，这里统一落盘形状
+        set_opt_str(&mut entry, "baseUrl", base.trim_end_matches('/'));
         set_opt_obj(
             &mut entry,
             "headers",
@@ -472,7 +521,10 @@ impl Chat {
             Some(c) => obj.insert("cost".into(), c),
             None => obj.remove("cost"),
         };
-        let model = serde_json::Value::Object(obj);
+        let mut model = serde_json::Value::Object(obj);
+        // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
+        // 编辑器删键后的缺省在此统一补齐
+        pi_link::models_json::ensure_model_defaults(&mut model);
         pi_link::models_json::update_model(&mut self.cfg.mc_models_json, &provider, ix, model);
         self.mj_flush(cx);
         cx.notify();
@@ -645,12 +697,19 @@ impl Chat {
                             let old = st.read(cx).mj_name.read(cx).value().trim().to_string();
                             c.mj_apply_provider(old, cx);
                         }
-                        // 2、自动拉取：目录落盘 + 刷新内存（可用模型区即满）
+                        // 2、自动拉取：目录落盘 + 刷新内存（可用模型区即满）；
+                        // 并同步进账本 models[]（pi 注册需含模型，否则会话零模型）
                         if catalog.is_empty() {
                             c.cfg.mj_speed = Some(MjSpeedState::PassedEmpty);
                         } else {
                             match pi_link::catalog::save_catalog(&provider_bg, &catalog) {
                                 Ok(()) => {
+                                    Self::mj_merge_catalog_into_ledger(
+                                        &mut c.cfg.mc_models_json,
+                                        &provider_bg,
+                                        &catalog,
+                                    );
+                                    c.mj_flush(cx);
                                     c.refresh_provider_catalog(&provider_bg);
                                     c.cfg.mj_speed = Some(MjSpeedState::Passed {
                                         latency_ms,
@@ -741,6 +800,13 @@ impl Chat {
                         c.mc_set_error(&e, cx);
                         return;
                     }
+                    // 同测速：目录同步进账本 models[]
+                    Self::mj_merge_catalog_into_ledger(
+                        &mut c.cfg.mc_models_json,
+                        &provider,
+                        &catalog,
+                    );
+                    c.mj_flush(cx);
                     c.refresh_provider_catalog(&provider);
                     cx.notify();
                 }

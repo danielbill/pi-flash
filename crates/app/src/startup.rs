@@ -121,6 +121,10 @@ pub(crate) fn boot() {
     if filled > 0 {
         eprintln!("[startup] inferred api for {filled} provider(s) in providers.json");
     }
+    let shaped = pi_link::pf_providers::migrate_model_defaults();
+    if shaped > 0 {
+        eprintln!("[startup] applied runtime defaults to {shaped} custom model(s)");
+    }
     adopt_legacy_credentials();
 }
 
