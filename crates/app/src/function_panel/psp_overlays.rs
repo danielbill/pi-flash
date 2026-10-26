@@ -301,7 +301,8 @@ fn hover_card(
                 .child(card_icon_btn(
                     &weak_hc_pin,
                     "hc-pin",
-                    "pin",
+                    // 已置顶 → pin-off（与 tooltip「取消置顶」同频翻转）
+                    if pinned { "pin-off" } else { "pin" },
                     if pinned {
                         tr("psp.unpin")
                     } else {
