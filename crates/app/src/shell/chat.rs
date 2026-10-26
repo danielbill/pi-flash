@@ -511,6 +511,7 @@ impl Chat {
         //   ② 显式意图：切项目/打开项目、PI_FLASH_CWD（开发覆盖，同走 ① 通道）。
         // 无项目态下 composer 发送会弹「打开项目」先要一个目录（send 门）。
         let ui = ui_state();
+        crate::perf_mark("Chat::new: ui_state (workspace prefs)");
         // fs watch 通道：tx 永驻 Chat，rx 交给 startup 的泵任务
         let (fs_watch_tx, fs_watch_rx_ch) = std::sync::mpsc::channel::<()>();
 
@@ -758,9 +759,11 @@ impl Chat {
                 ext_input: cx.new(|cx| TextInput::new(cx)),
             },
         };
+        crate::perf_mark("Chat::new: struct init");
         // 启动阶段：全局态一次性装载（010-启动.md §1/§6）——模型清单（磁盘 ∪ 自有
         // 缓存）、命令、默认项、插件、全局 mcp，全部先于第一帧进内存，**不 spawn 进程**。
         chat.pool.globals = startup::load_globals();
+        crate::perf_mark("Chat::new: load_globals");
         // new-session defaults (default model / thinking / enabledModels
         // scope) before the first frame — the draft pills render from them
         //（无项目态：project scope 恒 false；恢复挂载后 spawn_boot_restore 重算）
@@ -855,6 +858,7 @@ impl Chat {
         // models panel state (enabledModels whitelist + credentials) for the
         // picker filter — loaded once at startup, refreshed when opened
         chat.reload_settings_panel();
+        crate::perf_mark("Chat::new: reload_settings_panel");
         // 初始 runtime = 无项目态占位（draft-0）：cwd 为空、永不 spawn——
         // 需要项目的动作全部在入口被门拦下（composer 发送 → 打开项目；
         // 文件树/git/终端空态）。占位只为让 rt() 全路径安全（rpc 对未附着
