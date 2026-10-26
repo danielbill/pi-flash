@@ -211,6 +211,14 @@ pub(super) fn dispatch(
                 _ => MouseButton::Left,
             };
             let count = params.get("count").and_then(Value::as_u64).unwrap_or(1) as usize;
+            // pressed=true 的 move 事件带 pressed_button（真实拖拽语义）——
+            // 编辑器拖拽划选等按住拖动的手势只有它触发（component 端
+            // on_drag_move 门 pressed_button==Some(Left)，裸 move 注入划
+            // 不出选区，划选类 bug 因此无法自动化复现）
+            let pressed = params
+                .get("pressed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             window.defer(cx, move |window, cx| {
                 let send = |window: &mut Window, cx: &mut gpui::App, down: bool| {
                     let ev = if down {
@@ -236,6 +244,7 @@ pub(super) fn dispatch(
                         window.dispatch_mouse_input(
                             PlatformInput::MouseMove(MouseMoveEvent {
                                 position,
+                                pressed_button: pressed.then_some(button),
                                 ..Default::default()
                             }),
                             cx,
