@@ -1514,6 +1514,14 @@ fn mj_enabled_section(
         * 1.25
         + 12.;
     let all_enabled = chat.cfg.mc_state.all_enabled;
+    // 账本内已有的模型 id（名字可点进编辑器；不在账本的纯展示行不可点）
+    let ledger_ids: std::collections::HashSet<String> =
+        pi_link::models_json::provider_entry(&chat.cfg.mc_models_json, provider)
+            .map(pi_link::models_json::provider_models)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|mm| mm.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
     let project_scope = chat.cfg.mc_project_scope;
     let last_guard = enabled_count == 1;
     let enabled_rows = enabled_set.clone();
@@ -1536,9 +1544,10 @@ fn mj_enabled_section(
             let is_enabled = all_enabled || enabled_rows.contains(&r);
             let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
             let last_one = last_guard && is_enabled;
-            // 行点击 → 模型编辑器（在账本 models 数组里按 id 定位下标）
+            // 点击名字 → 模型编辑器（仅账本内条目可点；开关区不误触详情页）
             let open_ref = (prov.clone(), m.id.clone());
             let weak_row = weak_rows_v.clone();
+            let editable = ledger_ids.contains(&m.id);
             div()
                 .id(SharedString::from(format!("mj-row-{ix}")))
                 .w_full()
@@ -1548,29 +1557,37 @@ fn mj_enabled_section(
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .cursor_pointer()
                 .when(ix > 0, |dd| dd.border_t_1().border_color(rgb(t.border)))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_row.update(cx, |c, cx| {
-                        let (prov, id) = &open_ref;
-                        let ix = pi_link::models_json::provider_entry(&c.cfg.mc_models_json, prov)
-                            .map(pi_link::models_json::provider_models)
-                            .unwrap_or_default()
-                            .iter()
-                            .position(|mm| {
-                                mm.get("id").and_then(|v| v.as_str()) == Some(id.as_str())
-                            });
-                        if let Some(ix) = ix {
-                            c.mj_select(format!("mj:m:{prov}:{ix}"), cx);
-                        }
-                    });
-                })
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .flex()
                         .flex_col()
+                        .when(editable, |dd| {
+                            dd.cursor_pointer().on_mouse_down(MouseButton::Left, {
+                                let weak_row = weak_row.clone();
+                                move |_, _, cx| {
+                                    let _ = weak_row.update(cx, |c, cx| {
+                                        let (prov, id) = &open_ref;
+                                        let ix = pi_link::models_json::provider_entry(
+                                            &c.cfg.mc_models_json,
+                                            prov,
+                                        )
+                                        .map(pi_link::models_json::provider_models)
+                                        .unwrap_or_default()
+                                        .iter()
+                                        .position(|mm| {
+                                            mm.get("id").and_then(|v| v.as_str())
+                                                == Some(id.as_str())
+                                        });
+                                        if let Some(ix) = ix {
+                                            c.mj_select(format!("mj:m:{prov}:{ix}"), cx);
+                                        }
+                                    });
+                                }
+                            })
+                        })
                         .child(
                             div()
                                 .text_size(crate::appearance::ui_size(11.))
@@ -1620,29 +1637,7 @@ fn mj_enabled_section(
                 .into_any_element()
         },
     );
-    let section = section.child(list).child({
-        // + 模型：手工加一个空白模型条目（导入之外的手工入口）
-        let weak_add = weak.clone();
-        let pname = provider.to_string();
-        div()
-            .id("mj-add-model")
-            .h(px(30.))
-            .px(px(8.))
-            .rounded(px(5.))
-            .flex()
-            .items_center()
-            .text_size(crate::appearance::ui_size(12.))
-            .cursor_pointer()
-            .text_color(rgb(t.text_dim))
-            .hover(|s| {
-                s.bg(rgb(t.bg_hover))
-                    .text_color(rgb(crate::appearance::theme::theme().accent))
-            })
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let _ = weak_add.update(cx, |c, cx| c.mj_add_model(pname.clone(), cx));
-            })
-            .child(format!("+ {}", tr("settings.tab.models")))
-    });
+    let section = section.child(list);
     detail.child(section)
 }
 
