@@ -10,8 +10,15 @@ UI复用当前settings-模型页的Provider详情面板
 在Provider详情面板中增加如下新组件，仅当自定义时展示：
 原只读显示的Provider name改为： name  input
 在API key下方新增 ——
-- Base URL   ： input
-- API ： select  默认值 auto
+- Base URL   ： input（全宽）
+- ~~API ： select~~ **已下线**（2026 改版）：API 形状由 PF 从 baseUrl 推断
+  （`probe::infer_api`）随条目落盘，用户零选择——Provider = baseUrl + apiKey。
+  规则：`*/anthropic` / 含 `/anthropic/` → anthropic-messages；
+  `*/v1beta` → google-generative-ai；其余 → openai-completions。
+  pi 对缺 api 硬 throw（extensionModelFromDefinition），条目必写具体值；
+  openai-responses 与 completions URL 不可区分，一律默认 completions，
+  误判走模型编辑器「API 覆盖」逃生门（高级设置内保留）。存量缺 api
+  条目由 boot 迁移 `pf_providers::migrate_infer_api` 幂等补写。
 - 操作栏：[测速] [保存] [+模型]  （[]代表按钮）
 - 注释行：点击测速，连通后自动保存
 

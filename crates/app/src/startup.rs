@@ -115,6 +115,12 @@ pub(crate) fn boot() {
     }
     pi_link::recents::ensure_seeded();
     pi_link::pf_providers::ensure_extension_template_or_warn();
+    // 042-1 改版迁移：旧 auto 档条目缺 api（pi 注册硬 throw → provider
+    // 静默不可用），按 baseUrl 推断补写（幂等，显式 api 尊重保留）
+    let filled = pi_link::pf_providers::migrate_infer_api();
+    if filled > 0 {
+        eprintln!("[startup] inferred api for {filled} provider(s) in providers.json");
+    }
     adopt_legacy_credentials();
 }
 
