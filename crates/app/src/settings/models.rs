@@ -860,10 +860,11 @@ fn mc_models_detail(
         return super::custom_models::mj_provider_editor(chat, weak, name, d, error, t);
     }
     if let Some(rest) = selected.strip_prefix("mj:m:") {
-        if let Some((name, ix)) = rest.rsplit_once(':') {
-            if let Ok(ix) = ix.parse::<usize>() {
-                return super::custom_models::mj_model_editor(chat, weak, name, ix, d, error, t);
-            }
+        // 模型编辑器已改居中 500×500 小弹窗（render.rs 顶层挂
+        // mj_model_modal_overlay，section = mj:m:{prov}:{ix} 即打开态）；
+        // 右栏底图保持 Provider 详情，错误归弹窗显示
+        if let Some((name, _)) = rest.rsplit_once(':') {
+            return super::custom_models::mj_provider_editor(chat, weak, name, d, &None, t);
         }
     }
     // catalog provider detail（API Key；OAuth 归 pi，PF 只管自有账本）

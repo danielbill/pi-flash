@@ -1702,18 +1702,33 @@ fn tlm_level_color(level: &str) -> u32 {
 }
 
 /// 自定义模型编辑器（pi-web ModelDetail 对齐：能力/规格/价格/高级设置/
-/// 测试/填入模型信息）。
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn mj_model_editor(
+/// 测试/填入模型信息）——**居中 500×500 小弹窗**（不再整页替换右栏详情）。
+/// `section = mj:m:{prov}:{ix}` 即打开态：本函数由 render.rs 顶层挂载，叠在
+/// 设置弹窗之上，右栏底图保持 Provider 详情；关闭（✕/点外/ESC）= 退回
+/// `mj:p:{prov}`（重播 provider 回填，模态随 section 撤下）。
+pub(crate) fn mj_model_modal_overlay(
     chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    name: &str,
-    ix: usize,
-    d: &super::SettingsFormData,
-    error: &Option<String>,
-    t: &crate::appearance::theme::Theme,
-) -> gpui::AnyElement {
-    let entry = pi_link::models_json::provider_entry(&chat.cfg.mc_models_json, name)
+    cx: &mut Context<Chat>,
+) -> Option<gpui::AnyElement> {
+    let panel = chat.dlg.settings.as_ref()?;
+    let selected = panel.read(cx).section.clone();
+    let rest = selected.strip_prefix("mj:m:")?;
+    let (name, ix) = {
+        let (n, i) = rest.rsplit_once(':')?;
+        (n.to_string(), i.parse::<usize>().ok()?)
+    };
+    let d = super::SettingsFormData::snapshot(panel.read(cx), cx);
+    let error = panel.read(cx).error.clone();
+    let t = T();
+    let weak = cx.entity().downgrade();
+    let dismiss = {
+        let weak = weak.clone();
+        let n = name.clone();
+        move |_: &mut gpui::Window, cx: &mut gpui::App| {
+            let _ = weak.update(cx, |c, cx| c.mj_select(format!("mj:p:{n}"), cx));
+        }
+    };
+    let entry = pi_link::models_json::provider_entry(&chat.cfg.mc_models_json, &name)
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     let model = entry
@@ -1777,7 +1792,8 @@ pub(crate) fn mj_model_editor(
         }
     };
 
-    // 头行：模型 + provider 名 + [测试] [保存] [移除]；测试状态行紧随
+    // 头行（弹窗固定区，不随表单滚动）：标题 + provider + [测试][保存][移除] + ✕；
+    // 测试状态行进滚动体
     let test_state = chat.cfg.mj_test.clone();
     let testing = matches!(test_state, Some(MjTestState::Running));
     let test_note: Option<(String, bool)> = match &test_state {
@@ -1797,59 +1813,70 @@ pub(crate) fn mj_model_editor(
         None => None,
     };
     let header = div()
+        .flex_shrink_0()
+        .h(px(40.))
+        .pl(px(15.))
+        .pr(px(8.))
         .flex()
         .items_center()
         .gap(px(8.))
-        .min_h(px(28.))
+        .bg(rgb(t.chrome))
+        .border_b_1()
+        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x73)))
         .child(section_title(&tr("settings.tab.models")))
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(10.))
                 .text_color(rgb(t.text_dim))
-                .child(SharedString::from(name.to_string())),
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(SharedString::from(name.clone())),
         )
-        .child(div().flex_1())
         .child(config_button(
             "mj-test",
-            weak,
+            &weak,
             &tr("models.test"),
             Btn::Secondary,
             true,
             testing,
             {
-                let n = name.to_string();
+                let n = name.clone();
                 move |c, cx| c.mj_test_start(n.clone(), ix, cx)
             },
         ))
         .child(config_button(
             "mj-mapply",
-            weak,
+            &weak,
             &tr("action.save"),
             Btn::Primary,
             true,
             false,
             {
-                let n = name.to_string();
+                let n = name.clone();
                 move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
             },
         ))
         .child(config_button(
             "mj-mdel",
-            weak,
+            &weak,
             &tr("action.remove"),
             Btn::Danger,
             true,
             false,
             {
-                let n = name.to_string();
+                let n = name.clone();
                 move |c, cx| c.mj_delete_model(n.clone(), ix, cx)
             },
-        ));
+        ))
+        .child(crate::ui::overlay::close_btn("mj-model-close", t, dismiss.clone()));
 
+    // 滚动体：原详情页表单整体下移（头行已上提到弹窗固定区）
     let mut detail = detail_shell("mc-detail")
         .p(px(15.))
-        .child(header)
         .children(error.as_ref().map(|e| error_note(e)))
         .children(test_note.as_ref().map(|(text, ok)| {
             if *ok {
@@ -1862,25 +1889,30 @@ pub(crate) fn mj_model_editor(
             div()
                 .flex()
                 .gap(px(10.))
-                .child(field(
-                    &tr("custom_models.field_id"),
-                    div().w(px(300.)).child(d.mj_id.clone()),
-                ))
-                .child(field(
-                    &tr("field.name"),
-                    div().w(px(300.)).child(d.mj_mname.clone()),
-                )),
+                // 500px 弹窗内两列各占一半（原 w300 双列放不下）
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("custom_models.field_id"), d.mj_id.clone())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("field.name"), d.mj_mname.clone())),
+                ),
         )
         // -- 填入模型信息（models.dev）--
-        .child(mj_catalog_fill_section(chat, weak, name, ix, d, t))
+        .child(mj_catalog_fill_section(chat, &weak, &name, ix, &d, t))
         // -- 能力 --
         .child(section_title(&tr("models.capabilities")))
         .child(
             div()
                 .flex()
                 .gap(px(20.))
-                .child(mj_capability_row(weak, "mj-reasoning", &tr("models.cap_reasoning"), d.mj_reasoning, 3))
-                .child(mj_capability_row(weak, "mj-image", &tr("models.cap_image"), d.mj_image, 2)),
+                .child(mj_capability_row(&weak, "mj-reasoning", &tr("models.cap_reasoning"), d.mj_reasoning, 3))
+                .child(mj_capability_row(&weak, "mj-image", &tr("models.cap_image"), d.mj_image, 2)),
         )
         // -- 模型规格 --
         .child(
@@ -1890,7 +1922,7 @@ pub(crate) fn mj_model_editor(
                 .child(section_title(&tr("models.specs")))
                 .child(div().flex_1())
                 .child(mj_text_button(
-                    weak,
+                    &weak,
                     "mj-cost-edit",
                     &if d.mj_cost_edit {
                         tr("models.finish_costs").to_string()
@@ -1904,16 +1936,20 @@ pub(crate) fn mj_model_editor(
             div()
                 .flex()
                 .gap(px(10.))
-                .child(field(
-                    &tr("custom_models.field_context"),
-                    div().w(px(300.)).child(d.mj_ctx.clone()),
-                ))
-                .child(field(
-                    &tr("models.max_output"),
-                    div().w(px(300.)).child(d.mj_max_tokens.clone()),
-                )),
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("custom_models.field_context"), d.mj_ctx.clone())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("models.max_output"), d.mj_max_tokens.clone())),
+                ),
         )
-        .child(mj_cost_section(&model, d, t));
+        .child(mj_cost_section(&model, &d, t));
 
     // -- 高级设置（折叠）--
     let weak_adv = weak.clone();
@@ -1963,7 +1999,7 @@ pub(crate) fn mj_model_editor(
         detail = detail
             .child(field(
                 &tr("models.api_override"),
-                mj_api_override_dropdown(weak, d),
+                mj_api_override_dropdown(&weak, &d),
             ))
             .child(field(
                 &tr("models.headers"),
@@ -1971,7 +2007,7 @@ pub(crate) fn mj_model_editor(
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .children(render_header_rows(weak, d, t))
+                    .children(render_header_rows(&weak, &d, t))
                     .child({
                         let weak_add_hdr = weak.clone();
                         div()
@@ -1997,23 +2033,45 @@ pub(crate) fn mj_model_editor(
             detail = detail
                 .child(section_title(&tr("models.compatibility")))
                 .child(mj_capability_row(
-                    weak,
+                    &weak,
                     "mj-deepseek",
                     &tr("models.deepseek_compat"),
                     d.mj_deepseek,
                     0,
                 ))
                 .child(mj_capability_row(
-                    weak,
+                    &weak,
                     "mj-devrole",
                     &tr("models.devrole"),
                     d.mj_devrole,
                     1,
                 ))
-                .child(mj_tlm_editor(weak, d, &provider_compat, t));
+                .child(mj_tlm_editor(&weak, &d, &provider_compat, t));
         }
     }
-    detail.into_any_element()
+    // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×500
+    // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；头行固定，表单区滚动
+    let overlay = crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(crate::ui::overlay::stop_click(
+            div()
+                .flex_shrink_0()
+                .w(px(500.))
+                .h(px(500.))
+                .bg(rgb(t.bg))
+                .border_1()
+                .border_color(rgb(t.border))
+                .rounded(px(12.))
+                .shadow_lg()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(header)
+                .child(div().flex_1().min_h_0().flex().child(detail)),
+        ));
+    Some(overlay.into_any_element())
 }
 
 /// 能力/兼容开关行（label + switch；pi-web Check 对齐）。
@@ -2169,7 +2227,10 @@ fn mj_cost_section(
             )
             .child(div().flex().gap(px(8.)).children(
                 labels.iter().zip(inputs.iter()).map(|((label, _), input)| {
-                    field(&tr(label), div().w(px(140.)).child(input.clone()))
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr(label), input.clone()))
                         .into_any_element()
                 }),
             ))
