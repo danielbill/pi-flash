@@ -697,31 +697,25 @@ impl Chat {
                             let old = st.read(cx).mj_name.read(cx).value().trim().to_string();
                             c.mj_apply_provider(old, cx);
                         }
-                        // 2、自动拉取：目录落盘 + 刷新内存（可用模型区即满）；
-                        // 并同步进账本 models[]（pi 注册需含模型，否则会话零模型）
+                        // 2、自动拉取：目录直接合并进账本 models[]（自定义商
+                        // 唯一真相源；provider-catalog 缓存只服务内置商，
+                        // 这里顺带清键防旧 id 复显）+ 刷新内存（可用模型区即满）
                         if catalog.is_empty() {
                             c.cfg.mj_speed = Some(MjSpeedState::PassedEmpty);
                         } else {
-                            match pi_link::catalog::save_catalog(&provider_bg, &catalog) {
-                                Ok(()) => {
-                                    Self::mj_merge_catalog_into_ledger(
-                                        &mut c.cfg.mc_models_json,
-                                        &provider_bg,
-                                        &catalog,
-                                    );
-                                    c.mj_flush(cx);
-                                    c.refresh_provider_catalog(&provider_bg);
-                                    c.cfg.mj_speed = Some(MjSpeedState::Passed {
-                                        latency_ms,
-                                        models: catalog.len(),
-                                        seeded: false,
-                                    });
-                                }
-                                Err(e) => {
-                                    c.mc_set_error(&e, cx);
-                                    c.cfg.mj_speed = Some(MjSpeedState::Failed(e));
-                                }
-                            }
+                            Self::mj_merge_catalog_into_ledger(
+                                &mut c.cfg.mc_models_json,
+                                &provider_bg,
+                                &catalog,
+                            );
+                            c.mj_flush(cx);
+                            let _ = pi_link::catalog::save_catalog(&provider_bg, &[]);
+                            c.refresh_provider_catalog(&provider_bg);
+                            c.cfg.mj_speed = Some(MjSpeedState::Passed {
+                                latency_ms,
+                                models: catalog.len(),
+                                seeded: false,
+                            });
                         }
                     }
                     pi_link::probe::ProbeOutcome::AuthRejected { status } => {
@@ -747,7 +741,7 @@ impl Chat {
     }
 
     /// 可用模型区头行的刷新钮（内置详情同位）：按**已保存**条目重新拉取
-    /// 该商模型目录（probe → save_catalog → 刷新内存）；失败挂错误条。
+    /// 该商模型目录（probe → 合并进账本 → 刷新内存）；失败挂错误条。
     pub(crate) fn mj_fetch_models(&mut self, provider: String, cx: &mut Context<Self>) {
         let Some(entry) =
             pi_link::models_json::provider_entry(&self.cfg.mc_models_json, &provider).cloned()
@@ -796,17 +790,14 @@ impl Chat {
                 .await;
             let _ = this.update(cx, |c, cx| match outcome {
                 pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
-                    if let Err(e) = pi_link::catalog::save_catalog(&provider, &catalog) {
-                        c.mc_set_error(&e, cx);
-                        return;
-                    }
-                    // 同测速：目录同步进账本 models[]
+                    // 目录直接合并进账本（自定义商唯一真相源），缓存键清掉
                     Self::mj_merge_catalog_into_ledger(
                         &mut c.cfg.mc_models_json,
                         &provider,
                         &catalog,
                     );
                     c.mj_flush(cx);
+                    let _ = pi_link::catalog::save_catalog(&provider, &[]);
                     c.refresh_provider_catalog(&provider);
                     cx.notify();
                 }
