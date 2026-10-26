@@ -1523,7 +1523,6 @@ fn mj_enabled_section(
             .filter_map(|mm| mm.get("id").and_then(|v| v.as_str()).map(str::to_string))
             .collect();
     let project_scope = chat.cfg.mc_project_scope;
-    let last_guard = enabled_count == 1;
     let enabled_rows = enabled_set.clone();
     let pins = chat.cfg.mc_state.pins.clone();
     let weak_rows = weak.clone();
@@ -1543,7 +1542,6 @@ fn mj_enabled_section(
             let r = format!("{}/{}", m.provider, m.id);
             let is_enabled = all_enabled || enabled_rows.contains(&r);
             let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-            let last_one = last_guard && is_enabled;
             // 点击名字 → 模型编辑器（仅账本内条目可点；开关区不误触详情页）
             let open_ref = (prov.clone(), m.id.clone());
             let weak_row = weak_rows_v.clone();
@@ -1628,7 +1626,7 @@ fn mj_enabled_section(
                     format!("mj-sw-{ix}"),
                     &weak_rows_v,
                     is_enabled,
-                    last_one || project_scope,
+                    project_scope,
                     {
                         let r = r.clone();
                         move |c, cx| c.mc_toggle_model(r.clone(), !is_enabled, cx)

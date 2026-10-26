@@ -313,8 +313,7 @@ pub fn compute_state(patterns: Option<&Vec<String>>, refs: &[String]) -> Enabled
     }
 }
 
-/// Toggle refs on/off with the smallest possible pattern edit. Fails when
-/// disabling would leave no enabled model (pi reads an empty scope as "none").
+/// Toggle refs on/off with the smallest possible pattern edit.
 pub fn set_models_enabled(
     patterns: Option<&Vec<String>>,
     refs: &[String],
@@ -369,9 +368,6 @@ pub fn set_models_enabled(
                     pin: e.pin.clone(),
                 });
             }
-        }
-        if enabled_refs(&next).is_empty() {
-            return Err("last-model");
         }
         entries = next;
     }

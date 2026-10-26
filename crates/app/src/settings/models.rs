@@ -1184,7 +1184,6 @@ fn mc_enabled_section(
         + 12.;
     let all_enabled = chat.cfg.mc_state.all_enabled;
     let project_scope = chat.cfg.mc_project_scope;
-    let last_guard = enabled_count == 1;
     let enabled_rows = enabled_set.clone();
     let pins = chat.cfg.mc_state.pins.clone();
     let weak_rows = weak.clone();
@@ -1202,7 +1201,6 @@ fn mc_enabled_section(
             let r = format!("{}/{}", m.provider, m.id);
             let is_enabled = all_enabled || enabled_rows.contains(&r);
             let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-            let last_one = last_guard && is_enabled;
             let ref_click = r.clone();
             div()
                 .id(SharedString::from(format!("mc-row-{ix}")))
@@ -1265,7 +1263,7 @@ fn mc_enabled_section(
                     format!("mc-sw-{ix}"),
                     &weak_rows,
                     is_enabled,
-                    last_one || project_scope,
+                    project_scope,
                     {
                         let r = r.clone();
                         move |c, cx| c.mc_toggle_model(r.clone(), !is_enabled, cx)
