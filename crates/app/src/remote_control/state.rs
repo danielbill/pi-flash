@@ -33,8 +33,8 @@ pub(crate) enum Service {
     },
     /// 用户显式关停：本进程不再自动拉起（扫码 / 开关 / 自动化可再开）
     Stopped,
-    /// 启动失败（状态卡④显示文案），[`SERVICE_RETRY`] 后允许重试
-    Failed { at: Instant, err: String },
+    /// 启动失败：[`SERVICE_RETRY`] 后允许重试（详情只在 stderr，非产品状态）
+    Failed { at: Instant },
 }
 
 impl Service {
@@ -63,14 +63,6 @@ impl Service {
             Service::Pending => true,
             Service::Failed { at, .. } => now.duration_since(*at) >= SERVICE_RETRY,
             Service::On { .. } | Service::Stopped => false,
-        }
-    }
-
-    /// 失败文案（状态卡④；成功即清）。
-    pub(crate) fn error(&self) -> Option<&str> {
-        match self {
-            Service::Failed { err, .. } => Some(err),
-            _ => None,
         }
     }
 }

@@ -264,7 +264,6 @@ impl RemoteControl {
         if !self.persist {
             self.svc = Service::Failed {
                 at: std::time::Instant::now(),
-                err: "测试实例不启动真实渠道".into(),
             };
             return;
         }
@@ -280,13 +279,11 @@ impl RemoteControl {
                 self.notice = Some(true);
                 self.health = Health::Ok;
             }
-            // 静默失败是最坏的形态（§6 坑 4）：文案留给状态卡④，30s 后重试
+            // 静默失败是最坏的形态（§6 坑 4）：30s 后重试，详情只进 stderr
             Err(e) => {
-                let err = format!("渠道未启动：{e}");
-                eprintln!("[wx] {err}");
+                eprintln!("[wx] 渠道未启动：{e}");
                 self.svc = Service::Failed {
                     at: std::time::Instant::now(),
-                    err,
                 };
             }
         }
@@ -359,11 +356,6 @@ impl RemoteControl {
         if let Some(cwd) = desktop_cwd {
             self.set_wx_cwd_from_user(Some(cwd));
         }
-    }
-
-    /// 工作目录是否上锁（新建会话后 = true：禁止自动赋值）。
-    pub(crate) fn wx_cwd_locked(&self) -> bool {
-        self.snap.wx_cwd_lock
     }
 
     /// 微信线（影子会话）指针改指向 `key`（草稿键或会话文件路径）。
@@ -1743,16 +1735,12 @@ mod tests {
         // 开机那次撞上「锁被占 / token 没写」不该整个进程都不再试：
         // Failed 到点自动给一次重试机会。
         let now = std::time::Instant::now();
-        let fresh = Service::Failed {
-            at: now,
-            err: "x".into(),
-        };
+        let fresh = Service::Failed { at: now };
         assert!(!fresh.wants_start(now), "刚失败不立刻重试");
         assert!(
             fresh.wants_start(now + std::time::Duration::from_secs(31)),
             "冷却到点允许重试"
         );
-        assert_eq!(fresh.error(), Some("x"));
     }
 
     #[test]
