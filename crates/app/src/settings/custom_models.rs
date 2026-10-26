@@ -17,55 +17,16 @@ impl Chat {
         let model = ix
             .and_then(|ix| entry.get("models").and_then(|m| m.get(ix)).cloned())
             .unwrap_or_else(|| serde_json::json!({}));
-        // 042-1 改版：api 由 PF 推断落盘，表单不再读取/展示
-        let reasoning = model
-            .get("reasoning")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
         let get_str = |v: &serde_json::Value, k: &str| {
             v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
         };
-        // 兼容 effective 值（provider compat 合并 model compat，model 赢）
-        let compat = |key: &str| -> Option<serde_json::Value> {
+        // 能力勾选回填：input 数组含 image/video（文本恒选不落 UI 态）
+        let in_input = |key: &str| {
             model
-                .get("compat")
-                .and_then(|c| c.get(key))
-                .cloned()
-                .or_else(|| {
-                    entry
-                        .get("compat")
-                        .and_then(|c| c.get(key))
-                        .cloned()
-                })
+                .get("input")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(key)))
         };
-        let deepseek = model
-            .get("compat")
-            .and_then(|c| c.get("thinkingFormat"))
-            .and_then(|v| v.as_str())
-            == Some("deepseek");
-        let devrole = compat("supportsDeveloperRole")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let image = model
-            .get("input")
-            .and_then(|v| v.as_array())
-            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some("image")));
-        // headers 回填：provider 编辑器回 provider.headers，模型编辑器回
-        // model.headers（共用槽，切换 section 时重建）
-        let headers_src = if ix.is_some() {
-            model.get("headers")
-        } else {
-            entry.get("headers")
-        };
-        let header_pairs: Vec<(String, String)> = headers_src
-            .and_then(|h| h.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let tlm = model.get("thinkingLevelMap").cloned().unwrap_or(serde_json::json!({}));
         // 换选中项 = 换被测模型，旧测试结果作废；测速态按"已有商 = 已通过"
         // 种子（042-1：不强迫重测；新商无 baseUrl = 未测，保存/+模型禁用）
         self.cfg.mj_test = None;
@@ -86,66 +47,8 @@ impl Chat {
             st.update(cx, |s, cx| {
                 s.section = section.clone();
                 s.error = None;
-                s.mj_reasoning = reasoning;
-                s.mj_headers = header_pairs
-                    .iter()
-                    .map(|(k, v)| MjHeaderRow {
-                        name: cx.new(|tcx| {
-                            let mut ti = TextInput::new(tcx);
-                            ti.set_value(k.clone(), tcx);
-                            ti
-                        }),
-                        value: cx.new(|tcx| {
-                            let mut ti = TextInput::new(tcx);
-                            ti.set_value(v.clone(), tcx);
-                            ti
-                        }),
-                    })
-                    .collect();
-                s.mj_adv_open = false;
-                s.mj_api_override = model
-                    .get("api")
-                    .and_then(|v| v.as_str())
-                    .map(mj_api_ix)
-                    .unwrap_or(4);
-                s.mj_deepseek = deepseek;
-                s.mj_devrole = devrole;
-                s.mj_image = image;
-                s.mj_cost_edit = false;
-                let cost = model.get("cost").cloned().unwrap_or(serde_json::json!({}));
-                let cost_str = |k: &str| {
-                    cost.get(k)
-                        .and_then(|v| v.as_f64())
-                        .map(|v| {
-                            let s = v.to_string();
-                            s.trim_end_matches('0').trim_end_matches('.').to_string()
-                        })
-                        .unwrap_or_default()
-                };
-                s.mj_max_tokens.update(cx, |ti, cx| {
-                    ti.set_value(
-                        model
-                            .get("maxTokens")
-                            .and_then(|v| v.as_u64())
-                            .map(|v| v.to_string())
-                            .unwrap_or_default(),
-                        cx,
-                    )
-                });
-                s.mj_cost_in.update(cx, |ti, cx| ti.set_value(cost_str("input"), cx));
-                s.mj_cost_out.update(cx, |ti, cx| ti.set_value(cost_str("output"), cx));
-                s.mj_cost_cr.update(cx, |ti, cx| ti.set_value(cost_str("cacheRead"), cx));
-                s.mj_cost_cw.update(cx, |ti, cx| ti.set_value(cost_str("cacheWrite"), cx));
-                for (i, level) in TLM_LEVELS.iter().enumerate() {
-                    let raw = tlm.get(*level);
-                    let (mode, val) = match raw {
-                        None => (MjTlmMode::Omit, String::new()),
-                        Some(serde_json::Value::Null) => (MjTlmMode::Null, String::new()),
-                        Some(v) => (MjTlmMode::Custom, v.as_str().unwrap_or("").to_string()),
-                    };
-                    s.mj_tlm[i].mode = mode;
-                    s.mj_tlm[i].value.update(cx, |ti, cx| ti.set_value(val.clone(), cx));
-                }
+                s.mj_image = in_input("image");
+                s.mj_video = in_input("video");
                 s.mj_name
                     .update(cx, |ti, cx| ti.set_value(name.clone(), cx));
                 s.mj_base
@@ -171,14 +74,19 @@ impl Chat {
                 });
                 s.mj_id
                     .update(cx, |ti, cx| ti.set_value(get_str(&model, "id"), cx));
-                s.mj_mname
-                    .update(cx, |ti, cx| ti.set_value(get_str(&model, "name"), cx));
                 let ctx = model
                     .get("contextWindow")
                     .and_then(|v| v.as_u64())
                     .map(|v| v.to_string())
                     .unwrap_or_default();
                 s.mj_ctx.update(cx, |ti, cx| ti.set_value(ctx, cx));
+                let max_tokens = model
+                    .get("maxTokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                s.mj_max_tokens
+                    .update(cx, |ti, cx| ti.set_value(max_tokens, cx));
                 cx.notify();
             });
         }
@@ -310,7 +218,6 @@ impl Chat {
                 s.mj_key.read(cx).value().trim().to_string(),
             )
         };
-        let headers = st.read(cx).mj_headers_value(cx);
         if name.is_empty() {
             return self.mc_set_error(tr("custom_models.name_required"), cx);
         }
@@ -327,11 +234,6 @@ impl Chat {
         // 尾斜杠规范化（pi 运行时直接拼 base+path，避免 /key//path）；
         // 探测端本就 trim，这里统一落盘形状
         set_opt_str(&mut entry, "baseUrl", base.trim_end_matches('/'));
-        set_opt_obj(
-            &mut entry,
-            "headers",
-            headers.as_ref().and_then(|h| headers_to_json(h)),
-        );
         // apiKey 分流（051）：明文 → 凭据库 + $PF_KEY_* 引用；高级引用原样；
         // 库不可用降级明文
         self.mj_store_key(&mut entry, &name, &key, cx);
@@ -408,30 +310,25 @@ impl Chat {
         self.mj_select(format!("mj:m:{provider}:{ix}"), cx);
     }
 
-    /// 把模型编辑器全部字段写回缓冲里的模型条目（在既有条目上改键，保留
-    /// 手写字段——对齐 pi-web 全量条目编辑语义）。
+    /// 把模型编辑器字段写回缓冲里的模型条目（精简版：编辑器只拥有 id /
+    /// 上下文窗口 / 最大输出 / 能力勾选四个键；名称、价格、reasoning、兼容
+    /// 等交【自动填参】从 models.dev 落——既有值原样保留不碰）。
     pub(crate) fn mj_apply_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let (id, mname, ctx, reasoning) = {
+        let (id, ctx, image, video, max_tokens) = {
             let s = st.read(cx);
             (
                 s.mj_id.read(cx).value().trim().to_string(),
-                s.mj_mname.read(cx).value().trim().to_string(),
                 s.mj_ctx.read(cx).value().trim().to_string(),
-                s.mj_reasoning,
+                s.mj_image,
+                s.mj_video,
+                s.mj_max_tokens.read(cx).value().trim().to_string(),
             )
         };
-        let form = st.read(cx).mj_model_form(cx);
         if id.is_empty() {
             return self.mc_set_error(tr("custom_models.model_id_required"), cx);
-        }
-        // cost 草稿 → JSON（pi-web parseCompleteModelCost 语义：空 = 0，
-        // 任一项非数字 = 不完整 → 整个 cost 丢弃）
-        let cost = cost_to_json(&form.cost);
-        if cost.is_none() && form.cost_has_value {
-            return self.mc_set_error(tr("models.cost_all_required"), cx);
         }
         let Some(entry) =
             pi_link::models_json::provider_entry(&self.cfg.mc_models_json, &provider).cloned()
@@ -449,78 +346,29 @@ impl Chat {
         }
         let mut obj = model.as_object().cloned().unwrap_or_default();
         obj.insert("id".into(), serde_json::Value::String(id));
-        if !mname.is_empty() {
-            obj.insert("name".into(), serde_json::Value::String(mname));
-        } else {
-            obj.remove("name");
-        }
         if let Ok(n) = ctx.parse::<u64>() {
             obj.insert("contextWindow".into(), serde_json::json!(n));
         } else {
             obj.remove("contextWindow");
         }
-        if let Ok(n) = form.max_tokens.parse::<u64>() {
+        if let Ok(n) = max_tokens.parse::<u64>() {
             obj.insert("maxTokens".into(), serde_json::json!(n));
         } else {
             obj.remove("maxTokens");
         }
-        if reasoning {
-            obj.insert("reasoning".into(), serde_json::json!(true));
-        } else {
-            obj.remove("reasoning");
+        // 能力：文本恒在；仅 text = 删键走 ensure_model_defaults 缺省
+        let mut input = vec!["text"];
+        if image {
+            input.push("image");
         }
-        if form.image {
-            obj.insert("input".into(), serde_json::json!(["text", "image"]));
+        if video {
+            input.push("video");
+        }
+        if input.len() > 1 {
+            obj.insert("input".into(), serde_json::json!(input));
         } else {
             obj.remove("input");
         }
-        // API 覆盖：4 = 沿用 Provider（删键），其余落显式 api
-        if form.api_override >= 4 {
-            obj.remove("api");
-        } else {
-            obj.insert("api".into(), serde_json::Value::String(mj_api_name(form.api_override)));
-        }
-        // compat：DeepSeek 兼容写 thinkingFormat + requiresReasoningContent…；
-        // developer role 取消勾选才落显式 false（勾选 = 默认态，删键）
-        let mut compat = model
-            .get("compat")
-            .and_then(|c| c.as_object())
-            .cloned()
-            .unwrap_or_default();
-        if form.deepseek {
-            compat.insert("thinkingFormat".into(), serde_json::json!("deepseek"));
-            compat.insert(
-                "requiresReasoningContentOnAssistantMessages".into(),
-                serde_json::json!(true),
-            );
-        } else {
-            compat.remove("thinkingFormat");
-            compat.remove("requiresReasoningContentOnAssistantMessages");
-        }
-        if !form.devrole {
-            compat.insert("supportsDeveloperRole".into(), serde_json::json!(false));
-        } else {
-            compat.remove("supportsDeveloperRole");
-        }
-        if compat.is_empty() {
-            obj.remove("compat");
-        } else {
-            obj.insert("compat".into(), serde_json::Value::Object(compat));
-        }
-        if let Some(h) = form.headers.as_ref().and_then(|h| headers_to_json(h)) {
-            obj.insert("headers".into(), h);
-        } else {
-            obj.remove("headers");
-        }
-        if let Some(t) = tlm_to_json(&form.tlm) {
-            obj.insert("thinkingLevelMap".into(), t);
-        } else {
-            obj.remove("thinkingLevelMap");
-        }
-        match cost {
-            Some(c) => obj.insert("cost".into(), c),
-            None => obj.remove("cost"),
-        };
         let mut model = serde_json::Value::Object(obj);
         // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
         // 编辑器删键后的缺省在此统一补齐
@@ -536,92 +384,20 @@ impl Chat {
         self.mj_select(format!("mj:p:{provider}"), cx);
     }
 
-    // -- headers / 高级设置 / 思考映射表单动作 -------------------------------
-
-    pub(crate) fn mj_add_header_row(&mut self, cx: &mut Context<Self>) {
+    /// 能力勾选切换（图片 / 视频；文本恒选无动作）。
+    pub(crate) fn mj_toggle_image(&mut self, cx: &mut Context<Self>) {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
-                s.mj_headers.push(MjHeaderRow {
-                    name: cx.new(|tcx| TextInput::new(tcx)),
-                    value: cx.new(|tcx| TextInput::new(tcx)),
-                });
+                s.mj_image = !s.mj_image;
                 cx.notify();
             });
         }
     }
 
-    pub(crate) fn mj_remove_header_row(&mut self, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn mj_toggle_video(&mut self, cx: &mut Context<Self>) {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
-                if ix < s.mj_headers.len() {
-                    s.mj_headers.remove(ix);
-                    cx.notify();
-                }
-            });
-        }
-    }
-
-    pub(crate) fn mj_toggle_adv(&mut self, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                s.mj_adv_open = !s.mj_adv_open;
-                cx.notify();
-            });
-        }
-    }
-
-    pub(crate) fn mj_toggle_cost_edit(&mut self, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                s.mj_cost_edit = !s.mj_cost_edit;
-                cx.notify();
-            });
-        }
-    }
-
-    pub(crate) fn mj_set_api_override(&mut self, ix: u8, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                s.mj_api_override = ix;
-                s.mj_api_popup = None;
-                cx.notify();
-            });
-        }
-    }
-
-    pub(crate) fn mj_toggle_flag(&mut self, flag: u8, cx: &mut Context<Self>) {
-        // 0 = deepseek 1 = devrole 2 = image 3 = reasoning
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                match flag {
-                    0 => s.mj_deepseek = !s.mj_deepseek,
-                    1 => s.mj_devrole = !s.mj_devrole,
-                    2 => s.mj_image = !s.mj_image,
-                    _ => s.mj_reasoning = !s.mj_reasoning,
-                }
-                cx.notify();
-            });
-        }
-    }
-
-    pub(crate) fn mj_tlm_set(&mut self, ix: usize, mode: MjTlmMode, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                if let Some(row) = s.mj_tlm.get_mut(ix) {
-                    row.mode = mode;
-                    cx.notify();
-                }
-            });
-        }
-    }
-
-    pub(crate) fn mj_tlm_clear_all(&mut self, cx: &mut Context<Self>) {
-        if let Some(st) = self.dlg.settings.clone() {
-            st.update(cx, |s, cx| {
-                for row in &mut s.mj_tlm {
-                    row.mode = MjTlmMode::Omit;
-                    row.value.update(cx, |ti, cx| ti.set_value(String::new(), cx));
-                }
+                s.mj_video = !s.mj_video;
                 cx.notify();
             });
         }
@@ -832,24 +608,19 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let (model_id, base, key_text, model_api, model_headers) = {
+        let (model_id, base, key_text) = {
             let s = st.read(cx);
             (
                 s.mj_id.read(cx).value().trim().to_string(),
                 s.mj_base.read(cx).value().trim().to_string(),
                 s.mj_key.read(cx).value().trim().to_string(),
-                s.mj_api_override,
-                s.mj_headers_value(cx),
             )
         };
-        let api = if model_api >= 4 {
-            // 沿用 Provider：随表单 baseUrl 推断（042-1 改版，与测速同源）
-            pi_link::probe::infer_api(&base).to_string()
-        } else {
-            mj_api_name(model_api)
-        };
-        // provider 级 headers 从缓冲合并（模型行覆盖同名）
-        let mut headers: Vec<(String, String)> = pi_link::models_json::provider_entry(
+        // API 随表单 baseUrl 推断（042-1 改版，与测速同源）
+        let api = pi_link::probe::infer_api(&base).to_string();
+        // provider 级 headers 从缓冲合并（模型级 headers 随编辑器精简退场，
+        // 既有条目的 model.headers 原样保留不碰）
+        let headers: Vec<(String, String)> = pi_link::models_json::provider_entry(
             &self.cfg.mc_models_json,
             &provider,
         )
@@ -860,10 +631,6 @@ impl Chat {
                 .collect()
         })
         .unwrap_or_default();
-        for (k, v) in model_headers.into_iter().flatten() {
-            headers.retain(|(n, _)| !n.eq_ignore_ascii_case(&k));
-            headers.push((k, v));
-        }
         self.mc_clear_error(cx);
         if model_id.is_empty() {
             return self.mc_set_error(tr("custom_models.model_id_required"), cx);
@@ -977,132 +744,6 @@ impl Chat {
 }
 
 // ---------------------------------------------------------------------------
-// 表单值读取（SettingsPanel 扩展，住在 custom_models.rs 的域内）
-// ---------------------------------------------------------------------------
-
-impl super::SettingsPanel {
-    /// headers 行 → 有序键值对（空名丢弃；全空 = None）。
-    pub(crate) fn mj_headers_value(&self, cx: &gpui::App) -> Option<Vec<(String, String)>> {
-        let mut out: Vec<(String, String)> = Vec::new();
-        for row in &self.mj_headers {
-            let name = row.name.read(cx).value().trim().to_string();
-            if name.is_empty() {
-                continue;
-            }
-            let value = row.value.read(cx).value().to_string();
-            out.retain(|(n, _)| *n != name);
-            out.push((name, value));
-        }
-        (!out.is_empty()).then_some(out)
-    }
-
-    /// 模型编辑器全部扩展字段的读取快照（mj_apply_model 用）。
-    pub(crate) fn mj_model_form(
-        &self,
-        cx: &gpui::App,
-    ) -> MjModelForm {
-        let num = |e: &gpui::Entity<TextInput>| e.read(cx).value().trim().to_string();
-        MjModelForm {
-            max_tokens: num(&self.mj_max_tokens),
-            image: self.mj_image,
-            api_override: self.mj_api_override,
-            deepseek: self.mj_deepseek,
-            devrole: self.mj_devrole,
-            headers: self.mj_headers_value(cx),
-            tlm: std::array::from_fn(|i| {
-                (
-                    self.mj_tlm[i].mode,
-                    self.mj_tlm[i].value.read(cx).value().trim().to_string(),
-                )
-            }),
-            cost: [
-                num(&self.mj_cost_in),
-                num(&self.mj_cost_out),
-                num(&self.mj_cost_cr),
-                num(&self.mj_cost_cw),
-            ],
-            cost_has_value: [
-                num(&self.mj_cost_in),
-                num(&self.mj_cost_out),
-                num(&self.mj_cost_cr),
-                num(&self.mj_cost_cw),
-            ]
-            .iter()
-            .any(|s| !s.trim().is_empty()),
-        }
-    }
-}
-
-/// 模型编辑器扩展字段的保存期快照。
-pub(crate) struct MjModelForm {
-    pub max_tokens: String,
-    pub image: bool,
-    pub api_override: u8,
-    pub deepseek: bool,
-    pub devrole: bool,
-    pub headers: Option<Vec<(String, String)>>,
-    pub tlm: [(MjTlmMode, String); TLM_LEVEL_COUNT],
-    pub cost: [String; 4],
-    pub cost_has_value: bool,
-}
-
-/// headers 键值对 → JSON 对象（空表 = None 删键）。
-fn headers_to_json(headers: &[(String, String)]) -> Option<serde_json::Value> {
-    if headers.is_empty() {
-        return None;
-    }
-    let mut obj = serde_json::Map::new();
-    for (k, v) in headers {
-        obj.insert(k.clone(), serde_json::Value::String(v.clone()));
-    }
-    Some(serde_json::Value::Object(obj))
-}
-
-/// 思考映射行 → JSON（全 Omit = None）。
-fn tlm_to_json(tlm: &[(MjTlmMode, String); TLM_LEVEL_COUNT]) -> Option<serde_json::Value> {
-    let mut obj = serde_json::Map::new();
-    for (i, level) in TLM_LEVELS.iter().enumerate() {
-        match tlm[i].0 {
-            MjTlmMode::Omit => {}
-            MjTlmMode::Null => {
-                obj.insert((*level).to_string(), serde_json::Value::Null);
-            }
-            MjTlmMode::Custom => {
-                let v = tlm[i].1.trim();
-                if !v.is_empty() {
-                    obj.insert((*level).to_string(), serde_json::Value::String(v.into()));
-                }
-            }
-        }
-    }
-    (!obj.is_empty()).then(|| serde_json::Value::Object(obj))
-}
-
-/// cost 四项草稿 → 完整 cost JSON（pi-web parseCompleteModelCost：空 = 0，
-/// 任一非数字 = None；全空 = None）。
-fn cost_to_json(draft: &[String; 4]) -> Option<serde_json::Value> {
-    if draft.iter().all(|s| s.trim().is_empty()) {
-        return None;
-    }
-    let parse = |s: &str| -> Option<f64> {
-        if s.trim().is_empty() {
-            return Some(0.);
-        }
-        s.trim().parse::<f64>().ok().filter(|n| n.is_finite() && *n >= 0.)
-    };
-    let (i, o, cr, cw) = (
-        parse(&draft[0]),
-        parse(&draft[1]),
-        parse(&draft[2]),
-        parse(&draft[3]),
-    );
-    match (i, o, cr, cw) {
-        (Some(i), Some(o), Some(cr), Some(cw)) => Some(serde_json::json!({
-            "input": i, "output": o, "cacheRead": cr, "cacheWrite": cw
-        })),
-        _ => None,
-    }
-}
 
 /// 价格可靠度提示文案（pi-web catalogResultSummary 的 price 段对齐）。
 fn mj_price_note(price: &Option<pi_link::models_dev::Price>) -> String {
@@ -1138,24 +779,6 @@ fn mj_parse_section(section: &str) -> (String, Option<usize>) {
     (String::new(), None)
 }
 
-fn mj_api_ix(api: &str) -> u8 {
-    match api {
-        "openai-responses" => 1,
-        "anthropic-messages" => 2,
-        "google-generative-ai" => 3,
-        _ => 0,
-    }
-}
-
-fn mj_api_name(ix: u8) -> String {
-    match ix {
-        1 => "openai-responses".into(),
-        2 => "anthropic-messages".into(),
-        3 => "google-generative-ai".into(),
-        _ => "openai-completions".into(),
-    }
-}
-
 /// 空串删除可选字符串键，其余写入（保序）。
 fn set_opt_str(obj: &mut serde_json::Value, key: &str, value: &str) {
     let map = obj.as_object_mut().expect("entry is an object");
@@ -1166,19 +789,6 @@ fn set_opt_str(obj: &mut serde_json::Value, key: &str, value: &str) {
             key.to_string(),
             serde_json::Value::String(value.to_string()),
         );
-    }
-}
-
-/// 空对象/None 删除可选对象键，其余写入（保序）。
-fn set_opt_obj(obj: &mut serde_json::Value, key: &str, value: Option<serde_json::Value>) {
-    let map = obj.as_object_mut().expect("entry is an object");
-    match value {
-        None => {
-            map.remove(key);
-        }
-        Some(v) => {
-            map.insert(key.to_string(), v);
-        }
     }
 }
 
@@ -1639,70 +1249,11 @@ fn mj_enabled_section(
     detail.child(section)
 }
 
-/// headers 行编辑器（name input + value input + ✕）。
-fn render_header_rows(
-    weak: &gpui::WeakEntity<Chat>,
-    d: &super::SettingsFormData,
-    t: &crate::appearance::theme::Theme,
-) -> Vec<gpui::AnyElement> {
-    d.mj_headers
-        .iter()
-        .enumerate()
-        .map(|(ix, row)| {
-            let weak_del = weak.clone();
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .mb(px(4.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .max_w(px(180.))
-                        .child(row.name.clone()),
-                )
-                .child(div().flex_1().min_w_0().child(row.value.clone()))
-                .child(
-                    div()
-                        .id(SharedString::from(format!("mj-hdr-del-{ix}")))
-                        .flex_shrink_0()
-                        .size(px(20.))
-                        .rounded(px(4.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(t.text_dim))
-                        .cursor_pointer()
-                        .hover(|s| {
-                            s.bg(rgb(t.bg_hover))
-                                .text_color(rgb(crate::appearance::theme::theme().danger))
-                        })
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = weak_del.update(cx, |c, cx| c.mj_remove_header_row(ix, cx));
-                        })
-                        .child("✕"),
-                )
-                .into_any_element()
-        })
-        .collect()
-}
-
-/// 思考档位点的配色（pi-web LEVEL_COLORS 对齐）。
-fn tlm_level_color(level: &str) -> u32 {
-    match level {
-        "low" => 0x60a5fa,
-        "medium" => 0xa78bfa,
-        "high" => 0xf472b6,
-        "xhigh" => 0xfb923c,
-        "max" => 0xef4444,
-        _ => 0x6b7280,
-    }
-}
-
-/// 自定义模型编辑器（pi-web ModelDetail 对齐：能力/规格/价格/高级设置/
-/// 测试/填入模型信息）——**居中 500×500 小弹窗**（不再整页替换右栏详情）。
+/// 自定义模型详情/编辑小弹窗（500×500 居中，2026-10-27 用户定稿规格）：
+/// 控制栏右侧 [测试][保存][移除] 三钮同宽 84 + ✕（间隔 10，无标题）；
+/// 内容区 = 模型ID（左）+【自动填参】（右）→ 上下文窗口 / 最大输出 →
+/// 能力勾选（文本恒选不可改 / 图片 / 视频）。名称、价格、reasoning、
+/// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
 /// `section = mj:m:{prov}:{ix}` 即打开态：本函数由 render.rs 顶层挂载，叠在
 /// 设置弹窗之上，右栏底图保持 Provider 详情；关闭（✕/点外/ESC）= 退回
 /// `mj:p:{prov}`（重播 provider 回填，模态随 section 撤下）。
@@ -1728,72 +1279,9 @@ pub(crate) fn mj_model_modal_overlay(
             let _ = weak.update(cx, |c, cx| c.mj_select(format!("mj:p:{n}"), cx));
         }
     };
-    let entry = pi_link::models_json::provider_entry(&chat.cfg.mc_models_json, &name)
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
-    let model = entry
-        .get("models")
-        .and_then(|m| m.get(ix))
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
-    let provider_compat = entry.get("compat").cloned().unwrap_or(serde_json::json!({}));
-    let mut compat_count = 0usize;
-    if d.mj_deepseek {
-        compat_count += 1;
-    }
-    if !d.mj_devrole {
-        compat_count += 1;
-    }
-    compat_count += model
-        .get("compat")
-        .and_then(|c| c.as_object())
-        .map(|o| {
-            o.keys()
-                .filter(|k| {
-                    !(*k == "thinkingFormat"
-                        || *k == "requiresReasoningContentOnAssistantMessages"
-                        || *k == "supportsDeveloperRole")
-                })
-                .count()
-        })
-        .unwrap_or(0);
-    let tlm_set = d
-        .mj_tlm
-        .iter()
-        .filter(|r| r.mode != MjTlmMode::Omit)
-        .count();
-    let adv_summary = {
-        let mut parts: Vec<String> = Vec::new();
-        if d.mj_api_override < 4 {
-            parts.push(format!("API: {}", mj_api_name(d.mj_api_override)));
-        }
-        if !d.mj_headers.is_empty() {
-            parts.push(crate::i18n::tf(
-                "models.headers_summary",
-                &[("count", d.mj_headers.len().to_string())],
-            ));
-        }
-        if compat_count > 0 {
-            parts.push(crate::i18n::tf(
-                "models.compat_summary",
-                &[("count", compat_count.to_string())],
-            ));
-        }
-        if tlm_set > 0 {
-            parts.push(crate::i18n::tf(
-                "models.thinking_summary",
-                &[("count", tlm_set.to_string())],
-            ));
-        }
-        if parts.is_empty() {
-            tr("models.adv_defaults").to_string()
-        } else {
-            parts.join(" · ")
-        }
-    };
 
-    // 头行（弹窗固定区，不随表单滚动）：标题 + provider + [测试][保存][移除] + ✕；
-    // 测试状态行进滚动体
+    // 控制栏：右侧 [测试][保存][移除]（三钮同宽 84——detail_button 定稿规格）
+    // + ✕，间隔 10；无标题
     let test_state = chat.cfg.mj_test.clone();
     let testing = matches!(test_state, Some(MjTestState::Running));
     let test_note: Option<(String, bool)> = match &test_state {
@@ -1814,58 +1302,43 @@ pub(crate) fn mj_model_modal_overlay(
     };
     let header = div()
         .flex_shrink_0()
-        .h(px(40.))
+        .h(px(44.))
         .pl(px(15.))
         .pr(px(8.))
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(px(10.))
         .bg(rgb(t.chrome))
         .border_b_1()
         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x73)))
-        .child(section_title(&tr("settings.tab.models")))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .font_family(crate::editor::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::ui_size(10.))
-                .text_color(rgb(t.text_dim))
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(SharedString::from(name.clone())),
-        )
-        .child(config_button(
+        .child(div().flex_1())
+        .child(super::models::detail_button(
             "mj-test",
             &weak,
             &tr("models.test"),
-            Btn::Secondary,
-            true,
+            crate::ui::button::BtnVariant::Secondary,
             testing,
             {
                 let n = name.clone();
                 move |c, cx| c.mj_test_start(n.clone(), ix, cx)
             },
         ))
-        .child(config_button(
+        .child(super::models::detail_button(
             "mj-mapply",
             &weak,
             &tr("action.save"),
-            Btn::Primary,
-            true,
+            crate::ui::button::BtnVariant::Primary,
             false,
             {
                 let n = name.clone();
                 move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
             },
         ))
-        .child(config_button(
+        .child(super::models::detail_button(
             "mj-mdel",
             &weak,
             &tr("action.remove"),
-            Btn::Danger,
-            true,
+            crate::ui::button::BtnVariant::Danger,
             false,
             {
                 let n = name.clone();
@@ -1874,8 +1347,8 @@ pub(crate) fn mj_model_modal_overlay(
         ))
         .child(crate::ui::overlay::close_btn("mj-model-close", t, dismiss.clone()));
 
-    // 滚动体：原详情页表单整体下移（头行已上提到弹窗固定区）
-    let mut detail = detail_shell("mc-detail")
+    // 滚动体：状态行（表单错误 / 测试结果 / 自动填参结果）+ 三个设置行
+    let detail = detail_shell("mc-detail")
         .p(px(15.))
         .children(error.as_ref().map(|e| error_note(e)))
         .children(test_note.as_ref().map(|(text, ok)| {
@@ -1885,53 +1358,47 @@ pub(crate) fn mj_model_modal_overlay(
                 error_note(text)
             }
         }))
+        .children(match &chat.cfg.mj_models_dev_state {
+            MjCatalogState::Running => vec![note(&tr("models.catalog_filling"))],
+            MjCatalogState::Done { applied, note: price_note } => {
+                let mut msg = crate::i18n::tf(
+                    "models.catalog_filled",
+                    &[("count", applied.to_string())],
+                );
+                if !price_note.is_empty() {
+                    msg.push_str(&format!(" · {price_note}"));
+                }
+                vec![note(&msg)]
+            }
+            MjCatalogState::Err(e) => vec![error_note(e)],
+            MjCatalogState::Idle => Vec::new(),
+        })
+        // 模型ID（左）+ 自动填参（右）
         .child(
             div()
                 .flex()
+                .items_center()
                 .gap(px(10.))
-                // 500px 弹窗内两列各占一半（原 w300 双列放不下）
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .child(field(&tr("custom_models.field_id"), d.mj_id.clone())),
                 )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(field(&tr("field.name"), d.mj_mname.clone())),
-                ),
-        )
-        // -- 填入模型信息（models.dev）--
-        .child(mj_catalog_fill_section(chat, &weak, &name, ix, &d, t))
-        // -- 能力 --
-        .child(section_title(&tr("models.capabilities")))
-        .child(
-            div()
-                .flex()
-                .gap(px(20.))
-                .child(mj_capability_row(&weak, "mj-reasoning", &tr("models.cap_reasoning"), d.mj_reasoning, 3))
-                .child(mj_capability_row(&weak, "mj-image", &tr("models.cap_image"), d.mj_image, 2)),
-        )
-        // -- 模型规格 --
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(section_title(&tr("models.specs")))
-                .child(div().flex_1())
-                .child(mj_text_button(
+                .child(config_button(
+                    "mj-autofill",
                     &weak,
-                    "mj-cost-edit",
-                    &if d.mj_cost_edit {
-                        tr("models.finish_costs").to_string()
-                    } else {
-                        tr("models.edit_costs").to_string()
+                    &tr("models.autofill"),
+                    Btn::Secondary,
+                    true,
+                    matches!(chat.cfg.mj_models_dev_state, MjCatalogState::Running),
+                    {
+                        let n = name.clone();
+                        move |c, cx| c.mj_catalog_fill(n.clone(), ix, cx)
                     },
-                    |c, cx| c.mj_toggle_cost_edit(cx),
                 )),
         )
+        // 上下文窗口 / 最大输出
         .child(
             div()
                 .flex()
@@ -1949,108 +1416,40 @@ pub(crate) fn mj_model_modal_overlay(
                         .child(field(&tr("models.max_output"), d.mj_max_tokens.clone())),
                 ),
         )
-        .child(mj_cost_section(&model, &d, t));
-
-    // -- 高级设置（折叠）--
-    let weak_adv = weak.clone();
-    detail = detail
+        // 能力：文本恒选不可改；图片/视频勾选落 model.input
         .child(
             div()
-                .mt(px(12.))
-                .pt(px(8.))
-                .border_t_1()
-                .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
+                .flex()
+                .flex_col()
+                .gap(px(5.))
+                .child(section_title(&tr("models.capabilities")))
                 .child(
                     div()
-                        .id("mj-adv-toggle")
                         .flex()
                         .items_center()
-                        .gap(px(6.))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                            let _ = weak_adv.update(cx, |c, cx| c.mj_toggle_adv(cx));
-                        })
-                        .child(
-                            div()
-                                .text_size(crate::appearance::ui_size(12.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(t.text))
-                                .child(tr("models.advanced")),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .text_color(rgb(t.text_dim))
-                                .child(SharedString::from(adv_summary)),
-                        )
-                        .child(crate::ui::icon(
-                            if d.mj_adv_open { "chevron-up" } else { "chevron-down" },
-                            14.,
-                            t.text_muted,
+                        .gap(px(16.))
+                        .child(mj_cap_checkbox(
+                            &tr("models.cap_text"),
+                            true,
+                            &weak,
+                            None,
+                        ))
+                        .child(mj_cap_checkbox(
+                            &tr("models.cap_image"),
+                            d.mj_image,
+                            &weak,
+                            Some(|c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_image(cx)),
+                        ))
+                        .child(mj_cap_checkbox(
+                            &tr("models.cap_video"),
+                            d.mj_video,
+                            &weak,
+                            Some(|c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_video(cx)),
                         )),
                 ),
         );
-    if d.mj_adv_open {
-        detail = detail
-            .child(field(
-                &tr("models.api_override"),
-                mj_api_override_dropdown(&weak, &d),
-            ))
-            .child(field(
-                &tr("models.headers"),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .children(render_header_rows(&weak, &d, t))
-                    .child({
-                        let weak_add_hdr = weak.clone();
-                        div()
-                            .id("mj-add-header-m")
-                            .mt(px(2.))
-                            .flex()
-                            .items_center()
-                            .gap(px(5.))
-                            .text_size(crate::appearance::ui_size(11.))
-                            .cursor_pointer()
-                            .text_color(rgb(t.text_muted))
-                            .hover(|s| {
-                                s.text_color(rgb(crate::appearance::theme::theme().accent))
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_add_hdr.update(cx, |c, cx| c.mj_add_header_row(cx));
-                            })
-                            .child(format!("+ {}", tr("models.headers_add")))
-                    }),
-            ))
-            .child(note(&tr("models.headers_hint_model")));
-        if d.mj_reasoning {
-            detail = detail
-                .child(section_title(&tr("models.compatibility")))
-                .child(mj_capability_row(
-                    &weak,
-                    "mj-deepseek",
-                    &tr("models.deepseek_compat"),
-                    d.mj_deepseek,
-                    0,
-                ))
-                .child(mj_capability_row(
-                    &weak,
-                    "mj-devrole",
-                    &tr("models.devrole"),
-                    d.mj_devrole,
-                    1,
-                ))
-                .child(mj_tlm_editor(&weak, &d, &provider_compat, t));
-        }
-    }
     // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×500
-    // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；头行固定，表单区滚动
+    // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；控制栏固定，表单区滚动
     let overlay = crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
         .flex()
         .items_center()
@@ -2074,504 +1473,59 @@ pub(crate) fn mj_model_modal_overlay(
     Some(overlay.into_any_element())
 }
 
-/// 能力/兼容开关行（label + switch；pi-web Check 对齐）。
-fn mj_capability_row(
-    weak: &gpui::WeakEntity<Chat>,
-    id: &'static str,
+/// 能力勾选项（checkbox §5.4：14、r3、勾 10 = accent_contrast；视觉同
+/// pi_extension_picker 的既核勾选框）。`toggle` 传 None = 恒选不可改
+///（文本：模型输入天然含 text）。
+fn mj_cap_checkbox(
     label: &str,
-    on: bool,
-    flag: u8,
+    checked: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    toggle: Option<fn(&mut Chat, &mut gpui::Context<Chat>)>,
 ) -> gpui::AnyElement {
-    div()
+    let t = T();
+    let mut el = div()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(px(6.))
+        .child(
+            div()
+                .size(px(crate::ui::tokens::checkbox::SIZE))
+                .flex_shrink_0()
+                .rounded(px(3.))
+                .border_1()
+                .border_color(rgb(if checked { t.accent } else { t.border }))
+                .bg(rgb(if checked { t.accent } else { t.bg_panel }))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(checked, |dd| {
+                    dd.child(crate::ui::icon(
+                        "check",
+                        crate::ui::tokens::checkbox::CHECK,
+                        t.accent_contrast,
+                    ))
+                }),
+        )
         .child(
             div()
                 .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(T().text_muted))
+                .text_color(rgb(if toggle.is_none() {
+                    t.text_dim
+                } else {
+                    t.text
+                }))
                 .child(SharedString::from(label.to_string())),
-        )
-        .child(config_switch(id, weak, on, false, move |c, cx| {
-            c.mj_toggle_flag(flag, cx)
-        }))
-        .into_any_element()
-}
-
-/// 小号文字按钮（编辑价格 / 目录来源这类行内链接钮）。
-fn mj_text_button(
-    weak: &gpui::WeakEntity<Chat>,
-    id: &'static str,
-    label: &str,
-    on_click: fn(&mut Chat, &mut gpui::Context<Chat>),
-) -> gpui::AnyElement {
-    let weak = weak.clone();
-    div()
-        .id(SharedString::from(id))
-        .px(px(4.))
-        .py(px(2.))
-        .text_size(crate::appearance::ui_size(10.))
-        .cursor_pointer()
-        .text_color(rgb(T().accent))
-        .hover(|s| s.opacity(0.8))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let _ = weak.update(cx, |c, cx| on_click(c, cx));
-        })
-        .child(SharedString::from(label.to_string()))
-        .into_any_element()
-}
-
-/// 填入模型信息区（按钮 + 来源 + 结果行）。
-fn mj_catalog_fill_section(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    name: &str,
-    ix: usize,
-    _d: &super::SettingsFormData,
-    t: &crate::appearance::theme::Theme,
-) -> gpui::AnyElement {
-    let running = matches!(
-        chat.cfg.mj_models_dev_state,
-        MjCatalogState::Running
-    );
-    let status: Option<(String, bool)> = match &chat.cfg.mj_models_dev_state {
-        MjCatalogState::Running => Some((tr("models.catalog_filling").to_string(), true)),
-        MjCatalogState::Done { applied, note } => {
-            let mut msg = if *applied > 0 {
-                crate::i18n::tf("models.catalog_filled", &[("count", applied.to_string())])
-            } else {
-                tr("models.catalog_no_empty").to_string()
-            };
-            if !note.is_empty() {
-                msg.push_str(&format!(" · {note}"));
-            }
-            Some((msg, true))
-        }
-        MjCatalogState::Err(e) => Some((e.clone(), false)),
-        MjCatalogState::Idle => None,
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .pt(px(4.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(config_button(
-                    "mj-catalog-fill",
-                    weak,
-                    &if running {
-                        tr("models.catalog_filling")
-                    } else {
-                        tr("models.catalog_fill")
-                    },
-                    Btn::Secondary,
-                    true,
-                    running,
-                    {
-                        let n = name.to_string();
-                        move |c, cx| c.mj_catalog_fill(n.clone(), ix, cx)
-                    },
-                ))
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .text_size(crate::appearance::ui_size(10.))
-                        .text_color(rgb(t.text_dim))
-                        .child(tr("models.catalog_source")),
-                ),
-        )
-        .children(status.as_ref().map(|(text, ok)| {
-            if *ok {
-                note(text)
-            } else {
-                error_note(text)
-            }
-        }))
-        .into_any_element()
-}
-
-/// 每百万价格区（展示态 = 4 字段；编辑态 = 4 输入 + 全填提示）。
-fn mj_cost_section(
-    model: &serde_json::Value,
-    d: &super::SettingsFormData,
-    t: &crate::appearance::theme::Theme,
-) -> gpui::AnyElement {
-    let cost = model.get("cost").cloned().unwrap_or(serde_json::json!({}));
-    let labels = [
-        ("models.cost_input", "input"),
-        ("models.cost_output", "output"),
-        ("models.cost_cache_read", "cacheRead"),
-        ("models.cost_cache_write", "cacheWrite"),
-    ];
-    if d.mj_cost_edit {
-        let inputs = [
-            d.mj_cost_in.clone(),
-            d.mj_cost_out.clone(),
-            d.mj_cost_cr.clone(),
-            d.mj_cost_cw.clone(),
-        ];
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(10.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("models.cost_per_m")),
-            )
-            .child(div().flex().gap(px(8.)).children(
-                labels.iter().zip(inputs.iter()).map(|((label, _), input)| {
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(field(&tr(label), input.clone()))
-                        .into_any_element()
-                }),
-            ))
-            .into_any_element()
-    } else {
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(10.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("models.cost_per_m")),
-            )
-            .child(div().flex().gap(px(16.)).children(labels.iter().map(
-                |(label, key)| {
-                    let v = cost.get(*key).and_then(|x| x.as_f64());
-                    let shown = match v {
-                        None => tr("models.not_provided").to_string(),
-                        Some(n) => format!("${n}"),
-                    };
-                    div()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .text_color(rgb(t.text_dim))
-                                .child(tr(label)),
-                        )
-                        .child(
-                            div()
-                                .font_family(crate::editor::markdown::MONO_FAMILY)
-                                .text_size(crate::appearance::ui_size(12.))
-                                .text_color(rgb(if v.is_none() { t.text_dim } else { t.text }))
-                                .child(SharedString::from(shown)),
-                        )
-                        .into_any_element()
-                },
-            )))
-            .into_any_element()
-    }
-}
-
-/// API 下拉选项（pi-web API_OPTIONS；`None` 档位 = 沿用 Provider，仅
-/// 模型 API 覆盖下拉出现）。
-const MJ_API_OPTIONS: [(u8, &str); 4] = [
-    (0, "openai-completions"),
-    (1, "openai-responses"),
-    (2, "anthropic-messages"),
-    (3, "google-generative-ai"),
-];
-
-/// 下拉触发器（agents 页 sel_trigger 同款形态）；`w` 接 px 或 relative
-///（半宽列用 relative），`dim` = 默认态暗色文字（pi-web Select 空 value
-/// 用 --text-dim）。
-fn mj_sel_trigger(value: &str, open: bool, w: impl Into<gpui::Length>, dim: bool) -> gpui::AnyElement {
-    let t = T();
-    div()
-        .w(w.into())
-        .h(px(30.))
-        .flex_shrink_0()
-        .px(px(10.))
-        .rounded(px(6.))
-        .border_1()
-        .border_color(rgb(t.border))
-        .bg(rgb(t.bg_panel))
-        .flex()
-        .items_center()
-        .font_family(crate::editor::markdown::MONO_FAMILY)
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(rgb(if dim { t.text_dim } else { t.text }))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(SharedString::from(value.to_string())),
-        )
-        .child(crate::ui::icon(
-            if open { "chevron-up" } else { "chevron-down" },
-            12.,
-            t.text_dim,
-        ))
-        .into_any_element()
-}
-
-/// 下拉菜单项（点选即落面板状态并收起）。
-fn mj_dd_item(
-    weak: gpui::WeakEntity<Chat>,
-    label: String,
-    selected: bool,
-    pick: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + Copy + 'static,
-) -> gpui::AnyElement {
-    let t = T();
-    div()
-        .id(SharedString::from(format!("mj-ddit-{label}")))
-        .h(px(30.))
-        .px(px(10.))
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .font_family(crate::editor::markdown::MONO_FAMILY)
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(rgb(if selected { t.accent } else { t.text }))
-        .bg(rgb(if selected { t.bg_selected } else { t.bg }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(t.bg_hover)))
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            cx.stop_propagation();
-            let _ = weak.update(cx, pick);
-        })
-        .child(SharedString::from(label))
-        .into_any_element()
-}
-
-/// 模型 API 覆盖下拉（pi-web ModelDetail 高级区 `<Select>` 对齐：非 required
-/// 时首项 = `— 默认 / none —`，未选默认态触发器文字暗色）。
-fn mj_api_override_dropdown(
-    weak: &gpui::WeakEntity<Chat>,
-    d: &super::SettingsFormData,
-) -> gpui::AnyElement {
-    let t = T();
-    let open = d.mj_api_popup == Some(1);
-    let inherit = d.mj_api_override >= 4;
-    let label = if inherit {
-        tr("models.api_default_item").to_string()
-    } else {
-        MJ_API_OPTIONS
-            .iter()
-            .find(|(ix, _)| *ix == d.mj_api_override)
-            .map(|(_, name)| (*name).to_string())
-            .unwrap_or_default()
-    };
-    let weak_toggle = weak.clone();
-    let weak_dismiss = weak.clone();
-    crate::ui::dropdown(
-        "mj-apio-dd",
-        &d.mj_api_dd,
-        open,
-        move |_, cx| {
-            let _ = weak_toggle.update(cx, |c, cx| {
-                if let Some(st) = c.dlg.settings.clone() {
-                    st.update(cx, |s, cx| {
-                        s.mj_api_popup = if s.mj_api_popup == Some(1) { None } else { Some(1) };
-                        cx.notify();
-                    });
+        );
+    if let Some(toggle) = toggle {
+        el = el
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.85))
+            .on_mouse_down(MouseButton::Left, {
+                let weak = weak.clone();
+                move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| toggle(c, cx));
                 }
             });
-        },
-        move |_, cx| {
-            let _ = weak_dismiss.update(cx, |c, cx| {
-                if let Some(st) = c.dlg.settings.clone() {
-                    st.update(cx, |s, cx| {
-                        if s.mj_api_popup.take().is_some() {
-                            cx.notify();
-                        }
-                    });
-                }
-            });
-        },
-        mj_sel_trigger(&label, open, px(300.), inherit),
-        move || {
-            let mut menu = div()
-                .w(px(300.))
-                .py(px(3.))
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(t.border))
-                .rounded(px(8.))
-                .shadow_lg()
-                .overflow_hidden();
-            menu = menu.child(mj_dd_item(
-                weak.clone(),
-                tr("models.api_default_item").to_string(),
-                d.mj_api_override >= 4,
-                |c, cx| c.mj_set_api_override(4, cx),
-            ));
-            for (ix, name) in MJ_API_OPTIONS {
-                menu = menu.child(mj_dd_item(
-                    weak.clone(),
-                    name.to_string(),
-                    ix == d.mj_api_override,
-                    move |c, cx| c.mj_set_api_override(ix, cx),
-                ));
-            }
-            menu.into_any_element()
-        },
-    )
-}
-
-/// 思考等级映射编辑器（7 档 × Default/Disabled/Custom+输入）。
-fn mj_tlm_editor(
-    weak: &gpui::WeakEntity<Chat>,
-    d: &super::SettingsFormData,
-    _provider_compat: &serde_json::Value,
-    t: &crate::appearance::theme::Theme,
-) -> gpui::AnyElement {
-    let any_set = d.mj_tlm.iter().any(|r| r.mode != MjTlmMode::Omit);
-    let mut col = div().flex().flex_col().gap(px(2.));
-    if any_set {
-        col = col.child(
-            div()
-                .flex()
-                .justify_end()
-                .child(mj_text_button(weak, "mj-tlm-clear", &tr("models.tlm_clear").to_string(), |c, cx| {
-                    c.mj_tlm_clear_all(cx)
-                })),
-        );
     }
-    for (i, level) in TLM_LEVELS.iter().enumerate() {
-        let row = &d.mj_tlm[i];
-        let color = tlm_level_color(level);
-        let weak_row = weak.clone();
-        let weak_row2 = weak.clone();
-        let weak_row3 = weak.clone();
-        let mode = row.mode;
-        col = col.child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .w(px(72.))
-                        .flex()
-                        .items_center()
-                        .gap(px(5.))
-                        .flex_shrink_0()
-                        .child(
-                            div()
-                                .size(px(6.))
-                                .rounded_full()
-                                .bg(rgb(color))
-                                .when(mode == MjTlmMode::Null, |dd| dd.opacity(0.3)),
-                        )
-                        .child(
-                            div()
-                                .font_family(crate::editor::markdown::MONO_FAMILY)
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(if mode == MjTlmMode::Null {
-                                    t.text_dim
-                                } else {
-                                    t.text_muted
-                                }))
-                                .child(SharedString::from((*level).to_string())),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(rgb(t.border))
-                        .overflow_hidden()
-                        .child({
-                            let w = weak_row.clone();
-                            div()
-                                .id(SharedString::from(format!("mj-tlm-{i}-def")))
-                                .h(px(22.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .bg(rgb(if mode == MjTlmMode::Omit { t.accent } else { t.bg_panel }))
-                                .text_color(rgb(if mode == MjTlmMode::Omit { t.bg } else { t.text_muted }))
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.85))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = w.update(cx, |c, cx| c.mj_tlm_set(i, MjTlmMode::Omit, cx));
-                                })
-                                .child(tr("models.tlm_default"))
-                        })
-                        .child({
-                            let w = weak_row2.clone();
-                            div()
-                                .id(SharedString::from(format!("mj-tlm-{i}-null")))
-                                .h(px(22.))
-                                .px(px(8.))
-                                .border_l_1()
-                                .border_color(rgb(t.border))
-                                .flex()
-                                .items_center()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .bg(rgb(if mode == MjTlmMode::Null { 0xef4444 } else { t.bg_panel }))
-                                .text_color(rgb(if mode == MjTlmMode::Null { 0xffffff } else { t.text_muted }))
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.85))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = w.update(cx, |c, cx| c.mj_tlm_set(i, MjTlmMode::Null, cx));
-                                })
-                                .child(tr("models.tlm_disabled"))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(rgb(if mode == MjTlmMode::Custom { t.accent } else { t.border }))
-                        .overflow_hidden()
-                        .child({
-                            let w = weak_row3.clone();
-                            div()
-                                .id(SharedString::from(format!("mj-tlm-{i}-custom")))
-                                .h(px(22.))
-                                .px(px(8.))
-                                .flex()
-                                .items_center()
-                                .text_size(crate::appearance::ui_size(10.))
-                                .bg(rgb(if mode == MjTlmMode::Custom { t.accent } else { t.bg_panel }))
-                                .text_color(rgb(if mode == MjTlmMode::Custom { t.bg } else { t.text_muted }))
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.85))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = w.update(cx, |c, cx| c.mj_tlm_set(i, MjTlmMode::Custom, cx));
-                                })
-                                .child(tr("models.tlm_custom"))
-                        })
-                        .when(mode == MjTlmMode::Custom, |dd| {
-                            dd.child(row.value.clone())
-                        }),
-                ),
-        );
-    }
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(section_title(&tr("models.tlm")))
-                .child(div().flex_1()),
-        )
-        .child(col)
-        .into_any_element()
+    el.into_any_element()
 }
-
-
