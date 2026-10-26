@@ -1416,8 +1416,16 @@ impl Chat {
             match res {
                 Ok(()) => {
                     for a in actions {
-                        if let PluginAction::Toast(m) = a {
-                            self.set_status(m, cx);
+                        match a {
+                            PluginAction::Toast(m) => self.set_status(m, cx),
+                            // 意图调用可达（newDraft 无窗口依赖）；窗口类动作
+                            // 丢弃（broadcast 纯数据回调口径，与 JS 分支一致）
+                            PluginAction::NewDraft { prefix, cwd } => {
+                                if let Err(e) = self.plugin_new_draft(ix, &prefix, &cwd, cx) {
+                                    self.set_status(format!("newDraft 失败：{e}"), cx);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     self.plugin_wasm_render(ix, cx);
@@ -1479,7 +1487,7 @@ impl Chat {
     /// wasm `PluginAction` → 宿主实现（与 JS 动作同款落点，复用实现不复制逻辑）。
     fn plugin_wasm_dispatch(
         &mut self,
-        _ix: usize,
+        ix: usize,
         actions: Vec<PluginAction>,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
@@ -1488,6 +1496,13 @@ impl Chat {
             match a {
                 PluginAction::Toast(m) => self.set_status(m, cx),
                 PluginAction::OpenFile(p) => self.open_file_tab(PathBuf::from(&p), cx),
+                // 意图调用（契约 v2.4 sessions）：与 JS 分支同款落点——建线
+                // 后经 broadcast "claim" 回推，失败经状态栏透传
+                PluginAction::NewDraft { prefix, cwd } => {
+                    if let Err(e) = self.plugin_new_draft(ix, &prefix, &cwd, cx) {
+                        self.set_status(format!("newDraft 失败：{e}"), cx);
+                    }
+                }
                 PluginAction::RunScript(p) => {
                     let path = PathBuf::from(&p);
                     match crate::services::script_exec::resolve(&path, self.ws.cwd.as_deref()) {

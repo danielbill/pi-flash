@@ -4,10 +4,13 @@ package pf:plugin;
 
 interface types {
     // 宿主→插件事件：契约里每种 `contributes.*` 回调都走这一条通道，
-    // 以后加贡献项不用再改 WIT（JS 的 onMenu / onCommand / onPanelOpen 同源）。
-    //   kind = "panel-open" | "menu" | "command" | "action"
-    //   id   = contributes 里的 id（file_menu.id / panels.id / 组件动作 id）
-    //   path = 目标路径（file_menu/command/action 带；其余为空）
+    // 以后加贡献项不用再改 WIT（JS 的 onMenu / onCommand / onPanelOpen /
+    // onBroadcast 同源）。
+    //   kind = "panel-open" | "menu" | "command" | "action" | "broadcast"
+    //   id   = contributes 里的 id（file_menu.id / panels.id / 组件动作 id）；
+    //          broadcast = 事件名（broadcast_events：inputpanel / claim）
+    //   path = 目标路径（file_menu/command/action 带；broadcast = 负载 JSON 串；
+    //          其余为空）
     record plugin-event {
         kind: string,
         id: string,
@@ -38,6 +41,11 @@ interface host {
         nonce-tag: string,
     }
     get-host-proof: func(nonce: string) -> host-proof;
+
+    // 意图调用：新建插件认领会话（契约 v2.4 ctx.newDraft 同一面）。同步无
+    // 返回值（动作队列模型），宿主建线后经 on-event broadcast "claim" 回推
+    // {key,name,cwd}（插件存指针）；失败经宿主状态栏提示透传。
+    new-draft: func(prefix: string, cwd: string);
 }
 
 world plugin {

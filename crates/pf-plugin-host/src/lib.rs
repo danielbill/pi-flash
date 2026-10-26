@@ -85,6 +85,11 @@ impl pf::plugin::host::Host for HostState {
             nonce_tag,
         }
     }
+    fn new_draft(&mut self, prefix: String, cwd: String) {
+        // 意图调用（契约 v2.4 ctx.newDraft 同面）：只入队，建线在调用方消费
+        // PluginAction::NewDraft 时进行；结果经 broadcast "claim" 回推。
+        let _ = self.tx.send(PluginAction::NewDraft { prefix, cwd });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +97,9 @@ pub enum PluginAction {
     Toast(String),
     OpenFile(String),
     RunScript(String),
+    /// 意图调用：新建插件认领会话（契约 v2.4 sessions；JS 侧 JsAction::NewDraft
+    /// 同语义）。宿主建线后经 broadcast "claim" 事件回推 key。
+    NewDraft { prefix: String, cwd: String },
 }
 
 // ---------------------------------------------------------------------------
