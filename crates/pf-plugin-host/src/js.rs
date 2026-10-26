@@ -241,6 +241,10 @@ globalThis.__pf_ctx = {{
   newDraft: (p, c) => {{
     globalThis.__pf_new_draft(p == null ? "" : String(p), c == null ? "" : String(c));
   }},
+  // 契约 v2.4 会话槽 RPC 面：ctx.sessions.newDraft（扁平 newDraft 为旧兼容别名）
+  sessions: {{
+    newDraft: (p, c) => globalThis.__pf_new_draft(p == null ? "" : String(p), c == null ? "" : String(c)),
+  }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
   onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
@@ -518,6 +522,48 @@ export function render(ctx) {
 
         // 未注册的事件名 → no-op 不报错
         plugin.fire_broadcast("other", r#"{}"#).expect("noop");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sessions_newdraft_contract_namespace() {
+        // 契约 v2.4 会话槽：ctx.sessions.newDraft（嵌套面）。扁平 ctx.newDraft
+        // 仅旧兼容——插件按契约写法必须可达。
+        let dir = std::env::temp_dir().join("pf-js-sessions-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(
+            &entry,
+            r#"
+let got = null;
+export function activate(ctx) {
+  ctx.sessions.newDraft("pf-wxbot-", "D:/proj/demo");
+  got = typeof ctx.sessions.newDraft;
+}
+export function render(ctx) { return { type: "text", value: got }; }
+"#,
+        )
+        .unwrap();
+        let host = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host.clone()).expect("load");
+        plugin.activate().expect("activate");
+        let drafts: Vec<_> = host
+            .borrow()
+            .actions
+            .iter()
+            .filter_map(|a| match a {
+                JsAction::NewDraft { prefix, cwd } => Some((prefix.clone(), cwd.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            drafts,
+            vec![("pf-wxbot-".into(), "D:/proj/demo".into())],
+            "ctx.sessions.newDraft 必须到达动作队列"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
