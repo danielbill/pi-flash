@@ -158,8 +158,22 @@ impl Chat {
                 s.mj_base
                     .update(cx, |ti, cx| ti.set_value(get_str(&entry, "baseUrl"), cx));
                 s.mj_key_visible = false;
+                // key 回填对齐内置商（mc_select_provider）：$PF_KEY_* 引用经
+                // 凭据库解出明文预填（掩码态眼睛复核）；解不出（库缺条目/
+                // 库错）回退引用原文；降级明文与用户高级引用（$VAR/!cmd）原样
+                let key_raw = get_str(&entry, "apiKey");
+                let key_display = match pi_link::credentials::classify(&key_raw) {
+                    pi_link::credentials::StoreMode::Vault => {
+                        pi_link::credentials::pf_ref(&key_raw)
+                            .and_then(|v| {
+                                pi_link::credentials::KeyringVault.get(v).ok().flatten()
+                            })
+                            .unwrap_or(key_raw)
+                    }
+                    _ => key_raw,
+                };
                 s.mj_key.update(cx, |ti, cx| {
-                    ti.set_value(get_str(&entry, "apiKey"), cx);
+                    ti.set_value(key_display, cx);
                     ti.set_masked(true, cx);
                 });
                 s.mj_id
