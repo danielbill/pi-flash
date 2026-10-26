@@ -464,7 +464,7 @@ mod tests {
         let m = &crate::models_json::provider_entry(&doc, "my-ds")
             .unwrap()["models"][0];
         assert_eq!(m["input"], json!(["text"]));
-        assert_eq!(m["reasoning"], json!(false));
+        assert_eq!(m["reasoning"], json!(true));
         assert_eq!(m["cost"]["output"], json!(0));
         assert_eq!(m["name"], "F", "原有字段保留");
         assert_eq!(migrate_model_defaults_at(&p), 0, "幂等");

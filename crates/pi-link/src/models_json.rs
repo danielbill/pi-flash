@@ -53,14 +53,16 @@ pub fn provider_models<'a>(entry: &'a Value) -> Vec<&'a Value> {
 /// 自定义模型条目补 pi 运行时必需的缺省形状。实测 042-1（扩展注册模型不
 /// 走 models.dev 缺省合并）：缺 input → 聊天报 `reading 'includes'`、
 /// 缺 reasoning → `reading 'tiers'`、缺 cost 同崩——表现即「会话无反应」。
-/// 幂等：已有值（手调过的 input/reasoning/cost）一律保留。
+/// reasoning 缺省 true：pi 的 getSupportedThinkingLevels 对 falsy 只给
+/// ["off"] 且菜单锁死（「推理强度强行 off」根因）；不可推理的模型走模型
+/// 编辑器勾选关闭。已有值一律保留，幂等。
 pub fn ensure_model_defaults(model: &mut Value) {
     let Some(map) = model.as_object_mut() else {
         return;
     };
     map.entry("input")
         .or_insert_with(|| serde_json::json!(["text"]));
-    map.entry("reasoning").or_insert(serde_json::json!(false));
+    map.entry("reasoning").or_insert(serde_json::json!(true));
     map.entry("cost").or_insert_with(|| {
         serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0})
     });
@@ -183,7 +185,7 @@ mod tests {
         let mut m = json!({"id": "x"});
         ensure_model_defaults(&mut m);
         assert_eq!(m["input"], json!(["text"]));
-        assert_eq!(m["reasoning"], json!(false));
+        assert_eq!(m["reasoning"], json!(true), "缺省可推理：否则档位菜单锁死 off");
         assert_eq!(m["cost"]["input"], json!(0));
         // 已有值保留
         let mut m = json!({"id": "x", "input": ["text", "image"], "reasoning": true,
