@@ -645,13 +645,23 @@ impl Chat {
             Ok(k) => k,
             Err(e) => return self.mc_set_error(&e, cx),
         };
+        // base 指向 Anthropic 兼容端点：目录优先 GET /v1/models，messages
+        // POST 只作连通兜底（DeepSeek /anthropic 等；直打 messages 永远空目录）
+        let compat = pi_link::probe::anthropic_compat_urls(&base);
         self.cfg.mj_speed = Some(MjSpeedState::Running);
         cx.notify();
         cx.spawn(async move |this, cx| {
             let provider_bg = provider;
             let outcome = cx
                 .background_executor()
-                .spawn(async move { pi_link::probe::probe(&url, auth, &key) })
+                .spawn(async move {
+                    match compat {
+                        Some((models, messages)) => {
+                            pi_link::probe::probe_anthropic_compat(&models, &messages, &key)
+                        }
+                        None => pi_link::probe::probe(&url, auth, &key),
+                    }
+                })
                 .await;
             let _ = this.update(cx, |c, cx| {
                 match outcome {
@@ -741,11 +751,20 @@ impl Chat {
             Ok(k) => k,
             Err(e) => return self.mc_set_error(&e, cx),
         };
+        // 与测速同款：Anthropic 兼容端点目录优先，messages POST 兜底
+        let compat = pi_link::probe::anthropic_compat_urls(&base);
         cx.notify();
         cx.spawn(async move |this, cx| {
             let outcome = cx
                 .background_executor()
-                .spawn(async move { pi_link::probe::probe(&url, auth, &key) })
+                .spawn(async move {
+                    match compat {
+                        Some((models, messages)) => {
+                            pi_link::probe::probe_anthropic_compat(&models, &messages, &key)
+                        }
+                        None => pi_link::probe::probe(&url, auth, &key),
+                    }
+                })
                 .await;
             let _ = this.update(cx, |c, cx| match outcome {
                 pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {

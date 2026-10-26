@@ -107,6 +107,8 @@ pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
 
 /// 自定义商的列模型 URL：models.json 的 `baseUrl` + `api` 走同一构造规则
 /// （对齐 pi-web buildModelsListUrl：按 api 补版本段，不重复补）。
+/// base 带 /anthropic 段时本函数返回的是 messages 连通目标；目录拉取应配
+/// [`anthropic_compat_urls`] + [`probe_anthropic_compat`]（目录优先）。
 pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
@@ -115,8 +117,17 @@ pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
     let (url, auth) = match api {
         "anthropic-messages" => (join_version(base, "v1"), Auth::Anthropic),
         "google-generative-ai" => (join_version(base, "v1beta"), Auth::Google),
-        // openai-completions / openai-responses 共用 /models 列表端点
-        _ => (format!("{base}/models"), Auth::Bearer),
+        // auto / 末明确：base 带 /anthropic 时按 Anthropic 兼容格式（对齐 cc-switch 端点）
+        _ => if api == "auto" || base.ends_with("/anthropic") || base.contains("/anthropic/") {
+            (format!("{base}/v1/messages"), Auth::Anthropic)
+        } else {
+            // openai 默认：base 已含 /v1 则直接接 /models，否则补 /v1（通用自定义商）
+            if base.ends_with("/v1") || base.contains("/v1/") {
+                (format!("{base}/models"), Auth::Bearer)
+            } else {
+                (format!("{base}/v1/models"), Auth::Bearer)
+            }
+        },
     };
     Some((url, auth))
 }
@@ -128,6 +139,30 @@ fn join_version(base: &str, version: &str) -> String {
     } else {
         format!("{base}/{version}/models")
     }
+}
+
+/// base 指向 Anthropic 兼容端点（custom_target `_` 分支的 base 判定同款：
+/// 带 `/anthropic` 段）→ 返回 (models_url, messages_url)，供
+/// [`probe_anthropic_compat`] 目录优先 + 连通兜底。
+pub fn anthropic_compat_urls(base_url: &str) -> Option<(String, String)> {
+    let base = base_url.trim().trim_end_matches('/');
+    let implies = base.ends_with("/anthropic") || base.contains("/anthropic/");
+    (!base.is_empty() && implies)
+        .then(|| (format!("{base}/v1/models"), format!("{base}/v1/messages")))
+}
+
+/// Anthropic 兼容端点探查：先 GET /v1/models（Anthropic 官方列模型端点，
+/// DeepSeek /anthropic 等网关多有实现——无 key 探测 401 而非 404）；
+/// 拉到目录即成功。401/403 直接判鉴权拒绝（key 坏，不必再打）；其余
+/// （404 / 空目录 / 网络）回退 POST /v1/messages 判连通——Messages-only
+/// 代理通 = 空目录，上层 PassedEmpty 提示手动 +模型。
+pub fn probe_anthropic_compat(models_url: &str, messages_url: &str, key: &str) -> ProbeOutcome {
+    let first = probe(models_url, Auth::Anthropic, key);
+    let got_catalog = matches!(&first, ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty());
+    if got_catalog || matches!(first, ProbeOutcome::AuthRejected { .. }) {
+        return first;
+    }
+    probe(messages_url, Auth::Anthropic, key)
 }
 
 /// 目录 provider 的探查 key：pf-auth.json 条目（凭据库引用 → 解出；降级
@@ -167,15 +202,24 @@ pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(20))
         .build();
-    let req = agent.get(url);
+    // DeepSeek Anthropic 兼容代理 /v1/messages 只接受 POST，测速用 POST 判连通
+    let is_msg = url.contains("/messages");
+    let req = if is_msg { agent.post(url) } else { agent.get(url) };
     let req = match auth {
         Auth::Bearer => req.set("Authorization", &format!("Bearer {key}")),
-        Auth::Anthropic => req
-            .set("x-api-key", key)
-            .set("anthropic-version", "2023-06-01"),
+        Auth::Anthropic => {
+            let mut r = req.set("x-api-key", key).set("anthropic-version", "2023-06-01");
+            if url.contains("/messages") { r = r.set("Content-Type", "application/json"); }
+            r
+        }
         Auth::Google => req.set("x-goog-api-key", key),
     };
-    let resp = match req.call() {
+    let resp_result: Result<ureq::Response, ureq::Error> = if is_msg {
+        req.send_string(r#"{"model":"deepseek-chat","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
+    } else {
+        req.call()
+    };
+    let resp = match resp_result {
         Ok(r) => r,
         Err(ureq::Error::Status(status, _)) => {
             return if status == 401 || status == 403 {
@@ -187,9 +231,7 @@ pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
             };
         }
         Err(e) => {
-            return ProbeOutcome::Unreachable {
-                error: e.to_string(),
-            };
+            return ProbeOutcome::Unreachable { error: e.to_string() };
         }
     };
     let latency_ms = started.elapsed().as_millis() as u64;
@@ -289,6 +331,21 @@ mod tests {
             Some(("https://gw.example.com/v1beta/models".into(), Auth::Google))
         );
         assert_eq!(custom_target("", "openai-completions"), None);
+    }
+
+    #[test]
+    fn anthropic_compat_urls_match_the_base_condition() {
+        let (models, messages) =
+            anthropic_compat_urls("https://api.deepseek.com/anthropic").unwrap();
+        assert_eq!(models, "https://api.deepseek.com/anthropic/v1/models");
+        assert_eq!(messages, "https://api.deepseek.com/anthropic/v1/messages");
+        // 尾斜杠归一 + 段中匹配（custom_target 同条件）
+        assert!(anthropic_compat_urls("https://x.com/anthropic/").is_some());
+        assert!(anthropic_compat_urls("https://x.com/api/anthropic/v2").is_some());
+        // 纯 openai 形 base 不适用
+        assert!(anthropic_compat_urls("https://api.deepseek.com").is_none());
+        assert!(anthropic_compat_urls("https://api.deepseek.com/v1").is_none());
+        assert_eq!(anthropic_compat_urls(""), None);
     }
 
     #[test]

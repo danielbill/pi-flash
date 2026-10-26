@@ -20,5 +20,7 @@ UI复用当前settings-模型页的Provider详情面板
 - 测试 和 +模型 仅在自定义Provider时显示
 - 自定义时，测试未通过前，保存和+模型 disable
 - 用户点击测速，能通则：1、自动保存自定义Provider 2、自动从base url拉取模型列表 
-- 自动拉取如果失败，提示用户：“无法自动获取该Provider模型列表，请点击[+模型]手动添加”
+- 自动拉取如果失败，提示用户：“无法自动获取该Provider模型列表，请点击[+模型]手动添加模型”
+- base 带 /anthropic 段（Anthropic 兼容端点，如 DeepSeek /anthropic）：目录优先 GET /v1/models（Anthropic 官方列模型端点，网关多有实现）；拉不到再回退 POST /v1/messages 判连通（通 = 空目录 → 手动 +模型兜底）
+
 
