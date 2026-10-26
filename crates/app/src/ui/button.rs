@@ -5,7 +5,7 @@
 //! （红字 + 35% 红描边，hover 12% 红洗底）。存量手搓按钮一律收敛到这里。
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    AnyElement, InteractiveElement, IntoElement, MouseButton, ParentElement,
     SharedString, Styled, div, px, rgb,
 };
 
@@ -54,11 +54,13 @@ pub fn button_base(
         .rounded(px(radius::CTRL))
         .text_size(crate::appearance::ui_size(ts));
     let el = match variant {
+        // Primary 只许颜色走 accent 系——几何/字重与 Secondary/Danger 严格
+        // 一致（SEMIBOLD 会触发 CJK 字体回退放大文本，同排按钮高矮不齐，
+        // 用户定稿：加粗禁绝）
         BtnVariant::Primary => el
             .border_1()
             .border_color(rgb(t.accent))
             .bg(rgb(t.accent))
-            .font_weight(FontWeight::SEMIBOLD)
             .text_color(rgb(t.accent_contrast)),
         BtnVariant::Secondary => el
             .border_1()

@@ -33,3 +33,17 @@ UI复用当前settings-模型页的Provider详情面板
 - 模型条目必带 pi 运行时形状 input/reasoning/cost：pi 对扩展注册模型不做 models.dev 缺省合并，缺字段聊天即崩（实测 reading 'includes' / reading 'tiers'）。`models_json::ensure_model_defaults` 统一补齐（缺省 input=["text"]、reasoning=false、cost 全 0）；boot 迁移 `migrate_model_defaults` 兑存量
 
 
+## +模型/模型详情页说明 
+500x500 小弹窗， 点击[+模型]按钮 or 点击模型列表中模型名称后弹出
+该页面提供四个按钮：  自动填参、测试、保存、移除
+
+UI设计：
+1、控制栏右侧：  测试、保存、移除 三个按钮 + 关闭按钮， 按钮间隔10px
+2、内容区：
+- 模型ID：input  左对齐； [自动填参]右对齐   （来源models.dev隐藏，这是内部实现无需暴露）
+- 上下文窗口 ； 最大输出
+- 能力：文本[X]、图片[]、视频[]  ; 文本默认选中disable不得更改
+
+其他原有设计全部删除，完全是心智负担；
+
+  
