@@ -350,14 +350,17 @@ impl Chat {
     pub(crate) fn mj_delete_provider(&mut self, name: String, cx: &mut Context<Self>) {
         let mut doc = Self::mj_doc();
         pi_link::models_json::remove_provider(&mut doc, &name);
-        // 凭据条目一并清（042-1：PF 标记条目 + 钥匙库；用户手写的明文/oauth
-        // 不动——delete_secret 自带标记守卫）
-        let _ = pi_link::auth_json::delete_secret(&name);
+        // 凭据一并清：api_key 条目（不论谁写的——用户刚确认删除该商）+ 钥匙库
+        // 条目；oauth 归 pi 不动
+        let _ = pi_link::auth_json::delete_api_key(&name);
         self.cfg.mj_speed = None;
         self.mj_write(&doc, cx);
         // 内存目录同步摘掉（否则进程答案 / 启动 globals 里的模型会让列表项
         // 继续挂着）。列表成员资格 = models.json 里有没有条目，无隐藏清单。
         self.drop_provider_from_catalog(&name);
+        // 凭据快照（cfg.mc_creds）也要重读：侧栏成员资格含「有凭据」这一支，
+        // 不重读会让已删的商凭旧快照继续挂在列表上
+        self.reload_settings_panel();
         if let Some(st) = self.dlg.settings.clone() {
             let next = pi_link::models_json::providers(&doc)
                 .first()
