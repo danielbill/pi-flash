@@ -537,6 +537,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.detail_title", "模型详情", "模型詳情", "Model details"),
     ("models.test_running", "测试中…", "測試中…", "Testing…"),
     ("models.test_passed", "通过 · {ms}ms · HTTP {status} · {text}", "通過 · {ms}ms · HTTP {status} · {text}", "Connected · {ms}ms · HTTP {status} · {text}"),
+    ("models.test_passed_short", "通过 · {ms}ms · HTTP {status}", "通過 · {ms}ms · HTTP {status}", "Connected · {ms}ms · HTTP {status}"),
     ("models.capabilities", "能力", "能力", "Capabilities"),
     ("models.cap_text", "文本", "文本", "Text"),
     ("models.cap_image", "图片", "圖片", "Image"),

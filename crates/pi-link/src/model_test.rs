@@ -167,17 +167,13 @@ pub fn send(req: &TestRequest, key: &str, extra_headers: &[(String, String)]) ->
     let latency_ms = started.elapsed().as_millis() as u64;
     let text = resp.into_string().unwrap_or_default();
     let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    match extract_text(&parsed) {
-        Some(t) if !t.trim().is_empty() => TestOutcome::Ok {
-            latency_ms,
-            status,
-            text: t.chars().take(300).collect(),
-        },
-        _ => TestOutcome::Err {
-            message: "模型返回了空响应".into(),
-            status: Some(status),
-            latency_ms,
-        },
+    // 2xx = 通了。正文抽不出来（推理模型只给 reasoning、或 max_tokens 太小）
+    // 也照样算通过——用户口径：通了就是通了，别拿「空响应」当失败。
+    let body = extract_text(&parsed).unwrap_or_default();
+    TestOutcome::Ok {
+        latency_ms,
+        status,
+        text: body.chars().take(300).collect(),
     }
 }
 
@@ -189,6 +185,17 @@ fn extract_text(v: &Value) -> Option<String> {
         .and_then(|x| x.as_str())
     {
         return Some(t.to_string());
+    }
+    // 推理模型（DeepSeek R/V 系等）：content 可能为空，文本在 reasoning_content
+    for key in ["reasoning_content", "reasoning"] {
+        if let Some(t) = v
+            .pointer(&format!("/choices/0/message/{key}"))
+            .and_then(|x| x.as_str())
+        {
+            if !t.trim().is_empty() {
+                return Some(t.to_string());
+            }
+        }
     }
     // openai-responses: output_text（SDK 聚合字段）或 output[].content[].text
     if let Some(t) = v.get("output_text").and_then(|x| x.as_str()) {

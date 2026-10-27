@@ -247,6 +247,9 @@ mod tests {
             name: name.into(),
             provider: p.into(),
             context_window: None,
+            max_tokens: None,
+            reasoning: None,
+            input: None,
         };
         let ms = dedupe(vec![
             mk("a", "1", "first"),

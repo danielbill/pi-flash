@@ -118,9 +118,8 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         })
         .unwrap_or_default();
     input.dedup();
-    if input.is_empty() {
-        input.push("text".into());
-    }
+    // 注意：**不**给「目录没给模态」的情况兜 {"text"}——留空表示未知，
+    // 回填时保留模型原有能力（否则自动填参会把已勾的「图片」冲掉）
     let top = v.get("top_provider");
     let context_window = opt_pos_num(v.get("context_length"))
         .or(opt_pos_num(top.as_ref().and_then(|t| t.get("context_length"))));

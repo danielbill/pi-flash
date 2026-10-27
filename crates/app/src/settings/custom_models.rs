@@ -83,6 +83,9 @@ impl Chat {
         // 换选中项 = 换被测模型，旧测试结果作废；测速态按"已有商 = 已通过"
         // 种子（042-1：不强迫重测；新商无 baseUrl = 未测，保存/+模型禁用）
         self.cfg.mj_test = None;
+        // 提示栏只属于本次操作：换选中项即清（否则上次的「未能获取该模型参数」
+        // 会一直挂到下次填参）
+        self.cfg.mj_models_dev_state = MjCatalogState::Idle;
         self.cfg.mj_speed = if entry
             .get("baseUrl")
             .and_then(|v| v.as_str())
@@ -509,8 +512,25 @@ impl Chat {
 
     pub(crate) fn mj_delete_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         let mut doc = Self::mj_doc();
+        // 删之前先记住 id：内存目录按 provider+id 摘（和磁盘同一步）
+        let id = pi_link::models_json::provider_entry(&doc, &provider)
+            .and_then(|e| e.get("models"))
+            .and_then(|m| m.get(ix))
+            .and_then(|m| m.get("id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         pi_link::models_json::remove_model(&mut doc, &provider, ix);
         self.mj_write(&doc, cx);
+        // 内存目录同步摘掉该模型（否则 Provider 详情的可用模型列表还挂着它）
+        if let Some(id) = id {
+            self.pool
+                .globals
+                .models
+                .retain(|m| !(m.provider == provider && m.id == id));
+            for models in self.pool.models_by_cwd.values_mut() {
+                models.retain(|m| !(m.provider == provider && m.id == id));
+            }
+        }
         self.mj_select(format!("mj:p:{provider}"), cx);
     }
 
@@ -1489,14 +1509,24 @@ pub(crate) fn mj_model_modal_overlay(
     let test_note: Option<(String, bool)> = match &test_state {
         Some(MjTestState::Running) => Some((tr("models.test_running").to_string(), false)),
         Some(MjTestState::Ok { latency_ms, status, text }) => Some((
-            crate::i18n::tf(
-                "models.test_passed",
-                &[
-                    ("ms", latency_ms.to_string()),
-                    ("status", status.to_string()),
-                    ("text", text.clone()),
-                ],
-            ),
+            if text.trim().is_empty() {
+                crate::i18n::tf(
+                    "models.test_passed_short",
+                    &[
+                        ("ms", latency_ms.to_string()),
+                        ("status", status.to_string()),
+                    ],
+                )
+            } else {
+                crate::i18n::tf(
+                    "models.test_passed",
+                    &[
+                        ("ms", latency_ms.to_string()),
+                        ("status", status.to_string()),
+                        ("text", text.clone()),
+                    ],
+                )
+            },
             true,
         )),
         Some(MjTestState::Err(e)) => Some((e.clone(), false)),
