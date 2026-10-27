@@ -402,9 +402,6 @@ impl Chat {
         if image {
             input.push("image");
         }
-        if video {
-            input.push("video");
-        }
         if input.len() > 1 {
             obj.insert("input".into(), serde_json::json!(input));
         } else {
@@ -1305,7 +1302,7 @@ fn mj_enabled_section(
 /// 标题栏 = chrome 头条 + 下划线（big_card 标准），标题「模型详情」+ ✕；
 /// 页脚右对齐 [测试][保存][移除] 三钮同宽 84（间隔 10）；
 /// 内容区 = 模型ID（左）+【自动填参】（右）→ 上下文窗口 / 最大输出 →
-/// 能力勾选（文本恒选不可改 / 图片 / 视频）→ **唯一一条**提示栏（表单错误 /
+/// 能力勾选（文本恒选不可改 / 图片）→ **唯一一条**提示栏（表单错误 /
 /// 测试结果 / 填参结果三选一）。名称、价格、reasoning、
 /// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
 /// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。

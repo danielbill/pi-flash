@@ -629,7 +629,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("custom_models.field_id", "模型ID", "模型ID", "Model ID"),
     ("custom_models.field_name", "Provider 名称", "Provider 名稱", "Provider name"),
     ("custom_models.model_id_required", "模型 ID 不能为空", "模型 ID 不能為空", "Model ID must not be empty"),
-    ("custom_models.model_id_duplicate", "模型 ID 与已有条目重复（{id}）", "模型 ID 與已有條目重複（{id}）", "Model ID duplicates an existing entry ({id})"),
     ("custom_models.name_invalid", "Provider 名称只能使用字母、数字、_ 和 -", "Provider 名稱只能使用字母、數字、_ 和 -", "Provider name may only contain letters, digits, _ and -"),
     ("custom_models.name_required", "Provider 名称不能为空", "Provider 名稱不能為空", "Provider name must not be empty"),
     ("custom_models.new_model", "新模型", "新模型", "New model"),
