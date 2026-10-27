@@ -1,7 +1,7 @@
-//! `~/.pi/agent/models.json` — **pi 的文件，PF 只读**（051 M1.1 铁律：PF
-//! 永不写 models.json，连修复也不写；PF 自定义 provider 的账本与全部写盘
-//! 在 `pf_providers.rs`）。本模块 = 只读视图 + 纯 JSON 手术（编辑器在内存
-//! 缓冲上用，落盘走 pf_providers）。
+//! `~/.pi/agent/models.json` — pi 的 provider/模型清单。042-1 起 **PF 会写它**
+//!（推翻 051 的「只读」铁律）：整份草稿保存 + **不可读拒写** + proper-lockfile
+//! 同款锁，与 pi / pi-web 共用写者约定。用户手写的内容同样受保护——读不出
+//! 来就永不覆盖。
 //!
 //! ```json
 //! { "providers": { "glm": { "baseUrl": "...", "api": "openai-completions",
@@ -175,6 +175,116 @@ pub fn parse(text: &str) -> Result<Value, String> {
     parse_lenient(text)
 }
 
+// ---------------------------------------------------------------------------
+// 写盘（042-1）
+// ---------------------------------------------------------------------------
+
+/// pi `MODEL_INPUT_MODALITIES` 只认这两项；多写会让 pi 对**整份文件**的
+/// schema 校验失败（自定义 provider 全部消失）。
+const ALLOWED_MODALITIES: &[&str] = &["text", "image"];
+
+fn validate_model_at(provider: &str, ix: usize, model: &Value) -> Result<(), String> {
+    let obj = model
+        .as_object()
+        .ok_or_else(|| format!("{provider}.models[{ix}] 不是对象"))?;
+    match obj.get("id").and_then(Value::as_str).map(str::trim) {
+        Some(id) if !id.is_empty() => {}
+        _ => return Err(format!("{provider}.models[{ix}] 缺少 id")),
+    }
+    if let Some(input) = obj.get("input") {
+        let arr = input
+            .as_array()
+            .ok_or_else(|| format!("{provider}.models[{ix}].input 不是数组"))?;
+        for v in arr {
+            let s = v.as_str().unwrap_or("");
+            if !ALLOWED_MODALITIES.contains(&s) {
+                return Err(format!(
+                    "{provider}.models[{ix}].input 含非法模态 {s:?}（只允许 text/image）"
+                ));
+            }
+        }
+    }
+    for key in ["contextWindow", "maxTokens"] {
+        if let Some(v) = obj.get(key) {
+            if !v.as_f64().is_some_and(|n| n > 0.0) {
+                return Err(format!("{provider}.models[{ix}].{key} 必须是正数"));
+            }
+        }
+    }
+    if let Some(cost) = obj.get("cost") {
+        let rates = cost
+            .as_object()
+            .ok_or_else(|| format!("{provider}.models[{ix}].cost 不是对象"))?;
+        for (k, v) in rates {
+            if !v.is_number() {
+                return Err(format!("{provider}.models[{ix}].cost.{k} 必须是数字"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 写盘前校验（pi schema 的子集）：结构错就 Err，不落盘。
+pub fn validate(doc: &Value) -> Result<(), String> {
+    let obj = doc.as_object().ok_or("models.json 顶层必须是对象")?;
+    let providers = obj
+        .get("providers")
+        .ok_or("models.json 缺少 providers")?
+        .as_object()
+        .ok_or("providers 必须是对象")?;
+    for (name, entry) in providers {
+        let p = entry
+            .as_object()
+            .ok_or_else(|| format!("provider {name} 不是对象"))?;
+        if let Some(models) = p.get("models") {
+            let arr = models
+                .as_array()
+                .ok_or_else(|| format!("provider {name} 的 models 不是数组"))?;
+            for (ix, model) in arr.iter().enumerate() {
+                validate_model_at(name, ix, model)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 落盘前补齐模型缺省形状（input/reasoning/cost），幂等。
+fn normalize(doc: &mut Value) {
+    let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    for entry in providers.values_mut() {
+        let Some(models) = entry.get_mut("models").and_then(|m| m.as_array_mut()) else {
+            continue;
+        };
+        for model in models.iter_mut() {
+            ensure_model_defaults(model);
+        }
+    }
+}
+
+pub fn save(doc: &Value) -> Result<(), String> {
+    save_at_locked(&path(), doc)
+}
+
+/// 锁内整份写。不可读（用户写坏/手工带错）时**拒绝写入**——pi 的 schema
+/// 是整份校验，覆盖一次就等于删掉用户的全部自定义 provider。
+pub fn save_at_locked(path: &std::path::Path, doc: &Value) -> Result<(), String> {
+    let mut doc = doc.clone();
+    normalize(&mut doc);
+    validate(&doc)?;
+    let _guard = crate::fs_lock::lock(path, std::time::Duration::from_secs(10))?;
+    if path.exists() {
+        let text = std::fs::read(path).map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&text).into_owned();
+        let text = text.trim_start_matches('\u{feff}');
+        if parse(text).is_err() {
+            return Err("models.json 无法解析，已拒绝写入（请先修好该文件）".to_string());
+        }
+    }
+    crate::config::write_json_private(path, &doc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +363,76 @@ mod tests {
             provider_entry(&doc, "fresh").unwrap()["models"][0]["id"],
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn tmp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pf-mj-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("models.json")
+    }
+
+    fn doc() -> Value {
+        json!({"providers":{"glm":{"baseUrl":"https://x/v1","api":"openai-completions",
+            "models":[{"id":"glm-5","contextWindow":128000,"maxTokens":8192}]}}})
+    }
+
+    #[test]
+    fn save_writes_and_is_idempotent() {
+        let path = tmp("idem");
+        save_at_locked(&path, &doc()).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        save_at_locked(&path, &doc()).unwrap();
+        assert_eq!(first, std::fs::read(&path).unwrap(), "重复保存必须字节一致");
+        let back: Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(back["providers"]["glm"]["models"][0]["id"], "glm-5");
+        // 缺省形状补齐（input/reasoning/cost）
+        assert_eq!(back["providers"]["glm"]["models"][0]["input"][0], "text");
+    }
+
+    #[test]
+    fn broken_file_is_never_clobbered() {
+        let path = tmp("broken");
+        std::fs::write(&path, b"{ not json").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let err = save_at_locked(&path, &doc()).unwrap_err();
+        assert!(err.contains("无法解析"), "错误信息应指明原因：{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn video_modality_is_rejected() {
+        let path = tmp("video");
+        let bad = json!({"providers":{"glm":{"models":[{"id":"m","input":["text","video"]}]}}});
+        let err = save_at_locked(&path, &bad).unwrap_err();
+        assert!(err.contains("非法模态"), "{err}");
+        assert!(!path.exists(), "校验失败不得落盘");
+    }
+
+    #[test]
+    fn missing_id_is_rejected() {
+        let path = tmp("noid");
+        let bad = json!({"providers":{"glm":{"models":[{"name":"x"}]}}});
+        assert!(save_at_locked(&path, &bad).is_err());
+    }
+
+    #[test]
+    fn missing_providers_key_is_rejected() {
+        let path = tmp("noprov");
+        assert!(save_at_locked(&path, &json!({})).is_err());
     }
 }

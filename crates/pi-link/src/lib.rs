@@ -8,6 +8,7 @@
 //!   act gated by the protocol conformance tests in this crate.
 
 pub mod agents;
+pub mod auth_json;
 pub mod automation;
 pub mod catalog;
 pub mod client;
@@ -16,6 +17,7 @@ pub mod credentials;
 pub mod dev_flags;
 pub mod estimate;
 pub mod extensions;
+pub mod fs_lock;
 pub mod hidden_sessions;
 pub mod json;
 pub mod market;
