@@ -500,74 +500,49 @@ fn metadata_preset(e: &CatalogEntry) -> Preset {
     }
 }
 
-/// 把预设回填进 models.json 模型条目：**只填空字段**（pi-web
-/// fillEmptyModelFields 对齐），返回应用了的字段数。
-pub fn fill_empty(model: &mut Value, preset: &Preset) -> usize {
+/// 按预设**覆盖**模型的目录派生字段（换了模型 ID 后的回填语义）：上下文/
+/// 最大输出/能力/名称/价格都跟新 ID 走，旧值属于上一个模型、留着就是错的。
+/// 返回实际改变的字段数。
+pub fn fill_from_preset(model: &mut Value, preset: &Preset) -> usize {
     let mut applied = 0usize;
     let Some(map) = model.as_object_mut() else {
         return 0;
     };
-    let empty_str = |v: Option<&Value>| v.and_then(|x| x.as_str()).unwrap_or("").trim().is_empty();
-    if preset.name.as_deref().is_some_and(|n| !n.is_empty())
-        && empty_str(map.get("name"))
-    {
-        map.insert("name".into(), Value::String(preset.name.clone().unwrap()));
-        applied += 1;
-    }
-    if preset.reasoning == Some(true) && map.get("reasoning").is_none() {
-        map.insert("reasoning".into(), Value::Bool(true));
-        applied += 1;
-    }
-    if let Some(input) = &preset.input {
-        let has_input = map
-            .get("input")
-            .and_then(|v| v.as_array())
-            .is_some_and(|a| !a.is_empty());
-        if !has_input {
-            map.insert(
-                "input".into(),
-                Value::Array(input.iter().map(|s| Value::String(s.clone())).collect()),
-            );
+    let mut put = |key: &str, v: Value, map: &mut serde_json::Map<String, Value>| {
+        if map.get(key) != Some(&v) {
+            map.insert(key.to_string(), v);
             applied += 1;
         }
+    };
+    if let Some(name) = preset.name.as_deref().filter(|n| !n.is_empty()) {
+        put("name", Value::String(name.to_string()), map);
     }
-    if preset.context_window.is_some() && map.get("contextWindow").is_none() {
-        map.insert(
-            "contextWindow".into(),
-            serde_json::json!(preset.context_window.unwrap()),
-        );
-        applied += 1;
+    if let Some(reasoning) = preset.reasoning {
+        put("reasoning", Value::Bool(reasoning), map);
     }
-    if preset.max_tokens.is_some() && map.get("maxTokens").is_none() {
-        map.insert(
-            "maxTokens".into(),
-            serde_json::json!(preset.max_tokens.unwrap()),
+    if let Some(input) = preset.input.as_ref().filter(|i| !i.is_empty()) {
+        put(
+            "input",
+            Value::Array(input.iter().map(|s| Value::String(s.clone())).collect()),
+            map,
         );
-        applied += 1;
+    }
+    if let Some(n) = preset.context_window {
+        put("contextWindow", serde_json::json!(n), map);
+    }
+    if let Some(n) = preset.max_tokens {
+        put("maxTokens", serde_json::json!(n), map);
     }
     if let Some(cost) = &preset.cost {
-        // 四项全齐才写入（pi-web parseCompleteModelCost 语义）
+        // 四项全齐才整块写（pi 对扩展模型要求 cost 完整，缺项会让运行时崩）
         if let (Some(i), Some(o), Some(cr), Some(cw)) =
             (cost.input, cost.output, cost.cache_read, cost.cache_write)
         {
-            let existing = map.get("cost").cloned().unwrap_or_else(|| Value::Object(Default::default()));
-            let mut merged = serde_json::Map::new();
-            if let Some(m) = existing.as_object() {
-                for (k, v) in m {
-                    merged.insert(k.clone(), v.clone());
-                }
-            }
-            let mut filled = 0;
-            for (k, v) in [("input", i), ("output", o), ("cacheRead", cr), ("cacheWrite", cw)] {
-                if merged.get(k).and_then(|x| x.as_f64()).is_none() {
-                    merged.insert(k.to_string(), serde_json::json!(v));
-                    filled += 1;
-                }
-            }
-            if filled > 0 {
-                map.insert("cost".into(), Value::Object(merged));
-                applied += filled;
-            }
+            put(
+                "cost",
+                serde_json::json!({"input": i, "output": o, "cacheRead": cr, "cacheWrite": cw}),
+                map,
+            );
         }
     }
     applied
@@ -638,6 +613,23 @@ pub fn load() -> Result<Vec<CatalogEntry>, String> {
                 Err(e)
             }
         }
+    }
+}
+
+/// 拉目录并**强制刷新**（阻塞，供后台线程·用户点【自动填参】时用）：
+/// 先 GET models.dev 并落缓存；网络/解析失败回退陈旧缓存（离线也能回填），
+/// 都没有才报错。与 [`load`] 的区别只有“不看 TTL、每次都真拉”。
+pub fn load_fresh() -> Result<Vec<CatalogEntry>, String> {
+    let path = cache_path().ok_or("pf data dir unavailable")?;
+    match fetch_remote() {
+        Ok(entries) if !entries.is_empty() => {
+            write_cache(&path, &entries);
+            Ok(entries)
+        }
+        Ok(_) => read_cache(&path)
+            .map(|(entries, _)| entries)
+            .ok_or_else(|| "models.dev returned an empty catalog".into()),
+        Err(e) => read_cache(&path).map(|(entries, _)| entries).ok_or(e),
     }
 }
 
@@ -769,10 +761,18 @@ mod tests {
     }
 
     #[test]
-    fn fill_empty_touches_only_blank_fields() {
-        let mut model = json!({ "id": "ds-v3", "name": "", "contextWindow": 4096 });
+    fn fill_from_preset_overwrites_stale_values() {
+        // 换了 ID 的场景：旧上下文/旧能力/旧价格都属于上一个模型，必须被换掉
+        let mut model = json!({
+            "id": "deepseek-v4-pro",
+            "name": "旧名字",
+            "contextWindow": 1048576,
+            "maxTokens": 393216,
+            "input": ["text"],
+            "cost": {"input": 0.28, "output": 0.42, "cacheRead": 0.028, "cacheWrite": 0.}
+        });
         let preset = Preset {
-            name: Some("DeepSeek V3".into()),
+            name: Some("DeepSeek V4 Pro".into()),
             reasoning: Some(true),
             input: Some(vec!["text".into(), "image".into()]),
             context_window: Some(128000),
@@ -784,16 +784,17 @@ mod tests {
                 cache_write: Some(0.),
             }),
         };
-        let n = fill_empty(&mut model, &preset);
-        // name + reasoning + input + maxTokens + cost(4 项) = 8；contextWindow 已有不动
-        assert_eq!(n, 8);
-        assert_eq!(model["name"], "DeepSeek V3");
-        assert_eq!(model["contextWindow"], 4096);
+        let n = fill_from_preset(&mut model, &preset);
+        // name + reasoning + input + contextWindow + maxTokens + cost = 6
+        assert_eq!(n, 6);
+        assert_eq!(model["name"], "DeepSeek V4 Pro");
+        assert_eq!(model["reasoning"], true);
+        assert_eq!(model["contextWindow"], 128000);
         assert_eq!(model["maxTokens"], 8192);
         assert_eq!(model["input"][1], "image");
-        assert_eq!(model["cost"]["input"], 0.27);
-        // 再填一次：全部已有 → 0
-        assert_eq!(fill_empty(&mut model, &preset), 0);
+        assert_eq!(model["cost"]["output"], 1.1);
+        // 幂等：值已经一致 → 0
+        assert_eq!(fill_from_preset(&mut model, &preset), 0);
     }
 
     #[test]

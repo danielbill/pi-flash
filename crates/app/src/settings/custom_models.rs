@@ -314,8 +314,25 @@ impl Chat {
     /// 上下文窗口 / 最大输出 / 能力勾选四个键；名称、价格、reasoning、兼容
     /// 等交【自动填参】从 models.dev 落——既有值原样保留不碰）。
     pub(crate) fn mj_apply_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
-        let Some(st) = self.dlg.settings.clone() else {
+        if !self.mj_commit_model_form(&provider, ix, cx) {
             return;
+        }
+        self.mj_flush(cx);
+        cx.notify();
+    }
+
+    /// 表单四键落进缓冲（保存与【自动填参】共用）。返回 false = 模型ID 为空
+    /// （已置错）或面板不在。
+    /// 【自动填参】必须先走这一步：回填以本条模型为查询键、且末尾会把表单
+    /// 按缓冲重播——不先落表单值就用旧 id 查目录，还会把输入框改回旧值。
+    fn mj_commit_model_form(
+        &mut self,
+        provider: &str,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(st) = self.dlg.settings.clone() else {
+            return false;
         };
         let (id, ctx, image, video, max_tokens) = {
             let s = st.read(cx);
@@ -328,12 +345,13 @@ impl Chat {
             )
         };
         if id.is_empty() {
-            return self.mc_set_error(tr("custom_models.model_id_required"), cx);
+            self.mc_set_error(tr("custom_models.model_id_required"), cx);
+            return false;
         }
         let Some(entry) =
-            pi_link::models_json::provider_entry(&self.cfg.mc_models_json, &provider).cloned()
+            pi_link::models_json::provider_entry(&self.cfg.mc_models_json, provider).cloned()
         else {
-            return;
+            return false;
         };
         let mut model = entry
             .get("models")
@@ -373,9 +391,8 @@ impl Chat {
         // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
         // 编辑器删键后的缺省在此统一补齐
         pi_link::models_json::ensure_model_defaults(&mut model);
-        pi_link::models_json::update_model(&mut self.cfg.mc_models_json, &provider, ix, model);
-        self.mj_flush(cx);
-        cx.notify();
+        pi_link::models_json::update_model(&mut self.cfg.mc_models_json, provider, ix, model);
+        true
     }
 
     pub(crate) fn mj_delete_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
@@ -670,45 +687,47 @@ impl Chat {
 
     // -- 填入模型信息（models.dev）--------------------------------------------
 
-    /// 目录回填：目录未加载先拉（后台，1h 磁盘缓存），加载完直接按当前
-    /// 表单模型 id 推荐回填**缓冲里的空字段**并重选回显。
+    /// 【自动填参】：点一次就真拉一次 models.dev（强制刷新，不看缓存 TTL；
+    /// 网络挂了回退旧缓存），再按当前表单里的模型 ID 取预设**覆盖**回填
+    ///（上下文/最大输出/能力/名称/价格都跟当前 ID 走）并重选回显。
     pub(crate) fn mj_catalog_fill(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
-        if self.cfg.mj_models_dev.is_none()
-            || !matches!(self.cfg.mj_models_dev_state, MjCatalogState::Done { .. })
-        {
-            self.cfg.mj_models_dev_state = MjCatalogState::Running;
-            cx.notify();
-            cx.spawn(async move |this, cx| {
-                let loaded = cx
-                    .background_executor()
-                    .spawn(async { pi_link::models_dev::load() })
-                    .await;
-                let _ = this.update(cx, |c, cx| match loaded {
-                    Ok(entries) => {
-                        let n = entries.len();
-                        c.cfg.mj_models_dev = Some(std::sync::Arc::new(entries));
-                        c.cfg.mj_models_dev_state = MjCatalogState::Idle;
-                        let _ = n;
-                        // 目录就绪后立即应用一次回填
-                        c.mj_catalog_apply(&provider, ix, cx);
-                    }
-                    Err(e) => {
-                        c.cfg.mj_models_dev_state = MjCatalogState::Err(e);
-                        cx.notify();
-                    }
-                });
-            })
-            .detach();
+        // 先落表单值：回填以它为查询键，且回填末尾按缓冲重播表单——
+        // 不先落就会拿旧 ID 查、还把输入框改回旧值。
+        if !self.mj_commit_model_form(&provider, ix, cx) {
             return;
         }
-        self.mj_catalog_apply(&provider, ix, cx);
+        self.cfg.mj_models_dev_state = MjCatalogState::Running;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async { pi_link::models_dev::load_fresh() })
+                .await;
+            let _ = this.update(cx, |c, cx| match loaded {
+                Ok(entries) => {
+                    c.cfg.mj_models_dev_state = MjCatalogState::Idle;
+                    // 等目录期间用户可能又改了表单：再落一次，回填不吃回刚敲的值
+                    if c.mj_commit_model_form(&provider, ix, cx) {
+                        c.mj_catalog_apply(&entries, &provider, ix, cx);
+                    }
+                }
+                Err(e) => {
+                    c.cfg.mj_models_dev_state = MjCatalogState::Err(e);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
-    fn mj_catalog_apply(&mut self, provider: &str, ix: usize, cx: &mut Context<Self>) {
-        let Some(entries) = self.cfg.mj_models_dev.clone() else {
-            return;
-        };
+    fn mj_catalog_apply(
+        &mut self,
+        entries: &[pi_link::models_dev::CatalogEntry],
+        provider: &str,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) {
         let Some(entry) =
             pi_link::models_json::provider_entry(&self.cfg.mc_models_json, provider).cloned()
         else {
@@ -717,17 +736,20 @@ impl Chat {
         let Some(model) = entry.get("models").and_then(|m| m.get(ix)).cloned() else {
             return;
         };
-        let query = model.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        if query.is_empty() {
-            return self.mc_set_error(tr("custom_models.model_id_required"), cx);
-        }
+        let query = model
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let base_url = entry
             .get("baseUrl")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let rec = pi_link::models_dev::recommend(&entries, query, provider, base_url);
+        let rec = pi_link::models_dev::recommend(entries, &query, provider, base_url);
+        // 点填参就是“把这个 ID 的参数拉下来填上”：目录派生字段（名称/思考/
+        // 能力/上下文/最大输出/价格）一律按预设覆盖，旧值属于上一个模型。
         let mut model = model;
-        let applied = pi_link::models_dev::fill_empty(&mut model, &rec.preset);
+        let applied = pi_link::models_dev::fill_from_preset(&mut model, &rec.preset);
         pi_link::models_json::update_model(
             &mut self.cfg.mc_models_json,
             provider,
@@ -1250,10 +1272,12 @@ fn mj_enabled_section(
 }
 
 /// 自定义模型详情/编辑小弹窗（500×500 居中，2026-10-27 用户定稿规格）：
-/// 标题栏 = chrome 头条 + 下划线（big_card 标准），标题「模型」+ ✕；
+/// 标题栏 = chrome 头条 + 下划线（big_card 标准），标题「模型详情」+ ✕；
 /// 页脚右对齐 [测试][保存][移除] 三钮同宽 84（间隔 10）；
 /// 内容区 = 模型ID（左）+【自动填参】（右）→ 上下文窗口 / 最大输出 →
-/// 能力勾选（文本恒选不可改 / 图片 / 视频）。名称、价格、reasoning、
+/// 能力勾选（文本恒选不可改 / 图片 / 视频）→ **唯一一条**提示栏（表单错误 /
+/// 测试结果 / 填参结果三选一）。名称、价格、reasoning、
+/// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
 /// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
 /// `section = mj:m:{prov}:{ix}` 即打开态：本函数由 render.rs 顶层挂载，叠在
 /// 设置弹窗之上，右栏底图保持 Provider 详情；关闭（✕/点外/ESC）= 退回
@@ -1365,10 +1389,10 @@ pub(crate) fn mj_model_modal_overlay(
             },
         ));
 
-    // 自动填参状态：查询中贴在按钮上（用户定稿，不占状态行）；结果信息
-    // （已填字段/价格来源、失败原因）落在能力行下方
+    // 提示栏**只有一个**（用户定稿）：同一时刻只显示一条，位置在能力行下方。
+    // 优先级：表单错误 > 测试结果 > 自动填参结果；查询中提示贴按钮。
     let filling = matches!(chat.cfg.mj_models_dev_state, MjCatalogState::Running);
-    let catalog_notes: Vec<gpui::AnyElement> = match &chat.cfg.mj_models_dev_state {
+    let catalog_line: Option<(String, bool)> = match &chat.cfg.mj_models_dev_state {
         MjCatalogState::Done {
             applied,
             note: price_note,
@@ -1378,22 +1402,19 @@ pub(crate) fn mj_model_modal_overlay(
             if !price_note.is_empty() {
                 msg.push_str(&format!(" · {price_note}"));
             }
-            vec![note(&msg)]
+            Some((msg, true))
         }
-        MjCatalogState::Err(e) => vec![error_note(e)],
-        MjCatalogState::Running | MjCatalogState::Idle => Vec::new(),
+        MjCatalogState::Err(e) => Some((e.clone(), false)),
+        MjCatalogState::Running | MjCatalogState::Idle => None,
     };
+    let status_line: Option<(String, bool)> = error
+        .as_ref()
+        .map(|e| (e.clone(), false))
+        .or(test_note.clone())
+        .or(catalog_line);
 
     let detail = detail_shell("mc-detail")
         .p(px(15.))
-        .children(error.as_ref().map(|e| error_note(e)))
-        .children(test_note.as_ref().map(|(text, ok)| {
-            if *ok {
-                note(text)
-            } else {
-                error_note(text)
-            }
-        }))
         // 模型ID（左半列）+ 自动填参（右半列，标准 §5.1 按钮与 input 底缘
         // 对齐）；两列与下行 上下文/最大输出 同宽——ID input 等长对齐
         .child(
@@ -1493,8 +1514,14 @@ pub(crate) fn mj_model_modal_overlay(
                         )),
                 ),
         )
-        // 自动填参结果信息（能力行下方；查询中提示挂在按钮上）
-        .children(catalog_notes);
+        // 提示栏（唯一一条）：表单错误 / 测试结果 / 填参结果三选一
+        .children(status_line.as_ref().map(|(text, ok)| {
+            if *ok {
+                note(text)
+            } else {
+                error_note(text)
+            }
+        }));
     // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×500
     // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；控制栏固定，表单区滚动
     let overlay = crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)

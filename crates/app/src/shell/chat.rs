@@ -100,9 +100,6 @@ pub(crate) struct CfgUi {
     pub(crate) mj_speed: Option<MjSpeedState>,
     /// 042 M2 自定义模型「测试」状态（单槽：同一时刻只测一个模型）
     pub(crate) mj_test: Option<MjTestState>,
-    /// 042 M2 models.dev 目录（「填入模型信息」；None = 未加载/加载失败）
-    pub(crate) mj_models_dev:
-        Option<std::sync::Arc<Vec<pi_link::models_dev::CatalogEntry>>>,
     /// 042 M2 models.dev 拉取状态（按钮文案与结果行）
     pub(crate) mj_models_dev_state: MjCatalogState,
     /// 042 新增 Provider 弹窗的全量注册表（registry.rs dump；None = 未加载）
@@ -730,7 +727,6 @@ impl Chat {
                 mc_probe: std::collections::HashMap::new(),
                 mj_speed: None,
                 mj_test: None,
-                mj_models_dev: None,
                 mj_models_dev_state: MjCatalogState::Idle,
                 provider_registry: None,
                 registry_state: crate::session::model_picker::RegistryState::Idle,

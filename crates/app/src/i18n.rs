@@ -574,7 +574,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.catalog_fill", "填入模型信息", "填入模型資訊", "Fill from catalog"),
     ("models.catalog_filling", "查询中", "查詢中", "Querying"),
     ("models.catalog_source", "来源: models.dev", "來源: models.dev", "Source: models.dev"),
-    ("models.catalog_filled", "已填入 {count} 个空字段", "已填入 {count} 個空欄位", "Filled {count} empty fields"),
+    ("models.catalog_filled", "已填入 {count} 个字段", "已填入 {count} 個欄位", "Filled {count} fields"),
     ("models.catalog_no_empty", "没有可回填的空字段", "沒有可回填的空欄位", "No empty fields to fill"),
     ("models.catalog_price_provider", "价格取自同名 Provider", "價格取自同名 Provider", "Price from matching provider"),
     ("models.catalog_price_baseurl", "价格取自同域名 Provider", "價格取自同網域 Provider", "Price from matching base URL"),
