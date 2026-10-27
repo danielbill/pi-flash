@@ -1250,7 +1250,8 @@ fn mj_enabled_section(
 }
 
 /// 自定义模型详情/编辑小弹窗（500×500 居中，2026-10-27 用户定稿规格）：
-/// 控制栏右侧 [测试][保存][移除] 三钮同宽 84 + ✕（间隔 10，无标题）；
+/// 标题栏 = chrome 头条 + 下划线（big_card 标准），标题「模型」+ ✕；
+/// 页脚右对齐 [测试][保存][移除] 三钮同宽 84（间隔 10）；
 /// 内容区 = 模型ID（左）+【自动填参】（右）→ 上下文窗口 / 最大输出 →
 /// 能力勾选（文本恒选不可改 / 图片 / 视频）。名称、价格、reasoning、
 /// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
@@ -1280,8 +1281,7 @@ pub(crate) fn mj_model_modal_overlay(
         }
     };
 
-    // 控制栏：右侧 [测试][保存][移除]（三钮同宽 84——detail_button 定稿规格）
-    // + ✕，间隔 10；无标题
+    // 测试钮即时态 + 状态行文案（表单错误 / 测试结果 / 自动填参结果）
     let test_state = chat.cfg.mj_test.clone();
     let testing = matches!(test_state, Some(MjTestState::Running));
     let test_note: Option<(String, bool)> = match &test_state {
@@ -1300,55 +1300,92 @@ pub(crate) fn mj_model_modal_overlay(
         Some(MjTestState::Err(e)) => Some((e.clone(), false)),
         None => None,
     };
-    // 滚动体：控制行（[测试][保存][移除]+✕ 右对齐，自标题栏下移）→ 状态行
-    //（表单错误 / 测试 / 自动填参结果）→ 三个设置行
+    // 标题栏（chrome 头条 + 下划线，big_card 同规格）：标题「模型详情」+ ✕；
+    // 操作按钮不在这里（用户定稿：[测试][保存][移除] 在页脚右对齐）
+    let header = div()
+        .flex_shrink_0()
+        .h(px(40.))
+        .pl(px(15.))
+        .pr(px(8.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .bg(rgb(t.chrome))
+        .border_b_1()
+        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x73)))
+        .child(section_title(&tr("models.detail_title")))
+        .child(div().flex_1())
+        .child(crate::ui::overlay::close_btn(
+            "mj-model-close",
+            t,
+            dismiss.clone(),
+        ));
+
+    // 页脚：[测试][保存][移除] 右对齐（标准 §5.1 按钮，经 detail_button 三钮
+    // 同宽 84）；状态行（表单错误 / 测试 / 自动填参结果）+ 三个设置行在滚动体
+    let footer = div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_end()
+        .gap(px(10.))
+        .px(px(15.))
+        .pb(px(15.))
+        .child(super::models::detail_button(
+            "mj-test",
+            &weak,
+            &tr("models.test"),
+            crate::ui::button::BtnVariant::Secondary,
+            testing,
+            {
+                let n = name.clone();
+                move |c, cx| c.mj_test_start(n.clone(), ix, cx)
+            },
+        ))
+        .child(super::models::detail_button(
+            "mj-mapply",
+            &weak,
+            &tr("action.save"),
+            crate::ui::button::BtnVariant::Primary,
+            false,
+            {
+                let n = name.clone();
+                move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
+            },
+        ))
+        .child(super::models::detail_button(
+            "mj-mdel",
+            &weak,
+            &tr("action.remove"),
+            crate::ui::button::BtnVariant::Danger,
+            false,
+            {
+                let n = name.clone();
+                move |c, cx| c.mj_delete_model(n.clone(), ix, cx)
+            },
+        ));
+
+    // 自动填参状态：查询中贴在按钮上（用户定稿，不占状态行）；结果信息
+    // （已填字段/价格来源、失败原因）落在能力行下方
+    let filling = matches!(chat.cfg.mj_models_dev_state, MjCatalogState::Running);
+    let catalog_notes: Vec<gpui::AnyElement> = match &chat.cfg.mj_models_dev_state {
+        MjCatalogState::Done {
+            applied,
+            note: price_note,
+        } => {
+            let mut msg =
+                crate::i18n::tf("models.catalog_filled", &[("count", applied.to_string())]);
+            if !price_note.is_empty() {
+                msg.push_str(&format!(" · {price_note}"));
+            }
+            vec![note(&msg)]
+        }
+        MjCatalogState::Err(e) => vec![error_note(e)],
+        MjCatalogState::Running | MjCatalogState::Idle => Vec::new(),
+    };
+
     let detail = detail_shell("mc-detail")
         .p(px(15.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_end()
-                .gap(px(10.))
-                .child(super::models::detail_button(
-                    "mj-test",
-                    &weak,
-                    &tr("models.test"),
-                    crate::ui::button::BtnVariant::Secondary,
-                    testing,
-                    {
-                        let n = name.clone();
-                        move |c, cx| c.mj_test_start(n.clone(), ix, cx)
-                    },
-                ))
-                .child(super::models::detail_button(
-                    "mj-mapply",
-                    &weak,
-                    &tr("action.save"),
-                    crate::ui::button::BtnVariant::Primary,
-                    false,
-                    {
-                        let n = name.clone();
-                        move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
-                    },
-                ))
-                .child(super::models::detail_button(
-                    "mj-mdel",
-                    &weak,
-                    &tr("action.remove"),
-                    crate::ui::button::BtnVariant::Danger,
-                    false,
-                    {
-                        let n = name.clone();
-                        move |c, cx| c.mj_delete_model(n.clone(), ix, cx)
-                    },
-                ))
-                .child(crate::ui::overlay::close_btn(
-                    "mj-model-close",
-                    t,
-                    dismiss.clone(),
-                )),
-        )
         .children(error.as_ref().map(|e| error_note(e)))
         .children(test_note.as_ref().map(|(text, ok)| {
             if *ok {
@@ -1357,21 +1394,6 @@ pub(crate) fn mj_model_modal_overlay(
                 error_note(text)
             }
         }))
-        .children(match &chat.cfg.mj_models_dev_state {
-            MjCatalogState::Running => vec![note(&tr("models.catalog_filling"))],
-            MjCatalogState::Done { applied, note: price_note } => {
-                let mut msg = crate::i18n::tf(
-                    "models.catalog_filled",
-                    &[("count", applied.to_string())],
-                );
-                if !price_note.is_empty() {
-                    msg.push_str(&format!(" · {price_note}"));
-                }
-                vec![note(&msg)]
-            }
-            MjCatalogState::Err(e) => vec![error_note(e)],
-            MjCatalogState::Idle => Vec::new(),
-        })
         // 模型ID（左半列）+ 自动填参（右半列，标准 §5.1 按钮与 input 底缘
         // 对齐）；两列与下行 上下文/最大输出 同宽——ID input 等长对齐
         .child(
@@ -1392,20 +1414,32 @@ pub(crate) fn mj_model_modal_overlay(
                         .items_end()
                         .justify_end()
                         .child({
-                            let weak_fill = weak.clone();
                             let n = name.clone();
-                            crate::ui::button(
+                            let el = crate::ui::button::button_base(
                                 "mj-autofill",
-                                tr("models.autofill"),
-                                crate::ui::BtnSize::Md,
-                                crate::ui::BtnVariant::Secondary,
-                                matches!(chat.cfg.mj_models_dev_state, MjCatalogState::Running),
-                                move |_, _, cx| {
+                                crate::ui::button::BtnSize::Lg,
+                                crate::ui::button::BtnVariant::Secondary,
+                            )
+                            .w(px(84.))
+                            .child(SharedString::from(
+                                if filling {
+                                    tr("models.catalog_filling")
+                                } else {
+                                    tr("models.autofill")
+                                }
+                                .to_string(),
+                            ));
+                            if filling {
+                                el.opacity(0.5).into_any_element()
+                            } else {
+                                let weak_fill = weak.clone();
+                                el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let _ = weak_fill.update(cx, |c, cx| {
                                         c.mj_catalog_fill(n.clone(), ix, cx)
                                     });
-                                },
-                            )
+                                })
+                                .into_any_element()
+                            }
                         }),
                 ),
         )
@@ -1458,7 +1492,9 @@ pub(crate) fn mj_model_modal_overlay(
                             Some(|c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_video(cx)),
                         )),
                 ),
-        );
+        )
+        // 自动填参结果信息（能力行下方；查询中提示挂在按钮上）
+        .children(catalog_notes);
     // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×500
     // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；控制栏固定，表单区滚动
     let overlay = crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
@@ -1478,7 +1514,9 @@ pub(crate) fn mj_model_modal_overlay(
                 .flex()
                 .flex_col()
                 .overflow_hidden()
-                .child(div().flex_1().min_h_0().flex().child(detail)),
+                .child(header)
+                .child(div().flex_1().min_h_0().flex().child(detail))
+                .child(footer),
         ));
     Some(overlay.into_any_element())
 }
