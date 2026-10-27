@@ -562,7 +562,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.speedtest", "测速", "測速", "Speed test"),
     ("models.speed_testing", "测速中…", "測速中…", "Testing…"),
     ("models.speed_pass", "通过 · {ms}ms · {count} 个模型", "通過 · {ms}ms · {count} 個模型", "Connected · {ms}ms · {count} models"),
-    ("models.speed_note", "点击测速，连通后自动保存", "點擊測速，連通後自動儲存", "Click Speed test; on success the provider is saved automatically"),
+    ("models.speed_note", "测速只校验连通性并自动拉模型；保存不受限制", "測速只校驗連通性並自動拉模型；儲存不受限制", "Speed test only checks reachability and fetches models; saving is unrestricted"),
     ("models.autofetch_failed_hint", "无法自动获取该Provider模型列表，请点击[+ 模型]手动添加", "無法自動獲取該Provider模型列表，請點擊[+ 模型]手動新增", "Couldn't fetch this provider's model list; click [+ Model] to add manually"),
     ("models.compatibility", "兼容性", "相容性", "Compatibility"),
     ("models.deepseek_compat", "DeepSeek 思考兼容", "DeepSeek 思考相容", "DeepSeek thinking compat"),

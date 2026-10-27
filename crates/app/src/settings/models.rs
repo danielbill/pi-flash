@@ -761,9 +761,21 @@ fn mc_models_sidebar(
                 let r = format!("{}/{}", m.provider, m.id);
                 let is_default = default_ref.as_deref() == Some(r.as_str());
                 let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-                crate::session::model_picker::group_model_row(
+                let row = crate::session::model_picker::group_model_row(
                     &weak_rows, m, is_default, false, false, false, row_h, 15., pin, None, t,
-                )
+                );
+                // 042-1：点模型行打开模型详情弹窗（内置模型走 modelOverrides 覆盖；
+                // 行内开关/五角星自己 stop_propagation，不会误触）
+                let open_weak = weak_rows.clone();
+                let (op, oi) = (m.provider.clone(), m.id.clone());
+                div()
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = open_weak
+                            .update(cx, |c, cx| c.mj_open_model(op.clone(), oi.clone(), cx));
+                    })
+                    .child(row)
+                    .into_any_element()
             }
         },
     );
