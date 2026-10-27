@@ -917,6 +917,18 @@ impl Chat {
         if entry.disabled {
             return Err("插件已停用".into());
         }
+        // 清单对账（契约 v2.4 `[[contributes.sessions]] prefix`）：声明过槽位的
+        // 插件，实际认领前缀不在声明里就留痕——不阻断（运行期真相是
+        // ctx.newDraft 传入的 prefix，声明只是清单面的可审计位）。
+        let declared = &entry.manifest.sessions;
+        if !declared.is_empty() && !declared.iter().any(|s| s.prefix == prefix) {
+            let list: Vec<&str> = declared.iter().map(|s| s.prefix.as_str()).collect();
+            eprintln!(
+                "[pf-plugin] 认领前缀与清单声明不一致（plugin={}，declared=[{}]，actual={prefix}）",
+                entry.manifest.id,
+                list.join(", ")
+            );
+        }
         // 先取值再动 self（借用分离）：pi 扩展绝对路径 + 插件 id + 形态门
         let pi_exts: Vec<String> = entry
             .manifest
