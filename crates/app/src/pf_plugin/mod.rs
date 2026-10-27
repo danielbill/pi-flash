@@ -68,6 +68,9 @@ pub(crate) struct PluginManifest {
     /// 认领会话 spawn 时以 `-e` 挂入，插件逻辑在会话进程内运行。
     /// **Tier 2 门**：仅官方验签包可携带（安装链执行，见 002 §W5）。
     pub pi_extensions: Vec<String>,
+    /// 认领前缀声明（契约 v2.4 contributes.sessions）：插件建线时经
+    /// ctx.newDraft 显式给 prefix，此处声明是清单面对账位（缺段解析即拒）。
+    pub sessions: Vec<SessionSlotContrib>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +85,12 @@ pub(crate) struct StatusBarContrib {
 pub(crate) struct TopbarMenuContrib {
     pub icon: String,
     pub title_zh: String,
+}
+
+/// 认领槽声明（契约 v2.4 contributes.sessions）。
+#[derive(Debug, Clone)]
+pub(crate) struct SessionSlotContrib {
+    pub prefix: String,
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +301,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         file_menu: Vec::new(),
         panels: Vec::new(),
         pi_extensions: Vec::new(),
+        sessions: Vec::new(),
         wasm: None,
         bytecode: None,
     };
@@ -351,6 +361,12 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 "contributes.pi_extensions" => {
                     m.pi_extensions.push(String::new());
                     "pi_extensions".to_string()
+                }
+                "contributes.sessions" => {
+                    m.sessions.push(SessionSlotContrib {
+                        prefix: String::new(),
+                    });
+                    "sessions".to_string()
                 }
                 other => return Err(format!("pf-plugin.toml 行 {}：未知段 [[{other}]]", n + 1)),
             };
@@ -443,7 +459,12 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             }
             ("pi_extensions", "path") => {
                 *m.pi_extensions.last_mut().unwrap() = val.as_str("path", n)?;
-            },
+            }
+            ("sessions", "prefix") => {
+                *m.sessions.last_mut().unwrap() = SessionSlotContrib {
+                    prefix: val.as_str("prefix", n)?,
+                };
+            }
             (sec, key) => return Err(format!("pf-plugin.toml 行 {}：{sec} 段未知键 {key}", n + 1)),
         }
     }
@@ -1804,6 +1825,25 @@ entry = "main.js"
         );
         std::fs::write(dir2.join("main.js"), "export function render(){{}}").unwrap();
         assert!(parse_manifest(&dir2).is_err(), "topbar_menu 只能声明一个");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 契约 v2.4 sessions 解析：认领前缀声明段必须入清单（漏段曾把整份
+    /// 清单拒在扫描关——wechat-bridge「未知段 [[contributes.sessions]]」）
+    #[test]
+    fn manifest_sessions_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-sessions-test-{}", std::process::id()));
+        let body = format!(
+            "{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-wxbot-\"\n"
+        );
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &body);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+        let m = parse_manifest(&dir).expect("含 sessions 段的清单必须通过");
+        assert_eq!(m.sessions.len(), 1);
+        assert_eq!(m.sessions[0].prefix, "pf-wxbot-");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

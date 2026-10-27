@@ -642,7 +642,7 @@ pub(crate) fn plugin_panel_view(
         .min_h_0()
         .flex()
         .flex_col()
-        .child(render_node(&tree, ix, weak, t, &ctx));
+        .child(render_root(&tree, ix, weak, t, &ctx));
 
     // 拖拽中：全幅透明覆层接管鼠标移动（分隔线只有几像素，靠它才不会丢事件）
     if let Some(drag) = dragging {
@@ -709,6 +709,30 @@ fn render_node(
     t: &'static Theme,
     ctx: &RenderCtx,
 ) -> gpui::AnyElement {
+    render_node_inner(node, ix, weak, t, ctx, false)
+}
+
+/// 根节点渲染入口：根 Column 撑满面板（justify 垂直居中等才有意义）。
+/// 嵌套 Column 一律自适应高度——曾经无条件 flex_1 让页面级子列平分整页
+/// 高度（绑定页二维码区/提示区各占一半，002 §1 布局稀碎）。
+fn render_root(
+    node: &ResolvedNode,
+    ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    ctx: &RenderCtx,
+) -> gpui::AnyElement {
+    render_node_inner(node, ix, weak, t, ctx, true)
+}
+
+fn render_node_inner(
+    node: &ResolvedNode,
+    ix: usize,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+    ctx: &RenderCtx,
+    is_root: bool,
+) -> gpui::AnyElement {
     match node {
         // ---- 外壳：分区 + 各自滚动 + 可拖拽分隔线（宿主画，插件不参与）----
         ResolvedNode::Frame { sections } => {
@@ -746,13 +770,12 @@ fn render_node(
             justify_center,
             children,
         } => {
-            let mut col = div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .gap(px(*gap))
-                .p(px(*pad));
+            let mut col = div().flex().flex_col().gap(px(*gap)).p(px(*pad));
+            if is_root {
+                // 仅根 Column 撑满面板高度（wrapper 已是 flex_col，子项
+                // flex_1 = 占满；justify_center 居中整卡）
+                col = col.flex_1().min_h_0();
+            }
             if *align_center {
                 col = col.items_center();
             }
