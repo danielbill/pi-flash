@@ -877,8 +877,10 @@ fn mc_models_detail(
             d.child(error_note(error.as_deref().unwrap_or("")))
         });
 
-    // header：Provider 名称 +【移除】（删 key + 从合并列表除名，确认后执行）
+    // header：Provider 名称（左）+ 操作钮（右，同一行）：[移除][保存]，间隔 10px。
+    // 保存钮原本贴在 API Key 输入框右缘——输入框改全宽后统一收到这里。
     let remove_provider = provider.clone();
+    let save_provider = provider.clone();
     let detail = detail.child(
         div()
             .flex()
@@ -895,30 +897,52 @@ fn mc_models_detail(
                     )),
             )
             .child(div().flex_1())
-            .child(detail_button(
-                "mc-remove",
-                weak,
-                &tr("action.remove"),
-                crate::ui::button::BtnVariant::Danger,
-                false,
-                move |c, cx| c.mc_ask_remove_provider(remove_provider.clone(), cx),
-            )),
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(detail_button(
+                        "mc-remove",
+                        weak,
+                        &tr("action.remove"),
+                        crate::ui::button::BtnVariant::Danger,
+                        false,
+                        move |c, cx| c.mc_ask_remove_provider(remove_provider.clone(), cx),
+                    ))
+                    .child(detail_button(
+                        "mc-key-save",
+                        weak,
+                        &tr("action.save"),
+                        crate::ui::button::BtnVariant::Primary,
+                        false,
+                        move |c, cx| {
+                            let key = c
+                                .dlg
+                                .settings
+                                .as_ref()
+                                .map(|st| st.read(cx).key_input.clone())
+                                .map(|input| input.read(cx).value().to_string())
+                                .unwrap_or_default();
+                            c.mc_save_key(save_provider.clone(), key, cx);
+                        },
+                    )),
+            ),
     );
 
-    // API Key 段：标题 + 输入（右缘内置眼睛，掩码显隐已存 key）+【保存】
+    // API Key 段：标题 + 输入**全宽**（右缘内置眼睛，掩码显隐已存 key）；
+    // 保存钮在 headr 行（见上）
     let weak_eye = weak.clone();
-    let save_provider = provider.clone();
     let detail = detail
         .child(section_title("API Key"))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(px(6.))
                 .child(
                     div()
                         .relative()
-                        .flex_1()
+                        .w_full()
                         .min_w_0()
                         .child(d.key_input.clone())
                         .child(
@@ -951,24 +975,7 @@ fn mc_models_detail(
                                     t.text_muted,
                                 )),
                         ),
-                )
-                .child(detail_button(
-                    "mc-key-save",
-                    weak,
-                    &tr("action.save"),
-                    crate::ui::button::BtnVariant::Primary,
-                    false,
-                    move |c, cx| {
-                        let key = c
-                            .dlg
-                            .settings
-                            .as_ref()
-                            .map(|st| st.read(cx).key_input.clone())
-                            .map(|input| input.read(cx).value().to_string())
-                            .unwrap_or_default();
-                        c.mc_save_key(save_provider.clone(), key, cx);
-                    },
-                )),
+                ),
         )
         // API Key 与可用模型之间的分隔线
         .child(
@@ -1094,37 +1101,43 @@ fn mc_enabled_section(
                 ],
             )))
             .child(div().flex_1())
-            .child({
-                // 只看free：开 = 列表只显示 free 模型（筛选叠加隐藏的 free
-                // 关键字）；状态在 SettingsPanel，切换即整面板重渲染
-                let weak_free = weak.clone();
+            // 右侧聚簇：只看free（开关在左、文字在右）+ 刷新钮；文字与刷新钮 10px
+            .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .child(
+                    .gap(px(10.))
+                    .child({
+                        // 只看free：开 = 列表只显示 free 模型（筛选叠加隐藏的 free
+                        // 关键字）；状态在 SettingsPanel，切换即整面板重渲染
+                        let weak_free = weak.clone();
                         div()
-                            .text_size(crate::appearance::ui_size(11.))
-                            .text_color(rgb(t.text_dim))
-                            .child(tr("models.free_only")),
-                    )
-                    .child(config_switch(
-                        "mc-free-only",
-                        &weak_free,
-                        free_only,
-                        false,
-                        |c, cx| {
-                            if let Some(st) = c.dlg.settings.clone() {
-                                st.update(cx, |s, cx| {
-                                    s.model_free_only = !s.model_free_only;
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(config_switch(
+                                "mc-free-only",
+                                &weak_free,
+                                free_only,
+                                false,
+                                |c, cx| {
+                                    if let Some(st) = c.dlg.settings.clone() {
+                                        st.update(cx, |s, cx| {
+                                            s.model_free_only = !s.model_free_only;
+                                            cx.notify();
+                                        });
+                                    }
                                     cx.notify();
-                                });
-                            }
-                            cx.notify();
-                        },
-                    ))
-            })
-            .child({
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .text_size(crate::appearance::ui_size(11.))
+                                    .text_color(rgb(t.text_dim))
+                                    .child(tr("models.free_only")),
+                            )
+                    })
+                    .child({
                 // 纯 icon 获取钮：与移除/保存同宽 84 同高 32（右缘对齐）
                 let el = crate::ui::button::button_base(
                     "mc-fetch",
@@ -1143,7 +1156,8 @@ fn mc_enabled_section(
                     })
                     .into_any_element()
                 }
-            }),
+                    }),
+            ),
     );
     if chat.cfg.mc_project_scope {
         section = section.child(note(tr("models.project_override_dotpi")));
