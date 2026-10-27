@@ -176,31 +176,43 @@ impl Chat {
         cx.notify();
     }
 
-    /// 弹窗「自定义」卡进来：直接在账本创建 new-provider（重名自动
-    /// `-1`/`-2`，pi-web addCustomProvider 同规则），落盘并进详情表单。
-    /// 条目带 `name` 字段保证 sanitize 不丢；测速通过前保存/+模型禁用
-    ///（042-1），名字在头行输入框改。
+    /// 弹窗「自定义」卡进来：**纯 UI 草稿**（section = `mj:new`），不写任何
+    /// 文件——列表里的对象只在【保存】时诞生（042-1 用户定稿：没保存前不该
+    /// 在列表上看见新对象）。表单清空、无删除钮，名字在头行输入。
     pub(crate) fn mj_open_add(&mut self, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         self.cfg.mj_test = None;
-        let mut doc = Self::mj_doc();
-        let existing: Vec<String> = pi_link::models_json::providers(&doc)
-            .into_iter()
-            .map(|(n, _)| n)
-            .collect();
-        let mut name = "new-provider".to_string();
-        let mut n = 1;
-        while existing.iter().any(|e| e == &name) {
-            name = format!("new-provider-{n}");
-            n += 1;
-        }
-        pi_link::models_json::upsert_provider(
-            &mut doc,
-            &name,
-            serde_json::json!({ "name": name }),
-        );
-        self.mj_write(&doc, cx);
-        self.mj_select(format!("mj:p:{name}"), cx);
+        self.cfg.mj_speed = None;
+        let Some(st) = self.dlg.settings.clone() else {
+            return;
+        };
+        st.update(cx, |s, cx| {
+            s.section = "mj:new".to_string();
+            s.error = None;
+            s.mj_image = false;
+            s.mj_reasoning = false;
+            s.mj_key_visible = false;
+            s.mj_name.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+            s.mj_base.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+            s.mj_key.update(cx, |ti, cx| {
+                ti.set_value(String::new(), cx);
+                ti.set_masked(true, cx);
+            });
+            // 模型行用不到（新商无模型），一并清空且可编辑
+            s.mj_id.update(cx, |ti, cx| {
+                ti.set_value(String::new(), cx);
+                ti.set_disabled(false, cx);
+            });
+            s.mj_ctx.update(cx, |ti, cx| {
+                ti.set_value(String::new(), cx);
+                ti.set_disabled(false, cx);
+            });
+            s.mj_max_tokens.update(cx, |ti, cx| {
+                ti.set_value(String::new(), cx);
+                ti.set_disabled(false, cx);
+            });
+            cx.notify();
+        });
         cx.notify();
     }
 
@@ -268,6 +280,13 @@ impl Chat {
             return self.mc_set_error(tr("custom_models.name_required"), cx);
         }
         let mut doc = Self::mj_doc();
+        // 新建（草稿）时 old_name 为空：同名已存在就报错，别把人家覆盖了
+        if old_name.is_empty()
+            && pi_link::models_json::provider_entry(&doc, &name).is_some()
+        {
+            let msg = crate::i18n::tf("custom_models.name_exists", &[("name", name)]);
+            return self.mc_set_error(&msg, cx);
+        }
         let mut entry = pi_link::models_json::provider_entry(&doc, &old_name)
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
@@ -576,6 +595,20 @@ impl Chat {
                     pi_link::probe::ProbeOutcome::Ok {
                         catalog, latency_ms, ..
                     } => {
+                        // 草稿（未保存的新商）：只报连通结果，**不落盘**——
+                        // 列表里的对象只能由【保存】诞生（042-1 用户定稿）
+                        if provider_bg.is_empty() {
+                            c.cfg.mj_speed = Some(MjSpeedState::Passed {
+                                latency_ms,
+                                models: catalog.len(),
+                                seeded: false,
+                            });
+                            if let Some(st) = c.dlg.settings.clone() {
+                                st.update(cx, |_, cx| cx.notify());
+                            }
+                            cx.notify();
+                            return;
+                        }
                         // 1、自动保存（表单全字段 + 头行输入框可能的改名）
                         if let Some(st) = c.dlg.settings.clone() {
                             let old = st.read(cx).mj_name.read(cx).value().trim().to_string();
@@ -982,6 +1015,8 @@ pub(crate) fn mj_provider_editor(
             .into_any_element()
     };
 
+    // 草稿态（未保存的新商）：没有可删的对象，不给删除钮
+    let is_new = name.is_empty();
     // name 行：标题列 + 控件列（input 半宽；[删除][保存] 与 name input 同列右对齐）
     let remove_provider = name.to_string();
     let name_owned = name.to_string();
@@ -1006,14 +1041,16 @@ pub(crate) fn mj_provider_editor(
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .child(super::models::detail_button(
-                            "mj-del",
-                            weak,
-                            &tr("action.delete"),
-                            crate::ui::button::BtnVariant::Danger,
-                            false,
-                            move |c, cx| c.mj_ask_delete_provider(remove_provider.clone(), cx),
-                        ))
+                        .children((!is_new).then(|| {
+                            super::models::detail_button(
+                                "mj-del",
+                                weak,
+                                &tr("action.delete"),
+                                crate::ui::button::BtnVariant::Danger,
+                                false,
+                                move |c, cx| c.mj_ask_delete_provider(remove_provider.clone(), cx),
+                            )
+                        }))
                         .child(super::models::detail_button(
                             "mj-apply",
                             weak,
@@ -1084,6 +1121,7 @@ pub(crate) fn mj_provider_editor(
                 .mt(px(10.))
                 .flex()
                 .items_center()
+                .justify_end()
                 .gap(px(8.))
                 .child(super::models::detail_button(
                     "mj-speedtest",
@@ -1105,7 +1143,7 @@ pub(crate) fn mj_provider_editor(
                     weak,
                     &format!("+ {}", tr("settings.tab.models")),
                     crate::ui::button::BtnVariant::Secondary,
-                    !add_ok,
+                    !add_ok || is_new,
                     {
                         let n = name.to_string();
                         move |c, cx| c.mj_add_model(n.clone(), cx)
@@ -1135,6 +1173,9 @@ pub(crate) fn mj_provider_editor(
         // 注释行用 faint 弱化（比 note 再小一号 + 降透明），不抢操作栏视线
         .child(
             div()
+                .flex()
+                .justify_end()
+                .text_right()
                 .opacity(0.7)
                 .child(
                     div()
@@ -1153,7 +1194,10 @@ pub(crate) fn mj_provider_editor(
             .bg(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66))),
     );
 
-    // 可用模型区（内置同规格）
+    // 可用模型区（内置同规格）；草稿态不渲染——还没保存，没有可挂的模型
+    if is_new {
+        return detail.into_any_element();
+    }
     mj_enabled_section(chat, weak, name, d, t, detail).into_any_element()
 }
 

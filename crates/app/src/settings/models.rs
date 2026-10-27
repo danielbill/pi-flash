@@ -858,6 +858,10 @@ fn mc_models_detail(
     enabled_set: &std::collections::HashSet<String>,
 ) -> gpui::AnyElement {
     let t = T();
+    // 新建 Provider 草稿（042-1）：纯 UI，未落盘；name = 空 → 编辑器无删除钮
+    if selected == "mj:new" {
+        return super::custom_models::mj_provider_editor(chat, weak, "", d, error, t);
+    }
     // custom provider / model editors
     if let Some(name) = selected.strip_prefix("mj:p:") {
         return super::custom_models::mj_provider_editor(chat, weak, name, d, error, t);
