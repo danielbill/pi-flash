@@ -1416,6 +1416,16 @@ impl Chat {
         self.catalog_for(self.project())
     }
 
+    /// 删掉某商在**内存目录**里的条目（042-1：删除自定义商后列表项立刻消失）。
+    /// 光删 models.json 不够——`models_by_cwd` 里的进程答案与启动时装的
+    /// globals 都还带着该商的模型，侧栏/菜单会继续列出它。
+    pub(crate) fn drop_provider_from_catalog(&mut self, provider: &str) {
+        self.pool.globals.models.retain(|m| m.provider != provider);
+        for models in self.pool.models_by_cwd.values_mut() {
+            models.retain(|m| m.provider != provider);
+        }
+    }
+
     /// 「获取模型」落盘后刷新内存目录：该 provider 的条目整体以磁盘现读为
     /// 准（实拉目录替换 models-store 陈旧缓存），其余 provider 不动；其他
     /// 商的进程答案/RPC 清单原样保留。
