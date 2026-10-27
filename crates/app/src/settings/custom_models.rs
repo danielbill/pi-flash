@@ -595,24 +595,30 @@ impl Chat {
                     pi_link::probe::ProbeOutcome::Ok {
                         catalog, latency_ms, ..
                     } => {
-                        // 草稿（未保存的新商）：只报连通结果，**不落盘**——
-                        // 列表里的对象只能由【保存】诞生（042-1 用户定稿）
-                        if provider_bg.is_empty() {
-                            c.cfg.mj_speed = Some(MjSpeedState::Passed {
-                                latency_ms,
-                                models: catalog.len(),
-                                seeded: false,
-                            });
-                            if let Some(st) = c.dlg.settings.clone() {
-                                st.update(cx, |_, cx| cx.notify());
-                            }
-                            cx.notify();
-                            return;
-                        }
-                        // 1、自动保存（表单全字段 + 头行输入框可能的改名）
+                        // 1、自动保存（表单全字段）。草稿（provider_bg 为空，
+                        // 表单一开头就填着名字）→ 以 old_name="" 新建；已存在
+                        // 的商按老名字保存（改名走头行【保存】）
+                        let mut form_name = String::new();
                         if let Some(st) = c.dlg.settings.clone() {
-                            let old = st.read(cx).mj_name.read(cx).value().trim().to_string();
+                            form_name = st.read(cx).mj_name.read(cx).value().trim().to_string();
+                            let old = if provider_bg.is_empty() {
+                                String::new()
+                            } else {
+                                form_name.clone()
+                            };
                             c.mj_apply_provider(old, cx);
+                        }
+                        // 草稿测速后 section 已切成 mj:p:{name}：后续合并用真名
+                        let target = if provider_bg.is_empty() {
+                            form_name
+                        } else {
+                            provider_bg.clone()
+                        };
+                        // 没填名字 = 存不了；别往 models.json 里塞空名条目
+                        if target.is_empty() {
+                            c.cfg.mj_speed = None;
+                            c.mc_set_error(tr("custom_models.name_required"), cx);
+                            return;
                         }
                         // 2、自动拉取：目录直接合并进账本 models[]（自定义商
                         // 唯一真相源；provider-catalog 缓存只服务内置商，
@@ -621,9 +627,9 @@ impl Chat {
                             c.cfg.mj_speed = Some(MjSpeedState::PassedEmpty);
                         } else {
                             let mut doc = Self::mj_doc();
-                            Self::mj_merge_catalog_into_ledger(&mut doc, &provider_bg, &catalog);
+                            Self::mj_merge_catalog_into_ledger(&mut doc, &target, &catalog);
                             c.mj_write(&doc, cx);
-                            c.refresh_provider_catalog(&provider_bg);
+                            c.refresh_provider_catalog(&target);
                             c.cfg.mj_speed = Some(MjSpeedState::Passed {
                                 latency_ms,
                                 models: catalog.len(),
@@ -1150,14 +1156,14 @@ pub(crate) fn mj_provider_editor(
                     },
                 )),
         )
-        // 测速结果行（seeded 通过态不显示）
+        // 测速结果行（seeded 通过态不显示）。用户定稿：与操作栏同侧，右对齐
         .children(match chat.cfg.mj_speed.as_ref() {
-            Some(MjSpeedState::Running) => vec![note(&tr("models.speed_testing"))],
+            Some(MjSpeedState::Running) => vec![note_right(&tr("models.speed_testing"))],
             Some(MjSpeedState::Passed {
                 latency_ms,
                 models,
                 seeded: false,
-            }) => vec![note(&crate::i18n::tf(
+            }) => vec![note_right(&crate::i18n::tf(
                 "models.speed_pass",
                 &[
                     ("ms", latency_ms.to_string()),
@@ -1165,25 +1171,12 @@ pub(crate) fn mj_provider_editor(
                 ],
             ))],
             Some(MjSpeedState::PassedEmpty { .. }) => {
-                vec![error_note(&tr("models.autofetch_failed_hint"))]
+                vec![error_note_right(&tr("models.autofetch_failed_hint"))]
             }
-            Some(MjSpeedState::Failed(e)) => vec![error_note(e)],
+            Some(MjSpeedState::Failed(e)) => vec![error_note_right(e)],
             _ => Vec::new(),
         })
-        // 注释行用 faint 弱化（比 note 再小一号 + 降透明），不抢操作栏视线
-        .child(
-            div()
-                .flex()
-                .justify_end()
-                .text_right()
-                .opacity(0.7)
-                .child(
-                    div()
-                        .text_size(crate::appearance::ui_size(10.))
-                        .text_color(rgb(t.text_dim))
-                        .child(SharedString::from(tr("models.speed_note").to_string())),
-                ),
-        );
+;
 
 
     // API 段与可用模型区之间的分隔线（内置详情同款）

@@ -25,8 +25,9 @@ use misc::mc_misc_view;
 use super::*;
 pub(crate) use crate::ui::{DropdownState, VListHeight, icon, vlist};
 pub(crate) use widgets::{
-    Btn, LIST_W, SwitchMark, config_button, config_switch, detail_shell, error_note, field,
-    group_header, group_switch, mono_text, note, scope_tag, section_title, set_row, sidebar_list,
+    Btn, LIST_W, SwitchMark, config_button, config_switch, detail_shell, error_note,
+    error_note_right, field, group_header, group_switch, mono_text, note, note_right, scope_tag,
+    section_title, set_row, sidebar_list,
     sidebar_shell, status_dot, switch_base, width_slider,
 };
 

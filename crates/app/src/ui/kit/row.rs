@@ -38,6 +38,28 @@ pub(crate) fn note(text: &str) -> AnyElement {
         .into_any_element()
 }
 
+/// 右对齐说明行（042-1 用户定稿：提示信息与操作栏同侧）。
+pub(crate) fn note_right(text: &str) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .justify_end()
+        .text_right()
+        .child(note(text))
+        .into_any_element()
+}
+
+/// 右对齐错误行。
+pub(crate) fn error_note_right(text: &str) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .justify_end()
+        .text_right()
+        .child(error_note(text))
+        .into_any_element()
+}
+
 pub(crate) fn error_note(text: &str) -> AnyElement {
     div()
         .text_size(crate::appearance::ui_size(11.))
