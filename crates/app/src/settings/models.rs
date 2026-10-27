@@ -448,12 +448,12 @@ impl Chat {
         match pi_link::auth_json::delete_secret(&provider) {
             Ok(true) => {}
             Ok(false) => {
+                // 凭据归用户/pi：文件不动，静默从 PF 列表隐藏（保存即恢复）
                 let mut hidden = crate::services::workspace::removed_providers();
                 if !hidden.contains(&provider) {
                     hidden.push(provider.clone());
                     crate::services::workspace::set_removed_providers(&hidden);
                 }
-                self.mc_set_error(tr("models.cred_not_managed"), cx);
             }
             Err(e) => {
                 self.mc_set_error(&e, cx);
