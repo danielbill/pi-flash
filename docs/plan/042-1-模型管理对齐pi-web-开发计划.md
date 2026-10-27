@@ -262,3 +262,12 @@ M1 文件层 ──▶ M2 凭据 ──▶ M3 模型源 ──▶ M4 目录单�
 - 真机（vendored pi 1.4.0）：
   - `auth.json` 写 `!'…/pif-secret.exe' get deepseek` → `pi auth check --provider deepseek --json` = `ready`，取到的正是钥匙库里的真值；
   - helper 不存在 / 钥匙库无条目 → `not_ready`（回落到 provider 的官方 env，无 env 即未配置）——**安全失败，不会把命令串当 key 发出去**。
+
+## 8 发版注意（080-软件分发）
+
+- `pif-secret.exe` 必须与 `pi-flash.exe` **同目录**分发（`auth_json::helper_exe()` 取
+  `current_exe().parent()`）。载荷打包时确认两个 bin 都在。
+- helper 路径写死在 `auth.json` 的标记条目里：安装目录变更后所有标记条目会失效，
+  由启动校验提示「凭据失效」，用户重新保存任一 key 即重写全部标记（`store_marker` 幂等）。
+- `vendor/pi` 升级时复核：`AuthStorage.read()` 仍对 api_key 走 `resolveConfigValue`
+  （`!` 命令分支）；若 pi 改了这条链，标记条目会静默失效 → 用 `pi auth check` 跑一次冒烟。
