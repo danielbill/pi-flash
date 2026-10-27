@@ -862,6 +862,13 @@ fn mc_models_detail(
     if let Some(name) = selected.strip_prefix("mj:p:") {
         return super::custom_models::mj_provider_editor(chat, weak, name, d, error, t);
     }
+    if let Some(rest) = selected.strip_prefix("mj:o:") {
+        // 内置模型的覆盖式详情：右栏底图同样是 Provider 详情（section 原文
+        // 不能当 provider 名，否则标题会显示成 mj:o:xxx:yyy）
+        if let Some((name, _)) = rest.split_once(':') {
+            return super::custom_models::mj_provider_editor(chat, weak, name, d, &None, t);
+        }
+    }
     if let Some(rest) = selected.strip_prefix("mj:m:") {
         // 模型编辑器已改居中 500×500 小弹窗（render.rs 顶层挂
         // mj_model_modal_overlay，section = mj:m:{prov}:{ix} 即打开态）；

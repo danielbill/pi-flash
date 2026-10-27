@@ -78,6 +78,13 @@ pub fn parse_store(value: &Value) -> Vec<ModelInfo> {
                     .unwrap_or(provider)
                     .to_string(),
                 context_window: m.get("contextWindow").and_then(Value::as_u64),
+                max_tokens: m.get("maxTokens").and_then(Value::as_u64),
+                reasoning: m.get("reasoning").and_then(Value::as_bool),
+                input: m.get("input").and_then(Value::as_array).map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                }),
             });
         }
     }
@@ -111,6 +118,13 @@ pub fn parse_models_json(value: &Value) -> Vec<ModelInfo> {
                     .to_string(),
                 provider: provider.clone(),
                 context_window: m.get("contextWindow").and_then(Value::as_u64),
+                max_tokens: m.get("maxTokens").and_then(Value::as_u64),
+                reasoning: m.get("reasoning").and_then(Value::as_bool),
+                input: m.get("input").and_then(Value::as_array).map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                }),
             });
         }
     }

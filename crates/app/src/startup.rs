@@ -242,6 +242,9 @@ mod tests {
                 name: "disk".into(),
                 provider: "p".into(),
                 context_window: None,
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             }],
             ..Default::default()
         };
@@ -251,12 +254,18 @@ mod tests {
                 name: "rpc".into(),
                 provider: "p".into(),
                 context_window: Some(9),
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             },
             ModelInfo {
                 id: "y".into(),
                 name: "rpc2".into(),
                 provider: "p".into(),
                 context_window: None,
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             },
         ];
         assert!(merge_models(&mut g, &rpc));

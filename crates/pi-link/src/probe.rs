@@ -304,6 +304,10 @@ fn parse_entry(e: &serde_json::Value) -> Option<crate::protocol::ModelInfo> {
         name,
         provider: String::new(),
         context_window,
+        // 探查只关心 id/name/上下文窗口（保存时由 catalog 补全其余参数）
+        max_tokens: None,
+        reasoning: None,
+        input: None,
     })
 }
 

@@ -35,13 +35,32 @@ impl Chat {
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         let model = match &over {
-            // 覆盖模式：读 modelOverrides[id]（没有 → 全空表单，保存时新建）
+            // 覆盖模式：读 modelOverrides[id]；没有覆盖条目 → 用该模型**当前
+            // 生效的定义**（pi 目录里的 contextWindow/maxTokens/reasoning/
+            // input）预填，表单不再是空白、用户能看见真实参数，改哪项就覆盖哪项
             Some((_, id)) => {
                 let mut m = entry
                     .get("modelOverrides")
                     .and_then(|o| o.get(id))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({}));
+                if !m.is_object() {
+                    m = serde_json::json!({});
+                }
+                if m.as_object().is_some_and(|o| o.is_empty()) {
+                    if let Some(base) = self
+                        .catalog_for(self.project())
+                        .into_iter()
+                        .find(|mm| mm.provider == name && &mm.id == id)
+                    {
+                        m = serde_json::json!({
+                            "contextWindow": base.context_window,
+                            "maxTokens": base.max_tokens,
+                            "reasoning": base.reasoning,
+                            "input": base.input,
+                        });
+                    }
+                }
                 if let Some(obj) = m.as_object_mut() {
                     obj.insert("id".into(), serde_json::json!(id));
                 }
@@ -448,15 +467,24 @@ impl Chat {
             }
             // 推理恒显式写 bool（pi 对 falsy 只给 off，缺键会被补 true）
             m.insert("reasoning".into(), serde_json::json!(reasoning));
-            let mut input = vec!["text"];
+            // 能力：text 恒有、image 跟勾选；其余能力（video 等，pi 的内置定义
+            // 里可能有）原样保留——别因为表单只有两个框就把它们冲掉
+            let mut input: Vec<String> = m
+                .get("input")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .filter(|x| *x != "text" && *x != "image")
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
             if image {
-                input.push("image");
+                input.insert(0, "image".to_string());
             }
-            if input.len() > 1 {
-                m.insert("input".into(), serde_json::json!(input));
-            } else {
-                m.remove("input");
-            }
+            input.insert(0, "text".to_string());
+            m.insert("input".into(), serde_json::json!(input));
         }
         let overrides = obj
             .entry("modelOverrides")
