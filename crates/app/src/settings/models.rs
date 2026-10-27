@@ -325,12 +325,6 @@ impl Chat {
             self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
             return;
         }
-        // 保存 = （重新）注册：从隐藏清单除名，列表恢复显示
-        let mut hidden = crate::services::workspace::removed_providers();
-        if hidden.iter().any(|p| p == &provider) {
-            hidden.retain(|p| p != &provider);
-            crate::services::workspace::set_removed_providers(&hidden);
-        }
         self.reload_settings_panel();
         // 输入框保留刚保存的 key（掩码态），眼睛可复核
         // 042 决策 3：保存后自动探查 + 实拉该商模型目录落盘
@@ -401,10 +395,8 @@ impl Chat {
     /// Whether the provider has an api_key credential（detail 头部状态点用；
     /// 侧栏已改 provider logo，不再用凭据状态点缀行）。
     pub(crate) fn mc_configured(&self, provider: &str) -> bool {
-        self.cfg
-            .mc_creds
-            .iter()
-            .any(|(p, k)| p == provider && *k == pi_link::config::CredentialKind::ApiKey)
+        // api_key 与 oauth 都算「该商在用」（列表成员资格 = 有凭据）
+        self.cfg.mc_creds.iter().any(|(p, _)| p == provider)
     }
 
     /// 选中一个 catalog provider：已配置的把已存 key 解出预填进输入框
@@ -441,24 +433,12 @@ impl Chat {
             cx.notify();
             return;
         }
-        // 042-1【移除】两层语义：①PF 自己写的凭据 → 删标记条目 + 钥匙库条目；
-        // ②凭据归用户/pi（明文、oauth、或压根没有）→ **文件一律不动**，只把
-        // 该商从 PF 的展示面隐藏（重新保存 key 即恢复）。所以「移除」永远能
-        // 生效，不会再因为「凭据不是我写的」把人卡住。
-        match pi_link::auth_json::delete_secret(&provider) {
-            Ok(true) => {}
-            Ok(false) => {
-                // 凭据归用户/pi：文件不动，静默从 PF 列表隐藏（保存即恢复）
-                let mut hidden = crate::services::workspace::removed_providers();
-                if !hidden.contains(&provider) {
-                    hidden.push(provider.clone());
-                    crate::services::workspace::set_removed_providers(&hidden);
-                }
-            }
-            Err(e) => {
-                self.mc_set_error(&e, cx);
-                return;
-            }
+        // 042-1【移除】= 断开连接：删掉该商的 api_key 凭据（用户已确认）。
+        // 列表成员资格靠真实状态维持（内置商 = 有凭据；自定义商 = 有条目），
+        // 凭据没了商家自然从列表消失——不需要任何隐藏清单。oauth 归 pi，不动。
+        if let Err(e) = pi_link::auth_json::delete_api_key(&provider) {
+            self.mc_set_error(&e, cx);
+            return;
         }
         self.cfg.mc_probe.remove(&provider);
         self.reload_settings_panel();
@@ -564,14 +544,14 @@ fn mc_models_sidebar(
                     .is_some_and(|s| !s.trim().is_empty())
         })
     };
-    let hidden_providers = crate::services::workspace::removed_providers();
-    let mut provs: Vec<String> = chat.mc_provider_ids();
-    provs.extend(
-        custom_entries
-            .iter()
-            .map(|(n, _)| n.clone())
-            .filter(|n| !hidden_providers.iter().any(|p| p == n)),
-    );
+    // 列表 = 用户在用的那一份：内置商按「有凭据」入列（移除凭据即出列），
+    // 自定义商按「models.json 有条目」入列（删除条目即出列）。没有隐藏清单。
+    let mut provs: Vec<String> = chat
+        .mc_provider_ids()
+        .into_iter()
+        .filter(|p| chat.mc_configured(p) || is_custom(p))
+        .collect();
+    provs.extend(custom_entries.iter().map(|(n, _)| n.clone()));
     // 去重保序（models.json 的商可能已从目录进过一次）
     let mut seen = std::collections::HashSet::new();
     provs.retain(|p| seen.insert(p.clone()));
@@ -1401,13 +1381,7 @@ impl Chat {
             .map(|v| v.as_slice())
             .filter(|v| !v.is_empty())
             .unwrap_or(self.pool.globals.models.as_slice());
-        // 042-1：【移除】= 只从 PF 的展示面隐藏（凭据归 pi/用户时 PF 不删文件）；
-        // 重新保存该商 key 会自动恢复显示（mc_save_key 清墓碑）
-        let hidden = crate::services::workspace::removed_providers();
-        raw.iter()
-            .filter(|m| !hidden.iter().any(|p| p == &m.provider))
-            .cloned()
-            .collect()
+        raw.to_vec()
     }
 
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，

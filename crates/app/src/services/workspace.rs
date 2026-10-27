@@ -846,9 +846,6 @@ pub struct AppSettings {
     /// 新会话。两键齐才算设置了默认。
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
-    /// 042：被【移除】的内置商（不再出现在设置页合并列表；重新配置 key 时
-    /// 自动除名）。空数组与缺键同义。
-    pub removed_providers: Option<Vec<String>>,
     /// 081 其他页: 自动更新（默认 on——off 时只提示新版本号 ↑ 不下载）
     pub auto_update: Option<bool>,
     /// 052 其他页: 会话自动清理天数——最后活动超出该天数的非置顶会话
@@ -940,14 +937,6 @@ pub fn app_settings() -> AppSettings {
                         .get("default_model")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
-                    removed_providers: map.get("removed_providers").and_then(|v| {
-                        Some(
-                            v.as_array()?
-                                .iter()
-                                .filter_map(|e| e.as_str().map(str::to_string))
-                                .collect::<Vec<_>>(),
-                        )
-                    }),
                     auto_update: map.get("auto_update").and_then(|v| v.as_bool()),
                     auto_clean_days: map
                         .get("auto_clean_days")
@@ -1027,15 +1016,6 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = &s.default_model {
         obj.insert("default_model".into(), Value::String(v.clone()));
     }
-    match &s.removed_providers {
-        Some(v) if !v.is_empty() => {
-            obj.insert(
-                "removed_providers".into(),
-                Value::Array(v.iter().map(|e| Value::String(e.clone())).collect()),
-            );
-        }
-        _ => {}
-    }
     if let Some(v) = s.auto_update {
         obj.insert("auto_update".into(), Value::Bool(v));
     }
@@ -1076,20 +1056,6 @@ pub fn send_mode_pref() -> &'static str {
 pub fn save_send_mode(mode: &str) {
     let mut s = app_settings();
     s.send_mode = Some(mode.to_string());
-    save_app_settings(&s);
-}
-
-/// 042：从 PF 列表里隐藏的商（【移除】的 UI 墓碑）。
-/// 042-1：凭据归 pi/用户时 PF 不能删文件，于是「移除」= 只从列表隐藏；
-/// 重新保存该商 key 即自动恢复显示。
-pub fn removed_providers() -> Vec<String> {
-    app_settings().removed_providers.unwrap_or_default()
-}
-
-/// 整体改写隐藏清单（空 = 全部恢复显示）。
-pub fn set_removed_providers(list: &[String]) {
-    let mut s = app_settings();
-    s.removed_providers = Some(list.to_vec()).filter(|v| !v.is_empty());
     save_app_settings(&s);
 }
 

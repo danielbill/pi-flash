@@ -275,12 +275,6 @@ impl Chat {
         }
         pi_link::models_json::upsert_provider(&mut doc, &name, entry);
         self.mj_write(&doc, cx);
-        // 保存 = 该商恢复显示（删除后同名重建不会被隐藏清单挡住）
-        let mut hidden = crate::services::workspace::removed_providers();
-        if hidden.iter().any(|p| p == &name) {
-            hidden.retain(|p| p != &name);
-            crate::services::workspace::set_removed_providers(&hidden);
-        }
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = format!("mj:p:{name}");
@@ -318,13 +312,8 @@ impl Chat {
         self.cfg.mj_speed = None;
         self.mj_write(&doc, cx);
         // 内存目录同步摘掉（否则进程答案 / 启动 globals 里的模型会让列表项
-        // 继续挂着）；再记进隐藏清单，压住「已关会话回放的陈旧 RPC 答案」。
+        // 继续挂着）。列表成员资格 = models.json 里有没有条目，无隐藏清单。
         self.drop_provider_from_catalog(&name);
-        let mut hidden = crate::services::workspace::removed_providers();
-        if !hidden.contains(&name) {
-            hidden.push(name.clone());
-            crate::services::workspace::set_removed_providers(&hidden);
-        }
         if let Some(st) = self.dlg.settings.clone() {
             let next = pi_link::models_json::providers(&doc)
                 .first()

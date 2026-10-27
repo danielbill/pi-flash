@@ -153,6 +153,29 @@ pub fn remove_marker_at(path: &Path, provider: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
+/// 删除该商的 api_key 条目（**不论谁写的**）。只允许在用户显式操作（【移除】/
+/// 【删除】+ 确认）后调用——那是用户自己的意图。oauth 条目归 pi，一律不动。
+pub fn delete_api_key(provider: &str) -> Result<bool, String> {
+    let mut removed = false;
+    update(&auth_path(), |doc| {
+        let is_api_key = doc
+            .get(provider)
+            .and_then(|c| c.get("type"))
+            .and_then(Value::as_str)
+            .map(|t| t != "oauth")
+            .unwrap_or(false);
+        if is_api_key {
+            doc.remove(provider);
+            removed = true;
+        }
+    })?;
+    if removed {
+        let _ =
+            crate::credentials::KeyringVault.delete(&crate::credentials::env_var_name(provider));
+    }
+    Ok(removed)
+}
+
 /// 迁移器用：把一条**用户明文**条目收进标记形态（钥匙库由调用方先写）。
 /// 只在当前值仍等于 `secret` 时改写，避免覆盖用户刚改过的新值。
 pub fn seal_plaintext(provider: &str, secret: &str) -> Result<bool, String> {
