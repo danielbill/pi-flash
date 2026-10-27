@@ -353,6 +353,29 @@ impl Chat {
         else {
             return false;
         };
+        // 同商下不允许**新增**重复模型 ID：pi 的启用键是 provider/id，两条同 ID
+        // 条目只能共用一个开关（列表两边一起跳），存了也是脏数据。
+        // 仅拦“改成重复”：存量已是重复的条目（stored == id）照常可改可存。
+        let stored_id = entry
+            .get("models")
+            .and_then(|m| m.get(ix))
+            .and_then(|m| m.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let dup = stored_id != id
+            && entry
+                .get("models")
+                .and_then(|m| m.as_array())
+                .is_some_and(|a| {
+                    a.iter().enumerate().any(|(i, m)| {
+                        i != ix && m.get("id").and_then(|v| v.as_str()) == Some(id.as_str())
+                    })
+                });
+        if dup {
+            let msg = crate::i18n::tf("custom_models.model_id_duplicate", &[("id", id.clone())]);
+            self.mc_set_error(&msg, cx);
+            return false;
+        }
         let mut model = entry
             .get("models")
             .and_then(|m| m.get(ix))
@@ -1047,6 +1070,13 @@ fn mj_enabled_section(
         .iter()
         .filter(|m| m.provider == provider)
         .cloned()
+        .collect();
+    // 同 ID 多条目在 pi 眼里就是一个模型（启用键 = provider/id）：列表按 ID
+    // 去重展示——否则两行行共用同一个开关，点一个两个一起动（"联动"根源）
+    let mut seen = std::collections::HashSet::new();
+    let models: Vec<pi_link::protocol::ModelInfo> = models
+        .into_iter()
+        .filter(|m| seen.insert(format!("{}/{}", m.provider, m.id)))
         .collect();
     let enabled_set: std::collections::HashSet<String> =
         chat.cfg.mc_state.enabled.iter().cloned().collect();
