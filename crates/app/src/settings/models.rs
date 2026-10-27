@@ -891,11 +891,7 @@ fn mc_models_detail(
         .filter(|m| m.provider == provider)
         .collect();
     // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
-    let detail = detail_shell("mc-detail")
-        .p(px(15.))
-        .when(error.is_some(), |d| {
-            d.child(error_note(error.as_deref().unwrap_or("")))
-        });
+    let detail = detail_shell("mc-detail").p(px(15.));
 
     // header：Provider 名称（左）+ 操作钮（右，同一行）：[移除][保存]，间隔 10px。
     // 保存钮原本贴在 API Key 输入框右缘——输入框改全宽后统一收到这里。
@@ -949,6 +945,10 @@ fn mc_models_detail(
                     )),
             ),
     );
+    // 详情页唯一信息栏（用户定稿）：按钮下方、右对齐，同一时刻只有一条
+    let detail = detail.when(error.is_some(), |d| {
+        d.child(error_note_right(error.as_deref().unwrap_or("")))
+    });
 
     // API Key 段：标题 + 输入**全宽**（右缘内置眼睛，掩码显隐已存 key）；
     // 保存钮在 headr 行（见上）

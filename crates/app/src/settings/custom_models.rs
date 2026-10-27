@@ -303,7 +303,8 @@ impl Chat {
         // apiKey 分流（051）：明文 → 凭据库 + $PF_KEY_* 引用；高级引用原样；
         // 库不可用降级明文
         self.mj_store_key(&mut entry, &name, &key, cx);
-        if name != old_name {
+        // 草稿（old_name 为空）= 新建，没有旧键可改名
+        if !old_name.is_empty() && name != old_name {
             if let Err(e) =
                 pi_link::models_json::rename_provider(&mut doc, &old_name, &name)
             {
@@ -1067,8 +1068,7 @@ pub(crate) fn mj_provider_editor(
                         )),
                 )
                 .into_any_element(),
-        ))
-        .children(error.as_ref().map(|e| error_note(e)));
+        ));
 
     // API Key 行：控件全宽（右缘眼睛，掩码显隐已存 key）；保存钮在操作栏
     let weak_eye = weak.clone();
@@ -1156,8 +1156,12 @@ pub(crate) fn mj_provider_editor(
                     },
                 )),
         )
-        // 测速结果行（seeded 通过态不显示）。用户定稿：与操作栏同侧，右对齐
-        .children(match chat.cfg.mj_speed.as_ref() {
+        // 详情页唯一的信息栏（用户定稿）：两按钮下方、右对齐，同一时刻只有
+        // 一条。优先级：表单错误 > 测速结果（seeded 通过态不显示）。
+        .children(if let Some(e) = error.as_ref() {
+            vec![error_note_right(e)]
+        } else {
+            match chat.cfg.mj_speed.as_ref() {
             Some(MjSpeedState::Running) => vec![note_right(&tr("models.speed_testing"))],
             Some(MjSpeedState::Passed {
                 latency_ms,
@@ -1175,6 +1179,7 @@ pub(crate) fn mj_provider_editor(
             }
             Some(MjSpeedState::Failed(e)) => vec![error_note_right(e)],
             _ => Vec::new(),
+            }
         })
 ;
 
