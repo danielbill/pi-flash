@@ -325,6 +325,12 @@ impl Chat {
             self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
             return;
         }
+        // 保存 = （重新）注册：从隐藏清单除名，列表恢复显示
+        let mut hidden = crate::services::workspace::removed_providers();
+        if hidden.iter().any(|p| p == &provider) {
+            hidden.retain(|p| p != &provider);
+            crate::services::workspace::set_removed_providers(&hidden);
+        }
         self.reload_settings_panel();
         // 输入框保留刚保存的 key（掩码态），眼睛可复核
         // 042 决策 3：保存后自动探查 + 实拉该商模型目录落盘
@@ -435,14 +441,19 @@ impl Chat {
             cx.notify();
             return;
         }
-        // 042-1：只删 PF 标记条目 + 钥匙库条目。用户手写的明文 / pi 的 oauth
-        // 条目一律不动（提示由用户自行维护）。
+        // 042-1【移除】两层语义：①PF 自己写的凭据 → 删标记条目 + 钥匙库条目；
+        // ②凭据归用户/pi（明文、oauth、或压根没有）→ **文件一律不动**，只把
+        // 该商从 PF 的展示面隐藏（重新保存 key 即恢复）。所以「移除」永远能
+        // 生效，不会再因为「凭据不是我写的」把人卡住。
         match pi_link::auth_json::delete_secret(&provider) {
             Ok(true) => {}
             Ok(false) => {
+                let mut hidden = crate::services::workspace::removed_providers();
+                if !hidden.contains(&provider) {
+                    hidden.push(provider.clone());
+                    crate::services::workspace::set_removed_providers(&hidden);
+                }
                 self.mc_set_error(tr("models.cred_not_managed"), cx);
-                cx.notify();
-                return;
             }
             Err(e) => {
                 self.mc_set_error(&e, cx);
@@ -553,8 +564,14 @@ fn mc_models_sidebar(
                     .is_some_and(|s| !s.trim().is_empty())
         })
     };
+    let hidden_providers = crate::services::workspace::removed_providers();
     let mut provs: Vec<String> = chat.mc_provider_ids();
-    provs.extend(custom_entries.iter().map(|(n, _)| n.clone()));
+    provs.extend(
+        custom_entries
+            .iter()
+            .map(|(n, _)| n.clone())
+            .filter(|n| !hidden_providers.iter().any(|p| p == n)),
+    );
     // 去重保序（models.json 的商可能已从目录进过一次）
     let mut seen = std::collections::HashSet::new();
     provs.retain(|p| seen.insert(p.clone()));
@@ -1384,7 +1401,13 @@ impl Chat {
             .map(|v| v.as_slice())
             .filter(|v| !v.is_empty())
             .unwrap_or(self.pool.globals.models.as_slice());
-        raw.to_vec()
+        // 042-1：【移除】= 只从 PF 的展示面隐藏（凭据归 pi/用户时 PF 不删文件）；
+        // 重新保存该商 key 会自动恢复显示（mc_save_key 清墓碑）
+        let hidden = crate::services::workspace::removed_providers();
+        raw.iter()
+            .filter(|m| !hidden.iter().any(|p| p == &m.provider))
+            .cloned()
+            .collect()
     }
 
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，

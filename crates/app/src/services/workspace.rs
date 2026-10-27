@@ -1079,6 +1079,20 @@ pub fn save_send_mode(mode: &str) {
     save_app_settings(&s);
 }
 
+/// 042：从 PF 列表里隐藏的商（【移除】的 UI 墓碑）。
+/// 042-1：凭据归 pi/用户时 PF 不能删文件，于是「移除」= 只从列表隐藏；
+/// 重新保存该商 key 即自动恢复显示。
+pub fn removed_providers() -> Vec<String> {
+    app_settings().removed_providers.unwrap_or_default()
+}
+
+/// 整体改写隐藏清单（空 = 全部恢复显示）。
+pub fn set_removed_providers(list: &[String]) {
+    let mut s = app_settings();
+    s.removed_providers = Some(list.to_vec()).filter(|v| !v.is_empty());
+    save_app_settings(&s);
+}
+
 /// 042：默认模型写入（设置页五角星 / inputpanel 星标共用；None = 取消）。
 /// 落盘即生效——新会话 spawn 读最新值。
 pub fn set_default_model_pref(pref: Option<(String, String)>) {
