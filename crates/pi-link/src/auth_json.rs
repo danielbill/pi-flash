@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::{auth_path, read_json, write_json_private, CredentialKind};
+use crate::credentials::SecretVault;
 use crate::fs_lock;
 
 /// 标记条目里的命令前缀成员：判据靠它区分「PF 写的」与「用户写的」。
@@ -177,6 +178,56 @@ pub fn seal_plaintext_at(
         sealed = true;
     })?;
     Ok(sealed)
+}
+
+// ---------------------------------------------------------------------------
+// 秘密（钥匙库）+ 标记条目：一个入口
+// ---------------------------------------------------------------------------
+
+/// 保存 apikey：①钥匙库写入并读回校验 ②auth.json 写标记条目（失败回滚钥匙库）。
+/// 覆盖同商旧条目（含用户手写明文的覆盖——决策 042-1 §9-4）。
+pub fn store_secret(provider: &str, secret: &str) -> Result<(), String> {
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return Err("API Key 不能为空".to_string());
+    }
+    let entry = crate::credentials::env_var_name(provider);
+    let vault = crate::credentials::KeyringVault;
+    vault.set(&entry, secret)?;
+    let readback = vault.get(&entry).ok().flatten();
+    if readback.as_deref() != Some(secret) {
+        let _ = vault.delete(&entry);
+        return Err("钥匙库读回校验失败（保存已回滚）".to_string());
+    }
+    if let Err(e) = store_marker(provider) {
+        let _ = vault.delete(&entry);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// 移除 apikey：只删 PF 标记条目（+ 对应钥匙库条目）。用户明文 / oauth 不动。
+pub fn delete_secret(provider: &str) -> Result<bool, String> {
+    let removed = remove_marker(provider)?;
+    if removed {
+        let _ =
+            crate::credentials::KeyringVault.delete(&crate::credentials::env_var_name(provider));
+    }
+    Ok(removed)
+}
+
+/// 取该商可用的秘密（PF 标记 → 钥匙库；用户明文 → 原值）。UI 掩码预填与
+/// 通路探查共用。
+pub fn resolve_secret(provider: &str) -> Option<String> {
+    let cred = read_credential(provider).ok().flatten()?;
+    if is_pf_managed(&cred) {
+        crate::credentials::KeyringVault
+            .get(&crate::credentials::env_var_name(provider))
+            .ok()
+            .flatten()
+    } else {
+        plaintext_key(&cred).map(str::to_string)
+    }
 }
 
 fn update<F>(path: &Path, f: F) -> Result<(), String>

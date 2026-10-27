@@ -189,21 +189,10 @@ pub fn probe_anthropic_compat(models_url: &str, messages_url: &str, key: &str) -
     probe(messages_url, Auth::Anthropic, key)
 }
 
-/// 目录 provider 的探查 key：pf-auth.json 条目（凭据库引用 → 解出；降级
-/// 明文 → 原值）。无条目/解不出 → None（跳过探查）。
-pub fn catalog_probe_key(provider: &str, vault: &dyn SecretVault) -> Option<String> {
-    let entries = crate::pf_auth::entries_at(&crate::pf_auth::path()?).ok()?;
-    for (p, key, _inject_as, mode) in entries {
-        if p != provider {
-            continue;
-        }
-        return match classify(&key) {
-            StoreMode::Vault => pf_ref(&key).and_then(|v| vault.get(&v).ok().flatten()),
-            StoreMode::File if mode == StoreMode::File.as_str() => Some(key),
-            _ => None,
-        };
-    }
-    None
+/// 目录 provider 的探查 key（042-1）：auth.json 条目 —— PF 标记条目解钥匙库，
+/// 用户手写的明文取原值；`!cmd` / `$VAR` 高级引用不探查。无条目 → None。
+pub fn catalog_probe_key(provider: &str) -> Option<String> {
+    crate::auth_json::resolve_secret(provider)
 }
 
 /// 自定义 provider 的探查 key：models.json 的 `apiKey` 字段（`$PF_KEY_*`
@@ -419,7 +408,8 @@ mod tests {
         let mut mem = std::collections::BTreeMap::new();
         mem.insert("PF_KEY_DEEPSEEK".to_string(), "sk-vault".to_string());
         let vault = crate::credentials::MemVault(std::sync::Mutex::new(mem));
-        assert_eq!(catalog_probe_key("nosuch", &vault), None);
+        // 目录商 key 自 042-1 起走 auth.json（本机无标注条目 → None）
+        assert_eq!(catalog_probe_key("nosuch"), None);
         assert_eq!(
             custom_probe_key("sk-plain", &vault),
             Some("sk-plain".into())

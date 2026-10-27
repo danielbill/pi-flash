@@ -1,6 +1,7 @@
 //! models.json 自定义 provider / 模型编辑器（设置·模型页右栏的 mj_* 分支）。
 //! 042 定稿：表单头【保存】/【移除】（043 同款），点保存即写盘——无页面级
-//! footer；**无编辑缓冲**——读即现读 `providers.json`，写即 read→mutate→write。
+//! footer；**无编辑缓冲**——读即现读 `models.json`，写即 read→mutate→write
+//!（042-1：数据源从 PF 账本切到 pi 的 models.json，UI 与交互不变）。
 //! 042 M2 对齐 pi-web ProviderDetail/ModelDetail：headers、导入模型
 //!（discovery 多选）、模型测试、models.dev 填入模型信息、API 覆盖 /
 //! 兼容（DeepSeek / developer role）/ 思考等级映射。
@@ -9,16 +10,17 @@ use super::*;
 use pi_link::credentials::SecretVault;
 
 impl Chat {
-    /// 账本现读（`providers.json`；缺失/坏文件 → 空文档）。**不做内存副本**：
-    /// 读处读盘、写处 read→mutate→write，不存在“打开面板时那份旧快照”
-    /// 把磁盘上别人的改动覆盖掉的情形。
+    /// 现读 `models.json`（缺失 → 空文档；坏文件 → 空文档 + 错误条由
+    /// `mc_mj_error` 承担）。**不做内存副本**：读处读盘、写处
+    /// read→mutate→write，不存在“打开面板时那份旧快照”把磁盘上别人的
+    /// 改动覆盖掉的情形。
     fn mj_doc() -> serde_json::Value {
-        pi_link::pf_providers::read().unwrap_or_else(|_| serde_json::json!({}))
+        pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({ "providers": {} }))
     }
 
-    /// 账本写盘（整份 write 只发生在 read 之后的同一处，失败挂错误条）。
+    /// 写盘（整份 read→mutate→write 的末步；锁内 + 不可读拒写）。
     fn mj_write(&mut self, doc: &serde_json::Value, cx: &mut Context<Self>) {
-        if let Err(e) = pi_link::pf_providers::write(doc) {
+        if let Err(e) = pi_link::models_json::save(doc) {
             self.mc_set_error(&e, cx);
         }
     }
@@ -71,20 +73,11 @@ impl Chat {
                 s.mj_base
                     .update(cx, |ti, cx| ti.set_value(get_str(&entry, "baseUrl"), cx));
                 s.mj_key_visible = false;
-                // key 回填对齐内置商（mc_select_provider）：$PF_KEY_* 引用经
-                // 凭据库解出明文预填（掩码态眼睛复核）；解不出（库缺条目/
-                // 库错）回退引用原文；降级明文与用户高级引用（$VAR/!cmd）原样
-                let key_raw = get_str(&entry, "apiKey");
-                let key_display = match pi_link::credentials::classify(&key_raw) {
-                    pi_link::credentials::StoreMode::Vault => {
-                        pi_link::credentials::pf_ref(&key_raw)
-                            .and_then(|v| {
-                                pi_link::credentials::KeyringVault.get(v).ok().flatten()
-                            })
-                            .unwrap_or(key_raw)
-                    }
-                    _ => key_raw,
-                };
+                // key 回填（042-1）：凭据统一在 auth.json —— PF 标记条目 →
+                // 钥匙库解出明文预填（掩码态眼睛复核）；否则回落 `models.json`
+                // 里用户自己写的 apiKey 原文。
+                let key_display = pi_link::auth_json::resolve_secret(&name)
+                    .unwrap_or_else(|| get_str(&entry, "apiKey"));
                 s.mj_key.update(cx, |ti, cx| {
                     ti.set_value(key_display, cx);
                     ti.set_masked(true, cx);
@@ -255,12 +248,12 @@ impl Chat {
             {
                 return self.mc_set_error(&e, cx);
             }
-            // 凭据库条目跟名搬家（无旧条目则静默跳过）
-            pi_link::pf_providers::rename_provider_key(
-                &old_name,
-                &name,
-                &pi_link::credentials::KeyringVault,
-            );
+            // 凭据跟名搬家：钥匙库条目 + auth.json 标记条目（无旧条目静默跳过）
+            if let Some(secret) = pi_link::auth_json::resolve_secret(&old_name) {
+                if pi_link::auth_json::store_secret(&name, &secret).is_ok() {
+                    let _ = pi_link::auth_json::delete_secret(&old_name);
+                }
+            }
         }
         pi_link::models_json::upsert_provider(&mut doc, &name, entry);
         self.mj_write(&doc, cx);
@@ -294,8 +287,10 @@ impl Chat {
         cx.notify();
     }
 
-    /// apiKey 分流（051）：明文 → 凭据库 + `$PF_KEY_*` 引用；`$`/`!` 高级
-    /// 引用原样；凭据库失败 → 降级明文并提示。空串清除字段。
+    /// apiKey 分流（042-1）：PF 保存的 key 只进钥匙库 + auth.json 标记条目，
+    /// **`models.json` 里不写 `apiKey`**（自定义商与内置商走同一条凭据路径）。
+    /// 只清理 PF 自己以前写下的 `$PF_KEY_*` 遗留引用；用户手写的明文 / `$VAR`
+    /// / `!cmd` 一律原样保留（规则 1）。空串 = 本次不动 key。
     fn mj_store_key(
         &mut self,
         entry: &mut serde_json::Value,
@@ -303,15 +298,22 @@ impl Chat {
         key: &str,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(Some(pi_link::credentials::StoreMode::File)) =
-            pi_link::pf_providers::set_provider_key(
-                entry,
-                name,
-                key,
-                &pi_link::credentials::KeyringVault,
-            )
-        {
-            self.mc_set_error(tr("conflict.vault_unavailable"), cx);
+        let key = key.trim();
+        if key.is_empty() {
+            return;
+        }
+        if let Err(e) = pi_link::auth_json::store_secret(name, key) {
+            self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
+            return;
+        }
+        let legacy_pf_ref = entry
+            .get("apiKey")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| pi_link::credentials::pf_ref(v).is_some());
+        if legacy_pf_ref {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.remove("apiKey");
+            }
         }
     }
 

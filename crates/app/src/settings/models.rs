@@ -22,11 +22,6 @@ impl Chat {
             let data = self.mcp_backfill_data(&section);
             panel.update(cx, |s, cx| super::mcp::mcp_apply_backfill(s, data, cx));
         }
-        // 模型页：确保全量 registry（含静态模型目录保底）在拉——缓存命中
-        // 同步可用，否则后台起一次性 node dump（幂等；provider 弹窗同款）
-        if tab == super::TAB_MODELS {
-            self.ensure_registry(cx);
-        }
         self.dlg.settings = Some(panel);
         cx.notify();
     }
@@ -54,7 +49,7 @@ impl Chat {
         provider: &str,
         enabled_set: &std::collections::HashSet<String>,
     ) -> (usize, usize) {
-        let catalog = self.catalog_for(self.project());
+        let catalog = self.catalog_with_ledger();
         let models: Vec<&pi_link::protocol::ModelInfo> =
             catalog.iter().filter(|m| m.provider == provider).collect();
         let enabled = models
@@ -94,7 +89,7 @@ impl Chat {
             .map(|s| s.as_str())
             .collect();
         let mut list: Vec<pi_link::protocol::ModelInfo> = self
-            .catalog_for(self.project())
+            .catalog_with_ledger()
             .iter()
             .filter(|m| {
                 all_enabled || {
@@ -195,7 +190,9 @@ impl Chat {
     pub(crate) fn reload_settings_panel(&mut self) {
         self.reload_model_defaults();
         // 凭据（PF 自有账本 pf-auth.json；auth.json 归 pi，PF 不读）
-        self.cfg.mc_creds = pi_link::pf_auth::kinds();
+        // 042-1：凭据清单来自 pi 的 auth.json（PF 标记条目 + 用户明文 + oauth），
+        // 不再有 PF 私有账本
+        self.cfg.mc_creds = pi_link::auth_json::kinds().unwrap_or_default();
         // 会话预设 `configured` 对应的工具清单（settings.json defaultTools）
         self.cfg.mc_default_tools = self.pool.globals.default_tools.clone();
         self.cfg.mc_pkgs_global = self.pool.globals.packages.clone();
@@ -214,17 +211,9 @@ impl Chat {
         let (mcp_servers, mcp_errors) = pi_link::mcp::load(self.project());
         self.cfg.mcp_servers = mcp_servers;
         self.cfg.mcp_errors = mcp_errors;
-        // 自定义 provider 编辑缓冲（PF 私有账本；面板打开/写盘后重建）
-        match pi_link::pf_providers::read() {
-            Ok(v) => {
-                self.cfg.mc_models_json = v;
-                self.cfg.mc_mj_error = None;
-            }
-            Err(e) => {
-                self.cfg.mc_models_json = serde_json::json!({});
-                self.cfg.mc_mj_error = Some(e);
-            }
-        }
+        // 自定义 provider 账本**不留副本**：各读点现读 providers.json，
+        // 这里只把「读失败」记成错误条（文件缺失是正常空账本）
+        self.cfg.mc_mj_error = pi_link::models_json::read().err();
     }
 
     pub(crate) fn mc_set_error(&mut self, msg: &str, cx: &mut Context<Self>) {
@@ -324,27 +313,12 @@ impl Chat {
             self.mc_set_error(tr("models.api_key_required"), cx);
             return;
         }
-        // 051：明文 → 凭据库 + pf-auth.json 引用；高级引用原样；库不可用降级明文
-        match pi_link::pf_auth::store_catalog_key(
-            &provider,
-            key.trim(),
-            &pi_link::credentials::KeyringVault,
-        ) {
-            Ok(pi_link::credentials::StoreMode::File) => {
-                self.mc_set_error(tr("conflict.vault_unavailable"), cx);
-            }
-            Ok(_) => {}
-            Err(e) => {
-                self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
-                return;
-            }
-        }
-        // 换 key 注入的是子进程环境，重启会话才生效（051 §8）
-        // 保存 = （重新）注册：从【移除】清单除名，合并列表恢复显示
-        let mut removed = crate::services::workspace::removed_providers();
-        if removed.iter().any(|p| p == &provider) {
-            removed.retain(|p| p != &provider);
-            crate::services::workspace::set_removed_providers(&removed);
+        // 042-1：钥匙库写秘密 + auth.json 写「标记条目」（!<helper> get <provider>）。
+        // pi 请求时自己执行 helper 取回，盘上永不落明文；换 key 需重开会话
+        // 才生效（pi 的命令结果按进程缓存）。
+        if let Err(e) = pi_link::auth_json::store_secret(&provider, key.trim()) {
+            self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
+            return;
         }
         self.reload_settings_panel();
         // 输入框保留刚保存的 key（掩码态），眼睛可复核
@@ -367,10 +341,7 @@ impl Chat {
             let outcome = cx
                 .background_executor()
                 .spawn(async move {
-                    let Some(key) = pi_link::probe::catalog_probe_key(
-                        &provider_probe,
-                        &pi_link::credentials::KeyringVault,
-                    ) else {
+                    let Some(key) = pi_link::auth_json::resolve_secret(&provider_probe) else {
                         return pi_link::probe::ProbeOutcome::Unreachable {
                             error: crate::i18n::tr("model.key_not_in_vault").to_string(),
                         };
@@ -384,16 +355,9 @@ impl Chat {
                 // 在保存/获取后短暂可见，占位区常驻到下次探查）
                 let state = match &outcome {
                     pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
-                        match pi_link::catalog::save_catalog(&provider_bg, catalog) {
-                            Ok(()) => {
-                                c.refresh_provider_catalog(&provider_bg);
-                                McProbe::Done
-                            }
-                            Err(e) => {
-                                c.mc_set_error(&e, cx);
-                                McProbe::Failed(e)
-                            }
-                        }
+                        // 不再落 provider-catalog 副本：模型一律以 pi 目录为准
+                        c.refresh_provider_catalog(&provider_bg);
+                        McProbe::Done
                     }
                     // 200 但解析不出模型条目：此前完全静默，用户只见"没动静"
                     pi_link::probe::ProbeOutcome::Ok { .. } => {
@@ -435,11 +399,7 @@ impl Chat {
     /// 选中一个 catalog provider：已配置的把已存 key 解出预填进输入框
     /// （掩码态，眼睛展开）；未配置清空。筛选同步重置（换 provider 重置表单）。
     pub(crate) fn mc_select_provider(&mut self, id: String, cx: &mut Context<Self>) {
-        let saved = if self.mc_configured(&id) {
-            pi_link::probe::catalog_probe_key(&id, &pi_link::credentials::KeyringVault)
-        } else {
-            None
-        };
+        let saved = pi_link::auth_json::resolve_secret(&id);
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = id;
@@ -470,18 +430,21 @@ impl Chat {
             cx.notify();
             return;
         }
-        if let Err(e) =
-            pi_link::pf_auth::delete_catalog_key(&provider, &pi_link::credentials::KeyringVault)
-        {
-            self.mc_set_error(&e, cx);
-            return;
+        // 042-1：只删 PF 标记条目 + 钥匙库条目。用户手写的明文 / pi 的 oauth
+        // 条目一律不动（提示由用户自行维护）。
+        match pi_link::auth_json::delete_secret(&provider) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.mc_set_error(tr("models.cred_not_managed"), cx);
+                cx.notify();
+                return;
+            }
+            Err(e) => {
+                self.mc_set_error(&e, cx);
+                return;
+            }
         }
         self.cfg.mc_probe.remove(&provider);
-        let mut removed = crate::services::workspace::removed_providers();
-        if !removed.contains(&provider) {
-            removed.push(provider.clone());
-            crate::services::workspace::set_removed_providers(&removed);
-        }
         self.reload_settings_panel();
         let first = self.mc_provider_ids().first().cloned().unwrap_or_default();
         self.mc_select_provider(first, cx);
@@ -562,8 +525,8 @@ fn mc_models_sidebar(
     t: &'static crate::appearance::theme::Theme,
 ) -> gpui::AnyElement {
     // ---- Provider 全集（内置目录 + models.json 自定义）与计数 -------------
-    let custom: Vec<(String, &serde_json::Value)> =
-        pi_link::models_json::providers(&chat.cfg.mc_models_json);
+    let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
+    let custom: Vec<(String, &serde_json::Value)> = pi_link::models_json::providers(&models_doc);
     let mut provs: Vec<String> = chat
         .mc_provider_ids()
         .into_iter()
@@ -823,29 +786,6 @@ pub(crate) fn detail_button(
 
 /// Models detail by section kind (catalog provider / custom editor / add).
 #[allow(clippy::too_many_arguments)]
-/// 详情可用模型区取数合并：基础列表（catalog_for 按商过滤）+ registry 静态
-/// 目录**保底**——表外内置商（无探查端点）保存 key 后进程答案未到时列表
-/// 为空，静态条目只补 id 不重复的缺；实拉目录/进程答案/models.json 优先
-/// 级全在前。registry 为 None（dump 进行中/失败）时行为与现状完全一致。
-/// 静态目录**不并入** `catalog_for`/`Globals.models`——会话 picker 非虚拟
-/// 化且无已配置商过滤，全量灌入踩性能铁律（042 决策）。
-fn merge_registry_models(
-    base: Vec<pi_link::protocol::ModelInfo>,
-    registry: Option<&pi_link::registry::RegistryDump>,
-    provider: &str,
-) -> Vec<pi_link::protocol::ModelInfo> {
-    let Some(registry) = registry else {
-        return base;
-    };
-    let mut models = base;
-    for m in registry.models_for(provider) {
-        if !models.iter().any(|x| x.id == m.id) {
-            models.push(m.clone());
-        }
-    }
-    models
-}
-
 fn mc_models_detail(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
@@ -869,15 +809,13 @@ fn mc_models_detail(
     }
     // catalog provider detail（API Key；OAuth 归 pi，PF 只管自有账本）
     let provider = selected.to_string();
-    let models: Vec<pi_link::protocol::ModelInfo> = merge_registry_models(
-        chat.catalog_for(chat.project())
-            .iter()
-            .filter(|m| m.provider == provider)
-            .cloned()
-            .collect(),
-        chat.cfg.provider_registry.as_deref(),
-        &provider,
-    );
+    // 042-1：可用模型 = 唯一目录（models.json + models-store + 进程答案），
+    // 不再有 registry 静态目录保底
+    let models: Vec<pi_link::protocol::ModelInfo> = chat
+        .catalog_for(chat.project())
+        .into_iter()
+        .filter(|m| m.provider == provider)
+        .collect();
     // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail")
         .p(px(15.))
@@ -1309,7 +1247,7 @@ impl Chat {
     /// `provider/modelId` refs of every available model, display order.
     /// Reads the shared catalog of the current project (models_by_cwd).
     pub(crate) fn mc_refs(&self) -> Vec<String> {
-        self.catalog_for(self.project())
+        self.catalog_with_ledger()
             .iter()
             .map(|m| format!("{}/{}", m.provider, m.id))
             .collect()
@@ -1366,11 +1304,13 @@ impl Chat {
             .map(|v| v.as_slice())
             .filter(|v| !v.is_empty())
             .unwrap_or(self.pool.globals.models.as_slice());
-        let removed = crate::services::workspace::removed_providers();
-        raw.iter()
-            .filter(|m| !removed.iter().any(|p| p == &m.provider))
-            .cloned()
-            .collect()
+        raw.to_vec()
+    }
+
+    /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
+    /// 不再有「内置取 pi / 自定义取 PF 账本」的两套口径）。
+    pub(crate) fn catalog_with_ledger(&self) -> Vec<pi_link::protocol::ModelInfo> {
+        self.catalog_for(self.project())
     }
 
     /// 「获取模型」落盘后刷新内存目录：该 provider 的条目整体以磁盘现读为
@@ -1497,60 +1437,4 @@ pub(crate) enum MjCatalogState {
     /// Done：回填成功（成功不占提示栏，用户定稿；只有失败才提示）
     Done,
     Err(String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::merge_registry_models;
-    use pi_link::protocol::ModelInfo;
-    use pi_link::registry::RegistryDump;
-
-    fn model(id: &str, provider: &str) -> ModelInfo {
-        ModelInfo {
-            id: id.into(),
-            name: id.into(),
-            provider: provider.into(),
-            context_window: Some(128_000),
-        }
-    }
-
-    fn dump(models: Vec<ModelInfo>) -> RegistryDump {
-        RegistryDump {
-            models,
-            ..RegistryDump::default()
-        }
-    }
-
-    #[test]
-    fn merge_appends_only_missing_ids_for_provider() {
-        let base = vec![model("glm-5.3", "zai"), model("glm-4.7", "zai")];
-        let registry = dump(vec![
-            model("glm-5.3", "zai"), // 已在实拉目录里 → 不重复
-            model("glm-5.2", "zai"), // 静态补缺 → 追加
-            model("kimi-k3", "moonshotai"), // 他商条目 → 不混入
-        ]);
-        let merged = merge_registry_models(base, Some(&registry), "zai");
-        let ids: Vec<_> = merged.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["glm-5.3", "glm-4.7", "glm-5.2"]);
-    }
-
-    #[test]
-    fn merge_without_registry_returns_base_unchanged() {
-        let base = vec![model("glm-5.3", "zai")];
-        let merged = merge_registry_models(base.clone(), None, "zai");
-        assert_eq!(merged, base);
-    }
-
-    #[test]
-    fn merge_into_empty_base_fills_static_catalog() {
-        // 表外商保存 key 后、进程答案未到：基础列表空，静态目录整商补齐
-        let registry = dump(vec![
-            model("glm-5.3", "zai"),
-            model("glm-5.2", "zai"),
-            model("kimi-k3", "moonshotai"),
-        ]);
-        let merged = merge_registry_models(Vec::new(), Some(&registry), "zai");
-        assert_eq!(merged.len(), 2);
-        assert!(merged.iter().all(|m| m.provider == "zai"));
-    }
 }

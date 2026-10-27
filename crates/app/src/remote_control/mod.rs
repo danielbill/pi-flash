@@ -858,11 +858,7 @@ fn provider_options(chat: &crate::Chat) -> Vec<(String, String)> {
         .get(&chat.project_key())
         .map(|v| v.as_slice())
         .unwrap_or(&[]);
-    let removed = crate::services::workspace::removed_providers();
     for m in live.iter().chain(chat.pool.globals.models.iter()) {
-        if removed.iter().any(|p| p == &m.provider) {
-            continue;
-        }
         if !out.iter().any(|(_, p)| p == &m.provider) {
             out.push((m.provider.clone(), m.provider.clone()));
         }
@@ -1384,10 +1380,8 @@ impl crate::Chat {
             .get(&self.project_key())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let removed = crate::services::workspace::removed_providers();
         live.iter()
             .chain(self.pool.globals.models.iter())
-            .filter(|m| !removed.iter().any(|p| p == &m.provider))
             .find(|m| m.id == id)
             .map(|m| m.provider.clone())
     }

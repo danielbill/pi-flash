@@ -91,8 +91,6 @@ pub(crate) struct CfgUi {
     /// 卸载确认浮层（040：点垃圾桶先确认）：待卸载来源
     pub(crate) pkg_confirm_remove: Option<String>,
     pub(crate) mc_default_tools: Option<Vec<String>>,
-    /// models.json 编辑缓冲（设置·模型页；表单头保存即写盘，无页面级 footer）
-    pub(crate) mc_models_json: serde_json::Value,
     pub(crate) mc_mj_error: Option<String>,
     /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
     pub(crate) mc_probe: std::collections::HashMap<String, McProbe>,
@@ -722,7 +720,6 @@ impl Chat {
                 pkg_op: None,
                 pkg_confirm_remove: None,
                 mc_default_tools: None,
-                mc_models_json: serde_json::json!({}),
                 mc_mj_error: None,
                 mc_probe: std::collections::HashMap::new(),
                 mj_speed: None,

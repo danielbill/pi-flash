@@ -260,25 +260,19 @@ fn render_provider_picker(
 
     // PF 自定义账本的 provider 不进 API KEY 网格（pi-web 排除 custom
     // sources 同款：自定义入口只有「自定义」卡）
-    let custom_names: Vec<String> = pi_link::models_json::providers(&chat.cfg.mc_models_json)
+    let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
+    let custom_names: Vec<String> = pi_link::models_json::providers(&models_doc)
         .into_iter()
         .map(|(n, _)| n)
         .collect();
 
     // API KEY 组：registry 原始顺序（不排序，对齐 pi-web）；匹配显示名或 id。
-    // 已配置（auth.json 有 key）不列——**被【移除】的商除外**：移除删的是
-    // PF 账本（pf-auth）的 key，pi 的 auth.json 里旧 key 仍在（PF 不写 pi
-    // 文件），但用户必须能从弹窗重新配置 → 除名商无视 configured 过滤。
-    let removed = crate::services::workspace::removed_providers();
+    // 已配置（auth.json 有 api_key 凭据）不列。
     let api_cards: Vec<(String, String, usize)> = match &dump {
         Some(d) => d
             .providers
             .iter()
-            .filter(|p| {
-                p.has_api_key_login
-                    && (d.credential(&p.id) != Some("api_key")
-                        || removed.iter().any(|r| r == &p.id))
-            })
+            .filter(|p| p.has_api_key_login && d.credential(&p.id) != Some("api_key"))
             .filter(|p| !custom_names.iter().any(|n| n == &p.id))
             .filter(|p| {
                 q.is_empty()

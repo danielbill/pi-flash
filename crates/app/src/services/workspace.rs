@@ -1081,18 +1081,6 @@ pub fn save_send_mode(mode: &str) {
 
 /// 042：默认模型写入（设置页五角星 / inputpanel 星标共用；None = 取消）。
 /// 落盘即生效——新会话 spawn 读最新值。
-/// 042：【移除】的内置商清单（合并列表过滤用）。
-pub fn removed_providers() -> Vec<String> {
-    app_settings().removed_providers.unwrap_or_default()
-}
-
-/// 042：整体改写移除清单（空切片 = 清空/全恢复）。
-pub fn set_removed_providers(list: &[String]) {
-    let mut s = app_settings();
-    s.removed_providers = Some(list.to_vec()).filter(|v| !v.is_empty());
-    save_app_settings(&s);
-}
-
 pub fn set_default_model_pref(pref: Option<(String, String)>) {
     let mut s = app_settings();
     match pref {
