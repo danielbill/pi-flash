@@ -65,10 +65,10 @@ pub(crate) struct SettingsPanel {
     pub mj_key: gpui::Entity<TextInput>,
     pub mj_id: gpui::Entity<TextInput>,
     pub mj_ctx: gpui::Entity<TextInput>,
-    /// 能力：图片输入（文本恒选；视频相邻字段）
+    /// 能力：图片输入（文本恒选）
     pub mj_image: bool,
-    /// 能力：视频输入（落 model.input "video"）
-    pub mj_video: bool,
+    /// 推理（保存恒显式写 model.reasoning，防 ensure_model_defaults 补 true）
+    pub mj_reasoning: bool,
     /// 最大输出 tokens
     pub mj_max_tokens: gpui::Entity<TextInput>,
     /// 自定义商 API Key 的显隐（掩码眼睛；mj_select 回填即回掩码态）
@@ -175,7 +175,7 @@ impl SettingsPanel {
             mj_id: panel_input("model-id", cx),
             mj_ctx: cx.new(|cx| TextInput::new(cx).numeric(true)),
             mj_image: false,
-            mj_video: false,
+            mj_reasoning: false,
             mj_max_tokens: cx.new(|cx| TextInput::new(cx).numeric(true)),
             mj_key_visible: false,
             install_input: cx
@@ -345,7 +345,7 @@ pub(crate) struct SettingsFormData {
     pub mj_id: gpui::Entity<TextInput>,
     pub mj_ctx: gpui::Entity<TextInput>,
     pub mj_image: bool,
-    pub mj_video: bool,
+    pub mj_reasoning: bool,
     pub mj_max_tokens: gpui::Entity<TextInput>,
     pub mj_key_visible: bool,
     pub install_input: gpui::Entity<TextInput>,
@@ -397,7 +397,7 @@ impl SettingsFormData {
             mj_id: p.mj_id.clone(),
             mj_ctx: p.mj_ctx.clone(),
             mj_image: p.mj_image,
-            mj_video: p.mj_video,
+            mj_reasoning: p.mj_reasoning,
             mj_max_tokens: p.mj_max_tokens.clone(),
             mj_key_visible: p.mj_key_visible,
             install_input: p.install_input.clone(),

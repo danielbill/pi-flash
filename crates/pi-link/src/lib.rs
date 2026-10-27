@@ -23,6 +23,7 @@ pub mod mcp;
 pub mod model_test;
 pub mod models_json;
 pub mod models_dev;
+pub mod openrouter;
 pub mod paths;
 pub mod pf_auth;
 pub mod pf_plugins;

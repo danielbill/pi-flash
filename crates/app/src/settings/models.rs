@@ -1494,8 +1494,8 @@ pub(crate) enum MjTestState {
 pub(crate) enum MjCatalogState {
     Idle,
     Running,
-    /// Done：applied = 回填字段数；note = 价格可靠度提示（已格式化）
-    Done { applied: usize, note: String },
+    /// Done：回填成功（成功不占提示栏，用户定稿；只有失败才提示）
+    Done,
     Err(String),
 }
 
