@@ -192,6 +192,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("models.api_key", "API Key", "API Key", "API Key"),
     ("models.api_key_configured", "API Key 已配置", "API Key 已配置", "API key configured"),
     ("models.api_key_required", "API Key 不能为空", "API Key 不能為空", "API key must not be empty"),
+    ("custom_models.delete_confirm", "确认删除该 Provider 及其下所有模型？", "確認刪除該 Provider 及其下所有模型？", "Delete this provider and all of its models?"),
     ("models.cred_not_managed", "该供应商的凭据不是 PF 保存的（由你或 pi 维护），请自行处理", "該供應商的憑證不是 PF 儲存的（由你或 pi 維護），請自行處理", "This provider's credential is not managed by PF — edit it yourself"),
     ("models.signed_in_with_oauth", "OAuth 已登录", "OAuth 已登入", "Signed in with OAuth"),
     ("models.credentials", "凭据", "憑證", "Credentials"),

@@ -70,7 +70,40 @@ pub struct RegistryDump {
     pub models: Vec<crate::protocol::ModelInfo>,
 }
 
+/// Provider 归属（042-1）：判据是**在不在 pi 的 SDK 注册表**，而不是「谁写的
+/// 文件」。`models.json` 里出现内置商条目（走代理只改 baseUrl、或 upsert 模型）
+/// 是合法的覆盖写法，不能因此把它当自定义商。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProviderSource {
+    Builtin,
+    Custom,
+}
+
+/// 无注册表（首启 dump 未就绪 / 失败）时的过渡判据：`models.json` 有条目 →
+/// 自定义。注册表就绪后以 [`RegistryDump::source`] 为准（自愈）。
+pub fn source_without_registry(in_models_json: bool) -> ProviderSource {
+    if in_models_json {
+        ProviderSource::Custom
+    } else {
+        ProviderSource::Builtin
+    }
+}
+
 impl RegistryDump {
+    /// 该 id 是否 pi 内置注册表里的商。
+    pub fn has_provider(&self, id: &str) -> bool {
+        self.providers.iter().any(|p| p.id == id)
+    }
+
+    /// 归属判定（注册表就绪时）。
+    pub fn source(&self, id: &str) -> ProviderSource {
+        if self.has_provider(id) {
+            ProviderSource::Builtin
+        } else {
+            ProviderSource::Custom
+        }
+    }
+
     pub fn credential(&self, id: &str) -> Option<&str> {
         self.credentials.get(id).map(String::as_str)
     }

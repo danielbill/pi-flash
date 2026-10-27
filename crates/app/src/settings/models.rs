@@ -22,6 +22,11 @@ impl Chat {
             let data = self.mcp_backfill_data(&section);
             panel.update(cx, |s, cx| super::mcp::mcp_apply_backfill(s, data, cx));
         }
+        // 模型页：归属判定（内置 vs 自定义）依赖全量注册表——缓存命中同步
+        // 可用，否则后台一次性 dump（幂等；与 provider 弹窗同款）
+        if tab == super::TAB_MODELS {
+            self.ensure_registry(cx);
+        }
         self.dlg.settings = Some(panel);
         cx.notify();
     }
@@ -524,15 +529,35 @@ fn mc_models_sidebar(
     enabled_filter_value: &str,
     t: &'static crate::appearance::theme::Theme,
 ) -> gpui::AnyElement {
-    // ---- Provider 全集（内置目录 + models.json 自定义）与计数 -------------
+    // ---- Provider 全集 + 归属（042-1 UI：内置在上、自定义在下）-------------
+    // 归属判据 = **在不在 pi 的 SDK 注册表**，不是「谁写的文件」：models.json
+    // 里出现内置商条目（走代理只改 baseUrl / upsert 模型）是合法覆盖，不能
+    // 因此判成自定义商。注册表未就绪时按旧判据过渡（models.json 有条目）。
     let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
-    let custom: Vec<(String, &serde_json::Value)> = pi_link::models_json::providers(&models_doc);
-    let mut provs: Vec<String> = chat
-        .mc_provider_ids()
-        .into_iter()
-        .filter(|p| !custom.iter().any(|(n, _)| n == p))
-        .collect();
-    provs.extend(custom.iter().map(|(n, _)| n.clone()));
+    let custom_entries: Vec<(String, &serde_json::Value)> =
+        pi_link::models_json::providers(&models_doc);
+    let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);
+    let is_custom = |p: &str| -> bool {
+        let src = match chat.cfg.provider_registry.as_deref() {
+            Some(dump) => dump.source(p),
+            None => pi_link::registry::source_without_registry(in_models_json(p)),
+        };
+        src == pi_link::registry::ProviderSource::Custom
+    };
+    // models.json 里用户手写的 apiKey 也算「已配置」（规则 1：只读不改）
+    let key_in_models_json = |p: &str| {
+        custom_entries.iter().any(|(n, e)| {
+            n == p
+                && e.get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty())
+        })
+    };
+    let mut provs: Vec<String> = chat.mc_provider_ids();
+    provs.extend(custom_entries.iter().map(|(n, _)| n.clone()));
+    // 去重保序（models.json 的商可能已从目录进过一次）
+    let mut seen = std::collections::HashSet::new();
+    provs.retain(|p| seen.insert(p.clone()));
     let counts: Vec<(usize, usize)> = provs
         .iter()
         .map(|p| chat.mc_provider_counts(p, enabled_set))
@@ -540,8 +565,7 @@ fn mc_models_sidebar(
 
     // 三档：0 = 默认模型所在商，1 = 有启用模型，2 = 无；档内显示名字典序
     let default_prov = chat.cfg.mc_default_model.as_ref().map(|(p, _)| p.clone());
-    let mut order: Vec<usize> = (0..provs.len()).collect();
-    order.sort_by_key(|&ix| {
+    let tier_name = |ix: usize| {
         let tier = match default_prov.as_deref() {
             Some(dp) if dp == provs[ix] => 0u8,
             _ if counts[ix].0 > 0 => 1,
@@ -551,7 +575,15 @@ fn mc_models_sidebar(
             tier,
             crate::ui::provider_display_name(&provs[ix]).to_lowercase(),
         )
-    });
+    };
+    let mut builtin_order: Vec<usize> = (0..provs.len())
+        .filter(|&ix| !is_custom(&provs[ix]))
+        .collect();
+    builtin_order.sort_by_key(|&ix| tier_name(ix));
+    let mut custom_order: Vec<usize> = (0..provs.len())
+        .filter(|&ix| is_custom(&provs[ix]))
+        .collect();
+    custom_order.sort_by_key(|&ix| tier_name(ix));
 
     // ---- 过滤（菜单同规则）：只筛模型行，Provider 行常驻 ------------------
     let total_enabled: usize = counts.iter().map(|(en, _)| *en).sum();
@@ -583,6 +615,8 @@ fn mc_models_sidebar(
         Prov(usize),
         /// `flat` 下标
         Model(usize),
+        /// 内置组 / 自定义组之间的分隔线
+        Divider,
     }
     struct ProvRow {
         id: String,
@@ -597,11 +631,23 @@ fn mc_models_sidebar(
     let mut flat: Vec<pi_link::protocol::ModelInfo> = Vec::new();
     let mut rows: Vec<SbRow> = Vec::new();
     let enabled_models = chat.mc_sorted_enabled();
-    for &ix in &order {
+    // 两组之间插一条分隔线（两组都非空才画）
+    let show_divider = !builtin_order.is_empty() && !custom_order.is_empty();
+    let ordered: Vec<usize> = builtin_order
+        .iter()
+        .copied()
+        .chain(show_divider.then_some(usize::MAX))
+        .chain(custom_order.iter().copied())
+        .collect();
+    for &ix in &ordered {
+        if ix == usize::MAX {
+            rows.push(SbRow::Divider);
+            continue;
+        }
         let p = &provs[ix];
         let (en, total) = counts[ix];
-        let is_custom = custom.iter().any(|(n, _)| n == p);
-        let configured = is_custom || chat.mc_configured(p);
+        let is_custom = is_custom(p);
+        let configured = chat.mc_configured(p) || key_in_models_json(p);
         rows.push(SbRow::Prov(prov_rows.len()));
         prov_rows.push(ProvRow {
             id: p.clone(),
@@ -702,6 +748,14 @@ fn mc_models_sidebar(
                     ))
                     .into_any_element()
             }
+            SbRow::Divider => div()
+                .h(px(row_h))
+                .w_full()
+                .px(px(15.))
+                .flex()
+                .items_center()
+                .child(div().h(px(1.)).w_full().bg(rgb(t.border)))
+                .into_any_element(),
             SbRow::Model(fx) => {
                 let m = &flat[*fx];
                 let r = format!("{}/{}", m.provider, m.id);

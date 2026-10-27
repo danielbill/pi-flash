@@ -266,12 +266,31 @@ impl Chat {
         cx.notify();
     }
 
+    /// 【删除】入口（042-1 UI）：只置确认状态，真正删除在
+    /// [`Self::mj_delete_provider_close`]。删除 = 删自定义商条目 + 其下全部
+    /// 模型 + 凭据条目（与内置商的【移除】不同，移除只让商家不显示）。
+    pub(crate) fn mj_ask_delete_provider(&mut self, name: String, cx: &mut Context<Self>) {
+        self.cfg.mc_mj_delete_confirm = Some(name);
+        cx.notify();
+    }
+
+    pub(crate) fn mj_delete_provider_close(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let Some(name) = self.cfg.mc_mj_delete_confirm.take() else {
+            return;
+        };
+        if !ok {
+            cx.notify();
+            return;
+        }
+        self.mj_delete_provider(name, cx);
+    }
+
     pub(crate) fn mj_delete_provider(&mut self, name: String, cx: &mut Context<Self>) {
         let mut doc = Self::mj_doc();
         pi_link::models_json::remove_provider(&mut doc, &name);
-        // 凭据库条目一并清（幂等；条目不存在是 Ok）
-        let _ =
-            pi_link::credentials::KeyringVault.delete(&pi_link::credentials::env_var_name(&name));
+        // 凭据条目一并清（042-1：PF 标记条目 + 钥匙库；用户手写的明文/oauth
+        // 不动——delete_secret 自带标记守卫）
+        let _ = pi_link::auth_json::delete_secret(&name);
         self.cfg.mj_speed = None;
         self.mj_write(&doc, cx);
         if let Some(st) = self.dlg.settings.clone() {
@@ -823,6 +842,29 @@ fn set_opt_str(obj: &mut serde_json::Value, key: &str, value: &str) {
 // 渲染
 // ---------------------------------------------------------------------------
 
+/// 自定义商【删除】确认浮层（042-1 UI：删除 = 连同其下所有模型）。
+pub(crate) fn mj_delete_confirm_overlay(
+    chat: &Chat,
+    cx: &mut Context<Chat>,
+) -> Option<gpui::AnyElement> {
+    let name = chat.cfg.mc_mj_delete_confirm.clone()?;
+    let weak = cx.entity().downgrade();
+    let message = crate::i18n::tf("custom_models.delete_confirm", &[("name", name)]);
+    Some(crate::ui::overlay::confirm(
+        &chat.dlg.dialog_focus,
+        message,
+        {
+            let weak = weak.clone();
+            move |_, cx| {
+                let _ = weak.update(cx, |c, cx| c.mj_delete_provider_close(false, cx));
+            }
+        },
+        move |_, cx| {
+            let _ = weak.update(cx, |c, cx| c.mj_delete_provider_close(true, cx));
+        },
+    ))
+}
+
 /// 自定义 Provider 详情页（042-1 定稿：**复用内置 Provider 详情面板** +
 /// 自有组件）：头行 = name input +【移除】→ API Key 段（掩码+眼睛，保存
 /// 钮已挪操作栏）→ Base URL → API 下拉（默认 auto）→ 操作栏
@@ -882,10 +924,10 @@ pub(crate) fn mj_provider_editor(
                 .child(super::models::detail_button(
                     "mj-del",
                     weak,
-                    &tr("action.remove"),
+                    &tr("action.delete"),
                     crate::ui::button::BtnVariant::Danger,
                     false,
-                    move |c, cx| c.mj_delete_provider(remove_provider.clone(), cx),
+                    move |c, cx| c.mj_ask_delete_provider(remove_provider.clone(), cx),
                 ))
                 .into_any_element(),
         ))

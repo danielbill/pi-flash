@@ -92,6 +92,8 @@ pub(crate) struct CfgUi {
     pub(crate) pkg_confirm_remove: Option<String>,
     pub(crate) mc_default_tools: Option<Vec<String>>,
     pub(crate) mc_mj_error: Option<String>,
+    /// 自定义商【删除】确认浮层：待删 provider 名（含其下全部模型）
+    pub(crate) mc_mj_delete_confirm: Option<String>,
     /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
     pub(crate) mc_probe: std::collections::HashMap<String, McProbe>,
     /// 042-1 自定义商「测速」状态（单槽：详情页同屏只有一个）
@@ -721,6 +723,7 @@ impl Chat {
                 pkg_confirm_remove: None,
                 mc_default_tools: None,
                 mc_mj_error: None,
+                mc_mj_delete_confirm: None,
                 mc_probe: std::collections::HashMap::new(),
                 mj_speed: None,
                 mj_test: None,
