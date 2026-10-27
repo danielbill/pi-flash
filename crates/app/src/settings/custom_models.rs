@@ -134,6 +134,11 @@ impl Chat {
                     .unwrap_or_default();
                 s.mj_max_tokens
                     .update(cx, |ti, cx| ti.set_value(max_tokens, cx));
+                // 内置模型＝pi 的定义，PF 只看不改（用户 2026-10-27 定稿）
+                let ro = over.is_some();
+                s.mj_id.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                s.mj_ctx.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                s.mj_max_tokens.update(cx, |ti, cx| ti.set_disabled(ro, cx));
                 cx.notify();
             });
         }
@@ -405,213 +410,6 @@ impl Chat {
     pub(crate) fn mj_apply_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         // mj_commit_model_form 自己就落盘，这里不必再 flush
         let _ = self.mj_commit_model_form(&provider, ix, cx);
-        cx.notify();
-    }
-
-    /// 覆盖模式保存（内置模型）：四键写进 `providers.<p>.modelOverrides.<id>`。
-    pub(crate) fn mj_apply_override(
-        &mut self,
-        provider: String,
-        id: String,
-        cx: &mut Context<Self>,
-    ) {
-        self.mj_commit_override(&provider, &id, cx);
-        cx.notify();
-    }
-
-    /// 表单 → override 对象。ID 可改：改了就搬到新键并删旧键（section 同步）。
-    fn mj_commit_override(&mut self, provider: &str, id: &str, cx: &mut Context<Self>) -> bool {
-        let Some(st) = self.dlg.settings.clone() else {
-            return false;
-        };
-        let (new_id, ctx, image, reasoning, max_tokens) = {
-            let s = st.read(cx);
-            (
-                s.mj_id.read(cx).value().trim().to_string(),
-                s.mj_ctx.read(cx).value().trim().to_string(),
-                s.mj_image,
-                s.mj_reasoning,
-                s.mj_max_tokens.read(cx).value().trim().to_string(),
-            )
-        };
-        if new_id.is_empty() {
-            self.mc_set_error(tr("custom_models.model_id_required"), cx);
-            return false;
-        }
-        let mut doc = Self::mj_doc();
-        let Some(obj) = doc
-            .get_mut("providers")
-            .and_then(|p| p.get_mut(provider))
-            .and_then(|e| e.as_object_mut())
-        else {
-            return false;
-        };
-        let mut model = obj
-            .get("modelOverrides")
-            .and_then(|o| o.get(id))
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
-        if !model.is_object() {
-            model = serde_json::json!({});
-        }
-        if let Some(m) = model.as_object_mut() {
-            if let Ok(n) = ctx.parse::<u64>() {
-                m.insert("contextWindow".into(), serde_json::json!(n));
-            } else {
-                m.remove("contextWindow");
-            }
-            if let Ok(n) = max_tokens.parse::<u64>() {
-                m.insert("maxTokens".into(), serde_json::json!(n));
-            } else {
-                m.remove("maxTokens");
-            }
-            // 推理恒显式写 bool（pi 对 falsy 只给 off，缺键会被补 true）
-            m.insert("reasoning".into(), serde_json::json!(reasoning));
-            // 能力：text 恒有、image 跟勾选；其余能力（video 等，pi 的内置定义
-            // 里可能有）原样保留——别因为表单只有两个框就把它们冲掉
-            let mut input: Vec<String> = m
-                .get("input")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str())
-                        .filter(|x| *x != "text" && *x != "image")
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            if image {
-                input.insert(0, "image".to_string());
-            }
-            input.insert(0, "text".to_string());
-            m.insert("input".into(), serde_json::json!(input));
-        }
-        let overrides = obj
-            .entry("modelOverrides")
-            .or_insert_with(|| serde_json::json!({}));
-        if let Some(map) = overrides.as_object_mut() {
-            if new_id != id {
-                map.remove(id);
-            }
-            map.insert(new_id.clone(), model);
-        }
-        self.mj_write(&doc, cx);
-        if new_id != id {
-            st.update(cx, |s, cx| {
-                s.section = override_section(provider, &new_id);
-                cx.notify();
-            });
-        }
-        true
-    }
-
-    /// 覆盖模式【移除】：删掉 override 条目（模型回到 pi 的原始定义）。
-    pub(crate) fn mj_delete_override(
-        &mut self,
-        provider: String,
-        id: String,
-        cx: &mut Context<Self>,
-    ) {
-        let mut doc = Self::mj_doc();
-        if let Some(map) = doc
-            .get_mut("providers")
-            .and_then(|p| p.get_mut(&provider))
-            .and_then(|e| e.as_object_mut())
-            .and_then(|e| e.get_mut("modelOverrides"))
-            .and_then(|o| o.as_object_mut())
-        {
-            map.remove(&id);
-        }
-        self.mj_write(&doc, cx);
-        self.mj_select(format!("mj:p:{provider}"), cx);
-    }
-
-    /// 覆盖模式【自动填参】：数据源与自定义模型一致（OpenRouter），结果写
-    /// override 对象。
-    pub(crate) fn mj_fill_override(
-        &mut self,
-        provider: String,
-        id: String,
-        cx: &mut Context<Self>,
-    ) {
-        self.mc_clear_error(cx);
-        if !self.mj_commit_override(&provider, &id, cx) {
-            return;
-        }
-        // 提交可能因改 ID 而换键：以当前 section 里的 id 作查询键
-        let cur = self
-            .dlg
-            .settings
-            .as_ref()
-            .map(|st| st.read(cx).section.clone())
-            .unwrap_or_default();
-        let qid = mj_parse_override(&cur)
-            .map(|(_, i)| i)
-            .unwrap_or_else(|| id.clone());
-        self.cfg.mj_models_dev_state = MjCatalogState::Running;
-        cx.notify();
-        let p_bg = provider.clone();
-        let q_bg = qid.clone();
-        cx.spawn(async move |this, cx| {
-            let resolved = cx
-                .background_executor()
-                .spawn(async move { pi_link::openrouter::resolve(&p_bg, "", &q_bg) })
-                .await;
-            let shown = match &resolved {
-                Ok(_) => None,
-                Err(pi_link::openrouter::FillError::NoMatch) => {
-                    Some(tr("models.catalog_no_exact_match").to_string())
-                }
-                Err(pi_link::openrouter::FillError::Net(m)) => Some(m.clone()),
-            };
-            let _ = this.update(cx, |c, cx| match resolved {
-                Ok(e) => {
-                    if c.mj_commit_override(&provider, &qid, cx) {
-                        c.mj_catalog_apply_override(&e, &provider, &qid, cx);
-                    } else {
-                        c.cfg.mj_models_dev_state = MjCatalogState::Idle;
-                        cx.notify();
-                    }
-                }
-                Err(_) => {
-                    c.cfg.mj_models_dev_state = MjCatalogState::Err(shown.unwrap_or_default());
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    fn mj_catalog_apply_override(
-        &mut self,
-        e: &pi_link::openrouter::Entry,
-        provider: &str,
-        id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let mut doc = Self::mj_doc();
-        let Some(obj) = doc
-            .get_mut("providers")
-            .and_then(|p| p.get_mut(provider))
-            .and_then(|e| e.as_object_mut())
-        else {
-            return;
-        };
-        let mut model = obj
-            .get("modelOverrides")
-            .and_then(|o| o.get(id))
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
-        pi_link::openrouter::fill_from_entry(&mut model, e);
-        let overrides = obj
-            .entry("modelOverrides")
-            .or_insert_with(|| serde_json::json!({}));
-        if let Some(map) = overrides.as_object_mut() {
-            map.insert(id.to_string(), model);
-        }
-        self.mj_write(&doc, cx);
-        self.cfg.mj_models_dev_state = MjCatalogState::Done;
-        self.mj_select(override_section(provider, id), cx);
         cx.notify();
     }
 
@@ -1626,6 +1424,8 @@ pub(crate) fn mj_model_modal_overlay(
         }
     };
     let over_id = over.as_ref().map(|(_, id)| id.clone());
+    // 内置模型 = 只读参数视图：不给自动填参 / 测试 / 保存 / 移除，输入框禁用
+    let read_only = over_id.is_some();
     let d = super::SettingsFormData::snapshot(panel.read(cx), cx);
     let error = panel.read(cx).error.clone();
     let t = T();
@@ -1668,6 +1468,7 @@ pub(crate) fn mj_model_modal_overlay(
         .items_center()
         .gap(px(8.))
         .bg(rgb(t.chrome))
+        .rounded_t(px(12.))
         .border_b_1()
         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x73)))
         .child(section_title(&tr("models.detail_title")))
@@ -1696,14 +1497,7 @@ pub(crate) fn mj_model_modal_overlay(
             testing || over_id.is_some(),
             {
                 let n = name.clone();
-                let ov = over_id.clone();
-                move |c, cx| {
-                    // 覆盖模式：内置商的 baseUrl 在 pi 里，PF 侧没有端点可测
-                    if ov.is_some() {
-                        return;
-                    }
-                    c.mj_test_start(n.clone(), ix, cx)
-                }
+                move |c, cx| c.mj_test_start(n.clone(), ix, cx)
             },
         ))
         .child(super::models::detail_button(
@@ -1714,11 +1508,7 @@ pub(crate) fn mj_model_modal_overlay(
             false,
             {
                 let n = name.clone();
-                let ov = over_id.clone();
-                move |c, cx| match &ov {
-                    Some(id) => c.mj_apply_override(n.clone(), id.clone(), cx),
-                    None => c.mj_apply_model(n.clone(), ix, cx),
-                }
+                move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
             },
         ))
         .child(super::models::detail_button(
@@ -1729,12 +1519,7 @@ pub(crate) fn mj_model_modal_overlay(
             false,
             {
                 let n = name.clone();
-                let ov = over_id.clone();
-                move |c, cx| match &ov {
-                    // 覆盖模式：「移除」= 删掉这层覆盖，模型回到 pi 的原始定义
-                    Some(id) => c.mj_delete_override(n.clone(), id.clone(), cx),
-                    None => c.mj_delete_model(n.clone(), ix, cx),
-                }
+                move |c, cx| c.mj_delete_model(n.clone(), ix, cx)
             },
         ));
 
@@ -1753,7 +1538,9 @@ pub(crate) fn mj_model_modal_overlay(
         .or(test_note.clone())
         .or(catalog_line);
 
-    let detail = detail_shell("mc-detail")
+    // id 必须与底层 Provider 详情（mc-detail）区分：同一帧渲染两份同 id 容器
+    // 会让 gpui 的元素状态互相踩（点击落不到弹窗内的按钮）
+    let detail = detail_shell("mj-model-detail")
         .p(px(15.))
         // 模型ID（左半列）+ 自动填参（右半列，标准 §5.1 按钮与 input 底缘
         // 对齐）；两列与下行 上下文/最大输出 同宽——ID input 等长对齐
@@ -1767,7 +1554,8 @@ pub(crate) fn mj_model_modal_overlay(
                         .min_w_0()
                         .child(field(&tr("custom_models.field_id"), d.mj_id.clone())),
                 )
-                .child(
+                .children((!read_only).then(|| {
+                    let n = name.clone();
                     div()
                         .flex_1()
                         .min_w_0()
@@ -1775,7 +1563,7 @@ pub(crate) fn mj_model_modal_overlay(
                         .items_end()
                         .justify_end()
                         .child({
-                            let n = name.clone();
+                            let _ = &n;
                             let el = crate::ui::button::button_base(
                                 "mj-autofill",
                                 crate::ui::button::BtnSize::Lg,
@@ -1794,17 +1582,14 @@ pub(crate) fn mj_model_modal_overlay(
                                 el.opacity(0.5).into_any_element()
                             } else {
                                 let weak_fill = weak.clone();
-                                let ov = over_id.clone();
                                 el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_fill.update(cx, |c, cx| match &ov {
-                                        Some(id) => c.mj_fill_override(n.clone(), id.clone(), cx),
-                                        None => c.mj_catalog_fill(n.clone(), ix, cx),
-                                    });
+                                    let _ = weak_fill
+                                        .update(cx, |c, cx| c.mj_catalog_fill(n.clone(), ix, cx));
                                 })
                                 .into_any_element()
                             }
-                        }),
-                ),
+                        })
+                })),
         )
         // 上下文窗口 / 最大输出
         .child(
@@ -1834,7 +1619,9 @@ pub(crate) fn mj_model_modal_overlay(
                     &tr("models.reasoning"),
                     d.mj_reasoning,
                     &weak,
-                    Some(|c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_reasoning(cx)),
+                    (!read_only).then_some(
+                        |c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_reasoning(cx),
+                    ),
                 )),
         )
         // 能力：文本恒选不可改；图片勾选落 model.input
@@ -1859,7 +1646,9 @@ pub(crate) fn mj_model_modal_overlay(
                             &tr("models.cap_image"),
                             d.mj_image,
                             &weak,
-                            Some(|c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_image(cx)),
+                            (!read_only).then_some(
+                                |c: &mut Chat, cx: &mut Context<Chat>| c.mj_toggle_image(cx),
+                            ),
                         )),
                 ),
         )
@@ -1881,7 +1670,8 @@ pub(crate) fn mj_model_modal_overlay(
             div()
                 .flex_shrink_0()
                 .w(px(500.))
-                .h(px(500.))
+                .when(!read_only, |d| d.h(px(500.)))
+                .when(read_only, |d| d.max_h(px(560.)))
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_color(rgb(t.border))
@@ -1892,7 +1682,7 @@ pub(crate) fn mj_model_modal_overlay(
                 .overflow_hidden()
                 .child(header)
                 .child(div().flex_1().min_h_0().flex().child(detail))
-                .child(footer),
+                .children((!read_only).then_some(footer)),
         ));
     Some(overlay.into_any_element())
 }
