@@ -38,6 +38,15 @@ fn sp_token(name: &str) -> Option<f32> {
     })
 }
 
+/// padX / padY：有值用值，否则回落 pad。
+fn node_pad(node: &Value, key: &str, fallback: f32) -> f32 {
+    match node.get(key) {
+        Some(Value::Number(n)) => n.as_f64().map(|v| v as f32).unwrap_or(fallback),
+        Some(Value::String(t)) => sp_token(t).unwrap_or(fallback),
+        _ => fallback,
+    }
+}
+
 fn sp(node: &Value, key: &str, default: f32) -> f32 {
     // 数字 = 直接像素（弹窗要精确对齐老 UI 的 16/12 这类值）；字符串 = SP token
     match node.get(key) {
@@ -170,6 +179,8 @@ pub(crate) enum ResolvedNode {
     },
     Column {
         pad: f32,
+        pad_x: Option<f32>,
+        pad_y: Option<f32>,
         gap: f32,
         align_center: bool,
         /// `justify: "center"`：主轴（纵向）居中——空态提示在面板正中
@@ -364,6 +375,8 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
         }),
         "column" => Some(ResolvedNode::Column {
             pad: sp(node, "pad", crate::ui::tokens::space::SP5),
+            pad_x: node.get("padX").and_then(Value::as_f64).map(|v| v as f32),
+            pad_y: node.get("padY").and_then(Value::as_f64).map(|v| v as f32),
             w: node.get("w").and_then(Value::as_f64).map(|v| v as f32),
             bg: node.get("bg").and_then(Value::as_str).map(str::to_string),
             radius: node.get("radius").and_then(Value::as_f64).map(|v| v as f32),
@@ -846,6 +859,8 @@ fn render_node_inner(
         ResolvedNode::Section { .. } => render_section(node, 0, ix, weak, t, ctx),
         ResolvedNode::Column {
             pad,
+            pad_x,
+            pad_y,
             gap,
             align_center,
             justify_center,
@@ -855,7 +870,11 @@ fn render_node_inner(
             border,
             children,
         } => {
-            let mut col = div().flex().flex_col().gap(px(*gap)).p(px(*pad));
+            let mut col = div().flex().flex_col().gap(px(*gap));
+            // padX/padY：四边内距（数字=px，缺省回落 pad）
+            col = col
+                .px(px(pad_x.unwrap_or(*pad)))
+                .py(px(pad_y.unwrap_or(*pad)));
             if let Some(w) = w {
                 col = col.w(px(*w)).flex_none();
             }
