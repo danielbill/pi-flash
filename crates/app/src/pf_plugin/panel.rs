@@ -179,6 +179,8 @@ pub(crate) enum ResolvedNode {
         pad: f32,
         align: String,
         justify_between: bool,
+        /// `justify: "end"`：主轴（横向）尾对齐（v3；switch 行居右等）
+        justify_end: bool,
         children: Vec<ResolvedNode>,
     },
     Group {
@@ -221,6 +223,15 @@ pub(crate) enum ResolvedNode {
         width: f32,
         height: f32,
         paints: Vec<CanvasPaint>,
+    },
+    /// 开/关开关（契约 v3）：点击翻转 → onCommand(command, {value: 新布尔})。
+    /// 样式全归宿主（§10.4 开关）。
+    Switch {
+        value: bool,
+        label: String,
+        tip: String,
+        command: String,
+        disabled: bool,
     },
     /// 未知组件：占位 + 日志（01 §1）
     Unknown(String),
@@ -353,6 +364,7 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 .unwrap_or("stretch")
                 .to_string(),
             justify_between: node.get("justify").and_then(Value::as_str) == Some("between"),
+            justify_end: node.get("justify").and_then(Value::as_str) == Some("end"),
             children: resolve_children(node),
         }),
         "group" => Some(ResolvedNode::Group {
@@ -465,11 +477,49 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 paints,
             })
         }
+        "switch" => Some(resolve_switch(node)),
         other => {
             eprintln!("[pf-plugin] 未知组件已占位: {other}");
             Some(ResolvedNode::Unknown(other.to_string()))
         }
     }
+}
+
+/// switch 节点解析（契约 v3）：value 必须布尔、command 必填 kebab。
+fn resolve_switch(node: &Value) -> ResolvedNode {
+    let bad = |msg: String| {
+        eprintln!("[pf-plugin] switch 节点非法，已占位: {msg}");
+        ResolvedNode::Unknown("switch".to_string())
+    };
+    let Some(value) = node.get("value").and_then(Value::as_bool) else {
+        return bad("value 必须是布尔".into());
+    };
+    let Some(command) = node.get("command").and_then(Value::as_str) else {
+        return bad("缺 command".into());
+    };
+    if !is_kebab_cmd(command) {
+        return bad(format!("command「{command}」非 kebab-case"));
+    }
+    ResolvedNode::Switch {
+        value,
+        label: i18n(node.get("label")),
+        tip: node
+            .get("tip")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        command: command.to_string(),
+        disabled: node.get("disabled").and_then(Value::as_bool).unwrap_or(false),
+    }
+}
+
+/// 命令 id kebab-case（与清单 is_kebab 同口径；switch.command / fn_bar.command 共用）。
+fn is_kebab_cmd(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && s.chars().last().is_some_and(|c| c.is_ascii_alphanumeric())
 }
 
 fn resolve_children(node: &Value) -> Vec<ResolvedNode> {
@@ -792,6 +842,7 @@ fn render_node_inner(
             pad,
             align,
             justify_between,
+            justify_end,
             children,
         } => {
             let mut row = div().flex().flex_wrap().gap(px(*gap)).p(px(*pad));
@@ -803,6 +854,8 @@ fn render_node_inner(
             };
             if *justify_between {
                 row = row.justify_between();
+            } else if *justify_end {
+                row = row.justify_end();
             } else {
                 row = row.justify_center();
             }
@@ -915,6 +968,66 @@ fn render_node_inner(
                 });
             }
             canvas.into_any_element()
+        }
+        ResolvedNode::Switch {
+            value,
+            label,
+            tip,
+            command,
+            disabled,
+        } => {
+            // 契约 v3 开关：轨道/knob 走 §10.4 尺寸（SW_MD 28x16·knob10），
+            // 点击翻转 → onCommand(command, {value: 新布尔})；声明式：
+            // 插件收到回调改自己的数据，重渲后 value 自然到位
+            let t_ = *t;
+            let (track, knob_x, knob_color) = if *value {
+                (rgb(t_.accent), 28. - 16. + 3., t_.bg)
+            } else {
+                (rgb(t_.text_faint), 3., t_.bg)
+            };
+            let weak = weak.clone();
+            let cmd = command.clone();
+            let next = !*value;
+            let env = serde_json::json!({ "value": next }).to_string();
+            let mut row = div().flex().items_center().gap(px(8.)).px(px(10.)).py(px(6.));
+            if !label.is_empty() {
+                row = row.child(
+                    div()
+                        .text_size(crate::appearance::ui_size(11.5))
+                        .text_color(rgb(t_.text_muted))
+                        .child(SharedString::from(label.clone())),
+                );
+            }
+            let mut sw = div()
+                .id(SharedString::from(format!("pf-switch-{ix}-{cmd}")))
+                .relative()
+                .w(px(28.))
+                .h(px(16.))
+                .rounded_full()
+                .bg(track)
+                .cursor_pointer()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(knob_x))
+                        .top(px(3.))
+                        .w(px(10.))
+                        .h(px(10.))
+                        .rounded_full()
+                        .bg(rgb(knob_color)),
+                );
+            if !*disabled {
+                sw = sw.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.plugin_command_fire_env(ix, &cmd, &env, window, cx);
+                        cx.notify();
+                    });
+                });
+            }
+            if !tip.is_empty() {
+                sw = sw.with_tip_text(tip.clone());
+            }
+            row.child(sw).into_any_element()
         }
         ResolvedNode::Unknown(ty) => div()
             .px(px(10.))
@@ -1401,6 +1514,118 @@ fn tone_color(tone: &str, t: &'static Theme) -> u32 {
         "accent" => t.accent,
         "danger" => t.danger,
         _ => t.text_dim, // text.dim 默认
+    }
+}
+
+/// 插件弹窗浮层（契约 v3 popups）：非模态居中卡（尺寸档位映射，MD≈500x500），
+/// 外点/× 关闭；内容 = 插件 render_popup 树，同一解释器渲染。挂在 psp-overlays。
+pub(crate) fn plugin_popup_layer(
+    chat: &mut Chat,
+    _vp: (f32, f32),
+    t: &'static Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+    let Some(p) = chat.plugins.popup.as_ref() else {
+        return div().into_any_element();
+    };
+    let ix = p.ix;
+    let (id, title, body, tree_loaded) = (
+        p.id.clone(),
+        p.title.clone(),
+        p.body.clone(),
+        p.tree_loaded,
+    );
+    let weak = cx.entity().downgrade();
+    let weak_close = weak.clone();
+    // 非模态：不压暗背景、不抢焦点；点外/× 即收（overlay 基座规则 2/5）
+    let layer = crate::ui::overlay::layer(false, None, move |_, cx| {
+        let _ = weak_close.update(cx, |c, cx| c.plugin_popup_close(cx));
+    });
+    // 尺寸档位 → 实现值（宿主映射；插件不写像素）
+    let (w, h) = match chat
+        .plugins
+        .plugins
+        .get(ix)
+        .and_then(|e| e.manifest.popups.iter().find(|p| p.id == id))
+        .map(|p| p.size.as_str())
+    {
+        Some("SM") => (400., 420.),
+        Some("LG") => (600., 640.),
+        _ => (500., 500.), // MD（缺省）
+    };
+    let mut card = div()
+        .occlude()
+        .flex()
+        .flex_col()
+        .w(px(w))
+        .h(px(h))
+        .max_h_full()
+        .bg(rgb(t.bg))
+        .border_1()
+        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+        .rounded(px(crate::ui::tokens::radius::CARD))
+        .overflow_hidden();
+    // 标题栏：标题 + ×（overlay 规则 5：有可见内容的卡片挂关闭钮）
+    let weak_x = weak.clone();
+    card = card.child(
+        div()
+            .id("pf-popup-titlebar")
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(12.))
+            .py(px(8.))
+            .border_b_1()
+            .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(12.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(title)),
+            )
+            .child(
+                div()
+                    .id("pf-popup-close")
+                    .cursor_pointer()
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .text_color(rgb(t.text_muted))
+                    .on_mouse_down(MouseButton::Left, move |_, _w, cx| {
+                        let _ = weak_x.update(cx, |c, cx| c.plugin_popup_close(cx));
+                    })
+                    .child(crate::ui::icon("close", 14., t.text_muted)),
+            ),
+    );
+    // 内容区：同一解释器；未就绪占位
+    let content = if tree_loaded
+        && let Some(tree) = body.as_ref().and_then(resolve)
+    {
+        render_root(&tree, ix, &weak, t, &popup_render_ctx(chat, ix))
+    } else {
+        placeholder_center("…", t)
+    };
+    card = card.child(div().flex_1().min_h_0().flex().flex_col().child(content));
+    // 居中：外层满幅 + 主轴居中（点外即层的外点关闭）
+    layer
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(card)
+        .into_any_element()
+}
+
+/// 弹窗内容的渲染 ctx（面板同款；宽度用面板宽——插件树自适应）。
+fn popup_render_ctx<'a>(chat: &'a Chat, ix: usize) -> RenderCtx<'a> {
+    let entry = &chat.plugins.plugins[ix];
+    RenderCtx {
+        plugin_id: &entry.manifest.id,
+        panel_w: chat.layout.slp_w,
+        ratios: vec![1.0],
+        scrolls: vec![],
+        split_hover: *entry.split_hover.borrow(),
+        split_drag: entry.split_drag.borrow().as_ref().map(|d| d.index),
     }
 }
 

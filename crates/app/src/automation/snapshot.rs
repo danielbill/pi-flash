@@ -208,6 +208,17 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         },
         "dock_panel": chat.layout.dock_panel.as_str(),
         "content_view": content_view_str(chat.layout.content_view),
+        // 契约 v3 插件弹窗（pif-ui 断言载体：open/插件/内容树）
+        "plugin_popup": match chat.plugins.popup.as_ref() {
+            Some(p) => json!({
+                "open": true,
+                "ix": p.ix,
+                "id": p.id,
+                "title": p.title,
+                "body": p.body.clone().unwrap_or(Value::Null),
+            }),
+            None => json!({ "open": false }),
+        },
         // 【微信通话】tab 关闭态（2026-10-25 用户定夺：关闭跨重启保持）——
         // 启动回放/关 tab 落盘的断言载体（pif-ui wait --path app.wx_tab_closed）
         "wx_tab_closed": !chat.wx_tab_open(),

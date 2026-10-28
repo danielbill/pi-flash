@@ -281,6 +281,9 @@ fn session_fn_bar(
         // 线的操作栏注入簇（模版注入点 ①，060 微信线 = 微信 icon 三色 +
         // 启停开关/说明文字 + 新建会话 + 重新绑定；002 操作栏定序）
         .children(skin.fn_bar.map(|f| f(chat, cx)))
+        // 插件功能栏注册槽（契约 v3 fn_bar）：每插件一颗微信/自定义 icon，
+        // 点击回环 command（env 带当前会话键）；宿主统一 fn 样式，注册序从右到左
+        .children(crate::pf_plugin::fn_bar_plugin_elements(chat, cx))
         .into_any_element()
 }
 

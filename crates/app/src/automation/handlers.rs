@@ -459,6 +459,62 @@ pub(super) fn dispatch(
             chat.plugin_menu_fire(ix, id, &path, window, cx);
             ok()
         }
+        method::PLUGIN_FNBAR => {
+            // 契约 v3 fn_bar：直调 chrome（与功能栏渲染同一条缓存链），
+            // 返回当前 icon 清单供断言。session 键取活跃会话 pi sessionId
+            let key = chat
+                .pool
+                .runtimes
+                .get(&chat.pool.active_key)
+                .and_then(|rt| {
+                    rt.read(cx)
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.session_id.clone())
+                })
+                .unwrap_or_default();
+            let rows: Vec<Value> = chat
+                .plugin_fn_bar_chrome(&key, cx)
+                .into_iter()
+                .map(|(ix, icon, tone, tip)| {
+                    json!({ "ix": ix, "icon": icon.to_string(), "tone": tone, "tip": tip })
+                })
+                .collect();
+            Ok(json!({ "items": rows }))
+        }
+        method::PLUGIN_FNBAR_CLICK => {
+            // 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session）。
+            // session 键 = 活跃会话 pi sessionId（与插件侧 getSessionId 同源）
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let key = chat
+                .pool
+                .runtimes
+                .get(&chat.pool.active_key)
+                .and_then(|rt| {
+                    rt.read(cx)
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.session_id.clone())
+                })
+                .unwrap_or_default();
+            chat.plugin_fn_bar_click(ix, &key, window, cx);
+            ok()
+        }
+        method::PLUGIN_COMMAND_ENV => {
+            // 契约 v3 命令直调：{ix?, command, env 对象}（与 switch 翻转同链）
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let id = params
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"command\": \"toggle-enabled\"}"))?;
+            let env = params.get("env").cloned().unwrap_or(Value::Null);
+            chat.plugin_command_fire_env(ix, id, &env.to_string(), window, cx);
+            ok()
+        }
+        method::PLUGIN_POPUP_CLOSE => {
+            chat.plugin_popup_close(cx);
+            ok()
+        }
         method::PLUGIN_DOCK => {
             let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
             if chat.plugins.plugins.get(ix).is_none_or(|e| e.disabled) {

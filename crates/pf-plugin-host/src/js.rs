@@ -45,7 +45,7 @@ pub trait JsHost {
 }
 
 /// 延迟动作（02 §3 动作类）。消费方按动作名分派宿主实现。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JsAction {
     /// 021 执行链，新终端 tab
     Run(String),
@@ -66,6 +66,10 @@ pub enum JsAction {
     NewDraft { prefix: String, cwd: String },
     /// 把文本填进输入框（**只预填、不代发**：发不发由用户决定）
     AskPi(String),
+    /// 打开插件声明的 popups 条目（契约 v3 act.openPopup；非模态，宿主管窗体）
+    OpenPopup(String),
+    /// 关闭插件弹窗（契约 v3 act.closePopup）
+    ClosePopup(String),
 }
 
 /// 一个已装载的 JS 插件实例（全局单例：面板开着时右键复用同一份 ctx）。
@@ -185,6 +189,9 @@ impl JsPlugin {
                     (|_s: String| JsAction::NewSession) as fn(String) -> JsAction,
                 ),
                 ("__pf_ask_pi", JsAction::AskPi as fn(String) -> JsAction),
+                // 契约 v3 popups：act.openPopup / act.closePopup
+                ("__pf_open_popup", JsAction::OpenPopup as fn(String) -> JsAction),
+                ("__pf_close_popup", JsAction::ClosePopup as fn(String) -> JsAction),
             ] {
                 let h = glue_host.clone();
                 g.set(
@@ -246,6 +253,11 @@ globalThis.__pf_ctx = {{
     newDraft: (p, c) => globalThis.__pf_new_draft(p == null ? "" : String(p), c == null ? "" : String(c)),
   }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
+  // 契约 v3：动作命名空间（扁平面 toast 等保持不动，兼容存量插件）
+  act: {{
+    openPopup: (id) => globalThis.__pf_open_popup(id == null ? "" : String(id)),
+    closePopup: (id) => globalThis.__pf_close_popup(id == null ? "" : String(id)),
+  }},
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
   onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
   onPanelOpen: (fn) => {{ globalThis.__pf_panel_open_fn = fn; }},
@@ -265,6 +277,22 @@ globalThis.__pf_fire_cmd = (id, path) => {{
   const fn = globalThis["__pf_cmd_" + id];
   if (typeof fn === "function") fn({{ path }});
 }};
+// 契约 v3 命令 env：fn_bar 点击 = {{"session":{{"key":"…"}}}}；switch 翻转 = {{"value":bool}}；
+// envJson 空串按 {{}} 解。旧 path 面（__pf_fire_cmd）不动。
+globalThis.__pf_fire_cmd_env = (id, envJson) => {{
+  const fn = globalThis["__pf_cmd_" + id];
+  if (typeof fn === "function") fn(JSON.parse(envJson || "{{}}"));
+}};
+// 契约 v3 fn_bar：插件导出 fn_bar(ctx, env) → {{icon,tone,tip}}；未导出 = "null"。
+globalThis.__pf_fn_bar_str = (envJson) =>
+  typeof globalThis.__pf_exports.fn_bar === "function"
+    ? JSON.stringify(globalThis.__pf_exports.fn_bar(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}")))
+    : "null";
+// 契约 v3 弹窗内容：render_popup 优先，退回 render（旧导出面兼容）。
+globalThis.__pf_render_popup_str = () =>
+  typeof globalThis.__pf_exports.render_popup === "function"
+    ? JSON.stringify(globalThis.__pf_exports.render_popup(globalThis.__pf_ctx))
+    : JSON.stringify(globalThis.__pf_exports.render(globalThis.__pf_ctx));
 globalThis.__pf_fire_panel_open = () => {{
   if (typeof globalThis.__pf_panel_open_fn === "function")
     globalThis.__pf_panel_open_fn();
@@ -318,6 +346,18 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
             .map_err(|e| e.to_string())
     }
 
+    /// 触发命令回调（env 负载形态，契约 v3）：fn_bar 点击 =
+    /// {"session":{"key":"…"}}，switch 翻转 = {"value":bool}；未注册 = no-op。
+    pub fn fire_command_env(&self, id: &str, env_json: &str) -> Result<(), String> {
+        self.ctx
+            .with(|ctx| -> Result<(), rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fire_cmd_env")?;
+                f.call::<(&str, &str), ()>((id, env_json))?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
     /// 触发组件菜单回调 `onCommand(id, {path})`（未注册 = no-op）。
     pub fn fire_command(&self, id: &str, path: &str) -> Result<(), String> {
         self.ctx
@@ -325,6 +365,28 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
                 let f: Function = ctx.globals().get("__pf_fire_cmd")?;
                 f.call::<(&str, &str), ()>((id, path))?;
                 Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    /// 调 fn_bar(ctx, env)（契约 v3 功能栏 chrome）。未导出 → Ok(None)。
+    /// 返回 JSON 串 {"icon":"…","tone":"…","tip":…}。
+    pub fn fn_bar_json(&self, env_json: &str) -> Result<Option<String>, String> {
+        self.ctx
+            .with(|ctx| -> Result<String, rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fn_bar_str")?;
+                f.call::<(&str,), String>((env_json,))
+            })
+            .map(|s| if s == "null" { None } else { Some(s) })
+            .map_err(|e| e.to_string())
+    }
+
+    /// render_popup(ctx)（契约 v3 弹窗内容；无导出退回 render）→ 树 JSON。
+    pub fn render_popup_json(&self) -> Result<String, String> {
+        self.ctx
+            .with(|ctx| -> Result<String, rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_render_popup_str")?;
+                f.call::<(), String>(())
             })
             .map_err(|e| e.to_string())
     }
@@ -438,6 +500,92 @@ export function render(ctx) {
   })) };
 }
 "#;
+
+    /// 契约 v3 面：fn_bar chrome / fire_command_env / act.openPopup /
+    /// render_popup（无导出退回 render）。
+    #[test]
+    fn v3_fn_bar_command_env_popup() {
+        let dir = std::env::temp_dir().join("pf-js-v3-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(
+            &entry,
+            r#"
+export function activate(ctx) {
+  ctx.onCommand("bind", (env) => {
+    ctx.fs.write("env.json", JSON.stringify(env));
+  });
+  ctx.onCommand("toggle-enabled", (env) => {
+    ctx.fs.write("switch.json", JSON.stringify(env));
+  });
+  ctx.act.openPopup("qr");
+}
+export function fn_bar(ctx, env) {
+  return {
+    icon: "assets:wx.svg",
+    tone: env.session && env.session.key === "s1" ? "accent" : "text.faint",
+    tip: { zh: "微信机器人" },
+  };
+}
+export function render_popup(ctx) {
+  return { type: "column", children: [
+    { type: "switch", value: true, command: "toggle-enabled" },
+  ] };
+}
+export function render(ctx) {
+  return { type: "text", value: { zh: "旧面" } };
+}
+"#,
+        )
+        .unwrap();
+        let host = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host.clone()).expect("load");
+        plugin.activate().expect("activate");
+        // act.openPopup → 动作入队
+        assert_eq!(
+            host.borrow().actions.clone(),
+            vec![JsAction::OpenPopup("qr".into())]
+        );
+        // fn_bar chrome：env 带会话键 → 绿；换键 → 灰
+        let green = plugin.fn_bar_json(r#"{"session":{"key":"s1"}}"#).unwrap().unwrap();
+        assert!(green.contains("assets:wx.svg") && green.contains("accent"), "{green}");
+        let grey = plugin.fn_bar_json(r#"{"session":{"key":"s2"}}"#).unwrap().unwrap();
+        assert!(grey.contains("text.faint"), "{grey}");
+        // 命令 env 负载形态：switch 翻转 {value:bool} / bind {session:{key}}
+        plugin
+            .fire_command_env("toggle-enabled", r#"{"value":false}"#)
+            .unwrap();
+        assert_eq!(
+            host.borrow_mut().files.get("switch.json").map(String::as_str),
+            Some(r#"{"value":false}"#)
+        );
+        plugin
+            .fire_command_env("bind", r#"{"session":{"key":"sA"}}"#)
+            .unwrap();
+        assert_eq!(
+            host.borrow_mut().files.get("env.json").map(String::as_str),
+            Some(r#"{"session":{"key":"sA"}}"#)
+        );
+        // 弹窗内容：render_popup 优先（不含旧面文案）
+        let popup = plugin.render_popup_json().unwrap();
+        assert!(popup.contains("switch") && !popup.contains("旧面"), "{popup}");
+        // 未导出 fn_bar 的插件 → None（负缓存语义由 app 侧管）
+        let dir2 = std::env::temp_dir().join("pf-js-v3-nofnbar");
+        std::fs::create_dir_all(&dir2).unwrap();
+        let entry2 = dir2.join("main.js");
+        std::fs::write(&entry2, "export function render(ctx) { return { type: \"text\", value: { zh: \"x\" } }; }").unwrap();
+        let host2 = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let p2 = JsPlugin::load(&entry2, "/tmp/pf", host2).expect("load");
+        assert!(p2.fn_bar_json("{}").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
 
     #[test]
     fn host_proof_placeholder_and_nonce_tag() {
