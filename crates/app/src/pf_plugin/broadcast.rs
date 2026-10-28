@@ -56,27 +56,31 @@ pub(crate) fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
 /// 契约 v3 session 事件：活跃会话键变化时派发（差分守门；空键不派——
 /// 还没进任何会话）。负载 {"key": …}。
 pub(crate) fn tick_session(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
-    let sess = chat
-        .pool
-        .runtimes
-        .get(&chat.pool.active_key)
-        .and_then(|rt| {
-            rt.read(cx)
-                .state
-                .as_ref()
-                .and_then(|s| s.session_id.clone())
-        });
-    if chat.plugins.session_last.as_ref() == Some(&sess) {
+    // **PF 会话键**（active_key）= 插件面统一 id，与 fn_bar env / page_actived /
+    // 列表行同一把键。曾用 runtime.state.session_id（pi 的 uuid）→ 插件侧拿到
+    // 的 id 与渲染面不一致，被迫引入 session_file/uuid 双口径。
+    let sess = Some(chat.pool.active_key.clone()).filter(|k| !k.is_empty());
+    let changed = chat.plugins.session_last.as_ref() != Some(&sess);
+    if !changed {
         return;
     }
-    chat.plugins.session_last = Some(sess.clone());
-    let Some(key) = sess else { return };
+    // 先派发再记账：首拍插件 JS 可能还没装载（plugin_ready 才懒加载），
+    // 先记账会导致这一拍被吞、page_id 永远不落地。
+    let Some(key) = sess.clone() else {
+        chat.plugins.session_last = None;
+        return;
+    };
     // PF 钩子 page_actived：同一时机把当前页 key 推给插件（PF 独有概念）
-    chat.plugin_page_active(&key, cx);
+    let notified = chat.plugin_page_active(&key, cx);
+    if notified == 0 {
+        // 插件 JS 尚未装载完：不记账，下一拍重试（否则 page_id 永远不落地）
+        return;
+    }
     let payload = serde_json::json!({ "key": key }).to_string();
     for ix in 0..chat.plugins.plugins.len() {
         chat.plugin_broadcast_fire(ix, SESSION, &payload, cx);
     }
+    chat.plugins.session_last = Some(Some(key.clone()));
 }
 
 /// 当前 inputpanel 负载（纯读取）：项目 = 桌面工作目录；模型 = 活跃会话

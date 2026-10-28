@@ -254,7 +254,6 @@ pub(crate) fn session_row_view(
                 // icon」）优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
                 // 用户定夺 2026-10-28）；没徽标才回落相对时间
                 .child({
-                
                     if badges.is_empty() {
                         div()
                             .flex_shrink_0()

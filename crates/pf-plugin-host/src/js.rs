@@ -355,9 +355,12 @@ globalThis.__pf_fn_bar_str = (envJson) =>
 // PF 钩子（schema/pf-hooks.json）：page_active = 页面激活（PF 独有概念，
 // pi 一个进程只服务一个会话，没有"当前页"）；session_row = 会话列表行徽标。
 globalThis.__pf_page_active_str = (envJson) => {{
-  if (typeof globalThis.__pf_exports.page_active === "function")
-    globalThis.__pf_exports.page_active(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}"));
-  return "null";
+  const fn = globalThis.__pf_exports.page_actived;
+  if (typeof fn === "function") {{
+    fn(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}"));
+    return "1";
+  }}
+  return "0";
 }};
 globalThis.__pf_session_row_str = (envJson) =>
   typeof globalThis.__pf_exports.session_row === "function"
@@ -472,14 +475,13 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
     }
 
     /// PF 钩子 page_active(ctx, env)：页面激活推送（返回值恒 null，忽略）。
-    pub fn page_active(&self, env_json: &str) -> Result<(), String> {
+    pub fn page_active(&self, env_json: &str) -> Result<String, String> {
         self.arm_deadline();
         self.ctx
             .with(|ctx| -> rquickjs::Result<String> {
                 let f: Function = ctx.globals().get("__pf_page_active_str")?;
                 f.call::<(&str,), String>((env_json,))
             })
-            .map(|_| ())
             .map_err(|e| e.to_string())
     }
 

@@ -2198,11 +2198,16 @@ impl Chat {
     /// 处理完照重渲染规则刷新面板（wasm = render 回灌）。
     /// PF 钩子 page_actived：把「当前页会话 key」推给每个 JS 插件
     /// （PF 独有概念，pi 进程没有“当前页”；插件据此记住身份，禁止再猜）。
-    pub(crate) fn plugin_page_active(&mut self, session_key: &str, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn plugin_page_active(
+        &mut self,
+        session_key: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> usize {
         if session_key.is_empty() {
-            return;
+            return 0;
         }
         let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
+        let mut notified = 0usize;
         let n = self.plugins.plugins.len();
         for ix in 0..n {
             let ok = {
@@ -2220,12 +2225,24 @@ impl Chat {
                 host.borrow_mut().actions.clear();
                 r
             };
-            if let Err(e) = r {
-                self.plugin_broken(ix, e, cx);
+            match r {
+                Err(e) => self.plugin_broken(ix, e, cx),
+                Ok(hit) => {
+                    if hit == "1" {
+                        notified += 1;
+                    } else {
+                        eprintln!("[pf-plugin] page_actived 未导出（ix={ix}）");
+                    }
+                }
             }
         }
         self.plugins.row_cache.clear();
         self.plugins.fn_bar_cache.clear();
+        eprintln!(
+            "[pf-plugin] page_actived 派发 key={} 插件数={} 通知={}",
+            session_key, n, notified
+        );
+        notified
     }
 
     pub(crate) fn plugin_broadcast_fire(
