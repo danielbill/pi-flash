@@ -678,6 +678,23 @@ mod tests {
         assert_eq!(p.session_row_json("{}").unwrap(), None);
         let _ = p.render_popup_json().expect("render-popup 调用应成功");
 
+        // 官方 proof（可选注入）→ init 验签激活后，钩子应回真值：未绑态
+        // chrome = 灰（text.faint）+ 绑定引导 tip；徽标 = 无；弹窗 = 组件树
+        if std::env::var("PF_TEST_PROOF_OFFICIAL").is_ok() {
+            install_proof_hook(proof_official);
+            let mut p = PluginInstance::load(std::path::Path::new(&v3)).expect("load v3");
+            p.init("pf-wxbot").expect("官方 proof 必须激活");
+            let chrome = p.fn_bar_json("{}").unwrap().expect("chrome 应有值");
+            let v: serde_json::Value = serde_json::from_str(&chrome).unwrap();
+            assert_eq!(v["tone"], "text.faint", "未绑 = 灰");
+            assert_eq!(v["tip"]["zh"], "微信机器人：点击扫码绑定");
+            assert_eq!(v["icon"], "assets:wx.svg");
+            assert_eq!(p.session_row_json("{}").unwrap(), None, "未绑 = 无徽标");
+            let popup = p.render_popup_json().unwrap();
+            let tree: serde_json::Value = serde_json::from_str(&popup).unwrap();
+            assert_eq!(tree["type"], "column", "弹窗体应是组件树");
+        }
+
         // v2 旧包：探不到新钩子，装载与 v2 render 面不受影响
         if let Ok(v2) = std::env::var("PF_TEST_V2_WASM") {
             let mut p = PluginInstance::load(std::path::Path::new(&v2)).expect("load v2");
