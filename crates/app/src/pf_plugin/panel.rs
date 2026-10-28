@@ -367,7 +367,10 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
             w: node.get("w").and_then(Value::as_f64).map(|v| v as f32),
             bg: node.get("bg").and_then(Value::as_str).map(str::to_string),
             radius: node.get("radius").and_then(Value::as_f64).map(|v| v as f32),
-            border: node.get("border").and_then(Value::as_str).map(str::to_string),
+            border: node
+                .get("border")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             gap: sp(node, "gap", crate::ui::tokens::space::SP2),
             align_center: node.get("align").and_then(Value::as_str) == Some("center"),
             justify_center: node.get("justify").and_then(Value::as_str) == Some("center"),
@@ -1650,7 +1653,7 @@ pub(crate) fn plugin_popup_layer(
     {
         Some("SM") => (400., 420.),
         Some("LG") => (600., 640.),
-        _ => (500., 500.), // MD（缺省）
+        _ => (420., 560.), // MD（缺省）：宽度 -40、高度容纳 360 码（2026-10-28）
     };
     let mut card = div()
         .occlude()
@@ -1668,37 +1671,37 @@ pub(crate) fn plugin_popup_layer(
     // title 为空 = 不画标题栏（老微信弹窗无标题栏，用户 2026-10-28 定夺）
     let weak_x = weak.clone();
     if !title.is_empty() {
-    card = card.child(
-        div()
-            .id("pf-popup-titlebar")
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(12.))
-            .py(px(8.))
-            .border_b_1()
-            .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text))
-                    .child(SharedString::from(title)),
-            )
-            .child(
-                div()
-                    .id("pf-popup-close")
-                    .cursor_pointer()
-                    .px(px(6.))
-                    .rounded(px(4.))
-                    .hover(|s| s.bg(rgb(t.bg_hover)))
-                    .text_color(rgb(t.text_muted))
-                    .on_mouse_down(MouseButton::Left, move |_, _w, cx| {
-                        let _ = weak_x.update(cx, |c, cx| c.plugin_popup_close(cx));
-                    })
-                    .child(crate::ui::icon("close", 14., t.text_muted)),
-            ),
-    );
+        card = card.child(
+            div()
+                .id("pf-popup-titlebar")
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(12.))
+                .py(px(8.))
+                .border_b_1()
+                .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
+                .child(
+                    div()
+                        .text_size(crate::appearance::ui_size(12.))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(rgb(t.text))
+                        .child(SharedString::from(title)),
+                )
+                .child(
+                    div()
+                        .id("pf-popup-close")
+                        .cursor_pointer()
+                        .px(px(6.))
+                        .rounded(px(4.))
+                        .hover(|s| s.bg(rgb(t.bg_hover)))
+                        .text_color(rgb(t.text_muted))
+                        .on_mouse_down(MouseButton::Left, move |_, _w, cx| {
+                            let _ = weak_x.update(cx, |c, cx| c.plugin_popup_close(cx));
+                        })
+                        .child(crate::ui::icon("close", 14., t.text_muted)),
+                ),
+        );
     }
 
     // 内容区：同一解释器；未就绪占位
