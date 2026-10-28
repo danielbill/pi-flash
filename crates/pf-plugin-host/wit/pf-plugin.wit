@@ -1,5 +1,11 @@
 // PF 插件契约（wasm 形态）——**与 JS 插件同一份契约**：插件返回组件树 JSON，
 // 宿主解释器统一渲染（01 规范）。wasm 只是另一种载体，不另立渲染模型。
+//
+// 本副本 = 宿主**装载面下限**（8tb.2 起）：world 导出只含 v2 面（init /
+// on-event / render）——契约 v3 钩子导出（fn-bar / render-popup /
+// session-row）**不进 world**，由 PluginInstance 在实例化时探测（能力面，
+// 缺 = 功能关，旧 wasm 包不受影响）；host 接口的 import（如 open-popup）
+// 可以加——旧包不 import 它就不引用，链接器多备无害。
 package pf:plugin;
 
 interface types {
@@ -7,6 +13,9 @@ interface types {
     // 以后加贡献项不用再改 WIT（JS 的 onMenu / onCommand / onPanelOpen /
     // onBroadcast 同源）。
     //   kind = "panel-open" | "menu" | "command" | "action" | "broadcast"
+    //        | "page-active"（契约 v3，PF 钩子 page_actived：当前页会话变化，
+    //          与 broadcast "session" 同拍。id 空串，path = env JSON
+    //          {"session":{"key":…}}；旧 wasm 不认识即忽略，无害）
     //   id   = contributes 里的 id（file_menu.id / panels.id / 组件动作 id）；
     //          broadcast = 事件名（broadcast_events：inputpanel / claim）
     //   path = 目标路径（file_menu/command/action 带；broadcast = 负载 JSON 串；
@@ -46,6 +55,12 @@ interface host {
     // 返回值（动作队列模型），宿主建线后经 on-event broadcast "claim" 回推
     // {key,name,cwd}（插件存指针）；失败经宿主状态栏提示透传。
     new-draft: func(prefix: string, cwd: string);
+
+    // 契约 v3 act.openPopup（8tb.2）：打开插件清单 contributes.popups 声明的
+    // 条目。非模态——窗体/定位/尺寸档位全归宿主，插件只给内容树。意图调用
+    // （动作队列，与 new-draft 同款）：同步无返回值；id 未声明 → 宿主忽略。
+    // import 对旧包无害（不 import 即不引用）。
+    open-popup: func(id: string);
 }
 
 world plugin {

@@ -90,6 +90,11 @@ impl pf::plugin::host::Host for HostState {
         // PluginAction::NewDraft 时进行；结果经 broadcast "claim" 回推。
         let _ = self.tx.send(PluginAction::NewDraft { prefix, cwd });
     }
+    fn open_popup(&mut self, id: String) {
+        // 契约 v3 act.openPopup（wasm 面，8tb.2）：只入队，开窗在调用方消费
+        // PluginAction::OpenPopup 时进行（与 JS JsAction::OpenPopup 同落点）。
+        let _ = self.tx.send(PluginAction::OpenPopup(id));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +104,13 @@ pub enum PluginAction {
     RunScript(String),
     /// 意图调用：新建插件认领会话（契约 v2.4 sessions；JS 侧 JsAction::NewDraft
     /// 同语义）。宿主建线后经 broadcast "claim" 事件回推 key。
-    NewDraft { prefix: String, cwd: String },
+    NewDraft {
+        prefix: String,
+        cwd: String,
+    },
+    /// 契约 v3 act.openPopup：开插件声明的 popups 条目（与 JS
+    /// JsAction::OpenPopup 同落点；非模态，窗体归宿主）。
+    OpenPopup(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +221,11 @@ pub struct PluginInstance {
     component: Component,
     store: Option<Store<HostState>>,
     bindings: Option<Plugin>,
+    /// 能力面（契约 v3 钩子导出，8tb.2）：None = 本包未导出该钩子（旧 wasm
+    /// 包）→ 调用方按「无」处理，与 JS 未导出同形。
+    hook_fn_bar: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
+    hook_session_row: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
+    hook_render_popup: Option<wasmtime::component::TypedFunc<(), (String,)>>,
     rx: mpsc::Receiver<PluginAction>,
 }
 
@@ -369,14 +385,30 @@ impl PluginInstance {
             },
         );
 
-        let bindings = {
+        let (bindings, hook_fn_bar, hook_session_row, hook_render_popup) = {
             let instance = linker.instantiate(&mut store, &component)?;
-            Plugin::new(&mut store, &instance)?
+            // 能力面探测（契约 v3 钩子导出）：world 不声明它们（旧 wasm 包
+            // 兼容——声明即强要求，缺导出的包在 Plugin::new 拒载），导出存在
+            // 才接。旧包探不到 = 功能关；新包多出的导出对 v2 bindgen 无害。
+            let hook_fn_bar = instance
+                .get_typed_func::<(String,), (String,)>(&mut store, "fn-bar")
+                .ok();
+            let hook_session_row = instance
+                .get_typed_func::<(String,), (String,)>(&mut store, "session-row")
+                .ok();
+            let hook_render_popup = instance
+                .get_typed_func::<(), (String,)>(&mut store, "render-popup")
+                .ok();
+            let bindings = Plugin::new(&mut store, &instance)?;
+            (bindings, hook_fn_bar, hook_session_row, hook_render_popup)
         };
         Ok(Self {
             engine,
             store: Some(store),
             bindings: Some(bindings),
+            hook_fn_bar,
+            hook_session_row,
+            hook_render_popup,
             rx,
             component,
         })
@@ -420,12 +452,99 @@ impl PluginInstance {
         }
     }
 
+    /// 契约 v3 fn-bar（能力面）：chrome JSON {icon,tone,tip}；未导出 →
+    /// `Ok(None)`（与 JS 未导出同形）；空串/"null" → None（无 chrome）。
+    pub fn fn_bar_json(&mut self, env: &str) -> Result<Option<String>, String> {
+        let Some(f) = self.hook_fn_bar else {
+            return Ok(None);
+        };
+        let Some(store) = self.store.as_mut() else {
+            return Ok(None);
+        };
+        let s = f
+            .call(&mut *store, (env.to_string(),))
+            .and_then(|(r,)| f.post_return(&mut *store).map(|()| r))
+            .map_err(|e| e.to_string())?;
+        Ok(hook_optional(s))
+    }
+
+    /// 契约 v3 session-row（能力面）：徽标 JSON {icon,tone}；未导出 →
+    /// `Ok(None)`；空串/"null" → None（本行无徽标）。
+    pub fn session_row_json(&mut self, env: &str) -> Result<Option<String>, String> {
+        let Some(f) = self.hook_session_row else {
+            return Ok(None);
+        };
+        let Some(store) = self.store.as_mut() else {
+            return Ok(None);
+        };
+        let s = f
+            .call(&mut *store, (env.to_string(),))
+            .and_then(|(r,)| f.post_return(&mut *store).map(|()| r))
+            .map_err(|e| e.to_string())?;
+        Ok(hook_optional(s))
+    }
+
+    /// 契约 v3 render-popup（能力面）：弹窗内联树 JSON；空串 → `"null"`
+    /// （= JS render_popup 返回 null = 弹窗该收了，app 侧解析与 JS 同路）。
+    /// 未导出 → 退回 v2 render 面（wit v3 前弹窗体 = render() 的既有形态）。
+    pub fn render_popup_json(&mut self) -> Result<String, String> {
+        if let Some(f) = self.hook_render_popup {
+            let Some(store) = self.store.as_mut() else {
+                return Ok("null".to_string());
+            };
+            let s = f
+                .call(&mut *store, ())
+                .and_then(|(r,)| f.post_return(&mut *store).map(|()| r))
+                .map_err(|e| e.to_string())?;
+            return Ok(if s.is_empty() { "null".to_string() } else { s });
+        }
+        self.render_json().map_err(|e| e.to_string())
+    }
+
     pub fn pump_actions(&self) -> Vec<PluginAction> {
         let mut out = Vec::new();
         while let Ok(a) = self.rx.try_recv() {
             out.push(a);
         }
         out
+    }
+
+    // ---- 能力面查询（8tb.2；测试与日志用）：包是否导出契约 v3 钩子 ----
+
+    pub fn has_fn_bar(&self) -> bool {
+        self.hook_fn_bar.is_some()
+    }
+
+    pub fn has_session_row(&self) -> bool {
+        self.hook_session_row.is_some()
+    }
+
+    pub fn has_render_popup(&self) -> bool {
+        self.hook_render_popup.is_some()
+    }
+}
+
+/// 钩子返回的「无」归一：空串 / "null" → None（与 JS glue 的 "null" 同语义，
+/// app 侧不需要知道载体）。
+fn hook_optional(s: String) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("null") {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::*;
+
+    #[test]
+    fn hook_optional_nulls() {
+        assert_eq!(hook_optional(String::new()), None);
+        assert_eq!(hook_optional("null".into()), None);
+        assert_eq!(hook_optional("NULL".into()), None);
+        assert_eq!(hook_optional(" {}".into()), Some(" {}".to_string()));
     }
 }
 
@@ -537,6 +656,33 @@ mod tests {
             let mut inst = PluginInstance::load(&path).expect("load");
             let err = inst.init(name).expect_err("伪造必须拒载");
             assert!(err.to_string().contains("验签失败"), "原因要可读: {err}");
+        }
+    }
+
+    /// 契约 v3 能力面（8tb.2）：v3 包探测命中三钩子且类型吻合（类型不符 =
+    /// 探测 None，所以 has=true + 调用 Ok 即签名验证过）；v2 旧包探不到 =
+    /// 功能关、装载不受影响（向后兼容的核心承诺）。缺环境跳过；由 W4
+    /// 部署链注入 PF_TEST_V3_WASM / PF_TEST_V2_WASM 后运行。
+    #[test]
+    fn wasm_v3_capability_face() {
+        let Ok(v3) = std::env::var("PF_TEST_V3_WASM") else {
+            return;
+        };
+        install_proof_hook(proof_placeholder); // 不 init，纯装载 + 探测
+        let mut p = PluginInstance::load(std::path::Path::new(&v3)).expect("load v3");
+        assert!(p.has_fn_bar(), "v3 包应探到 fn-bar");
+        assert!(p.has_session_row(), "v3 包应探到 session-row");
+        assert!(p.has_render_popup(), "v3 包应探到 render-popup");
+        // 签名吻合：调用不 trap、lift/lower 走通（桩返回 "null" → None）
+        assert_eq!(p.fn_bar_json("{}").unwrap(), None);
+        assert_eq!(p.session_row_json("{}").unwrap(), None);
+        let _ = p.render_popup_json().expect("render-popup 调用应成功");
+
+        // v2 旧包：探不到新钩子，装载与 v2 render 面不受影响
+        if let Ok(v2) = std::env::var("PF_TEST_V2_WASM") {
+            let mut p = PluginInstance::load(std::path::Path::new(&v2)).expect("load v2");
+            assert!(!p.has_fn_bar() && !p.has_session_row() && !p.has_render_popup());
+            p.render_json().expect("v2 render 面应可用");
         }
     }
 }

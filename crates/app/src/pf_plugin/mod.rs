@@ -844,6 +844,67 @@ pub(crate) struct PluginEntry {
     pub section_scrolls: std::cell::RefCell<Vec<gpui::ScrollHandle>>,
 }
 
+impl PluginEntry {
+    // ---- 能力面取数（8tb.2）：同一签名，载体分发收在实例调用这一处；
+    // 调用方（fn_bar chrome / 徽标 / 弹窗）按清单贡献项取数，不按载体分支。
+    // JS 动作入 host 队列随返回带走；wasm 动作走 pump（OpenPopup 等意图）。
+
+    /// 契约 v3 fn_bar chrome（JS fn_bar / wasm fn-bar，同形 JSON）。
+    /// 返回 (chrome，期间动作)。chrome = None = 本会话无（含未导出/未实现）。
+    fn hook_fn_bar(&mut self, env: &str) -> (Result<Option<String>, String>, Vec<JsAction>) {
+        if let Some(inst) = self.wasm.as_mut() {
+            // chrome 是纯取数面：wasm 动作不在 chrome 期放行（与 JS 同口径，
+            // JS 侧例外只有徽标声明，wasm 面无此动作）
+            let r = inst.fn_bar_json(env);
+            let _ = inst.pump_actions();
+            return (r, Vec::new());
+        }
+        let Some(js) = self.js.as_ref() else {
+            return (Ok(None), Vec::new());
+        };
+        let host = self.host.as_ref().expect("js 载体必有 host").clone();
+        host.borrow_mut().actions.clear();
+        let r = js.fn_bar_json(env);
+        let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+        (r, drained)
+    }
+
+    /// PF 钩子 session_row 徽标（JS session_list_render / wasm session-row）。
+    fn hook_session_row(&mut self, env: &str) -> (Result<Option<String>, String>, Vec<JsAction>) {
+        if let Some(inst) = self.wasm.as_mut() {
+            let r = inst.session_row_json(env);
+            let _ = inst.pump_actions();
+            return (r, Vec::new());
+        }
+        let Some(js) = self.js.as_ref() else {
+            return (Ok(None), Vec::new());
+        };
+        let host = self.host.as_ref().expect("js 载体必有 host").clone();
+        host.borrow_mut().actions.clear();
+        let r = js.session_row_json(env);
+        let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+        (r, drained)
+    }
+
+    /// 契约 v3 弹窗体（JS render_popup / wasm render-popup；wasm 未导出时
+    /// 退回 v2 render 面）。返回 (体 JSON，期间动作)。
+    fn hook_render_popup(&mut self) -> (Result<String, String>, Vec<JsAction>, Vec<PluginAction>) {
+        if let Some(inst) = self.wasm.as_mut() {
+            let r = inst.render_popup_json();
+            let acts = inst.pump_actions();
+            return (r, Vec::new(), acts);
+        }
+        let Some(js) = self.js.as_ref() else {
+            return (Ok("null".to_string()), Vec::new(), Vec::new());
+        };
+        let host = self.host.as_ref().expect("js 载体必有 host").clone();
+        host.borrow_mut().actions.clear();
+        let r = js.render_popup_json();
+        let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+        (r, drained, Vec::new())
+    }
+}
+
 /// 会话列表徽标（契约 v3 sessions.setBadge）：落时间位置，owner = 插件 id。
 #[derive(Debug, Clone)]
 /// PF 钩子 session_list_render 的缓存条目（徽标是渲染结果，缓存只省 JS 调用）。
@@ -1573,8 +1634,8 @@ impl Chat {
     }
 
     /// 契约 v3 fn_bar：会话功能栏插件 icon 批量取数（带 1s TTL 缓存——
-    /// 功能栏每帧渲染，QuickJS 调用不进每帧）。返回 (ix, icon_path, tone, tip)。
-    /// wasm 面无 fn_bar 导出（wit v3 前）不参与；停用/坏插件不出。
+    /// 功能栏每帧渲染，调用不进每帧）。按能力面取（清单 fn_bar 声明 +
+    /// 插件导出，载体无关）；停用/坏插件不出。
     pub(crate) fn plugin_fn_bar_chrome(
         &mut self,
         session_key: &str,
@@ -1584,7 +1645,7 @@ impl Chat {
         let mut out = Vec::new();
         let mut miss: Vec<usize> = Vec::new();
         for (ix, e) in self.plugins.plugins.iter().enumerate() {
-            if e.manifest.fn_bar.is_none() || e.disabled || e.wasm.is_some() {
+            if e.manifest.fn_bar.is_none() || e.disabled {
                 continue;
             }
             let hit = self.plugins.fn_bar_cache.iter().find(|c| {
@@ -1607,11 +1668,7 @@ impl Chat {
             let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
             let (result, actions) = {
                 let entry = &mut self.plugins.plugins[ix];
-                let host = entry.host.as_ref().unwrap().clone();
-                host.borrow_mut().actions.clear();
-                let r = entry.js.as_ref().unwrap().fn_bar_json(&env);
-                let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
-                (r, drained)
+                entry.hook_fn_bar(&env)
             };
             // chrome 取数期间的动作丢弃（fn_bar 是纯 chrome，不该有副作用）。
             // 例外：会话列表徽标（SetBadge/ClearBadge）就是 chrome 的伴随声明——
@@ -1820,12 +1877,13 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
+        // 命令回环后插件状态已变（绑定指针/开关/出码）：chrome 缓存作废重建
+        // ——两载体同时机（8tb.2：wasm 命令回环原先不清，导致扫码后 icon 滞灰）
+        self.plugins.fn_bar_cache.clear();
         if self.plugins.plugins[ix].wasm.is_some() {
             self.plugin_wasm_event(ix, "command", command_id, env_json, window, cx);
             return;
         }
-        // 命令回环后插件状态已变（绑定指针/开关/出码）：chrome 缓存作废重建
-        self.plugins.fn_bar_cache.clear();
         let (result, actions) = {
             let entry = &mut self.plugins.plugins[ix];
             let host = entry.host.as_ref().unwrap().clone();
@@ -1874,33 +1932,11 @@ impl Chat {
             };
             (pc.id.clone(), pick_lang(&pc.title_zh, &pc.title_en))
         };
-        // wasm 面：render() 即弹窗树（wit v3 前的形态），复用面板渲染链取体
-        if self.plugins.plugins[ix].wasm.is_some() {
-            self.plugin_wasm_render(ix, cx);
-            let body = self.plugins.plugins.get(ix).and_then(|e| e.body.clone());
-            self.plugins.popup = Some(PluginPopupOpen {
-                ix,
-                id,
-                title,
-                tree_loaded: body.is_some(),
-                body,
-            });
-            cx.notify();
-            let popup_gen = self.plugins.popup_gen;
-            self.plugin_popup_poll(ix, popup_gen, cx);
-            return;
-        }
-        let (result, actions) = {
+        // 能力面取体（8tb.2）：JS render_popup / wasm render-popup（未导出
+        // 退回 render 面）同一取数口，解析与开窗逻辑不分支。
+        let (result, js_actions, wasm_actions) = {
             let entry = &mut self.plugins.plugins[ix];
-            let (Some(host), Some(js)) = (entry.host.as_ref(), entry.js.as_ref()) else {
-                self.plugin_popup_close(cx);
-                return;
-            };
-            let host = host.clone();
-            host.borrow_mut().actions.clear();
-            let r = js.render_popup_json();
-            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
-            (r, drained)
+            entry.hook_render_popup()
         };
         match result {
             Ok(json) => {
@@ -1918,8 +1954,12 @@ impl Chat {
                     tree_loaded: true,
                     body: Some(body),
                 });
-                // bind 回调里 openPopup 之外若还带了别的动作，照走
-                self.plugin_dispatch(ix, actions, window, cx);
+                // bind 回调里 openPopup 之外若还带了别的动作，照走；
+                // wasm 意图（open-popup）同落点
+                self.plugin_dispatch(ix, js_actions, window, cx);
+                if !wasm_actions.is_empty() {
+                    self.plugin_wasm_dispatch(ix, wasm_actions, window, cx);
+                }
             }
             Err(e) => self.plugin_broken(ix, e, cx),
         }
@@ -1967,39 +2007,30 @@ impl Chat {
     }
 
     /// 弹窗内容重取（回调链返回后的重渲染规则：弹窗开着就跟着新态）。
+    /// 能力面取体（8tb.2）：JS/wasm 同一取数口，解析不分支。
     fn plugin_popup_reload(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
         eprintln!("[pf-plugin] popup reload trace ix={ix}");
         if self.plugins.popup.as_ref().map(|p| p.ix) != Some(ix) {
             return;
         }
-        if self.plugins.plugins[ix].wasm.is_some() {
-            self.plugin_wasm_render(ix, cx);
-            let body = self.plugins.plugins.get(ix).and_then(|e| e.body.clone());
-            if let Some(p) = self.plugins.popup.as_mut() {
-                p.body = body;
-                p.tree_loaded = p.body.is_some();
-            }
-            cx.notify();
-            return;
-        }
-        // 防御：js/host 可能已被异常隔离（plugin_broken）或重扫描清掉——
+        // 防御：js/wasm 可能已被异常隔离（plugin_broken）或重扫描清掉——
         // 弹窗场景绝不打崩宿主，收弹窗即可
         if !self.plugin_ready(ix, cx) {
             self.plugin_popup_close(cx);
             return;
         }
-        let (result, actions) = {
+        let (result, actions, wasm_actions) = {
             let entry = &mut self.plugins.plugins[ix];
-            let (Some(host), Some(js)) = (entry.host.as_ref(), entry.js.as_ref()) else {
-                self.plugin_popup_close(cx);
-                return;
-            };
-            let host = host.clone();
-            host.borrow_mut().actions.clear();
-            let r = js.render_popup_json();
-            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
-            (r, drained)
+            entry.hook_render_popup()
         };
+        // wasm 意图：本面无 window，只放行 Toast，其余丢弃（broadcast 同口径；
+        // 弹窗体不该再开弹窗）
+        for a in wasm_actions {
+            match a {
+                PluginAction::Toast(m) => self.set_status(m, cx),
+                other => eprintln!("[pf-plugin] popup 重取期间 wasm 动作被忽略: {:?}", other),
+            }
+        }
         // 重取期间的动作：徽标是渲染的伴随声明，必须落地（否则列表永远没徽标）；
         // 其余动作忽略（与 render 面同口径）。
         for a in actions {
@@ -2208,14 +2239,39 @@ impl Chat {
         let mut notified = 0usize;
         let n = self.plugins.plugins.len();
         for ix in 0..n {
+            // 能力面（8tb.2）：PF 钩子全员派发，载体无关——JS 未导出由胶水
+            // 回 "0" 记日志；wasm 走事件通道 kind="page-active"（wit v3；
+            // 旧 wasm 不认识即忽略，无害）
             let ok = {
                 let e = &self.plugins.plugins[ix];
-                !e.disabled && e.wasm.is_none()
+                !e.disabled
             };
             if !ok || !self.plugin_ready(ix, cx) {
                 continue;
             }
-            let r = {
+            let is_wasm = self.plugins.plugins[ix].wasm.is_some();
+            let r: Result<String, String> = if is_wasm {
+                let (res, acts) = {
+                    let entry = &mut self.plugins.plugins[ix];
+                    let Some(inst) = entry.wasm.as_mut() else {
+                        continue;
+                    };
+                    let res = inst.on_event("page-active", "", &env);
+                    let acts = inst.pump_actions();
+                    (res, acts)
+                };
+                // 无 window 面：Toast 照走，其余丢弃（broadcast 同口径；
+                // page-active 只作废 chrome/徽标缓存，不触发面板重渲）
+                for a in acts {
+                    match a {
+                        PluginAction::Toast(m) => self.set_status(m, cx),
+                        other => {
+                            eprintln!("[pf-plugin] page-active 期间动作被忽略: {other:?}")
+                        }
+                    }
+                }
+                res.map(|()| "1".to_string()).map_err(|e| e.to_string())
+            } else {
                 let entry = &self.plugins.plugins[ix];
                 let host = entry.host.as_ref().unwrap().clone();
                 host.borrow_mut().actions.clear();
@@ -2361,6 +2417,8 @@ impl Chat {
                         None => self.set_status(format!("无法执行：{p}"), cx),
                     }
                 }
+                // 契约 v3 act.openPopup：与 JS JsAction::OpenPopup 同落点
+                PluginAction::OpenPopup(id) => self.plugin_popup_open(ix, Some(&id), window, cx),
             }
         }
         // 动作可能改了插件数据（如 toggle pin）：同步快照给后续 render
@@ -2544,11 +2602,13 @@ impl Chat {
         const TTL: std::time::Duration = std::time::Duration::from_millis(1000);
         let n = self.plugins.plugins.len();
         for ix in 0..n {
-            let (pkg, has_js) = {
+            // 能力面（8tb.2）：徽标是每行渲染结果，载体无关——JS 未导出 /
+            // wasm 未实现都回 None（负缓存 TTL 内不再问）
+            let (pkg, capable) = {
                 let e = &self.plugins.plugins[ix];
-                (e.manifest.pkg.clone(), !e.disabled && e.wasm.is_none())
+                (e.manifest.pkg.clone(), !e.disabled)
             };
-            if !has_js {
+            if !capable {
                 continue;
             }
             if let Some(c) = self
@@ -2567,13 +2627,9 @@ impl Chat {
                 continue;
             }
             let env = serde_json::json!({ "session": { "key": key } }).to_string();
-            let r = {
-                let entry = &self.plugins.plugins[ix];
-                let host = entry.host.as_ref().unwrap().clone();
-                host.borrow_mut().actions.clear();
-                let r = entry.js.as_ref().unwrap().session_row_json(&env);
-                host.borrow_mut().actions.clear();
-                r
+            let (r, _) = {
+                let entry = &mut self.plugins.plugins[ix];
+                entry.hook_session_row(&env)
             };
             let badge = match r {
                 Ok(Some(json)) => {
@@ -2692,7 +2748,7 @@ pub(crate) fn fn_bar_plugin_elements(
                 .justify_center()
                 .w(px(32.))
                 .h(px(32.))
-                .pr(px(20.)) // icon 右侧留 20px（用户定夺）
+                .mr(px(20.)) // 按钮右侧留 20px（不压缩 icon，用户定夺）
                 .rounded(px(6.))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(t.bg_hover)));
