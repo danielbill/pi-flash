@@ -363,8 +363,8 @@ globalThis.__pf_page_active_str = (envJson) => {{
   return "0";
 }};
 globalThis.__pf_session_row_str = (envJson) =>
-  typeof globalThis.__pf_exports.session_row === "function"
-    ? JSON.stringify(globalThis.__pf_exports.session_row(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}")))
+  typeof globalThis.__pf_exports.session_list_render === "function"
+    ? JSON.stringify(globalThis.__pf_exports.session_list_render(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}")))
     : "null";
 // 契约 v3 弹窗内容：render_popup 优先，退回 render（旧导出面兼容）。
 globalThis.__pf_render_popup_str = () =>

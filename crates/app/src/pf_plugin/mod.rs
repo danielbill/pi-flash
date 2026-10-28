@@ -2590,6 +2590,10 @@ impl Chat {
                         .and_then(Value::as_str)
                         .unwrap_or("accent")
                         .to_string();
+                    eprintln!(
+                        "[pf-plugin] session_list_render 命中 pkg={} session={} icon={}",
+                        self.plugins.plugins[ix].manifest.pkg, key, icon
+                    );
                     if icon.is_empty() {
                         None
                     } else {
