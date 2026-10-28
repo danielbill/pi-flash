@@ -1673,7 +1673,7 @@ pub(crate) fn plugin_popup_layer(
     {
         Some("SM") => (400., 420.),
         Some("LG") => (600., 640.),
-        _ => (420., 600.), // MD（缺省）：宽 -40，高容纳 396 码（用户定）
+        _ => (420., 610.), // MD（缺省）：底部再加高 10（用户定）
     };
     let mut card = div()
         .occlude()
