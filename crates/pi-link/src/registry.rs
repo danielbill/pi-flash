@@ -257,9 +257,7 @@ fn dump() -> Result<RegistryDump, String> {
         serde_json::from_str(stdout.trim()).map_err(|e| format!("registry dump 解析失败: {e}"))?;
     // 旧版 SDK（≤1.0.0）refreshOnCreate:false 下 getModels() 返回空——计数
     // 或模型条目任一为空 = dump 无效，按失败处理（不落缓存，下次弹窗重试）
-    if !dump.providers.is_empty()
-        && (dump.model_counts.is_empty() || dump.models.is_empty())
-    {
+    if !dump.providers.is_empty() && (dump.model_counts.is_empty() || dump.models.is_empty()) {
         return Err("registry dump 缺少模型清单/计数（vendor SDK 过旧）".to_string());
     }
     dump.version = vendored_version().unwrap_or_default();
@@ -308,7 +306,11 @@ mod tests {
         let d = sample();
         assert_eq!(d.models.len(), 3);
         // 缺 name 的条目回退空串、缺 contextWindow 回退 None（serde default）
-        let sonnet = d.models.iter().find(|m| m.id == "claude-sonnet-4-6").unwrap();
+        let sonnet = d
+            .models
+            .iter()
+            .find(|m| m.id == "claude-sonnet-4-6")
+            .unwrap();
         assert_eq!(sonnet.name, "");
         assert_eq!(sonnet.context_window, None);
         let ids: Vec<_> = d.models_for("anthropic").map(|m| m.id.as_str()).collect();

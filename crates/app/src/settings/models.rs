@@ -493,7 +493,14 @@ pub(crate) fn mc_models_view(
         &d.enabled_filter_value,
         t,
     );
-    let detail = mc_models_detail(chat, &weak.clone(), &selected, d, &detail_error, &enabled_set);
+    let detail = mc_models_detail(
+        chat,
+        &weak.clone(),
+        &selected,
+        d,
+        &detail_error,
+        &enabled_set,
+    );
     div()
         .flex()
         .w_full()
@@ -956,46 +963,43 @@ fn mc_models_detail(
     let detail = detail
         .child(section_title("API Key"))
         .child(
-            div()
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .relative()
-                        .w_full()
-                        .min_w_0()
-                        .child(d.key_input.clone())
-                        .child(
-                            div()
-                                .id("mc-key-eye")
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .right(px(8.))
-                                .flex()
-                                .items_center()
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.7))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak_eye.update(cx, |c, cx| {
-                                        if let Some(st) = c.dlg.settings.clone() {
-                                            let input = st.read(cx).key_input.clone();
-                                            let visible = st.update(cx, |s, cx| {
-                                                s.key_visible = !s.key_visible;
-                                                cx.notify();
-                                                s.key_visible
-                                            });
-                                            input.update(cx, |ti, cx| ti.set_masked(!visible, cx));
-                                        }
-                                    });
-                                })
-                                .child(crate::ui::icon(
-                                    if d.key_visible { "eye-off" } else { "eye" },
-                                    14.,
-                                    t.text_muted,
-                                )),
-                        ),
-                ),
+            div().flex().items_center().child(
+                div()
+                    .relative()
+                    .w_full()
+                    .min_w_0()
+                    .child(d.key_input.clone())
+                    .child(
+                        div()
+                            .id("mc-key-eye")
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right(px(8.))
+                            .flex()
+                            .items_center()
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.7))
+                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak_eye.update(cx, |c, cx| {
+                                    if let Some(st) = c.dlg.settings.clone() {
+                                        let input = st.read(cx).key_input.clone();
+                                        let visible = st.update(cx, |s, cx| {
+                                            s.key_visible = !s.key_visible;
+                                            cx.notify();
+                                            s.key_visible
+                                        });
+                                        input.update(cx, |ti, cx| ti.set_masked(!visible, cx));
+                                    }
+                                });
+                            })
+                            .child(crate::ui::icon(
+                                if d.key_visible { "eye-off" } else { "eye" },
+                                14.,
+                                t.text_muted,
+                            )),
+                    ),
+            ),
         )
         // API Key 与可用模型之间的分隔线
         .child(
@@ -1158,24 +1162,24 @@ fn mc_enabled_section(
                             )
                     })
                     .child({
-                // 纯 icon 获取钮：与移除/保存同宽 84 同高 32（右缘对齐）
-                let el = crate::ui::button::button_base(
-                    "mc-fetch",
-                    crate::ui::button::BtnSize::Lg,
-                    crate::ui::button::BtnVariant::Secondary,
-                )
-                .w(px(84.))
-                .child(crate::ui::icon("rotate-ccw", 16., t.text));
-                if running {
-                    el.opacity(0.5).into_any_element()
-                } else {
-                    let weak = fetch_weak.clone();
-                    let fp = fetch_provider.clone();
-                    el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let _ = weak.update(cx, |c, cx| c.mc_fetch_models(fp.clone(), cx));
-                    })
-                    .into_any_element()
-                }
+                        // 纯 icon 获取钮：与移除/保存同宽 84 同高 32（右缘对齐）
+                        let el = crate::ui::button::button_base(
+                            "mc-fetch",
+                            crate::ui::button::BtnSize::Lg,
+                            crate::ui::button::BtnVariant::Secondary,
+                        )
+                        .w(px(84.))
+                        .child(crate::ui::icon("rotate-ccw", 16., t.text));
+                        if running {
+                            el.opacity(0.5).into_any_element()
+                        } else {
+                            let weak = fetch_weak.clone();
+                            let fp = fetch_provider.clone();
+                            el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                let _ = weak.update(cx, |c, cx| c.mc_fetch_models(fp.clone(), cx));
+                            })
+                            .into_any_element()
+                        }
                     }),
             ),
     );

@@ -107,10 +107,7 @@ pub(crate) static WX_SKIN: crate::session::template::SessionPageSkin =
 /// 2. 开关 + 说明文字 —— 启用/停用微信通话（未创建时禁用，只能扫码创建）；
 /// 3. 新建会话 —— 丢弃当前会话重建（= 微信端 `/新建` 同语义）；
 /// 4. 刷新二维码 —— refresh icon +「重新绑定」，强制换一张新码。
-pub(crate) fn wx_fn_bar(
-    chat: &mut Chat,
-    cx: &mut gpui::Context<Chat>,
-) -> gpui::AnyElement {
+pub(crate) fn wx_fn_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     // 镜像读（泵一拍刷一次）：渲染路径不碰盘
     let has_token = chat.aux.remote.has_token();
@@ -156,11 +153,7 @@ pub(crate) fn wx_fn_bar(
                     });
                 },
             )
-            .child(crate::ui::icon(
-                "wechat",
-                22.,
-                icon_color,
-            ))
+            .child(crate::ui::icon("wechat", 22., icon_color))
             .into_any_element()
     };
 
@@ -185,17 +178,12 @@ pub(crate) fn wx_fn_bar(
         } else {
             tr("remote.toggle_off")
         };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .child(sw)
-            .child(
-                div()
-                    .text_size(crate::appearance::ui_size(11.5))
-                    .text_color(rgb(t.text_muted))
-                    .child(SharedString::from(label)),
-            )
+        div().flex().items_center().gap(px(6.)).child(sw).child(
+            div()
+                .text_size(crate::appearance::ui_size(11.5))
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(label)),
+        )
     });
     // 新建会话（第 3 件，W1）：002 §3——弹确认框「丢弃当前会话创建新会话？」，
     // 确认后走 wx_rotate_session（= 微信 /新建 同语义）。运行中不开确认框，
@@ -344,11 +332,7 @@ pub(crate) fn wx_qr_panel(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme)
 /// 操作栏），二维码卡原尺寸居中。**无标题栏、无关闭钮、外点/ESC 均不关**
 /// ——不扫码绑定就不能进行下一步操作；唯一撤层路径是扫码成功（泵见
 /// `QrState::Done` 自动清 `dlg.dialog`）。
-pub(crate) fn wx_qr_layer(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    t: &Theme,
-) -> gpui::Div {
+pub(crate) fn wx_qr_layer(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::Div {
     crate::ui::overlay::layer_blocking(&chat.dlg.dialog_focus)
         // topbar 不盖住（用户定夺「覆盖至 topbar」）；content-col 是
         // relative 容器，40px = titlebar::HEIGHT
@@ -362,11 +346,7 @@ pub(crate) fn wx_qr_layer(
 
 /// 绑定票面：蒙层（跟主题）+ 居中二维码卡。**一份**——功能页 Bind 段（内容区
 /// 内）与强制模态层（Dialog::WxQr，挂 content-col）都用它，别各画一份布局。
-fn wx_bind_surface(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    t: &Theme,
-) -> gpui::AnyElement {
+fn wx_bind_surface(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &Theme) -> gpui::AnyElement {
     div()
         .id("wx-bind-surface")
         .size_full()
@@ -641,14 +621,14 @@ impl Chat {
             .as_ref()
             .and_then(|cwd| crate::services::workspace::get_last_open(&cwd.to_string_lossy()))
             .and_then(|k| {
-            if let Some(rt) = self.pool.runtimes.get(&k).cloned() {
-                Some(rt)
-            } else if std::path::Path::new(&k).is_file() {
-                self.open_session_detached(std::path::PathBuf::from(&k), cx)
-            } else {
-                None
-            }
-        });
+                if let Some(rt) = self.pool.runtimes.get(&k).cloned() {
+                    Some(rt)
+                } else if std::path::Path::new(&k).is_file() {
+                    self.open_session_detached(std::path::PathBuf::from(&k), cx)
+                } else {
+                    None
+                }
+            });
         // 落地保底：桌面会话不在了也要有地方去（否则活跃位留在微信线 =
         // 「新会话」标题 + 微信内容的幻影页）
         let rt = match target {
@@ -706,11 +686,7 @@ impl Chat {
     /// - `None` = 用户点了【新建会话】→ 清空 + 停在设置页，等用户手动选。
     ///
     /// 其他任何地方都不准写 `wx_cwd`（尤其禁止把 PF/桌面 cwd 复制进来）。
-    pub(crate) fn wx_choose_cwd(
-        &mut self,
-        choice: Option<PathBuf>,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    pub(crate) fn wx_choose_cwd(&mut self, choice: Option<PathBuf>, cx: &mut gpui::Context<Self>) {
         let old = self.aux.remote.line.key.clone();
         let old_active = old.as_deref() == Some(self.pool.active_key.as_str());
         // 模型承接读在忘线之前（忘线后 rt() 悬空）

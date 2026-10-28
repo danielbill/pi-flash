@@ -30,7 +30,11 @@ fn enc(name: &str) -> String {
 
 /// 清单包 latest 元数据端点。
 pub fn manifest_pkg_url() -> String {
-    format!("{}/{}/latest", crate::market::registry_base(), enc(MARKET_PKG))
+    format!(
+        "{}/{}/latest",
+        crate::market::registry_base(),
+        enc(MARKET_PKG)
+    )
 }
 
 /// 单包 latest 元数据端点。
@@ -80,7 +84,10 @@ pub fn entry_from(m: &ManifestEntry, integrity: String, tarball: String) -> Opti
         integrity,
         min_pf: String::new(),
         display: m.display.clone().unwrap_or(IndexDisplay {
-            zh: m.name.trim_start_matches(&format!("{PF_SCOPE}/")).to_string(),
+            zh: m
+                .name
+                .trim_start_matches(&format!("{PF_SCOPE}/"))
+                .to_string(),
             en: String::new(),
         }),
         desc: m.desc.clone(),
@@ -191,7 +198,10 @@ mod tests {
 
     #[test]
     fn parse_manifest_tolerates_missing_fields() {
-        let m = parse_manifest(r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/a"}]}"#).unwrap();
+        let m = parse_manifest(
+            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/a"}]}"#,
+        )
+        .unwrap();
         assert_eq!(m.packages.len(), 1);
         assert!(parse_manifest("not json").is_err());
     }

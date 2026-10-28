@@ -11,7 +11,7 @@
 //! 自校验用 [`crate::auth_json::resolve_secret`]（与 pi 取值同一机制：标记
 //! 条目 → 钥匙库），不起 node 进程（`pi auth check` 每家一次太贵）。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth_json;
 use crate::credentials::{KeyringVault, SecretVault};
@@ -66,7 +66,10 @@ fn run_providers(log: &mut Vec<String>) {
         return;
     }
     let Some(doc) = read_json_file(&path) else {
-        log.push(format!("providers.json 无法解析，已跳过：{}", path.display()));
+        log.push(format!(
+            "providers.json 无法解析，已跳过：{}",
+            path.display()
+        ));
         return;
     };
     let mut models = models_json::read().unwrap_or_else(|_| json!({ "providers": {} }));
@@ -98,9 +101,11 @@ fn run_providers(log: &mut Vec<String>) {
             }
         }
     }
-    if moved > 0 || models_json::providers(&doc).iter().any(|(n, _)| {
-        auth_json::resolve_secret(n).is_some()
-    }) {
+    if moved > 0
+        || models_json::providers(&doc)
+            .iter()
+            .any(|(n, _)| auth_json::resolve_secret(n).is_some())
+    {
         match models_json::save(&models) {
             Ok(()) => log.push(format!("已迁移 {moved} 个自定义 provider 到 models.json")),
             Err(e) => log.push(format!("models.json 写入失败（已跳过迁移）：{e}")),
@@ -151,7 +156,9 @@ fn run_auth(log: &mut Vec<String>) {
         }
     }
     if moved > 0 {
-        log.push(format!("已把 {moved} 个 apikey 的引用改写成 auth.json 标记条目"));
+        log.push(format!(
+            "已把 {moved} 个 apikey 的引用改写成 auth.json 标记条目"
+        ));
     }
     if skipped > 0 {
         log.push(format!(
@@ -195,12 +202,16 @@ mod tests {
         assert!(should_adopt(Some(
             &json!({"type":"api_key","key":"!'C:/x/pif-secret.exe' get deepseek"})
         )));
-        assert!(!should_adopt(Some(
-            &json!({"type":"api_key","key":"sk-user"})
-        )), "用户手写明文必须原样保留");
-        assert!(!should_adopt(Some(
-            &json!({"type":"oauth","access":"a","refresh":"r","expires":1})
-        )), "oauth 归 pi");
+        assert!(
+            !should_adopt(Some(&json!({"type":"api_key","key":"sk-user"}))),
+            "用户手写明文必须原样保留"
+        );
+        assert!(
+            !should_adopt(Some(
+                &json!({"type":"oauth","access":"a","refresh":"r","expires":1})
+            )),
+            "oauth 归 pi"
+        );
     }
 
     #[test]

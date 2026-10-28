@@ -406,8 +406,7 @@ pub fn extract(tarball: &Path, dest: &Path) -> Result<(), String> {
 /// 失败回滚整个安装目录（不会留半成品）。未注入 = 不做事（pi-link 单测/CLI 场景）。
 pub type InstallPrepareFn = fn(&Path) -> Result<(), String>;
 
-static INSTALL_PREPARE: std::sync::RwLock<Option<InstallPrepareFn>> =
-    std::sync::RwLock::new(None);
+static INSTALL_PREPARE: std::sync::RwLock<Option<InstallPrepareFn>> = std::sync::RwLock::new(None);
 
 /// app 启动时注入安装尾声钩子（见 [`InstallPrepareFn`]）。
 pub fn install_prepare_hook(f: InstallPrepareFn) {
@@ -565,9 +564,8 @@ pub fn sweep_orphans() {
         let has_manifest = pkg_dir.join("pf-plugin.toml").is_file()
             || std::fs::read_dir(&pkg_dir)
                 .map(|rd| {
-                    rd.flatten().any(|v| {
-                        v.path().is_dir() && v.path().join("pf-plugin.toml").is_file()
-                    })
+                    rd.flatten()
+                        .any(|v| v.path().is_dir() && v.path().join("pf-plugin.toml").is_file())
                 })
                 .unwrap_or(false);
         if !has_manifest {

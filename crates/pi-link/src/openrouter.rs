@@ -101,8 +101,9 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
     let params = v.get("supported_parameters").and_then(|x| x.as_array());
     let reasoning = params.is_some_and(|a| {
         a.iter().any(|p| {
-            p.as_str()
-                .is_some_and(|s| matches!(s, "reasoning" | "include_reasoning" | "reasoning_effort"))
+            p.as_str().is_some_and(|s| {
+                matches!(s, "reasoning" | "include_reasoning" | "reasoning_effort")
+            })
         })
     });
     let mut input: Vec<String> = v
@@ -121,8 +122,9 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
     // 注意：**不**给「目录没给模态」的情况兜 {"text"}——留空表示未知，
     // 回填时保留模型原有能力（否则自动填参会把已勾的「图片」冲掉）
     let top = v.get("top_provider");
-    let context_window = opt_pos_num(v.get("context_length"))
-        .or(opt_pos_num(top.as_ref().and_then(|t| t.get("context_length"))));
+    let context_window = opt_pos_num(v.get("context_length")).or(opt_pos_num(
+        top.as_ref().and_then(|t| t.get("context_length")),
+    ));
     let max_tokens = opt_pos_num(top.as_ref().and_then(|t| t.get("max_completion_tokens")));
     let p = v.get("pricing");
     let cost = Cost {
@@ -271,9 +273,10 @@ fn pick<'a>(entries: &'a [Entry], q: &str, hints: &[String]) -> Option<&'a Entry
     }
     // 同级优先序：无变体 > 变体；再在同级里 hint author 优先（裸 id 查询
     // 默认指正价模型，:free 等变体只在显式写出时才命中）
-    if let Some(e) = cand.iter().find(|e| {
-        !slug_of(&e.id).contains(':') && hints.iter().any(|h| h == &author_of(&e.id))
-    }) {
+    if let Some(e) = cand
+        .iter()
+        .find(|e| !slug_of(&e.id).contains(':') && hints.iter().any(|h| h == &author_of(&e.id)))
+    {
         return Some(e);
     }
     if let Some(e) = cand.iter().find(|e| !slug_of(&e.id).contains(':')) {
@@ -325,7 +328,9 @@ fn fetch_full() -> Result<Vec<Entry>, FillError> {
     let entries = parse_list(&v);
     (!entries.is_empty())
         .then_some(entries)
-        .ok_or(FillError::Net("openrouter returned an empty catalog".into()))
+        .ok_or(FillError::Net(
+            "openrouter returned an empty catalog".into(),
+        ))
 }
 
 // ---- 磁盘缓存（全量列表，1h TTL）----------------------------------------------

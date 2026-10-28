@@ -63,9 +63,9 @@ pub fn ensure_model_defaults(model: &mut Value) {
     map.entry("input")
         .or_insert_with(|| serde_json::json!(["text"]));
     map.entry("reasoning").or_insert(serde_json::json!(true));
-    map.entry("cost").or_insert_with(|| {
-        serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0})
-    });
+    map.entry("cost").or_insert_with(
+        || serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
+    );
 }
 
 /// Ensure `providers` exists and return the provider object for `name`,
@@ -295,7 +295,11 @@ mod tests {
         let mut m = json!({"id": "x"});
         ensure_model_defaults(&mut m);
         assert_eq!(m["input"], json!(["text"]));
-        assert_eq!(m["reasoning"], json!(true), "缺省可推理：否则档位菜单锁死 off");
+        assert_eq!(
+            m["reasoning"],
+            json!(true),
+            "缺省可推理：否则档位菜单锁死 off"
+        );
         assert_eq!(m["cost"]["input"], json!(0));
         // 已有值保留
         let mut m = json!({"id": "x", "input": ["text", "image"], "reasoning": true,

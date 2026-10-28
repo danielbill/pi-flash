@@ -525,7 +525,10 @@ fn resolve_switch(node: &Value) -> ResolvedNode {
             .unwrap_or("")
             .to_string(),
         command: command.to_string(),
-        disabled: node.get("disabled").and_then(Value::as_bool).unwrap_or(false),
+        disabled: node
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     }
 }
 
@@ -606,10 +609,7 @@ fn section_count(tree: &ResolvedNode) -> usize {
 /// 插件预览页签内容（契约 v2.4 dock="tab"，`ContentView::Plugin` 分支）：
 /// 归属 = 活跃标签携带的 pkg（重装/重载后 ix 漂移安全，经 by_pkg 现查），
 /// 主体复用 dock 的 `plugin_panel_view`（同一解释器，同一渲染契约）。
-pub(crate) fn plugin_tab_page(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-) -> gpui::AnyElement {
+pub(crate) fn plugin_tab_page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let active = chat
         .ws
@@ -977,7 +977,13 @@ fn render_node_inner(
                         }
                         d
                     }
-                    CanvasPaint::Text { x, y, size, tone, value } => div()
+                    CanvasPaint::Text {
+                        x,
+                        y,
+                        size,
+                        tone,
+                        value,
+                    } => div()
                         .absolute()
                         .left(px(*x))
                         .top(px(*y))
@@ -1019,7 +1025,12 @@ fn render_node_inner(
             let cmd = command.clone();
             let next = !*value;
             let env = serde_json::json!({ "value": next }).to_string();
-            let mut row = div().flex().items_center().gap(px(8.)).px(px(10.)).py(px(6.));
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(10.))
+                .py(px(6.));
             if !label.is_empty() {
                 row = row.child(
                     div()
@@ -1528,9 +1539,8 @@ fn hex_color(s: &str) -> Option<u32> {
             u8::from_str_radix(&h[4..6], 16).ok()?,
         ),
         3 => {
-            let c = |i: usize| -> Option<u8> {
-                Some(u8::from_str_radix(&h[i..i + 1], 16).ok()? * 17)
-            };
+            let c =
+                |i: usize| -> Option<u8> { Some(u8::from_str_radix(&h[i..i + 1], 16).ok()? * 17) };
             (c(0)?, c(1)?, c(2)?)
         }
         _ => return None,
@@ -1583,12 +1593,8 @@ pub(crate) fn plugin_popup_layer(
         return div().into_any_element();
     };
     let ix = p.ix;
-    let (id, title, body, tree_loaded) = (
-        p.id.clone(),
-        p.title.clone(),
-        p.body.clone(),
-        p.tree_loaded,
-    );
+    let (id, title, body, tree_loaded) =
+        (p.id.clone(), p.title.clone(), p.body.clone(), p.tree_loaded);
     let weak = cx.entity().downgrade();
     let weak_close = weak.clone();
     // 非模态：不压暗背景、不抢焦点；点外/× 即收（overlay 基座规则 2/5）
@@ -1653,9 +1659,7 @@ pub(crate) fn plugin_popup_layer(
             ),
     );
     // 内容区：同一解释器；未就绪占位
-    let content = if tree_loaded
-        && let Some(tree) = body.as_ref().and_then(resolve)
-    {
+    let content = if tree_loaded && let Some(tree) = body.as_ref().and_then(resolve) {
         render_root(&tree, ix, &weak, t, &popup_render_ctx(chat, ix))
     } else {
         placeholder_center("…", t)

@@ -126,15 +126,9 @@ pub fn save(h: &Hidden) {
 
 /// 模块注入/替换自己的一条（`owner` 决定替换范围）。`prefix` 可选：同族
 /// 旧会话（如历史 `pf-wxbot-*`）一并挡住。
-pub fn set_owned(
-    owner: &str,
-    name: Option<&str>,
-    path: Option<&Path>,
-    prefix: Option<&str>,
-) {
+pub fn set_owned(owner: &str, name: Option<&str>, path: Option<&Path>, prefix: Option<&str>) {
     let mut h = load();
-    h.entries
-        .retain(|e| e.owner.as_deref() != Some(owner));
+    h.entries.retain(|e| e.owner.as_deref() != Some(owner));
     h.entries.push(Entry {
         owner: Some(owner.to_string()),
         name: name.map(str::to_string),
@@ -148,8 +142,7 @@ pub fn set_owned(
 pub fn clear_owned(owner: &str) {
     let mut h = load();
     let before = h.entries.len();
-    h.entries
-        .retain(|e| e.owner.as_deref() != Some(owner));
+    h.entries.retain(|e| e.owner.as_deref() != Some(owner));
     if h.entries.len() != before {
         save(&h);
     }

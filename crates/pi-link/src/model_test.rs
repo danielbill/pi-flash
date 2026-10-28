@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::probe::Auth;
 
@@ -124,7 +124,10 @@ pub fn build_headers(auth: Auth, key: &str, extra: &[(String, String)]) -> Vec<(
         if name.is_empty() {
             continue;
         }
-        if let Some(slot) = headers.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        if let Some(slot) = headers
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
             slot.1 = value.clone();
         } else {
             headers.push((name.to_string(), value.clone()));
@@ -233,7 +236,10 @@ fn extract_text(v: &Value) -> Option<String> {
         }
     }
     // google-generative-ai: candidates[0].content.parts[].text
-    if let Some(arr) = v.pointer("/candidates/0/content/parts").and_then(|x| x.as_array()) {
+    if let Some(arr) = v
+        .pointer("/candidates/0/content/parts")
+        .and_then(|x| x.as_array())
+    {
         let mut out = String::new();
         for p in arr {
             if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
@@ -260,7 +266,10 @@ fn extract_error(status: &u16, text: &str) -> String {
     if msg.is_empty() {
         format!("HTTP {status}")
     } else {
-        format!("HTTP {status} · {}", msg.chars().take(200).collect::<String>())
+        format!(
+            "HTTP {status} · {}",
+            msg.chars().take(200).collect::<String>()
+        )
     }
 }
 
@@ -270,21 +279,18 @@ mod tests {
 
     #[test]
     fn request_shape_per_api() {
-        let r = build_request("https://gw.example.com/v1", "openai-completions", "m-1")
-            .unwrap();
+        let r = build_request("https://gw.example.com/v1", "openai-completions", "m-1").unwrap();
         assert_eq!(r.url, "https://gw.example.com/v1/chat/completions");
         assert_eq!(r.body["model"], "m-1");
         assert_eq!(r.body["messages"][0]["content"], TEST_PROMPT);
         assert_eq!(r.body["max_tokens"], 16);
 
-        let r = build_request("https://gw.example.com/v1", "openai-responses", "m-1")
-            .unwrap();
+        let r = build_request("https://gw.example.com/v1", "openai-responses", "m-1").unwrap();
         assert_eq!(r.url, "https://gw.example.com/v1/responses");
         assert_eq!(r.body["input"], TEST_PROMPT);
         assert_eq!(r.body["max_output_tokens"], 16);
 
-        let r = build_request("https://gw.example.com", "anthropic-messages", "m-1")
-            .unwrap();
+        let r = build_request("https://gw.example.com", "anthropic-messages", "m-1").unwrap();
         assert_eq!(r.url, "https://gw.example.com/v1/messages");
         assert_eq!(r.body["max_tokens"], 16, "占位符已换名");
         assert!(r.body.get("maxTokensPlaceholder").is_none());
@@ -327,7 +333,10 @@ mod tests {
             hs.iter().find(|(n, _)| n == "Authorization").unwrap().1,
             "Bearer sk-1"
         );
-        assert_eq!(hs.iter().find(|(n, _)| n == "X-Flag").unwrap().1, "provider");
+        assert_eq!(
+            hs.iter().find(|(n, _)| n == "X-Flag").unwrap().1,
+            "provider"
+        );
         // model 覆盖 provider 的同名 header
         let hs = build_headers(
             Auth::Bearer,
@@ -337,7 +346,10 @@ mod tests {
                 ("user-agent".into(), "model-ua".into()),
             ],
         );
-        assert_eq!(hs.iter().find(|(n, _)| n == "User-Agent").unwrap().1, "model-ua");
+        assert_eq!(
+            hs.iter().find(|(n, _)| n == "User-Agent").unwrap().1,
+            "model-ua"
+        );
         // anthropic 鉴权头形状
         let hs = build_headers(Auth::Anthropic, "sk-2", &[]);
         assert_eq!(hs.iter().find(|(n, _)| n == "x-api-key").unwrap().1, "sk-2");
@@ -367,8 +379,7 @@ mod tests {
             Some("OK")
         );
         assert_eq!(
-            extract_text(&json!({"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}))
-                .as_deref(),
+            extract_text(&json!({"candidates":[{"content":{"parts":[{"text":"OK"}]}}]})).as_deref(),
             Some("OK")
         );
         assert_eq!(extract_text(&json!({"error":{"message":"bad"}})), None);

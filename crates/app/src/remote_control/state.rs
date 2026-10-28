@@ -88,7 +88,6 @@ impl Health {
     pub(crate) fn expired(&self) -> bool {
         matches!(self, Health::Expired)
     }
-
 }
 
 /// 微信线（影子会话）指针。`key` = runtime key（草稿 `draft-N` 或会话文件
