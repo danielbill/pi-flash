@@ -70,6 +70,9 @@ pub struct ManifestEntry {
     pub display: Option<IndexDisplay>,
     #[serde(default)]
     pub desc: Option<IndexDisplay>,
+    /// 市场卡片预览图（包内资产相对路径，如 "assets/wx.svg"）。
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 /// 从清单条目构造市场条目（integrity/tarball 来自 registry packument，
@@ -91,6 +94,7 @@ pub fn entry_from(m: &ManifestEntry, integrity: String, tarball: String) -> Opti
             en: String::new(),
         }),
         desc: m.desc.clone(),
+        icon: m.icon.clone(),
         publisher: "Pi-Flash".into(),
         published_at: String::new(),
         source: "url".into(),
@@ -183,12 +187,14 @@ mod tests {
             name: "evil/pkg".into(),
             display: None,
             desc: None,
+            icon: None,
         };
         assert!(entry_from(&m, "sha512-A".into(), "https://t".into()).is_none());
         let m = ManifestEntry {
             name: "@pi-flash-plugins/quick-panel".into(),
             display: None,
             desc: None,
+            icon: None,
         };
         assert!(entry_from(&m, String::new(), "https://t".into()).is_none());
         let e = entry_from(&m, "sha512-A".into(), "https://t".into()).unwrap();
@@ -204,5 +210,16 @@ mod tests {
         .unwrap();
         assert_eq!(m.packages.len(), 1);
         assert!(parse_manifest("not json").is_err());
+    }
+
+    #[test]
+    fn manifest_entry_icon_passthrough() {
+        let m = parse_manifest(
+            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/w","icon":"assets/wx.svg"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.packages[0].icon.as_deref(), Some("assets/wx.svg"));
+        let e = entry_from(&m.packages[0], "sha512-x".into(), "https://t/w.tgz".into()).unwrap();
+        assert_eq!(e.icon.as_deref(), Some("assets/wx.svg"));
     }
 }

@@ -322,8 +322,7 @@ fn all_body(
         .plugins
         .iter()
         .filter_map(|p| {
-            crate::pf_plugin::status_bar_icon_path(p)
-                .map(|icon| (p.manifest.pkg.clone(), icon))
+            crate::pf_plugin::status_bar_icon_path(p).map(|icon| (p.manifest.pkg.clone(), icon))
         })
         .collect();
     let cols = if m.narrow { 1 } else { 2 };
@@ -402,12 +401,7 @@ fn all_body(
 }
 
 /// 页面骨架（**两个页签共用**）：头段 + body + 底部 `shell_pad`（与顶部对称）。
-fn page_frame(
-    head: AnyElement,
-    body: AnyElement,
-    m: &Metrics,
-    t: &'static Theme,
-) -> AnyElement {
+fn page_frame(head: AnyElement, body: AnyElement, m: &Metrics, t: &'static Theme) -> AnyElement {
     gpui::div()
         .w_full()
         .flex_1()
@@ -674,6 +668,9 @@ fn card(
     // icon 用 hint 档（text_faint）= 非行动信息，不抢标题/安装钮的注意力。
     // 装了就用**插件自己的图标**（与状态栏 tab 同一资产，`plugins/<id>/assets/…`），
     // 未装/无 status_bar 的包回通用 package。
+    // 取图链：status_bar 图标 → 市场清单声明的包图标（pf-market/1 `icon`，
+    // wxbot 这类无 status_bar 的 v3 插件从这里给卡片图；仅已安装时解析——
+    // 资产随包落盘才存在）→ 通用 package。
     let plugin_icon = pi_link::pf_plugins::dir_aliases(&e.name)
         .into_iter()
         .find_map(|alias| {
@@ -681,6 +678,16 @@ fn card(
                 .iter()
                 .find(|(pkg, _)| *pkg == alias)
                 .map(|(_, icon)| icon.clone())
+        })
+        .or_else(|| {
+            let icon = e.icon.as_deref()?;
+            if !installed {
+                return None;
+            }
+            let alias = pi_link::pf_plugins::dir_aliases(&e.name)
+                .into_iter()
+                .next()?;
+            Some(crate::pf_plugin::contrib_icon_path(&alias, icon))
         });
     // 插件自己的图标用**正常图标色**（text_muted）；还没装的包没有图标资产，
     // 回通用 package 时才降成 hint 档（text_faint），不抢标题/安装钮

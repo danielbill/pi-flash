@@ -2685,7 +2685,7 @@ pub(crate) fn badges_for(
 }
 
 /// 贡献项图标三来源映射：宿主内置名 / `assets:<名>` / `assets/` 相对路径。
-fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
+pub(crate) fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
     // `assets/` 是目录结构的一段，**不能剥**——曾剥掉导致
     // plugins/<slug>/bolt.svg NotFound（图标空白，还进负缓存）
     if icon.starts_with("assets/") {
