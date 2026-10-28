@@ -38,14 +38,8 @@ fn sp_token(name: &str) -> Option<f32> {
     })
 }
 
-/// padX / padY：有值用值，否则回落 pad。
-fn node_pad(node: &Value, key: &str, fallback: f32) -> f32 {
-    match node.get(key) {
-        Some(Value::Number(n)) => n.as_f64().map(|v| v as f32).unwrap_or(fallback),
-        Some(Value::String(t)) => sp_token(t).unwrap_or(fallback),
-        _ => fallback,
-    }
-}
+// padX / padY 取值由下方 sp(node, key, default) 统一承担（2026-10-29 清
+// dead_code：旧 node_pad 与其重复，当前树无调用方）。
 
 fn sp(node: &Value, key: &str, default: f32) -> f32 {
     // 数字 = 直接像素（弹窗要精确对齐老 UI 的 16/12 这类值）；字符串 = SP token

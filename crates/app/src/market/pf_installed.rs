@@ -197,12 +197,21 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
     let items: Vec<InstalledItem> = {
         let ix = index_snapshot();
+        // 未上架的包（dev 侧载/内层私有包）索引里查不到 display：回落已装
+        // 清单的 title_zh，裸 slug 只作最后兑底（用户看名字，不看包名）
+        let manifests = crate::pf_plugin::scan_manifests();
         st.ledger
             .iter()
             .map(|l| {
                 let display = ix
                     .entry(&l.name)
                     .map(|e| e.display.zh.clone())
+                    .or_else(|| {
+                        manifests
+                            .iter()
+                            .find(|m| m.pkg == l.name)
+                            .map(|m| m.title_zh.clone())
+                    })
                     .unwrap_or_else(|| l.name.clone());
                 InstalledItem {
                     name: l.name.clone(),
