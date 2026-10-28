@@ -23,7 +23,8 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 - 构建产物只留在 `target/`（如 `target/release/pi-flash.exe`），禁止替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
 - CHANGELOG发版驱动，勿碰！
 - 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt
-- 禁止修改“Settings”模块！
+- 禁止修改“Settings”模块！（唯一例外：042-1 模型管理重构，用户 2026-10-27 明确授权）
+- **models.json / auth.json 是 pi 的文件，但 042-1 起 PF 会写**：整份草稿保存、**不可读拒写**、proper-lockfile 同款锁（`fs_lock.rs`）；用户手写的明文/oauth 条目一律只读不改。apikey 只进系统钥匙库，auth.json 只存 `!<helper> get <provider>` 标记条目
 
 # 路径
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
@@ -58,12 +59,16 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   sessions.rs             会话发现（~/.pi/agent/sessions 索引扫描）
   recents.rs              最近活动会话列表（003）
   config.rs               pi 配置文件访问（Models 面板）
-  models_json.rs          ~/.pi/agent/models.json（pi 的文件，PF 只读）
-  registry.rs             全量 provider 注册表（042 新增 Provider 数据源）
-  pf_auth.rs              ~/.pi-flash/pf-auth.json PF 密钥账本（051）
-  pf_providers.rs         ~/.pi-flash/providers.json 自定义 provider（051）
-  credentials.rs          OS 凭据库 keyring + $PF_KEY_* 引用（051）
-  probe.rs                apikey 保存后通路探查（042）
+  models_json.rs          ~/.pi/agent/models.json（042-1 起 PF 写它：整份草稿 +
+                          不可读拒写 + proper-lockfile 同款锁）
+  auth_json.rs            ~/.pi/agent/auth.json 的 PF 视图——只碰「标记条目」
+                          （!<helper> get <provider>），用户明文/oauth 原样透传
+  fs_lock.rs              proper-lockfile 协议复刻（<file>.lock 目录，30s stale）
+  migrate_0421.rs         042-1 一次性迁移：pf 账本 → models.json + 标记条目
+  registry.rs             全量 provider 注册表——仅「新增 Provider」弹窗元数据
+                          （hasApiKeyLogin/hasOAuth/计数），**不再喂模型清单**
+  credentials.rs          OS 凭据库 keyring（唯一秘密落点）+ env_var_name
+  probe.rs                通路探查（内置商保存 key 后 / 自定义商获取模型）
   projects.rs             PF 项目注册表 ~/.pi-flash/projects.json（打开项目即注册，004）
   estimate.rs             token 估算（pi-web parity）
   mcp.rs                  mcp.json 全局/项目配置（043）
@@ -71,7 +76,7 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   extensions.rs           扩展发现口径（复刻 pi core/extensions）
   session_ext.rs          会话级插件清单（031/034）
   agents.rs               Agent profile 目录读写（Settings-子代理页数据源，044-1）
-  subagents.rs            内置子代理扩展定位（-e 挂载，同 pf_providers 模式）
+  subagents.rs            内置子代理扩展定位（-e 挂载）
   subagent_catalog.rs     子代理 catalog 流式读取（父会话 JSONL custom entry，044-1）
   dev_flags.rs            dev-flags.json 开发旗标（重型模块发版排除）
   paths.rs                PF 自有文件路径（不污染 pi，010）

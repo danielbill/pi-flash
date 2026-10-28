@@ -148,12 +148,13 @@ pub mod method {
     /// PF 插件（090-4）驱动：状态栏 tab 开面板 / 文件树右键项回调（UI 测试用）
     pub const PLUGIN_DOCK: &str = "plugin.dock";
     pub const PLUGIN_MENU: &str = "plugin.menu";
-    /// 契约 v3 fn_bar：chrome 取数 + 点击回环（automation 验收面）
+    /// 契约 v3 fn_bar：功能栏插件 icon 清单（直调 fn_bar chrome；UI 测试用）
     pub const PLUGIN_FNBAR: &str = "plugin.fnbar";
+    /// 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session；UI 测试用）
     pub const PLUGIN_FNBAR_CLICK: &str = "plugin.fnbar_click";
-    /// 契约 v3 命令 env 直灌（fnbar_click 等价物，env 由调用方给）
+    /// 契约 v3 命令直调（env 负载形态；与 switch 翻转/任意回环同链，UI 测试用）
     pub const PLUGIN_COMMAND_ENV: &str = "plugin.command_env";
-    /// 契约 v3 弹窗关闭（automation 验收）
+    /// 契约 v3 弹窗：关闭（与点外/× 同链，UI 测试用）
     pub const PLUGIN_POPUP_CLOSE: &str = "plugin.popup_close";
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
     pub const PI_EXTENSION_PICKER_OPEN: &str = "plugin_picker.open";

@@ -58,6 +58,9 @@ pub struct TextInput {
     /// 占位符色覆盖（None = 主题 `muted_foreground`）：同理，深肤页要用页内灰。
     placeholder_color: Option<u32>,
     select_all_on_focus: bool,
+    /// 只读态（042-1：内置模型参数由 pi 定义，PF 只看不改）：内件 disabled +
+    /// 半透明；焦点/点击/输入全部由 gpui-component 拦下
+    disabled: bool,
     select_all_done: bool,
     want_focus: bool,
     // dirty buffers applied on render (inner setters need &mut Window)
@@ -92,6 +95,7 @@ impl TextInput {
             caret_color: None,
             placeholder_color: None,
             select_all_on_focus: false,
+            disabled: false,
             select_all_done: false,
             want_focus: false,
             pending_value: None,
@@ -235,6 +239,14 @@ impl TextInput {
 
     pub fn value(&self) -> &str {
         &self.value
+    }
+
+    /// 只读开关：禁用后内件不吃焦点/输入（值仍可由 set_value 回填）。
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if self.disabled != disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
     }
 
     pub fn set_value(&mut self, v: String, cx: &mut Context<Self>) {
@@ -439,6 +451,7 @@ impl Render for TextInput {
         let mut input = GpInput::new(&state)
             .appearance(!self.flat)
             .bordered(!self.flat)
+            .disabled(self.disabled)
             .map(|input| {
                 if self.compact {
                     use gpui_component::Sizable as _;
@@ -465,6 +478,7 @@ impl Render for TextInput {
         }
         div()
             .w_full()
+            .when(self.disabled, |d| d.opacity(0.7))
             .when(!auto_h, |d| d.h(h))
             // compact：槽高与 XSmall 内件（vendor input_h 20px）同高、零富余
             //（曾 22px，stretch 对定高子件退化为 top-align，2px 全落底部把

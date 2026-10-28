@@ -19,14 +19,20 @@ use crate::Chat;
 pub(crate) const INPUTPANEL: &str = "inputpanel";
 /// 认领结果回推事件（new_draft 意图调用的返回通道）：负载 {key, name, cwd}。
 pub(crate) const CLAIM: &str = "claim";
+/// 会话标签激活/切换（契约 v3）：负载 {key}（活跃会话的 pi sessionId，与
+/// fn_bar env、pi getSessionId() 同源）。页面未激活不产生。
+pub(crate) const SESSION: &str = "session";
 
 /// inputpanel 负载快照：(project, model)。
 pub(crate) type Snap = (Option<String>, Option<(String, String)>);
 
 /// 挂到 Chat 自身 observe（`spawn_plugin_scan` 期一次性接入）。
 pub(crate) fn attach(cx: &mut gpui::Context<Chat>) {
-    cx.observe(&cx.entity(), |this, _entity, cx| tick(this, cx))
-        .detach();
+    cx.observe(&cx.entity(), |this, _entity, cx| {
+        tick(this, cx);
+        tick_session(this, cx); // 契约 v3 session 事件（差分守门）
+    })
+    .detach();
 }
 
 /// 面板打开/插件（重）装载：清快照 → 下一拍必发（「激活首拍」语义）。
@@ -44,6 +50,30 @@ pub(crate) fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
     let payload = payload_json(&cur);
     for ix in 0..chat.plugins.plugins.len() {
         chat.plugin_broadcast_fire(ix, INPUTPANEL, &payload, cx);
+    }
+}
+
+/// 契约 v3 session 事件：活跃会话键变化时派发（差分守门；空键不派——
+/// 还没进任何会话）。负载 {"key": …}。
+pub(crate) fn tick_session(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
+    let sess = chat
+        .pool
+        .runtimes
+        .get(&chat.pool.active_key)
+        .and_then(|rt| {
+            rt.read(cx)
+                .state
+                .as_ref()
+                .and_then(|s| s.session_id.clone())
+        });
+    if chat.plugins.session_last.as_ref() == Some(&sess) {
+        return;
+    }
+    chat.plugins.session_last = Some(sess.clone());
+    let Some(key) = sess else { return };
+    let payload = serde_json::json!({ "key": key }).to_string();
+    for ix in 0..chat.plugins.plugins.len() {
+        chat.plugin_broadcast_fire(ix, SESSION, &payload, cx);
     }
 }
 

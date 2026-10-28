@@ -114,65 +114,11 @@ pub(crate) fn boot() {
         eprintln!("[startup] purged {purged_ws} app-owned key(s) from workspace memory");
     }
     pi_link::recents::ensure_seeded();
-    pi_link::pf_providers::ensure_extension_template_or_warn();
-    // 042-1 改版迁移：旧 auto 档条目缺 api（pi 注册硬 throw → provider
-    // 静默不可用），按 baseUrl 推断补写（幂等，显式 api 尊重保留）
-    let filled = pi_link::pf_providers::migrate_infer_api();
-    if filled > 0 {
-        eprintln!("[startup] inferred api for {filled} provider(s) in providers.json");
-    }
-    let shaped = pi_link::pf_providers::migrate_model_defaults();
-    if shaped > 0 {
-        eprintln!("[startup] applied runtime defaults to {shaped} custom model(s)");
-    }
-    adopt_legacy_credentials();
-}
-
-/// 051 一次性收编：复制式（pi 的 auth.json / models.json 原文不动）；失败
-/// 停在原状下次重试，绝不阻塞启动。此后 PF 对这两个文件零写入。
-fn adopt_legacy_credentials() {
-    let vault = pi_link::credentials::KeyringVault;
-    // 自定义 provider：pi models.json → PF 账本（复制式）
-    match (
-        pi_link::pf_providers::path(),
-        pi_link::paths::pf_providers_migrated_file(),
-    ) {
-        (Some(ledger), Some(marker)) => {
-            match pi_link::pf_providers::adopt_from_models_json_at(
-                &ledger,
-                &pi_link::models_json::path(),
-                &marker,
-                &vault,
-            ) {
-                Ok(n) if n > 0 => {
-                    eprintln!("[startup] adopted {n} custom provider(s) → providers.json")
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("[startup] providers adoption skipped: {e}"),
-            }
-        }
-        _ => eprintln!("[startup] providers adoption skipped: dir unavailable"),
-    }
-    // 目录 provider key：auth.json 明文 → 凭据库 + pf-auth.json
-    let Some(pf_path) = pi_link::pf_auth::path() else {
-        return;
-    };
-    match pi_link::pf_auth::adopt_from_auth_at(
-        &pf_path,
-        &pi_link::config::auth_path(),
-        &vault,
-        &crate::services::workspace::removed_providers(),
-    ) {
-        Ok(n) if n > 0 => {
-            eprintln!("[startup] adopted {n} legacy key(s) → credential vault + pf-auth.json")
-        }
-        Ok(_) => {}
-        Err(e) => eprintln!("[startup] pf-auth adoption skipped: {e}"),
-    }
-    // 042 墓碑清算：被【移除】的商既不收编（上方 skip），也把此前复活残留
-    // 的账本条目 + 凭据库密钥清掉（幂等；auth.json 归 pi 不动）
-    for p in crate::services::workspace::removed_providers() {
-        let _ = pi_link::pf_auth::delete_catalog_key(&p, &vault);
+    // 042-1 一次性迁移：PF 私有账本（providers.json / pf-auth.json）→ pi 的
+    // models.json + auth.json 标记条目；旧文件改名 .bak，幂等。失败只记日志，
+    // 绝不阻塞启动（下次启动重试）。
+    for line in pi_link::migrate_0421::run() {
+        eprintln!("[startup] migrate: {line}");
     }
 }
 
@@ -209,14 +155,11 @@ pub(crate) struct ProjectCtx {
 
 /// 装载全局态：模型清单（缓存 ∪ 磁盘）、命令（内置 + 扩展缓存）、默认项、插件、全局 mcp。
 pub(crate) fn load_globals() -> Globals {
-    let cache = read_cache();
-    // 缓存优先：它含包内联 provider（pi-freeflow 之类磁盘没有数据文件的清单）
-    let mut models = cache.models;
-    models.extend(pi_link::catalog::disk_models());
-    let models = pi_link::catalog::dedupe(models);
-
-    let mut commands = pi_link::catalog::builtin_commands();
-    commands.extend(cache.commands);
+    // 无缓存层：模型清单每次启动现读磁盘（providers.json / models.json /
+    // models-store.json）；包内联 provider 与扩展命令等会话进程答到后经
+    // `merge_models` / `merge_commands` 并进本进程内存（不落盘）。
+    let models = pi_link::catalog::dedupe(pi_link::catalog::disk_models());
+    let commands = pi_link::catalog::builtin_commands();
 
     let settings_path = pi_link::config::settings_path();
     Globals {
@@ -287,163 +230,9 @@ pub(crate) fn merge_commands(globals: &mut Globals, rpc: &[SlashCommand]) -> boo
     changed
 }
 
-// ---------------------------------------------------------------------------
-// 自有缓存 `~/.pi-flash/catalog-cache.json`（010-启动.md §4.1）
-// ---------------------------------------------------------------------------
-
-/// 缓存内容：模型目录 + 扩展命令（磁盘上拿不到的那部分）。
-#[derive(Default, Clone)]
-pub(crate) struct CatalogCache {
-    pub models: Vec<ModelInfo>,
-    pub commands: Vec<SlashCommand>,
-}
-
-/// 从显式路径读缓存（测试用同一实现，不碰进程环境）。
-fn cache_load_from(path: &Path) -> CatalogCache {
-    let Ok(value) = pi_link::config::read_json(path) else {
-        return CatalogCache::default();
-    };
-    let models = value
-        .get("models")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    let id = m.get("id")?.as_str()?.to_string();
-                    let provider = m.get("provider")?.as_str()?.to_string();
-                    Some(ModelInfo {
-                        id,
-                        name: m
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        provider,
-                        context_window: m.get("contextWindow").and_then(|v| v.as_u64()),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let commands = value
-        .get("commands")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    Some(SlashCommand {
-                        name: c.get("name")?.as_str()?.to_string(),
-                        description: c
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    CatalogCache { models, commands }
-}
-
-/// 写缓存（原子写）；返回是否写入。
-fn cache_save_to(path: &Path, cache: &CatalogCache) -> bool {
-    let models: Vec<serde_json::Value> = cache
-        .models
-        .iter()
-        .map(|m| {
-            serde_json::json!({
-                "provider": m.provider,
-                "id": m.id,
-                "name": m.name,
-                "contextWindow": m.context_window,
-            })
-        })
-        .collect();
-    let commands: Vec<serde_json::Value> = cache
-        .commands
-        .iter()
-        .map(|c| serde_json::json!({ "name": c.name, "description": c.description }))
-        .collect();
-    let value = serde_json::json!({
-        "version": 1,
-        "fetchedAt": std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        "models": models,
-        "commands": commands,
-    });
-    let _ = pi_link::paths::ensure_dir();
-    pi_link::config::write_json(path, &value).is_ok()
-}
-
-/// 读自有缓存（无文件/坏文件 → 空）。
-pub(crate) fn read_cache() -> CatalogCache {
-    match pi_link::paths::catalog_cache_file() {
-        Some(p) => cache_load_from(&p),
-        None => CatalogCache::default(),
-    }
-}
-
-/// 回写自有缓存（会话进程的 RPC 答复到位时调用）。
-pub(crate) fn write_cache(models: &[ModelInfo], commands: &[SlashCommand]) -> bool {
-    let Some(path) = pi_link::paths::catalog_cache_file() else {
-        return false;
-    };
-    cache_save_to(
-        &path,
-        &CatalogCache {
-            models: models.to_vec(),
-            commands: commands.to_vec(),
-        },
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn tmp_cache_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir()
-            .join(format!(
-                "pi-flash-cache-{tag}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .subsec_nanos()
-            ))
-            .join("catalog-cache.json")
-    }
-
-    #[test]
-    fn cache_roundtrip_keeps_models_and_commands() {
-        let path = tmp_cache_path("roundtrip");
-        let cache = CatalogCache {
-            models: vec![ModelInfo {
-                id: "m1".into(),
-                name: "Model One".into(),
-                provider: "p".into(),
-                context_window: Some(1234),
-            }],
-            commands: vec![SlashCommand {
-                name: "notify".into(),
-                description: "d".into(),
-            }],
-        };
-        assert!(cache_save_to(&path, &cache));
-        let back = cache_load_from(&path);
-        assert_eq!(back.models.len(), 1);
-        assert_eq!(back.models[0].name, "Model One");
-        assert_eq!(back.models[0].context_window, Some(1234));
-        assert_eq!(back.commands.len(), 1);
-        assert_eq!(back.commands[0].name, "notify");
-        // 缺文件 → 空缓存（不 panic）
-        let missing = cache_load_from(&path.with_file_name("nope.json"));
-        assert!(missing.models.is_empty() && missing.commands.is_empty());
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
 
     #[test]
     fn merge_models_keeps_union_with_priority_to_rpc() {
@@ -453,6 +242,9 @@ mod tests {
                 name: "disk".into(),
                 provider: "p".into(),
                 context_window: None,
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             }],
             ..Default::default()
         };
@@ -462,12 +254,18 @@ mod tests {
                 name: "rpc".into(),
                 provider: "p".into(),
                 context_window: Some(9),
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             },
             ModelInfo {
                 id: "y".into(),
                 name: "rpc2".into(),
                 provider: "p".into(),
                 context_window: None,
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             },
         ];
         assert!(merge_models(&mut g, &rpc));
@@ -854,7 +652,10 @@ fn boot_target() -> BootTarget {
             // 影子会话（pf-wxbot-*）**永不**做桌面恢复目标：按文件名前缀与
             // state.session_key 双保险（过滤清单可能滞后一轮）
             .filter(|p| {
-                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if name.starts_with("pf-wxbot-") {
                     return false;
                 }

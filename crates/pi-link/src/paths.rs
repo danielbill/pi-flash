@@ -156,10 +156,10 @@ pub fn registry_cache_file() -> Option<PathBuf> {
     file("registry-cache.json")
 }
 
-/// `~/.pi-flash/models-dev-cache.json` — models.dev 目录缓存（models_dev.rs，
-/// 「填入模型信息」用；TTL 1h，网络失败回陈旧）。
-pub fn models_dev_cache_file() -> Option<PathBuf> {
-    file("models-dev-cache.json")
+/// `~/.pi-flash/openrouter-cache.json` — OpenRouter 全量目录缓存（openrouter.rs，
+/// 「自动填参」用；TTL 1h，网络失败回陈旧）。
+pub fn openrouter_cache_file() -> Option<PathBuf> {
+    file("openrouter-cache.json")
 }
 
 /// `~/.pi-flash/pi-ext-market-cache.json` — Pi 扩展市场首页快照（040-1：
@@ -183,17 +183,6 @@ pub fn plugins_dir() -> Option<PathBuf> {
 /// `~/.pi-flash/registry-dump.mjs` — 注册表 dump 一次性脚本（每次 dump 重写）。
 pub fn registry_dump_script_file() -> Option<PathBuf> {
     file("registry-dump.mjs")
-}
-
-/// `~/.pi-flash/pf-providers.mjs` — spawn 时 `-e` 注入的官方扩展（进程内
-/// `pi.registerProvider`），由 pf_providers::ensure_extension_template 生成。
-pub fn pf_providers_ext_file() -> Option<PathBuf> {
-    file("pf-providers.mjs")
-}
-
-/// `~/.pi-flash/providers-migrated` — models.json 一次性复制迁移完成标记。
-pub fn pf_providers_migrated_file() -> Option<PathBuf> {
-    file("providers-migrated")
 }
 
 /// `~/.pi-flash/workspace.json` — 工作区记忆（每项目 last_open、布局、UI 状态）。
@@ -223,22 +212,9 @@ pub fn session_recents_file() -> Option<PathBuf> {
     file("session-recents.json")
 }
 
-/// `~/.pi-flash/provider-catalog.json` — 「获取模型」落盘的 provider 目录
-/// （probe 成功响应的 best-effort 解析；disk_models 优先读取，覆盖
-/// models-store 的陈旧缓存）。与 010 的 catalog-cache.json（进程答案缓存）
-/// 是两个文件。
-pub fn provider_catalog_file() -> Option<PathBuf> {
-    file("provider-catalog.json")
-}
-
 /// `~/.pi-flash/session-ext.json` — 会话级插件清单（自定义档：每个对话保存一份）。
 pub fn session_ext_file() -> Option<PathBuf> {
     file("session-ext.json")
-}
-
-/// `~/.pi-flash/catalog-cache.json` — 模型目录 + 扩展命令缓存（010-启动.md §4.1）。
-pub fn catalog_cache_file() -> Option<PathBuf> {
-    file("catalog-cache.json")
 }
 
 /// `~/.pi-flash/update-state.json` — 自动更新状态（081）：last_seen_version

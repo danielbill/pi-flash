@@ -490,9 +490,10 @@ mod tests {
         let refs = vec!["a/one".to_string(), "b/two".to_string()];
         let edit = set_models_enabled(None, &refs, &["a/one".to_string()], false).unwrap();
         let patterns = edit.patterns.unwrap();
-        // disabling the only remaining enabled model fails
-        let err = set_models_enabled(Some(&patterns), &refs, &["b/two".to_string()], false);
-        assert_eq!(err, Err("last-model"));
+        // 守卫已按用户裁决移除（d3a5c543）：再关一个也允许
+        let edit = set_models_enabled(Some(&patterns), &refs, &["b/two".to_string()], false)
+            .expect("last-model guard removed");
+        assert!(edit.changed);
     }
 
     #[test]
@@ -527,11 +528,11 @@ mod tests {
             vec!["deepseek/deepseek-reasoner".to_string()]
         );
 
-        // whitelist semantics: disabling the only pattern-covered model is
-        // rejected by the last-model guard (pi-web parity)
+        // 守卫已移除：整商关掉最后一个启用的模型也允许（空名单交 pi 解释）
         let patterns = vec!["deepseek/deepseek-chat:medium".to_string()];
-        let err = set_provider_enabled(Some(&patterns), &refs, "deepseek", false);
-        assert_eq!(err, Err("last-model"));
+        let edit = set_provider_enabled(Some(&patterns), &refs, "deepseek", false)
+            .expect("last-model guard removed");
+        assert!(edit.changed);
     }
 
     #[test]

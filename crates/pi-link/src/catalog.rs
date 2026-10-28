@@ -78,6 +78,13 @@ pub fn parse_store(value: &Value) -> Vec<ModelInfo> {
                     .unwrap_or(provider)
                     .to_string(),
                 context_window: m.get("contextWindow").and_then(Value::as_u64),
+                max_tokens: m.get("maxTokens").and_then(Value::as_u64),
+                reasoning: m.get("reasoning").and_then(Value::as_bool),
+                input: m.get("input").and_then(Value::as_array).map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                }),
             });
         }
     }
@@ -111,6 +118,13 @@ pub fn parse_models_json(value: &Value) -> Vec<ModelInfo> {
                     .to_string(),
                 provider: provider.clone(),
                 context_window: m.get("contextWindow").and_then(Value::as_u64),
+                max_tokens: m.get("maxTokens").and_then(Value::as_u64),
+                reasoning: m.get("reasoning").and_then(Value::as_bool),
+                input: m.get("input").and_then(Value::as_array).map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                }),
             });
         }
     }
@@ -122,23 +136,12 @@ pub fn store_path() -> PathBuf {
     crate::config::agent_dir().join("models-store.json")
 }
 
-/// 磁盘模型目录 = `providers.json`（PF 自定义账本，最优先）+ `models.json`
-/// （pi 的文件，只读）+ `models-store.json`（pi 缓存），按 `provider/id` 去重、
-/// 保持 provider 出现顺序。任一文件缺失/坏掉都只是少一份。
+/// 磁盘模型目录 = `models.json`（用户/pi-web/PF 共同维护）+ `models-store.json`
+///（pi 的远端目录缓存），按 `provider/id` 去重、保持 provider 出现顺序。
+/// 任一文件缺失/坏掉都只是少一份。
 pub fn disk_models() -> Vec<ModelInfo> {
     let mut out = Vec::new();
-    if let Ok(v) = crate::pf_providers::read() {
-        out.extend(parse_models_json(&v));
-    }
-    // 「获取模型」落盘的实拉目录（probe 成功响应）：排在 models-store 之前
-    // ——新鲜目录按 provider/id 去重时天然覆盖 pi 的陈旧缓存
-    if let Some(path) = crate::paths::provider_catalog_file() {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(v) = crate::config::parse_lenient(&text) {
-                out.extend(parse_store(&v));
-            }
-        }
-    }
+    // 042-1：PF 私有账本退役——自定义商就在 models.json（pi 的文件）
     if let Ok(v) = crate::models_json::read() {
         out.extend(parse_models_json(&v));
     }
@@ -148,43 +151,6 @@ pub fn disk_models() -> Vec<ModelInfo> {
         }
     }
     dedupe(out)
-}
-
-/// 「获取模型」落盘：probe 成功响应的目录按 provider 写进 provider-catalog.json
-/// （键 = provider id，值 = ModelInfo 数组；空列表删除该键）。整个文件损坏
-/// 视为不存在，重写自愈。
-pub fn save_catalog(provider: &str, models: &[ModelInfo]) -> Result<(), String> {
-    let path = crate::paths::provider_catalog_file()
-        .ok_or_else(|| "pi-flash 配置目录不可用".to_string())?;
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let mut root: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
-    if models.is_empty() {
-        root.remove(provider);
-    } else {
-        let items: Vec<serde_json::Value> = models
-            .iter()
-            .map(|m| {
-                serde_json::json!({
-                    "provider": provider,
-                    "id": m.id,
-                    "name": m.name,
-                    "contextWindow": m.context_window,
-                })
-            })
-            .collect();
-        // 与 models-store 同形（{"models":[...]}）：disk_models 的读取端
-        // parse_store 按此形状解析——042 曾直接落数组导致写读不一致，
-        // 自定义商目录恒 0 条（内置商有 models-store 兑底未暴露）
-        root.insert(provider.to_string(), serde_json::json!({ "models": items }));
-    }
-    let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))
-        .map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())
 }
 
 /// 按 `provider/id` 去重，保留首次出现（磁盘源优先级 = 调用顺序）。
@@ -281,6 +247,9 @@ mod tests {
             name: name.into(),
             provider: p.into(),
             context_window: None,
+            max_tokens: None,
+            reasoning: None,
+            input: None,
         };
         let ms = dedupe(vec![
             mk("a", "1", "first"),

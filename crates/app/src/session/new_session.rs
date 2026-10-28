@@ -194,7 +194,8 @@ fn action_bar(
             .unwrap_or_else(|| tr("action.select_project").to_string())
             .into()
     } else {
-        chat.project()
+        chat
+            .project()
             .map(|p| {
                 p.file_name()
                     .map(|n| n.to_string_lossy().to_string())

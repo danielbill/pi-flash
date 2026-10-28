@@ -846,9 +846,6 @@ pub struct AppSettings {
     /// 新会话。两键齐才算设置了默认。
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
-    /// 042：被【移除】的内置商（不再出现在设置页合并列表；重新配置 key 时
-    /// 自动除名）。空数组与缺键同义。
-    pub removed_providers: Option<Vec<String>>,
     /// 081 其他页: 自动更新（默认 on——off 时只提示新版本号 ↑ 不下载）
     pub auto_update: Option<bool>,
     /// 052 其他页: 会话自动清理天数——最后活动超出该天数的非置顶会话
@@ -940,14 +937,6 @@ pub fn app_settings() -> AppSettings {
                         .get("default_model")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
-                    removed_providers: map.get("removed_providers").and_then(|v| {
-                        Some(
-                            v.as_array()?
-                                .iter()
-                                .filter_map(|e| e.as_str().map(str::to_string))
-                                .collect::<Vec<_>>(),
-                        )
-                    }),
                     auto_update: map.get("auto_update").and_then(|v| v.as_bool()),
                     auto_clean_days: map
                         .get("auto_clean_days")
@@ -1027,15 +1016,6 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = &s.default_model {
         obj.insert("default_model".into(), Value::String(v.clone()));
     }
-    match &s.removed_providers {
-        Some(v) if !v.is_empty() => {
-            obj.insert(
-                "removed_providers".into(),
-                Value::Array(v.iter().map(|e| Value::String(e.clone())).collect()),
-            );
-        }
-        _ => {}
-    }
     if let Some(v) = s.auto_update {
         obj.insert("auto_update".into(), Value::Bool(v));
     }
@@ -1081,18 +1061,6 @@ pub fn save_send_mode(mode: &str) {
 
 /// 042：默认模型写入（设置页五角星 / inputpanel 星标共用；None = 取消）。
 /// 落盘即生效——新会话 spawn 读最新值。
-/// 042：【移除】的内置商清单（合并列表过滤用）。
-pub fn removed_providers() -> Vec<String> {
-    app_settings().removed_providers.unwrap_or_default()
-}
-
-/// 042：整体改写移除清单（空切片 = 清空/全恢复）。
-pub fn set_removed_providers(list: &[String]) {
-    let mut s = app_settings();
-    s.removed_providers = Some(list.to_vec()).filter(|v| !v.is_empty());
-    save_app_settings(&s);
-}
-
 pub fn set_default_model_pref(pref: Option<(String, String)>) {
     let mut s = app_settings();
     match pref {

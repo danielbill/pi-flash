@@ -744,6 +744,9 @@ mod tests {
             name: id.to_string(),
             provider: provider.to_string(),
             context_window: None,
+            max_tokens: None,
+            reasoning: None,
+            input: None,
         }
     }
 

@@ -1051,6 +1051,14 @@ pub struct ModelInfo {
     pub provider: String,
     #[serde(default, rename = "contextWindow")]
     pub context_window: Option<u64>,
+    /// 042-1：模型详情弹窗要「显示当前生效的参数」，故保留 pi 的完整定义
+    /// （RPC 的 get_available_models 与 models-store 都带这几键）
+    #[serde(default, rename = "maxTokens")]
+    pub max_tokens: Option<u64>,
+    #[serde(default)]
+    pub reasoning: Option<bool>,
+    #[serde(default)]
+    pub input: Option<Vec<String>>,
 }
 
 impl ModelInfo {
@@ -1060,6 +1068,13 @@ impl ModelInfo {
             name: v["name"].as_str().unwrap_or("").to_string(),
             provider: v["provider"].as_str().unwrap_or("").to_string(),
             context_window: v["contextWindow"].as_u64(),
+            max_tokens: v["maxTokens"].as_u64(),
+            reasoning: v["reasoning"].as_bool(),
+            input: v["input"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            }),
         })
     }
 

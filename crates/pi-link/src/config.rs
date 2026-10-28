@@ -196,8 +196,7 @@ pub fn write_enabled_models(path: &Path, patterns: Option<Vec<String>>) -> Resul
 // auth.json (per-provider credentials)
 // ---------------------------------------------------------------------------
 
-/// 051 起：凭据清单来自 pf-auth.json（pf_auth::kinds）；本枚举保留给
-/// 旧 auth.json 视角（read_credential_kinds，迁移诊断用）。
+/// 凭据类型（042-1：清单来自 `auth_json::kinds`，即 pi 的 auth.json 视角）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialKind {
     ApiKey,
@@ -219,47 +218,6 @@ pub fn read_credential_kinds(path: &Path) -> Result<Vec<(String, CredentialKind)
         }
     }
     Ok(out)
-}
-
-/// Store an API key for a provider: `{ "<provider>": { type: "api_key", key } }`.
-///
-/// 051 起退役：PF 的 key 走 pf_auth::store_catalog_key（凭据库 + 自有账本），
-/// auth.json 归 pi。保留仅为库 API 兼容，勿在新代码调用。
-pub fn set_api_key(path: &Path, provider: &str, key: &str) -> Result<(), String> {
-    let mut value = read_json(path)?;
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| "auth.json is not an object".to_string())?;
-    obj.insert(
-        provider.to_string(),
-        serde_json::json!({ "type": "api_key", "key": key }),
-    );
-    write_json_private(path, &value)
-}
-
-/// DELETE /api/auth/api-key/[provider] parity: refuse to drop an OAuth
-/// credential ("is authenticated with OAuth, not an API key").
-///
-/// 051 起退役：断开连接走 pf_auth::delete_catalog_key；auth.json 归 pi。
-pub fn remove_credential_if_api_key(path: &Path, provider: &str) -> Result<bool, String> {
-    let mut value = read_json(path)?;
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| "auth.json is not an object".to_string())?;
-    let is_api_key = obj
-        .get(provider)
-        .and_then(|c| c.get("type").and_then(|t| t.as_str()))
-        != Some("oauth");
-    if !is_api_key {
-        return Err(format!(
-            "{provider} is authenticated with OAuth, not an API key"
-        ));
-    }
-    let removed = obj.remove(provider).is_some();
-    if removed {
-        write_json_private(path, &value)?;
-    }
-    Ok(removed)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,31 +315,6 @@ mod tests {
         let path = tmpfile("settings-missing.json");
         let _ = std::fs::remove_file(&path);
         assert_eq!(read_enabled_models(&path).unwrap(), None);
-    }
-
-    #[test]
-    fn api_key_crud_and_oauth_guard() {
-        let path = tmpfile("auth.json");
-        set_api_key(&path, "deepseek", "sk-test").unwrap();
-        set_api_key(&path, "openrouter", "sk-or").unwrap();
-        let kinds = read_credential_kinds(&path).unwrap();
-        assert!(kinds.contains(&("deepseek".into(), CredentialKind::ApiKey)));
-        // oauth entries are preserved and refuse deletion via the key path
-        std::fs::write(
-            &path,
-            r#"{"github-copilot":{"type":"oauth","refresh":"r","access":"a","expires":1}}"#,
-        )
-        .unwrap();
-        let kinds = read_credential_kinds(&path).unwrap();
-        assert_eq!(kinds[0].1, CredentialKind::OAuth);
-        let err = remove_credential_if_api_key(&path, "github-copilot").unwrap_err();
-        assert!(err.contains("OAuth"), "{err}");
-        // api-key delete works
-        set_api_key(&path, "deepseek", "sk-test").unwrap();
-        assert!(remove_credential_if_api_key(&path, "deepseek").unwrap());
-        let kinds = read_credential_kinds(&path).unwrap();
-        assert!(kinds.iter().all(|(p, _)| p != "deepseek"));
-        let _ = std::fs::remove_file(&path);
     }
 }
 

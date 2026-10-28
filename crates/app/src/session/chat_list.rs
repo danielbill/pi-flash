@@ -40,6 +40,12 @@
 //! （`release` / 打断投递的 [`ChatList::release_if_following`]）只留给发送
 //! 失败 / fork / 整表重读等重置场景——钉顶期退役必把短内容拽到屏底。
 //!
+//! 自由滚动期间**钉顶/跟尾判定整体冻结**（第 5 步尾部重测、settle 回判、帧
+//! 自检全部暂停）：判定依据是尾部实测高度，滚离尾部后尾部条目不在绘制范围、
+//! 实测不可得，据陈旧/低估的 below 回判会把跟尾误翻回钉顶、垫片涨回一整屏，
+//! summary 塌陷还会把滚轮 scroll_max 钳死——生成中读历史因此「无法下拉、各种
+//! 乱跳」（2026-10 用户报障）。滚回贴底（free_scroll 复位）后下一帧照常补账。
+//!
 //! 同步入口只有 [`ChatList::sync`]：增删走 splice（保逻辑滚动位），整体重排
 //! 才 reset。
 use std::cell::Cell;
@@ -204,6 +210,11 @@ impl ChatList {
             self.core.settle_attempts.set(n.saturating_add(1));
             return n < 12;
         }
+        // 自由滚动中判定冻结（数据不可信，见 settle_spacer）：follow_decision_stale
+        // 用同一份低估的 below 会误报「判定过期」→ 每帧 notify → sync 空转
+        if self.core.free_scroll.get() {
+            return false;
+        }
         self.follow_decision_stale(ix)
     }
 
@@ -348,8 +359,14 @@ impl ChatList {
         let target = content + usize::from(want_spacer);
         if self.state.item_count() != target {
             self.state.reset(target);
-        } else if msgs > 0 {
+        } else if msgs > 0 && !self.core.free_scroll.get() {
             // 5. 外科重测尾部：最后一条消息 + phase + 垫片（流式增长/垫片缩放）。
+            //    **自由滚动中整步跳过**：用户滚离尾部后，尾部条目在下一帧布局的
+            //    绘制范围之外，打回 Unmeasured 不会被重测——summary 高度当场塌陷
+            //    （生长中的整轮回复按 0 计），滚轮 scroll_max 钳死在塌缩值：下拉
+            //    被钳回半空、位置乱跳（2026-10 用户报障「生成中无法下拉、乱跳」）。
+            //    贴底时尾部每帧都会被布局重测（钉顶期在首屏内、跟尾期在胶水
+            //    walk-up 里），跳过无损失；流式增长在条目重新可见那一帧自会补测。
             //    **但绝不重测「轮首条目」**（锚点 + 1，它承载整轮内容）：把它打回
             //    Unmeasured 后，同一帧里第二个 pi 事件结算时 ListState 会按 0 计它
             //    的高度 → below 只剩锚点的高度 → 钉顶/跟尾判定每事件翻转一次 → 快流
@@ -469,6 +486,15 @@ impl ChatList {
             return;
         };
         let (spacer_px, follow) = spacer_target(avail, below);
+        // 自由滚动中禁止「跟尾 → 钉顶」回退：below 依赖尾部实测高度，用户滚离
+        // 尾部后尾部条目不可见（第 5 步也跳过重测），below 是陈旧/低估值，不足以
+        // 推翻已确立的跟尾——误翻会把垫片涨回一整屏（尾部凭空多一屏空白），滚回
+        // 贴底先看到空白、判定翻回又瞬移。真发生轮末缩水也不急：滚回贴底（
+        // free_scroll 复位）后下一帧 take_frame_sync 照常补账重钉。反向翻转
+        // （钉顶 → 跟尾）照旧放行（follow_flip_while_free_scroll_does_not_yank）。
+        if self.core.following.get() && !follow && self.core.free_scroll.get() {
+            return;
+        }
         self.core.settled.set(true);
         self.core.spacer_px.set(spacer_px);
         let was_following = self.core.following.replace(follow);
@@ -927,6 +953,61 @@ mod glue_geometry {
         assert_eq!(pager.spacer_px(), 0.); // 垫片照常归零交几何
         assert_eq!(pager.state().item_count(), heights.len() + 1);
         assert_eq!(top(&items, 0), Some(px(PAD_TOP))); // 视口停在原地，没被拽走
+    }
+
+    /// 用户报障回归锁（2026-10「生成中拖拽滚屏无法下拉、乱跳」）：跟尾期用户
+    /// 上滚读历史时流式 delta 连发，sync 第 5 步不得把尾部条目打回 Unmeasured
+    /// ——否则 summary 高度当场塌陷（整轮回复按 0 计），滚轮 scroll_max 钳死
+    /// 在塌缩值，下拉即被钳回；判定也不得据低估的 below 把跟尾翻回钉顶（垫片
+    /// 涨回一整屏，尾部凭空多一屏空白）。
+    #[gpui::test]
+    fn streaming_while_reading_history_keeps_tail_measured(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let seen: Rc<RefCell<Vec<(usize, Bounds<Pixels>)>>> = Default::default();
+        let pager = Rc::new(ChatList::new());
+
+        let mut heights = vec![500., 60.];
+        pager.reload(heights.len());
+        paint(window, &pager, &seen, &heights, false);
+        pager.page_turn(1, heights.len(), false);
+        paint(window, &pager, &seen, &heights, false);
+        step(window, &pager, &seen, &heights, false);
+
+        // 回复长过内容区 → 跟尾（垫片归零、末条贴住屏底）
+        heights.push(1200.);
+        step(window, &pager, &seen, &heights, false);
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), 0.);
+        assert_eq!(bottom(&items, 2), Some(px(VIEWPORT - PAD_BOTTOM)));
+
+        // summary 完好（滚轮 scroll_max 的数据源）
+        let full = pager.state().max_offset_for_scrollbar().height;
+        assert!(full > px(0.));
+
+        // 用户上滚进历史（free_scroll），流式增长只 sync 不 paint
+        //（delta 连发、视口停在历史处，尾部不进绘制范围）
+        pager.core.free_scroll.set(true);
+        pager.state().scroll_to(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.),
+        });
+        heights[2] = 3200.;
+        pager.sync(heights.len(), false);
+        pager.sync(heights.len(), false);
+
+        // 判定冻结：垫片不回涨、scroll_max 不塌、帧自检安静
+        assert!(pager.core.following.get());
+        assert_eq!(pager.spacer_px(), 0.);
+        assert_eq!(pager.state().max_offset_for_scrollbar().height, full);
+        assert!(!pager.take_frame_sync());
+
+        // 滚回贴底（滚轮到底 ≡ 胶水位，同 jump_to_bottom）：free_scroll 复位
+        // → 补测 → 跟尾照常（末条贴住屏底）
+        pager.core.free_scroll.set(false);
+        pager.jump_to_bottom();
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), 0.);
+        assert_eq!(bottom(&items, 2), Some(px(VIEWPORT - PAD_BOTTOM)));
     }
 
     /// 内容**形状**变化（轮末把思考/工具折进「工作详情」→ 锚下内容大幅变矮）

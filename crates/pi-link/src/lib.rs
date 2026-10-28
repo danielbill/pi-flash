@@ -8,6 +8,7 @@
 //!   act gated by the protocol conformance tests in this crate.
 
 pub mod agents;
+pub mod auth_json;
 pub mod automation;
 pub mod catalog;
 pub mod client;
@@ -16,17 +17,17 @@ pub mod credentials;
 pub mod dev_flags;
 pub mod estimate;
 pub mod extensions;
+pub mod fs_lock;
 pub mod hidden_sessions;
 pub mod json;
 pub mod market;
 pub mod mcp;
+pub mod migrate_0421;
 pub mod model_test;
 pub mod models_json;
-pub mod models_dev;
+pub mod openrouter;
 pub mod paths;
-pub mod pf_auth;
 pub mod pf_plugins;
-pub mod pf_providers;
 pub mod probe;
 pub mod projects;
 pub mod protocol;

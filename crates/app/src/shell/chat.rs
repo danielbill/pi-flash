@@ -91,18 +91,15 @@ pub(crate) struct CfgUi {
     /// 卸载确认浮层（040：点垃圾桶先确认）：待卸载来源
     pub(crate) pkg_confirm_remove: Option<String>,
     pub(crate) mc_default_tools: Option<Vec<String>>,
-    /// models.json 编辑缓冲（设置·模型页；表单头保存即写盘，无页面级 footer）
-    pub(crate) mc_models_json: serde_json::Value,
     pub(crate) mc_mj_error: Option<String>,
+    /// 自定义商【删除】确认浮层：待删 provider 名（含其下全部模型）
+    pub(crate) mc_mj_delete_confirm: Option<String>,
     /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
     pub(crate) mc_probe: std::collections::HashMap<String, McProbe>,
     /// 042-1 自定义商「测速」状态（单槽：详情页同屏只有一个）
     pub(crate) mj_speed: Option<MjSpeedState>,
     /// 042 M2 自定义模型「测试」状态（单槽：同一时刻只测一个模型）
     pub(crate) mj_test: Option<MjTestState>,
-    /// 042 M2 models.dev 目录（「填入模型信息」；None = 未加载/加载失败）
-    pub(crate) mj_models_dev:
-        Option<std::sync::Arc<Vec<pi_link::models_dev::CatalogEntry>>>,
     /// 042 M2 models.dev 拉取状态（按钮文案与结果行）
     pub(crate) mj_models_dev_state: MjCatalogState,
     /// 042 新增 Provider 弹窗的全量注册表（registry.rs dump；None = 未加载）
@@ -725,12 +722,11 @@ impl Chat {
                 pkg_op: None,
                 pkg_confirm_remove: None,
                 mc_default_tools: None,
-                mc_models_json: serde_json::json!({}),
                 mc_mj_error: None,
+                mc_mj_delete_confirm: None,
                 mc_probe: std::collections::HashMap::new(),
                 mj_speed: None,
                 mj_test: None,
-                mj_models_dev: None,
                 mj_models_dev_state: MjCatalogState::Idle,
                 provider_registry: None,
                 registry_state: crate::session::model_picker::RegistryState::Idle,

@@ -3,8 +3,19 @@
 
 use super::*;
 use crate::appearance::theme::Theme;
-use gpui::{AnyElement, div, px, rgb};
+use gpui::{AnyElement, ClickEvent, div, px, rgb};
 use std::path::PathBuf;
+
+/// 预览区 click（进源码）与拖拽手势的分界：down→up 位移不超过
+/// [`CLICK_MAX_DRAG`] 算 genuine click，超过算拖拽。与 gpui div.rs
+/// DRAG_THRESHOLD(2.) 同量级，取 4 宽松一点防手抖误判。
+const CLICK_MAX_DRAG: f32 = 4.0;
+
+fn click_within_drag(down: gpui::Point<gpui::Pixels>, up: gpui::Point<gpui::Pixels>) -> bool {
+    let dx = f32::from(up.x) - f32::from(down.x);
+    let dy = f32::from(up.y) - f32::from(down.y);
+    dx * dx + dy * dy <= CLICK_MAX_DRAG * CLICK_MAX_DRAG
+}
 
 static DOC_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -368,8 +379,21 @@ pub(crate) fn render_preview_body(
         // 而非 on_mouse_down：预览内链接在 mouse-up 才发，按下即切会把整棵
         // 元素树换掉、链接点击丢失。链接与路径 code 块在自己 handler 里
         // stop_propagation 不落此处（渲染器与聊天区共用，聊天无祖先点击
-        // 监听，行为不变）
-        .on_click(move |_, _, cx| {
+        // 监听，行为不变）。
+        // **拖拽不切**：gpui 的 on_click 只要 down/up 都落在 hitbox 就发
+        // （div.rs 的 DRAG_THRESHOLD 只管 drag_listener 拖放，不拦
+        // click），按住拖动的手势 mouse-up 也被当成「点击」把整棵树换成
+        // 源码——预览正文是自绘 StyledText（无选区机制），用户在预览里
+        // 唯一的划选尝试落空后还被甩进源码态，观感即「选中文字 ctrl-c
+        // 复制不了」。所以 down→up 位移超过 CLICK_MAX_DRAG 视为拖拽，留
+        // 在预览态；genuine click（位移 ≤ 阈值）才进源码，Obsidian 阅读
+        // 视图同型（点一下才进编辑）。预览正文可选可复制是独立缺口
+        // （自绘渲染器无选区机制），不在本处
+        .on_click(move |ev, _, cx| {
+            let ClickEvent::Mouse(m) = ev else { return };
+            if !click_within_drag(m.down.position, m.up.position) {
+                return;
+            }
             let _ = weak_click.update(cx, |c, cx| {
                 if let Some(ft) = c.ws.file_cache.get_mut(&click_path) {
                     ft.md_source = true;
@@ -483,4 +507,43 @@ pub(crate) fn sync_live_decorations(
             None
         });
     });
+}
+
+#[cfg(test)]
+mod doc_tests {
+    use super::{CLICK_MAX_DRAG, click_within_drag};
+    use gpui::{point, px};
+
+    /// genuine click（位移 ≤ 阈值，含轻微手抖）→ 进源码编辑。
+    #[test]
+    fn genuine_click_passes() {
+        let o = point(px(100.), px(200.));
+        assert!(click_within_drag(o, o)); // 原地
+        assert!(click_within_drag(
+            o,
+            point(px(100. + CLICK_MAX_DRAG), px(200.))
+        )); // 恰好阈值
+        assert!(click_within_drag(o, point(px(103.), px(201.)))); // 手抖
+    }
+
+    /// 拖拽（位移 > 阈值）不进源码——预览态划选手势留在预览（024 预览
+    /// 正文无选区机制，拖一下就被甩进源码 = 「预览选中复制不了」的元凶）。
+    #[test]
+    fn drag_motion_rejected() {
+        let o = point(px(100.), px(200.));
+        let eps = 0.01;
+        assert!(!click_within_drag(
+            o,
+            point(px(100. + CLICK_MAX_DRAG + eps), px(200.))
+        ));
+        assert!(!click_within_drag(
+            o,
+            point(px(100.), px(200. + CLICK_MAX_DRAG + eps))
+        ));
+        // 斜向小分量叠加超阈值同样拒
+        assert!(!click_within_drag(
+            o,
+            point(px(100. + CLICK_MAX_DRAG), px(200. + CLICK_MAX_DRAG))
+        ));
+    }
 }

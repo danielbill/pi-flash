@@ -55,7 +55,8 @@ const CMD_NOT_ENABLED: &str = "当前 bot 未启用这个命令。";
 const DELIVER_FAILED: &str = "消息未送达：目标会话没有可用的 pi 进程，稍后重试。";
 /// 无项目/模型态回执（wxprobe 文案表同名条目）：放行条件（项目+模型）
 /// 未满足时，需要会话的动作统一引导设置，不建会话、不投递（用户定夺）。
-const NO_SETUP: &str = "请先设置项目和模型：回复 **/项目** 选择工作区、**/模型** 选择模型后再发消息。";
+const NO_SETUP: &str =
+    "请先设置项目和模型：回复 **/项目** 选择工作区、**/模型** 选择模型后再发消息。";
 
 /// wxprobe 文案表（002 的微信侧用词）的唯一入口。语言索引只在这里读一次——
 /// 旧实现 `wx_lang()` 在 10 个地方各写一遍。
@@ -67,7 +68,6 @@ fn wx_lang() -> Lang {
 fn wx_text(s: &str) -> String {
     t(wx_lang(), s)
 }
-
 
 /// ZCode `taskRunning`。`/新建` 与 `/task`（列表、切换）共用 —— 同一个语义
 /// 同一句话，ZCode 三处也都是 `msg(locale, "taskRunning")`。
@@ -126,15 +126,26 @@ pub enum QrState {
     Idle,
     Loading,
     /// `url` = `qrcode_img_content`，用 [`wxprobe::qr::qr_block_text`] 渲成可扫码字符画
-    Ready { url: String },
+    Ready {
+        url: String,
+    },
     /// 已扫码，等待手机确认（码继续显示）
-    Scanned { url: String },
+    Scanned {
+        url: String,
+    },
     /// 成功：token 已写进状态文件
-    Done { bot_id: Option<String> },
+    Done {
+        bot_id: Option<String>,
+    },
     /// 超时：旧码上蒙白
-    Expired { url: Option<String> },
+    Expired {
+        url: Option<String>,
+    },
     /// 微信侧出错：旧码上蒙白 + 文案
-    Error { msg: String, url: Option<String> },
+    Error {
+        msg: String,
+        url: Option<String>,
+    },
 }
 
 impl QrState {
@@ -294,7 +305,11 @@ impl RemoteControl {
     fn stop(&mut self, user: bool) {
         let was_on = self.svc.is_running();
         let announced = self.notice.is_none();
-        self.svc = if user { Service::Stopped } else { Service::Pending };
+        self.svc = if user {
+            Service::Stopped
+        } else {
+            Service::Pending
+        };
         // 降沿通知规则见 `state::stop_notice`（换绑落 Pending 时静默）
         self.notice = state::stop_notice(user, was_on, announced);
         self.health = Health::Ok;
@@ -341,7 +356,11 @@ impl RemoteControl {
         wxprobe::state::set(
             &mut st,
             "wx_cwd_lock",
-            if self.snap.wx_cwd_lock { Some("1") } else { None },
+            if self.snap.wx_cwd_lock {
+                Some("1")
+            } else {
+                None
+            },
         );
         wxprobe::state::save(&st);
         self.snap.refresh(true);
@@ -858,11 +877,7 @@ fn provider_options(chat: &crate::Chat) -> Vec<(String, String)> {
         .get(&chat.project_key())
         .map(|v| v.as_slice())
         .unwrap_or(&[]);
-    let removed = crate::services::workspace::removed_providers();
     for m in live.iter().chain(chat.pool.globals.models.iter()) {
-        if removed.iter().any(|p| p == &m.provider) {
-            continue;
-        }
         if !out.iter().any(|(_, p)| p == &m.provider) {
             out.push((m.provider.clone(), m.provider.clone()));
         }
@@ -1344,9 +1359,7 @@ impl crate::Chat {
                 // 会让后续输入落到新 task，但旧 task 输出仍回同一 bot 会话 ——
                 // 用户会误以为消息串线。运行中一律拒绝切换。
                 if self.aux.remote.active_running {
-                    self.aux
-                        .remote
-                        .send(&t(wx_lang(), TASK_RUNNING));
+                    self.aux.remote.send(&t(wx_lang(), TASK_RUNNING));
                     return;
                 }
                 if let Some(info) = self.pool.sessions.iter().find(|s| s.id == value) {
@@ -1384,10 +1397,8 @@ impl crate::Chat {
             .get(&self.project_key())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let removed = crate::services::workspace::removed_providers();
         live.iter()
             .chain(self.pool.globals.models.iter())
-            .filter(|m| !removed.iter().any(|p| p == &m.provider))
             .find(|m| m.id == id)
             .map(|m| m.provider.clone())
     }
@@ -1724,10 +1735,16 @@ mod tests {
         assert!(!rc.is_running(), "默认没在跑");
         // 标签关：不启动
         rc.step_service(false);
-        assert!(matches!(rc.svc, Service::Pending), "标签关 = off，不启动渠道");
+        assert!(
+            matches!(rc.svc, Service::Pending),
+            "标签关 = off，不启动渠道"
+        );
         // 标签开：进入待启动（真起渠道要 token，测试实例不起线程）
         rc.step_service(true);
-        assert!(!matches!(rc.svc, Service::Pending), "标签开 = on，泵会去启动");
+        assert!(
+            !matches!(rc.svc, Service::Pending),
+            "标签开 = on，泵会去启动"
+        );
     }
 
     #[test]
@@ -1932,7 +1949,6 @@ mod tests {
     fn wx_link_notice_texts() {
         assert!(WX_LINK_ON.contains("Pi-Flash") && WX_LINK_ON.contains("已开启"));
         assert!(WX_LINK_OFF.contains("Pi-Flash") && WX_LINK_OFF.contains("已关闭"));
-
     }
 
     /// 无项目/模型态回执（用户定夺）：放行条件未满足时需要会话的动作
@@ -1943,7 +1959,6 @@ mod tests {
         assert!(NO_SETUP.contains("/项目"), "必须指出项目自救入口");
         assert!(NO_SETUP.contains("/模型"), "必须指出模型自救入口");
     }
-
 }
 
 /// 过滤清单里微信线的 owner 条目 path（真文件兜底指针）。读盘，仅在线指针

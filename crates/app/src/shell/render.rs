@@ -776,6 +776,10 @@ impl Render for Chat {
         if let Some(el) = settings::models::remove_provider_confirm_overlay(self, cx) {
             root = root.child(el);
         }
+        // 042-1 自定义商【删除】确认浮层（删除自定义商 + 其下全部模型）
+        if let Some(el) = settings::custom_models::mj_delete_confirm_overlay(self, cx) {
+            root = root.child(el);
+        }
         // 042-1 模型编辑器小弹窗（自定义商模型行 /【+模型】打开；叠在设置弹窗
         // 之上，section = mj:m:{prov}:{ix} 即打开态，关闭退回 Provider 详情）
         if let Some(el) = settings::custom_models::mj_model_modal_overlay(self, cx) {

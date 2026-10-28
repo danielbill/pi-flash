@@ -45,7 +45,7 @@ pub trait JsHost {
 }
 
 /// 延迟动作（02 §3 动作类）。消费方按动作名分派宿主实现。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JsAction {
     /// 021 执行链，新终端 tab
     Run(String),
@@ -225,6 +225,9 @@ impl JsPlugin {
                     (|_s: String| JsAction::NewSession) as fn(String) -> JsAction,
                 ),
                 ("__pf_ask_pi", JsAction::AskPi as fn(String) -> JsAction),
+                // 契约 v3 popups：act.openPopup / act.closePopup
+                ("__pf_open_popup", JsAction::OpenPopup as fn(String) -> JsAction),
+                ("__pf_close_popup", JsAction::ClosePopup as fn(String) -> JsAction),
             ] {
                 let h = glue_host.clone();
                 g.set(
@@ -314,6 +317,11 @@ globalThis.__pf_ctx = {{
     clearBadge: (b) => globalThis.__pf_clear_badge(JSON.stringify(b ?? {{}})),
   }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
+  // 契约 v3：动作命名空间（扁平面 toast 等保持不动，兼容存量插件）
+  act: {{
+    openPopup: (id) => globalThis.__pf_open_popup(id == null ? "" : String(id)),
+    closePopup: (id) => globalThis.__pf_close_popup(id == null ? "" : String(id)),
+  }},
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
   onCommand: (id, fn) => {{ globalThis["__pf_cmd_" + id] = fn; }},
   onPanelOpen: (fn) => {{ globalThis.__pf_panel_open_fn = fn; }},
@@ -333,6 +341,22 @@ globalThis.__pf_fire_cmd = (id, path) => {{
   const fn = globalThis["__pf_cmd_" + id];
   if (typeof fn === "function") fn({{ path }});
 }};
+// 契约 v3 命令 env：fn_bar 点击 = {{"session":{{"key":"…"}}}}；switch 翻转 = {{"value":bool}}；
+// envJson 空串按 {{}} 解。旧 path 面（__pf_fire_cmd）不动。
+globalThis.__pf_fire_cmd_env = (id, envJson) => {{
+  const fn = globalThis["__pf_cmd_" + id];
+  if (typeof fn === "function") fn(JSON.parse(envJson || "{{}}"));
+}};
+// 契约 v3 fn_bar：插件导出 fn_bar(ctx, env) → {{icon,tone,tip}}；未导出 = "null"。
+globalThis.__pf_fn_bar_str = (envJson) =>
+  typeof globalThis.__pf_exports.fn_bar === "function"
+    ? JSON.stringify(globalThis.__pf_exports.fn_bar(globalThis.__pf_ctx, JSON.parse(envJson || "{{}}")))
+    : "null";
+// 契约 v3 弹窗内容：render_popup 优先，退回 render（旧导出面兼容）。
+globalThis.__pf_render_popup_str = () =>
+  typeof globalThis.__pf_exports.render_popup === "function"
+    ? JSON.stringify(globalThis.__pf_exports.render_popup(globalThis.__pf_ctx))
+    : JSON.stringify(globalThis.__pf_exports.render(globalThis.__pf_ctx));
 globalThis.__pf_fire_panel_open = () => {{
   if (typeof globalThis.__pf_panel_open_fn === "function")
     globalThis.__pf_panel_open_fn();

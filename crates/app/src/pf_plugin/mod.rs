@@ -39,7 +39,7 @@ use crate::ui::tooltip::WithTip;
 
 /// 本版 PF 支持的清单契约大版本（与插件仓 schema/plugin-contract.json 的
 /// `manifest_schema` 对齐；加/删原语时一并升）
-pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 2;
+pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
@@ -57,6 +57,12 @@ pub(crate) struct PluginManifest {
     /// topbar「菜单」三横浮层条目申请（契约 v2.5；props 同 status_bar）。
     /// 点击语义与 status_bar tab 同构（按 panels[].dock 解释形态）。
     pub topbar_menu: Option<TopbarMenuContrib>,
+    /// 会话标签功能栏注册槽（契约 v3）：每个会话标签一个插件 icon，
+    /// chrome 由插件导出 fn_bar(ctx, env) 给出；点击回环 command（env 带 session）。
+    pub fn_bar: Option<FnBarContrib>,
+    /// 非模态弹窗（契约 v3 popups）：内容由插件导出 render_popup(ctx) 给出；
+    /// 开/关走 ctx.act.openPopup / closePopup。
+    pub popups: Vec<PopupContrib>,
     pub file_menu: Vec<FileMenuContrib>,
     pub panels: Vec<PanelContrib>,
     /// 内层 wasm 插件（契约 inner_package）：`wasm = "plugin.wasm"` 声明即启用；
@@ -86,6 +92,25 @@ pub(crate) struct StatusBarContrib {
 pub(crate) struct TopbarMenuContrib {
     pub icon: String,
     pub title_zh: String,
+}
+
+/// 会话功能栏注册槽（契约 v3 contributes.fn_bar；一个插件至多一条）。
+#[derive(Debug, Clone)]
+pub(crate) struct FnBarContrib {
+    /// 点击回环命令 id（ctx.onCommand；回调 env 带 {session:{key}}）
+    pub command: String,
+}
+
+/// 非模态弹窗（契约 v3 contributes.popups）。
+#[derive(Debug, Clone)]
+pub(crate) struct PopupContrib {
+    pub id: String,
+    pub title_zh: String,
+    pub title_en: Option<String>,
+    /// 尺寸档位 SM/MD/LG（MD≈500x500；实现值归宿主，插件不写像素）
+    pub size: String,
+    /// 逻辑入口（固定 main.js；wasm 面不读）
+    pub entry: String,
 }
 
 /// 认领槽声明（契约 v2.4 contributes.sessions）。
@@ -299,6 +324,8 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         version: String::new(),
         status_bar: None,
         topbar_menu: None,
+        fn_bar: None,
+        popups: Vec::new(),
         file_menu: Vec::new(),
         panels: Vec::new(),
         pi_extensions: Vec::new(),
@@ -349,6 +376,27 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                         return Err("pf-plugin.toml：topbar_menu 只能声明一个".into());
                     }
                     "topbar_menu".to_string()
+                }
+                "contributes.fn_bar" => {
+                    if m.fn_bar
+                        .replace(FnBarContrib {
+                            command: String::new(),
+                        })
+                        .is_some()
+                    {
+                        return Err("pf-plugin.toml：fn_bar 只能声明一个".into());
+                    }
+                    "fn_bar".to_string()
+                }
+                "contributes.popups" => {
+                    m.popups.push(PopupContrib {
+                        id: String::new(),
+                        title_zh: String::new(),
+                        title_en: None,
+                        size: "MD".into(),
+                        entry: "main.js".into(),
+                    });
+                    "popups".to_string()
                 }
                 "contributes.panels" => {
                     m.panels.push(PanelContrib {
@@ -419,6 +467,27 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             ("topbar_menu", "title") => {
                 m.topbar_menu.as_mut().unwrap().title_zh = val.as_i18n("title", n)?.0
             }
+            ("fn_bar", "command") => {
+                m.fn_bar.as_mut().unwrap().command = val.as_str("command", n)?
+            }
+            ("popups", "id") => m.popups.last_mut().unwrap().id = val.as_str("id", n)?,
+            ("popups", "title") => {
+                let (zh, en) = val.as_i18n("title", n)?;
+                let p = m.popups.last_mut().unwrap();
+                p.title_zh = zh;
+                p.title_en = en;
+            }
+            ("popups", "size") => {
+                let s = val.as_str("size", n)?;
+                if !matches!(s.as_str(), "SM" | "MD" | "LG") {
+                    return Err(format!(
+                        "pf-plugin.toml 行 {}：popups.size 只认 \"SM\" | \"MD\" | \"LG\"，得到 {s}",
+                        n + 1
+                    ));
+                }
+                m.popups.last_mut().unwrap().size = s;
+            }
+            ("popups", "entry") => m.popups.last_mut().unwrap().entry = val.as_str("entry", n)?,
             ("file_menu", "id") => m.file_menu.last_mut().unwrap().id = val.as_str("id", n)?,
             ("file_menu", "title") => {
                 let (zh, en) = val.as_i18n("title", n)?;
@@ -504,8 +573,10 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         && m.status_bar.is_none()
         && m.file_menu.is_empty()
         && m.panels.is_empty()
+        && m.fn_bar.is_none()
+        && m.popups.is_empty()
     {
-        return Err("纯库包（三项都没申请），不加载".into());
+        return Err("纯库包（没申请任何进驻面），不加载".into());
     }
     if let Some(sb) = &m.status_bar {
         if sb.icon.is_empty() {
@@ -551,6 +622,33 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
             ));
         }
     }
+    // 契约 v3：fn_bar / popups 校验
+    if let Some(fb) = &m.fn_bar {
+        if !is_kebab(&fb.command) {
+            return Err(format!(
+                "pf-plugin.toml：fn_bar.command「{}」非 kebab-case",
+                fb.command
+            ));
+        }
+    }
+    let mut popup_ids = std::collections::HashSet::new();
+    for p in &m.popups {
+        if !is_kebab(&p.id) {
+            return Err(format!("pf-plugin.toml：popup id「{}」非 kebab-case", p.id));
+        }
+        if !popup_ids.insert(p.id.clone()) {
+            return Err(format!("pf-plugin.toml：popup id「{}」重复", p.id));
+        }
+        if p.title_zh.is_empty() {
+            return Err(format!("pf-plugin.toml：popup「{}」缺 title.zh", p.id));
+        }
+        if m.wasm.is_none() && m.bytecode.is_none() && !dir.join(&p.entry).is_file() {
+            return Err(format!(
+                "pf-plugin.toml：popups entry「{}」不存在（02 §2）",
+                p.entry
+            ));
+        }
+    }
     Ok(m)
 }
 
@@ -587,6 +685,8 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
                     && m.status_bar.is_none()
                     && m.file_menu.is_empty()
                     && m.panels.is_empty()
+                    && m.fn_bar.is_none()
+                    && m.popups.is_empty()
                 {
                     continue; // 纯库包
                 }
@@ -784,6 +884,8 @@ pub(crate) struct PluginUi {
     /// 组件状态广播的上次已发快照（None = 从未发过/面板刚开，下一拍必发）。
     /// 类型 = broadcast::Snap：(project, model)。见 `broadcast.rs`。
     pub broadcast_last: Option<(Option<String>, Option<(String, String)>)>,
+    /// 契约 v3 session 广播的上次已发会话键（差分守门）。
+    pub session_last: Option<Option<String>>,
     /// 认领槽：插件实例 × 进行中会话（002 wx_session_id 的泛化；一个插件
     /// 同时只有一条进行中线，新建即换绑）。见 `Claim`。
     pub claims: Vec<Claim>,
@@ -954,6 +1056,18 @@ impl Chat {
         };
         if entry.disabled {
             return Err("插件已停用".into());
+        }
+        // 清单对账（契约 v2.4 `[[contributes.sessions]] prefix`）：声明过槽位的
+        // 插件，实际认领前缀不在声明里就留痕——不阻断（运行期真相是
+        // ctx.newDraft 传入的 prefix，声明只是清单面的可审计位）。
+        let declared = &entry.manifest.sessions;
+        if !declared.is_empty() && !declared.iter().any(|s| s.prefix == prefix) {
+            let list: Vec<&str> = declared.iter().map(|s| s.prefix.as_str()).collect();
+            eprintln!(
+                "[pf-plugin] 认领前缀与清单声明不一致（plugin={}，declared=[{}]，actual={prefix}）",
+                entry.manifest.id,
+                list.join(", ")
+            );
         }
         // 先取值再动 self（借用分离）：pi 扩展绝对路径 + 插件 id + 形态门
         let pi_exts: Vec<String> = entry
@@ -1309,6 +1423,15 @@ impl Chat {
         // 不需要 panel-open 事件：render 每次都现读插件自己的存储。
         if self.plugins.plugins[ix].wasm.is_some() {
             self.plugin_wasm_render(ix, cx);
+            // 契约 v3：弹窗开着且属于本插件 → 体跟着新 render
+            if self.plugins.popup.as_ref().map(|p| p.ix) == Some(ix) {
+                let body = self.plugins.plugins.get(ix).and_then(|e| e.body.clone());
+                if let Some(p) = self.plugins.popup.as_mut() {
+                    p.body = body;
+                    p.tree_loaded = p.body.is_some();
+                }
+                cx.notify();
+            }
             return;
         }
         let (result, actions) = {
@@ -1366,6 +1489,8 @@ impl Chat {
                 // v2：render 直接返回组件树（根节点），没有 { body, rows } 外壳
                 entry.body = Some(v);
                 entry.tree_loaded = true;
+                // 契约 v3：弹窗开着且属于本插件 → 内容跟着新态（refresh-qr 等回环后弹窗即新态）
+                self.plugin_popup_reload(ix, cx);
                 cx.notify();
             }
             Err(e) => self.plugin_broken(ix, e, cx),
@@ -1690,6 +1815,8 @@ impl Chat {
             self.plugin_wasm_event(ix, "command", command_id, env_json, window, cx);
             return;
         }
+        // 命令回环后插件状态已变（绑定指针/开关/出码）：chrome 缓存作废重建
+        self.plugins.fn_bar_cache.clear();
         let (result, actions) = {
             let entry = &mut self.plugins.plugins[ix];
             let host = entry.host.as_ref().unwrap().clone();
@@ -1797,6 +1924,9 @@ impl Chat {
         eprintln!("[pf-plugin] popup close (trace)");
         if self.plugins.popup.take().is_some() {
             self.plugins.popup_gen += 1;
+            // chrome 缓存作废：扫码成功 → 弹窗自动收，此刻功能栏 icon 必须立刻
+            // 灰→绿。不失效就要等下一个会话事件（真机：滞后到微信来消息才亮）
+            self.plugins.fn_bar_cache.clear();
             cx.notify();
         }
     }
@@ -2504,7 +2634,7 @@ mod tests {
     }
 
     const GOOD: &str = r#"
-schema = 2
+schema = 3
 id = "quick-panel"
 title = { zh = "快捷面板", en = "Quick Panel" }
 version = "0.1.0"
@@ -2748,15 +2878,15 @@ entry = \"main.js\"
             &GOOD.replace("id = \"quick-panel\"", "id = \"quick-panel-x\""),
         );
         assert!(parse_manifest(&dir).is_err());
-        // schema ≠ 支持的契约大版本
+        // schema ≠ 支持的契约大版本（v3 起拒旧版；不降级运行）
         let dir = tmp.join("quick-panel");
-        write_manifest(&dir, &GOOD.replace("schema = 2", "schema = 3"));
+        write_manifest(&dir, &GOOD.replace("schema = 3", "schema = 2"));
         assert!(parse_manifest(&dir).is_err());
         // 纯库包（无 contributes）
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 2\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
+            "schema = 3\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
         );
         let e = parse_manifest(&dir).unwrap_err();
         assert!(e.contains("纯库"));
@@ -2774,7 +2904,7 @@ entry = \"main.js\"
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 2  # 顶部注释
+            "schema = 3  # 顶部注释
 id = \"quick-panel\"   
 title = { zh = \"快捷#面板\" } # 行内
 version = \"0.1.0\"
@@ -2801,7 +2931,7 @@ entry = \"main.js\" # 入口
         write_manifest(
             &dir,
             r#"
-schema = 2
+schema = 3
 id = "quick-panel"
 title = { zh = "快捷面板", en = "Quick Panel" }
 version = "0.1.3"
@@ -2866,3 +2996,4 @@ title = { zh = "快捷面板" }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+// 临时探针（勿入库）：直接跑 scan_manifests 看装载产物

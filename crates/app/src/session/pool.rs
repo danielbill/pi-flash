@@ -149,12 +149,8 @@ impl Chat {
                     // 存下来下次冷启动就有真名字）。
                     let cwd_key = rt.read(cx).cwd.to_string_lossy().to_string();
                     chat.pool.models_by_cwd.insert(cwd_key, models.clone());
-                    if crate::startup::merge_models(&mut chat.pool.globals, &models) {
-                        let _ = crate::startup::write_cache(
-                            &chat.pool.globals.models,
-                            &chat.pool.globals.commands,
-                        );
-                    }
+                    // 只并进本进程内存（无落盘缓存层）
+                    crate::startup::merge_models(&mut chat.pool.globals, &models);
                     chat.cfg.mc_state = models_config::compute_state(
                         chat.cfg.mc_patterns.as_ref(),
                         &chat.mc_refs(),
@@ -164,12 +160,7 @@ impl Chat {
                 SessionEvent::Commands(commands) => {
                     // 扩展命令（包内注册，磁盘没有数据文件）：并进全局清单 + 回写缓存。
                     // `skill:` 前缀不入全局（skill 走磁盘派生，见 startup::merge_commands）。
-                    if crate::startup::merge_commands(&mut chat.pool.globals, &commands) {
-                        let _ = crate::startup::write_cache(
-                            &chat.pool.globals.models,
-                            &chat.pool.globals.commands,
-                        );
-                    }
+                    crate::startup::merge_commands(&mut chat.pool.globals, &commands);
                     cx.notify();
                 }
                 SessionEvent::FileBound(path) => {
@@ -373,12 +364,7 @@ impl Chat {
             self.subscribe_runtime(&rt, cx);
             return Some(rt);
         }
-        if let Some(rt) = self
-            .pool
-            .runtimes
-            .get(crate::Chat::PLACEHOLDER_KEY)
-            .cloned()
-        {
+        if let Some(rt) = self.pool.runtimes.get(crate::Chat::PLACEHOLDER_KEY).cloned() {
             return Some(rt);
         }
         let rt = cx.new(|_| {
@@ -588,8 +574,7 @@ impl Chat {
             .map(|c| (c.key.clone(), c.prefix.clone(), c.plugin_id.clone()))
         {
             let (_old, prefix, plugin_id) = c;
-            self.plugins
-                .claims
+            self.plugins.claims
                 .iter_mut()
                 .find(|c| c.plugin_id == plugin_id)
                 .map(|c| c.key = path_key.clone());
@@ -603,12 +588,7 @@ impl Chat {
                 Some(&prefix),
             );
             // 交接文件同步（ext 读的是 key，草稿键已退役）
-            if let Some(e) = self
-                .plugins
-                .plugins
-                .iter()
-                .find(|e| e.manifest.id == plugin_id)
-            {
+            if let Some(e) = self.plugins.plugins.iter().find(|e| e.manifest.id == plugin_id) {
                 let f = e.manifest.dir.join("data").join("claim.json");
                 if f.exists() {
                     let _ = std::fs::write(

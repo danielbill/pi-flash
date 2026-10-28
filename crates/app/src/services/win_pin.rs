@@ -301,10 +301,9 @@ mod tests {
             pf.Load(&hstring_path(&lnk), STGM_READ).unwrap();
             let store: IPropertyStore = link.cast().unwrap();
             let pv = store.GetValue(&PKEY_AppUserModel_ID).unwrap();
-            assert_eq!(unsafe { pv.Anonymous.Anonymous.vt }, VT_LPWSTR);
-            let s = unsafe {
-                String::from_utf16_lossy(pv.Anonymous.Anonymous.Anonymous.pwszVal.as_wide())
-            };
+            // 外层已是 unsafe 块（上面 com(|| unsafe { … })），内层不再嵌套
+            assert_eq!(pv.Anonymous.Anonymous.vt, VT_LPWSTR);
+            let s = String::from_utf16_lossy(pv.Anonymous.Anonymous.Anonymous.pwszVal.as_wide());
             assert_eq!(s, AUMID, "lnk 上的 AUMID 属性不符");
         });
 
