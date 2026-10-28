@@ -2690,8 +2690,8 @@ pub(crate) fn fn_bar_plugin_elements(
                 .flex()
                 .items_center()
                 .justify_center()
-                .w(px(28.))
-                .h(px(28.))
+                .w(px(32.))
+                .h(px(32.))
                 .rounded(px(6.))
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(t.bg_hover)));
@@ -2708,7 +2708,7 @@ pub(crate) fn fn_bar_plugin_elements(
                 gpui::svg()
                     .path(icon_path)
                     .text_color(rgb(color))
-                    .size(px(18.)), // 002 §安装1：fn 注册槽 icon 用大样式（LG 18）
+                    .size(px(24.)), // fn 槽 icon = XLG 24（用户定夺 2026-10-28，002「大样式」）
             )
             .into_any_element()
         })
