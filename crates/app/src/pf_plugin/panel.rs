@@ -1673,7 +1673,7 @@ pub(crate) fn plugin_popup_layer(
     {
         Some("SM") => (400., 420.),
         Some("LG") => (600., 640.),
-        _ => (420., 642.), // MD（缺省）：底部留白 20（用户定）
+        _ => (420., 630.), // MD（缺省）：用户定（2026-10-28）
     };
     let mut card = div()
         .occlude()
