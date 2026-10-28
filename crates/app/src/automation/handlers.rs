@@ -433,7 +433,12 @@ pub(super) fn dispatch(
                 // （建 ctx/装 wasm → onPanelOpen → render 缓存）；直接赋值
                 // dock_panel 会绕过它，插件面板永远停在「…」占位。
                 // dock="tab" 形态同步路由到预览页签（与状态栏点击同口径）
-                if chat.plugins.plugins.get(plugin_ix).is_none_or(|e| e.disabled) {
+                if chat
+                    .plugins
+                    .plugins
+                    .get(plugin_ix)
+                    .is_none_or(|e| e.disabled)
+                {
                     return Err(bad(format!("插件 ix={plugin_ix} 不存在或已停用")));
                 }
                 if chat.plugin_dock_is_tab(plugin_ix) {
@@ -457,6 +462,75 @@ pub(super) fn dispatch(
                 .ok_or_else(|| bad("需要 {\"id\": \"set-quick\"}"))?;
             let path = params_path(params, "path")?;
             chat.plugin_menu_fire(ix, id, &path, window, cx);
+            ok()
+        }
+        method::PLUGIN_FNBAR => {
+            // 契约 v3 fn_bar：直调 chrome（与功能栏渲染同一条缓存链），
+            // 返回当前 icon 清单供断言。session 键口径与 UI 渲染一致
+            // （session_file 优先，跨进程重启稳定）
+            let key = chat
+                .pool
+                .runtimes
+                .get(&chat.pool.active_key)
+                .and_then(|rt| {
+                    rt.read(cx)
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.session_file.clone().or_else(|| s.session_id.clone()))
+                })
+                .unwrap_or_default();
+            let rows: Vec<Value> = chat
+                .plugin_fn_bar_chrome(&key, cx)
+                .into_iter()
+                .map(|(ix, icon, tone, tip)| {
+                    json!({ "ix": ix, "icon": icon.to_string(), "tone": tone, "tip": tip })
+                })
+                .collect();
+            Ok(json!({ "items": rows }))
+        }
+        method::PLUGIN_FNBAR_CLICK => {
+            // 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session）。
+            // session 键 = 会话文件路径（跨进程重启稳定；插件 ext 双口径比对
+            // getSessionFile/getSessionId）
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let key = chat
+                .pool
+                .runtimes
+                .get(&chat.pool.active_key)
+                .and_then(|rt| {
+                    rt.read(cx)
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.session_file.clone())
+                })
+                .or_else(|| {
+                    chat.pool
+                        .runtimes
+                        .get(&chat.pool.active_key)
+                        .and_then(|rt| {
+                            rt.read(cx)
+                                .state
+                                .as_ref()
+                                .and_then(|s| s.session_id.clone())
+                        })
+                })
+                .unwrap_or_default();
+            chat.plugin_fn_bar_click(ix, &key, window, cx);
+            ok()
+        }
+        method::PLUGIN_COMMAND_ENV => {
+            // 契约 v3 命令直调：{ix?, command, env 对象}（与 switch 翻转同链）
+            let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let id = params
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"command\": \"toggle-enabled\"}"))?;
+            let env = params.get("env").cloned().unwrap_or(Value::Null);
+            chat.plugin_command_fire_env(ix, id, &env.to_string(), window, cx);
+            ok()
+        }
+        method::PLUGIN_POPUP_CLOSE => {
+            chat.plugin_popup_close(cx);
             ok()
         }
         method::PLUGIN_DOCK => {
@@ -800,19 +874,20 @@ pub(super) fn dispatch(
             // 002 §6 [新建会话]：confirm=false = 按钮同路径（运行守卫 + 弹
             // 确认框）；confirm=true = 确认按钮同路径（清 wx_cwd + wx_session
             // 引用 → 设置会话页）。
-            let confirm = params.get("confirm").and_then(Value::as_bool).unwrap_or(false);
+            let confirm = params
+                .get("confirm")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let dialog_opened = if confirm {
                 chat.wx_new_session_reset(cx);
                 false
             } else {
                 if chat.aux.remote.active_running {
                     let lang = wxprobe::format::messages::Lang::from_ix(crate::i18n::lang_ix());
-                    chat.aux
-                        .remote
-                        .send(&wxprobe::format::messages::t(
-                            lang,
-                            crate::remote_control::TASK_RUNNING,
-                        ));
+                    chat.aux.remote.send(&wxprobe::format::messages::t(
+                        lang,
+                        crate::remote_control::TASK_RUNNING,
+                    ));
                     false
                 } else {
                     chat.dlg.dialog = Some(crate::Dialog::WxNewSession);

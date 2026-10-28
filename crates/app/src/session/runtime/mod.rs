@@ -425,6 +425,18 @@ impl SessionRuntime {
             }
             _ => {}
         }
+        // 会话级扩展清单（031 session-ext.json；契约 v2.4/v3 pi_extensions
+        // 的挂载通道）：**所有档位统一消费**——此前只有 custom 档读它，
+        // pf-wxbot 之类插件 ext 在 full/default 档下永远挂不上（-e 缺席，
+        // 出码/收发无人执行）。已挂过的（custom 档经 ext_sources）不重复。
+        if let Some(store) = pi_link::session_ext::store_path() {
+            for src in pi_link::session_ext::read_for(&store, &self.key) {
+                if !self.ext_sources.iter().any(|e| e == &src) {
+                    extra.push("-e".into());
+                    extra.push(src);
+                }
+            }
+        }
         // pi 原则：不逐次审批工具调用（vendor security.md），任何档位都
         // 不挂 permission 门禁；扩展自己的 ctx.ui.* 请求仍照常呈现（060 翻案）。
         // draft picks made before the process existed ride the spawn flags

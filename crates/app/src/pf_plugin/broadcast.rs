@@ -55,15 +55,19 @@ fn current(chat: &Chat, cx: &gpui::App) -> Snap {
         .cwd
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned());
-    let model = chat.pool.runtimes.get(&chat.pool.active_key).and_then(|rt| {
-        let r = rt.read(cx);
-        r.pending_model.clone().or_else(|| {
-            r.state.as_ref().and_then(|s| {
-                let m = s.model.as_ref()?;
-                (!m.id.is_empty()).then(|| (m.provider.clone(), m.id.clone()))
+    let model = chat
+        .pool
+        .runtimes
+        .get(&chat.pool.active_key)
+        .and_then(|rt| {
+            let r = rt.read(cx);
+            r.pending_model.clone().or_else(|| {
+                r.state.as_ref().and_then(|s| {
+                    let m = s.model.as_ref()?;
+                    (!m.id.is_empty()).then(|| (m.provider.clone(), m.id.clone()))
+                })
             })
-        })
-    });
+        });
     (project, model)
 }
 

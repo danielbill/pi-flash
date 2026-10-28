@@ -214,6 +214,9 @@ pub(crate) enum ResolvedNode {
         variant: String,
         size: String,
         disabled: bool,
+        /// 契约 v3+：左键直接回环插件命令（与 switch.command 同口径）。
+        /// 空 = 只有 action/menu 面（旧包）。
+        command: String,
     },
     /// 通用画布（契约 v2.4）：paint list 逐条绝对定位绘制，坐标裁剪在节点框内。
     /// 宿主不解释图形含义（rect 实心方块、text 主题色文字）；未知 op 解析期丢弃。
@@ -221,6 +224,17 @@ pub(crate) enum ResolvedNode {
         width: f32,
         height: f32,
         paints: Vec<CanvasPaint>,
+        /// 契约 v3+：左键点画布 = 回环插件命令（二维码框内「刷新二维码」这类
+        /// 提示本身是按钮，设计 002 §二维码展示区）。
+        command: String,
+    },
+    /// 开/关开关（契约 v3）：点击翻转 → onCommand(command, {value: 新布尔})。
+    Switch {
+        value: bool,
+        label: Option<String>,
+        tip: String,
+        command: String,
+        disabled: bool,
     },
     /// 未知组件：占位 + 日志（01 §1）
     Unknown(String),
@@ -392,7 +406,7 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
             tone: tone(node),
         }),
         "button" => Some(ResolvedNode::Button {
-            label: i18n(node.get("label")),
+            label: Some(i18n(node.get("label"))),
             icon: node
                 .get("icon")
                 .and_then(Value::as_str)
@@ -424,6 +438,11 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 .get("disabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            command: node
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         }),
         "canvas" => {
             let paints = node
@@ -463,6 +482,11 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
                 width: node.get("width").and_then(Value::as_f64).unwrap_or(0.) as f32,
                 height: node.get("height").and_then(Value::as_f64).unwrap_or(0.) as f32,
                 paints,
+                command: node
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         }
         other => {
@@ -470,6 +494,46 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
             Some(ResolvedNode::Unknown(other.to_string()))
         }
     }
+}
+
+/// switch 节点解析（契约 v3）：value 必须布尔、command 必填 kebab。
+fn resolve_switch(node: &Value) -> ResolvedNode {
+    let bad = |msg: String| {
+        eprintln!("[pf-plugin] switch 节点非法，已占位: {msg}");
+        ResolvedNode::Unknown("switch".to_string())
+    };
+    let Some(value) = node.get("value").and_then(Value::as_bool) else {
+        return bad("value 必须是布尔".into());
+    };
+    let Some(command) = node.get("command").and_then(Value::as_str) else {
+        return bad("缺 command".into());
+    };
+    if !is_kebab_cmd(command) {
+        return bad(format!("command「{command}」非 kebab-case"));
+    }
+    ResolvedNode::Switch {
+        value,
+        label: i18n(node.get("label")),
+        tip: node
+            .get("tip")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        command: command.to_string(),
+        disabled: node
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+/// 命令 id kebab-case（与清单 is_kebab 同口径；switch.command / fn_bar.command 共用）。
+fn is_kebab_cmd(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && s.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && s.chars().last().is_some_and(|c| c.is_ascii_alphanumeric())
 }
 
 fn resolve_children(node: &Value) -> Vec<ResolvedNode> {
@@ -540,10 +604,7 @@ fn section_count(tree: &ResolvedNode) -> usize {
 /// 插件预览页签内容（契约 v2.4 dock="tab"，`ContentView::Plugin` 分支）：
 /// 归属 = 活跃标签携带的 pkg（重装/重载后 ix 漂移安全，经 by_pkg 现查），
 /// 主体复用 dock 的 `plugin_panel_view`（同一解释器，同一渲染契约）。
-pub(crate) fn plugin_tab_page(
-    chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-) -> gpui::AnyElement {
+pub(crate) fn plugin_tab_page(chat: &Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let active = chat
         .ws
@@ -877,13 +938,16 @@ fn render_node_inner(
             variant,
             size,
             disabled,
+            command,
         } => render_button(
-            label, icon, tip, arg, action, menu, variant, size, *disabled, ix, weak, t, ctx,
+            label, icon, tip, arg, action, menu, variant, size, *disabled, command, ix, weak, t,
+            ctx,
         ),
         ResolvedNode::Canvas {
             width,
             height,
             paints,
+            command,
         } => {
             // 画布容器：定宽高 + 裁剪（契约：paint 坐标不许逃逸出节点框）
             let mut canvas = div()
@@ -905,7 +969,13 @@ fn render_node_inner(
                         }
                         d
                     }
-                    CanvasPaint::Text { x, y, size, tone, value } => div()
+                    CanvasPaint::Text {
+                        x,
+                        y,
+                        size,
+                        tone,
+                        value,
+                    } => div()
                         .absolute()
                         .left(px(*x))
                         .top(px(*y))
@@ -914,7 +984,83 @@ fn render_node_inner(
                         .child(SharedString::from(value.clone())),
                 });
             }
+            // 框内提示即按钮（contract canvas.command）：左键点画布回环插件命令
+            if !command.is_empty() {
+                return canvas
+                    .id(SharedString::from(format!("pf-canvas-{ix}-{command}")))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        click_command(weak.clone(), ix, command.clone(), String::new()),
+                    )
+                    .into_any_element();
+            }
             canvas.into_any_element()
+        }
+        ResolvedNode::Switch {
+            value,
+            label,
+            tip,
+            command,
+            disabled,
+        } => {
+            // 契约 v3 开关：轨道/knob 走 §10.4 尺寸（SW_MD 28x16·knob10），
+            // 点击翻转 → onCommand(command, {value: 新布尔})；声明式：
+            // 插件收到回调改自己的数据，重渲后 value 自然到位
+            let t_ = *t;
+            let (track, knob_x, knob_color) = if *value {
+                (rgb(t_.accent), 28. - 16. + 3., t_.bg)
+            } else {
+                (rgb(t_.text_faint), 3., t_.bg)
+            };
+            let weak = weak.clone();
+            let cmd = command.clone();
+            let next = !*value;
+            let env = serde_json::json!({ "value": next }).to_string();
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(10.))
+                .py(px(6.));
+            if label.as_deref().is_some_and(|l| !l.is_empty()) {
+                row = row.child(
+                    div()
+                        .text_size(crate::appearance::ui_size(11.5))
+                        .text_color(rgb(t_.text_muted))
+                        .child(SharedString::from(label.clone().unwrap_or_default())),
+                );
+            }
+            let mut sw = div()
+                .id(SharedString::from(format!("pf-switch-{ix}-{cmd}")))
+                .relative()
+                .w(px(28.))
+                .h(px(16.))
+                .rounded_full()
+                .bg(track)
+                .cursor_pointer()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(knob_x))
+                        .top(px(3.))
+                        .w(px(10.))
+                        .h(px(10.))
+                        .rounded_full()
+                        .bg(rgb(knob_color)),
+                );
+            if !*disabled {
+                sw = sw.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        c.plugin_command_fire_env(ix, &cmd, &env, window, cx);
+                        cx.notify();
+                    });
+                });
+            }
+            if !tip.is_empty() {
+                sw = sw.with_tip_text(tip.clone());
+            }
+            row.child(sw).into_any_element()
         }
         ResolvedNode::Unknown(ty) => div()
             .px(px(10.))
@@ -1062,12 +1208,14 @@ fn render_button(
     variant: &str,
     size: &str,
     disabled: bool,
+    command: &str,
     ix: usize,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
     ctx: &RenderCtx,
 ) -> gpui::AnyElement {
-    let dead = disabled || matches!(action, None | Some(CellAction::Unsupported(_)));
+    let has_cmd = !command.is_empty();
+    let dead = disabled || (!has_cmd && matches!(action, None | Some(CellAction::Unsupported(_))));
     let (cell_h, icon_px) = button_dims(size);
     let icon_only = variant == "icon";
 
@@ -1075,7 +1223,13 @@ fn render_button(
     let with_clicks = |mut el: gpui::Stateful<gpui::Div>| -> gpui::Stateful<gpui::Div> {
         if !dead {
             el = el.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
-            if !matches!(action, None | Some(CellAction::Unsupported(_))) {
+            if has_cmd {
+                // 契约 v3+：按钮左键 = 回环插件命令（刷新二维码这类"用户自己点"的入口）
+                el = el.on_mouse_down(
+                    MouseButton::Left,
+                    click_command(weak.clone(), ix, command.to_string(), arg.to_string()),
+                );
+            } else if !matches!(action, None | Some(CellAction::Unsupported(_))) {
                 el = el.on_mouse_down(
                     MouseButton::Left,
                     click_action(weak.clone(), ix, action.clone()),
@@ -1195,6 +1349,22 @@ fn click_action(
             if let Some(a) = action {
                 c.plugin_dispatch(ix, vec![to_js_action(a)], window, cx);
             }
+        });
+    }
+}
+
+/// 左键：按钮 `command` → 插件命令回调（与右键菜单项无 action 时的同一条链）。
+fn click_command(
+    weak: gpui::WeakEntity<Chat>,
+    ix: usize,
+    command: String,
+    arg: String,
+) -> impl Fn(&gpui::MouseDownEvent, &mut gpui::Window, &mut gpui::App) + 'static {
+    move |_, window, cx| {
+        let cmd = command.clone();
+        let a = arg.clone();
+        let _ = weak.update(cx, |c, cx| {
+            c.plugin_command_fire(ix, &cmd, &a, window, cx);
         });
     }
 }
@@ -1361,9 +1531,8 @@ fn hex_color(s: &str) -> Option<u32> {
             u8::from_str_radix(&h[4..6], 16).ok()?,
         ),
         3 => {
-            let c = |i: usize| -> Option<u8> {
-                Some(u8::from_str_radix(&h[i..i + 1], 16).ok()? * 17)
-            };
+            let c =
+                |i: usize| -> Option<u8> { Some(u8::from_str_radix(&h[i..i + 1], 16).ok()? * 17) };
             (c(0)?, c(1)?, c(2)?)
         }
         _ => return None,
@@ -1401,6 +1570,112 @@ fn tone_color(tone: &str, t: &'static Theme) -> u32 {
         "accent" => t.accent,
         "danger" => t.danger,
         _ => t.text_dim, // text.dim 默认
+    }
+}
+
+/// 插件弹窗浮层（契约 v3 popups）：非模态居中卡（尺寸档位映射，MD≈500x500），
+/// 外点/× 关闭；内容 = 插件 render_popup 树，同一解释器渲染。挂在 psp-overlays。
+pub(crate) fn plugin_popup_layer(
+    chat: &mut Chat,
+    _vp: (f32, f32),
+    t: &'static Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+    let Some(p) = chat.plugins.popup.as_ref() else {
+        return div().into_any_element();
+    };
+    let ix = p.ix;
+    let (id, title, body, tree_loaded) =
+        (p.id.clone(), p.title.clone(), p.body.clone(), p.tree_loaded);
+    let weak = cx.entity().downgrade();
+    let weak_close = weak.clone();
+    // 非模态：不压暗背景、不抢焦点；点外/× 即收（overlay 基座规则 2/5）
+    let layer = crate::ui::overlay::layer(false, None, move |_, cx| {
+        let _ = weak_close.update(cx, |c, cx| c.plugin_popup_close(cx));
+    });
+    // 尺寸档位 → 实现值（宿主映射；插件不写像素）
+    let (w, h) = match chat
+        .plugins
+        .plugins
+        .get(ix)
+        .and_then(|e| e.manifest.popups.iter().find(|p| p.id == id))
+        .map(|p| p.size.as_str())
+    {
+        Some("SM") => (400., 420.),
+        Some("LG") => (600., 640.),
+        _ => (500., 500.), // MD（缺省）
+    };
+    let mut card = div()
+        .occlude()
+        .flex()
+        .flex_col()
+        .w(px(w))
+        .h(px(h))
+        .max_h_full()
+        .bg(rgb(t.bg))
+        .border_1()
+        .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
+        .rounded(px(crate::ui::tokens::radius::CARD))
+        .overflow_hidden();
+    // 标题栏：标题 + ×（overlay 规则 5：有可见内容的卡片挂关闭钮）
+    let weak_x = weak.clone();
+    card = card.child(
+        div()
+            .id("pf-popup-titlebar")
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(12.))
+            .py(px(8.))
+            .border_b_1()
+            .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
+            .child(
+                div()
+                    .text_size(crate::appearance::ui_size(12.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(title)),
+            )
+            .child(
+                div()
+                    .id("pf-popup-close")
+                    .cursor_pointer()
+                    .px(px(6.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(rgb(t.bg_hover)))
+                    .text_color(rgb(t.text_muted))
+                    .on_mouse_down(MouseButton::Left, move |_, _w, cx| {
+                        let _ = weak_x.update(cx, |c, cx| c.plugin_popup_close(cx));
+                    })
+                    .child(crate::ui::icon("close", 14., t.text_muted)),
+            ),
+    );
+    // 内容区：同一解释器；未就绪占位
+    let content = if tree_loaded && let Some(tree) = body.as_ref().and_then(resolve) {
+        render_root(&tree, ix, &weak, t, &popup_render_ctx(chat, ix))
+    } else {
+        placeholder_center("…", t)
+    };
+    card = card.child(div().flex_1().min_h_0().flex().flex_col().child(content));
+    // 居中：外层满幅 + 主轴居中（点外即层的外点关闭）
+    layer
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(card)
+        .into_any_element()
+}
+
+/// 弹窗内容的渲染 ctx（面板同款；宽度用面板宽——插件树自适应）。
+fn popup_render_ctx<'a>(chat: &'a Chat, ix: usize) -> RenderCtx<'a> {
+    let entry = &chat.plugins.plugins[ix];
+    RenderCtx {
+        plugin_id: &entry.manifest.id,
+        panel_w: chat.layout.slp_w,
+        ratios: vec![1.0],
+        scrolls: vec![],
+        split_hover: *entry.split_hover.borrow(),
+        split_drag: entry.split_drag.borrow().as_ref().map(|d| d.index),
     }
 }
 
@@ -1527,8 +1802,10 @@ mod tests {
                 width,
                 height,
                 paints,
+                command: cmd,
             }) => {
                 assert_eq!((width, height), (392., 392.));
+                assert_eq!(cmd, "");
                 // 未知 op（circle）解析期丢弃，不占位不报错
                 assert_eq!(paints.len(), 2);
                 assert!(matches!(

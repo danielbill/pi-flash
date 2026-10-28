@@ -25,12 +25,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
-use gpui::{AppContext, SharedString};
+use gpui::{AppContext, MouseButton, SharedString, div, prelude::*, px, rgb};
 use pf_plugin_host::js::{JsAction, JsHost, JsPlugin};
 use pf_plugin_host::{PluginAction, PluginInstance};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::Chat;
+use crate::ui::tooltip::WithTip;
 
 // ---------------------------------------------------------------------------
 // 清单（02 §2；手写极简解析，不引 toml 库——设计定案）
@@ -453,7 +454,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                         return Err(format!(
                             "pf-plugin.toml 行 {}：dock 只认 \"panel\" | \"tab\"，得到 {other}",
                             n + 1
-                        ))
+                        ));
                     }
                 };
             }
@@ -745,6 +746,37 @@ pub(crate) struct PluginEntry {
     pub section_scrolls: std::cell::RefCell<Vec<gpui::ScrollHandle>>,
 }
 
+/// 会话列表徽标（契约 v3 sessions.setBadge）：落时间位置，owner = 插件 id。
+#[derive(Debug, Clone)]
+pub(crate) struct PluginBadge {
+    pub owner: String,
+    pub session: String,
+    pub icon: String,
+    pub tone: String,
+}
+
+/// 弹窗打开态（契约 v3 popups）：一次一个（开新的关旧的）。
+#[derive(Debug, Clone)]
+pub(crate) struct PluginPopupOpen {
+    pub ix: usize,
+    pub id: String,
+    pub title: String,
+    pub body: Option<serde_json::Value>,
+    pub tree_loaded: bool,
+}
+
+/// fn_bar chrome 缓存（契约 v3）：功能栏每帧渲染，QuickJS 调用不进每帧
+/// ——1s TTL + 会话键变更即失效。wasm 面（wit v3 前）不参与。
+#[derive(Debug, Clone)]
+pub(crate) struct FnBarCache {
+    pub pkg: String,
+    pub session_key: String,
+    pub icon: String,
+    pub tone: String,
+    pub tip: String,
+    pub at: std::time::Instant,
+}
+
 /// Chat 上的插件簇（与 aux/ws 等并列的最小簇）。
 #[derive(Default)]
 pub(crate) struct PluginUi {
@@ -755,6 +787,15 @@ pub(crate) struct PluginUi {
     /// 认领槽：插件实例 × 进行中会话（002 wx_session_id 的泛化；一个插件
     /// 同时只有一条进行中线，新建即换绑）。见 `Claim`。
     pub claims: Vec<Claim>,
+    /// 打开中的插件弹窗（契约 v3；None = 无）。
+    pub popup: Option<PluginPopupOpen>,
+    /// 弹窗轮询代数：每次开/关自增，旧轮询循环见代数不符自行退出
+    /// （重复点击不堆叠 1s 轮询）。
+    pub popup_gen: u64,
+    /// fn_bar chrome 缓存（键 = pkg + session_key，TTL 见 FnBarCache 用法）。
+    pub fn_bar_cache: Vec<FnBarCache>,
+    /// 会话列表徽标（契约 v3 sessions.setBadge；owner 互不覆盖）。
+    pub badges: Vec<PluginBadge>,
 }
 
 /// 插件认领槽记录（匿名归属：宿主只认识 "某插件 × 某 key"）。
@@ -768,10 +809,7 @@ pub(crate) struct Claim {
 /// 认领会话名：`{prefix}YYMMDDHHMMSSmmm`（与 wx 线同款 15 位时间戳口径，
 /// 002 §5）。纯函数便于单测。
 pub(crate) fn claim_session_name(prefix: &str) -> String {
-    format!(
-        "{prefix}{}",
-        chrono::Local::now().format("%y%m%d%H%M%S%3f")
-    )
+    format!("{prefix}{}", chrono::Local::now().format("%y%m%d%H%M%S%3f"))
 }
 
 /// JsHost 实现（02 §3 提问类同步、动作类入队）。
@@ -931,7 +969,8 @@ impl Chat {
         let key = format!("draft-{}", self.pool.draft_seq);
         self.pool.draft_seq += 1;
         let rt = cx.new(|_| {
-            let mut r = crate::session::runtime::SessionRuntime::new(key.clone(), cwd_path.clone(), None);
+            let mut r =
+                crate::session::runtime::SessionRuntime::new(key.clone(), cwd_path.clone(), None);
             r.default_model = crate::services::workspace::default_model_pref();
             r.status = crate::i18n::tr("session.new").to_string();
             r
@@ -998,20 +1037,23 @@ impl Chat {
         if entry.disabled {
             return;
         };
-        let Some((pkg, page)) = entry.manifest.tab_page().map(|(p, g)| (p.to_string(), g.to_string()))
+        let Some((pkg, page)) = entry
+            .manifest
+            .tab_page()
+            .map(|(p, g)| (p.to_string(), g.to_string()))
         else {
             return;
         };
         // 单例：同 pkg+page 已开 → 激活既有页签（不重排，082 顺序稳定）
-        let tix = self
-            .ws
-            .panel_tabs
-            .iter()
-            .position(|t| matches!(t, crate::PanelTab::Plugin { pkg: p, page: g } if p == &pkg && g == &page));
+        let tix = self.ws.panel_tabs.iter().position(
+            |t| matches!(t, crate::PanelTab::Plugin { pkg: p, page: g } if p == &pkg && g == &page),
+        );
         let tix = match tix {
             Some(tix) => tix,
             None => {
-                self.ws.panel_tabs.push(crate::PanelTab::Plugin { pkg, page });
+                self.ws
+                    .panel_tabs
+                    .push(crate::PanelTab::Plugin { pkg, page });
                 self.ws.panel_tabs.len() - 1
             }
         };
@@ -1279,7 +1321,42 @@ impl Chat {
             (r, drained)
         };
         for a in actions {
-            eprintln!("[pf-plugin] render/onPanelOpen 期间的动作被忽略: {a:?}");
+            // 徽标是渲染的伴随声明（同 fn_bar）：render_popup 里也会同步徽标，
+            // 一律丢弃会让列表徽标彻底打不上（真机 2026-10-28）。
+            match a {
+                JsAction::SetBadge {
+                    session,
+                    icon,
+                    tone,
+                } => {
+                    if !session.is_empty() {
+                        let owner = self.plugins.plugins[ix].manifest.id.clone();
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                        self.plugins.badges.push(PluginBadge {
+                            owner,
+                            session,
+                            icon,
+                            tone,
+                        });
+                        cx.notify();
+                    }
+                }
+                JsAction::ClearBadge { session } => {
+                    let owner = self.plugins.plugins[ix].manifest.id.clone();
+                    let before = self.plugins.badges.len();
+                    if session.is_empty() {
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                    } else {
+                        self.plugins
+                            .badges
+                            .retain(|b| !(b.owner == owner && b.session == session));
+                    }
+                    if self.plugins.badges.len() != before {
+                        cx.notify();
+                    }
+                }
+                other => eprintln!("[pf-plugin] render/onPanelOpen 期间的动作被忽略: {other:?}"),
+            }
         }
         match result {
             Ok(json) => {
@@ -1361,6 +1438,486 @@ impl Chat {
         }
     }
 
+    /// 契约 v3 fn_bar：会话功能栏插件 icon 批量取数（带 1s TTL 缓存——
+    /// 功能栏每帧渲染，QuickJS 调用不进每帧）。返回 (ix, icon_path, tone, tip)。
+    /// wasm 面无 fn_bar 导出（wit v3 前）不参与；停用/坏插件不出。
+    pub(crate) fn plugin_fn_bar_chrome(
+        &mut self,
+        session_key: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<(usize, SharedString, String, String)> {
+        const TTL: std::time::Duration = std::time::Duration::from_millis(1000);
+        let mut out = Vec::new();
+        let mut miss: Vec<usize> = Vec::new();
+        for (ix, e) in self.plugins.plugins.iter().enumerate() {
+            if e.manifest.fn_bar.is_none() || e.disabled || e.wasm.is_some() {
+                continue;
+            }
+            let hit = self.plugins.fn_bar_cache.iter().find(|c| {
+                c.pkg == e.manifest.pkg && c.session_key == session_key && c.at.elapsed() < TTL
+            });
+            match hit {
+                Some(c) => {
+                    let path = contrib_icon_path(&e.manifest.id, &c.icon);
+                    out.push((ix, path, c.tone.clone(), c.tip.clone()));
+                }
+                None => miss.push(ix),
+            }
+        }
+        for ix in miss {
+            // 未就绪的插件不阻塞功能栏（懒加载链；首拍拿不到下一拍再试）
+            if !self.plugin_ready(ix, cx) {
+                continue;
+            }
+            let pkg = self.plugins.plugins[ix].manifest.pkg.clone();
+            let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
+            let (result, actions) = {
+                let entry = &mut self.plugins.plugins[ix];
+                let host = entry.host.as_ref().unwrap().clone();
+                host.borrow_mut().actions.clear();
+                let r = entry.js.as_ref().unwrap().fn_bar_json(&env);
+                let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+                (r, drained)
+            };
+            // chrome 取数期间的动作丢弃（fn_bar 是纯 chrome，不该有副作用）。
+            // 例外：会话列表徽标（SetBadge/ClearBadge）就是 chrome 的伴随声明——
+            // 不放行的话，已绑会话的列表 icon 永远打不上（002 时间位徽标）。
+            for a in &actions {
+                match a {
+                    JsAction::SetBadge {
+                        session,
+                        icon,
+                        tone,
+                    } => {
+                        if !session.is_empty() {
+                            let owner = self.plugins.plugins[ix].manifest.id.clone();
+                            self.plugins.badges.retain(|b| b.owner != owner); // 一插件一条
+                            self.plugins.badges.push(PluginBadge {
+                                owner,
+                                session: session.clone(),
+                                icon: icon.clone(),
+                                tone: tone.clone(),
+                            });
+                        }
+                    }
+                    JsAction::ClearBadge { session } => {
+                        let owner = self.plugins.plugins[ix].manifest.id.clone();
+                        if session.is_empty() {
+                            self.plugins.badges.retain(|b| b.owner != owner);
+                        } else {
+                            self.plugins
+                                .badges
+                                .retain(|b| !(b.owner == owner && b.session == *session));
+                        }
+                    }
+                    _ => eprintln!("[pf-plugin] fn_bar 期间的动作被忽略: {a:?}"),
+                }
+            }
+            match result {
+                Ok(Some(json)) => {
+                    let v: serde_json::Value =
+                        serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                    let icon = v
+                        .get("icon")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let tone = v
+                        .get("tone")
+                        .and_then(Value::as_str)
+                        .unwrap_or("text.faint")
+                        .to_string();
+                    // tip 是文案对象 {zh,en} 或纯字符串，统一解成本语言串
+                    let tip = match v.get("tip") {
+                        Some(Value::Object(_)) => {
+                            let zh = v["tip"]["zh"].as_str().unwrap_or("").to_string();
+                            let en = v["tip"]["en"].as_str().map(|s| s.to_string());
+                            pick_lang(&zh, &en)
+                        }
+                        Some(Value::String(s)) => s.clone(),
+                        _ => String::new(),
+                    };
+                    self.plugins
+                        .fn_bar_cache
+                        .retain(|c| !(c.pkg == pkg && c.session_key == session_key));
+                    self.plugins.fn_bar_cache.push(FnBarCache {
+                        pkg: pkg.clone(),
+                        session_key: session_key.to_string(),
+                        icon: icon.clone(),
+                        tone: tone.clone(),
+                        tip: tip.clone(),
+                        at: std::time::Instant::now(),
+                    });
+                    if !icon.is_empty() {
+                        let path = contrib_icon_path(&self.plugins.plugins[ix].manifest.id, &icon);
+                        out.push((ix, path, tone, tip));
+                    }
+                }
+                // 未导出 fn_bar：负缓存一轮（TTL 内不再问）
+                Ok(None) => self.plugins.fn_bar_cache.push(FnBarCache {
+                    pkg: pkg.clone(),
+                    session_key: session_key.to_string(),
+                    icon: String::new(),
+                    tone: String::new(),
+                    tip: String::new(),
+                    at: std::time::Instant::now(),
+                }),
+                Err(e) => self.plugin_broken(ix, e, cx),
+            }
+        }
+        out
+    }
+
+    /// fn_bar icon 点击：command 回环（env 带 {session:{key}}，契约 v3）。
+    /// 绑定目标 = 当前会话：先把包内 pi 扩展写进该会话扩展清单（出码/收发
+    /// 本体在 ext，004 §5.2），进程空闲即重启挂载，再回环命令。
+    pub(crate) fn plugin_fn_bar_click(
+        &mut self,
+        ix: usize,
+        session_key: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        // 两套键各归其位：ext 挂载清单按 **PF 会话键**（active_key，与
+        // spawn 读侧一致）；插件命令 env 按 **pi sessionId**（与 ext
+        // getSessionId() 同源，004 §7-1）
+        let pf_key = self.pool.active_key.clone();
+        self.plugin_attach_pi_exts(ix, &pf_key, cx);
+        let Some(cmd) = self
+            .plugins
+            .plugins
+            .get(ix)
+            .and_then(|e| e.manifest.fn_bar.as_ref())
+            .map(|f| f.command.clone())
+        else {
+            return;
+        };
+        let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
+        self.plugin_command_fire_env(ix, &cmd, &env, window, cx);
+    }
+
+    /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通
+    /// 会话，不再走建线，挂载改在绑定时完成）。`pf_session_key` = PF 会话键
+    /// （active_key，session-ext.json 的键）；Tier 2 门：market 验签包才可
+    /// 携带（安装链已验）；dev 手拷包（台账 integrity 空）告警放行。
+    /// 会话进程空闲 → 立即重启挂载；忙 → 清单已写，下次 spawn 生效。
+    fn plugin_attach_pi_exts(
+        &mut self,
+        ix: usize,
+        pf_session_key: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(entry) = self.plugins.plugins.get(ix) else {
+            return;
+        };
+        if entry.manifest.pi_extensions.is_empty() || pf_session_key.is_empty() {
+            return;
+        }
+        // Tier 2 门口径：台账 integrity 非空 = market 验签包（安装链已验）；
+        // 空 = dev 手拷（link:dev），告警放行——市场分发必须走验签链
+        let verified = pi_link::pf_plugins::load_ledger().iter().any(|l| {
+            pi_link::pf_plugins::dir_aliases(&l.name)
+                .iter()
+                .any(|a| *a == entry.manifest.pkg)
+                && !l.integrity.is_empty()
+        });
+        if !verified {
+            eprintln!(
+                "[pf-plugin] dev 手拷包携带 pi_extensions，告警放行（{}；市场分发必须走验签链）",
+                entry.manifest.id
+            );
+        }
+        let pi_exts: Vec<String> = entry
+            .manifest
+            .pi_extensions
+            .iter()
+            .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
+            .collect();
+        let missing = pi_link::session_ext::store_path()
+            .map(|store| {
+                let have = pi_link::session_ext::read_for(&store, pf_session_key);
+                pi_exts.iter().any(|p| !have.iter().any(|h| h == p))
+            })
+            .unwrap_or(true);
+        if !missing {
+            return; // 清单已含，无需重启
+        }
+        if let Some(store) = pi_link::session_ext::store_path() {
+            if let Err(e) = pi_link::session_ext::write_for(&store, pf_session_key, &pi_exts) {
+                eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
+                return;
+            }
+        }
+        eprintln!(
+            "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
+            entry.manifest.id, pf_session_key
+        );
+        // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）
+        if let Some(rt) = self.pool.runtimes.get(pf_session_key).cloned() {
+            let busy = rt.read(cx).agent_running;
+            if !busy {
+                rt.update(cx, |r, cx| {
+                    // 内存清单同步（custom 档 spawn 走 ext_sources，其他档走
+                    // session-ext.json 统一追加——两路都要有这份路径）
+                    for p in &pi_exts {
+                        if !r.ext_sources.iter().any(|e| e == p) {
+                            r.ext_sources.push(p.clone());
+                        }
+                    }
+                    r.shutdown_process();
+                    r.ensure_spawned(cx);
+                });
+            } else {
+                self.set_status("微信机器人扩展将在当前任务完成后生效".to_string(), cx);
+            }
+        }
+    }
+
+    /// 命令回调（env 负载形态，契约 v3）：与 plugin_command_fire 同链，
+    /// JS 走 fire_command_env，wasm 走 on-event（env 串放 path 位）。
+    pub(crate) fn plugin_command_fire_env(
+        &mut self,
+        ix: usize,
+        command_id: &str,
+        env_json: &str,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_event(ix, "command", command_id, env_json, window, cx);
+            return;
+        }
+        let (result, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let host = entry.host.as_ref().unwrap().clone();
+            host.borrow_mut().actions.clear();
+            let js = entry.js.as_ref().unwrap();
+            let r = js.fire_command_env(command_id, env_json);
+            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+            (r, drained)
+        };
+        match result {
+            Ok(()) => self.plugin_dispatch(ix, actions, window, cx),
+            Err(e) => self.plugin_broken(ix, e, cx),
+        }
+    }
+
+    /// 弹窗打开（契约 v3）：内容 = render_popup(ctx)（wasm = render()）；
+    /// 一次一个（开新的关旧的）。同插件重复 open = 重取内容。
+    pub(crate) fn plugin_popup_open(
+        &mut self,
+        ix: usize,
+        popup_id: Option<&str>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.plugin_ready(ix, cx) {
+            return;
+        }
+        // 代数自增：杀掉上一轮 poll（重复 open 不堆叠 1s 轮询循环）
+        self.plugins.popup_gen += 1;
+        let (id, title) = {
+            let entry = &self.plugins.plugins[ix];
+            let pc = match popup_id {
+                Some(id) => entry.manifest.popups.iter().find(|p| p.id == id),
+                None => entry.manifest.popups.first(),
+            };
+            let Some(pc) = pc else {
+                self.set_status(
+                    format!(
+                        "插件 {} 没有弹窗 {}",
+                        entry.manifest.id,
+                        popup_id.unwrap_or("")
+                    ),
+                    cx,
+                );
+                return;
+            };
+            (pc.id.clone(), pick_lang(&pc.title_zh, &pc.title_en))
+        };
+        // wasm 面：render() 即弹窗树（wit v3 前的形态），复用面板渲染链取体
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_render(ix, cx);
+            let body = self.plugins.plugins.get(ix).and_then(|e| e.body.clone());
+            self.plugins.popup = Some(PluginPopupOpen {
+                ix,
+                id,
+                title,
+                tree_loaded: body.is_some(),
+                body,
+            });
+            cx.notify();
+            let popup_gen = self.plugins.popup_gen;
+            self.plugin_popup_poll(ix, popup_gen, cx);
+            return;
+        }
+        let (result, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let (Some(host), Some(js)) = (entry.host.as_ref(), entry.js.as_ref()) else {
+                self.plugin_popup_close(cx);
+                return;
+            };
+            let host = host.clone();
+            host.borrow_mut().actions.clear();
+            let r = js.render_popup_json();
+            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+            (r, drained)
+        };
+        match result {
+            Ok(json) => {
+                let body = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                // 契约约定：render_popup 返回 null = 此刻无弹窗内容（如绑定
+                // 已成功）→ 不开/自动关
+                if body.is_null() {
+                    self.plugin_popup_close(cx);
+                    return;
+                }
+                self.plugins.popup = Some(PluginPopupOpen {
+                    ix,
+                    id,
+                    title,
+                    tree_loaded: true,
+                    body: Some(body),
+                });
+                // bind 回调里 openPopup 之外若还带了别的动作，照走
+                self.plugin_dispatch(ix, actions, window, cx);
+            }
+            Err(e) => self.plugin_broken(ix, e, cx),
+        }
+        cx.notify();
+        let popup_gen = self.plugins.popup_gen;
+        self.plugin_popup_poll(ix, popup_gen, cx);
+    }
+
+    /// 弹窗关闭（随手关：点外/×；act.closePopup 同路）。
+    pub(crate) fn plugin_popup_close(&mut self, cx: &mut gpui::Context<Self>) {
+        eprintln!("[pf-plugin] popup close (trace)");
+        if self.plugins.popup.take().is_some() {
+            self.plugins.popup_gen += 1;
+            cx.notify();
+        }
+    }
+
+    /// 弹窗打开期间的低频重取（1s，旧版宿主泵采样 parity）：ext 写镜像
+    /// （过期白遮/新码/开关态）无回调链可触发，轮询是弹窗场景唯一时效保障；
+    /// 弹窗关闭即停。停用/坏插件自动断流。
+    fn plugin_popup_poll(&mut self, ix: usize, popup_gen: u64, cx: &mut gpui::Context<Self>) {
+        eprintln!("[pf-plugin] popup poll 启动 ix={ix} gen={popup_gen}");
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(1000))
+                    .await;
+                let mut stop = true;
+                let _ = this.update(cx, |c, cx| match c.plugins.popup.as_ref() {
+                    Some(p) if p.ix == ix && p.tree_loaded && c.plugins.popup_gen == popup_gen => {
+                        stop = false;
+                        c.plugin_popup_reload(ix, cx);
+                    }
+                    _ => {}
+                });
+                if stop {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// 弹窗内容重取（回调链返回后的重渲染规则：弹窗开着就跟着新态）。
+    fn plugin_popup_reload(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        eprintln!("[pf-plugin] popup reload trace ix={ix}");
+        if self.plugins.popup.as_ref().map(|p| p.ix) != Some(ix) {
+            return;
+        }
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_render(ix, cx);
+            let body = self.plugins.plugins.get(ix).and_then(|e| e.body.clone());
+            if let Some(p) = self.plugins.popup.as_mut() {
+                p.body = body;
+                p.tree_loaded = p.body.is_some();
+            }
+            cx.notify();
+            return;
+        }
+        // 防御：js/host 可能已被异常隔离（plugin_broken）或重扫描清掉——
+        // 弹窗场景绝不打崩宿主，收弹窗即可
+        if !self.plugin_ready(ix, cx) {
+            self.plugin_popup_close(cx);
+            return;
+        }
+        let (result, actions) = {
+            let entry = &mut self.plugins.plugins[ix];
+            let (Some(host), Some(js)) = (entry.host.as_ref(), entry.js.as_ref()) else {
+                self.plugin_popup_close(cx);
+                return;
+            };
+            let host = host.clone();
+            host.borrow_mut().actions.clear();
+            let r = js.render_popup_json();
+            let drained = host.borrow_mut().actions.drain(..).collect::<Vec<_>>();
+            (r, drained)
+        };
+        // 重取期间的动作：徽标是渲染的伴随声明，必须落地（否则列表永远没徽标）；
+        // 其余动作忽略（与 render 面同口径）。
+        for a in actions {
+            match a {
+                JsAction::SetBadge {
+                    session,
+                    icon,
+                    tone,
+                } => {
+                    if !session.is_empty() {
+                        let owner = self.plugins.plugins[ix].manifest.id.clone();
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                        self.plugins.badges.push(PluginBadge {
+                            owner,
+                            session,
+                            icon,
+                            tone,
+                        });
+                        cx.notify();
+                    }
+                }
+                JsAction::ClearBadge { session } => {
+                    let owner = self.plugins.plugins[ix].manifest.id.clone();
+                    let before = self.plugins.badges.len();
+                    if session.is_empty() {
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                    } else {
+                        self.plugins
+                            .badges
+                            .retain(|b| !(b.owner == owner && b.session == session));
+                    }
+                    if self.plugins.badges.len() != before {
+                        cx.notify();
+                    }
+                }
+                other => eprintln!("[pf-plugin] popup 重取期间的动作被忽略: {other:?}"),
+            }
+        }
+        match result {
+            Ok(json) => {
+                let body: serde_json::Value =
+                    serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                // null = 插件判定弹窗该收了（如绑定成功瞬间）→ 自动关
+                if body.is_null() {
+                    self.plugin_popup_close(cx);
+                    return;
+                }
+                if let Some(p) = self.plugins.popup.as_mut() {
+                    p.body = Some(body);
+                    p.tree_loaded = true;
+                }
+                cx.notify();
+            }
+            Err(e) => self.plugin_broken(ix, e, cx),
+        }
+    }
+
     /// 动作分派（02 §3 动作类 → 宿主实现；run 目标不可执行 → toast 报错）。
     pub(crate) fn plugin_dispatch(
         &mut self,
@@ -1379,6 +1936,50 @@ impl Chat {
                     }
                 }
                 JsAction::Edit(p) => self.open_file_tab(PathBuf::from(&p), cx),
+                // 契约 v3 sessions.setBadge / clearBadge：会话列表时间位徽标
+                JsAction::SetBadge {
+                    session,
+                    icon,
+                    tone,
+                } => {
+                    if !session.is_empty() {
+                        let owner = self
+                            .plugins
+                            .plugins
+                            .get(ix)
+                            .map(|e| e.manifest.id.clone())
+                            .unwrap_or_default();
+                        // 一个插件只允许一条徽标（002：只绑一个会话）——换绑即覆盖，
+                        // 否则列表里会残留旧会话的绿标
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                        self.plugins.badges.push(PluginBadge {
+                            owner,
+                            session,
+                            icon,
+                            tone,
+                        });
+                        cx.notify();
+                    }
+                }
+                JsAction::ClearBadge { session } => {
+                    let owner = self
+                        .plugins
+                        .plugins
+                        .get(ix)
+                        .map(|e| e.manifest.id.clone())
+                        .unwrap_or_default();
+                    let before = self.plugins.badges.len();
+                    if session.is_empty() {
+                        self.plugins.badges.retain(|b| b.owner != owner);
+                    } else {
+                        self.plugins
+                            .badges
+                            .retain(|b| !(b.owner == owner && b.session == session));
+                    }
+                    if self.plugins.badges.len() != before {
+                        cx.notify();
+                    }
+                }
                 JsAction::RevealInExplorer(p) => {
                     crate::services::shell_open::reveal_in_explorer(Path::new(&p))
                 }
@@ -1406,6 +2007,15 @@ impl Chat {
                     }
                     None => self.set_status(text, cx),
                 },
+                // 契约 v3 popups：开/关插件弹窗（非模态，宿主管窗体）
+                JsAction::OpenPopup(id) => self.plugin_popup_open(ix, Some(&id), window, cx),
+                JsAction::ClosePopup(id) => {
+                    if self.plugins.popup.as_ref().map(|p| (p.ix, p.id.as_str()))
+                        == Some((ix, id.as_str()))
+                    {
+                        self.plugin_popup_close(cx);
+                    }
+                }
             }
         }
         // 插件数据可能被 onMenu/onCommand 改过：无条件重 render（独立窗口
@@ -1461,7 +2071,10 @@ impl Chat {
                 let Some(inst) = entry.wasm.as_mut() else {
                     return;
                 };
-                (inst.on_event("broadcast", name, payload), inst.pump_actions())
+                (
+                    inst.on_event("broadcast", name, payload),
+                    inst.pump_actions(),
+                )
             };
             match res {
                 Ok(()) => {
@@ -1579,6 +2192,7 @@ impl Chat {
 
     /// 插件异常隔离（02 §4）：捕获 → toast → 会话级禁用，不影响宿主。
     fn plugin_broken(&mut self, ix: usize, err: String, cx: &mut gpui::Context<Self>) {
+        eprintln!("[pf-plugin] 插件熔断 ix={ix}: {err}");
         let Some(entry) = self.plugins.plugins.get_mut(ix) else {
             return;
         };
@@ -1728,6 +2342,30 @@ pub(crate) fn topbar_menu_icon_path(entry: &PluginEntry) -> Option<SharedString>
     Some(contrib_icon_path(&entry.manifest.id, &tb.icon))
 }
 
+impl Chat {
+    /// 会话列表徽标（契约 v3）：命中该会话的**全部**徽标 → [(icon 资产路径, tone)]，
+    /// 每插件一条（owner 唯一）。绘制归宿主：从右到左、间隔 10px 全画出（用户定夺
+    /// 2026-10-28），不裁不并。
+    pub(crate) fn plugin_badge(&self, session: &std::path::Path) -> Vec<(SharedString, String)> {
+        badges_for(&self.plugins.badges, session)
+    }
+}
+
+/// 命中会话的全部徽标（纯函数，测试锚点）：过滤 + icon 映射，**保序**
+/// （声明序 = 绘制从右到左，首条最右）。
+pub(crate) fn badges_for(
+    badges: &[PluginBadge],
+    session: &std::path::Path,
+) -> Vec<(SharedString, String)> {
+    badges
+        .iter()
+        .filter(|b| {
+            crate::services::workspace::same_path(std::path::Path::new(&b.session), session)
+        })
+        .map(|b| (contrib_icon_path(&b.owner, &b.icon), b.tone.clone()))
+        .collect()
+}
+
 /// 贡献项图标三来源映射：宿主内置名 / `assets:<名>` / `assets/` 相对路径。
 fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
     // `assets/` 是目录结构的一段，**不能剥**——曾剥掉导致
@@ -1741,11 +2379,122 @@ fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
     }
 }
 
-pub(crate) use panel::{cell_menu_layer, plugin_panel_view};
+pub(crate) use panel::{cell_menu_layer, plugin_panel_view, plugin_popup_layer};
+
+/// 会话功能栏插件 icon（契约 v3 fn_bar）：每插件一颗 icon 钮（tone 着色、
+/// tip 悬浮），点击 = fn_bar.command 回环（env 带当前会话键）。
+pub(crate) fn fn_bar_plugin_elements(
+    chat: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+) -> Vec<gpui::AnyElement> {
+    // 当前会话键：与 pi 侧 sessionManager.getSessionId() 同源（004 §7-1）
+    // 会话键口径：session_file 优先（跨进程重启稳定），退 session_id；
+    // 与 ext 门控双口径、automation fnbar_click 同一套
+    let session_key = chat
+        .pool
+        .runtimes
+        .get(&chat.pool.active_key)
+        .and_then(|rt| {
+            rt.read(cx)
+                .state
+                .as_ref()
+                .and_then(|s| s.session_file.clone().or_else(|| s.session_id.clone()))
+        })
+        .unwrap_or_default();
+    let chromes = chat.plugin_fn_bar_chrome(&session_key, cx);
+    let weak = cx.entity().downgrade();
+    chromes
+        .into_iter()
+        .map(|(ix, icon_path, tone, tip)| {
+            let t = crate::appearance::theme::theme();
+            // 002：绿=已绑定。kitchen 等主题 accent 是红，fn_bar 的 accent
+            // 固定映射主题绿（appearance::UNREAD，与旧版微信 icon 同色）
+            let color = if tone == "accent" {
+                crate::appearance::theme::UNREAD
+            } else {
+                t.text_muted
+            };
+            let weak = weak.clone();
+            let key = session_key.clone();
+            let mut el = div()
+                .id(SharedString::from(format!("pf-fnbar-{ix}")))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(28.))
+                .h(px(28.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(t.bg_hover)));
+            if !tip.is_empty() {
+                el = el.with_tip_text(tip);
+            }
+            el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                let _ = weak.update(cx, |c, cx| {
+                    c.plugin_fn_bar_click(ix, &key, window, cx);
+                    cx.notify();
+                });
+            })
+            .child(
+                gpui::svg()
+                    .path(icon_path)
+                    .text_color(rgb(color))
+                    .size(px(18.)), // 002 §安装1：fn 注册槽 icon 用大样式（LG 18）
+            )
+            .into_any_element()
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_badge_multi_owner_same_session_all_kept() {
+        // 多插件同会话：全部保留、保序（从右到左 = 声明序），不裁不并（用户定夺 2026-10-28）
+        let ses = "C:/x/a.jsonl";
+        let badges = vec![
+            PluginBadge {
+                owner: "pf-wxbot".into(),
+                session: ses.into(),
+                icon: "assets:wx.svg".into(),
+                tone: "accent".into(),
+            },
+            PluginBadge {
+                owner: "other".into(),
+                session: ses.into(),
+                icon: "assets:o.svg".into(),
+                tone: "faint".into(),
+            },
+            PluginBadge {
+                owner: "third".into(),
+                session: "C:/x/b.jsonl".into(),
+                icon: "assets:t.svg".into(),
+                tone: "accent".into(),
+            },
+        ];
+        let hit = badges_for(&badges, std::path::Path::new(ses));
+        assert_eq!(hit.len(), 2);
+        assert_eq!(
+            hit[0],
+            ("plugins/pf-wxbot/assets/wx.svg".into(), "accent".into())
+        );
+        assert_eq!(
+            hit[1],
+            ("plugins/other/assets/o.svg".into(), "faint".into())
+        );
+        // 路径大小写变体也命中（same_path 归一化）
+        assert_eq!(
+            badges_for(&badges, std::path::Path::new("c:/X/A.jsonl")).len(),
+            2
+        );
+        // 空列表 → 空
+        assert!(badges_for(&[], std::path::Path::new(ses)).is_empty());
+    }
+
+    #[allow(dead_code)]
+    fn __anchor() {}
 
     fn write_manifest(dir: &Path, body: &str) -> PathBuf {
         std::fs::create_dir_all(dir).unwrap();
@@ -1821,7 +2570,9 @@ entry = "main.js"
         let dir2 = tmp.join("dup");
         write_manifest(
             &dir2,
-            &format!("{body}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"第二条\" }}\nicon = \"bolt\"\n"),
+            &format!(
+                "{body}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"第二条\" }}\nicon = \"bolt\"\n"
+            ),
         );
         std::fs::write(dir2.join("main.js"), "export function render(){{}}").unwrap();
         assert!(parse_manifest(&dir2).is_err(), "topbar_menu 只能声明一个");
@@ -1833,9 +2584,7 @@ entry = "main.js"
     #[test]
     fn manifest_sessions_parse() {
         let tmp = std::env::temp_dir().join(format!("pf-sessions-test-{}", std::process::id()));
-        let body = format!(
-            "{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-wxbot-\"\n"
-        );
+        let body = format!("{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-wxbot-\"\n");
         let dir = tmp.join("quick-panel");
         write_manifest(&dir, &body);
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
@@ -1865,7 +2614,10 @@ entry = "main.js"
         let tmp = std::env::temp_dir().join(format!("pf-dock-test-{}", std::process::id()));
         // tab 形态
         let dir = tmp.join("quick-panel");
-        write_manifest(&dir, &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"tab\""));
+        write_manifest(
+            &dir,
+            &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"tab\""),
+        );
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
         std::fs::create_dir_all(dir.join("assets")).unwrap();
         std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
@@ -1884,7 +2636,13 @@ entry = "main.js"
 
         // 非法值拒装（封闭词表）
         let dir = tmp.join("quick-panel");
-        write_manifest(&dir, &GOOD.replace("entry = \"main.js\"", "entry = \"main.js\"\ndock = \"sidebar\""));
+        write_manifest(
+            &dir,
+            &GOOD.replace(
+                "entry = \"main.js\"",
+                "entry = \"main.js\"\ndock = \"sidebar\"",
+            ),
+        );
         let e = parse_manifest(&dir).unwrap_err();
         assert!(e.contains("dock"), "错误应提及 dock：{e}");
 
@@ -1912,6 +2670,71 @@ entry = "main.js"
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
         let m = parse_manifest(&dir).expect("无 pi_extensions 应通过");
         assert!(m.pi_extensions.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 契约 v3 fn_bar / popups 解析：入清单 + command 必填 + size 封闭词表
+    #[test]
+    fn manifest_fn_bar_and_popups_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-v3-test-{}", std::process::id()));
+        let body = format!(
+            "{GOOD}
+[[contributes.fn_bar]]
+command = \"bind\"
+
+[[contributes.popups]]
+id = \"qr\"
+title = {{ zh = \"绑定微信\" }}
+size = \"MD\"
+entry = \"main.js\"
+"
+        );
+        let dir = tmp.join("quick-panel");
+        write_manifest(&dir, &body);
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+        let m = parse_manifest(&dir).expect("v3 清单应通过");
+        assert_eq!(m.fn_bar.as_ref().unwrap().command, "bind");
+        assert_eq!(m.popups.len(), 1);
+        assert_eq!(m.popups[0].id, "qr");
+        assert_eq!(m.popups[0].size, "MD");
+        // fn_bar 缺 command = 拒
+        let dir = tmp.join("bad-cmd");
+        write_manifest(
+            &dir,
+            &body.replace(
+                "command = \"bind\"
+",
+                "",
+            ),
+        );
+        assert!(parse_manifest(&dir).is_err());
+        // popup size 封闭词表
+        let dir = tmp.join("bad-size");
+        write_manifest(&dir, &body.replace("size = \"MD\"", "size = \"XL\""));
+        assert!(parse_manifest(&dir).is_err());
+        // fn_bar / popups 也是进驻面：仅这两段的包不是纯库包
+        let dir = tmp.join("pf-wxbot");
+        write_manifest(
+            &dir,
+            "schema = 3
+id = \"pf-wxbot\"
+title = { zh = \"x\" }
+version = \"0.1.0\"
+
+[[contributes.fn_bar]]
+command = \"bind\"
+
+[[contributes.popups]]
+id = \"qr\"
+title = { zh = \"弹窗\" }
+entry = \"main.js\"
+",
+        );
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        let m = parse_manifest(&dir).expect("仅 fn_bar+popups 的包应通过");
+        assert!(m.fn_bar.is_some() && m.popups.len() == 1);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

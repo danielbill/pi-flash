@@ -63,9 +63,25 @@ pub enum JsAction {
     NewSession,
     /// 意图调用：新建插件认领会话（契约 v2.4 sessions）。ctx 同步无返回值
     /// （动作队列模型），宿主建线后经 broadcast "claim" 事件回推 key。
-    NewDraft { prefix: String, cwd: String },
+    NewDraft {
+        prefix: String,
+        cwd: String,
+    },
     /// 把文本填进输入框（**只预填、不代发**：发不发由用户决定）
     AskPi(String),
+    /// 打开插件声明的 popups 条目（契约 v3 act.openPopup；非模态，宿主管窗体）
+    OpenPopup(String),
+    /// 契约 v3：会话列表徽标（落时间位置；owner = 插件 id，多插件互不覆盖）
+    SetBadge {
+        session: String,
+        icon: String,
+        tone: String,
+    },
+    ClearBadge {
+        session: String,
+    },
+    /// 关闭插件弹窗（契约 v3 act.closePopup）
+    ClosePopup(String),
 }
 
 /// 一个已装载的 JS 插件实例（全局单例：面板开着时右键复用同一份 ctx）。
@@ -74,6 +90,19 @@ pub struct JsPlugin {
     ctx: Context,
     /// 保活宿主（闭包里持的是它的 Rc 克隆）
     _host: Rc<RefCell<dyn JsHost>>,
+    /// JS 调用死线（ms 时间戳；0 = 未布防）。每次入口调用前刷新为
+    /// now+超时；超时触发 rquickjs 中断 = JS 失控抛异常而非挂死 UI 线程。
+    deadline: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// 单次 JS 调用上限（ms）。插件逻辑是清单级小计算，5s 已是百倍宽裕。
+const JS_CALL_DEADLINE_MS: u64 = 5_000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl JsPlugin {
@@ -111,6 +140,17 @@ impl JsPlugin {
         let rt = Runtime::new().map_err(|e| e.to_string())?;
         // v1 内存上限：插件逻辑是清单级小计算，32MB 足够宽裕
         rt.set_memory_limit(32 * 1024 * 1024);
+        // JS 调用死线：入口方法前 arm（deadline=now+5s），超时中断抛异常
+        // ——插件 JS 失控（死循环）不再挂死 UI 线程（2026 真机卡死教训）
+        let deadline: std::sync::Arc<std::sync::atomic::AtomicU64> =
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        {
+            let dl = deadline.clone();
+            rt.set_interrupt_handler(Some(Box::new(move || {
+                let limit = dl.load(std::sync::atomic::Ordering::Relaxed);
+                limit != 0 && now_ms() >= limit
+            })));
+        }
         let ctx = Context::full(&rt).map_err(|e| e.to_string())?;
 
         let glue_host = host.clone();
@@ -194,6 +234,32 @@ impl JsPlugin {
                     }),
                 )?;
             }
+            // 契约 v3 sessions.setBadge / clearBadge（会话列表时间位徽标）
+            let h = glue_host.clone();
+            g.set(
+                "__pf_set_badge",
+                Func::from(move |json: String| {
+                    let v: serde_json::Value =
+                        serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    h.borrow_mut().queue(JsAction::SetBadge {
+                        session: s("session"),
+                        icon: s("icon"),
+                        tone: if s("tone").is_empty() { "accent".into() } else { s("tone") },
+                    });
+                }),
+            )?;
+            let h = glue_host.clone();
+            g.set(
+                "__pf_clear_badge",
+                Func::from(move |json: String| {
+                    let v: serde_json::Value =
+                        serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+                    h.borrow_mut().queue(JsAction::ClearBadge {
+                        session: v.get("session").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    });
+                }),
+            )?;
             // 双参动作（契约 v2.4 sessions）：新建插件认领会话
             let h = glue_host.clone();
             g.set(
@@ -244,6 +310,8 @@ globalThis.__pf_ctx = {{
   // 契约 v2.4 会话槽 RPC 面：ctx.sessions.newDraft（扁平 newDraft 为旧兼容别名）
   sessions: {{
     newDraft: (p, c) => globalThis.__pf_new_draft(p == null ? "" : String(p), c == null ? "" : String(c)),
+    setBadge: (b) => globalThis.__pf_set_badge(JSON.stringify(b ?? {{}})),
+    clearBadge: (b) => globalThis.__pf_clear_badge(JSON.stringify(b ?? {{}})),
   }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
   onMenu: (id, fn) => {{ globalThis["__pf_menu_" + id] = fn; }},
@@ -283,13 +351,23 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
             _rt: rt,
             ctx,
             _host: host,
+            deadline,
         })
+    }
+
+    /// 布防死线：本次入口调用最多 JS_CALL_DEADLINE_MS。
+    fn arm_deadline(&self) {
+        self.deadline.store(
+            now_ms() + JS_CALL_DEADLINE_MS,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// `activate(ctx)`：注册 onMenu / onCommand / onPanelOpen（无 activate 导出 = 纯渲染插件，放行）。
     pub fn activate(&self) -> Result<(), String> {
+        self.arm_deadline();
         self.ctx
-            .with(|ctx| -> Result<(), rquickjs::Error> {
+            .with(|ctx| -> rquickjs::Result<()> {
                 let f: Function = ctx.globals().get("__pf_activate")?;
                 f.call::<(), ()>(())?;
                 Ok(())
@@ -299,6 +377,7 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
 
     /// `render(ctx)` → 组件树 JSON（01 规范；v2 无 rows）。
     pub fn render_json(&self) -> Result<String, String> {
+        self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<String, rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_render_str")?;
@@ -309,6 +388,7 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
 
     /// 触发右键菜单回调 `onMenu(id, {path, fileIcon})`（未注册 = no-op）。
     pub fn fire_menu(&self, id: &str, path: &str, file_icon: &str) -> Result<(), String> {
+        self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_menu")?;
@@ -318,8 +398,22 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
             .map_err(|e| e.to_string())
     }
 
+    /// 触发命令回调（env 负载形态，契约 v3）：fn_bar 点击 =
+    /// {"session":{"key":"…"}}，switch 翻转 = {"value":bool}；未注册 = no-op。
+    pub fn fire_command_env(&self, id: &str, env_json: &str) -> Result<(), String> {
+        self.arm_deadline();
+        self.ctx
+            .with(|ctx| -> Result<(), rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fire_cmd_env")?;
+                f.call::<(&str, &str), ()>((id, env_json))?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
     /// 触发组件菜单回调 `onCommand(id, {path})`（未注册 = no-op）。
     pub fn fire_command(&self, id: &str, path: &str) -> Result<(), String> {
+        self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_cmd")?;
@@ -329,8 +423,33 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
             .map_err(|e| e.to_string())
     }
 
+    /// 调 fn_bar(ctx, env)（契约 v3 功能栏 chrome）。未导出 → Ok(None)。
+    /// 返回 JSON 串 {"icon":"…","tone":"…","tip":…}。
+    pub fn fn_bar_json(&self, env_json: &str) -> Result<Option<String>, String> {
+        self.arm_deadline();
+        self.ctx
+            .with(|ctx| -> rquickjs::Result<String> {
+                let f: Function = ctx.globals().get("__pf_fn_bar_str")?;
+                f.call::<(&str,), String>((env_json,))
+            })
+            .map(|s| if s == "null" { None } else { Some(s) })
+            .map_err(|e| e.to_string())
+    }
+
+    /// render_popup(ctx)（契约 v3 弹窗内容；无导出退回 render）→ 树 JSON。
+    pub fn render_popup_json(&self) -> Result<String, String> {
+        self.arm_deadline();
+        self.ctx
+            .with(|ctx| -> Result<String, rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_render_popup_str")?;
+                f.call::<(), String>(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
     /// 触发面板激活回调 `onPanelOpen()`（未注册 = no-op）。
     pub fn fire_panel_open(&self) -> Result<(), String> {
+        self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_panel_open")?;
@@ -343,6 +462,7 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
     /// 触发组件状态广播回调 `onBroadcast(name, payload)`（未注册 = no-op）。
     /// payload = 负载 JSON 串（契约 v2.4 broadcast_events）。
     pub fn fire_broadcast(&self, name: &str, payload: &str) -> Result<(), String> {
+        self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_broadcast")?;
@@ -439,6 +559,111 @@ export function render(ctx) {
 }
 "#;
 
+    /// 契约 v3 面：fn_bar chrome / fire_command_env / act.openPopup /
+    /// render_popup（无导出退回 render）。
+    #[test]
+    fn v3_fn_bar_command_env_popup() {
+        let dir = std::env::temp_dir().join("pf-js-v3-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("main.js");
+        std::fs::write(
+            &entry,
+            r#"
+export function activate(ctx) {
+  ctx.onCommand("bind", (env) => {
+    ctx.fs.write("env.json", JSON.stringify(env));
+  });
+  ctx.onCommand("toggle-enabled", (env) => {
+    ctx.fs.write("switch.json", JSON.stringify(env));
+  });
+  ctx.act.openPopup("qr");
+}
+export function fn_bar(ctx, env) {
+  return {
+    icon: "assets:wx.svg",
+    tone: env.session && env.session.key === "s1" ? "accent" : "text.faint",
+    tip: { zh: "微信机器人" },
+  };
+}
+export function render_popup(ctx) {
+  return { type: "column", children: [
+    { type: "switch", value: true, command: "toggle-enabled" },
+  ] };
+}
+export function render(ctx) {
+  return { type: "text", value: { zh: "旧面" } };
+}
+"#,
+        )
+        .unwrap();
+        let host = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let plugin = JsPlugin::load(&entry, "/tmp/pf", host.clone()).expect("load");
+        plugin.activate().expect("activate");
+        // act.openPopup → 动作入队
+        assert_eq!(
+            host.borrow().actions.clone(),
+            vec![JsAction::OpenPopup("qr".into())]
+        );
+        // fn_bar chrome：env 带会话键 → 绿；换键 → 灰
+        let green = plugin
+            .fn_bar_json(r#"{"session":{"key":"s1"}}"#)
+            .unwrap()
+            .unwrap();
+        assert!(
+            green.contains("assets:wx.svg") && green.contains("accent"),
+            "{green}"
+        );
+        let grey = plugin
+            .fn_bar_json(r#"{"session":{"key":"s2"}}"#)
+            .unwrap()
+            .unwrap();
+        assert!(grey.contains("text.faint"), "{grey}");
+        // 命令 env 负载形态：switch 翻转 {value:bool} / bind {session:{key}}
+        plugin
+            .fire_command_env("toggle-enabled", r#"{"value":false}"#)
+            .unwrap();
+        assert_eq!(
+            host.borrow_mut()
+                .files
+                .get("switch.json")
+                .map(String::as_str),
+            Some(r#"{"value":false}"#)
+        );
+        plugin
+            .fire_command_env("bind", r#"{"session":{"key":"sA"}}"#)
+            .unwrap();
+        assert_eq!(
+            host.borrow_mut().files.get("env.json").map(String::as_str),
+            Some(r#"{"session":{"key":"sA"}}"#)
+        );
+        // 弹窗内容：render_popup 优先（不含旧面文案）
+        let popup = plugin.render_popup_json().unwrap();
+        assert!(
+            popup.contains("switch") && !popup.contains("旧面"),
+            "{popup}"
+        );
+        // 未导出 fn_bar 的插件 → None（负缓存语义由 app 侧管）
+        let dir2 = std::env::temp_dir().join("pf-js-v3-nofnbar");
+        std::fs::create_dir_all(&dir2).unwrap();
+        let entry2 = dir2.join("main.js");
+        std::fs::write(
+            &entry2,
+            "export function render(ctx) { return { type: \"text\", value: { zh: \"x\" } }; }",
+        )
+        .unwrap();
+        let host2 = Rc::new(RefCell::new(TestHost {
+            files: Default::default(),
+            actions: Vec::new(),
+        }));
+        let p2 = JsPlugin::load(&entry2, "/tmp/pf", host2).expect("load");
+        assert!(p2.fn_bar_json("{}").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
     #[test]
     fn host_proof_placeholder_and_nonce_tag() {
         // 未覆写 host_proof 的宿主（TestHost 同 fork 自建款）：占位符 fail-closed
@@ -502,10 +727,7 @@ export function render(ctx) {
 
         // 广播带项目无模型 → 负载直达（可空字段走 null）
         plugin
-            .fire_broadcast(
-                "inputpanel",
-                r#"{"project":"D:/work","model":null}"#,
-            )
+            .fire_broadcast("inputpanel", r#"{"project":"D:/work","model":null}"#)
             .expect("fire");
         let v: serde_json::Value = serde_json::from_str(&plugin.render_json().unwrap()).unwrap();
         assert_eq!(v["value"], "D:/work|-");

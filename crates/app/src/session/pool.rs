@@ -373,7 +373,12 @@ impl Chat {
             self.subscribe_runtime(&rt, cx);
             return Some(rt);
         }
-        if let Some(rt) = self.pool.runtimes.get(crate::Chat::PLACEHOLDER_KEY).cloned() {
+        if let Some(rt) = self
+            .pool
+            .runtimes
+            .get(crate::Chat::PLACEHOLDER_KEY)
+            .cloned()
+        {
             return Some(rt);
         }
         let rt = cx.new(|_| {
@@ -583,7 +588,8 @@ impl Chat {
             .map(|c| (c.key.clone(), c.prefix.clone(), c.plugin_id.clone()))
         {
             let (_old, prefix, plugin_id) = c;
-            self.plugins.claims
+            self.plugins
+                .claims
                 .iter_mut()
                 .find(|c| c.plugin_id == plugin_id)
                 .map(|c| c.key = path_key.clone());
@@ -597,7 +603,12 @@ impl Chat {
                 Some(&prefix),
             );
             // 交接文件同步（ext 读的是 key，草稿键已退役）
-            if let Some(e) = self.plugins.plugins.iter().find(|e| e.manifest.id == plugin_id) {
+            if let Some(e) = self
+                .plugins
+                .plugins
+                .iter()
+                .find(|e| e.manifest.id == plugin_id)
+            {
                 let f = e.manifest.dir.join("data").join("claim.json");
                 if f.exists() {
                     let _ = std::fs::write(

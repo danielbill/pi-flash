@@ -78,7 +78,8 @@ pub(crate) fn main_column(
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
     // 项目|会话列表为空、或「新建会话」都落在这里。微信线除外（皮肤
     // `keep_on_empty`）：它空会话也停在会话页，设置页由功能页分段承担。
-    let new_session_page = rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
+    let new_session_page =
+        rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -102,7 +103,9 @@ pub(crate) fn main_column(
         .bg(rgb(t.bg))
         .text_color(rgb(t.text))
         .font_family(sf.family.clone())
-        .when(!new_session_page, |d| d.child(session_fn_bar(chat, page_skin, cx)))
+        .when(!new_session_page, |d| {
+            d.child(session_fn_bar(chat, page_skin, cx))
+        })
         .child(
             div()
                 .id("chat-and-nav")
@@ -193,14 +196,14 @@ fn session_fn_bar(
     // 淡色 chevron（编辑器面包屑同款 ">"），再接原有三钮。（2026-10-20
     // 用户定案：改回一直展示，不再随功能面板收拢态切换）。无项目态显示占位名。
     let project: Option<SharedString> = Some(
-            chat.ui_project()
-                .map(|p| {
-                    p.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| p.to_string_lossy().to_string())
-                })
-                .unwrap_or_else(|| tr("statusbar.no_project").to_string())
-                .into(),
+        chat.ui_project()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| tr("statusbar.no_project").to_string())
+            .into(),
     );
     // 会话组目录（sfbar-sessdir）：pi sessions 根下按 cwd 编码的组目录，
     // 还没建（无落盘会话）退回 sessions 根——与 psp 项目详情卡同口径；
@@ -281,6 +284,10 @@ fn session_fn_bar(
         // 线的操作栏注入簇（模版注入点 ①，060 微信线 = 微信 icon 三色 +
         // 启停开关/说明文字 + 新建会话 + 重新绑定；002 操作栏定序）
         .children(skin.fn_bar.map(|f| f(chat, cx)))
+        // 插件功能栏注册槽（契约 v3 fn_bar）：**功能栏右侧**（002，弹性占位
+        // 把插件 icon 推到右端；注册序从右到左），点击回环 command（env 带会话键）
+        .child(div().flex_1())
+        .children(crate::pf_plugin::fn_bar_plugin_elements(chat, cx))
         .into_any_element()
 }
 

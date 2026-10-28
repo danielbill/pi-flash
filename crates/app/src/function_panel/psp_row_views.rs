@@ -249,20 +249,48 @@ pub(crate) fn session_row_view(
                 )
                 // 时间区（v55 fmtAgo）：固定宽右对齐成一列（宽度与左侧图标区+
                 // padding 视觉平衡，标题可用空间最大化）
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .w(px(38.))
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        // 时间 = 面板字号−2（2026-10-10 定夺，原 −1）
-                        .text_size(crate::appearance::ui_size(10.))
-                        .text_color(rgb(t.text_faint))
-                        .child(SharedString::from(crate::services::format::fmt_ago(
-                            info.modified,
-                        ))),
-                ),
+                // 时间区：插件徽标（契约 v3 sessions.setBadge，002「时间位置放微信
+                // icon」）优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
+                // 用户定夺 2026-10-28）；没徽标才回落相对时间
+                .child({
+                    let badges = chat.plugin_badge(&info.path);
+                    if badges.is_empty() {
+                        div()
+                            .flex_shrink_0()
+                            .w(px(38.))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            // 时间 = 面板字号−2（2026-10-10 定夺，原 −1）
+                            .text_size(crate::appearance::ui_size(10.))
+                            .text_color(rgb(t.text_faint))
+                            .child(SharedString::from(crate::services::format::fmt_ago(
+                                info.modified,
+                            )))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_shrink_0()
+                            .min_w(px(38.))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(10.))
+                            .children(badges.into_iter().rev().map(|(icon, tone)| {
+                                let color = if tone == "accent" {
+                                    crate::appearance::theme::UNREAD
+                                } else {
+                                    t.text_faint
+                                };
+                                gpui::svg()
+                                    .path(icon)
+                                    .text_color(rgb(color))
+                                    .size(px(crate::ui::tokens::icon::MD))
+                            }))
+                            .into_any_element()
+                    }
+                }),
         )
         .into_any_element()
 }
