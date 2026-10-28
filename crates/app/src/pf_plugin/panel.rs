@@ -1606,6 +1606,7 @@ fn theme_color(name: &str, t: &'static Theme) -> u32 {
     match name {
         "bg" => t.bg,
         "bg_panel" => t.bg_panel,
+        "chrome" => t.chrome, // topbar/statusbar 同层
         "border" => crate::appearance::theme::border_alpha(t, 0xC0),
         "white" => 0xffffff,
         _ => tone_color(name, t),
@@ -1653,7 +1654,7 @@ pub(crate) fn plugin_popup_layer(
     {
         Some("SM") => (400., 420.),
         Some("LG") => (600., 640.),
-        _ => (420., 560.), // MD（缺省）：宽度 -40、高度容纳 360 码（2026-10-28）
+        _ => (420., 600.), // MD（缺省）：宽 -40，高容纳 396 码（用户定）
     };
     let mut card = div()
         .occlude()
@@ -1662,7 +1663,7 @@ pub(crate) fn plugin_popup_layer(
         .w(px(w))
         .h(px(h))
         .max_h_full()
-        .bg(rgb(t.bg))
+        .bg(rgb(t.chrome)) // 卡片底色 = topbar 同层（用户定）
         .border_1()
         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
         .rounded(px(crate::ui::tokens::radius::CARD))
