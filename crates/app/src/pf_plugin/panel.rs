@@ -39,10 +39,12 @@ fn sp_token(name: &str) -> Option<f32> {
 }
 
 fn sp(node: &Value, key: &str, default: f32) -> f32 {
-    node.get(key)
-        .and_then(Value::as_str)
-        .and_then(sp_token)
-        .unwrap_or(default)
+    // 数字 = 直接像素（弹窗要精确对齐老 UI 的 16/12 这类值）；字符串 = SP token
+    match node.get(key) {
+        Some(Value::Number(n)) => n.as_f64().map(|v| v as f32).unwrap_or(default),
+        Some(Value::String(t)) => sp_token(t).unwrap_or(default),
+        _ => default,
+    }
 }
 
 /// 面板内边距（**唯一来源**）：外壳四周留白 + 列数公式共用同一份，
@@ -172,6 +174,12 @@ pub(crate) enum ResolvedNode {
         align_center: bool,
         /// `justify: "center"`：主轴（纵向）居中——空态提示在面板正中
         justify_center: bool,
+        /// 固定宽度（px，可选）：夹住内容列（弹窗内容对齐二维码方框这类场景）
+        w: Option<f32>,
+        /// 卡片能力（可选）：底色 / 圆角 / 1px 描边（通用，非插件特例）
+        bg: Option<String>,
+        radius: Option<f32>,
+        border: Option<String>,
         children: Vec<ResolvedNode>,
     },
     Row {
@@ -356,6 +364,10 @@ pub(crate) fn resolve(node: &Value) -> Option<ResolvedNode> {
         }),
         "column" => Some(ResolvedNode::Column {
             pad: sp(node, "pad", crate::ui::tokens::space::SP5),
+            w: node.get("w").and_then(Value::as_f64).map(|v| v as f32),
+            bg: node.get("bg").and_then(Value::as_str).map(str::to_string),
+            radius: node.get("radius").and_then(Value::as_f64).map(|v| v as f32),
+            border: node.get("border").and_then(Value::as_str).map(str::to_string),
             gap: sp(node, "gap", crate::ui::tokens::space::SP2),
             align_center: node.get("align").and_then(Value::as_str) == Some("center"),
             justify_center: node.get("justify").and_then(Value::as_str) == Some("center"),
@@ -834,9 +846,25 @@ fn render_node_inner(
             gap,
             align_center,
             justify_center,
+            w,
+            bg,
+            radius,
+            border,
             children,
         } => {
             let mut col = div().flex().flex_col().gap(px(*gap)).p(px(*pad));
+            if let Some(w) = w {
+                col = col.w(px(*w)).flex_none();
+            }
+            if let Some(c) = bg {
+                col = col.bg(rgb(theme_color(c, t)));
+            }
+            if let Some(r) = radius {
+                col = col.rounded(px(*r)).overflow_hidden();
+            }
+            if let Some(c) = border {
+                col = col.border_1().border_color(rgb(theme_color(c, t)));
+            }
             if is_root {
                 // 仅根 Column 撑满面板高度（wrapper 已是 flex_col，子项
                 // flex_1 = 占满；justify_center 居中整卡）
@@ -1570,6 +1598,17 @@ fn hairline(t: &'static Theme) -> gpui::Rgba {
     gpui::rgba(crate::appearance::theme::rgba_a(t.text, 0.18))
 }
 
+/// 主题色名 → 色值（column.bg / column.border 用；与 tone 词表同一套 + 补充）。
+fn theme_color(name: &str, t: &'static Theme) -> u32 {
+    match name {
+        "bg" => t.bg,
+        "bg_panel" => t.bg_panel,
+        "border" => crate::appearance::theme::border_alpha(t, 0xC0),
+        "white" => 0xffffff,
+        _ => tone_color(name, t),
+    }
+}
+
 fn tone_color(tone: &str, t: &'static Theme) -> u32 {
     match tone {
         "text" => t.text,
@@ -1626,7 +1665,9 @@ pub(crate) fn plugin_popup_layer(
         .rounded(px(crate::ui::tokens::radius::CARD))
         .overflow_hidden();
     // 标题栏：标题 + ×（overlay 规则 5：有可见内容的卡片挂关闭钮）
+    // title 为空 = 不画标题栏（老微信弹窗无标题栏，用户 2026-10-28 定夺）
     let weak_x = weak.clone();
+    if !title.is_empty() {
     card = card.child(
         div()
             .id("pf-popup-titlebar")
@@ -1658,6 +1699,8 @@ pub(crate) fn plugin_popup_layer(
                     .child(crate::ui::icon("close", 14., t.text_muted)),
             ),
     );
+    }
+
     // 内容区：同一解释器；未就绪占位
     let content = if tree_loaded && let Some(tree) = body.as_ref().and_then(resolve) {
         render_root(&tree, ix, &weak, t, &popup_render_ctx(chat, ix))

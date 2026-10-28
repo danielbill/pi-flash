@@ -639,9 +639,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         if !popup_ids.insert(p.id.clone()) {
             return Err(format!("pf-plugin.toml：popup id「{}」重复", p.id));
         }
-        if p.title_zh.is_empty() {
-            return Err(format!("pf-plugin.toml：popup「{}」缺 title.zh", p.id));
-        }
+        // title 可空：空 = 不画标题栏（老微信弹窗无标题栏，用户 2026-10-28 定夺）
         if m.wasm.is_none() && m.bytecode.is_none() && !dir.join(&p.entry).is_file() {
             return Err(format!(
                 "pf-plugin.toml：popups entry「{}」不存在（02 §2）",
