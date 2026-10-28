@@ -71,6 +71,8 @@ pub(crate) fn tick_session(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
     }
     chat.plugins.session_last = Some(sess.clone());
     let Some(key) = sess else { return };
+    // PF 钩子 page_actived：同一时机把当前页 key 推给插件（PF 独有概念）
+    chat.plugin_page_active(&key, cx);
     let payload = serde_json::json!({ "key": key }).to_string();
     for ix in 0..chat.plugins.plugins.len() {
         chat.plugin_broadcast_fire(ix, SESSION, &payload, cx);

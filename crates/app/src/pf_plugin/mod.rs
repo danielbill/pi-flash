@@ -848,6 +848,15 @@ pub(crate) struct PluginEntry {
 
 /// 会话列表徽标（契约 v3 sessions.setBadge）：落时间位置，owner = 插件 id。
 #[derive(Debug, Clone)]
+/// PF 钩子 session_list_render 的缓存条目（徽标是渲染结果，缓存只省 JS 调用）。
+pub(crate) struct RowCache {
+    pub pkg: String,
+    pub session_key: String,
+    /// None = 本行无徽标（负缓存）
+    pub badge: Option<(String, String)>,
+    pub at: std::time::Instant,
+}
+
 pub(crate) struct PluginBadge {
     pub owner: String,
     pub session: String,
@@ -896,8 +905,10 @@ pub(crate) struct PluginUi {
     pub popup_gen: u64,
     /// fn_bar chrome 缓存（键 = pkg + session_key，TTL 见 FnBarCache 用法）。
     pub fn_bar_cache: Vec<FnBarCache>,
-    /// 会话列表徽标（契约 v3 sessions.setBadge；owner 互不覆盖）。
+    /// 会话列表徽标（旧命令式路径，保留字段供存量包；新路径 = session_list_render）
     pub badges: Vec<PluginBadge>,
+    /// PF 钩子 session_list_render 的渲染缓存（pkg + 会话键，1s TTL）
+    pub row_cache: Vec<RowCache>,
 }
 
 /// 插件认领槽记录（匿名归属：宿主只认识 "某插件 × 某 key"）。
@@ -2185,6 +2196,38 @@ impl Chat {
     /// 组件状态广播派发（契约 v2.4 broadcast_events）。纯数据回调：
     /// 窗口相关动作（run/edit/终端）在无窗口面不可达即丢弃，Toast 照走；
     /// 处理完照重渲染规则刷新面板（wasm = render 回灌）。
+    /// PF 钩子 page_actived：把「当前页会话 key」推给每个 JS 插件
+    /// （PF 独有概念，pi 进程没有“当前页”；插件据此记住身份，禁止再猜）。
+    pub(crate) fn plugin_page_active(&mut self, session_key: &str, cx: &mut gpui::Context<Self>) {
+        if session_key.is_empty() {
+            return;
+        }
+        let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
+        let n = self.plugins.plugins.len();
+        for ix in 0..n {
+            let ok = {
+                let e = &self.plugins.plugins[ix];
+                !e.disabled && e.wasm.is_none()
+            };
+            if !ok || !self.plugin_ready(ix, cx) {
+                continue;
+            }
+            let r = {
+                let entry = &self.plugins.plugins[ix];
+                let host = entry.host.as_ref().unwrap().clone();
+                host.borrow_mut().actions.clear();
+                let r = entry.js.as_ref().unwrap().page_active(&env);
+                host.borrow_mut().actions.clear();
+                r
+            };
+            if let Err(e) = r {
+                self.plugin_broken(ix, e, cx);
+            }
+        }
+        self.plugins.row_cache.clear();
+        self.plugins.fn_bar_cache.clear();
+    }
+
     pub(crate) fn plugin_broadcast_fire(
         &mut self,
         ix: usize,
@@ -2476,8 +2519,78 @@ impl Chat {
     /// 会话列表徽标（契约 v3）：命中该会话的**全部**徽标 → [(icon 资产路径, tone)]，
     /// 每插件一条（owner 唯一）。绘制归宿主：从右到左、间隔 10px 全画出（用户定夺
     /// 2026-10-28），不裁不并。
-    pub(crate) fn plugin_badge(&self, session: &std::path::Path) -> Vec<(SharedString, String)> {
-        badges_for(&self.plugins.badges, session)
+    pub(crate) fn plugin_badge(
+        &mut self,
+        session: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<(SharedString, String)> {
+        let key = session.to_string_lossy().into_owned();
+        let mut out: Vec<(SharedString, String)> = badges_for(&self.plugins.badges, session);
+        const TTL: std::time::Duration = std::time::Duration::from_millis(1000);
+        let n = self.plugins.plugins.len();
+        for ix in 0..n {
+            let (pkg, has_js) = {
+                let e = &self.plugins.plugins[ix];
+                (e.manifest.pkg.clone(), !e.disabled && e.wasm.is_none())
+            };
+            if !has_js {
+                continue;
+            }
+            if let Some(c) = self
+                .plugins
+                .row_cache
+                .iter()
+                .find(|c| c.pkg == pkg && c.session_key == key && c.at.elapsed() < TTL)
+            {
+                if let Some((icon, tone)) = &c.badge {
+                    let id = self.plugins.plugins[ix].manifest.id.clone();
+                    out.push((contrib_icon_path(&id, icon), tone.clone()));
+                }
+                continue;
+            }
+            if !self.plugin_ready(ix, cx) {
+                continue;
+            }
+            let env = serde_json::json!({ "session": { "key": key } }).to_string();
+            let r = {
+                let entry = &self.plugins.plugins[ix];
+                let host = entry.host.as_ref().unwrap().clone();
+                host.borrow_mut().actions.clear();
+                let r = entry.js.as_ref().unwrap().session_row_json(&env);
+                host.borrow_mut().actions.clear();
+                r
+            };
+            let badge = match r {
+                Ok(Some(json)) => {
+                    let v: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+                    let icon = v
+                        .get("icon")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let tone = v
+                        .get("tone")
+                        .and_then(Value::as_str)
+                        .unwrap_or("accent")
+                        .to_string();
+                    if icon.is_empty() {
+                        None
+                    } else {
+                        let id = self.plugins.plugins[ix].manifest.id.clone();
+                        out.push((contrib_icon_path(&id, &icon), tone.clone()));
+                        Some((icon, tone))
+                    }
+                }
+                _ => None,
+            };
+            self.plugins.row_cache.push(RowCache {
+                pkg,
+                session_key: key.clone(),
+                badge,
+                at: std::time::Instant::now(),
+            });
+        }
+        out
     }
 }
 
@@ -2517,20 +2630,27 @@ pub(crate) fn fn_bar_plugin_elements(
     chat: &mut Chat,
     cx: &mut gpui::Context<Chat>,
 ) -> Vec<gpui::AnyElement> {
-    // 当前会话键：与 pi 侧 sessionManager.getSessionId() 同源（004 §7-1）
-    // 会话键口径：session_file 优先（跨进程重启稳定），退 session_id；
-    // 与 ext 门控双口径、automation fnbar_click 同一套
-    let session_key = chat
-        .pool
-        .runtimes
-        .get(&chat.pool.active_key)
-        .and_then(|rt| {
-            rt.read(cx)
-                .state
-                .as_ref()
-                .and_then(|s| s.session_file.clone().or_else(|| s.session_id.clone()))
-        })
-        .unwrap_or_default();
+    // 当前会话键：**以标签页的会话路径为准**（= 用户看到的那个会话）。
+    // 不能用「活跃 runtime 的 state.session_file」兜底：新建/刚切过去的会话还没
+    // 起自己的 pi 进程时，runtime 池里的可能是上一个会话 → 点 icon 绑到旧会话
+    // （真机：切到新会话扫码，绑定仍落在旧会话）。runtime 状态只做最后兜底。
+    let session_key = {
+        let tab = chat.pool.active_key.to_string();
+        if tab.ends_with(".jsonl") {
+            tab
+        } else {
+            chat.pool
+                .runtimes
+                .get(&chat.pool.active_key)
+                .and_then(|rt| {
+                    rt.read(cx)
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.session_file.clone().or_else(|| s.session_id.clone()))
+                })
+                .unwrap_or_default()
+        }
+    };
     let chromes = chat.plugin_fn_bar_chrome(&session_key, cx);
     let weak = cx.entity().downgrade();
     chromes

@@ -24,6 +24,7 @@ pub(crate) fn session_row_view(
     t: &'static Theme,
     window: &gpui::Window,
     cx: &gpui::Context<Chat>,
+    badges: &[(gpui::SharedString, String)],
 ) -> gpui::AnyElement {
     let Some(g) = chat.psp.projects.get(p) else {
         return div().into_any_element();
@@ -253,7 +254,7 @@ pub(crate) fn session_row_view(
                 // icon」）优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
                 // 用户定夺 2026-10-28）；没徽标才回落相对时间
                 .child({
-                    let badges = chat.plugin_badge(&info.path);
+                
                     if badges.is_empty() {
                         div()
                             .flex_shrink_0()

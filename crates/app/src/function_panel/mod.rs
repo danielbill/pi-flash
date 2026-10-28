@@ -487,12 +487,18 @@ pub(crate) fn psp_view(
             match row {
                 PspRow::Project(pi) => rows.push(project_row(chat, pi, &weak, t)),
                 PspRow::PinnedHeader => rows.push(pinned_header_row(t)),
-                PspRow::Session { p, s } => rows.push(session_row_view(
-                    chat, p, s, shift, false, &weak, t, window, cx,
-                )),
-                PspRow::PinnedSession { p, s } => rows.push(session_row_view(
-                    chat, p, s, shift, true, &weak, t, window, cx,
-                )),
+                PspRow::Session { p, s } => {
+                    let badges = row_badges(chat, p, s, cx);
+                    rows.push(session_row_view(
+                        chat, p, s, shift, false, &weak, t, window, cx, &badges,
+                    ));
+                }
+                PspRow::PinnedSession { p, s } => {
+                    let badges = row_badges(chat, p, s, cx);
+                    rows.push(session_row_view(
+                        chat, p, s, shift, true, &weak, t, window, cx, &badges,
+                    ));
+                }
                 PspRow::Pending { key } => rows.push(pending_row_view(chat, &key, shift, &weak, t)),
                 PspRow::Empty => rows.push(
                     div()
@@ -1240,4 +1246,23 @@ pub(crate) enum TreeValidation {
     None,
     Error(String),
     Warning(String),
+}
+
+/// 行徽标预算：PF 钩子 session_list_render（每行每插件一次，宿主 1s 缓存）。
+fn row_badges(
+    chat: &mut Chat,
+    p: usize,
+    s: usize,
+    cx: &mut gpui::Context<Chat>,
+) -> Vec<(gpui::SharedString, String)> {
+    let path = chat
+        .psp
+        .projects
+        .get(p)
+        .and_then(|g| g.sessions.get(s))
+        .map(|i| i.path.clone());
+    match path {
+        Some(path) => chat.plugin_badge(&path, cx),
+        None => Vec::new(),
+    }
 }
