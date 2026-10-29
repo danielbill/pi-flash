@@ -54,8 +54,6 @@ pub(crate) struct AuxUi {
     pub(crate) pi_extension_updates: services::pi_extension_updates::UpdatesState,
     /// 040-1 市场域状态簇（Pi 扩展市场页；后续多个市场在此并列）
     pub(crate) market: crate::market::MarketUi,
-    /// 微信 Bot 桥（060）：transport + 待答 ExtUi 请求
-    pub(crate) remote: remote_control::RemoteControl,
     /// 工具定义弹窗左列表选中的工具名（pi-web ToolDefinitionsPanel 的
     /// selectedToolName）
     pub(crate) tool_sel: Option<String>,
@@ -748,7 +746,6 @@ impl Chat {
                 changelog_scroll: gpui::ScrollHandle::new(),
                 pi_extension_updates: services::pi_extension_updates::UpdatesState::default(),
                 market: crate::market::MarketUi::default(),
-                remote: remote_control::RemoteControl::new(),
                 tool_sel: None,
                 sysprompt_scroll: gpui::ScrollHandle::new(),
                 decl_open: [false; 7],
@@ -911,11 +908,7 @@ impl Chat {
     /// 读的是 `ws.cwd`（桌面项目），微信会话实际在 `wx_cwd` 里干活，界面却
     /// 满眼桌面项目名。
     pub(crate) fn ui_project(&self) -> Option<&Path> {
-        if self.wx_front_active() {
-            self.aux.remote.wx_cwd().map(|p| p.as_path())
-        } else {
-            self.ws.cwd.as_deref()
-        }
+        self.ws.cwd.as_deref()
     }
 
     pub(crate) fn project(&self) -> Option<&Path> {

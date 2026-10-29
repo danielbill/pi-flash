@@ -385,16 +385,6 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 Some("search"),
                 ContentView::SessionSearch,
             ),
-            // 060/002【微信通话】：tab 归队后与别的 tab 同构——标题固定，
-            // 内容是「管理页 ⇄ 微信线会话」两副面孔（归属判据见
-            // `PanelTab::owns_view` / `Chat::wx_front_active`）。
-            crate::PanelTab::Wx => (
-                tr("remote.tab_title").into(),
-                None,
-                false,
-                Some("smartphone"),
-                ContentView::Wx,
-            ),
             // 090 插件预览页签（契约 v2.4 dock="tab"）：标题 = 清单 title
             //（随语言，宿主解释清单；零插件名硬编码），图标通用 puzzle
             crate::PanelTab::Plugin { pkg, .. } => {
@@ -437,15 +427,11 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                 .into_any_element(),
             )
         });
-        // 激活判据不能用 `content_view == tab_view` 枚举相等：微信 tab 的
-        // 「微信线会话」在类型上是 Chat（见 PanelTab::owns_view），拿\.view()
-        // 的名义值（Wx）去比会永远认不出它自己的聊天视图。
-        let wx_line = chat.wx_line_active();
         let active = chat
             .ws
             .panel_tabs
             .get(ix)
-            .is_some_and(|t| t.owns_view(chat.layout.content_view, wx_line))
+            .is_some_and(|t| t.owns_view(chat.layout.content_view))
             && chat.ws.active_panel_tab == Some(ix);
         tabs_host = tabs_host.child(content_tab(
             if is_file { "ctab-file" } else { "ctab-term" },
@@ -488,21 +474,10 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
 /// 会话视图（Obsidian 卡片融底）；点击回会话视图。
 fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    // 会话 tab = 桌面会话。**微信聊天页在前台时它不指向微信会话**（否则
-    // 影子会话不在会话列表里，标题回落成「新会话」= 幻影标签）：标题与点击
-    // 都指向「当前项目最后打开的桌面会话」，没有就落到落地会话。
-    let wechat_front = chat.wx_line_active();
-    let desktop = wechat_front.then(|| chat.desktop_session_key());
-    let active = chat.layout.content_view == ContentView::Chat && !wechat_front;
-    let title: SharedString = match &desktop {
-        Some(Some(k)) => chat.session_title_of(k, cx).into(),
-        _ => chat.session_title(cx).into(),
-    };
+    // 会话 tab = 桌面会话（060 微信线退役后无影子会话）
+    let active = chat.layout.content_view == ContentView::Chat;
+    let title: SharedString = chat.session_title(cx).into();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-        if this.wx_line_active() {
-            this.wx_leave_front(cx); // 回桌面会话（微信标签保持开着）
-            return;
-        }
         this.set_content_view(crate::ContentView::Chat);
         cx.notify();
     });

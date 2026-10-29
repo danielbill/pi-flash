@@ -17,7 +17,7 @@
 use serde_json::Value;
 
 /// 已知旗标键（模块发版排除注册表）。新增可配置模块 = 在此加一个键。
-pub const KNOWN: &[&str] = &["subagents", "pi_ext_market", "pi_native_market", "wx"];
+pub const KNOWN: &[&str] = &["subagents", "pi_ext_market", "pi_native_market"];
 
 /// 某模块旗标是否开启：env 覆盖 > dev-flags.json 键值 > false。
 pub fn enabled(key: &str) -> bool {

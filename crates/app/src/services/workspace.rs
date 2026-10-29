@@ -328,9 +328,6 @@ pub struct TabsState {
     pub active: Option<usize>,
     /// 关停时内容区前台是会话 tab（false = 前台是激活 tab 的视图）
     pub chat: bool,
-    /// 关停时【微信通话】**标签展开着**（002：标签开 = on，关 = off；
-    /// 关掉就存成关着，重启不会被顶回来；开着就原样还回来）。
-    pub wx_open: bool,
 }
 
 /// 纯内核：从 JSON 值读 tab 带存档（无记录/旧版 per-project 嵌套形态 =
@@ -356,18 +353,10 @@ fn tabs_state_from_value(v: &Value) -> Option<TabsState> {
         .map(|a| a as usize)
         .filter(|a| *a < tabs.len());
     let chat = v.get("chat").and_then(|b| b.as_bool()).unwrap_or(true);
-    // 旧档兼容：单字段 `wx` / `wx_front` 时代一律读成「标签开」
-    let wx_open = v
-        .get("wx_open")
-        .and_then(|b| b.as_bool())
-        .or_else(|| v.get("wx_front").and_then(|b| b.as_bool()))
-        .or_else(|| v.get("wx").and_then(|b| b.as_bool()))
-        .unwrap_or(false);
     Some(TabsState {
         tabs,
         active,
         chat,
-        wx_open,
     })
 }
 
@@ -381,7 +370,7 @@ fn tabs_state_to_value(state: &TabsState) -> Option<Value> {
     // 空带通常 = 移除槽位（启动落默认 chat）；唯独微信标签开着要单独能
     // 存活——[设置会话] 页时 tab 带本就为空，若这里返回 None，重启就
     // 「蹿回桌面会话对话页」（2026-10-25 真机事故）
-    if state.tabs.is_empty() && !state.wx_open {
+    if state.tabs.is_empty() {
         return None;
     }
     let tabs: Vec<Value> = state
@@ -394,7 +383,6 @@ fn tabs_state_to_value(state: &TabsState) -> Option<Value> {
         "tabs": tabs,
         "active": state.active,
         "chat": state.chat,
-        "wx_open": state.wx_open,
     }))
 }
 
@@ -1174,14 +1162,6 @@ pub fn pi_ext_market_enabled() -> bool {
     dev_flag_enabled("pi_ext_market")
 }
 
-/// 060 微信通信模块总开关（开发旗标，**默认关 = 发版不可见**）。关态 =
-/// 三横菜单【微信通信】项与 topbar 微信线 tab 不渲染、`open_wx` 直接
-/// 返回、入站泵不挂（服务状态机根本不被问到——模块整死）。发版排除
-/// 语义同 040-1 市场：dev 环境用 dev-flags.json `"wx": true` 或
-/// `PI_FLASH_WX=1` 打开。
-pub fn wx_enabled() -> bool {
-    dev_flag_enabled("wx")
-}
 
 /// topbar「菜单」三横钮是否渲染：**恒显**（2026-10-23 用户禁令：不许删菜单 icon）。
 /// 菜单是多入口的壳，里面 090-4「Pi-Flash 插件」是主线常驻项，按钮不能跟着
@@ -1497,7 +1477,6 @@ mod tests {
             ],
             active: Some(1),
             chat: false,
-            wx_open: false,
         };
         let v = tabs_state_to_value(&state).unwrap();
         assert_eq!(tabs_state_from_value(&v).unwrap(), state);
@@ -1514,24 +1493,8 @@ mod tests {
             "越界下标不采信"
         );
 
-        // 空带 = None（写侧据此移除槽位）；微信标签开着例外（可单独存活）
+        // 空带 = None（写侧据此移除槽位）
         assert!(tabs_state_to_value(&TabsState::default()).is_none());
-        let wx_only = TabsState {
-            tabs: vec![],
-            active: None,
-            chat: false,
-            wx_open: true,
-        };
-        assert!(tabs_state_to_value(&wx_only).is_some());
-
-        // 旧档（单字段 `wx` / `wx_front`）一律读成「标签开」
-        for legacy in [
-            serde_json::json!({ "tabs": [], "active": null, "chat": false, "wx": true }),
-            serde_json::json!({ "tabs": [], "active": null, "chat": true, "wx_front": true }),
-        ] {
-            let back = tabs_state_from_value(&legacy).unwrap();
-            assert!(back.wx_open, "旧档兼容：开着的标签要还回来");
-        }
 
         // 非法条目读侧丢弃（kind 不识 / 空 path）
         let v = serde_json::json!({ "tabs": [

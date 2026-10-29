@@ -82,10 +82,7 @@ impl Chat {
             };
             if let Some(dir) = paths.pop() {
                 let _ = this.update(cx, |c, cx| {
-                    if c.wx_setup_ctx() {
-                        // 微信设置会话页：选项目写独立工作目录 wx_cwd（禁止联动）
-                        c.wx_pick_project(dir, cx);
-                    } else if fresh {
+                    if fresh {
                         c.new_session_in(dir, cx);
                     } else {
                         c.switch_project(dir, cx);

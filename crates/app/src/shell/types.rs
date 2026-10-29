@@ -51,12 +51,6 @@ pub(crate) enum Dialog {
     FileDirty {
         paths: Vec<PathBuf>,
     },
-    /// 060 二维码弹窗（微信线扫码绑定/重建）：信息栏【重制二维码】触发，
-    /// 未创建时打开微信线会话自动弹出；扫码成功泵自动关窗。
-    WxQr,
-    /// 002 §3 [新建会话] 确认（W1）：丢弃当前会话创建新会话？确认后走
-    /// `wx_rotate_session`（老影子下线不删文件、新影子 `pf-wxbot-*`）。
-    WxNewSession,
 }
 
 /// ⋯ 菜单的两个面：系统提示词原文 / 已加载工具的声明。各自画在设置弹窗
@@ -127,10 +121,6 @@ pub(crate) enum ContentView {
     Search,
     /// 会话查询 tab（PanelTab::SessionSearch；同版式，只查询）
     SessionSearch,
-    /// 060/002【微信通话】功能页：从管理（绑定/设置会话）到内部自管会话
-    /// 的完整页（remote_control::panel::page）。就绪后由 open_wx/泵切回
-    /// Chat 视图的微信线会话（wx_tab 依旧高亮）。
-    Wx,
     /// 090 插件预览页签（契约 v2.4 `panels[].dock = "tab"`）：单例、
     /// 整页声明式树，与 Changelog/Market 同位同姿态。归属 = 标签携带的
     /// pkg+page（`PanelTab::Plugin`），内容渲染统一走插件树解释器。
@@ -294,15 +284,6 @@ pub(crate) enum PanelTab {
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
     SessionSearch,
-    /// 060/002【微信通话】：一个 tab 底下两种内容（未绑定/过期 → 绑定管理
-    /// 页 `ContentView::Wx`；就绪 → 微信影子会话聊天视图 `ContentView::Chat`
-    /// + 微信皮肤）。当年因为「一个 tab 两种 view」被排挤成固定段特例，
-    /// 但它和会话 tab 完全同构（会话 tab 底下也是 N 个会话视图轮换）——
-    /// 归队后右键菜单/拖拽换位/批量关闭全套免费继承。
-    ///
-    /// 归属判据（真身在 `Chat::wx_front_active`）：
-    /// `content_view == Wx || wx_line_active()`。
-    Wx,
     /// 090 插件预览页签（契约 v2.4 dock="tab"）：pkg = 顶层包目录名
     /// （重装/重载后 ix 漂移安全的稳定身份，渲染时经 `plugin_ix_by_pkg`
     /// 现查），page = `panels[].id`。瞬态页不进存档；声明式树模式
@@ -323,7 +304,6 @@ pub(crate) enum TabKey {
     PfMarket,
     Search,
     SessionSearch,
-    Wx,
     Plugin { pkg: String, page: String },
 }
 
@@ -338,7 +318,6 @@ impl PanelTab {
             PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
             PanelTab::SessionSearch => TabKey::SessionSearch,
-            PanelTab::Wx => TabKey::Wx,
             PanelTab::Plugin { pkg, page } => TabKey::Plugin {
                 pkg: pkg.clone(),
                 page: page.clone(),
@@ -368,24 +347,14 @@ impl PanelTab {
             PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
             PanelTab::SessionSearch => ContentView::SessionSearch,
-            // 微信 tab 有两副面孔：`view()` 只给「菜单/回退」用的名义视图
-            //（管理页）。真归属判据见 `PanelTab::owns_view`——微信线会话在
-            // 类型上是 `ContentView::Chat`，单靠枚举相等认不出来。
-            PanelTab::Wx => ContentView::Wx,
             PanelTab::Plugin { .. } => ContentView::Plugin,
         }
     }
 
     /// 该 tab 是否「拥有」某个内容视图（激活高亮/关闭回退/视图归属的唯一
-    /// 判据）。绝大多数 tab 就是 `view() == to` 的同义反复；微信 tab 例外：
-    /// 它同时拥有管理页（`Wx`）与微信线会话聊天视图（`Chat` + 微信线），
-    /// 这两副面孔都属于它，不能让它以外的东西认领 `ContentView::Chat`。
-    ///
-    /// `wx_line` = 当前活跃会话是不是微信线（`Chat::wx_line_active`），由
-    /// 调用方传入——纯枚举函数摸不到 Chat 状态。
-    pub(crate) fn owns_view(&self, to: ContentView, wx_line: bool) -> bool {
+    /// 判据）。绝大多数 tab 就是 `view() == to` 的同义反复。
+    pub(crate) fn owns_view(&self, to: ContentView) -> bool {
         match self {
-            PanelTab::Wx => to == ContentView::Wx || (to == ContentView::Chat && wx_line),
             PanelTab::Term(_) => to == ContentView::Term,
             PanelTab::File(_) => to == ContentView::File,
             PanelTab::Changelog => to == ContentView::Changelog,

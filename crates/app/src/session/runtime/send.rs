@@ -9,13 +9,6 @@ use crate::session::messages::{BashInfo, Msg, Role};
 
 use super::*;
 
-/// 远程（微信）投递结果：排队 ≠ 失败——只有 Failed 才向微信发出失败回执。
-pub(crate) enum RemoteSend {
-    Sent,
-    Queued,
-    Failed,
-}
-
 impl SessionRuntime {
     /// 发送后进 ↑ 历史：**上限截断**。此前无上限——长会话里每次发送的全文
     /// （含粘贴的大段日志）都永久留底，内存随消息条数线性涨，且
@@ -510,102 +503,7 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// 远程（微信）来的一条文本 —— 与 [`send_input`] **同口径**，但不碰
-    /// `self.input` / `pending_images`（那两个是 composer 专属的）。
-    ///
-    /// 关键：草稿**还没有 pi 进程**时必须先 `spawn()` + `attach_pump`，
-    /// 否则 `agent.session` 是 `None`、命令直接丢掉 —— 真机表现就是
-    /// 「发消息没有任何应答，重启后才有人回」。
-    ///
-    /// 远程（微信）来的一条文本 —— 与 [`send_input`] **同口径**，但不碰
-    /// `self.input` / `pending_images`（那两个是 composer 专属的）。
-    ///
-    /// 关键：草稿**还没有 pi 进程**时必须先 `spawn()` + `attach_pump`，
-    /// 否则 `agent.session` 是 `None`、命令直接丢掉 —— 真机表现就是
-    /// 「发消息没有任何应答，重启后才有人回」。
-    ///
-    /// 返回三态：微信回执要区分「排队中」（正常，等当前轮结束）与
-    /// 「失败」（必须出声），不能都按 bool 的 false 静默吞掉。
-    pub(crate) fn send_remote_text(&mut self, text: String, cx: &mut Context<Self>) -> RemoteSend {
-        if self.compacting {
-            return RemoteSend::Failed;
-        }
-        if !self.ensure_spawned(cx) {
-            return RemoteSend::Failed;
-        }
-        if self.agent.session.is_none() {
-            self.status = tr("status.disconnected").into();
-            cx.notify();
-            return RemoteSend::Failed;
-        }
-        // 规则 1+2：仅**运行中**才入缓冲（空闲直接发送，不经过缓冲）。
-        if self.queue_mode() && self.agent_running {
-            self.enqueue_remote(text.clone(), cx);
-            cx.notify();
-            return RemoteSend::Queued;
-        }
-        // steer 模式运行中（规则 3）：打断投递——中止当前轮，本条作为新一轮。
-        if !self.queue_mode() && self.agent_running {
-            if self.history.last().map(|h| h != &text).unwrap_or(true) {
-                self.remember_input(text.clone());
-            }
-            self.history_ix = None;
-            self.interrupt_deliver(
-                QueuedInput {
-                    text,
-                    images: Vec::new(),
-                    remote: true,
-                },
-                cx,
-            );
-            return RemoteSend::Sent;
-        }
-        // 空闲（两模式同条）：直接发送，pi 原子判定。
-        let cmd = Command::Prompt {
-            message: text.clone(),
-            images: Vec::new(),
-            streaming_behavior: Some("followUp".into()),
-        };
-        let sent = self.rpc(&cmd);
-        if sent {
-            if self.history.last().map(|h| h != &text).unwrap_or(true) {
-                self.remember_input(text.clone());
-            }
-            self.history_ix = None;
-            self.status = "running".into();
-            // 让桌面端也看到这条消息（微信发的同样属于这轮对话）
-            if !text.starts_with("/skill:") {
-                self.optimistic_send(text, true, cx);
-            }
-        } else {
-            self.status = tr("status.send_failed").into();
-        }
-        cx.notify();
-        if sent {
-            RemoteSend::Sent
-        } else {
-            RemoteSend::Failed
-        }
-    }
 
-    /// 远程来的非文本命令（`/停止`、ExtUi 回填）：**不 spawn** ——
-    /// 没有进程就明确返回失败，由调用方出声。
-    pub(crate) fn send_remote_command(&mut self, cmd: &Command, cx: &mut Context<Self>) -> bool {
-        if self.compacting {
-            return false;
-        }
-        let Some(session) = &self.agent.session else {
-            self.status = tr("status.disconnected").into();
-            cx.notify();
-            return false;
-        };
-        let ok = session.send(cmd).is_ok();
-        if !ok {
-            self.status = tr("status.send_failed").into();
-        }
-        cx.notify();
-        ok
-    }
 
     /// 思考档换挡（胶囊菜单 / 微信菜单同源）。
     ///

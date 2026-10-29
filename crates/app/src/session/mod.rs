@@ -42,12 +42,9 @@ pub(crate) use subagent_panel::SubagentPanel;
 /// 当前活跃会话所属「线」的皮肤 = 会话页模版注入面的**唯一取值处**。
 /// 新增一条功能线 = 在它自己的模块里给一份 `SessionPageSkin`，这里加一个
 /// 分支；页面骨架保持零判定。
-pub(crate) fn skin(chat: &Chat) -> &'static template::SessionPageSkin {
-    if chat.wx_line_active() {
-        &crate::remote_control::panel::WX_SKIN
-    } else {
-        &template::DESKTOP
-    }
+pub(crate) fn skin(_chat: &Chat) -> &'static template::SessionPageSkin {
+    // 060 宿主微信面板退役（2026-10-29）：会话页皮肤恒桌面版（插件弹窗接管 UI）
+    &template::DESKTOP
 }
 
 pub(crate) fn main_column(

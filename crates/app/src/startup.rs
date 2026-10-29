@@ -315,13 +315,6 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     spawn_recents_poll(cx);
     spawn_splash_gate(cx);
     spawn_fs_watch_pump(cx);
-    // 微信 Bot 入站泵（060）：dev-flag `wx` 关（默认，发版排除）= 泵都
-    // 不挂——入口全隐（菜单/tab/open_wx），模块整死。开态渠道由泵里的
-    // 服务状态机决定：**开关 on 且【微信通话】窗口激活**才在跑（002
-    // 「关于微信通话服务激活」的设计取舍：低频功能不激活就不后台收消息）
-    if crate::services::workspace::wx_enabled() {
-        crate::remote_control::spawn_wx_pump(cx);
-    }
     // syntect 语法引擎冷加载 ~百 ms 挪出首个 md 渲染帧（第一次渲染卡顿）：
     // 后台线程预热 OnceLock，命中后首渲零成本
     std::thread::spawn(|| crate::editor::markdown::warm_up());
@@ -689,7 +682,7 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
         let saved_tabs = match &target {
             BootTarget::Project { .. } if restore_on => {
                 crate::services::workspace::tabs_state_for()
-                    .filter(|s| !s.tabs.is_empty() || s.wx_open)
+                    .filter(|s| !s.tabs.is_empty())
             }
             _ => None,
         };

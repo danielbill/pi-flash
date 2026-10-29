@@ -40,8 +40,6 @@ pub(crate) fn content_main(
         ContentView::Search => crate::search::view(chat, weak, window, cx),
         // 会话查询（同版式，只查询）
         ContentView::SessionSearch => crate::search::session_view(chat, weak, t),
-        // 060/002【微信通话】功能页（管理段：绑定 / 设置会话；就绪切回 Chat）
-        ContentView::Wx => crate::remote_control::panel::page(chat, weak, window, cx),
         // 090 插件预览页签（契约 v2.4 dock="tab"）：整页声明式树，
         // 按 pkg 现查（重装/重载后 ix 漂移安全）
         ContentView::Plugin => crate::pf_plugin::panel::plugin_tab_page(chat, weak),
@@ -187,8 +185,6 @@ pub(crate) fn term_view(
             crate::PanelTab::SessionSearch => div().into_any_element(),
             // 插件预览页签不是终端，body 走 content.rs 的 ContentView 分支
             crate::PanelTab::Plugin { .. } => div().into_any_element(),
-            // 微信 tab 不是终端，body 走 content.rs 的 ContentView 分支
-            crate::PanelTab::Wx => div().into_any_element(),
             crate::PanelTab::Term(id) => {
                 let tix = chat.ws.terminals.iter().position(|t| t.id == id);
                 let Some(tix) = tix else {

@@ -94,27 +94,6 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// 微信远程入队（与 composer 同一漏斗；不碰 self.input/pending_images）。
-    /// 规则 2 同样适用：缓冲非空拒绝，返回 false（调用方按未送达口径处理）。
-    pub(crate) fn enqueue_remote(&mut self, text: String, cx: &mut Context<Self>) -> bool {
-        if !self.queued_inputs.is_empty() {
-            self.status = tr("queue.full").into();
-            cx.notify();
-            return false;
-        }
-        self.queued_inputs.push(QueuedInput {
-            text: text.clone(),
-            images: Vec::new(),
-            remote: true,
-        });
-        if self.history.last().map(|h| h != &text).unwrap_or(true) {
-            self.remember_input(text.clone());
-        }
-        self.history_ix = None;
-        self.set_queued_status();
-        cx.notify();
-        true
-    }
 
     /// 卡片垃圾桶：移除该条（丢弃）。
     pub(crate) fn queue_remove(&mut self, ix: usize, cx: &mut Context<Self>) {

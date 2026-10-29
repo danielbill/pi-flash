@@ -612,16 +612,7 @@ impl Render for Chat {
                         t,
                     ))
                 })
-                // 002-微信通信 绑定层（W2）：白蒙层覆盖内容区至 topbar、
-                // 无关闭出口；放最后保证盖过 content 与分隔线
-                .children({
-                    let wx_qr = matches!(self.dlg.dialog, Some(crate::Dialog::WxQr));
-                    wx_qr.then(|| {
-                        crate::remote_control::panel::wx_qr_layer(self, &weak, &t)
-                            .into_any_element()
-                    })
-                }),
-        );
+,        );
 
         let mut root = div()
             .size_full()

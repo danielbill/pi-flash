@@ -379,8 +379,6 @@ impl Chat {
         cancelled: bool,
         cx: &mut Context<Self>,
     ) {
-        // 桌面端先应答 → 微信端放弃同一请求（060 §8 档 2 不重复消费）
-        self.aux.remote.clear_pending(&req.id);
         self.rt()
             .read(cx)
             .rpc(&pi_link::protocol::Command::ExtensionUiResponse {

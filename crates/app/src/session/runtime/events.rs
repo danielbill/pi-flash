@@ -581,9 +581,6 @@ impl SessionRuntime {
             Event::MessageUpdate(assistant_event) => {
                 self.phase_waiting = false;
                 self.streaming_content = true;
-                // 060 微信回推：把流式事件原样冒给订阅方，由它自己决定何时
-                // flush（ZCode assistantReplyBuffer 语义，§6 坑1 边界不按 chunk）
-                cx.emit(SessionEvent::Assistant(assistant_event.clone()));
                 match assistant_event {
                     AssistantEvent::TextDelta {
                         content_index,

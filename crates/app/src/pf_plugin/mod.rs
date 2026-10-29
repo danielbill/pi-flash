@@ -1457,6 +1457,8 @@ impl Chat {
             .detach();
             return false;
         }
+        // [perf] UI 线程同步装载要留实测数字（铁律：热路径不靠感觉）
+        let t0 = std::time::Instant::now();
         let mut inst = match PluginInstance::load_cached(&wasm_path, &cache) {
             Ok(i) => i,
             Err(e) => {
@@ -1465,11 +1467,22 @@ impl Chat {
                 return false;
             }
         };
+        let load = t0.elapsed();
         if let Err(e) = inst.init(&id) {
             entry.disabled = true;
             self.set_status(format!("插件 {id} 拒载：{e}"), cx);
             return false;
         }
+        eprintln!(
+            "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
+            t0.elapsed() - load,
+            std::backtrace::Backtrace::force_capture()
+                .to_string()
+                .lines()
+                .nth(2)
+                .unwrap_or("")
+                .trim(),
+        );
         entry.wasm = Some(inst);
         entry.wasm_focus = Some(cx.focus_handle());
         true

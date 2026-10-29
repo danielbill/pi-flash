@@ -68,30 +68,6 @@ pub(crate) fn render_dialogs(
     if let Some(Dialog::FileDirty { paths }) = chat.dlg.dialog.as_ref() {
         root = root.child(render_file_dirty(chat, weak, paths, t));
     }
-    if let Some(Dialog::WxNewSession) = chat.dlg.dialog.as_ref() {
-        // 002 §6 [新建会话] 确认：统一 overlay::confirm 两键。
-        // 确认 = wx_new_session_reset（清 wx_cwd + 微信线指针 → 跳
-        // [设置会话]页，不现场建线）；取消/点外/ESC 同义。
-        let weak_cancel = weak.clone();
-        let weak_ok = weak.clone();
-        root = root.child(crate::ui::overlay::confirm(
-            &chat.dlg.dialog_focus,
-            tr("remote.new_confirm"),
-            move |_, cx| {
-                let _ = weak_cancel.update(cx, |c, cx| {
-                    c.dlg.dialog = None;
-                    cx.notify();
-                });
-            },
-            move |_, cx| {
-                let _ = weak_ok.update(cx, |c, cx| {
-                    c.dlg.dialog = None;
-                    c.wx_new_session_reset(cx);
-                    cx.notify();
-                });
-            },
-        ));
-    }
     // Dialog::WxQr 不走这里：绑定层是强制模态（白蒙层、无关闭出口），
     // 由 render.rs 挂在 content-col 内、只盖 topbar 以下（panel.rs:wx_qr_layer）
     root
@@ -670,7 +646,7 @@ fn render_project_picker(
         let path = p.path.clone();
         let weak_row = weak.clone();
         let name: SharedString = p.name.clone().into();
-        let selected = chat.picker_current_cwd().is_some_and(|cur| {
+        let selected = chat.ws.cwd.clone().is_some_and(|cur| {
             crate::services::workspace::same_ws(&p.path.to_string_lossy(), &cur.to_string_lossy())
         });
         rows.push(
@@ -693,11 +669,7 @@ fn render_project_picker(
                     let _ = weak_row.update(cx, |c, cx| {
                         // 菜单关闭是 UI 入口的职责（业务函数只管业务）
                         c.dlg.dialog = None;
-                        if c.wx_setup_ctx() {
-                            // 微信设置会话页：选项目写独立工作目录 wx_cwd，
-                            // 禁止联动桌面项目（002 模块独立）
-                            c.wx_pick_project(path.clone(), cx);
-                        } else if fresh {
+                        if fresh {
                             c.new_session_in(path.clone(), cx);
                         } else {
                             c.switch_project(path.clone(), cx);
@@ -900,7 +872,7 @@ impl Chat {
             let _ = weak.update(cx, |c, cx| {
                 // 当前项目兜底入选（无 30 天活动也显示，004：默认选中该项目）；
                 // 无项目态没有「当前项目」，不兜底。微信设置页当前 = wx_cwd
-                if let Some(cwd) = c.picker_current_cwd() {
+                if let Some(cwd) = c.ws.cwd.clone() {
                     let cwd_key = cwd.to_string_lossy().to_string();
                     if !entries.iter().any(|p| {
                         crate::services::workspace::same_ws(&p.path.to_string_lossy(), &cwd_key)
@@ -954,10 +926,7 @@ impl Chat {
         let path = self.psp.project_hits[visible[sel - 1]].path.clone();
         // 键盘 Enter 同一条 UI 收尾（菜单关闭不归业务函数管）
         self.dlg.dialog = None;
-        if self.wx_setup_ctx() {
-            // 微信设置会话页：选项目写独立工作目录 wx_cwd（禁止联动）
-            self.wx_pick_project(path, cx);
-        } else if fresh {
+        if fresh {
             self.new_session_in(path, cx);
         } else {
             self.switch_project(path, cx);
@@ -971,7 +940,7 @@ impl Chat {
     pub(crate) fn project_sel_default(&self) -> usize {
         let visible = project_visible(self);
         let cur = visible.iter().position(|&ix| {
-            self.picker_current_cwd().is_some_and(|cur| {
+            self.ws.cwd.clone().is_some_and(|cur| {
                 crate::services::workspace::same_ws(
                     &self.psp.project_hits[ix].path.to_string_lossy(),
                     &cur.to_string_lossy(),

@@ -43,8 +43,6 @@ pub(crate) enum SessionEvent {
     ListDirty,
     /// extension UI request (active session only surfaces the dialog)
     ExtUi(pi_link::protocol::ExtensionUiRequest),
-    /// assistant 流式输出（060 微信回推：文本累积 / tool_call 处 force flush）
-    Assistant(pi_link::protocol::AssistantEvent),
     /// get_state arrived with a pending rename prefill
     RenameReady(String),
     /// get_available_models arrived: the model catalog is project-level
@@ -472,22 +470,6 @@ impl SessionRuntime {
         }
     }
 
-    /// 微信线放行条件之一（002 §2，用户定夺：项目和模型都是必选项）：
-    /// 模型是否已定。draft 看手选/工作区默认模型（spawn 时才消费）；恢复
-    /// 的会话文件 pi 必带模型，恒就绪。
-    pub(crate) fn has_model(&self) -> bool {
-        if self.file.is_none() {
-            // 草稿期：手选（pending）/ 工作区默认（default）/ pi 已报的模型标
-            // 三者任一即算已定——界面显示什么，判定就认什么（否则「界面明明
-            // 显示 GLM-5.3-Flash」却判未设置，微信侧会被拦在引导文案）
-            self.pending_model.is_some()
-                || self.default_model.is_some()
-                || self.state.as_ref().and_then(|s| s.model_label()).is_some()
-        } else {
-            true
-        }
-    }
-
     pub(crate) fn model_label_text(&self) -> String {
         self.state
             .as_ref()
@@ -666,8 +648,6 @@ mod ingest;
 mod nav;
 mod queue;
 mod send;
-
-pub(crate) use send::RemoteSend;
 
 #[cfg(test)]
 mod turn_outcome_tests {

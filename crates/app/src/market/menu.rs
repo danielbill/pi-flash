@@ -35,26 +35,8 @@ pub(crate) fn menu_layer(
     // 旧页代码保留（open_pi_ext_market 仍可从自动化口进入），不再上菜单。
     // 图标档：`plug` 是细长形，12 档下如图标并与方形图标并排会显小→给 14
     // （与 topbar 同名标签同档，见 titlebar::tab_icon_size）；puzzle 保持 12。
-    // 微信通信（060；dev-flag `wx` 默认关 = 发版不可见）：开态才渲染首项。
     // 2026-10-23 定夺：入口只留三横菜单（topbar/statusbar 图标全撤）。
     let mut card = crate::function_panel::psp_overlays::menu_card(edges, t);
-    if crate::services::workspace::wx_enabled() {
-        let weak_wx = weak.clone();
-        card = card.child(
-            crate::function_panel::psp_overlays::menu_item_sized(
-                "menu-wx",
-                "smartphone",
-                14.,
-                tr("remote.panel_title"),
-                false,
-                false,
-            )
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = weak_wx.update(cx, |c, cx| c.open_wx(cx));
-            }),
-        );
-    }
     let weak_item = weak.clone();
     card = card.child(
         crate::function_panel::psp_overlays::menu_item_sized(

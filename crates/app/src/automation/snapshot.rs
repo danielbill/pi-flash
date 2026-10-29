@@ -219,19 +219,6 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
             }),
             None => json!({ "open": false }),
         },
-        // 【微信通话】tab 关闭态（2026-10-25 用户定夺：关闭跨重启保持）——
-        // 启动回放/关 tab 落盘的断言载体（pif-ui wait --path app.wx_tab_closed）
-        "wx_tab_closed": !chat.wx_tab_open(),
-        // 微信会话归属（排障）：工作目录 / 会话指针 / 会话运行时 cwd
-        "wx_cwd": chat.aux.remote.wx_cwd().map(|p| p.to_string_lossy().to_string()),
-        "wx_line_key": chat.aux.remote.line_key().map(str::to_string),
-        "wx_line_cwd": chat
-            .aux
-            .remote
-            .line_key()
-            .and_then(|k| chat.pool.runtimes.get(k))
-            .map(|rt| rt.read(cx).cwd.to_string_lossy().to_string()),
-        "wx_running": chat.aux.remote.is_running(),
         "active_key": chat.pool.active_key,
         "active_file": opt_path(chat.psp.active_file.as_ref()),
         "terminals": chat.ws.terminals.len(),
@@ -709,7 +696,6 @@ fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             crate::PanelTab::PfMarket => json!({"pf_market": true}),
             crate::PanelTab::Search => json!({"search": true}),
             crate::PanelTab::SessionSearch => json!({"session_search": true}),
-            crate::PanelTab::Wx => json!({"wx": true}),
             crate::PanelTab::Plugin { pkg, page } => {
                 json!({"plugin_tab": {"pkg": pkg, "page": page}})
             }
@@ -817,8 +803,6 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         Dialog::ImagePreview { .. } => "image_preview",
         Dialog::SessionInfo { .. } => "session_info",
         Dialog::FileDirty { .. } => "file_dirty",
-        Dialog::WxQr => "wx_qr",
-        Dialog::WxNewSession => "wx_new_session",
     });
     // 打开项目菜单：列表数据随弹窗一起上报（扫描是异步回填，UI 测试
     // 据此轮询就绪）
@@ -875,16 +859,6 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "ext_dialog": chat.aux.ext_dialog.is_some(),
         "toast": chat.dlg.status_toast.as_ref().map(|(t, _)| truncate(t, 200)),
         "settings_open": chat.dlg.settings.is_some(),
-        // 060 微信 Bot：扫码弹窗的实时状态（pif-ui 可据此断言 UI 状态）
-        "wx_qr": match &chat.aux.remote.qr {
-            crate::remote_control::QrState::Idle => "idle",
-            crate::remote_control::QrState::Loading => "loading",
-            crate::remote_control::QrState::Ready { .. } => "ready",
-            crate::remote_control::QrState::Scanned { .. } => "scanned",
-            crate::remote_control::QrState::Done { .. } => "done",
-            crate::remote_control::QrState::Expired { .. } => "expired",
-            crate::remote_control::QrState::Error { .. } => "error",
-        },
     })
 }
 
@@ -899,7 +873,6 @@ fn content_view_str(v: crate::ContentView) -> &'static str {
         crate::ContentView::PfMarket => "pf-market",
         crate::ContentView::Search => "search",
         crate::ContentView::SessionSearch => "session_search",
-        crate::ContentView::Wx => "wx",
         crate::ContentView::Plugin => "plugin",
     }
 }

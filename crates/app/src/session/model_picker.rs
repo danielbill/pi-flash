@@ -375,15 +375,10 @@ impl Chat {
             .get(sel)
             .map(|m| (m.provider.clone(), m.id.clone()));
         if let Some((provider, id)) = pick {
-            // 微信设置页：模型选择属于微信线（无线时暂存），禁止沾到桌面会话
-            if !self.wx_setup_select_model(provider.clone(), id.clone(), cx) {
-                self.rt()
-                    .update(cx, |r, cx| r.select_model(provider, id, cx));
-            }
+            self.rt()
+                .update(cx, |r, cx| r.select_model(provider, id, cx));
         }
         self.dlg.model_picker = None;
-        // 微信设置页：模型选定后若 wx_cwd 也已定 → 建会话并跳聊天页
-        self.wx_after_setup_change(cx);
         cx.notify();
     }
 }
@@ -583,15 +578,10 @@ pub(crate) fn view(
                     10.,
                     None,
                     Some(Box::new(move |c, cx| {
-                        // 微信设置页：模型选择属于微信线（无线时暂存）
-                        if !c.wx_setup_select_model(dp.clone(), di.clone(), cx) {
-                            c.rt()
-                                .update(cx, |r, cx| r.select_model(dp.clone(), di.clone(), cx));
-                        }
+                        c.rt()
+                            .update(cx, |r, cx| r.select_model(dp.clone(), di.clone(), cx));
                         // picking is also the dismissal gesture
                         c.dlg.model_picker = None;
-                        // 微信设置页：模型选定后若 wx_cwd 也已定 → 建会话并跳聊天页
-                        c.wx_after_setup_change(cx);
                         cx.notify();
                     })),
                     t,

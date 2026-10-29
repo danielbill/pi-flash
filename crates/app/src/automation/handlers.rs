@@ -334,7 +334,6 @@ pub(super) fn dispatch(
                     ContentView::PfMarket => "pf-market",
                     ContentView::Search => "search",
                     ContentView::SessionSearch => "session_search",
-                    ContentView::Wx => "wx",
                     ContentView::Plugin => "plugin",
                 },
             }))
@@ -430,12 +429,6 @@ pub(super) fn dispatch(
                 .get("panel")
                 .and_then(Value::as_str)
                 .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin|wx\"}"))?;
-            // "wx" 已非 dock 面板（2026-10-23 迁内容区全屏页）：重定向到
-            // 开页，老脚本不破。
-            if panel == "wx" {
-                chat.open_wx(cx);
-                return ok();
-            }
             let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
             if panel == "plugin" {
                 // 走 open_plugin_dock（与点状态栏 tab 同语义）：触发插件懒加载链
@@ -569,8 +562,6 @@ pub(super) fn dispatch(
                 "pi-native-market" => chat.open_pi_native_market(cx),
                 // 090-4：PF 插件市场同口径（建输入框 + 重读台账）
                 "pf-market" => chat.open_pf_market(cx),
-                // 060：微信通信全屏页（三横菜单唯一 UI 入口）
-                "wx" => chat.open_wx(cx),
                 "search" => chat.open_project_search(cx),
                 other => return Err(bad(format!("未知内容视图: {other:?}"))),
             }
@@ -859,56 +850,6 @@ pub(super) fn dispatch(
             let confirmed = params.get("ok").and_then(Value::as_bool).unwrap_or(false);
             chat.mc_remove_dialog_close(confirmed, cx);
             ok()
-        }
-        method::WX_QR_OPEN => {
-            // 扫码弹窗已废（2026-10-23：码直接绘在【微信通信】页内）——
-            // 动作改道：开页 + 幂等起扫码，老脚本语义不变。
-            chat.aux.remote.begin_qr();
-            chat.open_wx(cx);
-            ok()
-        }
-        method::WX_ENABLE => {
-            // 开/关微信渠道 = 开/关【微信通话】标签（002：标签开 = on，
-            // 关 = off）。缺省 on=true；返回渠道是否真的起来了（无 token
-            // 起不来，调用方看 running 字段）。
-            let on = params.get("on").and_then(Value::as_bool).unwrap_or(true);
-            if on {
-                chat.open_wx(cx);
-            } else {
-                chat.close_wx_tab(cx);
-            }
-            Ok(json!({ "ok": true, "running": chat.aux.remote.is_running() }))
-        }
-        method::WX_NEW_SESSION => {
-            // 002 §6 [新建会话]：confirm=false = 按钮同路径（运行守卫 + 弹
-            // 确认框）；confirm=true = 确认按钮同路径（清 wx_cwd + wx_session
-            // 引用 → 设置会话页）。
-            let confirm = params
-                .get("confirm")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let dialog_opened = if confirm {
-                chat.wx_new_session_reset(cx);
-                false
-            } else {
-                if chat.aux.remote.active_running {
-                    let lang = wxprobe::format::messages::Lang::from_ix(crate::i18n::lang_ix());
-                    chat.aux.remote.send(&wxprobe::format::messages::t(
-                        lang,
-                        crate::remote_control::TASK_RUNNING,
-                    ));
-                    false
-                } else {
-                    chat.dlg.dialog = Some(crate::Dialog::WxNewSession);
-                    true
-                }
-            };
-            cx.notify();
-            Ok(json!({
-                "ok": true,
-                "dialog_opened": dialog_opened,
-                "active_key": chat.pool.active_key,
-            }))
         }
         method::DIALOG_CLOSE => {
             chat.dlg.dialog = None;
