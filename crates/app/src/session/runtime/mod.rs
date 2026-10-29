@@ -470,10 +470,18 @@ impl SessionRuntime {
                             {
                                 pi_link::service_ext::reset_spools(&base, &token);
                             }
+                            pi_link::service_ext::note_shim(
+                                &base,
+                                &format!("挂载 shim={} cfg={}", shim.display(), cfg.display()),
+                            );
                             envs.push(("PF_SVC_CONFIG".into(), cfg.to_string_lossy().into_owned()));
                         }
                         None => {
-                            eprintln!("[pf-svc] 本构建缺执行域 shim，service 落空（{}）", self.key)
+                            eprintln!("[pf-svc] 本构建缺执行域 shim，service 落空（{}）", self.key);
+                            pi_link::service_ext::note_shim(
+                                &base,
+                                &format!("shim 定位失败 key={}", self.key),
+                            );
                         }
                     }
                 }

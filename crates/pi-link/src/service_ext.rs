@@ -220,6 +220,26 @@ pub fn consume_events(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// 排障留痕：`<base>/pf-svc/shim.log`（定位/装载链路的唯一可观测面）。
+pub fn note_shim(base: &Path, line: &str) {
+    let path = svc_root(base).join("shim.log");
+    if let Some(p) = path.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {line}");
+    }
+}
+
 /// spawn 时清空双方信箱残留：上一轮生命周期已消费的事件不得重放（至多一次）。
 pub fn reset_spools(base: &Path, token: &str) {
     let _ = std::fs::write(in_path(base, token), "");
@@ -254,6 +274,12 @@ pub fn shim_path() -> Option<PathBuf> {
         if let Some(root) = vendor.parent().and_then(Path::parent) {
             out.push(root.to_path_buf());
         }
+    }
+    // debug/test 构建：workspace 根在编译期烙进 CARGO_MANIFEST_DIR（crates/<x> 上两级），
+    // exe 被拷走也能找到仓内 shim（与 paths.rs dev_dir 同策略）
+    #[cfg(debug_assertions)]
+    if let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2) {
+        out.push(root.to_path_buf());
     }
     out.iter().map(|b| b.join(SHIM_REL)).find(|p| p.is_file())
 }

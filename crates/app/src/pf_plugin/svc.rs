@@ -49,22 +49,11 @@ pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
         return false;
     };
     let payload_value: serde_json::Value = serde_json::from_str(payload).unwrap_or(json!(payload));
-    let mut st = svc().lock().unwrap();
-    if st.ready.contains(&token) {
-        drop(st);
-        return service_ext::append_event(
-            &service_ext::in_path(&base, &token),
-            &json!({"id": id, "payload": payload_value}),
-        )
-        .is_ok();
-    }
-    let q = st.queues.entry(token).or_default();
-    if q.len() >= QUEUE_CAP {
-        eprintln!("[pf-svc] 排队溢出（{id}），post 被拒");
-        return false;
-    }
-    q.push((id.to_string(), payload.to_string()));
-    true
+    service_ext::append_event(
+        &service_ext::in_path(&base, &token),
+        &json!({"id": id, "payload": payload_value}),
+    )
+    .is_ok()
 }
 
 /// 呈现面 `ctx.service.query`：宿主生命周期事实，插件不得自记。
