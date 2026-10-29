@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 fn probe_vendored_pi_handshake() {
     let cwd = std::env::current_dir().unwrap();
     // 探测复现应用默认路径：主会话带扩展（v70.3 起；全局开关已删）
-    let (session, mut rx) = match pi_link::client::spawn(&cwd, &[]) {
+    let (session, mut rx) = match pi_link::client::spawn(&cwd, &[], &[]) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("SPAWN FAILED: {e}");

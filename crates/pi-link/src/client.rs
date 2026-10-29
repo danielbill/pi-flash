@@ -45,6 +45,7 @@ pub struct PiSession {
 pub fn spawn(
     cwd: &Path,
     extra_args: &[&str],
+    envs: &[(String, String)],
 ) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
     let cli = vendor::cli_path().ok_or_else(|| {
         "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string()
@@ -108,6 +109,10 @@ pub fn spawn(
         if let Some(ext) = crate::subagents::ext_path() {
             cmd.arg("-e").arg(ext);
         }
+    }
+    // 执行域（90-6）唯一例外：PF_SVC_CONFIG = 宿主自带 shim 的配置指针（无凭据）
+    if !envs.is_empty() {
+        cmd.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     }
     #[cfg(windows)]
     {

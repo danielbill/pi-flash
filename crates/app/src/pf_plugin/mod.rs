@@ -11,6 +11,7 @@
 
 mod broadcast;
 pub(crate) mod panel;
+pub(crate) mod svc;
 mod wasm_hooks;
 
 pub(crate) use wasm_hooks::spawn_precompile_installed;
@@ -39,7 +40,7 @@ use crate::ui::tooltip::WithTip;
 
 /// 本版 PF 支持的清单契约大版本（与插件仓 schema/plugin-contract.json 的
 /// `manifest_schema` 对齐；加/删原语时一并升）
-pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 3;
+pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
@@ -71,10 +72,9 @@ pub(crate) struct PluginManifest {
     /// 分发态 JS **字节码**（`plugin.qbc`，由 `qjsc` 从同一份 main.js 编出）：
     /// 与源码包同一引擎、同一 ctx、同一渲染路径，落盘无明文源码。
     pub bytecode: Option<String>,
-    /// 包内 pi 扩展文件（契约 v2.4 contributes.pi_extensions，相对包根）。
-    /// 认领会话 spawn 时以 `-e` 挂入，插件逻辑在会话进程内运行。
-    /// **Tier 2 门**：仅官方验签包可携带（安装链执行，见 002 §W5）。
-    pub pi_extensions: Vec<String>,
+    /// 执行域实例声明（契约 v4 contributes.service，90-6）：scope 本版仅 session。
+    /// 宿主托管身份/通道/生命周期/存储；spawn 挂宿主自带 shim（Tier 2 验签门照旧）。
+    pub service: Vec<ServiceContrib>,
     /// 认领前缀声明（契约 v2.4 contributes.sessions）：插件建线时经
     /// ctx.newDraft 显式给 prefix，此处声明是清单面对账位（缺段解析即拒）。
     pub sessions: Vec<SessionSlotContrib>,
@@ -92,6 +92,17 @@ pub(crate) struct StatusBarContrib {
 pub(crate) struct TopbarMenuContrib {
     pub icon: String,
     pub title_zh: String,
+}
+
+/// 执行域实例声明（契约 v4 contributes.service；90-6）。
+#[derive(Debug, Clone)]
+pub(crate) struct ServiceContrib {
+    /// 插件内唯一 id（kebab-case）
+    pub id: String,
+    /// 本版仅 "session"
+    pub scope: String,
+    /// 执行面入口（相对包根；会话进程内运行）
+    pub entry: String,
 }
 
 /// 会话功能栏注册槽（契约 v3 contributes.fn_bar；一个插件至多一条）。
@@ -328,7 +339,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         popups: Vec::new(),
         file_menu: Vec::new(),
         panels: Vec::new(),
-        pi_extensions: Vec::new(),
+        service: Vec::new(),
         sessions: Vec::new(),
         wasm: None,
         bytecode: None,
@@ -407,9 +418,13 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     });
                     "panels".to_string()
                 }
-                "contributes.pi_extensions" => {
-                    m.pi_extensions.push(String::new());
-                    "pi_extensions".to_string()
+                "contributes.service" => {
+                    m.service.push(ServiceContrib {
+                        id: String::new(),
+                        scope: String::new(),
+                        entry: String::new(),
+                    });
+                    "service".to_string()
                 }
                 "contributes.sessions" => {
                     m.sessions.push(SessionSlotContrib {
@@ -527,8 +542,14 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     }
                 };
             }
-            ("pi_extensions", "path") => {
-                *m.pi_extensions.last_mut().unwrap() = val.as_str("path", n)?;
+            ("service", "id") => {
+                m.service.last_mut().unwrap().id = val.as_str("id", n)?.to_string();
+            }
+            ("service", "scope") => {
+                m.service.last_mut().unwrap().scope = val.as_str("scope", n)?.to_string();
+            }
+            ("service", "entry") => {
+                m.service.last_mut().unwrap().entry = val.as_str("entry", n)?.to_string();
             }
             ("sessions", "prefix") => {
                 *m.sessions.last_mut().unwrap() = SessionSlotContrib {
@@ -620,6 +641,31 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 "pf-plugin.toml：file_menu「{}」缺 id/title.zh",
                 fm.id
             ));
+        }
+    }
+    // 契约 v4：service 校验（id kebab / scope 封闭 / entry 非空）
+    for sc in &m.service {
+        let ok = !sc.id.is_empty()
+            && sc
+                .id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && !sc.id.starts_with('-')
+            && !sc.id.ends_with('-');
+        if !ok {
+            return Err(format!(
+                "pf-plugin.toml：service.id「{}」须 kebab-case",
+                sc.id
+            ));
+        }
+        if sc.scope != "session" {
+            return Err(format!(
+                "pf-plugin.toml：service.scope 只认 \"session\"，得到 {:?}",
+                sc.scope
+            ));
+        }
+        if sc.entry.is_empty() {
+            return Err("pf-plugin.toml：service.entry 不能为空".into());
         }
     }
     // 契约 v3：fn_bar / popups 校验
@@ -987,6 +1033,8 @@ pub(crate) fn claim_session_name(prefix: &str) -> String {
 /// JsHost 实现（02 §3 提问类同步、动作类入队）。
 /// 纯数据，不持 Chat——动作由 Chat 方法在 JS 返回后消费。
 pub(crate) struct ChatHost {
+    /// 插件 id（执行域信箱投递署名，90-6）
+    id: String,
     /// 插件私有目录（`plugins/<id>/data/`）——插件自管，宿主不解析内容
     dir: PathBuf,
     pub actions: Vec<JsAction>,
@@ -1047,6 +1095,12 @@ impl JsHost for ChatHost {
             eprintln!("[pf-plugin] fs 写入失败（{}）: {e}", path.display());
         }
     }
+    fn svc_post(&mut self, anchor: &str, payload: &str) -> bool {
+        svc::svc_post(&self.id, anchor, payload)
+    }
+    fn svc_query(&mut self, anchor: &str) -> String {
+        svc::svc_query(anchor)
+    }
     fn fs_list(&mut self) -> Vec<String> {
         let mut out: Vec<String> = std::fs::read_dir(&self.dir)
             .map(|rd| {
@@ -1072,6 +1126,35 @@ impl Chat {
     /// 启动扫描落位（spawn_plugin_scan 回调）。
     pub(crate) fn plugins_set(&mut self, plugins: Vec<PluginEntry>, cx: &mut gpui::Context<Self>) {
         self.plugins.plugins = plugins;
+        // 执行域实例集随清单落位同步（装/卸/更新都走这里重扫，90-6）
+        svc::svc_sync_configs(self);
+        cx.notify();
+    }
+
+    /// 执行域 svc→UI 投递（90-6 通道）：outbox 泵回调呈现面 onMessage 后重渲。
+    /// wasm 载体面（on-event kind="svc-message"）随 ③-b 接线。
+    pub(crate) fn svc_deliver(
+        &mut self,
+        plugin_id: &str,
+        payload_json: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(ix) = self
+            .plugins
+            .plugins
+            .iter()
+            .position(|e| e.manifest.id == plugin_id)
+        else {
+            return;
+        };
+        let Some(js) = self.plugins.plugins[ix].js.as_ref() else {
+            eprintln!("[pf-svc] 推送到达但呈现面未装载（{plugin_id}），丢弃");
+            return;
+        };
+        if let Err(e) = js.fire_svc_message(payload_json) {
+            eprintln!("[pf-svc] onMessage 投递失败（{plugin_id}）: {e}");
+            return;
+        }
         cx.notify();
     }
 
@@ -1139,16 +1222,7 @@ impl Chat {
                 list.join(", ")
             );
         }
-        // 先取值再动 self（借用分离）：pi 扩展绝对路径 + 插件 id + 形态门
-        let pi_exts: Vec<String> = entry
-            .manifest
-            .pi_extensions
-            .iter()
-            .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
-            .collect();
         let plugin_id = entry.manifest.id.clone();
-        let is_wasm = entry.manifest.wasm.is_some();
-        let pkg_dir = entry.manifest.dir.clone();
         let name = claim_session_name(prefix);
         let key = format!("draft-{}", self.pool.draft_seq);
         self.pool.draft_seq += 1;
@@ -1161,22 +1235,8 @@ impl Chat {
         });
         self.pool.runtimes.insert(key.clone(), rt.clone());
         self.subscribe_runtime(&rt, cx);
-        // 包内 pi 扩展挂到该会话（spawn 时 `-e`；路径 = 包根 + 相对路径）。
-        // **Tier 2 门**：pi ext 是会话进程内全权代码，仅官方验签包（wasm 形态，
-        // init 即验签门）可携带；JS 形态声明了也不挂（fail-closed + 告警）。
-        // 同时写 claim.json 到插件 data 目录：ext 在 session_start 自读交接
-        //（ext 自定位：__dirname/../data/，与宿主 ChatHost dir 同源）。
-        if !pi_exts.is_empty() {
-            if !is_wasm {
-                eprintln!(
-                    "[pf-plugin] Tier2 拒绝：非验签包（JS 形态）声明 pi_extensions，不挂载（{plugin_id}）"
-                );
-            } else if let Some(store) = pi_link::session_ext::store_path() {
-                if let Err(e) = pi_link::session_ext::write_for(&store, &key, &pi_exts) {
-                    eprintln!("[pf-plugin] pi 扩展挂载失败（{key}）: {e}");
-                }
-            }
-        }
+        // 执行域（v4）：实例随会话 spawn 由宿主自带 shim 统一挂载（runtime 侧
+        // 读实例配置），这里不再做 per-claim 挂载（90-6 §9 一步替换）。
         // 认领槽替换（一个插件同时只有一条进行中线）+ 过滤清单（owner = 插件 id）
         let prefix = prefix.to_string();
         self.plugins.claims.retain(|c| c.plugin_id != plugin_id);
@@ -1186,24 +1246,7 @@ impl Chat {
             key: key.clone(),
         });
         pi_link::hidden_sessions::set_owned(&plugin_id, Some(&name), None, Some(&prefix));
-        // 结果回推（契约 broadcast_events.claim）：插件存指针（wx_session_id 泛化）
-        // 交接文件：ext 在 session_start 自读（data 目录 = 包根/data/，
-        // 与宿主 ChatHost dir 同源；卸载随目录删，更新随包走）
-        if !pi_exts.is_empty() {
-            let claim_file = Some(pkg_dir.join("data").join("claim.json"));
-            if let Some(f) = claim_file {
-                if let Some(p) = f.parent() {
-                    let _ = std::fs::create_dir_all(p);
-                }
-                if let Err(e) = std::fs::write(
-                    &f,
-                    json!({"key": key, "name": name, "cwd": cwd, "prefix": prefix, "plugin_id": plugin_id})
-                        .to_string(),
-                ) {
-                    eprintln!("[pf-plugin] claim.json 写入失败: {e}");
-                }
-            }
-        }
+        // 结果回推（契约 broadcast_events.claim）：插件存指针（newDraft 泛化）
         let payload = json!({"key": key, "name": name, "cwd": cwd}).to_string();
         self.plugin_broadcast_fire(ix, broadcast::CLAIM, &payload, cx);
         Ok(key)
@@ -1363,7 +1406,9 @@ impl Chat {
         let dir = entry.manifest.dir.join("data");
         let _ = std::fs::create_dir_all(&dir); // 插件自管目录：PF 只建，不解析
         let dir_str = dir.to_string_lossy().into_owned();
+        let id = entry.manifest.id.clone();
         let host = Rc::new(RefCell::new(ChatHost {
+            id: id.clone(),
             dir,
             actions: Vec::new(),
         }));
@@ -1373,7 +1418,6 @@ impl Chat {
             .manifest
             .dir
             .join(bytecode_rel.as_deref().unwrap_or(&entry_rel));
-        let id = entry.manifest.id.clone();
         // 正版门（分发态）：字节码包只在官方构建里加载（非官方 = 占位证明 → 拒载）
         if bytecode_rel.is_some() && !has_official_proof() {
             entry.disabled = true;
@@ -1782,11 +1826,7 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        // 两套键各归其位：ext 挂载清单按 **PF 会话键**（active_key，与
-        // spawn 读侧一致）；插件命令 env 按 **pi sessionId**（与 ext
-        // getSessionId() 同源，004 §7-1）
-        let pf_key = self.pool.active_key.clone();
-        self.plugin_attach_pi_exts(ix, &pf_key, cx);
+        // 执行域（v4）：实例随会话常驻，绑定流不再触发挂载（90-6 §9 一步替换）
         let Some(cmd) = self
             .plugins
             .plugins
@@ -1798,83 +1838,6 @@ impl Chat {
         };
         let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
         self.plugin_command_fire_env(ix, &cmd, &env, window, cx);
-    }
-
-    /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通
-    /// 会话，不再走建线，挂载改在绑定时完成）。`pf_session_key` = PF 会话键
-    /// （active_key，session-ext.json 的键）；Tier 2 门：market 验签包才可
-    /// 携带（安装链已验）；dev 手拷包（台账 integrity 空）告警放行。
-    /// 会话进程空闲 → 立即重启挂载；忙 → 清单已写，下次 spawn 生效。
-    fn plugin_attach_pi_exts(
-        &mut self,
-        ix: usize,
-        pf_session_key: &str,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let Some(entry) = self.plugins.plugins.get(ix) else {
-            return;
-        };
-        if entry.manifest.pi_extensions.is_empty() || pf_session_key.is_empty() {
-            return;
-        }
-        // Tier 2 门口径：台账 integrity 非空 = market 验签包（安装链已验）；
-        // 空 = dev 手拷（link:dev），告警放行——市场分发必须走验签链
-        let verified = pi_link::pf_plugins::load_ledger().iter().any(|l| {
-            pi_link::pf_plugins::dir_aliases(&l.name)
-                .iter()
-                .any(|a| *a == entry.manifest.pkg)
-                && !l.integrity.is_empty()
-        });
-        if !verified {
-            eprintln!(
-                "[pf-plugin] dev 手拷包携带 pi_extensions，告警放行（{}；市场分发必须走验签链）",
-                entry.manifest.id
-            );
-        }
-        let pi_exts: Vec<String> = entry
-            .manifest
-            .pi_extensions
-            .iter()
-            .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
-            .collect();
-        let missing = pi_link::session_ext::store_path()
-            .map(|store| {
-                let have = pi_link::session_ext::read_for(&store, pf_session_key);
-                pi_exts.iter().any(|p| !have.iter().any(|h| h == p))
-            })
-            .unwrap_or(true);
-        if !missing {
-            return; // 清单已含，无需重启
-        }
-        if let Some(store) = pi_link::session_ext::store_path() {
-            if let Err(e) = pi_link::session_ext::write_for(&store, pf_session_key, &pi_exts) {
-                eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
-                return;
-            }
-        }
-        eprintln!(
-            "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
-            entry.manifest.id, pf_session_key
-        );
-        // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）
-        if let Some(rt) = self.pool.runtimes.get(pf_session_key).cloned() {
-            let busy = rt.read(cx).agent_running;
-            if !busy {
-                rt.update(cx, |r, cx| {
-                    // 内存清单同步（custom 档 spawn 走 ext_sources，其他档走
-                    // session-ext.json 统一追加——两路都要有这份路径）
-                    for p in &pi_exts {
-                        if !r.ext_sources.iter().any(|e| e == p) {
-                            r.ext_sources.push(p.clone());
-                        }
-                    }
-                    r.shutdown_process();
-                    r.ensure_spawned(cx);
-                });
-            } else {
-                self.set_status("微信机器人扩展将在当前任务完成后生效".to_string(), cx);
-            }
-        }
     }
 
     /// 命令回调（env 负载形态，契约 v3）：与 plugin_command_fire 同链，
@@ -2500,6 +2463,18 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     // 组件状态广播（契约 v2.4）：observe Chat 自身，差分派发给订阅插件
     broadcast::attach(cx);
+    // 执行域 outbox 泵（90-6 通道）：独立节拍，不随 UI notify 驱动
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(350))
+                .await;
+            if this.update(cx, |c, cx| svc::svc_pump(c, cx)).is_err() {
+                break; // Chat 已释放（退出）
+            }
+        }
+    })
+    .detach();
     // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
     // wasmtime，故由 app 注入）。纯函数指针，零开销。
     pi_link::pf_plugins::install_prepare_hook(install_prepare);
@@ -2846,7 +2821,7 @@ mod tests {
     }
 
     const GOOD: &str = r#"
-schema = 3
+schema = 4
 id = "quick-panel"
 title = { zh = "快捷面板", en = "Quick Panel" }
 version = "0.1.0"
@@ -2991,27 +2966,53 @@ entry = "main.js"
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 契约 v2.4 pi_extensions 解析：路径清单进 manifest（Tier 2 门在 new_draft）
+    /// 契约 v4 service 解析：入清单 + scope 封闭；pi_extensions 已移除（声明即错）
     #[test]
-    fn manifest_pi_extensions_parse() {
-        let tmp = std::env::temp_dir().join(format!("pf-piext-test-{}", std::process::id()));
+    fn manifest_service_parse() {
+        let tmp = std::env::temp_dir().join(format!("pf-svc-test-{}", std::process::id()));
         let body = GOOD.replace(
             "entry = \"main.js\"",
-            "entry = \"main.js\"\n\n[[contributes.pi_extensions]]\npath = \"pi/bridge.js\"",
+            "entry = \"main.js\"
+
+[[contributes.service]]
+id = \"wechat\"
+scope = \"session\"
+entry = \"pi/index.mjs\"",
         );
         let dir = tmp.join("quick-panel");
         write_manifest(&dir, &body);
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
         std::fs::create_dir_all(dir.join("assets")).unwrap();
         std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
-        let m = parse_manifest(&dir).expect("pi_extensions 清单应通过");
-        assert_eq!(m.pi_extensions, vec!["pi/bridge.js".to_string()]);
-        // 未声明 → 空
-        let dir = tmp.join("quick-panel");
-        write_manifest(&dir, GOOD);
-        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
-        let m = parse_manifest(&dir).expect("无 pi_extensions 应通过");
-        assert!(m.pi_extensions.is_empty());
+        let m = parse_manifest(&dir).expect("service 清单应通过");
+        assert_eq!(m.service.len(), 1);
+        assert_eq!(m.service[0].id, "wechat");
+        assert_eq!(m.service[0].scope, "session");
+        assert_eq!(m.service[0].entry, "pi/index.mjs");
+        // scope 封闭（本版仅 session）
+        let bad = GOOD.replace(
+            "entry = \"main.js\"",
+            "entry = \"main.js\"
+
+[[contributes.service]]
+id = \"wechat\"
+scope = \"global\"
+entry = \"pi/index.mjs\"",
+        );
+        write_manifest(&dir, &bad);
+        let e = parse_manifest(&dir).expect_err("scope=global 应拒");
+        assert!(e.contains("session"), "错误应提及 session：{e}");
+        // pi_extensions 一步替换：v4 声明即拒
+        let legacy = GOOD.replace(
+            "entry = \"main.js\"",
+            "entry = \"main.js\"
+
+[[contributes.pi_extensions]]
+path = \"pi/index.mjs\"",
+        );
+        write_manifest(&dir, &legacy);
+        let e = parse_manifest(&dir).expect_err("pi_extensions 应拒");
+        assert!(e.contains("未知段"), "错误：{e}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -3060,7 +3061,7 @@ entry = \"main.js\"
         let dir = tmp.join("pf-wxbot");
         write_manifest(
             &dir,
-            "schema = 3
+            "schema = 4
 id = \"pf-wxbot\"
 title = { zh = \"x\" }
 version = \"0.1.0\"
@@ -3092,13 +3093,13 @@ entry = \"main.js\"
         assert!(parse_manifest(&dir).is_err());
         // schema ≠ 支持的契约大版本（v3 起拒旧版；不降级运行）
         let dir = tmp.join("quick-panel");
-        write_manifest(&dir, &GOOD.replace("schema = 3", "schema = 2"));
+        write_manifest(&dir, &GOOD.replace("schema = 4", "schema = 2"));
         assert!(parse_manifest(&dir).is_err());
         // 纯库包（无 contributes）
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 3\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
+            "schema = 4\nid = \"quick-panel\"\ntitle = { zh = \"x\" }\nversion = \"0.1.0\"\n",
         );
         let e = parse_manifest(&dir).unwrap_err();
         assert!(e.contains("纯库"));
@@ -3116,7 +3117,7 @@ entry = \"main.js\"
         let dir = tmp.join("quick-panel");
         write_manifest(
             &dir,
-            "schema = 3  # 顶部注释
+            "schema = 4  # 顶部注释
 id = \"quick-panel\"   
 title = { zh = \"快捷#面板\" } # 行内
 version = \"0.1.0\"
@@ -3143,7 +3144,7 @@ entry = \"main.js\" # 入口
         write_manifest(
             &dir,
             r#"
-schema = 3
+schema = 4
 id = "quick-panel"
 title = { zh = "快捷面板", en = "Quick Panel" }
 version = "0.1.3"

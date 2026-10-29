@@ -10,6 +10,8 @@ impl Chat {
         rt: &gpui::Entity<session::runtime::SessionRuntime>,
         cx: &mut Context<Self>,
     ) {
+        // 执行域实例配置随会话挂册同步（90-6；新会话铸造 token + 写实例配置）
+        crate::pf_plugin::svc::svc_sync_configs(self);
         cx.subscribe(rt, |chat, rt, ev: &session::runtime::SessionEvent, cx| {
             use session::runtime::SessionEvent;
             let is_active = rt.read(cx).key == chat.pool.active_key;
@@ -337,6 +339,10 @@ impl Chat {
                 let _ = pi_link::session_ext::write_for(&store, &path_key, &sources);
             }
             let _ = pi_link::session_ext::remove_for(&store, &old_key);
+        }
+        // 执行域锚点注册表随身份搬家（token 不变 → 插件侧绑定指针跨迁移稳定，90-6 §2）
+        if let Some(base) = pi_link::paths::dir() {
+            let _ = pi_link::service_ext::move_key(&base, &old_key, &path_key);
         }
         if let Some(entity) = self.pool.runtimes.remove(&old_key) {
             self.pool.runtimes.insert(path_key.clone(), entity);

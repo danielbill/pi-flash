@@ -34,6 +34,15 @@ pub trait JsHost {
     fn fs_write(&mut self, name: &str, data: &str);
     /// `ctx.fs.list()`：目录下文件名。
     fn fs_list(&mut self) -> Vec<String>;
+    /// `ctx.service.post(anchor, msg)`（契约 v4 执行域，90-6）：
+    /// 发往执行域实例；未运行 → 宿主排队，溢出 = false。默认拒收（无执行域宿主）。
+    fn svc_post(&mut self, _anchor: &str, _payload: &str) -> bool {
+        false
+    }
+    /// `ctx.service.query(anchor)` → running | stopped | absent。宿主生命周期事实。
+    fn svc_query(&mut self, _anchor: &str) -> String {
+        "absent".into()
+    }
     /// `ctx.hostProof` 的材料源（090-5 L3）：构建期注入的官方宿主证明，
     /// 紧凑 JSON `{"kid":"…","proof":"…"}`。**默认 = 占位符（fail-closed）**：
     /// 未覆写的宿主实现（含 fork 自建）只会递出验签必失败的占位符。
@@ -179,6 +188,18 @@ impl JsPlugin {
             )?;
             let h = glue_host.clone();
             g.set(
+                "__pf_svc_post",
+                Func::from(move |anchor: String, payload: String| -> bool {
+                    h.borrow_mut().svc_post(&anchor, &payload)
+                }),
+            )?;
+            let h = glue_host.clone();
+            g.set(
+                "__pf_svc_query",
+                Func::from(move |anchor: String| -> String { h.borrow_mut().svc_query(&anchor) }),
+            )?;
+            let h = glue_host.clone();
+            g.set(
                 "__pf_fs_list",
                 Func::from(move || -> String {
                     let names = h.borrow_mut().fs_list();
@@ -316,6 +337,12 @@ globalThis.__pf_ctx = {{
     setBadge: (b) => globalThis.__pf_set_badge(JSON.stringify(b ?? {{}})),
     clearBadge: (b) => globalThis.__pf_clear_badge(JSON.stringify(b ?? {{}})),
   }},
+  // 契约 v4 执行域（90-6）：通道/查询；onMessage 注册后由宿主 outbox 泵投递
+  service: {{
+    post: (a, m) => globalThis.__pf_svc_post(String(a), m == null ? "" : String(m)),
+    onMessage: (h) => {{ globalThis.__pf_svc_msg_fn = h; }},
+    query: (a) => globalThis.__pf_svc_query(String(a)),
+  }},
   askPi: (t) => globalThis.__pf_ask_pi(t == null ? "" : String(t)),
   // 契约 v3：动作命名空间（扁平面 toast 等保持不动，兼容存量插件）
   act: {{
@@ -378,6 +405,10 @@ globalThis.__pf_fire_panel_open = () => {{
 globalThis.__pf_fire_broadcast = (name, json) => {{
   const fn = globalThis["__pf_bc_" + name];
   if (typeof fn === "function") fn(JSON.parse(json || "null"));
+}};
+globalThis.__pf_fire_svc_message = (json) => {{
+  if (typeof globalThis.__pf_svc_msg_fn === "function")
+    globalThis.__pf_svc_msg_fn(JSON.parse(json || "null"));
 }};
 "#,
             ))?;
@@ -528,6 +559,19 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_broadcast")?;
                 f.call::<(&str, &str), ()>((name, payload))?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    /// 触发执行域推送回调 `onMessage(payload)`（未注册 = no-op）。
+    /// payload = 不透明负载 JSON 串（契约 v4 执行域，90-6）。
+    pub fn fire_svc_message(&self, payload: &str) -> Result<(), String> {
+        self.arm_deadline();
+        self.ctx
+            .with(|ctx| -> Result<(), rquickjs::Error> {
+                let f: Function = ctx.globals().get("__pf_fire_svc_message")?;
+                f.call::<(&str,), ()>((payload,))?;
                 Ok(())
             })
             .map_err(|e| e.to_string())

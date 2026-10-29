@@ -454,7 +454,32 @@ impl SessionRuntime {
             extra.push("--thinking".into());
             extra.push(level);
         }
-        self.agent.spawn_with(&self.cwd, &extra)
+        // 执行域挂载（90-6）：存在实例配置 → 挂宿主自带 shim + 交付配置指针。
+        // 配置由 Chat 侧随插件装/卸同步（svc_sync_configs）；spawn 只消费。
+        let mut envs: Vec<(String, String)> = Vec::new();
+        if let Some(base) = pi_link::paths::dir() {
+            if let Some(cfg) = pi_link::service_ext::config_path_if_any(&base, &self.key) {
+                if cfg.is_file() {
+                    match pi_link::service_ext::shim_path() {
+                        Some(shim) => {
+                            extra.push("-e".into());
+                            extra.push(shim.to_string_lossy().into_owned());
+                            // 信箱残留清零：上一轮已消费事件不得重放（至多一次）
+                            if let Some(token) =
+                                pi_link::service_ext::token_if_any(&base, &self.key)
+                            {
+                                pi_link::service_ext::reset_spools(&base, &token);
+                            }
+                            envs.push(("PF_SVC_CONFIG".into(), cfg.to_string_lossy().into_owned()));
+                        }
+                        None => {
+                            eprintln!("[pf-svc] 本构建缺执行域 shim，service 落空（{}）", self.key)
+                        }
+                    }
+                }
+            }
+        }
+        self.agent.spawn_with(&self.cwd, &extra, &envs)
     }
 
     /// Kill the process but keep everything else (idle recycle / soft drop).

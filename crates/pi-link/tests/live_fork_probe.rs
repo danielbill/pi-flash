@@ -75,7 +75,8 @@ fn probe_fork() {
     let path = std::env::var("PROBE_SESSION").expect("PROBE_SESSION=<session.jsonl>");
     let cwd = std::env::current_dir().unwrap();
     // 探测复现应用默认路径：主会话带扩展（v70.3 起；全局开关已删）
-    let (session, mut rx) = pi_link::client::spawn(&cwd, &["--session", &path]).expect("spawn pi");
+    let (session, mut rx) =
+        pi_link::client::spawn(&cwd, &["--session", &path], &[]).expect("spawn pi");
     eprintln!(
         "spawned pi pid={} session={path}",
         session.id().unwrap_or(0)

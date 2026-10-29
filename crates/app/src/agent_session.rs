@@ -29,13 +29,14 @@ impl AgentSession {
         &mut self,
         cwd: &Path,
         extra_args: &[String],
+        envs: &[(String, String)],
     ) -> Option<UnboundedReceiver<Event>> {
         self.epoch += 1;
         let args: Vec<&str> = extra_args.iter().map(String::as_str).collect();
         // 扩展装载（pi-web parity，v70.3）：freeflow 等插件 provider 由此
         // 可用；隔离归工具预设档（full/full+ 自带 -ne 精确集）。全局开关
         // 已删（2026-10-10）。
-        match spawn_pi(cwd, &args) {
+        match spawn_pi(cwd, &args, envs) {
             Ok((s, ev)) => {
                 self.session = Some(s);
                 Some(ev)
