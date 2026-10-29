@@ -244,6 +244,31 @@ fn shared_engine() -> anyhow::Result<&'static Engine> {
 
 static SHARED_ENGINE: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
 
+/// 按路径的编译单飞锁（8tb.4 真机 10-29）：冷缓存时「启动验签门」与「UI 懒
+/// 装载」会并发各编一份 cwasm（秒级 cranelift 抢满 CPU → 揭幕后 UI 冻结数秒）。
+/// 同路径编译持同一把锁，进锁后**先复查产物是否已出现**（双检），后者直接
+/// mmap 前者的成果。
+fn compile_lock(path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+    > = std::sync::OnceLock::new();
+    let map = LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut g = map.lock().unwrap();
+    g.entry(path.to_path_buf())
+        .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
+        .clone()
+}
+
+/// 编译耗时实测（铁律：热路径要带数字）。进程内只报一次/路径。
+fn log_compile_perf(path: &Path, elapsed: std::time::Duration) {
+    static REPORTED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    let set = REPORTED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    if set.lock().unwrap().insert(path.to_path_buf()) {
+        eprintln!("[perf] cwasm 编译 {}: {elapsed:?}", path.display());
+    }
+}
+
 /// wasm 内容指纹（缓存键）：sha256 十六进制。
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -317,6 +342,8 @@ impl PluginInstance {
         let engine = shared_engine()?.clone();
         let wasm = std::fs::read(wasm_path)?;
         let artifact = cache_dir.join(format!("{}.cwasm", sha256_hex(&wasm)));
+        // 同路径编译单飞：持锁后复查产物（并发方可能已编好落盘）
+        let _compile_guard = compile_lock(wasm_path);
         // SAFETY：产物只由本方 `precompile_component` 写出，路径在 PF 自有目录
         let component = match unsafe { Component::deserialize_file(&engine, &artifact) } {
             Ok(c) => c,
@@ -327,7 +354,9 @@ impl PluginInstance {
                         artifact.display()
                     );
                 }
+                let t = std::time::Instant::now();
                 let bytes = engine.precompile_component(&wasm)?;
+                log_compile_perf(wasm_path, t.elapsed());
                 write_artifact(cache_dir, &bytes, &artifact);
                 // SAFETY：同一份自产产物字节（刚编译，形态即 precompile 输出）
                 unsafe { Component::deserialize(&engine, &bytes) }?
@@ -356,7 +385,13 @@ impl PluginInstance {
         if artifact.is_file() {
             return Ok(false);
         }
+        let _compile_guard = compile_lock(wasm_path);
+        if artifact.is_file() {
+            return Ok(false); // 并发方已编好（双检）
+        }
+        let t = std::time::Instant::now();
         let bytes = shared_engine()?.precompile_component(&wasm)?;
+        log_compile_perf(wasm_path, t.elapsed());
         write_artifact(cache_dir, &bytes, &artifact);
         Ok(true)
     }
@@ -800,5 +835,48 @@ mod tests {
                 "不得再画 1px 外框：{p:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_single_flight_tests {
+    use super::*;
+
+    /// 冷缓存 + 双线程并发 load_cached：编译必须只发生一次（单飞锁 + 双检）。
+    /// 由 inner e2e 注入 PF_TEST_V3_WASM 运行；--nocapture 下应只见一条
+    /// 「[perf] cwasm 编译」。
+    #[test]
+    fn concurrent_load_compiles_once() {
+        let Ok(v3) = std::env::var("PF_TEST_V3_WASM") else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("pf-wx-single-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wasm = dir.join("plugin.wasm");
+        std::fs::copy(&v3, &wasm).unwrap();
+        let cache = dir.join(".cache");
+        // 不 init：load_cached 只验装载，不触证明门
+
+        let wasm1 = wasm.clone();
+        let cache1 = cache.clone();
+        let t1 = std::thread::spawn(move || {
+            let mut i = PluginInstance::load_cached(&wasm1, &cache1).expect("t1 load");
+            i.init("t1").ok();
+        });
+        let wasm2 = wasm.clone();
+        let cache2 = cache.clone();
+        let t2 = std::thread::spawn(move || {
+            let mut i = PluginInstance::load_cached(&wasm2, &cache2).expect("t2 load");
+            i.init("t2").ok();
+        });
+        t1.join().unwrap();
+        t2.join().unwrap();
+        // 两份实例都装载成功（文件级断言：产物存在且唯一）
+        let n = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
+            .count();
+        assert_eq!(n, 1, "并发装载后产物应只有一份");
     }
 }
