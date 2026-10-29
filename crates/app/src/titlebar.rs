@@ -395,7 +395,13 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
                     .find(|e| e.manifest.pkg == *pkg)
                     .map(|e| e.manifest.title_zh.clone())
                     .unwrap_or_else(|| pkg.clone());
-                (label.into(), None, false, Some("puzzle"), ContentView::Plugin)
+                (
+                    label.into(),
+                    None,
+                    false,
+                    Some("puzzle"),
+                    ContentView::Plugin,
+                )
             }
         };
         // 文件 tab 行尾标记（023）：冲突 ! > 脏点。zed parity（DiskState::

@@ -279,10 +279,6 @@ impl Chat {
         self.new_session_with(cx, true);
     }
 
-
-
-
-
     /// 启动落草稿（restore=off / 该项目无会话）：**不清 per-project 会话
     /// 记忆**——旧会话还在盘上，下次开 restore 仍应能直接加载（010）。
     pub(crate) fn boot_new_session(&mut self, cx: &mut Context<Self>) {
@@ -850,7 +846,6 @@ impl Chat {
     pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
         self.session_title_of(&self.pool.active_key.clone(), cx)
     }
-
 
     /// 指定池 key 的会话标题（topbar 第一格在查看微信 tab 时显示桌面会话用）。
     pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {

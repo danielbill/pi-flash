@@ -611,8 +611,8 @@ impl Render for Chat {
                         slp_hovered || slp_dragging,
                         t,
                     ))
-                })
-,        );
+                }),
+        );
 
         let mut root = div()
             .size_full()

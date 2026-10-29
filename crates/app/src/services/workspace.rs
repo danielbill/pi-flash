@@ -353,11 +353,7 @@ fn tabs_state_from_value(v: &Value) -> Option<TabsState> {
         .map(|a| a as usize)
         .filter(|a| *a < tabs.len());
     let chat = v.get("chat").and_then(|b| b.as_bool()).unwrap_or(true);
-    Some(TabsState {
-        tabs,
-        active,
-        chat,
-    })
+    Some(TabsState { tabs, active, chat })
 }
 
 /// 读取全局 tab 带存档。
@@ -1161,7 +1157,6 @@ pub fn subagents_enabled() -> bool {
 pub fn pi_ext_market_enabled() -> bool {
     dev_flag_enabled("pi_ext_market")
 }
-
 
 /// topbar「菜单」三横钮是否渲染：**恒显**（2026-10-23 用户禁令：不许删菜单 icon）。
 /// 菜单是多入口的壳，里面 090-4「Pi-Flash 插件」是主线常驻项，按钮不能跟着

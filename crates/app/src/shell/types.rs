@@ -288,7 +288,10 @@ pub(crate) enum PanelTab {
     /// （重装/重载后 ix 漂移安全的稳定身份，渲染时经 `plugin_ix_by_pkg`
     /// 现查），page = `panels[].id`。瞬态页不进存档；声明式树模式
     /// （认领会话线模式随 W5 会话槽交付）。
-    Plugin { pkg: String, page: String },
+    Plugin {
+        pkg: String,
+        page: String,
+    },
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时

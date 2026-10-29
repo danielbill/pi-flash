@@ -642,19 +642,14 @@ fn boot_target() -> BootTarget {
             // 微信线归【微信通话】标签管，历史遗留指针一律按「无会话可
             // 恢复」处理，落新会话页
             .filter(|p| p.exists() && !hidden.hides(None, p))
-            // 影子会话（pf-wxbot-*）**永不**做桌面恢复目标：按文件名前缀与
-            // state.session_key 双保险（过滤清单可能滞后一轮）
+            // 影子会话（pf-wxbot-*，插件认领线草稿键）**永不**做桌面恢复
+            // 目标：按文件名前缀过滤（hidden 清单可能滞后一轮，前缀是铁闸）
             .filter(|p| {
                 let name = p
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                if name.starts_with("pf-wxbot-") {
-                    return false;
-                }
-                let key = wxprobe::state::get_str(&wxprobe::state::load(), "session_key")
-                    .unwrap_or_default();
-                key != p.to_string_lossy()
+                !name.starts_with("pf-wxbot-")
             })
     } else {
         None
@@ -681,8 +676,7 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
         }
         let saved_tabs = match &target {
             BootTarget::Project { .. } if restore_on => {
-                crate::services::workspace::tabs_state_for()
-                    .filter(|s| !s.tabs.is_empty())
+                crate::services::workspace::tabs_state_for().filter(|s| !s.tabs.is_empty())
             }
             _ => None,
         };

@@ -503,8 +503,6 @@ impl SessionRuntime {
         cx.notify();
     }
 
-
-
     /// 思考档换挡（胶囊菜单 / 微信菜单同源）。
     ///
     /// `level` 是 pi 的档位键。pi 会按模型能力**截断**（deepseek-flash 只有

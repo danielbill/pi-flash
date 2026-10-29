@@ -245,10 +245,7 @@ impl Element for ScrollbarElement {
 
         // thumb 上悬停（zed update_hovered_thumb）；拖拽 = 本实例在拖
         let thumb_hovered = layout.thumb_bounds.contains(&window.mouse_position());
-        let dragging = DRAG.with(|c| {
-            c.borrow()
-                .is_some_and(|(owner, _)| owner == my_id)
-        });
+        let dragging = DRAG.with(|c| c.borrow().is_some_and(|(owner, _)| owner == my_id));
 
         if opacity > 0. {
             // 悬停/拖拽加宽 4px（用户定稿）：右缘锚定不动，向左扩

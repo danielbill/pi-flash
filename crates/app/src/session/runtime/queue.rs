@@ -94,7 +94,6 @@ impl SessionRuntime {
         cx.notify();
     }
 
-
     /// 卡片垃圾桶：移除该条（丢弃）。
     pub(crate) fn queue_remove(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix >= self.queued_inputs.len() {
