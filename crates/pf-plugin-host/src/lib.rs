@@ -669,7 +669,12 @@ mod tests {
             return;
         };
         install_proof_hook(proof_placeholder); // 不 init，纯装载 + 探测
-        let mut p = PluginInstance::load(std::path::Path::new(&v3)).expect("load v3");
+        // 拷进独立临时目录：测试各自的 data/ 互不串扰（插件 storage = 包目录/data）
+        let dir = std::env::temp_dir().join(format!("pf-wx-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wasm = dir.join("plugin.wasm");
+        std::fs::copy(&v3, &wasm).unwrap();
+        let mut p = PluginInstance::load(&wasm).expect("load v3");
         assert!(p.has_fn_bar(), "v3 包应探到 fn-bar");
         assert!(p.has_session_row(), "v3 包应探到 session-row");
         assert!(p.has_render_popup(), "v3 包应探到 render-popup");
@@ -680,9 +685,11 @@ mod tests {
 
         // 官方 proof（可选注入）→ init 验签激活后，钩子应回真值：未绑态
         // chrome = 灰（text.faint）+ 绑定引导 tip；徽标 = 无；弹窗 = 组件树
+        // 官方 proof（可选注入）→ init 验签激活后，钩子应回真值：未绑态
+        // chrome = 灰（text.faint）+ 绑定引导 tip；徽标 = 无；弹窗 = 组件树
         if std::env::var("PF_TEST_PROOF_OFFICIAL").is_ok() {
             install_proof_hook(proof_official);
-            let mut p = PluginInstance::load(std::path::Path::new(&v3)).expect("load v3");
+            let mut p = PluginInstance::load(&wasm).expect("load v3");
             p.init("pf-wxbot").expect("官方 proof 必须激活");
             let chrome = p.fn_bar_json("{}").unwrap().expect("chrome 应有值");
             let v: serde_json::Value = serde_json::from_str(&chrome).unwrap();
@@ -700,6 +707,98 @@ mod tests {
             let mut p = PluginInstance::load(std::path::Path::new(&v2)).expect("load v2");
             assert!(!p.has_fn_bar() && !p.has_session_row() && !p.has_render_popup());
             p.render_json().expect("v2 render 面应可用");
+        }
+    }
+
+    /// 弹窗三态渲染断言（8tb.4 真机反馈回归，2026-10-29）：①正常码只画模块
+    /// （无白遮/无提示/无边框）；② 120s 超时（qr_timeout=1）→ 白遮旧码 +
+    /// 两行居中提示；③ 失败（qr_error）→ 叠提示不白遮。镜像由测试直写
+    /// （插件 storage = 包目录/data，拷 wasm 进独立临时目录隔离）。需
+    /// PF_TEST_V3_WASM + PF_TEST_PROOF_OFFICIAL（render_popup 要验签激活）。
+    #[test]
+    fn wasm_popup_three_states() {
+        let (Ok(v3), Ok(_)) = (
+            std::env::var("PF_TEST_V3_WASM"),
+            std::env::var("PF_TEST_PROOF_OFFICIAL"),
+        ) else {
+            return;
+        };
+        install_proof_hook(proof_official);
+        let dir = std::env::temp_dir().join(format!("pf-wx-popup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wasm = dir.join("plugin.wasm");
+        std::fs::copy(&v3, &wasm).unwrap();
+        let data_dir = dir.join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let mut inst = PluginInstance::load(&wasm).expect("load v3");
+        inst.init("pf-wxbot").expect("官方 proof 必须激活");
+
+        let grid = r#"{"size":4,"rows":[[[0,2],[3,1]],[[1,1]],[[2,2]],[[0,4]]]}"#;
+        let write_mirror = |obj: serde_json::Value| {
+            std::fs::write(data_dir.join("wx-state.json"), obj.to_string()).unwrap();
+        };
+        let canvas = |inst: &mut PluginInstance| -> serde_json::Value {
+            let s = inst.render_popup_json().expect("render-popup 应成功");
+            let tree: serde_json::Value = serde_json::from_str(&s).expect("树应是合法 JSON");
+            tree["children"][0].clone()
+        };
+
+        // ① 正常态：只画模块（#1f1f1f），无白遮、无提示、无边框
+        write_mirror(serde_json::json!({ "qrcode_grid": grid }));
+        let c = canvas(&mut inst);
+        let paint = c["paint"].as_array().unwrap();
+        assert!(!paint.is_empty(), "正常码应有模块 rect");
+        assert!(
+            paint.iter().all(|p| p["fill"] == "#1f1f1f"),
+            "正常态只画模块：{paint:?}"
+        );
+
+        // ② 120s 超时：白遮旧码（#ffffff 全幅）+ 两行居中提示（002 态3）
+        write_mirror(serde_json::json!({ "qrcode_grid": grid, "qr_timeout": "1" }));
+        let c = canvas(&mut inst);
+        let paint = c["paint"].as_array().unwrap();
+        assert!(
+            paint
+                .iter()
+                .any(|p| p["op"] == "rect" && p["fill"] == "#ffffff"),
+            "超时必须白遮旧码"
+        );
+        let texts: Vec<&serde_json::Value> = paint.iter().filter(|p| p["op"] == "text").collect();
+        assert_eq!(texts.len(), 2, "超时态两行提示");
+        // 行一【刷新二维码】7 字 × 13px → x = (396-91)/2 = 152（居中）
+        assert_eq!(texts[0]["x"], 152, "行一应居中");
+        assert_eq!(texts[0]["tone"], "accent");
+        // 行二 11 字 × 11px → x = (396-121)/2 = 137
+        assert_eq!(texts[1]["x"], 137, "行二应居中");
+        assert!(texts[1]["value"].as_str().unwrap().contains("扫描超时"));
+        assert_eq!(c["command"], "refresh-qr", "超时态点框即重出码");
+
+        // ③ 失败：qr_error + 活码 → 叠提示不白遮（002 态2；瞬态轮询错由 ext
+        // 不写 qr_error，这里验证壳侧对真错的呈现）
+        write_mirror(serde_json::json!({ "qrcode_grid": grid, "qr_error": "x" }));
+        let c = canvas(&mut inst);
+        let paint = c["paint"].as_array().unwrap();
+        assert!(
+            !paint.iter().any(|p| p["fill"] == "#ffffff"),
+            "失败态不白遮"
+        );
+        assert!(
+            paint
+                .iter()
+                .any(|p| p["op"] == "text"
+                    && p["value"].as_str().unwrap().contains("绑定出错请重试"))
+        );
+        assert_eq!(c["command"], "refresh-qr");
+
+        // ④ 无边框回归：任何 paint 都不出现 1px 长条（旧外框特征）
+        write_mirror(serde_json::json!({ "qrcode_grid": grid }));
+        let c = canvas(&mut inst);
+        for p in c["paint"].as_array().unwrap() {
+            let (w, h) = (p["w"].as_i64().unwrap_or(0), p["h"].as_i64().unwrap_or(0));
+            assert!(
+                !((w == 1 && h > 50) || (h == 1 && w > 50)),
+                "不得再画 1px 外框：{p:?}"
+            );
         }
     }
 }
