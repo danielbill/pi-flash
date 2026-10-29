@@ -40,6 +40,15 @@ fn resolve_token(base: &std::path::Path, key_or_anchor: &str) -> Option<String> 
 }
 
 /// 呈现面 `ctx.service.post`：ready → 直投信箱；未运行 → 排队（溢出 false）。
+/** wasm 载体入口（无插件 id 参数）：id 从锚点 `<token>/<pluginId>` 派生。 */
+pub(crate) fn svc_post_anon(key_or_anchor: &str, payload: &str) -> bool {
+    let id = key_or_anchor
+        .split_once('/')
+        .map(|(_, rest)| rest)
+        .unwrap_or("");
+    svc_post(id, key_or_anchor, payload)
+}
+
 pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
     let Some(base) = service_ext::base() else {
         return false;
@@ -51,7 +60,7 @@ pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
     let payload_value: serde_json::Value = serde_json::from_str(payload).unwrap_or(json!(payload));
     service_ext::append_event(
         &service_ext::in_path(&base, &token),
-        &json!({"id": id, "payload": payload_value}),
+        &json!({"id": if id.is_empty() { "svc" } else { id }, "payload": payload_value}),
     )
     .is_ok()
 }

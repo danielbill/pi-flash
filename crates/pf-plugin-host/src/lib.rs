@@ -90,6 +90,12 @@ impl pf::plugin::host::Host for HostState {
         // PluginAction::NewDraft 时进行；结果经 broadcast "claim" 回推。
         let _ = self.tx.send(PluginAction::NewDraft { prefix, cwd });
     }
+    fn svc_post(&mut self, anchor_or_key: String, payload: String) -> bool {
+        svc_post_bridge(&anchor_or_key, &payload)
+    }
+    fn svc_query(&mut self, anchor_or_key: String) -> String {
+        svc_query_bridge(&anchor_or_key)
+    }
     fn open_popup(&mut self, id: String) {
         // 契约 v3 act.openPopup（wasm 面，8tb.2）：只入队，开窗在调用方消费
         // PluginAction::OpenPopup 时进行（与 JS JsAction::OpenPopup 同落点）。
@@ -118,6 +124,33 @@ pub enum PluginAction {
 // ---------------------------------------------------------------------------
 
 pub type QuickPinListFn = fn() -> Vec<String>;
+
+/// 执行域桥（90-6）：wasm 插件的 ctx.service 面。app 侧注入真实实现。
+pub type SvcPostFn = fn(&str, &str) -> bool;
+pub type SvcQueryFn = fn(&str) -> String;
+
+thread_local! {
+    static SVC_POST_FN: std::cell::RefCell<Option<SvcPostFn>> = const { std::cell::RefCell::new(None) };
+    static SVC_QUERY_FN: std::cell::RefCell<Option<SvcQueryFn>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 注入执行域能力（启动一次；未注入 = 拒收，fail-closed）。
+pub fn install_svc_hooks(post: SvcPostFn, query: SvcQueryFn) {
+    SVC_POST_FN.with(|c| *c.borrow_mut() = Some(post));
+    SVC_QUERY_FN.with(|c| *c.borrow_mut() = Some(query));
+}
+
+fn svc_post_bridge(key: &str, payload: &str) -> bool {
+    SVC_POST_FN.with(|c| c.borrow().map(|f| f(key, payload)).unwrap_or(false))
+}
+
+fn svc_query_bridge(key: &str) -> String {
+    SVC_QUERY_FN.with(|c| {
+        c.borrow()
+            .map(|f| f(key))
+            .unwrap_or_else(|| "absent".into())
+    })
+}
 /// 路径派生能力（与 JS 插件 ctx.fileIcon / ctx.isExecutive 同源）
 pub type FileIconFn = fn(&str) -> String;
 pub type IsExecFn = fn(&str) -> bool;

@@ -1148,6 +1148,25 @@ impl Chat {
         else {
             return;
         };
+        // wasm 载体：on-event kind="svc-message"，path = {payload, meta}
+        if self.plugins.plugins[ix].wasm.is_some() {
+            let path = format!("{{\"payload\":{payload_json},\"meta\":{meta_json}}}");
+            let res = {
+                let Some(inst) = self.plugins.plugins[ix].wasm.as_mut() else {
+                    return;
+                };
+                let r = inst.on_event("svc-message", plugin_id, &path);
+                let acts = inst.pump_actions();
+                (r, acts)
+            };
+            match res.0 {
+                Ok(()) => {
+                    self.plugin_wasm_render(ix, cx);
+                }
+                Err(e) => self.plugin_broken(ix, format!("{e}"), cx),
+            }
+            return;
+        }
         let Some(js) = self.plugins.plugins[ix].js.as_ref() else {
             eprintln!("[pf-svc] 推送到达但呈现面未装载（{plugin_id}），丢弃");
             return;
@@ -2482,6 +2501,11 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     // 宿主证明钩子**启动即注入**（进程级，线程无关）：晚注入会让先加载的
     // wasm 插件读到 fallback 占位符 → 误判「fork/无证明构建」而拒载。
     pf_plugin_host::install_proof_hook(host_proof_material);
+    // 执行域桥（90-6）：wasm 载体 ctx.service ↔ 与 JS 同一条通道实现
+    pf_plugin_host::install_svc_hooks(
+        |key, payload| svc::svc_post_anon(key, payload),
+        |key| svc::svc_query(key),
+    );
     // 路径派生能力（与 JS 插件 ctx.fileIcon / ctx.isExecutive 同一套服务）
     pf_plugin_host::install_path_hooks(
         |p| crate::services::file_icons::get_icon(Path::new(p)).to_string(),
