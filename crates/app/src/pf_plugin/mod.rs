@@ -2733,11 +2733,14 @@ pub(crate) fn fn_bar_plugin_elements(
         .map(|(ix, icon_path, tone, tip)| {
             let t = crate::appearance::theme::theme();
             // 002：绿=已绑定。kitchen 等主题 accent 是红，fn_bar 的 accent
-            // 固定映射主题绿（appearance::UNREAD，与旧版微信 icon 同色）
-            let color = if tone == "accent" {
-                crate::appearance::theme::UNREAD
-            } else {
-                t.text_muted
+            // 固定映射主题绿（appearance::UNREAD，与旧版微信 icon 同色）。
+            // 其余按 token 原样映射（text.faint = 未绑默认灰，2026-10-29 用户
+            // 定夺；曾一律 text_muted 近黑，灰不可辨）。
+            let color = match tone.as_str() {
+                "accent" => crate::appearance::theme::UNREAD,
+                "text.faint" => t.text_faint,
+                "text.muted" => t.text_muted,
+                _ => t.text_muted,
             };
             let weak = weak.clone();
             let key = session_key.clone();
