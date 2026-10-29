@@ -43,7 +43,6 @@ pub(crate) fn content_main(
         // 090 插件预览页签（契约 v2.4 dock="tab"）：整页声明式树，
         // 按 pkg 现查（重装/重载后 ix 漂移安全）
         ContentView::Plugin => crate::pf_plugin::panel::plugin_tab_page(chat, weak),
-        // 微信通信全屏页（060；三横菜单唯一入口）
     };
     div()
         .id("content-main")

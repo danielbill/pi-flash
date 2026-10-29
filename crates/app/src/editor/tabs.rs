@@ -236,8 +236,6 @@ impl Chat {
         // focus 按身份追踪：批量移除会让下标平移，事后按下标找必指错
         let focus_tab = focus.and_then(|f| self.ws.panel_tabs.get(f).cloned());
         let mut dirty: Vec<PathBuf> = Vec::new();
-        // 微信 tab 被批掉时，摘完再统一收前台（不能用 close_wx_tab：它按
-        // 现查下标移除，会打乱本轮正在倒序消耗的 targets 下标）
         // 倒序移除：前面的下标不因删除漂移
         for ix in targets.iter().rev() {
             let Some(tab) = self.ws.panel_tabs.get(*ix).cloned() else {

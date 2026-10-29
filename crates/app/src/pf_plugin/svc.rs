@@ -195,7 +195,14 @@ pub(crate) fn svc_pump(chat: &mut crate::Chat, cx: &mut gpui::Context<crate::Cha
                 continue;
             };
             let payload_json = serde_json::to_string(payload).unwrap_or_default();
-            chat.svc_deliver(id, &payload_json, cx);
+            // 来源 meta（90-6 §4）：呈现面归档状态需要知道推送来自哪个锚点/会话
+            let anchor = format!("{token}/{id}");
+            let meta = json!({
+                "anchor": anchor,
+                "key": service_ext::key_for_token(&base, token),
+            });
+            let meta_json = meta.to_string();
+            chat.svc_deliver(id, &payload_json, &meta_json, cx);
         }
     }
 }

@@ -337,7 +337,7 @@ globalThis.__pf_ctx = {{
     setBadge: (b) => globalThis.__pf_set_badge(JSON.stringify(b ?? {{}})),
     clearBadge: (b) => globalThis.__pf_clear_badge(JSON.stringify(b ?? {{}})),
   }},
-  // 契约 v4 执行域（90-6）：通道/查询；onMessage 注册后由宿主 outbox 泵投递
+  // 契约 v4 执行域（90-6）：通道/查询；onMessage(payload, meta) 由宿主 outbox 泵投递
   service: {{
     post: (a, m) => globalThis.__pf_svc_post(String(a), m == null ? "" : String(m)),
     onMessage: (h) => {{ globalThis.__pf_svc_msg_fn = h; }},
@@ -406,9 +406,9 @@ globalThis.__pf_fire_broadcast = (name, json) => {{
   const fn = globalThis["__pf_bc_" + name];
   if (typeof fn === "function") fn(JSON.parse(json || "null"));
 }};
-globalThis.__pf_fire_svc_message = (json) => {{
+globalThis.__pf_fire_svc_message = (json, meta) => {{
   if (typeof globalThis.__pf_svc_msg_fn === "function")
-    globalThis.__pf_svc_msg_fn(JSON.parse(json || "null"));
+    globalThis.__pf_svc_msg_fn(JSON.parse(json || "null"), JSON.parse(meta || "null"));
 }};
 "#,
             ))?;
@@ -564,14 +564,14 @@ globalThis.__pf_fire_svc_message = (json) => {{
             .map_err(|e| e.to_string())
     }
 
-    /// 触发执行域推送回调 `onMessage(payload)`（未注册 = no-op）。
-    /// payload = 不透明负载 JSON 串（契约 v4 执行域，90-6）。
-    pub fn fire_svc_message(&self, payload: &str) -> Result<(), String> {
+    /// 触发执行域推送回调 `onMessage(payload, meta)`（未注册 = no-op）。
+    /// payload = 不透明负载 JSON 串；meta = {anchor, key}（来源实例锚点 + 会话当前键）。
+    pub fn fire_svc_message(&self, payload: &str, meta: &str) -> Result<(), String> {
         self.arm_deadline();
         self.ctx
             .with(|ctx| -> Result<(), rquickjs::Error> {
                 let f: Function = ctx.globals().get("__pf_fire_svc_message")?;
-                f.call::<(&str,), ()>((payload,))?;
+                f.call::<(&str, &str), ()>((payload, meta))?;
                 Ok(())
             })
             .map_err(|e| e.to_string())

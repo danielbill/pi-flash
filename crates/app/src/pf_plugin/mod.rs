@@ -1137,6 +1137,7 @@ impl Chat {
         &mut self,
         plugin_id: &str,
         payload_json: &str,
+        meta_json: &str,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(ix) = self
@@ -1151,7 +1152,7 @@ impl Chat {
             eprintln!("[pf-svc] 推送到达但呈现面未装载（{plugin_id}），丢弃");
             return;
         };
-        if let Err(e) = js.fire_svc_message(payload_json) {
+        if let Err(e) = js.fire_svc_message(payload_json, meta_json) {
             eprintln!("[pf-svc] onMessage 投递失败（{plugin_id}）: {e}");
             return;
         }

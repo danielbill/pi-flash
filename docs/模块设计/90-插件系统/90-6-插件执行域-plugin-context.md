@@ -51,7 +51,8 @@ entry = "<相对路径>"      # 执行面入口
 
 ```js
 ctx.service.post(anchor, msg)      // 发往实例；未运行 → 有界排队（按序，溢出返回 false）
-ctx.service.onMessage(handler)     // 收实例推送；返回后宿主按既有规则重渲
+ctx.service.onMessage(handler)     // 收实例推送 handler(payload, meta{anchor,key})；
+                                   // meta 宿主解析（来源锚点 + 会话当前键）；返回后按既有规则重渲
 ctx.service.query(anchor)          // → "running" | "stopped" | "absent"（宿主生命周期事实）
 ```
 

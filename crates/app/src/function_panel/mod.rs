@@ -1084,8 +1084,6 @@ pub(crate) fn dock(
             .child(crate::pf_plugin::plugin_panel_view(chat, ix, weak))
             .into_any_element();
     }
-    // 微信面板已迁出 dock（2026-10-23）：入口收三横菜单【微信通信】，
-    // 内容区全屏页（ContentView::Wx，remote_control::panel::page）。
     // 020-1 整合面板：会话列表(上) + 文件树(下)，默认 50/50；分隔线拖拽
     // 改占比（拖拽即退出两侧最小态、双击复位 50%），各自可收起到控制栏
     //（单最大化钮，语义见 LayoutUi::sess_min / files_min）

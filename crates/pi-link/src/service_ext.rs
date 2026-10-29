@@ -143,6 +143,14 @@ pub fn out_path(base: &Path, token: &str) -> PathBuf {
     sessions_dir(base).join(format!("{token}-out.jsonl"))
 }
 
+/// token 反查会话键（呈现面投递 meta 用；注册表内逆查）。
+pub fn key_for_token(base: &Path, token: &str) -> Option<String> {
+    registry_read(base)
+        .into_iter()
+        .find(|(_, t)| t == token)
+        .map(|(k, _)| k)
+}
+
 /// spawn 侧：该会话的实例配置路径（未铸造过 = None，不铸）。
 pub fn config_path_if_any(base: &Path, key: &str) -> Option<PathBuf> {
     token_if_any(base, key).map(|t| config_path(base, &t))
