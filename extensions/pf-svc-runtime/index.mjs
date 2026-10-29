@@ -22,8 +22,19 @@ function append(f, obj) {
   }
 }
 
+function crumb(line) {
+  try {
+    const base = (process.env.PF_SVC_CONFIG || "").split("\\").join("/");
+    const m = base.match(/^(.*)\/pf-svc\/sessions\//);
+    if (!m) return;
+    appendFileSync(m[1] + "/pf-svc/shim.log", `[shim ${Date.now()}] ${line}
+`);
+  } catch { /* 排障留痕，尽力而为 */ }
+}
+
 export default function (pi) {
   const cfgPath = process.env.PF_SVC_CONFIG;
+  crumb(`load cfg=${cfgPath ?? "(unset)"} exists=${cfgPath ? existsSync(cfgPath) : false}`);
   if (!cfgPath || !existsSync(cfgPath)) return; // 无实例配置 = 纯旁路
 
   let cfg;
@@ -45,7 +56,7 @@ export default function (pi) {
       try { inst._onStop?.(); } catch (e) { console.error("[pf-svc] onStop 异常:", e); }
       return;
     }
-    try { inst._onMessage?.(line.payload); } catch (e) { console.error("[pf-svc] onMessage 异常:", e); }
+    try { inst._onMessage?.(line.payload); } catch (e) { console.error("[pf-svc] onMessage 异常:", e); crumb(`dispatch THREW ${e?.message ?? e}`); }
   }
 
   function pumpInbox() {
@@ -65,6 +76,7 @@ export default function (pi) {
 
   pi.on("session_start", async (event, sessionCtx) => {
     if (stopped) return;
+    crumb(`session_start instances=${(cfg.instances ?? []).length}`);
     for (const inst of cfg.instances ?? []) {
       if (insts.has(inst.id)) continue;
       const svc = {
@@ -87,8 +99,10 @@ export default function (pi) {
         await activate(svc);
         insts.set(inst.id, inst);
         append(inst.outbox, { id: inst.id, ev: "ready" });
+        crumb(`activate ok id=${inst.id} anchor=${inst.anchor}`);
       } catch (e) {
         console.error(`[pf-svc] ${inst.id} 实例化失败:`, e?.message ?? e);
+        crumb(`activate FAIL id=${inst.id} err=${e?.message ?? e}`);
       }
     }
     if (insts.size > 0 && !timer) timer = setInterval(pumpInbox, TICK_MS);

@@ -339,7 +339,10 @@ globalThis.__pf_ctx = {{
   }},
   // 契约 v4 执行域（90-6）：通道/查询；onMessage(payload, meta) 由宿主 outbox 泵投递
   service: {{
-    post: (a, m) => globalThis.__pf_svc_post(String(a), m == null ? "" : String(m)),
+    post: (a, m) => globalThis.__pf_svc_post(
+      String(a),
+      typeof m === "string" ? m : JSON.stringify(m == null ? null : m)
+    ),
     onMessage: (h) => {{ globalThis.__pf_svc_msg_fn = h; }},
     query: (a) => globalThis.__pf_svc_query(String(a)),
   }},
