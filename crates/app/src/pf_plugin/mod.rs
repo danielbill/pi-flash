@@ -1865,6 +1865,15 @@ impl Chat {
         self.plugin_command_fire_env(ix, &cmd, &env, window, cx);
     }
 
+    /// 该会话是否有「绑定中的服务实例」（闲置回收豁免判据）：
+    /// 注册表里有 token + 实例配置在位即算——绑定存在 = 轮询器必须活着。
+    pub(crate) fn has_live_service(&self, key: &str, cx: &mut gpui::Context<Self>) -> bool {
+        let Some(base) = pi_link::paths::dir() else {
+            return false;
+        };
+        pi_link::service_ext::config_path_if_any(&base, key).is_some()
+    }
+
     /// 确保当前会话的 pi 进程已起（执行域实例随之激活）。
     /// 幂等：已在跑直接返回；起不来就安静跳过（调用方继续走，不阻塞 UI）。
     pub(crate) fn ensure_active_process(&mut self, cx: &mut gpui::Context<Self>) {

@@ -476,6 +476,13 @@ fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
                         if *key == chat.pool.active_key {
                             continue;
                         }
+                        // 执行域豁免（90-6）：该会话挂着绑定中的微信实例时，
+                        // pi 进程 = 轮询器本体；回收它 = 手机消息没人收、
+                        // ui.json 的绑定指针却还在 → icon 假绿（2026-10-30
+                        // 真机「发消息收不到」主因之一）。
+                        if chat.has_live_service(key, cx) {
+                            continue;
+                        }
                         let idle = {
                             let r = rt.read(cx);
                             !r.agent_running

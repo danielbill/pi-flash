@@ -62,23 +62,20 @@ echo "== 1. 扫描绑定情况"
 REG="$WORK/dir/pf-svc/registry.json"
 EXT="$DEST/data/svc/wx-state.json"
 [ -f "$REG" ] || skip "缺锚点注册表（从未起过执行域）"
-[ -f "$EXT" ] || skip "缺执行面状态（从未绑定）"
+touch "$EXT"   # 执行面状态可为空盘：本用例只测「壳↔通道↔宿主」，绑定用合成事件
 
-BOT=$(node -e 'const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(v.bot_user_id||"")' "$EXT" 2>/dev/null)
-[ -n "$BOT" ] || skip "执行面未绑定微信（无 bot_user_id）"
-echo "  已绑定账号: $BOT"
-
-# 绑定会话：优先执行面记的 session_id / page_id（谁绑的就是谁），退回注册表首个已落盘键
+# 绑定会话：优先执行面记的 session_id / page_id，退回注册表首个已落盘键
 SESSION_FILE=$(node -e '
 const fs=require("fs");
-const ext=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const BS=String.fromCharCode(92);
+const ext=fs.existsSync(process.argv[1])?JSON.parse(fs.readFileSync(process.argv[1],"utf8")):{};
 const reg=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-const toWin=k=>k.replace(/\//g,"\\");
-const cand=[ext.session_id,ext.page_id].filter(Boolean).map(toWin);
-for(const k of Object.keys(reg)){ if(k&&!k.startsWith("draft-")) cand.push(toWin(k)); }
+const cand=[];
+for(const k of ["session_id","page_id"]){const v=ext[k];if(v)cand.push(v.split("/").join(BS));}
+for(const k of Object.keys(reg)){ if(k&&!k.startsWith("draft-")) cand.push(k.split("/").join(BS)); }
 for(const c of cand){ if(fs.existsSync(c)){ console.log(c); break; } }
 ' "$EXT" "$REG" 2>/dev/null)
-[ -n "$SESSION_FILE" ] || skip "绑定会话文件不在盘上"
+[ -n "$SESSION_FILE" ] || skip "注册表里没有已落盘会话"
 NORM_KEY=$(node -e 'const s=process.argv[1].trim().replace(/\\/g,"/");process.stdout.write(s.length>1&&s[1]===":"?s[0].toLowerCase()+s.slice(1):s)' "$SESSION_FILE")
 echo "  绑定会话ID: $SESSION_FILE"
 
