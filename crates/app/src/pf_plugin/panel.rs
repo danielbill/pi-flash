@@ -1416,6 +1416,25 @@ fn click_command(
         let cmd = command.clone();
         let a = arg.clone();
         let _ = weak.update(cx, |c, cx| {
+            // 契约：会话域命令回环必须带 env.session.key（fn_bar 同规）。
+            // 画布/开关点击不带 arg 时宿主补当前会话键——壳侧 onCommand 用
+            // env.session.key 定位投递目标，空 env = 意图静默丢失（2026-10-30
+            // 真机：超时白遮点【刷新二维码】无响应，即空 env 丢失）。
+            let a = if a.trim().is_empty() {
+                let key =
+                    c.pool
+                        .runtimes
+                        .get(&c.pool.active_key)
+                        .and_then(|rt| {
+                            rt.read(cx).state.as_ref().and_then(|s| {
+                                s.session_file.clone().or_else(|| s.session_id.clone())
+                            })
+                        })
+                        .unwrap_or_default();
+                serde_json::json!({ "session": { "key": key } }).to_string()
+            } else {
+                a
+            };
             c.plugin_command_fire(ix, &cmd, &a, window, cx);
         });
     }

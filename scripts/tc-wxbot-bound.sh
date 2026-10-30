@@ -161,6 +161,56 @@ done
 [ "${OPENED:-0}" = "1" ] && ok "二维码弹窗已打开" || bad "二维码弹窗未打开"
 [ "${PAINT:-0}" -gt 0 ] 2>/dev/null && ok "二维码已绘制（paint 段数 $PAINT）" || bad "二维码空白（canvas paint=${PAINT:-0}）"
 
+# ---------------------------------------------------------------- 6. 超时白遮 → 点画布刷新（TC3）
+echo "== 6. 二维码超时 → 点击画布刷新（TC3）"
+TOKEN=$(node -e '
+const fs=require("fs");
+const ext=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+const reg=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
+const BS=String.fromCharCode(92);
+const norm=k=>{k=k.split(BS).join("/");return k.length>1&&k[1]===":"?k[0].toLowerCase()+k.slice(1):k};
+const cand=[];
+for(const k of ["session_id","page_id"]){const v=ext[k];if(v)cand.push(v);}
+for(const k of Object.keys(reg)){if(k&&!k.startsWith("draft-"))cand.push(k);}
+for(const c of cand){const t=reg[norm(c)];if(t){console.log(t);break;}}' "$EXT" "$REG" 2>/dev/null)
+[ -n "$TOKEN" ] || die "找不到会话 token"
+# 走真实通道注入超时（宿主 outbox 泵 → 壳 onMessage → 白遮）
+printf '{"id":"pf-wxbot","payload":{"type":"qr_timeout"}}
+' >> "$WORK/dir/pf-svc/sessions/$TOKEN-in.jsonl"
+TIMEOUT_SHOWN=0
+for _ in $(seq 1 20); do
+  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
+  grep -q "刷新二维码" "$WORK/pop.json" && { TIMEOUT_SHOWN=1; break; }
+  sleep 1
+done
+[ "$TIMEOUT_SHOWN" = "1" ] && ok "超时白遮出现（【刷新二维码】文案）" || bad "超时白遮未出现"
+# 点击画布中心（MD 弹窗 500x500 居中，画布在弹窗顶部 396px 内）——真实鼠标事件链
+# 点击画布中心：MD 卡 420x630 逻辑居中，画布 396 居卡片顶部（标题栏 ~45）。
+# input.mouse 吃 **逻辑像素**（gpui px 口径）——物理坐标会点到卡外触发点外关闭。
+WH=$("$PUI" snapshot app --only window 2>/dev/null)
+CLICKXY=$(node -e '
+const j=JSON.parse(process.argv[1]);
+const sc=j.window.scale_factor||1;
+const lw=j.window.width_px/sc, lh=j.window.height_px/sc;
+console.log(Math.round(lw/2)+","+Math.round(lh/2-72));' "$WH" 2>/dev/null)
+CX=${CLICKXY%,*}; CY=${CLICKXY#*,}
+"$PUI" exec input.mouse --arg x=$CX --arg y=$CY >/dev/null 2>&1 || bad "鼠标点击失败"
+NEWPAINT=0
+for _ in $(seq 1 40); do
+  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
+  NEWPAINT=$(node -e '
+try {
+  const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+  const b=j.plugin_popup && j.plugin_popup.body;
+  const walk=(n)=>!n?null:(n.type==="canvas"?n:((n.children||[]).map(walk).find(Boolean)||null));
+  const c=walk(b);
+  console.log(c && Array.isArray(c.paint) ? c.paint.length : 0);
+} catch(e) { console.log(0) }' "$WORK/pop.json" 2>/dev/null)
+  [ "${NEWPAINT:-0}" -gt 100 ] 2>/dev/null && break
+  sleep 1
+done
+[ "${NEWPAINT:-0}" -gt 100 ] 2>/dev/null && ok "点击后新码已绘（paint $NEWPAINT 段）" || bad "点击不刷新（paint=${NEWPAINT:-0}）"
+
 echo; echo "== 结果：$pass passed, $fail failed"
 [ "$KEEP" = "1" ] && echo "（现场 $WORK；日志 $WORK/app.log）"
 cleanup
