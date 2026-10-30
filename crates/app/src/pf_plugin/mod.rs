@@ -1008,6 +1008,10 @@ pub(crate) struct PluginUi {
     /// 弹窗轮询代数：每次开/关自增，旧轮询循环见代数不符自行退出
     /// （重复点击不堆叠 1s 轮询）。
     pub popup_gen: u64,
+    /// 弹窗 1s 重取的驱动状态（120ms 主泵调用；不另开循环）
+    pub popup_poll_gen: u64,
+    pub popup_poll_ix: Option<usize>,
+    pub popup_poll_at: Option<std::time::Instant>,
     /// fn_bar chrome 缓存（键 = pkg + session_key，TTL 见 FnBarCache 用法）。
     pub fn_bar_cache: Vec<FnBarCache>,
     /// 会话列表徽标（旧命令式路径，保留字段供存量包；新路径 = session_list_render）
@@ -1691,10 +1695,6 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
-        if self.plugins.plugins[ix].wasm.is_some() {
-            self.plugin_wasm_event(ix, "command", command_id, path, window, cx);
-            return;
-        }
         let (result, actions) = {
             let entry = &mut self.plugins.plugins[ix];
             let host = entry.host.as_ref().unwrap().clone();
@@ -1846,7 +1846,12 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        // 执行域（v4）：实例随会话常驻，绑定流不再触发挂载（90-6 §9 一步替换）
+        // 执行域（v4）：意图写在**本会话**的信箱里，必须有人消费——该会话的
+        // 执行面实例只在它的 pi 进程里活着。切到另一个会话点 icon 时那个会话
+        // 往往还没起进程（PF 懒启动），意图就一直躺在信箱里没人读：二维码不
+        // 出、绑定不换，只有壳侧指针变绿（2026-10-30 真机「只点亮 icon 不
+        // 切换绑定」）。点 icon 前先确保本会话进程在。
+        self.ensure_active_process(cx);
         let Some(cmd) = self
             .plugins
             .plugins
@@ -1858,6 +1863,19 @@ impl Chat {
         };
         let env = serde_json::json!({ "session": { "key": session_key } }).to_string();
         self.plugin_command_fire_env(ix, &cmd, &env, window, cx);
+    }
+
+    /// 确保当前会话的 pi 进程已起（执行域实例随之激活）。
+    /// 幂等：已在跑直接返回；起不来就安静跳过（调用方继续走，不阻塞 UI）。
+    pub(crate) fn ensure_active_process(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(rt) = self.pool.runtimes.get(&self.pool.active_key).cloned() else {
+            return;
+        };
+        let _ = rt.update(cx, |r, cx| {
+            r.ensure_spawned(cx);
+        });
+        // 进程起来后实例配置才被消费；顺手同步一次（幂等）
+        svc::svc_sync_configs(self);
     }
 
     /// 命令回调（env 负载形态，契约 v3）：与 plugin_command_fire 同链，
@@ -1980,32 +1998,44 @@ impl Chat {
     /// （过期白遮/新码/开关态）无回调链可触发，轮询是弹窗场景唯一时效保障；
     /// 弹窗关闭即停。停用/坏插件自动断流。
     fn plugin_popup_poll(&mut self, ix: usize, popup_gen: u64, cx: &mut gpui::Context<Self>) {
-        eprintln!("[pf-plugin] popup poll 启动 ix={ix} gen={popup_gen}");
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(1000))
-                    .await;
-                let mut stop = true;
-                let _ = this.update(cx, |c, cx| match c.plugins.popup.as_ref() {
-                    Some(p) if p.ix == ix && p.tree_loaded && c.plugins.popup_gen == popup_gen => {
-                        stop = false;
-                        c.plugin_popup_reload(ix, cx);
-                    }
-                    _ => {}
-                });
-                if stop {
-                    break;
-                }
-            }
-        })
-        .detach();
+        // 重取节拍挂到 120ms 主泵（startup::spawn_pump_120ms → popup_tick）。
+        // 早先在这里自起 cx.spawn 循环，实测「首拍后即不再进」——弹窗内容永远
+        // 停在打开那一刻的旧帧，画布也就永远不带 refresh-qr 命令：超时白遮后
+        // 点画布毫无反应（2026-10-30 真机 bug①）。不再自开节拍。
+        self.plugins.popup_poll_gen = popup_gen;
+        self.plugins.popup_poll_ix = Some(ix);
+        self.plugins.popup_poll_at = Some(std::time::Instant::now());
+    }
+
+    /// 弹窗 1s 重取（由 120ms 主泵驱动；弹窗关/gen 变即自动失效）。
+    pub(crate) fn plugin_popup_tick(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(ix) = self.plugins.popup_poll_ix else {
+            return;
+        };
+        let Some(p) = self.plugins.popup.as_ref() else {
+            self.plugins.popup_poll_ix = None;
+            return;
+        };
+        if p.ix != ix || !p.tree_loaded || self.plugins.popup_gen != self.plugins.popup_poll_gen {
+            self.plugins.popup_poll_ix = None;
+            return;
+        }
+        let due = self
+            .plugins
+            .popup_poll_at
+            .map(|t| t.elapsed() >= std::time::Duration::from_millis(1000))
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.plugins.popup_poll_at = Some(std::time::Instant::now());
+        eprintln!("[popup-tick] reload ix={ix}");
+        self.plugin_popup_reload(ix, cx);
     }
 
     /// 弹窗内容重取（回调链返回后的重渲染规则：弹窗开着就跟着新态）。
     /// 能力面取体（8tb.2）：JS/wasm 同一取数口，解析不分支。
     fn plugin_popup_reload(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
-        eprintln!("[pf-plugin] popup reload trace ix={ix}");
         if self.plugins.popup.as_ref().map(|p| p.ix) != Some(ix) {
             return;
         }
@@ -2074,6 +2104,14 @@ impl Chat {
                     self.plugin_popup_close(cx);
                     return;
                 }
+                eprintln!(
+                    "[popup-tick] body={}",
+                    serde_json::to_string(&body)
+                        .unwrap_or_default()
+                        .chars()
+                        .take(120)
+                        .collect::<String>()
+                );
                 if let Some(p) = self.plugins.popup.as_mut() {
                     p.body = Some(body);
                     p.tree_loaded = true;

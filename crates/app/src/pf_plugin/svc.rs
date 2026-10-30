@@ -53,7 +53,14 @@ pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
     let Some(base) = service_ext::base() else {
         return false;
     };
-    let Some(token) = resolve_token(&base, key_or_anchor) else {
+    // 插件级（全局）操作——二维码出码/刷新就是这一类：它和「当前在哪个会话」
+    // 无关，绑谁由扫码结果决定。键为空/未注册时投给该插件的**任意活实例**
+    // （出码态是插件全局单写者，投给谁都一样），不再因缺会话键丢失意图。
+    let token = match resolve_token(&base, key_or_anchor) {
+        Some(t) => Some(t),
+        None => any_live_token(&base, id),
+    };
+    let Some(token) = token else {
         eprintln!("[pf-svc] post 无实例（{key_or_anchor}），丢弃");
         return false;
     };
@@ -63,6 +70,20 @@ pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
         &json!({"id": if id.is_empty() { "svc" } else { id }, "payload": payload_value}),
     )
     .is_ok()
+}
+
+/// 该插件的任意活实例（优先 ready；其次排队中的；都没有 = 无）。
+/// 用于插件级操作（出码/刷新/开关）——不绑定具体会话。
+fn any_live_token(base: &std::path::Path, plugin_id: &str) -> Option<String> {
+    let st = svc().lock().unwrap();
+    // ready 集里挑一个（token 不区分插件，用实例配置里的 id 校对）
+    let pick = st
+        .ready
+        .iter()
+        .chain(st.seen.iter())
+        .find(|t| service_ext::has_instance(base, t, plugin_id))
+        .cloned();
+    pick
 }
 
 /// 呈现面 `ctx.service.query`：宿主生命周期事实，插件不得自记。

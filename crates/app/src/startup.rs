@@ -396,6 +396,8 @@ fn spawn_pump_120ms(cx: &mut gpui::Context<Chat>) {
             if svc_tick % 3 == 0 {
                 let _ = this.update(cx, |c, cx| crate::pf_plugin::svc::svc_pump(c, cx));
             }
+            // 插件弹窗 1s 重取（超时白遮/新码/开关态）：同样挂这条长跑循环
+            let _ = this.update(cx, |c, cx| c.plugin_popup_tick(cx));
             let ok = this
                 .update(cx, |c, cx| {
                     let mut dirty = false;

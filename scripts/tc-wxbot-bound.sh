@@ -106,110 +106,224 @@ poll() {  # poll <次数> <命令...>；命中即返回 0
   printf '%s' "$out"; return 1
 }
 
+# ---------------------------------------------------------------- 基线（通道级、确定性）
+# 本用例只验证「壳 ↔ 通道 ↔ 宿主」这一段，不依赖 ext 的实时出码/网络/锁：
+# 用与 ext 同形的 outbox 事件驱动壳，和真机扫码成功后的推送逐字段一致。
+norm() { node -e '
+const BS=String.fromCharCode(92);
+let k=process.argv[1].trim().split(BS).join("/");
+process.stdout.write(k.length>1&&k[1]===":"?k[0].toLowerCase()+k.slice(1):k)' "$1"; }
+NORM_KEY=$(norm "$SESSION_FILE")
+UIJSON="$DEST/data/ui.json"
+ujson() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(process.argv[2].split(".").reduce((o,k)=>o==null?o:o[k],v))}catch(e){console.log("")}' "$UIJSON" "$1"; }
+fp() { node -e '
+try {
+  const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+  const g=v.qr&&v.qr.grid;
+  const rows=g&&g.rows?JSON.stringify(g.rows):"";
+  let h=0; for(let i=0;i<rows.length;i++){h=(h*31+rows.charCodeAt(i))%2147483647;}
+  console.log([!!v.qr, v.qrTimeout===true?1:0, h].join(":")); } catch(e){ console.log("err") }' "$UIJSON"; }
+
+# 让本会话成为已绑定态：先把门牌（token）弄出来，再按 ext 的扫码成功事件推一次
+"$PUI" exec plugin.fnbar_click >/dev/null 2>&1 || bad "fn icon 点击失败"
+TOKEN1=""
+for _ in $(seq 1 40); do
+  TOKEN1=$(node -e '
+const fs=require("fs");
+try {
+  const reg=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const BS=String.fromCharCode(92);
+  const norm=k=>{k=k.split(BS).join("/");return k.length>1&&k[1]===":"?k[0].toLowerCase()+k.slice(1):k};
+  const t=reg[norm(process.argv[2])];
+  if(t) console.log(t);
+} catch(e){}' "$REG" "$SESSION_FILE" 2>/dev/null)
+  [ -n "$TOKEN1" ] && break
+  sleep 1
+done
+[ -n "$TOKEN1" ] || die "本会话执行域未起（token 未铸）"
+IN1="$WORK/dir/pf-svc/sessions/$TOKEN1-in.jsonl"
+OUT1="$WORK/dir/pf-svc/sessions/$TOKEN1-out.jsonl"
+
+printf '{"id":"pf-wxbot","payload":{"type":"bound","scanned":true}}
+' >> "$OUT1"
+GOT=""
+for _ in $(seq 1 30); do GOT=$(ujson boundKey); [ "$GOT" = "$NORM_KEY" ] && break; sleep 1; done
+[ "$GOT" = "$NORM_KEY" ] && ok "基线：绑定指针指向本会话（注册表口径）" || bad "基线失败（boundKey=$GOT）"
+[ "$(ujson expired)" = "false" ] && ok "基线：非过期态（expired=false）" || bad "基线：仍处过期态"
+
 # ---------------------------------------------------------------- 3. 徽标
 echo "== 3. 会话列表 badge"
-POLL_PAT='"icon"'
-poll 30 "$PUI" exec plugin.badge --arg "path=$SESSION_FILE" >/dev/null   # 先等徽标态成立
-B=$("$PUI" exec plugin.badge --arg "path=$SESSION_FILE" 2>&1); echo "  $B"
-N=$(node -e 'try{console.log(JSON.parse(process.argv[1]).items.length)}catch{console.log(0)}' "$B")
+B=""; N=0
+for _ in $(seq 1 30); do
+  B=$("$PUI" exec plugin.badge --arg "path=$SESSION_FILE" 2>&1)
+  N=$(node -e 'try{console.log(JSON.parse(process.argv[1]).items.length)}catch{console.log(0)}' "$B")
+  [ "${N:-0}" -ge 1 ] 2>/dev/null && break
+  sleep 1
+done
+echo "  $B"
 [ "${N:-0}" -ge 1 ] && ok "会话行画出 badge（$N 条）" || bad "会话行没有 badge（期望 ≥1）"
 
 # ---------------------------------------------------------------- 4. fn icon
 echo "== 4. fn_bar 微信 icon"
-# ip 会话文件落进运行时才算「进会话完成」，此前 fn_bar 的 env.session.key 是空串
-for _ in $(seq 1 40); do
-  SF=$("$PUI" snapshot session --only file 2>&1)
-  case "$SF" in *".jsonl"*) break ;; esac
+TONE=""
+for _ in $(seq 1 30); do
+  F=$("$PUI" exec plugin.fnbar 2>&1)
+  TONE=$(node -e 'try{const i=JSON.parse(process.argv[1]).items;console.log(i.length?i[0].tone:"(none)")}catch{console.log("(parse)")}' "$F")
+  [ "$TONE" = "accent" ] && break
   sleep 1
 done
-POLL_PAT='accent'
-poll 30 "$PUI" exec plugin.fnbar >/dev/null
-F=$("$PUI" exec plugin.fnbar 2>&1); echo "  $F"
-TONE=$(node -e 'try{const i=JSON.parse(process.argv[1]).items;console.log(i.length?i[0].tone:"(none)")}catch{console.log("(parse)")}' "$F")
-[ "$TONE" = "accent" ] && ok "微信 icon 点亮（tone=accent）" || bad "微信 icon 未点亮（tone=$TONE，期望 accent）"
+echo "  $F"
+[ "$TONE" = "accent" ] && ok "微信 icon 点亮（tone=accent）" || bad "微信 icon 未点亮（tone=$TONE）"
 
-# 口径回归：壳归档的绑定指针必须是宿主注册表规范形
-UI="$DEST/data/ui.json"
-if [ -f "$UI" ]; then
-  GOT=$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).boundKey||"")}catch{console.log("")}' "$UI")
-  [ "$GOT" = "$NORM_KEY" ] && ok "ui.boundKey = 注册表口径" || bad "ui.boundKey 口径不符：$GOT ≠ $NORM_KEY"
-else
-  bad "壳未写 ui.json（sync→bound 链未跑通）"
-fi
-
-# ---------------------------------------------------------------- 5. 点 icon → 二维码
-echo "== 5. 点微信 icon → 二维码显示（TC2）"
+# ---------------------------------------------------------------- 5. 弹窗 + 码（TC2）
+echo "== 5. 点微信 icon → 二维码（TC2）"
 "$PUI" exec plugin.fnbar_click >/dev/null 2>&1 || bad "fn icon 点击失败"
-PAINT=0; OPENED=0
+OPENED=0
 for _ in $(seq 1 40); do
+  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
+  OPENED=$(node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(j.plugin_popup&&j.plugin_popup.open?1:0)}catch(e){console.log(0)}' "$WORK/pop.json" 2>/dev/null)
+  [ "$OPENED" = "1" ] && break
+  sleep 1
+done
+[ "$OPENED" = "1" ] && ok "二维码弹窗已打开" || bad "二维码弹窗未打开"
+
+SYNTH=$(node -e '
+const N=49; const rows=[]; for(let y=0;y<N;y++){ rows.push([[0,25],[26,23]]); }
+console.log(JSON.stringify({size:N,rows}));')
+printf '{"id":"pf-wxbot","payload":{"type":"qr","grid":%s}}
+' "$SYNTH" >> "$IN1"
+PAINT=0
+for _ in $(seq 1 30); do
   "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
   PAINT=$(node -e '
-try {
+try{
   const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-  const b=j.plugin_popup && j.plugin_popup.body;
-  if (j.plugin_popup && j.plugin_popup.open) console.log("OPEN");
-  const walk=(n)=>!n?null:(n.type==="canvas"?n:((n.children||[]).map(walk).find(Boolean)||null));
-  const c=walk(b);
-  const k=require("fs").statSync(process.argv[1]).size;
-  console.log(c && Array.isArray(c.paint) ? c.paint.length : 0);
-} catch(e) { console.log(0) }' "$WORK/pop.json" 2>/dev/null | tail -1)
-  OPENED=$(node -e '
-try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(j.plugin_popup&&j.plugin_popup.open?1:0)}catch(e){console.log(0)}' "$WORK/pop.json" 2>/dev/null)
-  [ "${PAINT:-0}" -gt 0 ] 2>/dev/null && break
+  const b=j.plugin_popup&&j.plugin_popup.body;
+  const walk=n=>!n?null:(n.type==="canvas"?n:((n.children||[]).map(walk).find(Boolean)||null));
+  const c=walk(b); console.log(c&&Array.isArray(c.paint)?c.paint.length:0);
+}catch(e){console.log(0)}' "$WORK/pop.json" 2>/dev/null)
+  [ "${PAINT:-0}" -gt 90 ] 2>/dev/null && break
   sleep 1
 done
-[ "${OPENED:-0}" = "1" ] && ok "二维码弹窗已打开" || bad "二维码弹窗未打开"
-[ "${PAINT:-0}" -gt 0 ] 2>/dev/null && ok "二维码已绘制（paint 段数 $PAINT）" || bad "二维码空白（canvas paint=${PAINT:-0}）"
+[ "${PAINT:-0}" -gt 90 ] 2>/dev/null && ok "二维码已绘制（paint $PAINT 段）" || bad "二维码空白（paint=${PAINT:-0}）"
 
-# ---------------------------------------------------------------- 6. 超时白遮 → 点画布刷新（TC3）
+# ---------------------------------------------------------------- 6. 超时白遮 → 点击刷新（TC3）
 echo "== 6. 二维码超时 → 点击画布刷新（TC3）"
-TOKEN=$(node -e '
-const fs=require("fs");
-const ext=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
-const reg=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-const BS=String.fromCharCode(92);
-const norm=k=>{k=k.split(BS).join("/");return k.length>1&&k[1]===":"?k[0].toLowerCase()+k.slice(1):k};
-const cand=[];
-for(const k of ["session_id","page_id"]){const v=ext[k];if(v)cand.push(v);}
-for(const k of Object.keys(reg)){if(k&&!k.startsWith("draft-"))cand.push(k);}
-for(const c of cand){const t=reg[norm(c)];if(t){console.log(t);break;}}' "$EXT" "$REG" 2>/dev/null)
-[ -n "$TOKEN" ] || die "找不到会话 token"
-# 走真实通道注入超时（宿主 outbox 泵 → 壳 onMessage → 白遮）
-printf '{"id":"pf-wxbot","payload":{"type":"qr_timeout"}}
-' >> "$WORK/dir/pf-svc/sessions/$TOKEN-in.jsonl"
-TIMEOUT_SHOWN=0
-for _ in $(seq 1 20); do
-  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
-  grep -q "刷新二维码" "$WORK/pop.json" && { TIMEOUT_SHOWN=1; break; }
+# 先等呈现面稳定（ext 自己的真码推送可能晚于本用例的注入，后到的 qr 会把
+# qrTimeout 复位——那是正确行为，不是 bug；所以等它安静下来再注入白遮）
+prev=""; stable=0
+for _ in $(seq 1 60); do
+  cur=$(fp)
+  if [ "$cur" = "$prev" ]; then stable=$((stable+1)); else stable=0; fi
+  prev=$cur
+  [ "$stable" -ge 5 ] && break
   sleep 1
 done
-[ "$TIMEOUT_SHOWN" = "1" ] && ok "超时白遮出现（【刷新二维码】文案）" || bad "超时白遮未出现"
-# 点击画布中心（MD 弹窗 500x500 居中，画布在弹窗顶部 396px 内）——真实鼠标事件链
-# 点击画布中心：MD 卡 420x630 逻辑居中，画布 396 居卡片顶部（标题栏 ~45）。
-# input.mouse 吃 **逻辑像素**（gpui px 口径）——物理坐标会点到卡外触发点外关闭。
+echo "  状态已稳定：$cur"
+printf '{"id":"pf-wxbot","payload":{"type":"qr_timeout"}}
+' >> "$IN1"
+TMO=0
+for _ in $(seq 1 120); do TMO=$(ujson qrTimeout); [ "$TMO" = "true" ] && break; sleep 1; done
+[ "$TMO" = "true" ] && ok "超时白遮成立（qrTimeout=true）" || bad "超时白遮未成立（qrTimeout=$TMO）"
+
+# 呈现面必须已经渲染出「可点的白遮帧」（canvas 带 command=refresh-qr）——
+# 弹窗内容 1s 一帧，body 落后于 ui.json 时点下去等于点空。
+CMDOK=0
+for _ in $(seq 1 30); do
+  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
+  CMDOK=$(node -e '
+try{
+  const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
+  const b=j.plugin_popup&&j.plugin_popup.body;
+  const walk=n=>!n?null:(n.type==="canvas"?n:((n.children||[]).map(walk).find(Boolean)||null));
+  const c=walk(b); console.log(c&&c.command==="refresh-qr"?1:0);
+}catch(e){console.log(0)}' "$WORK/pop.json" 2>/dev/null)
+  [ "$CMDOK" = "1" ] && break
+  sleep 1
+done
+[ "$CMDOK" = "1" ] && ok "白遮帧已渲染成可点画布（command=refresh-qr）" || bad "白遮帧未带刷新命令"
+
+BEFORE=$(fp); echo "  点击前 (hasQr:timeout:hash) = $BEFORE"
+
 WH=$("$PUI" snapshot app --only window 2>/dev/null)
 CLICKXY=$(node -e '
 const j=JSON.parse(process.argv[1]);
 const sc=j.window.scale_factor||1;
-const lw=j.window.width_px/sc, lh=j.window.height_px/sc;
-console.log(Math.round(lw/2)+","+Math.round(lh/2-72));' "$WH" 2>/dev/null)
+console.log(Math.round(j.window.width_px/sc/2)+","+Math.round(j.window.height_px/sc/2-72));' "$WH" 2>/dev/null)
 CX=${CLICKXY%,*}; CY=${CLICKXY#*,}
+: > "$IN1"    # 清空 inbox：只看本次点击产生什么
+echo "  点击逻辑坐标 ($CX,$CY)"
 "$PUI" exec input.mouse --arg x=$CX --arg y=$CY >/dev/null 2>&1 || bad "鼠标点击失败"
-NEWPAINT=0
-for _ in $(seq 1 40); do
-  "$PUI" snapshot app --only plugin_popup > "$WORK/pop.json" 2>/dev/null
-  NEWPAINT=$(node -e '
-try {
-  const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-  const b=j.plugin_popup && j.plugin_popup.body;
-  const walk=(n)=>!n?null:(n.type==="canvas"?n:((n.children||[]).map(walk).find(Boolean)||null));
-  const c=walk(b);
-  console.log(c && Array.isArray(c.paint) ? c.paint.length : 0);
-} catch(e) { console.log(0) }' "$WORK/pop.json" 2>/dev/null)
-  [ "${NEWPAINT:-0}" -gt 100 ] 2>/dev/null && break
+
+# 断言一（宿主契约，本 bug 的核心）：点击必须回环出 refresh 意图落到本会话信箱
+GOTREFRESH=0
+for _ in $(seq 1 60); do
+  if grep -q '"type":"refresh"' "$IN1" 2>/dev/null; then GOTREFRESH=1; break; fi
   sleep 1
 done
-[ "${NEWPAINT:-0}" -gt 100 ] 2>/dev/null && ok "点击后新码已绘（paint $NEWPAINT 段）" || bad "点击不刷新（paint=${NEWPAINT:-0}）"
+[ "$GOTREFRESH" = "1" ] && ok "点击回环出 refresh 意图（env 带会话键）" || bad "点击未产生 refresh 意图（空 env 丢意图）"
+
+# 断言二（呈现面）：ext 收到 refresh 后出新码 → 白遮解除 + 码指纹变
+NEW=$(node -e '
+const N=49; const rows=[]; for(let y=0;y<N;y++){ rows.push([[0,12],[14,11],[27,20]]); }
+console.log(JSON.stringify({size:N,rows}));')
+printf '{"id":"pf-wxbot","payload":{"type":"qr","grid":%s}}
+' "$NEW" >> "$IN1"
+HB=$(echo "$BEFORE" | cut -d: -f3)
+AFTER="$BEFORE"
+for _ in $(seq 1 60); do
+  AFTER=$(fp)
+  TMOA=$(echo "$AFTER" | cut -d: -f2); HA=$(echo "$AFTER" | cut -d: -f3)
+  [ "$TMOA" = "0" ] && [ "$HA" != "$HB" ] && [ "$HA" != "0" ] && break
+  sleep 1
+done
+echo "  新码后 (hasQr:timeout:hash) = $AFTER"
+TMOA=$(echo "$AFTER" | cut -d: -f2); HA=$(echo "$AFTER" | cut -d: -f3)
+if [ "$AFTER" = "err" ]; then bad "读不到呈现面状态"
+elif [ "$TMOA" != "0" ]; then bad "白遮未解除（qrTimeout 仍为 true）"
+elif [ "$HA" = "$HB" ]; then bad "码未更换（指纹未变）"
+else ok "新码生效：qrTimeout 复位 + 码指纹变化"; fi
+
+# ---------------------------------------------------------------- 7. 切换绑定（TC4）
+echo "== 7. 切换到另一会话并绑定（TC4）"
+OTHER=$(ls -t "C:/Users/bi_da/.pi/agent/sessions/--D--ai_workspace-pi_work--/"*.jsonl 2>/dev/null | while read f; do
+  W=$(echo "$f" | tr '/' '\'); [ "$W" != "$SESSION_FILE" ] && echo "$W" && break; done)
+[ -n "$OTHER" ] || die "找不到第二个会话用于切换"
+echo "  目标会话: $OTHER"
+"$PUI" exec session.open --arg "path=$OTHER" >/dev/null || die "打开第二会话失败"
+sleep 3
+"$PUI" exec plugin.fnbar_click >/dev/null 2>&1 || bad "第二会话 icon 点击失败"
+TOKEN2=""
+for _ in $(seq 1 40); do
+  TOKEN2=$(node -e '
+const fs=require("fs");
+try {
+  const reg=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const BS=String.fromCharCode(92);
+  const norm=k=>{k=k.split(BS).join("/");return k.length>1&&k[1]===":"?k[0].toLowerCase()+k.slice(1):k};
+  const t=reg[norm(process.argv[2])];
+  if(t) console.log(t);
+} catch(e){}' "$REG" "$OTHER" 2>/dev/null)
+  [ -n "$TOKEN2" ] && break
+  sleep 1
+done
+[ -n "$TOKEN2" ] && ok "第二会话执行域已就绪（token $TOKEN2）" || bad "第二会话执行域未起"
+if [ -n "$TOKEN2" ]; then
+  printf '{"id":"pf-wxbot","payload":{"type":"bound","scanned":true}}
+' >> "$WORK/dir/pf-svc/sessions/$TOKEN2-out.jsonl"
+  NORM2=$(norm "$OTHER"); GOT2=""
+  for _ in $(seq 1 30); do
+    GOT2=$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).boundKey||"")}catch(e){console.log("")}' "$UIJSON" 2>/dev/null)
+    [ "$GOT2" = "$NORM2" ] && break
+    sleep 1
+  done
+  [ "$GOT2" = "$NORM2" ] && ok "绑定指针已切到第二会话" || bad "绑定未切换（boundKey=$GOT2 期望 $NORM2）"
+  "$PUI" exec session.open --arg "path=$SESSION_FILE" >/dev/null 2>&1
+  sleep 3
+  F2=$("$PUI" exec plugin.fnbar 2>&1)
+  T2=$(node -e 'try{const i=JSON.parse(process.argv[1]).items;console.log(i.length?i[0].tone:"(none)")}catch{console.log("(parse)")}' "$F2")
+  [ "$T2" = "text.faint" ] && ok "原会话 icon 已回落为灰" || bad "原会话 icon 仍亮（tone=$T2）"
+fi
 
 echo; echo "== 结果：$pass passed, $fail failed"
 [ "$KEEP" = "1" ] && echo "（现场 $WORK；日志 $WORK/app.log）"

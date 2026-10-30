@@ -383,3 +383,21 @@ pub fn is_exec_entry(path: &Path) -> bool {
         Err(_) => false,
     }
 }
+
+/// 该 token 的实例配置里是否有指定插件实例（插件级操作路由用）。
+pub fn has_instance(base: &Path, token: &str, plugin_id: &str) -> bool {
+    let cfg = config_path(base, token);
+    let Ok(text) = std::fs::read_to_string(cfg) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    v.get("instances")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .any(|i| i.get("id").and_then(Value::as_str) == Some(plugin_id))
+        })
+        .unwrap_or(false)
+}
