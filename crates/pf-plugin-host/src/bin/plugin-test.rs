@@ -25,6 +25,7 @@
 //!   （command/broadcast/page-active/…；path 位按契约放 env JSON 串）。
 //! - `{"op":"pump_actions"}` —— 回 `actions` = 排水的宿主动作
 //!   （open-popup/toast/open-file/run-script/new-draft）。
+//! - `{"op":"unload"}` —— 90-9 §2 停用/退出前最后一次调用（L2 时序断言用）。
 //!
 //! 结果（一行一条 JSON）：`{"op":...,"ok":true,...}` / `{"op":...,"ok":false,"err":...}`。
 //!
@@ -57,6 +58,24 @@ fn no_quick_pins() -> Vec<String> {
     Vec::new()
 }
 
+/// 离线路径派生（`install_path_hooks` 缺省时 `is_executive` 恒 false，会把
+/// 全部快捷项归进文档区）：扩展名白名单判可执行；图标取小写扩展名
+/// （真机是图标主题映射，L2 不断言图标值，L3 覆盖）。
+fn approx_is_exec(path: &str) -> bool {
+    matches!(
+        path.rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "exe" | "bat" | "cmd" | "com" | "ps1" | "msi" | "lnk" | "scr"
+    )
+}
+
+fn approx_file_icon(path: &str) -> String {
+    path.rsplit('.').next().unwrap_or("").to_ascii_lowercase()
+}
+
 fn emit(value: serde_json::Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{value}");
@@ -66,6 +85,7 @@ fn emit(value: serde_json::Value) {
 fn main() {
     pf_plugin_host::install_proof_hook(runtime_proof);
     pf_plugin_host::install_host_hooks(no_quick_pins, approx_measure_text);
+    pf_plugin_host::install_path_hooks(approx_file_icon, approx_is_exec);
     let stdin = std::io::stdin();
     let mut inst: Option<PluginInstance> = None;
     for line in stdin.lock().lines() {
@@ -173,6 +193,12 @@ fn handle(op: &str, cmd: &serde_json::Value, inst: &mut Option<PluginInstance>) 
             let actions: Vec<serde_json::Value> =
                 i.pump_actions().into_iter().map(action_json).collect();
             Ok(serde_json::json!({"ok": true, "actions": actions}))
+        }
+        "unload" => {
+            // 90-9 §2：停用/卸载/退出前的最后一次调用。L2 断言它不崩、
+            // 调用后动作排水为空（插件不得在 unload 里申请动作）。
+            let i = inst.as_mut().ok_or_else(|| "先 load+init".to_string())?;
+            i.unload().map(|_| serde_json::json!({"ok": true}))
         }
         other => Err(format!("未知 op: {other}")),
     }
