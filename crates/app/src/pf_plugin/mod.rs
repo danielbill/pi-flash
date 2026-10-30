@@ -10,6 +10,7 @@
 //! 建；插件异常 → toast + 会话级禁用，不影响宿主。
 
 mod broadcast;
+pub(crate) mod lifecycle;
 pub(crate) mod panel;
 pub(crate) mod svc;
 mod wasm_hooks;
@@ -884,6 +885,9 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
 /// 单个插件条目：清单 + 懒加载运行时 + 面板行缓存。
 pub(crate) struct PluginEntry {
     pub manifest: PluginManifest,
+    /// 90-9 §5 生命周期状态（宿主事实；转移逻辑在 lifecycle::transition，
+    /// 这里只持字段）
+    pub state: lifecycle::State,
     /// 会话级禁用（插件逻辑抛异常后置位；02 §4）
     pub disabled: bool,
     /// QuickJS 运行时（懒建；主线程独占）
@@ -1367,6 +1371,9 @@ impl Chat {
             pi_link::hidden_sessions::clear_owned(&id);
         }
         if let Some(entry) = self.plugins.plugins.get_mut(ix) {
+            // 90-9 §6：停用 = 唯一销毁入口，unload() 先于丢运行时（卸载/更新
+            // 覆盖走 evict 同得 unload）
+            entry_unload(entry);
             entry.disabled = true;
             entry.js = None;
             entry.wasm = None;
@@ -1379,6 +1386,27 @@ impl Chat {
         }
         if docked {
             self.layout.dock_panel = crate::DockPanel::Default;
+        }
+    }
+
+    /// PF 退出扇出（90-9 §6）：全体已装载插件 `unload()`，**总预算 1 秒**；
+    /// 超预算的剩余插件各记一条「退出预算用尽」。退出顺序 = unload → 停 pi
+    /// 子进程（随进程退出终止）→ 存窗口状态——unload 先行，带 `pi_extensions`
+    /// 的插件要在 pi 进程还活着时说完最后一句话（90-9 §8，不提供 ack）。
+    /// 由 `main.rs` 的 `on_window_should_close` 首位调用。
+    pub(crate) fn plugin_unload_all_for_quit(&mut self) {
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+        let t_all = std::time::Instant::now();
+        for entry in &mut self.plugins.plugins {
+            if entry.js.is_none() && entry.wasm.is_none() {
+                continue; // 未装载过：无 load 即无 unload，配对不能凭空造
+            }
+            let dir = entry.manifest.dir.clone();
+            if t_all.elapsed() >= BUDGET {
+                lifecycle::log_unload(&dir, false, 0, "PF 退出预算用尽，未执行 unload");
+                continue;
+            }
+            entry_unload(entry);
         }
     }
 
@@ -1475,6 +1503,9 @@ impl Chat {
             self.set_status(format!("插件 {id} 拒载：需要官方构建的 PF"), cx);
             return false;
         }
+        // 90-9：load 事件 = serving 实例的装载+激活，全程耗时进 plugin.log
+        entry.state = lifecycle::State::Loading;
+        let t0 = std::time::Instant::now();
         let loaded = match bytecode_rel {
             Some(_) => JsPlugin::load_bytecode(&entry_path, &dir_str, host.clone()),
             None => JsPlugin::load(&entry_path, &dir_str, host.clone()),
@@ -1488,13 +1519,29 @@ impl Chat {
                 if failed.is_none() {
                     entry.js = Some(js);
                     entry.host = Some(host);
+                    lifecycle::log_load(&entry.manifest.dir, true, t0.elapsed().as_millis(), "");
+                    entry.state = lifecycle::State::Active;
                     return true;
                 }
+                entry.state = lifecycle::State::Crashed;
+                lifecycle::log_load(
+                    &entry.manifest.dir,
+                    false,
+                    t0.elapsed().as_millis(),
+                    failed.as_deref().unwrap_or(""),
+                );
                 entry.disabled = true;
                 self.set_status(failed.unwrap(), cx);
                 false
             }
             Err(e) => {
+                entry.state = lifecycle::State::Crashed;
+                lifecycle::log_load(
+                    &entry.manifest.dir,
+                    false,
+                    t0.elapsed().as_millis(),
+                    &e,
+                );
                 entry.disabled = true;
                 self.set_status(format!("插件 {id} 出错：{e}"), cx);
                 false
@@ -1523,7 +1570,9 @@ impl Chat {
         // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」
         let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
         if !cached {
+            entry.state = lifecycle::State::Loading;
             cx.spawn(async move |this, cx| {
+                let t0 = std::time::Instant::now();
                 let res = cx
                     .background_executor()
                     .spawn(async move {
@@ -1531,17 +1580,22 @@ impl Chat {
                         inst.and_then(|mut i| i.init(&id).map(|()| i))
                     })
                     .await;
+                let ms = t0.elapsed().as_millis();
                 let _ = this.update(cx, |c, cx| {
                     let Some(entry) = c.plugins.plugins.get_mut(ix) else {
                         return;
                     };
                     match res {
                         Ok(inst) => {
+                            lifecycle::log_load(&entry.manifest.dir, true, ms, "");
+                            entry.state = lifecycle::State::Active;
                             entry.wasm = Some(inst);
                             entry.wasm_focus = Some(cx.focus_handle());
                             c.plugin_wasm_render(ix, cx);
                         }
                         Err(e) => {
+                            entry.state = lifecycle::State::Crashed;
+                            lifecycle::log_load(&entry.manifest.dir, false, ms, &e.to_string());
                             entry.disabled = true;
                             let id = entry.manifest.id.clone();
                             c.set_status(format!("插件 {id} 出错：{e}"), cx);
@@ -1553,10 +1607,18 @@ impl Chat {
             return false;
         }
         // [perf] UI 线程同步装载要留实测数字（铁律：热路径不靠感觉）
+        entry.state = lifecycle::State::Loading;
         let t0 = std::time::Instant::now();
         let mut inst = match PluginInstance::load_cached(&wasm_path, &cache) {
             Ok(i) => i,
             Err(e) => {
+                entry.state = lifecycle::State::Crashed;
+                lifecycle::log_load(
+                    &entry.manifest.dir,
+                    false,
+                    t0.elapsed().as_millis(),
+                    &e.to_string(),
+                );
                 entry.disabled = true;
                 self.set_status(format!("插件 {id} 出错：{e}"), cx);
                 return false;
@@ -1564,10 +1626,19 @@ impl Chat {
         };
         let load = t0.elapsed();
         if let Err(e) = inst.init(&id) {
+            entry.state = lifecycle::State::Crashed;
+            lifecycle::log_load(
+                &entry.manifest.dir,
+                false,
+                t0.elapsed().as_millis(),
+                &e.to_string(),
+            );
             entry.disabled = true;
             self.set_status(format!("插件 {id} 拒载：{e}"), cx);
             return false;
         }
+        lifecycle::log_load(&entry.manifest.dir, true, load.as_millis(), "");
+        entry.state = lifecycle::State::Active;
         eprintln!(
             "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
             t0.elapsed() - load,
@@ -2596,6 +2667,38 @@ impl Chat {
     }
 }
 
+/// 单条目 unload（90-9 §2/§6）：调载体 `unload()`（未导出 = no-op）+ 落
+/// plugin.log + 状态 Active→Unloading→Disabled。best-effort：unload 的
+/// Err 只进日志，宿主不等确认。条目若无运行时（从未装载过），无事发生、
+/// 不落日志——load/unload 必须成对。
+pub(crate) fn entry_unload(entry: &mut PluginEntry) {
+    let has_runtime = entry.js.is_some() || entry.wasm.is_some();
+    if !has_runtime {
+        return;
+    }
+    let dir = entry.manifest.dir.clone();
+    entry.state = lifecycle::State::Unloading;
+    let t0 = std::time::Instant::now();
+    let mut err: Option<String> = None;
+    if let Some(js) = entry.js.as_ref()
+        && let Err(e) = js.unload()
+    {
+        err = Some(e);
+    }
+    if let Some(w) = entry.wasm.as_mut()
+        && let Err(e) = w.unload()
+    {
+        err = err.or(Some(e));
+    }
+    lifecycle::log_unload(
+        &dir,
+        err.is_none(),
+        t0.elapsed().as_millis(),
+        err.as_deref().unwrap_or(""),
+    );
+    entry.state = lifecycle::State::Disabled;
+}
+
 /// 清单 → 运行条目（disabled 一律 false 起步：停用已在扫描层被台账过滤；
 /// 运行中的禁用/复用走原地翻 entry.disabled 位，090-4 v5）。
 pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry> {
@@ -2603,6 +2706,7 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
         .into_iter()
         .map(|manifest| PluginEntry {
             manifest,
+            state: lifecycle::State::Registered,
             disabled: false,
             js: None,
             wasm: None,
@@ -2657,7 +2761,14 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
             .spawn(async move {
                 // 先清无主残留（卸载时被占用留下的 .cache 等），再扫
                 pi_link::pf_plugins::sweep_orphans();
-                scan_manifests()
+                let manifests = scan_manifests();
+                // 90-9 §7 启动对账：上次异常退出（plugin.log 存在未闭合
+                // load）→ 补一条「上次异常退出，未执行 unload」。后台线程
+                // 做掉，主线程零成本。
+                for m in &manifests {
+                    lifecycle::reconcile_startup(&m.dir);
+                }
+                manifests
             })
             .await;
         let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());

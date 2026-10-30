@@ -361,6 +361,12 @@ globalThis.__pf_activate = () => {{
   if (typeof globalThis.__pf_exports.activate === "function")
     globalThis.__pf_exports.activate(globalThis.__pf_ctx);
 }};
+// 90-9 §2：unload() = 停用/卸载/更新覆盖/退出前的最后一次调用。未导出 =
+// no-op（unload 必需但允许空实现；旧包缺导出同空）。
+globalThis.__pf_unload = () => {{
+  if (typeof globalThis.__pf_exports.unload === "function")
+    globalThis.__pf_exports.unload();
+}};
 globalThis.__pf_render_str = () =>
   JSON.stringify(globalThis.__pf_exports.render(globalThis.__pf_ctx));
 globalThis.__pf_fire_menu = (id, path, fileIcon) => {{
@@ -441,6 +447,20 @@ globalThis.__pf_fire_svc_message = (json, meta) => {{
         self.ctx
             .with(|ctx| -> rquickjs::Result<()> {
                 let f: Function = ctx.globals().get("__pf_activate")?;
+                f.call::<(), ()>(())?;
+                Ok(())
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    /// `unload()`（90-9 §2）：停用/卸载/更新覆盖/退出前的最后一次调用。
+    /// 未导出 = no-op（`__pf_unload` 胶水恒在，内部按导出判空）。Err 只落
+    /// plugin.log，宿主不等待确认（best-effort，关不掉的插件不能卡宿主）。
+    pub fn unload(&self) -> Result<(), String> {
+        self.arm_deadline();
+        self.ctx
+            .with(|ctx| -> rquickjs::Result<()> {
+                let f: Function = ctx.globals().get("__pf_unload")?;
                 f.call::<(), ()>(())?;
                 Ok(())
             })

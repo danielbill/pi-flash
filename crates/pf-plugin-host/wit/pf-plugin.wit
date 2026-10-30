@@ -4,8 +4,9 @@
 // 本副本 = 宿主**装载面下限**（8tb.2 起）：world 导出只含 v2 面（init /
 // on-event / render）——契约 v3 钩子导出（fn-bar / render-popup /
 // session-row）**不进 world**，由 PluginInstance 在实例化时探测（能力面，
-// 缺 = 功能关，旧 wasm 包不受影响）；host 接口的 import（如 open-popup）
-// 可以加——旧包不 import 它就不引用，链接器多备无害。
+// 缺 = 功能关，旧 wasm 包不受影响）；90-9 的 `unload` 同走能力面探测。
+// host 接口的 import（如 open-popup）可以加——旧包不 import 它就不引用，
+// 链接器多备无害。
 package pf:plugin;
 
 interface types {

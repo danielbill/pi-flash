@@ -369,6 +369,13 @@ fn main() {
                         // persist window bounds + shell layout on close so the
                         // startup restore layer has data (§4)
                         window.on_window_should_close(cx, move |window, cx| {
+                            // 90-9 §6 退出顺序：全体插件 unload（总预算 1s）→
+                            // 停 pi 子进程（随进程退出终止）→ 存窗口状态。unload
+                            // 先行：带 pi_extensions 的插件要在 pi 进程还活着时
+                            // 说完最后一句话。
+                            if let Some(chat) = weak.upgrade() {
+                                chat.update(cx, |chat, _cx| chat.plugin_unload_all_for_quit());
+                            }
                             let b = window.bounds();
                             save_window_state(&WindowState {
                                 x: f64::from(b.origin.x),

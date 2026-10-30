@@ -56,6 +56,9 @@ pub(super) fn ensure_wasm_hooks(cx: &gpui::App) {
 /// plugin_wasm_ready）。返回**拒载包 id**：结论只进 stderr + 回传主线程置
 /// disabled，不向用户播报任何正版校验提示。
 ///
+/// **不落 plugin.log**（90-9 §7）：验签实例不是 serving 实例，记 load 会
+/// 留下永不闭合的配对，启动崩溃判定全数误报。
+///
 /// 速度：装载走**插件目录内的**编译产物缓存（`<插件目录>/.cache/<sha256>.cwasm`）——
 /// 安装时已预编译（见 [`install_prepare`]），故这里恒命中；之后每次 =
 /// mmap 反序列化 + 实例化 + init（毫秒级）。旧的 `load()` 每次启动重编

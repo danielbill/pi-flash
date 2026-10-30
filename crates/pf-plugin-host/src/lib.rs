@@ -259,6 +259,9 @@ pub struct PluginInstance {
     hook_fn_bar: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
     hook_session_row: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
     hook_render_popup: Option<wasmtime::component::TypedFunc<(), (String,)>>,
+    /// 90-9 §2 `unload()`（能力面，world 不声明——旧包兼容，声明即强要求）。
+    /// None = 本包未导出（含旧 init 面的包）→ unload no-op。
+    hook_unload: Option<wasmtime::component::TypedFunc<(), ()>>,
     rx: mpsc::Receiver<PluginAction>,
 }
 
@@ -453,7 +456,7 @@ impl PluginInstance {
             },
         );
 
-        let (bindings, hook_fn_bar, hook_session_row, hook_render_popup) = {
+        let (bindings, hook_fn_bar, hook_session_row, hook_render_popup, hook_unload) = {
             let instance = linker.instantiate(&mut store, &component)?;
             // 能力面探测（契约 v3 钩子导出）：world 不声明它们（旧 wasm 包
             // 兼容——声明即强要求，缺导出的包在 Plugin::new 拒载），导出存在
@@ -467,8 +470,15 @@ impl PluginInstance {
             let hook_render_popup = instance
                 .get_typed_func::<(), (String,)>(&mut store, "render-popup")
                 .ok();
+            let hook_unload = instance.get_typed_func::<(), ()>(&mut store, "unload").ok();
             let bindings = Plugin::new(&mut store, &instance)?;
-            (bindings, hook_fn_bar, hook_session_row, hook_render_popup)
+            (
+                bindings,
+                hook_fn_bar,
+                hook_session_row,
+                hook_render_popup,
+                hook_unload,
+            )
         };
         Ok(Self {
             engine,
@@ -477,6 +487,7 @@ impl PluginInstance {
             hook_fn_bar,
             hook_session_row,
             hook_render_popup,
+            hook_unload,
             rx,
             component,
         })
@@ -567,6 +578,22 @@ impl PluginInstance {
             return Ok(if s.is_empty() { "null".to_string() } else { s });
         }
         self.render_json().map_err(|e| e.to_string())
+    }
+
+    /// 90-9 §2 `unload()`：停用/卸载/更新覆盖/退出前的最后一次调用。
+    /// 未导出 = no-op（unload 必需但允许空实现；旧 wasm 包缺导出同空）。
+    /// 无返回值；Err = wasm trap 等——best-effort，宿主只落 plugin.log，
+    /// 不等插件确认存盘（关不掉的插件不能卡住宿主）。
+    pub fn unload(&mut self) -> Result<(), String> {
+        let Some(f) = self.hook_unload else {
+            return Ok(());
+        };
+        let Some(store) = self.store.as_mut() else {
+            return Ok(());
+        };
+        f.call(&mut *store, ())
+            .and_then(|()| f.post_return(&mut *store))
+            .map_err(|e| e.to_string())
     }
 
     pub fn pump_actions(&self) -> Vec<PluginAction> {
