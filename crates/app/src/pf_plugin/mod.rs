@@ -72,6 +72,9 @@ pub(crate) struct PluginManifest {
     /// 分发态 JS **字节码**（`plugin.qbc`，由 `qjsc` 从同一份 main.js 编出）：
     /// 与源码包同一引擎、同一 ctx、同一渲染路径，落盘无明文源码。
     pub bytecode: Option<String>,
+    /// 包内 pi 扩展文件（契约 v2.4/v3 contributes.pi_extensions，相对包根）：
+    /// v3 镜像协议的 ext 挂载面（fnbar 点击 → 写会话清单 → 空闲重启挂载）。
+    pub pi_extensions: Vec<String>,
     /// 执行域实例声明（契约 v4 contributes.service，90-6）：scope 本版仅 session。
     /// 宿主托管身份/通道/生命周期/存储；spawn 挂宿主自带 shim（Tier 2 验签门照旧）。
     pub service: Vec<ServiceContrib>,
@@ -339,6 +342,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         popups: Vec::new(),
         file_menu: Vec::new(),
         panels: Vec::new(),
+        pi_extensions: Vec::new(),
         service: Vec::new(),
         sessions: Vec::new(),
         wasm: None,
@@ -418,6 +422,10 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     });
                     "panels".to_string()
                 }
+                "contributes.pi_extensions" => {
+                    m.pi_extensions.push(String::new());
+                    "pi_extensions".to_string()
+                }
                 "contributes.service" => {
                     m.service.push(ServiceContrib {
                         id: String::new(),
@@ -455,9 +463,9 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     .as_raw("schema", n)?
                     .parse()
                     .map_err(|_| format!("pf-plugin.toml 行 {}：schema 必须是整数", n + 1))?;
-                if got != SUPPORTED_MANIFEST_SCHEMA {
+                if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 {
                     return Err(format!(
-                        "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（只支持 {SUPPORTED_MANIFEST_SCHEMA}）"
+                        "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（支持 {SUPPORTED_MANIFEST_SCHEMA}/3）"
                     ));
                 }
             }
@@ -503,6 +511,11 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                 m.popups.last_mut().unwrap().size = s;
             }
             ("popups", "entry") => m.popups.last_mut().unwrap().entry = val.as_str("entry", n)?,
+            ("pi_extensions", "path") => {
+                if let Some(last) = m.pi_extensions.last_mut() {
+                    *last = val.as_str("path", n)?.to_string();
+                }
+            }
             ("file_menu", "id") => m.file_menu.last_mut().unwrap().id = val.as_str("id", n)?,
             ("file_menu", "title") => {
                 let (zh, en) = val.as_i18n("title", n)?;
@@ -1846,12 +1859,23 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        // 执行域（v4）：意图写在**本会话**的信箱里，必须有人消费——该会话的
-        // 执行面实例只在它的 pi 进程里活着。切到另一个会话点 icon 时那个会话
-        // 往往还没起进程（PF 懒启动），意图就一直躺在信箱里没人读：二维码不
-        // 出、绑定不换，只有壳侧指针变绿（2026-10-30 真机「只点亮 icon 不
-        // 切换绑定」）。点 icon 前先确保本会话进程在。
-        self.ensure_active_process(cx);
+        // v3 面（回滚）：绑定目标 = 当前会话——先把包内 pi 扩展写进该会话
+        // 扩展清单（出码/收发本体在 ext），进程空闲即重启挂载，再回环命令。
+        // 执行域（v4）代码保留但仅对声明 contributes.service 的包生效；
+        // v3 包走 plugin_attach_pi_exts（v3 镜像协议回滚，2026-10-30 用户令）。
+        {
+            let has_service = self
+                .plugins
+                .plugins
+                .get(ix)
+                .map(|e| !e.manifest.service.is_empty())
+                .unwrap_or(false);
+            if !has_service {
+                let pf_key = self.pool.active_key.clone();
+                self.plugin_attach_pi_exts(ix, &pf_key, cx);
+                self.ensure_active_process(cx);
+            }
+        }
         let Some(cmd) = self
             .plugins
             .plugins
@@ -1872,6 +1896,65 @@ impl Chat {
             return false;
         };
         pi_link::service_ext::config_path_if_any(&base, key).is_some()
+    }
+
+    /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通
+    /// 会话，挂载改在绑定时完成）。会话进程空闲 → 立即重启挂载；忙 → 清单
+    /// 已写，下次 spawn 生效。
+    pub(crate) fn plugin_attach_pi_exts(
+        &mut self,
+        ix: usize,
+        pf_session_key: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(entry) = self.plugins.plugins.get(ix) else {
+            return;
+        };
+        if entry.manifest.pi_extensions.is_empty() || pf_session_key.is_empty() {
+            return;
+        }
+        let pi_exts: Vec<String> = entry
+            .manifest
+            .pi_extensions
+            .iter()
+            .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
+            .collect();
+        let missing = pi_link::session_ext::store_path()
+            .map(|store| {
+                let have = pi_link::session_ext::read_for(&store, pf_session_key);
+                pi_exts.iter().any(|p| !have.iter().any(|h| h == p))
+            })
+            .unwrap_or(true);
+        if !missing {
+            return; // 清单已含，无需重启
+        }
+        if let Some(store) = pi_link::session_ext::store_path() {
+            if let Err(e) = pi_link::session_ext::write_for(&store, pf_session_key, &pi_exts) {
+                eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
+                return;
+            }
+        }
+        eprintln!(
+            "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
+            entry.manifest.id, pf_session_key
+        );
+        // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）
+        if let Some(rt) = self.pool.runtimes.get(pf_session_key).cloned() {
+            let busy = rt.read(cx).agent_running;
+            if !busy {
+                rt.update(cx, |r, cx| {
+                    for p in &pi_exts {
+                        if !r.ext_sources.iter().any(|e| e == p) {
+                            r.ext_sources.push(p.clone());
+                        }
+                    }
+                    r.shutdown_process();
+                    r.ensure_spawned(cx);
+                });
+            } else {
+                self.set_status("微信机器人扩展将在当前任务完成后生效".to_string(), cx);
+            }
+        }
     }
 
     /// 确保当前会话的 pi 进程已起（执行域实例随之激活）。
