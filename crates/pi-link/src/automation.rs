@@ -160,6 +160,25 @@ pub mod method {
     pub const MCP_PICKER_CANCEL: &str = "mcp_picker.cancel";
     /// 043 设置页 MCP 表单：填字段并走真实 mcp_save_submit 保存链路
     pub const SETTINGS_MCP_SAVE: &str = "settings.mcp_save";
+    /// 051 设置页自定义 Provider：无坐标直调（UI 测试用）。op 语义与对应
+    /// 按钮/保存链路完全同源（见 handlers.rs 各分支注释）：
+    /// mj_new 开草稿 · mj_select 跳 section · mj_form 填表单（name/base/key）
+    /// · mj_save 保存（改名按 section 旧名走 rename）· mj_speedtest 测速
+    /// · mj_add_model 加模型行 · mj_model_form/mj_model_save 模型弹窗填/存
+    /// · mj_model_close 收弹窗 · mj_autofill 自动填参 · mj_fetch 刷新目录
+    /// · mj_delete 删除（走确认流，ok 缺省 true）
+    pub const SETTINGS_MJ_NEW: &str = "settings.mj_new";
+    pub const SETTINGS_MJ_SELECT: &str = "settings.mj_select";
+    pub const SETTINGS_MJ_FORM: &str = "settings.mj_form";
+    pub const SETTINGS_MJ_SAVE: &str = "settings.mj_save";
+    pub const SETTINGS_MJ_SPEEDTEST: &str = "settings.mj_speedtest";
+    pub const SETTINGS_MJ_ADD_MODEL: &str = "settings.mj_add_model";
+    pub const SETTINGS_MJ_MODEL_FORM: &str = "settings.mj_model_form";
+    pub const SETTINGS_MJ_MODEL_SAVE: &str = "settings.mj_model_save";
+    pub const SETTINGS_MJ_MODEL_CLOSE: &str = "settings.mj_model_close";
+    pub const SETTINGS_MJ_AUTOFILL: &str = "settings.mj_autofill";
+    pub const SETTINGS_MJ_FETCH: &str = "settings.mj_fetch";
+    pub const SETTINGS_MJ_DELETE: &str = "settings.mj_delete";
     /// 截屏：窗口最近一帧渲染回读为 PNG（进程内 D3D11 staging readback，
     /// 非 OS 抢屏；窗口被遮挡/最小化也能截）。params: {path?}，缺省写
     /// <配置目录>/automation/shots/。返回 {path,width,height,bytes}。

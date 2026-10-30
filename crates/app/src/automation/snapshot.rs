@@ -747,6 +747,14 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         None => json!({"open": false}),
         Some(panel) => {
             let p = panel.read(cx);
+            // 内存目录里的商名去重（改名后旧名残留断言用，P2-4 观测点）
+            let mut mj_catalog_providers: Vec<String> = chat
+                .catalog_for(chat.project())
+                .iter()
+                .map(|m| m.provider.clone())
+                .collect();
+            mj_catalog_providers.sort();
+            mj_catalog_providers.dedup();
             json!({
                 "open": true,
                 "tab": p.tab,
@@ -790,6 +798,29 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                     .collect::<Vec<_>>(),
                 "mcp_name_value": p.mcp_name.read(cx).value().to_string(),
                 "mcp_add_value": p.mcp_add.read(cx).value().to_string(),
+                // 051 自定义 Provider 页：表单值 / 测速-测试-填参状态 / 账本与
+                // 内存目录商名（UI 测试断言用；key 只报字符数不报明文）
+                "mj_providers": pi_link::models_json::read()
+                    .map(|doc| {
+                        pi_link::models_json::providers(&doc)
+                            .into_iter()
+                            .map(|(n, _)| n)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+                "mj_catalog_providers": mj_catalog_providers,
+                "mj_speed": chat.cfg.mj_speed.as_ref().map(|s| format!("{s:?}")),
+                "mj_test": chat.cfg.mj_test.as_ref().map(|s| format!("{s:?}")),
+                "mj_fill": format!("{:?}", chat.cfg.mj_models_dev_state),
+                "mj_name_value": p.mj_name.read(cx).value().to_string(),
+                "mj_base_value": p.mj_base.read(cx).value().to_string(),
+                "mj_key_len": p.mj_key.read(cx).value().chars().count(),
+                "mj_id_value": p.mj_id.read(cx).value().to_string(),
+                "mj_ctx_value": p.mj_ctx.read(cx).value().to_string(),
+                "mj_max_tokens_value": p.mj_max_tokens.read(cx).value().to_string(),
+                "mj_image": p.mj_image,
+                "mj_reasoning": p.mj_reasoning,
+                "mj_delete_confirm": chat.cfg.mc_mj_delete_confirm.clone(),
             })
         }
     }

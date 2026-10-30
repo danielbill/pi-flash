@@ -31,6 +31,27 @@ fn params_path(params: &Value, key: &str) -> Result<PathBuf, (String, String)> {
         .ok_or_else(|| bad(format!("需要 {{\"{key}\": \"路径\"}}")))
 }
 
+/// 当前设置面板 section 里的自定义商名（`mj:p:{name}` → Some(name)，
+/// `mj:new` 草稿 → Some("")，其他 → None）。
+fn mj_provider_from_section(chat: &Chat, cx: &Context<Chat>) -> Option<String> {
+    let st = chat.dlg.settings.as_ref()?;
+    let section = st.read(cx).section.clone();
+    if section == "mj:new" {
+        return Some(String::new());
+    }
+    section.strip_prefix("mj:p:").map(str::to_string)
+}
+
+/// 当前模型编辑器 section 解析（`mj:m:{prov}:{ix}` → Some((prov, ix))）。
+fn mj_model_from_section(chat: &Chat, cx: &Context<Chat>) -> Option<(String, usize)> {
+    let st = chat.dlg.settings.as_ref()?;
+    let section = st.read(cx).section.clone();
+    let rest = section.strip_prefix("mj:m:")?;
+    let (prov, ix) = rest.rsplit_once(':')?;
+    let ix: usize = ix.parse().ok()?;
+    (!prov.is_empty()).then(|| (prov.to_string(), ix))
+}
+
 pub(super) fn dispatch(
     chat: &mut Chat,
     window: &mut Window,
@@ -971,6 +992,122 @@ pub(super) fn dispatch(
                 });
             }
             chat.mcp_save_submit(cx);
+            ok()
+        }
+        // ---- 051 自定义 Provider 页（UI 测试直调）：每个 op 与对应按钮走
+        // 同一条 Chat 方法，不绕过任何保存/测速链路。目标 provider 从当前
+        // section 推导：`mj:p:{name}` = 已存商；`mj:new` = 草稿。
+        method::SETTINGS_MJ_NEW => {
+            chat.mj_open_add(cx);
+            ok()
+        }
+        method::SETTINGS_MJ_SELECT => {
+            let section = params
+                .get("section")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    bad("需要 {\"section\": \"mj:p:名字 / mj:m:名字:ix / mj:o:商:模型id\"}")
+                })?
+                .to_string();
+            chat.mj_select(section, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_FORM => {
+            let get = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+            if let Some(st) = chat.dlg.settings.clone() {
+                st.update(cx, |s, cx| {
+                    if let Some(v) = get("name") {
+                        s.mj_name.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    if let Some(v) = get("base") {
+                        s.mj_base.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    if let Some(v) = get("key") {
+                        s.mj_key.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    cx.notify();
+                });
+            }
+            ok()
+        }
+        method::SETTINGS_MJ_SAVE => {
+            let old = mj_provider_from_section(chat, cx)
+                .ok_or_else(|| bad("当前 section 不是自定义商（需要 mj:p:名字 或 mj:new）"))?;
+            chat.mj_apply_provider(old, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_SPEEDTEST => {
+            let provider = mj_provider_from_section(chat, cx)
+                .ok_or_else(|| bad("当前 section 不是自定义商（需要 mj:p:名字 或 mj:new）"))?;
+            chat.mj_speedtest_start(provider, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_ADD_MODEL => {
+            let provider = mj_provider_from_section(chat, cx)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| bad("需要已保存的商（section = mj:p:名字）"))?;
+            chat.mj_add_model(provider, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_MODEL_FORM => {
+            let get = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+            let get_bool = |k: &str| params.get(k).and_then(Value::as_bool);
+            if let Some(st) = chat.dlg.settings.clone() {
+                st.update(cx, |s, cx| {
+                    if let Some(v) = get("id") {
+                        s.mj_id.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    if let Some(v) = get("ctx") {
+                        s.mj_ctx.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    if let Some(v) = get("max_tokens") {
+                        s.mj_max_tokens.update(cx, |ti, cx| ti.set_value(v, cx));
+                    }
+                    if let Some(v) = get_bool("image") {
+                        s.mj_image = v;
+                    }
+                    if let Some(v) = get_bool("reasoning") {
+                        s.mj_reasoning = v;
+                    }
+                    cx.notify();
+                });
+            }
+            ok()
+        }
+        method::SETTINGS_MJ_MODEL_SAVE => {
+            let (provider, ix) = mj_model_from_section(chat, cx)
+                .ok_or_else(|| bad("当前 section 不是模型编辑器（mj:m:名字:ix）"))?;
+            chat.mj_apply_model(provider, ix, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_MODEL_CLOSE => {
+            let (provider, _) = mj_model_from_section(chat, cx)
+                .ok_or_else(|| bad("当前 section 不是模型编辑器（mj:m:名字:ix）"))?;
+            chat.mj_select(format!("mj:p:{provider}"), cx);
+            ok()
+        }
+        method::SETTINGS_MJ_AUTOFILL => {
+            let (provider, ix) = mj_model_from_section(chat, cx)
+                .ok_or_else(|| bad("当前 section 不是模型编辑器（mj:m:名字:ix）"))?;
+            chat.mj_catalog_fill(provider, ix, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_FETCH => {
+            let provider = mj_provider_from_section(chat, cx)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| bad("需要已保存的商（section = mj:p:名字）"))?;
+            chat.mj_fetch_models(provider, cx);
+            ok()
+        }
+        method::SETTINGS_MJ_DELETE => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"name\": \"商名\"}"))?
+                .to_string();
+            let ok_del = params.get("ok").and_then(Value::as_bool).unwrap_or(true);
+            chat.mj_ask_delete_provider(name, cx);
+            chat.mj_delete_provider_close(ok_del, cx);
             ok()
         }
         method::UI_SCREENSHOT => super::screenshot::shot(window, params),
