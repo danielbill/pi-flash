@@ -150,6 +150,9 @@ pub mod method {
     pub const PLUGIN_MENU: &str = "plugin.menu";
     /// 契约 v3 fn_bar：功能栏插件 icon 清单（直调 fn_bar chrome；UI 测试用）
     pub const PLUGIN_FNBAR: &str = "plugin.fnbar";
+    /// 契约 v3 session_list_render：会话行徽标清单（直调 plugin_badge 同一条
+    /// 缓存链；args {path}，回 {items:[{icon,tone}]}；UI 测试用）
+    pub const PLUGIN_BADGE: &str = "plugin.badge";
     /// 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session；UI 测试用）
     pub const PLUGIN_FNBAR_CLICK: &str = "plugin.fnbar_click";
     /// 契约 v3 命令直调（env 负载形态；与 switch 翻转/任意回环同链，UI 测试用）

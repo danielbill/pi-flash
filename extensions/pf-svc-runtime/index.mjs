@@ -47,9 +47,13 @@ export default function (pi) {
 
   const insts = new Map();
   let timer = null;
-  let stopped = false;
+  // live = 本会话域活着。**不是**进程级终态：pi 会在会话切换/重载时
+  // session_shutdown → session_start，把它当终态会让通道在第一次切换后
+  // 永久死掉（inbox 里的意图再也没人消费——灯/徽标/二维码全哑）。
+  let live = false;
 
   function dispatch(line) {
+    if (!live) return;
     const inst = insts.get(line.id);
     if (!inst) return;
     if (line.sys === "stop") {
@@ -60,7 +64,7 @@ export default function (pi) {
   }
 
   function pumpInbox() {
-    if (stopped) return;
+    if (!live) return;
     for (const inst of insts.values()) {
       if (!existsSync(inst.inbox)) continue;
       let text = "";
@@ -74,9 +78,10 @@ export default function (pi) {
     }
   }
 
-  pi.on("session_start", async (event, sessionCtx) => {
-    if (stopped) return;
-    crumb(`session_start instances=${(cfg.instances ?? []).length}`);
+  const start = async (sessionCtx) => {
+    if (live) return;
+    live = true;
+    crumb(`start instances=${(cfg.instances ?? []).length}`);
     for (const inst of cfg.instances ?? []) {
       if (insts.has(inst.id)) continue;
       const svc = {
@@ -105,16 +110,24 @@ export default function (pi) {
         crumb(`activate FAIL id=${inst.id} err=${e?.message ?? e}`);
       }
     }
-    if (insts.size > 0 && !timer) timer = setInterval(pumpInbox, TICK_MS);
+    if (!timer) timer = setInterval(pumpInbox, TICK_MS);
+  };
+
+  // 装载时机晚于 session_start（扩展随进程启动挂载，事件已过）——就地起一次，
+  // 再保留事件钩子兜后续会话；start 幂等（insts.has / stopped 双闸）。
+  const early = pi.sessionCtx ?? {};
+  start(early).catch((e) => crumb(`start FAIL ${e?.message ?? e}`));
+  pi.on("session_start", (_event, sessionCtx) => {
+    start(sessionCtx).catch((e) => crumb(`start FAIL ${e?.message ?? e}`));
   });
 
   pi.on("session_shutdown", () => {
-    if (stopped) return;
-    stopped = true;
-    if (timer) { clearInterval(timer); timer = null; }
+    if (!live) return;
+    live = false;
     for (const inst of insts.values()) {
       try { inst._onStop?.(); } catch (e) { console.error("[pf-svc] onStop 异常:", e); }
       append(inst.outbox, { id: inst.id, ev: "stopped" });
     }
+    insts.clear(); // 下一轮 session_start 重新 activate（实例对象随会话走）
   });
 }

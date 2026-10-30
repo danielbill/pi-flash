@@ -490,6 +490,18 @@ pub(super) fn dispatch(
                 .collect();
             Ok(json!({ "items": rows }))
         }
+        method::PLUGIN_BADGE => {
+            // 契约 v3 session_list_render：会话行徽标清单。与 function_panel
+            // 行渲染同一条缓存链（plugin_badge）；args {path}，回当前徽标图标/tone。
+            // 徽标是否"画出来"由这条断言（宿主渲染前取到的最终清单）。
+            let path = params_path(params, "path")?;
+            let items: Vec<Value> = chat
+                .plugin_badge(&path, cx)
+                .into_iter()
+                .map(|(icon, tone)| json!({ "icon": icon.to_string(), "tone": tone }))
+                .collect();
+            Ok(json!({ "items": items }))
+        }
         method::PLUGIN_FNBAR_CLICK => {
             // 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session）。
             // session 键 = 会话文件路径（跨进程重启稳定；插件 ext 双口径比对

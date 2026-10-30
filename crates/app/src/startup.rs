@@ -386,10 +386,16 @@ fn spawn_fs_watch_pump(cx: &mut gpui::Context<Chat>) {
 /// 不再需要 2Hz 切换；会话详情卡 2026-10-15 起改右键召唤，无定时逻辑）。
 fn spawn_pump_120ms(cx: &mut gpui::Context<Chat>) {
     cx.spawn(async move |this, cx| {
+        let mut svc_tick: u32 = 0;
         loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(120))
                 .await;
+            // 执行域 outbox 泵（90-6）：本循环 120ms 一拍，泵按 ~360ms 抽一次
+            svc_tick += 1;
+            if svc_tick % 3 == 0 {
+                let _ = this.update(cx, |c, cx| crate::pf_plugin::svc::svc_pump(c, cx));
+            }
             let ok = this
                 .update(cx, |c, cx| {
                     let mut dirty = false;

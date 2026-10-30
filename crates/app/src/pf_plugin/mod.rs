@@ -2483,18 +2483,10 @@ pub(crate) fn plugin_entries(manifests: Vec<PluginManifest>) -> Vec<PluginEntry>
 pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     // 组件状态广播（契约 v2.4）：observe Chat 自身，差分派发给订阅插件
     broadcast::attach(cx);
-    // 执行域 outbox 泵（90-6 通道）：独立节拍，不随 UI notify 驱动
-    cx.spawn(async move |this, cx| {
-        loop {
-            cx.background_executor()
-                .timer(std::time::Duration::from_millis(350))
-                .await;
-            if this.update(cx, |c, cx| svc::svc_pump(c, cx)).is_err() {
-                break; // Chat 已释放（退出）
-            }
-        }
-    })
-    .detach();
+    // 执行域 outbox 泵（90-6 通道）挂到既有 120ms 主泵上（startup::spawn_pump_120ms）：
+    // 早先在这里自起一条 cx.spawn 循环，实测「只跑第一拍就再也不进」
+    // （2026-10-30：bound 送达、qr 永远压在 outbox 里没人取 → 二维码空白），
+    // 不再自开节拍，复用那条已验证长跑的循环。
     // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
     // wasmtime，故由 app 注入）。纯函数指针，零开销。
     pi_link::pf_plugins::install_prepare_hook(install_prepare);
