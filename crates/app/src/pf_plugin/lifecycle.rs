@@ -43,9 +43,7 @@ pub(crate) enum Ev {
 /// （90-9 §2 异常处理只说「本次会话禁用」，不剥夺用户手动开闸）。
 pub(crate) fn transition(s: State, e: Ev) -> Option<State> {
     use Ev::{LoadErr, LoadOk, LoadStart, UnloadDone, UnloadStart};
-    use State::{
-        Active, Crashed, Disabled, Loading, Registered, Unloading,
-    };
+    use State::{Active, Crashed, Disabled, Loading, Registered, Unloading};
     Some(match (s, e) {
         (Registered | Disabled | Crashed, LoadStart) => Loading,
         (Loading, LoadOk) => Active,
@@ -189,7 +187,9 @@ mod tests {
                   2026-10-31T09:12:07 load   ERR      45ms   verify failed";
         assert!(has_unclosed_load(ok), "末尾 load 未闭合");
         // 补过对账行（unload ERR 上次异常退出）后即闭合
-        let closed = format!("{ok}\n2026-10-31T09:13:00 unload ERR        0ms   上次异常退出，未执行 unload");
+        let closed = format!(
+            "{ok}\n2026-10-31T09:13:00 unload ERR        0ms   上次异常退出，未执行 unload"
+        );
         assert!(!has_unclosed_load(&closed));
         // 未知事件行不干扰判定（前向兼容）
         let noise = "2026-10-30T21:04:12 verify ok     3120ms\nload-x ok";

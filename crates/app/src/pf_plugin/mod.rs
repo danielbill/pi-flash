@@ -1536,12 +1536,7 @@ impl Chat {
             }
             Err(e) => {
                 entry.state = lifecycle::State::Crashed;
-                lifecycle::log_load(
-                    &entry.manifest.dir,
-                    false,
-                    t0.elapsed().as_millis(),
-                    &e,
-                );
+                lifecycle::log_load(&entry.manifest.dir, false, t0.elapsed().as_millis(), &e);
                 entry.disabled = true;
                 self.set_status(format!("插件 {id} 出错：{e}"), cx);
                 false
