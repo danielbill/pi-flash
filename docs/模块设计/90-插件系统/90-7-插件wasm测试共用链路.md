@@ -30,8 +30,8 @@ import（storage/measure/open-popup…）、动作通道。这些只在 PF 的
 - `{"op":"load","wasm":"<path>","cache":"<dir>"}` —— 装载（cache = sha256
   编译缓存，未命中编一次后毫秒级命中）；回执带三钩子探测面。
 - `{"op":"init","id":"...","proof":"<proof JSON 串>"}` —— 验签激活。proof 由
-  **调用方**签发（插件仓 `inner/scripts/proof.mjs sign` + `PF_BUILD_KEY`），
-  runner 不持有任何密钥/kid。拒载后实例即弃（真机同语义）。
+  **调用方**签发（签名流程见内部发布文档），runner 不持有任何密钥/kid。
+  拒载后实例即弃（真机同语义）。
 - `{"op":"fn_bar"|"session_row","env":"..."}` / `{"op":"render_popup"}` /
   `{"op":"render"}` —— 契约钩子直调；空语义与宿主一致（空串 → null/"null"）。
 - `{"op":"on_event","kind":"command|broadcast|page-active","id":"...","path":"..."}`

@@ -425,8 +425,8 @@
   缓存改绑 `<插件目录>/.cache/`（卸载随删、拷走跟走、启动 sweep_orphans 收尾）
 - **卸载 bug 修复**：先就地撤运行态释放 cwasm mmap，再删目录；台账先摘，
   目录删不掉也不会「显示已卸装又复活」（os error 32）
-- **开发构建自签 proof**：build.rs 仅 `PROFILE=debug` 时调 `proof.mjs` 用本机 dev
-  私钥现签，`cargo run -p app` 即可装加密插件；release 仍只认流水线注入；
+- **开发构建自签 proof**：build.rs 仅 `PROFILE=debug` 时用本机开发签名材料现签，
+  `cargo run -p app` 即可装内层插件；release 仍只认流水线注入；
   另修「证明钩子只在后台验签线程注入 → 面板先 init 读 fallback 拒载」的竞态
 - 实测：市场装 `quick-panel@0.1.4` → 验签通过（装载 3.2s/init 2.7ms，缓存命中毫秒级）
   → tab 闪电图标 → 面板分区/图标/色调与 JS 版一致 → 右键「设为快捷」写收藏可用

@@ -197,8 +197,8 @@ fn proof_material() -> String {
         .unwrap_or_else(|| r#"{"kid":"","proof":"PROOF_PLACEHOLDER"}"#.into())
 }
 
-/// nonceTag 派生（js.rs / 内层插件 pf-inner-verify 同算法，公开）：
-/// `hex(sha256(proof ‖ 0x00 ‖ nonce))`。防静态硬编码 dump，线性抬价非绝对防护。
+/// nonceTag 派生（js / 内层插件 pf-inner-verify 同算法，公开）：
+/// `hex(sha256(proof ‖ 0x00 ‖ nonce))`。
 pub fn nonce_tag(proof: &str, nonce: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();

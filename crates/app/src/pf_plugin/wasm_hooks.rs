@@ -144,8 +144,8 @@ pub(super) fn has_official_proof() -> bool {
     option_env!("PF_HOST_PROOF").is_some_and(|p| !p.is_empty() && p != "PROOF_PLACEHOLDER")
 }
 
-/// 官方构建证明材料（build.rs 把 PF_BUILD_PROOF/KID 烙成二进制常量，见
-/// crates/app/build.rs；未设置的构建 = 占位符 → init 验签必败 → 拒载）。
+/// 官方构建证明材料（build.rs 把签名材料烙成二进制常量，见 crates/app/build.rs；
+/// 未设置的构建 = 占位符 → 装载校验必败 → 拒载）。
 pub(super) fn host_proof_material() -> String {
     let proof = option_env!("PF_HOST_PROOF").unwrap_or("PROOF_PLACEHOLDER");
     let kid = option_env!("PF_HOST_PROOF_KID").unwrap_or("");

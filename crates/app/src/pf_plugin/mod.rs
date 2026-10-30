@@ -1090,8 +1090,7 @@ impl ChatHost {
 
 impl JsHost for ChatHost {
     fn host_proof(&mut self) -> String {
-        // 090-5 L3：官方构建由 build.rs 注入（PF_BUILD_PROOF → 常量 PF_HOST_PROOF）；
-        // 无注入构建 option_env! 为 None → 占位符（fail-closed，与 fork 自建同款）。
+        // 090-5 L3：官方构建由 build.rs 注入签名材料；无注入构建为占位符（fail-closed）。
         let proof = option_env!("PF_HOST_PROOF").unwrap_or("PROOF_PLACEHOLDER");
         let kid = option_env!("PF_HOST_PROOF_KID").unwrap_or("");
         serde_json::json!({ "kid": kid, "proof": proof }).to_string()

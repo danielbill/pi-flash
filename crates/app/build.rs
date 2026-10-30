@@ -4,9 +4,9 @@
 //! 运行时 if 挡不住编译期 E0433。macOS 图标走 .app bundle 的
 //! assets/macos/pi-flash.icns（见 .github/workflows/release-macos.yml）。
 //!
-//! 另承担 090-5 L3 官方宿主证明注入（纯机制，无秘密）：构建机由发布流水线先跑
-//! 插件仓 `inner/scripts/proof.mjs` 产出已签 proof（紧凑 JSON），经环境变量传入；
-//! 本脚本只做 env → 二进制常量，**不做任何密码学、不接触私钥**。
+//! 另承担 090-5 L3 官方宿主证明注入（纯机制，无秘密）：构建机由发布流水线先产出
+//! 已签 proof（紧凑 JSON），经环境变量传入；本脚本只做 env → 二进制常量，
+//! **不做任何密码学、不接触签名材料**。签发流程见内部发布文档。
 
 fn main() {
     inject_host_proof();
@@ -28,18 +28,18 @@ fn inject_host_proof() {
             println!("cargo:rustc-env=PF_HOST_PROOF_KID={kid}");
         }
         _ => {
-            // 开发构建自签：本机有 dev 私钥就现场签一份（**仅 debug**）
+            // 开发构建自签：本机有 dev 签名材料就现场签一份（**仅 debug**）
             if let Some((kid, proof)) = dev_sign_proof() {
                 println!("cargo:rustc-env=PF_HOST_PROOF={proof}");
                 println!("cargo:rustc-env=PF_HOST_PROOF_KID={kid}");
-                println!("cargo:warning=开发构建已自带宿主证明（kid={kid}，本机 dev 私钥现签）");
+                println!("cargo:warning=开发构建已自带宿主证明（kid={kid}）");
                 return;
             }
             println!("cargo:rustc-env=PF_HOST_PROOF=PROOF_PLACEHOLDER");
             println!("cargo:rustc-env=PF_HOST_PROOF_KID=");
             println!(
-                "cargo:warning=PF_BUILD_PROOF/PF_BUILD_KID 未设置：本次构建不含官方宿主证明（占位符）。\
-                 内层 wasm 插件将拒绝加载（090-5 L3）。官方构建需先在插件仓 inner/ 跑 scripts/proof.mjs。"
+                "cargo:warning=本次构建不含官方宿主证明（占位符）：内层 wasm 插件将拒绝加载。\
+                 官方构建需由发布流水线注入（见内部发布文档）。"
             );
         }
     }
@@ -58,11 +58,10 @@ fn embed_windows_icon() {
 #[cfg(not(windows))]
 fn embed_windows_icon() {}
 
-/// 开发构建自签宿主证明（**仅 debug**）：调用插件仓 `inner/scripts/proof.mjs sign`，
-/// 用本机 dev 私钥现签。私钥默认 `<PF仓>/../pi-flash-plugins/inner/keys/priv/<kid>.pk8.pem`，
-/// 可用 `PF_DEV_KEY` / `PF_DEV_KID` 覆盖；私钥或脚本缺失 → None（回退占位符）。
+/// 开发构建自签宿主证明（**仅 debug**）：调用内部签发脚本，用本机开发签名材料现签。
+/// 路径与变量名见内部发布文档（不入库）；材料或脚本缺失 → None（回退占位符）。
 ///
-/// 意义：日常 `cargo run -p app` 就能装加密插件，不必每次手拼环境变量。
+/// 意义：日常 `cargo run -p app` 就能装内层插件，不必每次手拼环境变量。
 /// release 构建不自动签（`PROFILE != "debug"`），发布包仍由流水线显式注入。
 fn dev_sign_proof() -> Option<(String, String)> {
     println!("cargo:rerun-if-env-changed=PF_DEV_KEY");
@@ -85,7 +84,16 @@ fn dev_sign_proof() -> Option<(String, String)> {
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let out = std::process::Command::new("node")
         .arg(&script)
-        .args(["sign", "--kid", &kid, "--build-id", "dev-local", "--version", &version, "--json"])
+        .args([
+            "sign",
+            "--kid",
+            &kid,
+            "--build-id",
+            "dev-local",
+            "--version",
+            &version,
+            "--json",
+        ])
         .env("PF_BUILD_KEY", &key)
         .output()
         .ok()?;

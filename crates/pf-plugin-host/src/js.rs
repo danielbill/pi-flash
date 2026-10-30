@@ -583,7 +583,6 @@ globalThis.__pf_fire_svc_message = (json, meta) => {{
 /// 注入 JS 字符串字面量的最小转义（`\ " ` 与控制符；清单路径是本地明文，够用）。
 /// nonceTag 派生（090-5 L3.3 多点校验：activate / render / onCommand 各带一次，
 /// 插件 wasm 内按同一算法复算比对）：hex(sha256(proof ‖ 0x00 ‖ nonce))。
-/// 算法公开——防「dump 一段静态串硬编码」，线性抬价非绝对防护。
 /// nonceTag 派生已上移 `crate::nonce_tag`（js / wasm 两路共用同一实现）。
 
 fn json_escape(s: &str) -> String {
