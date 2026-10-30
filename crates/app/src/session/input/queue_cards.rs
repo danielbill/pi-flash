@@ -233,7 +233,7 @@ pub(crate) fn queue_cards_strip(
                         .cursor(gpui::CursorStyle::OpenHand)
                         .child(icon("menu", 12., t.text_faint)),
                 )
-                // 微信远程来的条目：来源标识（与 composer 条目区分）
+                // 远程插件来的条目：来源标识（与 composer 条目区分）
                 .when(entry.remote, |d| {
                     d.child(icon("smartphone", 12., t.text_muted))
                 })

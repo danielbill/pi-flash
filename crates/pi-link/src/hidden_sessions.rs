@@ -2,20 +2,22 @@
 //!
 //! 文件：`<PF 数据目录>/hidden-sessions.json`
 //! ```json
-//! { "entries": [ { "owner": "pf-wxbot", "name": "pf-wxbot-261024164500123" } ] }
+//! { "entries": [ { "owner": "pf-demo", "name": "pf-demo-261024164500123" } ] }
 //! ```
 //!
-//! 谁写：拥有影子会话的模块自己——当前唯一消费者 = 060 微信线
-//! （`pf-wxbot-<15 位时间戳>`，见 `remote_control::panel`）。模块每次启动/
-//! 重连**注入一条**自己的条目（按 `owner` 整体替换，不累积）。
+//! 谁写：拥有影子会话的插件自己——认领线建线/重连时**注入一条**自己的
+//! 条目（按 `owner` 整体替换，不累积；owner = 插件 id）。PF 不内置任何
+//! 插件身份，条目内容全部由插件侧自报。
 //!
 //! 为什么不让 pi 知道：这是**显示口径**而不是存储口径——会话文件照旧躺在
-//! pi 的 sessions 目录里（微信线要能被 pi 打开/续写），只是 PF 的列表
+//! pi 的 sessions 目录里（认领线要能被 pi 打开/续写），只是 PF 的列表
 //! （psp 会话侧栏 / 最近会话 / 项目分组）按本清单过滤掉。
 //!
 //! 匹配口径三选一（任一命中即隐藏）：`path` 精确（大小写/分隔符归一）、
 //! `name` 精确（pi 的 `session_info.name`）、`prefix` 前缀（同名族的旧会话
-//! 也不进列表——微信线不复用旧会话、也不再删旧文件，靠前缀兜住历史）。
+//! 也不进列表——认领线不复用旧会话、也不再删旧文件，靠前缀兜住历史）。
+//! 另有一道不依赖本清单的静态铁闸：启动恢复按插件**清单声明**的认领
+//! 前缀过滤（见 `pf_plugin::declared_claim_prefixes`）。
 
 use std::path::{Path, PathBuf};
 
@@ -23,10 +25,7 @@ use serde_json::{Value, json};
 
 use crate::paths;
 
-/// 微信线会话的 owner 标识（模块注入/替换自己的条目都按它）。
-pub const OWNER_WX: &str = "pf-wxbot";
-
-/// 一条过滤记录。`owner` 只用于模块自管（模块重连时整体替换自己的条目）。
+/// 一条过滤记录。`owner` 只用于插件自管（插件重连时整体替换自己的条目）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
     pub owner: Option<String>,
@@ -124,8 +123,8 @@ pub fn save(h: &Hidden) {
     }
 }
 
-/// 模块注入/替换自己的一条（`owner` 决定替换范围）。`prefix` 可选：同族
-/// 旧会话（如历史 `pf-wxbot-*`）一并挡住。
+/// 插件注入/替换自己的一条（`owner` 决定替换范围）。`prefix` 可选：同族
+/// 旧会话（如历史残留）一并挡住。
 pub fn set_owned(owner: &str, name: Option<&str>, path: Option<&Path>, prefix: Option<&str>) {
     let mut h = load();
     h.entries.retain(|e| e.owner.as_deref() != Some(owner));
@@ -138,7 +137,7 @@ pub fn set_owned(owner: &str, name: Option<&str>, path: Option<&Path>, prefix: O
     save(&h);
 }
 
-/// 模块收尾（例如微信线彻底停用）时撤掉自己的条目。
+/// 插件收尾（例如认领线彻底停用）时撤掉自己的条目。
 pub fn clear_owned(owner: &str) {
     let mut h = load();
     let before = h.entries.len();
@@ -157,8 +156,8 @@ mod tests {
         let h = Hidden {
             entries: vec![
                 Entry {
-                    owner: Some(OWNER_WX.into()),
-                    name: Some("pf-wxbot-1".into()),
+                    owner: Some("pf-demo".into()),
+                    name: Some("pf-demo-1".into()),
                     path: None,
                     prefix: None,
                 },
@@ -172,13 +171,13 @@ mod tests {
                     owner: None,
                     name: None,
                     path: None,
-                    prefix: Some("pf-wxbot-".into()),
+                    prefix: Some("pf-demo-".into()),
                 },
             ],
         };
-        assert!(h.hides(Some("pf-wxbot-1"), Path::new("C:\\other\\b.jsonl")));
+        assert!(h.hides(Some("pf-demo-1"), Path::new("C:\\other\\b.jsonl")));
         assert!(h.hides(Some("plain"), Path::new("c:\\users\\X\\sessions\\A.jsonl")));
         assert!(!h.hides(Some("plain"), Path::new("C:\\other\\c.jsonl")));
-        assert!(!Hidden::default().hides(Some("pf-wxbot-1"), Path::new("x")));
+        assert!(!Hidden::default().hides(Some("pf-demo-1"), Path::new("x")));
     }
 }

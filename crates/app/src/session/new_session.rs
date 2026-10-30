@@ -54,7 +54,7 @@ pub(crate) fn page(
 ) -> AnyElement {
     let t = T();
     // 新会话页也是模版页的一部分：欢迎语与扩展更新卡由**线皮肤**注入，
-    // 本文件不自己判「是不是微信线」（002 微信线的欢迎语 = 插件注入语；
+    // 本文件不自己判「是不是插件功能线」（功能线的欢迎语 = 插件注入语；
     // 扩展更新表只属真正的新会话页）
     let welcome = tr(skin.greeting_key);
     div()
@@ -123,7 +123,7 @@ pub(crate) fn page(
                         // 扩展更新通知 = 零高锚点（不占流空间），卡片
                         // absolute 下移固定 20px（验收定稿），欢迎语/inputpanel
                         // 定位零改动。**只属于真正的新会话页**（皮肤开关）：
-                        // 微信线不渲染也不触发加载。
+                        // 插件功能线不渲染也不触发加载。
                         .children(if skin.plugin_updates {
                             plugin_update_notice(chat, weak, t)
                         } else {

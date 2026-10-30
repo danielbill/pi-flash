@@ -428,7 +428,7 @@ pub(super) fn dispatch(
             let panel = params
                 .get("panel")
                 .and_then(Value::as_str)
-                .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin|wx\"}"))?;
+                .ok_or_else(|| bad("需要 {\"panel\": \"default|git|plugin\"}"))?;
             let plugin_ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
             if panel == "plugin" {
                 // 走 open_plugin_dock（与点状态栏 tab 同语义）：触发插件懒加载链

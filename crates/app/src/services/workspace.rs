@@ -363,8 +363,8 @@ pub fn tabs_state_for() -> Option<TabsState> {
 
 /// 纯内核：存档 → JSON 值（空带 = None，调用方据此移除槽位）。
 fn tabs_state_to_value(state: &TabsState) -> Option<Value> {
-    // 空带通常 = 移除槽位（启动落默认 chat）；唯独微信标签开着要单独能
-    // 存活——[设置会话] 页时 tab 带本就为空，若这里返回 None，重启就
+    // 空带通常 = 移除槽位（启动落默认 chat）；但空带也可能只是插件功能页
+    // 暂存态——tab 带本就为空，若这里返回 None，重启就
     // 「蹿回桌面会话对话页」（2026-10-25 真机事故）
     if state.tabs.is_empty() {
         return None;

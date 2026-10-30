@@ -91,7 +91,7 @@ pub(crate) fn activate_script_path() -> Option<PathBuf> {
 /// full+plugins 档要追加的 CLI 参数（spawn 时接在 `--session <file>` 之后）。
 pub(crate) fn full_plugin_args(ext_sources: &[String], cwd: &Path) -> Vec<String> {
     // 契约 v4：插件 pi/*.mjs 是执行域入口（只导出 activate），不能再当 pi 扩展
-    // 挂载——带上它会让 pi 整批 -e 失败（执行域 shim 一起失效：灯/徽标/二维码全哑）。
+    // 挂载——带上它会让 pi 整批 -e 失败（执行域 shim 一起失效：插件功能面全哑）。
     let kept: Vec<String> = ext_sources
         .iter()
         .filter(|s| !pi_link::service_ext::is_exec_entry(std::path::Path::new(s)))

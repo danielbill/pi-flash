@@ -2,8 +2,7 @@
 //! 内部页面按 pi-web 最新版重构（路径条/分组侧栏/详情表单/底栏）。表单
 //! 状态由 SettingsPanel entity 持有；mc_*/mcp_* 动作仍在 Chat 上（单一
 //! RPC 属主）。子代理页已移除——社区子代理扩展经「扩展」页安装即用，
-//! 不再建模任何 subagent 配置。原「微信 Bot」页签已删除——内容迁左列
-//! 「微信」面板（`remote_control::panel`，060，2026-10-23 定夺）。
+//! 不再建模任何 subagent 配置。
 
 pub(crate) mod about;
 pub(crate) mod agents;
@@ -30,8 +29,7 @@ pub(crate) use widgets::{
     section_title, set_row, sidebar_list, sidebar_shell, status_dot, switch_base, width_slider,
 };
 
-/// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 8 快捷键
-/// （原 6 微信 Bot 页签已删除，内容迁左列「微信」面板——2026-10-23 定）。
+/// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 8 快捷键。
 pub(crate) const TAB_GENERAL: u8 = 0;
 pub(crate) const TAB_MODELS: u8 = 1;
 pub(crate) const TAB_SKILLS: u8 = 2;
@@ -603,9 +601,6 @@ fn two_pane(sidebar: gpui::AnyElement, detail: gpui::AnyElement) -> gpui::AnyEle
 }
 
 /// 左导航（icon + label；激活 = bg_selected + 600 + icon accent）。
-/// 原「微信 Bot」页签（TAB_REMOTE，历史名「远程控制」）已永久删除
-///（2026-10-23 定夺）——内容迁左列「微信」面板（`remote_control::panel`），
-/// 不留死分支；要恢复只能重写页面。
 fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElement> {
     let t = T();
     // tr() 传 &'static 键返回 &'static；显式标注避免数组被推断成临时生命周期

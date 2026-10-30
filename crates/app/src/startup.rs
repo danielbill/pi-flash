@@ -476,8 +476,8 @@ fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
                         if *key == chat.pool.active_key {
                             continue;
                         }
-                        // 执行域豁免（90-6）：该会话挂着绑定中的微信实例时，
-                        // pi 进程 = 轮询器本体；回收它 = 手机消息没人收、
+                        // 执行域豁免（90-6）：该会话挂着绑定中的插件实例时，
+                        // pi 进程 = 轮询器本体；回收它 = 远程消息没人收、
                         // ui.json 的绑定指针却还在 → icon 假绿（2026-10-30
                         // 真机「发消息收不到」主因之一）。
                         if chat.has_live_service(key, cx) {
@@ -651,20 +651,23 @@ fn boot_target() -> BootTarget {
     // ③ restore 只决定要不要连带加载该项目的最后会话
     let session = if restore {
         let hidden = pi_link::hidden_sessions::load();
+        // 影子会话（插件认领线）**永不**做桌面恢复目标（2026-10-25 孤儿页
+        // 事故）：认领线归插件管，历史遗留指针一律按「无会话可恢复」处理，
+        // 落新会话页。铁闸数据源 = 已装插件**清单声明**的认领前缀
+        // （[[contributes.sessions]]）——静态、不随运行期过滤清单滞后或
+        // 停用清条而漂移；PF 不含任何具体插件的身份信息。
+        let claim_prefixes = crate::pf_plugin::declared_claim_prefixes();
         crate::services::workspace::get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
-            // 影子会话（微信线）不做桌面恢复目标（2026-10-25 孤儿页事故）：
-            // 微信线归【微信通话】标签管，历史遗留指针一律按「无会话可
-            // 恢复」处理，落新会话页
             .filter(|p| p.exists() && !hidden.hides(None, p))
-            // 影子会话（pf-wxbot-*，插件认领线草稿键）**永不**做桌面恢复
-            // 目标：按文件名前缀过滤（hidden 清单可能滞后一轮，前缀是铁闸）
             .filter(|p| {
                 let name = p
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                !name.starts_with("pf-wxbot-")
+                !claim_prefixes
+                    .iter()
+                    .any(|pre| name.starts_with(pre.as_str()))
             })
     } else {
         None
@@ -768,7 +771,7 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
             None => Vec::new(),
         };
         let _ = this.update(cx, |chat, cx| {
-            // 影子会话（微信线 pf-wxbot-*）不进列表：过滤清单读一次
+            // 影子会话（插件认领线）不进列表：过滤清单读一次
             let hidden = pi_link::hidden_sessions::load();
             chat.pool.sessions = sessions
                 .into_iter()

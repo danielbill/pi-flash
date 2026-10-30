@@ -179,7 +179,7 @@ pub(crate) enum ResolvedNode {
         align_center: bool,
         /// `justify: "center"`：主轴（纵向）居中——空态提示在面板正中
         justify_center: bool,
-        /// 固定宽度（px，可选）：夹住内容列（弹窗内容对齐二维码方框这类场景）
+        /// 固定宽度（px，可选）：夹住内容列（弹窗内容对齐画布方框这类场景）
         w: Option<f32>,
         /// 卡片能力（可选）：底色 / 圆角 / 1px 描边（通用，非插件特例）
         bg: Option<String>,
@@ -239,8 +239,8 @@ pub(crate) enum ResolvedNode {
         width: f32,
         height: f32,
         paints: Vec<CanvasPaint>,
-        /// 契约 v3+：左键点画布 = 回环插件命令（二维码框内「刷新二维码」这类
-        /// 提示本身是按钮，设计 002 §二维码展示区）。
+        /// 契约 v3+：左键点画布 = 回环插件命令（画布内嵌「刷新」这类
+        /// 提示本身是按钮）。
         command: String,
     },
     /// 开/关开关（契约 v3）：点击翻转 → onCommand(command, {value: 新布尔})。
@@ -802,7 +802,7 @@ fn render_node(
 
 /// 根节点渲染入口：根 Column 撑满面板（justify 垂直居中等才有意义）。
 /// 嵌套 Column 一律自适应高度——曾经无条件 flex_1 让页面级子列平分整页
-/// 高度（绑定页二维码区/提示区各占一半，002 §1 布局稀碎）。
+/// 高度（分区布局被硬拉成对半分）。
 fn render_root(
     node: &ResolvedNode,
     ix: usize,
@@ -1276,7 +1276,7 @@ fn render_button(
         if !dead {
             el = el.cursor_pointer().hover(|s| s.bg(rgb(t.bg_hover)));
             if has_cmd {
-                // 契约 v3+：按钮左键 = 回环插件命令（刷新二维码这类"用户自己点"的入口）
+                // 契约 v3+：按钮左键 = 回环插件命令（"用户自己点"的回环入口）
                 el = el.on_mouse_down(
                     MouseButton::Left,
                     click_command(weak.clone(), ix, command.to_string(), arg.to_string()),
@@ -1419,7 +1419,7 @@ fn click_command(
             // 契约：会话域命令回环必须带 env.session.key（fn_bar 同规）。
             // 画布/开关点击不带 arg 时宿主补当前会话键——壳侧 onCommand 用
             // env.session.key 定位投递目标，空 env = 意图静默丢失（2026-10-30
-            // 真机：超时白遮点【刷新二维码】无响应，即空 env 丢失）。
+            // 真机：超时白遮态点画布回环无响应，即空 env 丢失）。
             let a = if a.trim().is_empty() {
                 let key =
                     c.pool
@@ -1701,7 +1701,7 @@ pub(crate) fn plugin_popup_layer(
         .rounded(px(crate::ui::tokens::radius::CARD))
         .overflow_hidden();
     // 标题栏：标题 + ×（overlay 规则 5：有可见内容的卡片挂关闭钮）
-    // title 为空 = 不画标题栏（老微信弹窗无标题栏，用户 2026-10-28 定夺）
+    // title 为空 = 不画标题栏（旧版弹窗无标题栏形态，用户 2026-10-28 定夺）
     let weak_x = weak.clone();
     if !title.is_empty() {
         card = card.child(

@@ -214,7 +214,7 @@ pub fn consume_events(path: &Path) -> Vec<Value> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    // **只截走完整行**：写侧是并发 append（二维码那种 3KB 大推送会跨多次写），
+    // **只截走完整行**：写侧是并发 append（KB 级大推送会跨多次写），
     // 读到半截就整文件清空 = 大消息被静默吞掉（2026-10-30 真机：qr 从不投递，
     // bound 16 字节却能过）。剩余半行留到下一拍。
     let Some(cut) = text.rfind('\n') else {

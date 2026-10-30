@@ -250,8 +250,8 @@ pub(crate) fn session_row_view(
                 )
                 // 时间区（v55 fmtAgo）：固定宽右对齐成一列（宽度与左侧图标区+
                 // padding 视觉平衡，标题可用空间最大化）
-                // 时间区：插件徽标（契约 v3 sessions.setBadge，002「时间位置放微信
-                // icon」）优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
+                // 时间区：插件徽标（契约 v3 sessions.setBadge，落时间位置）
+                // 优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
                 // 用户定夺 2026-10-28）；没徽标才回落相对时间
                 .child({
                     if badges.is_empty() {

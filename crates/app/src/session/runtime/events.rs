@@ -921,7 +921,7 @@ impl SessionRuntime {
                 delay_ms,
                 error_message: _,
             } => {
-                // 状态行（快照/微信端消费）报倒计时与次数；错误原文可能很长，
+                // 状态行（快照/远程端消费）报倒计时与次数；错误原文可能很长，
                 // 不进一行状态。桌面端此时按钮保持停止态、等待行照常转。
                 let secs = (delay_ms / 1000).max(1);
                 self.status = crate::i18n::tf(

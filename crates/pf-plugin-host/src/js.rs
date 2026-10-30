@@ -688,9 +688,9 @@ export function activate(ctx) {
 }
 export function fn_bar(ctx, env) {
   return {
-    icon: "assets:wx.svg",
+    icon: "assets:demo.svg",
     tone: env.session && env.session.key === "s1" ? "accent" : "text.faint",
-    tip: { zh: "微信机器人" },
+    tip: { zh: "示例插件" },
   };
 }
 export function render_popup(ctx) {
@@ -721,7 +721,7 @@ export function render(ctx) {
             .unwrap()
             .unwrap();
         assert!(
-            green.contains("assets:wx.svg") && green.contains("accent"),
+            green.contains("assets:demo.svg") && green.contains("accent"),
             "{green}"
         );
         let grey = plugin
@@ -867,7 +867,7 @@ export function render(ctx) {
             r#"
 let got = null;
 export function activate(ctx) {
-  ctx.sessions.newDraft("pf-wxbot-", "D:/proj/demo");
+  ctx.sessions.newDraft("pf-demo-", "D:/proj/demo");
   got = typeof ctx.sessions.newDraft;
 }
 export function render(ctx) { return { type: "text", value: got }; }
@@ -891,7 +891,7 @@ export function render(ctx) { return { type: "text", value: got }; }
             .collect();
         assert_eq!(
             drafts,
-            vec![("pf-wxbot-".into(), "D:/proj/demo".into())],
+            vec![("pf-demo-".into(), "D:/proj/demo".into())],
             "ctx.sessions.newDraft 必须到达动作队列"
         );
         let _ = std::fs::remove_dir_all(&dir);

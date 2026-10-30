@@ -32,8 +32,8 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
         .ml(px(align::ICON_LINE))
         // 020-1：面板 tab 只剩「项目」一个（briefcase 图标；文件树
         // tab 隐藏——文件树已并入上方整合面板）。tab 位保留，后续
-        // 新面板在此续可点 tab。微信 tab 已撤（2026-10-23：入口收
-        // 三横菜单【微信通信】，内容区全屏页，不再占 statusbar 图标位）。
+        // 新面板在此续可点 tab。插件全屏功能页不占 statusbar 图标位
+        // （2026-10-23：入口收三横菜单）。
         .child(project_tab(chat, cx));
     for (pix, p) in chat.plugins.plugins.iter().enumerate() {
         let Some(sb) = p.manifest.status_bar.as_ref() else {

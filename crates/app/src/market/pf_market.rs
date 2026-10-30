@@ -669,7 +669,7 @@ fn card(
     // 装了就用**插件自己的图标**（与状态栏 tab 同一资产，`plugins/<id>/assets/…`），
     // 未装/无 status_bar 的包回通用 package。
     // 取图链：status_bar 图标 → 市场清单声明的包图标（pf-market/1 `icon`，
-    // wxbot 这类无 status_bar 的 v3 插件从这里给卡片图；仅已安装时解析——
+    // 无 status_bar 的 v3 插件从这里给卡片图；仅已安装时解析——
     // 资产随包落盘才存在）→ 通用 package。
     let plugin_icon = pi_link::pf_plugins::dir_aliases(&e.name)
         .into_iter()

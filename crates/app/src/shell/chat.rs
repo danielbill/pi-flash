@@ -32,7 +32,7 @@ pub(crate) struct Chat {
 }
 
 /// 周边面板状态簇（4ea 字段重组）：扩展 UI 面 / 081 自动更新与更新日志 /
-/// 060 微信 Bot 桥 / 系统提示词·工具定义弹窗。
+/// 系统提示词·工具定义弹窗。
 pub(crate) struct AuxUi {
     // extension UI surface (active session)
     pub(crate) ext_status: Vec<(String, String)>,
@@ -897,16 +897,10 @@ impl Chat {
     /// 当前项目目录——None = 无项目态（启动未恢复、也未用任何显式动作进入
     /// 过项目）。cwd 的合法来源只有显式动作：恢复最后会话（其项目随之成为
     /// cwd）、切项目/打开项目、PI_FLASH_CWD。应用永不捏造（010 重设计）。
-    /// 界面「当前项目」：微信内容在前台（功能页 / 微信会话）时 = 模块独立
-    /// 工作目录 `wx_cwd`；其余 = 桌面 `ws.cwd`。
     ///
     /// 只给**展示/定向**类消费方用（会话栏项目名、会话目录钮、终端起点、
     /// 项目选择器勾选）。业务侧（会话归属、last_open、项目注册表、文件树）
-    /// 仍走 [`Self::project`]——微信线不碰桌面项目（002 模块独立）。
-    ///
-    /// 2026-10-25 报障：「选了目录还一直进 pi-flash」——微信页顶栏/会话目录
-    /// 读的是 `ws.cwd`（桌面项目），微信会话实际在 `wx_cwd` 里干活，界面却
-    /// 满眼桌面项目名。
+    /// 仍走 [`Self::project`]——插件认领线不碰桌面项目（模块独立）。
     pub(crate) fn ui_project(&self) -> Option<&Path> {
         self.ws.cwd.as_deref()
     }

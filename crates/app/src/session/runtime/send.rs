@@ -62,7 +62,7 @@ impl SessionRuntime {
     pub(super) fn optimistic_send(&mut self, text: String, pin: bool, cx: &mut Context<Self>) {
         // 伪标签：还没绑定会话文件的 draft，乐观发送的同一帧就在侧栏挂标
         // 签（真标签要等 pi 落盘 + 磁盘扫描，进程冷启 1-3s）。prompt/排队/
-        // 微信远程三个入口共用本漏斗；已绑定会话被 file 守卫挡掉。
+        // 远程插件各入口共用本漏斗；已绑定会话被 file 守卫挡掉。
         if self.file.is_none() {
             let preview = text
                 .lines()
@@ -503,7 +503,7 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// 思考档换挡（胶囊菜单 / 微信菜单同源）。
+    /// 思考档换挡（胶囊菜单 / 操作栏菜单同源）。
     ///
     /// `level` 是 pi 的档位键。pi 会按模型能力**截断**（deepseek-flash 只有
     /// off/low/high/max），真值随 `thinking_level_changed` 事件回来，本地这

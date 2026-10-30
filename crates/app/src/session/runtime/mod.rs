@@ -78,7 +78,7 @@ pub(crate) enum SessionEvent {
 pub(crate) struct QueuedInput {
     pub text: String,
     pub images: Vec<crate::AttachedImage>,
-    /// 微信远程来的条目（与 composer 同一漏斗；卡片渲染不区分，仅排障用）
+    /// 远程插件来的条目（与 composer 同一漏斗；卡片渲染不区分，仅排障用）
     pub remote: bool,
 }
 
@@ -170,7 +170,7 @@ pub(crate) struct SessionRuntime {
     pub queued_steering: Vec<String>,
     pub queued_followups: Vec<String>,
     /// 090：PF 本地排队（queue 模式运行中的发送 + Ctrl+Enter 显式入队 +
-    /// 微信远程）。AgentSettled 逐条 flush，见 queue.rs。
+    /// 远程插件端）。AgentSettled 逐条 flush，见 queue.rs。
     pub queued_inputs: Vec<QueuedInput>,
     /// 在途 flush 的命令 id（Prompt{None} 发出后等 response）：success =
     /// 摘掉队首；failure = pi 忙拒绝，放回队首等下一次 settled 重试。
@@ -425,8 +425,8 @@ impl SessionRuntime {
         }
         // 会话级扩展清单（031 session-ext.json；契约 v2.4/v3 pi_extensions
         // 的挂载通道）：**所有档位统一消费**——此前只有 custom 档读它，
-        // pf-wxbot 之类插件 ext 在 full/default 档下永远挂不上（-e 缺席，
-        // 出码/收发无人执行）。已挂过的（custom 档经 ext_sources）不重复。
+        // 插件 ext 在 full/default 档下永远挂不上（-e 缺席，出码/收发无人
+        // 执行）。已挂过的（custom 档经 ext_sources）不重复。
         if let Some(store) = pi_link::session_ext::store_path() {
             for src in pi_link::session_ext::read_for(&store, &self.key) {
                 // 契约 v4：插件的 pi/*.mjs 是执行域入口，再当扩展挂载会整批 -e 失败

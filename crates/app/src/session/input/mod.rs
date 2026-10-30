@@ -215,7 +215,7 @@ impl Chat {
         cx.notify();
     }
 
-    /// 思考档换挡入口（胶囊菜单 / 微信菜单同源）。`key` 是 pi 的档位键，
+    /// 思考档换挡入口（胶囊菜单 / 操作栏菜单同源）。`key` 是 pi 的档位键，
     /// 特例 `"auto"` = 「使用 pi 默认设置」：pi 没有 auto 档，得把设置里
     /// 解出来的默认档显式下发（只清本地 override 等于点了没反应）。
     pub(crate) fn set_thinking_level(&mut self, key: &str, cx: &mut Context<Self>) {

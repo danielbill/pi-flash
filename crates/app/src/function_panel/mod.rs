@@ -237,7 +237,7 @@ impl Chat {
                 .unwrap_or(0)
         };
         let mut groups: Vec<crate::ProjectGroup> = Vec::new();
-        // 影子会话（微信线 pf-wxbot-*）不建行：过滤清单由模块注入
+        // 影子会话（插件认领线）不建行：过滤清单由插件注入
         let hidden = pi_link::hidden_sessions::load();
         // 同一会话文件可能被索引两次（路径大小写变体：`C:/…` 与 `c:/…`，自动化
         // 打开/外部工具写索引都会留下双条）→ 列表出现重复行。按归一化路径去重。

@@ -698,7 +698,7 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
         if !popup_ids.insert(p.id.clone()) {
             return Err(format!("pf-plugin.toml：popup id「{}」重复", p.id));
         }
-        // title 可空：空 = 不画标题栏（老微信弹窗无标题栏，用户 2026-10-28 定夺）
+        // title 可空：空 = 不画标题栏（旧版弹窗无标题栏形态，用户 2026-10-28 定夺）
         if m.wasm.is_none() && m.bytecode.is_none() && !dir.join(&p.entry).is_file() {
             return Err(format!(
                 "pf-plugin.toml：popups entry「{}」不存在（02 §2）",
@@ -755,6 +755,21 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
         }
     }
     out
+}
+
+/// 已装插件清单声明的认领前缀全集（契约 v2.4 `[[contributes.sessions]]`）。
+/// 启动恢复的**影子会话铁闸**数据源：直接读磁盘清单（后台线程可调），
+/// 不看运行期台账——停用/未登记的包也算：它的认领线残留会话同样不该
+/// 被桌面恢复接走。PF 不内置任何插件身份，前缀全部来自插件自声明。
+pub(crate) fn declared_claim_prefixes() -> Vec<String> {
+    let Some(root) = pi_link::paths::plugins_dir() else {
+        return Vec::new();
+    };
+    scan_candidates(&root)
+        .iter()
+        .filter_map(|(_, dir)| parse_manifest(dir).ok())
+        .flat_map(|m| m.sessions.into_iter().map(|s| s.prefix))
+        .collect()
 }
 
 /// 扫插件根目录出 `(顶层包目录名, 清单所在目录)` 候选。
@@ -1013,8 +1028,8 @@ pub(crate) struct PluginUi {
     pub broadcast_last: Option<(Option<String>, Option<(String, String)>)>,
     /// 契约 v3 session 广播的上次已发会话键（差分守门）。
     pub session_last: Option<Option<String>>,
-    /// 认领槽：插件实例 × 进行中会话（002 wx_session_id 的泛化；一个插件
-    /// 同时只有一条进行中线，新建即换绑）。见 `Claim`。
+    /// 认领槽：插件实例 × 进行中会话（一个插件同时只有一条进行中线，
+    /// 新建即换绑）。见 `Claim`。
     pub claims: Vec<Claim>,
     /// 打开中的插件弹窗（契约 v3；None = 无）。
     pub popup: Option<PluginPopupOpen>,
@@ -1952,7 +1967,11 @@ impl Chat {
                     r.ensure_spawned(cx);
                 });
             } else {
-                self.set_status("微信机器人扩展将在当前任务完成后生效".to_string(), cx);
+                let msg = crate::i18n::tf(
+                    "plugin.ext_wait_idle",
+                    &[("name", entry.manifest.id.clone())],
+                );
+                self.set_status(msg, cx);
             }
         }
     }
@@ -1983,8 +2002,8 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
-        // 命令回环后插件状态已变（绑定指针/开关/出码）：chrome 缓存作废重建
-        // ——两载体同时机（8tb.2：wasm 命令回环原先不清，导致扫码后 icon 滞灰）
+        // 命令回环后插件状态已变（绑定指针/开关态）：chrome 缓存作废重建
+        // ——两载体同时机（8tb.2：wasm 命令回环原先不清，导致绑定后 icon 滞灰）
         self.plugins.fn_bar_cache.clear();
         if self.plugins.plugins[ix].wasm.is_some() {
             self.plugin_wasm_event(ix, "command", command_id, env_json, window, cx);
@@ -2079,8 +2098,8 @@ impl Chat {
         eprintln!("[pf-plugin] popup close (trace)");
         if self.plugins.popup.take().is_some() {
             self.plugins.popup_gen += 1;
-            // chrome 缓存作废：扫码成功 → 弹窗自动收，此刻功能栏 icon 必须立刻
-            // 灰→绿。不失效就要等下一个会话事件（真机：滞后到微信来消息才亮）
+            // chrome 缓存作废：弹窗动作（如绑定成功）→ 弹窗自动收，此刻功能栏
+            // icon 必须立刻变色。不失效就要等下一个会话事件才亮
             self.plugins.fn_bar_cache.clear();
             cx.notify();
         }
@@ -2615,7 +2634,7 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
     broadcast::attach(cx);
     // 执行域 outbox 泵（90-6 通道）挂到既有 120ms 主泵上（startup::spawn_pump_120ms）：
     // 早先在这里自起一条 cx.spawn 循环，实测「只跑第一拍就再也不进」
-    // （2026-10-30：bound 送达、qr 永远压在 outbox 里没人取 → 二维码空白），
+    // （2026-10-30：载荷永远压在 outbox 里没人取 → 弹窗内容空白），
     // 不再自开节拍，复用那条已验证长跑的循环。
     // 安装尾声钩子：wasm → cwasm 预编译压在安装那一次做完（pi-link 不依赖
     // wasmtime，故由 app 注入）。纯函数指针，零开销。
@@ -2843,7 +2862,7 @@ pub(crate) fn fn_bar_plugin_elements(
     // 当前会话键：**以标签页的会话路径为准**（= 用户看到的那个会话）。
     // 不能用「活跃 runtime 的 state.session_file」兜底：新建/刚切过去的会话还没
     // 起自己的 pi 进程时，runtime 池里的可能是上一个会话 → 点 icon 绑到旧会话
-    // （真机：切到新会话扫码，绑定仍落在旧会话）。runtime 状态只做最后兜底。
+    // （真机：切到新会话再点绑定，仍落在旧会话）。runtime 状态只做最后兜底。
     let session_key = {
         let tab = chat.pool.active_key.to_string();
         if tab.ends_with(".jsonl") {
@@ -2867,10 +2886,10 @@ pub(crate) fn fn_bar_plugin_elements(
         .into_iter()
         .map(|(ix, icon_path, tone, tip)| {
             let t = crate::appearance::theme::theme();
-            // 002：绿=已绑定。kitchen 等主题 accent 是红，fn_bar 的 accent
-            // 固定映射主题绿（appearance::UNREAD，与旧版微信 icon 同色）。
-            // 其余按 token 原样映射（text.faint = 未绑默认灰，2026-10-29 用户
-            // 定夺；曾一律 text_muted 近黑，灰不可辨）。
+            // accent（插件的「已绑定/激活」态语义）固定映射主题绿
+            // （appearance::UNREAD）——kitchen 等主题 accent 是红，直接透传
+            // 会与错误色混淆。其余按 token 原样映射（text.faint = 未绑默认
+            // 灰，2026-10-29 用户定夺；曾一律 text_muted 近黑，灰不可辨）。
             let color = match tone.as_str() {
                 "accent" => crate::appearance::theme::UNREAD,
                 "text.faint" => t.text_faint,
@@ -2903,7 +2922,7 @@ pub(crate) fn fn_bar_plugin_elements(
                 gpui::svg()
                     .path(icon_path)
                     .text_color(rgb(color))
-                    .size(px(24.)), // fn 槽 icon = XL 档 24（用户定夺 2026-10-28，002「大样式」）
+                    .size(px(24.)), // fn 槽 icon = XL 档 24（用户定夺 2026-10-28）
             )
             .into_any_element()
         })
@@ -2920,9 +2939,9 @@ mod tests {
         let ses = "C:/x/a.jsonl";
         let badges = vec![
             PluginBadge {
-                owner: "pf-wxbot".into(),
+                owner: "pf-demo".into(),
                 session: ses.into(),
-                icon: "assets:wx.svg".into(),
+                icon: "assets:x.svg".into(),
                 tone: "accent".into(),
             },
             PluginBadge {
@@ -2942,7 +2961,7 @@ mod tests {
         assert_eq!(hit.len(), 2);
         assert_eq!(
             hit[0],
-            ("plugins/pf-wxbot/assets/wx.svg".into(), "accent".into())
+            ("plugins/pf-demo/assets/x.svg".into(), "accent".into())
         );
         assert_eq!(
             hit[1],
@@ -3013,22 +3032,22 @@ entry = "main.js"
     fn manifest_topbar_menu_parse() {
         let tmp = std::env::temp_dir().join(format!("pf-topbar-test-{}", std::process::id()));
         let body = format!(
-            "{GOOD}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"微信通话\" }}\nicon = \"assets/wx.svg\"\n"
+            "{GOOD}\n[[contributes.topbar_menu]]\ntitle = {{ zh = \"面板标题\" }}\nicon = \"assets/top.svg\"\n"
         );
         let dir = tmp.join("quick-panel");
         write_manifest(&dir, &body);
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
         std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("assets/wx.svg"), "<svg/>").unwrap();
+        std::fs::write(dir.join("assets/top.svg"), "<svg/>").unwrap();
         std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
         let m = parse_manifest(&dir).expect("topbar_menu 清单应通过");
         let tb = m.topbar_menu.as_ref().expect("条目应入清单");
-        assert_eq!(tb.title_zh, "微信通话");
-        assert_eq!(tb.icon, "assets/wx.svg");
+        assert_eq!(tb.title_zh, "面板标题");
+        assert_eq!(tb.icon, "assets/top.svg");
         // 图标三来源映射（与 status_bar 共用 contrib_icon_path）
         assert_eq!(
             topbar_menu_icon_path(&plugin_entries(vec![m]).remove(0)).map(|s| s.to_string()),
-            Some("plugins/quick-panel/assets/wx.svg".to_string())
+            Some("plugins/quick-panel/assets/top.svg".to_string())
         );
         // 重复段 = 拒绝
         let dir2 = tmp.join("dup");
@@ -3044,11 +3063,11 @@ entry = "main.js"
     }
 
     /// 契约 v2.4 sessions 解析：认领前缀声明段必须入清单（漏段曾把整份
-    /// 清单拒在扫描关——wechat-bridge「未知段 [[contributes.sessions]]」）
+    /// 清单拒在扫描关——插件包「未知段 [[contributes.sessions]]」事故）
     #[test]
     fn manifest_sessions_parse() {
         let tmp = std::env::temp_dir().join(format!("pf-sessions-test-{}", std::process::id()));
-        let body = format!("{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-wxbot-\"\n");
+        let body = format!("{GOOD}\n[[contributes.sessions]]\nprefix = \"pf-demo-\"\n");
         let dir = tmp.join("quick-panel");
         write_manifest(&dir, &body);
         std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
@@ -3056,12 +3075,12 @@ entry = "main.js"
         std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
         let m = parse_manifest(&dir).expect("含 sessions 段的清单必须通过");
         assert_eq!(m.sessions.len(), 1);
-        assert_eq!(m.sessions[0].prefix, "pf-wxbot-");
+        assert_eq!(m.sessions[0].prefix, "pf-demo-");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// 契约 v2.4 dock 解析：tab/panel/缺省/非法值四路
-    /// 认领会话名：前缀 + 15 位时间戳（002 §5 口径，与 wx 线同构）
+    /// 认领会话名：前缀 + 15 位时间戳（§5 口径，各插件认领线同构）
     #[test]
     fn claim_session_name_format() {
         let n = claim_session_name("mybot-");
@@ -3122,7 +3141,7 @@ entry = "main.js"
             "entry = \"main.js\"
 
 [[contributes.service]]
-id = \"wechat\"
+id = \"demo-svc\"
 scope = \"session\"
 entry = \"pi/index.mjs\"",
         );
@@ -3133,7 +3152,7 @@ entry = \"pi/index.mjs\"",
         std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
         let m = parse_manifest(&dir).expect("service 清单应通过");
         assert_eq!(m.service.len(), 1);
-        assert_eq!(m.service[0].id, "wechat");
+        assert_eq!(m.service[0].id, "demo-svc");
         assert_eq!(m.service[0].scope, "session");
         assert_eq!(m.service[0].entry, "pi/index.mjs");
         // scope 封闭（本版仅 session）
@@ -3142,14 +3161,14 @@ entry = \"pi/index.mjs\"",
             "entry = \"main.js\"
 
 [[contributes.service]]
-id = \"wechat\"
+id = \"demo-svc\"
 scope = \"global\"
 entry = \"pi/index.mjs\"",
         );
         write_manifest(&dir, &bad);
         let e = parse_manifest(&dir).expect_err("scope=global 应拒");
         assert!(e.contains("session"), "错误应提及 session：{e}");
-        // pi_extensions 一步替换：v4 声明即拒
+        // pi_extensions 段已恢复（90-6 revert：schema 3/4 双收）→ 合法且入清单
         let legacy = GOOD.replace(
             "entry = \"main.js\"",
             "entry = \"main.js\"
@@ -3158,8 +3177,8 @@ entry = \"pi/index.mjs\"",
 path = \"pi/index.mjs\"",
         );
         write_manifest(&dir, &legacy);
-        let e = parse_manifest(&dir).expect_err("pi_extensions 应拒");
-        assert!(e.contains("未知段"), "错误：{e}");
+        let m = parse_manifest(&dir).expect("pi_extensions 段已恢复，应通过");
+        assert_eq!(m.pi_extensions, vec!["pi/index.mjs".to_string()]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -3174,7 +3193,7 @@ command = \"bind\"
 
 [[contributes.popups]]
 id = \"qr\"
-title = {{ zh = \"绑定微信\" }}
+title = {{ zh = \"绑定面板\" }}
 size = \"MD\"
 entry = \"main.js\"
 "
@@ -3205,11 +3224,11 @@ entry = \"main.js\"
         write_manifest(&dir, &body.replace("size = \"MD\"", "size = \"XL\""));
         assert!(parse_manifest(&dir).is_err());
         // fn_bar / popups 也是进驻面：仅这两段的包不是纯库包
-        let dir = tmp.join("pf-wxbot");
+        let dir = tmp.join("pf-demo");
         write_manifest(
             &dir,
             "schema = 4
-id = \"pf-wxbot\"
+id = \"pf-demo\"
 title = { zh = \"x\" }
 version = \"0.1.0\"
 

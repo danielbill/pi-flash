@@ -53,8 +53,8 @@ pub(crate) fn svc_post(id: &str, key_or_anchor: &str, payload: &str) -> bool {
     let Some(base) = service_ext::base() else {
         return false;
     };
-    // 插件级（全局）操作——二维码出码/刷新就是这一类：它和「当前在哪个会话」
-    // 无关，绑谁由扫码结果决定。键为空/未注册时投给该插件的**任意活实例**
+    // 插件级（全局）操作——绑定/出码刷新就是这一类：它和「当前在哪个会话」
+    // 无关，目标由插件自己的状态决定。键为空/未注册时投给该插件的**任意活实例**
     // （出码态是插件全局单写者，投给谁都一样），不再因缺会话键丢失意图。
     let token = match resolve_token(&base, key_or_anchor) {
         Some(t) => Some(t),

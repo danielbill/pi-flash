@@ -101,7 +101,7 @@ impl Chat {
                     cx.notify();
                 }
                 SessionEvent::ExtUi(req) => {
-                    // **只接微信线自己的请求**（与下面 Assistant 同一条闸）。
+                    // **只接远程插件线自己的请求**（与下面 Assistant 同一条闸）。
                     // 扩展的 ui 广播是全局的：任何会话里任何扩展调
                     // `ui.notify` / `setStatus` / `setTitle` 都走这条事件，
                     if is_active {
@@ -271,8 +271,8 @@ impl Chat {
 }
 
 impl Chat {
-    /// 无项目态占位会话：恒在、永不 spawn、非微信线。`shell::chat` 建它，
-    /// 「关掉微信标签回桌面」也回它——不再到处写字面量 `"draft-0"`。
+    /// 无项目态占位会话：恒在、永不 spawn、非插件功能线。`shell::chat` 建它，
+    /// 「关掉功能页回桌面」也回它——不再到处写字面量 `"draft-0"`。
     pub(crate) const PLACEHOLDER_KEY: &'static str = "draft-0";
 
     /// 新会话草稿（用户显式新建：psp ＋、新建按钮、删会话后归位）。
@@ -400,7 +400,7 @@ impl Chat {
         }
         // 新会话落地的项目组若处于折叠态则自动展开：伪标签（draft）在折叠
         // 组里照常显示，FileBound 一换真身就被折叠藏掉——用户眼里刚发的
-        // 会话凭空消失。fork / 微信端新会话同经此处（2026-10-15 用户报障）。
+        // 会话凭空消失。fork / 远程端新会话同经此处（2026-10-15 用户报障）。
         self.psp
             .collapsed_keys
             .remove(&same_ws_key(&rt.read(cx).cwd.to_string_lossy()));
@@ -548,7 +548,7 @@ impl Chat {
             self.remount_workspace(cx);
         }
         if let Some(cur) = &self.ws.cwd {
-            // 插件认领线不进桌面恢复线（与微信线同口径）
+            // 插件认领线不进桌面恢复线（与远程功能线同口径）
             if !self.plugin_claimed(&path.to_string_lossy()) {
                 set_last_open(&cur.to_string_lossy(), &path.to_string_lossy());
             }
@@ -693,7 +693,7 @@ impl Chat {
             return;
         };
         let cwd = cwd.to_string_lossy().to_string();
-        // 影子会话（微信线 pf-wxbot-*）不进任何列表：过滤清单由模块自己注入
+        // 影子会话（插件认领线）不进任何列表：过滤清单由插件自己注入
         let hidden = pi_link::hidden_sessions::load();
         let full = list_sessions_for_cwd(&cwd, 500)
             .into_iter()
@@ -853,7 +853,7 @@ impl Chat {
         self.session_title_of(&self.pool.active_key.clone(), cx)
     }
 
-    /// 指定池 key 的会话标题（topbar 第一格在查看微信 tab 时显示桌面会话用）。
+    /// 指定池 key 的会话标题（topbar 第一格在查看插件功能页时显示桌面会话用）。
     pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {
         let file = self
             .pool

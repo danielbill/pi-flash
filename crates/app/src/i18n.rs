@@ -100,6 +100,8 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.none_installed", "尚未安装任何插件", "尚未安裝任何外掛", "No plugins installed yet"),
     ("market.pf.uninstall_confirm", "卸载插件 {name}？", "卸載外掛 {name}？", "Uninstall plugin {name}?"),
     ("market.pf.enable_failed", "启用失败：未找到插件清单（{name}）", "啟用失敗：未找到外掛清單（{name}）", "Enable failed: manifest not found ({name})"),
+    // 插件包内 pi 扩展挂载：忙时会话延迟重启的提示（name = 插件 id）
+    ("plugin.ext_wait_idle", "插件 {name} 的扩展将在当前任务完成后生效", "外掛 {name} 的擴充將在當前任務完成後生效", "Extension of plugin {name} will take effect after the current task finishes"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）
     ("market.install", "install", "install", "install"),
     ("market.copied", "copied", "copied", "copied"),
@@ -705,21 +707,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("psp.switch_to_flat", "切换为最近会话列表", "切換為最近會話列表", "Switch to recent sessions"),
     ("psp.switch_to_grouped", "切换为项目分组列表", "切換為專案分組列表", "Switch to project groups"),
     ("psp.unpin", "取消置顶", "取消置頂", "Unpin"),
-    // 002-微信通信：插件单开标签页的标签名（与面板/弹窗标题的「微信通信」
-    // 区分——002 定名【微信通话】）
-    // 操作栏第 2 件：开关旁的说明文字（动作式文案：on 时点之则关、off 时点之则启）
-    // 操作栏第 3 件：刷新二维码钮文案（refresh icon + 重新绑定）
-    // 操作栏第 3 件：[新建会话] 确认框（002 §3，W1）
-    // 操作栏第 3 件按钮文案（plus icon + 新建会话）
-    // 微信通话页的欢迎语（002 插件注入语，替代桌面新会话页的"Hi，打算让我
-    // 做点什么？"）
-    // 002-微信通信（pi-flash-plugins）版式文案。二维码弹窗唯一提示文案
-    //（2026-10-24 用户定夺：三步走，码区下方再无别的说明行）
-    // 060 七态生命周期（2026-10-24 用户定夺）：①未扫描 ②微信侧出错
-    // ③重新扫码更新重建 ④我方创建出错 ⑤创建成功 ⑥启用中 ⑦关停中
-    // 002-微信通信（pi-flash-plugins）版式文案
-    // 二维码方框内的三态提示（002 §二维码弹窗：提示信息一律写在方框里）
-    // 会话过期（errcode:-14）：操作栏提示 + 弹窗框内说明
     ("session_search.tab", "会话查询", "會話查詢", "Session Search"),
     ("session_search.title", "搜索会话", "搜尋會話", "Search Sessions"),
     ("session_search.no_match_hint", "换个关键词，或确认会话已落盘", "換個關鍵詞，或確認會話已落盤", "Try another keyword, or make sure the session is saved"),
@@ -780,8 +767,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("titlebar.expand_sidebar", "展开侧栏", "展開側欄", "Expand sidebar"),
     ("titlebar.toggle_sidebar", "收起 / 展开侧栏", "收起 / 展開側欄", "Collapse / expand sidebar"),
     ("tools.preset_rebound", "工具预设: {k} (会话进程已重绑)", "工具預設: {k} (會話進程已重綁)", "Tool preset: {k} (session process rebound)"),
-    // 060 微信通信页两栏重构（2026-10-24）：左「扫码连接」/右「Bot 渠道」；
-    // 渠道卡只保留微信（060 范围无飞书/Lark/Telegram）
     ("settings.filter_models", "筛选模型…", "篩選模型…", "Filter models…"),
     ("settings.filter_enabled", "筛选启用的模型…", "篩選已啟用的模型…", "Filter enabled models…"),
     ("settings.model_display_name", "显示名（可选）", "顯示名（可選）", "Display name (optional)"),

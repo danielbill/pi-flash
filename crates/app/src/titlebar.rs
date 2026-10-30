@@ -106,7 +106,7 @@ pub const CAPTION_FONT: &str = "Segoe Fluent Icons";
 
 /// 左段（015 功能面板侧）：收放钮贴左 = `tokens::align::TOGGLE_ML`（图标
 /// 视觉线 ICON_LINE 与 psp 列表图标对齐，2026-10-13 定稿）+ 拖拽填充。
-/// 微信手机钮**已撤**（2026-10-23 定夺：入口只留三横菜单【微信通信】，
+/// 插件功能页入口钮**已撤**（2026-10-23 定夺：入口只留三横菜单，
 /// 内容区全屏页），旧钮走 git 历史找回。
 pub(crate) fn topbar_l(_chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
@@ -275,7 +275,7 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
         .items_end();
     // 固定段：置顶会话 tab（滚动区外，永不滚走）
     strip = strip.child(session_tab(chat, cx));
-    // 【微信通话】已归队 `PanelTab::Wx`（跟自由区一起渲染/拖拽/右键）——
+    // 插件功能页 tab 已归队 PanelTab（跟自由区一起渲染/拖拽/右键）——
     // 它曾作为固定段特例活在会话 tab 旁，代价是右键菜单/拖拽/批量关闭
     // 全套缺失（同规则见 shell/types.rs::PanelTab::Wx 注释）。
     // 自由标签区：独立横向滑动，起点紧贴会话 tab（tab 自带 ml 4px）。
@@ -480,7 +480,7 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
 /// 会话视图（Obsidian 卡片融底）；点击回会话视图。
 fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    // 会话 tab = 桌面会话（060 微信线退役后无影子会话）
+    // 会话 tab = 桌面会话（060 宿主功能线退役后无影子会话）
     let active = chat.layout.content_view == ContentView::Chat;
     let title: SharedString = chat.session_title(cx).into();
     let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
@@ -581,7 +581,7 @@ fn content_tab(
         ));
         cx.notify();
     });
-    // 中键关闭（浏览器/zed 同款；原仅微信 tab 有，归队后全 tab 统一）
+    // 中键关闭（浏览器/zed 同款；归队后全 tab 统一）
     let close_mid = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
         this.close_tab_at(ix, cx);
         cx.notify();

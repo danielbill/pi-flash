@@ -61,11 +61,6 @@ pub fn layer(
     el
 }
 
-/// 强制模态层（002-微信通信 绑定页专用）：遮挡 + 抢焦点（dialog_focus），
-/// **无任何关闭出口**——不挂外点关闭、不挂 ESC 关闭，卡片也不给 ×。键盘
-/// 事件落在空焦点层上自然蒸发；焦点由 render 焦点仲裁的 dialog 分支统一
-/// 推上（render.rs `dialog.is_some()` → `window.focus(dialog_focus)`）。
-/// 背景与定位由调用方定（微信绑定页 = 白蒙层、topbar 下方起铺）。
 /// 规则 4：卡片外壳。点卡片本身不触发「外点关闭」。
 pub fn stop_click(el: gpui::Div) -> gpui::Div {
     el.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

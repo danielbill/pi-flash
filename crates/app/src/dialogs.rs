@@ -68,8 +68,6 @@ pub(crate) fn render_dialogs(
     if let Some(Dialog::FileDirty { paths }) = chat.dlg.dialog.as_ref() {
         root = root.child(render_file_dirty(chat, weak, paths, t));
     }
-    // Dialog::WxQr 不走这里：绑定层是强制模态（白蒙层、无关闭出口），
-    // 由 render.rs 挂在 content-col 内、只盖 topbar 以下（panel.rs:wx_qr_layer）
     root
 }
 
@@ -871,7 +869,7 @@ impl Chat {
                 .await;
             let _ = weak.update(cx, |c, cx| {
                 // 当前项目兜底入选（无 30 天活动也显示，004：默认选中该项目）；
-                // 无项目态没有「当前项目」，不兜底。微信设置页当前 = wx_cwd
+                // 无项目态没有「当前项目」，不兜底
                 if let Some(cwd) = c.ws.cwd.clone() {
                     let cwd_key = cwd.to_string_lossy().to_string();
                     if !entries.iter().any(|p| {
@@ -933,8 +931,8 @@ impl Chat {
         }
     }
 
-    /// 打开项目菜单的默认选中：当前项目（微信设置页 = wx_cwd，其余 =
-    /// ws.cwd，见 `picker_current_cwd`）在过滤结果里的行号 +1；
+    /// 打开项目菜单的默认选中：当前项目（= ws.cwd，见 `picker_current_cwd`）
+    /// 在过滤结果里的行号 +1；
     /// 不在列（列表未回填 / 被搜索词滤掉）但有项目行时取首个项目行，连
     /// 项目行都没有才落【打开文件夹】。打开、列表回填、改过滤词三处共用。
     pub(crate) fn project_sel_default(&self) -> usize {

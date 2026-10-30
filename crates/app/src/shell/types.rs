@@ -65,7 +65,6 @@ pub(crate) enum TopPanel {
 /// 简化后 sessions/files 渲染已无差别（文件树并入整合面板）——2026-10
 /// 重整：收敛为 `Default`（整合面板），`Git` 保留（automation 可达的
 /// 独立视图），`Plugin(ix)` 为插件面板（快捷面板起）。
-/// 微信面板**已迁出 dock**（2026-10-23 定夺）：入口收三横菜单，内容区
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPanel {

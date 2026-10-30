@@ -369,7 +369,7 @@ impl Chat {
         }
     }
 
-    /// 底层应答：桌面端先应答 → 微信端放弃同一请求（060 §8 档 2 不重复消费）
+    /// 底层应答：桌面端先应答 → 远程端放弃同一请求（060 §8 档 2 不重复消费）
     /// → 发 extension_ui_response。ext_respond 与问卷卡（ask_card）共用。
     pub(crate) fn ext_send(
         &mut self,

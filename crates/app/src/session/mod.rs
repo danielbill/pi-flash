@@ -43,7 +43,7 @@ pub(crate) use subagent_panel::SubagentPanel;
 /// 新增一条功能线 = 在它自己的模块里给一份 `SessionPageSkin`，这里加一个
 /// 分支；页面骨架保持零判定。
 pub(crate) fn skin(_chat: &Chat) -> &'static template::SessionPageSkin {
-    // 060 宿主微信面板退役（2026-10-29）：会话页皮肤恒桌面版（插件弹窗接管 UI）
+    // 060 宿主功能面板退役（2026-10-29）：会话页皮肤恒桌面版（插件弹窗接管 UI）
     &template::DESKTOP
 }
 
@@ -69,11 +69,11 @@ pub(crate) fn main_column(
     // 不用 get_state 快照的 is_streaming——发消息后无人重拉快照，它恒 false
     // 导致 stop 按钮永远不出现
     let streaming = rt.read(cx).agent_running;
-    // 会话页模版（030）：桌面线与微信线共用本骨架，差异全部由皮肤注入
+    // 会话页模版（030）：桌面线与插件功能线共用本骨架，差异全部由皮肤注入
     // （操作栏右侧簇 / 空会话策略 / 新会话页皮肤）——骨架里不写任何线判定。
     let page_skin = skin(chat);
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
-    // 项目|会话列表为空、或「新建会话」都落在这里。微信线除外（皮肤
+    // 项目|会话列表为空、或「新建会话」都落在这里。插件功能线除外（皮肤
     // `keep_on_empty`）：它空会话也停在会话页，设置页由功能页分段承担。
     let new_session_page =
         rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
@@ -204,8 +204,7 @@ fn session_fn_bar(
     );
     // 会话组目录（sfbar-sessdir）：pi sessions 根下按 cwd 编码的组目录，
     // 还没建（无落盘会话）退回 sessions 根——与 psp 项目详情卡同口径；
-    // 无项目态直接开 sessions 根（微信前台时按 `wx_cwd` 定位——旧实现读
-    // `ws.cwd`，微信页点「会话目录」打开的是桌面项目的会话组）
+    // 无项目态直接开 sessions 根
     let sess_dir_btn = {
         let cwd = chat.ui_project().map(|p| p.to_path_buf());
         move |_: &gpui::MouseDownEvent, _w: &mut gpui::Window, _cx: &mut gpui::App| {
@@ -264,8 +263,7 @@ fn session_fn_bar(
             tr("session.open_terminal"),
             chat.layout.content_view == crate::ContentView::Term,
             cx.listener({
-                // 终端起点跟界面当前项目（微信前台 = wx_cwd）——旧实现开在
-                // 桌面项目里，微信页点「打开终端」看到的是别的目录
+                // 终端起点跟界面当前项目
                 let term_cwd = chat.ui_project().map(|p| p.to_path_buf());
                 move |this, _: &gpui::MouseDownEvent, window, cx| {
                     this.open_terminal(term_cwd.clone(), window, cx);
@@ -278,7 +276,7 @@ fn session_fn_bar(
         .when(crate::services::workspace::subagents_enabled(), |d| {
             d.child(subagent_fn_bar_btn(chat, cx))
         })
-        // 线的操作栏注入簇（模版注入点 ①，060 微信线 = 微信 icon 三色 +
+        // 线的操作栏注入簇（模版注入点 ①，插件功能线 = 自有 icon 三色 +
         // 启停开关/说明文字 + 新建会话 + 重新绑定；002 操作栏定序）
         .children(skin.fn_bar.map(|f| f(chat, cx)))
         // 插件功能栏注册槽（契约 v3 fn_bar）：**功能栏右侧**（002，弹性占位

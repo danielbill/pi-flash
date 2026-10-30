@@ -70,7 +70,7 @@ pub struct ManifestEntry {
     pub display: Option<IndexDisplay>,
     #[serde(default)]
     pub desc: Option<IndexDisplay>,
-    /// 市场卡片预览图（包内资产相对路径，如 "assets/wx.svg"）。
+    /// 市场卡片预览图（包内资产相对路径，如 "assets/w.svg"）。
     #[serde(default)]
     pub icon: Option<String>,
 }
@@ -215,11 +215,11 @@ mod tests {
     #[test]
     fn manifest_entry_icon_passthrough() {
         let m = parse_manifest(
-            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/w","icon":"assets/wx.svg"}]}"#,
+            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/w","icon":"assets/w.svg"}]}"#,
         )
         .unwrap();
-        assert_eq!(m.packages[0].icon.as_deref(), Some("assets/wx.svg"));
+        assert_eq!(m.packages[0].icon.as_deref(), Some("assets/w.svg"));
         let e = entry_from(&m.packages[0], "sha512-x".into(), "https://t/w.tgz".into()).unwrap();
-        assert_eq!(e.icon.as_deref(), Some("assets/wx.svg"));
+        assert_eq!(e.icon.as_deref(), Some("assets/w.svg"));
     }
 }

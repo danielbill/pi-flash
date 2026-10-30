@@ -54,7 +54,7 @@ pub struct IndexEntry {
     /// `source = "url"` 时的 tarball 直链（http/https）。
     #[serde(default)]
     pub url: String,
-    /// 市场卡片预览图：包内资产相对路径（`assets/wx.svg`）。仅已安装时可
+    /// 市场卡片预览图：包内资产相对路径（`assets/icon.svg`）。仅已安装时可
     /// 解析（`plugins/<pkg>/<icon>`，资产随包落盘）；未装/文件缺失回通用
     /// package 图标。pf-market/1 可选字段，缺省 = 按 status_bar 图标或回退。
     #[serde(default)]
