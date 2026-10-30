@@ -20,6 +20,7 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 - 完成任务保证编译通过后提交git并push，验收交给用户，禁止UI测试
 - **GitHub 推送**：origin 已直连 SSH over 443（`~/.ssh/config` 的 `Host github.com-443` 别名 → ssh.github.com:443，已配 IdentityFile），`git push`/`git fetch` 直接推拉即可。github HTTPS(443) 与 SSH(22) 间歇被墙，勿走 HTTPS 远端、勿手拼 GIT_SSH_COMMAND。
 - UI绘制遵循 docs\UI设计\UI组件规范.md，禁手写参数造新组件
+- **插件唯一开发载体 = Rust→wasm**（`docs/模块设计/90-插件系统/90-8-插件开发闭环.md`）：禁止先写 `main.js` 再移植 wasm；新能力先落 WIT。提交前 L1（编译+契约）+L2（wasm 逻辑用例）+L3（pif-ui 接线用例）全绿，人肉验收只发生在最后一次
 - 构建产物只留在 `target/`（如 `target/release/pi-flash.exe`），禁止替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
 - CHANGELOG发版驱动，勿碰！
 - 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt
