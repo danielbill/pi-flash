@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use futures::StreamExt;
 use gpui::{
     App, Application, Context, FocusHandle, Focusable, KeyBinding, KeyDownEvent, MouseButton,
-    ParentElement, Render, SharedString, Styled, WindowOptions, actions, div, prelude::*, px, rgb,
+    ParentElement, Render, SharedString, Styled, Window, WindowOptions, actions, div, prelude::*,
+    px, rgb,
 };
 use pi_link::protocol::Command;
 use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
@@ -369,23 +370,8 @@ fn main() {
                         // persist window bounds + shell layout on close so the
                         // startup restore layer has data (§4)
                         window.on_window_should_close(cx, move |window, cx| {
-                            // 90-9 §6 退出顺序：全体插件 unload（总预算 1s）→
-                            // 停 pi 子进程（随进程退出终止）→ 存窗口状态。unload
-                            // 先行：带 pi_extensions 的插件要在 pi 进程还活着时
-                            // 说完最后一句话。
                             if let Some(chat) = weak.upgrade() {
-                                chat.update(cx, |chat, _cx| chat.plugin_unload_all_for_quit());
-                            }
-                            let b = window.bounds();
-                            save_window_state(&WindowState {
-                                x: f64::from(b.origin.x),
-                                y: f64::from(b.origin.y),
-                                w: f64::from(b.size.width),
-                                h: f64::from(b.size.height),
-                                maximized: window.is_maximized(),
-                            });
-                            if let Some(chat) = weak.upgrade() {
-                                chat.update(cx, |chat, _cx| chat.persist_ui());
+                                chat.update(cx, |chat, _cx| shutdown_for_close(chat, window));
                             }
                             true
                         });
@@ -408,6 +394,24 @@ fn main() {
             }
             cx.activate(true);
         });
+}
+
+/// 退出序列（90-9 §6，唯一实现，三条退出路共用）：全体插件 unload（总预算
+/// 1s）→ 停 pi 子进程（随进程退出终止）→ 存窗口状态 + UI 布局。共用方：
+/// 标题栏 ✕ / Alt-F4（on_window_should_close）、pif-ui `app.quit`、更新重启。
+/// gpui Windows 的 `cx.quit()` 走 PostQuitMessage，**不触发** on_should_close
+/// ——凡主动 quit 的路径必须先走这里，否则插件 unload 与窗口状态全丢。
+pub(crate) fn shutdown_for_close(chat: &mut Chat, window: &Window) {
+    chat.plugin_unload_all_for_quit();
+    let b = window.bounds();
+    save_window_state(&WindowState {
+        x: f64::from(b.origin.x),
+        y: f64::from(b.origin.y),
+        w: f64::from(b.size.width),
+        h: f64::from(b.size.height),
+        maximized: window.is_maximized(),
+    });
+    chat.persist_ui();
 }
 
 #[cfg(test)]

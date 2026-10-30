@@ -150,6 +150,9 @@ pub mod method {
     pub const PLUGIN_COMMAND_ENV: &str = "plugin.command_env";
     /// 契约 v3 弹窗：关闭（与点外/× 同链，UI 测试用）
     pub const PLUGIN_POPUP_CLOSE: &str = "plugin.popup_close";
+    /// PF 插件启停（90-8 L3 停用/卸载断言用）：{pkg, enable}，与市场【已安装】
+    /// 页开关同链（台账落盘 + 运行态 evict/reload，unload 落 plugin.log）
+    pub const PLUGIN_TOGGLE: &str = "plugin.toggle";
     /// 031 插件选择面板：打开 / 勾选 / 确认（UI 测试用）
     pub const PI_EXTENSION_PICKER_OPEN: &str = "plugin_picker.open";
     pub const PI_EXTENSION_PICKER_TOGGLE: &str = "plugin_picker.toggle";

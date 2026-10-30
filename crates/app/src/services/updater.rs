@@ -1096,6 +1096,9 @@ impl crate::Chat {
     /// 载荷目录里的 exe（新目录，零锁）→ 本进程退出。spawn 不起来就原地不动，
     /// 提示留给下次启动的交接。
     pub(crate) fn restart_to_apply_update(&mut self, cx: &mut gpui::Context<Self>) {
+        // 90-9 §6：重启换版 = 一次退出，插件先说再见（unload 落 plugin.log；
+        // 本路径拿不到 window，窗口状态由新版启动页承接，persist_ui 照旧）
+        self.plugin_unload_all_for_quit();
         self.persist_ui();
         let Some((version, dir)) = next_payload() else {
             // 没有可切的更高版本（已被清/自己就是最新）→ 回落 Idle

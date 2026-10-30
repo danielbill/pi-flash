@@ -94,6 +94,9 @@ pub(super) fn dispatch(
 
         // ---- app ----
         method::APP_QUIT => {
+            // 与标题栏 ✕ 同序（90-9 §6）：unload → 存窗口状态 → cx.quit
+            //（停 pi 随进程）。gpui Windows 的 cx.quit 不触发 on_should_close。
+            crate::shutdown_for_close(chat, window);
             cx.quit();
             Ok(json!({"quitting": true}))
         }
@@ -566,6 +569,20 @@ pub(super) fn dispatch(
         }
         method::PLUGIN_POPUP_CLOSE => {
             chat.plugin_popup_close(cx);
+            ok()
+        }
+        method::PLUGIN_TOGGLE => {
+            // 90-8 L3：停用/启用与市场页开关同链（停用 = evict + unload）
+            let pkg = params
+                .get("pkg")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"pkg\": \"pf-…\"}"))?
+                .to_string();
+            let enable = params
+                .get("enable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            chat.pf_toggle_plugin(pkg, enable, cx);
             ok()
         }
         method::PLUGIN_DOCK => {
