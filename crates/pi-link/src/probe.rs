@@ -11,7 +11,6 @@
 //! - 自定义商按 models.json 的 `baseUrl` + `api` 走同一构造规则。
 //! - 结果只驱动 UI 状态点，不回滚保存——可能是网络问题，key 留着。
 
-use crate::credentials::{SecretVault, StoreMode, classify, pf_ref};
 use std::time::Duration;
 
 /// 列模型请求的鉴权样式（决定头形状）。
@@ -188,22 +187,6 @@ pub fn probe_anthropic_compat(models_url: &str, messages_url: &str, key: &str) -
         return first;
     }
     probe(messages_url, Auth::Anthropic, key)
-}
-
-/// 目录 provider 的探查 key（042-1）：auth.json 条目 —— PF 标记条目解钥匙库，
-/// 用户手写的明文取原值；`!cmd` / `$VAR` 高级引用不探查。无条目 → None。
-pub fn catalog_probe_key(provider: &str) -> Option<String> {
-    crate::auth_json::resolve_secret(provider)
-}
-
-/// 自定义 provider 的探查 key：models.json 的 `apiKey` 字段（`$PF_KEY_*`
-/// 引用 → 凭据库解出；明文 → 原值；`!cmd` / 其他 `$VAR` 高级引用不探查）。
-pub fn custom_probe_key(api_key: &str, vault: &dyn SecretVault) -> Option<String> {
-    match classify(api_key) {
-        StoreMode::Vault => pf_ref(api_key).and_then(|v| vault.get(&v).ok().flatten()),
-        StoreMode::File => Some(api_key.to_string()),
-        StoreMode::Ref => None,
-    }
 }
 
 /// 发一次列模型 GET（阻塞，20s 超时）并按三态分类。2xx 响应体里的
@@ -422,21 +405,6 @@ mod tests {
             assert!(url.starts_with(base.trim_end_matches('/')), "{url}");
             assert!(url.ends_with("/models"), "{url}");
         }
-    }
-
-    #[test]
-    fn keys_resolve_through_the_vault_or_stay_plain() {
-        let mut mem = std::collections::BTreeMap::new();
-        mem.insert("PF_KEY_DEEPSEEK".to_string(), "sk-vault".to_string());
-        let vault = crate::credentials::MemVault(std::sync::Mutex::new(mem));
-        // 目录商 key 自 042-1 起走 auth.json（本机无标注条目 → None）
-        assert_eq!(catalog_probe_key("nosuch"), None);
-        assert_eq!(
-            custom_probe_key("sk-plain", &vault),
-            Some("sk-plain".into())
-        );
-        assert_eq!(custom_probe_key("$OTHER_VAR", &vault), None);
-        assert_eq!(custom_probe_key("!cmd", &vault), None);
     }
 
     #[test]

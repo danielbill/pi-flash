@@ -144,8 +144,8 @@ pub fn projects_file() -> Option<PathBuf> {
     file("projects.json")
 }
 
-/// `~/.pi-flash/providers.json` — PF 自定义 provider 账本（051 M1.1：PF
-/// 永不写 pi 的 models.json，自定义内容全部记在这里，spawn 经扩展注入）。
+/// `~/.pi-flash/providers.json` — 051 账本方案的遗留文件：042-1 起自定义
+/// provider 直写 pi 的 models.json，本文件只被 migrate_0421 一次性读入迁移。
 pub fn pf_providers_file() -> Option<PathBuf> {
     file("providers.json")
 }

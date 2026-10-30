@@ -133,19 +133,6 @@ pub fn remove_provider(value: &mut Value, name: &str) -> bool {
     remove_provider_entry(value, name)
 }
 
-/// Append an empty model entry (`{ "id": "" }` — the sidebar shows it as
-/// "新模型") and return its index.
-pub fn add_model(value: &mut Value, provider: &str) -> usize {
-    let entry = provider_entry_mut(value, provider);
-    let obj = entry.as_object_mut().expect("provider entry is an object");
-    let models = obj
-        .entry("models")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    let arr = models.as_array_mut().expect("models is an array");
-    arr.push(serde_json::json!({ "id": "" }));
-    arr.len() - 1
-}
-
 /// Overwrite one model entry (Save applies the editor fields).
 pub fn update_model(value: &mut Value, provider: &str, index: usize, model: Value) {
     let entry = provider_entry_mut(value, provider);
@@ -336,8 +323,8 @@ mod tests {
             "glm",
             json!({ "baseUrl": "https://x/v1", "api": "openai-completions" })
         ));
-        assert_eq!(add_model(&mut doc, "glm"), 0);
-        assert_eq!(add_model(&mut doc, "glm"), 1);
+        assert_eq!(push_model(&mut doc, "glm", json!({ "id": "m0" })), 0);
+        assert_eq!(push_model(&mut doc, "glm", json!({ "id": "m1" })), 1);
         update_model(
             &mut doc,
             "glm",
@@ -376,10 +363,10 @@ mod tests {
         assert!(remove_model(&mut doc, "p", 0));
         assert!(!remove_model(&mut doc, "p", 0));
         assert!(!remove_model(&mut doc, "nope", 0));
-        add_model(&mut doc, "fresh");
+        push_model(&mut doc, "fresh", json!({ "id": "a" }));
         assert_eq!(
             provider_entry(&doc, "fresh").unwrap()["models"][0]["id"],
-            ""
+            "a"
         );
     }
 
