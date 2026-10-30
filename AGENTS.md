@@ -15,27 +15,29 @@ RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-l
 - 环境变量：`PI_FLASH_PI_BIN` 覆盖内置 pi；`PI_FLASH_THEME` 切主题（default/dark/rose）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；**`PI_FLASH_DIR` 显式指定永远优先；未设时按构建档位取默认——debug/test（cargo run/cargo test）自动落 `./pi-flash-dev`，release 才落 `~/.pi-flash`**（2026-10-18 起 paths 层焊死，裸跑测试摸不到正式目录；**dev-flags（重型模块发版排除）默认全关**：`<PF数据目录>/dev-flags.json`（支持 // 注释）按键控模块，false/缺省=关、改动重启生效；键住址 = pi-link `dev_flags::KNOWN`，env 覆盖 `PI_FLASH_<键大写>=1/0` 最高优先，启动 stderr 打 `[startup] dev-flags:` 状态行（仅 debug 构建——release 包零输出是烟测门禁）。子代理关 = 不加载扩展 + 隐藏设置页与面板按钮
 
 # 铁律
-- **快是第一卖点**：PF 的卖点就是快——启动/首帧/输入/渲染热路径**禁止同步重活**（wasm 编译、全仓扫描、网络、大文件哈希）；一律后台线程 + 过揭幕，能沉成缓存的必经缓存（编译产物/结果），缓存自校验、失配自动回退；改热路径要带实测数字（`Instant`/`[perf]` 计时进日志），不靠感觉
+- **快是第一卖点**：PF 的卖点就是快——启动/首帧/输入/渲染热路径**禁止同步重活**（wasm 编译、全仓扫描、网络、大文件哈希）；一律后台线程 + 过揭幕，能沉成缓存的必经缓存（编译产物/结果），缓存自校验、失配自动回退；改热路径要带实测数字（`Instant`/`[perf]` 计时进日志）
 - **内置pi**：内置 `@earendil-works/pi-coding-agent`，vendor 进应用分发，运行时 spawn `node <app>/vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --mode rpc`。**不读 PATH/系统 pi**；升级 = bump `vendor/pi/package.json` + VERSION + 跑 pi-link 符合性测试（wire 陷阱与升级复核点见 `docs/agents/pi-rpc.md`）。开发期 `PI_FLASH_PI_BIN` 可覆盖。
-- 完成任务保证编译通过后提交git并push，验收交给用户，禁止UI测试
-- **GitHub 推送**：origin 已直连 SSH over 443（`~/.ssh/config` 的 `Host github.com-443` 别名 → ssh.github.com:443，已配 IdentityFile），`git push`/`git fetch` 直接推拉即可。github HTTPS(443) 与 SSH(22) 间歇被墙，勿走 HTTPS 远端、勿手拼 GIT_SSH_COMMAND。
+- 完成任务保证编译通过后提交git并push，验收交给用户，禁非授权UI测试
+- 复杂需求编写testcase，存 'test/'目录，按功能模块编号分目录存放
+- **GitHub 推送**：origin 已直连 SSH ，`git push`/`git fetch` 直接推拉即可。勿走 HTTPS 远端、勿手拼 GIT_SSH_COMMAND。
 - UI绘制遵循 docs\UI设计\UI组件规范.md，禁手写参数造新组件
-- **插件唯一开发载体 = Rust→wasm**（`docs/模块设计/90-插件系统/90-8-插件开发闭环.md`）：禁止先写 `main.js` 再移植 wasm；新能力先落 WIT。提交前 L1（编译+契约）+L2（wasm 逻辑用例）+L3（pif-ui 接线用例）全绿，人肉验收只发生在最后一次
-- 构建产物只留在 `target/`（如 `target/release/pi-flash.exe`），禁止替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
+- **插件唯一开发载体 = Rust→wasm**（`docs/模块设计/90-插件系统/90-8-插件开发闭环.md`）：禁止先写 `main.js` 再移植 wasm；新能力先落 WIT。提交前 L1（编译+契约）+L2（wasm 逻辑用例）+L3（pif-ui 接线用例）全绿。
+- 构建产物只留在 `target/`，禁替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
 - CHANGELOG发版驱动，勿碰！
 - 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt
-- 禁止修改“Settings”模块！（唯一例外：042-1 模型管理重构，用户 2026-10-27 明确授权）
+- 勿修改“Settings”模块
 - **models.json / auth.json 是 pi 的文件，但 042-1 起 PF 会写**：整份草稿保存、**不可读拒写**、proper-lockfile 同款锁（`fs_lock.rs`）；用户手写的明文/oauth 条目一律只读不改。apikey 只进系统钥匙库，auth.json 只存 `!<helper> get <provider>` 标记条目
 
 # 路径
 - vendored pi：`vendor/pi`（package.json+lock 入库；node_modules 走 `npm ci` 不入库）
-- 架构设计：`docs/ARCHITECTURE.md`；复刻计划：`docs/PORT_PLAN.md`
+- 架构设计：`docs/ARCHITECTURE.md`
 - 模块设计：`docs/模块设计/`（编号即模块）
 - 领域笔记：`docs/agents/`（见后「领域笔记」节）
-- 调研笔记：本地 `docs/调研/`（外部项目调研报告ignore不入库，正文勿引用）
+- 调研笔记：本地 `docs/调研/`（ignore不入库，正文勿引用）
 - 软件分发：`docs/模块设计/080-软件分发.md`；发版唯一路径：`docs/RELEASE.md`
 - bug 追踪：`docs/buglist.md`；
 - 进度：`docs/progress.md`；
+- 测试用例：`test/` 
 - 临时文件入`tmp/`
 
 # 架构
@@ -89,8 +91,8 @@ crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字�
                         状态子结构 pool/composer/layout/psp/ws/dlg/cfg/aux——
                         跨域摸字段在代码里可见；域方法以 impl Chat 块形式住在
                         各领域文件——这是本仓的核心组织方式）
-  main.rs                 只剩 mod 树 + 根 re-export（shell::{Chat,types::*}）+ main()
-  shell/                  应用壳域（P3 自 main.rs 拆出）：types 界面类型簇
+  main.rs                 mod 树 + 根 re-export（shell::{Chat,types::*}）+ main()
+  shell/                  应用壳域：types 界面类型簇
                           （Dialog/PanelTab/FileTab/Pill*，单域类型已下沉）/
                           chat Chat 实体本体（8 簇子结构+构造器）/ render Chat
                           渲染根（焦点仲裁+overlay 叠放）
@@ -103,7 +105,7 @@ crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字�
   terminal/               内置终端（alacritty+ConPTY）：mod 渲染/impl Chat +
                           palette + snapshot + input_encode（键盘/IME→PTY）
   i18n.rs                 三语（zh-CN 为源）
-  i18n_audit.rs           i18n 审计（语义键源码级静态检查）
+  i18n_audit.rs           i18n 审计
   models_config.rs        enabledModels 白名单编辑（pi-web port）
   assets.rs               图标编入二进制；status_bar.rs 状态栏；titlebar.rs topbar；
                           top_panels.rs 系统提示词/工具定义面板
@@ -138,10 +140,7 @@ crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字�
   ui/                     通用件：tokens（UI组件规范唯一代码落点）、button、text_input、
                           composer_input、dropdown、overlay、popup、vlist、psp_scrollbar、
                           tooltip、list_handle
-  ui/kit/                 页面级组件库（**新页面只从这里取控件，禁就地手搓**）：
-                          button（Btn+config_button）/ switch（三态开关）/ row（set_row、
-                          field、文本块）/ layout（两栅骨架、LIST_W）/ badge（黊标·
-                          状态点）/ slider（width_slider）；尺寸见 UI组件规范 §10
+  ui/kit/                 页面级组件库（**新页面从这里取控件，禁手搓**），尺寸见 UI组件规范 §10
 ```
 
 # 领域笔记（docs/agents/）
