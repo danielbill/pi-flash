@@ -270,6 +270,17 @@ impl Chat {
 
     /// 把编辑器字段应用进缓冲并落盘（provider 名称改动走重命名）。
     pub(crate) fn mj_apply_provider(&mut self, old_name: String, cx: &mut Context<Self>) {
+        self.mj_apply_provider_inner(old_name, true, cx);
+    }
+
+    /// 测速自动保存专用（P2-3）：`honor_form_name=false` 时表单改名**不生效**
+    /// ——按盘上老名保存（改名走头行【保存】，测速只保存连通性字段）。
+    fn mj_apply_provider_inner(
+        &mut self,
+        old_name: String,
+        honor_form_name: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
@@ -284,10 +295,17 @@ impl Chat {
         if name.is_empty() {
             return self.mc_set_error(tr("custom_models.name_required"), cx);
         }
+        // 落盘名：表单名优先；测速路径（honor=false）对已存在的商按老名
+        // 保存，表单改名不随测速生效（P2-3）
+        let target = if honor_form_name || old_name.is_empty() {
+            name.clone()
+        } else {
+            old_name.clone()
+        };
         let mut doc = Self::mj_doc();
         // 新建（草稿）时 old_name 为空：同名已存在就报错，别把人家覆盖了
-        if old_name.is_empty() && pi_link::models_json::provider_entry(&doc, &name).is_some() {
-            let msg = crate::i18n::tf("custom_models.name_exists", &[("name", name)]);
+        if old_name.is_empty() && pi_link::models_json::provider_entry(&doc, &target).is_some() {
+            let msg = crate::i18n::tf("custom_models.name_exists", &[("name", target.clone())]);
             return self.mc_set_error(&msg, cx);
         }
         let mut entry = pi_link::models_json::provider_entry(&doc, &old_name)
@@ -298,30 +316,40 @@ impl Chat {
         // 填好 base 再保存即随推断更新
         entry["api"] = serde_json::Value::String(pi_link::probe::infer_api(&base).to_string());
         // name 字段随输入同步（顺带保证新建条目 sanitize 不丢）
-        set_opt_str(&mut entry, "name", &name);
+        set_opt_str(&mut entry, "name", &target);
         // 尾斜杠规范化（pi 运行时直接拼 base+path，避免 /key//path）；
         // 探测端本就 trim，这里统一落盘形状
         set_opt_str(&mut entry, "baseUrl", base.trim_end_matches('/'));
         // apiKey 分流（051）：明文 → 凭据库 + $PF_KEY_* 引用；高级引用原样；
         // 库不可用降级明文
-        self.mj_store_key(&mut entry, &name, &key, cx);
-        // 草稿（old_name 为空）= 新建，没有旧键可改名
-        if !old_name.is_empty() && name != old_name {
-            if let Err(e) = pi_link::models_json::rename_provider(&mut doc, &old_name, &name) {
+        self.mj_store_key(&mut entry, &target, &key, cx);
+        // 草稿（old_name 为空）= 新建，没有旧键可改名；测速路径不改名
+        let renamed = !old_name.is_empty() && target != old_name;
+        if renamed {
+            if let Err(e) = pi_link::models_json::rename_provider(&mut doc, &old_name, &target) {
                 return self.mc_set_error(&e, cx);
             }
             // 凭据跟名搬家：钥匙库条目 + auth.json 标记条目（无旧条目静默跳过）
             if let Some(secret) = pi_link::auth_json::resolve_secret(&old_name) {
-                if pi_link::auth_json::store_secret(&name, &secret).is_ok() {
+                if pi_link::auth_json::store_secret(&target, &secret).is_ok() {
                     let _ = pi_link::auth_json::delete_secret(&old_name);
                 }
             }
         }
-        pi_link::models_json::upsert_provider(&mut doc, &name, entry);
+        pi_link::models_json::upsert_provider(&mut doc, &target, entry);
         self.mj_write(&doc, cx);
+        // 改名同步内存目录（P2-4）：磁盘现读重建新名条目，再整体摘除老名
+        //（顺序保证 models-store.json 里万一残留的老名缓存也被滤掉）——
+        // 否则可用模型区按新名过滤为 0 条、模型选择器残留旧商名直到重启。
+        // 凭据快照同步重读（侧栏成员资格含「有凭据」支）。
+        if renamed {
+            self.refresh_provider_catalog(&target);
+            self.drop_provider_from_catalog(&old_name);
+            self.reload_settings_panel();
+        }
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
-                s.section = format!("mj:p:{name}");
+                s.section = format!("mj:p:{target}");
                 cx.notify();
             });
         }
@@ -421,9 +449,14 @@ impl Chat {
     }
 
     pub(crate) fn mj_add_model(&mut self, provider: String, cx: &mut Context<Self>) {
-        let mut doc = Self::mj_doc();
-        let ix = pi_link::models_json::add_model(&mut doc, &provider);
-        self.mj_write(&doc, cx);
+        // 草稿行**不预写占位**（P1-1）：validate 拒绝空 id，预写必失败且
+        // 后续按 ix 保存时越界静默丢数据。ix = 盘上现有模型数，保存时走
+        // mj_commit_model_form 的追加分支落盘；保存前列表不显示（与
+        // 「没保存前不该在列表上看见新对象」的 042-1 定稿一致）
+        let ix = pi_link::models_json::provider_entry(&Self::mj_doc(), &provider)
+            .map(pi_link::models_json::provider_models)
+            .unwrap_or_default()
+            .len();
         self.mj_select(format!("mj:m:{provider}:{ix}"), cx);
     }
 
@@ -497,7 +530,21 @@ impl Chat {
         // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
         // 编辑器删键后的缺省在此统一补齐
         pi_link::models_json::ensure_model_defaults(&mut model);
-        pi_link::models_json::update_model(&mut doc, provider, ix, model);
+        // ix < len = 编辑既有行；ix == len = 【+模型】草稿行追加落盘（P1-1：
+        // 占位不再预写，保存时才诞生）；ix 越界 = 陈旧 section（期间列表被
+        // 删过），不写错位置
+        let models_len = entry
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        if ix < models_len {
+            pi_link::models_json::update_model(&mut doc, provider, ix, model);
+        } else if ix == models_len {
+            pi_link::models_json::push_model(&mut doc, provider, model);
+        } else {
+            return false;
+        }
         self.mj_write(&doc, cx);
         true
     }
@@ -613,16 +660,12 @@ impl Chat {
                     } => {
                         // 1、自动保存（表单全字段）。草稿（provider_bg 为空，
                         // 表单一开头就填着名字）→ 以 old_name="" 新建；已存在
-                        // 的商按老名字保存（改名走头行【保存】）
+                        // 的商按**盘上老名字**保存，表单改名不随测速生效
+                        //（honor_form_name=false，P2-3；改名走头行【保存】）
                         let mut form_name = String::new();
                         if let Some(st) = c.dlg.settings.clone() {
                             form_name = st.read(cx).mj_name.read(cx).value().trim().to_string();
-                            let old = if provider_bg.is_empty() {
-                                String::new()
-                            } else {
-                                form_name.clone()
-                            };
-                            c.mj_apply_provider(old, cx);
+                            c.mj_apply_provider_inner(provider_bg.clone(), false, cx);
                         }
                         // 草稿测速后 section 已切成 mj:p:{name}：后续合并用真名
                         let target = if provider_bg.is_empty() {
@@ -694,11 +737,16 @@ impl Chat {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| pi_link::probe::infer_api(&base).to_string());
-        let key_text = entry
-            .get("apiKey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        // key 解析：PF 保存的商 key 在凭据路径（auth.json 标记 → 钥匙库），
+        // **不在 models.json**——只读 entry.apiKey 会拿到空串、探测必 401。
+        // 回落 entry.apiKey 兼容用户手写明文（P1-2）。
+        let key_text = pi_link::auth_json::resolve_secret(&provider).unwrap_or_else(|| {
+            entry
+                .get("apiKey")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        });
         self.mc_clear_error(cx);
         let Some((url, auth)) = pi_link::probe::custom_target(&base, &api) else {
             return self.mc_set_error(tr("models.import_base_url_required"), cx);

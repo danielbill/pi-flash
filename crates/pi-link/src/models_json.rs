@@ -160,6 +160,20 @@ pub fn update_model(value: &mut Value, provider: &str, index: usize, model: Valu
     }
 }
 
+/// Append a full model entry（【+模型】草稿行的保存落盘）。+模型不再预写
+/// `{id:""}` 占位——validate 对空 id 硬拒绝，预写必失败且把整次写盘连带
+/// 炸掉（P1-1）；草稿行保存时在此追加。返回新条目下标。
+pub fn push_model(value: &mut Value, provider: &str, model: Value) -> usize {
+    let entry = provider_entry_mut(value, provider);
+    let obj = entry.as_object_mut().expect("provider entry is an object");
+    let arr = obj
+        .entry("models")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let arr = arr.as_array_mut().expect("models is an array");
+    arr.push(model);
+    arr.len() - 1
+}
+
 pub fn remove_model(value: &mut Value, provider: &str, index: usize) -> bool {
     let entry = provider_entry_mut(value, provider);
     entry
@@ -367,6 +381,19 @@ mod tests {
             provider_entry(&doc, "fresh").unwrap()["models"][0]["id"],
             ""
         );
+    }
+
+    #[test]
+    fn push_model_appends_and_creates_missing_array() {
+        let mut doc = json!({ "providers": {} });
+        // 无 models 数组的空壳商也能追加（+模型草稿行保存路径）
+        assert_eq!(push_model(&mut doc, "p", json!({ "id": "m1" })), 0);
+        assert_eq!(push_model(&mut doc, "p", json!({ "id": "m2" })), 1);
+        let models = provider_models(provider_entry(&doc, "p").unwrap());
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[1]["id"], "m2");
+        // 整份校验通过（非空 id）——save 语义闭环
+        assert!(validate(&doc).is_ok());
     }
 }
 

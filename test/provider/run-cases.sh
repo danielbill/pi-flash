@@ -111,23 +111,34 @@ const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit(((((d.providers||{})['pf-test-ds']||{}).models)||[]).some(x=>x.id==='pf-test-manual')?0:1)"
 mj settings.mj_model_close
 
-# ---------- CASE4 自动填参（OpenRouter，在线；目标行自适应）----------
+# ---------- CASE4 自动填参（OpenRouter，在线）----------
+# 自造一行真实 id（deepseek-chat 在 OpenRouter 有条目；pf-test-manual 查不到
+# 是 NoMatch 常态，不是 bug）。查目录优先按 author 推断（baseUrl host → deepseek）
+mj settings.mj_add_model
 TARGET_IX=$(node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
-const ms=(((d.providers||{})['pf-test-ds']||{}).models)||[];
-const i=ms.findIndex(m=>m.id==='pf-test-manual');
-console.log(i>=0?i:(ms.length>0?0:-1))")
-if [ "$TARGET_IX" -ge 0 ] 2>/dev/null; then
+console.log(((((d.providers||{})['pf-test-ds']||{}).models)||[]).length)")
+mj settings.mj_model_form --arg id=deepseek-chat
+mj settings.mj_model_save
+if node -e "
+const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
+process.exit(((((d.providers||{})['pf-test-ds']||{}).models)||[]).some(x=>x.id==='deepseek-chat')?0:1)" 2>/dev/null; then
   mj settings.mj_select --arg section="mj:m:pf-test-ds:$TARGET_IX"
   mj settings.mj_autofill
-  check CASE4 "填参完成（mj_fill=Done）" "$PUI" wait --path settings.mj_fill --eq "Done" --timeout 40
-  check CASE4 "目录参数落盘（该行有 name/cost）" node -e "
+  # 断言落盘而非 mj_fill==Done：回填成功设 Done 后立即 mj_select 重选回显，
+  # 状态被「换选中项即清」的设计瞬时清回 Idle，Done 不可观测
+  FILL_OK=0
+  for i in $(seq 1 30); do
+    if node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
-const m=((((d.providers||{})['pf-test-ds']||{}).models)||[])[process.argv[1]]||{};
-process.exit(m.name&&m.cost?0:1)" "$TARGET_IX"
+const m=((((d.providers||{})['pf-test-ds']||{}).models)||[]).find(x=>x.id==='deepseek-chat')||{};
+process.exit(m.name&&m.cost?0:1)" 2>/dev/null; then FILL_OK=1; break; fi
+    sleep 2
+  done
+  check CASE4 "目录参数落盘（deepseek-chat 行有 name/cost）" test "$FILL_OK" = 1
   mj settings.mj_model_close
 else
-  skip CASE4 "自动填参（无可用模型行：目录空且 CASE3 未落盘）"
+  skip CASE4 "自动填参（deepseek-chat 行未落盘：CASE3 追加分支失效）"
 fi
 
 # ---------- CASE5 新增智谱商（openai 形状 /v4，有真目录）----------
