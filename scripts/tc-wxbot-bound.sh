@@ -57,24 +57,6 @@ DEST="$WORK/dir/plugins/pf-wxbot"; mkdir -p "$DEST"
 cp "$PKG/pf-plugin.toml" "$PKG/main.js" "$DEST/" || die "拷清单/壳失败"
 rm -rf "$DEST/pi" "$DEST/assets"; cp -r "$PKG/pi" "$DEST/pi"; cp -r "$PKG/assets" "$DEST/assets"
 
-# 迁移残留清理（90-6）：session-ext.json 里 v3 时代的
-# `plugins/<id>/pi/index.mjs` 是「插件自带 pi 扩展」接线，v4 起该文件是执行域入口
-# （只导出 activate），再当扩展 -e 挂载会导致 pi 报
-# 「does not export a valid factory function」并掐掉同批 -e（含执行域 shim）。
-node -e '
-const fs=require("fs");
-const f=process.argv[1];
-if(!fs.existsSync(f))process.exit(0);
-const v=JSON.parse(fs.readFileSync(f,"utf8"));
-let n=0;
-for(const k of Object.keys(v)){
-  const keep=(v[k]||[]).filter(p=>!/(^|[\\/])plugins[\\/][^\\/]+[\\/]pi[\\/]index\.mjs$/.test(p));
-  if(keep.length!==(v[k]||[]).length)n+=(v[k]||[]).length-keep.length;
-  if(keep.length)v[k]=keep; else delete v[k];
-}
-if(n){fs.writeFileSync(f,JSON.stringify(v,null,2));console.log(`  清理迁移残留扩展挂载 ${n} 条`);}
-' "$WORK/dir/session-ext.json"
-
 # ---------------------------------------------------------------- 1. 绑定情况
 echo "== 1. 扫描绑定情况"
 REG="$WORK/dir/pf-svc/registry.json"

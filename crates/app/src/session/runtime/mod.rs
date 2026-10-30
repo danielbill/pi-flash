@@ -429,6 +429,10 @@ impl SessionRuntime {
         // 出码/收发无人执行）。已挂过的（custom 档经 ext_sources）不重复。
         if let Some(store) = pi_link::session_ext::store_path() {
             for src in pi_link::session_ext::read_for(&store, &self.key) {
+                // 契约 v4：插件的 pi/*.mjs 是执行域入口，再当扩展挂载会整批 -e 失败
+                if pi_link::service_ext::is_exec_entry(std::path::Path::new(&src)) {
+                    continue;
+                }
                 if !self.ext_sources.iter().any(|e| e == &src) {
                     extra.push("-e".into());
                     extra.push(src);

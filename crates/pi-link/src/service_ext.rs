@@ -359,3 +359,27 @@ mod tests {
         assert!(!in_path(&b, &t).exists());
     }
 }
+
+/// 该路径是否是**执行域入口**（而不是可 `-e` 挂载的 pi 扩展）。
+///
+/// 判据：`…/plugins/<id>/pi/<file>` 且同一插件目录的 `pf-plugin.toml` 声明了
+/// `contributes.service`。契约 v4 把这些文件从「pi 扩展」改成「执行域入口」，
+/// 旧会话清单仍指着它们时，pi 会报 `does not export a valid factory function`，
+/// 连累同批 `-e`（含执行域 shim）——挂载侧必须当场过滤，不能等迁移清理跑到。
+pub fn is_exec_entry(path: &Path) -> bool {
+    let norm = path.to_string_lossy().replace('\\', "/");
+    // 取 `…/plugins/<id>/` 段
+    let Some(idx) = norm.rfind("/plugins/") else {
+        return false;
+    };
+    let rest = &norm[idx + "/plugins/".len()..];
+    let Some(id_end) = rest.find('/') else {
+        return false;
+    };
+    let plugin_dir = Path::new(&norm[..idx + "/plugins/".len() + id_end]);
+    let manifest = plugin_dir.join("pf-plugin.toml");
+    match std::fs::read_to_string(manifest) {
+        Ok(text) => text.contains("contributes.service"),
+        Err(_) => false,
+    }
+}

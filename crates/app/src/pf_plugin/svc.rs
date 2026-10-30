@@ -140,6 +140,12 @@ pub(crate) fn svc_sync_configs(chat: &mut crate::Chat) {
             ));
         }
     }
+    // 迁移清理（90-6）：这些入口从 v4 起是执行域面，不再是可 -e 挂载的扩展；
+    // v3 时代写进 session-ext.json 的残留会让 pi 拒绝加载并连累同一批 -e
+    // （含执行域 shim）——每轮同步顺手摘掉，幂等。
+    for (id, _, _) in &owned {
+        let _ = pi_link::session_ext::purge_exec_entries(id);
+    }
     let specs: Vec<SvcInstanceSpec<'_>> = owned
         .iter()
         .map(|(id, entry, dir)| SvcInstanceSpec { id, entry, dir })

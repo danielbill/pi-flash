@@ -153,3 +153,36 @@ mod tests {
         assert!(read(&p).is_empty());
     }
 }
+
+/// 迁移清理（90-6）：把某插件的执行域入口从**所有**会话的扩展清单里摘掉。
+///
+/// 契约 v4 起，插件 `pi/index.mjs`（以及清单 contributes.service 指的任何
+/// `pi/*.mjs`）是执行域入口，不再是可 `-e` 挂载的 pi 扩展；v3 时代写下的
+/// 会话清单还指着它 —— pi 在 spawn 时直接报
+/// `does not export a valid factory function`，同批 `-e`（含执行域 shim）
+/// 一起失效：灯不亮、徽标不出、二维码空白（2026-10-30 真机根因）。
+///
+/// 按**插件目录**匹配（`…/plugins/<id>/pi/…`）而非整条路径相等：数据目录被
+/// 搬迁/复制后旧清单里的绝对路径可能与当前插件目录不同，仍要摘掉。
+/// 幂等：没有残留就不写盘。
+pub fn purge_exec_entries(plugin_id: &str) -> Result<usize, String> {
+    let Some(store) = store_path() else {
+        return Ok(0);
+    };
+    if !store.is_file() {
+        return Ok(0);
+    }
+    let needle = format!("/plugins/{}/pi/", plugin_id.to_ascii_lowercase());
+    let mut table = read(&store);
+    let mut removed = 0usize;
+    for list in table.values_mut() {
+        let before = list.len();
+        list.retain(|p| !norm_key(p).to_ascii_lowercase().contains(&needle));
+        removed += before - list.len();
+    }
+    if removed > 0 {
+        table.retain(|_, v| !v.is_empty());
+        write_all(&store, &table)?;
+    }
+    Ok(removed)
+}
