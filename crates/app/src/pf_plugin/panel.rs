@@ -1489,14 +1489,11 @@ pub(crate) fn cell_menu_layer(
     let weak = cx.entity().downgrade();
     // 与 psp 菜单同参：向下弹让 12px，左右象限决定横向方向
     let edges = crate::ui::popup::PopupEdges::around((menu.x, menu.y), vp, 0., 12.);
-    let weak_out = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_out.update(cx, |c, cx| {
-            if let Some(e) = c.plugins.plugins.get_mut(ix) {
-                e.cell_menu = None;
-                cx.notify();
-            }
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, move |c, cx| {
+        if let Some(e) = c.plugins.plugins.get_mut(ix) {
+            e.cell_menu = None;
+            cx.notify();
+        }
     });
 
     let mut card = crate::function_panel::psp_overlays::menu_card(edges, t);
@@ -1671,11 +1668,8 @@ pub(crate) fn plugin_popup_layer(
     let (id, title, body, tree_loaded) =
         (p.id.clone(), p.title.clone(), p.body.clone(), p.tree_loaded);
     let weak = cx.entity().downgrade();
-    let weak_close = weak.clone();
     // 非模态：不压暗背景、不抢焦点；点外/× 即收（overlay 基座规则 2/5）
-    let layer = crate::ui::overlay::layer(false, None, move |_, cx| {
-        let _ = weak_close.update(cx, |c, cx| c.plugin_popup_close(cx));
-    });
+    let layer = crate::ui::menu::menu_layer(None, &weak, |c, cx| c.plugin_popup_close(cx));
     // 尺寸档位 → 实现值（宿主映射；插件不写像素）
     let (w, h) = match chat
         .plugins

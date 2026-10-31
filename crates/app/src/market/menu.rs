@@ -24,12 +24,8 @@ pub(crate) fn menu_layer(
     let weak = cx.entity().downgrade();
     let (x, y) = chat.dlg.market_menu.expect("checked by caller");
     let edges = crate::ui::popup::PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.market_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.market_menu = None;
     });
     // 040-1「Pi扩展市场」已退役（2026-10-22 用户定夺）：菜单只留原生市场。
     // 旧页代码保留（open_pi_ext_market 仍可从自动化口进入），不再上菜单。

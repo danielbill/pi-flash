@@ -15,6 +15,7 @@ pub(crate) mod messages;
 pub(crate) mod model_picker;
 pub(crate) mod new_session;
 pub(crate) mod pi_extension_picker;
+pub(crate) mod picker_shell;
 pub(crate) mod pool;
 pub(crate) mod runtime;
 pub(crate) mod subagent_panel;

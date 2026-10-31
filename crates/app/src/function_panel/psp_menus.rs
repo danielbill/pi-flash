@@ -22,12 +22,8 @@ pub(crate) fn editor_menu_layer(
     let weak = cx.entity().downgrade();
     let (path, x, y) = chat.dlg.editor_menu.clone().expect("checked by caller");
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.editor_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.editor_menu = None;
     });
     let ed = chat.ws.file_cache.get(&path).and_then(|f| f.editor.clone());
     let mut card = menu_card(edges, t);
@@ -157,12 +153,8 @@ pub(crate) fn input_menu_layer(
     let weak = cx.entity().downgrade();
     let (x, y) = chat.dlg.input_menu.expect("checked by caller");
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.input_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.input_menu = None;
     });
     let card = menu_card(edges, t)
         .child(composer_edit_item(
@@ -227,12 +219,8 @@ pub(crate) fn msg_menu_layer(
     let (x, y) = chat.dlg.msg_menu.expect("checked by caller");
     let copied = gpui_component::text::take_last_selected_text(cx);
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.msg_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.msg_menu = None;
     });
     let copied_click = copied.clone();
     let card = menu_card(edges, t).child(

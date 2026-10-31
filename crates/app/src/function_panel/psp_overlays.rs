@@ -10,7 +10,7 @@
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::appearance::theme::{Theme, danger_wash, theme as T};
+use crate::appearance::theme::{Theme, theme as T};
 use crate::i18n::{tf, tr};
 use crate::services::format::time_ago;
 use crate::services::workspace::{same_path, same_ws};
@@ -675,99 +675,11 @@ fn solid_danger_btn(
 // 项目删除确认原为垃圾桶直弹独立浮层，2026-10-16 并入项目行右键详情卡）
 // ---------------------------------------------------------------------------
 
-/// 统一菜单卡座：absolute 弹层基座，贴边由统一算法的 [`PopupEdges`] 决定。
-pub(crate) fn menu_card(edges: PopupEdges, t: &'static Theme) -> gpui::Div {
-    edges.apply(
-        div()
-            .absolute()
-            .min_w(px(200.))
-            .p(px(4.))
-            .bg(rgb(t.bg))
-            .border_1()
-            .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x8c)))
-            .rounded(px(8.))
-            .shadow_lg()
-            .flex()
-            .flex_col()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                cx.stop_propagation();
-            }),
-    )
-}
-
-pub(crate) fn menu_item<S: Into<SharedString>>(
-    id: S,
-    icon_name: &'static str,
-    label: &str,
-    danger: bool,
-    checked: bool,
-) -> gpui::Stateful<gpui::Div> {
-    menu_item_sized(id, icon_name, 14., label, danger, checked)
-}
-
-/// 带图标尺寸的菜单条（`menu_item` 的通用体）。
-///
-/// **图标档位**：菜单默认 14（`ICON_SM`）；市场菜单传 12（`ICON_XS`）——
-/// 菜单项的图标与 topbar 同名标签的图标（040-2 定夺 = 12）必须同尺寸，
-/// 否则同一个 plug 在标签里一个样、在菜单里一个样（2026-10-23 用户定夺）。
-pub(crate) fn menu_item_sized<S: Into<SharedString>>(
-    id: S,
-    icon_name: &'static str,
-    icon_size: f32,
-    label: &str,
-    danger: bool,
-    checked: bool,
-) -> gpui::Stateful<gpui::Div> {
-    menu_item_asset(
-        id,
-        Some(format!("icons/{icon_name}.svg")),
-        icon_size,
-        label,
-        danger,
-        checked,
-    )
-}
-
-/// 菜单条（**任意资产路径**）：内置图标走 `icons/x.svg`，插件图标走
-/// `plugins/<id>/assets/x.svg`。样式与 `menu_item` 同源——插件面板的右键菜单
-/// 必须和文件树右键菜单长得一样（同一卡座 `menu_card` + 同一行样式）。
-pub(crate) fn menu_item_asset<S: Into<SharedString>>(
-    id: S,
-    asset: Option<String>,
-    icon_size: f32,
-    label: &str,
-    danger: bool,
-    checked: bool,
-) -> gpui::Stateful<gpui::Div> {
-    let t = T();
-    div()
-        .id(id.into())
-        .flex()
-        .items_center()
-        .gap(px(8.))
-        .px(px(10.))
-        .py(px(7.))
-        .rounded(px(6.))
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(if danger { rgb(t.danger) } else { rgb(t.text) })
-        .cursor_pointer()
-        .hover(|s| {
-            if danger {
-                s.bg(gpui::rgba(danger_wash(t)))
-            } else {
-                s.bg(rgb(t.bg_hover))
-            }
-        })
-        .children(asset.map(|a| {
-            gpui::svg()
-                .path(SharedString::from(a))
-                .text_color(rgb(if danger { t.danger } else { t.text_muted }))
-                .size(px(icon_size))
-                .into_any_element()
-        }))
-        .child(div().flex_1().child(SharedString::from(label.to_string())))
-        .children(checked.then(|| icon("check", 12., t.accent)))
-}
+// psp 菜单原语（menu_card/menu_item 族/menu_sep）已于 090 重构上移
+// ui::menu（全 app 统一菜单形制）；此处 re-export 维持既有导入路径。
+pub(crate) use crate::ui::menu::{
+    menu_card, menu_item, menu_item_asset, menu_item_sized, menu_sep,
+};
 
 /// 删除项目确认浮层已撤（2026-10-16）：项目行垃圾桶钮移除后无入口，
 /// 删除确认并入项目行右键详情卡的卡内 取消/确认 两键（会话卡同款）。
@@ -820,13 +732,9 @@ fn tree_proj_menu_layer(
                 )
             })
             .collect();
-    let weak_layer = weak.clone();
     let weak_nav = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.tree_proj_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.tree_proj_menu = None;
     })
     // ↑/↓ 移高亮、Enter 切换（裸修饰键才接管；ESC 落到 layer 自己的
     // escape 分支）。无输入实体参与派发，apply 不需要 defer 出派发周期
@@ -936,7 +844,6 @@ fn term_menu_layer(
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
     let weak = cx.entity().downgrade();
-    let weak_layer = weak.clone();
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
     let has_sel = chat
         .ws
@@ -944,11 +851,8 @@ fn term_menu_layer(
         .iter()
         .find(|t| t.id == tab_id)
         .is_some_and(|t| t.selection.is_some());
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.term_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.term_menu = None;
     });
     let card = menu_card(edges, t)
         .child(term_menu_item(
@@ -1021,17 +925,6 @@ fn term_menu_item(
     if enabled { item } else { item.opacity(0.45) }
 }
 
-/// 菜单分组分隔线（§5.6：1px t.border）。
-pub(crate) fn menu_sep() -> gpui::Div {
-    div()
-        .h(px(1.))
-        .my(px(4.))
-        .bg(gpui::rgba(crate::appearance::theme::border_alpha(
-            T(),
-            0x66,
-        )))
-}
-
 /// 删除失败持久弹层：trash Err 必看（状态栏 toast 一闪容易漏）。
 fn tree_del_error_layer(
     chat: &mut Chat,
@@ -1040,13 +933,9 @@ fn tree_del_error_layer(
 ) -> gpui::AnyElement {
     let weak = cx.entity().downgrade();
     let msg = chat.dlg.tree_del_error.clone().expect("checked by caller");
-    let weak_dismiss = weak.clone();
     let weak_ok = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_dismiss.update(cx, |c, cx| {
-            c.dlg.tree_del_error = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.tree_del_error = None;
     });
     let card = crate::ui::overlay::stop_click(
         div()

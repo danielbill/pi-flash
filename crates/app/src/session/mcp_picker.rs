@@ -11,11 +11,12 @@
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
+use super::picker_shell::{capped_list, capped_list_h, empty_row, pill_anchor_edges, picker_card};
 use super::Chat;
 use crate::appearance::theme::theme as T;
 
 /// 行高（10 行限高 = `ROW_H × 10`，与 pi_extension_picker 一致）。
-const ROW_H: f32 = 30.;
+use super::picker_shell::ROW_H;
 
 /// 打开时的滚动位（勾选当即落盘，无「取消丢弃」态可存）。
 pub(crate) struct McpPicker {
@@ -107,22 +108,12 @@ pub(crate) fn view(
 
     let mut body = rows;
     if body.is_empty() {
-        body.push(
-            div()
-                .px(px(10.))
-                .py(px(12.))
-                .text_size(ui(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(crate::i18n::tr("mcp.none_configured")))
-                .into_any_element(),
-        );
+        body.push(empty_row(SharedString::from(crate::i18n::tr(
+            "mcp.none_configured",
+        ))));
     }
     // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
-    let list_h = if n_rows == 0 {
-        60.
-    } else {
-        (n_rows as f32 * ROW_H).min(ROW_H * 10.)
-    };
+    let list_h = capped_list_h(n_rows);
 
     let enabled_n = items.iter().filter(|s| s.enabled).count();
     let header = div()
@@ -155,51 +146,15 @@ pub(crate) fn view(
 
     // 锚点算法与扩展菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
-    let gap = px(5.);
     let panel_w = px(320.);
-    let (bottom, left) = match chat.dlg.pill_anchor {
-        Some(a) => {
-            let bottom = (vp.height - a.top + gap).max(px(8.));
-            let mut left = a.center_x - panel_w / 2.;
-            if left + panel_w > vp.width - px(8.) {
-                left = vp.width - panel_w - px(8.);
-            }
-            (bottom, left.max(px(8.)))
-        }
-        None => (px(64.), vp.width - panel_w - px(24.)),
-    };
+    let (bottom, left) = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
-    let dismiss_weak = weak.clone();
-    let layer = crate::ui::overlay::layer(false, None, move |_w, cx| {
-        let _ = dismiss_weak.update(cx, |c, _cx| c.dlg.mcp_picker = None);
-    });
+    let layer = crate::ui::menu::menu_layer(None, weak, |c, _cx| c.dlg.mcp_picker = None);
 
     let card = crate::ui::overlay::stop_click(
-        div()
-            .absolute()
-            .bottom(bottom)
-            .left(left)
-            .w(panel_w)
-            .rounded(px(8.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.bg))
-            .shadow_lg()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
+        picker_card(bottom, left, panel_w, t)
             .child(header)
-            .child(
-                div()
-                    .id("mcp-picker-list")
-                    .pb(px(6.))
-                    .h(px(list_h))
-                    .overflow_y_scroll()
-                    .track_scroll(&picker.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(body),
-            ),
+            .child(capped_list("mcp-picker-list", &picker.scroll, list_h, body)),
     );
     Some(layer.child(card).into_any_element())
 }

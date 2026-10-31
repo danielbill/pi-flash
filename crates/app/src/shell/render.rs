@@ -404,14 +404,11 @@ impl Render for Chat {
             // 浮层公共基座：遮挡不穿透 + 点外关闭（ESC 走 composer 的输入框焦点，
             // 这里不抢焦）
             {
-                let weak_menu = weak_menu.clone();
-                crate::ui::overlay::layer(false, None, move |_w, cx| {
-                    let _ = weak_menu.update(cx, |c, cx| {
-                        if c.dlg.pill_menu.is_some() {
-                            c.dlg.pill_menu = None;
-                            cx.notify();
-                        }
-                    });
+                crate::ui::menu::menu_layer(None, &weak_menu, |c, cx| {
+                    if c.dlg.pill_menu.is_some() {
+                        c.dlg.pill_menu = None;
+                        cx.notify();
+                    }
                 })
             }
             .child({

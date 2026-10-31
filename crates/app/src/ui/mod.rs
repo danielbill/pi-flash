@@ -9,6 +9,8 @@ pub mod dropdown;
 /// 页面级组件库（页面只从这里取控件；见 kit/mod.rs 头注释）
 pub(crate) mod kit;
 pub mod list_handle;
+/// 全 app 统一菜单原语（卡座/菜单条/分隔线/浮层收口；090 自 psp_overlays 上移）
+pub mod menu;
 pub mod overlay;
 pub mod popup;
 pub mod psp_scrollbar;

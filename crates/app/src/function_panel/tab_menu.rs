@@ -26,12 +26,8 @@ pub(crate) fn layer(
 ) -> gpui::AnyElement {
     let weak = cx.entity().downgrade();
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.tab_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.tab_menu = None;
     });
     let len = chat.ws.panel_tabs.len();
     let all_ix = |c: &Chat| (0..c.ws.panel_tabs.len()).collect::<Vec<_>>();

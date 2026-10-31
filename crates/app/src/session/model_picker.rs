@@ -613,19 +613,9 @@ pub(crate) fn view(
 
     // 锚点算法与 MCP 菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
-    let gap = px(5.);
     let panel_w = px(380.);
-    let (bottom, left) = match chat.dlg.pill_anchor {
-        Some(a) => {
-            let bottom = (vp.height - a.top + gap).max(px(8.));
-            let mut left = a.center_x - panel_w / 2.;
-            if left + panel_w > vp.width - px(8.) {
-                left = vp.width - panel_w - px(8.);
-            }
-            (bottom, left.max(px(8.)))
-        }
-        None => (px(64.), vp.width - panel_w - px(24.)),
-    };
+    let (bottom, left) =
+        crate::session::picker_shell::pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
     // 列表高 = min(内容高, 10 行上限, 视口内可用高)：内容超高时列表滚动
     // （滚动条常显），卡片也不会顶出窗口上沿。
@@ -637,28 +627,13 @@ pub(crate) fn view(
     let scrollable = content_h > list_h - 6. + 0.5;
     let row_pr = if scrollable { 14. } else { 10. };
 
-    let dismiss_weak = weak.clone();
-    let layer = crate::ui::overlay::layer(false, None, move |_w, cx| {
-        let _ = dismiss_weak.update(cx, |c, _cx| c.dlg.model_picker = None);
-    });
+    let layer = crate::ui::menu::menu_layer(None, weak, |c, _cx| c.dlg.model_picker = None);
 
     let weak_apply = weak.clone();
     let weak_up = weak.clone();
     let weak_down = weak.clone();
     let card = crate::ui::overlay::stop_click(
-        div()
-            .absolute()
-            .bottom(bottom)
-            .left(left)
-            .w(panel_w)
-            .rounded(px(8.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.bg))
-            .shadow_lg()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
+        crate::session::picker_shell::picker_card(bottom, left, panel_w, t)
             // Enter：与原 ModelSelect 同路——过滤输入单行模式的 Enter 会向上
             // 冒泡，在卡片上拦下；apply 会丢弃派发中的实体，defer 出派发周期
             .on_key_down(move |ev: &gpui::KeyDownEvent, _w, cx| {

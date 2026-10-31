@@ -25,13 +25,12 @@ use pi_link::sessions::{SessionInfo, list_sessions_for_cwd, read_tail_messages};
 
 mod agent_session;
 mod appearance;
-mod ask_card;
 mod assets;
 mod automation;
 mod content;
 mod dialogs;
+pub(crate) use dialogs::{ask_card, ext_ui};
 mod editor;
-mod ext_ui;
 mod function_panel;
 mod i18n;
 #[cfg(test)]

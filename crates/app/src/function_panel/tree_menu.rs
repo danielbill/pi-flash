@@ -31,12 +31,8 @@ pub(crate) fn tree_menu_layer(
     };
     // 与 psp 菜单同参：向下弹让 12px，左右象限决定横向方向
     let edges = PopupEdges::around((x, y), vp, 0., 12.);
-    let weak_layer = weak.clone();
-    let layer = crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), move |_w, cx| {
-        let _ = weak_layer.update(cx, |c, cx| {
-            c.dlg.tree_menu = None;
-            cx.notify();
-        });
+    let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
+        c.dlg.tree_menu = None;
     });
     let mut card = menu_card(edges, t);
     match chat.dlg.tree_menu.clone().expect("re-checked") {

@@ -14,8 +14,11 @@
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
+use super::picker_shell::{capped_list, capped_list_h, empty_row, pill_anchor_edges, picker_card};
 use crate::Chat;
 use crate::appearance::theme::theme as T;
+
+use super::picker_shell::ROW_H;
 
 /// 勾选集 + 滚动位（勾选当即落地，不存在「取消丢弃」）。
 pub(crate) struct PiExtensionPicker {
@@ -33,9 +36,6 @@ impl PiExtensionPicker {
         }
     }
 }
-
-/// 行高（10 行限高 = `ROW_H × 10`）。
-const ROW_H: f32 = 30.;
 
 impl Chat {
     /// 扩展按钮点击：已开则收，未开则按守卫打开。
@@ -180,24 +180,12 @@ pub(crate) fn view(
 
     let mut body = rows;
     if body.is_empty() {
-        body.push(
-            div()
-                .px(px(10.))
-                .py(px(12.))
-                .text_size(ui(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(crate::i18n::tr(
-                    "extensions.not_configured",
-                )))
-                .into_any_element(),
-        );
+        body.push(empty_row(SharedString::from(crate::i18n::tr(
+            "extensions.not_configured",
+        ))));
     }
     // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
-    let list_h = if n_rows == 0 {
-        60.
-    } else {
-        (n_rows as f32 * ROW_H).min(ROW_H * 10.)
-    };
+    let list_h = capped_list_h(n_rows);
 
     // 标题行右侧：当前勾选集的说明 token 合计（040 延迟加载测得多少算多少）
     let total: i64 = items
@@ -247,52 +235,16 @@ pub(crate) fn view(
 
     // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
-    let gap = px(5.);
     // 040：列表加宽 100px 容纳右侧 token 标注（320 → 420）
     let panel_w = px(420.);
-    let (bottom, left) = match chat.dlg.pill_anchor {
-        Some(a) => {
-            let bottom = (vp.height - a.top + gap).max(px(8.));
-            let mut left = a.center_x - panel_w / 2.;
-            if left + panel_w > vp.width - px(8.) {
-                left = vp.width - panel_w - px(8.);
-            }
-            (bottom, left.max(px(8.)))
-        }
-        None => (px(64.), vp.width - panel_w - px(24.)),
-    };
+    let (bottom, left) = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
-    let dismiss_weak = weak.clone();
-    let layer = crate::ui::overlay::layer(false, None, move |_w, cx| {
-        let _ = dismiss_weak.update(cx, |c, cx| c.pi_extension_picker_cancel(cx));
-    });
+    let layer = crate::ui::menu::menu_layer(None, weak, |c, cx| c.pi_extension_picker_cancel(cx));
 
     let card = crate::ui::overlay::stop_click(
-        div()
-            .absolute()
-            .bottom(bottom)
-            .left(left)
-            .w(panel_w)
-            .rounded(px(8.))
-            .border_1()
-            .border_color(rgb(t.border))
-            .bg(rgb(t.bg))
-            .shadow_lg()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
+        picker_card(bottom, left, panel_w, t)
             .child(header)
-            .child(
-                div()
-                    .id("pp-list")
-                    .pb(px(6.))
-                    .h(px(list_h))
-                    .overflow_y_scroll()
-                    .track_scroll(&picker.scroll)
-                    .flex()
-                    .flex_col()
-                    .children(body),
-            ),
+            .child(capped_list("pp-list", &picker.scroll, list_h, body)),
     );
     Some(layer.child(card).into_any_element())
 }
