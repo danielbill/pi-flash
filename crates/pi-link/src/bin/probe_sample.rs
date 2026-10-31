@@ -1,5 +1,5 @@
 //! 042-1 探测样本测试 CLI：`probe_sample <base_url> [api_key]`。
-//! 打印 baseUrl 推断形状、目录/兜底 URL 与真实探测结果；key 只用不回显。
+//! 打印 baseUrl 推断形状（模块①）与连通探测结果（模块②，key 只用不回显）。
 //!
 //! 用途：给真实 provider 样本跑通路验证（脚本测试），不启动 UI。
 
@@ -12,34 +12,18 @@ fn main() {
     let base = args[1].as_str();
     let key = args.get(2).map(String::as_str).unwrap_or("");
 
-    let api = pi_link::probe::infer_api(base);
     println!("base      : {base}");
-    println!("infer api : {api}");
-    if let Some((models, messages)) = pi_link::probe::anthropic_compat_urls(base) {
-        println!("compat    : models  = {models}");
-        println!("            messages= {messages}");
-    }
-    let Some((url, auth)) = pi_link::probe::custom_target(base, api) else {
-        eprintln!("empty base url");
-        std::process::exit(1);
-    };
-    println!("probe url : {url} (auth {auth:?})");
+    println!(
+        "infer api : {}（模块①，仅 pi 注册用）",
+        pi_link::probe::infer_api(base)
+    );
     if key.is_empty() {
         println!("key       : (none given, stop before probe)");
         return;
     }
 
-    let outcome = match pi_link::probe::anthropic_compat_urls(base) {
-        Some((models, messages)) => {
-            println!("strategy  : catalog-first + messages fallback");
-            pi_link::probe::probe_anthropic_compat(&models, &messages, key)
-        }
-        None => {
-            println!("strategy  : direct");
-            pi_link::probe::probe(&url, auth, key)
-        }
-    };
-    match outcome {
+    println!("strategy  : probe_connect（模块②阶梯，与 api type 无关）");
+    match pi_link::probe::probe_connect(base, key) {
         pi_link::probe::ProbeOutcome::Ok {
             models,
             latency_ms,

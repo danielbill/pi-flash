@@ -625,10 +625,11 @@ impl Chat {
         }
     }
 
-    /// 测速（042-1）：读**表单**值打一次列模型 GET。能通 = ① 自动保存
-    /// 全表单（含改名）② 目录落 provider-catalog 并刷新内存，可用模型区
-    /// 即满；响应无模型条目 = 已保存但提示手动 +模型；不通 = 红条错误，
-    /// 保存/+模型保持禁用。auto（api 缺省）按 openai 形状猜端点。
+    /// 测速（042-1 / 2026-10-31 三模块定稿）：读**表单**值做连通探测
+    ///（[`pi_link::probe::probe_connect`]：baseUrl + key 即可，不依赖 api
+    /// type——模块①的 infer_api 只服务 pi 注册，与探测解耦）。能通 =
+    /// ① 自动保存全表单 ② 目录合并进账本并刷新内存；连通但无目录 =
+    /// PassedEmpty 提示手动 +模型；不通 = 红条错误。
     pub(crate) fn mj_speedtest_start(&mut self, provider: String, cx: &mut Context<Self>) {
         let Some(st) = self.dlg.settings.clone() else {
             return;
@@ -638,34 +639,21 @@ impl Chat {
             s.mj_base.read(cx).value().trim().to_string()
         };
         let key_text = st.read(cx).mj_key.read(cx).value().trim().to_string();
-        // API 形状随 baseUrl 推断（042-1 改版）：anthropic 兼容端点自动获得
-        // 目录优先 + messages POST 兜底的组合探查
-        let api = pi_link::probe::infer_api(&base);
         self.mc_clear_error(cx);
-        let Some((url, auth)) = pi_link::probe::custom_target(&base, &api) else {
+        if base.is_empty() {
             return self.mc_set_error(tr("models.import_base_url_required"), cx);
-        };
+        }
         let key = match Self::mj_form_key(&key_text) {
             Ok(k) => k,
             Err(e) => return self.mc_set_error(&e, cx),
         };
-        // base 指向 Anthropic 兼容端点：目录优先 GET /v1/models，messages
-        // POST 只作连通兜底（DeepSeek /anthropic 等；直打 messages 永远空目录）
-        let compat = pi_link::probe::anthropic_compat_urls(&base);
         self.cfg.mj_speed = Some(MjSpeedState::Running);
         cx.notify();
         cx.spawn(async move |this, cx| {
             let provider_bg = provider;
             let outcome = cx
                 .background_executor()
-                .spawn(async move {
-                    match compat {
-                        Some((models, messages)) => {
-                            pi_link::probe::probe_anthropic_compat(&models, &messages, &key)
-                        }
-                        None => pi_link::probe::probe(&url, auth, &key),
-                    }
-                })
+                .spawn(async move { pi_link::probe::probe_connect(&base, &key) })
                 .await;
             let _ = this.update(cx, |c, cx| {
                 match outcome {
@@ -746,13 +734,6 @@ impl Chat {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        // 存量显式 api 尊重保留，缺省按 baseUrl 推断（042-1 改版）
-        let api = entry
-            .get("api")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| pi_link::probe::infer_api(&base).to_string());
         // key 解析：PF 保存的商 key 在凭据路径（auth.json 标记 → 钥匙库），
         // **不在 models.json**——只读 entry.apiKey 会拿到空串、探测必 401。
         // 回落 entry.apiKey 兼容用户手写明文（P1-2）。
@@ -764,27 +745,19 @@ impl Chat {
                 .to_string()
         });
         self.mc_clear_error(cx);
-        let Some((url, auth)) = pi_link::probe::custom_target(&base, &api) else {
+        if base.is_empty() {
             return self.mc_set_error(tr("models.import_base_url_required"), cx);
-        };
+        }
         let key = match Self::mj_form_key(&key_text) {
             Ok(k) => k,
             Err(e) => return self.mc_set_error(&e, cx),
         };
-        // 与测速同款：Anthropic 兼容端点目录优先，messages POST 兜底
-        let compat = pi_link::probe::anthropic_compat_urls(&base);
+        // 与测速同款三模块：连通探测不依赖条目的 api 字段（2026-10-31 定稿）
         cx.notify();
         cx.spawn(async move |this, cx| {
             let outcome = cx
                 .background_executor()
-                .spawn(async move {
-                    match compat {
-                        Some((models, messages)) => {
-                            pi_link::probe::probe_anthropic_compat(&models, &messages, &key)
-                        }
-                        None => pi_link::probe::probe(&url, auth, &key),
-                    }
-                })
+                .spawn(async move { pi_link::probe::probe_connect(&base, &key) })
                 .await;
             let _ = this.update(cx, |c, cx| match outcome {
                 pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {

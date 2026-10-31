@@ -1,15 +1,17 @@
-//! 保存 apikey 后的通路探查（042 决策 3，PF 超出 pi-web 的优化）。
+//! 通路探查（042 决策 3，PF 超出 pi-web 的优化）。2026-10-31 定稿：测速
+//! 按钮拆成三个独立功能模块，本文件按模块分节，**代码里不得存在任何写死
+//! 的模型名**（历史教训：messages 兜底里硬编码过 `deepseek-chat`——那是
+//! 「模块②缺失被业务请求顶替」的结构必然，见 [`probe_connect`] 文档）。
 //!
-//! pi-web 并无探查请求——模型列表来自 SDK 静态注册表，与 key 无关，保存
-//! 只是刷新状态；但 051 的痛点是 key 错了要重启会话才发现。探查把失败提前
-//! 到保存时刻：向该 provider 的列模型端点发一次轻量 GET，key 被拒/网络
-//! 不可达当场可见。
+//! - 模块① [`infer_api`]：baseUrl → api type（pi 注册与真实业务请求需要），
+//!   **不参与连通探测**。
+//! - 模块② [`probe_connect`]：连通性测试，输入只有 baseUrl + key，与 api
+//!   type 解耦。
+//! - 模块③ [`probe`]：拉取 Model List（GET /models + best-effort 解析），
+//!   供模块②快路径与内置商端点表（[`catalog_target`]，vendor pin 的已知
+//!   端点表，非模型名硬编码）使用。
 //!
-//! - 内置商端点表随 vendor pin 固化（与 [`crate::credentials::official_env_name`]
-//!   同款看护），URL/鉴权样式对齐 pi-web `lib/model-discovery.ts` 的列模型
-//!   请求形状。表外 provider 跳过探查（调用方直接呈现已配置态）。
-//! - 自定义商按 models.json 的 `baseUrl` + `api` 走同一构造规则。
-//! - 结果只驱动 UI 状态点，不回滚保存——可能是网络问题，key 留着。
+//! 结果只驱动 UI 状态点，不回滚保存——可能是网络问题，key 留着。
 
 use std::time::Duration;
 
@@ -40,8 +42,36 @@ pub enum ProbeOutcome {
     Unreachable { error: String },
 }
 
+// ---------------------------------------------------------------------------
+// 模块①：API Type 判定（服务 pi 注册与真实业务请求，不做连通探测）
+// ---------------------------------------------------------------------------
+
+/// baseUrl → pi wire 协议形状（042-1 改版：Provider = baseUrl + apiKey，
+/// API 形状用户不选，PF 推断后随条目落盘——pi 侧 modelFromJson /
+/// extensionModelFromDefinition 对缺 api 硬 throw，绝不留空）。
+/// `*/anthropic` / 含 `/anthropic/` → anthropic-messages（DeepSeek /anthropic、
+/// GLM、Kimi 等兼容端点）；`*/v1beta` → google-generative-ai；其余 →
+/// openai-completions（最大公约数）。openai-responses 与 completions 在 URL
+/// 上不可区分，一律默认 completions。**只服务注册与业务请求（[`crate::model_test`]），
+/// 连通探测走 [`probe_connect`]（不依赖本函数）。**
+pub fn infer_api(base_url: &str) -> &'static str {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.ends_with("/anthropic") || base.contains("/anthropic/") {
+        "anthropic-messages"
+    } else if base.ends_with("/v1beta") || base.contains("/v1beta/") {
+        "google-generative-ai"
+    } else {
+        "openai-completions"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 模块③：拉取 Model List（GET /models + best-effort 解析）
+// ---------------------------------------------------------------------------
+
 /// 内置商探查端点表（vendor pin 1.1.0）。只收高置信条目——表外商跳过
-/// 探查（UI 直接呈现已配置态），宁缺勿错报。
+/// 探查（UI 直接呈现已配置态），宁缺勿错报。**这是已知端点表，不是模型名
+/// 硬编码**——模型名只该出现在真实业务请求（`model_test`，调用方提供）。
 pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
     const TABLE: &[(&str, &str, Auth)] = &[
         ("openai", "https://api.openai.com/v1/models", Auth::Bearer),
@@ -104,152 +134,205 @@ pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
         .map(|(_, url, auth)| (*url, *auth))
 }
 
-/// 自定义商的列模型 URL：`baseUrl` + `api`（042-1 改版：api 由 [`infer_api`]
-/// 从 baseUrl 推断，UI 不再让用户选）按同一构造规则（对齐 pi-web
-/// buildModelsListUrl：按 api 补版本段，不重复补）。Anthropic 兼容端点的
-/// messages 连通兑底见 [`anthropic_compat_urls`] + [`probe_anthropic_compat`]。
-pub fn custom_target(base_url: &str, api: &str) -> Option<(String, Auth)> {
-    let base = base_url.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return None;
-    }
-    let (url, auth) = match api {
-        "anthropic-messages" => (join_version(base, "v1"), Auth::Anthropic),
-        "google-generative-ai" => (join_version(base, "v1beta"), Auth::Google),
-        // openai 系（completions/responses）：base 末段已是版本号（/v1、/v4…
-        // GLM coding 端点即 /v4）则直接接 /models，否则补 /v1（通用自定义商）
-        _ => {
-            if base_has_version_segment(base) {
-                (format!("{base}/models"), Auth::Bearer)
-            } else {
-                (format!("{base}/v1/models"), Auth::Bearer)
+/// 发一次列模型 GET（阻塞，20s 超时）并按三态分类。2xx 响应体交
+/// [`parse_catalog`] 解析目录。
+pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
+    match http(url, auth, key, None) {
+        Ok((latency_ms, body)) => {
+            let (models, catalog) = parse_catalog(&body);
+            ProbeOutcome::Ok {
+                models,
+                latency_ms,
+                catalog,
             }
         }
+        Err(HttpFail::Auth(status)) => ProbeOutcome::AuthRejected { status },
+        Err(HttpFail::Status(status, _)) => ProbeOutcome::Unreachable {
+            error: format!("HTTP {status}"),
+        },
+        Err(HttpFail::Net(e)) => ProbeOutcome::Unreachable { error: e },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 模块②：连通性测试（baseUrl + key，与 api type 解耦）
+// ---------------------------------------------------------------------------
+
+/// 连通性测试（2026-10-31 三模块定稿）。输入只有 baseUrl + key，内部按
+/// 候选阶梯逐发请求，**全部无厂商知识、无写死模型名**：
+///
+/// ```text
+/// GET  {base}/models              Bearer      ← 命中即连通 + 目录（快路径）
+/// GET  {base}/v1/models           Bearer
+/// GET  {base}/v1/models           Anthropic
+/// GET  {base}/v1beta/models       Google
+/// POST {base}/chat/completions {} Bearer      ← 协议握手：体 {} 故意缺
+/// POST {base}/v1/messages      {} Anthropic  │  model 字段，协议正确的服务
+/// POST {base}/v1/messages      {} Bearer     │  端必须回请求校验类 4xx
+///                                               （缺字段 validation——官方
+///                                               API 是 400，DeepSeek 实测是
+///                                               422），即「路由可达且讲协议」
+/// ```
+///
+/// 单步结论：2xx = 连通成立；**握手 POST 的校验类 4xx（非 401/403/404/405）
+/// = 协议可达**（服务端已解析并校验请求体 → 连通成立、目录为空）；401/403
+/// 记为 key 被拒证据但**不定论**（换下一种鉴权样式可能就通）；404/405 =
+/// 路由不存在；其余换下一候选。终局：连通 → [`ProbeOutcome::Ok`]（空目录 = UI
+/// 的 PassedEmpty，提示手动 +模型）；未连通但见过 401/403 →
+/// [`ProbeOutcome::AuthRejected`]；否则 [`ProbeOutcome::Unreachable`]。
+///
+/// 历史（P3-7 根因）：这里曾用 `POST /v1/messages` 发真实业务请求判连通，
+/// 请求体必须带 model 而探测层恰恰没有合法 model id——只能硬编码
+/// `deepseek-chat`，等于赌某个厂商。改用「缺 model 的协议握手」后，400 的
+/// 语义恰好是「讲协议且可达」，不绑模型、不消耗 token。
+pub fn probe_connect(base_url: &str, key: &str) -> ProbeOutcome {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return ProbeOutcome::Unreachable {
+            error: "empty base url".into(),
+        };
+    }
+    // 候选阶梯（url, auth, is_handshake）；base 已含版本段时跳过会拼重的
+    // GET 形态（/v1 + /v1/models → /v1/v1/models）
+    let mut ladder: Vec<(String, Auth, bool)> = Vec::new();
+    let mut add = |path: &str, auth: Auth, hs: bool| {
+        let url = format!("{base}{path}");
+        // 去重键 = (url, auth)：同一 URL 换鉴权样式是不同候选
+        if !ladder.iter().any(|(u, a, _)| *u == url && *a == auth) {
+            ladder.push((url, auth, hs));
+        }
     };
-    Some((url, auth))
-}
-
-/// base 是否已含 openai 版本段：末段为 /v<数字>（v1/v4/v1beta 不算——那是
-/// google 段）或路径中含 /v1/。决定接 /models 还是补 /v1。
-fn base_has_version_segment(base: &str) -> bool {
-    let last = base.rsplit('/').next().unwrap_or("");
-    let tail_is_version =
-        last.len() >= 2 && last.starts_with('v') && last[1..].bytes().all(|b| b.is_ascii_digit());
-    tail_is_version || base.contains("/v1/")
-}
-
-/// baseUrl → pi wire 协议形状（042-1 改版：Provider = baseUrl + apiKey，
-/// API 形状用户不选，PF 推断后随条目落盘——pi 侧 modelFromJson /
-/// extensionModelFromDefinition 对缺 api 硬 throw，绝不留空）。
-/// `*/anthropic` / 含 `/anthropic/` → anthropic-messages（DeepSeek /anthropic、
-/// GLM、Kimi 等兼容端点）；`*/v1beta` → google-generative-ai；其余 →
-/// openai-completions（最大公约数）。openai-responses 与 completions 在 URL
-/// 上不可区分，一律默认 completions，误判走模型级 API 覆盖逃生门。
-pub fn infer_api(base_url: &str) -> &'static str {
-    let base = base_url.trim().trim_end_matches('/');
-    if base.ends_with("/anthropic") || base.contains("/anthropic/") {
-        "anthropic-messages"
-    } else if base.ends_with("/v1beta") || base.contains("/v1beta/") {
-        "google-generative-ai"
+    add("/models", Auth::Bearer, false);
+    if !base.ends_with("/v1") {
+        add("/v1/models", Auth::Bearer, false);
+    }
+    if !base.ends_with("/v1") {
+        add("/v1/models", Auth::Anthropic, false);
+    }
+    if base.ends_with("/v1beta") {
+        add("/models", Auth::Google, false);
     } else {
-        "openai-completions"
+        add("/v1beta/models", Auth::Google, false);
+    }
+    add("/chat/completions", Auth::Bearer, true);
+    add("/v1/messages", Auth::Anthropic, true);
+    add("/v1/messages", Auth::Bearer, true);
+
+    let mut auth_rejected: Option<u16> = None;
+    let mut last_error = String::new();
+    for (url, auth, is_handshake) in ladder {
+        let body = is_handshake.then_some("{}");
+        match http(&url, auth, key, body) {
+            Ok((latency_ms, resp)) => {
+                // 2xx：连通成立（握手体 {} 若真被接受也按空目录连通计）
+                let (models, catalog) = if is_handshake {
+                    (0, Vec::new())
+                } else {
+                    parse_catalog(&resp)
+                };
+                return ProbeOutcome::Ok {
+                    models,
+                    latency_ms,
+                    catalog,
+                };
+            }
+            Err(HttpFail::Auth(status)) => {
+                // key 被拒证据：换下一种鉴权样式可能就通，先不定论
+                auth_rejected.get_or_insert(status);
+            }
+            Err(HttpFail::Status(status, latency_ms))
+                if is_handshake
+                    && (400..500).contains(&status)
+                    && !matches!(status, 401 | 403 | 404 | 405) =>
+            {
+                // 协议握手成立：服务端已解析并校验请求体（缺 model/messages
+                // 等字段的 validation 错，400/422 随各家实现）→ 路由可达且
+                // 讲该协议；404/405 = 路由不存在，换下一候选
+                return ProbeOutcome::Ok {
+                    models: 0,
+                    latency_ms,
+                    catalog: Vec::new(),
+                };
+            }
+            Err(HttpFail::Status(status, _)) => {
+                last_error = format!("HTTP {status}");
+            }
+            Err(HttpFail::Net(e)) => {
+                last_error = e;
+            }
+        }
+    }
+    match auth_rejected {
+        Some(status) => ProbeOutcome::AuthRejected { status },
+        None => ProbeOutcome::Unreachable { error: last_error },
     }
 }
 
-/// base 已带该版本段就只接 /models，否则补上版本段再接。
-fn join_version(base: &str, version: &str) -> String {
-    if base.ends_with(&format!("/{version}")) {
-        format!("{base}/models")
-    } else {
-        format!("{base}/{version}/models")
-    }
+// ---------------------------------------------------------------------------
+// HTTP 原语（模块②③共用）
+// ---------------------------------------------------------------------------
+
+/// 非 2xx 失败分类。Auth = 401/403（key 被拒证据）；Status = 其他 HTTP 状态
+/// （连带耗时，握手 400 的「测速」语义要用）；Net = 网络/超时。
+enum HttpFail {
+    Auth(u16),
+    Status(u16, u64),
+    Net(String),
 }
 
-/// base 指向 Anthropic 兼容端点（[`infer_api`] 同款判定：带 `/anthropic` 段）
-/// → 返回 (models_url, messages_url)，供 [`probe_anthropic_compat`]
-/// 目录优先 + 连通兑底。
-pub fn anthropic_compat_urls(base_url: &str) -> Option<(String, String)> {
-    let base = base_url.trim().trim_end_matches('/');
-    let implies = base.ends_with("/anthropic") || base.contains("/anthropic/");
-    (!base.is_empty() && implies)
-        .then(|| (format!("{base}/v1/models"), format!("{base}/v1/messages")))
-}
-
-/// Anthropic 兼容端点探查：先 GET /v1/models（Anthropic 官方列模型端点，
-/// DeepSeek /anthropic 等网关多有实现——无 key 探测 401 而非 404）；
-/// 拉到目录即成功。401/403 直接判鉴权拒绝（key 坏，不必再打）；其余
-/// （404 / 空目录 / 网络）回退 POST /v1/messages 判连通——Messages-only
-/// 代理通 = 空目录，上层 PassedEmpty 提示手动 +模型。
-pub fn probe_anthropic_compat(models_url: &str, messages_url: &str, key: &str) -> ProbeOutcome {
-    let first = probe(models_url, Auth::Anthropic, key);
-    let got_catalog = matches!(&first, ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty());
-    if got_catalog || matches!(first, ProbeOutcome::AuthRejected { .. }) {
-        return first;
-    }
-    probe(messages_url, Auth::Anthropic, key)
-}
-
-/// 发一次列模型 GET（阻塞，20s 超时）并按三态分类。2xx 响应体里的
-/// `data[]`（openai/anthropic 形状）或 `models[]`（google 形状）解析模型
-/// 目录：id 缺失回退 `name`（google 形状剥 `models/` 前缀）、显示名取
-/// `displayName`/`display_name`、上下文窗口取 `context_length`/
-/// `context_window`/`inputTokenLimit`；解不出按空目录计。
-pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
+/// 发一次请求（阻塞，20s 超时）。`body` = Some → POST JSON，None → GET。
+/// 2xx → (耗时, 响应体截断 1MB)。
+fn http(url: &str, auth: Auth, key: &str, body: Option<&str>) -> Result<(u64, String), HttpFail> {
     let started = std::time::Instant::now();
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(20))
         .build();
-    // DeepSeek Anthropic 兼容代理 /v1/messages 只接受 POST，测速用 POST 判连通
-    let is_msg = url.contains("/messages");
-    let req = if is_msg {
+    let req = if body.is_some() {
         agent.post(url)
     } else {
         agent.get(url)
     };
     let req = match auth {
         Auth::Bearer => req.set("Authorization", &format!("Bearer {key}")),
-        Auth::Anthropic => {
-            let mut r = req
-                .set("x-api-key", key)
-                .set("anthropic-version", "2023-06-01");
-            if url.contains("/messages") {
-                r = r.set("Content-Type", "application/json");
-            }
-            r
-        }
+        Auth::Anthropic => req
+            .set("x-api-key", key)
+            .set("anthropic-version", "2023-06-01"),
         Auth::Google => req.set("x-goog-api-key", key),
     };
-    let resp_result: Result<ureq::Response, ureq::Error> = if is_msg {
-        req.send_string(r#"{"model":"deepseek-chat","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
+    let req = if body.is_some() {
+        req.set("Content-Type", "application/json")
     } else {
-        req.call()
+        req
+    };
+    let resp_result = match body {
+        Some(b) => req.send_string(b),
+        None => req.call(),
     };
     let resp = match resp_result {
         Ok(r) => r,
         Err(ureq::Error::Status(status, _)) => {
-            return if status == 401 || status == 403 {
-                ProbeOutcome::AuthRejected { status }
+            let latency_ms = started.elapsed().as_millis() as u64;
+            return Err(if status == 401 || status == 403 {
+                HttpFail::Auth(status)
             } else {
-                ProbeOutcome::Unreachable {
-                    error: format!("HTTP {status}"),
-                }
-            };
+                HttpFail::Status(status, latency_ms)
+            });
         }
-        Err(e) => {
-            return ProbeOutcome::Unreachable {
-                error: e.to_string(),
-            };
-        }
+        Err(e) => return Err(HttpFail::Net(e.to_string())),
     };
     let latency_ms = started.elapsed().as_millis() as u64;
-    let body = resp
+    // 响应体截断到 1MB——列表端点可能带全文档，计数不需要
+    let text = resp
         .into_string()
-        .map(|s| {
-            // 响应体截断到 1MB——列表端点可能带全文档，计数不需要
-            s.chars().take(1024 * 1024).collect::<String>()
-        })
+        .map(|s| s.chars().take(1024 * 1024).collect::<String>())
         .unwrap_or_default();
-    let entries = serde_json::from_str::<serde_json::Value>(&body)
+    Ok((latency_ms, text))
+}
+
+/// 目录响应解析（模块③）：`data[]`（openai/anthropic 形状）或 `models[]`
+/// （google 形状）；解不出按空目录计。返回 (条目数, 解析出的目录)。
+fn parse_catalog(body: &str) -> (usize, Vec<crate::protocol::ModelInfo>) {
+    let entries = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| {
             v.get("data")
@@ -260,11 +343,7 @@ pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
         .unwrap_or_default();
     let models = entries.len();
     let catalog = entries.iter().filter_map(parse_entry).collect();
-    ProbeOutcome::Ok {
-        models,
-        latency_ms,
-        catalog,
-    }
+    (models, catalog)
 }
 
 /// 单条模型目录项的 best-effort 解析（各家 /models 字段形状不一）。
@@ -308,6 +387,9 @@ fn parse_entry(e: &serde_json::Value) -> Option<crate::protocol::ModelInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
 
     #[test]
     fn catalog_table_covers_the_common_api_key_providers() {
@@ -320,62 +402,6 @@ mod tests {
             Some(("https://api.anthropic.com/v1/models", Auth::Anthropic))
         );
         assert!(catalog_target("zai-coding-cn").is_none(), "表外商跳过探查");
-    }
-
-    #[test]
-    fn custom_urls_follow_the_api_shape() {
-        assert_eq!(
-            custom_target("https://gw.example.com/v1", "openai-completions"),
-            Some(("https://gw.example.com/v1/models".into(), Auth::Bearer))
-        );
-        // 版本段不重复补
-        assert_eq!(
-            custom_target("https://gw.example.com/v1/", "anthropic-messages"),
-            Some(("https://gw.example.com/v1/models".into(), Auth::Anthropic))
-        );
-        assert_eq!(
-            custom_target("https://gw.example.com", "anthropic-messages"),
-            Some(("https://gw.example.com/v1/models".into(), Auth::Anthropic))
-        );
-        assert_eq!(
-            custom_target("https://gw.example.com/v1beta", "google-generative-ai"),
-            Some(("https://gw.example.com/v1beta/models".into(), Auth::Google))
-        );
-        assert_eq!(custom_target("", "openai-completions"), None);
-        // 末段版本号任意 /vN 都直接接 /models（GLM coding /v4 实测样本）
-        assert_eq!(
-            custom_target(
-                "https://open.bigmodel.cn/api/coding/paas/v4",
-                "openai-completions"
-            ),
-            Some((
-                "https://open.bigmodel.cn/api/coding/paas/v4/models".into(),
-                Auth::Bearer
-            ))
-        );
-        // /v1beta 不是 openai 版本段（google 专用），不误判
-        assert_eq!(
-            custom_target("https://g.example.com/v1beta", "openai-completions"),
-            Some((
-                "https://g.example.com/v1beta/v1/models".into(),
-                Auth::Bearer
-            ))
-        );
-    }
-
-    #[test]
-    fn anthropic_compat_urls_match_the_base_condition() {
-        let (models, messages) =
-            anthropic_compat_urls("https://api.deepseek.com/anthropic").unwrap();
-        assert_eq!(models, "https://api.deepseek.com/anthropic/v1/models");
-        assert_eq!(messages, "https://api.deepseek.com/anthropic/v1/messages");
-        // 尾斜杠归一 + 段中匹配（custom_target 同条件）
-        assert!(anthropic_compat_urls("https://x.com/anthropic/").is_some());
-        assert!(anthropic_compat_urls("https://x.com/api/anthropic/v2").is_some());
-        // 纯 openai 形 base 不适用
-        assert!(anthropic_compat_urls("https://api.deepseek.com").is_none());
-        assert!(anthropic_compat_urls("https://api.deepseek.com/v1").is_none());
-        assert_eq!(anthropic_compat_urls(""), None);
     }
 
     #[test]
@@ -395,16 +421,6 @@ mod tests {
         assert_eq!(infer_api("https://api.openai.com/v1"), "openai-completions");
         assert_eq!(infer_api("https://api.deepseek.com"), "openai-completions");
         assert_eq!(infer_api(""), "openai-completions");
-        // 推断值必须被 custom_target 原样消化（形状闭环，目录 URL 不落 messages）
-        for base in [
-            "https://api.deepseek.com/anthropic",
-            "https://x.example.com/v1",
-            "https://g.example.com/v1beta",
-        ] {
-            let (url, _) = custom_target(base, infer_api(base)).unwrap();
-            assert!(url.starts_with(base.trim_end_matches('/')), "{url}");
-            assert!(url.ends_with("/models"), "{url}");
-        }
     }
 
     #[test]
@@ -438,5 +454,282 @@ mod tests {
                 .name,
             ""
         );
+    }
+
+    // ---- 模块②阶梯：本地 mock server 离线覆盖 -----------------------------
+
+    /// 极简 HTTP mock：按 (path, 鉴权样式, 请求体) 决定状态码；200 带 openai
+    /// 形状目录体、400 带「缺 model」校验错体。返回 base url + 记录到的请求体。
+    fn spawn_mock(
+        rules: Arc<dyn Fn(&str, &str, &str) -> u16 + Send + Sync>,
+        seen: Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let rules = rules.clone();
+                let seen = seen.clone();
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut buf = Vec::new();
+                    let mut byte = [0u8; 1];
+                    loop {
+                        match stream.read(&mut byte) {
+                            Ok(1) => {
+                                buf.push(byte[0]);
+                                if buf.ends_with(b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&buf);
+                    let mut lines = head.lines();
+                    let req_line = lines.next().unwrap_or("");
+                    let path = req_line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or("/")
+                        .to_string();
+                    let mut auth_kind = "none";
+                    let mut content_len = 0usize;
+                    for l in lines {
+                        let lower = l.to_lowercase();
+                        if lower.starts_with("authorization: bearer") {
+                            auth_kind = "bearer";
+                        }
+                        if lower.starts_with("x-api-key:") {
+                            auth_kind = "anthropic";
+                        }
+                        if lower.starts_with("x-goog-api-key:") {
+                            auth_kind = "google";
+                        }
+                        if lower.starts_with("content-length:") {
+                            content_len = l
+                                .split(':')
+                                .nth(1)
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    let mut body = vec![0u8; content_len];
+                    if content_len > 0 {
+                        stream.read_exact(&mut body).ok();
+                    }
+                    let body_s = String::from_utf8_lossy(&body).to_string();
+                    seen.lock()
+                        .unwrap()
+                        .push((path.clone(), auth_kind.into(), body_s.clone()));
+                    let status = rules(&path, auth_kind, &body_s);
+                    let (resp_body, reason) = match status {
+                        200 => (r#"{"data":[{"id":"m-1","name":"M1"}]}"#, "OK"),
+                        400 => (
+                            r#"{"error":{"message":"model: Field required"}}"#,
+                            "Bad Request",
+                        ),
+                        401 => ("{}", "Unauthorized"),
+                        403 => ("{}", "Forbidden"),
+                        _ => ("{}", "Not Found"),
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{resp_body}",
+                        resp_body.len()
+                    );
+                    stream.write_all(resp.as_bytes()).ok();
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn connect_direct_catalog_hit() {
+        // 候选 1（GET {base}/models Bearer）直接 200：连通 + 有目录
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base = spawn_mock(
+            Arc::new(|path, kind, _body| {
+                if path.ends_with("/models") && kind == "bearer" {
+                    200
+                } else {
+                    404
+                }
+            }),
+            seen.clone(),
+        );
+        match probe_connect(&base, "k") {
+            ProbeOutcome::Ok {
+                models, catalog, ..
+            } => {
+                assert_eq!(models, 1);
+                assert_eq!(catalog[0].id, "m-1");
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+        // 首个请求就是 GET /models，且 GET 不带请求体
+        let first = &seen.lock().unwrap()[0];
+        assert_eq!(first.0, "/models");
+        assert_eq!(first.1, "bearer");
+        assert_eq!(first.2, "");
+    }
+
+    #[test]
+    fn connect_handshake_400_is_protocol_reachable() {
+        // 全部 GET 404（Messages-only 网关）：messages 握手 400 = 协议可达 →
+        // Ok{空目录}（UI 的 PassedEmpty 源头）；握手体必须是 `{}`——无任何
+        // 写死模型名
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base = spawn_mock(
+            Arc::new(|path, _kind, body| {
+                if path.ends_with("/v1/messages") && body == "{}" {
+                    400
+                } else {
+                    404
+                }
+            }),
+            seen.clone(),
+        );
+        match probe_connect(&base, "k") {
+            ProbeOutcome::Ok { models, .. } => assert_eq!(models, 0),
+            other => panic!("expected Ok(empty), got {other:?}"),
+        }
+        let seen = seen.lock().unwrap();
+        let handshake = seen.iter().find(|(p, ..)| p.ends_with("/v1/messages"));
+        assert_eq!(handshake.unwrap().2, "{}", "握手体 = {{}}，无模型名");
+        assert!(
+            seen.iter().all(|(_, _, b)| b != "deepseek-chat"),
+            "任何请求都不得携带写死模型名"
+        );
+    }
+
+    #[test]
+    fn connect_handshake_422_validation_class_counts() {
+        // DeepSeek 实测：协议校验错回 422（非 400）——校验类 4xx 整类都算
+        // 协议可达
+        let base = spawn_mock(
+            Arc::new(|path, _kind, body| {
+                if path.ends_with("/v1/messages") && body == "{}" {
+                    422
+                } else {
+                    404
+                }
+            }),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert!(matches!(
+            probe_connect(&base, "k"),
+            ProbeOutcome::Ok { models: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn connect_handshake_404_route_missing_falls_through() {
+        // 404 = 路由不存在，不算协议可达：全 404 → Unreachable
+        let base = spawn_mock(
+            Arc::new(|_path, _kind, _body| 404),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert!(matches!(
+            probe_connect(&base, "k"),
+            ProbeOutcome::Unreachable { .. }
+        ));
+    }
+
+    #[test]
+    fn connect_auth_style_fallback() {
+        // Bearer 全 401、Anthropic 样式 GET /v1/models 200：key 被拒证据
+        // 不定论，换鉴权样式命中 → Ok{有目录}
+        let base = spawn_mock(
+            Arc::new(
+                |_path, kind, _body| {
+                    if kind == "anthropic" { 200 } else { 401 }
+                },
+            ),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        match probe_connect(&base, "k") {
+            ProbeOutcome::Ok { models, .. } => assert_eq!(models, 1),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_all_401_is_auth_rejected() {
+        let base = spawn_mock(
+            Arc::new(|_path, _kind, _body| 401),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert_eq!(
+            probe_connect(&base, "bad"),
+            ProbeOutcome::AuthRejected { status: 401 }
+        );
+    }
+
+    #[test]
+    fn connect_dead_port_is_unreachable() {
+        // 占住端口再释放：连接必然被拒
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        match probe_connect(&format!("http://{addr}"), "k") {
+            ProbeOutcome::Unreachable { .. } => {}
+            other => panic!("expected Unreachable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_empty_base_is_unreachable() {
+        assert!(matches!(
+            probe_connect("", "k"),
+            ProbeOutcome::Unreachable { .. }
+        ));
+    }
+
+    #[test]
+    fn connect_version_segment_base_skips_dupe_gets() {
+        // base 末段已是 /vN（智谱 coding /v4 实测样本）：{base}/models 直接
+        // 命中候选 1，不产生 /v1/v1/models 之类的拼重请求
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base = spawn_mock(
+            Arc::new(|path, kind, _body| {
+                if path.ends_with("/models") && kind == "bearer" {
+                    200
+                } else {
+                    404
+                }
+            }),
+            seen.clone(),
+        );
+        let versioned = format!("{base}/v4");
+        match probe_connect(&versioned, "k") {
+            ProbeOutcome::Ok { models, .. } => assert_eq!(models, 1),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+        let seen = seen.lock().unwrap();
+        assert!(
+            !seen.iter().any(|(p, _, _)| p.contains("/v1/")),
+            "base 已带版本段不得再拼 /v1/*：{:?}",
+            seen.iter().map(|(p, _, _)| p).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn v1beta_base_tries_google_auth_on_direct_models() {
+        // base 末段 /v1beta：Google 鉴权直连 {base}/models
+        let base = spawn_mock(
+            Arc::new(|path, kind, _body| {
+                if path.ends_with("/models") && kind == "google" {
+                    200
+                } else {
+                    404
+                }
+            }),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert!(matches!(
+            probe_connect(&format!("{base}/v1beta"), "k"),
+            ProbeOutcome::Ok { .. }
+        ));
     }
 }

@@ -79,7 +79,9 @@ check CASE1 "auth.json 有 PF 标记条目" node -e "const d=JSON.parse(require(
 
 # ---------- CASE2 测速（compat：models 404 → messages 兜底 = PassedEmpty）----------
 mj settings.mj_speedtest
-check CASE2 "测速通过" "$PUI" wait --path settings.mj_speed --contains "Passed" --timeout 40
+# 三模块重构：/anthropic 无 models 端点 → messages 握手 400 = 协议可达
+# → 明确 PassedEmpty（不再是含糊的 Passed 前缀匹配）
+check CASE2 "测速通过（PassedEmpty：连通但无目录）" "$PUI" wait --path settings.mj_speed --contains "PassedEmpty" --timeout 60
 if [ "$(ds_models)" -gt 0 ]; then
   check CASE2 "目录合并进账本" test "$(ds_models)" -gt 0
   check CASE2 "内存目录出现该商" node -e "process.exit(JSON.parse(process.argv[1]).mj_catalog_providers.includes('pf-test-ds')?0:1)" "$(snap)"
