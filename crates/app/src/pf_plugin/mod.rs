@@ -1369,6 +1369,9 @@ impl Chat {
             let id = entry.manifest.id.clone();
             self.plugins.claims.retain(|c| c.plugin_id != id);
             pi_link::hidden_sessions::clear_owned(&id);
+            // 90-9 §8 摘除：会话挂载清单里本插件的 ext 条目全量摘掉——残留会
+            // 在下次 spawn 把 ext 带回进程（真机：面板 off 重启还能收发，tc6）
+            let _ = pi_link::session_ext::purge_exec_entries(&id);
         }
         if let Some(entry) = self.plugins.plugins.get_mut(ix) {
             // 90-9 §6：停用 = 唯一销毁入口，unload() 先于丢运行时（卸载/更新
@@ -1999,6 +2002,37 @@ impl Chat {
             return false;
         };
         pi_link::service_ext::config_path_if_any(&base, key).is_some()
+    }
+
+    /// 摘除活跃运行时里本插件的 ext（attach 逆操作，90-9 §8）：evict/停用后
+    /// 运行中的进程还带着已挂载 ext——空闲即就地重启摘掉；忙 → spawn 前过滤
+    /// （ext_source_registered）+ 清单已 purged，下次 spawn 生效。
+    pub(crate) fn plugin_detach_active_ext(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        let ext_paths: Vec<String> = match self.plugins.plugins.get(ix) {
+            Some(e) => e
+                .manifest
+                .pi_extensions
+                .iter()
+                .map(|rel| e.manifest.dir.join(rel).to_string_lossy().into_owned())
+                .collect(),
+            None => return,
+        };
+        if ext_paths.is_empty() {
+            return;
+        }
+        let key = self.pool.active_key.clone();
+        let Some(rt) = self.pool.runtimes.get(&key).cloned() else {
+            return;
+        };
+        let busy = rt.read(cx).agent_running;
+        if busy {
+            return; // 下次 spawn 生效
+        }
+        rt.update(cx, |r, cx| {
+            r.ext_sources.retain(|e| !ext_paths.iter().any(|p| e == p));
+            r.shutdown_process();
+            r.ensure_spawned(cx);
+        });
     }
 
     /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通

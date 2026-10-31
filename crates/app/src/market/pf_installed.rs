@@ -79,7 +79,11 @@ impl Chat {
                 crate::pf_plugin::spawn_precompile_installed();
             }
             // 停用：运行态就地撤下（含左 dock 退默认），否则面板还照旧渲染
-            (false, Some(ix)) => self.plugin_evict(ix),
+            (false, Some(ix)) => {
+                self.plugin_evict(ix);
+                // 摘除活跃运行时里的 ext（空闲即重启；忙 = 下次 spawn 生效）
+                self.plugin_detach_active_ext(ix, cx);
+            }
             (false, None) => {} // 未装载，无运行态可撤
         }
         cx.notify();

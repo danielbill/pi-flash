@@ -294,6 +294,40 @@ pub(crate) struct SessionRuntime {
     nav_dirty: bool,
 }
 
+/// 挂载源放行判定（tc6）：插件包源（`/plugins/<pkg>/…`）须注册在案且未停用；
+/// 非插件包源（PF 扩展等）不过问。
+fn ext_source_allowed(src: &str, ledger: &[pi_link::pf_plugins::LedgerEntry]) -> bool {
+    let norm = src.replace('\\', "/");
+    if !norm.contains("/plugins/") {
+        return true;
+    }
+    ext_source_registered(src, ledger)
+}
+
+/// 挂载源注册状态检查（90-9 §8 摘除面，tc6）：src 形如 `<…>/plugins/<pkg>/…`
+/// → 包目录须有清单（未卸载）且台账未停用。
+fn ext_source_registered(src: &str, ledger: &[pi_link::pf_plugins::LedgerEntry]) -> bool {
+    let norm = src.replace('\\', "/");
+    let Some(idx) = norm.rfind("/plugins/") else {
+        return false;
+    };
+    let rest = &norm[idx + "/plugins/".len()..];
+    let Some(pkg) = rest.split(['/', '\\']).next() else {
+        return false;
+    };
+    if pkg.is_empty() {
+        return false;
+    }
+    let manifest =
+        std::path::Path::new(&norm[..idx + "/plugins/".len() + pkg.len()]).join("pf-plugin.toml");
+    if !manifest.is_file() {
+        return false; // 已卸载
+    }
+    pi_link::pf_plugins::dir_aliases(pkg)
+        .iter()
+        .any(|a| ledger.iter().any(|l| &l.name == a && !l.disabled))
+}
+
 impl SessionRuntime {
     pub(crate) fn new(key: String, cwd: PathBuf, file: Option<PathBuf>) -> Self {
         // 会话级扩展清单：**绑定会话的独立数组**（用户定稿）。全局 settings
@@ -305,6 +339,12 @@ impl SessionRuntime {
             .unwrap_or_default();
         if ext_sources.is_empty() {
             ext_sources = pi_link::skills::enabled_package_sources();
+        }
+        // 停用/卸载插件的残留挂载源失效（tc6）：创建时 store 读入的清单只增
+        // 不减，spawn 前按注册状态过滤（PF 扩展源不过问）
+        {
+            let ledger = pi_link::pf_plugins::load_ledger();
+            ext_sources.retain(|src| ext_source_allowed(src, &ledger));
         }
         Self {
             key,
@@ -385,6 +425,8 @@ impl SessionRuntime {
             extra.push("--session".into());
             extra.push(f.to_string_lossy().into());
         }
+        // tc6：挂载源注册过滤的台账（custom 档 ext_sources + store 清单共用）
+        let ledger = pi_link::pf_plugins::load_ledger();
         match self.tools_preset.as_str() {
             // spawn-arg tool selection (pi-web uses in-process
             // setActiveToolsByName; the RPC surface has no live switch).
@@ -416,8 +458,15 @@ impl SessionRuntime {
             // 自定义（原 full+plugins）：不发 --tools（注册级 allowlist 会把
             // 插件工具挡在注册之外），走 -ne + 逐条 -e + full_activate.ts
             "custom" => {
+                // tc6：ext_sources 同过注册过滤（创建/rebind 链路可能带回
+                // 已停用插件的残留源）
+                let ext_sources: Vec<String> = {
+                    let mut v = self.ext_sources.clone();
+                    v.retain(|src| ext_source_allowed(src, &ledger));
+                    v
+                };
                 extra.extend(crate::session::tools_recipe::full_plugin_args(
-                    &self.ext_sources,
+                    &ext_sources,
                     &self.cwd,
                 ));
             }
@@ -428,9 +477,15 @@ impl SessionRuntime {
         // 插件 ext 在 full/default 档下永远挂不上（-e 缺席，出码/收发无人
         // 执行）。已挂过的（custom 档经 ext_sources）不重复。
         if let Some(store) = pi_link::session_ext::store_path() {
+            // 停用/卸载后的残留挂载条目必须失效（真机 2026-10-31：面板 off 重启
+            // 后 ext 照跑还能收发——store 只增不减，spawn 前按注册状态过滤；
+            // 插件仓 tc6 锁回归）
             for src in pi_link::session_ext::read_for(&store, &self.key) {
                 // 契约 v4：插件的 pi/*.mjs 是执行域入口，再当扩展挂载会整批 -e 失败
                 if pi_link::service_ext::is_exec_entry(std::path::Path::new(&src)) {
+                    continue;
+                }
+                if !ext_source_allowed(&src, &ledger) {
                     continue;
                 }
                 if !self.ext_sources.iter().any(|e| e == &src) {
