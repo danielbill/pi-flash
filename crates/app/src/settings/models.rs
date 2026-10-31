@@ -527,13 +527,14 @@ fn mc_models_sidebar(
     enabled_filter_value: &str,
     t: &'static crate::appearance::theme::Theme,
 ) -> gpui::AnyElement {
-    // ---- Provider 全集 + 归属（042-1 UI：内置在上、自定义在下）-------------
+    // ---- Provider 全集 + 归属（042-1 UI：内置及插件在上、自定义在下）-------
     // 归属判据 = **在不在 pi 的 SDK 注册表**，不是「谁写的文件」：models.json
     // 里出现内置商条目（走代理只改 baseUrl / upsert 模型）是合法覆盖，不能
     // 因此判成自定义商。注册表未就绪时按旧判据过渡（models.json 有条目）。
     // 注册表就绪后仍需 models.json 条目佐证才算自定义——扩展注册的 provider
-    //（pi-freeflow 等）同样不在注册表 dump 里，但 models.json 没它的条目，
-    // 不得混进自定义组（2026-11-01 反馈）。
+    //（pi-freeflow 等）同样不在注册表 dump 里，但 models.json 没它的条目：
+    // 不进自定义组，归「内置及插件」组、无凭据也出列（用户要能看到插件带
+    // 的模型，2026-11-01 反馈）。
     let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
     let custom_entries: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&models_doc);
@@ -545,6 +546,12 @@ fn mc_models_sidebar(
         };
         src == pi_link::registry::ProviderSource::Custom
     };
+    let is_extension = |p: &str| -> bool {
+        chat.cfg
+            .provider_registry
+            .as_deref()
+            .is_some_and(|dump| dump.is_extension_provider(p, in_models_json(p)))
+    };
     // models.json 里用户手写的 apiKey 也算「已配置」（规则 1：只读不改）
     let key_in_models_json = |p: &str| {
         custom_entries.iter().any(|(n, e)| {
@@ -555,11 +562,12 @@ fn mc_models_sidebar(
         })
     };
     // 列表 = 用户在用的那一份：内置商按「有凭据」入列（移除凭据即出列），
-    // 自定义商按「models.json 有条目」入列（删除条目即出列）。没有隐藏清单。
+    // 自定义商按「models.json 有条目」入列（删除条目即出列），扩展注册的
+    // provider（插件带模型）恒入列——归上面那组。没有隐藏清单。
     let mut provs: Vec<String> = chat
         .mc_provider_ids()
         .into_iter()
-        .filter(|p| chat.mc_configured(p) || is_custom(p))
+        .filter(|p| chat.mc_configured(p) || is_custom(p) || is_extension(p))
         .collect();
     provs.extend(custom_entries.iter().map(|(n, _)| n.clone()));
     // 去重保序（models.json 的商可能已从目录进过一次）

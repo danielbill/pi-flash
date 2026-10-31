@@ -11,6 +11,9 @@
 //! 孤儿锁耗满 30s stale 死线才放行，曾致弹窗"读取注册表"挂几十秒），
 //! 结果落 `registry-cache.json`，
 //! 以 [`crate::vendor::vendored_version`] 为缓存键，bump vendor 自动失效。
+//! dump 在 `PI_CODING_AGENT_DIR` 指向的**空沙箱**里跑——`ModelRuntime` 会把
+//! agent 目录 models.json 的自定义商装进 `getProviders()`，归属判据会被
+//! models.json 污染；载荷带 `staticOnly` 标记，旧非静态缓存一律失效。
 //!
 //! 分组/过滤语义照抄 pi-web：
 //! - API KEY 组 = 声明 `apiKey.login` 且当前凭据**不是** `api_key`（OAuth
@@ -68,6 +71,12 @@ pub struct RegistryDump {
     /// （会话 picker 非虚拟化，全量灌入踩性能铁律）。
     #[serde(default)]
     pub models: Vec<crate::protocol::ModelInfo>,
+    /// dump 是否为**纯静态注册表**（PI_CODING_AGENT_DIR 指向空目录生成）。
+    /// 旧 dump 在用户 agent 目录里跑，`ModelRuntime` 会把 models.json 的自定义
+    /// 商也装进 getProviders()——归属判据「在不在注册表」被 models.json 污染
+    /// 且随缓存时机漂移。无此标记的缓存一律失效重 dump。
+    #[serde(default, rename = "staticOnly")]
+    pub static_only: bool,
 }
 
 /// Provider 归属（042-1）：判据是**在不在 pi 的 SDK 注册表**，而不是「谁写的
@@ -95,16 +104,25 @@ impl RegistryDump {
         self.providers.iter().any(|p| p.id == id)
     }
 
-    /// 归属判定（注册表就绪时）。`in_models_json` = models.json 里有没有该商
-    /// 的条目：不在 SDK 注册表的商有两类——models.json 自定义商，以及**扩展
-    /// 注册的 provider**（pi-freeflow 等，注册表 dump 不装载扩展）。后者
-    /// models.json 没条目，不得判成自定义（曾混进设置页自定义组）。
+    /// 归属判定（注册表就绪时）。dump 为**纯静态注册表**（agent 目录置空的
+    /// 沙箱里生成，不含 models.json / 扩展内容），所以：`in_models_json` =
+    /// models.json 里有条目 → 自定义（内置商的 models.json 覆盖条目不算，
+    /// 见 [`Self::has_provider`]）；不在静态注册表且 models.json 无条目 →
+    /// 扩展注册的 provider（pi-freeflow 等，归「内置及插件」组，不是自定义）。
     pub fn source(&self, id: &str, in_models_json: bool) -> ProviderSource {
         if self.has_provider(id) || !in_models_json {
             ProviderSource::Builtin
         } else {
             ProviderSource::Custom
         }
+    }
+
+    /// 扩展注册的 provider（注册表就绪时）：不在静态注册表且 models.json
+    /// 无条目。与 [`Self::source`] 的 Builtin 分支互补——归属上不是内置也
+    /// 不是自定义，设置页归「内置及插件」组、无凭据也出列（否则插件带的
+    /// 模型用户看不见）。
+    pub fn is_extension_provider(&self, id: &str, in_models_json: bool) -> bool {
+        !self.has_provider(id) && !in_models_json
     }
 
     pub fn credential(&self, id: &str) -> Option<&str> {
@@ -157,12 +175,14 @@ fn cache_file() -> Option<std::path::PathBuf> {
 }
 
 /// 读盘上缓存；vendor VERSION 不一致（或字段缺失）视为失效。旧格式缓存
-/// （无 `models` 键，serde default 为空）同样失效——重 dump 补全静态目录。
+/// （无 `models` 键或非静态 dump——无 `staticOnly` 标记，serde default 为
+/// false）同样失效——重 dump 补全。
 pub fn read_cache() -> Option<RegistryDump> {
     let path = cache_file()?;
     let text = std::fs::read_to_string(path).ok()?;
     let dump: RegistryDump = serde_json::from_str(&text).ok()?;
     if dump.version != vendored_version().unwrap_or_default()
+        || !dump.static_only
         || dump.providers.is_empty()
         || dump.models.is_empty()
     {
@@ -216,7 +236,7 @@ const models = allModels.map((m) => ({
 }));
 const credentials = {};
 for (const c of await rt.listCredentials()) credentials[c.providerId] = c.type;
-process.stdout.write(JSON.stringify({ providers, counts, credentials, models }));
+process.stdout.write(JSON.stringify({ providers, counts, credentials, models, staticOnly: true }));
 "#;
 
 /// 同步执行 dump 并落缓存——**只在后台线程调用**（阻塞一次 node 进程）。
@@ -237,6 +257,14 @@ fn dump() -> Result<RegistryDump, String> {
 
     let mut cmd = std::process::Command::new(vendor::node_bin());
     cmd.arg(&script).arg(&entry);
+    // 纯静态注册表：ModelRuntime 会把 agent 目录里 models.json 的自定义商
+    // 也装进 getProviders()——归属判据「在不在注册表」就没了立足点（自定义
+    // 商 ds 曾随 dump 时机混进内置组）。指向空目录 = dump 只含 SDK 静态
+    // 注册表；目录留盘不清（%TEMP% 卫生交给系统，删除走回收站的规矩不碰它）
+    let sandbox =
+        std::env::temp_dir().join(format!("pi-flash-registry-dump-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&sandbox);
+    cmd.env("PI_CODING_AGENT_DIR", &sandbox);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -395,7 +423,10 @@ mod tests {
         // models.json 有条目 = 自定义
         assert_eq!(d.source("ds", true), ProviderSource::Custom);
         // 不在注册表**且** models.json 无条目 = 扩展注册的 provider
-        //（pi-freeflow 等），不是自定义
+        //（pi-freeflow 等）：非自定义，但归「内置及插件」组出列
         assert_eq!(d.source("freeflow", false), ProviderSource::Builtin);
+        assert!(d.is_extension_provider("freeflow", false));
+        assert!(!d.is_extension_provider("freeflow", true));
+        assert!(!d.is_extension_provider("deepseek", false));
     }
 }
