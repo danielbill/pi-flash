@@ -146,7 +146,8 @@ pub mod panel_ctrl {
 }
 
 /// §5.12 分隔线（统一规范，2026-10-23 定夺）：常驻 1px 细线；hover 与拖拽
-/// 同款 4px accent 粗线；感应厚度三处统一。高亮线一律 absolute 覆盖、不占
+/// 同款 accent 粗线（宽度唯一落点 = [`HOVER`]）；感应厚度三处统一。高亮线
+/// 一律 absolute 覆盖、不占
 /// 布局 = hover 零推挤（border 占布局，换粗细会抖）。唯一实现
 /// `ui::divider`（LineSpec + line），调用方禁止就地手画；hover 用显式状态
 /// 位，不得用 gpui hover/group_hover 改粗细（refine 受 has_active_drag
@@ -157,7 +158,7 @@ pub mod divider {
     /// 常驻视觉线
     pub const LINE: f32 = 1.;
     /// hover/拖拽高亮粗线
-    pub const HOVER: f32 = 4.;
+    pub const HOVER: f32 = 3.;
     /// 感应带厚度（三处统一；竖直分隔线的摆位另定：面板侧 3px 避让列表
     /// 滚动条，其余落在内容侧）
     pub const HIT: f32 = 12.;
@@ -291,7 +292,7 @@ mod tests {
         );
         // §5.10 面板控制栏（020-1） / §5.12 分隔线（统一规范）
         assert_eq!([panel_ctrl::BAR_H, panel_ctrl::BTN_H], [38., 30.]);
-        assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 4., 12.]);
+        assert_eq!([divider::LINE, divider::HOVER, divider::HIT], [1., 3., 12.]);
         // §7 图标对齐线（含推导值）
         assert_eq!(
             [

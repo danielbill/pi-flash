@@ -285,7 +285,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 ### 5.12 分隔线（统一规范）
 
-壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 4px accent 粗线；感应厚度统一 12px**（`tokens::divider::HIT`；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局。
+壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 3px accent 粗线；感应厚度统一 12px**（粗线宽度唯一落点 = `tokens::divider::HOVER`；`tokens::divider::HIT`；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局。
 
 **唯一实现**：`ui::divider`（`LineSpec::{vertical,horizontal}` + `line`）。新增可拖拽分隔线一律调它，禁止就地手画。常驻线/highlight 颜色也由该函数按主题语义 token 统一取（细线灰 `border_alpha(0x99)` / accent），调用方不各传一种灰。
 
@@ -297,7 +297,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | dock 上下分区（横） | 会话列表 ⇆ 文件树之间 | 12px | 10（对齐列表右线） | `LayoutUi::split_hover` / `split_drag` |
 | 插件面板分区（横） | 快捷面板各 section 之间 | 12px | 0 | `PluginEntry::split_hover` / `split_drag` |
 
-横线在感应带内垂直居中（`(band - thick) / 2`）= 1px↔4px 中线不动；拖拽跟踪各自在壳层/面板层做（内容区在 `app-body`、dock 在 `app-body`、插件在面板透明覆层），不进本组件。代码落点 `tokens::divider`（LINE=1 / HOVER=4 / HIT=7）。
+横线在感应带内垂直居中（`(band - thick) / 2`）= 粗细变化中线不动；拖拽跟踪各自在壳层/面板层做（内容区在 `app-body`、dock 在 `app-body`、插件在面板透明覆层），不进本组件。代码落点 `tokens::divider`（LINE / HOVER / HIT，数值唯一落点，勿在此复写）。
 
 ---
 
