@@ -443,3 +443,4 @@
   「更新 ↑」按钮（更新中 → 「更新中…」+ spinner，pending 单飞防并发）
 - i18n 零新增（`market.btn.update`/`market.pf.updating` 存量死键激活）
 - 测试：`pf_updatable` 单测 2 例；test/090-10/插件更新/testcase.md（人工清单 M1-M10）
+- 验收：dev-market 本地假 registry 全链路人工验收通过（0.1.5→0.2.0→0.3.0 两轮更新）
