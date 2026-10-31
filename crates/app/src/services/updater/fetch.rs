@@ -2,12 +2,12 @@
 //! SHA-256 校验 / zip 解压消毒 / 进度原子量 / stage_update 落位 /
 //! last_seen 与更新日志缓存。自 updater.rs 拆出（090 重构）。
 
+use super::*;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use super::*;
 
 // ---------------------------------------------------------------------------
 // release 拉取
@@ -390,7 +390,11 @@ pub(crate) fn download_and_hash_cfg(
 
 /// 按候选源逐个试下载（每源一次，测速不过/网络错误都换下一个），全灭才报错。
 /// 返回（zip 的 SHA-256，命中源 base——校验和钉官方优先时兜底用）。
-pub(crate) fn download_mirrored(asset: &str, dest: &Path, ver: &str) -> Result<(String, String), String> {
+pub(crate) fn download_mirrored(
+    asset: &str,
+    dest: &Path,
+    ver: &str,
+) -> Result<(String, String), String> {
     download_mirrored_cfg(
         asset,
         dest,
@@ -553,4 +557,3 @@ pub(crate) fn read_changelog_cache(version: &str) -> Option<String> {
         .ok()
         .filter(|s| !s.trim().is_empty())
 }
-

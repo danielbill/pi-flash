@@ -104,7 +104,9 @@ pub(crate) fn memory_path() -> Option<PathBuf> {
 /// Shared in-process cache for the workspace memory map (one static for
 /// both read and write paths — startup used to hit the file four times:
 /// lang, sound, last workspace, last open).
-pub(crate) fn with_memory_cache<T>(f: impl FnOnce(&mut Option<serde_json::Map<String, Value>>) -> T) -> T {
+pub(crate) fn with_memory_cache<T>(
+    f: impl FnOnce(&mut Option<serde_json::Map<String, Value>>) -> T,
+) -> T {
     static CACHE: Mutex<Option<serde_json::Map<String, Value>>> = Mutex::new(None);
     let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     f(&mut guard)

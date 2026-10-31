@@ -9,7 +9,6 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-
 /// Window bounds / maximized flag (schema landed in phase A, consumed by
 /// the phase-D shell).
 const WS_WINDOW_KEY: &str = "__window";

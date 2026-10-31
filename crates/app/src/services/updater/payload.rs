@@ -2,11 +2,11 @@
 //! `next_payload`（staged 新载荷挑选）/ `handoff_if_newer`（启动交接）/
 //! 旧载荷后台清理。自 updater.rs 拆出（090 重构）。
 
+use super::*;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use super::*;
 
 // ---------------------------------------------------------------------------
 // 落位布局：载荷目录 = exe 所在目录；安装根 = 它的父目录
@@ -310,4 +310,3 @@ pub(crate) fn touch_tree(dir: &Path) -> (usize, u128) {
     );
     (n, ms)
 }
-
