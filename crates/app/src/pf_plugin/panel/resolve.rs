@@ -625,4 +625,3 @@ mod tests {
         assert!(matches!(resolve(&v), Some(ResolvedNode::Canvas { .. })));
     }
 }
-

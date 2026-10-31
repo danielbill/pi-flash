@@ -117,4 +117,3 @@ pub(crate) fn placeholder_center(text: &str, t: &'static Theme) -> gpui::AnyElem
         .child(SharedString::from(text.to_string()))
         .into_any_element()
 }
-
