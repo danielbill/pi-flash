@@ -1788,6 +1788,16 @@ impl Chat {
         if !self.plugin_ready(ix, cx) {
             return;
         }
+        // 内层 wasm 插件：同一事件通道（on-event kind=command，path 裸串与
+        // JS fire_command 同面）。上一版缺这个分支：wasm 条目 entry.js = None，
+        // 下方 unwrap 直接 panic——且 panic 发生在 window_procedure 里
+        // cannot unwind，app 整体退出（quick-panel 右键「移除快捷」必崩，
+        // 真机 2026-10-31）。姊妹函数（refresh/menu_fire/command_fire_env/
+        // broadcast/page_active）都有 wasm 早退分支，唯此漏。
+        if self.plugins.plugins[ix].wasm.is_some() {
+            self.plugin_wasm_event(ix, "command", command_id, path, window, cx);
+            return;
+        }
         let (result, actions) = {
             let entry = &mut self.plugins.plugins[ix];
             let host = entry.host.as_ref().unwrap().clone();
