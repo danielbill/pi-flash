@@ -8,8 +8,8 @@ use super::*;
 use std::collections::HashMap;
 
 use gpui::{
-    Animation, AnimationExt, FontWeight, MouseButton, SharedString, div, prelude::*, px,
-    relative, rgb, rgba,
+    Animation, AnimationExt, FontWeight, MouseButton, SharedString, div, prelude::*, px, relative,
+    rgb, rgba,
 };
 
 use crate::Chat;
@@ -596,4 +596,3 @@ pub(super) fn alert_box(
         .child(SharedString::from(text))
         .into_any_element()
 }
-

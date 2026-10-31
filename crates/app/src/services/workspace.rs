@@ -24,6 +24,7 @@ pub use app_settings::*;
 pub use store::{TABS_SAVE_CAP, file_sig, is_under, project_name, same_path, same_ws, same_ws_key};
 pub use ws_state::*;
 
+#[allow(unused_imports)] // load_map_from 仅 tests 用（cfg(test) 不可见会误报）
 pub(crate) use store::{
     WS_LANG_KEY, WS_LAST_KEY, WS_SOUND_KEY, WS_TABS_KEY, app_owned_cwd, load_map_from,
     load_plain_map_from, memory, save_map_to, set_memory, ws_key,

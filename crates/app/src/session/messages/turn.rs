@@ -2,13 +2,11 @@
 //! （组内条目计数/答案起点切分/模型标签）与 written_files 芯片。
 //! 用户行件在 [`super::user_row`]（090 重构拆分）。
 
-use super::*;
 use super::user_row::{bar_hover_wired, render_block};
+use super::*;
 use std::collections::HashMap;
 
-use gpui::{
-    MouseButton, SharedString, div, prelude::*, px, rgb, rgba,
-};
+use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb, rgba};
 use pi_link::protocol::Block;
 
 use crate::Chat;
@@ -503,4 +501,3 @@ fn written_files_chips(
     }
     Some(chips.into_any_element())
 }
-
