@@ -1561,8 +1561,17 @@ impl Chat {
         // 编译产物缓存绑在插件安装目录（卸载即清、整目录拷走跟着走）。
         // 安装时已预编译过 → 这里命中是常态（mmap 反序列化，毫秒级）。
         let cache = pi_link::pf_plugins::plugin_cache_for(&entry.manifest.dir);
+        // **装载中守卫（所有路径之前）**：后台编译期间 entry.wasm 仍是 None，
+        // 而徽标/面板/快照渲染链每拍都调 plugin_ready——无守卫时每拍再 spawn
+        // 一个后台装载任务，真机实测 1 秒内 47 条 load（全量编译 4-6s/条，
+        // 2026-10-31 e2e 日志）。守卫只放在后台分支还不够：后台 load_cached
+        // 中途把产物写进缓存后 cached 翻 true，同步路径会绕过分支再装一份
+        // （双实例双日志）——Loading 态一律拒绝，无论缓存命中与否。
+        if entry.state == lifecycle::State::Loading {
+            return false;
+        }
         // 缓存未命中（手工摆包/旧版安装）：编译秒级重活不许进主线程 →
-        // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」
+        // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」。
         let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
         if !cached {
             entry_state(entry, lifecycle::Ev::LoadStart);
