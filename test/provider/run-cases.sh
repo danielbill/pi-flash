@@ -34,7 +34,7 @@ check() { # check <case> <描述> <条件命令...>
 known_fail() { # 期望当前是 bug 态：断言失败 = 复现（KNOWN）；断言通过 = bug 已修（PASS）
   local case="$1" desc="$2"; shift 2
   if "$@" >/dev/null 2>&1; then
-    RESULTS+=("PASS  $case  $desc（bug 已修复！）"); PASS=$((PASS+1))
+    RESULTS+=("PASS  $case  $desc"); PASS=$((PASS+1))
   else
     RESULTS+=("KNOWN $case  $desc（复现已知 bug）"); KNOWN=$((KNOWN+1))
   fi
@@ -91,7 +91,7 @@ fi
 mj settings.mj_form --arg name=pf-test-ds-renamed
 mj settings.mj_speedtest
 "$PUI" wait --path settings.mj_speed --contains "Passed" --timeout 40
-known_fail CASE2B "无重复商（唯一 pf-test-ds）" node -e "
+check CASE2B "无重复商（唯一 pf-test-ds）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 const ks=Object.keys(d.providers||{}).filter(k=>k.startsWith('pf-test'));
 process.exit(ks.length===1&&ks[0]==='pf-test-ds'?0:1)"
@@ -106,7 +106,7 @@ N=$(ds_models)
 check CASE3 "模型行 section 打开（ix=$N）" "$PUI" wait --path settings.section --eq "mj:m:pf-test-ds:$N" --timeout 10
 mj settings.mj_model_form --arg id=pf-test-manual --arg ctx=8192 --arg max_tokens=4096 --arg reasoning=true
 mj settings.mj_model_save
-known_fail CASE3 "手加模型落盘（id=pf-test-manual）" node -e "
+check CASE3 "手加模型落盘（id=pf-test-manual）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit(((((d.providers||{})['pf-test-ds']||{}).models)||[]).some(x=>x.id==='pf-test-manual')?0:1)"
 mj settings.mj_model_close
@@ -157,7 +157,7 @@ mj settings.mj_select --arg section="mj:p:pf-test-zg"
 sleep 1
 mj settings.mj_fetch
 sleep 12   # 真网络探测（20s 超时内）；成功=无错误条，失败=error 条
-known_fail CASE6 "刷新无鉴权错误（error 条为空）" node -e "
+check CASE6 "刷新无鉴权错误（error 条为空）" node -e "
 process.exit(JSON.parse(process.argv[1]).error?1:0)" "$(snap)"
 check CASE6 "刷新后目录仍可用（模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_models)"
 
@@ -172,12 +172,41 @@ check CASE7 "section 切到新名" "$PUI" wait --path settings.section --eq "mj:
 check CASE7 "磁盘改名完成" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit((d.providers||{})['pf-test-zg-rn']&&!(d.providers||{})['pf-test-zg']?0:1)"
-known_fail CASE7 "内存目录换名（旧名消失、新名出现）" node -e "
+check CASE7 "内存目录换名（旧名消失、新名出现）" node -e "
 const s=JSON.parse(process.argv[1]).mj_catalog_providers;
 process.exit(!s.includes('pf-test-zg')&&s.includes('pf-test-zg-rn')?0:1)" "$(snap)"
 check CASE7 "凭据跟名搬家（auth.json 新名有标记）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));
 process.exit(d['pf-test-zg-rn']&&d['pf-test-zg-rn'].key.startsWith('!')?0:1)"
+
+# ---------- CASE9 手写条目只读（2026-10-31 定稿：auth.json 无 PF 标记 = 非托管，
+# PF 只显示不修改。判据 = pif-secret 命令引用形态，人工不可能手写）----------
+node -e "
+const fs=require('fs');
+const d=JSON.parse(fs.readFileSync('$MODELS','utf8'));
+d.providers['hand-made-ds']={name:'hand-made-ds',baseUrl:'https://api.deepseek.com',api:'openai-completions',apiKey:'sk-handwritten-plain'};
+fs.writeFileSync('$MODELS',JSON.stringify(d,null,2));"
+mj settings.mj_select --arg section="mj:p:hand-made-ds"
+"$PUI" wait --path settings.section --eq "mj:p:hand-made-ds" --timeout 10
+mj settings.mj_save
+check CASE9 "保存被拒（错误条=只读提示）" node -e "
+const s=JSON.parse(process.argv[1]);
+process.exit((s.error||'').includes('手写')?0:1)" "$(snap)"
+mj settings.mj_speedtest
+check CASE9 "测速被拒（链路含自动保存写盘）" node -e "
+const s=JSON.parse(process.argv[1]);
+process.exit((s.error||'').includes('手写')?0:1)" "$(snap)"
+check CASE9 "条目未被改写（apiKey 原文还在）" test "$(jm_get '.providers["hand-made-ds"].apiKey')" = '"sk-handwritten-plain"'
+check CASE9 "未写凭据标记（auth.json 无该商）" node -e "
+const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));
+process.exit(d['hand-made-ds']?1:0)"
+mj settings.mj_select --arg section="mj:p:pf-test-zg-rn"
+# 清理：PF 不删手写条目（删除也守卫），测试自己摘
+node -e "
+const fs=require('fs');
+const d=JSON.parse(fs.readFileSync('$MODELS','utf8'));
+delete d.providers['hand-made-ds'];
+fs.writeFileSync('$MODELS',JSON.stringify(d,null,2));"
 
 # ---------- CASE8 删除 Provider（teardown：盘+auth.json+keyring 三清）----------
 for P in $(node -e "const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));console.log(Object.keys(d.providers||{}).filter(k=>k.startsWith('pf-test')).join(' '))"); do

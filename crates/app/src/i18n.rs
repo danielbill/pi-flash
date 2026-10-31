@@ -636,6 +636,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("custom_models.name_invalid", "Provider 名称只能使用字母、数字、_ 和 -", "Provider 名稱只能使用字母、數字、_ 和 -", "Provider name may only contain letters, digits, _ and -"),
     ("custom_models.name_required", "Provider 名称不能为空", "Provider 名稱不能為空", "Provider name must not be empty"),
     ("custom_models.name_exists", "Provider「{name}」已存在，请换个名字", "Provider「{name}」已存在，請換個名字", "Provider \"{name}\" already exists — pick another name"),
+    ("custom_models.readonly_hint", "该条目为 models.json 手写，PF 只显示不修改", "該條目為 models.json 手寫，PF 只顯示不修改", "Hand-written in models.json — displayed read-only, PF never modifies it"),
     ("custom_models.new_model", "新模型", "新模型", "New model"),
     ("custom_models.reasoning_badge", "推理模型（T 徽标）", "推理模型（T 徽標）", "Reasoning model (T badge)"),
     ("dock.mcp", "MCP", "MCP", "MCP"),
