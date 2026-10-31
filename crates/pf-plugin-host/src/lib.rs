@@ -259,9 +259,6 @@ pub struct PluginInstance {
     hook_fn_bar: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
     hook_session_row: Option<wasmtime::component::TypedFunc<(String,), (String,)>>,
     hook_render_popup: Option<wasmtime::component::TypedFunc<(), (String,)>>,
-    /// 90-9 §2 `unload()`（能力面，world 不声明——旧包兼容，声明即强要求）。
-    /// None = 本包未导出（含旧 init 面的包）→ unload no-op。
-    hook_unload: Option<wasmtime::component::TypedFunc<(), ()>>,
     rx: mpsc::Receiver<PluginAction>,
 }
 
@@ -456,7 +453,7 @@ impl PluginInstance {
             },
         );
 
-        let (bindings, hook_fn_bar, hook_session_row, hook_render_popup, hook_unload) = {
+        let (bindings, hook_fn_bar, hook_session_row, hook_render_popup) = {
             let instance = linker.instantiate(&mut store, &component)?;
             // 能力面探测（契约 v3 钩子导出）：world 不声明它们（旧 wasm 包
             // 兼容——声明即强要求，缺导出的包在 Plugin::new 拒载），导出存在
@@ -470,15 +467,8 @@ impl PluginInstance {
             let hook_render_popup = instance
                 .get_typed_func::<(), (String,)>(&mut store, "render-popup")
                 .ok();
-            let hook_unload = instance.get_typed_func::<(), ()>(&mut store, "unload").ok();
             let bindings = Plugin::new(&mut store, &instance)?;
-            (
-                bindings,
-                hook_fn_bar,
-                hook_session_row,
-                hook_render_popup,
-                hook_unload,
-            )
+            (bindings, hook_fn_bar, hook_session_row, hook_render_popup)
         };
         Ok(Self {
             engine,
@@ -487,18 +477,20 @@ impl PluginInstance {
             hook_fn_bar,
             hook_session_row,
             hook_render_popup,
-            hook_unload,
             rx,
             component,
         })
     }
 
-    pub fn init(&mut self, name: &str) -> anyhow::Result<()> {
+    /// 90-9 §3/§10（契约 v5）：装载入口 = `load(plugin-ctx)`，无 init 回退
+    /// （本版一刀切，两在役包同步改造）。ctx = JSON 串，每次调用给完整一份。
+    /// 方法名 load_ctx：与组件装载器 [`Self::load`]（wasm_path）区分。
+    pub fn load_ctx(&mut self, plugin_ctx: &str) -> anyhow::Result<()> {
         let _ = &self.engine;
         let _ = &self.component;
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
-            // WIT：init 返回 Err = 插件自拒（如宿主证明验签失败）→ 拒载并透传原因（失败不静默）。
-            match b.call_init(store, name) {
+            // WIT：load 返回 Err = 插件自拒（如宿主证明验签失败）→ 拒载并透传原因（失败不静默）。
+            match b.call_load(store, plugin_ctx) {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(reason)) => Err(anyhow::anyhow!("插件拒载: {reason}")),
                 Err(e) => Err(e.into()),
@@ -580,20 +572,18 @@ impl PluginInstance {
         self.render_json().map_err(|e| e.to_string())
     }
 
-    /// 90-9 §2 `unload()`：停用/卸载/更新覆盖/退出前的最后一次调用。
-    /// 未导出 = no-op（unload 必需但允许空实现；旧 wasm 包缺导出同空）。
-    /// 无返回值；Err = wasm trap 等——best-effort，宿主只落 plugin.log，
-    /// 不等插件确认存盘（关不掉的插件不能卡住宿主）。
+    /// 90-9 §2 `unload()`（world 必需导出，本版起非能力面探测）：停用/卸载/
+    /// 更新覆盖/退出前的最后一次调用。允许空实现（插件侧 no-op）。Err =
+    /// wasm trap 等——best-effort，宿主只落 plugin.log，不等插件确认存盘
+    /// （关不掉的插件不能卡住宿主）。
     pub fn unload(&mut self) -> Result<(), String> {
-        let Some(f) = self.hook_unload else {
-            return Ok(());
-        };
         let Some(store) = self.store.as_mut() else {
             return Ok(());
         };
-        f.call(&mut *store, ())
-            .and_then(|()| f.post_return(&mut *store))
-            .map_err(|e| e.to_string())
+        let Some(b) = self.bindings.as_mut() else {
+            return Ok(());
+        };
+        b.call_unload(store).map_err(|e| e.to_string())
     }
 
     pub fn pump_actions(&self) -> Vec<PluginAction> {
@@ -700,6 +690,18 @@ fn unquote(v: &str) -> String {
     v.trim_matches('"').trim_matches('\'').to_string()
 }
 
+/// 契约 v5 最小 plugin-ctx（宿主自测用；session null / cwd 空）。
+#[cfg(test)]
+fn test_ctx(id: &str) -> String {
+    serde_json::json!({
+        "plugin": {"id": id, "version": "", "dataDir": ""},
+        "pf": {"version": "host-test", "locale": "zh-CN"},
+        "session": null,
+        "cwd": "",
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,7 +734,8 @@ mod tests {
         // ① 官方 proof → 正常激活
 
         let mut inst = PluginInstance::load(&path).expect("load");
-        inst.init(name).expect("官方 proof 必须激活成功");
+        inst.load_ctx(&test_ctx(name))
+            .expect("官方 proof 必须激活成功");
         // 激活后渲染应有产出（多点校验过的路径；090-5 起 Paint 直绘面退役，回归组件树契约）
         assert!(
             !inst.render_json().expect("render").is_empty(),
@@ -742,14 +745,14 @@ mod tests {
         // ② 占位符（fork 自建/无 key 构建）→ 拒载 + 原因
         install_proof_hook(proof_placeholder);
         let mut inst = PluginInstance::load(&path).expect("load");
-        let err = inst.init(name).expect_err("占位符必须拒载");
+        let err = inst.load_ctx(&test_ctx(name)).expect_err("占位符必须拒载");
         assert!(err.to_string().contains("官方构建"), "原因要可读: {err}");
 
         // ③ 伪造（换钥签名）→ 拒载 + 原因
         if !forged.is_empty() {
             install_proof_hook(proof_forged);
             let mut inst = PluginInstance::load(&path).expect("load");
-            let err = inst.init(name).expect_err("伪造必须拒载");
+            let err = inst.load_ctx(&test_ctx(name)).expect_err("伪造必须拒载");
             assert!(err.to_string().contains("验签失败"), "原因要可读: {err}");
         }
     }
@@ -787,7 +790,8 @@ mod tests {
         ) {
             install_proof_hook(proof_official);
             let mut p = PluginInstance::load(&wasm).expect("load v3");
-            p.init(&plugin_id).expect("官方 proof 必须激活");
+            p.load_ctx(&test_ctx(&plugin_id))
+                .expect("官方 proof 必须激活");
             let chrome = p.fn_bar_json("{}").unwrap().expect("chrome 应有值");
             let v: serde_json::Value = serde_json::from_str(&chrome).unwrap();
             assert_eq!(v["tone"], "text.faint", "未绑 = 灰");
@@ -837,13 +841,13 @@ mod compile_single_flight_tests {
         let cache1 = cache.clone();
         let t1 = std::thread::spawn(move || {
             let mut i = PluginInstance::load_cached(&wasm1, &cache1).expect("t1 load");
-            i.init("t1").ok();
+            i.load_ctx(&test_ctx("t1")).ok();
         });
         let wasm2 = wasm.clone();
         let cache2 = cache.clone();
         let t2 = std::thread::spawn(move || {
             let mut i = PluginInstance::load_cached(&wasm2, &cache2).expect("t2 load");
-            i.init("t2").ok();
+            i.load_ctx(&test_ctx("t2")).ok();
         });
         t1.join().unwrap();
         t2.join().unwrap();

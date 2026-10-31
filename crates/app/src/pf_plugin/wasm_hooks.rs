@@ -77,7 +77,7 @@ pub(super) fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String>
         let load_elapsed = t0.elapsed();
         let t1 = std::time::Instant::now();
         match loaded {
-            Ok(mut inst) => match inst.init(&id) {
+            Ok(mut inst) => match inst.load_ctx(&super::plugin_ctx_json(&id, &m, None)) {
                 Ok(()) => eprintln!(
                     "[pf-plugin] {id} 验签通过（装载 {load_elapsed:?} / init {:?}，后台线程）",
                     t1.elapsed()

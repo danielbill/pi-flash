@@ -79,8 +79,15 @@ world plugin {
 
     import host;
 
-    // 返回 Err = 插件自拒（如宿主证明验签失败）→ 宿主拒载并透传原因（失败不静默）。
-    export init: func(plugin-name: string) -> result<_, string>;
+    // 90-9 §3/§10（契约 v5，本版一刀切无 init 回退）：load(plugin-ctx) =
+    // 装载入口。ctx = JSON 串 {"plugin":{"id","version","dataDir"},
+    // "pf":{"version","locale"},"session":{"key"}|null,"cwd"}，每次调用给
+    // 完整一份，字段只增不改。返回 Err = 插件自拒（如验签失败）→ 宿主拒载
+    // 并透传原因（失败不静默）。
+    export load: func(plugin-ctx: string) -> result<_, string>;
+    // 90-9 §2：停用/卸载/更新覆盖/PF 退出前的最后一次调用（必需，允许空
+    // 实现）。无返回值；best-effort，宿主不等确认。
+    export unload: func();
     // contributes.* 回调（文件树右键 / 组件动作 / 面板打开）
     export on-event: func(ev: plugin-event);
     // 01 规范组件树 JSON（与 JS `render(ctx)` 返回值逐字段一致；值内联、动作显式）

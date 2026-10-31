@@ -41,7 +41,7 @@ use crate::ui::tooltip::WithTip;
 
 /// 本版 PF 支持的清单契约大版本（与插件仓 schema/plugin-contract.json 的
 /// `manifest_schema` 对齐；加/删原语时一并升）
-pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 4;
+pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginManifest {
@@ -464,9 +464,9 @@ fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
                     .as_raw("schema", n)?
                     .parse()
                     .map_err(|_| format!("pf-plugin.toml 行 {}：schema 必须是整数", n + 1))?;
-                if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 {
+                if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 {
                     return Err(format!(
-                        "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（支持 {SUPPORTED_MANIFEST_SCHEMA}/3）"
+                        "pf-plugin.toml：清单 schema {got} 不被本版 PF 支持（支持 {SUPPORTED_MANIFEST_SCHEMA}，兼容 3/4）"
                     ));
                 }
             }
@@ -1566,13 +1566,17 @@ impl Chat {
         let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
         if !cached {
             entry_state(entry, lifecycle::Ev::LoadStart);
+            let manifest = entry.manifest.clone();
             cx.spawn(async move |this, cx| {
                 let t0 = std::time::Instant::now();
                 let res = cx
                     .background_executor()
                     .spawn(async move {
                         let inst = PluginInstance::load_cached(&wasm_path, &cache);
-                        inst.and_then(|mut i| i.init(&id).map(|()| i))
+                        inst.and_then(|mut i| {
+                            let ctx = plugin_ctx_json(&id, &manifest, None);
+                            i.load_ctx(&ctx).map(|()| i)
+                        })
                     })
                     .await;
                 let ms = t0.elapsed().as_millis();
@@ -1620,7 +1624,7 @@ impl Chat {
             }
         };
         let load = t0.elapsed();
-        if let Err(e) = inst.init(&id) {
+        if let Err(e) = inst.load_ctx(&plugin_ctx_json(&id, &entry.manifest, None)) {
             entry_state(entry, lifecycle::Ev::LoadErr);
             lifecycle::log_load(
                 &entry.manifest.dir,
@@ -2670,6 +2674,26 @@ impl Chat {
         let id = entry.manifest.id.clone();
         self.set_status(format!("插件 {id} 出错：{err}"), cx);
     }
+}
+
+/// 契约 v5 plugin-ctx 现组（90-9 §3）：每次装载给完整一份，字段只增不改。
+/// 会话键暂缺省 null（壳侧会话身份走镜像分账，ctx.session 留给后续装载点
+/// 逐调用填）；cwd = 当前项目目录。
+pub(crate) fn plugin_ctx_json(id: &str, m: &PluginManifest, session_key: Option<&str>) -> String {
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    serde_json::json!({
+        "plugin": {
+            "id": id,
+            "version": m.version,
+            "dataDir": m.dir.join("data").to_string_lossy(),
+        },
+        "pf": {"version": env!("CARGO_PKG_VERSION"), "locale": crate::i18n::LANG_LABELS[crate::i18n::lang_ix()]},
+        "session": session_key.map(|k| serde_json::json!({"key": k})),
+        "cwd": cwd,
+    })
+    .to_string()
 }
 
 /// 状态机转移（90-9 §5）：条目状态只能经 [`lifecycle::transition`] 变更。

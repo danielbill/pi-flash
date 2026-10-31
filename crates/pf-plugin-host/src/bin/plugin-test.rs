@@ -15,7 +15,8 @@
 //! - `{"op":"load","wasm":"<path>","cache":"<dir>"}` —— 装载组件（cache 可省 =
 //!   每次全量编译；给了 = sha256 编译缓存，未命中编一次后毫秒级命中）。
 //!   回执带钩子探测面 `has_fn_bar/has_session_row/has_render_popup`。
-//! - `{"op":"init","id":"<plugin-id>","proof":"<proof JSON 串>"}` —— 验签激活。
+//! - `{"op":"init","id":"<plugin-id>","proof":"<proof JSON 串>"}` —— 验签激活
+//!   （契约 v5：调 `load(plugin-ctx)`，ctx 由 runner 现组；op 名沿用 init）。
 //!   proof 由调用方签发（签发流程见内部发布文档），runner 不持有任何密钥。**拒载后实例即弃**（真机同语义）：重测需重新 load。
 //! - `{"op":"fn_bar","env":"<env JSON 串>"}` —— 回 `value` = chrome JSON | null。
 //! - `{"op":"session_row","env":"<env JSON 串>"}` —— 回 `value` = 徽标 JSON | null。
@@ -140,7 +141,24 @@ fn handle(op: &str, cmd: &serde_json::Value, inst: &mut Option<PluginInstance>) 
             let proof = need_str(cmd, "proof", op)?;
             RUNTIME_PROOF.with(|p| *p.borrow_mut() = proof.to_string());
             let i = inst.as_mut().ok_or_else(|| "init 前先 load".to_string())?;
-            match i.init(id) {
+            // 契约 v5：装载入口 = load(plugin-ctx)。runner 现组一份最小 ctx
+            //（session null / cwd = wasm 同目录），case 断言装载与验签语义。
+            let data_dir = cmd["wasm"]
+                .as_str()
+                .and_then(|w| {
+                    std::path::Path::new(w)
+                        .parent()
+                        .map(|d| d.join("data").to_string_lossy().into_owned())
+                })
+                .unwrap_or_default();
+            let ctx = serde_json::json!({
+                "plugin": {"id": id, "version": "", "dataDir": data_dir},
+                "pf": {"version": "plugin-test", "locale": "zh-CN"},
+                "session": null,
+                "cwd": "",
+            })
+            .to_string();
+            match i.load_ctx(&ctx) {
                 Ok(()) => Ok(serde_json::json!({"ok": true})),
                 // 拒载后实例即弃（真机同语义）：验签门只此一次
                 Err(e) => {
