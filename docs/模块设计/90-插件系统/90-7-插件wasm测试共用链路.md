@@ -9,8 +9,7 @@
 内层 wasm 插件（090-5 L3）的行为测试（fn_bar chrome、弹窗画布、命令回环、
 验签门）需要**真宿主运行时**才能跑：wasmtime 组件装载、proof 验签、host
 import（storage/measure/open-popup…）、动作通道。这些只在 PF 的
-`pf-plugin-host` 里有。把测试 case 写进 PF 的 cargo test 曾是权宜形态
-（env 注入 wasm 路径），但 case 属于插件、不属于宿主——PF 里出现任何插件
+`pf-plugin-host` 里有。测试 case 属于插件、不属于宿主——PF 里出现任何插件
 的文案/像素/镜像文件断言都是越界耦合。
 
 ## 分工
