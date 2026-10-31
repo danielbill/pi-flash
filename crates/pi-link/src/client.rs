@@ -153,6 +153,13 @@ pub fn spawn(
                     let mut f = log.lock().unwrap();
                     let _ = write!(f, "[stderr] {text}");
                 }
+                // PI_FLASH_PI_STDERR=1：pi 侧 stderr（扩展 console.error 等）直通
+                // 宿主 stderr——插件通信排障用（[wxbridge] 等）。env 门控，
+                // 缺省关闭：release 零输出烟测门禁不变。
+                if std::env::var("PI_FLASH_PI_STDERR").as_deref() == Ok("1") {
+                    let text = String::from_utf8_lossy(&buf[..n]);
+                    eprint!("[pi-stderr] {text}");
+                }
             }
         });
     }
