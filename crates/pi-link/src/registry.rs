@@ -95,9 +95,12 @@ impl RegistryDump {
         self.providers.iter().any(|p| p.id == id)
     }
 
-    /// 归属判定（注册表就绪时）。
-    pub fn source(&self, id: &str) -> ProviderSource {
-        if self.has_provider(id) {
+    /// 归属判定（注册表就绪时）。`in_models_json` = models.json 里有没有该商
+    /// 的条目：不在 SDK 注册表的商有两类——models.json 自定义商，以及**扩展
+    /// 注册的 provider**（pi-freeflow 等，注册表 dump 不装载扩展）。后者
+    /// models.json 没条目，不得判成自定义（曾混进设置页自定义组）。
+    pub fn source(&self, id: &str, in_models_json: bool) -> ProviderSource {
+        if self.has_provider(id) || !in_models_json {
             ProviderSource::Builtin
         } else {
             ProviderSource::Custom
@@ -381,5 +384,18 @@ mod tests {
         assert_eq!(d.model_count("openrouter"), 0);
         d.model_counts.insert("openrouter".into(), 408);
         assert_eq!(d.model_count("openrouter"), 408);
+    }
+
+    #[test]
+    fn source_requires_models_json_entry() {
+        let d = sample();
+        // 注册表内的商恒为内置（models.json 覆盖条目不改变归属）
+        assert_eq!(d.source("deepseek", true), ProviderSource::Builtin);
+        assert_eq!(d.source("deepseek", false), ProviderSource::Builtin);
+        // models.json 有条目 = 自定义
+        assert_eq!(d.source("ds", true), ProviderSource::Custom);
+        // 不在注册表**且** models.json 无条目 = 扩展注册的 provider
+        //（pi-freeflow 等），不是自定义
+        assert_eq!(d.source("freeflow", false), ProviderSource::Builtin);
     }
 }

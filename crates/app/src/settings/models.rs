@@ -531,13 +531,16 @@ fn mc_models_sidebar(
     // 归属判据 = **在不在 pi 的 SDK 注册表**，不是「谁写的文件」：models.json
     // 里出现内置商条目（走代理只改 baseUrl / upsert 模型）是合法覆盖，不能
     // 因此判成自定义商。注册表未就绪时按旧判据过渡（models.json 有条目）。
+    // 注册表就绪后仍需 models.json 条目佐证才算自定义——扩展注册的 provider
+    //（pi-freeflow 等）同样不在注册表 dump 里，但 models.json 没它的条目，
+    // 不得混进自定义组（2026-11-01 反馈）。
     let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
     let custom_entries: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&models_doc);
     let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);
     let is_custom = |p: &str| -> bool {
         let src = match chat.cfg.provider_registry.as_deref() {
-            Some(dump) => dump.source(p),
+            Some(dump) => dump.source(p, in_models_json(p)),
             None => pi_link::registry::source_without_registry(in_models_json(p)),
         };
         src == pi_link::registry::ProviderSource::Custom
