@@ -706,12 +706,6 @@ mod tests {
     }
 }
 
-/// 端到端几何锁：真 gpui 布局 + 真 [`ChatList`]。
-///
-/// 上面的 `tests` 模块是无窗口单测（`viewport_bounds` 恒 0，结算根本不跑），
-/// 而 v59 三次回归全栽在「公式对、但 gpui 贴底胶水的语义不对」上。这里用 gpui
-/// 测试夹具走一遍真实帧序列：发送帧钉顶 → 下一帧结算 → 回复逐帧增长 → 长过
-/// 内容区交还胶水跟随尾部；断言用条目实际绘制位置（canvas prepaint 抓 bounds）。
 #[cfg(test)]
 mod glue_geometry {
     use std::cell::RefCell;
@@ -723,7 +717,12 @@ mod glue_geometry {
         size,
     };
 
-    use super::{ChatList, PAD_BOTTOM, PAD_TOP};
+    use super::*;
+    /// 端到端几何锁：真 gpui 布局 + 真 [`ChatList`]。上面的 `tests` 模块是
+    /// 无窗口单测（`viewport_bounds` 恒 0，结算根本不跑）；v59 三次回归全栽
+    /// 在「公式对、但 gpui 贴底胶水的语义不对」上。这里用 gpui 测试夹具走
+    /// 一遍真实帧序列：发送帧钉顶 → 下一帧结算 → 回复逐帧增长 → 长过内容区
+    /// 交还胶水跟随尾部；断言用条目实际绘制位置（canvas prepaint 抓 bounds）。
 
     const VIEWPORT: f32 = 1000.;
     /// 内容区高 = 视口 − 上下内边距
