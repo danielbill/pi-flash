@@ -1,5 +1,5 @@
 {
-	"name": "pi-subagents",
+	"name": "pf-subagents",
 	"version": "0.1.0",
 	"description": "Subagent delegation for Pi: dsh-subagent call mechanics, pi-native execution.",
 	"type": "module",

@@ -1,4 +1,4 @@
-//! Locating the bundled subagent extension (`extensions/pi-subagents`).
+//! Locating the bundled subagent extension (`extensions/pf-subagents`).
 //!
 //! PF spawns the vendored pi with `-e <path>` when the extension is present, the
 //! same way `pf_providers` mounts its provider extension (051). The extension is
@@ -7,14 +7,14 @@
 //! Search order:
 //! 1. `PI_FLASH_SUBAGENTS_EXT` (explicit override; the on/off policy lives in
 //!    `crate::dev_flags`, not here)
-//! 2. next to the executable (`<exe_dir>/extensions/pi-subagents`, release layout)
+//! 2. next to the executable (`<exe_dir>/extensions/pf-subagents`, release layout)
 //! 3. one level up (`target/debug/../..`, `cargo run` during dev)
 //! 4. derived from the vendored pi directory (`vendor/pi` → repo root), the
 //!    layout used by `cargo run` and by the macOS `.app` bundle
 
 use std::path::{Path, PathBuf};
 
-const REL: &str = "extensions/pi-subagents/src/index.ts";
+const REL: &str = "extensions/pf-subagents/src/index.ts";
 
 /// 功能总开关（2026-10-19 发布前拍板：subagent 是开发中功能，**默认关**，
 /// 发布包即关态）。机制在 [`crate::dev_flags`]——env `PI_FLASH_SUBAGENTS`

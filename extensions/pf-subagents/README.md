@@ -1,4 +1,4 @@
-# pi-subagents
+# pf-subagents
 
 Subagent delegation for Pi. Call mechanics follow [dsh-subagent](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/subagent);
 execution stays pi-native — the child is a real pi session and the result is a real tool result.

@@ -1,6 +1,6 @@
 # subagent 管理(扩展设计)
 
-> 状态:**扩展侧已实现(`extensions/pi-subagents`);宿主侧配套见 044-1**。
+> 状态:**扩展侧已实现(`extensions/pf-subagents`);宿主侧配套见 044-1**。
 > 结论先行:**采用 dsh-subagent 框架结构,在该框架下纳入 pi 的核心机制;形态为
 > pi package 扩展**(CLI、pi-flash、任何宿主都能加载),不做宿主内置、不做引擎内置。
 > **总开关**:PF 侧默认**不加载**本扩展(dev-flags.json /
@@ -116,7 +116,7 @@ createAgentSessionFromServices({
 ## 8. profile = Agent 定义(用户资产)
 
 **概念分层**:profile 不是扩展私有数据,是**用户的
-Agent 定义资产**(「类」);委派产生的运行记录是「实例」。pi-subagents 是
+Agent 定义资产**(「类」);委派产生的运行记录是「实例」。pf-subagents 是
 manager(机制层),只消费目录约定,不拥有定义——预制与自定义两层由此
 解耦(对齐 dsh「bundle 内置 preset + 补丁自定义」的概念,载体用 pi 的
 目录发现,不搬 cordis 体系)。
@@ -126,7 +126,7 @@ manager(机制层),只消费目录约定,不拥有定义——预制与自定义
 | 来源 | 路径/载体 | 说明 |
 |---|---|---|
 | 自定义 | `~/.pi/agent/agents/*.md` | 用户完全所有;同名覆盖内置 |
-| 内置 | 扩展代码内常量 | 随 pi-subagents 出厂,只读 |
+| 内置 | 扩展代码内常量 | 随 pf-subagents 出厂,只读 |
 
 内置清单:**explorer + general-purpose** 两枚(抄 ZCode 两
 内置;dsh 无出厂内置)。落点 = profile.ts BUILTIN_PROFILE_DOCS +

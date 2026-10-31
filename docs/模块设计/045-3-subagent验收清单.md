@@ -1,12 +1,12 @@
 # subagent M1 验收清单
 
-> 配套 [045-1 开发计划](045-1-subagent开发计划.md)。对象:`extensions/pi-subagents`。
+> 配套 [045-1 开发计划](045-1-subagent开发计划.md)。对象:`extensions/pf-subagents`。
 > **验收主路径就是跑 PF**:`cargo run -p app`,新会话里让模型委派一次,
 > 界面上看到 `agent` 工具卡与子代理结果。下面 CLI 步骤是排查用的下位手段。
 
 ## A. PF 内验收(主路径)
 
-集成方式:PF 起 vendored pi 时追加 `-e extensions/pi-subagents/src/index.ts`
+集成方式:PF 起 vendored pi 时追加 `-e extensions/pf-subagents/src/index.ts`
 (`pi-link/src/subagents.rs` 定位、`client.rs` 挂载;`PI_FLASH_SUBAGENTS=0` 关闭,
 `PI_FLASH_SUBAGENTS_EXT` 覆盖路径)。发版时 `scripts/release.sh` 把扩展一并拷到
 `dist/pi-flash/extensions/`,查找顺序与开发布局一致。
@@ -42,7 +42,7 @@ user → assistant(tool_calls=1)→ assistant("PF-SUBAGENT-OK");子会话文件�
 ## B. 机制层测试(改扩展后必跑)
 
 ```bash
-cd extensions/pi-subagents && node --test "test/*.test.ts"
+cd extensions/pf-subagents && node --test "test/*.test.ts"
 ```
 
 期望:`ℹ tests 64 / ℹ pass 64 / ℹ fail 0`。
@@ -65,7 +65,7 @@ cd extensions/pi-subagents && node --test "test/*.test.ts"
 
 ```bash
 mkdir -p tmp/smoke
-$PI -e extensions/pi-subagents/src/index.ts --session-dir tmp/smoke \
+$PI -e extensions/pf-subagents/src/index.ts --session-dir tmp/smoke \
   --model deepseek/deepseek-flash --no-session \
   -p "Use the agent tool exactly once with prompt 'Reply with exactly: PONG-7'. Then report it."
 ```
@@ -76,7 +76,7 @@ $PI -e extensions/pi-subagents/src/index.ts --session-dir tmp/smoke \
 
 ```bash
 rm -rf tmp/subagent-smoke
-$PI -e extensions/pi-subagents/src/index.ts --model deepseek/deepseek-flash \
+$PI -e extensions/pf-subagents/src/index.ts --model deepseek/deepseek-flash \
   --session-dir tmp/subagent-smoke --mode json -p \
   "Call the agent tool twice in parallel: one child must reply 'AAA', the other 'BBB'. Then report both."
 ```
@@ -145,7 +145,7 @@ You are a probe. Answer in one word.
 - marker 机制落地前的存量子会话文件(无 marker)无法被识别排除——M1 落地
   不足一天、存量已归档,不做迁移
 - 子会话 loader 带 marker inline extension(不注册工具),与"子会话不装配
-  pi-subagents"的防孙代约束不冲突;自定义 loader 必须显式传 `agentDir`,
+  pf-subagents"的防孙代约束不冲突;自定义 loader 必须显式传 `agentDir`,
   否则 pi 的 `resolvePath(undefined)` 崩(`undefined.startsWith`)
 - CLI 用 `--no-session` 时父会话无文件 → 子会话拿不到 `parentSession`,
   会作为普通会话出现(仅影响 CLI 冒烟,PF 恒有会话文件)

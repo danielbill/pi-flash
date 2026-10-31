@@ -4,7 +4,7 @@
 > 三家 subagent 全量对照研究见本地调研笔记（不入库）。
 > **优先级:L1 复刻 dsh-subagent 调用机制先行;L2 pi 增强(codemode/nested-call)
 > 后置叠加。** 机制与 codemode 正交——manager/activation 是纯编排类,不依赖 codemode。
-> 交付物形态:扩展主体为 **pi package 扩展**(`pi-subagents`);
+> 交付物形态:扩展主体为 **pi package 扩展**(`pf-subagents`);
 > 宿主接入走 `pi-link/src/subagents.rs` 定位 + spawn 追加 `-e`。
 > 状态:**M1–M3 扩展侧已完成;M4–M6 待做**(M3.5 宿主联调待 044)。
 
@@ -106,7 +106,7 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 > 依赖顺序:M4(扩展字段)先行——M5 表单/M6 面板的字段契约由它落实;
 > M5 与 M6 互不依赖,可并行。验收 = 跑起 PF 在界面里看到功能。
 
-### M4:扩展侧字段落地(pi-subagents,TS)
+### M4:扩展侧字段落地(pf-subagents,TS)
 
 | # | 任务 | 验收 |
 |---|---|---|

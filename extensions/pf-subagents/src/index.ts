@@ -1,5 +1,5 @@
 /**
- * pi-subagents — extension entry.
+ * pf-subagents — extension entry.
  *
  * Wires the dsh-subagent call mechanics (manager, registry, capacity, descriptor,
  * local providers) onto pi. Nothing here re-implements pi's own primitives:

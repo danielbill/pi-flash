@@ -120,7 +120,7 @@ pub(super) fn result_is_empty(result: &str) -> bool {
     r.is_empty() || r == "(no output)"
 }
 
-/// 044：subagent 专属卡。数据源（扩展 `pi-subagents` 的 details，snake_case）：
+/// 044：subagent 专属卡。数据源（扩展 `pf-subagents` 的 details，snake_case）：
 /// `child_id` / `status`(running) / `stop_reason` / `session_file` /
 /// `duration_ms` / `total_tokens` / `cost_total` / `error_code`；args 里取
 /// `label` / `prompt`。布局：头部（子代理 · 标签 · 状态徽标 · 耗时 · tokens ·
@@ -350,7 +350,7 @@ pub(super) fn render_tool_card(
     t: &theme::Theme,
 ) -> gpui::Div {
     let _ = images; // c11 渲染
-    // 044：subagent 专属卡（扩展 pi-subagents 的 agent 工具）——数据源为
+    // 044：subagent 专属卡（扩展 pf-subagents 的 agent 工具）——数据源为
     // 扩展 details（snake_case），不走通用 diff/preview 主流程。
     if name == "agent" {
         return render_subagent_card(

@@ -118,7 +118,7 @@ describe("profileFromDocument", () => {
 
 describe("profile loading", () => {
 	it("prefers the project directory over the global one", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
 		const projectDir = join(root, "project");
 		await mkdir(globalDir, { recursive: true });
@@ -132,7 +132,7 @@ describe("profile loading", () => {
 	});
 
 	it("falls back to the global directory", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
 		await mkdir(globalDir, { recursive: true });
 		await writeFile(join(globalDir, "writer.md"), "---\ndescription: global\n---\nbody");
@@ -142,7 +142,7 @@ describe("profile loading", () => {
 	});
 
 	it("rejects unknown profiles with a stable code", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const error = await loadProfile("ghost", { globalDir: root, projectDir: root }).catch((e: unknown) => e);
 		assert.equal(code(error), SubagentErrorCode.PROFILE_INVALID);
 	});
@@ -153,7 +153,7 @@ describe("profile loading", () => {
 	});
 
 	it("lists profiles from both directories without duplicates", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
 		const projectDir = join(root, "project");
 		await mkdir(globalDir, { recursive: true });
@@ -167,7 +167,7 @@ describe("profile loading", () => {
 	});
 
 	it("falls back to the built-in explorer when no file exists", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const paths = { globalDir: join(root, "missing"), projectDir: join(root, "also-missing") };
 		const profile = await loadProfile("explorer", paths);
 		assert.equal(profile.tools, "read-only");
@@ -177,7 +177,7 @@ describe("profile loading", () => {
 	});
 
 	it("falls back to the built-in general-purpose with inherited tools", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const paths = { globalDir: join(root, "missing"), projectDir: join(root, "also-missing") };
 		const profile = await loadProfile("general-purpose", paths);
 		assert.equal(profile.tools, undefined, "no tools key = inherit the delegator's assembly");
@@ -187,7 +187,7 @@ describe("profile loading", () => {
 	});
 
 	it("a same-id custom file overrides the built-in", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
 		await mkdir(globalDir, { recursive: true });
 		await writeFile(join(globalDir, "explorer.md"), "---\ndescription: mine\n---\nmy body");
@@ -197,7 +197,7 @@ describe("profile loading", () => {
 	});
 
 	it("lists built-in ids even with no directories on disk", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		assert.deepEqual(
 			await listProfiles({ globalDir: join(root, "x"), projectDir: join(root, "y") }),
 			["explorer", "general-purpose"],
@@ -207,7 +207,7 @@ describe("profile loading", () => {
 
 describe("listProfilesSync", () => {
 	it("carries built-in frontmatter summaries", () => {
-		const root = join(tmpdir(), "pi-subagents-sync-missing");
+		const root = join(tmpdir(), "pf-subagents-sync-missing");
 		const summaries = listProfilesSync({ globalDir: join(root, "x"), projectDir: join(root, "y") });
 		assert.deepEqual(summaries, [
 			{ id: "explorer", description: "只读探索 · 调研与定位", tools: "read-only" },
@@ -216,7 +216,7 @@ describe("listProfilesSync", () => {
 	});
 
 	it("a custom file shadows the built-in summary, a corrupt one degrades to a bare id", async () => {
-		const root = await mkdtemp(join(tmpdir(), "pi-subagents-"));
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
 		await mkdir(globalDir, { recursive: true });
 		await writeFile(join(globalDir, "explorer.md"), "---\ndescription: mine\n---\nmy body");

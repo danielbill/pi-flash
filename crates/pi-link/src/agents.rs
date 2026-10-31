@@ -2,7 +2,7 @@
 //! pi-link 侧设施。
 //!
 //! 事实源 = `~/.pi/agent/agents/*.md`（用户资产惯例，非扩展私有数据）。本模块
-//! 的 frontmatter 语义必须与扩展侧 `extensions/pi-subagents/src/profile.ts`
+//! 的 frontmatter 语义必须与扩展侧 `extensions/pf-subagents/src/profile.ts`
 //! 的 `parseFrontmatter` **逐字对齐**——同一个 .md 两边读必须得到同一份字段，
 //! 否则 Settings 页存的值与运行期扩展读到的值会静默分叉。
 //!
@@ -109,7 +109,7 @@ impl AgentProfile {
 }
 
 /// 内置 Agent 定义（随扩展出厂，只读）。id 与内容须与扩展侧内置清单
-/// （`extensions/pi-subagents/src/profile.ts` `BUILTIN_PROFILE_DOCS`）逐字
+/// （`extensions/pf-subagents/src/profile.ts` `BUILTIN_PROFILE_DOCS`）逐字
 /// 一致——两侧各存一份，改动时同步。
 /// 2026-10-19 拍板：dsh 无出厂内置，对齐 ZCode 两内置（general-purpose +
 /// Explore，explorer 即 Explore 位）。
