@@ -1,4 +1,4 @@
-//! 大文件打开路径微基准：tmp/perf/perf-80k.txt（4.59MB / 80k 行随机文本）。
+//! 大文件打开路径微基准：test/perf/perf-80k.txt（5.2MB / 80k 行随机文本）。
 //!
 //! 数据段（纯 ropey/String 成本）+ InputState 段（#[gpui::test]，真实
 //! set_value 路径）。与 app 的 open_file_tab → ensure_file_editor →
@@ -10,7 +10,7 @@ use gpui::{AppContext as _, Context, IntoElement, Render, TestAppContext, Window
 use gpui_component::input::RopeExt as _;
 use std::time::{Duration, Instant};
 
-const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tmp/perf/perf-80k.txt");
+const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/perf/perf-80k.txt");
 
 fn ms(d: Duration) -> String {
     format!("{:>8.2} ms", d.as_secs_f64() * 1000.0)
