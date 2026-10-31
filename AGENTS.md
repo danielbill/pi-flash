@@ -99,14 +99,14 @@ crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字�
   startup.rs              启动唯一入口（010）：Globals/ProjectCtx、boot 泵、splash
   agent_session.rs        AgentSession：RPC 进程所有权、事件泵、状态机
   content.rs              内容区状态机 chat / term / md（v54）
-  dialogs.rs              弹窗域：模态渲染（ModelSelect/GitDiff/SessionSearch/…）+ 打开器
-  ext_ui.rs               扩展 UI 面 + 协议动作 on_ext_ui/ext_respond（040）
-  ask_card.rs             ask_user_question 整卷问卷卡（tab 分题+串行应答）
-  terminal/               内置终端（alacritty+ConPTY）：mod 渲染/impl Chat +
-                          palette + snapshot + input_encode（键盘/IME→PTY）
+  dialogs/                弹窗域（090 重构目录化）：mod（dialog_shell+分发+三个
+                          小弹窗）+ provider_picker + project_picker +
+                          ask_card（整卷问卷卡）+ ext_ui（扩展阻塞件/协议动作）
+  terminal/               内置终端（alacritty+ConPTY）：mod（常量/类型/spawn/tests）
+                          + element（TerminalElement/TermShared）+ host（impl Chat）
+                          + palette + snapshot + input_encode（键盘/IME→PTY）
   i18n.rs                 三语（zh-CN 为源）
   i18n_audit.rs           i18n 审计
-  models_config.rs        enabledModels 白名单编辑（pi-web port）
   assets.rs               图标编入二进制；status_bar.rs 状态栏；titlebar.rs topbar；
                           top_panels.rs 系统提示词/工具定义面板
   appearance/             界面域：theme.rs 七主题色板 + 注册表（registry 自 ALL 派生）
@@ -116,20 +116,35 @@ crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字�
                           未注册走默认文本 kind；打开路由/编辑器配置/主体渲染/
                           工具栏/右键菜单全由 handler 决定）+ view 编辑页（023）
                           + tabs 文件 tab 生命周期 + markdown/ 渲染与所见即所得（024/025）
-  function_panel/         左 dock 域：psp 一体列表（015）+ psp_actions 项目动作 +
-                          file_tree（021）+ file_actions 树文件动作 + git 面板（022）+ 悬浮层
+  function_panel/         左 dock 域：mod（psp view+dock 容器+overlay 状态类型）
+                          + psp_rows（行模型+rebuild 簇）+ project_row +
+                          psp_actions/psp_drag/psp_menus/psp_overlays/psp_row_views +
+                          file_tree.rs（三视图+行渲染）+ file_tree/（tree_action_bar +
+                          tree_state）+ file_tree_edit/pins/sticky/drag + file_actions
+                          + git 面板（022）+ tab_menu/tree_menu（菜单原语已上移 ui/menu）
   remote_control/         微信 ⇄ 会话桥（060）
-  market/                 040-1 扩展市场页面（卡片/分页/预取）
-  services/               无 UI 助手（pi-web lib/ parity）：file_icons / at_file /
+  market/                 040-1 扩展市场页面（卡片/分页/预取）+ shell.rs（三市场
+                          共用分段外壳/页码窗口，090-4 几何共享色板独立）
+  pf_plugin/              PF 插件宿主（090-4；02 契约）：mod（组装纯函数+钩子桥
+                          thread_local）+ manifest（清单解析+扫描+资产注册表）+
+                          entry（PluginEntry/ChatHost/徽标图标映射）+ host_tabs
+                          （impl Chat·装载与面板）+ host_actions（impl Chat·动作
+                          与分派）+ panel/（resolve 纯逻辑/render/popup）+
+                          lifecycle/svc/broadcast/wasm_hooks
+  services/               无 UI 助手（pi-web lib/ parity）：updater/（mod impl Chat+
+                          version/payload/fetch，081）+ workspace/（mod re-export+
+                          store IO 层/ws_state 运行态/app_settings 外观设置）+
+                          models_config（enabledModels，纯逻辑）+ file_icons / at_file /
                           file_index / file_tree / format / git / paths_sort / sound /
-                          token_probe / updater / watcher / workspace / shell_open /
-                          asset_evict（gpui 位图驱逐）/ plugin_updates（082）/
-                          session_clean（052）
+                          token_probe / watcher / shell_open / asset_evict /
+                          pi_extension_updates（082）/ session_clean（052）
   session/                会话域：runtime/ 会话池实体（030；mod 生命周期+泵、
                           events 事件臂、send 发送+rpc 门面、nav 定位对账、
                           ingest 摄入）+ messages/（032；mod、model 类型与尾窗
-                          解码、cards 工具/压缩卡、turn 行轮渲染、images 解码
-                          缓存）+ input/（031 composer；mod 委托层、area 主输入
+                          解码、user_row 用户行+块分发、tool_card/compaction/
+                          diff_view、turn 轮装配、images 解码缓存）+
+                          picker_shell（picker 四件套）+ nav_panel（033 导航面板）+
+                          input/（031 composer；mod 委托层、area 主输入
                           区、bar 控件行、ctx_tip 用量面板）+ pool 池 Chat 方法、
                           chat_list 滚屏、menu 补全菜单 + attachments 附件、
                           fork、diff、model/plugin/mcp picker、new_session（012）、

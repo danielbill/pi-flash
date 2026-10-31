@@ -30,13 +30,13 @@ mod automation;
 mod content;
 mod dialogs;
 pub(crate) use dialogs::{ask_card, ext_ui};
+pub(crate) use services::models_config;
 mod editor;
 mod function_panel;
 mod i18n;
 #[cfg(test)]
 mod i18n_audit;
 mod market;
-mod models_config;
 mod pf_plugin;
 mod search;
 mod services;

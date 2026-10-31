@@ -38,26 +38,30 @@ crates/app/src/
 ├── agent_session.rs   无头实体:PiSession/事件泵/epoch/on_event 分发
 ├── appearance/        主题注册表 + ActiveTheme + 字体(theme.rs,rgba_a 等色助手)
 ├── content.rs         内容区状态机 chat/term/md(v54)
-├── dialogs.rs         弹窗域渲染 + 打开器
-├── ext_ui.rs          扩展 UI 面
-├── terminal/          内置终端(alacritty+ConPTY):mod(Element/paint/impl Chat)
-│                      + palette + snapshot + input_encode(键盘/IME→PTY)
+├── dialogs/           弹窗域:mod(dialog_shell+分发+小弹窗) + provider_picker
+│                      + project_picker + ask_card(整卷问卷卡) + ext_ui(扩展阻塞件)
+├── terminal/          内置终端(alacritty+ConPTY):mod(常量/类型/spawn/tests)
+│                      + element(Element/paint) + host(impl Chat) + palette
+│                      + snapshot + input_encode(键盘/IME→PTY)
 ├── i18n.rs assets.rs status_bar.rs titlebar.rs top_panels.rs
 ├── automation/        pif-ui 自动化服务(snapshot/handlers)
 ├── editor/            编辑器域:kind FileTypeHandler 注册表 + view + tabs +
-│                      markdown/(mod 渲染入口 + highlight syntect + parse
-│                      pulldown + links + doc 文档模式 + wysiwyg/ + render/
-│                      + tests)
-├── function_panel/    左 dock 域:mod(psp 列表渲染 + HoverCard/PspMenu/Tree*
-│                      overlay 状态类型) + psp_actions + psp_overlays +
-│                      file_tree + file_actions + git_panel
+│                      markdown/(mod 渲染入口+类型 + code_block + blocks +
+│                      highlight syntect + parse pulldown + links + doc
+│                      文档模式 + wysiwyg/ + render/ + tests)
+├── function_panel/    左 dock 域:mod(psp view+dock 容器+overlay 状态类型) +
+│                      psp_rows(行模型+rebuild 簇) + project_row + psp_* +
+│                      file_tree.rs(三视图+行渲染) + file_tree/(action_bar +
+│                      tree_state) + file_actions + git_panel + 菜单原语上移 ui/menu
 ├── remote_control/    微信桥(060;mod/menu/pipeline)
-├── services/          无 UI 助手(pi-web lib/ parity)
+├── services/          无 UI 助手(pi-web lib/ parity):updater/(mod+version+
+│                      payload+fetch) + workspace/(mod re-export+store+ws_state+
+│                      app_settings) + models_config + git/format/… 原平铺件
 ├── session/           会话域:mod(sessionView 组装/列表) + runtime/(mod 结构+
 │                      生命周期+泵、events 事件臂、send 发送路径+rpc 门面、
 │                      nav 定位对账、ingest 摄入) + messages/(mod、model 类型
-│                      与尾窗解码、cards 工具/压缩卡、turn 行轮渲染、images
-│                      解码缓存) + input/(mod Chat 委托层、area 主输入区+
+│                      与尾窗解码、tool_card/compaction/diff_view、user_row
+│                      用户行+块分发、turn 轮装配、images 解码缓存) + input/(mod Chat 委托层、area 主输入区+
 │                      键路由、bar 控件行、ctx_tip 用量面板) + pool + chat_list
 │                      + menu + attachments + fork + diff + pickers +
 │                      new_session + tools_recipe
@@ -96,13 +100,14 @@ git/cwd）、`dlg`（弹窗/悬浮层/右键菜单/toast/设置句柄）、`cfg`
 |---|---|
 | RPC 会话/事件泵/epoch | AgentSession（无头）+ `session/runtime/`（泵在 runtime/mod.rs） |
 | 消息数据/折叠/流式状态 | SessionRuntime 字段（`session/runtime/`）；**渲染**是
-  `session/messages/`（model/cards/turn/images 四件，无状态自由函数）；
+  `session/messages/`（model/user_row/tool_card/compaction/diff_view/turn/images
+  各件，无状态自由函数）；
   列表组装在 session/mod.rs |
 | 编辑器草稿/附件/历史（**双宿主镜像**） | Chat.composer（UI 侧）+ SessionRuntime
   （会话侧）各一份；镜像协议两个写入点：切会话 `pool.rs switch_to`（flush/load）、
   发送前 `input/mod.rs with_active_editor`（Chat→Runtime 刷草稿）。改镜像协议
   只动这两个方法 |
-| 会话列表渲染/搜索弹窗 | Chat.psp（状态）+ function_panel（psp 渲染）+ dialogs.rs（搜索弹窗） |
+| 会话列表渲染/搜索弹窗 | Chat.psp（状态）+ function_panel（psp 渲染）+ dialogs/（搜索弹窗） |
 | cwd/branch/git/文件树/终端/编辑器 tab | Chat.ws |
 | 弹窗/右键菜单/toast/设置面板句柄 | Chat.dlg |
 | 设置页配置状态（mc_*/provider registry/mcp） | Chat.cfg；面板实体渲染在 settings/ |

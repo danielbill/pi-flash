@@ -5,6 +5,7 @@ pub(crate) mod asset_evict;
 pub mod at_file;
 pub mod file_icons;
 pub mod file_index;
+pub(crate) mod models_config;
 pub mod file_tree;
 pub mod format;
 pub mod git;
