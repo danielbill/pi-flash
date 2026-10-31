@@ -425,3 +425,10 @@
 - 接入约定：KNOWN 加键 → 消费点调 `dev_flag_enabled("键")` → env 覆盖自动获得。候选：
   remote_control、automation、terminal、updater；markdown 不建议（与内容区三态耦合）。
 - 验证：启动 stderr 出现状态行；false 关态三处隐藏齐全；改 true 重启全恢复。
+
+
+## 自定义Provider
+1、添加模型时， 点击【自动填参】，从OpenRouter获取模型参数后，未能填充UI组件，包括上下文大小，以及模型能力选择；而自动填参之前已经实现过。
+
+2、自定义Provider列表中，混入了freeflow，这是通过pi扩展安装的Provider，不属于自定义Provider，不应当混入
+
