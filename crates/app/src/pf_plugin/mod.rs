@@ -758,6 +758,20 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
     out
 }
 
+/// 按包名直读清单标题（已装列表用）：停用插件被 scan 过滤、没有清单条目，
+/// 显示名不能因此跌回裸包名——盘上清单还在，title 直读即可。
+pub(crate) fn manifest_title_for(pkg: &str) -> Option<String> {
+    for alias in pi_link::pf_plugins::dir_aliases(pkg) {
+        let dir = pi_link::paths::plugins_dir()?.join(&alias);
+        if dir.join("pf-plugin.toml").is_file() {
+            if let Ok(m) = parse_manifest(&dir) {
+                return Some(m.title_zh);
+            }
+        }
+    }
+    None
+}
+
 /// 已装插件清单声明的认领前缀全集（契约 v2.4 `[[contributes.sessions]]`）。
 /// 启动恢复的**影子会话铁闸**数据源：直接读磁盘清单（后台线程可调），
 /// 不看运行期台账——停用/未登记的包也算：它的认领线残留会话同样不该

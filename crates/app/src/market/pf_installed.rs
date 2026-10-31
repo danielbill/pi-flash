@@ -220,6 +220,9 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                             .find(|m| m.pkg == l.name)
                             .map(|m| m.title_zh.clone())
                     })
+                    // 停用插件被 scan 过滤、不在 manifests 里：盘上直读清单标题，
+                    // 裸包名只作最后兜底
+                    .or_else(|| crate::pf_plugin::manifest_title_for(&l.name))
                     .unwrap_or_else(|| l.name.clone());
                 InstalledItem {
                     name: l.name.clone(),
