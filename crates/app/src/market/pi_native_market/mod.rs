@@ -378,11 +378,13 @@ impl Chat {
         self.native_reload(cx);
     }
 
-    /// 类型筛选（下拉）。
+    /// 类型筛选（下拉）：**重查第一页**（pi.dev `?type=` 口径——类型切换 =
+    /// 一次新查询）。装载链落地后会重补 kinds，首装填充失败的坏态随重查
+    /// 自愈（旧实现纯渲染期过滤，kinds 一旦没补上就恒 0 且永不重试）。
     pub(crate) fn native_set_kind(&mut self, k: NativeKind, cx: &mut gpui::Context<Self>) {
         self.aux.market.native.kind = k;
         self.aux.market.native.kind_open = false;
-        cx.notify();
+        self.native_reload(cx);
     }
 
     /// 排序（下拉）；纯渲染期重排，0 网络。
