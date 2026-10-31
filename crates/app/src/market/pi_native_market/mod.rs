@@ -141,6 +141,9 @@ pub(crate) struct NativeState {
     pub(crate) pending: Option<String>,
     /// 过滤去抖代际（每键 ++；到点的旧轮次不再 notify）
     pub(crate) filter_gen: u64,
+    /// kinds 后台补齐在途（fetch 落地置位、补齐/失败清除）：空窗期空态要显示
+    /// 「类型信息加载中」而不是「无匹配」——否则选类型后 ~15s 里像坏了。
+    pub(crate) kinds_pending: bool,
     /// 变高虚拟列表（整页分段：最近发布 / 头+工具栏 / 卡行×N / 页码条）
     pub(crate) list: gpui::ListState,
     /// 列表竖向滚动条状态
@@ -169,6 +172,7 @@ impl Default for NativeState {
             loaded_once: false,
             pending: None,
             filter_gen: 0,
+            kinds_pending: false,
             list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2000.)),
             sb: gpui_component::scroll::ScrollbarState::default(),
         }
@@ -413,6 +417,7 @@ impl Chat {
         st.gen_ix += 1;
         st.loading = true;
         st.error = None;
+        st.kinds_pending = true;
         let gen_ix = st.gen_ix;
         let query = st.query.clone();
         let from = page.saturating_sub(1) * PAGE_SIZE;
@@ -481,6 +486,7 @@ impl Chat {
             return;
         }
         self.aux.market.native.loading = false;
+        self.aux.market.native.kinds_pending = false;
         self.aux.market.native.error = Some(err);
         cx.notify();
     }
@@ -513,6 +519,7 @@ impl Chat {
         entries: Vec<MarketEntry>,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.aux.market.native.kinds_pending = false;
         if gen_ix != self.aux.market.native.gen_ix
             || entries.len() != self.aux.market.native.entries.len()
         {
@@ -557,19 +564,32 @@ pub(crate) fn page(
 
     let recent_src = st.recent.clone();
     let loading = st.loading;
+    // 类型过滤下的空窗期（搜索已落地、kinds 还在补）：显示加载中而非「无匹配」，
+    // 否则选类型后 ~15s 里页面看起来像坏了（0 条 + 旧 pager）。
+    let kinds_loading = st.kinds_pending
+        && st.kind != NativeKind::All
+        && st.entries.iter().all(|e| e.kinds.is_empty());
     let empty_text: &'static str = if loading {
         "Loading packages…"
     } else if st.error.is_some() {
         "Failed to load. Try Reset."
+    } else if kinds_loading {
+        "Loading type info…"
     } else {
         "No packages match this filter."
     };
     let bar = BarModel::of(st);
     let shown = visible.len();
-    let total = st.total;
-    let page_ix = st.page;
+    // 类型过滤是**客户端**过滤（npm 无类型查询参数）：过滤集只覆盖当前页 50 条，
+    // 服务端 total/pager 对过滤集没有意义——计数与分页改按过滤集本页真实值，
+    // 不再显示未过滤全集的 13,084 / 266 页。
+    let kind_only = st.kind != NativeKind::All;
+    let (total, page_ix, total_pages) = if kind_only {
+        (shown, 1, 1)
+    } else {
+        (st.total, st.page, st.total_pages())
+    };
     let filtered = !st.filter.trim().is_empty() || st.kind != NativeKind::All;
-    let total_pages = st.total_pages();
     let pending = st.pending.clone();
     let installed_set = chat.pi_ext_installed_sources();
     let weak_c = weak.clone();
@@ -597,7 +617,7 @@ pub(crate) fn page(
         let r = ix - 2;
         let mut row = card::row_shell(&m_c);
         if visible.is_empty() {
-            row = row.child(card::empty_line(empty_text, loading));
+            row = row.child(card::empty_line(empty_text, loading || kinds_loading));
         } else {
             let start = r * cols;
             for e in visible.iter().skip(start).take(cols) {
