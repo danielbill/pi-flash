@@ -229,21 +229,7 @@ fn mcp_row(
             cx.stop_propagation();
             let _ = row_weak.update(cx, |c, cx| c.mcp_picker_toggle(&owned, cx));
         })
-        .child(
-            div()
-                .size(px(14.))
-                .flex_shrink_0()
-                .rounded(px(3.))
-                .border_1()
-                .border_color(rgb(if checked { t.accent } else { t.border }))
-                .bg(rgb(if checked { t.accent } else { t.bg_panel }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(checked, |d| {
-                    d.child(crate::ui::icon("check", 10., t.accent_contrast))
-                }),
-        )
+        .child(crate::ui::kit::checkbox(checked))
         .child(
             div()
                 .flex_1()

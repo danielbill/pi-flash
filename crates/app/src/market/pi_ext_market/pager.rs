@@ -13,32 +13,7 @@ use crate::ui::tokens::{radius, space};
 // 翻页条（官方式：← 上一页 / 页码窗口 / 下一页 →）
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Eq)]
-enum PageBtn {
-    Num(usize),
-    Gap,
-}
-
-/// 页码窗口（纯函数，单测友好）：≤7 页全显示；否则 首/末 + 当前前后各 1，缺口用省略号。
-fn page_window(page: usize, total: usize) -> Vec<PageBtn> {
-    if total <= 7 {
-        return (1..=total).map(PageBtn::Num).collect();
-    }
-    let mut out = vec![PageBtn::Num(1)];
-    let start = page.saturating_sub(1).max(2);
-    let end = (page + 1).min(total - 1);
-    if start > 2 {
-        out.push(PageBtn::Gap);
-    }
-    for p in start..=end.max(start) {
-        out.push(PageBtn::Num(p));
-    }
-    if end < total - 1 {
-        out.push(PageBtn::Gap);
-    }
-    out.push(PageBtn::Num(total));
-    out
-}
+use crate::market::shell::{PageBtn, page_window};
 
 pub(super) fn pager(
     weak: &gpui::WeakEntity<Chat>,
@@ -186,50 +161,4 @@ fn pager_nav(
             on_click(cx);
         });
     el.into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn page_window_shapes() {
-        assert_eq!(
-            page_window(1, 3),
-            vec![PageBtn::Num(1), PageBtn::Num(2), PageBtn::Num(3)]
-        );
-        // 首页：1 2 … 20
-        assert_eq!(
-            page_window(1, 20),
-            vec![
-                PageBtn::Num(1),
-                PageBtn::Num(2),
-                PageBtn::Gap,
-                PageBtn::Num(20)
-            ]
-        );
-        // 中间页：1 … 9 10 11 … 20
-        assert_eq!(
-            page_window(10, 20),
-            vec![
-                PageBtn::Num(1),
-                PageBtn::Gap,
-                PageBtn::Num(9),
-                PageBtn::Num(10),
-                PageBtn::Num(11),
-                PageBtn::Gap,
-                PageBtn::Num(20)
-            ]
-        );
-        // 末页
-        assert_eq!(
-            page_window(20, 20),
-            vec![
-                PageBtn::Num(1),
-                PageBtn::Gap,
-                PageBtn::Num(19),
-                PageBtn::Num(20)
-            ]
-        );
-    }
 }

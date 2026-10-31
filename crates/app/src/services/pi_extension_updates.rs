@@ -177,10 +177,9 @@ fn check_git(source: &str) -> PkgUpdateResult {
         return mk(source, PkgUpdateState::Error);
     }
     let git = |args: &[&str]| {
-        let mut cmd = Command::new("git");
-        cmd.args(args)
-            .current_dir(&dir)
-            .env("GIT_TERMINAL_PROMPT", "0");
+        // 基座走 git.rs::git_command（CREATE_NO_WINDOW + GIT_TERMINAL_PROMPT=0）
+        let mut cmd = crate::services::git::git_command();
+        cmd.args(args).current_dir(&dir);
         run_timeout(cmd, CMD_TIMEOUT)
     };
     // 本地 HEAD vs 上游：先解析 @{upstream}，解析不到退 HEAD（pi-web 同款）

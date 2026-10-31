@@ -75,29 +75,25 @@ fn recent_item(e: &MarketEntry, ago: &str, weak: &gpui::WeakEntity<Chat>) -> Any
 }
 
 /// 卡片头（标题 + 可选右端件）。设计 `.content-card-header`。
+/// 容器骨架走 `market::shell` 公共件（色板注入 design 字面量），mono 大写
+/// 标签是本页自己的东西，在这里构造。
 pub(super) fn card_header(title: &str, right: Option<AnyElement>, m: &Metrics) -> AnyElement {
-    gpui::div()
-        .flex()
-        .items_baseline()
-        .justify_between()
-        .gap(gpui::px(sp::BLOCK_GAP))
-        .px(gpui::px(m.card_pad_head))
-        .py(gpui::px(sp::HEADER_PAD_Y))
-        .border_b_1()
-        .border_color(d::line())
-        .child(
-            gpui::div()
-                .font_family(d::MONO)
-                .text_size(gpui::px(px18::TITLE_FS))
-                .text_color(d::text())
-                .child(label(&d::spaced(&title.to_uppercase(), false))),
-        )
-        .children(right)
-        .into_any_element()
+    crate::market::shell::card_header(
+        gpui::div()
+            .font_family(d::MONO)
+            .text_size(gpui::px(px18::TITLE_FS))
+            .text_color(d::text())
+            .child(label(&d::spaced(&title.to_uppercase(), false)))
+            .into_any_element(),
+        right,
+        m,
+        d::line(),
+    )
 }
 
 // ---------------------------------------------------------------------------
-// 分段外壳（把设计稿的一只盒子拆成三段，各自画侧边描边）
+// 分段外壳（`market::shell` 公共件 + design 字面量色板注入；090-4：几何共享、
+// 色板独立）
 // ---------------------------------------------------------------------------
 
 /// 居中外壳：定宽的段盒子在整行里居中（`mx_auto` 在列表项里不可靠——
@@ -105,32 +101,12 @@ pub(super) fn card_header(title: &str, right: Option<AnyElement>, m: &Metrics) -
 pub(super) fn centered(inner: gpui::Div, m: &Metrics) -> gpui::Div {
     // 定宽段 + **显式左右留白**（不用 justify_center：列表项宽度不定时居中是
     // no-op，曾让「最近发布」段贴左、index 段居中）
-    gpui::div()
-        .pl(gpui::px(m.side_pad()))
-        .pr(gpui::px(m.side_pad()))
-        .child(inner)
+    crate::market::shell::centered(inner, m)
 }
 
 /// 段外壳：两侧描边 + 面板底；`top/bottom` = 首/末段补边。
 pub(super) fn slice_shell(m: &Metrics, top: bool, bottom: bool) -> gpui::Div {
-    let mut boxed = gpui::div()
-        // **定宽 + mx_auto 居中**：`w_full()` 在变高列表项里拿不到父宽
-        // （测量期父宽不定 → 0 宽 0 高，整段塌掉：这是 2026-10-22 那次
-        // 「头段没有底色、和卡行重叠」的根因）
-        .w(gpui::px(m.shell_inner_w()))
-        .flex()
-        .flex_col()
-        .bg(d::panel())
-        .border_l_1()
-        .border_r_1()
-        .border_color(d::line());
-    if top {
-        boxed = boxed.border_t_1();
-    }
-    if bottom {
-        boxed = boxed.border_b_1();
-    }
-    boxed
+    crate::market::shell::slice_shell(m, top, bottom, d::panel(), d::line())
 }
 
 /// ① 「最近发布」整块（含外壳内距与段间 1rem 间隙）。
@@ -248,12 +224,7 @@ pub(super) fn index_head(
 
 /// ③ 卡行：左右两道内距 + 行间距；卡本身等高（`Metrics::card_h`）。
 pub(super) fn row_shell(m: &Metrics) -> gpui::Div {
-    gpui::div()
-        .w_full()
-        .flex()
-        .gap(gpui::px(sp::BLOCK_GAP))
-        .px(gpui::px(m.card_pad_body))
-        .pb(gpui::px(sp::BLOCK_GAP))
+    crate::market::shell::row_shell(m, false)
 }
 
 /// 行 → 外壳（两侧描边 + 居中）。
@@ -263,18 +234,14 @@ pub(super) fn row_slice(row: gpui::Div, m: &Metrics) -> AnyElement {
 
 /// ④ index 卡下段：页码条（末尾带上外壳 4rem 底留白）。
 pub(super) fn pager_block(pager: AnyElement, m: &Metrics) -> AnyElement {
-    centered(
-        slice_shell(m, false, true).child(
-            gpui::div()
-                .px(gpui::px(m.card_pad_body))
-                .pt(gpui::px(sp::BODY_GAP))
-                .pb(gpui::px(m.card_pad_body))
-                .child(pager),
-        ),
+    crate::market::shell::pager_block(
         m,
+        pager,
+        false,
+        sp::SHELL_PAD_BOTTOM,
+        d::panel(),
+        d::line(),
     )
-    .pb(gpui::px(sp::SHELL_PAD_BOTTOM))
-    .into_any_element()
 }
 
 /// 空态 / 加载态行（设计 `.packages-empty`：纯文本，无插图）；加载态在文字前挂转圈。

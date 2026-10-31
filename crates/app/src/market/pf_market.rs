@@ -39,6 +39,7 @@ use crate::appearance::theme::{Theme, border_alpha, rgba_a};
 use crate::i18n::{tf, tr};
 use crate::market::pi_native_market::design::{self as pnd, Metrics, px18, sp};
 use crate::market::pi_native_market::thousands;
+use crate::market::shell::{PageBtn, page_window};
 
 /// mono 字体（与 040-2 design::MONO 同值；该常量在私有 mod 里不可引）。
 pub(crate) const MONO: &str = "JetBrains Mono";
@@ -416,36 +417,17 @@ fn page_frame(head: AnyElement, body: AnyElement, m: &Metrics, t: &'static Theme
 }
 
 // ---------------------------------------------------------------------------
-// 分段骨架（pi 页 card.rs 同构：一只盒子拆成段，各自画侧边描边）
+// 分段骨架（`market::shell` 公共件 + PF 主题 token 注入；pi 页 card.rs 同构：
+// 一只盒子拆成段，各自画侧边描边）
 // ---------------------------------------------------------------------------
 
-/// 居中外壳：定宽段盒子显式左右留白（列表项里 `mx_auto` 不可靠，pi 页同款）。
-/// 收 `impl IntoElement`：`Stateful<Div>`（带 id 的滚动列）也能直接包。
-pub(crate) fn centered(inner: impl gpui::IntoElement, m: &Metrics) -> gpui::Div {
-    gpui::div()
-        .pl(px(m.side_pad()))
-        .pr(px(m.side_pad()))
-        .child(inner)
-}
+/// 居中外壳（`market::shell` 公共件；`pf_installed` 从本路径导入）。
+pub(crate) use crate::market::shell::centered;
 
 /// 段外壳：两侧描边 + 面板底；`top/bottom` = 首/末段补边。
+/// （PF 页：底 = bg_panel、线 = border@70%，全走主题 token。）
 pub(crate) fn slice_shell(m: &Metrics, top: bool, bottom: bool, t: &Theme) -> gpui::Div {
-    let mut boxed = gpui::div()
-        // 定宽（`w_full()` 在变高列表项里拿不到父宽，会整段塌掉——pi 页同坑）
-        .w(px(m.shell_inner_w()))
-        .flex()
-        .flex_col()
-        .bg(rgb(t.bg_panel))
-        .border_l_1()
-        .border_r_1()
-        .border_color(line(t));
-    if top {
-        boxed = boxed.border_t_1();
-    }
-    if bottom {
-        boxed = boxed.border_b_1();
-    }
-    boxed
+    crate::market::shell::slice_shell(m, top, bottom, rgb(t.bg_panel), line(t))
 }
 
 /// 卡片头（标题件 + 可选右端件）。pi 页 `.content-card-header` 同构。
@@ -455,18 +437,7 @@ fn card_header(
     m: &Metrics,
     t: &'static Theme,
 ) -> AnyElement {
-    gpui::div()
-        .flex()
-        .items_baseline()
-        .justify_between()
-        .gap(px(sp::BLOCK_GAP))
-        .px(px(m.card_pad_head))
-        .py(px(sp::HEADER_PAD_Y))
-        .border_b_1()
-        .border_color(line(t))
-        .child(title)
-        .children(right)
-        .into_any_element()
+    crate::market::shell::card_header(title, right, m, line(t))
 }
 
 /// 页签行：`所有插件 | 已安装`（090-4 v4）。活动页签全亮，另一签
@@ -576,13 +547,7 @@ pub(crate) fn head_segment(
 /// 卡行：左右两道内距 + 上内距（pi 页由工具栏容器给 `pt`，本页没有工具栏，
 /// 这一份挪到卡行段自己身上）+ 行间距。
 fn row_shell(m: &Metrics) -> gpui::Div {
-    gpui::div()
-        .w_full()
-        .flex()
-        .gap(px(sp::BLOCK_GAP))
-        .px(px(m.card_pad_body))
-        .pt(px(m.card_pad_body))
-        .pb(px(sp::BLOCK_GAP))
+    crate::market::shell::row_shell(m, true)
 }
 
 /// 扫描中：居中转圈 + 提示。字号对齐 Pi 市场的扫描提示（`px18::BODY_FS`）。
@@ -616,19 +581,16 @@ fn empty_line(text: &'static str, t: &'static Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// ③ 页码段（末尾带上外壳 4rem 底留白）。PF 本地索引恒单页。
+/// ③ 页码段（PF 本地索引恒单页；贴面板底，无外壳底留白）。
 fn pager_block(m: &Metrics, t: &'static Theme) -> AnyElement {
-    centered(
-        slice_shell(m, true, true, t).child(
-            gpui::div()
-                .px(px(m.card_pad_body))
-                .pt(px(sp::BODY_GAP))
-                .pb(px(m.card_pad_body))
-                .child(pager(1, 1, t)),
-        ),
+    crate::market::shell::pager_block(
         m,
+        pager(1, 1, t),
+        true,
+        0.,
+        rgb(t.bg_panel),
+        line(t),
     )
-    .into_any_element()
 }
 
 // ---------------------------------------------------------------------------
@@ -877,33 +839,6 @@ fn bracket(ch: &'static str, t: &'static Theme) -> AnyElement {
 // 页码条（pi 页 controls.rs 同构；PF 本地索引恒单页）
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Eq)]
-enum PageBtn {
-    Num(usize),
-    Gap,
-}
-
-/// 页码窗口（纯函数）：≤7 页全显示；否则 首/末 + 当前前后各 1。
-fn page_window(page: usize, total: usize) -> Vec<PageBtn> {
-    if total <= 7 {
-        return (1..=total).map(PageBtn::Num).collect();
-    }
-    let mut out = vec![PageBtn::Num(1)];
-    let start = page.saturating_sub(1).max(2);
-    let end = (page + 1).min(total - 1);
-    if start > 2 {
-        out.push(PageBtn::Gap);
-    }
-    for p in start..=end.max(start) {
-        out.push(PageBtn::Num(p));
-    }
-    if end < total - 1 {
-        out.push(PageBtn::Gap);
-    }
-    out.push(PageBtn::Num(total));
-    out
-}
-
 fn pager(page: usize, total_pages: usize, t: &'static Theme) -> AnyElement {
     let mut pages = gpui::div().flex().items_center().gap(px(6.3)).flex_wrap();
     for b in page_window(page, total_pages) {
@@ -993,31 +928,5 @@ fn nav_button(
     } else {
         base.text_color(gpui::rgba(rgba_a(t.text_faint, 0.55)))
             .into_any_element()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn window_short_lists_fully() {
-        assert_eq!(
-            page_window(1, 3),
-            vec![PageBtn::Num(1), PageBtn::Num(2), PageBtn::Num(3)]
-        );
-        assert_eq!(
-            page_window(1, 7),
-            (1..=7).map(PageBtn::Num).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn window_clamps_edges() {
-        let w = page_window(1, 20);
-        assert_eq!(w[0], PageBtn::Num(1));
-        assert_eq!(w[1], PageBtn::Num(2));
-        assert_eq!(w[2], PageBtn::Gap);
-        assert_eq!(w.last(), Some(&PageBtn::Num(20)));
     }
 }

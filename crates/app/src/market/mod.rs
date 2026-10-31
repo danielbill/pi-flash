@@ -17,6 +17,7 @@ pub(crate) mod pf_market;
 pub(crate) mod pi_ext_market;
 pub(crate) mod pi_native_market;
 pub(crate) mod prefetch;
+pub(crate) mod shell;
 
 /// 市场域状态簇（挂 `Chat.aux`）。
 #[derive(Default)]

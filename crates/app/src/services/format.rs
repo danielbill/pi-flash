@@ -51,6 +51,11 @@ pub fn fmt_duration_ms(ms: i64) -> String {
     }
 }
 
+/// 详情卡相对时间（带「前」后缀，走 i18n）。
+///
+/// **不是 [`fmt_ago`] 的重复**：那个是会话行内紧凑形态（无「前」、刚过阈值
+/// 5 分钟、设计稿 fmtAgo parity 故意不走 i18n）。两处可见文本不同，合并
+/// 必然改变其中一处的 UI——勿合（2026-10-31 重构盘查结论）。
 pub fn time_ago(modified: std::time::SystemTime) -> String {
     let secs = modified
         .duration_since(std::time::UNIX_EPOCH)
@@ -156,6 +161,9 @@ pub fn fmt_thousand(n: u64) -> String {
 
 /// 会话行相对时间（设计稿 fmtAgo parity）：距今
 /// <5 分钟=「刚刚」；<60 分钟=N分钟；<24 小时=N小时；否则=N天。
+///
+/// 与 [`time_ago`] 是**刻意变体**（行内紧凑无「前」/阈值 5 分钟/不走 i18n），
+/// 勿合并——见彼处注释。
 pub fn fmt_ago(t: std::time::SystemTime) -> String {
     let mins = t.elapsed().map(|d| d.as_secs() / 60).unwrap_or(0) as i64;
     if mins < 5 {

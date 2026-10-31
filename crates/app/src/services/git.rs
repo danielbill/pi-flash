@@ -63,11 +63,21 @@ fn hide_console(cmd: &mut std::process::Command) {
 #[cfg(not(windows))]
 fn hide_console(_cmd: &mut std::process::Command) {}
 
-/// 带 CREATE_NO_WINDOW 的 `git -C <cwd> <args>`。
-fn git_cmd(cwd: &Path, args: &[&str]) -> std::process::Command {
+/// 裸 `git` 命令基座（无参数）：统一 CREATE_NO_WINDOW（GUI 宿主裸 spawn
+/// 会弹 Windows Terminal 窗口）+ `GIT_TERMINAL_PROMPT=0`（GUI 无 tty，
+/// 凭据缺失时宁可立刻失败也不许挂起等输入）。域内其他自建 git 命令
+/// （file_index / pi_extension_updates）一律从这里起步。
+pub(crate) fn git_command() -> std::process::Command {
     let mut cmd = std::process::Command::new("git");
-    cmd.arg("-C").arg(cwd).args(args);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     hide_console(&mut cmd);
+    cmd
+}
+
+/// 带 CREATE_NO_WINDOW 的 `git -C <cwd> <args>`。
+pub(crate) fn git_cmd(cwd: &Path, args: &[&str]) -> std::process::Command {
+    let mut cmd = git_command();
+    cmd.arg("-C").arg(cwd).args(args);
     cmd
 }
 

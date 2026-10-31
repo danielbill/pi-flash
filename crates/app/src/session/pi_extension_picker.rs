@@ -324,21 +324,7 @@ fn plugin_row(
             cx.stop_propagation();
             let _ = row_weak.update(cx, |c, cx| c.pi_extension_picker_toggle(&src, cx));
         })
-        .child(
-            div()
-                .size(px(14.))
-                .flex_shrink_0()
-                .rounded(px(3.))
-                .border_1()
-                .border_color(rgb(if checked { t.accent } else { t.border }))
-                .bg(rgb(if checked { t.accent } else { t.bg_panel }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(checked, |d| {
-                    d.child(crate::ui::icon("check", 10., t.accent_contrast))
-                }),
-        )
+        .child(crate::ui::kit::checkbox(checked))
         .child(
             div()
                 .flex_1()
@@ -374,14 +360,5 @@ fn plugin_row(
 }
 
 fn tag(label: &str, bg: gpui::Hsla, fg: gpui::Hsla) -> AnyElement {
-    div()
-        .flex_shrink_0()
-        .px(px(4.))
-        .py(px(1.))
-        .rounded(px(3.))
-        .bg(bg)
-        .text_size(crate::appearance::ui_size(9.))
-        .text_color(fg)
-        .child(SharedString::from(label.to_string()))
-        .into_any_element()
+    crate::ui::kit::tag(label, bg, fg)
 }

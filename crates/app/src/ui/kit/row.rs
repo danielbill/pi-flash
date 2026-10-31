@@ -68,6 +68,18 @@ pub(crate) fn error_note(text: &str) -> AnyElement {
         .into_any_element()
 }
 
+/// 单行省略样式：`.overflow_hidden().whitespace_nowrap().text_ellipsis()` 三连
+/// 的收口（全库 ~60 处样板）。任何 `Styled` 链上直接 `.single_line()`，常配
+/// `.min_w_0()`。
+pub(crate) trait SingleLine: Styled {
+    fn single_line(self) -> Self {
+        self.overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+    }
+}
+impl<T: Styled> SingleLine for T {}
+
 /// mono 值块（路径 / 命令等）。
 pub(crate) fn mono_text(text: String, dim: bool) -> AnyElement {
     let t = T();
@@ -75,9 +87,7 @@ pub(crate) fn mono_text(text: String, dim: bool) -> AnyElement {
         .font_family(crate::editor::markdown::MONO_FAMILY)
         .text_size(crate::appearance::ui_size(11.))
         .text_color(if dim { rgb(t.text_dim) } else { rgb(t.text) })
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis()
+        .single_line()
         .child(SharedString::from(text))
         .into_any_element()
 }

@@ -41,3 +41,18 @@ pub(crate) fn scope_tag(label: &str, project: bool) -> AnyElement {
         .child(SharedString::from(label.to_string()))
         .into_any_element()
 }
+
+/// 小号标签原语（px4/py1/rounded3/ui_size(9)，色由调用方给）。
+/// pin 徽章、picker 类型标签共用；scope_tag 是 px5/ui10 的另一规格，不合用。
+pub(crate) fn tag(label: &str, bg: gpui::Hsla, fg: gpui::Hsla) -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .px(px(4.))
+        .py(px(1.))
+        .rounded(px(3.))
+        .bg(bg)
+        .text_size(crate::appearance::ui_size(9.))
+        .text_color(fg)
+        .child(SharedString::from(label.to_string()))
+        .into_any_element()
+}

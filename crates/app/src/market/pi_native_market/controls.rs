@@ -288,32 +288,7 @@ fn bracket_button(
 // 页码条
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Eq)]
-enum PageBtn {
-    Num(usize),
-    Gap,
-}
-
-/// 页码窗口（纯函数，单测友好）：≤7 页全显示；否则 首/末 + 当前前后各 1。
-fn page_window(page: usize, total: usize) -> Vec<PageBtn> {
-    if total <= 7 {
-        return (1..=total).map(PageBtn::Num).collect();
-    }
-    let mut out = vec![PageBtn::Num(1)];
-    let start = page.saturating_sub(1).max(2);
-    let end = (page + 1).min(total - 1);
-    if start > 2 {
-        out.push(PageBtn::Gap);
-    }
-    for p in start..=end.max(start) {
-        out.push(PageBtn::Num(p));
-    }
-    if end < total - 1 {
-        out.push(PageBtn::Gap);
-    }
-    out.push(PageBtn::Num(total));
-    out
-}
+use crate::market::shell::{PageBtn, page_window};
 
 /// 页码条（设计 `.pagination`：上边框 + 左右两组）。
 pub(super) fn pager(
@@ -450,37 +425,5 @@ fn nav_button(
     } else {
         base.text_color(gpui::rgba(crate::appearance::theme::rgba_a(0xc5c2c9, 0.36)))
             .into_any_element()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn window_short_lists_fully() {
-        assert_eq!(
-            page_window(1, 3),
-            vec![PageBtn::Num(1), PageBtn::Num(2), PageBtn::Num(3)]
-        );
-        assert_eq!(
-            page_window(1, 7),
-            (1..=7).map(PageBtn::Num).collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn window_clamps_edges() {
-        // 第 1 页：1 2 … 20（首尾各一 + 当前后一）
-        let w = page_window(1, 20);
-        assert_eq!(w[0], PageBtn::Num(1));
-        assert_eq!(w[1], PageBtn::Num(2));
-        assert_eq!(w[2], PageBtn::Gap);
-        assert_eq!(w.last(), Some(&PageBtn::Num(20)));
-        let w = page_window(20, 20);
-        assert_eq!(w[0], PageBtn::Num(1));
-        assert_eq!(w[1], PageBtn::Gap);
-        assert!(w.contains(&PageBtn::Num(19)));
-        assert_eq!(w.last(), Some(&PageBtn::Num(20)));
     }
 }

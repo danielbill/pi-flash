@@ -13,10 +13,12 @@
 //!   SettingsPanel 强绑的逻辑，公共件全部转发到这里。
 //!
 //! 目录：`button` 按钮 / `switch` 开关 / `toggle` 工具条开关钮 / `row` 行与
-//! 文本 / `layout` 两栏骨架 / `badge` 徽标与状态点 / `slider` 连续量。
+//! 文本 / `layout` 两栏骨架 / `badge` 徽标与状态点 / `checkbox` 勾选框 /
+//! `slider` 连续量。
 
 mod badge;
 mod button;
+mod checkbox;
 mod layout;
 mod row;
 mod slider;
@@ -25,6 +27,7 @@ mod toggle;
 
 pub(crate) use badge::*;
 pub(crate) use button::*;
+pub(crate) use checkbox::*;
 pub(crate) use layout::*;
 pub(crate) use row::*;
 pub(crate) use slider::*;
