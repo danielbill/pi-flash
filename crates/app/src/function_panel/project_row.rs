@@ -232,4 +232,3 @@ pub(crate) fn project_row(
         })
         .into_any_element()
 }
-

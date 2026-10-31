@@ -398,4 +398,3 @@ pub(crate) fn newest(g: &crate::ProjectGroup) -> std::time::SystemTime {
         std::time::UNIX_EPOCH + std::time::Duration::from_millis(g.opened_ms.max(0) as u64);
     from_sessions.max(from_open)
 }
-
