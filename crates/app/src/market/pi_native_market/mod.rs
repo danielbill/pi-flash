@@ -29,7 +29,7 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{AnyElement, IntoElement, MouseButton, SharedString, Styled};
 
-use pi_link::market::pi_ext_market::{MarketEntry, PAGE_SIZE};
+use pi_link::market::pi_ext_market::{MarketEntry, MarketKind, PAGE_SIZE};
 
 use crate::Chat;
 use crate::ContentView;
@@ -144,6 +144,9 @@ pub(crate) struct NativeState {
     /// kinds 后台补齐在途（fetch 落地置位、补齐/失败清除）：空窗期空态要显示
     /// 「类型信息加载中」而不是「无匹配」——否则选类型后 ~15s 里像坏了。
     pub(crate) kinds_pending: bool,
+    /// 会话级 kinds 表（name → 资源类型；首载时从磁盘缓存灌入）：重查补齐
+    /// 命中即 0 网络，选类型立即出结果。落盘 = `KindsCache`（跨会话）。
+    pub(crate) kinds: std::collections::HashMap<String, Vec<MarketKind>>,
     /// 变高虚拟列表（整页分段：最近发布 / 头+工具栏 / 卡行×N / 页码条）
     pub(crate) list: gpui::ListState,
     /// 列表竖向滚动条状态
@@ -173,6 +176,7 @@ impl Default for NativeState {
             pending: None,
             filter_gen: 0,
             kinds_pending: false,
+            kinds: std::collections::HashMap::new(),
             list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(2000.)),
             sb: gpui_component::scroll::ScrollbarState::default(),
         }
@@ -315,6 +319,7 @@ impl Chat {
             return;
         }
         self.aux.market.native.loaded_once = true;
+        self.aux.market.native.kinds = pi_link::market::pi_ext_market::KindsCache::load();
         self.native_reload(cx);
     }
 
@@ -456,12 +461,16 @@ impl Chat {
             }
             // 类型徽标：50 个包的 `latest` 清单（并发 8，约 3-6s）。整批到齐再刷
             // 一次，不做流式 append——本页卡片等高，逐批上屏会跳版。
-            let names = this
+            // kinds 表（会话级 + 磁盘缓存）作起点：命中即 0 网络，重查立即出结果。
+            let (names, table) = this
                 .update(cx, |c, _| {
                     if c.aux.market.native.gen_ix != gen_ix {
-                        return Vec::new();
+                        return (Vec::new(), Default::default());
                     }
-                    c.aux.market.native.entries.clone()
+                    (
+                        c.aux.market.native.entries.clone(),
+                        c.aux.market.native.kinds.clone(),
+                    )
                 })
                 .unwrap_or_default();
             if names.is_empty() {
@@ -471,12 +480,18 @@ impl Chat {
                 .background_executor()
                 .spawn(async move {
                     let mut entries = names;
-                    let mut kinds = std::collections::HashMap::new();
+                    let mut kinds = table;
                     pi_link::market::pi_ext_market::fill_kinds(&mut entries, &mut kinds);
-                    entries
+                    (entries, kinds)
                 })
                 .await;
-            let _ = this.update(cx, |c, cx| c.native_kinds_land(gen_ix, filled, cx));
+            let _ = this.update(cx, |c, cx| {
+                let (entries, table) = filled;
+                // 磁盘缓存同步落一份（失败静默）；会话表照常更新
+                pi_link::market::pi_ext_market::KindsCache::save(&table);
+                c.aux.market.native.kinds = table;
+                c.native_kinds_land(gen_ix, entries, cx);
+            });
         })
         .detach();
     }

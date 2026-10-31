@@ -423,6 +423,55 @@ impl HomeSnapshot {
     }
 }
 
+/// 会话外 kinds 缓存（090 重构补）：`<数据目录>/pi-native-kinds-cache.json`，
+/// name → 包内资源类型。原生市场每次重查都要重补 50 个 `latest` 清单
+/// （~15-20s），有这份缓存后命中即零网络——选类型立即出结果。
+/// 单条 ~100B；超 [`KINDS_CACHE_MAX`] 整体清空重学（兜底，不设 LRU）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KindsCache {
+    pub kinds: HashMap<String, Vec<MarketKind>>,
+}
+
+/// 缓存条目上限（13,084 包全量也才 ~2MB；正常使用到不了）。
+const KINDS_CACHE_MAX: usize = 5000;
+
+impl KindsCache {
+    /// 读（坏文件/缺失 → 空表）。
+    pub fn load() -> HashMap<String, Vec<MarketKind>> {
+        match crate::paths::pi_native_kinds_cache_file() {
+            Some(path) => Self::load_at(&path).unwrap_or_default(),
+            None => HashMap::new(),
+        }
+    }
+
+    fn load_at(path: &Path) -> Option<HashMap<String, Vec<MarketKind>>> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let c: KindsCache = serde_json::from_str(&text).ok()?;
+        Some(c.kinds)
+    }
+
+    /// 覆盖写（原子：tmp + rename；失败静默——缓存不值得打扰用户）。
+    pub fn save(kinds: &HashMap<String, Vec<MarketKind>>) {
+        if let Some(path) = crate::paths::pi_native_kinds_cache_file() {
+            let _ = Self::save_at(kinds, &path);
+        }
+    }
+
+    fn save_at(kinds: &HashMap<String, Vec<MarketKind>>, path: &Path) -> std::io::Result<()> {
+        let mut map = kinds.clone();
+        if map.len() > KINDS_CACHE_MAX {
+            map.clear();
+        }
+        let text = serde_json::to_string(&KindsCache { kinds: map })?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, text)?;
+        std::fs::rename(&tmp, path)
+    }
+}
+
 fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

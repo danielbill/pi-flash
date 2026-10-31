@@ -168,6 +168,12 @@ pub fn pi_ext_market_cache_file() -> Option<PathBuf> {
     file("pi-ext-market-cache.json")
 }
 
+/// `pi-native-kinds-cache.json` — pi 原生市场的包类型缓存（090 重构补：
+/// name → kinds，选类型免二次 50 清单拉取）。
+pub fn pi_native_kinds_cache_file() -> Option<PathBuf> {
+    file("pi-native-kinds-cache.json")
+}
+
 /// `~/.pi-flash/plugins.json` — PF 插件台账（090-4：安装/卸载记账，唯一落盘物）。
 pub fn plugins_ledger_file() -> Option<PathBuf> {
     file("plugins.json")
