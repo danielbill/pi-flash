@@ -46,7 +46,7 @@ pub(super) fn ensure_wasm_hooks(cx: &gpui::App) {
     }
     super::TEXT_SYSTEM.with(|c| *c.borrow_mut() = Some(cx.text_system().clone()));
     pf_plugin_host::install_host_hooks(super::quick_pin_snap, wasm_measure_text);
- // 幂等再兜一次（启动路径已装；这里保证任何入口先于 init 都有证明材料）
+    // 幂等再兜一次（启动路径已装；这里保证任何入口先于 init 都有证明材料）
     pf_plugin_host::install_proof_hook(host_proof_material);
 }
 
@@ -64,8 +64,8 @@ pub(super) fn ensure_wasm_hooks(cx: &gpui::App) {
 /// mmap 反序列化 + 实例化 + init（毫秒级）。旧的 `load()` 每次启动重编
 /// （4.6 MB 组件 7.2 s debug）。
 pub(super) fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String> {
- // 证明材料钩子是进程级（pf-plugin-host 里从 thread_local 改成全局），
- // 后台线程 init 时插件回调 get_host_proof 同样取得到材料
+    // 证明材料钩子是进程级（pf-plugin-host 里从 thread_local 改成全局），
+    // 后台线程 init 时插件回调 get_host_proof 同样取得到材料
     pf_plugin_host::install_proof_hook(host_proof_material);
     let mut rejected = Vec::new();
     for m in manifests {

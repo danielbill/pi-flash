@@ -36,11 +36,11 @@ struct InstalledItem {
 }
 
 impl Chat {
- /// 启停单插件（090-4 v5）：台账 disabled 位落盘 + 运行态立即生效。
- /// 停用 = 台账落盘 + `plugin_evict`（丢 JS 运行时与组件树缓存、左 dock
- /// 正显示它就退默认）——状态栏 tab / 文件树插件菜单 / 左面板全部隐身；
- /// 启用 = 有条目则复位，无条目（启动时被扫描跳过）只补装这一个。
- /// 失败进头段错误行。
+    /// 启停单插件（090-4 v5）：台账 disabled 位落盘 + 运行态立即生效。
+    /// 停用 = 台账落盘 + `plugin_evict`（丢 JS 运行时与组件树缓存、左 dock
+    /// 正显示它就退默认）——状态栏 tab / 文件树插件菜单 / 左面板全部隐身；
+    /// 启用 = 有条目则复位，无条目（启动时被扫描跳过）只补装这一个。
+    /// 失败进头段错误行。
     pub(crate) fn pf_toggle_plugin(
         &mut self,
         name: String,
@@ -62,30 +62,30 @@ impl Chat {
         {
             l.disabled = !enable;
         }
- // 台账包名 → 运行态条目：只认顶层包目录名（版本层目录名是版本号，
- // 拿它比永远比不中——上一版停用点了没反应就是因为这个）
+        // 台账包名 → 运行态条目：只认顶层包目录名（版本层目录名是版本号，
+        // 拿它比永远比不中——上一版停用点了没反应就是因为这个）
         let hit = self.plugin_ix_by_pkg(&name);
         match (enable, hit) {
             (true, Some(ix)) => {
                 if let Some(entry) = self.plugins.plugins.get_mut(ix) {
                     entry.disabled = false;
                 }
- // 重新装载：ext 自动重挂当前会话（off 时被摘除）——绑定态在镜像
- // 里原样保留，ext 重挂后门控命中、渠道自恢复（免重扫）
+                // 重新装载：ext 自动重挂当前会话（off 时被摘除）——绑定态在镜像
+                // 里原样保留，ext 重挂后门控命中、渠道自恢复（免重扫）
                 self.plugin_attach_pi_exts(ix, &self.pool.active_key.clone(), cx);
                 self.ensure_active_process(cx);
             }
             (true, None) => {
- // 启动时被停用过滤、运行态无条目：后台重扫**只补装这一个**
- // （内建 `plugin_replace_by_pkg`，不整体替换 plugins_set）
+                // 启动时被停用过滤、运行态无条目：后台重扫**只补装这一个**
+                // （内建 `plugin_replace_by_pkg`，不整体替换 plugins_set）
                 self.reload_plugin_by_pkg(name.clone(), cx);
- // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
+                // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
                 crate::pf_plugin::spawn_precompile_installed();
             }
- // 停用：运行态就地撤下（含左 dock 退默认），否则面板还照旧渲染
+            // 停用：运行态就地撤下（含左 dock 退默认），否则面板还照旧渲染
             (false, Some(ix)) => {
                 self.plugin_evict(ix);
- // 摘除活跃运行时里的 ext（空闲即重启；忙 = 下次 spawn 生效）
+                // 摘除活跃运行时里的 ext（空闲即重启；忙 = 下次 spawn 生效）
                 self.plugin_detach_active_ext(ix, cx);
             }
             (false, None) => {} // 未装载，无运行态可撤
@@ -93,7 +93,7 @@ impl Chat {
         cx.notify();
     }
 
- /// 点垃圾桶：弹确认浮层（040 统一确认组件；渲染在 shell/render 顶层）。
+    /// 点垃圾桶：弹确认浮层（040 统一确认组件；渲染在 shell/render 顶层）。
     pub(crate) fn pf_ask_remove(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         if self.aux.market.pf.removing.is_some() {
             return;
@@ -102,7 +102,7 @@ impl Chat {
         cx.notify();
     }
 
- /// 确认浮层的「确认 / 取消」：ok=true 才真删。
+    /// 确认浮层的「确认 / 取消」：ok=true 才真删。
     pub(crate) fn pf_remove_dialog_close(&mut self, ok: bool, cx: &mut gpui::Context<Self>) {
         let Some(name) = self.aux.market.pf.confirm_remove.take() else {
             return;
@@ -114,18 +114,18 @@ impl Chat {
         }
     }
 
- /// 卸载：后台线程删目录 + 摘台账（幂等），完成重读台账刷新列表；
- /// **成功则同账号把运行态条目一并摘掉**（否则状态栏 tab / 左 dock 面板 /
- /// 文件树菜单 / JS 运行时全活着，删了还能用直到重启）。
- /// 失败原因进头段错误行（pf_install 同款通道）。
+    /// 卸载：后台线程删目录 + 摘台账（幂等），完成重读台账刷新列表；
+    /// **成功则同账号把运行态条目一并摘掉**（否则状态栏 tab / 左 dock 面板 /
+    /// 文件树菜单 / JS 运行时全活着，删了还能用直到重启）。
+    /// 失败原因进头段错误行（pf_install 同款通道）。
     fn pf_uninstall(&mut self, name: String, cx: &mut gpui::Context<Self>) {
         if self.aux.market.pf.removing.is_some() {
             return;
         }
         self.aux.market.pf.removing = Some(name.clone());
         self.aux.market.pf.error = None;
- // 先就地撤运行态（drop wasm 实例 → 释放 .cache/*.cwasm 的 mmap），
- // 否则后台删目录必被 Windows 拒绝（os error 32，文件被占用）。
+        // 先就地撤运行态（drop wasm 实例 → 释放 .cache/*.cwasm 的 mmap），
+        // 否则后台删目录必被 Windows 拒绝（os error 32，文件被占用）。
         if let Some(ix) = self.plugin_ix_by_pkg(&name) {
             self.plugin_evict(ix);
             self.plugins.plugins.remove(ix);
@@ -158,7 +158,7 @@ impl Chat {
                     c.plugin_evict(ix);
                     c.plugins.plugins.remove(ix);
                     crate::pf_plugin::plugin_forget(&id);
- // 下标位移：插件面板存的是位置，任何一条被摘都退默认
+                    // 下标位移：插件面板存的是位置，任何一条被摘都退默认
                     if matches!(c.layout.dock_panel, crate::DockPanel::Plugin(_)) {
                         c.layout.dock_panel = crate::DockPanel::Default;
                     }
@@ -205,8 +205,8 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
     let items: Vec<InstalledItem> = {
         let ix = index_snapshot();
- // 未上架的包（dev 侧载/内层私有包）索引里查不到 display：回落已装
- // 清单的 title_zh，裸 slug 只作最后兑底（用户看名字，不看包名）
+        // 未上架的包（dev 侧载/内层私有包）索引里查不到 display：回落已装
+        // 清单的 title_zh，裸 slug 只作最后兑底（用户看名字，不看包名）
         let manifests = crate::pf_plugin::scan_manifests();
         st.ledger
             .iter()
@@ -244,9 +244,9 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
     let removing = st.removing.clone();
     let weak_c = weak.clone();
 
- // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
- // 列表头不再画「已安装」——页签行就在正上方，同一个词不重复
- // 上内距对齐右详情（detail_shell 的 p(15)）：左列表首行不再贴着段盒顶边
+    // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
+    // 列表头不再画「已安装」——页签行就在正上方，同一个词不重复
+    // 上内距对齐右详情（detail_shell 的 p(15)）：左列表首行不再贴着段盒顶边
     let mut list = sidebar_list().px(px(7.)).pt(px(15.));
     for (n, item) in items.iter().enumerate() {
         let active = selected_name.as_deref() == Some(item.name.as_str());
@@ -280,8 +280,8 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                         .text_color(rgb(t.text_faint))
                         .child(SharedString::from(item.version.clone())),
                 )
- // 启停开关（090-4 v5）：停用 = PF 不装载不绘制（台账 disabled
- // 位 + 运行态 entry.disabled，状态栏/文件树/分发全部隐身）
+                // 启停开关（090-4 v5）：停用 = PF 不装载不绘制（台账 disabled
+                // 位 + 运行态 entry.disabled，状态栏/文件树/分发全部隐身）
                 .child(config_switch(
                     SharedString::from(format!("pf-installed-sw-{n}")),
                     &weak_sw,
@@ -298,8 +298,8 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 
     let detail = detail_pane(selected, removing.as_deref(), weak, t);
 
- // 段盒吃满全高：centered 外壳必须是 flex（否则 flex_1 的 shell 在块级父里
- // 拿不到剩余高度 → 段盒只到内容高度，和【所有插件】页不一样高）
+    // 段盒吃满全高：centered 外壳必须是 flex（否则 flex_1 的 shell 在块级父里
+    // 拿不到剩余高度 → 段盒只到内容高度，和【所有插件】页不一样高）
     let body = centered(
         slice_shell(m, false, true, t).flex_1().min_h_0().child(
             gpui::div()
@@ -327,18 +327,18 @@ fn detail_pane(
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
 ) -> AnyElement {
- // 没有选中/没有安装：详情栏留空（不加任何提示文案）
+    // 没有选中/没有安装：详情栏留空（不加任何提示文案）
     let Some(item) = item else {
         return detail_shell("pf-installed-detail").into_any_element();
     };
 
- // 垃圾桶（settings-扩展同款 danger 盒；卸载本插件 → spinner，任一卸载中禁用）
+    // 垃圾桶（settings-扩展同款 danger 盒；卸载本插件 → spinner，任一卸载中禁用）
     let removing_this = removing == Some(item.name.as_str());
     let mut trash = gpui::div()
         .id("pf-installed-remove")
         .size(px(28.))
- // 视觉微调：标题是 mono 12px（字形重心偏下），垃圾桶要跟标题垂直居中对齐，
- // 整体下挪 6px（relative 不占布局，不动行高）
+        // 视觉微调：标题是 mono 12px（字形重心偏下），垃圾桶要跟标题垂直居中对齐，
+        // 整体下挪 6px（relative 不占布局，不动行高）
         .relative()
         .top(px(6.))
         .flex()
@@ -379,7 +379,7 @@ fn detail_pane(
             });
     }
 
- // 索引补全：发布人（来源行）+ 一句话描述（说明行，缺索引/无描述 = —）
+    // 索引补全：发布人（来源行）+ 一句话描述（说明行，缺索引/无描述 = —）
     let ix = index_snapshot();
     let entry = ix.entry(&item.name);
     let source_display = match &entry {
@@ -397,7 +397,7 @@ fn detail_pane(
             }
         })
         .unwrap_or_else(|| "—".to_string());
- // 安装路径（版本化目录，与 install 落点一致）；索引/版本缺失退插件根目录
+    // 安装路径（版本化目录，与 install 落点一致）；索引/版本缺失退插件根目录
     let path = match pi_link::paths::plugins_dir() {
         Some(root) => {
             let base = root.join(pf_plugins::dir_name(&item.name));
@@ -418,7 +418,7 @@ fn detail_pane(
                 .items_center()
                 .gap(px(8.))
                 .min_h(px(28.))
- // 名前标后（与技能页 / settings-扩展 同款）
+                // 名前标后（与技能页 / settings-扩展 同款）
                 .child(
                     gpui::div()
                         .font_family(crate::editor::markdown::MONO_FAMILY)

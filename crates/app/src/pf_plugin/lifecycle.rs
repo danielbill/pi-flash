@@ -139,7 +139,7 @@ mod tests {
         transition(s, e)
     }
 
- #[test]
+    #[test]
     fn state_machine_happy_path() {
         use State::*;
         assert_eq!(t(Registered, Ev::LoadStart), Some(Loading));
@@ -148,21 +148,21 @@ mod tests {
         assert_eq!(t(Unloading, Ev::UnloadDone), Some(Disabled));
     }
 
- #[test]
+    #[test]
     fn state_machine_error_and_rearm() {
         use State::*;
- // load 失败 → Crashed；用户手动重启用可再装载
+        // load 失败 → Crashed；用户手动重启用可再装载
         assert_eq!(t(Loading, Ev::LoadErr), Some(Crashed));
         assert_eq!(t(Crashed, Ev::LoadStart), Some(Loading));
- // 停用过的插件可再启用（台账开闸 + 懒装载重走 load）
+        // 停用过的插件可再启用（台账开闸 + 懒装载重走 load）
         assert_eq!(t(Disabled, Ev::LoadStart), Some(Loading));
- // 非法转移：注册态没有 unload；Loading 直接 unload 不合法
+        // 非法转移：注册态没有 unload；Loading 直接 unload 不合法
         assert_eq!(t(Registered, Ev::UnloadStart), None);
         assert_eq!(t(Loading, Ev::UnloadStart), None);
         assert_eq!(t(Active, Ev::LoadStart), None);
     }
 
- #[test]
+    #[test]
     fn line_format_matches_design() {
         assert_eq!(
             format_line("2026-10-30T21:04:12", "load", true, 3120, "首次校验+编译"),
@@ -178,20 +178,20 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn pairing_detection() {
         assert!(!has_unclosed_load(""));
- // 设计文档 §7 示例：三行成对
+        // 设计文档 §7 示例：三行成对
         let ok = "2026-10-30T21:04:12 load   ok    3120ms\n\
                   2026-10-30T21:44:51 unload ok       2ms\n\
                   2026-10-31T09:12:07 load   ERR      45ms   verify failed";
         assert!(has_unclosed_load(ok), "末尾 load 未闭合");
- // 补过对账行（unload ERR 上次异常退出）后即闭合
+        // 补过对账行（unload ERR 上次异常退出）后即闭合
         let closed = format!(
             "{ok}\n2026-10-31T09:13:00 unload ERR        0ms   上次异常退出，未执行 unload"
         );
         assert!(!has_unclosed_load(&closed));
- // 未知事件行不干扰判定（前向兼容）
+        // 未知事件行不干扰判定（前向兼容）
         let noise = "2026-10-30T21:04:12 verify ok     3120ms\nload-x ok";
         assert!(!has_unclosed_load(noise));
     }
