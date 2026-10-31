@@ -583,14 +583,7 @@ fn empty_line(text: &'static str, t: &'static Theme) -> AnyElement {
 
 /// ③ 页码段（PF 本地索引恒单页；贴面板底，无外壳底留白）。
 fn pager_block(m: &Metrics, t: &'static Theme) -> AnyElement {
-    crate::market::shell::pager_block(
-        m,
-        pager(1, 1, t),
-        true,
-        0.,
-        rgb(t.bg_panel),
-        line(t),
-    )
+    crate::market::shell::pager_block(m, pager(1, 1, t), true, 0., rgb(t.bg_panel), line(t))
 }
 
 // ---------------------------------------------------------------------------

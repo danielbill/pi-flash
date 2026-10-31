@@ -234,14 +234,7 @@ pub(super) fn row_slice(row: gpui::Div, m: &Metrics) -> AnyElement {
 
 /// ④ index 卡下段：页码条（末尾带上外壳 4rem 底留白）。
 pub(super) fn pager_block(pager: AnyElement, m: &Metrics) -> AnyElement {
-    crate::market::shell::pager_block(
-        m,
-        pager,
-        false,
-        sp::SHELL_PAD_BOTTOM,
-        d::panel(),
-        d::line(),
-    )
+    crate::market::shell::pager_block(m, pager, false, sp::SHELL_PAD_BOTTOM, d::panel(), d::line())
 }
 
 /// 空态 / 加载态行（设计 `.packages-empty`：纯文本，无插图）；加载态在文字前挂转圈。

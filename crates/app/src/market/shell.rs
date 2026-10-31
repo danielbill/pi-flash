@@ -33,7 +33,13 @@ pub(crate) fn centered(inner: impl IntoElement, m: &Metrics) -> gpui::Div {
 
 /// 段外壳：两侧描边 + 面板底；`top/bottom` = 首/末段补边。
 /// `bg`/`line` 由调用方注入（pi 页 = design 字面量，PF 页 = 主题 token）。
-pub(crate) fn slice_shell(m: &Metrics, top: bool, bottom: bool, bg: gpui::Rgba, line: gpui::Rgba) -> gpui::Div {
+pub(crate) fn slice_shell(
+    m: &Metrics,
+    top: bool,
+    bottom: bool,
+    bg: gpui::Rgba,
+    line: gpui::Rgba,
+) -> gpui::Div {
     let mut boxed = gpui::div()
         // 定宽（`w_full()` 在变高列表项里拿不到父宽，会整段塌掉——pi 页同坑）
         .w(px(m.shell_inner_w()))

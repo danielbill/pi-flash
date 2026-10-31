@@ -73,9 +73,7 @@ pub(crate) fn error_note(text: &str) -> AnyElement {
 /// `.min_w_0()`。
 pub(crate) trait SingleLine: Styled {
     fn single_line(self) -> Self {
-        self.overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
+        self.overflow_hidden().whitespace_nowrap().text_ellipsis()
     }
 }
 impl<T: Styled> SingleLine for T {}
