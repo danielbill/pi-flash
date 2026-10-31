@@ -4,9 +4,7 @@
 > 045 定编排侧(pi-subagents 扩展,站 pi 0.99→1.1 原语),本文定**宿主侧**——
 > pi-flash 作为 RPC 宿主对 subagent 的观测、管理、交互面。
 > 总原则(承 045):**编排逻辑一行都不进宿主;宿主只消费 pi 标准事件面,
-> 零自建协议**。本会话早前讨论的"Rust 内生编排 / delegate_dsh / token 账本"
-> 方案作废,被 045 的 pi 原生路线替代;本文吸收其有效残片(§7 后端不感知、§2.4 usage 上卷)。
-> dsh/pi-web/ZCode 三家 subagent 全量对照曾归档于本地调研笔记（不入库，本文只吸收其中宿主可见部分）。
+> 零自建协议**。
 
 ## 0. 结论速览
 
@@ -19,7 +17,7 @@ Agent 定义管理(Settings-子代理页,见 [044-1](044-1-子代理面板.md) �
 |---|---|---|
 | 子代理进度流 | `tool_execution_update`(spawn 工具 onUpdate,details 带 sessionId/状态/token) | 渲染嵌套卡 |
 | 完整过程 | 子会话 JSONL 文件(路径在 details/entry) | 直读 + 跳转 |
-| 多代理聚合视图 | 父会话文件的 descriptor entries(实时落盘) | 面板渲染——定稿见 [044-1-子代理面板](044-1-子代理面板.md)(setWidget 挂件方案已弃) |
+| 多代理聚合视图 | 父会话文件的 descriptor entries(实时落盘) | 面板渲染——见 [044-1-子代理面板](044-1-子代理面板.md) |
 | 成本 | nested-call usage **逐层上卷**进父工具结果(0.99 原生) | ctx_tip 现有面板直接显示,零新代码 |
 | 孤儿 | 自定义 entry + `agent_settled.aborted`(1.1.0) | interrupted 标记 + resume 入口 |
 | 后台完成通知(v2) | `ctx.ui.notify`(fire-and-forget) | 消费并决定 followUp 策略 |
@@ -71,8 +69,7 @@ setWidget 载荷),契约变更 = 扩展版本 bump + 宿主适配,与 040/041 �
 ### 2.4 成本显示(零新代码)
 
 nested-call usage 逐层上卷(0.99 原生记账)→ 父工具结果自带子代理成本 →
-ctx_tip 用量面板现有逻辑直接覆盖。**不自建分账**——早前"dsh 损耗基线/三笔
-委派税"的担忧在 pi 原生记账下消解:账在 nestedCalls 里,宿主只显示。
+ctx_tip 用量面板现有逻辑直接覆盖。**不自建分账**——账在 nestedCalls 里,宿主只显示。
 
 ## 3. 管理面
 
@@ -108,7 +105,7 @@ pi-subagents 作为普通 pi package,走 040/041 的扩展开关与装载机制,
   按钮(触发 045 的 resume 路径:复用同一子 session 文件续跑)。
 - resume 的用户确认默认开启(花的是新 token,不自动续跑)。
 
-## 6. v2 后台模式的宿主契约(045 留给宿主的决策,本文答)
+## 6. v2 后台模式的宿主契约
 
 - 完成通知经 `ctx.ui.notify` 到达宿主(fire-and-forget)。
 - **followUp 触发策略:默认"用户确认"**,通知卡给「继续此会话」按钮 →
@@ -121,9 +118,9 @@ pi-subagents 作为普通 pi package,走 040/041 的扩展开关与装载机制,
 - 045 的 `agent` 工具/profile 若未来扩展 provider(另一 harness 经 ACP、
   Claude Code、Codex、vendored dsh),宿主观测面**零改动**:onUpdate/
   setWidget/usage 上卷/entry 契约不变,卡片至多多个 provider 标签。
-- vendored dsh 路线（见本地调研笔记）降格为扩展侧 provider
-  候选:ACP 协议层若做,住 pi-link/acp.rs(协议测试在 pi-link),宿主仍
-  不感知。**宿主永远只见 pi 标准事件面。**
+- vendored dsh 作为扩展侧 provider
+候选:ACP 协议层若做,住 pi-link/acp.rs(协议测试在 pi-link),宿主仍
+不感知。**宿主永远只见 pi 标准事件面。**
 
 ## 8. 分期
 
@@ -135,7 +132,7 @@ pi-subagents 作为普通 pi package,走 040/041 的扩展开关与装载机制,
 
 ## 9. 待研究(接 045 待研究清单)
 
-1. onUpdate details 字段集冻结(与 045 扩展实现同步定稿,写进两文档契约表)。
+1. onUpdate details 字段集冻结(与 045 扩展实现同步确定,写进两文档契约表)。
 2. setWidget 载荷格式(RPC 下经 extension_ui 子协议的哪条通道,需与 040
    实现对一遍)。
 3. 子会话跳转后「返回父会话」的导航栈行为(033 nav 是否需要父子栈)。

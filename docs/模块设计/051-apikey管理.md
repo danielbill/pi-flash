@@ -8,20 +8,13 @@ apikeyManager
 
 ## 铁律
 
-1. **PF 永不写 `~/.pi/agent/models.json`**——读只读（catalog 合并显示需要），零写入，连修复都不写（051 M1.1，用户令）。PF 对它造成的任何历史污染由用户手工清理。
+1. **PF 永不写 `~/.pi/agent/models.json`**——读只读（catalog 合并显示需要），零写入，连修复都不写（051 M1.1）。PF 对它造成的任何历史污染由用户手工清理。
 2. **PF 永不写 `~/.pi/agent/auth.json`**——pi 的凭据文件归 pi；仅首启一次性**复制**收编（复制不删）。
 3. 明文密钥唯一 rest 归宿 = OS 凭据库（Windows Credential Manager / macOS Keychain，`keyring` crate）。
 
 ## 核心架构（一句话）
 
 **PF 的东西记 PF 的账本**：目录 provider 的 key 记 `~/.pi-flash/pf-auth.json`，自定义 provider 记 `~/.pi-flash/providers.json`，两份都是 PF 私有文件（0600）；pi 侧需要什么，spawn 时**注入**进去（env 变量 + 官方扩展注册），pi 的文件一个字节都不碰。
-
-## 背景与事故记录
-
-- 现状前身：PF 曾直接读写 auth.json（与 pi 共用凭据）；M1 初版还把 models.json 当"兜底通道"写入了 `providers.{p}.apiKey` 引用，导致两个真实事故：
-  1. 双 pi 用户（系统 pi + PF 共用 agent 目录）的系统 pi 解析不了 `$PF_KEY_*` 引用，自定义 provider 直接不可用；
-  2. apiKey-only 裸条目让 catalog provider（zai-coding-cn）被侧栏误判为自定义 provider，点「+ 模型」立即落盘 `{"id": ""}` 占位条目且 flush 无校验 → pi 严格校验（`id minLength 1`）→ 整个 models.json schema 报废。
-- 结论（用户裁决）：明文本来就不该到处放；共享文件一个字节都不能写。功能存亡靠注入解决。
 
 ## pi 侧事实（vendored 源码核实）
 
@@ -55,7 +48,7 @@ apikeyManager
 
 ## 方案选型
 
-OS 凭据库（选定）> 明文 0600（CLI 基线，rest 暴露）> 密码数据库（真增益仅当每次输密码且不缓存，免输则主密码又得靠 DPAPI/钥匙串包一层，绕回凭据库；留作 M2 可选叠加层）。
+OS 凭据库 > 明文 0600（CLI 基线，rest 暴露）> 密码数据库（真增益仅当每次输密码且不缓存，免输则主密码又得靠 DPAPI/钥匙串包一层，绕回凭据库；留作 M2 可选叠加层）。
 
 ## 设计细节
 
@@ -65,13 +58,13 @@ OS 凭据库（选定）> 明文 0600（CLI 基线，rest 暴露）> 密码数�
 { "deepseek": { "type": "api_key", "key": "$PF_KEY_DEEPSEEK", "injectAs": "DEEPSEEK_API_KEY", "mode": "vault" } }
 ```
 
-- `injectAs` = pi 官方 env 名，逐字照抄 vendored `getApiKeyEnvVars` 表（含 zai→ZAI_API_KEY、zai-coding-cn→ZAI_CODING_CN_API_KEY 等 40 项）；查不到的 provider 记自身变量名——pi 不消费即不可用，**诚实降级，不再写 models.json 兜底**。
+- `injectAs` = pi 官方 env 名，逐字照抄 vendored `getApiKeyEnvVars` 表（含 zai→ZAI_API_KEY、zai-coding-cn→ZAI_CODING_CN_API_KEY 等 40 项）；查不到的 provider 记自身变量名——pi 不消费即不可用，**诚实降级，不写 models.json 兜底**。
 - `mode`：`vault`（凭据库）/ `ref`（用户手写 `$VAR`/`!cmd`，PF 不掺和）/ `file`（降级明文，PF 直接注入 env）。
 
 ### 2. providers.json（自定义 provider 账本）
 
 - schema 沿用 models.json 的 providers 形状（编辑器缓冲零改动成本）；
-- **落盘净化**：空 id / 缺 id 的模型条目、空模型数组、无有效内容（含 apiKey-only 裸条目）的 provider，写前一律丢弃——schema 报废事故根治点；
+- **落盘净化**：空 id / 缺 id 的模型条目、空模型数组、无有效内容（含 apiKey-only 裸条目）的 provider，写前一律丢弃；
 - 自定义 key 走同款分流：明文 → 凭据库 + 引用；高级引用原样；库失败降级明文。
 
 ### 3. 扩展注入（pf-providers.mjs）
@@ -105,7 +98,7 @@ export default function (pi) {
 - 保存（目录 → pf-auth；自定义 → providers.json 缓冲，净化落盘）：`$`/`!` 高级引用原样；明文 → vault + 引用；vault 失败 → 降级明文 + 错误条提示。
 - 断开：删自己账本的条目 + vault delete（幂等）。**不碰 pi 文件。**
 - 自定义 provider 改名：vault 条目跟名搬家。
-- 显示：目录与自定义商表单同规——`$PF_KEY_*` 引用经凭据库解出明文掩码预填（眼睛可复核，mc_select_provider / mj_select 同链路）；解不出（库缺条目）回退显示引用原文；降级明文 / 用户高级引用（`$VAR`/`!cmd`）原样显示。早期「只显状态文案」方案已被 042 掩码预填 UX 取代。
+- 显示：目录与自定义商表单同规——`$PF_KEY_*` 引用经凭据库解出明文掩码预填（眼睛可复核，mc_select_provider / mj_select 同链路）；解不出（库缺条目）回退显示引用原文；降级明文 / 用户高级引用（`$VAR`/`!cmd`）原样显示。
 
 ### 7. 迁移（全部复制式，一次性，先于任何 spawn）
 
@@ -116,7 +109,7 @@ export default function (pi) {
 ### 8. 行为变化（需在 UI 告知用户）
 
 - 换 key 需重启会话生效（env/扩展按子进程固定）。
-- PF 注册的内容只服务 PF 会话（用户裁决的架构）：系统 pi 想用同款 provider 就写它自己的 models.json。
+- PF 注册的内容只服务 PF 会话：系统 pi 想用同款 provider 就写它自己的 models.json。
 - OAuth 归 pi：PF 模型页不再显示/管理 auth.json 里的 OAuth 登录态。
 
 ## 代码落点

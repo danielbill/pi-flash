@@ -7,7 +7,7 @@
 
 | 层 | 原型 | 方式 |
 |---|---|---|
-| 框架层(布局/dock/文件树/git 面板/状态栏/顶栏) | **ZED**(`D:\github\zed`,移植基线 commit `4c902c9`,2026-09-23) | 剪裁移植源码(渲染/交互照抄,数据层接本地) |
+| 框架层(布局/dock/文件树/git 面板/状态栏/顶栏) | **ZED**(`D:\github\zed`,移植基线 commit `4c902c9`) | 剪裁移植源码(渲染/交互照抄,数据层接本地) |
 | 会话列表(020) | **ZCode**(`D:\github\---harness-tools---\ZCode` packages/ui) | 按其设计规格实现(排序/交互/布局参数照搬) |
 | 对话层(030/031/032) | **pi-web**(行为规格,React 无代码可搬) | 自研,行为 1:1 对齐 |
 | 外观体系(006/007) | 架构 ZED,数据 pi-web | ThemeRegistry/ActiveTheme + mist/rose 令牌 + pi-web markdown |
@@ -70,7 +70,7 @@ crates/app/src/
 pi-link:sessions.rs 索引化扫描(group 目录定位 + tail-seek 摘要 + (mtime,size)
 指纹索引落盘 + `read_tail_messages` 尾窗解析)+ 协议层(不变,只对钉版 pi 负责)。
 
-## 2.5 会话模型(pi-web 多开对齐,2026-09-26 定案)
+## 2.5 会话模型(pi-web 多开对齐)
 
 **每个会话 = 一个常驻 SessionRuntime 实体**(session/runtime.rs):独立 pi 进程
 (AgentSession)+ 全量消息 + 投影状态 + **独立 inputPanel(草稿/附件/history/
@@ -85,7 +85,7 @@ Chat 是壳:池(runtimes map)+ 注意力指针 + 侧栏/git/文件/终端/设置
 
 ## 3. 状态所有权
 
-Chat 是壳实体，**直属字段只有 8 个子结构**（4ea，2026-10-13）：`pool`（会话池/
+Chat 是壳实体，**直属字段只有 8 个子结构**：`pool`（会话池/
 指针/缓存/启动闸门）、`composer`（输入面板 031）、`layout`（dock/路由/分隔条/
 flyout/焦点）、`psp`（项目/会话列表/搜索/通知点）、`ws`（文件树/编辑器/终端/
 git/cwd）、`dlg`（弹窗/悬浮层/右键菜单/toast/设置句柄）、`cfg`（设置页配置状态）、
@@ -110,7 +110,7 @@ git/cwd）、`dlg`（弹窗/悬浮层/右键菜单/toast/设置句柄）、`cfg`
 | 扩展 UI/自动更新/远程桥 | Chat.aux |
 | 主题/语言/字体 | 全局(appearance/i18n) |
 
-**RPC 发送纪律**（2026-10-13 收口）：`Command` 直发只允许出现在
+**RPC 发送纪律**：`Command` 直发只允许出现在
 `session/runtime/` 域内与 agent_session.rs；域外一律走 `SessionRuntime::rpc()`
 门面（无进程返回 false）。新命令接入只改 runtime 域。
 
@@ -130,9 +130,9 @@ RPC 对账)→ 页面流转`。
 
 **预算(验收线):首帧 <50ms;会话列表 <150ms;上次对话消息上屏 <300ms
 (与 node 无关);pi 就绪 <1s 且不阻塞任何 UI。** 实测基线:热索引扫描
-49 会话 5-9ms/0 文件扫描(阶段 A,原 200-400ms×2 全量读)。
+49 会话 5-9ms/0 文件扫描。
 
-**加载深度与预加载(2026-09-26 调查定案)**:pi 本体无窗口——
+**加载深度与预加载**:pi 本体无窗口——
 SessionManager.open 全量解析文件(82MB ~1.1s),get_messages 返回
 compaction 感知投影全量(压缩后 = 摘要检查点 + 压缩点之后的消息,
 活跃投影通常远小于原始消息数);pi-web 的 50 条尾窗是其 API route
@@ -153,7 +153,7 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
   nord light/ayu light(拷 zed 主题 JSON);深色 One Dark/nord dark。
   主题切换需重跑 gpui-component token 映射。
 - **syntax**:zed 主题 syntax 色 → syntect 色彩方案映射(markdown.rs +
-  syntect 保留;006 定案不引 zed markdown,markdown preview 对齐 pi-web)。
+  syntect 保留;不引 zed markdown,markdown preview 对齐 pi-web)。
 - **icon theme**:ZED 架构(注册表/文件图标集解析,服务 021 文件树),
   内置内容 = pi-web 图标。
 - **字体三档**:session font(≈zed UI font)/ panel font / markdown preview
@@ -167,7 +167,7 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
 ## 6. TextInput:全 app 唯一文本输入
 
 `ui/text_input.rs` = gpui-component InputState 的 facade(真实选区/光标/
-剪贴板/IME 由其提供;e60f842 起)。**铁律:任何文本输入禁止用 `on_key_down`
+剪贴板/IME 由其提供)。**铁律:任何文本输入禁止用 `on_key_down`
 字符匹配手搓。** 例外:终端(PTY 字节流)与主编辑器(多行,EditorInputElement
 + EntityInputHandler,随 Composer 迁移,收敛到 InputState 基座是既定方向,
 迁移时须实测中文 IME)。
@@ -178,7 +178,7 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
   禁止子组件持 `WeakEntity<父>` 散弹式 update(回调闭包除外)
 - 视图组件不直接碰 PiSession RPC(pi-web:ChatInput/MessageView 无网络请求)
 
-## 7.5 UI 自动化服务(pi-flash-2kq,2026-10-07)
+## 7.5 UI 自动化服务
 
 - **目的**:agent 调试不抢真实屏幕/鼠标——数据快照代替截图,方法直调代替鼠标点击。
 - **协议**:`pi_link::automation`(NDJSON over 127.0.0.1;hello→auth→auth_ok→
@@ -193,10 +193,10 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
   逐字不可靠);无头截图 gpui 0.2.2 无回读 API 不做,纯视觉问题留给人工;升级 gpui
   时可 backport Zed 的 AccessKit a11y 树 + capture_screenshot 补上。
 
-## 8. 守护规则(scripts/check_arch.sh,阶段 F 落地)
+## 8. 守护规则(scripts/check_arch.sh)
 
-1. 单文件**非测试行数** ≤1500（`#[cfg(test)]` 块与文件式测试模块不计；
-   2026-10-13 改口径——测试体量不再惩罚生产代码）；顶层视图函数 ≤300 行
+1. 单文件**非测试行数** ≤1500（`#[cfg(test)]` 块与文件式测试模块不计，
+   测试体量不惩罚生产代码）；顶层视图函数 ≤300 行
    （仅扫 crates/app；视图函数在本仓均为顶层自由函数）
 2. 禁止 `on_key_down` 字符匹配输入模式
 3. `cargo build` 无新警告;`cargo test` 全绿
@@ -204,66 +204,8 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
 
 守卫挂进发版 checklist（RELEASE.md §2）——发版前必跑 `scripts/check_arch.sh`。
 
-## 9. 迁移记录
+## 9. 待办
 
-- 阶段 1(2026-09-25,52c5675):ui/ + TextInput 落地,9 输入点接入。
-- 阶段 2(9bcf25b):services/ 层拆出,main.rs 9881→9055。
-- 阶段 3a(c0d8f55):settings/ 模块树,→6180。
-- 阶段 3b(848b96b):SettingsPanel 独立实体;主线程栈 16MB。
-- e60f842:TextInput 换 gpui-component InputState 基座;窗口根包 Root。
-- 3b8ae6f:docs/模块设计/ 新设计(005-032)入库,驱动本轮重构。
-- **阶段 A(93c29e9,2026-09-26)**:pi-link sessions 索引化扫描(group 定位/
-  tail-seek/指纹索引/尾窗解析,热扫描 5-9ms)+ app_settings.json/状态文件
-  三层配置(原子写/单次读缓存/__window/__dock schema)。
-- **阶段 B(2026-09-26)**:撤 settings 双 BISECT 短路(render_settings 空返回 +
-  open_settings reload-only),按 3b 架构重接 SettingsPanel;修焦点仲裁缺失
-  settings 分支(Esc 关闭弹窗,原 Esc 误触会话中止);6 tab UI 实测通过;
-  修 015/020 文档;本文重写为 v2 契约。
-- **阶段 C(a34af22,2026-09-26)**:render() 3260→1291 行,main.rs 6173→3533。
-  新边界模块(session/messages+input、dialogs、ext_ui、function_panel/mod+file_tree)
-  以 settings 式自由函数承接原内联区块,零行为变更;警告 20→19(余量均为
-  BISECT 时代死代码,阶段 D/E 清)。
-- **阶段 D(f09b60e,2026-09-26)**:005 壳骨架落地——无边框窗口 + 自绘顶栏
-  (WindowControlArea 拖拽/三按钮,zed platform_title_bar 机制)、底部
-  statusControlBar(018,四视图互斥 + 右键换边)、functionPanel dock、
-  welcome 页面态 + 后台填充(会话列表不再阻塞首帧,骨架先行)、窗口
-  bounds/最大化恢复;右面板拆除(终端宿主暂挂 dock Terminal 视图,阶段 E
-  归位);appearance/ 注册表(mist/rose/one-dark 起步)+
-  切换重跑 gpui-component 映射 + 字体槽位 + icon theme 骨架;设置通用页
-  主题选择器接新链路。default/dark 主题按 006 退役。
-- **阶段 E(32c985d + 45e4404 + 51e9984,2026-09-26,已完成)**:
-  ① dock 收尾——git 面板简化版(Changes|History + 行点击暂存 + commit/push,
-  push 走后台执行器;services/git.rs 增 stage/unstage/commit/push/log)、
-  终端宿主归位 function_panel::terminal_view、文件预览弹窗化(PanelTab::File
-  删除);② **AgentSession 无头实体**(Chat 持 Entity<AgentSession>,session/
-  epoch 进实体,spawn 走 entity update,refresh_state 取 &App);③ **单次
-  spawn**(启动恢复决策前移,消灭白起再杀的 node 进程);④ **磁盘直读**
-  (启动恢复与 open_session 先用会话文件尾窗上屏,get_messages 快照后到
-  对账——已实测:resuming 状态下消息已可见);⑤ sessionView 组装迁
-  session::main_column(main.rs 3172→2740);⑥ 主题选择器接 registry
-  (雾青/蔷薇/One Dark 显示名)。
-  **E 范围裁定**:InputPanel/SessionsPanel/FunctionPanel 的完整
-  Entity+EventEmitter 化移入 G+ 按需升级——模块边界已由自由函数视图落位,
-  粗粒度重绘对单窗口应用足够;IME/编辑器迁移涉及最高回归风险区,须在
-  031 细化要求到位后单独成战役。
-- **主题数据补齐(2026-09-27)**:One Light/nord light/ayu light/nord dark
-  落地——源 JSON 入库 `assets/themes/{one,ayu,nord}/`(含 LICENSE;nord 取自
-  用户本机 Zed 扩展目录),`tmp/gen_themes.py` 移植进 theme.rs(半透明色按
-  主题底色烘焙);registry() 凑齐 006 定案 7 套;PI_FLASH_THEME 实测
-  nord-dark/one-light 截图通过。
-- **发版前整理 P1–P4(2026-10-12;0dc29a0/3a9b52c/ac79fa3+6e95584/0565d3d)**:
-  theme 归并 appearance、9 个 actions_* 动词切片按调用图归并域目录、
-  main.rs 2326→204(Chat 实体/渲染根/域方法搬家,shell/{chat,render,types})。
-- **巨石拆分+边界纪律(2026-10-13,bead pzy/4ea/o5z)**:messages 2840→五件
-  (model/cards/turn/images/tests 外移)、runtime 2407→五件(mod/events/send/
-  nav/ingest)、input 1404→四件(area/bar/ctx_tip/mod)、terminal 2119→四件
-  (palette/snapshot/input_encode/mod)、markdown 3106→六件(mod/highlight/
-  parse/links/doc/测试外移);input_area 392→286、composer_bar 327→286
-  (wire_composer_keys 键路由、bar_left_group 内切);RPC 直发收口
-  SessionRuntime::rpc 门面(域外 9 文件 12 处归零);shell/types.rs 单域类型
-  十枚下沉;Chat 158 直属字段重组为 8 簇子结构(pool/composer/layout/psp/
-  ws/dlg/cfg/aux,跨域摸字段自此在代码里可见);check_arch 口径改非测试
-  行数并挂发版 checklist。
-- 待做:G+(功能细化,等详细要求;含 InputPanel/SessionsPanel/FunctionPanel
+- G+(功能细化,等详细要求;含 InputPanel/SessionsPanel/FunctionPanel
   实体升级、外观字体设置 tab、032 气泡控制栏、013 会话搜索)。
-  待补交互实测:dock 换边/git 面板操作/池多会话并发场景。
+- 待补交互实测:dock 换边/git 面板操作/池多会话并发场景。

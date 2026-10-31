@@ -1,6 +1,6 @@
 # PF UI 组件规范
 
-> 定稿：2026-10-09。适用范围：`crates/app` 全部界面。
+> 适用范围：`crates/app` 全部界面。
 > 本文是**唯一尺寸来源**：界面里出现的一切高度 / 内边距 / 间距 / 图标 / 圆角 / 字号，必须能对到本文的令牌上；对不上的视为 bug。
 >
 > 配色不在本文范围——色板语义见 `crates/app/src/theme.rs`（其头部注释即色彩规则）。
@@ -9,7 +9,7 @@
 
 ## 0. 参照体系（为什么是这些数）
 
-规范不拍脑袋，按下表四家收敛。**首选参照是 Zed**：同为 GPUI、同为桌面开发者工具、本项目本就以 Zed 为性能原型，其 `crates/ui` 的令牌直接实测提取；Fluent 2（Windows 平台规范）与 Material 3 / GitHub Primer / shadcn 用于交叉校验。
+按下表四家收敛，**首选参照是 Zed**（其 `crates/ui` 的令牌直接实测提取）；Fluent 2（Windows 平台规范）与 Material 3 / GitHub Primer / shadcn 用于交叉校验。
 
 | 维度 | Zed（实测源码） | Fluent 2 | Material 3 | Primer / shadcn | **PF 取值** |
 |---|---|---|---|---|---|
@@ -24,7 +24,7 @@
 | 滚动条 | 宽 6，悬停加宽 | — | — | — | **宽 6→10（与 Zed 相同）** |
 | UI 字号 | 10/12/14/16（默认 14） | — | — | VS Code 13 一档 | **10/11/12/13/14（默认 12）** |
 
-密度取向说明：PF 基准字号 12px（用户可调 10–17），比 Zed（14）/VS Code（13）密一档，但控件高度取 28 档而不是 Zed 的 22 档——留呼吸感，也是 pi-web 原型的既定观感。触屏目标尺寸（M3 的 48dp、7–10mm）不适用：PF 是键鼠桌面应用。
+密度取向：PF 基准字号 12px（用户可调 10–17），比 Zed（14）/VS Code（13）密一档；控件高度取 28 档（Zed 为 22 档）。触屏目标尺寸（M3 的 48dp、7–10mm）不适用：PF 是键鼠桌面应用。
 
 ---
 
@@ -65,7 +65,7 @@
 
 ## 2. 字号体系
 
-沿用已定稿的双轨模型（详见 `docs/UI设计/字体大小设置.md`），本文只固定档位语义：
+双轨模型（详见 `docs/UI设计/字体大小设置.md`），本文只固定档位语义：
 
 **面板轨 `ui_size(base)`**（随"界面字号"设置缩放，设置值钳 10–20，档位 小15/中16/大17/特大18）：
 
@@ -73,9 +73,9 @@
 |---|---|---|
 | caption | ui(10) | 徽标、scope 标签、stat 标签 |
 | secondary | ui(11) | 辅助说明、时间列、git 面板正文、footer |
-| **secondary+** | **ui(11.5)** | **行描述（set_row desc）、主题卡名、模型行副文**（2026-10-20 按 settings 实测收编） |
+| **secondary+** | **ui(11.5)** | **行描述（set_row desc）、主题卡名、模型行副文** |
 | **body** | **ui(12)** | 面板正文、按钮、输入框、菜单行、设置正文（基准档） |
-| **body+** | **ui(12.5)** | **选项文字（语言行/字体列表）、misc 的值文字**（2026-10-20 收编） |
+| **body+** | **ui(12.5)** | **选项文字（语言行/字体列表）、misc 的值文字** |
 | emphasized | ui(13) | 设置导航、富菜单主行、列表强调行 |
 | title | ui(14) | 弹窗标题、pill 菜单、选中行主文字 |
 
@@ -96,16 +96,16 @@
 | 令牌 | px | 用途 | 禁止用途 |
 |---|---|---|---|
 | ICON_INDICATOR | 10 | checkbox 勾、状态点、行内 meta 小图标 | — |
-| ICON_XS | 12 | 行内关闭 ×、工具卡小图标、面包屑 chevron、**topbar 标签**（2026-10-22 定夺，原值 15 非法档收敛） | — |
+| ICON_XS | 12 | 行内关闭 ×、工具卡小图标、面包屑 chevron、**topbar 标签** | — |
 | ICON_SM（默认） | 14 | **菜单项、列表行、按钮内、文件树** | — |
 | ICON_MD | 16 | 独立强调图标、statusbar tab、空态图标 | — |
 | ICON_LG | 18 | 图标按钮内部（psp 行操作钮、topbar 图标钮） | — |
-| CHECK_CARD（语义特例） | 24 | **卡片「已启用/已安装」✓，全局唯一尺寸**（2026-10-23 定夺） | 下拉/菜单行选中勾不归它（归通用档）；不得挪作他用 |
+| CHECK_CARD（语义特例） | 24 | **卡片「已启用/已安装」✓，全局唯一尺寸** | 下拉/菜单行选中勾不归它（归通用档）；不得挪作他用 |
 
 规则：
 - 图标↔文字 gap 8（SP4）；图标在按钮内默认 ICON_SM，图标按钮走 §5.2 的方形槽。
-- 关闭 × 全项目统一 ICON_XS（12）——存量 8/11/13 三种杂值收敛掉。
-- **「更多」图标全项目唯一 = lucide ellipsis（裸三点）**（2026-10-13 用户定夺，取代 2026-10-10 的 circle-ellipsis 带圈三点）；禁止再引入第二种 more 变体。
+- 关闭 × 全项目统一 ICON_XS（12）。
+- **「更多」图标全项目唯一 = lucide ellipsis（裸三点）**；禁止再引入第二种 more 变体。
 - iconfont「新建会话」19px 等**品牌特例**仅限 startup logo（88）与该处，不得扩散。
 - icon hover 动效（scale 1.06 + 上抬 1px）按 v55 既有规格，见 `docs/UI设计/主界面UI设计说明.md` §14。
 
@@ -116,14 +116,14 @@
 | 令牌 | px | 用途 |
 |---|---|---|
 | R_XS | 3 | checkbox、徽标、高亮词底 |
-| R_INLINE（行内小件） | 5 | **输入框、下拉触发器、列表行、菜单行、主题卡、键帽、行内小图标钮**（2026-10-20 收编 settings 实测：这一族全是 5，见 §10） |
+| R_INLINE（行内小件） | 5 | **输入框、下拉触发器、列表行、菜单行、主题卡、键帽、行内小图标钮**（见 §10） |
 | R_CTRL（默认控件） | 6 | **一切文字按钮、图标按钮、tab** |
 | R_CARD | 8 | 菜单/弹层容器、会话/项目列表行、面板内卡片 |
 | R_MODAL | 10 | 弹窗卡片（含大卡顶条与整体） |
 | R_SHEET | 12 | 大卡片（设置/系统提示词）、hover 浮卡 |
 | R_PILL | 16 / full | composer 胶囊、pill、开关、圆点（rounded_full） |
 
-规则：同语义同值。"5 与 6 并存"不是随机：**能点的散件（按钮）走 6、被塞进行里的容器件走 5**，两档语义见 §10 实测表。"弹窗圆角"只有一个 10（存量 8/10/12 三档收敛：菜单壳 8、标准弹窗 10、大卡 12——这是三条语义，不是三档随机）。窗口装饰（CSD）10px 是系统特例。
+规则：同语义同值。**能点的散件（按钮）走 6、被塞进行里的容器件走 5**（两档语义见 §10 实测表）。"弹窗圆角"只有三条语义：菜单壳 8、标准弹窗 10、大卡 12。窗口装饰（CSD）10px 是系统特例。
 
 ---
 
@@ -146,7 +146,7 @@
 | Danger | 透明 | t.danger | danger_alpha(t, 0x59)（35%） | danger_wash()（红 12%） |
 
 规则：
-- 全项目只有这一张按钮表。存量 6 种文字按钮组合（overlay confirm / dialogs / git 小钮 / psp ghost 钮…）全部向此收敛：git 面板小钮 → BTN_SM；弹窗按钮 → BTN_MD；`rounded(7)` 文字钮 → 6。
+- 全项目只有这一张按钮表：git 面板小钮 → BTN_SM；弹窗按钮 → BTN_MD。
 - **设置页入口 `config_button` 只有两档：`small` = BTN_MD(28)，默认 = BTN_LG(32)**（表单主按钮取 LG；实测表见 §10.4）。
 - Danger 三套红（widgets hsla 系 / overlay t.danger 系 / psp danger_alpha 系）**只保留 theme.rs 语义系**：`t.danger` 文字 + `danger_alpha(0x59)` 边 + `danger_wash()` 底。硬编码 0xd8626a 仅允许出现在窗口关闭钮（OS 惯例特例）。
 - 弹窗按钮排布：右对齐、gap 8、次要（取消）在左、主要（确认）在右。危险确认钮用 Danger 变体，rest 底 6% → hover 12%。
@@ -161,7 +161,7 @@
 | IB_MD（默认） | 28 | 16 | 行操作钮、弹窗关闭 × |
 | IB_LG | 32 | 18 | topbar、psp 标题行操作 |
 
-特例（保留）：窗口控制钮 42×40 无圆角（OS 惯例）；composer 发送/停止 36×36 圆角 16（运行中收成 9）；大卡关闭钮 30×30 红底（破坏性区域语义）；topbar/statusbar 高 40（chrome 层，2026-10-10 定夺 36→38，2026-10-13 定夺 38→40 两条等高；两条 bar 上沿均不画 border_t，激活 tab 上沿不画线只留左右分隔）；**bar 内 tab 高 = bar 高 −4**（2026-10-13 定夺；topbar tab 底缘 mb(−1) 融入下方内容区，statusbar 激活卡顶缘贴 dock 连体）。
+特例（保留）：窗口控制钮 42×40 无圆角（OS 惯例）；composer 发送/停止 36×36 圆角 16（运行中收成 9）；大卡关闭钮 30×30 红底（破坏性区域语义）；topbar/statusbar 高 40（chrome 层，两条等高；两条 bar 上沿均不画 border_t，激活 tab 上沿不画线只留左右分隔）；**bar 内 tab 高 = bar 高 −4**（topbar tab 底缘 mb(−1) 融入下方内容区，statusbar 激活卡顶缘贴 dock 连体）。
 
 ### 5.3 开关 Switch
 
@@ -174,9 +174,9 @@
   - **On（全选）** = accent 实底 + bg 色 knob，knob 在开位；
   - **Mixed（部分选中）** = accent 减淡铺底（`tokens::switch::MD_MIXED_ALPHA`）+ 同色调略深描边 + knob 在开位；
   - **Off** = bg_selected 底 + border，knob 在关位；
-  - 用于「一组若干项」的总开关（技能分组 / 扩展全局 / MCP 全局）：一项没开不能装成一半，只开了一部分也不能装成全关——部分看轨道浓度，具体数字交给旁边的 `{enabled}/{total}`。禁用仍是整体 opacity 0.5（别拿减淡轨道当禁用）。
+  - 用于「一组若干项」的总开关（技能分组 / 扩展全局 / MCP 全局）：部分看轨道浓度，具体数字交给旁边的 `{enabled}/{total}`。禁用仍是整体 opacity 0.5（别拿减淡轨道当禁用）。
 - 选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用整体 opacity 0.5。
-- 与 Zed（32×20/knob12）、Fluent（40×20/thumb12）同族，按 12px 密度再收半档（2026-10-09 定夺）。存量 config_switch 32×18、misc 34×19、组头 24×14 全部收敛到 28×16（`settings/widgets.rs::switch_el` 为唯一画法，组头行内开关同尺寸）。SW_SM 24×14 为**预留档**（当前无消费方；需要更小开关必须用它，禁止自造第三种尺寸）。状态直切、无动画——GPUI 现状即无插值，规范不虚构动画。
+- 开关唯一画法 = `settings/widgets.rs::switch_el`（组头行内开关同尺寸）。SW_SM 24×14 为**预留档**（当前无消费方；需要更小开关必须用它，禁止自造第三种尺寸）。状态直切、无动画。
 
 ### 5.4 复选框 / 单选
 
@@ -185,7 +185,7 @@
 | 方框 | 14×14，圆角 3，边框 1px（选中 accent 底，未选 border） |
 | 勾 | icon CHECK @ ICON_INDICATOR(10)，色 **accent_contrast**（统一；清掉 mcp/plugin picker 里硬编码 0xffffff） |
 | 单选 | 14 圆圈 + 6 内点，选中描边 accent |
-| 选项/分项文字 | 统一 `text_muted`，**选中只加粗（SEMIBOLD）不变色**；分项标签比节标题小一档（ui12 常规，节标题 ui13 semibold），层级靠字号字重表达（2026-10-10 定夺） |
+| 选项/分项文字 | 统一 `text_muted`，**选中只加粗（SEMIBOLD）不变色**；分项标签比节标题小一档（ui12 常规，节标题 ui13 semibold），层级靠字号字重表达 |
 
 ### 5.5 输入框
 
@@ -193,10 +193,10 @@
 |---|---|
 | 单行高 | 30（紧凑档 20 = 行内改名/过滤框，见 §10.4） |
 | 多行高 | 170（约 8 行，可拖） |
-| 圆角 | **5（R_INLINE）**——2026-10-20 按实现收编（原写 6，`ui/text_input.rs` 与 settings 全部输入框都是 5） |
+| 圆角 | **5（R_INLINE）** |
 | 边框 | 1px；未焦 = t.border，**聚焦 = accent**（不做双圈 focus ring） |
 | 底色 | bg_panel |
-| 字号 | ui(12)（随面板字号缩放；清掉现在硬编码的 px(12)） |
+| 字号 | ui(12)（随面板字号缩放） |
 | placeholder | text_faint |
 
 composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例，内部行框契约不变。
@@ -207,12 +207,12 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 |---|---|
 | 容器 | min_w 200，p 4，圆角 8，border 1px，shadow_lg，max_h 75% 视口 |
 | 行 | 水平 padding 10，垂直 padding 7，图标↔文字 gap 8 |
-| 行图标 | ICON_SM(14)（存量 13/15 并存收敛到 14） |
+| 行图标 | ICON_SM(14) |
 | 行文字 | ui(12)；副行/描述 ui(11) text_faint |
 | 快捷键/右注 | ui(11) text_faint，`ml_auto` 右对齐 |
 | 分隔线 | 1px t.border，上下留白 6 |
 | 子菜单 | 沿父容器右侧 +4 偏移（间隙恒 4px），行对行；父卡向上弹时行位按卡底缘折算。实现锚定：子卡挂主行 `absolute left:100% + ml8`（主卡右留白4 + 偏移4，不随主卡实宽浮动；**禁止** left 写死像素——主卡 min_w 200 会被长文案撑宽，写死必穿帮） |
-| 弹出方向（统一算法） | 锚点在视口**上半 → 向下弹，反之向上弹；左半 → 向右弹，反之向左弹**（两轴独立判定，恰在中线按「反之」）。唯一实现 `ui::popup::PopupEdges`（边锚定制：向上/向左弹给 bottom/right，免量内容尺寸）；toast 与会话栏（psp）全套浮层已接入，新锚定浮层一律走它（2026-10-11 定夺）。**算法只裁方向，精准对齐归调用方**——如会话 hover 详情卡：向下弹卡顶=行顶、向上弹卡底=行底（行高由 prepaint 钩子实测），卡悬在行的背离侧不遮行（2026-10-11 二次定夺） |
+| 弹出方向（统一算法） | 锚点在视口**上半 → 向下弹，反之向上弹；左半 → 向右弹，反之向左弹**（两轴独立判定，恰在中线按「反之」）。唯一实现 `ui::popup::PopupEdges`（边锚定制：向上/向左弹给 bottom/right，免量内容尺寸）；toast 与会话栏（psp）全套浮层已接入，新锚定浮层一律走它。**算法只裁方向，精准对齐归调用方**——如会话 hover 详情卡：向下弹卡顶=行顶、向上弹卡底=行底（行高由 prepaint 钩子实测），卡悬在行的背离侧不遮行 |
 
 锚定与防抖沿用 `ui/dropdown.rs`（弹层 mt4、窗口收口 margin 8、防抖 300ms），不在本文重复。
 
@@ -222,12 +222,12 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 |---|---|
 | 遮罩 | 黑 35%（模态）；非遮挡菜单 dim=false 走 `ui/overlay.rs::layer` |
 | 宽度档 | **380 / 500 / 620 / 760**；大卡 = 相对 0.7×0.98 |
-| 内 padding | 16（存量 12/14/18 收敛到 16；大卡 body px30 保留） |
+| 内 padding | 16（大卡 body px30 保留） |
 | 圆角 | 10 |
 | 标题 | ui(14) Semibold；标题行高 36 + 关闭钮 IB_SM/ICON_XS |
 | 按钮行 | 见 §5.1：右对齐 gap 8，mt 16 |
 
-宽度档映射：小确认 380（存量 260/300 收敛）；表单/中型 500；模型选择/会话搜索 620；diff/大查看器 760；项目选择维持 500×500。
+宽度档映射：小确认 380；表单/中型 500；模型选择/会话搜索 620；diff/大查看器 760；项目选择维持 500×500。
 
 ### 5.8 列表行
 
@@ -238,17 +238,17 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | 主列表（psp 会话行） | 32 | bg_selected + Semibold | bg_selected 同色（更浅不变） |
 | 弹窗选择行（项目选择） | 40 | 行尾 check | bg_hover |
 
-- **选中态统一 bg_selected**：psp 会话行现用的 `rgba(text,0x1a)` 中性薄纱与 bg_selected 视觉几乎等效，收敛为 token，消除特例。
-- 项目行 33（=32+mb2 补偿）改回真行高 32，用 mb 补间距的写法废除。
-- 行内结构：pl10 pr10 gap8；图标 ICON_SM(14/15→统一)；时间/数字列定宽右对齐。
+- **选中态统一 bg_selected**。
+- 项目行行高 32（真行高，不用 mb 补间距）。
+- 行内结构：pl10 pr10 gap8；图标 ICON_SM(14)；时间/数字列定宽右对齐。
 
 ### 5.9 滚动条
 
-`ui/psp_scrollbar.rs` 既有常量即标准：thumb 宽 6、内缩 4、hover/拖拽 10、min thumb 25、最大不透明 0.7、autohide 3s + 1s 淡出、全圆角。**容器统一 w10**（存量 w8/w12 收敛）。
+`ui/psp_scrollbar.rs` 既有常量即标准：thumb 宽 6、内缩 4、hover/拖拽 10、min thumb 25、最大不透明 0.7、autohide 3s + 1s 淡出、全圆角。**容器统一 w10**。
 
 ### 5.10 悬浮提示 tooltip
 
-唯一入口 `ui/tooltip.rs` 的 `WithTip`（2026-10-13 建），禁止直摸 `gpui_component::tooltip::Tooltip`：
+唯一入口 `ui/tooltip.rs` 的 `WithTip`，禁止直摸 `gpui_component::tooltip::Tooltip`：
 
 | API | 文案 | 用途 |
 |---|---|---|
@@ -272,7 +272,7 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 | 已选段 | 同轨道几何，`t.accent` |
 | 旋钮 | 12px 圆，`t.bg_panel` 填充 + 1.5px `t.accent` 描边（中心行程 = 元素宽 − 旋钮径） |
 | 默认宽 | 180 |
-| 步进 | 数值域自定（宽度 = 20px/档，2026-10-29 定） |
+| 步进 | 数值域自定（宽度 = 20px/档） |
 
 交互：点轨道即跳值、按住连续拖（拖出元素范围仍跟手）；拖动中只写内存预览
 并重绘（消息列与 composer 同帧同步变宽），**松手才落盘**。实现走
@@ -281,15 +281,15 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 ### 5.11 面板控制栏（020-1 整合面板）
 
-上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**（2026-10-14 定夺，视觉统一清晰）；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 12px、视觉与交互全按 §5.12 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
+上下子面板（会话列表 / 文件树）的**控制栏统一 38px 高、一律无下 border**；控制栏钮盒高 30、图标档位左二 LG18（icon+文字）/ 右三 MD16（纯 icon，搜索已降级并入右侧组）；分隔条感应厚度 12px、视觉与交互全按 §5.12 统一分隔线规范，双击复位 50%。代码落点 `tokens::panel_ctrl`（BAR_H=38 / BTN_H=30），分隔线数值归 `tokens::divider`。
 
-### 5.12 分隔线（统一规范，2026-10-23 定夺）
+### 5.12 分隔线（统一规范）
 
-壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 4px accent 粗线；感应厚度统一 12px**（`tokens::divider::HIT`，原 panel_ctrl::DIV_H 并入；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局——gpui border 占布局，改 border 粗细会推挤内容（hover 抖动），覆盖线方案 hover 前后零位移。
+壳内可拖拽分隔线共用一套契约：**常驻 1px 细线；hover 与拖拽同款 4px accent 粗线；感应厚度统一 12px**（`tokens::divider::HIT`；竖直分隔线的摆位另定：面板侧 3px 避让列表滚动条，其余 9px 落在内容侧）。高亮线一律 absolute 覆盖在常驻线之上、不占布局。
 
 **唯一实现**：`ui::divider`（`LineSpec::{vertical,horizontal}` + `line`）。新增可拖拽分隔线一律调它，禁止就地手画。常驻线/highlight 颜色也由该函数按主题语义 token 统一取（细线灰 `border_alpha(0x99)` / accent），调用方不各传一种灰。
 
-高亮态一律用布尔状态位（`hovered || dragging`）驱动，**不得用 gpui 的 `hover`/`group_hover` 改粗细**：其样式 refine 受 `has_active_drag` 门控且需元素自带 hitbox，同一契约会渲染成两种结果（实测颜色变了粗细没变）。现有三处：
+高亮态一律用布尔状态位（`hovered || dragging`）驱动，**不得用 gpui 的 `hover`/`group_hover` 改粗细**。现有三处：
 
 | 分隔线 | 位置 | 感应带 | 两端缩进 | 高亮状态位 |
 |---|---|---|---|---|
@@ -325,9 +325,9 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 - 图标与文字一律垂直居中（items_center），禁止基线对齐。
 - 表单：标签左对齐；标签↔控件 gap 8，控件间 gap 8，行距 12，区块间距 20。控件列起点对齐（不同表单页同一列宽节奏）。
 - 列表：行内左对齐起于 pl10（psp 一体列表除外，见下条图标对齐线）；时间/数字/快捷键列右对齐（右缘 pr10）。
-- **图标对齐线（topbar 收放钮 ⇄ psp 列表 ⇄ 状态栏首 tab，2026-10-13 定稿）**：收放钮图标与 psp 列表行图标（项目 folder / 会话 / 伪标签）共用一条视觉左缘，状态栏首 tab 卡片左缘也落在线上，单一来源 `ui/tokens.rs::align::ICON_LINE`（现值 12）。两侧从它反推：收放钮 `ml = ICON_LINE − (钮盒30 − 图标18)/2 = 6`；psp 列容器 `px 10`（唯一水平留白），行内 `pl = ICON_LINE − 10 = 2`（对齐补偿，非留白）；状态栏 tabs 容器 `ml = ICON_LINE`。**改线只改 ICON_LINE 一个数**（规范本条 + tokens 常量 + 锁定测试断言三处记账），两侧边距与 session 渐隐量宽公式全部自动跟随。状态栏设置钮图标右缘对齐列表右线（容器 LIST_PX + 行 pr LIST_PX = 2×LIST_PX，右对齐 + pr 直取；居中会是 15px、多伸出 5px，勿改回）。
+- **图标对齐线（topbar 收放钮 ⇄ psp 列表 ⇄ 状态栏首 tab）**：收放钮图标与 psp 列表行图标（项目 folder / 会话 / 伪标签）共用一条视觉左缘，状态栏首 tab 卡片左缘也落在线上，单一来源 `ui/tokens.rs::align::ICON_LINE`（现值 12）。两侧从它反推：收放钮 `ml = ICON_LINE − (钮盒30 − 图标18)/2 = 6`；psp 列容器 `px 10`（唯一水平留白），行内 `pl = ICON_LINE − 10 = 2`（对齐补偿，非留白）；状态栏 tabs 容器 `ml = ICON_LINE`。**改线只改 ICON_LINE 一个数**（规范本条 + tokens 常量 + 锁定测试断言三处记账），两侧边距与 session 渐隐量宽公式全部自动跟随。状态栏设置钮图标右缘对齐列表右线（容器 LIST_PX + 行 pr LIST_PX = 2×LIST_PX，右对齐 + pr 直取）。
 - 弹窗：标题左对齐、关闭钮右上；按钮行右对齐。
-- 分栏容器：设置页**左列表列宽统一 400**（`settings/widgets.rs::LIST_W`，Providers/扩展/MCP 清单/技能四页，基准 = 扩展页；2026-10-09 定稿 350，082 因扩展页要容「↑ 可更新」箭头四页同步加宽到 **400**，2026-10-20 回写）；设置**主导航列 160**（mod.rs big_card：界面/模型/技能… 那列；2026-10-10 定夺，勿与 sidebar_shell 混淆）；子页清单基座 `sidebar_shell` 240（未走 LIST_W 的页用）；工具定义左列 200。
+- 分栏容器：设置页**左列表列宽统一 400**（`settings/widgets.rs::LIST_W`，Providers/扩展/MCP 清单/技能四页）；设置**主导航列 160**（mod.rs big_card：界面/模型/技能… 那列；勿与 sidebar_shell 混淆）；子页清单基座 `sidebar_shell` 240（未走 LIST_W 的页用）；工具定义左列 200。
 
 ---
 
@@ -340,9 +340,9 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | focus | accent 1px 边框（仅输入框类）；按钮不做 focus ring，键盘焦点走 hover 同款底 |
 | disabled | opacity 0.5，去掉 hover 响应 |
 | 图标 hover | scale 1.06 + 上抬 1px（v55 规格，paint 期矩阵实现） |
-| toast | 全项目两处（status 居中 / ext notice 右上）统一主题配色：`bg_panel` 底 + 1px 边框（status 用 `t.border`，ext 用类型色）+ `t.text` 文字；尺寸自适应内容，max 600×200，超高滚动，自动换行，左右 padding 20（2026-10-10 定夺）；定位纵边走 §5.6 统一弹出算法（status 只取纵向判定、水平居中独立保留；ext 右上槽 = 上半向下+右半向左，输出与原写死值等价）（2026-10-11） |
-| 会话状态槽 | 15px 槽：运行 = spinner(accent)；agent 结束时**窗口无焦点或本会话已转后台** → 通知点三色（2026-10-10 定夺）：**外部错误/崩溃 = 7px 红 `t.danger`**、**内部中断（stopReason length/aborted，超时/上限停止）= 7px 黄 `WARN`**、**正常完成 = 7px 青蓝 `NOTICE`**（只是"跑完了回来看"，不承载对错）；绿色不作通知点（绿色只表达正确性）；点径统一 7px，切入会话即清 |
-| psp 会话行局部字号 | 标题 = 面板设置值（ui12 基准）；时间 = **面板−2** `ui(10)` text_faint 右对齐列；「显示更多」= **面板−1** `ui(11)` **text_faint（placeholder 色）**，hover 回正文（2026-10-10 定夺） |
+| toast | 全项目两处（status 居中 / ext notice 右上）统一主题配色：`bg_panel` 底 + 1px 边框（status 用 `t.border`，ext 用类型色）+ `t.text` 文字；尺寸自适应内容，max 600×200，超高滚动，自动换行，左右 padding 20；定位纵边走 §5.6 统一弹出算法（status 只取纵向判定、水平居中独立保留；ext 右上槽 = 上半向下+右半向左） |
+| 会话状态槽 | 15px 槽：运行 = spinner(accent)；agent 结束时**窗口无焦点或本会话已转后台** → 通知点三色：**外部错误/崩溃 = 7px 红 `t.danger`**、**内部中断（stopReason length/aborted，超时/上限停止）= 7px 黄 `WARN`**、**正常完成 = 7px 青蓝 `NOTICE`**（只是"跑完了回来看"，不承载对错）；绿色不作通知点（绿色只表达正确性）；点径统一 7px，切入会话即清 |
+| psp 会话行局部字号 | 标题 = 面板设置值（ui12 基准）；时间 = **面板−2** `ui(10)` text_faint 右对齐列；「显示更多」= **面板−1** `ui(11)` **text_faint（placeholder 色）**，hover 回正文 |
 
 ---
 
@@ -365,21 +365,19 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 落地建议（四阶段滚动，每阶段独立 commit + pif-ui 截图走查）：
 
 - **P0 地基（约半天）**：新建 `crates/app/src/ui/tokens.rs` 落全部令牌常量（SP*、ICON_*、R_*、BTN_*、SW_*、DLG_*）+ 单测锁定数值（仿 `theme.rs` 的不变量测试）。零视觉变化；此后禁止新增硬编码尺寸。
-- **P1 低风险值替换（约 1 天，一个 commit）**：#8 checkbox 勾色（2 处 2 行）→ #9 次要钮描边（2 处）→ #7 滚动条容器 w10（4 处）→ #4 danger 唯一化（4 文件）。全是近等值替换，视觉几乎无感，先销 4 条。
+- **P1 低风险值替换（约 1 天，一个 commit）**：#8 checkbox 勾色（2 处 2 行）→ #9 次要钮描边（2 处）→ #7 滚动条容器 w10（4 处）→ #4 danger 唯一化（4 文件）。全是近等值替换，视觉几乎无感。
 - **P2 样板收敛（2–3 天）**：#1 文字按钮——把 `settings/widgets.rs` 的 config_button 升级为基于 tokens 的通用按钮组件（三高三变体），先在 043 MCP 设置页试点走查，再替换 overlay/dialogs/psp_overlays/git_panel 其余组合；随后 #5 弹窗圆角三语义、#3 图标档位（先统一"关闭×=12""菜单图标=14"两个高频语义，其余按模块滚动）。
 - **P3 视觉敏感项 + 文档回写（约半天 + 走查）**：#6 行高四档、废 mb 补偿（项目行 33→32 有 1px 变化，需走查）；#2 裸字号——markdown/终端按规范本就是固定特例，值入册 tokens 即可，其余换 ui()；#10 文档漂移以本文为准回写实现。
 
-优先级理由：#1/#4 是后续新页面（042/043 一类设置页正密集产出）会照抄的样板，最优先统一，否则每新一个页面多欠一笔债；#2 带 bug 性质（用户调界面字号时那 11 处不动）；icon 全量 66 处不做一次性大扫除，改到哪个模块顺手收敛哪个模块。`settings/widgets.rs` 的 Config* 系列在 P2 改造为基于 tokens 的通用组件（Button/Switch/Checkbox/NavRow）向全项目推广。
+`settings/widgets.rs` 的 Config* 系列在 P2 改造为基于 tokens 的通用组件（Button/Switch/Checkbox/NavRow）向全项目推广。
 
-> **销账状态（2026-10-10）**：#1–#10 全部落地。#2 的 markdown 固定字号入册 `tokens::fixed`（含锁值单测），vendored TextInput 实测已继承环境字号（无硬编码 px(12)，自然合规）；#3 剩余低频图标按"改到即收敛"策略滚动；#10 发送钮实测已 36、statusbar 36 入册 §5.2、设置主导航列恢复 160（P3 曾误按 sidebar_shell 的 240 改宽，两处是不同的面，2026-10-10 纠正）。会话轨新增定夺同期入册：§5.4 选项/分项文字（text_muted 统一、选中只加粗）、§2 终端字体（JetBrains Mono）与字号（= 面板字号）。
+> **销账状态**：#1–#10 已全部落地。#2 的 markdown 固定字号入册 `tokens::fixed`（含锁值单测），vendored TextInput 已继承环境字号（无硬编码 px(12)）；#3 低频图标按"改到即收敛"策略滚动；#10 发送钮 36、statusbar 36 入册 §5.2，设置主导航列 160。会话轨规格已入册：§5.4 选项/分项文字（text_muted 统一、选中只加粗）、§2 终端字体（JetBrains Mono）与字号（= 面板字号）。
 
 ---
 
 ## 10. Settings 已实现组件实测表（事实标准 · 新页面照抄）
 
-> **立此存照（2026-10-20）**：040-1 扩展市场这个「简单页面」，因为没有一张能抄的尺寸表，
-> 每个按钮、每段间距都现场推，来回改一整天仍对不齐。本章把 settings 里**已经落地并被
-> 用户验收**的组件逐件量下来，作为可复制的清单。
+> 本章把 settings 里**已经落地并被用户验收**的组件逐件量下来，作为可复制的清单。
 >
 > 使用规则：**新页面照本章抄数**；本章与 §1–§9 冲突处以本章为准（通用规则只约束本章未
 > 覆盖的新组件）；抄到一半发现缺项，**补进本章再写代码**，不要现推。
@@ -403,7 +401,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 
 | 部件 | 值 |
 |---|---|
-| 侧栏基座 `sidebar_shell` | 默认 w**240**，但**现有五页（扩展/模型/技能/MCP/子代理）一律 `.w(LIST_W=400)` 覆盖**——新建分栏页照 **400** 抄，240 只当兜底默认值；`h_full`、右边 1px `t.border`、**不刷底色**（列表区与详情同底，2026-10-10 定稿） |
+| 侧栏基座 `sidebar_shell` | 默认 w**240**，但**现有五页（扩展/模型/技能/MCP/子代理）一律 `.w(LIST_W=400)` 覆盖**——新建分栏页照 **400** 抄，240 只当兜底默认值；`h_full`、右边 1px `t.border`、**不刷底色**（列表区与详情同底） |
 | 列表容器 `sidebar_list` | `px 6 / pt 8`，滚动容器；**列表页统一 `px 7`**（扩展/技能/MCP） |
 | 列表行 `sidebar_item` | h**30**、`px 8`、`mb 1`、r**5**、gap **8**、ui(12)；激活 `bg_selected`+SEMIBOLD+`t.text`，否则 `bg_panel`+`text_muted`，hover `bg_hover` |
 | 组头 `group_header` | `px 8 / pt 8 / pb 3`、ui(10) SEMIBOLD `text_dim`，右侧 aside（计数 + 三态开关） |
@@ -434,7 +432,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 单选 | **14** 圆 + **6** 内点（选中：accent 边框 + accent 点），标签 ui(12)、间距 7 | general 语言行 |
 | 徽标 scope_tag | `px 5 / py 1`、r**3**、ui(10)；项目 = indigo `hsla(.63,.86,.62, .12/.85)`，其他 = 中性 12% 纱 | `scope_tag` |
 | 状态点 | **7** 圆 `rounded_full` | `status_dot` |
-| 状态徽标 `state_badge` | scope_tag 同槽（`px 5 / py 1`、r**3**、ui(10)）+ 7px 状态点 + gap 5；点色按语义：等待 = WARN 黄、就绪/运行/已绑 = UNREAD 绿、失败 = `t.danger`、中性 = `text_faint`（060 微信通信页起） | `kit/badge.rs::state_badge` |
+| 状态徽标 `state_badge` | scope_tag 同槽（`px 5 / py 1`、r**3**、ui(10)）+ 7px 状态点 + gap 5；点色按语义：等待 = WARN 黄、就绪/运行/已绑 = UNREAD 绿、失败 = `t.danger`、中性 = `text_faint` | `kit/badge.rs::state_badge` |
 | 行内小图标钮 | **24×24** r5（其他页）、垃圾桶 **28×28** r5（danger 35% 边 + 6% 红底） | misc / plugins |
 | 工具条开关钮 `icon_toggle` | **24×24** r**6**、图标 **14**；按 = accent 16% 洗底 + accent 图标，否则透明 + `text_muted`，hover `bg_hover`，禁用 0.4 | kit/toggle.rs（083 搜索条） |
 | 工具条文字开关 `text_toggle` | 同槽（h**24**、`px 6`、r**6**），文字 mono ui(11) BOLD；按 = accent 16% 洗底 + accent 字 | kit/toggle.rs（083 搜索条 Aa/ab\|/.*） |
@@ -444,7 +442,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 列表行高（可缩放页） | `max(ui(11) + 19, 30)`——随字号长个，不写死 30 | models 侧栏 |
 | 表单（子代理页） | label 列 **w96**、控件列 **w250**（下拉/输入框 30 高）、textarea **170**、行距 **8**、区块 gap **12** | agents |
 
-### 10.5 字号补充档（2026-10-20 收编，§2 的档位表 +2 档）
+### 10.5 字号补充档（§2 的档位表 +2 档）
 
 | 档 | 值 | 用途 |
 |---|---|---|
@@ -468,23 +466,23 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
    确属特殊控件在该链写 `// ui-raw: ok <理由>` 并回来登记尺寸。
 7. **对齐**：右缘对齐同一列时，宽度由同一个函数算（参见市场页 `side_col_w` 用 `text_system().layout_line` 实测标签宽，禁写死——英文标签比中文长一倍）。
 
-### 10.7 本章收编时的两项判定（防再次反复）
+### 10.7 本章收编时的两项判定
 
-- **圆角 5 vs 6**：不是漂移，是两条语义——**被塞进行里的容器件（输入框/触发器/列表行/菜单行/键帽）走 5**，**能点的散件（文字按钮/图标按钮/tab）走 6**。已入 §4 为 R_INLINE。
-- **间距出现 7.5 / 9 / 13 / 14 这类非 2px 网格值**：settings 是 pi-web 逐像素复刻，这批值已全站验收，**归 10 章的「设置页专用密度」**，不改；新页面照抄含义（行 py13 / 行内 gap14 / 导航 py7.5 / 标签↔控件 gap5），不要搬去其他面（会话区仍按 §1 网格）。
+- **圆角 5 vs 6**：两条语义——**被塞进行里的容器件（输入框/触发器/列表行/菜单行/键帽）走 5**，**能点的散件（文字按钮/图标按钮/tab）走 6**（§4 的 R_INLINE）。
+- **间距出现 7.5 / 9 / 13 / 14 这类非 2px 网格值**：**归 10 章的「设置页专用密度」**，不改；新页面照抄含义（行 py13 / 行内 gap14 / 导航 py7.5 / 标签↔控件 gap5），不要搬去其他面（会话区仍按 §1 网格）。
 
 ### 10.8 ui-raw: ok 豁免登记（特殊控件 · 逐条可追溯）
 
 | 位置 | 几何 | 理由 |
 |---|---|---|
 | `search/results.rs` `landing_row` | 行高 22 / px 4 / gap 4 / rounded 4 | Zed search landing 行逐值复刻，非 PF 档位 |
-| `search/results.rs` `card_header` 外壳 | 块 p 4 / 内条 pl 4 pr 8 gap 6 rounded 4 | Zed `render_buffer_header` 逐值复刻（083 定案） |
+| `search/results.rs` `card_header` 外壳 | 块 p 4 / 内条 pl 4 pr 8 gap 6 rounded 4 | Zed `render_buffer_header` 逐值复刻（083） |
 | `search/results.rs` `card_header` 收展钮 | 28×28 / rounded 2 | Zed `rems_from_px(28)`；不套 `ui_size`（12 基准会放大成 31） |
 | `market/pi_native_market/controls.rs` `select_box`/`menu_shell`/`bracket_button` 链 | select 箭头右隙 7.56 / menu py 4 / `[ ]` 括号内距 4.6 | pi.dev Package Catalog 逐值复刻，非 PF 档位 |
 | `market/pi_native_market/mod.rs` `dropdown_row` | py 7 | pi.dev select 选项逐值复刻 |
 | `status_bar.rs` 插件 tab（`plugin-tab-*`） | 46px 宽连体卡（w 46 / mt −4 / 底圆角 9） | 与「项目」tab 同形继承（020-1 tab 卡形制）；尺寸待 tab 体系 token 化时一并收编（beads 360） |
 | `status_bar.rs` 项目 tab（`project-tab`） | 同上 46px 连体卡 | 020-1 纯指示位升级为可点 tab（回 DockPanel::Default），与插件 tab 同形同源（beads 360） |
-| `remote_control/panel.rs` 操作栏图标钮 / 刷新钮 / 二维码弹窗 header / 码框内边框钮 | 图标钮 24×24 r6 / 刷新钮 px 8 gap 6 / header h 36 pl 12 / 边框钮 h 28 | 002-微信通信设计稿钉死形制（用户定案：白底蓝字蓝边固定色不跟主题；060 发版隐藏模块） |
+| `remote_control/panel.rs` 操作栏图标钮 / 刷新钮 / 二维码弹窗 header / 码框内边框钮 | 图标钮 24×24 r6 / 刷新钮 px 8 gap 6 / header h 36 pl 12 / 边框钮 h 28 | 002-微信通信设计稿钉死形制（白底蓝字蓝边固定色不跟主题；060 发版隐藏模块） |
 
 ---
 

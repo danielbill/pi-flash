@@ -4,7 +4,7 @@
 > **验收主路径就是跑 PF**:`cargo run -p app`,新会话里让模型委派一次,
 > 界面上看到 `agent` 工具卡与子代理结果。下面 CLI 步骤是排查用的下位手段。
 
-## A. PF 内验收(主路径,2026-10-19 已实测通过)
+## A. PF 内验收(主路径)
 
 集成方式:PF 起 vendored pi 时追加 `-e extensions/pi-subagents/src/index.ts`
 (`pi-link/src/subagents.rs` 定位、`client.rs` 挂载;`PI_FLASH_SUBAGENTS=0` 关闭,
@@ -32,10 +32,10 @@ cargo run -p app
   session_start 时经 inline extension appendEntry),索引层据此排除
   (`sessions.rs` `IndexEntry::child_marker`);仍可按路径打开检视
 - **pi 原生 fork 分支必须正常上行**:fork 的 header 同样带 `parentSession`,
-  但无 marker——**禁止**用 `parentSession` 判定子会话(2026-10-19 事故:曾据此
-  把用户 fork 的置顶会话从侧栏全杀)
+  但无 marker——**禁止**用 `parentSession` 判定子会话(pi 原生 fork 会话
+  无 marker,误判会把用户 fork 的置顶会话从侧栏全杀)
 
-实测记录(2026-10-19):PF 界面确认通过。同轮快照 `messages` 为
+实测记录:PF 界面确认通过。同轮快照 `messages` 为
 user → assistant(tool_calls=1)→ assistant("PF-SUBAGENT-OK");子会话文件与
 描述符齐备。
 
@@ -61,7 +61,7 @@ cd extensions/pi-subagents && node --test "test/*.test.ts"
 
 **必须带 `--session-dir tmp/smoke` 隔离**：`--no-session` 只隔离父会话，
 子会话仍按 cwd 落进用户真实 sessions 目录；旧扩展产物无 marker，无法自动
-识别，曾污染侧栏需手工归档（2026-10-19）。
+识别，曾污染侧栏需手工归档。
 
 ```bash
 mkdir -p tmp/smoke

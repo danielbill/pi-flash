@@ -11,8 +11,8 @@ UI复用当前settings-模型页的Provider详情面板
 原只读显示的Provider name改为： name  input
 在API key下方新增 ——
 - Base URL   ： input（全宽）
-- ~~API ： select~~ **已下线**（2026 改版）：API 形状由 PF 从 baseUrl 推断
-  （`probe::infer_api`）随条目落盘，用户零选择——Provider = baseUrl + apiKey。
+- API：无用户选择——API 形状由 PF 从 baseUrl 推断
+  （`probe::infer_api`）随条目落盘，Provider = baseUrl + apiKey。
   规则：`*/anthropic` / 含 `/anthropic/` → anthropic-messages；
   `*/v1beta` → google-generative-ai；其余 → openai-completions。
   pi 对缺 api 硬 throw（extensionModelFromDefinition），条目必写具体值；
@@ -23,7 +23,7 @@ UI复用当前settings-模型页的Provider详情面板
 - 注释行：点击测速，连通后自动保存
 
 ## 操作栏说明
-- 保存按钮从原先的apikey行挪至操作栏
+- 保存按钮在操作栏
 - 测试 和 +模型 仅在自定义Provider时显示
 - 自定义时，测试未通过前，保存和+模型 disable
 - 用户点击测速，能通则：1、自动保存自定义Provider 2、自动从base url拉取模型列表 
@@ -40,11 +40,9 @@ UI复用当前settings-模型页的Provider详情面板
 UI设计：
 1、控制栏右侧：  测试、保存、移除 三个按钮 + 关闭按钮， 按钮间隔10px
 2、内容区：
-- 模型ID：input  左对齐； [自动填参]右对齐   （来源models.dev隐藏，这是内部实现无需暴露）
+- 模型ID：input  左对齐； [自动填参]右对齐
 - 上下文窗口 ； 最大输出
 - 能力：文本[X]、图片[]、视频[]  ; 文本默认选中disable不得更改
-
-其他原有设计全部删除，完全是心智负担；
 
 
 ## UI改造

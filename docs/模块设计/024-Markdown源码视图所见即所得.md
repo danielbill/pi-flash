@@ -1,18 +1,14 @@
 # Markdown 源码视图所见即所得
 
-> **需求定位（拍板，勿再偏）**：所见即所得 = **markdown 源码视图的感官**——
+> **需求定位**：所见即所得 = **markdown 源码视图的感官**——
 > 用户看到的是"带感官的源码"：光标不在的行，语法字符（`**`、`#`、反引号…）
 > 隐藏、正文按渲染规格着色；光标进入哪行，哪行还原源码可直接编辑。
 >
-> **两条铁律（前车之鉴，违反即错）**：
+> **两条铁律**：
 >
 > 1. **preview 零改动**：`editor/view.rs file_editor_body` 的 `is_md && !md_source`
 >    分支（`doc_blocks` 只读渲染页）是既有 preview 代码，**一行不改**。
->    024 曾把该分支替换为可编辑视图、架空 preview——已全部撤回
->    （git `5a7a7fe` 实现 → `30a4a4d` 撤回），不许重演。
-> 2. **默认态**：初版拍板"不变（进 preview）"；**2026-10-10 用户二改拍板：
->    md 默认打开 = 源码态**（WYSIWYG 感官完整后便于日常测试），eye 一键
->    切 preview 渲染页——两者均完好，非事故勿撤回。
+> 2. **默认态**：md 默认打开 = 源码态，eye 一键切 preview 渲染页。
 
 ## 1. 目标与非目标
 
@@ -29,8 +25,8 @@
 **非目标**
 
 - **不动 preview**（铁律 1）
-- 不动默认态机制（铁律 2：现拍板默认源码态，eye 双态切换不变）
-- 表格 WYSIWYG 编辑、frontmatter、嵌入笔记、阅读模式（原 024 砍掉项沿用）
+- 不动默认态机制（铁律 2：默认源码态，eye 双态切换不变）
+- 表格 WYSIWYG 编辑、frontmatter、嵌入笔记、阅读模式
 - 不新增第三种视图态——eye 仍是二态：preview 渲染页 ↔ 源码视图
 
 ## 2. 现状与禁改区
@@ -38,7 +34,7 @@
 | 现状 | 位置 | 024 态度 |
 |---|---|---|
 | preview 渲染页（`doc_blocks` 只读 + ListState 虚拟化） | `editor/view.rs file_editor_body` 的 `is_md && !md_source` 分支 | **禁改区** |
-| eye 双态切换（`ft.md_source`） | `file_nav_bar` + `FileTab.md_source`（默认 true，024 二改拍板：默认源码态） | **双态机制禁改**（默认值按铁律 2） |
+| eye 双态切换（`ft.md_source`） | `file_nav_bar` + `FileTab.md_source`（默认 true = 默认源码态） | **双态机制禁改**（默认值按铁律 2） |
 | 源码态 CodeEditor（行号/ts/搜索，`.code_editor()` 创建） | `ensure_file_editor` + `file_editor_body` 通用分支 | **改造对象**（只挂装饰，不改结构） |
 | 渲染器样式规格（strong=700+88% accent 混色…） | `editor/markdown/mod.rs highlight()` | 引用不复制 |
 | pulldown-cmark 0.13 | `crates/app/Cargo.toml` | 源码态装饰的解析器 |
@@ -49,8 +45,8 @@ preview 分支根本不渲染这个编辑器，天然零影响。
 
 ## 3. 架构（沿用已实测验证的部分）
 
-原 024 的技术底座经 P0 spike 实现并全链路实测（折叠/reveal/光标映射/undo
-往返，`cargo test` 452 绿、pif-ui 截图验证），**架构本身没有错，错在接线**：
+技术底座经 P0 spike 实现并全链路实测（折叠/reveal/光标映射/undo
+往返，`cargo test` 452 绿、pif-ui 截图验证）：
 
 ```
 rope（InputState.text，文档本体，唯一真相）
@@ -69,14 +65,12 @@ FoldSet（折叠集：doc↔vis 双向映射 + atomic 跳表）—— 映射单�
 - **铁律**：文档 = rope 源码；装饰只改视图，从不改写文档——复制/undo/IME/
   持久化零处理天然正确
 - reveal = 每帧纯函数（光标行 folds 退出折叠集），selection 变了自然生效
-- ~~源码态关软换行（wrap 与折叠正交，避免 text_wrapper 结构纠缠）~~
-  **2026-10-14 反转（用户定夺）**：折行是被 WYSIWYG 连坐误关的，md 源码
-  编辑器折行恢复恒开（kind.rs `EditorConfig`，6bc1f2f 口径「预览和编辑
+- md 源码编辑器折行恒开（kind.rs `EditorConfig`，6bc1f2f 口径「预览和编辑
   状态都要回行」）；折叠与折行的结构互斥只约束「装饰挂上期间」——关折行
   收口在 `markdown::doc::sync_live_decorations` 一处（挂装饰原子关、摘
-  装饰原子恢复）。stock 路径不再为 WYSIWYG 让步。
+  装饰原子恢复），stock 路径不为 WYSIWYG 让步。
 
-### vendor 缝（薄补丁，升级重放；实测过的实现见 git `5a7a7fe`）
+### vendor 缝（薄补丁，升级重放）
 
 | 缝 | 位置 | 改法 |
 |---|---|---|
@@ -105,8 +99,8 @@ crates/app/src/editor/
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **P0**（已验证，可从 git `5a7a7fe` 取回） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
-| **P1 接线纠偏**（✅ 2026-10-10 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 关软换行。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认 false（当时；后用户二改拍板默认源码态）；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
+| **P0**（已验证） | 三缝打样：折叠文本过 `layout_lines`、`pos_for` 经 FoldSet、光标行 reveal | ✅ 实测通过（P0 spike 全链路 + 28 单测） |
+| **P1 接线纠偏**（✅ 完成） | 按本文 §2 接线：装饰挂 `ensure_file_editor`（`sync_md_live_state`：`md_source=true` 挂 provider）；**preview 分支零改动**；行号保留；md 折行恒开。P1 扩容：标题行级字号上浮（`Decorations.line_scale`，行高 uniform 内 cap 1.7）+ 字重；链接 `[text](url)` 折叠+着色；围栏标记行折叠 | ✅ 三条红线全绿：`git diff` 不含 preview 分支；`md_source` 默认值按铁律 2（源码态）；preview 往返快照**逐字节一致**；源码态标题/链接/折叠/样式 pif-ui README 截图验证 |
 | **P2 光标与交互打磨** | 1. **元素级 reveal**：光标落在哪段哪段显现（现为光标行整行还原，Obsidian 为段级）
 2. **atomic 跳词接线**：left/right 遇折叠段原子跳过（`next_atomic` 已实现未接线，现会走进隐藏字符）
 3. **点击反算**：鼠标点折叠区 → doc 偏移（`vis_to_doc` 已备）
@@ -118,18 +112,18 @@ crates/app/src/editor/
 2. **图片行**：`![]()` 显示真图（025 源码态可视等此项）
 3. **表格块**：源码态渲染对齐表格
 4. 代码块灰底圆角块样式；5. 公式块 `$$…$$` | 手测 + 快照 |
-| **P2+ 性能** | 大文件窗口化 parse（>1MB 只解析可见区±余量）；edit 计数器缓存（P0 拍板无缓存，实测慢再上） | 大文件滚动帧耗基准 |
+| **P2+ 性能** | 大文件窗口化 parse（>1MB 只解析可见区±余量）；edit 计数器缓存（无缓存，实测慢再上） | 大文件滚动帧耗基准 |
 
 **P1 验收红线（防复发）**：
 1. `git show --stat` 不得包含 `file_editor_body` preview 分支的删除/替换
-2. `FileTab.md_source` 默认值必须为 `false`
+2. `FileTab.md_source` 默认值必须为 `true`（源码态）
 3. 打开 md 的首帧快照与 023 基线一致
 
 ## 6. 测试
 
 - **单元**（`wysiwyg/fold.rs` 为主）：映射往返/单调性质测试、parse fixtures
   （嵌套/未闭合/转义/中英混排/跨行边界）、分区器全覆盖不变式
-  （P0 已沉淀 28 个，随 `5a7a7fe` 可整体取回）
+  （P0 已沉淀 28 个）
 - **UI（pif-ui）**：双态快照——preview 态与 023 基线比对（零 diff）；
   源码态折叠行无 `**`、光标行有 `**`、复制往返 = 原文
 
@@ -138,7 +132,7 @@ crates/app/src/editor/
 | 风险 | 应对 |
 |---|---|
 | 再次误伤 preview | §5 三条验收红线；改动评审先看 diff 范围 |
-| 折叠与 wrap 结构纠缠 | 装饰挂上期间关软换行（2026-10-14 起收口在 sync_live_decorations；stock 路径折行恒开） |
+| 折叠与 wrap 结构纠缠 | 装饰挂上期间关软换行，收口在 `sync_live_decorations`；stock 路径折行恒开 |
 | `pos_for` 漏一处 = 光标错位 | 映射收口 FoldSet 单点 + 性质测试 + pif-ui 按键断言 |
 | vendor 补丁随升级丢失 | 补丁面集中在 decorations/state/element/movement，升级 checklist 重放 |
 | 每帧全文解析/拷贝开销 | 典型笔记 <1ms；>1MB 再窗口化（P2 视实测） |

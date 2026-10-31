@@ -1,11 +1,12 @@
 # subagent 开发计划(扩展侧,045 配套)
 
-> 状态:**待开工**。依据 [045-subagent管理](045-subagent管理.md)(设计)+
+> 依据 [045-subagent管理](045-subagent管理.md)(设计);
 > 三家 subagent 全量对照研究见本地调研笔记（不入库）。
-> **优先级铁定:L1 复刻 dsh-subagent 调用机制先行;L2 pi 增强(codemode/nested-call)
-> 后置叠加。** 机制与 codemode 正交——manager/activation 是纯编排类,不依赖 codemode,
-> 不会推倒重来。
-> 交付物形态:**pi package 扩展**(`pi-subagents`),不碰宿主 Rust 代码。
+> **优先级:L1 复刻 dsh-subagent 调用机制先行;L2 pi 增强(codemode/nested-call)
+> 后置叠加。** 机制与 codemode 正交——manager/activation 是纯编排类,不依赖 codemode。
+> 交付物形态:扩展主体为 **pi package 扩展**(`pi-subagents`);
+> 宿主接入走 `pi-link/src/subagents.rs` 定位 + spawn 追加 `-e`。
+> 状态:**M1–M3 扩展侧已完成;M4–M6 待做**(M3.5 宿主联调待 044)。
 
 ## 0. 复刻基准事实(dsh 0.2.1-rc.2)
 
@@ -30,12 +31,11 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 
 **目标**:`agent(prompt)` 在 pi CLI 里可用,子会话是完整 pi session,结果即工具结果。
 
-> **进度(2026-10-19)**:**M1 已闭环并在 PF 内实测通过**。1.1–1.8/1.10 落地
-> (`extensions/pi-subagents`,64 测试全绿);1.9 深度护栏依赖构造期事实
+> 1.9 深度护栏依赖构造期事实
 > (子会话由 `createAgentSession` 创建,默认资源发现不含 `-e` 路径 → 孙代无
 > `agent` 工具),运行期 `childDepths` 作兜底。
 >
-> **宿主接入(提前于原计划)**:`pi-link/src/subagents.rs` 定位扩展,
+> **宿主接入**:`pi-link/src/subagents.rs` 定位扩展,
 > `client.rs` 在 spawn 时追加 `-e`;`scripts/release.sh` 随包分发。PF 内验收
 > 步骤见 [045-3](045-3-subagent验收清单.md)。
 
@@ -59,18 +59,14 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 
 **目标**:不动 M1 机制,叠 pi 能力面。
 
-> **进度(2026-10-19):M2 闭环。**
-> - 2.1 outputSchema 已声明,脚本拿 structuredContent ✓
-> - 2.2 fan-out 实测:`Promise.allSettled` 两路 agent,子会话并行,脚本内
->   直接编程聚合结果 ✓
 > - 2.3 usage:子会话是独立 session,nested-call 上卷**不适用**(它只管
->   同会话 executeTool 链);改为 ChildSession.usage() 从子会话末条
->   assistant message 取 usage,经工具结果 usage 字段回流(token 明细+成本) ✓
+>   同会话 executeTool 链);usage 取自子会话末条 assistant message
+>   (`ChildSession.usage()`),经工具结果 usage 字段回流(token 明细+成本)
 > - 2.4 prepareLoadout:**不需要自写**——codemode 内建扩展统一处理
 >   `codemode.mode:"only"`(所有 declared 工具含 agent 都被其隐藏)
-> - 2.5 子会话 extensionFactories 装配 codemode/tool_search/MCP ✓
->   (实测子会话 sandbox 含 codemode + 用户 mcp.json 服务器;防孙代在
->   codemode 层天然成立——子会话 sandbox 无 agent 工具)
+> - 2.5 子会话 extensionFactories 装配 codemode/tool_search/MCP;
+>   子会话 sandbox 含 codemode + 用户 mcp.json 服务器;防孙代在
+>   codemode 层天然成立——子会话 sandbox 无 agent 工具
 
 | # | 任务 | 验收 |
 |---|---|---|
@@ -84,19 +80,16 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 
 ## 3. M3:parent 投递(v2 后台)+ 宿主契约
 
-> **进度(2026-10-19):M3 扩展侧闭环(3.5 宿主联调待 044)。**
-> - 3.1 parent 投递 ✓:`background:true` 立即回 childId;完成经
+> - 3.1 parent 投递:`background:true` 立即回 childId;完成经
 >   `ctx.ui.notify`(onCompleted → 会话级 notify 绑定)+ 终态 descriptor entry
-> - 3.2 中断三层 ✓:`subagent_interrupt`(settled=noop / live=停轮次留队列/
+> - 3.2 中断三层:`subagent_interrupt`(settled=noop / live=停轮次留队列/
 >   unknown=稳定分码)
-> - 3.3 控制工具三件 ✓:`subagent_send`/`subagent_interrupt`/`subagent_list`
+> - 3.3 控制工具三件:`subagent_send`/`subagent_interrupt`/`subagent_list`
 >   (schema 全局一份;list=父会话 catalog 全历史含 settled)
-> - 3.4 孤儿对账 ✓:session_start 对账 `aborted:true`(宿主退出≈中止),
+> - 3.4 孤儿对账:session_start 对账 `aborted:true`(宿主退出≈中止),
 >   标 interrupted;resume=直接打开子会话文件(子会话是普通 pi 会话,PF
 >   既有能力),无需扩展支持
-> - 3.5 setWidget:待 044 联调定稿
-> - 修复:DescriptorPhase 补 `completed` 终态(原先 completed 错标 interrupted);
->   `subagent_list` execute 签名(第 5 参 ctx)
+> - 3.5 setWidget:待 044 联调确定
 
 | # | 任务 | 验收 |
 |---|---|---|
@@ -104,11 +97,11 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 | 3.2 | 中断三层语义(本地停轮次留队列 / 外部永久停 / 已结束空操作) | 三态各一测 |
 | 3.3 | catalog 投影 + `list_agents` 类控制工具(复用同一 schema) | 列表与实际一致 |
 | 3.4 | 孤儿恢复(`agent_settled.aborted` 区分取消/崩溃 + resourceSnapshot resume) | 杀进程重启后标 interrupted 可续 |
-| 3.5 | setWidget 载荷格式定稿(与 044 契约表对齐) | 宿主侧联调 |
+| 3.5 | setWidget 载荷格式确定(与 044 契约表对齐) | 宿主侧联调 |
 
 **M3 出口**:PF 宿主接上后台通知与聚合面板(044 v2)。
 
-## 7. 实现计划(2026-10-20 定稿,原型已过稿)
+## 7. 实现计划
 
 > 依赖顺序:M4(扩展字段)先行——M5 表单/M6 面板的字段契约由它落实;
 > M5 与 M6 互不依赖,可并行。验收 = 跑起 PF 在界面里看到功能。
@@ -124,7 +117,7 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 | 4.5 | `tools` 档位化:废弃白名单裁剪逻辑,改四档枚举(inherit 沿用委派者装配 / read-only / default / full → 334 行既有三套白名单) | 四档各一测,继承档与委派者一致 |
 | 4.6 | profile 解析补全上述字段 + 未知字段原样透传 | 解析回环测试 |
 
-### M5:Settings-子代理页(crates/app,设计 = 044-1 §2,原型已过稿)
+### M5:Settings-子代理页(crates/app,设计 = 044-1 §2)
 
 | # | 任务 | 落点 |
 |---|---|---|
@@ -141,7 +134,7 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 |---|---|---|
 | 6.1 | `subagent_catalog::read_catalog(file, from_offset)` 流式扫 descriptor,同 childId 末条覆盖 | `crates/pi-link/src/subagent_catalog.rs` |
 | 6.2 | 操作栏按钮 + 运行中计数徽标(数 phase ∈ provisioning/active) | `session/mod.rs session_fn_bar` |
-| 6.3 | 浮层面板(overlay::layer,向下延伸遮上半区,点外/ESC/✕ 关) | 新 `session/subagent_panel.rs` |
+| 6.3 | 浮层面板(absolute 挂 chat-wrap 顶左,宽 400、最大高内容区上半;✕/再点按钮关,不挂全屏外点拦截) | 新 `session/subagent_panel.rs` |
 | 6.4 | 打开期 1s 轮询增量读;整行点击 = open_session 开正式 tab 并关浮层 | 同上 |
 | 6.5 | 空态文案 + i18n 三语 | 同上 |
 
@@ -150,26 +143,8 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 - i18n_audit 门禁 + `cargo test -p app` 全绿 + pif-ui 自动化链路跑 M5/M6 界面断言
 - 与用户一起做完整测试(045-3 验收清单)
 
-## 8. 依赖与并行(旧)
+## 10. 不做
 
-- **M1 全部独立于宿主**——纯 TS,只依赖 vendored pi 1.1.0,可在 CLI 内完成验收。
-- **M2 只依赖 M1.8/M1.9**(工具面存在)。
-- **M3.5 是唯一需要 044 配合的点**;其余 M3 也可在 CLI 验证。
-- 可并行的:1.1/1.2/1.3 先行,1.4 与它们并行(接口按 types.ts 定);1.6/1.7 与 1.4 并行。
-
-## 9. 风险(旧)
-
-| 风险 | 应对 |
-|---|---|
-| manager.ts 1493 行的隐性不变式(dsh 靠契约而非注释撑住,需逐节对照 README) | 每个行为约定落一条测试,不靠"看起来对" |
-| 剥 cordis 壳时漏掉生命周期(注册/注销、HMR 等价物) | 先圈出 `ctx.on/ctx.provide/effect` 全部调用点再动手 |
-| pi 扩展在 RPC 宿主下的行为差异(会话构造、事件流) | M1 先在 CLI 验收,RPC 差异留给 044 联调 |
-| Windows worktree | 按 `BACKEND_UNSUPPORTED` 拒绝(045 §10 待研究 4) |
-| 扩展分发 | pi package 走 npm;PF 是否内置分发由 044 后续定 |
-
-## 10. 不做(旧)
-
-- ❌ 不碰 `crates/app` 宿主代码(M1–M3 全在扩展侧)
-- ❌ 不做 team/roster/DAG(远期,045 §8 之外的协作面)
-- ❌ 不做多后端外部 provider(ACP/CC/Codex,远期)
-- ❌ 不自建 token 账本、不自建通知去重、不自建 toolCallId 映射(pi 原生)
+- 不做 team/roster/DAG(远期,045 §8 之外的协作面)
+- 不做多后端外部 provider(ACP/CC/Codex,远期)
+- 不自建 token 账本、不自建通知去重、不自建 toolCallId 映射(pi 原生)

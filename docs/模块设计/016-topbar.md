@@ -7,37 +7,36 @@ topbar分左中右三段
 
 右段
 最小 最大 关闭 窗口控制按钮
-设置按钮 放到 018 底部控制状态栏， 替换之前的手机icon
+设置按钮 放到 018 底部控制状态栏
 
 中段 标签栏 最大标签宽度 300px
 两部分组成
 1、当前会话标签
 永远置左侧第一位，没有关闭按钮 
-改动：旧会话icon（message-square-more）换成 bot-message-square；标签距条左缘 10px
+改动：会话icon = bot-message-square；标签距条左缘 10px
 
 2、自由标签区
 向右一直延展至 右段
-标签打开切换规则同之前文件标签
+标签打开切换规则同文件标签
 terminal打开也在这里
 
 
-实施定案（2026-10-09）：
-- 设置钮落 018 状态栏右槽（46×36，原手机图标位）；收起态状态栏随面板隐藏
-  = 设置无入口（与原手机图标行为一致，不加补偿入口）。
+实施要点：
+- 设置钮落 018 状态栏右槽（46×36）；收起态状态栏随面板隐藏
+  = 设置无入口，不加补偿入口。
 - ⋯ 菜单（打开终端 / 此会话系统提示词 / 此会话加载工具）保留在会话标签
-  卡片内右缘，仅会话态显示（与旧标题行行为一致）。
-- 「+」按钮（打开文件…/新建文件）整体删除（含 Dialog::NewFile 弹窗链）。
-- 中段不画底线（统一 Obsidian 式：激活 tab 卡片融进下方内容区；原"会话态
-  画线"与会话 tab 卡片融底互斥，取标签规则同文件标签口径）。
-- 自由标签区伸展到最小化钮左侧 20px（flex_1 + min_w_0；2026-10-14 定案
-  撤 75% 限宽，回 023 的 Zed parity）+ 横向滑动；右端 20px 固定为窗口拖拽区。
-- 会话 tab 为固定段、不参与滚动，且不接 on_drag（禁止拖拽，2026-10-14
-  定案）。自由 tab 拖拽换位 = zed pane.rs 原文移植：
+  卡片内右缘，仅会话态显示。
+- 无「+」按钮（打开文件…/新建文件入口与 Dialog::NewFile 弹窗链均不设）。
+- 中段不画底线（Obsidian 式：激活 tab 卡片融进下方内容区，标签规则同
+  文件标签口径）。
+- 自由标签区伸展到最小化钮左侧 20px（flex_1 + min_w_0，无 75% 限宽，
+  Zed parity）+ 横向滑动；右端 20px 固定为窗口拖拽区。
+- 会话 tab 为固定段、不参与滚动，且不接 on_drag（禁止拖拽）。
+  自由 tab 拖拽换位 = zed pane.rs 原文移植：
   - **元素 id 每 tab 唯一**（`Tab::new(ix)` 同款 `("ctab-file", ix)`）。
     所有 tab 共用同一个字符串 id 时 gpui 的 element_state 是同一条
     （pending_mouse_down / drag_listener 共用），在任意 tab 上起手拖拿到
-    的都是**最后一个** tab 的载荷——幽灵黏住最后一个 tab（黏连 bug 根因，
-    2026-10-18）。
+    的都是**最后一个** tab 的载荷——幽灵黏住最后一个 tab（黏连 bug 根因）。
   - on_drag 发起：幽灵 = 被拖 tab 本体（`DraggedTab::render` 同款，复用
     tab_body 外观：icon + 标题 + 激活态配色 + shadow），不另造小签。幽灵
     icon 取值同文件树拖拽幽灵（`TreeDragGhost` 的两态口径）：文件 tab →
@@ -60,10 +59,10 @@ terminal打开也在这里
     `on_drag_move::<TabDrag>` 覆写 ClosedHand——与 020 项目行拖拽同一
     口径（Windows 无掌形系统光标，OpenHand/ClosedHand 由 vendored gpui
     自绘 SVG）。会话 tab 不可拖，仍 pointer。
-  - **激活跟随滚动**（zed `update_active_tab` 同式，2026-10-18）：自由
+  - **激活跟随滚动**（zed `update_active_tab` 同式）：自由
     标签区挂 `track_scroll(&chat.layout.tabs_scroll)`，`activate_panel_tab`
-    末尾一句 `scroll_to_item(ix)`（最小滚动，已可见不动）——Ctrl+←/→ 切到
-    屏外 tab 时不再「激活了但看不到也点不到」。响应只挂激活路径，不挂渲染
+    末尾一句 `scroll_to_item(ix)`（最小滚动，已可见不动）——保证 Ctrl+←/→
+    切到屏外 tab 时可见可点。响应只挂激活路径，不挂渲染
     路径（否则用户手滚走一帧就被拽回）；拖拽换位落位后同样滚到被拖 tab。
     已知 4px 瑕疙：tab 的 `ml(4px)` 是 margin，不入 child bounds，走到首
     tab 时它会贴紧会话 tab（zed 用 position 内 padding 不复现）。
@@ -71,32 +70,25 @@ terminal打开也在这里
     残留（ghost 不消失、新拖被挡），根 no-op listener 兼清道夫，真 drop
     在深层已 stop_propagation。
 - 会话标签前置 bot-message-square icon（15px，muted），标签贴标签栏左缘
-  10px（2026-10-10 追加，替代初稿"去掉会话icon"口径）；会话 tab 为固定
-  段、不随自由标签滚动（2026-10-14 追加：超多标签旧实现会把它滚出视野）。
+  10px；会话 tab 为固定段、不随自由标签滚动。
 
 
-## 【微信通话】tab 归队自由标签区（2026-10-26 用户定夺）
-
-历史：060 的微信通话 tab 曾是紧贴会话 tab 的**第二固定段特例**，理由是
-「一个 tab 两种内容（绑定管理页 ⇄ 微信线会话）装不进 PanelTab」。用户指出
-这是倒因为果——tab 是视窗，视窗下挂几个 view 都不是标准问题；会话 tab
-底下本来就轮换 N 个会话视图。归队后的口径：
+## 微信通话 tab（自由标签区）
 
 - `PanelTab::Wx` + `TabKey::Wx`：微信 tab 就是普通自由 tab，**右键菜单
   （Close / Others / Left / Right / All）、拖拽换位、中键关闭、批量关闭
-  全套直接继承**，不再有特例代码路径。
+  全套直接继承**，无特例代码路径。
 - 内容归属判据：`PanelTab::owns_view(to, wx_line)`——微信 tab 同时拥有
   `ContentView::Wx`（管理页）与 `ContentView::Chat`（微信线会话聊天），
-  激活高亮/关闭回退不再用 `content_view == tab.view()` 的枚举相等（微信
+  激活高亮/关闭回退不走 `content_view == tab.view()` 的枚举相等（微信
   会话在类型上是 Chat，枚举相等永远认不出它）。
-- 开关真身收敛：删掉 `RemoteControl::tab_open` 这个与 `panel_tabs` 并列的
-  第二真相源，`wx_tab_open()` = `panel_tabs` 里有没有 `PanelTab::Wx`。
+- 开关真身唯一：`wx_tab_open()` = `panel_tabs` 里有没有 `PanelTab::Wx`。
   服务泵门控、自动化 `wx_tab_closed`、存档 `wx_open` 全从它派生。
 - 关闭 = 「标签与内容一体」：摘 tab → 收专属模态（二维码/新建会话）→
   收前台（`wx_leave_front`）。服务与影子会话不动。
 - Ctrl+←/→：微信 tab 按它在 `panel_tabs` 的真下标参与邻位切换；往左回到
   会话 tab 时若微信线在前台，走 `wx_leave_front` 真正离开（微信会话也是
   Chat 视图，只 `set_content_view(Chat)` 会原地不动且无 tab 高亮）。
-- 中键关闭统一给所有自由 tab（原先只有微信 tab 有）。
+- 中键关闭统一给所有自由 tab。
 - 存档仍只存「开/关」一条腿（`wx_open`），微信 tab 在 `tabs` 数组里按
   瞬态页跳过——老档格式不变，重启后回到标签带尾部。

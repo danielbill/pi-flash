@@ -1,17 +1,16 @@
 # subagent 管理(扩展设计)
 
-> 状态:**设计思考阶段,未实现**。
+> 状态:**扩展侧已实现(`extensions/pi-subagents`);宿主侧配套见 044-1**。
 > 结论先行:**采用 dsh-subagent 框架结构,在该框架下纳入 pi 的核心机制;形态为
 > pi package 扩展**(CLI、pi-flash、任何宿主都能加载),不做宿主内置、不做引擎内置。
-> **总开关(2026-10-19)**:PF 侧默认**不加载**本扩展(dev-flags.json /
+> **总开关**:PF 侧默认**不加载**本扩展(dev-flags.json /
 > `PI_FLASH_SUBAGENTS=1` 开,重启生效;发布包恒关),见 044-1 头注。
 > 宿主侧(pi-flash)配套设计见 [044](044-subagent宿主设计.md)。
-> pi-web / ZCode / dsh 的研究过程见本地调研笔记（不入库）,
-> 本文只落结论,不再对比叙事。
+> pi-web / ZCode / dsh 的研究过程见本地调研笔记（不入库）。
 
 ## 背景与决策
 
-- pi-web 的 subagent 实现已拆除(2026-10-09),地基错位;ZCode 版复杂度不可维护。
+- pi-web 的 subagent 实现已拆除;ZCode 版复杂度不可维护。
 - dsh-subagent(`packages/subagent`,正式包组)是当前最完整的框架蓝本:服务/provider/
   工具三层分离、统一受管理生命周期、能力声明协商、稳定失败分码。
 - **框架骨架采 dsh,机制层站 pi**:dsh 的 activation/通知模型经 `delivery` 二分
@@ -23,11 +22,11 @@
 
 | 版本 | 对 subagent 有意义的变更 |
 |---|---|
-| **0.99.0** (9/29) | **codemode 诞生**:模型写 JS 跑在 QuickJS 沙箱调工具,只有脚本输出进模型。同批落地编排 API:`exposure` 五级暴露、`namespace`、`outputSchema`+`structuredContent`、`prepareLoadout()`、**`ctx.executeTool()` 嵌套调用**(`parentToolCallId` 记账、`nestedCalls` 有界清单、**usage 逐层上卷**)。另有虚拟模型、分类器模型 |
+| **0.99.0** | **codemode 诞生**:模型写 JS 跑在 QuickJS 沙箱调工具,只有脚本输出进模型。同批落地编排 API:`exposure` 五级暴露、`namespace`、`outputSchema`+`structuredContent`、`prepareLoadout()`、**`ctx.executeTool()` 嵌套调用**(`parentToolCallId` 记账、`nestedCalls` 有界清单、**usage 逐层上卷**)。另有虚拟模型、分类器模型 |
 | **0.99.2** | MCP 默认 `codemode` 暴露;codemode 与 MCP 合流 |
-| **1.0.0** (10/1) | codemode 减 40% prompt token。**SDK 创建的 session 默认不加载 codemode/tool_search/MCP 内建扩展**,宿主须显式加 `extensionFactories` |
+| **1.0.0** | codemode 减 40% prompt token。**SDK 创建的 session 默认不加载 codemode/tool_search/MCP 内建扩展**,宿主须显式加 `extensionFactories` |
 | **1.0.4** | `--tools` 支持 `*`;沙箱内建对象冻结;`read()` 可返回图片块 |
-| **1.1.0** (10/7) | `agent_settled` 事件增加 **`aborted` 字段**(取消 vs 正常结束,孤儿判定基础);工具事件带 `durationMs` |
+| **1.1.0** | `agent_settled` 事件增加 **`aborted` 字段**(取消 vs 正常结束,孤儿判定基础);工具事件带 `durationMs` |
 
 ## 1. 框架骨架(采 dsh-subagent,七个组件)
 
@@ -116,7 +115,7 @@ createAgentSessionFromServices({
 
 ## 8. profile = Agent 定义(用户资产)
 
-**概念分层(2026-10-19 定案)**:profile 不是扩展私有数据,是**用户的
+**概念分层**:profile 不是扩展私有数据,是**用户的
 Agent 定义资产**(「类」);委派产生的运行记录是「实例」。pi-subagents 是
 manager(机制层),只消费目录约定,不拥有定义——预制与自定义两层由此
 解耦(对齐 dsh「bundle 内置 preset + 补丁自定义」的概念,载体用 pi 的
@@ -129,14 +128,14 @@ manager(机制层),只消费目录约定,不拥有定义——预制与自定义
 | 自定义 | `~/.pi/agent/agents/*.md` | 用户完全所有;同名覆盖内置 |
 | 内置 | 扩展代码内常量 | 随 pi-subagents 出厂,只读 |
 
-内置清单 2026-10-19 定稿:**explorer + general-purpose** 两枚(抄 ZCode 两
-内置;经查 dsh 无出厂内置)。落点 = profile.ts BUILTIN_PROFILE_DOCS +
+内置清单:**explorer + general-purpose** 两枚(抄 ZCode 两
+内置;dsh 无出厂内置)。落点 = profile.ts BUILTIN_PROFILE_DOCS +
 pi-link agents.rs builtin_agents,两侧逐字一致(有对账测试);委派工具描述
 注册期扫盘列清单(带 description + tools 档位),模型按意图点名。
 
-近期:文件即事实源(PF/CLI/扩展三方共享,零自有存储)。2026-10-19 拍板:
+文件即事实源(PF/CLI/扩展三方共享,零自有存储)。边界:
 ①**不分项目级**(只分内置/自定义);②**不做包分发**(内部组件);
-③**PF 编辑走表单**不让用户直写明文(防小白+防注入),配置后续单独管理
+③**PF 编辑走表单**不让用户直写明文,配置后续单独管理
 存储;PF 未识别的新字段**原样透传**。
 
 ### 8.2 字段集 v1(frontmatter)
@@ -147,9 +146,9 @@ model: provider/id            # 路由
 tools: inherit                # 工具档位(034 配方复用):inherit(委派者)
                               # / read-only / default / full;无 full+ 档
                               # (full+ 委派者专属,经 inherit 间接获得)
-maxTurns: 15                  # 🆕 轮次预算:软限(到限 steer 收尾,超限
+maxTurns: 15                  # 轮次预算:软限(到限 steer 收尾,超限
                               #    abort),覆盖全局默认;缺省 25
-systemPrompt: |               # 🆕 替换式人格(before_agent_start
+systemPrompt: |               # 替换式人格(before_agent_start
   你是代码评审员…               #    systemPrompt override;优先于追加)
 appendSystemPrompt: …         # 追加式(与替换并存;替换优先)
 injectAgentsMd: true          # 项目 AGENTS.md 是否注入子代理上下文
@@ -165,9 +164,8 @@ injectAgentsMd: true          # 项目 AGENTS.md 是否注入子代理上下文
 
 - 修改只影响**之后创建的**子代理(dsh 同语义:"修改只影响之后创建的
   Agent");运行中的实例保持其 resourceSnapshot。
-- 🆕 tools 由白名单数组改**档位枚举**(034 配方复用):spawn 时解析
-  inherit→读委派者当前档位配方,转发对应 `--tools`/`-ne` 参数
-  (M1/M2 已实现的白名单裁剪逻辑相应废弃)。
+- tools 为**档位枚举**(034 配方复用):spawn 时解析
+  inherit→读委派者当前档位配方,转发对应 `--tools`/`-ne` 参数。
 - 损坏 profile fail-closed(`PROFILE_INVALID`),不静默降级。
 - profile 说明挂进 `namespace: "subagents"` instructions,codemode 脚本
   `describeNamespace()` 可读。
@@ -182,7 +180,7 @@ injectAgentsMd: true          # 项目 AGENTS.md 是否注入子代理上下文
 
 ## 10. 待研究
 
-1. onUpdate details 字段集、setWidget 载荷格式冻结(与 044 契约表同步定稿,
+1. onUpdate details 字段集、setWidget 载荷格式冻结(与 044 契约表对齐,
    对一遍 040 的 extension_ui 通道)。
 2. 子会话 MCP 共享父连接(borrowed 快照)还是独立 `createMcpExtension()`?
    (凭据共享 vs 生命周期隔离)

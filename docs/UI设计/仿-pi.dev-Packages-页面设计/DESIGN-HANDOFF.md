@@ -17,7 +17,7 @@ This archive is the source of truth for turning the design into production code.
 - Supporting assets detected: 4
 
 ## Responsive contract
-Validate the implementation across this 2025–2026 viewport matrix:
+Validate the implementation across this viewport matrix:
 - Mobile compact: 360×800
 - Mobile standard: 390×844
 - Mobile large: 430×932
@@ -81,7 +81,7 @@ For responsive web exports, treat these as a modern breakpoint system for one ad
 1. Inspect `pi-packages.html` and `DESIGN-MANIFEST.json` first and identify reusable components before coding.
 2. Implement each user-facing screen file as its own route/surface; keep launcher, landing, app, platform, and OS widget files separate.
 3. Extract design tokens into the target stack: colors, type scale, spacing, radius, shadows, and motion.
-4. Implement layout with real 2025–2026 responsive breakpoints, fluid type/spacing, and container-query-aware component behavior; test with no horizontal overflow.
+4. Implement layout with modern responsive breakpoints, fluid type/spacing, and container-query-aware component behavior; test with no horizontal overflow.
 5. Preserve interactive controls, hover/focus/pressed states, form behavior, validation, and copy actions where present.
 6. Implement domain-specific in-app modules with real states; do not flatten them into generic cards.
 7. Keep landing page, product screens, and OS widget/quick-access surfaces separate when present.

@@ -1794,7 +1794,7 @@ statusbar 40（项目 tab + 设置钮）│</pre>
   document.getElementById("ctrlSearch").addEventListener("click", () =>
     document.getElementById("searchMask").classList.add("open"));
 
-  // 子面板「最大化」（020-1 定稿：单一最大化钮，无最小化钮，避免双最小化盲区）：
+  // 子面板「最大化」（单一最大化钮，无最小化钮）：
   // 点击本面板最大化，另一面板自动收起到操作栏；中间比例交给分隔线拖拽（双击复位 50%）
   {
     const maximize = (thisId, otherId) => {
