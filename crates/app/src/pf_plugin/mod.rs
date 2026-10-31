@@ -1504,7 +1504,7 @@ impl Chat {
             return false;
         }
         // 90-9：load 事件 = serving 实例的装载+激活，全程耗时进 plugin.log
-        entry.state = lifecycle::State::Loading;
+        entry_state(entry, lifecycle::Ev::LoadStart);
         let t0 = std::time::Instant::now();
         let loaded = match bytecode_rel {
             Some(_) => JsPlugin::load_bytecode(&entry_path, &dir_str, host.clone()),
@@ -1520,10 +1520,10 @@ impl Chat {
                     entry.js = Some(js);
                     entry.host = Some(host);
                     lifecycle::log_load(&entry.manifest.dir, true, t0.elapsed().as_millis(), "");
-                    entry.state = lifecycle::State::Active;
+                    entry_state(entry, lifecycle::Ev::LoadOk);
                     return true;
                 }
-                entry.state = lifecycle::State::Crashed;
+                entry_state(entry, lifecycle::Ev::LoadErr);
                 lifecycle::log_load(
                     &entry.manifest.dir,
                     false,
@@ -1535,7 +1535,7 @@ impl Chat {
                 false
             }
             Err(e) => {
-                entry.state = lifecycle::State::Crashed;
+                entry_state(entry, lifecycle::Ev::LoadErr);
                 lifecycle::log_load(&entry.manifest.dir, false, t0.elapsed().as_millis(), &e);
                 entry.disabled = true;
                 self.set_status(format!("插件 {id} 出错：{e}"), cx);
@@ -1565,7 +1565,7 @@ impl Chat {
         // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」
         let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
         if !cached {
-            entry.state = lifecycle::State::Loading;
+            entry_state(entry, lifecycle::Ev::LoadStart);
             cx.spawn(async move |this, cx| {
                 let t0 = std::time::Instant::now();
                 let res = cx
@@ -1583,13 +1583,13 @@ impl Chat {
                     match res {
                         Ok(inst) => {
                             lifecycle::log_load(&entry.manifest.dir, true, ms, "");
-                            entry.state = lifecycle::State::Active;
+                            entry_state(entry, lifecycle::Ev::LoadOk);
                             entry.wasm = Some(inst);
                             entry.wasm_focus = Some(cx.focus_handle());
                             c.plugin_wasm_render(ix, cx);
                         }
                         Err(e) => {
-                            entry.state = lifecycle::State::Crashed;
+                            entry_state(entry, lifecycle::Ev::LoadErr);
                             lifecycle::log_load(&entry.manifest.dir, false, ms, &e.to_string());
                             entry.disabled = true;
                             let id = entry.manifest.id.clone();
@@ -1602,12 +1602,12 @@ impl Chat {
             return false;
         }
         // [perf] UI 线程同步装载要留实测数字（铁律：热路径不靠感觉）
-        entry.state = lifecycle::State::Loading;
+        entry_state(entry, lifecycle::Ev::LoadStart);
         let t0 = std::time::Instant::now();
         let mut inst = match PluginInstance::load_cached(&wasm_path, &cache) {
             Ok(i) => i,
             Err(e) => {
-                entry.state = lifecycle::State::Crashed;
+                entry_state(entry, lifecycle::Ev::LoadErr);
                 lifecycle::log_load(
                     &entry.manifest.dir,
                     false,
@@ -1621,7 +1621,7 @@ impl Chat {
         };
         let load = t0.elapsed();
         if let Err(e) = inst.init(&id) {
-            entry.state = lifecycle::State::Crashed;
+            entry_state(entry, lifecycle::Ev::LoadErr);
             lifecycle::log_load(
                 &entry.manifest.dir,
                 false,
@@ -1633,7 +1633,7 @@ impl Chat {
             return false;
         }
         lifecycle::log_load(&entry.manifest.dir, true, load.as_millis(), "");
-        entry.state = lifecycle::State::Active;
+        entry_state(entry, lifecycle::Ev::LoadOk);
         eprintln!(
             "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
             t0.elapsed() - load,
@@ -1971,7 +1971,7 @@ impl Chat {
 
     /// 该会话是否有「绑定中的服务实例」（闲置回收豁免判据）：
     /// 注册表里有 token + 实例配置在位即算——绑定存在 = 轮询器必须活着。
-    pub(crate) fn has_live_service(&self, key: &str, cx: &mut gpui::Context<Self>) -> bool {
+    pub(crate) fn has_live_service(&self, key: &str, _cx: &mut gpui::Context<Self>) -> bool {
         let Some(base) = pi_link::paths::dir() else {
             return false;
         };
@@ -2173,7 +2173,7 @@ impl Chat {
     /// 弹窗打开期间的低频重取（1s，旧版宿主泵采样 parity）：ext 写镜像
     /// （过期白遮/新码/开关态）无回调链可触发，轮询是弹窗场景唯一时效保障；
     /// 弹窗关闭即停。停用/坏插件自动断流。
-    fn plugin_popup_poll(&mut self, ix: usize, popup_gen: u64, cx: &mut gpui::Context<Self>) {
+    fn plugin_popup_poll(&mut self, ix: usize, popup_gen: u64, _cx: &mut gpui::Context<Self>) {
         // 重取节拍挂到 120ms 主泵（startup::spawn_pump_120ms → popup_tick）。
         // 早先在这里自起 cx.spawn 循环，实测「首拍后即不再进」——弹窗内容永远
         // 停在打开那一刻的旧帧，画布也就永远不带 refresh-qr 命令：超时白遮后
@@ -2662,6 +2662,14 @@ impl Chat {
     }
 }
 
+/// 状态机转移（90-9 §5）：条目状态只能经 [`lifecycle::transition`] 变更。
+/// 非法转移保持原状——状态机不 panic，宿主事实以 plugin.log 为准。
+fn entry_state(entry: &mut PluginEntry, e: lifecycle::Ev) {
+    if let Some(s) = lifecycle::transition(entry.state, e) {
+        entry.state = s;
+    }
+}
+
 /// 单条目 unload（90-9 §2/§6）：调载体 `unload()`（未导出 = no-op）+ 落
 /// plugin.log + 状态 Active→Unloading→Disabled。best-effort：unload 的
 /// Err 只进日志，宿主不等确认。条目若无运行时（从未装载过），无事发生、
@@ -2672,7 +2680,7 @@ pub(crate) fn entry_unload(entry: &mut PluginEntry) {
         return;
     }
     let dir = entry.manifest.dir.clone();
-    entry.state = lifecycle::State::Unloading;
+    entry_state(entry, lifecycle::Ev::UnloadStart);
     let t0 = std::time::Instant::now();
     let mut err: Option<String> = None;
     if let Some(js) = entry.js.as_ref()
@@ -2691,7 +2699,7 @@ pub(crate) fn entry_unload(entry: &mut PluginEntry) {
         t0.elapsed().as_millis(),
         err.as_deref().unwrap_or(""),
     );
-    entry.state = lifecycle::State::Disabled;
+    entry_state(entry, lifecycle::Ev::UnloadDone);
 }
 
 /// 清单 → 运行条目（disabled 一律 false 起步：停用已在扫描层被台账过滤；

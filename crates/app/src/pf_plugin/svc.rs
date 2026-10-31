@@ -11,9 +11,6 @@ use serde_json::json;
 
 use pi_link::service_ext::{self, SvcInstanceSpec};
 
-/// 未运行排队上限（90-6 §4：溢出 post 返回 false）。
-const QUEUE_CAP: usize = 16;
-
 #[derive(Default)]
 struct SvcShared {
     /// 见过信箱事件的 token 集（区分 absent / stopped）
