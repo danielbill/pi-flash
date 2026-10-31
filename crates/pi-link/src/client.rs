@@ -38,7 +38,7 @@ pub struct PiSession {
 /// 扩展装载归 spawn 参数（工具预设档）管：full/full+ 档自带 `-ne` + 显式
 /// `-e` 精确集；default/read-only/chat-only 档不发 `-ne`（加载
 /// `~/.pi/agent` 扩展与 npm 包，pi-web parity，v70.3 拍板）。全局开关已删
-/// （2026-10-10 用户定夺）：它在默认档路径（自定义/full）上本就无效，
+/// ：它在默认档路径（自定义/full）上本就无效，
 /// 逃生口语义由档位系统承担。历史背景：曾恒定 `-ne` 防宿主扩展崩钉版
 /// pi（系统 pi 1.0 的 auto-router.ts fatal 0.87.1 RPC），v70.3 改默认
 /// 加载并把隔离降级为设置页开关。

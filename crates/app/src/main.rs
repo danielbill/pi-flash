@@ -56,13 +56,13 @@ pub(crate) use shell::types::*;
 pub(crate) use ui::ComposerInput;
 
 /// 常规（非最大化）窗口尺寸——点窗口「缩小」钮还原到的就是这一档
-/// （2026-10-29 用户定案）。逻辑像素（gpui 按 scale_factor 折算），唯一
+/// 。逻辑像素（gpui 按 scale_factor 折算），唯一
 /// 落点在 `run()` 的建窗参数。
 pub(crate) const WINDOW_W: f32 = 1180.;
 pub(crate) const WINDOW_H: f32 = 760.;
 
 /// 窗口最小尺寸：宽 = 还原宽（「点缩小钮后多大就别想再拖更小」——再窄聊天
-/// 列会被挤到不可用）；高比还原高矮 160（2026-10-29 用户定案 600），给
+/// 列会被挤到不可用）；高比还原高矮 160，给
 /// 1366×768 这类老屏幕留出任务栏之后的可用高度。
 pub(crate) const WINDOW_W_MIN: f32 = WINDOW_W;
 pub(crate) const WINDOW_H_MIN: f32 = 600.;
