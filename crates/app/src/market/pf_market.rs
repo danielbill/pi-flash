@@ -725,12 +725,15 @@ fn card(
         )
         .children((!e.version.is_empty()).then(|| {
             let mut v = gpui::div()
+                .flex()
+                .items_center()
+                .gap(px(2.))
                 .font_family(MONO)
                 .text_size(px(11.))
                 .text_color(rgb(t.text_faint))
                 .child(SharedString::from(format!("v{}", e.version)));
             if updatable {
-                // ↑ 可更新标记（对齐 settings-扩展页范式）
+                // ↑ 可更新标记（对齐 settings-扩展页范式），行内跟在版本号后
                 v = v.child(crate::ui::icon("arrow-up", 11., t.accent));
             }
             v
