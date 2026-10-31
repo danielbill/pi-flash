@@ -288,4 +288,3 @@ pub(super) fn render_provider_picker(
         );
     dialog_shell(chat, weak, panel)
 }
-

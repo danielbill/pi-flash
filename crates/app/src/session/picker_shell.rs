@@ -4,7 +4,9 @@
 //! 各 picker 的行渲染、开关业务语义（勾选即落盘 / 会话清单对齐）不入本
 //! 文件——这里只有「长什么样、摆在哪里」。
 
-use gpui::{AnyElement, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px, rgb};
+use gpui::{
+    AnyElement, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px, rgb,
+};
 
 use crate::appearance::theme::Theme;
 use crate::shell::types::PillAnchor;

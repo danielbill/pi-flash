@@ -14,7 +14,7 @@
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
-use super::picker_shell::{capped_list, capped_list_h, empty_row, pill_anchor_edges, picker_card};
+use super::picker_shell::{capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges};
 use crate::Chat;
 use crate::appearance::theme::theme as T;
 

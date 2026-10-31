@@ -11,8 +11,8 @@
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
-use super::picker_shell::{capped_list, capped_list_h, empty_row, pill_anchor_edges, picker_card};
 use super::Chat;
+use super::picker_shell::{capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges};
 use crate::appearance::theme::theme as T;
 
 /// 行高（10 行限高 = `ROW_H × 10`，与 pi_extension_picker 一致）。
