@@ -430,3 +430,16 @@
   另修「证明钩子只在后台验签线程注入 → 面板先 init 读 fallback 拒载」的竞态
 - 实测：市场装 `quick-panel@0.1.4` → 验签通过（装载 3.2s/init 2.7ms，缓存命中毫秒级）
   → tab 闪电图标 → 面板分区/图标/色调与 JS 版一致 → 右键「设为快捷」写收藏可用
+
+## 090-10 PF 插件更新（2026-11-01）
+- **检测**：市场卡片/已装页逐条比对台账版本 vs 索引版本（`pf_updatable`，
+  semver 逐段，非 semver 回落字符串不等；降级/空版本不出更新）；有新版 =
+  版本号 ↑（accent）+ 按钮换「更新」
+- **动作三步（设计稿对齐）**：停（`plugin_evict` 自带 unload + purge 会话清单
+  + 摘活跃进程 ext，释放 cwasm mmap 防 os error 32）→ 覆盖（`pf_plugins::install`
+  本就是覆盖语义，SRI 校验 + 失败回滚）→ 重载（`reload_plugin_by_pkg` 新增
+  `reattach` 参：更新链路装完把包内 pi 扩展重挂回当前会话；原安装/启用链路传 false）
+- **UI**：市场卡 install_btn 三态化（安装/更新/✓）；已装页列表 ↑ + 详情
+  「更新 ↑」按钮（更新中 → 「更新中…」+ spinner，pending 单飞防并发）
+- i18n 零新增（`market.btn.update`/`market.pf.updating` 存量死键激活）
+- 测试：`pf_updatable` 单测 2 例；test/090-10/插件更新/testcase.md（人工清单 M1-M10）

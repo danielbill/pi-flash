@@ -56,7 +56,7 @@ pub(crate) fn muted(t: &Theme) -> gpui::Rgba {
     gpui::rgb(t.text_faint)
 }
 
-fn accent_alpha(t: &Theme, a: f32) -> gpui::Rgba {
+pub(crate) fn accent_alpha(t: &Theme, a: f32) -> gpui::Rgba {
     gpui::rgba(rgba_a(t.accent, a))
 }
 
@@ -92,6 +92,33 @@ fn index() -> pi_link::pf_plugins::MarketIndex {
 
 fn installed_in(ledger: &[pi_link::pf_plugins::LedgerEntry], name: &str) -> bool {
     ledger.iter().any(|l| l.name == name)
+}
+
+/// 已装版本是否落后于索引版本（090-10 更新判定）。两边都是 npm 语义版本，
+/// 能解析就逐段比较；任一解析失败回落字符串不等（覆盖安装无害，宁误报
+/// 不漏报）。索引版本 ≤ 已装版本（含降级）不算更新。
+pub(crate) fn pf_updatable(installed: &str, index: &str) -> bool {
+    if installed.is_empty() || index.is_empty() {
+        return false;
+    }
+    match (
+        semver::Version::parse(installed),
+        semver::Version::parse(index),
+    ) {
+        (Ok(a), Ok(b)) => b > a,
+        _ => installed != index,
+    }
+}
+
+/// 台账里某包的已装版本（未装 = None）。
+fn ledger_version_of<'a>(
+    ledger: &'a [pi_link::pf_plugins::LedgerEntry],
+    name: &str,
+) -> Option<&'a str> {
+    ledger
+        .iter()
+        .find(|l| l.name == name)
+        .map(|l| l.version.as_str())
 }
 
 /// 索引快照（pub 口子给 pf_installed；整表克隆一次后本地连查）。
@@ -205,7 +232,10 @@ impl Chat {
     }
 
     /// 安装。后台线程跑 npm pack → sha512 校验 → 解包落盘 → 台账。
-    fn pf_install(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+    ///
+    /// `reattach`：更新链路传 true——装完重载后把包内 pi 扩展重挂回当前
+    /// 会话（更新前 pf_update 已摘除）；全新安装传 false（无旧挂载要补）。
+    fn pf_install(&mut self, name: String, reattach: bool, cx: &mut gpui::Context<Self>) {
         if self.aux.market.pf.pending.is_some() {
             return;
         }
@@ -244,7 +274,7 @@ impl Chat {
                     Ok(_) => {
                         c.aux.market.pf.error = None;
                         // 装完立即落运行态（台账=安装真相，扫描只认台账；不靠重启）
-                        c.reload_plugin_by_pkg(pkg.clone(), cx);
+                        c.reload_plugin_by_pkg(pkg.clone(), reattach, cx);
                         // 首启不等编译：装完立刻后台预热编译产物（pf_plugin 编译缓存）
                         crate::pf_plugin::spawn_precompile_installed();
                     }
@@ -255,6 +285,21 @@ impl Chat {
             });
         })
         .detach();
+    }
+
+    /// 更新（090-10）：①停（evict 自带 unload + purge 会话清单；再摘活跃
+    /// 进程 ext——顺带释放 cwasm 的 mmap，否则 Windows 覆盖目录必 os error 32）
+    /// → ②覆盖（`pf_plugins::install` 本就是覆盖语义）→ ③重载（pf_install
+    /// 完成 Ok 分支的 reload + reattach）。
+    pub(crate) fn pf_update(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+        if self.aux.market.pf.pending.is_some() {
+            return;
+        }
+        if let Some(ix) = self.plugin_ix_by_pkg(&name) {
+            self.plugin_evict(ix);
+            self.plugin_detach_active_ext(ix, cx);
+        }
+        self.pf_install(name, true, cx);
     }
 }
 
@@ -612,6 +657,9 @@ fn card(
     ledger: &[pi_link::pf_plugins::LedgerEntry],
 ) -> AnyElement {
     let installed = installed_in(ledger, &e.name);
+    // 090-10：已装且索引版本更高 → 卡片出「更新」钮 + 版本号 ↑
+    let updatable = installed
+        && ledger_version_of(ledger, &e.name).is_some_and(|v| pf_updatable(v, &e.version));
     // 窄屏（<768）：与 pi 页同口径转单列，卡宽吃满行
     let width = if m.narrow {
         gpui::div().w_full()
@@ -676,11 +724,16 @@ fn card(
                 .child(e.display.zh.clone()),
         )
         .children((!e.version.is_empty()).then(|| {
-            gpui::div()
+            let mut v = gpui::div()
                 .font_family(MONO)
                 .text_size(px(11.))
                 .text_color(rgb(t.text_faint))
-                .child(SharedString::from(format!("v{}", e.version)))
+                .child(SharedString::from(format!("v{}", e.version)));
+            if updatable {
+                // ↑ 可更新标记（对齐 settings-扩展页范式）
+                v = v.child(crate::ui::icon("arrow-up", 11., t.accent));
+            }
+            v
         }));
 
     // ── 描述（无则不渲染；卡宽自然约束换行）──
@@ -708,7 +761,7 @@ fn card(
                 .child(e.published_at.clone()),
         )
         .child(gpui::div().flex_1())
-        .child(install_btn(weak, e, installed, busy, t));
+        .child(install_btn(weak, e, installed, updatable, busy, t));
 
     let body = gpui::div()
         .flex_1()
@@ -743,16 +796,18 @@ fn card(
 }
 
 /// 安装钮（v1 定稿）：边框盒内 `[`+安装+`]`；busy = spinner；
-/// 已装 = ✓ 绿（accent，不可点）。只有这一个动作。
+/// 已装 = ✓ 绿（accent，不可点）；已装且索引有更高版 = `[`+更新+`]`
+/// （090-10，点击走 `pf_update` 覆盖安装链路）。
 fn install_btn(
     weak: &gpui::WeakEntity<Chat>,
     e: &IndexEntry,
     installed: bool,
+    updatable: bool,
     busy: bool,
     t: &'static Theme,
 ) -> AnyElement {
-    // 已装：✓ 绿（accent，不可点）
-    if installed {
+    // 已装且无更新：✓ 绿（accent，不可点）
+    if installed && !updatable {
         return gpui::div()
             .h(px(33.3))
             .px(px(9.36))
@@ -774,6 +829,12 @@ fn install_btn(
     } else {
         let name = e.name.clone();
         let weak_c = weak.clone();
+        // 更新链路：同款按钮壳，点击走 pf_update（停→覆盖→重载）
+        let text = if updatable {
+            tr("market.btn.update")
+        } else {
+            tr("market.btn.install")
+        };
         gpui::div()
             .id(SharedString::from(format!("pf-market-install-{}", e.name)))
             .flex()
@@ -782,10 +843,16 @@ fn install_btn(
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
                 let name = name.clone();
-                let _ = weak_c.update(cx, |c, cx| c.pf_install(name, cx));
+                let _ = weak_c.update(cx, |c, cx| {
+                    if updatable {
+                        c.pf_update(name, cx);
+                    } else {
+                        c.pf_install(name, false, cx);
+                    }
+                });
             })
             .child(bracket("[", t))
-            .child(tr("market.btn.install"))
+            .child(text)
             .child(bracket("]", t))
             .into_any_element()
     };
@@ -921,5 +988,33 @@ fn nav_button(
     } else {
         base.text_color(gpui::rgba(rgba_a(t.text_faint, 0.55)))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pf_updatable;
+
+    #[test]
+    fn updatable_semver_compare() {
+        // 逐段数值比较：1.10 > 1.9（字符串比较会错判）
+        assert!(pf_updatable("1.9.0", "1.10.0"));
+        assert!(pf_updatable("1.0.0", "2.0.0"));
+        // 预发布号：同版本号下 rc < 正式
+        assert!(pf_updatable("1.2.0-rc.1", "1.2.0"));
+        // 相等 / 降级 / 索引更旧：不出更新
+        assert!(!pf_updatable("1.2.0", "1.2.0"));
+        assert!(!pf_updatable("2.0.0", "1.9.9"));
+    }
+
+    #[test]
+    fn updatable_fallback_and_empty() {
+        // 非 semver 回落字符串不等（宁误报不漏报，覆盖安装无害）
+        assert!(pf_updatable("dev", "1.0.0"));
+        assert!(!pf_updatable("1.0.0", "1.0.0"));
+        // 空版本（dev 侧载无版本号 / 索引缺失）不出更新
+        assert!(!pf_updatable("", "1.0.0"));
+        assert!(!pf_updatable("1.0.0", ""));
+        assert!(!pf_updatable("", ""));
     }
 }

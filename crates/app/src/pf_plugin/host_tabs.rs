@@ -299,7 +299,16 @@ impl Chat {
 
     /// 后台按台账包名重扫清单（只出这一个包）→ 主线程 `plugin_replace_by_pkg`
     /// 落位。安装完 / 启用即生效，不靠重启；扫不到就走市场页头段错误行。
-    pub(crate) fn reload_plugin_by_pkg(&mut self, name: String, cx: &mut gpui::Context<Self>) {
+    ///
+    /// `reattach`：重建后把包内 pi 扩展重挂回**当前会话**（更新链路用——
+    /// 更新前 evict 已 purge 会话清单 + 摘活跃进程 ext，重载必须补回；全新
+    /// 安装/启用走各自原有挂载时机，传 false）。
+    pub(crate) fn reload_plugin_by_pkg(
+        &mut self,
+        name: String,
+        reattach: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let pkg = name.clone();
         let scan = cx.background_executor().spawn(async move {
             let aliases = pi_link::pf_plugins::dir_aliases(&pkg);
@@ -314,6 +323,10 @@ impl Chat {
                 if !c.plugin_replace_by_pkg(&name, manifests) {
                     let msg = crate::i18n::tf("market.pf.enable_failed", &[("name", name.clone())]);
                     c.aux.market.pf.error = Some(msg);
+                } else if reattach && let Some(ix) = c.plugin_ix_by_pkg(&name) {
+                    let key = c.pool.active_key.clone();
+                    c.plugin_attach_pi_exts(ix, &key, cx);
+                    c.ensure_active_process(cx);
                 }
                 cx.notify();
             });

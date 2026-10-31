@@ -20,7 +20,7 @@ use pi_link::pf_plugins;
 use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::i18n::{tf, tr};
-use crate::market::pf_market::{MONO, centered, index_snapshot, slice_shell};
+use crate::market::pf_market::{MONO, centered, index_snapshot, pf_updatable, slice_shell};
 use crate::market::pi_native_market::design::Metrics;
 use crate::ui::kit::{
     LIST_W, config_switch, detail_shell, field, sidebar_item, sidebar_list, sidebar_shell,
@@ -33,6 +33,8 @@ struct InstalledItem {
     version: String,
     source: String,
     disabled: bool,
+    /// 索引上的更高版本（090-10；None = 已是最新 / 索引缺失）
+    update: Option<String>,
 }
 
 impl Chat {
@@ -78,7 +80,7 @@ impl Chat {
             (true, None) => {
                 // 启动时被停用过滤、运行态无条目：后台重扫**只补装这一个**
                 // （内建 `plugin_replace_by_pkg`，不整体替换 plugins_set）
-                self.reload_plugin_by_pkg(name.clone(), cx);
+                self.reload_plugin_by_pkg(name.clone(), false, cx);
                 // 启用即预热编译产物：下次启动验签走缓存命中（不现场编）
                 crate::pf_plugin::spawn_precompile_installed();
             }
@@ -224,12 +226,18 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                     // 裸包名只作最后兜底
                     .or_else(|| crate::pf_plugin::manifest_title_for(&l.name))
                     .unwrap_or_else(|| l.name.clone());
+                // 090-10：索引版本更高 → 列表 ↑ + 详情更新钮
+                let update = ix
+                    .entry(&l.name)
+                    .map(|e| e.version.clone())
+                    .filter(|v| pf_updatable(&l.version, v));
                 InstalledItem {
                     name: l.name.clone(),
                     display,
                     version: l.version.clone(),
                     source: l.source.clone(),
                     disabled: l.disabled,
+                    update,
                 }
             })
             .collect()
@@ -245,6 +253,7 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .find(|i| Some(&i.name) == selected_name.as_ref());
 
     let removing = st.removing.clone();
+    let pending = st.pending.clone();
     let weak_c = weak.clone();
 
     // ── 左列表（LIST_W，对齐 settings-扩展；无开关——PF 插件无持久启停）──
@@ -278,10 +287,19 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                 )
                 .child(
                     gpui::div()
+                        .flex()
+                        .items_center()
+                        .gap(px(2.))
                         .font_family(MONO)
                         .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_faint))
-                        .child(SharedString::from(item.version.clone())),
+                        .child(SharedString::from(item.version.clone()))
+                        // ↑ 可更新（090-10）
+                        .children(
+                            item.update
+                                .is_some()
+                                .then(|| crate::ui::icon("arrow-up", 11., t.accent)),
+                        ),
                 )
                 // 启停开关（090-4 v5）：停用 = PF 不装载不绘制（台账 disabled
                 // 位 + 运行态 entry.disabled，状态栏/文件树/分发全部隐身）
@@ -299,7 +317,7 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         .bg(rgb(t.bg))
         .child(list);
 
-    let detail = detail_pane(selected, removing.as_deref(), weak, t);
+    let detail = detail_pane(selected, removing.as_deref(), pending.as_deref(), weak, t);
 
     // 段盒吃满全高：centered 外壳必须是 flex（否则 flex_1 的 shell 在块级父里
     // 拿不到剩余高度 → 段盒只到内容高度，和【所有插件】页不一样高）
@@ -327,6 +345,7 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
 fn detail_pane(
     item: Option<&InstalledItem>,
     removing: Option<&str>,
+    pending: Option<&str>,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static Theme,
 ) -> AnyElement {
@@ -337,6 +356,56 @@ fn detail_pane(
 
     // 垃圾桶（settings-扩展同款 danger 盒；卸载本插件 → spinner，任一卸载中禁用）
     let removing_this = removing == Some(item.name.as_str());
+    let updating_this = pending == Some(item.name.as_str());
+    let busy_any = removing.is_some() || pending.is_some();
+
+    // 更新钮（090-10：详情随列表同出升级入口；有新版才渲染）——
+    // danger 盒同款几何，accent 描边；更新本插件 → 「更新中…」+ spinner，
+    // 任一安装/卸载动作进行中都禁用
+    let update_btn = item.update.is_some().then(|| {
+        let weak_u = weak.clone();
+        let name_u = item.name.clone();
+        let mut btn = gpui::div()
+            .id("pf-installed-update")
+            .h(px(28.))
+            .px(px(9.))
+            .relative()
+            .top(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .rounded(px(5.))
+            .border_1()
+            .border_color(super::pf_market::accent_alpha(t, 0.59))
+            .bg(super::pf_market::accent_alpha(t, 0.06));
+        if updating_this {
+            btn = btn
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.accent))
+                .child(tr("market.pf.updating"))
+                .child(crate::ui::spinner(11., t.accent));
+        } else if busy_any {
+            btn = btn
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.accent))
+                .opacity(0.5)
+                .child(tr("market.btn.update"))
+                .child(crate::ui::icon("arrow-up", 11., t.accent));
+        } else {
+            btn = btn
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.accent))
+                .cursor_pointer()
+                .hover(|s| s.bg(super::pf_market::accent_alpha(t, 0.1)))
+                .child(tr("market.btn.update"))
+                .child(crate::ui::icon("arrow-up", 11., t.accent))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_u.update(cx, |c, cx| c.pf_update(name_u.clone(), cx));
+                });
+        }
+        btn
+    });
+
     let mut trash = gpui::div()
         .id("pf-installed-remove")
         .size(px(28.))
@@ -431,6 +500,7 @@ fn detail_pane(
                         .child(SharedString::from(item.display.clone())),
                 )
                 .child(gpui::div().flex_1())
+                .children(update_btn)
                 .child(trash),
         )
         .child(field(
