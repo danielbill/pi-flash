@@ -400,7 +400,12 @@ impl SessionRuntime {
         if let Some(list) = pending_ext {
             self.ext_sources = list;
             if let Some(p) = pi_link::session_ext::store_path() {
-                let _ = pi_link::session_ext::write_for(&p, &self.key, &self.ext_sources);
+                // 同勾选面板写入口：保路径型条目（插件挂载通道），勿整表覆写
+                let _ = pi_link::session_ext::write_for_preserving_mounts(
+                    &p,
+                    &self.key,
+                    &self.ext_sources,
+                );
             }
         }
         if !self.spawn_attached(cx) {

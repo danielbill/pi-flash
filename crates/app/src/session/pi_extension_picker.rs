@@ -120,9 +120,12 @@ impl Chat {
             r.ext_sources = sources.clone();
             r.pending_ext_sources = Some(sources.clone());
         });
-        // 每个对话保存一份：落 ~/.pi-flash/session-ext.json，重启后按会话恢复
+        // 每个对话保存一份：落 ~/.pi-flash/session-ext.json，重启后按会话恢复。
+        // 保路径型条目（PF 插件挂载通道写入，面板不显示）——按宇宙重建后
+        // 直接覆写会把插件 ext 从台账里抹掉，下轮 spawn 就不挂了
         if let Some(path) = pi_link::session_ext::store_path() {
-            if let Err(e) = pi_link::session_ext::write_for(&path, &key, &sources) {
+            if let Err(e) = pi_link::session_ext::write_for_preserving_mounts(&path, &key, &sources)
+            {
                 self.set_status(
                     crate::i18n::tf("extensions.list_save_failed", &[("e", e)]),
                     cx,

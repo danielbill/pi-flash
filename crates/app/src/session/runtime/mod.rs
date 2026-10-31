@@ -337,7 +337,15 @@ impl SessionRuntime {
         let mut ext_sources = pi_link::session_ext::store_path()
             .map(|p| pi_link::session_ext::read_for(&p, &key))
             .unwrap_or_default();
-        if ext_sources.is_empty() {
+        // 台账是混合通道：scheme 源 = 用户自选；路径型条目 = PF 插件挂载通道
+        // （session_ext::is_mount_path），只归 spawn 前的台账 -e 段管，不进
+        // ext_sources——否则胶囊计数 ≠ 勾选面板（真机 2026-10-31：勾 2 显 [3]）。
+        // 台账没有 scheme 自选（空，或只剩路径条目——历史版本 attach 整表覆写
+        // npm 清单的残留）→ 回落全局启用集
+        if !ext_sources
+            .iter()
+            .any(|s| !pi_link::session_ext::is_mount_path(s))
+        {
             ext_sources = pi_link::skills::enabled_package_sources();
         }
         // 停用/卸载插件的残留挂载源失效（tc6）：创建时 store 读入的清单只增

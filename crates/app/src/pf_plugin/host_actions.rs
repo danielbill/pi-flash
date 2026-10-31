@@ -314,35 +314,38 @@ impl Chat {
             .iter()
             .map(|rel| entry.manifest.dir.join(rel).to_string_lossy().into_owned())
             .collect();
-        let missing = pi_link::session_ext::store_path()
-            .map(|store| {
-                let have = pi_link::session_ext::read_for(&store, pf_session_key);
-                pi_exts.iter().any(|p| !have.iter().any(|h| h == p))
-            })
-            .unwrap_or(true);
-        if !missing {
+        // 台账**合并写**（勿整表覆写）：会话自选的 npm 清单与插件挂载通道
+        // 同住一份台账，覆写 = 把用户勾选抹掉（真机 2026-10-31：观宏知微
+        // 会话台账只剩一条插件路径，就是被覆写没的）
+        let Some(store) = pi_link::session_ext::store_path() else {
+            return;
+        };
+        let mut merged = pi_link::session_ext::read_for(&store, pf_session_key);
+        if pi_exts.iter().all(|p| merged.iter().any(|h| h == p)) {
             return; // 清单已含，无需重启
         }
-        if let Some(store) = pi_link::session_ext::store_path() {
-            if let Err(e) = pi_link::session_ext::write_for(&store, pf_session_key, &pi_exts) {
-                eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
-                return;
+        for p in &pi_exts {
+            if !merged.iter().any(|h| h == p) {
+                merged.push(p.clone());
             }
+        }
+        if let Err(e) = pi_link::session_ext::write_for(&store, pf_session_key, &merged) {
+            eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
+            return;
         }
         eprintln!(
             "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
             entry.manifest.id, pf_session_key
         );
-        // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）
+        // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）。
+        // **不 push 进 ext_sources**：挂载本体在 spawn 前按台账统一 `-e`
+        // （runtime spawn 的 store 消费段，所有档位）；ext_sources 只装用户
+        // 勾选的 scheme 源——路径型条目混进去会把胶囊计数和勾选面板搞劈叉
+        // （真机 2026-10-31：面板勾 2 项、胶囊显 [3]）
         if let Some(rt) = self.pool.runtimes.get(pf_session_key).cloned() {
             let busy = rt.read(cx).agent_running;
             if !busy {
                 rt.update(cx, |r, cx| {
-                    for p in &pi_exts {
-                        if !r.ext_sources.iter().any(|e| e == p) {
-                            r.ext_sources.push(p.clone());
-                        }
-                    }
                     r.shutdown_process();
                     r.ensure_spawned(cx);
                 });

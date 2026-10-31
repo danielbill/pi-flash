@@ -92,6 +92,32 @@ pub fn remove_for(path: &Path, key: &str) -> Result<(), String> {
     write_all(path, &table)
 }
 
+/// 路径型挂载条目（PF 插件 `pi_extensions` 绑定通道写入的绝对路径，契约 v3）。
+/// 台账是**混合通道**：用户勾选的 scheme 源（`npm:`/`git:`…）+ 插件挂载的
+/// 路径条目。勾选面板宇宙只含 scheme 源——路径条目不显示、不计数，但落盘
+/// 时必须保住（丢 = 下轮 spawn 插件 ext 不挂）。
+pub fn is_mount_path(src: &str) -> bool {
+    std::path::Path::new(src).is_absolute()
+}
+
+/// 用户勾选清单 + 既有路径型条目合并（保序去重）：`user` 为基准，
+/// `existing` 里的路径条目原样保留，scheme 条目以 `user` 为准。
+pub fn with_mounts_preserved(existing: &[String], user: &[String]) -> Vec<String> {
+    let mut out = user.to_vec();
+    for src in existing {
+        if is_mount_path(src) && !out.contains(src) {
+            out.push(src.clone());
+        }
+    }
+    out
+}
+
+/// [`with_mounts_preserved`] + 落盘一步到位（勾选面板/重绑共用的写入口）。
+pub fn write_for_preserving_mounts(path: &Path, key: &str, user: &[String]) -> Result<(), String> {
+    let existing = read_for(path, key);
+    write_for(path, key, &with_mounts_preserved(&existing, user))
+}
+
 /// 便捷取路径（`~/.pi-flash/session-ext.json`）。
 pub fn store_path() -> Option<PathBuf> {
     crate::paths::session_ext_file()
@@ -144,6 +170,46 @@ mod tests {
         write_for(&p, "C:/tmp/y.jsonl", &["npm:b".into()]).unwrap();
         let win2 = format!("c:\\tmp\\y.jsonl");
         assert_eq!(read_for(&p, &win2), vec!["npm:b"]);
+    }
+
+    /// 插件挂载通道（真机 2026-10-31：勾 2 显 [3]）——scheme 源以勾选为准，
+    /// 路径型条目跨勾选保留；路径判定与平台绝对路径口径一致。
+    #[test]
+    fn mount_paths_survive_user_pick_rewrites() {
+        let mount = std::env::temp_dir()
+            .join("plugins/wechat-bridge/pi/index.mjs")
+            .to_string_lossy()
+            .into_owned();
+        assert!(is_mount_path(&mount), "绝对路径 = 挂载条目");
+        assert!(!is_mount_path("npm:pi-freeflow"));
+        assert!(!is_mount_path("git:https://github.com/u/r"));
+
+        let existing = vec!["npm:old".into(), mount.clone()];
+        // 用户取消勾了 npm:old、新勾 npm:new——old 该走就走，mount 必须留下
+        let merged = with_mounts_preserved(&existing, &["npm:new".to_string()]);
+        assert_eq!(merged, vec!["npm:new".to_string(), mount.clone()]);
+
+        // 幂等：以合并结果为 existing 再合并不增生
+        let again = with_mounts_preserved(&merged, &["npm:new".to_string()]);
+        assert_eq!(again, merged);
+    }
+
+    #[test]
+    fn write_preserving_mounts_roundtrip() {
+        let p = tmp("preserve.json");
+        let _ = std::fs::remove_file(&p);
+        let mount = std::env::temp_dir()
+            .join("plugins/pf-wxbot/pi/index.mjs")
+            .to_string_lossy()
+            .into_owned();
+        // 先按插件挂载通道的形态落一份（历史 attach 曾整表覆写：台账只剩路径）
+        write_for(&p, "k", &[mount.clone()]).unwrap();
+        // 用户勾选落盘：mount 保留，npm 勾选进来
+        write_for_preserving_mounts(&p, "k", &["npm:pi-freeflow".into()]).unwrap();
+        assert_eq!(
+            read_for(&p, "k"),
+            vec!["npm:pi-freeflow".to_string(), mount]
+        );
     }
 
     #[test]
