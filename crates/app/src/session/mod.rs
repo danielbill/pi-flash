@@ -230,10 +230,12 @@ fn session_fn_bar(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .pl(px(12.))
         .pr(px(8.))
         .border_b_1()
         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
+        // 左距 20：栏首项目名与 topbar 会话 tab 的 icon 墨迹对齐
+        //（tab = strip pl 10 + tab pl 12；20 ≈ 22 - 字形留白，实测对齐）
+        .pl(px(20.))
         .children(project.map(|project| {
             div()
                 .flex()
