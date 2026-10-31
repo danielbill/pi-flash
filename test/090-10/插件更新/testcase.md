@@ -15,6 +15,11 @@
 
 ## UI/动作（人工验收清单）
 
+**测法：dev-market 本地假 registry**（`test/090-10/dev-market/README.md`，Rust 零改动，
+`PI_FLASH_NPM_REGISTRY` 指向本地即可整链路演练"发新版→出更新钮→覆盖安装"）：
+feed 放线上版 tgz → 装它 → `node bump.mjs <slug> <新版>` → 市场重开 → 演练更新。
+M1-M10 全部在此环境完成；台账降版本造假只作 dev-market 不可用时的备选。
+
 | # | 场景 | 预期 |
 |---|------|------|
 | M1 | 市场页【所有插件】：已装且索引有更高版 | 版本号旁 ↑（accent 色），按钮由 ✓ 变 `[更新]` |
