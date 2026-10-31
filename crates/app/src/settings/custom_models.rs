@@ -137,22 +137,11 @@ impl Chat {
                     .unwrap_or_default();
                 s.mj_max_tokens
                     .update(cx, |ti, cx| ti.set_value(max_tokens, cx));
-                // 内置模型＝pi 的定义，PF 只看不改（用户 2026-10-27 定稿）；
-                // models.json 手写商同款只读（2026-10-31 定稿：非 PF 创建的
-                // 条目只显示不修改）
+                // 内置模型＝pi 的定义，PF 只看不改（用户 2026-10-27 定稿）
                 let ro = over.is_some();
-                let ro_provider = over.is_none() && !name.is_empty() && !mj_managed(&name);
-                let ro_fields = ro || ro_provider;
-                s.mj_id.update(cx, |ti, cx| ti.set_disabled(ro_fields, cx));
-                s.mj_ctx.update(cx, |ti, cx| ti.set_disabled(ro_fields, cx));
-                s.mj_max_tokens
-                    .update(cx, |ti, cx| ti.set_disabled(ro_fields, cx));
-                s.mj_name
-                    .update(cx, |ti, cx| ti.set_disabled(ro_provider, cx));
-                s.mj_base
-                    .update(cx, |ti, cx| ti.set_disabled(ro_provider, cx));
-                s.mj_key
-                    .update(cx, |ti, cx| ti.set_disabled(ro_provider, cx));
+                s.mj_id.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                s.mj_ctx.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                s.mj_max_tokens.update(cx, |ti, cx| ti.set_disabled(ro, cx));
                 cx.notify();
             });
         }
@@ -295,10 +284,6 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        // 手写条目只读（2026-10-31 定稿）：非 PF 创建的商不改盘（草稿除外）
-        if !old_name.is_empty() && !mj_managed(&old_name) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         let (name, base, key) = {
             let s = st.read(cx);
             (
@@ -326,28 +311,44 @@ impl Chat {
         let mut entry = pi_link::models_json::provider_entry(&doc, &old_name)
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        // API 形状 PF 推断（042-1 改版：baseUrl 决定协议，用户零选择）。
-        // pi 对缺 api 硬 throw，必须写具体值；空 base 先落 openai 形状，
-        // 填好 base 再保存即随推断更新
-        entry["api"] = serde_json::Value::String(pi_link::probe::infer_api(&base).to_string());
+        // 托管判据（2026-10-31 定稿）：auth.json 有 PF 标记条目（pif-secret
+        // 命令引用，人工不可能手写）= PF 创建的条目；草稿（old_name 空）=
+        // 本次新建，天然归 PF 管。**落盘动作按托管分流**：
+        // - 托管：api 随 baseUrl 推断刷新，key 走凭据分流（051）
+        // - 手写：只写表单真正拥有的键（name/baseUrl），其余原样——显式
+        //   api 不被推断覆盖（openai-responses 等推断不了的形状）；apiKey
+        //   不转存凭据库、不写标记、遗留引用不清
+        let managed = old_name.is_empty() || mj_managed(&old_name);
+        if managed {
+            // API 形状 PF 推断（042-1 改版：baseUrl 决定协议，用户零选择）。
+            // pi 对缺 api 硬 throw，必须写具体值；空 base 先落 openai 形状，
+            // 填好 base 再保存即随推断更新
+            entry["api"] = serde_json::Value::String(pi_link::probe::infer_api(&base).to_string());
+        }
         // name 字段随输入同步（顺带保证新建条目 sanitize 不丢）
         set_opt_str(&mut entry, "name", &target);
         // 尾斜杠规范化（pi 运行时直接拼 base+path，避免 /key//path）；
         // 探测端本就 trim，这里统一落盘形状
         set_opt_str(&mut entry, "baseUrl", base.trim_end_matches('/'));
         // apiKey 分流（051）：明文 → 凭据库 + $PF_KEY_* 引用；高级引用原样；
-        // 库不可用降级明文
-        self.mj_store_key(&mut entry, &target, &key, cx);
+        // 库不可用降级明文。手写条目跳过——用户的明文 key 原样留在盘上
+        if managed {
+            self.mj_store_key(&mut entry, &target, &key, cx);
+        }
         // 草稿（old_name 为空）= 新建，没有旧键可改名；测速路径不改名
         let renamed = !old_name.is_empty() && target != old_name;
         if renamed {
             if let Err(e) = pi_link::models_json::rename_provider(&mut doc, &old_name, &target) {
                 return self.mc_set_error(&e, cx);
             }
-            // 凭据跟名搬家：钥匙库条目 + auth.json 标记条目（无旧条目静默跳过）
-            if let Some(secret) = pi_link::auth_json::resolve_secret(&old_name) {
-                if pi_link::auth_json::store_secret(&target, &secret).is_ok() {
-                    let _ = pi_link::auth_json::delete_secret(&old_name);
+            // 凭据跟名搬家：钥匙库条目 + auth.json 标记条目（无旧条目静默
+            // 跳过）。手写条目跳过——它的 key 在 models.json 里随条目搬，
+            // 不得把用户明文收进凭据库
+            if managed {
+                if let Some(secret) = pi_link::auth_json::resolve_secret(&old_name) {
+                    if pi_link::auth_json::store_secret(&target, &secret).is_ok() {
+                        let _ = pi_link::auth_json::delete_secret(&old_name);
+                    }
                 }
             }
         }
@@ -391,10 +392,6 @@ impl Chat {
     }
 
     pub(crate) fn mj_delete_provider(&mut self, name: String, cx: &mut Context<Self>) {
-        // 手写条目只读：删除也是改盘（连条目带凭据），非 PF 商一律拒绝
-        if !name.is_empty() && !mj_managed(&name) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         let mut doc = Self::mj_doc();
         pi_link::models_json::remove_provider(&mut doc, &name);
         // 凭据一并清：api_key 条目（不论谁写的——用户刚确认删除该商）+ 钥匙库
@@ -468,10 +465,6 @@ impl Chat {
     }
 
     pub(crate) fn mj_add_model(&mut self, provider: String, cx: &mut Context<Self>) {
-        // 手写条目只读：不给手写商追加模型行
-        if !provider.is_empty() && !mj_managed(&provider) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         // 草稿行**不预写占位**（P1-1）：validate 拒绝空 id，预写必失败且
         // 后续按 ix 保存时越界静默丢数据。ix = 盘上现有模型数，保存时走
         // mj_commit_model_form 的追加分支落盘；保存前列表不显示（与
@@ -497,11 +490,6 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return false;
         };
-        // 手写条目只读：模型行也是手写商条目的一部分
-        if !provider.is_empty() && !mj_managed(provider) {
-            self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-            return false;
-        }
         let (id, ctx, image, reasoning, max_tokens) = {
             let s = st.read(cx);
             (
@@ -578,10 +566,6 @@ impl Chat {
     }
 
     pub(crate) fn mj_delete_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
-        // 手写条目只读：不给手写商删模型行
-        if !provider.is_empty() && !mj_managed(&provider) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         let mut doc = Self::mj_doc();
         // 删之前先记住 id：内存目录按 provider+id 摘（和磁盘同一步）
         let id = pi_link::models_json::provider_entry(&doc, &provider)
@@ -649,10 +633,6 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        // 手写条目只读：测速链路会自动保存表单（写盘），非 PF 商一律拒绝
-        if !provider.is_empty() && !mj_managed(&provider) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         let base = {
             let s = st.read(cx);
             s.mj_base.read(cx).value().trim().to_string()
@@ -912,10 +892,6 @@ impl Chat {
     /// 网络挂了回退旧缓存），再按当前表单里的模型 ID 取预设**覆盖**回填
     ///（上下文/最大输出/能力/名称/价格都跟当前 ID 走）并重选回显。
     pub(crate) fn mj_catalog_fill(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
-        // 手写条目只读：自动填参会落盘
-        if !provider.is_empty() && !mj_managed(&provider) {
-            return self.mc_set_error(&tr("custom_models.readonly_hint"), cx);
-        }
         self.mc_clear_error(cx);
         // 先落表单值：回填以它为查询键，且回填末尾按缓冲重播表单——
         // 不先落就会拿旧 ID 查、还把输入框改回旧值。
@@ -1017,8 +993,9 @@ impl Chat {
 
 /// PF 托管判据（2026-10-31 用户定稿）：auth.json 里有 PF 标记条目
 /// （`!'/…/pif-secret.exe' get <provider>` 命令引用——人工不可能手写该命令
-/// 形态）= PF 创建的条目，可编辑；否则视为 models.json 手写，PF 只显示
-/// 不修改（禁保存/测速/+模型/删除，字段禁用）。零额外记账。
+/// 形态）= PF 创建的条目；否则视为 models.json 手写。**只用于落盘分流**
+/// （UI 不区分来源）：托管条目 api 随推断刷新 + key 走凭据分流；手写条目
+/// 只写表单拥有的键（name/baseUrl），其余原样保留。零额外记账。
 fn mj_managed(provider: &str) -> bool {
     !provider.is_empty()
         && pi_link::auth_json::read_credential(provider)
@@ -1139,9 +1116,6 @@ pub(crate) fn mj_provider_editor(
 
     // 草稿态（未保存的新商）：没有可删的对象，不给删除钮
     let is_new = name.is_empty();
-    // 手写条目（auth.json 无 PF 标记）：整页只读——四个按钮全禁 + 提示行
-    //（2026-10-31 定稿：非 PF 创建的条目只显示不修改）
-    let readonly = !is_new && !mj_managed(name);
     // name 行：标题列 + 控件列（input 半宽；[删除][保存] 与 name input 同列右对齐）
     let remove_provider = name.to_string();
     let name_owned = name.to_string();
@@ -1164,7 +1138,7 @@ pub(crate) fn mj_provider_editor(
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .children((!is_new && !readonly).then(|| {
+                    .children((!is_new).then(|| {
                         super::models::detail_button(
                             "mj-del",
                             weak,
@@ -1179,7 +1153,7 @@ pub(crate) fn mj_provider_editor(
                         weak,
                         &tr("action.save"),
                         crate::ui::button::BtnVariant::Primary,
-                        readonly,
+                        false,
                         move |c, cx| c.mj_apply_provider(name_owned.clone(), cx),
                     )),
             )
@@ -1253,7 +1227,7 @@ pub(crate) fn mj_provider_editor(
                         tr("models.speedtest")
                     },
                     crate::ui::button::BtnVariant::Secondary,
-                    testing || readonly,
+                    testing,
                     {
                         let n = name.to_string();
                         move |c, cx| c.mj_speedtest_start(n.clone(), cx)
@@ -1264,7 +1238,7 @@ pub(crate) fn mj_provider_editor(
                     weak,
                     &format!("+ {}", tr("settings.tab.models")),
                     crate::ui::button::BtnVariant::Secondary,
-                    !add_ok || is_new || readonly,
+                    !add_ok || is_new,
                     {
                         let n = name.to_string();
                         move |c, cx| c.mj_add_model(n.clone(), cx)
@@ -1272,12 +1246,9 @@ pub(crate) fn mj_provider_editor(
                 )),
         )
         // 详情页唯一的信息栏（用户定稿）：两按钮下方、右对齐，同一时刻只有
-        // 一条。优先级：表单错误 > 手写只读提示 > 测速结果（seeded 通过态
-        // 不显示）。
+        // 一条。优先级：表单错误 > 测速结果（seeded 通过态不显示）。
         .children(if let Some(e) = error.as_ref() {
             vec![error_note_right(e)]
-        } else if readonly {
-            vec![note_right(&tr("custom_models.readonly_hint"))]
         } else {
             match chat.cfg.mj_speed.as_ref() {
                 Some(MjSpeedState::Running) => vec![note_right(&tr("models.speed_testing"))],
@@ -1583,9 +1554,8 @@ pub(crate) fn mj_model_modal_overlay(
         }
     };
     let over_id = over.as_ref().map(|(_, id)| id.clone());
-    // 内置模型 = 只读参数视图：不给自动填参 / 测试 / 保存 / 移除，输入框禁用；
-    // models.json 手写商的模型同款只读（2026-10-31 定稿）
-    let read_only = over_id.is_some() || !mj_managed(&name);
+    // 内置模型 = 只读参数视图：不给自动填参 / 测试 / 保存 / 移除，输入框禁用
+    let read_only = over_id.is_some();
     let d = super::SettingsFormData::snapshot(panel.read(cx), cx);
     let error = panel.read(cx).error.clone();
     let t = T();
@@ -1668,7 +1638,7 @@ pub(crate) fn mj_model_modal_overlay(
             &weak,
             &tr("models.test"),
             crate::ui::button::BtnVariant::Secondary,
-            testing || read_only,
+            testing || over_id.is_some(),
             {
                 let n = name.clone();
                 move |c, cx| c.mj_test_start(n.clone(), ix, cx)
@@ -1679,7 +1649,7 @@ pub(crate) fn mj_model_modal_overlay(
             &weak,
             &tr("action.save"),
             crate::ui::button::BtnVariant::Primary,
-            read_only,
+            false,
             {
                 let n = name.clone();
                 move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
@@ -1690,7 +1660,7 @@ pub(crate) fn mj_model_modal_overlay(
             &weak,
             &tr("action.remove"),
             crate::ui::button::BtnVariant::Danger,
-            read_only,
+            false,
             {
                 let n = name.clone();
                 move |c, cx| c.mj_delete_model(n.clone(), ix, cx)

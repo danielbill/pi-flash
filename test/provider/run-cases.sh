@@ -179,29 +179,36 @@ check CASE7 "凭据跟名搬家（auth.json 新名有标记）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));
 process.exit(d['pf-test-zg-rn']&&d['pf-test-zg-rn'].key.startsWith('!')?0:1)"
 
-# ---------- CASE9 手写条目只读（2026-10-31 定稿：auth.json 无 PF 标记 = 非托管，
-# PF 只显示不修改。判据 = pif-secret 命令引用形态，人工不可能手写）----------
+# ---------- CASE9 手写条目落盘分流（2026-10-31 定稿：auth.json 无 PF 标记 =
+# 非托管。UI 照常编辑；落盘只写表单拥有的键——显式 api 不被推断覆盖，
+# 明文 apiKey 不转存凭据库、不写标记。判据 = pif-secret 命令引用形态）----------
 node -e "
 const fs=require('fs');
 const d=JSON.parse(fs.readFileSync('$MODELS','utf8'));
-d.providers['hand-made-ds']={name:'hand-made-ds',baseUrl:'https://api.deepseek.com',api:'openai-completions',apiKey:'sk-handwritten-plain'};
+d.providers['hand-made-ds']={name:'hand-made-ds',baseUrl:'https://api.deepseek.com',api:'openai-responses',apiKey:'$DS_KEY'};
 fs.writeFileSync('$MODELS',JSON.stringify(d,null,2));"
 mj settings.mj_select --arg section="mj:p:hand-made-ds"
 "$PUI" wait --path settings.section --eq "mj:p:hand-made-ds" --timeout 10
+mj settings.mj_form --arg base="https://api.deepseek.com/v1"
 mj settings.mj_save
-check CASE9 "保存被拒（错误条=只读提示）" node -e "
-const s=JSON.parse(process.argv[1]);
-process.exit((s.error||'').includes('手写')?0:1)" "$(snap)"
-mj settings.mj_speedtest
-check CASE9 "测速被拒（链路含自动保存写盘）" node -e "
-const s=JSON.parse(process.argv[1]);
-process.exit((s.error||'').includes('手写')?0:1)" "$(snap)"
-check CASE9 "条目未被改写（apiKey 原文还在）" test "$(jm_get '.providers["hand-made-ds"].apiKey')" = '"sk-handwritten-plain"'
+check CASE9 "表单改动落盘（baseUrl 已更新）" test "$(jm_get '.providers["hand-made-ds"].baseUrl')" = '"https://api.deepseek.com/v1"'
+check CASE9 "显式 api 不被推断覆盖（仍 openai-responses）" test "$(jm_get '.providers["hand-made-ds"].api')" = '"openai-responses"'
+check CASE9 "明文 apiKey 原样（不转存不删除）" test "$(jm_get '.providers["hand-made-ds"].apiKey')" = "\"$DS_KEY\""
 check CASE9 "未写凭据标记（auth.json 无该商）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));
 process.exit(d['hand-made-ds']?1:0)"
+check CASE9 "钥匙库无收编（无 PF_KEY_HAND_MADE 条目）" bash -c '! cmdkey /list 2>/dev/null | grep -q PF_KEY_HAND_MADE'
+mj settings.mj_speedtest
+# 偶发护栏：套件前段已多次打 DeepSeek，限流/瞬断重试一次
+if ! "$PUI" wait --path settings.mj_speed --contains "Passed" --timeout 40 >/dev/null 2>&1; then
+  sleep 5
+  mj settings.mj_speedtest
+fi
+check CASE9 "手写商测速可用（探测不写凭据）" "$PUI" wait --path settings.mj_speed --contains "Passed" --timeout 40
+check CASE9 "测速后 apiKey 仍原样明文" test "$(jm_get '.providers["hand-made-ds"].apiKey')" = "\"$DS_KEY\""
+check CASE9 "测速后显式 api 仍保留" test "$(jm_get '.providers["hand-made-ds"].api')" = '"openai-responses"'
 mj settings.mj_select --arg section="mj:p:pf-test-zg-rn"
-# 清理：PF 不删手写条目（删除也守卫），测试自己摘
+# 清理：测试自己摘手写条目
 node -e "
 const fs=require('fs');
 const d=JSON.parse(fs.readFileSync('$MODELS','utf8'));
