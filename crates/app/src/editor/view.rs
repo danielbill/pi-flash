@@ -410,7 +410,9 @@ fn file_nav_bar(
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .pl(px(12.))
+                // 左距 23：与 topbar 会话 tab icon 墨迹对齐（同 session_fn_bar，
+                // 两栏视觉同步）
+                .pl(px(23.))
                 .child(crumbs)
                 .child(div().flex_1())
                 .child(right),
