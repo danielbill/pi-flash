@@ -27,8 +27,8 @@ impl Chat {
     /// 「搜索文件」：**打开 083 项目搜索面板**（文件 + 内容同搜）。
     ///
     /// 2026-10-21 用户定案：原来的 700×500 弹窗（`Dialog::FileSearch`，只按
-    /// 文件名过滤清单）退役，入口统一到 Zed 式搜索面板（Ctrl+L / Ctrl+Shift+F
-    /// / 本按钮三条路同一个方法），面板打开即聚焦查询框。
+    /// 文件名过滤清单）退役，入口统一到 Zed 式搜索面板（Ctrl+L
+    /// / 本按钮两条路同一个方法），面板打开即聚焦查询框。
     pub(crate) fn open_file_search(&mut self, cx: &mut Context<Self>) {
         self.open_project_search(cx);
     }

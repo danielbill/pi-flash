@@ -273,7 +273,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("settings.tab.appearance", "界面", "介面", "Appearance"),
     ("settings.theme", "主题", "主題", "Themes"),
     // ---- 083 项目搜索 ----
-    ("shortcuts.project_search", "搜索文件内容（项目搜索）", "搜尋檔案內容（專案搜尋）", "Search in project files"),
     ("search.tab", "搜索", "搜尋", "Search"),
     ("search.close", "收起搜索", "收起搜尋", "Close search"),
     ("search.match_count", "{n} 处", "{n} 處", "{n} matches"),

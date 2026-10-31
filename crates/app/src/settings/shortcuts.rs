@@ -3,7 +3,7 @@
 //! （细边框 + 底部厚边，修饰键浅一档灰）。组标题与行文案的左缘都落在
 //! 原数字列起点（行内 px(2) 内边距处），去掉编号后不额外缩进。键帽来源
 //! 分两类：
-//! - 有 action 的五项：keymap 反查（`highest_precedence_binding_for_action`
+//! - 有 action 的六项：keymap 反查（`highest_precedence_binding_for_action`
 //!   首键，单一事实源，与按钮 tooltip 键位 chip 同源，改绑定自动跟随）；
 //! - Ctrl+←/→ 与 F2：走渲染根按键兜底、**故意没有 action**（None-context
 //!   绑定会把输入框词移动抢掉，见 shell/render.rs），键串静态解析。
@@ -15,7 +15,7 @@ use gpui::{Action, AsKeystroke, FontWeight, Keystroke, Window};
 const COL_W: f32 = 600.;
 
 pub(crate) fn mc_shortcuts_view(window: &Window) -> gpui::AnyElement {
-    // 全局：前五项 keymap 反查，后两键走渲染根兜底（无 action，见模块注释）；
+    // 全局：前六项 keymap 反查，后两键走渲染根兜底（无 action，见模块注释）；
     // 说明行只有文件树的「重命名」需要（其余行不写注释说明）
     let global: Vec<(&str, &str, Option<Keystroke>)> = vec![
         (
@@ -37,11 +37,6 @@ pub(crate) fn mc_shortcuts_view(window: &Window) -> gpui::AnyElement {
             tr("shortcuts.search_files"),
             "",
             action_key(&crate::OpenFileSearch, window),
-        ),
-        (
-            tr("shortcuts.project_search"),
-            "",
-            action_key(&crate::OpenProjectSearch, window),
         ),
         (
             tr("psp.maximize_session_list"),

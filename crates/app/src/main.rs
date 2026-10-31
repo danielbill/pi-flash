@@ -101,7 +101,6 @@ actions!(
         ViewLeft,
         ViewRight,
         OpenFileSearch,
-        OpenProjectSearch,
         PreviewUp,
         PreviewDown,
         PreviewPageUp,
@@ -320,9 +319,6 @@ fn main() {
                 // 方法 = 083 搜索面板（文件+内容同搜）。2026-10-21 起旧弹窗
                 // 退役，两条快捷键同一面板
                 KeyBinding::new("ctrl-l", OpenFileSearch, None),
-                // 083 项目搜索（Ctrl+Shift+F，Zed project_search::ToggleFocus
-                // 同键；None 上下文任意焦点可用，再按一次回到查询框）
-                KeyBinding::new("ctrl-shift-f", OpenProjectSearch, None),
                 // 082 子面板最大化两键（无上下文 = 任意焦点可用，与上面三键
                 // 同款；tooltip 键位 chip 反查这里）
                 KeyBinding::new("alt-1", MaximizeSessionList, None),

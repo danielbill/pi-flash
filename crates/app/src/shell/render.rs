@@ -654,11 +654,6 @@ impl Render for Chat {
             .on_action(cx.listener(|this, _: &OpenFileSearch, _window, cx| {
                 this.open_file_search(cx);
             }))
-            // 083 项目搜索（Ctrl+Shift+F）：开/聚焦搜索 tab（Zed
-            // project_search::ToggleFocus 的单例语义）
-            .on_action(cx.listener(|this, _: &OpenProjectSearch, _window, cx| {
-                this.open_project_search(cx);
-            }))
             // 082 全局最大化两键（Alt+1 / Alt+2，绑定见 main.rs bind_keys）：
             // 与 psp/文件树头部最大化钮同一语义（点谁谁填满、对面收起到控制栏）
             .on_action(cx.listener(|this, _: &MaximizeSessionList, _window, cx| {

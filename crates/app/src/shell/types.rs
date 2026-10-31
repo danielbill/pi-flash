@@ -279,7 +279,7 @@ pub(crate) enum PanelTab {
     PiNativeMarket,
     /// 090-4 PF 插件市场（内置索引 + 台账；菜单-三横按钮打开）
     PfMarket,
-    /// 083 项目搜索（单例 tab；Ctrl+Shift+F 打开，Zed ProjectSearchView 同位）
+    /// 083 项目搜索（单例 tab；Ctrl+L / 文件树「搜索文件」打开，Zed ProjectSearchView 同位）
     Search,
     /// 会话查询（单例 tab；Ctrl+K 打开，与 083 同版式但**只查询**）
     SessionSearch,
