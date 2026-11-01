@@ -41,6 +41,10 @@ pub struct Entry {
     /// （"… Flash Latest"），回填时名称不落账本（保留用户/测速落的具体名）。
     #[serde(default)]
     pub alias: bool,
+    /// 别名指向的具体型号 id（"deepseek/deepseek-v4.1-flash-1017"）。命中
+    /// 别名后顺着它落到具体条目——名称与参数都以具体型号为准。
+    #[serde(default)]
+    pub alias_target: Option<String>,
 }
 
 /// 每百万价格（缺项 = None）。
@@ -138,6 +142,13 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         cache_write: price_per_mtok(p.as_ref().and_then(|x| x.get("internal_cache_write"))),
     };
     let alias = is_alias(&id);
+    let alias_target = v
+        .get("alias_target")
+        .and_then(|t| t.get("slug"))
+        .and_then(|s| s.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase);
     Some(Entry {
         id,
         name,
@@ -147,6 +158,7 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         max_tokens,
         cost,
         alias,
+        alias_target,
     })
 }
 
@@ -413,9 +425,17 @@ fn load_full() -> Result<Vec<Entry>, FillError> {
     }
 }
 
+/// 别名命中 → 顺着 alias_target 取**具体型号**条目（名称/参数都以具体为
+/// 准，泛化的「…Latest」标签不进账本）；目标取不到再回别名本身。
+fn concrete_of_alias(e: &Entry) -> Option<Entry> {
+    let target = e.alias_target.as_deref()?;
+    let (a, s) = target.split_once('/')?;
+    fetch_model(a, s).ok()
+}
+
 /// 解析一个模型（阻塞，供后台线程）：query 自带 author → 单模型直查；
 /// author 可从 provider 名/baseUrl 推断 → 仍单模型直查；否则全量列表反查
-/// （783KB，走缓存）。
+/// （783KB，走缓存）。命中别名通配条目时一律顺着 alias_target 落到具体型号。
 pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, FillError> {
     let q = normalize_query(query);
     if q.is_empty() {
@@ -426,7 +446,7 @@ pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, Fil
     if let Some((a, s)) = q.split_once('/') {
         if !a.is_empty() && !s.is_empty() {
             if let Ok(e) = fetch_model(a, s) {
-                return Ok(e);
+                return Ok(concrete_of_alias(&e).unwrap_or(e));
             }
         }
     }
@@ -435,17 +455,27 @@ pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, Fil
     //    404 不算错，落全量反查兜底
     for a in &hints {
         if let Ok(e) = fetch_model(a, &q) {
-            return Ok(e);
+            return Ok(concrete_of_alias(&e).unwrap_or(e));
         }
         if let Ok(e) = fetch_model(&format!("~{a}"), &format!("{q}-latest")) {
-            return Ok(e);
+            return Ok(concrete_of_alias(&e).unwrap_or(e));
         }
     }
-    // 3) 全量反查
+    // 3) 全量反查：别名命中 → 目录内直接找 alias_target 指向的具体条目
+    //    （零额外请求），找不到再单查，最后回别名本身
     let entries = load_full()?;
-    pick(&entries, &q, &hints)
+    let e = pick(&entries, &q, &hints)
         .cloned()
-        .ok_or(FillError::NoMatch)
+        .ok_or(FillError::NoMatch)?;
+    if is_alias(&e.id) {
+        if let Some(target) = e.alias_target.as_deref() {
+            if let Some(concrete) = entries.iter().find(|x| x.id == target) {
+                return Ok(concrete.clone());
+            }
+        }
+        return Ok(concrete_of_alias(&e).unwrap_or(e));
+    }
+    Ok(e)
 }
 
 // ---- 回填 --------------------------------------------------------------------
@@ -481,15 +511,16 @@ pub fn fill_from_entry(model: &mut Value, e: &Entry) -> usize {
         );
     }
     put("reasoning", Value::Bool(e.reasoning), map);
-    // 以下页面不可见：只填空。别名通配条目名称泛化（"… Flash Latest"），
-    // 不落账本——保留用户手起名 / 测速目录落的具体型号名
-    let name_empty = map
+    // 名称：只认**具体型号**条目（e 为别名时不写，泛化标签不进账本）。
+    // 现名若为旧版本写坏的「…Latest」泛化标签，换成具体型号名（自愈）
+    let name_now = map
         .get("name")
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .trim()
-        .is_empty();
-    if name_empty && !e.name.is_empty() && !e.alias {
+        .to_string();
+    let name_generic = name_now.to_lowercase().ends_with("latest");
+    if !e.name.is_empty() && !e.alias && (name_now.is_empty() || name_generic) {
         put("name", Value::String(e.name.clone()), map);
     }
     if let Some(cost) = map
@@ -677,5 +708,51 @@ mod tests {
         assert!(model.get("name").is_none());
         assert_eq!(model["contextWindow"], 1048576);
         assert_eq!(model["maxTokens"], 943718);
+    }
+
+    #[test]
+    fn fill_heals_generic_name_with_concrete() {
+        // 旧版本守卫缺失期把泛化标签写进了账本：具体型号条目回填时换回来
+        let e = Entry {
+            id: "deepseek/deepseek-v4.1-flash-1017".into(),
+            name: "DeepSeek V4.1 Flash 1017".into(),
+            reasoning: true,
+            input: vec!["text".into()],
+            context_window: Some(1048576),
+            max_tokens: Some(393216),
+            cost: Cost::default(),
+            alias: false,
+            alias_target: None,
+        };
+        let mut model = json!({ "id": "deepseek-flash", "name": "DeepSeek Flash Latest" });
+        fill_from_entry(&mut model, &e);
+        assert_eq!(model["name"], "DeepSeek V4.1 Flash 1017");
+        // 具体名不被冲掉
+        let mut model2 = json!({ "id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash" });
+        fill_from_entry(&mut model2, &e);
+        assert_eq!(model2["name"], "DeepSeek-V4.1-Flash");
+    }
+
+    #[test]
+    fn parse_captures_alias_target() {
+        let v = json!({
+            "id": "~deepseek/deepseek-flash-latest",
+            "name": "DeepSeek: DeepSeek Flash Latest",
+            "context_length": 1048576,
+            "architecture": {"input_modalities": ["text", "image"]},
+            "supported_parameters": ["reasoning"],
+            "alias_target": {"name": "DeepSeek: DeepSeek V4.1 Flash 1017",
+                             "slug": "deepseek/deepseek-v4.1-flash-1017"}
+        });
+        let e = parse_entry(&v).unwrap();
+        assert!(e.alias);
+        assert_eq!(
+            e.alias_target.as_deref(),
+            Some("deepseek/deepseek-v4.1-flash-1017")
+        );
+        // 具体型号无 alias_target
+        let c = parse_entry(&glm_entry()).unwrap();
+        assert!(!c.alias);
+        assert_eq!(c.alias_target, None);
     }
 }
