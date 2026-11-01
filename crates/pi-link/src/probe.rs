@@ -8,8 +8,9 @@
 //! - 模块② [`probe_connect`]：连通性测试，输入只有 baseUrl + key，与 api
 //!   type 解耦。
 //! - 模块③ [`probe`]：拉取 Model List（GET /models + best-effort 解析），
-//!   供模块②快路径与内置商端点表（[`catalog_target`]，vendor pin 的已知
-//!   端点表，非模型名硬编码）使用。
+//!   供模块②快路径与内置商「获取模型」使用——端点由 [`crate::registry`]
+//!   dump 携带的 SDK baseUrl/api 经 [`models_list_url`] 机械派生（2026-11-01
+//!   起单一来源；13 条手写白名单表已废）。
 //!
 //! 结果只驱动 UI 状态点，不回滚保存——可能是网络问题，key 留着。
 
@@ -68,71 +69,6 @@ pub fn infer_api(base_url: &str) -> &'static str {
 // ---------------------------------------------------------------------------
 // 模块③：拉取 Model List（GET /models + best-effort 解析）
 // ---------------------------------------------------------------------------
-
-/// 内置商探查端点表（vendor pin 1.1.0）。只收高置信条目——表外商跳过
-/// 探查（UI 直接呈现已配置态），宁缺勿错报。**这是已知端点表，不是模型名
-/// 硬编码**——模型名只该出现在真实业务请求（`model_test`，调用方提供）。
-pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
-    const TABLE: &[(&str, &str, Auth)] = &[
-        ("openai", "https://api.openai.com/v1/models", Auth::Bearer),
-        (
-            "deepseek",
-            "https://api.deepseek.com/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "anthropic",
-            "https://api.anthropic.com/v1/models",
-            Auth::Anthropic,
-        ),
-        (
-            "google",
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            Auth::Google,
-        ),
-        (
-            "openrouter",
-            "https://openrouter.ai/api/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "groq",
-            "https://api.groq.com/openai/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "cerebras",
-            "https://api.cerebras.ai/v1/models",
-            Auth::Bearer,
-        ),
-        ("mistral", "https://api.mistral.ai/v1/models", Auth::Bearer),
-        ("xai", "https://api.x.ai/v1/models", Auth::Bearer),
-        (
-            "moonshotai",
-            "https://api.moonshot.ai/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "moonshotai-cn",
-            "https://api.moonshot.cn/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "together",
-            "https://api.together.xyz/v1/models",
-            Auth::Bearer,
-        ),
-        (
-            "fireworks",
-            "https://api.fireworks.ai/inference/v1/models",
-            Auth::Bearer,
-        ),
-    ];
-    TABLE
-        .iter()
-        .find(|(p, _, _)| *p == provider)
-        .map(|(_, url, auth)| (*url, *auth))
-}
 
 /// 列模型 URL 机械拼装（模块③入口，对齐 pi-web `buildModelsListUrl`，
 /// **零厂商/模型名硬编码**）：输入 baseUrl + api 形状 → (url, auth)。
@@ -443,38 +379,6 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn catalog_table_covers_the_common_api_key_providers() {
-        assert_eq!(
-            catalog_target("openai"),
-            Some(("https://api.openai.com/v1/models", Auth::Bearer))
-        );
-        assert_eq!(
-            catalog_target("anthropic"),
-            Some(("https://api.anthropic.com/v1/models", Auth::Anthropic))
-        );
-        assert!(catalog_target("zai-coding-cn").is_none(), "表外商跳过探查");
-    }
-
-    #[test]
-    fn infer_api_routes_by_base_shape() {
-        assert_eq!(
-            infer_api("https://api.deepseek.com/anthropic"),
-            "anthropic-messages"
-        );
-        assert_eq!(
-            infer_api("https://gw.example.com/api/anthropic/"),
-            "anthropic-messages"
-        );
-        assert_eq!(
-            infer_api("https://generativelanguage.googleapis.com/v1beta"),
-            "google-generative-ai"
-        );
-        assert_eq!(infer_api("https://api.openai.com/v1"), "openai-completions");
-        assert_eq!(infer_api("https://api.deepseek.com"), "openai-completions");
-        assert_eq!(infer_api(""), "openai-completions");
-    }
-
-    #[test]
     fn models_list_url_mechanical_shapes() {
         // openai 系带版本段（zai-coding-cn 实测：open.bigmodel.cn /v4）直接接 /models
         assert_eq!(
@@ -652,7 +556,7 @@ mod tests {
     #[test]
     fn probe_module3_get_catalog_stands_alone() {
         // 模块③（probe()）独立可用：内置商路径（mc_probe_start +
-        // catalog_target 表项）就是这一个函数，重构后行为不变
+        // 的已知端点表）就是这一个函数；端点现由 registry dump 派生
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let base = spawn_mock(
             Arc::new(|path, kind, _body| {

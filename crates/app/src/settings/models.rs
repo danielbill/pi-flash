@@ -387,17 +387,14 @@ impl Chat {
         }
     }
 
-    /// 内置商「获取模型」端点（2026-11-01 双源）：注册表 SDK 派生优先
-    /// （40 家全覆盖，registry::models_list_target），回落 vendor pin 静态表
-    /// （注册表缓存未就绪时兜底）。两者都拿不到 = SDK 没给 baseUrl
-    /// （bedrock/vertex/copilot 类云专属鉴权），详情页才显示「暂不支持」。
+    /// 内置商「获取模型」端点（2026-11-01 单源）：注册表 SDK 派生
+    /// （[`pi_link::registry::models_list_target`]，42 家全覆盖）。拿不到 =
+    /// SDK 没给 baseUrl（bedrock/vertex/copilot 类云专属鉴权）或注册表
+    /// 未装载（启动 sweep 会把它装进来，见 spawn_builtin_catalog_sweep），
+    /// 详情页才显示「暂不支持」。13 条手写白名单表已废——单一真相，不回退。
     fn builtin_catalog_target(&self, provider: &str) -> Option<(String, pi_link::probe::Auth)> {
-        if let Some(dump) = self.cfg.provider_registry.as_ref() {
-            if let Some(t) = pi_link::registry::models_list_target(dump, provider) {
-                return Some(t);
-            }
-        }
-        pi_link::probe::catalog_target(provider).map(|(u, a)| (u.to_string(), a))
+        let dump = self.cfg.provider_registry.as_ref()?;
+        pi_link::registry::models_list_target(dump, provider)
     }
 
     /// 启动后台 sweep（2026-11-01 恢复 010-启动.md §4.1 定稿「启动把所有
@@ -442,6 +439,10 @@ impl Chat {
             return;
         }
         let sweep_dump = dump.clone();
+        // 注册表装进 Chat（「获取模型」端点单源就绪点；此前只有 model_picker
+        // 被动装载——首启到首次开 picker 之间设置页门禁会误显「暂不支持」）
+        let arc = std::sync::Arc::new(dump.clone());
+        self.cfg.provider_registry = Some(arc);
         cx.spawn(async move |this, cx| {
             let outcome = cx
                 .background_executor()

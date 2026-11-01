@@ -439,6 +439,9 @@ mod tests {
                 name: "Model One".into(),
                 provider: "p".into(),
                 context_window: Some(1234),
+                max_tokens: None,
+                reasoning: None,
+                input: None,
             }],
             commands: vec![SlashCommand {
                 name: "notify".into(),
