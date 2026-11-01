@@ -545,6 +545,41 @@ mod tests {
     }
 
     #[test]
+    fn probe_module3_get_catalog_stands_alone() {
+        // 模块③（probe()）独立可用：内置商路径（mc_probe_start +
+        // catalog_target 表项）就是这一个函数，重构后行为不变
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let base = spawn_mock(
+            Arc::new(|path, kind, _body| {
+                if path == "/v1/models" && kind == "bearer" {
+                    200
+                } else {
+                    404
+                }
+            }),
+            seen.clone(),
+        );
+        match probe(&format!("{base}/v1/models"), Auth::Bearer, "k") {
+            ProbeOutcome::Ok {
+                models, catalog, ..
+            } => {
+                assert_eq!(models, 1);
+                assert_eq!(catalog[0].id, "m-1");
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+        // 401 → AuthRejected（内置商 key 错误的可见路径）
+        let base401 = spawn_mock(
+            Arc::new(|_path, _kind, _body| 401),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        assert_eq!(
+            probe(&format!("{base401}/v1/models"), Auth::Bearer, "bad"),
+            ProbeOutcome::AuthRejected { status: 401 }
+        );
+    }
+
+    #[test]
     fn connect_direct_catalog_hit() {
         // 候选 1（GET {base}/models Bearer）直接 200：连通 + 有目录
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
