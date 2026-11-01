@@ -130,17 +130,15 @@ const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit(((((d.providers||{})['pf-test-ds']||{}).models)||[]).some(x=>x.id==='deepseek-chat')?0:1)" 2>/dev/null; then
   mj settings.mj_select --arg section="mj:m:pf-test-ds:$TARGET_IX"
   mj settings.mj_autofill
-  # 断言落盘而非 mj_fill==Done：回填成功设 Done 后立即 mj_select 重选回显，
-  # 状态被「换选中项即清」的设计瞬时清回 Idle，Done 不可观测
-  FILL_OK=0
-  for i in $(seq 1 30); do
-    if node -e "
+  # 当前实现：自动填参只填**表单**（mj_fill=Done 可观测），名称/价格在
+  # 【保存】时补进模型落盘——先等 Done，再保存，再断言磁盘
+  check CASE4 "填参完成（mj_fill=Done，表单已回填）" "$PUI" wait --path settings.mj_fill --eq Done --timeout 60
+  mj settings.mj_model_save
+  sleep 1
+  check CASE4 "保存后目录参数落盘（deepseek-chat 行有 name/cost）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 const m=((((d.providers||{})['pf-test-ds']||{}).models)||[]).find(x=>x.id==='deepseek-chat')||{};
-process.exit(m.name&&m.cost?0:1)" 2>/dev/null; then FILL_OK=1; break; fi
-    sleep 2
-  done
-  check CASE4 "目录参数落盘（deepseek-chat 行有 name/cost）" test "$FILL_OK" = 1
+process.exit(m.name&&m.cost?0:1)"
   mj settings.mj_model_close
 else
   skip CASE4 "自动填参（deepseek-chat 行未落盘：CASE3 追加分支失效）"
@@ -165,15 +163,13 @@ mj settings.mj_select --arg section="mj:p:pf-test-ds"
 mj settings.mj_select --arg section="mj:m:pf-test-ds:$FAMILY_IX"
 if "$PUI" wait --path settings.mj_id_value --eq deepseek-flash --timeout 10 >/dev/null 2>&1; then
   mj settings.mj_autofill
-  FILL_IX=0
-  for i in $(seq 1 30); do
-    if node -e "
-const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
-const m=(((d.providers||{})['pf-test-ds']||{}).models||[]).find(x=>x.id==='deepseek-flash')||{};
-process.exit(m.maxTokens===393216?0:1)" 2>/dev/null; then FILL_IX=1; break; fi
-    sleep 2
-  done
-  check CASE4B "填参取具体型号参数（maxTokens=393216 非别名 943718）" test "$FILL_IX" = 1
+  # 当前实现：填参只进表单，保存才落盘
+  "$PUI" wait --path settings.mj_fill --eq Done --timeout 60 >/dev/null 2>&1
+  echo "DIAG CASE4B: $(snap | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const s=JSON.parse(d);console.log('fill='+s.mj_fill+' id='+s.mj_id_value+' ctx='+s.mj_ctx_value+' max='+s.mj_max_tokens_value+' err='+s.error)})")" >&2
+  check CASE4B "填参取具体型号参数进表单（maxTokens=393216 非别名 943718）" "$PUI" wait --path settings.mj_max_tokens_value --eq 393216 --timeout 10
+  mj settings.mj_model_save
+  sleep 1
+  check CASE4B "保存后 maxTokens=393216 落盘" test "$(jm_get '.providers["pf-test-ds"].models.find(m=>m.id==="deepseek-flash").maxTokens')" = 393216
   check CASE4B "保存的 id 仍是官方家族名（不被查询键替换）" test "$(jm_get '.providers["pf-test-ds"].models.find(m=>m.id==="deepseek-flash").id')" = '"deepseek-flash"'
   check CASE4B "官方 name 不被泛化标签冲掉" test "$(jm_get '.providers["pf-test-ds"].models.find(m=>m.id==="deepseek-flash").name')" = '"DeepSeek-V4.1-Flash"'
   mj settings.mj_model_close

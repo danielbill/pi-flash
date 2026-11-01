@@ -634,7 +634,15 @@ fn mc_models_sidebar(
         .into_iter()
         .filter(|p| chat.mc_configured(p) || is_custom(p) || is_extension(p))
         .collect();
-    provs.extend(custom_entries.iter().map(|(n, _)| n.clone()));
+    // models.json 条目只追加**自定义商**：内置商在 models.json 有条目（模型
+    // 级覆盖 / 代理 baseUrl / 历史物化）不构成成员资格——它按「有凭据」入列，
+    // 移除凭据即出列（否则移除后仍被这一步挂回来）
+    provs.extend(
+        custom_entries
+            .iter()
+            .filter(|(n, _)| is_custom(n))
+            .map(|(n, _)| n.clone()),
+    );
     // 去重保序（models.json 的商可能已从目录进过一次）
     let mut seen = std::collections::HashSet::new();
     provs.retain(|p| seen.insert(p.clone()));
