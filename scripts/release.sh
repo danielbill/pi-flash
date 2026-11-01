@@ -67,6 +67,9 @@ eval "$(PF_BUILD_KEY="$PROOF_KEY" node "$PROOF_SCRIPT" sign --kid "$PROOF_KID" -
 export PF_BUILD_PROOF PF_BUILD_KID
 echo "    宿主证明已签：kid=$PF_BUILD_KID build-id=v$VERSION"
 cargo build --release -p app
+# pif-secret 是 pi-link 的独立 bin，不在 app 依赖图里——必须显式构建
+# （实测 cargo build -p app 不产出它，2026-11-02）
+cargo build --release -p pi-link --bin pif-secret
 # 产物自检：b64("pf-official|") = cGYtb2ZmaWNpYWx8，注入成功则 proof 常量必在
 # exe 字符串段（占位符字面量散布多处回退路径，不能作阴性信号，只验阳性）。
 grep -aq "cGYtb2ZmaWNpYWx8" target/release/pi-flash.exe \
@@ -81,7 +84,7 @@ cp target/release/pi-flash.exe dist/pi-flash/
 # 目是 pi 从系统凭据库取回 key 的唯一桥（pi 无 keyring 能力，靠 `!cmd` 执行它），
 # helper_exe() 按 current_exe 同目录写绝对路径，包里缺它 = 用户侧全断。
 [[ -f target/release/pif-secret.exe ]] || {
-  echo "✗ target/release/pif-secret.exe 缺失（cargo build 应连带产出 pi-link bin）"; exit 1;
+  echo "✗ target/release/pif-secret.exe 缺失（第 2 步构建应已产出）"; exit 1;
 }
 cp target/release/pif-secret.exe dist/pi-flash/
 NODE_BIN=$(command -v node || true)
