@@ -70,6 +70,10 @@ pub(crate) struct CfgUi {
     pub(crate) mc_patterns: Option<Vec<String>>,
     pub(crate) mc_state: EnabledState,
     pub(crate) mc_creds: Vec<(String, pi_link::config::CredentialKind)>,
+    /// 自定义商探测结果展示缓存（probe-cache.json 的内存镜像；2026-11-01
+    /// 定稿：探测清单只展示，勾选才物化进 models.json）。reload_settings_panel
+    /// 装载、探测 Ok 时更新——渲染路径只读内存不扫盘
+    pub(crate) mj_probe_cache: crate::services::probe_cache::Cache,
     pub(crate) mc_project_scope: bool,
     /// settings.json defaults a new session starts with (pi-web /api/models
     /// `defaultModel` + `defaultThinkingLevel`; selectInitialModelScope inputs)
@@ -100,6 +104,10 @@ pub(crate) struct CfgUi {
     pub(crate) mj_test: Option<MjTestState>,
     /// 042 M2 models.dev 拉取状态（按钮文案与结果行）
     pub(crate) mj_models_dev_state: MjCatalogState,
+    /// 【自动填参】的结果暂存（queried_id, 目录条目）：填参不再落盘，名称/价格
+    /// 等字段等【保存】时按它补进模型；`queried_id` 与保存时的模型ID 不一致就
+    /// 丢弃（防止把上一个模型的名称/价格串过去）。
+    pub(crate) mj_fill_entry: Option<(String, pi_link::openrouter::Entry)>,
     /// 模型详情那几个表单变量（mj_id / ctx / max / 能力勾选）当前对应的
     /// section。**唯一用途**：渲染前校验「表单内容 ↔ 当前 section」是否一致，
     /// 不一致就重填一遍——详情页关闭/切换时若有任何一个变量没清干净（值污染），
@@ -719,6 +727,7 @@ impl Chat {
                 mc_patterns: None,
                 mc_state: EnabledState::default(),
                 mc_creds: Vec::new(),
+                mj_probe_cache: Default::default(),
                 mc_project_scope: false,
                 mc_default_model: None,
                 mc_default_thinking: None,
@@ -737,6 +746,7 @@ impl Chat {
                 mj_test: None,
                 mj_models_dev_state: MjCatalogState::Idle,
                 mj_return: None,
+                mj_fill_entry: None,
                 mj_form_for: None,
                 provider_registry: None,
                 registry_state: crate::session::model_picker::RegistryState::Idle,

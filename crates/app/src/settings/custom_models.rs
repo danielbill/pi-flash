@@ -14,7 +14,7 @@ impl Chat {
     /// `mc_mj_error` 承担）。**不做内存副本**：读处读盘、写处
     /// read→mutate→write，不存在“打开面板时那份旧快照”把磁盘上别人的
     /// 改动覆盖掉的情形。
-    fn mj_doc() -> serde_json::Value {
+    pub(crate) fn mj_doc() -> serde_json::Value {
         pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({ "providers": {} }))
     }
 
@@ -163,6 +163,7 @@ impl Chat {
     /// 继承上一个模型的任何值（此前正是这里没清，出现「点别的行还是旧值」）。
     pub(crate) fn mj_clear_model_form(&mut self, cx: &mut Context<Self>) {
         self.cfg.mj_form_for = None;
+        self.cfg.mj_fill_entry = None;
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
@@ -250,51 +251,97 @@ impl Chat {
         cx.notify();
     }
 
-    /// 测速/刷新落目录后，把目录模型合并进账本 provider.models[]（042-1
-    /// 改版：Provider = baseUrl + apiKey 即含模型）。pi 注册的 provider
-    /// 若零模型，会话无模型可选——展示缓存（provider-catalog）不进账本
-    /// 正是「测速拿到模型但聊天没反应」的根因。按 id 去重：已有条目
-    /// （手调过参数的）原样保留，缺的目录 id 追加 {id, name?, contextWindow?}。
-    fn mj_merge_catalog_into_ledger(
-        doc: &mut serde_json::Value,
+    /// 测速/刷新探测到的官方清单 → **展示缓存**（probe-cache.json + 内存镜像）。
+    /// 2026-11-01 定稿：探测清单只做展示、不整批入账本；��户勾选哪个才把
+    /// 哪个物化进 models.json（[`Self::mj_materialize_selection`]）。整商替换。
+    fn mj_store_probe_catalog(&mut self, provider: &str, catalog: &[pi_link::protocol::ModelInfo]) {
+        let mut models = catalog.to_vec();
+        for m in models.iter_mut() {
+            m.provider = provider.to_string();
+        }
+        crate::services::probe_cache::replace_provider(
+            &mut self.cfg.mj_probe_cache,
+            provider,
+            models,
+        );
+        let _ = crate::services::probe_cache::write(&self.cfg.mj_probe_cache);
+    }
+
+    /// 勾选物化（2026-11-01 定稿，自定义商专用）：enable → 把该模型以完整
+    /// definition 追加进 models.json `providers.<p>.models[]`（id/api/baseUrl
+    /// 取骨架 + name/contextWindow 取展示条目 + ensure_model_defaults）；
+    /// disable → 从 models[] 移除；models[] 空时**骨架保留**（baseUrl 在，
+    /// pi applyModelsJson 不 throw）。内置商不走这里（pi 静态注册表即持久）。
+    /// 返回 Err 文案供调用方挂错误条。
+    pub(crate) fn mj_materialize_selection(
+        &mut self,
         provider: &str,
-        catalog: &[pi_link::protocol::ModelInfo],
-    ) {
-        let Some(mut entry) = pi_link::models_json::provider_entry(doc, provider).cloned() else {
-            return;
+        id: &str,
+        enable: bool,
+    ) -> Result<(), String> {
+        let mut doc = Self::mj_doc();
+        let Some(mut entry) = pi_link::models_json::provider_entry(&doc, provider).cloned() else {
+            return Ok(()); // 不是账本里的商（内置/扩展）：不物化
         };
-        let existing: Vec<String> = pi_link::models_json::provider_models(&entry)
-            .into_iter()
-            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
-            .collect();
-        let mut fresh: Vec<serde_json::Value> = Vec::new();
-        for m in catalog {
-            if existing.contains(&m.id) || fresh.iter().any(|e| e["id"] == m.id) {
-                continue;
+        let existing_ix = pi_link::models_json::provider_models(&entry)
+            .iter()
+            .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(id));
+        if enable {
+            if existing_ix.is_some() {
+                return Ok(());
             }
+            // 展示条目（探测缓存 / 目录）补 name/contextWindow
+            let shown = self
+                .provider_models_for_list(provider)
+                .into_iter()
+                .find(|m| m.id == id);
             let mut obj = serde_json::Map::new();
-            obj.insert("id".into(), serde_json::Value::String(m.id.clone()));
-            if !m.name.is_empty() {
-                obj.insert("name".into(), serde_json::Value::String(m.name.clone()));
+            obj.insert("id".into(), serde_json::Value::String(id.to_string()));
+            if let Some(api) = entry.get("api").and_then(|v| v.as_str()) {
+                obj.insert("api".into(), serde_json::Value::String(api.to_string()));
             }
-            if let Some(cw) = m.context_window {
-                obj.insert("contextWindow".into(), serde_json::json!(cw));
+            if let Some(base) = entry.get("baseUrl").and_then(|v| v.as_str()) {
+                obj.insert(
+                    "baseUrl".into(),
+                    serde_json::Value::String(base.to_string()),
+                );
             }
-            // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）
+            if let Some(m) = &shown {
+                if !m.name.is_empty() {
+                    obj.insert("name".into(), serde_json::Value::String(m.name.clone()));
+                }
+                if let Some(cw) = m.context_window {
+                    obj.insert("contextWindow".into(), serde_json::json!(cw));
+                }
+            }
             let mut model = serde_json::Value::Object(obj);
             pi_link::models_json::ensure_model_defaults(&mut model);
-            fresh.push(model);
+            if !entry.get("models").is_some_and(|m| m.is_array()) {
+                entry["models"] = serde_json::json!([]);
+            }
+            if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
+                arr.push(model);
+            }
+        } else {
+            let Some(ix) = existing_ix else {
+                return Ok(());
+            };
+            if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
+                arr.remove(ix);
+            }
+            // 空 models[] 删键（骨架 baseUrl/api/name 保留，pi 不 throw）
+            if entry
+                .get("models")
+                .and_then(|m| m.as_array())
+                .is_some_and(|a| a.is_empty())
+            {
+                if let Some(o) = entry.as_object_mut() {
+                    o.remove("models");
+                }
+            }
         }
-        if fresh.is_empty() {
-            return;
-        }
-        if !entry.get("models").is_some_and(|m| m.is_array()) {
-            entry["models"] = serde_json::json!([]);
-        }
-        if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
-            arr.extend(fresh);
-        }
-        pi_link::models_json::upsert_provider(doc, provider, entry);
+        pi_link::models_json::upsert_provider(&mut doc, provider, entry);
+        pi_link::models_json::save(&doc)
     }
 
     /// 把编辑器字段应用进缓冲并落盘（provider 名称改动走重命名）。
@@ -390,6 +437,11 @@ impl Chat {
         if renamed {
             self.refresh_provider_catalog(&target);
             self.drop_provider_from_catalog(&old_name);
+            // 探测展示缓存键跟名搬家（先写盘再 reload——reload 会从盘重读镜像）
+            if let Some(probe) = self.cfg.mj_probe_cache.remove(&old_name) {
+                self.cfg.mj_probe_cache.insert(target.clone(), probe);
+                let _ = crate::services::probe_cache::write(&self.cfg.mj_probe_cache);
+            }
             self.reload_settings_panel();
         }
         if let Some(st) = self.dlg.settings.clone() {
@@ -428,6 +480,10 @@ impl Chat {
         let _ = pi_link::auth_json::delete_api_key(&name);
         self.cfg.mj_speed = None;
         self.mj_write(&doc, cx);
+        // 探测展示缓存一并清（商没了，缓存条目无意义）
+        if self.cfg.mj_probe_cache.remove(&name).is_some() {
+            let _ = crate::services::probe_cache::write(&self.cfg.mj_probe_cache);
+        }
         // 内存目录同步摘掉（否则进程答案 / 启动 globals 里的模型会让列表项
         // 继续挂着）。列表成员资格 = models.json 里有没有条目，无隐藏清单。
         self.drop_provider_from_catalog(&name);
@@ -543,8 +599,23 @@ impl Chat {
     /// 等交【自动填参】从 models.dev 落——既有值原样保留不碰）。
     pub(crate) fn mj_apply_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         // mj_commit_model_form 自己就落盘，这里不必再 flush
-        let _ = self.mj_commit_model_form(&provider, ix, cx);
-        cx.notify();
+        if !self.mj_commit_model_form(&provider, ix, cx) {
+            cx.notify();
+            return;
+        }
+        // 内存目录同步：手动新建的商（自动测速拉不到目录，初始 0 条）保存模型后
+        // 列表必须立刻出现这一条——以前只写盘不刷新，「可用模型」恒 0 条
+        self.refresh_provider_catalog(&provider);
+        // 保存成功 → 自动关闭详情页（用户定稿）：走与 ✕ 同一条退路（退回来源
+        // section，并清空模型表单变量）
+        let target = self
+            .cfg
+            .mj_return
+            .clone()
+            .unwrap_or_else(|| format!("mj:p:{provider}"));
+        self.cfg.mj_return = None;
+        self.mj_clear_model_form(cx);
+        self.mj_select(target, cx);
     }
 
     /// 表单四键写进账本（保存与【自动填参】共用）：现读 → 改本条 → 立刻写盘。
@@ -605,6 +676,13 @@ impl Chat {
             obj.remove("input");
         }
         let mut model = serde_json::Value::Object(obj);
+        // 填参结果里的名称/价格在这里补（页面没有这两项，只填空不覆盖）；
+        // 仅当「填参时查的 id」与本次保存的 id 一致才用，避免串到别的模型
+        if let Some((queried, e)) = self.cfg.mj_fill_entry.clone() {
+            if model.get("id").and_then(|v| v.as_str()) == Some(queried.as_str()) {
+                pi_link::openrouter::fill_name_cost(&mut model, &e);
+            }
+        }
         // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
         // 编辑器删键后的缺省在此统一补齐
         pi_link::models_json::ensure_model_defaults(&mut model);
@@ -747,16 +825,13 @@ impl Chat {
                             c.mc_set_error(tr("custom_models.name_required"), cx);
                             return;
                         }
-                        // 2、自动拉取：目录直接合并进账本 models[]（自定义商
-                        // 唯一真相源；provider-catalog 缓存只服务内置商，
-                        // 这里顺带清键防旧 id 复显）+ 刷新内存（可用模型区即满）
+                        // 2、自动拉取：目录进**展示缓存**（2026-11-01 定稿：不整批
+                        // 入账本，勾选哪个才物化哪个）；可用模型区经
+                        // provider_models_for_list 即时列出
                         if catalog.is_empty() {
                             c.cfg.mj_speed = Some(MjSpeedState::PassedEmpty);
                         } else {
-                            let mut doc = Self::mj_doc();
-                            Self::mj_merge_catalog_into_ledger(&mut doc, &target, &catalog);
-                            c.mj_write(&doc, cx);
-                            c.refresh_provider_catalog(&target);
+                            c.mj_store_probe_catalog(&target, &catalog);
                             c.cfg.mj_speed = Some(MjSpeedState::Passed {
                                 latency_ms,
                                 models: catalog.len(),
@@ -825,11 +900,8 @@ impl Chat {
                 .await;
             let _ = this.update(cx, |c, cx| match outcome {
                 pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
-                    // 目录直接合并进账本（自定义商唯一真相源）
-                    let mut doc = Self::mj_doc();
-                    Self::mj_merge_catalog_into_ledger(&mut doc, &provider, &catalog);
-                    c.mj_write(&doc, cx);
-                    c.refresh_provider_catalog(&provider);
+                    // 目录进展示缓存（2026-11-01 定稿：勾选才物化进账本）
+                    c.mj_store_probe_catalog(&provider, &catalog);
                     cx.notify();
                 }
                 pi_link::probe::ProbeOutcome::Ok { .. } => {
@@ -930,36 +1002,32 @@ impl Chat {
     ///（上下文/最大输出/能力/名称/价格都跟当前 ID 走）并重选回显。
     pub(crate) fn mj_catalog_fill(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
-        // 先落表单值：回填以它为查询键，且回填末尾按缓冲重播表单——
-        // 不先落就会拿旧 ID 查、还把输入框改回旧值。
-        if !self.mj_commit_model_form(&provider, ix, cx) {
+        // 查询键 = **表单里的模型ID**（不落盘）。填参只是「把这个 ID 的参数
+        // 拉下来填到表单里」，落盘只在【保存】时发生——以前这里先调
+        // mj_commit_model_form 落了一次盘，等于点填参就偷偷保存。
+        let Some(st) = self.dlg.settings.clone() else {
+            return;
+        };
+        let id = st.read(cx).mj_id.read(cx).value().trim().to_string();
+        if id.is_empty() {
+            self.mc_set_error(tr("custom_models.model_id_required"), cx);
             return;
         }
-        // 查询键与 baseUrl 取自**已保存**条目（provider 名/baseUrl 参与 author 推断）
+        // 版本名：账本条目（若有）优先，缺则回落内存目录里同商的官方 name。
+        // 官方 id 常常只是家族名（DeepSeek 的 deepseek-flash），版本名才落到
+        // 具体型号；两个检索键并列交给 openrouter 裁决（见 query_candidates）。
         let doc = Self::mj_doc();
-        let Some(entry) = pi_link::models_json::provider_entry(&doc, &provider).cloned() else {
-            return;
-        };
-        let Some(model) = entry.get("models").and_then(|m| m.get(ix)).cloned() else {
-            return;
-        };
-        let id = model
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        // 版本名：账本条目优先，缺则回落内存目录里同商的官方 name。官方 id
-        // 常常只是**家族名**（DeepSeek 的 deepseek-flash，以后每个 flash 版本
-        // 都叫它），目录里只有别名聚合参数；版本名才落到具体型号的真值。
-        // 两个检索键并列交给 openrouter 裁决（具体型号 > 别名），id 本身命中
-        // 具体型号时行为与旧版完全一致（见 `model_ref::query_candidates`）。
-        let mut name = model
-            .get("name")
+        let entry = pi_link::models_json::provider_entry(&doc, &provider).cloned();
+        let mut name = entry
+            .as_ref()
+            .and_then(|e| e.get("models"))
+            .and_then(|m| m.get(ix))
+            .and_then(|m| m.get("name"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim()
             .to_string();
-        if name.is_empty() && !id.is_empty() {
+        if name.is_empty() {
             if let Some(m) = self
                 .catalog_for(self.project())
                 .into_iter()
@@ -969,12 +1037,9 @@ impl Chat {
             }
         }
         let queries = pi_link::model_ref::query_candidates(&id, &name);
-        if queries.is_empty() {
-            self.mc_set_error(tr("custom_models.model_id_required"), cx);
-            return;
-        }
         let base_url = entry
-            .get("baseUrl")
+            .as_ref()
+            .and_then(|e| e.get("baseUrl"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -997,15 +1062,7 @@ impl Chat {
                 Err(pi_link::openrouter::FillError::Net(m)) => Some(m.clone()),
             };
             let _ = this.update(cx, |c, cx| match resolved {
-                Ok(e) => {
-                    // 等待期间用户可能又改了表单：再落一次，回填不吃回刚敲的值
-                    if c.mj_commit_model_form(&provider, ix, cx) {
-                        c.mj_catalog_apply(&e, &provider, ix, cx);
-                    } else {
-                        c.cfg.mj_models_dev_state = MjCatalogState::Idle;
-                        cx.notify();
-                    }
-                }
+                Ok(e) => c.mj_catalog_fill_to_form(&e, &id, cx),
                 Err(_) => {
                     c.cfg.mj_models_dev_state = MjCatalogState::Err(shown.unwrap_or_default());
                     cx.notify();
@@ -1015,31 +1072,34 @@ impl Chat {
         .detach();
     }
 
-    fn mj_catalog_apply(
+    /// 填参结果 → **只写表单**（不落盘）：上下文/最大输出/能力/推理按目录覆盖，
+    /// 并把条目暂存起来，等【保存】时再补名称/价格（见 `mj_commit_model_form`）。
+    fn mj_catalog_fill_to_form(
         &mut self,
         e: &pi_link::openrouter::Entry,
-        provider: &str,
-        ix: usize,
+        queried_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let mut doc = Self::mj_doc();
-        let Some(entry) = pi_link::models_json::provider_entry(&doc, provider).cloned() else {
+        let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let Some(model) = entry.get("models").and_then(|m| m.get(ix)).cloned() else {
-            return;
-        };
-        // 点填参就是“把这个 ID 的参数拉下来填上”：页面可见字段（上下文/最大
-        // 输出/能力/推理）一律按目录覆盖，旧值属于上一个模型；名称/价格页面
-        // 没有，只填空不动已有值。
-        let mut model = model;
-        // 成功不占提示栏（用户定稿）；只填空不覆盖的名称/价格也在这一步落。
-        pi_link::openrouter::fill_from_entry(&mut model, e);
-        pi_link::models_json::update_model(&mut doc, provider, ix, model);
-        self.mj_write(&doc, cx);
+        st.update(cx, |s, cx| {
+            if let Some(n) = e.context_window {
+                s.mj_ctx
+                    .update(cx, |ti, cx| ti.set_value(n.to_string(), cx));
+            }
+            if let Some(n) = e.max_tokens {
+                s.mj_max_tokens
+                    .update(cx, |ti, cx| ti.set_value(n.to_string(), cx));
+            }
+            if !e.input.is_empty() {
+                s.mj_image = e.input.iter().any(|x| x == "image");
+            }
+            s.mj_reasoning = e.reasoning;
+        });
+        // 名称/价格留到保存时落盘；id 变了就不复用（防止串到别的模型）
+        self.cfg.mj_fill_entry = Some((queried_id.to_string(), e.clone()));
         self.cfg.mj_models_dev_state = MjCatalogState::Done;
-        // 表单重选回显（新字段进输入框）
-        self.mj_select(format!("mj:m:{provider}:{ix}"), cx);
         cx.notify();
     }
 }
@@ -1364,12 +1424,8 @@ fn mj_enabled_section(
     // 闭包存进元素需要 'static：主题用静态句柄遮蔽参数（mc_enabled_section 同款）
     let t = T();
     let provider_owned = provider.to_string();
-    let models: Vec<pi_link::protocol::ModelInfo> = chat
-        .catalog_for(chat.project())
-        .iter()
-        .filter(|m| m.provider == provider)
-        .cloned()
-        .collect();
+    // 罗列单点（账本 ∪ 目录 ∪ 探测展示缓存；2026-11-01 定稿）
+    let models: Vec<pi_link::protocol::ModelInfo> = chat.provider_models_for_list(provider);
     let enabled_set: std::collections::HashSet<String> =
         chat.cfg.mc_state.enabled.iter().cloned().collect();
     let enabled_count = models

@@ -11,6 +11,7 @@ pub mod git;
 pub(crate) mod models_config;
 pub mod paths_sort;
 pub mod pi_extension_updates;
+pub mod probe_cache;
 pub(crate) mod script_exec;
 pub(crate) mod session_clean;
 pub(crate) mod shell_open;

@@ -187,6 +187,9 @@ pub mod method {
     pub const SETTINGS_MJ_AUTOFILL: &str = "settings.mj_autofill";
     pub const SETTINGS_MJ_FETCH: &str = "settings.mj_fetch";
     pub const SETTINGS_MJ_DELETE: &str = "settings.mj_delete";
+    /// 2026-11-01 勾选链：模型开关直调 mc_toggle_model（params {ref:"商/模型id",
+    /// enable:bool}；自定义商勾选物化/移除 models.json 的 e2e 断言用）
+    pub const SETTINGS_MC_TOGGLE: &str = "settings.mc_toggle";
     /// 截屏：窗口最近一帧渲染回读为 PNG（进程内 D3D11 staging readback，
     /// 非 OS 抢屏；窗口被遮挡/最小化也能截）。params: {path?}，缺省写
     /// <配置目录>/automation/shots/。返回 {path,width,height,bytes}。

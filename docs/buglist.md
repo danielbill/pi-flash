@@ -427,8 +427,21 @@
 - 验证：启动 stderr 出现状态行；false 关态三处隐藏齐全；改 true 重启全恢复。
 
 
-## 自定义Provider
-1、添加模型时， 点击【自动填参】，从OpenRouter获取模型参数后，未能填充UI组件，包括上下文大小，以及模型能力选择；而自动填参之前已经实现过。
+## pif-secret.exe从来没有随包发布，秘钥保存完全是DEV自嗨
+严重发版bug！！！！
+代码指向开发目录，secret不随包发布，我都不知道用户怎么用PF！
+"ds": {
+  "type": "api_key",
+  "key": "!'d:/ai_workspace/pi-flash/target/debug/pif-secret.exe' get ds"
+}
 
-2、自定义Provider列表中，混入了freeflow，这是通过pi扩展安装的Provider，不属于自定义Provider，不应当混入
+> **修复（2026-11-01）**：auth.json 标记条目是 pi 从系统凭据库取 key 的唯一桥（pi 无
+> keyring 能力，042-1 退役 env 注入后只剩 `!cmd`）。`helper_exe()` 机制本身正确
+> （current_exe 同目录写绝对路径），断点仅在 release.sh 组装清单漏复制 exe。
+> 修：release.sh 补 `cp target/release/pif-secret.exe dist/pi-flash/`（缺源硬失败），
+> 包内与 pi-flash.exe 同目录（绿色包根 / npm payload/ / payload-<版本>/ 整包内容自动带上）。
+> 文档同步：RELEASE.md §3.1/§5、080-软件分发.md §0。用例：test/042-1/pif-secret-packaging/。
+> dev 路径条目是本机 debug 构建写入的正常产物（本机该路径真实存在），无需迁移。
 
+## 内置的Provider在保存apikey后不会自动列出模型列表了！
+注意：这是N早就实现的稳定功能！在最近被傻逼Agent删除了！！！！！

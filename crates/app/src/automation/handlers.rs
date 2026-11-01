@@ -1162,6 +1162,19 @@ pub(super) fn dispatch(
             chat.mj_fetch_models(provider, cx);
             ok()
         }
+        method::SETTINGS_MC_TOGGLE => {
+            let r = params
+                .get("ref")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"ref\": \"商/模型id\", \"enable\": bool}"))?
+                .to_string();
+            let enable = params
+                .get("enable")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            chat.mc_toggle_model(r, enable, cx);
+            ok()
+        }
         method::SETTINGS_MJ_DELETE => {
             let name = params
                 .get("name")

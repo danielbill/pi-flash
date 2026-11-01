@@ -616,6 +616,47 @@ pub fn fill_from_entry(model: &mut Value, e: &Entry) -> usize {
     applied
 }
 
+/// 名称 / 价格：页面没有这两项，**只填空不覆盖**（名称另加「泛化标签自愈」：
+/// 现名是旧版本写坏的「…Latest」→ 换具体型号名；别名条目不带名）。
+/// 填参不再落盘后，保存路径用这个把填参结果里的名称/价格补进模型。
+pub fn fill_name_cost(model: &mut Value, e: &Entry) -> usize {
+    let mut applied = 0usize;
+    let Some(map) = model.as_object_mut() else {
+        return 0;
+    };
+    let name_now = map
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let name_generic = name_now.to_lowercase().ends_with("latest");
+    if !e.name.is_empty() && !e.alias && (name_now.is_empty() || name_generic) {
+        map.insert("name".to_string(), Value::String(e.name.clone()));
+        applied += 1;
+    }
+    if let Some(cost) = map
+        .entry("cost")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        for (k, v) in [
+            ("input", e.cost.input),
+            ("output", e.cost.output),
+            ("cacheRead", e.cost.cache_read),
+            ("cacheWrite", e.cost.cache_write),
+        ] {
+            if let Some(val) = v {
+                if cost.get(k).and_then(|x| x.as_f64()).is_none() {
+                    cost.insert(k.to_string(), serde_json::json!(val));
+                    applied += 1;
+                }
+            }
+        }
+    }
+    applied
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
