@@ -599,24 +599,15 @@ fn mc_models_sidebar(
     //（pi-freeflow 等）同样不在注册表 dump 里，但 models.json 没它的条目：
     // 不进自定义组，归「内置及插件」组、无凭据也出列（用户要能看到插件带
     // 的模型，2026-11-01 反馈）。
+    // 成员商清单 = 统一接口（Chat::sidebar_providers，picker 同源）；
+    // 这里保留 is_custom 闭包只做「内置及插件 / 自定义」分组
+    let provs: Vec<String> = chat.sidebar_providers();
     let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
     let custom_entries: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&models_doc);
     let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);
-    let is_custom = |p: &str| -> bool {
-        let src = match chat.cfg.provider_registry.as_deref() {
-            Some(dump) => dump.source(p, in_models_json(p)),
-            None => pi_link::registry::source_without_registry(in_models_json(p)),
-        };
-        src == pi_link::registry::ProviderSource::Custom
-    };
-    let is_extension = |p: &str| -> bool {
-        chat.cfg
-            .provider_registry
-            .as_deref()
-            .is_some_and(|dump| dump.is_extension_provider(p, in_models_json(p)))
-    };
-    // models.json 里用户手写的 apiKey 也算「已配置」（规则 1：只读不改）
+    // models.json 里用户手写的 apiKey 也算「已配置」（规则 1：只读不改；
+    // 启用列表展示用，不参与成员资格——成员资格在 sidebar_providers）
     let key_in_models_json = |p: &str| {
         custom_entries.iter().any(|(n, e)| {
             n == p
@@ -625,26 +616,13 @@ fn mc_models_sidebar(
                     .is_some_and(|s| !s.trim().is_empty())
         })
     };
-    // 列表 = 用户在用的那一份：内置商按「有凭据」入列（移除凭据即出列），
-    // 自定义商按「models.json 有条目」入列（删除条目即出列），扩展注册的
-    // provider（插件带模型）恒入列——归上面那组。没有隐藏清单。
-    let mut provs: Vec<String> = chat
-        .mc_provider_ids()
-        .into_iter()
-        .filter(|p| chat.mc_configured(p) || is_custom(p) || is_extension(p))
-        .collect();
-    // models.json 条目只追加**自定义商**：内置商在 models.json 有条目（模型
-    // 级覆盖 / 代理 baseUrl / 历史物化）不构成成员资格——它按「有凭据」入列，
-    // 移除凭据即出列（否则移除后仍被这一步挂回来）
-    provs.extend(
-        custom_entries
-            .iter()
-            .filter(|(n, _)| is_custom(n))
-            .map(|(n, _)| n.clone()),
-    );
-    // 去重保序（models.json 的商可能已从目录进过一次）
-    let mut seen = std::collections::HashSet::new();
-    provs.retain(|p| seen.insert(p.clone()));
+    let is_custom = |p: &str| -> bool {
+        let src = match chat.cfg.provider_registry.as_deref() {
+            Some(dump) => dump.source(p, in_models_json(p)),
+            None => pi_link::registry::source_without_registry(in_models_json(p)),
+        };
+        src == pi_link::registry::ProviderSource::Custom
+    };
     let counts: Vec<(usize, usize)> = provs
         .iter()
         .map(|p| chat.mc_provider_counts(p, enabled_set))
@@ -1554,16 +1532,69 @@ impl Chat {
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
     /// 不再有「内置取 pi / 自定义取 PF 账本」的两套口径）。
     pub(crate) fn catalog_with_ledger(&self) -> Vec<pi_link::protocol::ModelInfo> {
-        // 左栏合并列表 / 右侧详情**同源**：账本并入后的目录（见 ledger_merge）
-        // + **已配置凭据的内置商**的罗列单点结果（静态注册表并入——否则其
-        // 静态模型不在 mc_refs 里，勾选链 set_models_enabled 对「不在 refs 的
-        // ref」静默丢弃，开关按不动、侧栏计数 0/0；2026-11-01）。只扩已配置
-        // 的商（= 侧栏成员），不把 42 家静态全灌进 refs。
-        let mut out = self.ledger_merge(self.catalog_for(self.project()));
+        self.model_listing(self.project())
+    }
+
+    /// **侧栏成员商清单**（统一接口①）：内置商 = 有凭据（移除凭据即出列；
+    /// models.json 覆盖条目不构成成员）；自定义商 = models.json 有条目；
+    /// 扩展注册的 provider 恒入列。设置页侧栏与 input panel 模型菜单共用。
+    pub(crate) fn sidebar_providers(&self) -> Vec<String> {
+        let doc = Self::mj_doc();
+        let custom_entries: Vec<(String, &serde_json::Value)> =
+            pi_link::models_json::providers(&doc);
+        let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);
+        let is_custom = |p: &str| -> bool {
+            let src = match self.cfg.provider_registry.as_deref() {
+                Some(dump) => dump.source(p, in_models_json(p)),
+                None => pi_link::registry::source_without_registry(in_models_json(p)),
+            };
+            src == pi_link::registry::ProviderSource::Custom
+        };
+        let is_extension = |p: &str| -> bool {
+            self.cfg
+                .provider_registry
+                .as_deref()
+                .is_some_and(|dump| dump.is_extension_provider(p, in_models_json(p)))
+        };
+        let mut provs: Vec<String> = self
+            .mc_provider_ids()
+            .into_iter()
+            .filter(|p| self.mc_configured(p) || is_custom(p) || is_extension(p))
+            .collect();
+        provs.extend(
+            custom_entries
+                .iter()
+                .filter(|(n, _)| is_custom(n))
+                .map(|(n, _)| n.clone()),
+        );
+        let mut seen = std::collections::HashSet::new();
+        provs.retain(|p| seen.insert(p.clone()));
+        provs
+    }
+
+    /// **统一模型清单**（统一接口②，input panel 菜单与设置页同源）：
+    /// 目录（cwd 语义由调用方定）经账本并入 + 已配置内置商静态并入，
+    /// 再按**侧栏成员**过滤——picker 里不再出现设置页没有的商（无凭据的
+    /// OpenAI 等）。
+    pub(crate) fn model_listing(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> Vec<pi_link::protocol::ModelInfo> {
+        let base = self.ledger_merge(self.catalog_for(cwd));
+        let members = self.sidebar_providers();
+        let mut out: Vec<pi_link::protocol::ModelInfo> = base
+            .into_iter()
+            .filter(|m| members.iter().any(|p| p == &m.provider))
+            .collect();
+        // 已配置凭据的内置商：静态注册表并入（否则其模型不在 mc_refs，
+        // 勾选链 set_models_enabled 静默丢弃；只扩成员商，不灌 42 家静态）
         let doc = Self::mj_doc();
         for (prov, _) in &self.cfg.mc_creds {
             if pi_link::models_json::provider_entry(&doc, prov).is_some() {
-                continue; // 账本商已经由 ledger_merge 走过 provider_models_for_list
+                continue; // 账本商已由 ledger_merge 走过 provider_models_for_list
+            }
+            if !members.iter().any(|p| p == prov) {
+                continue;
             }
             for m in self.provider_models_for_list(prov) {
                 if !out.iter().any(|x| x.provider == m.provider && x.id == m.id) {
@@ -1646,7 +1677,7 @@ impl Chat {
                 })
                 .collect();
         let mut out = ledger.clone();
-        let mut push_missing =
+        let push_missing =
             |m: pi_link::protocol::ModelInfo, out: &mut Vec<pi_link::protocol::ModelInfo>| {
                 if !out.iter().any(|x| x.id == m.id) {
                     out.push(m);
