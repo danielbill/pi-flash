@@ -25,13 +25,22 @@ impl Chat {
         }
     }
 
+    /// 换选中项（section 驱动整页回填）：现读 `models.json` 后交给
+    /// [`Self::mj_fill_from`]。点列表进来的路径走 [`Self::mj_open_model`]
+    /// （**同一份 doc 里选索引 + 回填**，不受并发写盘影响）。
     pub(crate) fn mj_select(&mut self, section: String, cx: &mut Context<Self>) {
+        let doc = Self::mj_doc();
+        self.mj_fill_from(section, &doc, cx);
+    }
+
+    /// section 回填本体：`doc` 必须是与索引解析同源的快照。
+    fn mj_fill_from(&mut self, section: String, doc: &serde_json::Value, cx: &mut Context<Self>) {
         let over = mj_parse_override(&section);
         let (name, ix) = match &over {
             Some((p, _)) => (p.clone(), None),
             None => mj_parse_section(&section),
         };
-        let entry = pi_link::models_json::provider_entry(&Self::mj_doc(), &name)
+        let entry = pi_link::models_json::provider_entry(doc, &name)
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         let model = match &over {
@@ -460,6 +469,9 @@ impl Chat {
             .as_ref()
             .map(|st| st.read(cx).section.clone())
             .filter(|s| !s.is_empty());
+        // 一份 doc 内完成「选索引 → 回填」：以前是这里读一次盘、mj_select 再读
+        // 一次，中间若有异步写盘（测速合并目录会 append 模型）把数组挪了位，
+        // 弹出来的就不是点的那个模型了
         let doc = Self::mj_doc();
         let models = pi_link::models_json::provider_entry(&doc, &provider)
             .map(pi_link::models_json::provider_models)
@@ -485,10 +497,11 @@ impl Chat {
                 }
                 hit
             });
-        match ix {
-            Some(ix) => self.mj_select(format!("mj:m:{provider}:{ix}"), cx),
-            None => self.mj_select(override_section(&provider, &id), cx),
-        }
+        let section = match ix {
+            Some(ix) => format!("mj:m:{provider}:{ix}"),
+            None => override_section(&provider, &id),
+        };
+        self.mj_fill_from(section, &doc, cx);
     }
 
     pub(crate) fn mj_add_model(&mut self, provider: String, cx: &mut Context<Self>) {
