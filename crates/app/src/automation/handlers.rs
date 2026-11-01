@@ -1141,6 +1141,8 @@ pub(super) fn dispatch(
                 .clone()
                 .or_else(|| (!provider.is_empty()).then(|| format!("mj:p:{provider}")));
             chat.cfg.mj_return = None;
+            // 与弹窗 ✕ 同源：关详情即清模型表单变量（不留上一个模型的值）
+            chat.mj_clear_model_form(cx);
             match target {
                 Some(t) => chat.mj_select(t, cx),
                 None => return Err(bad("无处可退：没有来源 section")),

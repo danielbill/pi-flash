@@ -154,6 +154,26 @@ impl Chat {
                 cx.notify();
             });
         }
+        // 登记：这几个表单变量现在装的是哪个 section 的值
+        self.cfg.mj_form_for = Some(section);
+    }
+
+    /// 模型详情的表单变量清空（关闭详情时调用）：id / 上下文 / 最大输出 /
+    /// 能力勾选全部归零，并注销「表单属于哪个 section」——下一个模型绝不会
+    /// 继承上一个模型的任何值（此前正是这里没清，出现「点别的行还是旧值」）。
+    pub(crate) fn mj_clear_model_form(&mut self, cx: &mut Context<Self>) {
+        self.cfg.mj_form_for = None;
+        let Some(st) = self.dlg.settings.clone() else {
+            return;
+        };
+        st.update(cx, |s, cx| {
+            for ti in [&s.mj_id, &s.mj_ctx, &s.mj_max_tokens] {
+                ti.update(cx, |ti, cx| ti.set_value(String::new(), cx));
+            }
+            s.mj_image = false;
+            s.mj_reasoning = false;
+            cx.notify();
+        });
     }
 
     /// Skills toggle: write `disable-model-invocation` into SKILL.md
@@ -1484,6 +1504,26 @@ pub(crate) fn mj_model_modal_overlay(
         }
     };
     let over_id = over.as_ref().map(|(_, id)| id.clone());
+    // 硬保证：详情页显示的就是当前 section 的模型。表单变量若还残留着别的
+    // section（关闭/切换时没清干净，或任何缓存污染），这里立刻按盘上真值
+    // 重填一次——绝不再把上一个模型的值端给用户看。
+    if chat.cfg.mj_form_for.as_deref() != Some(selected.as_str()) {
+        let weak_fix = cx.entity().downgrade();
+        let sec = selected.clone();
+        cx.defer(move |cx| {
+            let _ = weak_fix.update(cx, |c, cx| {
+                let now = c
+                    .dlg
+                    .settings
+                    .as_ref()
+                    .map(|st| st.read(cx).section.clone());
+                // 期间又切走了 → 不再回填旧 section
+                if now.as_deref() == Some(sec.as_str()) {
+                    c.mj_select(sec.clone(), cx);
+                }
+            });
+        });
+    }
     // 内置模型 = 只读参数视图：不给自动填参 / 测试 / 保存 / 移除，输入框禁用
     let read_only = over_id.is_some();
     let d = super::SettingsFormData::snapshot(panel.read(cx), cx);
@@ -1500,6 +1540,8 @@ pub(crate) fn mj_model_modal_overlay(
             let _ = weak.update(cx, |c, cx| {
                 let target = back.clone().unwrap_or_else(|| format!("mj:p:{n}"));
                 c.cfg.mj_return = None;
+                // 先清模型表单变量：关掉详情不留任何上个模型的值
+                c.mj_clear_model_form(cx);
                 c.mj_select(target, cx);
             });
         }

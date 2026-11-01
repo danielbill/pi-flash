@@ -100,6 +100,11 @@ pub(crate) struct CfgUi {
     pub(crate) mj_test: Option<MjTestState>,
     /// 042 M2 models.dev 拉取状态（按钮文案与结果行）
     pub(crate) mj_models_dev_state: MjCatalogState,
+    /// 模型详情那几个表单变量（mj_id / ctx / max / 能力勾选）当前对应的
+    /// section。**唯一用途**：渲染前校验「表单内容 ↔ 当前 section」是否一致，
+    /// 不一致就重填一遍——详情页关闭/切换时若有任何一个变量没清干净（值污染），
+    /// 会立刻被拉回正确值，而不是把上一个模型的值显示出来。
+    pub(crate) mj_form_for: Option<String>,
     /// 模型详情弹窗的**来源 section**（点列表进详情时记下当前右栏）：关弹窗
     /// （✕/点外/ESC）退回此处——内置商模型来自合并列表 / 内置详情（section
     /// = 商 id），自定义商来自 `mj:p:名`；`None` = 从【+模型】草稿进
@@ -732,6 +737,7 @@ impl Chat {
                 mj_test: None,
                 mj_models_dev_state: MjCatalogState::Idle,
                 mj_return: None,
+                mj_form_for: None,
                 provider_registry: None,
                 registry_state: crate::session::model_picker::RegistryState::Idle,
                 mc_remove_confirm: None,
