@@ -263,8 +263,12 @@ impl Chat {
     }
 
     /// 摘除活跃运行时里本插件的 ext（attach 逆操作，90-9 §8）：evict/停用后
-    /// 运行中的进程还带着已挂载 ext——空闲即就地重启摘掉；忙 → spawn 前过滤
-    /// （ext_source_registered）+ 清单已 purged，下次 spawn 生效。
+    /// 运行中的进程还带着已挂载 ext——**停用不再立即杀进程重启摘除**（2026-
+    /// 11-01，pf-wxbot 下线通知）：壳 `unload()` 已写 `unload_seq` 镜像标记
+    ///（PF↔插件唯一对话通道），ext 泵见标记自我隔离——停渠道、发下线通知、
+    /// 释放锁，进程存活即可完成；立即 kill 则 ext 一拍都跑不到，通知永远发
+    /// 不出。进程内物理摘除落在下次 spawn（重新启用 attach 走「空闲重启挂
+    /// 载」重启时）。忙 → 不动进程，行为同前（ext 见标记同样自我隔离）。
     pub(crate) fn plugin_detach_active_ext(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
         let ext_paths: Vec<String> = match self.plugins.plugins.get(ix) {
             Some(e) => e
@@ -278,19 +282,12 @@ impl Chat {
         if ext_paths.is_empty() {
             return;
         }
-        let key = self.pool.active_key.clone();
-        let Some(rt) = self.pool.runtimes.get(&key).cloned() else {
-            return;
-        };
-        let busy = rt.read(cx).agent_running;
-        if busy {
-            return; // 下次 spawn 生效
+        if let Some(rt) = self.pool.runtimes.get(&self.pool.active_key).cloned() {
+            rt.update(cx, |r, _cx| {
+                // 防御性再摘（attach 不入 ext_sources，路径型条目混入会污染）
+                r.ext_sources.retain(|e| !ext_paths.iter().any(|p| e == p));
+            });
         }
-        rt.update(cx, |r, cx| {
-            r.ext_sources.retain(|e| !ext_paths.iter().any(|p| e == p));
-            r.shutdown_process();
-            r.ensure_spawned(cx);
-        });
     }
 
     /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通
