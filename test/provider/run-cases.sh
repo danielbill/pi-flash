@@ -314,6 +314,21 @@ const d=JSON.parse(fs.readFileSync('$MODELS','utf8'));
 delete d.providers['hand-made-ds'];
 fs.writeFileSync('$MODELS',JSON.stringify(d,null,2));"
 
+# ---------- CASE10 内置商端点管道（2026-11-01：注册表 dump 携带 baseUrl，
+# 内置商「获取模型」端点 SDK 派生——27 家白名单缺口根治的管道级证明）----------
+REG="$T/registry-cache.json"
+REG_OK=0
+for i in $(seq 1 30); do
+  if node -e "
+const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
+const ps=d.providers||[];
+const withUrl=ps.filter(p=>p.baseUrl);
+const zai=ps.find(p=>p.id==='zai-coding-cn');
+process.exit(ps.length>=40&&withUrl.length===ps.length&&zai&&zai.baseUrl==='https://open.bigmodel.cn/api/coding/paas/v4'?0:1)" "$REG" 2>/dev/null; then REG_OK=1; break; fi
+  sleep 2
+done
+check CASE10 "注册表缓存就绪且全员带 baseUrl（含 zai-coding-cn 实值）" test "$REG_OK" = 1
+
 # ---------- CASE8 删除 Provider（teardown：盘+auth.json+keyring 三清）----------
 for P in $(node -e "const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));console.log(Object.keys(d.providers||{}).filter(k=>k.startsWith('pf-test')).join(' '))"); do
   mj settings.mj_select --arg section="mj:p:$P"

@@ -155,11 +155,17 @@ pub(crate) struct ProjectCtx {
 
 /// 装载全局态：模型清单（缓存 ∪ 磁盘）、命令（内置 + 扩展缓存）、默认项、插件、全局 mcp。
 pub(crate) fn load_globals() -> Globals {
-    // 无缓存层：模型清单每次启动现读磁盘（providers.json / models.json /
-    // models-store.json）；包内联 provider 与扩展命令等会话进程答到后经
-    // `merge_models` / `merge_commands` 并进本进程内存（不落盘）。
-    let models = pi_link::catalog::dedupe(pi_link::catalog::disk_models());
-    let commands = pi_link::catalog::builtin_commands();
+    // 模型清单 = 自有缓存 ∪ 磁盘（010-启动.md §4.1，2026-11-01 回归：缓存含
+    // 包内联 provider 与拉取过的内置商目录，磁盘拿不到的那部分）；包内联
+    // provider 与扩展命令等会话进程答到后经 `merge_models` / `merge_commands`
+    // 并进本进程内存并回写缓存。
+    let cache = read_cache();
+    let mut models = cache.models;
+    models.extend(pi_link::catalog::disk_models());
+    let models = pi_link::catalog::dedupe(models);
+
+    let mut commands = pi_link::catalog::builtin_commands();
+    commands.extend(cache.commands);
 
     let settings_path = pi_link::config::settings_path();
     Globals {
@@ -168,6 +174,123 @@ pub(crate) fn load_globals() -> Globals {
         default_tools: pi_link::config::read_default_tools(&settings_path).unwrap_or(None),
         packages: pi_link::config::read_packages(&settings_path).unwrap_or_default(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 自有缓存 `~/.pi-flash/catalog-cache.json`（010-启动.md §4.1；042-1 曾删除、
+// 2026-11-01 回归——表外内置商拉取结果没有它就是进程死即失）
+// ---------------------------------------------------------------------------
+
+/// 缓存内容：模型目录 + 扩展命令（磁盘上拿不到的那部分）。
+#[derive(Default, Clone)]
+pub(crate) struct CatalogCache {
+    pub models: Vec<ModelInfo>,
+    pub commands: Vec<SlashCommand>,
+}
+
+/// 从显式路径读缓存（测试用同一实现，不碰进程环境）。
+fn cache_load_from(path: &Path) -> CatalogCache {
+    let Ok(value) = pi_link::config::read_json(path) else {
+        return CatalogCache::default();
+    };
+    let models = value
+        .get("models")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let id = m.get("id")?.as_str()?.to_string();
+                    let provider = m.get("provider")?.as_str()?.to_string();
+                    Some(ModelInfo {
+                        id,
+                        name: m
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        provider,
+                        context_window: m.get("contextWindow").and_then(|v| v.as_u64()),
+                        max_tokens: None,
+                        reasoning: None,
+                        input: None,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let commands = value
+        .get("commands")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    Some(SlashCommand {
+                        name: c.get("name")?.as_str()?.to_string(),
+                        description: c
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    CatalogCache { models, commands }
+}
+
+/// 写缓存（原子写）；返回是否写入。
+fn cache_save_to(path: &Path, cache: &CatalogCache) -> bool {
+    let models: Vec<serde_json::Value> = cache
+        .models
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "provider": m.provider,
+                "id": m.id,
+                "name": m.name,
+                "contextWindow": m.context_window,
+            })
+        })
+        .collect();
+    let commands: Vec<serde_json::Value> = cache
+        .commands
+        .iter()
+        .map(|c| serde_json::json!({ "name": c.name, "description": c.description }))
+        .collect();
+    let value = serde_json::json!({
+        "version": 1,
+        "fetchedAt": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        "models": models,
+        "commands": commands,
+    });
+    let _ = pi_link::paths::ensure_dir();
+    pi_link::config::write_json(path, &value).is_ok()
+}
+
+/// 读自有缓存（无文件/坏文件 → 空）。
+pub(crate) fn read_cache() -> CatalogCache {
+    match pi_link::paths::catalog_cache_file() {
+        Some(p) => cache_load_from(&p),
+        None => CatalogCache::default(),
+    }
+}
+
+/// 回写自有缓存（会话进程的 RPC 答复 / 启动 sweep 拉取到位时调用）。
+pub(crate) fn write_cache(models: &[ModelInfo], commands: &[SlashCommand]) -> bool {
+    let Some(path) = pi_link::paths::catalog_cache_file() else {
+        return false;
+    };
+    cache_save_to(
+        &path,
+        &CatalogCache {
+            models: models.to_vec(),
+            commands: commands.to_vec(),
+        },
+    )
 }
 
 /// 装载一个项目的技能表（纯磁盘读）。设置页开关写盘后也要现读一遍——
@@ -292,6 +415,47 @@ mod tests {
         assert_eq!(g.commands[0].name, "notify");
         // 幂等
         assert!(!merge_commands(&mut g, &rpc));
+    }
+
+    fn tmp_cache_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join(format!(
+                "pi-flash-cache-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .subsec_nanos()
+            ))
+            .join("catalog-cache.json")
+    }
+
+    #[test]
+    fn cache_roundtrip_keeps_models_and_commands() {
+        let path = tmp_cache_path("roundtrip");
+        let cache = CatalogCache {
+            models: vec![ModelInfo {
+                id: "m1".into(),
+                name: "Model One".into(),
+                provider: "p".into(),
+                context_window: Some(1234),
+            }],
+            commands: vec![SlashCommand {
+                name: "notify".into(),
+                description: "d".into(),
+            }],
+        };
+        assert!(cache_save_to(&path, &cache));
+        let back = cache_load_from(&path);
+        assert_eq!(back.models.len(), 1);
+        assert_eq!(back.models[0].name, "Model One");
+        assert_eq!(back.models[0].context_window, Some(1234));
+        assert_eq!(back.commands.len(), 1);
+        assert_eq!(back.commands[0].name, "notify");
+        // 缺文件 → 空缓存（不 panic）
+        let missing = cache_load_from(&path.with_file_name("nope.json"));
+        assert!(missing.models.is_empty() && missing.commands.is_empty());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }
 
@@ -574,6 +738,10 @@ fn spawn_splash_gate(cx: &mut gpui::Context<Chat>) {
             // 040 延迟加载：揭幕（切换启动页）后才开始测扩展/skill 说明
             // token——非关键数据，不对启动造成任何负担
             c.spawn_token_probe(cx);
+            // 010-启动.md §4.1（2026-11-01 恢复）：启动后台 sweep 已配置 key
+            // 的内置商模型目录 → 并进全局态 + 回写 catalog-cache（重启仍在）。
+            // 网络探测走后台线程，失败静默，不阻塞揭幕后的任何交互
+            c.spawn_builtin_catalog_sweep(cx);
             // 081 延迟加载：新版本首启开「更新日志」tab + 后台检查更新
             // （timeout 30s、失败重试 2 次间隔 10min，全程后台线程不阻塞）
             c.spawn_startup_update_hooks(cx);

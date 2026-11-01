@@ -312,6 +312,103 @@ impl Chat {
         cx.notify();
     }
 
+    /// 内置商「获取模型」端点（2026-11-01 双源）：注册表 SDK 派生优先
+    /// （40 家全覆盖，registry::models_list_target），回落 vendor pin 静态表
+    /// （注册表缓存未就绪时兜底）。两者都拿不到 = SDK 没给 baseUrl
+    /// （bedrock/vertex/copilot 类云专属鉴权），详情页才显示「暂不支持」。
+    fn builtin_catalog_target(&self, provider: &str) -> Option<(String, pi_link::probe::Auth)> {
+        if let Some(dump) = self.cfg.provider_registry.as_ref() {
+            if let Some(t) = pi_link::registry::models_list_target(dump, provider) {
+                return Some(t);
+            }
+        }
+        pi_link::probe::catalog_target(provider).map(|(u, a)| (u.to_string(), a))
+    }
+
+    /// 启动后台 sweep（2026-11-01 恢复 010-启动.md §4.1 定稿「启动把所有
+    /// 内置拉取进 cache」）：揭幕后后台线程，遍历注册表里**已配置 api key**
+    /// 且 SDK 给了 baseUrl 的内置商，逐个 probe_connect 实拉目录 → 并进
+    /// 全局态 + 回写 catalog-cache.json（重启仍在）。只补增量（目录里已有
+    /// 该商模型的跳过）；顺序执行、典型 1~3 家，失败静默（下次启动重试，
+    /// 不打扰用户）。
+    pub(crate) fn spawn_builtin_catalog_sweep(&mut self, cx: &mut Context<Self>) {
+        // 注册表未就绪 → 后台补 dump（现状机制，vendor VERSION 为缓存键）
+        let registry = match pi_link::registry::read_cache() {
+            Some(d) => Some(d),
+            None => match std::thread::spawn(pi_link::registry::dump_and_cache).join() {
+                Ok(Ok(d)) => Some(d),
+                _ => None,
+            },
+        };
+        let Some(dump) = registry else { return };
+        // 候选：内置（在注册表）+ 有 key + 有端点 + 目录里还没有该商模型
+        let have: std::collections::HashSet<String> = self
+            .pool
+            .globals
+            .models
+            .iter()
+            .map(|m| m.provider.clone())
+            .collect();
+        // (id, url, auth)：端点由 models_list_target 从 SDK 的 baseUrl/api 派生
+        let targets: Vec<(String, String, pi_link::probe::Auth)> = dump
+            .providers
+            .iter()
+            .filter(|p| {
+                p.base_url.as_deref().is_some_and(|b| !b.trim().is_empty())
+                    && !have.contains(&p.id)
+                    && pi_link::auth_json::resolve_secret(&p.id).is_some()
+            })
+            .filter_map(|p| {
+                let (url, auth) = pi_link::registry::models_list_target(&dump, &p.id)?;
+                Some((p.id.clone(), url, auth))
+            })
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut fetched: Vec<pi_link::protocol::ModelInfo> = Vec::new();
+                    for (id, url, auth) in targets {
+                        // key 现取（进程内不存秘密）；端点 = 注册表派生 URL
+                        let Some(key) = pi_link::auth_json::resolve_secret(&id) else {
+                            continue;
+                        };
+                        if let pi_link::probe::ProbeOutcome::Ok { catalog, .. } =
+                            pi_link::probe::probe(&url, auth, &key)
+                        {
+                            let mut list = catalog;
+                            for m in list.iter_mut() {
+                                m.provider = id.clone();
+                            }
+                            fetched.extend(list);
+                        }
+                    }
+                    fetched
+                })
+                .await;
+            if outcome.is_empty() {
+                return;
+            }
+            let _ = this.update(cx, |c, cx| {
+                if crate::startup::merge_models(&mut c.pool.globals, &outcome) {
+                    let _ = crate::startup::write_cache(
+                        &c.pool.globals.models,
+                        &c.pool.globals.commands,
+                    );
+                }
+                c.cfg.mc_state = services::models_config::compute_state(
+                    c.cfg.mc_patterns.as_ref(),
+                    &c.mc_refs(),
+                );
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn mc_save_key(&mut self, provider: String, key: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         if key.trim().is_empty() {
@@ -335,7 +432,7 @@ impl Chat {
     /// 042 决策 3：通路探查——后台线程 GET 该 provider 列模型端点，三态
     /// 结果落 `mc_probe`（只驱动 UI 状态点，不回滚保存）。
     pub(crate) fn mc_probe_start(&mut self, provider: String, cx: &mut Context<Self>) {
-        let Some(target) = pi_link::probe::catalog_target(&provider) else {
+        let Some(target) = self.builtin_catalog_target(&provider) else {
             return;
         };
         self.cfg.mc_probe.insert(provider.clone(), McProbe::Running);
@@ -352,7 +449,7 @@ impl Chat {
                         };
                     };
                     let (url, auth) = target;
-                    pi_link::probe::probe(url, auth, &key)
+                    pi_link::probe::probe(&url, auth, &key)
                 })
                 .await;
             let _ = this.update(cx, |c, cx| {
@@ -360,8 +457,22 @@ impl Chat {
                 // 在保存/获取后短暂可见，占位区常驻到下次探查）
                 let state = match &outcome {
                     pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
-                        // 不再落 provider-catalog 副本：模型一律以 pi 目录为准
+                        // 不再落 provider-catalog 副本：模型一律以 pi 目录为准；
+                        // 先按磁盘重建（refresh 内部会清该商旧条目），**再**把
+                        // 拉取结果并进 globals（顺序反了会被磁盘重建冲掉）+
+                        // 回写 catalog-cache（2026-11-01：手动拉取的结果同样
+                        // 持久，重启仍在）
                         c.refresh_provider_catalog(&provider_bg);
+                        let mut fetched = catalog.clone();
+                        for m in fetched.iter_mut() {
+                            m.provider = provider_bg.clone();
+                        }
+                        if crate::startup::merge_models(&mut c.pool.globals, &fetched) {
+                            let _ = crate::startup::write_cache(
+                                &c.pool.globals.models,
+                                &c.pool.globals.commands,
+                            );
+                        }
                         McProbe::Done
                     }
                     // 200 但解析不出模型条目：此前完全静默，用户只见"没动静"
@@ -912,11 +1023,7 @@ fn mc_models_detail(
     let provider = selected.to_string();
     // 042-1：可用模型 = 唯一目录（models.json + models-store + 进程答案），
     // 不再有 registry 静态目录保底
-    let models: Vec<pi_link::protocol::ModelInfo> = chat
-        .catalog_for(chat.project())
-        .into_iter()
-        .filter(|m| m.provider == provider)
-        .collect();
+    let models: Vec<pi_link::protocol::ModelInfo> = chat.provider_models_for_list(&provider);
     // 详情内边距与列表 15px 统一（040 扩展页定稿；detail_shell 默认 p20）
     let detail = detail_shell("mc-detail").p(px(15.));
 
@@ -1053,7 +1160,7 @@ fn mc_empty_models_section(
     provider: &str,
     detail: gpui::Stateful<gpui::Div>,
 ) -> gpui::Stateful<gpui::Div> {
-    if pi_link::probe::catalog_target(provider).is_none() {
+    if chat.builtin_catalog_target(provider).is_none() {
         return detail.child(
             div()
                 .flex()
@@ -1481,7 +1588,80 @@ impl Chat {
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
     /// 不再有「内置取 pi / 自定义取 PF 账本」的两套口径）。
     pub(crate) fn catalog_with_ledger(&self) -> Vec<pi_link::protocol::ModelInfo> {
-        self.catalog_for(self.project())
+        // 左栏合并列表 / 右侧详情**同源**：账本里有条目的商，用 `models[]` 原样
+        // （同 id 的重复条目照样显示）；账本里没有的商（内置商）用目录条目。
+        let base = self.catalog_for(self.project());
+        let doc = Self::mj_doc();
+        let ledger_provs = pi_link::models_json::providers(&doc);
+        if ledger_provs.is_empty() {
+            return base;
+        }
+        let mut out: Vec<pi_link::protocol::ModelInfo> = Vec::new();
+        let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for m in &base {
+            if ledger_provs.iter().any(|(p, _)| p == &m.provider) {
+                if emitted.insert(m.provider.as_str()) {
+                    out.extend(self.provider_models_for_list(&m.provider));
+                }
+                continue; // 该商的目录行让位给账本行（避免重复）
+            }
+            out.push(m.clone());
+        }
+        for (p, _) in &ledger_provs {
+            if !emitted.contains(p.as_str()) {
+                out.extend(self.provider_models_for_list(p));
+            }
+        }
+        out
+    }
+
+    /// **某商在列表里要显示的全部模型**（左栏合并列表 / 右栏可用模型区共用
+    /// 这一处，左右不许再分叉）：
+    /// 该商在 `models.json` 有条目 → 账本 `models[]` **原样**逐条（同 id 的重复
+    /// 条目照样显示，用户要看真实磁盘内容）；账本里没有的（内置商）→ 目录该商
+    /// 条目；账本条目里没有、目录里有的（扩展注册/pi 自带）补在后面。
+    pub(crate) fn provider_models_for_list(
+        &self,
+        provider: &str,
+    ) -> Vec<pi_link::protocol::ModelInfo> {
+        let doc = Self::mj_doc();
+        let ledger: Vec<pi_link::protocol::ModelInfo> =
+            pi_link::models_json::provider_entry(&doc, provider)
+                .map(pi_link::models_json::provider_models)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| pi_link::protocol::ModelInfo {
+                    id: m
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    name: m
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    provider: provider.to_string(),
+                    context_window: m.get("contextWindow").and_then(|v| v.as_u64()),
+                    max_tokens: m.get("maxTokens").and_then(|v| v.as_u64()),
+                    reasoning: m.get("reasoning").and_then(|v| v.as_bool()),
+                    input: m.get("input").and_then(|v| v.as_array()).map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    }),
+                })
+                .collect();
+        let mut out = ledger.clone();
+        for m in self.catalog_for(self.project()) {
+            if m.provider != provider {
+                continue;
+            }
+            if !ledger.iter().any(|x| x.id == m.id) {
+                out.push(m);
+            }
+        }
+        out
     }
 
     /// 删掉某商在**内存目录**里的条目（042-1：删除自定义商后列表项立刻消失）。

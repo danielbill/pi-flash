@@ -134,6 +134,57 @@ pub fn catalog_target(provider: &str) -> Option<(&'static str, Auth)> {
         .map(|(_, url, auth)| (*url, *auth))
 }
 
+/// 列模型 URL 机械拼装（模块③入口，对齐 pi-web `buildModelsListUrl`，
+/// **零厂商/模型名硬编码**）：输入 baseUrl + api 形状 → (url, auth)。
+/// - 路径已以 /models 结尾：只按形状定鉴权头
+/// - anthropic-messages：路径非 /vN(beta) 结尾补 /v1，加 `limit=1000`
+/// - google-generative-ai：路径非版本段结尾补 /v1beta，加 `pageSize=1000`
+/// - 其余（openai 系，含 /v1 /v4 等版本段）：直接接 /models
+pub fn models_list_url(base_url: &str, api: &str) -> Option<(String, Auth)> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return None;
+    }
+    let auth = match api {
+        "anthropic-messages" => Auth::Anthropic,
+        "google-generative-ai" => Auth::Google,
+        _ => Auth::Bearer,
+    };
+    // 路径段（host 之后的全部）；无路径 = 空
+    let path = base
+        .split_once("://")
+        .and_then(|(_, r)| r.split_once('/'))
+        .map(|(_, p)| format!("/{}", p.trim_end_matches('/')))
+        .unwrap_or_default();
+    // 末段是版本段：/v<数字> 或 /v<数字>beta（v1 / v4 / v1beta）
+    let ends_versioned = path
+        .rsplit('/')
+        .next()
+        .and_then(|tail| tail.strip_prefix('v'))
+        .is_some_and(|t| {
+            let digits = t.split('b').next().unwrap_or("");
+            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+        });
+    let suffix = if path.ends_with("/models") {
+        String::new()
+    } else {
+        match api {
+            "anthropic-messages" if !ends_versioned => "/v1/models",
+            "google-generative-ai" if !ends_versioned => "/v1beta/models",
+            _ => "/models",
+        }
+        .to_string()
+    };
+    let mut url = format!("{base}{suffix}");
+    if api == "anthropic-messages" && !url.contains("limit=") {
+        url.push_str("?limit=1000");
+    }
+    if api == "google-generative-ai" && !url.contains("pageSize=") {
+        url.push_str("?pageSize=1000");
+    }
+    Some((url, auth))
+}
+
 /// 发一次列模型 GET（阻塞，20s 超时）并按三态分类。2xx 响应体交
 /// [`parse_catalog`] 解析目录。
 pub fn probe(url: &str, auth: Auth, key: &str) -> ProbeOutcome {
@@ -421,6 +472,60 @@ mod tests {
         assert_eq!(infer_api("https://api.openai.com/v1"), "openai-completions");
         assert_eq!(infer_api("https://api.deepseek.com"), "openai-completions");
         assert_eq!(infer_api(""), "openai-completions");
+    }
+
+    #[test]
+    fn models_list_url_mechanical_shapes() {
+        // openai 系带版本段（zai-coding-cn 实测：open.bigmodel.cn /v4）直接接 /models
+        assert_eq!(
+            models_list_url(
+                "https://open.bigmodel.cn/api/coding/paas/v4",
+                "openai-completions"
+            ),
+            Some((
+                "https://open.bigmodel.cn/api/coding/paas/v4/models".into(),
+                Auth::Bearer
+            ))
+        );
+        // openai 形状不补版本段（pi-web 同款：只有 /models；DeepSeek 根域
+        // /models 实测 200），探查阶梯兜 /v1/models 变体
+        assert_eq!(
+            models_list_url("https://api.deepseek.com", "openai-completions"),
+            Some(("https://api.deepseek.com/models".into(), Auth::Bearer))
+        );
+        // anthropic：补 /v1 + limit=1000 + Anthropic 头
+        assert_eq!(
+            models_list_url("https://api.minimaxi.com/anthropic", "anthropic-messages"),
+            Some((
+                "https://api.minimaxi.com/anthropic/v1/models?limit=1000".into(),
+                Auth::Anthropic
+            ))
+        );
+        // anthropic 路径已带版本段：不重复补 /v1，limit 照加
+        assert_eq!(
+            models_list_url("https://gw.example.com/anthropic/v2", "anthropic-messages"),
+            Some((
+                "https://gw.example.com/anthropic/v2/models?limit=1000".into(),
+                Auth::Anthropic
+            ))
+        );
+        // google：补 /v1beta + pageSize=1000
+        assert_eq!(
+            models_list_url(
+                "https://generativelanguage.googleapis.com",
+                "google-generative-ai"
+            ),
+            Some((
+                "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000".into(),
+                Auth::Google
+            ))
+        );
+        // 已以 /models 结尾：只定鉴权头，不重复拼
+        assert_eq!(
+            models_list_url("https://api.openai.com/v1/models/", "openai-completions"),
+            Some(("https://api.openai.com/v1/models".into(), Auth::Bearer))
+        );
+        assert_eq!(models_list_url("", "openai-completions"), None);
     }
 
     #[test]

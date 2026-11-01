@@ -156,6 +156,12 @@ pub fn registry_cache_file() -> Option<PathBuf> {
     file("registry-cache.json")
 }
 
+/// `~/.pi-flash/catalog-cache.json` — 模型目录 + 扩展命令缓存（010-启动.md
+/// §4.1：startup 装载 + runtime 答复回写；2026-11-01 回归）。
+pub fn catalog_cache_file() -> Option<PathBuf> {
+    file("catalog-cache.json")
+}
+
 /// `~/.pi-flash/openrouter-cache.json` — OpenRouter 全量目录缓存（openrouter.rs，
 /// 「自动填参」用；TTL 1h，网络失败回陈旧）。
 pub fn openrouter_cache_file() -> Option<PathBuf> {

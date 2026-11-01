@@ -175,10 +175,11 @@ fn cleanup_caches(log: &mut Vec<String>) {
     let Some(dir) = paths::ensure_dir() else {
         return;
     };
+    // catalog-cache.json 不在清理清单（2026-11-01 缓存层回归：它又是
+    // 有效数据了——010-启动.md §4.1）
     for path in [
         dir.join("provider-catalog.json"),
         dir.join("models-dev-cache.json"),
-        dir.join("catalog-cache.json"),
     ] {
         if path.exists() && std::fs::remove_file(&path).is_ok() {
             if let Some(name) = path.file_name() {

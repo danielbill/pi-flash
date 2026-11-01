@@ -50,6 +50,13 @@ pub struct RegistryProvider {
     pub has_oauth: bool,
     #[serde(rename = "oauthName", default)]
     pub oauth_name: Option<String>,
+    /// SDK 注册表里的baseUrl（provider 对象直带；2026-11-01 起提取——
+    /// 内置商「获取模型」端点由此派生，替代 13 条手写白名单表）。
+    #[serde(rename = "baseUrl", default)]
+    pub base_url: Option<String>,
+    /// 该商模型的协议形状（取首模型的 api；模型级覆盖以模型条目为准）。
+    #[serde(default)]
+    pub api: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -174,6 +181,20 @@ fn cache_file() -> Option<std::path::PathBuf> {
     paths::registry_cache_file()
 }
 
+/// 内置商「获取模型」端点（SDK 派生）：该商的 (baseUrl, api) → 机械拼装。
+/// 无 baseUrl / 空 base 的商（云专属鉴权类）→ None。
+pub fn models_list_target(
+    dump: &RegistryDump,
+    provider: &str,
+) -> Option<(String, crate::probe::Auth)> {
+    let p = dump.providers.iter().find(|p| p.id == provider)?;
+    let base = p.base_url.as_deref()?.trim();
+    if base.is_empty() {
+        return None;
+    }
+    crate::probe::models_list_url(base, p.api.as_deref().unwrap_or(""))
+}
+
 /// 读盘上缓存；vendor VERSION 不一致（或字段缺失）视为失效。旧格式缓存
 /// （无 `models` 键或非静态 dump——无 `staticOnly` 标记，serde default 为
 /// false）同样失效——重 dump 补全。
@@ -185,6 +206,8 @@ pub fn read_cache() -> Option<RegistryDump> {
         || !dump.static_only
         || dump.providers.is_empty()
         || dump.models.is_empty()
+        // 2026-11-01 前的缓存不带 baseUrl（内置商拉取端点派生源）→ 重 dump
+        || dump.providers.iter().all(|p| p.base_url.is_none())
     {
         return None;
     }
@@ -218,15 +241,19 @@ const rt = await ModelRuntime.create({
     refreshOnCreate: false,
     credentials: new ReadOnlyAuthStorage(),
 });
+const allModels = rt.getModels();
+const firstApi = {};
+for (const m of allModels) if (!firstApi[m.provider]) firstApi[m.provider] = m.api ?? null;
 const providers = rt.getProviders().map((p) => ({
     id: p.id,
     name: p.name,
     hasApiKeyLogin: Boolean(p.auth && p.auth.apiKey && p.auth.apiKey.login),
     hasOAuth: Boolean(p.auth && p.auth.oauth),
     oauthName: (p.auth && p.auth.oauth && p.auth.oauth.name) || null,
+    baseUrl: p.baseUrl ?? null,
+    api: firstApi[p.id] ?? null,
 }));
 const counts = {};
-const allModels = rt.getModels();
 for (const m of allModels) counts[m.provider] = (counts[m.provider] || 0) + 1;
 const models = allModels.map((m) => ({
     id: m.id,
@@ -351,6 +378,55 @@ mod tests {
     }
 
     #[test]
+    fn models_list_target_derives_from_sdk_base_url() {
+        // 带 baseUrl/api 的 provider：机械拼装端点（zai-coding-cn 实测形状）
+        let d: RegistryDump = serde_json::from_str(
+            r#"{
+                "version": "1.4.0",
+                "providers": [
+                    { "id": "zai-coding-cn", "name": "Z.AI Coding CN",
+                      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+                      "api": "openai-completions" },
+                    { "id": "minimax-cn", "name": "MiniMax CN",
+                      "baseUrl": "https://api.minimaxi.com/anthropic",
+                      "api": "anthropic-messages" },
+                    { "id": "amazon-bedrock", "name": "Bedrock" }
+                ]
+            }"#,
+        )
+        .unwrap();
+        // models_list_target：有 baseUrl → 端点；无 baseUrl（bedrock 类）→ None
+        let t = models_list_target(&d, "zai-coding-cn").unwrap();
+        assert!(t.0.ends_with("/v4/models"));
+        assert_eq!(t.1, crate::probe::Auth::Bearer);
+        let t2 = models_list_target(&d, "minimax-cn").unwrap();
+        assert!(t2.0.ends_with("/anthropic/v1/models?limit=1000"));
+        assert_eq!(t2.1, crate::probe::Auth::Anthropic);
+        assert!(models_list_target(&d, "amazon-bedrock").is_none());
+        assert!(models_list_target(&d, "no-such").is_none());
+    }
+
+    #[test]
+    fn cache_without_any_base_url_is_invalid_format() {
+        // 2026-11-01 前的缓存 providers 全员无 baseUrl → read_cache 视为
+        // 旧格式失效（重 dump 自愈）。这里断言判据本身
+        let old: RegistryDump = serde_json::from_str(
+            r#"{ "version": "1.4.0", "staticOnly": true,
+                "providers": [ { "id": "zai", "name": "ZAI" } ],
+                "models": [ { "id": "m", "provider": "zai" } ] }"#,
+        )
+        .unwrap();
+        assert!(old.providers.iter().all(|p| p.base_url.is_none()));
+        let new_: RegistryDump = serde_json::from_str(
+            r#"{ "version": "1.4.0", "staticOnly": true,
+                "providers": [ { "id": "zai", "name": "ZAI", "baseUrl": "https://x" } ],
+                "models": [ { "id": "m", "provider": "zai" } ] }"#,
+        )
+        .unwrap();
+        assert!(!new_.providers.iter().all(|p| p.base_url.is_none()));
+    }
+
+    #[test]
     fn old_cache_without_models_key_parses_to_empty() {
         // 旧格式缓存（本改动之前落盘）没有 models 键：serde default 解析成功
         // 但 models 为空——read_cache 按失效处理，重 dump 补全
@@ -380,6 +456,8 @@ mod tests {
     fn oauth_display_name_overrides_then_oauth_name_then_name() {
         let mut d = sample();
         let codex = RegistryProvider {
+            base_url: None,
+            api: None,
             id: "openai-codex".into(),
             name: "OpenAI Codex".into(),
             has_api_key_login: false,
