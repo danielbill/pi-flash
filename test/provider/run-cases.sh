@@ -143,6 +143,44 @@ else
   skip CASE4 "自动填参（deepseek-chat 行未落盘：CASE3 追加分支失效）"
 fi
 
+# ---------- CASE4B 家族名 id → 版本名检索键（051：具体型号优先于别名聚合）----------
+# 官方 /models 的 id 常是**家族名**（DeepSeek 的 deepseek-flash，以后每个 flash
+# 版本都叫它），版本信息只在 name 里。自动填参必须用 name 派生的检索键拿到
+# 具体型号参数，而不是「…-latest」别名聚合值（实测 ctx 1048576 /
+# maxTokens 393216 vs 别名 943718）；落盘 id/name 一律保持官方列表值。
+node -e "
+const fs=require('fs');const p='$MODELS';
+const d=JSON.parse(fs.readFileSync(p,'utf8'));
+const e=d.providers['pf-test-ds'];
+e.models=(e.models||[]).filter(m=>m.id!=='deepseek-flash');
+e.models.push({id:'deepseek-flash',name:'DeepSeek-V4.1-Flash',reasoning:true,input:['text']});
+fs.writeFileSync(p,JSON.stringify(d,null,2));" 2>/dev/null
+FAMILY_IX=$(ds_models)
+FAMILY_IX=$((FAMILY_IX-1))
+mj settings.mj_select --arg section="mj:p:pf-test-ds"
+"$PUI" wait --path settings.section --eq "mj:p:pf-test-ds" --timeout 10
+mj settings.mj_select --arg section="mj:m:pf-test-ds:$FAMILY_IX"
+if "$PUI" wait --path settings.mj_id_value --eq deepseek-flash --timeout 10 >/dev/null 2>&1; then
+  mj settings.mj_autofill
+  FILL_IX=0
+  for i in $(seq 1 30); do
+    if node -e "
+const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
+const m=(((d.providers||{})['pf-test-ds']||{}).models||[]).find(x=>x.id==='deepseek-flash')||{};
+process.exit(m.maxTokens===393216?0:1)" 2>/dev/null; then FILL_IX=1; break; fi
+    sleep 2
+  done
+  check CASE4B "填参取具体型号参数（maxTokens=393216 非别名 943718）" test "$FILL_IX" = 1
+  check CASE4B "保存的 id 仍是官方家族名（不被查询键替换）" test "$(jm_get '.providers["pf-test-ds"].models.find(m=>m.id==="deepseek-flash").id')" = '"deepseek-flash"'
+  check CASE4B "官方 name 不被泛化标签冲掉" test "$(jm_get '.providers["pf-test-ds"].models.find(m=>m.id==="deepseek-flash").name')" = '"DeepSeek-V4.1-Flash"'
+  mj settings.mj_model_close
+  # 收尾：等异步回填彻底静止（section 回到商详情、填参态 Idle），后续 CASE
+  # 不受本段的网络尾巴影响
+  "$PUI" wait --path settings.section --eq "mj:p:pf-test-ds" --timeout 10 >/dev/null 2>&1 || true
+else
+  skip CASE4B "家族名 id 填参（mj_id_value 未回显 deepseek-flash）"
+fi
+
 # ---------- CASE5 新增智谱商（openai 形状 /v4，有真目录）----------
 mj settings.mj_new
 mj settings.mj_form --arg name=pf-test-zg --arg base="https://open.bigmodel.cn/api/coding/paas/v4" --arg key="$ZG_KEY"
@@ -164,13 +202,26 @@ process.exit(JSON.parse(process.argv[1]).error?1:0)" "$(snap)"
 check CASE6 "刷新后目录仍可用（模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_models)"
 
 # ---------- CASE7 改名（P2-4：内存目录同步）----------
-mj settings.mj_form --arg name=pf-test-zg-rn
-mj settings.mj_save
-# 偶发护栏：save 极偶尔不生效（疑似与前一网络 op 的异步回填竞态），重试一次
-if ! "$PUI" wait --path settings.section --eq "mj:p:pf-test-zg-rn" --timeout 10 >/dev/null 2>&1; then
+# 前置等待：上一段刷新目录是异步写盘（PF 现读现写），刚写完就改名会撞在
+# 「表单被重建 → save 拿到旧名」的窗口上（本套件原有的偶发护栏即此原因）。
+# 改为确定性重试：每次重填 name 后再存，最多三次。
+SETTLED=0
+for i in $(seq 1 10); do
+  if node -e "
+const j=JSON.parse(process.argv[1]);
+process.exit(j.mj_fill==='Idle'&&!String(j.mj_speed||'').includes('Running')&&!j.error?0:1)" "$(snap)" 2>/dev/null; then SETTLED=1; break; fi
+  sleep 2
+done
+RENAMED=0
+for attempt in 1 2 3; do
+  mj settings.mj_form --arg name=pf-test-zg-rn
   mj settings.mj_save
-fi
-check CASE7 "section 切到新名" "$PUI" wait --path settings.section --eq "mj:p:pf-test-zg-rn" --timeout 10
+  if "$PUI" wait --path settings.section --eq "mj:p:pf-test-zg-rn" --timeout 10 >/dev/null 2>&1; then
+    RENAMED=1; break
+  fi
+  sleep 2
+done
+check CASE7 "section 切到新名" test "$RENAMED" = 1
 check CASE7 "磁盘改名完成" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit((d.providers||{})['pf-test-zg-rn']&&!(d.providers||{})['pf-test-zg']?0:1)"

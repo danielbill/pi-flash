@@ -23,6 +23,7 @@ pub mod json;
 pub mod market;
 pub mod mcp;
 pub mod migrate_0421;
+pub mod model_ref;
 pub mod model_test;
 pub mod models_json;
 pub mod openrouter;

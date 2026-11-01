@@ -453,11 +453,21 @@ impl Chat {
     /// 否则是 pi 的内置模型 → 覆盖模式（modelOverrides）。
     pub(crate) fn mj_open_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
         let doc = Self::mj_doc();
-        let ix = pi_link::models_json::provider_entry(&doc, &provider)
+        let models = pi_link::models_json::provider_entry(&doc, &provider)
             .map(pi_link::models_json::provider_models)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let field = mj_field;
+        // 先按 id 精确找；找不到再认「同一模型的另一种写法」（忽略大小写 /
+        // slug 等价 / 目录拿 name 当 id）——左右两个列表点同一行必须落到同一
+        // 条目，否则会掉进只读覆盖视图
+        let ix = models
             .iter()
-            .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(id.as_str()));
+            .position(|m| field(m, "id") == id)
+            .or_else(|| {
+                models.iter().position(|m| {
+                    pi_link::model_ref::matches_ref(field(m, "id"), field(m, "name"), &id)
+                })
+            });
         match ix {
             Some(ix) => self.mj_select(format!("mj:m:{provider}:{ix}"), cx),
             None => self.mj_select(override_section(&provider, &id), cx),
@@ -879,12 +889,33 @@ impl Chat {
         let Some(model) = entry.get("models").and_then(|m| m.get(ix)).cloned() else {
             return;
         };
-        let query = model
+        let id = model
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if query.is_empty() {
+        // 版本名：账本条目优先，缺则回落内存目录里同商的官方 name。官方 id
+        // 常常只是**家族名**（DeepSeek 的 deepseek-flash，以后每个 flash 版本
+        // 都叫它），目录里只有别名聚合参数；版本名才落到具体型号的真值。
+        // 两个检索键并列交给 openrouter 裁决（具体型号 > 别名），id 本身命中
+        // 具体型号时行为与旧版完全一致（见 `model_ref::query_candidates`）。
+        let mut name = model
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() && !id.is_empty() {
+            if let Some(m) = self
+                .catalog_for(self.project())
+                .into_iter()
+                .find(|m| m.provider == provider && m.id == id)
+            {
+                name = m.name;
+            }
+        }
+        let queries = pi_link::model_ref::query_candidates(&id, &name);
+        if queries.is_empty() {
             self.mc_set_error(tr("custom_models.model_id_required"), cx);
             return;
         }
@@ -897,11 +928,11 @@ impl Chat {
         cx.notify();
         let p_bg = provider.clone();
         let b_bg = base_url.clone();
-        let q_bg = query.clone();
+        let q_bg = queries.clone();
         cx.spawn(async move |this, cx| {
             let resolved = cx
                 .background_executor()
-                .spawn(async move { pi_link::openrouter::resolve(&p_bg, &b_bg, &q_bg) })
+                .spawn(async move { pi_link::openrouter::resolve_many(&p_bg, &b_bg, &q_bg) })
                 .await;
             // 目录无此 id 是常态错误（本地化文案）；网络错带原文
             let shown = match &resolved {
@@ -1005,6 +1036,11 @@ fn mj_parse_section(section: &str) -> (String, Option<usize>) {
         return (name.to_string(), None);
     }
     (String::new(), None)
+}
+
+/// 模型条目里某个字符串键（缺 / 非字符串 = 空串）。
+fn mj_field<'a>(model: &'a serde_json::Value, key: &str) -> &'a str {
+    model.get(key).and_then(|v| v.as_str()).unwrap_or("")
 }
 
 /// 空串删除可选字符串键，其余写入（保序）。

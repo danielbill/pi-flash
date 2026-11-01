@@ -292,13 +292,19 @@ fn pick<'a>(entries: &'a [Entry], q: &str, hints: &[String]) -> Option<&'a Entry
     if let Some(e) = entries.iter().find(|e| e.id == q) {
         return Some(e);
     }
-    let q_slug = q.rsplit('/').next().unwrap_or(q);
-    let q_base = base_slug(q_slug);
+    let q_slug = crate::model_ref::slugify(q.rsplit('/').next().unwrap_or(q));
+    if q_slug.is_empty() {
+        return None;
+    }
+    let q_base = base_slug(&q_slug);
+    // 目录侧同样走 slug 规范化：大写 id（GLM-5.3-Flash）、下划线/空格形态
+    // 与查询键等价，不再因大小写/分隔符错失命中
+    let norm = |id: &str| crate::model_ref::slugify(slug_of(id));
     let cand: Vec<&Entry> = entries
         .iter()
         .filter(|e| {
-            let s = slug_of(&e.id);
-            s == q_slug || base_slug(s) == q_base || alias_base_slug(s) == Some(q_base)
+            let s = norm(&e.id);
+            s == q_slug || base_slug(&s) == q_base || alias_base_slug(&s) == Some(q_base)
         })
         .collect();
     if cand.is_empty() {
@@ -433,20 +439,31 @@ fn concrete_of_alias(e: &Entry) -> Option<Entry> {
     fetch_model(a, s).ok()
 }
 
-/// 解析一个模型（阻塞，供后台线程）：query 自带 author → 单模型直查；
+/// 解析一个检索键（阻塞，供后台线程）：query 自带 author → 单模型直查；
 /// author 可从 provider 名/baseUrl 推断 → 仍单模型直查；否则全量列表反查
 /// （783KB，走缓存）。命中别名通配条目时一律顺着 alias_target 落到具体型号。
-pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, FillError> {
+///
+/// 返回值第二项 = 「只拿到别名」（具体型号取不到时的兜底命中）——多候选
+/// 裁决靠它区分**具体型号 > 别名**。
+fn resolve_one(provider: &str, base_url: &str, query: &str) -> Result<(Entry, bool), FillError> {
     let q = normalize_query(query);
     if q.is_empty() {
         return Err(FillError::NoMatch);
     }
     let hints = author_hints(provider, base_url);
+    // 别名 → (具体型号 or 别名本身, 是否停留别名)
+    let settle = |e: Entry| match is_alias(&e.id) {
+        false => (e, false),
+        true => match concrete_of_alias(&e) {
+            Some(c) => (c, false),
+            None => (e, true),
+        },
+    };
     // 1) query 自带 author（"deepseek/deepseek-v4-pro"）
     if let Some((a, s)) = q.split_once('/') {
         if !a.is_empty() && !s.is_empty() {
             if let Ok(e) = fetch_model(a, s) {
-                return Ok(concrete_of_alias(&e).unwrap_or(e));
+                return Ok(settle(e));
             }
         }
     }
@@ -455,10 +472,10 @@ pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, Fil
     //    404 不算错，落全量反查兜底
     for a in &hints {
         if let Ok(e) = fetch_model(a, &q) {
-            return Ok(concrete_of_alias(&e).unwrap_or(e));
+            return Ok(settle(e));
         }
         if let Ok(e) = fetch_model(&format!("~{a}"), &format!("{q}-latest")) {
-            return Ok(concrete_of_alias(&e).unwrap_or(e));
+            return Ok(settle(e));
         }
     }
     // 3) 全量反查：别名命中 → 目录内直接找 alias_target 指向的具体条目
@@ -470,12 +487,66 @@ pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, Fil
     if is_alias(&e.id) {
         if let Some(target) = e.alias_target.as_deref() {
             if let Some(concrete) = entries.iter().find(|x| x.id == target) {
-                return Ok(concrete.clone());
+                return Ok((concrete.clone(), false));
             }
         }
-        return Ok(concrete_of_alias(&e).unwrap_or(e));
+        return Ok(settle(e));
     }
-    Ok(e)
+    Ok((e, false))
+}
+
+/// 多候选裁决：**具体型号优先**（按候选顺序取第一个具体命中）；全部只拿到
+/// 别名（alias_target 追不到）才用第一个别名命中。网络错只在一条都拿不到
+/// 时上报（有命中就照填，别让一次抖动作废整次填参）。
+fn best_hit(hits: Vec<(Entry, bool)>, last_net: Option<FillError>) -> Result<Entry, FillError> {
+    let mut alias_fallback: Option<Entry> = None;
+    for (e, via_alias) in hits {
+        if !via_alias {
+            return Ok(e);
+        }
+        if alias_fallback.is_none() {
+            alias_fallback = Some(e);
+        }
+    }
+    match alias_fallback {
+        Some(e) => Ok(e),
+        None => Err(last_net.unwrap_or(FillError::NoMatch)),
+    }
+}
+
+/// 解析一个模型（单检索键；保留给已有调用与用例）。
+pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, FillError> {
+    resolve_many(provider, base_url, &[query.to_string()])
+}
+
+/// 解析一组检索键（【自动填参】唯一入口，候选见
+/// [`crate::model_ref::query_candidates`]）。官方 id 常常只是家族名（参数
+/// 只有别名聚合值），版本名派生的 slug 才能拿到具体型号——候选并列交给
+/// 目录裁决，UI 与落盘 id 都不受影响。
+pub fn resolve_many(
+    provider: &str,
+    base_url: &str,
+    queries: &[String],
+) -> Result<Entry, FillError> {
+    let mut hits: Vec<(Entry, bool)> = Vec::new();
+    let mut last_net: Option<FillError> = None;
+    for q in queries {
+        if normalize_query(q).is_empty() {
+            continue;
+        }
+        match resolve_one(provider, base_url, q) {
+            // 具体型号到手即定胜（剩下的候选不必再发请求）
+            Ok((e, false)) => {
+                hits.push((e, false));
+                break;
+            }
+            // 只是别名兜底（具体型号追不到）→ 留着，继续试后面的候选
+            Ok((e, true)) => hits.push((e, true)),
+            Err(FillError::NoMatch) => {}
+            Err(e) => last_net = Some(e),
+        }
+    }
+    best_hit(hits, last_net)
 }
 
 // ---- 回填 --------------------------------------------------------------------
@@ -615,6 +686,80 @@ mod tests {
             "deepseek/deepseek-chat:free"
         );
         assert!(pick(&entries, "gpt-9", &[]).is_none());
+    }
+
+    #[test]
+    fn best_hit_prefers_concrete_over_alias_in_candidate_order() {
+        let mk = |id: &str| Entry {
+            id: id.into(),
+            name: id.into(),
+            ..Default::default()
+        };
+        // 候选 1（官方家族名 deepseek-flash）只落到别名，候选 2（版本名
+        // slug）命中具体型号 → 具体型号胜出，别名不抢
+        let hits = vec![
+            (mk("~deepseek/deepseek-flash-latest"), true),
+            (mk("deepseek/deepseek-v4.1-flash"), false),
+        ];
+        assert_eq!(
+            best_hit(hits, None).unwrap().id,
+            "deepseek/deepseek-v4.1-flash"
+        );
+        // 全部只能拿到别名 → 用第一个别名兜底（别名参数仍可填）
+        let hits = vec![
+            (mk("~deepseek/deepseek-flash-latest"), true),
+            (mk("~deepseek/deepseek-pro-latest"), true),
+        ];
+        assert_eq!(
+            best_hit(hits, None).unwrap().id,
+            "~deepseek/deepseek-flash-latest"
+        );
+        // 零命中：有网络错报网络错（UI 显示原文），否则 NoMatch
+        assert_eq!(best_hit(Vec::new(), None), Err(FillError::NoMatch));
+        assert!(matches!(
+            best_hit(Vec::new(), Some(FillError::Net("boom".into()))),
+            Err(FillError::Net(_))
+        ));
+    }
+
+    #[test]
+    fn query_candidates_ladder_feeds_resolve_many() {
+        // 自动填参链路：官方 id + 版本名 slug（网络部分由 best_hit 裁决覆盖）
+        let qs = crate::model_ref::query_candidates("deepseek-flash", "DeepSeek-V4.1-Flash");
+        assert_eq!(qs, vec!["deepseek-flash", "deepseek-v4.1-flash"]);
+        // 版本名 slug 在目录里命中具体型号，而家族名只命中别名——两者
+        // 并列交给目录裁决（本用例只校候选形状 + pick 对版本名的命中）
+        let mk = |id: &str| Entry {
+            id: id.into(),
+            name: id.into(),
+            ..Default::default()
+        };
+        let entries = vec![
+            mk("~deepseek/deepseek-flash-latest"),
+            mk("deepseek/deepseek-v4.1-flash"),
+        ];
+        assert_eq!(
+            pick(&entries, &qs[1], &[]).unwrap().id,
+            "deepseek/deepseek-v4.1-flash"
+        );
+    }
+
+    #[test]
+    fn pick_matches_uppercase_and_space_separated_ids() {
+        let mk = |id: &str| Entry {
+            id: id.into(),
+            name: id.into(),
+            ..Default::default()
+        };
+        let entries = vec![mk("zai-org/GLM-5.3-Flash"), mk("Qwen 2.5 72B Instruct")];
+        assert_eq!(
+            pick(&entries, "glm-5.3-flash", &[]).unwrap().id,
+            "zai-org/GLM-5.3-Flash"
+        );
+        assert_eq!(
+            pick(&entries, "qwen-2.5-72b-instruct", &[]).unwrap().id,
+            "Qwen 2.5 72B Instruct"
+        );
     }
 
     #[test]
