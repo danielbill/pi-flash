@@ -37,6 +37,10 @@ pub struct Entry {
     pub max_tokens: Option<u64>,
     #[serde(default)]
     pub cost: Cost,
+    /// 「最新版」别名通配条目（"~author/…-latest"）：参数齐全但名称泛化
+    /// （"… Flash Latest"），回填时名称不落账本（保留用户/测速落的具体名）。
+    #[serde(default)]
+    pub alias: bool,
 }
 
 /// 每百万价格（缺项 = None）。
@@ -133,6 +137,7 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         cache_read: price_per_mtok(p.as_ref().and_then(|x| x.get("internal_cache_read"))),
         cache_write: price_per_mtok(p.as_ref().and_then(|x| x.get("internal_cache_write"))),
     };
+    let alias = is_alias(&id);
     Some(Entry {
         id,
         name,
@@ -141,6 +146,7 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         context_window,
         max_tokens,
         cost,
+        alias,
     })
 }
 
@@ -243,6 +249,20 @@ fn base_slug(slug: &str) -> &str {
     slug.split(':').next().unwrap_or(slug)
 }
 
+/// 别名通配条目（"~deepseek/deepseek-flash-latest"）：OpenRouter 的「最新
+/// 版」目录项，id 带前导 `~`、slug 以 "-latest" 结尾，参数齐全（ctx /
+/// maxTokens / 能力）但名称泛化——厂商自家命名（如 DeepSeek 的
+/// deepseek-flash）在目录里常常只有这个形态，具体型号是另一个 id。
+fn is_alias(id: &str) -> bool {
+    id.starts_with('~') && slug_of(id).ends_with("-latest")
+}
+
+/// 别名 slug 剥 "-latest"（"deepseek-flash-latest" → "deepseek-flash"）。
+fn alias_base_slug(slug: &str) -> Option<&str> {
+    let base = slug.strip_suffix("-latest")?;
+    (!base.is_empty()).then_some(base)
+}
+
 fn normalize_query(s: &str) -> String {
     s.trim()
         .to_lowercase()
@@ -251,7 +271,8 @@ fn normalize_query(s: &str) -> String {
 }
 
 /// 裸 id / 全 id → 目录条目。author 命中提示的候选优先；同级里无变体
-/// （不带 ":free" 等）优先。
+/// （不带 ":free" 等）优先；**具体型号优先于别名通配**——别名只在没有任何
+/// 具体命中时兜底（参数齐全，填得全）。
 fn pick<'a>(entries: &'a [Entry], q: &str, hints: &[String]) -> Option<&'a Entry> {
     if q.is_empty() {
         return None;
@@ -265,30 +286,37 @@ fn pick<'a>(entries: &'a [Entry], q: &str, hints: &[String]) -> Option<&'a Entry
         .iter()
         .filter(|e| {
             let s = slug_of(&e.id);
-            s == q_slug || base_slug(s) == q_base
+            s == q_slug || base_slug(s) == q_base || alias_base_slug(s) == Some(q_base)
         })
         .collect();
     if cand.is_empty() {
         return None;
     }
-    // 同级优先序：无变体 > 变体；再在同级里 hint author 优先（裸 id 查询
-    // 默认指正价模型，:free 等变体只在显式写出时才命中）
-    if let Some(e) = cand
-        .iter()
-        .find(|e| !slug_of(&e.id).contains(':') && hints.iter().any(|h| h == &author_of(&e.id)))
-    {
-        return Some(e);
+    // 具体型号走原四级优先序；全部候选都是别名时同一套序兜底
+    let concrete: Vec<&Entry> = cand.iter().copied().filter(|e| !is_alias(&e.id)).collect();
+    let tiered = |pool: &[&'a Entry]| -> Option<&'a Entry> {
+        if let Some(e) = pool
+            .iter()
+            .find(|e| !slug_of(&e.id).contains(':') && hints.iter().any(|h| h == &author_of(&e.id)))
+        {
+            return Some(e);
+        }
+        if let Some(e) = pool.iter().find(|e| !slug_of(&e.id).contains(':')) {
+            return Some(e);
+        }
+        if let Some(e) = pool
+            .iter()
+            .find(|e| hints.iter().any(|h| h == &author_of(&e.id)))
+        {
+            return Some(e);
+        }
+        pool.first().copied()
+    };
+    if !concrete.is_empty() {
+        tiered(&concrete)
+    } else {
+        tiered(&cand)
     }
-    if let Some(e) = cand.iter().find(|e| !slug_of(&e.id).contains(':')) {
-        return Some(e);
-    }
-    if let Some(e) = cand
-        .iter()
-        .find(|e| hints.iter().any(|h| h == &author_of(&e.id)))
-    {
-        return Some(e);
-    }
-    cand.first().copied()
 }
 
 // ---- 网络 --------------------------------------------------------------------
@@ -402,9 +430,14 @@ pub fn resolve(provider: &str, base_url: &str, query: &str) -> Result<Entry, Fil
             }
         }
     }
-    // 2) author 推断命中 → 裸 id 当 slug 试
+    // 2) author 推断命中 → 裸 id 当 slug 试；再试 "-latest" 别名形态（厂商
+    //    自家命名常只有别名条目，其 author 是 "~author"——实测不带 ~ 404）。
+    //    404 不算错，落全量反查兜底
     for a in &hints {
         if let Ok(e) = fetch_model(a, &q) {
+            return Ok(e);
+        }
+        if let Ok(e) = fetch_model(&format!("~{a}"), &format!("{q}-latest")) {
             return Ok(e);
         }
     }
@@ -448,14 +481,15 @@ pub fn fill_from_entry(model: &mut Value, e: &Entry) -> usize {
         );
     }
     put("reasoning", Value::Bool(e.reasoning), map);
-    // 以下页面不可见：只填空
+    // 以下页面不可见：只填空。别名通配条目名称泛化（"… Flash Latest"），
+    // 不落账本——保留用户手起名 / 测速目录落的具体型号名
     let name_empty = map
         .get("name")
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .trim()
         .is_empty();
-    if name_empty && !e.name.is_empty() {
+    if name_empty && !e.name.is_empty() && !e.alias {
         put("name", Value::String(e.name.clone()), map);
     }
     if let Some(cost) = map
@@ -553,6 +587,42 @@ mod tests {
     }
 
     #[test]
+    fn pick_resolves_latest_alias_with_concrete_preference() {
+        let mk = |id: &str| Entry {
+            id: id.into(),
+            name: id.into(),
+            ..Default::default()
+        };
+        let entries = vec![
+            mk("deepseek/deepseek-v4-flash"),
+            mk("~deepseek/deepseek-flash-latest"),
+            mk("deepseek/deepseek-v4.1-flash"),
+        ];
+        // 厂商自家命名（deepseek-flash）目录里只有别名通配 → 兜底命中别名，
+        // 别名条目参数齐全（ctx/maxTokens 由单测外的 parse 实测覆盖）
+        assert_eq!(
+            pick(&entries, "deepseek-flash", &[]).unwrap().id,
+            "~deepseek/deepseek-flash-latest"
+        );
+        // 具体型号存在时优先具体，别名不抢
+        assert_eq!(
+            pick(&entries, "deepseek-v4-flash", &[]).unwrap().id,
+            "deepseek/deepseek-v4-flash"
+        );
+        assert_eq!(
+            pick(&entries, "deepseek-v4.1-flash", &[]).unwrap().id,
+            "deepseek/deepseek-v4.1-flash"
+        );
+        // 别名 id 显式写出 → 精确命中
+        assert_eq!(
+            pick(&entries, "~deepseek/deepseek-flash-latest", &[])
+                .unwrap()
+                .id,
+            "~deepseek/deepseek-flash-latest"
+        );
+    }
+
+    #[test]
     fn fill_overwrites_visible_fills_blank_invisible() {
         let e = parse_entry(&glm_entry()).unwrap();
         let mut model = json!({
@@ -595,5 +665,17 @@ mod tests {
             vec!["z-ai"]
         );
         assert!(author_hints("whatever", "https://example.com/v1").is_empty());
+    }
+
+    #[test]
+    fn fill_skips_generic_name_for_alias_entries() {
+        let mut e = parse_entry(&glm_entry()).unwrap();
+        e.alias = true;
+        let mut model = json!({ "id": "deepseek-flash" });
+        fill_from_entry(&mut model, &e);
+        // 别名名称泛化（"… Flash Latest"）不落账本；ctx/maxTokens 照填
+        assert!(model.get("name").is_none());
+        assert_eq!(model["contextWindow"], 1048576);
+        assert_eq!(model["maxTokens"], 943718);
     }
 }
