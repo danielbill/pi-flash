@@ -312,6 +312,81 @@ impl Chat {
         cx.notify();
     }
 
+    /// 内置商拉取目录落 models.json（2026-11-01，「发送无效」根治）：拉到的
+    /// 模型 upsert 进 `providers.<内置id>.models[]`——pi 的 applyModelsJson
+    /// 对内置商条目是同 id 替换、新 id 追加、静态模型保留（合法覆盖写法，
+    /// 042-1 文档明载），落了 pi 才能解析/发送；catalog-cache 只是展示层，
+    /// 不落这里模型选了也发不出去。保留既有条目（手调过的不覆盖）。
+    fn merge_fetched_builtin_into_models_json(
+        &mut self,
+        provider: &str,
+        catalog: &[pi_link::protocol::ModelInfo],
+        api_shape: &str,
+        base_url: &str,
+    ) {
+        if catalog.is_empty() {
+            return;
+        }
+        // modelFromJson 硬校验：definition 无 api / 无 baseUrl（且静态表无
+        // 同 id defaults 兜底）直接 throw——两级都必须写；调用方从注册表
+        // dump 取（启动 sweep 时 Chat.provider_registry 还没装载，不能读它）
+        if api_shape.is_empty() || base_url.is_empty() {
+            return;
+        }
+        let base_url = base_url.trim();
+        let api_shape = api_shape.trim();
+        let mut doc = match pi_link::models_json::read() {
+            Ok(d) => d,
+            Err(_) => serde_json::json!({ "providers": {} }),
+        };
+        let mut entry = pi_link::models_json::provider_entry(&doc, provider)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let existing: Vec<String> = pi_link::models_json::provider_models(&entry)
+            .into_iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        let mut fresh: Vec<serde_json::Value> = Vec::new();
+        for m in catalog {
+            if existing.contains(&m.id) {
+                continue;
+            }
+            let mut obj = serde_json::Map::new();
+            obj.insert("id".into(), serde_json::Value::String(m.id.clone()));
+            obj.insert(
+                "api".into(),
+                serde_json::Value::String(api_shape.to_string()),
+            );
+            obj.insert(
+                "baseUrl".into(),
+                serde_json::Value::String(base_url.to_string()),
+            );
+            if !m.name.is_empty() {
+                obj.insert("name".into(), serde_json::Value::String(m.name.clone()));
+            }
+            if let Some(cw) = m.context_window {
+                obj.insert("contextWindow".into(), serde_json::json!(cw));
+            }
+            let mut model = serde_json::Value::Object(obj);
+            // pi 运行时要求完整形状（缺 input/reasoning/cost 聊天即崩）
+            pi_link::models_json::ensure_model_defaults(&mut model);
+            fresh.push(model);
+        }
+        if fresh.is_empty() {
+            return;
+        }
+        if !entry.get("models").is_some_and(|m| m.is_array()) {
+            entry["models"] = serde_json::json!([]);
+        }
+        if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
+            arr.extend(fresh);
+        }
+        pi_link::models_json::upsert_provider(&mut doc, provider, entry);
+        if let Err(e) = pi_link::models_json::save(&doc) {
+            eprintln!("[models] builtin catalog merge into models.json failed: {e}");
+        }
+    }
+
     /// 内置商「获取模型」端点（2026-11-01 双源）：注册表 SDK 派生优先
     /// （40 家全覆盖，registry::models_list_target），回落 vendor pin 静态表
     /// （注册表缓存未就绪时兜底）。两者都拿不到 = SDK 没给 baseUrl
@@ -366,6 +441,7 @@ impl Chat {
         if targets.is_empty() {
             return;
         }
+        let sweep_dump = dump.clone();
         cx.spawn(async move |this, cx| {
             let outcome = cx
                 .background_executor()
@@ -393,7 +469,26 @@ impl Chat {
                 return;
             }
             let _ = this.update(cx, |c, cx| {
-                if crate::startup::merge_models(&mut c.pool.globals, &outcome) {
+                // 按 provider 分组落 models.json（pi 可解析/发送）+ 并进全局态
+                // + 回写 catalog-cache
+                let mut by_provider: std::collections::BTreeMap<
+                    String,
+                    Vec<pi_link::protocol::ModelInfo>,
+                > = Default::default();
+                for m in outcome {
+                    by_provider.entry(m.provider.clone()).or_default().push(m);
+                }
+                for (prov, catalog) in &by_provider {
+                    // sweep 的 dump 就在闭包里（启动期 Chat.provider_registry
+                    // 未装载，不能读它）
+                    let reg = sweep_dump.providers.iter().find(|p| &p.id == prov);
+                    let api = reg.and_then(|p| p.api.clone()).unwrap_or_default();
+                    let base = reg.and_then(|p| p.base_url.clone()).unwrap_or_default();
+                    c.merge_fetched_builtin_into_models_json(prov, catalog, &api, &base);
+                }
+                let flat: Vec<pi_link::protocol::ModelInfo> =
+                    by_provider.into_values().flatten().collect();
+                if crate::startup::merge_models(&mut c.pool.globals, &flat) {
                     let _ = crate::startup::write_cache(
                         &c.pool.globals.models,
                         &c.pool.globals.commands,
@@ -458,10 +553,23 @@ impl Chat {
                 let state = match &outcome {
                     pi_link::probe::ProbeOutcome::Ok { catalog, .. } if !catalog.is_empty() => {
                         // 不再落 provider-catalog 副本：模型一律以 pi 目录为准；
-                        // 先按磁盘重建（refresh 内部会清该商旧条目），**再**把
+                        // ① 落 models.json（pi 才能解析/发送，2026-11-01）
+                        // ② 先按磁盘重建（refresh 内部会清该商旧条目），**再**把
                         // 拉取结果并进 globals（顺序反了会被磁盘重建冲掉）+
-                        // 回写 catalog-cache（2026-11-01：手动拉取的结果同样
-                        // 持久，重启仍在）
+                        // ③ 回写 catalog-cache（手动拉取的结果同样持久）
+                        let reg = c
+                            .cfg
+                            .provider_registry
+                            .as_ref()
+                            .and_then(|d| d.providers.iter().find(|p| p.id == provider_bg));
+                        let api = reg.and_then(|p| p.api.clone()).unwrap_or_default();
+                        let base = reg.and_then(|p| p.base_url.clone()).unwrap_or_default();
+                        c.merge_fetched_builtin_into_models_json(
+                            &provider_bg,
+                            catalog,
+                            &api,
+                            &base,
+                        );
                         c.refresh_provider_catalog(&provider_bg);
                         let mut fetched = catalog.clone();
                         for m in fetched.iter_mut() {
