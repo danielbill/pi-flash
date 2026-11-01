@@ -253,13 +253,42 @@ impl Chat {
         self.plugin_command_fire_env(ix, &cmd, &env, window, cx);
     }
 
-    /// 该会话是否有「绑定中的服务实例」（闲置回收豁免判据）：
-    /// 注册表里有 token + 实例配置在位即算——绑定存在 = 轮询器必须活着。
+    /// 该会话是否有「绑定中的服务实例」（闲置回收豁免判据）：**两条通道都算**。
+    /// - 执行域（契约 v4 `contributes.service`）：注册表有 token + 实例配置在位；
+    /// - 挂载通道（契约 v3 `contributes.pi_extensions`）：会话挂载台账里挂着任一
+    ///   启用中插件的 pi 扩展——ext 进程就是通信/轮询本体。
+    ///
+    /// 挂载通道是 2026-11-01 补的漏：豁免原先只认执行域，而按用户 2026-10-30
+    /// 定案回滚到镜像协议的插件（pf-wxbot）只走挂载通道 → 永远不豁免 → 绑定的
+    /// **非活动**会话闲置满 `idle_cap` 即被回收，微信侧静默而镜像里绑定指针还在
+    /// → icon 假绿。这正是本豁免注释当年记的事故形态（2026-10-30「发消息收不
+    /// 到」），换了个挂载通道又复现。
     pub(crate) fn has_live_service(&self, key: &str, _cx: &mut gpui::Context<Self>) -> bool {
-        let Some(base) = pi_link::paths::dir() else {
+        if let Some(base) = pi_link::paths::dir()
+            && pi_link::service_ext::config_path_if_any(&base, key).is_some()
+        {
+            return true;
+        }
+        let Some(store) = pi_link::session_ext::store_path() else {
             return false;
         };
-        pi_link::service_ext::config_path_if_any(&base, key).is_some()
+        let mounts = pi_link::session_ext::read_for(&store, key);
+        if mounts.is_empty() {
+            return false;
+        }
+        let live: Vec<String> = self
+            .plugins
+            .plugins
+            .iter()
+            .filter(|e| !e.disabled && !e.manifest.pi_extensions.is_empty())
+            .flat_map(|e| {
+                e.manifest
+                    .pi_extensions
+                    .iter()
+                    .map(|rel| e.manifest.dir.join(rel).to_string_lossy().into_owned())
+            })
+            .collect();
+        mounts_overlap_live(&mounts, &live)
     }
 
     /// 摘除活跃运行时里本插件的 ext（attach 逆操作，90-9 §8）：evict/停用后
@@ -1137,4 +1166,68 @@ pub(crate) fn fn_bar_plugin_elements(
             .into_any_element()
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// 挂载通道的「存活扩展」判定（闲置回收豁免，见 Chat::has_live_service）
+// ---------------------------------------------------------------------------
+
+/// 路径归一：台账与清单两侧写法不保证一致（`C:\` / `C:/`、盘符与目录大小写），
+/// 字符串直比会把「已挂载」判成未挂载。Windows 文件系统大小写不敏感，全小写安全。
+fn norm_mount_path(p: &str) -> String {
+    // 92 = 反斜杠码位（写字符字面量在多种工具链转义层里容易被吞，用码位免歧义）
+    p.replace(char::from(92), "/").to_lowercase()
+}
+
+/// 会话挂载台账 ∩ 启用中插件的扩展路径。纯函数（单测面）：
+/// `mounts` = 台账里该会话的条目，`live` = 启用中插件声明的扩展绝对路径。
+fn mounts_overlap_live(mounts: &[String], live: &[String]) -> bool {
+    let live: Vec<String> = live.iter().map(|p| norm_mount_path(p)).collect();
+    mounts
+        .iter()
+        .map(|m| norm_mount_path(m))
+        .any(|m| live.iter().any(|l| *l == m))
+}
+
+#[cfg(test)]
+mod has_live_service_tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn mount_hit_exempts_session() {
+        // 真机形态：清单给反斜杠绝对路径，台账可能落正斜杠小写
+        let live = s(&[r"D:\ai_workspace\pi-flash\plugins\pf-wxbot\pi/index.mjs"]);
+        let mounts = s(&["d:/ai_workspace/pi-flash/plugins/pf-wxbot/pi/index.mjs"]);
+        assert!(
+            mounts_overlap_live(&mounts, &live),
+            "同一扩展的两种写法必须命中"
+        );
+    }
+
+    #[test]
+    fn unrelated_mounts_do_not_exempt() {
+        // 用户勾选的 scheme 源不是插件挂载，进程里没有轮询器，不构成豁免
+        let live = s(&["D:/pf/plugins/pf-wxbot/pi/index.mjs"]);
+        let mounts = s(&["npm:pi-freeflow", "git:https://github.com/u/r"]);
+        assert!(!mounts_overlap_live(&mounts, &live));
+    }
+
+    #[test]
+    fn other_plugin_mounts_do_not_exempt() {
+        // 台账挂着插件 A，存活清单只有插件 B（A 已停用/已卸载）→ 不豁免
+        let live = s(&["D:/pf/plugins/pf-wxbot/pi/index.mjs"]);
+        let mounts = s(&["D:/pf/plugins/quick-panel/pi/index.mjs"]);
+        assert!(!mounts_overlap_live(&mounts, &live));
+    }
+
+    #[test]
+    fn empty_sides_never_exempt() {
+        assert!(!mounts_overlap_live(&[], &[]));
+        assert!(!mounts_overlap_live(&s(&["D:/pf/plugins/x/pi/a.mjs"]), &[]));
+        assert!(!mounts_overlap_live(&[], &s(&["D:/pf/plugins/x/pi/a.mjs"])));
+    }
 }
