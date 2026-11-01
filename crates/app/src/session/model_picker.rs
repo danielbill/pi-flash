@@ -246,8 +246,11 @@ impl Chat {
         cx: &gpui::App,
     ) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
         let picker_enabled = !self.cfg.mc_state.all_enabled;
+        // 目录先过账本并入（2026-11-01：与设置页同一合并语义——会话进程早于
+        // 自定义商 spawn 时，进程答案里没有该商，裸目录会让 picker 缺商，
+        // 而设置页（catalog_with_ledger）有，两边列表不一致）
         let scoped: Vec<pi_link::protocol::ModelInfo> = self
-            .catalog_for(Some(self.rt().read(cx).cwd.as_path()))
+            .ledger_merge(self.catalog_for(Some(self.rt().read(cx).cwd.as_path())))
             .iter()
             .filter(|m| {
                 !picker_enabled || {

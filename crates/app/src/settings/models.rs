@@ -1697,9 +1697,20 @@ impl Chat {
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
     /// 不再有「内置取 pi / 自定义取 PF 账本」的两套口径）。
     pub(crate) fn catalog_with_ledger(&self) -> Vec<pi_link::protocol::ModelInfo> {
-        // 左栏合并列表 / 右侧详情**同源**：账本里有条目的商，用 `models[]` 原样
-        // （同 id 的重复条目照样显示）；账本里没有的商（内置商）用目录条目。
-        let base = self.catalog_for(self.project());
+        // 左栏合并列表 / 右侧详情**同源**：账本并入后的目录（见 ledger_merge）。
+        self.ledger_merge(self.catalog_for(self.project()))
+    }
+
+    /// 目录 ∪ **models.json 账本强制并入**（2026-11-01 抽公共：input panel
+    /// 模型 picker 与设置页必须同一合并语义——此前 picker 用裸目录，会话进程
+    /// 是在自定义商创建之前 spawn 的（models.json 每会话装载一次）时，进程
+    /// 答案里没有该商 → picker 缺商，而设置页有，两边列表不一致）：
+    /// 账本里有条目的商用 `models[]` 原样（同 id 的重复条目照样显示）；账本
+    /// 里没有的商（内置商）用目录条目。
+    pub(crate) fn ledger_merge(
+        &self,
+        base: Vec<pi_link::protocol::ModelInfo>,
+    ) -> Vec<pi_link::protocol::ModelInfo> {
         let doc = Self::mj_doc();
         let ledger_provs = pi_link::models_json::providers(&doc);
         if ledger_provs.is_empty() {
