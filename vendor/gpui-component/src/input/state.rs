@@ -818,7 +818,15 @@ impl InputState {
     ) {
         if self.mode.is_single_line() {
             self.history.ignore = true;
+            // pi-flash patch（051）：`set_value` 是**宿主程序化赋值**入口，
+            // 不得被 disabled 拦下。单行分支走 `replace_text` →
+            // `replace_text_in_range`，那里首行 `if self.disabled { return }`
+            // 会把整句丢掉——只读字段因此永远显示旧值（内置模型详情「点哪个
+            // 都显示上一次那个模型」的根因）。disabled 该挡的是用户输入
+            // （按键/IME/replace_text_in_range 自身那几条路径），不是这里。
+            let was_disabled = std::mem::replace(&mut self.disabled, false);
             self.replace_text(value, window, cx);
+            self.disabled = was_disabled;
             self.history.ignore = false;
             // Ensure cursor to end when set text（v57: 菜单接受后光标应停在
             // 插入命令之后）
@@ -829,11 +837,10 @@ impl InputState {
             return;
         }
 
-        if self.disabled {
-            // 与 replace_text_in_range 的 disabled 守卫对齐：禁用态不换文本、
-            // 不发 Change（原实现经 replace_text_in_range 的同款守卫）。
-            return;
-        }
+        // pi-flash patch（051）：多行同样不能整句丢弃（同单行理由——
+        // 程序化赋值必须落，用户输入由 replace_text_in_range 自己的守卫拦）。
+        // 临时解禁整个赋值体，末尾恢复。
+        let lifted_disabled = std::mem::replace(&mut self.disabled, false);
 
         self.history.ignore = true;
         self.pause_blink_cursor(cx);
@@ -860,6 +867,7 @@ impl InputState {
         // Move scroll to top
         self.scroll_handle.set_offset(point(px(0.), px(0.)));
         self.history.ignore = false;
+        self.disabled = lifted_disabled;
 
         cx.emit(InputEvent::Change);
         cx.notify();

@@ -190,6 +190,7 @@
 
 ## gpui-component
 
+- **`InputState::set_value` 在 `disabled` 时会被静默丢弃（单行走 `replace_text` → `replace_text_in_range` 首行的 `if self.disabled { return }`，多行分支自己也有一道）**：后果是「只读输入框永远显示旧值」——`set_value` 写进去的新值只在实体里，画面上还是上一帧的文本，`value()` 读回来却是对的，所以快照/断言完全看不出问题。042-1 内置模型详情「点哪个模型都显示上一次那个」就是这个（内置 = 只读 `set_disabled(true)`，自定义 = 可编辑，于是两个列表行为分叉）。vendor 已打补丁：`set_value` 里临时解禁再赋值（disabled 只该挡**用户输入**，不该挡宿主程序化赋值），多行同理。**升级 gpui-component 必须重套**。
 - Input `set_value` 全文走 utf16 编辑管线（4.6MB ≈48ms）→ 大文本走 vendor state.rs 的 reset 路径（换 Rope + wrapper.reset）。
 - **md 软换行 ⇄ WYSIWYG 解耦（2026-10-14 用户定夺）**：md 源码编辑器折行恒开（`editor/kind.rs` EditorConfig，stock 路径回行）；折叠与折行**结构互斥**（`element.rs` 折叠分支 `debug_assert!("折叠态必须关软换行")`——折叠改写每行字节长，text_wrapper 换行段按 doc 文本算），WYSIWYG 装饰挂上期间的关折行**只**收口在 `editor/markdown/doc.rs sync_live_decorations`（挂装饰原子关、摘装饰原子恢复；早退 `has_decorations()==live` 蕴含折行已同步）。别在别处单独动 md 编辑器的 soft_wrap，也别给 MdLiveProvider 之外的装饰路径默认开折行。
 
@@ -198,6 +199,7 @@
 - `cx.spawn(async move |weak, &mut AsyncApp|)`；prompt_for_paths 返回 oneshot Receiver；HighlightStyle 无 builder（字段赋值）。
 - 杂项：prepaint/paint 第 5 参是 prepaint state 非 hitbox；Pixels 字段私有（f32::from/除法）；move 闭包捕获 `&WeakEntity` 参数 E0521（闭包外 clone）；`unbounded()` 返回值不能别解构。
 - **vendor 本地改动（升级必须重套）**：`elements/div.rs` `TOOLTIP_SHOW_DELAY` 500→350ms（用户定夺 2026-10-13，350ms 弹出体感更跟手；源码处有注释标记）。
+- **vendor 本地改动（升级必须重套）**：`input/state.rs` `set_value` 在 disabled 态也照常赋值（单行分支临时解禁再 `replace_text`；多行去掉整句 return、末尾恢复）——不然后果见上「只读输入框显示旧值」（2026-11-01）。
 - **vendor 本地改动（升级必须重套）**：`input/state.rs` `set_selected_range` 显式清 `selection_reversed`（不变式：该 setter 光标恒在选区尾）+ 新增 `set_selected_range_reversed`（光标锚选区**起点**，滚动保起点可见）——app `TextInput::select_all_on_focus` 全选改走它（改名框头部可见，2026-10-13 用户定夺）；`cursor()`/滚动早有 reversed 分支，此补丁只补公开设置口。
 - **vendor 本地改动（升级必须重套）**：`input/state.rs` `set_soft_wrap` 抽出无 window 变体 `set_soft_wrap_cx`（上游签名里 window 参数本就被忽略）——app 渲染帧同步点（sync_live_decorations）手里只有 `Context<Self>`；`set_soft_wrap` 原签名保留并委托。
 - **vendor 本地改动（升级必须重套）**：`input/element.rs` 视口字节窗（`viewport_byte_window` + `EXTRA_SHAPE_ROWS`：`highlight_lines` 逐行查询与窗求交 + 窗前/窗后默认样式 filler 保「从 0 连续平铺」不变式、`layout_lines` 窗外软换行段垫等 len 空 ShapedLine、`calculate_visible_range` 非等高路径钳逻辑行数）+ `input/text_wrapper.rs`（`LineLayout::paint` 跳空 text 段；`closest_index_for_x`/`closest_index_for_position`/`index_for_position` 字节累加改用覆写后 `len()`）——超大单行（minified js）每帧假死修复，2026-10-14，pi-flash-jtt；平铺 filler 补丁 2026-10-15（CJK 文件 char boundary panic）。
