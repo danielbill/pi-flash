@@ -1555,8 +1555,24 @@ impl Chat {
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
     /// 不再有「内置取 pi / 自定义取 PF 账本」的两套口径）。
     pub(crate) fn catalog_with_ledger(&self) -> Vec<pi_link::protocol::ModelInfo> {
-        // 左栏合并列表 / 右侧详情**同源**：账本并入后的目录（见 ledger_merge）。
-        self.ledger_merge(self.catalog_for(self.project()))
+        // 左栏合并列表 / 右侧详情**同源**：账本并入后的目录（见 ledger_merge）
+        // + **已配置凭据的内置商**的罗列单点结果（静态注册表并入——否则其
+        // 静态模型不在 mc_refs 里，勾选链 set_models_enabled 对「不在 refs 的
+        // ref」静默丢弃，开关按不动、侧栏计数 0/0；2026-11-01）。只扩已配置
+        // 的商（= 侧栏成员），不把 42 家静态全灌进 refs。
+        let mut out = self.ledger_merge(self.catalog_for(self.project()));
+        let doc = Self::mj_doc();
+        for (prov, _) in &self.cfg.mc_creds {
+            if pi_link::models_json::provider_entry(&doc, prov).is_some() {
+                continue; // 账本商已经由 ledger_merge 走过 provider_models_for_list
+            }
+            for m in self.provider_models_for_list(prov) {
+                if !out.iter().any(|x| x.provider == m.provider && x.id == m.id) {
+                    out.push(m);
+                }
+            }
+        }
+        out
     }
 
     /// 目录 ∪ **models.json 账本强制并入**（2026-11-01 抽公共：input panel
