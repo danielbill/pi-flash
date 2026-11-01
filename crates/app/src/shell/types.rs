@@ -88,8 +88,8 @@ impl DockPanel {
 
     /// automation `panel.dock` 入参 → 态（旧值 sessions/files 兼容映射）。
     pub(crate) fn from_dock_arg(panel: &str, plugin_ix: usize) -> Option<Self> {
-        // "wx" 不再是 dock 面板（2026-10-23 迁内容区全屏页），automation
-        // 侧在 PANEL_DOCK 入口先行截获重定向到 `Chat::open_wx`。
+        // 未知值 = None（调用方按错处理）。历史上的 "wx" 面板已随微信通信
+        // 下线（迁入插件），旧名不再合法，也不留兼容分支。
         match panel {
             "sessions" | "files" | "default" => Some(DockPanel::Default),
             "git" => Some(DockPanel::Git),

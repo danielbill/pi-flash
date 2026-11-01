@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn mount_paths_survive_user_pick_rewrites() {
         let mount = std::env::temp_dir()
-            .join("plugins/wechat-bridge/pi/index.mjs")
+            .join("plugins/demo-plugin/pi/index.mjs")
             .to_string_lossy()
             .into_owned();
         assert!(is_mount_path(&mount), "绝对路径 = 挂载条目");
@@ -199,7 +199,7 @@ mod tests {
         let p = tmp("preserve.json");
         let _ = std::fs::remove_file(&p);
         let mount = std::env::temp_dir()
-            .join("plugins/pf-wxbot/pi/index.mjs")
+            .join("plugins/demo-plugin/pi/index.mjs")
             .to_string_lossy()
             .into_owned();
         // 先按插件挂载通道的形态落一份（历史 attach 曾整表覆写：台账只剩路径）
