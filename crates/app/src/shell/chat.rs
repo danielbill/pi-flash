@@ -70,10 +70,10 @@ pub(crate) struct CfgUi {
     pub(crate) mc_patterns: Option<Vec<String>>,
     pub(crate) mc_state: EnabledState,
     pub(crate) mc_creds: Vec<(String, pi_link::config::CredentialKind)>,
-    /// 自定义商探测结果展示缓存（probe-cache.json 的内存镜像；2026-11-01
-    /// 定稿：探测清单只展示，勾选才物化进 models.json）。reload_settings_panel
-    /// 装载、探测 Ok 时更新——渲染路径只读内存不扫盘
-    pub(crate) mj_probe_cache: crate::services::probe_cache::Cache,
+    /// 自定义商模型清单仓镜像（custom-provider.json；2026-11-01 定稿：完整
+    /// 定义存 PF 侧，models.json 只放勾选子集）。reload_settings_panel 装载、
+    /// 探测/保存/勾选时更新——渲染路径只读内存不扫盘
+    pub(crate) mj_probe_cache: crate::services::custom_models_store::Store,
     pub(crate) mc_project_scope: bool,
     /// settings.json defaults a new session starts with (pi-web /api/models
     /// `defaultModel` + `defaultThinkingLevel`; selectInitialModelScope inputs)

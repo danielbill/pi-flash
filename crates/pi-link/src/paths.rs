@@ -162,10 +162,10 @@ pub fn catalog_cache_file() -> Option<PathBuf> {
     file("catalog-cache.json")
 }
 
-/// `~/.pi-flash/probe-cache.json` — 自定义 Provider 探测结果展示缓存
-/// （2026-11-01 定稿：探测清单只展示，勾选才物化进 models.json）。
-pub fn probe_cache_file() -> Option<PathBuf> {
-    file("probe-cache.json")
+/// `~/.pi-flash/custom-provider.json` — 自定义 Provider 模型清单仓
+/// （2026-11-01 定稿：完整定义存 PF 侧；models.json 只放勾选子集）。
+pub fn custom_provider_file() -> Option<PathBuf> {
+    file("custom-provider.json")
 }
 
 /// `~/.pi-flash/openrouter-cache.json` — OpenRouter 全量目录缓存（openrouter.rs，

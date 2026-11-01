@@ -198,7 +198,7 @@ impl Chat {
         // 042-1：凭据清单来自 pi 的 auth.json（PF 标记条目 + 用户明文 + oauth），
         // 不再有 PF 私有账本
         self.cfg.mc_creds = pi_link::auth_json::kinds().unwrap_or_default();
-        self.cfg.mj_probe_cache = services::probe_cache::read();
+        self.cfg.mj_probe_cache = services::custom_models_store::read();
         // 会话预设 `configured` 对应的工具清单（settings.json defaultTools）
         self.cfg.mc_default_tools = self.pool.globals.default_tools.clone();
         self.cfg.mc_pkgs_global = self.pool.globals.packages.clone();
@@ -415,7 +415,6 @@ impl Chat {
         self.cfg.mc_probe.insert(provider.clone(), McProbe::Running);
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let provider_bg = provider.clone();
             let provider_probe = provider.clone();
             let outcome = cx
                 .background_executor()
@@ -1667,12 +1666,10 @@ impl Chat {
                 push_missing(m.clone(), &mut out);
             }
         }
-        // 自定义商探测展示缓存：未勾选的探测项入列（勾选后进账本，走上面
+        // 自定义商清单仓：未勾选的定义也在罗列（勾选后进账本，走上面
         // ledger 分支，这里按 id 去重自然让位）
-        if let Some(probe) = self.cfg.mj_probe_cache.get(provider) {
-            for m in &probe.models {
-                push_missing(m.clone(), &mut out);
-            }
+        for m in services::custom_models_store::listing(&self.cfg.mj_probe_cache, provider) {
+            push_missing(m, &mut out);
         }
         out
     }

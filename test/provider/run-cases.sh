@@ -45,9 +45,11 @@ snap() { "$PUI" snapshot settings 2>/dev/null; }
 mj() { "$PUI" exec "$@"; }
 ds_models() { node -e "const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));console.log(((((d.providers||{})['pf-test-ds']||{}).models)||[]).length)"; }
 zg_models() { node -e "const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));console.log(((((d.providers||{})['pf-test-zg']||{}).models)||[]).length)"; }
-# 探测展示缓存（2026-11-01 定稿：探测清单只进 probe-cache，勾选才物化进 models.json）
-zg_probe() { node -e "try{const d=JSON.parse(require('fs').readFileSync('$T/probe-cache.json','utf8'));console.log((((d['pf-test-zg']||{}).models)||[]).length)}catch{console.log(0)}"; }
-zg_probe_first() { node -e "try{const d=JSON.parse(require('fs').readFileSync('$T/probe-cache.json','utf8'));console.log(((((d['pf-test-zg']||{}).models)||[])[0]||{}).id||'')}catch{console.log('')}"; }
+# 自定义模型清单仓（2026-11-01 定稿：完整定义存 custom-provider.json，
+# models.json 只放勾选子集）
+STORE_F="$T/custom-provider.json"
+zg_probe() { node -e "try{const d=JSON.parse(require('fs').readFileSync('$STORE_F','utf8'));console.log(Object.keys((((d['pf-test-zg']||{}).models)||{})).length)}catch{console.log(0)}"; }
+zg_probe_first() { node -e "try{const d=JSON.parse(require('fs').readFileSync('$STORE_F','utf8'));console.log(Object.keys((((d['pf-test-zg']||{}).models)||{}))[0]||'')}catch{console.log('')}"; }
 
 # ---------- 环境准备 ----------
 rm -rf "$T"; mkdir -p "$T"
@@ -234,7 +236,7 @@ check CASE5 "保存成功" "$PUI" wait --path settings.section --eq "mj:p:pf-tes
 check CASE5 "api=openai-completions" test "$(jm_get '.providers["pf-test-zg"].api')" = '"openai-completions"'
 mj settings.mj_speedtest
 check CASE5 "测速通过（/v4 直接接 /models）" "$PUI" wait --path settings.mj_speed --contains "Passed" --timeout 40
-check CASE5 "探测清单进展示缓存（probe-cache 模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_probe)"
+check CASE5 "探测清单进清单仓（custom-provider.json 模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_probe)"
 check CASE5 "models.json 只有骨架（探测不整批入账本）" test "$(zg_models)" = 0
 
 # ---------- CASE6 刷新目录（P1-2：PF 管的商 key 不在 models.json）----------
@@ -244,7 +246,7 @@ mj settings.mj_fetch
 sleep 12   # 真网络探测（20s 超时内）；成功=无错误条，失败=error 条
 check CASE6 "刷新无鉴权错误（error 条为空）" node -e "
 process.exit(JSON.parse(process.argv[1]).error?1:0)" "$(snap)"
-check CASE6 "刷新后展示缓存仍有目录（probe-cache 模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_probe)"
+check CASE6 "刷新后清单仓仍有目录（模型数>0）" node -e "process.exit(Number(process.argv[1])>0?0:1)" "$(zg_probe)"
 
 # ---------- CASE11 勾选物化（2026-11-01 定稿：勾选的模型才保存至 models.json，
 # 取消同步移除，自定义商骨架常驻）----------
@@ -260,6 +262,10 @@ process.exit(m&&m.api&&m.baseUrl&&m.input&&m.cost?0:1)" "$FIRST"
   mj settings.mc_toggle --arg ref="pf-test-zg/$FIRST" --arg enable=false
   sleep 1
   check CASE11 "取消勾选 → models.json 移除" test "$(zg_models)" = 0
+  check CASE11 "定义仍在清单仓（off/on 往返不丢）" node -e "
+try{const d=JSON.parse(require('fs').readFileSync('$STORE_F','utf8'));
+const m=(((d['pf-test-zg']||{}).models)||{})[process.argv[1]];
+process.exit(m&&m.id===process.argv[1]?0:1)}catch{process.exit(1)}" "$FIRST"
   check CASE11 "骨架常驻（baseUrl 仍在）" test "$(jm_get '.providers["pf-test-zg"].baseUrl')" = '"https://open.bigmodel.cn/api/coding/paas/v4"'
   # 重新勾选一条留给 CASE7（改名要有账本模型才能在内存目录观测）
   mj settings.mc_toggle --arg ref="pf-test-zg/$FIRST" --arg enable=true
@@ -295,8 +301,8 @@ process.exit((d.providers||{})['pf-test-zg-rn']&&!(d.providers||{})['pf-test-zg'
 check CASE7 "内存目录换名（旧名消失、新名出现）" node -e "
 const s=JSON.parse(process.argv[1]).mj_catalog_providers;
 process.exit(!s.includes('pf-test-zg')&&s.includes('pf-test-zg-rn')?0:1)" "$(snap)"
-check CASE7 "探测缓存键跟名搬家（probe-cache 有新名无旧名）" node -e "
-try{const d=JSON.parse(require('fs').readFileSync('$T/probe-cache.json','utf8'));
+check CASE7 "清单仓键跟名搬家（custom-provider.json 有新名无旧名）" node -e "
+try{const d=JSON.parse(require('fs').readFileSync('$STORE_F','utf8'));
 process.exit(d['pf-test-zg-rn']&&!d['pf-test-zg']?0:1)}catch{process.exit(1)}"
 check CASE7 "凭据跟名搬家（auth.json 新名有标记）" node -e "
 const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));

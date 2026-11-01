@@ -3,6 +3,7 @@
 
 pub(crate) mod asset_evict;
 pub mod at_file;
+pub mod custom_models_store;
 pub mod file_icons;
 pub mod file_index;
 pub mod file_tree;
@@ -11,7 +12,6 @@ pub mod git;
 pub(crate) mod models_config;
 pub mod paths_sort;
 pub mod pi_extension_updates;
-pub mod probe_cache;
 pub(crate) mod script_exec;
 pub(crate) mod session_clean;
 pub(crate) mod shell_open;
