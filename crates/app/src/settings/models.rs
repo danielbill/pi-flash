@@ -876,6 +876,15 @@ fn mc_models_detail(
     enabled_set: &std::collections::HashSet<String>,
 ) -> gpui::AnyElement {
     let t = T();
+    // 模型详情弹窗打开时（section 已变成 mj:m:/mj:o:），右栏底图保持**来源视图**：
+    // 内置商的模型来自合并列表/内置详情（section = 商 id），不能把底图换成
+    // 自定义商编辑器（那会显出一个不存在的草稿商）
+    if let Some(back) = chat.cfg.mj_return.clone() {
+        let is_model = selected.starts_with("mj:m:") || selected.starts_with("mj:o:");
+        if is_model && back != selected {
+            return mc_models_detail(chat, weak, &back, d, error, enabled_set);
+        }
+    }
     // 新建 Provider 草稿（042-1）：纯 UI，未落盘；name = 空 → 编辑器无删除钮
     if selected == "mj:new" {
         return super::custom_models::mj_provider_editor(chat, weak, "", d, error, t);
@@ -1200,8 +1209,43 @@ fn mc_enabled_section(
 
     // 筛选（>8 个模型时出现；值经快照传入）。「只看free」开着时在用户
     // 关键字之外叠加隐藏的 free 关键字（AND 语义，不写进输入框）
-    let q = model_filter_value.trim().to_lowercase();
-    let shown: Vec<pi_link::protocol::ModelInfo> = models
+    let shown = model_list_shown(models, model_filter_value, free_only);
+    if models.len() > 8 {
+        section = section.child(model_filter.clone());
+    }
+    // pi-web 行规格：min-height 36 + padding 6/9 + 浏览器默认行高（≈1.2，
+    // 实际约 37px，开关右对齐、分隔线通栏）。行高不能写死——ui_size 随用户
+    // 界面字号缩放，行高从两行缩放后的文本尺寸推导（上下各 6px 呼吸），
+    // panel=12 时 ≈38px 与 pi-web 对齐，调大界面字号也不会再挤。
+    let list = model_list_vlist(
+        weak,
+        provider,
+        &shown,
+        "mc-model-list",
+        "mc",
+        chat.cfg.mc_state.all_enabled,
+        enabled_set,
+        chat.cfg.mc_project_scope,
+        &chat.cfg.mc_state.pins,
+    );
+    detail.child(section.child(list))
+}
+
+/// 可用模型行的行高（内置 / 自定义共用；ui_size 随界面字号缩放）。
+pub(crate) fn model_list_row_h() -> f32 {
+    (f32::from(crate::appearance::ui_size(11.)) + f32::from(crate::appearance::ui_size(10.))) * 1.25
+        + 12.
+}
+
+/// 可用模型列表的筛选（内置 / 自定义共用）：关键字匹配名称或 id，「只看free」
+/// 在关键字之外叠加隐藏的 free 匹配（AND 语义，不写进输入框）。
+pub(crate) fn model_list_shown(
+    models: &[pi_link::protocol::ModelInfo],
+    filter: &str,
+    free_only: bool,
+) -> Vec<pi_link::protocol::ModelInfo> {
+    let q = filter.trim().to_lowercase();
+    models
         .iter()
         .filter(|m| {
             let hit = q.is_empty()
@@ -1212,25 +1256,35 @@ fn mc_enabled_section(
                 || m.name.to_lowercase().contains("free"))
         })
         .cloned()
-        .collect();
-    if models.len() > 8 {
-        section = section.child(model_filter.clone());
-    }
-    // pi-web 行规格：min-height 36 + padding 6/9 + 浏览器默认行高（≈1.2，
-    // 实际约 37px，开关右对齐、分隔线通栏）。行高不能写死——ui_size 随用户
-    // 界面字号缩放，行高从两行缩放后的文本尺寸推导（上下各 6px 呼吸），
-    // panel=12 时 ≈38px 与 pi-web 对齐，调大界面字号也不会再挤。
-    let row_h = (f32::from(crate::appearance::ui_size(11.))
-        + f32::from(crate::appearance::ui_size(10.)))
-        * 1.25
-        + 12.;
-    let all_enabled = chat.cfg.mc_state.all_enabled;
-    let project_scope = chat.cfg.mc_project_scope;
+        .collect()
+}
+
+/// 可用模型列表（**内置商与自定义商共用同一行实现**，行为不许分叉）：
+/// 两行行（名称 + 等宽 id）；点行 = 打开模型详情弹窗（内置模型 → 只读覆盖
+/// 视图 / 自定义商 → 账本条目）；点 id 行 = 复制 `provider/id`
+/// （stop_propagation，不连带开弹窗）；行右 = 启用开关（自己的点击）。
+/// `list_id` / `id_prefix` 区分同帧两处渲染（内置详情 / 自定义详情），元素 id
+/// 撞车会让 gpui 元素状态互相踩。
+pub(crate) fn model_list_vlist(
+    weak: &gpui::WeakEntity<Chat>,
+    provider: &str,
+    shown: &[pi_link::protocol::ModelInfo],
+    list_id: &'static str,
+    id_prefix: &'static str,
+    all_enabled: bool,
+    enabled_set: &std::collections::HashSet<String>,
+    project_scope: bool,
+    pins: &[(String, String)],
+) -> gpui::AnyElement {
+    let t = T();
+    let row_h = model_list_row_h();
+    let shown: Vec<pi_link::protocol::ModelInfo> = shown.to_vec();
     let enabled_rows = enabled_set.clone();
-    let pins = chat.cfg.mc_state.pins.clone();
+    let pins = pins.to_vec();
     let weak_rows = weak.clone();
-    let list = vlist(
-        "mc-model-list",
+    let prov = provider.to_string();
+    vlist(
+        list_id,
         shown.len(),
         row_h,
         VListHeight::Capped(360.),
@@ -1243,9 +1297,13 @@ fn mc_enabled_section(
             let r = format!("{}/{}", m.provider, m.id);
             let is_enabled = all_enabled || enabled_rows.contains(&r);
             let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
+            // 点行 → 模型详情（与左栏合并列表同一入口，`mj_open_model` 自己分流
+            // 账本条目 / 内置覆盖两种模式）
+            let open_ref = (prov.clone(), m.id.clone());
+            let weak_row = weak_rows.clone();
             let ref_click = r.clone();
             div()
-                .id(SharedString::from(format!("mc-row-{ix}")))
+                .id(SharedString::from(format!("{id_prefix}-row-{ix}")))
                 // uniform_list 的行是 fit-content（taffy 根节点不拉伸）：
                 // 不写 w_full 分隔线只有内容宽、开关贴在文字右边
                 .w_full()
@@ -1263,6 +1321,13 @@ fn mc_enabled_section(
                         .min_w_0()
                         .flex()
                         .flex_col()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_row.update(cx, |c, cx| {
+                                let (prov, id) = &open_ref;
+                                c.mj_open_model(prov.clone(), id.clone(), cx);
+                            });
+                        })
                         .child(
                             div()
                                 .text_size(crate::appearance::ui_size(11.))
@@ -1271,7 +1336,11 @@ fn mc_enabled_section(
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .child(SharedString::from(m.name.clone())),
+                                .child(SharedString::from(if m.name.is_empty() {
+                                    m.id.clone()
+                                } else {
+                                    m.name.clone()
+                                })),
                         )
                         .child(
                             div()
@@ -1283,7 +1352,8 @@ fn mc_enabled_section(
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    // click the id to copy the ref
+                                    // 点 id = 复制模型引用（不连带开详情弹窗）
+                                    cx.stop_propagation();
                                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                         ref_click.clone(),
                                     ));
@@ -1302,7 +1372,7 @@ fn mc_enabled_section(
                         .child(SharedString::from(p))
                 }))
                 .child(config_switch(
-                    format!("mc-sw-{ix}"),
+                    format!("{id_prefix}-sw-{ix}"),
                     &weak_rows,
                     is_enabled,
                     project_scope,
@@ -1313,9 +1383,7 @@ fn mc_enabled_section(
                 ))
                 .into_any_element()
         },
-    );
-    let section = section.child(list);
-    detail.child(section)
+    )
 }
 
 /// 042 详情头【移除】的确认浮层（与扩展卸载确认同款机制，叠在设置弹窗之上）。

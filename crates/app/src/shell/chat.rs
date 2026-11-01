@@ -100,6 +100,11 @@ pub(crate) struct CfgUi {
     pub(crate) mj_test: Option<MjTestState>,
     /// 042 M2 models.dev 拉取状态（按钮文案与结果行）
     pub(crate) mj_models_dev_state: MjCatalogState,
+    /// 模型详情弹窗的**来源 section**（点列表进详情时记下当前右栏）：关弹窗
+    /// （✕/点外/ESC）退回此处——内置商模型来自合并列表 / 内置详情（section
+    /// = 商 id），自定义商来自 `mj:p:名`；`None` = 从【+模型】草稿进
+    /// （退回 `mj:p:名` 的旧行为）。
+    pub(crate) mj_return: Option<String>,
     /// 042 新增 Provider 弹窗的全量注册表（registry.rs dump；None = 未加载）
     pub(crate) provider_registry: Option<std::sync::Arc<pi_link::registry::RegistryDump>>,
     /// dump 拉取状态（Idle = 待拉/可拉，Loading = 后台进行中，Failed = 上次失败）
@@ -726,6 +731,7 @@ impl Chat {
                 mj_speed: None,
                 mj_test: None,
                 mj_models_dev_state: MjCatalogState::Idle,
+                mj_return: None,
                 provider_registry: None,
                 registry_state: crate::session::model_picker::RegistryState::Idle,
                 mc_remove_confirm: None,

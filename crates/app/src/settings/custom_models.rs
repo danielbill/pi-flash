@@ -452,6 +452,14 @@ impl Chat {
     /// 该模型在 `models.json` 里已有条目（自定义商 / 早已物化）→ 索引模式；
     /// 否则是 pi 的内置模型 → 覆盖模式（modelOverrides）。
     pub(crate) fn mj_open_model(&mut self, provider: String, id: String, cx: &mut Context<Self>) {
+        // 记下来源 section：弹窗关闭要退回这里（内置商的模型来自合并列表 /
+        // 内置详情，那只属于 section = 商 id，不是 `mj:p:商`）
+        self.cfg.mj_return = self
+            .dlg
+            .settings
+            .as_ref()
+            .map(|st| st.read(cx).section.clone())
+            .filter(|s| !s.is_empty());
         let doc = Self::mj_doc();
         let models = pi_link::models_json::provider_entry(&doc, &provider)
             .map(pi_link::models_json::provider_models)
@@ -475,6 +483,8 @@ impl Chat {
     }
 
     pub(crate) fn mj_add_model(&mut self, provider: String, cx: &mut Context<Self>) {
+        // 草稿行不是「从列表进详情」：关闭退回 `mj:p:商`（mj_return=None 即该默认）
+        self.cfg.mj_return = None;
         // 草稿行**不预写占位**（P1-1）：validate 拒绝空 id，预写必失败且
         // 后续按 ix 保存时越界静默丢数据。ix = 盘上现有模型数，保存时走
         // mj_commit_model_form 的追加分支落盘；保存前列表不显示（与
@@ -576,6 +586,8 @@ impl Chat {
     }
 
     pub(crate) fn mj_delete_model(&mut self, provider: String, ix: usize, cx: &mut Context<Self>) {
+        // 删掉后回到商详情：来源 section 一并清（否则下次弹窗会退回旧视图）
+        self.cfg.mj_return = None;
         let mut doc = Self::mj_doc();
         // 删之前先记住 id：内存目录按 provider+id 摘（和磁盘同一步）
         let id = pi_link::models_json::provider_entry(&doc, &provider)
@@ -1400,138 +1412,25 @@ fn mj_enabled_section(
     }
 
     // 筛选（>8 个模型时出现；与内置详情同规则）+「只看free」叠加
-    let q = d.model_filter_value.trim().to_lowercase();
-    let shown: Vec<pi_link::protocol::ModelInfo> = models
-        .iter()
-        .filter(|m| {
-            let hit = q.is_empty()
-                || m.id.to_lowercase().contains(&q)
-                || m.name.to_lowercase().contains(&q);
-            hit && (!d.model_free_only
-                || m.id.to_lowercase().contains("free")
-                || m.name.to_lowercase().contains("free"))
-        })
-        .cloned()
-        .collect();
+    let shown = super::models::model_list_shown(&models, &d.model_filter_value, d.model_free_only);
     if models.len() > 8 {
         section = section.child(d.model_filter.clone());
     }
-    // 行高与内置详情同公式（ui_size 缩放自适应）
-    let row_h = (f32::from(crate::appearance::ui_size(11.))
-        + f32::from(crate::appearance::ui_size(10.)))
-        * 1.25
-        + 12.;
-    let all_enabled = chat.cfg.mc_state.all_enabled;
-    // 账本内已有的模型 id（名字可点进编辑器；不在账本的纯展示行不可点）
-    let ledger_ids: std::collections::HashSet<String> =
-        pi_link::models_json::provider_entry(&Chat::mj_doc(), provider)
-            .map(pi_link::models_json::provider_models)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|mm| mm.get("id").and_then(|v| v.as_str()).map(str::to_string))
-            .collect();
-    let project_scope = chat.cfg.mc_project_scope;
-    let enabled_rows = enabled_set.clone();
-    let pins = chat.cfg.mc_state.pins.clone();
-    let weak_rows = weak.clone();
-    let weak_rows_v = weak_rows.clone();
-    let prov = provider.to_string();
-    let list = vlist(
+    // 列表行与内置商详情**同一实现**（super::models::model_list_vlist）：两行行、
+    // 点行开模型详情、点 id 复制引用、右侧启用开关。行高/筛选/元素 id 前缀都在
+    // 那边统一，这里只管取数据
+    let list = super::models::model_list_vlist(
+        weak,
+        provider,
+        &shown,
         "mj-model-list",
-        shown.len(),
-        row_h,
-        VListHeight::Capped(360.),
-        true,
-        true,
-        tr("models.no_matching_models"),
-        None,
-        move |ix, _window, _cx| {
-            let m = &shown[ix];
-            let r = format!("{}/{}", m.provider, m.id);
-            let is_enabled = all_enabled || enabled_rows.contains(&r);
-            let pin = pins.iter().find(|(p, _)| p == &r).map(|(_, l)| l.clone());
-            // 点击名字 → 模型编辑器（仅账本内条目可点；开关区不误触详情页）
-            let open_ref = (prov.clone(), m.id.clone());
-            let weak_row = weak_rows_v.clone();
-            let editable = ledger_ids.contains(&m.id);
-            div()
-                .id(SharedString::from(format!("mj-row-{ix}")))
-                .w_full()
-                .h(px(row_h))
-                .pl(px(12.))
-                .pr(px(24.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .when(ix > 0, |dd| dd.border_t_1().border_color(rgb(t.border)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .when(editable, |dd| {
-                            dd.cursor_pointer().on_mouse_down(MouseButton::Left, {
-                                let weak_row = weak_row.clone();
-                                move |_, _, cx| {
-                                    let _ = weak_row.update(cx, |c, cx| {
-                                        let (prov, id) = &open_ref;
-                                        c.mj_open_model(prov.clone(), id.clone(), cx);
-                                    });
-                                }
-                            })
-                        })
-                        .child(
-                            div()
-                                .text_size(crate::appearance::ui_size(11.))
-                                .line_height(gpui::relative(1.25))
-                                .text_color(rgb(t.text))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(SharedString::from(if m.name.is_empty() {
-                                    m.id.clone()
-                                } else {
-                                    m.name.clone()
-                                })),
-                        )
-                        .child(
-                            div()
-                                .font_family(crate::editor::markdown::MONO_FAMILY)
-                                .text_size(crate::appearance::ui_size(10.))
-                                .line_height(gpui::relative(1.25))
-                                .text_color(rgb(t.text_dim))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(SharedString::from(m.id.clone())),
-                        ),
-                )
-                .children(pin.map(|p| {
-                    div()
-                        .px(px(4.))
-                        .py(px(1.))
-                        .rounded(px(3.))
-                        .bg(widgets::indigo_bg())
-                        .text_size(crate::appearance::ui_size(9.))
-                        .text_color(widgets::indigo_fg())
-                        .child(SharedString::from(p))
-                }))
-                .child(config_switch(
-                    format!("mj-sw-{ix}"),
-                    &weak_rows_v,
-                    is_enabled,
-                    project_scope,
-                    {
-                        let r = r.clone();
-                        move |c, cx| c.mc_toggle_model(r.clone(), !is_enabled, cx)
-                    },
-                ))
-                .into_any_element()
-        },
+        "mj",
+        chat.cfg.mc_state.all_enabled,
+        &enabled_set,
+        chat.cfg.mc_project_scope,
+        &chat.cfg.mc_state.pins,
     );
-    let section = section.child(list);
-    detail.child(section)
+    detail.child(section.child(list))
 }
 
 /// 自定义模型详情/编辑小弹窗（500×500 居中，2026-10-27 用户定稿规格）：
@@ -1569,11 +1468,18 @@ pub(crate) fn mj_model_modal_overlay(
     let error = panel.read(cx).error.clone();
     let t = T();
     let weak = cx.entity().downgrade();
+    // 关闭返回来源 section（点列表进详情时记下）；从【+模型】草稿进 → 退回
+    // `mj:p:商`（旧行为）
+    let back = chat.cfg.mj_return.clone();
     let dismiss = {
         let weak = weak.clone();
         let n = name.clone();
         move |_: &mut gpui::Window, cx: &mut gpui::App| {
-            let _ = weak.update(cx, |c, cx| c.mj_select(format!("mj:p:{n}"), cx));
+            let _ = weak.update(cx, |c, cx| {
+                let target = back.clone().unwrap_or_else(|| format!("mj:p:{n}"));
+                c.cfg.mj_return = None;
+                c.mj_select(target, cx);
+            });
         }
     };
 

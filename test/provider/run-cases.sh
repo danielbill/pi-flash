@@ -181,6 +181,30 @@ else
   skip CASE4B "家族名 id 填参（mj_id_value 未回显 deepseek-flash）"
 fi
 
+# ---------- CASE4C 列表行 → 模型详情（内置商 / 自定义商同一行为）----------
+# 两个「可用模型」列表（内置详情 / 自定义详情）共用同一行实现：点行 = 模型
+# 详情，关闭退回**来源 section**（内置模型属于 section = 商 id，不能把底图
+# 换成不存在的自定义商草稿）。ops 与行点击是同一个 Chat::mj_open_model。
+mj settings.mj_select --arg section=deepseek
+"$PUI" wait --path settings.section --eq deepseek --timeout 10 >/dev/null 2>&1 || true
+mj settings.mj_open_model --arg provider=deepseek --arg id=deepseek-flash
+check CASE4C "内置商模型行可点开详情（只读覆盖视图）" "$PUI" wait --path settings.section --eq "mj:o:deepseek:deepseek-flash" --timeout 10
+# 参数回显依赖内存目录已装该商（真实链路里行就来自目录）；沙箱 PI_CODING_AGENT_DIR
+# 隔离、目录冷启动，此处只断言必然成立的部分：id 回显（参数空了不算 bug）
+check CASE4C "只读视图回显该模型 id" node -e "
+const j=JSON.parse(process.argv[1]);
+process.exit(j.mj_id_value==='deepseek-flash'?0:1)" "$(snap)"
+mj settings.mj_model_close
+check CASE4C "关闭退回来源 section（内置商 → 商 id，不是 mj:p:）" "$PUI" wait --path settings.section --eq deepseek --timeout 10
+mj settings.mj_select --arg section="mj:p:pf-test-ds"
+"$PUI" wait --path settings.section --eq "mj:p:pf-test-ds" --timeout 10 >/dev/null 2>&1 || true
+mj settings.mj_open_model --arg provider=pf-test-ds --arg id=pf-test-manual
+check CASE4C "自定义商模型行可点开详情（账本条目）" node -e "
+const j=JSON.parse(process.argv[1]);
+process.exit(j.section.startsWith('mj:m:pf-test-ds:')&&j.mj_id_value==='pf-test-manual'?0:1)" "$(snap)"
+mj settings.mj_model_close
+check CASE4C "关闭退回自定义商详情" "$PUI" wait --path settings.section --eq "mj:p:pf-test-ds" --timeout 10
+
 # ---------- CASE5 新增智谱商（openai 形状 /v4，有真目录）----------
 mj settings.mj_new
 mj settings.mj_form --arg name=pf-test-zg --arg base="https://open.bigmodel.cn/api/coding/paas/v4" --arg key="$ZG_KEY"

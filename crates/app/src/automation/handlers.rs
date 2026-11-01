@@ -43,6 +43,12 @@ fn mj_provider_from_section(chat: &Chat, cx: &Context<Chat>) -> Option<String> {
 }
 
 /// 当前模型编辑器 section 解析（`mj:m:{prov}:{ix}` → Some((prov, ix))）。
+/// `mj:o:{商}:{模型id}` → 商名（模型 id 可含 ':'，只切第一个）。
+fn mj_parse_override_provider(section: &str) -> Option<String> {
+    let (p, id) = section.strip_prefix("mj:o:")?.split_once(':')?;
+    (!p.is_empty() && !id.is_empty()).then(|| p.to_string())
+}
+
 fn mj_model_from_section(chat: &Chat, cx: &Context<Chat>) -> Option<(String, usize)> {
     let st = chat.dlg.settings.as_ref()?;
     let section = st.read(cx).section.clone();
@@ -1014,6 +1020,15 @@ pub(super) fn dispatch(
         // ---- 051 自定义 Provider 页（UI 测试直调）：每个 op 与对应按钮走
         // 同一条 Chat 方法，不绕过任何保存/测速链路。目标 provider 从当前
         // section 推导：`mj:p:{name}` = 已存商；`mj:new` = 草稿。
+        method::SETTINGS_MJ_OPEN_MODEL => {
+            let get = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+            let (provider, id) = match (get("provider"), get("id")) {
+                (Some(p), Some(i)) if !p.is_empty() && !i.is_empty() => (p, i),
+                _ => return Err(bad("需要 {\"provider\": \"商\", \"id\": \"模型id\"}")),
+            };
+            chat.mj_open_model(provider, id, cx);
+            ok()
+        }
         method::SETTINGS_MJ_NEW => {
             chat.mj_open_add(cx);
             ok()
@@ -1098,9 +1113,38 @@ pub(super) fn dispatch(
             ok()
         }
         method::SETTINGS_MJ_MODEL_CLOSE => {
-            let (provider, _) = mj_model_from_section(chat, cx)
-                .ok_or_else(|| bad("当前 section 不是模型编辑器（mj:m:名字:ix）"))?;
-            chat.mj_select(format!("mj:p:{provider}"), cx);
+            // 与弹窗 ✕/点外同源：退回来源 section（列表进来的内置模型 → 商 id，
+            // 自定义模型 → mj:p:商；【+模型】草稿 → mj:p:商）
+            let section = chat
+                .dlg
+                .settings
+                .as_ref()
+                .map(|st| st.read(cx).section.clone())
+                .unwrap_or_default();
+            let is_model = section.starts_with("mj:m:") || section.starts_with("mj:o:");
+            if !is_model {
+                return Err(bad(
+                    "当前 section 不是模型详情（mj:m:名字:ix / mj:o:商:模型id）",
+                ));
+            }
+            let provider = match section.strip_prefix("mj:m:") {
+                Some(rest) => rest
+                    .rsplit_once(':')
+                    .map(|(p, _)| p)
+                    .unwrap_or("")
+                    .to_string(),
+                None => mj_parse_override_provider(&section).unwrap_or_default(),
+            };
+            let target = chat
+                .cfg
+                .mj_return
+                .clone()
+                .or_else(|| (!provider.is_empty()).then(|| format!("mj:p:{provider}")));
+            chat.cfg.mj_return = None;
+            match target {
+                Some(t) => chat.mj_select(t, cx),
+                None => return Err(bad("无处可退：没有来源 section")),
+            }
             ok()
         }
         method::SETTINGS_MJ_AUTOFILL => {

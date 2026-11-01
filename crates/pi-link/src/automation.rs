@@ -169,7 +169,12 @@ pub mod method {
     /// · mj_save 保存（改名按 section 旧名走 rename）· mj_speedtest 测速
     /// · mj_add_model 加模型行 · mj_model_form/mj_model_save 模型弹窗填/存
     /// · mj_model_close 收弹窗 · mj_autofill 自动填参 · mj_fetch 刷新目录
+    /// · mj_open_model 点模型行（与两个列表的行点击同一条路径）
     /// · mj_delete 删除（走确认流，ok 缺省 true）
+    /// 模型列表行点击的同一入口（内置商 / 自定义商两个列表共用
+    /// [`Chat::mj_open_model`]）：params `{provider, id}`。内置模型 → 只读覆盖
+    /// 详情（mj:o:商:模型id），自定义商模型 → 账本条目（mj:m:商:ix）。
+    pub const SETTINGS_MJ_OPEN_MODEL: &str = "settings.mj_open_model";
     pub const SETTINGS_MJ_NEW: &str = "settings.mj_new";
     pub const SETTINGS_MJ_SELECT: &str = "settings.mj_select";
     pub const SETTINGS_MJ_FORM: &str = "settings.mj_form";
