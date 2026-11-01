@@ -6,7 +6,8 @@
 #   例：scripts/release.sh 0.2.0 tmp/release-notes-0.2.0.md
 #
 # 步骤：校验工作区 → 更新版本号（Cargo + npm 薄壳同同步）→ release 构建 →
-# 组装 dist/pi-flash（exe + node.exe + vendor/pi 裁非宿主 esbuild + 启动说明）
+# 组装 dist/pi-flash（exe + pif-secret.exe + node.exe + vendor/pi 裁非宿主
+# esbuild + 启动说明）
 # → 包内烟测 → 更新 CHANGELOG.md / CHANGELOG_EN.md → 压缩 dist/pi-flash-<版本>-win32-x64.zip
 # → 生成 SHA256SUMS 与 <资产>.sha256（npm 薄壳下载校验用，080-软件分发 §4）。
 #
@@ -76,6 +77,13 @@ echo "==> 3/8 组装 dist/pi-flash"
 rm -rf dist/pi-flash "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
 mkdir -p dist/pi-flash/vendor
 cp target/release/pi-flash.exe dist/pi-flash/
+# 042-1：pif-secret.exe 必须与 pi-flash.exe 同目录随包分发——auth.json 标记条
+# 目是 pi 从系统凭据库取回 key 的唯一桥（pi 无 keyring 能力，靠 `!cmd` 执行它），
+# helper_exe() 按 current_exe 同目录写绝对路径，包里缺它 = 用户侧全断。
+[[ -f target/release/pif-secret.exe ]] || {
+  echo "✗ target/release/pif-secret.exe 缺失（cargo build 应连带产出 pi-link bin）"; exit 1;
+}
+cp target/release/pif-secret.exe dist/pi-flash/
 NODE_BIN=$(command -v node || true)
 [[ -n "$NODE_BIN" ]] || { echo "✗ 找不到 node（PATH 或 PI_FLASH_NODE）"; exit 1; }
 cp "$NODE_BIN" dist/pi-flash/node.exe
@@ -114,7 +122,8 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 
 首次使用：
 1. 配置模型 API Key：底部「模型」-> 选择 provider -> 填入 API Key 保存
-   （密钥写入 ~/.pi/agent/auth.json，与 pi CLI 共用）
+   （密钥本体存系统凭据库，auth.json 只留取回标记，与 pi CLI 共用）
+   注意：包内 pif-secret.exe 是密钥取回通道，必须与 pi-flash.exe 同目录，勿删勿移。
 2. 顶部状态栏连接成功后即可对话；工具栏「生成标题」可让模型为会话起名
 
 功能入口：

@@ -63,7 +63,7 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 1. 版本三处同步（Cargo + npm + lock）
 2. 签宿主证明（签名流程见内部发布文档）+ `cargo build --release -p app` +
    **exe 烙入自检**（proof b64 前缀必须命中，未烙入 = 拒打包）
-3. 组装 `dist/pi-flash`：exe + node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
+3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
    查 `PI_FLASH_PERF`）；结束 taskkill
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
@@ -114,6 +114,7 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 
 ## 5. 发版后验收
 
+- [ ] 解包核验：`pif-secret.exe` 与 `pi-flash.exe` 同目录在位（密钥取回唯一桥，缺失 = 用户侧 provider 全断）
 - [ ] `gh release view v<v>`：win zip + sidecar + SHA256SUMS 三资产在
 - [ ] `gh release view v<v>` 正文双语（`<!-- EN -->` 为 HTML 注释不渲染；纯中文发版的用
       `gh release edit v<v> --notes-file <双语文件>` 补挂英文）
