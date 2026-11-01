@@ -208,6 +208,8 @@ pub fn read_cache() -> Option<RegistryDump> {
         || dump.models.is_empty()
         // 2026-11-01 前的缓存不带 baseUrl（内置商拉取端点派生源）→ 重 dump
         || dump.providers.iter().all(|p| p.base_url.is_none())
+        // 模型条目不带 maxTokens/reasoning/input（模型详情只读视图回填用）→ 重 dump
+        || dump.models.iter().all(|m| m.max_tokens.is_none())
     {
         return None;
     }
@@ -260,6 +262,9 @@ const models = allModels.map((m) => ({
     name: m.name ?? m.id,
     provider: m.provider,
     contextWindow: m.contextWindow ?? null,
+    maxTokens: m.maxTokens ?? null,
+    reasoning: m.reasoning ?? null,
+    input: Array.isArray(m.input) ? m.input : null,
 }));
 const credentials = {};
 for (const c of await rt.listCredentials()) credentials[c.providerId] = c.type;

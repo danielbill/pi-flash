@@ -57,10 +57,17 @@ impl Chat {
                     m = serde_json::json!({});
                 }
                 if m.as_object().is_some_and(|o| o.is_empty()) {
+                    // 目录（进程答案/磁盘）优先；静态注册表模型不在 catalog_for
+                    // （性能铁律不灌），回落罗列单点（含 registry 静态）取参数
                     if let Some(base) = self
                         .catalog_for(self.project())
                         .into_iter()
                         .find(|mm| mm.provider == name && &mm.id == id)
+                        .or_else(|| {
+                            self.provider_models_for_list(&name)
+                                .into_iter()
+                                .find(|mm| &mm.id == id)
+                        })
                     {
                         m = serde_json::json!({
                             "contextWindow": base.context_window,
