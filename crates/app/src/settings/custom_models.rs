@@ -1602,8 +1602,9 @@ pub(crate) fn mj_model_modal_overlay(
             dismiss.clone(),
         ));
 
-    // 页脚：[测试][保存][移除] 右对齐（标准 §5.1 按钮，经 detail_button 三钮
-    // 同宽 84）；状态行（表单错误 / 测试 / 自动填参结果）+ 三个设置行在滚动体
+    // 页脚：[测试][移除][保存] 右对齐（标准 §5.1 按钮，经 detail_button 三钮
+    // 同宽 84；2026-11-01 用户定稿：移除在保存左侧）；状态行（表单错误 /
+    // 测试 / 自动填参结果）+ 三个设置行在滚动体
     let footer = div()
         .flex_shrink_0()
         .flex()
@@ -1624,17 +1625,6 @@ pub(crate) fn mj_model_modal_overlay(
             },
         ))
         .child(super::models::detail_button(
-            "mj-mapply",
-            &weak,
-            &tr("action.save"),
-            crate::ui::button::BtnVariant::Primary,
-            false,
-            {
-                let n = name.clone();
-                move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
-            },
-        ))
-        .child(super::models::detail_button(
             "mj-mdel",
             &weak,
             &tr("action.remove"),
@@ -1643,6 +1633,17 @@ pub(crate) fn mj_model_modal_overlay(
             {
                 let n = name.clone();
                 move |c, cx| c.mj_delete_model(n.clone(), ix, cx)
+            },
+        ))
+        .child(super::models::detail_button(
+            "mj-mapply",
+            &weak,
+            &tr("action.save"),
+            crate::ui::button::BtnVariant::Primary,
+            false,
+            {
+                let n = name.clone();
+                move |c, cx| c.mj_apply_model(n.clone(), ix, cx)
             },
         ));
 
