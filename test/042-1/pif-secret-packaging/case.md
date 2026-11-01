@@ -14,6 +14,7 @@ key 的唯一桥（pi 是 node 进程，无 keyring 能力；042-1 退役 env �
 ## 自动化：`scripts/secret-e2e.sh`
 
 全程隔离目录 + pif-ui 自动化，不碰真实 `~/.pi` / `~/.pi-flash`，不抢屏幕。
+**须在 Git Bash、仓库根目录执行**（bash 脚本 + `VAR=… cmd` / `$(…)` 语法，cmd.exe 跑不了）。
 
 ```bash
 cargo build && cargo build --release -p app && cargo build --release -p pi-link --bin pif-secret
