@@ -71,15 +71,23 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
    （双语以单独一行 `<!-- EN -->` 分隔；无英文段则只收中文，英文版不动）
 6. 压缩 `pi-flash-<v>-win32-x64.zip`（PowerShell Compress-Archive，根带 `pi-flash/` 包装目录）
 7. 生成 `SHA256SUMS` + `<资产>.sha256`（薄壳校验取用顺序：sidecar → SHA256SUMS）
-8. 完成，打印尾部块
+8. 完成，打印尾部块（下一步是 §3.2 人工验收，不是直接 ship）
 
-### 3.2 发版收尾（一条命令；排查时按手动序列逐步走）
+### 3.2 发布包人工验收（所有者执行；八步全绿之后、ship.sh 之前）
+
+验收对象 = `dist/pi-flash-<v>-win32-x64.zip`（即将上传的那份）。
+解压到任意目录，运行包内 `pi-flash.exe`，由所有者验证本版改动是否生效。
+
+- 通过 → `touch dist/MANUAL-OK-<v>`（ship.sh 前置校验认此标记；release.sh 重跑会清掉标记，重打包即重验）
+- 不通过 → 修因后整脚重跑 release.sh
+
+### 3.3 发版收尾（一条命令；排查时按手动序列逐步走）
 
 ```bash
 scripts/ship.sh <v> tmp/release-notes-<v>.md
 ```
 
-前置校验（版本三处一致、dist 三资产在位、tag 未占用）→ 发版提交（pathspec 限六文件）→
+前置校验（版本三处一致、dist 三资产在位、tag 未占用、§3.2 标记在位）→ 发版提交（pathspec 限六文件）→
 tag → 推 main + tags → `gh release create` 挂三资产。等价手动序列（顺序敏感）：
 
 ```bash
@@ -100,7 +108,7 @@ cd npm && npm publish                             # ③ 仅首发/回退需要�
 - 尾部块内的 `npm publish` 与 CI 的 `publish-npm.yml` **二选一**，勿双跑（重复发版报 EPUBLISHCONFLICT，job 红）
 - tag 已存在且指向旧提交（测试期残留）时：发版前 `git tag -f v<v>` + 强制推 tag。`gh release create --verify-tag` 只校核tag 存在，不校核指向哪个 commit
 
-### 3.3 等 publish-npm
+### 3.4 等 publish-npm
 
 tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干预；失败看 §6。
 
@@ -146,6 +154,7 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 | 烟测 ✗ 启动有输出 | 看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑 |
 | 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。预写的 CHANGELOG 段自行提交后再整脚重跑 |
 | ship.sh ✗ tag 已存在 / push 断网 / release 撞名 | 分别见 §0 永不复用、§6 git push 断网、§6 release 撞名；脚本各步失败信息已带对应处置 |
+| ship.sh ✗ 缺 `dist/MANUAL-OK-<v>` | 未做 §3.2 人工验收，或 release.sh 重跑后标记已清（重打包即重验）→ 按 §3.2 验收通过后 `touch dist/MANUAL-OK-<v>` 再 ship |
 | git push 断网 | 网络恢复重推，本地提交不丢；勿强推 |
 | 资产漏挂 / 传坏 | `gh release upload v<v> <文件> --clobber` |
 | `gh release create` 撞名 | 多半是同名 release 已存在 → `gh release upload v<v> <资产> --clobber` 补挂 |
@@ -168,6 +177,8 @@ cargo check --workspace && cargo test -p pi-link && node npm/test/e2e.js
 scripts/check_arch.sh
 # 官方源核对
 npm view pi-flash version dist-tags --registry=https://registry.npmjs.org/
+# 发布包人工验收通过标记（§3.2；release.sh 重跑即作废，ship.sh 缺它拒发）
+touch dist/MANUAL-OK-<v>
 ```
 
 ## 8. 关联

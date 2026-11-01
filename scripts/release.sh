@@ -77,7 +77,7 @@ grep -aq "cGYtb2ZmaWNpYWx8" target/release/pi-flash.exe \
 echo "    宿主证明已烙入 exe（自检通过）"
 
 echo "==> 3/8 组装 dist/pi-flash"
-rm -rf dist/pi-flash "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
+rm -rf dist/pi-flash "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS "dist/MANUAL-OK-${VERSION}"  # 标记随产物清：重打包即重验（RELEASE.md §3.2）
 mkdir -p dist/pi-flash/vendor
 cp target/release/pi-flash.exe dist/pi-flash/
 # 042-1：pif-secret.exe 必须与 pi-flash.exe 同目录随包分发——auth.json 标记条
@@ -228,7 +228,10 @@ echo "==> 8/8 完成"
 ls -lh "dist/$ZIP_NAME" "dist/${ZIP_NAME}.sha256" dist/SHA256SUMS
 cat <<EOF
 
-后续（一条命令收尾；等价手动序列见 RELEASE.md §3.2）：
-  scripts/ship.sh ${VERSION} "${NOTES_FILE}"
+后续：
+  1) 人工验收（RELEASE.md §3.2，所有者执行）：解压 dist/${ZIP_NAME} 到任意目录跑包内 exe，
+     通过后  touch dist/MANUAL-OK-${VERSION}
+  2) 一条命令收尾（缺上述标记拒发；等价手动序列见 RELEASE.md §3.3）：
+     scripts/ship.sh ${VERSION} "${NOTES_FILE}"
 npm 薄壳无需手动发——publish-npm.yml 随 tag 推送自动 OIDC 发布（RELEASE.md §4）。
 EOF
