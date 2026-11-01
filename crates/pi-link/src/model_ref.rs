@@ -65,22 +65,22 @@ pub fn query_candidates(id: &str, name: &str) -> Vec<String> {
 
 /// 账本条目是否就是这个模型引用（点列表进详情时的兜底匹配）。
 ///
-/// 精确 id 优先由调用方先试一遍；本函数兜的是「目录 id 与账本 id 形态不同」
-/// 的三种情况：忽略大小写、slug 等价（`DeepSeek V4.1 Flash` ↔
-/// `deepseek-v4.1-flash`）、目录拿 name 当 id（与账本 name 相等）。
-pub fn matches_ref(id: &str, name: &str, needle: &str) -> bool {
+/// **只看 id，绝不看 name**：账本的 name 是显示字符串，可能恰好等于另一个
+/// 模型的 id（实测 freeflow 的 `glm-5.3-flash-free` 显示名是「GLM-4.6V」），
+/// 拿它当匹配维度会把用户点到「莫名其妙的模型」。
+///
+/// 兜的只是「目录 id 与账本 id 形态不同」：忽略大小写、slug 等价
+/// （`GLM-5.3` ↔ `glm-5.3`）。调用方还必须保证命中**唯一**（多条相似 → 不猜）。
+pub fn matches_ref(id: &str, needle: &str) -> bool {
     let n = needle.trim();
     if n.is_empty() {
         return false;
     }
-    if id.eq_ignore_ascii_case(n) || (!name.is_empty() && name.eq_ignore_ascii_case(n)) {
+    if id.eq_ignore_ascii_case(n) {
         return true;
     }
     let ns = slugify(n);
-    if ns.is_empty() {
-        return false;
-    }
-    slugify(id) == ns || (!name.is_empty() && slugify(name) == ns)
+    !ns.is_empty() && slugify(id) == ns
 }
 
 #[cfg(test)]
@@ -143,33 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn matches_ref_fallback_forms() {
+    fn matches_ref_id_only_never_name() {
         // 精确 id
-        assert!(matches_ref(
-            "deepseek-flash",
-            "DeepSeek-V4.1-Flash",
-            "deepseek-flash"
-        ));
-        // 忽略大小写
-        assert!(matches_ref("GLM-5.3", "GLM 5.3", "glm-5.3"));
-        // 目录拿 name 当 id：与账本 name 相等
-        assert!(matches_ref(
-            "deepseek-flash",
-            "DeepSeek V4.1 Flash",
-            "DeepSeek V4.1 Flash"
-        ));
-        // slug 等价
-        assert!(matches_ref(
-            "deepseek-flash",
-            "DeepSeek-V4.1-Flash",
-            "deepseek v4.1 flash"
-        ));
-        // 不相干的模型不能被误配
-        assert!(!matches_ref(
-            "deepseek-flash",
-            "DeepSeek-V4.1-Flash",
-            "deepseek-v4-pro"
-        ));
-        assert!(!matches_ref("deepseek-flash", "DeepSeek-V4.1-Flash", ""));
+        assert!(matches_ref("deepseek-flash", "deepseek-flash"));
+        // 忽略大小写 / slug 等价
+        assert!(matches_ref("GLM-5.3", "glm-5.3"));
+        assert!(matches_ref("glm-5.3-flash", "glm 5.3 flash"));
+        // 不相干 → 不命中（名称再像也不认：名称不是 id）
+        assert!(!matches_ref("glm-5.3-flash-free", "glm-4.6v"));
+        assert!(!matches_ref("deepseek-flash", "deepseek-v4-pro"));
+        assert!(!matches_ref("glm-5.3", ""));
     }
 }

@@ -205,6 +205,28 @@ process.exit(j.section.startsWith('mj:m:pf-test-ds:')&&j.mj_id_value==='pf-test-
 mj settings.mj_model_close
 check CASE4C "关闭退回自定义商详情" "$PUI" wait --path settings.section --eq "mj:p:pf-test-ds" --timeout 10
 
+# ---------- CASE4D 点模型行**只认 id**，名称不得参与匹配 ----------
+# 教训（2026-11-01 用户实测）：账本里 id=glm-5.3-flash-free、name=GLM-4.6V 的
+# 行，曾让「点 GLM-4.6V」弹出那个莫名其妙的 free 模型。名称是显示字符串，
+# 绝不能当匹配维度；命中不唯一也一律不猜（退回只读的 pi 定义视图）。
+node -e "
+const fs=require('fs');const p='$MODELS';
+const d=JSON.parse(fs.readFileSync(p,'utf8'));
+d.providers['pf-test-mism']={name:'pf-test-mism',baseUrl:'https://api.deepseek.com',api:'openai-completions',
+  models:[{id:'glm-5.3-flash-free',name:'GLM-4.6V',contextWindow:1000000,reasoning:true,input:['text']}]};
+fs.writeFileSync(p,JSON.stringify(d,null,2));" 2>/dev/null
+mj settings.mj_select --arg section="mj:p:pf-test-mism"
+"$PUI" wait --path settings.section --eq "mj:p:pf-test-mism" --timeout 10 >/dev/null 2>&1 || true
+mj settings.mj_open_model --arg provider=pf-test-mism --arg id=glm-4.6v
+check CASE4D "名称再像也不串行（落只读覆盖视图，不碰那条 free 账本行）" node -e "
+const j=JSON.parse(process.argv[1]);
+process.exit(j.section==='mj:o:pf-test-mism:glm-4.6v'&&j.mj_id_value==='glm-4.6v'?0:1)" "$(snap)"
+mj settings.mj_model_close
+node -e "
+const fs=require('fs');const p='$MODELS';
+const d=JSON.parse(fs.readFileSync(p,'utf8'));delete d.providers['pf-test-mism'];
+fs.writeFileSync(p,JSON.stringify(d,null,2));" 2>/dev/null
+
 # ---------- CASE5 新增智谱商（openai 形状 /v4，有真目录）----------
 mj settings.mj_new
 mj settings.mj_form --arg name=pf-test-zg --arg base="https://open.bigmodel.cn/api/coding/paas/v4" --arg key="$ZG_KEY"

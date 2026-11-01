@@ -465,16 +465,25 @@ impl Chat {
             .map(pi_link::models_json::provider_models)
             .unwrap_or_default();
         let field = mj_field;
-        // 先按 id 精确找；找不到再认「同一模型的另一种写法」（忽略大小写 /
-        // slug 等价 / 目录拿 name 当 id）——左右两个列表点同一行必须落到同一
-        // 条目，否则会掉进只读覆盖视图
+        // 精确 id 命中 → 索引模式（编辑账本条目）。否则只在「同一 id 的另
+        // 一种写法」（忽略大小写 / slug 等价，**名称不参与**）且命中**唯一**时
+        // 才认；多条相似或无命中 → 覆盖模式（只读的 pi 定义视图）。
+        // 宁可不猜：曾因拿 name 当匹配维度，点 GLM-4.6V 弹出了另一个模型
+        //（账本里 id=glm-5.3-flash-free、name=GLM-4.6V）。
         let ix = models
             .iter()
             .position(|m| field(m, "id") == id)
             .or_else(|| {
-                models.iter().position(|m| {
-                    pi_link::model_ref::matches_ref(field(m, "id"), field(m, "name"), &id)
-                })
+                let mut hit: Option<usize> = None;
+                for (i, m) in models.iter().enumerate() {
+                    if pi_link::model_ref::matches_ref(field(m, "id"), &id) {
+                        if hit.is_some() {
+                            return None;
+                        }
+                        hit = Some(i);
+                    }
+                }
+                hit
             });
         match ix {
             Some(ix) => self.mj_select(format!("mj:m:{provider}:{ix}"), cx),
