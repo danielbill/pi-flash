@@ -100,6 +100,12 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.pf.none_installed", "尚未安装任何插件", "尚未安裝任何外掛", "No plugins installed yet"),
     ("market.pf.uninstall_confirm", "卸载插件 {name}？", "卸載外掛 {name}？", "Uninstall plugin {name}?"),
     ("market.pf.enable_failed", "启用失败：未找到插件清单（{name}）", "啟用失敗：未找到外掛清單（{name}）", "Enable failed: manifest not found ({name})"),
+    // 090-10 迁移体验：台账启用却被本版 PF 拒载的失效包（旧 schema 等）
+    ("market.pf.stale_toast", "{n} 个插件与本版 PF 不兼容，请到「PF 插件市场」更新：{list}", "{n} 個外掛與本版 PF 不相容，請到「PF 外掛市場」更新：{list}", "{n} plugin(s) are incompatible with this PF; update them in PF Plugin Market: {list}"),
+    ("market.pf.stale_head", "{n} 个已安装插件与本版 PF 不兼容，需更新：{list}", "{n} 個已安裝外掛與本版 PF 不相容，需更新：{list}", "{n} installed plugin(s) are incompatible with this PF and need an update: {list}"),
+    ("market.pf.stale_tag", "需更新", "需更新", "Update needed"),
+    ("market.pf.stale_state", "与本版 PF 不兼容（清单 schema {got}），请更新", "與本版 PF 不相容（清單 schema {got}），請更新", "Incompatible with this PF (manifest schema {got}); please update"),
+    ("market.pf.stale_invalid", "清单无效，无法装载：{reason}", "清單無效，無法載入：{reason}", "Invalid manifest, cannot load: {reason}"),
     // 插件包内 pi 扩展挂载：忙时会话延迟重启的提示（name = 插件 id）
     ("plugin.ext_wait_idle", "插件 {name} 的扩展将在当前任务完成后生效", "外掛 {name} 的擴充將在當前任務完成後生效", "Extension of plugin {name} will take effect after the current task finishes"),
     // 040-2 页内按钮走英文原串（照设计稿那套 chrome 的语言）

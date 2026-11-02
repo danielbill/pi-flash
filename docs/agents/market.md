@@ -162,3 +162,17 @@
   干净位置加包装函数）。
 - 台账重读时机：open、安装/卸载完成、页签切换（`pf_switch_tab`，进出都重读，
   零成本同步点）；选中项 `section` 在切换与卸载后复位。
+- **失效包提示（090-10 迁移体验，2026-11-02）**：`PfState.stale` 由启动链
+  `spawn_plugin_scan` 用 `scan_manifests_full()` 写入；`reload_plugin_by_pkg`
+  （更新/启用）按包名 retain+extend 本包的新结论，`pf_uninstall` 成功 retain 掉。
+  `scan_manifests()` 保持薄包装无副作用——**已安装页 render 每帧在调它**，任何迁移
+  /收集/toast 都不能塞进去。toast 必须等 `pool.booted`（2.5s 自动过期，揭幕前播
+  = 白播）。失效包清单 parse 不过，标题/版本走 `peek_manifest_head` 行扫，别指望
+  `manifest_title_for`（它只认平铺布局且要 parse 成功）。
+- pif-ui 跑市场用例的坑：① app 写 `<PI_FLASH_DIR>/automation/<pid>.json` 要几百
+  毫秒，第一条 `pif-ui` 前先轮询登记文件出现，否则「没有找到自动化实例」直接退出
+  （`wait` 不会替你等登记）；② `snapshot app` 的 toast 键叫 `status_toast`，
+  `dialogs` 面才叫 `toast`，`--only` 只裁顶层键、裁不到就回 `{}` 而不是报错——字段
+  加错面了看起来像「状态没写进去」；③ Git Bash 的 `tar -xzf D:/...` 把 `D:` 当远程
+  主机，加 `--force-local`；④ 开市场页走 `exec content.view --arg view=pf-market`，
+  页签切换没有 op，用 `input.mouse --arg rx= --arg ry=`（相对坐标）点。

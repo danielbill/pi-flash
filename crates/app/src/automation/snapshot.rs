@@ -259,6 +259,17 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
         }),
         // 瞬时提示（set_status）：运行中拦截 / 对话中途禁改 等断言用
         "status_toast": chat.dlg.status_toast.as_ref().map(|(m, _)| m.clone()),
+        // 090-10 迁移体验：台账启用却被本版 PF 拒载的失效包（市场常驻提示数据源）。
+        // 只读；L3 断言「旧 schema 包启动后进提示、更新后消失」
+        "pf_market_stale": chat.aux.market.pf.stale.iter().map(|s| json!({
+            "name": s.name,
+            "version": s.version,
+            "title": s.title_zh,
+            "kind": match &s.kind {
+                crate::pf_plugin::StaleKind::SchemaUnsupported { got } => format!("schema:{got}"),
+                crate::pf_plugin::StaleKind::Invalid(_) => "invalid".to_string(),
+            },
+        })).collect::<Vec<_>>(),
         "pill_menu": chat.dlg.pill_menu.map(|m| match m {
             crate::PillMenu::Thinking => "thinking",
             crate::PillMenu::Tools => "tools",

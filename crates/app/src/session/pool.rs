@@ -390,7 +390,7 @@ impl Chat {
                 .iter()
                 .find(|e| e.manifest.id == plugin_id)
             {
-                let f = e.manifest.dir.join("data").join("claim.json");
+                let f = e.manifest.data_dir().join("claim.json");
                 if f.exists() {
                     let _ = std::fs::write(
                         &f,

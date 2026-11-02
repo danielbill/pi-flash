@@ -48,7 +48,7 @@ pub(crate) fn plugin_ctx_json(id: &str, m: &PluginManifest, session_key: Option<
         "plugin": {
             "id": id,
             "version": m.version,
-            "dataDir": m.dir.join("data").to_string_lossy(),
+            "dataDir": m.data_dir().to_string_lossy(),
         },
         "pf": {"version": env!("CARGO_PKG_VERSION"), "locale": crate::i18n::LANG_LABELS[crate::i18n::lang_ix()]},
         "session": session_key.map(|k| serde_json::json!({"key": k})),
@@ -154,33 +154,50 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
         |p| crate::services::script_exec::exec_kind(Path::new(p)).is_some(),
     );
     cx.spawn(async move |this, cx| {
-        let manifests = cx
+        let outcome = cx
             .background_executor()
             .spawn(async move {
-                // 先清无主残留（卸载时被占用留下的 .cache 等），再扫
+                // 先清无主残留（卸载时被占用留下的 .cache 等），再迁、再扫
                 pi_link::pf_plugins::sweep_orphans();
-                let manifests = scan_manifests();
+                // 090-10 迁移体验：版本目录下的 data 一次性搬到 <pkg>/data。
+                // 必须在 scan 之前、任何实例装载之前（此时无句柄）；且**不看
+                // 清单能否解析**——被本版拒载的旧包正是最需要迁的那个。
+                if let Some(root) = pi_link::paths::plugins_dir() {
+                    let moved = pi_link::pf_plugins::migrate_data_dirs(
+                        &root,
+                        &pi_link::pf_plugins::load_ledger(),
+                    );
+                    if !moved.is_empty() {
+                        eprintln!("[pf-plugin] data 目录已迁出版本层：{}", moved.join(", "));
+                    }
+                }
+                let outcome = scan_manifests_full();
                 // 90-9 §7 启动对账：上次异常退出（plugin.log 存在未闭合
                 // load）→ 补一条「上次异常退出，未执行 unload」。后台线程
                 // 做掉，主线程零成本。
-                for m in &manifests {
+                for m in &outcome.manifests {
                     lifecycle::reconcile_startup(&m.dir);
                 }
-                manifests
+                outcome
             })
             .await;
+        let ScanOutcome { manifests, stale } = outcome;
         let (wasm, js): (Vec<_>, Vec<_>) = manifests.into_iter().partition(|m| m.wasm.is_some());
         // ① 全部落位（JS+wasm）：状态栏 tab 立即可见；wasm 实例本身仍是懒装载
-        // （首次开面板才建，见 plugin_wasm_ready），落位只是清单/入口
+        // （首次开面板才建，见 plugin_wasm_ready），落位只是清单/入口。
+        // 失效包（台账启用却被本版拒载）同时进市场状态——常驻提示的数据源。
+        let has_stale = !stale.is_empty();
         let _ = this.update(cx, |c, cx| {
             let mut entries = plugin_entries(js);
             entries.extend(plugin_entries(wasm.clone()));
             c.plugins_set(entries, cx);
+            c.aux.market.pf.stale = stale;
         });
-        if wasm.is_empty() {
+        if wasm.is_empty() && !has_stale {
             return;
         }
-        // ② 等揭幕：验签是秒级 CPU 重活，不和启动抢核（揭幕前只有启动页）
+        // ② 等揭幕：验签是秒级 CPU 重活，不和启动抢核（揭幕前只有启动页）；
+        // 失效包 toast 也必须等到这里——它 2.5s 自动过期，揭幕前播了等于没播。
         loop {
             if this.update(cx, |c, _| c.pool.booted).unwrap_or(true) {
                 break;
@@ -188,6 +205,26 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(100))
                 .await;
+        }
+        if has_stale {
+            // 这不是验签结论（那类一律不播报）——是「插件需更新」的可操作信号。
+            // 只播一次；用户不在电脑前错过了，市场页头部通知行还在。
+            let _ = this.update(cx, |c, cx| {
+                let st = &c.aux.market.pf.stale;
+                let list = st
+                    .iter()
+                    .map(|s| format!("{} v{}", s.title_zh, s.version))
+                    .collect::<Vec<_>>()
+                    .join("、");
+                let msg = crate::i18n::tf(
+                    "market.pf.stale_toast",
+                    &[("n", st.len().to_string()), ("list", list)],
+                );
+                c.set_status(msg, cx);
+            });
+        }
+        if wasm.is_empty() {
+            return;
         }
         // ③ 验签门：拒载的包置 disabled（tab 隐藏，面板点不开）；通过的无事
         // （实例是懒装载的，这里只做安全把关 + stderr 播报）

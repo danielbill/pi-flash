@@ -154,7 +154,7 @@ pub(crate) fn svc_sync_configs(chat: &mut crate::Chat) {
             owned.push((
                 e.manifest.id.clone(),
                 e.manifest.dir.join(&sc.entry),
-                e.manifest.dir.join("data").join("svc"),
+                e.manifest.data_dir().join("svc"),
             ));
         }
     }

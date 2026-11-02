@@ -157,6 +157,10 @@ pub struct PfState {
     pub error: Option<String>,
     /// 台账镜像（open 时重读；安装完成后重读）
     pub ledger: Vec<pi_link::pf_plugins::LedgerEntry>,
+    /// 失效包（090-10 迁移体验）：台账启用、清单被本版拒载（旧 schema 等）。
+    /// 启动扫描写入；更新/启用重载成功、卸载时按包名移除。驱动市场头部
+    /// 常驻通知行 + 已安装页标签——toast 只播一次，错过了这里还看得到。
+    pub stale: Vec<crate::pf_plugin::StalePlugin>,
 }
 
 impl Default for PfState {
@@ -170,6 +174,7 @@ impl Default for PfState {
             loading: false,
             error: None,
             ledger: Vec::new(),
+            stale: Vec::new(),
         }
     }
 }
@@ -340,7 +345,7 @@ pub(crate) fn page(
     } else {
         st.ledger.len()
     };
-    let head = head_segment(st.error.clone(), total, st.tab, weak, &m, t);
+    let head = head_segment(st.error.clone(), &st.stale, total, st.tab, weak, &m, t);
     let body: AnyElement = if st.tab == PfTab::Installed {
         super::pf_installed::body(chat, weak, &m)
     } else {
@@ -548,6 +553,7 @@ fn tab_label(
 /// 否则头段贴着内容区顶边（用户原话：上边距没了）。
 pub(crate) fn head_segment(
     err: Option<String>,
+    stale: &[crate::pf_plugin::StalePlugin],
     total: usize,
     tab: PfTab,
     weak: &gpui::WeakEntity<Chat>,
@@ -574,6 +580,30 @@ pub(crate) fn head_segment(
             .text_color(rgb(t.danger))
             .child(e)
     });
+    // 失效包常驻通知行（090-10 迁移体验）：WARN 黄点（规范 §6「内部中断」
+    // 语义，非外部错误）+ 说明档 ui(11) text_dim。两个页签都可见，更新完
+    // 自动消失——启动 toast 只播一次，用户不在电脑前错过了靠这行兜底。
+    let stale_el = (!stale.is_empty()).then(|| {
+        let list = stale
+            .iter()
+            .map(|s| format!("{} v{}", s.title_zh, s.version))
+            .collect::<Vec<_>>()
+            .join("、");
+        gpui::div()
+            .id("pf-stale-notice")
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(m.card_pad_body))
+            .pb(px(sp::BODY_GAP))
+            .text_size(px(11.))
+            .text_color(rgb(t.text_dim))
+            .child(crate::ui::kit::status_dot(crate::appearance::theme::WARN))
+            .child(SharedString::from(tf(
+                "market.pf.stale_head",
+                &[("n", stale.len().to_string()), ("list", list)],
+            )))
+    });
     centered(
         slice_shell(m, true, false, t)
             .child(card_header(
@@ -582,6 +612,7 @@ pub(crate) fn head_segment(
                 m,
                 t,
             ))
+            .children(stale_el)
             .children(err_el),
         m,
     )

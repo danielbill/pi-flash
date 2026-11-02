@@ -32,3 +32,46 @@ M1-M10 全部在此环境完成；台账降版本造假只作 dev-market 不可�
 | M8 | 带会话清单已挂载 pi 扩展的插件 | 更新后 ext 重挂回当前会话（`plugin_attach_pi_exts`，空闲即重启 pi） |
 | M9 | 正在运行的插件更新 | evict 先行 unload + 释放 cwasm mmap → 覆盖目录不报 os error 32 |
 | M10 | 回归：全新安装/启用/卸载 | 行为与更新前一致（`reload_plugin_by_pkg` 新参传 false 不影响原链路） |
+
+## 迁移体验（0.3.2：契约 v5 一刀切后旧包的升级路径）
+
+背景：市场安装链落 `<pkg>/<version>/`，此前 `dataDir = 清单目录/data` 挂在版本目录下，
+更新一次丢一次；旧 schema 2 包被 `scan_manifests` 静默跳过（release 下无任何提示）。
+修法：`PluginManifest.pkg_dir` + `data_dir()`（用户数据统一 `<pkg>/data`，与 90-4 设计对齐）、
+启动期 `migrate_data_dirs` 一次性搬迁、`scan_manifests_full` 收集失效包 → `PfState.stale`
+→ 启动 toast 一次 + 市场头部常驻通知行 + 已安装页「需更新」标签 + 详情状态文案。
+
+### 单元（已自动化）
+
+`RUST_MIN_STACK=33554432 cargo test -p pi-link migrate_data` / `cargo test -p app -- pf_plugin::manifest i18n_audit`
+
+| # | 用例 | 断言 |
+|---|------|------|
+| U6 | 版本目录 data 搬到 `<pkg>/data` | `migrate_data_dirs` 返回包名；内容原样；源目录搬空（rename） |
+| U7 | `<pkg>/data` 已存在 | 不动（幂等，二次启动 / 新版本目录又长 data 都不覆盖） |
+| U8 | 平铺 dev 布局 | no-op；`assets/data` 之类非版本形目录不被误当版本层 |
+| U9 | 台账版本目录 data 空 | 回落 mtime 最新且非空的版本目录 |
+| U10 | 哪都没 data | 什么都不做 |
+| U11 | `pkg_dir` 两档布局 | 版本布局 = 父目录、平铺 = 清单目录；`data_dir()` 都落 `<pkg>/data`；`dir` 仍是版本目录 |
+| U12 | `scan_root` 失效包收集 | schema 2 台账包 → `StaleKind::SchemaUnsupported{2}` + version + title（peek）；合法包进 manifests；野包两边都不进 |
+| U13 | 停用 / 其他清单错误 | 停用不进 stale（用户主动关的不催）；非 schema 错误归 `Invalid(原因)`，version 缺失回落目录名 |
+
+### L3 接线（pif-ui 自动化）
+
+脚本：`bash test/090-10/插件更新/l3-stale-migrate.sh`（先 `cargo build`）。
+播种 = 台账 quick-panel 0.1.4 + feed 里的 0.1.4.tgz（schema 2）+ `0.1.4/data/pins.lst`。
+
+| # | 断言 | 读哪里 |
+|---|------|--------|
+| L1 | `<pkg>/data/pins.lst` 到位、`0.1.4/data` 搬空、内容两行原样 | 文件系统 |
+| L2 | 揭幕后 toast「1 个插件与本版 PF 不兼容…快捷面板 v0.1.4」 | `snapshot app` → `status_toast`（揭幕前不播：2.5s 窗口会白播） |
+| L3 | `pf_market_stale[0] = {name, version:"0.1.4", title:"快捷面板", kind:"schema:2"}` | `snapshot app` → `pf_market_stale`（只读字段） |
+| L4 | `content.view view=pf-market` 开页 → `shot`：页签行下黄点通知行可见 | 截帧人眼/视觉复核 |
+
+### 人工验收（交付用户）
+
+| # | 场景 | 预期 |
+|---|------|------|
+| M11 | 真机 `~/.pi-flash` 现有 quick-panel 0.1.4 → 启动新 PF | toast 一次；菜单 → PF 插件市场：头部通知行；【已安装】行「需更新」黄标签，详情「状态」= 与本版 PF 不兼容（清单 schema 2），请更新 |
+| M12 | 市场 0.1.5 已发（`engines.pf >= 0.3.2`）→ 点 [更新] | 装到 `0.1.5/`，状态栏「快捷」tab 回来，**快捷项全在**（data 在 `<pkg>/data`）；通知行/标签消失 |
+| M13 | 旧 PF 0.3.1 看到市场 0.1.5 | 点更新被 `min_pf` 挡下，提示需更新 PF；0.1.4 照常运行 |

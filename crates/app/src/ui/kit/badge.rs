@@ -13,6 +13,15 @@ pub(crate) fn indigo_fg() -> gpui::Hsla {
     gpui::hsla(0.63, 0.86, 0.62, 0.85)
 }
 
+/// WARN 黄（`theme::WARN` 0xfacc15 的 hsla 形态）——「需更新 / 内部中断」语义
+/// 标签色（规范 §6 通知点三色；不是外部错误，不用 danger）。
+pub(crate) fn warn_bg() -> gpui::Hsla {
+    gpui::hsla(0.133, 0.96, 0.53, 0.14)
+}
+pub(crate) fn warn_fg() -> gpui::Hsla {
+    gpui::hsla(0.133, 0.96, 0.53, 0.9)
+}
+
 /// 7px 状态点。
 pub(crate) fn status_dot(color: u32) -> AnyElement {
     div()

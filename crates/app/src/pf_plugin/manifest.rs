@@ -19,6 +19,11 @@ pub(crate) const SUPPORTED_MANIFEST_SCHEMA: u32 = 5;
 pub(crate) struct PluginManifest {
     /// 安装目录 = `<数据目录>/plugins/<pkg>/[<version>/]`
     pub dir: PathBuf,
+    /// 顶层包目录 `<数据目录>/plugins/<pkg>/`——平铺 dev 布局 == `dir`，
+    /// market 版本布局 == `dir` 的父目录。**用户数据只挂这里**（90-4：
+    /// `plugins/<id>/data/` 无版本维度）；wasm / assets / .cache / 入口文件
+    /// 仍随版本目录 `dir`。版本换代 data 不丢——`data_dir()` 唯一派生口。
+    pub pkg_dir: PathBuf,
     /// 顶层包目录名（`plugins/<pkg>/`）——台账 name 经 `pf_plugins::dir_name`
     /// 转写的形态。**运行态条目 ↔ 台账条目对账靠它**（停用/卸载），版本层
     /// 目录名是版本号，不能当身份用（090-4 v5 踩过：停用形同虚设）。
@@ -136,6 +141,14 @@ pub(crate) enum PluginDock {
 }
 
 impl PluginManifest {
+    /// 插件私有数据目录 `<pkg_dir>/data`（90-4 §2：PF 建目录、插件读写、
+    /// PF 不解析）。所有用户数据派生（plugin-ctx dataDir / JS ctx.dir /
+    /// data/svc / claim.json）都从这里取，**不要**再 `dir.join("data")`——
+    /// 那会把数据挂到版本目录，更新一次丢一次（090-10 迁移体验）。
+    pub(crate) fn data_dir(&self) -> PathBuf {
+        self.pkg_dir.join("data")
+    }
+
     /// 声明为预览页签的面板（契约 v2.4 dock="tab"）。当前取第一个：
     /// 多 page 页签支持随认领会话线（W5）一起开。
     pub(crate) fn tab_page(&self) -> Option<(&str, &str)> {
@@ -304,7 +317,8 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 
     let mut m = PluginManifest {
         dir: dir.to_path_buf(),
-        pkg: String::new(), // 扫描期回填（顶层包目录名）
+        pkg_dir: dir.to_path_buf(), // 平铺默认；版本布局在目录名对账处上钻
+        pkg: String::new(),         // 扫描期回填（顶层包目录名）
         id: String::new(),
         title_zh: String::new(),
         title_en: None,
@@ -557,12 +571,11 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
     // `@<scope>__<id>/<version>/`。版本层取父目录名；scope 前缀剥掉后对账。
     let mut base = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
     if base.starts_with(|c: char| c.is_ascii_digit())
-        && let Some(p) = dir
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
+        && let Some(parent) = dir.parent()
+        && let Some(p) = parent.file_name().and_then(|s| s.to_str())
     {
         base = p; // 版本目录 → 上钻到插件目录
+        m.pkg_dir = parent.to_path_buf(); // 用户数据挂顶层包目录（data_dir）
     }
     let expected = base.rsplit("__").next().unwrap_or(base);
     if m.id != expected {
@@ -685,28 +698,79 @@ pub(crate) fn parse_manifest(dir: &Path) -> Result<PluginManifest, String> {
 /// 扫描 `<数据目录>/plugins/*/` 只出清单（后台线程可调——PluginEntry 持
 /// 非 Send 的 JsPlugin，条目装配必须在主线程做）；坏清单 eprintln 跳过。
 ///
+/// 扫描结果：可装载清单 + 台账里登记却装不上的「失效包」（090-10 迁移体验）。
+pub(crate) struct ScanOutcome {
+    pub manifests: Vec<PluginManifest>,
+    pub stale: Vec<StalePlugin>,
+}
+
+/// 台账启用、磁盘有清单、但本版 PF 拒载的包。用户可见信号的唯一数据源
+/// （启动 toast + 市场头部通知行 + 已安装页标签）；此前只进 stderr，release
+/// 下用户看到的就是插件凭空消失。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StalePlugin {
+    /// 台账包名（`@scope/name`）——市场 / 已安装页按它对账
+    pub name: String,
+    /// 清单 version（peek 行扫；缺则取版本目录名）
+    pub version: String,
+    /// 清单 title.zh（peek；缺则回落短包名）
+    pub title_zh: String,
+    pub kind: StaleKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum StaleKind {
+    /// 清单 schema 不在本版支持集 → 「需更新插件」（本轮 = 旧 schema 2 包）
+    SchemaUnsupported { got: u32 },
+    /// 其他清单错误 → 「包损坏」（原因原文）
+    Invalid(String),
+}
+
 /// **装载白名单 = 台账**（唯一安装真相）：只有台账里登记且未停用的包才装载，
 /// 磁盘上多出来的目录（手拷 / 卸载残留 / 历史野包）一律不装载——否则就会
 /// 「市场说未安装、左面板却挂着它」（090-4 v5b 踩过）。
+///
+/// 薄包装：只要清单。**render 路径也在调它**（已安装页标题回落），所以这里
+/// 不能有副作用；收集失效包走 [`scan_manifests_full`]。
 pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
+    scan_manifests_full().manifests
+}
+
+/// 带失效包收集的扫描（启动链 / 单包重载用）。
+pub(crate) fn scan_manifests_full() -> ScanOutcome {
     let Some(root) = pi_link::paths::plugins_dir() else {
-        return Vec::new();
+        return ScanOutcome {
+            manifests: Vec::new(),
+            stale: Vec::new(),
+        };
     };
-    // 台账包名 → 目录别名（`@scope__name` 与平铺 `name` 都认）
-    let enabled: std::collections::HashSet<String> = pi_link::pf_plugins::load_ledger()
-        .into_iter()
+    scan_root(&root, &pi_link::pf_plugins::load_ledger())
+}
+
+/// 扫描本体（显式 root + 台账，单测直接喂）。
+pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]) -> ScanOutcome {
+    // 目录别名（`@scope__name` 与平铺 `name` 都认）→ 台账包名；只含未停用的
+    let enabled: std::collections::HashMap<String, String> = ledger
+        .iter()
         .filter(|l| !l.disabled)
-        .flat_map(|l| pi_link::pf_plugins::dir_aliases(&l.name))
+        .flat_map(|l| {
+            pi_link::pf_plugins::dir_aliases(&l.name)
+                .into_iter()
+                .map(move |a| (a, l.name.clone()))
+        })
         .collect();
-    let mut out = Vec::new();
-    let mut candidates = scan_candidates(&root);
+    let mut out = ScanOutcome {
+        manifests: Vec::new(),
+        stale: Vec::new(),
+    };
+    let mut candidates = scan_candidates(root);
     candidates.sort_by(|a, b| a.1.cmp(&b.1));
     for (pkg, dir) in candidates {
         // 准入/停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比
         // 包名永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
-        if !enabled.contains(&pkg) {
+        let Some(ledger_name) = enabled.get(&pkg) else {
             continue; // 未安装（台账无此包）或已停用，不装载不绘制
-        }
+        };
         match parse_manifest(&dir) {
             Ok(mut m) => {
                 // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
@@ -722,12 +786,88 @@ pub(crate) fn scan_manifests() -> Vec<PluginManifest> {
                 }
                 m.pkg = pkg;
                 register_plugin_dir(&m.id, &dir);
-                out.push(m);
+                out.manifests.push(m);
             }
-            Err(e) => eprintln!("[pf-plugin] 跳过 {}：{e}", dir.display()),
+            Err(e) => {
+                eprintln!("[pf-plugin] 跳过 {}：{e}", dir.display());
+                out.stale.push(stale_of(ledger_name, &pkg, &dir, e));
+            }
         }
     }
     out
+}
+
+/// 拒载清单 → 失效包条目：schema 不支持单列（可操作 = 去更新），其余归损坏。
+fn stale_of(ledger_name: &str, pkg: &str, dir: &Path, err: String) -> StalePlugin {
+    let head = peek_manifest_head(dir);
+    let kind = match head.schema {
+        Some(got) if got != SUPPORTED_MANIFEST_SCHEMA && got != 3 && got != 4 => {
+            StaleKind::SchemaUnsupported { got }
+        }
+        _ => StaleKind::Invalid(err),
+    };
+    let version = head.version.unwrap_or_else(|| {
+        dir.file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| n.starts_with(|c: char| c.is_ascii_digit()))
+            .unwrap_or("")
+            .to_string()
+    });
+    let title_zh = head
+        .title_zh
+        .unwrap_or_else(|| pkg.rsplit("__").next().unwrap_or(pkg).to_string());
+    StalePlugin {
+        name: ledger_name.to_string(),
+        version,
+        title_zh,
+        kind,
+    }
+}
+
+/// 清单头三字段的容错行扫（`schema` / `version` / `title.zh`），只看第一个
+/// `[` 段之前的顶层行。给失效包取元数据用——此时 `parse_manifest` 已经拒了，
+/// 不能再依赖它；也**不**做校验，拿到什么算什么。
+#[derive(Default)]
+struct ManifestHead {
+    schema: Option<u32>,
+    version: Option<String>,
+    title_zh: Option<String>,
+}
+
+fn peek_manifest_head(dir: &Path) -> ManifestHead {
+    let mut head = ManifestHead::default();
+    let Ok(src) = std::fs::read_to_string(dir.join("pf-plugin.toml")) else {
+        return head;
+    };
+    for line in src.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let (k, v) = (k.trim(), v.trim());
+        match k {
+            "schema" => head.schema = v.split('#').next().unwrap_or("").trim().parse().ok(),
+            "version" => head.version = quoted(v),
+            "title" => {
+                // title = { zh = "快捷面板", en = "Quick Panel" }
+                head.title_zh = v
+                    .split_once("zh")
+                    .and_then(|(_, rest)| rest.split_once('='))
+                    .and_then(|(_, rest)| quoted(rest.trim()));
+            }
+            _ => {}
+        }
+    }
+    head
+}
+
+/// 取行首的 `"..."` 字面量内容。
+fn quoted(v: &str) -> Option<String> {
+    let rest = v.strip_prefix('"')?;
+    rest.split_once('"').map(|(s, _)| s.to_string())
 }
 
 /// 按包名直读清单标题（已装列表用）：停用插件被 scan 过滤、没有清单条目，
@@ -1311,5 +1451,133 @@ title = { zh = "快捷面板" }
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// 把 GOOD 清单连同它引用的入口/资产一起落到目录（parse 校验文件存在）。
+    fn write_good_pkg(dir: &Path, id: &str) {
+        write_manifest(
+            dir,
+            &GOOD.replace("id = \"quick-panel\"", &format!("id = \"{id}\"")),
+        );
+        std::fs::write(dir.join("main.js"), "export function render(){{}}").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets/bolt.svg"), "<svg/>").unwrap();
+    }
+
+    fn ledger_entry(name: &str, version: &str, disabled: bool) -> pi_link::pf_plugins::LedgerEntry {
+        pi_link::pf_plugins::LedgerEntry {
+            name: name.into(),
+            version: version.into(),
+            integrity: String::new(),
+            installed_at: String::new(),
+            source: "market".into(),
+            disabled,
+        }
+    }
+
+    /// 090-10 迁移体验：用户数据挂**顶层包目录**。版本布局 pkg_dir = 父目录，
+    /// 平铺布局 pkg_dir = 清单目录；两档 data_dir 都落 `<pkg>/data`——版本换代
+    /// 时 data 路径不变，这是「更新不丢数据」的全部依据。
+    #[test]
+    fn pkg_dir_follows_layout() {
+        let tmp = std::env::temp_dir().join(format!("pf-pkgdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // market 版本布局
+        let ver = tmp.join("@scope__quick-panel").join("0.1.5");
+        write_good_pkg(&ver, "quick-panel");
+        let m = parse_manifest(&ver).expect("版本布局清单合法");
+        assert_eq!(m.dir, ver, "wasm/assets 仍在版本目录");
+        assert_eq!(m.pkg_dir, tmp.join("@scope__quick-panel"));
+        assert_eq!(m.data_dir(), tmp.join("@scope__quick-panel").join("data"));
+        // dev 平铺布局
+        let flat = tmp.join("quick-panel");
+        write_good_pkg(&flat, "quick-panel");
+        let m = parse_manifest(&flat).expect("平铺清单合法");
+        assert_eq!(m.pkg_dir, flat);
+        assert_eq!(m.data_dir(), flat.join("data"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 090-10 迁移体验：台账启用、清单 schema 2 被本版拒 → 进 stale（kind /
+    /// version / title 都从 peek 来，不依赖 parse）；合法包进 manifests 不进
+    /// stale；台账没有的包两边都不进（野包不装载也不提示）。
+    #[test]
+    fn scan_root_collects_stale_for_rejected_ledger_pkgs() {
+        let tmp = std::env::temp_dir().join(format!("pf-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // ① 旧 schema 2 包（本机 0.1.4 现状）
+        write_manifest(
+            &tmp.join("@pi-flash-plugins__quick-panel").join("0.1.4"),
+            r#"
+schema = 2
+id = "quick-panel"
+title = { zh = "快捷面板", en = "Quick Panel" }
+version = "0.1.4"
+wasm = "plugin.wasm"
+"#,
+        );
+        // ② 合法包
+        write_good_pkg(&tmp.join("@s__other").join("1.0.0"), "other");
+        // ③ 野包：磁盘有、台账无
+        write_manifest(
+            &tmp.join("@s__wild").join("0.0.1"),
+            "schema = 2\nid = \"wild\"\n",
+        );
+
+        let ledger = vec![
+            ledger_entry("@pi-flash-plugins/quick-panel", "0.1.4", false),
+            ledger_entry("@s/other", "1.0.0", false),
+        ];
+        let out = scan_root(&tmp, &ledger);
+
+        assert_eq!(out.manifests.len(), 1, "只有合法包装载");
+        assert_eq!(out.manifests[0].id, "other");
+        assert_eq!(
+            out.stale,
+            vec![StalePlugin {
+                name: "@pi-flash-plugins/quick-panel".into(),
+                version: "0.1.4".into(),
+                title_zh: "快捷面板".into(),
+                kind: StaleKind::SchemaUnsupported { got: 2 },
+            }]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 停用的包不装载也**不**进 stale——用户主动关的，不该被催更新。
+    #[test]
+    fn scan_root_skips_disabled_even_if_rejected() {
+        let tmp = std::env::temp_dir().join(format!("pf-stale-dis-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_manifest(
+            &tmp.join("@s__old").join("0.1.0"),
+            "schema = 2\nid = \"old\"\ntitle = { zh = \"旧\" }\nversion = \"0.1.0\"\n",
+        );
+        let out = scan_root(&tmp, &[ledger_entry("@s/old", "0.1.0", true)]);
+        assert!(out.manifests.is_empty());
+        assert!(out.stale.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 非 schema 类清单错误归 Invalid（原因原文），version 缺失回落版本目录名。
+    #[test]
+    fn scan_root_marks_other_parse_errors_invalid() {
+        let tmp = std::env::temp_dir().join(format!("pf-stale-inv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // schema 合法但 id 与目录名不符 → parse 拒；没有 version 行
+        write_manifest(
+            &tmp.join("@s__mismatch").join("2.0.0"),
+            "schema = 5\nid = \"someone-else\"\ntitle = { zh = \"错位\" }\n",
+        );
+        let out = scan_root(&tmp, &[ledger_entry("@s/mismatch", "2.0.0", false)]);
+        assert_eq!(out.stale.len(), 1);
+        let s = &out.stale[0];
+        assert_eq!(s.version, "2.0.0", "version 缺失 → 版本目录名");
+        assert_eq!(s.title_zh, "错位");
+        assert!(
+            matches!(&s.kind, StaleKind::Invalid(r) if r.contains("目录名")),
+            "{:?}",
+            s.kind
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
-// 临时探针（勿入库）：直接跑 scan_manifests 看装载产物

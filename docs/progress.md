@@ -32,6 +32,14 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-02 090-10 迁移体验（契约 v5 一刀切后旧包升级路径）：插件用户数据从版本
+  目录脱出到 `plugins/<pkg>/data/`（对齐 90-4 设计；`PluginManifest::data_dir()`
+  唯一派生口 + 启动期 `migrate_data_dirs` 一次性搬迁，更新不再丢数据）；被本版拒载
+  的台账包收成 `PfState.stale` → 揭幕后 toast 一次 + 市场头部常驻通知行 + 已安装页
+  「需更新」标签/详情状态。pi-link 5 + app 4 单测、i18n 审计、pif-ui L1–L4 全绿
+  （`test/090-10/插件更新/l3-stale-migrate.sh`）。发版顺序定案：市场先发 0.1.5
+  （`engines.pf >= 0.3.2`），再发 PF 0.3.2。follow-up：mda8（多版本目录去重/清旧
+  目录）、7yle（plugin.log 版本层）。
 - 2026-10-25 060 微信通话事故整改：**状态收口 + 会话页模版化**。事故=开着
   【微信通话】关窗口重启后标签/操作栏/渠道全丢，换来一个「新会话」孤儿页。
   根因：同一件事五处编码（wx_tab_closed / content_view==Wx / is_wx_line / 存档

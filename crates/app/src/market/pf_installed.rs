@@ -35,6 +35,8 @@ struct InstalledItem {
     disabled: bool,
     /// 索引上的更高版本（090-10；None = 已是最新 / 索引缺失）
     update: Option<String>,
+    /// 本版 PF 拒载原因（090-10 迁移体验；None = 正常）——行标签 + 详情状态
+    stale: Option<crate::pf_plugin::StaleKind>,
 }
 
 impl Chat {
@@ -146,6 +148,10 @@ impl Chat {
                 c.aux.market.pf.removing = None;
                 c.aux.market.pf.error = result.err();
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
+                if ok {
+                    // 失效提示随包走：卸了就不再提醒更新
+                    c.aux.market.pf.stale.retain(|s| s.name != pkg_name);
+                }
                 if c.aux
                     .market
                     .pf
@@ -213,6 +219,7 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
         st.ledger
             .iter()
             .map(|l| {
+                let stale_entry = st.stale.iter().find(|s| s.name == l.name);
                 let display = ix
                     .entry(&l.name)
                     .map(|e| e.display.zh.clone())
@@ -222,6 +229,9 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                             .find(|m| m.pkg == l.name)
                             .map(|m| m.title_zh.clone())
                     })
+                    // 被拒清单 parse 不过、manifest_title_for 也拿不到：用扫描期
+                    // peek 出的标题
+                    .or_else(|| stale_entry.map(|s| s.title_zh.clone()))
                     // 停用插件被 scan 过滤、不在 manifests 里：盘上直读清单标题，
                     // 裸包名只作最后兜底
                     .or_else(|| crate::pf_plugin::manifest_title_for(&l.name))
@@ -238,6 +248,7 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                     source: l.source.clone(),
                     disabled: l.disabled,
                     update,
+                    stale: stale_entry.map(|s| s.kind.clone()),
                 }
             })
             .collect()
@@ -285,6 +296,14 @@ pub(crate) fn body(chat: &Chat, weak: &gpui::WeakEntity<Chat>, m: &Metrics) -> A
                         .text_ellipsis()
                         .child(SharedString::from(item.display.clone())),
                 )
+                // 需更新标签（090-10 迁移体验）：本版 PF 拒载该版本清单
+                .children(item.stale.is_some().then(|| {
+                    crate::ui::kit::tag(
+                        &tr("market.pf.stale_tag"),
+                        crate::ui::kit::warn_bg(),
+                        crate::ui::kit::warn_fg(),
+                    )
+                }))
                 .child(
                     gpui::div()
                         .flex()
@@ -515,10 +534,16 @@ fn detail_pane(
             gpui::div()
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text_muted))
-                .child(SharedString::from(if item.disabled {
-                    tr("status.disabled").to_string()
-                } else {
-                    tr("status.enabled").to_string()
+                .child(SharedString::from(match &item.stale {
+                    // 本版 PF 拒载（090-10 迁移体验）：说清原因 + 该做什么
+                    Some(crate::pf_plugin::StaleKind::SchemaUnsupported { got }) => {
+                        tf("market.pf.stale_state", &[("got", got.to_string())])
+                    }
+                    Some(crate::pf_plugin::StaleKind::Invalid(reason)) => {
+                        tf("market.pf.stale_invalid", &[("reason", reason.clone())])
+                    }
+                    None if item.disabled => tr("status.disabled").to_string(),
+                    None => tr("status.enabled").to_string(),
                 })),
         ))
         .child(field(

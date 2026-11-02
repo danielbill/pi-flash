@@ -312,14 +312,25 @@ impl Chat {
         let pkg = name.clone();
         let scan = cx.background_executor().spawn(async move {
             let aliases = pi_link::pf_plugins::dir_aliases(&pkg);
-            scan_manifests()
+            let outcome = scan_manifests_full();
+            let manifests = outcome
+                .manifests
                 .into_iter()
                 .filter(|m| aliases.iter().any(|a| *a == m.pkg))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            // 本包的失效条目一并带回：装上了 = 空（提示消失）；仍装不上 = 新原因
+            let stale = outcome
+                .stale
+                .into_iter()
+                .filter(|s| s.name == pkg)
+                .collect::<Vec<_>>();
+            (manifests, stale)
         });
         cx.spawn(async move |this, cx| {
-            let manifests = scan.await;
+            let (manifests, stale) = scan.await;
             let _ = this.update(cx, |c, cx| {
+                c.aux.market.pf.stale.retain(|s| s.name != name);
+                c.aux.market.pf.stale.extend(stale);
                 if !c.plugin_replace_by_pkg(&name, manifests) {
                     let msg = crate::i18n::tf("market.pf.enable_failed", &[("name", name.clone())]);
                     c.aux.market.pf.error = Some(msg);
@@ -357,7 +368,7 @@ impl Chat {
             .as_ref()
             .map(|p| p.entry.clone())
             .unwrap_or_else(|| "main.js".into());
-        let dir = entry.manifest.dir.join("data");
+        let dir = entry.manifest.data_dir();
         let _ = std::fs::create_dir_all(&dir); // 插件自管目录：PF 只建，不解析
         let dir_str = dir.to_string_lossy().into_owned();
         let id = entry.manifest.id.clone();

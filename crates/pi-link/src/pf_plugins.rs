@@ -579,6 +579,73 @@ pub fn sweep_orphans() {
     }
 }
 
+/// 090-10 迁移体验：把挂在版本目录下的用户数据 `<pkg>/<ver>/data` 一次性搬到
+/// `<pkg>/data`。90-4 的设计本就是 `plugins/<id>/data/`（无版本维度）；此前
+/// 代码取 `清单目录/data`，market 版本层布局下等于版本目录——更新一次丢一次。
+///
+/// 规则：
+/// - 只看台账里的包（含停用）；`<pkg>/data` 已存在 → 跳过（幂等；平铺 dev
+///   布局 `<pkg>/` 即清单目录，data 本就在位，天然 no-op）。
+/// - 源优先台账记录的版本目录；缺则取 mtime 最新且非空的 `<ver>/data`。
+/// - **不依赖清单能否解析**：被本版拒载的旧包（schema 过低）也要迁，否则
+///   用户点 [更新] 装到新版本目录后仍从空 data 起步。
+/// - `fs::rename` 同卷原子；失败只记日志，下次启动重试（.cache os error 32 同款
+///   容错）。跑在后台扫描线程、实例装载之前（此时无句柄）。
+/// 返回已迁包名（日志 / 单测断言）。
+pub fn migrate_data_dirs(root: &Path, ledger: &[LedgerEntry]) -> Vec<String> {
+    let mut moved = Vec::new();
+    for l in ledger {
+        let pkg_dir = root.join(dir_name(&l.name));
+        if !pkg_dir.is_dir() {
+            continue;
+        }
+        let target = pkg_dir.join("data");
+        if target.exists() {
+            continue;
+        }
+        let Some(src) = pick_versioned_data(&pkg_dir, &l.version) else {
+            continue;
+        };
+        match std::fs::rename(&src, &target) {
+            Ok(()) => moved.push(l.name.clone()),
+            Err(e) => eprintln!(
+                "[pf-plugin] data 迁移失败 {} → {}: {e}（下次启动重试）",
+                src.display(),
+                target.display()
+            ),
+        }
+    }
+    moved
+}
+
+/// 版本目录里挑 data 源：台账版本优先；否则 mtime 最新的非空 `<ver>/data`。
+/// 只认版本形目录（首字符数字，与清单目录名对账同口径），`assets/`、`pi/`
+/// 之类不会被误当版本层。
+fn pick_versioned_data(pkg_dir: &Path, ledger_version: &str) -> Option<PathBuf> {
+    let preferred = pkg_dir.join(ledger_version).join("data");
+    if dir_non_empty(&preferred) {
+        return Some(preferred);
+    }
+    let rd = std::fs::read_dir(pkg_dir).ok()?;
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(|c: char| c.is_ascii_digit()))
+        })
+        .map(|p| p.join("data"))
+        .filter(|d| dir_non_empty(d))
+        .max_by_key(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok())
+}
+
+fn dir_non_empty(d: &Path) -> bool {
+    std::fs::read_dir(d)
+        .map(|mut rd| rd.next().is_some())
+        .unwrap_or(false)
+}
+
 fn now_iso() -> String {
     // 无 chrono 依赖：epoch 秒即可（台账时间戳仅排障用）
     let secs = std::time::SystemTime::now()
@@ -702,6 +769,123 @@ mod uninstall_tests {
         assert!(!base.join("plugin.wasm").exists(), "wasm 必须被删");
         assert!(!base.join("assets").exists(), "资产目录必须被清");
         assert!(base.join(".cache/a.cwasm").exists(), "缓存留给启动清扫");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod migrate_data_tests {
+    use super::*;
+
+    fn fresh_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("pf-migr-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn ledger(name: &str, version: &str) -> Vec<LedgerEntry> {
+        vec![LedgerEntry {
+            name: name.into(),
+            version: version.into(),
+            integrity: String::new(),
+            installed_at: String::new(),
+            source: "market".into(),
+            disabled: false,
+        }]
+    }
+
+    fn seed_data(dir: &Path, file: &str, body: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(file), body).unwrap();
+    }
+
+    /// 主场景（090-10 迁移体验）：被本版拒载的 schema 2 旧包，其 `<ver>/data`
+    /// 必须搬到 `<pkg>/data`——不看清单能否解析，只看台账。
+    #[test]
+    fn versioned_data_moves_to_pkg_dir() {
+        let root = fresh_root("main");
+        let pkg = root.join("@s__quick");
+        seed_data(&pkg.join("0.1.4").join("data"), "pins.lst", "a\nb\n");
+        std::fs::write(pkg.join("0.1.4").join("pf-plugin.toml"), "schema = 2\n").unwrap();
+
+        let moved = migrate_data_dirs(&root, &ledger("@s/quick", "0.1.4"));
+        assert_eq!(moved, vec!["@s/quick".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("data/pins.lst")).unwrap(),
+            "a\nb\n",
+            "数据内容原样到位"
+        );
+        assert!(!pkg.join("0.1.4/data").exists(), "源目录整体搬走（rename）");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 幂等：`<pkg>/data` 已存在就不动——第二次启动、或更新后新版本目录下又
+    /// 长出 data，都不能覆盖已有数据。
+    #[test]
+    fn existing_pkg_data_is_kept() {
+        let root = fresh_root("keep");
+        let pkg = root.join("@s__quick");
+        seed_data(&pkg.join("data"), "pins.lst", "new\n");
+        seed_data(&pkg.join("0.1.4").join("data"), "pins.lst", "old\n");
+
+        let moved = migrate_data_dirs(&root, &ledger("@s/quick", "0.1.4"));
+        assert!(moved.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("data/pins.lst")).unwrap(),
+            "new\n"
+        );
+        assert!(pkg.join("0.1.4/data/pins.lst").exists(), "旧数据不被动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 平铺 dev 布局：`<pkg>/` 即清单目录，data 本就在 `<pkg>/data`，天然 no-op；
+    /// `assets/` 之类非版本形子目录绝不被当版本层。
+    #[test]
+    fn flat_layout_is_noop() {
+        let root = fresh_root("flat");
+        let pkg = root.join("quick");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("pf-plugin.toml"), "schema = 5\n").unwrap();
+        seed_data(&pkg.join("assets").join("data"), "x", "x"); // 诱饵：非版本形目录
+
+        let moved = migrate_data_dirs(&root, &ledger("quick", "0.1.5"));
+        assert!(moved.is_empty());
+        assert!(!pkg.join("data").exists(), "平铺布局不该凭空造 data");
+        assert!(pkg.join("assets/data/x").exists(), "诱饵目录不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 台账版本目录没有 data（或为空）→ 回落到 mtime 最新且非空的版本目录。
+    #[test]
+    fn falls_back_to_newest_non_empty_version() {
+        let root = fresh_root("fallback");
+        let pkg = root.join("@s__quick");
+        seed_data(&pkg.join("0.1.2").join("data"), "pins.lst", "v2\n");
+        std::fs::create_dir_all(pkg.join("0.1.4").join("data")).unwrap(); // 台账版本：空 data
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        seed_data(&pkg.join("0.1.3").join("data"), "pins.lst", "v3\n"); // 更晚写入
+
+        let moved = migrate_data_dirs(&root, &ledger("@s/quick", "0.1.4"));
+        assert_eq!(moved.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("data/pins.lst")).unwrap(),
+            "v3\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 哪个版本目录都没有 data → 什么都不做（宿主装载时自己建空目录）。
+    #[test]
+    fn nothing_to_migrate_is_noop() {
+        let root = fresh_root("none");
+        let pkg = root.join("@s__quick").join("0.1.4");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("pf-plugin.toml"), "schema = 2\n").unwrap();
+
+        let moved = migrate_data_dirs(&root, &ledger("@s/quick", "0.1.4"));
+        assert!(moved.is_empty());
+        assert!(!root.join("@s__quick/data").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }
