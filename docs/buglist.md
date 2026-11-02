@@ -3,6 +3,21 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 结构债务（0.3.2 口径复核放行，发后偿还）——check_arch 行数红线 5 处超线
+
+- 现状（`scripts/check_arch.sh` §1/§2，限值 文件 1500 / 顶层视图函数 300 非测试行）：
+  - `settings/custom_models.rs` 2017 行（0.3.1 时 651）
+  - `settings/models.rs` 1842 行（0.3.1 时 1483）
+  - `pf_plugin/manifest.rs::parse_manifest` 384 行
+  - `pf_plugin/panel/render.rs::render_node_inner` 307 行
+  - `settings/custom_models.rs::mj_model_modal_overlay` 315 行
+- 根因：042-1 / 051 模型与 Provider 架构重做集中落在 settings 两文件；pf_plugin 契约面
+  扩展（topbar_menu / dock=tab / canvas）把清单解析与节点渲染两个函数撑过线。
+- 决策：所有者 2026-11-02 口径复核放行 0.3.2（纯结构债，功能/测试/warning/ui-raw 全绿），
+  发版后偿还；在此之前 check_arch §1/§2 预期红，**不得以此为由改限值**。
+- 偿还：settings 两文件由 042-1 会话拆分（Settings 模块禁他人改动）；pf_plugin 两函数
+  按节点类型 / 清单段拆子函数。验证口径 = `scripts/check_arch.sh` 全绿，本条转「已验证」。
+
 ## 已验证（本轮修复）——新建 Provider 弹窗偶发「读取注册表」几十秒
 
 - 根因：弹窗缓存未命中时起一次性 node dump，脚本尾 `listCredentials()` 走默认
