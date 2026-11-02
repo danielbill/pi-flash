@@ -73,6 +73,10 @@ pub struct ManifestEntry {
     /// 市场卡片预览图（包内资产相对路径，如 "assets/w.svg"）。
     #[serde(default)]
     pub icon: Option<String>,
+    /// PF app 版本下限（`">=0.3.2"` 语义，pf_install 按 semver 拒装）；
+    /// 插件仓 dist 链 MARKET_MIN_PF 写入，缺省 = 不设限。
+    #[serde(default)]
+    pub min_pf: String,
 }
 
 /// 从清单条目构造市场条目（integrity/tarball 来自 registry packument，
@@ -85,7 +89,7 @@ pub fn entry_from(m: &ManifestEntry, integrity: String, tarball: String) -> Opti
         name: m.name.clone(),
         version: String::new(), // 由调用方从 packument 填
         integrity,
-        min_pf: String::new(),
+        min_pf: m.min_pf.clone(),
         display: m.display.clone().unwrap_or(IndexDisplay {
             zh: m
                 .name
@@ -188,6 +192,7 @@ mod tests {
             display: None,
             desc: None,
             icon: None,
+            min_pf: String::new(),
         };
         assert!(entry_from(&m, "sha512-A".into(), "https://t".into()).is_none());
         let m = ManifestEntry {
@@ -195,6 +200,7 @@ mod tests {
             display: None,
             desc: None,
             icon: None,
+            min_pf: String::new(),
         };
         assert!(entry_from(&m, String::new(), "https://t".into()).is_none());
         let e = entry_from(&m, "sha512-A".into(), "https://t".into()).unwrap();
@@ -221,5 +227,23 @@ mod tests {
         assert_eq!(m.packages[0].icon.as_deref(), Some("assets/w.svg"));
         let e = entry_from(&m.packages[0], "sha512-x".into(), "https://t/w.tgz".into()).unwrap();
         assert_eq!(e.icon.as_deref(), Some("assets/w.svg"));
+    }
+
+    #[test]
+    fn manifest_entry_min_pf_passthrough() {
+        // min_pf 随清单条目透传进市场条目（pf_install 按 semver 拒装）；缺省 = 空串不设限
+        let m = parse_manifest(
+            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/w","min_pf":">=0.3.2"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.packages[0].min_pf, ">=0.3.2");
+        let e = entry_from(&m.packages[0], "sha512-x".into(), "https://t/w.tgz".into()).unwrap();
+        assert_eq!(e.min_pf, ">=0.3.2");
+        let m = parse_manifest(
+            r#"{"schema":"pf-market/1","packages":[{"name":"@pi-flash-plugins/old"}]}"#,
+        )
+        .unwrap();
+        let e = entry_from(&m.packages[0], "sha512-x".into(), "https://t/o.tgz".into()).unwrap();
+        assert_eq!(e.min_pf, "");
     }
 }
