@@ -42,6 +42,14 @@
 - Windows 相关修复利好本仓用户：shell 检测接受 MS Store 别名 + 非 `C:\Windows` 安装下找 PowerShell/WSL（`#9504`/`#9501`）；`mcp.json` 带 UTF-8 BOM 可解析（`#11191`）。
 - pi 侧新键（PF 只读透传，无需动）：classifier `images` 输入、provider `compat.imageInput`/`sendImageOptInHeader`、`MiniMax-M3.1-Flash`、`PI_CODEMODE_MAX_WORKERS`；Copilot 默认模型 `gpt-5.4`→`gpt-6.1-sol`。
 
+## 1.5.0 升级复核（2026-11-02，npm tarball dist diff）
+
+- **wire 层零变化**：RPC 三件套 + `jsonl.js` 与 1.4.0 **逐字节一致**（`get_commands` 行为因此不变，catalog.rs 未动）；`agent-session.js` 事件字符串集零增删；`AgentSessionEvent` 联合类型无新事件；内置工具名仍 8 个；`formatDimensionNote` 未变（image-resize.js 逐字节一致，PF 剥除照旧）；`core/auth-storage.js` 仍导出 `ReadOnlyAuthStorage`（registry dump 只读闸照旧）。protocol.rs 未动。pi-link 253 测试全绿。
+- `agent-session.js` 两处实现变化（不破 wire）：压缩/分支摘要经 `markRuntimeStreamFunction` 标记的 streamFn 不再预解析凭据（#11520，OAuth 令牌不再被误当 API key 传）；工具开关重排保序（#11495，active tools 是集合，在留工具保序、新增追加）。
+- **工具参数验证改 `@earendil-works/pi-schema`**（上游破坏性变更）：TypeBox 特有特性（`Type.Refine()`/`Type.BigInt()`/codecs 等）不再适用于工具参数；验证失败消息改 pi-schema 风格（`- path: missing`）。PF 把 toolResult is_error 当不透明文本透传，不受影响；自研扩展若靠错误文案匹配需注意。
+- 模型目录更新至 models.dev v2，默认 OpenAI 模型 `gpt-5.5`→`gpt-6.1-sol`，纯图像模型不再作为聊天模型；GPT-6.1 Terra 新增（Codex 通道 500K 上下文）。registry.rs 测试夹具里的 "1.4.0" 是哑字符串，无需跟版本。
+- Windows/WSL 修复利好本仓用户：大小写路径差异导致技能重复加载、信任重复询问（#10488）；WSL 深目录图片粘贴/浏览器打开静默失败（#11592）。tool_search 排序支持中日泰等非 ASCII 查询（#11331）。
+
 ## transcript 重放
 
 - 系统提示词与工具声明在 transcript 的 `role:"system"` 消息里（content 追加 + sections 补丁 + toolsAdded/Removed），重放对齐 pi-ai `utils/transcript.js`。
