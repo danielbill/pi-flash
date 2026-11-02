@@ -305,7 +305,9 @@ fn ext_source_allowed(src: &str, ledger: &[pi_link::pf_plugins::LedgerEntry]) ->
 }
 
 /// 挂载源注册状态检查（90-9 §8 摘除面，tc6）：src 形如 `<…>/plugins/<pkg>/…`
-/// → 包目录须有清单（未卸载）且台账未停用。
+/// → 包目录须有清单（未卸载）且台账未停用。清单两档布局都认（090-10 版本层
+/// `<pkg>/<ver>/pf-plugin.toml` / 平铺 dev `<pkg>/pf-plugin.toml`）——只认顶层
+/// 会把已装包误判成已卸载，ext 被 spawn 过滤（真机 2026-11-02 wxbot 出码无人执行）。
 fn ext_source_registered(src: &str, ledger: &[pi_link::pf_plugins::LedgerEntry]) -> bool {
     let norm = src.replace('\\', "/");
     let Some(idx) = norm.rfind("/plugins/") else {
@@ -318,9 +320,8 @@ fn ext_source_registered(src: &str, ledger: &[pi_link::pf_plugins::LedgerEntry])
     if pkg.is_empty() {
         return false;
     }
-    let manifest =
-        std::path::Path::new(&norm[..idx + "/plugins/".len() + pkg.len()]).join("pf-plugin.toml");
-    if !manifest.is_file() {
+    let pkg_dir = std::path::Path::new(&norm[..idx + "/plugins/".len() + pkg.len()]);
+    if pi_link::service_ext::pkg_manifest_path(pkg_dir).is_none() {
         return false; // 已卸载
     }
     pi_link::pf_plugins::dir_aliases(pkg)

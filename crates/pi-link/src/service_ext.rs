@@ -358,6 +358,63 @@ mod tests {
         assert!(!config_path(&b, &t).exists());
         assert!(!in_path(&b, &t).exists());
     }
+
+    #[test]
+    fn pkg_manifest_and_exec_entry_recognize_versioned_layout() {
+        let b = tmp("exec-entry");
+        // market 版本层布局：<root>/plugins/<pkg>/<ver>/pf-plugin.toml（090-10 主形态）
+        let ver_dir = b.join("plugins").join("@x__svc").join("0.2.0");
+        std::fs::create_dir_all(&ver_dir).unwrap();
+        std::fs::write(
+            ver_dir.join("pf-plugin.toml"),
+            "[[contributes.service]]\nid = \"s\"\n",
+        )
+        .unwrap();
+        let entry = ver_dir.join("pi").join("index.mjs");
+        std::fs::create_dir_all(&entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "export function activate() {}").unwrap();
+        assert!(pkg_manifest_path(&b.join("plugins").join("@x__svc")).is_some());
+        assert!(is_exec_entry(&entry), "版本层布局也要认出执行域入口");
+
+        // 平铺 dev 布局：<root>/plugins/<pkg>/pf-plugin.toml
+        let flat = b.join("plugins").join("@x__flat");
+        std::fs::create_dir_all(&flat).unwrap();
+        std::fs::write(flat.join("pf-plugin.toml"), "schema = 5\n").unwrap();
+        let flat_ext = flat.join("pi").join("index.mjs");
+        std::fs::create_dir_all(flat_ext.parent().unwrap()).unwrap();
+        std::fs::write(&flat_ext, "export function activate() {}").unwrap();
+        assert_eq!(
+            pkg_manifest_path(&flat).as_deref(),
+            Some(flat.join("pf-plugin.toml").as_path())
+        );
+        assert!(!is_exec_entry(&flat_ext), "无 service 声明 = 可 -e 挂载");
+
+        // 无清单（已卸载）→ 两口都否
+        let gone = b.join("plugins").join("@x__gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        assert!(pkg_manifest_path(&gone).is_none());
+        let _ = std::fs::remove_dir_all(&b);
+    }
+}
+
+/// 插件包目录的清单路径——**两档布局都认**（02 §6，同 `sweep_orphans` 的
+/// has_manifest 判据）：market 版本层（`<pkg>/<ver>/pf-plugin.toml`）与平铺
+/// dev（`<pkg>/pf-plugin.toml`）。版本层重构（090-10）后 pkg 根通常无清单，
+/// 只认顶层会把已装包误判成「已卸载」（真机 2026-11-02：wxbot ext 在 spawn
+/// 的注册过滤段被剔除，出码/收发无人执行）。
+pub fn pkg_manifest_path(plugin_dir: &Path) -> Option<PathBuf> {
+    let top = plugin_dir.join("pf-plugin.toml");
+    if top.is_file() {
+        return Some(top);
+    }
+    std::fs::read_dir(plugin_dir)
+        .ok()?
+        .flatten()
+        .filter(|v| v.path().is_dir())
+        .find_map(|v| {
+            let m = v.path().join("pf-plugin.toml");
+            m.is_file().then_some(m)
+        })
 }
 
 /// 该路径是否是**执行域入口**（而不是可 `-e` 挂载的 pi 扩展）。
@@ -377,7 +434,9 @@ pub fn is_exec_entry(path: &Path) -> bool {
         return false;
     };
     let plugin_dir = Path::new(&norm[..idx + "/plugins/".len() + id_end]);
-    let manifest = plugin_dir.join("pf-plugin.toml");
+    let Some(manifest) = pkg_manifest_path(plugin_dir) else {
+        return false;
+    };
     match std::fs::read_to_string(manifest) {
         Ok(text) => text.contains("contributes.service"),
         Err(_) => false,
