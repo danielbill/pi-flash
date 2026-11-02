@@ -26,6 +26,8 @@ cat > "$T/plugins.json" <<'EOF'
 [{"name":"@pi-flash-plugins/quick-panel","version":"0.1.4","integrity":"","installed_at":"epoch:0","source":"market","disabled":false}]
 EOF
 grep -q '^schema = 2' "$PKG/0.1.4/pf-plugin.toml" || { echo "FAIL 夹具不是 schema 2"; exit 1; }
+# mda8：再放一个非台账版本的残留目录（模拟上次更新被占用没删掉），启动期应被 prune
+mkdir -p "$PKG/0.1.3"; printf 'schema = 2\n' > "$PKG/0.1.3/pf-plugin.toml"
 
 # ---- 起隔离实例 ----
 export PI_FLASH_DIR=$T
@@ -53,6 +55,10 @@ echo "booted"
 test -f "$PKG/data/pins.lst" && echo "PASS L1 data 迁到 <pkg>/data" || { echo "FAIL L1 目标缺失"; exit 1; }
 test ! -e "$PKG/0.1.4/data" && echo "PASS L1 版本目录 data 已搬空" || { echo "FAIL L1 源未搬"; exit 1; }
 [ "$(grep -c '' "$PKG/data/pins.lst")" = "2" ] && echo "PASS L1 内容两行原样" || { echo "FAIL L1 内容"; exit 1; }
+
+# ---- L5 启动期清非台账版本目录（mda8）----
+test ! -e "$PKG/0.1.3" && echo "PASS L5 残留 0.1.3 已清" || { echo "FAIL L5 残留未清"; exit 1; }
+test -d "$PKG/0.1.4" && echo "PASS L5 台账版本 0.1.4 保留" || { echo "FAIL L5 台账版本被误删"; exit 1; }
 
 # ---- L4 市场页头部常驻通知行（像素级：开页 → 等视图 → 截帧，人眼/视觉复核）----
 "$PUI" exec content.view --arg view=pf-market >/dev/null

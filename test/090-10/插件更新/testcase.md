@@ -55,6 +55,9 @@ M1-M10 全部在此环境完成；台账降版本造假只作 dev-market 不可�
 | U11 | `pkg_dir` 两档布局 | 版本布局 = 父目录、平铺 = 清单目录；`data_dir()` 都落 `<pkg>/data`；`dir` 仍是版本目录 |
 | U12 | `scan_root` 失效包收集 | schema 2 台账包 → `StaleKind::SchemaUnsupported{2}` + version + title（peek）；合法包进 manifests；野包两边都不进 |
 | U13 | 停用 / 其他清单错误 | 停用不进 stale（用户主动关的不催）；非 schema 错误归 `Invalid(原因)`，version 缺失回落目录名 |
+| U14 | `scan_root` 只认台账版本目录（mda8） | 三个合法版本目录只装台账那个；0.1.10/0.1.9 字符串序陷阱不影响；残留不算失效；台账版本目录缺失不拿别的顶上 |
+| U15 | `prune_old_versions` | 只删非台账版本的版本形目录（含其 `.cache`）；台账版本、`<pkg>/data`、`assets/` 不动 |
+| U16 | prune 数据抢救 / 全量版 | 旧版本目录里唯一一份 data 先救到包层再删；`prune_stale_versions` 按台账遍历，台账外的包不碰 |
 
 ### L3 接线（pif-ui 自动化）
 
@@ -67,6 +70,7 @@ M1-M10 全部在此环境完成；台账降版本造假只作 dev-market 不可�
 | L2 | 揭幕后 toast「1 个插件与本版 PF 不兼容…快捷面板 v0.1.4」 | `snapshot app` → `status_toast`（揭幕前不播：2.5s 窗口会白播） |
 | L3 | `pf_market_stale[0] = {name, version:"0.1.4", title:"快捷面板", kind:"schema:2"}` | `snapshot app` → `pf_market_stale`（只读字段） |
 | L4 | `content.view view=pf-market` 开页 → `shot`：页签行下黄点通知行可见 | 截帧人眼/视觉复核 |
+| L5 | 播种的游离 `0.1.3/` 残留目录启动后被清，台账版本 `0.1.4/` 保留（mda8） | 文件系统 |
 
 ### 人工验收（交付用户）
 

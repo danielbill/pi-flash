@@ -749,14 +749,14 @@ pub(crate) fn scan_manifests_full() -> ScanOutcome {
 
 /// 扫描本体（显式 root + 台账，单测直接喂）。
 pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]) -> ScanOutcome {
-    // 目录别名（`@scope__name` 与平铺 `name` 都认）→ 台账包名；只含未停用的
-    let enabled: std::collections::HashMap<String, String> = ledger
+    // 目录别名（`@scope__name` 与平铺 `name` 都认）→ (台账包名, 台账版本)；只含未停用的
+    let enabled: std::collections::HashMap<String, (String, String)> = ledger
         .iter()
         .filter(|l| !l.disabled)
         .flat_map(|l| {
             pi_link::pf_plugins::dir_aliases(&l.name)
                 .into_iter()
-                .map(move |a| (a, l.name.clone()))
+                .map(move |a| (a, (l.name.clone(), l.version.clone())))
         })
         .collect();
     let mut out = ScanOutcome {
@@ -768,9 +768,18 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
     for (pkg, dir) in candidates {
         // 准入/停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比
         // 包名永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
-        let Some(ledger_name) = enabled.get(&pkg) else {
+        let Some((ledger_name, ledger_version)) = enabled.get(&pkg) else {
             continue; // 未安装（台账无此包）或已停用，不装载不绘制
         };
+        // 版本层布局**只认台账版本那一个目录**（台账 = 唯一安装真相）：更新后
+        // 旧版本目录若还没清掉（被占用 / 上版 PF 没清），两版清单都合法时会
+        // 双装载——双 tab、双右键项，且 register_plugin_dir 按字符串序 last-wins
+        // （0.1.10 < 0.1.9）。平铺布局 dir == <pkg>，无版本可比，照旧。
+        if dir != root.join(&pkg)
+            && dir.file_name().and_then(|n| n.to_str()) != Some(ledger_version.as_str())
+        {
+            continue; // 非台账版本的残留目录：不装载、不算失效（prune 会清）
+        }
         match parse_manifest(&dir) {
             Ok(mut m) => {
                 // 内层 wasm 插件无 contributes 也合法（验签在 wasm 内，090-5 L3）
@@ -1578,6 +1587,29 @@ wasm = "plugin.wasm"
             "{:?}",
             s.kind
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// mda8：版本层布局只认台账版本目录。更新后旧版本目录残留（被占用没删掉）
+    /// 且两版清单都合法时，不能双装载；残留目录也不算失效（不催更新）。
+    #[test]
+    fn scan_root_loads_only_ledger_version() {
+        let tmp = std::env::temp_dir().join(format!("pf-onever-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let pkg = tmp.join("@s__quick-panel");
+        write_good_pkg(&pkg.join("0.1.5"), "quick-panel");
+        write_good_pkg(&pkg.join("0.1.6"), "quick-panel");
+        // 字符串序陷阱：0.1.10 < 0.1.9，但台账说 0.1.6 → 只它
+        write_good_pkg(&pkg.join("0.1.10"), "quick-panel");
+
+        let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "0.1.6", false)]);
+        assert_eq!(out.manifests.len(), 1, "三个合法版本目录只装台账那一个");
+        assert_eq!(out.manifests[0].dir, pkg.join("0.1.6"));
+        assert!(out.stale.is_empty(), "残留目录不算失效");
+
+        // 台账版本目录不存在（异常残局）→ 什么都不装、也不拿别的版本顶上
+        let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "9.9.9", false)]);
+        assert!(out.manifests.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -176,3 +176,8 @@
   加错面了看起来像「状态没写进去」；③ Git Bash 的 `tar -xzf D:/...` 把 `D:` 当远程
   主机，加 `--force-local`；④ 开市场页走 `exec content.view --arg view=pf-market`，
   页签切换没有 op，用 `input.mouse --arg rx= --arg ry=`（相对坐标）点。
+- **多版本目录（mda8）**：`scan_root` 对版本层布局只认 `dir.file_name() == 台账 version`
+  的那一个目录，其余残留既不装载也不进 stale；清理在两处——`install()` 台账落新版后
+  `prune_old_versions`，启动链 `migrate_data_dirs` **之后** `prune_stale_versions`
+  补刀。prune 自带「旧目录有未迁 data 先 rename 到包层」保险，但调用顺序仍必须
+  迁移在前。平铺 dev 布局 `dir == <pkg>` 不受版本门限制。

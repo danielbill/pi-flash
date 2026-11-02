@@ -485,7 +485,13 @@ pub fn install(entry: &IndexEntry) -> Result<String, String> {
             installed_at: now_iso(),
             source: "market".into(),
             disabled: false,
-        })
+        })?;
+        // 台账已指向新版本：旧版本目录即残留，当场清（数据在 <pkg>/data 不受
+        // 影响；被 mmap 占住删不掉的留给下次启动 prune_stale_versions）
+        if let Some(pkg_dir) = dest.parent() {
+            prune_old_versions(pkg_dir, &entry.version);
+        }
+        Ok(())
     })();
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -644,6 +650,68 @@ fn dir_non_empty(d: &Path) -> bool {
     std::fs::read_dir(d)
         .map(|mut rd| rd.next().is_some())
         .unwrap_or(false)
+}
+
+/// 清掉 `<pkg>/` 下**不是**台账版本的版本形目录（更新后的旧版本残留）。
+///
+/// 为什么要清：扫描只认台账版本（宿主 `scan_root`），残留目录本就不装载，但
+/// 它占磁盘、带着旧 cwasm，且 `declared_claim_prefixes` 一类全目录遍历还会读到
+/// 它的清单。为什么能清：用户数据已在 `<pkg>/data`（包层），版本目录里只有随
+/// 版本走的东西。**先救数据再删**：若 `<pkg>/data` 还不存在而该版本目录下有非空
+/// `data/`（上版 PF 没迁过），先 rename 上来，绝不让 prune 跑在迁移前面丢数据。
+/// 删除 best-effort：旧 cwasm 被运行中实例 mmap 住时 Windows 拒删（os error 32），
+/// 留给下次启动再清；返回成功删掉的目录数。
+pub fn prune_old_versions(pkg_dir: &Path, keep_version: &str) -> usize {
+    let Ok(rd) = std::fs::read_dir(pkg_dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for e in rd.flatten() {
+        let p = e.path();
+        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // 只碰版本形目录（首字符数字）；data/、.cache 之类一律不动
+        if !p.is_dir() || !name.starts_with(|c: char| c.is_ascii_digit()) || name == keep_version {
+            continue;
+        }
+        let rescue = p.join("data");
+        let target = pkg_dir.join("data");
+        if !target.exists()
+            && dir_non_empty(&rescue)
+            && let Err(err) = std::fs::rename(&rescue, &target)
+        {
+            eprintln!(
+                "[pf-plugin] 旧版本 data 抢救失败，保留目录 {}: {err}",
+                p.display()
+            );
+            continue; // 数据没救出来就不删
+        }
+        match std::fs::remove_dir_all(&p) {
+            Ok(()) => removed += 1,
+            Err(err) => eprintln!(
+                "[pf-plugin] 旧版本目录暂不可删 {}: {err}（下次启动再清）",
+                p.display()
+            ),
+        }
+    }
+    removed
+}
+
+/// 启动期：对台账里每个包清旧版本目录（`prune_old_versions` 的全量版）。跑在
+/// `migrate_data_dirs` 之后、`scan` 之前。返回 (包名, 删掉数) 供日志。
+pub fn prune_stale_versions(root: &Path, ledger: &[LedgerEntry]) -> Vec<(String, usize)> {
+    ledger
+        .iter()
+        .filter_map(|l| {
+            let pkg_dir = root.join(dir_name(&l.name));
+            if !pkg_dir.is_dir() {
+                return None;
+            }
+            let n = prune_old_versions(&pkg_dir, &l.version);
+            (n > 0).then(|| (l.name.clone(), n))
+        })
+        .collect()
 }
 
 fn now_iso() -> String {
@@ -886,6 +954,74 @@ mod migrate_data_tests {
         let moved = migrate_data_dirs(&root, &ledger("@s/quick", "0.1.4"));
         assert!(moved.is_empty());
         assert!(!root.join("@s__quick/data").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- prune_old_versions（mda8：更新后旧版本目录残留 → 双装载）----
+
+    /// 只删非台账版本的版本形目录；台账版本、`<pkg>/data`、`.cache`/非版本目录不动。
+    #[test]
+    fn prune_removes_only_other_version_dirs() {
+        let root = fresh_root("prune");
+        let pkg = root.join("@s__quick");
+        seed_data(&pkg.join("data"), "pins.lst", "live\n");
+        seed_data(&pkg.join("0.1.4"), "pf-plugin.toml", "schema = 2\n");
+        seed_data(&pkg.join("0.1.4").join(".cache"), "a.cwasm", "x");
+        seed_data(&pkg.join("0.1.5"), "pf-plugin.toml", "schema = 5\n");
+        seed_data(&pkg.join("assets"), "bolt.svg", "<svg/>"); // 非版本形目录：诱饵
+
+        let n = prune_old_versions(&pkg, "0.1.5");
+        assert_eq!(n, 1);
+        assert!(!pkg.join("0.1.4").exists(), "旧版本整目录（含 .cache）删掉");
+        assert!(pkg.join("0.1.5/pf-plugin.toml").exists(), "台账版本不动");
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("data/pins.lst")).unwrap(),
+            "live\n"
+        );
+        assert!(pkg.join("assets/bolt.svg").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 上版 PF 没迁过：旧版本目录里还躺着唯一一份 data → 先救到包层再删，
+    /// 绝不丢数据（prune 永远不能跑赢迁移）。
+    #[test]
+    fn prune_rescues_unmigrated_data_before_removing() {
+        let root = fresh_root("prune-rescue");
+        let pkg = root.join("@s__quick");
+        seed_data(&pkg.join("0.1.4").join("data"), "pins.lst", "only-copy\n");
+        seed_data(&pkg.join("0.1.5"), "pf-plugin.toml", "schema = 5\n");
+
+        assert_eq!(prune_old_versions(&pkg, "0.1.5"), 1);
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("data/pins.lst")).unwrap(),
+            "only-copy\n"
+        );
+        assert!(!pkg.join("0.1.4").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 全量版按台账遍历；台账版本目录不存在也不会误删别的（只删「非台账版本」）。
+    #[test]
+    fn prune_stale_versions_walks_ledger() {
+        let root = fresh_root("prune-all");
+        let a = root.join("@s__a");
+        seed_data(&a.join("1.0.0"), "pf-plugin.toml", "schema = 5\n");
+        seed_data(&a.join("0.9.0"), "pf-plugin.toml", "schema = 5\n");
+        let b = root.join("@s__b");
+        seed_data(&b.join("2.0.0"), "pf-plugin.toml", "schema = 5\n"); // 台账版本，唯一目录
+        let wild = root.join("@s__wild"); // 台账没有：不碰
+        seed_data(&wild.join("0.0.1"), "pf-plugin.toml", "schema = 5\n");
+
+        let mut entries = ledger("@s/a", "1.0.0");
+        entries.extend(ledger("@s/b", "2.0.0"));
+        let out = prune_stale_versions(&root, &entries);
+        assert_eq!(out, vec![("@s/a".to_string(), 1)]);
+        assert!(!a.join("0.9.0").exists() && a.join("1.0.0").exists());
+        assert!(b.join("2.0.0").exists());
+        assert!(
+            wild.join("0.0.1").exists(),
+            "台账外的包不碰（归 sweep_orphans 管）"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

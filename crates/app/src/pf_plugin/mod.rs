@@ -163,12 +163,15 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                 // 必须在 scan 之前、任何实例装载之前（此时无句柄）；且**不看
                 // 清单能否解析**——被本版拒载的旧包正是最需要迁的那个。
                 if let Some(root) = pi_link::paths::plugins_dir() {
-                    let moved = pi_link::pf_plugins::migrate_data_dirs(
-                        &root,
-                        &pi_link::pf_plugins::load_ledger(),
-                    );
+                    let ledger = pi_link::pf_plugins::load_ledger();
+                    let moved = pi_link::pf_plugins::migrate_data_dirs(&root, &ledger);
                     if !moved.is_empty() {
                         eprintln!("[pf-plugin] data 目录已迁出版本层：{}", moved.join(", "));
+                    }
+                    // 迁移之后才清旧版本目录（prune 自带数据抢救，但顺序上仍以
+                    // 迁移在前为准）：更新时被 mmap 占住没删掉的残留，这里补刀
+                    for (name, n) in pi_link::pf_plugins::prune_stale_versions(&root, &ledger) {
+                        eprintln!("[pf-plugin] 清旧版本目录 {name} ×{n}");
                     }
                 }
                 let outcome = scan_manifests_full();
