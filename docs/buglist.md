@@ -3,6 +3,24 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已修（0.3.2 发版后，2026-11-02）——自定义商勾选的探测模型对话出错 + 详情页只读
+
+- 根因：`253ca038`（11-01 21:47）给 `mj_materialize_selection` 加「清单仓命中 → 原样
+  复制」分支，`arr.push(stashed); return Ok(())` 提前返回，没走到 `upsert_provider +
+  save`——探测拉到的模型必在仓里，所以勾选只改了内存克隆，`models.json` 永远没有它：
+  pi 不认识该模型（对话出错），`mj_open_model` 在账本找不到 id → 落只读覆盖视图。
+  验收能过是因为当时账本模型由旧路径（4ea0d903 第二分支 / 详情页【保存】）写入；
+  发版后新建的商（真机 myds，fetchedAt=11-02）必踩。`test/provider/run-cases.sh`
+  CASE11 本能抓住，但 253ca038 之后没再跑。
+- 修法：纯变换下沉 `pi_link::models_json::materialize_model`（单一出口，3 单测）；
+  自定义商详情**一律可编辑**——仓里有/账本没有的模型以「追加槽 + 仓定义预填」草稿
+  打开（`cfg.mj_draft_store_id`），保存只进仓（显式勾选的才顺手物化），移除删仓条目；
+  启动/设置页装载时 `mj_reconcile_custom_selection` 对账补物化（仅显式勾选，
+  all_enabled 零写盘）；探测解析补 `max_output_tokens`/`input_modalities`/`effort`
+  （DeepSeek 实录全给，此前只取三键）+ 仓 merge 字段级补缺。
+- 验证：`test/042-1/custom-model-materialize/run.sh` 离线 27 断言全绿；`test/provider/
+  run-cases.sh` CASE11 真端点；真机——重启后 myds 自愈、对话成功、详情页可编辑。
+
 ## 待复验（0.3.2 验收）——设置-模型上组混入已删除的测试商 ds/glm，重启后又消失
 
 - 根因：051 测试商 ds/glm 从 `~/.pi/agent/models.json` 删除后，模型条目仍留在

@@ -209,7 +209,10 @@ check CASE4C "关闭退回自定义商详情" "$PUI" wait --path settings.sectio
 # ---------- CASE4D 点模型行**只认 id**，名称不得参与匹配 ----------
 # 教训（2026-11-01 用户实测）：账本里 id=glm-5.3-flash-free、name=GLM-4.6V 的
 # 行，曾让「点 GLM-4.6V」弹出那个莫名其妙的 free 模型。名称是显示字符串，
-# 绝不能当匹配维度；命中不唯一也一律不猜（退回只读的 pi 定义视图）。
+# 绝不能当匹配维度；命中不唯一也一律不猜。
+# 2026-11-02 定稿：自定义商详情一律可编辑——账本没有该 id → 可编辑仓草稿
+# （追加槽 mj:m:商:len，表单 id = 点的 id），而不是 mj:o: 只读视图；
+# 断言核心不变：绝不落到 ix=0 那条 free 账本行。
 node -e "
 const fs=require('fs');const p='$MODELS';
 const d=JSON.parse(fs.readFileSync(p,'utf8'));
@@ -219,9 +222,9 @@ fs.writeFileSync(p,JSON.stringify(d,null,2));" 2>/dev/null
 mj settings.mj_select --arg section="mj:p:pf-test-mism"
 "$PUI" wait --path settings.section --eq "mj:p:pf-test-mism" --timeout 10 >/dev/null 2>&1 || true
 mj settings.mj_open_model --arg provider=pf-test-mism --arg id=glm-4.6v
-check CASE4D "名称再像也不串行（落只读覆盖视图，不碰那条 free 账本行）" node -e "
+check CASE4D "名称再像也不串行（可编辑仓草稿 ix=1，不碰 ix=0 那条 free 账本行）" node -e "
 const j=JSON.parse(process.argv[1]);
-process.exit(j.section==='mj:o:pf-test-mism:glm-4.6v'&&j.mj_id_value==='glm-4.6v'?0:1)" "$(snap)"
+process.exit(j.section==='mj:m:pf-test-mism:1'&&j.mj_id_value==='glm-4.6v'?0:1)" "$(snap)"
 mj settings.mj_model_close
 node -e "
 const fs=require('fs');const p='$MODELS';

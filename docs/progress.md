@@ -452,3 +452,18 @@
 - i18n 零新增（`market.btn.update`/`market.pf.updating` 存量死键激活）
 - 测试：`pf_updatable` 单测 2 例；test/090-10/插件更新/testcase.md（人工清单 M1-M10）
 - 验收：dev-market 本地假 registry 全链路人工验收通过（0.1.5→0.2.0→0.3.0 两轮更新）
+
+## 042-1 自定义商勾选物化回归修复（2026-11-02，0.3.2 发版后）
+- **根因**：`253ca038` 仓命中分支 `arr.push(stashed); return Ok(())` 漏落盘 →
+  探测模型勾选永不进 models.json → pi 不认识（对话出错）+ 详情落只读视图。
+  验收未暴露：当时账本模型由旧路径写入；`run-cases.sh` CASE11 本能抓住但没再跑
+- **修**：纯变换下沉 `pi_link::models_json::materialize_model`（单一 save 出口）；
+  自定义商详情一律可编辑——仓草稿 `cfg.mj_draft_store_id`（追加槽 + 仓定义预填，
+  保存只进仓、显式勾选才物化、移除删仓）；`mj_reconcile_custom_selection` 启动/
+  设置页装载对账补物化（仅显式勾选；无仓/无 patterns 零开销，无事零写盘）
+- **探测解析**：DeepSeek `/models` 实录给 `name/context_window/max_output_tokens/
+  input_modalities/effort`，此前只取三键——补 maxTokens（4 个键名 + openrouter
+  top_provider）/input/reasoning；仓 `merge_probed` 改字段级补缺（手调不覆盖）；
+  debug 构建 `[probe]` 打首条键集
+- 测试：pi-link 3 + probe 1 + store 3 单测；`test/042-1/custom-model-materialize/run.sh`
+  离线 pif-ui 27 断言全绿（含启动自愈）

@@ -118,6 +118,12 @@ pub(crate) struct CfgUi {
     /// = 商 id），自定义商来自 `mj:p:名`；`None` = 从【+模型】草稿进
     /// （退回 `mj:p:名` 的旧行为）。
     pub(crate) mj_return: Option<String>,
+    /// 自定义商**仓草稿**登记（2026-11-02 定稿：自定义商详情一律可编辑）：
+    /// 点列表进详情时该模型只在清单仓、不在 models.json（未勾选）→ 记下仓
+    /// id，详情以「追加槽 + 仓定义预填」的可编辑表单打开；保存只进仓
+    ///（已显式勾选才顺手物化），移除删仓条目。`None` = 账本行 / +模型草稿 /
+    /// 内置覆盖视图。关闭详情必清。
+    pub(crate) mj_draft_store_id: Option<String>,
     /// 042 新增 Provider 弹窗的全量注册表（registry.rs dump；None = 未加载）
     pub(crate) provider_registry: Option<std::sync::Arc<pi_link::registry::RegistryDump>>,
     /// dump 拉取状态（Idle = 待拉/可拉，Loading = 后台进行中，Failed = 上次失败）
@@ -746,6 +752,7 @@ impl Chat {
                 mj_test: None,
                 mj_models_dev_state: MjCatalogState::Idle,
                 mj_return: None,
+                mj_draft_store_id: None,
                 mj_fill_entry: None,
                 mj_form_for: None,
                 provider_registry: None,

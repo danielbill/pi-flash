@@ -199,6 +199,9 @@ impl Chat {
         // 不再有 PF 私有账本
         self.cfg.mc_creds = pi_link::auth_json::kinds().unwrap_or_default();
         self.cfg.mj_probe_cache = services::custom_models_store::read();
+        // 存量对账（0.3.2 勾选漏写盘善后）：显式勾选却没进 models.json 的
+        // 自定义商模型补物化——仓装载之后、其余字段之前；无事可做零写盘
+        self.mj_reconcile_custom_selection();
         // 会话预设 `configured` 对应的工具清单（settings.json defaultTools）
         self.cfg.mc_default_tools = self.pool.globals.default_tools.clone();
         self.cfg.mc_pkgs_global = self.pool.globals.packages.clone();
@@ -263,6 +266,24 @@ impl Chat {
         cx.notify();
     }
 
+    /// 归属判定：该商是否「自定义商」（models.json 条目 + 注册表不认 = 用户
+    /// 自建）。勾选物化 / 详情页可编辑 / 存量对账三处同一把尺子。
+    pub(crate) fn mc_is_custom_provider(&self, prov: &str) -> bool {
+        let in_ledger = pi_link::models_json::provider_entry(&Self::mj_doc(), prov).is_some();
+        self.mc_source_is_custom(prov, in_ledger)
+    }
+
+    /// 同上，但账本成员资格由调用方给（已持有 doc 时免再读盘——启动路径用）。
+    pub(crate) fn mc_source_is_custom(&self, prov: &str, in_ledger: bool) -> bool {
+        match self.cfg.provider_registry.as_deref() {
+            Some(dump) => dump.source(prov, in_ledger) == pi_link::registry::ProviderSource::Custom,
+            None => {
+                pi_link::registry::source_without_registry(in_ledger)
+                    == pi_link::registry::ProviderSource::Custom
+            }
+        }
+    }
+
     pub(crate) fn mc_toggle_model(&mut self, r: String, enable: bool, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         // 2026-11-01 定稿：勾选 = 双写——① enabledModels patterns（pi available
@@ -270,17 +291,7 @@ impl Chat {
         // 才保存；内置商 pi 静态注册表即持久，不物化）。② 不依赖 ① 的
         // changed（all_enabled 态下勾选 patterns 无变化，但账本仍要物化）
         if let Some((prov, id)) = r.split_once('/') {
-            let in_ledger = pi_link::models_json::provider_entry(&Self::mj_doc(), prov).is_some();
-            let is_custom = match self.cfg.provider_registry.as_deref() {
-                Some(dump) => {
-                    dump.source(prov, in_ledger) == pi_link::registry::ProviderSource::Custom
-                }
-                None => {
-                    pi_link::registry::source_without_registry(in_ledger)
-                        == pi_link::registry::ProviderSource::Custom
-                }
-            };
-            if is_custom {
+            if self.mc_is_custom_provider(prov) {
                 if let Err(e) = self.mj_materialize_selection(prov, id, enable) {
                     self.mc_set_error(&crate::i18n::tf("models.failed_to_save", &[("e", e)]), cx);
                     return;

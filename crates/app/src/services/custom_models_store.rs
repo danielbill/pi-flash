@@ -43,16 +43,29 @@ pub fn write(store: &Store) -> bool {
     }
 }
 
-/// 探测结果并入（**只补缺**：已有 id 的定义原样保留——手调过的参数不被
-/// 探测覆盖；缺的按 {id, name?, contextWindow?} 新建）。
+/// 探测结果并入（**只补缺，不覆盖**）：新 id 按探测定义新建；已有 id 只补
+/// 它没有的键（手调过的参数原样保留；老探测缺的 maxTokens/input 等随新探测
+/// 补上——0.3.2 之前探测只取三个键，存量条目靠这一步补齐）。
 pub fn merge_probed(store: &mut Store, provider: &str, probed: &[ModelInfo]) {
     let entry = store.entry(provider.to_string()).or_default();
     entry.fetched_at = now_ms();
     for m in probed {
-        if m.id.is_empty() || entry.models.contains_key(&m.id) {
+        if m.id.is_empty() {
             continue;
         }
-        entry.models.insert(m.id.clone(), definition_from_info(m));
+        let def = definition_from_info(m);
+        match entry.models.get_mut(&m.id) {
+            None => {
+                entry.models.insert(m.id.clone(), def);
+            }
+            Some(existing) => {
+                if let (Some(dst), Some(src)) = (existing.as_object_mut(), def.as_object()) {
+                    for (k, v) in src {
+                        dst.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -88,7 +101,8 @@ pub fn listing(store: &Store, provider: &str) -> Vec<ModelInfo> {
         .unwrap_or_default()
 }
 
-/// ModelInfo → 最小定义（探测只有 id/name/contextWindow）。
+/// ModelInfo → 定义（探测给多少写多少：id/name/contextWindow/maxTokens/
+/// input/reasoning；没给的键不写，落盘时走 ensure_model_defaults 缺省）。
 fn definition_from_info(m: &ModelInfo) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("id".into(), Value::String(m.id.clone()));
@@ -97,6 +111,15 @@ fn definition_from_info(m: &ModelInfo) -> Value {
     }
     if let Some(cw) = m.context_window {
         obj.insert("contextWindow".into(), serde_json::json!(cw));
+    }
+    if let Some(mt) = m.max_tokens {
+        obj.insert("maxTokens".into(), serde_json::json!(mt));
+    }
+    if let Some(input) = m.input.as_ref().filter(|v| !v.is_empty()) {
+        obj.insert("input".into(), serde_json::json!(input));
+    }
+    if let Some(r) = m.reasoning {
+        obj.insert("reasoning".into(), serde_json::json!(r));
     }
     Value::Object(obj)
 }
@@ -207,7 +230,7 @@ mod tests {
             name: format!("N-{id}"),
             provider: String::new(),
             context_window: Some(128_000),
-            max_tokens: None,
+            max_tokens: Some(4096),
             reasoning: None,
             input: None,
         }
@@ -226,12 +249,36 @@ mod tests {
         merge_probed(&mut st, "ds", &[info("glm-5.3-flash"), info("glm-4.6")]);
         let e = st.get("ds").unwrap();
         assert_eq!(e.models.len(), 2);
-        // 已有 id 原样保留（探测不覆盖手调参数）
+        // 已有 id：手调的键原样保留（探测的 4096 不覆盖 65536）……
         assert_eq!(e.models["glm-5.3-flash"]["maxTokens"], 65536);
-        // 缺的按探测新建
+        assert_eq!(e.models["glm-5.3-flash"]["cost"]["input"], 1);
+        // ……但它缺的键随探测补上（存量条目补 name/contextWindow）
+        assert_eq!(e.models["glm-5.3-flash"]["name"], "N-glm-5.3-flash");
+        assert_eq!(e.models["glm-5.3-flash"]["contextWindow"], 128_000);
+        // 缺的按探测新建（探测给了最大输出就带上）
         assert_eq!(e.models["glm-4.6"]["name"], "N-glm-4.6");
         assert_eq!(e.models["glm-4.6"]["contextWindow"], 128_000);
+        assert_eq!(e.models["glm-4.6"]["maxTokens"], 4096);
+        // 探测没给的键不写（input/reasoning 交给落盘缺省）
+        assert!(e.models["glm-4.6"].get("input").is_none());
+        assert!(e.models["glm-4.6"].get("reasoning").is_none());
         assert!(e.fetched_at > 0);
+    }
+
+    #[test]
+    fn probe_modalities_and_reasoning_land_in_definition() {
+        let mut st = Store::default();
+        let mut m = info("deepseek-flash");
+        m.input = Some(vec!["text".into(), "image".into()]);
+        m.reasoning = Some(false);
+        merge_probed(&mut st, "ds", &[m]);
+        let d = definition(&st, "ds", "deepseek-flash").unwrap();
+        assert_eq!(d["input"], serde_json::json!(["text", "image"]));
+        assert_eq!(d["reasoning"], serde_json::json!(false));
+        // 展示条目派生同样带上
+        let l = listing(&st, "ds");
+        assert_eq!(l[0].reasoning, Some(false));
+        assert_eq!(l[0].input.as_ref().map(|v| v.len()), Some(2));
     }
 
     #[test]

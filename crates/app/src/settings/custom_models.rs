@@ -84,6 +84,21 @@ impl Chat {
             }
             None => ix
                 .and_then(|ix| entry.get("models").and_then(|m| m.get(ix)).cloned())
+                // 自定义商仓草稿（mj_open_model 登记）：账本无此行，用仓定义预填
+                //（探测拉到的 name/contextWindow、手调过的 maxTokens 等原样可见）；
+                // 仓里也没有 → 至少把点的 id 填上，别给用户一张空表
+                .or_else(|| {
+                    let did = self.cfg.mj_draft_store_id.as_deref()?;
+                    Some(
+                        crate::services::custom_models_store::definition(
+                            &self.cfg.mj_probe_cache,
+                            &name,
+                            did,
+                        )
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({ "id": did })),
+                    )
+                })
                 .unwrap_or_else(|| serde_json::json!({})),
         };
         let get_str = |v: &serde_json::Value, k: &str| {
@@ -171,6 +186,7 @@ impl Chat {
     pub(crate) fn mj_clear_model_form(&mut self, cx: &mut Context<Self>) {
         self.cfg.mj_form_for = None;
         self.cfg.mj_fill_entry = None;
+        self.cfg.mj_draft_store_id = None;
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
@@ -223,6 +239,7 @@ impl Chat {
         self.mc_clear_error(cx);
         self.cfg.mj_test = None;
         self.cfg.mj_speed = None;
+        self.cfg.mj_draft_store_id = None;
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
@@ -271,10 +288,11 @@ impl Chat {
     }
 
     /// 勾选物化（2026-11-01 定稿，自定义商专用）：enable → 把该模型以完整
-    /// definition 追加进 models.json `providers.<p>.models[]`（id/api/baseUrl
-    /// 取骨架 + name/contextWindow 取展示条目 + ensure_model_defaults）；
-    /// disable → 从 models[] 移除；models[] 空时**骨架保留**（baseUrl 在，
-    /// pi applyModelsJson 不 throw）。内置商不走这里（pi 静态注册表即持久）。
+    /// definition 追加进 models.json `providers.<p>.models[]`（仓定义优先原样
+    /// 复制；仓里没有才按展示条目 + 骨架最小构造）；disable → 从 models[]
+    /// 移除；models[] 空时**骨架保留**。内置商不走这里（pi 静态注册表即持久）。
+    /// 纯变换在 [`pi_link::models_json::materialize_model`]（0.3.2 教训：两条
+    /// 分支各自 push、仓命中分支漏落盘——现在只有这一处 save）。
     /// 返回 Err 文案供调用方挂错误条。
     pub(crate) fn mj_materialize_selection(
         &mut self,
@@ -283,135 +301,84 @@ impl Chat {
         enable: bool,
     ) -> Result<(), String> {
         let mut doc = Self::mj_doc();
-        let Some(mut entry) = pi_link::models_json::provider_entry(&doc, provider).cloned() else {
+        if pi_link::models_json::provider_entry(&doc, provider).is_none() {
             return Ok(()); // 不是账本里的商（内置/扩展）：不物化
-        };
-        let existing_ix = pi_link::models_json::provider_models(&entry)
-            .iter()
-            .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(id));
-        if enable {
-            if existing_ix.is_some() {
-                return Ok(());
-            }
-            // 定义优先从清单仓原样复制（手填/手调参数无损，off/on 往返不失）；
-            // 仓里没有（从未在仓）才按展示条目 + 骨架最小构造
-            if let Some(mut stashed) = crate::services::custom_models_store::definition(
-                &self.cfg.mj_probe_cache,
-                provider,
-                id,
-            )
-            .cloned()
-            {
-                // 骨架 api/baseUrl 兜底（仓定义缺了会撞 modelFromJson 硬 throw）
-                if let Some(o) = stashed.as_object_mut() {
-                    if o.get("api")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .is_empty()
-                    {
-                        if let Some(api) = entry.get("api").and_then(|v| v.as_str()) {
-                            o.insert("api".into(), serde_json::Value::String(api.to_string()));
-                        }
-                    }
-                    if o.get("baseUrl")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .is_empty()
-                    {
-                        if let Some(base) = entry.get("baseUrl").and_then(|v| v.as_str()) {
-                            o.insert(
-                                "baseUrl".into(),
-                                serde_json::Value::String(base.to_string()),
-                            );
-                        }
-                    }
-                }
-                pi_link::models_json::ensure_model_defaults(&mut stashed);
-                if !entry.get("models").is_some_and(|m| m.is_array()) {
-                    entry["models"] = serde_json::json!([]);
-                }
-                if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
-                    arr.push(stashed);
-                }
-                return Ok(());
-            }
-            // 展示条目（探测缓存 / 目录）补 name/contextWindow
-            let shown = self
-                .provider_models_for_list(provider)
+        }
+        let store_def = crate::services::custom_models_store::definition(
+            &self.cfg.mj_probe_cache,
+            provider,
+            id,
+        )
+        .cloned();
+        // 展示条目（探测缓存 / 目录）只在仓里没有时才用来补 name/contextWindow
+        let shown = if enable && store_def.is_none() {
+            self.provider_models_for_list(provider)
                 .into_iter()
-                .find(|m| m.id == id);
-            let mut obj = serde_json::Map::new();
-            obj.insert("id".into(), serde_json::Value::String(id.to_string()));
-            if let Some(api) = entry.get("api").and_then(|v| v.as_str()) {
-                obj.insert("api".into(), serde_json::Value::String(api.to_string()));
-            }
-            if let Some(base) = entry.get("baseUrl").and_then(|v| v.as_str()) {
-                obj.insert(
-                    "baseUrl".into(),
-                    serde_json::Value::String(base.to_string()),
-                );
-            }
-            if let Some(m) = &shown {
-                if !m.name.is_empty() {
-                    obj.insert("name".into(), serde_json::Value::String(m.name.clone()));
-                }
-                if let Some(cw) = m.context_window {
-                    obj.insert("contextWindow".into(), serde_json::json!(cw));
-                }
-            }
-            let mut model = serde_json::Value::Object(obj);
-            // 仓定义（探测的最小形状）可能缺 api/baseUrl——modelFromJson 硬
-            // throw，骨架补齐（已有值不动）
-            if let Some(o) = model.as_object_mut() {
-                if o.get("api")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .is_empty()
-                {
-                    if let Some(api) = entry.get("api").and_then(|v| v.as_str()) {
-                        o.insert("api".into(), serde_json::Value::String(api.to_string()));
-                    }
-                }
-                if o.get("baseUrl")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .is_empty()
-                {
-                    if let Some(base) = entry.get("baseUrl").and_then(|v| v.as_str()) {
-                        o.insert(
-                            "baseUrl".into(),
-                            serde_json::Value::String(base.to_string()),
-                        );
-                    }
-                }
-            }
-            pi_link::models_json::ensure_model_defaults(&mut model);
-            if !entry.get("models").is_some_and(|m| m.is_array()) {
-                entry["models"] = serde_json::json!([]);
-            }
-            if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
-                arr.push(model);
-            }
+                .find(|m| m.id == id)
         } else {
-            let Some(ix) = existing_ix else {
-                return Ok(());
+            None
+        };
+        let changed = pi_link::models_json::materialize_model(
+            &mut doc,
+            provider,
+            id,
+            enable,
+            store_def.as_ref(),
+            shown.as_ref().map(|m| m.name.as_str()),
+            shown.as_ref().and_then(|m| m.context_window),
+        );
+        if !changed {
+            return Ok(());
+        }
+        pi_link::models_json::save(&doc)
+    }
+
+    /// 存量自愈（0.3.2 勾选漏写盘的善后）：enabledModels **显式**勾选、清单仓
+    /// 有定义、models.json 却没有的自定义商模型 → 物化补齐。all_enabled
+    ///（无 patterns / patterns 全失配）一律跳过——绝不整批写入账本（2026-11-01
+    /// 定稿：勾选的才进 models.json）。
+    ///
+    /// 走 `reload_settings_panel` → **启动路径**（Chat::new）也会跑：无自定义
+    /// 仓 / 无显式 patterns 时零开销直接返回；有则一次 models.json 读 +
+    /// 一次 compute_state，无事可做零写盘。
+    pub(crate) fn mj_reconcile_custom_selection(&mut self) {
+        if self.cfg.mj_probe_cache.is_empty()
+            || self.cfg.mc_patterns.as_ref().is_none_or(|p| p.is_empty())
+        {
+            return;
+        }
+        let state = crate::services::models_config::compute_state(
+            self.cfg.mc_patterns.as_ref(),
+            &self.mc_refs(),
+        );
+        if state.all_enabled || state.enabled.is_empty() {
+            return;
+        }
+        let doc = Self::mj_doc();
+        let mut todo: Vec<(String, String)> = Vec::new();
+        for (provider, entry) in &self.cfg.mj_probe_cache {
+            let Some(ledger) = pi_link::models_json::provider_entry(&doc, provider) else {
+                continue;
             };
-            if let Some(arr) = entry.get_mut("models").and_then(|m| m.as_array_mut()) {
-                arr.remove(ix);
+            if !self.mc_source_is_custom(provider, true) {
+                continue;
             }
-            // 空 models[] 删键（骨架 baseUrl/api/name 保留，pi 不 throw）
-            if entry
-                .get("models")
-                .and_then(|m| m.as_array())
-                .is_some_and(|a| a.is_empty())
-            {
-                if let Some(o) = entry.as_object_mut() {
-                    o.remove("models");
+            let in_ledger: Vec<&str> = pi_link::models_json::provider_models(ledger)
+                .iter()
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                .collect();
+            for id in entry.models.keys() {
+                let r = format!("{provider}/{id}");
+                if state.enabled.iter().any(|e| e == &r) && !in_ledger.contains(&id.as_str()) {
+                    todo.push((provider.clone(), id.clone()));
                 }
             }
         }
-        pi_link::models_json::upsert_provider(&mut doc, provider, entry);
-        pi_link::models_json::save(&doc)
+        for (p, id) in todo {
+            if self.mj_materialize_selection(&p, &id, true).is_ok() {
+                self.refresh_provider_catalog(&p);
+            }
+        }
     }
 
     /// 把编辑器字段应用进缓冲并落盘（provider 名称改动走重命名）。
@@ -644,8 +611,22 @@ impl Chat {
                 hit
             });
         let section = match ix {
-            Some(ix) => format!("mj:m:{provider}:{ix}"),
-            None => override_section(&provider, &id),
+            Some(ix) => {
+                self.cfg.mj_draft_store_id = None;
+                format!("mj:m:{provider}:{ix}")
+            }
+            // 自定义商「仓里有、账本没有」（未勾选）的模型：**可编辑仓草稿**——
+            // 追加槽 + 仓定义预填（mj_fill_from 认 mj_draft_store_id）；保存只
+            // 进仓、移除删仓条目。用户 2026-11-02 定稿：自定义商详情一律可
+            // 编辑，只读覆盖视图只属于内置模型（0.3.2 曾把探测模型误落只读）
+            None if self.mc_is_custom_provider(&provider) => {
+                self.cfg.mj_draft_store_id = Some(id.clone());
+                format!("mj:m:{provider}:{}", models.len())
+            }
+            None => {
+                self.cfg.mj_draft_store_id = None;
+                override_section(&provider, &id)
+            }
         };
         self.mj_fill_from(section, &doc, cx);
     }
@@ -653,6 +634,8 @@ impl Chat {
     pub(crate) fn mj_add_model(&mut self, provider: String, cx: &mut Context<Self>) {
         // 草稿行不是「从列表进详情」：关闭退回 `mj:p:商`（mj_return=None 即该默认）
         self.cfg.mj_return = None;
+        // 【+模型】是空白草稿，不是仓草稿（否则表单会预填上一次点开的仓模型）
+        self.cfg.mj_draft_store_id = None;
         // 草稿行**不预写占位**（P1-1）：validate 拒绝空 id，预写必失败且
         // 后续按 ix 保存时越界静默丢数据。ix = 盘上现有模型数，保存时走
         // mj_commit_model_form 的追加分支落盘；保存前列表不显示（与
@@ -765,6 +748,17 @@ impl Chat {
         if model_id.is_empty() {
             return false;
         }
+        // 仓草稿改了 id → 旧键删掉，否则仓里留一条幽灵（列表多出一行）
+        let draft_from_store = self.cfg.mj_draft_store_id.is_some();
+        if let Some(old) = self.cfg.mj_draft_store_id.clone() {
+            if old != model_id {
+                crate::services::custom_models_store::remove_model(
+                    &mut self.cfg.mj_probe_cache,
+                    provider,
+                    &old,
+                );
+            }
+        }
         crate::services::custom_models_store::upsert_model(
             &mut self.cfg.mj_probe_cache,
             provider,
@@ -773,13 +767,15 @@ impl Chat {
         );
         let _ = crate::services::custom_models_store::write(&self.cfg.mj_probe_cache);
         // ② models.json 按投影规则：编辑已勾选的行 → 原位更新；【+模型】
-        // 手填（草稿追加，显式创建 = 勾选）→ 追加；未勾选的行保存 → 只进仓，
-        // 不进 models.json（投影规则）
+        // 手填（草稿追加，显式创建 = 勾选）→ 追加；**仓草稿**（从列表进、
+        // 账本无此行 = 未勾选）保存 → 只进仓，不进 models.json；但
+        // enabledModels 已显式勾选它（存量漏物化态）→ 顺手物化补齐
         let models_len = entry
             .get("models")
             .and_then(|m| m.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
+        let mut ledger_changed = true;
         if ix < models_len {
             let row_id = entry["models"][ix]
                 .get("id")
@@ -793,11 +789,20 @@ impl Chat {
                 pi_link::models_json::update_model(&mut doc, provider, ix, model);
             }
         } else if ix == models_len {
-            pi_link::models_json::push_model(&mut doc, provider, model);
+            let r = format!("{provider}/{model_id}");
+            let explicitly_enabled =
+                !self.cfg.mc_state.all_enabled && self.cfg.mc_state.enabled.iter().any(|e| e == &r);
+            if !draft_from_store || explicitly_enabled {
+                pi_link::models_json::push_model(&mut doc, provider, model);
+            } else {
+                ledger_changed = false;
+            }
         } else {
             return false;
         }
-        self.mj_write(&doc, cx);
+        if ledger_changed {
+            self.mj_write(&doc, cx);
+        }
         true
     }
 
@@ -805,15 +810,19 @@ impl Chat {
         // 删掉后回到商详情：来源 section 一并清（否则下次弹窗会退回旧视图）
         self.cfg.mj_return = None;
         let mut doc = Self::mj_doc();
-        // 删之前先记住 id：内存目录按 provider+id 摘（和磁盘同一步）
+        // 删之前先记住 id：内存目录按 provider+id 摘（和磁盘同一步）。
+        // 仓草稿（账本无此行）→ id 取登记的仓 id
+        let draft_id = self.cfg.mj_draft_store_id.take();
         let id = pi_link::models_json::provider_entry(&doc, &provider)
             .and_then(|e| e.get("models"))
             .and_then(|m| m.get(ix))
             .and_then(|m| m.get("id"))
             .and_then(|v| v.as_str())
-            .map(str::to_string);
-        pi_link::models_json::remove_model(&mut doc, &provider, ix);
-        self.mj_write(&doc, cx);
+            .map(str::to_string)
+            .or(draft_id);
+        if pi_link::models_json::remove_model(&mut doc, &provider, ix) {
+            self.mj_write(&doc, cx);
+        }
         // 清单仓同步删（模型详情【移除】= 删除该模型，不是取消勾选）
         if let Some(id) = &id {
             crate::services::custom_models_store::remove_model(

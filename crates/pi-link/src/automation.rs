@@ -173,7 +173,8 @@ pub mod method {
     /// · mj_delete 删除（走确认流，ok 缺省 true）
     /// 模型列表行点击的同一入口（内置商 / 自定义商两个列表共用
     /// [`Chat::mj_open_model`]）：params `{provider, id}`。内置模型 → 只读覆盖
-    /// 详情（mj:o:商:模型id），自定义商模型 → 账本条目（mj:m:商:ix）。
+    /// 详情（mj:o:商:模型id），自定义商模型 → 账本条目（mj:m:商:ix）；自定义商
+    /// 仓里有/账本没有的模型 → 可编辑仓草稿（mj:m:商:len，表单预填仓定义）。
     pub const SETTINGS_MJ_OPEN_MODEL: &str = "settings.mj_open_model";
     pub const SETTINGS_MJ_NEW: &str = "settings.mj_new";
     pub const SETTINGS_MJ_SELECT: &str = "settings.mj_select";

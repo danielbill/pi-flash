@@ -329,11 +329,20 @@ fn parse_catalog(body: &str) -> (usize, Vec<crate::protocol::ModelInfo>) {
         })
         .unwrap_or_default();
     let models = entries.len();
+    // 一次性确认各家 /models 到底回了哪些字段（0.3.2 争议：DeepSeek 是否给
+    // 最大输出）——只打首条的键集，不打值；debug 构建专属，release 零输出
+    #[cfg(debug_assertions)]
+    if let Some(first) = entries.first().and_then(|e| e.as_object()) {
+        let keys: Vec<&str> = first.keys().map(String::as_str).collect();
+        eprintln!("[probe] /models first entry keys: {keys:?}");
+    }
     let catalog = entries.iter().filter_map(parse_entry).collect();
     (models, catalog)
 }
 
 /// 单条模型目录项的 best-effort 解析（各家 /models 字段形状不一）。
+/// 最大输出按常见键名顺序取（openrouter 嵌在 `top_provider` 里）；没给
+/// 就 None——pi `modelFromJson` 缺省 16384，不算错。
 fn parse_entry(e: &serde_json::Value) -> Option<crate::protocol::ModelInfo> {
     let raw_id = e
         .get("id")
@@ -359,15 +368,48 @@ fn parse_entry(e: &serde_json::Value) -> Option<crate::protocol::ModelInfo> {
         .and_then(|v| v.as_u64())
         .or_else(|| e.get("context_window").and_then(|v| v.as_u64()))
         .or_else(|| e.get("inputTokenLimit").and_then(|v| v.as_u64()));
+    let max_tokens = [
+        "max_tokens",
+        "max_output_tokens",
+        "max_completion_tokens",
+        "outputTokenLimit",
+    ]
+    .iter()
+    .find_map(|k| e.get(*k).and_then(|v| v.as_u64()))
+    .or_else(|| {
+        e.get("top_provider")
+            .and_then(|t| t.get("max_completion_tokens"))
+            .and_then(|v| v.as_u64())
+    })
+    .filter(|n| *n > 0);
+    // 输入模态（DeepSeek `input_modalities`；pi 只认 text/image，其余丢弃）
+    let input = e
+        .get("input_modalities")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .filter(|s| *s == "text" || *s == "image")
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty());
+    // 推理能力：DeepSeek `effort.supported_levels` 非空 = 支持；没给就 None
+    //（交给落盘缺省，不猜）
+    let reasoning = e
+        .get("effort")
+        .and_then(|v| v.get("supported_levels"))
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty());
     Some(crate::protocol::ModelInfo {
         id: id.to_string(),
         name,
         provider: String::new(),
         context_window,
-        // 探查只关心 id/name/上下文窗口（保存时由 catalog 补全其余参数）
-        max_tokens: None,
-        reasoning: None,
-        input: None,
+        // 探查取 id/name/上下文窗口/最大输出/模态/推理（各家给多少取多少）
+        max_tokens,
+        reasoning,
+        input,
     })
 }
 
@@ -434,28 +476,73 @@ mod tests {
 
     #[test]
     fn entry_parse_maps_each_provider_shape() {
-        // openrouter：name/id/context_length
+        // openrouter：name/id/context_length + top_provider.max_completion_tokens
         let m = parse_entry(&serde_json::json!({
-            "id": "deepseek/deepseek-r1", "name": "DeepSeek R1", "context_length": 128000
+            "id": "deepseek/deepseek-r1", "name": "DeepSeek R1", "context_length": 128000,
+            "top_provider": { "max_completion_tokens": 32768 }
         }))
         .unwrap();
         assert_eq!(m.id, "deepseek/deepseek-r1");
         assert_eq!(m.name, "DeepSeek R1");
         assert_eq!(m.context_window, Some(128000));
-        // google：name 带 models/ 前缀 + displayName + inputTokenLimit
+        assert_eq!(m.max_tokens, Some(32768));
+        // google：name 带 models/ 前缀 + displayName + inputTokenLimit/outputTokenLimit
         let m = parse_entry(&serde_json::json!({
             "name": "models/gemini-2.0-flash", "displayName": "Gemini 2.0 Flash",
-            "inputTokenLimit": 1048576
+            "inputTokenLimit": 1048576, "outputTokenLimit": 8192
         }))
         .unwrap();
         assert_eq!(m.id, "gemini-2.0-flash");
         assert_eq!(m.name, "Gemini 2.0 Flash");
         assert_eq!(m.context_window, Some(1048576));
+        assert_eq!(m.max_tokens, Some(8192));
+        // 顶层 max_output_tokens / max_tokens 也认；0 视为没给
+        assert_eq!(
+            parse_entry(&serde_json::json!({ "id": "a", "max_output_tokens": 65536 }))
+                .unwrap()
+                .max_tokens,
+            Some(65536)
+        );
+        assert_eq!(
+            parse_entry(&serde_json::json!({ "id": "a", "max_tokens": 0 }))
+                .unwrap()
+                .max_tokens,
+            None
+        );
         // openai：只有 id（name=owned_by 字符串时回落空显示名）
         let m = parse_entry(&serde_json::json!({ "id": "gpt-4o", "object": "model" })).unwrap();
         assert_eq!(m.id, "gpt-4o");
         assert_eq!(m.name, "");
         assert_eq!(m.context_window, None);
+        assert_eq!(m.max_tokens, None);
+        assert_eq!(m.reasoning, None);
+        assert_eq!(m.input, None);
+        // DeepSeek（2026-11-02 curl 实录）：name/context_window/max_output_tokens/
+        // input_modalities/effort 全给——0.3.2 之前 PF 只取三个键把其余全丢了
+        let m = parse_entry(&serde_json::json!({
+            "id": "deepseek-flash", "object": "model", "owned_by": "deepseek",
+            "name": "DeepSeek-V4.1-Flash", "context_window": 1048576,
+            "max_output_tokens": 393216,
+            "input_modalities": ["text", "image"], "output_modalities": ["text"],
+            "effort": { "supported_levels": ["low", "high", "max"], "default_level": "high" }
+        }))
+        .unwrap();
+        assert_eq!(m.name, "DeepSeek-V4.1-Flash");
+        assert_eq!(m.context_window, Some(1048576));
+        assert_eq!(m.max_tokens, Some(393216));
+        assert_eq!(
+            m.input.as_deref(),
+            Some(&["text".to_string(), "image".to_string()][..])
+        );
+        assert_eq!(m.reasoning, Some(true));
+        // 非法模态被滤掉；空 supported_levels = 不支持推理
+        let m = parse_entry(&serde_json::json!({
+            "id": "x", "input_modalities": ["text", "video"],
+            "effort": { "supported_levels": [] }
+        }))
+        .unwrap();
+        assert_eq!(m.input.as_deref(), Some(&["text".to_string()][..]));
+        assert_eq!(m.reasoning, Some(false));
         assert!(parse_entry(&serde_json::json!({ "object": "model" })).is_none());
         assert_eq!(
             parse_entry(&serde_json::json!({ "id": "x", "name": "x" }))

@@ -171,6 +171,88 @@ pub fn remove_model(value: &mut Value, provider: &str, index: usize) -> bool {
         .unwrap_or(false)
 }
 
+/// 勾选物化（042-1，自定义商专用；**纯内存变换**，落盘由调用方负责）。
+/// `enable` → 把 `id` 以完整定义追加进 `providers.<p>.models[]`：定义优先
+/// 原样取 `store_def`（清单仓，手调参数 off/on 往返不丢），仓里没有才按展示
+/// 条目（`shown_name` / `shown_ctx`）最小构造；两条路都从商骨架兜底
+/// api/baseUrl（pi `modelFromJson` 对缺 api/baseUrl 硬 throw）再
+/// [`ensure_model_defaults`]。`!enable` → 按 id 移除，`models[]` 空则删键
+///（骨架 baseUrl/api/name 保留，pi 不 throw）。已在 / 已不在 → 幂等 no-op；
+/// 商不在账本（内置/扩展）→ no-op。返回是否改动了 `doc`。
+///
+/// 0.3.2 教训：此前两条 enable 分支各自 push，仓命中分支 push 完直接
+/// `return Ok(())`，根本没走到落盘——勾选只改了内存克隆，pi 永远不认识该
+/// 模型（对话出错 + 详情页因账本无此 id 落只读视图）。合并成单一出口。
+pub fn materialize_model(
+    doc: &mut Value,
+    provider: &str,
+    id: &str,
+    enable: bool,
+    store_def: Option<&Value>,
+    shown_name: Option<&str>,
+    shown_ctx: Option<u64>,
+) -> bool {
+    let Some(entry) = provider_entry(doc, provider) else {
+        return false;
+    };
+    let skeleton = |key: &str| {
+        entry
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let (skeleton_api, skeleton_base) = (skeleton("api"), skeleton("baseUrl"));
+    let existing_ix = provider_models(entry)
+        .iter()
+        .position(|m| m.get("id").and_then(|v| v.as_str()) == Some(id));
+    if !enable {
+        let Some(ix) = existing_ix else {
+            return false;
+        };
+        remove_model(doc, provider, ix);
+        if let Some(o) = provider_entry_mut(doc, provider).as_object_mut() {
+            if o.get("models")
+                .and_then(|m| m.as_array())
+                .is_some_and(|a| a.is_empty())
+            {
+                o.remove("models");
+            }
+        }
+        return true;
+    }
+    if existing_ix.is_some() {
+        return false;
+    }
+    let mut model = match store_def {
+        Some(d) if d.is_object() => d.clone(),
+        _ => {
+            let mut obj = serde_json::Map::new();
+            if let Some(n) = shown_name.filter(|n| !n.is_empty()) {
+                obj.insert("name".into(), Value::String(n.to_string()));
+            }
+            if let Some(cw) = shown_ctx {
+                obj.insert("contextWindow".into(), serde_json::json!(cw));
+            }
+            Value::Object(obj)
+        }
+    };
+    if let Some(o) = model.as_object_mut() {
+        o.insert("id".into(), Value::String(id.to_string()));
+        for (key, fallback) in [("api", skeleton_api), ("baseUrl", skeleton_base)] {
+            let missing = o.get(key).and_then(|v| v.as_str()).unwrap_or("").is_empty();
+            if missing {
+                if let Some(v) = fallback {
+                    o.insert(key.into(), Value::String(v));
+                }
+            }
+        }
+    }
+    ensure_model_defaults(&mut model);
+    push_model(doc, provider, model);
+    true
+}
+
 /// Lenient re-parse used when loading the file into the editor buffer.
 pub fn parse(text: &str) -> Result<Value, String> {
     parse_lenient(text)
@@ -313,6 +395,132 @@ mod tests {
         let mut junk = json!("str");
         ensure_model_defaults(&mut junk);
         assert_eq!(junk, json!("str"));
+    }
+
+    /// 0.3.2 回归锁：仓命中分支（探测拉到的模型 = 仓里必有定义）勾选后
+    /// doc 里**必须**出现该模型——此前该分支 push 完直接 return 没落盘。
+    #[test]
+    fn materialize_from_store_def_lands_in_doc() {
+        let mut doc = json!({ "providers": { "myds": {
+            "api": "openai-completions", "name": "myds",
+            "baseUrl": "https://api.deepseek.com" } } });
+        let def = json!({"id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash",
+            "contextWindow": 1048576});
+        assert!(materialize_model(
+            &mut doc,
+            "myds",
+            "deepseek-flash",
+            true,
+            Some(&def),
+            None,
+            None
+        ));
+        let m = &doc["providers"]["myds"]["models"][0];
+        assert_eq!(m["id"], "deepseek-flash");
+        assert_eq!(m["name"], "DeepSeek-V4.1-Flash");
+        assert_eq!(m["contextWindow"], 1048576);
+        // 骨架兜底 + 缺省形状（pi modelFromJson / 聊天路径硬要求）
+        assert_eq!(m["api"], "openai-completions");
+        assert_eq!(m["baseUrl"], "https://api.deepseek.com");
+        assert_eq!(m["input"], json!(["text"]));
+        assert_eq!(m["reasoning"], json!(true));
+        assert!(m["cost"].is_object());
+        // 幂等：再勾一次不重复
+        assert!(!materialize_model(
+            &mut doc,
+            "myds",
+            "deepseek-flash",
+            true,
+            Some(&def),
+            None,
+            None
+        ));
+        assert_eq!(
+            doc["providers"]["myds"]["models"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn materialize_off_on_roundtrip_keeps_store_params() {
+        let mut doc = json!({ "providers": { "p": {
+            "api": "openai-completions", "baseUrl": "https://x" } } });
+        // 手调过的仓定义（maxTokens/reasoning=false）
+        let def = json!({"id": "m1", "maxTokens": 65536, "reasoning": false,
+            "input": ["text", "image"]});
+        assert!(materialize_model(
+            &mut doc,
+            "p",
+            "m1",
+            true,
+            Some(&def),
+            None,
+            None
+        ));
+        assert!(materialize_model(
+            &mut doc,
+            "p",
+            "m1",
+            false,
+            Some(&def),
+            None,
+            None
+        ));
+        // 空 models[] 删键，骨架保留
+        assert!(doc["providers"]["p"].get("models").is_none());
+        assert_eq!(doc["providers"]["p"]["baseUrl"], "https://x");
+        // 取消再取消 = no-op
+        assert!(!materialize_model(
+            &mut doc,
+            "p",
+            "m1",
+            false,
+            Some(&def),
+            None,
+            None
+        ));
+        assert!(materialize_model(
+            &mut doc,
+            "p",
+            "m1",
+            true,
+            Some(&def),
+            None,
+            None
+        ));
+        let m = &doc["providers"]["p"]["models"][0];
+        assert_eq!(m["maxTokens"], 65536);
+        assert_eq!(
+            m["reasoning"],
+            json!(false),
+            "仓里显式 false 不被缺省改回 true"
+        );
+        assert_eq!(m["input"], json!(["text", "image"]));
+    }
+
+    #[test]
+    fn materialize_without_store_def_uses_shown_entry() {
+        let mut doc = json!({ "providers": { "p": {
+            "api": "anthropic-messages", "baseUrl": "https://x" } } });
+        assert!(materialize_model(
+            &mut doc,
+            "p",
+            "m2",
+            true,
+            None,
+            Some("Model Two"),
+            Some(200_000)
+        ));
+        let m = &doc["providers"]["p"]["models"][0];
+        assert_eq!(m["id"], "m2");
+        assert_eq!(m["name"], "Model Two");
+        assert_eq!(m["contextWindow"], 200_000);
+        assert_eq!(m["api"], "anthropic-messages");
+        // 商不在账本（内置/扩展）→ 不物化
+        assert!(!materialize_model(
+            &mut doc, "nope", "m", true, None, None, None
+        ));
+        assert!(doc["providers"].get("nope").is_none());
     }
 
     #[test]
