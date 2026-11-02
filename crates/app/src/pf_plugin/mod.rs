@@ -165,13 +165,16 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
                 if let Some(root) = pi_link::paths::plugins_dir() {
                     let ledger = pi_link::pf_plugins::load_ledger();
                     let moved = pi_link::pf_plugins::migrate_data_dirs(&root, &ledger);
-                    if !moved.is_empty() {
+                    // 迁移/清理日志只在 debug 构建打：release 包零输出是烟测门禁
+                    if !moved.is_empty() && cfg!(debug_assertions) {
                         eprintln!("[pf-plugin] data 目录已迁出版本层：{}", moved.join(", "));
                     }
                     // 迁移之后才清旧版本目录（prune 自带数据抢救，但顺序上仍以
                     // 迁移在前为准）：更新时被 mmap 占住没删掉的残留，这里补刀
                     for (name, n) in pi_link::pf_plugins::prune_stale_versions(&root, &ledger) {
-                        eprintln!("[pf-plugin] 清旧版本目录 {name} ×{n}");
+                        if cfg!(debug_assertions) {
+                            eprintln!("[pf-plugin] 清旧版本目录 {name} ×{n}");
+                        }
                     }
                 }
                 let outcome = scan_manifests_full();

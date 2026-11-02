@@ -87,8 +87,10 @@ pub(crate) fn splash_view() -> gpui::Div {
 ///    pi 的两个文件字节不动。必须先于任何会话 spawn（-e 扩展 + env 注入
 ///    依赖账本与凭据库就绪）
 pub(crate) fn boot() {
+    // 本函数所有 eprintln 只在 debug 构建打印：release 包必须 stdout/stderr 零输出
+    // （包内烟测门禁；0.3.2 实录——升级机上 migrate/purge 任一条命中就把烟测打红）。
     let moved = pi_link::paths::migrate_legacy_files();
-    if moved > 0 {
+    if moved > 0 && cfg!(debug_assertions) {
         eprintln!("[startup] migrated {moved} legacy pi-flash file(s) → ~/.pi-flash/");
     }
     // dev-flags（重型模块发版排除）状态一眼可见：关掉的功能为什么没了。
@@ -103,14 +105,14 @@ pub(crate) fn boot() {
     // 项目删了每次启动又回来」的根因，pi_link::paths::is_app_install_path）。
     // 放在 boot 第一步：注册表 with_registry 惰性单例首读就是清洗后的盘面。
     let purged = pi_link::projects::purge_app_paths();
-    if purged > 0 {
+    if purged > 0 && cfg!(debug_assertions) {
         eprintln!("[startup] purged {purged} app-owned path(s) from project registry");
     }
     // 工作区记忆同批清洗：脏 __last（启动恢复目标被钉死在载荷目录 = 每次双
     // 击都落回 payload 的另一半根因，恢复路径已在 Chat::new 消毒）+ 载荷目
     // 录名下的每项目记忆；__ 前缀的非路径键（布局/UI 状态）不动
     let purged_ws = crate::services::workspace::purge_app_install_memory();
-    if purged_ws > 0 {
+    if purged_ws > 0 && cfg!(debug_assertions) {
         eprintln!("[startup] purged {purged_ws} app-owned key(s) from workspace memory");
     }
     pi_link::recents::ensure_seeded();
@@ -118,7 +120,9 @@ pub(crate) fn boot() {
     // models.json + auth.json 标记条目；旧文件改名 .bak，幂等。失败只记日志，
     // 绝不阻塞启动（下次启动重试）。
     for line in pi_link::migrate_0421::run() {
-        eprintln!("[startup] migrate: {line}");
+        if cfg!(debug_assertions) {
+            eprintln!("[startup] migrate: {line}");
+        }
     }
 }
 

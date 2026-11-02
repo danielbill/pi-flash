@@ -798,7 +798,10 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
                 out.manifests.push(m);
             }
             Err(e) => {
-                eprintln!("[pf-plugin] 跳过 {}：{e}", dir.display());
+                // 拒载原因进 stale 走 toast/市场提示；stderr 只在 debug 构建打
+                if cfg!(debug_assertions) {
+                    eprintln!("[pf-plugin] 跳过 {}：{e}", dir.display());
+                }
                 out.stale.push(stale_of(ledger_name, &pkg, &dir, e));
             }
         }

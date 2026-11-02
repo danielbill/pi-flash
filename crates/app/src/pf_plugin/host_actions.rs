@@ -843,7 +843,7 @@ impl Chat {
                 Ok(hit) => {
                     if hit == "1" {
                         notified += 1;
-                    } else {
+                    } else if cfg!(debug_assertions) {
                         eprintln!("[pf-plugin] page_actived 未导出（ix={ix}）");
                     }
                 }
@@ -851,10 +851,14 @@ impl Chat {
         }
         self.plugins.row_cache.clear();
         self.plugins.fn_bar_cache.clear();
-        eprintln!(
-            "[pf-plugin] page_actived 派发 key={} 插件数={} 通知={}",
-            session_key, n, notified
-        );
+        // 每拍派发的追踪行，只在 debug 构建打：release 包零输出是烟测门禁
+        // （0.3.2 实录：这一行 3 秒刷 ~50 条直接把烟测打红）
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[pf-plugin] page_actived 派发 key={} 插件数={} 通知={}",
+                session_key, n, notified
+            );
+        }
         notified
     }
 
