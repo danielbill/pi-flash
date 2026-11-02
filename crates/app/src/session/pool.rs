@@ -121,7 +121,26 @@ impl Chat {
                     // 存下来下次冷启动就有真名字）。
                     let cwd_key = rt.read(cx).cwd.to_string_lossy().to_string();
                     chat.pool.models_by_cwd.insert(cwd_key, models.clone());
-                    if crate::startup::merge_models(&mut chat.pool.globals, &models) {
+                    // 首个实时答复：先淘汰缓存幽灵（已从 models.json 删除、静态
+                    // 注册表也没有、实时答复也不认的商——并集合并永远删不掉它们，
+                    // 还会落进设置页「扩展 provider」兜底桶上组恒入列）。
+                    let mut purged = false;
+                    if chat.pool.globals.catalog_provisional {
+                        let doc = crate::Chat::mj_doc();
+                        let mut keep: std::collections::HashSet<String> =
+                            pi_link::models_json::providers(&doc)
+                                .into_iter()
+                                .map(|(p, _)| p)
+                                .collect();
+                        if let Some(dump) = chat.cfg.provider_registry.as_deref() {
+                            keep.extend(dump.providers.iter().map(|p| p.id.clone()));
+                        }
+                        purged =
+                            crate::startup::purge_ghosts(&mut chat.pool.globals, &models, &keep);
+                        chat.pool.globals.catalog_provisional = false;
+                    }
+                    // 幽灵被删也要回写——否则并集无新增时缓存文件里的幽灵留到下次冷启动
+                    if crate::startup::merge_models(&mut chat.pool.globals, &models) || purged {
                         let _ = crate::startup::write_cache(
                             &chat.pool.globals.models,
                             &chat.pool.globals.commands,

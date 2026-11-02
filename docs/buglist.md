@@ -3,6 +3,20 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 待复验（0.3.2 验收）——设置-模型上组混入已删除的测试商 ds/glm，重启后又消失
+
+- 根因：051 测试商 ds/glm 从 `~/.pi/agent/models.json` 删除后，模型条目仍留在
+  `~/.pi-flash/catalog-cache.json`（会话进程答复缓存）——`merge_models` 是并集永不淘汰；
+  它们「不在静态注册表 ∧ 不在 models.json」正好落进 `sidebar_providers` 的「扩展
+  provider」兜底桶 → 上组恒入列。`catalog_for` 实时槽 `models_by_cwd` 非空即优先，
+  所以进程答复前（冷启动直开设置）显示、答复后隐藏——"重启消失"只是时序，缓存里还在。
+- 修法：`Globals.catalog_provisional`（缓存种子期标记）；首个 `SessionEvent::Models`
+  先 `startup::purge_ghosts`（删 provider 既不在实时答复、也不在 models.json ∪ registry
+  静态商 的条目）再并集，有删除即回写缓存自愈。不动缓存格式、不动归属三分法。
+- 验证：单测 `purge_ghosts_drops_only_unbacked_providers`；手工——启动后开一个会话，
+  `catalog-cache.json` 不再含 `"provider": "ds"/"glm"`，设置-模型上组无 ds/glm、dds 仍在
+  分隔线下、freeflow 仍在上组。
+
 ## 结构债务（0.3.2 口径复核放行，发后偿还）——check_arch 行数红线 5 处超线
 
 - 现状（`scripts/check_arch.sh` §1/§2，限值 文件 1500 / 顶层视图函数 300 非测试行）：

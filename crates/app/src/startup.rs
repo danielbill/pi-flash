@@ -142,6 +142,12 @@ pub(crate) struct Globals {
     pub default_tools: Option<Vec<String>>,
     /// 全局插件声明（`settings.json packages`）。
     pub packages: Vec<serde_json::Value>,
+    /// 模型清单仍是缓存种子、尚未经任何会话进程答复校验。首个
+    /// `SessionEvent::Models` 到达时走一次 [`purge_ghosts`] 后清零——缓存里
+    /// 已从 models.json 删除的商（051 测试商 ds/glm 残留）否则永不淘汰：
+    /// `merge_models` 是并集，且它们"不在静态注册表 ∧ 不在 models.json"正好
+    /// 落进设置页「扩展 provider」兜底桶、上组恒入列。
+    pub catalog_provisional: bool,
 }
 
 /// 一个项目的上下文（010-启动.md §5）：启动集合内逐项目装载一次，切项目直接命中。
@@ -177,6 +183,7 @@ pub(crate) fn load_globals() -> Globals {
         commands,
         default_tools: pi_link::config::read_default_tools(&settings_path).unwrap_or(None),
         packages: pi_link::config::read_packages(&settings_path).unwrap_or_default(),
+        catalog_provisional: true,
     }
 }
 
@@ -344,6 +351,23 @@ pub(crate) fn merge_models(globals: &mut Globals, rpc: &[ModelInfo]) -> bool {
     changed
 }
 
+/// 首个会话进程答复到达时淘汰缓存幽灵：`globals.models` 里 provider **既不在
+/// 实时答复、也不在 `keep` 集**的条目删掉。`keep` = models.json 账本商 ∪
+/// registry 静态商（有磁盘佐证，不是幽灵）；扩展注册商（freeflow）由实时答复
+/// 佐证。返回是否有删除。只在 `catalog_provisional` 期调一次——之后多 runtime
+/// 答复照旧并集（多 cwd 语义）。
+pub(crate) fn purge_ghosts(
+    globals: &mut Globals,
+    live: &[ModelInfo],
+    keep: &std::collections::HashSet<String>,
+) -> bool {
+    let before = globals.models.len();
+    globals
+        .models
+        .retain(|m| keep.contains(&m.provider) || live.iter().any(|l| l.provider == m.provider));
+    globals.models.len() != before
+}
+
 /// 把 RPC 答到的扩展命令并进全局命令清单（`skill:` 前缀不入全局，skill 走磁盘
 /// 派生）：返回是否有变化。
 pub(crate) fn merge_commands(globals: &mut Globals, rpc: &[SlashCommand]) -> bool {
@@ -399,6 +423,42 @@ mod tests {
         assert_eq!(g.models.len(), 2);
         assert_eq!(g.models[0].name, "rpc", "RPC 答案优先");
         assert_eq!(g.models[1].id, "y");
+    }
+
+    #[test]
+    fn purge_ghosts_drops_only_unbacked_providers() {
+        let mk = |provider: &str, id: &str| ModelInfo {
+            id: id.into(),
+            name: id.into(),
+            provider: provider.into(),
+            context_window: None,
+            max_tokens: None,
+            reasoning: None,
+            input: None,
+        };
+        // 缓存种子：ds/glm = 已从 models.json 删掉的测试商（幽灵）；dds = 账本商；
+        // deepseek = 静态注册表商；freeflow = 扩展商（只有实时答复佐证）
+        let mut g = Globals {
+            models: vec![
+                mk("ds", "deepseek-flash"),
+                mk("glm", "glm-5.3"),
+                mk("dds", "glm-5.3-flash"),
+                mk("deepseek", "deepseek-chat"),
+                mk("freeflow", "free-pro"),
+            ],
+            catalog_provisional: true,
+            ..Default::default()
+        };
+        let live = vec![mk("freeflow", "free-pro"), mk("deepseek", "deepseek-chat")];
+        let keep: std::collections::HashSet<String> = ["dds".to_string(), "deepseek".to_string()]
+            .into_iter()
+            .collect();
+
+        assert!(purge_ghosts(&mut g, &live, &keep));
+        let provs: Vec<&str> = g.models.iter().map(|m| m.provider.as_str()).collect();
+        assert_eq!(provs, vec!["dds", "deepseek", "freeflow"], "只删 ds/glm");
+        // 幽灵已清，再跑一次无删除
+        assert!(!purge_ghosts(&mut g, &live, &keep));
     }
 
     #[test]
