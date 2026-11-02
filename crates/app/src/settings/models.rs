@@ -125,6 +125,8 @@ impl Chat {
             .and_then(|p| pi_link::config::read_enabled_models(&p).unwrap_or_else(|_| None))
             .is_some();
         self.cfg.mc_default_model = services::workspace::default_model_pref();
+        // pi 自己的默认模型：仅草稿 pill 无星标时的显示兜底（见 CfgUi 注释）
+        self.cfg.mc_pi_default_model = pi_link::config::read_default_model(&settings_path);
         self.cfg.mc_default_thinking = pi_link::config::read_default_thinking_level(&settings_path);
         self.cfg.mc_model_thinking = pi_link::config::read_model_thinking_levels(&settings_path);
         self.cfg.mc_state =
@@ -148,17 +150,28 @@ impl Chat {
                 scoped
             }
         };
-        // PF 默认在 scope 内才用；无默认/默认失效 → 显示名序第一个（与
-        // 下列表排序同一把尺子）
+        // 兜底链（2026-11-02 定稿，镜像 pi findInitialModel：PF 不传 --models，
+        // 其第 1 步恒空）：① PF 星标在 scope 内 → ② pi settings.json 默认——在
+        // scope 内 ∧ 该商有凭据（auth.json 口径，对应 pi hasConfiguredAuth）
+        // → ③ 显示名序第一个（与下列表同一把尺子）。无星标时 spawn 不传
+        // --model，pi 真会选 ②，草稿 pill 先显示它才不会在进程起来后跳一下。
+        // 残差（已知不镜像）：pi 第 3 步的内置 defaultModelPerProvider 表；
+        // models.json 手写 apiKey 这种凭据 PF 不算——这两种情形仍可能跳
+        let find_in_scope = |p: &str, id: &str| {
+            scope
+                .iter()
+                .find(|m| m.provider == p && m.id == id)
+                .map(|m| (m.provider.clone(), m.id.clone()))
+        };
         let default = self
             .cfg
             .mc_default_model
             .as_ref()
-            .and_then(|(p, id)| {
-                scope
-                    .iter()
-                    .find(|m| m.provider == *p && m.id == *id)
-                    .map(|m| (m.provider.clone(), m.id.clone()))
+            .and_then(|(p, id)| find_in_scope(p, id))
+            .or_else(|| {
+                let (p, id) = self.cfg.mc_pi_default_model.as_ref()?;
+                let has_cred = self.cfg.mc_creds.iter().any(|(prov, _)| prov == p);
+                has_cred.then(|| find_in_scope(p, id)).flatten()
             })
             .or_else(|| {
                 scope

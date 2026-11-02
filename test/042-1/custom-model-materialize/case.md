@@ -36,6 +36,7 @@ bash test/042-1/custom-model-materialize/run.sh
 | CASE6 | 账本行 → `mj:m:myds:0` 索引模式；关闭退回 `mj:p:myds` |
 | CASE7 | 仓草稿关闭后【+模型】仍是空白草稿（不串值） |
 | CASE8 | 删商连 `settings.json` `enabledModels` 残留一起清（精确 / glob / :pin），别家 pattern 不动；盘上现读再写，不冲掉外部写入 |
+| CASE9 | 无星标时草稿 pill 兜底 = pi `settings.json` 默认模型（scope 内 ∧ 该商有凭据）；无凭据回落显示名序首个——两次重启断言 `snapshot session` 的 `draft_model` |
 
 真端点补充：`test/provider/run-cases.sh` CASE11（智谱 /v4 探测 → 勾选物化）。
 

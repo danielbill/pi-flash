@@ -75,9 +75,15 @@ pub(crate) struct CfgUi {
     /// 探测/保存/勾选时更新——渲染路径只读内存不扫盘
     pub(crate) mj_probe_cache: crate::services::custom_models_store::Store,
     pub(crate) mc_project_scope: bool,
-    /// settings.json defaults a new session starts with (pi-web /api/models
-    /// `defaultModel` + `defaultThinkingLevel`; selectInitialModelScope inputs)
+    /// PF 五角星默认模型（`app-settings.json`，042）：全新草稿 spawn 时以
+    /// `--model` 带上。**不是** pi 的 settings.json 默认——两份各管各的（2026-11-02
+    /// 定稿：pi-web 还在用 settings.json 那份，暂不统一）。
     pub(crate) mc_default_model: Option<(String, String)>,
+    /// pi `settings.json` 的 `defaultProvider/defaultModel`：PF **只在无星标时**
+    /// 用于草稿 pill 的显示兜底（镜像 pi `findInitialModel` 第 2 步，起会话
+    /// 前后 pill 不再跳），不参与 spawn、不写回。
+    pub(crate) mc_pi_default_model: Option<(String, String)>,
+    /// settings.json `defaultThinkingLevel`（pi-web /api/models 同源）
     pub(crate) mc_default_thinking: Option<String>,
     /// settings.modelThinkingLevels — per-`provider/modelId` recorded levels
     pub(crate) mc_model_thinking: Vec<(String, String)>,
@@ -736,6 +742,7 @@ impl Chat {
                 mj_probe_cache: Default::default(),
                 mc_project_scope: false,
                 mc_default_model: None,
+                mc_pi_default_model: None,
                 mc_default_thinking: None,
                 mc_model_thinking: Vec::new(),
                 mc_skills: Vec::new(),

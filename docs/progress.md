@@ -472,3 +472,10 @@
   纯函数（删商清名下全部含 glob/:pin，删模型只清精确 ref）+ `mc_prune_patterns`
   盘上现读再写（内存副本可能落后于 pi）；接进 `mj_delete_provider` / `mj_delete_model`。
   存量死条目不自动扫（builtin/扩展商 refs 装载时序不可靠，误删风险），手动删即可
+- **补**（同日）：无星标时草稿 pill 对齐 pi 默认模型——PF 不读 pi `settings.json`
+  的 `defaultProvider/defaultModel`，无星标 spawn 不传 `--model`，pi 自己选
+  settings 默认（mimo），而 pill 显示的是「显示名序首个」→ 进程起来后跳一下。
+  现 `cfg.mc_pi_default_model` 随 `reload_model_defaults` 装载，`new_session_default`
+  兜底链 = 星标 → pi 默认（scope 内 ∧ auth.json 有该商凭据，镜像 hasConfiguredAuth）
+  → 显示名序首个；两份存储仍各管各的（pi-web 在用，暂不统一）。snapshot session
+  加 `draft_model`（pill 同链），run.sh CASE9 两次重启断言（32/32）

@@ -442,6 +442,9 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "tools_preset_label": r.tool_preset_label(),
         "thinking_override": r.thinking_override,
         "model": model_json(&r),
+        // 草稿态 pill 实际显示的模型（与 input/area.rs 同一条链：state →
+        // 手选 → new_session_default 兜底）；有 state 时与 model 同值
+        "draft_model": draft_model_json(chat, &r),
         "state": state_json(&r),
         "messages": messages_json(&r),
     })
@@ -452,6 +455,26 @@ fn model_json(r: &SessionRuntime) -> Value {
         Some(m) => json!({
             "id": m.id, "name": m.name, "provider": m.provider,
             "context_window": m.context_window,
+        }),
+        None => Value::Null,
+    }
+}
+
+/// 草稿 pill 的模型（镜像 `input/area.rs` 的三段链）：state 模型 → 草稿手选
+/// `pending_model` → `new_session_default` 兜底（星标 / pi 默认 / 显示名序首个）。
+fn draft_model_json(chat: &Chat, r: &SessionRuntime) -> Value {
+    let picked = r
+        .state
+        .as_ref()
+        .and_then(|s| s.model.as_ref())
+        .map(|m| (m.provider.clone(), m.id.clone()))
+        .or_else(|| r.pending_model.clone())
+        .or_else(|| chat.new_session_default().0);
+    match picked {
+        Some((provider, id)) => json!({
+            "provider": provider,
+            "name": chat.model_display_name(&provider, &id),
+            "id": id,
         }),
         None => Value::Null,
     }

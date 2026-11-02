@@ -163,6 +163,42 @@ check CASE8 "models.json 无 myds" node -e "
 const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
 process.exit((d.providers||{}).myds?1:0)"
 
+# ---------- CASE9 无星标时草稿 pill 对齐 pi 的默认模型（2026-11-02 定稿） ----------
+# 场景：账本两条模型都勾选（myds/*），无 PF 星标；pi settings.json 默认指向
+# deepseek-v4-pro（显示名序第二）。有凭据 → pill 显示 v4-pro（pi 真会选它）；
+# 删掉凭据 → pi 跳过默认 → PF 回落显示名序第一（deepseek-flash）
+"$PUI" exec app.quit >/dev/null 2>&1; sleep 2
+AUTH="$PI_CODING_AGENT_DIR/auth.json"
+cat > "$MODELS" <<'EOF'
+{"providers":{"myds":{"api":"openai-completions","name":"myds","baseUrl":"https://api.deepseek.com","models":[
+  {"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash","contextWindow":1048576},
+  {"id":"deepseek-v4-pro","name":"DeepSeek-V4-Pro","contextWindow":1048576}]}}}
+EOF
+cat > "$SETTINGS" <<'EOF'
+{"enabledModels":["myds/*"],"defaultProvider":"myds","defaultModel":"deepseek-v4-pro"}
+EOF
+cat > "$AUTH" <<'EOF'
+{"myds":{"type":"api_key","key":"sk-test-not-real"}}
+EOF
+relaunch() {
+  PI_FLASH_AUTOMATION=auto "$EXE" >> "$T/app.log" 2>&1 &
+  APP_PID=$!
+  for i in $(seq 1 15); do
+    "$PUI" wait --path app.booted --truthy --timeout 10 >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+draft_id() { node -e "const j=JSON.parse(process.argv[1]);console.log(((j||{}).draft_model||{}).id||'')" "$("$PUI" snapshot session 2>/dev/null)"; }
+relaunch || { echo "FATAL: CASE9 重启失败"; exit 1; }
+sleep 1
+check CASE9 "有凭据：pill 兜底 = pi 默认 deepseek-v4-pro（非显示名序首个）" test "$(draft_id)" = deepseek-v4-pro
+"$PUI" exec app.quit >/dev/null 2>&1; sleep 2
+echo '{}' > "$AUTH"
+relaunch || { echo "FATAL: CASE9 二次重启失败"; exit 1; }
+sleep 1
+check CASE9 "无凭据：pi 会跳过默认 → PF 回落显示名序首个 deepseek-flash" test "$(draft_id)" = deepseek-flash
+
 printf '%s\n' "${RESULTS[@]}"
 echo "---- PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]
