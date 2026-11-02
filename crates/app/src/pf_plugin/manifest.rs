@@ -995,13 +995,25 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
     let mut bytes = pi_link::paths::plugins_dir().and_then(|d| std::fs::read(d.join(rel)).ok());
     if bytes.is_none()
         && let Some((id, rest)) = rel.split_once('/')
-        && let Some(dir) = PLUGIN_DIRS
+    {
+        // 登记键 = manifest.id（pf-wxbot）；部分调用方给的是**目录别名**
+        // （@pi-flash-plugins__pf-wxbot，如市场卡片 contrib_icon_path）——
+        // 直查落空，按 `__<id>` 后缀对回登记键（真机 2026-11-03：市场卡片
+        // 图标空白，会话标签同款 icon 正常，正因两条链键口径不同）
+        let dir = PLUGIN_DIRS
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .ok()
-            .and_then(|c| c.get(id).cloned())
-    {
-        bytes = std::fs::read(dir.join(rest)).ok();
+            .and_then(|c| {
+                c.get(id).cloned().or_else(|| {
+                    c.iter()
+                        .find(|(k, _)| id.ends_with(&format!("__{k}")))
+                        .map(|(_, v)| v.clone())
+                })
+            });
+        if let Some(dir) = dir {
+            bytes = std::fs::read(dir.join(rest)).ok();
+        }
     }
     if let Some(b) = &bytes {
         if cfg!(debug_assertions) {
@@ -1617,6 +1629,34 @@ wasm = "plugin.wasm"
         // 台账版本目录不存在（异常残局）→ 什么都不装、也不拿别的版本顶上
         let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "9.9.9", false)]);
         assert!(out.manifests.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod plugin_asset_alias_tests {
+    use super::*;
+
+    /// 市场卡片以**目录别名**（@scope__id）请求资产、登记键是 manifest.id：
+    /// fallback 按 `__<id>` 后缀对回（真机 2026-11-03 卡片图标空白根因）。
+    #[test]
+    fn plugin_asset_resolves_dir_alias_to_registered_manifest_id() {
+        let tmp = std::env::temp_dir().join(format!("pf-asset-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("wx.svg"), "<svg/>").unwrap();
+        register_plugin_dir("pf-wxbot", &tmp);
+        // 先清缓存（同进程其他测试可能登记过同键）
+        if let Ok(mut c) = PLUGIN_ASSETS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            c.clear();
+        }
+        let hit = plugin_asset("@pi-flash-plugins__pf-wxbot/wx.svg");
+        assert!(hit.is_some(), "目录别名须对回 manifest.id 登记的目录");
+        assert_eq!(hit.unwrap(), b"<svg/>");
+        assert!(plugin_asset("@pi-flash-plugins__pf-wxbot/missing.svg").is_none());
+        assert!(plugin_asset("@x__unrelated/wx.svg").is_none());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
