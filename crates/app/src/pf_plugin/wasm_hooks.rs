@@ -78,10 +78,15 @@ pub(super) fn verify_wasm_plugins(manifests: Vec<PluginManifest>) -> Vec<String>
         let t1 = std::time::Instant::now();
         match loaded {
             Ok(mut inst) => match inst.load_ctx(&super::plugin_ctx_json(&id, &m, None)) {
-                Ok(()) => eprintln!(
-                    "[pf-plugin] {id} 验签通过（装载 {load_elapsed:?} / init {:?}，后台线程）",
-                    t1.elapsed()
-                ),
+                // 成功路径只在 debug 构建打（release 包零输出）；拒载/失败照常打
+                Ok(()) => {
+                    if cfg!(debug_assertions) {
+                        eprintln!(
+                            "[pf-plugin] {id} 验签通过（装载 {load_elapsed:?} / init {:?}，后台线程）",
+                            t1.elapsed()
+                        );
+                    }
+                }
                 Err(e) => {
                     eprintln!("[pf-plugin] {id} 拒载：{e}");
                     rejected.push(id);
@@ -113,7 +118,9 @@ pub(super) fn install_prepare(plugin_dir: &Path) -> Result<(), String> {
     let t0 = std::time::Instant::now();
     match pf_plugin_host::PluginInstance::precompile_to_cache(&wasm_path, &cache) {
         Ok(_) => {
-            eprintln!("[pf-plugin] 安装预编译 {} 完成（{:?}）", m.id, t0.elapsed());
+            if cfg!(debug_assertions) {
+                eprintln!("[pf-plugin] 安装预编译 {} 完成（{:?}）", m.id, t0.elapsed());
+            }
             Ok(())
         }
         Err(e) => Err(format!("预编译失败: {e}")),
@@ -133,7 +140,9 @@ pub(crate) fn spawn_precompile_installed() {
             let t0 = std::time::Instant::now();
             match pf_plugin_host::PluginInstance::precompile_to_cache(&wasm, &cache) {
                 Ok(true) => {
-                    eprintln!("[pf-plugin] 预编译 {} 完成（{:?}）", m.id, t0.elapsed())
+                    if cfg!(debug_assertions) {
+                        eprintln!("[pf-plugin] 预编译 {} 完成（{:?}）", m.id, t0.elapsed());
+                    }
                 }
                 Ok(false) => {} // 已命中
                 Err(e) => eprintln!("[pf-plugin] 预编译 {} 失败：{e}", m.id),

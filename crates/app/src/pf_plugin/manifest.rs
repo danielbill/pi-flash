@@ -1004,10 +1004,14 @@ pub(crate) fn plugin_asset(rel: &str) -> Option<Vec<u8>> {
         bytes = std::fs::read(dir.join(rest)).ok();
     }
     if let Some(b) = &bytes {
-        eprintln!("[pf-plugin] asset {rel} -> {} bytes", b.len());
+        if cfg!(debug_assertions) {
+            eprintln!("[pf-plugin] asset {rel} -> {} bytes", b.len());
+        }
     } else {
         // 未找到不缓存：扫描登记晚于首帧渲染时，下帧重查即中
-        eprintln!("[pf-plugin] asset {rel} -> 未找到");
+        if cfg!(debug_assertions) {
+            eprintln!("[pf-plugin] asset {rel} -> 未找到");
+        }
         return None;
     }
     if let Ok(mut c) = cache.lock() {

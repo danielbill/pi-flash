@@ -365,10 +365,12 @@ impl Chat {
             eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
             return;
         }
-        eprintln!(
-            "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
-            entry.manifest.id, pf_session_key
-        );
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
+                entry.manifest.id, pf_session_key
+            );
+        }
         // 空闲会话立即重启挂载（忙 = 有任务在跑，不动，下次 spawn 生效）。
         // **不 push 进 ext_sources**：挂载本体在 spawn 前按台账统一 `-e`
         // （runtime spawn 的 store 消费段，所有档位）；ext_sources 只装用户
@@ -510,7 +512,9 @@ impl Chat {
 
     /// 弹窗关闭（随手关：点外/×；act.closePopup 同路）。
     pub(crate) fn plugin_popup_close(&mut self, cx: &mut gpui::Context<Self>) {
-        eprintln!("[pf-plugin] popup close (trace)");
+        if cfg!(debug_assertions) {
+            eprintln!("[pf-plugin] popup close (trace)");
+        }
         if self.plugins.popup.take().is_some() {
             self.plugins.popup_gen += 1;
             // chrome 缓存作废：弹窗动作（如绑定成功）→ 弹窗自动收，此刻功能栏
@@ -560,7 +564,9 @@ impl Chat {
             return;
         }
         self.plugins.popup_poll_at = Some(std::time::Instant::now());
-        eprintln!("[popup-tick] reload ix={ix}");
+        if cfg!(debug_assertions) {
+            eprintln!("[popup-tick] reload ix={ix}");
+        }
         self.plugin_popup_reload(ix, cx);
     }
 
@@ -635,14 +641,16 @@ impl Chat {
                     self.plugin_popup_close(cx);
                     return;
                 }
-                eprintln!(
-                    "[popup-tick] body={}",
-                    serde_json::to_string(&body)
-                        .unwrap_or_default()
-                        .chars()
-                        .take(120)
-                        .collect::<String>()
-                );
+                if cfg!(debug_assertions) {
+                    eprintln!(
+                        "[popup-tick] body={}",
+                        serde_json::to_string(&body)
+                            .unwrap_or_default()
+                            .chars()
+                            .take(120)
+                            .collect::<String>()
+                    );
+                }
                 if let Some(p) = self.plugins.popup.as_mut() {
                     p.body = Some(body);
                     p.tree_loaded = true;
@@ -1077,10 +1085,13 @@ impl Chat {
                         .and_then(Value::as_str)
                         .unwrap_or("accent")
                         .to_string();
-                    eprintln!(
-                        "[pf-plugin] session_list_render 命中 pkg={} session={} icon={}",
-                        self.plugins.plugins[ix].manifest.pkg, key, icon
-                    );
+                    // 逐行命中追踪，只在 debug 构建打（release 包零输出）
+                    if cfg!(debug_assertions) {
+                        eprintln!(
+                            "[pf-plugin] session_list_render 命中 pkg={} session={} icon={}",
+                            self.plugins.plugins[ix].manifest.pkg, key, icon
+                        );
+                    }
                     if icon.is_empty() {
                         None
                     } else {

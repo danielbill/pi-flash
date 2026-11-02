@@ -535,16 +535,20 @@ impl Chat {
         }
         lifecycle::log_load(&entry.manifest.dir, true, load.as_millis(), "");
         entry_state(entry, lifecycle::Ev::LoadOk);
-        eprintln!(
-            "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
-            t0.elapsed() - load,
-            std::backtrace::Backtrace::force_capture()
-                .to_string()
-                .lines()
-                .nth(2)
-                .unwrap_or("")
-                .trim(),
-        );
+        // [perf] 行按铁律由 PI_FLASH_PERF 门控（main.rs perf_mark 同款）；backtrace
+        // 抓取只在开了仪器时做——release 包零输出 + 不在 UI 线程白付这笔开销
+        if std::env::var("PI_FLASH_PERF").is_ok() {
+            eprintln!(
+                "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
+                t0.elapsed() - load,
+                std::backtrace::Backtrace::force_capture()
+                    .to_string()
+                    .lines()
+                    .nth(2)
+                    .unwrap_or("")
+                    .trim(),
+            );
+        }
         entry.wasm = Some(inst);
         entry.wasm_focus = Some(cx.focus_handle());
         true
