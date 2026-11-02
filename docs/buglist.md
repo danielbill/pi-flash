@@ -3,6 +3,18 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已修（2026-11-02 晚）——新会话模型列表点行不出 ✓ / pi 死后选不中、发送转圈
+
+- 根因（两处 PF 老缺口，被「pi 1.5.0 启动即死」第一次暴露）：① 退出臂不清
+  `agent.session` → `select_model` 把 SetModel 写进死管道、`ensure_spawned` 不重 spawn；
+  ② `model_picker::view` 的 ✓ 只读 `state.model`，草稿/死进程只记 `pending_model`，
+  ✓ 永远不出。外因是上一条（1.5.0 拒载残缺 cost → `--model my-glm/...` 退出）。
+- 修法：退出臂 `agent.session = None`；✓ / pill / snapshot `draft_model` 统一为
+  pending → state → 兜底。新 op `model.pick`（行点击同链）+ dialogs 面
+  `model_current_ref` 供断言。
+- 验证：`test/042-1/picker-current/run.sh` 13/13（死进程重 spawn + 草稿 ✓ 跟手）；
+  真机——新会话点行出 ✓、转圈会话重开可发。
+
 ## 已修（2026-11-02 晚）——发送空转 / 模型列表选不中：models.json 残缺 cost 让 pi 整份拒载
 
 - 根因：pi `models[]` 的 cost 是 `ModelCostSchema`，**四键全必填**（只有 modelOverrides

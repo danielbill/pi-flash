@@ -107,6 +107,10 @@ pub mod method {
     /// 模型选择弹窗：开（与 inputpanel「模型 ∨」同一个构造路径；UI 测试用，
     /// 列表内容读 dialogs 面的 `model_rows`）
     pub const MODEL_PICKER_OPEN: &str = "model.picker_open";
+    /// 模型选择弹窗：点行（与行 on_row 同链 `select_model` + 收菜单——草稿/
+    /// 死进程记 pending_model，活进程发 SetModel）；params `{provider, id}`。
+    /// ✓ 行读 dialogs 面 `model_current_ref`，pill 读 session 面 `draft_model`
+    pub const MODEL_PICK: &str = "model.pick";
     pub const PROJECT_SWITCH: &str = "project.switch";
     /// psp 项目行 ＋ 按钮同源入口（切到该项目并新建会话）；UI 测试用
     pub const PROJECT_NEW_SESSION_IN: &str = "project.new_session_in";

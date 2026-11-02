@@ -527,13 +527,22 @@ pub(crate) fn view(
     let (models, total) = chat.picker_models(cx);
     let show_filter = total >= MODEL_FILTER_MIN;
     let entries = Chat::group_entries(&models);
-    let current = chat
-        .rt()
-        .read(cx)
-        .state
-        .as_ref()
-        .and_then(|s| s.model.as_ref())
-        .map(|m| format!("{}/{}", m.provider, m.id));
+    // ✓ = 当前会话模型。草稿 / 进程已死时 select_model 只记 pending_model
+    //（spawn 时才变成 --model），它是用户最新意图，优先于 state 里的旧模型；
+    // 活进程下 pending 恒空（走 SetModel），仍以 state 为准。此前只读
+    // state → 新会话点任何行都不出 ✓（2026-11-02 真机）
+    let current = {
+        let r = chat.rt().read(cx);
+        r.pending_model
+            .as_ref()
+            .map(|(p, id)| format!("{p}/{id}"))
+            .or_else(|| {
+                r.state
+                    .as_ref()
+                    .and_then(|s| s.model.as_ref())
+                    .map(|m| format!("{}/{}", m.provider, m.id))
+            })
+    };
     let default_ref = chat
         .cfg
         .mc_default_model

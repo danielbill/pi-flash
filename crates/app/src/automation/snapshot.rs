@@ -460,15 +460,18 @@ fn model_json(r: &SessionRuntime) -> Value {
     }
 }
 
-/// 草稿 pill 的模型（镜像 `input/area.rs` 的三段链）：state 模型 → 草稿手选
-/// `pending_model` → `new_session_default` 兜底（星标 / pi 默认 / 显示名序首个）。
+/// 草稿 pill 的模型（镜像 `input/area.rs` 的三段链）：草稿手选 `pending_model`
+/// （无活进程时的最新意图）→ state 模型 → `new_session_default` 兜底。
 fn draft_model_json(chat: &Chat, r: &SessionRuntime) -> Value {
     let picked = r
-        .state
-        .as_ref()
-        .and_then(|s| s.model.as_ref())
-        .map(|m| (m.provider.clone(), m.id.clone()))
-        .or_else(|| r.pending_model.clone())
+        .pending_model
+        .clone()
+        .or_else(|| {
+            r.state
+                .as_ref()
+                .and_then(|s| s.model.as_ref())
+                .map(|m| (m.provider.clone(), m.id.clone()))
+        })
         .or_else(|| chat.new_session_default().0);
     match picked {
         Some((provider, id)) => json!({
@@ -888,6 +891,25 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "model_rows": match chat.dlg.model_picker.as_ref() {
             Some(_) => chat.picker_models(cx).0.len(),
             None => 0,
+        },
+        // 模型菜单 ✓ 行（当前会话模型，与 model_picker::view 同链：pending →
+        // state）；菜单没开 = null。「新会话点行不出 ✓」回归断言用
+        "model_current_ref": match chat.dlg.model_picker.as_ref() {
+            Some(_) => {
+                let r = chat.rt().read(cx);
+                r.pending_model
+                    .as_ref()
+                    .map(|(p, id)| format!("{p}/{id}"))
+                    .or_else(|| {
+                        r.state
+                            .as_ref()
+                            .and_then(|s| s.model.as_ref())
+                            .map(|m| format!("{}/{}", m.provider, m.id))
+                    })
+                    .map(Value::String)
+                    .unwrap_or(Value::Null)
+            }
+            None => Value::Null,
         },
         "project_hits": project_hits,
         "project_filter": chat.psp.project_filter,

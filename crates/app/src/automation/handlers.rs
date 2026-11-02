@@ -932,6 +932,20 @@ pub(super) fn dispatch(
             chat.open_model_picker(cx);
             ok()
         }
+        method::MODEL_PICK => {
+            // 与 model_picker::view 的行 on_row 闭包同链（↑/↓/Enter 是 GPUI
+            // action，合成按键在自动化里到不了卡片，方法直调才可靠）
+            let get = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+            let (provider, id) = match (get("provider"), get("id")) {
+                (Some(p), Some(i)) if !p.is_empty() && !i.is_empty() => (p, i),
+                _ => return Err(bad("需要 {\"provider\": \"商\", \"id\": \"模型id\"}")),
+            };
+            chat.rt()
+                .update(cx, |r, cx| r.select_model(provider, id, cx));
+            chat.dlg.model_picker = None;
+            cx.notify();
+            ok()
+        }
         method::FILES_PROJECT_MENU => {
             // 文件树标题项目下拉的无坐标入口（model.picker_open 同款）：
             // toggle 开/收；↑/↓/Enter 走 input.keys，状态读 files 面 proj_menu

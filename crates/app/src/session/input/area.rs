@@ -51,12 +51,13 @@ pub(crate) fn input_area(
         } else {
             (None, None)
         };
-        let model_label = state_model
-            .or_else(|| {
-                r.pending_model
-                    .as_ref()
-                    .map(|(p, id)| chat.model_display_name(p, id))
-            })
+        // 手选（pending_model）优先于 state：它只在无活进程时写入（草稿 /
+        // 进程已死），是用户最新意图，spawn 时才变成 --model；活进程下恒空
+        let model_label = r
+            .pending_model
+            .as_ref()
+            .map(|(p, id)| chat.model_display_name(p, id))
+            .or(state_model)
             .or_else(|| {
                 draft_model
                     .as_ref()

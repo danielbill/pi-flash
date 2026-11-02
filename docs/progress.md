@@ -484,3 +484,8 @@
   `--model` 退出。修：`complete_cost` 四键补 0（填参两处 + ensure_model_defaults）、
   `validate` 四键必在、`repair`/`mj_repair_models_json` 启动自愈存量文件、pi 退出
   stderr 末行挂 status。run.sh CASE10（33/33）。详见 buglist 顶条
+- **补**（同日晚，"模型列表点行不出 ✓ / 死会话选不中"）：pi 1.5.0 启动即死首次
+  暴露两处老缺口——退出臂不清 `agent.session`（SetModel 写死管道、不重 spawn）、
+  菜单 ✓ 只读 state.model（草稿 pending 永不出 ✓）。修：退出臂清句柄；✓ / pill /
+  `draft_model` 统一 pending → state → 兜底；新 op `model.pick` + `model_current_ref`
+  断言口。`test/042-1/picker-current/run.sh` 13/13

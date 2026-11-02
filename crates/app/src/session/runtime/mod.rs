@@ -742,6 +742,12 @@ async fn consume_runtime_events(
             if !stderr.trim().is_empty() {
                 eprintln!("pi stderr tail:\n{stderr}");
             }
+            // 死进程句柄必须摘掉：留着它 select_model 把 SetModel 写进死管道
+            //（✓ 永远不动）、ensure_spawned 认为还活着不重 spawn（发送空转）
+            //——pi 启动即死时第一次暴露（2026-11-02 真机：models.json 拒载 →
+            // `Error: Model not found` 退出，列表点不动、消息转圈）。与
+            // shutdown_process 同口径；重开/发送由 ensure_spawned 重起
+            rt.agent.session = None;
             // 进程死了：文件落过盘就补绑定（真标签接管；重启后可重开），
             // 没落盘（boot 即死 / 全程无消息）撤伪标签
             if !rt.try_bind_reported_file(cx) {
