@@ -52,7 +52,7 @@ done
 check CASE1 "pi 退出原因挂进 status（Model not found）" "$PUI" wait --path session.status --contains "not found" --timeout 30
 check CASE1 "死进程不再转圈（无 streaming）" node -e "process.exit(process.argv[1]==='true'?1:0)" "$(jget session .state.is_streaming)"
 "$PUI" exec model.picker_open >/dev/null
-check CASE1 "死会话菜单：✓ 槽为空（state 未到过模型）" test "$(jget dialogs .model_current_ref)" = null
+check CASE1 "死会话菜单：✓ 落在兜底默认行（与 pill 同源）" test "$(jget dialogs .model_current_ref)" = "\"myds/$(jget session .draft_model.id | tr -d '"')\""
 "$PUI" exec model.pick --arg provider=myds --arg id=deepseek-v4-pro >/dev/null; sleep 1
 check CASE1 "死会话里点行仍生效（pending 记下、pill 变）" test "$(jget session .draft_model.id)" = '"deepseek-v4-pro"'
 "$PUI" exec model.picker_open >/dev/null
@@ -69,7 +69,7 @@ process.exit(sp.length>=2&&sp[0].includes('nope/ghost')&&sp[sp.length-1].include
 "$PUI" exec session.new >/dev/null; sleep 1
 "$PUI" exec model.picker_open >/dev/null
 check CASE2 "新草稿菜单有行" node -e "process.exit(Number(process.argv[1])>=2?0:1)" "$(jget dialogs .model_rows)"
-check CASE2 "草稿未手选：无 ✓" test "$(jget dialogs .model_current_ref)" = null
+check CASE2 "草稿未手选：✓ 就在默认行（新会话一开即选中）" test "$(jget dialogs .model_current_ref)" = "\"myds/$(jget session .draft_model.id | tr -d '"')\""
 "$PUI" exec model.pick --arg provider=myds --arg id=deepseek-flash >/dev/null; sleep 1
 check CASE2 "点行即收菜单" test "$(jget dialogs .model_rows)" = 0
 check CASE2 "pill = 所选行（pending 优先于兜底）" test "$(jget session .draft_model.id)" = '"deepseek-flash"'

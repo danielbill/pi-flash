@@ -529,8 +529,9 @@ pub(crate) fn view(
     let entries = Chat::group_entries(&models);
     // ✓ = 当前会话模型。草稿 / 进程已死时 select_model 只记 pending_model
     //（spawn 时才变成 --model），它是用户最新意图，优先于 state 里的旧模型；
-    // 活进程下 pending 恒空（走 SetModel），仍以 state 为准。此前只读
-    // state → 新会话点任何行都不出 ✓（2026-11-02 真机）
+    // 活进程下 pending 恒空（走 SetModel），仍以 state 为准。都没有（全新
+    // 草稿）→ 兜底到 spawn 真会用的默认（星标 / pi 默认），与 pill 同源：
+    // 新会话一打开 ✓ 就在默认行上（用户 2026-11-02 定稿）
     let current = {
         let r = chat.rt().read(cx);
         r.pending_model
@@ -541,6 +542,11 @@ pub(crate) fn view(
                     .as_ref()
                     .and_then(|s| s.model.as_ref())
                     .map(|m| format!("{}/{}", m.provider, m.id))
+            })
+            .or_else(|| {
+                chat.new_session_default()
+                    .0
+                    .map(|(p, id)| format!("{p}/{id}"))
             })
     };
     let default_ref = chat

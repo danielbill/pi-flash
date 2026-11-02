@@ -892,8 +892,8 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             Some(_) => chat.picker_models(cx).0.len(),
             None => 0,
         },
-        // 模型菜单 ✓ 行（当前会话模型，与 model_picker::view 同链：pending →
-        // state）；菜单没开 = null。「新会话点行不出 ✓」回归断言用
+        // 模型菜单 ✓ 行（与 model_picker::view 同链：pending → state → 新会话
+        // 默认兜底）；菜单没开 = null。「新会话点行不出 ✓」回归断言用
         "model_current_ref": match chat.dlg.model_picker.as_ref() {
             Some(_) => {
                 let r = chat.rt().read(cx);
@@ -906,6 +906,7 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                             .and_then(|s| s.model.as_ref())
                             .map(|m| format!("{}/{}", m.provider, m.id))
                     })
+                    .or_else(|| chat.new_session_default().0.map(|(p, id)| format!("{p}/{id}")))
                     .map(Value::String)
                     .unwrap_or(Value::Null)
             }
