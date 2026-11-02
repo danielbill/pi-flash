@@ -442,6 +442,3 @@
 > 包内与 pi-flash.exe 同目录（绿色包根 / npm payload/ / payload-<版本>/ 整包内容自动带上）。
 > 文档同步：RELEASE.md §3.1/§5、080-软件分发.md §0。用例：test/042-1/pif-secret-packaging/。
 > dev 路径条目是本机 debug 构建写入的正常产物（本机该路径真实存在），无需迁移。
-
-## 内置的Provider在保存apikey后不会自动列出模型列表了！
-注意：这是N早就实现的稳定功能！在最近被傻逼Agent删除了！！！！！
