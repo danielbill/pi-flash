@@ -74,9 +74,10 @@ impl Chat {
                 if let Some(entry) = self.plugins.plugins.get_mut(ix) {
                     entry.disabled = false;
                 }
-                // 重新装载：ext 自动重挂当前会话（off 时被摘除）——绑定态在镜像
-                // 里原样保留，ext 重挂后门控命中、渠道自恢复（免重扫）
-                self.plugin_attach_pi_exts(ix, &self.pool.active_key.clone(), cx);
+                // 重新装载：ext 自动重挂当前会话——绑定态在镜像里原样保留，
+                // ext 重挂后门控命中、渠道自恢复（免重扫）。force=true：ext 的
+                // unload 水位是进程终态，停用→启用必须重启 pi 给它新 BOOT_TS
+                self.plugin_attach_pi_exts(ix, &self.pool.active_key.clone(), true, cx);
                 self.ensure_active_process(cx);
             }
             (true, None) => {

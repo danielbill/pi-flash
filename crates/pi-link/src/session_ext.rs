@@ -228,8 +228,14 @@ mod tests {
 /// `does not export a valid factory function`，同批 `-e`（含执行域 shim）
 /// 一起失效：插件功能面全哑（2026-10-30 真机根因）。
 ///
-/// 按**插件目录**匹配（`…/plugins/<id>/pi/…`）而非整条路径相等：数据目录被
-/// 搬迁/复制后旧清单里的绝对路径可能与当前插件目录不同，仍要摘掉。
+/// 按**插件目录**匹配而非整条路径相等：数据目录被搬迁/复制后旧清单里的
+/// 绝对路径可能与当前插件目录不同，仍要摘掉。
+///
+/// 包目录名两形态都认 + 版本层容忍（090-10）：market 落
+/// `…/plugins/@<scope>__<id>/<ver>/pi/…`，dev 平铺落 `…/plugins/<id>/pi/…`。
+/// 此前 needle 写死 `/plugins/<id>/pi/`，对 market 包（scope 前缀 + 版本层）
+/// 永不命中 → 停用摘不掉条目 → 再启用被「清单已含」短路、pi 不重启 →
+/// ext 停在 unload 水位终态，通信死（真机 2026-11-02）。
 /// 幂等：没有残留就不写盘。
 pub fn purge_exec_entries(plugin_id: &str) -> Result<usize, String> {
     let Some(store) = store_path() else {
@@ -238,12 +244,12 @@ pub fn purge_exec_entries(plugin_id: &str) -> Result<usize, String> {
     if !store.is_file() {
         return Ok(0);
     }
-    let needle = format!("/plugins/{}/pi/", plugin_id.to_ascii_lowercase());
+    let id = plugin_id.to_ascii_lowercase();
     let mut table = read(&store);
     let mut removed = 0usize;
     for list in table.values_mut() {
         let before = list.len();
-        list.retain(|p| !norm_key(p).to_ascii_lowercase().contains(&needle));
+        list.retain(|p| !is_plugin_pi_entry(&norm_key(p).to_ascii_lowercase(), &id));
         removed += before - list.len();
     }
     if removed > 0 {
@@ -251,4 +257,57 @@ pub fn purge_exec_entries(plugin_id: &str) -> Result<usize, String> {
         write_all(&store, &table)?;
     }
     Ok(removed)
+}
+
+/// 路径是否指到**本插件**的 pi 入口：`…/plugins/<pkg>/[<ver>/]pi/…`，
+/// 其中 `<pkg>` = `<id>`（dev 平铺）或 `@<scope>__<id>`（market 目录别名）。
+fn is_plugin_pi_entry(path_norm_lower: &str, id_lower: &str) -> bool {
+    let Some(i) = path_norm_lower.rfind("/plugins/") else {
+        return false;
+    };
+    let rest = &path_norm_lower[i + "/plugins/".len()..];
+    let mut seg = rest.split('/');
+    let pkg = seg.next().unwrap_or("");
+    if !(pkg == id_lower || pkg.ends_with(&format!("__{id_lower}"))) {
+        return false;
+    }
+    // 之后是 `pi/…`（平铺）或 `<版本>/pi/…`（版本层，版本目录首字符为数字）
+    let after: Vec<&str> = seg.collect();
+    match after.len() {
+        0 => false,
+        1 => after[0] == "pi",
+        _ => {
+            after[0] == "pi"
+                || (after[0].starts_with(|c: char| c.is_ascii_digit()) && after[1] == "pi")
+        }
+    }
+}
+
+#[cfg(test)]
+mod purge_exec_entry_tests {
+    use super::*;
+
+    #[test]
+    fn matches_market_versioned_dev_flat_and_rejects_others() {
+        let id = "pf-wxbot";
+        // market：@scope__id + 版本层
+        assert!(is_plugin_pi_entry(
+            "c:/r/plugins/@pi-flash-plugins__pf-wxbot/0.1.3/pi/index.mjs",
+            id
+        ));
+        // dev 平铺：<id>/pi/
+        assert!(is_plugin_pi_entry("c:/r/plugins/pf-wxbot/pi/index.mjs", id));
+        // 别的插件（__ 前缀不同于 id）：不匹配
+        assert!(!is_plugin_pi_entry(
+            "c:/r/plugins/@x__wxbotpro/0.1.0/pi/index.mjs",
+            id
+        ));
+        // 本插件但非 pi 入口（data/svc 通道文件）：不匹配
+        assert!(!is_plugin_pi_entry(
+            "c:/r/plugins/@pi-flash-plugins__pf-wxbot/0.1.3/data/svc/in",
+            id
+        ));
+        // 无 /plugins/ 段：不匹配
+        assert!(!is_plugin_pi_entry("npm:pi-freeflow", id));
+    }
 }

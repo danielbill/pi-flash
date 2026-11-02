@@ -336,7 +336,9 @@ impl Chat {
                     c.aux.market.pf.error = Some(msg);
                 } else if reattach && let Some(ix) = c.plugin_ix_by_pkg(&name) {
                     let key = c.pool.active_key.clone();
-                    c.plugin_attach_pi_exts(ix, &key, cx);
+                    // 更新链 = 状态跃迁：force 重启自愈存量脏状态（停用周期
+                    // 摘条目口径失配年代残留的「已含」短路）
+                    c.plugin_attach_pi_exts(ix, &key, true, cx);
                     c.ensure_active_process(cx);
                 }
                 cx.notify();

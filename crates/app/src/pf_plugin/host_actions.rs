@@ -236,7 +236,7 @@ impl Chat {
                 .unwrap_or(false);
             if !has_service {
                 let pf_key = self.pool.active_key.clone();
-                self.plugin_attach_pi_exts(ix, &pf_key, cx);
+                self.plugin_attach_pi_exts(ix, &pf_key, false, cx);
                 self.ensure_active_process(cx);
             }
         }
@@ -322,10 +322,16 @@ impl Chat {
     /// 包内 pi 扩展 → 当前会话扩展清单（契约 v3：绑定目标 = 用户当前普通
     /// 会话，挂载改在绑定时完成）。会话进程空闲 → 立即重启挂载；忙 → 清单
     /// 已写，下次 spawn 生效。
+    ///
+    /// `force_restart`：跳过「清单已含」短路、空闲即重启。**启用链必传
+    /// true**——ext 的 unload 水位是进程终态（BOOT_TS 只增不退，「本进程
+    /// 不复活」），停用→启用循环里若 pi 不重启，ext 永远停在终态、通信死
+    /// （真机 2026-11-02：停用摘条目口径失配 → 短路成立 → 重启没发生）。
     pub(crate) fn plugin_attach_pi_exts(
         &mut self,
         ix: usize,
         pf_session_key: &str,
+        force_restart: bool,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(entry) = self.plugins.plugins.get(ix) else {
@@ -347,7 +353,7 @@ impl Chat {
             return;
         };
         let mut merged = pi_link::session_ext::read_for(&store, pf_session_key);
-        if pi_exts.iter().all(|p| merged.iter().any(|h| h == p)) {
+        if !force_restart && pi_exts.iter().all(|p| merged.iter().any(|h| h == p)) {
             return; // 清单已含，无需重启
         }
         for p in &pi_exts {
