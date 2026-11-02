@@ -171,7 +171,7 @@ process.exit((d.providers||{}).myds?1:0)"
 AUTH="$PI_CODING_AGENT_DIR/auth.json"
 cat > "$MODELS" <<'EOF'
 {"providers":{"myds":{"api":"openai-completions","name":"myds","baseUrl":"https://api.deepseek.com","models":[
-  {"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash","contextWindow":1048576},
+  {"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash","contextWindow":1048576,"cost":{"input":0.0285,"output":0.0923}},
   {"id":"deepseek-v4-pro","name":"DeepSeek-V4-Pro","contextWindow":1048576}]}}}
 EOF
 cat > "$SETTINGS" <<'EOF'
@@ -193,6 +193,12 @@ draft_id() { node -e "const j=JSON.parse(process.argv[1]);console.log(((j||{}).d
 relaunch || { echo "FATAL: CASE9 重启失败"; exit 1; }
 sleep 1
 check CASE9 "有凭据：pill 兜底 = pi 默认 deepseek-v4-pro（非显示名序首个）" test "$(draft_id)" = deepseek-v4-pro
+# ---------- CASE10 启动自愈残缺 cost（2026-11-02 真机：填参只给 input/output →
+# pi ModelCostSchema 四键必填 → 整份拒载 → --model 退出、会话空转） ----------
+check CASE10 "启动后残缺 cost 补齐四键（已有值不动）" node -e "
+const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
+const c=d.providers.myds.models.find(m=>m.id==='deepseek-flash').cost;
+process.exit(c.input===0.0285&&c.output===0.0923&&c.cacheRead===0&&c.cacheWrite===0?0:1)"
 "$PUI" exec app.quit >/dev/null 2>&1; sleep 2
 echo '{}' > "$AUTH"
 relaunch || { echo "FATAL: CASE9 二次重启失败"; exit 1; }

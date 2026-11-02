@@ -3,6 +3,25 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已修（2026-11-02 晚）——发送空转 / 模型列表选不中：models.json 残缺 cost 让 pi 整份拒载
+
+- 根因：pi `models[]` 的 cost 是 `ModelCostSchema`，**四键全必填**（只有 modelOverrides
+  是 Partial）；【自动填参】（`openrouter::fill_name_cost` / `fill_from_entry`）只写目录
+  给了的键，models.dev 多数条目没有缓存价 → my-glm 落成 `{input, output}` → pi 对
+  **整份** models.json 报 schema 错并丢弃 → 自定义商全部消失（stderr `No models match
+  pattern "my-glm/..."`）→ `--model my-glm/glm-5.3-flash` 直接 `Error: Model not found`
+  退出 → 会话转圈；PF 的 `validate` 只查值是数字不查键，放行了。真机复现：隔离实例
+  灌入真实 `~/.pi-flash` + `~/.pi/agent` 三文件，pi 直跑 `get_available_models` 无
+  my-glm；补两键后立刻出现。
+- 修法：`models_json::complete_cost`（四键补 0，已有值不动）——填参两处落盘前调；
+  `ensure_model_defaults` 对已有 cost 也补齐（normalize 每次 save 都过）；`validate`
+  四键必在（最后一道闸）；`models_json::repair` + `mj_repair_models_json` 启动/设置页
+  装载对存量文件自愈（有改动才写）；pi 退出时 stderr 最后一行挂进 status（此前只
+  eprintln，用户只看到转圈）。
+- 验证：单测 `partial_cost_is_completed_and_rejected_until_repaired`；离线 run.sh
+  CASE10（33/33）；真机——重启即自愈（debug stderr `[models.json] 形状自愈已写盘`），
+  模型列表 MY-GLM 可选、发送有回复。
+
 ## 已修（0.3.2 发版后，2026-11-02）——自定义商勾选的探测模型对话出错 + 详情页只读
 
 - 根因：`253ca038`（11-01 21:47）给 `mj_materialize_selection` 加「清单仓命中 → 原样

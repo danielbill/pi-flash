@@ -212,6 +212,8 @@ impl Chat {
         // 不再有 PF 私有账本
         self.cfg.mc_creds = pi_link::auth_json::kinds().unwrap_or_default();
         self.cfg.mj_probe_cache = services::custom_models_store::read();
+        // 存量 models.json 形状自愈（残缺 cost 让 pi 整份拒载）——先于对账
+        self.mj_repair_models_json();
         // 存量对账（0.3.2 勾选漏写盘善后）：显式勾选却没进 models.json 的
         // 自定义商模型补物化——仓装载之后、其余字段之前；无事可做零写盘
         self.mj_reconcile_custom_selection();

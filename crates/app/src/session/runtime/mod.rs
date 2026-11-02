@@ -703,10 +703,29 @@ async fn consume_runtime_events(
                 rt.turn_error = true;
                 rt.fail_dangling_tool_calls();
             }
+            // 死因留痕：stderr 尾部（node OOM / unhandled rejection /
+            // 扩展 fatal 只出现在这里）。最后一行非空 stderr 直接挂进状态条——
+            // 此前只 eprintln，用户看到的是永远转圈的会话，不知道 pi 其实在
+            // 启动时就 `Error: Model "x/y" not found` 退出了（2026-11-02 真机）
+            let stderr = rt
+                .agent
+                .session
+                .as_ref()
+                .map(|s| s.stderr_tail())
+                .unwrap_or_default();
+            let last_line = stderr
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .next_back()
+                .map(|l| l.chars().take(160).collect::<String>());
             rt.status = match code {
                 Some(c) => crate::i18n::tf("status.pi_exited_code", &[("code", c.to_string())]),
                 None => tr("status.pi_exited").to_string(),
             };
+            if let Some(l) = last_line {
+                rt.status = format!("{} — {l}", rt.status);
+            }
             rt.compacting = false;
             // 进程没了就不存在「在跑」：不就地复位，agent_running 与快照
             // is_streaming 会永久卡在 true——psp 状态槽的旋转圈永不灭
@@ -720,14 +739,6 @@ async fn consume_runtime_events(
             if let Some(s) = rt.state.as_mut() {
                 s.is_streaming = false;
             }
-            // 死因留痕：stderr 尾部（node OOM / unhandled rejection /
-            // 扩展 fatal 只出现在这里）
-            let stderr = rt
-                .agent
-                .session
-                .as_ref()
-                .map(|s| s.stderr_tail())
-                .unwrap_or_default();
             if !stderr.trim().is_empty() {
                 eprintln!("pi stderr tail:\n{stderr}");
             }

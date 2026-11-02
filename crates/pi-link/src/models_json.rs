@@ -63,9 +63,37 @@ pub fn ensure_model_defaults(model: &mut Value) {
     map.entry("input")
         .or_insert_with(|| serde_json::json!(["text"]));
     map.entry("reasoning").or_insert(serde_json::json!(true));
-    map.entry("cost").or_insert_with(
+    let cost = map.entry("cost").or_insert_with(
         || serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
     );
+    // 已有 cost 但缺键（自动填参只拿到 input/output）→ 补齐；非对象 → 重置
+    match cost.as_object_mut() {
+        Some(obj) => complete_cost(obj),
+        None => {
+            *cost = serde_json::json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0})
+        }
+    }
+}
+
+/// pi `models[]` 的 cost 是 ModelCostSchema——**四键全必填**（只有
+/// modelOverrides 才是 Partial）。缺任一键 pi 对**整份** models.json 拒载：
+/// 自定义商全部消失、`--model 该商/模型` 直接 "not found" 退出（2026-11-02
+/// 真机：my-glm 填参后只剩 input/output → 发送空转）。没给的补 0，已有值不动。
+pub fn complete_cost(cost: &mut serde_json::Map<String, Value>) {
+    for k in ["input", "output", "cacheRead", "cacheWrite"] {
+        if cost.get(k).and_then(|x| x.as_f64()).is_none() {
+            cost.insert(k.to_string(), serde_json::json!(0));
+        }
+    }
+}
+
+/// 整份文档按 pi 形状修复（= 落盘前的 normalize）：有改动返回 true。启动时
+/// 对存量 models.json 跑一次——老版本写出的残缺 cost 在这里自愈，不必等用户
+/// 再保存一次。
+pub fn repair(doc: &mut Value) -> bool {
+    let before = doc.clone();
+    normalize(doc);
+    *doc != before
 }
 
 /// Ensure `providers` exists and return the provider object for `name`,
@@ -303,6 +331,15 @@ fn validate_model_at(provider: &str, ix: usize, model: &Value) -> Result<(), Str
                 return Err(format!("{provider}.models[{ix}].cost.{k} 必须是数字"));
             }
         }
+        // pi ModelCostSchema 四键全必填——缺一个整份拒载（normalize 已补齐，
+        // 这里是最后一道闸：绝不写出 pi 不认的文件）
+        for k in ["input", "output", "cacheRead", "cacheWrite"] {
+            if !rates.contains_key(k) {
+                return Err(format!(
+                    "{provider}.models[{ix}].cost 缺少 {k}（pi 四键必填）"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -395,6 +432,33 @@ mod tests {
         let mut junk = json!("str");
         ensure_model_defaults(&mut junk);
         assert_eq!(junk, json!("str"));
+    }
+
+    /// 2026-11-02 真机：自动填参只拿到 input/output → pi ModelCostSchema 四键
+    /// 必填 → 整份 models.json 拒载 → my-glm 消失、--model 退出、对话空转。
+    #[test]
+    fn partial_cost_is_completed_and_rejected_until_repaired() {
+        let mut m = json!({"id": "x", "cost": {"input": 0.0285, "output": 0.0923}});
+        ensure_model_defaults(&mut m);
+        assert_eq!(m["cost"]["input"], json!(0.0285), "已有值不动");
+        assert_eq!(m["cost"]["cacheRead"], json!(0));
+        assert_eq!(m["cost"]["cacheWrite"], json!(0));
+        // 非对象 cost 重置为完整四键
+        let mut m = json!({"id": "x", "cost": 3});
+        ensure_model_defaults(&mut m);
+        assert_eq!(m["cost"]["output"], json!(0));
+        // validate 是最后一道闸：残缺 cost 拒绝；repair 后通过且报告有改动
+        let mut doc = json!({"providers": {"my-glm": {"baseUrl": "https://x", "api": "a",
+            "models": [{"id": "glm-5.3-flash", "cost": {"input": 1, "output": 2}}]}}});
+        assert!(validate(&doc).unwrap_err().contains("cacheRead"));
+        assert!(repair(&mut doc));
+        assert!(validate(&doc).is_ok());
+        assert_eq!(
+            doc["providers"]["my-glm"]["models"][0]["cost"]["cacheWrite"],
+            json!(0)
+        );
+        // 幂等：再修一次无改动
+        assert!(!repair(&mut doc));
     }
 
     /// 0.3.2 回归锁：仓命中分支（探测拉到的模型 = 仓里必有定义）勾选后

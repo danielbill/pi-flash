@@ -612,6 +612,7 @@ pub fn fill_from_entry(model: &mut Value, e: &Entry) -> usize {
                 }
             }
         }
+        crate::models_json::complete_cost(cost);
     }
     applied
 }
@@ -653,6 +654,7 @@ pub fn fill_name_cost(model: &mut Value, e: &Entry) -> usize {
                 }
             }
         }
+        crate::models_json::complete_cost(cost);
     }
     applied
 }

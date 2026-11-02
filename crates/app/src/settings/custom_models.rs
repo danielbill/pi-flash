@@ -333,6 +333,28 @@ impl Chat {
         pi_link::models_json::save(&doc)
     }
 
+    /// 存量 models.json 形状自愈（启动 / 设置页装载）：老版本写出的残缺 cost
+    ///（自动填参只给 input/output）让 pi **整份拒载**——自定义商全部消失、
+    /// `--model` 直接退出、会话空转（2026-11-02 真机 my-glm）。normalize 一遍，
+    /// 有改动才写盘；不可读/坏文件照旧拒写（save 内置闸）。
+    pub(crate) fn mj_repair_models_json(&mut self) {
+        let Ok(mut doc) = pi_link::models_json::read() else {
+            return;
+        };
+        if !pi_link::models_json::repair(&mut doc) {
+            return;
+        }
+        // 结果只进 debug stderr（release 零输出门禁）；写失败下一次保存仍会再试
+        if cfg!(debug_assertions) {
+            match pi_link::models_json::save(&doc) {
+                Ok(()) => eprintln!("[models.json] 形状自愈已写盘（残缺 cost 等已补齐）"),
+                Err(e) => eprintln!("[models.json] 形状自愈写盘失败: {e}"),
+            }
+        } else {
+            let _ = pi_link::models_json::save(&doc);
+        }
+    }
+
     /// 存量自愈（0.3.2 勾选漏写盘的善后）：enabledModels **显式**勾选、清单仓
     /// 有定义、models.json 却没有的自定义商模型 → 物化补齐。all_enabled
     ///（无 patterns / patterns 全失配）一律跳过——绝不整批写入账本（2026-11-01

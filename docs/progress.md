@@ -479,3 +479,8 @@
   兜底链 = 星标 → pi 默认（scope 内 ∧ auth.json 有该商凭据，镜像 hasConfiguredAuth）
   → 显示名序首个；两份存储仍各管各的（pi-web 在用，暂不统一）。snapshot session
   加 `draft_model`（pill 同链），run.sh CASE9 两次重启断言（32/32）
+- **补**（同日晚，用户真机"发送空转/模型选不中"）：根因是 models.json 残缺 cost
+  （填参只给 input/output）撞 pi ModelCostSchema 四键必填 → 整份拒载 → my-glm 消失、
+  `--model` 退出。修：`complete_cost` 四键补 0（填参两处 + ensure_model_defaults）、
+  `validate` 四键必在、`repair`/`mj_repair_models_json` 启动自愈存量文件、pi 退出
+  stderr 末行挂 status。run.sh CASE10（33/33）。详见 buglist 顶条
