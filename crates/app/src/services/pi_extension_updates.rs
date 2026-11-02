@@ -2,24 +2,28 @@
 //!
 //! 为什么不用 pi 的 SDK `checkForAvailableUpdates()`：那是进程内 API，PF 是
 //! RPC 消费方吃不到（RPC 协议无此方法，`pi update` CLI 也没有 --check 旗标）。
-//! 检测本质 = 「读包清单 + spawn 探测命令」，照 pi-web 逻辑纯 Rust 实现：
-//! - npm：实装版本（`<install>/package.json`）vs `npm view <spec> version`
-//!   最新版 semver 对比（来源带 `^` 范围时取 maxSatisfying）；
+//! 检测本质 = 「读包清单 + 探最新版」，照 pi-web 逻辑纯 Rust 实现：
+//! - npm：实装版本（`<install>/package.json`）vs **registry `dist-tags.latest`**
+//!   （来源带 `^` 范围时取 maxSatisfying）；
 //! - git：本地 HEAD vs `git ls-remote origin <upstream>`。
 //! 检测零写入、不碰 node_modules。
 //!
-//! Windows 陷阱（pi-web node-cli 同款）：PATH 上的 `npm` 实为 `npm.cmd`，
-//! 直接 spawn 会被拒（CVE-2024-27980）——定位 `<node 目录>/node_modules/npm/
-//! bin/npm-cli.js` 用 PF 自带 node 直跑，找不到退裸 `npm`。
+//! 为什么不用 `npm view` 子进程（v1 已删，见 082 文档「检测 v2」）：npm 最新版
+//! 的取法只需要一个 HTTP GET，而 spawn `npm` 要 node 目录里带着
+//! `node_modules/npm`——release 布局（`dist/pi-flash/`）只带 `node.exe`，于是
+//! 整条链在发布版静默失败（每包 error → n=0 → 新会话页按安静原则不渲染），
+//! 表现为「调试有提示、发布版没有」。改 `ureq` 直连 registry：零额外产物、
+//! 无 Windows spawn 陷阱。注册源可用 `PI_FLASH_NPM_REGISTRY` 覆盖（私有镜像）；
+//! `.npmrc` 的 `registry=`/鉴权不解析，私有源包落 error（需 UI 显性展示）。
 //!
 //! 执行侧不在这：更新 = `cli.js update --extensions [--extension <src>]`，
-//! 走 settings/plugins.rs 的 `mc_cli_op` 管道（与安装/卸载同路，op 泵收尾）。
+//! 走 settings/pi_extensions.rs 的 `mc_cli_op` 管道（与安装/卸载同路，op 泵收尾）。
 //!
 //! v1 边界：只查全局 settings.json `packages`（与扩展页 global only 对齐）；
 //! npm 钉精确版本 / git 钉 ref / 本地路径 → unsupported；`PI_OFFLINE=1` 全
-//! 部 error；pnpm 等非标准布局读不到实装版本按 error 容错。
+//! 部 error；读不到实装版本按 error 容错。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -89,6 +93,10 @@ fn mk(source: &str, state: PkgUpdateState) -> PkgUpdateResult {
 // ---------------------------------------------------------------------------
 
 const CMD_TIMEOUT: Duration = Duration::from_secs(10);
+/// registry 直连超时（一个 GET，比子进程宽松没意义）。
+const REGISTRY_TIMEOUT: Duration = Duration::from_secs(8);
+const REGISTRY_DEFAULT: &str = "https://registry.npmjs.org";
+const UA: &str = "pi-flash-updater";
 
 /// 检测全局 settings.json `packages` 全部条目，结果顺序与清单一致。
 pub(crate) fn check_all() -> Vec<PkgUpdateResult> {
@@ -144,21 +152,11 @@ fn check_npm(agent_dir: &Path, source: &str, npm: NpmSource) -> PkgUpdateResult 
         Ok(v) => v,
         Err(_) => return mk(source, PkgUpdateState::Error),
     };
-    // npm view 以主目录为 cwd（用户 .npmrc 的 registry 生效；与项目无关）
-    let mut cmd = match npm_invocation(&["view", &npm.spec, "version", "--json"]) {
-        Ok(c) => c,
+    let doc = match registry_doc(&npm.name, REGISTRY_TIMEOUT) {
+        Ok(d) => d,
         Err(_) => return mk(source, PkgUpdateState::Error),
     };
-    cmd.current_dir(home_dir());
-    let out = match run_timeout(cmd, CMD_TIMEOUT) {
-        Ok(o) => o,
-        Err(_) => return mk(source, PkgUpdateState::Error),
-    };
-    let range = npm
-        .version
-        .as_deref()
-        .and_then(|v| semver::VersionReq::parse(v).ok());
-    match latest_version(&out, range.as_ref()) {
+    match latest_from_registry(&doc, npm.version.as_deref()) {
         Ok(latest) => {
             let state = if latest > current {
                 PkgUpdateState::UpdateAvailable
@@ -228,7 +226,8 @@ fn read_installed_version(dir: &Path) -> Result<semver::Version, String> {
 // ---------------------------------------------------------------------------
 
 struct NpmSource {
-    spec: String,
+    /// 包名（registry 路径用；scoped 形如 `@scope/pkg`）
+    name: String,
     version: Option<String>,
 }
 
@@ -252,7 +251,7 @@ fn parse_npm_source(source: &str) -> Option<NpmSource> {
         None => (spec, None),
     };
     (!name.is_empty()).then(|| NpmSource {
-        spec: spec.to_string(),
+        name: name.to_string(),
         version,
     })
 }
@@ -292,55 +291,79 @@ fn has_git_ref(source: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 子进程与解析辅助
+// registry 直连（替代 `npm view` 子进程）
 // ---------------------------------------------------------------------------
 
-/// npm 调用（pi-web node-cli 同款）：定位 `<node 目录>/node_modules/npm/bin/
-/// npm-cli.js` 用 PF 自带 node 直跑。PATH 上的 `npm` 在 Windows 实为
-/// `npm.cmd`，直接 spawn 会被拒（CVE-2024-27980，实测报 `program not
-/// found`）；全兜底落空退裸 `npm`（仅 Unix 可用）。
-fn npm_invocation(args: &[&str]) -> Result<Command, String> {
-    let node = resolve_node_path();
-    let npm_cli = node
-        .as_ref()
-        .and_then(|n| n.parent())
-        .map(|d| d.join("node_modules/npm/bin/npm-cli.js"))
-        .filter(|p| p.is_file());
-    let mut cmd = match (node, npm_cli) {
-        (Some(node), Some(script)) => {
-            let mut c = Command::new(&node);
-            c.arg(script);
-            c
-        }
-        _ => Command::new("npm"),
-    };
-    cmd.args(args);
-    Ok(cmd)
+/// 拉取 registry 元数据（裁剪文档）：`GET <registry>/<name>`，scoped 包把 `/`
+/// 编成 `%2F`。基础地址默认 `registry.npmjs.org`，可用
+/// `PI_FLASH_NPM_REGISTRY` 覆盖（私有镜像/代理）；`.npmrc` 不读。
+fn registry_doc(name: &str, timeout: Duration) -> Result<serde_json::Value, String> {
+    let base = std::env::var("PI_FLASH_NPM_REGISTRY")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| REGISTRY_DEFAULT.to_string());
+    let url = format!("{base}/{}", name.replace('/', "%2F"));
+    // Accept 取 install-v1 裁剪文档（实测 pi-mcp-adapter 全文 115 KB，够用）
+    let resp = ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .build()
+        .get(&url)
+        .set("User-Agent", UA)
+        .set("Accept", "application/vnd.npm.install-v1+json")
+        .call()
+        .map_err(|e| format!("{e}"))?;
+    // ureq 2 的 into_string 返回 io::Result（与 call 的 ureq::Error 不同型）
+    let text = resp.into_string().map_err(|e| format!("{e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("unexpected registry response: {e}"))
 }
 
-/// node 可执行绝对路径：vendored 规则给的已是路径直接用；裸 `"node"`
-/// （PATH 兑底）时扫 PATH 找 node.exe——否则定位不了同目录的 npm-cli.js。
-fn resolve_node_path() -> Option<PathBuf> {
-    let node = pi_link::vendor::node_bin();
-    let p = Path::new(&node);
-    if p.is_absolute() {
-        return Some(p.to_path_buf());
-    }
-    #[cfg(windows)]
-    let candidates = ["node.exe"];
-    #[cfg(not(windows))]
-    let candidates = ["node"];
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in std::env::split_paths(&path_var) {
-        for name in candidates {
-            let cand = dir.join(name);
-            if cand.is_file() {
-                return Some(cand);
+/// registry 文档 → 目标版本。`want` 的三种语义（对齐 `npm view <spec> version`）：
+/// - `None`：`dist-tags.latest`（不拿全量 keys 取最大，否则预发布版会误报）；
+/// - semver 范围（`^1.2.3`）：`dist-tags.latest` 命中则用，否则在 `versions`
+///   里取满足范围的最大值（maxSatisfying）；
+/// - 其它（`beta`/`next` 等 dist-tag）：直查 `dist-tags.<want>`。
+/// 钉死精确版本已在 `check_one` 归 unsupported，不会走到这。
+fn latest_from_registry(
+    doc: &serde_json::Value,
+    want: Option<&str>,
+) -> Result<semver::Version, String> {
+    let tag = |name: &str| -> Option<semver::Version> {
+        doc.get("dist-tags")
+            .and_then(|t| t.get(name))
+            .and_then(|v| v.as_str())
+            .and_then(|s| semver::Version::parse(s).ok())
+    };
+    let Some(want) = want else {
+        return tag("latest").ok_or_else(|| "registry has no dist-tags.latest".to_string());
+    };
+    match semver::VersionReq::parse(want) {
+        Ok(req) => {
+            if let Some(v) = tag("latest") {
+                if req.matches(&v) {
+                    return Ok(v);
+                }
             }
+            let mut best: Option<semver::Version> = None;
+            if let Some(map) = doc.get("versions").and_then(|v| v.as_object()) {
+                for key in map.keys() {
+                    if let Ok(v) = semver::Version::parse(key) {
+                        if req.matches(&v) && best.as_ref().map_or(true, |b| v > *b) {
+                            best = Some(v);
+                        }
+                    }
+                }
+            }
+            best.ok_or_else(|| format!("no published version matches {want}"))
         }
+        // 不是范围 → 当 dist-tag 查（`npm:pkg@beta`）
+        Err(_) => tag(want).ok_or_else(|| format!("registry has no dist-tag {want:?}")),
     }
-    None
 }
+
+// ---------------------------------------------------------------------------
+// 子进程辅助（git 探测）
+// ---------------------------------------------------------------------------
 
 /// 带超时的子进程执行：输出小（版本串/hash），管道不会写满，轮询 try_wait
 /// 到退出或超时强杀。Windows 下不弹控制台窗（CREATE_NO_WINDOW）。
@@ -385,32 +408,6 @@ fn run_timeout(mut cmd: Command, timeout: Duration) -> Result<String, String> {
     }
 }
 
-/// `npm view … version --json` 输出 → 最新版：字符串直解；数组按范围取
-/// maxSatisfying（无范围取最高，pi-web readLatestVersion 同款）。
-fn latest_version(
-    out: &str,
-    range: Option<&semver::VersionReq>,
-) -> Result<semver::Version, String> {
-    let parsed: serde_json::Value = serde_json::from_str(out.trim())
-        .map_err(|e| format!("unexpected npm view response: {e}"))?;
-    if let Some(v) = parsed.as_str() {
-        return semver::Version::parse(v).map_err(|_| format!("invalid version {v:?}"));
-    }
-    if let Some(arr) = parsed.as_array() {
-        let versions: Vec<semver::Version> = arr
-            .iter()
-            .filter_map(|x| x.as_str())
-            .filter_map(|s| semver::Version::parse(s).ok())
-            .collect();
-        let best = match range {
-            Some(req) => versions.iter().filter(|v| req.matches(v)).max().cloned(),
-            None => versions.into_iter().max(),
-        };
-        return best.ok_or_else(|| "no matching version".to_string());
-    }
-    Err("unexpected npm view response".into())
-}
-
 /// ls-remote 输出首个 `<40..64 位 hex>\s` 行的 hash（pi-web 同款判定）。
 fn first_commit_hash(out: &str) -> Option<&str> {
     out.lines().map(str::trim).find_map(|line| {
@@ -428,13 +425,6 @@ fn offline() -> bool {
                 || v.eq_ignore_ascii_case("yes")
         })
         .unwrap_or(false)
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 // ---------------------------------------------------------------------------
@@ -494,5 +484,83 @@ impl Chat {
             tr("extensions.updated_all").to_string(),
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DOC: &str = r#"{
+        "name": "pi-mcp-adapter",
+        "dist-tags": { "latest": "7.0.0", "beta": "8.0.0-beta.1" },
+        "versions": { "5.3.2": {}, "6.0.0": {}, "7.0.0": {}, "8.0.0-beta.1": {} }
+    }"#;
+
+    fn doc() -> serde_json::Value {
+        serde_json::from_str(DOC).unwrap()
+    }
+
+    fn v(s: &str) -> semver::Version {
+        semver::Version::parse(s).unwrap()
+    }
+
+    /// 无范围 → dist-tags.latest（不得被 8.0.0-beta.1 抢先）
+    #[test]
+    fn latest_uses_dist_tag_not_max_key() {
+        assert_eq!(latest_from_registry(&doc(), None).unwrap(), v("7.0.0"));
+    }
+
+    /// 范围命中 latest → 直接用 latest
+    #[test]
+    fn range_hits_latest() {
+        assert_eq!(
+            latest_from_registry(&doc(), Some("^7.0.0")).unwrap(),
+            v("7.0.0")
+        );
+    }
+
+    /// 范围不命中 latest → versions 里 maxSatisfying（^5 → 5.3.2）
+    #[test]
+    fn range_falls_back_to_max_satisfying() {
+        assert_eq!(
+            latest_from_registry(&doc(), Some("^5.3.0")).unwrap(),
+            v("5.3.2")
+        );
+    }
+
+    /// dist-tag 名当 want（npm:pkg@beta）→ 查 dist-tags.beta
+    #[test]
+    fn dist_tag_name_resolves() {
+        assert_eq!(
+            latest_from_registry(&doc(), Some("beta")).unwrap(),
+            v("8.0.0-beta.1")
+        );
+    }
+
+    /// 缺 latest / 缺该 dist-tag / 范围无解 → error（不静默当已是最新）
+    #[test]
+    fn missing_targets_are_errors() {
+        let empty: serde_json::Value = serde_json::from_str("{}").unwrap();
+        assert!(latest_from_registry(&empty, None).is_err());
+        assert!(latest_from_registry(&doc(), Some("next")).is_err());
+        assert!(latest_from_registry(&doc(), Some("^9.0.0")).is_err());
+    }
+
+    /// scoped 来源解析出包名（registry 路径要用）+ 版本范围
+    #[test]
+    fn parse_scoped_source_keeps_name() {
+        let npm = parse_npm_source("npm:@scope/pkg@^1.2.3").unwrap();
+        assert_eq!(npm.name, "@scope/pkg");
+        assert_eq!(npm.version.as_deref(), Some("^1.2.3"));
+        let bare = parse_npm_source("npm:pi-web-access").unwrap();
+        assert_eq!(bare.name, "pi-web-access");
+        assert!(bare.version.is_none());
+    }
+
+    /// registry URL 里 scoped 包的 `/` 要编码（name → 路径段）
+    #[test]
+    fn scoped_name_encoding() {
+        assert_eq!("@scope/pkg".replace('/', "%2F"), "@scope%2Fpkg");
     }
 }
