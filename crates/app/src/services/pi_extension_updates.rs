@@ -78,6 +78,9 @@ pub(crate) struct PkgUpdateResult {
     pub(crate) source: String,
     pub(crate) display_name: String,
     pub(crate) state: PkgUpdateState,
+    /// 仅 error 态填：失败原因。**不进 UI**（用户不需要看检测失败），
+    /// 只供开发构建的 trace 打印定位（release 静默）。
+    pub(crate) detail: Option<String>,
 }
 
 fn mk(source: &str, state: PkgUpdateState) -> PkgUpdateResult {
@@ -85,6 +88,15 @@ fn mk(source: &str, state: PkgUpdateState) -> PkgUpdateResult {
         source: source.to_string(),
         display_name: pi_link::skills::display_source(source).to_string(),
         state,
+        detail: None,
+    }
+}
+
+/// error 态带原因（只用于开发构建 trace）。
+fn mk_err(source: &str, detail: impl ToString) -> PkgUpdateResult {
+    PkgUpdateResult {
+        detail: Some(detail.to_string()),
+        ..mk(source, PkgUpdateState::Error)
     }
 }
 
@@ -115,13 +127,25 @@ pub(crate) fn check_all() -> Vec<PkgUpdateResult> {
             .collect();
     }
     let agent_dir = pi_link::config::agent_dir();
-    std::thread::scope(|scope| {
+    let results: Vec<PkgUpdateResult> = std::thread::scope(|scope| {
         let handles: Vec<_> = sources
             .iter()
             .map(|s| scope.spawn(|| check_one(&agent_dir, s)))
             .collect();
         handles.into_iter().filter_map(|h| h.join().ok()).collect()
-    })
+    });
+    // 失败不进 UI（082 定稿：升级检测失败对用户不重要），但开发构建留 trace，
+    // 免得再出现「release 静默失效、事后只能读源码」那种排查成本。
+    if cfg!(debug_assertions) {
+        for r in results.iter().filter(|r| r.state == PkgUpdateState::Error) {
+            eprintln!(
+                "[ext-updates] error {}: {}",
+                r.source,
+                r.detail.as_deref().unwrap_or("unknown")
+            );
+        }
+    }
+    results
 }
 
 fn check_one(agent_dir: &Path, source: &str) -> PkgUpdateResult {
@@ -150,11 +174,11 @@ fn check_npm(agent_dir: &Path, source: &str, npm: NpmSource) -> PkgUpdateResult 
     let installed = pi_link::skills::package_install_dir_in(agent_dir, source);
     let current = match read_installed_version(&installed) {
         Ok(v) => v,
-        Err(_) => return mk(source, PkgUpdateState::Error),
+        Err(e) => return mk_err(source, e),
     };
     let doc = match registry_doc(&npm.name, REGISTRY_TIMEOUT) {
         Ok(d) => d,
-        Err(_) => return mk(source, PkgUpdateState::Error),
+        Err(e) => return mk_err(source, e),
     };
     match latest_from_registry(&doc, npm.version.as_deref()) {
         Ok(latest) => {
@@ -165,7 +189,7 @@ fn check_npm(agent_dir: &Path, source: &str, npm: NpmSource) -> PkgUpdateResult 
             };
             mk(source, state)
         }
-        Err(_) => mk(source, PkgUpdateState::Error),
+        Err(e) => mk_err(source, e),
     }
 }
 
