@@ -107,6 +107,32 @@ fn resolve_all(patterns: &[String], refs: &[String]) -> Vec<Entry> {
     patterns.iter().map(|p| resolve_pattern(p, refs)).collect()
 }
 
+/// 删商 / 删模型后的 patterns 清理（纯函数）：`model_id = None` → 去掉该商
+/// 名下全部 pattern（`ds/*`、`ds/glm-5.3-flash`、带 :pin 的变体）；`Some(id)`
+/// → 只去掉精确 `商/模型id`（含 :pin），`商/*` 之类的 glob 留着（商还在）。
+/// 商名 / 模型 id 比对不分大小写（与 match_base 同口径）。返回 None = 没变。
+pub fn prune_patterns(
+    patterns: &[String],
+    provider: &str,
+    model_id: Option<&str>,
+) -> Option<Vec<String>> {
+    let dead = |p: &String| {
+        let (base, _) = split_pin(p);
+        if !ref_provider(&base).eq_ignore_ascii_case(provider) {
+            return false;
+        }
+        match model_id {
+            None => true,
+            Some(id) => base
+                .get(provider.len()..)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .is_some_and(|m| m.eq_ignore_ascii_case(id)),
+        }
+    };
+    let kept: Vec<String> = patterns.iter().filter(|p| !dead(p)).cloned().collect();
+    (kept.len() != patterns.len()).then_some(kept)
+}
+
 /// For each provider, the glob matching exactly its available models
 /// (verified: `provider/*` misses ids containing `/`, so use `**` then).
 pub fn provider_globs(refs: &[String]) -> Vec<(String, String)> {
@@ -546,5 +572,41 @@ mod tests {
             .unwrap();
         let out = edit.patterns.unwrap();
         assert!(out.contains(&"ghost/missing".to_string()));
+    }
+
+    /// 删商/删模型后 patterns 清理（2026-11-02 用户实测：删掉的 ds/my-ds 在
+    /// settings.json 里留了一堆死条目）
+    #[test]
+    fn prune_patterns_by_provider_and_by_model() {
+        let pats: Vec<String> = [
+            "freeflow/glm-5.3-flash-free",
+            "my-ds/*",
+            "ds/deepseek-flash",
+            "ds/glm-5.3-flash:high",
+            "dds/glm-5.3-flash",
+            "myds/deepseek-flash",
+            "myds/deepseek-v4-pro:low",
+            "myds/*",
+        ]
+        .map(String::from)
+        .to_vec();
+        // 删商：名下全清（glob / 精确 / 带 pin），别家不动
+        let out = prune_patterns(&pats, "ds", None).unwrap();
+        assert!(!out.iter().any(|p| p.starts_with("ds/")));
+        assert!(
+            out.contains(&"dds/glm-5.3-flash".to_string()),
+            "dds 不是 ds"
+        );
+        assert_eq!(out.len(), pats.len() - 2);
+        let out = prune_patterns(&pats, "MY-DS", None).unwrap();
+        assert!(!out.contains(&"my-ds/*".to_string()), "商名不分大小写");
+        // 删模型：只去精确 ref（含 pin），glob 留着
+        let out = prune_patterns(&pats, "myds", Some("deepseek-v4-pro")).unwrap();
+        assert!(!out.iter().any(|p| p.starts_with("myds/deepseek-v4-pro")));
+        assert!(out.contains(&"myds/*".to_string()));
+        assert!(out.contains(&"myds/deepseek-flash".to_string()));
+        // 没命中 = None（不写盘）
+        assert!(prune_patterns(&pats, "nope", None).is_none());
+        assert!(prune_patterns(&pats, "myds", Some("ghost")).is_none());
     }
 }

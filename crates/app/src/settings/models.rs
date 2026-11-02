@@ -266,6 +266,35 @@ impl Chat {
         cx.notify();
     }
 
+    /// 删商 / 删模型后清掉 `enabledModels` 里的残留 pattern（此前只清
+    /// models.json/auth.json/钥匙库/清单仓，settings.json 里 `ds/*`、
+    /// `ds/glm-5.3-flash` 留成死条目）。只删死条目，不经项目覆盖门；没命中
+    /// 零写盘。`model_id = None` → 该商名下全部。**盘上现读**再改再写——内存
+    /// 副本可能落后于 pi / 别的写者，拿它回写会把别人刚加的条目冲掉。
+    pub(crate) fn mc_prune_patterns(
+        &mut self,
+        provider: &str,
+        model_id: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = pi_link::config::settings_path();
+        let Ok(Some(patterns)) = pi_link::config::read_enabled_models(&path) else {
+            return;
+        };
+        let Some(kept) = models_config::prune_patterns(&patterns, provider, model_id) else {
+            return;
+        };
+        // 只删条目不删键（清空后 pi/PF 同样按「全部可用」回落，语义不变）
+        let next = Some(kept);
+        if let Err(e) = pi_link::config::write_enabled_models(&path, next.clone()) {
+            self.mc_set_error(&crate::i18n::tf("settings.write_failed", &[("e", e)]), cx);
+            return;
+        }
+        self.cfg.mc_patterns = next;
+        self.cfg.mc_state =
+            models_config::compute_state(self.cfg.mc_patterns.as_ref(), &self.mc_refs());
+    }
+
     /// 归属判定：该商是否「自定义商」（models.json 条目 + 注册表不认 = 用户
     /// 自建）。勾选物化 / 详情页可编辑 / 存量对账三处同一把尺子。
     pub(crate) fn mc_is_custom_provider(&self, prov: &str) -> bool {

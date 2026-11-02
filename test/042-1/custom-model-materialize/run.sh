@@ -143,6 +143,26 @@ check CASE7 "+模型 = 追加槽 mj:m:myds:1" "$PUI" wait --path settings.sectio
 check CASE7 "+模型 = 空白草稿（不预填刚关掉的仓模型）" test "$(snap_field mj_id_value)" = '""'
 mj settings.mj_model_close >/dev/null
 
+# ---------- CASE8 删商连 enabledModels 残留一起清 ----------
+# 现场：settings.json 有 myds/deepseek-flash（显式勾选）+ 预埋一条 myds/*:high 与
+# 一条别家的 dds/glm-5.3-flash；删 myds 后前两条必须消失、别家的必须还在
+node -e "
+const fs=require('fs');const p='$SETTINGS';const d=JSON.parse(fs.readFileSync(p,'utf8'));
+d.enabledModels=[...(d.enabledModels||[]),'myds/*:high','dds/glm-5.3-flash'];
+fs.writeFileSync(p,JSON.stringify(d,null,2));"
+mj settings.mj_select --arg section=mj:p:myds >/dev/null
+mj settings.mj_delete --arg name=myds >/dev/null
+sleep 1
+check CASE8 "删商后 settings.json 无 myds/ 残留（精确 + glob + :pin）" node -e "
+const d=JSON.parse(require('fs').readFileSync('$SETTINGS','utf8'));
+process.exit((d.enabledModels||[]).some(p=>p.toLowerCase().startsWith('myds/'))?1:0)"
+check CASE8 "别家 pattern 不动" node -e "
+const d=JSON.parse(require('fs').readFileSync('$SETTINGS','utf8'));
+process.exit((d.enabledModels||[]).includes('dds/glm-5.3-flash')?0:1)"
+check CASE8 "models.json 无 myds" node -e "
+const d=JSON.parse(require('fs').readFileSync('$MODELS','utf8'));
+process.exit((d.providers||{}).myds?1:0)"
+
 printf '%s\n' "${RESULTS[@]}"
 echo "---- PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

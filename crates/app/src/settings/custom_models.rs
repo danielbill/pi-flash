@@ -521,6 +521,9 @@ impl Chat {
         if self.cfg.mj_probe_cache.remove(&name).is_some() {
             let _ = crate::services::custom_models_store::write(&self.cfg.mj_probe_cache);
         }
+        // enabledModels 里该商名下的 pattern 一并清（`ds/*`、`ds/x`、带 :pin）——
+        // 此前漏了，删掉的商在 settings.json 里留一堆死条目
+        self.mc_prune_patterns(&name, None, cx);
         // 内存目录同步摘掉（否则进程答案 / 启动 globals 里的模型会让列表项
         // 继续挂着）。列表成员资格 = models.json 里有没有条目，无隐藏清单。
         self.drop_provider_from_catalog(&name);
@@ -831,6 +834,8 @@ impl Chat {
                 id,
             );
             let _ = crate::services::custom_models_store::write(&self.cfg.mj_probe_cache);
+            // enabledModels 里精确 `商/模型id` 的 pattern 一并清（glob 留着）
+            self.mc_prune_patterns(&provider, Some(id), cx);
         }
         // 内存目录同步摘掉该模型（否则 Provider 详情的可用模型列表还挂着它）
         if let Some(id) = id {

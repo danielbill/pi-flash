@@ -467,3 +467,8 @@
   debug 构建 `[probe]` 打首条键集
 - 测试：pi-link 3 + probe 1 + store 3 单测；`test/042-1/custom-model-materialize/run.sh`
   离线 pif-ui 27 断言全绿（含启动自愈）
+- **补**（同日）：删商/删模型漏清 `settings.json` `enabledModels`（用户实测留了
+  `ds/*`、`my-ds/*`、`ds/glm-5.3-flash` 等死条目）——`models_config::prune_patterns`
+  纯函数（删商清名下全部含 glob/:pin，删模型只清精确 ref）+ `mc_prune_patterns`
+  盘上现读再写（内存副本可能落后于 pi）；接进 `mj_delete_provider` / `mj_delete_model`。
+  存量死条目不自动扫（builtin/扩展商 refs 装载时序不可靠，误删风险），手动删即可

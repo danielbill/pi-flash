@@ -374,6 +374,11 @@ process.exit(Object.keys(d.providers||{}).some(k=>k.startsWith('pf-test'))?1:0)"
 check CASE8 "auth.json 无残留" node -e "
 const d=JSON.parse(require('fs').readFileSync('$AUTH','utf8'));
 process.exit(Object.keys(d).some(k=>k.startsWith('pf-test'))?1:0)"
+# 2026-11-02：CASE11 留了一条 pf-test-zg/<模型> 勾选 pattern，删商必须一并清
+# （此前漏清，用户 settings.json 里留了 ds/* my-ds/* 等死条目）
+check CASE8 "settings.json enabledModels 无 pf-test-* 残留" node -e "
+let d={};try{d=JSON.parse(require('fs').readFileSync('$PI_CODING_AGENT_DIR/settings.json','utf8'))}catch{}
+process.exit((d.enabledModels||[]).some(p=>p.startsWith('pf-test'))?1:0)"
 # keyring 兜底清（keyring 条目 PiFlash:PF_KEY_PF_TEST_*；删除用例本应清掉）
 cmdkey /list 2>/dev/null | grep -io "PF_KEY_PF_TEST[A-Z0-9_]*" | sort -u | while read -r K; do
   cmdkey "/delete:PiFlash:$K" >/dev/null 2>&1 || true

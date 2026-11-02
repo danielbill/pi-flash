@@ -35,6 +35,7 @@ bash test/042-1/custom-model-materialize/run.sh
 | CASE5 | 取消 → 账本移除，仓定义保留，另一条不受影响 |
 | CASE6 | 账本行 → `mj:m:myds:0` 索引模式；关闭退回 `mj:p:myds` |
 | CASE7 | 仓草稿关闭后【+模型】仍是空白草稿（不串值） |
+| CASE8 | 删商连 `settings.json` `enabledModels` 残留一起清（精确 / glob / :pin），别家 pattern 不动；盘上现读再写，不冲掉外部写入 |
 
 真端点补充：`test/provider/run-cases.sh` CASE11（智谱 /v4 探测 → 勾选物化）。
 
