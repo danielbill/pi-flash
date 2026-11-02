@@ -1,26 +1,30 @@
 # 「页面禁手搓控件」存量基线（scripts/check_ui_raw.py）
 # 格式: <相对路径> <命中数>；只允许人工 --update-baseline 重写。
 # 目标：逐模块把这些数字清零（先搬 ui/kit，再删行）。
-crates/app/src/ask_card.rs 7
-crates/app/src/dialogs.rs 6
-crates/app/src/editor/markdown/mod.rs 1
+crates/app/src/dialogs/ask_card.rs 7
+crates/app/src/dialogs/ext_ui.rs 2
+crates/app/src/dialogs/mod.rs 3
+crates/app/src/dialogs/project_picker.rs 2
+crates/app/src/dialogs/provider_picker.rs 2
+crates/app/src/editor/markdown/code_block.rs 1
 crates/app/src/editor/view.rs 4
-crates/app/src/ext_ui.rs 2
-crates/app/src/function_panel/file_tree.rs 6
+crates/app/src/function_panel/file_tree.rs 4
+crates/app/src/function_panel/file_tree/tree_action_bar.rs 2
 crates/app/src/function_panel/file_tree_edit.rs 1
 crates/app/src/function_panel/file_tree_pins.rs 2
 crates/app/src/function_panel/file_tree_sticky.rs 1
 crates/app/src/function_panel/git_panel.rs 9
-crates/app/src/function_panel/mod.rs 5
-crates/app/src/function_panel/psp_overlays.rs 8
+crates/app/src/function_panel/mod.rs 3
+crates/app/src/function_panel/project_row.rs 2
+crates/app/src/function_panel/psp_overlays.rs 6
 crates/app/src/function_panel/psp_row_views.rs 2
 crates/app/src/function_panel/tab_menu.rs 1
 crates/app/src/market/pi_ext_market/mod.rs 2
-# market/pi_native_market：0 违规 / 2 豁免（pi.dev Package Catalog 逐值复刻，§10.8 登记）
 crates/app/src/market/pi_native_market/controls.rs 0
 crates/app/src/market/pi_native_market/mod.rs 0
-crates/app/src/remote_control/mod.rs 1
-# search/results.rs：0 违规 / 3 豁免（Zed ProjectSearch 逐值复刻，§10.8 登记）
+crates/app/src/pf_plugin/host_actions.rs 1
+crates/app/src/pf_plugin/panel/popup.rs 1
+crates/app/src/pf_plugin/panel/render.rs 1
 crates/app/src/search/results.rs 0
 crates/app/src/session/actions_bar.rs 1
 crates/app/src/session/input/area.rs 3
@@ -29,22 +33,22 @@ crates/app/src/session/input/ctx_tip.rs 3
 crates/app/src/session/input/queue_cards.rs 2
 crates/app/src/session/mcp_picker.rs 1
 crates/app/src/session/menu.rs 1
-crates/app/src/session/messages/cards.rs 4
-crates/app/src/session/messages/turn.rs 4
-crates/app/src/session/mod.rs 6
+crates/app/src/session/messages/compaction.rs 1
+crates/app/src/session/messages/tool_card.rs 3
+crates/app/src/session/messages/turn.rs 2
+crates/app/src/session/messages/user_row.rs 2
+crates/app/src/session/mod.rs 4
 crates/app/src/session/model_picker.rs 1
+crates/app/src/session/nav_panel.rs 2
 crates/app/src/session/new_session.rs 2
-# pi_extension_picker.rs：plugin_picker.rs 改名随迁（pp-row 链几何未动，v0.2.2 存量 1 原样跟着新路径）
 crates/app/src/session/pi_extension_picker.rs 1
 crates/app/src/session/subagent_panel.rs 1
 crates/app/src/settings/agents.rs 2
-crates/app/src/settings/custom_models.rs 3
 crates/app/src/settings/general.rs 4
 crates/app/src/settings/misc.rs 4
 crates/app/src/settings/mod.rs 1
-crates/app/src/settings/models.rs 4
+crates/app/src/settings/models.rs 3
 crates/app/src/shell/render.rs 1
 crates/app/src/status_bar.rs 1
 crates/app/src/titlebar.rs 5
 crates/app/src/top_panels.rs 2
-crates/app/src/remote_control/panel.rs 0
