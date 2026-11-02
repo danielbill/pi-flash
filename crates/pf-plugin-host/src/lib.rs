@@ -241,6 +241,15 @@ fn storage_path(data_dir: &Path, key: &str) -> Option<PathBuf> {
     Some(data_dir.join(key))
 }
 
+/// plugin-ctx JSON 里的 `plugin.dataDir`（90-4 包层真源；app 侧
+/// `plugin_ctx_json` 从 `manifest.data_dir()` 构造）。缺省 / 空串 = None
+///（保持 instantiate 时的 wasm 旁猜测值，旧 ctx 兼容）。
+fn ctx_data_dir(plugin_ctx: &str) -> Option<PathBuf> {
+    let v: serde_json::Value = serde_json::from_str(plugin_ctx).ok()?;
+    let dir = v.get("plugin")?.get("dataDir")?.as_str()?;
+    (!dir.is_empty()).then(|| PathBuf::from(dir))
+}
+
 fn measure_text_width(text: &str, size: f32) -> f32 {
     MEASURE_FN.with(|c| c.borrow().map(|f| f(text, size)).unwrap_or(0.0))
 }
@@ -488,6 +497,16 @@ impl PluginInstance {
     pub fn load_ctx(&mut self, plugin_ctx: &str) -> anyhow::Result<()> {
         let _ = &self.engine;
         let _ = &self.component;
+        // 90-4：ctx.dir = `<pkg>/data`（无版本维度）。instantiate 时只能从
+        // wasm 路径猜（`<ver>/data` = 版本层——090-4 版本层布局下劈叉），
+        // 这里改听 ctx JSON 的 `plugin.dataDir`：app 侧从 manifest.data_dir()
+        // 构造，是包层的唯一真源。真机 2026-11-03：壳 storage 落版本层、
+        // pi ext 落包层，镜像劈叉（icon 灰 / qr·unload 信号互相看不见）。
+        if let Some(store) = self.store.as_mut()
+            && let Some(dir) = ctx_data_dir(plugin_ctx)
+        {
+            store.data_mut().data_dir = dir;
+        }
         if let (Some(store), Some(b)) = (self.store.as_mut(), self.bindings.as_mut()) {
             // WIT：load 返回 Err = 插件自拒（如宿主证明验签失败）→ 拒载并透传原因（失败不静默）。
             match b.call_load(store, plugin_ctx) {
@@ -858,5 +877,26 @@ mod compile_single_flight_tests {
             .filter(|e| e.path().extension().is_some_and(|x| x == "cwasm"))
             .count();
         assert_eq!(n, 1, "并发装载后产物应只有一份");
+    }
+}
+
+#[cfg(test)]
+mod ctx_data_dir_tests {
+    use super::*;
+
+    /// load_ctx 采纳 ctx JSON 的 plugin.dataDir（包层）；缺省保持 instantiate 猜测值。
+    #[test]
+    fn ctx_data_dir_parsed_from_plugin_ctx() {
+        let hit = ctx_data_dir(
+            r#"{"plugin":{"id":"pf-wxbot","version":"0.1.3","dataDir":"C:/u/.pi-flash/plugins/@x__pf-wxbot/data"},"pf":{"version":"0.3.2"}}"#,
+        );
+        assert_eq!(
+            hit.as_deref(),
+            Some(Path::new("C:/u/.pi-flash/plugins/@x__pf-wxbot/data"))
+        );
+        // 缺 dataDir / 空串 / 非 JSON → None（兼容旧 ctx，不改写）
+        assert!(ctx_data_dir(r#"{"plugin":{"id":"x"}}"#).is_none());
+        assert!(ctx_data_dir(r#"{"plugin":{"dataDir":""}}"#).is_none());
+        assert!(ctx_data_dir("not json").is_none());
     }
 }
