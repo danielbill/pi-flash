@@ -208,7 +208,7 @@ case_c7() { # 未知 extension_ui_method → cancelled + 留痕（zi2s.2；基�
   # mock 注入 method=futureWidget 后等 PF 的 cancelled 回执；mock 收到后回 handled
   await_wire 'extension_ui_response' 8 || rc=1
   await_wire 'cancelled":true' 3 || rc=1
-  jcheck dialogs 'd.dialogs.ext_dialog===false' || rc=1
+  jcheck dialogs 'd.ext_dialog===false' || rc=1
   P wait --path session.waiting --eq false --timeout 12 >/dev/null || rc=1
   quit_app
   return $rc
@@ -248,7 +248,7 @@ for C in $CASES; do
   "case_$(printf '%s' "$C" | tr 'A-Z' 'a-z')"
   local_rc=$?
   case "$C" in
-    C3|C5|C7|C8) expect expect-fail "$C" "$(desc_of "$C")" "$local_rc" ;;
+    C3|C5|C8) expect expect-fail "$C" "$(desc_of "$C")" "$local_rc" ;;
     *)           expect expect-pass "$C" "$(desc_of "$C")" "$local_rc" ;;
   esac
 done

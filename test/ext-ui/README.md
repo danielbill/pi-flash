@@ -26,7 +26,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C4 editor 弹窗开合 | 弹窗 method=editor + 取消回 cancelled | PASS* | zi2s.6 前置 |
 | C5 select 键盘导航 | ↓↓+Enter 选中第三项 gamma | XFAIL（无导航） | zi2s.7 |
 | C6 长标题 select | 40 行 title 弹窗可开可关 + shot 留档 | PASS | b9e2edce 回归 |
-| C7 未知 method | mock 注入 futureWidget → PF 回 cancelled | XFAIL（整条丢弃） | zi2s.2 |
+| C7 未知 method | mock 注入 futureWidget → PF 回 cancelled | ~~XFAIL~~ → **PASS**（zi2s.2 已修：parse 回 Unknown + 立刻 cancelled + eprintln 留痕） | zi2s.2 ✓ |
 | C8 pi 崩溃清弹窗 | mock exit(1) → ext_dialog 清理 | XFAIL（弹窗残留；偶发 XPASS 竞态抖动，无代码路径清理 ext_dialog——zi2s.3 落地后转确定性 PASS） | zi2s.3 |
 
 \* C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI

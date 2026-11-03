@@ -134,6 +134,18 @@ function mockMain(SCENARIO) {
         continue;
       }
       if (type === "prompt") {
+        if (SCENARIO === "unknown-method") {
+          // 先不回 prompt：等 PF 的 cancelled 回执到达后再收场 handled
+          //（respond 有去重守卫，先回 {} 会把后面的 handled 吞掉）
+          send({
+            type: "extension_ui_request",
+            id: "mock-unknown-1",
+            method: "futureWidget",
+            someFutureField: true,
+          });
+          waitForExtResponse("mock-unknown-1", id);
+          continue;
+        }
         respond(id, "prompt", ...scenarioPayload(SCENARIO, id));
         continue;
       }
@@ -143,16 +155,7 @@ function mockMain(SCENARIO) {
 
   function scenarioPayload(scenario, promptId) {
     if (scenario === "unknown-method") {
-      // PF 不认识的 method：旧 parse 落 _ => None（整条丢弃，扩展 handler
-      // 永久阻塞）；修复后必须立刻回 cancelled
-      send({
-        type: "extension_ui_request",
-        id: "mock-unknown-1",
-        method: "futureWidget",
-        someFutureField: true,
-      });
-      // 等 PF 的 cancelled 回执（由 stdin 臂观察）再收场 handled
-      waitForExtResponse("mock-unknown-1", promptId);
+      // 已上移到 prompt 处理臂（需要延迟回执，见彼处注释）
       return [];
     }
     if (scenario === "crash-with-dialog") {

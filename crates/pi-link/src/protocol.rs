@@ -623,6 +623,13 @@ pub enum ExtUiMethod {
     SetEditorText {
         text: String,
     },
+    /// Unrecognized method (pi upgrade adds a new UI surface). Must never be
+    /// dropped: the whole point is that an unknown method still gets an
+    /// `extension_ui_response` (cancelled) so the extension handler's await
+    /// settles instead of blocking forever (#7-shaped deadlock, invisible).
+    Unknown {
+        method: String,
+    },
 }
 
 impl ExtensionUiRequest {
@@ -675,7 +682,12 @@ impl ExtensionUiRequest {
             "set_editor_text" => ExtUiMethod::SetEditorText {
                 text: v["text"].as_str().unwrap_or("").to_string(),
             },
-            _ => return None,
+            // 未知 method 不丢弃（zi2s.2）：原 `_ => return None` 会把整条
+            // 请求扔掉且零痕迹，pi 升级新增 UI 方法即永久阻塞扩展 handler。
+            // 改回 Unknown 由 app 侧立刻回 cancelled + eprintln 留痕。
+            other => ExtUiMethod::Unknown {
+                method: other.to_string(),
+            },
         };
         Some(ExtensionUiRequest { id, method })
     }
@@ -1296,6 +1308,39 @@ pub fn parse_record(v: &Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // zi2s.2：未知 extension UI method 不丢条——parse 必须回 Unknown（带原
+    // 方法名），app 侧据此立刻回 cancelled。否则 pi 升级新增 UI 方法即整条
+    // 请求被丢弃、扩展 handler await 永久阻塞且零痕迹（#7 同型卡死）。
+    #[test]
+    fn unknown_ext_ui_method_parses_as_unknown() {
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"u9","method":"futureWidget","someFutureField":true}"#,
+        )
+        .expect("unknown method must still parse to ExtensionUi");
+        match e {
+            Event::ExtensionUi(ExtensionUiRequest { id, method }) => {
+                assert_eq!(id, "u9");
+                match method {
+                    ExtUiMethod::Unknown { method } => assert_eq!(method, "futureWidget"),
+                    other => panic!("expected Unknown, got {other:?}"),
+                }
+            }
+            other => panic!("expected ExtensionUi, got {other:?}"),
+        }
+        // 已知方法行为不变
+        let e = parse_line(
+            r#"{"type":"extension_ui_request","id":"s1","method":"select","title":"t","options":["a"]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::ExtensionUi(ExtensionUiRequest {
+                method: ExtUiMethod::Select { .. },
+                ..
+            })
+        ));
+    }
 
     // Fixtures below are REAL records captured from pi 0.87.1 runs.
 

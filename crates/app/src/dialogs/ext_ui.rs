@@ -368,6 +368,25 @@ impl Chat {
             return;
         }
         match req.method {
+            // 未知 method（zi2s.2）：不入阻塞队列、不弹窗——立刻回 cancelled
+            // 让扩展 handler 的 await 落地（否则 pi 升级新增 UI 方法即永久
+            // 阻塞，#7 同型卡死且界面零痕迹），eprintln 留痕到 app.log。
+            ExtUiMethod::Unknown { method } => {
+                eprintln!(
+                    "[ext-ui] unknown extension ui method={method:?} id={} —— 已回 cancelled",
+                    req.id
+                );
+                self.ext_send(
+                    &pi_link::protocol::ExtensionUiRequest {
+                        id: req.id.clone(),
+                        method: ExtUiMethod::Unknown { method },
+                    },
+                    None,
+                    None,
+                    true,
+                    cx,
+                );
+            }
             ExtUiMethod::SetStatus {
                 status_key,
                 status_text,
