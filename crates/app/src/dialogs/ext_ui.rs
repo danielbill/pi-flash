@@ -496,7 +496,11 @@ impl Chat {
                 ti.set_value(String::new(), cx);
             });
         } else if let pi_link::protocol::ExtUiMethod::Editor { prefill, .. } = &req.method {
-            let prefill = prefill.clone().unwrap_or_default();
+            // 单行 TextInput 阶段的防崩：prefill 常是多行（editor 语义），
+            // GPUI 文本渲染遇 `\n` 直接 panic（text_system.rs「text argument
+            // should not contain newlines」）→ 整个应用崩掉。折成空格保命；
+            // 真多行编辑器 = zi2s.6 换组件，届时移除本折行。
+            let prefill = prefill.clone().unwrap_or_default().replace('\n', " ");
             let input = self.aux.ext_input.clone();
             input.update(cx, |ti, cx| {
                 ti.set_value(prefill, cx);

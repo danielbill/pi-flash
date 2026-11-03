@@ -448,6 +448,19 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "draft_model": draft_model_json(chat, &r),
         "state": state_json(&r),
         "messages": messages_json(&r),
+        // 扩展 UI 面（test/ext-ui 台架断言出口；数据与渲染同源，见 dialogs/ext_ui.rs）
+        "ext_status": chat.aux.ext_status.clone(),
+        "ext_widgets": chat
+            .aux
+            .ext_widgets
+            .iter()
+            .map(|(k, lines, above)| json!({"key": k, "lines": lines, "above_editor": above}))
+            .collect::<Vec<_>>(),
+        "ext_notice": chat
+            .aux
+            .ext_notice
+            .as_ref()
+            .map(|(msg, ty)| json!({"message": msg, "type": ty})),
     })
 }
 
@@ -887,8 +900,10 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     // 文件搜索命中随弹窗上报（后台扫盘异步回填，UI 测试据此轮询就绪）
     json!({
         "dialog": dialog,
-        // 扩展阻塞弹窗：队头 id/方法 + 队列尾随数（#7 排队语义断言用）
-        "ext_dialog": chat.aux.ext_dialog.as_ref().map(|r| serde_json::json!({
+        // 扩展阻塞弹窗队头 id/方法（#7 排队语义 + test/ext-ui 台架断言用）。
+        // 键名不能叫 ext_dialog：下方布尔（Some=有弹窗）同名会把它覆盖，
+        // 富对象一直是死字段（json! 后键覆盖前键）
+        "ext_dialog_head": chat.aux.ext_dialog.as_ref().map(|r| serde_json::json!({
             "id": r.id,
             "method": match &r.method {
                 pi_link::protocol::ExtUiMethod::Select { .. } => "select",
