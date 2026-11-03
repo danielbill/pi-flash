@@ -2,6 +2,38 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.4.1] - 2026-11-03
+
+Highlights of this release:
+0. Fixed sessions freezing after running extension commands (issue #7)
+1. Fixed duplicate tray icons (double WeChat) after installing a plugin
+2. Fixed MCP server changes not taking effect while the session is idle
+3. Session rows now show a pin badge, capped at 5 badges per row
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # Same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. A portable zip is also available: download, unzip, and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- Session-row badge assembly: pinned sessions show a pin badge pinned to the far right, plugin badges follow in registration order, capped at 5 per row (rightmost kept). (031887ec)
+
+### Bug fixes
+- **Sessions freezing when running extension commands (issue #7), fixed as a batch**:
+  - The waiting row kept spinning forever ("Waiting for model...") after an extension command consumed the prompt. (2813b991)
+  - Multiple blocking extension dialogs covered each other, permanently blocking earlier requests; they now queue and are answered in order, with the queue count shown in the dialog header. (a7830a15)
+  - "Running extension command..." lingered for seconds after closing the dialog, and finishing a command wiped the whole screen: settlement now matches pi-web, bubbles are removed based on disk truth, and Stop cancels in-flight dialogs. (c9e48c95)
+  - Local-queue receipts swallowed the handled settlement signal, leaving the state stuck forever (root cause); extension dialogs redesigned as a 600×600 dual-pane scrolling shell so long content no longer pushes the close button out of view. (b9e2edce)
+- During slash-command execution the waiting row now shows "Running extension command..." instead of the misleading "Waiting for model...". (f07c911f)
+- Duplicate function-bar icons (double WeChat) after installing a plugin: runtime entry uniqueness enforced, and ghost double-loading from legacy flat-layout residue eradicated. (2fee18f1, 512d43ae)
+- Tools no longer go missing after unloading an extension mid-session and remounting it — direct tools are restored per the transcript ledger. (608b6f19)
+- MCP server changes (toggle/remove/bulk/save/rename) did not apply to already-open sessions — a live process never re-read mcp.json on its own; changes now mark the session for rebind. (31aa0200)
+- Session-row pin badge flickered on hover. (1ff354cf)
+- Provider picker layout: fixed 896px content width centered, card grid left-aligned with group titles. (21af6cbd, ae5e293b)
 ## [0.4.0] - 2026-11-03
 
 Highlights:
