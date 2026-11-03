@@ -365,6 +365,9 @@ impl Chat {
             eprintln!("[pf-plugin] pi 扩展挂载失败（{pf_session_key}）: {e}");
             return;
         }
+        // 005 §③：挂载成功 = 运行许可发放（宿主协议文件）。含 force 重启
+        // 链（启用/更新）：ext 无论新旧进程，泵见 on 即可恢复服务。
+        crate::pf_plugin::pf_runtime_write(&entry.manifest, true, "enable");
         if cfg!(debug_assertions) {
             eprintln!(
                 "[pf-plugin] pi 扩展已入会话清单（{} → {}），空闲重启挂载",
@@ -1119,27 +1122,11 @@ pub(crate) fn fn_bar_plugin_elements(
     chat: &mut Chat,
     cx: &mut gpui::Context<Chat>,
 ) -> Vec<gpui::AnyElement> {
-    // 当前会话键：**以标签页的会话路径为准**（= 用户看到的那个会话）。
-    // 不能用「活跃 runtime 的 state.session_file」兜底：新建/刚切过去的会话还没
-    // 起自己的 pi 进程时，runtime 池里的可能是上一个会话 → 点 icon 绑到旧会话
-    // 。runtime 状态只做最后兜底。
-    let session_key = {
-        let tab = chat.pool.active_key.to_string();
-        if tab.ends_with(".jsonl") {
-            tab
-        } else {
-            chat.pool
-                .runtimes
-                .get(&chat.pool.active_key)
-                .and_then(|rt| {
-                    rt.read(cx)
-                        .state
-                        .as_ref()
-                        .and_then(|s| s.session_file.clone().or_else(|| s.session_id.clone()))
-                })
-                .unwrap_or_default()
-        }
-    };
+    // 当前会话键：**pool.active_key 规范键**（005 §②）——与挂载台账键、
+    // spawn 注入的 PF_SESSION_KEY、命令 env 三通道同源。此前「标签路径 +
+    // pi 侧 session_file/session_id 兜底」三形态漂移：草稿会话空键、draft-N
+    // 与文件路径互不相认（真机 2026-11-03，出码归属丢失）。
+    let session_key = chat.pool.active_key.clone();
     let chromes = chat.plugin_fn_bar_chrome(&session_key, cx);
     let weak = cx.entity().downgrade();
     chromes

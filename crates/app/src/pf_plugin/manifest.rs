@@ -1659,4 +1659,34 @@ mod plugin_asset_alias_tests {
         assert!(plugin_asset("@x__unrelated/wx.svg").is_none());
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// 宿主协议文件（005 §③）：seq 单调递增 + enabled/reason 逐次覆写；
+    /// 原子写无 tmp 残留。
+    #[test]
+    fn pf_runtime_write_seq_and_flags() {
+        let root = std::env::temp_dir().join(format!("pf-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let tmp = root.join("pf-wxbot"); // parse_manifest 校验 id == 目录名
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("pf-plugin.toml"),
+            "schema = 5\nid = \"pf-wxbot\"\ntitle = { zh = \"微信通信\" }\nversion = \"0.2.0\"\n\n[[contributes.fn_bar]]\ncommand = \"bind\"\n\n[[contributes.pi_extensions]]\npath = \"pi/index.mjs\"\n",
+        )
+        .unwrap();
+        let m = parse_manifest(&tmp).expect("清单合法");
+        crate::pf_plugin::pf_runtime_write(&m, true, "enable");
+        crate::pf_plugin::pf_runtime_write(&m, false, "disable");
+        crate::pf_plugin::pf_runtime_write(&m, false, "quit");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.join("pf-runtime.json")).unwrap())
+                .unwrap();
+        assert_eq!(v["pf_enabled"], serde_json::Value::Bool(false));
+        assert_eq!(v["pf_seq"], serde_json::json!(3), "跨调用单调递增");
+        assert_eq!(v["pf_reason"], serde_json::json!("quit"));
+        assert!(
+            !tmp.join("pf-runtime.json.tmp").exists(),
+            "原子写无残留 tmp"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

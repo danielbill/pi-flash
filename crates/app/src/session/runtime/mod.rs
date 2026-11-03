@@ -532,6 +532,11 @@ impl SessionRuntime {
         // 执行域挂载（90-6）：存在实例配置 → 挂宿主自带 shim + 交付配置指针。
         // 配置由 Chat 侧随插件装/卸同步（svc_sync_configs）；spawn 只消费。
         let mut envs: Vec<(String, String)> = Vec::new();
+        // 005 §② 身份注入：ext 的会话身份由宿主给定（= 挂载台账键 / 命令
+        // env session.key 规范键），插件不再用 uuid/getSessionFile/argv 猜
+        // （首条消息前 undefined + uuid 随重启漂移，门控必失配——真机
+        // 2026-11-03）。所有 pi 扩展通用。
+        envs.push(("PF_SESSION_KEY".into(), self.key.clone()));
         if let Some(base) = pi_link::paths::dir() {
             if let Some(cfg) = pi_link::service_ext::config_path_if_any(&base, &self.key) {
                 if cfg.is_file() {

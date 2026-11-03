@@ -646,17 +646,10 @@ fn click_command(
             // 画布/开关点击不带 arg 时宿主补当前会话键——壳侧 onCommand 用
             // env.session.key 定位投递目标，空 env = 意图静默丢失（2026-10-30
             // 真机：超时白遮态点画布回环无响应，即空 env 丢失）。
+            // 键源 = **pool.active_key 规范键**（005 §②，与挂载台账/PF_SESSION_KEY
+            // 同源；此前取 pi 侧 session_file/session_id，草稿会话两者皆空）。
             let a = if a.trim().is_empty() {
-                let key =
-                    c.pool
-                        .runtimes
-                        .get(&c.pool.active_key)
-                        .and_then(|rt| {
-                            rt.read(cx).state.as_ref().and_then(|s| {
-                                s.session_file.clone().or_else(|| s.session_id.clone())
-                            })
-                        })
-                        .unwrap_or_default();
+                let key = c.pool.active_key.clone();
                 serde_json::json!({ "session": { "key": key } }).to_string()
             } else {
                 a

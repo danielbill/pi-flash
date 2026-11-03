@@ -534,31 +534,12 @@ pub(super) fn dispatch(
         }
         method::PLUGIN_FNBAR_CLICK => {
             // 契约 v3 fn_bar：icon 点击同路径（command 回环 env 带 session）。
-            // session 键 = 会话文件路径（跨进程重启稳定；插件 ext 双口径比对
-            // getSessionFile/getSessionId）
+            // session 键 = **pool.active_key 规范键**（005 §②）：与挂载台账键、
+            // spawn 注入的 PF_SESSION_KEY 同源——此前取 pi 侧 session_file/
+            // session_id（草稿会话两者皆空 → 空 key，出码归属丢失；真机
+            // 2026-11-03），且与台账键漂移。唯一键源，三通道一致。
             let ix = params.get("ix").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let key = chat
-                .pool
-                .runtimes
-                .get(&chat.pool.active_key)
-                .and_then(|rt| {
-                    rt.read(cx)
-                        .state
-                        .as_ref()
-                        .and_then(|s| s.session_file.clone())
-                })
-                .or_else(|| {
-                    chat.pool
-                        .runtimes
-                        .get(&chat.pool.active_key)
-                        .and_then(|rt| {
-                            rt.read(cx)
-                                .state
-                                .as_ref()
-                                .and_then(|s| s.session_id.clone())
-                        })
-                })
-                .unwrap_or_default();
+            let key = chat.pool.active_key.clone();
             chat.plugin_fn_bar_click(ix, &key, window, cx);
             ok()
         }

@@ -57,6 +57,35 @@ pub(crate) fn plugin_ctx_json(id: &str, m: &PluginManifest, session_key: Option<
     .to_string()
 }
 
+/// 宿主协议文件 `pf-runtime.json`（005 §③，90-4 增补）：`<pkg>/pf-runtime.json`，
+/// **唯一写者 = 宿主**（插件只读）。任何 `pi_extensions` 插件读它获知运行许可，
+/// 取代旧「壳 unload 写 unload_ts 水位、ext 比对 BOOT_TS 自杀」协议——时间戳
+/// 炸弹会冤杀 reload 循环里出生较早的活 ext（真机 2026-11-03）。
+/// 原子写（tmp + rename）；失败静默（ext 侧缺省 = 许可，兜底安全）。
+pub(crate) fn pf_runtime_write(m: &PluginManifest, enabled: bool, reason: &str) {
+    let f = m.pkg_dir.join("pf-runtime.json");
+    let seq = std::fs::read_to_string(&f)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("pf_seq").and_then(serde_json::Value::as_u64))
+        .unwrap_or(0)
+        + 1;
+    let tmp = f.with_extension("json.tmp");
+    if std::fs::write(
+        &tmp,
+        serde_json::json!({
+            "pf_enabled": enabled,
+            "pf_seq": seq,
+            "pf_reason": reason,
+        })
+        .to_string(),
+    )
+    .is_ok()
+    {
+        let _ = std::fs::rename(&tmp, &f);
+    }
+}
+
 /// 状态机转移（90-9 §5）：条目状态只能经 [`lifecycle::transition`] 变更。
 /// 非法转移保持原状——状态机不 panic，宿主事实以 plugin.log 为准。
 fn entry_state(entry: &mut PluginEntry, e: lifecycle::Ev) {

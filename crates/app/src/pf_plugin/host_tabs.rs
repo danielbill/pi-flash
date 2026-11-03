@@ -231,6 +231,9 @@ impl Chat {
             // 90-9 §8 摘除：会话挂载清单里本插件的 ext 条目全量摘掉——残留会
             // 在下次 spawn 把 ext 带回进程
             let _ = pi_link::session_ext::purge_exec_entries(&id);
+            // 005 §③：运行许可收线（宿主协议文件，ext 泵见 off 自我隔离——
+            // 停渠道 + 发下线通知 + 待机，不再用 unload_ts 时间戳炸弹）
+            crate::pf_plugin::pf_runtime_write(&entry.manifest, false, "disable");
         }
         if let Some(entry) = self.plugins.plugins.get_mut(ix) {
             // 90-9 §6：停用 = 唯一销毁入口，unload() 先于丢运行时（卸载/更新
@@ -259,6 +262,14 @@ impl Chat {
     pub(crate) fn plugin_unload_all_for_quit(&mut self) {
         const BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
         let t_all = std::time::Instant::now();
+        // 005 §③：退出前先收运行许可（宿主协议文件）——带 pi_extensions 的
+        // 插件 ext 泵 200ms 内见 off，停渠道 + 发下线通知（在 1s 预算窗口内），
+        // 随后进程树整体消亡
+        for entry in &self.plugins.plugins {
+            if !entry.manifest.pi_extensions.is_empty() {
+                crate::pf_plugin::pf_runtime_write(&entry.manifest, false, "quit");
+            }
+        }
         for entry in &mut self.plugins.plugins {
             if entry.js.is_none() && entry.wasm.is_none() {
                 continue; // 未装载过：无 load 即无 unload，配对不能凭空造
