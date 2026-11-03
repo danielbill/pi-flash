@@ -887,6 +887,18 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     // 文件搜索命中随弹窗上报（后台扫盘异步回填，UI 测试据此轮询就绪）
     json!({
         "dialog": dialog,
+        // 扩展阻塞弹窗：队头 id/方法 + 队列尾随数（#7 排队语义断言用）
+        "ext_dialog": chat.aux.ext_dialog.as_ref().map(|r| serde_json::json!({
+            "id": r.id,
+            "method": match &r.method {
+                pi_link::protocol::ExtUiMethod::Select { .. } => "select",
+                pi_link::protocol::ExtUiMethod::Confirm { .. } => "confirm",
+                pi_link::protocol::ExtUiMethod::Input { .. } => "input",
+                pi_link::protocol::ExtUiMethod::Editor { .. } => "editor",
+                _ => "other",
+            }
+        })),
+        "ext_dialog_waiting": chat.aux.ext_dialog_waiting.len(),
         // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；
         // 042 起数据源 = pill 化模型菜单的 picker_models）
         "model_rows": match chat.dlg.model_picker.as_ref() {

@@ -17,4 +17,13 @@ export default function (pi) {
 			throw new Error("boom: quota fetch failed");
 		},
 	});
+
+	// 看门狗验证组：handler 永不返回（模拟用户环境里菜单关闭后 handler 挂死）
+	pi.registerCommand("usagehang", {
+		description: "Hang forever after showing a transient notify",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify("usage-hang: handler will never return", "info");
+			await new Promise(() => {});
+		},
+	});
 }

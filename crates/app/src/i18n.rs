@@ -769,6 +769,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("status.send_failed", "发送失败", "發送失敗", "Send failed"),
     ("status.waiting_model", "正在等待模型...", "正在等待模型...", "Waiting for model..."),
     ("status.running_command", "执行扩展命令中...", "執行擴充命令中...", "Running command..."),
+    ("ext.dialog_waiting", "还有 {count} 个阻塞请求在排队", "還有 {count} 個阻塞請求在排隊", "{count} more request(s) waiting"),
     ("terminal.none", "暂无终端会话", "暫無終端會話", "No terminal sessions"),
     ("titlebar.expand_sidebar", "展开侧栏", "展開側欄", "Expand sidebar"),
     ("titlebar.toggle_sidebar", "收起 / 展开侧栏", "收起 / 展開側欄", "Collapse / expand sidebar"),

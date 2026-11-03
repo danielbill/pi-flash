@@ -894,6 +894,20 @@ pub(super) fn dispatch(
             cx.notify();
             ok()
         }
+        // 扩展阻塞弹窗点选项（#7 验收：与选项行 on_mouse_down 同链）；
+        // 不带 value = 取消（ext_dialog 被 take，无请求时报「无挂起」）
+        method::DIALOG_EXT_RESPOND => {
+            let value = params
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let cancelled = value.is_none();
+            if chat.aux.ext_dialog.is_none() {
+                return Err(not_found(format!("无挂起扩展弹窗")));
+            }
+            chat.ext_respond(value, None, cancelled, cx);
+            ok()
+        }
         // 081 自动更新：「下载完成，点击重启更新」的点击（spawn 新载荷 exe 后
         // 本进程退出；观察者看进程树/新版目录落位）
         method::UPDATE_RESTART => {

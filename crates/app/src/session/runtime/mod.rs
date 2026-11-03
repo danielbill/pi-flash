@@ -169,6 +169,10 @@ pub(crate) struct SessionRuntime {
     /// 生命期：optimistic_send 置位；真轮 AgentStart / handled 收场 /
     /// settled / abort / 发送失败 复位。
     pub phase_command: bool,
+    /// 阻塞扩展弹窗当前在屏（Chat aux.ext_dialog 的 runtime 侧镜像，由
+    /// Chat 在入队/应答时回写）：静默看门狗据此区分「handler 有可见进展」
+    /// 与「弹窗已关还静默」（#7）
+    pub ext_dialog_on_screen: bool,
     /// pi 侧 steering/followUp 队列镜像（`queue_update` 全量快照）：「已排
     /// 队 N 条」状态行不再本地猜。仅显示用——abort 撤回的对账真值来自
     /// `clear_queue` response（pi 权威回传），不读这里。090 后 composer 消息
@@ -400,6 +404,7 @@ impl SessionRuntime {
             streaming_content: false,
             pending_echoes: Vec::new(),
             phase_command: false,
+            ext_dialog_on_screen: false,
             queued_steering: Vec::new(),
             queued_followups: Vec::new(),
             queued_inputs: Vec::new(),

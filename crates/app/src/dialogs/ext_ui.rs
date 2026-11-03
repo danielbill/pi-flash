@@ -132,6 +132,20 @@ pub(crate) fn render_ext_dialog(
                         .text_color(rgb(t.text))
                         .child(title),
                 )
+                .children({
+                    // 队列尾随数（pi-web waitingExtensionDialogCount parity）：
+                    // 阻塞请求按到达序排队，队头之外的还在后面等
+                    let n = chat.aux.ext_dialog_waiting.len();
+                    (n > 0).then(|| {
+                        div()
+                            .text_size(crate::appearance::ui_size(11.))
+                            .text_color(rgb(t.text_muted))
+                            .child(crate::i18n::tf(
+                                "ext.dialog_waiting",
+                                &[("count", n.to_string())],
+                            ))
+                    })
+                })
                 .child(body)
                 .child(
                     div()
@@ -342,21 +356,72 @@ impl Chat {
                     } => Some(SharedString::from(p.clone())),
                     _ => None,
                 };
-                let input = self.aux.ext_input.clone();
-                input.update(cx, |ti, cx| {
-                    ti.set_placeholder(placeholder);
-                    ti.set_value(prefill, cx);
-                });
-                self.aux.ext_dialog = Some(pi_link::protocol::ExtensionUiRequest {
-                    id: req.id,
-                    method: blocking,
-                });
+                self.ext_enqueue(
+                    pi_link::protocol::ExtensionUiRequest {
+                        id: req.id,
+                        method: blocking,
+                    },
+                    cx,
+                );
                 cx.notify();
             }
         }
     }
 
-    /// Answer the pending blocking extension UI request.
+    /// 阻塞弹窗在屏旗标回写 runtime（静默看门狗读，#7）。
+    fn ext_sync_dialog_flag(&mut self, cx: &mut Context<Self>) {
+        let on = self.aux.ext_dialog.is_some();
+        self.rt().update(cx, |r, _| r.ext_dialog_on_screen = on);
+    }
+
+    /// 阻塞请求入队（pi-web extension-ui-queue parity）：队头在屏，其余按
+    /// 到达序排队。同 id 重发 = 原位替换（SSE 重放语义，RPC 管道不该发生，
+    /// 防御性保留）；否则新请求入队，队头空则直接上屏。
+    fn ext_enqueue(&mut self, req: pi_link::protocol::ExtensionUiRequest, cx: &mut Context<Self>) {
+        if self.aux.ext_dialog.as_ref().is_some_and(|h| h.id == req.id) {
+            self.aux.ext_dialog = Some(req);
+            return;
+        }
+        if let Some(w) = self
+            .aux
+            .ext_dialog_waiting
+            .iter_mut()
+            .find(|w| w.id == req.id)
+        {
+            *w = req;
+            return;
+        }
+        if self.aux.ext_dialog.is_none() {
+            self.ext_show(req, cx);
+        } else {
+            self.aux.ext_dialog_waiting.push(req);
+        }
+        self.ext_sync_dialog_flag(cx);
+    }
+
+    /// 队头上屏（含 Input 的输入框预填配置，pi-web 到达时同款）；晋升等待
+    /// 项时复用。
+    fn ext_show(&mut self, req: pi_link::protocol::ExtensionUiRequest, cx: &mut Context<Self>) {
+        if let pi_link::protocol::ExtUiMethod::Input { placeholder, .. } = &req.method {
+            let placeholder = placeholder.as_ref().map(|p| SharedString::from(p.clone()));
+            let input = self.aux.ext_input.clone();
+            input.update(cx, |ti, cx| {
+                ti.set_placeholder(placeholder);
+                ti.set_value(String::new(), cx);
+            });
+        } else if let pi_link::protocol::ExtUiMethod::Editor { prefill, .. } = &req.method {
+            let prefill = prefill.clone().unwrap_or_default();
+            let input = self.aux.ext_input.clone();
+            input.update(cx, |ti, cx| {
+                ti.set_value(prefill, cx);
+            });
+        }
+        self.aux.ext_dialog = Some(req);
+    }
+
+    /// 应答队头并晋升下一个等待项（pi-web respondToExtensionUi：先摘队头
+    /// 再发送；队列后续项依次上屏）。每个请求都最终被应答——handler 不会
+    /// 因单槽位覆盖而永久阻塞，prompt 回执（相位收场）也就不会丢失（#7）。
     pub(crate) fn ext_respond(
         &mut self,
         value: Option<String>,
@@ -367,6 +432,14 @@ impl Chat {
         if let Some(req) = self.aux.ext_dialog.take() {
             self.ext_send(&req, value, confirmed, cancelled, cx);
         }
+        if self.aux.ext_dialog.is_none() {
+            if let Some(next) = self.aux.ext_dialog_waiting.first().cloned() {
+                self.aux.ext_dialog_waiting.remove(0);
+                self.ext_show(next, cx);
+            }
+        }
+        self.ext_sync_dialog_flag(cx);
+        cx.notify();
     }
 
     /// 底层应答：桌面端先应答 → 远程端放弃同一请求（060 §8 档 2 不重复消费）

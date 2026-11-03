@@ -101,6 +101,11 @@ pub mod method {
     pub const THEME_SET: &str = "theme.set";
     pub const LANG_SET: &str = "lang.set";
     pub const DIALOG_CLOSE: &str = "dialog.close";
+    /// 扩展阻塞弹窗：点选项（与选项行 on_mouse_down 同链 ext_respond，
+    /// value = 选项原文；不带 value = 取消，同 ESC/点外）。UI 测试驱动
+    /// 阻塞式 select/confirm/input 用——#7 验收实踋：ESC 路径不通实测
+    /// 点选项路径
+    pub const DIALOG_EXT_RESPOND: &str = "dialog.ext_respond";
     /// 081 自动更新：点「下载完成，点击重启更新」（UI 测试用；走与
     /// 版本号位点击完全相同的 restart_to_apply_update，成功即本进程退出）
     pub const UPDATE_RESTART: &str = "update.restart";

@@ -100,6 +100,48 @@ impl SessionRuntime {
         });
         self.phase_waiting = true;
         self.phase_command = is_command;
+        if is_command {
+            // 静默看门狗（pi-web waitForPromptSettlement 的可用信号等效）：
+            // RPC 拿不到 prompt 在途标志，用「无阻塞弹窗在屏 + 无任何 agent
+            // 活动」持续静默替代——菜单开着＝handler 有可见进展，行保留；
+            // 弹窗关了还静默 5s（正常路径 handled 回执毫秒级先到，行早已退）
+            // ＝ handler 已不产生任何 UI/模型活动，行退场。真轮开跑则
+            // AgentStart 清 phase_command，看门狗自行退出。
+            cx.spawn(async move |this, cx| {
+                let started = std::time::Instant::now();
+                let mut quiet = started;
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+                    let Ok((cmd, idle, no_stream, no_dialog)) = this.update(cx, |c, _| {
+                        (
+                            c.phase_command,
+                            !c.agent_running,
+                            !c.streaming_content,
+                            !c.ext_dialog_on_screen,
+                        )
+                    }) else {
+                        return;
+                    };
+                    if !cmd {
+                        return;
+                    }
+                    if idle && no_stream && no_dialog {
+                        if quiet.elapsed() >= std::time::Duration::from_secs(5) {
+                            let _ = this.update(cx, |c, cx| c.settle_command_phase(cx));
+                            return;
+                        }
+                    } else {
+                        quiet = std::time::Instant::now();
+                    }
+                    if started.elapsed() > std::time::Duration::from_secs(120) {
+                        return;
+                    }
+                }
+            })
+            .detach();
+        }
         // 钉顶：新用户消息立即钉视口顶、历史滚出屏，不等回显不等 bounds
         // （page_turn 内部完成 sync 落账）。不钉顶（打断投递）：notify_list
         // 做结构同步即可，视口停在贴底跟随位，消息自然跟在流尾部

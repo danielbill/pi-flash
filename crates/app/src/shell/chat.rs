@@ -38,6 +38,12 @@ pub(crate) struct AuxUi {
     pub(crate) ext_status: Vec<(String, String)>,
     pub(crate) ext_widgets: Vec<(String, Vec<String>, bool)>,
     pub(crate) ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
+    /// 扩展阻塞请求队列（pi-web extension-ui-queue parity）：队头在屏上
+    /// （ext_dialog），其余按到达序在后面等。多个阻塞请求可同时存活
+    /// （并行工具各自被扩展门控），pi 侧每个都持有到应答为止——单槽位
+    /// 会让后来的请求遮住先来的，先来的 handler 永远等不到应答，它的
+    /// prompt 回执也不再来（#7 相位永久挂起的根因之一）
+    pub(crate) ext_dialog_waiting: Vec<pi_link::protocol::ExtensionUiRequest>,
     pub(crate) ext_input: gpui::Entity<TextInput>,
     /// ask_user_question 整卷问卷卡（ask_card.rs）；None = 无进行中的问卷
     pub(crate) ask: Option<ask_card::AskCard>,
@@ -774,6 +780,7 @@ impl Chat {
                 ext_status: Vec::new(),
                 ext_widgets: Vec::new(),
                 ext_dialog: None,
+                ext_dialog_waiting: Vec::new(),
                 ext_notice: None,
                 ask: None,
                 ask_input: cx.new(|cx| TextInput::new(cx)),

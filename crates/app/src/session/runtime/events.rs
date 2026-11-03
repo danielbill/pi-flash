@@ -84,6 +84,20 @@ impl SessionRuntime {
         true
     }
 
+    /// 命令相位收场（handled 回执臂与静默看门狗共用）：等待行退场、摘替身
+    /// 气泡、撤伪标签。
+    pub(super) fn settle_command_phase(&mut self, cx: &mut Context<Self>) {
+        self.phase_waiting = false;
+        self.phase_command = false;
+        if self.retire_stale_echo() {
+            self.pager.release();
+        }
+        if !self.try_bind_reported_file(cx) {
+            cx.emit(SessionEvent::PendingTab(None));
+        }
+        cx.notify();
+    }
+
     /// 重放 [`Self::system_msgs`] 刷新 `sys`（transcript 无 system 消息时保留
     /// 旧值，维持「尚未加载」语义）；变了就发 Changed，让开着的信息面板当场
     /// 点亮。
@@ -420,19 +434,7 @@ impl SessionRuntime {
                     // 留给回显/轮末对账，这里不动（pi-web 只在
                     // !sdkAgentActive 时 settle 的同款分支）。
                     if !self.agent_running {
-                        self.phase_waiting = false;
-                        self.phase_command = false;
-                        // 纯 UI 命令不落盘：替身气泡永远等不到回显，就地
-                        // 摘除（pi-web prompt_done → loadSession 磁盘真相
-                        // 口径的重读即时版）
-                        if self.retire_stale_echo() {
-                            // 锚点可能钉在被摘的气泡上：同发送失败口径退役
-                            self.pager.release();
-                        }
-                        // 伪标签：确定没落盘就撤（同 settled 臂口径）
-                        if !self.try_bind_reported_file(cx) {
-                            cx.emit(SessionEvent::PendingTab(None));
-                        }
+                        self.settle_command_phase(cx);
                     }
                 } else if success {
                     self.status = format!("{command} ok");
