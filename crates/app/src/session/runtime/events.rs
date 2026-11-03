@@ -63,6 +63,27 @@ impl SessionRuntime {
         }
     }
 
+    /// 摘除「无回显替身」乐观气泡（#7）：扩展命令吃掉 prompt 时 pi 不回显
+    /// 同文 user 消息（纯 UI 命令也不落盘），pending_echoes 里的同文条目
+    /// + 列表尾部的同文气泡互为替身特征，成对摘除。返回是否摘到气泡。
+    /// 文本匹配与回显臂同款（len 预筛 + plain_text 全量比对），echo 按
+    /// FIFO 摘一条——连发同文命令时每个 response 各摘一对。
+    pub(super) fn retire_stale_echo(&mut self) -> bool {
+        let Some(text) = self.pending_echoes.last().map(|p| p.text.clone()) else {
+            return false;
+        };
+        let Some(ix) = self.messages.iter().rposition(|m| {
+            m.role == Role::User && m.text_len() == text.len() && m.plain_text().as_ref() == text
+        }) else {
+            return false;
+        };
+        self.messages.remove(ix);
+        if let Some(p) = self.pending_echoes.iter().position(|p| p.text == text) {
+            self.pending_echoes.remove(p);
+        }
+        true
+    }
+
     /// 重放 [`Self::system_msgs`] 刷新 `sys`（transcript 无 system 消息时保留
     /// 旧值，维持「尚未加载」语义）；变了就发 Changed，让开着的信息面板当场
     /// 点亮。
@@ -378,6 +399,38 @@ impl SessionRuntime {
                                 &[("count", dropped.to_string())],
                             );
                             cx.notify();
+                        }
+                    }
+                } else if command == "prompt"
+                    && success
+                    && data
+                        .as_ref()
+                        .and_then(pi_link::protocol::prompt_disposition)
+                        == Some("handled")
+                {
+                    // 扩展命令 / 输入 handler 吃掉了 prompt（#7「装了扩展，
+                    // 使用的时候会话页面卡住了」）：pi 对这类输入**不开 run**
+                    // ——没有 agent_start / 同文回显 / agent_settled 可等，
+                    // wire 上只有命令自己的 UI 事件（extension_ui_request/
+                    // extension_error，ext_ui 已渲染）+ 本 response。此前
+                    // phase_waiting 只能等 settled 来清 → 等待行永久转圈。
+                    // handler 自己 sendMessage 开跑的情形（命令引出对话）：
+                    // AgentStart 先于本 response 到达（同管道序），
+                    // agent_running 在位——等待行让给那条真轮，替身气泡
+                    // 留给回显/轮末对账，这里不动（pi-web 只在
+                    // !sdkAgentActive 时 settle 的同款分支）。
+                    if !self.agent_running {
+                        self.phase_waiting = false;
+                        // 纯 UI 命令不落盘：替身气泡永远等不到回显，就地
+                        // 摘除（pi-web prompt_done → loadSession 磁盘真相
+                        // 口径的重读即时版）
+                        if self.retire_stale_echo() {
+                            // 锚点可能钉在被摘的气泡上：同发送失败口径退役
+                            self.pager.release();
+                        }
+                        // 伪标签：确定没落盘就撤（同 settled 臂口径）
+                        if !self.try_bind_reported_file(cx) {
+                            cx.emit(SessionEvent::PendingTab(None));
                         }
                     }
                 } else if success {

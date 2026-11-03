@@ -1153,6 +1153,22 @@ impl SessionStats {
     }
 }
 
+/// `prompt` 成功 response 的 `disposition`（pi agent-session.js `preflightResult`，
+/// rpc-mode.js `output(success(id, "prompt", { disposition }))`）：
+/// - `"handled"`：扩展命令 / 输入 handler 吃掉了输入，**不开 run**——wire 上
+///   只有命令自己的 UI 事件（extension_ui_request / extension_error），没有
+///   agent_start / 同文回显 / agent_settled（PF #7 卡等待行的根因）；
+/// - `"queued"`：isStreaming，消息入 steer/followUp 队列（回显下一轮边界才到）；
+/// - `"started"`：run 立即开跑（response 从 run 启动回调发出）。
+pub fn prompt_disposition(data: &Value) -> Option<&'static str> {
+    match data["disposition"].as_str() {
+        Some("handled") => Some("handled"),
+        Some("queued") => Some("queued"),
+        Some("started") => Some("started"),
+        _ => None,
+    }
+}
+
 /// Parse a single JSONL line from pi's stdout.
 pub fn parse_line(line: &str) -> Option<Event> {
     // NOT serde_json::from_str: get_tree nests the whole conversation
@@ -1282,6 +1298,33 @@ mod tests {
     use super::*;
 
     // Fixtures below are REAL records captured from pi 0.87.1 runs.
+
+    #[test]
+    fn prompt_disposition_values() {
+        // 实录（issue #7 复现，vendored pi 1.5.0 rpc-mode）：扩展命令吃掉 prompt
+        assert_eq!(
+            prompt_disposition(&serde_json::json!({"disposition": "handled"})),
+            Some("handled")
+        );
+        assert_eq!(
+            prompt_disposition(&serde_json::json!({"disposition": "queued"})),
+            Some("queued")
+        );
+        assert_eq!(
+            prompt_disposition(&serde_json::json!({"disposition": "started"})),
+            Some("started")
+        );
+        // 其他命令的 response 没有 disposition；未知值一律 None
+        assert_eq!(
+            prompt_disposition(&serde_json::json!({"messages": []})),
+            None
+        );
+        assert_eq!(
+            prompt_disposition(&serde_json::json!({"disposition": "bogus"})),
+            None
+        );
+        assert_eq!(prompt_disposition(&serde_json::Value::Null), None);
+    }
 
     #[test]
     fn prompt_record_shape() {
