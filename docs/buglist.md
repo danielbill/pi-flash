@@ -3,6 +3,17 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已修（0.4.1 发版复盘，2026-11-03）——0.4.0 发布包缺子代理扩展（agent 工具）
+
+- 根因：f848fdfa 把内置子代理扩展改名 `extensions/pi-subagents` → `extensions/pf-subagents`
+  （避开 pi 市场同名包），release.sh 第 3 步随包分发段未同步——`-d` 探测旧名不中，
+  打警告照常出包，0.4.0 起包内无 `extensions/pf-subagents`，开了子代理 dev-flags 的用户
+  `-e` 挂载落空（默认 dev-flags 全关，多数用户无感）。
+- 修法：release.sh 三处同步为 `pf-subagents`（91feed63）；0.4.1 验证包内
+  `extensions/pf-subagents/src/index.ts` 在位。
+- 欠账口径：**0.4.0 已发布资产不可改（RELEASE.md §0.4）**，受影响用户升级 0.4.1 即得；
+  无需紧急热修版本。
+
 ## 已修（0.4.0 发版测试，2026-11-03）——微信插件「绑定后重启即哑」：台账挂载路径卡在旧版本目录
 
 - 根因（发版包 0.4.0 真机复现）：PF 插件绑定微信时把 `pi_extensions` 的**绝对路径**
