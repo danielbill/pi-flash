@@ -563,6 +563,21 @@ impl Chat {
             .runtimes
             .insert(rt.read(cx).key.clone(), rt.clone());
         self.subscribe_runtime(&rt, cx);
+        // 005 预热：挂载台账里该会话名下有 pi 扩展 → 立即拉起进程。pi 只在
+        // 发送时懒加载（input 层 ensure_spawned），重启后绑定会话进程不活 →
+        // ext 无处安身，微信消息无人收（真机 2026-11-03）。通用判据 = 台账
+        // （session-ext.json），零插件知识。
+        {
+            let key = rt.read(cx).key.clone();
+            let has_ext = pi_link::session_ext::store_path()
+                .map(|p| !pi_link::session_ext::read_for(&p, &key).is_empty())
+                .unwrap_or(false);
+            if has_ext {
+                rt.update(cx, |r, cx| {
+                    r.ensure_spawned(cx);
+                });
+            }
+        }
         // 秒开深度优化（pi-flash-2o92）：磁盘计数改后台——主线程全文件读
         // 是 O(会话大小) 的打开冻结源
         rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
