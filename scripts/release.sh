@@ -70,6 +70,7 @@ cargo build --release -p app
 # pif-secret 是 pi-link 的独立 bin，不在 app 依赖图里——必须显式构建
 # （实测 cargo build -p app 不产出它，2026-11-02）
 cargo build --release -p pi-link --bin pif-secret
+cargo build --release -p pi-link --bin pi
 # 产物自检：b64("pf-official|") = cGYtb2ZmaWNpYWx8，注入成功则 proof 常量必在
 # exe 字符串段（占位符字面量散布多处回退路径，不能作阴性信号，只验阳性）。
 grep -aq "cGYtb2ZmaWNpYWx8" target/release/pi-flash.exe \
@@ -87,6 +88,12 @@ cp target/release/pi-flash.exe dist/pi-flash/
   echo "✗ target/release/pif-secret.exe 缺失（第 2 步构建应已产出）"; exit 1;
 }
 cp target/release/pif-secret.exe dist/pi-flash/
+# 081：pi.exe 是全局 pi 前置 shim——PF 启动/更新时注册到
+# %LOCALAPPDATA%\pi-flash\bin 并写 pi-target.json 指针；包内缺席则注册静默跳过。
+[[ -f target/release/pi.exe ]] || {
+  echo "✗ target/release/pi.exe 缺失（第 2 步构建应已产出）"; exit 1;
+}
+cp target/release/pi.exe dist/pi-flash/
 NODE_BIN=$(command -v node || true)
 [[ -n "$NODE_BIN" ]] || { echo "✗ 找不到 node（PATH 或 PI_FLASH_NODE）"; exit 1; }
 cp "$NODE_BIN" dist/pi-flash/node.exe
@@ -127,6 +134,8 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
 1. 配置模型 API Key：底部「模型」-> 选择 provider -> 填入 API Key 保存
    （密钥本体存系统凭据库，auth.json 只留取回标记，与 pi CLI 共用）
    注意：包内 pif-secret.exe 是密钥取回通道，必须与 pi-flash.exe 同目录，勿删勿移。
+2. 全局 pi 命令：pi-flash 首次运行/更新时把内置 pi 内核注册为系统默认
+   （%LOCALAPPDATA%\pi-flash\bin\pi.exe 前置转发，新开终端生效）
 2. 顶部状态栏连接成功后即可对话；工具栏「生成标题」可让模型为会话起名
 
 功能入口：

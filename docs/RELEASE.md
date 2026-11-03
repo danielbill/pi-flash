@@ -62,9 +62,10 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 
 1. 版本三处同步（Cargo + npm + lock）
 2. 签宿主证明（签名流程见内部发布文档）+ `cargo build --release -p app` +
-   `cargo build --release -p pi-link --bin pif-secret`（独立 bin，不在 app 依赖图）+
+   `cargo build --release -p pi-link --bin pif-secret --bin pi`（独立 bin，不在 app 依赖图）+
    **exe 烙入自检**（proof b64 前缀必须命中，未烙入 = 拒打包）
-3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
+3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ **pi.exe**
+   （全局 pi 前置 shim，缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
    查 `PI_FLASH_PERF`）；结束 taskkill
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`

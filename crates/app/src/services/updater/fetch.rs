@@ -515,7 +515,22 @@ pub(crate) fn stage_update_in(me: &Path, rel: &ReleaseInfo) -> Result<String, St
 
         // 051：新载荷落位后顺手确保 pif-secret 稳定安装（幂等毫秒级）——
         // 版本化载荷目录随升级漂移，helper 的归宿永远是用户级 PATH 目录。
-        let _ = pi_link::secret_bin::ensure_installed();
+        let _ = pi_link::register_to_sys::ensure_installed();
+        // 081：内置 pi 内核注册为系统全局 `pi`——指针直接指向 **staged 新载
+        // 荷**（交接后用户敲 `pi` 即新内核）。旧包没有 pi.exe → 复制静默跳
+        // 过、指针照写，下版起效。
+        let node = {
+            let bundled = target.join("node.exe");
+            if bundled.is_file() {
+                bundled.to_string_lossy().into_owned()
+            } else {
+                pi_link::vendor::node_bin()
+            }
+        };
+        let _ = pi_link::register_to_sys::ensure_pi_shim(
+            &node,
+            &target.join(pi_link::vendor::NODE_MODULES_REL),
+        );
 
         // 更新日志缓存（重启后的更新日志页直接读本地）
         if !rel.body.is_empty() {

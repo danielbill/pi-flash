@@ -15,7 +15,7 @@ WM_SETTINGCHANGE 广播、本进程 PATH 同步追加），标记条目改写**�
 
 ## 代码落点
 
-- `pi-link/src/secret_bin.rs`：`ensure_installed()`（幂等）+ `path_mode_ok()`
+- `pi-link/src/register_to_sys.rs`：`ensure_installed()`（幂等）+ `path_mode_ok()`
   + `path_has_segment`（纯函数）。
 - `pi-link/src/auth_json.rs`：`marker_key_with(path_mode, provider)` 双形态；
   `migrate_markers_pathless[_at]`（只动 `is_pf_managed` 且 key 含 `/` 或 `\`
@@ -26,9 +26,9 @@ WM_SETTINGCHANGE 广播、本进程 PATH 同步追加），标记条目改写**�
 
 ## 单测（pi-link，全绿）
 
-- `secret_bin::tests::path_segment_match_is_normalized`：判重（大小写/尾分隔
+- `register_to_sys::tests::path_segment_match_is_normalized`：判重（大小写/尾分隔
   符/空段/`%VAR%` 不误判/前缀同段不同不误判）。
-- `secret_bin::tests::stable_bin_dir_layout`。
+- `register_to_sys::tests::stable_bin_dir_layout`。
 - `auth_json::tests::marker_key_is_shell_safe`：双形态 shell 安全。
 - `auth_json::tests::migrate_rewrites_path_markers_to_bare_form`：路径形态
   （含 0.4.1 用户手改形态）→ 裸；oauth/明文/用户引用不动；幂等二跑 0。

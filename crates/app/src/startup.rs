@@ -545,13 +545,23 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
     // 旧版本载荷目录，标记迁移要抢先改写指向旧目录的条目（0.4.0→0.4.1 auth
     // 全崩事故的治本）。
     std::thread::spawn(|| {
-        if pi_link::secret_bin::ensure_installed() {
+        if pi_link::register_to_sys::ensure_installed() {
             match pi_link::auth_json::migrate_markers_pathless() {
                 Ok(0) => {}
                 Ok(n) => {
                     eprintln!("[startup] auth.json 标记去路径化：{n} 条 → !pif-secret 裸命令")
                 }
                 Err(e) => eprintln!("[startup] auth.json 标记迁移跳过（拒写）：{e}"),
+            }
+        }
+        // 081：内置 pi 内核注册为系统全局 `pi`（release 默认开，debug 需
+        // PI_FLASH_PI_SHIM=1）——指针自愈指向当前载荷（搬家/手装后也归位）。
+        // 幂等成功是常态，成功行仅 debug 打（release 零输出门禁）。
+        if let Some(cli) = pi_link::vendor::cli_path() {
+            let node = pi_link::vendor::node_bin();
+            if pi_link::register_to_sys::ensure_pi_shim(&node, &cli) {
+                #[cfg(debug_assertions)]
+                eprintln!("[startup] 全局 pi 已注册 → {cli:?}");
             }
         }
     });

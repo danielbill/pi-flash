@@ -67,8 +67,12 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   auth_json.rs            ~/.pi/agent/auth.json 的 PF 视图——只碰「标记条目」
                           （PATH 模式 = 裸命令 !pif-secret get <provider>，未
                           就绪回落 !<helper路径>），用户明文/oauth 原样透传
-  secret_bin.rs           pif-secret 用户级稳定安装（%LOCALAPPDATA%\pi-flash\bin
-                          + HKCU Path 判重追加 + 广播；051，标记去路径化的地基）
+  register_to_sys.rs       向系统注册（051/081）：用户级稳定 bin 目录
+                          %LOCALAPPDATA%\pi-flash\bin 地基（HKCU Path 段判重
+                          + 前置首位 + 保类型写回 + 广播）；注册物①pif-secret
+                          （标记去路径化地基）②全局 pi shim（pi.exe +
+                          pi-target.json 指针，vendored 内核注册为系统默认
+                          `pi`，release 默认开/debug 需 PI_FLASH_PI_SHIM=1）
   fs_lock.rs              proper-lockfile 协议复刻（<file>.lock 目录，30s stale）
   migrate_0421.rs         042-1 一次性迁移：pf 账本 → models.json + 标记条目
   registry.rs             全量 provider 注册表——仅「新增 Provider」弹窗元数据
@@ -88,7 +92,8 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   paths.rs                PF 自有文件路径（不污染 pi，010）
   market/                 040-1 扩展市场 pi-link 侧（目录抓取/磁盘快照）
   automation.rs           pif-ui 自动化协议（NDJSON over TCP 127.0.0.1）
-  bin/                    附属可执行（pif-ui CLI 等）
+  bin/                    附属可执行（pif-ui CLI、pif-secret 取 key、pi 全局
+                          前置 shim 等）
 
 crates/app/src/         GPUI 界面（Chat = 全应用状态实体：直属字段只有 8 个
                         状态子结构 pool/composer/layout/psp/ws/dlg/cfg/aux——

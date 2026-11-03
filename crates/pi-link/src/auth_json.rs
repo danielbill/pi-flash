@@ -36,7 +36,7 @@ pub fn helper_exe() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// 写进 auth.json 的 key 值。PATH 模式（`secret_bin::ensure_installed` 成功）
+/// 写进 auth.json 的 key 值。PATH 模式（`register_to_sys::ensure_installed` 成功）
 /// → **零路径裸命令** `!pif-secret get <provider>`，版本升级/重装/搬家永不
 /// 失效（0.4.0→0.4.1 事故的治本）；未就绪回落绝对路径形态（老行为）。
 ///
@@ -44,7 +44,7 @@ pub fn helper_exe() -> PathBuf {
 /// 没有 Git Bash 时回落 `sh -c`，两种 shell 都吃单引号；反斜杠会被 shell 当
 /// 转义符吞掉。
 pub fn marker_key(provider: &str) -> String {
-    marker_key_with(crate::secret_bin::path_mode_ok(), provider)
+    marker_key_with(crate::register_to_sys::path_mode_ok(), provider)
 }
 
 /// `marker_key` 的显式形态变体（供测试与迁移；不读进程级标志）。
@@ -248,7 +248,7 @@ pub fn migrate_markers_pathless_at(path: &Path, path_mode: bool) -> Result<usize
 
 /// `migrate_markers_pathless_at` 的生产入口（真实 auth_path + 进程级标志）。
 pub fn migrate_markers_pathless() -> Result<usize, String> {
-    migrate_markers_pathless_at(&auth_path(), crate::secret_bin::path_mode_ok())
+    migrate_markers_pathless_at(&auth_path(), crate::register_to_sys::path_mode_ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +272,8 @@ pub fn store_secret(provider: &str, secret: &str) -> Result<(), String> {
     }
     // PATH 模式未决（启动后台线程还没跑到）→ 先同步 ensure 一次（幂等毫秒
     // 级），让新写的标记条目直接落零路径裸形态，不留一版会漂移的绝对路径。
-    if !crate::secret_bin::path_mode_ok() {
-        crate::secret_bin::ensure_installed();
+    if !crate::register_to_sys::path_mode_ok() {
+        crate::register_to_sys::ensure_installed();
     }
     if let Err(e) = store_marker(provider) {
         let _ = vault.delete(&entry);
