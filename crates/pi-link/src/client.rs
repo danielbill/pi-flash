@@ -87,6 +87,15 @@ pub fn spawn(
         );
     }
     let mut cmd = StdCommand::new(node);
+    // cwd 兜底：无项目/草稿会话的 cwd 可能为空——`current_dir("")` 在
+    // Windows 直接 os error 123（文件名语法不正确），pi 一次都起不来
+    // （L3 隔离实例实测 2026-11-03：全部 spawn 静默失败，ext/工具面全哑）。
+    // 落到进程当前目录（boot 侧已重定向数据目录，无 projects 语境）。
+    let cwd: &Path = if cwd.as_os_str().is_empty() {
+        &Path::new(".")
+    } else {
+        cwd
+    };
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
     cmd.arg(&cli);
