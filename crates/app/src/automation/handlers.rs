@@ -523,6 +523,7 @@ pub(super) fn dispatch(
         method::PLUGIN_BADGE => {
             // 契约 v3 session_list_render：会话行徽标清单。与 function_panel
             // 行渲染同一条缓存链（plugin_badge）；args {path}，回当前徽标图标/tone。
+            // 清单 = 宿主渲染前最终结果：含 PF 主体 pin（置顶时首条）+ 上限 5。
             // 徽标是否"画出来"由这条断言（宿主渲染前取到的最终清单）。
             let path = params_path(params, "path")?;
             let items: Vec<Value> = chat

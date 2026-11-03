@@ -250,9 +250,10 @@ pub(crate) fn session_row_view(
                 )
                 // 时间区（v55 fmtAgo）：固定宽右对齐成一列（宽度与左侧图标区+
                 // padding 视觉平衡，标题可用空间最大化）
-                // 时间区：插件徽标（契约 v3 sessions.setBadge，落时间位置）
-                // 优先占位——全部画出、从右到左、间隔 10px（多插件不裁不并，
-                // 用户定夺 2026-10-28）；没徽标才回落相对时间
+                // 时间区：徽标（PF 主体 pin 优先最右 + 插件按注册序，契约
+                // v3 sessions.setBadge / session_list_render，落时间位置）——
+                // 从右到左、间隔 10px、上限 5 保右弃左（用户定夺 2026-12，
+                // 替代 2026-10-28 的"不裁不并"）；没徽标才回落相对时间
                 .child({
                     if badges.is_empty() {
                         div()
@@ -278,8 +279,13 @@ pub(crate) fn session_row_view(
                             .justify_end()
                             .gap(px(10.))
                             .children(badges.into_iter().rev().map(|(icon, tone)| {
+                                // tone：accent = 完成通知色（插件亮灯）；
+                                // dim = PF 主体 pin（对齐状态槽 pin 钮用色）；
+                                // 其余 = 常态灰
                                 let color = if tone == "accent" {
                                     crate::appearance::theme::UNREAD
+                                } else if tone == "dim" {
+                                    t.text_dim
                                 } else {
                                     t.text_faint
                                 };

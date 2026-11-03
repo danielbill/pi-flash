@@ -311,6 +311,24 @@ pub(crate) fn badges_for(
         .collect()
 }
 
+/// 行徽标上限（用户定夺 2026-12，替代 2026-10-28 的"不裁不并"）：PF 主体
+/// 1 条（pin）+ 插件至多 4 条。
+pub(crate) const ROW_BADGE_MAX: usize = 5;
+
+/// 单行徽标终装配（纯函数，测试锚点）：PF 主体 pin 优先插最前（绘制
+/// 从右到左 = 序列首条最右，用户定夺：置顶了谁还在乎时间），插件徽标按
+/// 注册序排其后；超上限保右弃左。
+pub(crate) fn assemble_row_badges(
+    pinned: bool,
+    mut badges: Vec<(SharedString, String)>,
+) -> Vec<(SharedString, String)> {
+    if pinned {
+        badges.insert(0, (SharedString::from("icons/pin.svg"), "dim".to_string()));
+    }
+    badges.truncate(ROW_BADGE_MAX);
+    badges
+}
+
 /// 贡献项图标三来源映射：宿主内置名 / `assets:<名>` / `assets/` 相对路径。
 pub(crate) fn contrib_icon_path(id: &str, icon: &str) -> SharedString {
     // `assets/` 是目录结构的一段，**不能剥**——曾剥掉导致

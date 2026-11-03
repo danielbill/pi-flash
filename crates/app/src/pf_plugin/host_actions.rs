@@ -1047,8 +1047,9 @@ impl Chat {
 
 impl Chat {
     /// 会话列表徽标（契约 v3）：命中该会话的**全部**徽标 → [(icon 资产路径, tone)]，
-    /// 每插件一条（owner 唯一）。绘制归宿主：从右到左、间隔 10px 全画出（用户定夺
-    /// 2026-10-28），不裁不并。
+    /// 每插件一条（owner 唯一）。绘制归宿主：PF 主体 pin 优先最右，插件按注册
+    /// 序从右到左、间隔 10px，上限 5 保右弃左（用户定夺 2026-12，替代
+    /// 2026-10-28 的"不裁不并"）。
     pub(crate) fn plugin_badge(
         &mut self,
         session: &std::path::Path,
@@ -1125,7 +1126,8 @@ impl Chat {
                 at: std::time::Instant::now(),
             });
         }
-        out
+        // 终装配：PF 主体 pin（置顶态）优先最右 + 上限 5 保右弃左
+        assemble_row_badges(self.session_pinned(session), out)
     }
 }
 

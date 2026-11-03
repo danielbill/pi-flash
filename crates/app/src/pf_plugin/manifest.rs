@@ -1081,6 +1081,42 @@ mod tests {
         assert!(badges_for(&[], std::path::Path::new(ses)).is_empty());
     }
 
+    #[test]
+    fn row_badge_assembly_pin_first_cap_five() {
+        // 终装配：PF 主体 pin 优先最右（首条），插件按注册序排其后
+        let ses = "C:/x/a.jsonl";
+        let mk = |owner: &str, icon: &str| PluginBadge {
+            owner: owner.into(),
+            session: ses.into(),
+            icon: format!("assets:{icon}").into(),
+            tone: "accent".into(),
+        };
+        let plugins = vec![mk("pf-wxbot", "wx.svg"), mk("other", "o.svg")];
+        let hit = assemble_row_badges(true, badges_for(&plugins, std::path::Path::new(ses)));
+        assert_eq!(
+            hit,
+            vec![
+                ("icons/pin.svg".into(), "dim".into()),
+                ("plugins/pf-wxbot/assets/wx.svg".into(), "accent".into()),
+                ("plugins/other/assets/o.svg".into(), "accent".into()),
+            ]
+        );
+        // 未置顶 → 无 pin
+        assert_eq!(
+            assemble_row_badges(false, badges_for(&plugins, std::path::Path::new(ses))).len(),
+            2
+        );
+        // 上限 5 保右弃左：置顶 + 6 插件 → pin + 前 4 个插件（越靠后越靠左，弃）
+        let many: Vec<PluginBadge> = (0..6)
+            .map(|i| mk(&format!("p{i}"), &format!("i{i}.svg")))
+            .collect();
+        let hit = assemble_row_badges(true, badges_for(&many, std::path::Path::new(ses)));
+        assert_eq!(hit.len(), crate::pf_plugin::ROW_BADGE_MAX);
+        assert_eq!(hit[0], ("icons/pin.svg".into(), "dim".into()));
+        assert_eq!(hit[1], ("plugins/p0/assets/i0.svg".into(), "accent".into()));
+        assert!(hit.last().unwrap().0.contains("i3.svg"));
+    }
+
     #[allow(dead_code)]
     fn __anchor() {}
 
