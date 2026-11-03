@@ -765,6 +765,11 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
     };
     let mut candidates = scan_candidates(root);
     candidates.sort_by(|a, b| a.1.cmp(&b.1));
+    // 装载单位 = 插件 id，不是磁盘目录（2026-12 真机）：市场包安装后，历史
+    // link:dev 平铺残留（prune 认清单不删、一直留在磁盘）经目录别名冒名命中
+    // 同一台账条目 → 同插件双装载 → fn_bar 双 icon。同 id 多候选时：版本层
+    // 目录名精确等于台账版本者优先，平铺（dev 兼容布局）回落。
+    let mut picked: Vec<(bool, PluginManifest)> = Vec::new(); // (exact, m)，按 id 去重
     for (pkg, dir) in candidates {
         // 准入/停用判定必须看**顶层包目录名**：版本层目录名是版本号，拿它比
         // 包名永远比不中（停用过滤失效 → 重启后照旧装载，090-4 v5 踩过）
@@ -774,10 +779,11 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
         // 版本层布局**只认台账版本那一个目录**（台账 = 唯一安装真相）：更新后
         // 旧版本目录若还没清掉（被占用 / 上版 PF 没清），两版清单都合法时会
         // 双装载——双 tab、双右键项，且 register_plugin_dir 按字符串序 last-wins
-        // （0.1.10 < 0.1.9）。平铺布局 dir == <pkg>，无版本可比，照旧。
-        if dir != root.join(&pkg)
-            && dir.file_name().and_then(|n| n.to_str()) != Some(ledger_version.as_str())
-        {
+        // （0.1.10 < 0.1.9）。平铺布局 dir == <pkg>，无版本可比，照旧（回落位）。
+        let flat = dir == root.join(&pkg);
+        let exact =
+            !flat && dir.file_name().and_then(|n| n.to_str()) == Some(ledger_version.as_str());
+        if !flat && !exact {
             continue; // 非台账版本的残留目录：不装载、不算失效（prune 会清）
         }
         match parse_manifest(&dir) {
@@ -794,8 +800,15 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
                     continue; // 纯库包
                 }
                 m.pkg = pkg;
-                register_plugin_dir(&m.id, &dir);
-                out.manifests.push(m);
+                match picked.iter().position(|(_, e)| e.id == m.id) {
+                    Some(ix) => {
+                        // 同 id 已有候选：精确匹配把非精确挤掉，反之让位
+                        if exact && !picked[ix].0 {
+                            picked[ix] = (exact, m);
+                        }
+                    }
+                    None => picked.push((exact, m)),
+                }
             }
             Err(e) => {
                 // 拒载原因进 stale 走 toast/市场提示；stderr 只在 debug 构建打
@@ -805,6 +818,11 @@ pub(crate) fn scan_root(root: &Path, ledger: &[pi_link::pf_plugins::LedgerEntry]
                 out.stale.push(stale_of(ledger_name, &pkg, &dir, e));
             }
         }
+    }
+    for (_, m) in picked {
+        let dir = m.dir.clone();
+        register_plugin_dir(&m.id, &dir);
+        out.manifests.push(m);
     }
     out
 }
@@ -1665,6 +1683,33 @@ wasm = "plugin.wasm"
         // 台账版本目录不存在（异常残局）→ 什么都不装、也不拿别的版本顶上
         let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "9.9.9", false)]);
         assert!(out.manifests.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 历史污染（2026-12 真机）：link:dev 平铺残留（prune 认清单不删）与市场
+    /// 版本层包同 id——平铺经目录别名第二形态冒名命中同一条账 → 曾双装载
+    /// （fn_bar 双微信）。只装版本层（精确匹配优先）；只有平铺时回落装载。
+    #[test]
+    fn scan_root_flat_dev_residue_yields_to_market_version() {
+        let tmp = std::env::temp_dir().join(format!("pf-flatdev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // 市场版（版本层）+ dev 平铺残留（同 id、旧版本号）
+        write_good_pkg(&tmp.join("@s__quick-panel/0.1.6"), "quick-panel");
+        write_good_pkg(&tmp.join("quick-panel"), "quick-panel");
+
+        let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "0.1.6", false)]);
+        assert_eq!(out.manifests.len(), 1, "同 id 只装一个");
+        assert_eq!(
+            out.manifests[0].dir,
+            tmp.join("@s__quick-panel/0.1.6"),
+            "版本精确匹配优先于平铺回落"
+        );
+
+        // 台账版本目录缺席、只剩平铺 → 平铺回落装载（dev 部署不回归）
+        std::fs::remove_dir_all(&tmp.join("@s__quick-panel")).unwrap();
+        let out = scan_root(&tmp, &[ledger_entry("@s/quick-panel", "9.9.9", false)]);
+        assert_eq!(out.manifests.len(), 1);
+        assert_eq!(out.manifests[0].dir, tmp.join("quick-panel"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
