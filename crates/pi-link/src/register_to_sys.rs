@@ -126,8 +126,7 @@ fn copy_self_sibling(name: &str, bin_dir: &std::path::Path) {
 /// 全局 `pi` shim 开关：release 默认开；debug 默认关（stable_entry_exe 先例：
 /// 开发跑多少遍都不许碰用户 shell），`PI_FLASH_PI_SHIM=1` 显式开启供开发验证。
 pub fn pi_shim_enabled() -> bool {
-    cfg!(not(debug_assertions))
-        || std::env::var("PI_FLASH_PI_SHIM").is_ok_and(|v| v == "1")
+    cfg!(not(debug_assertions)) || std::env::var("PI_FLASH_PI_SHIM").is_ok_and(|v| v == "1")
 }
 
 /// 把 PF 内置 pi 内核注册为系统全局 `pi`（幂等，毫秒级）：
@@ -292,8 +291,7 @@ pub(crate) fn path_with_segment_front(path_value: &str, dir: &str) -> Option<Str
     if want.is_empty() {
         return None;
     }
-    let norm =
-        |s: &str| s.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase();
+    let norm = |s: &str| s.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase();
     if path_value
         .split(';')
         .next()
@@ -363,10 +361,7 @@ mod tests {
         );
         // 大小写 / 尾分隔符归一后已首位 → None
         assert_eq!(
-            path_with_segment_front(
-                "c:\\U\\APPDATA\\LOCAL\\PI-FLASH\\BIN\\;C:\\Windows",
-                dir
-            ),
+            path_with_segment_front("c:\\U\\APPDATA\\LOCAL\\PI-FLASH\\BIN\\;C:\\Windows", dir),
             None
         );
         // 空值 → 直接给 dir
