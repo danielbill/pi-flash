@@ -210,6 +210,24 @@ impl Chat {
                 Err(e) => self.plugin_broken(ix, e, cx),
             }
         }
+        // 尾闸：同包只留第一颗（2026-12 真机：内存条目异常重复时 fn_bar 双
+        // icon——miss 循环对每条目各查一次 push，行徽标有 row_cache 按 pkg
+        // 兑底，这里补上同款防线；触发即打取证日志）。
+        let before = out.len();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        out.retain(|(ix, _, _, _)| {
+            let Some(e) = self.plugins.plugins.get(*ix) else {
+                return false;
+            };
+            seen.insert(e.manifest.pkg.as_str())
+        });
+        if out.len() != before && cfg!(debug_assertions) {
+            eprintln!(
+                "[pf-plugin] 异常：fn_bar 同包重复条目 {}→{}（重复装载来源待查）",
+                before,
+                out.len()
+            );
+        }
         out
     }
 
@@ -1059,6 +1077,9 @@ impl Chat {
         let mut out: Vec<(SharedString, String)> = badges_for(&self.plugins.badges, session);
         const TTL: std::time::Duration = std::time::Duration::from_millis(1000);
         let n = self.plugins.plugins.len();
+        // 同包只问一次（2026-12 真机：内存条目异常重复时防双徽标；row_cache
+        // 按 pkg 命中已能兜住大部分，这里是显式收口）
+        let mut seen_pkg: std::collections::HashSet<String> = std::collections::HashSet::new();
         for ix in 0..n {
             // 能力面（8tb.2）：徽标是每行渲染结果，载体无关——JS 未导出 /
             // wasm 未实现都回 None（负缓存 TTL 内不再问）
@@ -1066,7 +1087,7 @@ impl Chat {
                 let e = &self.plugins.plugins[ix];
                 (e.manifest.pkg.clone(), !e.disabled)
             };
-            if !capable {
+            if !capable || !seen_pkg.insert(pkg.clone()) {
                 continue;
             }
             if let Some(c) = self

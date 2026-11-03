@@ -293,13 +293,23 @@ impl Chat {
         name: &str,
         manifests: Vec<PluginManifest>,
     ) -> bool {
-        if let Some(ix) = self.plugin_ix_by_pkg(name) {
+        // 全量摘除同包条目（2026-12 真机：曾只摘 position 第一条，配合来源
+        // 未明的重复条目 → fn_bar 双 icon；条目唯一性在此收口，残留了几条
+        // 就摘几条，>1 时打取证日志指认）。
+        let mut removed = 0usize;
+        while let Some(ix) = self.plugin_ix_by_pkg(name) {
             self.plugin_evict(ix);
             self.plugins.plugins.remove(ix);
+            removed += 1;
             // 下标位移：插件面板存的是位置，任何一条被摘都退默认
             if matches!(self.layout.dock_panel, crate::DockPanel::Plugin(_)) {
                 self.layout.dock_panel = crate::DockPanel::Default;
             }
+        }
+        if removed > 1 && cfg!(debug_assertions) {
+            eprintln!(
+                "[pf-plugin] 异常：{name} 落位前已存在 {removed} 条运行条目（重复装载，来源待查）"
+            );
         }
         if manifests.is_empty() {
             return false;
