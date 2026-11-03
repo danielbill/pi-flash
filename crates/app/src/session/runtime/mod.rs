@@ -1174,6 +1174,40 @@ mod turn_outcome_tests {
             assert!(r.agent_running);
         });
     }
+
+    /// flush 链上的扩展命令：排队发出的 /usage（agent 跑着时用户发的），
+    /// 回执也是 disposition=handled（pi 对扩展命令不开 run）。此前被 flush
+    /// 回执分支吞掉 → 等待行永久「执行扩展命令中」，弹窗关掉也不退。
+    #[gpui::test]
+    fn handled_on_flush_path_settles_command_phase(cx: &mut TestAppContext) {
+        let rt = runtime(cx);
+        rt.update(cx, |r, cx| {
+            r.optimistic_send("/usage".into(), true, cx);
+            r.flush_in_flight = Some(FlushInFlight {
+                id: "cmd-9".into(),
+                interrupt: None,
+            });
+        });
+        assert!(rt.read_with(cx, |r, _| r.phase_command && r.phase_waiting));
+        feed(
+            &rt,
+            cx,
+            Event::Response {
+                id: "cmd-9".into(),
+                command: "prompt".into(),
+                success: true,
+                error: None,
+                data: Some(serde_json::json!({"disposition": "handled"})),
+            },
+        );
+        rt.read_with(cx, |r, _| {
+            assert!(
+                !r.phase_command && !r.phase_waiting,
+                "flush 路径 handled 也必须收场"
+            );
+            assert!(r.flush_in_flight.is_none(), "flush 关联已消化");
+        });
+    }
 }
 
 #[cfg(test)]

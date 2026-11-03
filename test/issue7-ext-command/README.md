@@ -71,7 +71,34 @@ spawn vendored pi `--mode rpc` + 假 /usage 扩展（纯 UI，不 sendMessage）
 Git Bash 实踩：`pif-ui exec --arg text=/usage` 会被 MSYS 路径翻译成
 `C:/Program Files/Git/usage`——必须 `MSYS2_ARG_CONV_EXCL='*'` 前缀。
 
+## 三改（2026-11-03 深夜）：真正根因——flush 回执分支吞掉 handled
+
+用户路径可直接复现（pi_work「这是测试」旧会话 → 进去打 `/usage` → 关弹窗 →
+「执行扩展命令中」永久亮）。wire 日志里 **Close → handled 到了**，但 PF 状态
+`waiting=true`、`phase_command=true`。加临时探针抓到：
+
+```
+[dbg] prompt resp id=cmd-11 success=true disp=Some("handled") flush=Some("cmd-11") ...
+```
+
+**这条 prompt 是本地队列 flush 发出的**（`flush_in_flight.id` 匹配），所以先命中
+`events.rs` 的 flush 回执分支，handled 语义被当成普通 flush 回执吞掉，
+后面的 handled 分支永不执行。修法：flush 分支里先按 disposition 收场命令相位，
+再做队首/打断槽逻辑。单测：`handled_on_flush_path_settles_command_phase`。
+
+同时替换阻塞弹窗外壳（旧版无高度限制）：
+
+- 卡片 600×600（小窗口按视口收缩），通用标题栏（首行标题 + 排队数 + ✕ 关闭）
+- 上：信息面板 ≈ 50% 高、独立滚动；下：操作面板 ≈ 50% 高、独立滚动（可见滚动条）
+- 旧版长标题（/usage 的 «View all» 40+ 行）会比小窗口还高：卡片铺满视口、
+  Close 在屏外，点背板又落在卡片上（stop_propagation）→ 弹窗根本关不掉
+
+验证：同一复刻环境（完整复制 pi-flash-dev 配置 + 真实 pi_work cwd + 会话副本
++ zai/glm-5.3-flash）Close 后 `waiting=false`、`msgs` 回 11（已落盘会话按磁盘
+真相摘气泡）、`ext_dialog=false`。
+
 ## 二改（2026-11-03 晚）：收场对齐 pi-web 磁盘真相 + Stop 取消弹窗
+
 
 用户实测反馈：弹窗关闭后还挂「执行扩展命令中…」好几秒，退出后整屏清空
 「像没执行过」。对照 pi-web（SDK 内嵌）逐行核：

@@ -38,6 +38,11 @@ pub(crate) struct AuxUi {
     pub(crate) ext_status: Vec<(String, String)>,
     pub(crate) ext_widgets: Vec<(String, Vec<String>, bool)>,
     pub(crate) ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
+    /// 阻塞弹窗两个内容区的滚动句柄（上：信息面板；下：操作面板）。
+    /// 扩展标题可长到 40+ 行（pi-usage 的 /usage「View all」），小窗口
+    /// 不限高不滚动就会把底部按钮顶出视口、点击全部落在卡片上，弹窗关不掉
+    pub(crate) ext_dialog_info_scroll: gpui::ScrollHandle,
+    pub(crate) ext_dialog_op_scroll: gpui::ScrollHandle,
     /// 扩展阻塞请求队列（pi-web extension-ui-queue parity）：队头在屏上
     /// （ext_dialog），其余按到达序在后面等。多个阻塞请求可同时存活
     /// （并行工具各自被扩展门控），pi 侧每个都持有到应答为止——单槽位
@@ -780,6 +785,8 @@ impl Chat {
                 ext_status: Vec::new(),
                 ext_widgets: Vec::new(),
                 ext_dialog: None,
+                ext_dialog_info_scroll: gpui::ScrollHandle::new(),
+                ext_dialog_op_scroll: gpui::ScrollHandle::new(),
                 ext_dialog_waiting: Vec::new(),
                 ext_notice: None,
                 ask: None,

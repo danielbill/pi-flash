@@ -88,13 +88,19 @@ impl SessionRuntime {
 
     /// 命令相位收场（只由 pi 的 `prompt` handled 回执驱动——rpc-mode 在
     /// `await command.handler()` 之后才发，等价 pi-web 的 prompt_done）：
-    /// 等待行退场 + 状态复位。消息处置按 pi-web `loadSession` 的磁盘真相：
-    /// 会话已落盘 → 盘上没有这条命令消息，摘乐观气泡；**未落盘** → pi-web
-    /// 走 404 分支不动列表，气泡与侧栏 transient 行（PF 伪标签）都保留。
+    /// 命令相位（文案）**无条件**收场。`agent_running` 可能来自**上一轮**
+    /// （用户在 agent 跑着时发的命令），拿它挡住会把等待行永远卡在
+    /// 「执行扩展命令中」；真有 run 在跑时 `phase_waiting` 保持（那是那条
+    /// 真轮在等，pi-web `if (!sdkAgentActive) settleUiStage()` 同款）。
+    /// 消息处置按 pi-web `loadSession` 的磁盘真相：会话已落盘 → 盘上没有
+    /// 这条命令消息，摘乐观气泡；**未落盘** → pi-web 走 404 分支不动列表，
+    /// 气泡与侧栏 transient 行（PF 伪标签）都保留。
     pub(super) fn settle_command_phase(&mut self, cx: &mut Context<Self>) {
-        self.phase_waiting = false;
         self.phase_command = false;
-        self.status = status_line(true, "idle");
+        if !self.agent_running {
+            self.phase_waiting = false;
+            self.status = status_line(true, "idle");
+        }
         // 顺手补绑定（文件已落盘就换真身）；绑定成功 = 盘上有这个会话 =
         // pi-web loadSession 拿到 200，磁盘真相赢。未绑定（草稿 / 纯 UI
         // 命令压根没落盘）保留气泡与伪标签。
@@ -162,6 +168,19 @@ impl SessionRuntime {
                     // 队首仍在队列、打断条目放回槽，等下一次 settled 重试，
                     // 不静默丢、更不会插进当前轮。
                     let in_flight = self.flush_in_flight.take();
+                    // 排队的斜杠命令（agent 跑着时用户发 /usage 之类）也走这条
+                    // 链：pi 对扩展命令**立即执行且不开 run**，回执是
+                    // `disposition:"handled"` 而不是普通轮。命令相位必须在这里
+                    // 收场——等 settled 永远等不到（真机回归：等待行永久
+                    // 「执行扩展命令中」，弹窗关不掉/关掉也不退）。
+                    if success
+                        && data
+                            .as_ref()
+                            .and_then(pi_link::protocol::prompt_disposition)
+                            == Some("handled")
+                    {
+                        self.settle_command_phase(cx);
+                    }
                     if success {
                         let from_interrupt = in_flight.is_some_and(|f| f.interrupt.is_some());
                         if !from_interrupt && !self.queued_inputs.is_empty() {
@@ -433,16 +452,13 @@ impl SessionRuntime {
                     // 使用的时候会话页面卡住了」）：pi 对这类输入**不开 run**
                     // ——没有 agent_start / 同文回显 / agent_settled 可等，
                     // wire 上只有命令自己的 UI 事件（extension_ui_request/
-                    // extension_error，ext_ui 已渲染）+ 本 response。此前
-                    // phase_waiting 只能等 settled 来清 → 等待行永久转圈。
-                    // handler 自己 sendMessage 开跑的情形（命令引出对话）：
-                    // AgentStart 先于本 response 到达（同管道序），
-                    // agent_running 在位——等待行让给那条真轮，替身气泡
-                    // 留给回显/轮末对账，这里不动（pi-web 只在
-                    // !sdkAgentActive 时 settle 的同款分支）。
-                    if !self.agent_running {
-                        self.settle_command_phase(cx);
-                    }
+                    // extension_error，ext_ui 已渲染）+ 本 response。
+                    // handled 无条件收场命令相位：`agent_running` 为 true 可能
+                    // 只是**上一轮**还在跑（用户在 agent 跑着时发的命令），
+                    // 拿它挡住 = 行永远卡在「执行扩展命令中」（真机回归）。
+                    // handler 自己 sendMessage 引出真轮的情形：AgentStart 先于
+                    // 本 response 到达（同管道序），`phase_waiting` 由真轮接管。
+                    self.settle_command_phase(cx);
                 } else if success {
                     self.status = format!("{command} ok");
                 } else if command == "prompt" {
