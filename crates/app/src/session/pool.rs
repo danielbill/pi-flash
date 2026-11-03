@@ -567,10 +567,16 @@ impl Chat {
         // 发送时懒加载（input 层 ensure_spawned），重启后绑定会话进程不活 →
         // ext 无处安身，微信消息无人收（真机 2026-11-03）。通用判据 = 台账
         // （session-ext.json），零插件知识。
+        // 判据要过 090-10 版本层自愈：插件升级后台账里只剩旧版本的死路径，
+        // 按原样判非空会为一个再也挂不上任何 ext 的会话白起进程（且 spawn
+        // 时那条死 `-e` 还会让其立刻退出）。
         {
             let key = rt.read(cx).key.clone();
             let has_ext = pi_link::session_ext::store_path()
-                .map(|p| !pi_link::session_ext::read_for(&p, &key).is_empty())
+                .map(|p| {
+                    let raw = pi_link::session_ext::read_for(&p, &key);
+                    !pi_link::session_ext::resolve_sources(&raw).0.is_empty()
+                })
                 .unwrap_or(false);
             if has_ext {
                 rt.update(cx, |r, cx| {

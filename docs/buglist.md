@@ -3,6 +3,25 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已修（0.4.0 发版测试，2026-11-03）——微信插件「绑定后重启即哑」：台账挂载路径卡在旧版本目录
+
+- 根因（发版包 0.4.0 真机复现）：PF 插件绑定微信时把 `pi_extensions` 的**绝对路径**
+  写进会话台账（`session-ext.json`），而市场布局是 `plugins/<pkg>/<ver>/pi/index.mjs`
+  ——路径里带版本目录。插件 0.1.4 → 0.2.0 升级后旧版本目录被清，台账仍是
+  `…\0.1.4\pi/index.mjs`；重启恢复会话时 spawn 把它当 `-e` 传给 pi，pi
+  **加载扩展失败即退出**（`Failed to load extension … Extension path does not exist`），
+  进程根本起不来 → ext（收发/轮询本体）无处安身，无「已连接」上线通知、微信发消息
+  无响应；镜像里绑定指针还在，看起来像「插件失效」。
+- 修法：台账当「语义引用」不自愈不用——`pi_link::session_ext::resolve_sources`
+  （版本层重定位到当前包同名文件 / 死条目摘除 / 重复去重，非插件包路径原样保留）
+  ＋首次自愈回写；消费点全过闸：`SessionRuntime::new`、`spawn`（ext_sources + 台账段）、
+  `plugin_attach_pi_exts` 合并前、`has_live_service`（`mount_key` 抹版本段）、
+  005 预热判据。见 90-4 §9。
+- 验证：`cargo test -p pi-link resolve_mount` 5 例（换代/平铺/死条目/外来路径/去重）
+  ＋`cargo test -p app has_live_service_tests` 4 例；真机——把台账还原成 0.1.4 死路径
+  后启动 0.4.0，台账自愈成 0.2.0、pi 存活、`svc_log` 出 `boot … pf_enabled=true` 且
+  `notice_log` 补「已连接」。
+
 ## 已修（2026-11-02 晚）——新会话模型列表点行不出 ✓ / pi 死后选不中、发送转圈
 
 - 根因（两处 PF 老缺口，被「pi 1.5.0 启动即死」第一次暴露）：① 退出臂不清

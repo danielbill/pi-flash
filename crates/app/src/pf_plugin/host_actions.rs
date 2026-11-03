@@ -353,11 +353,24 @@ impl Chat {
             return;
         };
         let mut merged = pi_link::session_ext::read_for(&store, pf_session_key);
-        if !force_restart && pi_exts.iter().all(|p| merged.iter().any(|h| h == p)) {
+        // 090-10 版本层自愈：先重解析已有条目（旧版本目录的路径 → 当前版本，
+        // 死条目摘除）再并入新路径。不自愈就会出现「台账同时留着 0.1.4 与
+        // 0.2.0 两条」，死的那条让 pi 整个起不来（真机 2026-11-03 重启哑火）
+        merged = pi_link::session_ext::resolve_sources(&merged).0;
+        if !force_restart
+            && pi_exts.iter().all(|p| {
+                merged
+                    .iter()
+                    .any(|h| pi_link::session_ext::same_source(h, p))
+            })
+        {
             return; // 清单已含，无需重启
         }
         for p in &pi_exts {
-            if !merged.iter().any(|h| h == p) {
+            if !merged
+                .iter()
+                .any(|h| pi_link::session_ext::same_source(h, p))
+            {
                 merged.push(p.clone());
             }
         }
@@ -1187,13 +1200,35 @@ fn norm_mount_path(p: &str) -> String {
     p.replace(char::from(92), "/").to_lowercase()
 }
 
+/// 挂载路径的比较键：抹掉插件**版本层目录**（090-10 市场布局
+/// `…/plugins/<pkg>/<ver>/pi/index.mjs`）。台账是绑定当时写的，插件升级后
+/// 路径指向旧版本——按原样路径比永远比不中，闲置回收豁免失效 → 绑定会话被
+/// 回收，微信侧静默而镜像里绑定指针还在（真机 2026-11-03：重启后收发死）。
+/// 同包同文件的换代前后必须视为同一挂载，故比较键不带版本段。
+fn mount_key(p: &str) -> String {
+    let norm = norm_mount_path(p);
+    let Some(i) = norm.rfind("/plugins/") else {
+        return norm;
+    };
+    let head = &norm[..i + "/plugins/".len()];
+    let rest = &norm[i + "/plugins/".len()..];
+    let mut segs = rest.split('/');
+    let pkg = segs.next().unwrap_or("");
+    let after: Vec<&str> = segs.collect();
+    if after.len() > 1 && after[0].starts_with(|c: char| c.is_ascii_digit()) {
+        format!("{head}{pkg}/{}", after[1..].join("/"))
+    } else {
+        format!("{head}{pkg}/{}", after.join("/"))
+    }
+}
+
 /// 会话挂载台账 ∩ 启用中插件的扩展路径。纯函数（单测面）：
 /// `mounts` = 台账里该会话的条目，`live` = 启用中插件声明的扩展绝对路径。
 fn mounts_overlap_live(mounts: &[String], live: &[String]) -> bool {
-    let live: Vec<String> = live.iter().map(|p| norm_mount_path(p)).collect();
+    let live: Vec<String> = live.iter().map(|p| mount_key(p)).collect();
     mounts
         .iter()
-        .map(|m| norm_mount_path(m))
+        .map(|m| mount_key(m))
         .any(|m| live.iter().any(|l| *l == m))
 }
 
@@ -1214,6 +1249,21 @@ mod has_live_service_tests {
             mounts_overlap_live(&mounts, &live),
             "同一扩展的两种写法必须命中"
         );
+    }
+
+    /// 版本层换代（090-10）：台账写的是绑定当时的 `0.1.4` 路径，插件已升到
+    /// `0.2.0`。按原样比会落空 → 绑定会话失去闲置回收豁免 → 微信静默。
+    #[test]
+    fn version_layer_rewrite_still_counts_as_live() {
+        let live =
+            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__pf-wxbot\0.2.0\pi\index.mjs"]);
+        let mounts =
+            s(&["c:/users/u/.pi-flash/plugins/@pi-flash-plugins__pf-wxbot/0.1.4/pi/index.mjs"]);
+        assert!(mounts_overlap_live(&mounts, &live), "换代前后是同一挂载");
+        // 不同文件仍不命中
+        let other =
+            s(&[r"C:\Users\u\.pi-flash\plugins\@pi-flash-plugins__pf-wxbot\0.2.0\pi\other.mjs"]);
+        assert!(!mounts_overlap_live(&mounts, &other));
     }
 
     #[test]

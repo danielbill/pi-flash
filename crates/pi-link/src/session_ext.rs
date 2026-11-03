@@ -118,6 +118,102 @@ pub fn write_for_preserving_mounts(path: &Path, key: &str, user: &[String]) -> R
     write_for(path, key, &with_mounts_preserved(&existing, user))
 }
 
+/// 单条挂载源自愈（090-10 版本层换代）：路径型条目的绝对路径里带着**版本
+/// 目录**（`…/plugins/<pkg>/<ver>/pi/index.mjs`，market 布局），插件升级后
+/// 旧版本目录被删，台账仍指旧路径 → spawn 把它当 `-e` 传给 pi，扩展加载失败
+/// 会让**整个进程直接退出**（真机 2026-11-03：绑定微信后重启，会话起不来，
+/// ext 无处安身，收发全哑）。这里按当前安装包重解析同名文件。
+///
+/// 返回 `None` = 插件包内那条路径已经没救了（文件改名/包已卸载）——调用方
+/// 必须摘掉它：一条死路径毒死整批 `-e`，宁可少挂一条。非插件包路径原样返回
+/// （用户自有的绝对路径条目，PF 不替它判生死）。
+fn resolve_mount_source(src: &str) -> Option<String> {
+    if std::path::Path::new(src).is_file() {
+        return Some(src.to_string());
+    }
+    let norm = src.replace('\\', "/");
+    let Some(i) = norm.rfind("/plugins/") else {
+        return Some(src.to_string());
+    };
+    let rest = &norm[i + "/plugins/".len()..];
+    let (pkg, rel) = rest.split_once('/')?;
+    if pkg.is_empty() || rel.is_empty() {
+        return None;
+    }
+    let pkg_dir = Path::new(&norm[..i + "/plugins/".len() + pkg.len()]).to_path_buf();
+    // 候选相对路径：原样（平铺 / 版本未变）+ 去掉首段版本目录（换代）
+    let mut cands: Vec<&str> = vec![rel];
+    if let Some((head, tail)) = rel.split_once('/')
+        && !tail.is_empty()
+        && head.starts_with(|c: char| c.is_ascii_digit())
+    {
+        cands.push(tail);
+    }
+    // 候选根：当前清单所在目录（版本层 = 最新版本目录；平铺 = 包根）→ 包根
+    // → 任一子目录（换代后清单还没落的残留）
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(cur) = crate::service_ext::pkg_manifest_path(&pkg_dir)
+        .and_then(|m| m.parent().map(Path::to_path_buf))
+    {
+        roots.push(cur);
+    }
+    roots.push(pkg_dir.clone());
+    if let Ok(rd) = std::fs::read_dir(&pkg_dir) {
+        let mut subs: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        subs.sort();
+        roots.extend(subs);
+    }
+    for root in &roots {
+        for cand in &cands {
+            let f = root.join(cand);
+            if f.is_file() {
+                return Some(f.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// 两条扩展源是否指同一项（路径分隔符 / 盘符大小写不敏感）。台账里同一份
+/// 路径可能落成 `C:\…\pi/index.mjs` 或 `c:/…/pi/index.mjs` 两种写法，spawn 拼
+/// `-e`、attach 合并去重、自愈比对都必须过这道门，否则同一挂载会挂两遍
+/// （ext 双开）或永远合并不上。
+pub fn same_source(a: &str, b: &str) -> bool {
+    norm_key(a).eq_ignore_ascii_case(&norm_key(b))
+}
+
+/// 整份会话清单自愈：路径型条目按当前安装包重解析、死条目摘除、重复条目
+/// 去重（同一条 `-e` 挂两次 = ext 双开）。返回（新清单，是否变动）——
+/// 调用方拿到 `true` 时**回写台账**，下一次 spawn 起就不再付解析成本。
+pub fn resolve_sources(srcs: &[String]) -> (Vec<String>, bool) {
+    let mut out: Vec<String> = Vec::with_capacity(srcs.len());
+    let mut changed = false;
+    for src in srcs {
+        let resolved = if is_mount_path(src) {
+            resolve_mount_source(src)
+        } else {
+            Some(src.clone())
+        };
+        let Some(r) = resolved else {
+            changed = true; // 死条目：摘
+            continue;
+        };
+        if out.iter().any(|x| same_source(x, &r)) {
+            changed = true; // 重复条目：去重
+            continue;
+        }
+        if !same_source(&r, src) {
+            changed = true;
+        }
+        out.push(r);
+    }
+    (out, changed)
+}
+
 /// 便捷取路径（`~/.pi-flash/session-ext.json`）。
 pub fn store_path() -> Option<PathBuf> {
     crate::paths::session_ext_file()
@@ -280,6 +376,123 @@ fn is_plugin_pi_entry(path_norm_lower: &str, id_lower: &str) -> bool {
             after[0] == "pi"
                 || (after[0].starts_with(|c: char| c.is_ascii_digit()) && after[1] == "pi")
         }
+    }
+}
+
+/// 挂载源自愈单测（090-10 版本层换代；真机 2026-11-03 重启哑火根因）。
+#[cfg(test)]
+mod resolve_mount_tests {
+    use super::*;
+
+    fn sandbox() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pi-flash-mountheal-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn plant(pkg_dir: &Path, ver: Option<&str>, rel: &str) -> PathBuf {
+        let base = match ver {
+            Some(v) => pkg_dir.join(v),
+            None => pkg_dir.to_path_buf(),
+        };
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("pf-plugin.toml"), "schema = 5\n").unwrap();
+        let f = base.join(rel);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "export function activate() {}").unwrap();
+        f
+    }
+
+    /// 真机形态：台账里是旧版本目录的绝对路径，磁盘上只剩新版本目录。
+    #[test]
+    fn stale_version_dir_heals_to_current() {
+        let root = sandbox();
+        let pkg = root.join("plugins").join("@pi-flash-plugins__pf-wxbot");
+        let live = plant(&pkg, Some("0.2.0"), "pi/index.mjs");
+        // 旧版本目录已不在（市场安装换代时被清掉）
+        let stale = pkg.join("0.1.4").join("pi/index.mjs");
+        let srcs = vec![
+            "npm:pi-freeflow".to_string(),
+            stale.to_string_lossy().into_owned(),
+        ];
+        let (healed, changed) = resolve_sources(&srcs);
+        assert!(changed, "版本层重定位必须报变动（调用方要回写台账）");
+        assert_eq!(healed[0], "npm:pi-freeflow", "scheme 源原样保留");
+        assert!(
+            same_source(&healed[1], &live.to_string_lossy()),
+            "指向当前版本目录"
+        );
+        assert!(Path::new(&healed[1]).is_file(), "自愈结果必须是活文件");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 平铺 dev 布局（无版本层）路径本来就对：不自愈、不报变动。
+    #[test]
+    fn flat_layout_is_left_alone() {
+        let root = sandbox();
+        let pkg = root.join("plugins").join("pf-wxbot");
+        let live = plant(&pkg, None, "pi/index.mjs");
+        let srcs = vec![live.to_string_lossy().into_owned()];
+        let (healed, changed) = resolve_sources(&srcs);
+        assert!(!changed);
+        assert_eq!(healed, srcs);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 包内文件改名/包已卸载：条目没救了 → 摘掉（绝不能把死路径喂给 pi，
+    /// 一条死 `-e` 会让 pi 整个退出）。
+    #[test]
+    fn dead_plugin_entry_is_dropped() {
+        let root = sandbox();
+        let pkg = root.join("plugins").join("@x__gone");
+        plant(&pkg, Some("0.2.0"), "pi/index.mjs");
+        let srcs = vec![
+            pkg.join("0.1.0")
+                .join("pi/old-entry.mjs")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        let (healed, changed) = resolve_sources(&srcs);
+        assert!(changed);
+        assert!(healed.is_empty(), "死条目必须摘除");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 非插件包的用户自有绝对路径：PF 不替它判生死（原样留着）。
+    #[test]
+    fn foreign_absolute_path_is_preserved() {
+        let root = sandbox();
+        let other = root.join("my-ext").join("index.mjs");
+        let srcs = vec![other.to_string_lossy().into_owned()];
+        let (healed, changed) = resolve_sources(&srcs);
+        assert!(!changed);
+        assert_eq!(healed, srcs);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 同一文件两条写法（旧版本 + 新版本）：去重成一条（-e 挂两次 = ext 双开）。
+    #[test]
+    fn duplicates_collapse() {
+        let root = sandbox();
+        let pkg = root.join("plugins").join("@x__p");
+        let live = plant(&pkg, Some("0.2.0"), "pi/index.mjs");
+        let srcs = vec![
+            live.to_string_lossy().into_owned(),
+            pkg.join("0.1.4")
+                .join("pi/index.mjs")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        let (healed, changed) = resolve_sources(&srcs);
+        assert!(changed);
+        assert_eq!(healed.len(), 1);
+        assert!(same_source(&healed[0], &live.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

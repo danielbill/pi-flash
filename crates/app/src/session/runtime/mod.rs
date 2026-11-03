@@ -343,7 +343,19 @@ impl SessionRuntime {
         // 设置页改动不影响已存在的会话）；台账里存的是该会话自选的清单，
         // 重启/复接原样恢复。菜单勾选态只对齐这一份数组。
         let mut ext_sources = pi_link::session_ext::store_path()
-            .map(|p| pi_link::session_ext::read_for(&p, &key))
+            .map(|p| {
+                let raw = pi_link::session_ext::read_for(&p, &key);
+                // 090-10 版本层自愈：台账存的是含版本目录的绝对路径，插件
+                // 升级后旧版本目录被删 → spawn 把死路径当 `-e` 传给 pi，扩展
+                // 加载失败会让**整个进程退出**（真机 2026-11-03：绑定微信后
+                // 重启会话起不来，ext 无处安身，收发全哑）。重解析后变动了
+                // 就回写台账，下一次 spawn 不再付这份 cost。
+                let (healed, changed) = pi_link::session_ext::resolve_sources(&raw);
+                if changed {
+                    let _ = pi_link::session_ext::write_for(&p, &key, &healed);
+                }
+                healed
+            })
             .unwrap_or_default();
         // 台账是混合通道：scheme 源 = 用户自选；路径型条目 = PF 插件挂载通道
         // （session_ext::is_mount_path），只归 spawn 前的台账 -e 段管，不进
@@ -443,6 +455,13 @@ impl SessionRuntime {
         }
         // tc6：挂载源注册过滤的台账（custom 档 ext_sources + store 清单共用）
         let ledger = pi_link::pf_plugins::load_ledger();
+        // 090-10 版本层自愈：ext_sources 里的挂载路径可能指着上一版本的
+        // 目录（运行中升级插件 / 台账自愈前的存量）——先重解析再拼参数，
+        // 免得两段（custom 档 / 台账段）各挂一份或挂上死的 `-e`
+        let (healed_ext, ext_changed) = pi_link::session_ext::resolve_sources(&self.ext_sources);
+        if ext_changed {
+            self.ext_sources = healed_ext;
+        }
         match self.tools_preset.as_str() {
             // spawn-arg tool selection (pi-web uses in-process
             // setActiveToolsByName; the RPC surface has no live switch).
@@ -495,8 +514,15 @@ impl SessionRuntime {
         if let Some(store) = pi_link::session_ext::store_path() {
             // 停用/卸载后的残留挂载条目必须失效（真机 2026-10-31：面板 off 重启
             // 后 ext 照跑还能收发——store 只增不减，spawn 前按注册状态过滤；
-            // 插件仓 tc6 锁回归）
-            for src in pi_link::session_ext::read_for(&store, &self.key) {
+            // 插件仓 tc6 锁回归）。版本换代同样自愈 + 回写（090-10）：台账里
+            // 的绝对路径带版本目录，插件升级后旧目录被删 → 死 `-e` 让 pi 起
+            // 不来（真机 2026-11-03 重启后微信插件全哑的根因）
+            let raw = pi_link::session_ext::read_for(&store, &self.key);
+            let (mounts, changed) = pi_link::session_ext::resolve_sources(&raw);
+            if changed && let Err(e) = pi_link::session_ext::write_for(&store, &self.key, &mounts) {
+                eprintln!("[session-ext] 挂载台账自愈回写失败（{}）: {e}", self.key);
+            }
+            for src in mounts {
                 // 契约 v4：插件的 pi/*.mjs 是执行域入口，再当扩展挂载会整批 -e 失败
                 if pi_link::service_ext::is_exec_entry(std::path::Path::new(&src)) {
                     continue;
@@ -504,7 +530,11 @@ impl SessionRuntime {
                 if !ext_source_allowed(&src, &ledger) {
                     continue;
                 }
-                if !self.ext_sources.iter().any(|e| e == &src) {
+                if !self
+                    .ext_sources
+                    .iter()
+                    .any(|e| pi_link::session_ext::same_source(e, &src))
+                {
                     extra.push("-e".into());
                     extra.push(src);
                 }
