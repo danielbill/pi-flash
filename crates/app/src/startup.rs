@@ -540,6 +540,21 @@ mod tests {
 /// 6. 恢复最后会话 + 进入其项目 + 会话清单装载 = spawn_boot_restore
 ///    （010 重设计：进程附着随恢复路径走，无项目态零进程，不再有首帧附着）
 pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
+    // 051：pif-secret 入用户级 PATH + auth.json 标记去路径化（后台、毫秒级、
+    // 幂等）。必须放所有后台任务**最前**——升级交接的 cleanup 线程可能先删
+    // 旧版本载荷目录，标记迁移要抢先改写指向旧目录的条目（0.4.0→0.4.1 auth
+    // 全崩事故的治本）。
+    std::thread::spawn(|| {
+        if pi_link::secret_bin::ensure_installed() {
+            match pi_link::auth_json::migrate_markers_pathless() {
+                Ok(0) => {}
+                Ok(n) => {
+                    eprintln!("[startup] auth.json 标记去路径化：{n} 条 → !pif-secret 裸命令")
+                }
+                Err(e) => eprintln!("[startup] auth.json 标记迁移跳过（拒写）：{e}"),
+            }
+        }
+    });
     spawn_pump_120ms(cx);
     spawn_external_append_watch(cx);
     spawn_idle_recycle(cx);

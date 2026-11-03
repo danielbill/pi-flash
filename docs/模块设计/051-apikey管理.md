@@ -117,6 +117,7 @@ export default function (pi) {
 | 文件 | 职责 |
 |---|---|
 | `pi-link/src/credentials.rs` | SecretVault trait + KeyringVault/MemVault/FailVault；`$PF_KEY_*` 识别、env_var_name、官方 env 表（照抄 getApiKeyEnvVars）、spawn_env_at |
+| `pi-link/src/secret_bin.rs` | pif-secret 用户级稳定安装（051 扩展，2026-11-04）：`%LOCALAPPDATA%\pi-flash\bin` + HKCU Path 判重追加（保 REG_EXPAND_SZ、WM_SETTINGCHANGE 广播、本进程 PATH 同步追加），全幂等；auth.json 标记条目由此去路径化（`!pif-secret get <provider>` 裸命令，PATH 不可用回落绝对路径），存量路径形态启动自动迁移 |
 | `pi-link/src/pf_auth.rs` | pf-auth.json 账本 + 目录 key 保存/断开/收编 |
 | `pi-link/src/pf_providers.rs` | providers.json 账本（净化落盘）+ key 分流 + 扩展模板 + models.json 复制迁移 |
 | `pi-link/src/models_json.rs` | **只读视图 + 纯 JSON 手术**（编辑器缓冲用），无任何 I/O |

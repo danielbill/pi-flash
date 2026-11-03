@@ -513,6 +513,10 @@ pub(crate) fn stage_update_in(me: &Path, rel: &ReleaseInfo) -> Result<String, St
         std::fs::write(target.join(".payload-version"), format!("{ver}\n"))
             .map_err(|e| format!("写版本戳失败：{e}"))?;
 
+        // 051：新载荷落位后顺手确保 pif-secret 稳定安装（幂等毫秒级）——
+        // 版本化载荷目录随升级漂移，helper 的归宿永远是用户级 PATH 目录。
+        let _ = pi_link::secret_bin::ensure_installed();
+
         // 更新日志缓存（重启后的更新日志页直接读本地）
         if !rel.body.is_empty() {
             if let Some(p) = pi_link::paths::changelog_cache_file(&ver) {

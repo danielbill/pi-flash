@@ -554,3 +554,20 @@
 > 包内与 pi-flash.exe 同目录（绿色包根 / npm payload/ / payload-<版本>/ 整包内容自动带上）。
 > 文档同步：RELEASE.md §3.1/§5、080-软件分发.md §0。用例：test/042-1/pif-secret-packaging/。
 > dev 路径条目是本机 debug 构建写入的正常产物（本机该路径真实存在），无需迁移。
+
+## pif-secret 绝对路径绑定版本化载荷目录，升级即崩（0.4.0→0.4.1 实录）
+
+2026-11-01 修复让 pif-secret.exe 随包进了 `payload-<版本>\`，但 auth.json 标记
+写的是**该目录的绝对路径**：`!'…/pi-flash/payload-0.4.0/pif-secret.exe' get x`。
+0.4.1 升级后旧目录被 `cleanup_older` 清掉 → pi `!` 命令取 key 全灭 → 全部
+provider「未配置」。用户手改路径自救——0.4.2 还会再崩。根因：路径随版本化
+载荷目录必然漂移，写死任何安装树内路径都逃不掉。
+
+> **修复（2026-11-04，051 扩展）**：治本 = 标记条目**去路径化**。pif-secret
+> 落用户级稳定目录 `%LOCALAPPDATA%\pi-flash\bin` 并加入 HKCU Path（判重追加、
+> 保 REG_EXPAND_SZ、WM_SETTINGCHANGE 广播、本进程 PATH 同步追加，全幂等），
+> 标记改写**零路径裸命令** `!pif-secret get <provider>`——pi 的 `!` 整串交
+> `bash -c`/`execSync`，都走 PATH 解析。启动最前（抢先升级 cleanup）+ 更新
+> 落位后 + 保存 key 时三处 `ensure_installed()`；存量路径形态标记（含用户
+> 手改的 payload-0.4.1）启动自动迁裸形态，oauth/用户明文/用户引用零触碰，
+> 不可读拒写。PATH 模式失败回落老绝对路径行为。用例：test/042-1/marker-pathless/。

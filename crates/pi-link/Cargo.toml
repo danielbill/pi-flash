@@ -27,5 +27,11 @@ base64 = "0.22"
 # 私域索引验签（090-3 §3.2 只认签名；仅 VerifyingKey，无随机源）
 ed25519-dalek = { version = "2", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# 051 pif-secret 稳定安装：HKCU Environment\Path 判重/追加（保 REG_EXPAND_SZ 原类型）
+windows-registry = "0.5"
+# WM_SETTINGCHANGE 广播：Explorer/已开终端立即感知新 PATH
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 futures-timer = "3.0.4"

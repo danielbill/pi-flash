@@ -34,6 +34,7 @@ pub mod projects;
 pub mod protocol;
 pub mod recents;
 pub mod registry;
+pub mod secret_bin;
 pub mod service_ext;
 pub mod session_ext;
 pub mod sessions;

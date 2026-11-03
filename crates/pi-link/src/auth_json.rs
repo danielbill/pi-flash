@@ -36,10 +36,22 @@ pub fn helper_exe() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// 写进 auth.json 的 key 值。路径统一正斜杠 + 单引号：pi 在 Windows 走
-/// Git Bash 的 `bash -c`，没有 Git Bash 时回落 `sh -c`，两种 shell 都吃
-/// 单引号；反斜杠会被 shell 当转义符吞掉。
+/// 写进 auth.json 的 key 值。PATH 模式（`secret_bin::ensure_installed` 成功）
+/// → **零路径裸命令** `!pif-secret get <provider>`，版本升级/重装/搬家永不
+/// 失效（0.4.0→0.4.1 事故的治本）；未就绪回落绝对路径形态（老行为）。
+///
+/// 绝对路径形态统一正斜杠 + 单引号：pi 在 Windows 走 Git Bash 的 `bash -c`，
+/// 没有 Git Bash 时回落 `sh -c`，两种 shell 都吃单引号；反斜杠会被 shell 当
+/// 转义符吞掉。
 pub fn marker_key(provider: &str) -> String {
+    marker_key_with(crate::secret_bin::path_mode_ok(), provider)
+}
+
+/// `marker_key` 的显式形态变体（供测试与迁移；不读进程级标志）。
+pub fn marker_key_with(path_mode: bool, provider: &str) -> String {
+    if path_mode {
+        return format!("!pif-secret get {provider}");
+    }
     let raw = helper_exe().display().to_string().replace('\\', "/");
     let exe = raw.replace('\'', "'\\''");
     format!("!'{exe}' get {provider}")
@@ -205,6 +217,40 @@ pub fn seal_plaintext_at(
     Ok(sealed)
 }
 
+/// 启动迁移（051）：PF 标记条目从「绝对路径形态」迁到「裸命令形态」。
+/// 只动 `is_pf_managed` 且 key 含路径分隔符的条目（含 0.4.1 事故里用户手改
+/// 的 `!'…/payload-0.4.1/pif-secret.exe' get x`）；oauth / 用户明文 / 用户
+/// `$`/`!` 引用一律不动。幂等（裸形态无分隔符，二跑零改动）。
+/// 不可读拒写由 [`update`] 内置：Err 原样上抛，文件零改动。
+pub fn migrate_markers_pathless_at(path: &Path, path_mode: bool) -> Result<usize, String> {
+    if !path_mode {
+        return Ok(0);
+    }
+    let mut migrated = 0usize;
+    update(path, |doc| {
+        for (provider, cred) in doc.iter_mut() {
+            let is_path_form = cred
+                .get("key")
+                .and_then(Value::as_str)
+                .is_some_and(|k| k.contains('/') || k.contains('\\'))
+                && is_pf_managed(cred);
+            if is_path_form {
+                let bare = marker_key_with(true, provider);
+                if let Some(obj) = cred.as_object_mut() {
+                    obj.insert("key".into(), Value::String(bare));
+                    migrated += 1;
+                }
+            }
+        }
+    })?;
+    Ok(migrated)
+}
+
+/// `migrate_markers_pathless_at` 的生产入口（真实 auth_path + 进程级标志）。
+pub fn migrate_markers_pathless() -> Result<usize, String> {
+    migrate_markers_pathless_at(&auth_path(), crate::secret_bin::path_mode_ok())
+}
+
 // ---------------------------------------------------------------------------
 // 秘密（钥匙库）+ 标记条目：一个入口
 // ---------------------------------------------------------------------------
@@ -223,6 +269,11 @@ pub fn store_secret(provider: &str, secret: &str) -> Result<(), String> {
     if readback.as_deref() != Some(secret) {
         let _ = vault.delete(&entry);
         return Err("钥匙库读回校验失败（保存已回滚）".to_string());
+    }
+    // PATH 模式未决（启动后台线程还没跑到）→ 先同步 ensure 一次（幂等毫秒
+    // 级），让新写的标记条目直接落零路径裸形态，不留一版会漂移的绝对路径。
+    if !crate::secret_bin::path_mode_ok() {
+        crate::secret_bin::ensure_installed();
     }
     if let Err(e) = store_marker(provider) {
         let _ = vault.delete(&entry);
@@ -393,9 +444,78 @@ mod tests {
 
     #[test]
     fn marker_key_is_shell_safe() {
-        let key = marker_key("deepseek");
+        // 路径形态（PATH 模式未就绪的回落）
+        let key = marker_key_with(false, "deepseek");
         assert!(key.starts_with("!'"));
         assert!(key.ends_with("' get deepseek"));
         assert!(!key.contains('\\'), "路径反斜杠会被 shell 吞掉");
+        // 裸命令形态（PATH 模式）：零路径，升级/搬家不失效
+        assert_eq!(
+            marker_key_with(true, "deepseek"),
+            "!pif-secret get deepseek"
+        );
+        assert_eq!(marker_key_with(true, "zai"), "!pif-secret get zai");
+    }
+
+    #[test]
+    fn migrate_rewrites_path_markers_to_bare_form() {
+        let path = tmp("migrate");
+        let hand_fixed = "!'D:/softwares/node/pi-flash/payload-0.4.1/pif-secret.exe' get zai";
+        write_json_private(
+            &path,
+            &json!({
+                // PF 写的绝对路径形态 → 迁
+                "deepseek": { "type": "api_key", "key": MARKER },
+                // 0.4.1 事故里用户手改的形态 → 也迁
+                "zai": { "type": "api_key", "key": hand_fixed },
+                // 裸形态（已迁）→ 不动
+                "glm": { "type": "api_key", "key": "!pif-secret get glm" },
+                // oauth / 用户明文 / 用户 `!` 引用 → 一律不动
+                "anthropic": { "type": "oauth", "access": "a", "refresh": "r", "expires": 9 },
+                "mine": { "type": "api_key", "key": "sk-user-plain" },
+                "other": { "type": "api_key", "key": "!my-cmd --flag" }
+            }),
+        )
+        .unwrap();
+        let n = migrate_markers_pathless_at(&path, true).unwrap();
+        assert_eq!(n, 2, "只迁两条路径形态标记");
+        let doc = read_json(&path).unwrap();
+        assert_eq!(doc["deepseek"]["key"], "!pif-secret get deepseek");
+        assert_eq!(doc["zai"]["key"], "!pif-secret get zai");
+        assert_eq!(doc["glm"]["key"], "!pif-secret get glm");
+        assert_eq!(doc["anthropic"]["type"], "oauth");
+        assert_eq!(doc["mine"]["key"], "sk-user-plain");
+        assert_eq!(doc["other"]["key"], "!my-cmd --flag");
+        // 幂等：二跑零改动
+        assert_eq!(migrate_markers_pathless_at(&path, true).unwrap(), 0);
+    }
+
+    #[test]
+    fn migrate_off_leaves_file_untouched() {
+        let path = tmp("migrate-off");
+        write_json_private(
+            &path,
+            &json!({ "deepseek": { "type": "api_key", "key": MARKER } }),
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(migrate_markers_pathless_at(&path, false).unwrap(), 0);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "PATH 模式未就绪不得写"
+        );
+    }
+
+    #[test]
+    fn migrate_refuses_unreadable_file() {
+        let path = tmp("migrate-broken");
+        std::fs::write(&path, "{not json").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            migrate_markers_pathless_at(&path, true).is_err(),
+            "不可读拒写"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before, "拒写 = 文件零改动");
     }
 }

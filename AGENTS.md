@@ -65,7 +65,10 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   models_json.rs          ~/.pi/agent/models.json（042-1 起 PF 写它：整份草稿 +
                           不可读拒写 + proper-lockfile 同款锁）
   auth_json.rs            ~/.pi/agent/auth.json 的 PF 视图——只碰「标记条目」
-                          （!<helper> get <provider>），用户明文/oauth 原样透传
+                          （PATH 模式 = 裸命令 !pif-secret get <provider>，未
+                          就绪回落 !<helper路径>），用户明文/oauth 原样透传
+  secret_bin.rs           pif-secret 用户级稳定安装（%LOCALAPPDATA%\pi-flash\bin
+                          + HKCU Path 判重追加 + 广播；051，标记去路径化的地基）
   fs_lock.rs              proper-lockfile 协议复刻（<file>.lock 目录，30s stale）
   migrate_0421.rs         042-1 一次性迁移：pf 账本 → models.json + 标记条目
   registry.rs             全量 provider 注册表——仅「新增 Provider」弹窗元数据
