@@ -60,6 +60,13 @@
 - serde_json 开 `preserve_order` 保 sections 顺序。
 - turn_start 后的 system message 全量携带 transcript 补丁（app 靠它 live 重放）；1.1.0 起多 `toolsAdded` 键、`agent_settled` 多 `aborted` 字段。
 
+## 工具账本与重挂（resume 陷阱，2026-11-03，pi-flash-3x95）
+
+- pi≥0.86 的 transcript 工具账本：每轮 system 消息记录 `toolsAdded`/`toolsRemoved`；resume 且未发 `--tools` 时跑 `_restoreToolsFromTranscript`——`active := 全分支 add/remove 回放后的当前集 ∪ 「从未在 transcript 出现过且注册即激活」的新工具`。
+- **重绑中途卸载过的扩展 = 工具回不来**：卸载轮把其工具记入 `toolsRemoved`，重挂进程里既不在当前集、又因「出现过」不算新工具 → **注册但永不激活**（getAllTools 有、active 无，模型看不到，用户视角「挂不上」）。扩展侧无法自救：adapter 指纹未变跳过重注册（pi 对已知工具重注册也不激活）、proxy 只补自己 deactivate 过的工具、web-access 设计性遵从 transcript 声明集。凡注册工具的扩展都中招（freeflow 无工具故「看起来正常」）。
+- PF 解法在 `full_activate.ts`（custom 档恒最后挂载）：session_start 并回「transcript 声明过（toolsAdded 出现过）+ 本进程已注册 + exposure==="direct" + 尚未激活」的工具——即 pi 本会给的默认态。deferred/hidden/model-only 不动；首挂（无 system 消息）天然 no-op。改这个脚本先读它的头注释（含收敛性清单与 dynamic 模式不误伤的论证），三步复现见 `test/041/重挂工具恢复/`。
+- 判别口诀：「扩展挂了工具不在」先分两层——getAllTools 无 = 装载/allowlist 问题（031 的 `--tools` 注册级硬闸）；getAllTools 有而 active 无 = 本节账本问题。
+
 ## fork 与深树
 
 - `get_tree` 深树双炸：客户端 serde_json 默认 128 层递归上限（→ `parse_value` disable_recursion_limit + reader 线程 16MB 栈）；pi 侧超长会话自己 `Maximum call stack`。

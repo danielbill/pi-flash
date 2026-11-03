@@ -32,6 +32,11 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-03 扩展重挂工具恢复（pi-flash-3x95）：custom 档中途卸→重挂的扩展
+  （mcp-adapter/web-access 实测同症）工具注册但不进 active（pi transcript 工具
+  账本 resume 恢复语义：卸载轮 toolsRemoved 后「出现过→不算新」）；修复 =
+  full_activate.ts session_start 并回「声明过+已注册+exposure=direct+未激活」
+  工具。三步探针 6 断言全绿（`test/041/重挂工具恢复/`），陷阱住 pi-rpc 笔记。
 - 2026-11-02 090-10 迁移体验（契约 v5 一刀切后旧包升级路径）：插件用户数据从版本
   目录脱出到 `plugins/<pkg>/data/`（对齐 90-4 设计；`PluginManifest::data_dir()`
   唯一派生口 + 启动期 `migrate_data_dirs` 一次性搬迁，更新不再丢数据）；被本版拒载
