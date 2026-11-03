@@ -248,7 +248,7 @@ for C in $CASES; do
   "case_$(printf '%s' "$C" | tr 'A-Z' 'a-z')"
   local_rc=$?
   case "$C" in
-    C3|C5|C8) expect expect-fail "$C" "$(desc_of "$C")" "$local_rc" ;;
+    C3|C5) expect expect-fail "$C" "$(desc_of "$C")" "$local_rc" ;;
     *)           expect expect-pass "$C" "$(desc_of "$C")" "$local_rc" ;;
   esac
 done

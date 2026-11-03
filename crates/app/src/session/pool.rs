@@ -114,6 +114,14 @@ impl Chat {
                         cx.notify();
                     }
                 }
+                SessionEvent::ExtUiDied => {
+                    // pi 进程死亡（zi2s.3）：在屏扩展弹窗/问卷卡清空并对死管道
+                    // 逐个回 cancelled（handler promise 落地）。弹窗只会来自
+                    // 活跃会话（ExtUi 同一闸），后台会话死亡无需动 aux。
+                    if is_active {
+                        chat.ext_cancel_all(cx);
+                    }
+                }
                 SessionEvent::Models(models) => {
                     // 进程答案写项目槽（pi-web /api/models parity：每个 runtime 只写
                     // 自己 cwd 的条目），同时**并进全局态并回写自有缓存**

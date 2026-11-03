@@ -68,6 +68,10 @@ pub(crate) enum SessionEvent {
         text: String,
         images: Vec<crate::AttachedImage>,
     },
+    /// pi 进程死亡（泵尾通道关闭分支）：在途扩展弹窗/问卷卡指向死管道，
+    /// Chat 侧须 ext_cancel_all 清理（zi2s.3）。后台会话不弹窗也就无弹窗可
+    /// 清，订阅侧按 is_active 闸掉。
+    ExtUiDied,
 }
 
 /// 090 排队护栏：PF 本地排队条目。运行中（queue 模式）的发送扣在这里，
@@ -807,6 +811,13 @@ async fn consume_runtime_events(
             if was_running {
                 cx.emit(SessionEvent::TurnSettled);
             }
+            // 在途扩展 UI 随进程一起死（zi2s.3）：ext_queue 里的积压请求指向
+            // 死管道就地清；在屏弹窗/问卷卡在 Chat.aux（runtime 摸不到），
+            // 冒泡给 Chat ext_cancel_all——否则弹窗留着，点击全发进死管道，
+            // handler 侧 await 早已无人应答。空闲死亡也要发（mock 崩溃场景
+            // handled 后才死，弹窗照旧在屏）。
+            rt.ext_queue.clear();
+            cx.emit(SessionEvent::ExtUiDied);
             cx.emit(SessionEvent::Changed);
             cx.notify();
         }
