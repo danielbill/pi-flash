@@ -270,6 +270,25 @@ pub(crate) fn spawn_plugin_scan(cx: &mut gpui::Context<Chat>) {
         if !rejected.is_empty() {
             let _ = this.update(cx, |c, _| c.plugin_mark_rejected(&rejected));
         }
+        // 005 预热：恢复挂载了 pi 扩展的**活跃会话**进程。pi 只在发送时懒加载
+        // （input 层 ensure_spawned），重启后绑定会话进程不活 → ext 无处安身 →
+        // 微信消息无人收（真机 2026-11-03：重启后收发死，直到用户手动发一条）。
+        // 通用判据 = 挂载台账（session-ext.json）里活跃会话名下有 pi 扩展条目，
+        // 零插件知识。
+        let _ = this.update(cx, |c, cx| {
+            let key = c.pool.active_key.clone();
+            let has_ext = pi_link::session_ext::store_path()
+                .map(|p| !pi_link::session_ext::read_for(&p, &key).is_empty())
+                .unwrap_or(false);
+            if has_ext {
+                let rt = c.pool.runtimes.get(&key).cloned();
+                if let Some(rt) = rt {
+                    rt.update(cx, |r, cx| {
+                        r.ensure_spawned(cx);
+                    });
+                }
+            }
+        });
     })
     .detach();
 }
