@@ -168,34 +168,29 @@ pub(super) fn render_provider_picker(
         body = body
             .child(group_header(tr("model.picker_custom"), 0.))
             .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_center()
-                    .gap(px(10.))
-                    .child(
-                        card("pp-custom".into())
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                let _ = weak_card.update(cx, |c, cx| {
-                                    c.dlg.dialog = None;
-                                    c.mj_open_add(cx);
-                                    cx.notify();
-                                });
-                            })
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .child(card_text(
-                                &tr("model.picker_custom_card"),
-                                tr("model.picker_custom_sub").to_string(),
-                            ))
-                            .child(crate::ui::icon("plus", 18., t.text_muted)),
-                    ),
+                div().flex().flex_wrap().gap(px(10.)).child(
+                    card("pp-custom".into())
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            let _ = weak_card.update(cx, |c, cx| {
+                                c.dlg.dialog = None;
+                                c.mj_open_add(cx);
+                                cx.notify();
+                            });
+                        })
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(card_text(
+                            &tr("model.picker_custom_card"),
+                            tr("model.picker_custom_sub").to_string(),
+                        ))
+                        .child(crate::ui::icon("plus", 18., t.text_muted)),
+                ),
             );
     }
     if !api_cards.is_empty() {
         body = body.child(group_header("API KEY", 0.));
-        let mut grid = div().flex().flex_wrap().justify_center().gap(px(10.));
+        let mut grid = div().flex().flex_wrap().gap(px(10.));
         for (p, name, total) in &api_cards {
             let weak_card = weak.clone();
             let pid = p.clone();
@@ -222,7 +217,7 @@ pub(super) fn render_provider_picker(
     }
     if !oauth_cards.is_empty() {
         body = body.child(group_header(tr("dialogs.subscription_services"), 14.));
-        let mut grid = div().flex().flex_wrap().justify_center().gap(px(10.));
+        let mut grid = div().flex().flex_wrap().gap(px(10.));
         for (p, name) in &oauth_cards {
             let weak_card = weak.clone();
             let el = card(format!("pp-oauth-{p}"))
