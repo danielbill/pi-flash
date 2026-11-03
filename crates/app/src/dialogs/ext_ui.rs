@@ -345,17 +345,7 @@ impl Chat {
                 cx.notify();
             }
             blocking => {
-                let prefill = match &blocking {
-                    ExtUiMethod::Editor { prefill, .. } => prefill.clone().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let placeholder = match &blocking {
-                    ExtUiMethod::Input {
-                        placeholder: Some(p),
-                        ..
-                    } => Some(SharedString::from(p.clone())),
-                    _ => None,
-                };
+                // Editor prefill / Input placeholder 由 `ext_show` 落进输入框
                 self.ext_enqueue(
                     pi_link::protocol::ExtensionUiRequest {
                         id: req.id,
@@ -366,12 +356,6 @@ impl Chat {
                 cx.notify();
             }
         }
-    }
-
-    /// 阻塞弹窗在屏旗标回写 runtime（静默看门狗读，#7）。
-    fn ext_sync_dialog_flag(&mut self, cx: &mut Context<Self>) {
-        let on = self.aux.ext_dialog.is_some();
-        self.rt().update(cx, |r, _| r.ext_dialog_on_screen = on);
     }
 
     /// 阻塞请求入队（pi-web extension-ui-queue parity）：队头在屏，其余按
@@ -396,7 +380,6 @@ impl Chat {
         } else {
             self.aux.ext_dialog_waiting.push(req);
         }
-        self.ext_sync_dialog_flag(cx);
     }
 
     /// 队头上屏（含 Input 的输入框预填配置，pi-web 到达时同款）；晋升等待
@@ -419,6 +402,33 @@ impl Chat {
         self.aux.ext_dialog = Some(req);
     }
 
+    /// 停止/中止时取消全部在途扩展 UI（pi-web `rpc-manager abort` 的
+    /// `extensionUiAbortController.abort()` parity）：阻塞请求逐个回
+    /// `cancelled`，pi 侧 select/confirm/input 的 promise 立即落地，扩展
+    /// handler 得以继续/退出。否则 handler 永久阻塞在弹窗上，prompt 的
+    /// handled 回执永远不来——等待行挂到天荒地老（#7 的另一条尾巴）。
+    pub(crate) fn ext_cancel_all(&mut self, cx: &mut Context<Self>) {
+        let mut pending: Vec<pi_link::protocol::ExtensionUiRequest> = Vec::new();
+        if let Some(req) = self.aux.ext_dialog.take() {
+            pending.push(req);
+        }
+        pending.append(&mut self.aux.ext_dialog_waiting);
+        // 问卷卡自身也持有阻塞请求（ask_user_question 整卷流）
+        if let Some(card) = self.aux.ask.as_mut() {
+            if let Some(req) = card.pending.take() {
+                pending.push(req);
+            }
+        }
+        self.aux.ask = None;
+        if pending.is_empty() {
+            return;
+        }
+        for req in &pending {
+            self.ext_send(req, None, None, true, cx);
+        }
+        cx.notify();
+    }
+
     /// 应答队头并晋升下一个等待项（pi-web respondToExtensionUi：先摘队头
     /// 再发送；队列后续项依次上屏）。每个请求都最终被应答——handler 不会
     /// 因单槽位覆盖而永久阻塞，prompt 回执（相位收场）也就不会丢失（#7）。
@@ -438,7 +448,6 @@ impl Chat {
                 self.ext_show(next, cx);
             }
         }
-        self.ext_sync_dialog_flag(cx);
         cx.notify();
     }
 

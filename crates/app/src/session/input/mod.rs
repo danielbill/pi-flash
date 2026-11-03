@@ -205,6 +205,10 @@ impl Chat {
     }
 
     pub(crate) fn abort_stream(&mut self, cx: &mut Context<Self>) {
+        // pi-web parity：Stop 先取消在途扩展 UI（弹窗 / 问卷），再中止 run。
+        // 否则阻塞在 ctx.ui.select/confirm 上的 handler 永不返回，prompt 的
+        // handled 回执不来，命令相位永远挂着。
+        self.ext_cancel_all(cx);
         self.rt().update(cx, |r, cx| r.abort_stream(cx));
         cx.notify();
     }

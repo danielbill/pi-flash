@@ -169,10 +169,6 @@ pub(crate) struct SessionRuntime {
     /// 生命期：optimistic_send 置位；真轮 AgentStart / handled 收场 /
     /// settled / abort / 发送失败 复位。
     pub phase_command: bool,
-    /// 阻塞扩展弹窗当前在屏（Chat aux.ext_dialog 的 runtime 侧镜像，由
-    /// Chat 在入队/应答时回写）：静默看门狗据此区分「handler 有可见进展」
-    /// 与「弹窗已关还静默」（#7）
-    pub ext_dialog_on_screen: bool,
     /// pi 侧 steering/followUp 队列镜像（`queue_update` 全量快照）：「已排
     /// 队 N 条」状态行不再本地猜。仅显示用——abort 撤回的对账真值来自
     /// `clear_queue` response（pi 权威回传），不读这里。090 后 composer 消息
@@ -404,7 +400,6 @@ impl SessionRuntime {
             streaming_content: false,
             pending_echoes: Vec::new(),
             phase_command: false,
-            ext_dialog_on_screen: false,
             queued_steering: Vec::new(),
             queued_followups: Vec::new(),
             queued_inputs: Vec::new(),
@@ -1105,6 +1100,47 @@ mod turn_outcome_tests {
             assert_eq!(r.exit_code, Some(1));
             assert_eq!(r.unparsed_types.len(), 2, "同 type 只记一次");
         });
+    }
+
+    /// 扩展命令收场按 pi-web `prompt_done → loadSession` 的磁盘真相语义：
+    /// 会话已落盘 → 盘上没有这条命令消息，摘乐观气泡；**未落盘** → pi-web
+    /// 的 loadSession 走 404 分支不动消息列表，气泡与侧栏 transient 行（PF
+    /// 伪标签）都保留。真机回归：/usage 一关，屏幕与侧栏都像没执行过。
+    #[gpui::test]
+    fn command_phase_settle_follows_disk_truth(cx: &mut TestAppContext) {
+        // 未落盘：气泡 / 伪标签保留
+        let rt = runtime(cx);
+        rt.update(cx, |r, cx| r.optimistic_send("/usage".into(), true, cx));
+        rt.update(cx, |r, cx| r.settle_command_phase(cx));
+        rt.read_with(cx, |r, _| {
+            assert_eq!(r.messages.len(), 1, "未落盘：命令气泡保留");
+            assert_eq!(r.pending_echoes.len(), 1);
+            assert!(!r.phase_waiting && !r.phase_command, "相位已收场");
+        });
+
+        // 已落盘：磁盘真相赢，摘除气泡
+        let real = std::env::temp_dir().join(format!(
+            "pf-cmd-settle-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::write(&real, "{}\n").unwrap();
+        let rt2 = runtime(cx);
+        rt2.update(cx, |r, cx| {
+            r.state = Some(SessionState {
+                session_file: Some(real.to_string_lossy().into_owned()),
+                ..Default::default()
+            });
+            r.optimistic_send("/usage".into(), true, cx);
+            r.settle_command_phase(cx);
+            assert!(r.messages.is_empty(), "已落盘：气泡随磁盘真相摘除");
+            assert!(r.pending_echoes.is_empty());
+            assert!(r.file.is_some(), "收场时补上文件绑定");
+        });
+        let _ = std::fs::remove_file(&real);
     }
 }
 

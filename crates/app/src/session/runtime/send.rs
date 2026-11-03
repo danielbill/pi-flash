@@ -60,9 +60,8 @@ impl SessionRuntime {
     /// 不要刷屏，跟在流后面」）。`pin` 记进 pending_echo 随条目走：回显到
     /// 达（message_start user）按同一决定行事，不再无条件补一次 page_turn。
     pub(super) fn optimistic_send(&mut self, text: String, pin: bool, cx: &mut Context<Self>) {
-        // 斜杠命令相位（pi-web isSlashCommandPrompt parity）：等待行文案用
-        // 「执行扩展命令中」而非「正在等待模型」——命令 handler 在跑，
-        // 与模型无关（#7）；真轮 AgentStart / handled 回执到达时复位
+        // 斜杠命令相位（pi-web isSlashCommandPrompt parity）：命令 handler
+        // 在跑时等待行文案与模型无关（#7）；AgentStart / handled 回执时复位
         let is_command = text.starts_with('/');
         // 伪标签：还没绑定会话文件的 draft，乐观发送的同一帧就在侧栏挂标
         // 签（真标签要等 pi 落盘 + 磁盘扫描，进程冷启 1-3s）。prompt/排队/
@@ -99,49 +98,14 @@ impl SessionRuntime {
             model: None,
         });
         self.phase_waiting = true;
+        // 斜杠命令相位（pi-web isSlashCommandPrompt parity）：等待行文案用
+        // 「执行扩展命令中」而非「正在等待模型」。收场**只认** pi 的
+        // `response:prompt{disposition:"handled"}`——rpc-mode 的 prompt 是
+        // fire-and-forget，但 `preflightResult("handled")` 在
+        // `await command.handler()` 之后才发（agent-session.js），语义等价
+        // pi-web 的 prompt_done。不要在这里再造「静默 N 秒当收场」的看门狗：
+        // 那与真实在途状态无关，只会让弹窗关闭后多挂几秒、或误杀后台 handler。
         self.phase_command = is_command;
-        if is_command {
-            // 静默看门狗（pi-web waitForPromptSettlement 的可用信号等效）：
-            // RPC 拿不到 prompt 在途标志，用「无阻塞弹窗在屏 + 无任何 agent
-            // 活动」持续静默替代——菜单开着＝handler 有可见进展，行保留；
-            // 弹窗关了还静默 5s（正常路径 handled 回执毫秒级先到，行早已退）
-            // ＝ handler 已不产生任何 UI/模型活动，行退场。真轮开跑则
-            // AgentStart 清 phase_command，看门狗自行退出。
-            cx.spawn(async move |this, cx| {
-                let started = std::time::Instant::now();
-                let mut quiet = started;
-                loop {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(500))
-                        .await;
-                    let Ok((cmd, idle, no_stream, no_dialog)) = this.update(cx, |c, _| {
-                        (
-                            c.phase_command,
-                            !c.agent_running,
-                            !c.streaming_content,
-                            !c.ext_dialog_on_screen,
-                        )
-                    }) else {
-                        return;
-                    };
-                    if !cmd {
-                        return;
-                    }
-                    if idle && no_stream && no_dialog {
-                        if quiet.elapsed() >= std::time::Duration::from_secs(5) {
-                            let _ = this.update(cx, |c, cx| c.settle_command_phase(cx));
-                            return;
-                        }
-                    } else {
-                        quiet = std::time::Instant::now();
-                    }
-                    if started.elapsed() > std::time::Duration::from_secs(120) {
-                        return;
-                    }
-                }
-            })
-            .detach();
-        }
         // 钉顶：新用户消息立即钉视口顶、历史滚出屏，不等回显不等 bounds
         // （page_turn 内部完成 sync 落账）。不钉顶（打断投递）：notify_list
         // 做结构同步即可，视口停在贴底跟随位，消息自然跟在流尾部

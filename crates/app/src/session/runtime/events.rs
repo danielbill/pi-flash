@@ -63,9 +63,11 @@ impl SessionRuntime {
         }
     }
 
-    /// 摘除「无回显替身」乐观气泡（#7）：扩展命令吃掉 prompt 时 pi 不回显
-    /// 同文 user 消息（纯 UI 命令也不落盘），pending_echoes 里的同文条目
-    /// + 列表尾部的同文气泡互为替身特征，成对摘除。返回是否摘到气泡。
+    /// 摘除「无回显替身」乐观气泡：扩展命令吃掉 prompt 时 pi 不回显同文
+    /// user 消息；**会话已落盘**时 pi-web 的 `prompt_done → loadSession` 会用
+    /// 磁盘真相覆盖列表（盘上没有这条命令消息），这里做同一口径的即时版。
+    /// 未落盘（纯 UI 命令 / 新草稿）不调本函数——pi-web 的 loadSession 走
+    /// 404 分支，**不动消息列表**。
     /// 文本匹配与回显臂同款（len 预筛 + plain_text 全量比对），echo 按
     /// FIFO 摘一条——连发同文命令时每个 response 各摘一对。
     pub(super) fn retire_stale_echo(&mut self) -> bool {
@@ -84,16 +86,21 @@ impl SessionRuntime {
         true
     }
 
-    /// 命令相位收场（handled 回执臂与静默看门狗共用）：等待行退场、摘替身
-    /// 气泡、撤伪标签。
+    /// 命令相位收场（只由 pi 的 `prompt` handled 回执驱动——rpc-mode 在
+    /// `await command.handler()` 之后才发，等价 pi-web 的 prompt_done）：
+    /// 等待行退场 + 状态复位。消息处置按 pi-web `loadSession` 的磁盘真相：
+    /// 会话已落盘 → 盘上没有这条命令消息，摘乐观气泡；**未落盘** → pi-web
+    /// 走 404 分支不动列表，气泡与侧栏 transient 行（PF 伪标签）都保留。
     pub(super) fn settle_command_phase(&mut self, cx: &mut Context<Self>) {
         self.phase_waiting = false;
         self.phase_command = false;
-        if self.retire_stale_echo() {
+        self.status = status_line(true, "idle");
+        // 顺手补绑定（文件已落盘就换真身）；绑定成功 = 盘上有这个会话 =
+        // pi-web loadSession 拿到 200，磁盘真相赢。未绑定（草稿 / 纯 UI
+        // 命令压根没落盘）保留气泡与伪标签。
+        self.try_bind_reported_file(cx);
+        if self.file.is_some() && self.retire_stale_echo() {
             self.pager.release();
-        }
-        if !self.try_bind_reported_file(cx) {
-            cx.emit(SessionEvent::PendingTab(None));
         }
         cx.notify();
     }

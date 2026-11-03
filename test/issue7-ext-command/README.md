@@ -56,7 +56,7 @@ spawn vendored pi `--mode rpc` + 假 /usage 扩展（纯 UI，不 sendMessage）
 4. **发送前必须 grep wire 日志确认 ext-usage 真挂上**，否则 /usage 漏成普通
    prompt 真调模型（实踩：烧了用户两条极短消息的配额）。
 
-实测结果（2026-11-03）：
+实测结果（2026-11-03 首修）：
 
 | | 修复前（4c8796ea） | 修复后（2813b991） |
 |---|---|---|
@@ -65,12 +65,54 @@ spawn vendored pi `--mode rpc` + 假 /usage 扩展（纯 UI，不 sendMessage）
 | 假气泡 "/usage" | 残留 | 摘除 |
 | messages.count | 1 | 0（命令不落盘，UI=磁盘真相） |
 
+> 上表 messages.count=0 是首修时的行为，已被下面的「二改」推翻：pi-web 的
+> loadSession 在会话未落盘时走 404 分支，**不清消息列表**。
+
 Git Bash 实踩：`pif-ui exec --arg text=/usage` 会被 MSYS 路径翻译成
 `C:/Program Files/Git/usage`——必须 `MSYS2_ARG_CONV_EXCL='*'` 前缀。
+
+## 二改（2026-11-03 晚）：收场对齐 pi-web 磁盘真相 + Stop 取消弹窗
+
+用户实测反馈：弹窗关闭后还挂「执行扩展命令中…」好几秒，退出后整屏清空
+「像没执行过」。对照 pi-web（SDK 内嵌）逐行核：
+
+1. **收场只认 pi 的 handled 回执**：rpc-mode 的 `preflightResult("handled")`
+   在 `await command.handler()` 之后才发（wire 实测 Close→handled **2ms**），
+   语义等于 pi-web wrapper 的 `prompt_done`。原先自造的「无弹窗 + 无 agent
+   活动静默 5s」看门狗已删——它与真实在途状态无关，只会在弹窗关闭后多挂
+   几秒 / 误杀后台 handler。pi-web 的 `waitForPromptSettlement` 兜底靠的是
+   `isPromptRunning`（pi RPC 的 get_state 无此字段），PF 无法照抄，也不该
+   用静默计时假装。
+2. **收场后按磁盘真相**：pi-web `prompt_done → loadSession(sid)`——会话已
+   落盘（200）用盘上消息覆盖；未落盘（纯 UI 命令，404）**不动消息列表**，
+   transient 会话行保留。PF 旧版无条件 `retire_stale_echo` + 撤伪标签 →
+   新会话 `/usage` 一关就空屏。现在只有 `file` 已绑定（盘上有会话）才摘
+   气泡；未落盘保留气泡与伪标签。
+3. **Stop 取消在途扩展 UI**（pi-web `extensionUiAbortController.abort()`
+   parity）：`session.abort` 前 `Chat::ext_cancel_all` 对队头 / 队列 / 问卷卡
+   逐个回 `cancelled`，否则 handler 永久阻塞在 `ctx.ui.select` 上。
+
+自动化：`tmp/verify-ext-usage.sh`（pif-ui 隔离实例，真实 @narumitw/pi-usage）
+
+| 场景 | 断言 | 结果 |
+|---|---|---|
+| A. 菜单 → Close | waiting=false、ext_dialog=false、**messages.count=1**（气泡保留）、wire disposition=handled | ✓ |
+| B. 菜单 → session.abort | ext_dialog=false、wire `cancelled:true`、handler 收场 handled | ✓ |
+
+单测锁：`session::runtime::turn_outcome_tests::command_phase_settle_follows_disk_truth`
+（未落盘保留 / 已落盘摘除 + 补绑定）。
+
+> RPC 模式能力缺口（非 bug、抄不过来）：pi-web 的 `/usage` 面板走
+> `ctx.ui.custom`（TUI 组件渲染 + 按键注入）；vendored pi 的 rpc-mode
+> `custom()` 直接 `return undefined`，@narumitw/pi-usage 的 pi-tui-kit 检测
+> `mode==="rpc"` 自动降级为 `ctx.ui.select`（多行 title + options）。
+> PF 里看到的面板就是降级 select。
 
 ## 人工验收（可选补充）
 
 - 装任意 /usage 类扩展（如 `pi install npm:@pi-plugins/usage`）→ 发 /usage：
-  等待行立即收场，扩展 notify/widget 照常出现，侧栏伪标签撤下。
+  等待行立即收场，扩展 notify/widget 照常出现，气泡保留（新会话未落盘，
+  pi-web 404 语义），已落盘会话里气泡随磁盘真相消失。
 - `/usageboom`（handler 抛错）→ extension_error 进状态行，同样不卡等待行。
+- 菜单开着按 Stop → 弹窗立即消失，命令相位收场。
 - 回归：普通消息流式照旧（started 分支未动）；运行中排队照旧（queued 分支未动）。
