@@ -49,6 +49,8 @@ impl Chat {
         if let Err(e) = pi_link::mcp::set_enabled(&entry.file, &entry.name, enable) {
             return self.mc_set_error(&e, cx);
         }
+        // 活进程不会自己重读 mcp.json——无论运行与否都标记下一轮重绑
+        self.mark_mcp_reload(cx);
         self.reload_settings_panel();
         cx.notify();
     }
@@ -61,6 +63,7 @@ impl Chat {
                 if let Some(st) = self.dlg.settings.clone() {
                     st.update(cx, |s, _| s.section = "__mcp_add__".into());
                 }
+                self.mark_mcp_reload(cx);
                 self.reload_settings_panel();
                 cx.notify();
             }
@@ -72,6 +75,7 @@ impl Chat {
     pub(crate) fn mcp_bulk(&mut self, enable: bool, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let mut failed = 0usize;
+        let mut changed = 0usize;
         for entry in self
             .cfg
             .mcp_servers
@@ -81,10 +85,15 @@ impl Chat {
             if entry.enabled == enable {
                 continue;
             }
+            changed += 1;
             if let Err(e) = pi_link::mcp::set_enabled(&entry.file, &entry.name, enable) {
                 failed += 1;
                 let _ = e;
             }
+        }
+        // 活进程不会自己重读 mcp.json——有实际写入就标记下一轮重绑
+        if changed > 0 {
+            self.mark_mcp_reload(cx);
         }
         if failed > 0 {
             self.mc_set_error(
@@ -142,10 +151,13 @@ impl Chat {
                 if let Err(e) = pi_link::mcp::remove(&old.file, &old.name) {
                     return self.mc_set_error(&e, cx);
                 }
+                // 改名删旧已动盘：标记下一轮重绑（活进程不会自己重读）
+                self.mark_mcp_reload(cx);
             }
         }
         match pi_link::mcp::add(&path, &name, config) {
             Ok(_) => {
+                self.mark_mcp_reload(cx);
                 self.reload_settings_panel();
                 let key = self
                     .cfg

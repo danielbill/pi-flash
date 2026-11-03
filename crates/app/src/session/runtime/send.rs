@@ -397,9 +397,10 @@ impl SessionRuntime {
         cx.notify();
     }
 
-    /// 040/043：picker/MCP 运行中确认的清单，空闲发送（或 090 flush）开始前
-    /// 生效——换包集必须重绑进程（RPC 无运行时切换），`--session` 复接不丢
-    /// 消息。返回 false = 重绑 spawn 失败，调用方放弃本次发送。
+    /// 040/043：picker/MCP 任意时刻确认的清单，空闲发送（或 090 flush）
+    /// 开始前生效——换包集必须重绑进程（RPC 无运行时切换；MCP 清单活
+    /// 进程也不会自己重读），`--session` 复接不丢消息。返回 false = 重绑
+    /// spawn 失败，调用方放弃本次发送。
     pub(super) fn rebind_pending(&mut self, cx: &mut Context<Self>) -> bool {
         if self.agent_running {
             return true; // 运行中不重绑（下一轮空闲时再生效）

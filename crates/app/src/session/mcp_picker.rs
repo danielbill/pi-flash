@@ -6,8 +6,14 @@
 //! - **不设档位守卫**：扩展只在 full+ 档挂载，MCP 各档都装载
 //!   （builtin:mcp 全档放行），故按钮常亮可点。
 //! - **清单是全局文件不是会话参数**：勾选当即写 mcp.json `enabled`，
-//!   运行中标记 `pending_mcp_reload`，下一轮 `send_input` 空闲发送前
-//!   重绑生效（新进程 session_start 重读清单）；空闲时本就无需重绑。
+//!   并标记 `pending_mcp_reload`，下一轮 `send_input` 空闲发送前重绑生效
+//!   （新进程启动时重读清单）。注意：**无论运行与否都必须标记**——
+//!   MCP 装载只在 pi 进程启动时读 mcp.json（扩展加载期 + session_start），
+//!   空闲但活着的进程永远不会自己重读；「空闲 spawn 本就直接读盘」只对
+//!   还没 spawn 的会话成立。运行中由 `rebind_pending` 自动推迟到空闲发送
+//!   （flag 不清，等到那一刻为止）——原先只在 agent_running 时标记，空闲
+//!   改动在活进程上永远不生效（真机 2026-11-03：取消勾选 ghzw 后下一轮
+//!   发送 adapter 照旧挂载）。
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
@@ -71,13 +77,18 @@ impl Chat {
             return;
         }
         self.reload_settings_panel();
-        let rt = self.rt();
-        if rt.read(cx).agent_running {
-            // 运行中不掐轮：标记重绑，下一轮 send_input 空闲发送前生效
-            rt.update(cx, |r, _| r.pending_mcp_reload = true);
-            self.set_status(crate::i18n::tr("mcp.next_turn").to_string(), cx);
-        }
+        // 无论运行与否都标记（见模块头注释）；运行中由 rebind_pending 推迟
+        self.mark_mcp_reload(cx);
+        self.set_status(crate::i18n::tr("mcp.next_turn").to_string(), cx);
         cx.notify();
+    }
+
+    /// mcp.json 已变更：标记活跃会话在下一轮空闲发送前重绑（幂等）。
+    /// 运行中不清 flag、不掐轮 —— `rebind_pending` 开头的 agent_running
+    /// 分支原样保留 flag，等到空闲发送那刻才 kill+respawn。
+    pub(crate) fn mark_mcp_reload(&mut self, cx: &mut gpui::Context<Self>) {
+        let rt = self.rt();
+        rt.update(cx, |r, _| r.pending_mcp_reload = true);
     }
 }
 

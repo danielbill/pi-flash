@@ -267,8 +267,13 @@ pub(crate) struct SessionRuntime {
     pub ext_sources: Vec<String>,
     /// 040：picker 在运行中确认的清单——下一轮 send_input 空闲时重绑生效
     pub(crate) pending_ext_sources: Option<Vec<String>>,
-    /// 043：MCP 菜单在运行中改过 mcp.json——下一轮 send_input 空闲时重绑
-    /// 生效（新进程 session_start 重读清单；空闲 spawn 本就直接读盘，无需标记）
+    /// 043：MCP 菜单/设置页改过 mcp.json——下一轮 send_input 空闲发送前
+    /// 重绑生效。**无论运行与否都必须标记**：MCP 装载只在 pi 进程启动时
+    /// 读 mcp.json（扩展加载期 + session_start），空闲但活着的进程永远不会
+    /// 自己重读；「空闲 spawn 本就直接读盘」只对还没 spawn 的会话成立
+    /// （真机 2026-11-03：空闲取消勾选 ghzw 后下一轮照旧挂载，根因即
+    /// 此处旧注释误导出的 agent_running 守卫）。运行中由 rebind_pending
+    /// 推迟，flag 不清。
     pub(crate) pending_mcp_reload: bool,
 
     // ---- `!` shell 命令（031）----
@@ -1141,6 +1146,33 @@ mod turn_outcome_tests {
             assert!(r.file.is_some(), "收场时补上文件绑定");
         });
         let _ = std::fs::remove_file(&real);
+    }
+
+    /// 运行中发扩展命令（agent 还在上一轮里）：handled 回执必须收场命令相位。
+    /// 真机回归：`agent_running` 来自**上一轮**，旧守卫 `if !agent_running`
+    /// 直接跳过 → 等待行永远卡在「执行扩展命令中...」。
+    #[gpui::test]
+    fn handled_settles_command_phase_while_previous_run_active(cx: &mut TestAppContext) {
+        let rt = runtime(cx);
+        feed(&rt, cx, Event::AgentStart);
+        rt.update(cx, |r, cx| r.optimistic_send("/usage".into(), true, cx));
+        assert!(rt.read_with(cx, |r, _| r.phase_command && r.phase_waiting));
+        feed(
+            &rt,
+            cx,
+            Event::Response {
+                id: "p1".into(),
+                command: "prompt".into(),
+                success: true,
+                error: None,
+                data: Some(serde_json::json!({"disposition": "handled"})),
+            },
+        );
+        rt.read_with(cx, |r, _| {
+            assert!(!r.phase_command, "命令相位无条件收场");
+            assert!(r.phase_waiting, "上一轮仍在跑：等待行让给真轮");
+            assert!(r.agent_running);
+        });
     }
 }
 
