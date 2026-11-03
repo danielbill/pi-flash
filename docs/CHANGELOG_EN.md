@@ -2,6 +2,62 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.4.0] - 2026-11-03
+
+Highlights:
+0. Upgraded the bundled pi kernel to 1.5
+1. Fixed the 0.3.1 bug where built-in providers could not list their models directly
+2. Added custom providers and models; auto-fill now sources model parameters from OpenRouter instead of models.dev
+3. Breaking upgrade of the plugin framework with new plugin lifecycle management — installed plugins must be upgraded along with PF
+4. New "WeChat Bridge" plugin on the plugin side, now listed in the PF internal plugin center
+5. Quick Panel upgraded to 0.1.5
+6. Restart recovery now restores the whole workspace — every file open before closing is reopened — instead of just the session
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. A portable zip is also available: unzip and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- Custom providers and models
+- Plugin updates: market cards and the "Installed" page compare versions and show an "Update" button; disable → overwrite → reload in one step. Plugin data directories now live outside the version layer so updates keep data (old layouts migrate automatically on first launch). (aed83a83, c4107496, 3d03df58)
+- Plugin manifests support an `engines.pf` minimum version: installs are refused on older PF, and already-installed incompatible plugins show a toast at startup. (1652bd1a)
+- Startup restores the tab strip: file / terminal tabs survive restarts. (124ac458, 7907e2bb)
+- Plugin contract extensions (for plugin developers): top-bar menu items generated from `contributes.topbar_menu` in the manifest, `dock=tab` full-page plugin tabs, session-slot claiming, canvas primitives and component state broadcast, lifecycle v5 (unload). (06ea39aa, 05cb4665, 81eb7ce8, 7210fde3, 79f997c3)
+- Market card preview images support the manifest `icon` field. (2fcd4c84)
+
+### Bug fixes
+
+- **Credential helper `pif-secret.exe` now ships in the package**: the 0.3.1 package was missing it, so API keys saved via Settings might not be retrievable after upgrading; this release bundles it and adds an end-to-end automated guard. (aed927e8, 3edbbd64)
+- Built-in providers fetch their model catalog again right after saving an API key (root-caused a 27-provider whitelist gap), with a static catalog fallback (42 providers / 1,599 models) — save the key and the models are there. (e34cb0b1, 567fbb8f, 97cb77f8)
+- Custom providers: models found by the speed test but chat unresponsive, "available models 0/0", "+ Model" not persisted, key blank after refresh, renaming during speed test creating duplicate providers, `/v4`-style version segments wrongly appended with `/v1`. (aafca8f4, 6a3373ad, 08a8e995, 66520120)
+- Settings › Models heavily reworked; `models.json` = user selection: the input-panel model menu and the Settings list now share one source; fixed built-in providers lingering in the left list after removal, static model toggles of built-in providers not responding, and custom models losing parameters on off/on round-trips. (4ea0d903, 3a2f2042, 9907daf0, 993e3a10, d93a2df0, 253ca038)
+- Model details: clicking a row opened a different model, names mixed up, read-only inputs not refreshing, stale values after closing, auto-fill failing on aliases and `-latest` names. (e7e23ea5, 044188a8, 9c716320, 67486028, 628ab27f, 57ec2029)
+- Reasoning level was locked to off. (3f2d74ab)
+- Creating a provider occasionally stalled for tens of seconds while reading the registry. (b20632df)
+- Providers registered by extensions leaked into the custom-provider list. (0e1f0740, bd747d61)
+- Market: blank window when filtering the pi native market by type (~20s → 0), honest page counts, filtering now re-queries; version badge wrapping to the next line; disabled plugins showing the bare package name in the Installed list. (1eff6ceb, 23d46f6d, 5dbc7fd6, 6bc461d8, 00177d60)
+- Plugins: disabling a plugin no longer kills the pi process immediately; bound sessions are no longer silently dropped by idle reclamation; stale mount sources after disable/uninstall are invalidated; duplicate wasm load spawns; crash in the context-menu command round-trip. (d5d9e20c, 04ba4d3e, e0cd9e22, 791e2952, 9aff8784)
+- In-progress sessions are kept when switching projects. (9219d225)
+- New-session model menu and selection: opens with ✓ on the default model row, clicking a row now checks it, selection and sending recover after pi exits; without a starred model the draft pill follows pi's default. (a09686ca, 136ce674, 89633090)
+- Models enabled for a custom provider were not persisted (probed models errored in chat and the detail page fell back to read-only); a `models.json` missing the cost field made pi reject the whole file (custom providers vanishing, sends spinning); deleting a provider/model left stale enabledModels entries. (9c6240a1, 0619cb24, 295c5c83)
+- Primary button weight unified with the other buttons (CJK fallback scaling made buttons in the same row uneven). (30d3ef3b)
+
+### Improvements
+
+- Bundled pi upgraded 1.4.0 → 1.5.0: zero RPC wire changes, transparent to sessions and extensions. (5f754ed0)
+- Extension update detection v2: latest npm versions are fetched via direct registry calls; a failed check no longer disturbs the UI (details only, trace in dev builds). (6aa10bb6, 177118e6)
+- Model editor slimmed down to a centered dialog: model ID + auto-fill / context window + max output / capability checkboxes, with [Test] [Remove] [Save] at the bottom. (08cba470, 5fc78269, d8852a28)
+- API Type removed: a provider only needs baseUrl + API key; the wire format is inferred from the baseUrl. (2b6ce8df)
+- Model toggles no longer enforce "keep at least one". (d3a5c543)
+- The built-in WeChat panel is retired; the pf-wxbot plugin takes over fully. (000b8de7, 2f6304e1)
+- Removed the Ctrl+Shift+F project-search shortcut. (6985add5)
+- The subagents extension is renamed pi-subagents → pf-subagents to avoid the same-named community package on the pi market. (f848fdfa)
+- Startup timing probes: `PI_FLASH_PERF=1` prints per-stage durations. (b9f60d4a)
 ## [0.3.1] - 2026-10-25
 
 ### Install & update
