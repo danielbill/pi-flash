@@ -529,7 +529,9 @@ pub(crate) fn stage_update_in(me: &Path, rel: &ReleaseInfo) -> Result<String, St
         };
         let _ = pi_link::register_to_sys::ensure_pi_shim(
             &node,
-            &target.join(pi_link::vendor::NODE_MODULES_REL),
+            &target
+                .join(pi_link::vendor::VENDOR_DIR_NAME)
+                .join(pi_link::vendor::NODE_MODULES_REL),
         );
 
         // 更新日志缓存（重启后的更新日志页直接读本地）
