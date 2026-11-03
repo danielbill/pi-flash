@@ -188,26 +188,16 @@ pub(crate) fn render_ext_dialog(
                                             ))
                                     })
                                 })
-                                .child(
-                                    div()
-                                        .id("ext-close")
-                                        .w(px(22.))
-                                        .h(px(22.))
-                                        .rounded(px(4.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .text_size(crate::appearance::ui_size(13.))
-                                        .text_color(rgb(t.text_muted))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-                                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                            let _ = weak_close.update(cx, |c, cx| {
-                                                c.ext_respond(None, None, true, cx)
-                                            });
-                                        })
-                                        .child(SharedString::from("\u{2715}")),
-                                ),
+                                // 关闭钮走 overlay::close_btn 唯一实现（§5.2 IB 表）
+                                .child(crate::ui::overlay::close_btn(
+                                    "ext-close",
+                                    t,
+                                    move |_, cx| {
+                                        let _ = weak_close.update(cx, |c, cx| {
+                                            c.ext_respond(None, None, true, cx)
+                                        });
+                                    },
+                                )),
                         ),
                 )
                 // ── 上：信息面板（占剩余高度一半，独立滚动） ──
