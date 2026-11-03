@@ -181,11 +181,19 @@ pub(crate) fn session_row_view(
                     });
                 })
                 .on_hover(move |h, _, cx| {
-                    // pin 槽位替换依据：只在翻转时 notify（行序重建后 path 判等
-                    // 自动失效，不需清旧）
+                    // pin 槽位替换依据（行序重建后 path 判等自动失效，不需清旧）。
+                    // **离行只清自己的**：一次 MouseMove 跨过行边界时，「离行
+                    // false」与「入行 true」在同一事件里成对触发，且 hover 回调
+                    // 走 bubble 序（= paint 序的逆 → 列表**从下往上**派发）——
+                    // 向下滑时先收到下行 enter(true)、后收到上行 leave(false)，
+                    // 无脑覆盖会把 enter 刚写入的值抹成 None（pin 时隐时现的
+                    // 真机回归：慢速移动每行独立事件所以时好时坏，快速滑动
+                    // 必触）。enter 无条件写；leave 仅当当前悬停仍是自己时才
+                    // 清（project_row 同款护栏）。
                     let _ = w_hover.update(cx, |c, cx| {
-                        let next = h.then(|| path_hover.clone());
-                        if c.psp.hovered_session.as_ref() != next.as_ref() {
+                        if let Some(next) =
+                            hover_session_transition(&c.psp.hovered_session, &path_hover, *h)
+                        {
                             c.psp.hovered_session = next;
                             cx.notify();
                         }
@@ -299,6 +307,29 @@ pub(crate) fn session_row_view(
                 }),
         )
         .into_any_element()
+}
+
+/// 会话行悬停状态迁移（纯函数，测试锚点）：`current` = 全局悬停态，
+/// `own` = 本行会话路径，`entered` = 本行 hover 翻转方向（true = 鼠标进入）。
+/// 返回 Some(next) 表示状态已变化需写回 + notify；None = 无变化。
+/// enter 无条件写入（除非已是自己）；leave 仅当当前悬停仍是自己才清——
+/// 详见调用点注释（bubble 序成对回调的覆盖竞态）。
+fn hover_session_transition(
+    current: &Option<std::path::PathBuf>,
+    own: &std::path::Path,
+    entered: bool,
+) -> Option<Option<std::path::PathBuf>> {
+    if entered {
+        if current.as_deref() != Some(own) {
+            return Some(Some(own.to_path_buf()));
+        }
+    } else if current
+        .as_deref()
+        .is_some_and(|cur| crate::services::workspace::same_path(cur, own))
+    {
+        return Some(None);
+    }
+    None
 }
 
 /// 会话行状态槽（15px）：常态 = 转圈/彩点/空；悬停换成置顶钮（020 会话
@@ -501,4 +532,90 @@ pub(crate) fn pending_row_view(
                 .child(div().flex_shrink_0().w(px(38.))),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hover_session_transition;
+    use std::path::{Path, PathBuf};
+
+    /// 复现一次 MouseMove 内的成对回调：gpui bubble 序 = paint 序的逆，
+    /// 列表行自上而下 paint → 回调**自下而上**派发。`seq` 按派发序喂入
+    /// (行路径, entered)，返回最终状态（None = 无行悬停）。
+    fn replay(current: &mut Option<PathBuf>, seq: &[(&Path, bool)]) {
+        for (own, entered) in seq {
+            if let Some(next) = hover_session_transition(current, own, *entered) {
+                *current = next;
+            }
+        }
+    }
+
+    fn p(s: &str) -> PathBuf {
+        PathBuf::from(s)
+    }
+
+    #[test]
+    fn hover_down_top_to_bottom_keeps_entered_row() {
+        // 回归：向下滑（A 上 → B 下），bubble 序 = B(true) 先、A(false) 后。
+        // 旧实现无脑覆盖 → 最终 None，pin 不显示；新实现必须留在 B。
+        let mut cur = Some(p("C:/p/A"));
+        replay(
+            &mut cur,
+            &[(Path::new("C:/p/B"), true), (Path::new("C:/p/A"), false)],
+        );
+        assert_eq!(cur, Some(p("C:/p/B")));
+    }
+
+    #[test]
+    fn hover_up_bottom_to_top_keeps_entered_row() {
+        // 向上滑（B 下 → A 上），bubble 序 = B(false) 先、A(true) 后 → A。
+        let mut cur = Some(p("C:/p/B"));
+        replay(
+            &mut cur,
+            &[(Path::new("C:/p/B"), false), (Path::new("C:/p/A"), true)],
+        );
+        assert_eq!(cur, Some(p("C:/p/A")));
+    }
+
+    #[test]
+    fn hover_cross_multiple_rows_lands_on_entered() {
+        // 快速滑动一次跨多行：下行 C(true)、中行 B(true)、上行 A(false)。
+        let mut cur = Some(p("C:/p/A"));
+        replay(
+            &mut cur,
+            &[
+                (Path::new("C:/p/C"), true),
+                (Path::new("C:/p/B"), true),
+                (Path::new("C:/p/A"), false),
+            ],
+        );
+        assert_eq!(cur, Some(p("C:/p/B")));
+    }
+
+    #[test]
+    fn hover_leave_leaves_list_clears_only_self() {
+        // 鼠标离开列表：最后一行 leave 且无 enter → 清空。
+        let mut cur = Some(p("C:/p/A"));
+        replay(&mut cur, &[(Path::new("C:/p/A"), false)]);
+        assert_eq!(cur, None);
+        // 离行的不是当前悬停行（已被别行顶掉）→ 不动。
+        let mut cur = Some(p("C:/p/B"));
+        replay(&mut cur, &[(Path::new("C:/p/A"), false)]);
+        assert_eq!(cur, Some(p("C:/p/B")));
+    }
+
+    #[test]
+    fn hover_enter_same_path_is_noop_and_leave_is_case_insensitive() {
+        // 重复 enter 同一行不抖动 notify。
+        let cur = Some(p("C:/p/A"));
+        assert_eq!(
+            hover_session_transition(&cur, Path::new("C:/p/A"), true),
+            None
+        );
+        // leave 判等走 same_path（Windows 大小写不敏感；pi 自报路径大小写漂移）。
+        assert_eq!(
+            hover_session_transition(&cur, Path::new("c:/P/a"), false),
+            Some(None)
+        );
+    }
 }
