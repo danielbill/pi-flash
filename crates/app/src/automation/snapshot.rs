@@ -432,6 +432,7 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "bash_running": r.bash_running,
         "streaming": r.streaming_content,
         "waiting": r.phase_waiting,
+        "phase_label": r.phase_label(),
         "has_process": r.agent.session.is_some(),
         "compacting": r.compacting,
         "forking": r.forking,

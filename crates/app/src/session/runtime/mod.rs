@@ -163,6 +163,12 @@ pub(crate) struct SessionRuntime {
     /// （[`PendingEcho`]）：打断投递的回显同样不翻页。
     /// 与 phase_waiting 解耦 —— 回显到达 ≠ agent 已应答，等待行不能被它掐掉。
     pub pending_echoes: Vec<PendingEcho>,
+    /// 乐观发送的入是斜杠命令（pi-web isSlashCommandPrompt → running_command
+    /// 相位）：等待行显示「执行扩展命令中...」而非「正在等待模型...」——
+    /// 命令 handler 在跑（阻塞菜单/查询都算），与模型无关（#7 体验修正）。
+    /// 生命期：optimistic_send 置位；真轮 AgentStart / handled 收场 /
+    /// settled / abort / 发送失败 复位。
+    pub phase_command: bool,
     /// pi 侧 steering/followUp 队列镜像（`queue_update` 全量快照）：「已排
     /// 队 N 条」状态行不再本地猜。仅显示用——abort 撤回的对账真值来自
     /// `clear_queue` response（pi 权威回传），不读这里。090 后 composer 消息
@@ -393,6 +399,7 @@ impl SessionRuntime {
             phase_waiting: false,
             streaming_content: false,
             pending_echoes: Vec::new(),
+            phase_command: false,
             queued_steering: Vec::new(),
             queued_followups: Vec::new(),
             queued_inputs: Vec::new(),
@@ -607,6 +614,7 @@ impl SessionRuntime {
         // 已死 / 事件泵先被回收），留着 true 会让状态槽的旋转圈常亮。
         self.agent_running = false;
         self.phase_waiting = false;
+        self.phase_command = false;
         self.stream_started = None;
         if let Some(s) = self.state.as_mut() {
             s.is_streaming = false;
@@ -767,6 +775,7 @@ async fn consume_runtime_events(
             //（用户实测：旧版还在跑的会话被掐掉后一直转）
             rt.agent_running = false;
             rt.phase_waiting = false;
+            rt.phase_command = false;
             rt.streaming_content = false;
             // stream_started 闩交给 settle_turn 消费（有音开关才响；用户
             // 已 abort 则闩已清，静音）

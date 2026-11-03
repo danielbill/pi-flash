@@ -421,6 +421,7 @@ impl SessionRuntime {
                     // !sdkAgentActive 时 settle 的同款分支）。
                     if !self.agent_running {
                         self.phase_waiting = false;
+                        self.phase_command = false;
                         // 纯 UI 命令不落盘：替身气泡永远等不到回显，就地
                         // 摘除（pi-web prompt_done → loadSession 磁盘真相
                         // 口径的重读即时版）
@@ -439,6 +440,7 @@ impl SessionRuntime {
                     self.status = format!("prompt failed: {}", error.unwrap_or_default());
                     // 发送失败：等待行不能一直转下去；锚点也无从跟随
                     self.phase_waiting = false;
+                    self.phase_command = false;
                     // **不清 pending_echoes**：prompt 被拒（鉴权/无模型）时 pi
                     // 侧队列原封不动——之前排队的消息仍会在下一轮跑完时回
                     // 显，届时还要靠 pending_echoes 去重（清了就是「排队气泡
@@ -894,6 +896,9 @@ impl SessionRuntime {
                 // assistant 消息（MessageEnd）覆盖、由用户消息（MessageStart）
                 // 归零（见那两处注释）。
                 self.agent_running = true;
+                // 真轮开跑：命令相位让位（扩展 handler 里 sendMessage 引出的
+                // 轮次从这一刻起就是正经的模型等待语义）
+                self.phase_command = false;
                 self.status = "running".into();
                 if self.stream_started.is_none() {
                     self.stream_started = Some(std::time::Instant::now());
@@ -906,6 +911,7 @@ impl SessionRuntime {
             Event::AgentSettled => {
                 self.agent_running = false;
                 self.phase_waiting = false;
+                self.phase_command = false;
                 self.streaming_content = false;
                 // 轮次彻底结束：残包窗口（abort..settle）关闭的兜底清除——
                 // 之后到达的流事件都属新轮，不得再并入旧 assistant
@@ -1145,7 +1151,15 @@ impl SessionRuntime {
             })
             .unwrap_or_default();
         match tools.len() {
-            0 => tr("status.waiting_model").to_string(),
+            0 => {
+                if self.phase_command {
+                    // 斜杠命令在途（handler 还在跑：阻塞菜单/查询都算）：
+                    // 语义与模型无关，不能谎报「正在等待模型」（#7）
+                    tr("status.running_command").to_string()
+                } else {
+                    tr("status.waiting_model").to_string()
+                }
+            }
             1 => crate::i18n::tf("status.running_tool", &[("name", tools[0].clone())]),
             n if n <= 3 => crate::i18n::tf("status.running_tools", &[("names", tools.join(", "))]),
             n => crate::i18n::tf(

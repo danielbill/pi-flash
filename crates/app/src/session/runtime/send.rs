@@ -60,6 +60,10 @@ impl SessionRuntime {
     /// 不要刷屏，跟在流后面」）。`pin` 记进 pending_echo 随条目走：回显到
     /// 达（message_start user）按同一决定行事，不再无条件补一次 page_turn。
     pub(super) fn optimistic_send(&mut self, text: String, pin: bool, cx: &mut Context<Self>) {
+        // 斜杠命令相位（pi-web isSlashCommandPrompt parity）：等待行文案用
+        // 「执行扩展命令中」而非「正在等待模型」——命令 handler 在跑，
+        // 与模型无关（#7）；真轮 AgentStart / handled 回执到达时复位
+        let is_command = text.starts_with('/');
         // 伪标签：还没绑定会话文件的 draft，乐观发送的同一帧就在侧栏挂标
         // 签（真标签要等 pi 落盘 + 磁盘扫描，进程冷启 1-3s）。prompt/排队/
         // 远程插件各入口共用本漏斗；已绑定会话被 file 守卫挡掉。
@@ -95,6 +99,7 @@ impl SessionRuntime {
             model: None,
         });
         self.phase_waiting = true;
+        self.phase_command = is_command;
         // 钉顶：新用户消息立即钉视口顶、历史滚出屏，不等回显不等 bounds
         // （page_turn 内部完成 sync 落账）。不钉顶（打断投递）：notify_list
         // 做结构同步即可，视口停在贴底跟随位，消息自然跟在流尾部
@@ -200,6 +205,7 @@ impl SessionRuntime {
         self.stream_cut = true;
         // 中止：等待行立即收起（不等 agent_settled）
         self.phase_waiting = false;
+        self.phase_command = false;
         // pending_echoes **不在此清**：撤回的条目由 clear_queue response 臂
         // 随气泡一起摘（response 异步回来）；已被投递的条目回显时正常消费。
         // 中止即「不在跑」：状态槽转圈 / composer 停止按钮都读 agent_running，

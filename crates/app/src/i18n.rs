@@ -768,6 +768,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("status.steer_dropped", "已中止：{count} 条插话未送达模型，已从队列撤下", "已中止：{count} 條插話未送達模型，已從佇列撤下", "Aborted: {count} steered message(s) never reached the model and were dropped"),
     ("status.send_failed", "发送失败", "發送失敗", "Send failed"),
     ("status.waiting_model", "正在等待模型...", "正在等待模型...", "Waiting for model..."),
+    ("status.running_command", "执行扩展命令中...", "執行擴充命令中...", "Running command..."),
     ("terminal.none", "暂无终端会话", "暫無終端會話", "No terminal sessions"),
     ("titlebar.expand_sidebar", "展开侧栏", "展開側欄", "Expand sidebar"),
     ("titlebar.toggle_sidebar", "收起 / 展开侧栏", "收起 / 展開側欄", "Collapse / expand sidebar"),
