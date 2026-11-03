@@ -124,6 +124,7 @@ pub(crate) fn main_column(
                         // 012 新会话页：标题 + 超大背景 logo + inputpanel +
                         // 额外操作栏；扩展行照旧挂页面上下
                         wrap = wrap
+                            .children(ext_status_row(chat, t))
                             .children(ext_widget_rows(chat, t, true))
                             .child(new_session::page(
                                 chat,
@@ -148,6 +149,7 @@ pub(crate) fn main_column(
                             ))
                             // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
                             // 胶囊绝对定位上浮叠在聊天区上
+                            .children(ext_status_row(chat, t))
                             .children(ext_widget_rows(chat, t, true))
                             .child(input::input_area(
                                 chat,
@@ -649,6 +651,44 @@ fn ext_widget_rows(
             .flex_col()
             .gap_1()
             .children(rows)
+            .into_any_element()
+    })
+}
+
+/// ctx.ui.setStatus 行（zi2s.4，pi-web ExtensionStatusBar parity）：composer
+/// 上方一条（ext_widget above 同区）。key+text mono 11px muted，多 key 横向
+/// 排列；空则整行不占位。此前 aux.ext_status 只写不渲染——pi-usage 的额度
+/// 状态行（wire 实测 statusText="zai 61% ↻ 1h18m · 88% ↻ 6d14h"）永远看不到。
+fn ext_status_row(
+    chat: &Chat,
+    t: &'static crate::appearance::theme::Theme,
+) -> Option<gpui::AnyElement> {
+    (!chat.aux.ext_status.is_empty()).then(|| {
+        let items: Vec<gpui::AnyElement> = chat
+            .aux
+            .ext_status
+            .iter()
+            .map(|(k, v)| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(SharedString::from(k.clone()))
+                    .child(SharedString::from(v.clone()))
+                    .into_any_element()
+            })
+            .collect();
+        div()
+            .px(px(34.))
+            .pt(px(2.))
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_3()
+            .font_family(crate::editor::markdown::MONO_FAMILY)
+            .text_size(crate::appearance::ui_size(11.))
+            .text_color(rgb(t.text_muted))
+            .children(items)
             .into_any_element()
     })
 }

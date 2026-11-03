@@ -139,6 +139,7 @@ case_c2() { # setStatus 数据面（渲染 parity = zi2s.4，此处锁数据链�
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   jcheck session 'JSON.stringify(d.ext_status).includes("usage") && JSON.stringify(d.ext_status).includes("61%")' || rc=1
+  P shot "$CUR_OUT/status.png" >/dev/null 2>&1 || true   # 人工复核渲染位（composer 上方状态行，zi2s.4）
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status-clear >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   sleep 1
