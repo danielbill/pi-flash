@@ -85,8 +85,10 @@ pub(super) fn render_provider_picker(
 
     let group_header = |label: &'static str, top_pad: f32| {
         div()
+            // 左缩进对齐卡片内文字（card p=14），上下间距各组统一
+            .ml(px(14.))
             .pt(px(top_pad))
-            .pb(px(6.))
+            .pb(px(8.))
             .text_size(crate::appearance::ui_size(11.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(rgb(t.text_dim))
@@ -189,7 +191,7 @@ pub(super) fn render_provider_picker(
             );
     }
     if !api_cards.is_empty() {
-        body = body.child(group_header("API KEY", 0.));
+        body = body.child(group_header("API KEY", 14.));
         let mut grid = div().flex().flex_wrap().gap(px(10.));
         for (p, name, total) in &api_cards {
             let weak_card = weak.clone();
@@ -239,6 +241,11 @@ pub(super) fn render_provider_picker(
     if dump.is_some() && !show_custom && api_cards.is_empty() && oauth_cards.is_empty() {
         body = body.child(status_row(tr("model.no_provider_match").to_string()));
     }
+
+    // 内容整体水平居中：定宽 896（3 列卡片），组内仍从左排，标题同缩进
+    let body = div()
+        .w_full()
+        .child(div().mx_auto().w(px(896.)).flex().flex_col().child(body));
 
     // 近满窗大面板：搜索条压顶（分隔线），下方滚动区吃满剩余高度
     let panel = div()
