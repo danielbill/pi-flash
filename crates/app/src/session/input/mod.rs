@@ -211,14 +211,8 @@ impl Chat {
                 if !handled {
                     return false;
                 }
-                // 用户可见的受理回执（真机验收实踩：runtime 的 r.status 无
-                // 渲染点，compact 发出去后除 placeholder 换文案外零反馈——
-                // 「毫无反应」）。toast 走 Chat::set_status 唯一通道；文案取
-                // runtime 写好的 status（拒绝原因/受理确认都落在这里）。
-                let msg = self.rt().read(cx).status.clone();
-                if !msg.is_empty() {
-                    self.set_status(msg, cx);
-                }
+                // 受理回执由 runtime 侧 notify_toast 冒泡 SessionEvent::Toast
+                // 弹出（用户可见反馈的唯一通道），这里不再读 r.status 转发
             }
         }
         self.set_input(String::new(), cx);

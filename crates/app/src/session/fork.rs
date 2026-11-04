@@ -191,8 +191,8 @@ impl SessionRuntime {
         // 命名素材在这里就消费掉：失败分支也要清，免得残留到下一次
         let source_title = self.fork_source_title.take();
         if !success {
-            self.status = format!("fork failed: {}", error.unwrap_or_default());
-            cx.notify();
+            let msg = format!("fork failed: {}", error.unwrap_or_default());
+            self.notify_toast(msg, cx);
             return;
         }
         self.branch_tree = None;
@@ -221,10 +221,11 @@ impl SessionRuntime {
         let name = source_title.as_deref().map(branch_name).unwrap_or_default();
         if !name.is_empty() {
             self.rpc(&Command::SetSessionName { name: name.clone() });
-            self.status = format!("forked: {name}");
+            let msg = format!("forked: {name}");
+            self.notify_toast(msg, cx);
         } else {
             // 原名取不到（空会话）：交给 pi 的默认命名，不发明名字
-            self.status = "forked".into();
+            self.notify_toast("forked".into(), cx);
         }
         // branch_tree / fork 锚点由上面的 get_entries / get_tree 重建
         cx.notify();

@@ -18,8 +18,7 @@ impl SessionRuntime {
         // 真会话上执行，进程不在就先拉起（拦截发生在 send_input 的
         // ensure_spawned 之前）
         if !self.ensure_spawned(cx) {
-            self.status = tr("status.disconnected").into();
-            cx.notify();
+            self.notify_toast(tr("status.disconnected").into(), cx);
             return true;
         }
         match name {
@@ -28,20 +27,18 @@ impl SessionRuntime {
                 // 入口没有视觉状态——静默 return 就是「毫无反应」，真机验收
                 // 实踩）。agent_running 时尤其要说明：压缩会掐当前轮次。
                 if self.agent_running {
-                    self.status = tr("slash.compact_running").into();
-                    cx.notify();
+                    self.notify_toast(tr("slash.compact_running").into(), cx);
                     return true;
                 }
                 if self.compacting {
-                    self.status = tr("slash.compact_ongoing").into();
-                    cx.notify();
+                    self.notify_toast(tr("slash.compact_ongoing").into(), cx);
                     return true;
                 }
                 self.compact(cx);
                 // 受理回执（placeholder 会换「压缩中」，但斜杠入口需要即时
-                // 可见的确认——status 行是唯一全局反馈位）
+                // 可见的确认）
                 if self.compacting {
-                    self.status = tr("slash.compact_started").into();
+                    self.notify_toast(tr("slash.compact_started").into(), cx);
                 }
                 true
             }
@@ -51,13 +48,13 @@ impl SessionRuntime {
                 if let Some(s) = &self.agent.session {
                     let _ = s.send(&Command::SetAutoCompaction { enabled: next });
                 }
-                self.status = tr(if next {
+                let msg: String = tr(if next {
                     "slash.auto_compact_on"
                 } else {
                     "slash.auto_compact_off"
                 })
                 .into();
-                cx.notify();
+                self.notify_toast(msg, cx);
                 true
             }
             "reload" => {
@@ -67,15 +64,13 @@ impl SessionRuntime {
                 // + 清单随 spawn 刷新
                 self.pending_mcp_reload = true;
                 if self.rebind_pending(cx) {
-                    self.status = tr("slash.reloaded").into();
+                    self.notify_toast(tr("slash.reloaded").into(), cx);
                 }
-                cx.notify();
                 true
             }
             "name" => {
                 if args.is_empty() {
-                    self.status = tr("slash.name_usage").into();
-                    cx.notify();
+                    self.notify_toast(tr("slash.name_usage").into(), cx);
                     return true;
                 }
                 let name = args.to_string();
@@ -86,8 +81,7 @@ impl SessionRuntime {
                 if let Some(st) = self.state.as_mut() {
                     st.session_name = Some(name.clone());
                 }
-                self.status = tf("slash.named", &[("name", name)]).into();
-                cx.notify();
+                self.notify_toast(tf("slash.named", &[("name", name)]).into(), cx);
                 true
             }
             "copy" => {
@@ -101,18 +95,16 @@ impl SessionRuntime {
                     .map(|m| m.plain_text().into_owned())
                     .unwrap_or_default();
                 if text.is_empty() {
-                    self.status = tr("slash.copy_empty").into();
+                    self.notify_toast(tr("slash.copy_empty").into(), cx);
                 } else {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                    self.status = tr("slash.copied").into();
+                    self.notify_toast(tr("slash.copied").into(), cx);
                 }
-                cx.notify();
                 true
             }
             "clone" => {
                 if self.agent_running || self.bash_running {
-                    self.status = tr("slash.clone_running").into();
-                    cx.notify();
+                    self.notify_toast(tr("slash.clone_running").into(), cx);
                     return true;
                 }
                 // 尾部轮 = 整段复制（fork.rs fork_from_turn(None) 的 Clone 链）
@@ -121,6 +113,16 @@ impl SessionRuntime {
             }
             _ => false,
         }
+    }
+
+    /// 用户动作终局的统一反馈（zi2s.5 收编）：写 r.status（automation 快照
+    /// 可见）+ 冒泡 [`SessionEvent::Toast`]（Chat 侧 status_toast，唯一用户
+    /// 可见提示位）。runtime 层所有「要让用户知道」的终局都走这里，别再裸
+    /// 写 `self.status = ...`——那是个无渲染死字段（真机验收实踩）。
+    pub(crate) fn notify_toast(&mut self, msg: String, cx: &mut Context<Self>) {
+        self.status = msg.clone();
+        cx.emit(SessionEvent::Toast(msg));
+        cx.notify();
     }
 
     /// 发送后进 ↑ 历史：**上限截断**。此前无上限——长会话里每次发送的全文

@@ -366,19 +366,19 @@ impl SessionRuntime {
                                 _ => String::new(),
                             }
                         });
-                        self.status =
+                        let msg =
                             format!("{}{}", tr("slash.compact_done"), detail.unwrap_or_default());
-                        cx.emit(SessionEvent::Toast(self.status.clone()));
+                        self.notify_toast(msg, cx);
                     } else {
                         // pi 拒绝场景要有出口：会话太小（Nothing to compact）/
                         // 已压缩过（Already compacted）/摘要 LLM 出错——此前
                         // 写进无渲染死字段，用户视角就是「压缩毫无反应」
-                        self.status = format!(
+                        let msg = format!(
                             "{}: {}",
                             tr("slash.compact_failed"),
                             error.unwrap_or_default()
                         );
-                        cx.emit(SessionEvent::Toast(self.status.clone()));
+                        self.notify_toast(msg, cx);
                     }
                 } else if command == "bash" {
                     // `!` shell 命令最终结果（流式增量已就地追加；这里回填
