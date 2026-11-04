@@ -17,9 +17,6 @@ use crate::ui::tooltip::WithTip;
 /// 状态带高度（034 §3.1：inputpanel 正下方一条 28px）。
 pub(crate) const BAR_H: f32 = 28.;
 
-/// 项间间距（SP6 = 12；034 §3.2 项间 gap）。
-const ITEM_GAP: f32 = 12.;
-
 /// 状态项动作（034 §4.2）。当前只有「执行命令」一类；将来若加面板类
 /// （如某个扩展设置页），在这里补 variant 并同步 `footer_status_act`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -37,20 +34,17 @@ impl StatusAction {
     }
 }
 
-/// key → 动作的唯一映射（静态 match，渲染期零分配）。
+/// key → 动作的映射（静态 match，渲染期零分配）。
 ///
-/// **同时是渲染白名单**：只有这里登记的键才上屏（`bar()` 用 `continue` 过滤）。
-/// 扩展的 `setStatus` 会塞进各种给 pi TUI footer 画的东西（`mcp` 的服务器计数、
-/// `mcp-auth` 登录码、`freeflow` relay 状态、`goal` 进度…），对 PF 都是无落位的
-/// 噪音；噪声源在扩展侧，PF 只能靠这张表守门。新增/恢复某个键 = 改本表 + 本条
-/// 注释 + 文档 §4.2。
+/// **只是"可不可点"**，不管准入：状态带默认显示**全部**扩展状态项（Pi 老用户
+/// 默认需求），无动作的键 = 灰字纯文本。想藏某一行是个体偏好，走逐键静音
+/// （`ui_state.ext_status_muted`，如 `["mcp"]`），不是这里。
 pub(crate) fn action_of(key: &str) -> Option<StatusAction> {
     match key {
         // pi-usage 的额度/余额行（点击 = /usage 菜单卡）
         "usage" => Some(StatusAction::Command("/usage")),
-        // `mcp`：**故意不上屏**。pi-mcp-adapter 的 "0 servers enabled (1 disabled)"
-        // 对 PF 是纯噪音——composer 功能栏已有 MCP 胶囊（server 图标 + `[n]` 已启用
-        // 数，点开勾选菜单），比这行更准也更可点。
+        // `mcp`：composer 功能栏已有 MCP 胶囊（server 图标 + `[n]` 已启用数），
+        // 这行不做第二入口；嫌吵可在 ext_status_muted 里静音
         _ => None,
     }
 }
@@ -71,16 +65,17 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         return None;
     }
     let t = T();
-    // 读一次运行态：白名单项（key 字母序）+ agent 是否在跑（命令类禁用判定）。
-    // 非白名单键（mcp / mcp-auth / freeflow / goal…）在这里就被滤掉 —— 带子上
-    // 只出现白名单键；如果剩下的全是噪音，整条不占位（零高度）。
+    // 读一次运行态：全部非空状态项（key 字母序）+ agent 是否在跑（命令类禁用
+    // 判定）。准入 = 全显示 − 用户静音键（`ext_status_muted`）；动作表只决定
+    // 可点性，不决定显示。
+    let muted = crate::services::workspace::ext_status_muted_keys();
     let (items, running) = {
         let r = chat.rt().read(cx);
-        let mut items: Vec<(String, String, StatusAction)> = r
+        let mut items: Vec<(String, String, Option<StatusAction>)> = r
             .ext_status
             .iter()
-            .filter(|(_, text)| !text.is_empty())
-            .filter_map(|(key, text)| action_of(key).map(|a| (key.clone(), text.clone(), a)))
+            .filter(|(key, text)| !text.is_empty() && !muted.iter().any(|m| m == key))
+            .map(|(key, text)| (key.clone(), text.clone(), action_of(key)))
             .collect();
         // pi footer 同口径：按 key 字母序（同一组项跨会话顺序稳定）
         items.sort_by(|a, b| a.0.cmp(&b.0));
@@ -90,10 +85,29 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         return None;
     }
 
-    let mut row = div().flex().items_center().gap(px(ITEM_GAP));
+    let mut row = div().flex().items_center();
+    let mut first = true;
     for (key, text, action) in items {
-        let blocked = running && matches!(action, StatusAction::Command(_));
-        let color = if blocked { t.text_faint } else { t.text_muted };
+        // 多条信息用 `|` 分隔（用户定夺，2026-11-04）：项间 gap 由分隔符 +
+        // 两侧 SP2 = 4 构成，不再用 ITEM_GAP
+        if !first {
+            row = row.child(
+                div()
+                    .mx(px(4.))
+                    .text_size(crate::appearance::ui_size(10.))
+                    .font_family(crate::appearance::panel_font().family)
+                    .text_color(rgb(t.text_faint))
+                    .child("|"),
+            );
+        }
+        first = false;
+
+        let blocked = running && matches!(action, Some(StatusAction::Command(_)));
+        let color = match action {
+            None => t.text_faint,
+            Some(_) if blocked => t.text_faint,
+            Some(_) => t.text_muted,
+        };
         let mut el = div()
             .id(SharedString::from(format!("ext-status-{key}")))
             .flex()
@@ -106,23 +120,28 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .text_size(crate::appearance::ui_size(10.))
             .text_color(rgb(color))
             .child(SharedString::from(text));
-        if blocked {
-            // 禁用：opacity 0.5 + 无 pointer / 无 hover（§8），提示为什么
-            el = el.opacity(0.5).with_tip("footerbar.tip.busy");
-        } else {
-            let key_tip = tip_key_of(&key);
-            if !key_tip.is_empty() {
-                el = el.with_tip(key_tip);
+        match action {
+            Some(_) if blocked => {
+                // 禁用：opacity 0.5 + 无 pointer / 无 hover（§8），提示为什么
+                el = el.opacity(0.5).with_tip("footerbar.tip.busy");
             }
-            el = el
-                .cursor_pointer()
-                .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text_muted)))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
-                        this.footer_status_act(action, cx);
-                    }),
-                );
+            Some(act) => {
+                let key_tip = tip_key_of(&key);
+                if !key_tip.is_empty() {
+                    el = el.with_tip(key_tip);
+                }
+                el = el
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text_muted)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+                            this.footer_status_act(act, cx);
+                        }),
+                    );
+            }
+            // 纯文本：无 pointer、无 hover（不可点语义）
+            None => {}
         }
         row = row.child(el);
     }
@@ -184,16 +203,16 @@ impl Chat {
 mod tests {
     use super::*;
 
-    /// 渲染白名单就是动作表：没登记的键一律不上屏（mcp 是用户点名的噪音源）。
+    /// 动作表只管可点性，不管准入：usage 可点，其余键 None（但仍会上屏）。
     #[test]
-    fn whitelist_only_admits_action_keys() {
+    fn action_table_is_not_admission() {
         assert!(matches!(
             action_of("usage"),
             Some(StatusAction::Command("/usage"))
         ));
-        assert_eq!(action_of("mcp"), None, "MCP 计数行是噪音，不进带子");
-        for noisy in ["mcp-auth", "freeflow", "goal", "cline-login", ""] {
-            assert_eq!(action_of(noisy), None, "{noisy} 不该上屏");
+        // mcp / mcp-auth / freeflow… = None = 纯文本（显示，但不可点）
+        for key in ["mcp", "mcp-auth", "freeflow", "goal", ""] {
+            assert_eq!(action_of(key), None, "{key} 无动作但不应被隐藏");
         }
     }
 }

@@ -268,6 +268,10 @@ pub struct UiState {
     /// 034 会话区底部状态栏显示开关（composer 功能栏 MCP 右侧 switch）。
     /// None = 旧档案缺字段，按默认**开**处理。
     pub session_status_bar: Option<bool>,
+    /// 034 状态带**逐键静音**（用户偏好，产品默认全显示）：不渲染的 statusKey
+    /// 列表。数据面照旧收全量（ext_status），只是画的时候跳过；当前没有逐键
+    /// 的 UI 入口（后续可加"隐藏这一行"），先由配置承载。
+    pub ext_status_muted: Vec<String>,
 }
 
 impl Default for UiState {
@@ -285,6 +289,7 @@ impl Default for UiState {
             proj_order: Vec::new(),
             session_pins: Vec::new(),
             session_status_bar: None,
+            ext_status_muted: Vec::new(),
         }
     }
 }
@@ -366,12 +371,35 @@ pub fn ui_state() -> UiState {
             })
             .unwrap_or_default(),
         session_status_bar: v.get("session_status_bar").and_then(|b| b.as_bool()),
+        ext_status_muted: v
+            .get("ext_status_muted")
+            .and_then(|c| c.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
 /// 034 状态带当前是否显示（缺字段 = 默认开）。
 pub fn session_status_bar_on() -> bool {
     ui_state().session_status_bar.unwrap_or(true)
+}
+
+/// 034 状态带逐键静音清单（含该 key 就不渲染那一项）。
+pub fn ext_status_muted_keys() -> Vec<String> {
+    ui_state().ext_status_muted
+}
+
+/// 034 状态带逐键静音落盘。（静音入口后续做"隐藏这一行"时接上；当前先由
+/// workspace.json 的 `__ui.ext_status_muted` 直接承载）
+#[allow(dead_code)]
+pub fn set_ext_status_muted_keys(keys: Vec<String>) {
+    let mut st = ui_state();
+    st.ext_status_muted = keys;
+    save_ui_state(&st);
 }
 
 /// 034 状态带显示开关落盘（单字段读-改-写，走同一 `__ui` 通道）。
@@ -418,6 +446,7 @@ pub fn save_ui_state(s: &UiState) {
             "dock_max": s.dock_max,
             "session_pins": s.session_pins,
             "session_status_bar": s.session_status_bar,
+            "ext_status_muted": s.ext_status_muted,
         }),
     );
     set_memory(&map);

@@ -531,3 +531,7 @@
   trace 的 `key` move 后借用（adddc556）；startup.rs 测试 `ModelInfo` 缺 `cost`
   字段（cbe86e71）。
 - **验收**：`cargo check -p app` 干净；`cargo test -p app` 429 全绿。
+- **改（同日晚，方案 B）**：准入改**默认全显示 + 逐键静音**——`action_of` 退回纯
+  动作表（只管可点性），新增 `ui_state.ext_status_muted`（本机已写 `["mcp"]`），
+  静音入口 UI 后续接（写函数已备）；多条信息用淡色 `|` 分隔（项间固定 gap 取消，
+  分隔符两侧 SP2）。测试 429 全绿。
