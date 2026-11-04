@@ -1190,6 +1190,74 @@ pub fn prompt_disposition(data: &Value) -> Option<&'static str> {
     }
 }
 
+/// Strip ANSI escape sequences from extension text (zi2s.8，pi-web
+/// PlainTextTheme parity)。rpc-mode 的扩展拿到的是真彩色主题，setStatus/
+/// setWidget 文本常带 SGR 序列（wire 实测 `statusText="\x1b[38;5;5m…\x1b[39m"`），
+/// 原样渲染就是 `[38;5;5m` 之类的碎渣。剥 CSI 序列（ESC [ 参数 终字节）与
+/// OSC（ESC ] … BEL/ST）；普通控制字符保留（\n 是合法的 widget 换行）。
+pub fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'[' => {
+                    // CSI：跳过参数/中间字节（0x30-0x3F / 0x20-0x2F），吃掉终字节
+                    let mut j = i + 2;
+                    while j < bytes.len() && (0x20..=0x3f).contains(&bytes[j]) {
+                        j += 1;
+                    }
+                    if j < bytes.len() && (0x40..=0x7e).contains(&bytes[j]) {
+                        i = j + 1;
+                        continue;
+                    }
+                    // 残缺序列：原样保留（宁可用乱码也不吞文本）
+                }
+                b']' => {
+                    // OSC：BEL (0x07) 或 ST (ESC \) 结尾
+                    let mut j = i + 2;
+                    while j < bytes.len() {
+                        if bytes[j] == 0x07 {
+                            i = j + 1;
+                            break;
+                        }
+                        if bytes[j] == 0x1b && j + 1 < bytes.len() && bytes[j + 1] == b'\\' {
+                            i = j + 2;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if j >= bytes.len() {
+                        i = bytes.len(); // 未闭合的 OSC 尾巴整段丢弃
+                    }
+                    continue;
+                }
+                _ => {
+                    // 两字节转义（ESC 7 / ESC ( B 等）：跳过
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        // 手动按字节推进，UTF-8 多字节原样拷贝
+        let ch_len = utf8_len(bytes[i]);
+        out.push_str(&text[i..i + ch_len]);
+        i += ch_len;
+    }
+    out
+}
+
+fn utf8_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => 1, // 非法首字节：当 1 字节走（UTF-8 合法输入不会到这里）
+    }
+}
+
 /// Parse a single JSONL line from pi's stdout.
 pub fn parse_line(line: &str) -> Option<Event> {
     // NOT serde_json::from_str: get_tree nests the whole conversation
@@ -1317,6 +1385,22 @@ pub fn parse_record(v: &Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // zi2s.8：扩展文本剥 ANSI（pi-web PlainTextTheme parity）
+    #[test]
+    fn strip_ansi_removes_sgr_and_osc_keeps_text() {
+        assert_eq!(strip_ansi("\x1b[31m█ RED\x1b[0m tail"), "█ RED tail");
+        assert_eq!(
+            strip_ansi("\x1b[38;5;5m🔌 MCP: 0 servers\x1b[39m"),
+            "🔌 MCP: 0 servers"
+        );
+        // OSC（标题序列）整段剥
+        assert_eq!(strip_ansi("\x1b]0;title\x07rest"), "rest");
+        assert_eq!(strip_ansi("\x1b]8;;url\x1b\\link"), "link");
+        // 多行 widget 保留换行；无序列原样
+        assert_eq!(strip_ansi("line1\nline2"), "line1\nline2");
+        assert_eq!(strip_ansi("plain"), "plain");
+    }
 
     // zi2s.2：未知 extension UI method 不丢条——parse 必须回 Unknown（带原
     // 方法名），app 侧据此立刻回 cancelled。否则 pi 升级新增 UI 方法即整条

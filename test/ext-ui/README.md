@@ -22,7 +22,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 |---|---|---|---|
 | C1 notify 冒烟 | 命令收场链路（waiting 收场 + notice + handled） | PASS | #7 回归哨兵 |
 | C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染=zi2s.4） | PASS | zi2s.4 前置 |
-| C3 setWidget ANSI | widget 文本无 ESC（PlainTextTheme parity） | XFAIL（原样带 \x1b） | zi2s.8 |
+| C3 setWidget ANSI | widget 文本无 ESC（PlainTextTheme parity） | ~~XFAIL~~ → **PASS**（zi2s.8 已修：pi-link `strip_ansi` + on_ext_ui 对 setWidget/setStatus 应用） | zi2s.8 ✓ |
 | C4 editor 弹窗开合 | 弹窗 method=editor + 取消回 cancelled | PASS* | zi2s.6 前置 |
 | C5 select 键盘导航 | ↓↓+Enter 选中第三项 gamma | XFAIL（无导航） | zi2s.7 |
 | C6 长标题 select | 40 行 title 弹窗可开可关 + shot 留档 | PASS | b9e2edce 回归 |

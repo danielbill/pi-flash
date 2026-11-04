@@ -391,6 +391,9 @@ impl Chat {
                 status_key,
                 status_text,
             } => {
+                // ANSI 剥离（zi2s.8）：rpc-mode 扩展拿真彩色主题，状态文本常
+                // 带 SGR 序列，原样渲染是碎渣（pi-web PlainTextTheme parity）
+                let status_text = status_text.map(|t| pi_link::protocol::strip_ansi(&t));
                 match status_text {
                     Some(text) if !text.is_empty() => {
                         if let Some(item) = self
@@ -417,6 +420,12 @@ impl Chat {
                 placement,
             } => {
                 let above = placement.as_deref() != Some("belowEditor");
+                // ANSI 剥离同 setStatus（zi2s.8）
+                let widget_lines: Option<Vec<String>> = widget_lines.map(|ls| {
+                    ls.iter()
+                        .map(|l| pi_link::protocol::strip_ansi(l))
+                        .collect()
+                });
                 match widget_lines {
                     Some(lines) if !lines.is_empty() => {
                         if let Some(w) = self
