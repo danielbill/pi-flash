@@ -53,11 +53,6 @@ pub(crate) fn stable_bin_dir_from(base: Option<&std::ffi::OsStr>) -> Option<Path
     Some(PathBuf::from(base).join("pi-flash").join("bin"))
 }
 
-/// helper 源文件：与本进程 exe 同目录（auth_json::helper_exe 同源）。
-fn helper_src() -> PathBuf {
-    crate::auth_json::helper_exe()
-}
-
 /// 确保 pif-secret 在用户级 bin 目录 + PATH 里（幂等，毫秒级）。成功 →
 /// 置位 PATH_MODE_OK 并返回 true；任何一步失败保持 false（marker 回落
 /// 绝对路径老行为，功能不损）。
