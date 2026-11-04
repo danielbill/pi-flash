@@ -439,7 +439,7 @@ function extractZip(zipPath, destDir) {
   }
 }
 
-// zip 根布局：win32 带 pi-flash/ 包装目录（release.sh Compress-Archive 行为），darwin 根即 .app
+// zip 根布局：win32 带 pi-flash/ 包装目录（release.sh 压缩产物约定，压缩器无关），darwin 根即 .app
 function locateContentRoot(extractDir, tag) {
   const exeRel = exeRelPath(tag);
   for (const root of [path.join(extractDir, "pi-flash"), extractDir]) {

@@ -23,7 +23,7 @@
 
 | 产物 | 通道 | 产生方式 | 备注 |
 |---|---|---|---|
-| `pi-flash-<v>-win32-x64.zip` + `.sha256` + `SHA256SUMS` | GitHub Release | 本地 `scripts/release.sh` | ≈86MB；解压 299MB（esbuild 已裁非宿主平台） |
+| `pi-flash-<v>-win32-x64.zip` + `.sha256` + `SHA256SUMS` | GitHub Release | 本地 `scripts/release.sh` | ≈90MB；解压 299MB（esbuild 已裁非宿主平台） |
 | ~~`pi-flash-<v>-darwin-arm64.zip`~~ | — | **不发布** | macOS 不在支持范围；薄壳代码仍保留 darwin 分支，只是不出资产 |
 | `pi-flash` npm 薄壳（7.4kB，仅 bin/） | npm 官方源 | **首发手动一次（0.1.0 已完成）→ 此后 `publish-npm.yml` OIDC 自动** | 薄壳安装时从 Release 拉载荷并 SHA-256 校验 |
 | `docs/CHANGELOG.md` + `docs/CHANGELOG_EN.md` 新版本段 | 仓库 | release.sh 5/8：说明文件中文段收编中文版、`<!-- EN -->` 后英文段收编英文版 | 说明文件全文（双语）作 GitHub Release 正文，同一 tag 下中英同页 |
@@ -61,8 +61,9 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 八步（任一失败即中止，修因后可整脚重跑，脚本自清 dist 幂等）：
 
 1. 版本三处同步（Cargo + npm + lock）
-2. 签宿主证明（签名流程见内部发布文档）+ `cargo build --release -p app` +
-   `cargo build --release -p pi-link --bin pif-secret --bin pi`（独立 bin，不在 app 依赖图）+
+2. 签宿主证明（签名流程见内部发布文档）+ `cargo build --release -p app -p pi-link
+   --bin pi-flash --bin pif-secret --bin pi`（一次 cargo 调用并行构建；pif-secret/pi
+   是独立 bin 不在 app 依赖图，必须显式 --bin）+
    **exe 烙入自检**（proof b64 前缀必须命中，未烙入 = 拒打包）
 3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ **pi.exe**
    （全局 pi 前置 shim，缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
@@ -70,7 +71,9 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
    查 `PI_FLASH_PERF`）；结束 taskkill
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
    （双语以单独一行 `<!-- EN -->` 分隔；无英文段则只收中文，英文版不动）
-6. 压缩 `pi-flash-<v>-win32-x64.zip`（PowerShell Compress-Archive，根带 `pi-flash/` 包装目录）
+6. 压缩 `pi-flash-<v>-win32-x64.zip`（压缩器择优：System32 bsdtar 优先 → 7-Zip
+   （`PF_7Z` 可覆盖路径）→ Compress-Archive 兜底；产物同为标准 deflate zip，
+   根带 `pi-flash/` 包装目录，npm 薄壳两条解压路径均可读）
 7. 生成 `SHA256SUMS` + `<资产>.sha256`（薄壳校验取用顺序：sidecar → SHA256SUMS）
 8. 完成，打印尾部块（下一步是 §3.2 人工验收，不是直接 ship）
 

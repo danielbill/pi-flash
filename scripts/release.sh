@@ -66,11 +66,13 @@ eval "$(PF_BUILD_KEY="$PROOF_KEY" node "$PROOF_SCRIPT" sign --kid "$PROOF_KID" -
 [[ -n "${PF_BUILD_PROOF:-}" && -n "${PF_BUILD_KID:-}" ]] || { echo "✗ 宿主证明签名失败（proof.mjs 无输出）"; exit 1; }
 export PF_BUILD_PROOF PF_BUILD_KID
 echo "    宿主证明已签：kid=$PF_BUILD_KID build-id=v$VERSION"
-cargo build --release -p app
-# pif-secret 是 pi-link 的独立 bin，不在 app 依赖图里——必须显式构建
-# （实测 cargo build -p app 不产出它，2026-11-02）
-cargo build --release -p pi-link --bin pif-secret
-cargo build --release -p pi-link --bin pi
+# app 与两个独立 bin 合并为一次 cargo 调用：pif-secret/pi 不在 app 依赖图里，必须
+# 显式 --bin（实测 cargo build -p app 不产出它们，2026-11-02）；合并后共享依赖只编
+# 一遍，三目标由 cargo jobserver 并行调度（原三条串行命令要等 app 全部落地才轮到
+# 两个小 bin，白占尾部几分钟）
+BUILD_T0=$SECONDS
+cargo build --release -p app -p pi-link --bin pi-flash --bin pif-secret --bin pi
+echo "    [perf] release 构建（app+pif-secret+pi 并行）耗时 $((SECONDS - BUILD_T0))s"
 # 产物自检：b64("pf-official|") = cGYtb2ZmaWNpYWx8，注入成功则 proof 常量必在
 # exe 字符串段（占位符字面量散布多处回退路径，不能作阴性信号，只验阳性）。
 grep -aq "cGYtb2ZmaWNpYWx8" target/release/pi-flash.exe \
@@ -228,7 +230,44 @@ else
 fi
 
 echo "==> 6/8 压缩 $ZIP_NAME"
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\pi-flash' -DestinationPath 'dist\\${ZIP_NAME}' -Force"
+# 压缩器择优（产物同为标准 deflate zip，根带 pi-flash/ 包装目录，npm 薄壳解压端
+# System32 bsdtar -xf / Expand-Archive 回落两条路均实测可读、逐字节一致；
+# 2026-11 实测 15379 文件/约300MB：bsdtar 24s·90.3MB，7z -mx=9 100s·85.9MB，
+# Compress-Archive 分钟级最慢）：
+# ① System32 bsdtar（Win10 1803+ 自带，与薄壳解压端同一支，零依赖，最快）
+# ② 7-Zip（PF_7Z 可覆盖路径；压得略小但慢 4 倍）
+# ③ Compress-Archive 兜底（仅在前两者都缺时）
+ZIP_T0=$SECONDS
+ZIP_TOOL=""
+SYS_TAR=""
+if [[ -n "${SYSTEMROOT:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+  _p="$(cygpath -u "$SYSTEMROOT")/System32/tar.exe"
+  [[ -f "$_p" ]] && SYS_TAR="$_p"
+fi
+[[ -n "$SYS_TAR" ]] || SYS_TAR="/c/Windows/System32/tar.exe"
+if [[ -f "$SYS_TAR" ]] && (cd dist && "$SYS_TAR" -a -cf "$ZIP_NAME" pi-flash); then
+  ZIP_TOOL="bsdtar"
+else
+  SEVENZIP=""
+  if [[ -n "${PF_7Z:-}" ]] && [[ -f "${PF_7Z}" ]]; then
+    SEVENZIP="$PF_7Z"
+  else
+    SEVENZIP=$(command -v 7z 2>/dev/null || true)
+    if [[ -z "$SEVENZIP" ]]; then
+      for c in "/d/softwares/7-Zip/7z.exe" "/c/Program Files/7-Zip/7z.exe" "/c/Program Files (x86)/7-Zip/7z.exe"; do
+        if [[ -f "$c" ]]; then SEVENZIP="$c"; break; fi
+      done
+    fi
+  fi
+  if [[ -n "$SEVENZIP" ]] && (cd dist && "$SEVENZIP" a -tzip -y -mx=9 -bso0 -bsp0 "$ZIP_NAME" pi-flash); then
+    ZIP_TOOL="7z"
+  else
+    echo "    （无 bsdtar/7-Zip，回落 Compress-Archive，较慢；建议确认 Win10 1803+ 或装 7-Zip）"
+    powershell -NoProfile -Command "Compress-Archive -Path 'dist\pi-flash' -DestinationPath 'dist\\${ZIP_NAME}' -Force"
+    ZIP_TOOL="Compress-Archive"
+  fi
+fi
+echo "    压缩完成（$ZIP_TOOL，$((SECONDS - ZIP_T0))s）"
 
 echo "==> 7/8 生成校验和（SHA256SUMS + 资产 sidecar，供 npm 薄壳下载校验）"
 (cd dist && sha256sum "$ZIP_NAME" | tee "${ZIP_NAME}.sha256" > SHA256SUMS)
