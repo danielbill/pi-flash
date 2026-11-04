@@ -169,11 +169,10 @@ pub(crate) fn main_column(
                                 weak,
                                 f32::from(window.viewport_size().height),
                             ))
-                            // 034 会话区底部状态栏：chat-wrap **最后一个**
-                            // flex 子项（非 absolute）= 内容列最底部 chrome 带；
-                            // 无扩展状态或开关关闭时整条不建 element（零占位）。
-                            // 放最后是为了让上方 0 高的 composer wrapper 底 ==
-                            // chat-wrap 底 − 条高，胶囊底距据此取 0（见 area.rs）。
+                            // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap
+                            // 底缘（最后绘制，压在消息列表之上），不参与 flex 流
+                            // —— 开闭都不推挤 Inputpanel（胶囊底距恒为条高）。
+                            // 无白名单项或开关关闭时整条不建 element。
                             .children(footer_bar::bar(chat, cx));
                     }
                     // ask_user_question 问卷卡浮层：挂进 chat-wrap（中栏）——

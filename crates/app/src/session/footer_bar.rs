@@ -11,22 +11,21 @@
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::appearance::theme::{border_alpha, theme as T};
+use crate::appearance::theme::theme as T;
 use crate::ui::tooltip::WithTip;
 
 /// 状态带高度（034 §3.1：inputpanel 正下方一条 28px）。
 pub(crate) const BAR_H: f32 = 28.;
 
-/// 项内左右内衬（SP6）+ 内容行左右留白（SP6）。
-const PAD_X: f32 = 12.;
+/// 项间间距（SP6 = 12；034 §3.2 项间 gap）。
+const ITEM_GAP: f32 = 12.;
 
-/// 状态项动作（034 §4.2）。
+/// 状态项动作（034 §4.2）。当前只有「执行命令」一类；将来若加面板类
+/// （如某个扩展设置页），在这里补 variant 并同步 `footer_status_act`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum StatusAction {
     /// 执行一条斜杠命令（与 composer 手打同一漏斗）
     Command(&'static str),
-    /// 打开设置页（tab 索引见 `settings::TAB_*`）
-    Settings(u8),
 }
 
 impl StatusAction {
@@ -34,7 +33,6 @@ impl StatusAction {
     pub(crate) fn tag(self) -> &'static str {
         match self {
             StatusAction::Command(cmd) => cmd,
-            StatusAction::Settings(_) => "settings",
         }
     }
 }
@@ -65,24 +63,6 @@ fn tip_key_of(key: &str) -> &'static str {
     }
 }
 
-/// 034 状态带可见高度：渲染侧与 composer 底距共用同一个判定，避免两套
-// “到底有没有条”的真相（switch 开 + 有非空文本项）。
-pub(crate) fn will_show(chat: &Chat, cx: &gpui::App) -> bool {
-    if !crate::services::workspace::session_status_bar_on() {
-        return false;
-    }
-    chat.pool
-        .runtimes
-        .get(&chat.pool.active_key)
-        .map(|rt| {
-            rt.read(cx)
-                .ext_status
-                .iter()
-                .any(|(_, text)| !text.is_empty())
-        })
-        .unwrap_or(false)
-}
-
 /// 状态带本体。None = 整条不渲染（不占 28px，也不建 element）。
 ///
 /// 显隐四档（034 §3.4）：开关关 / 无项 / 全部文本空 / 新会话页（调用方不挂）。
@@ -110,7 +90,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         return None;
     }
 
-    let mut row = div().flex().items_center().gap(px(PAD_X));
+    let mut row = div().flex().items_center().gap(px(ITEM_GAP));
     for (key, text, action) in items {
         let blocked = running && matches!(action, StatusAction::Command(_));
         let color = if blocked { t.text_faint } else { t.text_muted };
@@ -145,27 +125,35 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         row = row.child(el);
     }
 
+    // 条 = chat-wrap 底缘的 absolute 覆盖层（不参与 flex 流）：显隐都不推挤
+    // Inputpanel（composer 底距恒为 BAR_H，开闭之间不动）。PAD_BOTTOM 已把
+    // 这 28px 算进让位，消息不会被压在带子底下。
+    // 不画上沿线：左邻是 dock 的 tab 栏，横线一拉就对不齐（用户定夺）。
+    // 内容行与消息列/composer 同心：px15 + 内容列宽封顶 + 居中，行内项右对齐。
+    let content_w = crate::services::workspace::chat_content_width();
     Some(
         div()
             .id("session-status-bar")
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .right_0()
             .h(px(BAR_H))
-            .w_full()
-            .flex_shrink_0()
             .flex()
             .items_center()
+            .justify_center()
             .bg(rgb(t.chrome))
-            // 上沿细线：§5.12 分隔线唯一口径（常驻 1px）
-            .border_t_1()
-            .border_color(gpui::rgba(border_alpha(t, 0x99)))
             .child(
-                div()
-                    .w_full()
-                    .px(px(PAD_X))
-                    .flex()
-                    .items_center()
-                    // 会话槽（本期空）+ 扩展槽右对齐（034 §3.3）
-                    .child(div().flex_1())
-                    .child(row),
+                div().w_full().px(px(15.)).flex().justify_center().child(
+                    div()
+                        .w_full()
+                        .max_w(px(content_w))
+                        .flex()
+                        .items_center()
+                        // 会话槽（本期空）+ 扩展槽右对齐到内容列右缘
+                        .child(div().flex_1())
+                        .child(row),
+                ),
             )
             .into_any_element(),
     )
@@ -179,7 +167,6 @@ impl Chat {
             StatusAction::Command(cmd) => {
                 self.rt().update(cx, |r, cx| r.send_command(cmd, cx));
             }
-            StatusAction::Settings(tab) => self.open_settings(tab, cx),
         }
     }
 

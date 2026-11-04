@@ -270,14 +270,7 @@ pub(crate) fn input_area(
                     .child(capsule),
             ),
         );
-    // 034：状态带可见时胶囊底距取 0（胶囊下缘正好压在带上沿——0 高的
-    // composer wrapper 底 == chat-wrap 底 − 条高）；不可见时回落原来的 20。
-    let footer_gap = if crate::session::footer_bar::will_show(chat, cx) {
-        0.
-    } else {
-        20.
-    };
-    composer_wrap(inner, hero, show_scroll_btn, weak, t, footer_gap)
+    composer_wrap(inner, hero, show_scroll_btn, weak, t)
 }
 
 /// 附加图片缩略图（v58 图片粘贴）：56×56 圆角方块，panel 左上角并列、
@@ -500,8 +493,6 @@ fn composer_wrap(
     show_scroll_btn: bool,
     weak: &gpui::WeakEntity<Chat>,
     t: &'static crate::appearance::theme::Theme,
-    // 034：胶囊底距（像素）。有状态带 = 0（压在带上沿），无 = 20（原值）。
-    footer_gap: f32,
 ) -> gpui::AnyElement {
     if hero {
         return div()
@@ -520,8 +511,9 @@ fn composer_wrap(
         .child(
             div()
                 .absolute()
-                // 034：有状态带时 0（wrapper 底已在带上沿之上），否则原 20
-                .bottom(px(footer_gap))
+                // 034：永久上移 8（原 20 → 28）。状态带是 absolute 覆盖层，
+                // 开闭不改变布局，所以这里不随开关变——胶囊永不动。
+                .bottom(px(crate::session::footer_bar::BAR_H))
                 .left_0()
                 .right_0()
                 // 与消息列表同一水平内边距（session_list 的 px(15)）→ 胶囊列宽
