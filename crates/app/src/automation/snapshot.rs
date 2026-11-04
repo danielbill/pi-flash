@@ -456,7 +456,10 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "state": state_json(&r),
         "messages": messages_json(&r),
         // 扩展 UI 面（test/ext-ui 台架断言出口；数据与渲染同源，见 dialogs/ext_ui.rs）
-        "ext_status": chat.aux.ext_status.clone(),
+        // 034：ext_status 已下沉到运行时（per-session，防切会话串味）
+        "ext_status": r.ext_status.clone(),
+        // 034 会话区底部状态栏（渲染面）：开关 / 是否占位 / 可点动作
+        "status_bar": status_bar_json(&r),
         "ext_widgets": chat
             .aux
             .ext_widgets
@@ -468,6 +471,32 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             .ext_notice
             .as_ref()
             .map(|(msg, ty)| json!({"message": msg, "type": ty})),
+    })
+}
+
+/// 034 会话区底部状态栏快照：开关 + 是否占位 + 每项的动作/禁用态。
+/// 与 `session/footer_bar.rs` 共用同一张动作表（`action_of`）。
+fn status_bar_json(r: &SessionRuntime) -> Value {
+    let enabled = crate::services::workspace::session_status_bar_on();
+    let items: Vec<Value> = r
+        .ext_status
+        .iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(|(key, text)| {
+            let action = crate::session::footer_bar::action_of(key);
+            json!({
+                "key": key,
+                "text": truncate(text, 200),
+                "action": action.map(|a| a.tag()),
+                "disabled": r.agent_running
+                    && matches!(action, Some(crate::session::footer_bar::StatusAction::Command(_))),
+            })
+        })
+        .collect();
+    json!({
+        "enabled": enabled,
+        "visible": enabled && !items.is_empty(),
+        "items": items,
     })
 }
 

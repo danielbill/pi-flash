@@ -132,14 +132,14 @@ case_c1() { # notify 冒烟：命令收场链路（基线 PASS）
   return $rc
 }
 
-case_c2() { # setStatus 数据面（此处只锁数据链路；渲染行已隐藏，见 EXT_STATUS_ROW_VISIBLE）
+case_c2() { # setStatus 数据面（此处只锁数据链路；渲染 = 034 会话区底部状态带）
   start_app real || return 1
   mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
   local rc=0
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   jcheck session 'JSON.stringify(d.ext_status).includes("usage") && JSON.stringify(d.ext_status).includes("61%")' || rc=1
-  P shot "$CUR_OUT/status.png" >/dev/null 2>&1 || true   # 留档：状态行当前不渲染（EXT_STATUS_ROW_VISIBLE=false，待设计落位）
+  P shot "$CUR_OUT/status.png" >/dev/null 2>&1 || true   # 留档：034 状态带渲染位（C11 断言可见性/动作）
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status-clear >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   sleep 1
@@ -295,6 +295,24 @@ case_c10() { # ctx.ui.setTitle 映射窗口标题（zi2s.9）
   return $rc
 }
 
+case_c11() { # 034 底部状态带：可见性 + 可点项动作（同 footer_status_act 分派）
+  start_app real || return 1
+  mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
+  local rc=0
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status >/dev/null
+  P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
+  sleep 1
+  # 数据面 + 渲染面同源：usage 项存在、动作 = /usage、开关默认开
+  jcheck session 'd.status_bar && d.status_bar.enabled === true && d.status_bar.items.some(i => i.key === "usage" && i.action === "/usage")' || rc=1
+  jcheck session 'd.status_bar.visible === true' || rc=1
+  P shot "$CUR_OUT/statusbar.png" >/dev/null 2>&1 || true
+  # 点击同一条分派 → wire 出现 /usage prompt（与手打同漏斗）
+  P exec session.status_act --arg key=usage >/dev/null || rc=1
+  await_wire 'message":"/usage"' 10 || rc=1
+  quit_app
+  return $rc
+}
+
 # ------------------------------------------------------------------ main --
 desc_of() {
   case "$1" in
@@ -308,10 +326,11 @@ desc_of() {
     C8) echo "pi 崩溃清弹窗（zi2s.3）" ;;
     C9) echo "内置斜杠命令拦截（zi2s.5）" ;;
     C10) echo "setTitle 映射窗口标题（zi2s.9）" ;;
+    C11) echo "034 底部状态带：可见性 + 可点项动作" ;;
   esac
 }
 
-CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10}"
+CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11}"
 mkdir -p "$OUTBASE"
 for C in $CASES; do
   CUR="$C"; CUR_OUT="$OUTBASE/$C"; CUR_PFDATA="$CUR_OUT/pfdata"; CUR_WIRE="$CUR_OUT/wire.log"

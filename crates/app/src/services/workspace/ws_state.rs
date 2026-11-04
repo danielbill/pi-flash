@@ -265,6 +265,9 @@ pub struct UiState {
     /// （index 0 = 最近置顶）。置顶会话哪怕跌出加载时间窗口也要可见，
     /// 所以这份清单还参与启动装载并集（startup::spawn_boot_restore）。
     pub session_pins: Vec<String>,
+    /// 034 会话区底部状态栏显示开关（composer 功能栏 MCP 右侧 switch）。
+    /// None = 旧档案缺字段，按默认**开**处理。
+    pub session_status_bar: Option<bool>,
 }
 
 impl Default for UiState {
@@ -281,6 +284,7 @@ impl Default for UiState {
             dock_split: None,
             proj_order: Vec::new(),
             session_pins: Vec::new(),
+            session_status_bar: None,
         }
     }
 }
@@ -361,7 +365,20 @@ pub fn ui_state() -> UiState {
                     .collect()
             })
             .unwrap_or_default(),
+        session_status_bar: v.get("session_status_bar").and_then(|b| b.as_bool()),
     }
+}
+
+/// 034 状态带当前是否显示（缺字段 = 默认开）。
+pub fn session_status_bar_on() -> bool {
+    ui_state().session_status_bar.unwrap_or(true)
+}
+
+/// 034 状态带显示开关落盘（单字段读-改-写，走同一 `__ui` 通道）。
+pub fn set_session_status_bar(on: bool) {
+    let mut st = ui_state();
+    st.session_status_bar = Some(on);
+    save_ui_state(&st);
 }
 
 /// dock 最大化态 ↔ layout 两标志的**唯一映射**（两端共用，防漂移）。
@@ -400,6 +417,7 @@ pub fn save_ui_state(s: &UiState) {
             "proj_order": s.proj_order,
             "dock_max": s.dock_max,
             "session_pins": s.session_pins,
+            "session_status_bar": s.session_status_bar,
         }),
     );
     set_memory(&map);

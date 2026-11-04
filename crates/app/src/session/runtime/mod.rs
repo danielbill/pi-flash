@@ -300,6 +300,12 @@ pub(crate) struct SessionRuntime {
     /// queued ext requests while not active (G+ surfaces a badge)
     pub ext_queue: Vec<pi_link::protocol::ExtensionUiRequest>,
 
+    /// 034 状态带数据面：本会话 pi 侧 `ctx.ui.setStatus(key, text)` 的当前快照
+    /// （到达序；渲染侧按 key 字母序排）。**per-runtime 而不是 Chat 级**：pi 在
+    /// `resetExtensionUI()`（换会话/重载）里清扩展状态，PF 池子里每个 pi 进程
+    /// 各持一份 —— 放 Chat 上会让切会话串味（上一会话的额度行跟到新会话）。
+    pub ext_status: Vec<(String, String)>,
+
     /// (下标, 点亮时刻) — 复制 pill 的「已复制」反馈（032 恢复）：下标对
     /// 用户栏是 msg_ix、对 agent 轮栏是轮头 start_ix（两者互不重叠）。
     /// `spawn_flash_clear` 1.5s 后清空。渲染侧经
@@ -459,6 +465,7 @@ impl SessionRuntime {
             pending_bash: None,
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
+            ext_status: Vec::new(),
 
             pending_locate: None,
 
@@ -689,6 +696,9 @@ impl SessionRuntime {
                 // 队列快照（queue_update 只在变动时发，残留会一直错下去）
                 self.queued_steering.clear();
                 self.queued_followups.clear();
+                // 034：扩展状态同理——旧 pi 进程的 setStatus 快照随进程作废，
+                // 新进程重新发（否则 /reload、空闲回收重建后带子上挂旧文案）
+                self.ext_status.clear();
                 let epoch = self.agent.epoch;
                 Self::attach_pump(&this, rx, epoch, cx);
                 true

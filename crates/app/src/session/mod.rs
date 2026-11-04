@@ -7,6 +7,7 @@ pub(crate) mod actions_bar;
 pub(crate) mod attachments;
 pub(crate) mod chat_list;
 pub(crate) mod diff;
+pub(crate) mod footer_bar;
 pub(crate) mod fork;
 pub(crate) mod input;
 pub(crate) mod mcp_picker;
@@ -122,9 +123,9 @@ pub(crate) fn main_column(
                         .flex_col();
                     if new_session_page {
                         // 012 新会话页：标题 + 超大背景 logo + inputpanel +
-                        // 额外操作栏；扩展行照旧挂页面上下
+                        // 额外操作栏；扩展行照旧挂页面上下。034 状态带**不挂**
+                        // （draft 无扩展状态，且会破坏空态构图）。
                         wrap = wrap
-                            .children(ext_status_row(chat, t))
                             .children(ext_widget_rows(chat, t, true))
                             .child(new_session::page(
                                 chat,
@@ -149,7 +150,6 @@ pub(crate) fn main_column(
                             ))
                             // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
                             // 胶囊绝对定位上浮叠在聊天区上
-                            .children(ext_status_row(chat, t))
                             .children(ext_widget_rows(chat, t, true))
                             .child(input::input_area(
                                 chat,
@@ -163,12 +163,18 @@ pub(crate) fn main_column(
                             // 子代理浮层面板（044-1 §1.1 三改）：absolute 挂
                             // chat-wrap（relative）顶左 = 操作栏正下方悬浮，
                             // 不推挤消息区；无全屏外点拦截，composer 点击不受
-                            // 影响。放最后 = 与 composer 重叠时面板在上
+                            // 影响。
                             .children(subagent_panel::subagent_panel_element(
                                 chat,
                                 weak,
                                 f32::from(window.viewport_size().height),
-                            ));
+                            ))
+                            // 034 会话区底部状态栏：chat-wrap **最后一个**
+                            // flex 子项（非 absolute）= 内容列最底部 chrome 带；
+                            // 无扩展状态或开关关闭时整条不建 element（零占位）。
+                            // 放最后是为了让上方 0 高的 composer wrapper 底 ==
+                            // chat-wrap 底 − 条高，胶囊底距据此取 0（见 area.rs）。
+                            .children(footer_bar::bar(chat, cx));
                     }
                     // ask_user_question 问卷卡浮层：挂进 chat-wrap（中栏）——
                     // 与 composer 同一居中基准；挂整窗根会被左右侧栏挤偏
@@ -651,54 +657,6 @@ fn ext_widget_rows(
             .flex_col()
             .gap_1()
             .children(rows)
-            .into_any_element()
-    })
-}
-
-/// ctx.ui.setStatus 行（zi2s.4，pi-web ExtensionStatusBar parity）：composer
-/// 上方一条（ext_widget above 同区）。key+text mono 11px muted，多 key 横向
-/// 排列；空则整行不占位。
-///
-/// **当前不渲染**（`EXT_STATUS_ROW_VISIBLE = false`）：扩展（pi-mcp-adapter /
-/// pi-usage / pi-freeflow…）把给 pi TUI footer 画的一行短状态随手塞进这个通道，
-/// 而这条线的位置/字号/缩进都没有设计出处（`docs/UI设计/UI组件规范.md` 里没有
-/// 对应控件）。所以先整行隐掉，等设计定下落位再打开；数据面 `aux.ext_status`
-/// 与 pif-ui 快照照旧维护（`test/ext-ui` C2 靠它断言数据链路）。
-const EXT_STATUS_ROW_VISIBLE: bool = false;
-
-fn ext_status_row(
-    chat: &Chat,
-    t: &'static crate::appearance::theme::Theme,
-) -> Option<gpui::AnyElement> {
-    if !EXT_STATUS_ROW_VISIBLE {
-        return None;
-    }
-    (!chat.aux.ext_status.is_empty()).then(|| {
-        let items: Vec<gpui::AnyElement> = chat
-            .aux
-            .ext_status
-            .iter()
-            .map(|(k, v)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(SharedString::from(k.clone()))
-                    .child(SharedString::from(v.clone()))
-                    .into_any_element()
-            })
-            .collect();
-        div()
-            .px(px(34.))
-            .pt(px(2.))
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap_3()
-            .font_family(crate::editor::markdown::MONO_FAMILY)
-            .text_size(crate::appearance::ui_size(11.))
-            .text_color(rgb(t.text_muted))
-            .children(items)
             .into_any_element()
     })
 }

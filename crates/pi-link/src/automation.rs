@@ -145,6 +145,9 @@ pub mod method {
     pub const TERMINAL_OPEN: &str = "terminal.open";
     /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
     pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
+    /// 034 底部状态带可点项直调（UI 测试用：与点项**同一条分派**
+    /// `footer_status_act`；args {key}，回 {action}；未知/无动作键报错）
+    pub const SESSION_STATUS_ACT: &str = "session.status_act";
     /// PF 插件（090-4）驱动：状态栏 tab 开面板 / 文件树右键项回调（UI 测试用）
     pub const PLUGIN_DOCK: &str = "plugin.dock";
     pub const PLUGIN_MENU: &str = "plugin.menu";

@@ -21,7 +21,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | 用例 | 断言 | 基线 | 归属 |
 |---|---|---|---|
 | C1 notify 冒烟 | 命令收场链路（waiting 收场 + notice + handled） | PASS | #7 回归哨兵 |
-| C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染行当前隐藏＝`EXT_STATUS_ROW_VISIBLE=false`，待设计落位） | PASS | zi2s.4 前置 |
+| C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染 = 034 底部状态带） | PASS | zi2s.4 前置 |
 | C3 setWidget ANSI | widget 文本无 ESC（PlainTextTheme parity） | ~~XFAIL~~ → **PASS**（zi2s.8 已修：pi-link `strip_ansi` + on_ext_ui 对 setWidget/setStatus 应用） | zi2s.8 ✓ |
 | C4 editor 多行弹窗 | prefill 两行原样进多行输入 + 取消回 cancelled | PASS（zi2s.6：专用 multiline TextInput + Enter 提交，折叠保命 hack 已移除） | zi2s.6 ✓ |
 | C5 select 键盘导航 | ↓↓ 高亮 index=2 + Enter 选中 gamma（handler notify 回执） | ~~XFAIL~~ → **PASS**（zi2s.7 已修：overlay on_key_down 导航 + 首行预选高亮 + snapshot sel 出口） | zi2s.7 ✓ |
@@ -30,6 +30,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C8 pi 崩溃清弹窗 | mock exit(1) → ext_dialog 清理 | ~~XFAIL~~ → **PASS**（zi2s.3 已修：泵尾 ext_queue.clear + SessionEvent::ExtUiDied → Chat ext_cancel_all；连跑 4 次确定性通过） | zi2s.3 ✓ |
 | C9 内置斜杠命令 | /name /compact /auto-compact wire 命令帧 + /session /mcp 面板 + 全程零 prompt 帧 | PASS（zi2s.5 拦截实现即台架即验收） | zi2s.5 ✓ |
 | C10 setTitle | snapshot window.title = "PF ext title ✓"（OS 标题映射） | PASS（zi2s.9：render 帧 apply-diff 落 set_window_title） | zi2s.9 ✓ |
+| C11 034 状态带 | `session.status_bar.{enabled,visible,items[].action}` + `session.status_act key=usage` → wire 有 `/usage` prompt | 待跑（034 P1/P2） | 034 |
 
 \** C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
 `text argument should not contain newlines` panic）——单行 TextInput 阶段

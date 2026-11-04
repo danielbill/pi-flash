@@ -35,7 +35,7 @@ pub(crate) struct Chat {
 /// 系统提示词·工具定义弹窗。
 pub(crate) struct AuxUi {
     // extension UI surface (active session)
-    pub(crate) ext_status: Vec<(String, String)>,
+    // 034：ext_status 已下沉到 SessionRuntime（per-session，防切会话串味）
     pub(crate) ext_widgets: Vec<(String, Vec<String>, bool)>,
     pub(crate) ext_dialog: Option<pi_link::protocol::ExtensionUiRequest>,
     /// 阻塞弹窗两个内容区的滚动句柄（上：信息面板；下：操作面板）。
@@ -793,7 +793,6 @@ impl Chat {
             },
             plugins: pf_plugin::PluginUi::default(),
             aux: AuxUi {
-                ext_status: Vec::new(),
                 ext_widgets: Vec::new(),
                 ext_dialog: None,
                 ext_dialog_info_scroll: gpui::ScrollHandle::new(),

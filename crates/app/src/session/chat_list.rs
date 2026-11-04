@@ -64,7 +64,10 @@ pub(crate) const PAD_TOP: f32 = 22.;
 /// 输出距 input panel 上沿 50px 就该开始上滚）。跟尾时内容末条就停在
 /// `屏底 − PAD_BOTTOM`；「回到最新」按钮仍悬浮在胶囊上方 20px 处（比内容末条
 /// 低 30px，只在脱离尾部后出现，不与内容末条争同一条线）。
-pub(crate) const PAD_BOTTOM: f32 = 180.;
+///
+/// 034：胶囊底距 20 → 28（让位底部状态带）+ 内部 pb 12 → 7，净上浮 8 →
+/// 180 → 188（不同步就会让最后一条消息被胶囊压住）。
+pub(crate) const PAD_BOTTOM: f32 = 188.;
 
 /// 垫片高度只有两个取值：**钉顶期 = 一整屏内容区高，跟尾期 = 0**。
 ///
@@ -697,7 +700,7 @@ mod tests {
     #[test]
     fn spacer_target_is_a_constant_while_pinned() {
         let avail = 1000. - PAD_TOP - PAD_BOTTOM;
-        assert_eq!(avail, 1000. - 22. - 180.);
+        assert_eq!(avail, 1000. - 22. - 188.);
         assert_eq!(spacer_target(avail, 0.), (avail, false));
         assert_eq!(spacer_target(avail, 130.), (avail, false));
         // 内容刚好填满 → 垫片 0 且转跟随（胶水接住，几何连续）

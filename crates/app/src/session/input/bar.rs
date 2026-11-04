@@ -7,6 +7,7 @@ use super::*;
 use crate::Chat;
 use crate::PillMenu;
 use crate::i18n::tr;
+use crate::ui::WithTip;
 use crate::ui::{icon, icon_hover};
 
 /// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）。
@@ -115,6 +116,34 @@ fn mcp_button(
     // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
     el = el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.mcp));
     el.into_any_element()
+}
+
+/// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info + SW_MD 28×16）。
+/// 关 = 状态带整条不渲染（数据面照旧维护）；状态直切无动画。
+fn status_bar_toggle(
+    t: &'static crate::appearance::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
+    let on = crate::services::workspace::session_status_bar_on();
+    let color = if on { t.text_muted } else { t.text_faint };
+    let weak = cx.entity().downgrade();
+    div()
+        .id("ext-status-toggle")
+        .h(px(28.))
+        .flex()
+        .items_center()
+        .gap(px(6.)) // SP3：图标↔控件
+        .px(px(6.))
+        .with_tip("footerbar.tip.toggle")
+        .child(icon("badge-info", 16., color))
+        .child(crate::ui::kit::config_switch(
+            "ext-status-switch",
+            &weak,
+            on,
+            false,
+            |c, cx| c.toggle_session_status_bar(cx),
+        ))
+        .into_any_element()
 }
 
 /// 控件行：左 = 图片 + 工具预设；右 = 上下文环 + 模型 + 思考 + 发送/停止。
@@ -513,6 +542,8 @@ fn bar_left_group(
             .child(plugin_button(chat, t, cx))
             // MCP 按钮（043）：扩展按钮右边的兄弟节点（常驻渲染，n=0 显 [0]）
             .child(mcp_button(chat, t, cx))
+            // 034 会话状态带显示开关：MCP 右侧（用户定案）
+            .child(status_bar_toggle(t, cx))
             .into_any_element()
     }
 }

@@ -973,6 +973,17 @@ pub(super) fn dispatch(
             chat.mc_set_tools_preset(preset, cx);
             ok()
         }
+        method::SESSION_STATUS_ACT => {
+            let key = params
+                .get("key")
+                .and_then(Value::as_str)
+                .ok_or_else(|| bad("需要 {\"key\": \"usage|mcp\"}"))?;
+            let Some(action) = crate::session::footer_bar::action_of(key) else {
+                return Err(bad(format!("状态项 {key:?} 没有可点动作")));
+            };
+            chat.footer_status_act(action, cx);
+            Ok(json!({"action": action.tag()}))
+        }
         method::PI_EXTENSION_PICKER_OPEN => {
             chat.open_pi_extension_picker(cx);
             ok()

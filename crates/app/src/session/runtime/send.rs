@@ -689,6 +689,36 @@ impl SessionRuntime {
         cx.notify();
     }
 
+    /// 034 状态带可点项：执行一条扩展命令（如 `/usage`）。
+    ///
+    /// 与 composer 手打**同一条漏斗**：同一个 `Command::Prompt`（命令相位、
+    /// 乐观气泡、磁盘真相收场全由既有链路接管），区别只是不经输入框、
+    /// 不进 ↑ 历史。运行中不发（按钮侧已置灰，这里兼底）；要排队一条命令
+    /// 会让用户以为点了没反应（等待行要等上一轮才出现）。
+    pub(crate) fn send_command(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.compacting || self.agent_running {
+            return;
+        }
+        // 040/043：空闲发送前生效的扩展/MCP 重绑（与 send_input 同口径）
+        if !self.rebind_pending(cx) || !self.ensure_spawned(cx) {
+            return;
+        }
+        let cmd = Command::Prompt {
+            message: text.to_string(),
+            images: Vec::new(),
+            streaming_behavior: Some("followUp".into()),
+        };
+        match self.agent.session.as_ref().map(|s| s.send(&cmd)) {
+            Some(Ok(_)) => {
+                self.status = "running".into();
+                self.optimistic_send(text.to_string(), true, cx);
+            }
+            Some(Err(e)) => self.status = e,
+            None => self.status = tr("status.disconnected").into(),
+        }
+        cx.notify();
+    }
+
     /// 压缩按钮可用性：agent 跑动中不可（compact 会中止当前 turn）、
     /// 压缩中防连点、未连接不可。除此之外不设门槛——用不用由用户决定。
     pub(crate) fn can_compact(&self) -> bool {

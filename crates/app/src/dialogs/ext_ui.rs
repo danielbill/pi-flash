@@ -470,23 +470,23 @@ impl Chat {
                 // ANSI 剥离（zi2s.8）：rpc-mode 扩展拿真彩色主题，状态文本常
                 // 带 SGR 序列，原样渲染是碎渣（pi-web PlainTextTheme parity）
                 let status_text = status_text.map(|t| pi_link::protocol::strip_ansi(&t));
+                // 034：状态项存**运行时**（per-session），漫染兜底走 retain
+                // （空文本 = pi 的 setStatus(key, undefined) = 摘除）。
                 match status_text {
                     Some(text) if !text.is_empty() => {
-                        if let Some(item) = self
-                            .aux
-                            .ext_status
-                            .iter_mut()
-                            .find(|(k, _)| *k == status_key)
-                        {
-                            item.1 = text;
-                        } else {
-                            self.aux.ext_status.push((status_key, text));
-                        }
+                        self.rt().update(cx, |r, _| {
+                            if let Some(item) =
+                                r.ext_status.iter_mut().find(|(k, _)| *k == status_key)
+                            {
+                                item.1 = text;
+                            } else {
+                                r.ext_status.push((status_key, text));
+                            }
+                        });
                     }
                     _ => self
-                        .aux
-                        .ext_status
-                        .retain(|(k, _): &(String, String)| *k != status_key),
+                        .rt()
+                        .update(cx, |r, _| r.ext_status.retain(|(k, _)| *k != status_key)),
                 }
                 cx.notify();
             }

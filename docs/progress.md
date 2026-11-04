@@ -494,3 +494,20 @@
   菜单 ✓ 只读 state.model（草稿 pending 永不出 ✓）。修：退出臂清句柄；✓ / pill /
   `draft_model` 统一 pending → state → 兜底；新 op `model.pick` + `model_current_ref`
   断言口。`test/042-1/picker-current/run.sh` 13/13
+
+## 2026-11-04 · 034 会话区底部状态栏落地（P0–P2）
+
+- **背景**：pi 扩展 `ctx.ui.setStatus(key,text)` 的一行短状态此前被搬进 composer
+  上方（会话领口），位置/字号无设计出处，`mcp`/`usage` 等键的键名还漏进界面。
+- **落位**：`session/footer_bar.rs`（模块代码 sessionStatusBar）——content-col 最底部
+  28px chrome 带，`chat-wrap` 最后一个 flex 子项；可点项点击 = 执行命令（usage →
+  `/usage`，与手打同漏斗 `send_command`），mcp → 设置›MCP；运行中命令类置灰并有
+  tooltip。总开关在 composer 功能栏 MCP 右侧（badge-info + SW_MD，落 ui_state）。
+- **数据面**：`ext_status` 从 `Chat.aux` 下沉到 `SessionRuntime`（per-session，切会话
+  天然不串味），`spawn_attached` 清空旧进程快照（覆盖 `/reload` 与空闲回收重建）。
+- **几何**：条 28；胶囊底距视觉 20→28（代码 `footer_gap` 可见取 0）；`PAD_BOTTOM`
+  180→188；胶囊内 `pb` 12→7（= Inputpanel −5）。
+- **删除**：旧 `ext_status_row` + `EXT_STATUS_ROW_VISIBLE`（一条信息只在一处渲染）。
+- **验收**：`cargo check`/`cargo test -p app` 428 全绿；`test/ext-ui` 新增 C11
+  （`session.status_act key=usage` → wire `/usage`），待真机跑；快照新增
+  `session.status_bar`。文档 `docs/模块设计/034-会话区底部状态栏.md`。

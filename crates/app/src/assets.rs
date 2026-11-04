@@ -127,6 +127,8 @@ assets! {
     // 取代 2026-10-10 的 circle-ellipsis）
     "icons/ellipsis.svg",
     "icons/info.svg",
+    // 034 底部状态栏显示开关（lucide badge-info）
+    "icons/badge-info.svg",
     // 082 设置「快捷键」页导航图标（lucide keyboard）
     "icons/keyboard.svg",
     "icons/folder-open.svg",

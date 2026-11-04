@@ -870,6 +870,11 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("subagent.ago_secs", "秒前", "秒前", "s ago"),
     ("subagent.ago_mins", "分钟前", "分鐘前", "m ago"),
     ("subagent.ago_hours", "小时前", "小時前", "h ago"),
+    // -- 034 会话区底部状态栏
+    ("footerbar.tip.usage", "打开用量面板（/usage）", "開啟用量面板（/usage）", "Open usage panel (/usage)"),
+    ("footerbar.tip.mcp", "打开 MCP 设置", "開啟 MCP 設定", "Open MCP settings"),
+    ("footerbar.tip.busy", "当前轮次结束后可用", "目前輪次結束後可用", "Available after the current turn"),
+    ("footerbar.tip.toggle", "显示扩展状态栏", "顯示擴充狀態列", "Show extension status bar"),
 ];
 
 /// Translate a **semantic key** for the active language.
