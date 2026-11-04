@@ -135,7 +135,7 @@ pub(crate) struct CfgUi {
     /// 【自动填参】的结果暂存（queried_id, 目录条目）：填参不再落盘，名称/价格
     /// 等字段等【保存】时按它补进模型；`queried_id` 与保存时的模型ID 不一致就
     /// 丢弃（防止把上一个模型的名称/价格串过去）。
-    pub(crate) mj_fill_entry: Option<(String, pi_link::openrouter::Entry)>,
+    pub(crate) mj_fill_entry: Option<(String, pi_link::model_price::Entry)>,
     /// 模型详情那几个表单变量（mj_id / ctx / max / 能力勾选）当前对应的
     /// section。**唯一用途**：渲染前校验「表单内容 ↔ 当前 section」是否一致，
     /// 不一致就重填一遍——详情页关闭/切换时若有任何一个变量没清干净（值污染），

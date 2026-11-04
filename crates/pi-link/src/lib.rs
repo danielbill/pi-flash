@@ -27,7 +27,6 @@ pub mod model_price;
 pub mod model_ref;
 pub mod model_test;
 pub mod models_json;
-pub mod openrouter;
 pub mod paths;
 pub mod pf_plugins;
 pub mod probe;

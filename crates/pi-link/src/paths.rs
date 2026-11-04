@@ -168,12 +168,6 @@ pub fn custom_provider_file() -> Option<PathBuf> {
     file("custom-provider.json")
 }
 
-/// `~/.pi-flash/openrouter-cache.json` — OpenRouter 全量目录缓存（openrouter.rs，
-/// 「自动填参」用；TTL 1h，网络失败回陈旧）。
-pub fn openrouter_cache_file() -> Option<PathBuf> {
-    file("openrouter-cache.json")
-}
-
 /// `~/.pi-flash/model-price-cache.json` — models.dev 单文件 TOML 价格缓存
 /// （model_price.rs，042-2；TTL 7 天，网络失败回陈旧）。
 pub fn model_price_cache_file() -> Option<PathBuf> {

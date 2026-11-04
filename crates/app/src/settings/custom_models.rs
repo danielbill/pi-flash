@@ -861,15 +861,13 @@ impl Chat {
             if !price_is_manual
                 && model.get("id").and_then(|v| v.as_str()) == Some(queried.as_str())
             {
-                if e.source == pi_link::model_price::SOURCE_MODELS_DEV
-                    || e.source == pi_link::model_price::SOURCE_OPENROUTER
-                {
+                if !e.source.is_empty() {
                     model.as_object_mut().expect("model is object").insert(
                         pi_link::model_price::SOURCE_KEY.into(),
                         serde_json::json!(e.source.clone()),
                     );
                 }
-                pi_link::openrouter::fill_name_cost(&mut model, &e);
+                pi_link::model_price::fill_name_cost(&mut model, &e);
             }
         }
         // pi 对扩展注册模型要求完整形状（缺 input/reasoning/cost 聊天即崩）：
@@ -1309,10 +1307,10 @@ impl Chat {
             // 目录无此 id 是常态错误（本地化文案）；网络错带原文
             let shown = match &resolved {
                 Ok(_) => None,
-                Err(pi_link::openrouter::FillError::NoMatch) => {
+                Err(pi_link::model_price::FillError::NoMatch) => {
                     Some(tr("models.catalog_no_exact_match").to_string())
                 }
-                Err(pi_link::openrouter::FillError::Net(m)) => Some(m.clone()),
+                Err(pi_link::model_price::FillError::Net(m)) => Some(m.clone()),
             };
             let _ = this.update(cx, |c, cx| match resolved {
                 Ok(e) => c.mj_catalog_fill_to_form(&e, &id, cx),
@@ -1329,7 +1327,7 @@ impl Chat {
     /// 并把条目暂存起来，等【保存】时再补名称/价格（见 `mj_commit_model_form`）。
     fn mj_catalog_fill_to_form(
         &mut self,
-        e: &pi_link::openrouter::Entry,
+        e: &pi_link::model_price::Entry,
         queried_id: &str,
         cx: &mut Context<Self>,
     ) {

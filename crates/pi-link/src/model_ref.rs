@@ -11,7 +11,7 @@
 //!
 //! 判别不靠字符串长相猜（`deepseek-flash` 与 `deepseek-v4.1-flash-1017`
 //! 都像 id，猜必错）：这里只按「id → name 派生」产出**并列候选**，由目录
-//! 结果裁决（具体型号优先、别名兜底，见 `openrouter::resolve_many`）。
+//! 结果裁决（具体型号优先、别名兜底，见 `model_price::resolve`）。
 
 /// name → 目录 slug：剥厂商前缀（`DeepSeek: `）、小写、空白/下划线转 `-`、
 /// 剔非法字符、压重复 `-`。
@@ -46,7 +46,7 @@ pub fn slugify(name: &str) -> String {
 /// 1. 官方 id（本身能命中具体型号时就用它，行为与今天一致）；
 /// 2. `slugify(name)`（版本名 → 目录 slug，具体型号条目）。
 ///
-/// 命中优先级由 `openrouter::resolve_many` 裁决：**具体型号 > 别名通配**，
+/// 命中优先级由 `model_price::resolve` 裁决：**具体型号 > 别名通配**，
 /// 同等档位才看候选顺序。name 已与 slug 同形时不重复出现。
 pub fn query_candidates(id: &str, name: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();

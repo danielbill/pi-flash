@@ -420,9 +420,16 @@ mod tests {
             {"id": "m", "cost": {"input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0},
              "priceSource": "models-dev"}]}}});
         assert!(repair(&mut doc));
-        assert!(doc["providers"]["p"]["models"][0].get("priceSource").is_none(),
-            "PF 私有元数据不进 pi 账本");
-        assert_eq!(doc["providers"]["p"]["models"][0]["cost"]["input"], json!(1));
+        assert!(
+            doc["providers"]["p"]["models"][0]
+                .get("priceSource")
+                .is_none(),
+            "PF 私有元数据不进 pi 账本"
+        );
+        assert_eq!(
+            doc["providers"]["p"]["models"][0]["cost"]["input"],
+            json!(1)
+        );
     }
 
     #[test]
