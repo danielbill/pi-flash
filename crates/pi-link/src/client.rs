@@ -219,6 +219,21 @@ pub fn spawn(
                 }
                 match parse_line(&line) {
                     Some(event) => {
+                        // ext-ui 链路留痕（2026-11-04 #问题卡不弹）：阻塞类
+                        // extension_ui_request 一旦在宿主侧被吞，pi 永久挂起且
+                        // 界面零痕迹——本行是链路最上游的「确已送达」锚点，
+                        // 与 pool/ask_card 的下游 trace 用同一前缀可对账。
+                        if let Event::ExtensionUi(req) = &event {
+                            use crate::protocol::ExtUiMethod;
+                            let m = match &req.method {
+                                ExtUiMethod::Select { .. } => "select",
+                                ExtUiMethod::Confirm { .. } => "confirm",
+                                ExtUiMethod::Input { .. } => "input",
+                                ExtUiMethod::Editor { .. } => "editor",
+                                _ => "fire-and-forget",
+                            };
+                            eprintln!("[ext-ui] wire: id={} method={m}", req.id);
+                        }
                         if event_tx.unbounded_send(event).is_err() {
                             break;
                         }

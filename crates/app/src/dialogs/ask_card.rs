@@ -247,15 +247,20 @@ impl Chat {
         // 未布防：从 transcript 解析整卷，题目命中才接管
         if self.aux.ask.is_none() {
             let Some(mut card) = parse_from_transcript(&self.rt().read(cx)) else {
+                // #问题卡不弹：transcript 里找不到可解析的 ask_user_question
+                // toolCall（未送达 / args_partial / parse_args 拒收）→ 落 legacy
+                eprintln!("[ext-ui] ask: no parseable tool_call in transcript → legacy");
                 return false;
             };
             let idx = card.next_request;
             if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
+                eprintln!("[ext-ui] ask: title mismatch (idx={idx}) → legacy");
                 return false;
             }
             card.pending = Some(req);
             card.open = true;
             self.aux.ask = Some(card);
+            eprintln!("[ext-ui] ask: armed");
             cx.notify();
             return true;
         }
@@ -264,6 +269,7 @@ impl Chat {
             Some(card) => {
                 let idx = card.next_request;
                 if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
+                    eprintln!("[ext-ui] ask: stale-card mismatch (idx={idx}) → legacy");
                     return false;
                 }
                 card.submitted

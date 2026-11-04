@@ -105,11 +105,20 @@ impl Chat {
                     // 扩展的 ui 广播是全局的：任何会话里任何扩展调
                     // `ui.notify` / `setStatus` / `setTitle` 都走这条事件，
                     if is_active {
+                        eprintln!("[ext-ui] route: id={} key={}", req.id, rt.read(cx).key);
                         let req = req.clone();
                         chat.on_ext_ui(req, cx);
                     } else {
                         // parked session asks for permission: queue it, the
                         // badge surfaces it; popped when user switches there
+                        // #问题卡不弹：静默队列必须留痕——否则 pi 永久挂在
+                        // select 上而界面零线索（2026-11-04 真机事故链）
+                        eprintln!(
+                            "[ext-ui] PARKED: id={} key={} (active_key={})",
+                            req.id,
+                            rt.read(cx).key,
+                            chat.pool.active_key
+                        );
                         rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
                         cx.notify();
                     }
@@ -297,6 +306,12 @@ impl Chat {
             q
         });
         if let Some(first) = queued.first() {
+            // #问题卡不弹： parked 期间的积压请求在此兑现，留痕对账
+            eprintln!(
+                "[ext-ui] switch flush: {} queued, first id={}",
+                queued.len(),
+                first.id
+            );
             let first = first.clone();
             cx.notify();
             self.on_ext_ui(first, cx);
