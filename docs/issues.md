@@ -1,10 +1,10 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-11-03 16:43 ｜ 共 8 条（open 5）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-11-04 11:56 ｜ 共 8 条（open 3）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
 
-## 🔴 Open（5）
+## 🔴 Open（3）
 
 ### #8 没设置模型费用，会导致Error Cannot read properties of undefined (reading 'tiers')
 - 状态：open ｜ 标签：— ｜ 作者：zengdaming ｜ 创建：2026-10-26 ｜ 更新：2026-10-26
@@ -40,35 +40,24 @@ providers.json（或 models.json）的模型定义中补齐 cost 字段：
 
 建议加上当前会话消耗的token数，每个会话的token消耗，使用的模型
 
+## ✅ Closed（5）
+
 ### #5 建议支持自定义供应商
-- 状态：closed ｜ 标签：— ｜ 作者：easyeda2021 ｜ 创建：2026-10-23 ｜ 更新：2026-10-23 ｜ 关闭：2026-11-03
+- 状态：closed ｜ 标签：— ｜ 作者：easyeda2021 ｜ 创建：2026-10-23 ｜ 更新：2026-11-03 ｜ 关闭：2026-11-03
 - https://github.com/danielbill/pi-flash/issues/5
-
-<details><summary>评论（1）</summary>
-
-**@danielbill**（2026-11-03）：
-
-自定义供应商已支持
-</details>
 
 抖音刷到找来的
 1、不支持自定义provider，导致企业统一内部中转站的路由用不了
 2、界面看起来有些粗糙，建议可以让AI再美化一下
 3、可以配套vscdoe插件使用
 
-### #2 add release build for mac?
-- 状态：open ｜ 标签：— ｜ 作者：mungowang ｜ 创建：2026-10-20 ｜ 更新：2026-10-21
-- https://github.com/danielbill/pi-flash/issues/2
-
 <details><summary>评论（1）</summary>
 
-**@danielbill**（2026-10-21）：
+**@danielbill**（2026-11-03）：
 
-由于没有linux环境，暂无计划
+自定义供应商已支持
 
 </details>
-
-## ✅ Closed（3）
 
 ### #4 显示的md渲染颜色可以自定义最好
 - 状态：closed ｜ 标签：— ｜ 作者：zhoujun681 ｜ 创建：2026-10-23 ｜ 更新：2026-10-24 ｜ 关闭：2026-10-24
@@ -115,6 +104,18 @@ pi-web会话调用模型自动命名挺好用的，希望能集成进来
 **@danielbill**（2026-10-22）：
 
 PF无计划实现此功能，我正是那个提出反对的意见的用户 ：）
+
+</details>
+
+### #2 add release build for mac?
+- 状态：closed ｜ 标签：— ｜ 作者：mungowang ｜ 创建：2026-10-20 ｜ 更新：2026-11-03 ｜ 关闭：2026-11-03
+- https://github.com/danielbill/pi-flash/issues/2
+
+<details><summary>评论（1）</summary>
+
+**@danielbill**（2026-10-21）：
+
+由于没有linux环境，暂无计划
 
 </details>
 
