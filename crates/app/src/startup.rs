@@ -511,6 +511,8 @@ mod tests {
                 max_tokens: None,
                 reasoning: None,
                 input: None,
+                // 042-2：ModelInfo 增带价格四键（Option，测试用 None）
+                cost: None,
             }],
             commands: vec![SlashCommand {
                 name: "notify".into(),

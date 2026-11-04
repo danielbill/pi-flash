@@ -371,7 +371,7 @@ impl Chat {
             r.status = tr("session.new").to_string();
             r
         });
-        self.pool.runtimes.insert(key, rt.clone());
+        self.pool.runtimes.insert(key.clone(), rt.clone());
         pi_link::client::ext_trace(&format!("spawn-draft: key={key}"));
         self.subscribe_runtime(&rt, cx);
         if clear_memory {
