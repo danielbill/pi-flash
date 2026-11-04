@@ -38,6 +38,8 @@ pub(crate) struct AskCard {
     pub open: bool,
     /// 当前挂起的阻塞请求（包严格串行，至多一个）
     pub pending: Option<ExtensionUiRequest>,
+    /// 预览正文滚动句柄（Rc 共享：AskCard 每帧 clone，滚动位置跨帧存续）
+    pub pv_scroll: gpui::ScrollHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +213,7 @@ fn parse_args(args: &str) -> Option<AskCard> {
         submitted: false,
         open: false,
         pending: None,
+        pv_scroll: gpui::ScrollHandle::new(),
     })
 }
 
@@ -554,11 +557,13 @@ pub(crate) fn render_ask_card(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
     // 自定义答案行（AskCard 常驻模式）：active 题内嵌输入框，其余处只读回显
     qcol = qcol.child(ask_other_row(chat, q, weak, t));
 
-    let mut pane = div().flex().gap(px(0.)).child(qcol);
+    // relative = 预览侧栏（absolute 脱流，见 ask_preview_pane）的定位基准；
+    // 行高只由左列决定，右栏全高随行
+    let mut pane = div().relative().flex().gap(px(0.)).child(qcol);
 
     // 预览侧栏（当前题任一选项带 preview 时出现；装配见 ask_preview_pane）
     if with_pv {
-        pane = pane.child(ask_preview_pane(q, t));
+        pane = pane.child(ask_preview_pane(&card.pv_scroll, q, t));
     }
 
     // ---- 卡脚：提示 + 取消 + 确认 [n/N]（装配见 ask_footer） ----
@@ -846,7 +851,11 @@ fn ask_other_row(
 
 /// 预览侧栏：当前选中（或首个带 preview 的）选项的 PREVIEW 头 + mono 正文框。
 /// 内切自 render_ask_card（check_arch 300 行上限，纯结构搬运）。
-fn ask_preview_pane(q: &AskQ, t: &crate::appearance::theme::Theme) -> gpui::Div {
+fn ask_preview_pane(
+    scroll: &gpui::ScrollHandle,
+    q: &AskQ,
+    t: &crate::appearance::theme::Theme,
+) -> gpui::Div {
     let pv_idx = q
         .sel
         .iter()
@@ -858,9 +867,15 @@ fn ask_preview_pane(q: &AskQ, t: &crate::appearance::theme::Theme) -> gpui::Div 
         .clone()
         .unwrap_or_else(|| tr("ask.no_preview").to_string());
     let pv_name = q.options[pv_idx].label.clone();
+    // 绝对定位脱流（top0→bottom0，左缘 = 左列 with_pv 定宽 400）：行高只由
+    // 左列（题面+选项+自定义行）决定，预览区全高、底边与自定义行齐平
+    //（用户定稿）；超长正文滚而不撑卡（max_h 裁切已废）
     div()
-        .flex_1()
-        .min_w_0()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(400.))
+        .right_0()
         .pl(px(16.))
         .flex()
         .flex_col()
@@ -881,19 +896,28 @@ fn ask_preview_pane(q: &AskQ, t: &crate::appearance::theme::Theme) -> gpui::Div 
         .child(
             div()
                 .flex_1()
+                .min_h_0()
+                .relative()
                 .mt(px(10.))
-                .max_h(px(240.))
-                .overflow_hidden()
-                .bg(rgb(t.tool_bg))
-                .border_1()
-                .border_color(rgb(t.border))
-                .rounded(px(9.))
-                .px(px(14.))
-                .py(px(13.))
-                .font_family(crate::editor::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::ui_size(11.5))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(pv_text)),
+                .child(
+                    div()
+                        .id("ask-preview-body")
+                        .w_full()
+                        .h_full()
+                        .overflow_y_scroll()
+                        .track_scroll(scroll)
+                        .bg(rgb(t.tool_bg))
+                        .border_1()
+                        .border_color(rgb(t.border))
+                        .rounded(px(9.))
+                        .px(px(14.))
+                        .py(px(13.))
+                        .font_family(crate::editor::markdown::MONO_FAMILY)
+                        .text_size(crate::appearance::ui_size(11.5))
+                        .text_color(rgb(t.text_dim))
+                        .child(SharedString::from(pv_text)),
+                )
+                .child(crate::ui::psp_scrollbar::menu_scrollbar(scroll)),
         )
 }
 

@@ -207,7 +207,12 @@ function mockMain(SCENARIO) {
           question: "启用灰度？",
           multiSelect: false,
           options: [
-            { label: "Yes", description: "" },
+            {
+              label: "Yes",
+              description: "",
+              // 长 preview：预览侧栏（absolute 脱流 + 滚动）的常驻冒烟路径
+              preview: Array.from({ length: 30 }, (_, i) => `灰度说明第 ${i + 1} 行`).join("\n"),
+            },
             { label: "No", description: "" },
           ],
         },
