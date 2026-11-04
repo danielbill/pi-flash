@@ -24,7 +24,25 @@ impl SessionRuntime {
         }
         match name {
             "compact" => {
+                // can_compact 拒绝时必须有提示（圆环按钮灰态能看出来，斜杠
+                // 入口没有视觉状态——静默 return 就是「毫无反应」，真机验收
+                // 实踩）。agent_running 时尤其要说明：压缩会掐当前轮次。
+                if self.agent_running {
+                    self.status = tr("slash.compact_running").into();
+                    cx.notify();
+                    return true;
+                }
+                if self.compacting {
+                    self.status = tr("slash.compact_ongoing").into();
+                    cx.notify();
+                    return true;
+                }
                 self.compact(cx);
+                // 受理回执（placeholder 会换「压缩中」，但斜杠入口需要即时
+                // 可见的确认——status 行是唯一全局反馈位）
+                if self.compacting {
+                    self.status = tr("slash.compact_started").into();
+                }
                 true
             }
             "auto-compact" => {
