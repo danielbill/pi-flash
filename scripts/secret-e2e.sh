@@ -169,11 +169,27 @@ grep -q "\"$MODEL\"" "$T/agent/models.json" 2>/dev/null \
 step "TC2b auth.json 标记指向包内 helper（不是 target/debug）"
 AUTH="$T/agent/auth.json"
 [ -f "$AUTH" ] && ok "隔离 auth.json 已生成（真实 ~/.pi 未动）" || bad "隔离 auth.json 不存在"
+# 042-2 起标记去路径化（6210558a）：PATH 模式（register_to_sys 注册成功，包内
+# release 实例启动即注册）= 裸命令 `!pif-secret get <商>`；未就绪回落绝对路径
+# 形态 `!'…/pif-secret.exe' get <商>`（须指向包内 pkg，不是 target/debug）。
+bare=$(grep -o "!pif-secret get $PROVIDER" "$AUTH" 2>/dev/null | head -1)
 marker=$(grep -o "!'[^']*' get $PROVIDER" "$AUTH" 2>/dev/null | head -1)
 expect="!'$PKG_W/pif-secret.exe' get $PROVIDER"
-# 盘符大小写不敏感比对（current_exe 可能回 D:/ 也可能 d:/）
-if [ "${marker,,}" = "${expect,,}" ]; then ok "标记 = $marker"; else bad "标记不对" "got=[$marker] want=[$expect]"; fi
-case "${marker,,}" in *target/debug*) bad "标记仍指向 target/debug";; *) ok "标记不含 target/debug";; esac
+if [ -n "$bare" ]; then
+  ok "标记（PATH 模式裸命令）= $bare"
+elif [ -n "$marker" ]; then
+  # 盘符大小写不敏感比对（current_exe 可能回 D:/ 也可能 d:/）
+  if [ "${marker,,}" = "${expect,,}" ]; then ok "标记（回落绝对路径）= $marker"; else bad "标记不对" "got=[$marker] want=[$expect]"; fi
+else
+  bad "标记不对" "got=[] want=[!pif-secret get $PROVIDER 或 $expect]"
+fi
+if [ -z "$bare" ] && [ -z "$marker" ]; then
+  bad "两种形态的标记都没找到"
+elif [[ "${bare}${marker}" == *target/debug* ]]; then
+  bad "标记仍指向 target/debug"
+else
+  ok "标记不含 target/debug"
+fi
 if grep -q "\"$PROVIDER\"" "$AUTH" && ! grep -qF "$KEY" "$AUTH"; then
   ok "auth.json 无明文 key"
 else

@@ -32,7 +32,7 @@ E2E_SECRET_KEY="$(target/debug/pif-secret.exe get zai-coding-cn)" scripts/secret
 |---|---|
 | TC1 组装 | `pkg/pif-secret.exe` 与 `pkg/pi-flash.exe` 同目录在位 |
 | TC2a 存 key | `settings.open → mj_new → mj_form → mj_save` 真实保存链路；`mj_providers` 含商、`error` 为 null |
-| TC2b 标记 | 隔离 `agent/auth.json` 该商 key == `!'<pkg 正斜杠绝对路径>/pif-secret.exe' get <商>`；不含 `target/debug`；无明文 key |
+| TC2b 标记 | 隔离 `agent/auth.json` 该商 key：PATH 模式（042-2 起，包内 release 实例启动即注册 pif-secret 进用户级 PATH）== **裸命令** `!pif-secret get <商>`；未就绪回落 `!'<pkg 正斜杠绝对路径>/pif-secret.exe' get <商>`。两种形态都不含 `target/debug`、无明文 key |
 | TC2c 取回 | `pkg/pif-secret.exe get <商>` stdout == 保存值、exit 0；换 cwd 一致 |
 | TC2d 端到端（真 key） | `session.new → session.send` 出现 assistant 回复、无凭据类错误 |
 | TC3 反向 | 藏起 helper → 标记命令不可执行；（真 key）重启实例发消息失败；放回 → 取回恢复、（真 key）对话恢复 |
