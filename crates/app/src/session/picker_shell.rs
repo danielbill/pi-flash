@@ -14,6 +14,10 @@ use crate::shell::types::PillAnchor;
 /// 行高（10 行限高 = `ROW_H × 10`，三 picker 一致）。
 pub(crate) const ROW_H: f32 = 30.;
 
+/// 弹出菜单统一内边距（用户定稿 10px）：行 / 标题 / 空态的水平与上下
+/// 留白唯一取值，扩展 / MCP / 模型 picker 与工具·思考胶囊菜单共用。
+pub(crate) const PAD: f32 = 10.;
+
 // ---------------------------------------------------------------------------
 // 锚点定位
 // ---------------------------------------------------------------------------
@@ -86,7 +90,7 @@ pub(crate) fn capped_list(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .pb(px(6.))
+        .pb(px(PAD))
         .h(px(list_h))
         .overflow_y_scroll()
         .track_scroll(scroll)
@@ -95,12 +99,12 @@ pub(crate) fn capped_list(
         .children(rows)
 }
 
-/// 空态行（px10/py12/ui11/text_dim）。
+/// 空态行（PAD/ui11/text_dim）。
 pub(crate) fn empty_row(text: SharedString) -> AnyElement {
     let t = crate::appearance::theme::theme();
     div()
-        .px(px(10.))
-        .py(px(12.))
+        .px(px(PAD))
+        .py(px(PAD))
         .text_size(crate::appearance::ui_size(11.))
         .text_color(rgb(t.text_dim))
         .child(text)

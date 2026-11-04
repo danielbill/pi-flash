@@ -357,9 +357,10 @@ impl Render for Chat {
                             if is_thinking { "t" } else { "w" },
                             key
                         )))
-                        // 行距与扩展/MCP/模型 picker 对齐（ROW_H=30 + px(10)）
-                        .h(px(crate::session::picker_shell::ROW_H))
-                        .px(px(10.))
+                        // 内边距与扩展/MCP/模型 picker 统一（PAD=10）：
+                        // 上下走 PAD 不钉行高，14px 文案才有呼吸感
+                        .py(px(crate::session::picker_shell::PAD))
+                        .px(px(crate::session::picker_shell::PAD))
                         .flex()
                         .items_center()
                         .gap_2()

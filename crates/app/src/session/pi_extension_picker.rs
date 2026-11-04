@@ -14,7 +14,9 @@
 
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
-use super::picker_shell::{capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges};
+use super::picker_shell::{
+    PAD, capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges,
+};
 use crate::Chat;
 use crate::appearance::theme::theme as T;
 
@@ -199,9 +201,9 @@ pub(crate) fn view(
         .sum();
 
     let header = div()
-        .px(px(10.))
-        .pt(px(10.))
-        .pb(px(6.))
+        .px(px(PAD))
+        .pt(px(PAD))
+        .pb(px(PAD))
         .flex()
         .items_center()
         .gap(px(8.))
@@ -268,7 +270,7 @@ fn plugin_row(
     let mut row = div()
         .id(SharedString::from(format!("pp-row-{source}")))
         .h(px(ROW_H))
-        .px(px(10.))
+        .px(px(PAD))
         .flex()
         .items_center()
         .gap(px(8.))

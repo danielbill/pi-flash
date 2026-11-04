@@ -18,7 +18,9 @@
 use gpui::{AnyElement, MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use super::Chat;
-use super::picker_shell::{capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges};
+use super::picker_shell::{
+    PAD, capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges,
+};
 use crate::appearance::theme::theme as T;
 
 /// 行高（10 行限高 = `ROW_H × 10`，与 pi_extension_picker 一致）。
@@ -128,9 +130,9 @@ pub(crate) fn view(
 
     let enabled_n = items.iter().filter(|s| s.enabled).count();
     let header = div()
-        .px(px(10.))
-        .pt(px(10.))
-        .pb(px(6.))
+        .px(px(PAD))
+        .pt(px(PAD))
+        .pb(px(PAD))
         .flex()
         .items_center()
         .gap(px(8.))
@@ -184,7 +186,7 @@ fn mcp_row(
     div()
         .id(SharedString::from(format!("mcp-row-{name}")))
         .h(px(ROW_H))
-        .px(px(10.))
+        .px(px(PAD))
         .flex()
         .items_center()
         .gap(px(8.))

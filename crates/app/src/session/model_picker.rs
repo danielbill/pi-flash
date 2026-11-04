@@ -19,6 +19,7 @@
 use gpui::{AnyElement, MouseButton, SharedString, div, point, prelude::*, px, rgb};
 
 use super::Chat;
+use super::picker_shell::PAD;
 use crate::TextInput;
 use crate::appearance::theme::theme as T;
 
@@ -574,7 +575,7 @@ pub(crate) fn view(
     for (abs, e) in entries.iter().enumerate() {
         match e {
             ModelGroupEntry::Header(name) => {
-                body = body.child(group_header_row(name, 10., ROW_H * 0.8, t));
+                body = body.child(group_header_row(name, PAD, ROW_H * 0.8, t));
             }
             ModelGroupEntry::Model(ix) => {
                 let m = &models[*ix];
@@ -589,7 +590,7 @@ pub(crate) fn view(
                     selected,
                     true,
                     ROW_H,
-                    10.,
+                    PAD,
                     None,
                     Some(Box::new(move |c, cx| {
                         c.rt()
@@ -606,8 +607,8 @@ pub(crate) fn view(
     if models.is_empty() {
         body = body.child(
             div()
-                .px(px(10.))
-                .py(px(12.))
+                .px(px(PAD))
+                .py(px(PAD))
                 .text_size(ui(11.))
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(crate::i18n::tr(
@@ -673,9 +674,9 @@ pub(crate) fn view(
             // 无标题；过滤框按 MODEL_FILTER_MIN 阈值出现（占位壳保持节奏）
             .child(
                 div()
-                    .px(px(10.))
-                    .pt(px(10.))
-                    .pb(px(6.))
+                    .px(px(PAD))
+                    .pt(px(PAD))
+                    .pb(px(PAD))
                     .children(show_filter.then(|| picker.input.clone())),
             )
             .child(
@@ -688,7 +689,7 @@ pub(crate) fn view(
                     .child(
                         div()
                             .id("model-picker-list")
-                            .pb(px(6.))
+                            .pb(px(PAD))
                             .h(px(list_h))
                             .overflow_y_scroll()
                             .track_scroll(&picker.scroll)
