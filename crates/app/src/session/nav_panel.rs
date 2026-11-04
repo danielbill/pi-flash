@@ -1,5 +1,5 @@
 //! 会话导航面板 (033)：右缘 10px 轮次刻度条（nav_gutter）、悬停摘要卡
-//! 列表（nav_card + nav_summary_header）、相位脉冲行（phase_pulse）。
+//! 列表（nav_card + nav_summary_header）、相位工作行（phase_row：点阵+工作中+计时）。
 //! 摘要数据走 runtime 缓存（v63-3 惰性重建）。自 mod.rs 拆出（090 重构）。
 
 use super::*;
@@ -472,18 +472,36 @@ pub(crate) fn nav_card(
     turn_el.into_any_element()
 }
 
-/// 相位行文本（pi-web：13px text_muted，1.5s 透明度脉冲）。
-pub(crate) fn phase_pulse(label: String, t: &crate::appearance::theme::Theme) -> gpui::AnyElement {
+/// 相位行（v64 改版）：3×3 点阵图标 + 「工作中」+ 秒级计时（ZCode 同款），
+/// 取代原「正在运行 {tool}...」纯文本脉冲。计时文本放进 1s repeat 动画
+/// 闭包逐帧刷新——免额外定时器；起点取 runtime `stream_started`
+/// （AgentStart 记录、settle/abort 清除），跨 streaming 隐藏期持续累计。
+pub(crate) fn phase_row(
+    started: std::time::Instant,
+    t: &crate::appearance::theme::Theme,
+) -> gpui::AnyElement {
     div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
         .text_size(crate::appearance::ui_size(13.))
         .text_color(rgb(t.text_muted))
+        .child(crate::ui::working_dots(rgb(t.text_muted)))
+        .child(tr("status.working"))
         .with_animation(
-            "phase-pulse",
-            Animation::new(std::time::Duration::from_millis(1500)).repeat(),
-            move |el, delta| {
-                let wave = (delta * std::f32::consts::PI).sin().abs() as f32;
-                el.opacity(0.45 + 0.55 * wave)
-                    .child(SharedString::from(label.clone()))
+            "phase-row-timer",
+            Animation::new(std::time::Duration::from_millis(1000)).repeat(),
+            move |el, _| {
+                let secs = started.elapsed().as_secs();
+                let text = if secs >= 60 {
+                    crate::i18n::tf(
+                        "time.min_sec",
+                        &[("m", (secs / 60).to_string()), ("s", (secs % 60).to_string())],
+                    )
+                } else {
+                    crate::i18n::tf("time.seconds", &[("n", secs.to_string())])
+                };
+                el.child(SharedString::from(text))
             },
         )
         .into_any_element()

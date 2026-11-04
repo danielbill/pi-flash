@@ -409,6 +409,38 @@ impl gpui::Element for MeasureHeight {
     }
 }
 
+/// 3×3 点阵工作指示（ZCode 同款）：9 个小方点按相位依次明暗流动，1.5s
+/// 循环。纯 div 构建，无 SVG 资产。
+pub fn working_dots(color: gpui::Rgba) -> gpui::AnyElement {
+    gpui::div()
+        .flex()
+        .flex_wrap()
+        .w(gpui::px(13.)) // 3×(3px 点+2px 缝)−2px = 每行恰好 3 点换行
+        .gap(gpui::px(2.))
+        .with_animation(
+            "working-dots",
+            Animation::new(std::time::Duration::from_millis(1500)).repeat(),
+            move |el, delta| {
+                let mut el = el;
+                for i in 0..9u32 {
+                    let wave = (delta * std::f32::consts::TAU
+                        - (i as f32) * (std::f32::consts::TAU / 9.0))
+                        .sin();
+                    let alpha = 0.3 + 0.7 * (0.5 + 0.5 * wave);
+                    el = el.child(
+                        gpui::div()
+                            .size(gpui::px(3.))
+                            .rounded(gpui::px(0.5))
+                            .bg(color)
+                            .opacity(alpha),
+                    );
+                }
+                el
+            },
+        )
+        .into_any_element()
+}
+
 /// Rotating arc spinner (pi-web RunningSessionIndicator: the loader SVG
 /// spun 360°/0.9s, SMIL parity via with_animation).
 pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {

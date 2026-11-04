@@ -29,7 +29,7 @@ use gpui::{
 };
 use pi_link::protocol::Block;
 
-use self::nav_panel::{nav_gutter, phase_pulse};
+use self::nav_panel::{nav_gutter, phase_row};
 use crate::i18n::tr;
 
 use self::messages::{
@@ -623,7 +623,13 @@ fn session_list(
                                 .h(px(rt_view.pager.spacer_px()))
                                 .into_any_element()
                         } else if chat.rt().read(cx).phase_row_visible() {
-                            let label = chat.rt().read(cx).phase_label();
+                            // 计时起点 = stream_started（AgentStart 记录、
+                            // settle/abort 清除）；None 仅防御性回落。
+                            let started = chat
+                                .rt()
+                                .read(cx)
+                                .stream_started
+                                .unwrap_or_else(std::time::Instant::now);
                             div()
                                 .w_full()
                                 .flex()
@@ -633,7 +639,7 @@ fn session_list(
                                         .w_full()
                                         .max_w(px(content_w))
                                         .pt(px(2.))
-                                        .child(phase_pulse(label, t)),
+                                        .child(phase_row(started, t)),
                                 )
                                 .into_any_element()
                         } else {
