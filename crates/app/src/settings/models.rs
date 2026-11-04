@@ -34,7 +34,8 @@ impl Chat {
     /// Provider ids in available-models display order.
     pub(crate) fn mc_provider_ids(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for m in self.catalog_for(self.project()) {
+        // 借用迭代（2026-11-05：原 catalog_for 整份克隆只为取 provider 去重）
+        for m in self.catalog_slice_for(self.project()) {
             if !out.contains(&m.provider) {
                 out.push(m.provider.clone());
             }
@@ -588,7 +589,12 @@ pub(crate) fn mc_models_view(
         chat.cfg.mc_state.enabled.iter().cloned().collect();
     // 合并目录一帧只算一遍（2026-11-04 卡顿修复：此前 sidebar 每 Provider
     // 各自 catalog_with_ledger() → O(商×目录) 的读盘/克隆，每帧 11 次读盘起）
-    let listing = chat.catalog_with_ledger();
+    let listing = {
+        let __t = std::time::Instant::now();
+        let l = chat.catalog_with_ledger();
+        crate::perf_span("frame.models.listing", __t);
+        l
+    };
     let sb = {
         let __t = std::time::Instant::now();
         let el = mc_models_sidebar(
@@ -1589,16 +1595,25 @@ impl Chat {
         &self,
         cwd: Option<&std::path::Path>,
     ) -> Vec<pi_link::protocol::ModelInfo> {
-        let raw = cwd
-            .and_then(|c| {
-                self.pool
-                    .models_by_cwd
-                    .get(&c.to_string_lossy().to_string())
-            })
-            .map(|v| v.as_slice())
-            .filter(|v| !v.is_empty())
-            .unwrap_or(self.pool.globals.models.as_slice());
-        raw.to_vec()
+        self.catalog_slice_for(cwd).to_vec()
+    }
+
+    /// [`Self::catalog_for`] 的零克隆视图（2026-11-05 卡顿修复）：渲染热路径
+    /// 上 model_listing / provider_models_for_list 每 Provider 各克隆一次整份
+    /// 目录（实测真机目录 O(商) 次克隆 = 每帧 3-5ms），借这片迭代即可，
+    /// 只有真正进结果集的条目才 clone。
+    pub(crate) fn catalog_slice_for(
+        &self,
+        cwd: Option<&std::path::Path>,
+    ) -> &[pi_link::protocol::ModelInfo] {
+        cwd.and_then(|c| {
+            self.pool
+                .models_by_cwd
+                .get(&c.to_string_lossy().to_string())
+        })
+        .map(|v| v.as_slice())
+        .filter(|v| !v.is_empty())
+        .unwrap_or(self.pool.globals.models.as_slice())
     }
 
     /// 设置页用的模型清单（042-1：单一来源——`models.json` 已并入磁盘目录，
@@ -1652,62 +1667,67 @@ impl Chat {
         &self,
         cwd: Option<&std::path::Path>,
     ) -> Vec<pi_link::protocol::ModelInfo> {
-        let base = self.ledger_merge(self.catalog_for(cwd));
-        let members = self.sidebar_providers();
-        let mut out: Vec<pi_link::protocol::ModelInfo> = base
-            .into_iter()
-            .filter(|m| members.iter().any(|p| p == &m.provider))
-            .collect();
-        // 已配置凭据的内置商：静态注册表并入（否则其模型不在 mc_refs，
-        // 勾选链 set_models_enabled 静默丢弃；只扩成员商，不灌 42 家静态）
+        // 2026-11-05 性能重构（原：ledger_merge 整份克隆 → 成员过滤再丢弃）：
+        // 融合「账本并入 + 成员过滤」单趟完成——非成员商的目录行不 clone；
+        // 账本商仍 pmf 原样（同 id 重复条目照样显示，用户要看真实磁盘内容）。
+        // 顺序语义与原两步版等价：账本行落在其目录首行位置，无目录行的账本
+        // 商补在尾部。
+        let __t = std::time::Instant::now();
         let doc = Self::mj_doc();
+        let ledger_provs = pi_link::models_json::providers(&doc);
+        let members = self.sidebar_providers();
+        crate::perf_span("frame.listing.members", __t);
+        let __t = std::time::Instant::now();
+        let slice = self.catalog_slice_for(cwd);
+        let mut out: Vec<pi_link::protocol::ModelInfo> = Vec::new();
+        let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let in_members = |p: &str| members.iter().any(|x| x == p);
+        if ledger_provs.is_empty() {
+            for m in slice {
+                if in_members(&m.provider) {
+                    out.push(m.clone());
+                }
+            }
+        } else {
+            for m in slice {
+                if ledger_provs.iter().any(|(p, _)| p == &m.provider) {
+                    // 该商的目录行让位给账本行（避免重复）
+                    if emitted.insert(m.provider.as_str()) {
+                        out.extend(self.provider_models_for_list(&m.provider));
+                    }
+                } else if in_members(&m.provider) {
+                    out.push(m.clone());
+                }
+            }
+            for (p, _) in &ledger_provs {
+                if !emitted.contains(p.as_str()) {
+                    out.extend(self.provider_models_for_list(p));
+                }
+            }
+        }
+        crate::perf_span("frame.listing.merge", __t);
+        // 已配置凭据的内置商：静态注册表并入（否则其模型不在 mc_refs，
+        // 勾选链 set_models_enabled 静默丢弃；只扩成员商，不灌 42 家静态）。
+        // (provider,id) 集合去重（2026-11-05：原对 out 线性扫 O(n×m)）
+        let __t = std::time::Instant::now();
+        let mut seen: std::collections::HashSet<(String, String)> = out
+            .iter()
+            .map(|x| (x.provider.clone(), x.id.clone()))
+            .collect();
         for (prov, _) in &self.cfg.mc_creds {
             if pi_link::models_json::provider_entry(&doc, prov).is_some() {
-                continue; // 账本商已由 ledger_merge 走过 provider_models_for_list
+                continue; // 账本商已由上面 ledger 分支走过 provider_models_for_list
             }
             if !members.iter().any(|p| p == prov) {
                 continue;
             }
             for m in self.provider_models_for_list(prov) {
-                if !out.iter().any(|x| x.provider == m.provider && x.id == m.id) {
+                if seen.insert((m.provider.clone(), m.id.clone())) {
                     out.push(m);
                 }
             }
         }
-        out
-    }
-
-    /// 目录 ∪ **models.json 账本强制并入**（2026-11-01 抽公共：input panel
-    /// 模型 picker 与设置页必须同一合并语义——此前 picker 用裸目录，会话进程
-    /// 是在自定义商创建之前 spawn 的（models.json 每会话装载一次）时，进程
-    /// 答案里没有该商 → picker 缺商，而设置页有，两边列表不一致）：
-    /// 账本里有条目的商用 `models[]` 原样（同 id 的重复条目照样显示）；账本
-    /// 里没有的商（内置商）用目录条目。
-    pub(crate) fn ledger_merge(
-        &self,
-        base: Vec<pi_link::protocol::ModelInfo>,
-    ) -> Vec<pi_link::protocol::ModelInfo> {
-        let doc = Self::mj_doc();
-        let ledger_provs = pi_link::models_json::providers(&doc);
-        if ledger_provs.is_empty() {
-            return base;
-        }
-        let mut out: Vec<pi_link::protocol::ModelInfo> = Vec::new();
-        let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for m in &base {
-            if ledger_provs.iter().any(|(p, _)| p == &m.provider) {
-                if emitted.insert(m.provider.as_str()) {
-                    out.extend(self.provider_models_for_list(&m.provider));
-                }
-                continue; // 该商的目录行让位给账本行（避免重复）
-            }
-            out.push(m.clone());
-        }
-        for (p, _) in &ledger_provs {
-            if !emitted.contains(p.as_str()) {
-                out.extend(self.provider_models_for_list(p));
-            }
-        }
+        crate::perf_span("frame.listing.creds", __t);
         out
     }
 
@@ -1720,6 +1740,7 @@ impl Chat {
         &self,
         provider: &str,
     ) -> Vec<pi_link::protocol::ModelInfo> {
+        let __t = std::time::Instant::now();
         let doc = Self::mj_doc();
         let ledger: Vec<pi_link::protocol::ModelInfo> =
             pi_link::models_json::provider_entry(&doc, provider)
@@ -1749,32 +1770,39 @@ impl Chat {
                     }),
                 })
                 .collect();
-        let mut out = ledger.clone();
-        let push_missing =
-            |m: pi_link::protocol::ModelInfo, out: &mut Vec<pi_link::protocol::ModelInfo>| {
-                if !out.iter().any(|x| x.id == m.id) {
-                    out.push(m);
-                }
-            };
-        for m in self.catalog_for(self.project()) {
+        let mut out = ledger;
+        // id 去重集合（2026-11-05：原 push_missing 对 out 线性扫，O(n²)——
+        // openrouter 静态目录 388 模型时每帧 ~75k 次比较；HashSet 后 O(n)，
+        // 且命中才 clone，不再白克隆重复候选）
+        let mut seen: std::collections::HashSet<String> =
+            out.iter().map(|x| x.id.clone()).collect();
+        // 借用迭代目录（2026-11-05：原 catalog_for 整份克隆，每帧 O(商) 次）
+        for m in self.catalog_slice_for(self.project()) {
             if m.provider != provider {
                 continue;
             }
-            push_missing(m, &mut out);
+            if seen.insert(m.id.clone()) {
+                out.push(m.clone());
+            }
         }
         // 2026-11-01 定稿：内置商罗列 = pi 自带注册表（静态目录，无需 key）
         // ——registry dump 的 models_for 并入补缺；静态只在设置页罗列路径
         // 并入，不进 catalog_for/Globals（picker 非虚拟化，性能铁律）
         if let Some(dump) = self.cfg.provider_registry.as_ref() {
             for m in dump.models_for(provider) {
-                push_missing(m.clone(), &mut out);
+                if seen.insert(m.id.clone()) {
+                    out.push(m.clone());
+                }
             }
         }
         // 自定义商清单仓：未勾选的定义也在罗列（勾选后进账本，走上面
         // ledger 分支，这里按 id 去重自然让位）
         for m in services::custom_models_store::listing(&self.cfg.mj_probe_cache, provider) {
-            push_missing(m, &mut out);
+            if seen.insert(m.id.clone()) {
+                out.push(m);
+            }
         }
+        crate::perf_span("frame.listing.pmf", __t);
         out
     }
 

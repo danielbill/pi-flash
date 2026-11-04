@@ -478,6 +478,7 @@ pub(crate) fn render_settings(
 
     // 页内容：界面/其他=单列 rows（滚动在 body）；其余页自带左右分栏 +
     // 可选顶条/底栏（自身 h_full，body 不滚动）
+    let __pane_t = std::time::Instant::now();
     let pane: gpui::AnyElement = match tab {
         TAB_MODELS => crate::settings::models::mc_models_view(chat, weak, d),
         TAB_SKILLS => {
@@ -519,6 +520,7 @@ pub(crate) fn render_settings(
             &size_dd,
         ),
     };
+    crate::perf_span("frame.settings.pane", __pane_t);
 
     // 界面/其他页保持旧行为：body 滚动 + 大内边距；分栏页 body 不滚动、
     // pane 自身 h_full（顶条/底栏/侧栏滚动各自管理）
