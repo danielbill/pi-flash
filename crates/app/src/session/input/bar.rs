@@ -118,7 +118,7 @@ fn mcp_button(
     el.into_any_element()
 }
 
-/// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info + SW_MD 28×16）。
+/// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info ICON_SM + SW_SM 24×14）。
 /// 关 = 状态带整条不渲染（数据面照旧维护）；状态直切无动画。
 fn status_bar_toggle(
     t: &'static crate::appearance::theme::Theme,
@@ -137,12 +137,14 @@ fn status_bar_toggle(
         .with_tip("footerbar.tip.toggle")
         // 图标 ICON_SM 14（§3 行内/按钮内默认档；与同排胶囊的 13–14 视觉一致）
         .child(icon("badge-info", 14., color))
-        .child(crate::ui::kit::config_switch(
+        // 紧凑档开关（§5.3 SW_SM）：28px 行高里的行内件，MD 会几乎撑满整行
+        .child(crate::ui::kit::switch_base_sm(
             "ext-status-switch",
-            &weak,
             on,
             false,
-            |c, cx| c.toggle_session_status_bar(cx),
+            move |_on, cx| {
+                let _ = weak.update(cx, |c, cx| c.toggle_session_status_bar(cx));
+            },
         ))
         .into_any_element()
 }

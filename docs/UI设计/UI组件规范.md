@@ -176,7 +176,10 @@
   - **Off** = bg_selected 底 + border，knob 在关位；
   - 用于「一组若干项」的总开关（技能分组 / 扩展全局 / MCP 全局）：部分看轨道浓度，具体数字交给旁边的 `{enabled}/{total}`。禁用仍是整体 opacity 0.5（别拿减淡轨道当禁用）。
 - 选中 = accent 底 + bg 色 knob；未选 = bg_selected 底 + border；禁用整体 opacity 0.5。
-- 开关唯一画法 = `settings/widgets.rs::switch_el`（组头行内开关同尺寸）。SW_SM 24×14 为**预留档**（当前无消费方；需要更小开关必须用它，禁止自造第三种尺寸）。状态直切、无动画。
+- 开关唯一画法 = `ui/kit/switch.rs`（`switch_base` / `switch_base_sm` / `config_switch` / `group_switch`；settings 侧为转发）。
+  - **SW_MD 28×16**：默认档（设置页、组头、模型页）。
+  - **SW_SM 24×14**：紧凑档，用于 28px 行高的行内件 —— 当前唯一消费方 = 034 会话区底部状态栏开关（composer 功能栏 MCP 右侧）。需要更小开关必须用它，**禁止自造第三种尺寸**。
+- 状态直切、无动画。
 
 ### 5.4 复选框 / 单选
 
