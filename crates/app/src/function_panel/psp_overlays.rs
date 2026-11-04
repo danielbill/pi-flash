@@ -63,10 +63,8 @@ pub(crate) fn psp_overlays(
     if chat.plugins.plugins.iter().any(|p| p.cell_menu.is_some()) {
         el = el.child(crate::pf_plugin::cell_menu_layer(chat, vp, t, cx));
     }
-    // 插件弹窗（契约 v3 popups）：非模态居中卡，点外/× 收（同一浮层基座）
-    if chat.plugins.popup.is_some() {
-        el = el.child(crate::pf_plugin::plugin_popup_layer(chat, vp, t, cx));
-    }
+    // 插件弹窗（契约 v3 popups）：已迁 session/mod.rs 会话域居中浮层槽
+    //（chat-wrap 中栏，InputPanel 居中基准），不再挂全窗 psp-overlays
     if chat.dlg.tree_menu.is_some() {
         el = el.child(super::tree_menu::tree_menu_layer(chat, vp, t, cx));
     }

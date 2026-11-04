@@ -110,7 +110,6 @@ actions!(
     ]
 );
 use crate::appearance::theme::theme as T;
-use ext_ui::render_ext_dialog;
 use i18n::tr;
 use models_config::EnabledState;
 use services::format::*;

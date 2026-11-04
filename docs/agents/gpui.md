@@ -89,6 +89,15 @@
   x/y 绝对或 rx/ry 相对坐标）——穿透/命中类 bug 的可信复现通道，全程走真
   实 hit_test 事件链；与 input.keys 同因必须 `window.defer` 派发（防
   entity_map 重入）。
+- **会话域居中浮层槽（机制，2026-11-05 定案）**：所有「以 InputPanel 为
+  居中基准」的会话弹窗（ask_card 问卷卡 / ext_ui 扩展阻塞弹窗 / pf 插件
+  弹窗 plugin_popup）统一挂 `session/mod.rs` main_column 的 chat-wrap
+  尾部——absolute inset_0 随中栏定界，`items_center/justify_center` 自动
+  对齐 composer 中轴。**勿挂全窗根**：会被左右侧栏挤偏（用户实测不对齐，
+  ask_card 090 定案）。新增会话弹窗 = 在该槽位追加一个 if 挂载；z 序 =
+  子节点绘制序，非模态（插件弹窗）在下、模态（问卷卡 → 阻塞弹窗）在上。
+  切走 content tab 时弹窗随主栏同隐（状态保留，切回即见）。全窗模态
+  （Dialog 枚举族、settings、确认浮层）仍挂 `shell/render.rs` 根，勿混。
 
 ## 文本与绘制
 

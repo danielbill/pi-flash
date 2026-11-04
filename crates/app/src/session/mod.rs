@@ -35,7 +35,7 @@ use crate::i18n::tr;
 use self::messages::{
     Role, compute_meta, render_assistant_turn, render_bash_msg, render_custom_msg, render_msg,
 };
-use crate::ext_ui::render_ext_widget;
+use crate::ext_ui::{render_ext_dialog, render_ext_widget};
 
 use crate::Chat;
 use crate::appearance::theme::theme as T;
@@ -175,11 +175,28 @@ pub(crate) fn main_column(
                             // 无白名单项或开关关闭时整条不建 element。
                             .children(footer_bar::bar(chat, cx));
                     }
+                    // ── 会话域居中浮层槽（机制）──────────────────────────
+                    // 所有「以 InputPanel 为居中基准」的会话弹窗统一挂
+                    // chat-wrap 尾部（absolute inset_0 随中栏定界，
+                    // items_center 自动对齐 composer 中轴）。挂全窗根会被
+                    // 左右侧栏挤偏（ask_card 090 用户实测定案）。新增会话
+                    // 弹窗 = 在此追加一个 if 挂载；z 序 = 子节点绘制序，
+                    // 模态压非模态。切走 content tab 时随主栏同隐（状态
+                    // 仍在，切回即见；ask_card 同语义）。
+                    // 非模态在下（插件弹窗），模态在上（问卷卡 → 扩展阻塞弹窗）。
+                    if chat.plugins.popup.is_some() {
+                        wrap = wrap.child(crate::pf_plugin::plugin_popup_layer(chat, t, cx));
+                    }
                     // ask_user_question 问卷卡浮层：挂进 chat-wrap（中栏）——
                     // 与 composer 同一居中基准；挂整窗根会被左右侧栏挤偏
                     //（用户实测不对齐）。窄窗口下卡片收缩不溢出。
                     if chat.aux.ask.as_ref().is_some_and(|a| a.open) {
                         wrap = wrap.child(crate::ask_card::render_ask_card(chat, weak));
+                    }
+                    // 扩展阻塞弹窗（select/confirm/input/editor）：与问卷卡
+                    // 同基准，遮罩只盖会话区
+                    if let Some(req) = chat.aux.ext_dialog.clone() {
+                        wrap = wrap.child(render_ext_dialog(chat, req, weak));
                     }
                     wrap
                 })

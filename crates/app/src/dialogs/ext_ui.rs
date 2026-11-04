@@ -41,6 +41,9 @@ fn bar_title_of(s: &str) -> String {
 
 /// Blocking extension UI dialog（通用壳：标题栏 + 信息/操作双面板 + 底部按钮）。
 ///
+/// 挂 session/mod.rs 会话域居中浮层槽（chat-wrap 中栏，与 composer/问卷卡
+/// 同一居中基准，遮罩只盖会话区），不挂全窗根。
+///
 /// 尺寸 600×600（小窗口按视口收缩），信息与操作各占剩余高度一半、各自
 /// 滚动。扩展标题可长到 40+ 行（pi-usage 的 `/usage`「View all」会把所有
 /// provider 列出来）：旧版不限高，弹窗比小窗口还高 → 卡片铺满视口，Close

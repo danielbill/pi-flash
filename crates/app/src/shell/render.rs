@@ -904,12 +904,9 @@ impl Render for Chat {
                 ),
             );
         }
-        // blocking extension dialog (select/confirm/input/editor)
-        //（问卷卡浮层改挂 session/mod.rs main_column 的 chat-wrap 中栏，
-        //  与 composer 同基准居中；这里只剩 legacy 扩展弹窗）
-        if let Some(req) = &self.aux.ext_dialog {
-            root = root.child(render_ext_dialog(self, req.clone(), &weak_for_dialog));
-        }
+        // blocking extension dialog (select/confirm/input/editor)：已迁
+        // session/mod.rs 会话域居中浮层槽（chat-wrap 中栏，与 composer 同
+        // 基准居中；ask_card 同语义），不再挂全窗根
         crate::perf_span("frame.render", __frame_t);
         static MJ_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *MJ_ON.get_or_init(|| std::env::var("PI_FLASH_PERF").is_ok()) {

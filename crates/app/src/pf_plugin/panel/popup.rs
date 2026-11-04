@@ -1,13 +1,13 @@
 //! 插件弹窗浮层（契约 v3 popups）：非模态居中卡，同一解释器渲染。
 //! 外点/× 关闭；尺寸档位（SM/LG/MD）由宿主映射。自 panel.rs 拆出（090）。
+//! 挂 session/mod.rs 会话域居中浮层槽（chat-wrap 中栏，InputPanel 居中基准）。
 
 use super::*;
 
 /// 插件弹窗浮层（契约 v3 popups）：非模态居中卡（尺寸档位映射，MD≈500x500），
-/// 外点/× 关闭；内容 = 插件 render_popup 树，同一解释器渲染。挂在 psp-overlays。
+/// 外点/× 关闭；内容 = 插件 render_popup 树，同一解释器渲染。挂会话浮层槽。
 pub(crate) fn plugin_popup_layer(
     chat: &mut Chat,
-    _vp: (f32, f32),
     t: &'static Theme,
     cx: &mut gpui::Context<Chat>,
 ) -> gpui::AnyElement {
