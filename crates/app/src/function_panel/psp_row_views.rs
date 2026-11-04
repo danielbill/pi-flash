@@ -180,8 +180,21 @@ pub(crate) fn session_row_view(
                 .pr(px(align::LIST_PX))
                 .rounded(px(8.))
                 .cursor_pointer()
-                .when(is_active, |d| d.bg(row_sel).hover(|s| s.bg(row_sel)))
-                .when(!is_active, |d| d.hover(|s| s.bg(row_sel)))
+                // 色条与行体分离：行保持 32 命中区，可见色条上下各缩 1px
+                // （条高 30，相邻色条间留 2px 空隙——色条贴合无美感，
+                // 2026-11-05 用户定夺）。bg 不再挂行体：active 恒显，
+                // 非 active 走 group("psrow") + group_hover（pin 槽位同款）
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(1.))
+                        .bottom(px(1.))
+                        .rounded(px(8.))
+                        .when(is_active, |d| d.bg(row_sel))
+                        .when(!is_active, |d| d.group_hover("psrow", |s| s.bg(row_sel))),
+                )
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let _ = w_click.update(cx, |c, cx| {
                         c.open_session(path_click.clone(), false, cx);
@@ -256,8 +269,10 @@ pub(crate) fn session_row_view(
                                 div()
                                     .absolute()
                                     .right_0()
-                                    .top_0()
-                                    .bottom_0()
+                                    // 与色条同内缩 1px：渐隐尾色=色条色，超出
+                                    // 色条会在条外 1px 留下淡痕
+                                    .top(px(1.))
+                                    .bottom(px(1.))
                                     .w(px(24.))
                                     .bg(fade)
                                     .group_hover("psrow", |s| s.bg(fade_hover)),
@@ -507,6 +522,9 @@ pub(crate) fn pending_row_view(
         .child(
             div()
                 .id(SharedString::from(format!("ps-draft-{key}")))
+                // bg 层绝对定位锚 + hover 组（与 session 行同款）
+                .relative()
+                .group("psrow")
                 .w_full()
                 .h(px(crate::ui::tokens::row::MAIN))
                 .flex()
@@ -516,8 +534,18 @@ pub(crate) fn pending_row_view(
                 .pr(px(align::LIST_PX))
                 .rounded(px(8.))
                 .cursor_pointer()
-                .when(is_active, |d| d.bg(row_sel).hover(|s| s.bg(row_sel)))
-                .when(!is_active, |d| d.hover(|s| s.bg(row_sel)))
+                // 色条内缩 1px 同 session 行（相邻色条间留隙）
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(1.))
+                        .bottom(px(1.))
+                        .rounded(px(8.))
+                        .when(is_active, |d| d.bg(row_sel))
+                        .when(!is_active, |d| d.group_hover("psrow", |s| s.bg(row_sel))),
+                )
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     let key = key_click.clone();
                     let _ = w_click.update(cx, |c, cx| {
