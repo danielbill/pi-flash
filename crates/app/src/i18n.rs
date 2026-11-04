@@ -875,6 +875,8 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("footerbar.tip.usage", "打开用量面板（/usage）", "開啟用量面板（/usage）", "Open usage panel (/usage)"),
     ("footerbar.tip.busy", "当前轮次结束后可用", "目前輪次結束後可用", "Available after the current turn"),
     ("footerbar.tip.toggle", "显示扩展状态栏", "顯示擴充狀態列", "Show extension status bar"),
+    ("footerbar.tip.mgr", "管理常驻插件", "管理常駐外掛", "Manage resident plugins"),
+    ("footerbar.mgr.empty", "暂无申请常驻状态的插件", "暫無申請常駐狀態的外掛", "No extensions have requested status-bar residency"),
 ];
 
 /// Translate a **semantic key** for the active language.

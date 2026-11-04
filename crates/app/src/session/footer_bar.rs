@@ -11,8 +11,8 @@
 use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
-use crate::appearance::theme::theme as T;
-use crate::ui::tooltip::WithTip;
+use crate::appearance::theme::{Theme, theme as T};
+use crate::ui::{icon, tooltip::WithTip};
 
 /// 状态带高度（034 §3.1：inputpanel 正下方一条 28px）。
 pub(crate) const BAR_H: f32 = 28.;
@@ -81,7 +81,8 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
         items.sort_by(|a, b| a.0.cmp(&b.0));
         (items, r.agent_running)
     };
-    if items.is_empty() {
+    // 全部被静音时仍出条：只剩 [...] 图标 = 唯一的找回入口（勾选即恢复）
+    if items.is_empty() && muted.is_empty() {
         return None;
     }
 
@@ -184,17 +185,147 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
                             .w_full()
                             .max_w(px(content_w))
                             .min_w_0()
+                            .relative()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(row),
+                            // 内容管理 §1：可用宽 = 内容区宽度 − 20px（两侧 px10），
+                            // 超长截断禁止折行（项上三连已实现）
+                            .child(
+                                div()
+                                    .w_full()
+                                    .px(px(10.))
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(row),
+                            )
+                            // 内容管理 §2：[...] 管理入口，贴内容列右缘（约对齐
+                            // Inputpanel 发送钮），点开插件勾选菜单（200×≥200）
+                            .child(mgr_button(cx)),
                     ),
             )
             .into_any_element(),
     )
 }
 
+/// 内容管理 §2：[...] 图标钮（全库唯一「更多」= lucide ellipsis 裸三点，
+/// ICON_SM 14）。贴内容列右缘 absolute，点击打开插件勾选菜单。
+fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+    let t = T();
+    div()
+        .id("ext-status-mgr")
+        .absolute()
+        .right_0()
+        .top_0()
+        .h(px(BAR_H))
+        .w(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .with_tip("footerbar.tip.mgr")
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, ev: &gpui::MouseDownEvent, _w, cx| {
+                this.dlg.status_mgr_menu =
+                    Some((f32::from(ev.position.x), f32::from(ev.position.y)));
+                cx.notify();
+            }),
+        )
+        .child(icon("ellipsis", 14., t.text_faint))
+        .into_any_element()
+}
+
+/// 内容管理 §2：[...] 菜单——200px 宽、最小高 200px，内容 = 申请常驻
+/// 状态栏的插件键清单（当前会话键 ∪ 已静音键），勾选 = 上屏，取消勾选 =
+/// 隐藏（写 ext_status_muted）。菜单保持打开，勾选实时生效。
+pub(crate) fn mgr_menu_layer(
+    chat: &mut Chat,
+    vp: (f32, f32),
+    t: &'static Theme,
+    cx: &mut gpui::Context<Chat>,
+) -> gpui::AnyElement {
+    let weak = cx.entity().downgrade();
+    let (x, y) = chat.dlg.status_mgr_menu.expect("checked by caller");
+    let edges = crate::ui::popup::PopupEdges::around((x, y), vp, 0., 12.);
+    let layer = crate::ui::menu::menu_layer(None, &weak, |c, _cx| c.dlg.status_mgr_menu = None);
+
+    // 键清单 = 当前会话状态键 ∪ 静音键（字母序、去重）
+    let muted = crate::services::workspace::ext_status_muted_keys();
+    let mut keys: Vec<String> = chat
+        .rt()
+        .read(cx)
+        .ext_status
+        .iter()
+        .map(|(k, _)| k.clone())
+        .collect();
+    for m in &muted {
+        if !keys.contains(m) {
+            keys.push(m.clone());
+        }
+    }
+    keys.sort();
+    keys.dedup();
+
+    let rows: Vec<gpui::AnyElement> = keys
+        .iter()
+        .map(|k| {
+            let checked = !muted.iter().any(|m| m == k);
+            crate::ui::menu::menu_item(
+                SharedString::from(format!("ext-mgr-{k}")),
+                if k == "mcp" { "server" } else { "plug" },
+                k,
+                false,
+                checked,
+            )
+            .on_mouse_down(MouseButton::Left, {
+                let weak = weak.clone();
+                let k = k.clone();
+                move |_, _, cx| {
+                    cx.stop_propagation();
+                    let _ = weak.update(cx, |c, cx| c.toggle_ext_status_muted(k.clone(), cx));
+                }
+            })
+            .into_any_element()
+        })
+        .collect();
+
+    let mut card = crate::ui::menu::menu_card(edges, t)
+        .w(px(200.))
+        .min_h(px(200.));
+    if rows.is_empty() {
+        card = card.child(
+            div()
+                .px(px(10.))
+                .py(px(12.))
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(crate::i18n::tr("footerbar.mgr.empty"))),
+        );
+    } else {
+        card = card.children(rows);
+    }
+    layer.child(card).into_any_element()
+}
+
 impl Chat {
+    /// 内容管理 §2：切换某插件键的常驻显示（勾选互斥表 = ext_status_muted），
+    /// 落盘 ui_state；菜单保持打开（勾选实时生效）。
+    pub(crate) fn toggle_ext_status_muted(&mut self, key: String, cx: &mut gpui::Context<Chat>) {
+        let mut muted = crate::services::workspace::ext_status_muted_keys();
+        if let Some(ix) = muted.iter().position(|m| *m == key) {
+            muted.remove(ix);
+        } else {
+            muted.push(key);
+        }
+        crate::services::workspace::set_ext_status_muted_keys(muted);
+        cx.notify();
+    }
+
     /// 状态项点击（034 §5.1）：命令类走与 composer 同一条发送漏斗；
     /// 设置类走既有设置页打开链路（纯 UI 跳转，不动会话状态）。
     pub(crate) fn footer_status_act(&mut self, action: StatusAction, cx: &mut gpui::Context<Chat>) {

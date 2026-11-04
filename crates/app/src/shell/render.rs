@@ -782,6 +782,12 @@ impl Render for Chat {
             let vp = (f32::from(vp.width), f32::from(vp.height));
             root = root.child(market::menu::menu_layer(self, vp, t, cx));
         }
+        // 034 状态带 [...] 管理菜单（插件勾选 = 常驻/隐藏）
+        if self.dlg.status_mgr_menu.is_some() {
+            let vp = window.viewport_size();
+            let vp = (f32::from(vp.width), f32::from(vp.height));
+            root = root.child(session::footer_bar::mgr_menu_layer(self, vp, t, cx));
+        }
         // psp 悬浮层（tooltip / 详情卡 / 菜单 / 确认）
         root = root.child(function_panel::psp_overlays::psp_overlays(self, window, cx));
         // toolbar pill popup menus

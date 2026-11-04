@@ -292,6 +292,9 @@ pub(crate) struct DlgUi {
     /// 消息内容区右键菜单（单项「复制」= 复制当前消息划选；渲染挂
     /// psp_overlays 同层）。(鼠标 x, y)
     pub(crate) msg_menu: Option<(f32, f32)>,
+    /// 034 状态带 [...] 管理菜单：内容 = 申请常驻状态栏的插件键清单，
+    /// 勾选 = 上屏，取消勾选 = 写 ext_status_muted 隐藏。(鼠标 x, y)
+    pub(crate) status_mgr_menu: Option<(f32, f32)>,
     /// topbar 标签右键菜单（zed tab_bar 菜单移植：Close/Others/Left/
     /// Right/All；渲染挂 psp_overlays 同层）。(目标 tab, 鼠标 x, y)
     pub(crate) tab_menu: Option<(crate::TabMenuTarget, f32, f32)>,
@@ -701,6 +704,7 @@ impl Chat {
                 term_menu: None,
                 input_menu: None,
                 msg_menu: None,
+                status_mgr_menu: None,
                 tab_menu: None,
                 tree_confirm_del: None,
                 tree_del_error: None,
