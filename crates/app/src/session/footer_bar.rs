@@ -1,5 +1,5 @@
 //! 034 会话区底部状态栏（模块代码 sessionStatusBar）：content-col 最底部
-//! 28px chrome 带，承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
+//! 28px 无底色状态带，承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
 //!
 //! - 数据面：`SessionRuntime::ext_status`（per-session；pi 换会话/重载会清，
 //!   放 Chat 上会串味）。
@@ -164,7 +164,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(t.chrome))
+            // 不画底色：与内容区同背景（用户定夺，2026-11-04）
             .child(
                 div().w_full().px(px(15.)).flex().justify_center().child(
                     div()
