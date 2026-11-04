@@ -200,6 +200,8 @@ fn ensure_on_path(bin_dir: &std::path::Path) -> bool {
         Err(e) => {
             #[cfg(debug_assertions)]
             eprintln!("[register] Path 读取失败（按空处理）：{e}");
+            #[cfg(not(debug_assertions))]
+            let _ = e;
             (String::new(), true)
         } // 无 Path 值 → 按系统惯例新建 REG_EXPAND_SZ
     };
@@ -215,6 +217,8 @@ fn ensure_on_path(bin_dir: &std::path::Path) -> bool {
     if let Err(e) = written {
         #[cfg(debug_assertions)]
         eprintln!("[register] Path 写回失败：{e}");
+        #[cfg(not(debug_assertions))]
+        let _ = e;
         return false;
     }
     // 广播让 Explorer / 已开终端立即重读环境（否则新壳要等重登录才见新段）。
