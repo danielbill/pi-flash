@@ -174,6 +174,12 @@ pub fn openrouter_cache_file() -> Option<PathBuf> {
     file("openrouter-cache.json")
 }
 
+/// `~/.pi-flash/model-price-cache.json` — models.dev 单文件 TOML 价格缓存
+/// （model_price.rs，042-2；TTL 7 天，网络失败回陈旧）。
+pub fn model_price_cache_file() -> Option<PathBuf> {
+    file("model-price-cache.json")
+}
+
 /// `~/.pi-flash/pi-ext-market-cache.json` — Pi 扩展市场首页快照（040-1：
 /// 单文件、≤50 条、<100KB；启动延迟加载只预取首页写它）。
 pub fn pi_ext_market_cache_file() -> Option<PathBuf> {

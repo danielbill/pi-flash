@@ -368,7 +368,7 @@ pub fn validate(doc: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// 落盘前补齐模型缺省形状（input/reasoning/cost），幂等。
+/// 落盘前补齐模型缺省形状（input/reasoning/cost），并剥除 PF 私有键，幂等。
 fn normalize(doc: &mut Value) {
     let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_object_mut()) else {
         return;
@@ -378,6 +378,10 @@ fn normalize(doc: &mut Value) {
             continue;
         };
         for model in models.iter_mut() {
+            // PF 私有元数据（priceSource，042-2）只住清单仓，永不进 pi 账本
+            if let Some(o) = model.as_object_mut() {
+                o.remove(crate::model_price::SOURCE_KEY);
+            }
             ensure_model_defaults(model);
         }
     }
@@ -409,6 +413,17 @@ pub fn save_at_locked(path: &std::path::Path, doc: &Value) -> Result<(), String>
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn normalize_strips_pf_private_source_key() {
+        let mut doc = json!({"providers": {"p": {"models": [
+            {"id": "m", "cost": {"input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0},
+             "priceSource": "models-dev"}]}}});
+        assert!(repair(&mut doc));
+        assert!(doc["providers"]["p"]["models"][0].get("priceSource").is_none(),
+            "PF 私有元数据不进 pi 账本");
+        assert_eq!(doc["providers"]["p"]["models"][0]["cost"]["input"], json!(1));
+    }
 
     #[test]
     fn ensure_model_defaults_fills_missing_keeps_existing() {

@@ -45,6 +45,10 @@ pub struct Entry {
     /// 别名后顺着它落到具体条目——名称与参数都以具体型号为准。
     #[serde(default)]
     pub alias_target: Option<String>,
+    /// 价格来源记账（042-2）：models-dev / openrouter；空 = 旧缓存/旧链路。
+    /// 只进 PF 清单仓（`priceSource` 键），models.json 投影由 normalize 剥除。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// 每百万价格（缺项 = None）。
@@ -159,6 +163,7 @@ pub fn parse_entry(v: &Value) -> Option<Entry> {
         cost,
         alias,
         alias_target,
+        source: String::new(),
     })
 }
 
@@ -617,8 +622,10 @@ pub fn fill_from_entry(model: &mut Value, e: &Entry) -> usize {
     applied
 }
 
-/// 名称 / 价格：页面没有这两项，**只填空不覆盖**（名称另加「泛化标签自愈」：
+/// 名称 / 价格：页面没有这两项，**只填空/零不覆盖**（名称另加「泛化标签自愈」：
 /// 现名是旧版本写坏的「…Latest」→ 换具体型号名；别名条目不带名）。
+/// 零也算可填（042-2）：存量 0000 是缺省补的，不是用户定的——用户手填走
+/// 价格编辑器且落 `priceSource: manual`，调用方据它跳过本函数，不冲突。
 /// 填参不再落盘后，保存路径用这个把填参结果里的名称/价格补进模型。
 pub fn fill_name_cost(model: &mut Value, e: &Entry) -> usize {
     let mut applied = 0usize;
@@ -648,7 +655,12 @@ pub fn fill_name_cost(model: &mut Value, e: &Entry) -> usize {
             ("cacheWrite", e.cost.cache_write),
         ] {
             if let Some(val) = v {
-                if cost.get(k).and_then(|x| x.as_f64()).is_none() {
+                // 空或 0 都算「没定价」；真正的 0 价模型填回来还是 0，无损
+                let unfilled = cost
+                    .get(k)
+                    .and_then(|x| x.as_f64())
+                    .is_none_or(|cur| cur == 0.0);
+                if unfilled {
                     cost.insert(k.to_string(), serde_json::json!(val));
                     applied += 1;
                 }
@@ -911,6 +923,7 @@ mod tests {
             cost: Cost::default(),
             alias: false,
             alias_target: None,
+            source: String::new(),
         };
         let mut model = json!({ "id": "deepseek-flash", "name": "DeepSeek Flash Latest" });
         fill_from_entry(&mut model, &e);

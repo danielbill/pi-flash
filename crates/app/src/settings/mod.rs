@@ -69,6 +69,11 @@ pub(crate) struct SettingsPanel {
     pub mj_reasoning: bool,
     /// 最大输出 tokens
     pub mj_max_tokens: gpui::Entity<TextInput>,
+    /// 价格四键（$/MTok，042-2）：手填显式覆盖；自动填参只填空/零
+    pub mj_cost_in: gpui::Entity<TextInput>,
+    pub mj_cost_out: gpui::Entity<TextInput>,
+    pub mj_cost_cr: gpui::Entity<TextInput>,
+    pub mj_cost_cw: gpui::Entity<TextInput>,
     /// 自定义商 API Key 的显隐（掩码眼睛；mj_select 回填即回掩码态）
     pub mj_key_visible: bool,
     // -- 扩展页安装表单（040：整条 pi install 命令可直接粘贴）
@@ -175,6 +180,12 @@ impl SettingsPanel {
             mj_image: false,
             mj_reasoning: false,
             mj_max_tokens: cx.new(|cx| TextInput::new(cx).numeric(true)),
+            // 价格四框（042-2）不用 numeric()：它只放行 ASCII 数字、滤掉小数点
+            //（"0.15"→"015"）。小数是常态，校验交给保存时的 parse::<f64>
+            mj_cost_in: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_out: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_cr: cx.new(|cx| TextInput::new(cx)),
+            mj_cost_cw: cx.new(|cx| TextInput::new(cx)),
             mj_key_visible: false,
             install_input: cx
                 .new(|cx| TextInput::new(cx).placeholder(tr("extensions.source_example"))),
@@ -274,6 +285,10 @@ impl SettingsPanel {
             &self.mj_id,
             &self.mj_ctx,
             &self.mj_max_tokens,
+            &self.mj_cost_in,
+            &self.mj_cost_out,
+            &self.mj_cost_cr,
+            &self.mj_cost_cw,
             &self.install_input,
             &self.mcp_add,
             &self.mcp_name,
@@ -345,6 +360,10 @@ pub(crate) struct SettingsFormData {
     pub mj_image: bool,
     pub mj_reasoning: bool,
     pub mj_max_tokens: gpui::Entity<TextInput>,
+    pub mj_cost_in: gpui::Entity<TextInput>,
+    pub mj_cost_out: gpui::Entity<TextInput>,
+    pub mj_cost_cr: gpui::Entity<TextInput>,
+    pub mj_cost_cw: gpui::Entity<TextInput>,
     pub mj_key_visible: bool,
     pub install_input: gpui::Entity<TextInput>,
     pub mcp_add: gpui::Entity<TextInput>,
@@ -397,6 +416,10 @@ impl SettingsFormData {
             mj_image: p.mj_image,
             mj_reasoning: p.mj_reasoning,
             mj_max_tokens: p.mj_max_tokens.clone(),
+            mj_cost_in: p.mj_cost_in.clone(),
+            mj_cost_out: p.mj_cost_out.clone(),
+            mj_cost_cr: p.mj_cost_cr.clone(),
+            mj_cost_cw: p.mj_cost_cw.clone(),
             mj_key_visible: p.mj_key_visible,
             install_input: p.install_input.clone(),
             mcp_add: p.mcp_add.clone(),

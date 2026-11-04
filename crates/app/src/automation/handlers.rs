@@ -1116,6 +1116,17 @@ pub(super) fn dispatch(
                     if let Some(v) = get("max_tokens") {
                         s.mj_max_tokens.update(cx, |ti, cx| ti.set_value(v, cx));
                     }
+                    // 042-2 价格四框（手填 = 显式覆盖）
+                    for (k, ti) in [
+                        ("cost_in", &s.mj_cost_in),
+                        ("cost_out", &s.mj_cost_out),
+                        ("cost_cr", &s.mj_cost_cr),
+                        ("cost_cw", &s.mj_cost_cw),
+                    ] {
+                        if let Some(v) = get(k) {
+                            ti.update(cx, |ti, cx| ti.set_value(v, cx));
+                        }
+                    }
                     if let Some(v) = get_bool("image") {
                         s.mj_image = v;
                     }

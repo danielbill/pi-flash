@@ -908,6 +908,16 @@ fn settings_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 "mj_id_value": p.mj_id.read(cx).value().to_string(),
                 "mj_ctx_value": p.mj_ctx.read(cx).value().to_string(),
                 "mj_max_tokens_value": p.mj_max_tokens.read(cx).value().to_string(),
+                "mj_cost_in_value": p.mj_cost_in.read(cx).value().to_string(),
+                "mj_cost_out_value": p.mj_cost_out.read(cx).value().to_string(),
+                "mj_cost_cr_value": p.mj_cost_cr.read(cx).value().to_string(),
+                "mj_cost_cw_value": p.mj_cost_cw.read(cx).value().to_string(),
+                "mj_cost_source": chat
+                    .cfg
+                    .mj_fill_entry
+                    .as_ref()
+                    .map(|(_, e)| e.source.clone())
+                    .unwrap_or_default(),
                 "mj_image": p.mj_image,
                 "mj_reasoning": p.mj_reasoning,
                 "mj_delete_confirm": chat.cfg.mc_mj_delete_confirm.clone(),

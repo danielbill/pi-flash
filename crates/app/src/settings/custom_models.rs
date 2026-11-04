@@ -168,11 +168,33 @@ impl Chat {
                     .unwrap_or_default();
                 s.mj_max_tokens
                     .update(cx, |ti, cx| ti.set_value(max_tokens, cx));
+                // 价格四框回填（042-2）；0 显示为空（0 = 没定价，别让用户
+                // 把缺省 0 当成真价）
+                let cost_num = |k: &str| -> String {
+                    model
+                        .get("cost")
+                        .and_then(|c| c.get(k))
+                        .and_then(|v| v.as_f64())
+                        .filter(|n| *n != 0.0)
+                        .map(|n| n.to_string())
+                        .unwrap_or_default()
+                };
+                for (ti, k) in [
+                    (&s.mj_cost_in, "input"),
+                    (&s.mj_cost_out, "output"),
+                    (&s.mj_cost_cr, "cacheRead"),
+                    (&s.mj_cost_cw, "cacheWrite"),
+                ] {
+                    ti.update(cx, |ti, cx| ti.set_value(cost_num(k), cx));
+                }
                 // 内置模型＝pi 的定义，PF 只看不改（用户 2026-10-27 定稿）
                 let ro = over.is_some();
                 s.mj_id.update(cx, |ti, cx| ti.set_disabled(ro, cx));
                 s.mj_ctx.update(cx, |ti, cx| ti.set_disabled(ro, cx));
                 s.mj_max_tokens.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                for ti in [&s.mj_cost_in, &s.mj_cost_out, &s.mj_cost_cr, &s.mj_cost_cw] {
+                    ti.update(cx, |ti, cx| ti.set_disabled(ro, cx));
+                }
                 cx.notify();
             });
         }
@@ -191,7 +213,15 @@ impl Chat {
             return;
         };
         st.update(cx, |s, cx| {
-            for ti in [&s.mj_id, &s.mj_ctx, &s.mj_max_tokens] {
+            for ti in [
+                &s.mj_id,
+                &s.mj_ctx,
+                &s.mj_max_tokens,
+                &s.mj_cost_in,
+                &s.mj_cost_out,
+                &s.mj_cost_cr,
+                &s.mj_cost_cw,
+            ] {
                 ti.update(cx, |ti, cx| ti.set_value(String::new(), cx));
             }
             s.mj_image = false;
@@ -270,6 +300,12 @@ impl Chat {
                 ti.set_value(String::new(), cx);
                 ti.set_disabled(false, cx);
             });
+            for ti in [&s.mj_cost_in, &s.mj_cost_out, &s.mj_cost_cr, &s.mj_cost_cw] {
+                ti.update(cx, |ti, cx| {
+                    ti.set_value(String::new(), cx);
+                    ti.set_disabled(false, cx);
+                });
+            }
             cx.notify();
         });
         cx.notify();
@@ -701,14 +737,29 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return false;
         };
-        let (id, ctx, image, reasoning, max_tokens) = {
+        let (id, ctx, image, reasoning, max_tokens, costs) = {
             let s = st.read(cx);
+            let cost_val = |ti: &gpui::Entity<crate::ui::text_input::TextInput>| -> Option<
+                Result<f64, String>,
+            > {
+                let t = ti.read(cx).value().trim().to_string();
+                if t.is_empty() {
+                    return None; // 空 = 沿用现值
+                }
+                Some(t.parse::<f64>().map_err(|_| t))
+            };
             (
                 s.mj_id.read(cx).value().trim().to_string(),
                 s.mj_ctx.read(cx).value().trim().to_string(),
                 s.mj_image,
                 s.mj_reasoning,
                 s.mj_max_tokens.read(cx).value().trim().to_string(),
+                [
+                    cost_val(&s.mj_cost_in),
+                    cost_val(&s.mj_cost_out),
+                    cost_val(&s.mj_cost_cr),
+                    cost_val(&s.mj_cost_cw),
+                ],
             )
         };
         if id.is_empty() {
@@ -730,6 +781,36 @@ impl Chat {
         }
         let mut obj = model.as_object().cloned().unwrap_or_default();
         obj.insert("id".into(), serde_json::Value::String(id));
+        // 价格四框（042-2）：**手填 = 显式覆盖**——有值即写该键，空 = 沿用；
+        // 任一框非数字 → 报错不落盘。写价即记 manual 源（最高优先级：后续
+        // 自动填参跳过本模型，手填价永不被目录价冲掉）。
+        let cost_keys = ["input", "output", "cacheRead", "cacheWrite"];
+        let mut manual_priced = false;
+        for (res, key) in costs.into_iter().zip(cost_keys) {
+            match res {
+                Some(Ok(v)) => {
+                    let cost = obj.entry("cost").or_insert_with(|| serde_json::json!({}));
+                    if !cost.is_object() {
+                        *cost = serde_json::json!({});
+                    }
+                    cost.as_object_mut()
+                        .expect("cost is object")
+                        .insert(key.to_string(), serde_json::json!(v));
+                    manual_priced = true;
+                }
+                Some(Err(_bad)) => {
+                    self.mc_set_error(tr("models.cost_all_required"), cx);
+                    return false;
+                }
+                None => {}
+            }
+        }
+        if manual_priced {
+            obj.insert(
+                pi_link::model_price::SOURCE_KEY.into(),
+                serde_json::json!(pi_link::model_price::SOURCE_MANUAL),
+            );
+        }
         if let Ok(n) = ctx.parse::<u64>() {
             obj.insert("contextWindow".into(), serde_json::json!(n));
         } else {
@@ -754,10 +835,25 @@ impl Chat {
             obj.remove("input");
         }
         let mut model = serde_json::Value::Object(obj);
-        // 填参结果里的名称/价格在这里补（页面没有这两项，只填空不覆盖）；
-        // 仅当「填参时查的 id」与本次保存的 id 一致才用，避免串到别的模型
+        // 填参结果里的名称/价格在这里补（页面没有这两项，只填空/零不覆盖）；
+        // 仅当「填参时查的 id」与本次保存的 id 一致才用，避免串到别的模型。
+        // 手填价（priceSource = manual）是最高优先级：跳过自动补价。
+        let price_is_manual = model
+            .get(pi_link::model_price::SOURCE_KEY)
+            .and_then(|v| v.as_str())
+            == Some(pi_link::model_price::SOURCE_MANUAL);
         if let Some((queried, e)) = self.cfg.mj_fill_entry.clone() {
-            if model.get("id").and_then(|v| v.as_str()) == Some(queried.as_str()) {
+            if !price_is_manual
+                && model.get("id").and_then(|v| v.as_str()) == Some(queried.as_str())
+            {
+                if e.source == pi_link::model_price::SOURCE_MODELS_DEV
+                    || e.source == pi_link::model_price::SOURCE_OPENROUTER
+                {
+                    model.as_object_mut().expect("model is object").insert(
+                        pi_link::model_price::SOURCE_KEY.into(),
+                        serde_json::json!(e.source.clone()),
+                    );
+                }
                 pi_link::openrouter::fill_name_cost(&mut model, &e);
             }
         }
@@ -1177,7 +1273,6 @@ impl Chat {
                 name = m.name;
             }
         }
-        let queries = pi_link::model_ref::query_candidates(&id, &name);
         let base_url = entry
             .as_ref()
             .and_then(|e| e.get("baseUrl"))
@@ -1188,11 +1283,13 @@ impl Chat {
         cx.notify();
         let p_bg = provider.clone();
         let b_bg = base_url.clone();
-        let q_bg = queries.clone();
+        let i_bg = id.clone();
+        let n_bg = name.clone();
         cx.spawn(async move |this, cx| {
+            // 042-2 解析链：models.dev 单文件 TOML → OpenRouter → None（落 0）
             let resolved = cx
                 .background_executor()
-                .spawn(async move { pi_link::openrouter::resolve_many(&p_bg, &b_bg, &q_bg) })
+                .spawn(async move { pi_link::model_price::resolve(&p_bg, &b_bg, &i_bg, &n_bg) })
                 .await;
             // 目录无此 id 是常态错误（本地化文案）；网络错带原文
             let shown = match &resolved {
@@ -1237,6 +1334,33 @@ impl Chat {
                 s.mj_image = e.input.iter().any(|x| x == "image");
             }
             s.mj_reasoning = e.reasoning;
+            // 价格四框回显目录价：只填空/零（手填的非零值是用户定价，不冲）
+            let cost_num = |k: &str| -> Option<f64> {
+                match k {
+                    "input" => e.cost.input,
+                    "output" => e.cost.output,
+                    "cacheRead" => e.cost.cache_read,
+                    _ => e.cost.cache_write,
+                }
+            };
+            for (ti, k) in [
+                (&s.mj_cost_in, "input"),
+                (&s.mj_cost_out, "output"),
+                (&s.mj_cost_cr, "cacheRead"),
+                (&s.mj_cost_cw, "cacheWrite"),
+            ] {
+                let Some(v) = cost_num(k) else { continue };
+                let cur_empty_or_zero = ti
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .parse::<f64>()
+                    .map(|n| n == 0.0)
+                    .unwrap_or(true);
+                if cur_empty_or_zero {
+                    ti.update(cx, |ti, cx| ti.set_value(v.to_string(), cx));
+                }
+            }
         });
         // 名称/价格留到保存时落盘；id 变了就不复用（防止串到别的模型）
         self.cfg.mj_fill_entry = Some((queried_id.to_string(), e.clone()));
@@ -1930,6 +2054,47 @@ pub(crate) fn mj_model_modal_overlay(
                             .flex_1()
                             .min_w_0()
                             .child(field(&tr("models.max_output"), d.mj_max_tokens.clone())),
+                    ),
+            )
+            // 价格（042-2）：手填显式覆盖；自动填参回显目录价（只填空/零）。
+            // 2×2 网格，宽窄与上下文行一致
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(5.))
+                    .child(section_title(&tr("models.cost_per_m")))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(field(&tr("models.cost_input"), d.mj_cost_in.clone())),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(field(&tr("models.cost_output"), d.mj_cost_out.clone())),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(10.))
+                            .child(
+                                div().flex_1().min_w_0().child(field(
+                                    &tr("models.cost_cache_read"),
+                                    d.mj_cost_cr.clone(),
+                                )),
+                            )
+                            .child(div().flex_1().min_w_0().child(field(
+                                &tr("models.cost_cache_write"),
+                                d.mj_cost_cw.clone(),
+                            ))),
                     ),
             )
             // 推理（用户定稿：能力之前；单勾选落 model.reasoning）
