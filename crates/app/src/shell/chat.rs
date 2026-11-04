@@ -50,6 +50,9 @@ pub(crate) struct AuxUi {
     /// prompt 回执也不再来（#7 相位永久挂起的根因之一）
     pub(crate) ext_dialog_waiting: Vec<pi_link::protocol::ExtensionUiRequest>,
     pub(crate) ext_input: gpui::Entity<TextInput>,
+    /// editor 弹窗专用多行输入（zi2s.6）：editor 语义 Enter 提交，prefill 带
+    /// 真实换行（单行 ext_input 渲染遇换行直接 panic——GPUI text 契约）
+    pub(crate) ext_editor_input: gpui::Entity<TextInput>,
     /// ask_user_question 整卷问卷卡（ask_card.rs）；None = 无进行中的问卷
     pub(crate) ask: Option<ask_card::AskCard>,
     /// 问卷卡「自定义答案」输入框（active 题内嵌，切题时同步存量）
@@ -800,6 +803,7 @@ impl Chat {
                 sysprompt_scroll: gpui::ScrollHandle::new(),
                 decl_open: [false; 7],
                 ext_input: cx.new(|cx| TextInput::new(cx)),
+                ext_editor_input: cx.new(|cx| TextInput::new(cx).multiline()),
             },
         };
         crate::perf_mark("Chat::new: struct init");

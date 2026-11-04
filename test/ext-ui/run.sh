@@ -161,12 +161,14 @@ case_c3() { # setWidget ANSI 剥离（zi2s.8；基线=原样带 \x1b，XFAIL）
   return $rc
 }
 
-case_c4() { # editor 阻塞弹窗开合（Enter 提交 parity = zi2s.6，此处锁开合）
+case_c4() { # editor 多行弹窗（zi2s.6）：prefill 原样多行 + 开合链路
   start_app real || return 1
   mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
   local rc=0
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-editor >/dev/null
   P wait --path dialogs.ext_dialog_head.method --eq editor --timeout 15 >/dev/null || rc=1
+  # prefill 两个 \n 原样进多行输入（折行/丢失/换空格即回归 zi2s.6）
+  jcheck dialogs 'd.ext_dialog_head.input === "prefill L1\nprefill L2"' || rc=1
   P exec dialog.ext_respond >/dev/null 2>&1 || rc=1   # 无 value = 取消
   P wait --path dialogs.ext_dialog --eq false --timeout 5 >/dev/null || rc=1
   await_wire 'cancelled":true' 5 || rc=1
@@ -271,7 +273,7 @@ desc_of() {
     C1) echo "notify 冒烟：命令收场链路" ;;
     C2) echo "setStatus 渲染（zi2s.4）" ;;
     C3) echo "setWidget ANSI 剥离（zi2s.8）" ;;
-    C4) echo "editor 弹窗开合（Enter 提交=zi2s.6）" ;;
+    C4) echo "editor 多行弹窗（zi2s.6）" ;;
     C5) echo "select 键盘导航（zi2s.7）" ;;
     C6) echo "长标题 select 600x600 壳回归" ;;
     C7) echo "未知 method → cancelled 留痕（zi2s.2）" ;;

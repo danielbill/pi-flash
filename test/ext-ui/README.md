@@ -23,16 +23,17 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C1 notify 冒烟 | 命令收场链路（waiting 收场 + notice + handled） | PASS | #7 回归哨兵 |
 | C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染=zi2s.4） | PASS | zi2s.4 前置 |
 | C3 setWidget ANSI | widget 文本无 ESC（PlainTextTheme parity） | ~~XFAIL~~ → **PASS**（zi2s.8 已修：pi-link `strip_ansi` + on_ext_ui 对 setWidget/setStatus 应用） | zi2s.8 ✓ |
-| C4 editor 弹窗开合 | 弹窗 method=editor + 取消回 cancelled | PASS* | zi2s.6 前置 |
+| C4 editor 多行弹窗 | prefill 两行原样进多行输入 + 取消回 cancelled | PASS（zi2s.6：专用 multiline TextInput + Enter 提交，折叠保命 hack 已移除） | zi2s.6 ✓ |
 | C5 select 键盘导航 | ↓↓+Enter 选中第三项 gamma | XFAIL（无导航） | zi2s.7 |
 | C6 长标题 select | 40 行 title 弹窗可开可关 + shot 留档 | PASS | b9e2edce 回归 |
 | C7 未知 method | mock 注入 futureWidget → PF 回 cancelled | ~~XFAIL~~ → **PASS**（zi2s.2 已修：parse 回 Unknown + 立刻 cancelled + eprintln 留痕） | zi2s.2 ✓ |
 | C8 pi 崩溃清弹窗 | mock exit(1) → ext_dialog 清理 | ~~XFAIL~~ → **PASS**（zi2s.3 已修：泵尾 ext_queue.clear + SessionEvent::ExtUiDied → Chat ext_cancel_all；连跑 4 次确定性通过） | zi2s.3 ✓ |
 | C9 内置斜杠命令 | /name /compact /auto-compact wire 命令帧 + /session /mcp 面板 + 全程零 prompt 帧 | PASS（zi2s.5 拦截实现即台架即验收） | zi2s.5 ✓ |
 
-\* C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
+\** C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
 `text argument should not contain newlines` panic）——单行 TextInput 阶段
-已在 `dialogs/ext_ui.rs` ext_show 折行保命（zi2s.6 换真多行组件后移除）。
+曾折行保命，zi2s.6 已换专用 multiline 输入（aux.ext_editor_input），
+prefill 原样、Enter 提交（剥组件自插换行，composer 同款）。
 
 ## 台架机制（踩坑实录）
 

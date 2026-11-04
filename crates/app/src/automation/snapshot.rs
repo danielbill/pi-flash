@@ -911,7 +911,18 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 pi_link::protocol::ExtUiMethod::Input { .. } => "input",
                 pi_link::protocol::ExtUiMethod::Editor { .. } => "editor",
                 _ => "other",
-            }
+            },
+            // 在屏输入框当前值（input 单行 / editor 多行，zi2s.6 台架断言用；
+            // prefill 多行必须原样保留——折行/丢失即回归）
+            "input": match &r.method {
+                pi_link::protocol::ExtUiMethod::Input { .. } => {
+                    chat.aux.ext_input.read(cx).value().to_string()
+                }
+                pi_link::protocol::ExtUiMethod::Editor { .. } => {
+                    chat.aux.ext_editor_input.read(cx).value().to_string()
+                }
+                _ => String::new(),
+            },
         })),
         "ext_dialog_waiting": chat.aux.ext_dialog_waiting.len(),
         // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；

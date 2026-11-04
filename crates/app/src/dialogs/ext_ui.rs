@@ -109,10 +109,16 @@ pub(crate) fn render_ext_dialog(
                 .into_any_element(),
             div().into_any_element(),
         ),
-        ExtUiMethod::Input { title, .. } | ExtUiMethod::Editor { title, .. } => (
+        ExtUiMethod::Input { title, .. } => (
             title.clone(),
             div().into_any_element(),
             chat.aux.ext_input.clone().into_any_element(),
+        ),
+        // editor 用专用多行输入（zi2s.6）：Enter 提交，prefill 带真实换行
+        ExtUiMethod::Editor { title, .. } => (
+            title.clone(),
+            div().into_any_element(),
+            chat.aux.ext_editor_input.clone().into_any_element(),
         ),
         _ => (
             String::new(),
@@ -123,6 +129,8 @@ pub(crate) fn render_ext_dialog(
     let bar_title: SharedString = bar_title.into();
     let is_confirm = matches!(req.method, ExtUiMethod::Confirm { .. });
     let is_select = matches!(req.method, ExtUiMethod::Select { .. });
+    // editor 弹窗的提交值在专用多行输入里（zi2s.6）
+    let is_editor = matches!(req.method, ExtUiMethod::Editor { .. });
     let weak_ok = weak.clone();
     let weak_cancel = weak.clone();
     let weak_close = weak.clone();
@@ -330,7 +338,13 @@ pub(crate) fn render_ext_dialog(
                                         if is_confirm {
                                             c.ext_respond(None, Some(true), false, cx);
                                         } else {
-                                            let v = c.aux.ext_input.read(cx).value().to_string();
+                                            // editor = 专用多行输入（zi2s.6），
+                                            // input = 单行 ext_input
+                                            let v = if is_editor {
+                                                c.aux.ext_editor_input.read(cx).value().to_string()
+                                            } else {
+                                                c.aux.ext_input.read(cx).value().to_string()
+                                            };
                                             c.ext_respond(Some(v), None, false, cx);
                                         }
                                     });
@@ -516,22 +530,38 @@ impl Chat {
     /// 队头上屏（含 Input 的输入框预填配置，pi-web 到达时同款）；晋升等待
     /// 项时复用。
     fn ext_show(&mut self, req: pi_link::protocol::ExtensionUiRequest, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
         if let pi_link::protocol::ExtUiMethod::Input { placeholder, .. } = &req.method {
             let placeholder = placeholder.as_ref().map(|p| SharedString::from(p.clone()));
             let input = self.aux.ext_input.clone();
+            let weak_ok = weak.clone();
             input.update(cx, |ti, cx| {
                 ti.set_placeholder(placeholder);
                 ti.set_value(String::new(), cx);
+                // Enter 提交（zi2s.6，pi-web input 对话框同语义）
+                ti.set_on_submit(Box::new(move |v, cx| {
+                    let _ = weak_ok.update(cx, |c, cx| {
+                        c.ext_respond(Some(v.to_string()), None, false, cx)
+                    });
+                }));
             });
         } else if let pi_link::protocol::ExtUiMethod::Editor { prefill, .. } = &req.method {
-            // 单行 TextInput 阶段的防崩：prefill 常是多行（editor 语义），
-            // GPUI 文本渲染遇 `\n` 直接 panic（text_system.rs「text argument
-            // should not contain newlines」）→ 整个应用崩掉。折成空格保命；
-            // 真多行编辑器 = zi2s.6 换组件，届时移除本折行。
-            let prefill = prefill.clone().unwrap_or_default().replace('\n', " ");
-            let input = self.aux.ext_input.clone();
+            // 多行编辑器（zi2s.6）：prefill 带真实换行——editor 语义本就多行，
+            // 单行 TextInput 渲染遇 `\n` 直接 panic（GPUI text 契约），曾折行
+            // 保命；换 multiline 组件后保留原样
+            let prefill = prefill.clone().unwrap_or_default();
+            let input = self.aux.ext_editor_input.clone();
+            let weak_ok = weak.clone();
             input.update(cx, |ti, cx| {
                 ti.set_value(prefill, cx);
+                // Enter 提交：多行模式组件已自插 "\n" 再发 PressEnter
+                //（composer_input 同款剥法）——剥尾部换行后按提交值应答
+                ti.set_on_submit(Box::new(move |v, cx| {
+                    let submitted = v.strip_suffix('\n').unwrap_or(v);
+                    let _ = weak_ok.update(cx, |c, cx| {
+                        c.ext_respond(Some(submitted.to_string()), None, false, cx)
+                    });
+                }));
             });
         }
         self.aux.ext_dialog = Some(req);
