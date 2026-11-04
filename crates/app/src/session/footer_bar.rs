@@ -131,7 +131,8 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
     // Inputpanel（composer 底距恒为 BAR_H，开闭之间不动）。PAD_BOTTOM 已把
     // 这 28px 算进让位，消息不会被压在带子底下。
     // 不画上沿线：左邻是 dock 的 tab 栏，横线一拉就对不齐（用户定夺）。
-    // 内容行与消息列/composer 同心：px15 + 内容列宽封顶 + 居中，行内项右对齐。
+    // 内容行与消息列/composer 同心：px15 + 内容列宽封顶，项在列内**居中**
+    //（用户口径：右侧已有模型信息，项再右对齐会形成两条贴右竖排文字，碍眼）。
     let content_w = crate::services::workspace::chat_content_width();
     Some(
         div()
@@ -152,8 +153,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
                         .max_w(px(content_w))
                         .flex()
                         .items_center()
-                        // 会话槽（本期空）+ 扩展槽右对齐到内容列右缘
-                        .child(div().flex_1())
+                        .justify_center()
                         .child(row),
                 ),
             )

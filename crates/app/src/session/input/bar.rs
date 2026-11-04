@@ -135,7 +135,8 @@ fn status_bar_toggle(
         .gap(px(6.)) // SP3：图标↔控件
         .px(px(6.))
         .with_tip("footerbar.tip.toggle")
-        .child(icon("badge-info", 16., color))
+        // 图标 ICON_SM 14（§3 行内/按钮内默认档；与同排胶囊的 13–14 视觉一致）
+        .child(icon("badge-info", 14., color))
         .child(crate::ui::kit::config_switch(
             "ext-status-switch",
             &weak,
