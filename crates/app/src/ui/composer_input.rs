@@ -426,7 +426,7 @@ impl Render for ComposerInput {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(crate::ui::spinner(12., t.text_faint))
+                    .child(crate::ui::spark_spinner(12., t.text_faint))
                     .child(
                         div()
                             .line_height(ph_lh)

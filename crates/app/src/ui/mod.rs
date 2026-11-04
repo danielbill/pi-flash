@@ -467,3 +467,24 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
         )
         .into_any_element()
 }
+
+/// 8 针荆棘圈 spinner（ZCode 同款星芒）：spark.svg 的 8 根放射短针 alpha
+/// 沿圆周递减，旋转时天然逐针明暗闪烁（gpui svg 只取 alpha 着色，资产
+/// 内形状即明暗）。会话列表运行态用；弧线 spinner（`spinner`）仍服务
+/// 其余 15+ 处调用点。
+pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
+    gpui::svg()
+        .path(SharedString::from("icons/spark.svg"))
+        .text_color(gpui::rgb(color))
+        .size(gpui::px(size))
+        .with_animation(
+            "spark-spin",
+            Animation::new(std::time::Duration::from_millis(900)).repeat(),
+            |el, delta| {
+                el.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                    delta * std::f32::consts::TAU,
+                )))
+            },
+        )
+        .into_any_element()
+}

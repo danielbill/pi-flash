@@ -111,6 +111,8 @@ assets! {
     "icons/refresh.svg",
     "icons/layers.svg",
     "icons/loader.svg",
+    // 8 针荆棘圈（ZCode 同款星芒 spinner）：alpha 沿圆周递减，旋转即逐针闪烁
+    "icons/spark.svg",
     "icons/trash.svg",
     "icons/check.svg",
     // 031 输入面板右键菜单：lucide undo-2 / redo-2（撤销/恢复）

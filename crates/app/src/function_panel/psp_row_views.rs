@@ -8,7 +8,7 @@ use crate::appearance::theme::Theme;
 use crate::i18n::tr;
 use crate::ui::WithTip;
 use crate::ui::tokens::align;
-use crate::ui::{icon, spinner};
+use crate::ui::{icon, spark_spinner};
 
 /// 会话行：15px 状态槽（运行=旋转圈 / 未读=绿点 / 空）+ 标题；右键详情卡。
 /// `shift` = 所属项目块的避让位移（020 拖拽：整组随头行一起平移让位）。
@@ -394,7 +394,7 @@ fn session_status_slot(
                             .bg(rgb(crate::appearance::theme::ATTENTION))
                             .into_any_element()
                     } else if running {
-                        spinner(15., t.accent)
+                        spark_spinner(15., t.accent)
                     } else if chat.psp.turn_errors.contains(path) {
                         // 红 = 外部错误/崩溃（t.danger，§6 danger 系唯一表达）
                         div()
@@ -561,7 +561,7 @@ pub(crate) fn pending_row_view(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(spinner(15., t.accent)),
+                        .child(spark_spinner(15., t.accent)),
                 )
                 .child(
                     div()
