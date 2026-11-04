@@ -105,7 +105,11 @@ impl Chat {
                     // 扩展的 ui 广播是全局的：任何会话里任何扩展调
                     // `ui.notify` / `setStatus` / `setTitle` 都走这条事件，
                     if is_active {
-                        eprintln!("[ext-ui] route: id={} key={}", req.id, rt.read(cx).key);
+                        pi_link::client::ext_trace(&format!(
+                            "route: id={} key={}",
+                            req.id,
+                            rt.read(cx).key
+                        ));
                         let req = req.clone();
                         chat.on_ext_ui(req, cx);
                     } else {
@@ -113,12 +117,12 @@ impl Chat {
                         // badge surfaces it; popped when user switches there
                         // #问题卡不弹：静默队列必须留痕——否则 pi 永久挂在
                         // select 上而界面零线索（2026-11-04 真机事故链）
-                        eprintln!(
-                            "[ext-ui] PARKED: id={} key={} (active_key={})",
+                        pi_link::client::ext_trace(&format!(
+                            "PARKED: id={} key={} (active_key={})",
                             req.id,
                             rt.read(cx).key,
                             chat.pool.active_key
-                        );
+                        ));
                         rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
                         cx.notify();
                     }
@@ -247,6 +251,11 @@ impl Chat {
     ) {
         if let Some(old) = self.pool.runtimes.get(&self.pool.active_key).cloned() {
             if old != rt {
+                pi_link::client::ext_trace(&format!(
+                    "activate: key={} (prev={})",
+                    rt.read(cx).key,
+                    self.pool.active_key
+                ));
                 let (input, images, history) = (
                     std::mem::take(&mut self.composer.input),
                     std::mem::take(&mut self.composer.pending_images),
@@ -307,11 +316,11 @@ impl Chat {
         });
         if let Some(first) = queued.first() {
             // #问题卡不弹： parked 期间的积压请求在此兑现，留痕对账
-            eprintln!(
-                "[ext-ui] switch flush: {} queued, first id={}",
+            pi_link::client::ext_trace(&format!(
+                "switch flush: {} queued, first id={}",
                 queued.len(),
                 first.id
-            );
+            ));
             let first = first.clone();
             cx.notify();
             self.on_ext_ui(first, cx);
@@ -363,6 +372,7 @@ impl Chat {
             r
         });
         self.pool.runtimes.insert(key, rt.clone());
+        pi_link::client::ext_trace(&format!("spawn-draft: key={key}"));
         self.subscribe_runtime(&rt, cx);
         if clear_memory {
             clear_last_open(&cwd.to_string_lossy());
@@ -403,12 +413,24 @@ impl Chat {
         if let Some(base) = pi_link::paths::dir() {
             let _ = pi_link::service_ext::move_key(&base, &old_key, &path_key);
         }
+        // #问题卡不弹：bind 迁移碰撞 = 已证明发生的运行时替换源——若目标键
+        // 已被占，旧实体会从这里被顶出 map（其 pi 仍活着），后续事件/请求
+        // 全部落到被顶实体或双实体并存，必须留痕
+        if self.pool.runtimes.contains_key(&path_key) {
+            pi_link::client::ext_trace(&format!(
+                "bind COLLISION: {path_key} already held — entity replaced"
+            ));
+        }
         if let Some(entity) = self.pool.runtimes.remove(&old_key) {
             self.pool.runtimes.insert(path_key.clone(), entity);
         }
         if self.pool.active_key == old_key {
             self.pool.active_key = path_key.clone();
         }
+        pi_link::client::ext_trace(&format!(
+            "bind: {old_key} -> {path_key} active_follow={}",
+            self.pool.active_key == path_key
+        ));
         // 插件认领线跟随迁移（同语义，泛化形态）：草稿键 → 会话文件键，
         // 过滤清单按真身补一条（path 精确，重启后仍藏得住）；交接文件同步
         if let Some(c) = self

@@ -249,18 +249,18 @@ impl Chat {
             let Some(mut card) = parse_from_transcript(&self.rt().read(cx)) else {
                 // #问题卡不弹：transcript 里找不到可解析的 ask_user_question
                 // toolCall（未送达 / args_partial / parse_args 拒收）→ 落 legacy
-                eprintln!("[ext-ui] ask: no parseable tool_call in transcript → legacy");
+                pi_link::client::ext_trace("ask: no parseable tool_call in transcript → legacy");
                 return false;
             };
             let idx = card.next_request;
             if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
-                eprintln!("[ext-ui] ask: title mismatch (idx={idx}) → legacy");
+                pi_link::client::ext_trace(&format!("ask: title mismatch (idx={idx}) → legacy"));
                 return false;
             }
             card.pending = Some(req);
             card.open = true;
             self.aux.ask = Some(card);
-            eprintln!("[ext-ui] ask: armed");
+            pi_link::client::ext_trace("ask: armed");
             cx.notify();
             return true;
         }
@@ -269,7 +269,9 @@ impl Chat {
             Some(card) => {
                 let idx = card.next_request;
                 if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
-                    eprintln!("[ext-ui] ask: stale-card mismatch (idx={idx}) → legacy");
+                    pi_link::client::ext_trace(&format!(
+                        "ask: stale-card mismatch (idx={idx}) → legacy"
+                    ));
                     return false;
                 }
                 card.submitted

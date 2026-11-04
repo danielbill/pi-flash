@@ -22,6 +22,34 @@ use crate::vendor;
 /// fatal）只需尾部几行，整段留存反而吃内存
 const STDERR_TAIL_CAP: usize = 16 * 1024;
 
+/// ext-ui 全链路留痕（#问题卡不弹，2026-11-04 真机两次复现）：wire 送达锚点 /
+/// pool 路由与 parked 队列 / bind 迁移碰撞 / ask_card 分支统一走这里。
+/// release 无控制台 stderr 不可见——必须落盘 `<PF dir>/logs/ext-ui.log`，
+/// 追加写、全局互斥防多线程交错；路径不可得时退 stderr。事件低频，无热路径。
+pub fn ext_trace(msg: &str) {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _g = LOCK.lock();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let line = format!("[ext-ui] ts={ts} {msg}\n");
+    if let Some(dir) = crate::paths::dir() {
+        let logs = dir.join("logs");
+        if std::fs::create_dir_all(&logs).is_ok() {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(logs.join("ext-ui.log"))
+            {
+                let _ = f.write_all(line.as_bytes());
+                return;
+            }
+        }
+    }
+    eprint!("{line}");
+}
+
 pub struct PiSession {
     /// 进程句柄挂在共享锁后：exit-waiter 线程跨线程 reap 退出码
     ///（std 无法在别的线程 `wait()`），Drop 时 `take()` 接管击杀
@@ -232,7 +260,7 @@ pub fn spawn(
                                 ExtUiMethod::Editor { .. } => "editor",
                                 _ => "fire-and-forget",
                             };
-                            eprintln!("[ext-ui] wire: id={} method={m}", req.id);
+                            ext_trace(&format!("wire: id={} method={m}", req.id));
                         }
                         if event_tx.unbounded_send(event).is_err() {
                             break;
