@@ -804,7 +804,9 @@ impl Chat {
                 ext_dialog_waiting: Vec::new(),
                 ext_notice: None,
                 ask: None,
-                ask_input: cx.new(|cx| TextInput::new(cx)),
+                // 问卷卡「自定义答案」内嵌输入：flat 档（无边框/无内件底色），
+                // 选中态的 chrome 由宿主行提供（用户定稿：输入区不要 box-in-box）
+                ask_input: cx.new(|cx| TextInput::new(cx).flat()),
                 update: services::updater::initial_state(),
                 changelog: None,
                 changelog_scroll: gpui::ScrollHandle::new(),

@@ -264,6 +264,12 @@ impl Chat {
             card.pending = Some(req);
             card.open = true;
             self.aux.ask = Some(card);
+            // flat 输入框常驻自定义行：placeholder 由输入框自身显示，布防时
+            // 现取 tr()（语言切换后下一张卡即刷新）
+            let ph = tr("ask.other_placeholder").to_string();
+            self.aux
+                .ask_input
+                .update(cx, |ti, _| ti.set_placeholder(Some(ph.into())));
             pi_link::client::ext_trace("ask: armed");
             cx.notify();
             return true;
@@ -358,20 +364,44 @@ impl Chat {
         cx.notify();
     }
 
-    /// 「自定义答案」行点选：单选清选项；聚焦输入框
-    pub(crate) fn ask_other_click(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+    /// 「自定义答案」行体点选（输入区/行内任意处）：确保选中（幂等，再点
+    /// 不取消——编辑意图），单选清选项；聚焦输入框
+    pub(crate) fn ask_other_select(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let Some(card) = self.aux.ask.as_mut() else {
             return;
         };
         let q = &mut card.questions[card.active];
-        q.other_sel = true;
-        if !q.multi {
-            for s in q.sel.iter_mut() {
-                *s = false;
+        if !q.other_sel {
+            q.other_sel = true;
+            if !q.multi {
+                for s in q.sel.iter_mut() {
+                    *s = false;
+                }
             }
         }
         let fh = self.aux.ask_input.read(cx).focus_handle_in(cx);
         window.focus(&fh);
+        cx.notify();
+    }
+
+    /// 「自定义答案」圆标点选：切换选中态（选中后再点 = 取消选中，用户定稿）；
+    /// 单选在选中瞬间清选项。取消后文本保留（重选即恢复，作答口径只认
+    /// other_sel && 非空文本，残留文本不误提交）
+    pub(crate) fn ask_other_toggle(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let Some(card) = self.aux.ask.as_mut() else {
+            return;
+        };
+        let q = &mut card.questions[card.active];
+        q.other_sel = !q.other_sel;
+        if q.other_sel && !q.multi {
+            for s in q.sel.iter_mut() {
+                *s = false;
+            }
+        }
+        if q.other_sel {
+            let fh = self.aux.ask_input.read(cx).focus_handle_in(cx);
+            window.focus(&fh);
+        }
         cx.notify();
     }
 
@@ -725,13 +755,17 @@ fn ask_option_rows(
                             .text_color(rgb(t.text))
                             .child(SharedString::from(opt.label.clone())),
                     )
-                    .child(
-                        div()
-                            .text_size(crate::appearance::ui_size(12.))
-                            .text_color(rgb(t.text_muted))
-                            .mt(px(2.))
-                            .child(SharedString::from(opt.desc.clone())),
-                    ),
+                    // 空描述不渲染：占位空行会把无描述选项撑到 1.5 倍高，
+                    // 与自定义答案行不等高（用户定稿：视觉丑陋）
+                    .when(!opt.desc.trim().is_empty(), |d| {
+                        d.child(
+                            div()
+                                .text_size(crate::appearance::ui_size(12.))
+                                .text_color(rgb(t.text_muted))
+                                .mt(px(2.))
+                                .child(SharedString::from(opt.desc.clone())),
+                        )
+                    }),
             )
             .child(mark)
             .map(|d| {
@@ -754,7 +788,9 @@ fn ask_option_rows(
     opts
 }
 
-/// 自定义答案行（AskCard 常驻模式）：active 题内嵌输入框，未选时只显示占位。
+/// 自定义答案行（AskCard 常驻模式）：flat 输入框**常驻**（placeholder 走
+/// 输入框自身，行高恒定 = 单行选项行高，选中态不再跳变）。行体点选 =
+/// 确保选中并聚焦；圆标点选 = 切换选中（取消选中入口，用户定稿）。
 /// 内切自 render_ask_card（check_arch 300 行上限，纯结构搬运）。
 fn ask_other_row(
     chat: &Chat,
@@ -763,17 +799,32 @@ fn ask_other_row(
     t: &crate::appearance::theme::Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let weak_other = weak.clone();
+    let weak_mark = weak.clone();
     let mut row = div()
         .id("ask-other")
         .flex()
         .items_center()
         .gap(px(10.))
         .px(px(11.))
-        .py(px(7.))
+        // py(4)+flat 输入槽 30px = 38px ≈ 单行选项行（py9+文本行 ~37.5），
+        // 两类行同高（用户定稿：高度差视觉丑陋）
+        .py(px(4.))
         .rounded(px(9.))
         .border_1()
         .cursor_pointer()
-        .child(option_mark(q.multi, q.other_sel, t))
+        .child(
+            // 圆标 = 切换开关：stop_propagation 防止行体 ensure 分支盖掉
+            div()
+                .id("ask-other-mark")
+                .flex()
+                .cursor_pointer()
+                .child(option_mark(q.multi, q.other_sel, t))
+                .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
+                    let _ = ev;
+                    let _ = weak_mark.update(cx, |c, cx| c.ask_other_toggle(window, cx));
+                    cx.stop_propagation();
+                }),
+        )
         .map(|d| {
             if q.other_sel {
                 d.bg(accent_tint(0.08)).border_color(accent_tint(0.35))
@@ -785,18 +836,11 @@ fn ask_other_row(
         })
         .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
             let _ = ev;
-            let _ = weak_other.update(cx, |c, cx| c.ask_other_click(window, cx));
+            // 输入区点击从 vendor 编辑器冒泡上来（其不 stop_propagation，
+            // 已核）：与行体同走 ensure，编辑意图不会误触取消
+            let _ = weak_other.update(cx, |c, cx| c.ask_other_select(window, cx));
         });
-    if q.other_sel || !q.other_text.is_empty() {
-        row = row.child(chat.aux.ask_input.clone().into_any_element());
-    } else {
-        row = row.child(
-            div()
-                .text_size(crate::appearance::ui_size(12.5))
-                .text_color(rgb(t.text_faint))
-                .child(SharedString::from(tr("ask.other_placeholder").to_string())),
-        );
-    }
+    row = row.child(chat.aux.ask_input.clone().into_any_element());
     row
 }
 
