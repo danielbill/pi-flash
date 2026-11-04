@@ -112,6 +112,7 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .id(SharedString::from(format!("ext-status-{key}")))
             .flex()
             .items_center()
+            .min_w_0() // 允许被 flex 挤压（过载前提）
             .px(px(6.))
             .py(px(2.))
             .rounded(px(5.)) // R_INLINE：被塞进行里的散件
@@ -119,6 +120,11 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .font_family(crate::appearance::panel_font().family)
             .text_size(crate::appearance::ui_size(10.))
             .text_color(rgb(color))
+            // 过载处理（用户定夺 2026-11-04）：超长截断、禁止折行——单行 +
+            // 尾部省略，flex 挤压到多少都保持一行，绝不折行撑破 28px 条
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
             .child(SharedString::from(text));
         match action {
             Some(_) if blocked => {
@@ -164,17 +170,25 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .flex()
             .items_center()
             .justify_center()
+            .overflow_hidden()
             // 不画底色：与内容区同背景（用户定夺，2026-11-04）
             .child(
-                div().w_full().px(px(15.)).flex().justify_center().child(
-                    div()
-                        .w_full()
-                        .max_w(px(content_w))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(row),
-                ),
+                div()
+                    .w_full()
+                    .px(px(15.))
+                    .min_w_0()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(content_w))
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(row),
+                    ),
             )
             .into_any_element(),
     )
