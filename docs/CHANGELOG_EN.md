@@ -2,6 +2,43 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.4.2] - 2026-11-04
+
+Highlights of this release:
+0. Fixed saved API keys becoming unretrievable after the 0.4.0→0.4.1 upgrade (credential markers de-pathed)
+1. 8 built-in slash commands added: /compact etc. are now visible end-to-end, with acceptance feedback and a before/after token comparison on completion
+2. Extension UI now matches pi-web: status bar, window title, keyboard navigation for select dialogs, multi-line editor
+3. After install, the bundled pi kernel registers as the system-wide `pi` command — typing `pi` in a terminal now runs the 1.5 kernel
+4. Faster first launch after upgrades, with self-healing for a broken stable entry
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # Same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. A portable zip is also available: download, unzip, and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **8 built-in slash commands implemented client-side** (pi-web handleBuiltinSlashCommand parity): built-in commands like /compact and /clear now appear in the slash menu (they used to be invisible among extension commands), and their execution is visible end-to-end — acceptance shows a toast, completion shows a before/after token comparison, and failures show pi's rejection reason. (9f079fba, 598f4d41, 0df04c62, 95414e7a)
+- **Extension UI surface, pi-web parity as a batch**:
+  - ctx.ui.setStatus: session status set by an extension now renders in the UI (ExtensionStatusBar parity). (4d43815b)
+  - ctx.ui.setTitle: maps to the OS window title (document.title parity). (6db66241)
+  - Blocking select dialogs get keyboard navigation: ↑↓ moves the highlight (wrapping), Enter selects. (d17a0666)
+  - Editor dialogs switched to a multi-line input with Enter to submit; prefill supports real newlines. (0388a9c4)
+- **The bundled pi kernel registers as the system-wide `pi`**: installs a pi.exe forwarding shim plus a user-Path first segment — no uninstalls, no edits, pure shadowing. Typing `pi` in any terminal/script runs the vendored 1.5 kernel; after an upgrade handoff it serves the new kernel immediately. (7199f22f)
+
+### Bug fixes
+- **Saved API keys all became unretrievable after the 0.4.0→0.4.1 upgrade**: auth.json marker entries hard-coded the old install path, which broke the moment the app moved; markers are now de-pathed and pif-secret lands in the user-level PATH directory, so retrieval survives upgrades and moves. (6210558a)
+- In-flight extension dialogs lingered forever after the pi process died: the pump tail clears the queue and the state bubbles up, so dialogs exit with the process. (663e1e8a)
+- An unknown extension UI method (e.g. after a pi upgrade) could block an extension forever: unknown methods now answer cancelled immediately, with a trace. (bdac103a)
+- ANSI escape sequences in extension widget/status text were rendered raw: they are now stripped uniformly (PlainTextTheme parity). (6cb0294c)
+
+### Improvements
+- **Faster first launch after upgrades**: stable-entry precopy — files the old process doesn't lock are copied as soon as they land, so the new first launch only finishes one big file (pi-flash.exe); in the common case, zero copying. (9d505b59)
+- **Stable-entry self-healing, three pieces**: taskbar dead links caused by the npm shell's payload placement failing halfway are auto-repaired on new-version first launch; redundant versioned directories are cleaned up into one; the global pi pointer re-pins to the stable entry. (4dc4dd40)
+- Final feedback for user actions now goes through the unified notify_toast channel. (bc0aa429)
 ## [0.4.1] - 2026-11-03
 
 Highlights of this release:

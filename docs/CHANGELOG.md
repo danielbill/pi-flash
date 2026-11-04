@@ -2,6 +2,43 @@
 
 所有对外发布的版本变化记录于此，格式见 `docs/CHANGELOG规范.md`。
 
+## [0.4.2] - 2026-11-04
+
+本次更新核心：
+0、修复 0.4.0→0.4.1 升级后已保存 API Key 全部取不回的问题（凭据标记去路径化）
+1、新增 8 条内置斜杠命令：/compact 等执行全程可见，受理有反馈、完成带前后 token 对比
+2、扩展 UI 全面看齐 pi-web：状态栏、窗口标题、select 弹窗键盘导航、editor 多行输入
+3、安装后内置 pi 内核注册为系统全局 `pi` 命令，终端直接敲 `pi` 即用 1.5 内核
+4、升级后首启提速，稳定入口损坏可自愈
+
+### 安装与更新
+
+```bash
+npm install -g pi-flash@latest   # 首次安装与更新同命令
+pi-flash
+```
+
+需要 Node.js ≥ 22.19。也可直接下载 zip 绿色包，解压后双击 `pi-flash.exe` 即用。仅提供 Windows x64 版本。
+
+### 新增
+- **内置斜杠命令 8 条客户端实现**（pi-web handleBuiltinSlashCommand parity）：/compact、/clear 等内置命令进入斜杠菜单（此前混在扩展命令里不可见），执行全程可见——受理即 toast 反馈，压缩完成带前后 token 对比、失败带 pi 拒绝原因。(9f079fba, 598f4d41, 0df04c62, 95414e7a)
+- **扩展 UI 面 pi-web parity 整批**：
+  - ctx.ui.setStatus：扩展设置的会话状态渲染到界面（ExtensionStatusBar parity）。(4d43815b)
+  - ctx.ui.setTitle：映射 OS 窗口标题（document.title parity）。(6db66241)
+  - 阻塞 select 弹窗键盘导航：↑↓ 移动高亮（循环）、Enter 选中。(d17a0666)
+  - editor 弹窗改多行输入 + Enter 提交，prefill 支持真实换行。(0388a9c4)
+- **内置 pi 内核注册为系统全局 `pi`**：安装 pi.exe 前置 shim + 用户 Path 首位段，不卸载不改老安装、纯遮蔽；终端/脚本里直接敲 `pi` 即用 vendored 1.5 内核，升级交接后立即可用新内核。(7199f22f)
+
+### 修复
+- **0.4.0→0.4.1 升级后已保存 API Key 全部失效**：auth.json 标记条目硬编码旧安装路径，升级即指向不存在的 helper；标记去路径化，pif-secret 落用户级 PATH 目录，升级/搬家后照样取回。(6210558a)
+- pi 进程死亡后在途扩展弹窗永久残留：泵尾清队列 + 状态冒泡，弹窗随进程退场。(663e1e8a)
+- pi 升级后新增未知扩展 UI 方法导致扩展永久阻塞：未知方法立即回 cancelled 并留痕。(bdac103a)
+- 扩展 widget/status 文本里的 ANSI 转义串直接上屏：统一剥除（PlainTextTheme parity）。(6cb0294c)
+
+### 改进
+- **升级首启提速**：稳定入口预拷——老进程锁不住的文件落位即拷，新版首启只剩 pi-flash.exe 一个大文件收尾，常见情形零复制。(9d505b59)
+- **稳定入口自愈三件套**：npm 薄壳载荷落位半途失败导致的任务栏死链，新版首启自动补齐；冗余版本目录清理归一；全局 pi 指针收敛稳定入口。(4dc4dd40)
+- 用户动作终局反馈统一走 notify_toast 通用通道。(bc0aa429)
 ## [0.4.1] - 2026-11-03
 
 本次更新核心：
