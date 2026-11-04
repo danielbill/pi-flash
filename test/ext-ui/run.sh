@@ -132,14 +132,14 @@ case_c1() { # notify 冒烟：命令收场链路（基线 PASS）
   return $rc
 }
 
-case_c2() { # setStatus 数据面（渲染 parity = zi2s.4，此处锁数据链路）
+case_c2() { # setStatus 数据面（此处只锁数据链路；渲染行已隐藏，见 EXT_STATUS_ROW_VISIBLE）
   start_app real || return 1
   mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
   local rc=0
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   jcheck session 'JSON.stringify(d.ext_status).includes("usage") && JSON.stringify(d.ext_status).includes("61%")' || rc=1
-  P shot "$CUR_OUT/status.png" >/dev/null 2>&1 || true   # 人工复核渲染位（composer 上方状态行，zi2s.4）
+  P shot "$CUR_OUT/status.png" >/dev/null 2>&1 || true   # 留档：状态行当前不渲染（EXT_STATUS_ROW_VISIBLE=false，待设计落位）
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-status-clear >/dev/null
   P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
   sleep 1

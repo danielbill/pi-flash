@@ -657,12 +657,22 @@ fn ext_widget_rows(
 
 /// ctx.ui.setStatus 行（zi2s.4，pi-web ExtensionStatusBar parity）：composer
 /// 上方一条（ext_widget above 同区）。key+text mono 11px muted，多 key 横向
-/// 排列；空则整行不占位。此前 aux.ext_status 只写不渲染——pi-usage 的额度
-/// 状态行（wire 实测 statusText="zai 61% ↻ 1h18m · 88% ↻ 6d14h"）永远看不到。
+/// 排列；空则整行不占位。
+///
+/// **当前不渲染**（`EXT_STATUS_ROW_VISIBLE = false`）：扩展（pi-mcp-adapter /
+/// pi-usage / pi-freeflow…）把给 pi TUI footer 画的一行短状态随手塞进这个通道，
+/// 而这条线的位置/字号/缩进都没有设计出处（`docs/UI设计/UI组件规范.md` 里没有
+/// 对应控件）。所以先整行隐掉，等设计定下落位再打开；数据面 `aux.ext_status`
+/// 与 pif-ui 快照照旧维护（`test/ext-ui` C2 靠它断言数据链路）。
+const EXT_STATUS_ROW_VISIBLE: bool = false;
+
 fn ext_status_row(
     chat: &Chat,
     t: &'static crate::appearance::theme::Theme,
 ) -> Option<gpui::AnyElement> {
+    if !EXT_STATUS_ROW_VISIBLE {
+        return None;
+    }
     (!chat.aux.ext_status.is_empty()).then(|| {
         let items: Vec<gpui::AnyElement> = chat
             .aux

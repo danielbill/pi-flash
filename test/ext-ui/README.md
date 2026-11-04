@@ -21,7 +21,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | 用例 | 断言 | 基线 | 归属 |
 |---|---|---|---|
 | C1 notify 冒烟 | 命令收场链路（waiting 收场 + notice + handled） | PASS | #7 回归哨兵 |
-| C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染=zi2s.4） | PASS | zi2s.4 前置 |
+| C2 setStatus 数据面 | ext_status 写入/摘除（快照口径；渲染行当前隐藏＝`EXT_STATUS_ROW_VISIBLE=false`，待设计落位） | PASS | zi2s.4 前置 |
 | C3 setWidget ANSI | widget 文本无 ESC（PlainTextTheme parity） | ~~XFAIL~~ → **PASS**（zi2s.8 已修：pi-link `strip_ansi` + on_ext_ui 对 setWidget/setStatus 应用） | zi2s.8 ✓ |
 | C4 editor 多行弹窗 | prefill 两行原样进多行输入 + 取消回 cancelled | PASS（zi2s.6：专用 multiline TextInput + Enter 提交，折叠保命 hack 已移除） | zi2s.6 ✓ |
 | C5 select 键盘导航 | ↓↓ 高亮 index=2 + Enter 选中 gamma（handler notify 回执） | ~~XFAIL~~ → **PASS**（zi2s.7 已修：overlay on_key_down 导航 + 首行预选高亮 + snapshot sel 出口） | zi2s.7 ✓ |
