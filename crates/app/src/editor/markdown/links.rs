@@ -68,7 +68,8 @@ pub(crate) fn dispatch_md_link(url: &str, cx: &mut gpui::App) {
 /// 行内 code 文本 / 链接 href 形似本地文件路径 → 可打开的路径串（已剥
 /// `:行[:列]` 后缀）。判定锚定 code span / href 边界，路径内允许空格与
 /// CJK（「已写入 `D:\...\1 每日博文\x.md`」场景）；不做盘上存在性检查
-/// （渲染期 fs 调用不可接受，缺失由 open_file_tab 状态栏兜底）。
+/// （渲染期 fs 调用不可接受，缺失由 open_file_tab 状态栏兜底；目录由
+/// open_file_tab 转资源管理器打开，zed 路径链接同型）。
 pub(crate) fn as_file_path(input: &str) -> Option<String> {
     let mut s = input.trim();
     // 成对引号包裹（agent 常见 `'D:\x y.md'` / `"D:\x.md"`）

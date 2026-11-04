@@ -40,19 +40,26 @@ impl Chat {
             cwd.join(path)
         };
         const MAX: u64 = 10 * 1024 * 1024;
-        if std::fs::metadata(&path)
-            .map(|m| m.len() > MAX)
-            .unwrap_or(false)
-        {
-            self.set_status(
-                format!(
-                    "{}：{}",
-                    crate::i18n::tr("file_view.too_large"),
-                    path.display()
-                ),
-                cx,
-            );
-            return;
+        if let Ok(md) = std::fs::metadata(&path) {
+            // 目录不是编辑器对象：资源管理器打开（zed 路径链接同型）。
+            // 消息里的项目根/目录路径、插件误传都落这里——Windows 上
+            // fs::read 目录 = ERROR_ACCESS_DENIED (5)，不再冒出误导性的
+            // 「读取失败：拒绝访问」（2026-11-04 pf_test 项目根路径实案）
+            if md.is_dir() {
+                crate::services::shell_open::open_in_explorer(&path);
+                return;
+            }
+            if md.len() > MAX {
+                self.set_status(
+                    format!(
+                        "{}：{}",
+                        crate::i18n::tr("file_view.too_large"),
+                        path.display()
+                    ),
+                    cx,
+                );
+                return;
+            }
         }
         // 已打开则直接切过去（Zed 行为）：不重读磁盘、不整文重灌——那会
         // 复位滚动/光标，并在大文件上冻结数百毫秒。外部改动由 fs watcher
@@ -91,12 +98,21 @@ impl Chat {
             Ok(b) => b,
             Err(e) => {
                 // 带上完整路径：消息里的路径点击失败（相对解析/拼写/盘符），
-                // 没有路径无法定位是哪个文件没打开
+                // 没有路径无法定位是哪个文件没打开。
+                // 目录漏进来（open_file_tab 守卫与读取间的竞态/恢复路）：
+                // Windows fs::read 目录报「拒绝访问 (os error 5)」，直译会
+                // 误导排障——换目录提示（2026-11-04 pf_test 实案）
+                let detail = if path.is_dir() {
+                    crate::i18n::tr("file_view.is_dir").to_string()
+                } else {
+                    e.to_string()
+                };
                 self.set_status(
                     format!(
-                        "{} {}: {e}",
+                        "{} {}: {}",
                         crate::i18n::tr("file_view.read_failed"),
-                        path.display()
+                        path.display(),
+                        detail
                     ),
                     cx,
                 );

@@ -388,6 +388,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("file_view.create_hint", "在项目根下创建；Enter 确认，Esc 取消", "在專案根下建立；Enter 確認，Esc 取消", "Created under the project root; Enter to confirm, Esc to cancel"),
     ("file_view.too_large", "文件超过 10MB，不打开", "檔案超過 10MB，不開啟", "File exceeds 10MB, not opening"),
     ("file_view.read_failed", "读取失败", "讀取失敗", "Read failed"),
+    ("file_view.is_dir", "这是目录，不是文件", "這是目錄，不是檔案", "This is a directory, not a file"),
     // 无法打开灰屏（二进制占位 tab，仿 Zed Could not open file）
     ("file_view.unsupported_type", "无法打开 {ext} 类型文件", "無法開啟 {ext} 類型的檔案", "Cannot open {ext} files"),
     ("file_view.binary_unsupported", "二进制文件不受支持", "不支援二進位檔案", "Binary files are not supported"),

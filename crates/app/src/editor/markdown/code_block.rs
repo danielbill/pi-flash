@@ -313,7 +313,7 @@ pub(crate) fn inline_code_box(text: &str, t: &Theme) -> AnyElement {
         line_height: relative(1.5),
         ..Default::default()
     };
-    let mut box_div = div()
+    let box_div = div()
         .max_w_full()
         .rounded(px(5.))
         .bg(rgba(t.bg_subtle))
@@ -324,21 +324,41 @@ pub(crate) fn inline_code_box(text: &str, t: &Theme) -> AnyElement {
         // 字号挂容器（见 sized_text 注释）：行内 code = 槽位 -1.12（0.92em）
         .text_size(px(spec.size - 1.12))
         .line_height(relative(1.5));
-    // 路径形 code 可点开文件标签页（pi-web 消息链接的行内 code 变体）：
-    // on_mouse_down 无需 stateful id，流式增长中也即时可点；非路径 code 盒零改动
+    // 路径形 code 可点开文件标签页（pi-web 消息链接的行内 code 变体）；
+    // 非路径 code 盒零改动。**必须 on_click（mouse-up）而非 on_mouse_down**：
+    // 按下即触发会让「划选/复制路径文本」的手势在 mouse-down 就误开文件
+    // tab——pf_test 会话里目录路径被划选即报「拒绝访问 os error 5」的元凶
+    // （2026-11-04，gpui.md「拖拽起手先行误触发」陷阱的又一实例）。
+    // id 用文本哈希（runs_element 的 md-link 同款）：on_click 要 stateful
+    // 元素；流式增长中 id 未稳点击可能失效，定稿即恢复。
     if let Some(path) = as_file_path(text) {
         let target = md_target();
         let accent = t.accent;
-        box_div = box_div
+        let mut hasher = DefaultHasher::new();
+        hasher.write(text.as_bytes());
+        let styled = StyledText::new(text.to_string()).with_default_highlights(&style, Vec::new());
+        return box_div
+            .id(gpui::ElementId::named_usize(
+                "md-code-path",
+                hasher.finish() as usize,
+            ))
             .cursor_pointer()
             .hover(move |s| s.text_color(rgb(accent)))
-            .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                // 点击归 code 自己消费（开文件 tab），不冒泡给 md 预览容器的
-                // 「点击进编辑」（on_mouse_down 在容器 on_click 记录按下态
-                // 之前发，这里停了容器整条 click 链都不触发）
+            .on_click(move |ev, _, cx| {
+                // genuine click（down→up 位移 ≤ 阈值）才开：划选/拖拽不触发
+                let gpui::ClickEvent::Mouse(m) = ev else {
+                    return;
+                };
+                if !super::doc::click_within_drag(m.down.position, m.up.position) {
+                    return;
+                }
+                // 点击归 code 自己消费（开文件 tab），不冒泡给 md 预览容器
+                // 的「点击进编辑」
                 cx.stop_propagation();
                 open_path_with(target.clone(), path.clone(), cx);
-            });
+            })
+            .child(styled)
+            .into_any_element();
     }
     box_div
         .child(StyledText::new(text.to_string()).with_default_highlights(&style, Vec::new()))

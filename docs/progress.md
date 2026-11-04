@@ -516,3 +516,18 @@
   `action_of` 登记的键（当前仅 `usage`）上屏，`mcp`/`mcp-auth`/`freeflow`/`goal`
   等一律不显示；只剩噪音时整条零占位。快照 `status_bar.hidden_keys` 留痕，C11
   增加「mcp 不入 items」断言。
+
+## 2026-11-04 fix(editor)：消息内路径行内 code 划选误触发 + 目录误当文件读
+
+- **现象**：pf_test 项目根路径出现在 agent 回复表格里，用户划选/复制该文本即弹
+  「读取失败 D:/ai_workspace/pf_test: 拒绝访问。(os error 5)」，与设置页操作无关。
+- **根因**：①路径形行内 code 盒挂 `on_mouse_down`（按下即触发，划选手势必误开）；
+  ②`open_file_tab` 无目录守卫，Windows `fs::read` 目录 = ERROR_ACCESS_DENIED (5)。
+- **修复**：行内 code 路径改 `on_click`（mouse-up + 复用 doc.rs `CLICK_MAX_DRAG`
+  位移阈值，`click_within_drag` 提为 `pub(super)` 共用）；`open_file_tab` 入口
+  `is_dir` → `shell_open::open_in_explorer`（zed 路径链接同型）；恢复路/竞态漏网
+  的目录读失败换「这是目录，不是文件」提示（i18n `file_view.is_dir`）。
+- **顺带修 HEAD 既有编译破损**（他 Session 提交遗留，挡测试）：pool.rs spawn-draft
+  trace 的 `key` move 后借用（adddc556）；startup.rs 测试 `ModelInfo` 缺 `cost`
+  字段（cbe86e71）。
+- **验收**：`cargo check -p app` 干净；`cargo test -p app` 429 全绿。

@@ -8,10 +8,14 @@ use std::path::PathBuf;
 
 /// 预览区 click（进源码）与拖拽手势的分界：down→up 位移不超过
 /// [`CLICK_MAX_DRAG`] 算 genuine click，超过算拖拽。与 gpui div.rs
-/// DRAG_THRESHOLD(2.) 同量级，取 4 宽松一点防手抖误判。
+/// DRAG_THRESHOLD(2.) 同量级，取 4 宽松一点防手抖误判。路径形行内
+/// code 盒（code_block.rs）共用同一条界。
 const CLICK_MAX_DRAG: f32 = 4.0;
 
-fn click_within_drag(down: gpui::Point<gpui::Pixels>, up: gpui::Point<gpui::Pixels>) -> bool {
+pub(super) fn click_within_drag(
+    down: gpui::Point<gpui::Pixels>,
+    up: gpui::Point<gpui::Pixels>,
+) -> bool {
     let dx = f32::from(up.x) - f32::from(down.x);
     let dy = f32::from(up.y) - f32::from(down.y);
     dx * dx + dy * dy <= CLICK_MAX_DRAG * CLICK_MAX_DRAG
