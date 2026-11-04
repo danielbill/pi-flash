@@ -9,6 +9,7 @@ pub mod file_index;
 pub mod file_tree;
 pub mod format;
 pub mod git;
+pub(crate) mod mj_doc_cache;
 pub(crate) mod models_config;
 pub mod paths_sort;
 pub mod pi_extension_updates;

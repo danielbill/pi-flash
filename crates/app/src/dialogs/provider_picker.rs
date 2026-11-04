@@ -39,7 +39,8 @@ pub(super) fn render_provider_picker(
 
     // PF 自定义账本的 provider 不进 API KEY 网格（pi-web 排除 custom
     // sources 同款：自定义入口只有「自定义」卡）
-    let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
+    let models_doc =
+        crate::services::mj_doc_cache::read().unwrap_or_else(|_| serde_json::json!({}));
     let custom_names: Vec<String> = pi_link::models_json::providers(&models_doc)
         .into_iter()
         .map(|(n, _)| n)

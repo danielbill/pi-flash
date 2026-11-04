@@ -13,10 +13,12 @@ impl Chat {
     /// 现读 `models.json`（缺失 → 空文档；坏文件 → 空文档 + 错误条由
     /// `mc_mj_error` 承担）。**不做内存副本**：读处读盘、写处
     /// read→mutate→write，不存在“打开面板时那份旧快照”把磁盘上别人的
-    /// 改动覆盖掉的情形。
+    /// 改动覆盖掉的情形。（2026-11-04 起读盘走 mtime 校验缓存
+    /// `services::mj_doc_cache`——每次调用 stat 一次，任何写盘（含外部）
+    /// 下一次读立即可见，副本语义不破；修复每键全窗重建时的读盘风暴。）
     pub(crate) fn mj_doc() -> serde_json::Value {
-        crate::MJ_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({ "providers": {} }))
+        crate::services::mj_doc_cache::read()
+            .unwrap_or_else(|_| serde_json::json!({ "providers": {} }))
     }
 
     /// 写盘（整份 read→mutate→write 的末步；锁内 + 不可读拒写）。
@@ -24,6 +26,7 @@ impl Chat {
         if let Err(e) = pi_link::models_json::save(doc) {
             self.mc_set_error(&e, cx);
         }
+        crate::services::mj_doc_cache::invalidate();
     }
 
     /// 换选中项（section 驱动整页回填）：现读 `models.json` 后交给
@@ -382,7 +385,9 @@ impl Chat {
         if !changed {
             return Ok(());
         }
-        pi_link::models_json::save(&doc)
+        let r = pi_link::models_json::save(&doc);
+        crate::services::mj_doc_cache::invalidate();
+        r
     }
 
     /// 存量 models.json 形状自愈（启动 / 设置页装载）：老版本写出的残缺 cost
@@ -405,6 +410,7 @@ impl Chat {
         } else {
             let _ = pi_link::models_json::save(&doc);
         }
+        crate::services::mj_doc_cache::invalidate();
     }
 
     /// 存量自愈（0.3.2 勾选漏写盘的善后）：enabledModels **显式**勾选、清单仓

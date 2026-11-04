@@ -49,24 +49,6 @@ impl Chat {
         out
     }
 
-    pub(crate) fn mc_provider_counts(
-        &self,
-        provider: &str,
-        enabled_set: &std::collections::HashSet<String>,
-    ) -> (usize, usize) {
-        let catalog = self.catalog_with_ledger();
-        let models: Vec<&pi_link::protocol::ModelInfo> =
-            catalog.iter().filter(|m| m.provider == provider).collect();
-        let enabled = models
-            .iter()
-            .filter(|m| {
-                let r = format!("{}/{}", m.provider, m.id);
-                enabled_set.contains(&r)
-            })
-            .count();
-        (enabled, models.len())
-    }
-
     /// 042 显示名排序键：`Provider显示名/model` 小写——菜单与「无默认回落
     /// 取第一」用同一把尺（设置页合并列表展示为三档分组，回落仍用本键）。
     pub(crate) fn mc_sort_key(m: &pi_link::protocol::ModelInfo) -> String {
@@ -604,11 +586,15 @@ pub(crate) fn mc_models_view(
     // 本帧的启用集合（O(1) 行查询；一次构建，上下列表/详情共用）
     let enabled_set: std::collections::HashSet<String> =
         chat.cfg.mc_state.enabled.iter().cloned().collect();
+    // 合并目录一帧只算一遍（2026-11-04 卡顿修复：此前 sidebar 每 Provider
+    // 各自 catalog_with_ledger() → O(商×目录) 的读盘/克隆，每帧 11 次读盘起）
+    let listing = chat.catalog_with_ledger();
     let sb = {
         let __t = std::time::Instant::now();
         let el = mc_models_sidebar(
             chat,
             &weak.clone(),
+            &listing,
             &enabled_set,
             &d.enabled_filter,
             &d.enabled_filter_value,
@@ -651,6 +637,7 @@ pub(crate) fn mc_models_view(
 fn mc_models_sidebar(
     chat: &Chat,
     weak: &gpui::WeakEntity<Chat>,
+    listing: &[pi_link::protocol::ModelInfo],
     enabled_set: &std::collections::HashSet<String>,
     enabled_filter: &gpui::Entity<crate::TextInput>,
     enabled_filter_value: &str,
@@ -667,10 +654,8 @@ fn mc_models_sidebar(
     // 成员商清单 = 统一接口（Chat::sidebar_providers，picker 同源）；
     // 这里保留 is_custom 闭包只做「内置及插件 / 自定义」分组
     let provs: Vec<String> = chat.sidebar_providers();
-    let models_doc = {
-        crate::MJ_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}))
-    };
+    let models_doc =
+        crate::services::mj_doc_cache::read().unwrap_or_else(|_| serde_json::json!({}));
     let custom_entries: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&models_doc);
     let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);
@@ -691,9 +676,20 @@ fn mc_models_sidebar(
         };
         src == pi_link::registry::ProviderSource::Custom
     };
+    // 每商 (enabled, total)：合并目录上**单趟**统计（2026-11-04 修复：此前
+    // 每 Provider 各自 catalog_with_ledger() 重算整份清单，O(商×目录)）
+    let mut counts_map: std::collections::HashMap<&str, (usize, usize)> =
+        std::collections::HashMap::new();
+    for m in listing {
+        let e = counts_map.entry(m.provider.as_str()).or_insert((0, 0));
+        e.1 += 1;
+        if enabled_set.contains(&format!("{}/{}", m.provider, m.id)) {
+            e.0 += 1;
+        }
+    }
     let counts: Vec<(usize, usize)> = provs
         .iter()
-        .map(|p| chat.mc_provider_counts(p, enabled_set))
+        .map(|p| counts_map.get(p.as_str()).copied().unwrap_or((0, 0)))
         .collect();
 
     // 三档：0 = 默认模型所在商，1 = 有启用模型，2 = 无；档内显示名字典序
@@ -763,7 +759,15 @@ fn mc_models_sidebar(
     let mut prov_rows: Vec<ProvRow> = Vec::new();
     let mut flat: Vec<pi_link::protocol::ModelInfo> = Vec::new();
     let mut rows: Vec<SbRow> = Vec::new();
-    let enabled_models = chat.mc_sorted_enabled();
+    // 启用模型（mc_sorted_enabled 同语义）：同一份 listing 上一次过滤一趟
+    //（2026-11-04 修复：此前这里又整体 catalog_with_ledger() 一遍）
+    let all_enabled = chat.cfg.mc_state.all_enabled;
+    let mut enabled_models: Vec<pi_link::protocol::ModelInfo> = listing
+        .iter()
+        .filter(|m| all_enabled || enabled_set.contains(&format!("{}/{}", m.provider, m.id)))
+        .cloned()
+        .collect();
+    enabled_models.sort_by_key(|m| Chat::mc_sort_key(m));
     // 两组之间插一条分隔线（两组都非空才画）
     let show_divider = !builtin_order.is_empty() && !custom_order.is_empty();
     let ordered: Vec<usize> = builtin_order
