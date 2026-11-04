@@ -170,7 +170,6 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("ask.question", "问题", "問題", "Question"),
     ("ask.confirm", "确 认", "確 認", "Confirm"),
     ("ask.cancel_all", "取消整卷", "取消整卷", "Cancel all"),
-    ("ask.next", "下一题", "下一題", "Next"),
     ("ask.advance_submit", "跳题/提交", "跳題/提交", "Skip/Submit"),
     ("ask.direct_pick", "直选", "直選", "Pick"),
     ("ask.other_placeholder", "自定义答案…", "自訂答案…", "Custom answer…"),

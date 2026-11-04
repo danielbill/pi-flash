@@ -7,12 +7,12 @@
 //! 回传契约与 @juicesharp/rpiv-ask-user-question 的 rpc-fallback 严格对齐：
 //! 单选回 options 原行 / 自定义回纯文本；多选回 "N[,N…][; 文本]"，空 = 全不选。
 //!
-//! 交互结构移植自 my-mastra-bot AskCard.tsx：tab 自由切题、每题独立作答态、
-//! tab ●→✓ 答完标记、确认 [n/N] 门控、Tab/Enter/数字键键盘模型。
-//! Tab 键 = AskCard 上下文的 AskTabNext 绑定（main.rs；Root 层 tab 绑定会
-//! 抢在 on_key_down 前吞键，监听器路线不通）；Enter/数字键无绑定劫持，
-//! 监听器直达。语义分工：Tab 无条件切下一题，Enter 跳下一未答题、全答完
-//! 即提交（AskCard.tsx parity）。
+//! 交互结构移植自 my-mastra-bot AskCard.tsx：tab 自由切题（鼠标点题签）、
+//! 每题独立作答态、tab ●→✓ 答完标记、确认 [n/N] 门控、Enter/数字键键盘模型。
+//! Tab 键已砍（2026-11-05 用户拍板）：与 Enter 表观重叠（Enter 跳下一未
+//! 答题、全答完即提交，按序作答时与 Tab 同效），键盘模型只留 Enter/数字键；
+//! 且 Root 层 `tab→Tab` 绑定会抢在 on_key_down 前吞键（gpui.md keymap 节），
+//! 监听器路线本就不通。
 //! 视觉 = tmp/ask-user-redesign.html 评审稿（MIST 主题逐值对译）。
 
 use gpui::{
@@ -375,16 +375,6 @@ impl Chat {
         cx.notify();
     }
 
-    /// Tab 键：切下一题
-    pub(crate) fn ask_tab_key(&mut self, cx: &mut Context<Self>) {
-        let Some(card) = self.aux.ask.as_ref() else {
-            return;
-        };
-        if card.active + 1 < card.questions.len() {
-            self.ask_switch_tab(card.active + 1, cx);
-        }
-    }
-
     /// Enter：未答完跳到下一未答题；全部答完 = 确认提交（AskCard 同款）
     pub(crate) fn ask_enter(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.aux.ask.as_ref() else {
@@ -492,9 +482,8 @@ pub(crate) fn render_ask_card(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
         let _ = weak_cancel.update(cx, |c, cx| c.ask_cancel(cx));
     };
 
-    // ---- 键盘：Enter 跳题·提交 / 数字直选（Tab 切题走下方 AskTabNext
-    //      action——绑定先于 on_key_down 监听器，gpui-component Root 层
-    //      `tab→Tab` 会先吞键，监听器臂永远收不到，见 main.rs bind_keys） ----
+    // ---- 键盘：Enter 跳题·提交 / 数字直选（Tab 已砍：与 Enter 表观重叠，
+    //      用户拍板删除；Root 层 tab→Tab 绑定吞键的陷阱见 gpui.md keymap 节） ----
     let weak_keys = weak.clone();
     let keys = move |ev: &gpui::KeyDownEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         let key = ev.keystroke.key.as_str();
@@ -565,18 +554,8 @@ pub(crate) fn render_ask_card(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
         .child(pane)
         .child(foot);
 
-    // Tab 切题 = AskCard 上下文绑定（main.rs bind_keys）：Root 层的
-    // `tab→Tab`（focus_next）会抢在一切 on_key_down 监听器之前吞键，
-    // 故锚定浮层自带 key_context 抢占式接管（gpui.md keymap 节正解）。
-    // 卡片不开则浮层不在树上、绑定永不命中，Root 焦点导航零变化；
-    // 焦点在自定义答案输入框内时 "Input" 上下文更深，composer 缩进照旧。
-    let weak_tab_action = weak.clone();
     crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
         .on_key_down(keys)
-        .key_context("AskCard")
-        .on_action(move |_: &AskTabNext, _w, cx| {
-            let _ = weak_tab_action.update(cx, |c, cx| c.ask_tab_key(cx));
-        })
         .flex()
         .items_center()
         .justify_center()
@@ -891,7 +870,6 @@ fn ask_footer(
         .gap(px(8.))
         .child(hint_row(
             &[
-                ("tab", tr("ask.next")),
                 ("enter", tr("ask.advance_submit")),
                 ("1-4", tr("ask.direct_pick")),
                 ("esc", tr("ask.cancel_all")),

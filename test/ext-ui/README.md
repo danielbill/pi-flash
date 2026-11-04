@@ -31,7 +31,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C9 内置斜杠命令 | /name /compact /auto-compact wire 命令帧 + /session /mcp 面板 + 全程零 prompt 帧 | PASS（zi2s.5 拦截实现即台架即验收） | zi2s.5 ✓ |
 | C10 setTitle | snapshot window.title = "PF ext title ✓"（OS 标题映射） | PASS（zi2s.9：render 帧 apply-diff 落 set_window_title） | zi2s.9 ✓ |
 | C11 034 状态带 | `session.status_bar.{enabled,visible,items[].action}`、`mcp` 键在 items 且 action=null（默认全显示）+ `session.status_act key=usage` → wire 有 `/usage` prompt | 待跑（034 P1/P2） | 034 |
-| C12 ask 问卷卡键盘模型 | mock 注入整卷 toolCall + 3 串行阻塞 select → keys 走真实派发：Tab 切题 active 0→1→2（**Root 层 `tab→Tab` 吞键死键回归哨兵**）+ 数字直选 done↑ + Enter 跳未答题/全答完提交 → wire 三笔 value（Alpha / "1" / Yes）+ 卡片清空 | PASS（AskCard 上下文绑定修复，见 main.rs bind_keys 与 docs/agents/gpui.md keymap 节） | ask 卡 Tab 修复 |
+| C12 ask 问卷卡键盘模型 | mock 注入整卷 toolCall + 3 串行阻塞 select → keys 走真实派发：数字直选 done↑ + Enter 跳未答题 active 0→1→2 + 全答完提交 → wire 三笔 value（Alpha / "1" / Yes）+ 卡片清空 | PASS（Tab 已砍——与 Enter 表观重叠，用户拍板删除；Root 层 `tab→Tab` 吞键陷阱记录在 docs/agents/gpui.md keymap 节） | ask 卡键盘模型定版 |
 
 \** C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
 `text argument should not contain newlines` panic）——单行 TextInput 阶段
