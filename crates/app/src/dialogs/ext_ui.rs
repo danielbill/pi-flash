@@ -136,8 +136,6 @@ pub(crate) fn render_ext_dialog(
     let is_select = matches!(req.method, ExtUiMethod::Select { .. });
     // editor 弹窗的提交值在专用多行输入里（zi2s.6）
     let is_editor = matches!(req.method, ExtUiMethod::Editor { .. });
-    let weak_ok = weak.clone();
-    let weak_cancel = weak.clone();
     let weak_close = weak.clone();
     let weak_dismiss = weak.clone();
     // 浮层公共基座：遮挡不穿透 + 点外关闭 + ESC 关闭 —— 两者都等于「取消」
@@ -314,99 +312,109 @@ pub(crate) fn render_ext_dialog(
                 )
                 // ── 底部按钮行（select 的选项就是操作，不出现底部按钮） ──
                 .children((!is_select).then(|| {
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .justify_end()
-                        .gap_2()
-                        .px_4()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(rgb(t.border))
-                        .child(
-                            div()
-                                .id("ext-cancel")
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(t.text_muted))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(rgb(t.text)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    let weak = weak_cancel.clone();
-                                    move |_, _, cx| {
-                                        let _ = weak.update(cx, |c, cx| {
-                                            c.ext_respond(None, None, true, cx)
-                                        });
-                                    }
-                                })
-                                .child(tr("action.cancel")),
-                        )
-                        .children(is_confirm.then(|| {
-                            div()
-                                .id("ext-no")
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(t.text))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(t.bg_hover)))
-                                .on_mouse_down(MouseButton::Left, {
-                                    let weak = weak_ok.clone();
-                                    move |_, _, cx| {
-                                        let _ = weak.update(cx, |c, cx| {
-                                            c.ext_respond(None, Some(false), false, cx)
-                                        });
-                                    }
-                                })
-                                .child(tr("action.no"))
-                        }))
-                        .child({
-                            let label = if is_confirm {
-                                tr("action.yes")
-                            } else {
-                                tr("action.submit")
-                            };
-                            let weak = weak_ok.clone();
-                            div()
-                                .id("ext-ok")
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .bg(rgb(t.accent))
-                                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
-                                .text_size(crate::appearance::ui_size(11.))
-                                .text_color(rgb(t.accent_contrast))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(rgb(t.accent_hover)))
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    let _ = weak.update(cx, |c, cx| {
-                                        if is_confirm {
-                                            c.ext_respond(None, Some(true), false, cx);
-                                        } else {
-                                            // editor = 专用多行输入（zi2s.6），
-                                            // input = 单行 ext_input
-                                            let v = if is_editor {
-                                                c.aux.ext_editor_input.read(cx).value().to_string()
-                                            } else {
-                                                c.aux.ext_input.read(cx).value().to_string()
-                                            };
-                                            c.ext_respond(Some(v), None, false, cx);
-                                        }
-                                    });
-                                })
-                                .child(label)
-                        })
+                    ext_dialog_footer(is_confirm, is_editor, weak.clone(), weak.clone(), t)
                 })),
         )
+        .into_any_element()
+}
+
+/// 底部按钮行：取消 + confirm 的「否/是」或 input/editor 的「提交」。
+/// select 弹窗的选项本身就是操作，不渲染此行。
+fn ext_dialog_footer(
+    is_confirm: bool,
+    is_editor: bool,
+    weak_ok: gpui::WeakEntity<Chat>,
+    weak_cancel: gpui::WeakEntity<Chat>,
+    t: &crate::appearance::theme::Theme,
+) -> gpui::AnyElement {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .justify_end()
+        .gap_2()
+        .px_4()
+        .py_3()
+        .border_t_1()
+        .border_color(rgb(t.border))
+        .child(
+            div()
+                .id("ext-cancel")
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(t.border))
+                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_muted))
+                .cursor_pointer()
+                .hover(|s| s.text_color(rgb(t.text)))
+                .on_mouse_down(MouseButton::Left, {
+                    let weak = weak_cancel.clone();
+                    move |_, _, cx| {
+                        let _ = weak.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
+                    }
+                })
+                .child(tr("action.cancel")),
+        )
+        .children(is_confirm.then(|| {
+            div()
+                .id("ext-no")
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(t.border))
+                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(MouseButton::Left, {
+                    let weak = weak_ok.clone();
+                    move |_, _, cx| {
+                        let _ =
+                            weak.update(cx, |c, cx| c.ext_respond(None, Some(false), false, cx));
+                    }
+                })
+                .child(tr("action.no"))
+        }))
+        .child({
+            let label = if is_confirm {
+                tr("action.yes")
+            } else {
+                tr("action.submit")
+            };
+            let weak = weak_ok.clone();
+            div()
+                .id("ext-ok")
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(t.accent))
+                // §5.1 BTN_SM 字号（原 text_xs 裸字号）
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.accent_contrast))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.accent_hover)))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        if is_confirm {
+                            c.ext_respond(None, Some(true), false, cx);
+                        } else {
+                            // editor = 专用多行输入（zi2s.6），
+                            // input = 单行 ext_input
+                            let v = if is_editor {
+                                c.aux.ext_editor_input.read(cx).value().to_string()
+                            } else {
+                                c.aux.ext_input.read(cx).value().to_string()
+                            };
+                            c.ext_respond(Some(v), None, false, cx);
+                        }
+                    });
+                })
+                .child(label)
+        })
         .into_any_element()
 }
 
