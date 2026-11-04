@@ -176,13 +176,16 @@ case_c4() { # editor 多行弹窗（zi2s.6）：prefill 原样多行 + 开合链
   return $rc
 }
 
-case_c5() { # select 键盘导航（zi2s.7；基线无导航，XFAIL）
+case_c5() { # select 键盘导航（zi2s.7）
   start_app real || return 1
   mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
   local rc=0
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-select >/dev/null
   P wait --path dialogs.ext_dialog_head.method --eq select --timeout 15 >/dev/null || rc=1
-  P keys "down" >/dev/null 2>&1; P keys "down" >/dev/null 2>&1; P keys "enter" >/dev/null 2>&1
+  P keys "down" >/dev/null 2>&1; P keys "down" >/dev/null 2>&1
+  # ↓↓ 后高亮 = 第 3 行（index 2，zi2s.7 导航数据出口）
+  jcheck dialogs 'd.ext_dialog_head.sel===2' || rc=1
+  P keys "enter" >/dev/null 2>&1
   P wait --path dialogs.ext_dialog --eq false --timeout 5 >/dev/null || rc=1
   # ↓↓+Enter = 第三项 gamma（handler 回 notify 带选择值）
   jcheck session '(d.ext_notice||{}).message && d.ext_notice.message.includes("gamma")' || rc=1
@@ -290,7 +293,7 @@ for C in $CASES; do
   "case_$(printf '%s' "$C" | tr 'A-Z' 'a-z')"
   local_rc=$?
   case "$C" in
-    C5) expect expect-fail "$C" "$(desc_of "$C")" "$local_rc" ;;
+    C5) expect expect-pass "$C" "$(desc_of "$C")" "$local_rc" ;;
     *)           expect expect-pass "$C" "$(desc_of "$C")" "$local_rc" ;;
   esac
 done

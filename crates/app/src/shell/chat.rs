@@ -53,6 +53,9 @@ pub(crate) struct AuxUi {
     /// editor 弹窗专用多行输入（zi2s.6）：editor 语义 Enter 提交，prefill 带
     /// 真实换行（单行 ext_input 渲染遇换行直接 panic——GPUI text 契约）
     pub(crate) ext_editor_input: gpui::Entity<TextInput>,
+    /// select 弹窗键盘导航高亮行（zi2s.7）：↑↓ 移动、Enter 选中；ext_show
+    /// 归零（晋升等待项时同款）
+    pub(crate) ext_sel_ix: usize,
     /// ask_user_question 整卷问卷卡（ask_card.rs）；None = 无进行中的问卷
     pub(crate) ask: Option<ask_card::AskCard>,
     /// 问卷卡「自定义答案」输入框（active 题内嵌，切题时同步存量）
@@ -804,6 +807,7 @@ impl Chat {
                 decl_open: [false; 7],
                 ext_input: cx.new(|cx| TextInput::new(cx)),
                 ext_editor_input: cx.new(|cx| TextInput::new(cx).multiline()),
+                ext_sel_ix: 0,
             },
         };
         crate::perf_mark("Chat::new: struct init");

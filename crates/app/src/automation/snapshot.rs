@@ -923,6 +923,12 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                 }
                 _ => String::new(),
             },
+            // select 键盘导航高亮行（zi2s.7 台架断言：↓↓ 后应=2）
+            "sel": if matches!(r.method, pi_link::protocol::ExtUiMethod::Select { .. }) {
+                serde_json::json!(chat.aux.ext_sel_ix)
+            } else {
+                serde_json::json!(null)
+            },
         })),
         "ext_dialog_waiting": chat.aux.ext_dialog_waiting.len(),
         // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；

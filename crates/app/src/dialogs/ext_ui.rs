@@ -58,6 +58,8 @@ pub(crate) fn render_ext_dialog(
     let (bar_title, info, ops): (String, gpui::AnyElement, gpui::AnyElement) = match &req.method {
         ExtUiMethod::Select { title, options } => {
             let weak_opts = weak.clone();
+            // 键盘导航高亮行（zi2s.7）：↑↓ 移动、Enter 选中；首行预选
+            let sel_ix = chat.aux.ext_sel_ix;
             let opts: Vec<gpui::AnyElement> = options
                 .iter()
                 .enumerate()
@@ -76,6 +78,9 @@ pub(crate) fn render_ext_dialog(
                         .text_color(rgb(t.text))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(t.bg_selected)))
+                        .when(sel_ix == ix, |d| {
+                            d.bg(rgb(t.bg_selected)).border_color(rgb(t.accent))
+                        })
                         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                             let _ = weak_o.update(cx, |c, cx| {
                                 c.ext_respond(Some(v.clone()), None, false, cx)
@@ -140,7 +145,56 @@ pub(crate) fn render_ext_dialog(
     let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
         let _ = weak_dismiss.update(cx, |c, cx| c.ext_respond(None, None, true, cx));
     };
+    // select 键盘导航（zi2s.7，pi-web/TUI 同语义）：↑↓ 移动高亮（循环）、
+    // Enter 选中高亮行，Esc 取消由 overlay 管。焦点在浮层上（overlay::layer
+    // track_focus）才派发；非 select 弹窗（input/editor 输入框在打字）一律
+    // 不拦不吞，按键照常进输入组件。
+    let weak_nav = weak.clone();
+    let nav = move |ev: &gpui::KeyDownEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let key = ev.keystroke.key.as_str();
+        let mut handled = false;
+        match key {
+            "up" | "down" => {
+                let delta: i64 = if key == "down" { 1 } else { -1 };
+                let _ = weak_nav.update(cx, |c, cx| {
+                    if let Some(pi_link::protocol::ExtensionUiRequest {
+                        method: ExtUiMethod::Select { options, .. },
+                        ..
+                    }) = &c.aux.ext_dialog
+                    {
+                        let n = options.len();
+                        if n > 0 {
+                            let cur = c.aux.ext_sel_ix as i64;
+                            c.aux.ext_sel_ix = (cur + delta).rem_euclid(n as i64) as usize;
+                            cx.notify();
+                            handled = true;
+                        }
+                    }
+                });
+            }
+            "enter" => {
+                let _ = weak_nav.update(cx, |c, cx| {
+                    let head = c.aux.ext_dialog.clone();
+                    if let Some(pi_link::protocol::ExtensionUiRequest {
+                        method: ExtUiMethod::Select { options, .. },
+                        ..
+                    }) = &head
+                    {
+                        if let Some(v) = options.get(c.aux.ext_sel_ix).cloned() {
+                            handled = true;
+                            c.ext_respond(Some(v), None, false, cx);
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+        if handled {
+            cx.stop_propagation();
+        }
+    };
     crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
+        .on_key_down(nav)
         .flex()
         .items_center()
         .justify_center()
@@ -565,6 +619,8 @@ impl Chat {
             });
         }
         self.aux.ext_dialog = Some(req);
+        // 键盘高亮从头开始（zi2s.7；晋升等待项时同款）
+        self.aux.ext_sel_ix = 0;
         // 新请求从顶部开始看（旧滚动位置不属于这个面板）
         self.aux
             .ext_dialog_info_scroll
