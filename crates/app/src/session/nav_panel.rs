@@ -472,7 +472,7 @@ pub(crate) fn nav_card(
     turn_el.into_any_element()
 }
 
-/// 相位行（v64 改版）：3×3 点阵图标 + 「工作中」+ 秒级计时（ZCode 同款），
+/// 相位行（v64 改版）：3×3 点阵图标 + 「等待中」+ 秒级计时（ZCode 同款），
 /// 取代原「正在运行 {tool}...」纯文本脉冲。计时文本放进 1s repeat 动画
 /// 闭包逐帧刷新——免额外定时器；起点取 runtime `stream_started`
 /// （AgentStart 记录、settle/abort 清除），跨 streaming 隐藏期持续累计。
@@ -487,7 +487,7 @@ pub(crate) fn phase_row(
         .text_size(crate::appearance::ui_size(13.))
         .text_color(rgb(t.text_muted))
         .child(crate::ui::working_dots(rgb(t.text_muted)))
-        .child(tr("status.working"))
+        .child(tr("status.waiting"))
         .with_animation(
             "phase-row-timer",
             Animation::new(std::time::Duration::from_millis(1000)).repeat(),
@@ -496,7 +496,10 @@ pub(crate) fn phase_row(
                 let text = if secs >= 60 {
                     crate::i18n::tf(
                         "time.min_sec",
-                        &[("m", (secs / 60).to_string()), ("s", (secs % 60).to_string())],
+                        &[
+                            ("m", (secs / 60).to_string()),
+                            ("s", (secs % 60).to_string()),
+                        ],
                     )
                 } else {
                     crate::i18n::tf("time.seconds", &[("n", secs.to_string())])

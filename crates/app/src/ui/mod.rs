@@ -409,8 +409,8 @@ impl gpui::Element for MeasureHeight {
     }
 }
 
-/// 3×3 点阵工作指示（ZCode 同款）：9 个小方点按相位依次明暗流动，1.5s
-/// 循环。纯 div 构建，无 SVG 资产。
+/// 3×3 点阵工作指示：一个亮点顺时针沿方形边缘转圈（头后两步渐弱尾迹），
+/// 其余点常暗，1.5s 一圈。纯 div 构建，无 SVG 资产。
 pub fn working_dots(color: gpui::Rgba) -> gpui::AnyElement {
     gpui::div()
         .flex()
@@ -422,11 +422,19 @@ pub fn working_dots(color: gpui::Rgba) -> gpui::AnyElement {
             Animation::new(std::time::Duration::from_millis(1500)).repeat(),
             move |el, delta| {
                 let mut el = el;
-                for i in 0..9u32 {
-                    let wave = (delta * std::f32::consts::TAU
-                        - (i as f32) * (std::f32::consts::TAU / 9.0))
-                        .sin();
-                    let alpha = 0.3 + 0.7 * (0.5 + 0.5 * wave);
+                // 3×3 行主序里除中心(4)外的 8 点，顺时针边缘序
+                const EDGE: [usize; 8] = [0, 1, 2, 5, 8, 7, 6, 3];
+                let head = (delta * 8.0) as usize % 8;
+                for i in 0..9usize {
+                    let alpha = match EDGE.iter().position(|&e| e == i) {
+                        Some(pos) => match (head + 8 - pos) % 8 {
+                            0 => 1.0,
+                            1 => 0.45,
+                            2 => 0.2,
+                            _ => 0.15,
+                        },
+                        None => 0.15, // 中心点常暗
+                    };
                     el = el.child(
                         gpui::div()
                             .size(gpui::px(3.))
