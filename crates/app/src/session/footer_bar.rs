@@ -101,9 +101,9 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .px(px(6.))
             .py(px(2.))
             .rounded(px(5.)) // R_INLINE：被塞进行里的散件
-            // 034：字体族与左侧面板同族（psp 行同源 panel_font），字号 = 面板 −1
+            // 034：字体族与左侧面板同族（psp 行同源 panel_font），字号 = 面板 −2
             .font_family(crate::appearance::panel_font().family)
-            .text_size(crate::appearance::ui_size(11.))
+            .text_size(crate::appearance::ui_size(10.))
             .text_color(rgb(color))
             .child(SharedString::from(text));
         if blocked {
