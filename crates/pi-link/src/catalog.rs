@@ -265,6 +265,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             input: None,
+            cost: None,
         };
         let ms = dedupe(vec![
             mk("a", "1", "first"),

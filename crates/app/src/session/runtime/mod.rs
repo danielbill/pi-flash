@@ -299,6 +299,9 @@ pub(crate) struct SessionRuntime {
     pub last_activity: std::time::Instant,
     /// queued ext requests while not active (G+ surfaces a badge)
     pub ext_queue: Vec<pi_link::protocol::ExtensionUiRequest>,
+    /// 已提醒过「在等你回答」的阻塞请求 id（pi-web
+    /// claimExtensionAttentionNotification parity：每请求只提醒一次）
+    pub notified_ext_ids: std::collections::HashSet<String>,
 
     /// 034 状态带数据面：本会话 pi 侧 `ctx.ui.setStatus(key, text)` 的当前快照
     /// （到达序；渲染侧按 key 字母序排）。**per-runtime 而不是 Chat 级**：pi 在
@@ -465,6 +468,7 @@ impl SessionRuntime {
             pending_bash: None,
             last_activity: std::time::Instant::now(),
             ext_queue: Vec::new(),
+            notified_ext_ids: std::collections::HashSet::new(),
             ext_status: Vec::new(),
 
             pending_locate: None,

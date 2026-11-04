@@ -115,15 +115,34 @@ impl Chat {
                     } else {
                         // parked session asks for permission: queue it, the
                         // badge surfaces it; popped when user switches there
-                        // #问题卡不弹：静默队列必须留痕——否则 pi 永久挂在
-                        // select 上而界面零线索（2026-11-04 真机事故链）
+                        // #问题卡不弹：静默队列必须留痕 + **必须叫人**——pi-web
+                        // 的另一半（browser-notification parity）：队列藏在
+                        // 后台运行时里，用户不切回永远看不见，pi 就挂在
+                        // select 上直到天荒地老（2026-11-04 真机事故链）
+                        let blocking = matches!(
+                            req.method,
+                            pi_link::protocol::ExtUiMethod::Select { .. }
+                                | pi_link::protocol::ExtUiMethod::Confirm { .. }
+                                | pi_link::protocol::ExtUiMethod::Input { .. }
+                                | pi_link::protocol::ExtUiMethod::Editor { .. }
+                        );
                         pi_link::client::ext_trace(&format!(
-                            "PARKED: id={} key={} (active_key={})",
+                            "PARKED: id={} key={} blocking={blocking} (active_key={})",
                             req.id,
                             rt.read(cx).key,
                             chat.pool.active_key
                         ));
                         rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
+                        if blocking {
+                            // 每请求只叫一次（claimExtensionAttentionNotification
+                            // parity）；切回兑现后不再打扰
+                            let fresh =
+                                rt.update(cx, |r, _| r.notified_ext_ids.insert(req.id.clone()));
+                            if fresh {
+                                let label = Self::session_label_of(chat, &rt.read(cx).key);
+                                chat.set_status(format!("后台会话「{label}」在等你回答问题"), cx);
+                            }
+                        }
                         cx.notify();
                     }
                 }
@@ -493,6 +512,33 @@ impl Chat {
     /// 别的项目时先重挂工作区再切注意力——switch_to 本身是纯注意力切换，
     /// 跨项目场景绕过 open_session 的入口都必须走这里（用户实测
     /// 2026-10-13：池命中跨项目只改 cwd 不重建，树/变更面板停在上一项目）。
+    /// 会话显示名：优先会话列表里的现成名字/预览（psp 索引），退化为文件名
+    /// 时间片（2026-11-04T07-47-54-411Z_… → 07-47-54）；draft 键原样。
+    fn session_label_of(chat: &Chat, key: &str) -> String {
+        for g in &chat.psp.projects {
+            for si in &g.sessions {
+                if crate::services::workspace::same_path(&si.path, std::path::Path::new(key)) {
+                    if let Some(n) = si.name.clone().filter(|n| !n.trim().is_empty()) {
+                        return n;
+                    }
+                    if !si.preview.is_empty() {
+                        return si.preview.chars().take(18).collect();
+                    }
+                }
+            }
+        }
+        let stem = std::path::Path::new(key)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(key);
+        if stem.len() >= 19 && stem.as_bytes()[4] == b'-' {
+            // ISO 时间戳文件名：截时刻 07-47-54
+            stem[11..19].to_string()
+        } else {
+            stem.to_string()
+        }
+    }
+
     pub(crate) fn switch_pool_rt(
         &mut self,
         rt: gpui::Entity<session::runtime::SessionRuntime>,

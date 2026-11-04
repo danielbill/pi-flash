@@ -50,6 +50,13 @@ pub(crate) fn session_row_view(
             .is_some_and(|f| crate::services::workspace::same_path(f, &info.path))
             && (r.agent_running || r.state.as_ref().is_some_and(|s| s.is_streaming))
     });
+    // 后台会话押着未兑现的阻塞扩展请求（#问题卡不弹徽标；与 pool PARKED
+    // 队列一一对应）。键用 path 判等：绑卡前 key 即会话路径
+    let awaiting = chat.pool.runtimes.values().any(|rt| {
+        let r = rt.read(cx);
+        !r.ext_queue.is_empty()
+            && crate::services::workspace::same_path(std::path::Path::new(&r.key), &info.path)
+    });
     let title: SharedString = info
         .name
         .clone()
@@ -224,6 +231,7 @@ pub(crate) fn session_row_view(
                     chat,
                     &info.path,
                     running,
+                    awaiting,
                     hovered,
                     pinned,
                     weak.clone(),
@@ -342,6 +350,7 @@ fn session_status_slot(
     chat: &Chat,
     path: &std::path::Path,
     running: bool,
+    awaiting: bool,
     hovered: bool,
     pinned: bool,
     weak: gpui::WeakEntity<Chat>,
@@ -360,7 +369,16 @@ fn session_status_slot(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(if running {
+                    .child(if awaiting {
+                        // 橙 = 后台会话阻塞请求等你回答（#问题卡不弹）：
+                        // agent 其实挂着在等 select，转圈是骗人的——此态
+                        // 优先级最高，盖过转圈/错误/未读
+                        div()
+                            .size(px(7.))
+                            .rounded_full()
+                            .bg(rgb(crate::appearance::theme::ATTENTION))
+                            .into_any_element()
+                    } else if running {
                         spinner(15., t.accent)
                     } else if chat.psp.turn_errors.contains(path) {
                         // 红 = 外部错误/崩溃（t.danger，§6 danger 系唯一表达）

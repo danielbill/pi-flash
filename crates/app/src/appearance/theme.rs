@@ -54,6 +54,8 @@ pub const UNREAD: u32 = 0x2fa356;
 /// 不作通知点——青蓝语义是「跑完了回来看」，不承载对错判断。
 pub const NOTICE: u32 = 0x3aa6d0;
 pub const WARN: u32 = 0xfacc15;
+/// 后台会话阻塞请求等待应答（#问题卡不弹：agent 其实挂着，转圈是骗人的）
+pub const ATTENTION: u32 = 0xfb923c;
 
 /// Linear RGB channel mix: `wa` = weight of a (0..1). pi-web 的
 /// `color-mix(in srgb, a X%, b)` 等价物（代码块底、strong/marker 混色等）。
