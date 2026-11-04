@@ -357,9 +357,9 @@ impl Render for Chat {
                             if is_thinking { "t" } else { "w" },
                             key
                         )))
-                        .min_h(px(40.))
-                        .px_3()
-                        .py_2()
+                        // 行距与扩展/MCP/模型 picker 对齐（ROW_H=30 + px(10)）
+                        .h(px(crate::session::picker_shell::ROW_H))
+                        .px(px(10.))
                         .flex()
                         .items_center()
                         .gap_2()
@@ -421,30 +421,17 @@ impl Render for Chat {
                 })
             }
             .child({
-                // 统一定位（用户定稿）：弹窗与按钮水平居中、底缘距
-                // 按钮顶缘 5px（不遮按钮）；左右钳在视口内。
-                // 例外：tools 菜单**右对齐**——它锚在输入栏最右侧的
-                // 胶囊上，居中会被视口右缘钳成「贴边溢」怪位，改为
-                // 菜单右缘贴按钮右缘（标准下拉式）。
+                // 统一定位（用户定稿）：与扩展/MCP/模型 picker 同款
+                // `pill_anchor_edges`——按钮水平居中、底缘距按钮顶缘
+                // 5px（不遮按钮）、左右钳在视口内。tools 不再有右对齐
+                // 特例，InputPanel 弹出菜单行为完全一致。
                 let vp = window.viewport_size();
-                let gap = px(5.);
                 let menu_w = px(320.);
-                let right_align = self.dlg.pill_menu == Some(PillMenu::Tools);
-                let (anchor_bottom, anchor_left) = match self.dlg.pill_anchor {
-                    Some(a) => {
-                        let bottom = (vp.height - a.top + gap).max(px(8.));
-                        let mut left = if right_align {
-                            a.right_x - menu_w
-                        } else {
-                            a.center_x - menu_w / 2.
-                        };
-                        if left + menu_w > vp.width - px(8.) {
-                            left = vp.width - menu_w - px(8.);
-                        }
-                        (bottom, left.max(px(8.)))
-                    }
-                    None => (px(64.), vp.width - menu_w - px(24.)),
-                };
+                let (anchor_bottom, anchor_left) = crate::session::picker_shell::pill_anchor_edges(
+                    self.dlg.pill_anchor,
+                    vp,
+                    menu_w,
+                );
                 div()
                     .absolute()
                     .bottom(anchor_bottom)

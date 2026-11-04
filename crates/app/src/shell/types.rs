@@ -209,12 +209,11 @@ pub(crate) enum PillMenu {
 }
 
 /// inputpanel 弹窗的统一定位锚点（用户定稿）：弹窗与触发按钮**水平居中**、
-/// 底缘距按钮**顶缘 5px**（不遮按钮）。坐标来自按钮 paint 期的 canvas 捕获。
-/// `right_x` 供右侧按钮（如 tools）做**右对齐**锚定：菜单右缘贴按钮右缘。
+/// 底缘距按钮**顶缘 5px**（不遮按钮）。坐标来自按钮 paint 期的 canvas 捕获；
+/// 摆放算法唯一落点 = `session/picker_shell::pill_anchor_edges`。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PillAnchor {
     pub center_x: gpui::Pixels,
-    pub right_x: gpui::Pixels,
     pub top: gpui::Pixels,
 }
 
@@ -240,12 +239,10 @@ impl PillBtns {
         slot.borrow()
             .map(|b| PillAnchor {
                 center_x: b.center().x,
-                right_x: b.right(),
                 top: b.origin.y,
             })
             .unwrap_or(PillAnchor {
                 center_x: at.x,
-                right_x: at.x,
                 top: at.y,
             })
     }
