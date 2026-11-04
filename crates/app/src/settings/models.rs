@@ -604,22 +604,32 @@ pub(crate) fn mc_models_view(
     // 本帧的启用集合（O(1) 行查询；一次构建，上下列表/详情共用）
     let enabled_set: std::collections::HashSet<String> =
         chat.cfg.mc_state.enabled.iter().cloned().collect();
-    let sb = mc_models_sidebar(
-        chat,
-        &weak.clone(),
-        &enabled_set,
-        &d.enabled_filter,
-        &d.enabled_filter_value,
-        t,
-    );
-    let detail = mc_models_detail(
-        chat,
-        &weak.clone(),
-        &selected,
-        d,
-        &detail_error,
-        &enabled_set,
-    );
+    let sb = {
+        let __t = std::time::Instant::now();
+        let el = mc_models_sidebar(
+            chat,
+            &weak.clone(),
+            &enabled_set,
+            &d.enabled_filter,
+            &d.enabled_filter_value,
+            t,
+        );
+        crate::perf_span("frame.models.sidebar", __t);
+        el
+    };
+    let detail = {
+        let __t = std::time::Instant::now();
+        let el = mc_models_detail(
+            chat,
+            &weak.clone(),
+            &selected,
+            d,
+            &detail_error,
+            &enabled_set,
+        );
+        crate::perf_span("frame.models.detail", __t);
+        el
+    };
     div()
         .flex()
         .w_full()
@@ -657,7 +667,10 @@ fn mc_models_sidebar(
     // 成员商清单 = 统一接口（Chat::sidebar_providers，picker 同源）；
     // 这里保留 is_custom 闭包只做「内置及插件 / 自定义」分组
     let provs: Vec<String> = chat.sidebar_providers();
-    let models_doc = pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}));
+    let models_doc = {
+        crate::MJ_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({}))
+    };
     let custom_entries: Vec<(String, &serde_json::Value)> =
         pi_link::models_json::providers(&models_doc);
     let in_models_json = |p: &str| custom_entries.iter().any(|(n, _)| n == p);

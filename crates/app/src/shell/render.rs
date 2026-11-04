@@ -13,6 +13,7 @@ use crate::*;
 
 impl Render for Chat {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let __frame_t = std::time::Instant::now();
         // 焦点快照（给「agent 结束时窗口没焦点就给点」用）：平台层在每次
         // 激活变化都会 window.refresh() 强制重绘，所以这里的值总是新鲜的
         self.psp.window_active = window.is_window_active();
@@ -743,6 +744,7 @@ impl Render for Chat {
             .child(body);
 
         if let Some(panel) = self.dlg.settings.clone() {
+            let __t = std::time::Instant::now();
             let data = settings::SettingsFormData::snapshot(panel.read(cx), cx);
             root = root.child(settings::render_settings(
                 self,
@@ -750,6 +752,7 @@ impl Render for Chat {
                 &data,
                 window,
             ));
+            crate::perf_span("frame.settings", __t);
         }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
         // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉
@@ -773,8 +776,13 @@ impl Render for Chat {
         }
         // 042-1 模型编辑器小弹窗（自定义商模型行 /【+模型】打开；叠在设置弹窗
         // 之上，section = mj:m:{prov}:{ix} 即打开态，关闭退回 Provider 详情）
-        if let Some(el) = settings::custom_models::mj_model_modal_overlay(self, cx) {
-            root = root.child(el);
+        {
+            let __t = std::time::Instant::now();
+            let mj_modal = settings::custom_models::mj_model_modal_overlay(self, cx);
+            crate::perf_span("frame.mj_modal", __t);
+            if let Some(el) = mj_modal {
+                root = root.child(el);
+            }
         }
         // 040-1 topbar 三横菜单浮层（入口：Pi扩展市场）
         if self.dlg.market_menu.is_some() {
@@ -901,6 +909,14 @@ impl Render for Chat {
         //  与 composer 同基准居中；这里只剩 legacy 扩展弹窗）
         if let Some(req) = &self.aux.ext_dialog {
             root = root.child(render_ext_dialog(self, req.clone(), &weak_for_dialog));
+        }
+        crate::perf_span("frame.render", __frame_t);
+        static MJ_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *MJ_ON.get_or_init(|| std::env::var("PI_FLASH_PERF").is_ok()) {
+            eprintln!(
+                "[perf] frame.mj_reads_total: {}",
+                crate::MJ_READS.load(std::sync::atomic::Ordering::Relaxed)
+            );
         }
         root
     }

@@ -136,6 +136,19 @@ pub(crate) fn perf_mark(label: &str) {
     }
 }
 
+/// [perf] 区间耗时直打（PI_FLASH_PERF=1 才输出）：每帧渲染路径分段计时，
+/// 键入类事件每键只多几行，量可控。
+pub(crate) fn perf_span(label: &str, start: std::time::Instant) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var("PI_FLASH_PERF").is_ok()) {
+        eprintln!("[perf] {label}: {:?}", start.elapsed());
+    }
+}
+
+/// [perf] 仪器：models.json 同步读盘累计次数（渲染路径里 `mj_doc()` /
+/// 侧栏直读都计数）。每次打印取绝对值，帧间差 = 该帧读盘次数。
+pub(crate) static MJ_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 // ---------------------------------------------------------------------------
 // state
 // ---------------------------------------------------------------------------

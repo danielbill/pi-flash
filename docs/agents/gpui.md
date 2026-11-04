@@ -174,6 +174,7 @@
   按钮路径才允许 `read`（按钮事件不在输入框的 update 里）。
 - `window.update`/`chat.update` 不 flatten（catch_unwind 四层嵌套）；vendored `WeakEntity::update` 签名与 Zed 上游不同，别照抄；渲染期读取的实体会注册 window invalidator（InputState notify 即重渲染）。
 - **vendored gpui 0.2.2 的 `Entity` 子元素每帧无条件重渲染**（view.rs `impl Element for Entity` 直接 `view.render()`，没有脏检查复用）；唯一复用路径是 `AnyView::cached(style)`（未 notify 即回收上一帧 layout+paint，`window.refresh()` 会击穿）。后果：composer 每键 `Chat` notify = **全窗口重建**（消息区 markdown 元素 + dock + chrome 全连坐）。消息列表是 `list()` 闭包不是实体，吃不到 cached——要隔离只有把轮次包实体 + cached（大手术）。在此前提下，Chat::render 每帧路径严禁 O(会话规模) 的分配：命令表/模型目录/全文拷贝都要门控或借用化（composer 打字卡顿 2026-10-12 排查的落点：slash_commands 深克隆、new_session_default 全目录扫描、set_value 镜像克隆）。
+- **「每键全窗重建」同样吃设置页，且磁盘 I/O 比分配更狠（2026-11-04 模型详情页卡顿排查）**：弹窗里任何 TextInput 敲键（无 on_change 也一样——InputState notify 即窗口失效，见上行）→ 全窗重建 → 设置 Models 页每帧跑一遍 `mc_models_sidebar`，里面 `mj_doc()`/`models_json::read()` 是**同步读盘**且级联爆炸：`sidebar_providers()` 读 1 次（models.rs:1597）+ 侧栏直读 1 次（models.rs:660）+ 每个 Provider 一遍 `mc_provider_counts → catalog_with_ledger → model_listing`（内部 `ledger_merge`/`sidebar_providers`/`provider_models_for_list` 各自再读）+ `mc_sorted_enabled` 整套再来一遍——实测 1 商 1 模型的隔离实例 **每帧 11 次读盘、sidebar 3-6ms、整帧 8-12ms**（debug；release 省的是 CPU，读盘次数不变），且光标闪烁 idle（2 renders/s）也在烧同样的帧。仪器：`PI_FLASH_PERF=1` 下 stderr 有 `frame.render/frame.settings/frame.models.sidebar/frame.mj_modal/frame.mj_reads_total` 五个探针（render.rs、models.rs 打点）。修法方向：doc 一帧只读一次（帧内 memo，写盘路径显式失效）+ 列表/计数一帧算一遍传下去，禁每 Provider 各自 `catalog_with_ledger()`。
 
 ## keymap 与快捷键
 

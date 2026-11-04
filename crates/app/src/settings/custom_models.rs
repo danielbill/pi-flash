@@ -15,6 +15,7 @@ impl Chat {
     /// read→mutate→write，不存在“打开面板时那份旧快照”把磁盘上别人的
     /// 改动覆盖掉的情形。
     pub(crate) fn mj_doc() -> serde_json::Value {
+        crate::MJ_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         pi_link::models_json::read().unwrap_or_else(|_| serde_json::json!({ "providers": {} }))
     }
 
