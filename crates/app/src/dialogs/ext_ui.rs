@@ -30,6 +30,20 @@ pub(crate) fn render_ext_widget(
         .into_any_element()
 }
 
+/// 不展示的扩展状态键：这些是扩展给 **pi TUI footer** 画的自带状态行，
+/// 不是会话内容。
+///
+/// - `mcp`：pi-mcp-adapter 的 footer 行（`utils.ts::formatMcpStatus`，实测
+///   `🔌 MCP: 0 servers enabled (1 disabled)`）。pi-mcp-adapter 在 Pi 自己的
+///   TUI 里用「已连接/已禁用服务器数」占 footer；PF 的 MCP 面板（设置 › MCP）
+///   已经表达同一信息，且这行对「0 enabled」纯属噪音。
+///
+/// 想在源头也关掉（连带 pi TUI）：`~/.pi/agent/mcp-adapter.json` 加
+/// `{"settings": {"mcpFooterStatus": "off"}}`（compact/full/off 三档）。
+fn noisy_status_key(key: &str) -> bool {
+    matches!(key, "mcp")
+}
+
 /// 标题栏短标题：首个非空行（长文本进信息面板）
 fn bar_title_of(s: &str) -> String {
     s.lines()
@@ -470,6 +484,13 @@ impl Chat {
                 // ANSI 剥离（zi2s.8）：rpc-mode 扩展拿真彩色主题，状态文本常
                 // 带 SGR 序列，原样渲染是碎渣（pi-web PlainTextTheme parity）
                 let status_text = status_text.map(|t| pi_link::protocol::strip_ansi(&t));
+                // 噪声键整键丢弃（等价 setStatus(key, undefined)）：不进 ext_status，
+                // 也就不进渲染与 pif-ui 快照。
+                let status_text = if noisy_status_key(&status_key) {
+                    None
+                } else {
+                    status_text
+                };
                 match status_text {
                     Some(text) if !text.is_empty() => {
                         if let Some(item) = self
