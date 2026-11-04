@@ -108,7 +108,9 @@ pub mod dialog {
 pub mod row {
     pub const TREE: f32 = 24.;
     pub const STD: f32 = 30.;
-    pub const MAIN: f32 = 32.;
+    /// psp 主列表行高（2026-11-05 用户定夺 34）：命中区 34，选中/悬停色条
+    /// 上下各内缩 1px = 32（相邻色条间留 2px 空隙，见 psp_row_views）。
+    pub const MAIN: f32 = 34.;
     pub const PICKER: f32 = 40.;
 }
 
@@ -284,7 +286,7 @@ mod tests {
         // §5.8 行高 / §5.9 滚动条
         assert_eq!(
             [row::TREE, row::STD, row::MAIN, row::PICKER],
-            [24., 30., 32., 40.]
+            [24., 30., 34., 40.]
         );
         assert_eq!(
             [scrollbar::W, scrollbar::THUMB, scrollbar::THUMB_ACTIVE],

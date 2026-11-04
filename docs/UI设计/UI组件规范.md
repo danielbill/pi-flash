@@ -238,11 +238,11 @@ composer 胶囊（rounded16、pt10 pb12、AutoGrow 3–10 行）为既有特例�
 |---|---|---|---|
 | 紧凑（文件树） | 24 | 无 | bg_hover |
 | 标准（设置侧栏、picker、字体列表） | 30 | bg_selected + Semibold | bg_hover |
-| 主列表（psp 会话行） | 32 | bg_selected + Semibold | bg_selected 同色（更浅不变） |
+| 主列表（psp 会话行） | 34（色条 32，上下各内缩 1px，相邻条间留 2px） | bg_selected + Semibold | bg_selected 同色（更浅不变） |
 | 弹窗选择行（项目选择） | 40 | 行尾 check | bg_hover |
 
 - **选中态统一 bg_selected**。
-- 项目行行高 32（真行高，不用 mb 补间距）。
+- 项目行行高 34（真行高，不用 mb 补间距；2026-11-05 用户定夺，主列表行高与色条分离）。
 - 行内结构：pl10 pr10 gap8；图标 ICON_SM(14)；时间/数字列定宽右对齐。
 
 ### 5.9 滚动条
