@@ -138,6 +138,9 @@ pi-flash v${VERSION} — pi coding agent 的桌面壳（Windows x64）
    注意：包内 pif-secret.exe 是密钥取回通道，必须与 pi-flash.exe 同目录，勿删勿移。
 2. 全局 pi 命令：pi-flash 首次运行/更新时把内置 pi 内核注册为系统默认
    （%LOCALAPPDATA%\pi-flash\bin\pi.exe 前置转发，新开终端生效）
+3. 快捷方式请指向固定入口（安装版 payload\pi-flash.exe；解压版为解压目录内 pi-flash.exe），
+   勿指向带版本号的目录，旧版本目录会被自动清理
+
 数据位置：pi 数据 ~/.pi/agent/（sessions、settings.json、auth.json、models 缓存）；
          pi-flash 自己的配置 ~/.pi-flash/（workspace / app-settings / session-index / recents / catalog-cache）
 EOF
