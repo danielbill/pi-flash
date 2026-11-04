@@ -1811,13 +1811,13 @@ fn mj_enabled_section(
     detail.child(section.child(list))
 }
 
-/// 自定义模型详情/编辑小弹窗（500×500 居中，2026-10-27 用户定稿规格）：
+/// 自定义模型详情/编辑小弹窗（500×600 居中，2026-10-27 定稿 500×500；
+/// 042-2 加价格区后 +100）：
 /// 标题栏 = chrome 头条 + 下划线（big_card 标准），标题「模型详情」+ ✕；
 /// 页脚右对齐 [测试][保存][移除] 三钮同宽 84（间隔 10）；
 /// 内容区 = 模型ID（左）+【自动填参】（右）→ 上下文窗口 / 最大输出 →
-/// 能力勾选（文本恒选不可改 / 图片）→ **唯一一条**提示栏（表单错误 /
-/// 测试结果 / 填参结果三选一）。名称、价格、reasoning、
-/// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
+/// 价格四框（042-2）→ 能力勾选（文本恒选不可改 / 图片）→ **唯一一条**提示栏
+///（表单错误 / 测试结果 / 填参结果三选一）。名称、reasoning、
 /// 兼容等交【自动填参】从 models.dev 落（内部实现不暴露）。
 /// `section = mj:m:{prov}:{ix}` 即打开态：本函数由 render.rs 顶层挂载，叠在
 /// 设置弹窗之上，右栏底图保持 Provider 详情；关闭（✕/点外/ESC）= 退回
@@ -2152,8 +2152,9 @@ pub(crate) fn mj_model_modal_overlay(
                     if *ok { note(text) } else { error_note(text) }
                 },
             ));
-    // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×500
+    // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×600
     // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；控制栏固定，表单区滚动
+    // 042-2 加价格四框后高 +100（用户验收定稿），read_only 同步放宽
     let overlay = crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
         .flex()
         .items_center()
@@ -2162,8 +2163,8 @@ pub(crate) fn mj_model_modal_overlay(
             div()
                 .flex_shrink_0()
                 .w(px(500.))
-                .when(!read_only, |d| d.h(px(500.)))
-                .when(read_only, |d| d.max_h(px(560.)))
+                .when(!read_only, |d| d.h(px(600.)))
+                .when(read_only, |d| d.max_h(px(660.)))
                 .bg(rgb(t.bg))
                 .border_1()
                 .border_color(rgb(t.border))
