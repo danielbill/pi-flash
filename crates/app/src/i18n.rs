@@ -620,6 +620,8 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("slash.compact_running", "agent 运行中，等本轮结束再压缩", "agent 執行中，等本輪結束再壓縮", "Agent is running — compact after this turn"),
     ("slash.compact_ongoing", "压缩已在进行中", "壓縮已在進行中", "Compaction already in progress"),
     ("slash.compact_started", "开始压缩上下文……", "開始壓縮上下文……", "Compacting context…"),
+    ("slash.compact_done", "压缩完成", "壓縮完成", "Compaction complete "),
+    ("slash.compact_failed", "压缩失败", "壓縮失敗", "Compaction failed"),
     ("status.auto_retry", "出错，{secs}s 后自动重试（第 {attempt}/{max} 次）", "出錯，{secs}s 後自動重試（第 {attempt}/{max} 次）", "Error — retrying in {secs}s (attempt {attempt}/{max})"),
     ("status.pi_exited", "pi 进程已退出", "pi 程式已結束", "pi process exited"),
     ("status.pi_exited_code", "pi 进程已退出（code {code}）", "pi 程式已結束（code {code}）", "pi process exited (code {code})"),

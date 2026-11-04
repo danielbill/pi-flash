@@ -342,8 +342,8 @@ impl SessionRuntime {
                     }
                     self.status = status_line(true, "resumed");
                 } else if command == "compact" {
-                    // 手动压缩（圆环弹窗按钮）：response 在摘要 LLM 完成后
-                    // 才回（带 summary/usage）——清防连点标志并重拉
+                    // 手动压缩（圆环弹窗按钮/斜杠命令）：response 在摘要 LLM
+                    // 完成后才回（带 summary/usage）——清防连点标志并重拉
                     // stats/messages（compaction 卡片 + 上下文环跟着变）
                     self.compacting = false;
                     if success {
@@ -354,8 +354,31 @@ impl SessionRuntime {
                         // 090：压缩期间扣住的本地队列（flush 复核 compacting
                         // 会跳过），压缩收尾这里补发队首
                         self.flush_local_queue(cx);
+                        // 压缩前后 token 对比（response data 有 tokensBefore/
+                        // estimatedTokensAfter，pi agent-session.js compactResult）
+                        let detail = data.as_ref().map(|d| {
+                            let before = d["tokensBefore"].as_u64();
+                            let after = d["estimatedTokensAfter"].as_u64();
+                            match (before, after) {
+                                (Some(b), Some(a)) if b > 0 => {
+                                    format!("（{b} → {a} tokens）")
+                                }
+                                _ => String::new(),
+                            }
+                        });
+                        self.status =
+                            format!("{}{}", tr("slash.compact_done"), detail.unwrap_or_default());
+                        cx.emit(SessionEvent::Toast(self.status.clone()));
                     } else {
-                        self.status = format!("compact failed: {}", error.unwrap_or_default());
+                        // pi 拒绝场景要有出口：会话太小（Nothing to compact）/
+                        // 已压缩过（Already compacted）/摘要 LLM 出错——此前
+                        // 写进无渲染死字段，用户视角就是「压缩毫无反应」
+                        self.status = format!(
+                            "{}: {}",
+                            tr("slash.compact_failed"),
+                            error.unwrap_or_default()
+                        );
+                        cx.emit(SessionEvent::Toast(self.status.clone()));
                     }
                 } else if command == "bash" {
                     // `!` shell 命令最终结果（流式增量已就地追加；这里回填

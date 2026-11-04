@@ -35,6 +35,10 @@ use crate::services::format::status_line;
 pub(crate) enum SessionEvent {
     /// repaint-worthy state change
     Changed,
+    /// 用户可见的瞬时提示（status_toast 通道）：runtime 层发生的用户动作
+    /// 终局（compact 完成/失败等）——r.status 是无渲染死字段，用户可见
+    /// 反馈只有 Chat::set_status 的 toast（真机验收实踩）
+    Toast(String),
     /// 一轮终点（AgentSettled，2026-10-10）：订阅方据此给**不在场**的会话
     /// 点亮完成绿点/出错红点——结算时 agent_running 已复位，走 Changed 的
     /// 「running 时记未读」通路永远轮不到它

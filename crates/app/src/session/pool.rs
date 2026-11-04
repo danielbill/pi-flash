@@ -114,6 +114,14 @@ impl Chat {
                         cx.notify();
                     }
                 }
+                SessionEvent::Toast(msg) => {
+                    // runtime 层用户动作终局的可见出口（compact 完成/失败等；
+                    // r.status 无渲染点）。仅活跃会话弹 toast，后台会话的
+                    // 状态变化等切换时从状态行看。
+                    if is_active {
+                        chat.set_status(msg.clone(), cx);
+                    }
+                }
                 SessionEvent::ExtUiDied => {
                     // pi 进程死亡（zi2s.3）：在屏扩展弹窗/问卷卡清空并对死管道
                     // 逐个回 cancelled（handler promise 落地）。弹窗只会来自
