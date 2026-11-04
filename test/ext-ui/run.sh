@@ -235,6 +235,20 @@ case_c8() { # pi 进程死亡清弹窗（zi2s.3；基线弹窗残留，XFAIL）
 case_c9() { # 内置斜杠命令客户端拦截（zi2s.5）：wire 断言无 prompt 帧
   start_app mock plain || return 1
   local rc=0
+  # 菜单源回归（真机实踩：rt.commands 非空分支曾整表返回，内置 8 条进不了
+  # 菜单）：mock get_commands 带 1 条扩展命令。进程回执要 spawn 后才到，所以
+  # 断言放在首次发送之后。set_text 的值含 / 时 --arg 会被吃掉，走 params-file
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=x >/dev/null
+  await_wire '"type":"prompt"' 8 || rc=1
+  echo '{"text":"/"}' > "$CUR_OUT/slash.json"
+  P exec composer.set_text --params-file "$CUR_OUT/slash.json" >/dev/null
+  jcheck app 'd.composer_menu.kind==="slash" && JSON.stringify(d.composer_menu.items).includes("compact") && JSON.stringify(d.composer_menu.items).includes("websearch")' || rc=1
+  echo '{"text":""}' > "$CUR_OUT/empty.json"
+  P exec composer.set_text --params-file "$CUR_OUT/empty.json" >/dev/null
+  # /name <name> → set_session_name 命令 + 输入清空 + 不发 prompt（menu 断言
+  # 那次 x 的 prompt 已发，下面全部内置命令不许再出 prompt——用计数闸）。
+  local prompts_before
+  prompts_before=$(grep -c '"type":"prompt"' "$CUR_WIRE" || true)
   # /name <name> → set_session_name 命令 + 输入清空 + 不发 prompt。
   # （侧栏名不在此断言：mock 的 get_state 无 sessionName 回显，异步会覆写
   # 乐观写；真机的侧栏名走既有 rename 链 pending_rename → RenameReady）
@@ -258,8 +272,8 @@ case_c9() { # 内置斜杠命令客户端拦截（zi2s.5）：wire 断言无 pro
   sleep 1
   jcheck dialogs 'd.settings_open===true' || rc=1
   P exec settings.close >/dev/null 2>&1
-  # 关键负断言：以上内置命令一个 prompt 都没发过
-  if grep -q '"type":"prompt"' "$CUR_WIRE"; then
+  # 关键负断言：内置命令段一个 prompt 都没发过（首个 x 的对照组 prompt 除外）
+  if [ "$(grep -c '"type":"prompt"' "$CUR_WIRE")" -gt "${prompts_before:-0}" ]; then
     echo "  [wire] 内置命令泄漏成 prompt 帧（字面文本进了模型上下文）"
     rc=1
   fi

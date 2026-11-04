@@ -326,8 +326,18 @@ impl Chat {
         cx: &'a gpui::App,
     ) -> std::borrow::Cow<'a, [pi_link::protocol::SlashCommand]> {
         let rt = self.rt().read(cx);
+        // 内置 8 条（zi2s.5）并进菜单：进程命令清单非空时它优先、扩展/skill
+        // 同名让位（与 builtin_slash_dispatch 同口径）——此前 rt.commands
+        // 非空直接整表返回，内置命令在真机上（45 条扩展命令）永远不进菜单
+        let builtins = pi_link::catalog::builtin_commands();
         if !rt.commands.is_empty() {
-            return std::borrow::Cow::Borrowed(&rt.commands);
+            let mut out = rt.commands.clone();
+            for b in builtins {
+                if !out.iter().any(|c| c.name == b.name) {
+                    out.push(b);
+                }
+            }
+            return std::borrow::Cow::Owned(out);
         }
         let mut out: Vec<pi_link::protocol::SlashCommand> = self
             .pool

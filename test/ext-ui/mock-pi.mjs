@@ -79,7 +79,12 @@ function mockMain(SCENARIO) {
       messageCount: 0,
       sessionFile: null,
     },
-    get_commands: { commands: [] },
+    // 一条假扩展命令：让 rt.commands 非空（真机有 45 条扩展/skill），
+    // 菜单源因此走「进程清单优先」分支——内置 8 条并进该分支才可断言
+    //（C9：websearch 与 compact 必须同在）
+    get_commands: {
+      commands: [{ name: "websearch", description: "mock extension command" }],
+    },
     get_messages: { messages: [] },
     get_available_models: {
       models: [
