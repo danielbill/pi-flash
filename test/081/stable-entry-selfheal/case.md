@@ -38,6 +38,27 @@ T1 落位时复制：pin 启动的常见路径下老版本就跑在 `payload\` �
   release 用户应用内更新后全局 `pi` 的 cli 指针一直悬空。补
   `join(VENDOR_DIR_NAME)`。
 
+## T1 预拷优化（同日追加，bead ab0c 讨论）
+
+首启自愈复制 1.5 万文件 ~25s，其中老进程锁得住的只有它自己的运行镜像——
+vendor 等万计文件在 T1 时无主。优化：**落位后趁热预拷，首启只收尾**。
+
+- `precopy_stable_entry`（T1，`stage_update_in` 写完载荷戳后起后台线程，
+  release only）：逐文件复制 `target → payload\`，失败（锁定/IO 错）记账
+  不中断；
+  - **无一失败**（老进程跑在版本化目录的常见情形）→ 直接写戳完成迁移 +
+    指针收敛稳定入口 → 首启零复制；
+  - 有剩余（老进程跑在稳定入口，pi-flash.exe 必锁）→ 写 `.payload-stage`
+    半程标记（首行版本 + 待补相对路径清单）；
+- `refresh_stable_entry` 升级收尾模式：读到同版本标记 → 只按清单补拷（实际
+  = pi-flash.exe 一个大文件，秒级）→ 写戳清标记；无标记/版本对不上 → 全量
+  兜底；树遍历失败 → 不写戳不写标记（完整度未知，清单不可信），下次全量；
+- 进程中途死掉 → 无戳无标记 → 首启全量兜底，永不劣化。
+
+新增单测：`precopy_direct_migration_when_target_idle` /
+`precopy_marker_then_refresh_finishes`（真镜像锁全链：预拷 → 标记 → 收尾）/
+`refresh_marker_version_mismatch_falls_back_to_full`。
+
 ## 单测（`payload::tests`，app crate）
 
 - `stable_entry_version_requires_stamp_and_exe`：缺戳/缺 exe/非版本戳都不算

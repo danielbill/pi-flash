@@ -128,10 +128,12 @@ fn stable_entry_version(stable_dir: &Path) -> Option<String> {
 /// 目标就此死链）。纪律：
 /// - 源 = 版本最高的完整载荷目录；稳定入口已是该版本 → 幂等零动作；
 /// - 稳定入口比所有版本化目录都新 → 不降级；
+/// - **收尾模式**：稳定入口有同版本 `.payload-stage` 标记（T1 预拷留下）→
+///   只补拷被锁跳过的文件，秒级完成；无标记/版本对不上 → 全量复制兜底；
 /// - 占用探针：目标 exe 写打开失败 = 有进程跑在稳定入口里（pin 启动的老版本
 ///   本尊）→ 整体跳过，下次启动重试；
-/// - 非 exe 先拷、exe 最后拷、版本戳完整走完才写——中途失败留下的混合态里
-///   旧 exe 仍可启动（交接兜底），无戳 = 下次视为未完成重来。
+/// - 版本戳完整走完才写——中途失败留下的混合态里旧 exe 仍可启动（交接兜底），
+///   失败清单记入标记，下次按清单续拷。
 /// 返回是否完成了刷新（true = 稳定入口内容已等于最新完整载荷）。
 pub(crate) fn refresh_stable_entry(root: &Path, me: &Path) -> bool {
     let Some(stable_dir) = stable_entry_dir_of(root, me) else {
@@ -164,32 +166,81 @@ pub(crate) fn refresh_stable_entry(root: &Path, me: &Path) -> bool {
         );
         return false;
     }
-    let complete = copy_payload_tree(&src_dir, &stable_dir);
-    if complete {
-        let _ = std::fs::write(stable_dir.join(".payload-version"), format!("{src_ver}\n"));
-        eprintln!(
-            "[updater] 稳定入口已刷新到 v{src_ver}：{}",
-            stable_dir.display()
-        );
-    } else {
-        eprintln!("[updater] 稳定入口刷新不完整（不写戳，下次启动重试）");
+    let outcome: Result<Vec<PathBuf>, ()> = match read_stage_marker(&stable_dir) {
+        Some((v, files)) if v == src_ver && !files.is_empty() => {
+            let rest = copy_listed(&src_dir, &stable_dir, &files);
+            if rest.is_empty() {
+                eprintln!("[updater] 预拷收尾：补拷 {} 个锁定文件完成", files.len());
+            }
+            Ok(rest)
+        }
+        _ => copy_payload_tree(&src_dir, &stable_dir),
+    };
+    match outcome {
+        Ok(failed) if failed.is_empty() => {
+            let _ = std::fs::write(stable_dir.join(".payload-version"), format!("{src_ver}\n"));
+            let _ = std::fs::remove_file(stable_dir.join(STAGE_MARKER)); // 全量成功也顺手清旧标记
+            eprintln!(
+                "[updater] 稳定入口已刷新到 v{src_ver}：{}",
+                stable_dir.display()
+            );
+            true
+        }
+        Ok(failed) => {
+            write_stage_marker(&stable_dir, &src_ver, &failed);
+            eprintln!(
+                "[updater] 稳定入口刷新不完整（{} 个待补，已记标记，下次启动重试）",
+                failed.len()
+            );
+            false
+        }
+        Err(()) => {
+            // 树遍历失败 = 完整度未知，绝不写清单冒充记账，下次全量重试
+            eprintln!("[updater] 稳定入口刷新遍历失败（不写戳不记标记，下次启动重试）");
+            false
+        }
     }
-    complete
+}
+
+/// T1 半程标记：首行 = 版本，其后 = 因锁定/IO 错未拷入稳定入口的相对路径。
+/// 首启自愈读到同版本标记 → 收尾模式只补清单；戳写完即清。
+const STAGE_MARKER: &str = ".payload-stage";
+
+fn write_stage_marker(stable_dir: &Path, ver: &str, failed: &[PathBuf]) {
+    let mut body = format!("{ver}\n");
+    for f in failed {
+        body.push_str(&f.to_string_lossy());
+        body.push('\n');
+    }
+    let _ = std::fs::write(stable_dir.join(STAGE_MARKER), body);
+}
+
+fn read_stage_marker(stable_dir: &Path) -> Option<(String, Vec<PathBuf>)> {
+    let raw = std::fs::read_to_string(stable_dir.join(STAGE_MARKER)).ok()?;
+    let mut lines = raw.lines();
+    let ver = lines.next()?.trim().to_string();
+    if !is_version(&ver) {
+        return None;
+    }
+    Some((ver, lines.map(PathBuf::from).collect()))
 }
 
 /// 把载荷树逐文件复制覆盖到 `dst`（非 .exe 先、.exe 后；源里的版本戳不拷——
-/// 由调用方在完整走完后写）。任一文件失败不中断，继续拷其余，返回是否全部
-/// 成功。
-fn copy_payload_tree(src: &Path, dst: &Path) -> bool {
+/// 由调用方在完整走完后写）。任一文件失败不中断，继续拷其余；`Ok(清单)` =
+/// 失败文件的相对路径（空 = 全部成功），`Err` = 树遍历失败（完整度未知，
+/// 调用方不得写戳/写标记，下次全量重试）。
+fn copy_payload_tree(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, ()> {
     let mut dirs = vec![src.to_path_buf()];
     let mut plain: Vec<PathBuf> = Vec::new();
     let mut exes: Vec<PathBuf> = Vec::new();
     while let Some(d) = dirs.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else {
-            return false;
+            return Err(());
         };
         for e in entries.flatten() {
-            let Ok(t) = e.file_type() else { return false };
+            let Ok(t) = e.file_type() else {
+                return Err(());
+            };
             let p = e.path();
             if t.is_dir() {
                 dirs.push(p);
@@ -202,26 +253,85 @@ fn copy_payload_tree(src: &Path, dst: &Path) -> bool {
             }
         }
     }
-    let mut ok = true;
+    let mut failed = Vec::new();
     for p in plain.iter().chain(exes.iter()) {
         let Ok(rel) = p.strip_prefix(src) else {
-            ok = false;
+            failed.push(p.to_path_buf());
             continue;
         };
-        let to = dst.join(rel);
-        if let Some(parent) = to.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("[updater] 自愈建目录失败 {}：{e}", parent.display());
-                ok = false;
-                continue;
-            }
-        }
-        if let Err(e) = std::fs::copy(p, &to) {
-            eprintln!("[updater] 自愈复制失败 {}：{e}", p.display());
-            ok = false;
+        if let Err(e) = copy_one(src, dst, rel) {
+            eprintln!("[updater] 复制失败 {}：{e}", p.display());
+            failed.push(rel.to_path_buf());
         }
     }
-    ok
+    Ok(failed)
+}
+
+/// 按相对路径清单逐个复制（预拷收尾通道）；返回仍失败的（留在标记里重试）。
+fn copy_listed(src: &Path, dst: &Path, files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut failed = Vec::new();
+    for rel in files {
+        if let Err(e) = copy_one(src, dst, rel) {
+            eprintln!("[updater] 收尾复制失败 {}：{e}", rel.display());
+            failed.push(rel.clone());
+        }
+    }
+    failed
+}
+
+/// 单文件复制：目标父目录按需创建；目标被锁（运行中镜像）时 Err 返回。
+fn copy_one(src: &Path, dst: &Path, rel: &Path) -> std::io::Result<()> {
+    let to = dst.join(rel);
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src.join(rel), &to)?;
+    Ok(())
+}
+
+/// T1 预拷（ab0c 优化）：落位后趁热把新载荷尽量刷进稳定入口——老进程锁得住
+/// 的只有它自己的运行镜像（跑在稳定入口时 = pi-flash.exe，node.exe 视会话而
+/// 定），vendor 等万计文件此时无主，现在拷走，首启就只剩大文件收尾。纪律与
+/// 自愈同源：逐文件失败记账不中断；**无一失败 → 直接写戳完成迁移**（老进程
+/// 跑在版本化目录时的常见情形，首启零复制）；有剩余 → 写 `.payload-stage`
+/// 标记，首启 refresh_stable_entry 收尾。进程中途死掉 → 无戳无标记 → 首启
+/// 全量复制兜底（不劣化）。
+pub(crate) fn precopy_stable_entry(root: &Path, me: &Path, target: &Path, ver: &str) {
+    let Some(stable_dir) = stable_entry_dir_of(root, me) else {
+        return;
+    };
+    if crate::services::workspace::same_path(target, &stable_dir) {
+        return; // 对称守卫：目标是版本化目录，理论不可能，防呆
+    }
+    match stable_entry_version(&stable_dir) {
+        Some(v) if v == ver => return,            // 已有实例收过尾
+        Some(v) if version_gt(&v, ver) => return, // 不降级
+        _ => {}
+    }
+    let failed = match copy_payload_tree(target, &stable_dir) {
+        Ok(f) => f,
+        Err(()) => {
+            eprintln!("[updater] 载荷预拷遍历失败（不写戳不记标记，首启全量兜底）");
+            return;
+        }
+    };
+    if failed.is_empty() {
+        let _ = std::fs::write(stable_dir.join(".payload-version"), format!("{ver}\n"));
+        let _ = std::fs::remove_file(stable_dir.join(STAGE_MARKER));
+        // 直接迁移完成 → 指针同步收敛稳定入口（版本化目录随时可被清理）
+        repoint_pi_shim_to_stable(&stable_dir);
+        eprintln!(
+            "[updater] 载荷预拷：稳定入口直接迁移到 v{ver}（{}）",
+            stable_dir.display()
+        );
+    } else {
+        write_stage_marker(&stable_dir, ver, &failed);
+        eprintln!(
+            "[updater] 载荷预拷：{} 个文件待首启补拷（{}）",
+            failed.len(),
+            stable_dir.display()
+        );
+    }
 }
 
 /// 自愈完成后把全局 pi 指针收敛到稳定入口：版本化目录会被扩展清理删掉，指针
@@ -499,6 +609,37 @@ mod tests {
         std::fs::write(dir.join(".payload-version"), format!("{ver}\n")).unwrap();
     }
 
+    /// 真镜像锁（windows）：把系统 cmd.exe 复制成 `exe` 并运行——运行中镜像
+    /// 的写打开必败（ERROR_SHARING_VIOLATION）。std 打开文件自带全共享模式，
+    /// 测试里持写句柄模拟不出镜像锁，必须真跑。返回 None = 环境不可用，调用
+    /// 方跳过用例。
+    #[cfg(windows)]
+    fn spawn_image_lock(exe: &Path) -> Option<std::process::Child> {
+        std::fs::create_dir_all(exe.parent().unwrap()).ok()?;
+        let cmd = std::env::var("SystemRoot")
+            .map(|r| std::path::PathBuf::from(r).join("System32/cmd.exe"))
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe"));
+        std::fs::copy(&cmd, exe).ok()?;
+        let mut child = std::process::Command::new(exe)
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        // 轮询等镜像节真正建立（全量并行下 CPU 抢占，固定 sleep 会翻车）：
+        // 写打开失败 = 锁已生效；5s 仍锁不上视为环境异常
+        for _ in 0..50 {
+            if std::fs::OpenOptions::new().write(true).open(exe).is_err() {
+                return Some(child);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("[test] 镜像锁 5s 未建立，跳过用例");
+        None
+    }
+
     #[test]
     fn stable_entry_version_requires_stamp_and_exe() {
         let root = temp_root("sev");
@@ -570,37 +711,17 @@ mod tests {
         let root = temp_root("locked");
         let me = root.join("payload-0.4.2");
         make_payload(&me, "0.4.2", &[]);
-        // 真镜像锁：系统 cmd.exe 复制成稳定入口的 pi-flash.exe 并运行——运行中
-        // 镜像的写打开必败（ERROR_SHARING_VIOLATION），与「老版本跑在稳定入口」
-        // 同语义。（std 打开文件自带全共享模式，测试里持写句柄模拟不出镜像锁。）
-        let stable_exe = root.join("payload").join(exe_rel());
-        std::fs::create_dir_all(stable_exe.parent().unwrap()).unwrap();
-        let cmd = std::env::var("SystemRoot")
-            .map(|r| std::path::PathBuf::from(r).join("System32/cmd.exe"))
-            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe"));
-        if std::fs::copy(&cmd, &stable_exe).is_err() {
-            eprintln!("[test] 复制 cmd.exe 失败，跳过镜像锁用例");
-            return;
-        }
-        let Ok(mut child) = std::process::Command::new(&stable_exe)
-            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        else {
-            eprintln!("[test] 拉起镜像锁进程失败，跳过用例");
+        let stable = root.join("payload");
+        // 老版本跑在稳定入口：镜像锁 → 整体跳过
+        let Some(mut child) = spawn_image_lock(&stable.join(exe_rel())) else {
+            eprintln!("[test] 镜像锁不可用，跳过用例");
             return;
         };
-        std::thread::sleep(std::time::Duration::from_millis(500)); // 等镜像节建立
-        std::fs::write(
-            stable_exe.parent().unwrap().join(".payload-version"),
-            "0.4.0\n",
-        )
-        .unwrap();
+        std::fs::write(stable.join(".payload-version"), "0.4.0\n").unwrap();
 
         assert!(!refresh_stable_entry(&root, &me), "被占用整体跳过");
         assert_eq!(
-            stable_entry_version(stable_exe.parent().unwrap()).as_deref(),
+            stable_entry_version(&stable).as_deref(),
             Some("0.4.0"),
             "旧内容原封不动"
         );
@@ -628,6 +749,11 @@ mod tests {
         assert!(
             stable.join("pi-flash.exe").is_file(),
             "非 exe 已先拷成功（旧 exe 仍可启动走交接）"
+        );
+        let marker = std::fs::read_to_string(stable.join(STAGE_MARKER)).unwrap();
+        assert!(
+            marker.starts_with("0.4.2\n") && marker.contains("node.exe"),
+            "失败清单入标记（首行版本 + 相对路径），下次按清单续拷"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -675,6 +801,78 @@ mod tests {
         assert!(me.exists());
         // payload-0.0.1 会被 outdated 判据删（current_version() 必大于 0.0.1），
         // 与扩展判据无关，不在此断言。
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn precopy_direct_migration_when_target_idle() {
+        let root = temp_root("precopy");
+        let me = root.join("payload-0.4.2");
+        make_payload(&me, "0.4.2", &["node.exe"]);
+        let target = me.clone();
+        let stable = root.join("payload");
+        std::fs::create_dir_all(&stable).unwrap(); // 空（被炸残骸）
+
+        // 稳定入口无主（老进程跑在版本化目录）→ T1 直接完成迁移
+        precopy_stable_entry(&root, &me, &target, "0.4.2");
+        assert_eq!(
+            stable_entry_version(&stable).as_deref(),
+            Some("0.4.2"),
+            "无一被锁 → 直接迁移写戳"
+        );
+        assert!(!stable.join(STAGE_MARKER).exists(), "完整迁移不留标记");
+        assert!(stable.join("node.exe").is_file());
+        assert!(stable.join("vendor/pi/x.js").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn precopy_marker_then_refresh_finishes() {
+        let root = temp_root("precmk");
+        let me = root.join("payload-0.4.2");
+        make_payload(&me, "0.4.2", &["node.exe"]);
+        let stable = root.join("payload");
+        // 老进程本尊跑在稳定入口：pi-flash.exe 镜像锁
+        let Some(mut child) = spawn_image_lock(&stable.join(exe_rel())) else {
+            eprintln!("[test] 镜像锁不可用，跳过用例");
+            return;
+        };
+
+        precopy_stable_entry(&root, &me, &me.clone(), "0.4.2");
+        assert_eq!(stable_entry_version(&stable), None, "有锁定剩余 = 不写戳");
+        assert!(stable.join("node.exe").is_file(), "未锁文件已预拷就位");
+        let marker = std::fs::read_to_string(stable.join(STAGE_MARKER)).unwrap();
+        assert!(marker.starts_with("0.4.2\n"), "标记首行 = 版本");
+        assert!(marker.contains("pi-flash.exe"), "锁定文件在清单里");
+
+        // 老进程退出 → 首启自愈按清单收尾（只补 pi-flash.exe，不再全量）
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(refresh_stable_entry(&root, &me), "收尾完成");
+        assert_eq!(stable_entry_version(&stable).as_deref(), Some("0.4.2"));
+        assert!(!stable.join(STAGE_MARKER).exists(), "收尾后清标记");
+        assert_eq!(
+            std::fs::read_to_string(stable.join("pi-flash.exe")).unwrap(),
+            "pi-flash.exe @ 0.4.2"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_marker_version_mismatch_falls_back_to_full() {
+        let root = temp_root("precmm");
+        let me = root.join("payload-0.4.2");
+        make_payload(&me, "0.4.2", &[]);
+        let stable = root.join("payload");
+        std::fs::create_dir_all(&stable).unwrap();
+        // 陈旧标记（版本对不上）→ 必须走全量而非按清单
+        std::fs::write(stable.join(STAGE_MARKER), "0.3.9\npi-flash.exe\n").unwrap();
+
+        assert!(refresh_stable_entry(&root, &me));
+        assert_eq!(stable_entry_version(&stable).as_deref(), Some("0.4.2"));
+        assert!(!stable.join(STAGE_MARKER).exists(), "全量成功清旧标记");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -513,6 +513,22 @@ pub(crate) fn stage_update_in(me: &Path, rel: &ReleaseInfo) -> Result<String, St
         std::fs::write(target.join(".payload-version"), format!("{ver}\n"))
             .map_err(|e| format!("写版本戳失败：{e}"))?;
 
+        // T1 预拷（ab0c 优化，release only）：趁老进程锁不住大部分文件，后台
+        // 把新载荷尽量刷进稳定入口 `payload\`——锁住的记 `.payload-stage` 标
+        // 记，首启 refresh_stable_entry 按清单收尾。debug 构建不碰安装树（与
+        // win_pin / 自愈同纪律），e2e 夹具也不受扰动。
+        if !cfg!(debug_assertions) {
+            let precopy_root = root.clone();
+            let precopy_me = me.to_path_buf();
+            let precopy_target = target.clone();
+            let precopy_ver = ver.clone();
+            let _ = std::thread::Builder::new()
+                .name("precopy".into())
+                .spawn(move || {
+                    precopy_stable_entry(&precopy_root, &precopy_me, &precopy_target, &precopy_ver);
+                });
+        }
+
         // 051：新载荷落位后顺手确保 pif-secret 稳定安装（幂等毫秒级）——
         // 版本化载荷目录随升级漂移，helper 的归宿永远是用户级 PATH 目录。
         let _ = pi_link::register_to_sys::ensure_installed();
