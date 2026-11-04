@@ -111,7 +111,7 @@ assets! {
     "icons/refresh.svg",
     "icons/layers.svg",
     "icons/loader.svg",
-    // 8 针荆棘圈（ZCode 同款星芒 spinner）：alpha 沿圆周递减，旋转即逐针闪烁
+    // 8 针荆棘圈（ZCode 同款星芒 spinner）：8 根针统一透明度，纯形状
     "icons/spark.svg",
     "icons/trash.svg",
     "icons/check.svg",
