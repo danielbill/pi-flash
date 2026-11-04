@@ -511,3 +511,8 @@
 - **验收**：`cargo check`/`cargo test -p app` 428 全绿；`test/ext-ui` 新增 C11
   （`session.status_act key=usage` → wire `/usage`），待真机跑；快照新增
   `session.status_bar`。文档 `docs/模块设计/034-会话区底部状态栏.md`。
+- **改（同日，用户实测反馈）**：`mcp` 项在带子上是纯噪音（"0 servers enabled (1
+  disabled)"，且 composer 已有 MCP 胶囊 `[n]`），准入改为**白名单**——只有
+  `action_of` 登记的键（当前仅 `usage`）上屏，`mcp`/`mcp-auth`/`freeflow`/`goal`
+  等一律不显示；只剩噪音时整条零占位。快照 `status_bar.hidden_keys` 留痕，C11
+  增加「mcp 不入 items」断言。

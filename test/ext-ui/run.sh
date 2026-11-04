@@ -305,6 +305,8 @@ case_c11() { # 034 底部状态带：可见性 + 可点项动作（同 footer_st
   # 数据面 + 渲染面同源：usage 项存在、动作 = /usage、开关默认开
   jcheck session 'd.status_bar && d.status_bar.enabled === true && d.status_bar.items.some(i => i.key === "usage" && i.action === "/usage")' || rc=1
   jcheck session 'd.status_bar.visible === true' || rc=1
+  # 白名单口径：mcp 键（pi-mcp-adapter 的服务器计数行）不得上屏
+  jcheck session '!d.status_bar.items.some(i => i.key === "mcp")' || rc=1
   P shot "$CUR_OUT/statusbar.png" >/dev/null 2>&1 || true
   # 点击同一条分派 → wire 出现 /usage prompt（与手打同漏斗）
   P exec session.status_act --arg key=usage >/dev/null || rc=1

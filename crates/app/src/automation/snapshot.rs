@@ -478,25 +478,28 @@ fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
 /// 与 `session/footer_bar.rs` 共用同一张动作表（`action_of`）。
 fn status_bar_json(r: &SessionRuntime) -> Value {
     let enabled = crate::services::workspace::session_status_bar_on();
-    let items: Vec<Value> = r
-        .ext_status
-        .iter()
-        .filter(|(_, text)| !text.is_empty())
-        .map(|(key, text)| {
-            let action = crate::session::footer_bar::action_of(key);
-            json!({
-                "key": key,
-                "text": truncate(text, 200),
-                "action": action.map(|a| a.tag()),
-                "disabled": r.agent_running
-                    && matches!(action, Some(crate::session::footer_bar::StatusAction::Command(_))),
-            })
-        })
-        .collect();
+    // 与渲染同一口径：只有动作表登记的键上屏（其余 = 扩展噪音，见 footer_bar）
+    let mut items: Vec<Value> = Vec::new();
+    let mut hidden: Vec<&str> = Vec::new();
+    for (key, text) in r.ext_status.iter().filter(|(_, text)| !text.is_empty()) {
+        let Some(action) = crate::session::footer_bar::action_of(key) else {
+            hidden.push(key.as_str());
+            continue;
+        };
+        items.push(json!({
+            "key": key,
+            "text": truncate(text, 200),
+            "action": Some(action.tag()),
+            "disabled": r.agent_running
+                && matches!(action, crate::session::footer_bar::StatusAction::Command(_)),
+        }));
+    }
+    items.sort_by(|a, b| a["key"].as_str().cmp(&b["key"].as_str()));
     json!({
         "enabled": enabled,
         "visible": enabled && !items.is_empty(),
         "items": items,
+        "hidden_keys": hidden,
     })
 }
 
