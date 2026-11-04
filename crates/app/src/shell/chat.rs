@@ -56,6 +56,11 @@ pub(crate) struct AuxUi {
     /// select 弹窗键盘导航高亮行（zi2s.7）：↑↓ 移动、Enter 选中；ext_show
     /// 归零（晋升等待项时同款）
     pub(crate) ext_sel_ix: usize,
+    /// ctx.ui.setTitle 目标（zi2s.9，pi-web document.title parity）：None =
+    /// 未收到过；render 帧发现与已应用值不同就 set_window_title
+    pub(crate) ext_title: Option<String>,
+    /// 已应用到 OS 窗口标题的值（apply-diff 守卫，防每帧 set_title 抖动）
+    pub(crate) ext_title_applied: String,
     /// ask_user_question 整卷问卷卡（ask_card.rs）；None = 无进行中的问卷
     pub(crate) ask: Option<ask_card::AskCard>,
     /// 问卷卡「自定义答案」输入框（active 题内嵌，切题时同步存量）
@@ -808,6 +813,8 @@ impl Chat {
                 ext_input: cx.new(|cx| TextInput::new(cx)),
                 ext_editor_input: cx.new(|cx| TextInput::new(cx).multiline()),
                 ext_sel_ix: 0,
+                ext_title: None,
+                ext_title_applied: String::new(),
             },
         };
         crate::perf_mark("Chat::new: struct init");

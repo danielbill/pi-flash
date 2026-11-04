@@ -205,6 +205,13 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
             "width_px": (f32::from(viewport.width) * scale).round() as i64,
             "height_px": (f32::from(viewport.height) * scale).round() as i64,
             "scale_factor": scale,
+            // 已应用的 OS 窗口标题（zi2s.9 ctx.ui.setTitle 台架断言出口；
+            // None 时与启动标题 "pi-flash" 一致）
+            "title": if chat.aux.ext_title.is_some() {
+                chat.aux.ext_title_applied.clone()
+            } else {
+                "pi-flash".to_string()
+            },
         },
         "dock_panel": chat.layout.dock_panel.as_str(),
         "content_view": content_view_str(chat.layout.content_view),

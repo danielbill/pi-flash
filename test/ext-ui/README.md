@@ -29,6 +29,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C7 未知 method | mock 注入 futureWidget → PF 回 cancelled | ~~XFAIL~~ → **PASS**（zi2s.2 已修：parse 回 Unknown + 立刻 cancelled + eprintln 留痕） | zi2s.2 ✓ |
 | C8 pi 崩溃清弹窗 | mock exit(1) → ext_dialog 清理 | ~~XFAIL~~ → **PASS**（zi2s.3 已修：泵尾 ext_queue.clear + SessionEvent::ExtUiDied → Chat ext_cancel_all；连跑 4 次确定性通过） | zi2s.3 ✓ |
 | C9 内置斜杠命令 | /name /compact /auto-compact wire 命令帧 + /session /mcp 面板 + 全程零 prompt 帧 | PASS（zi2s.5 拦截实现即台架即验收） | zi2s.5 ✓ |
+| C10 setTitle | snapshot window.title = "PF ext title ✓"（OS 标题映射） | PASS（zi2s.9：render 帧 apply-diff 落 set_window_title） | zi2s.9 ✓ |
 
 \** C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
 `text argument should not contain newlines` panic）——单行 TextInput 阶段

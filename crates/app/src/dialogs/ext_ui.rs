@@ -536,8 +536,13 @@ impl Chat {
                 })
                 .detach();
             }
-            ExtUiMethod::SetTitle { .. } => {
-                // window title is fixed in this shell (pi-web sets document.title)
+            ExtUiMethod::SetTitle { title } => {
+                // 窗口标题映射（zi2s.9，pi-web document.title parity）：render
+                // 帧 apply-diff 落 OS 标题（on_ext_ui 无 window 访问权）
+                if self.aux.ext_title.as_deref() != Some(title.as_str()) {
+                    self.aux.ext_title = Some(title);
+                    cx.notify();
+                }
             }
             ExtUiMethod::SetEditorText { text } => {
                 self.composer.input = text;

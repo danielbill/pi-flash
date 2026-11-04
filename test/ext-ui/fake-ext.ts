@@ -77,4 +77,13 @@ export default function (pi) {
 			ctx.ui.notify("ext-notify: hello", "info");
 		},
 	});
+
+	// setTitle（zi2s.9）：映射 OS 窗口标题（pi-web document.title parity）
+	pi.registerCommand("ext-title", {
+		description: "Set window title via ctx.ui.setTitle",
+		handler: async (_args, ctx) => {
+			ctx.ui.setTitle("PF ext title ✓");
+			ctx.ui.notify("ext-title: set", "info");
+		},
+	});
 }

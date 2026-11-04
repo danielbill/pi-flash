@@ -16,6 +16,14 @@ impl Render for Chat {
         // 焦点快照（给「agent 结束时窗口没焦点就给点」用）：平台层在每次
         // 激活变化都会 window.refresh() 强制重绘，所以这里的值总是新鲜的
         self.psp.window_active = window.is_window_active();
+        // ctx.ui.setTitle → OS 窗口标题（zi2s.9，pi-web document.title parity）：
+        // apply-diff 守卫，变了才落平台调用（每帧 set_title 会抖动任务栏）
+        if let Some(title) = &self.aux.ext_title {
+            if *title != self.aux.ext_title_applied {
+                window.set_window_title(title);
+                self.aux.ext_title_applied = title.clone();
+            }
+        }
         static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if PERF.load(std::sync::atomic::Ordering::Relaxed)
             && !FIRST.swap(true, std::sync::atomic::Ordering::Relaxed)

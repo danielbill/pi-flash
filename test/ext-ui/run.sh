@@ -270,6 +270,17 @@ case_c9() { # 内置斜杠命令客户端拦截（zi2s.5）：wire 断言无 pro
   return $rc
 }
 
+case_c10() { # ctx.ui.setTitle 映射窗口标题（zi2s.9）
+  start_app real || return 1
+  mount_fake_ext && assert_ext_mounted || { quit_app; return 1; }
+  local rc=0
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/ext-title >/dev/null
+  P wait --path session.waiting --eq false --timeout 15 >/dev/null || rc=1
+  jcheck app 'd.window.title === "PF ext title ✓"' || rc=1
+  quit_app
+  return $rc
+}
+
 # ------------------------------------------------------------------ main --
 desc_of() {
   case "$1" in
@@ -282,10 +293,11 @@ desc_of() {
     C7) echo "未知 method → cancelled 留痕（zi2s.2）" ;;
     C8) echo "pi 崩溃清弹窗（zi2s.3）" ;;
     C9) echo "内置斜杠命令拦截（zi2s.5）" ;;
+    C10) echo "setTitle 映射窗口标题（zi2s.9）" ;;
   esac
 }
 
-CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9}"
+CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10}"
 mkdir -p "$OUTBASE"
 for C in $CASES; do
   CUR="$C"; CUR_OUT="$OUTBASE/$C"; CUR_PFDATA="$CUR_OUT/pfdata"; CUR_WIRE="$CUR_OUT/wire.log"
