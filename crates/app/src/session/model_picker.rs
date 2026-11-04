@@ -726,6 +726,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             input: None,
+            cost: None,
         }
     }
 

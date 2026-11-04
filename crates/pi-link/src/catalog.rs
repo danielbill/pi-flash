@@ -98,6 +98,7 @@ pub fn parse_store(value: &Value) -> Vec<ModelInfo> {
                         .filter_map(|x| x.as_str().map(str::to_string))
                         .collect()
                 }),
+                cost: m.get("cost").and_then(crate::protocol::CostInfo::parse),
             });
         }
     }
@@ -138,6 +139,7 @@ pub fn parse_models_json(value: &Value) -> Vec<ModelInfo> {
                         .filter_map(|x| x.as_str().map(str::to_string))
                         .collect()
                 }),
+                cost: m.get("cost").and_then(crate::protocol::CostInfo::parse),
             });
         }
     }

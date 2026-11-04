@@ -75,6 +75,21 @@ impl Chat {
                             "reasoning": base.reasoning,
                             "input": base.input,
                         });
+                        // 内置模型目录价回显（042-2）：pi 定义自带 cost 四键，
+                        // 详情弹窗直接可见（只读视图，不存在误改问题）
+                        if let Some(c) = &base.cost {
+                            if let Some(obj) = m.as_object_mut() {
+                                obj.insert(
+                                    "cost".into(),
+                                    serde_json::json!({
+                                        "input": c.input,
+                                        "output": c.output,
+                                        "cacheRead": c.cache_read,
+                                        "cacheWrite": c.cache_write,
+                                    }),
+                                );
+                            }
+                        }
                     }
                 }
                 if let Some(obj) = m.as_object_mut() {

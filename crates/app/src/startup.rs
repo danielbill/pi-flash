@@ -224,6 +224,7 @@ fn cache_load_from(path: &Path) -> CatalogCache {
                         max_tokens: None,
                         reasoning: None,
                         input: None,
+                        cost: None,
                     })
                 })
                 .collect()
@@ -396,6 +397,7 @@ mod tests {
                 max_tokens: None,
                 reasoning: None,
                 input: None,
+                cost: None,
             }],
             ..Default::default()
         };
@@ -408,6 +410,7 @@ mod tests {
                 max_tokens: None,
                 reasoning: None,
                 input: None,
+                cost: None,
             },
             ModelInfo {
                 id: "y".into(),
@@ -417,6 +420,7 @@ mod tests {
                 max_tokens: None,
                 reasoning: None,
                 input: None,
+                cost: None,
             },
         ];
         assert!(merge_models(&mut g, &rpc));
@@ -435,6 +439,7 @@ mod tests {
             max_tokens: None,
             reasoning: None,
             input: None,
+            cost: None,
         };
         // 缓存种子：ds/glm = 已从 models.json 删掉的测试商（幽灵）；dds = 账本商；
         // deepseek = 静态注册表商；freeflow = 扩展商（只有实时答复佐证）

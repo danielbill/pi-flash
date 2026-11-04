@@ -146,6 +146,7 @@ pub fn info_from_definition(provider: &str, v: &Value) -> ModelInfo {
                 .filter_map(|x| x.as_str().map(str::to_string))
                 .collect()
         }),
+        cost: v.get("cost").and_then(pi_link::protocol::CostInfo::parse),
     }
 }
 
@@ -233,6 +234,7 @@ mod tests {
             max_tokens: Some(4096),
             reasoning: None,
             input: None,
+            cost: None,
         }
     }
 

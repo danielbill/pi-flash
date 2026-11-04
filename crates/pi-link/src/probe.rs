@@ -410,6 +410,7 @@ fn parse_entry(e: &serde_json::Value) -> Option<crate::protocol::ModelInfo> {
         max_tokens,
         reasoning,
         input,
+        cost: None,
     })
 }
 

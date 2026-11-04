@@ -1724,6 +1724,7 @@ impl Chat {
                     context_window: m.get("contextWindow").and_then(|v| v.as_u64()),
                     max_tokens: m.get("maxTokens").and_then(|v| v.as_u64()),
                     reasoning: m.get("reasoning").and_then(|v| v.as_bool()),
+                    cost: m.get("cost").and_then(pi_link::protocol::CostInfo::parse),
                     input: m.get("input").and_then(|v| v.as_array()).map(|a| {
                         a.iter()
                             .filter_map(|x| x.as_str().map(str::to_string))

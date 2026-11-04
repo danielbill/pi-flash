@@ -1061,6 +1061,30 @@ pub struct SessionState {
     pub pending_message_count: u64,
 }
 
+/// 价格四键（$/MTok，042-2）：内置模型详情回填用。缺键 = None（未知）。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct CostInfo {
+    #[serde(default)]
+    pub input: Option<f64>,
+    #[serde(default)]
+    pub output: Option<f64>,
+    #[serde(default, rename = "cacheRead")]
+    pub cache_read: Option<f64>,
+    #[serde(default, rename = "cacheWrite")]
+    pub cache_write: Option<f64>,
+}
+
+impl CostInfo {
+    pub fn parse(v: &Value) -> Option<CostInfo> {
+        Some(CostInfo {
+            input: v.get("input").and_then(Value::as_f64),
+            output: v.get("output").and_then(Value::as_f64),
+            cache_read: v.get("cacheRead").and_then(Value::as_f64),
+            cache_write: v.get("cacheWrite").and_then(Value::as_f64),
+        })
+    }
+}
+
 /// serde 形状对齐 pi RPC 的 camelCase（`contextWindow`）——registry dump
 /// 直接以 `Vec<ModelInfo>` 落 `registry-cache.json`（042 静态目录保底）。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1080,6 +1104,9 @@ pub struct ModelInfo {
     pub reasoning: Option<bool>,
     #[serde(default)]
     pub input: Option<Vec<String>>,
+    /// 价格四键（042-2）：pi 模型定义自带，内置模型详情直接回显
+    #[serde(default)]
+    pub cost: Option<CostInfo>,
 }
 
 impl ModelInfo {
@@ -1096,6 +1123,7 @@ impl ModelInfo {
                     .filter_map(|x| x.as_str().map(str::to_string))
                     .collect()
             }),
+            cost: v.get("cost").and_then(CostInfo::parse),
         })
     }
 
