@@ -983,6 +983,17 @@ fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             },
         })),
         "ext_dialog_waiting": chat.aux.ext_dialog_waiting.len(),
+        // ask_user_question 问卷卡（v2 整卷卡；test/ext-ui C12 键盘模型断言
+        // 出口）。卡片不在 = null
+        "ask": chat.aux.ask.as_ref().map(|a| {
+            json!({
+                "open": a.open,
+                "active": a.active,
+                "n": a.questions.len(),
+                "done": a.questions.iter().filter(|q| q.answered()).count(),
+                "submitted": a.submitted,
+            })
+        }),
         // 模型菜单可见行数（UI 测试断言用：空列表 = 新会话页拉不到目录；
         // 042 起数据源 = pill 化模型菜单的 picker_models）
         "model_rows": match chat.dlg.model_picker.as_ref() {

@@ -13,7 +13,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | 文件 | 作用 |
 |---|---|
 | `fake-ext.ts` | 真实 vendored pi 的假扩展：/ext-status /ext-status-clear /ext-widget-ansi /ext-editor /ext-select /ext-bigselect /ext-notify，全 UI 零 agent run |
-| `mock-pi.mjs` | 协议边界假 pi：`emit <dir> <scenario>` 生成假 vendor 树（VERSION + cli.js），`PI_FLASH_VENDOR_DIR` 指过去即被 spawn。scenario：`unknown-method` / `crash-with-dialog` |
+| `mock-pi.mjs` | 协议边界假 pi：`emit <dir> <scenario>` 生成假 vendor 树（VERSION + cli.js），`PI_FLASH_VENDOR_DIR` 指过去即被 spawn。scenario：`unknown-method` / `crash-with-dialog` / `ask-card` |
 | `run.sh` | 每用例独立隔离实例（PI_FLASH_DIR + wire 日志），PASS/FAIL/XFAIL 表，非零退出码 |
 
 ## 基线（2026-11-04，zi2s 动工前）
@@ -31,6 +31,7 @@ bash test/ext-ui/run.sh C1 C7    # 只跑指定用例
 | C9 内置斜杠命令 | /name /compact /auto-compact wire 命令帧 + /session /mcp 面板 + 全程零 prompt 帧 | PASS（zi2s.5 拦截实现即台架即验收） | zi2s.5 ✓ |
 | C10 setTitle | snapshot window.title = "PF ext title ✓"（OS 标题映射） | PASS（zi2s.9：render 帧 apply-diff 落 set_window_title） | zi2s.9 ✓ |
 | C11 034 状态带 | `session.status_bar.{enabled,visible,items[].action}`、`mcp` 键在 items 且 action=null（默认全显示）+ `session.status_act key=usage` → wire 有 `/usage` prompt | 待跑（034 P1/P2） | 034 |
+| C12 ask 问卷卡键盘模型 | mock 注入整卷 toolCall + 3 串行阻塞 select → keys 走真实派发：Tab 切题 active 0→1→2（**Root 层 `tab→Tab` 吞键死键回归哨兵**）+ 数字直选 done↑ + Enter 跳未答题/全答完提交 → wire 三笔 value（Alpha / "1" / Yes）+ 卡片清空 | PASS（AskCard 上下文绑定修复，见 main.rs bind_keys 与 docs/agents/gpui.md keymap 节） | ask 卡 Tab 修复 |
 
 \** C4 基线曾 FAIL：**editor 多行 prefill 直接崩掉整个应用**（GPUI
 `text argument should not contain newlines` panic）——单行 TextInput 阶段
@@ -61,5 +62,10 @@ prefill 原样、Enter 提交（剥组件自插换行，composer 同款）。
   回 prompt handled；8s 兜底。
 - `crash-with-dialog`：prompt → 注入阻塞 select → 回 handled → 4s 后
   `process.exit(1)` 模拟 pi 崩溃（弹窗在屏时进程死亡）。
+- `ask-card`：prompt → 注入 assistant message_start/end（toolCall =
+  ask_user_question 整卷 3 题）→ `chainAsk` 串行注入 3 个阻塞 select
+  （title 含题面文本，与 `title_matches` 的 contains 口径对齐）→ 每收一笔
+  `extension_ui_response` 再发下一笔 → 收齐回 prompt handled；8s 兜底。
+  PF 侧断言出口 = `dialogs.ask.{open,active,n,done,submitted}`（snapshot.rs）。
 
 线缆真相一律以各用例目录 `wire.log`（PI_FLASH_RPC_LOG 双向记录）为准。

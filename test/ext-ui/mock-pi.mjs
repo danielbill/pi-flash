@@ -18,6 +18,12 @@
 //   crash-with-dialog prompt → 注入阻塞 select → 回 prompt handled →
 //                    4s 后 process.exit(1) 模拟 pi 崩溃。断言：弹窗被清理
 //                    （zi2s.3）。
+//   ask-card        prompt → 注入 assistant toolCall（ask_user_question
+//                    整卷 3 题，含 transcript 工具块）→ 串行注入 3 个阻塞
+//                    select（title 含题面文本，按序映射 tab N）→ 每收到
+//                    extension_ui_response 再发下一发，收齐回 prompt
+//                    handled。断言：问卷卡 Tab/数字/Enter 键盘模型 + 三笔回
+//                    執值（C12）。
 //
 // 线缆真相一律以 PI_FLASH_RPC_LOG 为准（client.rs 双向记录），mock 不自己
 // 记日志。
@@ -174,6 +180,67 @@ function mockMain(SCENARIO) {
       setTimeout(() => process.exit(1), 4000); // 弹窗在屏时进程死亡
       return [{ disposition: "handled" }];
     }
+    if (scenario === "ask-card") {
+      // 整卷 args（parse_args 口径：question 必填非空、options 1-12 条）
+      const questions = [
+        {
+          header: "方案",
+          question: "选择部署方式？",
+          multiSelect: false,
+          options: [
+            { label: "Alpha", description: "方案 A" },
+            { label: "Beta", description: "方案 B" },
+          ],
+        },
+        {
+          header: "范围",
+          question: "包含哪些模块？",
+          multiSelect: true,
+          options: [
+            { label: "One", description: "" },
+            { label: "Two", description: "" },
+            { label: "Three", description: "" },
+          ],
+        },
+        {
+          header: "确认",
+          question: "启用灰度？",
+          multiSelect: false,
+          options: [
+            { label: "Yes", description: "" },
+            { label: "No", description: "" },
+          ],
+        },
+      ];
+      const toolMsg = {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "tc_ask_1",
+            name: "ask_user_question",
+            arguments: { questions },
+            index: 0,
+          },
+        ],
+        timestamp: Date.now(),
+      };
+      // transcript 先有整卷 toolCall（ask_route_request 布防靠它），再发阻塞
+      // 请求——事件按序摄入，同帧先后即安全
+      send({ type: "message_start", message: toolMsg });
+      send({ type: "message_end", message: { ...toolMsg, stopReason: "toolUse" } });
+      // 串行阻塞请求链：title 含题面文本（title_matches 按 contains 对齐）
+      chainAsk(
+        [
+          { id: "ask-req-1", title: "[方案] 选择部署方式？", options: ["Alpha", "Beta"] },
+          { id: "ask-req-2", title: "[范围] 包含哪些模块？", options: ["One", "Two", "Three"] },
+          { id: "ask-req-3", title: "[确认] 启用灰度？", options: ["Yes", "No"] },
+        ],
+        0,
+        promptId,
+      );
+      return []; // prompt 回执由链尾发（见 chainAsk 兜底）
+    }
     // 默认：普通 handled 收场（无 agent run）
     return [{ disposition: "handled" }];
   }
@@ -183,6 +250,33 @@ function mockMain(SCENARIO) {
       if (extReqDone.has(reqId)) {
         clearInterval(t);
         respond(promptId, "prompt", { disposition: "handled" });
+      }
+    }, 50);
+    setTimeout(() => {
+      clearInterval(t);
+      respond(promptId, "prompt", { disposition: "handled" }); // 兜底收场
+    }, 8000);
+  }
+
+  // ask-card 串行链：发第 i 个阻塞请求 → 等回执 → 递归下一个；收齐回
+  // prompt handled（真实扩展逐题阻塞的同构时序）。8s 兜底防挂死。
+  function chainAsk(reqs, i, promptId) {
+    if (i >= reqs.length) {
+      respond(promptId, "prompt", { disposition: "handled" });
+      return;
+    }
+    const r = reqs[i];
+    send({
+      type: "extension_ui_request",
+      id: r.id,
+      method: "select",
+      title: r.title,
+      options: r.options,
+    });
+    const t = setInterval(() => {
+      if (extReqDone.has(r.id)) {
+        clearInterval(t);
+        chainAsk(reqs, i + 1, promptId);
       }
     }, 50);
     setTimeout(() => {

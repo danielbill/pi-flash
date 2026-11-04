@@ -84,9 +84,16 @@ pub(crate) const WINDOW_H_MIN: f32 = 600.;
 // no-op 死键）。
 // 082 三期 md 预览滚动六动作（Preview*）：预览容器持焦（key_context
 // "MdPreview"）时方向/翻页/首尾键滚动虚拟列表，预览不再是键盘死角。
+// 问卷卡 Tab 切题（AskTabNext）：绑定锚定浮层自带 key_context("AskCard")
+//（卡片不开则上下文不存在、绑定永不命中，Root 行为零变化）。纯 on_key_down
+// 监听器不够——gpui-component Root 层注册了 `tab→Tab`（Root 上下文，全窗
+// 命中）先于监听器执行 focus_next 吞键，问卷卡 Tab 因此死键（gpui.md
+// keymap 节同款实例）；焦点在自定义答案输入框内时 "Input" 更深、composer
+// 语义（缩进）照旧。
 actions!(
     app,
     [
+        AskTabNext,
         ComposerUp,
         ComposerDown,
         ComposerTab,
@@ -291,6 +298,9 @@ fn main() {
                 KeyBinding::new("up", ComposerUp, Some("Input")),
                 KeyBinding::new("down", ComposerDown, Some("Input")),
                 KeyBinding::new("tab", ComposerTab, Some("Input")),
+                // 问卷卡 Tab 切题：锚定浮层 key_context("AskCard")，抢 Root 层
+                // `tab→Tab`（focus_next 吞键）——见 actions! 上方注释
+                KeyBinding::new("tab", AskTabNext, Some("AskCard")),
                 // 图片粘贴：同深度后注册者优先（覆盖组件 ctrl-v→Paste），
                 // composer 内层处理图片附件，其余输入框由根节点兜底重派发
                 KeyBinding::new("ctrl-v", ComposerPaste, Some("Input")),

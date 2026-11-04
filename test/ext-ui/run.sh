@@ -315,6 +315,48 @@ case_c11() { # 034 底部状态带：可见性 + 可点项动作（同 footer_st
   return $rc
 }
 
+case_c12() { # ask 问卷卡键盘模型：Tab 切题（Root 层 tab→Tab 吞键曾致死键）+ 数字直选 + Enter 跳题/提交
+  start_app mock ask-card || return 1
+  local rc=0
+  P exec session.send --arg text=hello >/dev/null
+  # 布防：transcript 整卷 toolCall + 首个阻塞请求到达 → 卡开、三题、零作答
+  P wait --path dialogs.ask.open --eq true --timeout 15 >/dev/null || rc=1
+  jcheck dialogs 'd.ask.active===0 && d.ask.n===3 && d.ask.done===0' || rc=1
+  # Tab 切题主断言：keys 走 dispatch_keystroke 全量派发（含 keymap 绑定），
+  # 修复前 Root 层 `tab→Tab`（focus_next）先吞键，active 永远停在 0
+  P keys "tab" >/dev/null 2>&1
+  P wait --path dialogs.ask.active --eq 1 --timeout 5 >/dev/null || rc=1
+  P keys "tab" >/dev/null 2>&1
+  P wait --path dialogs.ask.active --eq 2 --timeout 5 >/dev/null || rc=1
+  # 数字直选当前题（q3 = Yes）；Enter 跳下一未答题（2→0）
+  P keys "1" >/dev/null 2>&1
+  P wait --path dialogs.ask.done --eq 1 --timeout 5 >/dev/null || rc=1
+  P keys "enter" >/dev/null 2>&1
+  P wait --path dialogs.ask.active --eq 0 --timeout 5 >/dev/null || rc=1
+  P keys "1" >/dev/null 2>&1 # q1 = Alpha
+  P wait --path dialogs.ask.done --eq 2 --timeout 5 >/dev/null || rc=1
+  P keys "enter" >/dev/null 2>&1 # → q2
+  P wait --path dialogs.ask.active --eq 1 --timeout 5 >/dev/null || rc=1
+  P keys "1" >/dev/null 2>&1 # q2 多选 = "1"
+  P wait --path dialogs.ask.done --eq 3 --timeout 5 >/dev/null || rc=1
+  P keys "enter" >/dev/null 2>&1 # 全答完 = 确认提交
+  # 回执 1（确认应答挂起请求）+ 请求 2/3 到达即 submitted 自动应答，共三笔
+  await_wire '"type":"extension_ui_response"' 8 || rc=1
+  await_wire '"value":"Alpha"' 8 || rc=1
+  await_wire '"value":"1"' 8 || rc=1
+  await_wire '"value":"Yes"' 8 || rc=1
+  # 三笔收齐卡片清空（aux.ask=None → ask=null）+ mock handled 收场
+  local cleared=0
+  for i in $(seq 1 40); do
+    jcheck dialogs 'd.ask===null' && cleared=1 && break
+    sleep 0.25
+  done
+  [ "$cleared" = 1 ] || { echo "  [ask] 三笔回执后卡片未清空"; rc=1; }
+  P wait --path session.waiting --eq false --timeout 8 >/dev/null || rc=1
+  quit_app
+  return $rc
+}
+
 # ------------------------------------------------------------------ main --
 desc_of() {
   case "$1" in
@@ -329,10 +371,11 @@ desc_of() {
     C9) echo "内置斜杠命令拦截（zi2s.5）" ;;
     C10) echo "setTitle 映射窗口标题（zi2s.9）" ;;
     C11) echo "034 底部状态带：可见性 + 可点项动作" ;;
+    C12) echo "ask 问卷卡键盘模型：Tab 切题 + 数字直选 + Enter 跳题/提交" ;;
   esac
 }
 
-CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11}"
+CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12}"
 mkdir -p "$OUTBASE"
 for C in $CASES; do
   CUR="$C"; CUR_OUT="$OUTBASE/$C"; CUR_PFDATA="$CUR_OUT/pfdata"; CUR_WIRE="$CUR_OUT/wire.log"
