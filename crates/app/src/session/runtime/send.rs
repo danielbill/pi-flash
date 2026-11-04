@@ -10,6 +10,101 @@ use crate::session::messages::{BashInfo, Msg, Role};
 use super::*;
 
 impl SessionRuntime {
+    /// 内置斜杠命令的运行时臂（zi2s.5；Chat 级分发在 input/mod.rs
+    /// `builtin_slash_dispatch`——session/mcp 开面板的在那边，不走这里）。
+    /// 返回 false = 运行时侧不处理（调用方照旧走 prompt）。
+    pub(crate) fn slash_builtin(&mut self, name: &str, args: &str, cx: &mut Context<Self>) -> bool {
+        // draft 懒 spawn 语境（pi-web ensureNewSession parity）：内置命令要在
+        // 真会话上执行，进程不在就先拉起（拦截发生在 send_input 的
+        // ensure_spawned 之前）
+        if !self.ensure_spawned(cx) {
+            self.status = tr("status.disconnected").into();
+            cx.notify();
+            return true;
+        }
+        match name {
+            "compact" => {
+                self.compact(cx);
+                true
+            }
+            "auto-compact" => {
+                let next = !self.auto_compaction.unwrap_or(true);
+                self.auto_compaction = Some(next);
+                if let Some(s) = &self.agent.session {
+                    let _ = s.send(&Command::SetAutoCompaction { enabled: next });
+                }
+                self.status = tr(if next {
+                    "slash.auto_compact_on"
+                } else {
+                    "slash.auto_compact_off"
+                })
+                .into();
+                cx.notify();
+                true
+            }
+            "reload" => {
+                // pi rpc-mode 无 reload 命令（rpc-mode.js 实测，pi-web 走自己
+                // 的服务端调 SDK）：对齐 pi-web reloadSessionResources 的效果
+                // = 重绑进程（同 --session 复接，扩展/MCP/skills 全部重读）
+                // + 清单随 spawn 刷新
+                self.pending_mcp_reload = true;
+                if self.rebind_pending(cx) {
+                    self.status = tr("slash.reloaded").into();
+                }
+                cx.notify();
+                true
+            }
+            "name" => {
+                if args.is_empty() {
+                    self.status = tr("slash.name_usage").into();
+                    cx.notify();
+                    return true;
+                }
+                let name = args.to_string();
+                if let Some(s) = &self.agent.session {
+                    let _ = s.send(&Command::SetSessionName { name: name.clone() });
+                }
+                // 乐观写状态槽（pi 回执臂再补 ListDirty 刷侧栏）
+                if let Some(st) = self.state.as_mut() {
+                    st.session_name = Some(name.clone());
+                }
+                self.status = tf("slash.named", &[("name", name)]).into();
+                cx.notify();
+                true
+            }
+            "copy" => {
+                // actions_bar 同链：本地消息尾找最后一条 assistant（pi-web
+                // 走 get_last_assistant_text RPC，本地链等价且零往返）
+                let text = self
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::Assistant)
+                    .map(|m| m.plain_text().into_owned())
+                    .unwrap_or_default();
+                if text.is_empty() {
+                    self.status = tr("slash.copy_empty").into();
+                } else {
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                    self.status = tr("slash.copied").into();
+                }
+                cx.notify();
+                true
+            }
+            "clone" => {
+                if self.agent_running || self.bash_running {
+                    self.status = tr("slash.clone_running").into();
+                    cx.notify();
+                    return true;
+                }
+                // 尾部轮 = 整段复制（fork.rs fork_from_turn(None) 的 Clone 链）
+                self.fork_from_turn(None, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// 发送后进 ↑ 历史：**上限截断**。此前无上限——长会话里每次发送的全文
     /// （含粘贴的大段日志）都永久留底，内存随消息条数线性涨，且
     /// `with_active_editor` 每次收发还要整体 clone 两份（per-send O(历史)）。

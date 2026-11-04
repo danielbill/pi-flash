@@ -159,7 +159,62 @@ impl Chat {
         // 树侧两处）都同步移动注意力，发送只认活跃会话，没有第二个判断
         // 依据（曾加过「cwd 不一致则重落草稿」的兑底判断，核查全部路径后
         // 确认分叉不可达，判断本身即第二语义残渣，已删）。
+        // 内置斜杠命令（zi2s.5，pi-web handleBuiltinSlashCommand parity）：命中
+        // 即客户端执行并清输入、**不发 prompt**——字面文本进模型上下文是纯浪费
+        //（烧 token 且行为错乱）。未命中/扩展同名让位照旧。
+        if self.composer.pending_images.is_empty() && self.builtin_slash_dispatch(cx) {
+            return;
+        }
         self.with_active_editor(cx, |r, cx| r.send_input(cx));
+    }
+
+    /// 内置斜杠命令拦截（首词精确匹配）。返回 true = 已消费。
+    ///
+    /// 扩展/skill 定义了同名命令时让位（`rt.commands` = get_commands 实测含
+    /// 扩展命令；pi-web 只对 /mcp 做 bareMcpOpensSettings 守卫，这里全量守
+    /// ——用户装了注册 /copy /clone 的扩展不该被劫持）。
+    fn builtin_slash_dispatch(&mut self, cx: &mut Context<Self>) -> bool {
+        const BUILTIN: &[&str] = &[
+            "compact",
+            "auto-compact",
+            "reload",
+            "name",
+            "session",
+            "mcp",
+            "copy",
+            "clone",
+        ];
+        let text = self.composer.input.trim().to_string();
+        if text.len() < 2 || !text.starts_with('/') {
+            return false;
+        }
+        let rest = &text[1..];
+        // pi-web /^\/([^\s]+)(?:\s+([\s\S]*))?$/：首词 = 命令名，余下 = args
+        let (name, args) = match rest.find(|c| c == ' ' || c == '\n' || c == '\t') {
+            Some(ix) => (&rest[..ix], rest[ix..].trim()),
+            None => (rest, ""),
+        };
+        if !BUILTIN.contains(&name) {
+            return false;
+        }
+        if self.rt().read(cx).commands.iter().any(|c| c.name == name) {
+            return false; // 扩展/skill 同名让位
+        }
+        match name {
+            "session" => self.open_session_info(crate::TopPanel::System, cx),
+            "mcp" => self.open_settings(crate::settings::TAB_MCP, cx),
+            _ => {
+                let mut handled = false;
+                self.rt().update(cx, |r, cx| {
+                    handled = r.slash_builtin(name, args, cx);
+                });
+                if !handled {
+                    return false;
+                }
+            }
+        }
+        self.set_input(String::new(), cx);
+        true
     }
 
     /// send 门回填（new_session_in 落新草稿后调）：switch_to 会把 composer

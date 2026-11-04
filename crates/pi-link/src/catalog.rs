@@ -27,8 +27,21 @@ use serde_json::Value;
 use crate::protocol::{ModelInfo, SlashCommand};
 use crate::skills::SkillEntry;
 
-/// pi 内置斜杠命令表 (name, description)。钉 1.0.0/1.1.0/1.3.0 实测均为空，见模块头注。
-pub const BUILTIN_COMMANDS: &[(&str, &str)] = &[];
+/// pi 内置斜杠命令表 (name, description)。pi 的 RPC `get_commands` 不返回
+/// 内置命令（1.0.0/1.1.0/1.3.0 实测均为空），**vendor/pi 升级时复核**
+/// （PROBE: `get_commands`）。本表 = zi2s.5 客户端内置命令：PF 侧拦截执行
+/// （app session/input/mod.rs `builtin_slash_dispatch`），不发 prompt——
+/// pi-web handleBuiltinSlashCommand parity。扩展/skill 定义了同名的让位。
+pub const BUILTIN_COMMANDS: &[(&str, &str)] = &[
+    ("compact", "Compact context (manual)"),
+    ("auto-compact", "Toggle auto-compaction"),
+    ("reload", "Reload session resources (extensions/MCP)"),
+    ("name", "Rename session — /name <name>"),
+    ("session", "Open session info panel"),
+    ("mcp", "Open MCP settings"),
+    ("copy", "Copy last assistant message"),
+    ("clone", "Clone current session branch"),
+];
 
 /// 内置表 → `SlashCommand`。
 pub fn builtin_commands() -> Vec<SlashCommand> {
@@ -276,9 +289,25 @@ mod tests {
         assert_eq!(cs[1].name, "skill:jev");
     }
 
-    /// pi 无内置斜杠命令（1.0.0/1.1.0/1.3.0 实测）；升级 vendor 时这条会提醒复核。
+    /// 内置表 = zi2s.5 客户端 8 条（pi-web handleBuiltinSlashCommand parity）。
+    /// vendor 升级时另行复核 PROBE: get_commands（pi 的 RPC 不返回内置命令，
+    /// 见模块头注）——本表是 PF 自己的拦截表，与 vendor 无关。
     #[test]
-    fn builtin_table_is_empty() {
-        assert!(builtin_commands().is_empty());
+    fn builtin_table_is_zi2s5_set() {
+        let names: Vec<&str> = BUILTIN_COMMANDS.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            [
+                "compact",
+                "auto-compact",
+                "reload",
+                "name",
+                "session",
+                "mcp",
+                "copy",
+                "clone"
+            ]
+        );
+        assert_eq!(builtin_commands().len(), 8);
     }
 }

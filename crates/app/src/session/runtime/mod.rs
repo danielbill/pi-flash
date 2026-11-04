@@ -279,6 +279,9 @@ pub(crate) struct SessionRuntime {
     /// 此处旧注释误导出的 agent_running 守卫）。运行中由 rebind_pending
     /// 推迟，flag 不清。
     pub(crate) pending_mcp_reload: bool,
+    /// 自动压缩开关（zi2s.5 /auto-compact）：pi 的 get_state 不回显该值
+    /// （rpc-types.d.ts RpcSessionState 无此字段），本地跟踪；None = 默认开。
+    pub(crate) auto_compaction: Option<bool>,
 
     // ---- `!` shell 命令（031）----
     /// rpc bash 在飞（pi isBashRunning 的客户端镜像；期间再发 bash 会被
@@ -447,6 +450,7 @@ impl SessionRuntime {
             ext_sources,
             pending_ext_sources: None,
             pending_mcp_reload: false,
+            auto_compaction: None,
             bash_running: false,
             pending_bash: None,
             last_activity: std::time::Instant::now(),

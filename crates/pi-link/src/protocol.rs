@@ -58,6 +58,11 @@ pub enum Command {
     SetSessionName {
         name: String,
     },
+    /// Toggle pi's auto-compaction (rpc `set_auto_compaction`；zi2s.5
+    /// /auto-compact 用。pi-web 对齐：get_state 不回显该值，本地跟踪）。
+    SetAutoCompaction {
+        enabled: bool,
+    },
     GetCommands,
     GetAvailableModels,
     ExportHtml,
@@ -123,6 +128,7 @@ impl Command {
             Command::GetSessionStats => "get_session_stats",
             Command::SetModel { .. } => "set_model",
             Command::SetSessionName { .. } => "set_session_name",
+            Command::SetAutoCompaction { .. } => "set_auto_compaction",
             Command::GetCommands => "get_commands",
             Command::ExportHtml => "export_html",
             Command::GetAvailableModels => "get_available_models",
@@ -210,6 +216,9 @@ impl Command {
             }
             Command::SetSessionName { name } => {
                 json!({ "type": self.kind(), "name": name })
+            }
+            Command::SetAutoCompaction { enabled } => {
+                json!({ "type": self.kind(), "enabled": enabled })
             }
             Command::GetTree
             | Command::GetEntries

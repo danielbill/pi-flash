@@ -227,21 +227,60 @@ case_c8() { # pi 进程死亡清弹窗（zi2s.3；基线弹窗残留，XFAIL）
   return $rc
 }
 
+case_c9() { # 内置斜杠命令客户端拦截（zi2s.5）：wire 断言无 prompt 帧
+  start_app mock plain || return 1
+  local rc=0
+  # /name <name> → set_session_name 命令 + 输入清空 + 不发 prompt。
+  # （侧栏名不在此断言：mock 的 get_state 无 sessionName 回显，异步会覆写
+  # 乐观写；真机的侧栏名走既有 rename 链 pending_rename → RenameReady）
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text="/name mockname" >/dev/null
+  sleep 1
+  await_wire '"type":"set_session_name"' 5 || rc=1
+  jcheck session 'd.input===""' || rc=1
+  # /compact /auto-compact → 对应 RPC 命令
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/compact >/dev/null
+  sleep 1
+  await_wire '"type":"compact"' 5 || rc=1
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/auto-compact >/dev/null
+  sleep 1
+  await_wire '"type":"set_auto_compaction"' 5 || rc=1
+  # /session /mcp → 客户端面板（无 wire）
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/session >/dev/null
+  sleep 1
+  jcheck dialogs 'd.dialog==="session_info"' || rc=1
+  P exec dialog.close >/dev/null 2>&1
+  MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=/mcp >/dev/null
+  sleep 1
+  jcheck dialogs 'd.settings_open===true' || rc=1
+  P exec settings.close >/dev/null 2>&1
+  # 关键负断言：以上内置命令一个 prompt 都没发过
+  if grep -q '"type":"prompt"' "$CUR_WIRE"; then
+    echo "  [wire] 内置命令泄漏成 prompt 帧（字面文本进了模型上下文）"
+    rc=1
+  fi
+  # 对照组：普通文本照旧发 prompt
+  P exec session.send --arg text=hello >/dev/null
+  await_wire '"type":"prompt"' 5 || rc=1
+  quit_app
+  return $rc
+}
+
 # ------------------------------------------------------------------ main --
 desc_of() {
   case "$1" in
     C1) echo "notify 冒烟：命令收场链路" ;;
-    C2) echo "setStatus 数据面（渲染=zi2s.4）" ;;
+    C2) echo "setStatus 渲染（zi2s.4）" ;;
     C3) echo "setWidget ANSI 剥离（zi2s.8）" ;;
     C4) echo "editor 弹窗开合（Enter 提交=zi2s.6）" ;;
     C5) echo "select 键盘导航（zi2s.7）" ;;
     C6) echo "长标题 select 600x600 壳回归" ;;
     C7) echo "未知 method → cancelled 留痕（zi2s.2）" ;;
     C8) echo "pi 崩溃清弹窗（zi2s.3）" ;;
+    C9) echo "内置斜杠命令拦截（zi2s.5）" ;;
   esac
 }
 
-CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8}"
+CASES="${*:-C1 C2 C3 C4 C5 C6 C7 C8 C9}"
 mkdir -p "$OUTBASE"
 for C in $CASES; do
   CUR="$C"; CUR_OUT="$OUTBASE/$C"; CUR_PFDATA="$CUR_OUT/pfdata"; CUR_WIRE="$CUR_OUT/wire.log"
