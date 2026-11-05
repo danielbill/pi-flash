@@ -12,10 +12,10 @@ use crate::function_panel::file_tree_drag::{
     DRAG_EXPAND_DELAY, TreeDrag, TreeDragGhost, drag_move_target,
 };
 use crate::function_panel::file_tree_edit::{edit_chrome, edit_input_slot, validation_note};
+use crate::same_path;
 use crate::services::file_icons;
 use crate::services::file_tree::TreeRow;
 use crate::ui::icon_path;
-use crate::{same_path};
 
 use super::{CONTENT_PAD, GUIDE_X, INDENT, ROW_H};
 

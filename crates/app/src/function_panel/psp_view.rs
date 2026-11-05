@@ -11,10 +11,10 @@ use crate::i18n::tr;
 use crate::ui::WithTip;
 use crate::ui::tokens::align;
 
+use super::project_row::project_row;
 use super::psp_drag;
 use super::psp_row_views::{pending_row_view, pinned_header_row, session_row_view};
 use super::psp_rows::{PspRow, psp_page, psp_rows};
-use super::project_row::project_row;
 
 pub(crate) fn psp_view(
     chat: &mut Chat,

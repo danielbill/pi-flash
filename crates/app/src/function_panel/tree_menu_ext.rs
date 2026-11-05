@@ -68,8 +68,9 @@ pub(crate) fn ext_menu_entry(
             let item_path = path.clone();
             let menu_id = fm.id.clone();
             sub = sub.child(
-                menu_item_asset(item_id, icon, 14., &item_label, false, false)
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                menu_item_asset(item_id, icon, 14., &item_label, false, false).on_mouse_down(
+                    MouseButton::Left,
+                    move |_, window, cx| {
                         cx.stop_propagation();
                         let _ = weak_item.update(cx, |c, cx| {
                             c.plugin_menu_fire(pix, &menu_id, &item_path, window, cx);
@@ -77,7 +78,8 @@ pub(crate) fn ext_menu_entry(
                             c.dlg.plugin_submenu = false;
                             cx.notify();
                         });
-                    }),
+                    },
+                ),
             );
         }
     }

@@ -10,7 +10,9 @@ use gpui::{SharedString, UniformListDecoration, div, prelude::*, px, rgb};
 use crate::Chat;
 use crate::appearance::theme;
 use crate::function_panel::file_tree_drag::TreeDrag;
-use crate::function_panel::file_tree_edit::{edit_chrome, edit_input_slot, tree_edit_row, validation_note};
+use crate::function_panel::file_tree_edit::{
+    edit_chrome, edit_input_slot, tree_edit_row, validation_note,
+};
 use crate::function_panel::file_tree_sticky::StickyAncestors;
 use crate::services::file_tree::TreeRow;
 use crate::ui::{VListHeight, vlist};
@@ -354,5 +356,6 @@ fn changes_row(
             });
         });
     }
-    el.child(super::rows::tree_right_click(&weak, &row)).into_any_element()
+    el.child(super::rows::tree_right_click(&weak, &row))
+        .into_any_element()
 }

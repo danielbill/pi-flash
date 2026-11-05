@@ -425,4 +425,3 @@ fn tree_terminal_item(
         });
     })
 }
-

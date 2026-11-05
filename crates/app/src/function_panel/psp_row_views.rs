@@ -8,8 +8,8 @@ use crate::Chat;
 use crate::appearance::theme::Theme;
 use crate::ui::tokens::align;
 
-pub(crate) use super::psp_row_slot::{pending_row_view, pinned_header_row};
 use super::psp_row_slot::session_status_slot;
+pub(crate) use super::psp_row_slot::{pending_row_view, pinned_header_row};
 
 /// 会话行：15px 状态槽（运行=旋转圈 / 未读=绿点 / 空）+ 标题；右键详情卡。
 /// `shift` = 所属项目块的避让位移（020 拖拽：整组随头行一起平移让位）。

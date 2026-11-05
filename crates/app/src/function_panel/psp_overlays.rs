@@ -21,8 +21,8 @@ use crate::services::workspace::same_path;
 
 use super::psp_del_confirm::{tree_del_error_layer, tree_delete_confirm};
 use super::psp_hover_card::hover_card;
-use super::psp_project_card::project_card;
 use super::psp_proj_tip::proj_tip;
+use super::psp_project_card::project_card;
 use super::psp_term_menu::term_menu_layer;
 use super::psp_tree_proj_menu::tree_proj_menu_layer;
 
