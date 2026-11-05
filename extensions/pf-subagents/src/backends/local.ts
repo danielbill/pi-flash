@@ -51,6 +51,14 @@ export interface SessionFactoryOptions {
 	providerName?: string;
 	/** Delegation depth, recorded in the marker entry. */
 	depth?: number;
+	/** chat-only tier: start the child with no tools at all (044-0 六档). */
+	noTools?: boolean;
+	/** pi-extension paths to mount in the child (full+ 档的 pi-ext 选择). */
+	extensions?: string[];
+	/** MCP server names the child may use (full+ 档；空/缺省 = 全部按默认装配). */
+	mcpServers?: string[];
+	/** Skill ids to inject; empty/absent = the loader's own discovery. */
+	skills?: string[];
 }
 
 export type SessionFactory = (options: SessionFactoryOptions) => Promise<ChildSession>;
@@ -76,6 +84,11 @@ export interface ResolvedComposition {
 	model?: string;
 	injectAgentsMd?: boolean;
 	maxTurns?: number;
+	/** chat-only tier (044-0 六档): the child starts with no tools. */
+	noTools?: boolean;
+	extensions?: string[];
+	mcpServers?: string[];
+	skills?: string[];
 }
 
 /** Steering message injected at the turn budget; the child should wrap up now. */
@@ -318,6 +331,10 @@ export class LocalProvider implements Provider {
 				inheritParentContext: this.#options.inheritsParentContext,
 				providerName: this.#options.name,
 				depth: request.depth,
+				noTools: composition.noTools,
+				extensions: composition.extensions,
+				mcpServers: composition.mcpServers,
+				skills: composition.skills,
 			});
 		} catch (error) {
 			throw asSubagentError(error, SubagentErrorCode.START_REJECTED);

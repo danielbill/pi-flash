@@ -13,10 +13,11 @@ import { join } from "node:path";
 
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 
-/** Tool-permission tiers (034 recipe reuse). No `full+`: that stays delegator-only. */
-export type ToolTier = "inherit" | "read-only" | "default" | "full";
+/** Tool-permission tiers (034 recipe reuse). `full+` adds per-profile pi-extension
+ * and MCP-server selection (044-0 工具定制 6 档); plain `full` is the built-in set only. */
+export type ToolTier = "inherit" | "chat-only" | "read-only" | "default" | "full" | "full+";
 
-export const TOOL_TIERS: readonly ToolTier[] = ["inherit", "read-only", "default", "full"];
+export const TOOL_TIERS: readonly ToolTier[] = ["inherit", "chat-only", "read-only", "default", "full", "full+"];
 
 /** Default turn budget when neither the delegation call nor the profile sets one. */
 export const DEFAULT_MAX_TURNS = 100;
@@ -73,12 +74,17 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
  * are therefore folded in for the tiers that keep them.
  */
 export const TOOL_TIER_WHITELISTS: Record<Exclude<ToolTier, "inherit">, readonly string[]> = {
+	// Chat-only: no tools at all (model answers from context alone; 044-0 chat-only 档).
+	"chat-only": [],
 	// Read-only exploration: no scripting engine, no mutation, no MCP surface.
 	"read-only": ["read", "grep", "find", "ls"],
 	// Default coding set plus the codemode/tool_search infrastructure (M2.5).
 	default: ["read", "bash", "edit", "write", "codemode", "tool_search"],
 	// Every built-in tool; `agent` is absent by construction (children cannot delegate).
 	full: ["bash", "read", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"],
+	// full+ = full toolset + the profile's own pi-extension/MCP selection
+	// (044-0: 档位选 full+ 时额外挂 extensions/mcp 清单)。
+	"full+": ["bash", "read", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"],
 };
 
 export interface Profile {
@@ -102,6 +108,12 @@ export interface Profile {
 	inheritContextLimit?: number;
 	/** `worktree` isolates the child in a separate checkout. */
 	isolation?: "worktree";
+	/** pi-extension paths to mount in the child (full+ 档的 pi-ext 选择；044-0). */
+	extensions?: string[];
+	/** MCP server names the child may use (full+ 档的 mcp 服务选择；044-0). */
+	mcpServers?: string[];
+	/** Skill ids to inject; empty/absent = the system-enabled set (044-0 skills 定制). */
+	skills?: string[];
 	/** Where the profile came from, for diagnostics. */
 	source: string;
 }
@@ -198,6 +210,17 @@ export function profileFromDocument(id: string, text: string, source: string): P
 			`${source}: tools must be one of ${TOOL_TIERS.join("/")} (got ${String(tools)})`,
 		);
 	}
+	const strList = (key: string): string[] | undefined => {
+		const v = data[key];
+		if (v === undefined) return undefined;
+		if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
+			throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `${source}: ${key} must be a list of strings`);
+		}
+		return v as string[];
+	};
+	const extensions = strList("extensions");
+	const mcpServers = strList("mcp");
+	const skills = strList("skills");
 	const isolation = data.isolation;
 	if (isolation !== undefined && isolation !== "worktree") {
 		throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `${source}: unsupported isolation ${String(isolation)}`);
@@ -229,6 +252,9 @@ export function profileFromDocument(id: string, text: string, source: string): P
 		injectAgentsMd: inject === undefined ? undefined : inject === "true",
 		inheritContextLimit: limit === undefined ? undefined : Number(limit),
 		isolation: isolation as "worktree" | undefined,
+		extensions,
+		mcpServers,
+		skills,
 		source,
 	};
 }

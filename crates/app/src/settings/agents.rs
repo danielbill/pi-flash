@@ -16,13 +16,15 @@ use pi_link::agents::{AgentOrigin, AgentProfile, MaxTurnsTier};
 /// 新建态的 section 哨兵（同 MCP 页 `__mcp_add__`）。
 const AG_NEW: &str = "__agents_new__";
 
-/// 工具档位四选一（含描述；照抄原型下拉）。
-fn tool_tiers() -> [(&'static str, &'static str); 4] {
+/// 工具档位六选一（044-0：继承/chat-only/read-only/default/full/full+；含描述）。
+fn tool_tiers() -> [(&'static str, &'static str); 6] {
     [
         (tr("agents.inherit_tools"), ""),
+        ("chat-only", "无工具，纯对话"),
         ("read-only", "4 个只读内置工具"),
         ("default", "4 个内置工具"),
         ("full", "全部内置工具，无扩展"),
+        ("full+", "全部工具 + 自选扩展/MCP"),
     ]
 }
 
@@ -105,6 +107,11 @@ impl Chat {
             _ => String::new(),
         };
         let inject = a.inject_enabled();
+        let (ag_extensions, ag_mcp, ag_skills) = (
+            a.extensions.clone(),
+            a.mcp_servers.clone(),
+            a.skills.clone(),
+        );
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = id;
@@ -116,6 +123,9 @@ impl Chat {
                 s.ag_tools = tools;
                 s.ag_turns = turns;
                 s.ag_inject = inject;
+                s.ag_extensions = ag_extensions;
+                s.ag_mcp = ag_mcp;
+                s.ag_skills = ag_skills;
                 s.ag_popup = None;
                 s.ag_dirty = false;
                 cx.notify();
@@ -141,6 +151,9 @@ impl Chat {
                 s.ag_tools = "inherit".into();
                 s.ag_turns = MaxTurnsTier::Hundred;
                 s.ag_inject = true;
+                s.ag_extensions = Vec::new();
+                s.ag_mcp = Vec::new();
+                s.ag_skills = Vec::new();
                 s.ag_popup = None;
                 s.ag_dirty = false;
                 cx.notify();
@@ -155,20 +168,35 @@ impl Chat {
         let Some(st) = self.dlg.settings.clone() else {
             return;
         };
-        let (section, name, desc, prompt, turns_n, model, tools, turns, inject) =
-            st.update(cx, |s, cx| {
-                (
-                    s.section.clone(),
-                    s.ag_name.read(cx).value().trim().to_string(),
-                    s.ag_desc.read(cx).value().trim().to_string(),
-                    s.ag_prompt.read(cx).value().to_string(),
-                    s.ag_turns_n.read(cx).value().trim().to_string(),
-                    s.ag_model.clone(),
-                    s.ag_tools.clone(),
-                    s.ag_turns,
-                    s.ag_inject,
-                )
-            });
+        let (
+            section,
+            name,
+            desc,
+            prompt,
+            turns_n,
+            model,
+            tools,
+            turns,
+            inject,
+            ag_extensions,
+            ag_mcp,
+            ag_skills,
+        ) = st.update(cx, |s, cx| {
+            (
+                s.section.clone(),
+                s.ag_name.read(cx).value().trim().to_string(),
+                s.ag_desc.read(cx).value().trim().to_string(),
+                s.ag_prompt.read(cx).value().to_string(),
+                s.ag_turns_n.read(cx).value().trim().to_string(),
+                s.ag_model.clone(),
+                s.ag_tools.clone(),
+                s.ag_turns,
+                s.ag_inject,
+                s.ag_extensions.clone(),
+                s.ag_mcp.clone(),
+                s.ag_skills.clone(),
+            )
+        });
         if name.is_empty()
             || !name
                 .chars()
@@ -210,6 +238,9 @@ impl Chat {
                 Some(prompt_trimmed)
             },
             unknown: prev_unknown,
+            extensions: ag_extensions,
+            mcp_servers: ag_mcp,
+            skills: ag_skills,
             origin: AgentOrigin::Custom,
             path: None,
             error: None,
@@ -433,6 +464,9 @@ fn agent_detail(
         ag_tools,
         ag_turns,
         ag_inject,
+        ag_extensions,
+        ag_mcp,
+        ag_skills,
         ag_popup,
         ag_dd,
         ag_dirty,
@@ -626,12 +660,67 @@ fn agent_detail(
         false,
     ));
 
-    // 工具权限下拉（四档）
+    // 工具权限下拉（044-0 六档）
     form = form.child(agent_row(
         &tr("agents.tools"),
         tools_dropdown(weak, ag_tools, *ag_popup, ag_dd.clone(), readonly),
         false,
     ));
+
+    // full+ 档：自选 pi-ext / MCP 服务器（044-0 工具定制）；skills 定制恒显。
+    // 只读态（内置）不渲染清单（内置不配扩展）。
+    if !readonly {
+        if ag_tools.as_str() == "full+" {
+            form = form
+                .child(agent_row(
+                    &tr("agents.ext_pick"),
+                    pick_list(
+                        weak,
+                        "ext",
+                        pi_link::extensions::personal_extensions(),
+                        ag_extensions,
+                    ),
+                    false,
+                ))
+                .child(agent_row(
+                    &tr("agents.mcp_pick"),
+                    {
+                        let cwd = chat.ws.cwd.clone().unwrap_or_default();
+                        let (servers, _) = pi_link::mcp::load(Some(std::path::Path::new(&cwd)));
+                        let opts = servers
+                            .iter()
+                            .filter(|s| s.enabled)
+                            .map(|s| s.name.clone())
+                            .collect::<Vec<_>>();
+                        pick_list(weak, "mcp", opts, ag_mcp)
+                    },
+                    false,
+                ));
+        }
+        form = form.child(agent_row(
+            &tr("agents.skills_pick"),
+            {
+                let cwd = chat.ws.cwd.clone().unwrap_or_default();
+                let agent_dir = pi_link::config::agent_dir();
+                let home_agents = agent_dir
+                    .parent()
+                    .map(|p| p.join("..").join(".agents").join("skills"))
+                    .map(|p| dunce::canonicalize(&p).unwrap_or(p))
+                    .unwrap_or_else(|| agent_dir.clone());
+                let settings_value = pi_link::config::read_json(&pi_link::config::settings_path())
+                    .unwrap_or(serde_json::json!({}));
+                let entries = pi_link::skills::discover_skills(
+                    std::path::Path::new(&cwd),
+                    &agent_dir,
+                    &home_agents,
+                    &settings_value,
+                );
+                let opts = entries.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+                pick_list(weak, "skill", opts, ag_skills)
+            },
+            false,
+        ));
+    }
 
     // 系统提示 textarea（170px）；只读态渲染静态文本块
     form = form.child(agent_row(
@@ -877,6 +966,103 @@ fn model_dropdown(
 }
 
 /// 工具权限下拉（四档，带描述）。
+/// 多选清单（044-0 工具定制/skills 定制）：checkbox + 名称行，选中态读
+/// `selected`，点击经 `kind` 分派到 Settings 态的对应清单翻转。空清单显
+/// 暂无提示。`kind`: "ext"（pi-ext 路径）/ "mcp"（服务器名）/ "skill"。
+fn pick_list(
+    weak: &gpui::WeakEntity<Chat>,
+    kind: &'static str,
+    options: Vec<String>,
+    selected: &[String],
+) -> gpui::AnyElement {
+    let t = T();
+    let mut col = div()
+        .id(SharedString::from(format!("ag-picks-{kind}")))
+        .w_full()
+        .max_h(px(150.))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(px(2.));
+    if options.is_empty() {
+        col = col.child(
+            div()
+                .text_size(crate::appearance::ui_size(11.))
+                .text_color(rgb(t.text_dim))
+                .child(tr("agents.pick_empty")),
+        );
+    }
+    for opt in options {
+        let checked = selected.iter().any(|s| s == &opt);
+        let weak_row = weak.clone();
+        let opt_label = opt.clone();
+        let opt_for_id = opt.clone();
+        col = col.child(
+            div()
+                .id(SharedString::from(format!(
+                    "ag-pick-{kind}-{}",
+                    sanitize_id(&opt_for_id)
+                )))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(4.))
+                .py(px(3.))
+                .rounded(px(crate::ui::tokens::radius::INLINE))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(t.bg_hover)))
+                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                    let _ = weak_row.update(cx, |c, cx| {
+                        if let Some(st) = c.dlg.settings.clone() {
+                            let _ = st.update(cx, |s, cx| {
+                                let slot = match kind {
+                                    "ext" => &mut s.ag_extensions,
+                                    "mcp" => &mut s.ag_mcp,
+                                    _ => &mut s.ag_skills,
+                                };
+                                match slot.iter().position(|x| x == &opt) {
+                                    Some(ix) => {
+                                        slot.remove(ix);
+                                    }
+                                    None => slot.push(opt.clone()),
+                                }
+                                s.ag_dirty = true;
+                                cx.notify();
+                            });
+                        }
+                        cx.notify();
+                    });
+                })
+                .child(crate::ui::kit::checkbox(checked))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(crate::appearance::ui_size(11.5))
+                        .text_color(rgb(if checked { t.text } else { t.text_dim }))
+                        .child(SharedString::from(opt_label)),
+                ),
+        );
+    }
+    col.into_any_element()
+}
+
+/// 元素 id 消毒：扩展路径/服务器名可能带 `/\:.#` 等字符，gpui 元素 id
+/// 只留字母数字与 `_`。
+fn sanitize_id(raw: &str) -> String {
+    raw.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn tools_dropdown(
     weak: &gpui::WeakEntity<Chat>,
     tools: &str,

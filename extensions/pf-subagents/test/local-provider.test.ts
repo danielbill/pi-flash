@@ -361,7 +361,7 @@ describe("LocalProvider", () => {
 		// Read-only has no scripting engine: neither belongs there.
 		assert.ok(!TOOL_TIER_WHITELISTS["read-only"].includes("codemode"));
 		// No tier may hand a child the agent tool: children cannot delegate.
-		for (const tier of ["read-only", "default", "full"] as const) {
+		for (const tier of ["read-only", "default", "full", "full+"] as const) {
 			assert.ok(!TOOL_TIER_WHITELISTS[tier].includes("agent"), `${tier} must not expose agent`);
 		}
 	});

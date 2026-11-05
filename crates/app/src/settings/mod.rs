@@ -88,11 +88,17 @@ pub(crate) struct SettingsPanel {
     pub ag_turns_n: gpui::Entity<TextInput>,
     /// 模型（None = 键省略 = 继承会话模型）
     pub ag_model: Option<String>,
-    /// 工具档位（inherit/read-only/default/full）
+    /// 工具档位（inherit/chat-only/read-only/default/full/full+，044-0 六档）
     pub ag_tools: String,
     /// 最大轮次档
     pub ag_turns: pi_link::agents::MaxTurnsTier,
     pub ag_inject: bool,
+    /// full+ 档选中的 pi-ext 路径（044-0 工具定制）
+    pub ag_extensions: Vec<String>,
+    /// full+ 档选中的 MCP 服务器名（044-0 工具定制）
+    pub ag_mcp: Vec<String>,
+    /// 选中的 skills（044-0 skills 定制；空 = 注入系统开启的）
+    pub ag_skills: Vec<String>,
     /// 哪个下拉开着（0=模型 1=工具；None=全关）
     pub ag_popup: Option<u8>,
     /// 下拉外点收起守卫（模型/工具两个共享）
@@ -241,6 +247,9 @@ impl SettingsPanel {
             ag_tools: "inherit".into(),
             ag_turns: pi_link::agents::MaxTurnsTier::Hundred,
             ag_inject: true,
+            ag_extensions: Vec::new(),
+            ag_mcp: Vec::new(),
+            ag_skills: Vec::new(),
             ag_popup: None,
             ag_dd: cx.new(|_| DropdownState::new()),
             ag_dirty: false,
@@ -377,6 +386,9 @@ pub(crate) struct SettingsFormData {
     pub ag_tools: String,
     pub ag_turns: pi_link::agents::MaxTurnsTier,
     pub ag_inject: bool,
+    pub ag_extensions: Vec<String>,
+    pub ag_mcp: Vec<String>,
+    pub ag_skills: Vec<String>,
     pub ag_popup: Option<u8>,
     pub ag_dd: gpui::Entity<DropdownState>,
     pub ag_dirty: bool,
@@ -433,6 +445,9 @@ impl SettingsFormData {
             ag_tools: p.ag_tools.clone(),
             ag_turns: p.ag_turns,
             ag_inject: p.ag_inject,
+            ag_extensions: p.ag_extensions.clone(),
+            ag_mcp: p.ag_mcp.clone(),
+            ag_skills: p.ag_skills.clone(),
             ag_popup: p.ag_popup,
             ag_dd: p.ag_dd.clone(),
             ag_dirty: p.ag_dirty,

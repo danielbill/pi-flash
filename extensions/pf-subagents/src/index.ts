@@ -12,6 +12,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -78,6 +79,21 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 			// `injectAgentsMd: false` suppresses project context files (AGENTS.md) —
 			// dsh's agent-instructions loader has no off switch, we do (044 §3).
 			...(options.injectAgentsMd === false ? { noContextFiles: true } : {}),
+			// full+ 档的 pi-ext 选择（044-0）：清单即 -e，挂进 loader。
+			...(options.extensions?.length ? { additionalExtensionPaths: options.extensions } : {}),
+			// skills 定制（044-0）：清单缺省 = 发现集原样；有清单 = 按名字过滤
+			// （skillsOverride 在 discovery 之后、装配之前生效）。
+			...(options.skills?.length
+				? {
+						skillsOverride: (base: { skills: Array<{ name?: string; id?: string }>; diagnostics: unknown[] }) => ({
+							skills: base.skills.filter((s) => {
+								const id = s.name ?? s.id ?? "";
+								return options.skills!.includes(id);
+							}),
+							diagnostics: base.diagnostics,
+						}),
+					}
+				: {}),
 			extensionFactories: [
 				{
 					name: "subagent-child-marker",
@@ -97,7 +113,39 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 				// 官方姿势见 examples/sdk/14-codemode-mcp.ts。
 				sdk.createCodemodeExtension?.({ mode: "on" }),
 				sdk.createToolSearchExtension?.(),
-				sdk.createMcpExtension?.(),
+				// full+ 档的 mcp 服务选择（044-0）：有清单 = 自带 loadConfig 按
+				// 名字过滤（global + 可信项目两份 mcp.json 读后筛）；缺省 = 默认装配。
+				options.mcpServers?.length
+					? sdk.createMcpExtension?.({
+							loadConfig: (ctx: { cwd: string; isProjectTrusted?: () => boolean }) => {
+								const agentDir = sdk.getAgentDir();
+								const servers: Array<Record<string, unknown>> = [];
+								const errors: string[] = [];
+								const read = (file: string, scope: string) => {
+									try {
+										const raw = JSON.parse(readFileSync(file, "utf8"));
+										const map = raw?.mcpServers;
+										if (map && typeof map === "object") {
+											for (const [name, config] of Object.entries(map)) {
+												servers.push({ name, config, source: file, scope });
+											}
+										}
+									} catch (e) {
+										if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+											errors.push(`${file}: ${(e as Error).message}`);
+										}
+									}
+								};
+								read(join(agentDir, "mcp.json"), "global");
+								const trusted = ctx.isProjectTrusted?.() ?? true;
+								if (trusted) read(join(ctx.cwd, ".pi", "mcp.json"), "project");
+								return {
+									servers: servers.filter((s) => options.mcpServers!.includes(String(s.name))),
+									errors,
+								};
+							},
+						})
+					: sdk.createMcpExtension?.(),
 			].filter((f): f is NonNullable<typeof f> => Boolean(f)),
 		});
 		await loader.reload();
@@ -112,6 +160,8 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 			sessionManager,
 			settingsManager,
 			resourceLoader: loader,
+			// chat-only 档（044-0 六档）：noTools all = 一个工具都不开
+			...(options.noTools ? { noTools: "all" } : {}),
 			...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
 		});
 		// SDK sessions don't auto-bind the extension runtime: without this the
@@ -157,6 +207,7 @@ interface SdkLike {
 		cwd?: string;
 		agentDir?: string;
 		extensionFactories?: unknown[];
+		[key: string]: unknown;
 	}) => { reload(): Promise<void> };
 	SettingsManager: {
 		create(cwd?: string, agentDir?: string): {
@@ -165,7 +216,7 @@ interface SdkLike {
 	};
 	createCodemodeExtension?(options?: Record<string, unknown>): unknown;
 	createToolSearchExtension?(): unknown;
-	createMcpExtension?(): unknown;
+	createMcpExtension?(options?: Record<string, unknown>): unknown;
 }
 
 interface AgentSessionLike {
@@ -525,13 +576,18 @@ async function resolveComposition(
 ): Promise<ResolvedComposition> {
 	if (!profileId) return { model };
 	const profile = await loadProfile(profileId, defaultProfilePaths(ctx.cwd));
-	const tools = profile.tools && profile.tools !== "inherit" ? [...TOOL_TIER_WHITELISTS[profile.tools]] : undefined;
+	const tier = profile.tools && profile.tools !== "inherit" ? profile.tools : undefined;
 	return {
 		systemPrompt: profile.systemPrompt,
 		appendSystemPrompt: profile.appendSystemPrompt,
-		tools,
+		// chat-only 档不发白名单（发 noTools 全关）；其余档位发对应清单
+		tools: tier && tier !== "chat-only" ? [...TOOL_TIER_WHITELISTS[tier]] : undefined,
+		noTools: tier === "chat-only" ? true : undefined,
 		model: model ?? profile.model,
 		injectAgentsMd: profile.injectAgentsMd,
 		maxTurns: profile.maxTurns,
+		extensions: profile.extensions,
+		mcpServers: profile.mcpServers,
+		skills: profile.skills,
 	};
 }

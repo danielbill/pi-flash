@@ -18,7 +18,14 @@ pub const FIELD_MAX_TURNS: &str = "maxTurns";
 pub const FIELD_INJECT_AGENTS_MD: &str = "injectAgentsMd";
 
 /// 工具档位四选一（034 配方复用；无 `full+`，那是委派者专属）。
-pub const TOOL_TIERS: [&str; 4] = ["inherit", "read-only", "default", "full"];
+pub const TOOL_TIERS: [&str; 6] = [
+    "inherit",
+    "chat-only",
+    "read-only",
+    "default",
+    "full",
+    "full+",
+];
 
 /// 默认轮次预算：既非调用级 `maxloop` 也非 profile `maxTurns` 时用它。
 pub const DEFAULT_MAX_TURNS: u32 = 100;
@@ -69,6 +76,12 @@ pub struct AgentProfile {
     pub append_system_prompt: Option<String>,
     /// v1 已知字段之外的原序键值（写回时透传）。
     pub unknown: Vec<(String, String)>,
+    /// `extensions` 清单（full+ 档的 pi-ext 选择；空 = 不额外挂，044-0）。
+    pub extensions: Vec<String>,
+    /// `mcp` 清单（full+ 档的 mcp 服务选择；空 = 默认装配，044-0）。
+    pub mcp_servers: Vec<String>,
+    /// `skills` 清单（skills 定制；空 = 注入系统开启的 skills，044-0）。
+    pub skills: Vec<String>,
     pub origin: AgentOrigin,
     /// 文件路径；内置常量无文件时为 None。
     pub path: Option<PathBuf>,
@@ -127,6 +140,9 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
                 "你是只读探索员：调研代码、定位实现、回答问题。\n不执行任何写操作。".into(),
             ),
             unknown: Vec::new(),
+            extensions: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
             origin: AgentOrigin::Builtin,
             path: None,
             error: None,
@@ -144,6 +160,9 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
                 "你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n可使用会话的全部工具，按需读写文件与执行命令。".into(),
             ),
             unknown: Vec::new(),
+            extensions: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
             origin: AgentOrigin::Builtin,
             path: None,
             error: None,
@@ -162,6 +181,9 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
                 "你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。\n不继承任何环境上下文，不执行任何写操作，只输出摘要。".into(),
             ),
             unknown: Vec::new(),
+            extensions: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
             origin: AgentOrigin::Builtin,
             path: None,
             error: None,
@@ -207,6 +229,9 @@ pub fn read_agent_file(id: String, path: &Path) -> AgentProfile {
             system_prompt: None,
             append_system_prompt: None,
             unknown: Vec::new(),
+            extensions: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: Vec::new(),
             origin: AgentOrigin::Custom,
             path: Some(path.to_path_buf()),
             error: Some(error),
@@ -265,12 +290,26 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         "systemPrompt",
         "inheritContextLimit",
         "isolation",
+        "extensions",
+        "mcp",
+        "skills",
     ];
     let unknown = data
         .iter()
         .filter(|(k, _)| !known.contains(&k.as_str()))
         .cloned()
         .collect();
+    // `- item` 清单字段（parse_frontmatter 把清单项拼进一个值，`\n-item` 分隔）
+    let parse_list = |key: &str| -> Vec<String> {
+        get(key)
+            .map(|v| {
+                v.split("\n-")
+                    .map(|s| s.trim_start_matches('-').trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     Ok(AgentProfile {
         id: id.to_string(),
@@ -282,6 +321,9 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         system_prompt: get("systemPrompt").filter(|s| !s.is_empty()),
         append_system_prompt: if body.is_empty() { None } else { Some(body) },
         unknown,
+        extensions: parse_list("extensions"),
+        mcp_servers: parse_list("mcp"),
+        skills: parse_list("skills"),
         origin,
         path: None,
         error: None,
@@ -310,6 +352,19 @@ pub fn serialize_agent(a: &AgentProfile) -> String {
     if let Some(sp) = &a.system_prompt {
         out.push_str(&scalar("systemPrompt", sp));
     }
+    // `- item` 清单（044-0：full+ 的 extensions/mcp + skills 定制）
+    let mut list = |k: &str, items: &[String]| {
+        if items.is_empty() {
+            return;
+        }
+        out.push_str(&format!("{k}:\n"));
+        for item in items {
+            out.push_str(&format!("- {item}\n"));
+        }
+    };
+    list("extensions", &a.extensions);
+    list("mcp", &a.mcp_servers);
+    list("skills", &a.skills);
     for (k, v) in &a.unknown {
         out.push_str(&scalar(k, v));
     }
@@ -520,6 +575,14 @@ mod tests {
         assert!(parse_agent("p", "---\ntools: read\n---\nx\n", AgentOrigin::Custom).is_err());
         assert!(parse_agent("p", "---\ntools:\n  - read\n---\nx\n", AgentOrigin::Custom).is_err());
         assert!(
+            parse_agent("p", "---\ntools: chat-only\n---\nx\n", AgentOrigin::Custom).is_ok(),
+            "044-0 六档 chat-only"
+        );
+        assert!(
+            parse_agent("p", "---\ntools: full+\n---\nx\n", AgentOrigin::Custom).is_ok(),
+            "044-0 六档 full+"
+        );
+        assert!(
             parse_agent(
                 "p",
                 "---\ninjectAgentsMd: yes\n---\nx\n",
@@ -528,6 +591,26 @@ mod tests {
             .is_err()
         );
         assert!(parse_agent("p", "---\nisolation: docker\n---\nx\n", AgentOrigin::Custom).is_err());
+    }
+
+    #[test]
+    fn list_fields_roundtrip_0440() {
+        let doc = "---\ndescription: pick\ntools: full+\nextensions:\n- D:/ext/a\n- D:/ext/b\nmcp:\n- mcp-server-one\nskills:\n- mx-data\n---\n\nbody\n";
+        let a = parse_agent("picks", doc, AgentOrigin::Custom).unwrap();
+        assert_eq!(a.extensions, vec!["D:/ext/a", "D:/ext/b"]);
+        assert_eq!(a.mcp_servers, vec!["mcp-server-one"]);
+        assert_eq!(a.skills, vec!["mx-data"]);
+        // 序列化→再解析回环
+        let b = parse_agent("picks", &serialize_agent(&a), AgentOrigin::Custom).unwrap();
+        assert_eq!(b.extensions, a.extensions);
+        assert_eq!(b.mcp_servers, a.mcp_servers);
+        assert_eq!(b.skills, a.skills);
+        // 不进 unknown（已知键）
+        assert!(
+            !b.unknown
+                .iter()
+                .any(|(k, _)| k == "extensions" || k == "mcp" || k == "skills")
+        );
     }
 
     #[test]
