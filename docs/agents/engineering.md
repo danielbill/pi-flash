@@ -186,4 +186,14 @@ lnk + `User Pinned\TaskBar` 死链自愈。这里只记工程陷阱：
 - **CLSID_ShellLink 无 CoClass 包装**：0.61 没生成 `ShellLink` 类，`CoCreateInstance`
   直接喂 GUID `00021401-0000-0000-C000-000000000046`。
 
+## dev-flags（开发旗标：重型模块发版排除）
+
+机制主体在 `crates/pi-link/src/dev_flags.rs`（`//!` 头注释），AGENTS.md 原有的长解释收编至此：
+
+- **事实源** = `<PF数据目录>/dev-flags.json`（debug = `./pi-flash-dev/`、release = `~/.pi-flash/`；用户机器无此文件 = 各键走默认值）。解析走 `config::read_json`：容忍 `//` 注释 / 尾逗号 / BOM，缺文件 = 空对象，坏文件 fail-closed。
+- **优先级**：env `PI_FLASH_<键大写>`（`1`/`true` 强开、`0`/`false` 强关）> 文件键值 > 默认值。键住址 = `dev_flags::KNOWN`；**接入约定**：KNOWN 加键 → 消费点调 `dev_flag_enabled("键")` → env 覆盖自动获得。现键：`subagents`（默认**开**，044-0 拍板）、`pi_ext_market`、`pi_native_market`（发版排除语义，默认关）。
+- **改动重启生效**：渲染侧走 `workspace::dev_flag_enabled` 的 OnceLock 快照，不热加载。
+- **可观测**：debug 构建启动 stderr 打 `[startup] dev-flags:` 状态行（含未知键 typo 提示）；release 包必须 stdout/stderr 零输出（包内烟测门禁，见「发版脚本」节）。
+- 关态生效点示例（subagents，7 处）：不注入 `-e pi-subagents`、full 档 `--tools` 不点名 agent、设置页/操作栏按钮/徽标隐藏、会话激活不建面板缓存不起轮询（零 IO）。
+
 
