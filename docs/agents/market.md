@@ -111,13 +111,24 @@
 - **内存只留当前页**（翻页先清空）；`kinds` 表（name → 资源类型）只活会话内，翻回旧页
   命中即 0 网络。
 - 单测：pi-link 侧在 `market/pi_ext_market.rs` 的 `#[cfg(test)]`（搜索 fixture）；
-  app 侧已拆目录模块 `market/pi_ext_market/`（mod.rs 状态机 + page 骨架 +
-  `thousands`；card.rs 卡片及子件；pager.rs `page_window` / `pager` / `pager_nav`
-  及翻页单测），跑
+  app 侧已拆目录模块 `market/pi_ext_market/`（mod.rs 状态机 + 动作；
+  render.rs 页面主体 + 几何常量 + `card_metrics`；toolbar.rs 工具栏 + 右列宽；
+  states.rs 黄条/骨架/空态；card.rs 卡片及子件；pager.rs `page_window` /
+  `pager` / `pager_nav` 及翻页单测），跑
   `cargo test -p app --bin pi-flash market`（本机 vendored gpui-component 的 dev 配置会
   先报无关错误，见 engineering.md）。
 
-## PF 插件市场页（090-4，pf_market.rs + pf_installed.rs）
+## PF 插件市场页（090-4，pf_market/ + pf_installed/ 目录模块）
+
+> 文件组织（2026-11-06 超规拆分后）：`pf_market/mod.rs` 索引单例 + `PfState`
+> + 动作（open/switch/install/update）；`pf_market/render.rs` 页主体/头段/
+> 页签行；`pf_market/card.rs` 市场卡；`pf_market/pager.rs` 页码条；
+> `pf_installed/mod.rs` 列表/详情渲染；`pf_installed/actions.rs` 启停/卸载
+> + `remove_confirm_overlay`。pi_native_market 同口径：mod.rs 状态机 +
+> 助手、actions.rs Chat 动作链、render.rs page + BarModel、card.rs 分段壳、
+> package.rs 包卡、controls.rs 工具栏/页码条、design.rs 设计稿字面量、
+> time.rs 时间戳文案。外部入口路径不变（`pi_ext_market::page` /
+> `pi_native_market::page` / `pf_market::page` / `pf_installed::remove_confirm_overlay`）。
 
 - **头段是页签行**（v4）：`所有插件 | 已安装` 两签都可点（`tab_row`/`tab_label`，
   `PfTab`），`card_header` 的 title 已从 SharedString 改成 AnyElement——别照旧

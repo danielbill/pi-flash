@@ -7,8 +7,9 @@ use gpui::prelude::*;
 
 use gpui::{AnyElement, IntoElement, MouseButton, SharedString, Styled};
 
-use super::{
-    Chat, DESC_LINE_H, DESC_LINES, ROW_PAD_R, RowData, RowStatus, THUMB_H, THUMB_W, card_metrics,
+use super::Chat;
+use super::render::{
+    DESC_LINE_H, DESC_LINES, ROW_PAD_R, RowData, RowStatus, THUMB_H, THUMB_W, card_metrics,
 };
 use crate::appearance::theme::{Theme, theme as T};
 use crate::i18n::tr;

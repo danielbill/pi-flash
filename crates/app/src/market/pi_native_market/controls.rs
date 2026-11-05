@@ -7,7 +7,8 @@ use gpui::prelude::*;
 use gpui::{AnyElement, IntoElement, MouseButton, SharedString, Styled};
 
 use super::design::{self as d, Metrics, px18, sp};
-use super::{BarModel, NativeKind, NativeSort, dropdown_row, label};
+use super::render::BarModel;
+use super::{NativeKind, NativeSort, label};
 use crate::Chat;
 
 /// 工具栏：三字段 + 两按钮。字段宽 12rem / 13rem（= 216 / 234）。
@@ -287,6 +288,34 @@ fn bracket_button(
 // ---------------------------------------------------------------------------
 // 页码条
 // ---------------------------------------------------------------------------
+
+/// 类型/排序下拉的一行（设计稿 select 选项：全小写 + 大写化由渲染做）。
+fn dropdown_row(
+    id: String,
+    text: &str,
+    selected: bool,
+    on_click: impl Fn(&mut gpui::App) + 'static,
+) -> AnyElement {
+    let mut row = gpui::div()
+        .id(SharedString::from(id))
+        // ui-raw: ok pi.dev select 选项 py7 逐值复刻（§10.8 登记）
+        .w_full()
+        .px(gpui::px(sp::CONTROL_PAD_X))
+        .py(gpui::px(7.))
+        .flex()
+        .items_center()
+        .cursor_pointer()
+        .text_size(gpui::px(px18::META_FS))
+        .font_family(d::MONO)
+        .text_color(d::text())
+        .hover(|s| s.bg(d::control_bg_hover()))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| on_click(cx))
+        .child(SharedString::from(text.to_string()));
+    if selected {
+        row = row.bg(d::control_bg_hover());
+    }
+    row.into_any_element()
+}
 
 use crate::market::shell::{PageBtn, page_window};
 
