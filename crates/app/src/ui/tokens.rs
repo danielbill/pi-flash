@@ -33,9 +33,13 @@ pub mod icon {
     pub const CHECK_CARD: f32 = 24.;
 }
 
-/// §4 圆角（px）。同语义同值：8=菜单壳/列表行，10=弹窗，12=大卡。
+/// §4 圆角（px）。同语义同值：5=行内小件（R_INLINE），8=菜单壳/列表行，
+/// 10=弹窗，12=大卡。
 pub mod radius {
     pub const XS: f32 = 3.;
+    /// 行内小件档（规范 R_INLINE）：被塞进行里的小散件——行内小图标钮、
+    /// 菜单行、键帽、状态项等（「能点的散件走 CTRL 6，行内容器走 5」）。
+    pub const INLINE: f32 = 5.;
     pub const CTRL: f32 = 6.;
     pub const CARD: f32 = 8.;
     pub const MODAL: f32 = 10.;
@@ -222,12 +226,13 @@ mod tests {
         assert_eq!(
             [
                 radius::XS,
+                radius::INLINE,
                 radius::CTRL,
                 radius::CARD,
                 radius::MODAL,
                 radius::SHEET
             ],
-            [3., 6., 8., 10., 12.]
+            [3., 5., 6., 8., 10., 12.]
         );
         // §5.1 按钮
         assert_eq!(

@@ -12,6 +12,7 @@ use gpui::{MouseButton, SharedString, div, prelude::*, px, rgb};
 
 use crate::Chat;
 use crate::appearance::theme::{Theme, theme as T};
+use crate::ui::tokens::radius;
 use crate::ui::{icon, tooltip::WithTip};
 
 /// 状态带高度（034 §3.1：inputpanel 正下方一条 28px）。
@@ -220,11 +221,11 @@ fn mgr_button(cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
         .right_0()
         .top_0()
         .h(px(BAR_H))
-        .w(px(28.))
+        .w(px(BAR_H))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(5.))
+        .rounded(px(radius::INLINE))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(t.bg_hover)))
         .with_tip("footerbar.tip.mgr")
