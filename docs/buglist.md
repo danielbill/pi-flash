@@ -3,77 +3,59 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
-## 待修（2026-11-05）——子代理 044-0 新版首轮真机实测（用户反馈，根因已取证）
+## 待复验（2026-11-06 修复）——子代理 044-0 首轮真机实测 B1-B5（代码全落 d5ecf742→ac33bdee，真机验收未做）
 
 > 取证环境：真机委派 explorer×4（并发设 3）；会话
 > `sessions/--D--ai_workspace-pi-flash--/2026-11-05T10-51-39-…jsonl`；
 > 一次性复现脚本 `vendor/pi/tmp-repro{,2,3}.mjs`（探针直指 manager/子会话
 > 事件链，未动产品代码；vendor/pi 下脚本用完可删）。bd：pi-flash-3ghh /
-> -es8m / -y26f / -g9pn / -mtc1。
+> -es8m / -y26f / -g9pn / -mtc1。扩展测试 106 / app 432 全绿。
 
-### B1 行二统计只在 settle 后出现，运行中恒空（pi-flash-y26f）
+### B1 行二统计只在 settle 后出现（pi-flash-y26f，d5ecf742）
 
-- 现象：运行 4m23s 行二只有时长；settle 后一行才齐「4轮 4言 80工具 35k」。
-- 根因（repro-3 探针实锤）：manager.ts 每轮 watcher 守卫
-  `if (record.state !== "active") return` ——caller 投递下 `wait()/#settle`
-  在 start 后**立即**把 state 置 `settling`，而子代理整个运行期都发生在
-  `handle.result()` await 期间（即 settling 内），每轮上报全被拦。探针：
-  watch 回调到达 4 次、onDescriptor 仅 3 次（provisioning/active/completed）。
-- 连带：descriptor.usage 只在 settle 写，运行中永远无 token——设计行二含
-  token 消耗，需每轮 stats 顺带累计 usage（message_end 事件 message.usage）。
-- 修法方向：守卫改「settled/failed 才拦」（settling 期放行）；stats 通道带
-  usage 累计。
+- 根因：manager.ts 每轮 watcher 守卫 `state !== "active"`——caller 投递下
+  `wait()/#settle` 在 start 后立即置 `settling`，运行期全在 settling 内，每轮
+  上报全被拦（repro-3 探针实锤）；连带 usage 只在 settle 落盘。
+- 修法：守卫改 settled/failed 才拦；watch 通道升级 `ChildProgress{stats,usage}`
+  ——usage 随每轮 message_end 累计（ΣtotalTokens+cost），settle 的 result.usage
+  同口径。
 - 验证：委派≥2 轮任务，第 1 轮结束 1s 内行二出轮次/发言/工具/token，不等 settle。
 
-### B2 运行中面板行不可点击打开子会话（pi-flash-3ghh）
+### B2 运行中面板行不可点击打开子会话（pi-flash-3ghh，d1172ea9）
 
-- 现象：运行中整行点击无反应，settle 后才行。
-- 根因：descriptor.sessionFile 只在 #settle 回写；provisioning/active 条目
-  无 sessionFile → panel_row open=None 不接点击。子会话文件 prepare 后即存在。
-- 修法：active 落盘前即回写 session_file()。
+- 根因：descriptor.sessionFile 只在 #settle 回写，in-flight 条目无 sessionFile。
+- 修法：prepare 返回即回写 session_file()（accept 失败的 failed descriptor
+  同样带上）。
 - 验证：运行中点行 → 打开只读观察窗且随子会话追加刷新。
 
-### B3 并发满即拒的第 4 个委派完全不可见（pi-flash-g9pn，用户拍板验收 UX）
+### B3 并发满即拒的第 4 个委派完全不可见（pi-flash-g9pn，2e33cc2f）
 
-- 现象：并发 3 同帧派 4，面板/描述符只有 3 个 childId，转录第 4 张卡看起来
-  正常（绿点，实为 B5），用户以为派了 4 个。
-- 根因（JSONL 追踪到收尾，实锤）：CAPACITY_REACHED 满即拒不排队（设计如
-  此）；被拒调用**无 descriptor**（manager.start 在 capacity.acquire 抛出时
-  record 未创建），失败结果挂在工具结果里，而 pi 转录要等全部工具完成才写
-  toolResult——两个子代理在跑期间用户看不到拒绝。文件已落地
-  `CAPACITY_REACHED: subagent capacity reached: 3/3 active`——**是我们容量闸
-  拒的，非智谱直打**（provider 层错误会归一 PROVIDER_ERROR，本案未发生）。
-- 后续追踪：模型收到拒绝结果后**自行重派成功**（第 4 个扫描以 sub-5 完成，
-  stopReason=completed）——4 个扫描最终都跑完，但全程用户不可见。
-- 修法清单（用户拍板：派发条目后直接更新 [失败]，点击可见失败理由）：
-  ② **runDelegation 失败路径先发 onUpdate(details.status=failed,
-  error_code) 再返回 failure——转录 compact 卡即时变 [失败]+分码——本条
-  验收核心必修**（主 agent 实际一直知道拒绝：它转述了容量失败并自行补派
-  sub-5；缺的只是给用户的即时呈现）；
-  ① agent 工具描述动态注入容量上限 +「被拒等槽位释放重派」引导（增益：
-  免掉这趟拒绝往返）；
-  ③ 被拒委派落 descriptor——面板即时显示（增益）；
-  ④ 点击行/卡看失败理由（增益）。
+- 根因：CAPACITY_REACHED 满即拒不排队；被拒调用无 descriptor、失败结果挂在
+  工具结果里而 pi 转录要等整轮工具收尾才写 toolResult；且 PF 此前把
+  tool_execution_update 事件整体丢弃（WireEvent 空臂），onUpdate 分片根本
+  到不了 UI。
+- 修法（拍板 ②①③④全做）：② runDelegation 失败路径先发
+  onUpdate(details.status=failed, error_code) 再返回 failure，failure() details
+  改 snake_case；PF 侧 events.rs/model.rs 接收 agent 工具的
+  partialResult.details 合入 ToolCall 块；① 工具描述注入容量上限+「等槽位
+  释放重派」引导；③ 被拒委派也落 failed descriptor（面板即时红行）；④
+  面板失败行内联红分码。
 - 验证：并发 3 派 4，第 4 条**立即**在转录与面板显 [失败]+CAPACITY_REACHED；
   模型在槽位释放后补派且新委派可见。
 
-### B4 面板头部合计时长与行时长矛盾（pi-flash-mtc1）
+### B4 面板头部合计时长与行时长矛盾（pi-flash-mtc1，61cc503a）
 
-- 现象：合计 ⏱3s 而行各 13s（另一次 合计4m3s vs 行4m23s）。
-- 根因：头部合计用 row_duration_secs（updatedAt−startedAt，运行中 descriptor
-  不刷新则≈0/滞后），行用 live now−startedAt，两套口径。
-- 修法：头部运行中行同走 live 口径（与 panel_row 统一一个函数）；B1 修好
-  后 updatedAt 每轮刷新也会自然收敛。
+- 根因：头部用 stale 的 updatedAt−startedAt，行用 live now−startedAt，两套口径。
+- 修法：row_secs 唯一口径函数（运行中 live / 终态 updatedAt），头部与行同走。
 - 验证：运行中合计 ≥ 最大单行且随 tick 增长。
 
-### B5 会话流 compact 卡状态点恒绿（pi-flash-es8m）
+### B5 会话流 compact 卡状态点恒绿（pi-flash-es8m，ac33bdee）
 
-- 现象：派出瞬间 4 张卡全部绿点（运行中也绿）。
-- 根因：render_subagent_card 的 done 条件
-  `(!result_arrived || !stop_reason.is_empty())` 把「结果未到」也算 done；
-  running 只认 details.status=="running"（onUpdate 仅 accept 时发一次）。
-- 修法：done = result_arrived 且 stop_reason=="completed"；其余非错误态显黄 spin。
-- 验证：派出即黄 spin，settle 后才变绿/红（分码）。
+- 根因：render_subagent_card 的 done 条件 `(!result_arrived || …)` 把「结果
+  未到」也算 done。
+- 修法：done = result 到且 stopReason==completed；其余非终态黄 spin；中止/
+  轮次用尽橙点（044-1 §1.3 与面板同源）；失败红点+分码（B3② 分片即时上卡）。
+- 验证：派出即黄 spin，settle 后才变绿/红/橙（分码）。
 
 ### 信息项（非 bug）
 
@@ -81,9 +63,8 @@
   `~/.pi/agent/agents/explorer.md` 同名自定义覆盖内置（by design）；删自定义
   文件即恢复内置。
 - **「看不到 subagent 工作内容」**：compact 卡按 044-0 新设计不再带
-  prompt/回答正文，检视路径=面板行点击打开子会话（B2 修复前不可用，两者
-  叠加造成完全看不到）。B2 修复后评估是否仍需 compact 卡展开正文。
-- **只读观察窗的外部追加跟随（~3s）未验证**：依赖 B2 先修复。
+  prompt/回答正文，检视路径=面板行点击打开子会话（B2 已修复）。
+- **只读观察窗的外部追加跟随（~3s）未验证**：依赖 B2，随本轮一并复验。
 
 ## 已修（0.4.1 发版复盘，2026-11-03）——0.4.0 发布包缺子代理扩展（agent 工具）
 
