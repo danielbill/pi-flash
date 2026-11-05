@@ -2,6 +2,37 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.4.3] - 2026-11-05
+
+Highlights of this release:
+0. A bottom status bar for the session area: extension status (usage, MCP, etc.) is now fixed in place, clickable, and per-plugin visibility is toggleable
+1. Model pricing in the model detail dialog: official prices pulled from models.dev, with manual override
+2. When a background session is waiting for your answer, its session row shows an orange-dot badge plus a toast
+3. A batch of interaction fixes and performance work
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # Same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. A portable zip is also available: download, unzip, and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **Bottom status bar for the session area**: session status set via ctx.ui.setStatus moves from a bare one-liner above the input box into a designed slot at the bottom of the session area; multiple entries are separated by `|` with overflow ellipsized on a single line; clickable items jump straight to their target (usage → /usage, MCP → Settings›MCP), and command-type entries are disabled while running with a tooltip; the `[...]` menu at the right edge toggles per-plugin status visibility (takes effect live, persisted); a master switch sits right of MCP in the composer toolbar (on by default). (949a2adc, c01ab9cf)
+- **Model pricing management**: the model detail dialog gains four price fields (input/output/cache read/cache write, $/MTok) — filled automatically from the official models.dev price source (raw + jsdelivr dual channel, 7-day cache, falls back to stale cache offline); catalog prices only fill empty/zero slots; a hand-entered value is an explicit override, clearing it falls back to the catalog price; the dialog is correspondingly taller (500×600). (98260a32, 6a74c513, cbe86e71, 903393f8)
+- **Background session waiting-for-you notice** (pi-web notification parity): when a background session's extension dialog is waiting for your answer, its session row shows an orange-dot badge plus a toast "Background session "X" is waiting for your answer", reminded once per request. (d599bdf2)
+- **Session-list phase row**: a running session shows "Working + elapsed timer", a waiting one shows "Waiting"; the running spinner is now an 8-spoke ring (ZCode-style starburst). (00df351a, a67734c0, eaabe8f7)
+
+### Bug fixes
+- AskCard: the preview area is now full-height with scrolling for long content (the old 240px cap truncated it); custom answer rows with empty descriptions keep their height, rows align, and a selected row can be deselected. (e6e2c809, 75ba968d)
+- Tool/thinking pill popup menus: unified anchor positioning (dropping the right-aligned special case), uniform 10px padding, row spacing pinned back — no more squeezing. (6e0a5d2e, 2b45bd38, 97df83b5)
+- Editor: selecting inline code in a message no longer triggers a file open; directories are no longer misread as files with "Access denied". (dd3c9ae3)
+
+### Improvements
+- Performance: fixed an 11x models.json disk-read storm per keystroke in the model detail dialog; settings-page listing dropped from 3-5ms to 1.5ms per frame with a real directory. (f0582e40, 5ae62a58)
+- Session-list row height 32 → 34px for a larger hit target; the accent bar is separated from the row body with a gap between adjacent bars. (fd8992c8, 7e710d03)
 ## [0.4.2] - 2026-11-04
 
 Highlights of this release:
