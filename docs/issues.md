@@ -1,13 +1,13 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-11-04 11:56 ｜ 共 8 条（open 3）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-11-05 10:29 ｜ 共 8 条（open 0）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
 
-## 🔴 Open（3）
+## ✅ Closed（8）
 
 ### #8 没设置模型费用，会导致Error Cannot read properties of undefined (reading 'tiers')
-- 状态：open ｜ 标签：— ｜ 作者：zengdaming ｜ 创建：2026-10-26 ｜ 更新：2026-10-26
+- 状态：closed ｜ 标签：— ｜ 作者：zengdaming ｜ 创建：2026-10-26 ｜ 更新：2026-11-05 ｜ 关闭：2026-11-05
 - https://github.com/danielbill/pi-flash/issues/8
 
 ### 背景：
@@ -28,19 +28,41 @@ providers.json（或 models.json）的模型定义中补齐 cost 字段：
 ### 建议
 能兼容么有定义模型费用的情况，提高健壮性
 
+<details><summary>评论（1）</summary>
+
+**@danielbill**（2026-11-05）：
+
+0.4.3已支持自动填参获取价格
+
+</details>
+
 ### #7 装了扩展，使用的时候会话页面卡住了
-- 状态：open ｜ 标签：— ｜ 作者：yuanjingking ｜ 创建：2026-10-26 ｜ 更新：2026-10-26
+- 状态：closed ｜ 标签：— ｜ 作者：yuanjingking ｜ 创建：2026-10-26 ｜ 更新：2026-11-04 ｜ 关闭：2026-11-04
 - https://github.com/danielbill/pi-flash/issues/7
 
 <img width="2418" height="1395" alt="Image" src="https://github.com/user-attachments/assets/769fcb2f-9748-4d33-bbda-cfef23d4d788" />
 
+<details><summary>评论（1）</summary>
+
+**@danielbill**（2026-11-04）：
+
+0.4.2已修复
+
+</details>
+
 ### #6 建议加上当前会话消耗的token数
-- 状态：open ｜ 标签：— ｜ 作者：yuanjingking ｜ 创建：2026-10-25 ｜ 更新：2026-10-25
+- 状态：closed ｜ 标签：— ｜ 作者：yuanjingking ｜ 创建：2026-10-25 ｜ 更新：2026-11-04 ｜ 关闭：2026-11-04
 - https://github.com/danielbill/pi-flash/issues/6
 
 建议加上当前会话消耗的token数，每个会话的token消耗，使用的模型
 
-## ✅ Closed（5）
+<details><summary>评论（1）</summary>
+
+**@danielbill**（2026-11-04）：
+
+模型边上的小圆圈点一点，早就实现了
+
+</details>
 
 ### #5 建议支持自定义供应商
 - 状态：closed ｜ 标签：— ｜ 作者：easyeda2021 ｜ 创建：2026-10-23 ｜ 更新：2026-11-03 ｜ 关闭：2026-11-03
