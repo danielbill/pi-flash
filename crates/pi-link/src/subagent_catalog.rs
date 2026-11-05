@@ -42,6 +42,11 @@ pub struct CatalogRow {
     pub session_file: Option<String>,
     /// 子代理 token 合计（descriptor.usage，终态才落盘；老 descriptor 无此字段）
     pub usage_total: Option<u64>,
+    /// 活动计数（descriptor.stats，044-0 面板行二：轮次/发言数/工具调用数；
+    /// 老 descriptor 无此字段 → None，面板显 "—"）
+    pub turns: Option<u64>,
+    pub agent_messages: Option<u64>,
+    pub tool_calls: Option<u64>,
     pub started_at: String,
     pub updated_at: String,
 }
@@ -222,6 +227,9 @@ fn parse_line(line: &str) -> Option<CatalogRow> {
             .map(str::to_string)
             .filter(|s| !s.is_empty()),
         usage_total: usage_total_of(&d["usage"]),
+        turns: stat_of(d, "turns"),
+        agent_messages: stat_of(d, "agentMessages"),
+        tool_calls: stat_of(d, "toolCalls"),
         started_at: d["startedAt"].as_str().unwrap_or("").to_string(),
         updated_at: d["updatedAt"].as_str().unwrap_or("").to_string(),
     })
@@ -241,6 +249,11 @@ fn usage_total_of(u: &Value) -> Option<u64> {
         .filter_map(|k| u[*k].as_u64())
         .sum();
     (sum > 0).then_some(sum)
+}
+
+/// descriptor.stats 的单顶计数：stats 缺失/非对象/字段缺失 → None。
+fn stat_of(d: &Value, key: &str) -> Option<u64> {
+    d["stats"][key].as_u64()
 }
 
 /// ISO-8601（`2026-10-19T12:34:56.789Z`）→ Unix 秒。解析不出返回 None。
@@ -436,6 +449,24 @@ mod tests {
             scan.rows[2].usage_total, None,
             "老 descriptor 无 usage → None"
         );
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn stats_fields_parse_or_fall_back_to_none() {
+        let f = tmp("stats");
+        let with_stats = "{\"type\":\"custom\",\"customType\":\"subagent/descriptor\",\"data\":{\"childId\":\"a\",\"provider\":\"spawn\",\"phase\":\"active\",\"stats\":{\"turns\":3,\"agentMessages\":2,\"toolCalls\":5}}}\n";
+        // stats 缺字段 → 该顶 None；无 stats（老 descriptor）→ 三顶全 None
+        let partial = "{\"type\":\"custom\",\"customType\":\"subagent/descriptor\",\"data\":{\"childId\":\"b\",\"provider\":\"spawn\",\"phase\":\"active\",\"stats\":{\"turns\":1}}}\n";
+        let plain = desc("c", "completed", "");
+        std::fs::write(&f, format!("{with_stats}{partial}{plain}")).unwrap();
+        let scan = read_catalog(&f, 0);
+        assert_eq!(scan.rows[0].turns, Some(3));
+        assert_eq!(scan.rows[0].agent_messages, Some(2));
+        assert_eq!(scan.rows[0].tool_calls, Some(5));
+        assert_eq!(scan.rows[1].turns, Some(1));
+        assert_eq!(scan.rows[1].agent_messages, None);
+        assert_eq!(scan.rows[2].turns, None, "老 descriptor 无 stats → None");
         let _ = std::fs::remove_file(&f);
     }
 

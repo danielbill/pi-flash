@@ -28,6 +28,12 @@ export const SubagentErrorCode = {
 	PROFILE_INVALID: "PROFILE_INVALID",
 	/** The work was aborted (parent turn cancel, session shutdown). */
 	ABORTED: "ABORTED",
+	/**
+	 * Runtime failure produced by the model provider (429/5xx/timeout/stream
+	 * drop). The original error stays in the message (044-0 错误管理: 模块层
+	 * 与运行层二分——码表只枚举我们自己的，模型商的不可枚举一律归一).
+	 */
+	PROVIDER_ERROR: "PROVIDER_ERROR",
 } as const;
 
 export type SubagentErrorCode = (typeof SubagentErrorCode)[keyof typeof SubagentErrorCode];

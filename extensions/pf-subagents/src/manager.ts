@@ -49,6 +49,8 @@ interface ActivationRecord {
 	/** Admission switch; false once settlement starts. */
 	admissionOpen: boolean;
 	settled?: Promise<SubagentResult>;
+	/** Unsubscribe for the per-turn stats watcher, wired at active. */
+	unwatch?: () => void;
 	descriptor: SubagentDescriptor;
 }
 
@@ -159,6 +161,14 @@ export class SubagentManager {
 			record.state = "active";
 			record.admissionOpen = true;
 			record.descriptor = { ...record.descriptor, phase: "active", updatedAt: this.#now().toISOString() };
+			// Per-turn stats feed the host panel (044-0 行二): each assistant turn
+			// refreshes the descriptor and re-emits it (one entry per turn). The
+			// watcher dies with settlement (record.unwatch in #settle).
+			record.unwatch = handle.watch?.((stats) => {
+				if (record.state !== "active") return;
+				record.descriptor = { ...record.descriptor, stats, updatedAt: this.#now().toISOString() };
+				this.#emit(record);
+			});
 			this.#emit(record);
 		} catch (error) {
 			record.state = "failed";
@@ -254,7 +264,9 @@ export class SubagentManager {
 			try {
 				result = await record.handle!.result();
 			} catch (error) {
-				const failure = asSubagentError(error, SubagentErrorCode.START_REJECTED);
+				// result() itself does not throw for run failures, but a hostile
+				// backend still lands here: runtime layer, not admission.
+				const failure = asSubagentError(error, SubagentErrorCode.PROVIDER_ERROR);
 				result = {
 					childId: record.childId,
 					text: "",
@@ -270,6 +282,8 @@ export class SubagentManager {
 			}
 			record.slot.release();
 			record.state = "settled";
+			record.unwatch?.();
+			record.unwatch = undefined;
 			this.#untrackChild(record);
 			// 回写子会话文件路径：宿主“打开子会话”跳转的数据源（044）。
 			record.descriptor.sessionFile = record.handle?.session_file() ?? record.descriptor.sessionFile;
@@ -288,6 +302,9 @@ export class SubagentManager {
 				errorCode: result.stopReason === "max_turns" ? "MAX_TURNS" : result.errorCode,
 				// 子代理 token 用量落盘（面板行的 tokens 列，pi-web Agents 对齐）
 				...(result.usage ? { usage: result.usage } : {}),
+				// 活动计数落盘（044-0 行二：轮次/发言数/工具调用次数）；终态优先
+				// result.stats，缺了保运行期 watcher 已写入的最新值。
+				...(result.stats ? { stats: result.stats } : {}),
 				updatedAt: this.#now().toISOString(),
 			};
 			this.#emit(record);

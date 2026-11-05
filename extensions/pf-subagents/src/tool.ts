@@ -184,6 +184,7 @@ function success(result: SubagentResult): ToolResultLike {
 			text: result.text,
 			stopReason: result.stopReason,
 			usage: result.usage,
+			...(result.stats ? { stats: result.stats } : {}),
 			durationMs: result.durationMs,
 		},
 		// 卡片数据源（Rust 侧读 details，snake_case）。
@@ -194,6 +195,14 @@ function success(result: SubagentResult): ToolResultLike {
 			duration_ms: result.durationMs,
 			total_tokens: usage?.["totalTokens"],
 			cost_total: cost?.["total"],
+			// Activity counters (044-0 card/panel row 2), snake_case for the host.
+			...(result.stats
+				? {
+						turns: result.stats.turns,
+						agent_messages: result.stats.agentMessages,
+						tool_calls: result.stats.toolCalls,
+					}
+				: {}),
 			error_code: result.errorCode,
 		},
 		isError: result.stopReason === "error",

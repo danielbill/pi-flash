@@ -58,6 +58,16 @@ export interface SubagentRequest {
 
 export type StopReason = "completed" | "aborted" | "error" | "max_turns";
 
+/** Live activity counters of one child (panel row 2 / card details, 044-0). */
+export interface ChildSessionStats {
+	/** Assistant turns taken. */
+	turns: number;
+	/** Assistant messages that carried a non-empty text block (agent 发言数). */
+	agentMessages: number;
+	/** Tool calls issued across all turns. */
+	toolCalls: number;
+}
+
 export interface SubagentUsage {
 	input: number;
 	output: number;
@@ -72,6 +82,8 @@ export interface SubagentResult {
 	stopReason: StopReason;
 	usage?: SubagentUsage;
 	durationMs?: number;
+	/** Activity counters at settle (partial counts on error/max_turns). */
+	stats?: ChildSessionStats;
 	/** Persisted session file of the child (host "open child session" jump target). */
 	session_file?: string;
 	/** Present when `stopReason` is not `completed`. */
@@ -91,6 +103,11 @@ export interface ChildHandle {
 	session_file(): string | undefined;
 	/** Settles with the child's final answer. */
 	result(): Promise<SubagentResult>;
+	/**
+	 * Observe live activity counters (one call per assistant turn). Returns an
+	 * unsubscribe; absent when the backend cannot observe turns.
+	 */
+	watch?(listener: (stats: ChildSessionStats) => void): () => void;
 	/** Release the child and its resources. Idempotent. */
 	dispose(): Promise<void>;
 }

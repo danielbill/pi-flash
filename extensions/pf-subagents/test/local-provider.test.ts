@@ -26,8 +26,16 @@ class ScriptedSession implements ChildSession {
 	}
 
 	/** Emit one `message_end`; the turn limiter counts assistant turns only. */
-	emitAssistantTurn(options: { toolCall?: boolean } = {}): void {
-		const content = options.toolCall ? [{ type: "toolCall", name: "read" }] : [{ type: "text", text: "done" }];
+	emitAssistantTurn(options: { toolCall?: boolean; textCount?: number; toolCount?: number } = {}): void {
+		let content: Array<{ type: string; text?: string; name?: string }>;
+		if (options.textCount !== undefined || options.toolCount !== undefined) {
+			content = [
+				...Array.from({ length: options.textCount ?? 0 }, () => ({ type: "text", text: "speech" })),
+				...Array.from({ length: options.toolCount ?? 0 }, () => ({ type: "toolCall", name: "read" })),
+			];
+		} else {
+			content = options.toolCall ? [{ type: "toolCall", name: "read" }] : [{ type: "text", text: "done" }];
+		}
 		for (const listener of this.#listeners) {
 			listener({ type: "message_end", message: { role: "assistant", content } });
 		}
@@ -170,7 +178,51 @@ describe("LocalProvider", () => {
 		sessions[0].crash(new Error("model exploded"));
 		const result = await activation.wait();
 		assert.equal(result.stopReason, "error");
-		assert.equal(result.errorCode, SubagentErrorCode.START_REJECTED);
+		// 运行层归一（044-0 错误管理）：中途崩的 prompt 是模型商的错，不是准入失败。
+		assert.equal(result.errorCode, SubagentErrorCode.PROVIDER_ERROR);
+	});
+
+	it("accumulates activity stats from assistant turns", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn" }));
+		sessions[0].emitAssistantTurn({ toolCall: true }); // 1 turn, 0 speech, 1 tool call
+		sessions[0].emitAssistantTurn({ textCount: 1, toolCount: 2 }); // 1 turn, 1 speech, 2 calls
+		sessions[0].emitAssistantTurn(); // 1 turn, 1 speech, 0 calls
+		sessions[0].settle("done");
+		const result = await activation.wait();
+		assert.deepEqual(result.stats, { turns: 3, agentMessages: 2, toolCalls: 3 });
+		assert.deepEqual(manager.descriptors()[0].stats, { turns: 3, agentMessages: 2, toolCalls: 3 });
+	});
+
+	it("keeps partial stats on an errored run", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn" }));
+		sessions[0].emitAssistantTurn({ toolCall: true });
+		sessions[0].crash(new Error("429 too many requests"));
+		const result = await activation.wait();
+		assert.equal(result.stopReason, "error");
+		assert.deepEqual(result.stats, { turns: 1, agentMessages: 0, toolCalls: 1 });
+	});
+
+	it("refreshes the descriptor stats on every assistant turn while active", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn" }));
+		sessions[0].emitAssistantTurn({ toolCall: true });
+		assert.deepEqual(manager.descriptors()[0].stats, { turns: 1, agentMessages: 0, toolCalls: 1 });
+		sessions[0].emitAssistantTurn({ textCount: 1 });
+		assert.deepEqual(manager.descriptors()[0].stats, { turns: 2, agentMessages: 1, toolCalls: 1 });
+		sessions[0].settle("done");
+		await activation.wait();
+		assert.equal(manager.descriptors()[0].phase, "completed");
+	});
+
+	it("still counts stats without a turn budget", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn", maxTurns: 0 }));
+		sessions[0].emitAssistantTurn({ toolCall: true });
+		sessions[0].settle("done");
+		const result = await activation.wait();
+		assert.deepEqual(result.stats, { turns: 1, agentMessages: 0, toolCalls: 1 });
 	});
 
 	it("passes the turn budget to the factory and the child", async () => {

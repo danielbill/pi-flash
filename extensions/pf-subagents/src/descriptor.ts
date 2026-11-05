@@ -39,6 +39,10 @@ export interface SubagentDescriptor {
 	/** Child token usage, folded in at settle. Optional: v1 descriptors written
 	 * before the field existed simply lack it (panel shows "—"). */
 	usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number; total?: number };
+	/** Activity counters (044-0 面板行二：轮次/发言数/工具调用次数). Optional:
+	 * pre-stats descriptors lack it (panel shows "—"). Refreshed on every
+	 * assistant turn while the child runs. */
+	stats?: { turns: number; agentMessages: number; toolCalls: number };
 	startedAt: string;
 	updatedAt: string;
 }

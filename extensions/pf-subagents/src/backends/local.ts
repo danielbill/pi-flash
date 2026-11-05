@@ -6,7 +6,7 @@
  * suite) and lets the extension entry decide how a real session is created.
  */
 
-import type { ChildHandle, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../types.ts";
+import type { ChildHandle, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../types.ts";
 import { asSubagentError, SubagentError, SubagentErrorCode } from "../errors.ts";
 import { DEFAULT_MAX_TURNS } from "../profile.ts";
 
@@ -141,11 +141,13 @@ class LocalChild implements ChildHandle {
 	#started_at: number | undefined;
 	#budget: TurnBudget | undefined;
 	#unsubscribe: (() => void) | undefined;
+	#stats: ChildSessionStats = { turns: 0, agentMessages: 0, toolCalls: 0 };
+	#watchers: Array<(stats: ChildSessionStats) => void> = [];
 
 	constructor(id: string, session: ChildSession, maxTurns?: number) {
 		this.id = id;
 		this.#session = session;
-		if (maxTurns !== undefined && session.subscribe) {
+		if (maxTurns !== undefined) {
 			this.#budget = new TurnBudget(
 				maxTurns,
 				() => {
@@ -155,6 +157,10 @@ class LocalChild implements ChildHandle {
 					void session.abort();
 				},
 			);
+		}
+		// Subscribed whenever the session can observe events — the budget needs
+		// turns, and the panel stats (044-0 行二) need them even without one.
+		if (session.subscribe) {
 			this.#unsubscribe = session.subscribe((event) => this.#onEvent(event));
 		}
 	}
@@ -164,6 +170,35 @@ class LocalChild implements ChildHandle {
 		if (record?.type !== "message_end") return;
 		if (record.message?.role !== "assistant") return;
 		this.#budget?.assistantTurn(record.message);
+		this.#accumulate(record.message);
+	}
+
+	/** Fold one assistant message into the activity counters (044-0 面板行二). */
+	#accumulate(message: { content?: unknown[] } | undefined): void {
+		const content = message?.content ?? [];
+		this.#stats = {
+			turns: this.#stats.turns + 1,
+			agentMessages:
+				this.#stats.agentMessages +
+				(content.some((b) => (b as { type?: string; text?: string })?.type === "text" && (b as { text?: string }).text?.trim())
+					? 1
+					: 0),
+			toolCalls: this.#stats.toolCalls + content.filter((b) => (b as { type?: string })?.type === "toolCall").length,
+		};
+		for (const watcher of this.#watchers) watcher({ ...this.#stats });
+	}
+
+	/** Live activity counters (044-0 面板行二). */
+	stats(): ChildSessionStats {
+		return { ...this.#stats };
+	}
+
+	/** Observe the counters; one call per assistant turn. */
+	watch(listener: (stats: ChildSessionStats) => void): () => void {
+		this.#watchers.push(listener);
+		return () => {
+			this.#watchers = this.#watchers.filter((w) => w !== listener);
+		};
 	}
 
 	get sessionFile(): string | undefined {
@@ -186,7 +221,9 @@ class LocalChild implements ChildHandle {
 			this.#failure = error;
 		});
 		await Promise.resolve();
-		if (this.#failure) throw asSubagentError(this.#failure, SubagentErrorCode.START_REJECTED);
+		// An immediate follow-up rejection is a model-layer failure (044-0 运行
+		// 层归一 PROVIDER_ERROR), not an admission failure of the initial task.
+		if (this.#failure) throw asSubagentError(this.#failure, SubagentErrorCode.PROVIDER_ERROR);
 	}
 
 	async interrupt(): Promise<void> {
@@ -200,10 +237,13 @@ class LocalChild implements ChildHandle {
 	async result(): Promise<SubagentResult> {
 		if (this.#run) await this.#run;
 		const usage = this.#session.usage?.();
+		const stats = this.stats();
 		const durationMs = this.#started_at !== undefined ? Date.now() - this.#started_at : undefined;
 		if (this.#failure) {
-			const failure = asSubagentError(this.#failure, SubagentErrorCode.START_REJECTED);
-			return { childId: this.id, text: "", stopReason: "error", errorCode: failure.code, usage, durationMs };
+			// A run that failed mid-flight is the provider's fault (429/5xx/timeout/
+			// stream drop), not an admission failure — 044-0 错误管理二分。
+			const failure = asSubagentError(this.#failure, SubagentErrorCode.PROVIDER_ERROR);
+			return { childId: this.id, text: "", stopReason: "error", errorCode: failure.code, usage, stats, durationMs };
 		}
 		// A blown budget reports itself even when the run ended without throwing:
 		// the abort surfaced as a normal settle, but the work did not complete.
@@ -213,6 +253,7 @@ class LocalChild implements ChildHandle {
 				text: this.#session.lastAssistantText() ?? "",
 				stopReason: "max_turns",
 				usage,
+				stats,
 				durationMs,
 			};
 		}
@@ -221,6 +262,7 @@ class LocalChild implements ChildHandle {
 			text: this.#session.lastAssistantText() ?? "",
 			stopReason: "completed",
 			usage,
+			stats,
 			durationMs,
 		};
 	}
