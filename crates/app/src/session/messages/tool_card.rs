@@ -147,7 +147,6 @@ fn render_subagent_card(
     t: &theme::Theme,
 ) -> gpui::Div {
     let d = details.cloned().unwrap_or_default();
-    let running = d.get("status").and_then(|v| v.as_str()) == Some("running");
     let stop_reason = d.get("stop_reason").and_then(|v| v.as_str()).unwrap_or("");
     let session_file = d
         .get("session_file")
@@ -183,13 +182,20 @@ fn render_subagent_card(
                 .collect::<String>()
         });
 
-    // 状态：运行中（spinner 黄）/ 完成（绿点）/ 失败（红点 + 分码）
-    let failed = is_error || error_code.is_some();
-    let done = !running && !failed && (!result_arrived || !stop_reason.is_empty());
+    // 状态（044-0 B5：同面板四色，settle 才定色）——
+    //   失败 红点+分码（含被拒 onUpdate 分片，B3② 即时上卡）
+    //   轮次用尽/中止 橙点（044-1 §1.3，与面板 C_ABORTED 同源）
+    //   完成 绿点 = result 到了且 stop_reason=="completed"
+    //   其余（派出未决/运行中）黄 spin——旧条件 (!result_arrived||…) 把
+    //   「结果未到」也算 done，派出瞬间全体恒绿（B5 根因）
+    let max_turns = stop_reason == "max_turns";
+    let failed = (is_error || error_code.is_some()) && !max_turns;
+    let done = result_arrived && stop_reason == "completed";
+    let aborted = result_arrived && (stop_reason == "aborted" || max_turns);
     let (mark_c, mark) = if failed {
         (0xf87171, "dot")
-    } else if running {
-        (0xeab308, "spin")
+    } else if aborted {
+        (0xf97316, "dot")
     } else if done {
         (0x22c55e, "dot")
     } else {
