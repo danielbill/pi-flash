@@ -9,7 +9,7 @@ Pi-Flash 缩写 PF
 ```bash
 cd vendor/pi && npm ci && cd ../..              # 首次；node_modules 不入库
 cargo run -p app                                # 运行（bin: pi-flash）
-RUST_MIN_STACK=33554432 cargo test -p pi-link   # 协议/路径测试都在 pi-link
+cargo test -p pi-link                           # 协议/路径测试都在 pi-link（deep_tree 用例自抬 32MB 栈，无需配 env）
 ```
 
 - 环境变量：`PI_FLASH_PI_BIN` 覆盖内置 pi；`PI_FLASH_THEME` 切主题（default/dark/rose）；`PI_FLASH_RPC_LOG` 开 RPC 线缆日志；**`PI_FLASH_DIR` 显式指定永远优先；未设时按构建档位取默认——debug/test（cargo run/cargo test）自动落 `./pi-flash-dev`，release 才落 `~/.pi-flash`**（2026-10-18 起 paths 层焊死，裸跑测试摸不到正式目录；**dev-flags（重型模块发版排除）默认全关**：`<PF数据目录>/dev-flags.json`（支持 // 注释）按键控模块，false/缺省=关、改动重启生效；键住址 = pi-link `dev_flags::KNOWN`，env 覆盖 `PI_FLASH_<键大写>=1/0` 最高优先，启动 stderr 打 `[startup] dev-flags:` 状态行（仅 debug 构建——release 包零输出是烟测门禁）。子代理关 = 不加载扩展 + 隐藏设置页与面板按钮

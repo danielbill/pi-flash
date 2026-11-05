@@ -43,7 +43,7 @@ M1-M10 全部在此环境完成；台账降版本造假只作 dev-market 不可�
 
 ### 单元（已自动化）
 
-`RUST_MIN_STACK=33554432 cargo test -p pi-link migrate_data` / `cargo test -p app -- pf_plugin::manifest i18n_audit`
+`cargo test -p pi-link migrate_data` / `cargo test -p app -- pf_plugin::manifest i18n_audit`
 
 | # | 用例 | 断言 |
 |---|------|------|

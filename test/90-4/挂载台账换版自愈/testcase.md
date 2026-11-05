@@ -12,7 +12,7 @@
 
 ## 一 单元（已自动化）
 
-`RUST_MIN_STACK=33554432 cargo test -p pi-link resolve_mount`
+`cargo test -p pi-link resolve_mount`
 （`crates/pi-link/src/session_ext.rs`）
 
 | # | 用例 | 夹具 | 断言 |
