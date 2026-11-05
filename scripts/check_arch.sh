@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # check_arch.sh — ARCHITECTURE.md §8 守护规则
-# 用法: scripts/check_arch.sh   (非零退出 = 违规)
+# 用法: scripts/check_arch.sh [--update-baseline]   (非零退出 = 违规)
 # 口径: 行数红线按"非测试行数"计——#[cfg(test)] 标注的块(含 mod tests;
 #       指向的独立测试文件)不计入,测试体量不惩罚生产代码。
 #       函数行数仅量顶层 fn(视图函数在本仓均为顶层自由函数,impl 方法不量)。
+# §1/§2 超线存量冻结在 scripts/arch-lines-baseline.txt（ui-raw 基线同款口径）：
+#       新增超线 / 存量继续增长 = 违规；基线只许人工 `--update-baseline`
+#       重写，agent 禁刷基线（刷基线 = 等于没规则）。
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+[[ $# -eq 0 || "${1:-}" == "--update-baseline" ]] || {
+  echo "用法: scripts/check_arch.sh [--update-baseline]"; exit 1;
+}
 
 LIMIT_FILE=1500        # 单文件非测试行数上限
 LIMIT_RENDER=300       # 单个顶层视图函数行数上限
 
 fail=0
 
-echo "== 1. 单文件非测试行数 ≤ $LIMIT_FILE =="
-echo "== 2. 顶层视图函数行数 ≤ $LIMIT_RENDER =="
-python - "$LIMIT_FILE" "$LIMIT_RENDER" <<'PYEOF'
+echo "== 1. 单文件非测试行数 ≤ $LIMIT_FILE（存量冻结 arch-lines-baseline.txt）=="
+echo "== 2. 顶层视图函数行数 ≤ $LIMIT_RENDER（同上基线，只拦新增/增长）=="
+python - "$LIMIT_FILE" "$LIMIT_RENDER" "${1:-}" <<'PYEOF'
 import os, re, sys
 
 limit_file, limit_render = int(sys.argv[1]), int(sys.argv[2])
@@ -67,13 +73,26 @@ def scan(path):
         i += 1
     return lines, flags
 
-bad_file, bad_fn = [], []
+# --- 存量基线（ui-raw 同款口径：冻结存量，只拦新增/增长）---
+BASELINE = 'scripts/arch-lines-baseline.txt'
+UPDATE = len(sys.argv) > 3 and sys.argv[3] == '--update-baseline'
+
+def load_baseline():
+    base = {}
+    if os.path.isfile(BASELINE):
+        for ln in open(BASELINE, encoding='utf-8'):
+            parts = ln.split()
+            if len(parts) == 3 and parts[0] in ('FILE', 'FN'):
+                base[parts[0] + ' ' + parts[1]] = int(parts[2])
+    return base
+
+over_file, over_fn = {}, {}
 fn_set = set(fn_roots)
 for path in sorted(set(files) - excluded_files):
     lines, flags = scan(path)
     non_test = sum(1 for f in flags if not f)
     if non_test > limit_file:
-        bad_file.append(f"{path} ({non_test} non-test lines)")
+        over_file[path] = non_test
     if path not in fn_set:
         continue
     # 顶层 fn 行数(跳过测试区内的 fn)
@@ -92,9 +111,37 @@ for path in sorted(set(files) - excluded_files):
             j = min(j, n - 1)
             cnt = sum(1 for k in range(i, j + 1) if not flags[k])
             if cnt > limit_render:
-                bad_fn.append(f"{path}: fn {m.group(1)} ({cnt} non-test lines)")
+                over_fn[f"{path}::{m.group(1)}"] = cnt
             i = j
         i += 1
+
+if UPDATE:
+    with open(BASELINE, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('# 「行数红线」存量基线（scripts/check_arch.sh §1/§2）\n')
+        f.write('# 格式: FILE <相对路径> <非测试行数> / FN <相对路径>::<fn名> <非测试行数>\n')
+        f.write('# 只允许人工 `scripts/check_arch.sh --update-baseline` 重写（agent 禁刷基线）。\n')
+        f.write('# 目标：逐条清偿（拆分降数），存量只许降不许涨。\n')
+        for path, cnt in sorted(over_file.items()):
+            f.write(f'FILE {path} {cnt}\n')
+        for q, cnt in sorted(over_fn.items()):
+            f.write(f'FN {q} {cnt}\n')
+    print(f'baseline rewritten: FILE×{len(over_file)} + FN×{len(over_fn)} -> {BASELINE}')
+    sys.exit(0)
+
+base = load_baseline()
+bad_file, bad_fn = [], []
+for path, cnt in sorted(over_file.items()):
+    b = base.get('FILE ' + path)
+    if b is None:
+        bad_file.append(f"{path} ({cnt} non-test lines) —— 新增超线：先拆分或口径复核（确属存量 → 人工 --update-baseline）")
+    elif cnt > b:
+        bad_file.append(f"{path} ({cnt} non-test lines, 基线 {b}) —— 超线存量增长：先拆分清偿")
+for q, cnt in sorted(over_fn.items()):
+    b = base.get('FN ' + q)
+    if b is None:
+        bad_fn.append(f"{q} ({cnt} non-test lines) —— 新增超线：先拆分或口径复核（确属存量 → 人工 --update-baseline）")
+    elif cnt > b:
+        bad_fn.append(f"{q} ({cnt} non-test lines, 基线 {b}) —— 超线存量增长：先拆分清偿")
 
 for b in bad_file:
     print("VIOLATION(file):", b)

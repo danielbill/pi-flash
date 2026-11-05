@@ -39,7 +39,9 @@
       收编幂等，内容一致则零改动）
 - [ ] CHANGELOG写完交所有者审批，审批通过方可继续
 - [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（19 项）
-- [ ] 架构守卫 PASS：`scripts/check_arch.sh`（行数红线按**非测试行数**计；超线 = 先拆分或口径复核再发版）
+- [ ] 架构守卫 PASS：`scripts/check_arch.sh`（行数红线按**非测试行数**计；超线存量冻结在
+      `scripts/arch-lines-baseline.txt`，新增超线/存量增长 = 先拆分或口径复核再发版；
+      基线只许人工 `--update-baseline` 刷新）
 - [ ] `pi-flash.exe` 未运行（烟测会 `taskkill` 全部实例；且 debug 实例正在运行会让 debug 构建撞 exe 锁）
 - [ ] 发布说明就绪：`tmp/release-notes-<v>.md`（安装/更新命令 + 本版要点；**双语**：中文段在上、
       单独一行 `<!-- EN -->`、下接英文段，见 `docs/CHANGELOG规范.md`；中文段收编 CHANGELOG.md、
