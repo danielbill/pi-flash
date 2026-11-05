@@ -600,9 +600,15 @@ impl Chat {
         // 大小写）：先归一到扫描器形态再入池——pool key、侧栏行匹配、通知
         // 点集合共用同一条字符串身份，形态分裂就会点行重复 spawn runtime
         let path = pi_link::sessions::canonical_session_path(&path);
+        // 子会话判定（044-0 只读观察窗）：头部有 subagent/child marker 的
+        // 会话 = 观察窗——永不 spawn 进程（驱动权归父 pi），无输入通道。
+        // 判定在 touch_recent 之前：子会话不进最近列表（侧栏扫描器同口径）。
+        let observer = pi_link::sessions::is_subagent_session(&path);
         // recents (003-session管理): opening is activity — promote to the
         // top of the recent-activity list (persist throttled)
-        pi_link::recents::touch_recent(&path);
+        if !observer {
+            pi_link::recents::touch_recent(&path);
+        }
         // cwd lookup: current project first, then all psp groups (v54 跨项目)，
         // 兜底当前项目；三处皆无（无项目态孤儿会话）→ 不开
         let cwd = self
@@ -652,9 +658,10 @@ impl Chat {
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
             r.default_model = services::workspace::default_model_pref();
+            r.observer = observer;
             r.messages = tail;
             r.pager.reload(r.messages.len());
-            r.status = "resuming".into();
+            r.status = if observer { "observer".into() } else { "resuming".into() };
             r.pending_rename = rename;
             r
         });
@@ -669,7 +676,8 @@ impl Chat {
         // 判据要过 090-10 版本层自愈：插件升级后台账里只剩旧版本的死路径，
         // 按原样判非空会为一个再也挂不上任何 ext 的会话白起进程（且 spawn
         // 时那条死 `-e` 还会让其立刻退出）。
-        {
+        // 只读观察窗不预热（永不 spawn，044-0）。
+        if !observer {
             let key = rt.read(cx).key.clone();
             let has_ext = pi_link::session_ext::store_path()
                 .map(|p| {
@@ -684,8 +692,10 @@ impl Chat {
             }
         }
         // 秒开深度优化（pi-flash-2o92）：磁盘计数改后台——主线程全文件读
-        // 是 O(会话大小) 的打开冻结源
-        rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
+        // 是 O(会话大小) 的打开冻结源（观察窗跳过：全量快照自己计数）
+        if !observer {
+            rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
+        }
         if !self
             .ws
             .cwd
@@ -708,6 +718,12 @@ impl Chat {
         let rt_spawn = rt;
         cx.spawn(async move |_this, cx| {
             let _ = rt_spawn.update(cx, |r, cx| {
+                if r.observer {
+                    // 观察窗：无进程可起，磁盘链即真相；全量快照后台装载
+                    // （tail 只是首帧），此后外部追加靠 3s tick 跟随（044-0）
+                    r.spawn_observer_snapshot(cx);
+                    return;
+                }
                 if r.agent.session.is_none() {
                     if let Some(rx) = r.spawn() {
                         let epoch = r.agent.epoch;

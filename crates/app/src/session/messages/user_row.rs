@@ -271,6 +271,8 @@ pub(crate) fn render_msg(
     bar_revealed: bool,
     // 复制反馈（032 恢复）：runtime.copy_flash 点亮中 → 栏换 ✓ 已复制
     copied: bool,
+    // 只读观察窗（044-0）：消息操作栏随输入面板一并隐藏
+    read_only: bool,
 ) -> gpui::Div {
     // pi-web 消息间距 marginBottom 16（v 此前 22 偏大）
     let mut col = div().w_full().mb(px(16.)).flex().flex_col();
@@ -429,7 +431,11 @@ pub(crate) fn render_msg(
             (h, st)
         };
 
-        let bottom = user_action_bar(msg_ix, weak, m.ts, bar_revealed, copied, t);
+        let bottom = if read_only {
+            None
+        } else {
+            Some(user_action_bar(msg_ix, weak, m.ts, bar_revealed, copied, t))
+        };
         // 纯图片消息（空文本）不渲染空泡；缩略图行在气泡上方
         let has_text = !text.trim().is_empty();
         let mut row = bar_hover_wired(
@@ -536,7 +542,9 @@ pub(crate) fn render_msg(
                 ),
             );
         }
-        row = row.child(bottom);
+        if let Some(bottom) = bottom {
+            row = row.child(bottom);
+        }
         col = col.child(row);
     }
     // 非 User 臂已删：mod.rs 分发入口只在 m.role == Role::User 时调

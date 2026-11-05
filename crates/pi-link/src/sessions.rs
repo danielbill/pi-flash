@@ -46,6 +46,38 @@ const PARTIAL_PREVIEW_CHARS: usize = 50;
 /// 子会话自己）。侧栏过滤只认后者。
 const SUBAGENT_CHILD_MARKER: &str = "subagent/child";
 
+/// 子会话头部判定窗口（[`is_subagent_session`]）：marker 由扩展在子会话
+/// session_start 时 appendEntry，位置紧随 header，必在头部几十行内——
+/// 按前 64KB 有界扫即可判，免整文件读（面板逐行点击热路径）。
+const SUBAGENT_HEAD_SCAN: u64 = 64 * 1024;
+
+/// 该会话文件是否是子代理子会话（044-0 只读观察窗的打开守卫）：头部窗口
+/// 内出现 `subagent/child` custom entry 即是。header 的 parentSession 不可
+/// 用作判定——pi 原生 fork 的分支同样带它。文件不存在/读不了 → false
+/// （按普通会话开，行为不变）。
+pub fn is_subagent_session(path: &Path) -> bool {
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let take = len.min(SUBAGENT_HEAD_SCAN) as usize;
+    let mut buf = vec![0u8; take];
+    if f.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    let Ok(text) = String::from_utf8(buf) else {
+        return false;
+    };
+    text.split_inclusive('\n').any(|line| {
+        serde_json::from_str::<Value>(line.trim())
+            .ok()
+            .is_some_and(|v| {
+                v["type"].as_str() == Some("custom")
+                    && v["customType"].as_str() == Some(SUBAGENT_CHILD_MARKER)
+            })
+    })
+}
+
 const NEEDLE_MESSAGE: &str = "\"type\":\"message\"";
 const NEEDLE_SESSION_INFO: &str = "\"type\":\"session_info\"";
 
@@ -1233,6 +1265,40 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::write_session;
     use super::*;
+
+    #[test]
+    fn is_subagent_session_keys_on_head_marker() {
+        let root = temp_root("subagent-marker");
+        // 子会话形状：header + marker + 正文（扩展 session_start 即写 marker）
+        let child = write_session(
+            &root,
+            "D:\\proj-c",
+            "child1",
+            &format!(
+                "{{\"type\":\"custom\",\"customType\":\"subagent/child\",\"id\":\"m1\",\"data\":{{\"provider\":\"spawn\",\"depth\":1}}}}\n{BODY}"
+            ),
+        );
+        assert!(is_subagent_session(&child));
+        // 普通会话：无 marker → false（即使带 parentSession header——pi 原生
+        // fork 同样有它，不可作判定）
+        let normal = write_session(&root, "D:\\proj-c", "normal1", BODY);
+        assert!(!is_subagent_session(&normal));
+        let forked = write_session(
+            &root,
+            "D:\\proj-c",
+            "fork1",
+            &format!(
+                "{{\"type\":\"session\",\"version\":3,\"id\":\"fk\",\"cwd\":\"D:\\proj-c\",\"parentSession\":\"D:\\proj.jsonl\"}}\n{BODY}"
+            ),
+        );
+        assert!(
+            !is_subagent_session(&forked),
+            "parentSession header 不是判定据"
+        );
+        // 不存在的文件 → false（按普通会话开，行为不变）
+        assert!(!is_subagent_session(&root.join("missing.jsonl")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn temp_root(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

@@ -193,8 +193,10 @@ pub(crate) fn render_assistant_turn(
     bar_revealed: bool,
     // 复制反馈（032 恢复）：runtime.copy_flash 点亮中 → 栏换 ✓ 已复制
     copied: bool,
-    // 「新分支」目标（None = 锚点还没回来，按钮不出）
+    // 「新分支」目标（None = 锚点还没回来，按钮不出；观察窗恒 None）
     fork: Option<ForkAnchor>,
+    // 只读观察窗（044-0）：消息操作栏随输入面板一并隐藏
+    read_only: bool,
 ) -> gpui::AnyElement {
     // pi-web onMouseEnter/Leave parity：悬停整轮（无遮挡后代，见 bar_hover_wired）
     let mut col = bar_hover_wired(
@@ -437,6 +439,10 @@ pub(crate) fn render_assistant_turn(
     let written = turn_written_files(turn);
     if let Some(chips) = written_files_chips(start_ix, weak, &written, t) {
         col = col.child(chips);
+    }
+    if read_only {
+        // 观察窗：无复制/新分支/用时栏（变异操作随输入面板一并隐藏）
+        return col.into_any_element();
     }
     col = col.child(actions_bar::assistant_action_bar(
         start_ix,

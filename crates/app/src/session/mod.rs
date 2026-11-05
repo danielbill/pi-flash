@@ -92,6 +92,9 @@ pub(crate) fn main_column(
     let chat_entity = entity.clone();
     let rt_entity = rt.clone();
     let rt_list = rt.read(cx).pager.state();
+    // 只读观察窗（044-0）：子代理子会话 tab —— composer/操作栏全隐，
+    // 底部换只读提示条
+    let observer = rt.read(cx).observer;
 
     let sf = crate::appearance::session_font();
 
@@ -139,7 +142,8 @@ pub(crate) fn main_column(
                             .children(ext_widget_rows(chat, t, false));
                     } else {
                         wrap = wrap
-                            // message list（底部 135px 让位悬浮 composer）
+                            // message list（底部 135px 让位悬浮 composer；
+                            // 观察窗无 composer，让位高度由提示条占住观感）
                             .child(session_list(
                                 chat,
                                 chat_entity,
@@ -149,16 +153,17 @@ pub(crate) fn main_column(
                                 t,
                             ))
                             // 悬浮 composer：0 高 wrapper（不吞点击/滚轮），
-                            // 胶囊绝对定位上浮叠在聊天区上
+                            // 胶囊绝对定位上浮叠在聊天区上。观察窗不渲染
+                            // （044-0：用户输入会生成第二驱动分叉账本/双花
+                            // token/抢占并发槽——子代理由主agent独占管理），
+                            // 换只读提示条。
                             .children(ext_widget_rows(chat, t, true))
-                            .child(input::input_area(
-                                chat,
-                                weak,
-                                streaming,
-                                input_focused,
-                                false,
-                                cx,
-                            ))
+                            .child(if observer {
+                                observer_notice(t)
+                            } else {
+                                input::input_area(chat, weak, streaming, input_focused, false, cx)
+                                    .into_any_element()
+                            })
                             .children(ext_widget_rows(chat, t, false))
                             // 子代理浮层面板（044-1 §1.1 三改）：absolute 挂
                             // chat-wrap（relative）顶左 = 操作栏正下方悬浮，
@@ -426,6 +431,21 @@ pub(crate) fn scroll_to_bottom_button(
         .into_any_element()
 }
 
+/// 只读观察窗底部提示条（044-0）：composer 不渲染，换一条居中的浅色提示
+/// ——子代理由主会话管理，此处只观察。高 40px（占住 PAD_BOTTOM 让位区的
+/// 观感），无交互。
+fn observer_notice(t: &crate::appearance::theme::Theme) -> gpui::AnyElement {
+    div()
+        .h(px(40.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(crate::appearance::ui_size(11.))
+        .text_color(rgb(t.text_dim))
+        .child(tr("subagent.observer"))
+        .into_any_element()
+}
+
 /// Message list + phase row (v54: 内容列宽见 `workspace::CHAT_WIDTH_*`，行距 22)。
 fn session_list(
     _chat: &mut Chat,
@@ -510,6 +530,7 @@ fn session_list(
                             rt_view.copy_flash.is_some_and(|(cix, at)| {
                                 cix == ix && at.elapsed().as_millis() < 1500
                             }),
+                            rt_view.observer,
                         )))
                         .into_any_element(),
                     Some(_) => {
@@ -570,7 +591,8 @@ fn session_list(
                         // 「下一条用户消息之前」（该用户消息本身及之后的内容丢弃）。
                         // 本轮就是尾部时 pi 没有可 fork 的 before 目标 → 走 rpc
                         // clone（整段复制）。锚点还没回来就不给按钮。
-                        let fork = if rt_view.active_user_entry_ids.is_empty() {
+                        // 观察窗恒无 fork（044-0：变异操作随输入面板一并隐藏）。
+                        let fork = if rt_view.observer || rt_view.active_user_entry_ids.is_empty() {
                             None
                         } else {
                             let next_user = rt_view.messages[end..]
@@ -606,6 +628,7 @@ fn session_list(
                                         cix == ix && at.elapsed().as_millis() < 1500
                                     }),
                                     fork,
+                                    rt_view.observer,
                                 ),
                             ))
                             .into_any_element()

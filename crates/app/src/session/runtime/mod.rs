@@ -134,6 +134,12 @@ pub(crate) struct SessionRuntime {
     pub cwd: PathBuf,
     /// None until pi persists the draft (first prompt)
     pub file: Option<PathBuf>,
+    /// 只读观察窗（044-0 子代理会话查看）：子会话由父 pi 进程独占驱动，
+    /// PF 打开它只是观察同一账本文件——永不 spawn 进程（spawn 会造出第二
+    /// 驱动：分叉账本/双花 token/抢占并发槽），无输入通道（composer/操作
+    /// 栏隐藏），外部追加靠 3s tick（check_external_append 空闲态天然覆盖）。
+    /// open_session 按文件头部 marker 判定置位（sessions::is_subagent_session）。
+    pub observer: bool,
     /// disk-side message count at open time — get_messages shorter than
     /// this means pi's restored leaf chain is truncated (mis-parented
     /// non-message entry) and the display rebuilds from the file instead
@@ -421,6 +427,7 @@ impl SessionRuntime {
             messages: Vec::new(),
             pager: ChatList::new(),
             collapsed: std::collections::HashMap::new(),
+            observer: false,
             phase_waiting: false,
             streaming_content: false,
             pending_echoes: Vec::new(),
@@ -483,6 +490,12 @@ impl SessionRuntime {
     /// callers wrap this on the background executor; returns the event
     /// receiver for the pump.
     pub(crate) fn spawn(&mut self) -> Option<UnboundedReceiver<Event>> {
+        // 只读观察窗永不 spawn（044-0）：子会话的驱动权归父 pi 进程，这里
+        // 再起一个进程 = 第二驱动（分叉账本/双花 token）。所有 spawn 入口
+        // （open 预热/ensure_spawned/发送链）都汇到这一道闸。
+        if self.observer {
+            return None;
+        }
         let mut extra: Vec<String> = Vec::new();
         if let Some(f) = &self.file {
             extra.push("--session".into());
@@ -718,6 +731,10 @@ impl SessionRuntime {
     /// 草稿懒 spawn（pi-web ensureNewSession parity）：还没有 pi 进程时
     /// spawn + attach_pump + 拉初始状态。失败返回 false（调用方提前 return）。
     pub(crate) fn ensure_spawned(&mut self, cx: &mut Context<Self>) -> bool {
+        // 观察窗无输入通道，发送链不会走到这；防御性拦截（never spawn）
+        if self.observer {
+            return false;
+        }
         if self.agent.session.is_some() {
             return true;
         }

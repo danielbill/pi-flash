@@ -10,6 +10,32 @@ use pi_link::sessions::read_leaf_messages;
 use super::*;
 
 impl SessionRuntime {
+    /// 只读观察窗装载（044-0）：后台全量 leaf 读子会话文件 → 回灌 messages。
+    /// 观察窗无进程，GetMessages 无人接，磁盘链就是唯一真相。回灌后同步
+    /// disk_file_len 基线 —— 此后外部追加由 3s tick（check_external_append）
+    /// 自然跟随（观察窗 agent_running 恒 false，守卫恒开）。
+    pub(crate) fn spawn_observer_snapshot(&mut self, cx: &mut Context<Self>) {
+        let Some(f) = self.file.clone() else { return };
+        let epoch = self.agent.epoch;
+        let f_read = f.clone();
+        cx.spawn(async move |this, cx| {
+            let msgs = cx
+                .background_executor()
+                .spawn(async move { msgs_from_tail(read_leaf_messages(&f_read, LEAF_REPAIR_MAX)) })
+                .await;
+            let _ = this.update(cx, |r, cx| {
+                if r.agent.epoch != epoch || r.file.as_deref() != Some(f.as_path()) || !r.observer {
+                    return; // 重绑/换身份/已退出观察态：陈旧快照作废
+                }
+                r.messages = msgs;
+                r.sync_disk_baseline();
+                r.notify_list(cx);
+                r.status = "observer: synced from disk".into();
+            });
+        })
+        .detach();
+    }
+
     /// 绑定对账：pi 报告过的 sessionFile（state 里）若已落盘就跟随绑定
     /// （FileBound → Chat 迁移 pool key + 摘伪标签换真身）。返回 false =
     /// 报过但确定没落盘（调用方据此撤伪标签）。state 还空着时发一条

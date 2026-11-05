@@ -161,6 +161,10 @@ impl SessionRuntime {
     /// 重新下达指令）。运行中 abort 当前回复、本条立刻作为新一轮发出；空闲
     /// 直接开跑。机制见 queue.rs `interrupt_deliver`。
     pub(crate) fn steer_input(&mut self, cx: &mut Context<Self>) {
+        // 只读观察窗无输入通道（同 send_input 兜底闸）
+        if self.observer {
+            return;
+        }
         // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
         if self.compacting {
             return;
@@ -547,6 +551,12 @@ impl SessionRuntime {
     }
 
     pub(crate) fn send_input(&mut self, cx: &mut Context<Self>) {
+        // 只读观察窗无输入通道（044-0）：子代理由主 agent 独占管理，这里
+        // 再发一条 = 第二驱动（分叉账本/双花 token）。composer 已隐藏，
+        // 这是 pif-ui 自动化等非 UI 入口的兜底闸。
+        if self.observer {
+            return;
+        }
         // 压缩锁：UI 已锁死，这里是绕过 UI 调用的兜底
         if self.compacting {
             return;
