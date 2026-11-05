@@ -33,18 +33,29 @@
 - 修法：active 落盘前即回写 session_file()。
 - 验证：运行中点行 → 打开只读观察窗且随子会话追加刷新。
 
-### B3 并发满即拒的第 4 个委派完全不可见（pi-flash-g9pn）
+### B3 并发满即拒的第 4 个委派完全不可见（pi-flash-g9pn，用户拍板验收 UX）
 
 - 现象：并发 3 同帧派 4，面板/描述符只有 3 个 childId，转录第 4 张卡看起来
   正常（绿点，实为 B5），用户以为派了 4 个。
-- 根因：CAPACITY_REACHED 满即拒不排队（设计如此）；被拒调用**无 descriptor**
-  （manager.start 在 capacity.acquire 抛出时 record 未创建），失败结果挂在
-  工具结果里，而 pi 转录要等全部工具完成才写 toolResult——两个子代理在跑
-  期间用户看不到拒绝。取证：JSONL 仅 sub-1/2/3，全文无 CAPACITY_REACHED。
-- 修法方向：①被拒委派也落一条 descriptor（phase=failed、
-  errorCode=CAPACITY_REACHED）让面板如实显示；②promptGuidelines 补「容量满
-  被拒→等槽位释放后重派」；③（远期）模型补派策略。
-- 验证：并发 3 派 4，面板立即出第 4 条带分码的失败行。
+- 根因（JSONL 追踪到收尾，实锤）：CAPACITY_REACHED 满即拒不排队（设计如
+  此）；被拒调用**无 descriptor**（manager.start 在 capacity.acquire 抛出时
+  record 未创建），失败结果挂在工具结果里，而 pi 转录要等全部工具完成才写
+  toolResult——两个子代理在跑期间用户看不到拒绝。文件已落地
+  `CAPACITY_REACHED: subagent capacity reached: 3/3 active`——**是我们容量闸
+  拒的，非智谱直打**（provider 层错误会归一 PROVIDER_ERROR，本案未发生）。
+- 后续追踪：模型收到拒绝结果后**自行重派成功**（第 4 个扫描以 sub-5 完成，
+  stopReason=completed）——4 个扫描最终都跑完，但全程用户不可见。
+- 修法清单（用户拍板：派发条目后直接更新 [失败]，点击可见失败理由）：
+  ① agent 工具描述**动态注入容量上限**（用户指出模型根本不知道有并发限
+  制，靠失败才发现）+「CAPACITY_REACHED 后等槽位释放重派」引导；
+  ② runDelegation 失败路径先发 onUpdate(details.status=failed, error_code)
+  再返回 failure——转录 compact 卡**即时**变 [失败]+分码（pi 只挡 toolResult
+  时序，不挡 tool_execution_update）；
+  ③ 被拒委派落 descriptor（phase=failed、errorCode=CAPACITY_REACHED）——
+  面板即时显示；
+  ④ 点击行/卡看失败理由（观察窗或详情展开）。
+- 验证：并发 3 派 4，第 4 条**立即**在转录与面板显 [失败]+CAPACITY_REACHED；
+  模型在槽位释放后补派且新委派可见。
 
 ### B4 面板头部合计时长与行时长矛盾（pi-flash-mtc1）
 
