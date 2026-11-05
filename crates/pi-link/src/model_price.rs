@@ -369,7 +369,10 @@ pub fn fill_name_cost(model: &mut Value, e: &Entry) -> usize {
         .to_string();
     let name_generic = name_now.to_lowercase().ends_with("latest");
     if !e.name.is_empty() && (name_now.is_empty() || name_generic) {
-        map.insert("name".to_string(), serde_json::Value::String(e.name.clone()));
+        map.insert(
+            "name".to_string(),
+            serde_json::Value::String(e.name.clone()),
+        );
         applied += 1;
     }
     if let Some(cost) = map
@@ -462,7 +465,12 @@ mod tests {
             input: vec![],
             context_window: None,
             max_tokens: None,
-            cost: Cost { input: Some(i), output: Some(o), cache_read: None, cache_write: None },
+            cost: Cost {
+                input: Some(i),
+                output: Some(o),
+                cache_read: None,
+                cache_write: None,
+            },
             source: SOURCE_MODELS_DEV.into(),
         };
         // 存量 0000（缺省补的）= 可填；无名条目顺带补名
