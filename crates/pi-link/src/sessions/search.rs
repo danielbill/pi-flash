@@ -298,58 +298,58 @@ mod tests {
     use super::*;
     use crate::sessions::testing::{temp_root, write_session};
 
-#[test]
-fn content_search_finds_matches_with_context() {
-    let root = temp_root("search");
-    let body = concat!(
-        "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123456,\"content\":[{\"type\":\"text\",\"text\":\"help me refactor the parser code\"}]}}\n",
-        "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"timestamp\":1790454125000,\"content\":[{\"type\":\"text\",\"text\":\"sure, the PARSER module is ready\"}]}}\n",
-        "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"content\":\"ignored\"}}\n"
-    );
-    write_session(&root, "D:\\proj-s", "s1", body);
-    let group = root.join(group_name_for_cwd("D:\\proj-s"));
-    let resp = search_sessions_in_dir(&group, "PARSER");
-    assert!(!resp.truncated);
-    assert_eq!(resp.hits.len(), 2, "user + assistant both match");
-    assert_eq!(resp.hits[0].ts, Some(1790454123456));
-    assert_eq!(resp.hits[0].match_text, "parser"); // lowercased needle len
-    assert!(resp.hits[0].before.starts_with("help me"));
-    assert!(resp.hits[1].match_text.eq_ignore_ascii_case("parser"));
-    // empty query: no hits, no truncation
-    let empty = search_sessions_in_dir(&group, "   ");
-    assert!(empty.hits.is_empty() && !empty.truncated);
-    // no match: clean empty response
-    let miss = search_sessions_in_dir(&group, "quantum");
-    assert!(miss.hits.is_empty() && !miss.truncated);
-}
+    #[test]
+    fn content_search_finds_matches_with_context() {
+        let root = temp_root("search");
+        let body = concat!(
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123456,\"content\":[{\"type\":\"text\",\"text\":\"help me refactor the parser code\"}]}}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"timestamp\":1790454125000,\"content\":[{\"type\":\"text\",\"text\":\"sure, the PARSER module is ready\"}]}}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"toolResult\",\"content\":\"ignored\"}}\n"
+        );
+        write_session(&root, "D:\\proj-s", "s1", body);
+        let group = root.join(group_name_for_cwd("D:\\proj-s"));
+        let resp = search_sessions_in_dir(&group, "PARSER");
+        assert!(!resp.truncated);
+        assert_eq!(resp.hits.len(), 2, "user + assistant both match");
+        assert_eq!(resp.hits[0].ts, Some(1790454123456));
+        assert_eq!(resp.hits[0].match_text, "parser"); // lowercased needle len
+        assert!(resp.hits[0].before.starts_with("help me"));
+        assert!(resp.hits[1].match_text.eq_ignore_ascii_case("parser"));
+        // empty query: no hits, no truncation
+        let empty = search_sessions_in_dir(&group, "   ");
+        assert!(empty.hits.is_empty() && !empty.truncated);
+        // no match: clean empty response
+        let miss = search_sessions_in_dir(&group, "quantum");
+        assert!(miss.hits.is_empty() && !miss.truncated);
+    }
 
-#[test]
-fn all_projects_search_spans_groups() {
-    // 2026-10-21 用户定案：会话查询搜**全部**会话，不只看当前项目
-    let root = temp_root("all");
-    let body = concat!(
-        "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123456,",
-        "\"content\":[{\"type\":\"text\",\"text\":\"跨项目 hello 世界\"}]}}\n"
-    );
-    let a = write_session(&root, r"D:\proj-a", "a1", body);
-    let b = write_session(&root, r"D:\proj-b", "b1", body);
-    // 让 proj-b 的会话更新一些，验证跨项目按 mtime 倒序
-    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-    std::fs::OpenOptions::new()
-        .append(true)
-        .open(&a)
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
-    let resp = search_all_in_root(&root, "世界");
-    assert!(!resp.truncated, "两个 group 都在预算内");
-    assert_eq!(resp.hits.len(), 2, "两个项目的会话都要命中");
-    assert_eq!(resp.hits[0].session_path, b, "更新的会话（proj-b）排在前");
-    assert_eq!(resp.hits[0].project.as_deref(), Some(r"D:\proj-b"));
-    assert_eq!(resp.hits[1].session_path, a);
-    assert_eq!(resp.hits[1].project.as_deref(), Some(r"D:\proj-a"));
-    // 单项目入口仍然只搜自己的 group
-    let only_a = search_sessions_in_dir(&root.join(group_name_for_cwd(r"D:\proj-a")), "世界");
-    assert_eq!(only_a.hits.len(), 1);
-}
+    #[test]
+    fn all_projects_search_spans_groups() {
+        // 2026-10-21 用户定案：会话查询搜**全部**会话，不只看当前项目
+        let root = temp_root("all");
+        let body = concat!(
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"timestamp\":1790454123456,",
+            "\"content\":[{\"type\":\"text\",\"text\":\"跨项目 hello 世界\"}]}}\n"
+        );
+        let a = write_session(&root, r"D:\proj-a", "a1", body);
+        let b = write_session(&root, r"D:\proj-b", "b1", body);
+        // 让 proj-b 的会话更新一些，验证跨项目按 mtime 倒序
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let resp = search_all_in_root(&root, "世界");
+        assert!(!resp.truncated, "两个 group 都在预算内");
+        assert_eq!(resp.hits.len(), 2, "两个项目的会话都要命中");
+        assert_eq!(resp.hits[0].session_path, b, "更新的会话（proj-b）排在前");
+        assert_eq!(resp.hits[0].project.as_deref(), Some(r"D:\proj-b"));
+        assert_eq!(resp.hits[1].session_path, a);
+        assert_eq!(resp.hits[1].project.as_deref(), Some(r"D:\proj-a"));
+        // 单项目入口仍然只搜自己的 group
+        let only_a = search_sessions_in_dir(&root.join(group_name_for_cwd(r"D:\proj-a")), "世界");
+        assert_eq!(only_a.hits.len(), 1);
+    }
 }

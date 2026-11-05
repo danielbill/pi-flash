@@ -64,8 +64,7 @@ fn incremental_rescan_tracks_new_rename_and_keeps_old_name() {
         )
         .unwrap();
     let meta = std::fs::metadata(&path).unwrap();
-    let e2 =
-        scan_file(&path, meta.modified().unwrap(), meta.len(), Some(&e1)).expect("scan ok");
+    let e2 = scan_file(&path, meta.modified().unwrap(), meta.len(), Some(&e1)).expect("scan ok");
     assert_eq!(e2.name.as_deref(), Some("renamed-2"));
     assert_eq!(e2.message_count, e1.message_count + 1);
     // 再追加一条普通消息（无改名）→ 沿用旧名，不回落预览
@@ -78,8 +77,7 @@ fn incremental_rescan_tracks_new_rename_and_keeps_old_name() {
         )
         .unwrap();
     let meta = std::fs::metadata(&path).unwrap();
-    let e3 =
-        scan_file(&path, meta.modified().unwrap(), meta.len(), Some(&e2)).expect("scan ok");
+    let e3 = scan_file(&path, meta.modified().unwrap(), meta.len(), Some(&e2)).expect("scan ok");
     assert_eq!(e3.name.as_deref(), Some("renamed-2"));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -180,7 +178,6 @@ fn list_for_cwd_paths_are_on_disk_form() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-
 #[test]
 fn list_skips_child_sessions_but_keeps_forks() {
     // 045：子代理会话靠自体内的 `subagent/child` marker 排除；pi 原生 fork
@@ -253,8 +250,7 @@ fn fingerprint_index_hits_and_invalidates() {
     // fingerprint change (size differs) forces a rescan — append keeps
     // the header line intact
     let mut content = std::fs::read_to_string(&path).unwrap();
-    content
-        .push_str("{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"z\"}}\n");
+    content.push_str("{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"z\"}}\n");
     std::fs::write(&path, content).unwrap();
     let infos = s.list(10);
     assert_eq!(s.scans, 2, "appended line invalidates the entry");

@@ -58,7 +58,11 @@ const NEEDLE_SESSION_INFO: &str = "\"type\":\"session_info\"";
 
 /// Streaming message count + latest session name — one pass, no
 /// whole-file allocation.
-pub(super) fn count_messages(path: &Path, start_byte: u64, base: u64) -> (u64, u64, Option<String>) {
+pub(super) fn count_messages(
+    path: &Path,
+    start_byte: u64,
+    base: u64,
+) -> (u64, u64, Option<String>) {
     // 返回 (总数, 已覆盖字节, 最新会话名)。只统计 '\n' 结尾的完整行；文件尾
     // 未落盘完的半行不计、不推进——半行既可能漏 needle 也可能把 needle 拆在
     // 边界，留给下次扫描重数。start_byte 之前的字节默认已计过（pi 会话文件

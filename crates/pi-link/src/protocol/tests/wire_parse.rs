@@ -7,8 +7,8 @@ use crate::protocol::*;
 
 #[test]
 fn response_success() {
-    let e = parse_line(r#"{"id":"1","type":"response","command":"prompt","success":true}"#)
-        .unwrap();
+    let e =
+        parse_line(r#"{"id":"1","type":"response","command":"prompt","success":true}"#).unwrap();
     match e {
         Event::Response {
             id,
@@ -151,9 +151,7 @@ fn message_end_blocks_extract_toolcall_with_tool_name() {
             assert!(
                 matches!(&blocks[1], Block::ToolCall { content_index: 1, name, .. } if name == "read")
             );
-            assert!(
-                matches!(&blocks[2], Block::Text { content_index: 2, text } if text == "done")
-            );
+            assert!(matches!(&blocks[2], Block::Text { content_index: 2, text } if text == "done"));
         }
         other => panic!("wrong event: {other:?}"),
     }
@@ -379,8 +377,8 @@ fn bash_response_parses_bash_result() {
 // 执行中的流式输出增量（agent_session._emit 原样转发，json-event 不改写）
 #[test]
 fn bash_execution_update_event() {
-    let e = parse_line(r#"{"type":"bash_execution_update","id":"req-9","delta":"hello "}"#)
-        .unwrap();
+    let e =
+        parse_line(r#"{"type":"bash_execution_update","id":"req-9","delta":"hello "}"#).unwrap();
     match e {
         Event::BashExecutionUpdate { id, delta } => {
             assert_eq!(id.as_deref(), Some("req-9"));

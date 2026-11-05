@@ -208,8 +208,7 @@ fn extension_error_and_misc_wire_events_are_typed() {
         }
     );
     // app 暂不消费的杂项：解析出 type，不落 Unparsed
-    let e =
-        parse_line(r#"{"type":"tool_execution_start","id":"t1","toolName":"bash"}"#).unwrap();
+    let e = parse_line(r#"{"type":"tool_execution_start","id":"t1","toolName":"bash"}"#).unwrap();
     let Event::WireEvent { kind, .. } = e else {
         panic!("not wire event")
     };
