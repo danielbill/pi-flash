@@ -32,6 +32,24 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-05 子代理 044-0 新梳理设计落地（8 项差距全关，7 commits
+  9a3f1a2a..24011ef4）：①运行层错误归一 PROVIDER_ERROR（429/5xx/断流不再
+  误报 START_REJECTED）+ descriptor/details 增活动计数 stats（turns/
+  agentMessages/toolCalls，每 assistant turn 刷新重发，契约表冻结 044-1
+  §1.4）；②子会话只读观察窗——sessions::is_subagent_session 头部 marker
+  判定，observer runtime 零进程（spawn/ensure_spawned/send_input/steer 四
+  闸），composer/消息操作栏/fork 全隐，外部追加跟随复用 3s tick；③面板
+  新版式：宽 500/最小高 200/与子代理按钮居中对齐（PillBtns 测量锚点）/
+  80px 状态卡两行（会话列表同款 spinner/色点 + 名称 + 任务截断｜时长·轮次
+  ·发言数·工具调用·token k）+ 按钮【子代理[N]】文案计数；④主会话渲染
+  向 zcode 对齐——啰嗦专属卡改紧凑行「子代理 name 任务名 …」；⑤内置第三
+  枚「摘要机」（readonly + injectAgentsMd:false，两侧清单逐字同步+对账测
+  试）；⑥工具档位六档（chat-only=noTools:all；full+=per-profile 自选
+  pi-ext/MCP）+ skills 定制（skillsOverride 按名过滤，缺省=系统开启），
+  Settings 页复选清单；⑦模块设置三项目——**开关默认开**（dev_flags
+  default_for，PI_FLASH_SUBAGENTS=0 可关）/并发默认 3（2-5）/深度默认 1
+  （1-3），Settings 页 stepper + spawn env 传导（PI_SUBAGENTS_CAPACITY/
+  MAX_DEPTH）。测试：pi-link 269 + app 429 + 扩展 96 全绿
 - 2026-11-03 扩展重挂工具恢复（pi-flash-3x95）：custom 档中途卸→重挂的扩展
   （mcp-adapter/web-access 实测同症）工具注册但不进 active（pi transcript 工具
   账本 resume 恢复语义：卸载轮 toolsRemoved 后「出现过→不算新」）；修复 =
