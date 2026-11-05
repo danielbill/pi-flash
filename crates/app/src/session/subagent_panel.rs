@@ -294,7 +294,9 @@ fn panel_header(weak: &gpui::WeakEntity<Chat>, panel: &SubagentPanel) -> gpui::A
     let t = T();
     let weak_close = weak.clone();
     let running = panel.rows.iter().filter(|r| r.in_flight()).count();
-    let total_secs: i64 = panel.rows.iter().filter_map(row_duration_secs).sum();
+    // B4：合计同走行的唯一口径（row_secs）——运行中行 live 递增，合计 ≥
+    // 最大单行且随 tick 增长，不再出现「合计 3s vs 行 13s」
+    let total_secs: i64 = panel.rows.iter().filter_map(row_secs).sum();
     let total_tokens: u64 = panel.rows.iter().filter_map(|r| r.usage_total).sum();
 
     let mut stats = format!("{} ⏱{}", tr("subagent.total"), duration_text(total_secs));
@@ -503,19 +505,25 @@ fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
     segs
 }
 
-/// 行一时长（044-0 运行时长）：运行中 = 实时 now−startedAt（每轮 descriptor
-/// 刷新一次，轮间隔内由本函数补齐实时性）；终态 = updatedAt−startedAt。
-fn live_duration_text(row: &CatalogRow) -> String {
+/// 行的运行耗时秒数——**头部合计与行时远唯一口径**（044-0 B4：原先头部
+/// 用 stale 的 updatedAt−startedAt、行用 live now−startedAt，出现合计 3s
+/// vs 行 13s 的矛盾）：运行中 = 实时 now−startedAt（轮间隔内补齐实时性），
+/// 终态 = updatedAt−startedAt。
+fn row_secs(row: &CatalogRow) -> Option<i64> {
     if row.in_flight() {
-        if let Some(a) = parse_iso_secs(&row.started_at) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(a);
-            return duration_text((now - a).max(0));
-        }
+        let a = parse_iso_secs(&row.started_at)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(a);
+        return Some((now - a).max(0));
     }
     row_duration_secs(row)
+}
+
+/// 行一时长（044-0 运行时长）。
+fn live_duration_text(row: &CatalogRow) -> String {
+    row_secs(row)
         .map(duration_text)
         .unwrap_or_else(|| "—".into())
 }
