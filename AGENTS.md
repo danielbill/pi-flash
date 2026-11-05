@@ -93,4 +93,4 @@ crates/app/src/         GPUI 界面（组织方式：Chat = 全应用状态实�
 - [engineering.md](docs/agents/engineering.md)：Rust/工具链工程杂项（补丁方式、CRLF、Windows 路径、测试栈、真实按键链、dev-flags）。
 - [market.md](docs/agents/market.md)：040-1 Pi 扩展市场（页状态机、磁盘快照、布局踩点）。覆盖 `crates/app/src/market/**` + `crates/pi-link/src/market/**`。
 
-任务跟踪用 bd（beads）：命令与收尾协议跑 `bd prime`。
+任务跟踪用 bd（beads），勿用 TodoWrite/markdown TODO 清单；协议跑 `bd prime`。
