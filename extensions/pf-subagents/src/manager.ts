@@ -129,7 +129,27 @@ export class SubagentManager {
 		if (this.#records.has(childId)) {
 			throw new SubagentError(SubagentErrorCode.DUPLICATE_CHILD, `child id already in use: ${childId}`);
 		}
-		const slot = this.#capacity.acquire(request.parentId);
+		let slot: SlotRelease;
+		try {
+			slot = this.#capacity.acquire(request.parentId);
+		} catch (error) {
+			// B3③：满即拒的委派也落一份 failed descriptor——否则面板里这次
+			// 拒绝完全不可见（无 record、无转录卡），用户不知道第 4 个委派
+			// 发生过。id 照常消耗：重试会拿到下一个序号。
+			const descriptor = createDescriptor({
+				childId,
+				provider: provider.name,
+				cwd: request.cwd ?? process.cwd(),
+				depth: request.depth,
+				label: request.label,
+				profile: request.profile,
+				model: request.model,
+				now: this.#now(),
+			});
+			const code = asSubagentError(error, SubagentErrorCode.CAPACITY_REACHED).code;
+			this.#onDescriptor?.({ ...descriptor, phase: "failed", errorCode: code, stopReason: "error" });
+			throw error;
+		}
 		const record: ActivationRecord = {
 			childId,
 			parentId: request.parentId,

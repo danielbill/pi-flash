@@ -80,11 +80,18 @@ export function delegationDescription(
 		 * description lists each profile with what it is, so the model can pick
 		 * on intent instead of guessing from bare ids. */
 		profileSummaries?: ProfileSummary[];
+		/** Concurrency cap, injected so the model can pace itself and knows a
+		 * CAPACITY_REACHED rejection means "retry after an earlier delegation
+		 * settles", not "give up" (044-0 B3①). */
+		capacity?: number;
 	},
 ): string {
 	const context = options.inheritsParentContext
 		? "It does not see the current in-flight turn, only completed history."
 		: "It does not see this conversation.";
+	const capacity = options.capacity
+		? ` At most ${options.capacity} subagents run concurrently in this session; if a call is rejected with CAPACITY_REACHED, re-issue it once an earlier delegation settles — slots free as they finish.`
+		: "";
 	const summaries = options.profileSummaries;
 	const profiles = summaries && summaries.length > 0
 		? ` Choose a profile:\n${summaries
@@ -101,7 +108,7 @@ export function delegationDescription(
 		"Delegate a task to a child agent that works in its own session.",
 		context,
 		"The child's final answer is returned as this tool's result.",
-		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.`,
+		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.${capacity}`,
 		// 委派政策（对齐 ZCode task 工具描述的力度——实测只有机械说明时
 		// 模型从不主动委派，哪怕系统提示词里有鼓励 bullet；见 buglist 第五批）
 		"When to delegate: the task matches one of the profiles above, or answering means sweeping many files or whole directories — research, comparing implementations, locating where something is done, multi-step verification — and you only need the conclusions, not the file dumps. Delegate it and continue the main task; do not repeat the delegated searches yourself, wait for the results. For a single known file, symbol, or value, act directly instead.",
@@ -122,14 +129,26 @@ export async function runDelegation(
 	context: DelegationContext,
 	on_update?: (partial: ToolResultLike) => void,
 ): Promise<ToolResultLike> {
+	// B3②：失败即时上屏——先发一条 status=failed 的 onUpdate（compact 卡
+	// 立刻变 [失败]+分码），再返回 failure。pi 的 toolResult 要等同帧全部
+	// 工具收尾才写转录，没有这条分片时被拒委派在其余子代理运行期间完全
+	// 不可见（044-0 真机 B3）。
+	const fail = (code: SubagentErrorCode, message: string): ToolResultLike => {
+		on_update?.({
+			content: [{ type: "text", text: `${code}: ${message}` }],
+			structuredContent: { errorCode: code, message },
+			details: { status: "failed", error_code: code, ...(input.label ? { label: input.label } : {}) },
+		});
+		return failure(code, message);
+	};
 	if (options.allowedProfiles && options.allowedProfiles.length > 0 && input.profile) {
 		if (!options.allowedProfiles.includes(input.profile)) {
-			return failure(SubagentErrorCode.PROFILE_INVALID, `profile not allowed: ${input.profile}`);
+			return fail(SubagentErrorCode.PROFILE_INVALID, `profile not allowed: ${input.profile}`);
 		}
 	}
 	// `0` is the "unlimited" tier (no budget), so only a negative value is rejected.
 	if (input.maxloop !== undefined && (!Number.isSafeInteger(input.maxloop) || input.maxloop < 0)) {
-		return failure(SubagentErrorCode.START_REJECTED, `maxloop must be a non-negative integer, got ${input.maxloop}`);
+		return fail(SubagentErrorCode.START_REJECTED, `maxloop must be a non-negative integer, got ${input.maxloop}`);
 	}
 	const delivery: Delivery = input.background ? "parent" : "caller";
 	try {
@@ -170,7 +189,7 @@ export async function runDelegation(
 		const failureError = SubagentError.is(error)
 			? error
 			: new SubagentError(SubagentErrorCode.START_REJECTED, error instanceof Error ? error.message : String(error));
-		return failure(failureError.code, failureError.message);
+		return fail(failureError.code, failureError.message);
 	}
 }
 
@@ -214,7 +233,8 @@ function failure(code: SubagentErrorCode, message: string): ToolResultLike {
 	return {
 		content: [{ type: "text", text: `${code}: ${message}` }],
 		structuredContent: { errorCode: code, message },
-		details: { errorCode: code },
+		// 卡片数据源读 snake_case（Rust tool_card）；camelCase 只进 structuredContent
+		details: { error_code: code },
 		isError: true,
 	};
 }

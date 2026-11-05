@@ -421,6 +421,7 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
     }
     el.child(
         // 行一：状态标记 + 名称 + 任务（超长截断，任务吃余下宽度）
+        // + 失败分码（044-0 B3④：被拒/失败行没有子会话可点，理由内联可见）
         div()
             .flex()
             .items_center()
@@ -446,6 +447,18 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
                     .text_ellipsis()
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(task)),
+            )
+            .children(
+                row.error_code
+                    .as_deref()
+                    .filter(|_| matches!(kind, StatusKind::Error))
+                    .map(|code| {
+                        div()
+                            .flex_shrink_0()
+                            .text_size(crate::appearance::ui_size(10.))
+                            .text_color(rgb(C_ERROR))
+                            .child(SharedString::from(code.to_string()))
+                    }),
             ),
     )
     .child(

@@ -74,6 +74,27 @@ describe("SubagentManager.start", () => {
 		assert.equal(provider.prepareCalls, 2);
 	});
 
+	// B3③回归（pi-flash-g9pn）：满即拒的委派也落一份 failed descriptor，
+	// 面板立即出红行——否则这次拒绝完全不可见（无 record、转录卡要等整轮）。
+	it("emits a failed descriptor for a capacity-rejected delegation", async () => {
+		const seen: Array<{ phase: string; errorCode?: string; childId: string }> = [];
+		const { manager, provider } = setup({}, { capacity: 2, onDescriptor: (d) => seen.push({ phase: d.phase, errorCode: d.errorCode, childId: d.childId }) });
+		await manager.start(baseRequest());
+		await manager.start(baseRequest());
+		await manager.start(baseRequest()).catch(() => {});
+		const rejected = seen.at(-1)!;
+		assert.equal(rejected.phase, "failed");
+		assert.equal(rejected.errorCode, SubagentErrorCode.CAPACITY_REACHED);
+		assert.equal(rejected.childId, "sub-3");
+		// 被拒的不进 childrenOf（无 handle、不占容量）
+		assert.deepEqual(manager.childrenOf("parent-a"), ["sub-1", "sub-2"]);
+		// 槽位释放后重派成功（对齐真机：被拒后模型自行补派）——id 照常消耗
+		provider.children[0].complete("done");
+		await manager.activation("sub-1")!.wait();
+		await manager.start(baseRequest());
+		assert.deepEqual(manager.childrenOf("parent-a"), ["sub-2", "sub-4"]);
+	});
+
 	it("reports the provider name in the descriptor", async () => {
 		const { manager } = setup();
 		await manager.start(baseRequest({ label: "explore" }));

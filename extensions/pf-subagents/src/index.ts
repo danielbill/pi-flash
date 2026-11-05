@@ -318,6 +318,9 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			inheritsParentContext: false,
 			allowedProfiles: profiles.map((p) => p.id),
 			profileSummaries: profiles,
+			// B3①：容量上限进描述——模型按它节流，被拒也知道是等槽位重派
+			// 而不是放弃。
+			capacity: manager.capacity,
 		}),
 		// promptSnippet 进系统提示词的常驻工具清单（`- agent: …` 行）——这行
 		// 是模型决定"要不要用这个工具"的第一触点，必须带政策不能只带机制

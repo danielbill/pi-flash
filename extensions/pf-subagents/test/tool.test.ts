@@ -10,8 +10,13 @@ const setup = (options: Parameters<typeof ScriptedProvider.prototype.constructor
 	const provider = new ScriptedProvider("scripted", options);
 	manager.registry.register(provider);
 	const context = { parentId: "parent-a", depth: 0, cwd: "/repo" };
-	const delegate = (input: Record<string, unknown>) =>
-		runDelegation({ manager, providerName: "scripted", inheritsParentContext: false, ...toolOptions }, input as never, context);
+	const delegate = (input: Record<string, unknown>, on_update?: (partial: never) => void) =>
+		runDelegation(
+			{ manager, providerName: "scripted", inheritsParentContext: false, ...toolOptions },
+			input as never,
+			context,
+			on_update,
+		);
 	return { manager, provider, delegate };
 };
 
@@ -46,7 +51,40 @@ describe("delegation tool", () => {
 		const result = await delegate({ prompt: "will fail" });
 		assert.equal(result.isError, true);
 		assert.match(result.content[0].text, /START_REJECTED/);
-		assert.deepEqual(result.details, { errorCode: "START_REJECTED" });
+		// 卡片数据源读 snake_case（Rust tool_card）
+		assert.deepEqual(result.details, { error_code: "START_REJECTED" });
+	});
+
+	// B3②回归（pi-flash-g9pn）：失败先发 status=failed 的 onUpdate 分片，
+	// compact 卡即时变 [失败]+分码，不等同帧其余工具收尾。
+	it("emits a failed onUpdate before returning a failure", async () => {
+		const { delegate } = setup({ failPrepare: true });
+		const updates: Array<Record<string, unknown> | undefined> = [];
+		const pending = delegate({ prompt: "will fail", label: "scan" }, (partial: never) =>
+			updates.push(partial as Record<string, unknown>),
+		);
+		const result = await pending;
+		assert.equal(result.isError, true);
+		assert.equal(updates.length, 1);
+		const details = updates[0]?.details as Record<string, unknown>;
+		assert.equal(details["status"], "failed");
+		assert.equal(details["error_code"], "START_REJECTED");
+		assert.equal(details["label"], "scan");
+	});
+
+	it("reports CAPACITY_REACHED with the failed update too", async () => {
+		const { manager, delegate } = setup();
+		manager.capacity = 1;
+		const updates: Array<Record<string, unknown> | undefined> = [];
+		// 占住唯一槽位（不 await——runDelegation 要等子代理跑完）
+		void delegate({ prompt: "slot 1" });
+		await new Promise((resolve) => setImmediate(resolve));
+		const result = await delegate({ prompt: "slot 2" }, (partial: never) =>
+			updates.push(partial as Record<string, unknown>),
+		);
+		assert.equal(result.isError, true);
+		const details = updates[0]?.details as Record<string, unknown>;
+		assert.equal(details["error_code"], "CAPACITY_REACHED");
 	});
 
 	it("rejects a profile outside the allowlist before delegating", async () => {
@@ -123,5 +161,16 @@ describe("delegation description", () => {
 		// 即使系统提示词有鼓励 bullet 也不派）——丢了就是回归
 		assert.match(text, /When to delegate/);
 		assert.match(text, /do not repeat the delegated searches/);
+	});
+
+	// B3①（pi-flash-g9pn）：容量上限与「被拒等槽位重派」引导进描述
+	it("injects the concurrency cap and the retry guidance", () => {
+		const text = delegationDescription({ inheritsParentContext: false, capacity: 3 });
+		assert.match(text, /At most 3 subagents/);
+		assert.match(text, /CAPACITY_REACHED/);
+		assert.match(text, /re-issue it once an earlier delegation settles/);
+		// 未给容量时不注入（别的宿主可能不限并发）
+		const bare = delegationDescription({ inheritsParentContext: false });
+		assert.doesNotMatch(bare, /CAPACITY_REACHED/);
 	});
 });

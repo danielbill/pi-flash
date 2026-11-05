@@ -326,7 +326,28 @@ impl SessionRuntime {
                 // 统一补全——那里才能拿到 was_running 并一次收尾
                 self.exit_code = code;
             }
-            Event::WireEvent { .. } => {}
+            Event::WireEvent { kind, value } => {
+                // 044-0 B3②：tool_execution_update 此前整体丢弃——委派被拒的
+                // 失败 details 要等同帧其余工具全部收尾才随 toolResult 上屏，
+                // 运行期完全不可见。这里把 partialResult.details 合入对应
+                // ToolCall 块（先限定 agent 卡：running/failed 状态即时化的
+                // 唯一消费者）；正文仍走 toolResult 主通道避免双写。
+                if kind == "tool_execution_update" && value["toolName"].as_str() == Some("agent") {
+                    if let (Some(tcid), Some(det)) = (
+                        value["toolCallId"].as_str(),
+                        value["partialResult"]["details"].as_object(),
+                    ) {
+                        if let Some(m) = self.messages.last_mut() {
+                            crate::session::messages::merge_tool_update(
+                                m,
+                                tcid,
+                                serde_json::Value::Object(det.clone()),
+                            );
+                            cx.notify();
+                        }
+                    }
+                }
+            }
             // 思考档真值（pi 按模型能力截断后广播）：状态槽是胶囊标签的
             // 首选来源，不跟着它走就永远停在 get_state 那一刻的旧值——真机
             // 症状「怎么换都是 high」（pi 早已是 low/minimal，标签不动）。
