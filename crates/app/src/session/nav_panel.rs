@@ -472,10 +472,12 @@ pub(crate) fn nav_card(
     turn_el.into_any_element()
 }
 
-/// 相位行（v64 改版）：3×3 点阵图标 + 「等待中」+ 秒级计时（ZCode 同款），
-/// 取代原「正在运行 {tool}...」纯文本脉冲。计时文本放进 1s repeat 动画
+/// 相位行（v64 改版）：3×3 点阵图标 + 「工作中」+ 计时（ZCode 同款），
+/// 取代原「正在运行 {tool}...」纯文本脉冲。计时文本放进 100ms repeat 动画
 /// 闭包逐帧刷新——免额外定时器；起点取 runtime `stream_started`
 /// （AgentStart 记录、settle/abort 清除），跨 streaming 隐藏期持续累计。
+/// 计时进位到天：天/时/分/秒自高位起只显非零段，秒段恒带 1 位小数
+/// （整数十分秒，免浮点）。
 pub(crate) fn phase_row(
     started: std::time::Instant,
     t: &crate::appearance::theme::Theme,
@@ -487,24 +489,34 @@ pub(crate) fn phase_row(
         .text_size(crate::appearance::ui_size(13.))
         .text_color(rgb(t.text_muted))
         .child(crate::ui::working_dots(rgb(t.text_muted)))
-        .child(tr("status.waiting"))
+        .child(tr("status.working"))
         .with_animation(
             "phase-row-timer",
-            Animation::new(std::time::Duration::from_millis(1000)).repeat(),
+            Animation::new(std::time::Duration::from_millis(100)).repeat(),
             move |el, _| {
-                let secs = started.elapsed().as_secs();
-                let text = if secs >= 60 {
-                    crate::i18n::tf(
-                        "time.min_sec",
-                        &[
-                            ("m", (secs / 60).to_string()),
-                            ("s", (secs % 60).to_string()),
-                        ],
-                    )
-                } else {
-                    crate::i18n::tf("time.seconds", &[("n", secs.to_string())])
-                };
-                el.child(SharedString::from(text))
+                let total = started.elapsed();
+                let secs = total.as_secs();
+                let days = secs / 86_400;
+                let hours = (secs % 86_400) / 3_600;
+                let mins = (secs % 3_600) / 60;
+                // 十分秒：整段只留分钟内的 1 位小数（59.96s 抖动不会跳成 60.0）
+                let t10 = (total.as_millis() / 100 % 600) as u32;
+                let sec_txt = crate::i18n::tf(
+                    "time.seconds",
+                    &[("n", format!("{}.{:01}", t10 / 10, t10 % 10))],
+                );
+                let mut seg: Vec<String> = Vec::with_capacity(4);
+                if days > 0 {
+                    seg.push(crate::i18n::tf("time.day", &[("n", days.to_string())]));
+                }
+                if days > 0 || hours > 0 {
+                    seg.push(crate::i18n::tf("time.hour", &[("n", hours.to_string())]));
+                }
+                if days > 0 || hours > 0 || mins > 0 {
+                    seg.push(crate::i18n::tf("time.minute", &[("n", mins.to_string())]));
+                }
+                seg.push(sec_txt);
+                el.child(SharedString::from(seg.join(" ")))
             },
         )
         .into_any_element()
