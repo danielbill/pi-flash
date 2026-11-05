@@ -2,7 +2,7 @@
 //! 写入点，事件臂共用）。
 
 use gpui::Context;
-use pi_link::protocol::{Block, Usage};
+use pi_link::protocol::{Block, Usage, content_blocks};
 
 use crate::session::messages::{BashInfo, Msg, Role, UsageLine, merge_tool_result, result_payload};
 
@@ -177,5 +177,40 @@ impl SessionRuntime {
             msg.blocks[content_index] = fresh;
         }
         &mut msg.blocks[content_index]
+    }
+
+    /// get_messages 的权威投影（整表替换——fixes doubled rows after the tail
+    /// pre-render）：ingest 全表 + fork 锚点映射 + 尾部时间戳回填 + 定位/
+    /// 钉顶/重绘。同步路径与后台 leaf 修复的落败分支共用（秒开深度优化
+    /// pi-flash-2o92 把修复改后台后，落败分支在这里补投影）。
+    pub(crate) fn project_rpc_messages(
+        &mut self,
+        rpc_msgs: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        self.messages.clear();
+        self.pending_echoes.clear();
+        // 整表已按权威快照归一：切断窗口随之作废（残包即使再到也不能并入）
+        self.stream_cut = false;
+        for msg in &rpc_msgs {
+            let blocks = content_blocks(&msg["content"]);
+            let usage = Usage::parse(&msg["usage"]);
+            self.ingest_message(msg, blocks, usage, None, cx);
+        }
+        // map user messages to active-path entry ids (fork anchors)
+        let mut ids = self.active_user_entry_ids.iter();
+        for m in self.messages.iter_mut() {
+            if m.role == Role::User {
+                m.entry_id = ids.next().cloned();
+            }
+        }
+        // get_messages payloads carry generation-START stamps only;
+        // completion stamps (回复用时) come from the session file's entry
+        // write-times
+        self.merge_tail_stamps();
+        self.apply_pending_locate(cx);
+        // 同一会话的重读保住钉顶（换工具预设/压缩后重拉都走这里）
+        self.restore_anchor_after_reload();
+        self.notify_list(cx);
     }
 }

@@ -1,0 +1,115 @@
+//! RPC 事件泵（自由异步函数）：epoch 守卫在此——路由本会话事件进本
+//! runtime；泵尾通道关闭 = pi 进程死亡，轮终语义在这里一次补全。
+
+use futures::StreamExt;
+use futures::channel::mpsc::UnboundedReceiver;
+use pi_link::protocol::Event;
+
+use crate::i18n::tr;
+
+use super::*;
+
+/// Runtime-local event pump: routes THIS session's events into THIS runtime
+/// (stale-guarded by epoch). Chat is not involved — running sessions keep
+/// accumulating while parked.
+pub(super) async fn consume_runtime_events(
+    this: gpui::WeakEntity<SessionRuntime>,
+    cx: &mut gpui::AsyncApp,
+    mut rx: UnboundedReceiver<Event>,
+    epoch: u64,
+) {
+    while let Some(event) = rx.next().await {
+        let stale = this
+            .update(cx, |rt, cx| {
+                if rt.agent.epoch != epoch {
+                    return true;
+                }
+                rt.touch();
+                rt.on_event(event, cx);
+                false
+            })
+            .unwrap_or(true);
+        if stale {
+            return;
+        }
+    }
+    let _ = this.update(cx, |rt, cx| {
+        if rt.agent.epoch == epoch {
+            // 轮中死亡 = 外部错误：补全轮终语义。此前只有一条静默的
+            // "pi exited" 状态行——标签栏三色点只认 TurnSettled，永不亮；
+            // 半截工具卡永转；无提示音（用户实测：跑着跑着就没了，标签
+            // 栏毫无动静）。
+            let code = rt.exit_code.take();
+            let was_running = rt.agent_running || rt.stream_started.is_some();
+            if was_running {
+                rt.turn_error = true;
+                rt.fail_dangling_tool_calls();
+            }
+            // 死因留痕：stderr 尾部（node OOM / unhandled rejection /
+            // 扩展 fatal 只出现在这里）。最后一行非空 stderr 直接挂进状态条——
+            // 此前只 eprintln，用户看到的是永远转圈的会话，不知道 pi 其实在
+            // 启动时就 `Error: Model "x/y" not found` 退出了（2026-11-02 真机）
+            let stderr = rt
+                .agent
+                .session
+                .as_ref()
+                .map(|s| s.stderr_tail())
+                .unwrap_or_default();
+            let last_line = stderr
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .next_back()
+                .map(|l| l.chars().take(160).collect::<String>());
+            rt.status = match code {
+                Some(c) => crate::i18n::tf("status.pi_exited_code", &[("code", c.to_string())]),
+                None => tr("status.pi_exited").to_string(),
+            };
+            if let Some(l) = last_line {
+                rt.status = format!("{} — {l}", rt.status);
+            }
+            rt.compacting = false;
+            // 进程没了就不存在「在跑」：不就地复位，agent_running 与快照
+            // is_streaming 会永久卡在 true——psp 状态槽的旋转圈永不灭
+            //（用户实测：旧版还在跑的会话被掐掉后一直转）
+            rt.agent_running = false;
+            rt.phase_waiting = false;
+            rt.phase_command = false;
+            rt.streaming_content = false;
+            // stream_started 闩交给 settle_turn 消费（有音开关才响；用户
+            // 已 abort 则闩已清，静音）
+            rt.settle_turn();
+            if let Some(s) = rt.state.as_mut() {
+                s.is_streaming = false;
+            }
+            if !stderr.trim().is_empty() {
+                eprintln!("pi stderr tail:\n{stderr}");
+            }
+            // 死进程句柄必须摘掉：留着它 select_model 把 SetModel 写进死管道
+            //（✓ 永远不动）、ensure_spawned 认为还活着不重 spawn（发送空转）
+            //——pi 启动即死时第一次暴露（2026-11-02 真机：models.json 拒载 →
+            // `Error: Model not found` 退出，列表点不动、消息转圈）。与
+            // shutdown_process 同口径；重开/发送由 ensure_spawned 重起
+            rt.agent.session = None;
+            // 进程死了：文件落过盘就补绑定（真标签接管；重启后可重开），
+            // 没落盘（boot 即死 / 全程无消息）撤伪标签
+            if !rt.try_bind_reported_file(cx) {
+                cx.emit(SessionEvent::PendingTab(None));
+            }
+            // 轮中死亡按轮终冒泡：订阅方给不在场的会话点红点（turn_error
+            // 已置）。空闲死亡（闲置进程被系统清掉）不值得打扰，不冒泡。
+            if was_running {
+                cx.emit(SessionEvent::TurnSettled);
+            }
+            // 在途扩展 UI 随进程一起死（zi2s.3）：ext_queue 里的积压请求指向
+            // 死管道就地清；在屏弹窗/问卷卡在 Chat.aux（runtime 摸不到），
+            // 冒泡给 Chat ext_cancel_all——否则弹窗留着，点击全发进死管道，
+            // handler 侧 await 早已无人应答。空闲死亡也要发（mock 崩溃场景
+            // handled 后才死，弹窗照旧在屏）。
+            rt.ext_queue.clear();
+            cx.emit(SessionEvent::ExtUiDied);
+            cx.emit(SessionEvent::Changed);
+            cx.notify();
+        }
+    });
+}

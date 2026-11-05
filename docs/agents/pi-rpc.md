@@ -78,7 +78,7 @@
 
 ## 进程死亡与轮终语义（EOF 三件套，2026-10-19）
 
-- pi 进程死亡不发任何「轮终」事件——只有 stdout EOF。app 侧 pump 尾部（`runtime/mod.rs` 的 `consume_runtime_events` 通道关闭分支）统一收尾：轮中死亡 ⇒ `turn_error=true` + `fail_dangling_tool_calls()`（悬空工具卡就地落红）+ `settle_turn()`（响铃）+ `TurnSettled`（标签栏红点）；空闲死亡只复位不冒泡。此前这里只留一条静默的 "pi exited"——标签栏三色点只认 TurnSettled，用户看到的就是「跑一半悄无声息停了」。
+- pi 进程死亡不发任何「轮终」事件——只有 stdout EOF。app 侧 pump 尾部（`runtime/pump.rs` 的 `consume_runtime_events` 通道关闭分支）统一收尾：轮中死亡 ⇒ `turn_error=true` + `fail_dangling_tool_calls()`（悬空工具卡就地落红）+ `settle_turn()`（响铃）+ `TurnSettled`（标签栏红点）；空闲死亡只复位不冒泡。此前这里只留一条静默的 "pi exited"——标签栏三色点只认 TurnSettled，用户看到的就是「跑一半悄无声息停了」。
 - pi-link 合成 [`Event::ProcessExited`]：exit-waiter 线程 300ms 轮询 `try_wait` reap 退出码（std 无法跨线程 wait，child 住 `Arc<Mutex<Option<Child>>>`，Drop take 走后 waiter 见 None 即退）。stderr 恒 piped + 16KB 尾缓冲（`PiSession::stderr_tail`，`STDERR_TAIL_CAP`）——node OOM / unhandled rejection / 扩展 fatal 只出现在 stderr，死亡时 eprintln 留痕。
 - 排查「跑一半停了」：先看 wire log 尾部有无 `=== stdout EOF`——有 = 进程死（本节语义收尾，状态行带退出码）；无 EOF 也无 agent_end = 流挂起（另一类问题）。
 
