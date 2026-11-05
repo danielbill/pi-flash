@@ -123,7 +123,11 @@ pub(crate) fn main_column(
                         .min_w_0()
                         .relative()
                         .flex()
-                        .flex_col();
+                        .flex_col()
+                        // wrap bounds 每帧捕获（PillBtns::tracker 同款 canvas，
+                        // dock 容器同模式）：子代理面板的窗口坐标 → wrap 坐标
+                        // 换算需要 wrap 原点（044-0 与按钮居中对齐）
+                        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.chat_wrap));
                     if new_session_page {
                         // 012 新会话页：标题 + 超大背景 logo + inputpanel +
                         // 额外操作栏；扩展行照旧挂页面上下。034 状态带**不挂**
@@ -320,15 +324,27 @@ fn session_fn_bar(
         .into_any_element()
 }
 
-/// 「子代理面板」钮（044-1 §1.1）：icon + 文案 + 运行中计数徽标；
-/// 浮层开着时点亮 accent。徽标数 phase ∈ provisioning/active。
+/// 「子代理面板」钮（044-1 §1.1）：icon + 文案 + 运行中计数（044-0 定稿：
+/// 文案内嵌【子代理[2]】，不用圆徽标）。浮层开着时点亮 accent。计数 =
+/// phase ∈ provisioning/active。
 fn subagent_fn_bar_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
     let open = chat.dlg.subagent_panel.as_ref().is_some_and(|p| p.open);
-    let badge = subagent_panel::running_badge(chat);
+    let running = chat
+        .dlg
+        .subagent_panel
+        .as_ref()
+        .map(|p| p.running_count())
+        .unwrap_or(0);
+    let label = if running > 0 {
+        SharedString::from(format!("{}[{running}]", tr("subagent.panel")))
+    } else {
+        SharedString::from(tr("subagent.panel").to_string())
+    };
     let hover_fg = if open { t.accent } else { t.text };
     div()
         .id("sfbar-subagent")
+        .relative()
         .flex()
         .items_center()
         .gap(px(6.))
@@ -350,8 +366,9 @@ fn subagent_fn_bar_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::A
             crate::ui::tokens::icon::MD,
             if open { t.accent } else { t.text_muted },
         ))
-        .child(SharedString::from(tr("subagent.panel")))
-        .children(badge)
+        .child(label)
+        // bounds 捕获（面板与按钮居中对齐的测量端，044-0）
+        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.subagent))
         .into_any_element()
 }
 

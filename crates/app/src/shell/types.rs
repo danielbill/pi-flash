@@ -217,7 +217,7 @@ pub(crate) struct PillAnchor {
     pub top: gpui::Pixels,
 }
 
-/// 三个胶囊按钮的 bounds 槽位：canvas 在 paint 期每帧覆盖写入，弹窗
+/// 按钮与容器的 bounds 槽位：canvas 在 paint 期每帧覆盖写入，弹窗
 /// 打开时读取。Rc<RefCell> 是为了绕开 paint 闭包拿不到实体借用的限制。
 #[derive(Clone, Default)]
 pub(crate) struct PillBtns {
@@ -228,6 +228,11 @@ pub(crate) struct PillBtns {
     pub mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// 模型按钮（042：模型菜单锚定）
     pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// 子代理面板钮（044-0：面板与按钮居中对齐，取 center_x）
+    pub subagent: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// chat-wrap 容器（044-0：面板挂 wrap 内，窗口坐标 → wrap 坐标换算
+    /// 需要 wrap 原点；function_panel dock 容器 bounds 同款捕获）
+    pub chat_wrap: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl PillBtns {
