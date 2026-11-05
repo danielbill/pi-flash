@@ -1,7 +1,7 @@
 # pi RPC wire 陷阱
 
 改动会碰到的文件（先读完本文再动）：
-- `crates/pi-link/**`：协议层本体——`protocol.rs` 类型、`client.rs` 侧车进程、`json.rs` 解析、`transcript.rs` 重放、`catalog.rs` 启动目录、`vendor.rs` 定位
+- `crates/pi-link/**`：协议层本体——`protocol/` 目录（itlq.6 起，mod 全量 re-export：command/blocks/events/session/wire + tests/）、`client.rs` 侧车进程、`json.rs` 解析、`transcript.rs` 重放、`catalog.rs` 启动目录、`vendor.rs` 定位
 - `crates/app/src/agent_session.rs`、`crates/app/src/session/runtime.rs`、`crates/app/src/session/messages.rs`、`crates/app/src/ext_ui.rs`：app 侧主要消费方
 
 随踩随补。vendor 升级（bump `vendor/pi/package.json` + VERSION）必跑 pi-link 符合性测试，并复核下方标了版本号的条目。
@@ -88,7 +88,7 @@
 
 ## 图片坐标标注（formatDimensionNote，升级复核点）
 
-图片超限缩放展示时，pi 把 `[Image: original WxH, displayed at WxH. Multiply coordinates by N to map to original image.]` **无开关**拼进消息 text 块尾（生成于 `dist/utils/image-resize.js formatDimensionNote`；user 附件拼 `\n\n` + 标注、read 工具图结果拼 `Read image file [mime]\n` + 标注，多图多条连排）。会话 jsonl 存的就是带标注的最终文本，RPC 回显同文。这是给模型的元数据、非消息原文：PF 在 wire 解码出口统一剥除（`protocol.rs content_blocks → strip_image_dimension_note`，尾部连续标注、形状严格校验）。升级 pi 若改了该格式，剥除静默失效（不误剥），以新版 image-resize.js 为准复核。
+图片超限缩放展示时，pi 把 `[Image: original WxH, displayed at WxH. Multiply coordinates by N to map to original image.]` **无开关**拼进消息 text 块尾（生成于 `dist/utils/image-resize.js formatDimensionNote`；user 附件拼 `\n\n` + 标注、read 工具图结果拼 `Read image file [mime]\n` + 标注，多图多条连排）。会话 jsonl 存的就是带标注的最终文本，RPC 回显同文。这是给模型的元数据、非消息原文：PF 在 wire 解码出口统一剥除（`protocol/blocks.rs content_blocks → strip_image_dimension_note`，尾部连续标注、形状严格校验）。升级 pi 若改了该格式，剥除静默失效（不误剥），以新版 image-resize.js 为准复核。
 
 ## registry dump 凭据只读闸（auth.json 锁陷阱，升级复核点）
 

@@ -53,13 +53,15 @@ UI测试技能：`.agents/skills/pi-flash-ui-test/SKILL.md`
 
 ```
 crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
-  protocol.rs             typed pi RPC（JSONL over stdio）
+  protocol/               typed pi RPC（JSONL over stdio；mod 全量 re-export 保
+                          公 API 路径：command/blocks/events/session/wire + tests/）
   client.rs               pi 侧车进程所有权与 JSONL 管线
   json.rs                 pi 返回 JSON 的解析入口（disable_recursion_limit 在此）
   transcript.rs           transcript 系统提示词 + 工具声明重放
   catalog.rs              启动期目录直读（get_commands 无内置命令的补偿）
   vendor.rs               vendored pi 运行时定位
-  sessions.rs             会话发现（~/.pi/agent/sessions 索引扫描）
+  sessions/               会话发现（~/.pi/agent/sessions 索引扫描；info/scan/
+                          read/search + testing 夹具，mod re-export）
   recents.rs              最近活动会话列表（003）
   config.rs               pi 配置文件访问（Models 面板）
   models_json.rs          ~/.pi/agent/models.json（042-1 起 PF 写它：整份草稿 +
