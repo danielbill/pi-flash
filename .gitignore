@@ -47,3 +47,8 @@ docs/内部决策/
 .agents/skills
 target-test/
 test/provider/real-provider-info.txt
+
+# repo-root junction → vendor/pi/node_modules（扩展独立开发/复现用，仅本机）
+node_modules/
+vendor/pi/tmp-repro*.mjs
+tmp/diag-*.mjs
