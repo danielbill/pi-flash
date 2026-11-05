@@ -559,3 +559,16 @@
   静音键），勾选 = 上屏、取消勾选 = 隐藏（`ext_status_muted`，实时生效不关菜单）；
   全静音时条只剩 `[...]` 作找回入口。`dlg.status_mgr_menu` 槽位 + `toggle_ext_
   status_muted`；测试 429 全绿。
+
+## 2026-11-06 refactor(market)：itlq.3 三市场页超规拆分（f31aeaab）
+
+- **范围**：`crates/app/src/market/` 超规 6 文件全拆，全部 ≤500 行，纯移动零语义变化。
+- **拆法**：pi_ext_market → mod（状态机+动作）/ render（页主体+几何+card_metrics）/
+  toolbar / states；pf_market.rs、pf_installed.rs → 目录模块（mod + render + card +
+  pager；mod + actions）；pi_native_market → mod（状态机）/ actions（Chat 动作链）/
+  render（page+BarModel）/ card（分段壳）/ package（包卡）/ time（时间戳纯函数，
+  design.rs 453 行免豁免）。
+- **外部入口零改动**：三个 `::page`、`pf_installed::remove_confirm_overlay`、
+  `pf_market::PfState`、`pi_native_market::thousands` 路径不变。
+- **验收**：`cargo check -p app` 零警告；app 432 + pi-link 269 全绿（market 21 条，
+  含 design.rs 设计稿几何钉值）。UI 快照回归待用户真机复验（bd pi-flash-itlq.3）。
