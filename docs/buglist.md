@@ -46,14 +46,14 @@
 - 后续追踪：模型收到拒绝结果后**自行重派成功**（第 4 个扫描以 sub-5 完成，
   stopReason=completed）——4 个扫描最终都跑完，但全程用户不可见。
 - 修法清单（用户拍板：派发条目后直接更新 [失败]，点击可见失败理由）：
-  ① agent 工具描述**动态注入容量上限**（用户指出模型根本不知道有并发限
-  制，靠失败才发现）+「CAPACITY_REACHED 后等槽位释放重派」引导；
-  ② runDelegation 失败路径先发 onUpdate(details.status=failed, error_code)
-  再返回 failure——转录 compact 卡**即时**变 [失败]+分码（pi 只挡 toolResult
-  时序，不挡 tool_execution_update）；
-  ③ 被拒委派落 descriptor（phase=failed、errorCode=CAPACITY_REACHED）——
-  面板即时显示；
-  ④ 点击行/卡看失败理由（观察窗或详情展开）。
+  ② **runDelegation 失败路径先发 onUpdate(details.status=failed,
+  error_code) 再返回 failure——转录 compact 卡即时变 [失败]+分码——本条
+  验收核心必修**（主 agent 实际一直知道拒绝：它转述了容量失败并自行补派
+  sub-5；缺的只是给用户的即时呈现）；
+  ① agent 工具描述动态注入容量上限 +「被拒等槽位释放重派」引导（增益：
+  免掉这趟拒绝往返）；
+  ③ 被拒委派落 descriptor——面板即时显示（增益）；
+  ④ 点击行/卡看失败理由（增益）。
 - 验证：并发 3 派 4，第 4 条**立即**在转录与面板显 [失败]+CAPACITY_REACHED；
   模型在槽位释放后补派且新委派可见。
 
