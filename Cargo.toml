@@ -23,11 +23,16 @@ incremental = false
 [profile.dev.package."*"]
 debug = false               # 依赖不带调试信息：windows/gpui 的 rlib 和 pdb 直接瘦一圈
 
+# vendored gpui 保留行号表方便断点进内部；2026-11-05 加 O2——真实目录内容下
+# debug 每键 18-23ms/帧明显卡顿（release 同场景 3.9-4.2ms），渲染主路径
+# （元素树/paint/文本 shaping/hit-test）不能在 O0 跑。单步会跳（内联），断点可进。
 [profile.dev.package.gpui]
-debug = 1                   # vendored 的 gpui 保留行号表，方便断点进 gpui 内部
+debug = 1
+opt-level = 2
 
 [profile.dev.package.gpui-component]
 debug = 1
+opt-level = 2
 
 # 帧时间热依赖在 dev 下单独 O3——对齐 Zed 自己的 Cargo.toml
 # [profile.dev.package]（taffy / tree-sitter / serde_json 三项就是 zed 的配置）。
@@ -41,6 +46,19 @@ opt-level = 3
 
 [profile.dev.package.serde_json]
 opt-level = 3
+
+# app/pi-link 自身代码 O1（2026-11-05）：debug 帧大头在 Chat::render 的元素
+# 构造与清单解析循环（frame.settings 9ms / listing 6ms @O0）。O1 对计算密集
+# 段 ~2-3 倍，断点可进；代价：本 crate 重编译变慢（dev 关增量，改动 app
+# 代码的重编感知明显，忍不了就临时 CARGO_INCREMENTAL=1）。
+[profile.dev.package.app]
+opt-level = 1
+
+[profile.dev.package.pi-link]
+opt-level = 1
+
+[profile.dev.package.pf-plugin-host]
+opt-level = 1
 
 [patch.crates-io]
 gpui = { path = "vendor/gpui" }
