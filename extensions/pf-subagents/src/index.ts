@@ -24,7 +24,9 @@ import { SubagentManager } from "./manager.ts";
 import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
 import { DELEGATION_PARAMETERS, delegationDescription, runDelegation } from "./tool.ts";
 
-const DEFAULT_CAPACITY = 8;
+// 044-0 模块设置：最大并发默认 3（glm 服务器侧只允许 3 并发；可设 2-5，
+// PI_SUBAGENTS_CAPACITY env 覆盖）。
+const DEFAULT_CAPACITY = 3;
 const DEFAULT_MAX_DEPTH = 1;
 const TOOL_NAME = "agent";
 /// Must match `SUBAGENT_CHILD_MARKER` in `pi-link/src/sessions.rs`: the side-bar

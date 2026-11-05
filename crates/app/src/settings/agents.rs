@@ -359,6 +359,15 @@ pub(crate) fn mc_agents_view(
 
     // ---- 左列表 ----
     let mut list = sidebar_list().px(px(7.));
+    // 模块设置（044-0）：并发/深度，写 app_settings，spawn 时 env 传导
+    list = list.child(module_settings_block(weak));
+    list = list.child(
+        div()
+            .h(px(1.))
+            .mx(px(4.))
+            .my(px(6.))
+            .bg(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66))),
+    );
     if !builtins.is_empty() {
         list = list.child(group_header(
             &format!("{} {}", tr("agents.builtin_group"), builtins.len()),
@@ -1061,6 +1070,116 @@ fn sanitize_id(raw: &str) -> String {
             }
         })
         .collect()
+}
+
+/// 模块设置块（044-0）：子代理模块的三项目之一对——最大并发（2-5）与
+/// 嵌套深度（1-3）。写 app_settings（spawn 时 env 传导给 pf-subagents），
+/// 立即落盘。第三项「模块开关」= 开发旗标（044-0 拍板默认开），不在
+/// 此处提供 UI（PI_FLASH_SUBAGENTS / dev-flags.json 控制）。
+/// 模块设置块（044-0）：子代理模块的并发/深度两项——最大并发（2-5，默认 3，
+/// glm 侧限 3）与嵌套深度（1-3，默认 1 禁止套娃）。写 app_settings 立即落盘，
+/// spawn 时 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH）传导给
+/// pf-subagents。第三项「模块开关」= 开发旗标（044-0 拍板默认开），UI 不
+/// 暴露（PI_FLASH_SUBAGENTS / dev-flags.json 控制）。
+fn module_settings_block(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+    let t = T();
+    let cap = crate::services::workspace::subagent_capacity() as u32;
+    let depth = crate::services::workspace::subagent_max_depth() as u32;
+    let stepper = |weak2: &gpui::WeakEntity<Chat>,
+                   id: &'static str,
+                   label: &str,
+                   v: u32,
+                   min: u32,
+                   max: u32,
+                   set: fn(u64)| {
+        let mk = |bid: String,
+                  txt: &'static str,
+                  to: u32,
+                  disabled: bool,
+                  weak3: &gpui::WeakEntity<Chat>| {
+            config_button(
+                bid,
+                weak3,
+                txt,
+                Btn::Secondary,
+                true,
+                disabled,
+                move |_, cx| {
+                    set(to as u64);
+                    cx.notify();
+                },
+            )
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(4.))
+            .py(px(3.))
+            .child(
+                div()
+                    .w(px(64.))
+                    .flex_shrink_0()
+                    .text_size(crate::appearance::ui_size(11.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(label.to_string())),
+            )
+            .child(mk(
+                format!("{id}-dec"),
+                "\u{2212}",
+                v.saturating_sub(1).max(min),
+                v <= min,
+                weak2,
+            ))
+            .child(
+                div()
+                    .w(px(20.))
+                    .text_center()
+                    .text_size(crate::appearance::ui_size(12.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(v.to_string())),
+            )
+            .child(mk(
+                format!("{id}-inc"),
+                "+",
+                (v + 1).min(max),
+                v >= max,
+                weak2,
+            ))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(
+            div()
+                .px(px(4.))
+                .pt(px(4.))
+                .pb(px(2.))
+                .text_size(crate::appearance::ui_size(10.))
+                .text_color(rgb(t.text_faint))
+                .child(tr("agents.module_settings")),
+        )
+        .child(stepper(
+            weak,
+            "ag-cap",
+            &tr("agents.capacity"),
+            cap,
+            2,
+            5,
+            crate::services::workspace::set_subagent_capacity,
+        ))
+        .child(stepper(
+            weak,
+            "ag-depth",
+            &tr("agents.depth"),
+            depth,
+            1,
+            3,
+            crate::services::workspace::set_subagent_max_depth,
+        ))
+        .into_any_element()
 }
 
 fn tools_dropdown(

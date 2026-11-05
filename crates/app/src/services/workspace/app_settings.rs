@@ -79,6 +79,12 @@ pub struct AppSettings {
     /// AgentSettled 才逐条发出；"steer" = prompt+steer 立即插进当前轮。
     /// 非法值/缺键都落 queue。
     pub send_mode: Option<String>,
+    /// 044-0 模块设置: 子代理最大并发（2-5，默认 3；glm 服务器侧只允许
+    /// 3 并发）。spawn pi 时以 PI_SUBAGENTS_CAPACITY 传导给扩展。
+    pub subagent_capacity: Option<u64>,
+    /// 044-0 模块设置: 子代理嵌套深度（1-3，默认 1 = 禁止套娃）。spawn pi
+    /// 时以 PI_SUBAGENTS_MAX_DEPTH 传导给扩展。
+    pub subagent_max_depth: Option<u64>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -163,6 +169,14 @@ pub fn app_settings() -> AppSettings {
                         .get("send_mode")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
+                    subagent_capacity: map
+                        .get("subagent_capacity")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v.clamp(2, 5)),
+                    subagent_max_depth: map
+                        .get("subagent_max_depth")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v.clamp(1, 3)),
                 }
             }
             None => AppSettings::default(),
@@ -247,6 +261,12 @@ pub fn save_app_settings(s: &AppSettings) {
     }
     if let Some(v) = &s.send_mode {
         obj.insert("send_mode".into(), Value::String(v.clone()));
+    }
+    if let Some(v) = s.subagent_capacity {
+        obj.insert("subagent_capacity".into(), Value::Number(v.into()));
+    }
+    if let Some(v) = s.subagent_max_depth {
+        obj.insert("subagent_max_depth".into(), Value::Number(v.into()));
     }
     save_map_to(&path, &obj);
 }
@@ -437,6 +457,45 @@ pub const CHAT_WIDTH_MAX: u32 = 1200;
 /// 滑块步进（20px，用户定案；min/default/max 均为 20 的整数倍）
 pub const CHAT_WIDTH_STEP: u32 = 20;
 
+/// 044-0 模块设置默认值：最大并发 3（glm 侧限 3）、嵌套深度 1（禁止套娃）。
+pub const SUBAGENT_CAPACITY_DEFAULT: u64 = 3;
+pub const SUBAGENT_MAX_DEPTH_DEFAULT: u64 = 1;
+
+/// 子代理最大并发（设置-子代理页「模块设置」；钳 2-5，缺省 3）。
+pub fn subagent_capacity() -> u64 {
+    app_settings()
+        .subagent_capacity
+        .unwrap_or(SUBAGENT_CAPACITY_DEFAULT)
+        .clamp(2, 5)
+}
+
+/// 子代理嵌套深度（钳 1-3，缺省 1）。
+pub fn subagent_max_depth() -> u64 {
+    app_settings()
+        .subagent_max_depth
+        .unwrap_or(SUBAGENT_MAX_DEPTH_DEFAULT)
+        .clamp(1, 3)
+}
+
+/// 子代理模块设置 → 扩展 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH，
+/// pf-subagents index.ts numberFromEnv 读）。subagents 旗标关着时不传导
+/// （扩展不加载，env 无意义）。
+pub fn subagent_envs() -> Vec<(String, String)> {
+    if !subagents_enabled() {
+        return Vec::new();
+    }
+    vec![
+        (
+            "PI_SUBAGENTS_CAPACITY".into(),
+            subagent_capacity().to_string(),
+        ),
+        (
+            "PI_SUBAGENTS_MAX_DEPTH".into(),
+            subagent_max_depth().to_string(),
+        ),
+    ]
+}
+
 /// 会话内容宽度（px，已钳制；渲染期多次读取，只读缓存）。
 pub fn chat_content_width() -> f32 {
     clamp_chat_width(
@@ -462,6 +521,26 @@ pub fn preview_chat_content_width(width: u32) {
 
 /// 把内存缓存（拖拽预览后的值）落盘。
 pub fn save_app_settings_now() {
+    save_app_settings(&app_settings());
+}
+
+/// 044-0 模块设置：设子代理最大并发（钳 2-5；spawn 时 env 传导）。
+pub fn set_subagent_capacity(v: u64) {
+    with_app_settings_cache(|cache| {
+        let mut s = (*cache).clone().unwrap_or_default();
+        s.subagent_capacity = Some(v.clamp(2, 5));
+        *cache = Some(s);
+    });
+    save_app_settings(&app_settings());
+}
+
+/// 044-0 模块设置：设子代理嵌套深度（钳 1-3；spawn 时 env 传导）。
+pub fn set_subagent_max_depth(v: u64) {
+    with_app_settings_cache(|cache| {
+        let mut s = (*cache).clone().unwrap_or_default();
+        s.subagent_max_depth = Some(v.clamp(1, 3));
+        *cache = Some(s);
+    });
     save_app_settings(&app_settings());
 }
 

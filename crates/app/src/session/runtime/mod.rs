@@ -615,6 +615,9 @@ impl SessionRuntime {
         // （首条消息前 undefined + uuid 随重启漂移，门控必失配——真机
         // 2026-11-03）。所有 pi 扩展通用。
         envs.push(("PF_SESSION_KEY".into(), self.key.clone()));
+        // 044-0 模块设置传导：并发/深度从设置页到 pf-subagents（env 覆盖
+        // 扩展默认值；旗标关着 = 空 vec，扩展不加载无意义）。
+        envs.extend(crate::services::workspace::subagent_envs());
         if let Some(base) = pi_link::paths::dir() {
             if let Some(cfg) = pi_link::service_ext::config_path_if_any(&base, &self.key) {
                 if cfg.is_file() {

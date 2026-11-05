@@ -2,13 +2,14 @@
 //!
 //! 事实源 = `<PF数据目录>/dev-flags.json`（[`crate::paths::dev_flags_file`]；
 //! debug 构建 = `./pi-flash-dev/`，release = `~/.pi-flash/`，用户机器无此
-//! 文件 → 全部键走默认 false，发布包即关态）。解析走
+//! 文件 → 键走 [`default_for`] 默认值）。解析走
 //! [`crate::config::read_json`]：容忍 `//` 注释 / 尾逗号 / BOM，缺文件 =
 //! 空对象，文件可自带说明注释。
 //!
 //! 键约定：
 //! - 键名 = 模块名 snake_case，注册在 [`KNOWN`]（后续模块在此加键即接入）；
-//! - 值 bool，**false / 缺省 = 关**（发版排除语义）；
+//! - 值 bool，缺省 = [`default_for`] 默认值（subagents **默认开** 044-0；
+//!   其余发版排除语义默认关）；
 //! - 环境变量覆盖最高优先：`PI_FLASH_<键大写>`，`1`/`true` 强开、`0`/`false`
 //!   强关（如 `subagents` → `PI_FLASH_SUBAGENTS`）；
 //! - 本模块**不缓存**（调用频率 = spawn 级）；app 渲染侧用
@@ -19,7 +20,14 @@ use serde_json::Value;
 /// 已知旗标键（模块发版排除注册表）。新增可配置模块 = 在此加一个键。
 pub const KNOWN: &[&str] = &["subagents", "pi_ext_market", "pi_native_market"];
 
-/// 某模块旗标是否开启：env 覆盖 > dev-flags.json 键值 > false。
+/// 键默认值（044-0 拍板：subagents 模块**默认开**——发布包子代理可见；
+/// 其余重型模块维持发版排除语义默认关）。dev-flags.json 显式值 / env
+/// 覆盖仍可翻转。
+fn default_for(key: &str) -> bool {
+    key == "subagents"
+}
+
+/// 某模块旗标是否开启：env 覆盖 > dev-flags.json 键值 > 默认值（subagents 开）。
 pub fn enabled(key: &str) -> bool {
     let env_name = format!("PI_FLASH_{}", key.to_uppercase());
     if let Ok(flag) = std::env::var(&env_name) {
@@ -30,14 +38,16 @@ pub fn enabled(key: &str) -> bool {
             return true;
         }
     }
-    from_file(key)
+    file_values()
+        .and_then(|v| v.get(key).and_then(Value::as_bool))
+        .unwrap_or_else(|| default_for(key))
 }
 
-/// 只看文件的键值（不含 env 覆盖；缺文件/缺键/非 bool = false）。
+/// 只看文件的键值（不含 env 覆盖；缺文件/缺键 = 默认值，非 bool = 默认值）。
 pub fn from_file(key: &str) -> bool {
     file_values()
         .and_then(|v| v.get(key).and_then(Value::as_bool))
-        .unwrap_or(false)
+        .unwrap_or_else(|| default_for(key))
 }
 
 /// dev-flags 全文件内容；缺文件 = 空对象，坏文件 = None（fail-closed 全关）。
@@ -54,7 +64,7 @@ pub fn summary() -> String {
         let on = file
             .as_ref()
             .and_then(|v| v.get(*key).and_then(Value::as_bool))
-            .unwrap_or(false);
+            .unwrap_or_else(|| default_for(key));
         if !out.is_empty() {
             out.push(' ');
         }
@@ -109,11 +119,13 @@ mod tests {
     #[test]
     fn file_keys_and_summary_all_paths() {
         let _g = DirGuard::new("all");
-        // 缺文件 = 全关
-        assert!(!from_file("subagents"));
+        // 缺文件 = 默认值（subagents 默认开，044-0 拍板；其余键默认关）
+        assert!(from_file("subagents"));
+        assert!(!from_file("pi_ext_market"));
         let empty = summary();
-        assert!(empty.contains("subagents=off"), "{empty}");
-        // true（注释与尾逗号都认）/ false / 缺键 = 关；未知键进 summary 提示
+        assert!(empty.contains("subagents=on"), "{empty}");
+        assert!(empty.contains("pi_ext_market=off"), "{empty}");
+        // true（注释与尾逗号都认）/ false / 缺键 = 默认；未知键进 summary 提示
         let path = crate::paths::dev_flags_file().unwrap();
         std::fs::write(&path, "// 注释也认得\n{ \"subagents\": true, }").unwrap();
         assert!(from_file("subagents"));
@@ -121,9 +133,9 @@ mod tests {
         std::fs::write(&path, "{ \"subagents\": false }").unwrap();
         assert!(!from_file("subagents"));
         std::fs::write(&path, "{ \"subagent\": 1 }").unwrap();
-        assert!(!from_file("subagents"), "缺键 = 关");
+        assert!(from_file("subagents"), "缺键 = 默认开（044-0）");
         let s = summary();
-        assert!(s.contains("subagents=off"), "{s}");
+        assert!(s.contains("subagents=on"), "{s}");
         assert!(s.contains("未知键 subagent"), "{s}");
     }
 }
