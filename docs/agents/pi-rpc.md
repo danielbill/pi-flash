@@ -94,6 +94,16 @@
 
 `registry.rs` DUMP_SCRIPT 给 `ModelRuntime.create` 传 `credentials: new ReadOnlyAuthStorage()`——类**按文件路径**从 `<entry>/../core/auth-storage.js` import（`dist/index.js` 只导出 `readStoredCredential`，不走包名 import 是同一绕过手法）。不能省：默认 `AuthStorage` 的 `listCredentials` 走 proper-lockfile 等 `~/.pi/agent/auth.json` 锁，等待死线 30s（auth-storage.js `staleMs = 30_000`）；孤儿锁目录（持锁 pi 进程被杀、Windows unlock EPERM 被静默吞）会让 dump 挂满 30s 才按 stale 砸锁（2026-10-26 实测 30.8s，只读版 2.1s）。dump 只消费 providerId→type 元数据，只读裸读零锁语义刚好。升级复核：`core/auth-storage.js` 仍导出 `ReadOnlyAuthStorage` 且构造默认 authPath 同源；若 SDK 改名/搬家，弹窗退回 30s 挂起（非报错，不易察觉）。
 
+## 扩展 UI 请求的阻塞口径（is_blocking，2026-11-05 黄点事故）
+
+`extension_ui_request` 分两类：**阻塞件**（select/confirm/input/editor——handler promise 挂住，pi 停在原地等答案）与 **fire-and-forget**（notify/setStatus/setWidget/setTitle/set_editor_text/unknown——发出方不等回执）。判定唯一落点 = `pi_link::protocol::ExtUiMethod::is_blocking()`，三处消费方必须同口径：
+
+1. **parked 入队**（`pool.rs` ExtUi 臂）：阻塞件才叫人（toast + 侧栏橙点）；fire-and-forget 只入队等切回时重放，不亮点。
+2. **侧栏橙点**（`psp_row_views.rs` awaiting）：只数队列里的阻塞件。真机事故：微信桥/监控类服务会话 park 期间猛发 setStatus，旧口径整个队列非空就点亮，徽标常亮且切回不清（切回 flush 只兑现队首、其余无差别回队 → 永远非空）。
+3. **空闲退役闸**（`startup.rs` spawn_idle_recycle）：只拦未兑现阻塞件；fire-and-forget 队尾残留不拦（退役即丢，发出方语义本就不保证送达）。
+
+切回 flush 两段式（`switch_to`）：fire-and-forget 全部立即兑现（此刻 active_key 已切到本会话，on_ext_ui 写的 self.rt() 就是本 runtime）；阻塞件只浮队首供作答，其余回队。新增 ExtUiMethod 变体时同步复核 is_blocking 归类。
+
 ## 调试
 
 - `PI_FLASH_RPC_LOG` 开线缆日志。

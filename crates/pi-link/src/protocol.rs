@@ -641,6 +641,20 @@ pub enum ExtUiMethod {
     },
 }
 
+impl ExtUiMethod {
+    /// 阻塞原语：扩展 handler 的 promise 挂在 select/confirm/input/editor
+    /// 上，pi 停在原地等答案——PF 必须排队留痕并「叫人」（#问题卡不弹）。
+    /// 其余（notify/setStatus/setWidget/setTitle/setEditorText/unknown）是
+    /// fire-and-forget：发出方不等回执，不得点亮「等你回答」徽标，
+    /// 也不得阻止后台运行时退役。
+    pub fn is_blocking(&self) -> bool {
+        matches!(
+            self,
+            Self::Select { .. } | Self::Confirm { .. } | Self::Input { .. } | Self::Editor { .. }
+        )
+    }
+}
+
 impl ExtensionUiRequest {
     fn parse(v: &Value) -> Option<ExtensionUiRequest> {
         let id = v["id"].as_str()?.to_string();
@@ -2407,6 +2421,41 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// 阻塞语义判定（黄点链路共用）：select/confirm/input/editor 挂住 pi 等
+    /// 答案；notify/setStatus/setWidget/setTitle/setEditorText 是
+    /// fire-and-forget。unknown 不得误判为阻塞（zi2s.2：回 cancelled 即落地）。
+    #[test]
+    fn ext_ui_blocking_classification() {
+        let blocking = [
+            r#"{"type":"extension_ui_request","id":"b1","method":"select","title":"t","options":["a"]}"#,
+            r#"{"type":"extension_ui_request","id":"b2","method":"confirm","title":"t","message":"m"}"#,
+            r#"{"type":"extension_ui_request","id":"b3","method":"input","title":"t"}"#,
+            r#"{"type":"extension_ui_request","id":"b4","method":"editor","title":"t"}"#,
+        ];
+        for line in blocking {
+            match parse_line(line).unwrap() {
+                Event::ExtensionUi(req) => assert!(req.method.is_blocking(), "{line} 应判为阻塞"),
+                _ => panic!("wrong event"),
+            }
+        }
+        let fire_and_forget = [
+            r#"{"type":"extension_ui_request","id":"f1","method":"notify","message":"m"}"#,
+            r#"{"type":"extension_ui_request","id":"f2","method":"setStatus","statusKey":"k"}"#,
+            r#"{"type":"extension_ui_request","id":"f3","method":"setWidget","widgetKey":"w"}"#,
+            r#"{"type":"extension_ui_request","id":"f4","method":"setTitle"}"#,
+            r#"{"type":"extension_ui_request","id":"f5","method":"set_editor_text","text":"t"}"#,
+            r#"{"type":"extension_ui_request","id":"f6","method":"bogus"}"#,
+        ];
+        for line in fire_and_forget {
+            match parse_line(line).unwrap() {
+                Event::ExtensionUi(req) => {
+                    assert!(!req.method.is_blocking(), "{line} 应判为 fire-and-forget")
+                }
+                _ => panic!("wrong event"),
+            }
+        }
     }
 
     #[test]

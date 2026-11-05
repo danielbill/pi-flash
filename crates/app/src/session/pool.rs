@@ -115,17 +115,14 @@ impl Chat {
                     } else {
                         // parked session asks for permission: queue it, the
                         // badge surfaces it; popped when user switches there
-                        // #问题卡不弹：静默队列必须留痕 + **必须叫人**——pi-web
-                        // 的另一半（browser-notification parity）：队列藏在
-                        // 后台运行时里，用户不切回永远看不见，pi 就挂在
-                        // select 上直到天荒地老（2026-11-04 真机事故链）
-                        let blocking = matches!(
-                            req.method,
-                            pi_link::protocol::ExtUiMethod::Select { .. }
-                                | pi_link::protocol::ExtUiMethod::Confirm { .. }
-                                | pi_link::protocol::ExtUiMethod::Input { .. }
-                                | pi_link::protocol::ExtUiMethod::Editor { .. }
-                        );
+                        // #问题卡不弹： parked 期间的积压请求在此兑现，留痕对账
+                        // 阻塞判定收口到 protocol::ExtUiMethod::is_blocking——
+                        // 侧栏橙点徽标（psp_row_views awaiting）与这里必须同一
+                        // 口径：fire-and-forget（notify/setStatus/…）不叫人、
+                        // 不亮点，只入队等切回时重放（2026-11-05 真机：微信桥
+                        // /监控类服务会话 park 期间猛发 setStatus，全被当阻塞
+                        // 件排队，橙点常亮且切回不清）
+                        let blocking = req.method.is_blocking();
                         pi_link::client::ext_trace(&format!(
                             "PARKED: id={} key={} blocking={blocking} (active_key={})",
                             req.id,
@@ -333,19 +330,34 @@ impl Chat {
             r.touch();
             q
         });
-        if let Some(first) = queued.first() {
-            // #问题卡不弹： parked 期间的积压请求在此兑现，留痕对账
+        if !queued.is_empty() {
+            // #问题卡不弹： parked 期间的积压请求在此兑现，留痕对账。
+            // 两段式兑现（2026-11-05 黄点修复）：fire-and-forget 立即全部
+            // 落地（此刻 active_key 已切到本会话，on_ext_ui 写的 self.rt()
+            // 就是本 runtime，不会污染别人）；阻塞件只浮出队首供作答，
+            // 其余回队等逐个兑现。旧逻辑「只兑现队首、其余无差别回队」
+            // 会把 fire-and-forget 永远留在队里——徽标常亮、空闲退役被卡。
+            let (blocking, forget): (Vec<_>, Vec<_>) =
+                queued.into_iter().partition(|q| q.method.is_blocking());
             pi_link::client::ext_trace(&format!(
-                "switch flush: {} queued, first id={}",
-                queued.len(),
-                first.id
+                "switch flush: {} forget + {} blocking (first id={})",
+                forget.len(),
+                blocking.len(),
+                blocking.first().map(|q| q.id.as_str()).unwrap_or("-")
             ));
-            let first = first.clone();
-            cx.notify();
-            self.on_ext_ui(first, cx);
-            for r in queued.into_iter().skip(1) {
-                rt.update(cx, |r2, _| r2.ext_queue.push(r));
+            for q in forget {
+                self.on_ext_ui(q, cx);
             }
+            if let Some(first) = blocking.first() {
+                let first = first.clone();
+                cx.notify();
+                self.on_ext_ui(first, cx);
+            }
+            let rest = blocking.into_iter().skip(1).collect::<Vec<_>>();
+            if !rest.is_empty() {
+                rt.update(cx, |r2, _| r2.ext_queue.extend(rest));
+            }
+            cx.notify();
         }
         // 子代理面板缓存随会话激活常备（open=false）：徽标从切换起就准，
         // 不依赖先开过一次面板（2026-10-19 拍板：关面板只是隐藏，轮询常驻）。
@@ -661,7 +673,11 @@ impl Chat {
             r.observer = observer;
             r.messages = tail;
             r.pager.reload(r.messages.len());
-            r.status = if observer { "observer".into() } else { "resuming".into() };
+            r.status = if observer {
+                "observer".into()
+            } else {
+                "resuming".into()
+            };
             r.pending_rename = rename;
             r
         });

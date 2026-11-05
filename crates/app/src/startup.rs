@@ -751,7 +751,11 @@ fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
                             !r.agent_running
                                 && r.last_activity.elapsed() > idle_cap
                                 && r.agent.session.is_some()
-                                && r.ext_queue.is_empty()
+                                // 阻塞件未兑现不得退役（切回要浮卡兑现）；
+                                // fire-and-forget 队尾残留不拦退役——旧口径
+                                // 整队非空即拦，服务会话 park 期间猛发
+                                // setStatus 后进程永不退休（2026-11-05 黄点同源）
+                                && r.ext_queue.iter().all(|q| !q.method.is_blocking())
                         };
                         if idle {
                             retire.push(key.clone());

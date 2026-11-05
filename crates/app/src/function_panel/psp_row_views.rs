@@ -51,10 +51,13 @@ pub(crate) fn session_row_view(
             && (r.agent_running || r.state.as_ref().is_some_and(|s| s.is_streaming))
     });
     // 后台会话押着未兑现的阻塞扩展请求（#问题卡不弹徽标；与 pool PARKED
-    // 队列一一对应）。键用 path 判等：绑卡前 key 即会话路径
+    // 队列一一对应）。键用 path 判等：绑卡前 key 即会话路径。只数阻塞件
+    // （is_blocking）——fire-and-forget（notify/setStatus/…）只是状态重放，
+    // 不代表「在等你回答」：旧口径整个 ext_queue 非空就点亮，微信桥/监控
+    // 类服务会话 park 期间猛发 setStatus，橙点常亮且切回也不消（2026-11-05）
     let awaiting = chat.pool.runtimes.values().any(|rt| {
         let r = rt.read(cx);
-        !r.ext_queue.is_empty()
+        r.ext_queue.iter().any(|q| q.method.is_blocking())
             && crate::services::workspace::same_path(std::path::Path::new(&r.key), &info.path)
     });
     let title: SharedString = info
