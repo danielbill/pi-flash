@@ -83,6 +83,23 @@ describe("SubagentManager.start", () => {
 		assert.equal(descriptor.depth, 1);
 	});
 
+	// B2 回归（pi-flash-3ghh）：子会话文件 prepare 返回即回写 descriptor，
+	// 运行中面板行就可点开；不再等 settle。
+	it("writes the child session file back as soon as the handle exists", async () => {
+		const { manager, provider } = setup({ sessionFile: "/tmp/child.jsonl" });
+		await manager.start(baseRequest());
+		const descriptor = manager.descriptors()[0];
+		assert.equal(descriptor.phase, "active");
+		assert.equal(descriptor.sessionFile, "/tmp/child.jsonl");
+		assert.ok(provider.children[0].disposals === 0); // still running
+	});
+
+	it("carries the session file on a failed-start descriptor too", async () => {
+		const { manager } = setup({ sessionFile: "/tmp/child.jsonl", failAccept: true });
+		await manager.start(baseRequest()).catch(() => {});
+		assert.equal(manager.descriptors()[0].sessionFile, "/tmp/child.jsonl");
+	});
+
 	it("emits a descriptor for every phase change", async () => {
 		const seen: string[] = [];
 		const { manager, provider } = setup({ completeOnDispose: true }, { onDescriptor: (d) => seen.push(d.phase) });

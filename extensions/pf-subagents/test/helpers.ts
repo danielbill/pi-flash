@@ -11,6 +11,8 @@ export interface ScriptedOptions {
 	failAccept?: boolean;
 	/** Return a different id than the manager reserved. */
 	idOverride?: string;
+	/** Durable session file the handle reports (B2: panel rows click through it). */
+	sessionFile?: string;
 	capabilities?: Partial<ProviderCapabilities>;
 	/** Complete automatically when disposed (default: keep waiting for `complete()`). */
 	completeOnDispose?: boolean;
@@ -51,7 +53,7 @@ export class ScriptedChild implements ChildHandle {
 	}
 
 	session_file(): string | undefined {
-		return undefined;
+		return this.#options.sessionFile;
 	}
 
 	watch(listener: (progress: ChildProgress) => void): () => void {
