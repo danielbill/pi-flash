@@ -163,7 +163,7 @@ describe("profile loading", () => {
 		await writeFile(join(projectDir, "b.md"), "---\n---\n");
 		await writeFile(join(projectDir, "c.md"), "---\n---\n");
 
-		assert.deepEqual(await listProfiles({ globalDir, projectDir }), ["a", "b", "c", "explorer", "general-purpose"]);
+		assert.deepEqual(await listProfiles({ globalDir, projectDir }), ["a", "b", "c", "explorer", "general-purpose", "summarizer"]);
 	});
 
 	it("falls back to the built-in explorer when no file exists", async () => {
@@ -186,6 +186,17 @@ describe("profile loading", () => {
 		assert.equal(profile.source, "<builtin>");
 	});
 
+	it("falls back to the built-in summarizer with no project context (044-0)", async () => {
+		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
+		const paths = { globalDir: join(root, "missing"), projectDir: join(root, "also-missing") };
+		const profile = await loadProfile("summarizer", paths);
+		assert.equal(profile.tools, "read-only");
+		assert.equal(profile.injectAgentsMd, false, "摘要机不注入 AGENTS.md（不继承环境）");
+		assert.equal(profile.maxTurns, 0);
+		assert.match(profile.appendSystemPrompt ?? "", /摘要机/);
+		assert.equal(profile.source, "<builtin>");
+	});
+
 	it("a same-id custom file overrides the built-in", async () => {
 		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		const globalDir = join(root, "global");
@@ -200,7 +211,7 @@ describe("profile loading", () => {
 		const root = await mkdtemp(join(tmpdir(), "pf-subagents-"));
 		assert.deepEqual(
 			await listProfiles({ globalDir: join(root, "x"), projectDir: join(root, "y") }),
-			["explorer", "general-purpose"],
+			["explorer", "general-purpose", "summarizer"],
 		);
 	});
 });
@@ -212,6 +223,7 @@ describe("listProfilesSync", () => {
 		assert.deepEqual(summaries, [
 			{ id: "explorer", description: "只读探索 · 调研与定位", tools: "read-only" },
 			{ id: "general-purpose", description: "通用子代理 · 复杂调研、代码检索、多步任务" },
+			{ id: "summarizer", description: "无状态摘要 · 阅读文件或内容按要求总结", tools: "read-only" },
 		]);
 	});
 

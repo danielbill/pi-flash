@@ -148,6 +148,24 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
             path: None,
             error: None,
         },
+        // 044-0 第三枚内置：摘要机——无状态摘要，不注入 AGENTS.md（不继承
+        // 环境上下文），只读工具集。适用本地/廉价模型跑系统日志摘要等批量总结。
+        AgentProfile {
+            id: "summarizer".into(),
+            description: "无状态摘要 · 阅读文件或内容按要求总结".into(),
+            model: None,
+            tools: Some("read-only".into()),
+            max_turns: Some(0),
+            inject_agents_md: Some(false),
+            system_prompt: None,
+            append_system_prompt: Some(
+                "你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。\n不继承任何环境上下文，不执行任何写操作，只输出摘要。".into(),
+            ),
+            unknown: Vec::new(),
+            origin: AgentOrigin::Builtin,
+            path: None,
+            error: None,
+        },
     ]
 }
 
@@ -553,8 +571,8 @@ mod tests {
         let builtins = builtin_agents();
         assert_eq!(
             builtins.len(),
-            2,
-            "explorer + general-purpose（2026-10-19 拍板）"
+            3,
+            "explorer + general-purpose（2026-10-19 拍板）+ summarizer（044-0 摘要机）"
         );
         let ex = builtins.iter().find(|b| b.id == "explorer").unwrap();
         assert_eq!(ex.tools_tier(), "read-only");
@@ -598,6 +616,12 @@ mod tests {
                 None,
                 "你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n可使用会话的全部工具，按需读写文件与执行命令。",
             ),
+            (
+                "summarizer",
+                "无状态摘要 · 阅读文件或内容按要求总结",
+                Some("read-only"),
+                "你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。\n不继承任何环境上下文，不执行任何写操作，只输出摘要。",
+            ),
         ];
         let builtins = builtin_agents();
         assert_eq!(builtins.len(), docs.len());
@@ -618,5 +642,8 @@ mod tests {
                 "{id} 正文与扩展侧不一致"
             );
         }
+        // 摘要机的定义性特征：不注入 AGENTS.md（044-0 不继承环境）
+        let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
+        assert_eq!(sum.inject_agents_md, Some(false));
     }
 }
