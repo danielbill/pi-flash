@@ -96,10 +96,7 @@ fn breakdown_buckets_sections_and_tools() {
     // 全局 = content + preamble + rules + 全局 AGENTS 块
     assert_eq!(
         b[at(GlobalPrompt)],
-        t("base prompt")
-            + t("you are pi")
-            + t("<rules>- be careful</rules>")
-            + t("global rules")
+        t("base prompt") + t("you are pi") + t("<rules>- be careful</rules>") + t("global rules")
     );
     assert_eq!(b[at(Skills)], t("<skills>- mx-data</skills>"));
     assert_eq!(

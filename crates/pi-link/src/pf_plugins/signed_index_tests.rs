@@ -14,8 +14,7 @@ fn market_index_signed_verify() {
     assert!(ix.packages.is_empty());
     // 篡改 signed（换前 4 字符）→ 必拒
     let tampered = signed.replace(&signed[..4], "AAAA");
-    let bad = format!(
-        r#"{{"format":"pf-market-signed/1","signed":"{tampered}","signature":"{sig}"}}"#
-    );
+    let bad =
+        format!(r#"{{"format":"pf-market-signed/1","signed":"{tampered}","signature":"{sig}"}}"#);
     assert!(verify_signed_index(&bad, &pem).is_err(), "篡改必须拒");
 }

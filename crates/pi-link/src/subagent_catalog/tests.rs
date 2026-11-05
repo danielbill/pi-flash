@@ -164,7 +164,9 @@ fn stats_fields_parse_or_fall_back_to_none() {
 fn malformed_and_wrong_type_lines_are_ignored() {
     let f = tmp("malformed");
     let mut body = String::from("not json at all\n");
-    body.push_str("{\"type\":\"custom\",\"customType\":\"subagent/child\",\"data\":{\"childId\":\"x\"}}\n");
+    body.push_str(
+        "{\"type\":\"custom\",\"customType\":\"subagent/child\",\"data\":{\"childId\":\"x\"}}\n",
+    );
     body.push_str("{\"type\":\"custom\",\"customType\":\"subagent/descriptor\",\"data\":{\"childId\":\"\",\"provider\":\"spawn\",\"phase\":\"active\"}}\n");
     body.push_str("{\"type\":\"custom\",\"customType\":\"subagent/descriptor\",\"data\":{\"childId\":\"ok\",\"provider\":\"\",\"phase\":\"active\"}}\n");
     body.push_str(&desc("good", "active", ""));

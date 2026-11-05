@@ -45,8 +45,7 @@ fn dir_ladder_core_then_alias_then_slug() {
     assert_eq!(dirs, vec!["deepseek", "my-ds"]);
     let dirs = provider_dir_candidates("https://open.bigmodel.cn/api/paas/v4", "zhipu");
     assert_eq!(dirs, vec!["bigmodel", "zhipuai", "zai", "zhipu"]);
-    let dirs =
-        provider_dir_candidates("https://dashscope.aliyuncs.com/compatible-mode/v1", "x");
+    let dirs = provider_dir_candidates("https://dashscope.aliyuncs.com/compatible-mode/v1", "x");
     assert_eq!(dirs, vec!["dashscope", "alibaba", "alibaba-cn", "x"]);
 }
 

@@ -358,4 +358,4 @@ fn activate_menu_render_and_command() {
     assert!(plugin.render_json().is_err());
     let _ = std::fs::remove_file(&bad);
     let _ = std::fs::remove_dir_all(&dir);
-    }
+}

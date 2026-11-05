@@ -1,6 +1,5 @@
 use super::*;
 
-
 fn proof_official() -> String {
     std::env::var("PF_TEST_PROOF_OFFICIAL").unwrap_or_default()
 }

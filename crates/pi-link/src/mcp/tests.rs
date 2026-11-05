@@ -99,8 +99,7 @@ fn parse_url_command_and_json() {
     assert_eq!(cfg["url"], "https://a/mcp");
     assert_eq!(src, ParsedSource::Json);
 
-    let (name, cfg, _) =
-        parse_server_input(r#"{"command":"uvx","args":["mcp-fetch"]}"#).unwrap();
+    let (name, cfg, _) = parse_server_input(r#"{"command":"uvx","args":["mcp-fetch"]}"#).unwrap();
     assert_eq!(name, "uvx");
     assert_eq!(cfg["args"][0], "mcp-fetch");
 

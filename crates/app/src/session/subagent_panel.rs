@@ -387,7 +387,11 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
     let kind = row.status_kind();
     let mark_c = mark_color(row);
     let name = row.profile.clone().unwrap_or_else(|| row.provider.clone());
-    let task = row.label.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| row.child_id.clone());
+    let task = row
+        .label
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| row.child_id.clone());
     let open = row.session_file.clone().map(PathBuf::from);
 
     let mut el = div()
@@ -463,7 +467,12 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
 fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
     let mut segs: Vec<gpui::AnyElement> = Vec::new();
     let mut push = |text: String| {
-        segs.push(div().flex_shrink_0().child(SharedString::from(text)).into_any_element());
+        segs.push(
+            div()
+                .flex_shrink_0()
+                .child(SharedString::from(text))
+                .into_any_element(),
+        );
     };
     push(format!("⏱ {}", live_duration_text(row)));
     if let Some(n) = row.turns {
@@ -493,7 +502,9 @@ fn live_duration_text(row: &CatalogRow) -> String {
             return duration_text((now - a).max(0));
         }
     }
-    row_duration_secs(row).map(duration_text).unwrap_or_else(|| "—".into())
+    row_duration_secs(row)
+        .map(duration_text)
+        .unwrap_or_else(|| "—".into())
 }
 
 /// 行一状态标记（044-0：同会话列表）——运行中 = 8 针荆棘圈 spinner；
