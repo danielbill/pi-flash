@@ -120,32 +120,33 @@ pub(super) fn result_is_empty(result: &str) -> bool {
     r.is_empty() || r == "(no output)"
 }
 
-/// 044：subagent 专属卡。数据源（扩展 `pf-subagents` 的 details，snake_case）：
-/// `child_id` / `status`(running) / `stop_reason` / `session_file` /
-/// `duration_ms` / `total_tokens` / `cost_total` / `error_code`；args 里取
-/// `label` / `prompt`。布局：头部（子代理 · 标签 · 状态徽标 · 耗时 · tokens ·
-/// 成本）+ 展开正文（prompt 与子代理回答）+ 「打开子会话」跳转。
+/// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（设计原文
+/// 「当前会话流中的渲染有些啰嗦」，旧版头体双段卡废弃）：
+/// `[状态标记] 子代理 <名称(profile)> <任务名(label 退 prompt 截断)> … [分码]`
+/// 数据源（扩展 pf-subagents 的 details，snake_case）：`child_id` / `status`
+/// / `stop_reason` / `session_file` / `error_code`；args 取 `profile` /
+/// `label` / `prompt`。整行点击 = 打开子会话（只读观察窗）；token/耗时等
+/// 统计不再进会话流（面板行二专责展示）。
 #[allow(clippy::too_many_arguments)]
 fn render_subagent_card(
     msg_ix: usize,
     content_index: usize,
     args: &str,
-    result: &str,
+    _result: &str,
     is_error: bool,
     details: Option<&serde_json::Value>,
-    duration_s: Option<i64>,
-    // 子代理卡不区分「参数是否流式部分到达」（args 只取 label/prompt），
-    // 保留形参以对齐普通工具卡的调用签名
+    // 统计已迁面板（044-0），行内不再展示耗时
+    _duration_s: Option<i64>,
+    // 行不区分「参数是否流式部分到达」（args 只取 name/task），保留形参
+    // 以对齐派发签名
     _args_partial: bool,
     result_arrived: bool,
     weak: &gpui::WeakEntity<Chat>,
-    collapsed: &HashMap<(usize, usize), bool>,
+    // 旧版展开态残留槽位：紧凑行无正文，保留形参对齐签名
+    _collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
 ) -> gpui::Div {
-    let key = (msg_ix, content_index);
-    let expanded = collapsed.get(&key).copied().unwrap_or(false);
     let d = details.cloned().unwrap_or_default();
-    // child_id 仅在 details 里（面板/日志用），卡面不展示
     let running = d.get("status").and_then(|v| v.as_str()) == Some("running");
     let stop_reason = d.get("stop_reason").and_then(|v| v.as_str()).unwrap_or("");
     let session_file = d
@@ -153,78 +154,69 @@ fn render_subagent_card(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from);
-    let total_tokens = d.get("total_tokens").and_then(|v| v.as_u64());
-    let cost_total = d.get("cost_total").and_then(|v| v.as_f64());
     let error_code = d.get("error_code").and_then(|v| v.as_str());
 
     let args_v = serde_json::from_str::<serde_json::Value>(args).ok();
-    let label = args_v
+    let profile = args_v
         .as_ref()
-        .and_then(|v| v.get("label"))
+        .and_then(|v| v.get("profile"))
         .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty());
-    let prompt = args_v
-        .as_ref()
-        .and_then(|v| v.get("prompt"))
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
+        .filter(|s| !s.is_empty())
+        .unwrap_or("general-purpose")
         .to_string();
+    let task = args_v
+        .as_ref()
+        .and_then(|v| {
+            v.get("label")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| {
+            args_v
+                .as_ref()
+                .and_then(|v| v.get("prompt"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(40)
+                .collect::<String>()
+        });
 
-    // 状态徽标：运行中(黄) / 完成(绿) / 失败(红，分码优先)
-    let (phase_text, phase_c) = if is_error || error_code.is_some() {
-        (error_code.unwrap_or("error").to_string(), 0xf87171)
-    } else if running || (!result_arrived && stop_reason.is_empty()) {
-        ("运行中".to_string(), 0xeab308)
+    // 状态：运行中（spinner 黄）/ 完成（绿点）/ 失败（红点 + 分码）
+    let failed = is_error || error_code.is_some();
+    let done = !running && !failed && (!result_arrived || !stop_reason.is_empty());
+    let (mark_c, mark) = if failed {
+        (0xf87171, "dot")
+    } else if running {
+        (0xeab308, "spin")
+    } else if done {
+        (0x22c55e, "dot")
     } else {
-        ("完成".to_string(), 0x22c55e)
+        (0xeab308, "spin")
+    };
+    let mark_el = if mark == "spin" {
+        crate::ui::spark_spinner(13., mark_c)
+    } else {
+        div()
+            .size(px(6.))
+            .rounded_full()
+            .bg(gpui::rgb(mark_c))
+            .into_any_element()
     };
 
-    // 度量行：耗时（事件 duration_s 优先，回退 details.duration_ms）+ tokens + 成本
-    let mut metrics: Vec<String> = Vec::new();
-    if let Some(sec) = duration_s {
-        metrics.push(format!("{sec}s"));
-    } else if let Some(ms) = d.get("duration_ms").and_then(|v| v.as_u64()) {
-        if ms >= 1000 {
-            metrics.push(format!("{:.1}s", ms as f64 / 1000.0));
-        } else if ms > 0 {
-            metrics.push(format!("{ms}ms"));
-        }
-    }
-    if let Some(tok) = total_tokens {
-        metrics.push(format!("{tok} tok"));
-    }
-    if let Some(cost) = cost_total {
-        metrics.push(format!("¥{cost:.4}"));
-    }
-
-    // 标题：label 优先，退 prompt 截断
-    let title = label
-        .map(str::to_string)
-        .unwrap_or_else(|| prompt.chars().take(40).collect());
-
-    // 头部（点击=折叠切换，复用 weak_toggle 模式）
-    let weak_toggle = weak.clone();
-    let mut head = div()
+    let mut row = div()
         .id(SharedString::from(format!("sa-{msg_ix}-{content_index}")))
         .flex()
         .items_center()
         .gap(px(7.))
         .px(px(10.))
-        .py(px(6.))
+        .py(px(5.))
         .min_w_0()
-        .flex_1()
+        .rounded(px(crate::ui::tokens::radius::CTRL))
         .text_size(crate::appearance::sess_size(-2.))
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            let _ = weak_toggle.update(cx, |c, cx| {
-                let rt = c.rt();
-                rt.update(cx, |r, _| {
-                    let next = !r.collapsed.get(&key).copied().unwrap_or(false);
-                    r.collapsed.insert(key, next);
-                });
-                cx.notify();
-            });
-        })
+        .hover(|s| s.bg(gpui::rgba(theme::rgba_a(t.accent, 0.06))))
+        .child(mark_el)
         .child(
             div()
                 .flex_shrink_0()
@@ -233,101 +225,47 @@ fn render_subagent_card(
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(0x60a5fa))
                 .child("子代理"),
-        );
-    if !title.is_empty() {
-        head = head.child(
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .font_family(crate::editor::markdown::MONO_FAMILY)
+                .text_size(crate::appearance::sess_size(-3.))
+                .text_color(rgb(t.text))
+                .child(SharedString::from(profile)),
+        )
+        .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .text_color(rgb(t.text))
-                .child(SharedString::from(title)),
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(task)),
         );
-    }
-    head = head.child(
-        div()
-            .flex_shrink_0()
-            .text_size(crate::appearance::sess_size(-3.))
-            .text_color(rgb(phase_c))
-            .child(SharedString::from(phase_text)),
-    );
-    for m in &metrics {
-        head = head.child(
+    if let Some(code) = error_code {
+        let code = code.to_string();
+        row = row.child(
             div()
                 .flex_shrink_0()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(m.clone())),
+                .text_color(rgb(0xf87171))
+                .child(SharedString::from(code)),
         );
     }
-
-    // 展开正文：prompt + 子代理回答 + 错误分码
-    let mut body = div().flex().flex_col().gap(px(6.)).px(px(10.)).pb(px(8.));
-    if !prompt.is_empty() {
-        body = body.child(
-            div()
-                .text_size(crate::appearance::sess_size(-2.))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(format!("任务：{prompt}"))),
-        );
-    }
-    if result_arrived && !result.trim().is_empty() {
-        body = body.child(
-            div()
-                .text_size(crate::appearance::sess_size(-2.))
-                .text_color(rgb(t.text))
-                .child(SharedString::from(format!(
-                    "回答：{}",
-                    result.chars().take(600).collect::<String>()
-                ))),
-        );
-    }
-
-    // 「打开子会话」：子会话是普通 pi 会话，直接 open_session（只读检视+可续跑）
     if let Some(sf) = session_file {
         let weak_open = weak.clone();
-        body = body.child(
-            div()
-                .id(SharedString::from(format!(
-                    "sa-open-{msg_ix}-{content_index}"
-                )))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .cursor_pointer()
-                .text_size(crate::appearance::sess_size(-2.))
-                .text_color(rgb(0x60a5fa))
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    let _ = weak_open.update(cx, |c, cx| {
-                        c.open_session(sf.clone(), false, cx);
-                    });
-                })
-                .child("↗ 打开子会话"),
-        );
+        row = row
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_open.update(cx, |c, cx| {
+                    c.open_session(sf.clone(), false, cx);
+                });
+            });
     }
-
-    // 卡壳（状态色与通用卡一致）
-    let (border_c, bg_c) = if is_error {
-        (theme::rgba_a(0xf87171, 0.45), theme::rgba_a(0xf87171, 0.05))
-    } else {
-        (theme::rgba_a(0x22c55e, 0.25), theme::rgba_a(0x22c55e, 0.04))
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(4.))
-        .px(px(2.))
-        .py(px(2.))
-        .border_1()
-        .border_color(gpui::rgba(border_c))
-        .bg(gpui::rgba(bg_c))
-        .rounded(px(6.))
-        .overflow_hidden()
-        .child(head)
-        .when(expanded, |dd| dd.child(body))
+    div().flex().flex_col().px(px(2.)).py(px(2.)).child(row)
 }
 
 /// 「工作详情」组内的 pi-web ToolCallBlock 卡片（v56-2 c8/c9）。
