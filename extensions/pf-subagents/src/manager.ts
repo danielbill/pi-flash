@@ -163,10 +163,19 @@ export class SubagentManager {
 			record.descriptor = { ...record.descriptor, phase: "active", updatedAt: this.#now().toISOString() };
 			// Per-turn stats feed the host panel (044-0 行二): each assistant turn
 			// refreshes the descriptor and re-emits it (one entry per turn). The
-			// watcher dies with settlement (record.unwatch in #settle).
-			record.unwatch = handle.watch?.((stats) => {
-				if (record.state !== "active") return;
-				record.descriptor = { ...record.descriptor, stats, updatedAt: this.#now().toISOString() };
+			// watcher dies with settlement (record.unwatch in #settle). Guard only
+			// on terminal states: caller delivery parks in `settling` for the
+			// child's whole run (wait() awaits result()), so `state !== "active"`
+			// swallowed every per-turn report there (B1). The usage total rides
+			// along so the panel shows tokens while running, not just at settle.
+			record.unwatch = handle.watch?.((progress) => {
+				if (record.state === "settled" || record.state === "failed") return;
+				record.descriptor = {
+					...record.descriptor,
+					...(progress.usage ? { usage: progress.usage } : {}),
+					stats: progress.stats,
+					updatedAt: this.#now().toISOString(),
+				};
 				this.#emit(record);
 			});
 			this.#emit(record);

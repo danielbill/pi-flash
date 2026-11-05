@@ -4,7 +4,7 @@
  * only the backend is faked, the manager, capacity, and registry stay real.
  */
 
-import type { ChildHandle, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult } from "../src/types.ts";
+import type { ChildHandle, ChildProgress, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../src/types.ts";
 
 export interface ScriptedOptions {
 	failPrepare?: boolean;
@@ -27,7 +27,7 @@ export class ScriptedChild implements ChildHandle {
 	#result: Promise<SubagentResult>;
 	#disposeBarrier: Promise<void> | undefined;
 	#releaseDispose: (() => void) | undefined;
-	#watchers: Array<(stats: ChildSessionStats) => void> = [];
+	#watchers: Array<(progress: ChildProgress) => void> = [];
 
 	constructor(id: string, options: ScriptedOptions) {
 		this.id = id;
@@ -54,16 +54,16 @@ export class ScriptedChild implements ChildHandle {
 		return undefined;
 	}
 
-	watch(listener: (stats: ChildSessionStats) => void): () => void {
+	watch(listener: (progress: ChildProgress) => void): () => void {
 		this.#watchers.push(listener);
 		return () => {
 			this.#watchers = this.#watchers.filter((w) => w !== listener);
 		};
 	}
 
-	/** Emit activity counters as if an assistant turn just completed. */
-	progress(stats: ChildSessionStats): void {
-		for (const watcher of this.#watchers) watcher(stats);
+	/** Emit activity counters (and optional usage) as if an assistant turn just completed. */
+	progress(stats: ChildSessionStats, usage?: SubagentUsage): void {
+		for (const watcher of this.#watchers) watcher({ stats, ...(usage ? { usage } : {}) });
 	}
 
 	result(): Promise<SubagentResult> {

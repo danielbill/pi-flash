@@ -6,7 +6,7 @@
  * suite) and lets the extension entry decide how a real session is created.
  */
 
-import type { ChildHandle, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../types.ts";
+import type { ChildHandle, ChildProgress, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../types.ts";
 import { asSubagentError, SubagentError, SubagentErrorCode } from "../errors.ts";
 import { DEFAULT_MAX_TURNS } from "../profile.ts";
 
@@ -99,8 +99,15 @@ export const TURN_LIMIT_STEER =
 /** One `message_end` event as far as the turn limiter cares. */
 interface MessageEndEvent {
 	type?: string;
-	message?: { role?: string; content?: unknown[] };
+	message?: { role?: string; content?: unknown[]; usage?: unknown };
 }
+
+/** pi Usage 的逐字段累加视图（044-0 面板 token 列 + 卡片 total_tokens/cost）：
+ * `total` = ΣtotalTokens（面板优先读它），`totalTokens`/`cost` 透传给卡片 details。 */
+type UsageSum = SubagentUsage & {
+	totalTokens?: number;
+	cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+};
 
 /** Turns already taken, and whether a wrap-up steer is still owed. */
 class TurnBudget {
@@ -155,7 +162,10 @@ class LocalChild implements ChildHandle {
 	#budget: TurnBudget | undefined;
 	#unsubscribe: (() => void) | undefined;
 	#stats: ChildSessionStats = { turns: 0, agentMessages: 0, toolCalls: 0 };
-	#watchers: Array<(stats: ChildSessionStats) => void> = [];
+	/** Cumulative token usage across the child's assistant turns (B1: 面板运行
+	 * 中就要出 token；settle 的 result.usage 也走这份累计，同口径). */
+	#usage: UsageSum | undefined;
+	#watchers: Array<(progress: ChildProgress) => void> = [];
 
 	constructor(id: string, session: ChildSession, maxTurns?: number) {
 		this.id = id;
@@ -186,8 +196,9 @@ class LocalChild implements ChildHandle {
 		this.#accumulate(record.message);
 	}
 
-	/** Fold one assistant message into the activity counters (044-0 面板行二). */
-	#accumulate(message: { content?: unknown[] } | undefined): void {
+	/** Fold one assistant message into the activity counters + usage total
+	 * (044-0 面板行二). */
+	#accumulate(message: { content?: unknown[]; usage?: unknown } | undefined): void {
 		const content = message?.content ?? [];
 		this.#stats = {
 			turns: this.#stats.turns + 1,
@@ -198,7 +209,39 @@ class LocalChild implements ChildHandle {
 					: 0),
 			toolCalls: this.#stats.toolCalls + content.filter((b) => (b as { type?: string })?.type === "toolCall").length,
 		};
-		for (const watcher of this.#watchers) watcher({ ...this.#stats });
+		this.#foldUsage(message?.usage);
+		const progress: ChildProgress = { stats: { ...this.#stats } };
+		if (this.#usage) progress.usage = { ...this.#usage };
+		for (const watcher of this.#watchers) watcher(progress);
+	}
+
+	/** Sum one assistant message's usage into the running total. Messages
+	 * without usage (older providers) leave the accumulator untouched. */
+	#foldUsage(raw: unknown): void {
+		const usage = raw as UsageSum | undefined;
+		if (!usage || typeof usage !== "object") return;
+		const prior = this.#usage;
+		const totalTokens = usage.totalTokens;
+		if (typeof totalTokens !== "number") {
+			// Nothing dependable to sum: keep whatever earlier turns accumulated.
+			return;
+		}
+		const cost = (usage.cost ?? {}) as NonNullable<UsageSum["cost"]>;
+		this.#usage = {
+			input: (prior?.input ?? 0) + (usage.input ?? 0),
+			output: (prior?.output ?? 0) + (usage.output ?? 0),
+			cacheRead: (prior?.cacheRead ?? 0) + (usage.cacheRead ?? 0),
+			cacheWrite: (prior?.cacheWrite ?? 0) + (usage.cacheWrite ?? 0),
+			total: (prior?.total ?? 0) + totalTokens,
+			totalTokens: (prior?.totalTokens ?? 0) + totalTokens,
+			cost: {
+				input: (prior?.cost?.input ?? 0) + (cost.input ?? 0),
+				output: (prior?.cost?.output ?? 0) + (cost.output ?? 0),
+				cacheRead: (prior?.cost?.cacheRead ?? 0) + (cost.cacheRead ?? 0),
+				cacheWrite: (prior?.cost?.cacheWrite ?? 0) + (cost.cacheWrite ?? 0),
+				total: (prior?.cost?.total ?? 0) + (cost.total ?? 0),
+			},
+		};
 	}
 
 	/** Live activity counters (044-0 面板行二). */
@@ -207,7 +250,7 @@ class LocalChild implements ChildHandle {
 	}
 
 	/** Observe the counters; one call per assistant turn. */
-	watch(listener: (stats: ChildSessionStats) => void): () => void {
+	watch(listener: (progress: ChildProgress) => void): () => void {
 		this.#watchers.push(listener);
 		return () => {
 			this.#watchers = this.#watchers.filter((w) => w !== listener);
@@ -249,7 +292,9 @@ class LocalChild implements ChildHandle {
 
 	async result(): Promise<SubagentResult> {
 		if (this.#run) await this.#run;
-		const usage = this.#session.usage?.();
+		// 累计 usage（每轮 message_end 求和）与运行期面板同口径；会话一路没报
+		// usage 时退回最后一条 assistant 消息的（老语义兜底）。
+		const usage = this.#usage ? { ...this.#usage } : this.#session.usage?.();
 		const stats = this.stats();
 		const durationMs = this.#started_at !== undefined ? Date.now() - this.#started_at : undefined;
 		if (this.#failure) {

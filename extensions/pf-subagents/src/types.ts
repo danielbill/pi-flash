@@ -68,6 +68,14 @@ export interface ChildSessionStats {
 	toolCalls: number;
 }
 
+/** Per-turn progress snapshot: counters plus the running usage total (B1 连带：
+ * 面板行二运行中就要出 token，usage 随每轮 stats 顺带回传，不再只等 settle）. */
+export interface ChildProgress {
+	stats: ChildSessionStats;
+	/** Cumulative token usage across the child's assistant turns so far. */
+	usage?: SubagentUsage;
+}
+
 export interface SubagentUsage {
 	input: number;
 	output: number;
@@ -104,10 +112,10 @@ export interface ChildHandle {
 	/** Settles with the child's final answer. */
 	result(): Promise<SubagentResult>;
 	/**
-	 * Observe live activity counters (one call per assistant turn). Returns an
-	 * unsubscribe; absent when the backend cannot observe turns.
+	 * Observe live progress (one call per assistant turn: counters + cumulative
+	 * usage). Returns an unsubscribe; absent when the backend cannot observe turns.
 	 */
-	watch?(listener: (stats: ChildSessionStats) => void): () => void;
+	watch?(listener: (progress: ChildProgress) => void): () => void;
 	/** Release the child and its resources. Idempotent. */
 	dispose(): Promise<void>;
 }

@@ -91,6 +91,41 @@ describe("SubagentManager.start", () => {
 		await activation.wait();
 		assert.deepEqual(seen, ["provisioning", "active", "completed"]);
 	});
+
+	// B1 回归（pi-flash-y26f）：caller 投递下 wait() 立即把 state 置 settling，
+	// 子代理整个运行期都发生在 settling 内——每轮 stats/usage 必须照常透出，
+	// 只有终态（settled/failed）才拦。
+	it("keeps per-turn stats and usage flowing while a caller-delivery child runs", async () => {
+		const seen: Array<{ phase: string; stats?: unknown; usage?: unknown }> = [];
+		const { manager, provider } = setup({}, { onDescriptor: (d) => seen.push({ phase: d.phase, stats: d.stats, usage: d.usage }) });
+		const activation = await manager.start(baseRequest({ delivery: "caller" }));
+		const pending = activation.wait(); // parks in settling for the whole run
+		provider.children[0].progress({ turns: 1, agentMessages: 0, toolCalls: 1 }, { input: 100, output: 10, total: 110 });
+		provider.children[0].progress({ turns: 2, agentMessages: 1, toolCalls: 2 }, { input: 300, output: 30, total: 330 });
+		const midRun = manager.descriptors()[0];
+		assert.equal(midRun.phase, "active");
+		assert.deepEqual(midRun.stats, { turns: 2, agentMessages: 1, toolCalls: 2 });
+		assert.deepEqual(midRun.usage, { input: 300, output: 30, total: 330 });
+		provider.children[0].complete("done", "completed", { turns: 3, agentMessages: 2, toolCalls: 2 });
+		await pending;
+		assert.equal(manager.descriptors()[0].phase, "completed");
+		// 管道里每轮都在：provisioning / active / 运行中两轮 / settled 终态
+		assert.deepEqual(
+			seen.map((e) => e.phase),
+			["provisioning", "active", "active", "active", "completed"],
+		);
+		assert.deepEqual(seen[2]?.usage, { input: 100, output: 10, total: 110 });
+	});
+
+	it("stops the per-turn feed once settled", async () => {
+		const { manager, provider } = setup();
+		const activation = await manager.start(baseRequest());
+		const child = provider.children[0];
+		child.complete("done", "completed", { turns: 2, agentMessages: 1, toolCalls: 1 });
+		await activation.wait();
+		child.progress({ turns: 9, agentMessages: 9, toolCalls: 9 });
+		assert.deepEqual(manager.descriptors()[0].stats, { turns: 2, agentMessages: 1, toolCalls: 1 });
+	});
 });
 
 describe("SubagentManager settlement", () => {

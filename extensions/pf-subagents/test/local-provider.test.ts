@@ -26,7 +26,7 @@ class ScriptedSession implements ChildSession {
 	}
 
 	/** Emit one `message_end`; the turn limiter counts assistant turns only. */
-	emitAssistantTurn(options: { toolCall?: boolean; textCount?: number; toolCount?: number } = {}): void {
+	emitAssistantTurn(options: { toolCall?: boolean; textCount?: number; toolCount?: number; usage?: unknown } = {}): void {
 		let content: Array<{ type: string; text?: string; name?: string }>;
 		if (options.textCount !== undefined || options.toolCount !== undefined) {
 			content = [
@@ -37,7 +37,10 @@ class ScriptedSession implements ChildSession {
 			content = options.toolCall ? [{ type: "toolCall", name: "read" }] : [{ type: "text", text: "done" }];
 		}
 		for (const listener of this.#listeners) {
-			listener({ type: "message_end", message: { role: "assistant", content } });
+			listener({
+				type: "message_end",
+				message: { role: "assistant", content, ...(options.usage ? { usage: options.usage } : {}) },
+			});
 		}
 	}
 
@@ -214,6 +217,47 @@ describe("LocalProvider", () => {
 		sessions[0].settle("done");
 		await activation.wait();
 		assert.equal(manager.descriptors()[0].phase, "completed");
+	});
+
+	// B1 连带（pi-flash-y26f）：usage 随每轮 message_end 累计并透出面板，
+	// settle 的 result.usage 同口径（ΣtotalTokens），不再只报最后一轮。
+	it("accumulates usage per turn and settles with the same total", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn" }));
+		const pending = activation.wait(); // caller delivery: the run sits in settling
+		sessions[0].emitAssistantTurn({
+			usage: { input: 100, output: 10, cacheRead: 5, cacheWrite: 0, totalTokens: 115, cost: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 } },
+		});
+		assert.deepEqual(manager.descriptors()[0].usage, {
+			input: 100,
+			output: 10,
+			cacheRead: 5,
+			cacheWrite: 0,
+			total: 115,
+			totalTokens: 115,
+			cost: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 },
+		});
+		sessions[0].emitAssistantTurn({ usage: { input: 200, output: 20, cacheRead: 5, cacheWrite: 0, totalTokens: 225, cost: { input: 20, output: 4, cacheRead: 0, cacheWrite: 0, total: 24 } } });
+		assert.equal(manager.descriptors()[0].usage?.total, 340);
+		assert.equal(manager.descriptors()[0].usage?.totalTokens, 340);
+		assert.equal(manager.descriptors()[0].usage?.cost?.total, 36);
+		sessions[0].settle("done");
+		const result = await pending;
+		assert.equal(result.usage?.total, 340);
+		assert.deepEqual(manager.descriptors()[0].usage, result.usage);
+	});
+
+	it("keeps turns without usage from zeroing the accumulated total", async () => {
+		const { manager, sessions } = setup({ hold: true });
+		const activation = await manager.start(baseRequest({ provider: "spawn" }));
+		const pending = activation.wait();
+		sessions[0].emitAssistantTurn({ usage: { input: 50, output: 5, totalTokens: 55 } });
+		sessions[0].emitAssistantTurn({ toolCall: true }); // no usage on this message
+		assert.equal(manager.descriptors()[0].usage?.total, 55);
+		assert.deepEqual(manager.descriptors()[0].stats, { turns: 2, agentMessages: 1, toolCalls: 1 });
+		sessions[0].settle("done");
+		const result = await pending;
+		assert.equal(result.usage?.total, 55);
 	});
 
 	it("still counts stats without a turn budget", async () => {
