@@ -357,9 +357,9 @@ impl Render for Chat {
                             if is_thinking { "t" } else { "w" },
                             key
                         )))
-                        // 内边距与扩展/MCP/模型 picker 统一（PAD=10）：
-                        // 上下走 PAD 不钉行高，14px 文案才有呼吸感
-                        .py(px(crate::session::picker_shell::PAD))
+                        // 行内只有水平 PAD；上下不塞 padding（行高钉
+                        // ROW_H，与扩展菜单同款节奏，条目间不松散）
+                        .h(px(crate::session::picker_shell::ROW_H))
                         .px(px(crate::session::picker_shell::PAD))
                         .flex()
                         .items_center()
@@ -446,6 +446,10 @@ impl Render for Chat {
                     .overflow_hidden()
                     .flex()
                     .flex_col()
+                    // 内容区外围上下 PAD（同扩展菜单的头/列表外围留白节奏；
+                    // 条目之间不塞 padding）
+                    .pt(px(crate::session::picker_shell::PAD))
+                    .pb(px(crate::session::picker_shell::PAD))
                     // 浮层规则 4：点卡片本身不关（菜单项自己关）
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .children(items)
