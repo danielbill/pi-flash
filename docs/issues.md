@@ -1,6 +1,6 @@
 # GitHub Issues 镜像
 
-> 仓库：danielbill/pi-flash ｜ 同步：2026-11-05 10:29 ｜ 共 8 条（open 0）
+> 仓库：danielbill/pi-flash ｜ 同步：2026-11-06 07:30 ｜ 共 8 条（open 0）
 >
 > 本文件由 `scripts\sync-issues.bat` 自动生成，手动修改会被下次同步覆盖；评论/关闭请走 `gh issue`。
 
