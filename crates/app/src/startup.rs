@@ -931,6 +931,10 @@ fn boot_target() -> BootTarget {
         crate::services::workspace::get_last_open(&cwd.to_string_lossy())
             .map(PathBuf::from)
             .filter(|p| p.exists() && !hidden.hides(None, p))
+            // 子会话（044-0 观察窗）永不做恢复目标：它是只读检视，驱动权归
+            // 父 pi；旧版 open_session 曾把子会话写进 last-open（已修），这里
+            // 把历史污染一并挡住——落新会话页
+            .filter(|p| !pi_link::sessions::is_subagent_session(p))
             .filter(|p| {
                 let name = p
                     .file_name()

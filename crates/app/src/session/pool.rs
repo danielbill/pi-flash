@@ -298,16 +298,25 @@ impl Chat {
         self.composer.history = history;
         self.composer.history_ix = None;
         self.pool.active_key = key.clone();
-        // 会话 tab 条：切到即入序（去重，open 序稳定不重排——zed tab 同则）；
-        // 普通会话顺手刷新标题快照（observer 的快照由 open_session 写任务
-        // 名，这里不覆盖——session_title_of 对子会话只会兜底出「新会话」）。
-        if !self.pool.tab_order.contains(&key) {
-            self.pool.tab_order.push(key.clone());
-        }
+        // tab 姿态（044-0 验收②）：普通会话 = 主会话指针跟进 + 标题快照刷
+        // 新 + 自由区全灭（chat 前台高亮归固定段）；observer 观察窗 = 激活
+        // 自由区对应 tab（open_session 保证已在 panel_tabs），主会话指针
+        // 不动——固定段永远显示主会话/新会话。
         let observer = rt.read(cx).observer;
-        if !observer {
+        if observer {
+            if let Some(ix) = self
+                .ws
+                .panel_tabs
+                .iter()
+                .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if *k == key))
+            {
+                self.ws.active_panel_tab = Some(ix);
+            }
+        } else {
+            self.pool.primary_key = key.clone();
             let title = self.session_title_of(&key, cx);
             self.pool.tab_labels.insert(key.clone(), title);
+            self.ws.active_panel_tab = None;
         }
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
@@ -320,8 +329,10 @@ impl Chat {
         }
         if let Some(f) = &file {
             // 无项目态不存在可切会话（switch_pool_rt 已先重挂），防御式取 Some。
+            // observer 观察窗不写 last-open：子会话不是恢复目标（044-0 验收
+            // ①教训——旧版污染后启动会恢复成子会话，父 catalog 无从解析）
             if let Some(cwd) = &self.ws.cwd {
-                if !self.plugin_claimed(&f.to_string_lossy()) {
+                if !observer && !self.plugin_claimed(&f.to_string_lossy()) {
                     set_last_open(&cwd.to_string_lossy(), &f.to_string_lossy());
                 }
             }
@@ -469,11 +480,16 @@ impl Chat {
         if self.pool.active_key == old_key {
             self.pool.active_key = path_key.clone();
         }
-        // 会话 tab 条跟随身份迁移（draft-N → 会话文件键）：顺序不变，标题
-        // 快照搬家（草稿标题「新会话」在下次 switch_to 时刷成真名）
-        for k in &mut self.pool.tab_order {
-            if *k == old_key {
-                *k = path_key.clone();
+        // tab 身份跟随迁移（draft-N → 会话文件键）：主会话指针、标题快照、
+        // 自由区观察窗 tab 的 key（草稿标题「新会话」在下次 switch_to 刷真名）
+        if self.pool.primary_key == old_key {
+            self.pool.primary_key = path_key.clone();
+        }
+        for t in &mut self.ws.panel_tabs {
+            if let crate::PanelTab::Observer { key } = t {
+                if *key == old_key {
+                    *key = path_key.clone();
+                }
             }
         }
         if let Some(label) = self.pool.tab_labels.remove(&old_key) {
@@ -731,7 +747,22 @@ impl Chat {
                 })
                 .unwrap_or(None)
                 .unwrap_or_else(|| tr("subagent.tab").to_string());
-            self.pool.tab_labels.insert(new_key, label);
+            self.pool.tab_labels.insert(new_key.clone(), label);
+            // 观察窗 = 自由区普通 tab（044-0 验收②：追加**末尾**，不抢固定
+            // 段第一位）；已开过（面板行重复点）只激活不重复 push
+            let existing =
+                self.ws.panel_tabs.iter().position(
+                    |t| matches!(t, crate::PanelTab::Observer { key: k } if *k == new_key),
+                );
+            match existing {
+                Some(ix) => self.activate_panel_tab(ix, cx),
+                None => {
+                    self.ws
+                        .panel_tabs
+                        .push(crate::PanelTab::Observer { key: new_key });
+                    self.activate_panel_tab(self.ws.panel_tabs.len() - 1, cx);
+                }
+            }
         }
         self.pool
             .runtimes
@@ -835,10 +866,21 @@ impl Chat {
                 r.shutdown_process();
             });
         }
-        // 会话没了：tab 条摘牌（was_active 分支的 new_session 会 switch 进
-        // 新草稿、自动入序）
-        self.pool.tab_order.retain(|k| *k != key);
+        // 会话没了：tab 摘牌——标题快照、主会话指针（was_active 分支的
+        // new_session 会 switch 进新草稿并接管 primary）、自由区观察窗 tab
+        //（close_panel_tab 负责激活位下标平移）
         self.pool.tab_labels.remove(&key);
+        if self.pool.primary_key == key {
+            self.pool.primary_key.clear();
+        }
+        while let Some(ix) = self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if *k == key))
+        {
+            self.close_panel_tab(ix, cx);
+        }
         self.psp.unread.remove(&path);
         self.psp.turn_errors.remove(&path);
         self.psp.turn_warnings.remove(&path);
@@ -872,19 +914,26 @@ impl Chat {
         cx.notify();
     }
 
-    /// 点一枚会话 tab：runtime 驻留 → switch_pool_rt（切注意力）；空闲退役
-    /// 被摘的 → open_session 秒开重开（key 即会话文件路径；draft 不退役）。
-    pub(crate) fn activate_session_tab(&mut self, key: String, cx: &mut Context<Self>) {
+    /// 点固定段主会话 tab：回到主会话/新会话（primary）。runtime 驻留 →
+    /// switch_pool_rt（切注意力，switch_to 顺带清自由区激活位）；空闲退役
+    /// 被摘的 → open_session 秒开重开（primary 即会话文件路径；draft 不退役）。
+    pub(crate) fn activate_primary_tab(&mut self, cx: &mut Context<Self>) {
+        let key = self.pool.primary_key.clone();
         match self.pool.runtimes.get(&key).cloned() {
             Some(rt) => self.switch_pool_rt(rt, cx),
-            None => self.open_session(PathBuf::from(&key), false, cx),
+            None if !key.is_empty() => self.open_session(PathBuf::from(&key), false, cx),
+            None => {
+                self.set_content_view(crate::ContentView::Chat);
+                cx.notify();
+            }
         }
     }
 
-    /// 关一枚观察窗 tab（topbar 子会话 tab 的 ×）：observer 无进程，runtime
-    /// 纯 drop 即可（不 abort 不 shutdown）。active 被关时切回 tab 条里
-    /// 最后一枚驻留会话；一枚都不剩 → 落新草稿（同 delete_session 的
-    /// was_active 分支）。tail cache 不动——再点面板行秒开重开。
+    /// 关一枚观察窗 tab（自由区 × / 右键菜单 Close 同源）：observer 无进程，
+    /// runtime 纯 drop 即可（不 abort 不 shutdown）。tab 摘除走
+    /// close_panel_tab（激活位下标平移）。被关的是前台时切回主会话
+    /// （primary）；primary 不在池 → 落新草稿（同 delete_session was_active）。
+    /// tail cache 不动——再点面板行秒开重开。
     pub(crate) fn close_observer_tab(&mut self, key: &str, cx: &mut Context<Self>) {
         let is_observer = self
             .pool
@@ -896,28 +945,31 @@ impl Chat {
             return;
         }
         self.pool.runtimes.remove(key);
-        self.pool.tab_order.retain(|k| k != key);
         self.pool.tab_labels.remove(key);
+        while let Some(ix) = self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if k == key))
+        {
+            self.close_panel_tab(ix, cx);
+        }
         if self.pool.active_key == key {
             self.psp.active_file = None;
             let next = self
                 .pool
-                .tab_order
-                .iter()
-                .rev()
-                .find(|k| {
-                    self.pool
-                        .runtimes
-                        .get(*k)
-                        .map(|rt| !rt.read(cx).observer)
-                        .unwrap_or(false)
-                })
-                .cloned();
-            match next.and_then(|k| self.pool.runtimes.get(&k).cloned()) {
+                .runtimes
+                .get(&self.pool.primary_key)
+                .cloned()
+                .filter(|rt| !rt.read(cx).observer);
+            match next {
                 Some(rt) => {
                     self.switch_pool_rt(rt, cx);
                 }
-                None => self.new_session(cx),
+                None => {
+                    self.pool.primary_key.clear();
+                    self.new_session(cx);
+                }
             }
         }
         cx.notify();

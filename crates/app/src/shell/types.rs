@@ -293,6 +293,13 @@ pub(crate) enum PanelTab {
         pkg: String,
         page: String,
     },
+    /// 子代理观察窗 tab（044-0 验收）：普通自由 tab 姿态——追加末尾、
+    /// 标题 = descriptor 任务名、× 可关；key = 池 key（会话文件路径串），
+    /// runtime 驻留会话池（observer 不 spawn）。瞬态不进存档；空闲退役
+    /// 只摘 runtime 不摘 tab，点击走 open_session 秒开重开。
+    Observer {
+        key: String,
+    },
 }
 
 /// tab 稳定键（2026-10-14 标签拖拽换位引入）：拖拽发起时记 key，drop 时
@@ -309,6 +316,7 @@ pub(crate) enum TabKey {
     Search,
     SessionSearch,
     Plugin { pkg: String, page: String },
+    Observer { key: String },
 }
 
 impl PanelTab {
@@ -326,6 +334,7 @@ impl PanelTab {
                 pkg: pkg.clone(),
                 page: page.clone(),
             },
+            PanelTab::Observer { key } => TabKey::Observer { key: key.clone() },
         }
     }
 }
@@ -341,8 +350,11 @@ pub(crate) enum TabMenuTarget {
 
 impl PanelTab {
     /// 该 tab 对应的内容区视图（切换/关闭回退共用）。
+    /// 观察窗 tab 复用 Chat 视图：内容区渲染的是 active_key 那枚 runtime，
+    /// 激活它 = 切池指针（switch_to），固定段主会话 tab 同时退出高亮。
     pub(crate) fn view(&self) -> ContentView {
         match self {
+            PanelTab::Observer { .. } => ContentView::Chat,
             PanelTab::Term(_) => ContentView::Term,
             PanelTab::File(_) => ContentView::File,
             PanelTab::Changelog => ContentView::Changelog,
@@ -359,6 +371,7 @@ impl PanelTab {
     /// 判据）。绝大多数 tab 就是 `view() == to` 的同义反复。
     pub(crate) fn owns_view(&self, to: ContentView) -> bool {
         match self {
+            PanelTab::Observer { .. } => to == ContentView::Chat,
             PanelTab::Term(_) => to == ContentView::Term,
             PanelTab::File(_) => to == ContentView::File,
             PanelTab::Changelog => to == ContentView::Changelog,

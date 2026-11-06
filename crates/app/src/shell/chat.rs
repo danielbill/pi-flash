@@ -333,11 +333,11 @@ pub(crate) struct PoolUi {
     pub(crate) runtimes:
         std::collections::HashMap<String, gpui::Entity<session::runtime::SessionRuntime>>,
     pub(crate) active_key: String,
-    /// 会话 tab 条的开启顺序（open 序，topbar 固定段按它渲染多枚会话
-    /// tab；044-0 验收：子会话观察窗以新 tab 打开，不再挤掉主会话）。
-    /// 空闲退役只清 runtimes 不清这里——tab 保留，点击走 open_session
-    /// 秒开重开（tail cache）。
-    pub(crate) tab_order: Vec<String>,
+    /// 固定段会话 tab 的主会话指针（最近一次激活的**非 observer** 会话，
+    /// 含草稿）：新会话/主会话永远占 topbar 第一位（044-0 验收②），子会话
+    /// 观察窗进自由区 panel_tabs，不抢固定段。空闲退役只清 runtimes 不清
+    /// 这里——固定段照常渲染，点击 activate 走 open_session 秒开重开。
+    pub(crate) primary_key: String,
     /// tab 标题快照（key → 标题）：observer 子会话 = descriptor 的任务名
     /// （侧栏扫描器不含子会话，session_title_of 取不到）；普通会话 =
     /// switch_to 时的 session_title_of 快照（空闲退役后 runtime 不在池，
@@ -678,7 +678,7 @@ impl Chat {
             pool: PoolUi {
                 runtimes: std::collections::HashMap::new(),
                 active_key: String::new(),
-                tab_order: Vec::new(),
+                primary_key: String::new(),
                 tab_labels: std::collections::HashMap::new(),
                 sessions: Vec::new(),
                 session_tail_cache: std::collections::HashMap::new(),

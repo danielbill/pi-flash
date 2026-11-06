@@ -197,6 +197,13 @@ impl Chat {
             cx.notify();
             return;
         }
+        // 子代理观察窗：摘池（observer 无进程）+ tab 摘除 + 前台回退主会话
+        // 全在 close_observer_tab——不走下面的通用回退（那套按 view 找剩余
+        // tab，Chat 视图的回退语义归池指针管）
+        if let PanelTab::Observer { key } = &tab {
+            self.close_observer_tab(key, cx);
+            return;
+        }
         let view = tab.view();
         let was_active = self.ws.active_panel_tab == Some(ix) && self.layout.content_view == view;
         self.close_panel_tab(ix, cx);
@@ -275,6 +282,13 @@ impl Chat {
                         self.discard_file_tab(&p, cx);
                     }
                 }
+                // 观察窗批量摘除：池 runtime + 快照就地清（不走
+                // close_observer_tab——它的前台回退由批量收尾统一裁决）
+                PanelTab::Observer { key } => {
+                    self.pool.runtimes.remove(&key);
+                    self.pool.tab_labels.remove(&key);
+                    self.close_panel_tab(*ix, cx);
+                }
                 _ => self.close_panel_tab(*ix, cx),
             }
         }
@@ -290,6 +304,24 @@ impl Chat {
                 self.set_content_view(v);
             }
             None => self.fallback_after_closes(cx),
+        }
+        // 批量可能关掉前台观察窗：active_key 悬空时回主会话（primary 在池
+        // → 切回；否则落新草稿）
+        if !self.pool.runtimes.contains_key(&self.pool.active_key) {
+            self.psp.active_file = None;
+            let pri = self
+                .pool
+                .runtimes
+                .get(&self.pool.primary_key)
+                .cloned()
+                .filter(|rt| !rt.read(cx).observer);
+            match pri {
+                Some(rt) => self.switch_pool_rt(rt, cx),
+                None => {
+                    self.pool.primary_key.clear();
+                    self.new_session(cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -608,8 +640,21 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
+        // 子代理观察窗（044-0 验收②）：复用 Chat 视图——内容区渲染
+        // active_key runtime，激活它 = 切池指针到该子会话。runtime 被
+        // 空闲退役摘走时 open_session 秒开重开（key 即会话文件路径）。
+        if let Some(PanelTab::Observer { key }) = self.ws.panel_tabs.get(ix).cloned() {
+            self.activate_panel_tab(ix, cx);
+            match self.pool.runtimes.get(&key).cloned() {
+                Some(rt) => self.switch_pool_rt(rt, cx),
+                None => self.open_session(PathBuf::from(&key), false, cx),
+            }
+            return;
+        }
         let view = match self.ws.panel_tabs.get(ix) {
             Some(PanelTab::Term(_)) => ContentView::Term,
+            // 观察窗已在上方提前 return（穷尽性兜底臂）
+            Some(PanelTab::Observer { .. }) => ContentView::Chat,
             Some(PanelTab::Changelog) => ContentView::Changelog,
             Some(PanelTab::PiExtMarket) => ContentView::PiExtMarket,
             Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
