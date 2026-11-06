@@ -55,7 +55,6 @@ impl Chat {
             if matches!(
                 view,
                 ContentView::Changelog
-                    | ContentView::PiExtMarket
                     | ContentView::PiNativeMarket
                     | ContentView::PfMarket
                     | ContentView::Search

@@ -10,12 +10,9 @@
 //! （单包 ~0.4s），故按 10 条一批并发 8 补全（见 [`fill_kinds`]），调用方
 //! 每批判完就上屏，不攒满一页。
 //!
-//! 缓存只有一份首页快照（[`HomeSnapshot`]）：单文件、≤50 条、<100KB，
-//! 启动延迟加载（app 侧 `market::prefetch`）只预取首页写它。
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -361,68 +358,6 @@ pub fn fill_kinds(entries: &mut [MarketEntry], kinds: &mut HashMap<String, Vec<M
     }
 }
 
-// ---------------------------------------------------------------------------
-// 首页快照（唯一的磁盘缓存）
-// ---------------------------------------------------------------------------
-
-/// 快照最多存多少条（= 一页）。
-pub const SNAPSHOT_MAX: usize = 50;
-
-/// 首页快照：`{query, entries, fetched_at}`。进页面先渲染它（0 网络），
-/// 后台刷新完就地替换。单文件 <100KB。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HomeSnapshot {
-    pub query: String,
-    pub entries: Vec<MarketEntry>,
-    pub fetched_at: i64,
-}
-
-impl HomeSnapshot {
-    /// 从 `<PF数据目录>/pi-ext-market-cache.json` 读（坏文件/缺字段 → None）。
-    pub fn load() -> Option<Self> {
-        Self::load_at(&crate::paths::pi_ext_market_cache_file()?)
-    }
-
-    pub fn load_at(path: &Path) -> Option<Self> {
-        let text = std::fs::read_to_string(path).ok()?;
-        let snap: HomeSnapshot = serde_json::from_str(&text).ok()?;
-        (!snap.entries.is_empty()).then_some(snap)
-    }
-
-    /// 覆盖写（原子：tmp + rename；失败静默——缓存不值得打扰用户）。
-    pub fn save(&self) {
-        if let Some(path) = crate::paths::pi_ext_market_cache_file() {
-            let _ = self.save_at(&path);
-        }
-    }
-
-    pub fn save_at(&self, path: &Path) -> std::io::Result<()> {
-        let mut snap = self.clone();
-        snap.entries.truncate(SNAPSHOT_MAX);
-        let text = serde_json::to_string(&snap)?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, path)
-    }
-
-    /// 快照年龄（秒）。
-    pub fn age_secs(&self) -> i64 {
-        now_secs() - self.fetched_at
-    }
-
-    /// 用给定条目建快照（`fetched_at` = 现在）。
-    pub fn new_now(query: &str, entries: Vec<MarketEntry>) -> Self {
-        Self {
-            query: query.to_string(),
-            entries,
-            fetched_at: now_secs(),
-        }
-    }
-}
-
 /// 会话外 kinds 缓存（090 重构补）：`<数据目录>/pi-native-kinds-cache.json`，
 /// name → 包内资源类型。原生市场每次重查都要重补 50 个 `latest` 清单
 /// （~15-20s），有这份缓存后命中即零网络——选类型立即出结果。
@@ -472,12 +407,6 @@ impl KindsCache {
     }
 }
 
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
 
 #[cfg(test)]
 mod tests;

@@ -174,12 +174,6 @@ pub fn model_price_cache_file() -> Option<PathBuf> {
     file("model-price-cache.json")
 }
 
-/// `~/.pi-flash/pi-ext-market-cache.json` — Pi 扩展市场首页快照（040-1：
-/// 单文件、≤50 条、<100KB；启动延迟加载只预取首页写它）。
-pub fn pi_ext_market_cache_file() -> Option<PathBuf> {
-    file("pi-ext-market-cache.json")
-}
-
 /// `pi-native-kinds-cache.json` — pi 原生市场的包类型缓存（090 重构补：
 /// name → kinds，选类型免二次 50 清单拉取）。
 pub fn pi_native_kinds_cache_file() -> Option<PathBuf> {

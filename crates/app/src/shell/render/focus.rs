@@ -116,18 +116,7 @@ impl Chat {
                 .as_ref()
                 .is_some_and(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
         {
-            // 040-2：原生市场搜索框持焦不回收（同下面 040-1）
-        } else if self.layout.content_view == crate::ContentView::PiExtMarket
-            && self
-                .aux
-                .market
-                .pi_ext
-                .input
-                .as_ref()
-                .is_some_and(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
-        {
-            // 040-1：市场搜索框持焦不回收（同文件编辑器白名单）——render
-            // 每帧仲裁会把焦点抢回 composer，市场页搜索框点进去打不进字
+            // 040-2：原生市场搜索框持焦不回收
         } else if !(self.layout.content_view == crate::ContentView::Term
             && self
                 .shown_terminal_focus()

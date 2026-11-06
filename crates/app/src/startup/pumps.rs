@@ -330,7 +330,6 @@ fn spawn_splash_gate(cx: &mut gpui::Context<Chat>) {
             // 040-1 延迟加载：Pi 扩展市场预热——只预取首页，且**只在已有
             // 首页快照时**才发请求（从没用过市场页 = 零请求），见
             // market/prefetch.rs
-            c.spawn_pi_ext_market_prefetch(cx);
             // 052 延迟加载：会话自动清理（后排任务——扫描+回收站搬运全在
             // 后台线程，主线程只做状态摘除；0 天 = 关闭）
             c.spawn_session_auto_clean(cx);

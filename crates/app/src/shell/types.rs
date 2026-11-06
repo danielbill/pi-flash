@@ -110,8 +110,6 @@ pub(crate) enum ContentView {
     File,
     /// 081 更新日志 tab（PanelTab::Changelog；markdown 渲染）
     Changelog,
-    /// 040-1 Pi 扩展市场 tab（PanelTab::PiExtMarket；标准页）
-    PiExtMarket,
     /// 040-2 Pi 原生扩展市场 tab（PanelTab::PiNativeMarket；pi.dev 目录页移植）
     PiNativeMarket,
     /// 090-4 PF 插件市场 tab（PanelTab::PfMarket；内置索引 + 台账）
@@ -275,8 +273,6 @@ pub(crate) enum PanelTab {
     File(PathBuf),
     /// 081 更新日志（新版本首启自动打开；无外部资源，纯渲染）
     Changelog,
-    /// 040-1 Pi 扩展市场（标准页；菜单-三横按钮打开）
-    PiExtMarket,
     /// 040-2 Pi 原生扩展市场（pi.dev Package Catalog 移植；菜单-三横按钮打开）
     PiNativeMarket,
     /// 090-4 PF 插件市场（内置索引 + 台账；菜单-三横按钮打开）
@@ -310,7 +306,6 @@ pub(crate) enum TabKey {
     Term(usize),
     File(PathBuf),
     Changelog,
-    PiExtMarket,
     PiNativeMarket,
     PfMarket,
     Search,
@@ -325,7 +320,6 @@ impl PanelTab {
             PanelTab::Term(id) => TabKey::Term(*id),
             PanelTab::File(p) => TabKey::File(p.clone()),
             PanelTab::Changelog => TabKey::Changelog,
-            PanelTab::PiExtMarket => TabKey::PiExtMarket,
             PanelTab::PiNativeMarket => TabKey::PiNativeMarket,
             PanelTab::PfMarket => TabKey::PfMarket,
             PanelTab::Search => TabKey::Search,
@@ -358,7 +352,6 @@ impl PanelTab {
             PanelTab::Term(_) => ContentView::Term,
             PanelTab::File(_) => ContentView::File,
             PanelTab::Changelog => ContentView::Changelog,
-            PanelTab::PiExtMarket => ContentView::PiExtMarket,
             PanelTab::PiNativeMarket => ContentView::PiNativeMarket,
             PanelTab::PfMarket => ContentView::PfMarket,
             PanelTab::Search => ContentView::Search,
@@ -375,7 +368,6 @@ impl PanelTab {
             PanelTab::Term(_) => to == ContentView::Term,
             PanelTab::File(_) => to == ContentView::File,
             PanelTab::Changelog => to == ContentView::Changelog,
-            PanelTab::PiExtMarket => to == ContentView::PiExtMarket,
             PanelTab::PiNativeMarket => to == ContentView::PiNativeMarket,
             PanelTab::PfMarket => to == ContentView::PfMarket,
             PanelTab::Search => to == ContentView::Search,

@@ -27,8 +27,8 @@ pub(crate) fn menu_layer(
     let layer = crate::ui::menu::menu_layer(Some(&chat.dlg.dialog_focus), &weak, |c, _cx| {
         c.dlg.market_menu = None;
     });
-    // 040-1「Pi扩展市场」已退役（2026-10-22 用户定夺）：菜单只留原生市场。
-    // 旧页代码保留（open_pi_ext_market 仍可从自动化口进入），不再上菜单。
+    // 040-1「Pi扩展市场」已退役（2026-10-22 用户定夺；2026-11-06 代码已删）：
+    // 菜单只留原生市场。
     // 图标档：`plug` 是细长形，12 档下如图标并与方形图标并排会显小→给 14
     // （与 topbar 同名标签同档，见 titlebar::tab_icon_size）；puzzle 保持 12。
     // 2026-10-23 定夺：入口只留三横菜单（topbar/statusbar 图标全撤）。

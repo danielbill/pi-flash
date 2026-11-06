@@ -167,18 +167,6 @@ pub fn vlist(
 /// 能出现一次**——各调用点 id 互不相同（file-tree / mc-model-list / font-list）。
 /// pub(crate)：文件树 sticky 祖先链的「点击滚动到目录」要按同一 id 拿句柄
 /// 写偏移。
-/// 把列表滚回顶部（搜索/翻页/排序换内容后调用）。句柄表常驻，直接把
-/// 偏移置 0（gpui 约定：向下滚 offset 越负，顶部 = (0, 0)）。
-pub(crate) fn reset_scroll(id: &'static str) {
-    SCROLL_HANDLES.with(|handles| {
-        if let Some(h) = handles.borrow().get(id) {
-            h.0.borrow()
-                .base_handle
-                .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
-        }
-    });
-}
-
 pub(crate) fn scroll_handle(id: &'static str) -> UniformListScrollHandle {
     SCROLL_HANDLES.with(|handles| {
         handles

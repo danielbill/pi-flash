@@ -90,7 +90,6 @@ impl Chat {
             // 观察窗已在上方提前 return（穷尽性兜底臂）
             Some(PanelTab::Observer { .. }) => ContentView::Chat,
             Some(PanelTab::Changelog) => ContentView::Changelog,
-            Some(PanelTab::PiExtMarket) => ContentView::PiExtMarket,
             Some(PanelTab::PiNativeMarket) => ContentView::PiNativeMarket,
             Some(PanelTab::PfMarket) => ContentView::PfMarket,
             Some(PanelTab::Search) => ContentView::Search,

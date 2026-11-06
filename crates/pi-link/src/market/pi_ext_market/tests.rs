@@ -109,38 +109,3 @@ fn format_downloads_scales() {
     assert_eq!(format_downloads(1_800_000), "1.8M");
     assert_eq!(format_downloads(1_000_000), "1M");
 }
-
-#[test]
-fn home_snapshot_roundtrip_and_bad_file() {
-    let dir = std::env::temp_dir().join(format!("pf-mkt-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("snap.json");
-
-    // 坏文件 → None（不 panic）
-    std::fs::write(&path, "{oops").unwrap();
-    assert!(HomeSnapshot::load_at(&path).is_none());
-
-    let snap = HomeSnapshot::new_now(
-        "web",
-        vec![MarketEntry {
-            name: "pi-web-access".into(),
-            kinds: vec![MarketKind::Extension],
-            ..Default::default()
-        }],
-    );
-    snap.save_at(&path).unwrap();
-    let back = HomeSnapshot::load_at(&path).unwrap();
-    assert_eq!(back.query, "web");
-    assert_eq!(back.entries.len(), 1);
-    assert_eq!(back.entries[0].kinds, vec![MarketKind::Extension]);
-    assert!(back.age_secs().abs() < 5);
-
-    // 上限截断
-    let many = HomeSnapshot::new_now("q", vec![MarketEntry::default(); 80]);
-    many.save_at(&path).unwrap();
-    assert_eq!(
-        HomeSnapshot::load_at(&path).unwrap().entries.len(),
-        SNAPSHOT_MAX
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}

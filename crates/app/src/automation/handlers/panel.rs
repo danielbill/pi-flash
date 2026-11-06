@@ -56,7 +56,6 @@ pub(super) fn dispatch(
                 "term" => chat.set_content_view(ContentView::Term),
                 "file" => chat.set_content_view(ContentView::File),
                 // 040-1：市场页走真开页路径（建搜索框 + ensure_loaded 拉首页）
-                "pi-ext-market" => chat.open_pi_ext_market(cx),
                 "pi-native-market" => chat.open_pi_native_market(cx),
                 // 090-4：PF 插件市场同口径（建输入框 + 重读台账）
                 "pf-market" => chat.open_pf_market(cx),
@@ -78,7 +77,6 @@ pub(super) fn dispatch(
                     ContentView::Term => "term",
                     ContentView::File => "file",
                     ContentView::Changelog => "changelog",
-                    ContentView::PiExtMarket => "pi-ext-market",
                     ContentView::PiNativeMarket => "pi-native-market",
                     ContentView::PfMarket => "pf-market",
                     ContentView::Search => "search",
