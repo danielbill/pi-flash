@@ -407,6 +407,5 @@ impl KindsCache {
     }
 }
 
-
 #[cfg(test)]
 mod tests;

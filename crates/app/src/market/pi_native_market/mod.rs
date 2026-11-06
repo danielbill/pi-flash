@@ -268,7 +268,6 @@ pub(crate) fn install_label() -> SharedString {
     SharedString::from(tr("market.install").to_string())
 }
 
-
 impl Chat {
     /// 已装来源集合（渲染与过滤共用；`cfg.mc_pkgs_global` 是 op 泵维护的活数据）。
     pub(crate) fn pi_ext_installed_sources(&self) -> std::collections::HashSet<String> {
@@ -280,7 +279,6 @@ impl Chat {
             .collect()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
