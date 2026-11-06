@@ -26,4 +26,3 @@ pub(crate) use list::{model_list_shown, model_list_vlist};
 pub(crate) use panel::remove_provider_confirm_overlay;
 pub(crate) use states::{McProbe, MjCatalogState, MjSpeedState, MjTestState};
 pub(crate) use view::{detail_button, mc_models_view};
-

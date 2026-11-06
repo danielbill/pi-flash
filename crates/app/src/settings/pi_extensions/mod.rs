@@ -11,7 +11,7 @@ use super::*;
 
 pub(crate) mod panes;
 
-pub(crate) use panes::{pl_install_bar, pl_sidebar, pl_detail};
+pub(crate) use panes::{pl_detail, pl_install_bar, pl_sidebar};
 
 impl Chat {
     /// 启停单个扩展：资源数组置空 = 停用，恢复字符串条目 = 启用
