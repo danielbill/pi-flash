@@ -147,7 +147,6 @@ mod walk;
 
 use self::walk::{is_element, walk_block, walk_inline};
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

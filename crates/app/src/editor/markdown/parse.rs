@@ -4,12 +4,11 @@
 use super::*;
 use pulldown_cmark::Event;
 
-
 mod block;
 mod inline;
 
-use inline::{split_links, style_pop, style_push};
 pub(super) use block::parse_blocks;
+use inline::{split_links, style_pop, style_push};
 
 /// Collect inline runs until `is_end` matches (**consuming** the end event) —
 /// existing callers（段落 / 表格单元 / 图片 alt）的口径。

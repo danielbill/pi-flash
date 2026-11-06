@@ -1,5 +1,4 @@
 use super::results::{group_hits, project_name};
-use super::*;
 use pi_link::sessions::SearchHit;
 use std::time::SystemTime;
 
