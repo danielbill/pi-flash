@@ -161,6 +161,9 @@ assets! {
     // 2026-10-18——组头是「文件夹+书签」语义，与行上的 pin 区分）
     "icons/folder-bookmark.svg",
     "icons/clock.svg",
+    // 044-0 子代理面板行二：时长（lucide clock-4）+ token（lucide coins）
+    "icons/clock-4.svg",
+    "icons/coins.svg",
     "icons/arrow-up.svg",
     "icons/arrow-down.svg",
     "icons/wand.svg",

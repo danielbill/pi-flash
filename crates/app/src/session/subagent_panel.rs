@@ -288,8 +288,8 @@ pub(crate) fn subagent_panel_element(
     Some(card.into_any_element())
 }
 
-/// 头部行：标题 + N 个子代理 | 合计 ⏱时长 · tokens · N 个运行中 | ✕ 关闭
-/// （pi-web Agents 头部口径）。
+/// 头部行：标题 + N 个子代理 | 合计 [clock-4]时长 · [coins]tokens · N 个运行中 | ✕ 关闭
+/// （pi-web Agents 头部口径；icon 与行一同款）。
 fn panel_header(weak: &gpui::WeakEntity<Chat>, panel: &SubagentPanel) -> gpui::AnyElement {
     let t = T();
     let weak_close = weak.clone();
@@ -299,9 +299,27 @@ fn panel_header(weak: &gpui::WeakEntity<Chat>, panel: &SubagentPanel) -> gpui::A
     let total_secs: i64 = panel.rows.iter().filter_map(row_secs).sum();
     let total_tokens: u64 = panel.rows.iter().filter_map(|r| r.usage_total).sum();
 
-    let mut stats = format!("{} ⏱{}", tr("subagent.total"), duration_text(total_secs));
+    // 合计 stats（icon 化：clock-4 时长 + coins tokens，与行一同源）
+    let stat_cell = |icon_name: &'static str, text: String| {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(crate::ui::icon(icon_name, 11., t.text_dim))
+            .child(SharedString::from(text))
+    };
+    let mut stats = div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .text_size(crate::appearance::ui_size(11.))
+        .text_color(rgb(t.text_dim))
+        .child(SharedString::from(tr("subagent.total")))
+        .child(stat_cell("clock-4", duration_text(total_secs)));
     if total_tokens > 0 {
-        stats.push_str(&format!(" · {} tokens", tokens_text(total_tokens)));
+        stats = stats.child(stat_cell("coins", tokens_text(total_tokens)));
     }
 
     div()
@@ -339,13 +357,7 @@ fn panel_header(weak: &gpui::WeakEntity<Chat>, panel: &SubagentPanel) -> gpui::A
                 ))),
         )
         // 右：合计 stats + 运行中计数（accent 强调）+ ✕
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(crate::appearance::ui_size(11.))
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(stats)),
-        )
+        .child(stats)
         .child(
             div()
                 .flex_shrink_0()
@@ -426,8 +438,9 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
             });
     }
     el.child(
-        // 行一：状态标记 + 名称 + 任务（超长截断，任务吃余下宽度）
-        // + 失败分码（044-0 B3④：被拒/失败行没有子会话可点，理由内联可见）
+        // 行一：状态标记 + 名称 + 统计（044-0 验收④：时长/轮/言/工具/token
+        // icon 化上移到名字后）+ 失败分码（B3④：被拒/失败行没有子会话可
+        // 点，理由内联行尾可见）
         div()
             .flex()
             .items_center()
@@ -451,8 +464,9 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(task)),
+                    .children(stats_segments(row)),
             )
             .children(
                 row.error_code
@@ -468,29 +482,35 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
             ),
     )
     .child(
-        // 行二：运行时长 · 轮次 · 发言数 · 工具调用次数 · token消耗（k）
+        // 行二：任务名（label 退 childId，超长截断）
         div()
-            .flex()
-            .items_center()
-            .gap(px(10.))
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
             .px(px(23.))
             .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(t.text_dim))
-            .children(stats_segments(row)),
+            .child(SharedString::from(task)),
     )
     .into_any_element()
 }
 
-/// 行二统计段（044-0）：时长恒有；stats/usage 缺项（老 descriptor）整段
-/// 隐藏，不摆 "—" 占位（行二保持紧凑）。轮/言/工具 = icon+数字（044-0
-/// 验收③：右侧导航条同款 icon，文字后缀退役）。
+/// 行一统计段（044-0 验收④）：时长恒有；stats/usage 缺项（老 descriptor）
+/// 整段隐藏，不摆 "—" 占位。轮/言/工具/时长/token 全 icon+数字（右侧导航
+/// 条同款 + clock-4/coins，用户供图 lucide）。
 fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
     let t = T();
     let mut segs: Vec<gpui::AnyElement> = Vec::new();
     segs.push(
         div()
             .flex_shrink_0()
-            .child(SharedString::from(format!("⏱ {}", live_duration_text(row))))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(crate::ui::icon("clock-4", 11., t.text_dim))
+            .child(SharedString::from(live_duration_text(row)))
             .into_any_element(),
     );
     let mut push_stat = |icon_name: &'static str, n: u64| {
@@ -515,12 +535,7 @@ fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
         push_stat("wrench", n);
     }
     if let Some(n) = row.usage_total {
-        segs.push(
-            div()
-                .flex_shrink_0()
-                .child(SharedString::from(tokens_text(n)))
-                .into_any_element(),
-        );
+        push_stat("coins", n);
     }
     segs
 }
