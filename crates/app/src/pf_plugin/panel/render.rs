@@ -3,9 +3,7 @@
 //! 可拖拽分隔线。按钮在 [`super::button`]、右键菜单层在 [`super::menu_layer`]、
 //! 样式助手在 [`super::style`]。渲染规则见 mod.rs 头注释（树解释器，不猜布局）。
 
-use super::style::{
-    group_header, hairline, hex_color, section_header, theme_color, tone_color,
-};
+use super::style::{group_header, hairline, hex_color, section_header, theme_color, tone_color};
 use super::*;
 
 fn render_children(

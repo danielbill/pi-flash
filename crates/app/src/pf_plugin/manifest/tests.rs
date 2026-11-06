@@ -4,8 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use super::parse::parse_manifest;
 use super::PluginDock;
+use super::parse::parse_manifest;
 use crate::pf_plugin::*;
 
 fn write_manifest(dir: &Path, body: &str) -> PathBuf {

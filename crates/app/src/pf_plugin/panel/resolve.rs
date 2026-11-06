@@ -127,8 +127,8 @@ pub(crate) enum CanvasPaint {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::parse::CANVAS_PAINT_CAP;
+    use super::*;
 
     fn tree(json: &str) -> Value {
         serde_json::from_str(json).unwrap()

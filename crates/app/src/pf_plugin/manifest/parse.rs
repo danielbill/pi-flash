@@ -1,13 +1,13 @@
 //! PF 插件清单——手写极简解析（02 §2，不引 toml 库——设计定案）：
-//! 值形态 [`TomlVal`] / `parse_val` / 行内注释剥离 / [`parse_manifest`]
-//! （解析 + 02 §2 校验规则全量）。
+//! 值形态（`TomlVal`，见 [`super::val`]）/ `parse_val` / 行内注释剥离 /
+//! [`parse_manifest`]（解析 + 02 §2 校验规则全量）。
 
 use std::path::Path;
 
-use super::val::{TomlVal, is_kebab, parse_val, strip_inline_comment};
+use super::val::{is_kebab, parse_val, strip_inline_comment};
 use super::{
     FileMenuContrib, FnBarContrib, PanelContrib, PluginDock, PluginManifest, PopupContrib,
-    ServiceContrib, SessionSlotContrib, StatusBarContrib, SUPPORTED_MANIFEST_SCHEMA,
+    SUPPORTED_MANIFEST_SCHEMA, ServiceContrib, SessionSlotContrib, StatusBarContrib,
     TopbarMenuContrib,
 };
 

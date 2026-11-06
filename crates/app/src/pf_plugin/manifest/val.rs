@@ -26,7 +26,11 @@ impl TomlVal {
             _ => Err(format!("pf-plugin.toml 行 {}：{what} 需为字符串", line + 1)),
         }
     }
-    pub(super) fn as_i18n(&self, what: &str, line: usize) -> Result<(String, Option<String>), String> {
+    pub(super) fn as_i18n(
+        &self,
+        what: &str,
+        line: usize,
+    ) -> Result<(String, Option<String>), String> {
         match self {
             TomlVal::I18n { zh, en } => Ok((zh.clone(), en.clone())),
             TomlVal::Str(s) => Ok((s.clone(), None)), // 宽松：纯字符串当 zh
