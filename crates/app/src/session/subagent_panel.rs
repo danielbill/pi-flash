@@ -458,12 +458,15 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
                     .child(SharedString::from(name)),
             )
             .child(
+                // stats 容器：**必须显式 .flex()**——无它子元素纵向堆叠
+                //（gpui div 缺省非 row flex；验收④返工实录）
                 div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
                     .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
                     .children(stats_segments(row)),
@@ -484,7 +487,6 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
     .child(
         // 行二：任务名（label 退 childId，超长截断）
         div()
-            .flex_1()
             .min_w_0()
             .overflow_hidden()
             .whitespace_nowrap()
@@ -535,7 +537,17 @@ fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
         push_stat("wrench", n);
     }
     if let Some(n) = row.usage_total {
-        push_stat("coins", n);
+        // token 走 tokens_text 的 k 格式化（306k；push_stat 是裸计数专用）
+        segs.push(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(crate::ui::icon("coins", 11., t.text_dim))
+                .child(SharedString::from(tokens_text(n)))
+                .into_any_element(),
+        );
     }
     segs
 }
