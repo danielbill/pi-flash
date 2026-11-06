@@ -48,8 +48,19 @@ pub(crate) fn tick(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
     }
     chat.plugins.broadcast_last = Some(cur.clone());
     let payload = payload_json(&cur);
+    let t0 = std::time::Instant::now();
     for ix in 0..chat.plugins.plugins.len() {
         chat.plugin_broadcast_fire(ix, INPUTPANEL, &payload, cx);
+    }
+    // [perf] 铁律：热路径实测数字（2026-11-06 卡死修复附带——面板打开首拍
+    // 的全体扇出含各插件装载检查+broadcast+全量 render，流式期间这个数字
+    // 就是「切面板卡不卡」的直接证据）
+    if std::env::var("PI_FLASH_PERF").is_ok() {
+        eprintln!(
+            "[perf] broadcast tick 扇出 {} 插件耗时 {:?}",
+            chat.plugins.plugins.len(),
+            t0.elapsed()
+        );
     }
 }
 
@@ -60,27 +71,25 @@ pub(crate) fn tick_session(chat: &mut Chat, cx: &mut gpui::Context<Chat>) {
     // 列表行同一把键。曾用 runtime.state.session_id（pi 的 uuid）→ 插件侧拿到
     // 的 id 与渲染面不一致，被迫引入 session_file/uuid 双口径。
     let sess = Some(chat.pool.active_key.clone()).filter(|k| !k.is_empty());
-    let changed = chat.plugins.session_last.as_ref() != Some(&sess);
-    if !changed {
+    if chat.plugins.session_last.as_ref() == Some(&sess) {
         return;
     }
-    // 先派发再记账：首拍插件 JS 可能还没装载（plugin_ready 才懒加载），
-    // 先记账会导致这一拍被吞、page_id 永远不落地。
-    let Some(key) = sess.clone() else {
+    let Some(key) = sess else {
         chat.plugins.session_last = None;
         return;
     };
-    // PF 钩子 page_actived：同一时机把当前页 key 推给插件（PF 独有概念）
-    let notified = chat.plugin_page_active(&key, cx);
-    if notified == 0 {
-        // 插件 JS 尚未装载完：不记账，下一拍重试（否则 page_id 永远不落地）
-        return;
-    }
+    // 派发后即记账（B7，2026-11-06 卡死修复）：晚装插件收不到这一拍的问题
+    // 改由装载补拍（plugin_catchup_page_active）兜住，不再「notified==0 不
+    // 记账下一拍重试」——那会在插件装载失败/未就绪时退化成每 notify 全量
+    // 扇出风暴（流式期间 116 拍/s × 全体插件 = UI 线程饱和，本 bug 主因之
+    // 一）。扇出本身走就绪检查（plugin_loaded），未装载插件零成本跳过。
+    // PF 钩子 page_actived：同一时机把当前页 key 推给已装载插件（PF 独有概念）
+    chat.plugin_page_active(&key, cx);
     let payload = serde_json::json!({ "key": key }).to_string();
     for ix in 0..chat.plugins.plugins.len() {
         chat.plugin_broadcast_fire(ix, SESSION, &payload, cx);
     }
-    chat.plugins.session_last = Some(Some(key.clone()));
+    chat.plugins.session_last = Some(Some(key));
 }
 
 /// 当前 inputpanel 负载（纯读取）：项目 = 桌面工作目录；模型 = 活跃会话

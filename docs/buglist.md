@@ -634,3 +634,17 @@ provider「未配置」。用户手改路径自救——0.4.2 还会再崩。根
 > 落位后 + 保存 key 时三处 `ensure_installed()`；存量路径形态标记（含用户
 > 手改的 payload-0.4.1）启动自动迁裸形态，oauth/用户明文/用户引用零触碰，
 > 不可读拒写。PATH 模式失败回落老绝对路径行为。用例：test/042-1/marker-pathless/。
+
+## agent 流式时整 app 卡死、切快捷面板冻结（v0.4.3 实录，2026-11-06 修）
+
+116 t/s 快模型（DeepSeek V4.1 Flash）流式中：聊天框卡死，切快捷面板直接冻
+结。非死锁（全程无锁）——主线程饱和，三个增量条件在 11-03~11-05 第一次同
+时成立：①10-28 插件钩子机制（每 notify 的 broadcast tick + tick_session
+「notified==0 重试」+ 徽标/fn_bar 渲染路径同步插件调用 + 面板首拍 reset）；
+②11-03 用户装 quick-panel（wasm 插件，扇出有了真实对象）；③快模型把 delta
+间隔压到 8.6ms。修复（bead pi-flash-yftj）：泵批处理 30ms（2000 唤醒→13）+
+notify 33ms 节流 + markdown 流式尾 150ms 解析门/est 250ms 门 + 扇出就绪检查
+禁隐式首装 + tick_session 派发即记账（派发风暴 87→2）+ wasm 一律后台装载
+（根除产物失效 UI 线程重编/compile_lock 等锁）。已排除：11-06 拆分重构（用
+户跑 v0.4.3）、pi 1.5.0（wire 逐字节一致）、死锁。台架 test/030-流式卡死/
+（S1 极限洪水可交互 + S2 批处理零丢失），实测对比见 case.md。

@@ -235,3 +235,36 @@
   - **次源**：`mode.rs::update_highlighter` 三处 Point 全在**新文本**上算（`old_end_position` 语义丢失，多行/含换行替换时行号错）。已改为调用方传变异前快照（`update_highlighter(.., old_text: Option<&Rope>, ..)`，渲染帧零值路径传 None 退回新文本）。
   - **保命层**：回调里 offset 非字符边界时回退到前一字符边界（宁可给上游一段错位字节产生可恢复解析错误，不让它带走进程）。**通用规则：任何要交给 C/C++（tree-sitter、DirectWrite、平台回调）的闭包里，对用户文本的切片都必须过 `is_char_boundary` 守卫**——这类 panic 不是普通崩溃，是进程级 abort，catch_unwind 也兜不住。
   - 复现配方（本次定性用，探针已删）：`SyntaxHighlighter::new("markdown")` + 文章 rope 全量 parse 打底，再按 vendor 口径喂 `InputEdit` 做多行选区替换 / mid-char 脏区间，即可在 `highlighter.rs` 同点位复现同款 abort。
+
+## 流式热路径三件套（2026-11-06，116 t/s 真机卡死修复，pi-flash-yftj）
+
+v0.4.3 + 快模型（116 t/s）真机：agent 流式时整 app 卡死、切插件面板冻结。
+根因不是锁（Chat/SessionRuntime 全程无锁，事件泵就是主线程 task），是主线程
+串行队列饱和。三件套（改 `session/runtime/**`、`editor/markdown`、`session/
+mod.rs` 时不得回退）：
+
+1. **泵批处理**（pump.rs）：首条事件到达后等 30ms，窗口内积压整批一次
+   `WeakEntity::update` 按序喂 on_event。实测：2000 条 delta 洪水从 2000 次
+   唤醒降到 13 次。事件顺序不变（BATCH_CAP 256 溢出留给下一轮）。
+2. **notify 33ms 节流**（events.rs `notify_list`）：列内容类拍（pump/bash/
+   外部观察/帧补账）统一最小间隔，间隔未到置 pending 由 trailing timer 补拍
+   ——事件停了最后一拍也能落地。终端态（轮终/错误/进程死亡）不经此函数，
+   照旧直拍。pager.sync 幂等且按当前 messages 全量对账，推迟安全。
+3. **流式块解析/估算时间门**：markdown `stream_gate_blocks`（150ms，前缀增
+   长才复用上一棵解析树——交替流式块退化为原行为只慢不错）+ `stream_est_
+   throttled`（250ms，t/s 徽章本来就是这个粒度）。非流式路径与既有 LRU 不动。
+
+**通用规则：流式增量路径的任何 O(已流式内容长度) 工作（拼接/重解析/全文估
+算）必须过时间门，不得每帧现算**——帧成本随内容增长，快模型下 8.6ms/事件
+间隔必被击穿。缓存只对不变内容有效，流式尾恒 miss，门是唯一挡板。
+
+## 插件扇出禁隐式首装（不变量，2026-11-06）
+
+广播 tick（inputpanel/session）、page-active、徽标、功能栏全是**隐式路径**：
+就绪检查只认已装载实例（`Chat::plugin_loaded`），**绝不调 `plugin_ready`**。
+否则流式期间每拍扇出 × 全体插件 = UI 线程 QuickJS/wasm 首装突发。首装只归
+用户显式动作（开面板/页签、点面板元素、开弹窗）；晚装插件的首拍语义由装载
+补拍兜住（`plugin_catchup_page_active`：page-active 在 onPanelOpen/render 之
+前落地；inputpanel 靠装载伴随的 notify→tick 差分扇出）。`tick_session` 派发
+后即记账——「notified==0 不记账重试」曾退化为每 notify 全量扇出风暴（实测
+一次洪水会话 87 次派发 vs 修复后 2 次）。台架：`test/030-流式卡死/`。

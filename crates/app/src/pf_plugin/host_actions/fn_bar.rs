@@ -39,8 +39,10 @@ impl Chat {
             }
         }
         for ix in miss {
-            // 未就绪的插件不阻塞功能栏（懒加载链；首拍拿不到下一拍再试）
-            if !self.plugin_ready(ix, cx) {
+            // 未装载的插件不阻塞功能栏（B5 就绪检查不装载：渲染帧路径禁隐
+            // 式首装，不变量见 `plugin_loaded`；装载后的补拍 + 下一拍缓存
+            // 失效自然补上 chrome）
+            if !self.plugin_loaded(ix) {
                 continue;
             }
             let pkg = self.plugins.plugins[ix].manifest.pkg.clone();

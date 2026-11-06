@@ -461,7 +461,40 @@ impl SessionRuntime {
 
     /// 列表同步：结构手术（splice/reset）与翻页垫片结算全在 ChatList
     /// （chat_list.rs，pi-web useAgentSession 滚屏层的移植）。
+    ///
+    /// 带 33ms 节流门（2026-11-06 流式卡死修复 A2）：列内容类拍（pump 事
+    /// 件 / bash 输出 / 外部追加观察 / 帧补账）统一最小间隔 ≈30fps 上限——
+    /// 快流模型 100+ delta/s 时每条全窗失效会把前台队列塞满、输入饿死。
+    /// 间隔未到置 pending，trailing timer 补一拍（事件停了最后一拍也能落
+    /// 地）；pager.sync 按当前 messages 全量对账且幂等，推迟到补拍执行安
+    /// 全。终端态（轮终/错误/进程死亡）不经本函数，照旧直拍。
     pub(crate) fn notify_list(&mut self, cx: &mut Context<Self>) {
+        const NOTIFY_MIN_INTERVAL: std::time::Duration =
+            std::time::Duration::from_millis(33);
+        let now = std::time::Instant::now();
+        if let Some(t) = self.notify_last {
+            if now.duration_since(t) < NOTIFY_MIN_INTERVAL {
+                if !self.notify_pending {
+                    self.notify_pending = true;
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(NOTIFY_MIN_INTERVAL)
+                            .await;
+                        let _ = this.update(cx, |rt, cx| {
+                            rt.notify_pending = false;
+                            rt.notify_last = Some(std::time::Instant::now());
+                            rt.pager
+                                .sync(rt.messages.len(), rt.phase_row_visible());
+                            rt.nav_dirty = true;
+                            cx.notify();
+                        });
+                    })
+                    .detach();
+                }
+                return;
+            }
+        }
+        self.notify_last = Some(now);
         self.pager
             .sync(self.messages.len(), self.phase_row_visible());
         // 消息变化（含流式 delta 路径）→ 导航摘要置脏，渲染帧惰性重建

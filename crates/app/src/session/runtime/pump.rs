@@ -1,8 +1,12 @@
 //! RPC 事件泵（自由异步函数）：epoch 守卫在此——路由本会话事件进本
 //! runtime；泵尾通道关闭 = pi 进程死亡，轮终语义在这里一次补全。
 
+use std::pin::Pin;
+use std::task::Poll;
+
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
+use futures::future::poll_fn;
 use pi_link::protocol::Event;
 
 use crate::i18n::tr;
@@ -12,23 +16,58 @@ use super::*;
 /// Runtime-local event pump: routes THIS session's events into THIS runtime
 /// (stale-guarded by epoch). Chat is not involved — running sessions keep
 /// accumulating while parked.
+///
+/// **批窗口**（2026-11-06 流式卡死修复 A1）：快流模型 100+ delta/s 时每事
+/// 件一次 `WeakEntity::update` + notify 会把主线程前台队列塞满——帧重建排
+/// 不上队，输入饿死（116 t/s 真机：切面板/打字全冻结）。改为首条事件到达
+/// 后等 30ms，把窗口内积压整批一次 update 按序喂 on_event：gpui 在 update
+/// 返回后才统一失效重绘，批内 N 条事件只付一次传播成本。事件顺序不变；
+/// epoch 守卫按批判定；单事件（权限弹窗等交互事件）多付 ≤30ms 延迟，无感。
 pub(super) async fn consume_runtime_events(
     this: gpui::WeakEntity<SessionRuntime>,
     cx: &mut gpui::AsyncApp,
     mut rx: UnboundedReceiver<Event>,
     epoch: u64,
 ) {
-    while let Some(event) = rx.next().await {
+    const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(30);
+    // 上限防长轮独占主线程：超限部分留给下一轮（通道里还在，顺序不变）
+    const BATCH_CAP: usize = 256;
+    loop {
+        let first = match rx.next().await {
+            Some(ev) => ev,
+            None => break, // 通道关闭 → 轮终结算
+        };
+        let mut batch = vec![first];
+        cx.background_executor().timer(BATCH_WINDOW).await;
+        // 非阻塞排干窗口：Pending = 已排干；Ready(None) = 通道已关且排干
+        // （关态由外层下一轮 next() 兜住，这里当普通排干处理）
+        while batch.len() < BATCH_CAP {
+            let step = poll_fn(|cx| match Pin::new(&mut rx).poll_next_unpin(cx) {
+                Poll::Ready(Some(ev)) => Poll::Ready(Some(ev)),
+                _ => Poll::Ready(None),
+            })
+            .await;
+            let Some(ev) = step else {
+                break;
+            };
+            batch.push(ev);
+        }
+        let t0 = std::time::Instant::now();
         let stale = this
             .update(cx, |rt, cx| {
                 if rt.agent.epoch != epoch {
                     return true;
                 }
                 rt.touch();
-                rt.on_event(event, cx);
+                for event in batch {
+                    rt.on_event(event, cx);
+                }
                 false
             })
             .unwrap_or(true);
+        if std::env::var("PI_FLASH_PERF").is_ok() {
+            eprintln!("[perf] pump 批处理耗时 {:?}", t0.elapsed());
+        }
         if stale {
             return;
         }

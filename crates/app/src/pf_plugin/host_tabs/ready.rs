@@ -76,6 +76,9 @@ impl Chat {
                     entry.host = Some(host);
                     lifecycle::log_load(&entry.manifest.dir, true, t0.elapsed().as_millis(), "");
                     entry_state(entry, lifecycle::Ev::LoadOk);
+                    // 装载补拍（B6）：page-active 先于调用方的 onPanelOpen/
+                    // render 落地，page_id 在面板首帧前就位
+                    self.plugin_catchup_page_active(ix, cx);
                     return true;
                 }
                 entry_state(entry, lifecycle::Ev::LoadErr);
@@ -99,9 +102,14 @@ impl Chat {
         }
     }
 
-    /// 内层 wasm 插件懒装载（加密包渲染面）：主线程 `load_cached` —— cwasm
-    /// 缓存命中 = mmap 反序列化 + 实例化，毫秒级（启动预热已把编译搬走），
-    /// 首次开面板是用户显式动作，这个量级无感。失败 = 会话级禁用（与 JS 同款）。
+    /// 内层 wasm 插件懒装载（加密包渲染面）：**一律后台装载**（B8，2026-11-06
+    /// 流式卡死修复）——缓存命中 = mmap 反序列化毫秒级；未命中/产物失效 =
+    /// cranelift 全量编译秒级，两种量级都不许进 UI 线程。面板打开显「…」
+    /// 占位，装载完成回主线程补拍 + 渲染。曾有的「缓存命中走 UI 线程同步
+    /// 装」在产物失效（wasmtime 版本/配置失配致 `has_cached_artifact` 假阳
+    /// 性）时会在 UI 线程现场重编数秒；后台预编译持 compile_lock 时同步路
+    /// 径等锁同样冻结（instance.rs 真机事故记录）。失败 = 会话级禁用（与
+    /// JS 同款）。
     pub(crate) fn plugin_wasm_ready(&mut self, ix: usize, cx: &mut gpui::Context<Self>) -> bool {
         ensure_wasm_hooks(cx);
         self.plugin_sync_quick_pins();
@@ -114,111 +122,60 @@ impl Chat {
             .dir
             .join(entry.manifest.wasm.as_deref().unwrap_or("plugin.wasm"));
         // 编译产物缓存绑在插件安装目录（卸载即清、整目录拷走跟着走）。
-        // 安装时已预编译过 → 这里命中是常态（mmap 反序列化，毫秒级）。
         let cache = pi_link::pf_plugins::plugin_cache_for(&entry.manifest.dir);
-        // **装载中守卫（所有路径之前）**：后台编译期间 entry.wasm 仍是 None，
-        // 而徽标/面板/快照渲染链每拍都调 plugin_ready——无守卫时每拍再 spawn
+        // **装载中守卫（所有路径之前）**：后台装载期间 entry.wasm 仍是 None，
+        // 而面板/快照渲染链每拍都调 plugin_ready——无守卫时每拍再 spawn
         // 一个后台装载任务，真机实测 1 秒内 47 条 load（全量编译 4-6s/条，
-        // 2026-10-31 e2e 日志）。守卫只放在后台分支还不够：后台 load_cached
-        // 中途把产物写进缓存后 cached 翻 true，同步路径会绕过分支再装一份
-        // （双实例双日志）——Loading 态一律拒绝，无论缓存命中与否。
+        // 2026-10-31 e2e 日志）。Loading 态一律拒绝。
         if entry.state == lifecycle::State::Loading {
             return false;
         }
-        // 缓存未命中（手工摆包/旧版安装）：编译秒级重活不许进主线程 →
-        // 转后台装载，装好回主线程填实例+渲染；此刻返回 false = 「…」。
-        let cached = pf_plugin_host::PluginInstance::has_cached_artifact(&wasm_path, &cache);
-        if !cached {
-            entry_state(entry, lifecycle::Ev::LoadStart);
-            let manifest = entry.manifest.clone();
-            cx.spawn(async move |this, cx| {
-                let t0 = std::time::Instant::now();
-                let res = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let inst = PluginInstance::load_cached(&wasm_path, &cache);
-                        inst.and_then(|mut i| {
-                            let ctx = plugin_ctx_json(&id, &manifest, None);
-                            i.load_ctx(&ctx).map(|()| i)
-                        })
-                    })
-                    .await;
-                let ms = t0.elapsed().as_millis();
-                let _ = this.update(cx, |c, cx| {
-                    let Some(entry) = c.plugins.plugins.get_mut(ix) else {
-                        return;
-                    };
-                    match res {
-                        Ok(inst) => {
-                            lifecycle::log_load(&entry.manifest.dir, true, ms, "");
-                            entry_state(entry, lifecycle::Ev::LoadOk);
-                            entry.wasm = Some(inst);
-                            entry.wasm_focus = Some(cx.focus_handle());
-                            c.plugin_wasm_render(ix, cx);
-                        }
-                        Err(e) => {
-                            entry_state(entry, lifecycle::Ev::LoadErr);
-                            lifecycle::log_load(&entry.manifest.dir, false, ms, &e.to_string());
-                            entry.disabled = true;
-                            let id = entry.manifest.id.clone();
-                            c.set_status(format!("插件 {id} 出错：{e}"), cx);
-                        }
-                    }
-                });
-            })
-            .detach();
-            return false;
-        }
-        // [perf] UI 线程同步装载要留实测数字（铁律：热路径不靠感觉）
         entry_state(entry, lifecycle::Ev::LoadStart);
-        let t0 = std::time::Instant::now();
-        let mut inst = match PluginInstance::load_cached(&wasm_path, &cache) {
-            Ok(i) => i,
-            Err(e) => {
-                entry_state(entry, lifecycle::Ev::LoadErr);
-                lifecycle::log_load(
-                    &entry.manifest.dir,
-                    false,
-                    t0.elapsed().as_millis(),
-                    &e.to_string(),
-                );
-                entry.disabled = true;
-                self.set_status(format!("插件 {id} 出错：{e}"), cx);
-                return false;
-            }
-        };
-        let load = t0.elapsed();
-        if let Err(e) = inst.load_ctx(&plugin_ctx_json(&id, &entry.manifest, None)) {
-            entry_state(entry, lifecycle::Ev::LoadErr);
-            lifecycle::log_load(
-                &entry.manifest.dir,
-                false,
-                t0.elapsed().as_millis(),
-                &e.to_string(),
-            );
-            entry.disabled = true;
-            self.set_status(format!("插件 {id} 拒载：{e}"), cx);
-            return false;
-        }
-        lifecycle::log_load(&entry.manifest.dir, true, load.as_millis(), "");
-        entry_state(entry, lifecycle::Ev::LoadOk);
-        // [perf] 行按铁律由 PI_FLASH_PERF 门控（main.rs perf_mark 同款）；backtrace
-        // 抓取只在开了仪器时做——release 包零输出 + 不在 UI 线程白付这笔开销
-        if std::env::var("PI_FLASH_PERF").is_ok() {
-            eprintln!(
-                "[perf] wasm 懒装载(UI线程) {id}: load_cached={load:?} init={:?} caller={}",
-                t0.elapsed() - load,
-                std::backtrace::Backtrace::force_capture()
-                    .to_string()
-                    .lines()
-                    .nth(2)
-                    .unwrap_or("")
-                    .trim(),
-            );
-        }
-        entry.wasm = Some(inst);
-        entry.wasm_focus = Some(cx.focus_handle());
-        true
+        let manifest = entry.manifest.clone();
+        cx.spawn(async move |this, cx| {
+            let t0 = std::time::Instant::now();
+            let res = cx
+                .background_executor()
+                .spawn(async move {
+                    let inst = PluginInstance::load_cached(&wasm_path, &cache);
+                    inst.and_then(|mut i| {
+                        let ctx = plugin_ctx_json(&id, &manifest, None);
+                        i.load_ctx(&ctx).map(|()| i)
+                    })
+                })
+                .await;
+            let ms = t0.elapsed().as_millis();
+            let _ = this.update(cx, |c, cx| {
+                let Some(entry) = c.plugins.plugins.get_mut(ix) else {
+                    return;
+                };
+                match res {
+                    Ok(inst) => {
+                        lifecycle::log_load(&entry.manifest.dir, true, ms, "");
+                        entry_state(entry, lifecycle::Ev::LoadOk);
+                        entry.wasm = Some(inst);
+                        entry.wasm_focus = Some(cx.focus_handle());
+                        // [perf] 铁律：热路径实测数字（main.rs perf_mark 同款）
+                        if std::env::var("PI_FLASH_PERF").is_ok() {
+                            eprintln!("[perf] wasm 后台装载完成 {ms}ms");
+                        }
+                        // 装载补拍（B6）：page-active 先落地再首渲染，
+                        // page_id 在面板首帧前就位
+                        c.plugin_catchup_page_active(ix, cx);
+                        c.plugin_wasm_render(ix, cx);
+                    }
+                    Err(e) => {
+                        entry_state(entry, lifecycle::Ev::LoadErr);
+                        lifecycle::log_load(&entry.manifest.dir, false, ms, &e.to_string());
+                        entry.disabled = true;
+                        let id = entry.manifest.id.clone();
+                        c.set_status(format!("插件 {id} 出错：{e}"), cx);
+                    }
+                }
+            });
+        })
+        .detach();
+        false
     }
 
     /// 后台验签门拒载的包 → 会话级禁用（tab 隐藏、面板点不开；090-5 L3 fail-closed）。
@@ -232,6 +189,7 @@ impl Chat {
 
     /// onPanelOpen + render → rows 缓存（02 §4 懒加载链）。
     pub(crate) fn plugin_refresh(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        let t0 = std::time::Instant::now();
         if !self.plugin_ready(ix, cx) {
             return;
         }
@@ -308,6 +266,12 @@ impl Chat {
                 // 契约 v3：弹窗开着且属于本插件 → 内容跟着新态（refresh-qr 等回环后弹窗即新态）
                 self.plugin_popup_reload(ix, cx);
                 cx.notify();
+                // [perf] 铁律：热路径实测数字（PI_FLASH_PERF 门控；2026-11-06
+                // 卡死修复附带——refresh 链含 onPanelOpen+render 两次同步
+                // JS/wasm 调用，流式期间是否成为突发全靠这个数字说话）
+                if std::env::var("PI_FLASH_PERF").is_ok() {
+                    eprintln!("[perf] plugin_refresh ix={ix} 耗时 {:?}", t0.elapsed());
+                }
             }
             Err(e) => self.plugin_broken(ix, e, cx),
         }

@@ -38,6 +38,32 @@ use self::messages::{
 use crate::ext_ui::{render_ext_dialog, render_ext_widget};
 
 use crate::Chat;
+
+// 流式 token 估算门（A4，2026-11-06 流式卡死修复）：stream_est 原为每帧
+// 把末条消息全部 Text+Thinking 拼成一个 String 再逐字估算——O(已流式总
+// 字数)/帧，快流模型（116 t/s）下与 markdown 重解析叠加把帧成本推爆。
+// 250ms 时间门：门内复用上次估算值（t/s 徽章本来就按 250ms 量级波动，
+// 无感知）；门过即重算。会话切换后 ≤250ms 内可能沿用上一会话的值，量级
+// 不变，无感知。
+thread_local! {
+    static STREAM_EST_GATE: std::cell::RefCell<Option<(std::time::Instant, u64)>> =
+        const { std::cell::RefCell::new(None) };
+}
+const STREAM_EST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+fn stream_est_throttled(compute: impl FnOnce() -> u64) -> u64 {
+    STREAM_EST_GATE.with(|cell| {
+        let mut gate = cell.borrow_mut();
+        if let Some((at, est)) = gate.as_ref() {
+            if at.elapsed() < STREAM_EST_INTERVAL {
+                return *est;
+            }
+        }
+        let est = compute();
+        *gate = Some((std::time::Instant::now(), est));
+        est
+    })
+}
 use crate::appearance::theme::theme as T;
 use crate::services::format::*;
 
@@ -582,8 +608,10 @@ fn session_list(
                         let streaming = rt_view.agent_running;
                         let stream_est = if streaming && end == rt_view.messages.len() {
                             rt_view.messages.last().map(|last| {
-                                let text: String =
-                                    last.blocks
+                                // 250ms 时间门（A4）：全文拼接+估算不再每帧做
+                                stream_est_throttled(|| {
+                                    let text: String = last
+                                        .blocks
                                         .iter()
                                         .map(|b| match b {
                                             Block::Text { text, .. }
@@ -591,7 +619,8 @@ fn session_list(
                                             _ => "",
                                         })
                                         .collect();
-                                estimate_tokens(&text)
+                                    estimate_tokens(&text)
+                                })
                             })
                         } else {
                             None

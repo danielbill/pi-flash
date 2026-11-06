@@ -49,59 +49,18 @@ impl Chat {
         let mut notified = 0usize;
         let n = self.plugins.plugins.len();
         for ix in 0..n {
-            // 能力面（8tb.2）：PF 钩子全员派发，载体无关——JS 未导出由胶水
-            // 回 "0" 记日志；wasm 走事件通道 kind="page-active"（wit v3；
-            // 旧 wasm 不认识即忽略，无害）
-            let ok = {
-                let e = &self.plugins.plugins[ix];
-                !e.disabled
-            };
-            if !ok || !self.plugin_ready(ix, cx) {
-                continue;
-            }
-            let is_wasm = self.plugins.plugins[ix].wasm.is_some();
-            let r: Result<String, String> = if is_wasm {
-                let (res, acts) = {
-                    let entry = &mut self.plugins.plugins[ix];
-                    let Some(inst) = entry.wasm.as_mut() else {
-                        continue;
-                    };
-                    let res = inst.on_event("page-active", "", &env);
-                    let acts = inst.pump_actions();
-                    (res, acts)
-                };
-                // 无 window 面：Toast 照走，其余丢弃（broadcast 同口径；
-                // page-active 只作废 chrome/徽标缓存，不触发面板重渲）
-                for a in acts {
-                    match a {
-                        PluginAction::Toast(m) => self.set_status(m, cx),
-                        other => {
-                            eprintln!("[pf-plugin] page-active 期间动作被忽略: {other:?}")
-                        }
-                    }
-                }
-                res.map(|()| "1".to_string()).map_err(|e| e.to_string())
-            } else {
-                let entry = &self.plugins.plugins[ix];
-                let host = entry.host.as_ref().unwrap().clone();
-                host.borrow_mut().actions.clear();
-                let r = entry.js.as_ref().unwrap().page_active(&env);
-                host.borrow_mut().actions.clear();
-                r
-            };
-            match r {
-                Err(e) => self.plugin_broken(ix, e, cx),
-                Ok(hit) => {
-                    if hit == "1" {
-                        notified += 1;
-                    } else if cfg!(debug_assertions) {
-                        eprintln!("[pf-plugin] page_actived 未导出（ix={ix}）");
-                    }
-                }
+            if self.plugin_page_active_one(ix, &env, cx) {
+                notified += 1;
             }
         }
-        self.plugins.row_cache.clear();
-        self.plugins.fn_bar_cache.clear();
+        // 缓存作废只在确有派发命中时（2026-11-06 卡死修复 B7）：无命中 =
+        // 没有任何插件收到事件，缓存不可能由此变陈旧——原先每拍无条件清
+        // 把徽标/功能栏的 1s TTL 护栏打折，与 notify 节流前的每拍扇出叠加
+        // 即流式期间每帧同步 wasm 调用风暴。
+        if notified > 0 {
+            self.plugins.row_cache.clear();
+            self.plugins.fn_bar_cache.clear();
+        }
         // 每拍派发的追踪行，只在 debug 构建打：release 包零输出是烟测门禁
         // （0.3.2 实录：这一行 3 秒刷 ~50 条直接把烟测打红）
         if cfg!(debug_assertions) {
@@ -113,6 +72,79 @@ impl Chat {
         notified
     }
 
+    /// 单插件 page-active 派发（PF 钩子面）：返回是否命中（已装载且处理）。
+    /// 载体无关（8tb.2）——JS 未导出由胶水回 "0" 记日志；wasm 走事件通道
+    /// kind="page-active"（wit v3；旧 wasm 不认识即忽略，无害）。就绪检查
+    /// 用 `plugin_loaded` 不装载：隐式扇出路径禁隐式首装（不变量见
+    /// `plugin_loaded` 文档），晚装插件由装载补拍兜住。
+    fn plugin_page_active_one(
+        &mut self,
+        ix: usize,
+        env: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if !self.plugin_loaded(ix) {
+            return false;
+        }
+        let is_wasm = self.plugins.plugins[ix].wasm.is_some();
+        let r: Result<String, String> = if is_wasm {
+            let (res, acts) = {
+                let entry = &mut self.plugins.plugins[ix];
+                let Some(inst) = entry.wasm.as_mut() else {
+                    return false;
+                };
+                (inst.on_event("page-active", "", env), inst.pump_actions())
+            };
+            // 无 window 面：Toast 照走，其余丢弃（broadcast 同口径；
+            // page-active 只作废 chrome/徽标缓存，不触发面板重渲）
+            for a in acts {
+                match a {
+                    PluginAction::Toast(m) => self.set_status(m, cx),
+                    other => {
+                        eprintln!("[pf-plugin] page-active 期间动作被忽略: {other:?}")
+                    }
+                }
+            }
+            res.map(|()| "1".to_string()).map_err(|e| e.to_string())
+        } else {
+            let entry = &self.plugins.plugins[ix];
+            let host = entry.host.as_ref().unwrap().clone();
+            host.borrow_mut().actions.clear();
+            let r = entry.js.as_ref().unwrap().page_active(env);
+            host.borrow_mut().actions.clear();
+            r
+        };
+        match r {
+            Err(e) => {
+                self.plugin_broken(ix, e, cx);
+                false
+            }
+            Ok(hit) => {
+                if hit != "1" && cfg!(debug_assertions) {
+                    eprintln!("[pf-plugin] page_actived 未导出（ix={ix}）");
+                }
+                hit == "1"
+            }
+        }
+    }
+
+    /// 装载完成补拍（B6，2026-11-06 卡死修复）：插件首装成功后单独补发当
+    /// 前页 page-active——`session_last` 已记账时（tick_session 现在派发后
+    /// 即记账）晚装插件收不到后续扇出，page_id 会永远不落地（20e15b9a 原
+    /// 防的问题，改由装载点兜住）。inputpanel 首拍不需要这里补：装载必伴
+    /// 随渲染 notify → observe tick 差分扇出自然覆盖。
+    pub(crate) fn plugin_catchup_page_active(&mut self, ix: usize, cx: &mut gpui::Context<Self>) {
+        let key = self.pool.active_key.clone();
+        if key.is_empty() {
+            return;
+        }
+        let env = serde_json::json!({ "session": { "key": key } }).to_string();
+        if self.plugin_page_active_one(ix, &env, cx) {
+            self.plugins.row_cache.clear();
+            self.plugins.fn_bar_cache.clear();
+        }
+    }
+
     pub(crate) fn plugin_broadcast_fire(
         &mut self,
         ix: usize,
@@ -120,7 +152,9 @@ impl Chat {
         payload: &str,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !self.plugin_ready(ix, cx) {
+        // 就绪检查不装载（B5，2026-11-06 卡死修复）：广播是隐式扇出路径，
+        // 未装载插件跳过——首装只归用户显式动作（不变量见 `plugin_loaded`）
+        if !self.plugin_loaded(ix) {
             return;
         }
         if self.plugins.plugins[ix].wasm.is_some() {

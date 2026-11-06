@@ -15,7 +15,7 @@ impl Chat {
     pub(crate) fn plugin_badge(
         &mut self,
         session: &std::path::Path,
-        cx: &mut gpui::Context<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) -> Vec<(SharedString, String)> {
         let key = session.to_string_lossy().into_owned();
         let mut out: Vec<(SharedString, String)> = badges_for(&self.plugins.badges, session);
@@ -46,7 +46,9 @@ impl Chat {
                 }
                 continue;
             }
-            if !self.plugin_ready(ix, cx) {
+            // 就绪检查不装载（B5，2026-11-06 卡死修复）：徽标是渲染帧路径，
+            // 隐式首装会把 QuickJS/wasm 装载突发塞进帧里（不变量见 `plugin_loaded`）
+            if !self.plugin_loaded(ix) {
                 continue;
             }
             let env = serde_json::json!({ "session": { "key": key } }).to_string();

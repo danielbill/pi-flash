@@ -237,6 +237,13 @@ pub(crate) struct SessionRuntime {
     /// 一次」，不随渲染帧反复拼前缀/数块
     nav_cache: Option<std::rc::Rc<NavData>>,
     nav_dirty: bool,
+
+    /// notify_list 节流门（2026-11-06 流式卡死修复 A2）：列内容类拍的最小
+    /// 间隔（33ms ≈ 30fps 上限）。流式快模型 100+ delta/s 时每条全窗失效
+    /// 会把前台队列塞满、输入饿死——间隔未到时置 pending，由 trailing
+    /// timer 补一拍（事件停了最后一拍也能落地）。
+    notify_last: Option<std::time::Instant>,
+    notify_pending: bool,
 }
 
 impl SessionRuntime {
@@ -349,6 +356,8 @@ impl SessionRuntime {
             nav_cache: None,
             nav_dirty: true,
             copy_flash: None,
+            notify_last: None,
+            notify_pending: false,
         }
     }
 

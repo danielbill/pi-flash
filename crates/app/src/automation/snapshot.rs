@@ -214,6 +214,18 @@ fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value 
             },
         },
         "dock_panel": chat.layout.dock_panel.as_str(),
+        // dock_panel 快照串区分不了 Plugin(ix)（as_str 恒 "sessions"，旧键
+        // 名兼容）：kind + ix 是 pif-ui 断言插件面板态的载体（030-流式卡死
+        // 台架 first user）
+        "dock_panel_kind": match chat.layout.dock_panel {
+            crate::DockPanel::Default => "sessions",
+            crate::DockPanel::Git => "git",
+            crate::DockPanel::Plugin(_) => "plugin",
+        },
+        "plugin_panel_ix": match chat.layout.dock_panel {
+            crate::DockPanel::Plugin(ix) => json!(ix),
+            _ => Value::Null,
+        },
         "content_view": content_view_str(chat.layout.content_view),
         // 契约 v3 插件弹窗（pif-ui 断言载体：open/插件/内容树）
         "plugin_popup": match chat.plugins.popup.as_ref() {

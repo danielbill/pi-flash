@@ -418,7 +418,13 @@ fn render_impl(src: &str, t: &Theme, streaming: bool, html: bool) -> AnyElement 
     if src.chars().count() > MAX_MARKDOWN_CHARS {
         return render_oversize(src, t);
     }
-    let blocks = cached_blocks(src, html);
+    // 流式块走 150ms 解析门（A3，2026-11-06 流式卡死修复）：门内复用上一
+    // 棵解析树，非流式块照旧精确解析
+    let blocks = if streaming {
+        stream_gate_blocks(src, html)
+    } else {
+        cached_blocks(src, html)
+    };
     if blocks.is_empty() {
         return div().into_any_element();
     }
@@ -439,6 +445,43 @@ const MD_PARSE_CACHE_CAP: usize = 128;
 /// 字节预算（源文 32MB）：大粘贴场景 128 条 × MB 级源文＋解析树的组合曾把
 /// 稳态推高上百 MB；超预算从头驱逐（LRU），解析树随条目一起释放
 const MD_PARSE_CACHE_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
+// 流式尾条目解析门（A3，2026-11-06 流式卡死修复）：流式块源文每 delta
+// 一变 → 上面的 LRU 恒 miss → 每帧全量 pulldown 重解析 O(已流式字数)，
+// 快流模型（116 t/s）下与全窗重建叠加把帧成本推爆、输入饿死。门内
+// （150ms）源文是上一棵树的前缀增长（append-only 流式）时直接复用上一
+// 棵解析树——元素树每帧照常重建，只有显示滞后 ≤150ms（与 spinner/t-s
+// 徽章的刷新粒度一致，无感知）。非前缀（换块/截断）立即重解析并换门内
+// 容：交替流式块场景退化为原行为，只慢不错。常驻一条（≤MAX_MARKDOWN
+// _CHARS 量级），被下一次流式渲染覆盖，不显式清理。
+thread_local! {
+    static STREAM_PARSE_GATE: std::cell::RefCell<
+        Option<(std::time::Instant, String, std::rc::Rc<Vec<MdBlock>>, bool)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+const STREAM_GATE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+
+fn stream_gate_blocks(src: &str, html: bool) -> std::rc::Rc<Vec<MdBlock>> {
+    STREAM_PARSE_GATE.with(|cell| {
+        let mut gate = cell.borrow_mut();
+        if let Some((at, prev, tree, prev_html)) = gate.as_ref() {
+            if *prev_html == html
+                && at.elapsed() < STREAM_GATE_INTERVAL
+                && src.starts_with(prev.as_str())
+            {
+                return std::rc::Rc::clone(tree);
+            }
+        }
+        let parsed = cached_blocks(src, html);
+        *gate = Some((
+            std::time::Instant::now(),
+            src.to_string(),
+            std::rc::Rc::clone(&parsed),
+            html,
+        ));
+        parsed
+    })
+}
 
 /// FNV-1a 按 8 字节块处理（进程内去重键，非加密；命中另有全等校验兜底）
 pub(crate) fn hash_str(s: &str) -> u64 {

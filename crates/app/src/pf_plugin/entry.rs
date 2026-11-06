@@ -209,6 +209,23 @@ pub(crate) fn claim_session_name(prefix: &str) -> String {
     format!("{prefix}{}", chrono::Local::now().format("%y%m%d%H%M%S%3f"))
 }
 
+impl Chat {
+    /// 就绪检查（扇出/渲染路径专用）：只认已装载实例，**绝不触发装载**。
+    /// 隐式路径（广播 tick / page-active / 徽标 / 功能栏）若走
+    /// [`Chat::plugin_ready`] 懒加载，会把 QuickJS/wasm 首装突发塞进 UI 线
+    /// 程——流式期间每拍扇出 × 全体插件即整 app 卡死（2026-11-06，v0.4.3
+    /// 快速模型 + quick-panel 组合实录）。不变量：只有用户显式动作（开面
+    /// 板/页签、点面板元素、开弹窗）才允许 `plugin_ready` 懒加载；晚装插
+    /// 件的首拍语义由装载补拍（`plugin_catchup_page_active` + 装载伴随的
+    /// notify→tick 差分扇出）兜住。
+    pub(crate) fn plugin_loaded(&self, ix: usize) -> bool {
+        self.plugins
+            .plugins
+            .get(ix)
+            .is_some_and(|e| !e.disabled && (e.js.is_some() || e.wasm.is_some()))
+    }
+}
+
 /// JsHost 实现（02 §3 提问类同步、动作类入队）。
 /// 纯数据，不持 Chat——动作由 Chat 方法在 JS 返回后消费。
 pub(crate) struct ChatHost {
