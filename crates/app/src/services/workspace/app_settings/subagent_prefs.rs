@@ -25,13 +25,15 @@ pub fn subagent_max_depth() -> u64 {
 }
 
 /// 子代理模块设置 → 扩展 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH，
-/// pf-subagents index.ts numberFromEnv 读）。subagents 旗标关着时不传导
-/// （扩展不加载，env 无意义）。
+/// pf-subagents index.ts numberFromEnv 读；PI_FLASH_APP_SETTINGS = 设置文件
+/// 绝对路径，扩展**每次委派实时重读**——env 是进程级快照，只传死值会让
+/// 设置变更永远等不到下一次 spawn pi，真机 2026-11-06：改 3 后 4 并发照跑）。
+/// subagents 旗标关着时不传导（扩展不加载，env 无意义）。
 pub fn subagent_envs() -> Vec<(String, String)> {
     if !subagents_enabled() {
         return Vec::new();
     }
-    vec![
+    let mut envs = vec![
         (
             "PI_SUBAGENTS_CAPACITY".into(),
             subagent_capacity().to_string(),
@@ -40,7 +42,14 @@ pub fn subagent_envs() -> Vec<(String, String)> {
             "PI_SUBAGENTS_MAX_DEPTH".into(),
             subagent_max_depth().to_string(),
         ),
-    ]
+    ];
+    if let Some(p) = pi_link::paths::app_settings_file() {
+        envs.push((
+            "PI_FLASH_APP_SETTINGS".into(),
+            p.to_string_lossy().into_owned(),
+        ));
+    }
+    envs
 }
 
 /// 044-0 模块设置：设子代理最大并发（钳 2-5；spawn 时 env 传导）。

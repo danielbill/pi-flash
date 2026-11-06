@@ -44,6 +44,33 @@ function numberFromEnv(name: string, fallback: number): number {
 }
 
 /**
+ * Sync the module settings (capacity / maxDepth) from PF's app-settings.json.
+ *
+ * env 只在 pi 进程 spawn 那一刻定格（进程级快照），PF 会话常驻——用户改设置
+ * 后不重启 app 就永远命中旧值（真机 2026-11-06：设 3 照跑 4 并发）。PF 因此
+ * 把设置文件绝对路径放进 env（PI_FLASH_APP_SETTINGS），这里**每次委派入口
+ * 实时重读**：改完即生效，无需重启。读失败（缺文件/缺键/非 JSON）保持现值。
+ */
+export function syncModuleSettings(manager: SubagentManager): void {
+	const file = process.env["PI_FLASH_APP_SETTINGS"];
+	if (!file) return;
+	try {
+		const raw = readFileSync(file, "utf8");
+		const settings = JSON.parse(raw) as Record<string, unknown>;
+		const cap = Number(settings["subagent_capacity"]);
+		if (Number.isSafeInteger(cap)) {
+			manager.capacity = Math.min(5, Math.max(2, cap));
+		}
+		const depth = Number(settings["subagent_max_depth"]);
+		if (Number.isSafeInteger(depth)) {
+			manager.maxDepth = Math.min(3, Math.max(1, depth));
+		}
+	} catch {
+		// 缺文件/坏 JSON：模块设置维持 env 初值（best-effort）
+	}
+}
+
+/**
  * Build a child-session factory over the pi SDK.
  *
  * The SDK is imported lazily: this module must stay loadable (and testable)
@@ -369,6 +396,9 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			onUpdate: ((partial: unknown) => void) | undefined,
 			ctx: ExtensionContext,
 		) {
+			// 模块设置实时同步（容量/深度，PF app-settings.json）——env 快照
+			// 会过时，见 syncModuleSettings
+			syncModuleSettings(manager);
 			const depth = currentDepthOf(ctx);
 			const parentId = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile ?? "draft";
 			const result = await runDelegation(
