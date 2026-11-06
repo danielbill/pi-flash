@@ -95,11 +95,11 @@ mod audit {
     /// TABLE 行 → (key, zh, tw, en)
     fn table_rows(i18n_src: &str) -> Vec<(String, String, String, String)> {
         let Some((_, after)) = i18n_src.split_once("const TABLE") else {
-            panic!("i18n.rs 里找不到 TABLE");
+            panic!("i18n/table.rs 里找不到 TABLE");
         };
         let mut rows = Vec::new();
         let started = after.contains("&[");
-        assert!(started, "i18n.rs 的 TABLE 声明格式变了");
+        assert!(started, "i18n/table.rs 的 TABLE 声明格式变了");
         for line in after.lines() {
             let t = line.trim();
             if !(t.starts_with('(')) {
@@ -172,8 +172,8 @@ mod audit {
         let mut found = BTreeSet::new();
         for f in files {
             match f.file_name().and_then(|s| s.to_str()) {
-                // i18n.rs = 元数据与负例；本文件源码里有 `["tr(", "tf("]`
-                Some("i18n.rs") | Some("i18n_audit.rs") => continue,
+                // i18n.rs/table.rs = 元数据与数据表；本文件源码里有 `["tr(", "tf("]`
+                Some("i18n.rs") | Some("i18n_audit.rs") | Some("table.rs") => continue,
                 _ => {}
             }
             let txt = code_of(&f);
@@ -248,7 +248,7 @@ mod audit {
     #[test]
     fn keys_and_translations_are_complete() {
         let root = src_root();
-        let rows = table_rows(&read(&root.join("i18n.rs")));
+        let rows = table_rows(&read(&root.join("i18n/table.rs")));
         assert!(rows.len() > 300, "TABLE 解析异常，只读到 {} 行", rows.len());
 
         // 键唯一（撞键 = find 永远取第一条，另一条成死数据）
