@@ -313,13 +313,17 @@ fn panel_header(weak: &gpui::WeakEntity<Chat>, panel: &SubagentPanel) -> gpui::A
         .py(px(8.))
         .border_b_1()
         .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
-        // 左：标题 + N 个子代理
+        // 左：标题（bot icon 同全产品 subagent 统一）+ N 个子代理
         .child(
             div()
                 .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(6.))
                 .text_size(crate::appearance::ui_size(12.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
+                .child(crate::ui::icon("bot", 13., t.text))
                 .child(tr("subagent.panel")),
         )
         .child(
@@ -478,29 +482,45 @@ fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui::AnyElemen
 }
 
 /// 行二统计段（044-0）：时长恒有；stats/usage 缺项（老 descriptor）整段
-/// 隐藏，不摆 "—" 占位（行二保持紧凑）。
+/// 隐藏，不摆 "—" 占位（行二保持紧凑）。轮/言/工具 = icon+数字（044-0
+/// 验收③：右侧导航条同款 icon，文字后缀退役）。
 fn stats_segments(row: &CatalogRow) -> Vec<gpui::AnyElement> {
+    let t = T();
     let mut segs: Vec<gpui::AnyElement> = Vec::new();
-    let mut push = |text: String| {
+    segs.push(
+        div()
+            .flex_shrink_0()
+            .child(SharedString::from(format!("⏱ {}", live_duration_text(row))))
+            .into_any_element(),
+    );
+    let mut push_stat = |icon_name: &'static str, n: u64| {
         segs.push(
             div()
                 .flex_shrink_0()
-                .child(SharedString::from(text))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(crate::ui::icon(icon_name, 11., t.text_dim))
+                .child(SharedString::from(n.to_string()))
                 .into_any_element(),
         );
     };
-    push(format!("⏱ {}", live_duration_text(row)));
     if let Some(n) = row.turns {
-        push(format!("{}{}", n, tr("subagent.row.turns")));
+        push_stat("message-square-text", n);
     }
     if let Some(n) = row.agent_messages {
-        push(format!("{}{}", n, tr("subagent.row.msgs")));
+        push_stat("bot", n);
     }
     if let Some(n) = row.tool_calls {
-        push(format!("{}{}", n, tr("subagent.row.tools")));
+        push_stat("wrench", n);
     }
     if let Some(n) = row.usage_total {
-        push(tokens_text(n));
+        segs.push(
+            div()
+                .flex_shrink_0()
+                .child(SharedString::from(tokens_text(n)))
+                .into_any_element(),
+        );
     }
     segs
 }

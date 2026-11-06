@@ -165,7 +165,8 @@ pub(super) fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::
                     label.into(),
                     None,
                     false,
-                    Some("bot-message-square"),
+                    // subagent 统一 bot icon（044-0 验收③）
+                    Some("bot"),
                     ContentView::Chat,
                 )
             }

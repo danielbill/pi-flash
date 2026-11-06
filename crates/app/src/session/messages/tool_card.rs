@@ -226,10 +226,15 @@ fn render_subagent_card(
         .child(
             div()
                 .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(4.))
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(0x60a5fa))
+                // subagent 统一 bot icon（044-0 验收③）
+                .child(crate::ui::icon("bot", 11., 0x60a5fa))
                 .child("子代理"),
         )
         .child(

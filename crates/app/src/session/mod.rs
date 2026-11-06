@@ -388,7 +388,8 @@ fn subagent_fn_bar_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::A
             }),
         )
         .child(crate::ui::icon(
-            "user-round",
+            // subagent 统一 bot icon（044-0 验收③：nav 范例同源，原误用 user）
+            "bot",
             crate::ui::tokens::icon::MD,
             if open { t.accent } else { t.text_muted },
         ))

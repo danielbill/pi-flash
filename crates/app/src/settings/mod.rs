@@ -649,7 +649,7 @@ fn nav_items(tab: u8, weak_close: gpui::WeakEntity<Chat>) -> Vec<gpui::AnyElemen
         (TAB_MODELS, tr("settings.tab.models"), "cpu"),
         (TAB_SKILLS, tr("settings.tab.skills"), "layers"),
         (TAB_PLUGINS, tr("settings.tab.extensions"), "plug"),
-        (TAB_AGENTS, tr("settings.tab.agents"), "user-round"),
+        (TAB_AGENTS, tr("settings.tab.agents"), "bot"),
         (TAB_MCP, tr("settings.tab.mcp"), "server"),
         (TAB_MISC, tr("settings.tab.misc"), "ellipsis"),
         (TAB_ABOUT, tr("settings.tab.about"), "info"),
