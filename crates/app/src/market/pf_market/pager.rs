@@ -96,7 +96,10 @@ fn nav_button(
     if enabled {
         base.text_color(rgb(t.text_dim)).into_any_element()
     } else {
-        base.text_color(gpui::rgba(crate::appearance::theme::rgba_a(t.text_faint, 0.55)))
-            .into_any_element()
+        base.text_color(gpui::rgba(crate::appearance::theme::rgba_a(
+            t.text_faint,
+            0.55,
+        )))
+        .into_any_element()
     }
 }

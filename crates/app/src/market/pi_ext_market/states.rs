@@ -10,7 +10,11 @@ use crate::i18n::tr;
 use crate::ui::tokens::{radius, space};
 
 /// 离线黄条 / 错误红条（有则渲染）。
-pub(super) fn banner(chat: &Chat, weak: &gpui::WeakEntity<Chat>, t: &'static Theme) -> Option<AnyElement> {
+pub(super) fn banner(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    t: &'static Theme,
+) -> Option<AnyElement> {
     let st = &chat.aux.market.pi_ext;
     let shell = || {
         gpui::div()

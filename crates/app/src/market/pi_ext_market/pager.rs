@@ -4,8 +4,8 @@ use gpui::prelude::*;
 
 use gpui::{AnyElement, IntoElement, MouseButton, SharedString, Styled};
 
-use super::render::{PAGE_LEFT, PAGE_RIGHT, PAGER_H};
 use super::Chat;
+use super::render::{PAGE_LEFT, PAGE_RIGHT, PAGER_H};
 use crate::appearance::theme::Theme;
 use crate::i18n::tr;
 use crate::ui::tokens::{radius, space};

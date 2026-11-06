@@ -124,7 +124,9 @@ pub(crate) fn page(
             for e in visible.iter().skip(start).take(cols) {
                 let busy = pending.as_deref() == Some(e.source().as_str());
                 let installed = installed_set.contains(&e.source());
-                row = row.child(super::package::package_card(e, &weak_c, &m_c, busy, installed));
+                row = row.child(super::package::package_card(
+                    e, &weak_c, &m_c, busy, installed,
+                ));
             }
             if visible.len().saturating_sub(start) < cols {
                 row = row.child(gpui::div().flex_1());
