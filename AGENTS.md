@@ -23,7 +23,7 @@ cargo test -p pi-link                           # 协议/路径测试都在 pi-l
 - **插件唯一开发载体 = Rust→wasm**：禁止先写 `main.js` 再移植 wasm，新能力先落 WIT；提交前 L1（编译+契约）+L2（wasm 逻辑）+L3（pif-ui 接线）全绿（`docs/模块设计/90-插件系统/90-8-插件开发闭环.md`）
 - 构建产物只留在 `target/`，禁替换本机安装的 `D:\softwares\...\payload\pi-flash.exe`
 - CHANGELOG 发版驱动，勿碰！
-- 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt
+- 禁止排版！pre-commit 自动对暂存的 crates/**.rs 跑 rustfmt；**提交后必须全量 `git status --porcelain` 验净**（查工作区 ` M` 行，不能只看暂存区——rustfmt 差异遗留过三次），机制见 `docs/agents/engineering.md`「格式化」
 - 勿修改“Settings”模块
 - **models.json / auth.json 是 pi 的文件，但 042-1 起 PF 会写**：整份草稿保存、**不可读拒写**、proper-lockfile 同款锁（`fs_lock.rs`）；用户手写的明文/oauth 条目一律只读不改；apikey 只进系统钥匙库——规则详见 `docs/模块设计/042-1-模型管理理清对齐.md`
 
