@@ -195,15 +195,10 @@ pub(crate) fn main_column(
                                     .into_any_element()
                             })
                             .children(ext_widget_rows(chat, t, false))
-                            // 子代理浮层面板（044-1 §1.1 三改）：absolute 挂
-                            // chat-wrap（relative）顶左 = 操作栏正下方悬浮，
-                            // 不推挤消息区；无全屏外点拦截，composer 点击不受
-                            // 影响。
-                            .children(subagent_panel::subagent_panel_element(
-                                chat,
-                                weak,
-                                f32::from(window.viewport_size().height),
-                            ))
+                            // 子代理扩展菜单（044-0 验收⑥）：导航轮卡 hover
+                            // 左弹的次级浮层，absolute 挂 chat-wrap（右侧对
+                            // 齐导航 flyout 左缘），不推挤消息区。
+                            .children(subagent_panel::subagent_menu_element(chat, weak))
                             // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap
                             // 底缘（最后绘制，压在消息列表之上），不参与 flex 流
                             // —— 开闭都不推挤 Inputpanel（胶囊底距恒为条高）。
@@ -335,11 +330,6 @@ fn session_fn_bar(
                 }
             }),
         ))
-        .child(fn_bar_sep(t))
-        // 子代理面板钮：开发旗标关着整颗隐藏（含徽标；044-1 §1.1）
-        .when(crate::services::workspace::subagents_enabled(), |d| {
-            d.child(subagent_fn_bar_btn(chat, cx))
-        })
         // 线的操作栏注入簇（模版注入点 ①，插件功能线 = 自有 icon 三色 +
         // 启停开关/说明文字 + 新建会话 + 重新绑定；002 操作栏定序）
         .children(skin.fn_bar.map(|f| f(chat, cx)))
@@ -347,55 +337,6 @@ fn session_fn_bar(
         // 把插件 icon 推到右端；注册序从右到左），点击回环 command（env 带会话键）
         .child(div().flex_1())
         .children(crate::pf_plugin::fn_bar_plugin_elements(chat, cx))
-        .into_any_element()
-}
-
-/// 「子代理面板」钮（044-1 §1.1）：icon + 文案 + 运行中计数（044-0 定稿：
-/// 文案内嵌【子代理[2]】，不用圆徽标）。浮层开着时点亮 accent。计数 =
-/// phase ∈ provisioning/active。
-fn subagent_fn_bar_btn(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
-    let t = T();
-    let open = chat.dlg.subagent_panel.as_ref().is_some_and(|p| p.open);
-    let running = chat
-        .dlg
-        .subagent_panel
-        .as_ref()
-        .map(|p| p.running_count())
-        .unwrap_or(0);
-    let label = if running > 0 {
-        SharedString::from(format!("{}[{running}]", tr("subagent.panel")))
-    } else {
-        SharedString::from(tr("subagent.panel").to_string())
-    };
-    let hover_fg = if open { t.accent } else { t.text };
-    div()
-        .id("sfbar-subagent")
-        .relative()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .px(px(8.))
-        .py(px(4.))
-        .rounded(px(6.))
-        .text_size(crate::appearance::ui_size(11.5))
-        .text_color(rgb(if open { t.accent } else { t.text_muted }))
-        .cursor_pointer()
-        .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(hover_fg)))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
-                this.toggle_subagent_panel(cx);
-            }),
-        )
-        .child(crate::ui::icon(
-            // subagent 统一 bot icon（044-0 验收③：nav 范例同源，原误用 user）
-            "bot",
-            crate::ui::tokens::icon::MD,
-            if open { t.accent } else { t.text_muted },
-        ))
-        .child(label)
-        // bounds 捕获（面板与按钮居中对齐的测量端，044-0）
-        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.subagent))
         .into_any_element()
 }
 

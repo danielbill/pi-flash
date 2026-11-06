@@ -99,6 +99,11 @@ pub(crate) fn nav_gutter(
                 } else {
                     this.layout.nav_flyout_hovered = false;
                     this.layout.nav_hover_turn = None;
+                    // 子代理扩展菜单随 flyout 离开收起（锚生命周期绑定
+                    // flyout hover——卡间空隙移动不清，防闪）
+                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
+                        p.menu_anchor = None;
+                    }
                     this.layout.nav_hide_at = Some(std::time::Instant::now());
                 }
                 cx.notify();
@@ -145,7 +150,13 @@ pub(crate) fn nav_gutter(
                         let on = weak_cards
                             .upgrade()
                             .is_some_and(|c| c.read(cx).layout.nav_hover_turn == Some(ix));
-                        nav_card(ix, s, on, &weak_cards, &rt_cards, t)
+                        // 该轮子代理（044-0 验收⑥）：第三行数据 + hover 菜单锚
+                        let sub_rows = weak_cards.upgrade().and_then(|c| {
+                            let chat = c.read(cx);
+                            let panel = chat.dlg.subagent_panel.as_ref()?;
+                            panel.turn_agents.get(ix).filter(|v| !v.is_empty()).cloned()
+                        });
+                        nav_card(ix, s, on, sub_rows, &weak_cards, &rt_cards, t)
                     },
                 )
                 // 上下 padding 挂 list 本体（prepaint 会应用）
@@ -353,6 +364,8 @@ pub(crate) fn nav_card(
     ti: usize,
     s: &crate::session::runtime::TurnSummary,
     on: bool,
+    // 该轮子代理（044-0 验收⑥）：Some 非空 = 有第三行 + hover 左弹扩展菜单
+    sub_rows: Option<Vec<pi_link::subagent_catalog::CatalogRow>>,
     weak: &gpui::WeakEntity<Chat>,
     rt_entity: &gpui::Entity<crate::session::runtime::SessionRuntime>,
     t: &'static crate::appearance::theme::Theme,
@@ -362,6 +375,12 @@ pub(crate) fn nav_card(
     let user_ix = s.user_ix;
     let rt_scroll = rt_entity.clone();
     let weak_hover = weak.clone();
+    // 轮卡 bounds 测量槽位（扩展菜单锚；canvas 每帧覆盖写，hover 事件读
+    // ——PillBtns::tracker 同款，但生命周期在单帧闭包内）
+    let bounds_slot: crate::session::subagent_panel::BoundsSlot =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let has_sub = sub_rows.is_some();
+    let bounds_hover = bounds_slot.clone();
     let mut turn_el = div()
         .id(SharedString::from(format!("nv-turn-{}", s.user_ix)))
         .mt(px(2.))
@@ -377,14 +396,39 @@ pub(crate) fn nav_card(
                 .border_color(rgb(t.accent))
         })
         .on_hover(move |h: &bool, _window, cx| {
-            if *h {
-                let _ = weak_hover.update(cx, |this, cx| {
-                    if this.layout.nav_hover_turn != Some(ti) {
-                        this.layout.nav_hover_turn = Some(ti);
-                        cx.notify();
+            let _ = weak_hover.update(cx, |this, cx| {
+                // 第三行轮 hover = 左弹扩展菜单（锚 = 卡 bounds，测量槽位
+                // 由 canvas 每帧写入）；无第三行的卡 hover 清锚（卡间移动
+                // 不残留上一轮的菜单）
+                let anchor = if *h && has_sub {
+                    bounds_hover.borrow().map(|b| (ti, b))
+                } else {
+                    None
+                };
+                if let Some(p) = this.dlg.subagent_panel.as_mut() {
+                    if p.menu_anchor != anchor {
+                        p.menu_anchor = anchor;
                     }
-                });
-            }
+                }
+                if *h && this.layout.nav_hover_turn != Some(ti) {
+                    this.layout.nav_hover_turn = Some(ti);
+                    cx.notify();
+                } else if !*h {
+                    // 离开卡不清锚（菜单紧邻 flyout 左缘，鼠标移入菜单的
+                    // 路径上会短暂离开卡）——锚生命周期绑定 flyout hover
+                    cx.notify();
+                }
+            });
+        })
+        // bounds 测量端（absolute inset_0 canvas，不拦事件）
+        .child({
+            let capture = bounds_slot.clone();
+            gpui::canvas(
+                move |b, _, _| *capture.borrow_mut() = Some(b),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0()
         })
         .child(
             // 用户行：点击定位到该用户消息
@@ -468,6 +512,11 @@ pub(crate) fn nav_card(
                         .child(SharedString::from(preview)),
                 ),
         );
+    }
+    // 第三行（044-0 验收⑥①）：[bot] ●●●● ——点数 = 该轮子代理数，样式取
+    // 会话运行结果青红点
+    if let Some(rows) = &sub_rows {
+        turn_el = turn_el.child(crate::session::subagent_panel::turn_agents_row(rows));
     }
     turn_el.into_any_element()
 }

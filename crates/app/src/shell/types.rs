@@ -226,8 +226,6 @@ pub(crate) struct PillBtns {
     pub mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// 模型按钮（042：模型菜单锚定）
     pub model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    /// 子代理面板钮（044-0：面板与按钮居中对齐，取 center_x）
-    pub subagent: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// chat-wrap 容器（044-0：面板挂 wrap 内，窗口坐标 → wrap 坐标换算
     /// 需要 wrap 原点；function_panel dock 容器 bounds 同款捕获）
     pub chat_wrap: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,

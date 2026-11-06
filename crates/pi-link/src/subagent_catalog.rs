@@ -40,6 +40,9 @@ pub struct CatalogRow {
     pub error_code: Option<String>,
     /// 子会话文件（整行点击 = 以正式 tab 打开）
     pub session_file: Option<String>,
+    /// 父会话派发工具调用 id（`<parent>/<n>` for nested）：导航面板按轮
+    /// 归属的钥匙（044-0 验收⑥：轮卡第三行状态点 + hover 扩展菜单）
+    pub parent_tool_call_id: Option<String>,
     /// 子代理 token 合计（descriptor.usage，终态才落盘；老 descriptor 无此字段）
     pub usage_total: Option<u64>,
     /// 活动计数（descriptor.stats，044-0 面板行二：轮次/发言数/工具调用数；
@@ -223,6 +226,10 @@ fn parse_line(line: &str) -> Option<CatalogRow> {
         stop_reason: d["stopReason"].as_str().map(str::to_string),
         error_code: d["errorCode"].as_str().map(str::to_string),
         session_file: d["sessionFile"]
+            .as_str()
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        parent_tool_call_id: d["parentToolCallId"]
             .as_str()
             .map(str::to_string)
             .filter(|s| !s.is_empty()),
