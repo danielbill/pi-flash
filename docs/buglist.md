@@ -5,19 +5,21 @@
 
 ## 待复验（2026-11-06 修复）——子代理 044-0 首轮真机实测 B1-B5（代码全落 d5ecf742→ac33bdee，真机验收未做）
 
-### 验收反馈①：观察窗挤掉主会话，tab 栏找不回（464e1fa5，2026-11-06）
+### 验收反馈①：观察窗挤掉主会话，tab 栏找不回（464e1fa5 → 返工 aa637453，2026-11-06）
 
 - 现象：点面板行打开子会话，主会话被顶掉，tab 栏只剩一枚（还叫「新会话」
   ——子会话不在侧栏扫描器，session_title_of 兜底），只能靠会话列表切回。
 - 根因：topbar 会话 tab 是**固定单槽**（session_tab 渲染 active_key 一枚），
   open_session 的 switch_to 直接换槽内会话，旧会话无 tab 可回。
-- 修法：会话 tab 条扩多开——PoolUi.tab_order（open 序）+ tab_labels（标题
-  快照）；observer tab = descriptor 任务名（label→profile→「子代理」），带
-  × 关闭（close_observer_tab 纯摘牌，active 被关切回最后一枚驻留会话）；
-  普通会话 tab 恒存不可关；60s 空闲退役只清 runtime 不清 tab，点击
-  activate_session_tab 秒开重开（tail cache）；启动空档保留「新会话」锚点。
-- 验证：运行中点面板行 → tab 栏两枚（主会话 + 任务名子会话），互切无损；
-  子会话 tab × 可关。
+- v1（驳回）：固定段多开 tab 条——用户复核：主会话/新会话必须恒占第一位，
+  子会话该是**普通 tab 排 tab 区末尾**；且标题兜底成「子代理」不对。
+- v2 修法：子会话观察窗 = 自由区普通 tab（`PanelTab::Observer`，追加末尾、
+  标题 = descriptor 任务名、× 可关、支持拖拽/右键菜单）；固定段还原单枚
+  primary 主会话 tab 恒占第一位（primary = 最近激活的非 observer 会话）。
+  兜底名根因 = 旧版把子会话写进了 last-open，启动恢复成子会话（父 catalog
+  无从解析）——observer 不再写 last-open + boot_target 过滤子会话恢复目标。
+- 验证：运行中点面板行 → tab 区**末尾**新增任务名 tab，固定段主会话不动；
+  互切无损；× 关闭回主会话；重启不再落子会话。
 
 > 取证环境：真机委派 explorer×4（并发设 3）；会话
 > `sessions/--D--ai_workspace-pi-flash--/2026-11-05T10-51-39-…jsonl`；
