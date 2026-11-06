@@ -484,6 +484,7 @@ pub(crate) fn phase_row(
     div()
         .flex()
         .items_center()
+        .ml(px(5.))
         .gap(px(8.))
         .text_size(crate::appearance::ui_size(13.))
         .text_color(rgb(t.text_muted))
