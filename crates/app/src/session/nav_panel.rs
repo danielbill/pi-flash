@@ -81,9 +81,11 @@ pub(crate) fn nav_gutter(
             // 14 = 与段左缘齐平（gutter 14 = 段命中区 10 实体 + 右 4 透明）
             .right(px(14.))
             .top_0()
-            // 下缘与 input panel 底线对齐（composer 悬浮 bottom 20，input/area.rs
-            // composer_wrap）——旧值 bottom_0 拖到窗口底，上下让位不对称
-            .bottom(px(20.))
+            // 下缘与 input panel 底线对齐：composer 悬浮容器的 bottom =
+            // footer_bar::BAR_H（034 起永久上移，input/area.rs composer_wrap
+            // 同一常量）——旧硬编码 20 与状态带高度脱钩（状态带 28 后 flyout
+            // 比输入面板多探出 8px）
+            .bottom(px(crate::session::footer_bar::BAR_H))
             .w(px(400.))
             .flex()
             .flex_col()
