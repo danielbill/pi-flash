@@ -1,0 +1,75 @@
+//! tabs 域测试外移（激活跟随移动 / 快照瞬态映射）。
+
+use super::shifted_active;
+
+/// 换位平移穷举：[t0..t4] 里枚举全部 (from, to, a)，用「模拟序列
+/// remove/insert 后查同元素下标」做 oracle 对照。
+#[test]
+fn active_index_follows_tab_move() {
+    for n in 1..=5usize {
+        let tabs: Vec<usize> = (0..n).collect();
+        for from in 0..n {
+            for to in 0..n {
+                let mut moved = tabs.clone();
+                let t = moved.remove(from);
+                moved.insert(to, t);
+                for a in 0..n {
+                    let elem = tabs[a];
+                    let want = moved.iter().position(|&e| e == elem).unwrap();
+                    assert_eq!(
+                        shifted_active(a, from, to),
+                        want,
+                        "n={n} from={from} to={to} a={a}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// 存档快照（pi-flash-weia）：瞬态页不进存档且激活位随之前移映射；
+/// 终端 id 换 cwd；CAP 截尾后激活位越界被读侧滤掉。
+#[test]
+fn tabs_state_snapshot_maps_active_past_transient() {
+    use super::tabs_state_from_parts;
+    use crate::PanelTab;
+    use std::path::PathBuf;
+
+    let file = |s: &str| PanelTab::File(PathBuf::from(s));
+    let strip = [
+        file("D:\\a\\x.rs"),
+        PanelTab::Search, // 瞬态：不进存档
+        PanelTab::Term(7),
+        file("D:\\a\\y.rs"),
+    ];
+    let term_cwd = |id: usize| (id == 7).then(|| PathBuf::from("D:\\a"));
+
+    // 激活位指向瞬态 Search：存档里无对应条目 → active=None
+    let st = tabs_state_from_parts(&strip, term_cwd, Some(1), false);
+    assert_eq!(st.tabs.len(), 3, "瞬态页不进存档");
+    assert_eq!(st.active, None, "指向瞬态页的激活位不采信");
+    assert!(!st.chat);
+
+    // 激活位指向 Term(7)：映射到存档下标 1；激活位是 term → chat=false
+    let st = tabs_state_from_parts(&strip, term_cwd, Some(2), false);
+    assert_eq!(st.active, Some(1));
+    assert_eq!(st.tabs[1].kind, "term");
+    assert_eq!(st.tabs[1].path, "D:\\a");
+
+    // 前台是会话 → chat=true，激活位照存（回到会话一键）
+    let st = tabs_state_from_parts(&strip, term_cwd, Some(3), true);
+    assert!(st.chat);
+    assert_eq!(st.active, Some(2), "瞬态页剪掉后 y.rs 前移到 2");
+
+    // 未知终端 id（terminals 已丢）：条目整体跳过
+    let st = tabs_state_from_parts(&strip, |_| None, None, true);
+    assert_eq!(st.tabs.len(), 2, "无 cwd 的终端不进存档");
+
+    // CAP 截尾：截到 TABS_SAVE_CAP 条，不多不少
+    let cap = crate::services::workspace::TABS_SAVE_CAP;
+    let many: Vec<PanelTab> = (0..cap + 5)
+        .map(|i| file(&format!("D:\\a\\f{i}.rs")))
+        .collect();
+    let st = tabs_state_from_parts(&many, |_| None, None, true);
+    assert_eq!(st.tabs.len(), cap);
+}
