@@ -163,85 +163,6 @@ pub fn doc_blocks(src: &str) -> std::rc::Rc<Vec<MdBlock>> {
     blocks
 }
 
-/// 把源码里的 wiki 图片引用展开为标准 markdown（逐行，fence 感知）。
-/// `![[a.png]]` → `![](a.png)`；`![[a.png|300]]` 取尺寸前的文件名。
-/// 另：独占一行的图片引用（wiki 或标准式）前后补空行——Obsidian 习惯
-/// 回车即图（图与文字间常无空行），GFM 同段落不产图片块，不补分割
-/// 预览就不出图（025 P1 实翻车）。
-fn expand_wiki_images(src: &str) -> String {
-    let mut out = String::with_capacity(src.len() + 32);
-    let mut in_fence = false;
-    for line in src.split_inclusive('\n') {
-        let t = line.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            in_fence = !in_fence;
-            out.push_str(line);
-            continue;
-        }
-        if in_fence {
-            out.push_str(line);
-            continue;
-        }
-        let expanded = expand_wiki_line(line);
-        let trimmed = expanded.trim();
-        if is_standalone_image_ref(trimmed) {
-            let blank_before = out.is_empty() || out.ends_with("\n\n");
-            if !blank_before {
-                out.push('\n');
-            }
-            out.push_str(&expanded);
-            if !expanded.ends_with('\n') {
-                out.push('\n');
-            }
-            out.push('\n');
-        } else {
-            out.push_str(&expanded);
-        }
-    }
-    out
-}
-
-/// 整行恰为一条图片引用：`![[…]]` 或 `![](…)`（闭合到行尾）。
-fn is_standalone_image_ref(line: &str) -> bool {
-    if let Some(rest) = line.strip_prefix("![[") {
-        return rest.ends_with("]]") && !rest.contains('\n');
-    }
-    if let Some(rest) = line.strip_prefix("![](") {
-        return rest.ends_with(')') && !rest.contains("![](") && !rest.contains('\n');
-    }
-    false
-}
-
-fn expand_wiki_line(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    loop {
-        let Some(s) = rest.find("![[") else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..s]);
-        let after = &rest[s + 3..];
-        let Some(e) = after.find("]]") else {
-            // 无闭合：原样保留剩余部分
-            out.push_str(&rest[s..]);
-            break;
-        };
-        let name = &after[..e];
-        if name.is_empty() || name.contains('[') || name.contains(']') || name.contains('\n') {
-            out.push_str(&rest[s..s + 3 + e + 2]);
-        } else {
-            // Obsidian 尺寸语法 `![[a.png|300]]`：取管道前文件名
-            let file = name.split('|').next().unwrap_or(name).trim();
-            out.push_str("![](");
-            out.push_str(file);
-            out.push(')');
-        }
-        rest = &after[e + 2..];
-    }
-    out
-}
-
 /// list 条目渲染。doc_mode/字体规格/img 基准在条目内自设——list 条目
 /// 懒渲染发生在调用方 render 函数返回之后，不能依赖外层的 set/reset 窗口。
 pub fn render_doc_item(
@@ -514,40 +435,7 @@ pub(crate) fn sync_live_decorations(
 }
 
 #[cfg(test)]
-mod doc_tests {
-    use super::{CLICK_MAX_DRAG, click_within_drag};
-    use gpui::{point, px};
+mod tests;
+mod wiki_images;
 
-    /// genuine click（位移 ≤ 阈值，含轻微手抖）→ 进源码编辑。
-    #[test]
-    fn genuine_click_passes() {
-        let o = point(px(100.), px(200.));
-        assert!(click_within_drag(o, o)); // 原地
-        assert!(click_within_drag(
-            o,
-            point(px(100. + CLICK_MAX_DRAG), px(200.))
-        )); // 恰好阈值
-        assert!(click_within_drag(o, point(px(103.), px(201.)))); // 手抖
-    }
-
-    /// 拖拽（位移 > 阈值）不进源码——预览态划选手势留在预览（024 预览
-    /// 正文无选区机制，拖一下就被甩进源码 = 「预览选中复制不了」的元凶）。
-    #[test]
-    fn drag_motion_rejected() {
-        let o = point(px(100.), px(200.));
-        let eps = 0.01;
-        assert!(!click_within_drag(
-            o,
-            point(px(100. + CLICK_MAX_DRAG + eps), px(200.))
-        ));
-        assert!(!click_within_drag(
-            o,
-            point(px(100.), px(200. + CLICK_MAX_DRAG + eps))
-        ));
-        // 斜向小分量叠加超阈值同样拒
-        assert!(!click_within_drag(
-            o,
-            point(px(100. + CLICK_MAX_DRAG), px(200. + CLICK_MAX_DRAG))
-        ));
-    }
-}
+use wiki_images::expand_wiki_images;
