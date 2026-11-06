@@ -26,6 +26,9 @@ pub(crate) fn render_block(
     streaming: bool,
     // thinking 时长（pi-web ThinkingBlock 右侧 Ns；快照按消息首尾时间差）
     thinking_dur: Option<i64>,
+    // 消息起始时间戳（epoch ms）：子代理卡运行中 live 时长的锚
+    //（044-0 验收⑤）；其余块不消费
+    msg_ts: Option<i64>,
 ) -> gpui::Div {
     match b {
         Block::Text {
@@ -185,6 +188,7 @@ pub(crate) fn render_block(
                 *duration_s,
                 *args_partial,
                 *result_arrived,
+                msg_ts,
                 weak,
                 collapsed,
                 t,
@@ -608,6 +612,7 @@ pub(crate) fn render_bash_msg(
         duration_s,
         false,
         done,
+        None,
         weak,
         collapsed,
         t,

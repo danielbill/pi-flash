@@ -15,6 +15,7 @@ use gpui::{
 use crate::Chat;
 use crate::appearance::theme;
 use crate::i18n::tr;
+use crate::ui::WithTip as _;
 use crate::ui::icon;
 
 // 两个 args 缓存的线程局部 LRU（同 MD_PARSE_CACHE 的理由，元素构建只在
@@ -120,27 +121,30 @@ pub(super) fn result_is_empty(result: &str) -> bool {
     r.is_empty() || r == "(no output)"
 }
 
-/// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（设计原文
-/// 「当前会话流中的渲染有些啰嗦」，旧版头体双段卡废弃）：
-/// `[状态标记] 子代理 <名称(profile)> <任务名(label 退 prompt 截断)> … [分码]`
+/// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（验收⑤定稿）：
+/// `[状态标记] 🤖子代理 <name(profile)> <时长> <任务名(25字截断)> <完成提示>`
+/// 状态标记同会话列表（运行 spark_spinner(accent) / 完成 NOTICE 青蓝点 /
+/// 异常 danger 红点）；完成提示 faint（运行 `.....` / 任务完成），异常态
+/// faint+下划线 + hover tooltip（错误详情）。
 /// 数据源（扩展 pf-subagents 的 details，snake_case）：`child_id` / `status`
-/// / `stop_reason` / `session_file` / `error_code`；args 取 `profile` /
-/// `label` / `prompt`。整行点击 = 打开子会话（只读观察窗）；token/耗时等
-/// 统计不再进会话流（面板行二专责展示）。
+/// / `stop_reason` / `session_file` / `error_code` / `duration_ms`；args 取
+/// `profile` / `label` / `prompt`。整行点击 = 打开子会话（只读观察窗）。
 #[allow(clippy::too_many_arguments)]
 fn render_subagent_card(
     msg_ix: usize,
     content_index: usize,
     args: &str,
-    _result: &str,
+    result: &str,
     is_error: bool,
     details: Option<&serde_json::Value>,
-    // 统计已迁面板（044-0），行内不再展示耗时
-    _duration_s: Option<i64>,
+    // 终态时长（result 到达 − 消息起始，秒）；运行中走 msg_ts 现算
+    duration_s: Option<i64>,
     // 行不区分「参数是否流式部分到达」（args 只取 name/task），保留形参
     // 以对齐派发签名
     _args_partial: bool,
     result_arrived: bool,
+    // 消息起始（epoch ms）：运行中 live 时长锚（验收⑤）
+    msg_ts: Option<i64>,
     weak: &gpui::WeakEntity<Chat>,
     // 旧版展开态残留槽位：紧凑行无正文，保留形参对齐签名
     _collapsed: &HashMap<(usize, usize), bool>,
@@ -154,6 +158,7 @@ fn render_subagent_card(
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from);
     let error_code = d.get("error_code").and_then(|v| v.as_str());
+    let duration_ms = d.get("duration_ms").and_then(|v| v.as_i64());
 
     let args_v = serde_json::from_str::<serde_json::Value>(args).ok();
     let profile = args_v
@@ -178,36 +183,107 @@ fn render_subagent_card(
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .chars()
-                .take(40)
+                .take(25)
                 .collect::<String>()
         });
 
-    // 状态（044-0 B5：同面板四色，settle 才定色）——
-    //   失败 红点+分码（含被拒 onUpdate 分片，B3② 即时上卡）
-    //   轮次用尽/中止 橙点（044-1 §1.3，与面板 C_ABORTED 同源）
-    //   完成 绿点 = result 到了且 stop_reason=="completed"
-    //   其余（派出未决/运行中）黄 spin——旧条件 (!result_arrived||…) 把
-    //   「结果未到」也算 done，派出瞬间全体恒绿（B5 根因）
-    let max_turns = stop_reason == "max_turns";
-    let failed = (is_error || error_code.is_some()) && !max_turns;
-    let done = result_arrived && stop_reason == "completed";
-    let aborted = result_arrived && (stop_reason == "aborted" || max_turns);
-    let (mark_c, mark) = if failed {
-        (0xf87171, "dot")
-    } else if aborted {
-        (0xf97316, "dot")
-    } else if done {
-        (0x22c55e, "dot")
+    // 完成提示分类（验收⑤注 2/3）：
+    //   派发失败 = 子代理根本没跑起来——PF 容量闸（CAPACITY_REACHED）、
+    //              provider 侧拒绝/并发（START_REJECTED 归一）、深度/资料
+    //              校验（DEPTH_LIMIT / PROFILE_INVALID / PROVIDER_UNKNOWN /
+    //              BACKEND_UNSUPPORTED / DUPLICATE_CHILD）
+    //   执行异常 = 跑起来后的失败——轮次用尽（max_looped/MAX_TURNS）、
+    //              意外中断（aborted）、provider 服务侧异常（PROVIDER_ERROR）
+    //              及其他一切非派发分码
+    //   任务完成 = result 到且 stopReason==completed 且无错
+    //   运行中   = 其余（`.....`）
+    const DISPATCH_CODES: [&str; 7] = [
+        "CAPACITY_REACHED",
+        "START_REJECTED",
+        "DEPTH_LIMIT",
+        "PROVIDER_UNKNOWN",
+        "BACKEND_UNSUPPORTED",
+        "PROFILE_INVALID",
+        "DUPLICATE_CHILD",
+    ];
+    let errored = is_error || error_code.is_some();
+    let dispatch_failed = error_code.is_some_and(|c| DISPATCH_CODES.contains(&c));
+    let done = result_arrived && stop_reason == "completed" && !errored;
+    let failed = errored && !done;
+
+    // 状态标记（验收⑤注 4：同会话列表 psp_row_slot 统一样式）
+    let mark_el: gpui::AnyElement = if done {
+        div()
+            .size(px(7.))
+            .rounded_full()
+            .bg(rgb(crate::appearance::theme::NOTICE))
+            .into_any_element()
+    } else if failed {
+        div()
+            .size(px(7.))
+            .rounded_full()
+            .bg(rgb(t.danger))
+            .into_any_element()
     } else {
-        (0xeab308, "spin")
+        crate::ui::spark_spinner(13., t.accent)
     };
-    let mark_el = if mark == "spin" {
-        crate::ui::spark_spinner(13., mark_c)
+
+    // 时长：终态 duration_ms（扩展回传）→ duration_s（pi 口径 result 到达
+    // − 消息起始）兜底；运行中 = now − msg_ts（live，每帧重绘自然刷新）
+    let secs = duration_ms.map(|ms| ms / 1000).or(duration_s).or_else(|| {
+        (!result_arrived).then_some(()).and_then(|_| {
+            msg_ts.map(|ts| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                ((now - ts) / 1000).max(0)
+            })
+        })
+    });
+    let duration_text = secs
+        .filter(|s| *s >= 0)
+        .map(crate::session::subagent_panel::duration_text);
+
+    // tooltip 详情：result 首行（`${code}: ${message}`）→ 分码兜底
+    let err_detail: SharedString = {
+        let first_line = result.lines().next().unwrap_or("").trim();
+        if !first_line.is_empty() {
+            first_line.to_string()
+        } else {
+            error_code.unwrap_or("").to_string()
+        }
+    }
+    .into();
+
+    // 完成提示段（faint；异常态 faint+下划线+tooltip）
+    let hint: gpui::AnyElement = if done {
+        div()
+            .flex_shrink_0()
+            .text_color(rgb(t.text_muted))
+            .child(tr("subagent.card.done"))
+            .into_any_element()
+    } else if failed {
+        let (label, tip) = if dispatch_failed {
+            (tr("subagent.card.dispatch_error"), err_detail)
+        } else {
+            (tr("subagent.card.run_error"), err_detail)
+        };
+        div()
+            .id(SharedString::from(format!(
+                "sa-hint-{msg_ix}-{content_index}"
+            )))
+            .flex_shrink_0()
+            .text_color(rgb(t.text_muted))
+            .underline()
+            .with_tip_text(tip)
+            .child(label)
+            .into_any_element()
     } else {
         div()
-            .size(px(6.))
-            .rounded_full()
-            .bg(gpui::rgb(mark_c))
+            .flex_shrink_0()
+            .text_color(rgb(t.text_muted))
+            .child(".....")
             .into_any_element()
     };
 
@@ -244,28 +320,27 @@ fn render_subagent_card(
                 .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text))
                 .child(SharedString::from(profile)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(rgb(t.text_dim))
-                .child(SharedString::from(task)),
         );
-    if let Some(code) = error_code {
-        let code = code.to_string();
+    if let Some(dt) = duration_text {
         row = row.child(
             div()
                 .flex_shrink_0()
-                .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
-                .text_color(rgb(0xf87171))
-                .child(SharedString::from(code)),
+                .text_color(rgb(t.text_muted))
+                .child(SharedString::from(dt)),
         );
     }
+    row = row.child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(rgb(t.text_dim))
+            .child(SharedString::from(task)),
+    );
+    row = row.child(hint);
     if let Some(sf) = session_file {
         let weak_open = weak.clone();
         row = row
@@ -294,6 +369,8 @@ pub(super) fn render_tool_card(
     duration_s: Option<i64>,
     args_partial: bool,
     result_arrived: bool,
+    // 消息起始（epoch ms）：子代理卡运行中 live 时长锚（044-0 验收⑤）
+    msg_ts: Option<i64>,
     weak: &gpui::WeakEntity<Chat>,
     collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
@@ -312,6 +389,7 @@ pub(super) fn render_tool_card(
             duration_s,
             args_partial,
             result_arrived,
+            msg_ts,
             weak,
             collapsed,
             t,

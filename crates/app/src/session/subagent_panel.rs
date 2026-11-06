@@ -599,7 +599,7 @@ fn mark_color(row: &CatalogRow) -> u32 {
 }
 
 /// 秒 → 紧凑时长（pi-web 口径）：22s / 1m42s。
-fn duration_text(secs: i64) -> String {
+pub(crate) fn duration_text(secs: i64) -> String {
     if secs < 0 {
         return "—".into();
     }

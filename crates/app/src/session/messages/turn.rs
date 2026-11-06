@@ -160,6 +160,7 @@ fn live_turn_body(
                 t,
                 streaming,
                 msg_think_dur,
+                m.ts,
             ));
         }
         body = body.child(item);
@@ -390,6 +391,7 @@ pub(crate) fn render_assistant_turn(
                         t,
                         streaming,
                         msg_think_dur,
+                        m.ts,
                     ));
                 }
                 group_body = group_body.child(item);
@@ -413,7 +415,16 @@ pub(crate) fn render_assistant_turn(
         // pi-web 最终回答块容器 gap 8
         let mut answer = div().w_full().flex().flex_col().gap(px(8.));
         for b in &final_msg.blocks[answer_start..] {
-            answer = answer.child(render_block(b, final_gix, weak, collapsed, t, false, None));
+            answer = answer.child(render_block(
+                b,
+                final_gix,
+                weak,
+                collapsed,
+                t,
+                false,
+                None,
+                final_msg.ts,
+            ));
         }
         col = col.child(answer);
     }
