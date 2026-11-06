@@ -307,10 +307,21 @@ pub(crate) fn plugin_panel_view(
 }
 
 /// 子节点渲染：**纯结构**，宿主不按组件组合猜布局（契约 layout_ownership）。
+///
+/// 渲染层文件组织（090 超规拆分）：[`resolve`] 树类型 / [`parse`] 解析遍历、
+/// [`render`] 节点分派 + 外壳（分区/分隔线）、[`button`] 格子/图标/文字按钮 +
+/// 点击接线、[`menu_layer`] 格子右键菜单层、[`style`] 样式助手（分区标题/色板
+/// 映射）。
+mod button;
+mod menu_layer;
+mod parse;
 mod popup;
 mod render;
 mod resolve;
+mod style;
 
+pub(crate) use menu_layer::cell_menu_layer;
+pub(crate) use parse::{icon_asset, resolve, section_count};
 pub(crate) use popup::{placeholder_center, plugin_popup_layer};
-pub(crate) use render::{cell_menu_layer, render_root};
-pub(crate) use resolve::{CanvasPaint, ResolvedNode, icon_asset, resolve, section_count};
+pub(crate) use render::render_root;
+pub(crate) use resolve::{CanvasPaint, ResolvedNode};
