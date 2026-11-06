@@ -7,7 +7,12 @@ use super::{OpResult, bad, not_found, ok, params_path};
 use crate::Chat;
 use pi_link::automation::method;
 
-pub(super) fn dispatch(chat: &mut Chat, cx: &mut Context<Chat>, m: &str, params: &Value) -> OpResult {
+pub(super) fn dispatch(
+    chat: &mut Chat,
+    cx: &mut Context<Chat>,
+    m: &str,
+    params: &Value,
+) -> OpResult {
     match m {
         method::MODEL_PICKER_OPEN => {
             // 042：模型菜单纯 pill 化后的无坐标入口（锚点走右下兜底）；

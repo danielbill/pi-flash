@@ -9,7 +9,12 @@ use super::{OpResult, bad, ok};
 use crate::Chat;
 use pi_link::automation::method;
 
-pub(super) fn dispatch(chat: &mut Chat, cx: &mut Context<Chat>, m: &str, params: &Value) -> OpResult {
+pub(super) fn dispatch(
+    chat: &mut Chat,
+    cx: &mut Context<Chat>,
+    m: &str,
+    params: &Value,
+) -> OpResult {
     match m {
         // ---- 设置/弹窗 ----
         method::SETTINGS_OPEN => {

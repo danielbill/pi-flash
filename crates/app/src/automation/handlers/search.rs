@@ -5,11 +5,16 @@ use gpui::Context;
 use serde_json::Value;
 
 use super::OpResult;
-use crate::automation::snapshot;
 use crate::Chat;
+use crate::automation::snapshot;
 use pi_link::automation::method;
 
-pub(super) fn dispatch(chat: &mut Chat, cx: &mut Context<Chat>, m: &str, params: &Value) -> OpResult {
+pub(super) fn dispatch(
+    chat: &mut Chat,
+    cx: &mut Context<Chat>,
+    m: &str,
+    params: &Value,
+) -> OpResult {
     match m {
         method::SEARCH_OPEN => {
             chat.open_project_search(cx);
