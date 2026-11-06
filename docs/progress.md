@@ -572,3 +572,18 @@
   `pf_market::PfState`、`pi_native_market::thousands` 路径不变。
 - **验收**：`cargo check -p app` 零警告；app 432 + pi-link 269 全绿（market 21 条，
   含 design.rs 设计稿几何钉值）。UI 快照回归待用户真机复验（bd pi-flash-itlq.3）。
+
+## 2026-11-06 refactor(pf_plugin)：itlq.8 插件宿主域超规拆分（ab435ae9）
+
+- **范围**：`crates/app/src/pf_plugin/` 超规 5 文件全拆，全部 ≤500 行（最大
+  panel/render.rs 486），纯移动零语义变化。
+- **拆法**：manifest.rs 1773 → 目录（mod 类型 / parse / val / scan / assets +
+  tests、tests_scan 双测试文件）；host_actions.rs 1314 → 目录（mod 命令回环+
+  分派+熔断 / wasm 桥 / popup / fn_bar / ext_mount / badge）；host_tabs.rs 669 →
+  目录（mod 落位撤下重载 / tabs / ready 懒加载链）；panel/render.rs 887 →
+  render / button / menu_layer / style；panel/resolve.rs 627 → resolve（类型+
+  tests）/ parse（遍历）。impl Chat 块按职责落位，mod 层 re-export 保外部
+  路径零改动。
+- **验收**：`cargo check -p app` 零警告；app 432 + pi-link 269 全绿（pf_plugin
+  40 条：清单解析/扫描/资产别名/宿主协议）。装载/面板渲染冒烟待用户真机复验
+  （bd pi-flash-itlq.8）。
