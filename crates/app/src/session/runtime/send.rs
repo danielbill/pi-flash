@@ -376,8 +376,7 @@ impl SessionRuntime {
             };
             match self.agent.session.as_ref().map(|s| s.send(&cmd)) {
                 Some(Ok(_)) => {
-                    if !text.is_empty() && self.history.last().map(|h| h != &text).unwrap_or(true)
-                    {
+                    if !text.is_empty() && self.history.last().map(|h| h != &text).unwrap_or(true) {
                         self.remember_input(text.clone());
                     }
                     self.history_ix = None;

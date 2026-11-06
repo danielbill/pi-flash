@@ -133,8 +133,7 @@ impl SessionRuntime {
             // 不来（真机 2026-11-03 重启后微信插件全哑的根因）
             let raw = pi_link::session_ext::read_for(&store, &self.key);
             let (mounts, changed) = pi_link::session_ext::resolve_sources(&raw);
-            if changed && let Err(e) = pi_link::session_ext::write_for(&store, &self.key, &mounts)
-            {
+            if changed && let Err(e) = pi_link::session_ext::write_for(&store, &self.key, &mounts) {
                 eprintln!("[session-ext] 挂载台账自愈回写失败（{}）: {e}", self.key);
             }
             for src in mounts {

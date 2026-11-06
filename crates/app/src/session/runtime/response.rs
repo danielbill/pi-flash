@@ -334,9 +334,7 @@ impl SessionRuntime {
                 let mut dropped = 0usize;
                 let mut editor_recalled: Vec<String> = Vec::new();
                 for text in &recalled {
-                    if let Some(ix) =
-                        self.pending_echoes.iter().position(|p| p.text == *text)
-                    {
+                    if let Some(ix) = self.pending_echoes.iter().position(|p| p.text == *text) {
                         // 已上屏：摘 pending_echoes（不会再回显），气泡留
                         self.pending_echoes.remove(ix);
                         dropped += 1;
@@ -368,10 +366,8 @@ impl SessionRuntime {
                     });
                 }
                 if dropped > 0 {
-                    self.status = crate::i18n::tf(
-                        "status.steer_dropped",
-                        &[("count", dropped.to_string())],
-                    );
+                    self.status =
+                        crate::i18n::tf("status.steer_dropped", &[("count", dropped.to_string())]);
                     cx.notify();
                 }
             }

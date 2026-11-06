@@ -469,22 +469,18 @@ impl SessionRuntime {
     /// 地）；pager.sync 按当前 messages 全量对账且幂等，推迟到补拍执行安
     /// 全。终端态（轮终/错误/进程死亡）不经本函数，照旧直拍。
     pub(crate) fn notify_list(&mut self, cx: &mut Context<Self>) {
-        const NOTIFY_MIN_INTERVAL: std::time::Duration =
-            std::time::Duration::from_millis(33);
+        const NOTIFY_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
         let now = std::time::Instant::now();
         if let Some(t) = self.notify_last {
             if now.duration_since(t) < NOTIFY_MIN_INTERVAL {
                 if !self.notify_pending {
                     self.notify_pending = true;
                     cx.spawn(async move |this, cx| {
-                        cx.background_executor()
-                            .timer(NOTIFY_MIN_INTERVAL)
-                            .await;
+                        cx.background_executor().timer(NOTIFY_MIN_INTERVAL).await;
                         let _ = this.update(cx, |rt, cx| {
                             rt.notify_pending = false;
                             rt.notify_last = Some(std::time::Instant::now());
-                            rt.pager
-                                .sync(rt.messages.len(), rt.phase_row_visible());
+                            rt.pager.sync(rt.messages.len(), rt.phase_row_visible());
                             rt.nav_dirty = true;
                             cx.notify();
                         });
