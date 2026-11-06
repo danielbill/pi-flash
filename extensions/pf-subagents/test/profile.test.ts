@@ -3,9 +3,10 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { homedir } from "node:os";
 
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
-import { listProfiles, listProfilesSync, loadProfile, parseFrontmatter, profileFromDocument } from "../src/profile.ts";
+import { defaultProfilePaths, listProfiles, listProfilesSync, loadProfile, parseFrontmatter, profileFromDocument } from "../src/profile.ts";
 import { captureSync } from "./helpers.ts";
 
 const code = (error: unknown) => (error as SubagentError).code;
@@ -239,5 +240,22 @@ describe("listProfilesSync", () => {
 			{ id: "explorer", description: "mine" },
 		);
 		assert.deepEqual(summaries.find((s) => s.id === "broken"), { id: "broken", description: "" });
+	});
+});
+
+describe("defaultProfilePaths (PF-owned dirs)", () => {
+	it("honours the injected PF profiles dir and uses .pi-flash for the project", () => {
+		process.env["PI_SUBAGENTS_PROFILES_DIR"] = "/pf-data/agents";
+		const p = defaultProfilePaths("/repo");
+		assert.equal(p.globalDir, "/pf-data/agents");
+		assert.equal(p.projectDir, join("/repo", ".pi-flash", "agents"));
+		delete process.env["PI_SUBAGENTS_PROFILES_DIR"];
+	});
+
+	it("falls back to ~/.pi-flash/agents when no PF host injected the dir", () => {
+		delete process.env["PI_SUBAGENTS_PROFILES_DIR"];
+		const p = defaultProfilePaths("/repo");
+		assert.equal(p.globalDir, join(homedir(), ".pi-flash", "agents"));
+		assert.equal(p.projectDir, join("/repo", ".pi-flash", "agents"));
 	});
 });

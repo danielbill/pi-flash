@@ -77,6 +77,13 @@ ctx_tip 用量面板现有逻辑直接覆盖。**不自建分账**——账在 n
 
 - 数据:`~/.pi/agent/agents/`(全局)与 `.pi/agents/`(项目)两级,`.md`
   frontmatter(schema 归 045)。
+  - **2026-11-06 迁改**:目录迁 PF 自有——全局 `<PF数据目录>/agents/`、项目
+    `<cwd>/.pi-flash/agents/`(spawn 经 `PI_SUBAGENTS_PROFILES_DIR` 注入扩展)。
+    原因:pi 扩展形态曾跟随 pi 生态约定放 pi 全局配置根,但 profile frontmatter
+    schema 是 pf-subagents 私有的,与 pi 市场社区 subagent 扩展共用目录 =
+    同一批 `.md` 被两套 schema 各自解释(真机实况:explorer.md 双向消费、目录
+    躺着别家 settings.json)——命名空间污染。启动一次性 copy 迁移(不覆盖
+    已存在;别家还要用旧目录,不动旧文件)。
 - UI:设置面板新增"子代理"页(与 042 模型管理同构):列表 + 编辑器 +
   内置 profile 只读可开关 + 损坏 fail-closed 红标。
 - frontmatter 编辑复用 skills.rs 的 SKILL.md 编辑模式(已有先例)。

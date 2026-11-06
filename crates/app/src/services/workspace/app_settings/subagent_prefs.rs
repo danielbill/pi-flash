@@ -42,6 +42,13 @@ pub fn subagent_envs() -> Vec<(String, String)> {
             "PI_SUBAGENTS_MAX_DEPTH".into(),
             subagent_max_depth().to_string(),
         ),
+        // profile 全局目录（PF 自有，2026-11-06 迁出 ~/.pi/agent/agents——
+        // pi 市场社区扩展共用旧目录，schema 撞车）。扩展 defaultProfilePaths
+        // 的兜底只在非 PF 宿主挂载时生效。
+        (
+            "PI_SUBAGENTS_PROFILES_DIR".into(),
+            pi_link::agents::agents_dir().to_string_lossy().into_owned(),
+        ),
     ];
     if let Some(p) = pi_link::paths::app_settings_file() {
         envs.push((

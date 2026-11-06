@@ -1,5 +1,11 @@
 /**
- * Profile documents: `~/.pi/agent/agents/<id>.md` (global) and `.pi/agents/<id>.md` (project).
+ * Profile documents: PF-owned directories — global `<PF数据目录>/agents/<id>.md`
+ * (injected via `PI_SUBAGENTS_PROFILES_DIR`; fallback `~/.pi-flash/agents`) and
+ * project `<cwd>/.pi-flash/agents/<id>.md`.
+ *
+ * 2026-11-06 迁出 `~/.pi/agent/agents`：pi 扩展形态曾跟随 pi 生态约定，但
+ * profile frontmatter schema 是 pf-subagents 私有的，与 pi 市场社区 subagent
+ * 扩展共用目录 = 同一批 `.md` 被两套 schema 各自解释（命名空间污染）。
  *
  * Frontmatter is deliberately a small YAML subset (scalars, `|` block scalars, and
  * `- item` lists). A profile that cannot be read fails closed with `PROFILE_INVALID`
@@ -124,9 +130,14 @@ export interface ProfilePaths {
 }
 
 export function defaultProfilePaths(cwd: string): ProfilePaths {
+	// PF 自有目录（2026-11-06 迁出 ~/.pi/agent/agents——pi 市场社区扩展共用
+	// 旧目录，schema 撞车）。PF 宿主 spawn 时注入 PI_SUBAGENTS_PROFILES_DIR
+	// （= <PF数据目录>/agents 绝对路径）；兜底 ~/.pi-flash/agents 只在非 PF
+	// 宿主单独挂载本扩展时生效。
+	const globalDir = process.env["PI_SUBAGENTS_PROFILES_DIR"] || join(homedir(), ".pi-flash", "agents");
 	return {
-		globalDir: join(homedir(), ".pi", "agent", "agents"),
-		projectDir: join(cwd, ".pi", "agents"),
+		globalDir,
+		projectDir: join(cwd, ".pi-flash", "agents"),
 	};
 }
 
