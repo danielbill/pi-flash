@@ -8,6 +8,10 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
+mod subagent_prefs;
+
+pub(crate) use subagent_prefs::*;
+
 // ---------------------------------------------------------------------------
 // app settings (006 界面设置): theme / icon theme / fonts + lang / sound
 // ---------------------------------------------------------------------------
@@ -457,45 +461,6 @@ pub const CHAT_WIDTH_MAX: u32 = 1200;
 /// 滑块步进（20px，用户定案；min/default/max 均为 20 的整数倍）
 pub const CHAT_WIDTH_STEP: u32 = 20;
 
-/// 044-0 模块设置默认值：最大并发 3（glm 侧限 3）、嵌套深度 1（禁止套娃）。
-pub const SUBAGENT_CAPACITY_DEFAULT: u64 = 3;
-pub const SUBAGENT_MAX_DEPTH_DEFAULT: u64 = 1;
-
-/// 子代理最大并发（设置-子代理页「模块设置」；钳 2-5，缺省 3）。
-pub fn subagent_capacity() -> u64 {
-    app_settings()
-        .subagent_capacity
-        .unwrap_or(SUBAGENT_CAPACITY_DEFAULT)
-        .clamp(2, 5)
-}
-
-/// 子代理嵌套深度（钳 1-3，缺省 1）。
-pub fn subagent_max_depth() -> u64 {
-    app_settings()
-        .subagent_max_depth
-        .unwrap_or(SUBAGENT_MAX_DEPTH_DEFAULT)
-        .clamp(1, 3)
-}
-
-/// 子代理模块设置 → 扩展 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH，
-/// pf-subagents index.ts numberFromEnv 读）。subagents 旗标关着时不传导
-/// （扩展不加载，env 无意义）。
-pub fn subagent_envs() -> Vec<(String, String)> {
-    if !subagents_enabled() {
-        return Vec::new();
-    }
-    vec![
-        (
-            "PI_SUBAGENTS_CAPACITY".into(),
-            subagent_capacity().to_string(),
-        ),
-        (
-            "PI_SUBAGENTS_MAX_DEPTH".into(),
-            subagent_max_depth().to_string(),
-        ),
-    ]
-}
-
 /// 会话内容宽度（px，已钳制；渲染期多次读取，只读缓存）。
 pub fn chat_content_width() -> f32 {
     clamp_chat_width(
@@ -524,65 +489,5 @@ pub fn save_app_settings_now() {
     save_app_settings(&app_settings());
 }
 
-/// 044-0 模块设置：设子代理最大并发（钳 2-5；spawn 时 env 传导）。
-pub fn set_subagent_capacity(v: u64) {
-    with_app_settings_cache(|cache| {
-        let mut s = (*cache).clone().unwrap_or_default();
-        s.subagent_capacity = Some(v.clamp(2, 5));
-        *cache = Some(s);
-    });
-    save_app_settings(&app_settings());
-}
-
-/// 044-0 模块设置：设子代理嵌套深度（钳 1-3；spawn 时 env 传导）。
-pub fn set_subagent_max_depth(v: u64) {
-    with_app_settings_cache(|cache| {
-        let mut s = (*cache).clone().unwrap_or_default();
-        s.subagent_max_depth = Some(v.clamp(1, 3));
-        *cache = Some(s);
-    });
-    save_app_settings(&app_settings());
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::services::workspace::load_map_from;
-    use std::path::PathBuf;
-
-    fn tmpfile(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pi-flash-ws-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join(name)
-    }
-    #[test]
-    fn app_settings_roundtrip() {
-        let path = tmpfile("app-settings.json");
-        let mut obj = serde_json::Map::new();
-        obj.insert("theme".into(), Value::String("mist".into()));
-        obj.insert(
-            "session_font".into(),
-            serde_json::json!({"family": "Inter", "size": 14.5}),
-        );
-        obj.insert("lang".into(), Value::Number(1u64.into()));
-        save_map_to(&path, &obj);
-        let map = load_map_from(&path);
-        let spec = font_spec_from(map.get("session_font").unwrap()).unwrap();
-        assert_eq!(spec.family, "Inter");
-        assert_eq!(spec.size, 14.5);
-        assert_eq!(map.get("theme").unwrap(), "mist");
-        assert_eq!(
-            map.get("lang").and_then(|v| v.as_u64()),
-            Some(1),
-            "lang/sound live in app_settings.json, not the workspace map"
-        );
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-}
+mod tests;
