@@ -25,15 +25,47 @@ set -uo pipefail
 
 staged=$(git diff --cached --name-only)
 
+# git add 带重试：多 agent 并行同仓时会短暂撞 index.lock。失败必须显式中止
+# ——静默丢暂存 = 提交里混入未格式化版本 + 工作区遗留排版差异
+#（itlq.12 / itlq.9 两次遗留的根因）。
+stage_file() {
+    local f=$1 try
+    for try in 1 2 3; do
+        if git add -- "$f" 2>/tmp/precommit-add.err; then
+            return 0
+        fi
+        sleep 0.3
+    done
+    return 1
+}
+
 # ---------- ① 自动格式化 ----------
 if command -v rustfmt >/dev/null 2>&1; then
     formatted=()
     skipped=0
     mapfile -t rs_files < <(git diff --cached --name-only --diff-filter=ACM -- 'crates/*.rs')
     for f in "${rs_files[@]}"; do
-        # 有未暂存改动 → 不接管（否则 git add 会把未暂存内容一起卷进提交）
         if ! git diff --quiet -- "$f"; then
-            skipped=$((skipped + 1))
+            # 工作区比暂存区多出的内容分两种：真 WIP（不接管，防 git add
+            # 把未暂存内容卷进提交），或上一轮 hook 中止留下的**纯排版**
+            # 差异（回暂存即收敛，不收敛就会把未格式化版带进历史——
+            # 「下次提交自然会被格式化」的旧说法只对前者成立，是假话）。
+            # 判据：暂存版经 rustfmt 后与工作区逐字节相等 = 差异只有排版。
+            # 临时副本放 .git/ 里，rustfmt 才能沿目录找到仓根的 rustfmt.toml。
+            if git show ":$f" > .git/precommit-drift.rs 2>/dev/null \
+                && rustfmt --edition 2024 .git/precommit-drift.rs 2>/dev/null \
+                && diff -q .git/precommit-drift.rs "$f" >/dev/null 2>&1; then
+                if ! stage_file "$f"; then
+                    echo "⛔ git add 失败（index.lock 持续被占）：$f"
+                    sed -n '1,3p' /tmp/precommit-add.err
+                    echo "   排版已写进工作区。重交前先 git add $f 再 git commit。"
+                    exit 1
+                fi
+                formatted+=("$f")
+            else
+                skipped=$((skipped + 1))
+            fi
+            rm -f .git/precommit-drift.rs
             continue
         fi
         if ! rustfmt --edition 2024 "$f" 2>/tmp/precommit-fmt.err; then
@@ -42,8 +74,22 @@ if command -v rustfmt >/dev/null 2>&1; then
             exit 1
         fi
         if ! git diff --quiet -- "$f"; then
-            git add -- "$f"
+            if ! stage_file "$f"; then
+                echo "⛔ git add 失败（index.lock 持续被占，多半有并行会话在提交）：$f"
+                sed -n '1,3p' /tmp/precommit-add.err
+                echo "   排版已写进工作区。重交前先 git add $f 再 git commit。"
+                exit 1
+            fi
             formatted+=("$f")
+        fi
+    done
+    # 终检：本轮格式化过的文件必须已落暂存区（工作区 == 暂存区）。防上面
+    # 任何一环静默失手——宁可拦下重交，不可把未格式化版本带进历史。
+    for f in ${formatted[@]+"${formatted[@]}"}; do
+        if ! git diff --quiet -- "$f"; then
+            echo "⛔ 终检失败：$f 格式化后未落暂存区，提交中止"
+            echo "   （排版已写进工作区：git add $f && git commit 重交即可）"
+            exit 1
         fi
     done
     if [ "${#formatted[@]}" -gt 0 ]; then
@@ -51,7 +97,7 @@ if command -v rustfmt >/dev/null 2>&1; then
         printf '  %s\n' "${formatted[@]}"
     fi
     if [ "$skipped" -gt 0 ]; then
-        echo "[pre-commit] 跳过 $skipped 个有未暂存改动的文件（下次提交时会被格式化）"
+        echo "[pre-commit] 跳过 $skipped 个含未暂存 WIP 的文件（工作区差异不只是排版，不接管）"
     fi
 else
     echo "[pre-commit] 警告：找不到 rustfmt，跳过自动格式化"

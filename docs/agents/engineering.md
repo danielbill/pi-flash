@@ -122,8 +122,11 @@
 **现状**：本仓是 rustfmt-clean 仓。**排版不需要记任何规则，也不需要主动跑任何命令**：
 
 - `.githooks/pre-commit` 对本次暂存的 `crates/**.rs` 跑 rustfmt，改了就自动
-  `git add` 回暂存区 → 提交里看到的已是格式化后的版本（有未暂存改动的文件会跳过，
-  留到下次提交处理）。
+  `git add` 回暂存区 → 提交里看到的已是格式化后的版本。工作区有额外差异的
+  暂存文件分两种：差异**只是排版**（上一轮 hook 中止遗留）→ 自动识别并回
+  暂存收敛；含真 WIP → 跳过不接管（防把未暂存内容卷进提交）。`git add` 带
+  重试，index.lock 持续被占（并行会话）则硬中止——2026-11-06 前此处静默
+  失败，曾把未格式化版本带进历史并留工作区遗留（itlq.12 / itlq.9 两例）。
 - 配置在仓库根 `rustfmt.toml`（`edition = "2024"`）。
 - **`vendor/**` 永不格式化**：gpui / gpui-component 是 vendored 上游副本（workspace
   exclude），格式化会把本地补丁面炸开。钩子与 `scripts/fmt.sh` 都用 `crates/*.rs`
