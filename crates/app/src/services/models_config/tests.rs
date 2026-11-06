@@ -82,8 +82,8 @@ fn disable_writes_explicit_list_then_serialize_drops_when_reenabled() {
     assert_eq!(state.enabled.len(), 4);
     assert!(!state.enabled.contains(&"openai/gpt-5".to_string()));
     // re-enable: everything back -> setting dropped entirely
-    let edit = set_models_enabled(Some(&patterns), &refs, &["openai/gpt-5".to_string()], true)
-        .unwrap();
+    let edit =
+        set_models_enabled(Some(&patterns), &refs, &["openai/gpt-5".to_string()], true).unwrap();
     assert_eq!(edit.patterns, None);
     assert!(compute_state(edit.patterns.as_ref(), &refs).all_enabled);
 }
@@ -145,8 +145,8 @@ fn stale_patterns_never_touched_by_edits() {
         "ghost/missing".to_string(),
         "deepseek/deepseek-chat".to_string(),
     ];
-    let edit = set_models_enabled(Some(&patterns), &refs, &["openai/gpt-5".to_string()], false)
-        .unwrap();
+    let edit =
+        set_models_enabled(Some(&patterns), &refs, &["openai/gpt-5".to_string()], false).unwrap();
     let out = edit.patterns.unwrap();
     assert!(out.contains(&"ghost/missing".to_string()));
 }

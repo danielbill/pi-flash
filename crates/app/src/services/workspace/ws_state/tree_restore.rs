@@ -30,7 +30,10 @@ pub struct TreeState {
 }
 
 /// 纯内核：从 map 读一个项目的文件树状态（无记录 = None）。
-pub(crate) fn tree_state_from(map: &serde_json::Map<String, Value>, cwd: &str) -> Option<TreeState> {
+pub(crate) fn tree_state_from(
+    map: &serde_json::Map<String, Value>,
+    cwd: &str,
+) -> Option<TreeState> {
     let v = map.get(WS_TREE_KEY)?.get(&ws_key(cwd))?.clone();
     let expanded = v
         .get("expanded")
@@ -52,7 +55,11 @@ pub fn tree_state_for(cwd: &str) -> Option<TreeState> {
 
 /// 纯内核：把一个项目的文件树状态写进传入 map（默认态 = 移除槽位）。
 /// **绝不碰全局缓存/落盘**——落盘职责归调用方（测试用内核，不写任何盘）。
-pub(crate) fn tree_state_into_map(map: &mut serde_json::Map<String, Value>, cwd: &str, state: &TreeState) {
+pub(crate) fn tree_state_into_map(
+    map: &mut serde_json::Map<String, Value>,
+    cwd: &str,
+    state: &TreeState,
+) {
     let key = ws_key(cwd);
     let entry = map
         .entry(WS_TREE_KEY.to_string())

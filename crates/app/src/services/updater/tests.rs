@@ -328,8 +328,7 @@ fn download_speed_guard_and_failover() {
     // ③ 无 content-length：下载成功但百分比保持未知
     let stream = serve(b"no-length-body".to_vec(), None, false);
     let (_h3, chosen3) =
-        download_mirrored_cfg("x.zip", &d_nl, "0.0.1", &[stream.clone()], probe, min_bps)
-            .unwrap();
+        download_mirrored_cfg("x.zip", &d_nl, "0.0.1", &[stream.clone()], probe, min_bps).unwrap();
     assert_eq!(chosen3, stream);
     assert_eq!(download_percent(), None, "无 content-length 无百分比");
 
@@ -348,8 +347,8 @@ fn updater_real_download() {
     let dir = std::env::temp_dir().join(format!("pf-upd-real-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let dest = dir.join(&asset);
-    let (hash, chosen) = download_mirrored(&asset, &dest, &rel.version)
-        .unwrap_or_else(|e| panic!("下载失败：{e}"));
+    let (hash, chosen) =
+        download_mirrored(&asset, &dest, &rel.version).unwrap_or_else(|e| panic!("下载失败：{e}"));
     eprintln!(
         "v{} 命中源：{chosen}\nsha256={hash}\n文件：{}",
         rel.version,

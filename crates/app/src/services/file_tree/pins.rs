@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use crate::services::git::{GitFile, GitStatus};
 
-use super::{IgnoreKind, TreeRow, build_gitignore_at, changed_ancestor_dirs, root_ignore_stack, walk};
+use super::{
+    IgnoreKind, TreeRow, build_gitignore_at, changed_ancestor_dirs, root_ignore_stack, walk,
+};
 
 /// Pin 收藏夹视图（021 三改：Pin = 与「只看变更」同级的独立视图，本质是
 /// 文件树过滤器）——每个收藏条目是一棵根树：根行 depth 0（name =

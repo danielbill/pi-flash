@@ -6,8 +6,7 @@ use super::*;
 struct TempTree(PathBuf);
 impl TempTree {
     fn new(tag: &str) -> Self {
-        let base =
-            std::env::temp_dir().join(format!("piflash-tree-{tag}-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("piflash-tree-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         Self(base)
