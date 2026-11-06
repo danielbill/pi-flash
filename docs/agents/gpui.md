@@ -268,3 +268,12 @@ mod.rs` 时不得回退）：
 前落地；inputpanel 靠装载伴随的 notify→tick 差分扇出）。`tick_session` 派发
 后即记账——「notified==0 不记账重试」曾退化为每 notify 全量扇出风暴（实测
 一次洪水会话 87 次派发 vs 修复后 2 次）。台架：`test/030-流式卡死/`。
+
+## div 缺省非 row flex：子容器漏 .flex() 即纵向堆叠（2026-11-06）
+
+gpui 的 `div()` **不带 `.flex()` 时不是横排 flex row**——子元素纵向堆叠（块状
+排列），且**不报错不告警**，纯靠肉眼验收发现。典型事故：子代理面板行重排时
+把带 `.flex()` 的旧行二容器改成 stats 容器，漏搬了 `.flex()` → 统计段竖排挤
+爆 80px 卡、下方行被顶出可视区（验收④返工）。规则：**凡 children() 多元素
+横排的容器，`.flex().items_center().gap(..)` 三件套必须显式齐**；review 时
+见到「新增容器 + children(vec) + 无 .flex()」直接判错。
