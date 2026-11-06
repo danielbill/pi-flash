@@ -297,7 +297,18 @@ impl Chat {
         self.composer.pending_images = images;
         self.composer.history = history;
         self.composer.history_ix = None;
-        self.pool.active_key = key;
+        self.pool.active_key = key.clone();
+        // 会话 tab 条：切到即入序（去重，open 序稳定不重排——zed tab 同则）；
+        // 普通会话顺手刷新标题快照（observer 的快照由 open_session 写任务
+        // 名，这里不覆盖——session_title_of 对子会话只会兜底出「新会话」）。
+        if !self.pool.tab_order.contains(&key) {
+            self.pool.tab_order.push(key.clone());
+        }
+        let observer = rt.read(cx).observer;
+        if !observer {
+            let title = self.session_title_of(&key, cx);
+            self.pool.tab_labels.insert(key.clone(), title);
+        }
         self.psp.active_file = file.clone();
         // 注意力切到会话 ⇒ 内容区必须回到 chat 前台：否则在终端/文件编辑
         // 视图里点会话列表行（或「新会话」）后，内容区还停在 Term/File，
@@ -457,6 +468,16 @@ impl Chat {
         }
         if self.pool.active_key == old_key {
             self.pool.active_key = path_key.clone();
+        }
+        // 会话 tab 条跟随身份迁移（draft-N → 会话文件键）：顺序不变，标题
+        // 快照搬家（草稿标题「新会话」在下次 switch_to 时刷成真名）
+        for k in &mut self.pool.tab_order {
+            if *k == old_key {
+                *k = path_key.clone();
+            }
+        }
+        if let Some(label) = self.pool.tab_labels.remove(&old_key) {
+            self.pool.tab_labels.insert(path_key.clone(), label);
         }
         pi_link::client::ext_trace(&format!(
             "bind: {old_key} -> {path_key} active_follow={}",
@@ -681,6 +702,37 @@ impl Chat {
             r.pending_rename = rename;
             r
         });
+        // observer 子会话的 tab 标题 = descriptor 的任务名（044-0 验收：
+        // 标签名使用任务名）。侧栏扫描器不含子会话（session_title_of 取
+        // 不到），从父会话 catalog 解析：label → profile → 「子代理」。
+        // 父会话 = 当前激活会话（面板行/compact 卡点击两条路都满足）。
+        if observer {
+            let new_key = rt.read(cx).key.clone();
+            let label = self
+                .pool
+                .runtimes
+                .get(&self.pool.active_key)
+                .and_then(|parent| parent.read(cx).file.clone())
+                .map(|f| pi_link::subagent_catalog::read_catalog(&f, 0))
+                .map(|scan| {
+                    scan.rows
+                        .iter()
+                        .find(|r| {
+                            r.session_file
+                                .as_deref()
+                                .is_some_and(|sf| same_path(Path::new(sf), &path))
+                        })
+                        .and_then(|r| {
+                            r.label
+                                .clone()
+                                .filter(|s| !s.is_empty())
+                                .or_else(|| r.profile.clone().filter(|s| !s.is_empty()))
+                        })
+                })
+                .unwrap_or(None)
+                .unwrap_or_else(|| tr("subagent.tab").to_string());
+            self.pool.tab_labels.insert(new_key, label);
+        }
         self.pool
             .runtimes
             .insert(rt.read(cx).key.clone(), rt.clone());
@@ -783,6 +835,10 @@ impl Chat {
                 r.shutdown_process();
             });
         }
+        // 会话没了：tab 条摘牌（was_active 分支的 new_session 会 switch 进
+        // 新草稿、自动入序）
+        self.pool.tab_order.retain(|k| *k != key);
+        self.pool.tab_labels.remove(&key);
         self.psp.unread.remove(&path);
         self.psp.turn_errors.remove(&path);
         self.psp.turn_warnings.remove(&path);
@@ -813,6 +869,57 @@ impl Chat {
             }
         }
         self.refresh_sessions();
+        cx.notify();
+    }
+
+    /// 点一枚会话 tab：runtime 驻留 → switch_pool_rt（切注意力）；空闲退役
+    /// 被摘的 → open_session 秒开重开（key 即会话文件路径；draft 不退役）。
+    pub(crate) fn activate_session_tab(&mut self, key: String, cx: &mut Context<Self>) {
+        match self.pool.runtimes.get(&key).cloned() {
+            Some(rt) => self.switch_pool_rt(rt, cx),
+            None => self.open_session(PathBuf::from(&key), false, cx),
+        }
+    }
+
+    /// 关一枚观察窗 tab（topbar 子会话 tab 的 ×）：observer 无进程，runtime
+    /// 纯 drop 即可（不 abort 不 shutdown）。active 被关时切回 tab 条里
+    /// 最后一枚驻留会话；一枚都不剩 → 落新草稿（同 delete_session 的
+    /// was_active 分支）。tail cache 不动——再点面板行秒开重开。
+    pub(crate) fn close_observer_tab(&mut self, key: &str, cx: &mut Context<Self>) {
+        let is_observer = self
+            .pool
+            .runtimes
+            .get(key)
+            .map(|rt| rt.read(cx).observer)
+            .unwrap_or(false);
+        if !is_observer {
+            return;
+        }
+        self.pool.runtimes.remove(key);
+        self.pool.tab_order.retain(|k| k != key);
+        self.pool.tab_labels.remove(key);
+        if self.pool.active_key == key {
+            self.psp.active_file = None;
+            let next = self
+                .pool
+                .tab_order
+                .iter()
+                .rev()
+                .find(|k| {
+                    self.pool
+                        .runtimes
+                        .get(*k)
+                        .map(|rt| !rt.read(cx).observer)
+                        .unwrap_or(false)
+                })
+                .cloned();
+            match next.and_then(|k| self.pool.runtimes.get(&k).cloned()) {
+                Some(rt) => {
+                    self.switch_pool_rt(rt, cx);
+                }
+                None => self.new_session(cx),
+            }
+        }
         cx.notify();
     }
 }

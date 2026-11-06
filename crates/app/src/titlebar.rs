@@ -273,8 +273,8 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
         .h_full()
         .flex()
         .items_end();
-    // 固定段：置顶会话 tab（滚动区外，永不滚走）
-    strip = strip.child(session_tab(chat, cx));
+    // 固定段：置顶会话 tab 条（滚动区外，永不滚走）
+    strip = strip.child(session_tabs(chat, cx));
     // 插件功能页 tab 已归队 PanelTab（跟自由区一起渲染/拖拽/右键）——
     // 它曾作为固定段特例活在会话 tab 旁，代价是右键菜单/拖拽/批量关闭
     // 全套缺失（同规则见 shell/types.rs::PanelTab::Wx 注释）。
@@ -478,39 +478,103 @@ fn tab_strip(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement 
 /// 定夺：⋯ 菜单三入口改到会话 tab 下方的功能栏，见 session::session_fn_bar），
 /// label = 会话标题（≤30 字截断不变），前置 bot-message-square icon。激活 =
 /// 会话视图（Obsidian 卡片融底）；点击回会话视图。
-fn session_tab(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
+fn session_tabs(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyElement {
     let t = T();
-    // 会话 tab = 桌面会话（060 宿主功能线退役后无影子会话）
-    let active = chat.layout.content_view == ContentView::Chat;
-    let title: SharedString = chat.session_title(cx).into();
-    let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-        this.set_content_view(crate::ContentView::Chat);
-        cx.notify();
-    });
-    // 右键 = 标签菜单（zed 移植）：会话 tab 恒存不可关，菜单无 Close、
-    // Close Left 恒灰（见 psp_overlays::tab_menu_layer）
-    let ctx_menu = cx.listener(move |this, ev: &gpui::MouseDownEvent, _w, cx| {
-        this.dlg.tab_menu = Some((
-            crate::TabMenuTarget::Session,
-            f32::from(ev.position.x),
-            f32::from(ev.position.y),
-        ));
-        cx.notify();
-    });
-    tab_shell(
-        "ctab-session".into(),
-        Some(crate::ui::icon("bot-message-square", 12., t.text_muted).into_any_element()),
-        title,
-        active,
-        0.,
-        t,
-        switch,
-        None,
-        None,
-        false,
-    )
-    .on_mouse_down(MouseButton::Right, ctx_menu)
-    .into_any_element()
+    // 会话 tab 条 = 每枚已开会话一个 tab（open 序 = pool.tab_order；044-0
+    // 验收：子会话观察窗以**新 tab**（任务名标题）打开，不再挤掉主会话，
+    // tab 栏点回）。空闲退役只清 runtime 不清 tab——点击走 open_session
+    // 秒开重开（tail cache）。
+    let keys = chat.pool.tab_order.clone();
+    if keys.is_empty() {
+        // 启动揭幕前的空档：保持固定段恒有一枚「新会话」锚点（旧单槽观感）
+        let active = chat.layout.content_view == ContentView::Chat;
+        return tab_shell(
+            "ctab-session-empty".into(),
+            Some(crate::ui::icon("bot-message-square", 12., t.text_muted).into_any_element()),
+            tr("session.new").into(),
+            active,
+            0.,
+            t,
+            |_, _, _| {},
+            None,
+            None,
+            false,
+        )
+        .into_any_element();
+    }
+    let mut strip = div().flex().items_end().min_w_0();
+    let chat_active = chat.layout.content_view == ContentView::Chat;
+    for (ix, key) in keys.iter().enumerate() {
+        let is_active = chat_active && *key == chat.pool.active_key;
+        // 标题：快照优先（observer = descriptor 任务名；普通会话 = switch_to
+        // 时的 session_title_of），无快照（理论不发生）回落现取
+        let title: SharedString = chat
+            .pool
+            .tab_labels
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| chat.session_title_of(key, cx))
+            .into();
+        let key_click = key.clone();
+        let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+            this.activate_session_tab(key_click.clone(), cx);
+        });
+        let observer = chat
+            .pool
+            .runtimes
+            .get(key)
+            .map(|rt| rt.read(cx).observer)
+            .unwrap_or(false);
+        // × 仅观察窗 tab：observer 无进程，关闭纯摘牌；普通会话 tab 恒存
+        // 不可关（关 = 杀活进程，语义不做）。zed 同则 × 只在激活 tab 渲染
+        // （tab_shell trailing 挂 when(active)）。
+        let key_close = key.clone();
+        let close = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+            this.close_observer_tab(&key_close, cx);
+        });
+        let close_x = div()
+            .id(gpui::ElementId::from(("stabs-x", ix)))
+            .flex_shrink_0()
+            .size(px(20.))
+            .rounded(px(4.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .text_size(crate::appearance::ui_size(14.))
+            .text_color(rgb(t.text_muted))
+            .hover(|s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
+            .on_mouse_down(MouseButton::Left, close)
+            .child("✕");
+        let tab = tab_shell(
+            gpui::ElementId::from(("stabs", ix)),
+            Some(crate::ui::icon("bot-message-square", 12., t.text_muted).into_any_element()),
+            title,
+            is_active,
+            if ix == 0 { 0. } else { 4. },
+            t,
+            switch,
+            observer.then_some(close_x.into_any_element()),
+            None,
+            false,
+        );
+        // 右键标签菜单（zed 移植）仅普通会话激活 tab：菜单操作针对当前
+        // 会话（会话 tab 恒存不可关，菜单无 Close、Close Left 恒灰）
+        if is_active && !observer {
+            let ctx_menu = cx.listener(move |this, ev: &gpui::MouseDownEvent, _w, cx| {
+                this.dlg.tab_menu = Some((
+                    crate::TabMenuTarget::Session,
+                    f32::from(ev.position.x),
+                    f32::from(ev.position.y),
+                ));
+                cx.notify();
+            });
+            strip = strip.child(tab.on_mouse_down(MouseButton::Right, ctx_menu));
+        } else {
+            strip = strip.child(tab);
+        }
+    }
+    strip.into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]

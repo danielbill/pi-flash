@@ -867,6 +867,7 @@ const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.saved", "已保存", "已儲存", "Saved"),
     ("agents.name_invalid", "名称只能含字母、数字、连字符与下划线", "名稱只能含字母、數字、連字號與底線", "Name may only contain letters, digits, hyphens and underscores"),
     // -- 子代理面板（044-1 §1）
+    ("subagent.tab", "子代理", "子代理", "Subagent"),
     ("subagent.panel", "子代理面板", "子代理面板", "Subagent panel"),
     ("subagent.empty", "本会话还没有子代理——在对话里让我委派任务即可", "本會話還沒有子代理——在對話裡讓我委派任務即可", "No subagents in this session yet — delegate a task in the conversation"),
     ("subagent.open_child", "打开子会话", "開啟子會話", "Open child session"),

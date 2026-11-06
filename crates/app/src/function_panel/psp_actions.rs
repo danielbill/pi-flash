@@ -147,6 +147,10 @@ impl Chat {
                     r.shutdown_process();
                 });
             }
+            // 会话文件删了：tab 条同步摘牌（与 delete_session 同口径）
+            let gone = p.to_string_lossy().to_string();
+            self.pool.tab_order.retain(|k| *k != gone);
+            self.pool.tab_labels.remove(&gone);
             let _ = std::fs::remove_file(p);
         }
         self.psp.projects.retain(|g| !same_path(&g.path, &path));
