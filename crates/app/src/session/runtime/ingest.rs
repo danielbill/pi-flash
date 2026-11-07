@@ -211,6 +211,8 @@ impl SessionRuntime {
         self.apply_pending_locate(cx);
         // 同一会话的重读保住钉顶（换工具预设/压缩后重拉都走这里）
         self.restore_anchor_after_reload();
+        // 权威内容落定（哪怕带回 0 条——真空会话不能永久钉在加载页）
+        self.messages_loaded = true;
         self.notify_list(cx);
     }
 }

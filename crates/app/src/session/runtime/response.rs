@@ -251,8 +251,15 @@ impl SessionRuntime {
                     return false;
                 }
                 self.project_rpc_messages(rpc_msgs, cx);
+            } else {
+                // 快照缺 data：没有可投影的内容，加载页放行（真空会话语义，
+                // 2026-11-07）——不能让打开永远钉在「会话载入中…」
+                self.messages_loaded = true;
             }
             self.status = status_line(true, "resumed");
+        } else if command == "get_messages" {
+            // 失败响应：加载页放行（回退空会话页 + 状态条报错，不无限加载）
+            self.messages_loaded = true;
         } else if command == "compact" {
             // 手动压缩（圆环弹窗按钮/斜杠命令）：response 在摘要 LLM
             // 完成后才回（带 summary/usage）——清防连点标志并重拉

@@ -81,7 +81,7 @@ pub(crate) fn nav_card(
     ti: usize,
     s: &crate::session::runtime::TurnSummary,
     on: bool,
-    // 该轮子代理（044-0 验收⑥）：Some 非空 = 有第三行 + hover 左弹扩展菜单
+    // 该轮子代理（044-0 验收⑥）：Some 非空 = 有第三行点阵
     sub_rows: Option<Vec<pi_link::subagent_catalog::CatalogRow>>,
     weak: &gpui::WeakEntity<Chat>,
     rt_entity: &gpui::Entity<crate::session::runtime::SessionRuntime>,
@@ -92,12 +92,6 @@ pub(crate) fn nav_card(
     let user_ix = s.user_ix;
     let rt_scroll = rt_entity.clone();
     let weak_hover = weak.clone();
-    // 轮卡 bounds 测量槽位（扩展菜单锚；canvas 每帧覆盖写，hover 事件读
-    // ——PillBtns::tracker 同款，但生命周期在单帧闭包内）
-    let bounds_slot: crate::session::subagent_panel::BoundsSlot =
-        std::rc::Rc::new(std::cell::RefCell::new(None));
-    let has_sub = sub_rows.is_some();
-    let bounds_hover = bounds_slot.clone();
     let mut turn_el = div()
         .id(SharedString::from(format!("nv-turn-{}", s.user_ix)))
         .mt(px(2.))
@@ -114,49 +108,16 @@ pub(crate) fn nav_card(
         })
         .on_hover(move |h: &bool, _window, cx| {
             let _ = weak_hover.update(cx, |this, cx| {
-                // 第三行轮 hover = 左弹扩展菜单（锚 = 卡 bounds，测量槽位
-                // 由 canvas 每帧写入）。**leave 不动菜单状态**——原先 leave
-                // 清锚，鼠标刚离开卡菜单即死，250ms 宽限形同虚设（真机
-                // 2026-11-07 二次返工）：存活由 enter 事件（卡/面板/菜单）
-                // + flyout leave 宽限 + pumps 到期裁决；卡间移动靠下一张
-                // 卡的 enter 重锚/清锚，绘制逆序的迟到 leave 不误伤
-                if *h {
-                    let anchor = if has_sub {
-                        bounds_hover.borrow().map(|b| (ti, b))
-                    } else {
-                        // 无第三行的卡：立即清锚（卡间移动不残留上一轮菜单）
-                        None
-                    };
-                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
-                        if p.menu_anchor != anchor {
-                            p.menu_anchor = anchor;
-                        }
-                        // 回卡取消待执行的菜单收起（250ms 宽限内往返）；
-                        // 鼠标此刻在卡上必然不在菜单上，顺手纠正存活旗标
-                        //（菜单卸载可能吞掉 hover(false) 留下 stale true）
-                        p.menu_hide_at = None;
-                        p.menu_hovered = false;
-                    }
-                }
                 if *h && this.layout.nav_hover_turn != Some(ti) {
                     this.layout.nav_hover_turn = Some(ti);
                     cx.notify();
                 } else if !*h {
-                    // 离开卡不清锚——菜单横跨 flyout 左缘外 2px，鼠标移入
-                    // 菜单的路径必然离开卡；收起由 flyout leave 宽限接管
+                    // 离开卡不清高亮——gpui 鼠标事件 bubble 阶段按绘制逆序
+                    // 派发，卡间移动的迟到 leave 会误清（v63 根因），统一由
+                    // 面板 on_hover(false) 清理
                     cx.notify();
                 }
             });
-        })
-        // bounds 测量端（absolute inset_0 canvas，不拦事件）
-        .child({
-            let capture = bounds_slot.clone();
-            gpui::canvas(
-                move |b, _, _| *capture.borrow_mut() = Some(b),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0()
         })
         .child(
             // 用户行：点击定位到该用户消息

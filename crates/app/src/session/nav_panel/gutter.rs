@@ -97,40 +97,13 @@ pub(crate) fn nav_gutter(
                     this.layout.nav_open = true;
                     this.layout.nav_hide_at = None;
                     this.layout.nav_flyout_hovered = true;
-                    // 鼠标回面板即取消菜单收起宽限（菜单→面板往返不掉；
-                    // 菜单迟到 leave 靠此态判「已回面板」不上 deadline）
-                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
-                        p.menu_hide_at = None;
-                    }
                 } else {
                     this.layout.nav_flyout_hovered = false;
                     this.layout.nav_hover_turn = None;
-                    // 子代理扩展菜单随 flyout 离开**延迟**收起（250ms 宽限，
-                    // pumps 到期清锚；进菜单/回卡即取消）——原立即清锚，鼠标
-                    // 还没跨过 flyout→菜单的 2px 缝菜单就没了，永远进不去。
-                    // 鼠标已在菜单上时不挂（flyout 收起卸载可能补发 hover
-                    // false，不能给正被悬停的菜单上 deadline）
-                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
-                        if !p.menu_hovered {
-                            p.menu_hide_at = Some(std::time::Instant::now());
-                        }
-                    }
                     this.layout.nav_hide_at = Some(std::time::Instant::now());
                 }
                 cx.notify();
             }));
-        // flyout paint 期 bounds 捕获（dock_bounds 同款 canvas tracker）：
-        // 子代理扩展菜单右缘 = flyout 左缘 − 2px 的定位基准（跨容器常量
-        // 换算不可靠，chat-wrap 右缘 ≠ 本容器右缘）
-        let flyout_bounds_slot = chat.layout.nav_flyout_bounds.clone();
-        flyout_wrap = flyout_wrap.child(
-            gpui::canvas(
-                move |b, _, _| *flyout_bounds_slot.borrow_mut() = Some(b),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .inset_0(),
-        );
         // 总结栏（v63-4）：「icon 数字」四组统计，装配在 nav_summary_header
         let header = nav_summary_header(&summary, t);
         // 卡片列表虚拟化（v63-6）：ListState 只建可视卡片（~20）而非全

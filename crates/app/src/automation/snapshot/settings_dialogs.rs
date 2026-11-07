@@ -223,9 +223,8 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             "x": x,
             "y": y,
         })),
-        // 044-0 验收⑥ 子代理次级弹窗（导航卡第三行 + hover 左弹 400px 菜单）
-        // ——数据化断言出口：turns 只列有点的轮，menu_turn = 当前锚轮
-        // （null=菜单收起）；None = 缓存未建（会话未激活过）
+        // 044-0 验收⑥ 子代理数据面（导航卡第三行点阵）——turns 只列有点的轮
+        // （二级菜单已删除，2026-11-07 用户定夺）；None = 缓存未建（会话未激活过）
         "subagent_panel": chat.dlg.subagent_panel.as_ref().map(|p| {
             json!({
                 "rows": p.rows.len(),
@@ -242,7 +241,6 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                         })
                     })
                     .collect::<Vec<_>>(),
-                "menu_turn": p.menu_anchor.as_ref().map(|(ti, _)| *ti),
             })
         }),
         "ext_dialog": chat.aux.ext_dialog.is_some(),

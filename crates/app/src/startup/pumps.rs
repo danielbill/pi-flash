@@ -152,20 +152,6 @@ fn spawn_pump_120ms(cx: &mut gpui::Context<Chat>) {
                             }
                         }
                     }
-                    // 子代理扩展菜单同款 250ms 宽限：flyout/菜单 hover 离开挂
-                    // deadline，进菜单（menu on_hover）/回卡（nav_card hover）
-                    // 取消——到期且鼠标不在菜单上才清锚收菜单
-                    if let Some(p) = c.dlg.subagent_panel.as_mut() {
-                        if let Some(at) = p.menu_hide_at {
-                            if at.elapsed() > std::time::Duration::from_millis(250)
-                                && !p.menu_hovered
-                            {
-                                p.menu_anchor = None;
-                                p.menu_hide_at = None;
-                                dirty = true;
-                            }
-                        }
-                    }
                     if let Some((_, at)) = &c.dlg.status_toast {
                         if at.elapsed() > std::time::Duration::from_millis(2500) {
                             c.dlg.status_toast = None;

@@ -78,6 +78,25 @@ pub(crate) fn skin(_chat: &Chat) -> &'static template::SessionPageSkin {
     &template::DESKTOP
 }
 
+/// 加载页主体（2026-11-07 用户定夺）：文件已绑定、权威内容未到第一份——
+/// 空白页 + 居中载入提示，不用欢迎语冒充加载态。放行条件见
+/// `SessionRuntime::messages_loaded`（投影落定/失败响应/tail 非空）。
+fn loading_body(t: &crate::appearance::theme::Theme) -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(13.))
+                .text_color(rgb(t.text_dim))
+                .child(tr("session.loading")),
+        )
+        .into_any_element()
+}
+
 pub(crate) fn main_column(
     chat: &mut Chat,
     entity: gpui::Entity<Chat>,
@@ -106,8 +125,17 @@ pub(crate) fn main_column(
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
     // 项目|会话列表为空、或「新建会话」都落在这里。插件功能线除外（皮肤
     // `keep_on_empty`）：它空会话也停在会话页，设置页由功能页分段承担。
-    let new_session_page =
-        rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
+    // 2026-11-07 用户定夺：**文件已绑定但内容未到第一份**的打开窗口渲染
+    // 空白页 + 「会话载入中…」（messages_loaded 未就位），不再拿欢迎页
+    // 冒充加载态——草稿（file=None）才落新会话页；投影/失败响应落定即
+    // 放行（真空会话落正常会话页空列表）。
+    let (messages_empty, file_bound, messages_loaded) = {
+        let r = rt.read(cx);
+        (r.messages.is_empty(), r.file.is_some(), r.messages_loaded)
+    };
+    let new_session_page = messages_empty && !streaming && !page_skin.keep_on_empty && !file_bound;
+    let loading_page =
+        messages_empty && !streaming && file_bound && !messages_loaded && !page_skin.keep_on_empty;
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -171,6 +199,11 @@ pub(crate) fn main_column(
                                 cx,
                             ))
                             .children(ext_widget_rows(chat, t, false));
+                    } else if loading_page {
+                        // 加载页（2026-11-07 用户定夺）：空白页 + 载入提示，
+                        // composer 不渲染（pi 还在恢复会话，此时发送只会堆进
+                        // 未挂线的队列）；内容落定/失败放行见 messages_loaded。
+                        wrap = wrap.child(loading_body(t));
                     } else {
                         wrap = wrap
                             // message list（底部 135px 让位悬浮 composer；
@@ -196,10 +229,6 @@ pub(crate) fn main_column(
                                     .into_any_element()
                             })
                             .children(ext_widget_rows(chat, t, false))
-                            // 子代理扩展菜单（044-0 验收⑥）：导航轮卡 hover
-                            // 左弹的次级浮层，absolute 挂 chat-wrap（右侧对
-                            // 齐导航 flyout 左缘），不推挤消息区。
-                            .children(subagent_panel::subagent_menu_element(chat, weak))
                             // 034 会话区底部状态栏：**absolute** 盖在 chat-wrap
                             // 底缘（最后绘制，压在消息列表之上），不参与 flex 流
                             // —— 开闭都不推挤 Inputpanel（胶囊底距恒为条高）。

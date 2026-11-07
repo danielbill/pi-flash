@@ -118,6 +118,9 @@ impl Chat {
             r.default_model = services::workspace::default_model_pref();
             r.observer = observer;
             r.messages = tail;
+            // tail 有内容 = 打开即有东西看，加载页不拦；空尾窗（文件刚建 /
+            // 老洪泛会话尾段全是 custom 条目）等 get_messages 投影放行
+            r.messages_loaded = !r.messages.is_empty();
             r.pager.reload(r.messages.len());
             r.status = if observer {
                 "observer".into()
