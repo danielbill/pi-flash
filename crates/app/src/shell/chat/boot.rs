@@ -102,6 +102,7 @@ impl Chat {
                 nav_hide_at: None,
                 nav_flyout_hovered: false,
                 nav_hover_turn: None,
+                nav_flyout_bounds: std::rc::Rc::new(std::cell::RefCell::new(None)),
                 nav_flyout_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
                 tabs_scroll: gpui::ScrollHandle::new(),
             },

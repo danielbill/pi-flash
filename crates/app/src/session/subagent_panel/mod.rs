@@ -4,7 +4,7 @@
 //! 2026-11-07 用户定稿（fn_bar 独立浮层退役）：
 //! - 导航轮卡有子代理的轮 → 第三行 `[bot] ●●●●`（点数 = 子代理数，色 =
 //!   会话列表青红点：运行 accent / 完成 NOTICE / 异常 danger）；
-//! - 悬浮该卡 → 左侧弹 400px【子代理详情扩展菜单】（无头部统计行），
+//! - 悬浮该卡 → 左侧弹 500px【子代理详情扩展菜单】（无头部统计行），
 //!   上沿齐卡上沿向下伸；卡在屏幕下半则下沿齐卡下沿向上伸，至多不超过
 //!   导航面板；内容超长滚动；
 //! - 状态卡点击 = 新 tab 打开子会话（观察窗，无输入面板）。
@@ -31,13 +31,14 @@ use pi_link::subagent_catalog::{
 /// 打开期轮询间隔（044-1 §1.4：1s 增量读）。
 const POLL_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// 扩展菜单几何（044-0 验收⑥定稿）：宽 400、状态卡高 70、菜单最小高 90。
-const MENU_W: f32 = 400.;
+/// 扩展菜单几何（044-0 验收⑥定稿）：宽 500、状态卡高 70、菜单最小高 90。
+/// 500 = 用户定稿（2026-11-07）：统计数据怕多走形，导航面板同步 +50 补偿。
+const MENU_W: f32 = 500.;
 const CARD_H: f32 = 70.;
 const MENU_MIN_H: f32 = 90.;
-/// 菜单与导航 flyout（400px）的间距 2px（用户定稿：视觉上连成一体）；
-/// flyout 锚在 gutter（14px）左侧。
-const MENU_RIGHT: f32 = 14. + 400. + 2.;
+/// 菜单与导航 flyout 的间距 2px（用户定稿：视觉上连成一体）。定位基准 =
+/// flyout 实测 bounds（layout.nav_flyout_bounds），不再用跨容器常量
+/// ——chat-wrap 右缘 ≠ flyout 容器右缘，常量曾把 2px 缝实出 ~19px。
 
 /// 状态色（照抄 cards.rs 的 subagent 卡片；中止橙按 044-1 §1.3 交互稿）。
 const C_RUNNING: u32 = 0xeab308;
@@ -219,7 +220,7 @@ fn spawn_poll(cx: &mut gpui::Context<Chat>) {
 /// 不推挤消息区；**不挂全屏外点拦截**（那会把 composer 模型下拉等点击一起
 /// 吃掉，见 buglist 第三批），关 = ✕ 或再点操作栏按钮。
 /// `open=false` → None（不占渲染）。
-/// 【子代理详情扩展菜单】（044-0 验收⑥）：导航轮卡 hover 左弹的 400px
+/// 【子代理详情扩展菜单】（044-0 验收⑥）：导航轮卡 hover 左弹的 500px
 /// 次级浮层。可见性 = `menu_anchor`（hover 的轮卡 bounds；收起走 250ms
 /// 离开宽限——flyout/菜单离开挂 deadline，进菜单/回卡取消，pumps 到期清）。
 /// 垂直定位：默认上沿齐卡上沿向下伸（至多面板底）；卡在屏幕下半（向下
@@ -239,8 +240,11 @@ pub(crate) fn subagent_menu_element(
     }
     // wrap 原点换算（菜单挂 wrap 内 absolute）：槽位由 chat-wrap 的
     // tracker 捕获（044-0 起沿用）；未就绪首帧不出（下一帧 hover 事件
-    // 仍在，自愈）
+    // 仍在，自愈）。水平定位基准 = flyout 实测左缘（paint 期 canvas 写入
+    // layout.nav_flyout_bounds）——菜单右缘 = flyout 左缘 − 2px
     let wrap = chat.dlg.pill_btn.chat_wrap.borrow().clone()?;
+    let flyout = chat.layout.nav_flyout_bounds.borrow().clone()?;
+    let menu_right = wrap.right() - flyout.origin.x + px(2.);
     let card_top = (card.origin.y - wrap.origin.y).max(px(0.));
     let card_bottom = (card.bottom() - wrap.origin.y).min(wrap.size.height);
     // 垂直：向下优先（上沿齐卡上沿），可用高不足最小高翻转向上（下沿齐
@@ -264,7 +268,9 @@ pub(crate) fn subagent_menu_element(
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
-        .px(px(6.))
+        // 左右 padding 10px（用户定稿 2026-11-07：两侧对称），行内不再
+        // 自带水平 padding——hover 高亮同样内缩 10px，边缘干净
+        .px(px(10.))
         .py(px(6.));
     for row in &rows_snapshot {
         list = list.child(panel_row(&weak_rows, row));
@@ -273,7 +279,7 @@ pub(crate) fn subagent_menu_element(
     let mut menu = div()
         .id("subagent-menu")
         .absolute()
-        .right(px(MENU_RIGHT))
+        .right(menu_right)
         .w(px(MENU_W))
         .min_h(px(MENU_MIN_H))
         .max_h(max_h)
@@ -292,7 +298,10 @@ pub(crate) fn subagent_menu_element(
             let _ = weak_menu.update(cx, |this, cx| {
                 if let Some(p) = this.dlg.subagent_panel.as_mut() {
                     p.menu_hovered = *h;
-                    p.menu_hide_at = if *h {
+                    // 离开菜单且未回面板 → 挂 250ms 宽限（pumps 到期清锚）；
+                    // enter 一律取消。绘制逆序的迟到 leave 若鼠标已回面板
+                    //（flyout_hovered=true）不上 deadline，防悬停中被收
+                    p.menu_hide_at = if *h || this.layout.nav_flyout_hovered {
                         None
                     } else {
                         Some(std::time::Instant::now())

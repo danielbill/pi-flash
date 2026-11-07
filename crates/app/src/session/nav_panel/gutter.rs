@@ -8,7 +8,7 @@ use super::*;
 /// 轮后段高不再缩小，>10 走百分比桶映射（轮 k → 段 k×10/N，点击回桶首
 /// 轮）。当前定位段 accent
 /// 实色——选中跟随真实滚动位置（贴底 = 末段），卡片悬浮框不回写。
-/// 悬停向左弹出 400px 轮次摘要卡片列表（用户前 50 字 + agent 首条回复
+/// 悬停向左弹出 450px 轮次摘要卡片列表（用户前 50 字 + agent 首条回复
 /// 前 50 字，编号 01-99）+ 30px 总结栏，点击卡片/段定位会话；内容溢出
 /// 时右缘显示滚动条。摘要数据走 runtime 缓存（v63-3）：notify_list 置
 /// 脏惰性重建，渲染帧零重算。
@@ -82,9 +82,10 @@ pub(crate) fn nav_gutter(
             // 下缘与 input panel 底线对齐：composer 悬浮容器的 bottom =
             // footer_bar::BAR_H（034 起永久上移，input/area.rs composer_wrap
             // 同一常量）——旧硬编码 20 与状态带高度脱钩（状态带 28 后 flyout
-            // 比输入面板多探出 8px）
+            // 比输入面板多探出 8px）。450 = 用户定稿（2026-11-07）：子代理
+            // 扩展菜单拓宽到 500 后导航面板补偿 +50
             .bottom(px(crate::session::footer_bar::BAR_H))
-            .w(px(400.))
+            .w(px(450.))
             .flex()
             .flex_col()
             // 悬停保持打开：挂 wrap（含总结栏）而不是滚动区——鼠标挪到
@@ -96,6 +97,11 @@ pub(crate) fn nav_gutter(
                     this.layout.nav_open = true;
                     this.layout.nav_hide_at = None;
                     this.layout.nav_flyout_hovered = true;
+                    // 鼠标回面板即取消菜单收起宽限（菜单→面板往返不掉；
+                    // 菜单迟到 leave 靠此态判「已回面板」不上 deadline）
+                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
+                        p.menu_hide_at = None;
+                    }
                 } else {
                     this.layout.nav_flyout_hovered = false;
                     this.layout.nav_hover_turn = None;
@@ -113,6 +119,18 @@ pub(crate) fn nav_gutter(
                 }
                 cx.notify();
             }));
+        // flyout paint 期 bounds 捕获（dock_bounds 同款 canvas tracker）：
+        // 子代理扩展菜单右缘 = flyout 左缘 − 2px 的定位基准（跨容器常量
+        // 换算不可靠，chat-wrap 右缘 ≠ 本容器右缘）
+        let flyout_bounds_slot = chat.layout.nav_flyout_bounds.clone();
+        flyout_wrap = flyout_wrap.child(
+            gpui::canvas(
+                move |b, _, _| *flyout_bounds_slot.borrow_mut() = Some(b),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        );
         // 总结栏（v63-4）：「icon 数字」四组统计，装配在 nav_summary_header
         let header = nav_summary_header(&summary, t);
         // 卡片列表虚拟化（v63-6）：ListState 只建可视卡片（~20）而非全

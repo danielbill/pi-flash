@@ -421,6 +421,12 @@ pub(crate) struct LayoutUi {
     pub(crate) nav_flyout_hovered: bool,
     /// flyout 内鼠标所在轮（选择框/比例尺亮点跟随鼠标）
     pub(crate) nav_hover_turn: Option<usize>,
+    /// 导航 flyout paint 期 bounds（canvas 每帧捕获；dock_bounds 同款）：
+    /// 子代理扩展菜单的定位基准——菜单右缘 = flyout 左缘 − 2px，跨容器
+    /// 常量换算不可靠（chat-wrap 右缘 ≠ flyout 容器右缘，2px 缝曾实出
+    /// ~19px，真机 2026-11-07）
+    pub(crate) nav_flyout_bounds:
+        std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// 导航 flyout 卡片列表虚拟化句柄（v63-6：只建可视卡片；跨开合保持
     /// 滚动位）
     pub(crate) nav_flyout_list: gpui::ListState,

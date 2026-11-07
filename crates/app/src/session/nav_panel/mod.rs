@@ -115,18 +115,22 @@ pub(crate) fn nav_card(
         .on_hover(move |h: &bool, _window, cx| {
             let _ = weak_hover.update(cx, |this, cx| {
                 // 第三行轮 hover = 左弹扩展菜单（锚 = 卡 bounds，测量槽位
-                // 由 canvas 每帧写入）；无第三行的卡 hover 清锚（卡间移动
-                // 不残留上一轮的菜单）
-                let anchor = if *h && has_sub {
-                    bounds_hover.borrow().map(|b| (ti, b))
-                } else {
-                    None
-                };
-                if let Some(p) = this.dlg.subagent_panel.as_mut() {
-                    if p.menu_anchor != anchor {
-                        p.menu_anchor = anchor;
-                    }
-                    if anchor.is_some() {
+                // 由 canvas 每帧写入）。**leave 不动菜单状态**——原先 leave
+                // 清锚，鼠标刚离开卡菜单即死，250ms 宽限形同虚设（真机
+                // 2026-11-07 二次返工）：存活由 enter 事件（卡/面板/菜单）
+                // + flyout leave 宽限 + pumps 到期裁决；卡间移动靠下一张
+                // 卡的 enter 重锚/清锚，绘制逆序的迟到 leave 不误伤
+                if *h {
+                    let anchor = if has_sub {
+                        bounds_hover.borrow().map(|b| (ti, b))
+                    } else {
+                        // 无第三行的卡：立即清锚（卡间移动不残留上一轮菜单）
+                        None
+                    };
+                    if let Some(p) = this.dlg.subagent_panel.as_mut() {
+                        if p.menu_anchor != anchor {
+                            p.menu_anchor = anchor;
+                        }
                         // 回卡取消待执行的菜单收起（250ms 宽限内往返）；
                         // 鼠标此刻在卡上必然不在菜单上，顺手纠正存活旗标
                         //（菜单卸载可能吞掉 hover(false) 留下 stale true）
@@ -138,8 +142,8 @@ pub(crate) fn nav_card(
                     this.layout.nav_hover_turn = Some(ti);
                     cx.notify();
                 } else if !*h {
-                    // 离开卡不清锚（菜单紧邻 flyout 左缘，鼠标移入菜单的
-                    // 路径上会短暂离开卡）——锚生命周期绑定 flyout hover
+                    // 离开卡不清锚——菜单横跨 flyout 左缘外 2px，鼠标移入
+                    // 菜单的路径必然离开卡；收起由 flyout leave 宽限接管
                     cx.notify();
                 }
             });

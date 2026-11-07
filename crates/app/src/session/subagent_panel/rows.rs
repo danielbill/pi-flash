@@ -31,7 +31,8 @@ pub(super) fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui
         .id(SharedString::from(format!("subagent-row-{}", row.child_id)))
         .w_full()
         .h(px(CARD_H))
-        .px(px(12.))
+        // 水平 padding 挂 list（px(10)，用户定稿两侧对称）——行内不再带
+        // 水平 padding，hover 高亮随之内缩，菜单边缘干净
         .mb(px(1.))
         .rounded(px(crate::ui::tokens::radius::INLINE))
         .flex()
@@ -113,8 +114,8 @@ pub(super) fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui
             ),
     )
     .child(
-        // 行二：任务名（label 退 childId，超长截断）。px(23) = 容器 12 +
-        // 标记列 15 + 行一 gap 8 − 容器 12 —— 与行一子代理名称左缘对齐
+        // 行二：任务名（label 退 childId，超长截断）。px(23) = list 10 +
+        // 标记列 15 + 行一 gap 8 − list 10 —— 与行一子代理名称左缘对齐
         div()
             .min_w_0()
             .overflow_hidden()
