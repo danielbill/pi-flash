@@ -223,6 +223,28 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             "x": x,
             "y": y,
         })),
+        // 044-0 验收⑥ 子代理次级弹窗（导航卡第三行 + hover 左弹 400px 菜单）
+        // ——数据化断言出口：turns 只列有点的轮，menu_turn = 当前锚轮
+        // （null=菜单收起）；None = 缓存未建（会话未激活过）
+        "subagent_panel": chat.dlg.subagent_panel.as_ref().map(|p| {
+            json!({
+                "rows": p.rows.len(),
+                "turns": p
+                    .turn_agents
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, v)| !v.is_empty())
+                    .map(|(i, v)| {
+                        json!({
+                            "turn": i,
+                            "count": v.len(),
+                            "phases": v.iter().map(|r| r.phase.clone()).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                "menu_turn": p.menu_anchor.as_ref().map(|(ti, _)| *ti),
+            })
+        }),
         "ext_dialog": chat.aux.ext_dialog.is_some(),
         "toast": chat.dlg.status_toast.as_ref().map(|(t, _)| truncate(t, 200)),
         "settings_open": chat.dlg.settings.is_some(),

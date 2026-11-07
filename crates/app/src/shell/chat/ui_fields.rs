@@ -288,8 +288,10 @@ pub(crate) struct DlgUi {
     /// 010 重设计 send 门：无项目态下用户敲下的文字在弹「打开项目」前
     /// 暂存于此，switch_project 选定目录后回填并自动发送（话不丢）
     pub(crate) pending_send: Option<String>,
-    /// 子代理浮层面板（044-1 §1）：Some = 开着（1s 轮询启动），None = 关闭
-    /// （轮询停止）。rows 是累积的 descriptor 投影，offset 是下一轮续读起点。
+    /// 子代理数据缓存（044-0 验收⑥）：会话激活即建（switch_to →
+    /// ensure_subagent_panel），1s 常驻轮询——不是开关态面板；菜单可见性 =
+    /// menu_anchor（导航卡 hover 锚）。rows 是累积的 descriptor 投影，
+    /// offset 是下一轮续读起点。
     pub(crate) subagent_panel: Option<crate::session::SubagentPanel>,
     /// 040-1 topbar 三横「菜单」浮层：Some = 开着，值为按钮锚点（x, y）。
     /// 渲染挂 render.rs 根（与 psp_overlays 同层），菜单项目前只有

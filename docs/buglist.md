@@ -82,6 +82,26 @@
   prompt/回答正文，检视路径=面板行点击打开子会话（B2 已修复）。
 - **只读观察窗的外部追加跟随（~3s）未验证**：依赖 B2，随本轮一并复验。
 
+## 待复验（2026-11-07 修复）——验收⑥导航第三行/悬浮菜单哑火：descriptor 丢 parentToolCallId（fcf1a069）
+
+- 现象：面板迁导航次级弹窗（验收⑥）后，导航轮卡永远不出第三行状态点，
+  hover 也不弹 400px 扩展菜单。
+- 根因（真机会话 JSONL 实锤：55 条 descriptor 全缺字段，父会话 12 个 agent
+  工具调用 id 都在）：扩展 `DelegationContext` 收了 `parentToolCallId` 但
+  `manager.start` 没传、`SubagentRequest` 类型上就没这字段——所有 descriptor
+  落盘即缺，宿主按轮归组（turn_agents）无钥匙可用，永远空。PF 侧接线经
+  全量核验完整（switch_to 全路径覆盖 / fn_bar 拆净 / 菜单无条件挂载）。
+- 修法：`types.ts` SubagentRequest +字段 → `tool.ts` 透传 → `manager.ts`
+  两处 createDescriptor（含 B3③ 满拒 descriptor）带上；npm test 114 绿
+  （112+2 回归：成功路径/满拒路径）。
+- **老会话不可追溯**：修复前落盘的 descriptor 已缺字段，JSONL 只追加、
+  无法补写——老会话第三行/菜单**永远不出现**，属数据现实非 bug。
+- 验证：重启 PF（扩展 jiti 直载随 pi 进程生效，无需重编）→ **新派发一轮**
+  （≥1 个 agent 工具调用）→ 导航 flyout 对应轮卡出第三行 `[bot] ●●●`
+  （完成青/异常红/运行 accent），hover 该卡左侧弹 400px 扩展菜单（状态卡
+  可点开观察窗）；数据面断言可用 `pif-ui snapshot dialogs` 的
+  `subagent_panel.turns`（2026-11-07 加）。
+
 ## 已修（0.4.1 发版复盘，2026-11-03）——0.4.0 发布包缺子代理扩展（agent 工具）
 
 - 根因：f848fdfa 把内置子代理扩展改名 `extensions/pi-subagents` → `extensions/pf-subagents`
