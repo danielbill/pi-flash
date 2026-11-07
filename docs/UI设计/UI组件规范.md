@@ -442,6 +442,7 @@ thread_local——paint 期每帧重注册闭包，局部变量活不过一次�
 | 键帽 Kbd | 高 **22**、`min-w 22`、`px 7`、r5、mono ui(11)；底 `cap_bg`、1px border、底部 1px 硬阴影（edge = border 混深） | shortcuts |
 | 主题卡 | 高 **36**、r5、1px border（选中 → **2px** accent）、`px 8`、gap 6、底色 = 该主题 `bg`；**每行 5 槽等宽、gap 8、mt 8**；槽位外包无 padding 容器（否则 flex 不等宽） | general 外观页 |
 | 滑块 | 180×18、轨道 4、旋钮 12（同 §5.12） | `width_slider` |
+| 步进器 `stepper` | −/+ 两钮各 **24×24** r**5** 1px border 底 `bg_panel`（ui(13) semibold `text_dim`，边界钮置灰 `text_muted`），中间值 **min-w 28** 居中 ui(12.5) semibold `text_muted`，gap **8**；点击 `cur()` 重读当前值、对齐步长网格后夹回 [min,max] 交 `apply` | `kit/stepper.rs`（misc 会话显示数/清理天数、agents 最大并发） |
 | 列表行高（可缩放页） | `max(ui(11) + 19, 30)`——随字号长个，不写死 30 | models 侧栏 |
 | 表单（子代理页） | label 列 **w96**、控件列 **w250**（下拉/输入框 30 高）、textarea **170**、行距 **8**、区块 gap **12** | agents |
 

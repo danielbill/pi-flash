@@ -26,7 +26,8 @@ pub(crate) use crate::ui::{DropdownState, VListHeight, icon, vlist};
 pub(crate) use widgets::{
     Btn, LIST_W, SwitchMark, config_button, config_switch, detail_shell, error_note,
     error_note_right, field, group_header, group_switch, mono_text, note, note_right, scope_tag,
-    section_title, set_row, sidebar_list, sidebar_shell, status_dot, switch_base, width_slider,
+    section_title, set_row, sidebar_list, sidebar_shell, status_dot, stepper, switch_base,
+    width_slider,
 };
 
 /// 页签序：0 界面 · 1 模型 · 2 技能 · 3 扩展 · 4 MCP · 5 其他 · 8 快捷键。

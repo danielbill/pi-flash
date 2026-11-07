@@ -8,7 +8,7 @@
 use super::*;
 
 pub(crate) mod controls;
-use controls::{clean_stepper, dir_row, stepper, switch};
+use controls::{clean_stepper, dir_row, switch};
 
 pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
@@ -94,7 +94,6 @@ pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> g
                 crate::services::workspace::save_app_settings(&s);
             },
             weak,
-            t,
         ),
         t,
     ));
@@ -104,7 +103,7 @@ pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> g
     col = col.child(set_row(
         tr("settings.auto_clean_title"),
         tr("settings.auto_clean_hint"),
-        clean_stepper(weak, t),
+        clean_stepper(weak),
         t,
     ));
 

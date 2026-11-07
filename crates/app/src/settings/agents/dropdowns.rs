@@ -189,58 +189,34 @@ fn sanitize_id(raw: &str) -> String {
 
 /// 顶条「全局设置」（T 型布局首行，2026-11-07 用户定稿，对齐扩展页顶条）：
 /// 两项一行——模块开关（写 app_settings `subagent_enabled`，关闭 = 下方
-/// 列表/表单整体不可见）+ 最大并发（2-10，默认 3）。嵌套深度恒定 1，
-/// 不设 UI。开发旗标 `subagents` 仍是总闸（PI_FLASH_SUBAGENTS 强关 =
-/// 整页从导航消失）；并发 spawn 时 env 传导给 pf-subagents。
+/// 列表/表单整体不可见）+ 最大并发（2-10，默认 3，kit 标准步进器）。
+/// 嵌套深度恒定 1，不设 UI。开发旗标 `subagents` 仍是总闸
+/// （PI_FLASH_SUBAGENTS 强关 = 整页从导航消失）；并发 spawn 时 env
+/// 传导给 pf-subagents。
 pub(super) fn global_settings_bar(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
     let on = crate::services::workspace::subagent_module_switch();
-    let cap = crate::services::workspace::subagent_capacity() as u32;
-    // 最大并发步进（−/值/+）：模块关着时禁用（委派已停，调它无意义）
-    let mk = |bid: String, txt: &'static str, to: u32, disabled: bool| {
-        config_button(
-            bid,
-            weak,
-            txt,
-            Btn::Secondary,
-            true,
-            disabled,
-            move |_, cx| {
-                crate::services::workspace::set_subagent_capacity(to as u64);
-                cx.notify();
-            },
-        )
-    };
+    let cap = crate::services::workspace::subagent_capacity();
     let cap_item = div()
         .flex()
         .items_center()
-        .gap(px(6.))
+        .gap(px(8.))
         .child(
             div()
                 .text_size(crate::appearance::ui_size(12.))
                 .text_color(rgb(t.text))
                 .child(tr("agents.capacity")),
         )
-        .child(mk(
-            "ag-cap-dec".into(),
-            "\u{2212}",
-            cap.saturating_sub(1).max(2),
-            !on || cap <= 2,
-        ))
-        .child(
-            div()
-                .w(px(20.))
-                .text_center()
-                .text_size(crate::appearance::ui_size(12.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(SharedString::from(cap.to_string())),
-        )
-        .child(mk(
-            "ag-cap-inc".into(),
-            "+",
-            (cap + 1).min(10),
-            !on || cap >= 10,
+        .child(stepper(
+            "ag-cap",
+            cap,
+            2,
+            10,
+            1,
+            |v| v.to_string(),
+            crate::services::workspace::subagent_capacity,
+            crate::services::workspace::set_subagent_capacity,
+            weak,
         ));
     // 模块开关行
     let sw_row = div()

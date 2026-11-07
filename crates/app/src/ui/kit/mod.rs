@@ -14,7 +14,7 @@
 //!
 //! 目录：`button` 按钮 / `switch` 开关 / `toggle` 工具条开关钮 / `row` 行与
 //! 文本 / `layout` 两栏骨架 / `badge` 徽标与状态点 / `checkbox` 勾选框 /
-//! `slider` 连续量。
+//! `slider` 连续量 / `stepper` 步进器。
 
 mod badge;
 mod button;
@@ -22,6 +22,7 @@ mod checkbox;
 mod layout;
 mod row;
 mod slider;
+mod stepper;
 mod switch;
 mod toggle;
 
@@ -31,5 +32,6 @@ pub(crate) use checkbox::*;
 pub(crate) use layout::*;
 pub(crate) use row::*;
 pub(crate) use slider::*;
+pub(crate) use stepper::*;
 pub(crate) use switch::*;
 pub(crate) use toggle::*;
