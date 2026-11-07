@@ -88,9 +88,19 @@ impl ChatList {
         // 尾部后尾部条目不可见（第 5 步也跳过重测），below 是陈旧/低估值，不足以
         // 推翻已确立的跟尾——误翻会把垫片涨回一整屏（尾部凭空多一屏空白），滚回
         // 贴底先看到空白、判定翻回又瞬移。真发生轮末缩水也不急：滚回贴底（
-        // free_scroll 复位）后下一帧 take_frame_sync 照常补账重钉。反向翻转
+        // free_scroll 复位）后下一帧 take_frame_sync 照常补账重钉。
+        //
+        // agent 运行中同样禁止：轮中工具卡/子代理卡形状变化（toolResult 到达、
+        // 状态切换、poll 回写 details）会让锚下内容缩水几十~几百px，below 跌破
+        // 内容区被判「该钉顶」——但轮还没结束，翻回钉顶会把视口拽回上一轮用户
+        // 消息（乱跳），翻转帧按旧逻辑位渲染满屏垫片、内容顶出视口上沿（屏幕
+        // 全空一帧）。轮末整形（工作详情折叠）发生在 AgentEnd 之后，此时
+        // agent_running 已翻 false，照常放行。两条拦截各管各的误翻源；反向翻转
         // （钉顶 → 跟尾）照旧放行（follow_flip_while_free_scroll_does_not_yank）。
-        if self.core.following.get() && !follow && self.core.free_scroll.get() {
+        if self.core.following.get()
+            && !follow
+            && (self.core.free_scroll.get() || self.core.agent_running.get())
+        {
             return;
         }
         self.core.settled.set(true);
@@ -125,6 +135,13 @@ impl ChatList {
             return false;
         };
         let (_, follow) = spacer_target(avail, below);
+        // agent 运行中只放行「钉顶 → 跟尾」正向翻转（流式内容涨过一屏必须能转
+        // 跟尾）；「跟尾 → 钉顶」与 settle_spacer 同源拦截（理由见彼处）：轮中
+        // 工具卡缩水是运行期噪声，误报会让每帧翻转请求 → sync → 满屏垫片过渡
+        // 帧（屏幕全空）。轮末整形在 AgentEnd 后，值已翻 false，照常补账重钉。
+        if self.core.agent_running.get() && !follow && self.core.following.get() {
+            return false;
+        }
         follow != self.core.following.get()
     }
 

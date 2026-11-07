@@ -159,6 +159,7 @@ impl SessionRuntime {
                         let _ = this.update(cx, |rt, cx| {
                             rt.notify_pending = false;
                             rt.notify_last = Some(std::time::Instant::now());
+                            rt.pager.set_agent_running(rt.agent_running);
                             rt.pager.sync(rt.messages.len(), rt.phase_row_visible());
                             rt.nav_dirty = true;
                             cx.notify();
@@ -170,6 +171,7 @@ impl SessionRuntime {
             }
         }
         self.notify_last = Some(now);
+        self.pager.set_agent_running(self.agent_running);
         self.pager
             .sync(self.messages.len(), self.phase_row_visible());
         // 消息变化（含流式 delta 路径）→ 导航摘要置脏，渲染帧惰性重建

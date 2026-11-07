@@ -95,6 +95,7 @@ impl ChatList {
             free_scroll: Cell::new(false),
             settled: Cell::new(false),
             following: Cell::new(false),
+            agent_running: Cell::new(false),
             settle_attempts: Cell::new(0),
             nav_pinned: Cell::new(None),
         });
@@ -177,6 +178,12 @@ impl ChatList {
             return false;
         }
         self.follow_decision_stale(ix)
+    }
+
+    /// 同步 agent 运行态（事件层 notify_list 两处 sync 调用点每拍前置调用；
+    /// pi 事件尾部统一走 notify_list，值不会滞后于真实状态）
+    pub(crate) fn set_agent_running(&self, running: bool) {
+        self.core.agent_running.set(running);
     }
 
     /// 搜索命中 / 导航点击定位：reveal 条目
@@ -408,6 +415,13 @@ struct Core {
     settled: Cell<bool>,
     /// 内容长过内容区：spacer 归零、交还贴底胶水跟随尾部
     following: Cell<bool>,
+    /// agent 运行中（事件层 notify_list 每拍同步）：跟尾期禁止「跟尾 → 钉顶」
+    /// 回退——轮中工具卡/子代理卡形状变化（toolResult 到达、状态切换、details
+    /// 回写）会让锚下内容缩水，below 跌破内容区纯属运行期噪声，不是轮末整形；
+    /// 此时翻回钉顶会把视口拽回上一轮用户消息（乱跳），翻转帧按旧逻辑位渲染
+    /// 满屏垫片、内容顶出视口（屏幕全空一帧）。轮末整形发生在 AgentEnd 之后，
+    /// 值已翻 false，照常放行
+    agent_running: Cell<bool>,
     /// 结算尝试次数（渲染帧驱动，带上限防病态循环）
     settle_attempts: Cell<u32>,
     /// 导航点击钉住的轮次（v63-7）：点击定位后选中段固定为该轮——贴底

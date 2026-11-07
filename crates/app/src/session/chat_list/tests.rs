@@ -480,6 +480,46 @@ mod glue_geometry {
         assert!(!pager.take_frame_sync());
     }
 
+    /// agent 运行中，轮中工具卡/子代理卡形状变化（toolResult 到达、状态切换、
+    /// details 回写）让锚下内容缩水：**不得**翻回钉顶——此时翻会把视口拽回上
+    /// 一轮用户消息（乱跳），且翻转帧按旧逻辑位渲染满屏垫片、内容顶出视口上
+    /// 沿（屏幕全空一帧）。轮末整形（AgentEnd，值翻 false）照常补账钉顶。
+    #[gpui::test]
+    fn agent_running_blocks_midturn_flip_settles_at_end(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let seen: Rc<RefCell<Vec<(usize, Bounds<Pixels>)>>> = Default::default();
+        let pager = Rc::new(ChatList::new());
+
+        // 发送 → 结算 → 长回复（垫片归零、跟尾）
+        let mut heights = vec![500., 100.];
+        pager.reload(heights.len());
+        paint(window, &pager, &seen, &heights, false);
+        pager.page_turn(1, heights.len(), false);
+        paint(window, &pager, &seen, &heights, false);
+        step(window, &pager, &seen, &heights, false);
+        heights.push(1200.);
+        step(window, &pager, &seen, &heights, false);
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), 0.);
+
+        // 轮中缩水（工具卡收拢 1200→300）：运行态下帧自检不报翻转、垫片不涨、
+        // 不钉顶（内容短于视口会暂被胶水拽到屏底，属可接受的中间态，等轮末整形）
+        pager.set_agent_running(true);
+        heights[2] = 300.;
+        let items = paint(window, &pager, &seen, &heights, false);
+        assert!(!pager.take_frame_sync());
+        assert_eq!(pager.spacer_px(), 0.);
+        assert_ne!(top(&items, 1), Some(px(PAD_TOP)));
+
+        // 轮末整形（AgentEnd）：照常补账钉顶，锚点回屏顶
+        pager.set_agent_running(false);
+        paint(window, &pager, &seen, &heights, false);
+        assert!(pager.take_frame_sync());
+        let items = step(window, &pager, &seen, &heights, false);
+        assert_eq!(pager.spacer_px(), AVAIL);
+        assert_eq!(top(&items, 1), Some(px(PAD_TOP)));
+    }
+
     /// 内容**变矮**（轮末把思考/工具折进「工作详情」）且**没有 pi 事件**时，
     /// 钉顶必须纹丝不动：垫片是常数（一整屏内容区高），gpui「锚下填不满视口就
     /// 强制贴底」的覆盖条件恒不成立，逻辑位不会被夺走。
