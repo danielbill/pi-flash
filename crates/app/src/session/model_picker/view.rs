@@ -294,11 +294,13 @@ pub(crate) fn view(
 
     // 列表高 = min(内容高, 10 行上限, 视口内可用高)：内容超高时列表滚动
     // （滚动条常显），卡片也不顶出窗口沿。
-    // 可用高 = 卡片纵边到对面视口缘 - 过滤块(10+30+6) - 列表底部留白(6)
+    // 可用高 = 卡片纵边到对面视口缘的净空 - 过滤块(10+30+6) - 列表底部
+    // 留白(6)：向上弹 = 视口顶缘 → 卡底缘（vp.height - bottom 偏移），
+    // 向下弹 = 卡顶缘 → 视口底缘
     let filter_h = if show_filter { 46. } else { 0. };
     let space = match pos.top {
         Some(top) => vp.height - top,
-        None => pos.bottom.unwrap_or_default(),
+        None => vp.height - pos.bottom.unwrap_or_default(),
     };
     let avail_h = (space - px(filter_h + 6.)).max(px(80.));
     let list_h = content_h.min(ROW_H * 10.).min(avail_h.to_f64() as f32);
