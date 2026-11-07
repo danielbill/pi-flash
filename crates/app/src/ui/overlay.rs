@@ -43,8 +43,14 @@ pub fn layer(
         .inset_0()
         // 规则 1：这一层就是鼠标的终点（子元素后绘制不受影响）
         .occlude()
-        // 规则 2：点在卡片外 = 关（卡片自己 stop_propagation）
-        .on_mouse_down(MouseButton::Left, move |_, w, cx| outside(w, cx));
+        // 规则 2：点在卡片外 = 关（卡片自己 stop_propagation）。
+        // dismiss 后立刻 stop_propagation：**硬禁穿透**——即便 hitbox 链因
+        // 任何实现细节放行（真实硬件点击曾观察到设置面板点击落到下层会话
+        // 链接上，2026-11-07 用户报告），事件也到不了浮层之下的表面。
+        .on_mouse_down(MouseButton::Left, move |_, w, cx| {
+            outside(w, cx);
+            cx.stop_propagation();
+        });
     if dim {
         el = el.bg(gpui::hsla(0., 0., 0., 0.35));
     }
