@@ -139,6 +139,7 @@ export class SubagentManager {
 			const descriptor = createDescriptor({
 				childId,
 				provider: provider.name,
+				parentToolCallId: request.parentToolCallId,
 				cwd: request.cwd ?? process.cwd(),
 				depth: request.depth,
 				label: request.label,
@@ -162,6 +163,7 @@ export class SubagentManager {
 			descriptor: createDescriptor({
 				childId,
 				provider: provider.name,
+				parentToolCallId: request.parentToolCallId,
 				cwd: request.cwd ?? process.cwd(),
 				depth: request.depth,
 				label: request.label,

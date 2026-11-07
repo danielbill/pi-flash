@@ -155,6 +155,7 @@ export async function runDelegation(
 		const activation = await options.manager.start({
 			provider: options.providerName,
 			parentId: context.parentId,
+			parentToolCallId: context.parentToolCallId,
 			depth: context.depth + 1,
 			prompt: input.prompt,
 			profile: input.profile ?? options.defaultProfile,

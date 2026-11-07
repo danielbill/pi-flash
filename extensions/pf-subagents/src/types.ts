@@ -35,6 +35,9 @@ export interface SubagentRequest {
 	childId?: string;
 	/** Owning session id, used for quota and ownership. */
 	parentId: string;
+	/** The parent's `agent` tool call id (044-0 descriptor field table): the
+	 * key the host nav panel uses to group children under their turn. */
+	parentToolCallId?: string;
 	/** Depth of the child: parent depth + 1. Root callers pass 1. */
 	depth: number;
 	prompt: string;

@@ -116,6 +116,49 @@ describe("delegation tool", () => {
 		assert.equal(result.isError, true);
 		assert.equal(result.content[0].text, "partial");
 	});
+
+	// 044-0 验收⑥回归：parentToolCallId 必须贯穿 runDelegation → manager →
+	// descriptor——宿主导航轮卡第三行按它与父会话 agent 工具调用 id 对号
+	// 入座；曾经 DelegationContext 收了但 manager.start 没传，所有 descriptor
+	// 都丢字段，导航第三行+悬浮菜单整体哑火（真机 2026-11-07）。
+	it("threads parentToolCallId into the descriptor", async () => {
+		const { manager, provider } = setup();
+		const pending = runDelegation(
+			{ manager, providerName: "scripted", inheritsParentContext: false },
+			{ prompt: "x" } as never,
+			{ parentId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_00_abc" } as never,
+		);
+		await new Promise((resolve) => setImmediate(resolve));
+		provider.children[0].complete("done");
+		await pending;
+		const desc = manager.descriptors().find((d) => d.childId === "sub-1");
+		assert.equal(desc?.parentToolCallId, "call_00_abc");
+	});
+
+	it("carries parentToolCallId on the capacity-rejected descriptor too", async () => {
+		// onDescriptor 是构造器选项（ManagerOptions），实例化后再赋值无效
+		const seen: Array<Record<string, unknown>> = [];
+		const manager = new SubagentManager({
+			capacity: 1,
+			onDescriptor: (d) => seen.push(d as Record<string, unknown>),
+		});
+		const provider = new ScriptedProvider("scripted");
+		manager.registry.register(provider);
+		const context = { parentId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_01_rej" };
+		const call = (prompt: string) =>
+			runDelegation(
+				{ manager, providerName: "scripted", inheritsParentContext: false },
+				{ prompt } as never,
+				context as never,
+			);
+		void call("slot 1");
+		await new Promise((resolve) => setImmediate(resolve));
+		const result = await call("slot 2");
+		assert.equal(result.isError, true);
+		const failed = seen.at(-1) as Record<string, unknown> | undefined;
+		assert.equal(failed?.["phase"], "failed");
+		assert.equal(failed?.["parentToolCallId"], "call_01_rej");
+	});
 });
 
 describe("delegation description", () => {
