@@ -39,11 +39,13 @@
    请求不满足的能力 → 稳定分码显式拒绝,**绝不静默降级**。
 3. **delivery 二分**:`caller`(结果即工具结果,await 返回;v1 全部)⊥
    `parent`(立即返回 childId,完成走通知;v2 后台)。同一框架,两种投递。
-4. **容量⊥深度分离**:每父会话在线名额(默认 4~8),**耗尽即拒不排队**
+4. **容量⊥深度分离**:每父会话在线名额(默认 3,glm 服务器侧约束;设置页
+   可配 2-5),**耗尽即拒不排队**
    (`CAPACITY_REACHED`;排队会造成"等待后代的父代理又等待自己占用名额"
-   级联死锁);名额与 `maxTurns`、委派深度预算相互独立。深度写死 1
-   (构造期:子会话 loader 不装配本扩展;运行期:读到 child-marker entry
-   不注册工具)。
+   级联死锁);名额与 `maxTurns`、委派深度预算相互独立。深度默认 1
+   (设置页可配 1-3;构造期:子会话 loader 不装配本扩展;运行期:读到
+   child-marker entry 不注册工具)。容量/深度由 PF 模块设置下发
+   (env 初值 + `PI_FLASH_APP_SETTINGS` 每次委派实时重读,见 044-0 模块设置节)。
 5. **中断三层**:本地子级=停当前轮次、保留队列与后代;外部后端=永久停止;
    对已结束子级=空操作容忍。父 turn 中止 = 前台子代理级联中止(signal 级联)。
 6. **稳定失败分码**:`CAPACITY_REACHED` / `PROFILE_INVALID` / `DEPTH_LIMIT` /
@@ -68,7 +70,13 @@
 ## 3. 工具面:一个工具,两个入口
 
 ```
-agent(prompt, { profile?, model?, cwd?, background? }) → { sessionId, text, usage, durationMs }
+agent(prompt, { profile?, model?, cwd?, label?, maxloop?, background? })
+  → { sessionId, text, usage, durationMs }
+
+- label: 任务短标签(transcript/面板显示);maxloop: 委派级轮次预算
+  (0=不限,省略=100;优先级 maxloop > profile maxTurns > 默认 100)。
+- 工具描述注册期动态注入容量上限 +「CAPACITY_REACHED 等槽位释放重派」
+  引导(2026-11-06,B3①)。
 ```
 
 - `exposure: "direct"` + `executionMode: "parallel"` + `namespace: "subagents"` +
@@ -105,7 +113,14 @@ createAgentSessionFromServices({
 - 进度经 spawn 工具 `onUpdate` 流出(details 带 sessionId、状态、最后活动、
   token 计数)→ `tool_execution_update` 天然过 RPC → 嵌套卡片。
 - 完整过程:宿主直读子 JSONL(路径在 details/entry),点击跳转。
-- 聚合面板:扩展 `setWidget`,宿主渲染(数据源 = §1 第 7 条 catalog)。
+- 聚合面板:**descriptor 拉模型**(父会话 JSONL 的 descriptor entry 即事实源,
+  宿主常驻轮询;`setWidget` 通道已弃用,见 044-1 §5 决策记录)。被拒委派也落
+  failed descriptor(B3③);失败 onUpdate 分片(status=failed + error_code)
+  经 `tool_execution_update` 即时上卡(B3②;该事件曾被 PF WireEvent 空臂
+  整体丢弃,2026-11-06 接通,限 agent 工具)。
+- watcher 守卫陷阱(B1):每轮 stats/usage 上报的守卫须 **settled/failed 才拦**
+  ——caller 投递下 `wait()` 即置 settling,`state!=="active"` 会吞掉整个
+  运行期的逐轮上报。
 
 ## 7. 持久化与孤儿恢复
 
@@ -125,34 +140,43 @@ manager(机制层),只消费目录约定,不拥有定义——预制与自定义
 
 | 来源 | 路径/载体 | 说明 |
 |---|---|---|
-| 自定义 | `~/.pi/agent/agents/*.md` | 用户完全所有;同名覆盖内置 |
+| 自定义(全局) | `<PF数据目录>/agents/*.md`(env `PI_SUBAGENTS_PROFILES_DIR` 注入) | 用户完全所有;同名覆盖内置 |
+| 自定义(项目) | `<cwd>/.pi-flash/agents/*.md` | 项目级覆盖全局 |
 | 内置 | 扩展代码内常量 | 随 pf-subagents 出厂,只读 |
 
-内置清单:**explorer + general-purpose** 两枚(抄 ZCode 两
-内置;dsh 无出厂内置)。落点 = profile.ts BUILTIN_PROFILE_DOCS +
-pi-link agents.rs builtin_agents,两侧逐字一致(有对账测试);委派工具描述
-注册期扫盘列清单(带 description + tools 档位),模型按意图点名。
+**【2026-11-06 迁改】** 原 `~/.pi/agent/agents/`(pi 全局配置根)迁 PF 自有
+目录——pi 市场社区 subagent 扩展共用旧目录,schema 撞车(命名空间污染);
+启动一次性 copy 迁移(不覆盖已存在,别家不动)。
 
-文件即事实源(PF/CLI/扩展三方共享,零自有存储)。边界:
-①**不分项目级**(只分内置/自定义);②**不做包分发**(内部组件);
-③**PF 编辑走表单**不让用户直写明文,配置后续单独管理
-存储;PF 未识别的新字段**原样透传**。
+内置清单:**explorer / general-purpose / summarizer** 三枚。落点 =
+profile.ts BUILTIN_PROFILE_DOCS + pi-link agents.rs builtin_agents,两侧
+逐字一致(有对账测试);委派工具描述注册期扫盘列清单(带 description +
+tools 档位),模型按意图点名。
+
+边界:①**不做包分发**(内部组件);②**PF 编辑走表单**不让用户直写明文;
+PF 未识别的新字段**原样透传**。
 
 ### 8.2 字段集 v1(frontmatter)
 
 ```yaml
 description: 代码评审          # 列表展示
 model: provider/id            # 路由
-tools: inherit                # 工具档位(034 配方复用):inherit(委派者)
-                              # / read-only / default / full;无 full+ 档
-                              # (full+ 委派者专属,经 inherit 间接获得)
+tools: inherit                # 工具档位(044-0 六档):inherit(委派者)
+                              # / chat-only / read-only / default / full
+                              # / full+(full+ 可选 pi-ext 与 mcp 服务)
 maxTurns: 15                  # 轮次预算:软限(到限 steer 收尾,超限
-                              #    abort),覆盖全局默认;缺省 25
+                              #    abort),覆盖全局默认;缺省 100(0=不限)
 systemPrompt: |               # 替换式人格(before_agent_start
   你是代码评审员…               #    systemPrompt override;优先于追加)
 appendSystemPrompt: …         # 追加式(与替换并存;替换优先)
 injectAgentsMd: true          # 项目 AGENTS.md 是否注入子代理上下文
                               # (默认 true;ZCode 同款开关)
+extensions:                   # full+ 档:挂载的 pi-ext 清单(044-0)
+  - path/to/ext.ts
+mcp:                          # full+ 档:允许的 mcp 服务名清单
+  - server-name
+skills:                       # 注入的 skills(缺省 = 系统开启集)
+  - skill-name
 ```
 
 (追加的语义对齐 pi 官方 SYSTEM.md/APPEND_SYSTEM.md 两档。)

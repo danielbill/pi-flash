@@ -1,3 +1,6 @@
+> **【已退休 2026-11-07】** 开发计划，M1-M6 全部完成并落地（扩展 extensions/pf-subagents + 宿主 session 域），使命终结。
+> M6 的 fn_bar 按钮形态已被 `044-0` 验收⑥（导航次级弹窗）取代；后续修复记录见 `docs/buglist.md`（B1-B5 及验收反馈节）。
+
 # subagent 开发计划(扩展侧,045 配套)
 
 > 依据 [045-subagent管理](045-subagent管理.md)(设计);

@@ -1,3 +1,6 @@
+> **【已退休 2026-11-07】** 测试设计路线（vitest 34 spec 映射）未按计划执行——实况为 node:test 内联测试，落 `extensions/pf-subagents/test/`（112 条全绿，`npm test`）。
+> 现行测试口径见 `045-3` B 节。本文保留作风险清单档案（manager 不变式/深度穿透/Windows worktree 等条目仍有效）。
+
 # subagent 测试设计(045-1 配套)
 
 > 状态:**待开工**。配套 [045-1-subagent开发计划](045-1-subagent开发计划.md)。

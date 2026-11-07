@@ -1,6 +1,8 @@
-# subagent M1 验收清单
+# subagent 验收清单（测试口径 + CLI 排查手册）
 
-> 配套 [045-1 开发计划](045-1-subagent开发计划.md)。对象:`extensions/pf-subagents`。
+> 状态:**B(机制层测试)/C(CLI 排查)现行**;A 节的 PF 内验收为 M1 时点快照——
+> 现行面板/卡形态见 `044-0` 验收①-⑥,待复验项以 `docs/buglist.md` 待复验节为准。
+> ~~配套 045-1 开发计划~~(已退休归档)。对象:`extensions/pf-subagents`。
 > **验收主路径就是跑 PF**:`cargo run -p app`,新会话里让模型委派一次,
 > 界面上看到 `agent` 工具卡与子代理结果。下面 CLI 步骤是排查用的下位手段。
 
@@ -45,7 +47,7 @@ user → assistant(tool_calls=1)→ assistant("PF-SUBAGENT-OK");子会话文件�
 cd extensions/pf-subagents && node --test "test/*.test.ts"
 ```
 
-期望:`ℹ tests 64 / ℹ pass 64 / ℹ fail 0`。
+期望:全绿(2026-11-07 实况 112 条,`npm test` = node --test;M1 时点为 64 条,随测试追加增长)。
 
 覆盖:容量(拒绝不排队/降低上限不杀已在跑)、结算(清理后才交付结果/关准入/
 迟到输入被拒)、注册表(能力协商/重复注册)、深度、描述符(版本/对账)、
@@ -106,11 +108,12 @@ grep -c '"subagent/descriptor"' tmp/subagent-smoke/*.jsonl
 ### C5 容量耗尽(可选,约 3 次调用)
 
 `PI_SUBAGENTS_CAPACITY=2` + 并行三次 → 第三次返回 `CAPACITY_REACHED`(不排队、
+默认 3,设置页可配 2-5 且实时生效;
 不挂起)。
 
 ### C6 Profile
 
-`~/.pi/agent/agents/probe.md`:
+`<PF数据目录>/agents/probe.md`(2026-11-06 迁改,原 `~/.pi/agent/agents/`):
 
 ```markdown
 ---
