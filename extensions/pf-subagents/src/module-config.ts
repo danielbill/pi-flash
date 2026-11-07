@@ -50,8 +50,11 @@ export interface ModuleConfig {
  * module carries numbers of its own; once the file exists it wins entirely.
  */
 export const FALLBACK_MODULE_CONFIG: ModuleConfig = Object.freeze({
-	capacity: Object.freeze({ default: 3, min: 2, max: 10 }),
-	maxDepth: Object.freeze({ default: 1, min: 1, max: 3 }),
+	// Bounds mirror dsh's `maxActiveSubagents` / `maxDepth` schema
+	// (`packages/subagent/subagent/src/index.ts`): 1..MAX_SAFE_INTEGER default 8,
+	// and 0..MAX_SAFE_INTEGER default 1.
+	capacity: Object.freeze({ default: 8, min: 1, max: Number.MAX_SAFE_INTEGER }),
+	maxDepth: Object.freeze({ default: 1, min: 0, max: Number.MAX_SAFE_INTEGER }),
 	maxTurns: 100,
 	model: undefined,
 });

@@ -4,7 +4,7 @@ Subagent delegation for Pi. Call mechanics follow [dsh-subagent](https://github.
 execution stays pi-native — the child is a real pi session and the result is a real tool result.
 
 Design: `docs/模块设计/045-subagent管理.md`. Plan: `045-1-subagent开发计划.md`.
-Tests: `045-2-subagent测试设计.md`.
+Tests: `045-2-subagent测试设计.md`. Parity with dsh: [`PARITY.md`](./PARITY.md).
 
 ## What M1 ships
 
@@ -12,21 +12,19 @@ Tests: `045-2-subagent测试设计.md`.
 - Providers: `spawn` (fresh child context), `fork` (inherits completed history).
 - Activation lifecycle: reserve identity and capacity → publish only after the child
   accepted the task → settle after cleanup → close admission on settle.
-- Per-lineage online quota that rejects instead of queueing (default from
+- Per-session online quota that rejects instead of queueing (default from
   `<profiles dir>/config.json`, see **Module config** below).
 - Depth limit from the same file, enforced before any resource is taken.
-- **Capacity scope = lineage root.** Every delegation names its root (`rootId`,
-  required — a missing one is rejected, never guessed), and quota is charged
-  there, so one tree never holds more than `capacity.default` live descendants in
-  total. This mirrors dsh's
-  `resident.get(parent.id)?.pool ?? rootPool(parent)`. Pool sets live in one
-  process-wide registry (`Symbol.for("pf-subagents.capacity.pools")`) because
-  every child session mounts its own manager instance; tests clear it with
-  `resetPoolRegistry()`. Pools are process-local: a child spawned in another OS
-  process would count separately.
-- **Lineage survives a reload.** The child's `subagent/child` marker carries
-  `depth` + `rootId`, and `session_start` restores them (`restoreChildLineage`),
-  so a reopened child still cannot out-delegate its depth or open a fresh pool.
+- **Capacity scope = the delegating session.** dsh charges a whole tree to its
+  root pool via `resident.get(parent.id)?.pool ?? rootPool(parent)`; that needs the
+  parent to be a live registration in one process-wide manager. Here one pi
+  process serves one PF session (`crates/app/src/agent_session.rs:39`) and child
+  sessions only mount extensions named by their profile, so a child has no `agent`
+  tool and depth is capped at 1 — per-session and per-root are the same bucket.
+  `PARITY.md` records the exact precondition that would have to change.
+- **Depth survives a reload.** The child's `subagent/child` marker carries
+  `depth`, and `session_start` restores it (`restoreChildDepth`) — the same role
+  dsh's agent header plays in `depth.ts`.
 - Profile documents: `~/.pi/agent/agents/<id>.md`, `.pi/agents/<id>.md` (project shadows global).
 - Versioned descriptor custom entry (`subagent/descriptor`) + orphan reconciliation on `session_start`.
 - Stable failure codes, see `src/errors.ts`.

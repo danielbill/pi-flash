@@ -33,14 +33,8 @@ export interface SubagentRequest {
 	provider: string;
 	/** Child identity reserved by the manager before the provider runs. */
 	childId?: string;
-	/** Owning session id, used for quota and ownership. */
+	/** Owning session id: the quota bucket this child is charged to. */
 	parentId: string;
-	/**
-	 * Lineage root session id (the top-level session this child belongs to).
-	 * Quota is charged here so a whole tree shares one pool, as dsh does via
-	 * `resident.get(parent.id)?.pool ?? rootPool(parent)`.
-	 */
-	rootId: string;
 	/** The parent's `agent` tool call id (044-0 descriptor field table): the
 	 * key the host nav panel uses to group children under their turn. */
 	parentToolCallId?: string;

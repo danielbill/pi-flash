@@ -125,12 +125,9 @@ export class ScriptedProvider implements Provider {
 }
 
 export const baseRequest = (overrides: Partial<SubagentRequest> = {}): SubagentRequest => {
-	const parentId = overrides.parentId ?? "parent-a";
 	return {
 		provider: "scripted",
-		parentId,
-		// Fixtures are top-level callers: the caller's own id IS the lineage root.
-		rootId: parentId,
+		parentId: "parent-a",
 		depth: 1,
 		prompt: "do the thing",
 		delivery: "caller",

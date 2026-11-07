@@ -118,11 +118,6 @@ export class SubagentManager {
 				`delegation depth ${request.depth} exceeds limit ${this.#maxDepth}`,
 			);
 		}
-		// The lineage root is what quota is charged to. A missing root would make
-		// every tree collide on one "undefined" pool, so it fails loudly instead.
-		if (typeof request.rootId !== "string" || request.rootId.length === 0) {
-			throw new SubagentError(SubagentErrorCode.START_REJECTED, "delegation requires a lineage root id");
-		}
 		if (request.signal?.aborted) {
 			throw new SubagentError(SubagentErrorCode.ABORTED, "delegation aborted before start");
 		}
@@ -136,7 +131,7 @@ export class SubagentManager {
 		}
 		let slot: SlotRelease;
 		try {
-			slot = this.#capacity.acquire(request.rootId);
+			slot = this.#capacity.acquire(request.parentId);
 		} catch (error) {
 			// B3③：满即拒的委派也落一份 failed descriptor——否则面板里这次
 			// 拒绝完全不可见（无 record、无转录卡），用户不知道第 4 个委派

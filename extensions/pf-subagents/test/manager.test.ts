@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resetPoolRegistry } from "../src/capacity.ts";
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
 import { SubagentManager } from "../src/manager.ts";
 import { baseRequest, ScriptedProvider } from "./helpers.ts";
@@ -10,8 +9,6 @@ const code = (error: unknown) => (error as SubagentError).code;
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 const setup = (options: Parameters<typeof ScriptedProvider.prototype.constructor>[1] = {}, managerOptions = {}) => {
-	// Pools are process-wide: reset so a test never inherits another's live slots.
-	resetPoolRegistry();
 	const manager = new SubagentManager(managerOptions);
 	const provider = new ScriptedProvider("scripted", options);
 	manager.registry.register(provider);
@@ -68,25 +65,22 @@ describe("SubagentManager.start", () => {
 		assert.equal(provider.prepareCalls, 0);
 	});
 
-	// 045 B4：孙代理（depth 2）不再另开池——整棵树共享 rootId 的池，与 dsh
-	// 的 `resident.get(parent.id)?.pool ?? rootPool(parent)` 语义一致。
-	it("charges a grandchild to the root pool instead of a fresh one", async () => {
-		const { manager } = setup({}, { capacity: 2, maxDepth: 2 });
-		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
-		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
-		// The child session ("sub-1") delegates on its own id but charges the root.
-		const error = await manager
-			.start(baseRequest({ parentId: "/child-1.jsonl", rootId: "/root.jsonl", depth: 2 }))
-			.catch((e: unknown) => e);
-		assert.equal(code(error), SubagentErrorCode.CAPACITY_REACHED);
+	// PARITY P0：子会话不装配本扩展（profile 未列 extensions），所以 depth≥2 在
+	// 宿主里不可达；管理器仍按 dsh 的 reserve/拒绝语义处理调用方给的 depth。
+	it("charges a depth-2 delegation to the session that issued it", async () => {
+		const { manager } = setup({}, { capacity: 1, maxDepth: 2 });
+		await manager.start(baseRequest({ parentId: "/root.jsonl" }));
+		// A separate parent id is a separate bucket: the host cannot produce this
+		// shape today, and PARITY.md records what must change if it ever can.
+		await assert.doesNotReject(
+			manager.start(baseRequest({ parentId: "/child-1.jsonl", depth: 2 })),
+		);
 	});
 
-	it("keeps separate trees independent", async () => {
-		const { manager } = setup({}, { capacity: 1, maxDepth: 2 });
-		await manager.start(baseRequest({ parentId: "/root-a.jsonl", rootId: "/root-a.jsonl" }));
-		await assert.doesNotReject(
-			manager.start(baseRequest({ parentId: "/root-b.jsonl", rootId: "/root-b.jsonl" })),
-		);
+	it("keeps separate sessions independent", async () => {
+		const { manager } = setup({}, { capacity: 1 });
+		await manager.start(baseRequest({ parentId: "/root-a.jsonl" }));
+		await assert.doesNotReject(manager.start(baseRequest({ parentId: "/root-b.jsonl" })));
 	});
 
 	it("rejects with CAPACITY_REACHED instead of queueing", async () => {

@@ -34,12 +34,6 @@ const CHILD_MARKER_TYPE = "subagent/child";
 
 /** Session file -> delegation depth, so a child that reloads this extension still knows its depth. */
 const childDepths = new Map<string, number>();
-/**
- * Session file -> lineage root (045 B4): a child that delegates again charges the
- * same capacity pool as its root, instead of opening a fresh one per level.
- * Filled when the child session is created; absent = this session is a root itself.
- */
-const childRoots = new Map<string, string>();
 
 /**
  * Sync the module settings (capacity / maxDepth) from the subagent module
@@ -124,7 +118,6 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 								childPi.appendEntry(CHILD_MARKER_TYPE, {
 								provider: options.providerName,
 								depth: options.depth,
-								...(options.rootId ? { rootId: options.rootId } : {}),
 							});
 							} catch {
 								// Missing marker degrades to "child shows in the list"; never fatal.
@@ -197,7 +190,6 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 		const sessionFile = session.sessionFile;
 		if (sessionFile) {
 			childDepths.set(sessionFile, currentDepthOf(ctx) + 1);
-			childRoots.set(sessionFile, currentRootOf(ctx));
 		}
 		return {
 			prompt: (text: string) => session.prompt(text),
@@ -288,53 +280,30 @@ async function resolveModel(sdk: SdkLike, ctx: ExtensionContext, requested?: str
 	return model;
 }
 
-function currentDepthOf(ctx: ExtensionContext): number {
+export function currentDepthOf(ctx: ExtensionContext): number {
 	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
 	if (!file) return 0;
 	return childDepths.get(file) ?? 0;
 }
 
 /**
- * Restore this session's lineage from its own `subagent/child` marker.
+ * Restore this session's delegation depth from its own `subagent/child` marker.
  *
- * The parent records depth/root in memory when it creates the child, but a child
- * session that the host opens later (or reloads this extension in) starts with
- * empty maps. Without this the child would look like a root: it could delegate
- * past the depth limit and its grandchildren would charge a fresh pool.
- * The marker is persisted in the session file, so it is the source of truth.
+ * dsh reads depth from the agent header (`depth.ts`: absence = top-level depth
+ * zero); our equivalent header is the marker persisted in the session file. The
+ * in-memory map alone is enough while the child lives in this process, but a
+ * child session the host reopens would otherwise look like a root.
  */
-export function restoreChildLineage(ctx: ExtensionContext): void {
+export function restoreChildDepth(ctx: ExtensionContext): void {
 	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
 	if (!file) return;
 	const entries = (ctx.sessionManager as unknown as { getBranch?: () => unknown[] }).getBranch?.() ?? [];
 	for (const entry of entries) {
 		const record = entry as { type?: string; customType?: string; data?: unknown };
 		if (record.type !== "custom" || record.customType !== CHILD_MARKER_TYPE) continue;
-		const data = record.data as { depth?: unknown; rootId?: unknown } | undefined;
+		const data = record.data as { depth?: unknown } | undefined;
 		if (typeof data?.depth === "number") childDepths.set(file, data.depth);
-		if (typeof data?.rootId === "string") childRoots.set(file, data.rootId);
 	}
-}
-
-/** Lineage this process knows for one session file: unknown = top-level session. */
-export function currentChildLineage(sessionFile: string): { depth: number; rootId: string } {
-	return {
-		depth: childDepths.get(sessionFile) ?? 0,
-		rootId: childRoots.get(sessionFile) ?? sessionFile,
-	};
-}
-
-/**
- * Lineage root of the calling session.
- *
- * A top-level session is its own root; a child session reports the root recorded
- * when it was created. Quota is charged to this id, so every level of one tree
- * draws from a single pool (dsh: `resident.get(parent.id)?.pool ?? rootPool(parent)`).
- */
-function currentRootOf(ctx: ExtensionContext): string {
-	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
-	if (!file) return "draft";
-	return childRoots.get(file) ?? file;
 }
 
 export default function piSubagents(pi: ExtensionAPI): void {
@@ -445,7 +414,6 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			syncModuleConfig(manager);
 			const depth = currentDepthOf(ctx);
 			const parentId = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile ?? "draft";
-			const rootId = currentRootOf(ctx);
 			const result = await runDelegation(
 				{
 					manager,
@@ -463,7 +431,6 @@ export default function piSubagents(pi: ExtensionAPI): void {
 				},
 				{
 					parentId,
-					rootId,
 					depth,
 					cwd: ctx.cwd,
 					signal: ctx.signal,
@@ -591,8 +558,8 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		// A child session reopened by the host has no in-memory lineage yet.
-		restoreChildLineage(ctx);
+		// A child session reopened by the host has no in-memory depth yet.
+		restoreChildDepth(ctx);
 		// Re-register providers for this session's context (the factory closes over it).
 		manager.registry.unregister("spawn");
 		manager.registry.unregister("fork");

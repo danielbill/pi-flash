@@ -53,8 +53,6 @@ export interface SessionFactoryOptions {
 	providerName?: string;
 	/** Delegation depth, recorded in the marker entry. */
 	depth?: number;
-	/** Lineage root session id, recorded in the marker entry (quota + future restore). */
-	rootId?: string;
 	/** chat-only tier: start the child with no tools at all (044-0 六档). */
 	noTools?: boolean;
 	/** pi-extension paths to mount in the child (full+ 档的 pi-ext 选择). */
@@ -383,7 +381,6 @@ export class LocalProvider implements Provider {
 				inheritParentContext: this.#options.inheritsParentContext,
 				providerName: this.#options.name,
 				depth: request.depth,
-				rootId: request.rootId,
 				noTools: composition.noTools,
 				extensions: composition.extensions,
 				mcpServers: composition.mcpServers,

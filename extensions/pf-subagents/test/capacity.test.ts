@@ -1,16 +1,12 @@
 import assert from "node:assert/strict";
-import { beforeEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 
-import { Capacity, resetPoolRegistry, sharedPoolRegistry } from "../src/capacity.ts";
+import { Capacity } from "../src/capacity.ts";
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
 import { captureSync } from "./helpers.ts";
 
-// Pools are process-wide by design (one manager per session), so tests start from
-// an empty registry instead of trying to keep private maps.
-beforeEach(() => resetPoolRegistry());
-
 describe("Capacity", () => {
-	it("rejects instead of queueing when the lineage is full", () => {
+	it("rejects instead of queueing when the bucket is full", () => {
 		const capacity = new Capacity(2);
 		capacity.acquire("p");
 		capacity.acquire("p");
@@ -19,7 +15,19 @@ describe("Capacity", () => {
 		assert.equal(capacity.used("p"), 2);
 	});
 
-	it("counts each root separately", () => {
+	// dsh wording carries the only useful next step, so the message is shared.
+	it("tells the caller to wait for a child or finish with the current agents", () => {
+		const capacity = new Capacity(1);
+		capacity.acquire("p");
+		const error = captureSync(() => capacity.acquire("p")) as SubagentError;
+		assert.equal(
+			error.message,
+			"subagent limit reached (active child limit: 1); wait for an existing child to finish " +
+				"or complete this work with the current agents",
+		);
+	});
+
+	it("counts each parent session separately", () => {
 		const capacity = new Capacity(1);
 		capacity.acquire("a");
 		const second = capacity.acquire("b");
@@ -29,35 +37,22 @@ describe("Capacity", () => {
 		assert.equal(capacity.used("b"), 0);
 	});
 
-	it("charges a whole lineage to one root pool across manager instances", () => {
-		// Two instances = a root session and a child session that mounts this
-		// extension. dsh shares one pool per root; so must we.
-		const root = new Capacity(2);
-		const child = new Capacity(2);
-		root.acquire("/root.jsonl");
-		root.acquire("/root.jsonl");
-		// The grandchild is started by the child's manager but charges the root.
-		const error = captureSync(() => child.acquire("/root.jsonl"));
-		assert.equal((error as SubagentError).code, SubagentErrorCode.CAPACITY_REACHED);
-		assert.equal(child.used("/root.jsonl"), 2);
-	});
-
-	it("frees the shared slot for every instance when released", () => {
+	it("keeps instances independent (one manager per session)", () => {
+		// `PARITY.md` P0: a child session never mounts this extension, so two
+		// Capacity instances never describe one tree. No shared registry needed.
 		const root = new Capacity(1);
-		const child = new Capacity(1);
-		const slot = root.acquire("/root.jsonl");
-		assert.equal(child.used("/root.jsonl"), 1);
-		slot.release();
-		assert.equal(child.used("/root.jsonl"), 0);
-		assert.doesNotThrow(() => child.acquire("/root.jsonl"));
+		const other = new Capacity(1);
+		root.acquire("/root.jsonl");
+		assert.equal(other.used("/root.jsonl"), 0);
+		assert.doesNotThrow(() => other.acquire("/root.jsonl"));
 	});
 
-	it("drops an empty pool so root session ids do not accumulate", () => {
+	it("drops an empty bucket so session ids do not accumulate", () => {
 		const capacity = new Capacity(1);
 		const slot = capacity.acquire("/root.jsonl");
-		assert.equal(sharedPoolRegistry().size, 1);
+		assert.equal(capacity.used("/root.jsonl"), 1);
 		slot.release();
-		assert.equal(sharedPoolRegistry().size, 0);
+		assert.equal(capacity.used("/root.jsonl"), 0);
 	});
 
 	it("returns the slot exactly once", () => {
@@ -69,17 +64,23 @@ describe("Capacity", () => {
 		assert.doesNotThrow(() => capacity.acquire("p"));
 	});
 
-	it("keeps running children when the limit is lowered", () => {
-		const capacity = new Capacity(3);
-		capacity.acquire("p");
-		capacity.acquire("p");
+	it("lowering the limit does not evict running children", () => {
+		const capacity = new Capacity(2);
+		const a = capacity.acquire("p");
+		const b = capacity.acquire("p");
 		capacity.setLimit(1);
 		assert.equal(capacity.used("p"), 2);
 		const error = captureSync(() => capacity.acquire("p"));
 		assert.equal((error as SubagentError).code, SubagentErrorCode.CAPACITY_REACHED);
+		a.release();
+		assert.equal(capacity.used("p"), 1);
+		// Still at the (new) limit: no eviction, but no new start either.
+		assert.throws(() => capacity.acquire("p"));
+		b.release();
+		assert.doesNotThrow(() => capacity.acquire("p"));
 	});
 
-	it("rejects invalid limits", () => {
+	it("refuses non-positive or fractional limits", () => {
 		assert.throws(() => new Capacity(0), RangeError);
 		assert.throws(() => new Capacity(-1), RangeError);
 		assert.throws(() => new Capacity(1.5), RangeError);

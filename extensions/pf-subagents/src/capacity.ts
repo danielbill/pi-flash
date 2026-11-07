@@ -1,39 +1,32 @@
 /**
- * Per-lineage online quota.
+ * Online quota for delegated children.
  *
- * Two rules ported from dsh-subagent (`subagent/README.md` → "Activation 容量"):
+ * Ported from dsh-subagent (`packages/subagent/subagent/src/activation.ts` →
+ * `ActivationPool`), keeping the three invariants that matter:
  *
  * 1. A slot is reserved before the child starts and returned only after its
  *    cleanup finished, so a child that is still shutting down still counts.
  * 2. Exhaustion rejects with `CAPACITY_REACHED`; it never queues. Queueing here
  *    would let a parent that is waiting for its children also wait for a slot
  *    those children occupy — a self-deadlock.
+ * 3. Lowering the limit never kills a running child; it only refuses new starts
+ *    until usage drops below the limit.
  *
- * Lowering the limit never kills a running child; it only refuses new starts
- * until usage drops below the limit.
+ * ## Scope: one bucket per delegating session (not per lineage root)
  *
- * ## Why the key is the lineage root, not the immediate parent
+ * dsh keys its pool by the *root* agent and lets descendants inherit it through
+ * `resident.get(parent.id)?.pool ?? rootPool(parent)`, so a whole tree shares one
+ * budget. That inheritance needs the parent to be a live registration in the same
+ * manager — true in dsh, unreachable here:
  *
- * dsh resolves the pool as `resident.get(parent.id)?.pool ?? rootPool(parent)`:
- * a child that delegates again inherits its root's pool, so one tree can never
- * hold more than `limit` live descendants in total.
+ * - one pi process serves one PF session (`crates/app/src/agent_session.rs:39`),
+ *   so the delegating session is the only user of this manager;
+ * - child sessions only mount extensions listed in the profile
+ *   (`src/index.ts` → `additionalExtensionPaths`), and no shipped profile lists
+ *   this extension, so a child has no `agent` tool and cannot delegate again.
  *
- * Our children are separate sessions with their own manager instance, so the
- * inheritance has to be explicit: every request carries the lineage `rootId`,
- * and the slot is charged to that root. Callers without a root fall back to
- * their own id (single-level behaviour stays exactly as before).
- *
- * ## Why the pools live in a process-wide registry
- *
- * A child session that mounts this extension gets its own manager; a
- * per-instance counter would restart from zero on every level. The slot sets are
- * therefore kept in a registry on `globalThis`, so every instance in the process
- * charges the same pool. Slots only describe live children, so this never
- * outlives a settled child: an empty pool is dropped immediately.
- *
- * Limits stay per-instance (each instance reads the module config), matching
- * dsh's `pool.reserve(this.maxActiveSubagents())` — the pool is shared data, the
- * limit is a policy read at reservation time.
+ * Hence per-parent and per-root are the same bucket today. `PARITY.md` records
+ * what has to change if child sessions ever mount this extension.
  */
 
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
@@ -43,49 +36,12 @@ export interface SlotRelease {
 	release(): void;
 }
 
-/** Live slots per lineage root. Shared between managers in one process. */
-export type PoolRegistry = Map<string, Set<symbol>>;
-
-/** Registry key on `globalThis`; `Symbol.for` so duplicate module copies still meet. */
-const POOL_REGISTRY_KEY = Symbol.for("pf-subagents.capacity.pools");
-
-/**
- * The process-wide pool registry.
- *
- * Duplicate copies of this module (extension path aliases, test reloads) must
- * share one registry, otherwise a grandchild's manager would see an empty pool.
- */
-export function sharedPoolRegistry(): PoolRegistry {
-	const holder = globalThis as unknown as Record<symbol, unknown>;
-	const existing = holder[POOL_REGISTRY_KEY];
-	if (existing instanceof Map) return existing as PoolRegistry;
-	const created: PoolRegistry = new Map<string, Set<symbol>>();
-	holder[POOL_REGISTRY_KEY] = created;
-	return created;
-}
-
-/**
- * Drop a registry entry no other instance is using. Test helper; the extension
- * never needs it because pools empty themselves as children settle.
- */
-export function resetPoolRegistry(registry: PoolRegistry = sharedPoolRegistry()): void {
-	registry.clear();
-}
-
 export class Capacity {
 	#limit: number;
-	#pools: PoolRegistry;
+	#used = new Map<string, number>();
 
-	/**
-	 * @param limit - maximum simultaneous children per lineage root.
-	 *
-	 * Pools are always the process-wide registry: with one manager per session
-	 * there is no such thing as a private pool (a child's manager must see its
-	 * root's usage). Tests isolate themselves with {@link resetPoolRegistry}.
-	 */
 	constructor(limit: number) {
 		this.#limit = Capacity.validate(limit);
-		this.#pools = sharedPoolRegistry();
 	}
 
 	static validate(limit: number): number {
@@ -104,35 +60,33 @@ export class Capacity {
 		this.#limit = Capacity.validate(limit);
 	}
 
-	/** Live slots charged to one lineage root. */
-	used(rootId: string): number {
-		return this.#pools.get(rootId)?.size ?? 0;
+	used(parentId: string): number {
+		return this.#used.get(parentId) ?? 0;
 	}
 
 	/**
-	 * Reserve one slot for `rootId`.
-	 * @throws SubagentError `CAPACITY_REACHED` when the lineage is at its limit.
+	 * Reserve one slot for `parentId`.
+	 * @throws SubagentError `CAPACITY_REACHED` when the parent is at its limit.
 	 */
-	acquire(rootId: string): SlotRelease {
-		const pool = this.#pools.get(rootId) ?? new Set<symbol>();
-		if (pool.size >= this.#limit) {
+	acquire(parentId: string): SlotRelease {
+		const current = this.used(parentId);
+		if (current >= this.#limit) {
+			// dsh's wording carries the only useful next step, so keep it verbatim.
 			throw new SubagentError(
 				SubagentErrorCode.CAPACITY_REACHED,
-				`subagent capacity reached: ${pool.size}/${this.#limit} active for ${rootId}`,
+				`subagent limit reached (active child limit: ${this.#limit}); ` +
+					"wait for an existing child to finish or complete this work with the current agents",
 			);
 		}
-		const slot = Symbol("subagent-slot");
-		pool.add(slot);
-		this.#pools.set(rootId, pool);
+		this.#used.set(parentId, current + 1);
 		let released = false;
 		return {
 			release: () => {
 				if (released) return;
 				released = true;
-				pool.delete(slot);
-				// Empty pools are dropped: nothing to count, and root session files
-				// would otherwise accumulate for the life of the process.
-				if (pool.size === 0 && this.#pools.get(rootId) === pool) this.#pools.delete(rootId);
+				const next = this.used(parentId) - 1;
+				if (next <= 0) this.#used.delete(parentId);
+				else this.#used.set(parentId, next);
 			},
 		};
 	}
