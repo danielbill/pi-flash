@@ -45,6 +45,68 @@ pub(crate) struct SubagentPanel {
     pub turn_agents: Vec<Vec<CatalogRow>>,
     /// 常驻轮询任务是否在跑（防重复 spawn）。
     pub polling: bool,
+    /// 按轮归组的增量游标（消息数 / 轮数 / 首条消息时间戳）。
+    turn_scan: TurnScan,
+    /// agent 工具调用 id → 轮序号（增量维护；此前每 tick 全量重建）。
+    call_turn: HashMap<String, usize>,
+}
+
+/// 按轮归组的增量游标。`first_ts` 是会话身份锚：换会话 / fork / 回退时
+/// 首条消息时间戳变（或消息数变短）→ 整份游标与映射作废重扫。
+#[derive(Clone, Default)]
+struct TurnScan {
+    len: usize,
+    turns: usize,
+    first_ts: Option<i64>,
+}
+
+/// 增量维护 `agent 工具调用 id → 轮序号`（第 n 条 User 消息 = 第 n-1 轮，
+/// 与 nav.rs 轮构建同口径）。只扫游标之后的消息，但每次都回退到**最后一
+/// 条**重扫：流式 / 后到的 toolCall 块会长在它上面。此前每 tick 遍历全
+/// 部消息，长会话 + 子代理运行期（descriptor 频繁落盘）是纯浪费。
+fn scan_agent_calls(
+    msgs: &[crate::session::messages::Msg],
+    scan: &mut TurnScan,
+    call_turn: &mut HashMap<String, usize>,
+) {
+    let first_ts = msgs.first().and_then(|m| m.ts);
+    // 换会话 / fork / 回退：len 变小或首条时间戳变 → 游标与映射作废。
+    if msgs.len() < scan.len || first_ts != scan.first_ts {
+        call_turn.clear();
+        *scan = TurnScan {
+            len: 0,
+            turns: 0,
+            first_ts,
+        };
+    }
+    let scanned = scan.len.min(msgs.len());
+    let from = scanned.saturating_sub(1);
+    let mut n_turns = scan.turns
+        - msgs[from..scanned]
+            .iter()
+            .filter(|m| m.role == crate::session::Role::User)
+            .count();
+    for m in &msgs[from..] {
+        if m.role == crate::session::Role::User {
+            n_turns += 1;
+            continue;
+        }
+        if m.role != crate::session::Role::Assistant {
+            continue;
+        }
+        for b in &m.blocks {
+            if let Block::ToolCall { id, name, .. } = b {
+                if name == "agent" && !id.is_empty() {
+                    call_turn.insert(id.clone(), n_turns.saturating_sub(1));
+                }
+            }
+        }
+    }
+    *scan = TurnScan {
+        len: msgs.len(),
+        turns: n_turns,
+        first_ts,
+    };
 }
 
 /// 进程内 catalog stash 条目（044-3 §4.2）：会话切走时整份存档，切回来
@@ -69,6 +131,8 @@ impl SubagentPanel {
             stash: Vec::new(),
             turn_agents: Vec::new(),
             polling,
+            turn_scan: TurnScan::default(),
+            call_turn: HashMap::new(),
         }
     }
 
@@ -79,6 +143,8 @@ impl SubagentPanel {
         self.offset = 0;
         self.read_in_flight = false;
         self.turn_agents.clear();
+        self.call_turn.clear();
+        self.turn_scan = TurnScan::default();
         let Some(want) = self.file.clone() else {
             return;
         };
@@ -264,28 +330,13 @@ impl Chat {
         let Some(panel) = self.dlg.subagent_panel.as_mut() else {
             return;
         };
-        let mut call_turn: HashMap<&str, usize> = HashMap::new();
-        let mut n_turns = 0usize;
-        for m in rt.read(cx).messages.iter() {
-            if m.role == crate::session::Role::User {
-                n_turns += 1;
-                continue;
-            }
-            if m.role != crate::session::Role::Assistant {
-                continue;
-            }
-            for b in &m.blocks {
-                if let Block::ToolCall { id, name, .. } = b {
-                    if name == "agent" {
-                        call_turn.insert(id.as_str(), n_turns.saturating_sub(1));
-                    }
-                }
-            }
-        }
+        let msgs = rt.read(cx).messages.as_slice();
+        scan_agent_calls(msgs, &mut panel.turn_scan, &mut panel.call_turn);
+        let n_turns = panel.turn_scan.turns;
         let mut turn_agents: Vec<Vec<CatalogRow>> = vec![Vec::new(); n_turns];
         for row in &panel.rows {
             if let Some(pid) = row.parent_tool_call_id.as_deref() {
-                if let Some(&ti) = call_turn.get(pid) {
+                if let Some(&ti) = panel.call_turn.get(pid) {
                     if let Some(slot) = turn_agents.get_mut(ti) {
                         slot.push(row.clone());
                         continue;
@@ -363,3 +414,6 @@ pub(crate) fn turn_agents_row(rows: &[CatalogRow]) -> gpui::AnyElement {
 /// 第三行状态点色（会话列表状态槽口径）。
 pub(crate) mod rows;
 use rows::row_dot_color;
+
+#[cfg(test)]
+mod turn_scan_tests;

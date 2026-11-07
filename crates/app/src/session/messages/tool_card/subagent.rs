@@ -2,6 +2,77 @@
 
 use super::*;
 
+// args 投影缓存（profile + 任务名）：卡片每帧只需要两个短字段，而 args
+// 里含整段 prompt——每帧整串 `serde_json::from_str` 是巨轮会话的重绘
+// 大头。key = (源文哈希, 长度)，命中后还要全等校验防碰撞（同
+// `tool_card::tool_preview` 的 PREVIEW_CACHE 范式）。
+thread_local! {
+    static ARGS_FIELDS_CACHE: std::cell::RefCell<
+        std::collections::VecDeque<((u64, usize), (String, (String, String)))>,
+    > = const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+/// 条数上限：卡片数量级远小于工具预览，128 条足够覆盖一屏。
+const ARGS_FIELDS_CACHE_CAP: usize = 128;
+/// 字节预算（存 args 原文用于全等校验）：子代理 args 以 prompt 为主，
+/// 2MB 能装上千条普通任务。
+const ARGS_FIELDS_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024;
+
+/// 卡片需要的两个 args 字段：`profile`（缺省 general-purpose）与任务名
+/// （`label` 优先，退回 `prompt` 前 25 字）。带线程局部 LRU。
+fn subagent_args_fields(args: &str) -> (String, String) {
+    if args.is_empty() {
+        return ("general-purpose".to_string(), String::new());
+    }
+    let key = (crate::editor::markdown::hash_str(args), args.len());
+    ARGS_FIELDS_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(pos) = cache.iter().rposition(|(k, _)| *k == key) {
+            if cache[pos].1.0.as_str() == args {
+                let entry = cache.remove(pos).expect("pos 来自刚才的迭代");
+                let out = entry.1.1.clone();
+                cache.push_back(entry); // 刷新到队尾（LRU）
+                return out;
+            }
+        }
+        let out = subagent_args_fields_uncached(args);
+        cache.push_back((key, (args.to_string(), out.clone())));
+        while cache.len() > ARGS_FIELDS_CACHE_CAP
+            || cache.iter().map(|(k, _)| k.1).sum::<usize>() > ARGS_FIELDS_CACHE_BUDGET_BYTES
+        {
+            if cache.pop_front().is_none() {
+                break;
+            }
+        }
+        out
+    })
+}
+
+fn subagent_args_fields_uncached(args: &str) -> (String, String) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(args) else {
+        return ("general-purpose".to_string(), String::new());
+    };
+    let profile = v
+        .get("profile")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("general-purpose")
+        .to_string();
+    let task = v
+        .get("label")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            v.get("prompt")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(25)
+                .collect()
+        });
+    (profile, task)
+}
+
 /// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（验收⑤定稿）：
 /// `[状态标记] 🤖子代理 <name(profile)> <时长> <任务名(25字截断)> <完成提示>`
 /// 状态标记同会话列表（运行 spark_spinner(accent) / 完成 NOTICE 青蓝点 /
@@ -30,41 +101,23 @@ pub(super) fn render_subagent_card(
     _collapsed: &HashMap<(usize, usize), bool>,
     t: &theme::Theme,
 ) -> gpui::Div {
-    let d = details.cloned().unwrap_or_default();
-    let stop_reason = d.get("stop_reason").and_then(|v| v.as_str()).unwrap_or("");
-    let session_file = d
-        .get("session_file")
+    // 借引用读 details 的四个字段：原实现 `details.cloned()` 每帧深拷贝整份
+    // JSON，只为随后 `.get(..)`——纯浪费。
+    let stop_reason = details
+        .and_then(|d| d.get("stop_reason"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let session_file = details
+        .and_then(|d| d.get("session_file"))
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from);
-    let error_code = d.get("error_code").and_then(|v| v.as_str());
+    let error_code = details
+        .and_then(|d| d.get("error_code"))
+        .and_then(|v| v.as_str());
 
-    let args_v = serde_json::from_str::<serde_json::Value>(args).ok();
-    let profile = args_v
-        .as_ref()
-        .and_then(|v| v.get("profile"))
-        .and_then(|x| x.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("general-purpose")
-        .to_string();
-    let task = args_v
-        .as_ref()
-        .and_then(|v| {
-            v.get("label")
-                .and_then(|x| x.as_str())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| {
-            args_v
-                .as_ref()
-                .and_then(|v| v.get("prompt"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .chars()
-                .take(25)
-                .collect::<String>()
-        });
+    // args 解析结果走缓存：整串（含 prompt）每帧解析是重绘大头。
+    let (profile, task) = subagent_args_fields(args);
 
     // 完成提示分类（验收⑤注 2/3）：
     //   派发失败 = 子代理根本没跑起来——PF 容量闸（CAPACITY_REACHED）、
@@ -217,4 +270,50 @@ pub(super) fn render_subagent_card(
             });
     }
     div().flex().flex_col().px(px(2.)).py(px(2.)).child(row)
+}
+
+#[cfg(test)]
+mod args_fields_tests {
+    use super::*;
+
+    #[test]
+    fn label_and_profile_come_from_args() {
+        let (p, t) = subagent_args_fields(
+            r#"{"profile":"explorer","label":"查日志","prompt":"很长的任务描述"}"#,
+        );
+        assert_eq!(p, "explorer");
+        assert_eq!(t, "查日志");
+    }
+
+    #[test]
+    fn prompt_is_the_task_fallback_and_is_truncated() {
+        let long = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十";
+        let args = format!(r#"{{"prompt":"{long}"}}"#);
+        let (p, t) = subagent_args_fields(&args);
+        assert_eq!(p, "general-purpose");
+        assert_eq!(t.chars().count(), 25);
+        assert!(long.starts_with(&t));
+    }
+
+    #[test]
+    fn partial_args_fall_back_without_panicking() {
+        let (p, t) = subagent_args_fields(r#"{"profile":"expl"#);
+        assert_eq!(p, "general-purpose");
+        assert!(t.is_empty());
+        assert_eq!(
+            subagent_args_fields(""),
+            ("general-purpose".to_string(), String::new())
+        );
+    }
+
+    #[test]
+    fn repeated_renders_hit_the_cache() {
+        let args = r#"{"profile":"reviewer","label":"审代码","prompt":"x"}"#;
+        let first = subagent_args_fields(args);
+        let second = subagent_args_fields(args);
+        assert_eq!(first, second);
+        // 同键不同文（碰撞防护）：结果必须按原文重新算
+        let other = r#"{"profile":"reviewer","label":"审代码 ","prompt":"x"}"#;
+        assert_eq!(subagent_args_fields(other).1, "审代码 ");
+    }
 }
