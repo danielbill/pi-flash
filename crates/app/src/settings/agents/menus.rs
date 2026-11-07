@@ -137,7 +137,7 @@ fn model_trigger(
         readonly,
         bar_trigger(
             "ag-model-trg",
-            None,
+            Some("cpu-ai"),
             13.,
             &label,
             true,

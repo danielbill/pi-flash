@@ -177,6 +177,9 @@ assets! {
     "icons/puzzle.svg",
     // v70 设置页：模型（芯片）+ MCP（服务器机架），路径取自 pi-web SettingsSectionIcon
     "icons/cpu.svg",
+    // 2026-11-08 模型钮前缀（lucide cpu-ai）：composer 操作栏模型钮 +
+    // 设置·子代理页模型触发钮
+    "icons/cpu-ai.svg",
     "icons/server.svg",
     // v54 UI: iconfont solid set (from the design html)
     "icons/icon-project.svg",
