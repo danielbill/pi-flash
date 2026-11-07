@@ -19,8 +19,7 @@
 //! 会话列表 psp 的项目路径悬浮条/会话详情卡是自绘 overlay（psp_overlays.rs，
 //! 「详情卡」语义：可交互、可改名、有宽限期），不是 tooltip，不走这里。
 
-use gpui::prelude::StatefulInteractiveElement;
-use gpui::{AnyView, App, SharedString, Window};
+use gpui::{AnyView, App, SharedString, Window, div, prelude::*, px, relative, rgb};
 use gpui_component::text::Text;
 
 /// 构建提示卡视图（gpui-component Tooltip 默认盘）。样式收口在此。
@@ -55,6 +54,31 @@ pub trait WithTip: StatefulInteractiveElement + Sized {
         let text = text.into();
         // tooltip 闭包是 Fn（每次弹出重建视图），SharedString 廉价克隆
         self.tooltip(move |window, cx| tip_view(text.clone(), window, cx))
+    }
+
+    /// 错误详情浮层（2026-11-07 用户定稿）：**固定 350px 宽、高 100-300px
+    /// （min_h/max_h 夹制）、超高滚动**，多行文本 pre-wrap。默认盘（
+    /// `with_tip_text`）自适应宽高装不下详情——多行错误走这里。
+    fn with_tip_detail(self, text: impl Into<SharedString>) -> Self {
+        let text = text.into();
+        self.tooltip(move |window, cx| {
+            let text = text.clone();
+            gpui_component::tooltip::Tooltip::element(move |_, _| {
+                let t = crate::appearance::theme::theme();
+                div()
+                    .id("tip-detail-body")
+                    .w(px(350.))
+                    .min_h(px(100.))
+                    .max_h(px(300.))
+                    .overflow_y_scroll()
+                    .p(px(10.))
+                    .text_size(crate::appearance::ui_size(11.))
+                    .line_height(relative(1.5))
+                    .text_color(rgb(t.text))
+                    .child(SharedString::from(text.clone()))
+            })
+            .build(window, cx)
+        })
     }
 
     /// i18n 键 + 动作键位 chip（截图样式「文字 + Ctrl+X 灰底键帽」）。

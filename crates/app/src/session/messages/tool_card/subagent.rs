@@ -18,14 +18,13 @@ pub(super) fn render_subagent_card(
     result: &str,
     is_error: bool,
     details: Option<&serde_json::Value>,
-    // 终态时长（result 到达 − 消息起始，秒）；运行中走 msg_ts 现算
-    duration_s: Option<i64>,
+    // 时长已从规格行删除（2026-11-07 简化），形参保留对齐派发签名
+    _duration_s: Option<i64>,
     // 行不区分「参数是否流式部分到达」（args 只取 name/task），保留形参
     // 以对齐派发签名
     _args_partial: bool,
     result_arrived: bool,
-    // 消息起始（epoch ms）：运行中 live 时长锚（验收⑤）
-    msg_ts: Option<i64>,
+    _msg_ts: Option<i64>,
     weak: &gpui::WeakEntity<Chat>,
     // 旧版展开态残留槽位：紧凑行无正文，保留形参对齐签名
     _collapsed: &HashMap<(usize, usize), bool>,
@@ -39,7 +38,6 @@ pub(super) fn render_subagent_card(
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from);
     let error_code = d.get("error_code").and_then(|v| v.as_str());
-    let duration_ms = d.get("duration_ms").and_then(|v| v.as_i64());
 
     let args_v = serde_json::from_str::<serde_json::Value>(args).ok();
     let profile = args_v
@@ -75,7 +73,10 @@ pub(super) fn render_subagent_card(
     //              BACKEND_UNSUPPORTED / DUPLICATE_CHILD）
     //   执行异常 = 跑起来后的失败——轮次用尽（max_looped/MAX_TURNS）、
     //              意外中断（aborted）、provider 服务侧异常（PROVIDER_ERROR）
-    //              及其他一切非派发分码
+    //              及其他一切非派发分码。**result 已到但 stopReason ≠
+    //              completed 一律算异常**（2026-11-07 修正：live abort 的
+    //              settle descriptor 不带 error_code，此前落「运行中」
+    //              分支转圈到永远）
     //   任务完成 = result 到且 stopReason==completed 且无错
     //   运行中   = 其余（`.....`）
     const DISPATCH_CODES: [&str; 7] = [
@@ -90,9 +91,9 @@ pub(super) fn render_subagent_card(
     let errored = is_error || error_code.is_some();
     let dispatch_failed = error_code.is_some_and(|c| DISPATCH_CODES.contains(&c));
     let done = result_arrived && stop_reason == "completed" && !errored;
-    let failed = errored && !done;
+    let failed = !done && (errored || result_arrived);
 
-    // 状态标记（验收⑤注 4：同会话列表 psp_row_slot 统一样式）
+    // 状态标记（验收⑤注 4：同会话列表 psp_row_slot 统一样式，15px 转圈）
     let mark_el: gpui::AnyElement = if done {
         div()
             .size(px(7.))
@@ -106,42 +107,26 @@ pub(super) fn render_subagent_card(
             .bg(rgb(t.danger))
             .into_any_element()
     } else {
-        crate::ui::spark_spinner(13., t.accent)
+        crate::ui::spark_spinner(15., t.accent)
     };
 
-    // 时长：终态 duration_ms（扩展回传）→ duration_s（pi 口径 result 到达
-    // − 消息起始）兜底；运行中 = now − msg_ts（live，每帧重绘自然刷新）
-    let secs = duration_ms.map(|ms| ms / 1000).or(duration_s).or_else(|| {
-        (!result_arrived).then_some(()).and_then(|_| {
-            msg_ts.map(|ts| {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                ((now - ts) / 1000).max(0)
-            })
-        })
-    });
-    let duration_text = secs
-        .filter(|s| *s >= 0)
-        .map(crate::session::subagent_panel::duration_text);
-
-    // tooltip 详情：result 首行（`${code}: ${message}`）→ 分码兜底
+    // tooltip 详情：result 全文（多行错误详情，350×100-300 滚动浮层）→
+    // 分码兜底
     let err_detail: SharedString = {
-        let first_line = result.lines().next().unwrap_or("").trim();
-        if !first_line.is_empty() {
-            first_line.to_string()
+        let body = result.trim();
+        if !body.is_empty() {
+            body.to_string()
         } else {
             error_code.unwrap_or("").to_string()
         }
     }
     .into();
 
-    // 完成提示段（faint；异常态 faint+下划线+tooltip）
+    // 完成提示段（faint=text_dim；异常态 faint+下划线+详情浮层）
     let hint: gpui::AnyElement = if done {
         div()
             .flex_shrink_0()
-            .text_color(rgb(t.text_muted))
+            .text_color(rgb(t.text_dim))
             .child(tr("subagent.card.done"))
             .into_any_element()
     } else if failed {
@@ -155,15 +140,15 @@ pub(super) fn render_subagent_card(
                 "sa-hint-{msg_ix}-{content_index}"
             )))
             .flex_shrink_0()
-            .text_color(rgb(t.text_muted))
+            .text_color(rgb(t.text_dim))
             .underline()
-            .with_tip_text(tip)
+            .with_tip_detail(tip)
             .child(label)
             .into_any_element()
     } else {
         div()
             .flex_shrink_0()
-            .text_color(rgb(t.text_muted))
+            .text_color(rgb(t.text_dim))
             .child(".....")
             .into_any_element()
     };
@@ -195,32 +180,31 @@ pub(super) fn render_subagent_card(
                 .child("子代理"),
         )
         .child(
+            // 子代理名称栏（注 5）：150px 定宽，左对齐，超长截断
             div()
+                .w(px(150.))
                 .flex_shrink_0()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text))
                 .child(SharedString::from(profile)),
-        );
-    if let Some(dt) = duration_text {
-        row = row.child(
+        )
+        .child(
+            // 任务描述栏（注 5）：300px 定宽，左对齐，超长截断
             div()
+                .w(px(300.))
                 .flex_shrink_0()
-                .text_size(crate::appearance::sess_size(-3.))
-                .text_color(rgb(t.text_muted))
-                .child(SharedString::from(dt)),
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(rgb(t.text_dim))
+                .child(SharedString::from(task)),
         );
-    }
-    row = row.child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .text_color(rgb(t.text_dim))
-            .child(SharedString::from(task)),
-    );
     row = row.child(hint);
     if let Some(sf) = session_file {
         let weak_open = weak.clone();

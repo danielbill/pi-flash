@@ -332,15 +332,17 @@ fn spawn_poll(cx: &mut gpui::Context<Chat>) {
 }
 
 /// 导航轮卡第三行（044-0 验收⑥①）：`[bot] ●●●●`——点数 = 该轮子代理
-/// 数，点色 = 会话列表青红点口径（运行 accent / 完成 NOTICE / 异常 danger，
-/// [`row_dot_color`]）。
+/// 数，点色 = 会话列表状态槽口径（[`row_dot_color`]，7px 同列表彩点）。
+/// 事后统计呈现（2026-11-07 用户定夺）；超长截断（容器裁切）。
 pub(crate) fn turn_agents_row(rows: &[CatalogRow]) -> gpui::AnyElement {
     let t = T();
-    let mut dots = div().flex().items_center().gap(px(4.));
+    let mut dots = div().flex().flex_shrink_0().items_center().gap(px(4.));
     for r in rows {
-        dots = dots.child(div().size(px(6.)).rounded_full().bg(rgb(row_dot_color(r))));
+        dots = dots.child(div().size(px(7.)).rounded_full().bg(rgb(row_dot_color(r))));
     }
     div()
+        .min_w_0()
+        .overflow_hidden()
         .flex()
         .items_center()
         .gap(px(6.))
@@ -349,6 +351,7 @@ pub(crate) fn turn_agents_row(rows: &[CatalogRow]) -> gpui::AnyElement {
         .child(
             div()
                 .w(px(18.))
+                .flex_shrink_0()
                 .flex()
                 .justify_end()
                 .child(crate::ui::icon("bot", 11., t.text_dim)),
@@ -357,8 +360,6 @@ pub(crate) fn turn_agents_row(rows: &[CatalogRow]) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 第三行状态点色（会话运行结果青红点）：运行 accent、完成 NOTICE、
-/// 异常/中止/轮次用尽 danger。
+/// 第三行状态点色（会话列表状态槽口径）。
 pub(crate) mod rows;
-pub(crate) use rows::duration_text;
 use rows::row_dot_color;
