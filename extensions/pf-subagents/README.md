@@ -15,13 +15,18 @@ Tests: `045-2-subagent测试设计.md`.
 - Per-lineage online quota that rejects instead of queueing (default from
   `<profiles dir>/config.json`, see **Module config** below).
 - Depth limit from the same file, enforced before any resource is taken.
-- **Capacity scope = lineage root.** A child that delegates again charges its
-  root's pool, so one tree never holds more than `capacity.default` live
-  descendants in total. This mirrors dsh's
-  `resident.get(parent.id)?.pool ?? rootPool(parent)`; the pool sets themselves
-  live in a process-wide registry (`Symbol.for("pf-subagents.capacity.pools")`)
-  because every child session mounts its own manager instance. Pools are
-  process-local: a child spawned in another OS process would count separately.
+- **Capacity scope = lineage root.** Every delegation names its root (`rootId`,
+  required — a missing one is rejected, never guessed), and quota is charged
+  there, so one tree never holds more than `capacity.default` live descendants in
+  total. This mirrors dsh's
+  `resident.get(parent.id)?.pool ?? rootPool(parent)`. Pool sets live in one
+  process-wide registry (`Symbol.for("pf-subagents.capacity.pools")`) because
+  every child session mounts its own manager instance; tests clear it with
+  `resetPoolRegistry()`. Pools are process-local: a child spawned in another OS
+  process would count separately.
+- **Lineage survives a reload.** The child's `subagent/child` marker carries
+  `depth` + `rootId`, and `session_start` restores them (`restoreChildLineage`),
+  so a reopened child still cannot out-delegate its depth or open a fresh pool.
 - Profile documents: `~/.pi/agent/agents/<id>.md`, `.pi/agents/<id>.md` (project shadows global).
 - Versioned descriptor custom entry (`subagent/descriptor`) + orphan reconciliation on `session_start`.
 - Stable failure codes, see `src/errors.ts`.

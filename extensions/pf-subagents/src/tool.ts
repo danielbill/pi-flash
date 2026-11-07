@@ -36,7 +36,7 @@ export interface DelegationContext {
 	 * Lineage root of the caller: its own session file when it is top level, or
 	 * the root recorded for it when it is itself a child. Quota is charged here.
 	 */
-	rootId?: string;
+	rootId: string;
 	/** Depth of the calling agent; the child is one deeper. */
 	depth: number;
 	cwd: string;
@@ -160,7 +160,7 @@ export async function runDelegation(
 		const activation = await options.manager.start({
 			provider: options.providerName,
 			parentId: context.parentId,
-			rootId: context.rootId ?? context.parentId,
+			rootId: context.rootId,
 			parentToolCallId: context.parentToolCallId,
 			depth: context.depth + 1,
 			prompt: input.prompt,

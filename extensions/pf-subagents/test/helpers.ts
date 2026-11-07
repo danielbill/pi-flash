@@ -124,14 +124,19 @@ export class ScriptedProvider implements Provider {
 	}
 }
 
-export const baseRequest = (overrides: Partial<SubagentRequest> = {}): SubagentRequest => ({
-	provider: "scripted",
-	parentId: "parent-a",
-	depth: 1,
-	prompt: "do the thing",
-	delivery: "caller",
-	...overrides,
-});
+export const baseRequest = (overrides: Partial<SubagentRequest> = {}): SubagentRequest => {
+	const parentId = overrides.parentId ?? "parent-a";
+	return {
+		provider: "scripted",
+		parentId,
+		// Fixtures are top-level callers: the caller's own id IS the lineage root.
+		rootId: parentId,
+		depth: 1,
+		prompt: "do the thing",
+		delivery: "caller",
+		...overrides,
+	};
+};
 
 /** Node's `assert.throws` returns nothing; tests need the thrown value to inspect `code`. */
 export function captureSync(fn: () => unknown): unknown {

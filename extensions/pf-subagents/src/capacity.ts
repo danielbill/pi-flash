@@ -78,12 +78,14 @@ export class Capacity {
 
 	/**
 	 * @param limit - maximum simultaneous children per lineage root.
-	 * @param pools - slot storage. Defaults to a private map (unit tests stay
-	 *   isolated); the extension passes {@link sharedPoolRegistry}.
+	 *
+	 * Pools are always the process-wide registry: with one manager per session
+	 * there is no such thing as a private pool (a child's manager must see its
+	 * root's usage). Tests isolate themselves with {@link resetPoolRegistry}.
 	 */
-	constructor(limit: number, pools: PoolRegistry = new Map()) {
+	constructor(limit: number) {
 		this.#limit = Capacity.validate(limit);
-		this.#pools = pools;
+		this.#pools = sharedPoolRegistry();
 	}
 
 	static validate(limit: number): number {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { resetPoolRegistry } from "../src/capacity.ts";
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
 import { SubagentManager } from "../src/manager.ts";
 import { baseRequest, ScriptedProvider } from "./helpers.ts";
@@ -9,6 +10,8 @@ const code = (error: unknown) => (error as SubagentError).code;
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 const setup = (options: Parameters<typeof ScriptedProvider.prototype.constructor>[1] = {}, managerOptions = {}) => {
+	// Pools are process-wide: reset so a test never inherits another's live slots.
+	resetPoolRegistry();
 	const manager = new SubagentManager(managerOptions);
 	const provider = new ScriptedProvider("scripted", options);
 	manager.registry.register(provider);
@@ -68,8 +71,7 @@ describe("SubagentManager.start", () => {
 	// 045 B4：孙代理（depth 2）不再另开池——整棵树共享 rootId 的池，与 dsh
 	// 的 `resident.get(parent.id)?.pool ?? rootPool(parent)` 语义一致。
 	it("charges a grandchild to the root pool instead of a fresh one", async () => {
-		const pools = new Map<string, Set<symbol>>();
-		const { manager } = setup({}, { capacity: 2, maxDepth: 2, pools });
+		const { manager } = setup({}, { capacity: 2, maxDepth: 2 });
 		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
 		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
 		// The child session ("sub-1") delegates on its own id but charges the root.
@@ -79,9 +81,8 @@ describe("SubagentManager.start", () => {
 		assert.equal(code(error), SubagentErrorCode.CAPACITY_REACHED);
 	});
 
-	it("keeps separate trees independent even when the child ids collide", async () => {
-		const pools = new Map<string, Set<symbol>>();
-		const { manager } = setup({}, { capacity: 1, maxDepth: 2, pools });
+	it("keeps separate trees independent", async () => {
+		const { manager } = setup({}, { capacity: 1, maxDepth: 2 });
 		await manager.start(baseRequest({ parentId: "/root-a.jsonl", rootId: "/root-a.jsonl" }));
 		await assert.doesNotReject(
 			manager.start(baseRequest({ parentId: "/root-b.jsonl", rootId: "/root-b.jsonl" })),

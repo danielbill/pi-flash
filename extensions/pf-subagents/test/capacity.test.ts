@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 
-import { Capacity } from "../src/capacity.ts";
+import { Capacity, resetPoolRegistry, sharedPoolRegistry } from "../src/capacity.ts";
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
 import { captureSync } from "./helpers.ts";
 
+// Pools are process-wide by design (one manager per session), so tests start from
+// an empty registry instead of trying to keep private maps.
+beforeEach(() => resetPoolRegistry());
+
 describe("Capacity", () => {
-	it("rejects instead of queueing when the parent is full", () => {
+	it("rejects instead of queueing when the lineage is full", () => {
 		const capacity = new Capacity(2);
 		capacity.acquire("p");
 		capacity.acquire("p");
@@ -15,7 +19,7 @@ describe("Capacity", () => {
 		assert.equal(capacity.used("p"), 2);
 	});
 
-	it("counts per parent", () => {
+	it("counts each root separately", () => {
 		const capacity = new Capacity(1);
 		capacity.acquire("a");
 		const second = capacity.acquire("b");
@@ -26,11 +30,10 @@ describe("Capacity", () => {
 	});
 
 	it("charges a whole lineage to one root pool across manager instances", () => {
-		// Two managers = a root session and a child session that mounts this
+		// Two instances = a root session and a child session that mounts this
 		// extension. dsh shares one pool per root; so must we.
-		const pools = new Map<string, Set<symbol>>();
-		const root = new Capacity(2, pools);
-		const child = new Capacity(2, pools);
+		const root = new Capacity(2);
+		const child = new Capacity(2);
 		root.acquire("/root.jsonl");
 		root.acquire("/root.jsonl");
 		// The grandchild is started by the child's manager but charges the root.
@@ -40,9 +43,8 @@ describe("Capacity", () => {
 	});
 
 	it("frees the shared slot for every instance when released", () => {
-		const pools = new Map<string, Set<symbol>>();
-		const root = new Capacity(1, pools);
-		const child = new Capacity(1, pools);
+		const root = new Capacity(1);
+		const child = new Capacity(1);
 		const slot = root.acquire("/root.jsonl");
 		assert.equal(child.used("/root.jsonl"), 1);
 		slot.release();
@@ -51,12 +53,11 @@ describe("Capacity", () => {
 	});
 
 	it("drops an empty pool so root session ids do not accumulate", () => {
-		const pools = new Map<string, Set<symbol>>();
-		const capacity = new Capacity(1, pools);
+		const capacity = new Capacity(1);
 		const slot = capacity.acquire("/root.jsonl");
-		assert.equal(pools.size, 1);
+		assert.equal(sharedPoolRegistry().size, 1);
 		slot.release();
-		assert.equal(pools.size, 0);
+		assert.equal(sharedPoolRegistry().size, 0);
 	});
 
 	it("returns the slot exactly once", () => {

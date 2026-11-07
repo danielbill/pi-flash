@@ -9,7 +9,7 @@ const setup = (options: Parameters<typeof ScriptedProvider.prototype.constructor
 	const manager = new SubagentManager();
 	const provider = new ScriptedProvider("scripted", options);
 	manager.registry.register(provider);
-	const context = { parentId: "parent-a", depth: 0, cwd: "/repo" };
+	const context = { parentId: "parent-a", rootId: "parent-a", depth: 0, cwd: "/repo" };
 	const delegate = (input: Record<string, unknown>, on_update?: (partial: never) => void) =>
 		runDelegation(
 			{ manager, providerName: "scripted", inheritsParentContext: false, ...toolOptions },
@@ -100,7 +100,7 @@ describe("delegation tool", () => {
 		const result = await runDelegation(
 			{ manager, providerName: "scripted", inheritsParentContext: false },
 			{ prompt: "deep" },
-			{ parentId: "parent-a", depth: 1, cwd: "/repo" },
+			{ parentId: "parent-a", rootId: "parent-a", depth: 1, cwd: "/repo" },
 		);
 		assert.equal(result.isError, true);
 		assert.match(result.content[0].text, /DEPTH_LIMIT/);
@@ -126,7 +126,7 @@ describe("delegation tool", () => {
 		const pending = runDelegation(
 			{ manager, providerName: "scripted", inheritsParentContext: false },
 			{ prompt: "x" } as never,
-			{ parentId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_00_abc" } as never,
+			{ parentId: "parent-a", rootId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_00_abc" } as never,
 		);
 		await new Promise((resolve) => setImmediate(resolve));
 		provider.children[0].complete("done");
@@ -144,7 +144,7 @@ describe("delegation tool", () => {
 		});
 		const provider = new ScriptedProvider("scripted");
 		manager.registry.register(provider);
-		const context = { parentId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_01_rej" };
+		const context = { parentId: "parent-a", rootId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_01_rej" };
 		const call = (prompt: string) =>
 			runDelegation(
 				{ manager, providerName: "scripted", inheritsParentContext: false },
