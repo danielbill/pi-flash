@@ -68,7 +68,8 @@ export const DELEGATION_PARAMETERS = {
 		},
 		background: {
 			type: "boolean",
-			description: "Return immediately with a child id and report the answer when it completes.",
+			description:
+				"Launch asynchronously: return immediately with a child id and end your turn — the report arrives later as a message. Do not wait or poll.",
 		},
 	},
 	required: ["prompt"],
@@ -108,6 +109,7 @@ export function delegationDescription(
 		"Delegate a task to a child agent that works in its own session.",
 		context,
 		"The child's final answer is returned as this tool's result.",
+		"`background: true` launches asynchronously; end your turn after telling the user what you launched — the report arrives in a later message instead of this tool's result.",
 		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.${capacity}`,
 		// 委派政策（对齐 ZCode task 工具描述的力度——实测只有机械说明时
 		// 模型从不主动委派，哪怕系统提示词里有鼓励 bullet；见 buglist 第五批）
@@ -168,7 +170,7 @@ export async function runDelegation(
 		});
 		if (delivery === "parent") {
 			return {
-				content: [{ type: "text", text: `started subagent ${activation.childId}` }],
+				content: [{ type: "text", text: backgroundLaunchText(activation.childId) }],
 				structuredContent: { childId: activation.childId, status: "started" },
 				details: { child_id: activation.childId, delivery, status: "started", label: input.label },
 			};
@@ -192,6 +194,20 @@ export async function runDelegation(
 			: new SubagentError(SubagentErrorCode.START_REJECTED, error instanceof Error ? error.message : String(error));
 		return fail(failureError.code, failureError.message);
 	}
+}
+
+/**
+ * Tool-result contract for background delegation (mirrors ZCode's async launch
+ * result): the parent must end its turn instead of polling. The report itself
+ * arrives later as a `subagent-completion` message (see completion.ts).
+ */
+export function backgroundLaunchText(childId: string): string {
+	return [
+		`Async subagent launched successfully (started subagent ${childId}).`,
+		"It is working in the background; you will be notified automatically when it completes.",
+		"Do not poll it, sleep in a shell, or re-check subagent_list for it.",
+		"Briefly tell the user what you launched and end your response — the subagent's report arrives in a subsequent message.",
+	].join(" ");
 }
 
 function success(result: SubagentResult): ToolResultLike {

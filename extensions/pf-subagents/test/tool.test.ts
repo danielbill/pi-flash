@@ -42,7 +42,11 @@ describe("delegation tool", () => {
 	it("returns a child id immediately for background delivery", async () => {
 		const { delegate } = setup();
 		const result = await delegate({ prompt: "long job", background: true });
-		assert.match(result.content[0].text, /started subagent sub-1/);
+		const text = result.content[0].text;
+		assert.match(text, /started subagent sub-1/);
+		assert.match(text, /notified automatically when it completes/);
+		assert.match(text, /Do not poll it, sleep in a shell, or re-check subagent_list/);
+		assert.match(text, /end your response/);
 		assert.deepEqual(result.structuredContent, { childId: "sub-1", status: "started" });
 	});
 
