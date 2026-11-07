@@ -92,18 +92,14 @@ describe("SubagentManager.start", () => {
 		assert.equal(provider.prepareCalls, 2);
 	});
 
-	// B3③回归（pi-flash-g9pn）：满即拒的委派也落一份 failed descriptor，
-	// 面板立即出红行——否则这次拒绝完全不可见（无 record、转录卡要等整轮）。
-	it("emits a failed descriptor for a capacity-rejected delegation", async () => {
-		const seen: Array<{ phase: string; errorCode?: string; childId: string }> = [];
-		const { manager, provider } = setup({}, { capacity: 2, onDescriptor: (d) => seen.push({ phase: d.phase, errorCode: d.errorCode, childId: d.childId }) });
+	// 满即拒的委派不建 record、不占容量；id 照常消耗（重派拿到下一个序号）。
+	// 落盘可见性已随 descriptor 持久化删除（pi-flash-9eck）——被拒的委派
+	// 可见性归宿主的转录卡。
+	it("keeps a capacity-rejected delegation out of the catalog but consumes its id", async () => {
+		const { manager, provider } = setup({}, { capacity: 2 });
 		await manager.start(baseRequest());
 		await manager.start(baseRequest());
 		await manager.start(baseRequest()).catch(() => {});
-		const rejected = seen.at(-1)!;
-		assert.equal(rejected.phase, "failed");
-		assert.equal(rejected.errorCode, SubagentErrorCode.CAPACITY_REACHED);
-		assert.equal(rejected.childId, "sub-3");
 		// 被拒的不进 childrenOf（无 handle、不占容量）
 		assert.deepEqual(manager.childrenOf("parent-a"), ["sub-1", "sub-2"]);
 		// 槽位释放后重派成功（对齐真机：被拒后模型自行补派）——id 照常消耗
@@ -139,23 +135,12 @@ describe("SubagentManager.start", () => {
 		assert.equal(manager.descriptors()[0].sessionFile, "/tmp/child.jsonl");
 	});
 
-	it("emits a descriptor for every phase change", async () => {
-		const seen: string[] = [];
-		const { manager, provider } = setup({ completeOnDispose: true }, { onDescriptor: (d) => seen.push(d.phase) });
-		const activation = await manager.start(baseRequest());
-		provider.children[0].complete("ok");
-		await activation.wait();
-		assert.deepEqual(seen, ["provisioning", "active", "completed"]);
-	});
-
 	// B1 回归（pi-flash-y26f）：caller 投递下 wait() 立即把 state 置 settling，
 	// 子代理整个运行期都发生在 settling 内——运行期 stats/usage 必须照常进
-	// 内存 descriptor（children 工具实时可读），只有终态（settled/failed）才
-	// 停止更新。2026-11-07 用户定夺：运行期统计不再逐条持久化（曾以
-	// ~15 条/秒把父会话灌到 209MB）——onDescriptor 只在相位变迁/终态触发。
-	it("keeps per-turn stats in memory without per-message persistence while a caller-delivery child runs", async () => {
-		const seen: Array<{ phase: string; stats?: unknown; usage?: unknown }> = [];
-		const { manager, provider } = setup({}, { onDescriptor: (d) => seen.push({ phase: d.phase, stats: d.stats, usage: d.usage }) });
+	// 内存 descriptor（children 工具实时可读）。descriptor 不再持久化
+	// （pi-flash-9eck：逐条 appendEntry 曾把父会话灌到 209MB）。
+	it("keeps per-turn stats in memory while a caller-delivery child runs", async () => {
+		const { manager, provider } = setup({});
 		const activation = await manager.start(baseRequest({ delivery: "caller" }));
 		const pending = activation.wait(); // parks in settling for the whole run
 		provider.children[0].progress({ turns: 1, agentMessages: 0, toolCalls: 1 }, { input: 100, output: 10, total: 110 });
@@ -167,14 +152,10 @@ describe("SubagentManager.start", () => {
 		provider.children[0].complete("done", "completed", { turns: 3, agentMessages: 2, toolCalls: 2 });
 		await pending;
 		assert.equal(manager.descriptors()[0].phase, "completed");
-		// 落盘点 = 相位变迁/终态，运行期两条 progress 均不触发 onDescriptor
-		assert.deepEqual(
-			seen.map((e) => e.phase),
-			["provisioning", "active", "completed"],
-		);
-		// 终态一条带走最终统计（stats 用 result.stats，usage 保运行期内存最新值）
-		assert.deepEqual(seen[2]?.stats, { turns: 3, agentMessages: 2, toolCalls: 2 });
-		assert.deepEqual(seen[2]?.usage, { input: 300, output: 30, total: 330 });
+		// 终态带走最终统计（stats 用 result.stats，usage 保运行期内存最新值）
+		const settledDesc = manager.descriptors()[0];
+		assert.deepEqual(settledDesc.stats, { turns: 3, agentMessages: 2, toolCalls: 2 });
+		assert.deepEqual(settledDesc.usage, { input: 300, output: 30, total: 330 });
 	});
 
 	it("stops the per-turn feed once settled", async () => {

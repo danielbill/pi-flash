@@ -277,7 +277,11 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
                         256 * 1024,
                         100,
                     ));
-                    map.insert(path, msgs);
+                    // 空 tail 不入缓存（pi-flash-9eck）：空投影会毒化打开路径
+                    // ——每次重开都复用空尾窗、永远卡「载入中」等 RPC 放行。
+                    if !msgs.is_empty() {
+                        map.insert(path, msgs);
+                    }
                 }
                 map
             })

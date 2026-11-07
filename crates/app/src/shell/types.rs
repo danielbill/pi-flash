@@ -302,7 +302,7 @@ pub(crate) enum PanelTab {
         page: String,
     },
     /// 子代理观察窗 tab（044-0 验收）：普通自由 tab 姿态——追加末尾、
-    /// 标题 = descriptor 任务名、× 可关；key = 池 key（会话文件路径串），
+    /// 标题 = 任务名（主会话反查）、× 可关；key = 池 key（会话文件路径串），
     /// runtime 驻留会话池（observer 不 spawn）。瞬态不进存档；空闲退役
     /// 只摘 runtime 不摘 tab，点击走 open_session 秒开重开。
     Observer {

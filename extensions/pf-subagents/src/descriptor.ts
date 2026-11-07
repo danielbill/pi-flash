@@ -1,14 +1,11 @@
 /**
- * Versioned custom entry that records one delegated child.
- *
- * Written by the extension on start, read back on `session_start` to detect
- * children that never reached a terminal state (orphans) and to restore the
- * composition snapshot a resume needs. Modelled on dsh-subagent's
- * `subagent/src/descriptor.ts`, reduced to what pi exposes through
- * `pi.appendEntry`.
+ * In-memory record of one delegated child (lifecycle phase / stats / usage /
+ * child session file). Formerly persisted as a `subagent/descriptor` custom
+ * entry in the parent transcript; persistence is removed (pi-flash-9eck,
+ * 2026-11-08 用户定夺): the host card is fed by the tool result details and
+ * per-message appends flooded parent session files (209MB 实测).
  */
 
-export const DESCRIPTOR_TYPE = "subagent/descriptor";
 export const DESCRIPTOR_VERSION = 1;
 
 export type DescriptorPhase = "provisioning" | "active" | "completed" | "interrupted" | "failed";
@@ -77,58 +74,4 @@ export function createDescriptor(input: {
 		startedAt: timestamp,
 		updatedAt: timestamp,
 	};
-}
-
-/**
- * Validate a stored descriptor.
- * Unknown versions and missing required fields fail closed: a descriptor we cannot
- * read is never treated as a live child.
- */
-export function parseDescriptor(value: unknown): SubagentDescriptor {
-	if (typeof value !== "object" || value === null) {
-		throw new Error("descriptor must be an object");
-	}
-	const record = value as Record<string, unknown>;
-	if (record.version !== DESCRIPTOR_VERSION) {
-		throw new Error(`unsupported descriptor version: ${String(record.version)}`);
-	}
-	for (const key of ["childId", "provider", "cwd"] as const) {
-		if (typeof record[key] !== "string" || record[key] === "") {
-			throw new Error(`descriptor.${key} must be a non-empty string`);
-		}
-	}
-	if (typeof record.depth !== "number" || !Number.isSafeInteger(record.depth) || record.depth < 1) {
-		throw new Error("descriptor.depth must be a positive safe integer");
-	}
-	const composition = record.composition;
-	if (typeof composition !== "object" || composition === null) {
-		throw new Error("descriptor.composition must be an object");
-	}
-	return record as unknown as SubagentDescriptor;
-}
-
-/** Phases that mean "this child is still supposed to be running". */
-export function isInFlight(phase: DescriptorPhase): boolean {
-	return phase === "provisioning" || phase === "active";
-}
-
-/**
- * Reconcile descriptors from a restored session: anything in flight becomes
- * `interrupted`. `aborted` on the session's settle event distinguishes a
- * user cancel from a crash, so the caller passes it in.
- */
-export function reconcileOnStart(
-	descriptors: readonly SubagentDescriptor[],
-	options: { aborted: boolean; now?: Date },
-): SubagentDescriptor[] {
-	const timestamp = (options.now ?? new Date()).toISOString();
-	return descriptors.map((descriptor) => {
-		if (!isInFlight(descriptor.phase)) return descriptor;
-		return {
-			...descriptor,
-			phase: options.aborted ? "interrupted" : "failed",
-			errorCode: options.aborted ? "ABORTED" : "START_REJECTED",
-			updatedAt: timestamp,
-		};
-	});
 }

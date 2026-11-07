@@ -37,8 +37,6 @@ export interface DelegationContext {
 	cwd: string;
 	signal?: AbortSignal;
 	parentToolCallId?: string;
-	/** Called whenever the child's descriptor changes, for `pi.appendEntry`. */
-	onDescriptor?: (descriptor: unknown) => void;
 }
 
 export interface ToolResultLike {

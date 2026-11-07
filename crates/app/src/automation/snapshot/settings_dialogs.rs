@@ -227,7 +227,6 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         // （二级菜单已删除，2026-11-07 用户定夺）；None = 缓存未建（会话未激活过）
         "subagent_panel": chat.dlg.subagent_panel.as_ref().map(|p| {
             json!({
-                "rows": p.rows.len(),
                 "turns": p
                     .turn_agents
                     .iter()
@@ -237,7 +236,6 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                         json!({
                             "turn": i,
                             "count": v.len(),
-                            "phases": v.iter().map(|r| r.phase.clone()).collect::<Vec<_>>(),
                         })
                     })
                     .collect::<Vec<_>>(),

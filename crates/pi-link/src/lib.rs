@@ -39,7 +39,6 @@ pub mod service_ext;
 pub mod session_ext;
 pub mod sessions;
 pub mod skills;
-pub mod subagent_catalog;
 pub mod subagents;
 pub mod transcript;
 pub mod vendor;

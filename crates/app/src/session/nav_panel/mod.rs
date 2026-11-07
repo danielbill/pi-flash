@@ -82,7 +82,7 @@ pub(crate) fn nav_card(
     s: &crate::session::runtime::TurnSummary,
     on: bool,
     // 该轮子代理（044-0 验收⑥）：Some 非空 = 有第三行点阵
-    sub_rows: Option<Vec<pi_link::subagent_catalog::CatalogRow>>,
+    sub_rows: Option<Vec<crate::session::subagent_panel::DotTone>>,
     weak: &gpui::WeakEntity<Chat>,
     rt_entity: &gpui::Entity<crate::session::runtime::SessionRuntime>,
     t: &'static crate::appearance::theme::Theme,

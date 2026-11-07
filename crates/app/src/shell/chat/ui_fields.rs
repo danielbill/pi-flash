@@ -288,9 +288,9 @@ pub(crate) struct DlgUi {
     /// 010 重设计 send 门：无项目态下用户敲下的文字在弹「打开项目」前
     /// 暂存于此，switch_project 选定目录后回填并自动发送（话不丢）
     pub(crate) pending_send: Option<String>,
-    /// 子代理数据缓存（044-0 验收⑥）：会话激活即建（switch_to →
-    /// ensure_subagent_panel），1s 常驻轮询——不是开关态面板。rows 是累积
-    /// 的 descriptor 投影，offset 是下一轮续读起点。
+    /// 子代理导航数据面（044-0 验收⑥）：会话激活即建（switch_to →
+    /// ensure_subagent_panel），1s 常驻任务——纯内存推导（主会话消息 →
+    /// 落点映射 + 第三行点阵），零 IO（pi-flash-9eck descriptor 已删）。
     pub(crate) subagent_panel: Option<crate::session::SubagentPanel>,
     /// 040-1 topbar 三横「菜单」浮层：Some = 开着，值为按钮锚点（x, y）。
     /// 渲染挂 render.rs 根（与 psp_overlays 同层），菜单项目前只有
@@ -316,8 +316,8 @@ pub(crate) struct PoolUi {
     /// 观察窗进自由区 panel_tabs，不抢固定段。空闲退役只清 runtimes 不清
     /// 这里——固定段照常渲染，点击 activate 走 open_session 秒开重开。
     pub(crate) primary_key: String,
-    /// tab 标题快照（key → 标题）：observer 子会话 = descriptor 的任务名
-    /// （侧栏扫描器不含子会话，session_title_of 取不到）；普通会话 =
+    /// tab 标题快照（key → 标题）：observer 子会话 = 任务名（主会话反查，
+    /// 侧栏扫描器不含子会话）；普通会话 =
     /// switch_to / refresh_sessions 时的 session_title_of 快照（空闲退役
     /// 后 runtime 不在池，标题仍有出处）。bind 迁移 / 关闭跟随键变化。
     pub(crate) tab_labels: std::collections::HashMap<String, String>,

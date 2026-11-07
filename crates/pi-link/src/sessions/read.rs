@@ -208,11 +208,34 @@ fn renderable_message(v: &Value) -> Option<Value> {
     }
 }
 
+/// 尾窗抗洪泛上限（pi-flash-9eck）：老洪泛会话尾部几十万条不可渲染的
+/// custom 条目，256KB 窗口极易全部落空 → 打开卡「载入中」等 RPC。窗口
+/// 倍增到此封顶（2MB 解析 ~10ms 量级，只在落空时才付）。
+const TAIL_WINDOW_MAX: u64 = 2 * 1024 * 1024;
+/// 倍增判定阈值：窗口里 renderable 条目低于此数就继续扩窗。
+const TAIL_MIN_RENDERABLE: usize = 10;
+
 /// Parse the trailing whole message entries of a session file — the
 /// disk-direct render path (agent_session renders the last conversation
 /// before the RPC session is up). Returns up to `max` parsed
 /// `{"type":"message",...}` values, oldest→newest within the window.
+///
+/// 尾窗内 renderable 条目不足时倍增窗口重读（至 [`TAIL_WINDOW_MAX`]）：
+/// descriptor 洪泛时代的老会话尾段全是垃圾行，固定窗口会读空。
 pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value> {
+    let mut window = tail_bytes;
+    let mut messages = read_tail_window(path, window, max);
+    // 窗口字节数单调递增 → renderable 计数单调不减；循环由上限封顶，
+    // 中间窗口仍读空也继续扩（垃圾段可能超过初窗数倍）。
+    while messages.len() < TAIL_MIN_RENDERABLE && window < TAIL_WINDOW_MAX {
+        window = (window * 2).min(TAIL_WINDOW_MAX);
+        messages = read_tail_window(path, window, max);
+    }
+    messages
+}
+
+/// 固定字节数的尾窗读取（[`read_tail_messages`] 的单窗实现）。
+fn read_tail_window(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value> {
     let tail = read_tail(path, tail_bytes);
     // only a seeked window starts mid-line; a whole-file read doesn't
     let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);

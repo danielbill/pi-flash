@@ -245,12 +245,16 @@ impl SessionRuntime {
                 // 执行，期间维持现有显示（tail 预渲染），落地后磁盘链
                 // 赢则换入、落败则执行权威投影（同守卫下无陈旧回退）。
                 self.last_rpc_msg_count = Some(rpc_msgs.len());
-                if rpc_msgs.len() < self.disk_msg_count && self.file.is_some() {
-                    let rpc_len = rpc_msgs.len();
-                    self.spawn_leaf_repair(rpc_len, Some(rpc_msgs), cx);
-                    return false;
-                }
+                // leaf-repair 只增强、不闸门（pi-flash-9eck）：needle 计数有
+                // 假阳性，先把 RPC 权威投影上屏放行（空尾窗的老洪泛会话不能
+                // 再等一轮全文件重读才看到内容）；后台磁盘链更长才整表换入，
+                // 落败无需动作——权威投影已在屏上。
+                let short = rpc_msgs.len() < self.disk_msg_count && self.file.is_some();
+                let rpc_len = rpc_msgs.len();
                 self.project_rpc_messages(rpc_msgs, cx);
+                if short {
+                    self.spawn_leaf_repair(rpc_len, None, cx);
+                }
             } else {
                 // 快照缺 data：没有可投影的内容，加载页放行（真空会话语义，
                 // 2026-11-07）——不能让打开永远钉在「会话载入中…」

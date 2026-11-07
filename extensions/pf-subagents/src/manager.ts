@@ -29,8 +29,6 @@ export interface ManagerOptions {
 	maxDepth?: number;
 	/** Clock, injectable for tests. */
 	now?: () => Date;
-	/** Called whenever a child's descriptor changes, so the host can persist it via `pi.appendEntry`. */
-	onDescriptor?: (descriptor: SubagentDescriptor) => void;
 	/** Parent-delivery completion hook; caller delivery never fires it. */
 	onCompleted?: (result: SubagentResult) => void;
 }
@@ -59,7 +57,6 @@ export class SubagentManager {
 	#capacity: Capacity;
 	#maxDepth: number;
 	#now: () => Date;
-	#onDescriptor?: ManagerOptions["onDescriptor"];
 	#onCompleted?: ManagerOptions["onCompleted"];
 	#records = new Map<string, ActivationRecord>();
 	#childrenByParent = new Map<string, Set<string>>();
@@ -68,9 +65,8 @@ export class SubagentManager {
 	constructor(options: ManagerOptions = {}) {
 		this.#capacity = new Capacity(options.capacity ?? 8);
 		this.#maxDepth = options.maxDepth ?? 1;
-		this.#now = options.now ?? (() => new Date());
-		this.#onDescriptor = options.onDescriptor;
-		this.#onCompleted = options.onCompleted;
+	this.#now = options.now ?? (() => new Date());
+	this.#onCompleted = options.onCompleted;
 	}
 
 	get capacity(): number {
@@ -133,22 +129,9 @@ export class SubagentManager {
 		try {
 			slot = this.#capacity.acquire(request.parentId);
 		} catch (error) {
-			// B3③：满即拒的委派也落一份 failed descriptor——否则面板里这次
-			// 拒绝完全不可见（无 record、无转录卡），用户不知道第 4 个委派
-			// 发生过。id 照常消耗：重试会拿到下一个序号。
-			const descriptor = createDescriptor({
-				childId,
-				provider: provider.name,
-				parentToolCallId: request.parentToolCallId,
-				cwd: request.cwd ?? process.cwd(),
-				depth: request.depth,
-				label: request.label,
-				profile: request.profile,
-				model: request.model,
-				now: this.#now(),
-			});
-			const code = asSubagentError(error, SubagentErrorCode.CAPACITY_REACHED).code;
-			this.#onDescriptor?.({ ...descriptor, phase: "failed", errorCode: code, stopReason: "error" });
+			// 满即拒的委派不建 record（被拒的不进 childrenOf、不占容量），
+			// id 照常消耗：重试会拿到下一个序号。落盘可见性归宿主的转录卡
+			// （descriptor 持久化已删，pi-flash-9eck）。
 			throw error;
 		}
 		const record: ActivationRecord = {
@@ -174,7 +157,6 @@ export class SubagentManager {
 		};
 		this.#records.set(childId, record);
 		this.#trackChild(record);
-		this.#emit(record);
 
 		try {
 			const handle = await this.#prepare(provider, { ...request, childId });
@@ -187,15 +169,12 @@ export class SubagentManager {
 			record.state = "active";
 			record.admissionOpen = true;
 			record.descriptor = { ...record.descriptor, phase: "active", updatedAt: this.#now().toISOString() };
-			// Live stats stay in memory only (044-0 行二 收窄，2026-11-07 用户
-			// 定夺)：watcher 每条 assistant message 都会触发，逐条 appendEntry
-			// 曾把父会话灌到 209MB（29.9 万条 descriptor，实测 15 条/秒）——
-			// 运行期统计不再持久化，descriptor 只在相位变迁/终态落盘（下面
-			// 的 #emit 与 #settle）。内存 record.descriptor 照常每条更新：
-			// `children` 工具（list_children）的实时统计仍读得到；面板运行中
-			// 行的 stats 停留在激活快照，终态落盘后补齐。watcher 随 settlement
-			// 退场（record.unwatch in #settle）；终态守卫保留——caller delivery
-			// parks in `settling` for the child's whole run (B1)。
+			// Live stats stay in memory only (pi-flash-9eck)：descriptor 不再
+			// 持久化（逐条 appendEntry 曾把父会话灌到 209MB，2026-11-07 用户
+			// 定夺先收窄、后全删）。内存 record.descriptor 照常每条更新：
+			// `children` 工具（list_children）的实时统计仍读得到。watcher 随
+			// settlement 退场（record.unwatch in #settle）；终态守卫保留——
+			// caller delivery parks in `settling` for the child's whole run (B1)。
 			record.unwatch = handle.watch?.((progress) => {
 				if (record.state === "settled" || record.state === "failed") return;
 				record.descriptor = {
@@ -215,7 +194,6 @@ export class SubagentManager {
 				if (handle.onRunDone) handle.onRunDone(() => void this.#settle(record));
 				else void this.#settle(record);
 			}
-			this.#emit(record);
 		} catch (error) {
 			record.state = "failed";
 			record.admissionOpen = false;
@@ -235,7 +213,6 @@ export class SubagentManager {
 				stopReason: "error",
 				updatedAt: this.#now().toISOString(),
 			};
-			this.#emit(record);
 			throw failure;
 		}
 
@@ -302,8 +279,6 @@ export class SubagentManager {
 		if (record.settled) return record.settled;
 		record.state = "settling";
 		record.admissionOpen = false;
-		// No descriptor emission here: the phase only changes when settlement finishes.
-		// Emitting with an unchanged phase would make observers see duplicate states.
 
 		record.settled = (async () => {
 			let result: SubagentResult;
@@ -346,14 +321,13 @@ export class SubagentManager {
 				// A blown turn budget is a distinct terminal state, not a generic
 				// failure: the card shows "轮次用尽" rather than a bare error code.
 				errorCode: result.stopReason === "max_turns" ? "MAX_TURNS" : result.errorCode,
-				// 子代理 token 用量落盘（面板行的 tokens 列，pi-web Agents 对齐）
+				// 子代理 token 用量回写内存（children 工具/result payload 可读）
 				...(result.usage ? { usage: result.usage } : {}),
-				// 活动计数落盘（044-0 行二：轮次/发言数/工具调用次数）；终态优先
+				// 活动计数回写内存（044-0 行二：轮次/发言数/工具调用次数）；终态优先
 				// result.stats，缺了保运行期 watcher 已写入的最新值。
 				...(result.stats ? { stats: result.stats } : {}),
 				updatedAt: this.#now().toISOString(),
 			};
-			this.#emit(record);
 			if (record.delivery === "parent") {
 				this.#onCompleted?.(result);
 			}
@@ -436,9 +410,5 @@ export class SubagentManager {
 	#nextChildId(): string {
 		this.#sequence += 1;
 		return `sub-${this.#sequence}`;
-	}
-
-	#emit(record: ActivationRecord): void {
-		this.#onDescriptor?.({ ...record.descriptor });
 	}
 }

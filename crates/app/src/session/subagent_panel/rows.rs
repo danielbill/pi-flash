@@ -1,5 +1,5 @@
-//! 行渲染残件：状态点色（二级菜单 2026-11-07 用户定夺删除——原本住在这里
-//! 的 panel_row/统计段/状态标记随浮层一起退役；点色供导航轮卡第三行）。
+//! 行渲染残件：状态点色调（panel 行/二级菜单 2026-11-07 用户定夺删除；
+//! 点色供导航轮卡第三行）。
 
 use super::*;
 
@@ -9,26 +9,42 @@ use super::*;
 /// 的轮看起来仍在活动；灰点表示"后台还在跑、尚无结果"，终态再落色（完成
 /// NOTICE 青蓝 / 中断·轮次用尽 WARN 橙 / 异常 danger 红）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum DotTone {
+pub(crate) enum DotTone {
     Muted,
     Notice,
     Warn,
     Danger,
 }
 
-pub(super) fn row_dot_tone(row: &CatalogRow) -> DotTone {
-    match row.status_kind() {
-        StatusKind::Running => DotTone::Muted,
-        StatusKind::Done => DotTone::Notice,
-        StatusKind::Aborted | StatusKind::MaxTurns => DotTone::Warn,
-        StatusKind::Error => DotTone::Danger,
+/// 从 agent ToolCall 块推状态点（主会话自足，pi-flash-9eck）：
+/// - result details 带 stop_reason → 终态（completed=完成、aborted/max_turns=
+///   中断橙、其余=异常红）；
+/// - 无 stop_reason 但 result 带错误 → 异常红；
+/// - 其余（status=started/running、result 未到）→ 运行中灰。
+pub(crate) fn dot_tone_of(block: &Block) -> DotTone {
+    let Block::ToolCall {
+        details, is_error, ..
+    } = block
+    else {
+        return DotTone::Muted;
+    };
+    let stop = details
+        .as_ref()
+        .and_then(|d| d.get("stop_reason"))
+        .and_then(|v| v.as_str());
+    match stop {
+        Some("completed") => DotTone::Notice,
+        Some("aborted" | "max_turns") => DotTone::Warn,
+        Some(_) => DotTone::Danger,
+        None if *is_error => DotTone::Danger,
+        None => DotTone::Muted,
     }
 }
 
 /// 色调 → 主题色。
-pub(super) fn row_dot_color(row: &CatalogRow) -> u32 {
+pub(crate) fn dot_color(tone: DotTone) -> u32 {
     let t = T();
-    match row_dot_tone(row) {
+    match tone {
         DotTone::Muted => t.text_dim,
         DotTone::Notice => crate::appearance::theme::NOTICE,
         DotTone::Warn => crate::appearance::theme::WARN,
@@ -40,24 +56,19 @@ pub(super) fn row_dot_color(row: &CatalogRow) -> u32 {
 mod tests {
     use super::*;
 
-    fn row(phase: &str, stop: Option<&str>) -> CatalogRow {
-        CatalogRow {
-            child_id: "sub-1".into(),
-            provider: "spawn".into(),
-            label: None,
-            profile: None,
-            depth: 1,
-            phase: phase.into(),
-            stop_reason: stop.map(Into::into),
-            error_code: None,
-            session_file: None,
-            parent_tool_call_id: Some("call-1".into()),
-            usage_total: None,
-            turns: None,
-            agent_messages: None,
-            tool_calls: None,
-            started_at: String::new(),
-            updated_at: String::new(),
+    fn call(details: serde_json::Value, is_error: bool) -> Block {
+        Block::ToolCall {
+            content_index: 0,
+            id: "a1".into(),
+            name: "agent".into(),
+            args: "{}".into(),
+            result: String::new(),
+            is_error,
+            images: Vec::new(),
+            duration_s: None,
+            details: Some(details),
+            args_partial: false,
+            result_arrived: false,
         }
     }
 
@@ -65,28 +76,46 @@ mod tests {
     /// 不能是 accent（否则已结束的轮看起来仍在活动）。
     #[test]
     fn running_dot_is_muted_not_accent() {
-        assert_eq!(row_dot_tone(&row("active", None)), DotTone::Muted);
-        assert_eq!(row_dot_tone(&row("provisioning", None)), DotTone::Muted);
+        assert_eq!(
+            dot_tone_of(&call(serde_json::json!({"status": "started"}), false)),
+            DotTone::Muted
+        );
+        assert_eq!(
+            dot_tone_of(&call(serde_json::json!({"status": "running"}), false)),
+            DotTone::Muted
+        );
+        assert_eq!(
+            dot_tone_of(&call(serde_json::json!({}), false)),
+            DotTone::Muted
+        );
     }
 
     #[test]
     fn terminal_dots_follow_status_slot() {
         assert_eq!(
-            row_dot_tone(&row("completed", Some("completed"))),
+            dot_tone_of(&call(
+                serde_json::json!({"stop_reason": "completed"}),
+                false
+            )),
             DotTone::Notice
         );
-        assert_eq!(row_dot_tone(&row("interrupted", None)), DotTone::Warn);
         assert_eq!(
-            row_dot_tone(&row("completed", Some("aborted"))),
+            dot_tone_of(&call(serde_json::json!({"stop_reason": "aborted"}), false)),
             DotTone::Warn
         );
         assert_eq!(
-            row_dot_tone(&row("completed", Some("max_turns"))),
+            dot_tone_of(&call(
+                serde_json::json!({"stop_reason": "max_turns"}),
+                false
+            )),
             DotTone::Warn
         );
-        assert_eq!(row_dot_tone(&row("failed", None)), DotTone::Danger);
         assert_eq!(
-            row_dot_tone(&row("completed", Some("error"))),
+            dot_tone_of(&call(serde_json::json!({"stop_reason": "error"}), false)),
+            DotTone::Danger
+        );
+        assert_eq!(
+            dot_tone_of(&call(serde_json::json!({}), true)),
             DotTone::Danger
         );
     }

@@ -136,31 +136,6 @@ describe("delegation tool", () => {
 		const desc = manager.descriptors().find((d) => d.childId === "sub-1");
 		assert.equal(desc?.parentToolCallId, "call_00_abc");
 	});
-
-	it("carries parentToolCallId on the capacity-rejected descriptor too", async () => {
-		// onDescriptor 是构造器选项（ManagerOptions），实例化后再赋值无效
-		const seen: Array<Record<string, unknown>> = [];
-		const manager = new SubagentManager({
-			capacity: 1,
-			onDescriptor: (d) => seen.push(d as Record<string, unknown>),
-		});
-		const provider = new ScriptedProvider("scripted");
-		manager.registry.register(provider);
-		const context = { parentId: "parent-a", depth: 0, cwd: "/repo", parentToolCallId: "call_01_rej" };
-		const call = (prompt: string) =>
-			runDelegation(
-				{ manager, providerName: "scripted", inheritsParentContext: false },
-				{ prompt } as never,
-				context as never,
-			);
-		void call("slot 1");
-		await new Promise((resolve) => setImmediate(resolve));
-		const result = await call("slot 2");
-		assert.equal(result.isError, true);
-		const failed = seen.at(-1) as Record<string, unknown> | undefined;
-		assert.equal(failed?.["phase"], "failed");
-		assert.equal(failed?.["parentToolCallId"], "call_01_rej");
-	});
 });
 
 describe("delegation description", () => {

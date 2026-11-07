@@ -19,7 +19,6 @@ import { join } from "node:path";
 import type { ChildSession, ResolvedComposition, SessionFactory, SessionFactoryOptions } from "./backends/local.ts";
 import { LocalProvider } from "./backends/local.ts";
 import { COMPLETION_TYPE, composeCompletion } from "./completion.ts";
-import { DESCRIPTOR_TYPE, parseDescriptor, reconcileOnStart, type SubagentDescriptor } from "./descriptor.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
 import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
@@ -308,11 +307,6 @@ export function restoreChildDepth(ctx: ExtensionContext): void {
 }
 
 export default function piSubagents(pi: ExtensionAPI): void {
-	// Descriptors are persisted as custom entries, so a restart can tell which
-	// children never settled. `persist` is rebound per session; the manager reads it
-	// through this closure.
-	let persist: (descriptor: SubagentDescriptor) => void = () => {};
-
 	// Parent-delivery completion hook (v2 background): routed to the live
 	// session's ui.notify; rebound on every session_start.
 	let notifyParent: (message: string) => void = () => {};
@@ -325,7 +319,6 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	const manager = new SubagentManager({
 		capacity: initialConfig.capacity.default,
 		maxDepth: initialConfig.maxDepth.default,
-		onDescriptor: (descriptor) => persist(descriptor),
 		onCompleted: (result) => {
 			const completion = composeCompletion(result);
 			notifyParent(completion.toast);
@@ -570,13 +563,6 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		manager.registry.unregister("fork");
 		manager.registry.register(spawnProvider(ctx));
 		manager.registry.register(forkProvider(ctx));
-		persist = (descriptor) => {
-			try {
-				pi.appendEntry(DESCRIPTOR_TYPE, descriptor);
-			} catch {
-				// Persistence is best-effort: a closed session must not break delegation.
-			}
-		};
 
 		notifyParent = (message: string) => {
 			try {
@@ -598,35 +584,11 @@ export default function piSubagents(pi: ExtensionAPI): void {
 				// Delivery is best-effort: closed/headless sessions keep the toast only.
 			}
 		};
-
-		const inFlight = readDescriptors(ctx);
-		if (inFlight.length > 0) {
-			// Orphan reconciliation: the host going away counts as an abort
-			// (crash vs cancel is refined by agent_settled.aborted on live runs).
-			const reconciled = reconcileOnStart(inFlight, { aborted: true });
-			for (const descriptor of reconciled) persist(descriptor);
-		}
 	});
 
 	pi.on("session_shutdown", async () => {
 		await manager.shutdown("session shutdown");
 	});
-}
-
-function readDescriptors(ctx: ExtensionContext): SubagentDescriptor[] {
-	const manager = ctx.sessionManager as unknown as { getBranch?: () => unknown[] };
-	const entries = manager.getBranch?.() ?? [];
-	const out: SubagentDescriptor[] = [];
-	for (const entry of entries) {
-		const record = entry as { type?: string; customType?: string; data?: unknown };
-		if (record.type !== "custom" || record.customType !== DESCRIPTOR_TYPE) continue;
-		try {
-			out.push(parseDescriptor(record.data));
-		} catch {
-			// A descriptor we cannot read is ignored, never treated as a live child.
-		}
-	}
-	return out;
 }
 
 /**

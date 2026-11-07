@@ -68,6 +68,50 @@ fn tail_messages_window_and_cap() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// 老洪泛会话（pi-flash-9eck）：尾段塞满不可渲染的 subagent/descriptor
+/// custom 条目，256KB 固定窗口会读空 → 打开卡「载入中」。倍增窗口必须把
+/// 垃圾行前面的正常消息读出来。
+#[test]
+fn tail_window_grows_past_descriptor_flood() {
+    let root = temp_root("tailflood");
+    let mut body = String::new();
+    for i in 0..12 {
+        body.push_str(&format!(
+            "{{\"type\":\"message\",\"id\":\"m{i}\",\"message\":{{\"role\":\"user\",\"content\":\"m{i}\"}}}}\n"
+        ));
+    }
+    // 尾部灌 ~300KB descriptor 垃圾行（同扩展 manager.ts 曾有的落盘形状）：
+    // 远超 256KB 初窗，且全是 non-renderable
+    let pad = "x".repeat(128); // 撑行宽，控制行数即可灌体积
+    let junk = format!(
+        r#"{{"type":"custom","customType":"subagent/descriptor","id":"d","data":{{"childId":"sub-1","provider":"spawn","phase":"active","depth":1,"cwd":"/w"}},"timestamp":9,"pad":"{pad}"}}"#
+    );
+    for _ in 0..2400 {
+        body.push_str(&junk);
+        body.push('\n');
+    }
+    let path = write_session(&root, "D:\\proj", "flood", &body);
+    let len = std::fs::metadata(&path).unwrap().len();
+    assert!(len > 256 * 1024, "垃圾段必须超过初窗（实际 {len}B）");
+
+    // 256KB 初窗全垃圾；扩窗后必须读到正常消息
+    let msgs = read_tail_messages(&path, 256 * 1024, 100);
+    assert!(
+        msgs.len() >= 10,
+        "扩窗后必须读到 ≥10 条 renderable（实际 {}）",
+        msgs.len()
+    );
+    // 消息在最前面：窗口 max=100 时应含首条 m0 附近
+    assert_eq!(
+        msgs.first().unwrap()["message"]["content"]
+            .as_str()
+            .unwrap(),
+        "m0",
+        "扩窗到 2MB 后 12 条消息全部在窗内"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn lists_real_sessions_when_present() {
     // machine-dependent smoke test: only asserts invariants, never fails

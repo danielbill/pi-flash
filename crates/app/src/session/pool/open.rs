@@ -4,53 +4,17 @@
 use super::*;
 
 impl Chat {
-    /// 子会话 tab 标题（044-0：用 descriptor 的任务名）。
-    ///
-    /// 044-3 §4.4：内存优先——panel.rows / stash 里必然有刚点开的子代理行
-    /// （点击入口就是这些行），所以正常路径零读盘。缓存没覆盖（PF 重启后的
-    /// 老 tab 等）先给占位名，后台扫一次父 catalog 补上。
+    /// 子会话 tab 标题（044-0：任务名）。pi-flash-9eck：descriptor/catalog
+    /// 已删——标题从主会话消息反查（agent 调用 args 的 label → profile →
+    /// prompt 首行），查不到给占位名「子代理」（零读盘、零后台任务）。
     pub(crate) fn subagent_tab_label(
         &mut self,
         child: &Path,
-        key: &str,
+        _key: &str,
         cx: &mut Context<Self>,
     ) -> String {
         let placeholder = || tr("subagent.tab").to_string();
-        let Some(panel) = self.dlg.subagent_panel.as_ref() else {
-            return placeholder();
-        };
-        if let Some(label) = panel.label_for_child(child) {
-            return label;
-        }
-        let Some(parent) = panel.file.clone() else {
-            return placeholder();
-        };
-        let target = child.to_path_buf();
-        let key = key.to_string();
-        cx.spawn(async move |this, cx| {
-            let scan = cx
-                .background_executor()
-                .spawn(async move { pi_link::subagent_catalog::read_catalog(&parent, 0) })
-                .await;
-            let label = scan
-                .rows
-                .iter()
-                .find(|r| {
-                    r.session_file
-                        .as_deref()
-                        .is_some_and(|sf| same_path(Path::new(sf), &target))
-                })
-                .and_then(crate::session::subagent_panel::child_tab_label);
-            let Some(label) = label else { return };
-            let _ = this.update(cx, move |chat, cx| {
-                if chat.pool.tab_labels.contains_key(&key) {
-                    chat.pool.tab_labels.insert(key, label);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-        placeholder()
+        self.label_for_child(cx, child).unwrap_or_else(placeholder)
     }
 
     pub(crate) fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
@@ -102,14 +66,19 @@ impl Chat {
             Some(msgs) => msgs,
             None => {
                 let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                if self.pool.session_tail_cache.len()
-                    >= crate::services::workspace::TAIL_PRELOAD * 2
-                {
-                    self.pool.session_tail_cache.clear();
+                // 空 tail 不入缓存（pi-flash-9eck）：老洪泛会话尾段垃圾行
+                // 读空时缓存空 Vec 会让每次重开都复用空投影、永远走慢放行
+                // 链；扩窗（read_tail_messages 内建）读空说明确实真空。
+                if !msgs.is_empty() {
+                    if self.pool.session_tail_cache.len()
+                        >= crate::services::workspace::TAIL_PRELOAD * 2
+                    {
+                        self.pool.session_tail_cache.clear();
+                    }
+                    self.pool
+                        .session_tail_cache
+                        .insert(path.clone(), msgs.clone());
                 }
-                self.pool
-                    .session_tail_cache
-                    .insert(path.clone(), msgs.clone());
                 msgs
             }
         };
@@ -130,14 +99,12 @@ impl Chat {
             r.pending_rename = rename;
             r
         });
-        // observer 子会话的 tab 标题 = descriptor 的任务名（044-0 验收：
-        // 标签名使用任务名）。侧栏扫描器不含子会话（session_title_of 取
-        // 不到），从父会话 catalog 解析：label → profile → 「子代理」。
-        // 父会话 = 当前激活会话（面板行/compact 卡点击两条路都满足）。
+        // observer 子会话的 tab 标题 = 任务名（044-0 验收）：主会话消息反查
+        // （agent 调用 args 的 label → profile → prompt 首行），查不到占位
+        // 「子代理」。父会话 = 当前激活会话（面板行/compact 卡点击两条路都
+        // 满足）。
         if observer {
             let new_key = rt.read(cx).key.clone();
-            // 044-3 §4.4：标题先查内存缓存（面板 rows + stash），打开路径不读盘；
-            // 缓存没覆盖才占位 + 后台补名（非热路径，首帧不被拖）。
             let label = self.subagent_tab_label(&path, &new_key, cx);
             self.pool.tab_labels.insert(new_key.clone(), label);
             // 观察窗 = 自由区普通 tab（044-0 验收②：追加**末尾**，不抢固定

@@ -128,8 +128,7 @@ pub(super) fn render_subagent_card(
     //              意外中断（aborted）、provider 服务侧异常（PROVIDER_ERROR）
     //              及其他一切非派发分码。**result 已到但 stopReason ≠
     //              completed 一律算异常**（2026-11-07 修正：live abort 的
-    //              settle descriptor 不带 error_code，此前落「运行中」
-    //              分支转圈到永远）
+    //              settle 不带 error_code，此前落「运行中」分支转圈到永远）
     //   任务完成 = result 到且 stopReason==completed 且无错
     //   运行中   = 其余（`.....`）
     const DISPATCH_CODES: [&str; 7] = [
@@ -259,8 +258,8 @@ pub(super) fn render_subagent_card(
     // 与任务描述的 text_dim 拉开一级（2026-11-07 用户：两行颜色不该一样）
     row = row.child(hint);
     // 整行点击 = 打开子会话（044-0 验收④，只读观察窗）。details 里没有
-    // session_file 时（background 派发尚未落 descriptor）用 child_id 到
-    // 面板缓存反查，避免「点不动」。
+    // session_file 时（background 派发尚未落 completion）用 child_id 在主
+    // 会话消息里反查，避免「点不动」。
     let child_id = details
         .and_then(|d| d.get("child_id"))
         .and_then(|v| v.as_str())
@@ -274,7 +273,7 @@ pub(super) fn render_subagent_card(
                 let _ = weak_open.update(cx, |c, cx| {
                     let sf = session_file.clone().or_else(|| {
                         let cid = child_id.as_deref()?;
-                        c.dlg.subagent_panel.as_ref()?.session_file_for_child(cid)
+                        c.session_file_for_child(cx, cid)
                     });
                     if let Some(sf) = sf {
                         c.open_session(sf, false, cx);
