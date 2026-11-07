@@ -319,8 +319,8 @@ pub(crate) struct PoolUi {
     pub(crate) primary_key: String,
     /// tab 标题快照（key → 标题）：observer 子会话 = descriptor 的任务名
     /// （侧栏扫描器不含子会话，session_title_of 取不到）；普通会话 =
-    /// switch_to 时的 session_title_of 快照（空闲退役后 runtime 不在池，
-    /// 标题仍有出处）。bind 迁移 / 关闭跟随键变化。
+    /// switch_to / refresh_sessions 时的 session_title_of 快照（空闲退役
+    /// 后 runtime 不在池，标题仍有出处）。bind 迁移 / 关闭跟随键变化。
     pub(crate) tab_labels: std::collections::HashMap<String, String>,
     pub(crate) sessions: Vec<SessionInfo>,
     pub(crate) session_tail_cache: std::collections::HashMap<PathBuf, Vec<Msg>>,

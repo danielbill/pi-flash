@@ -241,7 +241,8 @@ fn session_tabs(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEleme
     let t = T();
     // 固定段 = **一枚**主会话 tab（044-0 验收②：新会话/主会话永远第一位，
     // 子会话观察窗进自由区 panel_tabs 不抢这里）。标题 = primary 快照
-    // （switch_to 刷新；空闲退役后 runtime 不在池仍有快照），无 primary
+    //（switch_to / 侧栏重扫 ListDirty 刷新，见 sync_primary_tab_label；
+    // 空闲退役后 runtime 不在池仍有快照），无 primary
     //（启动空档/被删）→「新会话」。高亮 = chat 前台且自由区无激活 tab。
     let primary = chat.pool.primary_key.clone();
     let title: SharedString = chat

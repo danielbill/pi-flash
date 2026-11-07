@@ -93,7 +93,8 @@ impl Chat {
             self.pool.active_key = path_key.clone();
         }
         // tab 身份跟随迁移（draft-N → 会话文件键）：主会话指针、标题快照、
-        // 自由区观察窗 tab 的 key（草稿标题「新会话」在下次 switch_to 刷真名）
+        // 自由区观察窗 tab 的 key（草稿标题「新会话」由 bind 尾随的
+        // refresh_sessions 对齐真名，见 sync_primary_tab_label）
         if self.pool.primary_key == old_key {
             self.pool.primary_key = path_key.clone();
         }

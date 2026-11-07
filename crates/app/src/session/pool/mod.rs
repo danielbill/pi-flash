@@ -111,6 +111,11 @@ impl Chat {
             })
             .collect();
         self.rebuild_projects(all);
+        // 侧栏清单刚重扫完，顺手把 topbar 固定段的标题快照对齐真值：
+        // 草稿落盘（FileBound）/ pi 端改名回执 / 首条消息预览全走
+        // ListDirty → 这条链；switch_to 只在切换会话时刷快照，留在本
+        // 会话里一路聊到拿到真名也永不触发（2026-11-07 用户报障）
+        self.sync_primary_tab_label();
     }
 
     pub(crate) fn switch_project(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
@@ -216,40 +221,92 @@ impl Chat {
         skills
     }
 
-    /// 当前会话标题（topbar 会话视图展示；≤30 字截断）。优先 pi 会话名，
-    /// 回落首条用户消息。
+    /// 侧栏清单里的标题素材（pi 会话名优先，回落首条消息预览；都空 =
+    /// None）。session_title_of 与 tab 快照同步共用同一出处，两条路
+    /// 永不各说各话。
+    fn psp_title_of(&self, file: &std::path::Path) -> Option<String> {
+        self.psp
+            .projects
+            .iter()
+            .flat_map(|g| &g.sessions)
+            .find(|s| same_path(&s.path, file))
+            .and_then(|s| {
+                s.name
+                    .clone()
+                    .filter(|n| !n.trim().is_empty())
+                    .or_else(|| Some(s.preview.clone()).filter(|p| !p.trim().is_empty()))
+            })
+    }
 
-    /// 指定池 key 的会话标题（topbar 第一格在查看插件功能页时显示桌面会话用）。
+    /// 指定池 key 的会话标题（topbar 第一格在查看插件功能页时显示桌面会话用；
+    /// ≤30 字截断）。优先 pi 会话名，回落首条用户消息，再回落「新会话」。
     pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {
-        let file = self
-            .pool
+        self.pool
             .runtimes
             .get(key)
-            .and_then(|rt| rt.read(cx).file.clone());
-        let raw = file
-            .and_then(|f| {
-                self.psp
-                    .projects
-                    .iter()
-                    .flat_map(|g| &g.sessions)
-                    .find(|s| same_path(&s.path, &f))
-                    .and_then(|s| {
-                        s.name
-                            .clone()
-                            .filter(|n| !n.trim().is_empty())
-                            .or_else(|| Some(s.preview.clone()).filter(|p| !p.trim().is_empty()))
-                    })
-            })
-            .unwrap_or_else(|| tr("session.new").to_string());
-        // 首行 + ≤30 字
-        let first_line = raw.lines().next().unwrap_or("").trim().to_string();
-        let mut out: String = first_line.chars().take(30).collect();
-        if first_line.chars().count() > 30 {
-            out.push('…');
+            .and_then(|rt| rt.read(cx).file.clone())
+            .and_then(|f| self.psp_title_of(&f))
+            .map(|raw| tab_title(&raw))
+            .unwrap_or_else(|| tr("session.new").to_string())
+    }
+
+    /// topbar 固定段标题快照对齐（refresh_sessions 末尾调）：快照命中优先
+    /// 于活值渲染（titlebar::session_tabs），旧值不刷「新会话」就钉死在
+    /// tab 上。真值取不到（draft-N 不是文件路径 / 空闲退役后 runtime 出池）
+    /// **不写**——兜底词绝不能覆盖已有快照，退役后快照是 tab 标题唯一
+    /// 出处（PoolUi::tab_labels 注）。
+    fn sync_primary_tab_label(&mut self) {
+        let key = self.pool.primary_key.clone();
+        // 池 key 即会话文件路径（FileBound 迁移后）；is_file 守卫一步
+        // 分流草稿键，不出兜底词
+        let f = std::path::Path::new(&key);
+        if !f.is_file() {
+            return;
         }
-        out
+        if let Some(raw) = self.psp_title_of(f) {
+            self.pool.tab_labels.insert(key, tab_title(&raw));
+        }
     }
 }
 // ---------------------------------------------------------------------------
 // 会话池方法：刷新/切换/活跃态/上下文/标题（P3 自 main.rs impl Chat 拆入）
 // ---------------------------------------------------------------------------
+
+/// 标题入 tab 的统一整形：首行 + ≤30 字截断（超长补 …）。session_title_of
+/// 与 sync_primary_tab_label 共用，快照与活值同一个形。
+fn tab_title(raw: &str) -> String {
+    let first_line = raw.lines().next().unwrap_or("").trim().to_string();
+    let mut out: String = first_line.chars().take(30).collect();
+    if first_line.chars().count() > 30 {
+        out.push('…');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tab_title_tests {
+    use super::tab_title;
+
+    #[test]
+    fn keeps_short_single_line() {
+        assert_eq!(tab_title("派发3个子代理做测试"), "派发3个子代理做测试");
+    }
+
+    #[test]
+    fn takes_first_line_and_trims() {
+        assert_eq!(tab_title("  首行标题\n第二行"), "首行标题");
+    }
+
+    #[test]
+    fn truncates_over_30_chars() {
+        let long = "字".repeat(40);
+        let out = tab_title(&long);
+        assert_eq!(out.chars().count(), 31); // 30 字 + …
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn empty_yields_empty() {
+        assert_eq!(tab_title(""), "");
+    }
+}
