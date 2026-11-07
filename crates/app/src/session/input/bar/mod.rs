@@ -48,16 +48,7 @@ fn plugin_button(
     } else {
         t.text_muted
     };
-    let mut el = bar_trigger(
-        "plugins-menu",
-        Some("plug"),
-        16., // 2026-10-15 用户定夺：plug glyph 天然窄长（宽 fill 仅 50%），小档下
-        // 光学偏小，上 ICON_MD(16) 补视觉质量（18 试过稍大，13 太小）
-        &label,
-        false,
-        color,
-        active,
-    );
+    let mut el = bar_trigger("plugins-menu", Some("plug"), &label, false, color, active);
     if active {
         el = el.on_mouse_down(
             MouseButton::Left,
@@ -90,13 +81,12 @@ fn mcp_button(
     );
     let label = format!("[{n}]");
     let color = if open { t.accent } else { t.text_muted };
-    let el = bar_trigger("mcp-menu", Some("server"), 13., &label, false, color, true)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
-                this.toggle_mcp_menu_at(event.position, cx);
-            }),
-        );
+    let el = bar_trigger("mcp-menu", Some("server"), &label, false, color, true).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
+            this.toggle_mcp_menu_at(event.position, cx);
+        }),
+    );
     // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
     el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.mcp))
         .into_any_element()
@@ -104,16 +94,16 @@ fn mcp_button(
 
 /// 操作栏触发钮基座（InputPanel 五颗触发钮唯一样式落点：工具/模型/思考/
 /// 扩展/MCP，2026-11-07 自各处内联样式收口）：28px 高、gap5、圆角 8、
-/// BAR_FONT 字号；可选前置 icon（`icon_hover` 悬停提亮，尺寸 `icon_size`，
-/// plug 特档 16 见下）+ 文案 + 可选右挂 chevron。`color` = icon+文案色
-/// （open→accent / 锁定→text_faint / 常态→text_muted 由调用方按各自语义
-/// 给），`hoverable` = 可点态（挂 cursor + hover 洗底提字；锁定钮不挂）。
-/// 点击行为、tracker、守卫由调用方续挂——设置·子代理页表单
-/// （settings/agents）同款复用。
+/// BAR_FONT 字号；可选前置 icon（`icon_hover` 悬停提亮，尺寸**恒
+/// [`tokens::icon::MD`]**——同一控件行 icon 不许两种大小，2026-11-08 用户
+/// 定稿，原 plug 16 特档一并废除；参数已删，想漂移都没门）+ 文案 + 可选
+/// 右挂 chevron。`color` = icon+文案色（open→accent / 锁定→text_faint /
+/// 常态→text_muted 由调用方按各自语义给），`hoverable` = 可点态（挂
+/// cursor + hover 洗底提字；锁定钮不挂）。点击行为、tracker、守卫由调用
+/// 方续挂——设置·子代理页表单（settings/agents）同款复用。
 pub(crate) fn bar_trigger(
     id: &'static str,
     icon_name: Option<&'static str>,
-    icon_size: f32,
     label: &str,
     chevron: bool,
     color: u32,
@@ -130,7 +120,7 @@ pub(crate) fn bar_trigger(
         .rounded(px(8.))
         .text_size(ui(BAR_FONT))
         .text_color(rgb(color))
-        .children(icon_name.map(|name| icon_hover(name, icon_size, color)))
+        .children(icon_name.map(|name| icon_hover(name, crate::ui::tokens::icon::MD, color)))
         .child(SharedString::from(label.to_string()))
         .when(chevron, |d| {
             d.child(icon(
@@ -172,7 +162,11 @@ fn bar_left_group(
             .gap(px(6.))
             .pl(px(8.))
             .h(px(28.))
-            .child(icon("icon-terminal-solid", 13., t.text_dim))
+            .child(icon(
+                "icon-terminal-solid",
+                crate::ui::tokens::icon::MD,
+                t.text_dim,
+            ))
             .child(
                 div()
                     .text_size(crate::appearance::ui_size(BAR_FONT))
@@ -227,7 +221,6 @@ fn bar_left_group(
                 bar_trigger(
                     "tools-menu",
                     Some("wrench"),
-                    13.,
                     tools_label,
                     true,
                     if tools_locked {

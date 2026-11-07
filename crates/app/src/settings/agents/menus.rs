@@ -138,7 +138,6 @@ fn model_trigger(
         bar_trigger(
             "ag-model-trg",
             Some("cpu-ai"),
-            13.,
             &label,
             true,
             trg_color(readonly, d.ag_popup == Some(0)),
@@ -163,7 +162,6 @@ fn thinking_trigger(
         bar_trigger(
             "ag-thinking-trg",
             Some("lightbulb"),
-            13.,
             &d.ag_thinking.clone(),
             true,
             trg_color(readonly, d.ag_popup == Some(2)),
@@ -207,7 +205,6 @@ fn tier_trigger(
         bar_trigger(
             "ag-tier-trg",
             Some("wrench"),
-            13.,
             &d.ag_tools.clone(),
             true,
             trg_color(readonly, d.ag_popup == Some(1)),
@@ -234,7 +231,6 @@ fn ext_trigger(
         bar_trigger(
             "ag-ext-trg",
             Some("plug"),
-            16., // plug 特档：2026-10-15 用户定夺（glyph 窄长补视觉质量）
             &format!("[{}]", d.ag_extensions.len()),
             false,
             trg_color(disabled, d.ag_popup == Some(3)),
@@ -259,7 +255,6 @@ fn mcp_trigger(
         bar_trigger(
             "ag-mcp-trg",
             Some("server"),
-            13.,
             &format!("[{}]", d.ag_mcp.len()),
             false,
             trg_color(readonly, d.ag_popup == Some(4)),

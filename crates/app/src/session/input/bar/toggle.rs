@@ -20,7 +20,8 @@ pub(crate) fn status_bar_toggle(
         .px(px(6.))
         .with_tip("footerbar.tip.toggle")
         // 图标 ICON_SM 14（§3 行内/按钮内默认档；与同排胶囊的 13–14 视觉一致）
-        .child(icon("badge-info", 14., color))
+        // 同一控件行 icon 统一 MD 档（2026-11-08；原 SM 14 与触发钮 13/16 混用）
+        .child(icon("badge-info", crate::ui::tokens::icon::MD, color))
         // 紧凑档开关（§5.3 SW_SM）：28px 行高里的行内件，MD 会几乎撑满整行
         .child(crate::ui::kit::switch_base_sm(
             "ext-status-switch",
@@ -136,7 +137,6 @@ pub(crate) fn composer_bar(
         super::bar_trigger(
             "open-model-select",
             Some("cpu-ai"),
-            13.,
             model_label,
             true,
             if locked { t.text_faint } else { t.text_muted },
@@ -164,7 +164,6 @@ pub(crate) fn composer_bar(
         super::bar_trigger(
             "thinking-menu",
             Some("lightbulb"),
-            13.,
             thinking_label,
             true,
             if locked {
