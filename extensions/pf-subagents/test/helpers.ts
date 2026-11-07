@@ -30,6 +30,7 @@ export class ScriptedChild implements ChildHandle {
 	#disposeBarrier: Promise<void> | undefined;
 	#releaseDispose: (() => void) | undefined;
 	#watchers: Array<(progress: ChildProgress) => void> = [];
+	#runDoneCallbacks: Array<() => void> = [];
 
 	constructor(id: string, options: ScriptedOptions) {
 		this.id = id;
@@ -63,6 +64,11 @@ export class ScriptedChild implements ChildHandle {
 		};
 	}
 
+	/** Mirror LocalChild: the manager arms this; `complete()` fires it. */
+	onRunDone(callback: () => void): void {
+		this.#runDoneCallbacks.push(callback);
+	}
+
 	/** Emit activity counters (and optional usage) as if an assistant turn just completed. */
 	progress(stats: ChildSessionStats, usage?: SubagentUsage): void {
 		for (const watcher of this.#watchers) watcher({ stats, ...(usage ? { usage } : {}) });
@@ -92,6 +98,7 @@ export class ScriptedChild implements ChildHandle {
 		stats?: ChildSessionStats,
 	): void {
 		this.#resolve({ childId: this.id, text, stopReason, ...(stats ? { stats } : {}) });
+		for (const callback of this.#runDoneCallbacks.splice(0)) callback();
 	}
 }
 

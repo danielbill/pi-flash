@@ -119,6 +119,13 @@ export interface ChildHandle {
 	 * usage). Returns an unsubscribe; absent when the backend cannot observe turns.
 	 */
 	watch?(listener: (progress: ChildProgress) => void): () => void;
+	/**
+	 * Fire-and-forget completion signal for background delivery: fires once when
+	 * the child's current run resolves, so the manager can settle without a
+	 * waiting caller. Optional; backends without run observation fall back to
+	 * settle-on-availability.
+	 */
+	onRunDone?(callback: () => void): void;
 	/** Release the child and its resources. Idempotent. */
 	dispose(): Promise<void>;
 }

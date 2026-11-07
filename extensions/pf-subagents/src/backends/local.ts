@@ -170,6 +170,8 @@ class LocalChild implements ChildHandle {
 	 * 中就要出 token；settle 的 result.usage 也走这份累计，同口径). */
 	#usage: UsageSum | undefined;
 	#watchers: Array<(progress: ChildProgress) => void> = [];
+	/** Background-delivery completion hook, armed by the manager (onRunDone). */
+	#onRunDone: (() => void) | undefined;
 
 	constructor(id: string, session: ChildSession, maxTurns?: number) {
 		this.id = id;
@@ -261,6 +263,13 @@ class LocalChild implements ChildHandle {
 		};
 	}
 
+	/** Fire once when the current run resolves (background delivery's settle
+	 * trigger). The run promise never rejects (catch folded into #failure), so
+	 * resolution alone is the signal. */
+	onRunDone(callback: () => void): void {
+		this.#onRunDone = callback;
+	}
+
 	get sessionFile(): string | undefined {
 		return this.#session.sessionFile;
 	}
@@ -270,6 +279,10 @@ class LocalChild implements ChildHandle {
 		this.#run = this.#session.prompt(prompt).catch((error: unknown) => {
 			this.#failure = error;
 		});
+		void this.#run.then(
+			() => this.#onRunDone?.(),
+			() => {},
+		);
 		// Let a synchronous rejection surface before we call the child accepted.
 		await Promise.resolve();
 		if (this.#failure) throw asSubagentError(this.#failure, SubagentErrorCode.START_REJECTED);
@@ -280,6 +293,10 @@ class LocalChild implements ChildHandle {
 		this.#run = this.#session.prompt(message).catch((error: unknown) => {
 			this.#failure = error;
 		});
+		void this.#run.then(
+			() => this.#onRunDone?.(),
+			() => {},
+		);
 		await Promise.resolve();
 		// An immediate follow-up rejection is a model-layer failure (044-0 运行
 		// 层归一 PROVIDER_ERROR), not an admission failure of the initial task.

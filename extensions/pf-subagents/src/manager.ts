@@ -205,6 +205,16 @@ export class SubagentManager {
 					updatedAt: this.#now().toISOString(),
 				};
 			});
+			// v2 后台交付没有等待者——结算必须自驱：子代理当前一轮跑完即触发
+			// settle（dispose → 槽位归还 → 终态 descriptor → onCompleted 通知宿主）。
+			// 运行期间 admission 保持开放（send/interrupt 照常），结算只在真跑完后
+			// 才关准入。缺这个钩子的后端退化为“可结算即结算”。真机 2026-11-07：
+			// 无人 await 时槽位永不归还——5 个 background 子代理跑完后，第 6 个
+			// 委派永远 CAPACITY_REACHED，完成通知也从未发出，descriptor 永远 active。
+			if (request.delivery === "parent") {
+				if (handle.onRunDone) handle.onRunDone(() => void this.#settle(record));
+				else void this.#settle(record);
+			}
 			this.#emit(record);
 		} catch (error) {
 			record.state = "failed";

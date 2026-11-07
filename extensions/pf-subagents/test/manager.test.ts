@@ -305,6 +305,33 @@ describe("SubagentManager parent delivery + control", () => {
 		assert.deepEqual(completed, ["answer"]);
 	});
 
+	// 真机 2026-11-07 回归：background 交付（tool 层立即返回）后无人 await——
+	// settle 必须由运行结束自驱，否则槽位永不归还（容量池 5 槽全漏，第 6 个
+	// 委派永远 CAPACITY_REACHED）、onCompleted 通知永不发出、descriptor 永远
+	// 卡在 active（subagent_list 假活）。
+	it("settles a parent-delivery child on run completion without a waiting caller", async () => {
+		const completed: string[] = [];
+		const { manager, provider } = setup({}, { onCompleted: (r) => completed.push(r.text) });
+		await manager.start(baseRequest({ delivery: "parent" }));
+		// 没有任何人调用 wait()：一轮跑完即结算。
+		provider.children[0].complete("answer");
+		await tick();
+		assert.deepEqual(completed, ["answer"]);
+		assert.equal(provider.children[0].disposals, 1);
+		assert.equal(manager.descriptors()[0].phase, "completed");
+		// 槽位已归还：新委派直接成功，无需任何等待。
+		await assert.doesNotReject(manager.start(baseRequest({ delivery: "parent" })));
+	});
+
+	// 结算只在真跑完后才关准入：运行中的 background 子代理可打断、可续聊。
+	it("keeps a running parent-delivery child interruptible and admittable", async () => {
+		const { manager, provider } = setup();
+		await manager.start(baseRequest({ delivery: "parent" }));
+		assert.equal(await manager.interruptChild("sub-1"), "interrupted");
+		await manager.activation("sub-1")!.send("steer");
+		assert.deepEqual(provider.children[0].sent, ["steer"]);
+	});
+
 	it("lists children of a parent with phases", async () => {
 		const { manager, provider } = setup();
 		await manager.start(baseRequest({ label: "one" }));
