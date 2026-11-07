@@ -52,6 +52,14 @@ impl Chat {
         if let Some(crate::PanelTab::File(p)) = self.ws.panel_tabs.get(ix).cloned() {
             self.sync_tree_to_file(&p, cx);
         }
+        // 跨项目树同步会 switch_project → open_session/new_session →
+        // switch_to「自由区全灭」清掉上面刚写的激活位（044-0 起普通会话
+        // 切入的回 chat 姿态）。但本次激活才是最外层注意力落点——调用方
+        // 随后 set_content_view(File)，激活位必须跟着文件走，否则 file_view
+        // 渲染 active_file_path() = None 落空态「在左侧文件树中选择一个
+        // 文件」（2026-11-07 用户报障：消息里点他项目路径，树定位了、
+        // 编辑区空）。同项目路径不会触发 switch_to，重写同值无副作用。
+        self.ws.active_panel_tab = Some(ix);
         // zed `update_active_tab` 同款：让标签条把激活 tab 滚进视口（最小
         // 滚动，已可见即不动）。唯一写点，点标签/Ctrl+←/→/关标签补位全跟
         // 随；不挂渲染路径，否则用户手滚走一帧就被拽回。
