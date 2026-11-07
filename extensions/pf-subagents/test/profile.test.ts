@@ -71,6 +71,20 @@ describe("profileFromDocument", () => {
 		assert.match((error as Error).message, /unsupported isolation/);
 	});
 
+	it("parses the thinking level; absent = auto (2026-11-07 子代理表单)", () => {
+		const doc = ["---", "description: lab", "thinking: high", "---", "body"].join("\n");
+		const profile = profileFromDocument("p", doc, "mem");
+		assert.equal(profile.thinking, "high");
+		const auto = profileFromDocument("p", "---\ndescription: x\n---\n", "mem");
+		assert.equal(auto.thinking, undefined, "no thinking key = auto = don't override");
+	});
+
+	it("rejects a thinking value outside pi's seven levels", () => {
+		const bad = ["---", "thinking: ultra", "---", "x"].join("\n");
+		const error = captureSync(() => profileFromDocument("p", bad, "mem"));
+		assert.match((error as Error).message, /thinking must be one of/);
+	});
+
 	it("parses every v1 field and ignores unknown ones (M4.6)", () => {
 		const doc = [
 			"---",

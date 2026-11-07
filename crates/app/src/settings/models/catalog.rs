@@ -39,31 +39,6 @@ impl Chat {
             .unwrap_or_else(|| format!("{provider}/{id}"))
     }
 
-    /// 启用模型按显示名序（下列表数据源）。
-    pub(crate) fn mc_sorted_enabled(&self) -> Vec<pi_link::protocol::ModelInfo> {
-        let all_enabled = self.cfg.mc_state.all_enabled;
-        let enabled: std::collections::HashSet<&str> = self
-            .cfg
-            .mc_state
-            .enabled
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let mut list: Vec<pi_link::protocol::ModelInfo> = self
-            .catalog_with_ledger()
-            .iter()
-            .filter(|m| {
-                all_enabled || {
-                    let r = format!("{}/{}", m.provider, m.id);
-                    enabled.contains(r.as_str())
-                }
-            })
-            .cloned()
-            .collect();
-        list.sort_by_key(|m| Self::mc_sort_key(m));
-        list
-    }
-
     /// Re-read the model-related defaults a new session starts with. 042：
     /// 默认模型只认 PF 自己的 app-settings.json（五角星写入，不读 pi
     /// settings.json 的同名键——系统 pi / pi-web 的地盘）；思考档仍读 pi。

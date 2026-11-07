@@ -143,17 +143,13 @@ impl Chat {
 }
 
 /// 面板元素（`None` = 没开）。挂在 app root 上，锚点同工具胶囊菜单。
-pub(crate) fn view(
+/// 扩展菜单条目（composer 菜单与设置·子代理页共用，2026-11-07 收口）：
+/// 全局 → 项目序枚举去重，按展示名排序，`is_selected` 者稳定置顶。
+/// 返回 (来源, 是否项目级)。
+pub(crate) fn ext_menu_items(
     chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    window: &gpui::Window,
-) -> Option<AnyElement> {
-    let picker = chat.dlg.pi_extension_picker.as_ref()?;
-    let t = T();
-    let ui = crate::appearance::ui_size;
-    let selected = |src: &str| picker.pending.contains(src);
-
-    // ---- 宇宙 = 全局 ∪ 项目包去重；先按展示名排序，再稳定地把已勾选置顶 ----
+    is_selected: &impl Fn(&str) -> bool,
+) -> Vec<(String, bool)> {
     let mut items: Vec<(String, bool)> = Vec::new(); // (来源, 项目)
     for v in chat
         .cfg
@@ -173,34 +169,26 @@ pub(crate) fn view(
         items.push((src, project));
     }
     items.sort_by_key(|(s, _)| pi_link::skills::display_source(s).to_lowercase());
-    items.sort_by_key(|(s, _)| !selected(s));
-    let rows: Vec<AnyElement> = items
-        .iter()
-        .map(|(src, project)| {
-            let tokens = chat.pool.ext_tokens.get(src).map(|e| e.ext.max(0) as u64);
-            plugin_row(weak, src, selected(src), *project, tokens, t)
-        })
-        .collect();
-    let n_rows = rows.len();
+    items.sort_by_key(|(s, _)| !is_selected(s));
+    items
+}
 
-    let mut body = rows;
-    if body.is_empty() {
-        body.push(empty_row(SharedString::from(crate::i18n::tr(
-            "extensions.not_configured",
-        ))));
-    }
-    // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
-    let list_h = capped_list_h(n_rows);
-
-    // 标题行右侧：当前勾选集的说明 token 合计（040 延迟加载测得多少算多少）
+/// 扩展菜单头（标题 + 当前勾选集的说明 token 合计，040 延迟加载测得多少
+/// 算多少）：composer 菜单与设置·子代理页共用同一版式。
+pub(crate) fn ext_menu_header(
+    chat: &Chat,
+    items: &[(String, bool)],
+    is_selected: &impl Fn(&str) -> bool,
+) -> gpui::Div {
+    let t = T();
+    let ui = crate::appearance::ui_size;
     let total: i64 = items
         .iter()
-        .filter(|(s, _)| selected(s))
+        .filter(|(s, _)| is_selected(s))
         .filter_map(|(s, _)| chat.pool.ext_tokens.get(s))
         .map(|e| e.ext)
         .sum();
-
-    let header = div()
+    div()
         .px(px(PAD))
         .pt(px(PAD))
         .pb(px(PAD))
@@ -236,7 +224,47 @@ pub(crate) fn view(
                             total.max(0) as u64,
                         ))),
                 )
-        });
+        })
+}
+
+pub(crate) fn view(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    window: &gpui::Window,
+) -> Option<AnyElement> {
+    let picker = chat.dlg.pi_extension_picker.as_ref()?;
+    let t = T();
+    let selected = |src: &str| picker.pending.contains(src);
+    let items = ext_menu_items(chat, &selected);
+    let rows: Vec<AnyElement> = items
+        .iter()
+        .map(|(src, project)| {
+            let tokens = chat.pool.ext_tokens.get(src).map(|e| e.ext.max(0) as u64);
+            let src = src.clone();
+            let pick = src.clone();
+            plugin_row(
+                weak,
+                &src,
+                selected(&src),
+                *project,
+                tokens,
+                move |c, cx| c.pi_extension_picker_toggle(&pick, cx),
+                t,
+            )
+        })
+        .collect();
+    let n_rows = rows.len();
+
+    let mut body = rows;
+    if body.is_empty() {
+        body.push(empty_row(SharedString::from(crate::i18n::tr(
+            "extensions.not_configured",
+        ))));
+    }
+    // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
+    let list_h = capped_list_h(n_rows);
+
+    let header = ext_menu_header(chat, &items, &selected);
 
     // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
@@ -255,18 +283,19 @@ pub(crate) fn view(
 }
 
 /// 勾选行：14px 勾选框 + 展示名（去 `npm:`，等宽字体）+ 可选「项目」小标
-/// + 右侧说明 token 数（040 延迟加载测得才显示，不带单位）。
-fn plugin_row(
+/// + 右侧说明 token 数（040 延迟加载测得才显示，不带单位）。`on_toggle`
+/// 由调用方写入各自状态（composer 写 runtime 台账，设置页写表单清单）。
+pub(crate) fn plugin_row(
     weak: &gpui::WeakEntity<Chat>,
     source: &str,
     checked: bool,
     project: bool,
     tokens: Option<u64>,
+    on_toggle: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
     t: &'static crate::appearance::theme::Theme,
 ) -> AnyElement {
     let ui = crate::appearance::ui_size;
     let row_weak = weak.clone();
-    let src = source.to_string();
     let mut row = div()
         .id(SharedString::from(format!("pp-row-{source}")))
         .h(px(ROW_H))
@@ -279,7 +308,7 @@ fn plugin_row(
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             // 行内点击不冒泡到「点外关闭」
             cx.stop_propagation();
-            let _ = row_weak.update(cx, |c, cx| c.pi_extension_picker_toggle(&src, cx));
+            let _ = row_weak.update(cx, |c, cx| on_toggle(c, cx));
         })
         .child(crate::ui::kit::checkbox(checked))
         .child(

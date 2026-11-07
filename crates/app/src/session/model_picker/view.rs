@@ -129,6 +129,72 @@ pub(crate) fn group_model_row(
     row.into_any_element()
 }
 
+/// 行点击动作（双参版：composer 选会话模型、设置·子代理页写表单字段）。
+pub(crate) type ModelPickAction =
+    std::rc::Rc<dyn Fn(&mut Chat, &mut gpui::Context<Chat>, String, String) + 'static>;
+
+/// 模型菜单列表体（composer 菜单与设置·子代理页共用，2026-11-07 收口）：
+/// `group_entries` 装配组头 + 模型行。`current` = ✓ 模型键（None = 无 ✓），
+/// `default_ref` = 五角星默认，`sel_highlight(abs)` = 键盘高亮（composer 传
+/// 闭包、设置传恒 false），`on_pick` = 行点击 (provider, id)。
+pub(crate) fn model_menu_body(
+    weak: &gpui::WeakEntity<Chat>,
+    models: &[pi_link::protocol::ModelInfo],
+    current: Option<&str>,
+    default_ref: Option<&str>,
+    sel_highlight: impl Fn(usize) -> bool,
+    on_pick: Option<ModelPickAction>,
+    t: &'static crate::appearance::theme::Theme,
+) -> gpui::Div {
+    let entries = Chat::group_entries(models);
+    let mut body = div().flex().flex_col();
+    for (abs, e) in entries.iter().enumerate() {
+        match e {
+            ModelGroupEntry::Header(name) => {
+                body = body.child(group_header_row(name, PAD, ROW_H * 0.8, t));
+            }
+            ModelGroupEntry::Model(ix) => {
+                let m = &models[*ix];
+                let selected = sel_highlight(abs);
+                let r = format!("{}/{}", m.provider, m.id);
+                let on_row = on_pick.clone().map(|on| {
+                    let (dp, di) = (m.provider.clone(), m.id.clone());
+                    let action: ModelRowAction = Box::new(move |c: &mut Chat, cx| {
+                        on(c, cx, dp.clone(), di.clone());
+                    });
+                    action
+                });
+                body = body.child(group_model_row(
+                    weak,
+                    m,
+                    default_ref == Some(r.as_str()),
+                    current == Some(r.as_str()),
+                    selected,
+                    true,
+                    ROW_H,
+                    PAD,
+                    None,
+                    on_row,
+                    t,
+                ));
+            }
+        }
+    }
+    body
+}
+
+/// 列表内容高（组头 0.8×行高 + 模型行 1×行高）：菜单卡限高与设置页复用
+/// 同一把尺。
+pub(crate) fn model_menu_content_h(models: &[pi_link::protocol::ModelInfo]) -> f32 {
+    Chat::group_entries(models)
+        .iter()
+        .map(|e| match e {
+            ModelGroupEntry::Header(_) => ROW_H * 0.8,
+            ModelGroupEntry::Model(_) => ROW_H,
+        })
+        .sum()
+}
+
 /// 面板元素（`None` = 没开）。挂在 app root 上，锚点同 MCP 菜单。
 pub(crate) fn view(
     chat: &Chat,
@@ -142,7 +208,6 @@ pub(crate) fn view(
 
     let (models, total) = chat.picker_models(cx);
     let show_filter = total >= MODEL_FILTER_MIN;
-    let entries = Chat::group_entries(&models);
     // ✓ = 当前会话模型。草稿 / 进程已死时 select_model 只记 pending_model
     //（spawn 时才变成 --model），它是用户最新意图，优先于 state 里的旧模型；
     // 活进程下 pending 恒空（走 SetModel），仍以 state 为准。都没有（全新
@@ -175,7 +240,7 @@ pub(crate) fn view(
     let mut sel_abs = None;
     {
         let mut seen = 0usize;
-        for (abs, e) in entries.iter().enumerate() {
+        for (abs, e) in Chat::group_entries(&models).iter().enumerate() {
             if matches!(e, ModelGroupEntry::Model(_)) {
                 if seen == picker.sel {
                     sel_abs = Some(abs);
@@ -186,39 +251,21 @@ pub(crate) fn view(
         }
     }
 
-    let mut body = div().flex().flex_col();
-    for (abs, e) in entries.iter().enumerate() {
-        match e {
-            ModelGroupEntry::Header(name) => {
-                body = body.child(group_header_row(name, PAD, ROW_H * 0.8, t));
-            }
-            ModelGroupEntry::Model(ix) => {
-                let m = &models[*ix];
-                let selected = sel_abs == Some(abs);
-                let r = format!("{}/{}", m.provider, m.id);
-                let (dp, di) = (m.provider.clone(), m.id.clone());
-                body = body.child(group_model_row(
-                    weak,
-                    m,
-                    default_ref.as_deref() == Some(r.as_str()),
-                    current.as_deref() == Some(r.as_str()),
-                    selected,
-                    true,
-                    ROW_H,
-                    PAD,
-                    None,
-                    Some(Box::new(move |c, cx| {
-                        c.rt()
-                            .update(cx, |r, cx| r.select_model(dp.clone(), di.clone(), cx));
-                        // picking is also the dismissal gesture
-                        c.dlg.model_picker = None;
-                        cx.notify();
-                    })),
-                    t,
-                ));
-            }
-        }
-    }
+    let pick_action: ModelPickAction = std::rc::Rc::new(|c: &mut Chat, cx, dp, di| {
+        c.rt().update(cx, |r, cx| r.select_model(dp, di, cx));
+        // picking is also the dismissal gesture
+        c.dlg.model_picker = None;
+        cx.notify();
+    });
+    let mut body = model_menu_body(
+        weak,
+        &models,
+        current.as_deref(),
+        default_ref.as_deref(),
+        |abs| sel_abs == Some(abs),
+        Some(pick_action),
+        t,
+    );
     if models.is_empty() {
         body = body.child(
             div()
@@ -231,18 +278,12 @@ pub(crate) fn view(
                 ))),
         );
     }
-    // 列表内容高：组头 0.8×行高 + 模型行 1×行高（精确值，不用行数估）；
-    // 空列表 = 空态提示行（上下 12px 留白 + 一行文字）
-    let content_h: f32 = if entries.is_empty() {
+    // 列表内容高：精确值，不用行数估；空列表 = 空态提示行（上下 12px 留白
+    // + 一行文字）
+    let content_h: f32 = if models.is_empty() {
         46.
     } else {
-        entries
-            .iter()
-            .map(|e| match e {
-                ModelGroupEntry::Header(_) => ROW_H * 0.8,
-                ModelGroupEntry::Model(_) => ROW_H,
-            })
-            .sum()
+        model_menu_content_h(&models)
     };
 
     // 锚点算法与 MCP 菜单一致（统一定位：按钮居中 + 5px）

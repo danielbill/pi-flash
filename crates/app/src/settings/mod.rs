@@ -89,6 +89,8 @@ pub(crate) struct SettingsPanel {
     pub ag_turns_n: gpui::Entity<TextInput>,
     /// 模型（None = 键省略 = 继承会话模型）
     pub ag_model: Option<String>,
+    /// 思考强度档（"auto" = 不覆盖，落 pi 默认；其余 = pi ThinkingLevel 七档键）
+    pub ag_thinking: String,
     /// 工具档位（inherit/chat-only/read-only/default/full/full+，044-0 六档）
     pub ag_tools: String,
     /// 最大轮次档
@@ -100,10 +102,15 @@ pub(crate) struct SettingsPanel {
     pub ag_mcp: Vec<String>,
     /// 选中的 skills（044-0 skills 定制；空 = 注入系统开启的）
     pub ag_skills: Vec<String>,
-    /// 哪个下拉开着（0=模型 1=工具；None=全关）
+    /// 哪个下拉开着（0=模型 1=工具档 2=思考 3=ext清单 4=mcp清单；None=全关）
     pub ag_popup: Option<u8>,
-    /// 下拉外点收起守卫（模型/工具两个共享）
+    /// 下拉外点收起守卫（五个下拉共享）
     pub ag_dd: gpui::Entity<DropdownState>,
+    /// 模型菜单过滤框（≥ MODEL_FILTER_MIN 才渲染，同 composer 菜单规则）
+    pub ag_filter: gpui::Entity<TextInput>,
+    /// ext / mcp 勾选清单滚动位（跨帧复用，滚动句柄不能每帧重建）
+    pub ag_ext_scroll: gpui::ScrollHandle,
+    pub ag_mcp_scroll: gpui::ScrollHandle,
     /// 有未保存改动（表单头黄点 + 保存键可用）
     pub ag_dirty: bool,
     pub error: Option<String>,
@@ -245,6 +252,7 @@ impl SettingsPanel {
                 })
             },
             ag_model: None,
+            ag_thinking: "auto".into(),
             ag_tools: "inherit".into(),
             ag_turns: pi_link::agents::MaxTurnsTier::Hundred,
             ag_inject: true,
@@ -253,6 +261,20 @@ impl SettingsPanel {
             ag_skills: Vec::new(),
             ag_popup: None,
             ag_dd: cx.new(|_| DropdownState::new()),
+            ag_filter: {
+                let weak_af = cx.weak_entity();
+                cx.new(|cx| {
+                    TextInput::new(cx)
+                        .placeholder(tr("action.filter_models"))
+                        .on_change(Box::new(move |_, cx| {
+                            if let Some(p) = weak_af.upgrade() {
+                                p.update(cx, |_, cx| cx.notify());
+                            }
+                        }))
+                })
+            },
+            ag_ext_scroll: gpui::ScrollHandle::new(),
+            ag_mcp_scroll: gpui::ScrollHandle::new(),
             ag_dirty: false,
             error: None,
             font_popup: None,
@@ -303,6 +325,7 @@ impl SettingsPanel {
             &self.mcp_add,
             &self.mcp_name,
             &self.font_filter,
+            &self.ag_filter,
             &self.ag_name,
             &self.ag_desc,
             &self.ag_prompt,

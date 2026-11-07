@@ -27,6 +27,8 @@ mod ctx_tip;
 mod queue_cards;
 
 pub(crate) use area::*;
+// 触发钮基座给设置·子代理页表单复用（InputPanel 同款，2026-11-07）
+pub(crate) use bar::bar_trigger;
 use bar::*;
 use ctx_tip::*;
 pub(crate) use queue_cards::*;

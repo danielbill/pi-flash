@@ -94,17 +94,13 @@ impl Chat {
     }
 }
 
-/// 面板元素（`None` = 没开）。挂在 app root 上，锚点同扩展菜单。
-pub(crate) fn view(
+/// MCP 菜单条目（composer 菜单与设置·子代理页共用，2026-11-07 收口）：
+/// 全局 scope 已启用服务器，按名称排序，`is_selected` 者稳定置顶。
+/// 返回 (名称, 传输类型)。
+pub(crate) fn mcp_menu_items(
     chat: &Chat,
-    weak: &gpui::WeakEntity<Chat>,
-    window: &gpui::Window,
-) -> Option<AnyElement> {
-    let picker = chat.dlg.mcp_picker.as_ref()?;
-    let t = T();
-    let ui = crate::appearance::ui_size;
-
-    // ---- 全局条目：按名称排序，再稳定地把已勾选置顶 ----
+    is_selected: &impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
     let mut items: Vec<&pi_link::mcp::ServerEntry> = chat
         .cfg
         .mcp_servers
@@ -112,24 +108,18 @@ pub(crate) fn view(
         .filter(|s| s.scope == pi_link::mcp::Scope::Global)
         .collect();
     items.sort_by(|a, b| a.name.cmp(&b.name));
-    items.sort_by_key(|s| !s.enabled);
-    let rows: Vec<AnyElement> = items
-        .iter()
-        .map(|s| mcp_row(weak, &s.name, s.enabled, s.transport(), t))
-        .collect();
-    let n_rows = rows.len();
+    items.sort_by_key(|s| !is_selected(&s.name));
+    items
+        .into_iter()
+        .map(|s| (s.name.clone(), s.transport().to_string()))
+        .collect()
+}
 
-    let mut body = rows;
-    if body.is_empty() {
-        body.push(empty_row(SharedString::from(crate::i18n::tr(
-            "mcp.none_configured",
-        ))));
-    }
-    // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
-    let list_h = capped_list_h(n_rows);
-
-    let enabled_n = items.iter().filter(|s| s.enabled).count();
-    let header = div()
+/// MCP 菜单头（标题 + 已启用 n/total）：两侧共用同一版式。
+pub(crate) fn mcp_menu_header(enabled: usize, total: usize) -> gpui::Div {
+    let t = T();
+    let ui = crate::appearance::ui_size;
+    div()
         .px(px(PAD))
         .pt(px(PAD))
         .pb(px(PAD))
@@ -150,12 +140,59 @@ pub(crate) fn view(
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(crate::i18n::tf(
                     "mcp.enabled_count",
-                    &[
-                        ("n", enabled_n.to_string()),
-                        ("total", items.len().to_string()),
-                    ],
+                    &[("n", enabled.to_string()), ("total", total.to_string())],
                 ))),
-        );
+        )
+}
+
+/// 面板元素（`None` = 没开）。挂在 app root 上，锚点同扩展菜单。
+pub(crate) fn view(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    window: &gpui::Window,
+) -> Option<AnyElement> {
+    let picker = chat.dlg.mcp_picker.as_ref()?;
+    let t = T();
+
+    let is_selected = |name: &str| {
+        chat.cfg
+            .mcp_servers
+            .iter()
+            .any(|s| s.name == name && s.enabled)
+    };
+    let items = mcp_menu_items(chat, &is_selected);
+    let rows: Vec<AnyElement> = items
+        .iter()
+        .map(|(name, transport)| {
+            let name = name.clone();
+            let pick = name.clone();
+            mcp_row(
+                weak,
+                &name,
+                is_selected(&name),
+                transport,
+                move |c, cx| c.mcp_picker_toggle(&pick, cx),
+                t,
+            )
+        })
+        .collect();
+    let n_rows = rows.len();
+
+    let mut body = rows;
+    if body.is_empty() {
+        body.push(empty_row(SharedString::from(crate::i18n::tr(
+            "mcp.none_configured",
+        ))));
+    } // 10 行限高：内容不到就按内容高（不出滚动条），超出才截到 300px 滚动
+    let list_h = capped_list_h(n_rows);
+
+    let enabled_n = chat
+        .cfg
+        .mcp_servers
+        .iter()
+        .filter(|s| s.scope == pi_link::mcp::Scope::Global && s.enabled)
+        .count();
+    let header = mcp_menu_header(enabled_n, items.len());
 
     // 锚点算法与扩展菜单一致（统一定位：按钮居中 + 5px）
     let vp = window.viewport_size();
@@ -172,17 +209,18 @@ pub(crate) fn view(
     Some(layer.child(card).into_any_element())
 }
 
-/// 勾选行：14px 勾选框 + 名称（等宽）+ 右侧传输类型小标。
-fn mcp_row(
+/// 勾选行：14px 勾选框 + 名称（等宽）+ 右侧传输类型小标。`on_toggle` 由
+/// 调用方写入各自状态（composer 写 runtime，设置页写表单清单）。
+pub(crate) fn mcp_row(
     weak: &gpui::WeakEntity<Chat>,
     name: &str,
     checked: bool,
     transport: &str,
+    on_toggle: impl Fn(&mut Chat, &mut gpui::Context<Chat>) + 'static,
     t: &'static crate::appearance::theme::Theme,
 ) -> AnyElement {
     let ui = crate::appearance::ui_size;
     let row_weak = weak.clone();
-    let owned = name.to_string();
     div()
         .id(SharedString::from(format!("mcp-row-{name}")))
         .h(px(ROW_H))
@@ -195,7 +233,7 @@ fn mcp_row(
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             // 行内点击不冒泡到「点外关闭」
             cx.stop_propagation();
-            let _ = row_weak.update(cx, |c, cx| c.mcp_picker_toggle(&owned, cx));
+            let _ = row_weak.update(cx, |c, cx| on_toggle(c, cx));
         })
         .child(crate::ui::kit::checkbox(checked))
         .child(

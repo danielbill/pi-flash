@@ -25,6 +25,10 @@ export type ToolTier = "inherit" | "chat-only" | "read-only" | "default" | "full
 
 export const TOOL_TIERS: readonly ToolTier[] = ["inherit", "chat-only", "read-only", "default", "full", "full+"];
 
+/** Thinking levels for the profile `thinking` key — pi `ThinkingLevel` seven
+ * keys (pi-agent-core). `undefined`/absent = auto = don't override. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
 /** Default turn budget when neither the delegation call nor the profile sets one. */
 export const DEFAULT_MAX_TURNS = 100;
 
@@ -103,6 +107,12 @@ export interface Profile {
 	appendSystemPrompt?: string;
 	/** Tool tier; `undefined` means inherit the delegator's assembly. */
 	tools?: ToolTier;
+	/**
+	 * Thinking level for the child session (2026-11-07 子代理表单). One of
+	 * pi's `ThinkingLevel` seven keys; `undefined` = auto = don't override
+	 * (the child falls back to pi's own default for its model).
+	 */
+	thinking?: string;
 	/**
 	 * Turn budget (soft limit). `undefined` means {@link DEFAULT_MAX_TURNS};
 	 * `0` is the "unlimited" tier and disables the budget entirely.
@@ -221,6 +231,16 @@ export function profileFromDocument(id: string, text: string, source: string): P
 			`${source}: tools must be one of ${TOOL_TIERS.join("/")} (got ${String(tools)})`,
 		);
 	}
+	const thinking = data.thinking;
+	if (
+		thinking !== undefined &&
+		!THINKING_LEVELS.includes(String(thinking) as (typeof THINKING_LEVELS)[number])
+	) {
+		throw new SubagentError(
+			SubagentErrorCode.PROFILE_INVALID,
+			`${source}: thinking must be one of ${THINKING_LEVELS.join("/")} (got ${String(thinking)})`,
+		);
+	}
 	const strList = (key: string): string[] | undefined => {
 		const v = data[key];
 		if (v === undefined) return undefined;
@@ -259,6 +279,7 @@ export function profileFromDocument(id: string, text: string, source: string): P
 		systemPrompt: typeof data.systemPrompt === "string" && data.systemPrompt !== "" ? data.systemPrompt : undefined,
 		appendSystemPrompt: body === "" ? undefined : body,
 		tools: tools as ToolTier | undefined,
+		thinking: thinking === undefined ? undefined : String(thinking),
 		maxTurns: maxTurns === undefined ? undefined : Number(maxTurns),
 		injectAgentsMd: inject === undefined ? undefined : inject === "true",
 		inheritContextLimit: limit === undefined ? undefined : Number(limit),

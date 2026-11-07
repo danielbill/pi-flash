@@ -92,18 +92,34 @@ fn list_fields_roundtrip_0440() {
 
 #[test]
 fn roundtrip_preserves_fields_and_unknown() {
-    let doc = "---\ndescription: 评审\nmodel: a/b\ntools: full\nmaxTurns: 50\ninjectAgentsMd: true\nsystemPrompt: |\n  line1\n  line2\nextra: keep\n---\n\nbody line\n";
+    let doc = "---\ndescription: 评审\nmodel: a/b\ntools: full\nthinking: high\nmaxTurns: 50\ninjectAgentsMd: true\nsystemPrompt: |\n  line1\n  line2\nextra: keep\n---\n\nbody line\n";
     let a = parse_agent("rt", doc, AgentOrigin::Custom).unwrap();
     let out = serialize_agent(&a);
     let b = parse_agent("rt", &out, AgentOrigin::Custom).unwrap();
     assert_eq!(b.description, "评审");
     assert_eq!(b.model.as_deref(), Some("a/b"));
     assert_eq!(b.tools_tier(), "full");
+    assert_eq!(b.thinking_level.as_deref(), Some("high"));
     assert_eq!(b.max_turns, Some(50));
     assert!(b.inject_enabled());
     assert_eq!(b.system_prompt.as_deref(), Some("line1\nline2"));
     assert_eq!(b.append_system_prompt.as_deref(), Some("body line"));
     assert!(b.unknown.iter().any(|(k, v)| k == "extra" && v == "keep"));
+    // thinking 键省略 = auto（None），回环不写键
+    let auto = parse_agent("rt2", "---\ndescription: x\n---\n", AgentOrigin::Custom).unwrap();
+    assert_eq!(auto.thinking_level, None);
+    assert!(!serialize_agent(&auto).contains("thinking"));
+}
+
+#[test]
+fn rejects_bad_thinking_level() {
+    let err = parse_agent(
+        "bad",
+        "---\ndescription: x\nthinking: ultra\n---\n",
+        AgentOrigin::Custom,
+    )
+    .unwrap_err();
+    assert!(err.contains("thinking must be one of"), "{err}");
 }
 
 #[test]

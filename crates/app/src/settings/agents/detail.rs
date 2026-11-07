@@ -1,7 +1,8 @@
 //! 子代理右表单：agent_detail 全字段装配（名称/模型/提示词/轮数等）
 //! 与 detail_shell / turns_seg 构件。
 
-use super::dropdowns::{model_dropdown, pick_list, tools_dropdown};
+use super::dropdowns::pick_list;
+use super::menus::{model_thinking_control, tools_control};
 use super::*;
 
 /// 右栏表单：新建 / 损坏 / 内置只读 / 自定义可编辑 四态。
@@ -17,15 +18,9 @@ pub(super) fn agent_detail(
         ag_desc,
         ag_prompt,
         ag_turns_n,
-        ag_model,
-        ag_tools,
         ag_turns,
         ag_inject,
-        ag_extensions,
-        ag_mcp,
         ag_skills,
-        ag_popup,
-        ag_dd,
         ag_dirty,
         ag_name_value,
         ag_desc_value,
@@ -190,70 +185,25 @@ pub(super) fn agent_detail(
         true,
     ));
 
-    // 模型下拉（首项「继承」+ 分隔线 + 模型列表）
-    let model_opts = chat
-        .mc_sorted_enabled()
-        .iter()
-        .map(|m| {
-            let key = format!("{}/{}", m.provider, m.id);
-            let label = if m.name.is_empty() {
-                key.clone()
-            } else {
-                m.name.clone()
-            };
-            (key, label)
-        })
-        .collect::<Vec<_>>();
-    form = form.child(agent_row(
-        &tr("agents.model"),
-        model_dropdown(
-            weak,
-            &model_opts,
-            ag_model,
-            *ag_popup,
-            ag_dd.clone(),
-            readonly,
-        ),
-        false,
-    ));
+    // 模型 + 思考强度（InputPanel 同款触发钮 + composer 菜单组件全复用，
+    // 2026-11-07 对齐定稿）；工具 = 档位/ext/mcp 三菜单
+    if let Some(panel) = chat.dlg.settings.clone() {
+        form = form
+            .child(agent_row(
+                &tr("agents.model"),
+                model_thinking_control(chat, &panel, weak, d, readonly),
+                false,
+            ))
+            .child(agent_row(
+                &tr("agents.tools"),
+                tools_control(chat, &panel, weak, d, readonly),
+                false,
+            ));
+    }
 
-    // 工具权限下拉（044-0 六档）
-    form = form.child(agent_row(
-        &tr("agents.tools"),
-        tools_dropdown(weak, ag_tools, *ag_popup, ag_dd.clone(), readonly),
-        false,
-    ));
-
-    // full+ 档：自选 pi-ext / MCP 服务器（044-0 工具定制）；skills 定制恒显。
-    // 只读态（内置）不渲染清单（内置不配扩展）。
+    // skills 定制恒显（ext / mcp 已并入「工具」行三菜单，2026-11-07）。
+    // 只读态（内置）不渲染清单（内置不配技能）。
     if !readonly {
-        if ag_tools.as_str() == "full+" {
-            form = form
-                .child(agent_row(
-                    &tr("agents.ext_pick"),
-                    pick_list(
-                        weak,
-                        "ext",
-                        pi_link::extensions::personal_extensions(),
-                        ag_extensions,
-                    ),
-                    false,
-                ))
-                .child(agent_row(
-                    &tr("agents.mcp_pick"),
-                    {
-                        let cwd = chat.ws.cwd.clone().unwrap_or_default();
-                        let (servers, _) = pi_link::mcp::load(Some(std::path::Path::new(&cwd)));
-                        let opts = servers
-                            .iter()
-                            .filter(|s| s.enabled)
-                            .map(|s| s.name.clone())
-                            .collect::<Vec<_>>();
-                        pick_list(weak, "mcp", opts, ag_mcp)
-                    },
-                    false,
-                ));
-        }
         form = form.child(agent_row(
             &tr("agents.skills_pick"),
             {

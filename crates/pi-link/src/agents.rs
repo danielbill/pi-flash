@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 pub const FIELD_TOOLS: &str = "tools";
 pub const FIELD_MAX_TURNS: &str = "maxTurns";
 pub const FIELD_INJECT_AGENTS_MD: &str = "injectAgentsMd";
+/// 思考强度（2026-11-07 子代理表单加）：键省略 = auto = 不覆盖（子会话落
+/// pi 默认档）。值集 = pi `ThinkingLevel` 七档。
+pub const FIELD_THINKING: &str = "thinking";
 
 /// 工具档位四选一（034 配方复用；无 `full+`，那是委派者专属）。
 pub const TOOL_TIERS: [&str; 6] = [
@@ -26,6 +29,9 @@ pub const TOOL_TIERS: [&str; 6] = [
     "full",
     "full+",
 ];
+
+/// 思考强度七档（pi `ThinkingLevel`，pi-agent-core types.d.ts）。
+pub const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// 默认轮次预算：既非调用级 `maxloop` 也非 profile `maxTurns` 时用它。
 pub const DEFAULT_MAX_TURNS: u32 = 100;
@@ -66,6 +72,8 @@ pub struct AgentProfile {
     pub model: Option<String>,
     /// `tools` 档位：None = inherit。
     pub tools: Option<String>,
+    /// `thinking` 思考强度：None = auto = 不覆盖（子会话落 pi 默认档）。
+    pub thinking_level: Option<String>,
     /// `maxTurns`：None = 键省略（默认 100 档）。
     pub max_turns: Option<u32>,
     /// `injectAgentsMd`：None = 键省略（默认 true）。
@@ -157,6 +165,7 @@ pub fn read_agent_file(id: String, path: &Path) -> AgentProfile {
             description: String::new(),
             model: None,
             tools: None,
+            thinking_level: None,
             max_turns: None,
             inject_agents_md: None,
             system_prompt: None,
@@ -195,6 +204,15 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
             ));
         }
     }
+    let thinking = get(FIELD_THINKING);
+    if let Some(lv) = &thinking {
+        if !THINKING_LEVELS.contains(&lv.as_str()) {
+            return Err(format!(
+                "{FIELD_THINKING} must be one of {} (got {lv})",
+                THINKING_LEVELS.join("/")
+            ));
+        }
+    }
     if let Some(iso) = get("isolation") {
         if iso != "worktree" {
             return Err(format!("unsupported isolation {iso}"));
@@ -218,6 +236,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         "description",
         "model",
         FIELD_TOOLS,
+        FIELD_THINKING,
         FIELD_MAX_TURNS,
         FIELD_INJECT_AGENTS_MD,
         "systemPrompt",
@@ -249,6 +268,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         description: get("description").unwrap_or_default(),
         model: get("model").filter(|m| !m.is_empty()),
         tools,
+        thinking_level: thinking.filter(|l| !l.is_empty()),
         max_turns,
         inject_agents_md: inject,
         system_prompt: get("systemPrompt").filter(|s| !s.is_empty()),
@@ -275,6 +295,9 @@ pub fn serialize_agent(a: &AgentProfile) -> String {
     }
     if let Some(t) = &a.tools {
         out.push_str(&scalar(FIELD_TOOLS, t));
+    }
+    if let Some(lv) = &a.thinking_level {
+        out.push_str(&scalar(FIELD_THINKING, lv));
     }
     if let Some(n) = a.max_turns {
         out.push_str(&format!("{FIELD_MAX_TURNS}: {n}\n"));

@@ -39,6 +39,8 @@ export interface SessionFactoryOptions {
 	appendSystemPrompt?: string;
 	/** Tool tier resolved to an allowlist; `undefined` means inherit the delegator's. */
 	tools?: string[];
+	/** Thinking level from the profile (2026-11-07); `undefined` = auto = no override. */
+	thinkingLevel?: string;
 	/** Whether the child loads the project AGENTS.md; `false` suppresses context files. */
 	injectAgentsMd?: boolean;
 	/** Turn budget for the soft limit; `undefined` means no budget. */
@@ -81,6 +83,8 @@ export interface ResolvedComposition {
 	systemPrompt?: string;
 	appendSystemPrompt?: string;
 	tools?: string[];
+	/** Thinking level from the profile; `undefined` = auto = no override. */
+	thinkingLevel?: string;
 	model?: string;
 	injectAgentsMd?: boolean;
 	maxTurns?: number;
@@ -371,6 +375,7 @@ export class LocalProvider implements Provider {
 				systemPrompt: composition.systemPrompt,
 				appendSystemPrompt: composition.appendSystemPrompt,
 				tools: composition.tools,
+				thinkingLevel: composition.thinkingLevel,
 				injectAgentsMd: composition.injectAgentsMd,
 				maxTurns,
 				inheritParentContext: this.#options.inheritsParentContext,

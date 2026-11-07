@@ -119,7 +119,6 @@ use session::messages::{Msg, msgs_from_tail};
 use session::runtime::SessionRuntime;
 use terminal::TerminalTab;
 use ui::TextInput;
-use ui::icon;
 
 static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 static PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

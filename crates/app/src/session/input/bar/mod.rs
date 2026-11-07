@@ -27,7 +27,6 @@ fn plugin_button(
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
-    let ui = crate::appearance::ui_size;
     // 激活条件只有一个：**当前档是「full+」**（内部键 custom）。运行中也能
     // 点开勾选，清单在下一轮发送前重绑生效（pending_ext_sources 链路）。
     let (is_custom, n, open) = {
@@ -49,33 +48,27 @@ fn plugin_button(
     } else {
         t.text_muted
     };
-    let mut el = div()
-        .id("plugins-menu")
-        .h(px(28.))
-        .flex()
-        .items_center()
-        .gap(px(5.))
-        .rounded(px(8.))
-        .text_size(ui(BAR_FONT))
-        .text_color(rgb(color))
-        // 2026-10-15 用户定夺：plug glyph 天然窄长（宽 fill 仅 50%），小档下
+    let mut el = bar_trigger(
+        "plugins-menu",
+        Some("plug"),
+        16., // 2026-10-15 用户定夺：plug glyph 天然窄长（宽 fill 仅 50%），小档下
         // 光学偏小，上 ICON_MD(16) 补视觉质量（18 试过稍大，13 太小）
-        .child(icon_hover("plug", 16., color))
-        .child(SharedString::from(label));
+        &label,
+        false,
+        color,
+        active,
+    );
     if active {
-        el = el
-            .cursor_pointer()
-            .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
-                    this.toggle_plugin_menu_at(event.position, cx);
-                }),
-            );
+        el = el.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
+                this.toggle_plugin_menu_at(event.position, cx);
+            }),
+        );
     }
     // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
-    el = el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.ext));
-    el.into_any_element()
+    el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.ext))
+        .into_any_element()
 }
 
 /// MCP 按钮（043 定稿 + 2026-11 改版）：扩展按钮右边的兄弟节点。**不设档位
@@ -87,7 +80,6 @@ fn mcp_button(
     t: &'static crate::appearance::theme::Theme,
     cx: &mut Context<Chat>,
 ) -> gpui::AnyElement {
-    let ui = crate::appearance::ui_size;
     let (n, open) = (
         chat.cfg
             .mcp_servers
@@ -98,8 +90,39 @@ fn mcp_button(
     );
     let label = format!("[{n}]");
     let color = if open { t.accent } else { t.text_muted };
+    let el = bar_trigger("mcp-menu", Some("server"), 13., &label, false, color, true)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
+                this.toggle_mcp_menu_at(event.position, cx);
+            }),
+        );
+    // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+    el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.mcp))
+        .into_any_element()
+}
+
+/// 操作栏触发钮基座（InputPanel 五颗触发钮唯一样式落点：工具/模型/思考/
+/// 扩展/MCP，2026-11-07 自各处内联样式收口）：28px 高、gap5、圆角 8、
+/// BAR_FONT 字号；可选前置 icon（`icon_hover` 悬停提亮，尺寸 `icon_size`，
+/// plug 特档 16 见下）+ 文案 + 可选右挂 chevron。`color` = icon+文案色
+/// （open→accent / 锁定→text_faint / 常态→text_muted 由调用方按各自语义
+/// 给），`hoverable` = 可点态（挂 cursor + hover 洗底提字；锁定钮不挂）。
+/// 点击行为、tracker、守卫由调用方续挂——设置·子代理页表单
+/// （settings/agents）同款复用。
+pub(crate) fn bar_trigger(
+    id: &'static str,
+    icon_name: Option<&'static str>,
+    icon_size: f32,
+    label: &str,
+    chevron: bool,
+    color: u32,
+    hoverable: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let ui = crate::appearance::ui_size;
+    let t = crate::appearance::theme::theme();
     let mut el = div()
-        .id("mcp-menu")
+        .id(id)
         .h(px(28.))
         .flex()
         .items_center()
@@ -107,19 +130,24 @@ fn mcp_button(
         .rounded(px(8.))
         .text_size(ui(BAR_FONT))
         .text_color(rgb(color))
-        .cursor_pointer()
-        .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
-                this.toggle_mcp_menu_at(event.position, cx);
-            }),
+        .children(
+            icon_name
+                .map(|name| icon_hover(name, icon_size, color)),
         )
-        .child(icon_hover("server", 13., color))
-        .child(SharedString::from(label));
-    // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
-    el = el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.mcp));
-    el.into_any_element()
+        .child(SharedString::from(label.to_string()))
+        .when(chevron, |d| {
+            d.child(icon(
+                "chevron-down",
+                10.,
+                if hoverable { t.text_dim } else { t.text_faint },
+            ))
+        });
+    if hoverable {
+        el = el
+            .cursor_pointer()
+            .hover(move |s| s.bg(rgb(t.bg_hover)).text_color(rgb(t.text)));
+    }
+    el
 }
 
 /// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info ICON_SM + SW_SM 24×14）。
@@ -198,31 +226,24 @@ fn bar_left_group(
                     )),
             )
             .child(
-                // 工具预设「默认∨」
-                div()
-                    .id("tools-menu")
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .rounded(px(8.))
-                    .text_size(crate::appearance::ui_size(BAR_FONT))
-                    .text_color(rgb(if tools_locked {
+                // 工具预设「默认∨」（基座 = bar_trigger，点击行为与锚点留在本处）
+                bar_trigger(
+                    "tools-menu",
+                    Some("wrench"),
+                    13.,
+                    tools_label,
+                    true,
+                    if tools_locked {
                         t.text_faint
                     } else if tools_open {
                         t.accent
                     } else {
                         t.text_muted
-                    }))
-                    .when(!tools_locked, |d| d.cursor_pointer())
-                    .hover(move |s| {
-                        if tools_locked {
-                            s
-                        } else {
-                            s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
-                        }
-                    })
-                    .on_mouse_down(
+                    },
+                    !tools_locked,
+                )
+                .when(!tools_locked, |d| {
+                    d.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
                             if this.rt().read(cx).compacting {
@@ -247,15 +268,9 @@ fn bar_left_group(
                             cx.notify();
                         }),
                     )
-                    .child(icon_hover(
-                        "wrench",
-                        13.,
-                        if tools_open { t.accent } else { t.text_muted },
-                    ))
-                    .child(SharedString::from(tools_label.to_string()))
-                    .child(icon("chevron-down", 10., t.text_dim))
-                    // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
-                    .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.tools)),
+                })
+                // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+                .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.tools)),
             )
             // 扩展按钮（040 定稿）：**工具胶囊的兄弟节点**，不是子节点——
             // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「full+」档

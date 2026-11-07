@@ -32,7 +32,9 @@ pub(crate) const MODEL_FILTER_MIN: usize = 10;
 mod tests;
 /// 打开时的键盘选择位 + 滚动位（过滤文本变化时 sel 归零）。
 pub(crate) mod view;
-pub(crate) use view::{group_model_row, view};
+pub(crate) use view::{
+    ModelPickAction, group_model_row, model_menu_body, model_menu_content_h, view,
+};
 impl Chat {
     /// 自动化入口（无点击坐标）：锚点缺省走面板右下兜底定位（open_mcp_picker 同款）。
     pub(crate) fn open_model_picker(&mut self, cx: &mut gpui::Context<Self>) {
@@ -102,16 +104,42 @@ impl Chat {
     /// 返回的 vec 已按**菜单显示序**排好（默认模型置顶，见
     /// [`order_model_indices`]）：键盘选择的行号 = 该 vec 下标 = 屏幕行序，
     /// 三者同源（否则 ↑/↓ 高亮行与 Enter 落到的模型会错位）。
-    pub(crate) fn picker_models(
+    pub(crate) fn picker_models(&self, cx: &gpui::App) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
+        self.picker_models_with(cx, None)
+    }
+
+    /// [`Chat::picker_models`] 的参数化版：`flt_override` = 显式过滤文本
+    /// （设置·子代理页模型菜单传表单过滤框值；composer 传 None = 读菜单
+    /// 输入框）。阈值规则与显示序完全一致。
+    pub(crate) fn picker_models_with(
         &self,
         cx: &gpui::App,
+        flt_override: Option<String>,
+    ) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
+        let cwd = self.rt().read(cx).cwd.clone();
+        // composer 路径：显式过滤缺省时读菜单输入框
+        let flt = flt_override.or_else(|| match &self.dlg.model_picker {
+            Some(p) => Some(p.input.read(cx).value().to_string()),
+            None => None,
+        });
+        self.picker_models_from(Some(&cwd), flt)
+    }
+
+    /// [`Chat::picker_models`] 的 cx-free 版：cwd 显式给定（设置·子代理页
+    /// 传 None = 不做项目级收窄，模型目录来自 Chat 共享账本）。过滤文本
+    /// 仅在总数 ≥ [`MODEL_FILTER_MIN`] 时生效；返回 (可见, 总数)，可见已按
+    /// 菜单显示序排好（默认模型置顶）。
+    pub(crate) fn picker_models_from(
+        &self,
+        cwd: Option<&std::path::Path>,
+        flt_override: Option<String>,
     ) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
         let picker_enabled = !self.cfg.mc_state.all_enabled;
         // 统一接口（2026-11-01）：与设置页同一模型源 model_listing（账本并入
         // + 已配置内置商静态 + **侧栏成员过滤**——无凭据的商不再出现在
-        // 菜单里），cwd 用当前会话（进程答案新鲜度）
+        // 菜单里），cwd 由调用方给定（composer 用当前会话，设置页传 None）
         let scoped: Vec<pi_link::protocol::ModelInfo> = self
-            .model_listing(Some(self.rt().read(cx).cwd.as_path()))
+            .model_listing(cwd)
             .iter()
             .filter(|m| {
                 !picker_enabled || {
@@ -123,14 +151,14 @@ impl Chat {
             .collect();
         let total = scoped.len();
         // 过滤文本仅在总数 ≥ MODEL_FILTER_MIN 时生效（阈值以下不渲染过滤框，
-        // 文本也不参与过滤——两处列表同规则）
+        // 文本也不参与过滤——两处列表同规则）；显式值与菜单输入框统一在此
+        // trim + 小写归一
         let flt = if total < MODEL_FILTER_MIN {
             String::new()
         } else {
-            match &self.dlg.model_picker {
-                Some(p) => p.input.read(cx).value().trim().to_lowercase(),
-                None => String::new(),
-            }
+            flt_override
+                .map(|f| f.trim().to_lowercase())
+                .unwrap_or_default()
         };
         // 候选下标（过文本过滤）→ 显示序下标（默认模型置顶）
         let cand: Vec<usize> = scoped

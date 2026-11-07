@@ -130,26 +130,19 @@ pub(crate) fn composer_bar(
                     .children(ctx_tip),
             ),
     );
-    // 模型 ∨
+    // 模型 ∨（基座 = bar_trigger；锚点与守卫留在本处）
     right = right.child(
-        div()
-            .id("open-model-select")
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .gap(px(5.))
-            .rounded(px(8.))
-            .text_size(crate::appearance::ui_size(BAR_FONT))
-            .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
-            .when(!locked, |d| d.cursor_pointer())
-            .hover(move |s| {
-                if locked {
-                    s
-                } else {
-                    s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
-                }
-            })
-            .on_mouse_down(
+        super::bar_trigger(
+            "open-model-select",
+            None,
+            13.,
+            model_label,
+            true,
+            if locked { t.text_faint } else { t.text_muted },
+            !locked,
+        )
+        .when(!locked, |d| {
+            d.on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
                     if this.rt().read(cx).compacting {
@@ -161,41 +154,29 @@ pub(crate) fn composer_bar(
                     this.toggle_model_menu_at(event.position, cx);
                 }),
             )
-            .child(SharedString::from(model_label.to_string()))
-            .child(icon(
-                "chevron-down",
-                10.,
-                if locked { t.text_faint } else { t.text_dim },
-            ))
-            // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
-            .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.model)),
+        })
+        // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.model)),
     );
-    // 思考强度 ∨
+    // 思考强度 ∨（基座 = bar_trigger）
     right = right.child(
-        div()
-            .id("thinking-menu")
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .gap(px(5.))
-            .rounded(px(8.))
-            .text_size(crate::appearance::ui_size(BAR_FONT))
-            .text_color(rgb(if locked {
+        super::bar_trigger(
+            "thinking-menu",
+            Some("lightbulb"),
+            13.,
+            thinking_label,
+            true,
+            if locked {
                 t.text_faint
             } else if thinking_open {
                 t.accent
             } else {
                 t.text_muted
-            }))
-            .when(!locked, |d| d.cursor_pointer())
-            .hover(move |s| {
-                if locked {
-                    s
-                } else {
-                    s.bg(rgb(t.bg_hover)).text_color(rgb(t.text))
-                }
-            })
-            .on_mouse_down(
+            },
+            !locked,
+        )
+        .when(!locked, |d| {
+            d.on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &gpui::MouseDownEvent, _w, cx| {
                     if this.rt().read(cx).compacting {
@@ -212,25 +193,9 @@ pub(crate) fn composer_bar(
                     cx.notify();
                 }),
             )
-            .child(icon_hover(
-                "lightbulb",
-                13.,
-                if locked {
-                    t.text_faint
-                } else if thinking_open {
-                    t.accent
-                } else {
-                    t.text_muted
-                },
-            ))
-            .child(SharedString::from(thinking_label.to_string()))
-            .child(icon(
-                "chevron-down",
-                10.,
-                if locked { t.text_faint } else { t.text_dim },
-            ))
-            // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
-            .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.thinking)),
+        })
+        // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
+        .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.thinking)),
     );
     // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
     // 左移 5px、上移 8px

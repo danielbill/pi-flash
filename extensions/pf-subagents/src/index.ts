@@ -189,6 +189,9 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 			sessionManager,
 			settingsManager,
 			resourceLoader: loader,
+			// 思考强度（2026-11-07 子代理表单）：profile 有 `thinking` 才下发，
+			// 缺省 = auto = 落 pi 自己的默认档
+			...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
 			// chat-only 档（044-0 六档）：noTools all = 一个工具都不开
 			...(options.noTools ? { noTools: "all" } : {}),
 			...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
@@ -618,6 +621,7 @@ async function resolveComposition(
 		// chat-only 档不发白名单（发 noTools 全关）；其余档位发对应清单
 		tools: tier && tier !== "chat-only" ? [...TOOL_TIER_WHITELISTS[tier]] : undefined,
 		noTools: tier === "chat-only" ? true : undefined,
+		thinkingLevel: profile.thinking,
 		model: model ?? profile.model,
 		injectAgentsMd: profile.injectAgentsMd,
 		maxTurns: profile.maxTurns,
