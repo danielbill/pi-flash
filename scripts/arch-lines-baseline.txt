@@ -2,11 +2,3 @@
 # 格式: FILE <相对路径> <非测试行数> / FN <相对路径>::<fn名> <非测试行数>
 # 只允许人工 `scripts/check_arch.sh --update-baseline` 重写（agent 禁刷基线）。
 # 目标：逐条清偿（拆分降数），存量只许降不许涨。
-# 入档背景（0.4.3 发版时所有者拍板）：以下 6 条在 v0.4.2 已超线带灯发版，
-# 基线冻结当时峰值，此后新增/增长即红。
-FILE crates/app/src/settings/custom_models.rs 2239
-FILE crates/app/src/settings/models.rs 1943
-FN crates/app/src/function_panel/psp_row_views.rs::session_row_view 317
-FN crates/app/src/pf_plugin/manifest.rs::parse_manifest 384
-FN crates/app/src/pf_plugin/panel/render.rs::render_node_inner 307
-FN crates/app/src/settings/custom_models.rs::mj_model_modal_overlay 357
