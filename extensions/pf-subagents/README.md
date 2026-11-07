@@ -9,6 +9,9 @@ Tests: `44-子代理/044-4-subagent验收清单.md` (+ `44-子代理/归档/045-
 ## What M1 ships
 
 - `agent` tool (`namespace: subagents`), caller delivery: the call awaits the child.
+- `background: true` returns the child id immediately; when the child settles the notice
+  (`subagent-completion`) enters the parent session — idle parents are woken, streaming
+  parents get it steered into the current turn (044-6).
 - Providers: `spawn` (fresh child context), `fork` (inherits completed history).
 - Activation lifecycle: reserve identity and capacity → publish only after the child
   accepted the task → settle after cleanup → close admission on settle.

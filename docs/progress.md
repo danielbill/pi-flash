@@ -32,6 +32,12 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-07 子代理完成回传闭环（5554fa4a → 9e911ee4）：background 子代理结算后 toast +
+  `subagent-completion` 自定义消息双发（只发 toast 时父模型拿不到回执，实测暴露）；随后
+  按 dsh 对齐派发/回传/收尾——派发结果回裸句 `started subagent <id>`、异步契约移入工具
+  描述、结算消息三段式（摘要按 stopReason 分档 + `Its closing message:` + `Structured
+  result:`，正文不再截断）、忙碌父会话 `followUp`→`steer`。`node --test` 149 绿；真机实派
+  sub-1~4 验证通知送达与自动起轮（忙时 steer 待补测）。设计：`044-6-派发回传与收尾-对齐DSH.md`。
 - 2026-11-07 子代理 044-3 检索层落地（设计 a03fea01 + 本次实现）：`read_catalog`
   改字节预筛 + 每 childId 末条下沉（serde 调用 37,387→90，27 MB 样本 892 ms
   →32 ms，增量空读 0.2 ms）；宿主侧 poll 的读盘/解析全挪 `background_executor`

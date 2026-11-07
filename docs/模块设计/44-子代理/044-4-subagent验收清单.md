@@ -47,7 +47,7 @@ user → assistant(tool_calls=1)→ assistant("PF-SUBAGENT-OK");子会话文件�
 cd extensions/pf-subagents && node --test "test/*.test.ts"
 ```
 
-期望:全绿(2026-11-07 实况 112 条,`npm test` = node --test;M1 时点为 64 条,随测试追加增长)。
+期望:全绿(2026-11-07 实况 149 条,`npm test` = node --test;M1 时点为 64 条,随测试追加增长)。
 
 覆盖:容量(拒绝不排队/降低上限不杀已在跑)、结算(清理后才交付结果/关准入/
 迟到输入被拒)、注册表(能力协商/重复注册)、深度、描述符(版本/对账)、
@@ -152,5 +152,7 @@ You are a probe. Answer in one word.
   否则 pi 的 `resolvePath(undefined)` 崩(`undefined.startsWith`)
 - CLI 用 `--no-session` 时父会话无文件 → 子会话拿不到 `parentSession`,
   会作为普通会话出现(仅影响 CLI 冒烟,PF 恒有会话文件)
-- 后台投递(`background: true`)只回 childId,完成通知未接宿主(M3)
+- 后台投递(`background: true`):派发结果回裸句 `started subagent <id>`,完成经
+  `subagent-completion` 自定义消息投递(空阅 `triggerTurn` / 流式 `steer`,2026-11-07
+  接通,见 044-6);实时进度流未做(M3)
 - codemode fan-out / usage 上卷展示(M2)、worktree、外部后端(ACP/CC/Codex)
