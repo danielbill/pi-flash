@@ -210,3 +210,124 @@ fn parse_iso_handles_offsets_and_bad_input() {
         "只做算术，不校验日历合法性"
     );
 }
+
+/// 参考实现（044-3 §3.5 oracle）：逐行全解析 + 末条覆盖 + 首现序。
+/// 新实现必须与它逐字段一致——它是旧算法的直译。
+fn naive_rows(body: &str) -> Vec<CatalogRow> {
+    let mut by_id: HashMap<String, CatalogRow> = HashMap::new();
+    let mut seen: Vec<String> = Vec::new();
+    for line in body.split_inclusive('\n').filter(|l| l.ends_with('\n')) {
+        if let Some(row) = parse_line(line) {
+            if !seen.iter().any(|id| *id == row.child_id) {
+                seen.push(row.child_id.clone());
+            }
+            by_id.insert(row.child_id.clone(), row);
+        }
+    }
+    seen.into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect()
+}
+
+#[test]
+fn quoted_descriptor_line_does_not_shadow_real_last_entry() {
+    let f = tmp("quoted");
+    let mut body = desc("sub-1", "active", "");
+    // 用户在对话里贴了整段 descriptor JSON（含 childId）——不是 descriptor 行
+    body.push_str(
+        "{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"看这条 customType=subagent/descriptor 的记录 {\\\"childId\\\":\\\"sub-1\\\",\\\"phase\\\":\\\"failed\\\"}\"}]}\n",
+    );
+    body.push_str(
+        "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"\\\"childId\\\":\\\"sub-1\\\"\"}]}\n",
+    );
+    std::fs::write(&f, body).unwrap();
+    let scan = read_catalog(&f, 0);
+    assert_eq!(scan.rows.len(), 1, "伪行不得制造第二个 sub-1");
+    assert_eq!(scan.rows[0].phase, "active", "真末条不得被伪行挡住");
+    assert_eq!(scan.next_offset, std::fs::metadata(&f).unwrap().len());
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
+fn matches_naive_scan_on_large_log() {
+    let f = tmp("large");
+    let mut body = String::from("{\"type\":\"session\",\"id\":\"x\"}\n");
+    // 90 个子代理轮流重写 30 轮（2,700 条），夹带非 descriptor 行
+    for round in 0..30 {
+        for k in 0..90 {
+            let phase = if round == 29 { "completed" } else { "active" };
+            body.push_str(&desc(
+                &format!("sub-{k}"),
+                phase,
+                if round == 29 {
+                    ",\"stopReason\":\"completed\""
+                } else {
+                    ""
+                },
+            ));
+            if k % 7 == 0 {
+                body.push_str("{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}\n");
+            }
+        }
+    }
+    std::fs::write(&f, &body).unwrap();
+    let scan = read_catalog(&f, 0);
+    let want = naive_rows(&body);
+    assert_eq!(scan.rows, want, "新实现必须与全解析参考实现逐字段一致");
+    assert_eq!(scan.rows.len(), 90);
+    assert_eq!(scan.next_offset, body.len() as u64);
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
+fn big_file_without_descriptors_is_skipped() {
+    let f = tmp("nomark");
+    let mut body = String::new();
+    for i in 0..20_000 {
+        body.push_str(&format!(
+            "{{\"type\":\"message\",\"role\":\"assistant\",\"i\":{i},\"text\":\"ping pong filler\"}}\n"
+        ));
+    }
+    std::fs::write(&f, &body).unwrap();
+    let scan = read_catalog(&f, 0);
+    assert!(scan.rows.is_empty());
+    assert_eq!(scan.next_offset, body.len() as u64);
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
+fn truncated_file_reports_restarted() {
+    let f = tmp("restart");
+    std::fs::write(&f, desc("sub-1", "active", "")).unwrap();
+    let first = read_catalog(&f, 0);
+    assert!(!first.restarted);
+    // 文件被换成另一份更短的（换会话/重写）：旧 offset 越界 → 归零重扫并标记。
+    // （append-only 契约下只有「变短」可检测；同长重写的旧 offset 会读到行中书，
+    //  这是字节游标的固有限制，会话文件不重写故可接受。）
+    std::fs::write(
+        &f,
+        desc("sub-9", "completed", ",\"stopReason\":\"completed\""),
+    )
+    .unwrap();
+    let second = read_catalog(&f, first.next_offset + 1000);
+    assert!(second.restarted, "重扫必须报 restarted，宿主才能清旧行");
+    assert_eq!(second.rows.len(), 1);
+    assert_eq!(second.rows[0].child_id, "sub-9");
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
+fn candidate_depth_covers_three_pseudo_lines() {
+    let f = tmp("depth");
+    let mut body = desc("sub-1", "active", "");
+    for i in 0..3 {
+        body.push_str(&format!(
+            "{{\"type\":\"message\",\"role\":\"user\",\"n\":{i},\"text\":\"subagent/descriptor {{\\\"childId\\\":\\\"sub-1\\\",\\\"phase\\\":\\\"failed\\\"}}\"}}\n"
+        ));
+    }
+    std::fs::write(&f, body).unwrap();
+    let scan = read_catalog(&f, 0);
+    assert_eq!(scan.rows.len(), 1);
+    assert_eq!(scan.rows[0].phase, "active");
+    let _ = std::fs::remove_file(&f);
+}

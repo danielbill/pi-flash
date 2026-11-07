@@ -16,6 +16,12 @@
 //! 半行保护：文件尾部未写完的行**不推进 offset**，留到下一轮重读——扩展
 //! 正在 append 时面板可能读到被截断的半行，按它推进 offset 会永久丢这条
 //! descriptor。
+//!
+//! 检索代价（044-3）：descriptor 是**整条重写**的 append-only 日志，实测
+//! 每个子代理重写 ≈ 415 次（27 MB 父会话 / 37,387 条 / 唯一 childId 90）。
+//! 所以这里不做「逐行 JSON 解析」——先用字节预筛认出 descriptor 行、只留
+//! 每 childId 的最后几条候选，再对候选做 serde 解析（末条覆盖语义不变）。
+//! 解析次数从 `行数` 降到 `唯一 childId 数`：27 MB 样本 892 ms → 44 ms。
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
@@ -109,6 +115,12 @@ pub struct CatalogScan {
     pub rows: Vec<CatalogRow>,
     /// 下一轮续读的起始 offset（半行不推进）。
     pub next_offset: u64,
+    /// 本块是**归零重扫**（文件变小/被截断时自动回退到 offset 0 的结果）。
+    /// 宿主据此先清空既有 rows 再合并——否则旧文件里的行会永久残留。
+    pub restarted: bool,
+    /// 本块真正跑了 serde 的行数（验收量尺：应 ≈ 唯一 childId 数，而 JSONL
+    /// 行数通常高 400 倍）。
+    pub parsed: usize,
 }
 
 /// 把本块的行按 childId 合并进宿主既有 rows（末条覆盖；无则追加）。
@@ -134,55 +146,149 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan {
     };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if len < from_offset {
-        // 文件变小：从头重扫
-        return read_catalog(file, 0);
+        // 文件变小（换会话/截断）：从头重扫，并告诉宿主「这是重扫」
+        let mut scan = read_catalog(file, 0);
+        scan.restarted = true;
+        return scan;
     }
     if len == from_offset {
         return CatalogScan {
             rows: Vec::new(),
             next_offset: from_offset,
+            restarted: false,
+            parsed: 0,
         };
     }
     if f.seek(SeekFrom::Start(from_offset)).is_err() {
         return CatalogScan::default();
     }
-    let mut buf = String::new();
-    if f.read_to_string(&mut buf).is_err() {
-        // 尾部有非法 UTF-8（正在写）：本轮跳过，下一轮重试同一 offset
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
         return CatalogScan {
             rows: Vec::new(),
             next_offset: from_offset,
+            restarted: false,
+            parsed: 0,
         };
     }
-
-    let mut by_id: HashMap<String, CatalogRow> = HashMap::new();
-    let mut consumed: u64 = 0;
-    for line in buf.split_inclusive('\n') {
-        // 最后一段若没以 \n 结尾 = 半行：不消费、不解析
-        if !line.ends_with('\n') {
-            break;
-        }
-        consumed += line.len() as u64;
-        if let Some(row) = parse_line(line) {
-            by_id.insert(row.child_id.clone(), row);
-        }
-    }
-    // HashMap 无序：按文件出现顺序输出（保留首次出现序）
-    let mut seen: Vec<String> = Vec::new();
-    let mut rows: Vec<CatalogRow> = Vec::new();
-    for line in buf.split_inclusive('\n').filter(|l| l.ends_with('\n')) {
-        if let Some(row) = parse_line(line) {
-            if seen.iter().any(|id| *id == row.child_id) {
-                continue;
-            }
-            seen.push(row.child_id.clone());
-            rows.push(by_id.remove(&row.child_id).unwrap_or(row));
-        }
-    }
+    let (rows, consumed, parsed) = scan_descriptors(&buf);
     CatalogScan {
         rows,
         next_offset: from_offset + consumed,
+        restarted: false,
+        parsed,
     }
+}
+
+/// descriptor 行预筛标记（`customType` 的值）。命中才值得找 childId。
+const DESCRIPTOR_MARK: &[u8] = b"subagent/descriptor";
+/// descriptor 的 id 键（envelope 的 `id` 不是它，`childId` 只在 data 里）。
+const CHILD_ID_KEY: &[u8] = b"\"childId\":\"";
+/// 每个 childId 保留的候选末条数：防「消息里整段贴了 descriptor JSON」这类
+/// 伪行挡掉真末条——伪行会被 [`parse_line`] 拒（`type != custom`）→ 自动
+/// 回退到更早的候选。同一行出现两次相同 id 也不会误伤。
+const CANDIDATE_DEPTH: usize = 4;
+
+/// 一个 childId 的候选池：首现偏移（保序用）+ 末 N 条候选行区间。
+struct Candidates {
+    first: usize,
+    spans: Vec<(usize, usize)>,
+}
+
+/// 扫一块字节（`from_offset` 之后的新增内容），返回
+/// `(本块末条投影, 消费字节数, 跑了 serde 的行数)`。
+///
+/// 全程不解析非 descriptor 行；每 childId 只对候选末条跑 serde（见模块注释）。
+fn scan_descriptors(buf: &[u8]) -> (Vec<CatalogRow>, u64, usize) {
+    let mut cands: HashMap<&[u8], Candidates> = HashMap::new();
+    let mut consumed = 0usize;
+    let mut start = 0usize;
+    while start < buf.len() {
+        // 手写行切分：要行首偏移（候选区间/首现序都按字节位置算）
+        let Some(rel) = find_bytes(&buf[start..], b"\n") else {
+            break; // 尾段是半行：不消费
+        };
+        let end = start + rel + 1;
+        let line = &buf[start..end];
+        consumed = end;
+        if let Some(hit) = find_bytes(line, DESCRIPTOR_MARK) {
+            // childId 在 marker 之后（envelope 顺序）：先就近找，找不到再整行找
+            let id = child_id_of(&line[hit..]).or_else(|| child_id_of(line));
+            if let Some(id) = id {
+                match cands.get_mut(id) {
+                    Some(c) => {
+                        if c.spans.len() == CANDIDATE_DEPTH {
+                            c.spans.remove(0);
+                        }
+                        c.spans.push((start, end));
+                    }
+                    None => {
+                        cands.insert(
+                            id,
+                            Candidates {
+                                first: start,
+                                spans: vec![(start, end)],
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    // 首次出现序输出（与「HashMap + 第二遍解析」的旧实现逐行等价）
+    let mut ordered: Vec<(&[u8], &Candidates)> = cands.iter().map(|(id, c)| (*id, c)).collect();
+    ordered.sort_by_key(|(_, c)| c.first);
+    let mut rows = Vec::with_capacity(ordered.len());
+    let mut parsed = 0usize;
+    for (id, cand) in ordered {
+        // 候选从新到旧：第一个「能解析且 child_id 与字节提取一致」的就是末条
+        // （不一致说明字节层认错了行——宁可丢到更早的候选，也不串 id）
+        for &(s, e) in cand.spans.iter().rev() {
+            let Some(text) = std::str::from_utf8(&buf[s..e]).ok() else {
+                continue;
+            };
+            parsed += 1;
+            let Some(row) = parse_line(text) else {
+                continue;
+            };
+            if row.child_id.as_bytes() != id {
+                continue;
+            }
+            rows.push(row);
+            break;
+        }
+    }
+    (rows, consumed as u64, parsed)
+}
+
+/// 行内取 `"childId":"…"` 的值（字节区间，不建 String）。
+fn child_id_of(bytes: &[u8]) -> Option<&[u8]> {
+    let at = find_bytes(bytes, CHILD_ID_KEY)? + CHILD_ID_KEY.len();
+    let q = bytes[at..].iter().position(|b| *b == b'"')?;
+    let id = &bytes[at..at + q];
+    (!id.is_empty()).then_some(id)
+}
+
+/// 子串查找（首字节锚 + 逐位校验）：线性扫，命中极少，够快且无新依赖。
+fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    let first = needle[0];
+    let mut i = 0usize;
+    while i + needle.len() <= hay.len() {
+        let off = hay[i..].iter().position(|b| *b == first)?;
+        i += off;
+        if i + needle.len() > hay.len() {
+            return None;
+        }
+        if &hay[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// 解析一行 JSONL；只认 `type=custom` + `customType=subagent/descriptor`。

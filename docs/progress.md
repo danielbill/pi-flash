@@ -32,6 +32,14 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-07 子代理 044-3 检索层落地（设计 a03fea01 + 本次实现）：`read_catalog`
+  改字节预筛 + 每 childId 末条下沉（serde 调用 37,387→90，27 MB 样本 892 ms
+  →32 ms，增量空读 0.2 ms）；宿主侧 poll 的读盘/解析全挪 `background_executor`
+  （`read_in_flight` 在飞守卫 + offset/file 双校验回灌）、`SubagentPanel` 加
+  stash LRU4（父↔子来回切不再重扫）、打开子会话的 tab 标题改查内存（miss 才
+  后台补名）。`CatalogScan` 增 `restarted`（文件变短→归零重扫先清旧行）与
+  `parsed`（`[perf]` 量尺）。测试 pi-link 15/15（新增伪行回退/候选深度/大文件
+  等价 oracle/无 marker/截断五条）。
 - 2026-11-05 子代理 044-0 新梳理设计落地（8 项差距全关，7 commits
   9a3f1a2a..24011ef4）：①运行层错误归一 PROVIDER_ERROR（429/5xx/断流不再
   误报 START_REJECTED）+ descriptor/details 增活动计数 stats（turns/

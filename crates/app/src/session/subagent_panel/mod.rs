@@ -25,7 +25,8 @@ use crate::Chat;
 use crate::appearance::theme::theme as T;
 use crate::session::Block;
 use pi_link::subagent_catalog::{
-    CatalogRow, StatusKind, merge_rows, parse_iso_secs, read_catalog, row_duration_secs,
+    CatalogRow, CatalogScan, StatusKind, merge_rows, parse_iso_secs, read_catalog,
+    row_duration_secs,
 };
 
 /// 打开期轮询间隔（044-1 §1.4：1s 增量读）。
@@ -59,6 +60,10 @@ pub(crate) struct SubagentPanel {
     pub offset: u64,
     /// 累积的 descriptor 投影（同 childId 末条覆盖）。
     pub rows: Vec<CatalogRow>,
+    /// 后台增量读在飞（每 tick 最多一份：回灌前不重起，防重叠）。
+    pub read_in_flight: bool,
+    /// 会话切走时留下的整份缓存（044-3 §4.2）：父↔子来回切不重扫。
+    pub stash: Vec<CatalogStashEntry>,
     /// 按轮归组（turn 序 = 第 n 条 User 消息）：导航卡第三行 + 菜单数据源。
     pub turn_agents: Vec<Vec<CatalogRow>>,
     /// hover 的导航轮卡（turn 序 + 卡窗口坐标）：菜单锚；None = 菜单收起。
@@ -81,62 +86,230 @@ pub(crate) struct SubagentPanel {
 /// 闭包内，不入 Chat）。
 pub(crate) type BoundsSlot = Rc<RefCell<Option<Bounds<Pixels>>>>;
 
+/// 进程内 catalog stash 条目（044-3 §4.2）：会话切走时整份存档，切回来
+/// 从同一 offset 接着增量读——不再从 0 重扫 27 MB。
+#[derive(Clone)]
+pub(crate) struct CatalogStashEntry {
+    file: PathBuf,
+    offset: u64,
+    rows: Vec<CatalogRow>,
+}
+
+/// stash 容量上限（父会话 + 几个观察窗够用；超出按 LRU 丢最旧）。
+const STASH_MAX: usize = 4;
+
+impl SubagentPanel {
+    pub(crate) fn new(file: Option<PathBuf>, polling: bool) -> Self {
+        Self {
+            file,
+            offset: 0,
+            rows: Vec::new(),
+            read_in_flight: false,
+            stash: Vec::new(),
+            turn_agents: Vec::new(),
+            menu_anchor: None,
+            menu_hide_at: None,
+            menu_hovered: false,
+            polling,
+        }
+    }
+
+    /// 切到新会话：当前整份缓存入库，新会话尽量从库恢复（044-3 §4.2）。
+    /// 菜单状态一律清零（锚属于旧会话的轮卡，坐标会错位）。
+    pub(crate) fn adopt(&mut self, file: Option<PathBuf>) {
+        self.stash_put();
+        self.file = file;
+        self.offset = 0;
+        self.read_in_flight = false;
+        self.turn_agents.clear();
+        self.menu_anchor = None;
+        self.menu_hide_at = None;
+        self.menu_hovered = false;
+        let Some(want) = self.file.clone() else {
+            return;
+        };
+        if let Some(ix) = self.stash.iter().position(|e| e.file == want) {
+            let e = self.stash.remove(ix);
+            self.offset = e.offset;
+            self.rows = e.rows;
+        }
+    }
+
+    /// 当前 rows/offset 入库（rows 取走，不留重复副本）；先剔同名再把新条目
+    /// 放末尾（LRU 序）。
+    fn stash_put(&mut self) {
+        let Some(file) = self.file.clone() else {
+            return;
+        };
+        if self.offset == 0 && self.rows.is_empty() {
+            return;
+        }
+        self.stash.retain(|e| e.file != file);
+        self.stash.push(CatalogStashEntry {
+            file,
+            offset: self.offset,
+            rows: std::mem::take(&mut self.rows),
+        });
+        if self.stash.len() > STASH_MAX {
+            self.stash.remove(0);
+        }
+    }
+
+    /// 内存里查某个子会话的 tab 标题（label → profile）：打开路径零读盘
+    /// （044-3 §4.4）。当前会话 rows 与 stash 都查。
+    pub(crate) fn label_for_child(&self, path: &std::path::Path) -> Option<String> {
+        let hit = |rows: &[CatalogRow]| {
+            rows.iter()
+                .find(|r| {
+                    r.session_file.as_deref().is_some_and(|sf| {
+                        crate::services::workspace::same_path(std::path::Path::new(sf), path)
+                    })
+                })
+                .and_then(child_tab_label)
+        };
+        hit(&self.rows).or_else(|| self.stash.iter().find_map(|e| hit(&e.rows)))
+    }
+}
+
+/// 子会话 tab 的候选标题：descriptor 的 label，退回 profile（都非空才算）。
+pub(crate) fn child_tab_label(row: &CatalogRow) -> Option<String> {
+    row.label
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| row.profile.clone().filter(|s| !s.is_empty()))
+}
+
 impl Chat {
-    /// 会话激活时常备面板缓存——导航卡状态点从切换起就准，不依赖「先
-    /// hover 过」。switch_pool_rt 调；空结构起步，首轮 poll 全量扫，不拖
-    /// 慢切换热路径。
+    /// 会话激活：面板缓存跟随会话（切走归档、切回从 stash 恢复），轮询常备。
+    /// switch_pool_rt 调；空结构起步，首轮 poll 后台全量扫，不拖慢切换热路径。
     pub(crate) fn ensure_subagent_panel(&mut self, cx: &mut gpui::Context<Self>) {
         let file = self.rt().read(cx).file.clone();
-        let already = self
+        let same = self
             .dlg
             .subagent_panel
             .as_ref()
             .is_some_and(|p| p.file == file);
-        if !already {
+        if !same {
             let polling = self.dlg.subagent_panel.as_ref().is_some_and(|p| p.polling);
-            self.dlg.subagent_panel = Some(SubagentPanel {
-                file,
-                offset: 0,
-                rows: Vec::new(),
-                turn_agents: Vec::new(),
-                menu_anchor: None,
-                menu_hide_at: None,
-                menu_hovered: false,
-                polling,
-            });
+            match self.dlg.subagent_panel.as_mut() {
+                Some(p) => {
+                    p.adopt(file);
+                    p.polling = polling;
+                }
+                None => self.dlg.subagent_panel = Some(SubagentPanel::new(file, polling)),
+            }
         }
         ensure_poll(self, cx);
     }
 
-    /// 一轮增量轮询：只读上次 offset 之后的新增字节，合并后重绘 + 按轮
-    /// 归组重算。返回下一轮间隔；None = 面板没了（Chat 消亡）→ 任务退场。
-    /// 会话切换在这里自愈：缓存挂的还是旧会话 → 归零重扫新会话。
+    /// 一轮增量轮询：只把「读文件 + 解析」这一棒甩给后台线程（044-3 §4.1），
+    /// UI 线程本 tick 只算按轮投影。返回下一轮间隔；None = 面板没了（Chat
+    /// 消亡）→ 任务退场。会话切换在这里自愈（ensure 漏掉的路径）。
     fn subagent_panel_poll(&mut self, cx: &mut gpui::Context<Self>) -> Option<std::time::Duration> {
         let rt = self.rt().clone();
         let current = rt.read(cx).file.clone();
         let panel = self.dlg.subagent_panel.as_mut()?;
         if panel.file != current {
-            panel.file = current;
-            panel.offset = 0;
-            panel.rows.clear();
-            panel.turn_agents.clear();
-            panel.menu_anchor = None;
-            panel.menu_hide_at = None;
-            panel.menu_hovered = false;
+            panel.adopt(current);
         }
         let Some(file) = panel.file.clone() else {
-            // 会话还没落盘：没东西可读，慢速等文件出现
+            // 会话还没落盘：没东西可读，等下一 tick 看文件是否出现
             return Some(POLL_TICK);
         };
-        let scan = read_catalog(&file, panel.offset);
-        if scan.next_offset != panel.offset {
-            panel.offset = scan.next_offset;
-            merge_rows(&mut panel.rows, scan.rows);
+        // 上一份还在飞：本 tick 不叠读（回灌时自愈并重绘）
+        if panel.read_in_flight {
+            return Some(POLL_TICK);
         }
-        // 按轮归组（044-0 验收⑥）：轮序 = 第 n 条 User 消息（nav.rs 构建
-        // 同口径）；该轮 assistant 消息里的 agent 工具调用 id → descriptor
-        // 的 parentToolCallId 对号入座。messages 变化（新轮/新调用）随 poll
-        // 1s 内跟上，渲染帧零扫描。
+        let from = panel.offset;
+        panel.read_in_flight = true;
+        cx.spawn(async move |this, cx| {
+            let f_read = file.clone();
+            let (scan, cost) = cx
+                .background_executor()
+                .spawn(async move {
+                    let t0 = std::time::Instant::now();
+                    let scan = read_catalog(&f_read, from);
+                    (scan, t0.elapsed())
+                })
+                .await;
+            // 044-3 验收量尺：parsed ≈ 唯一 childId 数，绝不是行数
+            if std::env::var_os("PI_FLASH_PERF").is_some() {
+                eprintln!(
+                    "[perf] subagent_catalog bytes={} us={} parsed={} rows={} mode={}",
+                    scan.next_offset.saturating_sub(from),
+                    cost.as_micros(),
+                    scan.parsed,
+                    scan.rows.len(),
+                    if from == 0 || scan.restarted {
+                        "full"
+                    } else {
+                        "incr"
+                    }
+                );
+            }
+            let _ = this.update(cx, move |chat, cx| {
+                chat.apply_catalog_scan(file, from, scan, cx)
+            });
+        })
+        .detach();
+        self.regroup_turn_agents(&rt, cx);
+        Some(POLL_TICK)
+    }
+
+    /// 后台读回灌：会话文件与 offset 都对得上才合并，否则整份丢弃（陈旧
+    /// 快照永不覆盖新状态，下一 tick 自愈）。`restarted` = 文件变小后的归零
+    /// 重扫 → 先清旧行再合并（否则旧文件的行永久残留）。
+    fn apply_catalog_scan(
+        &mut self,
+        file: PathBuf,
+        from: u64,
+        scan: CatalogScan,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let rt = self.rt().clone();
+        let Some(panel) = self.dlg.subagent_panel.as_mut() else {
+            return;
+        };
+        // 会话已切走：别的会话的陈旧快照（in_flight 属新会话的读，已在
+        // adopt 里清过，这里不能再动）
+        if panel.file.as_deref() != Some(file.as_path()) {
+            return;
+        }
+        panel.read_in_flight = false;
+        // offset 已被另一份回灌推进/归零：本份作废，下一 tick 自愈
+        if panel.offset != from {
+            return;
+        }
+        let mut changed = false;
+        if scan.restarted {
+            panel.rows.clear();
+            changed = true;
+        }
+        if scan.next_offset != from {
+            panel.offset = scan.next_offset;
+            if !scan.rows.is_empty() {
+                merge_rows(&mut panel.rows, scan.rows);
+                changed = true;
+            }
+        }
+        if changed {
+            self.regroup_turn_agents(&rt, cx);
+        }
+    }
+
+    /// 按轮归组（044-0 验收⑥）：轮序 = 第 n 条 User 消息（nav.rs 构建同口径）；
+    /// 该轮 assistant 消息里的 agent 工具调用 id → descriptor 的
+    /// parentToolCallId 对号入座。messages 变化（新轮/新调用）随 poll 1s 内
+    /// 跟上，渲染帧零扫描。rows ≤ 90 行、无 IO，每 tick 重算实测非瓶颈
+    /// （044-3 §4.3 曾拟改下标，量过无收益，保留值拷贝）。
+    fn regroup_turn_agents(
+        &mut self,
+        rt: &gpui::Entity<crate::session::runtime::SessionRuntime>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(panel) = self.dlg.subagent_panel.as_mut() else {
+            return;
+        };
         let mut call_turn: HashMap<&str, usize> = HashMap::new();
         let mut n_turns = 0usize;
         for m in rt.read(cx).messages.iter() {
@@ -173,7 +346,6 @@ impl Chat {
         if changed {
             cx.notify();
         }
-        Some(POLL_TICK)
     }
 
     /// 整行点击：子会话是普通 pi 会话，直接 open_session（只读观察窗 +

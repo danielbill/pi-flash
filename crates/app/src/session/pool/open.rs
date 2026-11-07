@@ -4,6 +4,55 @@
 use super::*;
 
 impl Chat {
+    /// 子会话 tab 标题（044-0：用 descriptor 的任务名）。
+    ///
+    /// 044-3 §4.4：内存优先——panel.rows / stash 里必然有刚点开的子代理行
+    /// （点击入口就是这些行），所以正常路径零读盘。缓存没覆盖（PF 重启后的
+    /// 老 tab 等）先给占位名，后台扫一次父 catalog 补上。
+    pub(crate) fn subagent_tab_label(
+        &mut self,
+        child: &Path,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let placeholder = || tr("subagent.tab").to_string();
+        let Some(panel) = self.dlg.subagent_panel.as_ref() else {
+            return placeholder();
+        };
+        if let Some(label) = panel.label_for_child(child) {
+            return label;
+        }
+        let Some(parent) = panel.file.clone() else {
+            return placeholder();
+        };
+        let target = child.to_path_buf();
+        let key = key.to_string();
+        cx.spawn(async move |this, cx| {
+            let scan = cx
+                .background_executor()
+                .spawn(async move { pi_link::subagent_catalog::read_catalog(&parent, 0) })
+                .await;
+            let label = scan
+                .rows
+                .iter()
+                .find(|r| {
+                    r.session_file
+                        .as_deref()
+                        .is_some_and(|sf| same_path(Path::new(sf), &target))
+                })
+                .and_then(crate::session::subagent_panel::child_tab_label);
+            let Some(label) = label else { return };
+            let _ = this.update(cx, move |chat, cx| {
+                if chat.pool.tab_labels.contains_key(&key) {
+                    chat.pool.tab_labels.insert(key, label);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        placeholder()
+    }
+
     pub(crate) fn open_session(&mut self, path: PathBuf, rename: bool, cx: &mut Context<Self>) {
         // 入参可能带历史字符串形态（recents/last-open 存过 pi 自拼的 group
         // 大小写）：先归一到扫描器形态再入池——pool key、侧栏行匹配、通知
@@ -84,29 +133,9 @@ impl Chat {
         // 父会话 = 当前激活会话（面板行/compact 卡点击两条路都满足）。
         if observer {
             let new_key = rt.read(cx).key.clone();
-            let label = self
-                .pool
-                .runtimes
-                .get(&self.pool.active_key)
-                .and_then(|parent| parent.read(cx).file.clone())
-                .map(|f| pi_link::subagent_catalog::read_catalog(&f, 0))
-                .map(|scan| {
-                    scan.rows
-                        .iter()
-                        .find(|r| {
-                            r.session_file
-                                .as_deref()
-                                .is_some_and(|sf| same_path(Path::new(sf), &path))
-                        })
-                        .and_then(|r| {
-                            r.label
-                                .clone()
-                                .filter(|s| !s.is_empty())
-                                .or_else(|| r.profile.clone().filter(|s| !s.is_empty()))
-                        })
-                })
-                .unwrap_or(None)
-                .unwrap_or_else(|| tr("subagent.tab").to_string());
+            // 044-3 §4.4：标题先查内存缓存（面板 rows + stash），打开路径不读盘；
+            // 缓存没覆盖才占位 + 后台补名（非热路径，首帧不被拖）。
+            let label = self.subagent_tab_label(&path, &new_key, cx);
             self.pool.tab_labels.insert(new_key.clone(), label);
             // 观察窗 = 自由区普通 tab（044-0 验收②：追加**末尾**，不抢固定
             // 段第一位）；已开过（面板行重复点）只激活不重复 push

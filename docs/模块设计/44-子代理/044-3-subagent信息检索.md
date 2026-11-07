@@ -12,6 +12,11 @@
 
 ---
 
+**实现状态（2026-11-07）**：已落地。检索层 `crates/pi-link/src/subagent_catalog.rs`
+（实测 27 MB 样本 892 ms → **32 ms**，serde 调用 37,387 → 90）；宿主侧
+`crates/app/src/session/subagent_panel/mod.rs`（后台读 + 在飞守卫 + stash LRU4）、
+`crates/app/src/session/pool/open.rs`（打开路径零读盘）。测试 15/15 绿。
+
 ## 1 现状实测（2026-11-07，本机真实会话）
 
 ### 1.1 数据面
@@ -85,11 +90,19 @@ append-only 末条覆盖是该契约的正确读法，但代价是「事实重�
 ### 3.1 接口不变
 
 ```rust
-pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, next_offset }
+pub struct CatalogScan {
+    pub rows: Vec<CatalogRow>,   // 本块末条投影（首现序，同 id 已末条覆盖）
+    pub next_offset: u64,        // 下一轮续读起点（半行不推进）
+    pub restarted: bool,         // 本块是「文件变小 → 归零重扫」的结果
+    pub parsed: usize,           // 本块真正跑了 serde 的行数（验收量尺）
+}
+pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan
 ```
 
 - `from_offset` 增量续读语义不变；半行（文件尾部未写完）**不推进 offset**，下轮重读；
-- 文件变小 / 打不开 / 非法 UTF-8 → 空块或归零重扫（现行行为保留）；
+- 打不开 / 读到一半失败 → 空块（offset 不动，下轮重试）；文件变小 → 归零重扫并把
+  `restarted` 置真（宿主据此**先清 rows 再合并**，否则旧文件的行永久残留）；
+  非法 UTF-8 从「整块放弃」改成**逐行跳过**（一行坏不再让整个 tick 白跑）；
 - `rows` 输出顺序 = **首次出现序**（与现状逐行一致，已用真实文件比对等价，见 §3.4）。
 
 ### 3.2 算法：字节预筛 + 末条下沉
@@ -103,7 +116,7 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
      - 每个 id 只保留最后 K=4 条候选行区间（首现 offset 另记）
 4. 收尾：每个 id 从新到旧试解析候选行，第一个「parse_line 通过且 child_id 与字节提取一致」
    的行胜出；全不通过则该 id 丢弃（fail-closed，与现行一致）
-5. 按首现 offset 排序输出；next_offset = from_offset + consumed
+5. 按首现 offset 排序输出；next_offset = from_offset + consumed；parsed = 试解析过的行数
 ```
 
 要点：
@@ -125,6 +138,7 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 | 现状 | 892 ms | 37,387 × 2 遍 | 90 行 |
 | 原型 v1（逐行预筛） | 44 ms | **90** | 90 行，**逐行等价**（child_id/phase/stop_reason 全同），`next_offset` 相同 |
 | 原型 v2（整块 marker 扫描） | 50 ms | 90 | 等价，但不比 v1 快（回看行界的反向扫抵消收益）→ **取 v1** |
+| **落地实现**（`read_catalog`，2026-11-07） | **32 ms** | **90** | 90 行、`next_offset == len`、与原型等价；增量空读 0.2 ms（仅 open+metadata） |
 
 **可选的进一步优化**（不进第一版）：`memchr::memmem` 整块扫 marker（memchr 2.8.3 已在
 `Cargo.lock`，零新增下载）预计再降到 10-15 ms 级；收益小于一个 1 s tick，且要新增直接依赖，
@@ -132,13 +146,18 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 
 ### 3.5 测试（`crates/pi-link/src/subagent_catalog/tests.rs`）
 
-现有 12 条全保留（增量/末条覆盖/半行/坏 JSON/终态配色等），新增：
+现有 10 条全保留（增量/末条覆盖/半行/坏 JSON/终态配色等），新增 5 条
+（`crates/pi-link/src/subagent_catalog/tests.rs`，已全绿 15/15）：
 
-1. **伪行回退**：真末条后面再追加一行「消息里贴的 descriptor JSON」→ 仍取真末条。
-2. **大文件等价**：合成 5,000 条 descriptor（90 个 id 轮写）→ 新实现与
-   「朴素全解析参考实现」逐字段相等（把参考实现留在 test 里当 oracle）。
-3. **无 marker 大文件**：1 MB 纯文本 + 无 descriptor → 0 行、offset 推进、不 panic。
-4. **截断文件**：先读一次，再把文件截断到更小 → 归零重扫不丢行。
+1. `quoted_descriptor_line_does_not_shadow_real_last_entry`：真末条后面追加两行
+   「消息里贴的 descriptor JSON」→ 仍取真末条（伪行不制造第二个同 id）。
+2. `candidate_depth_covers_three_pseudo_lines`：连贴 3 条伪行 → K=4 候选仍兜住。
+3. `matches_naive_scan_on_large_log`：合成 2,700 条 descriptor（90 id × 30 轮）+ 夹杂
+   非 descriptor 行 → 与「朴素全解析参考实现」**逐字段相等**（oracle 留在 test 里）。
+4. `big_file_without_descriptors_is_skipped`：20,000 行纯文本、无 marker → 0 行、offset 推进。
+5. `truncated_file_reports_restarted`：offset 越界 → `restarted == true` 且只出新文件的行。
+   （注：append-only 契约下只有「文件变短」可检测；同长重写的旧 offset 会读到行中书，
+   这是字节游标的固有限制，会话文件不重写故可接受。）
 
 ---
 
@@ -150,14 +169,21 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 
 1. UI 线程：取 `(file, offset)` 快照，若 `read_in_flight` 已在跑则跳过本 tick；
 2. `background_executor().spawn(...)` 执行 `read_catalog`（IO + 解析全在后台）；
-3. 回灌守卫：`panel.file` 未变 && `panel.offset` 未变 && `!in_flight` 三条件全成立才
-   merge + 重算按轮投影 + `cx.notify()`；否则丢弃（下一 tick 自愈）。
+3. 回灌守卫（`apply_catalog_scan`）：`panel.file` 未变才继续（变了 = 别的会话的陈旧
+   快照，直接丢，`in_flight` 归属新会话的读，已在 `adopt` 里清）；同会话则先清
+   `read_in_flight`，再要求 `panel.offset == from` 才 merge + 重算按轮投影 + `cx.notify()`
+   ——offset 已被另一份回灌推进就丢弃（下一 tick 自愈）。
+4. `scan.restarted == true` → 先清 `rows` 再合并。
 
 `read_in_flight: bool` 落在 `SubagentPanel` 上，与 `polling` 同族。
 
 ### 4.2 进程内 stash（父↔子来回切不重扫）
 
-`SubagentPanel` 增 `stash: Vec<(PathBuf, u64, Vec<CatalogRow>)>`（LRU ≤ 4，按文件路径）：
+`SubagentPanel` 增 `stash: Vec<CatalogStashEntry>`（`{file, offset, rows}`，LRU ≤ 4，按文件路径）：
+
+- 入口统一在 `adopt(file)`（`ensure_subagent_panel` 与 poll 自愈两条路都走它）：
+  先 `stash_put()`（`std::mem::take` 取走 rows，不留重复副本；同名先剔、放末尾、超 4 丢最旧），
+  再把菜单锚/宽限/`in_flight` 清零——锚属于旧会话的轮卡，留着会错位；
 
 - 会话切走时把当前 `(file, offset, rows)` 存入 stash（不动 offset——文件增长由增量读跟随）；
 - 切回来先查 stash：命中 → 恢复 `rows/offset` 后**只读增量**（通常 0 字节 → 一次 metadata）；
@@ -167,18 +193,26 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 
 ### 4.3 按轮投影去克隆
 
-`turn_agents: Vec<Vec<CatalogRow>>` 现在持 `rows` 的**深拷贝**，且每 tick 深比较一次。
-改成 `Vec<Vec<usize>>`（rows 下标）；只在 `rows` 变更或 `messages.len()` 变化时重建。
-（`crates/app/src/session/subagent_panel/mod.rs:141-172`）
+**原计划**：`turn_agents: Vec<Vec<CatalogRow>>` 持 `rows` 深拷贝 + 每 tick 深比较，改成
+`Vec<Vec<usize>>`（下标）、只在变更时重建。
+
+**实际结论：不做。** 落地时量过：rows ≤ 90 行、str 字段 ~15 个 → 每 tick 重建 ≈ 数十 µs，
+与 32 ms 的读盘相比是噪声；而改下标要把 `gutter.rs` 的 `nav_card(rows)`、
+`nav/mod.rs` 的 `turn_agents_row(&[CatalogRow])`、菜单渲染、快照 JSON 四处签名一起改，
+收益/风险不划算。代码里把归组抽成 `regroup_turn_agents(&rt, cx)`（一处实现），
+将来真成瓶颈再改下标只需动这一处。
 
 ### 4.4 打开路径零读
 
-`crates/app/src/session/pool/open.rs:88-105` 的同步 `read_catalog(&parent, 0)` **删除**：
+`crates/app/src/session/pool/open.rs` 的同步 `read_catalog(&parent, 0)` **删除**，
+换成 `Chat::subagent_tab_label(&child, &key, cx)`（`session/pool/open.rs`）：
 
 - 主路径：从 `panel.rows`（或 stash）里按 `session_file` 匹配取 `label → profile → 「子代理」`。
   从导航菜单点进来的场景必然命中（那一行就是面板里的行）。
 - 兜底：没命中时先用占位标题 `tr("subagent.tab")` 建 tab，同时扔一个后台任务扫父文件，
   扫完若 tab 还在就改名（`pool.tab_labels.insert`）。
+- 匹配逻辑抽成 `SubagentPanel::label_for_child(&Path)`（当前 rows + stash 都查）与
+  `subagent_panel::child_tab_label(&CatalogRow)`（label → profile），两处口径不再分叉。
 
 `read_tail_messages` 保留（≤256 KB，~1-2 ms，且是首帧有内容的来源）。
 
@@ -188,14 +222,16 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 
 ### 5.1 `[perf]` 日志口径（进代码，长期量尺）
 
-`read_catalog` 每次调用打一行：
+`PI_FLASH_PERF=1` 时宿主侧 poll 每完成一次后台读打一行（pi-link 保持纯函数、不碰全局 io）：
 
 ```
-[perf] subagent_catalog bytes=27241180 from=0 us=44000 parsed=90 rows=90 mode=full|incr
+[perf] subagent_catalog bytes=27241180 us=32160 parsed=90 rows=90 mode=full|incr
 ```
 
-宿主侧 poll 打：`mode=stash|full|incr|idle`、`inflight_skip`、`thread=bg`。
-`read_catalog` 内**不允许**出现主线程调用（review 检查点 + 4.1 的守卫）。
+`us` 在**后台线程内**计时（只算 `read_catalog` 本身，不含排队/回灌）；
+`mode=full` 的条件是 `from == 0 || scan.restarted`。稳态（无新字节）每 tick 仍会打一行
+`bytes=0 us=<200 mode=incr`——这是「有没有误走全扫」的判据。
+线程纪律：`read_catalog` 只允许在 `background_executor` 里调（review 检查点 + 4.1 的守卫）。
 
 ### 5.2 验收项（最坏样本 = 27 MB / 37,882 行）
 
@@ -209,8 +245,10 @@ pub fn read_catalog(file: &Path, from_offset: u64) -> CatalogScan  // { rows, ne
 
 ### 5.3 测试用例
 
-`test/044-子代理/` 下新增「检索」组：伪行、截断、大文件等价、父↔子切换 stash 命中
-（以 `[perf]` 行作为断言输入），详见 `044-2-子代理testcase.md` 追加章节。
+检索层（pi-link）的 5 条用例见 §3.5，随 `cargo test -p pi-link` 常跑，不需要手工 UI 案例。
+宿主侧（后台读 / stash 命中 / 打开零读盘）是时序行为，验收走 §5.2 的 `[perf]` 日志断言：
+UI 侧只做「导航第三行点色、hover 菜单、tab 标题、观察窗同步」的功能回归，
+用例口头执行即可（用户端验收），`test/044-子代理/` 的既有案例不动。
 
 ---
 
