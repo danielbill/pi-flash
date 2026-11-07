@@ -67,6 +67,8 @@ pub(super) fn content_tab(
     // 右键 = 标签菜单（zed 移植）：Close/Others/Left/Right/All，锚点 =
     // 事件坐标
     let ctx_menu = cx.listener(move |this, ev: &gpui::MouseDownEvent, _w, cx| {
+        // 禁透传：右键已消费，不再喂给下层元素/raw 监听
+        cx.stop_propagation();
         this.dlg.tab_menu = Some((
             crate::TabMenuTarget::Panel(ix),
             f32::from(ev.position.x),
@@ -76,6 +78,8 @@ pub(super) fn content_tab(
     });
     // 中键关闭（浏览器/zed 同款；归队后全 tab 统一）
     let close_mid = cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
+        // 禁透传：中键已消费
+        cx.stop_propagation();
         this.close_tab_at(ix, cx);
         cx.notify();
     });
@@ -138,6 +142,9 @@ pub(super) fn content_tab(
     .on_drop::<TabDrag>(cx.listener(move |this, drag: &TabDrag, _, cx| {
         this.move_panel_tab(&drag.key, ix, cx);
     }))
+    // 禁透传（2026-11-07 用户令）：命中链止于 tab 本体——hover/点击不再
+    // 漏给下方重叠的兄弟 hitbox（drop 目标/内容区）。滚轮放行保横向滚动。
+    .block_mouse_except_scroll()
 }
 
 #[allow(clippy::too_many_arguments)]

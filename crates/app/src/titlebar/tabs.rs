@@ -261,6 +261,8 @@ fn session_tabs(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEleme
     // 右键 = 标签菜单（zed 移植）：会话 tab 恒存不可关，菜单无 Close、
     // Close Left 恒灰（见 psp_overlays::tab_menu_layer）
     let ctx_menu = cx.listener(move |this, ev: &gpui::MouseDownEvent, _w, cx| {
+        // 禁透传：右键已消费
+        cx.stop_propagation();
         this.dlg.tab_menu = Some((
             crate::TabMenuTarget::Session,
             f32::from(ev.position.x),
@@ -281,5 +283,7 @@ fn session_tabs(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> gpui::AnyEleme
         false,
     )
     .on_mouse_down(MouseButton::Right, ctx_menu)
+    // 禁透传（2026-11-07 用户令）：同 content_tab
+    .block_mouse_except_scroll()
     .into_any_element()
 }

@@ -343,12 +343,25 @@ impl Element for Inline {
 
         if !is_selection {
             // click to open link
+            // pi-flash patch (2026-11-07): 开链须尊重 hitbox 遮挡。裸监听
+            // 只查 bounds.contains——消息列表滚动后文本块 bounds 可顶进
+            // titlebar tab 条区域（渲染被 List content_mask 裁剪，但
+            // bounds 不变），点 tab 时窗口坐标被 link_for_position 当
+            // 文本局部坐标解析，命中首行链接 → 误开浏览器（tab 鼠标透传
+            // 实案）。与 text_view.rs 起选补丁同式：is_hovered 走
+            // hit_test，被遮挡（BlockMouse）或被裁剪（content_mask）者
+            // 进不了 ids，门禁即关。
             window.on_mouse_event({
+                let hitbox = hitbox.clone();
                 let links = self.links.clone();
                 let text_layout = text_layout.clone();
 
-                move |event: &MouseUpEvent, phase, _, cx| {
+                move |event: &MouseUpEvent, phase, window, cx| {
                     if !bounds.contains(&event.position) || !phase.bubble() {
+                        return;
+                    }
+
+                    if !hitbox.is_hovered(window) {
                         return;
                     }
 
