@@ -7,7 +7,6 @@ use gpui::Context;
 
 use super::engine::{FileHit, SearchMsg};
 use super::*;
-use crate::*;
 
 use super::DEBOUNCE_MS;
 

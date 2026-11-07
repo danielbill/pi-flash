@@ -14,7 +14,6 @@ use super::*;
 /// 前 50 字，编号 01-99）+ 30px 总结栏，点击卡片/段定位会话；内容溢出
 /// 时右缘显示滚动条。摘要数据走 runtime 缓存（v63-3）：notify_list 置
 /// 脏惰性重建，渲染帧零重算。
-
 pub(crate) mod gutter;
 pub(crate) use gutter::nav_gutter;
 /// 总结栏（v63-4 自 nav_gutter 内切抽出）：30px 固定高，滚动区之外。口径

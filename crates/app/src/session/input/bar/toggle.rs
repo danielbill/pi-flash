@@ -289,4 +289,3 @@ pub(crate) fn composer_bar(
     bar = bar.child(right);
     bar
 }
-

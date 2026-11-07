@@ -28,11 +28,10 @@ pub(crate) const ROW_H: f32 = 30.;
 /// 过滤框显示阈值：模型数少于该值不渲染过滤输入（菜单/设置·下列表同规则）。
 pub(crate) const MODEL_FILTER_MIN: usize = 10;
 
-/// 打开时的键盘选择位 + 滚动位（过滤文本变化时 sel 归零）。
-
-pub(crate) mod view;
 #[cfg(test)]
 mod tests;
+/// 打开时的键盘选择位 + 滚动位（过滤文本变化时 sel 归零）。
+pub(crate) mod view;
 pub(crate) use view::{group_model_row, view};
 impl Chat {
     /// 自动化入口（无点击坐标）：锚点缺省走面板右下兜底定位（open_mcp_picker 同款）。
@@ -391,4 +390,3 @@ pub(crate) fn order_model_indices(
     }
     out
 }
-

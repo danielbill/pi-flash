@@ -11,7 +11,6 @@ pub(crate) enum CellKind {
     Empty,
 }
 
-
 pub(crate) mod applypatch;
 pub(crate) use applypatch::{
     apply_patch_preview_to_files, is_apply_patch_tool_name, is_edit_tool_name,

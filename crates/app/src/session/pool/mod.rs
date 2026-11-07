@@ -4,7 +4,6 @@
 
 use crate::*;
 
-
 // itlq.5 按域拆分（只搬不改）：runtime_link = pi 子进程挂接与池切换主路；
 // session_ops = 新建/绑定/重挂载；open = 打开/删除/页签；本文件 = 改名流
 // 与刷新/项目切换/杂项供给。
@@ -219,9 +218,6 @@ impl Chat {
 
     /// 当前会话标题（topbar 会话视图展示；≤30 字截断）。优先 pi 会话名，
     /// 回落首条用户消息。
-    pub(crate) fn session_title(&self, cx: &gpui::App) -> String {
-        self.session_title_of(&self.pool.active_key.clone(), cx)
-    }
 
     /// 指定池 key 的会话标题（topbar 第一格在查看插件功能页时显示桌面会话用）。
     pub(crate) fn session_title_of(&self, key: &str, cx: &gpui::App) -> String {
@@ -257,4 +253,3 @@ impl Chat {
 // ---------------------------------------------------------------------------
 // 会话池方法：刷新/切换/活跃态/上下文/标题（P3 自 main.rs impl Chat 拆入）
 // ---------------------------------------------------------------------------
-

@@ -307,7 +307,6 @@ pub(crate) fn turn_agents_row(rows: &[CatalogRow]) -> gpui::AnyElement {
 
 /// 第三行状态点色（会话运行结果青红点）：运行 accent、完成 NOTICE、
 /// 异常/中止/轮次用尽 danger。
-
 pub(crate) mod rows;
-use rows::{panel_row, row_dot_color};
 pub(crate) use rows::duration_text;
+use rows::{panel_row, row_dot_color};

@@ -3,7 +3,6 @@
 use gpui::Context;
 
 use super::*;
-use crate::*;
 
 use super::SearchToggle;
 

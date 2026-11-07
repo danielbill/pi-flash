@@ -9,7 +9,6 @@ use crate::services::format::fmt_thousand;
 /// 悬停标志更新 + 淡出状态机（乱序免疫）：只按 (was_open, open) 转移，
 /// 环→面板交接时两个 hover 事件无论先后都收敛到正确状态。双面全空才
 /// 开始淡出（200ms 定时器到期清除，守卫时刻戳防旧定时器误杀新一轮）。
-
 pub(crate) mod capacity;
 use capacity::{ctx_capacity_block, ctx_tokens_cost_parts};
 /// 悬停标志更新 + 淡出状态机（乱序免疫）：只按 (was_open, open) 转移，
