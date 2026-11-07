@@ -104,7 +104,10 @@ impl Chat {
     /// 返回的 vec 已按**菜单显示序**排好（默认模型置顶，见
     /// [`order_model_indices`]）：键盘选择的行号 = 该 vec 下标 = 屏幕行序，
     /// 三者同源（否则 ↑/↓ 高亮行与 Enter 落到的模型会错位）。
-    pub(crate) fn picker_models(&self, cx: &gpui::App) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
+    pub(crate) fn picker_models(
+        &self,
+        cx: &gpui::App,
+    ) -> (Vec<pi_link::protocol::ModelInfo>, usize) {
         self.picker_models_with(cx, None)
     }
 

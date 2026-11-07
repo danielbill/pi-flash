@@ -130,10 +130,7 @@ pub(crate) fn bar_trigger(
         .rounded(px(8.))
         .text_size(ui(BAR_FONT))
         .text_color(rgb(color))
-        .children(
-            icon_name
-                .map(|name| icon_hover(name, icon_size, color)),
-        )
+        .children(icon_name.map(|name| icon_hover(name, icon_size, color)))
         .child(SharedString::from(label.to_string()))
         .when(chevron, |d| {
             d.child(icon(
