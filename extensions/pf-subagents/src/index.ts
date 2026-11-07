@@ -35,11 +35,6 @@ const CHILD_MARKER_TYPE = "subagent/child";
 /** Session file -> delegation depth, so a child that reloads this extension still knows its depth. */
 const childDepths = new Map<string, number>();
 
-/** 044-2 运行期 descriptor 持久化节流窗（同相位同子代理两条之间最小间隔）。 */
-const STATS_PERSIST_MS = 5000;
-const lastPersistAt = new Map<string, number>();
-const lastPersistPhase = new Map<string, string>();
-
 /**
  * Sync the module settings (capacity / maxDepth) from the subagent module
  * config (`<profiles dir>/config.json`).
@@ -572,21 +567,6 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		manager.registry.register(forkProvider(ctx));
 		persist = (descriptor) => {
 			try {
-				// 044-2 打开会话卡顿的根因治理：watcher 按 assistant message
-				// 触发（local.ts #accumulate），每条 message 都 appendEntry 一份
-				// 完整 descriptor——实测 5 子代理 × 快模型 ≈ 15 条/秒，5.6h 把父
-				// 会话灌到 209MB（22 条真消息 + 29.9 万条 custom），会话打开全
-				// 链路（pi restore / 尾窗 / 计数 / leaf 读）全是 O(文件大小)。
-				// 运行期 stats 按子代理节流：同相位最多 5s 一条；相位变迁与终
-				// 态立即落盘（B2 面板行可点、孤儿对账都依赖它们及时落盘）。
-				// 内存 descriptor 不受影响（manager 每条 message 照常更新）。
-				const inFlight = descriptor.phase === "provisioning" || descriptor.phase === "active";
-				const now = Date.now();
-				const phaseChanged = lastPersistPhase.get(descriptor.childId) !== descriptor.phase;
-				const prev = lastPersistAt.get(descriptor.childId) ?? 0;
-				if (inFlight && !phaseChanged && now - prev < STATS_PERSIST_MS) return;
-				lastPersistAt.set(descriptor.childId, now);
-				lastPersistPhase.set(descriptor.childId, descriptor.phase);
 				pi.appendEntry(DESCRIPTOR_TYPE, descriptor);
 			} catch {
 				// Persistence is best-effort: a closed session must not break delegation.

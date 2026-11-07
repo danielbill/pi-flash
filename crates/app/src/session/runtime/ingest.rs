@@ -188,7 +188,6 @@ impl SessionRuntime {
         rpc_msgs: Vec<serde_json::Value>,
         cx: &mut Context<Self>,
     ) {
-        let t = std::time::Instant::now();
         self.messages.clear();
         self.pending_echoes.clear();
         // 整表已按权威快照归一：切断窗口随之作废（残包即使再到也不能并入）
@@ -212,16 +211,6 @@ impl SessionRuntime {
         self.apply_pending_locate(cx);
         // 同一会话的重读保住钉顶（换工具预设/压缩后重拉都走这里）
         self.restore_anchor_after_reload();
-        // 044-2：权威内容落第一份（哪怕 0 条——加载页只服务「还没等到」的窗口）
-        self.messages_loaded = true;
         self.notify_list(cx);
-        crate::perf_span(
-            &format!(
-                "project_rpc_messages MAIN ({}) msgs, self.messages={})",
-                rpc_msgs.len(),
-                self.messages.len()
-            ),
-            t,
-        );
     }
 }
