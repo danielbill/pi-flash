@@ -317,6 +317,7 @@ mod menu_layer;
 mod parse;
 mod popup;
 mod render;
+mod render_arms;
 mod resolve;
 mod style;
 

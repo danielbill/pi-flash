@@ -6,6 +6,7 @@
 //! [`assets`]（PLUGIN_ASSETS/DIRS）；tests 在 [`tests`]。090 重构自 mod.rs 拆出。
 
 mod assets;
+mod fields;
 mod parse;
 mod scan;
 #[cfg(test)]
@@ -13,6 +14,7 @@ mod tests;
 #[cfg(test)]
 mod tests_scan;
 mod val;
+mod validate;
 
 pub(crate) use assets::*;
 pub(crate) use parse::*;

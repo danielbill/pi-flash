@@ -192,158 +192,8 @@ pub(crate) fn mj_model_modal_overlay(
 
     // id 必须与底层 Provider 详情（mc-detail）区分：同一帧渲染两份同 id 容器
     // 会让 gpui 的元素状态互相踩（点击落不到弹窗内的按钮）
-    let detail =
-        detail_shell("mj-model-detail")
-            .p(px(15.))
-            // 模型ID（左半列）+ 自动填参（右半列，标准 §5.1 按钮与 input 底缘
-            // 对齐）；两列与下行 上下文/最大输出 同宽——ID input 等长对齐
-            .child(
-                div()
-                    .flex()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(field(&tr("custom_models.field_id"), d.mj_id.clone())),
-                    )
-                    .children((!read_only).then(|| {
-                        let n = name.clone();
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .items_end()
-                            .justify_end()
-                            .child({
-                                let _ = &n;
-                                let el = crate::ui::button::button_base(
-                                    "mj-autofill",
-                                    crate::ui::button::BtnSize::Lg,
-                                    crate::ui::button::BtnVariant::Secondary,
-                                )
-                                .w(px(84.))
-                                .child(SharedString::from(
-                                    if filling {
-                                        tr("models.catalog_filling")
-                                    } else {
-                                        tr("models.autofill")
-                                    }
-                                    .to_string(),
-                                ));
-                                if filling {
-                                    el.opacity(0.5).into_any_element()
-                                } else {
-                                    let weak_fill = weak.clone();
-                                    el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                        let _ = weak_fill.update(cx, |c, cx| {
-                                            c.mj_catalog_fill(n.clone(), ix, cx)
-                                        });
-                                    })
-                                    .into_any_element()
-                                }
-                            })
-                    })),
-            )
-            // 上下文窗口 / 最大输出
-            .child(
-                div()
-                    .flex()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(field(&tr("custom_models.field_context"), d.mj_ctx.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(field(&tr("models.max_output"), d.mj_max_tokens.clone())),
-                    ),
-            )
-            // 价格（042-2）：手填显式覆盖；自动填参回显目录价（只填空/零）。
-            // 2×2 网格，宽窄与上下文行一致
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.))
-                    .child(section_title(&tr("models.cost_per_m")))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(10.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(field(&tr("models.cost_input"), d.mj_cost_in.clone())),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(field(&tr("models.cost_output"), d.mj_cost_out.clone())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(10.))
-                            .child(
-                                div().flex_1().min_w_0().child(field(
-                                    &tr("models.cost_cache_read"),
-                                    d.mj_cost_cr.clone(),
-                                )),
-                            )
-                            .child(div().flex_1().min_w_0().child(field(
-                                &tr("models.cost_cache_write"),
-                                d.mj_cost_cw.clone(),
-                            ))),
-                    ),
-            )
-            // 推理（用户定稿：能力之前；单勾选落 model.reasoning）
-            .child(div().flex().items_center().gap(px(16.)).child(
-                mj_cap_checkbox(
-                    &tr("models.reasoning"),
-                    d.mj_reasoning,
-                    &weak,
-                    (!read_only).then_some(|c: &mut Chat, cx: &mut Context<Chat>| {
-                        c.mj_toggle_reasoning(cx)
-                    }),
-                ),
-            ))
-            // 能力：文本恒选不可改；图片勾选落 model.input
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(5.))
-                    .child(section_title(&tr("models.capabilities")))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(16.))
-                            .child(mj_cap_checkbox(&tr("models.cap_text"), true, &weak, None))
-                            .child(mj_cap_checkbox(
-                                &tr("models.cap_image"),
-                                d.mj_image,
-                                &weak,
-                                (!read_only).then_some(|c: &mut Chat, cx: &mut Context<Chat>| {
-                                    c.mj_toggle_image(cx)
-                                }),
-                            )),
-                    ),
-            )
-            // 提示栏（唯一一条）：表单错误 / 测试结果 / 填参结果三选一
-            .children(status_line.as_ref().map(
-                |(text, ok)| {
-                    if *ok { note(text) } else { error_note(text) }
-                },
-            ));
+    let detail = mj_model_detail(&d, read_only, name, ix, filling, &weak, &status_line);
+
     // 弹窗装配：遮罩 + 外点/ESC 关（都退回 Provider 详情）+ 居中 500×600
     // 卡片（窗框对齐 big_card：chrome 头条 + 圆角 + 阴影）；控制栏固定，表单区滚动
     // 042-2 加价格四框后高 +100（用户验收定稿），read_only 同步放宽
@@ -370,6 +220,176 @@ pub(crate) fn mj_model_modal_overlay(
                 .children((!read_only).then_some(footer)),
         ));
     Some(overlay.into_any_element())
+}
+
+/// 模型详情表单主体（vh67 自 mj_model_modal_overlay 抽出，逐字未动）：
+/// 模型ID +【自动填参】→ 上下文/最大输出 → 价格四框 → 能力勾选 → 提示栏。
+fn mj_model_detail(
+    d: &super::SettingsFormData,
+    read_only: bool,
+    name: String,
+    ix: usize,
+    filling: bool,
+    weak: &gpui::WeakEntity<Chat>,
+    status_line: &Option<(String, bool)>,
+) -> gpui::AnyElement {
+    detail_shell("mj-model-detail")
+        .p(px(15.))
+        // 模型ID（左半列）+ 自动填参（右半列，标准 §5.1 按钮与 input 底缘
+        // 对齐）；两列与下行 上下文/最大输出 同宽——ID input 等长对齐
+        .child(
+            div()
+                .flex()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("custom_models.field_id"), d.mj_id.clone())),
+                )
+                .children((!read_only).then(|| {
+                    let n = name.clone();
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_end()
+                        .justify_end()
+                        .child({
+                            let _ = &n;
+                            let el = crate::ui::button::button_base(
+                                "mj-autofill",
+                                crate::ui::button::BtnSize::Lg,
+                                crate::ui::button::BtnVariant::Secondary,
+                            )
+                            .w(px(84.))
+                            .child(SharedString::from(
+                                if filling {
+                                    tr("models.catalog_filling")
+                                } else {
+                                    tr("models.autofill")
+                                }
+                                .to_string(),
+                            ));
+                            if filling {
+                                el.opacity(0.5).into_any_element()
+                            } else {
+                                let weak_fill = weak.clone();
+                                el.on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = weak_fill
+                                        .update(cx, |c, cx| c.mj_catalog_fill(n.clone(), ix, cx));
+                                })
+                                .into_any_element()
+                            }
+                        })
+                })),
+        )
+        // 上下文窗口 / 最大输出
+        .child(
+            div()
+                .flex()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("custom_models.field_context"), d.mj_ctx.clone())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(field(&tr("models.max_output"), d.mj_max_tokens.clone())),
+                ),
+        )
+        // 价格（042-2）：手填显式覆盖；自动填参回显目录价（只填空/零）。
+        // 2×2 网格，宽窄与上下文行一致
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(5.))
+                .child(section_title(&tr("models.cost_per_m")))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(field(&tr("models.cost_input"), d.mj_cost_in.clone())),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(field(&tr("models.cost_output"), d.mj_cost_out.clone())),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(field(&tr("models.cost_cache_read"), d.mj_cost_cr.clone())),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(field(&tr("models.cost_cache_write"), d.mj_cost_cw.clone())),
+                        ),
+                ),
+        )
+        // 推理（用户定稿：能力之前；单勾选落 model.reasoning）
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .child(mj_cap_checkbox(
+                    &tr("models.reasoning"),
+                    d.mj_reasoning,
+                    &weak,
+                    (!read_only).then_some(|c: &mut Chat, cx: &mut Context<Chat>| {
+                        c.mj_toggle_reasoning(cx)
+                    }),
+                )),
+        )
+        // 能力：文本恒选不可改；图片勾选落 model.input
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(5.))
+                .child(section_title(&tr("models.capabilities")))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(16.))
+                        .child(mj_cap_checkbox(&tr("models.cap_text"), true, &weak, None))
+                        .child(mj_cap_checkbox(
+                            &tr("models.cap_image"),
+                            d.mj_image,
+                            &weak,
+                            (!read_only).then_some(|c: &mut Chat, cx: &mut Context<Chat>| {
+                                c.mj_toggle_image(cx)
+                            }),
+                        )),
+                ),
+        )
+        // 提示栏（唯一一条）：表单错误 / 测试结果 / 填参结果三选一
+        .children(status_line.as_ref().map(
+            |(text, ok)| {
+                if *ok { note(text) } else { error_note(text) }
+            },
+        ))
+        .into_any_element()
 }
 
 /// 能力勾选项（checkbox §5.4：14、r3、勾 10 = accent_contrast；视觉同

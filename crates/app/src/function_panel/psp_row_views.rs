@@ -130,37 +130,9 @@ pub(crate) fn session_row_view(
         gpui::linear_color_stop(fade_hover_to, 1.),
     );
 
-    // 溢出测量：标题真实排版宽 vs 行内可用宽。chrome 全部走 align 令牌
-    // （容器 LIST_PX×2 + 行 ROW_PL/LIST_PX），其余 = slot 15 + 两个 gap 16
-    // + 时间列 38；对齐线改动时此处自动跟随
-    let chrome_w = align::LIST_PX * 2. + align::ROW_PL + align::LIST_PX;
+    // 行内标题字体族（测量在 session_title_overflows，装配仍要用）
     let panel_family = crate::appearance::panel_font().family;
-    let measure_font = gpui::Font {
-        family: panel_family.clone().into(),
-        features: gpui::FontFeatures::default(),
-        fallbacks: None,
-        weight: gpui::FontWeight::NORMAL,
-        style: gpui::FontStyle::Normal,
-    };
-    let measure_run = gpui::TextRun {
-        len: title.len(),
-        font: measure_font,
-        color: rgb(t.text).into(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    // 量宽字号必须 = 渲染字号（ui_size(12.)，随界面字号设置缩放）。
-    // 曾经写死 px(13.)：设置 ≥14 时低估标题宽 → 溢出不挂渐隐、生硬截断。
-    let title_overflows = {
-        let measure_size = crate::appearance::ui_size(12.);
-        let title_w = window
-            .text_system()
-            .layout_line(&title, measure_size, &[measure_run], None)
-            .width;
-        let available = px(chat.layout.slp_w - chrome_w - 15. - 16. - 38.);
-        title_w > available
-    };
+    let title_overflows = session_title_overflows(&title, chat.layout.slp_w, window, t);
 
     div()
         // 与项目行同理：滚动容器 overflow 压缩时会连内部行一起压（内层
@@ -341,6 +313,43 @@ pub(crate) fn session_row_view(
 /// 返回 Some(next) 表示状态已变化需写回 + notify；None = 无变化。
 /// enter 无条件写入（除非已是自己）；leave 仅当当前悬停仍是自己才清——
 /// 详见调用点注释（bubble 序成对回调的覆盖竞态）。
+/// 溢出测量：标题真实排版宽 vs 行内可用宽（vh67 自 session_row_view 抽出，
+/// 逐字未动）。chrome 全部走 align 令牌（容器 LIST_PX×2 + 行 ROW_PL/LIST_PX），
+/// 其余 = slot 15 + 两个 gap 16 + 时间列 38；对齐线改动时此处自动跟随
+fn session_title_overflows(
+    title: &str,
+    slp_w: f32,
+    window: &gpui::Window,
+    t: &'static Theme,
+) -> bool {
+    let chrome_w = align::LIST_PX * 2. + align::ROW_PL + align::LIST_PX;
+    let panel_family = crate::appearance::panel_font().family;
+    let measure_font = gpui::Font {
+        family: panel_family.clone().into(),
+        features: gpui::FontFeatures::default(),
+        fallbacks: None,
+        weight: gpui::FontWeight::NORMAL,
+        style: gpui::FontStyle::Normal,
+    };
+    let measure_run = gpui::TextRun {
+        len: title.len(),
+        font: measure_font,
+        color: rgb(t.text).into(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    // 量宽字号必须 = 渲染字号（ui_size(12.)，随界面字号设置缩放）。
+    // 曾经写死 px(13.)：设置 ≥14 时低估标题宽 → 溢出不挂渐隐、生硬截断。
+    let measure_size = crate::appearance::ui_size(12.);
+    let title_w = window
+        .text_system()
+        .layout_line(&title, measure_size, &[measure_run], None)
+        .width;
+    let available = px(slp_w - chrome_w - 15. - 16. - 38.);
+    title_w > available
+}
+
 fn hover_session_transition(
     current: &Option<std::path::PathBuf>,
     own: &std::path::Path,
