@@ -16,15 +16,17 @@
  *   never converted into one another.
  */
 
-import { Capacity, type SlotRelease } from "./capacity.ts";
+import { Capacity, type PoolRegistry, type SlotRelease } from "./capacity.ts";
 import { createDescriptor, type SubagentDescriptor } from "./descriptor.ts";
 import { asSubagentError, SubagentError, SubagentErrorCode } from "./errors.ts";
 import { ProviderRegistry } from "./registry.ts";
 import type { Activation, ChildHandle, Delivery, Provider, SubagentRequest, SubagentResult } from "./types.ts";
 
 export interface ManagerOptions {
-	/** Per-parent online quota. Default 8, matching dsh-subagent. */
+	/** Per-lineage online quota (one pool per root). Default 8, matching dsh-subagent. */
 	capacity?: number;
+	/** Slot storage shared with every other manager in this process (see capacity.ts). */
+	pools?: PoolRegistry;
 	/** Maximum delegation depth. Default 1: children cannot delegate. */
 	maxDepth?: number;
 	/** Clock, injectable for tests. */
@@ -66,7 +68,7 @@ export class SubagentManager {
 	#sequence = 0;
 
 	constructor(options: ManagerOptions = {}) {
-		this.#capacity = new Capacity(options.capacity ?? 8);
+		this.#capacity = new Capacity(options.capacity ?? 8, options.pools ?? new Map());
 		this.#maxDepth = options.maxDepth ?? 1;
 		this.#now = options.now ?? (() => new Date());
 		this.#onDescriptor = options.onDescriptor;
@@ -131,7 +133,7 @@ export class SubagentManager {
 		}
 		let slot: SlotRelease;
 		try {
-			slot = this.#capacity.acquire(request.parentId);
+			slot = this.#capacity.acquire(request.rootId ?? request.parentId);
 		} catch (error) {
 			// B3③：满即拒的委派也落一份 failed descriptor——否则面板里这次
 			// 拒绝完全不可见（无 record、无转录卡），用户不知道第 4 个委派

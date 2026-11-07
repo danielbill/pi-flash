@@ -65,6 +65,29 @@ describe("SubagentManager.start", () => {
 		assert.equal(provider.prepareCalls, 0);
 	});
 
+	// 045 B4：孙代理（depth 2）不再另开池——整棵树共享 rootId 的池，与 dsh
+	// 的 `resident.get(parent.id)?.pool ?? rootPool(parent)` 语义一致。
+	it("charges a grandchild to the root pool instead of a fresh one", async () => {
+		const pools = new Map<string, Set<symbol>>();
+		const { manager } = setup({}, { capacity: 2, maxDepth: 2, pools });
+		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
+		await manager.start(baseRequest({ parentId: "/root.jsonl", rootId: "/root.jsonl" }));
+		// The child session ("sub-1") delegates on its own id but charges the root.
+		const error = await manager
+			.start(baseRequest({ parentId: "/child-1.jsonl", rootId: "/root.jsonl", depth: 2 }))
+			.catch((e: unknown) => e);
+		assert.equal(code(error), SubagentErrorCode.CAPACITY_REACHED);
+	});
+
+	it("keeps separate trees independent even when the child ids collide", async () => {
+		const pools = new Map<string, Set<symbol>>();
+		const { manager } = setup({}, { capacity: 1, maxDepth: 2, pools });
+		await manager.start(baseRequest({ parentId: "/root-a.jsonl", rootId: "/root-a.jsonl" }));
+		await assert.doesNotReject(
+			manager.start(baseRequest({ parentId: "/root-b.jsonl", rootId: "/root-b.jsonl" })),
+		);
+	});
+
 	it("rejects with CAPACITY_REACHED instead of queueing", async () => {
 		const { manager, provider } = setup({}, { capacity: 2 });
 		await manager.start(baseRequest());

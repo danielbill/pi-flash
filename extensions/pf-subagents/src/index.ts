@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import type { ChildSession, ResolvedComposition, SessionFactory, SessionFactoryOptions } from "./backends/local.ts";
 import { LocalProvider } from "./backends/local.ts";
+import { sharedPoolRegistry } from "./capacity.ts";
 import { DESCRIPTOR_TYPE, parseDescriptor, reconcileOnStart, type SubagentDescriptor } from "./descriptor.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
@@ -34,6 +35,12 @@ const CHILD_MARKER_TYPE = "subagent/child";
 
 /** Session file -> delegation depth, so a child that reloads this extension still knows its depth. */
 const childDepths = new Map<string, number>();
+/**
+ * Session file -> lineage root (045 B4): a child that delegates again charges the
+ * same capacity pool as its root, instead of opening a fresh one per level.
+ * Filled when the child session is created; absent = this session is a root itself.
+ */
+const childRoots = new Map<string, string>();
 
 /**
  * Sync the module settings (capacity / maxDepth) from the subagent module
@@ -115,7 +122,11 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 					factory: (childPi: { on(event: string, handler: () => void): void; appendEntry(type: string, data?: unknown): void }) => {
 						childPi.on("session_start", () => {
 							try {
-								childPi.appendEntry(CHILD_MARKER_TYPE, { provider: options.providerName, depth: options.depth });
+								childPi.appendEntry(CHILD_MARKER_TYPE, {
+								provider: options.providerName,
+								depth: options.depth,
+								...(options.rootId ? { rootId: options.rootId } : {}),
+							});
 							} catch {
 								// Missing marker degrades to "child shows in the list"; never fatal.
 							}
@@ -185,7 +196,10 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 		// marker's session_start never fires and MCP never connects.
 		await (session as unknown as { bindExtensions(bindings: unknown): Promise<void> }).bindExtensions({});
 		const sessionFile = session.sessionFile;
-		if (sessionFile) childDepths.set(sessionFile, currentDepthOf(ctx) + 1);
+		if (sessionFile) {
+			childDepths.set(sessionFile, currentDepthOf(ctx) + 1);
+			childRoots.set(sessionFile, currentRootOf(ctx));
+		}
 		return {
 			prompt: (text: string) => session.prompt(text),
 			lastAssistantText: () => session.getLastAssistantText(),
@@ -281,6 +295,19 @@ function currentDepthOf(ctx: ExtensionContext): number {
 	return childDepths.get(file) ?? 0;
 }
 
+/**
+ * Lineage root of the calling session.
+ *
+ * A top-level session is its own root; a child session reports the root recorded
+ * when it was created. Quota is charged to this id, so every level of one tree
+ * draws from a single pool (dsh: `resident.get(parent.id)?.pool ?? rootPool(parent)`).
+ */
+function currentRootOf(ctx: ExtensionContext): string {
+	const file = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile;
+	if (!file) return "draft";
+	return childRoots.get(file) ?? file;
+}
+
 export default function piSubagents(pi: ExtensionAPI): void {
 	// Descriptors are persisted as custom entries, so a restart can tell which
 	// children never settled. `persist` is rebound per session; the manager reads it
@@ -295,6 +322,10 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	const manager = new SubagentManager({
 		capacity: initialConfig.capacity.default,
 		maxDepth: initialConfig.maxDepth.default,
+		// Slot sets are shared process-wide: a child session that mounts this
+		// extension gets its own manager, and a per-instance counter would start
+		// from zero on every level (see capacity.ts).
+		pools: sharedPoolRegistry(),
 		onDescriptor: (descriptor) => persist(descriptor),
 		onCompleted: (result) => {
 			const head = result.stopReason === "completed" ? "子代理完成" : `子代理结束（${result.errorCode ?? result.stopReason}）`;
@@ -389,6 +420,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			syncModuleConfig(manager);
 			const depth = currentDepthOf(ctx);
 			const parentId = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile ?? "draft";
+			const rootId = currentRootOf(ctx);
 			const result = await runDelegation(
 				{
 					manager,
@@ -406,6 +438,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 				},
 				{
 					parentId,
+					rootId,
 					depth,
 					cwd: ctx.cwd,
 					signal: ctx.signal,

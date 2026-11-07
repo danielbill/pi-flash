@@ -12,9 +12,16 @@ Tests: `045-2-subagent测试设计.md`.
 - Providers: `spawn` (fresh child context), `fork` (inherits completed history).
 - Activation lifecycle: reserve identity and capacity → publish only after the child
   accepted the task → settle after cleanup → close admission on settle.
-- Per-parent online quota that rejects instead of queueing (default from
+- Per-lineage online quota that rejects instead of queueing (default from
   `<profiles dir>/config.json`, see **Module config** below).
 - Depth limit from the same file, enforced before any resource is taken.
+- **Capacity scope = lineage root.** A child that delegates again charges its
+  root's pool, so one tree never holds more than `capacity.default` live
+  descendants in total. This mirrors dsh's
+  `resident.get(parent.id)?.pool ?? rootPool(parent)`; the pool sets themselves
+  live in a process-wide registry (`Symbol.for("pf-subagents.capacity.pools")`)
+  because every child session mounts its own manager instance. Pools are
+  process-local: a child spawned in another OS process would count separately.
 - Profile documents: `~/.pi/agent/agents/<id>.md`, `.pi/agents/<id>.md` (project shadows global).
 - Versioned descriptor custom entry (`subagent/descriptor`) + orphan reconciliation on `session_start`.
 - Stable failure codes, see `src/errors.ts`.
@@ -47,6 +54,8 @@ model cannot raise its own budget.
   rejected with `MODULE_CONFIG_INVALID`.
 - `maxTurns` is the turn budget for a child when neither the call nor the profile
   sets one (`0` = unlimited).
+- `capacity` / `maxDepth` bounds are enforced by `src/module-config.ts`; the
+  quoted values here are the ones shipped for PF (`pi-flash-dev/agents/config.json`).
 - `model` is the `provider/model` fallback for profiles that name none.
 - Unknown keys are ignored, so hosts can annotate the file (`version`, UI hints).
 - Read fresh on every delegation entry: an edit applies without restarting the
