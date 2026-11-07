@@ -47,8 +47,17 @@ pub(crate) struct SubagentPanel {
     pub polling: bool,
     /// 按轮归组的增量游标（消息数 / 轮数 / 首条消息时间戳）。
     turn_scan: TurnScan,
-    /// agent 工具调用 id → 轮序号（增量维护；此前每 tick 全量重建）。
-    call_turn: HashMap<String, usize>,
+    /// agent 工具调用 id → 会话流落点（增量维护；此前每 tick 全量重建）。
+    calls: HashMap<String, CallSite>,
+}
+
+/// 一个 `agent` 工具调用在父会话流里的落点：轮序号（导航归组）+ 消息/块
+/// 下标（catalog 终态回灌卡片时按此就地改写）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct CallSite {
+    pub turn: usize,
+    pub msg: usize,
+    pub block: usize,
 }
 
 /// 按轮归组的增量游标。`first_ts` 是会话身份锚：换会话 / fork / 回退时
@@ -60,19 +69,19 @@ struct TurnScan {
     first_ts: Option<i64>,
 }
 
-/// 增量维护 `agent 工具调用 id → 轮序号`（第 n 条 User 消息 = 第 n-1 轮，
-/// 与 nav.rs 轮构建同口径）。只扫游标之后的消息，但每次都回退到**最后一
+/// 增量维护 `agent 工具调用 id → 会话流落点`（第 n 条 User 消息 = 第 n-1
+/// 轮，与 nav.rs 轮构建同口径）。只扫游标之后的消息，但每次都回退到**最后一
 /// 条**重扫：流式 / 后到的 toolCall 块会长在它上面。此前每 tick 遍历全
 /// 部消息，长会话 + 子代理运行期（descriptor 频繁落盘）是纯浪费。
 fn scan_agent_calls(
     msgs: &[crate::session::messages::Msg],
     scan: &mut TurnScan,
-    call_turn: &mut HashMap<String, usize>,
+    calls: &mut HashMap<String, CallSite>,
 ) {
     let first_ts = msgs.first().and_then(|m| m.ts);
     // 换会话 / fork / 回退：len 变小或首条时间戳变 → 游标与映射作废。
     if msgs.len() < scan.len || first_ts != scan.first_ts {
-        call_turn.clear();
+        calls.clear();
         *scan = TurnScan {
             len: 0,
             turns: 0,
@@ -86,7 +95,7 @@ fn scan_agent_calls(
             .iter()
             .filter(|m| m.role == crate::session::Role::User)
             .count();
-    for m in &msgs[from..] {
+    for (mi, m) in msgs.iter().enumerate().skip(from) {
         if m.role == crate::session::Role::User {
             n_turns += 1;
             continue;
@@ -94,10 +103,17 @@ fn scan_agent_calls(
         if m.role != crate::session::Role::Assistant {
             continue;
         }
-        for b in &m.blocks {
+        for (bi, b) in m.blocks.iter().enumerate() {
             if let Block::ToolCall { id, name, .. } = b {
                 if name == "agent" && !id.is_empty() {
-                    call_turn.insert(id.clone(), n_turns.saturating_sub(1));
+                    calls.insert(
+                        id.clone(),
+                        CallSite {
+                            turn: n_turns.saturating_sub(1),
+                            msg: mi,
+                            block: bi,
+                        },
+                    );
                 }
             }
         }
@@ -132,7 +148,7 @@ impl SubagentPanel {
             turn_agents: Vec::new(),
             polling,
             turn_scan: TurnScan::default(),
-            call_turn: HashMap::new(),
+            calls: HashMap::new(),
         }
     }
 
@@ -143,7 +159,7 @@ impl SubagentPanel {
         self.offset = 0;
         self.read_in_flight = false;
         self.turn_agents.clear();
-        self.call_turn.clear();
+        self.calls.clear();
         self.turn_scan = TurnScan::default();
         let Some(want) = self.file.clone() else {
             return;
@@ -186,6 +202,19 @@ impl SubagentPanel {
                     })
                 })
                 .and_then(child_tab_label)
+        };
+        hit(&self.rows).or_else(|| self.stash.iter().find_map(|e| hit(&e.rows)))
+    }
+
+    /// 内存里查某个子代理的子会话文件：卡片点击时 details 还没带
+    /// session_file 的窗口期（background 派发尚未落 descriptor）用。
+    pub(crate) fn session_file_for_child(&self, child_id: &str) -> Option<PathBuf> {
+        let hit = |rows: &[CatalogRow]| {
+            rows.iter()
+                .find(|r| r.child_id == child_id)
+                .and_then(|r| r.session_file.as_deref())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
         };
         hit(&self.rows).or_else(|| self.stash.iter().find_map(|e| hit(&e.rows)))
     }
@@ -273,6 +302,7 @@ impl Chat {
         })
         .detach();
         self.regroup_turn_agents(&rt, cx);
+        self.sync_cards_from_rows(&rt, cx);
         Some(POLL_TICK)
     }
 
@@ -314,6 +344,7 @@ impl Chat {
         }
         if changed {
             self.regroup_turn_agents(&rt, cx);
+            self.sync_cards_from_rows(&rt, cx);
         }
     }
 
@@ -331,12 +362,13 @@ impl Chat {
             return;
         };
         let msgs = rt.read(cx).messages.as_slice();
-        scan_agent_calls(msgs, &mut panel.turn_scan, &mut panel.call_turn);
+        scan_agent_calls(msgs, &mut panel.turn_scan, &mut panel.calls);
         let n_turns = panel.turn_scan.turns;
         let mut turn_agents: Vec<Vec<CatalogRow>> = vec![Vec::new(); n_turns];
         for row in &panel.rows {
             if let Some(pid) = row.parent_tool_call_id.as_deref() {
-                if let Some(&ti) = panel.call_turn.get(pid) {
+                if let Some(site) = panel.calls.get(pid) {
+                    let ti = site.turn;
                     if let Some(slot) = turn_agents.get_mut(ti) {
                         slot.push(row.clone());
                         continue;
@@ -352,6 +384,80 @@ impl Chat {
             cx.notify();
         }
     }
+
+    /// catalog 终态回灌会话流卡片（状态回显）：background 子代理派发后 pi
+    /// 不再给该 toolCallId 发事件，descriptor 是唯一事实来源。按
+    /// parentToolCallId 找到块就地改写 details；终态置 result_arrived——
+    /// 卡片从转圈切到任务完成/执行异常（不追加消息，也不动索引）。
+    fn sync_cards_from_rows(
+        &mut self,
+        rt: &gpui::Entity<crate::session::runtime::SessionRuntime>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(panel) = self.dlg.subagent_panel.as_mut() else {
+            return;
+        };
+        let mut patches: Vec<(usize, usize, serde_json::Value, bool)> = Vec::new();
+        for row in &panel.rows {
+            let Some(pid) = row.parent_tool_call_id.as_deref() else {
+                continue;
+            };
+            let Some(site) = panel.calls.get(pid).copied() else {
+                continue;
+            };
+            let terminal = matches!(row.phase.as_str(), "completed" | "interrupted" | "failed");
+            patches.push((site.msg, site.block, row_details_patch(row), terminal));
+        }
+        if patches.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        rt.update(cx, |rt, _cx| {
+            for (mi, bi, details, terminal) in patches {
+                let Some(block) = rt.messages.get_mut(mi).and_then(|m| m.blocks.get_mut(bi)) else {
+                    continue;
+                };
+                if let Block::ToolCall {
+                    details: slot,
+                    result_arrived,
+                    ..
+                } = block
+                {
+                    if slot.as_ref() != Some(&details) {
+                        *slot = Some(details);
+                        changed = true;
+                    }
+                    if terminal && !*result_arrived {
+                        *result_arrived = true;
+                        changed = true;
+                    }
+                }
+            }
+        });
+        if changed {
+            cx.notify();
+        }
+    }
+}
+
+/// 从 catalog 行投影出卡片读的 details 字段（与扩展 tool.ts 的 snake_case
+/// 同口径）；只写卡片会读的键，不整份克隆 descriptor。
+fn row_details_patch(row: &CatalogRow) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    m.insert("child_id".into(), row.child_id.clone().into());
+    m.insert("status".into(), row.phase.clone().into());
+    for (key, val) in [
+        ("stop_reason", &row.stop_reason),
+        ("error_code", &row.error_code),
+        ("session_file", &row.session_file),
+        ("label", &row.label),
+        ("profile", &row.profile),
+    ] {
+        if let Some(v) = val {
+            m.insert(key.into(), v.clone().into());
+        }
+    }
+    serde_json::Value::Object(m)
 }
 
 /// 拉起常驻轮询（幂等：`polling` 已在跑则不动）。

@@ -61,9 +61,17 @@ fn first_scan_maps_calls_to_their_turn() {
     scan_agent_calls(&msgs, &mut scan, &mut map);
 
     assert_eq!(scan.turns, 2);
-    assert_eq!(map.get("a1"), Some(&0));
-    assert_eq!(map.get("a2"), Some(&0));
-    assert_eq!(map.get("b1"), Some(&1));
+    assert_eq!(map.get("a1").map(|c| c.turn), Some(0));
+    assert_eq!(
+        map.get("a2").copied(),
+        Some(CallSite {
+            turn: 0,
+            msg: 1,
+            block: 1,
+        }),
+        "落点必须能回指会话流里的块（终态回灌用）"
+    );
+    assert_eq!(map.get("b1").map(|c| c.turn), Some(1));
 }
 
 #[test]
@@ -79,9 +87,9 @@ fn appended_turns_are_scanned_incrementally() {
     scan_agent_calls(&msgs, &mut scan, &mut map);
 
     assert_eq!(scan.turns, 2);
-    assert_eq!(map.get("a1"), Some(&0), "旧轮映射保留");
-    assert_eq!(map.get("b1"), Some(&1));
-    assert_eq!(map.get("b2"), Some(&1));
+    assert_eq!(map.get("a1").map(|c| c.turn), Some(0), "旧轮映射保留");
+    assert_eq!(map.get("b1").map(|c| c.turn), Some(1));
+    assert_eq!(map.get("b2").map(|c| c.turn), Some(1));
 }
 
 #[test]
@@ -98,7 +106,7 @@ fn last_message_is_rescanned_for_late_blocks() {
     }
     scan_agent_calls(&msgs, &mut scan, &mut map);
 
-    assert_eq!(map.get("late"), Some(&0));
+    assert_eq!(map.get("late").map(|c| c.turn), Some(0));
 }
 
 #[test]
@@ -114,7 +122,7 @@ fn shrinking_history_voids_the_cursor() {
     scan_agent_calls(&forked, &mut scan, &mut map);
 
     assert!(map.get("a1").is_none(), "旧会话的映射必须清掉");
-    assert_eq!(map.get("f1"), Some(&0));
+    assert_eq!(map.get("f1").map(|c| c.turn), Some(0));
     assert_eq!(scan.turns, 1);
 }
 
@@ -125,4 +133,65 @@ fn non_agent_calls_are_ignored() {
     let mut map = HashMap::new();
     scan_agent_calls(&msgs, &mut scan, &mut map);
     assert!(map.is_empty());
+}
+
+fn row(
+    child: &str,
+    phase: &str,
+    stop: Option<&str>,
+    err: Option<&str>,
+    sf: Option<&str>,
+) -> CatalogRow {
+    CatalogRow {
+        child_id: child.into(),
+        provider: "pi".into(),
+        label: Some(format!("{child}-label")),
+        profile: Some("explorer".into()),
+        depth: 0,
+        phase: phase.into(),
+        stop_reason: stop.map(str::to_string),
+        error_code: err.map(str::to_string),
+        session_file: sf.map(str::to_string),
+        parent_tool_call_id: Some(format!("call-{child}")),
+        usage_total: None,
+        turns: None,
+        agent_messages: None,
+        tool_calls: None,
+        started_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
+#[test]
+fn row_patch_carries_card_fields_and_omits_absent_ones() {
+    let done = row(
+        "c1",
+        "completed",
+        Some("completed"),
+        None,
+        Some(r"D:\s\c1.jsonl"),
+    );
+    let v = row_details_patch(&done);
+    assert_eq!(v["child_id"], "c1");
+    assert_eq!(v["status"], "completed");
+    assert_eq!(v["stop_reason"], "completed");
+    assert_eq!(v["session_file"], r"D:\s\c1.jsonl");
+    assert!(v.get("error_code").is_none(), "缺字段不写空值");
+
+    let failed = row("c2", "failed", Some("error"), Some("PROVIDER_ERROR"), None);
+    let v = row_details_patch(&failed);
+    assert_eq!(v["error_code"], "PROVIDER_ERROR");
+    assert!(v.get("session_file").is_none());
+}
+
+#[test]
+fn session_file_lookup_matches_child_id() {
+    let mut p = SubagentPanel::new(None, false);
+    p.rows
+        .push(row("c1", "active", None, None, Some("D:/s/c1.jsonl")));
+    assert_eq!(
+        p.session_file_for_child("c1"),
+        Some(std::path::PathBuf::from("D:/s/c1.jsonl"))
+    );
+    assert_eq!(p.session_file_for_child("nope"), None);
 }

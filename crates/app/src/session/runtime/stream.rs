@@ -302,6 +302,11 @@ impl SessionRuntime {
                 content_index,
                 tool_call,
             } => {
+                // toolCall 对象里带 id（vendored pi: toolcall_end 的 toolCall =
+                // {type,toolCall,id,name,arguments}）——不补的话块 id 永远是
+                // 空串，tool_execution_update 按 id 匹配全部落空，卡片收不到
+                // 派发/状态回写。
+                let id = tool_call["id"].as_str().unwrap_or("").to_string();
                 let name = tool_call["toolName"]
                     .as_str()
                     .or_else(|| tool_call["name"].as_str())
@@ -312,13 +317,14 @@ impl SessionRuntime {
                     .filter(|o| !o.is_empty())
                     .map(|o| serde_json::Value::Object(o.clone()).to_string())
                     .unwrap_or_default();
+                let id_c = id;
                 let name_c = name;
                 let args_c = args;
-                if let Block::ToolCall { name, args, .. } = self.assistant_slot(
+                if let Block::ToolCall { id, name, args, .. } = self.assistant_slot(
                     content_index,
                     Block::ToolCall {
                         content_index,
-                        id: String::new(),
+                        id: id_c.clone(),
                         name: name_c.clone(),
                         args: args_c.clone(),
                         result: String::new(),
@@ -330,6 +336,9 @@ impl SessionRuntime {
                         result_arrived: false,
                     },
                 ) {
+                    if !id_c.is_empty() {
+                        *id = id_c;
+                    }
                     *name = name_c;
                     *args = args_c;
                 }

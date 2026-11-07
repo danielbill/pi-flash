@@ -76,7 +76,7 @@ fn subagent_args_fields_uncached(args: &str) -> (String, String) {
 /// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（验收⑤定稿）：
 /// `[状态标记] 🤖子代理 <name(profile)> <时长> <任务名(25字截断)> <完成提示>`
 /// 状态标记同会话列表（运行 spark_spinner(accent) / 完成 NOTICE 青蓝点 /
-/// 异常 danger 红点）；完成提示 faint（运行 `.....` / 任务完成），异常态
+/// 异常 danger 红点）；完成提示 faint（任务完成 / 派发失败 / 执行异常），异常态
 /// faint+下划线 + hover tooltip（错误详情）。
 /// 数据源（扩展 pf-subagents 的 details，snake_case）：`child_id` / `status`
 /// / `stop_reason` / `session_file` / `error_code` / `duration_ms`；args 取
@@ -199,11 +199,8 @@ pub(super) fn render_subagent_card(
             .child(label)
             .into_any_element()
     } else {
-        div()
-            .flex_shrink_0()
-            .text_color(rgb(t.text_dim))
-            .child(".....")
-            .into_any_element()
+        // 运行中不再占位（2026-11-07 用户定夺：删掉 `.....`），只留 spinner
+        div().into_any_element()
     };
 
     let mut row = div()
@@ -217,23 +214,22 @@ pub(super) fn render_subagent_card(
         .rounded(px(crate::ui::tokens::radius::CTRL))
         .text_size(crate::appearance::sess_size(-2.))
         .hover(|s| s.bg(gpui::rgba(theme::rgba_a(t.accent, 0.06))))
-        .child(mark_el)
         .child(
+            // 标记槽定宽：spinner(15px) 与状态点(7px) 同槽居中，状态切换
+            // 不再让后面的文字列错位（2026-11-07 用户：最后一行对齐失败）
             div()
+                .w(px(15.))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
-                .gap(px(4.))
-                .font_family(crate::editor::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::sess_size(-3.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x60a5fa))
-                // subagent 统一 bot icon（044-0 验收③）
-                .child(crate::ui::icon("bot", 11., 0x60a5fa))
-                .child("子代理"),
+                .justify_center()
+                .child(mark_el),
         )
+        // subagent 统一 bot icon（044-0 验收③）：图标档位 ICON_MD = 16，
+        // 颜色随主题 accent（2026-11-07 用户定夺：不许自造尺寸/颜色）
+        .child(crate::ui::icon("bot", 16., t.accent))
         .child(
-            // 子代理名称栏（注 5）：150px 定宽，左对齐，超长截断
+            // 子代理名称栏（注 5）：150px 定宽，左对齐，超长截断；名字加粗
             div()
                 .w(px(150.))
                 .flex_shrink_0()
@@ -243,6 +239,7 @@ pub(super) fn render_subagent_card(
                 .text_ellipsis()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::sess_size(-3.))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
                 .child(SharedString::from(profile)),
         )
@@ -258,14 +255,29 @@ pub(super) fn render_subagent_card(
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(task)),
         );
-    row = row.child(hint);
-    if let Some(sf) = session_file {
+    // 状态提示贴右（spacer 撑开）：运行/完成/异常三种行右缘一致
+    row = row.child(div().flex_1()).child(hint);
+    // 整行点击 = 打开子会话（044-0 验收④，只读观察窗）。details 里没有
+    // session_file 时（background 派发尚未落 descriptor）用 child_id 到
+    // 面板缓存反查，避免「点不动」。
+    let child_id = details
+        .and_then(|d| d.get("child_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if session_file.is_some() || child_id.is_some() {
         let weak_open = weak.clone();
         row = row
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let _ = weak_open.update(cx, |c, cx| {
-                    c.open_session(sf.clone(), false, cx);
+                    let sf = session_file.clone().or_else(|| {
+                        let cid = child_id.as_deref()?;
+                        c.dlg.subagent_panel.as_ref()?.session_file_for_child(cid)
+                    });
+                    if let Some(sf) = sf {
+                        c.open_session(sf, false, cx);
+                    }
                 });
             });
     }
