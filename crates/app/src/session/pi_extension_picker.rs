@@ -266,16 +266,17 @@ pub(crate) fn view(
 
     let header = ext_menu_header(chat, &items, &selected);
 
-    // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 5px）
+    // 锚点算法与工具胶囊菜单一致（统一定位：按钮居中 + 半屏定向，唯一
+    // 落点 pill_anchor_edges）
     let vp = window.viewport_size();
     // 040：列表加宽 100px 容纳右侧 token 标注（320 → 420）
     let panel_w = px(420.);
-    let (bottom, left) = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
+    let pos = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
     let layer = crate::ui::menu::menu_layer(None, weak, |c, cx| c.pi_extension_picker_cancel(cx));
 
     let card = crate::ui::overlay::stop_click(
-        picker_card(bottom, left, panel_w, t)
+        picker_card(pos, panel_w, t)
             .child(header)
             .child(capped_list("pp-list", &picker.scroll, list_h, body)),
     );

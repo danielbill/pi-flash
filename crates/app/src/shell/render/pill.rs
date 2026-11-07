@@ -58,21 +58,22 @@ impl Chat {
                 })
             }
             .child({
-                // 统一定位（用户定稿）：与扩展/MCP/模型 picker 同款
-                // `pill_anchor_edges`——按钮水平居中、底缘距按钮顶缘
-                // 5px（不遮按钮）、左右钳在视口内。tools 不再有右对齐
-                // 特例，InputPanel 弹出菜单行为完全一致。
+                // 统一定位（用户定稿）：与扩展/MCP/模型 picker 同一份
+                // `pill_anchor_edges`——按钮水平居中 + 半屏定向（上半向下弹、
+                // 下半向上弹），左右钳在视口内。InputPanel 弹出菜单行为完全
+                // 一致；卡片自身 min_w 保持内容自适应（ picker 卡是定宽）。
                 let vp = window.viewport_size();
                 let menu_w = px(320.);
-                let (anchor_bottom, anchor_left) = crate::session::picker_shell::pill_anchor_edges(
+                let pos = crate::session::picker_shell::pill_anchor_edges(
                     self.dlg.pill_anchor,
                     vp,
                     menu_w,
                 );
                 div()
                     .absolute()
-                    .bottom(anchor_bottom)
-                    .left(anchor_left)
+                    .left(pos.left)
+                    .when_some(pos.top, |d, top| d.top(top))
+                    .when_some(pos.bottom, |d, bottom| d.bottom(bottom))
                     .min_w(menu_w)
                     .rounded(px(8.))
                     .border_1()

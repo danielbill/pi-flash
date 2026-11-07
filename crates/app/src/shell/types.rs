@@ -206,13 +206,17 @@ pub(crate) enum PillMenu {
     Tools,
 }
 
-/// inputpanel 弹窗的统一定位锚点（用户定稿）：弹窗与触发按钮**水平居中**、
-/// 底缘距按钮**顶缘 5px**（不遮按钮）。坐标来自按钮 paint 期的 canvas 捕获；
-/// 摆放算法唯一落点 = `session/picker_shell::pill_anchor_edges`。
+/// inputpanel 弹窗的统一定位锚点（用户定稿）：弹窗与触发按钮**水平居中**；
+/// 纵向按按钮所在半屏定向——按钮在视口**上半** → 菜单向下弹（顶缘距按钮
+/// 底缘 5px），**下半** → 向上弹（底缘距按钮顶缘 5px，composer 常态）。
+/// 不遮按钮。坐标来自按钮 paint 期的 canvas 捕获；摆放算法唯一落点 =
+/// `session/picker_shell::pill_anchor_edges`。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PillAnchor {
     pub center_x: gpui::Pixels,
     pub top: gpui::Pixels,
+    /// 按钮底缘（向下弹时的贴靠边；2026-11-07 半屏定向加入）
+    pub bottom: gpui::Pixels,
 }
 
 /// 按钮与容器的 bounds 槽位：canvas 在 paint 期每帧覆盖写入，弹窗
@@ -229,6 +233,14 @@ pub(crate) struct PillBtns {
     /// chat-wrap 容器（044-0：面板挂 wrap 内，窗口坐标 → wrap 坐标换算
     /// 需要 wrap 原点；function_panel dock 容器 bounds 同款捕获）
     pub chat_wrap: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    // ---- 设置·子代理页五触发钮（2026-11-07 弹层对齐 inputpanel）：独立
+    // 槽位——composer 钮在模态后面照样每帧 paint tracker，与设置页共用
+    // 槽位会互相覆盖（谁后 paint 谁赢），独占才稳定
+    pub ag_model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ag_thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ag_tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ag_ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ag_mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl PillBtns {
@@ -241,10 +253,12 @@ impl PillBtns {
             .map(|b| PillAnchor {
                 center_x: b.center().x,
                 top: b.origin.y,
+                bottom: b.origin.y + b.size.height,
             })
             .unwrap_or(PillAnchor {
                 center_x: at.x,
                 top: at.y,
+                bottom: at.y,
             })
     }
 

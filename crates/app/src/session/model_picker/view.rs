@@ -286,17 +286,21 @@ pub(crate) fn view(
         model_menu_content_h(&models)
     };
 
-    // 锚点算法与 MCP 菜单一致（统一定位：按钮居中 + 5px）
+    // 锚点算法与 MCP 菜单一致（统一定位：按钮居中 + 半屏定向，唯一落点
+    // pill_anchor_edges）
     let vp = window.viewport_size();
     let panel_w = px(380.);
-    let (bottom, left) =
-        crate::session::picker_shell::pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
+    let pos = crate::session::picker_shell::pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
     // 列表高 = min(内容高, 10 行上限, 视口内可用高)：内容超高时列表滚动
-    // （滚动条常显），卡片也不会顶出窗口上沿。
-    // 可用高 = 视口高 - 底距 - 过滤块(10+30+6) - 列表底部留白(6)
+    // （滚动条常显），卡片也不顶出窗口沿。
+    // 可用高 = 卡片纵边到对面视口缘 - 过滤块(10+30+6) - 列表底部留白(6)
     let filter_h = if show_filter { 46. } else { 0. };
-    let avail_h = (vp.height - bottom - px(filter_h + 6.)).max(px(80.));
+    let space = match pos.top {
+        Some(top) => vp.height - top,
+        None => pos.bottom.unwrap_or_default(),
+    };
+    let avail_h = (space - px(filter_h + 6.)).max(px(80.));
     let list_h = content_h.min(ROW_H * 10.).min(avail_h.to_f64() as f32);
     // 内容超出可视区 = 可滚动：右缘多留 4px 给滚动条命中带（star 不被抢点击）
     let scrollable = content_h > list_h - 6. + 0.5;
@@ -308,7 +312,7 @@ pub(crate) fn view(
     let weak_up = weak.clone();
     let weak_down = weak.clone();
     let card = crate::ui::overlay::stop_click(
-        crate::session::picker_shell::picker_card(bottom, left, panel_w, t)
+        crate::session::picker_shell::picker_card(pos, panel_w, t)
             // Enter：与原 ModelSelect 同路——过滤输入单行模式的 Enter 会向上
             // 冒泡，在卡片上拦下；apply 会丢弃派发中的实体，defer 出派发周期
             .on_key_down(move |ev: &gpui::KeyDownEvent, _w, cx| {

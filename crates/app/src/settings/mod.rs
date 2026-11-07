@@ -104,8 +104,6 @@ pub(crate) struct SettingsPanel {
     pub ag_skills: Vec<String>,
     /// 哪个下拉开着（0=模型 1=工具档 2=思考 3=ext清单 4=mcp清单；None=全关）
     pub ag_popup: Option<u8>,
-    /// 下拉外点收起守卫（五个下拉共享）
-    pub ag_dd: gpui::Entity<DropdownState>,
     /// 模型菜单过滤框（≥ MODEL_FILTER_MIN 才渲染，同 composer 菜单规则）
     pub ag_filter: gpui::Entity<TextInput>,
     /// ext / mcp 勾选清单滚动位（跨帧复用，滚动句柄不能每帧重建）
@@ -260,7 +258,6 @@ impl SettingsPanel {
             ag_mcp: Vec::new(),
             ag_skills: Vec::new(),
             ag_popup: None,
-            ag_dd: cx.new(|_| DropdownState::new()),
             ag_filter: {
                 let weak_af = cx.weak_entity();
                 cx.new(|cx| {

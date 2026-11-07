@@ -23,6 +23,15 @@ impl Chat {
                 window,
             ));
             crate::perf_span("frame.settings", __t);
+            // 子代理页五菜单（2026-11-07 弹层对齐 inputpanel）：同 composer
+            // picker 走统一定位 pill_anchor_edges（按钮居中 + 半屏定向），
+            // 挂 settings 之后 = 画在模态之上；menu_layer 遮挡不穿透，点外
+            // 收菜单不关模态
+            if let Some(el) =
+                settings::agents::menus::ag_menus_overlay(self, &weak_for_dialog, &data, window)
+            {
+                root = root.child(el);
+            }
         }
         // 弹窗必须挂在 settings **之后**：后渲染者在上——原顺序（dialogs →
         // settings）让设置面板盖住从设置页打开的 ProviderPicker，遮挡层吃掉

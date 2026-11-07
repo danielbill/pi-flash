@@ -194,15 +194,16 @@ pub(crate) fn view(
         .count();
     let header = mcp_menu_header(enabled_n, items.len());
 
-    // 锚点算法与扩展菜单一致（统一定位：按钮居中 + 5px）
+    // 锚点算法与扩展菜单一致（统一定位：按钮居中 + 半屏定向，唯一落点
+    // pill_anchor_edges）
     let vp = window.viewport_size();
     let panel_w = px(320.);
-    let (bottom, left) = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
+    let pos = pill_anchor_edges(chat.dlg.pill_anchor, vp, panel_w);
 
     let layer = crate::ui::menu::menu_layer(None, weak, |c, _cx| c.dlg.mcp_picker = None);
 
     let card = crate::ui::overlay::stop_click(
-        picker_card(bottom, left, panel_w, t)
+        picker_card(pos, panel_w, t)
             .child(header)
             .child(capped_list("mcp-picker-list", &picker.scroll, list_h, body)),
     );

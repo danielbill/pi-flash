@@ -47,7 +47,6 @@ pub(crate) struct SettingsFormData {
     pub ag_mcp: Vec<String>,
     pub ag_skills: Vec<String>,
     pub ag_popup: Option<u8>,
-    pub ag_dd: gpui::Entity<DropdownState>,
     /// 模型菜单过滤框（实体 + 值快照：值参与过滤、实体渲染过滤框）
     pub ag_filter: gpui::Entity<TextInput>,
     pub ag_filter_value: String,
@@ -113,7 +112,6 @@ impl SettingsFormData {
             ag_mcp: p.ag_mcp.clone(),
             ag_skills: p.ag_skills.clone(),
             ag_popup: p.ag_popup,
-            ag_dd: p.ag_dd.clone(),
             ag_filter: p.ag_filter.clone(),
             ag_filter_value: p.ag_filter.read(cx).value().to_string(),
             ag_ext_scroll: p.ag_ext_scroll.clone(),
