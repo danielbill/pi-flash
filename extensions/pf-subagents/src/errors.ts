@@ -26,6 +26,8 @@ export const SubagentErrorCode = {
 	ADMISSION_CLOSED: "ADMISSION_CLOSED",
 	/** The profile document is missing, unreadable, or invalid. */
 	PROFILE_INVALID: "PROFILE_INVALID",
+	/** The module config document (`<profiles dir>/config.json`) is malformed. */
+	MODULE_CONFIG_INVALID: "MODULE_CONFIG_INVALID",
 	/** The work was aborted (parent turn cancel, session shutdown). */
 	ABORTED: "ABORTED",
 	/**

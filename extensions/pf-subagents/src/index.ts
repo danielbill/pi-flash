@@ -22,12 +22,11 @@ import { DESCRIPTOR_TYPE, parseDescriptor, reconcileOnStart, type SubagentDescri
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
 import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
+import { applyModuleConfig, loadModuleConfig, type ModuleConfigReadResult } from "./module-config.ts";
 import { DELEGATION_PARAMETERS, delegationDescription, runDelegation } from "./tool.ts";
 
-// 044-0 模块设置：最大并发默认 3（glm 服务器侧只允许 3 并发；可设 2-5，
-// PI_SUBAGENTS_CAPACITY env 覆盖）。
-const DEFAULT_CAPACITY = 3;
-const DEFAULT_MAX_DEPTH = 1;
+// 044-0 模块设置：容量/深度/轮数/默认模型全部来自 `<profiles dir>/config.json`
+// （见 module-config.ts）。代码不写死天花板——上下界与值同源，改文件即生效。
 const TOOL_NAME = "agent";
 /// Must match `SUBAGENT_CHILD_MARKER` in `pi-link/src/sessions.rs`: the side-bar
 /// filter keys on this custom entry, never on `parentSession`.
@@ -36,38 +35,24 @@ const CHILD_MARKER_TYPE = "subagent/child";
 /** Session file -> delegation depth, so a child that reloads this extension still knows its depth. */
 const childDepths = new Map<string, number>();
 
-function numberFromEnv(name: string, fallback: number): number {
-	const raw = process.env[name];
-	if (!raw) return fallback;
-	const value = Number(raw);
-	return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
 /**
- * Sync the module settings (capacity / maxDepth) from PF's app-settings.json.
+ * Sync the module settings (capacity / maxDepth) from the subagent module
+ * config (`<profiles dir>/config.json`).
  *
  * env 只在 pi 进程 spawn 那一刻定格（进程级快照），PF 会话常驻——用户改设置
- * 后不重启 app 就永远命中旧值（真机 2026-11-06：设 3 照跑 4 并发）。PF 因此
- * 把设置文件绝对路径放进 env（PI_FLASH_APP_SETTINGS），这里**每次委派入口
- * 实时重读**：改完即生效，无需重启。读失败（缺文件/缺键/非 JSON）保持现值。
+ * 后不重启 app 就永远命中旧值（真机 2026-11-06：设 3 照跑 4 并发）。所以这里
+ * **每次委派入口实时重读** config.json：改完即生效，无需重启。上下界也来自
+ * 同一份文件（见 module-config.ts），代码不再写死天花板。读失败（缺文件/坏
+ * JSON）退回 FALLBACK_MODULE_CONFIG，不阻断委派。
  */
-export function syncModuleSettings(manager: SubagentManager): void {
-	const file = process.env["PI_FLASH_APP_SETTINGS"];
-	if (!file) return;
-	try {
-		const raw = readFileSync(file, "utf8");
-		const settings = JSON.parse(raw) as Record<string, unknown>;
-		const cap = Number(settings["subagent_capacity"]);
-		if (Number.isSafeInteger(cap)) {
-			manager.capacity = Math.min(5, Math.max(2, cap));
-		}
-		const depth = Number(settings["subagent_max_depth"]);
-		if (Number.isSafeInteger(depth)) {
-			manager.maxDepth = Math.min(3, Math.max(1, depth));
-		}
-	} catch {
-		// 缺文件/坏 JSON：模块设置维持 env 初值（best-effort）
-	}
+export function syncModuleConfig(
+	manager: SubagentManager,
+	profilesDir: string = defaultProfilePaths(process.cwd()).globalDir,
+): ModuleConfigReadResult {
+	const result = loadModuleConfig(profilesDir);
+	// 读失败时保持现值，不用兜底值覆盖用户正在跑的上限——坏文件不该静默改行为
+	if (!result.problem) applyModuleConfig(manager, result.config);
+	return result;
 }
 
 /**
@@ -306,9 +291,10 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	// session's ui.notify; rebound on every session_start.
 	let notifyParent: (message: string) => void = () => {};
 
+	const initialConfig = loadModuleConfig(defaultProfilePaths(process.cwd()).globalDir).config;
 	const manager = new SubagentManager({
-		capacity: numberFromEnv("PI_SUBAGENTS_CAPACITY", DEFAULT_CAPACITY),
-		maxDepth: numberFromEnv("PI_SUBAGENTS_MAX_DEPTH", DEFAULT_MAX_DEPTH),
+		capacity: initialConfig.capacity.default,
+		maxDepth: initialConfig.maxDepth.default,
 		onDescriptor: (descriptor) => persist(descriptor),
 		onCompleted: (result) => {
 			const head = result.stopReason === "completed" ? "子代理完成" : `子代理结束（${result.errorCode ?? result.stopReason}）`;
@@ -399,9 +385,8 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			onUpdate: ((partial: unknown) => void) | undefined,
 			ctx: ExtensionContext,
 		) {
-			// 模块设置实时同步（容量/深度，PF app-settings.json）——env 快照
-			// 会过时，见 syncModuleSettings
-			syncModuleSettings(manager);
+			// 模块设置实时同步（容量/深度，见 syncModuleConfig）
+			syncModuleConfig(manager);
 			const depth = currentDepthOf(ctx);
 			const parentId = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile ?? "draft";
 			const result = await runDelegation(
@@ -612,7 +597,9 @@ async function resolveComposition(
 	profileId: string | undefined,
 	model: string | undefined,
 ): Promise<ResolvedComposition> {
-	if (!profileId) return { model };
+	// 每次组合都重读：模型兜底与轮数预算同属 module config
+	const config = loadModuleConfig(defaultProfilePaths(ctx.cwd).globalDir).config;
+	if (!profileId) return { model: model ?? config.model };
 	const profile = await loadProfile(profileId, defaultProfilePaths(ctx.cwd));
 	const tier = profile.tools && profile.tools !== "inherit" ? profile.tools : undefined;
 	return {
@@ -622,9 +609,9 @@ async function resolveComposition(
 		tools: tier && tier !== "chat-only" ? [...TOOL_TIER_WHITELISTS[tier]] : undefined,
 		noTools: tier === "chat-only" ? true : undefined,
 		thinkingLevel: profile.thinking,
-		model: model ?? profile.model,
+		model: model ?? profile.model ?? config.model,
 		injectAgentsMd: profile.injectAgentsMd,
-		maxTurns: profile.maxTurns,
+		maxTurns: profile.maxTurns ?? config.maxTurns,
 		extensions: profile.extensions,
 		mcpServers: profile.mcpServers,
 		skills: profile.skills,
