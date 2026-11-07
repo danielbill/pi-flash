@@ -1,5 +1,5 @@
 //! 034 会话区底部状态栏（模块代码 sessionStatusBar）：content-col 最底部
-//! 28px 无底色状态带，承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
+//! 28px 状态带（底色 = 会话区背景 t.bg），承载 pi 扩展 `ctx.ui.setStatus(key, text)` 申请的状态项。
 //!
 //! - 数据面：`SessionRuntime::ext_status`（per-session；pi 换会话/重载会清，
 //!   放 Chat 上会串味）。
@@ -173,7 +173,10 @@ pub(crate) fn bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> Option<gpui:
             .items_center()
             .justify_center()
             .overflow_hidden()
-            // 不画底色：与内容区同背景（用户定夺，2026-11-04）
+            // 底色 = 会话区背景（t.bg，2026-11-08 定夺，推翻 2026-11-04 的
+            // 「不画底色」）：本条是 absolute 覆盖层压在消息列表之上，无底色
+            // 时滚到带子底下的消息/工具卡会透出来
+            .bg(rgb(t.bg))
             .child(
                 div()
                     .w_full()
