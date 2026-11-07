@@ -179,7 +179,7 @@ pub(super) fn render_subagent_card(
     let hint: gpui::AnyElement = if done {
         div()
             .flex_shrink_0()
-            .text_color(rgb(t.text_dim))
+            .text_color(rgb(t.text_faint))
             .child(tr("subagent.card.done"))
             .into_any_element()
     } else if failed {
@@ -193,7 +193,7 @@ pub(super) fn render_subagent_card(
                 "sa-hint-{msg_ix}-{content_index}"
             )))
             .flex_shrink_0()
-            .text_color(rgb(t.text_dim))
+            .text_color(rgb(t.text_faint))
             .underline()
             .with_tip_detail(tip)
             .child(label)
@@ -255,8 +255,9 @@ pub(super) fn render_subagent_card(
                 .text_color(rgb(t.text_dim))
                 .child(SharedString::from(task)),
         );
-    // 状态提示贴右（spacer 撑开）：运行/完成/异常三种行右缘一致
-    row = row.child(div().flex_1()).child(hint);
+    // 完成提示紧跟任务描述栏左对齐（不贴右）；颜色走 text_faint，
+    // 与任务描述的 text_dim 拉开一级（2026-11-07 用户：两行颜色不该一样）
+    row = row.child(hint);
     // 整行点击 = 打开子会话（044-0 验收④，只读观察窗）。details 里没有
     // session_file 时（background 派发尚未落 descriptor）用 child_id 到
     // 面板缓存反查，避免「点不动」。
