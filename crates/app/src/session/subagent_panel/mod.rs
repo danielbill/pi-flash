@@ -20,9 +20,7 @@ use gpui::{div, prelude::*, px, rgb};
 use crate::Chat;
 use crate::appearance::theme::theme as T;
 use crate::session::Block;
-use pi_link::subagent_catalog::{
-    CatalogRow, CatalogScan, StatusKind, merge_rows, read_catalog,
-};
+use pi_link::subagent_catalog::{CatalogRow, CatalogScan, StatusKind, merge_rows, read_catalog};
 
 /// 打开期轮询间隔（044-1 §1.4：1s 增量读）。
 const POLL_TICK: std::time::Duration = std::time::Duration::from_secs(1);
