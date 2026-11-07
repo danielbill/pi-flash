@@ -105,9 +105,12 @@ impl Chat {
         // 早先在这里自起 cx.spawn 循环，实测「首拍后即不再进」——弹窗内容永远
         // 停在打开那一刻的旧帧，画布也就永远不带 refresh-qr 命令：超时白遮后
         // 点画布毫无反应。不再自开节拍。
+        // poll_at = None：**首拍立即**（下一拍 120ms 泵就重取）——插件先开窗
+        // 后取码（iLink 出码秒级波动）时，QR 最晚要等一整个 1s 间隔才画出来
+        //（2026-11-07 用户实测「二维码要等好几秒」）；steady-state 仍 1s parity。
         self.plugins.popup_poll_gen = popup_gen;
         self.plugins.popup_poll_ix = Some(ix);
-        self.plugins.popup_poll_at = Some(std::time::Instant::now());
+        self.plugins.popup_poll_at = None;
     }
 
     /// 弹窗 1s 重取（由 120ms 主泵驱动；弹窗关/gen 变即自动失效）。
