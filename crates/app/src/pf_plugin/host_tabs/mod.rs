@@ -18,6 +18,21 @@ impl Chat {
         self.plugins.plugins = plugins;
         // 执行域实例集随清单落位同步（装/卸/更新都走这里重扫，90-6）
         svc::svc_sync_configs(self);
+        // 启动装载（90-9 唯一显式首装点）：registry 落位后把全部启用插件装载。
+        // ee1ad6d0 渲染帧禁隐式首装后，fn_bar/徽标等扇出只查不装——而 fn_bar
+        // icon 本身就是用户入口，等交互才懒装 = icon 永远不出（2026-11-07
+        // 用户报告微信 icon 消失，plugin.log 当日零 load）。defer 到扫描回调
+        // 之外装载，QuickJS/wasm 首装突发不进任何渲染帧；plugin_ready 幂等
+        //（已装载直回），装卸/更新重扫落位只补装缺的。
+        let count = self.plugins.plugins.len();
+        cx.spawn(async move |this, cx| {
+            for ix in 0..count {
+                let _ = this.update(cx, |chat, cx| {
+                    chat.plugin_ready(ix, cx);
+                });
+            }
+        })
+        .detach();
         cx.notify();
     }
 
