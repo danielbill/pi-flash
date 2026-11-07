@@ -532,7 +532,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "subagent_list",
 		label: "Subagent List",
-		description: "List this session's child agents with id, phase, label, provider and depth.",
+		description: "List this session's child agents with id, phase, label, provider and depth. You will be notified when a background subagent finishes; there is no need to keep checking its status.",
 		promptSnippet: "List delegated child agents",
 		parameters: { type: "object", properties: {} } as unknown as never,
 		exposure: "direct",
@@ -586,13 +586,13 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			}
 		};
 
-		// Idle parent: wake it so the report is acted on; streaming parent: queue
-		// as a follow-up turn instead of interrupting the tool loop mid-flight.
+		// dsh parity (044-6): an idle parent is woken into a new turn; a streaming
+		// parent gets the notice steered into the current turn instead of queued.
 		deliverParent = (content, details) => {
 			try {
 				pi.sendMessage(
 					{ customType: COMPLETION_TYPE, content, display: true, details },
-					ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "followUp" },
+					ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" },
 				);
 			} catch {
 				// Delivery is best-effort: closed/headless sessions keep the toast only.

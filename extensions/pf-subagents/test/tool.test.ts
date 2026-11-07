@@ -42,11 +42,9 @@ describe("delegation tool", () => {
 	it("returns a child id immediately for background delivery", async () => {
 		const { delegate } = setup();
 		const result = await delegate({ prompt: "long job", background: true });
-		const text = result.content[0].text;
-		assert.match(text, /started subagent sub-1/);
-		assert.match(text, /notified automatically when it completes/);
-		assert.match(text, /Do not poll it, sleep in a shell, or re-check subagent_list/);
-		assert.match(text, /end your response/);
+		// dsh parity (044-6): the dispatch result is a bare sentence; the async
+		// contract lives in the tool description, the report arrives by notice.
+		assert.equal(result.content[0].text, "started subagent sub-1");
 		assert.deepEqual(result.structuredContent, { childId: "sub-1", status: "started" });
 	});
 
@@ -208,6 +206,15 @@ describe("delegation description", () => {
 		// 即使系统提示词有鼓励 bullet 也不派）——丢了就是回归
 		assert.match(text, /When to delegate/);
 		assert.match(text, /do not repeat the delegated searches/);
+	});
+
+	// 044-6：异步契约写在描述里（dsh 位置），结果不再下命令
+	it("carries the async contract in the description, not as an order", () => {
+		const text = delegationDescription({ inheritsParentContext: false });
+		assert.match(text, /notifies you when it finishes/);
+		assert.match(text, /use `subagent_send` to steer it while running/);
+		assert.doesNotMatch(text, /end your turn/);
+		assert.doesNotMatch(text, /Do not poll/);
 	});
 
 	// B3①（pi-flash-g9pn）：容量上限与「被拒等槽位重派」引导进描述
