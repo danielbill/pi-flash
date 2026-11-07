@@ -336,6 +336,8 @@ pub struct InputState {
     pub(super) caret_color: Option<Hsla>,
     /// pi-flash 追加：占位符色覆盖（None = 读主题 `muted_foreground`）
     pub(super) placeholder_color: Option<Hsla>,
+    /// pi-flash 追加：正文文字色覆盖（None = 主题 `foreground`）
+    pub(super) text_color: Option<Hsla>,
 
     /// Popover
     diagnostic_popover: Option<Entity<DiagnosticPopover>>,
@@ -454,6 +456,7 @@ impl InputState {
             placeholder: SharedString::default(),
             caret_color: None,
             placeholder_color: None,
+            text_color: None,
             mask_pattern: MaskPattern::default(),
             lsp: Lsp::default(),
             diagnostic_popover: None,
@@ -559,6 +562,14 @@ impl InputState {
     }
 
     /// pi-flash 追加：运行时改占位符色。
+    /// pi-flash 追加：正文文字色覆盖（None = 主题 `foreground`）。
+    pub fn set_text_color(&mut self, color: Option<Hsla>, cx: &mut Context<Self>) {
+        if self.text_color != color {
+            self.text_color = color;
+            cx.notify();
+        }
+    }
+
     pub fn set_placeholder_color(&mut self, color: Option<Hsla>, cx: &mut Context<Self>) {
         if self.placeholder_color != color {
             self.placeholder_color = color;
@@ -2715,7 +2726,8 @@ impl Render for InputState {
                 TextElement::new(cx.entity().clone())
                     .placeholder(self.placeholder.clone())
                     .caret_color(self.caret_color)
-                    .placeholder_color(self.placeholder_color),
+                    .placeholder_color(self.placeholder_color)
+                    .text_color(self.text_color),
             )
             .children(self.diagnostic_popover.clone())
             .children(self.context_menu.as_ref().map(|menu| menu.render()))

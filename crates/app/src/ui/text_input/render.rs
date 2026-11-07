@@ -45,10 +45,12 @@ impl Render for TextInput {
         // 颜色覆盖（幂等重设：vendor 侧值不变不 notify）
         let caret = self.caret_color.map(|c| gpui::rgb(c).into());
         let ph_color = self.placeholder_color.map(|c| gpui::rgb(c).into());
-        if caret.is_some() || ph_color.is_some() {
+        let tx_color = self.text_color.map(|c| gpui::rgb(c).into());
+        if caret.is_some() || ph_color.is_some() || tx_color.is_some() {
             state.update(cx, |st, scx| {
                 st.set_caret_color(caret, scx);
                 st.set_placeholder_color(ph_color, scx);
+                st.set_text_color(tx_color, scx);
             });
         }
         if let Some(m) = self.pending_masked.take() {

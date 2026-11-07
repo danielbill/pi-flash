@@ -83,6 +83,8 @@ pub(super) struct TextElement {
     caret_color: Option<Hsla>,
     /// pi-flash 追加：占位符色覆盖（None = 主题 `muted_foreground`）
     placeholder_color: Option<Hsla>,
+    /// pi-flash 追加：正文文字色覆盖（None = 主题 `foreground`）
+    text_color: Option<Hsla>,
 }
 
 impl TextElement {
@@ -92,6 +94,7 @@ impl TextElement {
             placeholder: SharedString::default(),
             caret_color: None,
             placeholder_color: None,
+            text_color: None,
         }
     }
 
@@ -108,6 +111,12 @@ impl TextElement {
     }
 
     /// pi-flash 追加：占位符色覆盖（None = 主题 `muted_foreground`）。
+    /// pi-flash 追加：正文文字色覆盖。
+    pub fn text_color(mut self, color: Option<Hsla>) -> Self {
+        self.text_color = color;
+        self
+    }
+
     pub fn placeholder_color(mut self, color: Option<Hsla>) -> Self {
         self.placeholder_color = color;
         self
@@ -1052,13 +1061,13 @@ impl Element for TextElement {
         } else if state.masked {
             (
                 &Rope::from("*".repeat(text.chars().count())),
-                cx.theme().foreground,
+                self.text_color.unwrap_or(cx.theme().foreground),
             )
         } else if let Some(dec) = decorations.as_ref() {
             // PF-024: 折叠后显示文本（行数与 doc 严格一致，折叠只在行内）
-            (&dec.display, cx.theme().foreground)
+            (&dec.display, self.text_color.unwrap_or(cx.theme().foreground))
         } else {
-            (&text, cx.theme().foreground)
+            (&text, self.text_color.unwrap_or(cx.theme().foreground))
         };
 
         let text_style = window.text_style();

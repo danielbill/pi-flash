@@ -54,6 +54,8 @@ pub struct TextInput {
     caret_color: Option<u32>,
     /// 占位符色覆盖（None = 主题 `muted_foreground`）：同理，深肤页要用页内灰。
     placeholder_color: Option<u32>,
+    /// 正文文字色覆盖（None = 主题 `foreground`）：同理，深肤页要用页内白。
+    text_color: Option<u32>,
     select_all_on_focus: bool,
     /// 只读态（042-1：内置模型参数由 pi 定义，PF 只看不改）：内件 disabled +
     /// 半透明；焦点/点击/输入全部由 gpui-component 拦下
@@ -91,6 +93,7 @@ impl TextInput {
             form: false,
             caret_color: None,
             placeholder_color: None,
+            text_color: None,
             select_all_on_focus: false,
             disabled: false,
             select_all_done: false,
@@ -169,6 +172,13 @@ impl TextInput {
     /// 占位符色覆盖（None = 主题 `muted_foreground`）：深肤页用页内灰。
     pub fn placeholder_color(mut self, rgb24: u32) -> Self {
         self.placeholder_color = Some(rgb24);
+        self
+    }
+
+    /// 正文文字色覆盖（None = 主题 `foreground`）：深肤页用页内白——vendor
+    /// 打字文字恒取主题 foreground，浅色主题下是墨色，落在固定深底页上看不见。
+    pub fn text_color(mut self, rgb24: u32) -> Self {
+        self.text_color = Some(rgb24);
         self
     }
 
@@ -364,4 +374,3 @@ impl TextInput {
         }
     }
 }
-

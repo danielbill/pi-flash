@@ -63,6 +63,9 @@ impl Chat {
                 // 光标 = 页正文白（design TEXT），占位 = 页内灰（design muted）。
                 .caret_color(design::TEXT)
                 .placeholder_color(design::MUTED)
+                // 打字正文 = 页正文白：vendor 默认取主题 foreground，浅色主题
+                // 下是墨色，落在本页固定深底上不可读（2026-11-07 用户报告）。
+                .text_color(design::TEXT)
                 .flat()
                 .form();
             // 打字 = 页内过滤（0 网络，160ms 去抖）；回车 = 服务端搜索。
