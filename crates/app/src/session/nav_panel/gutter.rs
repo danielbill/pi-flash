@@ -99,10 +99,15 @@ pub(crate) fn nav_gutter(
                 } else {
                     this.layout.nav_flyout_hovered = false;
                     this.layout.nav_hover_turn = None;
-                    // 子代理扩展菜单随 flyout 离开收起（锚生命周期绑定
-                    // flyout hover——卡间空隙移动不清，防闪）
+                    // 子代理扩展菜单随 flyout 离开**延迟**收起（250ms 宽限，
+                    // pumps 到期清锚；进菜单/回卡即取消）——原立即清锚，鼠标
+                    // 还没跨过 flyout→菜单的 2px 缝菜单就没了，永远进不去。
+                    // 鼠标已在菜单上时不挂（flyout 收起卸载可能补发 hover
+                    // false，不能给正被悬停的菜单上 deadline）
                     if let Some(p) = this.dlg.subagent_panel.as_mut() {
-                        p.menu_anchor = None;
+                        if !p.menu_hovered {
+                            p.menu_hide_at = Some(std::time::Instant::now());
+                        }
                     }
                     this.layout.nav_hide_at = Some(std::time::Instant::now());
                 }

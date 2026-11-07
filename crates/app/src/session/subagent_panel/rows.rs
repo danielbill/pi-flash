@@ -55,16 +55,27 @@ pub(super) fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui
     el.child(
         // 行一：状态标记 + 名称 + 统计（044-0 验收④：时长/轮/言/工具/token
         // icon 化上移到名字后）+ 失败分码（B3④：被拒/失败行没有子会话可
-        // 点，理由内联行尾可见）
+        // 点，理由内联行尾可见）。分栏定稿（2026-11-07）：名称限宽 150、
+        // 统计整体右对齐（flex_1 + justify_end 撑满推右）
         div()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(status_mark(kind, mark_c))
+            // 标记列固定 15px 宽（spinner 满宽、终态色点居中）——名称左缘
+            // 恒在 35px 处，行二任务名的 px(23) 对齐才有基准（原先点只有
+            // 7px 宽，名称随标记缩宽，与任务名错开 8px）
+            .child(
+                div()
+                    .w(px(15.))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .child(status_mark(kind, mark_c)),
+            )
             .child(
                 div()
                     .flex_shrink_0()
-                    .max_w(px(140.))
+                    .max_w(px(150.))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
@@ -74,13 +85,15 @@ pub(super) fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui
             )
             .child(
                 // stats 容器：**必须显式 .flex()**——无它子元素纵向堆叠
-                //（gpui div 缺省非 row flex；验收④返工实录）
+                //（gpui div 缺省非 row flex；验收④返工实录）；右对齐 =
+                // justify_end，极窄时左缘裁切、右侧 token 恒可见
                 div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .flex()
                     .items_center()
+                    .justify_end()
                     .gap(px(10.))
                     .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text_dim))
@@ -100,7 +113,8 @@ pub(super) fn panel_row(weak: &gpui::WeakEntity<Chat>, row: &CatalogRow) -> gpui
             ),
     )
     .child(
-        // 行二：任务名（label 退 childId，超长截断）
+        // 行二：任务名（label 退 childId，超长截断）。px(23) = 容器 12 +
+        // 标记列 15 + 行一 gap 8 − 容器 12 —— 与行一子代理名称左缘对齐
         div()
             .min_w_0()
             .overflow_hidden()

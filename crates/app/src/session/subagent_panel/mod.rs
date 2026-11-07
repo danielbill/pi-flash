@@ -35,8 +35,9 @@ const POLL_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 const MENU_W: f32 = 400.;
 const CARD_H: f32 = 70.;
 const MENU_MIN_H: f32 = 90.;
-/// 菜单与导航 flyout（400px）的间距；flyout 锚在 gutter（14px）左侧。
-const MENU_RIGHT: f32 = 14. + 400. + 6.;
+/// 菜单与导航 flyout（400px）的间距 2px（用户定稿：视觉上连成一体）；
+/// flyout 锚在 gutter（14px）左侧。
+const MENU_RIGHT: f32 = 14. + 400. + 2.;
 
 /// 状态色（照抄 cards.rs 的 subagent 卡片；中止橙按 044-1 §1.3 交互稿）。
 const C_RUNNING: u32 = 0xeab308;
@@ -48,7 +49,7 @@ const C_ABORTED: u32 = 0xf97316;
 ///
 /// `polling` 守卫常驻轮询任务只拉起一份——轮询从会话激活跑到 Chat 消亡，
 /// 换会话在 poll 内自愈归零重扫。菜单可见性 = `menu_anchor`（hover 的轮卡
-/// bounds，nav_card 测量写入；flyout hover 离开时清）。
+/// bounds，nav_card 测量写入；收起走 250ms 离开宽限，进菜单/回卡取消）。
 #[derive(Clone)]
 pub(crate) struct SubagentPanel {
     /// 父会话文件（descriptor 的落盘处）；没落盘的会话无 catalog。
@@ -60,7 +61,16 @@ pub(crate) struct SubagentPanel {
     /// 按轮归组（turn 序 = 第 n 条 User 消息）：导航卡第三行 + 菜单数据源。
     pub turn_agents: Vec<Vec<CatalogRow>>,
     /// hover 的导航轮卡（turn 序 + 卡窗口坐标）：菜单锚；None = 菜单收起。
+    /// 收起走 250ms 离开宽限（[`Self::menu_hide_at`]）——鼠标要能从卡/面板
+    /// 跨进菜单，立即清锚菜单永远进不去（真机 2026-11-07）。
     pub menu_anchor: Option<(usize, Bounds<Pixels>)>,
+    /// 菜单收起宽限的挂钟起点（flyout/菜单 hover 离开时挂，pumps 到期清锚；
+    /// 进菜单/回卡即取消）。None = 无待执行的收起。
+    pub menu_hide_at: Option<std::time::Instant>,
+    /// 鼠标是否在菜单上（menu on_hover 维护）。宽限到期与 flyout 离开都看
+    /// 它：导航 flyout 宽限到期收起、元素卸载时可能补发 hover(false)——
+    /// 无此旗标会给正被悬停的菜单重新挂上收起 deadline（鼠标底下消失）。
+    pub menu_hovered: bool,
     /// 常驻轮询任务是否在跑（防重复 spawn）。
     pub polling: bool,
 }
@@ -89,6 +99,8 @@ impl Chat {
                 rows: Vec::new(),
                 turn_agents: Vec::new(),
                 menu_anchor: None,
+                menu_hide_at: None,
+                menu_hovered: false,
                 polling,
             });
         }
@@ -108,6 +120,8 @@ impl Chat {
             panel.rows.clear();
             panel.turn_agents.clear();
             panel.menu_anchor = None;
+            panel.menu_hide_at = None;
+            panel.menu_hovered = false;
         }
         let Some(file) = panel.file.clone() else {
             // 会话还没落盘：没东西可读，慢速等文件出现
@@ -206,10 +220,11 @@ fn spawn_poll(cx: &mut gpui::Context<Chat>) {
 /// 吃掉，见 buglist 第三批），关 = ✕ 或再点操作栏按钮。
 /// `open=false` → None（不占渲染）。
 /// 【子代理详情扩展菜单】（044-0 验收⑥）：导航轮卡 hover 左弹的 400px
-/// 次级浮层。可见性 = `menu_anchor`（hover 的轮卡 bounds；flyout hover
-/// 离开统一清）。垂直定位：默认上沿齐卡上沿向下伸（至多面板底）；卡在
-/// 屏幕下半（向下不足最小高）翻转——下沿齐卡下沿向上伸（至多面板顶）；
-/// 内容超长滚动。**无头部统计行**（用户定稿）。
+/// 次级浮层。可见性 = `menu_anchor`（hover 的轮卡 bounds；收起走 250ms
+/// 离开宽限——flyout/菜单离开挂 deadline，进菜单/回卡取消，pumps 到期清）。
+/// 垂直定位：默认上沿齐卡上沿向下伸（至多面板底）；卡在屏幕下半（向下
+/// 不足最小高）翻转——下沿齐卡下沿向上伸（至多面板顶）；内容超长滚动。
+/// **无头部统计行**（用户定稿）。
 /// 挂 chat-wrap（relative）；坐标 = 卡窗口坐标 − wrap 原点。
 pub(crate) fn subagent_menu_element(
     chat: &Chat,
@@ -254,6 +269,7 @@ pub(crate) fn subagent_menu_element(
     for row in &rows_snapshot {
         list = list.child(panel_row(&weak_rows, row));
     }
+    let weak_menu = weak.clone();
     let mut menu = div()
         .id("subagent-menu")
         .absolute()
@@ -268,7 +284,23 @@ pub(crate) fn subagent_menu_element(
         .border_color(rgb(t.border))
         .bg(rgb(t.bg))
         .shadow_lg()
-        .overflow_hidden();
+        .overflow_hidden()
+        // 悬停即菜单存活：进菜单取消收起宽限，离开挂 250ms deadline
+        //（pumps 到期清锚）——occlude 隔断下层消息区的 hover/click 串扰
+        .occlude()
+        .on_hover(move |h: &bool, _w, cx| {
+            let _ = weak_menu.update(cx, |this, cx| {
+                if let Some(p) = this.dlg.subagent_panel.as_mut() {
+                    p.menu_hovered = *h;
+                    p.menu_hide_at = if *h {
+                        None
+                    } else {
+                        Some(std::time::Instant::now())
+                    };
+                }
+                cx.notify();
+            });
+        });
     if let Some(top) = top {
         menu = menu.top(top);
     }

@@ -126,6 +126,13 @@ pub(crate) fn nav_card(
                     if p.menu_anchor != anchor {
                         p.menu_anchor = anchor;
                     }
+                    if anchor.is_some() {
+                        // 回卡取消待执行的菜单收起（250ms 宽限内往返）；
+                        // 鼠标此刻在卡上必然不在菜单上，顺手纠正存活旗标
+                        //（菜单卸载可能吞掉 hover(false) 留下 stale true）
+                        p.menu_hide_at = None;
+                        p.menu_hovered = false;
+                    }
                 }
                 if *h && this.layout.nav_hover_turn != Some(ti) {
                     this.layout.nav_hover_turn = Some(ti);
