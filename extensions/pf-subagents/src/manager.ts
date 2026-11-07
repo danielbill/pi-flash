@@ -187,13 +187,15 @@ export class SubagentManager {
 			record.state = "active";
 			record.admissionOpen = true;
 			record.descriptor = { ...record.descriptor, phase: "active", updatedAt: this.#now().toISOString() };
-			// Per-turn stats feed the host panel (044-0 行二): each assistant turn
-			// refreshes the descriptor and re-emits it (one entry per turn). The
-			// watcher dies with settlement (record.unwatch in #settle). Guard only
-			// on terminal states: caller delivery parks in `settling` for the
-			// child's whole run (wait() awaits result()), so `state !== "active"`
-			// swallowed every per-turn report there (B1). The usage total rides
-			// along so the panel shows tokens while running, not just at settle.
+			// Live stats stay in memory only (044-0 行二 收窄，2026-11-07 用户
+			// 定夺)：watcher 每条 assistant message 都会触发，逐条 appendEntry
+			// 曾把父会话灌到 209MB（29.9 万条 descriptor，实测 15 条/秒）——
+			// 运行期统计不再持久化，descriptor 只在相位变迁/终态落盘（下面
+			// 的 #emit 与 #settle）。内存 record.descriptor 照常每条更新：
+			// `children` 工具（list_children）的实时统计仍读得到；面板运行中
+			// 行的 stats 停留在激活快照，终态落盘后补齐。watcher 随 settlement
+			// 退场（record.unwatch in #settle）；终态守卫保留——caller delivery
+			// parks in `settling` for the child's whole run (B1)。
 			record.unwatch = handle.watch?.((progress) => {
 				if (record.state === "settled" || record.state === "failed") return;
 				record.descriptor = {
@@ -202,7 +204,6 @@ export class SubagentManager {
 					stats: progress.stats,
 					updatedAt: this.#now().toISOString(),
 				};
-				this.#emit(record);
 			});
 			this.#emit(record);
 		} catch (error) {

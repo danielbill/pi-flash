@@ -149,9 +149,11 @@ describe("SubagentManager.start", () => {
 	});
 
 	// B1 回归（pi-flash-y26f）：caller 投递下 wait() 立即把 state 置 settling，
-	// 子代理整个运行期都发生在 settling 内——每轮 stats/usage 必须照常透出，
-	// 只有终态（settled/failed）才拦。
-	it("keeps per-turn stats and usage flowing while a caller-delivery child runs", async () => {
+	// 子代理整个运行期都发生在 settling 内——运行期 stats/usage 必须照常进
+	// 内存 descriptor（children 工具实时可读），只有终态（settled/failed）才
+	// 停止更新。2026-11-07 用户定夺：运行期统计不再逐条持久化（曾以
+	// ~15 条/秒把父会话灌到 209MB）——onDescriptor 只在相位变迁/终态触发。
+	it("keeps per-turn stats in memory without per-message persistence while a caller-delivery child runs", async () => {
 		const seen: Array<{ phase: string; stats?: unknown; usage?: unknown }> = [];
 		const { manager, provider } = setup({}, { onDescriptor: (d) => seen.push({ phase: d.phase, stats: d.stats, usage: d.usage }) });
 		const activation = await manager.start(baseRequest({ delivery: "caller" }));
@@ -165,12 +167,14 @@ describe("SubagentManager.start", () => {
 		provider.children[0].complete("done", "completed", { turns: 3, agentMessages: 2, toolCalls: 2 });
 		await pending;
 		assert.equal(manager.descriptors()[0].phase, "completed");
-		// 管道里每轮都在：provisioning / active / 运行中两轮 / settled 终态
+		// 落盘点 = 相位变迁/终态，运行期两条 progress 均不触发 onDescriptor
 		assert.deepEqual(
 			seen.map((e) => e.phase),
-			["provisioning", "active", "active", "active", "completed"],
+			["provisioning", "active", "completed"],
 		);
-		assert.deepEqual(seen[2]?.usage, { input: 100, output: 10, total: 110 });
+		// 终态一条带走最终统计（stats 用 result.stats，usage 保运行期内存最新值）
+		assert.deepEqual(seen[2]?.stats, { turns: 3, agentMessages: 2, toolCalls: 2 });
+		assert.deepEqual(seen[2]?.usage, { input: 300, output: 30, total: 330 });
 	});
 
 	it("stops the per-turn feed once settled", async () => {
