@@ -3,15 +3,15 @@
 Subagent delegation for Pi. Call mechanics follow [dsh-subagent](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/subagent);
 execution stays pi-native — the child is a real pi session and the result is a real tool result.
 
-Design: `docs/模块设计/44-子代理/044-5-subagent管理.md`. Plan: `44-子代理/归档/045-1-subagent开发计划.md`.
-Tests: `44-子代理/044-4-subagent验收清单.md` (+ `44-子代理/归档/045-2-subagent测试设计.md`). Parity with dsh: [`PARITY.md`](./PARITY.md).
+Design: `docs/模块设计/44-子代理/044-5-subagent管理.md` (dispatch/settlement contract in §4).
+Tests: `44-子代理/044-4-subagent验收清单.md`. Parity with dsh: [`PARITY.md`](./PARITY.md).
 
 ## What M1 ships
 
 - `agent` tool (`namespace: subagents`), caller delivery: the call awaits the child.
 - `background: true` returns the child id immediately; when the child settles the notice
   (`subagent-completion`) enters the parent session — idle parents are woken, streaming
-  parents get it steered into the current turn (044-6).
+  parents get it steered into the current turn (044-5 §4).
 - Providers: `spawn` (fresh child context), `fork` (inherits completed history).
 - Activation lifecycle: reserve identity and capacity → publish only after the child
   accepted the task → settle after cleanup → close admission on settle.

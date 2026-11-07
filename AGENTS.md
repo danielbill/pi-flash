@@ -55,7 +55,7 @@ crates/pi-link/src/     钉版 pi RPC 协议层（typed bridge，测试在此）
   registry.rs credentials.rs probe.rs  Provider 注册表（弹窗元数据）/ OS 凭据库 keyring / 通路探查
   projects.rs estimate.rs mcp.rs skills.rs  项目注册表（004）/ token 估算 / mcp.json（043）/ 技能发现
   extensions.rs session_ext.rs agents.rs  扩展发现 / 会话级插件清单（031/034）/ Agent profile（044-1）
-  subagents.rs subagent_catalog.rs  内置子代理扩展定位 / catalog 流式读取（044-1）
+  subagents.rs subagent_catalog.rs  内置子代理扩展定位 / catalog 流式读取（044-3）
   dev_flags.rs paths.rs   dev-flags 开发旗标 / PF 自有文件路径（010）
   market/ automation.rs   扩展市场 pi-link 侧（040-1）/ pif-ui 自动化协议
   bin/                    附属可执行（pif-ui CLI、pif-secret 取 key、pi 全局前置 shim）
@@ -79,7 +79,7 @@ crates/app/src/         GPUI 界面（组织方式：Chat = 全应用状态实�
                           token_probe/watcher/shell_open/asset_evict/pi_extension_updates（082）/session_clean（052）
   session/                会话域：runtime（030）/messages（032）/input（031）/nav_panel（033）/
                           picker_shell/chat_list/menu/attachments/fork/diff/model·plugin·mcp picker/
-                          new_session（012）/tools_recipe（034）/subagent_panel（044-1）/actions_bar
+                          new_session（012）/tools_recipe（034）/subagent_panel（044-3）/actions_bar
   settings/               设置面板六页（界面/模型/技能/扩展/MCP/其他）；公共件全部转发 ui/kit
   ui/  ui/kit/            通用件（tokens = UI组件规范唯一代码落点）/ 页面级组件库（新页面从这里取控件，禁手搓）
 ```

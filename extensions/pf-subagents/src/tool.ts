@@ -109,7 +109,7 @@ export function delegationDescription(
 		"Delegate a task to a child agent that works in its own session.",
 		context,
 		"The child's final answer is returned as this tool's result.",
-		// dsh parity (044-6): the async contract lives in the description, and the
+		// dsh parity (044-5 §4): the async contract lives in the description, and the
 		// dispatch result stays a bare sentence — the parent is woken by the
 		// settlement message instead of being told to end its turn.
 		"This tool starts an independently managed subagent; with `background: true` it returns its id immediately and the runtime notifies you when it finishes, and the notice includes its final answer.",

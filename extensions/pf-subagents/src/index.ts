@@ -586,7 +586,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			}
 		};
 
-		// dsh parity (044-6): an idle parent is woken into a new turn; a streaming
+		// dsh parity (044-5 §4): an idle parent is woken into a new turn; a streaming
 		// parent gets the notice steered into the current turn instead of queued.
 		deliverParent = (content, details) => {
 			try {

@@ -70,7 +70,7 @@
 - 根因：render_subagent_card 的 done 条件 `(!result_arrived || …)` 把「结果
   未到」也算 done。
 - 修法：done = result 到且 stopReason==completed；其余非终态黄 spin；中止/
-  轮次用尽橙点（044-1 §1.3 与面板同源）；失败红点+分码（B3② 分片即时上卡）。
+  轮次用尽橙点（语义见 044-0 渲染节）；失败红点+分码（B3② 分片即时上卡）。
 - 验证：派出即黄 spin，settle 后才变绿/红/橙（分码）。
 
 ### 信息项（非 bug）

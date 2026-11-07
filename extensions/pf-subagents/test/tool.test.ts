@@ -42,7 +42,7 @@ describe("delegation tool", () => {
 	it("returns a child id immediately for background delivery", async () => {
 		const { delegate } = setup();
 		const result = await delegate({ prompt: "long job", background: true });
-		// dsh parity (044-6): the dispatch result is a bare sentence; the async
+		// dsh parity (044-5 §4.2): the dispatch result is a bare sentence; the async
 		// contract lives in the tool description, the report arrives by notice.
 		assert.equal(result.content[0].text, "started subagent sub-1");
 		assert.deepEqual(result.structuredContent, { childId: "sub-1", status: "started" });
@@ -208,7 +208,7 @@ describe("delegation description", () => {
 		assert.match(text, /do not repeat the delegated searches/);
 	});
 
-	// 044-6：异步契约写在描述里（dsh 位置），结果不再下命令
+	// 044-5 §4.1：异步契约写在描述里（dsh 位置），结果不再下命令
 	it("carries the async contract in the description, not as an order", () => {
 		const text = delegationDescription({ inheritsParentContext: false });
 		assert.match(text, /notifies you when it finishes/);

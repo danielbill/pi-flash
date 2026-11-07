@@ -12,7 +12,7 @@ const result = (over: Partial<SubagentResult> = {}): SubagentResult => ({
 });
 
 describe("composeCompletion", () => {
-	// 044-6 §3.3：三段式结算消息（摘要 + Its closing message + Structured result）
+	// 044-5 §4.3：三段式结算消息（摘要 + Its closing message + Structured result）
 	it("builds the three-part settlement notice for a completed run", () => {
 		const msg = composeCompletion(result());
 		assert.equal(
