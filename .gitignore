@@ -2,6 +2,7 @@
 **/target/
 target-auto/
 target-check/
+target-perf/
 
 # zcode session artifacts
 .zcode/
