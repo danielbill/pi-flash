@@ -63,7 +63,7 @@
 | 并行 fan-out | codemode:`Promise.all([tools.agent(…), …])`(direct 暴露,脚本可调);分类汇总类任务只有结论进模型 |
 | 驻留子会话 | 子会话是**一等公民 pi session**:独立 JSONL、`parentSession` header、自己的 codemode/tool_search/MCP(`extensionFactories` 显式装配,0.99 补 pi-web 的课) |
 | 冷恢复与孤儿 | 自定义 entry(`pi.appendEntry`:profile 名、parentToolCallId、深度、resourceSnapshot)+ `agent_settled.aborted` 区分取消/崩溃 |
-| 完成通知(v2 parent) | `ctx.ui.notify`(RPC 下 fire-and-forget)→ 宿主消费(044 §6 契约:默认用户确认才 `followUp()`) |
+| 完成通知(v2 parent) | toast `ctx.ui.notify`(RPC 下 fire-and-forget)+ `pi.sendMessage(customType: subagent-completion)` 进父会话(模型可见);空闲父会话 `triggerTurn: true` 唤醒,流式中 `deliverAs: "followUp"` 排队 |
 | persona/工具面收敛 | profile 体系(§6):`.md` frontmatter,语义对齐 dsh preset(persona+工具白名单),形态走 pi package 资源 |
 | 上下文继承措辞 | 工具描述按 profile 继承配置动态生成(fresh 类"看不到本对话"/继承类"看不到进行中的轮次") |
 
@@ -105,8 +105,10 @@ createAgentSessionFromServices({
 ## 5. 后台模式分期
 
 - **v1 只做前台(caller)**。并行 batch + 脚本 fan-out 已覆盖绝大多数场景。
-- **v2 加 `background: true`(parent)**:完成通知走 `ctx.ui.notify` + 自定义
-  entry,**由宿主决定何时 `followUp()`**(044:默认用户确认)。
+- **v2 加 `background: true`(parent)**:完成通知双通道——toast 走
+  `ctx.ui.notify`(人看),报告走 `pi.sendMessage({customType:
+  "subagent-completion"}, {triggerTurn|followUp})`(模型看)。只发 toast 时
+  父模型拿不到回执(2026-11-07 实测暴露),故 v2 必须双发。
 
 ## 6. 可观测(RPC 宿主视角,契约见 044)
 

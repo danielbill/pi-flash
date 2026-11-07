@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import type { ChildSession, ResolvedComposition, SessionFactory, SessionFactoryOptions } from "./backends/local.ts";
 import { LocalProvider } from "./backends/local.ts";
+import { COMPLETION_TYPE, composeCompletion } from "./completion.ts";
 import { DESCRIPTOR_TYPE, parseDescriptor, reconcileOnStart, type SubagentDescriptor } from "./descriptor.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
@@ -315,6 +316,10 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	// Parent-delivery completion hook (v2 background): routed to the live
 	// session's ui.notify; rebound on every session_start.
 	let notifyParent: (message: string) => void = () => {};
+	// Parent-delivery result: background children settle after the spawning turn,
+	// so the outcome is only a toast unless it is also pushed into the session.
+	// `deliverParent` injects it as a custom message the model can read.
+	let deliverParent: (content: string, details: Record<string, unknown>) => void = () => {};
 
 	const initialConfig = loadModuleConfig(defaultProfilePaths(process.cwd()).globalDir).config;
 	const manager = new SubagentManager({
@@ -322,9 +327,9 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		maxDepth: initialConfig.maxDepth.default,
 		onDescriptor: (descriptor) => persist(descriptor),
 		onCompleted: (result) => {
-			const head = result.stopReason === "completed" ? "子代理完成" : `子代理结束（${result.errorCode ?? result.stopReason}）`;
-			const text = result.text.length > 400 ? `${result.text.slice(0, 400)}…` : result.text;
-			notifyParent(`${head} ${result.childId}: ${text}`);
+			const completion = composeCompletion(result);
+			notifyParent(completion.toast);
+			deliverParent(completion.content, completion.details);
 		},
 	});
 
@@ -578,6 +583,19 @@ export default function piSubagents(pi: ExtensionAPI): void {
 				void ctx.ui.notify(message, "info");
 			} catch {
 				// Notifications are best-effort (headless/JSON modes have no UI).
+			}
+		};
+
+		// Idle parent: wake it so the report is acted on; streaming parent: queue
+		// as a follow-up turn instead of interrupting the tool loop mid-flight.
+		deliverParent = (content, details) => {
+			try {
+				pi.sendMessage(
+					{ customType: COMPLETION_TYPE, content, display: true, details },
+					ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "followUp" },
+				);
+			} catch {
+				// Delivery is best-effort: closed/headless sessions keep the toast only.
 			}
 		};
 
