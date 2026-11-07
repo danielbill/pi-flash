@@ -224,12 +224,17 @@ impl Chat {
     /// 侧栏清单里的标题素材（pi 会话名优先，回落首条消息预览；都空 =
     /// None）。session_title_of 与 tab 快照同步共用同一出处，两条路
     /// 永不各说各话。
-    fn psp_title_of(&self, file: &std::path::Path) -> Option<String> {
+    pub(crate) fn psp_title_of(&self, file: &std::path::Path) -> Option<String> {
         self.psp
             .projects
             .iter()
             .flat_map(|g| &g.sessions)
             .find(|s| same_path(&s.path, file))
+            // 当前项目清单兑底（侧栏行同一出处）：psp 分组建自装载窗口
+            // （recent_load_paths），窗口外/未重建的会话在 pool.sessions
+            // 仍有行——分组缺席不该让标题取空落兑底词（2026-11-07
+            // 「新会话」复发根因③）
+            .or_else(|| self.pool.sessions.iter().find(|s| same_path(&s.path, file)))
             .and_then(|s| {
                 s.name
                     .clone()
@@ -250,12 +255,13 @@ impl Chat {
             .unwrap_or_else(|| tr("session.new").to_string())
     }
 
-    /// topbar 固定段标题快照对齐（refresh_sessions 末尾调）：快照命中优先
+    /// topbar 固定段标题快照对齐（refresh_sessions 末尾调 + 启动链
+    /// spawn_boot_restore 分组建好后补调）：快照命中优先
     /// 于活值渲染（titlebar::session_tabs），旧值不刷「新会话」就钉死在
     /// tab 上。真值取不到（draft-N 不是文件路径 / 空闲退役后 runtime 出池）
     /// **不写**——兜底词绝不能覆盖已有快照，退役后快照是 tab 标题唯一
     /// 出处（PoolUi::tab_labels 注）。
-    fn sync_primary_tab_label(&mut self) {
+    pub(crate) fn sync_primary_tab_label(&mut self) {
         let key = self.pool.primary_key.clone();
         // 池 key 即会话文件路径（FileBound 迁移后）；is_file 守卫一步
         // 分流草稿键，不出兜底词
@@ -273,8 +279,8 @@ impl Chat {
 // ---------------------------------------------------------------------------
 
 /// 标题入 tab 的统一整形：首行 + ≤30 字截断（超长补 …）。session_title_of
-/// 与 sync_primary_tab_label 共用，快照与活值同一个形。
-fn tab_title(raw: &str) -> String {
+/// 与 sync_primary_tab_label / switch_to 快照写入共用，快照与活值同一个形。
+pub(crate) fn tab_title(raw: &str) -> String {
     let first_line = raw.lines().next().unwrap_or("").trim().to_string();
     let mut out: String = first_line.chars().take(30).collect();
     if first_line.chars().count() > 30 {

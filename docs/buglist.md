@@ -692,3 +692,21 @@ notify 33ms 节流 + markdown 流式尾 150ms 解析门/est 250ms 门 + 扇出�
 ## settings 界面错误集合
 1、鼠标点击穿透，点击配置项时，会点击到会话区的链接从而报错
 2、
+
+## 重启后会话 tab 仍显示「新会话」（2026-11-07 修，复发两次）
+
+tab 标题取值顺序：快照 `pool.tab_labels` 优先于活值 `session_title_of`，兜底词
+「新会话」三者共用。此前修复（5cd67b3a，refresh_sessions 末尾 sync）只保了
+运行期聊天链——启动恢复链绕开了它：spawn_boot_restore → open_session →
+switch_to 时 psp 分组/会话清单尚未建（rebuild_projects 在其后），switch_to
+非观察者分支无条件把 session_title_of 结果写进快照，取不到真值就写入
+「新会话」毒快照；之后不发消息就永不触发 ListDirty→refresh_sessions，毒值
+钉死 tab。「改了好几遍仍复发」= 每遍只堵了一条写入路。
+
+> **修复（2026-11-07）**：三处叠加根治——①毒源：switch_to 不再把兜底词
+> 入快照，真值取不到就留空（渲染回落活值同词，快照随时可被治愈），与
+> sync 的「兜底词永不入快照」守卫同规；②启动治愈：restore 分组建好后立刻
+> sync_primary_tab_label，不等 ListDirty；③素材缺口：psp_title_of 加
+> pool.sessions 兜底（装载窗口外的会话在当前项目清单仍有行，分组缺席不
+> 等于取不到真值）。标题整形收拢 pub(crate) tab_title，快照/活值/切换
+> 三路同源同形。

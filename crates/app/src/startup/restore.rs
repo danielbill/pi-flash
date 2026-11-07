@@ -223,6 +223,11 @@ pub(crate) fn spawn_boot_restore(cx: &mut gpui::Context<Chat>) {
         let all = pi_link::sessions::sessions_for_paths(&paths);
         let _ = this.update(cx, |chat, cx| {
             chat.rebuild_projects(all);
+            // 分组建好立刻对齐固定段标题快照（2026-11-07「新会话」复发
+            // 根因②）：启动恢复路 open_session→switch_to 时分组/清单尚空，
+            // switch_to 取不到真值、只留了活值兑底；不发消息就永不触发
+            // ListDirty→refresh_sessions，必须这里补一次 sync 治愈
+            chat.sync_primary_tab_label();
             // 启动自动折叠：项目内会话全部早于「自动折叠时间」阈值 → 折叠
             // （其他页档位 1/3/7 天）。仅启动这一次，运行期重建不参与
             chat.auto_collapse_stale_projects();

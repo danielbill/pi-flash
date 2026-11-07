@@ -313,8 +313,20 @@ impl Chat {
             }
         } else {
             self.pool.primary_key = key.clone();
-            let title = self.session_title_of(&key, cx);
-            self.pool.tab_labels.insert(key.clone(), title);
+            // 标题快照只写真值，兜底词绝不入快照（与 sync_primary_tab_label
+            // 同规）：启动恢复路 open_session→switch_to 时 psp 分组/清单尚
+            // 未建，psp_title_of 取不到——旧代码把「新会话」写进快照钉死
+            // tab，直到下一次 ListDirty（发消息）才有机会自愈（2026-11-07
+            // 用户复发报障）。留空 → 渲染回落活值同词，清单重建后随时可被
+            // sync 治愈。
+            if let Some(raw) = file
+                .as_deref()
+                .and_then(|f| self.psp_title_of(std::path::Path::new(f)))
+            {
+                self.pool
+                    .tab_labels
+                    .insert(key.clone(), super::tab_title(&raw));
+            }
             self.ws.active_panel_tab = None;
         }
         self.psp.active_file = file.clone();
