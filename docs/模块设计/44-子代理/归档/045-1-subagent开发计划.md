@@ -3,7 +3,7 @@
 
 # subagent 开发计划(扩展侧,045 配套)
 
-> 依据 [045-subagent管理](045-subagent管理.md)(设计);
+> 依据 [044-5-subagent管理](../044-5-subagent管理.md)(设计);
 > 三家 subagent 全量对照研究见本地调研笔记（不入库）。
 > **优先级:L1 复刻 dsh-subagent 调用机制先行;L2 pi 增强(codemode/nested-call)
 > 后置叠加。** 机制与 codemode 正交——manager/activation 是纯编排类,不依赖 codemode。
@@ -40,7 +40,7 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 >
 > **宿主接入**:`pi-link/src/subagents.rs` 定位扩展,
 > `client.rs` 在 spawn 时追加 `-e`;`scripts/release.sh` 随包分发。PF 内验收
-> 步骤见 [045-3](045-3-subagent验收清单.md)。
+> 步骤见 [044-4](044-4-subagent验收清单.md)。
 
 | # | 任务 | 产出 | 验收 |
 |---|---|---|---|
@@ -144,7 +144,7 @@ preset-selection 分支(我们走 profile,见 045 §8),预计落到 3000–3500 
 ### 收尾
 
 - i18n_audit 门禁 + `cargo test -p app` 全绿 + pif-ui 自动化链路跑 M5/M6 界面断言
-- 与用户一起做完整测试(045-3 验收清单)
+- 与用户一起做完整测试(044-4 验收清单)
 
 ## 10. 不做
 

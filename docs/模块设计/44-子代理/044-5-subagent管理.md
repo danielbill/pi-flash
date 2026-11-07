@@ -5,7 +5,7 @@
 > pi package 扩展**(CLI、pi-flash、任何宿主都能加载),不做宿主内置、不做引擎内置。
 > **总开关**:PF 侧默认**不加载**本扩展(dev-flags.json /
 > `PI_FLASH_SUBAGENTS=1` 开,重启生效;发布包恒关),见 044-1 头注。
-> 宿主侧(pi-flash)配套设计见 [044](044-subagent宿主设计.md)。
+> 宿主侧(pi-flash)配套设计见 [044](归档/044-subagent宿主设计.md)。
 > pi-web / ZCode / dsh 的研究过程见本地调研笔记（不入库）。
 
 ## 背景与决策
