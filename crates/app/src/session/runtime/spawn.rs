@@ -90,13 +90,13 @@ impl SessionRuntime {
                 extra.push("--tools".into());
                 extra.push("read,bash,edit,write".into());
             }
-            // full：内置 7 件（--tools）+ agent（045 subagent，开发旗标开着
-            // 才点名——allowlist 指向不存在的注册工具没有意义）
+            // full：内置 7 件（--tools）+ agent（045 subagent，模块运行时
+            // 开关开着才点名——allowlist 指向不存在的注册工具没有意义）
             // + 精确集（-ne + 个人扩展 + 内置扩展）⇒ 插件一个不装 ⇒
             // 系统提示词零插件注入（034 §1.2）
             "full" => {
                 extra.push("--tools".into());
-                let tools = if crate::services::workspace::subagents_enabled() {
+                let tools = if crate::services::workspace::subagent_module_active() {
                     "bash,read,edit,write,grep,find,ls,agent"
                 } else {
                     "bash,read,edit,write,grep,find,ls"
@@ -182,7 +182,7 @@ impl SessionRuntime {
         // 2026-11-03）。所有 pi 扩展通用。
         envs.push(("PF_SESSION_KEY".into(), self.key.clone()));
         // 044-0 模块设置传导：并发/深度从设置页到 pf-subagents（env 覆盖
-        // 扩展默认值；旗标关着 = 空 vec，扩展不加载无意义）。
+        // 扩展默认值；模块开关关着 = 空 vec，委派停用无意义）。
         envs.extend(crate::services::workspace::subagent_envs());
         if let Some(base) = pi_link::paths::dir() {
             if let Some(cfg) = pi_link::service_ext::config_path_if_any(&base, &self.key) {

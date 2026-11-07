@@ -1,36 +1,50 @@
-//! 044-0 子代理模块设置（设置-子代理页「模块设置」）：最大并发 / 嵌套深度
-//! 的读取、钳制、落盘与扩展 env 传导。自 app_settings.rs 切出（itlq.9 超规
-//! 拆分，纯结构搬移）。
+//! 044-0 子代理模块设置（设置-子代理页「全局设置」行）：模块开关 / 最大
+//! 并发的读取、钳制、落盘与扩展 env 传导。嵌套深度 2026-11-07 用户拍板
+//! 恒定 1，UI 移除、存量设置值不再读取。自 app_settings.rs 切出（itlq.9
+//! 超规拆分，纯结构搬移）。
 
 use super::*;
 
-/// 044-0 模块设置默认值：最大并发 3（glm 侧限 3）、嵌套深度 1（禁止套娃）。
+/// 044-0 模块设置默认值：最大并发 3、嵌套深度 1（禁止套娃）。
 pub const SUBAGENT_CAPACITY_DEFAULT: u64 = 3;
 pub const SUBAGENT_MAX_DEPTH_DEFAULT: u64 = 1;
 
-/// 子代理最大并发（设置-子代理页「模块设置」；钳 2-5，缺省 3）。
+/// 子代理模块开关（设置-子代理页「全局设置」行，2026-11-07 从纯开发旗标
+/// 升级为 UI 开关；缺省开）。落盘 app_settings `subagent_enabled`。
+pub fn subagent_module_switch() -> bool {
+    app_settings().subagent_enabled.unwrap_or(true)
+}
+
+/// 子代理模块运行时生效开关 = 开发旗标（总闸，PI_FLASH_SUBAGENTS 可强关）
+/// && 用户面开关。spawn 工具清单 / 子代理面板缓存 / env 传导都看这里；
+/// 设置页导航可见性只看旗标——关了开关页面得留在原地，才有地方重新打开。
+pub fn subagent_module_active() -> bool {
+    subagents_enabled() && subagent_module_switch()
+}
+
+/// 子代理最大并发（设置-子代理页「全局设置」行；钳 2-10，缺省 3；
+/// 2026-11-07 上限 5→10 用户定稿）。
 pub fn subagent_capacity() -> u64 {
     app_settings()
         .subagent_capacity
         .unwrap_or(SUBAGENT_CAPACITY_DEFAULT)
-        .clamp(2, 5)
+        .clamp(2, 10)
 }
 
-/// 子代理嵌套深度（钳 1-3，缺省 1）。
+/// 子代理嵌套深度：恒定 1（禁止套娃，2026-11-07 用户拍板，UI 已移除）。
+/// 存量 app_settings `subagent_max_depth` 不再读取；env 仍显式传 1，
+/// 扩展侧语义不变。
 pub fn subagent_max_depth() -> u64 {
-    app_settings()
-        .subagent_max_depth
-        .unwrap_or(SUBAGENT_MAX_DEPTH_DEFAULT)
-        .clamp(1, 3)
+    SUBAGENT_MAX_DEPTH_DEFAULT
 }
 
 /// 子代理模块设置 → 扩展 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH，
 /// pf-subagents index.ts numberFromEnv 读；PI_FLASH_APP_SETTINGS = 设置文件
 /// 绝对路径，扩展**每次委派实时重读**——env 是进程级快照，只传死值会让
 /// 设置变更永远等不到下一次 spawn pi，真机 2026-11-06：改 3 后 4 并发照跑）。
-/// subagents 旗标关着时不传导（扩展不加载，env 无意义）。
+/// 模块运行时开关关着时不传导（委派停用，env 无意义）。
 pub fn subagent_envs() -> Vec<(String, String)> {
-    if !subagents_enabled() {
+    if !subagent_module_active() {
         return Vec::new();
     }
     let mut envs = vec![
@@ -59,21 +73,22 @@ pub fn subagent_envs() -> Vec<(String, String)> {
     envs
 }
 
-/// 044-0 模块设置：设子代理最大并发（钳 2-5；spawn 时 env 传导）。
+/// 044-0 模块设置：设子代理最大并发（钳 2-10；spawn 时 env 传导）。
 pub fn set_subagent_capacity(v: u64) {
     with_app_settings_cache(|cache| {
         let mut s = (*cache).clone().unwrap_or_default();
-        s.subagent_capacity = Some(v.clamp(2, 5));
+        s.subagent_capacity = Some(v.clamp(2, 10));
         *cache = Some(s);
     });
     save_app_settings(&app_settings());
 }
 
-/// 044-0 模块设置：设子代理嵌套深度（钳 1-3；spawn 时 env 传导）。
-pub fn set_subagent_max_depth(v: u64) {
+/// 用户面模块开关写入（设置-子代理页「全局设置」行；立即落盘）。运行中
+/// pi 进程的工具清单要到下次 spawn 才变；env 传导当轮委派即停。
+pub fn set_subagent_module_switch(on: bool) {
     with_app_settings_cache(|cache| {
         let mut s = (*cache).clone().unwrap_or_default();
-        s.subagent_max_depth = Some(v.clamp(1, 3));
+        s.subagent_enabled = Some(on);
         *cache = Some(s);
     });
     save_app_settings(&app_settings());

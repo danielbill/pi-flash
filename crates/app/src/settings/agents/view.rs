@@ -1,16 +1,18 @@
-//! 子代理页骨架：左列表（内置/自定义两组）+ 右表单两栏装配。
+//! 子代理页骨架（T 型布局，2026-11-07 用户定稿，对齐扩展页顶条式样）：
+//! 首行「全局设置」通栏（模块开关 + 最大并发），下方左列表（内置/自定义
+//! 两组）+ 右表单两栏；模块关闭时下方两栏整体不可见。
 
 use super::detail::agent_detail;
-use super::dropdowns::module_settings_block;
+use super::dropdowns::global_settings_bar;
 use super::*;
 
-/// 子代理页：左列表（内置/自定义两组）+ 右表单。
+/// 子代理页：顶条全局设置 + 左列表/右表单两栏（T 型）。
 pub(crate) fn mc_agents_view(
     chat: &mut Chat,
     weak: &gpui::WeakEntity<Chat>,
     section: &str,
     d: &SettingsFormData,
-) -> (gpui::AnyElement, gpui::AnyElement) {
+) -> gpui::AnyElement {
     let t = T();
     let builtins: Vec<&AgentProfile> = chat
         .cfg
@@ -27,15 +29,6 @@ pub(crate) fn mc_agents_view(
 
     // ---- 左列表 ----
     let mut list = sidebar_list().px(px(7.));
-    // 模块设置（044-0）：并发/深度，写 app_settings，spawn 时 env 传导
-    list = list.child(module_settings_block(weak));
-    list = list.child(
-        div()
-            .h(px(1.))
-            .mx(px(4.))
-            .my(px(6.))
-            .bg(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66))),
-    );
     if !builtins.is_empty() {
         list = list.child(group_header(
             &format!("{} {}", tr("agents.builtin_group"), builtins.len()),
@@ -79,7 +72,21 @@ pub(crate) fn mc_agents_view(
 
     // ---- 右表单 ----
     let detail = agent_detail(chat, weak, section, d);
-    (sidebar, detail)
+
+    // T 型装配：模块开关关着 → 两栏整体不可见（顶条留在原地，才有地方
+    // 重新打开；配置项不渲染 = 不留残影）
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .h_full()
+        .min_h_0()
+        .child(global_settings_bar(weak))
+        .when(
+            crate::services::workspace::subagent_module_switch(),
+            |pane| pane.child(div().flex().flex_1().min_h_0().child(sidebar).child(detail)),
+        )
+        .into_any_element()
 }
 
 /// 列表行：7px 圆点 + 名称（+ 覆盖内置徽标）。

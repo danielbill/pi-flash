@@ -382,8 +382,8 @@ impl Chat {
         }
         // 子代理面板缓存随会话激活常备（open=false）：徽标从切换起就准，
         // 不依赖先开过一次面板（2026-10-19 拍板：关面板只是隐藏，轮询常驻）。
-        // 功能总开关关着不建缓存不起轮询（零 IO）。
-        if crate::services::workspace::subagents_enabled() {
+        // 模块运行时开关关着不建缓存不起轮询（零 IO）。
+        if crate::services::workspace::subagent_module_active() {
             self.ensure_subagent_panel(cx);
         }
         cx.notify();

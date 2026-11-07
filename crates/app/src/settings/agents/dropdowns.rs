@@ -1,5 +1,5 @@
-//! 子代理表单下拉与勾选构件：模型下拉、 turns/并发 pick_list、
-//! 工具档位下拉、044-0 模块设置块与 dd_item 族、sanitize_id。
+//! 子代理表单下拉与勾选构件：全局设置顶条（模块开关 + 最大并发）、
+//! 模型下拉、turns/并发 pick_list、工具档位下拉与 dd_item 族、sanitize_id。
 
 use super::*;
 
@@ -187,113 +187,97 @@ fn sanitize_id(raw: &str) -> String {
         .collect()
 }
 
-/// 模块设置块（044-0）：子代理模块的三项目之一对——最大并发（2-5）与
-/// 嵌套深度（1-3）。写 app_settings（spawn 时 env 传导给 pf-subagents），
-/// 立即落盘。第三项「模块开关」= 开发旗标（044-0 拍板默认开），不在
-/// 此处提供 UI（PI_FLASH_SUBAGENTS / dev-flags.json 控制）。
-/// 模块设置块（044-0）：子代理模块的并发/深度两项——最大并发（2-5，默认 3，
-/// glm 侧限 3）与嵌套深度（1-3，默认 1 禁止套娃）。写 app_settings 立即落盘，
-/// spawn 时 env（PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH）传导给
-/// pf-subagents。第三项「模块开关」= 开发旗标（044-0 拍板默认开），UI 不
-/// 暴露（PI_FLASH_SUBAGENTS / dev-flags.json 控制）。
-pub(super) fn module_settings_block(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
+/// 顶条「全局设置」（T 型布局首行，2026-11-07 用户定稿，对齐扩展页顶条）：
+/// 两项一行——模块开关（写 app_settings `subagent_enabled`，关闭 = 下方
+/// 列表/表单整体不可见）+ 最大并发（2-10，默认 3）。嵌套深度恒定 1，
+/// 不设 UI。开发旗标 `subagents` 仍是总闸（PI_FLASH_SUBAGENTS 强关 =
+/// 整页从导航消失）；并发 spawn 时 env 传导给 pf-subagents。
+pub(super) fn global_settings_bar(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyElement {
     let t = T();
+    let on = crate::services::workspace::subagent_module_switch();
     let cap = crate::services::workspace::subagent_capacity() as u32;
-    let depth = crate::services::workspace::subagent_max_depth() as u32;
-    let stepper = |weak2: &gpui::WeakEntity<Chat>,
-                   id: &'static str,
-                   label: &str,
-                   v: u32,
-                   min: u32,
-                   max: u32,
-                   set: fn(u64)| {
-        let mk = |bid: String,
-                  txt: &'static str,
-                  to: u32,
-                  disabled: bool,
-                  weak3: &gpui::WeakEntity<Chat>| {
-            config_button(
-                bid,
-                weak3,
-                txt,
-                Btn::Secondary,
-                true,
-                disabled,
-                move |_, cx| {
-                    set(to as u64);
-                    cx.notify();
-                },
-            )
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(4.))
-            .py(px(3.))
-            .child(
-                div()
-                    .w(px(64.))
-                    .flex_shrink_0()
-                    .text_size(crate::appearance::ui_size(11.))
-                    .text_color(rgb(t.text_dim))
-                    .child(SharedString::from(label.to_string())),
-            )
-            .child(mk(
-                format!("{id}-dec"),
-                "\u{2212}",
-                v.saturating_sub(1).max(min),
-                v <= min,
-                weak2,
-            ))
-            .child(
-                div()
-                    .w(px(20.))
-                    .text_center()
-                    .text_size(crate::appearance::ui_size(12.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(t.text))
-                    .child(SharedString::from(v.to_string())),
-            )
-            .child(mk(
-                format!("{id}-inc"),
-                "+",
-                (v + 1).min(max),
-                v >= max,
-                weak2,
-            ))
+    // 最大并发步进（−/值/+）：模块关着时禁用（委派已停，调它无意义）
+    let mk = |bid: String, txt: &'static str, to: u32, disabled: bool| {
+        config_button(
+            bid,
+            weak,
+            txt,
+            Btn::Secondary,
+            true,
+            disabled,
+            move |_, cx| {
+                crate::services::workspace::set_subagent_capacity(to as u64);
+                cx.notify();
+            },
+        )
     };
-    div()
+    let cap_item = div()
         .flex()
-        .flex_col()
-        .gap(px(2.))
+        .items_center()
+        .gap(px(6.))
         .child(
             div()
-                .px(px(4.))
-                .pt(px(4.))
-                .pb(px(2.))
-                .text_size(crate::appearance::ui_size(10.))
-                .text_color(rgb(t.text_faint))
-                .child(tr("agents.module_settings")),
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text))
+                .child(tr("agents.capacity")),
         )
-        .child(stepper(
-            weak,
-            "ag-cap",
-            &tr("agents.capacity"),
-            cap,
-            2,
-            5,
-            crate::services::workspace::set_subagent_capacity,
+        .child(mk(
+            "ag-cap-dec".into(),
+            "\u{2212}",
+            cap.saturating_sub(1).max(2),
+            !on || cap <= 2,
         ))
-        .child(stepper(
+        .child(
+            div()
+                .w(px(20.))
+                .text_center()
+                .text_size(crate::appearance::ui_size(12.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(t.text))
+                .child(SharedString::from(cap.to_string())),
+        )
+        .child(mk(
+            "ag-cap-inc".into(),
+            "+",
+            (cap + 1).min(10),
+            !on || cap >= 10,
+        ));
+    // 模块开关行
+    let sw_row = div()
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text))
+                .child(tr("agents.module_enable")),
+        )
+        .child(config_switch(
+            "ag-module-sw",
             weak,
-            "ag-depth",
-            &tr("agents.depth"),
-            depth,
-            1,
-            3,
-            crate::services::workspace::set_subagent_max_depth,
-        ))
+            on,
+            false,
+            move |_, cx| {
+                crate::services::workspace::set_subagent_module_switch(!on);
+                cx.notify();
+            },
+        ));
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(28.))
+        // pl 15 = 列表内容左缘（list px7 + 行内 8），与扩展页顶条同一对齐
+        .pl(px(15.))
+        .pr(px(20.))
+        .pt(px(10.))
+        .pb(px(10.))
+        .border_b_1()
+        .border_color(rgb(t.border))
+        .child(section_title(&tr("agents.global_settings")))
+        .child(sw_row)
+        .child(cap_item)
         .into_any_element()
 }
 

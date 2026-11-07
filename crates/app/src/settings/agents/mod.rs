@@ -1,7 +1,8 @@
 //! Settings-子代理页（044-1 §2）：Agent 定义管理（实例层之外的「类」层）。
 //!
-//! 形态与 042 模型管理同构：左列表（内置/自定义两组）+ 右表单。表单化
-//! 只覆盖 v1 已定字段集；未知字段解析时透传、写回时拼回（见
+//! T 型布局（2026-11-07 定稿）：首行「全局设置」通栏（模块开关 + 最大并发，
+//! 见 dropdowns::global_settings_bar）+ 左列表（内置/自定义两组）+ 右表单。
+//! 表单化只覆盖 v1 已定字段集；未知字段解析时透传、写回时拼回（见
 //! `pi_link::agents`）。
 //!
 //! 尺寸/配色逐值照抄 `docs/UI设计/设置-子代理页-原型.html`（已过稿）：列表
@@ -9,8 +10,8 @@
 //! 输入 30px、系统提示 textarea 170px、下拉宽 250。
 //!
 //! itlq.2 按区块拆子模块（只搬不改）：本文件 = Chat 动作与共享构件
-//! （AG_NEW 哨兵 / agent_row / sel_trigger / tool_tiers）；view = 页骨架；
-//! detail = 右表单；dropdowns = 各下拉与勾选构件。
+//! （AG_NEW 哨兵 / agent_row / sel_trigger / tool_tiers）；view = 页骨架
+//! （T 型装配）；detail = 右表单；dropdowns = 全局设置顶条与各下拉勾选件。
 
 use gpui::prelude::FluentBuilder;
 

@@ -156,11 +156,8 @@ pub(crate) fn render_settings(
             let (sidebar, detail) = crate::settings::skills::mc_skills_view(chat, weak, &section);
             two_pane(sidebar, detail)
         }
-        TAB_AGENTS => {
-            let (sidebar, detail) =
-                crate::settings::agents::mc_agents_view(chat, weak, &section, d);
-            two_pane(sidebar, detail)
-        }
+        // 子代理页（T 型布局自带顶条通栏，同扩展页全出血）
+        TAB_AGENTS => crate::settings::agents::mc_agents_view(chat, weak, &section, d),
         TAB_PLUGINS => crate::settings::pi_extensions::mc_pi_extensions_view(
             chat,
             weak,
@@ -217,8 +214,12 @@ pub(crate) fn render_settings(
     } else {
         // 分栏页：列表与详情统一 15px 内边距（与内容缘等距），包装层不再
         // 另加 20（否则左侧多出 20 不对称）；分栏页全部全出血，顶条/底栏
-        // 的横线与侧栏竖线直通卡缘（040 扩展页定稿样式推广到各分栏页）
-        let hpad = if matches!(tab, TAB_PLUGINS | TAB_MODELS | TAB_SKILLS | TAB_MCP) {
+        // 的横线与侧栏竖线直通卡缘（040 扩展页定稿样式推广到各分栏页；
+        // 子代理页 2026-11-07 改 T 型顶条后同款）
+        let hpad = if matches!(
+            tab,
+            TAB_PLUGINS | TAB_MODELS | TAB_SKILLS | TAB_MCP | TAB_AGENTS
+        ) {
             0.
         } else {
             20.

@@ -83,12 +83,13 @@ pub struct AppSettings {
     /// AgentSettled 才逐条发出；"steer" = prompt+steer 立即插进当前轮。
     /// 非法值/缺键都落 queue。
     pub send_mode: Option<String>,
-    /// 044-0 模块设置: 子代理最大并发（2-5，默认 3；glm 服务器侧只允许
-    /// 3 并发）。spawn pi 时以 PI_SUBAGENTS_CAPACITY 传导给扩展。
+    /// 044-0 模块设置: 子代理最大并发（2-10，默认 3；2026-11-07 上限
+    /// 5→10 用户定稿）。spawn pi 时以 PI_SUBAGENTS_CAPACITY 传导给扩展。
     pub subagent_capacity: Option<u64>,
-    /// 044-0 模块设置: 子代理嵌套深度（1-3，默认 1 = 禁止套娃）。spawn pi
-    /// 时以 PI_SUBAGENTS_MAX_DEPTH 传导给扩展。
-    pub subagent_max_depth: Option<u64>,
+    /// 044-0 子代理模块开关（设置-子代理页「全局设置」行；缺省开）。与
+    /// 开发旗标 `subagents`（PI_FLASH_SUBAGENTS 可强关）相与后生效，见
+    /// `subagent_module_active`。
+    pub subagent_enabled: Option<bool>,
 }
 
 fn app_settings_path() -> Option<PathBuf> {
@@ -176,11 +177,8 @@ pub fn app_settings() -> AppSettings {
                     subagent_capacity: map
                         .get("subagent_capacity")
                         .and_then(|v| v.as_u64())
-                        .map(|v| v.clamp(2, 5)),
-                    subagent_max_depth: map
-                        .get("subagent_max_depth")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v.clamp(1, 3)),
+                        .map(|v| v.clamp(2, 10)),
+                    subagent_enabled: map.get("subagent_enabled").and_then(|v| v.as_bool()),
                 }
             }
             None => AppSettings::default(),
@@ -269,8 +267,8 @@ pub fn save_app_settings(s: &AppSettings) {
     if let Some(v) = s.subagent_capacity {
         obj.insert("subagent_capacity".into(), Value::Number(v.into()));
     }
-    if let Some(v) = s.subagent_max_depth {
-        obj.insert("subagent_max_depth".into(), Value::Number(v.into()));
+    if let Some(v) = s.subagent_enabled {
+        obj.insert("subagent_enabled".into(), Value::Bool(v));
     }
     save_map_to(&path, &obj);
 }
@@ -399,8 +397,9 @@ pub fn dev_flag_enabled(key: &str) -> bool {
     dev_flag_snapshot().get(key).copied().unwrap_or(false)
 }
 
-/// subagent 功能总开关（开发旗标，默认关；dev-flags.json /
-/// PI_FLASH_SUBAGENTS 控制）。
+/// subagent 功能总闸（开发旗标，默认开（044-0）；dev-flags.json /
+/// PI_FLASH_SUBAGENTS 可强关）。只管设置页导航可见性；运行时生效开关 =
+/// 本旗标 && 用户面开关（`subagent_module_active`）。
 pub fn subagents_enabled() -> bool {
     dev_flag_enabled("subagents")
 }
