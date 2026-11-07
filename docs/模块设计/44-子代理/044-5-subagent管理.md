@@ -12,7 +12,7 @@
 4. **容量⊥深度分离**：每父会话在线名额（默认 3，glm 服务器侧约束；设置页可配 2-5），**耗尽即拒不排队**（`CAPACITY_REACHED`；排队会造成"等待后代的父代理又等待自己占用名额"级联死锁）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度由 PF 模块设置下发（env 初值 + `PI_FLASH_APP_SETTINGS` 每次委派实时重读）。
 5. **中断三层**：本地子级 = 停当前轮次、保留队列与后代；外部后端 = 永久停止；对已结束子级 = 空操作容忍。父 turn 中止 = 前台子代理级联中止（signal 级联）。
 6. **稳定失败分码**：`CAPACITY_REACHED` / `PROFILE_INVALID` / `DEPTH_LIMIT` / `BACKEND_UNSUPPORTED` / `ABORTED` 等——宿主与 codemode 脚本按码编程，不解析自由文本。
-7. **子代理目录（catalog）**：父会话自有投影（`children` / 聚合状态），宿主面板与 `subagent_list` 共用同一数据源。
+7. **子代理目录（catalog）**：父会话自有投影（`children` / 聚合状态），宿主面板与 `subagent_list` 共用同一数据源。**内存 only**（pi-flash-9eck：descriptor 逐条落盘已删——曾以 ~15 条/秒灌爆父会话到 209MB；宿主观测改从主会话消息推导，见 044-3）。
 
 ## 2 pi 核心机制映射
 
@@ -22,7 +22,7 @@
 | 结构化输出 | `outputSchema` + `structuredContent` |
 | 并行 fan-out | codemode：`Promise.all([tools.agent(…), …])`（direct 暴露，脚本可调）；分类汇总类任务只有结论进模型 |
 | 驻留子会话 | 子会话是**一等公民 pi session**：独立 JSONL、`parentSession` header、自己的 codemode/tool_search/MCP（`extensionFactories` 显式装配） |
-| 冷恢复与孤儿 | 自定义 entry（`pi.appendEntry`：profile 名、parentToolCallId、深度、resourceSnapshot）+ `agent_settled.aborted` 区分取消/崩溃 |
+| 冷恢复与孤儿 | 子会话 `subagent/child` custom entry 记深度（`restoreChildDepth`）；孤儿恢复 UI 未做（原「重启标 interrupted descriptor」随 descriptor 落盘删除，pi-flash-9eck） |
 | 完成通知（parent） | toast `ctx.ui.notify`（人看）+ `pi.sendMessage(customType: subagent-completion)` 进父会话（模型看）；空闲 `triggerTurn` 唤醒、流式 `steer` 注入当前轮；三段式结算见 §4 |
 | persona / 工具面收敛 | profile 体系（§8）：`.md` frontmatter，语义对齐 dsh preset，形态走 pi package 资源 |
 | 上下文继承措辞 | 工具描述按 profile 继承配置动态生成（fresh 类"看不到本对话"/继承类"看不到进行中的轮次"） |
@@ -118,19 +118,19 @@ createAgentSessionFromServices({
 })
 ```
 
-首组自定义 entry 记录：profile 名、parentToolCallId、深度、resourceSnapshot（模型/系统提示/工具面快照，resume 时还原）。
+子会话首组自定义 entry = `subagent/child` 标记（深度；宿主侧栏过滤与嵌套深度还原的钥匙）。委派元数据（parentToolCallId 等）只走内存 descriptor 与派发 result details，不落子会话转录。
 
 ## 6 可观测（RPC 宿主视角）
 
 - 进度经 spawn 工具 `onUpdate` 流出（details 带 sessionId、状态、最后活动、token 计数）→ `tool_execution_update` 过 RPC → 嵌套卡片；失败 onUpdate 分片（status=failed + error_code）即时上卡（限 agent 工具）
 - 完整过程：宿主直读子 JSONL（路径在 details/entry），点击跳转
-- 聚合面板：**descriptor 拉模型**（父会话 JSONL 的 descriptor entry 即事实源，宿主常驻轮询，见 044-3）；被拒委派也落 failed descriptor
+- 聚合面板：**主会话自足**（pi-flash-9eck：caller=工具 result details、background=父会话 `subagent-completion` custom 消息回灌，宿主零读盘推导，见 044-3）；被拒委派经 fail onUpdate 即时上卡
 - watcher 守卫陷阱：每轮 stats/usage 上报的守卫须 **settled/failed 才拦**——caller 投递下 `wait()` 即置 settling，`state!=="active"` 会吞掉整个运行期的逐轮上报
 
 ## 7 持久化与孤儿恢复
 
-- `session_start` 扫自定义 entry，非终态子会话标 `interrupted`（`agent_settled.aborted` 区分取消与崩溃）
-- 按 resourceSnapshot 可 resume（复用同一子 session 文件续跑）
+- 子会话落 `subagent/child` 标记 entry（深度）；父会话不落 descriptor（pi-flash-9eck 已删）
+- 孤儿恢复（重启后续跑遗留子代理）**未做**：宿主重启后遗留卡按中断态呈现，resume 机制（复用同一子 session 文件续跑）另案
 
 ## 8 profile = Agent 定义（用户资产）
 

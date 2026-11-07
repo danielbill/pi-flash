@@ -32,6 +32,13 @@
   `docs/调研/pi-扩展生态对接调研.md`。
 
 ## 里程碑索引
+- 2026-11-08 descriptor 机制整体删除（pi-flash-9eck，用户定夺「没用直接删」）：扩展删
+  descriptor 落盘全链（内存留 `children` 工具实时统计）；宿主删 `pi-link::subagent_catalog`
+  读取整链（stash/1s 读盘轮询/`[perf]` 量尺一并退场），导航第三行/子会话 tab 标题/
+  background 卡终态改主会话自足推导（result details + `subagent-completion` 回灌，零读盘）；
+  同批修老洪泛会话打开秒开：`read_tail_messages` 尾窗 renderable<10 倍增至 2MB、空 tail
+  不入缓存、leaf-repair 只增强不闸门。测试：扩展 143 / pi-link 264 / app 446 全绿。
+  设计文档 044-0/1/3/4/5 同步重写（044-3 改写为主会话自足检索）。
 - 2026-11-07 子代理完成回传闭环（5554fa4a → 9e911ee4）：background 子代理结算后 toast +
   `subagent-completion` 自定义消息双发（只发 toast 时父模型拿不到回执，实测暴露）；随后
   按 dsh 对齐派发/回传/收尾——派发结果回裸句 `started subagent <id>`、异步契约移入工具

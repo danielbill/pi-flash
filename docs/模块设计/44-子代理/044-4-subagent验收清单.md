@@ -22,7 +22,7 @@ cargo run -p app
 
 - 出现「工作详情 · N 条消息 · 1 次工具调用」，折叠内是 `agent` 工具卡（入参为那条 prompt）
 - 最终回答含子代理返回的 `PF-SUBAGENT-OK`
-- 子会话文件落在**父会话同目录**（`~/.pi/agent/sessions/<encoded-cwd>/`），header 带 `parentSession`；父会话 jsonl 有 `subagent/descriptor` 条目
+- 子会话文件落在**父会话同目录**（`~/.pi/agent/sessions/<encoded-cwd>/`），header 带 `parentSession`；父会话 jsonl 有 `subagent-completion` custom 消息（background 交付时）；caller 交付的 agent 工具 result details 带 child_id/session_file
 - **侧栏不该多出行**：子会话自体落 `subagent/child` custom entry（扩展在子会话 `session_start` 时经 inline extension `appendEntry`），索引层据此排除（`sessions.rs` `IndexEntry::child_marker`）；仍可按路径打开检视
 - **pi 原生 fork 分支必须正常上行**：fork 的 header 同样带 `parentSession`，但无 marker——**禁止**用 `parentSession` 判定子会话（误判会把用户 fork 的置顶会话从侧栏全杀）
 
@@ -75,13 +75,13 @@ head -c 300 <子会话文件>
 
 期望：子会话与父同目录；header 含 `"parentSession":"…"`；跑完后 `~/.pi/agent/sessions/` 不新增本次子会话文件。
 
-### C4 描述符
+### C4 观测数据（pi-flash-9eck：descriptor 落盘已删）
 
 ```bash
-grep -c '"subagent/descriptor"' tmp/subagent-smoke/*.jsonl
+grep -c '"subagent-completion"' tmp/subagent-smoke/*.jsonl
 ```
 
-期望：父会话有描述符，`phase` 依次 `provisioning` → `active` → 终态。
+期望：background 交付的父会话有 `subagent-completion` 消息（childId/stopReason 齐全）；caller 交付走工具 result details，无落盘条目。父会话**不再有** `subagent/descriptor` 条目。
 
 ### C5 容量耗尽（可选，约 3 次调用）
 
