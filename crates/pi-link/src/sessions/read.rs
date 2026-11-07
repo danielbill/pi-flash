@@ -212,10 +212,32 @@ fn renderable_message(v: &Value) -> Option<Value> {
 /// disk-direct render path (agent_session renders the last conversation
 /// before the RPC session is up). Returns up to `max` parsed
 /// `{"type":"message",...}` values, oldest→newest within the window.
+///
+/// 尾窗整段都可能是非渲染条目：subagent 扩展曾以 ~15 条/秒的速率把
+/// `subagent/descriptor` custom 条目灌进父会话（044-2 实测 209MB 文件里
+/// 真消息只占头部 ~100KB），256KB 尾窗一条 message 都捞不到 → 秒开路径
+/// 落空态（新会话欢迎页闪现）。窗口非全文件且一无所获时 ×4 回溯再扫，
+/// 4MB 封顶——主线程开文件热路径不做无界全量解析。
 pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value> {
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let mut window = tail_bytes;
+    let mut messages = parse_tail_window(path, window, len);
+    while messages.is_empty() && window < len && window < TAIL_EXPAND_CAP {
+        window = (window * 4).min(len).min(TAIL_EXPAND_CAP);
+        messages = parse_tail_window(path, window, len);
+    }
+    if messages.len() > max {
+        messages.drain(..messages.len() - max);
+    }
+    messages
+}
+
+/// 回溯封顶：开文件热路径（主线程）的同步解析上限。
+const TAIL_EXPAND_CAP: u64 = 4 * 1024 * 1024;
+
+fn parse_tail_window(path: &Path, tail_bytes: u64, len: u64) -> Vec<Value> {
     let tail = read_tail(path, tail_bytes);
     // only a seeked window starts mid-line; a whole-file read doesn't
-    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let body = if len > tail_bytes {
         let start = tail.find('\n').map(|i| i + 1).unwrap_or(0);
         &tail[start..]
@@ -230,9 +252,6 @@ pub fn read_tail_messages(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value
         if let Some(m) = renderable_message(&v) {
             messages.push(m);
         }
-    }
-    if messages.len() > max {
-        messages.drain(..messages.len() - max);
     }
     messages
 }

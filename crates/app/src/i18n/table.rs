@@ -78,6 +78,8 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("market.next", "下一页 →", "下一頁 →", "Next →"),
     ("action.new", "新建", "新建", "New"),
     ("session.new", "新会话", "新會話", "New session"),
+    // 044-2 加载页（文件已绑定、权威内容未到第一份）
+    ("session.loading", "会话载入中…", "會話載入中…", "Loading session…"),
     // 012 新会话页（newSession）
     ("new_session.greeting", "Hi，打算让我做点什么？", "Hi，打算讓我做點什麼？", "Hi, what shall we work on?"),
     ("session.open_project", "打开项目", "開啟專案", "Open project"),

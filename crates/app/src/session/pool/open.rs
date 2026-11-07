@@ -98,26 +98,41 @@ impl Chat {
         }
         // new runtime: tail render first (cache or disk), process spawns in
         // the background — the conversation is on screen before node exists
+        let t_open = std::time::Instant::now();
         let tail = match self.pool.session_tail_cache.get(&path).cloned() {
             Some(msgs) => msgs,
             None => {
+                let t_tail = std::time::Instant::now();
                 let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                if self.pool.session_tail_cache.len()
-                    >= crate::services::workspace::TAIL_PRELOAD * 2
-                {
-                    self.pool.session_tail_cache.clear();
+                crate::perf_span(
+                    &format!("open_session tail read+parse ({} msgs)", msgs.len()),
+                    t_tail,
+                );
+                // 空结果不进缓存：尾窗被 custom 条目灌满的会话（044-2 实案）
+                // 或文件刚建的会话，空条目会粘住整个 app 运行期——之后每次
+                // 打开都秒落加载页，哪怕磁盘早就有了真内容
+                if !msgs.is_empty() {
+                    if self.pool.session_tail_cache.len()
+                        >= crate::services::workspace::TAIL_PRELOAD * 2
+                    {
+                        self.pool.session_tail_cache.clear();
+                    }
+                    self.pool
+                        .session_tail_cache
+                        .insert(path.clone(), msgs.clone());
                 }
-                self.pool
-                    .session_tail_cache
-                    .insert(path.clone(), msgs.clone());
                 msgs
             }
         };
+        let tail_len = tail.len();
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
             r.default_model = services::workspace::default_model_pref();
             r.observer = observer;
             r.messages = tail;
+            // tail 有内容 = 秒开就有东西看，加载页不拦；空 tail（尾窗被
+            // custom 条目占满 / 文件刚建）等 get_messages 投影或磁盘同步放行
+            r.messages_loaded = !r.messages.is_empty();
             r.pager.reload(r.messages.len());
             r.status = if observer {
                 "observer".into()
@@ -203,6 +218,12 @@ impl Chat {
         self.dlg.rename_input = None;
         self.dlg.confirm_delete = None;
         self.switch_to(rt.clone(), cx);
+        crate::perf_span(
+            &format!(
+                "open_session total pool-miss ({tail_len} tail msgs, runtime+subscribe+switch)"
+            ),
+            t_open,
+        );
         let rt_spawn = rt;
         cx.spawn(async move |_this, cx| {
             let _ = rt_spawn.update(cx, |r, cx| {

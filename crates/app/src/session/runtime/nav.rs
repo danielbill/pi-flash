@@ -9,6 +9,10 @@ use pi_link::sessions::read_leaf_messages;
 
 use super::*;
 
+/// 外部追加 tick 对账的文件大小上限（044-2）：超过即跳过 O(文件) 的全量
+/// leaf 重读，只推基线。见 check_external_append 内注释。
+const EXTERNAL_APPEND_CAP: u64 = 64 * 1024 * 1024;
+
 impl SessionRuntime {
     /// 只读观察窗装载（044-0）：后台全量 leaf 读子会话文件 → 回灌 messages。
     /// 观察窗无进程，GetMessages 无人接，磁盘链就是唯一真相。回灌后同步
@@ -28,6 +32,7 @@ impl SessionRuntime {
                     return; // 重绑/换身份/已退出观察态：陈旧快照作废
                 }
                 r.messages = msgs;
+                r.messages_loaded = true;
                 r.sync_disk_baseline();
                 r.notify_list(cx);
                 r.status = "observer: synced from disk".into();
@@ -101,6 +106,15 @@ impl SessionRuntime {
         if len == self.disk_file_len || len == 0 {
             return;
         }
+        // 044-2 实测守门：重读是 O(文件) 的 leaf 链全量解析（pi 自报路径的
+        // 每次 append——哪怕 restore 写的一条 session_info——3s 后都会走到
+        // 这里；209MB 会话每次都要后台全量过一遍）。超阈会话跳过 tick 对账
+        // （自己 pi 的追加走流式事件，权威投影/leaf 修复仍守正确性）；外部
+        // 写者（pi-web 同文件共编）大文件的实时跟随就丢给重开会话。
+        if len > EXTERNAL_APPEND_CAP {
+            self.disk_file_len = len;
+            return;
+        }
         // 长度先记账（防在飞期间每 3s tick 重复调度）；重读失败时长度已
         // 前移，靠外部写入的下一次增长重新触发（与同步版同语义）
         self.disk_file_len = len;
@@ -123,6 +137,8 @@ impl SessionRuntime {
                 if msgs.len() != r.messages.len() {
                     // 整表重读：锚点索引可能失效，重读后按最后一条用户消息重锚
                     r.messages = msgs;
+                    // 044-2：磁盘链落第一份内容，加载页放行
+                    r.messages_loaded = true;
                     // fork anchors best-effort (same as the open-time repair path)
                     let mut ids = r.active_user_entry_ids.iter();
                     for m in r.messages.iter_mut() {
@@ -151,11 +167,13 @@ impl SessionRuntime {
         let Some(f) = self.file.clone() else { return };
         let epoch = self.agent.epoch;
         let f_count = f.clone();
+        let t = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
             let n = cx
                 .background_executor()
                 .spawn(async move { pi_link::sessions::count_message_entries(&f_count) as usize })
                 .await;
+            crate::perf_span(&format!("disk_msg_count BG ({} entries)", n), t);
             let _ = this.update(cx, |r, cx| {
                 if r.agent.epoch != epoch || r.file.as_deref() != Some(f.as_path()) {
                     return; // 重启/重绑在飞期间已换身份，旧文件的计数作废
@@ -186,11 +204,14 @@ impl SessionRuntime {
         let Some(f) = self.file.clone() else { return };
         let epoch = self.agent.epoch;
         let f_read = f.clone();
+        let t = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
             let disk = cx
                 .background_executor()
                 .spawn(async move { msgs_from_tail(read_leaf_messages(&f_read, LEAF_REPAIR_MAX)) })
                 .await;
+            crate::perf_span(&format!("leaf_repair BG read ({} msgs)", disk.len()), t);
+            let t_apply = std::time::Instant::now();
             let _ = this.update(cx, |r, cx| {
                 if r.agent.epoch != epoch || r.file.as_deref() != Some(f.as_path()) {
                     return;
@@ -201,6 +222,8 @@ impl SessionRuntime {
                 if disk.len() > rpc_len {
                     r.messages = disk;
                     r.pending_echoes.clear();
+                    // 044-2：磁盘链落第一份内容，加载页放行
+                    r.messages_loaded = true;
                     // entry-id mapping stays the RPC/get_entries view
                     // (fork anchors best-effort on repaired chains)
                     let mut ids = r.active_user_entry_ids.iter();
@@ -220,6 +243,7 @@ impl SessionRuntime {
                 }
                 // 计数晚到补偿（无 fallback）：显示维持已上屏的权威投影
             });
+            crate::perf_span("leaf_repair apply MAIN", t_apply);
         })
         .detach();
     }

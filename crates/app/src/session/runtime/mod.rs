@@ -67,6 +67,12 @@ pub(crate) struct SessionRuntime {
 
     // ---- message log ----
     pub messages: Vec<Msg>,
+    /// 会话内容是否已经权威就位（044-2 加载态）：tail 预渲染非空即视为就位
+    /// （有东西可看，不落加载页）；空 tail 的打开要等 get_messages 投影 /
+    /// leaf 修复 / 磁盘同步任一路落第一份内容。空会话（投影真的带回 0 条）
+    /// 也置就位——加载页只服务「还没等到第一份内容」的窗口，不能把真空
+    /// 会话永久钉在加载提示上。
+    pub messages_loaded: bool,
     /// 滚屏状态机（chat_list.rs）：gpui 列表 + 翻页锚点 + 垫片 + splice 记账
     pub pager: ChatList,
     /// explicit open/close overrides; absent = per-state default (thinking
@@ -298,6 +304,7 @@ impl SessionRuntime {
                 .unwrap_or(0),
             agent: AgentSession::new(1),
             messages: Vec::new(),
+            messages_loaded: false,
             pager: ChatList::new(),
             collapsed: std::collections::HashMap::new(),
             observer: false,

@@ -57,6 +57,7 @@ impl Chat {
     }
 
     pub(crate) fn refresh_sessions(&mut self) {
+        let t = std::time::Instant::now();
         // 无项目态：没有「当前项目会话清单」可言（psp 窗口分组照常）
         let Some(cwd) = self.ws.cwd.clone() else {
             return;
@@ -116,6 +117,13 @@ impl Chat {
         // ListDirty → 这条链；switch_to 只在切换会话时刷快照，留在本
         // 会话里一路聊到拿到真名也永不触发（2026-11-07 用户报障）
         self.sync_primary_tab_label();
+        crate::perf_span(
+            &format!(
+                "refresh_sessions MAIN ({} sessions)",
+                self.pool.sessions.len()
+            ),
+            t,
+        );
     }
 
     pub(crate) fn switch_project(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {

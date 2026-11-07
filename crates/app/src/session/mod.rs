@@ -78,6 +78,26 @@ pub(crate) fn skin(_chat: &Chat) -> &'static template::SessionPageSkin {
     &template::DESKTOP
 }
 
+/// 044-2 加载页主体：文件已绑定、权威内容未到第一份——空白页 + 居中载入
+/// 提示。不用欢迎语冒充加载态（用户 2026-11-07 定夺）；composer 照常渲染，
+/// 会话内容由 get_messages 投影 / leaf 修复 / 磁盘同步任一路落第一份内容
+/// 后放行（messages_loaded）。
+fn loading_body(t: &crate::appearance::theme::Theme) -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(13.))
+                .text_color(rgb(t.text_dim))
+                .child(tr("session.loading")),
+        )
+        .into_any_element()
+}
+
 pub(crate) fn main_column(
     chat: &mut Chat,
     entity: gpui::Entity<Chat>,
@@ -106,8 +126,19 @@ pub(crate) fn main_column(
     // 012 新会话页判据 = pi-web isEmptyNew（空会话且 agent 未跑）：启动时
     // 项目|会话列表为空、或「新建会话」都落在这里。插件功能线除外（皮肤
     // `keep_on_empty`）：它空会话也停在会话页，设置页由功能页分段承担。
-    let new_session_page =
-        rt.read(cx).messages.is_empty() && !streaming && !page_skin.keep_on_empty;
+    // 044-2 拆出加载态：**文件已绑定但权威内容还没到第一份**（空 tail 的
+    // 打开要等 get_messages 投影 / leaf 修复 / 磁盘同步，大文件下 pi 恢复
+    // 要几十秒）——这不是「新会话」（渲染欢迎语会把用户钉在错误状态上，
+    // 2026-11-07 用户报障），渲染空白页 + 载入提示。草稿（file=None）才落
+    // 欢迎页；真空会话（投影带回 0 条）messages_loaded 已就位，走正常会话
+    // 页空列表。
+    let (messages_empty, file_bound, messages_loaded) = {
+        let r = rt.read(cx);
+        (r.messages.is_empty(), r.file.is_some(), r.messages_loaded)
+    };
+    let new_session_page = messages_empty && !streaming && !page_skin.keep_on_empty && !file_bound;
+    let loading_page =
+        messages_empty && !streaming && file_bound && !messages_loaded && !page_skin.keep_on_empty;
     // composer 焦点态来自输入组件（chat.layout.focus 仅是组件创建前的回退）
     let input_focused = chat
         .composer
@@ -171,6 +202,12 @@ pub(crate) fn main_column(
                                 cx,
                             ))
                             .children(ext_widget_rows(chat, t, false));
+                    } else if loading_page {
+                        // 044-2 加载页：文件已绑定、权威内容未到——空白页 +
+                        // 载入提示（用户 2026-11-07 定夺：不要用新会话欢迎页
+                        // 冒充加载态）。composer 不渲染：pi 还在恢复会话，
+                        // 此时发送只会堆进未挂线的队列。
+                        wrap = wrap.child(loading_body(t));
                     } else {
                         wrap = wrap
                             // message list（底部 135px 让位悬浮 composer；

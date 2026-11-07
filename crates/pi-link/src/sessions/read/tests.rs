@@ -69,6 +69,45 @@ fn tail_messages_window_and_cap() {
 }
 
 #[test]
+fn tail_messages_expands_past_custom_flood() {
+    // 044-2 实案：subagent 扩展以每条 assistant message 一条的速率把
+    // `subagent/descriptor` custom 条目灌进父会话——真消息全被挤出 256KB
+    // 尾窗（39MB 文件里 message 只占头部 ~100KB）。尾窗捞不到时窗口 ×4
+    // 回溯再扫（4MB 封顶）：窗口内够得着的真消息必须捞到，秒开不落空态。
+    let root = temp_root("tail-expand");
+    let mut body = String::new();
+    body.push_str("{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"early\"}}\n");
+    body.push_str(
+        "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":\"reply\"}}\n",
+    );
+    // >4MB 的 custom 洪泛：任何封顶窗口都只看到 custom
+    let flood = "x".repeat(600);
+    for _ in 0..8000 {
+        body.push_str(&format!(
+            "{{\"type\":\"custom\",\"customType\":\"subagent/descriptor\",\"data\":\"{flood}\"}}\n"
+        ));
+    }
+    // 尾端再垫一条真消息（回溯应该捞到它，而不是更早的头部两条）
+    body.push_str(
+        "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"latest\"}}\n",
+    );
+    let path = write_session(&root, "D:\\proj", "t2", &body);
+    let msgs = read_tail_messages(&path, 256 * 1024, 10);
+    assert!(
+        msgs.iter()
+            .any(|v| v["message"]["content"].as_str() == Some("latest")),
+        "custom 洪泛下的尾端真消息必须捞到（窗口回溯）"
+    );
+    assert!(
+        !msgs
+            .iter()
+            .any(|v| v["message"]["content"].as_str() == Some("early")),
+        "回溯按窗口截断，不回读全文件头部"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn lists_real_sessions_when_present() {
     // machine-dependent smoke test: only asserts invariants, never fails
     // when no sessions exist (e.g. fresh CI machine). Prints the scan
