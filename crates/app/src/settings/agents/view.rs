@@ -45,7 +45,8 @@ pub(crate) fn mc_agents_view(
             "ag-new",
             weak,
             &tr("agents.new"),
-            Btn::Secondary,
+            // 与右表单「保存」同款主按钮样式（2026-11-08 用户定稿）
+            Btn::Primary,
             true,
             false,
             |c, cx| c.mc_agent_new(cx),
