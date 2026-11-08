@@ -9,7 +9,7 @@
 1. **服务层（扩展内 SubagentManager）**：统一启动、消息准入、容量、父子所有权、结算与释放；"兑现即发布"——启动仅在子级已接受且可取消后返回。
 2. **provider 注册表**：具名后端，按名称路由。两个进程内后端：`spawn`（全新上下文）/ `fork`（带父转录）；外部后端（ACP / Claude Code / Codex）属未做。**能力声明协商**：每个 provider 声明 `continuable` / `depthLimit` / `modelOptions` / `worktree`，请求不满足的能力 → 稳定分码显式拒绝，**绝不静默降级**。
 3. **delivery 二分**：`caller`（结果即工具结果，await 返回；`background` 缺省）⊥ `parent`（立即返回 childId，完成走通知；`background: true`）。同一框架，两种投递。
-4. **容量⊥深度分离**：每父会话在线名额（默认 3，glm 服务器侧约束；设置页可配 2-5），**耗尽即拒不排队**（`CAPACITY_REACHED`；排队会造成"等待后代的父代理又等待自己占用名额"级联死锁）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度由 PF 模块设置下发（env 初值 + `PI_FLASH_APP_SETTINGS` 每次委派实时重读）。
+4. **容量⊥深度分离**：每父会话在线名额（默认 3，glm 服务器侧约束；设置页可配 2-10），**耗尽即拒不排队**（`CAPACITY_REACHED`；排队会造成"等待后代的父代理又等待自己占用名额"级联死锁）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度**事实源 = `<profiles dir>/config.json`**（`module-config.ts`：`capacity` / `maxDepth` 各一组 `{default,min,max}`，`maxTurns` / `model` 可选）——扩展每次委派入口重读（`syncModuleConfig`）所以改完即生效、不重启；PF 设置页改动**实时写这份文件**（`pi-link/agents/module_config.rs`），启动期仅在文件缺失时按 PF 缺省补一份。`PI_SUBAGENTS_CAPACITY` / `PI_SUBAGENTS_MAX_DEPTH` / `PI_FLASH_APP_SETTINGS` 只对旧版扩展（发布包旧构建）有意义，现版扩展一律忽略。
 5. **中断三层**：本地子级 = 停当前轮次、保留队列与后代；外部后端 = 永久停止；对已结束子级 = 空操作容忍。父 turn 中止 = 前台子代理级联中止（signal 级联）。
 6. **稳定失败分码**：`CAPACITY_REACHED` / `PROFILE_INVALID` / `DEPTH_LIMIT` / `BACKEND_UNSUPPORTED` / `ABORTED` 等——宿主与 codemode 脚本按码编程，不解析自由文本。
 7. **子代理目录（catalog）**：父会话自有投影（`children` / 聚合状态），宿主面板与 `subagent_list` 共用同一数据源。**内存 only**（pi-flash-9eck：descriptor 逐条落盘已删——曾以 ~15 条/秒灌爆父会话到 209MB；宿主观测改从主会话消息推导，见 044-3）。

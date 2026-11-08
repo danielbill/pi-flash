@@ -47,6 +47,14 @@ pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
         // copy 进 PF 自有目录（不覆盖已存在，幂等）——pi 市场社区扩展共用
         // 旧目录（命名空间污染），profile schema 归 PF 私有，数据也归位。
         pi_link::agents::migrate_legacy_agents();
+        // 044-0：`agents/config.json` 是容量事实源（扩展每次委派重读）。
+        // 首次运行按 PF 设置补一份——否则扩展用 FALLBACK 8，设置页显示 3。
+        // 已存在一律不碰（设置页每次改动实时写它）。
+        if let Err(e) =
+            pi_link::agents::ensure_module_config(crate::services::workspace::subagent_capacity())
+        {
+            eprintln!("[startup] agents/config.json 初始化失败: {e}");
+        }
     });
     spawn_pump_120ms(cx);
     spawn_external_append_watch(cx);

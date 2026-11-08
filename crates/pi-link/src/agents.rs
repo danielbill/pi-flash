@@ -131,6 +131,11 @@ impl AgentProfile {
 
 mod builtin;
 pub use builtin::builtin_agents;
+mod module_config;
+pub use module_config::{
+    CAPACITY_UI_MAX, CAPACITY_UI_MIN, MODULE_CONFIG_FILENAME, capacity, ensure_module_config,
+    module_config_path, read_capacity_at, set_capacity, write_capacity_at,
+};
 
 /// 扫一个目录里的 `*.md`，逐个解析（损坏的保留 + 记 error）。
 /// 不含内置——内置由 [`builtin_agents`] 单独给，避免与自定义目录重复。
