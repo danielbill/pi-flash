@@ -180,7 +180,11 @@
   `double_lease_panic`）。**回调已经给了值就用回调参数**（`on_submit(&str)` /
   `on_change(&str)`），别回头摸实体。实例：插件市场搜索框回车即崩（040-1，
   2026-10-20），`pi_ext_search_now()` 读输入框 → 改成 `pi_ext_search_with(v)`，
-  按钮路径才允许 `read`（按钮事件不在输入框的 update 里）。
+  按钮路径才允许 `read`（按钮事件不在输入框的 update 里）。实例 2：问卷卡
+  末题在自定义输入框内回车确认即崩（ask_card，2026-11-08）——boot.rs
+  on_submit → ask_enter → ask_confirm/ask_switch_tab 回头 read + set_value。
+  教训：下游还要摸实体（换题 set_value）时，回调参数救不全，改在回调里
+  `cx.defer` 整段动作（flush 尾租约已释放，read/set_value 都安全）。
 - `window.update`/`chat.update` 不 flatten（catch_unwind 四层嵌套）；vendored `WeakEntity::update` 签名与 Zed 上游不同，别照抄；渲染期读取的实体会注册 window invalidator（InputState notify 即重渲染）。
 - **vendored gpui 0.2.2 的 `Entity` 子元素每帧无条件重渲染**（view.rs `impl Element for Entity` 直接 `view.render()`，没有脏检查复用）；唯一复用路径是 `AnyView::cached(style)`（未 notify 即回收上一帧 layout+paint，`window.refresh()` 会击穿）。后果：composer 每键 `Chat` notify = **全窗口重建**（消息区 markdown 元素 + dock + chrome 全连坐）。消息列表是 `list()` 闭包不是实体，吃不到 cached——要隔离只有把轮次包实体 + cached（大手术）。在此前提下，Chat::render 每帧路径严禁 O(会话规模) 的分配：命令表/模型目录/全文拷贝都要门控或借用化（composer 打字卡顿 2026-10-12 排查的落点：slash_commands 深克隆、new_session_default 全目录扫描、set_value 镜像克隆）。
 - **「每键全窗重建」同样吃设置页，且磁盘 I/O 比分配更狠（2026-11-04 模型详情页卡顿排查，2026-11-05 已修）**：弹窗里任何 TextInput 敲键（无 on_change 也一样——InputState notify 即窗口失效，见上行）→ 全窗重建 → 设置 Models 页每帧跑一遍 `mc_models_sidebar`，里面 `mj_doc()`/`models_json::read()` 是**同步读盘**且级联爆炸：`sidebar_providers()` 读 1 次 + 侧栏直读 1 次 + 每个 Provider 一遍 `mc_provider_counts → catalog_with_ledger → model_listing`（内部 `ledger_merge`/`sidebar_providers`/`provider_models_for_list` 各自再读）+ `mc_sorted_enabled` 整套再来一遍——实测 1 商 1 模型的隔离实例 **每帧 11 次读盘、sidebar 3-6ms、整帧 8-12ms**（debug），且光标闪烁 idle（2 renders/s）也在烧同样的帧。仪器：`PI_FLASH_PERF=1` 下 stderr 有 `frame.render/frame.settings/frame.models.sidebar/frame.mj_modal/frame.mj_reads_total` 五个探针（render.rs、models.rs 打点）。**修法（两层）**：① `services::mj_doc_cache`——models.json 读走 (path, mtime, len) 校验缓存，每次调用 stat 一次，任何写盘（含 pi/pi-web 外部）下一次读立即可见，PF 侧各 save 落点再显式 invalidate 兜底（`mj_doc`「不做内存副本」防覆盖语义不破）；② `mc_models_view` 合并目录一帧算一遍下传 sidebar，计数/启用列表在共享 listing 上单趟统计（`mc_provider_counts` 已删）。修后同场景：读盘 **11→0 次/帧**，sidebar 1.4-1.8ms→0.10-0.23ms（release），整帧 release 2.4-3.4→1.8-2.6ms。新增设置页渲染路径时照此办理：**读盘必须走 mj_doc_cache，清单必须一帧一份**。

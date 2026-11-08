@@ -710,3 +710,18 @@ switch_to 时 psp 分组/会话清单尚未建（rebuild_projects 在其后）�
 > pool.sessions 兜底（装载窗口外的会话在当前项目清单仍有行，分组缺席不
 > 等于取不到真值）。标题整形收拢 pub(crate) tab_title，快照/活值/切换
 > 三路同源同形。
+
+## 问卷卡末题回车确认即崩（2026-11-08 修）
+
+ask_user_question 卡在自定义答案输入框内按 Enter：on_submit 回调于 ask_input
+自己的 update 里发起（gpui.md 双租节），直连 `chat.ask_enter` → 全答完走
+`ask_confirm` → `ask_input.read(cx)`（actions.rs:223）撞 double_lease_panic，
+panic 落在 window_procedure（cannot unwind）→ 进程直接消失。前几题不崩 =
+未答完时走 ask_switch_tab 同样回头 read/set_value（同族隐患），用户前几题
+焦点不在框上才没踩。证据：pi-flash-dev/logs/crash-1794138741.log。
+
+> **修复（2026-11-08）**：boot.rs on_submit 接线改 `cx.defer`——回调里只
+> 调度，ask_enter 整段推迟到本轮 flush 尾部（App::defer 语义即"栈上实体
+> 已归还"），read/set_value 全部安全；按钮/Root 键盘路径不在输入框
+> update 里，无需改。同族已排除：ext_input 的 ext_respond 用回调参数 v，
+> 不摸实体。

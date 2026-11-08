@@ -304,11 +304,19 @@ impl Chat {
                 });
             }));
         });
-        // 问卷卡自定义答案输入框：Enter = 跳下一未答题 / 全答完则提交
+        // 问卷卡自定义答案输入框：Enter = 跳下一未答题 / 全答完则提交。
+        // 必须 defer：on_submit 回调在 ask_input 自己的 update 里发起（gpui.md
+        // 双租节），ask_enter 下游的 ask_confirm / ask_switch_tab 会回头
+        // read/set_value 同一实体 → double_lease_panic（2026-11-08 实例：末题
+        // 在输入框内回车确认，app 即崩）。defer 到本轮 flush 尾部，租约已释放，
+        // read/set_value 都安全；回调值 _v 不需要——ask_confirm 到时自会读框。
         let weak_ask = cx.entity().downgrade();
         chat.aux.ask_input.update(cx, |ti, _| {
             ti.set_on_submit(Box::new(move |_v, cx| {
-                let _ = weak_ask.update(cx, |c, cx| c.ask_enter(cx));
+                let weak_ask = weak_ask.clone();
+                cx.defer(move |cx| {
+                    let _ = weak_ask.update(cx, |c, cx| c.ask_enter(cx));
+                });
             }));
         });
         // 文件树 / git / fs watch 的挂载全部随「进入项目」动作走
