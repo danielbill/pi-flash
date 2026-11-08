@@ -21,6 +21,8 @@ impl SessionRuntime {
         timestamp: Option<i64>,
         is_error: bool,
         tool_call_id: Option<String>,
+        custom_type: Option<String>,
+        custom_display: bool,
         details: Option<serde_json::Value>,
         raw_system: Option<serde_json::Value>,
         cx: &mut Context<Self>,
@@ -147,7 +149,11 @@ impl SessionRuntime {
                 }
             }
             "custom" => {
-                let _ = &details;
+                // customType/details 必须落表（pi-flash-9eck）：background
+                // 子代理的终态回灌（sync_cards_from_completions）按
+                // custom_type=="subagent-completion" + details.childId 找
+                // patch——此前 live 事件臂丢弃这两个字段，卡片转圈到
+                // 永远（重开会话走磁盘重放才自愈）。
                 self.messages.push(Msg {
                     role: Role::Custom,
                     bash: None,
@@ -158,9 +164,9 @@ impl SessionRuntime {
                     end_ts: None,
                     stop_reason: None,
                     error_message: None,
-                    custom_type: None,
-                    custom_display: true,
-                    details: None,
+                    custom_type,
+                    custom_display,
+                    details,
                     model: None,
                 });
             }

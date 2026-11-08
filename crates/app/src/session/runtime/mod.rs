@@ -501,6 +501,8 @@ pub(crate) use types::{
 #[cfg(test)]
 mod binding_guard_tests;
 #[cfg(test)]
+mod custom_msg_tests;
+#[cfg(test)]
 mod ext_source_registered_tests;
 #[cfg(test)]
 mod pin_regression_tests;
