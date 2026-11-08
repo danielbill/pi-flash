@@ -47,7 +47,7 @@ pub(crate) fn render_plan_approval(
     // 保持，agent 随 abort 停止，用户在 composer 自行输入新想法）
     let weak_dismiss = weak_close.clone();
     let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
-        let _ = weak_dismiss.update(cx, |c, cx| c.mc_plan_reject_abort(cx));
+        let _ = weak_dismiss.update(cx, |c, cx| c.mc_plan_reject(cx));
     };
     // 标准模态 = render_ext_dialog 同款骨架：layer 遮罩 + 居中卡片 +
     // stop_click（卡片内点击不冒泡成否决）；焦点 = dialog_focus（ESC 派发）
@@ -93,7 +93,7 @@ pub(crate) fn render_plan_approval(
                             "plan-close",
                             t,
                             move |_, cx| {
-                                let _ = weak_close.update(cx, |c, cx| c.mc_plan_reject_abort(cx));
+                                let _ = weak_close.update(cx, |c, cx| c.mc_plan_reject(cx));
                             },
                         )),
                 )
@@ -142,7 +142,7 @@ pub(crate) fn render_plan_approval(
                             weak.clone(),
                             tr("plan.reject").into(),
                             t,
-                            |c, cx| c.mc_plan_reject_abort(cx),
+                            |c, cx| c.mc_plan_reject(cx),
                         )),
                 ),
         ))

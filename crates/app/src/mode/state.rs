@@ -54,13 +54,19 @@ impl Chat {
         cx.notify();
     }
 
-    /// 弹窗【否决/取消 + Esc + 标题 ×】（裁决 5 简化版）：关弹窗 +
-    /// Abort+ClearQueue 配对（铁律：abort 不清队列）；present_plan 随
-    /// abort 取消（signal race），计划模式保持。用户的新想法直接在
-    /// composer 输入（无弹窗内输入框，2026-11-08 简化裁决）。
-    pub(crate) fn mc_plan_reject_abort(&mut self, cx: &mut Context<Self>) {
+    /// 弹窗【否决/取消 + Esc + 标题 ×】（2026-11-08 二次修正）：关弹窗 +
+    /// `/plan-reject` **优雅 resolve**——present_plan 正常返回（本轮干净
+    /// 收尾，模型不再续跑），计划模式保持。**不走 Abort**：abort 会把
+    /// 被掐的 present_plan 标成 "This operation was aborted" 错误卡
+    /// （真机实锤）；resolve 通道零噪声。用户的新想法直接在 composer
+    /// 输入（无弹窗内输入框，2026-11-08 简化裁决）。
+    pub(crate) fn mc_plan_reject(&mut self, cx: &mut Context<Self>) {
+        self.rt().read(cx).rpc(&Command::Prompt {
+            message: "/plan-reject".into(),
+            images: Vec::new(),
+            streaming_behavior: None,
+        });
         self.dlg.plan.approval = None;
-        self.rt().update(cx, |r, cx| r.abort_stream(cx));
         cx.notify();
     }
 }
