@@ -170,6 +170,78 @@ pub(crate) fn merge_tool_update(msg: &mut Msg, tool_call_id: &str, details: serd
     }
 }
 
+/// 044-0 B4：子代理终态来源归一——completion custom 消息与 settled 自定义
+/// 条目（扩展 `SETTLED_ENTRY_TYPE`）都带同一套扁平 details（childId /
+/// stopReason / errorCode? / session_file? / durationMs?）；这里折成「卡片
+/// details 的终态合并键」。返回 `(child_id, 终态字段)`。
+pub(crate) fn settled_patch_fields(
+    details: &serde_json::Value,
+) -> Option<(String, serde_json::Value)> {
+    let child_id = details.get("childId").and_then(|v| v.as_str())?;
+    let stop = details.get("stopReason").and_then(|v| v.as_str())?;
+    let mut merged = serde_json::Map::new();
+    merged.insert("status".into(), stop.into());
+    merged.insert("stop_reason".into(), stop.into());
+    if let Some(v) = details.get("errorCode") {
+        merged.insert("error_code".into(), v.clone());
+    }
+    if let Some(v) = details.get("session_file") {
+        merged.insert("session_file".into(), v.clone());
+    }
+    Some((child_id.to_string(), serde_json::Value::Object(merged)))
+}
+
+/// 把终态字段并入 `details.child_id` 匹配的派发 ToolCall 并置
+/// `result_arrived`——卡片从「运行中」即刻切到任务完成/执行异常。整表扫描：
+/// 一次结算只发生一次，数百条消息也是微秒级（无需 panel 索引）。幂等：
+/// 重复应用值相同返回 false（调用方据此决定是否 notify）。
+pub(crate) fn apply_child_settled(
+    msgs: &mut [Msg],
+    child_id: &str,
+    fields: &serde_json::Value,
+) -> bool {
+    let serde_json::Value::Object(fields) = fields else {
+        return false;
+    };
+    let mut changed = false;
+    for m in msgs.iter_mut() {
+        for b in m.blocks.iter_mut() {
+            let Block::ToolCall {
+                name,
+                details: slot,
+                result_arrived,
+                ..
+            } = b
+            else {
+                continue;
+            };
+            if name != "agent" {
+                continue;
+            }
+            let Some(serde_json::Value::Object(cur)) = slot.as_ref() else {
+                continue;
+            };
+            if cur.get("child_id").and_then(|v| v.as_str()) != Some(child_id) {
+                continue;
+            }
+            let map = slot.get_or_insert_with(|| serde_json::Value::Object(Default::default()));
+            if let serde_json::Value::Object(map) = map {
+                for (k, v) in fields {
+                    if map.get(k) != Some(v) {
+                        map.insert(k.clone(), v.clone());
+                        changed = true;
+                    }
+                }
+            }
+            if !*result_arrived {
+                *result_arrived = true;
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 impl Msg {
     /// 返回 Cow：单文本块（绝大多数用户消息）零拷贝借用。每帧每个可见
     /// 用户行都要调（气泡 markdown/技能折叠判定），长粘贴消息的全量 String
@@ -403,3 +475,6 @@ mod tail_tests;
 
 #[cfg(test)]
 mod tool_update_tests;
+
+#[cfg(test)]
+mod settled_tests;

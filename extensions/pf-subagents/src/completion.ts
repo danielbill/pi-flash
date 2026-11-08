@@ -8,6 +8,18 @@ import type { SubagentResult } from "./types.ts";
  */
 export const COMPLETION_TYPE = "subagent-completion";
 
+/**
+ * customType of the durable session **entry** appended the instant a
+ * background child settles.
+ *
+ * 卡片自更新：custom entry 不是消息，不参与父会话的消息顺序，所以 pi 会在
+ * `appendEntry` 当帧广播 `entry_appended`——而 completion **消息**在父会话流式
+ * 期间只能被 `steer` 排到父轮当前工具调用结束（模型自己 sleep 轮询时可达
+ * 数分钟），卡片于是长期停在「运行中」。宿主用这条条目把派发卡片当帧切到
+ * 终态，completion 消息仍只负责模型可见的正文。
+ */
+export const SETTLED_ENTRY_TYPE = "subagent-settled";
+
 /** Toast keeps to one line-ish preview; the message carries the full report. */
 const TOAST_CHARS = 400;
 
@@ -69,8 +81,12 @@ function structuredResult(result: SubagentResult): string {
 	return JSON.stringify(payload);
 }
 
-/** Builds the toast + parent-session message for one settled child. */
-export function composeCompletion(result: SubagentResult): CompletionMessage {
+/**
+ * Terminal fields both host channels carry: the completion message's
+ * `details` and the settled entry's `data` are the same flat object, so the
+ * host patches cards from either source with one code path.
+ */
+export function completionDetails(result: SubagentResult): Record<string, unknown> {
 	const details: Record<string, unknown> = {
 		childId: result.childId,
 		stopReason: result.stopReason,
@@ -78,6 +94,20 @@ export function composeCompletion(result: SubagentResult): CompletionMessage {
 	if (result.errorCode) details.errorCode = result.errorCode;
 	if (result.session_file) details.session_file = result.session_file;
 	if (result.durationMs !== undefined) details.durationMs = result.durationMs;
+	return details;
+}
+
+/** Payload of the settled entry (see [`SETTLED_ENTRY_TYPE`]). */
+export function settledEntry(result: SubagentResult): {
+	customType: string;
+	data: Record<string, unknown>;
+} {
+	return { customType: SETTLED_ENTRY_TYPE, data: completionDetails(result) };
+}
+
+/** Builds the toast + parent-session message for one settled child. */
+export function composeCompletion(result: SubagentResult): CompletionMessage {
+	const details = completionDetails(result);
 
 	const parts = [
 		settlementSummary(result),

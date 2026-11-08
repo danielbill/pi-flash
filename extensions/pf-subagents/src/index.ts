@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 import type { ChildSession, ResolvedComposition, SessionFactory, SessionFactoryOptions } from "./backends/local.ts";
 import { LocalProvider } from "./backends/local.ts";
-import { COMPLETION_TYPE, composeCompletion } from "./completion.ts";
+import { COMPLETION_TYPE, composeCompletion, settledEntry } from "./completion.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
 import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
@@ -364,6 +364,15 @@ export default function piSubagents(pi: ExtensionAPI): void {
 		maxDepth: initialConfig.maxDepth.default,
 		onCompleted: (result) => {
 			const completion = composeCompletion(result);
+			// 卡片自更新（044-0 B4）：终态先落成会话**自定义条目**——pi 当帧广播
+			// `entry_appended`，不受父会话转向（steer）排队影响；宿主据此即时把
+			// 派发卡片切到终态，无需等父 agent 下一轮把 completion 消息读进会话。
+			try {
+				const settled = settledEntry(result);
+				pi.appendEntry(settled.customType, settled.data);
+			} catch {
+				// 条目只是宿主显示通道；失败仍有 completion 消息与 toast 兜底。
+			}
 			notifyParent(completion.toast);
 			deliverParent(completion.content, completion.details);
 		},

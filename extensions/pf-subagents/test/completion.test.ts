@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { COMPLETION_TYPE, composeCompletion } from "../src/completion.ts";
+import { COMPLETION_TYPE, SETTLED_ENTRY_TYPE, composeCompletion, settledEntry } from "../src/completion.ts";
 import type { SubagentResult } from "../src/types.ts";
 
 const result = (over: Partial<SubagentResult> = {}): SubagentResult => ({
@@ -89,5 +89,26 @@ describe("composeCompletion", () => {
 			),
 			true,
 		);
+	});
+
+	// 044-0 B4：settled 自定义条目（宿主当帧刷卡片）与 completion 消息 details 同源
+	it("builds the settled entry with the same terminal fields as the message", () => {
+		const r = result({ session_file: "/sessions/sub-3.jsonl", durationMs: 42 });
+		const entry = settledEntry(r);
+		assert.equal(entry.customType, SETTLED_ENTRY_TYPE);
+		assert.equal(SETTLED_ENTRY_TYPE, "subagent-settled");
+		assert.deepEqual(entry.data, composeCompletion(r).details);
+		assert.deepEqual(entry.data, {
+			childId: "sub-3",
+			stopReason: "completed",
+			session_file: "/sessions/sub-3.jsonl",
+			durationMs: 42,
+		});
+	});
+
+	it("keeps the error code in the settled entry", () => {
+		const entry = settledEntry(result({ stopReason: "error", errorCode: "CHILD_CRASHED" }));
+		assert.equal(entry.data.errorCode, "CHILD_CRASHED");
+		assert.equal(entry.data.stopReason, "error");
 	});
 });

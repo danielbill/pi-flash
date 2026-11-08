@@ -275,6 +275,28 @@ impl SessionRuntime {
                         }
                     }
                 }
+                // 044-0 B4：子代理结算的 `subagent-settled` 自定义条目——扩展在
+                // 子会话结算当帧 appendEntry，pi 立即广播（custom entry 不参与
+                // 消息顺序，不像 completion 消息会被 steer 排到父轮工具结束）。
+                // 收到即把派发卡片切到终态：spinner 停、点开子会话可点。
+                if kind == "entry_appended" {
+                    let entry = &value["entry"];
+                    if entry["type"].as_str() == Some("custom")
+                        && entry["customType"].as_str() == Some("subagent-settled")
+                    {
+                        if let Some((cid, fields)) =
+                            crate::session::messages::settled_patch_fields(&entry["data"])
+                        {
+                            if crate::session::messages::apply_child_settled(
+                                &mut self.messages,
+                                &cid,
+                                &fields,
+                            ) {
+                                cx.notify();
+                            }
+                        }
+                    }
+                }
             }
             // 思考档真值（pi 按模型能力截断后广播）：状态槽是胶囊标签的
             // 首选来源，不跟着它走就永远停在 get_state 那一刻的旧值——真机
