@@ -262,13 +262,14 @@ pub(super) fn agent_detail(
     });
     form = form.child(agent_row(
         &tr("agents.inject_agents_md"),
+        // 开关在前、说明随后左对齐（2026-11-08 用户定稿）
         div()
             .flex()
             .items_center()
             .gap(px(8.))
             .w_full()
-            .child(inject_hint)
-            .child(inject_sw),
+            .child(inject_sw)
+            .child(inject_hint),
         false,
     ));
 
