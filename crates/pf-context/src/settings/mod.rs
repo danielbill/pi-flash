@@ -124,6 +124,12 @@ struct StoreInner {
     /// L2/L3 层覆盖值（index 0=Project / 1=Session）。S1 仅供测试与占位；
     /// S2/S4 接线。`Value::Null` = 移除覆盖。**永不回写文件**（001-0 §4）。
     overrides: Mutex<[HashMap<String, Value>; 2]>,
+    /// boot-only 段的值（S2：dev_flags，源 = dev-flags.json + PI_FLASH_* env，
+    /// open 时一次性灌入，改了需重启）。boot 值压过文件层，且**永不回写**。
+    boot: HashMap<&'static str, Value>,
+    /// set_preview 过的 section（只换内存未标脏；save_now 时转 dirty 落盘，
+    /// 001-1 §2「拖拽预览松手才写」）
+    previewed: Mutex<HashSet<&'static str>>,
     dirty: Mutex<HashSet<&'static str>>,
     dirty_cv: Condvar,
     /// 写者线程与同步 [`SettingsStore::flush`] 互斥（flush 先到 = 写者扑空）
@@ -151,6 +157,10 @@ impl SettingsStore {
     /// `[perf] settings.load` 打点走 `PI_FLASH_PERF=1` 门控（app 同约定）。
     pub fn open(path: Option<PathBuf>) -> SettingsStore {
         let t0 = Instant::now();
+        // boot-only 段（S2：dev_flags）：dev-flags.json + PI_FLASH_* env 的一次性
+        // 解析（语义全在 pi-link::dev_flags，env 最高优先；boot-only = 改了需重启）
+        let mut boot = HashMap::new();
+        boot.insert(sections::DevFlags::KEY, sections::dev_flags::boot_value());
         let inner = Arc::new(StoreInner {
             path,
             snap: RwLock::new(Arc::new(Snapshot {
@@ -160,6 +170,8 @@ impl SettingsStore {
                 problems: Arc::from(vec![]),
             })),
             overrides: Mutex::new([HashMap::new(), HashMap::new()]),
+            boot,
+            previewed: Mutex::new(HashSet::new()),
             dirty: Mutex::new(HashSet::new()),
             dirty_cv: Condvar::new(),
             write_lock: Mutex::new(()),
@@ -259,8 +271,31 @@ impl SettingsStore {
             *guard = Arc::clone(&arc);
             arc
         };
+        self.inner.previewed.lock().unwrap().remove(&T::KEY);
         self.inner.dirty.lock().unwrap().insert(T::KEY);
         self.inner.dirty_cv.notify_all();
+        self.inner.broadcast(&new_snap);
+    }
+
+    /// 拖拽预览通道（001-1 §2）：同 [`set`](Self::set) 的内存换新与广播，
+    /// 但**不标脏**——连续 MouseMove 不产生写盘；松手后
+    /// [`save_now`](Self::save_now) 把预览过的 section 转 dirty 落盘。
+    pub fn set_preview<T: Section>(&self, f: impl FnOnce(&mut T)) {
+        let cur = self.get::<T>();
+        let mut t = (*cur).clone();
+        f(&mut t);
+        t.validate();
+        let json = serde_json::to_value(&t).expect("section 序列化");
+        let new_snap = {
+            let mut guard = self.inner.snap.write().unwrap();
+            let mut s = guard.clone_shallow();
+            s.sections.insert(T::KEY, Arc::new(t));
+            s.section_json.insert(T::KEY, json);
+            let arc = Arc::new(s);
+            *guard = Arc::clone(&arc);
+            arc
+        };
+        self.inner.previewed.lock().unwrap().insert(T::KEY);
         self.inner.broadcast(&new_snap);
     }
 
@@ -293,8 +328,17 @@ impl SettingsStore {
         self.inner.flush_locked()
     }
 
-    /// [`flush`](Self::flush) 的别名（迁移/测试语义：立刻写，不等 coalesce）。
+    /// 立刻落盘：预览过的 section 转 dirty + 同步 flush（迁移/测试/拖拽松手）。
     pub fn save_now(&self) -> Result<(), String> {
+        {
+            let mut pv = self.inner.previewed.lock().unwrap();
+            if !pv.is_empty() {
+                let mut d = self.inner.dirty.lock().unwrap();
+                for k in pv.drain() {
+                    d.insert(k);
+                }
+            }
+        }
         self.flush()
     }
 
@@ -413,18 +457,21 @@ impl StoreInner {
         let mut sections = HashMap::new();
         let mut section_json = HashMap::new();
         let mut origins = HashMap::new();
-        for &key in sections::registered() {
-            let l1_disk = source::layer1_for(key, map);
+        for def in sections::registered() {
+            let key = def.key;
+            let mut l1 = source::layer1_for(key, map);
             let origin = if map.contains_key(key) {
                 Origin::Section
-            } else if l1_disk.is_some() {
+            } else if l1.is_some() {
                 Origin::Legacy
             } else {
                 Origin::Absent
             };
             origins.insert(key, origin);
-
-            let mut l1 = l1_disk;
+            // boot-only 段（dev_flags）：boot 值压过文件层（它不在 app-settings）
+            if let Some(b) = self.boot.get(key) {
+                l1 = Some(b.clone());
+            }
             // 本进程有未落盘改动：以内存为准——外部重载 / 层覆盖不得回退用户意图
             if dirty.contains(key) {
                 if let Some(cur) = cur_json.get(key) {
@@ -496,18 +543,16 @@ impl StoreInner {
     }
 
     /// 单个 section 的读-改-写落盘（doc.rs 管线），成功写后登记回声窗口。
+    /// 传整个快照：首次写（v1 文档）触发整份升级（version:2 + 全 section）。
     fn flush_section(&self, key: &'static str) -> Result<bool, String> {
         let Some(path) = self.path.as_ref() else {
             return Ok(false);
         };
-        let section_json = {
-            let snap = self.snap.read().unwrap();
-            snap.section_json
-                .get(key)
-                .cloned()
-                .ok_or_else(|| format!("{key} 不在快照"))?
-        };
-        let written = doc::write_section(path, key, &section_json)?;
+        let snap = Arc::clone(&self.snap.read().unwrap());
+        if !snap.section_json.contains_key(key) {
+            return Err(format!("{key} 不在快照"));
+        }
+        let written = doc::write_section(path, key, &snap)?;
         if written {
             self.writes.fetch_add(1, Ordering::Relaxed);
             if let Ok(mut w) = self.watch.lock() {

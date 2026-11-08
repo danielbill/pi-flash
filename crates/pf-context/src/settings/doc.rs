@@ -1,4 +1,5 @@
-//! 文件级写层：读-改-写（只替换本 section）+ 原子落盘 + 同内容跳过。
+//! 文件级写层：读-改-写（只替换本 section）+ 原子落盘 + 同内容跳过 +
+//! 首写整份升级（001-1 §3 写迁移）。
 //!
 //! 为什么必须读-改-写（001-1 §2）：整份重建会静默抹掉用户手工加的未知键、
 //! 未来版本写入的 section、其它分支实验字段——001-0 §1 点名的存量缺陷，
@@ -8,31 +9,45 @@ use serde_json::{Map, Value};
 use std::path::Path;
 
 use super::section::deep_merge;
-use super::sections;
+use super::{Snapshot, sections};
 
 /// 把一个 section 的规范 JSON 落盘（读-改-写），返回是否真的写了。
 ///
 /// - 只替换 `key` 指向的 section：盘上其它键/section（含未知键）原样保留；
 /// - section 内既有未知字段透传（typed 值深合并覆盖已知字段）；
 /// - section 的 legacy 平铺键同值回写（001-1 §3 写迁移，旧键保留一版）；
+/// - **整份升级**：盘上 `version != 2` 时（v1 平铺文档），任一写触发
+///   `version: 2` + 全部 in-file section 落位 + 全部 legacy 平铺键保留一版；
 /// - 与盘上内容一致则跳过写（少一次 IO + watcher 回声）；
 /// - 盘上是坏档时以内存为准重建（坏内容无从保留，读侧有 problem 记录）。
-pub(crate) fn write_section(path: &Path, key: &str, section_json: &Value) -> Result<bool, String> {
+pub(crate) fn write_section(path: &Path, key: &str, snap: &Snapshot) -> Result<bool, String> {
+    let section_json = snap
+        .section_json
+        .get(key)
+        .ok_or_else(|| format!("{key} 不在快照"))?;
     let mut map = match super::source::read_doc(path) {
         super::source::Doc::Ok(map) => map,
         super::source::Doc::Missing | super::source::Doc::Broken => Map::new(),
     };
 
-    // 原地深合并（不用 remove+insert——preserve_order 下那会把键挪到末尾，
-    // 破坏同内容跳过的字节级比对；get_mut 保键位不动）
-    match map.get_mut(key) {
-        Some(slot) if slot.is_object() => deep_merge(slot, section_json),
-        // 既有标量/垃圾（或本来就缺）：整段以 typed 值替换
-        _ => {
-            map.insert(key.to_string(), section_json.clone());
+    let full_upgrade = map.get("version").and_then(Value::as_u64) != Some(2);
+    if full_upgrade {
+        // v1 → v2：全部 section 落位 + 全部 legacy 平铺键保留一版（回滚兼容）
+        for def in sections::registered() {
+            if !def.in_file {
+                continue; // boot-only 段（dev_flags）永不进 app-settings.json
+            }
+            let Some(json) = snap.section_json.get(def.key) else {
+                continue;
+            };
+            upsert_section(&mut map, def.key, json);
+            sections::write_legacy(def.key, json, &mut map);
         }
+        map.insert("version".into(), Value::from(2));
+    } else {
+        upsert_section(&mut map, key, section_json);
+        sections::write_legacy(key, section_json, &mut map);
     }
-    sections::write_legacy(key, section_json, &mut map);
 
     let value = Value::Object(map);
     let text = serde_json::to_string_pretty(&value).map_err(|e| format!("序列化失败: {e}"))?;
@@ -42,4 +57,16 @@ pub(crate) fn write_section(path: &Path, key: &str, section_json: &Value) -> Res
     // tmp + rename 原子写（pi-link::config 与 workspace 存储层同一条管线）
     pi_link::config::write_json(path, &value)?;
     Ok(true)
+}
+
+/// 原地深合并 upsert（不用 remove+insert——preserve_order 下那会把键挪到
+/// 末尾，破坏同内容跳过的字节级比对；get_mut 保键位不动）。
+fn upsert_section(map: &mut Map<String, Value>, key: &str, section_json: &Value) {
+    match map.get_mut(key) {
+        Some(slot) if slot.is_object() => deep_merge(slot, section_json),
+        // 既有标量/垃圾（或本来就缺）：整段以 typed 值替换
+        _ => {
+            map.insert(key.to_string(), section_json.clone());
+        }
+    }
 }

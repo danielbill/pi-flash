@@ -14,9 +14,8 @@
 //!   env 是进程级快照，压过文件且改了要重启——001-0 §1 的 bug 根源；现版
 //!   扩展每次委派重读 config.json，只保留路径类 env。
 //!
-//! `AppSettings` 镜像字段（`subagent_capacity`/`subagent_enabled`）仅**内存
-//! 同步**、不再经 [`super::save_app_settings`] 落盘：主题等旧写入者整份重建
-//! JSON 时不会把陈值写回（S2 收编后随字段一起退役）。
+//! 001-S2 起 `save_app_settings` 是 diff 薄壳、subagents 段不经过它——
+//! 陈值回写风险已随整份重建写入路径一起消失，无需内存镜像同步。
 
 use super::*;
 
@@ -110,7 +109,6 @@ pub fn set_subagent_capacity(v: u64) {
     pf_context::hub()
         .settings
         .set::<Subagents>(|s| s.capacity = effective);
-    sync_capacity_mirror(Some(effective));
 }
 
 /// 用户面模块开关写入（设置-子代理页「全局设置」行）。进 hub（同上管线，
@@ -120,19 +118,4 @@ pub fn set_subagent_module_switch(on: bool) {
     pf_context::hub()
         .settings
         .set::<Subagents>(|s| s.enabled = on);
-    sync_capacity_mirror(None);
-}
-
-/// 内存镜像同步（只动缓存不落盘）：`effective` 有值 = 容量，`None` = 只同步
-/// 开关。旧写入者 [`super::save_app_settings`]（主题/字体等改动触发）整份
-/// 重建平铺 JSON 时，镜像陈值才不会回写盘面（001-S1 过渡保护）。
-fn sync_capacity_mirror(effective: Option<u64>) {
-    with_app_settings_cache(|cache| {
-        let mut s = (*cache).clone().unwrap_or_default();
-        if let Some(v) = effective {
-            s.subagent_capacity = Some(v);
-        }
-        s.subagent_enabled = Some(subagent_module_switch());
-        *cache = Some(s);
-    });
 }

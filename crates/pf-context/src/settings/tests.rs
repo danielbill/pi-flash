@@ -3,8 +3,8 @@
 
 use super::*;
 use section::Section;
-use sections::Subagents;
 use sections::probe::Probe;
+use sections::{Appearance, Chat, DevFlags, FontSpec, Index, Models, Sessions, Shell, Subagents};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -320,4 +320,170 @@ fn memory_only_store_writes_nothing() {
     assert!(store.flush().is_ok(), "无路径 = 无盘可写，静默成功");
     assert_eq!(store.stats().writes, 0);
     assert!(!store.check_external_change());
+}
+
+// ---------------------------------------------------------------------------
+// S2：v1 全量 25 键 → v2 整份升级（version:2 + 全 section + 旧键保留一版）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s2_full_upgrade_writes_version_and_all_sections() {
+    let dir = tmp_dir("s2-upgrade");
+    let path = dir.join("app-settings.json");
+    write_json_file(
+        &path,
+        &json!({
+            "theme": "rose",
+            "lang": 1,
+            "chat_content_width": 1000,
+            "session_display_count": 5,
+            "auto_clean_days": 30,
+            "default_provider": "deepseek",
+            "default_model": "deepseek-flash",
+            "auto_update": false,
+            "sound": true,
+            "subagent_capacity": 5,
+            "x_unknown": { "keep": [1, 2] },
+        }),
+    );
+    let store = SettingsStore::open(Some(path.clone()));
+    // 读迁移：全部平铺键进各 section
+    assert_eq!(store.get::<Appearance>().theme.as_deref(), Some("rose"));
+    assert_eq!(store.get::<Chat>().content_width, Some(1000));
+    assert_eq!(store.get::<Sessions>().display_count, Some(5));
+    assert_eq!(
+        store.get::<Models>().default_model.as_deref(),
+        Some("deepseek-flash")
+    );
+    assert_eq!(store.get::<Shell>().sound, Some(true));
+
+    // 任一 set → 整份升级：version:2 + 全部 section + 全部平铺键保留 + 未知键
+    store.set(|c: &mut Chat| c.show_thinking = Some(true));
+    store.flush().unwrap();
+    let doc = read_json_file(&path);
+    assert_eq!(doc["version"], 2);
+    for section in [
+        "subagents",
+        "appearance",
+        "chat",
+        "sessions",
+        "index",
+        "models",
+        "updates",
+        "shell",
+    ] {
+        assert!(
+            doc[section].is_object(),
+            "整份升级必须落全部 section：{section}"
+        );
+    }
+    assert_eq!(doc["theme"], "rose", "旧平铺键保留一版");
+    assert_eq!(doc["session_display_count"], 5);
+    assert_eq!(doc["x_unknown"], json!({ "keep": [1, 2] }));
+    assert!(
+        !doc.as_object().unwrap().contains_key("dev_flags"),
+        "boot-only 段不落盘"
+    );
+    // 升级后值不变
+    let store2 = SettingsStore::open(Some(path));
+    assert_eq!(store2.get::<Chat>().content_width, Some(1000));
+    assert_eq!(store2.get::<Chat>().show_thinking, Some(true));
+}
+
+// ---------------------------------------------------------------------------
+// S2：新 section 的 validate 唯一钳点
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s2_sections_clamp_in_validate() {
+    let dir = tmp_dir("s2-clamp");
+    let store = store_at(&dir);
+    store.set(|c: &mut Chat| c.content_width = Some(9999));
+    assert_eq!(store.get::<Chat>().content_width, Some(1200));
+    store.set(|se: &mut Sessions| {
+        se.display_count = Some(1);
+        se.auto_clean_days = Some(500);
+    });
+    let se = store.get::<Sessions>();
+    assert_eq!((se.display_count, se.auto_clean_days), (Some(3), Some(100)));
+    store.set(|ix: &mut Index| {
+        ix.at_index_ttl_secs = Some(0);
+        ix.at_index_max_projects = Some(0);
+    });
+    let ix = store.get::<Index>();
+    assert_eq!(
+        (ix.at_index_ttl_secs, ix.at_index_max_projects),
+        (Some(1), Some(1))
+    );
+    store.set(|a: &mut Appearance| {
+        a.lang = Some(9);
+        a.session_font = Some(FontSpec {
+            family: "Inter".into(),
+            size: 99.0,
+        });
+    });
+    let a = store.get::<Appearance>();
+    assert_eq!(a.lang, Some(2));
+    assert_eq!(a.session_font.as_ref().unwrap().size, 30.0);
+}
+
+// ---------------------------------------------------------------------------
+// S2：拖拽预览通道——只换内存，save_now 才落盘
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s2_preview_only_persists_on_save_now() {
+    let dir = tmp_dir("s2-preview");
+    let path = dir.join("app-settings.json");
+    write_json_file(&path, &json!({ "chat_content_width": 920 }));
+    let store = SettingsStore::open(Some(path.clone()));
+    assert_eq!(store.get::<Chat>().content_width, Some(920));
+
+    store.set_preview(|c: &mut Chat| c.content_width = Some(700));
+    assert_eq!(
+        store.get::<Chat>().content_width,
+        Some(700),
+        "预览立即换内存"
+    );
+    assert_eq!(
+        read_json_file(&path)["chat_content_width"],
+        920,
+        "预览不落盘"
+    );
+
+    store.save_now().unwrap();
+    assert_eq!(read_json_file(&path)["chat_content_width"], 700, "松手落盘");
+
+    // 真 set 会消费掉预览态：save_now 不再重复写
+    store.set(|c: &mut Chat| c.git_markers = Some(true));
+    store.save_now().unwrap();
+    let writes_after = store.stats().writes;
+    store.save_now().unwrap();
+    assert_eq!(store.stats().writes, writes_after, "空 flush 不写盘");
+}
+
+// ---------------------------------------------------------------------------
+// S2：dev_flags boot-only——只读、不落 app-settings.json
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s2_dev_flags_boot_only_never_written() {
+    let dir = tmp_dir("s2-devflags");
+    let path = dir.join("app-settings.json");
+    let store = SettingsStore::open(Some(path.clone()));
+    let df = store.get::<DevFlags>();
+    // 语义对齐 pi-link default_for：subagents 默认开（env 未设时）
+    let env_subagents = std::env::var("PI_FLASH_SUBAGENTS")
+        .ok()
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"));
+    assert_eq!(df.flag("subagents"), env_subagents.unwrap_or(true));
+    assert_eq!(df.flag("__no_such_flag__"), false);
+
+    store.set(|c: &mut Chat| c.git_markers = Some(true));
+    store.flush().unwrap();
+    let doc_text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !doc_text.contains("dev_flags"),
+        "boot-only 段永不进 app-settings.json"
+    );
 }

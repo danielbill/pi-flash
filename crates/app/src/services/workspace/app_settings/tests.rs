@@ -1,7 +1,7 @@
 //! app_settings 测试（itlq.9 自 app_settings.rs 外移，纯结构搬移）。
 
-use super::*;
-use crate::services::workspace::load_map_from;
+use crate::services::workspace::{load_map_from, save_map_to};
+use serde_json::Value;
 use std::path::PathBuf;
 
 fn tmpfile(name: &str) -> PathBuf {
@@ -28,7 +28,8 @@ fn app_settings_roundtrip() {
     obj.insert("lang".into(), Value::Number(1u64.into()));
     save_map_to(&path, &obj);
     let map = load_map_from(&path);
-    let spec = font_spec_from(map.get("session_font").unwrap()).unwrap();
+    let spec: pf_context::sections::FontSpec =
+        serde_json::from_value(map.get("session_font").unwrap().clone()).unwrap();
     assert_eq!(spec.family, "Inter");
     assert_eq!(spec.size, 14.5);
     assert_eq!(map.get("theme").unwrap(), "mist");

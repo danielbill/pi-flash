@@ -50,19 +50,6 @@ pub(crate) fn load_map_from(path: &Path) -> serde_json::Map<String, Value> {
     out
 }
 
-/// Plain object load without workspace-key normalization (app_settings.json
-/// keys are setting names, not paths).
-pub(crate) fn load_plain_map_from(path: &Path) -> serde_json::Map<String, Value> {
-    let mut out = serde_json::Map::new();
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return out;
-    };
-    if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&raw) {
-        out = obj;
-    }
-    out
-}
-
 /// Atomic map write (tmp + rename through pi_link::config::write_json) with
 /// a no-op skip when the serialized content is unchanged.
 pub(crate) fn save_map_to(path: &Path, map: &serde_json::Map<String, Value>) -> bool {
