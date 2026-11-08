@@ -459,6 +459,10 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
                 custom_display: true,
                 details: None,
             }),
+            "custom" if m["customType"].as_str() == Some(crate::mode::CONTEXT_CUSTOM_TYPE) => {
+                // 031-1：计划提醒是内部指令，磁盘尾读也不进 transcript
+                //（ingest/stream 两路径同款过滤）
+            }
             "custom" => out.push(Msg {
                 role: Role::Custom,
                 bash: None,

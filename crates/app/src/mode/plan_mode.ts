@@ -32,15 +32,13 @@ const ENTRY_TYPE = "pf-plan-mode";
 const CONTEXT_TYPE = "pf-plan-context";
 const PLAN_TOOL = "present_plan";
 
-/** 计划态放行的内置只读工具（其余一律 block，含 MCP/agent）。 */
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
-
 const BLOCK_REASON =
-	"Blocked by plan mode: only read-only exploration is allowed. " +
+	"Blocked by plan mode: file modifications are not allowed. " +
 	"Discuss the plan with the user; when the plan is complete, call the " +
 	`'${PLAN_TOOL}' tool with the full plan. Only the user can exit plan mode.`;
 
-// ---- bash 只读白名单（官方 plan-mode 示例 utils.ts 同款思路，缺省拒绝）----
+// ---- bash 破坏性命令黑名单（2026-11-08 用户裁决：只拒绝修改，缺省放行
+// —— 压缩/Provider/子代理委派等扩展工具与只读管道必须原样可用） ----
 
 const DESTRUCTIVE_PATTERNS = [
 	/\brm\b/i, /\brmdir\b/i, /\bmv\b/i, /\bcp\b/i, /\bmkdir\b/i, /\btouch\b/i,
@@ -58,19 +56,11 @@ const DESTRUCTIVE_PATTERNS = [
 	/\b(vim?|nano|emacs|code|subl)\b/i,
 ];
 
-const SAFE_PATTERNS = [
-	/^\s*(cat|head|tail|less|more|grep|find|ls|pwd|echo|printf|wc|sort|uniq|diff|file|stat|du|df|tree|which|whereis|type|env|printenv|uname|whoami|id|date|cal|uptime|ps|free|jq|rg|fd|bat|eza)\b/,
-	/^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get)/,
-	/^\s*git\s+ls-/,
-	/^\s*npm\s+(list|ls|view|info|search|outdated|audit)/,
-	/^\s*(node|python|python3)\s+--version/,
-	/^\s*curl\s/, /^\s*wget\s+-O\s*-[ \t]*$/,
-	/^\s*sed\s+-n/, /^\s*awk\b/,
-];
-
 function isSafeCommand(command: string): boolean {
+	// 2026-11-08 裁决反转：缺省**放行**，仅破坏性黑名单命中才拒
+	//（原 SAFE_PATTERNS 白名单不再作闸门条件；testcase 可重建对拍）
 	const cmd = command ?? "";
-	return !DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd)) && SAFE_PATTERNS.some((p) => p.test(cmd));
+	return !DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd));
 }
 
 // ---- 状态（单布尔，无工具快照）----
@@ -117,9 +107,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			return;
 		}
-		if (!READ_ONLY_TOOLS.has(event.toolName)) {
-			return { block: true, reason: BLOCK_REASON };
-		}
+		// 2026-11-08 用户裁决：其余工具一律放行——压缩/Provider（freeflow）/
+		// 子代理委派/MCP 等扩展生态不下掉，计划模式只拒绝「修改」本身。
 	});
 
 	// ---- 每轮提醒（仅在计划态；背景任务触发的 run 不重复注入）----
@@ -134,8 +123,10 @@ You are in plan mode. The user wants a plan, not execution.
 
 Restrictions:
 - You MUST NOT modify any files or system state.
-- edit/write and all non-read-only tools (destructive bash, MCP tools, subagents) are BLOCKED and return errors.
-- Explore read-only (read/grep/find/ls, safe bash) and DISCUSS the work plan with the user.
+- edit/write and destructive bash are BLOCKED and return errors.
+- Other tools (compaction, provider switching, subagent delegation, MCP) remain available — use them normally, but NOT to work around the restriction: never modify files or state through them.
+
+Explore read-only where appropriate and DISCUSS the work plan with the user.
 
 When the plan is complete (and only then), call the '${PLAN_TOOL}' tool with the complete plan in Markdown as the 'plan' argument. The user will approve or reject it. If the user replies with feedback, refine the plan; only user approval ends plan mode.`,
 			},

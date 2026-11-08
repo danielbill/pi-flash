@@ -77,6 +77,10 @@ impl SessionRuntime {
                 }
             }
             "custom" => {
+                // 031-1：计划提醒是内部指令（pf-plan-context），不进 transcript
+                if msg["customType"].as_str() == Some(crate::mode::CONTEXT_CUSTOM_TYPE) {
+                    return;
+                }
                 self.messages.push(Msg {
                     role: Role::Custom,
                     bash: None,
@@ -128,8 +132,26 @@ impl SessionRuntime {
         // 到消息流当场折进卡片，卡片 spinner / 导航点不出现两段式。
         if role == "custom" && msg["customType"].as_str() == Some(COMPLETION_CUSTOM) {
             crate::session::messages::apply_completion_messages(&mut self.messages);
+            // 账本同源：后台派发的 toolResult 只是 ack，终态在这条 custom
+            // 消息的 details（camelCase，扩展 onCompleted 落盘）。
+            if let Some(cid) = msg["details"]["childId"].as_str() {
+                let stop = msg["details"]["stopReason"].as_str();
+                if self.subagents.settle(cid, stop) {
+                    self.nav_dirty = true;
+                }
+            }
         }
         self.notify_list(cx);
+    }
+
+    /// 当前轮序号（第 n 条 User 消息 = 第 n 轮，0 基）。派发落地时取**一次**，
+    /// 之后由账本定格——不再事后按消息位置反推（旧投影实现的差一错根源）。
+    pub(super) fn current_turn(&self) -> usize {
+        self.messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .count()
+            .saturating_sub(1)
     }
 
     fn last_assistant(&mut self) -> &mut Msg {
@@ -223,6 +245,11 @@ impl SessionRuntime {
         // completion custom 消息里——进内存即折进卡片（首帧卡片已停
         // spinner、导航点已青红），而不是等事后回灌。
         crate::session::messages::apply_completion_messages(&mut self.messages);
+        // 子代理账本随权威快照重建（内存态：丢了大不了重建）。历史只能
+        // 从 transcript 的 `agent` 块回放——嵌套派发在 transcript 里没有
+        // 块（见 `runtime/subagents.rs` 模块文档）。
+        self.subagents.reset_and_seed(&self.messages);
+        self.nav_dirty = true;
         // 权威内容落定（哪怕带回 0 条——真空会话不能永久钉在加载页）
         self.messages_loaded = true;
         self.notify_list(cx);

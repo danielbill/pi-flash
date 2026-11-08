@@ -77,6 +77,12 @@ impl Chat {
                     window.focus(&handle);
                 }
             }
+        } else if self.dlg.plan.approval.is_some() {
+            // 031-1 计划审批弹窗：无输入件——开窗焦点归 dialog_focus（overlay
+            // 层 = ESC 否决派发路径），逐帧保持不被 composer 抢回
+            if !self.dlg.dialog_focus.is_focused(window) {
+                window.focus(&self.dlg.dialog_focus);
+            }
         } else if self.dlg.dialog.is_some()
             // overlay::confirm 两槽（文件树删除/删除失败）不占 Dialog 枚举，
             // 但同样要一打开就持有焦点——Enter 确认 / ESC 取消才能立即生效

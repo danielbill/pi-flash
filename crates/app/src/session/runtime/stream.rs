@@ -149,6 +149,11 @@ impl SessionRuntime {
                 }
             }
             "custom" => {
+                // 031-1：计划提醒是内部指令（pf-plan-context），live 流不进
+                // transcript（重放路径 ingest.rs 同款过滤）
+                if custom_type.as_deref() == Some(crate::mode::CONTEXT_CUSTOM_TYPE) {
+                    return None;
+                }
                 // customType/details 必须落表（pi-flash-9eck）：background
                 // 子代理的终态按 `custom_type=="subagent-completion"` +
                 // `details.childId` 折进派发卡片——此前 live 事件臂丢弃这

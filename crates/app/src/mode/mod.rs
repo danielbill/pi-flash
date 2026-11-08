@@ -20,6 +20,11 @@ use std::path::{Path, PathBuf};
 /// 扩展→PF 状态广播的 statusKey（plan_mode.ts `setStatus` 契约键）。
 pub(crate) const STATUS_KEY: &str = "pf-plan";
 
+/// 每轮计划提醒的 customType（plan_mode.ts before_agent_start 注入）——
+/// 内部指令消息，三个消息 ingest 点都跳过渲染（2026-11-08 用户反馈：
+/// 卡片外露污染 transcript；LLM 侧由扩展的 context 事件自行清理）。
+pub(crate) const CONTEXT_CUSTOM_TYPE: &str = "pf-plan-context";
+
 /// setStatus("pf-plan") 广播载荷（plan_mode.ts 契约：
 /// `{"v":1,"enabled":bool,"pending":string|null}`，pending = 挂起计划正文）。
 pub(crate) struct PlanBroadcast {

@@ -461,13 +461,13 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("thinking.all_built_in_tools", "全部内置工具", "全部內置工具", "All built-in tools"),
     // 034/040 会话扩展清单（2026-10 改版：档名 full+、勾选即生效）
     ("extensions.full", "full+", "full+", "full+"),
-    // 031-1 计划模式（工具菜单顶项 + 审批弹窗三行；键位提示并入文案朴实表达）
+    // 031-1 计划模式（工具菜单顶项 + 审批弹窗两钮；键位提示并入文案朴实表达）
     ("plan.menu", "计划模式", "計劃模式", "Plan mode"),
     ("plan.menu_desc", "只读探索，先出计划", "只讀探索，先出計劃", "Read-only exploration, plan first"),
+    ("plan.title", "计划", "計劃", "Plan"),
     ("plan.ext_unavailable", "计划模式不可用：扩展命令未被消费", "計劃模式不可用：擴展命令未被消費", "Plan mode unavailable: extension command was not consumed"),
     ("plan.approve", "批准计划，取消计划模式", "批准計劃，取消計劃模式", "Approve plan, exit plan mode"),
     ("plan.reject", "否决 / 取消（Esc）", "否決 / 取消（Esc）", "Reject / Cancel (Esc)"),
-    ("plan.input_placeholder", "输入其他想法，回车确认", "輸入其他想法，回車確認", "Type your feedback, press Enter to send"),
     ("tools.preset_full_desc", "full + 自定义扩展", "full + 自訂擴展", "full + custom extensions"),
     ("extensions.choose_extensions", "选择扩展", "選擇擴展", "Choose extensions"),
     ("extensions.builtin_all_desc", "全部内置工具，无扩展", "全部內置工具，无擴展", "All built-in tools ,no extensions"),

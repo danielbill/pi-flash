@@ -258,13 +258,12 @@ pub(crate) fn main_column(
                     if let Some(req) = chat.aux.ext_dialog.clone() {
                         wrap = wrap.child(render_ext_dialog(chat, req, weak));
                     }
-                    // 031-1 计划审批弹窗：挂最后（模态压非模态）——会话区
-                    // 100%×100% 完全覆盖（chat-wrap absolute inset_0 随中栏
-                    // 定界，正是需求里的「会话区」边界；dock/topbar/statusbar
-                    // 不在内）。版式与三动作见 crate::mode::dialog/state。
+                    // 031-1 计划审批弹窗：挂最后（模态压非模态）——宽度=
+                    // 会话区 100%、高度 90% 上下居中（chat-wrap absolute
+                    // inset_0 随中栏定界；dock/topbar/statusbar 不在内）。
+                    // 版式与两动作见 crate::mode::dialog/state。
                     if chat.dlg.plan.approval.is_some() {
-                        wrap = wrap
-                            .child(crate::mode::dialog::render_plan_approval(chat, weak, t, cx));
+                        wrap = wrap.child(crate::mode::dialog::render_plan_approval(chat, weak, t));
                     }
                     wrap
                 })
