@@ -76,8 +76,10 @@ fn subagent_args_fields_uncached(args: &str) -> (String, String) {
 /// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（验收⑤定稿）：
 /// `[状态标记] 🤖子代理 <name(profile)> <时长> <任务名(25字截断)> <完成提示>`
 /// 状态标记同会话列表（运行 spark_spinner(accent) / 完成 NOTICE 青蓝点 /
-/// 异常 danger 红点）；完成提示 faint（任务完成 / 派发失败 / 执行异常），异常态
-/// faint+下划线 + hover tooltip（错误详情）。
+/// 异常 danger 红点）；完成提示 faint（任务完成），异常态提示链接 = 正常
+/// 链接样式（accent+下划线+手指，2026-11-08 用户定夺）+ hover tooltip（错误
+/// 详情）；派发失败行整行 disabled（opacity 0.5 + 无 hover/手指/点击——
+/// 没有子会话可开，详情看链接）。
 /// 数据源（扩展 pf-subagents 的 details，snake_case）：`child_id` / `status`
 /// / `stop_reason` / `session_file` / `error_code` / `duration_ms`；args 取
 /// `profile` / `label` / `prompt`。整行点击 = 打开子会话（只读观察窗）。
@@ -187,13 +189,18 @@ pub(super) fn render_subagent_card(
         } else {
             (tr("subagent.card.run_error"), err_detail)
         };
+        // 提示链接「正常样式」（2026-11-08 用户定夺）：accent+下划线+手指
+        // （settings/about.rs 链接口径）——它是行里唯一要点的东西（错误
+        // 详情浮层），不随派发失败行整体 disabled 减淡。
         div()
             .id(SharedString::from(format!(
                 "sa-hint-{msg_ix}-{content_index}"
             )))
             .flex_shrink_0()
-            .text_color(rgb(t.text_faint))
+            .text_color(rgb(t.accent))
             .underline()
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.75))
             .with_tip_detail(tip)
             .child(label)
             .into_any_element()
@@ -202,6 +209,12 @@ pub(super) fn render_subagent_card(
         div().into_any_element()
     };
 
+    // 派发失败行整行 disabled（2026-11-08 用户定夺；口径 = UI 组件规范
+    // 「opacity 0.5 + 去 hover 响应」）：子代理根本没跑起来、无子会话可开——
+    // 行不可点、hover 不高亮不出手指，错误详情由提示链接独自承担。提示
+    // 链接不参与减淡（是要点的东西）。减淡只落在内容子件上，不能整行
+    // opacity（会把 hint 一起压暗）。
+    let dim = if dispatch_failed { 0.5 } else { 1.0 };
     let mut row = div()
         .id(SharedString::from(format!("sa-{msg_ix}-{content_index}")))
         .flex()
@@ -211,8 +224,11 @@ pub(super) fn render_subagent_card(
         .py(px(5.))
         .min_w_0()
         .rounded(px(crate::ui::tokens::radius::CTRL))
-        .text_size(crate::appearance::sess_size(-2.))
-        .hover(|s| s.bg(gpui::rgba(theme::rgba_a(t.accent, 0.06))))
+        .text_size(crate::appearance::sess_size(-2.));
+    if !dispatch_failed {
+        row = row.hover(|s| s.bg(gpui::rgba(theme::rgba_a(t.accent, 0.06))));
+    }
+    row = row
         .child(
             // 标记槽定宽：spinner(15px) 与状态点(7px) 同槽居中，状态切换
             // 不再让后面的文字列错位（2026-11-07 用户：最后一行对齐失败）
@@ -222,11 +238,16 @@ pub(super) fn render_subagent_card(
                 .flex()
                 .items_center()
                 .justify_center()
+                .opacity(dim)
                 .child(mark_el),
         )
         // subagent 统一 bot icon（044-0 验收③）：图标档位 ICON_MD = 16，
         // 颜色随主题 accent（2026-11-07 用户定夺：不许自造尺寸/颜色）
-        .child(crate::ui::icon("bot", 16., t.accent))
+        .child(
+            div()
+                .opacity(dim)
+                .child(crate::ui::icon("bot", 16., t.accent)),
+        )
         .child(
             // 子代理名称栏（注 5）：150px 定宽，左对齐，超长截断；名字加粗
             div()
@@ -240,6 +261,7 @@ pub(super) fn render_subagent_card(
                 .text_size(crate::appearance::sess_size(-3.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(t.text))
+                .opacity(dim)
                 .child(SharedString::from(profile)),
         )
         .child(
@@ -252,6 +274,7 @@ pub(super) fn render_subagent_card(
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_color(rgb(t.text_dim))
+                .opacity(dim)
                 .child(SharedString::from(task)),
         );
     // 完成提示紧跟任务描述栏左对齐（不贴右）；颜色走 text_faint，
@@ -259,13 +282,14 @@ pub(super) fn render_subagent_card(
     row = row.child(hint);
     // 整行点击 = 打开子会话（044-0 验收④，只读观察窗）。details 里没有
     // session_file 时（background 派发尚未落 completion）用 child_id 在主
-    // 会话消息里反查，避免「点不动」。
+    // 会话消息里反查，避免「点不动」。派发失败行不挂点击也不出手指
+    // （2026-11-08 用户定夺）：没有子会话可开，disabled 视觉要彻底。
     let child_id = details
         .and_then(|d| d.get("child_id"))
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    if session_file.is_some() || child_id.is_some() {
+    if (session_file.is_some() || child_id.is_some()) && !dispatch_failed {
         let weak_open = weak.clone();
         row = row
             .cursor_pointer()
