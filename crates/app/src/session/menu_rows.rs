@@ -110,7 +110,7 @@ pub(crate) fn pill_row(
         )
         .child(
             div()
-                .text_size(crate::appearance::ui_size(14.))
+                .text_size(crate::appearance::ui_size(12.))
                 .font_weight(if row.active {
                     gpui::FontWeight::SEMIBOLD
                 } else {
