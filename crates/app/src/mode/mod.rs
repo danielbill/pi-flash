@@ -10,7 +10,32 @@
 //! 本模块 P0 只管「把扩展挂上所有档位」；状态投影（P1）、工具菜单项（P2）、
 //! 审批弹窗（P3）后续以 `mode/` 子模块落在这里。
 
+pub(crate) mod dialog;
+mod state;
+
+pub(crate) use dialog::PlanUi;
+
 use std::path::{Path, PathBuf};
+
+/// 扩展→PF 状态广播的 statusKey（plan_mode.ts `setStatus` 契约键）。
+pub(crate) const STATUS_KEY: &str = "pf-plan";
+
+/// setStatus("pf-plan") 广播载荷（plan_mode.ts 契约：
+/// `{"v":1,"enabled":bool,"pending":string|null}`，pending = 挂起计划正文）。
+pub(crate) struct PlanBroadcast {
+    pub enabled: bool,
+    pub pending: Option<String>,
+}
+
+/// 手工解析（app 侧不引 serde derive，JSON 字段按契约直读）；非 JSON 或缺
+/// enabled 字段返回 None（照旧走通用状态带路径，防御性）。
+pub(crate) fn parse_plan_broadcast(text: &str) -> Option<PlanBroadcast> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    Some(PlanBroadcast {
+        enabled: v["enabled"].as_bool()?,
+        pending: v["pending"].as_str().map(str::to_string),
+    })
+}
 
 /// 随包分发的计划模式扩展（编译进二进制；dev 直接读工作区源文件）。
 const PLAN_MODE_TS: &str = include_str!("plan_mode.ts");

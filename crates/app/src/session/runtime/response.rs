@@ -71,6 +71,30 @@ impl SessionRuntime {
         data: Option<serde_json::Value>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // 031-1 裁决 7 防哑弹：/plan 类扩展命令的在途回执。disposition 非
+        // handled（-e 装载失败 → pi 把它当普通消息发给模型）= 回滚乐观位 +
+        // toast；handled 时真值由 setStatus("pf-plan") 广播驱动（裁决 1），
+        // 这里无需动作。/plan 不走命令相位机制（没设 phase_command），提前
+        // 收场不落下面的 prompt 臂。
+        if command == "prompt"
+            && self
+                .plan_cmd_inflight
+                .as_ref()
+                .is_some_and(|(pid, _)| pid == &id)
+        {
+            let (_, prev) = self.plan_cmd_inflight.take().unwrap();
+            let handled = success
+                && data
+                    .as_ref()
+                    .and_then(pi_link::protocol::prompt_disposition)
+                    == Some("handled");
+            if !handled {
+                self.plan_enabled = prev;
+                self.notify_toast(tr("plan.ext_unavailable").to_string(), cx);
+            }
+            cx.notify();
+            return true;
+        }
         if command == "prompt" && self.flush_in_flight.as_ref().is_some_and(|f| f.id == id) {
             // 090 flush 关联（queue.rs flush_local_queue）：队首/打断槽
             // 消息以 Prompt{None} 发出后的回执。success = pi 接受并开跑

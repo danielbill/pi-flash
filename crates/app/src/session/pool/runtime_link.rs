@@ -158,6 +158,17 @@ impl Chat {
                         chat.ext_cancel_all(cx);
                     }
                 }
+                SessionEvent::PlanPresent { plan } => {
+                    // 031-1 P3：present_plan 到达 → 开审批弹窗。同一时刻仅一
+                    // 份挂起裁决（弹窗开着时后来的丢弃）；后台会话不弹（切
+                    // 回时若裁决仍挂起，模型侧 present_plan 还挂着，但 PF 不
+                    // 重放工具事件——用户切回可在输入框直接发话，裁决走
+                    // /plan-approve 命令仍可完成。P4 待验收项）。
+                    if is_active && chat.dlg.plan.approval.is_none() {
+                        chat.dlg.plan.approval = Some(plan.clone());
+                        cx.notify();
+                    }
+                }
                 SessionEvent::Models(models) => {
                     // 进程答案写项目槽（pi-web /api/models parity：每个 runtime 只写
                     // 自己 cwd 的条目），同时**并进全局态并回写自有缓存**

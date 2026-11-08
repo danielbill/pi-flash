@@ -49,6 +49,10 @@ pub(crate) enum SessionEvent {
     /// Chat 侧须 ext_cancel_all 清理（zi2s.3）。后台会话不弹窗也就无弹窗可
     /// 清，订阅侧按 is_active 闸掉。
     ExtUiDied,
+    /// 031-1 P3：present_plan 工具调用到达（tool_execution_start）——Chat
+    /// 据此打开计划审批弹窗（plan 正文在工具 args 里，同一时刻仅一份挂起
+    /// 裁决，弹窗开着时后来的丢弃）。
+    PlanPresent { plan: String },
 }
 
 /// 090 排队护栏：PF 本地排队条目。运行中（queue 模式）的发送扣在这里，

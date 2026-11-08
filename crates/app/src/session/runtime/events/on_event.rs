@@ -255,6 +255,19 @@ impl SessionRuntime {
                 self.exit_code = code;
             }
             Event::WireEvent { kind, value } => {
+                // 031-1 P3：present_plan 到达 → Chat 开审批弹窗（正文在工具
+                // args；扩展 handler 挂起等待裁决，agent 停在原地）。
+                if kind == "tool_execution_start"
+                    && value["toolName"].as_str() == Some(crate::mode::PRESENT_PLAN_TOOL)
+                {
+                    if let Some(plan) = value["args"]["plan"].as_str() {
+                        if !plan.is_empty() {
+                            cx.emit(SessionEvent::PlanPresent {
+                                plan: plan.to_string(),
+                            });
+                        }
+                    }
+                }
                 // 044-0 B3②：tool_execution_update 此前整体丢弃——委派被拒的
                 // 失败 details 要等同帧其余工具全部收尾才随 toolResult 上屏，
                 // 运行期完全不可见。这里把 partialResult.details 合入对应

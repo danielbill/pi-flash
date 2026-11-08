@@ -145,6 +145,7 @@ impl Chat {
             dlg: DlgUi {
                 dialog_focus,
                 dialog: None,
+                plan: crate::mode::PlanUi::new(cx),
                 pill_menu: None,
                 pi_extension_picker: None,
                 mcp_picker: None,

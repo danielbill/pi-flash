@@ -233,6 +233,16 @@ pub(crate) struct SessionRuntime {
     /// 各持一份 —— 放 Chat 上会让切会话串味（上一会话的额度行跟到新会话）。
     pub ext_status: Vec<(String, String)>,
 
+    /// 031-1 计划模式（扩展是唯一事实源，这里只是 setStatus("pf-plan") 广播
+    /// 的投影）：agent 是否处于计划态。工具集不做任何切换（裁决 2）。
+    pub plan_enabled: bool,
+    /// 031-1：挂起审批的计划正文（present_plan 广播 pending 字段携带）。
+    pub plan_pending: Option<String>,
+    /// 031-1 裁决 7 防哑弹：/plan 类扩展命令的在途回执（id, 乐观翻转前的
+    /// 值）——disposition 非 handled（-e 装载失败，pi 把命令当普通消息发
+    /// 给模型）时回滚乐观位 + toast；handled 时真值以广播为准。
+    pub plan_cmd_inflight: Option<(String, bool)>,
+
     /// (下标, 点亮时刻) — 复制 pill 的「已复制」反馈（032 恢复）：下标对
     /// 用户栏是 msg_ix、对 agent 轮栏是轮头 start_ix（两者互不重叠）。
     /// `spawn_flash_clear` 1.5s 后清空。渲染侧经
@@ -362,6 +372,9 @@ impl SessionRuntime {
             ext_queue: Vec::new(),
             notified_ext_ids: std::collections::HashSet::new(),
             ext_status: Vec::new(),
+            plan_enabled: false,
+            plan_pending: None,
+            plan_cmd_inflight: None,
 
             pending_locate: None,
 
@@ -441,6 +454,10 @@ impl SessionRuntime {
                 // 034：扩展状态同理——旧 pi 进程的 setStatus 快照随进程作废，
                 // 新进程重新发（否则 /reload、空闲回收重建后带子上挂旧文案）
                 self.ext_status.clear();
+                // 031-1：计划态投影同理——新进程 session_start 广播立刻补齐真值
+                self.plan_enabled = false;
+                self.plan_pending = None;
+                self.plan_cmd_inflight = None;
                 let epoch = self.agent.epoch;
                 Self::attach_pump(&this, rx, epoch, cx);
                 true

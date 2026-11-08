@@ -1,5 +1,8 @@
 //! toolbar pill 弹层：thinking/tools 菜单（composer 胶囊上方锚定）。
 
+use gpui::{div, prelude::*, px, rgb};
+
+use crate::i18n::tr;
 use crate::*;
 
 impl Chat {
@@ -20,33 +23,76 @@ impl Chat {
             let weak_menu = weak.clone();
             // 档位表 + 行渲染都收口在 session::menu_rows（设置·子代理页同源
             // 复用，2026-11-07）；这里只分派 on_pick 的写入目标
-            let rows: Vec<crate::session::menu_rows::PillRow> = match menu {
+            let items: Vec<gpui::AnyElement> = match menu {
                 PillMenu::Thinking => {
                     let cur = thinking_override.as_deref().unwrap_or("auto");
-                    crate::session::menu_rows::thinking_rows(cur)
+                    let rows = crate::session::menu_rows::thinking_rows(cur)
+                        .into_iter()
+                        .map(|row| {
+                            let weak_row = weak_menu.clone();
+                            let key_for_rpc = row.key.to_string();
+                            crate::session::menu_rows::pill_row(
+                                &weak_row,
+                                move |c, cx| {
+                                    c.dlg.pill_menu = None;
+                                    c.set_thinking_level(&key_for_rpc, cx);
+                                },
+                                row,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    rows
                 }
-                PillMenu::Tools => crate::session::menu_rows::tools_preset_rows(&preset_key),
+                PillMenu::Tools => {
+                    // 031-1 计划模式顶项：独立勾选（与下方三/五档正交，不碰
+                    // 档位选中态），分隔线与档位分隔（需求原文）；点击发
+                    // /plan（乐观翻转 + 防哑弹见 mode::state）。计划模式的
+                    // 唯一 UI 指示 = 此菜单条目（用户裁决，禁状态栏/标记）。
+                    let plan_on = {
+                        let rt = self.rt();
+                        rt.read(cx).plan_enabled
+                    };
+                    let mut items: Vec<gpui::AnyElement> = vec![
+                        crate::session::menu_rows::pill_row(
+                            &weak_menu,
+                            |c, cx| {
+                                c.dlg.pill_menu = None;
+                                c.mc_toggle_plan(cx);
+                            },
+                            crate::session::menu_rows::PillRow {
+                                key: "pf-plan",
+                                label: tr("plan.menu").to_string(),
+                                desc: tr("plan.menu_desc").to_string(),
+                                active: plan_on,
+                            },
+                        ),
+                        // 菜单分隔线（§5.6：1px t.border，上下留白 6）
+                        div()
+                            .mx(px(crate::session::picker_shell::PAD))
+                            .my(px(6.))
+                            .h(px(1.))
+                            .bg(rgb(t.border))
+                            .into_any_element(),
+                    ];
+                    items.extend(
+                        crate::session::menu_rows::tools_preset_rows(&preset_key)
+                            .into_iter()
+                            .map(|row| {
+                                let weak_row = weak_menu.clone();
+                                let key_for_rpc = row.key.to_string();
+                                crate::session::menu_rows::pill_row(
+                                    &weak_row,
+                                    move |c, cx| {
+                                        c.dlg.pill_menu = None;
+                                        c.mc_set_tools_preset(&key_for_rpc, cx);
+                                    },
+                                    row,
+                                )
+                            }),
+                    );
+                    items
+                }
             };
-            let is_thinking = menu == PillMenu::Thinking;
-            let items = rows
-                .into_iter()
-                .map(|row| {
-                    let weak_row = weak_menu.clone();
-                    let key_for_rpc = row.key.to_string();
-                    crate::session::menu_rows::pill_row(
-                        &weak_row,
-                        move |c, cx| {
-                            c.dlg.pill_menu = None;
-                            if is_thinking {
-                                c.set_thinking_level(&key_for_rpc, cx);
-                            } else {
-                                c.mc_set_tools_preset(&key_for_rpc, cx);
-                            }
-                        },
-                        row,
-                    )
-                })
-                .collect::<Vec<_>>();
             // 浮层公共基座：遮挡不穿透 + 点外关闭（ESC 走 composer 的输入框焦点，
             // 这里不抢焦）
             {

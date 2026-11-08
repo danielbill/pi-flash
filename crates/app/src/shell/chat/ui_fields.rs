@@ -223,6 +223,9 @@ pub(crate) struct PspUi {
 pub(crate) struct DlgUi {
     pub(crate) dialog_focus: FocusHandle,
     pub(crate) dialog: Option<Dialog>,
+    /// 031-1 计划模式审批弹窗 UI 态（结构/渲染/动作在 crate::mode::dialog
+    /// 与 mode::state；状态真值在 runtime record 的 plan_* 投影）
+    pub(crate) plan: crate::mode::PlanUi,
     // shell surfaces
     pub(crate) pill_menu: Option<PillMenu>,
     /// 「full+」档的扩展选择面板（勾选即生效；滚动位跨帧复用）

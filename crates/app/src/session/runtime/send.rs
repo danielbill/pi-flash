@@ -26,7 +26,7 @@ impl SessionRuntime {
     /// `with_active_editor` 每次收发还要整体 clone 两份（per-send O(历史)）。
     /// 100 条足够 ↑ 回溯；完整记录在会话文件里，这里只是输入历史。
     /// 去重/空文本判定由调用方负责（各发送路径口径不同）。
-    pub(super) fn remember_input(&mut self, text: String) {
+    pub(crate) fn remember_input(&mut self, text: String) {
         const INPUT_HISTORY_CAP: usize = 100;
         self.history.push(text);
         if self.history.len() > INPUT_HISTORY_CAP {
@@ -43,6 +43,12 @@ impl SessionRuntime {
             Some(s) => s.send(cmd).is_ok(),
             None => false,
         }
+    }
+
+    /// 同 [`Self::rpc`] 但带回执关联 id（031-1 /plan 防哑弹：response 按 id
+    /// 校验 disposition）。无进程（草稿/断线）返回 None。
+    pub(crate) fn rpc_id(&self, cmd: &Command) -> Option<String> {
+        self.agent.session.as_ref().and_then(|s| s.send(cmd).ok())
     }
 
     /// steer（中断当前运行并立即注入）。090 起两个入口：设置「插话」模式下
@@ -74,7 +80,7 @@ impl SessionRuntime {
     /// 消息跟在流后面、视图保持贴底跟随（2026-10-20 用户定稿「打断消息
     /// 不要刷屏，跟在流后面」）。`pin` 记进 pending_echo 随条目走：回显到
     /// 达（message_start user）按同一决定行事，不再无条件补一次 page_turn。
-    pub(super) fn optimistic_send(&mut self, text: String, pin: bool, cx: &mut Context<Self>) {
+    pub(crate) fn optimistic_send(&mut self, text: String, pin: bool, cx: &mut Context<Self>) {
         // 斜杠命令相位（pi-web isSlashCommandPrompt parity）：命令 handler
         // 在跑时等待行文案与模型无关（#7）；AgentStart / handled 回执时复位
         let is_command = text.starts_with('/');

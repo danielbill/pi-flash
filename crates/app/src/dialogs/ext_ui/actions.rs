@@ -44,6 +44,24 @@ impl Chat {
                     cx,
                 );
             }
+            // 031-1 计划模式广播（必须在通用 SetStatus 之前拦下）：不入
+            // 状态带（用户裁决：唯一 UI 指示 = 工具菜单条目，状态栏零额外
+            // 信息），只投影到 runtime record；菜单勾选/弹窗数据都读它。
+            ExtUiMethod::SetStatus {
+                ref status_key,
+                ref status_text,
+            } if status_key == crate::mode::STATUS_KEY => {
+                if let Some(b) = status_text
+                    .as_deref()
+                    .and_then(crate::mode::parse_plan_broadcast)
+                {
+                    self.rt().update(cx, |r, _| {
+                        r.plan_enabled = b.enabled;
+                        r.plan_pending = b.pending.filter(|s| !s.is_empty());
+                    });
+                    cx.notify();
+                }
+            }
             ExtUiMethod::SetStatus {
                 status_key,
                 status_text,
