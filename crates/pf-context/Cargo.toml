@@ -1,0 +1,16 @@
+[package]
+name = "pf-context"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# preserve_order 由 pi-link 开启（feature 并集全仓生效）：Map 保插入序，
+# 读-改-写才能做到未知键逐字保留。
+serde_json = "1"
+# 外部改动监听（001-0 §5）：非递归盯 PF 数据目录（app 用同版 7）
+notify = "7"
+# 仅 paths（app-settings.json 路径）+ config::write_json（tmp+rename 原子写）；
+# 禁止依赖 pi-link 其余模块（RPC 层不进产品基础设施）
+pi-link = { path = "../pi-link" }

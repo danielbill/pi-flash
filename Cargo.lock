@@ -160,6 +160,7 @@ dependencies = [
  "lru",
  "mermaid-rs-renderer",
  "notify",
+ "pf-context",
  "pf-plugin-host",
  "pi-link",
  "pulldown-cmark",
@@ -5821,6 +5822,16 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "pf-context"
+version = "0.1.0"
+dependencies = [
+ "notify",
+ "pi-link",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pf-plugin-host"

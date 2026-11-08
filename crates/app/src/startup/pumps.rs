@@ -19,6 +19,12 @@ use crate::Chat;
 /// 6. 恢复最后会话 + 进入其项目 + 会话清单装载 = spawn_boot_restore
 ///    （010 重设计：进程附着随恢复路径走，无项目态零进程，不再有首帧附着）
 pub(crate) fn spawn_boot_tasks(cx: &mut gpui::Context<Chat>) {
+    // 001-S1：PFContext 初始化（一次读盘 + 单写者线程 + 外部改动监听，µs 级）。
+    // 先于一切 settings 读取方；快照换新广播 → 重绘标记，由 120ms 泵消费。
+    let hub = pf_context::init();
+    hub.settings.subscribe(Box::new(|_| {
+        crate::services::workspace::mark_settings_reload();
+    }));
     // 051：pif-secret 入用户级 PATH + auth.json 标记去路径化（后台、毫秒级、
     // 幂等）。必须放所有后台任务**最前**——升级交接的 cleanup 线程可能先删
     // 旧版本载荷目录，标记迁移要抢先改写指向旧目录的条目（0.4.0→0.4.1 auth
@@ -148,6 +154,11 @@ fn spawn_pump_120ms(cx: &mut gpui::Context<Chat>) {
             let ok = this
                 .update(cx, |c, cx| {
                     let mut dirty = false;
+                    // 001-S1：settings 快照换新（watcher 外部重载 / hub.set 广播）
+                    // → 全局重绘，外部编辑器改 app-settings.json 2s 内生效
+                    if crate::services::workspace::take_settings_reload() {
+                        dirty = true;
+                    }
                     // 导航 flyout 250ms 离开宽限（pi-web PREVIEW_HIDE_DELAY parity）
                     if c.layout.nav_open {
                         if let Some(at) = c.layout.nav_hide_at {

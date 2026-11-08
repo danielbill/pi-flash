@@ -20,6 +20,8 @@ wasmtime = { version = "36", default-features = false, features = ["runtime", "c
 wasmtime-wasi = { version = "36", default-features = false }
 gpui = "0.2.2"
 pi-link = { path = "../pi-link" }
+# 001 PFContext：settings/state/domain 统一上下文（settings 子集 S1 起通电）
+pf-context = { path = "../pf-context" }
 # QuickJS 插件运行时（pf_plugin 模块；wasm 侧依赖本 crate 的 wasmtime 已并列）
 pf-plugin-host = { path = "../pf-plugin-host" }
 futures = "0.3"

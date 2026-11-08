@@ -418,6 +418,9 @@ pub(crate) fn shutdown_for_close(chat: &mut Chat, window: &Window) {
         maximized: window.is_maximized(),
     });
     chat.persist_ui();
+    // 001-S1：settings 退出落盘——coalesce 窗口内未写的改动最后冲一次
+    //（写者线程随进程退出，不 flush 就丢最后 ≤50ms 的改动）
+    let _ = pf_context::hub().settings.flush();
 }
 
 #[cfg(test)]
