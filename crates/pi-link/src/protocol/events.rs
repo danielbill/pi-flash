@@ -406,7 +406,27 @@ pub enum Event {
     ThinkingLevelChanged {
         level: String,
     },
-    /// pi 会话事件中 app 暂不消费的杂项（tool_execution_* /
+    /// `tool_execution_start`：工具开始执行。`parent_tool_call_id` 非空 =
+    /// **嵌套调用**——由另一个工具在运行中发起（codemode 脚本里的
+    /// `ctx.executeTool()`，即 `tools.agent`）。嵌套调用在 transcript 里不留
+    /// 独立块（父块只带一份有损的 `nestedCalls`），事件流是唯一完整可见处。
+    ToolExecutionStart {
+        tool_call_id: String,
+        tool_name: String,
+        parent_tool_call_id: Option<String>,
+        args: Option<Value>,
+    },
+    /// `tool_execution_end`：工具执行收尾。嵌套调用的 `result`（含
+    /// `details.child_id` / `details.stop_reason`）**只**在这里出现。
+    ToolExecutionEnd {
+        tool_call_id: String,
+        tool_name: String,
+        parent_tool_call_id: Option<String>,
+        is_error: bool,
+        result: Option<Value>,
+        duration_ms: Option<u64>,
+    },
+    /// pi 会话事件中 app 暂不消费的杂项（tool_execution_update /
     /// entry_appended / session_info_changed）：
     /// 解析出 type 免落 [`Event::Unparsed`] 噪声，字段留原 Value。
     WireEvent {

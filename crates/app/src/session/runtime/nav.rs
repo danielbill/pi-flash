@@ -5,7 +5,6 @@ use gpui::Context;
 use pi_link::protocol::{Block, Command};
 
 use crate::session::messages::{Role, msgs_from_tail};
-use crate::session::subagent_panel::project_turn_agents;
 use pi_link::sessions::read_leaf_messages;
 
 use super::*;
@@ -387,7 +386,9 @@ impl SessionRuntime {
             })
             .collect();
         NavData {
-            turn_agents: project_turn_agents(&self.messages),
+            // 点阵读内存账本（事件流增量维护），不再扫消息反推——扫消息
+            // 看不见 codemode 嵌套派发（2026-11-08 实测一轮 3 个、点 0 个）。
+            turn_agents: self.subagents.turn_tones(),
             turns,
             users,
             assistants,

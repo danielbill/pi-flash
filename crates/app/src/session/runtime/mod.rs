@@ -67,6 +67,9 @@ pub(crate) struct SessionRuntime {
 
     // ---- message log ----
     pub messages: Vec<Msg>,
+    /// 子代理派发账本（内存态，见 `subagents.rs`）：点阵/状态的**唯一**数据源，
+    /// 事件流增量喂——渲染层不再扫消息反推（扫消息看不见 codemode 嵌套派发）。
+    pub subagents: SubagentLedger,
     /// 会话内容是否已权威就位（打开加载页的放行标记，2026-11-07 用户定夺）：
     /// 文件已绑定但内容未到第一份（尾窗空 + get_messages 投影未落）时渲染
     /// 空白页 + 「会话载入中…」，不再拿新会话欢迎页冒充加载态。tail 非空即
@@ -322,6 +325,7 @@ impl SessionRuntime {
                 .unwrap_or(0),
             agent: AgentSession::new(1),
             messages: Vec::new(),
+            subagents: SubagentLedger::default(),
             messages_loaded: false,
             pager: ChatList::new(),
             collapsed: std::collections::HashMap::new(),
@@ -537,8 +541,10 @@ mod response;
 mod send;
 mod spawn;
 mod stream;
+mod subagents;
 mod types;
 
+pub(crate) use subagents::{AGENT_TOOL, SubagentLedger};
 pub(crate) use types::{
     FlushInFlight, NavData, PendingEcho, QueuedInput, SessionEvent, TurnSummary,
 };

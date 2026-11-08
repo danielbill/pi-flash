@@ -207,15 +207,58 @@ fn extension_error_and_misc_wire_events_are_typed() {
             error: Some("boom".into()),
         }
     );
-    // app 暂不消费的杂项：解析出 type，不落 Unparsed
-    let e = parse_line(r#"{"type":"tool_execution_start","id":"t1","toolName":"bash"}"#).unwrap();
-    let Event::WireEvent { kind, .. } = e else {
-        panic!("not wire event")
+    // 工具执行起收：立正式事件（嵌套调用的完整 result 只在这里出现），
+    // parentToolCallId = 嵌套调用的父工具调用（codemode 里的 tools.agent）
+    let e = parse_line(
+        r#"{"type":"tool_execution_start","toolCallId":"p/1","toolName":"agent","args":{"prompt":"x"},"parentToolCallId":"p"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        e,
+        Event::ToolExecutionStart {
+            tool_call_id: "p/1".into(),
+            tool_name: "agent".into(),
+            parent_tool_call_id: Some("p".into()),
+            args: Some(serde_json::json!({"prompt": "x"})),
+        }
+    );
+    // 顶层调用无 parentToolCallId（直调 agent / 其他工具）
+    let e = parse_line(r#"{"type":"tool_execution_start","toolCallId":"t1","toolName":"bash"}"#)
+        .unwrap();
+    assert_eq!(
+        e,
+        Event::ToolExecutionStart {
+            tool_call_id: "t1".into(),
+            tool_name: "bash".into(),
+            parent_tool_call_id: None,
+            args: None,
+        }
+    );
+    let e = parse_line(
+        r#"{"type":"tool_execution_end","toolCallId":"p/1","toolName":"agent","isError":false,"durationMs":761,"parentToolCallId":"p","result":{"content":[],"details":{"child_id":"c1","stop_reason":"completed"}}}"#,
+    )
+    .unwrap();
+    let Event::ToolExecutionEnd {
+        tool_call_id,
+        parent_tool_call_id,
+        is_error,
+        result,
+        duration_ms,
+        ..
+    } = e
+    else {
+        panic!("not tool_execution_end")
     };
-    assert_eq!(kind, "tool_execution_start");
+    assert_eq!(tool_call_id, "p/1");
+    assert_eq!(parent_tool_call_id.as_deref(), Some("p"));
+    assert!(!is_error);
+    assert_eq!(duration_ms, Some(761));
+    assert_eq!(
+        result.unwrap()["details"]["stop_reason"],
+        serde_json::json!("completed")
+    );
     for kind in [
         "tool_execution_update",
-        "tool_execution_end",
         "entry_appended",
         "session_info_changed",
     ] {

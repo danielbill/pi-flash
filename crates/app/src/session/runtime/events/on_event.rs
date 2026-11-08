@@ -254,13 +254,20 @@ impl SessionRuntime {
                 // 统一补全——那里才能拿到 was_running 并一次收尾
                 self.exit_code = code;
             }
-            Event::WireEvent { kind, value } => {
+            Event::ToolExecutionStart {
+                tool_call_id,
+                tool_name,
+                parent_tool_call_id,
+                args,
+            } => {
                 // 031-1 P3：present_plan 到达 → Chat 开审批弹窗（正文在工具
                 // args；扩展 handler 挂起等待裁决，agent 停在原地）。
-                if kind == "tool_execution_start"
-                    && value["toolName"].as_str() == Some(crate::mode::PRESENT_PLAN_TOOL)
-                {
-                    if let Some(plan) = value["args"]["plan"].as_str() {
+                if tool_name == crate::mode::PRESENT_PLAN_TOOL {
+                    if let Some(plan) = args
+                        .as_ref()
+                        .and_then(|a| a.get("plan"))
+                        .and_then(|v| v.as_str())
+                    {
                         if !plan.is_empty() {
                             cx.emit(SessionEvent::PlanPresent {
                                 plan: plan.to_string(),
@@ -268,6 +275,41 @@ impl SessionRuntime {
                         }
                     }
                 }
+                // 子代理派发：直调（parent 为空）与 codemode 脚本里的
+                // `tools.agent`（parent = codemode 调用 id）走同一条事件，
+                // transcript 只能看见前者——账本是两者共同的唯一入口。
+                let turn = self.current_turn();
+                if self.subagents.start(
+                    &tool_call_id,
+                    &tool_name,
+                    parent_tool_call_id.as_deref(),
+                    turn,
+                    args.as_ref(),
+                ) {
+                    self.nav_dirty = true;
+                    cx.notify();
+                }
+            }
+            // 工具收尾：嵌套调用的完整 result（含 `details.child_id` /
+            // `stop_reason`）只在这里出现，账本靠它落终态。
+            Event::ToolExecutionEnd {
+                tool_call_id,
+                tool_name,
+                is_error,
+                result,
+                ..
+            } => {
+                let turn = self.current_turn();
+                let details = result.as_ref().and_then(|r| r.get("details"));
+                if self
+                    .subagents
+                    .finish(&tool_call_id, &tool_name, is_error, details, turn)
+                {
+                    self.nav_dirty = true;
+                    cx.notify();
+                }
+            }
+            Event::WireEvent { kind, value } => {
                 // 044-0 B3②：tool_execution_update 此前整体丢弃——委派被拒的
                 // 失败 details 要等同帧其余工具全部收尾才随 toolResult 上屏，
                 // 运行期完全不可见。这里把 partialResult.details 合入对应
@@ -284,6 +326,14 @@ impl SessionRuntime {
                                 tcid,
                                 serde_json::Value::Object(det.clone()),
                             );
+                            // 前台派发先报 running + child_id：账本记上，终态
+                            // 到达时按 child_id 归位
+                            if self
+                                .subagents
+                                .touch(tcid, &serde_json::Value::Object(det.clone()))
+                            {
+                                self.nav_dirty = true;
+                            }
                             cx.notify();
                         }
                     }
@@ -300,6 +350,12 @@ impl SessionRuntime {
                         if let Some((cid, fields)) =
                             crate::session::messages::settled_patch_fields(&entry["data"])
                         {
+                            // 账本同源：先按 child_id 补终态（后台派发的
+                            // toolResult 只是 ack，这里是终态的第一手）
+                            let stop = fields["stop_reason"].as_str().map(str::to_string);
+                            if self.subagents.settle(&cid, stop.as_deref()) {
+                                self.nav_dirty = true;
+                            }
                             if crate::session::messages::apply_child_settled(
                                 &mut self.messages,
                                 &cid,

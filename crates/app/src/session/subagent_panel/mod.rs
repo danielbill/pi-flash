@@ -166,7 +166,19 @@ impl Chat {
 /// 的点都落到下一轮的槽位；末轮无后继 User 消息，只能靠尾部的补 push 兜
 /// 到 `len` 下标——那个下标没有卡片，单轮会话的第三行因此整行不显。
 pub(crate) fn project_turn_agents(msgs: &[crate::session::messages::Msg]) -> Vec<Vec<DotTone>> {
-    let mut turn_agents: Vec<Vec<DotTone>> = Vec::new();
+    project_turn_agent_calls(msgs)
+        .into_iter()
+        .map(|turn| turn.into_iter().map(|(_, tone)| tone).collect())
+        .collect()
+}
+
+/// 同口径的**带 id** 投影：`(toolCallId, 色调)`——内存账本
+/// （[`crate::session::runtime::SubagentLedger`]）靠 `toolCallId` 和实时事件
+/// 去重，所以种子回放要带上调用 id。
+pub(crate) fn project_turn_agent_calls(
+    msgs: &[crate::session::messages::Msg],
+) -> Vec<Vec<(String, DotTone)>> {
+    let mut turn_agents: Vec<Vec<(String, DotTone)>> = Vec::new();
     for m in msgs {
         match m.role {
             // 见到 User 先立本轮槽位，后续 agent 调用往它里面填
@@ -178,9 +190,9 @@ pub(crate) fn project_turn_agents(msgs: &[crate::session::messages::Msg]) -> Vec
                     continue;
                 };
                 for b in &m.blocks {
-                    if let Block::ToolCall { name, .. } = b {
-                        if name == "agent" {
-                            slot.push(dot_tone_of(b));
+                    if let Block::ToolCall { name, id, .. } = b {
+                        if name == crate::session::runtime::AGENT_TOOL {
+                            slot.push((id.clone(), dot_tone_of(b)));
                         }
                     }
                 }

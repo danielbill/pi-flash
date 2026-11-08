@@ -200,17 +200,29 @@ pub fn parse_record(v: &Value) -> Event {
         Some("thinking_level_changed") => Event::ThinkingLevelChanged {
             level: v["level"].as_str().unwrap_or_default().to_string(),
         },
-        // app 暂不消费的会话事件：按 type 归类为 WireEvent，别落 Unparsed
-        Some(
-            "tool_execution_start"
-            | "tool_execution_update"
-            | "tool_execution_end"
-            | "entry_appended"
-            | "session_info_changed",
-        ) => Event::WireEvent {
-            kind: v["type"].as_str().unwrap_or("").to_string(),
-            value: v.clone(),
+        // 工具执行起收：立正式事件（嵌套调用的完整 result 只在这里出现，
+        // 派发账本靠它落 child_id / stop_reason）
+        Some("tool_execution_start") => Event::ToolExecutionStart {
+            tool_call_id: v["toolCallId"].as_str().unwrap_or_default().to_string(),
+            tool_name: v["toolName"].as_str().unwrap_or_default().to_string(),
+            parent_tool_call_id: v["parentToolCallId"].as_str().map(str::to_string),
+            args: (!v["args"].is_null()).then(|| v["args"].clone()),
         },
+        Some("tool_execution_end") => Event::ToolExecutionEnd {
+            tool_call_id: v["toolCallId"].as_str().unwrap_or_default().to_string(),
+            tool_name: v["toolName"].as_str().unwrap_or_default().to_string(),
+            parent_tool_call_id: v["parentToolCallId"].as_str().map(str::to_string),
+            is_error: v["isError"].as_bool().unwrap_or(false),
+            result: (!v["result"].is_null()).then(|| v["result"].clone()),
+            duration_ms: v["durationMs"].as_u64(),
+        },
+        // app 暂不消费的会话事件：按 type 归类为 WireEvent，别落 Unparsed
+        Some("tool_execution_update" | "entry_appended" | "session_info_changed") => {
+            Event::WireEvent {
+                kind: v["type"].as_str().unwrap_or("").to_string(),
+                value: v.clone(),
+            }
+        }
         Some("extension_ui_request") => {
             Event::ExtensionUi(ExtensionUiRequest::parse(v).unwrap_or(ExtensionUiRequest {
                 id: String::new(),
