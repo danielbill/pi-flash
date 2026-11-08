@@ -242,6 +242,32 @@ pub(crate) fn apply_child_settled(
     changed
 }
 
+/// 一并归一磁盘上全部 `subagent-completion` 终态（装载 / 即到即用）。
+///
+/// 设计判据（2026-11-08 用户定夺）：**一个子会话只有一个状态**——终态在
+/// 消息流里只此一份（派发卡 details 落盘永远停在 started），所以进内存时
+/// 一次性折进卡片，渲染层（卡片 spinner、导航第三行点）看到的从来是同一
+/// 个状态，不存在「先运行中、后补终态」的两段式画面。幂等：重复应用零
+/// 变更、零 notify。
+///
+/// 只认 `customType == subagent-completion`；`settled` 自定义条目走
+/// [`apply_child_settled`] 的事件路径，不在此重复（两者字段可重叠）。
+pub(crate) fn apply_completion_messages(msgs: &mut [Msg]) -> bool {
+    let patches: Vec<(String, serde_json::Value)> = msgs
+        .iter()
+        .filter(|m| m.role == Role::Custom && m.custom_type.as_deref() == Some(COMPLETION_CUSTOM))
+        .filter_map(|m| m.details.as_ref().and_then(settled_patch_fields))
+        .collect();
+    let mut changed = false;
+    for (cid, fields) in &patches {
+        changed |= apply_child_settled(msgs, cid, fields);
+    }
+    changed
+}
+
+/// 子代理终态 custom 消息类型（扩展 completion.ts 落盘）。
+pub(crate) const COMPLETION_CUSTOM: &str = "subagent-completion";
+
 impl Msg {
     /// 返回 Cow：单文本块（绝大多数用户消息）零拷贝借用。每帧每个可见
     /// 用户行都要调（气泡 markdown/技能折叠判定），长粘贴消息的全量 String
@@ -460,6 +486,10 @@ pub(crate) fn msgs_from_tail(values: Vec<serde_json::Value>) -> Vec<Msg> {
     }
     // 历史里的纯横幅 assistant 消息（pi 每次冷启动都会落盘一条）不渲染
     out.retain(|m| !(m.role == Role::Assistant && msg_is_mcp_banner(m)));
+    // 磁盘口径一次性归一：派发卡落盘永远停在 started，终态只在
+    // `subagent-completion` 消息里——所有磁盘链路（秒开 tail、观察窗、
+    // 外部追加对账、leaf 修复）都在这里收口，首帧即终态，没有两段式。
+    apply_completion_messages(&mut out);
     out
 }
 

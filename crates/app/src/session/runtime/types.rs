@@ -96,6 +96,9 @@ pub(crate) struct TurnSummary {
 /// ToolCall 块、system 入库即跳过，两边数字本来就对不上）
 pub(crate) struct NavData {
     pub turns: Vec<TurnSummary>,
+    /// 按轮子代理状态点（第 n 条 User 消息 = 第 n 轮）：导航卡第三行数据源。
+    /// 与 turns 同一次构建、同一个缓存——渲染层不允许另存一份（两份 = 两个渲染态）。
+    pub turn_agents: Vec<Vec<crate::session::subagent_panel::DotTone>>,
     pub users: usize,
     pub assistants: usize,
     pub tool_calls: usize,

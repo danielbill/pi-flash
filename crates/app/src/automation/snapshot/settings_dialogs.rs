@@ -224,11 +224,15 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
             "y": y,
         })),
         // 044-0 验收⑥ 子代理数据面（导航卡第三行点阵）——turns 只列有点的轮
-        // （二级菜单已删除，2026-11-07 用户定夺）；None = 缓存未建（会话未激活过）
-        "subagent_panel": chat.dlg.subagent_panel.as_ref().map(|p| {
+        // （二级菜单已删除，2026-11-07 用户定夺）；None = 会话未激活过。
+        // 2026-11-08：点阵唯一数据源是消息流（与渲染层同一纯函数），面板
+        // 不再自己存一份——快照跟着消息走，不会有第二份渲染态。
+        "subagent_panel": chat.dlg.subagent_panel.as_ref().map(|_| {
+            let turns = crate::session::subagent_panel::project_turn_agents(
+                &chat.rt().read(cx).messages,
+            );
             json!({
-                "turns": p
-                    .turn_agents
+                "turns": turns
                     .iter()
                     .enumerate()
                     .filter(|(_, v)| !v.is_empty())

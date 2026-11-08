@@ -155,12 +155,14 @@ pub(crate) fn nav_gutter(
                         let on = weak_cards
                             .upgrade()
                             .is_some_and(|c| c.read(cx).layout.nav_hover_turn == Some(ix));
-                        // 该轮子代理（044-0 验收⑥）：第三行数据 + hover 菜单锚
-                        let sub_rows = weak_cards.upgrade().and_then(|c| {
-                            let chat = c.read(cx);
-                            let panel = chat.dlg.subagent_panel.as_ref()?;
-                            panel.turn_agents.get(ix).filter(|v| !v.is_empty()).cloned()
-                        });
+                        // 该轮子代理（044-0 验收⑥）：第三行数据 + hover 菜单锚。
+                        // 数据与 turns 同一个 NavData 缓存（一次构建、一个版本），
+                        // 不在渲染层另存一份——两份就是两个渲染态。
+                        let sub_rows = summary_cards
+                            .turn_agents
+                            .get(ix)
+                            .filter(|v| !v.is_empty())
+                            .cloned();
                         nav_card(ix, s, on, sub_rows, &weak_cards, &rt_cards, t)
                     },
                 )

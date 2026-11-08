@@ -1,6 +1,6 @@
 //! custom 消息 live 事件回归锁（pi-flash-9eck）：`message_start` 的
-//! customType/display/details 必须落表——background 子代理终态回灌
-//! （subagent_panel::sync_cards_from_completions）按
+//! customType/display/details 必须落表——background 子代理终态归一
+//! （messages::apply_completion_messages）按
 //! `custom_type=="subagent-completion"` + `details.childId` 找 patch，
 //! live 事件臂此前丢弃这两个字段，卡片转圈到永远（重开会话走磁盘
 //! 重放才自愈，见 stream.rs on_message_start custom 臂）。

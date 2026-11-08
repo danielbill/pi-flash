@@ -6,7 +6,7 @@ use gpui::Context;
 use pi_link::protocol::{AssistantEvent, Block, Usage};
 
 use crate::session::messages::{
-    Msg, Role, UsageLine, merge_tool_result, msg_is_mcp_banner, result_payload,
+    COMPLETION_CUSTOM, Msg, Role, UsageLine, merge_tool_result, msg_is_mcp_banner, result_payload,
 };
 
 use super::*;
@@ -150,10 +150,10 @@ impl SessionRuntime {
             }
             "custom" => {
                 // customType/details 必须落表（pi-flash-9eck）：background
-                // 子代理的终态回灌（sync_cards_from_completions）按
-                // custom_type=="subagent-completion" + details.childId 找
-                // patch——此前 live 事件臂丢弃这两个字段，卡片转圈到
-                // 永远（重开会话走磁盘重放才自愈）。
+                // 子代理的终态按 `custom_type=="subagent-completion"` +
+                // `details.childId` 折进派发卡片——此前 live 事件臂丢弃这
+                // 两个字段，卡片转圈到永远（重开会话走磁盘重放才自愈）。
+                let is_settled = custom_type.as_deref() == Some(COMPLETION_CUSTOM);
                 self.messages.push(Msg {
                     role: Role::Custom,
                     bash: None,
@@ -169,6 +169,11 @@ impl SessionRuntime {
                     details,
                     model: None,
                 });
+                // 终态即到即归一（与装载路径同一函数）：一个子会话只有一个
+                // 状态——卡片 spinner 与导航点此刻就落色，不等事后回灌。
+                if is_settled {
+                    crate::session::messages::apply_completion_messages(&mut self.messages);
+                }
             }
             "system" => {
                 // pi 每个 run 都会先追加一条 role:"system"（content /

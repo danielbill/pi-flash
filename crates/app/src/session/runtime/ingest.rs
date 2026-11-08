@@ -4,7 +4,9 @@
 use gpui::Context;
 use pi_link::protocol::{Block, Usage, content_blocks};
 
-use crate::session::messages::{BashInfo, Msg, Role, UsageLine, merge_tool_result, result_payload};
+use crate::session::messages::{
+    BashInfo, COMPLETION_CUSTOM, Msg, Role, UsageLine, merge_tool_result, result_payload,
+};
 
 use super::*;
 
@@ -121,6 +123,12 @@ impl SessionRuntime {
             }
             _ => {}
         }
+        // 子代理终态即到即归一（设计：一个子会话只有一个状态）——background
+        // 派发的卡片 details 只有 started，终态在这条 custom 消息里；
+        // 到消息流当场折进卡片，卡片 spinner / 导航点不出现两段式。
+        if role == "custom" && msg["customType"].as_str() == Some(COMPLETION_CUSTOM) {
+            crate::session::messages::apply_completion_messages(&mut self.messages);
+        }
         self.notify_list(cx);
     }
 
@@ -211,6 +219,10 @@ impl SessionRuntime {
         self.apply_pending_locate(cx);
         // 同一会话的重读保住钉顶（换工具预设/压缩后重拉都走这里）
         self.restore_anchor_after_reload();
+        // 终态一次性归一：磁盘上派发卡永远停在 started，终态只在
+        // completion custom 消息里——进内存即折进卡片（首帧卡片已停
+        // spinner、导航点已青红），而不是等事后回灌。
+        crate::session::messages::apply_completion_messages(&mut self.messages);
         // 权威内容落定（哪怕带回 0 条——真空会话不能永久钉在加载页）
         self.messages_loaded = true;
         self.notify_list(cx);

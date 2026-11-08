@@ -5,6 +5,7 @@ use gpui::Context;
 use pi_link::protocol::{Block, Command};
 
 use crate::session::messages::{Role, msgs_from_tail};
+use crate::session::subagent_panel::project_turn_agents;
 use pi_link::sessions::read_leaf_messages;
 
 use super::*;
@@ -310,6 +311,7 @@ impl SessionRuntime {
         self.nav_cache.clone().unwrap_or_else(|| {
             std::rc::Rc::new(NavData {
                 turns: Vec::new(),
+                turn_agents: Vec::new(),
                 users: 0,
                 assistants: 0,
                 tool_calls: 0,
@@ -385,6 +387,7 @@ impl SessionRuntime {
             })
             .collect();
         NavData {
+            turn_agents: project_turn_agents(&self.messages),
             turns,
             users,
             assistants,
