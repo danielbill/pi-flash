@@ -24,7 +24,7 @@
 
 mod domain;
 pub mod settings;
-mod state;
+pub mod state;
 
 #[cfg(test)]
 pub(crate) mod tests_support;
@@ -35,7 +35,8 @@ use std::sync::OnceLock;
 pub struct Hub {
     /// 用户意图：app-settings.json 唯一 owner（S1 起通电）
     pub settings: settings::SettingsStore,
-    /// 运行期状态（S4 落地，beads pi-flash-nndc.4；先占位同生命周期）
+    /// 运行期状态（S4 最小集：当前会话/面板/子代理计数/窗口快照；内存为主，
+    /// 不落盘不投影）
     pub state: state::StateStore,
     /// 域数据 SQLite WAL（S5 落地，beads pi-flash-nndc.5；先占位 trait）
     pub domain: domain::DomainStore,
@@ -69,7 +70,7 @@ impl Hub {
     pub fn open(settings_path: Option<std::path::PathBuf>) -> Hub {
         Hub {
             settings: settings::SettingsStore::open(settings_path),
-            state: state::StateStore,
+            state: state::StateStore::default(),
             domain: domain::DomainStore,
         }
     }

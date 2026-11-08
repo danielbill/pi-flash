@@ -100,7 +100,8 @@ impl Chat {
     /// 不撤组件树就是「停用了左面板还在照旧渲染」：`plugin_panel_view` 只认
     /// `tree_loaded` + 缓存树，不看 disabled 位（090-4 v5 踩过）。
     pub(crate) fn plugin_evict(&mut self, ix: usize) {
-        let docked = self.layout.dock_panel == crate::DockPanel::Plugin(ix);
+        // 001-S4：读走 hub.state() 快照
+        let docked = crate::services::pf_state::dock_is(&format!("plugin:{ix}"));
         // 认领槽随停用一井撤：过滤清单同步摘除（会话文件保留，靠前缀仍藏得住）
         if let Some(entry) = self.plugins.plugins.get(ix) {
             let id = entry.manifest.id.clone();
@@ -129,6 +130,7 @@ impl Chat {
         }
         if docked {
             self.layout.dock_panel = crate::DockPanel::Default;
+            crate::services::pf_state::publish_dock(self.layout.dock_panel);
         }
     }
 
@@ -182,6 +184,7 @@ impl Chat {
             // 下标位移：插件面板存的是位置，任何一条被摘都退默认
             if matches!(self.layout.dock_panel, crate::DockPanel::Plugin(_)) {
                 self.layout.dock_panel = crate::DockPanel::Default;
+                crate::services::pf_state::publish_dock(self.layout.dock_panel);
             }
         }
         if removed > 1 && cfg!(debug_assertions) {

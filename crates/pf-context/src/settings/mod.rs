@@ -252,6 +252,7 @@ impl SettingsStore {
     }
 
     /// 当前快照 Arc（测试/观测用；O(1)）。
+    #[cfg(test)]
     pub(crate) fn snapshot_clone(&self) -> Arc<Snapshot> {
         Arc::clone(&self.inner.snap.read().unwrap())
     }

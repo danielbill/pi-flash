@@ -402,6 +402,10 @@ impl Chat {
             .runtimes
             .insert(crate::Chat::PLACEHOLDER_KEY.to_string(), rt.clone());
         chat.pool.active_key = crate::Chat::PLACEHOLDER_KEY.to_string();
+        // 001-S4：运行期状态初值进 hub.state()（dock 缺省 + 当前会话键；
+        // 会话切换发布点在 session/pool——该域文件另有进行中改动，S4+ 补）
+        crate::services::pf_state::publish_dock(DockPanel::Default);
+        crate::services::pf_state::publish_active_session(&chat.pool.active_key);
         chat.subscribe_runtime(&rt, cx);
         // 010-启动.md §9：启动期的一切（120ms 泵 / 3s 外部追加观察 / 60s 空闲
         // 回收 / 30s recents 对账 / 启动页闸门）都由 startup 发起；恢复最后

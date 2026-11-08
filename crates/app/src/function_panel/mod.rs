@@ -64,7 +64,8 @@ pub(crate) fn dock(
 ) -> gpui::AnyElement {
     let t = T();
     // git 面板保留独立视图（022；状态栏 tab 已隐藏，automation panel.dock 可达）
-    if chat.layout.dock_panel == DockPanel::Git {
+    // 001-S4：读走 hub.state() 快照
+    if crate::services::pf_state::dock_is("git") {
         return div()
             .id("dock")
             .flex_1()

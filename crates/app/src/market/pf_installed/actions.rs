@@ -106,6 +106,7 @@ impl Chat {
             self.plugins.plugins.remove(ix);
             if matches!(self.layout.dock_panel, crate::DockPanel::Plugin(_)) {
                 self.layout.dock_panel = crate::DockPanel::Default;
+                crate::services::pf_state::publish_dock(self.layout.dock_panel);
             }
         }
         let pkg_name = name.clone();
@@ -140,6 +141,7 @@ impl Chat {
                     // 下标位移：插件面板存的是位置，任何一条被摘都退默认
                     if matches!(c.layout.dock_panel, crate::DockPanel::Plugin(_)) {
                         c.layout.dock_panel = crate::DockPanel::Default;
+                        crate::services::pf_state::publish_dock(c.layout.dock_panel);
                     }
                 }
                 cx.notify();

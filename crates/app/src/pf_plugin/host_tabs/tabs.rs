@@ -17,6 +17,7 @@ impl Chat {
             return;
         }
         self.layout.dock_panel = crate::DockPanel::Plugin(ix);
+        crate::services::pf_state::publish_dock(self.layout.dock_panel);
         // 广播「面板打开首拍」语义：清快照 → 下一拍必发当前状态
         broadcast::reset(&mut self.plugins);
         self.plugin_refresh(ix, cx);

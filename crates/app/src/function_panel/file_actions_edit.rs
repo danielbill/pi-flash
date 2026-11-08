@@ -103,7 +103,7 @@ impl Chat {
         if self.modal_layer_open()
             || self.layout.panes_hidden
             || self.layout.files_min
-            || self.layout.dock_panel == DockPanel::Git
+            || crate::services::pf_state::dock_is("git")
         {
             return false;
         }

@@ -418,6 +418,12 @@ pub(crate) fn shutdown_for_close(chat: &mut Chat, window: &Window) {
         maximized: window.is_maximized(),
     });
     chat.persist_ui();
+    // 001-S4：窗口尺寸快照进 hub.state()（可重建，仅观测；不落盘不投影）
+    crate::services::pf_state::publish_window(
+        f64::from(b.origin.x),
+        f64::from(b.size.width),
+        window.is_maximized(),
+    );
     // 001-S1：settings 退出落盘——coalesce 窗口内未写的改动最后冲一次
     //（写者线程随进程退出，不 flush 就丢最后 ≤50ms 的改动）
     let _ = pf_context::hub().settings.flush();

@@ -46,7 +46,8 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
             continue;
         };
         // active = 左列正显示该插件面板（互斥切换，同「项目」tab 口径）
-        let active = chat.layout.dock_panel == crate::DockPanel::Plugin(pix);
+        // 001-S4：读走 hub.state()（Chat 真源变动时同步，见 services::pf_state）
+        let active = crate::services::pf_state::dock_is(&format!("plugin:{pix}"));
         let color = if active { t.accent } else { t.text_muted };
         let title = sb.title_zh.clone();
         tabs = tabs.child(
@@ -150,9 +151,9 @@ pub(crate) fn control_bar(chat: &mut Chat, cx: &mut gpui::Context<Chat>) -> impl
 /// 指示位；后续新面板在此续可点 tab（切换走 layout.dock_panel）。
 /// 「项目」tab（020-1）：连体卡（nav 底 + 顶无边 + 底圆角），点击回整合
 /// 面板（DockPanel::Default）。active = 左列正是整合面板（accent 图标）。
-fn project_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
+fn project_tab(_chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElement {
     let t = T();
-    let active = chat.layout.dock_panel == crate::DockPanel::Default;
+    let active = crate::services::pf_state::dock_is("sessions");
     div()
         .id("project-tab")
         // ui-raw: ok 020-1 连体卡原形制（w46/mt−4）升级为可点 tab；
@@ -183,6 +184,7 @@ fn project_tab(chat: &Chat, cx: &mut gpui::Context<Chat>) -> impl gpui::IntoElem
             cx.listener(move |this, _: &gpui::MouseDownEvent, _w, cx| {
                 if this.layout.dock_panel != crate::DockPanel::Default {
                     this.layout.dock_panel = crate::DockPanel::Default;
+                    crate::services::pf_state::publish_dock(this.layout.dock_panel);
                     cx.notify();
                 }
             }),

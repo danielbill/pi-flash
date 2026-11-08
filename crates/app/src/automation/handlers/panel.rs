@@ -43,6 +43,7 @@ pub(super) fn dispatch(
             }
             chat.layout.dock_panel = DockPanel::from_dock_arg(panel, plugin_ix)
                 .ok_or_else(|| bad(format!("未知 dock 面板: {panel:?}")))?;
+            crate::services::pf_state::publish_dock(chat.layout.dock_panel);
             cx.notify();
             ok()
         }
