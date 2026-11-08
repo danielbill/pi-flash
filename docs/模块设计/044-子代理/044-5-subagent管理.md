@@ -135,6 +135,7 @@ PF 宿主里**曾有第二个委派面**，不是 PF 也不是 pi 内核提供�
 - **它的自动避让不生效**：billion-context 自带 `delegate.forceEnable=false` 检测——只在发现 npm `pi-subagents` 安装（`npmInstallAt(agentDir)` / `extensions/*` 的 `package.json.name === "pi-subagents"`）时关掉。PF 用 `-e` 指仓库 `extensions/pf-subagents`，检测不到。
 - **关闭方式**：`C:/Users/bi_da/.config/billion-context/billion-context.json` 加 `"pi": {"subagents": {"enabled": false}}`（`CONFIGURATION.md:868-905`；`enabled:false` 同时移除三个工具与其系统提示词段，**新会话生效**）。已改（备份 `billion-context.json.bak-20261108`）。
 - **不依赖它**：即使没关，4.2 的反轮询契约 + `subagent_list` 的 snapshot 语义也让模型不去 poll。
+- **为什么还要 spawn 侧钉一次**：那份 JSON 会被 bili 自己的 web UI 整份重写成它的 schema（实测 16:36 把 `pi` 段丢了，只留 `providers`/`compress`），所以 `spawn.rs` 在所有档位额外发 `--exclude-tools acp_delegate,acp_delegate_wait,acp_delegate_cancel`（denylist 对扩展工具同样生效，已用 probe 扩展实测 `getAllTools()` 里三项彻底消失）。
 
 ## 5 子会话构造
 

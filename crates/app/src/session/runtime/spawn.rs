@@ -136,6 +136,15 @@ impl SessionRuntime {
             }
             _ => {}
         }
+        // 外部委派面与 `agent` 撞车（2026-11-08 真机）：billion-context 扩展会注册
+        // `acp_delegate` / `_wait` / `_cancel`（默认异步 + runId，与 PF 的
+        // dispatch-and-return 语义相反）。模型拿 childId 去 `acp_delegate_wait`
+        // 报错、再把 `subagent_list` 当状态轮询，最后 `bash sleep 30`。
+        // 关它靠 `pi.subagents.enabled=false`（044-5 §4.7），但那份配置会被
+        // bili 自己的 web UI 整份重写成它的 schema（已实测丢键），所以这里在
+        // spawn 参数上再钉一次：denylist 对扩展工具同样生效。
+        extra.push("--exclude-tools".into());
+        extra.push("acp_delegate,acp_delegate_wait,acp_delegate_cancel".into());
         // 会话级扩展清单（031 session-ext.json；契约 v2.4/v3 pi_extensions
         // 的挂载通道）：**所有档位统一消费**——此前只有 custom 档读它，
         // 插件 ext 在 full/default 档下永远挂不上（-e 缺席，出码/收发无人
