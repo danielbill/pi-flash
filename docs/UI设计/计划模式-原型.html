@@ -183,11 +183,7 @@ body{
   padding:0 14px; /* BTN_LG px14（§5.1） */
   transition:background .12s,border-color .12s,color .12s;
 }
-.btn-primary{background:var(--accent);color:var(--accent-contrast)}
-.btn-primary:hover{background:var(--accent-hover)}
-.btn-primary:active{transform:translateY(1px)}
-/* Secondary 变体（§5.1）：透明底 + text 字 + 1px border，hover bg_hover
-   （用户裁决：取消/否决不用警告色，正常态） */
+/* 两钮同款 Secondary（用户裁决：不用 accent 诱导，主次只靠行序） */
 .btn-secondary{
   background:transparent;color:var(--text);
   border:1px solid var(--border);
@@ -205,18 +201,11 @@ body{
 .op-input input::placeholder{color:var(--text-faint)}
 .op-input input:focus{border-color:var(--accent)}
 
-/* statusbar 40（chrome 层，示意） */
+/* statusbar 40（chrome 层，裸条示意——计划模式信息只在工具菜单条目，用户裁决） */
 .statusbar{
   height:40px;flex:none;background:var(--chrome);
   border-top:1px solid rgba(53,58,69,.6);
-  display:flex;align-items:center;gap:8px;padding:0 12px;font-size:11px;color:var(--text-dim);
 }
-.statusbar .sb-tab{
-  display:flex;align-items:center;gap:6px;height:28px;border-radius:5px;padding:0 10px;
-}
-.statusbar .sb-tab.on{background:var(--bg-hover);color:var(--text)}
-.statusbar .dot{width:6px;height:6px;border-radius:99px;background:#3aa6d0}
-.statusbar .right{margin-left:auto;display:flex;gap:14px;color:var(--text-faint);font-family:var(--mono);font-size:10.5px}
 </style>
 </head>
 <body>
@@ -300,7 +289,7 @@ body{
       <!-- 下 20%：操作面板 600px 居中，三行堆叠 -->
       <div class="plan-foot">
         <div class="ops">
-          <button class="btn btn-primary">批准计划，取消计划模式</button>
+          <button class="btn btn-secondary">批准计划，取消计划模式</button>
           <button class="btn btn-secondary">否决 / 取消（Esc）</button>
           <div class="op-input">
             <input type="text" placeholder="输入其他想法，回车确认">
@@ -310,11 +299,8 @@ body{
     </div>
   </div>
 
-  <!-- statusbar -->
-  <div class="statusbar">    <div class="sb-tab on"><span class="dot"></span>agent 运行中</div>
-    <div class="sb-tab">计划模式</div>
-    <div class="right"><span>GLM-5.3</span><span>main*</span><span>32.4k tok</span></div>
-  </div>
+  <!-- statusbar：裸条，零额外信息 -->
+  <div class="statusbar"></div>
 </div>
 </body>
 </html>
