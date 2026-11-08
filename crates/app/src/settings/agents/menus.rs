@@ -278,7 +278,8 @@ pub(super) fn skills_trigger(
             "ag-skills-trg",
             Some("wand"),
             &if custom {
-                tr("agents.skills_custom").to_string()
+                // 与 ext 触发钮同款计数标识（2026-11-08 用户定稿）
+                format!("{}[{}]", tr("agents.skills_custom"), d.ag_skills.len())
             } else {
                 tr("agents.inherit").to_string()
             },
@@ -469,6 +470,7 @@ fn thinking_card(weak: &gpui::WeakEntity<Chat>, d: &SettingsFormData) -> Div {
 /// 工具档位卡：inherit（继承委派者）置顶 + composer 五档（键 custom ↔
 /// profile 键 full+ 双向映射，其余直传）。
 fn tier_card(weak: &gpui::WeakEntity<Chat>, d: &SettingsFormData) -> Div {
+    let t = T();
     let cur_menu = if d.ag_tools == "full+" {
         "custom"
     } else {
@@ -476,33 +478,45 @@ fn tier_card(weak: &gpui::WeakEntity<Chat>, d: &SettingsFormData) -> Div {
     };
     // inherit 置顶（composer 无此档——子代理专属语义），其余档位表与
     // composer 工具菜单同源
-    let mut rows = vec![PillRow {
-        key: "inherit",
-        label: tr("agents.inherit_tools").to_string(),
-        desc: String::new(),
-        active: cur_menu == "inherit",
-    }];
-    rows.extend(tools_preset_rows(cur_menu));
-    let items = rows
-        .into_iter()
-        .map(|row| {
-            let weak = weak.clone();
-            let key = row.key.to_string();
-            pill_row(
-                &weak,
-                move |c, cx| {
-                    // 菜单键 custom = profile 键 full+；其余直传
-                    let v = if key == "custom" {
-                        "full+".to_string()
-                    } else {
-                        key.clone()
-                    };
-                    form_pick(c, cx, |s, _| s.ag_tools = v);
-                },
-                row,
-            )
-        })
-        .collect::<Vec<_>>();
+    // 「继承委派者」置顶 + 分隔线（2026-11-08 统一定稿，与模型/技能卡同式）
+    let inherit = pill_row(
+        weak,
+        |c, cx| {
+            form_pick(c, cx, |s, _| s.ag_tools = "inherit".into());
+        },
+        PillRow {
+            key: "inherit",
+            label: tr("agents.inherit_tools").to_string(),
+            desc: String::new(),
+            active: cur_menu == "inherit",
+        },
+    );
+    let mut items = vec![
+        inherit,
+        div()
+            .h(px(1.))
+            .mx(px(PAD))
+            .my(px(4.))
+            .bg(rgb(t.border))
+            .into_any_element(),
+    ];
+    items.extend(tools_preset_rows(cur_menu).into_iter().map(|row| {
+        let weak = weak.clone();
+        let key = row.key.to_string();
+        pill_row(
+            &weak,
+            move |c, cx| {
+                // 菜单键 custom = profile 键 full+；其余直传
+                let v = if key == "custom" {
+                    "full+".to_string()
+                } else {
+                    key.clone()
+                };
+                form_pick(c, cx, |s, _| s.ag_tools = v);
+            },
+            row,
+        )
+    }));
     div().flex().flex_col().children(items)
 }
 
