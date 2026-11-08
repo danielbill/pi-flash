@@ -308,6 +308,9 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     // 界面页：部分操作隐藏（dock 两操作栏不常用 icon 自动隐藏总开关）
     ("settings.autohide_icons", "部分操作隐藏", "部分操作隱藏", "Auto-hide small icons"),
     ("settings.autohide_icons_hint", "设置面板上的小icon隐藏，只当鼠标悬浮时展示", "設定面板上的小icon隱藏，只當滑鼠懸浮時展示", "Small panel icons stay hidden until you hover the panel"),
+    // 界面页：显示状态栏（输入下方状态栏信息显隐；默认 on）
+    ("settings.show_status_bar", "显示状态栏", "顯示狀態列", "Show status bar"),
+    ("settings.show_status_bar_hint", "设置输入下方状态栏信息是否显示", "設定輸入下方狀態列資訊是否顯示", "Show or hide the status bar under the input"),
     // 081 自动更新（其他页开关 + 新会话页版本号位 + 更新日志 tab）
     ("about.auto_update", "自动更新", "自動更新", "Auto-update"),
     ("settings.auto_update_hint", "允许Pi-Flash自动更新", "允許Pi-Flash自動更新", "Let Pi-Flash update itself automatically"),
@@ -848,7 +851,6 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     // -- 034 会话区底部状态栏
     ("footerbar.tip.usage", "打开用量面板（/usage）", "開啟用量面板（/usage）", "Open usage panel (/usage)"),
     ("footerbar.tip.busy", "当前轮次结束后可用", "目前輪次結束後可用", "Available after the current turn"),
-    ("footerbar.tip.toggle", "显示扩展状态栏", "顯示擴充狀態列", "Show extension status bar"),
     ("footerbar.tip.mgr", "管理常驻插件", "管理常駐外掛", "Manage resident plugins"),
     ("footerbar.mgr.empty", "暂无申请常驻状态的插件", "暫無申請常駐狀態的外掛", "No extensions have requested status-bar residency"),
 ];

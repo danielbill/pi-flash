@@ -339,13 +339,6 @@ impl Chat {
             }
         }
     }
-
-    /// 显示开关翻转（034 §2）：落盘 ui_state 后整条重建。
-    pub(crate) fn toggle_session_status_bar(&mut self, cx: &mut gpui::Context<Chat>) {
-        let on = !crate::services::workspace::session_status_bar_on();
-        crate::services::workspace::set_session_status_bar(on);
-        cx.notify();
-    }
 }
 
 #[cfg(test)]

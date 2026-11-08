@@ -1,38 +1,7 @@
-//! 状态带开关（status_bar_toggle）：插件勾选常驻/隐藏管理菜单。
+//! 状态带开关已自本行挪入「设置 - 界面」（显示状态栏）；本文件只剩
+//! composer 控件行。
 
 use super::*;
-
-/// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info ICON_SM + SW_SM 24×14）。
-/// 关 = 状态带整条不渲染（数据面照旧维护）；状态直切无动画。
-pub(crate) fn status_bar_toggle(
-    t: &'static crate::appearance::theme::Theme,
-    cx: &mut Context<Chat>,
-) -> gpui::AnyElement {
-    let on = crate::services::workspace::session_status_bar_on();
-    let color = if on { t.text_muted } else { t.text_faint };
-    let weak = cx.entity().downgrade();
-    div()
-        .id("ext-status-toggle")
-        .h(px(28.))
-        .flex()
-        .items_center()
-        .gap(px(6.)) // SP3：图标↔控件
-        .px(px(6.))
-        .with_tip("footerbar.tip.toggle")
-        // 图标 ICON_SM 14（§3 行内/按钮内默认档；与同排胶囊的 13–14 视觉一致）
-        // 同一控件行 icon 统一 MD 档（2026-11-08；原 SM 14 与触发钮 13/16 混用）
-        .child(icon("badge-info", crate::ui::tokens::icon::MD, color))
-        // 紧凑档开关（§5.3 SW_SM）：28px 行高里的行内件，MD 会几乎撑满整行
-        .child(crate::ui::kit::switch_base_sm(
-            "ext-status-switch",
-            on,
-            false,
-            move |_on, cx| {
-                let _ = weak.update(cx, |c, cx| c.toggle_session_status_bar(cx));
-            },
-        ))
-        .into_any_element()
-}
 
 /// 控件行：左 = 图片 + 工具预设；右 = 上下文环 + 模型 + 思考 + 发送/停止。
 #[allow(clippy::too_many_arguments)]

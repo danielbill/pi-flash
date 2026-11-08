@@ -155,6 +155,25 @@ pub(crate) fn mc_general_view(
         t,
     ));
 
+    // 显示状态栏 switch（034 自输入面板 MCP 右侧挪入：输入下方状态栏信息
+    // 显隐，默认 on）。落盘走 ui_state（`session_status_bar`），切开关即
+    // notify 重渲——状态带整条按新值决定是否渲染。
+    let status_bar = crate::services::workspace::session_status_bar_on();
+    col = col.child(set_row(
+        tr("settings.show_status_bar"),
+        tr("settings.show_status_bar_hint"),
+        switch_base("general-show-status-bar", status_bar, false, {
+            let weak = weak.clone();
+            move |on, cx| {
+                let _ = weak.update(cx, |_c, cx| {
+                    crate::services::workspace::set_session_status_bar(on);
+                    cx.notify();
+                });
+            }
+        }),
+        t,
+    ));
+
     // ---- 语言：三个一排，左对齐（置底——用户定夺） ------------------------
     col = col.child(section_label(tr("settings.language")));
     col = col.child(lang_row(weak, t));

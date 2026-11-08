@@ -7,7 +7,6 @@ use super::*;
 use crate::Chat;
 use crate::PillMenu;
 use crate::i18n::tr;
-use crate::ui::WithTip;
 use crate::ui::{icon, icon_hover};
 
 /// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）。
@@ -19,7 +18,7 @@ const BAR_FONT: f32 = 12.;
 /// 扩展按钮（040 定稿 + 2026-10 改版）：工具胶囊右边，**仅「full+」档激活**。
 /// 点击开合扩展菜单（勾选即生效，无确认按钮）；非 full+ 档置灰不可点。
 pub(crate) mod toggle;
-pub(super) use toggle::{composer_bar, status_bar_toggle};
+pub(super) use toggle::composer_bar;
 /// 扩展按钮（040 定稿 + 2026-10 改版）：工具胶囊右边，**仅「full+」档激活**。
 /// 点击开合扩展菜单（勾选即生效，无确认按钮）；非 full+ 档置灰不可点。
 fn plugin_button(
@@ -137,8 +136,6 @@ pub(crate) fn bar_trigger(
     el
 }
 
-/// 034 会话状态带显示开关：MCP 胶囊右侧（badge-info ICON_SM + SW_SM 24×14）。
-/// 关 = 状态带整条不渲染（数据面照旧维护）；状态直切无动画。
 /// 左组：`!` shell 模式提示，或 图片 + 工具预设 + 扩展/MCP 胶囊。
 /// （自 composer_bar 拆出，函数行数守卫。）
 #[allow(clippy::too_many_arguments)]
@@ -268,8 +265,6 @@ fn bar_left_group(
             .child(plugin_button(chat, t, cx))
             // MCP 按钮（043）：扩展按钮右边的兄弟节点（常驻渲染，n=0 显 [0]）
             .child(mcp_button(chat, t, cx))
-            // 034 会话状态带显示开关：MCP 右侧（用户定案）
-            .child(status_bar_toggle(t, cx))
             .into_any_element()
     }
 }

@@ -121,7 +121,10 @@ pub(crate) fn switch_base(
     switch_base_sized(id, on, disabled, SwitchSize::Md, apply)
 }
 
-/// 紧凑档独立开关（SW_SM 24×14）：28px 行高里的行内件（034 状态带开关）。
+/// 紧凑档独立开关（SW_SM 24×14）：28px 行高里的行内件（原 034 状态带开关；
+/// 该开关已自 composer 行挪入设置页，现走常规档 `switch_base`，此处保留
+/// 供后续行内紧凑场景复用）。
+#[allow(dead_code)]
 pub(crate) fn switch_base_sm(
     id: impl Into<SharedString>,
     on: bool,
