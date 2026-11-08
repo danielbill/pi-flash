@@ -48,14 +48,13 @@ body{
   border-radius:5px;padding:3px 8px;background:#1b1d22;
 }
 .specbar .dims{font-size:11.5px;color:var(--text-dim);font-family:var(--mono);letter-spacing:.2px}
-.layout-switch{margin-left:auto;display:flex;align-items:center;gap:8px}
-.layout-switch .lab{font-size:11.5px;color:var(--text-dim)}
-.chip{
-  font-size:12px;color:var(--text-muted);background:#1b1d22;border:1px solid var(--border);
-  border-radius:6px;padding:5px 12px;cursor:pointer;transition:all .15s;user-select:none;
+.kbd{
+  font-family:var(--mono);font-size:10px;color:var(--text-dim);
+  background:#1d2026;border:1px solid var(--border);border-bottom-width:2px;
+  border-radius:4px;padding:1px 5px;line-height:1.4;
 }
-.chip:hover{background:var(--bg-hover);color:var(--text)}
-.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-contrast);font-weight:600}
+/* 按钮内嵌键帽：继承按钮字色，弱化为纹理 */
+.btn .kbd{background:transparent;border-color:currentColor;border-bottom-width:1px;color:inherit;opacity:.55;margin-left:6px;font-size:9px}
 
 /* ---------- 应用窗框（CSD 10px 特例） ---------- */
 .app{
@@ -110,34 +109,6 @@ body{
   animation:planIn .28s cubic-bezier(.2,.7,.3,1);
 }
 @keyframes planIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-
-/* 标题行 36px（§5.7 标题行高 36） */
-.plan-head{
-  height:36px;flex:none;display:flex;align-items:center;gap:10px;
-  padding:0 8px 0 16px;border-bottom:1px solid var(--border);
-}
-.mode-badge{
-  display:flex;align-items:center;gap:6px;
-  font-size:11px;font-weight:600;color:var(--accent);
-  background:rgba(97,137,235,.12);border:1px solid rgba(97,137,235,.35);
-  border-radius:3px;padding:2px 8px;
-}
-.mode-badge .bulb{font-size:12px;line-height:1}
-.plan-head .title{font-size:14px;font-weight:600;color:var(--text)}
-.plan-head .sub{font-size:11px;color:var(--text-faint)}
-.plan-head .esc-hint{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--text-faint);font-size:11px}
-.kbd{
-  font-family:var(--mono);font-size:10px;color:var(--text-dim);
-  background:#1d2026;border:1px solid var(--border);border-bottom-width:2px;
-  border-radius:4px;padding:1px 5px;line-height:1.4;
-}
-/* 关闭钮 IB_MD 28 / ICON_XS 12（§5.2/§5.7） */
-.icon-btn{
-  width:28px;height:28px;border-radius:6px;border:none;background:transparent;
-  display:grid;place-items:center;color:var(--text-muted);cursor:pointer;transition:background .12s;
-}
-.icon-btn:hover{background:var(--bg-hover);color:var(--text)}
-.icon-btn .x{font-size:12px;line-height:1;font-family:var(--mono)}
 
 /* ---------- 上 80%：markdown 预览（editor-markdown 复用件的观感） ---------- */
 .plan-body{
@@ -209,7 +180,7 @@ body{
   display:flex;align-items:center;justify-content:center;
   background:linear-gradient(180deg,rgba(40,44,51,0) 0%,rgba(40,44,51,.45) 100%);
 }
-.ops{width:600px;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.ops{width:600px;display:flex;flex-direction:column;gap:8px}
 
 /* BTN_LG 32 / px14 / ui12 / r6（§5.1） */
 .btn{
@@ -230,11 +201,10 @@ body{
 .btn-danger:hover{background:rgba(223,85,97,.12)}
 .btn-danger:active{transform:translateY(1px)}
 
-/* 行 2 变体 A：并排（推荐） */
-.ops .row2{display:flex;gap:8px}
-.ops .row2 .btn-danger{flex:none;width:150px}
-/* 输入框：高 30 r5 边框聚焦 accent（§5.5） */
-.op-input{position:relative;flex:1}
+/* 行 2：否决整行（Esc 键帽内嵌） */
+.ops .btn-danger{width:100%}
+/* 行 3：输入框整行 —— 高 30 r5 边框聚焦 accent（§5.5） */
+.op-input{position:relative}
 .op-input input{
   width:100%;height:30px;border-radius:5px;
   background:var(--bg-panel);border:1px solid var(--border);
@@ -246,16 +216,6 @@ body{
 .op-input .enter{
   position:absolute;right:8px;top:50%;transform:translateY(-50%);
   display:flex;align-items:center;gap:4px;color:var(--text-faint);pointer-events:none;
-}
-
-/* 行 2 变体 B：上下两行 */
-body.stack .row2{flex-direction:column}
-body.stack .row2 .btn-danger{width:100%}
-
-/* 变体标注角标 */
-.variant-note{
-  font-size:11px;color:var(--text-faint);text-align:center;margin-top:2px;
-  font-family:var(--mono);letter-spacing:.3px;
 }
 
 /* statusbar 40（chrome 层，示意） */
@@ -279,12 +239,7 @@ body.stack .row2 .btn-danger{width:100%}
   <span class="tag">会话区 100%×100%</span>
   <span class="tag">上 80% markdown 预览</span>
   <span class="tag">下 20% 操作面板 · 600px 居中</span>
-  <span class="dims">BTN_LG 32 · 输入 30/r5 · 标题行 36 · R_CTRL 6</span>
-  <div class="layout-switch">
-    <span class="lab">第二行布局（待决策 1）</span>
-    <button class="chip on" id="chipSide" onclick="setLayout(false)">并排（推荐）</button>
-    <button class="chip" id="chipStack" onclick="setLayout(true)">上下</button>
-  </div>
+  <span class="dims">BTN_LG 32 · 输入 30/r5 · R_CTRL 6 · 无标题条</span>
 </div>
 
 <div class="app">
@@ -311,17 +266,8 @@ body.stack .row2 .btn-danger{width:100%}
       <div class="spacer"></div>
     </div>
 
-    <!-- ============ 计划弹窗（覆盖整个会话区） ============ -->
+    <!-- ============ 计划弹窗（覆盖整个会话区，无标题条） ============ -->
     <div class="plan">
-      <!-- 标题行 36 -->
-      <div class="plan-head">
-        <span class="mode-badge"><span class="bulb">💡</span>计划模式</span>
-        <span class="title">实施计划</span>
-        <span class="sub">agent 已完成只读探索，等待你的裁决</span>
-        <span class="esc-hint"><span class="kbd">Esc</span> 否决并退出</span>
-        <button class="icon-btn" title="否决/取消"><span class="x">✕</span></button>
-      </div>
-
       <!-- 上 80%：markdown 预览 -->
       <div class="plan-body">
         <div class="md">
@@ -364,20 +310,19 @@ body.stack .row2 .btn-danger{width:100%}
         </div>
       </div>
 
-      <!-- 下 20%：操作面板 600px 居中 -->
+      <!-- 下 20%：操作面板 600px 居中，三行堆叠 -->
       <div class="plan-foot">
         <div class="ops">
           <button class="btn btn-primary" style="width:100%">
             <span class="ic">✓</span>批准计划，退出计划模式
           </button>
-          <div class="row2">
-            <button class="btn btn-danger"><span class="ic">✕</span>否决 / 取消</button>
-            <div class="op-input">
-              <input type="text" placeholder="输入其他想法，agent 将重新计划">
-              <span class="enter"><span class="kbd">↵</span></span>
-            </div>
+          <button class="btn btn-danger">
+            <span class="ic">✕</span>否决 / 取消<span class="kbd">Esc</span>
+          </button>
+          <div class="op-input">
+            <input type="text" placeholder="输入其他想法，agent 将重新计划">
+            <span class="enter"><span class="kbd">↵</span></span>
           </div>
-          <div class="variant-note" id="variantNote">row2: 并排 — 否决 150px + 输入自适应</div>
         </div>
       </div>
     </div>
@@ -392,17 +337,13 @@ body.stack .row2 .btn-danger{width:100%}
 </div>
 
 <script>
-function setLayout(stack){
-  document.body.classList.toggle('stack',stack);
-  document.getElementById('chipSide').classList.toggle('on',!stack);
-  document.getElementById('chipStack').classList.toggle('on',stack);
-  document.getElementById('variantNote').textContent = stack
-    ? 'row2: 上下 — 否决整行 + 输入整行'
-    : 'row2: 并排 — 否决 150px + 输入自适应';
-}
-/* 交互预览：Esc = 否决路径 / 输入框回车 = 发送其他想法（原型仅演示焦点环） */
+/* 交互预览：Esc = 否决（原型仅演示高亮反馈） */
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){document.querySelector('.plan').style.outline='1px solid rgba(223,85,97,.5)';setTimeout(()=>document.querySelector('.plan').style.outline='',350);}
+  if(e.key==='Escape'){
+    const b=document.querySelector('.btn-danger');
+    b.style.background='rgba(223,85,97,.25)';
+    setTimeout(()=>b.style.background='',300);
+  }
 });
 </script>
 </body>
