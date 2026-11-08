@@ -167,3 +167,70 @@ fn non_agent_calls_are_ignored() {
     scan_agent_calls(&msgs, &mut scan, &mut map, &mut by_child);
     assert!(map.is_empty());
 }
+
+// ——— 第三行投影（project_turn_agents）：轮序必须与 scan_agent_calls 同口径 ———
+
+/// 2026-11-08 报障回归：第 2 轮派的 3 个子代理被画在第 3 轮卡上。
+#[test]
+fn turn_agents_land_on_their_own_turn() {
+    let msgs = vec![
+        user(1),
+        assistant(2, vec![call("a1", "bash")]),
+        // 第 2 条 User 消息 = 第 2 轮，三个子代理在这一轮派发
+        user(3),
+        assistant(
+            4,
+            vec![
+                call("s1", "agent"),
+                call("s2", "agent"),
+                call("s3", "agent"),
+            ],
+        ),
+        // 第 3 轮没有子代理
+        user(5),
+        assistant(6, Vec::new()),
+    ];
+    let rows = project_turn_agents(&msgs);
+    assert_eq!(rows.len(), 3, "槽位数 = 轮数");
+    assert!(rows[0].is_empty(), "第 1 轮无 agent 调用");
+    assert_eq!(rows[1].len(), 3, "三个子代理属第 2 轮，不是第 3 轮");
+    assert!(rows[2].is_empty(), "第 3 轮不得蹭到上一轮的点");
+}
+
+/// 末轮无后继 User 消息：旧实现的尾部补 push 落到无卡片的下标，第三行不显。
+#[test]
+fn last_turn_agents_stay_on_the_last_turn() {
+    let msgs = vec![
+        user(1),
+        assistant(2, vec![call("a1", "agent")]),
+        user(3),
+        assistant(4, vec![call("b1", "agent"), call("b2", "agent")]),
+    ];
+    let rows = project_turn_agents(&msgs);
+    assert_eq!(rows.len(), 2, "不得多出无卡片的幻影槽位");
+    assert_eq!(rows[0].len(), 1);
+    assert_eq!(rows[1].len(), 2, "末轮的点必须留在末轮槽位");
+}
+
+/// 单轮会话：旧实现整行不显（点全落在幻影下标上）。
+#[test]
+fn single_turn_session_still_shows_its_dots() {
+    let msgs = vec![user(1), assistant(2, vec![call("a1", "agent")])];
+    let rows = project_turn_agents(&msgs);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 1);
+}
+
+/// 首条 User 之前的 assistant（系统提示 / 回放残片）不归任何轮，也不能把
+/// 后续轮次序号顶位。
+#[test]
+fn assistant_before_first_user_does_not_shift_turns() {
+    let msgs = vec![
+        assistant(1, vec![call("pre", "agent")]),
+        user(2),
+        assistant(3, vec![call("a1", "agent")]),
+    ];
+    let rows = project_turn_agents(&msgs);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 1, "只有第 1 轮自己派的那一个");
+}

@@ -197,27 +197,7 @@ impl Chat {
             &mut panel.calls,
             &mut panel.by_child,
         );
-        let mut turn_agents: Vec<Vec<DotTone>> = Vec::new();
-        let mut cur: Vec<DotTone> = Vec::new();
-        for m in msgs {
-            if m.role == crate::session::Role::User {
-                turn_agents.push(std::mem::take(&mut cur));
-                continue;
-            }
-            if m.role != crate::session::Role::Assistant {
-                continue;
-            }
-            for b in &m.blocks {
-                if let Block::ToolCall { name, .. } = b {
-                    if name == "agent" {
-                        cur.push(dot_tone_of(b));
-                    }
-                }
-            }
-        }
-        if !cur.is_empty() {
-            turn_agents.push(cur);
-        }
+        let turn_agents = project_turn_agents(msgs);
         let changed = panel.turn_agents != turn_agents;
         panel.turn_agents = turn_agents;
         if changed {
@@ -238,7 +218,8 @@ impl Chat {
             return;
         };
         // 收集 patch：childId → (终态字段)。details 在 custom Msg 上原样保留
-        // （扩展 completion.ts：childId / stopReason / errorCode / session_file）。
+        // （扩展 completion.ts：childId / stopReason / errorCode / session_file）；
+        // 键名映射与 settled 条目走同一份 `settled_patch_fields`。
         let mut patches: Vec<(String, serde_json::Value)> = Vec::new();
         for m in rt.read(cx).messages.as_slice() {
             if m.role != crate::session::Role::Custom
@@ -247,22 +228,9 @@ impl Chat {
                 continue;
             }
             let Some(d) = &m.details else { continue };
-            let Some(cid) = d.get("childId").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let Some(stop) = d.get("stopReason").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let mut merged = serde_json::Map::new();
-            merged.insert("status".into(), stop.into());
-            merged.insert("stop_reason".into(), stop.into());
-            if let Some(v) = d.get("errorCode") {
-                merged.insert("error_code".into(), v.clone());
+            if let Some(patch) = crate::session::messages::settled_patch_fields(d) {
+                patches.push(patch);
             }
-            if let Some(v) = d.get("session_file") {
-                merged.insert("session_file".into(), v.clone());
-            }
-            patches.push((cid.to_string(), serde_json::Value::Object(merged)));
         }
         if patches.is_empty() {
             return;
@@ -394,6 +362,39 @@ impl Chat {
         }
         None
     }
+}
+
+/// 按轮投影第三行状态点：轮序与 [`scan_agent_calls`] **同口径**——第 n 条
+/// User 消息 = 第 n 轮，`agent` 调用归它**所属**的那一轮。
+///
+/// 历史上的差一错（2026-11-08 报障：第 2 轮派的 3 个子代理画在第 3 轮卡
+/// 上）：旧实现把攒下的点留到**下一条** User 消息出现时才 push，于是每轮
+/// 的点都落到下一轮的槽位；末轮无后继 User 消息，只能靠尾部的补 push 兜
+/// 到 `len` 下标——那个下标没有卡片，单轮会话的第三行因此整行不显。
+fn project_turn_agents(msgs: &[crate::session::messages::Msg]) -> Vec<Vec<DotTone>> {
+    let mut turn_agents: Vec<Vec<DotTone>> = Vec::new();
+    for m in msgs {
+        match m.role {
+            // 见到 User 先立本轮槽位，后续 agent 调用往它里面填
+            crate::session::Role::User => turn_agents.push(Vec::new()),
+            crate::session::Role::Assistant => {
+                // 首条 User 之前的 assistant 不属于任何轮（会话首帧的
+                // 系统提示 / 回放残片），丢弃
+                let Some(slot) = turn_agents.last_mut() else {
+                    continue;
+                };
+                for b in &m.blocks {
+                    if let Block::ToolCall { name, .. } = b {
+                        if name == "agent" {
+                            slot.push(dot_tone_of(b));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    turn_agents
 }
 
 /// 拉起常驻增量任务（幂等：`polling` 已在跑则不动）。
