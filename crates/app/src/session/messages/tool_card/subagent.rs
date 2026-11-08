@@ -73,6 +73,16 @@ fn subagent_args_fields_uncached(args: &str) -> (String, String) {
     (profile, task)
 }
 
+/// stop_reason 的人话兜底（tooltip 用）：空结果时用户至少能看懂「为什么红」。
+fn stop_reason_tip(sr: &str) -> &'static str {
+    match sr {
+        "max_turns" | "max_looped" => tr("subagent.max_turns"),
+        "aborted" => tr("subagent.aborted"),
+        "completed" => tr("subagent.done"),
+        _ => "",
+    }
+}
+
 /// 044-0：subagent 专属卡——向 zcode 渲染对齐的**紧凑行**（验收⑤定稿）：
 /// `[状态标记] 🤖子代理 <name(profile)> <时长> <任务名(25字截断)> <完成提示>`
 /// 状态标记同会话列表（运行 spark_spinner(accent) / 完成 NOTICE 青蓝点 /
@@ -170,8 +180,12 @@ pub(super) fn render_subagent_card(
         let body = result.trim();
         if !body.is_empty() {
             body.to_string()
+        } else if let Some(code) = error_code {
+            code.to_string()
         } else {
-            error_code.unwrap_or("").to_string()
+            // 前台子代理轮次用尽时 result 为空、error_code 也没有，只剩
+            // stop_reason——没有这层兜底就是一个空浮层（用户报障）。
+            stop_reason_tip(stop_reason).to_string()
         }
     }
     .into();

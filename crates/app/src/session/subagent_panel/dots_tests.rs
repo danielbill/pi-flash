@@ -198,3 +198,87 @@ fn completion_normalization_is_idempotent() {
         "第二次应用不得再产生变更"
     );
 }
+
+// ---- 前台派发（delivery: result）的终态收口 -------------------------------
+// 2026-11-08 用户报障：君正调研完成、华虹轮次用尽，卡片两个都在转圈，
+// 导航点阵却是对的——因为点阵读 details、卡片读 result_arrived，而前台
+// toolResult 从来没人置旗（唯一置旗点在 completion 归一/进程死亡）。
+
+fn arrive_on(m: &mut Msg, id: &str, text: &str, details: Option<serde_json::Value>) {
+    crate::session::messages::merge_tool_result(
+        m,
+        Some(id),
+        false,
+        text,
+        Vec::new(),
+        details,
+        Some(3),
+    );
+}
+
+/// 成功终态：details 带 `stop_reason=completed` → 卡片落「任务完成」。
+#[test]
+fn foreground_completed_result_settles_card() {
+    let mut msgs = vec![user(1), assistant(2, vec![call("t1", "agent")])];
+    arrive_on(
+        &mut msgs[1],
+        "t1",
+        "底稿正文",
+        Some(serde_json::json!({"child_id": "c1", "stop_reason": "completed"})),
+    );
+    let Block::ToolCall {
+        result_arrived,
+        is_error,
+        ..
+    } = &msgs[1].blocks[0]
+    else {
+        unreachable!()
+    };
+    assert!(!*is_error);
+    assert!(*result_arrived, "前台终态结果必须收口卡片，否则永远转圈");
+}
+
+/// 轮次用尽：text 为空、无 error_code，但 stop_reason 是终态 → 红点
+/// 「执行异常」（此前落「运行中」分支转圈到永远）。
+#[test]
+fn foreground_max_turns_result_settles_card() {
+    let mut msgs = vec![user(1), assistant(2, vec![call("t1", "agent")])];
+    arrive_on(
+        &mut msgs[1],
+        "t1",
+        "",
+        Some(serde_json::json!({"child_id": "c1", "stop_reason": "max_turns"})),
+    );
+    let Block::ToolCall { result_arrived, .. } = &msgs[1].blocks[0] else {
+        unreachable!()
+    };
+    assert!(*result_arrived);
+}
+
+/// 后台派发的 ack（`status=started`）不算到达：终态另走 completion 消息，
+/// 提前置旗会在两个通道之间闪一下红色「执行异常」。
+#[test]
+fn background_ack_does_not_settle_card() {
+    let mut msgs = vec![user(1), assistant(2, vec![call("t1", "agent")])];
+    arrive_on(
+        &mut msgs[1],
+        "t1",
+        "started subagent c1",
+        Some(serde_json::json!({"child_id": "c1", "status": "started", "delivery": "parent"})),
+    );
+    let Block::ToolCall { result_arrived, .. } = &msgs[1].blocks[0] else {
+        unreachable!()
+    };
+    assert!(!*result_arrived, "ack 不是终态，卡片应继续运行中");
+}
+
+/// 非 agent 工具的 toolResult 即终态（通用卡不靠 details 契约）。
+#[test]
+fn plain_tool_result_settles_card() {
+    let mut msgs = vec![user(1), assistant(2, vec![call("t1", "read")])];
+    arrive_on(&mut msgs[1], "t1", "file body", None);
+    let Block::ToolCall { result_arrived, .. } = &msgs[1].blocks[0] else {
+        unreachable!()
+    };
+    assert!(*result_arrived);
+}

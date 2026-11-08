@@ -101,6 +101,23 @@ pub(crate) fn result_payload(blocks: &[Block]) -> (String, Vec<pi_link::protocol
     (text.trim_end().to_string(), images)
 }
 
+/// `agent` 工具的 details 是否已到终态。
+///
+/// 前台派发（`delivery: result`）的终态**只在** toolResult 的 details 里：
+/// `stop_reason`（completed / max_turns / aborted）或 `error_code`（派发失败）。
+/// 后台派发的 ack 形如 `{child_id, status: "started", delivery: "parent"}`，
+/// 终态另走 completion 消息 / `subagent-settled` 条目——ack 不能算「结果已到」，
+/// 否则卡片会在两个通道之间闪一下红色「执行异常」。
+fn agent_details_terminal(d: Option<&serde_json::Value>) -> bool {
+    let Some(d) = d else { return false };
+    d.get("stop_reason").is_some()
+        || d.get("error_code").is_some()
+        || matches!(
+            d.get("status").and_then(|v| v.as_str()),
+            Some("failed" | "completed" | "done" | "aborted" | "error")
+        )
+}
+
 /// Merge a toolResult payload into the paired ToolCall of `msg` (must be the
 /// last assistant message). Correlates by toolCallId; blind-fallback to the
 /// last call keeps old snapshots without ids working.
@@ -133,11 +150,13 @@ pub(crate) fn merge_tool_result(
     };
     if let Some(ix) = ix {
         if let Some(Block::ToolCall {
+            name,
             result,
             is_error: err,
             images: imgs,
             duration_s: dur,
             details: det,
+            result_arrived,
             ..
         }) = msg.blocks.get_mut(ix)
         {
@@ -146,6 +165,15 @@ pub(crate) fn merge_tool_result(
             imgs.extend(images);
             *det = details;
             *dur = duration_s;
+            // 结果到达 = 卡片离开「运行中」（2026-11-08 用户报障：前台子代理
+            // 完成/轮次用尽后卡片永远转圈、点阵却已上色——因为点阵读 details、
+            // 卡片读本标记，而后台通道之外的 toolResult 从来没人置它）。
+            // `agent` 卡只认 details 契约（或错误）；其余工具的结果即终态。
+            if !*result_arrived
+                && (is_error || *name != "agent" || agent_details_terminal(det.as_ref()))
+            {
+                *result_arrived = true;
+            }
         }
     }
 }
