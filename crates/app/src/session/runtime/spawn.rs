@@ -214,6 +214,14 @@ impl SessionRuntime {
                 }
             }
         }
-        self.agent.spawn_with(&self.cwd, &extra, &envs)
+        self.agent.spawn_with(
+            &self.cwd,
+            &extra,
+            &envs,
+            // 044-0：模块运行时开关（开发旗标 && 用户面）——关着就不挂
+            // pf-subagents，子代理四件工具不注册（设置页关开关的另一半
+            // 在 `Chat::apply_subagent_switch`：空闲会话立即重绑）。
+            crate::services::workspace::subagent_module_active(),
+        )
     }
 }

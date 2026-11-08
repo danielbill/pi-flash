@@ -46,8 +46,12 @@ pub(super) fn global_settings_bar(weak: &gpui::WeakEntity<Chat>) -> gpui::AnyEle
             weak,
             on,
             false,
-            move |_, cx| {
+            move |c, cx| {
                 crate::services::workspace::set_subagent_module_switch(!on);
+                // 工具清单随 spawn 走：空闲会话立刻重绑、运行中的下一轮生效
+                // （否则设置页关了开关，已有进程里的 `agent`/`subagent_*`
+                // 仍在注入——2026-11-08 真机 bug）
+                c.apply_subagent_switch(cx);
                 cx.notify();
             },
         ));

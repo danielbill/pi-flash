@@ -134,6 +134,34 @@ fn scan_agent_calls(
 }
 
 impl Chat {
+    /// 设置-子代理页模块开关翻转 → 进程面生效。工具清单是 spawn 参数
+    /// （RPC 无运行时切换）：
+    /// - 全池标记 [`SessionRuntime::pending_subagents_reload`]——运行中的
+    ///   会话由 `rebind_pending` 推迟到下一轮空闲发送；
+    /// - 活跃会话已起进程且空闲：立刻重绑（同 `/reload` 的 `--session`
+    ///   复接，消息不丢）——工具定义面板立即可见工具消失/回归，不用等
+    ///   下一次发送；草稿（无进程）不为了翻开关凭空 spawn。
+    ///
+    /// 为什么必须重绑：扩展在 `spawn` 时以 `-e` 挂载（[`pi_link::subagents::
+    /// mount_target`]），`--tools` allowlist 也只在那时拼——活进程上的工具
+    /// 注册不会自更新。2026-11-08 真机 bug 的另一半。
+    pub(crate) fn apply_subagent_switch(&mut self, cx: &mut gpui::Context<Self>) {
+        for rt in self.pool.runtimes.values() {
+            rt.update(cx, |r, _| r.pending_subagents_reload = true);
+        }
+        let rt = self.rt();
+        let rebind_now = {
+            let r = rt.read(cx);
+            !r.observer && !r.agent_running && r.agent.session.is_some()
+        };
+        if rebind_now {
+            rt.update(cx, |r, cx| {
+                r.rebind_pending(cx);
+            });
+        }
+        cx.notify();
+    }
+
     /// 会话激活：面板常备（纯内存推导，无需按会话归档）。switch_pool_rt 调。
     pub(crate) fn ensure_subagent_panel(&mut self, cx: &mut gpui::Context<Self>) {
         if self.dlg.subagent_panel.is_none() {

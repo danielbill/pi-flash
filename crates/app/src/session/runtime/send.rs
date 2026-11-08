@@ -270,19 +270,20 @@ impl SessionRuntime {
         }
     }
 
-    /// 040/043：picker/MCP 任意时刻确认的清单，空闲发送（或 090 flush）
-    /// 开始前生效——换包集必须重绑进程（RPC 无运行时切换；MCP 清单活
-    /// 进程也不会自己重读），`--session` 复接不丢消息。返回 false = 重绑
-    /// spawn 失败，调用方放弃本次发送。
-    pub(super) fn rebind_pending(&mut self, cx: &mut Context<Self>) -> bool {
+    /// 040/043/044：picker/MCP/子代理开关任意时刻确认的变更，空闲发送
+    /// （或 090 flush）开始前生效——换包集必须重绑进程（RPC 无运行时切
+    /// 换；MCP 清单/扩展挂载活进程也不会自己重读），`--session` 复接不
+    /// 丢消息。返回 false = 重绑 spawn 失败，调用方放弃本次发送。
+    pub(crate) fn rebind_pending(&mut self, cx: &mut Context<Self>) -> bool {
         if self.agent_running {
             return true; // 运行中不重绑（下一轮空闲时再生效）
         }
         let pending_ext = self.pending_ext_sources.take();
-        if pending_ext.is_none() && !self.pending_mcp_reload {
+        if pending_ext.is_none() && !self.pending_mcp_reload && !self.pending_subagents_reload {
             return true;
         }
         self.pending_mcp_reload = false;
+        self.pending_subagents_reload = false;
         if let Some(list) = pending_ext {
             self.ext_sources = list;
             if let Some(p) = pi_link::session_ext::store_path() {

@@ -25,18 +25,22 @@ impl AgentSession {
 
     /// Spawn with raw CLI args (per-session tool presets etc. — the RPC
     /// surface has no live tool switching, so tools ride spawn flags).
+    ///
+    /// `mount_subagents`: 宿主是否允许挂 045 子代理扩展（设置页模块运行时
+    /// 开关的取值）。工具面只在 spawn 时定，关掉开关要重绑进程才消失。
     pub(crate) fn spawn_with(
         &mut self,
         cwd: &Path,
         extra_args: &[String],
         envs: &[(String, String)],
+        mount_subagents: bool,
     ) -> Option<UnboundedReceiver<Event>> {
         self.epoch += 1;
         let args: Vec<&str> = extra_args.iter().map(String::as_str).collect();
         // 扩展装载（pi-web parity，v70.3）：freeflow 等插件 provider 由此
         // 可用；隔离归工具预设档（full/full+ 自带 -ne 精确集）。全局开关
         // 已删（2026-10-10）。
-        match spawn_pi(cwd, &args, envs) {
+        match spawn_pi(cwd, &args, envs, mount_subagents) {
             Ok((s, ev)) => {
                 self.session = Some(s);
                 Some(ev)

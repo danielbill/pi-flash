@@ -203,6 +203,10 @@ pub(crate) struct SessionRuntime {
     /// 此处旧注释误导出的 agent_running 守卫）。运行中由 rebind_pending
     /// 推迟，flag 不清。
     pub(crate) pending_mcp_reload: bool,
+    /// 044-0：设置-子代理页模块开关翻转过——工具清单（`agent` /
+    /// `subagent_*`）是 spawn 参数，活着的 pi 进程不会自己重读。闲时
+    /// 重绑前生效，运行中由 `rebind_pending` 推迟到下一轮发送。
+    pub(crate) pending_subagents_reload: bool,
     /// 自动压缩开关（zi2s.5 /auto-compact）：pi 的 get_state 不回显该值
     /// （rpc-types.d.ts RpcSessionState 无此字段），本地跟踪；None = 默认开。
     pub(crate) auto_compaction: Option<bool>,
@@ -350,6 +354,7 @@ impl SessionRuntime {
             ext_sources,
             pending_ext_sources: None,
             pending_mcp_reload: false,
+            pending_subagents_reload: false,
             auto_compaction: None,
             bash_running: false,
             pending_bash: None,

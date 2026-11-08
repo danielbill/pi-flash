@@ -70,10 +70,17 @@ pub struct PiSession {
 /// 逃生口语义由档位系统承担。历史背景：曾恒定 `-ne` 防宿主扩展崩钉版
 /// pi（系统 pi 1.0 的 auto-router.ts fatal 0.87.1 RPC），v70.3 改默认
 /// 加载并把隔离降级为设置页开关。
+///
+/// `mount_subagents` = 宿主是否允许挂载 045 子代理扩展。工具面是 **spawn
+/// 参数**（RPC 没有运行时切换）：设置-子代理页模块开关关闭时宿主传 false，
+/// 扩展不挂载 ⇒ `agent` / `subagent_*` 工具压根不注册（真机 2026-11-08：
+/// 关了开关工具还在，因为旧实现在这里只看开发旗标）。开发旗标仍是兜底
+/// 与门（[`crate::subagents::mount_target`]）。
 pub fn spawn(
     cwd: &Path,
     extra_args: &[&str],
     envs: &[(String, String)],
+    mount_subagents: bool,
 ) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
     let cli = vendor::cli_path().ok_or_else(|| {
         "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string()
@@ -139,13 +146,12 @@ pub fn spawn(
     // 042-1：**不再注入 env、不再挂 pf-providers 扩展**。凭据由 pi 自己从
     // auth.json 的标记条目执行 `pif-secret` 取回（钥匙库），模型定义由 pi
     // 自己读 models.json。spawn 只负责起进程。
-    // 045 M1：subagent 扩展。开发旗标开着且文件存在才挂（`-ne` 下显式 `-e`
-    // 仍生效），模型因此多出 `agent` 工具；不挂只是没有该工具，不影响启动。
-    // 默认关（dev-flags.json / PI_FLASH_SUBAGENTS 控制，重启生效）。
-    if crate::subagents::dev_enabled() {
-        if let Some(ext) = crate::subagents::ext_path() {
-            cmd.arg("-e").arg(ext);
-        }
+    // 045 M1：subagent 扩展。宿主意愿（PF 设置-子代理页模块开关）与开发
+    // 旗标都开着、且文件存在才挂（`-ne` 下显式 `-e` 仍生效），模型因此多出
+    // `agent` 工具；不挂只是没有该工具，不影响启动。工具清单是 spawn 参数，
+    // 关掉开关要重绑进程才消失（app 侧 `Chat::apply_subagent_switch`）。
+    if let Some(ext) = crate::subagents::mount_target(mount_subagents) {
+        cmd.arg("-e").arg(ext);
     }
     // 执行域（90-6）唯一例外：PF_SVC_CONFIG = 宿主自带 shim 的配置指针（无凭据）
     if !envs.is_empty() {
