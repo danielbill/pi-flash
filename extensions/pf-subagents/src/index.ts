@@ -6,9 +6,8 @@
  * the child is a real pi session, the result is a real tool result, and usage is
  * accounted by pi's nested-call bookkeeping.
  *
- * M1 scope: local `spawn` and `fork` providers, caller delivery, depth guard,
- * orphan reconciliation. Background delivery, codemode fan-out and worktrees
- * come later (see 045).
+ * M1 scope: local `spawn` and `fork` providers, dispatch-and-return delivery, depth guard,
+ * orphan reconciliation. Codemode fan-out and worktrees come later (see 045).
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -350,7 +349,7 @@ export function restoreChildDepth(ctx: ExtensionContext): void {
 }
 
 export default function piSubagents(pi: ExtensionAPI): void {
-	// Parent-delivery completion hook (v2 background): routed to the live
+	// Parent-delivery completion hook (every delegation by default): routed to the live
 	// session's ui.notify; rebound on every session_start.
 	let notifyParent: (message: string) => void = () => {};
 	// Parent-delivery result: background children settle after the spawning turn,
@@ -438,7 +437,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			properties: {
 				childId: { type: "string" },
 				text: { type: "string" },
-				status: { type: "string", description: "started (background) | completed | error" },
+				status: { type: "string", description: "started | completed | error" },
 				stopReason: { type: "string" },
 				usage: { type: "object" },
 				durationMs: { type: "number" },
@@ -485,7 +484,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 					cwd: typeof params.cwd === "string" ? params.cwd : undefined,
 					label: typeof params.label === "string" ? params.label : undefined,
 					maxloop: typeof params.maxloop === "number" ? params.maxloop : undefined,
-					background: params.background === true,
+					blocking: params.blocking === true,
 				},
 				{
 					parentId,
@@ -585,7 +584,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "subagent_list",
 		label: "Subagent List",
-		description: "List this session's child agents with id, phase, label, provider and depth. You will be notified when a background subagent finishes; there is no need to keep checking its status.",
+		description: "List this session's child agents with id, phase, label, provider and depth. You will be notified when a subagent finishes; there is no need to keep checking its status.",
 		promptSnippet: "List delegated child agents",
 		parameters: { type: "object", properties: {} } as unknown as never,
 		exposure: "direct",

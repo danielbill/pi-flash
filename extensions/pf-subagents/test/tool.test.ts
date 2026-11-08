@@ -21,9 +21,9 @@ const setup = (options: Parameters<typeof ScriptedProvider.prototype.constructor
 };
 
 describe("delegation tool", () => {
-	it("returns the child's answer for caller delivery", async () => {
+	it("returns the child's answer only when a caller opts into blocking", async () => {
 		const { provider, delegate } = setup();
-		const pending = delegate({ prompt: "count files" });
+		const pending = delegate({ prompt: "count files", blocking: true });
 		// The child completes after the call started.
 		await new Promise((resolve) => setImmediate(resolve));
 		provider.children[0].complete("42 files");
@@ -39,9 +39,9 @@ describe("delegation tool", () => {
 		});
 	});
 
-	it("returns a child id immediately for background delivery", async () => {
+	it("returns a child id immediately by default (dispatch never waits)", async () => {
 		const { delegate } = setup();
-		const result = await delegate({ prompt: "long job", background: true });
+		const result = await delegate({ prompt: "long job" });
 		// dsh parity (044-5 §4.2): the dispatch result is a bare sentence; the async
 		// contract lives in the tool description, the report arrives by notice.
 		assert.equal(result.content[0].text, "started subagent sub-1");
@@ -53,7 +53,7 @@ describe("delegation tool", () => {
 	// completion 才给路径，in-flight 行点击静默丢弃）。
 	it("carries the child session file in the dispatch details", async () => {
 		const { delegate } = setup({ sessionFile: "/sessions/sub-1.jsonl" });
-		const result = await delegate({ prompt: "long job", background: true });
+		const result = await delegate({ prompt: "long job" });
 		const details = result.details as Record<string, unknown>;
 		assert.equal(details["session_file"], "/sessions/sub-1.jsonl");
 	});
@@ -61,7 +61,7 @@ describe("delegation tool", () => {
 	it("carries the child session file in the running update", async () => {
 		const { provider, delegate } = setup({ sessionFile: "/sessions/sub-1.jsonl" });
 		const updates: Array<Record<string, unknown> | undefined> = [];
-		const pending = delegate({ prompt: "count files" }, (partial: never) =>
+		const pending = delegate({ prompt: "count files", blocking: true }, (partial: never) =>
 			updates.push(partial as Record<string, unknown>),
 		);
 		await new Promise((resolve) => setImmediate(resolve));
@@ -104,7 +104,7 @@ describe("delegation tool", () => {
 		const { manager, delegate } = setup();
 		manager.capacity = 1;
 		const updates: Array<Record<string, unknown> | undefined> = [];
-		// 占住唯一槽位（不 await——runDelegation 要等子代理跑完）
+		// 占住唯一槽位（默认派发即返回，槽位随子代理才归还）
 		void delegate({ prompt: "slot 1" });
 		await new Promise((resolve) => setImmediate(resolve));
 		const result = await delegate({ prompt: "slot 2" }, (partial: never) =>
@@ -137,7 +137,7 @@ describe("delegation tool", () => {
 
 	it("marks an errored result as an error without hiding the text", async () => {
 		const { provider, delegate } = setup();
-		const pending = delegate({ prompt: "x" });
+		const pending = delegate({ prompt: "x", blocking: true });
 		await new Promise((resolve) => setImmediate(resolve));
 		provider.children[0].complete("partial", "error");
 		const result = await pending;
@@ -212,6 +212,7 @@ describe("delegation description", () => {
 	// 044-5 §4.1：异步契约写在描述里（dsh 位置），结果不再下命令
 	it("carries the async contract in the description, not as an order", () => {
 		const text = delegationDescription({ inheritsParentContext: false });
+		assert.match(text, /immediately returns its id/);
 		assert.match(text, /notifies you when it finishes/);
 		assert.match(text, /use `subagent_send` to steer it while running/);
 		assert.doesNotMatch(text, /end your turn/);

@@ -22,7 +22,7 @@ cargo run -p app
 
 - 出现「工作详情 · N 条消息 · 1 次工具调用」，折叠内是 `agent` 工具卡（入参为那条 prompt）
 - 最终回答含子代理返回的 `PF-SUBAGENT-OK`
-- 子会话文件落在**父会话同目录**（`~/.pi/agent/sessions/<encoded-cwd>/`），header 带 `parentSession`；父会话 jsonl 有 `subagent-completion` custom 消息（background 交付时）；caller 交付的 agent 工具 result details 带 child_id/session_file
+- 子会话文件落在**父会话同目录**（`~/.pi/agent/sessions/<encoded-cwd>/`），header 带 `parentSession`；父会话 jsonl 有 `subagent-completion` custom 消息（默认派发必有）；`blocking: true` 时终态走 agent 工具 result details（child_id/session_file）
 - **侧栏不该多出行**：子会话自体落 `subagent/child` custom entry（扩展在子会话 `session_start` 时经 inline extension `appendEntry`），索引层据此排除（`sessions.rs` `IndexEntry::child_marker`）；仍可按路径打开检视
 - **pi 原生 fork 分支必须正常上行**：fork 的 header 同样带 `parentSession`，但无 marker——**禁止**用 `parentSession` 判定子会话（误判会把用户 fork 的置顶会话从侧栏全杀）
 
@@ -81,7 +81,7 @@ head -c 300 <子会话文件>
 grep -c '"subagent-completion"' tmp/subagent-smoke/*.jsonl
 ```
 
-期望：background 交付的父会话有 `subagent-completion` 消息（childId/stopReason 齐全）；caller 交付走工具 result details，无落盘条目。父会话**不再有** `subagent/descriptor` 条目。
+期望：默认派发的父会话有 `subagent-completion` 消息（childId/stopReason 齐全）；`blocking: true` 走工具 result details，无落盘条目。父会话**不再有** `subagent/descriptor` 条目。
 
 ### C5 容量耗尽（可选，约 3 次调用）
 
@@ -110,5 +110,5 @@ You are a probe. Answer in one word.
 
 - 子会话 loader 带 marker inline extension（不注册工具），与"子会话不装配 pf-subagents"的防孙代约束不冲突；自定义 loader 必须显式传 `agentDir`，否则 pi 的 `resolvePath(undefined)` 崩（`undefined.startsWith`）
 - CLI 用 `--no-session` 时父会话无文件 → 子会话拿不到 `parentSession`，会作为普通会话出现（仅影响 CLI 冒烟，PF 恒有会话文件）
-- 后台投递（`background: true`）：派发结果回裸句 `started subagent <id>`，完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；实时进度流未做
+- 派发即返回（无参数，默认）：派发结果回裸句 `started subagent <id>`，完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；`blocking: true` 才等结果（code-mode 聚合）；实时进度流未做
 - 未做：codemode fan-out / usage 上卷展示、worktree、外部后端（ACP/CC/Codex）

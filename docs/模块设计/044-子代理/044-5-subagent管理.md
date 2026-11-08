@@ -8,7 +8,7 @@
 
 1. **服务层（扩展内 SubagentManager）**：统一启动、消息准入、容量、父子所有权、结算与释放；"兑现即发布"——启动仅在子级已接受且可取消后返回。
 2. **provider 注册表**：具名后端，按名称路由。两个进程内后端：`spawn`（全新上下文）/ `fork`（带父转录）；外部后端（ACP / Claude Code / Codex）属未做。**能力声明协商**：每个 provider 声明 `continuable` / `depthLimit` / `modelOptions` / `worktree`，请求不满足的能力 → 稳定分码显式拒绝，**绝不静默降级**。
-3. **delivery 二分**：`caller`（结果即工具结果，await 返回；`background` 缺省）⊥ `parent`（立即返回 childId，完成走通知；`background: true`）。同一框架，两种投递。
+3. **派发即返回**（对齐 dsh `tool-subagent/src/index.ts` 的唯一形态 `delivery: 'parent'`）：工具只准入子级并返回 childId，答案由结算消息送回，父轮**永远不会**被子代理占住。`caller`（await 即工具结果）只留给需要内联结果的程序化调用方（code-mode 聚合），必须显式 `blocking: true`——这是唯一会让父轮挂起的入口。
 4. **容量⊥深度分离**：每父会话在线名额（默认 3，glm 服务器侧约束；设置页可配 2-10），**耗尽即拒不排队**（`CAPACITY_REACHED`；排队会造成"等待后代的父代理又等待自己占用名额"级联死锁）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度/开关**事实源 = 投影 `<PF数据目录>/ext-context.json` 的 `subagents` 段**（001-2；`module-config.ts::readSubagentsProjection`，capacity / max_depth / enabled）——扩展每次委派入口重读（`syncModuleConfig`）所以改完即生效、不重启。回退链固定：投影（version 匹配）→ legacy `<profiles dir>/config.json`（`capacity` / `maxDepth` 各一组 `{default,min,max}`，`maxTurns` / `model` 仍以此文件为准）→ 扩展内置 FALLBACK(8)；**投影坏档/版本不匹配 = 保持现值不覆盖在跑上限**，problem 上报。PF 设置页改动写 hub `subagents` section（S3 起投影为扩展契约源）并**双写一版** legacy `config.json`（`pi-link/agents/module_config.rs`，给未升级扩展留活路）。env 值传导已全退役（`PI_SUBAGENTS_CAPACITY` / `PI_SUBAGENTS_MAX_DEPTH` / `PI_FLASH_APP_SETTINGS` 不再由 spawn 传递），路径类只留 `PI_SUBAGENTS_PROFILES_DIR` / `PI_FLASH_DIR`（001-2 §5）。
 5. **中断三层**：本地子级 = 停当前轮次、保留队列与后代；外部后端 = 永久停止；对已结束子级 = 空操作容忍。父 turn 中止 = 前台子代理级联中止（signal 级联）。
 6. **稳定失败分码**：`CAPACITY_REACHED` / `PROFILE_INVALID` / `DEPTH_LIMIT` / `BACKEND_UNSUPPORTED` / `ABORTED` 等——宿主与 codemode 脚本按码编程，不解析自由文本。
@@ -18,7 +18,7 @@
 
 | 框架概念 | pi 原语实现 |
 |---|---|
-| activation 结算与结果 | **nested-call**：`caller` 投递下 await 即工具结果；`parentToolCallId` 记账、`nestedCalls` 有界清单、usage 逐层上卷为 pi 原生 |
+| activation 结算与结果 | 默认 `parent` 投递：派发只回 childId，终态走结算消息；`blocking: true` 时 await 即工具结果（nested-call，`parentToolCallId` 记账、`nestedCalls` 有界清单、usage 逐层上卷为 pi 原生） |
 | 结构化输出 | `outputSchema` + `structuredContent` |
 | 并行 fan-out | codemode：`Promise.all([tools.agent(…), …])`（direct 暴露，脚本可调）；分类汇总类任务只有结论进模型 |
 | 驻留子会话 | 子会话是**一等公民 pi session**：独立 JSONL、`parentSession` header、自己的 codemode/tool_search/MCP（`extensionFactories` 显式装配） |
@@ -30,8 +30,9 @@
 ## 3 工具面：一个工具，两个入口
 
 ```
-agent(prompt, { profile?, model?, cwd?, label?, maxloop?, background? })
-  → { sessionId, text, usage, durationMs }
+agent(prompt, { profile?, model?, cwd?, label?, maxloop?, blocking? })
+  → { childId, status: "started" }        # 默认：立即返回，终态走完成通知
+  → { childId, text, stopReason, … }      # 仅 blocking: true
 
 - label: 任务短标签(transcript/面板显示);maxloop: 委派级轮次预算
   (0=不限,省略=100;优先级 maxloop > profile maxTurns > 默认 100)。
@@ -45,16 +46,18 @@ agent(prompt, { profile?, model?, cwd?, label?, maxloop?, background? })
 
 ### 4.1 工具描述（`tool.ts` · `delegationDescription()`）
 
-在 "The child's final answer is returned as this tool's result." 后插入：
+原第一句「The child's final answer is returned as this tool's result.」已删（它与派发即返回矛盾），改为直接声明派发语义：
 
 ```
-This tool starts an independently managed subagent; with 'background: true' it returns
-its id immediately and the runtime notifies you when it finishes, and the notice
-includes its final answer. The child does not report mid-run; use 'subagent_send' to
-steer it while running or continue its conversation after it finishes.
+This tool starts an independently managed subagent and immediately returns its id: it
+never parks your turn. The runtime notifies you when it finishes, and the notice includes
+its final answer. Right after dispatching, keep working or reply to the user — the notice
+is steered into your turn if you are still working, or starts a new one when you are idle.
+The child does not report mid-run; use 'subagent_send' to steer it while running or
+continue its conversation after it finishes.
 ```
 
-`background` 参数描述：`Return immediately with a child id; the runtime notifies you when it finishes.`
+`blocking` 参数描述：`Only for a programmatic caller that must read the answer inline: parks your turn for the child's whole run, so the user cannot reach you until it returns. Leave unset for every interactive delegation.`
 `label` 参数描述：`Short (3-5 word) display name for the child.`
 
 ### 4.2 派发结果（`tool.ts` · `runDelegation()` parent 分支）

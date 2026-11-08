@@ -19,6 +19,9 @@
 
 | 语义 | dsh | 本实现 | 状态 |
 |---|---|---|---|
+| 派发即返回（不占父轮） | `tool-subagent/src/index.ts` 唯一形态：`startActivation({ delivery: 'parent' })` → 返回 `{kind:'activation', subagentId}`，没有阻塞分支 | `tool.ts` 默认 `delivery: "parent"`，返回 `started subagent <id>`；`blocking: true` 是 code-mode 聚合的显式 opt-in（dsh 没有该形态，因它没有 PTC 侧 agent 工具） | **对齐**（默认路径无阻塞） |
+| 结算投递 | `manager.ts:1199` `sendWaking(parent, createSettlementMessage(...), parent.status === 'idle' ? 'queue' : 'steer')` | `index.ts` `pi.sendMessage(..., ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" })` | 同形 |
+| 结算消息归属 | `subagent-settled` / `form: 'notice'` 的会话来源标记 | `subagent-completion` 自定义消息 + `subagent-settled` 条目（卡片当帧收口） | 同形 |
 | 先占槽后启动 | `activation.ts` `pool.reserve(capacity)` 后才 prepare | `manager.ts` 先 `acquire` 再 `prepare` | 同 |
 | 满即拒、不排队 | `throw ... 'ACTIVATION_LIMIT_REACHED'` | `Capacity.acquire` 抛 `CAPACITY_REACHED`，文案沿用 dsh | 同（码名保留，宿主契约） |
 | 降限不杀 | `setLimit` 只影响新启动 | `Capacity.setLimit` | 同 |

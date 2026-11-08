@@ -1,11 +1,16 @@
 /**
- * The `agent` tool: one tool, two delivery modes.
+ * The `agent` tool: dispatch, not wait.
  *
- * - `delivery: "caller"` (M1 default): the call awaits the child and returns its
- *   answer, so the result is an ordinary tool result — pi's nested-call accounting
- *   covers usage, compaction and cancellation without a side channel.
- * - `delivery: "parent"` (v2 background): returns the child id immediately and the
- *   completion notification carries the answer.
+ * dsh parity (`tool-subagent/src/index.ts` `startActivation({ delivery: 'parent' })`):
+ * the call only admits the child and returns its id; the run is owned by the
+ * manager and its answer arrives as a settlement message. The parent's turn is
+ * therefore never parked by a delegation — whether the parent keeps working or
+ * yields to the human is a property of the code, not of the wording.
+ *
+ * `delivery: "caller"` survives for programmatic callers that must consume the
+ * answer inline (code-mode fan-out reads `structuredContent.text`); it is an
+ * explicit `blocking: true` opt-in because it parks the parent turn for the
+ * child's whole run.
  *
  * The description is generated from the profile's context inheritance so the model
  * cannot claim to see a conversation the child never received (dsh-subagent does
@@ -64,10 +69,11 @@ export const DELEGATION_PARAMETERS = {
 				"Estimated turns this task needs; the child wraps up at the budget and is cut off if it ignores the wrap-up. " +
 				"0 means no budget; omitted defaults to 100.",
 		},
-		background: {
+		blocking: {
 			type: "boolean",
 			description:
-				"Return immediately with a child id; the runtime notifies you when it finishes.",
+				"Only for a programmatic caller that must read the answer inline: parks your turn for the child's whole run, " +
+				"so the user cannot reach you until it returns. Leave unset for every interactive delegation.",
 		},
 	},
 	required: ["prompt"],
@@ -106,11 +112,11 @@ export function delegationDescription(
 	return [
 		"Delegate a task to a child agent that works in its own session.",
 		context,
-		"The child's final answer is returned as this tool's result.",
-		// dsh parity (044-5 §4): the async contract lives in the description, and the
-		// dispatch result stays a bare sentence — the parent is woken by the
-		// settlement message instead of being told to end its turn.
-		"This tool starts an independently managed subagent; with `background: true` it returns its id immediately and the runtime notifies you when it finishes, and the notice includes its final answer.",
+		// dsh parity (044-5 §4 + tool-subagent/src/index.ts): dispatch never waits.
+		// The wording follows the code — the tool really does return a bare id, so
+		// no prompt can lure the model into believing it must sit and wait.
+		"This tool starts an independently managed subagent and immediately returns its id: it never parks your turn. The runtime notifies you when it finishes, and the notice includes its final answer.",
+		"Right after dispatching, keep working or reply to the user — the notice is steered into your turn if you are still working, or starts a new one when you are idle, so the user can talk to you at any time.",
 		"The child does not report mid-run; use `subagent_send` to steer it while running or continue its conversation after it finishes.",
 		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.${capacity}`,
 		// 委派政策（对齐 ZCode task 工具描述的力度——实测只有机械说明时
@@ -128,7 +134,8 @@ export async function runDelegation(
 		cwd?: string;
 		label?: string;
 		maxloop?: number;
-		background?: boolean;
+		/** 显式等待模式（code-mode 聚合用）；交互派发一律不传，见文件头。 */
+		blocking?: boolean;
 	},
 	context: DelegationContext,
 	on_update?: (partial: ToolResultLike) => void,
@@ -154,7 +161,8 @@ export async function runDelegation(
 	if (input.maxloop !== undefined && (!Number.isSafeInteger(input.maxloop) || input.maxloop < 0)) {
 		return fail(SubagentErrorCode.START_REJECTED, `maxloop must be a non-negative integer, got ${input.maxloop}`);
 	}
-	const delivery: Delivery = input.background ? "parent" : "caller";
+	// 默认派发即返回（dsh 的唯一投递形态）；只有显式 `blocking: true` 才等结果。
+	const delivery: Delivery = input.blocking === true ? "caller" : "parent";
 	try {
 		const activation = await options.manager.start({
 			provider: options.providerName,
@@ -175,7 +183,7 @@ export async function runDelegation(
 				content: [{ type: "text", text: `started subagent ${activation.childId}` }],
 				structuredContent: { childId: activation.childId, status: "started" },
 				// B4（044）：session_file 在 prepare 返回时就存在，派发当帧就带上
-				// ——否则 background 子代理整段运行期卡片点不开（要等 completion
+				// ——否则派发后的子代理整段运行期卡片点不开（要等 completion
 				// 回灌才有路径）。
 				details: {
 					child_id: activation.childId,
