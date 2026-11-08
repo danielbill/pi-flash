@@ -26,14 +26,43 @@ impl Chat {
         let Some(cwd) = self.ws.cwd.clone() else {
             return;
         };
+
+        let reuse = if self.dlg.pending_send.is_none() {
+            self.pool
+                .runtimes
+                .values()
+                .filter(|rt| {
+                    let r = rt.read(cx);
+                    !r.observer && r.file.is_none() && same_path(&r.cwd, &cwd)
+                })
+                .max_by_key(|rt| rt.read(cx).input.len())
+                .cloned()
+        } else {
+            None
+        };
+        if let Some(rt) = reuse {
+            if clear_memory {
+                clear_last_open(&cwd.to_string_lossy());
+            }
+            self.dlg.renaming = None;
+            self.dlg.rename_input = None;
+            self.switch_to(rt, cx);
+            return;
+        }
         // lazy draft (pi-web parity): the pi process spawns on the first
         // prompt, not now; running sessions are untouched
         let key = format!("draft-{}", self.pool.draft_seq);
         self.pool.draft_seq += 1;
+        let cwd_str = cwd.to_string_lossy().to_string();
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key.clone(), cwd.clone(), None);
             r.default_model = services::workspace::default_model_pref();
             r.status = tr("session.new").to_string();
+            // 新会话页跨重启水合（2026-11-07 用户令）：上次没发出去的草稿
+            // 输入回来。只文本——附件是 GPUI 渲染源指针，无法跨进程保留
+            if let Some(text) = pi_link::drafts::load(&cwd_str) {
+                r.input = text;
+            }
             r
         });
         self.pool.runtimes.insert(key.clone(), rt.clone());
@@ -62,6 +91,10 @@ impl Chat {
         if old_key == path_key {
             return;
         }
+        // 草稿已晋级成会话 = 输入已被消费：草稿页文件退役（2026-11-07）。
+        // 先取 cwd 再改 rt，晋级后下次点新会话铸的是干净新页
+        let draft_cwd = rt.read(cx).cwd.to_string_lossy().to_string();
+        pi_link::drafts::clear(&draft_cwd);
         // 伪标签到此退役：磁盘扫描现在找得到真文件，真标签接管
         self.psp.pending_tabs.retain(|e| e.key != old_key);
         rt.update(cx, |r, _| r.key = path_key.clone());

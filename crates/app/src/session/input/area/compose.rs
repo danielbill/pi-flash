@@ -299,6 +299,22 @@ pub(super) fn ensure_composer(
                     // （长草稿每键一次全量分配 + 释放，是打字延迟的来源之一）
                     chat.composer.input.clear();
                     chat.composer.input.push_str(v);
+                    // 草稿页跨重启持久化（2026-11-07 用户令）：活跃 runtime
+                    // 是未晋级草稿时节流落盘（≤3s 一次）；FileBound 会话
+                    // 不落（输入属会话本体）
+                    let draft_cwd = chat
+                        .pool
+                        .runtimes
+                        .get(&chat.pool.active_key)
+                        .map(|rt| {
+                            let r = rt.read(cx);
+                            (r.file.is_none() && !r.observer)
+                                .then(|| r.cwd.to_string_lossy().to_string())
+                        })
+                        .flatten();
+                    if let Some(cwd) = draft_cwd {
+                        pi_link::drafts::save_throttled(&cwd, v);
+                    }
                     if !enter_pollution {
                         // 输入再次变化 = 解除点外/Esc 收起（active_menu 门控的
                         // 声明语义；打字不走 set_input，必须在此复位）

@@ -276,6 +276,16 @@ impl Chat {
                     std::mem::take(&mut self.composer.pending_images),
                     std::mem::take(&mut self.composer.history),
                 );
+                // 草稿页切走即落盘（持久化 flush 点，2026-11-07）：出场的
+                // 未晋级草稿把刚换下去的输入写进草稿文件，重启不丢；
+                // FileBound 会话不落（输入属会话本体，随文件走）
+                let draft_out = {
+                    let r = old.read(cx);
+                    (r.file.is_none() && !r.observer).then(|| r.cwd.to_string_lossy().to_string())
+                };
+                if let Some(cwd) = draft_out {
+                    pi_link::drafts::save(&cwd, &input);
+                }
                 old.update(cx, |r, _| {
                     r.input = input;
                     r.pending_images = images;
