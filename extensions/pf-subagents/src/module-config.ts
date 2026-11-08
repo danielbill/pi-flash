@@ -66,6 +66,12 @@ export interface ModuleConfigReadResult {
 	readonly problem?: string;
 }
 
+/** {@link syncModuleConfig} 的结果：投影链下多带一个模块开关（001-1 §5）。
+ * `enabled` 只在投影读到时给出；无投影 = `undefined`（开关由宿主侧决定）。 */
+export interface ModuleConfigSyncResult extends ModuleConfigReadResult {
+	readonly enabled?: boolean;
+}
+
 function invalidConfig(source: string, detail: string): SubagentError {
 	return new SubagentError(SubagentErrorCode.MODULE_CONFIG_INVALID, `${source}: ${detail}`);
 }
@@ -189,4 +195,89 @@ export interface ModuleConfigTarget {
 export function applyModuleConfig(target: ModuleConfigTarget, config: ModuleConfig): void {
 	target.capacity = clampToBound(config.capacity.default, config.capacity);
 	target.maxDepth = clampToBound(config.maxDepth.default, config.maxDepth);
+}
+
+// ---------------------------------------------------------------------------
+// ext-context.json 投影（001-2，S3）：PF 是唯一写者，本模块只读。
+// 回退链固定：投影（version 匹配）→ legacy agents/config.json → FALLBACK。
+// 坏投影 / 版本不匹配 = **保持现值**（不覆盖正在跑的上限），problem 上报。
+// 每次委派入口读一次，不缓存 mtime（readFileSync+parse 实测 ~90µs，噪声）。
+// ---------------------------------------------------------------------------
+
+export const PROJECTION_FILENAME = "ext-context.json";
+const PROJECTION_VERSION = 1;
+
+/** 投影 `subagents` 段：PF 设置页的生效值（PF 侧已 validate 过，这里仅防御）。 */
+export interface ProjectionSubagents {
+	readonly capacity: number;
+	readonly max_depth: number;
+	readonly enabled: boolean;
+}
+
+export type ProjectionRead =
+	| { readonly state: "ok"; readonly value: ProjectionSubagents; readonly path: string }
+	| { readonly state: "absent" }
+	| { readonly state: "invalid"; readonly path: string; readonly problem: string };
+
+/**
+ * Read the `subagents` section of the host's context projection.
+ *
+ * 缺文件（首启 / 非 PF 宿主）= `absent`，走 legacy 链；文件在但解析失败 /
+ * 版本不匹配 / 段坏 = `invalid`（调用方保持现值并上报 problem，绝不回退到
+ * FALLBACK 覆盖在跑上限——坏档不许静默改行为）。
+ */
+export function readSubagentsProjection(pfDataDir: string | undefined): ProjectionRead {
+	if (!pfDataDir) return { state: "absent" };
+	const path = join(pfDataDir, PROJECTION_FILENAME);
+	let raw: string;
+	try {
+		raw = readFileSync(path, "utf8");
+	} catch {
+		return { state: "absent" };
+	}
+	const invalid = (problem: string): ProjectionRead => ({ state: "invalid", path, problem });
+	let data: unknown;
+	try {
+		data = JSON.parse(raw);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return invalid(`not valid JSON (${message})`);
+	}
+	if (!data || typeof data !== "object" || Array.isArray(data)) {
+		return invalid("top level must be an object");
+	}
+	const doc = data as Record<string, unknown>;
+	if (doc["version"] !== PROJECTION_VERSION) {
+		return invalid(`unsupported projection version ${JSON.stringify(doc["version"])}`);
+	}
+	const section = doc["subagents"];
+	if (!section || typeof section !== "object" || Array.isArray(section)) {
+		return invalid("missing subagents section");
+	}
+	const entry = section as Record<string, unknown>;
+	const capacity = entry["capacity"];
+	const maxDepth = entry["max_depth"];
+	const enabled = entry["enabled"];
+	if (typeof capacity !== "number" || !Number.isSafeInteger(capacity) || capacity < 1) {
+		return invalid(`subagents.capacity must be a safe integer >= 1, got ${JSON.stringify(capacity)}`);
+	}
+	if (typeof maxDepth !== "number" || !Number.isSafeInteger(maxDepth) || maxDepth < 0) {
+		return invalid(`subagents.max_depth must be a safe integer >= 0, got ${JSON.stringify(maxDepth)}`);
+	}
+	if (typeof enabled !== "boolean") {
+		return invalid(`subagents.enabled must be a boolean, got ${JSON.stringify(enabled)}`);
+	}
+	return { state: "ok", value: { capacity, max_depth: maxDepth, enabled }, path };
+}
+
+/**
+ * 投影只有标量：默认值钳进 legacy 声明的边界（更窄的 min/max 可再收窄，
+ * 001-1 §5「文件/投影更窄的 min/max 可再收窄」；legacy 坏档时边界 = FALLBACK）。
+ */
+export function boundFromScalar(value: number, bounds: BoundedSetting): BoundedSetting {
+	return {
+		default: Math.min(bounds.max, Math.max(bounds.min, value)),
+		min: bounds.min,
+		max: bounds.max,
+	};
 }

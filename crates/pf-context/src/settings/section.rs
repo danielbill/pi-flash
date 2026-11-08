@@ -63,20 +63,18 @@ fn humantime_millis(at: Instant) -> String {
 
 /// Section 契约（001-1 §4）。
 ///
-/// `validate` 在「解析后」「set 后」「（S3）从投影读回后」三处调用，保证
+/// `validate` 在「解析后」「set 后」「从投影读回后」三处调用，保证
 /// 内存里永远是合法值；clamp 范围写进 section 的注释与单测，不在 UI、不在
 /// 扩展、不在文档里各写一遍。
+///
+/// 是否进投影（`exportable`）是**注册表级**静态属性（`sections::SectionDef`），
+/// 不放 trait——单一事实源在 `sections::registered()`。
 pub trait Section: Default + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// v2 文档里的 section 键名（= 文档键名，001-1 §1）
     const KEY: &'static str;
 
     /// 唯一 clamp / 归一化落点。
     fn validate(&mut self);
-
-    /// 是否可写入跨进程投影 `ext-context.json`（001-2，S3 起；默认否）。
-    fn exportable(&self) -> bool {
-        false
-    }
 
     /// v1 平铺键读迁移：文件缺 v2 section 时按旧键合成该段（001-1 §3）。
     /// `None` = 文件里没有该段的 legacy 键。

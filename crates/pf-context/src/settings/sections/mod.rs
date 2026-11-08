@@ -27,11 +27,13 @@ use serde_json::Value;
 use std::any::Any;
 use std::sync::Arc;
 
-/// 注册表条目：`in_file = false` 的段不落 app-settings.json
-///（boot-only，如 dev_flags 源在 dev-flags.json + env）。
+/// 注册表条目：`in_file = false` 的段不落 app-settings.json（boot-only，
+/// 如 dev_flags 源在 dev-flags.json + env）；`exportable = true` 的段进
+/// 跨进程投影 `ext-context.json`（001-2，白名单默认拒绝）。
 pub(crate) struct SectionDef {
     pub key: &'static str,
     pub in_file: bool,
+    pub exportable: bool,
 }
 
 /// 已注册 section（快照构建顺序）。
@@ -41,42 +43,52 @@ pub(crate) fn registered() -> &'static [SectionDef] {
         SectionDef {
             key: Subagents::KEY,
             in_file: true,
+            exportable: true,
         },
         SectionDef {
             key: Appearance::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Chat::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Sessions::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Index::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Models::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Updates::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Shell::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: DevFlags::KEY,
             in_file: false,
+            exportable: false,
         },
         SectionDef {
             key: probe::Probe::KEY,
             in_file: true,
+            exportable: false,
         },
     ];
     #[cfg(not(test))]
@@ -84,38 +96,47 @@ pub(crate) fn registered() -> &'static [SectionDef] {
         SectionDef {
             key: Subagents::KEY,
             in_file: true,
+            exportable: true,
         },
         SectionDef {
             key: Appearance::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Chat::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Sessions::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Index::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Models::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Updates::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: Shell::KEY,
             in_file: true,
+            exportable: false,
         },
         SectionDef {
             key: DevFlags::KEY,
             in_file: false,
+            exportable: false,
         },
     ];
 }

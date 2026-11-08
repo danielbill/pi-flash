@@ -94,6 +94,8 @@ pub struct SettingsStats {
     pub write_failures: u64,
     /// 外部改动触发的重载次数
     pub reloads: u64,
+    /// 投影实际写盘次数（001-2，同内容跳过不计）
+    pub exports: u64,
 }
 
 struct WatchState {
@@ -130,6 +132,8 @@ struct StoreInner {
     /// set_preview 过的 section（只换内存未标脏；save_now 时转 dirty 落盘，
     /// 001-1 §2「拖拽预览松手才写」）
     previewed: Mutex<HashSet<&'static str>>,
+    /// 投影 payload 哈希（0 = 尚未导出过，001-2 §3 同内容跳过）
+    projection_payload: Mutex<u64>,
     dirty: Mutex<HashSet<&'static str>>,
     dirty_cv: Condvar,
     /// 写者线程与同步 [`SettingsStore::flush`] 互斥（flush 先到 = 写者扑空）
@@ -142,6 +146,7 @@ struct StoreInner {
     writes: AtomicU64,
     write_failures: AtomicU64,
     reloads: AtomicU64,
+    exports: AtomicU64,
     /// 当前写失败退避时长（成功即复位）
     fail_backoff: Mutex<Duration>,
 }
@@ -172,6 +177,7 @@ impl SettingsStore {
             overrides: Mutex::new([HashMap::new(), HashMap::new()]),
             boot,
             previewed: Mutex::new(HashSet::new()),
+            projection_payload: Mutex::new(0),
             dirty: Mutex::new(HashSet::new()),
             dirty_cv: Condvar::new(),
             write_lock: Mutex::new(()),
@@ -181,6 +187,7 @@ impl SettingsStore {
             writes: AtomicU64::new(0),
             write_failures: AtomicU64::new(0),
             reloads: AtomicU64::new(0),
+            exports: AtomicU64::new(0),
             fail_backoff: Mutex::new(FAIL_BACKOFF_START),
         });
         let snapshot = match inner.build_snapshot() {
@@ -195,6 +202,18 @@ impl SettingsStore {
         inner.update_last_seen();
         perf_log("settings.load", t0.elapsed());
         spawn_writer(Arc::clone(&inner));
+        // 001-S3：初次投影（后台线程，启动热路径零 IO；扩展首次委派前就绪）
+        std::thread::Builder::new()
+            .name("pf-settings-export".into())
+            .spawn({
+                let inner = Arc::clone(&inner);
+                move || {
+                    if let Err(e) = inner.export_projection() {
+                        eprintln!("[settings] 初次投影写盘失败（下次写盘重试）: {e}");
+                    }
+                }
+            })
+            .ok();
         SettingsStore { inner }
     }
 
@@ -232,6 +251,11 @@ impl SettingsStore {
         self.inner.subs.lock().unwrap().push(f);
     }
 
+    /// 当前快照 Arc（测试/观测用；O(1)）。
+    pub(crate) fn snapshot_clone(&self) -> Arc<Snapshot> {
+        Arc::clone(&self.inner.snap.read().unwrap())
+    }
+
     /// 累积 problem 清单副本（坏档/坏段都进这里，001-0 §5）。
     pub fn problems(&self) -> Vec<SettingProblem> {
         self.inner.problems.lock().unwrap().clone()
@@ -244,6 +268,7 @@ impl SettingsStore {
             writes: i.writes.load(Ordering::Relaxed),
             write_failures: i.write_failures.load(Ordering::Relaxed),
             reloads: i.reloads.load(Ordering::Relaxed),
+            exports: i.exports.load(Ordering::Relaxed),
         }
     }
 
@@ -410,6 +435,10 @@ impl StoreInner {
                 self.reloads.fetch_add(1, Ordering::Relaxed);
                 self.update_last_seen();
                 self.broadcast(&arc);
+                // 001-S3：外部改动落进快照 → 投影跟进（同 payload 自动跳过）
+                if let Err(e) = self.export_projection() {
+                    eprintln!("[settings] 投影写盘失败（下次重载重试）: {e}");
+                }
                 true
             }
             Err(e) => {
@@ -535,6 +564,10 @@ impl StoreInner {
         }
         if wrote {
             perf_log("settings.flush", t0.elapsed());
+            // 001-S3：段内容变了 → 投影跟进（同 payload 自动跳过）
+            if let Err(e) = self.export_projection() {
+                eprintln!("[settings] 投影写盘失败（下次写盘重试）: {e}");
+            }
         }
         match first_err {
             Some(e) => Err(e),
@@ -572,6 +605,21 @@ impl StoreInner {
             }
         }
         Ok(written)
+    }
+
+    /// 投影落盘（001-2）：exportable 白名单段 → ext-context.json，
+    /// 同 payload 跳过。settings 文件缺失（纯内存态）= 无投影。
+    fn export_projection(&self) -> Result<bool, String> {
+        let Some(dir) = self.path.as_ref().and_then(|p| p.parent()) else {
+            return Ok(false);
+        };
+        let snap = Arc::clone(&self.snap.read().unwrap());
+        let mut last = self.projection_payload.lock().unwrap();
+        let wrote = export::export(&snap, dir, &mut last)?;
+        if wrote {
+            self.exports.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(wrote)
     }
 
     /// 盘上当前内容哈希 → last_seen（open / reload / 写后对齐用）。

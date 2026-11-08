@@ -22,7 +22,16 @@ import { COMPLETION_TYPE, composeCompletion } from "./completion.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
 import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
-import { applyModuleConfig, loadModuleConfig, type ModuleConfigReadResult } from "./module-config.ts";
+import {
+	applyModuleConfig,
+	boundFromScalar,
+	FALLBACK_MODULE_CONFIG,
+	loadModuleConfig,
+	readSubagentsProjection,
+	type ModuleConfig,
+	type ModuleConfigReadResult,
+	type ModuleConfigSyncResult,
+} from "./module-config.ts";
 import { DELEGATION_PARAMETERS, delegationDescription, runDelegation } from "./tool.ts";
 
 // 044-0 模块设置：容量/深度/轮数/默认模型全部来自 `<profiles dir>/config.json`
@@ -45,14 +54,48 @@ const childDepths = new Map<string, number>();
  * 同一份文件（见 module-config.ts），代码不再写死天花板。读失败（缺文件/坏
  * JSON）退回 FALLBACK_MODULE_CONFIG，不阻断委派。
  */
+/**
+ * Sync the module settings from the projection → legacy fallback chain
+ * （001-2 §4，顺序固定）：
+ *
+ * 1. 投影 `ext-context.json` 读到且 version 匹配 → capacity / maxDepth /
+ *    enabled 以投影为准（maxTurns / model 沿用 legacy：它们是文件政策，
+ *    不在 PF 设置里）；
+ * 2. 投影在但坏档 / 版本不匹配 → **保持现值**（绝不覆盖正在跑的上限），
+ *    problem 上报；
+ * 3. 投影缺失（首启 / 非 PF 宿主）→ legacy `agents/config.json`；
+ * 4. 再无 → 扩展内置 FALLBACK。
+ *
+ * env 只在 pi 进程 spawn 那一刻定格，PF 会话常驻——每次委派入口实时重读，
+ * 改完即生效，无需重启。
+ */
 export function syncModuleConfig(
 	manager: SubagentManager,
 	profilesDir: string = defaultProfilePaths(process.cwd()).globalDir,
-): ModuleConfigReadResult {
-	const result = loadModuleConfig(profilesDir);
-	// 读失败时保持现值，不用兜底值覆盖用户正在跑的上限——坏文件不该静默改行为
-	if (!result.problem) applyModuleConfig(manager, result.config);
-	return result;
+	dataDir: string | undefined = pfDataDir(),
+): ModuleConfigSyncResult {
+	const projection = readSubagentsProjection(dataDir);
+	if (projection.state === "invalid") {
+		return {
+			config: FALLBACK_MODULE_CONFIG,
+			path: projection.path,
+			problem: `ext-context.json: ${projection.problem}（保持现值，未覆盖在跑上限）`,
+		};
+	}
+	const legacy = loadModuleConfig(profilesDir);
+	if (projection.state === "ok") {
+		const config: ModuleConfig = {
+			capacity: boundFromScalar(projection.value.capacity, legacy.config.capacity),
+			maxDepth: boundFromScalar(projection.value.max_depth, legacy.config.maxDepth),
+			maxTurns: legacy.config.maxTurns,
+			model: legacy.config.model,
+		};
+		applyModuleConfig(manager, config);
+		return { config, path: projection.path, problem: legacy.problem, enabled: projection.value.enabled };
+	}
+	// 无投影：legacy 链（缺/坏 = FALLBACK + problem）
+	if (!legacy.problem) applyModuleConfig(manager, legacy.config);
+	return { ...legacy, enabled: undefined };
 }
 
 /**
@@ -408,8 +451,16 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			onUpdate: ((partial: unknown) => void) | undefined,
 			ctx: ExtensionContext,
 		) {
-			// 模块设置实时同步（容量/深度，见 syncModuleConfig）
-			syncModuleConfig(manager);
+			// 模块设置实时同步（容量/深度/开关，见 syncModuleConfig）；
+			// 开关关着直接拒绝（001-1 §5：运行中 pi 进程的工具清单要到下次
+			// spawn 才变，投影 enabled 让当轮委派即停）
+			const synced = syncModuleConfig(manager, undefined, pfDataDir());
+			if (synced.enabled === false) {
+				throw new SubagentError(
+					SubagentErrorCode.MODULE_DISABLED,
+					"子代理模块已在 PF 设置中停用（subagents.enabled=false）",
+				);
+			}
 			const depth = currentDepthOf(ctx);
 			const parentId = (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile ?? "draft";
 			const result = await runDelegation(
@@ -599,9 +650,13 @@ export default function piSubagents(pi: ExtensionAPI): void {
  * tiers expand to whitelists. `model` passed by the delegator wins over the
  * profile's.
  */
-/** PF data directory from the host-provided env (settings file absolute path).
- * `undefined` when absent — non-PF hosts keep the inherit semantics. */
+/** PF data directory from the host-provided env. 001-2 §5：白名单主键 =
+ * `PI_FLASH_DIR`（PF 数据目录直给）；`PI_FLASH_APP_SETTINGS`（旧版宿主给的
+ * 设置文件绝对路径，取 dirname）保留**读取兼容一版**。都缺 = 非 PF 宿主，
+ * 走 legacy 链。 */
 function pfDataDir(): string | undefined {
+	const dir = process.env.PI_FLASH_DIR;
+	if (dir) return dir;
 	const settings = process.env.PI_FLASH_APP_SETTINGS;
 	if (!settings) return undefined;
 	const i = Math.max(settings.lastIndexOf("/"), settings.lastIndexOf("\\"));

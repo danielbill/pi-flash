@@ -26,6 +26,9 @@ mod domain;
 pub mod settings;
 mod state;
 
+#[cfg(test)]
+pub(crate) mod tests_support;
+
 use std::sync::OnceLock;
 
 /// 三子集统一上下文（门面，001-0 §3）。一个 `Arc` 生命周期，进程级单例。

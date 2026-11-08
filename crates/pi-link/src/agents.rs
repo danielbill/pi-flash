@@ -20,7 +20,7 @@ pub const FIELD_INJECT_AGENTS_MD: &str = "injectAgentsMd";
 /// pi 默认档）。值集 = pi `ThinkingLevel` 七档。
 pub const FIELD_THINKING: &str = "thinking";
 /// 工作目录（2026-11-08 子代理表单加）：键省略 = 继承委派者 cwd；
-/// `pf-data` = PF 数据目录（扩展侧从 PI_FLASH_APP_SETTINGS 取 dirname）。
+/// `pf-data` = PF 数据目录（扩展侧从 PI_FLASH_DIR 取；001-2 §5 env 白名单）。
 pub const FIELD_CWD: &str = "cwd";
 /// [`FIELD_CWD`] 唯一合法显式值。
 pub const CWD_PF_DATA: &str = "pf-data";

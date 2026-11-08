@@ -28,6 +28,8 @@ export const SubagentErrorCode = {
 	PROFILE_INVALID: "PROFILE_INVALID",
 	/** The module config document (`<profiles dir>/config.json`) is malformed. */
 	MODULE_CONFIG_INVALID: "MODULE_CONFIG_INVALID",
+	/** 子代理模块开关已关（001-1 §5：关闭后 agent 工具直接拒绝）。 */
+	MODULE_DISABLED: "MODULE_DISABLED",
 	/** The work was aborted (parent turn cancel, session shutdown). */
 	ABORTED: "ABORTED",
 	/**

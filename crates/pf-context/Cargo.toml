@@ -11,6 +11,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 外部改动监听（001-0 §5）：非递归盯 PF 数据目录（app 用同版 7）
 notify = "7"
-# 仅 paths（app-settings.json 路径）+ config::write_json（tmp+rename 原子写）；
-# 禁止依赖 pi-link 其余模块（RPC 层不进产品基础设施）
+# 仅 paths（app-settings.json 路径）+ config::write_json（tmp+rename 原子写）+
+# dev_flags::KNOWN/enabled（boot-only 段，S2）；禁止依赖 RPC 层模块
 pi-link = { path = "../pi-link" }
+# 投影 generated_at（001-2 §2）；workspace 已有同版，零新增编译
+chrono = "0.4"

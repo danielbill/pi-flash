@@ -65,10 +65,10 @@ pub fn subagent_capacity() -> u64 {
         .unwrap_or_else(|| settings.get::<Subagents>().capacity)
 }
 
-/// 子代理模块设置 → 扩展 env。**只剩路径类两枚**（001-S1 起 PI_SUBAGENTS_
-/// CAPACITY / PI_SUBAGENTS_MAX_DEPTH 值传导退役——进程级快照压过文件、改了
-/// 要重启；现版扩展每次委派重读 `agents/config.json`，PI_SUBAGENTS_PROFILES_
-/// DIR 找 profile 目录，PI_FLASH_APP_SETTINGS 供旧版构建定位设置文件）。
+/// 子代理模块设置 → 扩展 env。**只剩路径类两枚**（001-S3 起 env 白名单收口，
+/// 001-2 §5：PI_SUBAGENTS_CAPACITY / PI_SUBAGENTS_MAX_DEPTH / PI_FLASH_APP_
+/// SETTINGS 全部退役——env 是进程级快照压过文件且改了要重启；现版扩展每次
+/// 委派实时重读 `ext-context.json` 投影 → legacy config.json 回退链）。
 /// 模块运行时开关关着时不传导（委派停用，env 无意义）。
 pub fn subagent_envs() -> Vec<(String, String)> {
     if !subagent_module_active() {
@@ -82,9 +82,12 @@ pub fn subagent_envs() -> Vec<(String, String)> {
             "PI_SUBAGENTS_PROFILES_DIR".into(),
             pi_link::agents::agents_dir().to_string_lossy().into_owned(),
         ),
+        // PF 数据目录（001-2 §5 路径类白名单）：扩展由此定位 ext-context.json
+        // 投影。子进程同时继承父进程 env——PI_FLASH_DIR / PI_FLASH_PI_BIN 在
+        // 父进程显式设置时自动传递，这里补的是「未显式设置 = 默认目录」情形。
         (
-            "PI_FLASH_APP_SETTINGS".into(),
-            pi_link::paths::app_settings_file()
+            "PI_FLASH_DIR".into(),
+            pi_link::paths::dir()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         ),
