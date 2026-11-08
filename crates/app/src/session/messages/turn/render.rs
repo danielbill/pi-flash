@@ -60,7 +60,10 @@ pub(crate) fn render_assistant_turn(
     let final_gix = turn_ixs[final_pos];
     let answer_start = split_answer_start(&final_msg.blocks);
     let answer_len = final_msg.blocks.len() - answer_start;
-    let final_error = final_msg.stop_reason.as_deref() == Some("error");
+    // 031-1：abort 类错误（工具执行中被打断，见 Msg::is_abort_error）按
+    // 内部中断口径显示——黄点已由 live 路径置位，这里不再画红框
+    let final_error =
+        final_msg.stop_reason.as_deref() == Some("error") && !final_msg.is_abort_error();
     let final_truncated = final_msg.stop_reason.as_deref() == Some("length");
     let has_final_answer = answer_len > 0 || final_error || final_truncated;
 

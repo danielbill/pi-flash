@@ -297,6 +297,18 @@ pub(crate) fn apply_completion_messages(msgs: &mut [Msg]) -> bool {
 pub(crate) const COMPLETION_CUSTOM: &str = "subagent-completion";
 
 impl Msg {
+    /// 031-1：pi 在「工具执行中被打断」（宿主 Abort/取消）时会把整轮标成
+    /// stopReason=="error" + errorMessage="This operation was aborted"——
+    /// 这是**内部中断**（用户取消），不是外部错误。按 aborted 口径显示：
+    /// 黄点、无红框。真机实锤于计划模式否决（Abort 通道）。
+    pub(crate) fn is_abort_error(&self) -> bool {
+        self.stop_reason.as_deref() == Some("error")
+            && self
+                .error_message
+                .as_deref()
+                .is_some_and(|m| m.to_ascii_lowercase().contains("abort"))
+    }
+
     /// 返回 Cow：单文本块（绝大多数用户消息）零拷贝借用。每帧每个可见
     /// 用户行都要调（气泡 markdown/技能折叠判定），长粘贴消息的全量 String
     /// 拷贝是白付的打字延迟。

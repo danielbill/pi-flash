@@ -428,9 +428,13 @@ impl SessionRuntime {
                     // （内部中断）；其余 = 正常完成青蓝。这里**覆盖**（不是
                     // 只置位）：pi 自动重试会产出多条 assistant 消息，只有
                     // 最后一条是这轮的结局（重试成功也要能从红回到正常）。
-                    self.turn_error = m.stop_reason.as_deref() == Some("error");
+                    // 031-1：工具执行中被 Abort（宿主取消/计划否决）时 pi 标
+                    // stopReason=="error"+"This operation was aborted"——按
+                    // Msg::is_abort_error 并入内部中断（黄），不画红
+                    let abort_err = m.is_abort_error();
+                    self.turn_error = m.stop_reason.as_deref() == Some("error") && !abort_err;
                     self.turn_interrupted =
-                        matches!(m.stop_reason.as_deref(), Some("length" | "aborted"));
+                        matches!(m.stop_reason.as_deref(), Some("length" | "aborted")) || abort_err;
                 }
             }
         } else if role == "user" {
