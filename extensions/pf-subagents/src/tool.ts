@@ -174,7 +174,16 @@ export async function runDelegation(
 			return {
 				content: [{ type: "text", text: `started subagent ${activation.childId}` }],
 				structuredContent: { childId: activation.childId, status: "started" },
-				details: { child_id: activation.childId, delivery, status: "started", label: input.label },
+				// B4（044）：session_file 在 prepare 返回时就存在，派发当帧就带上
+				// ——否则 background 子代理整段运行期卡片点不开（要等 completion
+				// 回灌才有路径）。
+				details: {
+					child_id: activation.childId,
+					delivery,
+					status: "started",
+					label: input.label,
+					...(activation.sessionFile ? { session_file: activation.sessionFile } : {}),
+				},
 			};
 		}
 		// 运行中进度（044 卡片状态行数据源）：accept 完成即发一次。
@@ -186,6 +195,7 @@ export async function runDelegation(
 				status: "running",
 				label: input.label,
 				profile: input.profile,
+				...(activation.sessionFile ? { session_file: activation.sessionFile } : {}),
 			},
 		});
 		const result = await activation.wait();

@@ -161,9 +161,10 @@ export class SubagentManager {
 		try {
 			const handle = await this.#prepare(provider, { ...request, childId });
 			record.handle = handle;
-			// B2（044）：子会话文件 prepare 返回即存在，此处就回写——面板运行中
-			// 行才能点击打开（原先只在 #settle 回写，in-flight 行全程点不开）；
-			// accept 失败的 failed descriptor 同样带上，失败行也可检视。
+			// B2（044）：子会话文件 prepare 返回即存在，此处就回写——#activationOf
+			// 把这个路径透给 tool.ts，派发的 started/running details 就带上
+			// session_file，卡片在运行中即可点击打开（原先只在 #settle 回写，
+			// in-flight 行全程点不开）；accept 失败的 failed descriptor 同样带上。
 			record.descriptor.sessionFile = handle.session_file() ?? record.descriptor.sessionFile;
 			await handle.accept(request.prompt, { signal: request.signal });
 			record.state = "active";
@@ -242,6 +243,11 @@ export class SubagentManager {
 		return {
 			childId: record.childId,
 			delivery: record.delivery,
+			// 活取 descriptor 的快照：prepare 之后（start 返回前）就已经有值，
+			// #settle 还会再回写一次；两者都落在同一个字段上。
+			get sessionFile() {
+				return record.descriptor.sessionFile;
+			},
 			started,
 			wait: () => manager.#settle(record),
 			send: async (message: string) => {

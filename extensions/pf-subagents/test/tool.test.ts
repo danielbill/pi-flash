@@ -48,6 +48,32 @@ describe("delegation tool", () => {
 		assert.deepEqual(result.structuredContent, { childId: "sub-1", status: "started" });
 	});
 
+	// B4（044）回归：子会话文件在 prepare 就存在，派发/运行中的 details 必须
+	// 带上 session_file——卡片运行中点行才能打开只读观察窗（原先只有
+	// completion 才给路径，in-flight 行点击静默丢弃）。
+	it("carries the child session file in the dispatch details", async () => {
+		const { delegate } = setup({ sessionFile: "/sessions/sub-1.jsonl" });
+		const result = await delegate({ prompt: "long job", background: true });
+		const details = result.details as Record<string, unknown>;
+		assert.equal(details["session_file"], "/sessions/sub-1.jsonl");
+	});
+
+	it("carries the child session file in the running update", async () => {
+		const { provider, delegate } = setup({ sessionFile: "/sessions/sub-1.jsonl" });
+		const updates: Array<Record<string, unknown> | undefined> = [];
+		const pending = delegate({ prompt: "count files" }, (partial: never) =>
+			updates.push(partial as Record<string, unknown>),
+		);
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(updates.length, 1);
+		const details = updates[0]?.details as Record<string, unknown>;
+		assert.equal(details["status"], "running");
+		assert.equal(details["session_file"], "/sessions/sub-1.jsonl");
+		assert.equal(details["child_id"], "sub-1");
+		provider.children[0].complete("done");
+		await pending;
+	});
+
 	it("maps failures onto stable codes", async () => {
 		const { delegate } = setup({ failPrepare: true });
 		const result = await delegate({ prompt: "will fail" });

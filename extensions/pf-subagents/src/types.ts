@@ -144,6 +144,13 @@ export interface Provider {
 export interface Activation {
 	readonly childId: string;
 	readonly delivery: Delivery;
+	/**
+	 * Persisted child session file, available as soon as the handle is prepared
+	 * (i.e. before the child's first turn). Hosts use it to open the child
+	 * session while the child is still running — B4 (044): without it the
+	 * in-flight card had no jump target and clicks were silently dropped.
+	 */
+	readonly sessionFile?: string;
 	/** Publish point: resolves after the child accepted the task. */
 	readonly started: Promise<void>;
 	/** For `caller` delivery the settlement every caller awaits. */
