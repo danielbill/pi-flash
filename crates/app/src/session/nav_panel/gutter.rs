@@ -62,8 +62,9 @@ pub(crate) fn nav_gutter(
     let mut gutter = div()
         .id("nav-gutter")
         .relative()
-        // 14 = 段命中区宽（实体 6 + 右侧 8px 透明可点，不贴窗口边）
-        .w(px(14.))
+        // 10 = 段命中区宽（实体 6 + 右侧 4px 透明可点，不贴窗口边；
+        // 2026-11-08 二次定夺：透明余量 8→4，右缘更贴边）
+        .w(px(10.))
         .h_full()
         .flex_shrink_0();
     // 悬停展开的轮次摘要列表（033：topbar 之下 100% 高、400px 宽、向左
@@ -76,8 +77,8 @@ pub(crate) fn nav_gutter(
         let mut flyout_wrap = div()
             .id("nav-flyout-wrap")
             .absolute()
-            // 14 = 与段左缘齐平（gutter 14 = 段命中区 6 实体 + 右 8 透明）
-            .right(px(14.))
+            // 10 = 与段左缘齐平（gutter 10 = 段命中区 6 实体 + 右 4 透明）
+            .right(px(10.))
             .top_0()
             // 下缘与 input panel 底线对齐：composer 悬浮容器的 bottom =
             // footer_bar::BAR_H（034 起永久上移，input/area.rs composer_wrap
@@ -198,19 +199,19 @@ pub(crate) fn nav_gutter(
     // 视觉中心正好上移 composer/4。生成算法（v63-5）：轮次均分切割整条
     // ——flex_1 等分 + 2px 缝，1 轮 = 整条弱主题色、2 轮 = 上下两段……
     // 10 轮后段高不再缩小（>10 百分比桶映射）。段色 = 弱主题色常驻，
-    // 选中 = accent 边框（不整段覆盖），hover 增亮；段命中区 14px = 实体
-    // 6px + 右侧 8px 透明可点（2026-10-10：命中不满宽会点穿下方内容误收
-    // 面板；2026-11-08 实体 10→6）
+    // 选中 = accent 边框（不整段覆盖），hover 增亮；段命中区 10px = 实体
+    // 6px + 右侧 4px 透明可点（2026-10-10：命中不满宽会点穿下方内容误收
+    // 面板；2026-11-08 实体 10→6、透明余量 8→4）
     if !summary.turns.is_empty() {
         let composer_h = chat.composer.composer_h.get();
         let active_tick = active_turn.map(tick_of_turn);
         let mut rail = div()
             .id("nav-rail")
             .h_full()
-            .w(px(14.))
+            .w(px(10.))
             .flex()
             .flex_col()
-            // 实体段贴左，右侧留 8px 透明命中区
+            // 实体段贴左，右侧留 4px 透明命中区
             .items_start()
             .gap(px(2.));
         for i in 0..tick_count {
@@ -220,7 +221,7 @@ pub(crate) fn nav_gutter(
             rail = rail.child(
                 div()
                     .id(SharedString::from(format!("nav-node-{i}")))
-                    // 命中区吃满 rail 14px：左 6px 实体 + 右 8px 透明同权
+                    // 命中区吃满 rail 10px：左 6px 实体 + 右 4px 透明同权
                     .w_full()
                     .flex_1()
                     .min_h_0()
@@ -241,7 +242,7 @@ pub(crate) fn nav_gutter(
                             window.refresh();
                         }),
                     )
-                    // 可见段体只有左 6px；右 8px 透明但同属命中区
+                    // 可见段体只有左 6px；右 4px 透明但同属命中区
                     .child(
                         div()
                             .w(px(6.))
@@ -273,7 +274,7 @@ pub(crate) fn nav_gutter(
                 .child(
                     // hover 响应区 = rail 垂直带 × gutter 全宽（033「悬浮
                     // 竖条弹出」）：高度 0.75 屏 + composer 偏移与 rail 同
-                    // 款，宽度 w_full 含右侧 8px 呼吸位——只挂 rail 本体
+                    // 款，宽度 w_full 含右侧 4px 呼吸位——只挂 rail 本体
                     // 的话那 4px 是死区；挂 gutter 全高又会误触上下空白区
                     div()
                         .id("nav-rail-hit")

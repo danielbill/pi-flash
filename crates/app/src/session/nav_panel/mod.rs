@@ -134,7 +134,8 @@ pub(crate) fn nav_card(
                 })
                 .child(
                     div()
-                        .w(px(18.))
+                        // 轮次编号列 20px（2026-11-08 由 18 扩宽）
+                        .w(px(20.))
                         .text_right()
                         .font_family(crate::editor::markdown::MONO_FAMILY)
                         .text_size(crate::appearance::ui_size(10.))
@@ -163,7 +164,7 @@ pub(crate) fn nav_card(
                 ),
         );
     // 摘要行：A 与轮次编号对齐、正文与用户发言对齐（033）——与用户行
-    // 同构（18px 右对齐标号列 + gap 9）
+    // 同构（20px 右对齐标号列 + gap 9）
     if let Some((aix, preview)) = s.agent.as_ref() {
         let (aix, preview) = (*aix, preview.clone());
         let rt_scroll_a = rt_entity.clone();
@@ -180,7 +181,7 @@ pub(crate) fn nav_card(
                 })
                 .child(
                     div()
-                        .w(px(18.))
+                        .w(px(20.))
                         .text_right()
                         .text_size(crate::appearance::ui_size(10.))
                         .line_height(relative(1.7))
