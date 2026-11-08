@@ -84,11 +84,19 @@ impl SessionRuntime {
             "chat-only" => extra.push("--no-tools".into()),
             "read-only" => {
                 extra.push("--tools".into());
-                extra.push("read,grep,find,ls".into());
+                // present_plan 必须点名（031-1）：--tools 是注册级 allowlist，
+                // 不点名的扩展工具连注册都进不去
+                extra.push(format!(
+                    "read,grep,find,ls,{}",
+                    crate::mode::PRESENT_PLAN_TOOL
+                ));
             }
             "default" => {
                 extra.push("--tools".into());
-                extra.push("read,bash,edit,write".into());
+                extra.push(format!(
+                    "read,bash,edit,write,{}",
+                    crate::mode::PRESENT_PLAN_TOOL
+                ));
             }
             // full：内置 7 件（--tools）+ agent（045 subagent，模块运行时
             // 开关开着才点名——allowlist 指向不存在的注册工具没有意义）
@@ -96,12 +104,19 @@ impl SessionRuntime {
             // 系统提示词零插件注入（034 §1.2）
             "full" => {
                 extra.push("--tools".into());
+                // present_plan 同上（031-1 注册级 allowlist 点名）
                 let tools = if crate::services::workspace::subagent_module_active() {
-                    "bash,read,edit,write,grep,find,ls,agent"
+                    format!(
+                        "bash,read,edit,write,grep,find,ls,agent,{}",
+                        crate::mode::PRESENT_PLAN_TOOL
+                    )
                 } else {
-                    "bash,read,edit,write,grep,find,ls"
+                    format!(
+                        "bash,read,edit,write,grep,find,ls,{}",
+                        crate::mode::PRESENT_PLAN_TOOL
+                    )
                 };
-                extra.push(tools.into());
+                extra.push(tools);
                 extra.extend(crate::session::tools_recipe::full_args(&self.cwd));
             }
             // 自定义（原 full+plugins）：不发 --tools（注册级 allowlist 会把
@@ -154,6 +169,9 @@ impl SessionRuntime {
                 }
             }
         }
+        // 计划模式扩展（031-1 P0）：全档位 `-e` 挂载——闸门在 pi 进程内
+        // （tool_call 打回写操作，无工具集切换），机制与定位见 crate::mode。
+        extra.extend(crate::mode::mount_args());
         // pi 原则：不逐次审批工具调用（vendor security.md），任何档位都
         // 不挂 permission 门禁；扩展自己的 ctx.ui.* 请求仍照常呈现（060 翻案）。
         // draft picks made before the process existed ride the spawn flags

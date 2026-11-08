@@ -37,6 +37,7 @@ mod i18n;
 #[cfg(test)]
 mod i18n_audit;
 mod market;
+mod mode;
 mod pf_plugin;
 mod search;
 mod services;
