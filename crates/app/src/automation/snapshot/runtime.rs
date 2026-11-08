@@ -42,6 +42,10 @@ pub(super) fn session_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         // 扩展 UI 面（test/ext-ui 台架断言出口；数据与渲染同源，见 dialogs/ext_ui.rs）
         // 034：ext_status 已下沉到运行时（per-session，防切会话串味）
         "ext_status": r.ext_status.clone(),
+        // 031-1 计划模式投影（pif-ui 断言出口：/plan 切换 → 广播 → record；
+        // 菜单勾选与防哑弹回滚都读这两个字段）
+        "plan_enabled": r.plan_enabled,
+        "plan_pending": r.plan_pending,
         // 034 会话区底部状态栏（渲染面）：开关 / 是否占位 / 可点动作
         "status_bar": status_bar_json(&r),
         "ext_widgets": chat
