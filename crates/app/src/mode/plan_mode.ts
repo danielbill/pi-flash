@@ -92,6 +92,27 @@ function settle(verdict: "approved" | "rejected" | "aborted"): void {
 	}
 }
 
+/** 否决走 Abort 后，transcript 里的中止错误结果在模型视角改写为用户
+ * 裁决的明确反馈（否则下一轮模型看到的是 "This operation was aborted"）。
+ * 判定收敛：present_plan + isError + 文本含 aborted——其余错误原样保留。 */
+function rewriteAbortedPlanResult(m: AgentMessage): AgentMessage {
+	const tm = m as AgentMessage & {
+		role?: string;
+		toolName?: string;
+		isError?: boolean;
+		content?: Array<{ type: string; text?: string }>;
+	};
+	if (tm.role !== "toolResult" || tm.toolName !== PLAN_TOOL || !tm.isError) return m;
+	const aborted = tm.content?.some(
+		(c) => c.type === "text" && (c.text ?? "").includes("aborted"),
+	);
+	if (!aborted) return m;
+	return {
+		...tm,
+		content: [{ type: "text", text: "用户拒绝或取消了你的计划。" }],
+	} as AgentMessage;
+}
+
 export default function planModeExtension(pi: ExtensionAPI): void {
 	// ---- 工具闸门（裁决 2/3/6）----
 	pi.on("tool_call", async (event) => {
@@ -135,12 +156,18 @@ When the plan is complete (and only then), call the '${PLAN_TOOL}' tool with the
 
 	// ---- 计划态关闭后，历史提醒不再进上下文（官方示例同款清理）----
 	pi.on("context", async (event) => {
-		if (planEnabled) return;
+		// 031-1 两层：(a) 内部提醒卡（pf-plan-context）不进上下文；
+		// (b) 否决走 Abort 后 transcript 留下的是中止错误结果（"This
+		// operation was aborted"），模型视角在本钩子改写为用户裁决的明确
+		// 反馈文案——run 已被 Abort 立即停止，下一轮模型看到的就是这句话
+		// （2026-11-08 用户定稿：反馈 = 用户拒绝或取消了你的计划）。
 		return {
-			messages: event.messages.filter((m) => {
-				const msg = m as AgentMessage & { customType?: string };
-				return msg.customType !== CONTEXT_TYPE;
-			}),
+			messages: event.messages
+				.filter((m) => {
+					const msg = m as AgentMessage & { customType?: string };
+					return msg.customType !== CONTEXT_TYPE;
+				})
+				.map((m) => rewriteAbortedPlanResult(m)),
 		};
 	});
 
