@@ -144,6 +144,15 @@ impl ChatList {
         self.core.spacer_px.get()
     }
 
+    /// 列表侧结构快照 `(msgs, phase, spacer)`——渲染闭包分配槽位的**唯一依据**
+    /// （见 [`row_slot`]）。它描述的是 `ListState` 里**真实有的条目**，与
+    /// `messages.len()` 可能短暂不等：`notify_list` 带 33ms 节流门，新消息
+    /// push 进 `messages` 之后到 `splice` 之间会隔着若干渲染帧。
+    pub(crate) fn listed(&self) -> (usize, bool, bool) {
+        let l = self.core.listed.get();
+        (l.msgs, l.phase, l.spacer)
+    }
+
     /// 视口贴底标记（「回到最新」按钮显隐）
     pub(crate) fn is_at_bottom(&self) -> bool {
         self.core.at_bottom.get()
@@ -391,6 +400,39 @@ fn spacer_target(avail: f32, content_below: f32) -> (f32, bool) {
         (0., true)
     } else {
         (avail, false)
+    }
+}
+
+/// 渲染槽位：条目序 `[msgs | phase | spacer]` 的下标 → 槽位映射。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RowSlot {
+    Message(usize),
+    Phase,
+    Spacer,
+    /// 结构外下标（列表比记账长 / 缩短间隙）：渲染 0 高占位
+    Empty,
+}
+
+/// 下标 → 槽位，**只认列表侧结构**（[`ChatList::listed`]）。
+///
+/// 严禁改用 `messages.len()` / `phase_row_visible()` 现算（旧实现即如此）：
+/// `notify_list` 有 33ms 节流门，而 agent 运行期等待行点阵 / 工具卡 spinner 的
+/// `with_animation` 每帧都申请新帧——于是「消息已进 `messages`、还没 splice 进
+/// 列表」的那 1~2 帧真的会被画出来。现算的垫片下标比列表实际下标大 1，垫片槽位
+/// 就落进 `else if phase_row_visible()` 分支、被渲染成一行 30px 等待行：一整屏
+/// 内容区高的垫片当场塌掉，`layout_items` 的覆盖条件
+/// `pt + below + spacer + pb < H` 成立 ⇒ 逻辑位被夺成贴底胶水 ⇒ 整块内容被拽
+/// 到屏底；≤33ms 后补账 sync 挂回垫片、又钉回锚点顶。用户观感 =
+/// **agent 一发消息就乱跳一下再归位**（2026-11-08 报障，频繁复现）。
+pub(crate) fn row_slot(ix: usize, msgs: usize, phase: bool, spacer: bool) -> RowSlot {
+    if ix < msgs {
+        RowSlot::Message(ix)
+    } else if ix == msgs && phase {
+        RowSlot::Phase
+    } else if spacer && ix == msgs + usize::from(phase) {
+        RowSlot::Spacer
+    } else {
+        RowSlot::Empty
     }
 }
 

@@ -277,3 +277,25 @@ gpui 的 `div()` **不带 `.flex()` 时不是横排 flex row**——子元素纵
 爆 80px 卡、下方行被顶出可视区（验收④返工）。规则：**凡 children() 多元素
 横排的容器，`.flex().items_center().gap(..)` 三件套必须显式齐**；review 时
 见到「新增容器 + children(vec) + 无 .flex()」直接判错。
+
+## 虚拟列表的槽位只认「列表侧结构」（2026-11-08，会话区「乱跳一下再归位」）
+
+`list()` 的 render_item 闭包收到的下标是 **ListState 里的条目下标**，而列表
+结构由宿主 splice 维护，**可能落后于数据**：`notify_list` 有 33ms 节流门，
+新消息 push 进 `messages` 到 `splice` 之间隔着若干渲染帧——而 agent 运行期
+等待行点阵 / 工具卡 spinner 的 `with_animation(.repeat())` 每帧都
+`request_animation_frame()`，那几帧真的会被画出来（`elements/animation.rs`
+的 request_layout 里请求新帧）。
+
+事故形态：会话列表条目序 `[msgs | phase | spacer]`，旧渲染闭包按
+`messages.len() + phase_row_visible()` **现算**垫片下标。数据一超前 1 条，
+垫片槽位就被当成等待行渲染——一整屏内容区高的垫片塌成 30px，`layout_items`
+的覆盖条件 `pt + below + spacer + pb < H` 成立 ⇒ 逻辑位被夺成贴底胶水 ⇒
+整块内容被拽到屏底；≤33ms 后补账 sync 挂回垫片又钉回锚点顶。观感 =
+「agent 一发消息，内容乱跳一下再归位」。
+
+规则：**渲染闭包分配槽位/判断条目身份，只能读列表侧的记账快照**
+（`chat_list::ChatList::listed()` + `chat_list::row_slot()`），并对超出记账
+的消息下标做钳制；一个条目在结构未变前**高度不许变**（等待行的显隐也要等
+sync，否则跟尾胶水期改末条高度 = 整屏推上/推下）。数据侧计数只能用于「数据
+是否比列表新」的判断，不能用于下推条目下标。

@@ -238,7 +238,13 @@ pub(crate) fn session_list(
                 let rt_view = rt_entity.read(cx);
                 let chat = chat_entity.read(cx);
                 let weak = weak_for_msg.clone();
-                match rt_view.messages.get(ix) {
+                // 槽位一律按**列表侧结构**分配（messages.len() 会因 notify_list
+                // 33ms 节流门短暂超前于列表条目——现算槽位会让垫片槽位被当成
+                // 等待行渲染，一整屏垫片塌掉 → 内容被拽到屏底再跳回，
+                // 见 chat_list::row_slot 注释）
+                let (l_msgs, l_phase, l_spacer) = rt_view.pager.listed();
+                let slot = chat_list::row_slot(ix, l_msgs, l_phase, l_spacer);
+                match rt_view.messages.get(ix).filter(|_| ix < l_msgs) {
                     Some(m) if m.role == Role::Custom => div()
                         .w_full()
                         .flex()
@@ -393,36 +399,40 @@ pub(crate) fn session_list(
                         // 条目序 [msgs | phase 行 | spacer]（chat_list::sync 的
                         // splice 编排与之对齐）。spacer = 翻页垫片（pi-web
                         // PromptAnchorSpacer）：把「跟随位」垫到用户消息顶。
-                        // phase 行 = 等待脉冲（文本流式一经出现即让位）
-                        let content =
-                            rt_view.messages.len() + usize::from(rt_view.phase_row_visible());
-                        if rt_view.pager.anchor_active() && ix == content {
-                            div()
+                        // phase 行 = 等待脉冲（文本流式一经出现即让位）。
+                        // 槽位按槽位表走，**不**按下标大小/现值现算（同前注）。
+                        match slot {
+                            chat_list::RowSlot::Spacer => div()
                                 .w_full()
                                 .h(px(rt_view.pager.spacer_px()))
-                                .into_any_element()
-                        } else if chat.rt().read(cx).phase_row_visible() {
-                            // 计时起点 = stream_started（AgentStart 记录、
-                            // settle/abort 清除）；None 仅防御性回落。
-                            let started = chat
-                                .rt()
-                                .read(cx)
-                                .stream_started
-                                .unwrap_or_else(std::time::Instant::now);
-                            div()
-                                .w_full()
-                                .flex()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .max_w(px(content_w))
-                                        .pt(px(2.))
-                                        .child(phase_row(started, t)),
-                                )
-                                .into_any_element()
-                        } else {
-                            div().w_full().into_any_element()
+                                .into_any_element(),
+                            // 槽位在就渲等待行，**不**再加 `phase_row_visible()` 门：
+                            // 结构未变前该条目的高度不能变（跟尾胶水期末尾条目一
+                            // 变高矮就把整屏内容推上/推下）——等待行的增减一律等
+                            // sync 改结构，最多滞后 33ms，肉眼看不出。
+                            chat_list::RowSlot::Phase => {
+                                // 计时起点 = stream_started（AgentStart 记录、
+                                // settle/abort 清除）；None 仅防御性回落。
+                                let started = rt_view
+                                    .stream_started
+                                    .unwrap_or_else(std::time::Instant::now);
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(content_w))
+                                            .pt(px(2.))
+                                            .child(phase_row(started, t)),
+                                    )
+                                    .into_any_element()
+                            }
+                            // 结构外下标 / 缩短间隙：0 高占位
+                            chat_list::RowSlot::Empty | chat_list::RowSlot::Message(_) => {
+                                div().w_full().into_any_element()
+                            }
                         }
                     }
                 }

@@ -56,6 +56,42 @@ mod tests {
         assert_eq!(p.state.item_count(), 6); // [m0..m4 spacer]
     }
 
+    /// 槽位分配只认列表侧结构：消息已进 messages、还没 splice 进列表时，
+    /// 垫片槽位必须仍是 Spacer（旧实现按现算 content 派槽位，会把它当成
+    /// 等待行渲染 —— 一整屏垫片塌成一行 → 内容被拽到屏底再跳回，见
+    /// row_slot 注释 / 2026-11-08 报障）
+    #[test]
+    fn row_slot_follows_listed_structure_not_live_counts() {
+        // 列表侧：[m0 m1 m2 | phase | spacer]
+        let (l_msgs, l_phase, l_spacer) = (3usize, true, true);
+        assert_eq!(row_slot(2, l_msgs, l_phase, l_spacer), RowSlot::Message(2));
+        assert_eq!(row_slot(3, l_msgs, l_phase, l_spacer), RowSlot::Phase);
+        assert_eq!(row_slot(4, l_msgs, l_phase, l_spacer), RowSlot::Spacer);
+        assert_eq!(row_slot(5, l_msgs, l_phase, l_spacer), RowSlot::Empty);
+        // 此刻 messages.len() = 4（新消息还没 splice）：旧实现现算 content =
+        // 4 + 1 = 5，垫片下标跟着漂到 5；结构里垫片仍在 4 → 判定失配。
+        let live_spacer_ix = 4 + usize::from(l_phase);
+        assert_eq!(live_spacer_ix, 5);
+        assert_ne!(
+            row_slot(live_spacer_ix, l_msgs, l_phase, l_spacer),
+            RowSlot::Spacer
+        );
+    }
+
+    /// listed() 与 ListState 条目数一一对应（槽位表的前提）
+    #[test]
+    fn listed_matches_item_count() {
+        let p = ChatList::new();
+        p.sync(3, false);
+        p.page_turn(2, 3, false);
+        p.sync(5, true);
+        let (msgs, phase, spacer) = p.listed();
+        assert_eq!(
+            msgs + usize::from(phase) + usize::from(spacer),
+            p.state.item_count()
+        );
+    }
+
     /// 外部裸 reset（记账失配）→ 下一次 sync 侦测差额整体重建
     #[test]
     fn sync_recovers_from_external_reset() {
