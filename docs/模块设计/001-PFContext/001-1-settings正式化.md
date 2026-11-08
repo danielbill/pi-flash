@@ -38,9 +38,14 @@
     "auto_collapse_hours": 3,
     "auto_clean_days": 30
   },
-  "subagents": { "capacity": 10, "max_depth": 1, "enabled": true },
-  "dev_flags": { "subagents": true }
+  "subagents": { "capacity": 10, "max_depth": 1, "enabled": true }
 }
+```
+
+> **dev_flags 不在此文档**：开发旗标是 boot-only 只读段（S2 实现），源 =
+> `<PF数据目录>/dev-flags.json` + `PI_FLASH_<键大写>` env（env 最高优先），
+> open 时一次性灌入 hub，**改了需重启**；永不进 app-settings.json（写通道按
+> 注册表 `in_file` 过滤，整份升级也不落位）。
 ```
 
 - section 的**键名即 `Section::KEY`**，字段名即结构体字段（`serde(rename_all = "snake_case")`）。
@@ -89,14 +94,19 @@
 ## 4 Section 契约
 
 ```rust
-pub trait Section: Default + Serialize + DeserializeOwned {
+pub trait Section: Default + Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     const KEY: &'static str;
     /// 唯一 clamp / 归一化落点。UI 不再重复钳，扩展只做防御性钳。
     fn validate(&mut self);
-    /// 是否可写入跨进程投影（默认 false，见 001-2）。
-    fn exportable(&self) -> bool { false }
+    /// v1 平铺键读迁移（缺省无）/ 写迁移同值回写一版（001-1 §3）。
+    fn from_legacy(...) -> Option<Self> { None }
+    fn to_legacy(&self, ...) {}
 }
 ```
+
+是否落 app-settings.json（`in_file`）与是否进投影（`exportable`）是**注册表级**
+静态属性（`sections::SectionDef`，S2/S3 实现）——单一事实源在
+`sections::registered()`，不放 trait（dyn 派发不值得）。
 
 - `validate` 在「解析后」「set 后」「从投影读回后」三处调用，保证内存里永远是合法值。
 - clamp 范围写进 section 的注释与单测；不在 UI、不在扩展、不在文档里各写一遍。

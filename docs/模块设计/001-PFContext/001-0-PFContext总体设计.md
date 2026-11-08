@@ -87,7 +87,7 @@ crates/pf-context/src/
 | `~/.pi/agent/mcp.json` | pi（043 由 PF 编辑） | 走既定 mcp 模块，不经 context |
 | `~/.pi-flash/app-settings.json` | **PF** | context 全权 |
 | `~/.pi-flash/ext-context.json` | **PF 写 / 扩展读** | 见 001-2 |
-| `~/.pi-flash/agents/config.json` | 扩展现役事实源（过渡） | 见 001-2 §8 |
+| `~/.pi-flash/agents/config.json` | legacy fallback（S3 投影上线后，双写一版过渡） | 见 001-2 §8 |
 
 **PF 的配置文件永远不叫 `settings.json`**——与 pi 的文件同名会让文档、issue、排查互相污染（2026-11-08 用户否决定名）。
 
