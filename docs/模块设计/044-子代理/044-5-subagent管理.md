@@ -64,10 +64,19 @@ continue its conversation after it finishes.
 ### 4.2 派发结果（`tool.ts` · `runDelegation()` parent 分支）
 
 ```
-content: [{ type: "text", text: `started subagent ${activation.childId}` }]
+started subagent <id> — it runs in the background. Do NOT poll for it (no `sleep`,
+no repeated `subagent_list`): its result arrives as a notification on its own.
 ```
 
-裸句，不含任何"结束本轮/不要轮询"指令——异步契约在描述里，不在结果里。
+**2026-11-08 真机回归**：裸句 `started subagent <id>` 太软——模型把它读成「在等结果」，
+接着 `bash sleep 30` 轮询。反轮询契约因此落到**结果文案**上（不只是描述）：每一条
+派发结果都必须点名 `sleep` / `subagent_list` 轮询为非法。同步把描述里
+「wait for the results」删掉（`wait` 会被模型读成「去等」）。
+
+`subagent_list` 同样收紧：描述声明它是 **diagnostic snapshot, NOT a polling API**，
+结果首行固定为 `Snapshot only — do not poll: finished children notify you on their own.`；
+`manager.list()` 对已 `settled` 的记录强制归一到终态（`stopReason` → completed/
+interrupted/failed），避免快照里残留 `active` 让模型「看到还在跑」而去轮询。
 
 ### 4.3 结算消息（`completion.ts` · `composeCompletion()`）
 
@@ -118,6 +127,14 @@ agent("continue the survey", { resumeFrom: "…/2026-11-08T05-20-11-330Z_01a1b�
 - **准入**（先于容量，失败不花槽位）：`assertResumable()`（`backends/local.ts`）要求 `*.jsonl` + 文件存在 + 非目录；`tool.ts` 另拒「父会话自己的文件」（会把父 transcript 写成子会话）与 `manager.liveSessionFiles()` 里的会话（两个写者交错同一文件）。错误码统一 `NOT_RESUMABLE`。
 - **构造**：`index.ts` 用 `SessionManager.open(file, parentSessionDir)`，cwd 取会话头的 `getCwd()`（历史工具结果都相对于它）；**不重打 `subagent/child` 标记**（文件里已有，重复 append 会污染侧栏过滤与深度恢复）。
 - **发现入口**：完成通知（`completion.ts`）在 `max_turns`/`aborted` 且带 `session_file` 时附「Resume it with `agent(prompt, { resumeFrom: "<file>" })`」，卡片 details 里也一直有 `session_file`。
+
+### 4.7 外部委派面：billion-context 的 `acp_delegate*`（2026-11-08）
+
+PF 宿主里**曾有第二个委派面**，不是 PF 也不是 pi 内核提供的：billion-context 扩展（`~/.pi/agent/npm/node_modules/billion-context`，`pi.extensions → ./dist/agent/pi-native.js`）注册 `acp_delegate` / `acp_delegate_wait` / `acp_delegate_cancel`，语义与 `agent` 相反（`runId`、默认异步但可阻塞 wait）。模型混用二者 → 拿 `childId` 去 `acp_delegate_wait` 报 `No delegate run with runId`，再读 `subagent_list` 当状态轮询，最后 `bash sleep 30`。
+
+- **它的自动避让不生效**：billion-context 自带 `delegate.forceEnable=false` 检测——只在发现 npm `pi-subagents` 安装（`npmInstallAt(agentDir)` / `extensions/*` 的 `package.json.name === "pi-subagents"`）时关掉。PF 用 `-e` 指仓库 `extensions/pf-subagents`，检测不到。
+- **关闭方式**：`C:/Users/bi_da/.config/billion-context/billion-context.json` 加 `"pi": {"subagents": {"enabled": false}}`（`CONFIGURATION.md:868-905`；`enabled:false` 同时移除三个工具与其系统提示词段，**新会话生效**）。已改（备份 `billion-context.json.bak-20261108`）。
+- **不依赖它**：即使没关，4.2 的反轮询契约 + `subagent_list` 的 snapshot 语义也让模型不去 poll。
 
 ## 5 子会话构造
 

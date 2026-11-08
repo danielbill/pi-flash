@@ -373,7 +373,21 @@ export class SubagentManager {
 	list(parentId: string): SubagentDescriptor[] {
 		return [...this.#records.values()]
 			.filter((record) => record.parentId === parentId)
-			.map((record) => ({ ...record.descriptor }));
+			.map((record) => {
+				const descriptor = { ...record.descriptor };
+				// 结算只改内存 descriptor，宿主读到的是拷贝；留下 "active" 的快照会让
+				// subagent_list 报「还在跑」——模型据此去 sleep 轮询。已经 settled 的
+				// 记录一律归一成终态，快照与真实状态永不分叉。
+				if (record.state === "settled" && descriptor.phase === "active") {
+					descriptor.phase =
+						descriptor.stopReason === "completed"
+							? "completed"
+							: descriptor.stopReason === "aborted"
+								? "interrupted"
+								: "failed";
+				}
+				return descriptor;
+			});
 	}
 
 	/** Find a live activation by child id. */

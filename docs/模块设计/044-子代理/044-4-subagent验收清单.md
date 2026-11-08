@@ -114,5 +114,5 @@ You are a probe. Answer in one word.
 
 - 子会话 loader 带 marker inline extension（不注册工具），与"子会话不装配 pf-subagents"的防孙代约束不冲突；自定义 loader 必须显式传 `agentDir`，否则 pi 的 `resolvePath(undefined)` 崩（`undefined.startsWith`）
 - CLI 用 `--no-session` 时父会话无文件 → 子会话拿不到 `parentSession`，会作为普通会话出现（仅影响 CLI 冒烟，PF 恒有会话文件）
-- 派发即返回（无参数，默认）：派发结果回裸句 `started subagent <id>`，完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；`blocking: true` 才等结果（code-mode 聚合）；实时进度流未做
+- 派发即返回（无参数，默认）：派发结果回 `started subagent <id> — it runs in the background. Do NOT poll…`（2026-11-08 加的反轮询契约，见 044-5 §4.2），完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；`blocking: true` 才等结果（code-mode 聚合）；实时进度流未做
 - 未做：codemode fan-out / usage 上卷展示、worktree、外部后端（ACP/CC/Codex）

@@ -43,8 +43,10 @@ describe("delegation tool", () => {
 		const { delegate } = setup();
 		const result = await delegate({ prompt: "long job" });
 		// dsh parity (044-5 §4.2): the dispatch result is a bare sentence; the async
-		// contract lives in the tool description, the report arrives by notice.
-		assert.equal(result.content[0].text, "started subagent sub-1");
+		// contract lives in the tool description and in this result text — the model
+		// used to answer it with `bash sleep 30` polling, so the ban is explicit.
+		assert.match(result.content[0].text, /^started subagent sub-1/);
+		assert.match(result.content[0].text, /Do NOT poll/);
 		assert.deepEqual(result.structuredContent, { childId: "sub-1", status: "started" });
 	});
 
@@ -207,6 +209,16 @@ describe("delegation description", () => {
 		// 即使系统提示词有鼓励 bullet 也不派）——丢了就是回归
 		assert.match(text, /When to delegate/);
 		assert.match(text, /do not repeat the delegated searches/);
+		// 也不能再用「wait for the results」劝模型等——它把 wait 读成「去 sleep」。
+		assert.ok(!/wait for the results/.test(text));
+	});
+
+	it("bans polling right after dispatch", () => {
+		const text = delegationDescription({ inheritsParentContext: false });
+		// 真机回归（2026-11-08）：模型派发后去 `bash sleep 30` 轮询；
+		// 描述里必须点名 sleep / subagent_list 轮询是非法的。
+		assert.match(text, /do not wait for the child/);
+		assert.match(text, /no `sleep`/);
 	});
 
 	// 044-5 §4.1：异步契约写在描述里（dsh 位置），结果不再下命令

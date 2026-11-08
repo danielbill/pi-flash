@@ -606,7 +606,7 @@ export default function piSubagents(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "subagent_list",
 		label: "Subagent List",
-		description: "List this session's child agents with id, phase, label, provider and depth. You will be notified when a subagent finishes; there is no need to keep checking its status.",
+		description: "List this session's child agents with id, phase, label, provider and depth. This is a diagnostic snapshot, NOT a polling API: you will be notified when a subagent finishes, so there is no need to check its status after dispatching.",
 		promptSnippet: "List delegated child agents",
 		parameters: { type: "object", properties: {} } as unknown as never,
 		exposure: "direct",
@@ -629,7 +629,10 @@ export default function piSubagents(pi: ExtensionAPI): void {
 				stopReason: d.stopReason,
 			}));
 			return {
-				content: [{ type: "text", text: JSON.stringify(children) }],
+				content: [
+					{ type: "text", text: "Snapshot only — do not poll: finished children notify you on their own." },
+					{ type: "text", text: JSON.stringify(children) },
+				],
 				structuredContent: { children },
 				details: { children },
 			} as never;

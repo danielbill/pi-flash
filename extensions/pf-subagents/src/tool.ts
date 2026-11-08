@@ -129,7 +129,7 @@ export function delegationDescription(
 		// The wording follows the code — the tool really does return a bare id, so
 		// no prompt can lure the model into believing it must sit and wait.
 		"This tool starts an independently managed subagent and immediately returns its id: it never parks your turn. The runtime notifies you when it finishes, and the notice includes its final answer.",
-		"Right after dispatching, keep working or reply to the user — the notice is steered into your turn if you are still working, or starts a new one when you are idle, so the user can talk to you at any time.",
+		"Right after dispatching, keep working or reply to the user — do not wait for the child and do not poll it (no `sleep`, no repeated `subagent_list`/status checks): the notice is steered into your turn if you are still working, or starts a new one when you are idle, so the user can talk to you at any time.",
 		"The child does not report mid-run; use `subagent_send` to steer it while running or continue its conversation after it finishes.",
 		// 冷恢复（044-5 §4.6 / dsh coldResume）：轮次用尽或中断的子代理可以带着
 		// 全部历史续跑，别重做调研——这是 token 预算最容易漏掉的一条。
@@ -137,7 +137,7 @@ export function delegationDescription(
 		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.${capacity}`,
 		// 委派政策（对齐 ZCode task 工具描述的力度——实测只有机械说明时
 		// 模型从不主动委派，哪怕系统提示词里有鼓励 bullet；见 buglist 第五批）
-		"When to delegate: the task matches one of the profiles above, or answering means sweeping many files or whole directories — research, comparing implementations, locating where something is done, multi-step verification — and you only need the conclusions, not the file dumps. Delegate it and continue the main task; do not repeat the delegated searches yourself, wait for the results. For a single known file, symbol, or value, act directly instead.",
+		"When to delegate: the task matches one of the profiles above, or answering means sweeping many files or whole directories — research, comparing implementations, locating where something is done, multi-step verification — and you only need the conclusions, not the file dumps. Delegate it and continue the main task; do not repeat the delegated searches yourself. For a single known file, symbol, or value, act directly instead.",
 	].join(" ");
 }
 
@@ -225,7 +225,17 @@ export async function runDelegation(
 		});
 		if (delivery === "parent") {
 			return {
-				content: [{ type: "text", text: `started subagent ${activation.childId}` }],
+				content: [
+					{
+						type: "text",
+						// 派发结果就是反轮询契约的落点：模型在这条消息上最容易"等"
+						// （实测它去 bash sleep 30 轮询）。机械说明比提示词有效。
+						text:
+							`started subagent ${activation.childId} — it runs in the background. ` +
+							"Do NOT poll for it (no `sleep`, no repeated `subagent_list`): " +
+							"its result arrives as a notification on its own.",
+					},
+				],
 				structuredContent: { childId: activation.childId, status: "started" },
 				// B4（044）：session_file 在 prepare 返回时就存在，派发当帧就带上
 				// ——否则派发后的子代理整段运行期卡片点不开（要等 completion

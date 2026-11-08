@@ -50,7 +50,7 @@ describe("cold resume (044-5 §4.4)", () => {
 		const { provider, delegate } = setup();
 		const target = sessionFile("child-run-1");
 		const result = await delegate({ prompt: "keep digging", resumeFrom: target });
-		assert.equal(result.content[0].text, "started subagent sub-1");
+		assert.match(result.content[0].text, /^started subagent sub-1/);
 		assert.equal(provider.requests[0]?.resumeFrom, target);
 	});
 
