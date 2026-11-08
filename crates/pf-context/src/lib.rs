@@ -89,3 +89,36 @@ impl Hub {
         }
     }
 }
+
+#[cfg(test)]
+mod hub_tests {
+    use crate::sections::Subagents;
+
+    /// Hub::open 全装配（app `pf_context::init()` 同路径）：settings/domain
+    /// 共享同一份 pfctx.log——boot 行一次、写盘行与投影行齐备、domain 懒开
+    /// 留痕；日志落在数据目录（settings 文件同级）。
+    #[test]
+    fn hub_open_shares_one_log_and_records_lifecycle() {
+        let dir = crate::tests_support::tmp_dir("hub-log");
+        let settings = dir.join("app-settings.json");
+        let hub = crate::Hub::open(Some(settings.clone()));
+
+        hub.settings.set::<Subagents>(|s| s.capacity = 6);
+        hub.settings.flush().unwrap();
+        // domain 懒开（首次访问才建 context.db 并留痕）
+        hub.domain.db().expect("temp 目录可建库");
+
+        let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+        assert_eq!(
+            text.matches("[boot]").count(),
+            1,
+            "settings/domain 共享一份日志器，boot 行只打一次：{text}"
+        );
+        assert!(text.contains("settings.load="), "{text}");
+        assert!(text.contains("[write] subagents"), "{text}");
+        assert!(text.contains("[export] ext-context.json"), "{text}");
+        assert!(text.contains("[domain] sqlite(context.db)"), "{text}");
+        assert!(dir.join("ext-context.json").is_file(), "投影落盘");
+        assert!(dir.join("context.db").is_file(), "domain DB 落盘");
+    }
+}
