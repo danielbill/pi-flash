@@ -1,10 +1,11 @@
-//! 031-1 P3 计划审批弹窗：宽度 = 会话区 100%，高度 = 90% 上下居中（挂
-//! session/mod.rs 的 chat-wrap 浮层槽），带 40px 标题栏（「计划」+ 标准 ×
-//! 控件，§5.7）。无输入框——否决（Esc/×/按钮）后用户在 composer 自行输入
-//! （2026-11-08 简化裁决）。计划正文 100% 宽，markdown 复用
-//! `editor::markdown::render`；下方两钮同款 Secondary 600px 居中。
-//! 焦点走老控件链：`overlay::layer(dialog_focus)` + focus_arbitrate 白名单
-//! （shell/render/focus.rs），Esc = 否决路径。三动作通道见 state.rs。
+//! 031-1 P3 计划审批弹窗：**标准模态卡**，骨架 1:1 抄
+//! `dialogs/ext_ui/dialog.rs::render_ext_dialog`（overlay::layer 遮罩 +
+//! 居中卡片 + 40px 标题栏 + info 滚动区 + footer 按钮行——不手搓）。
+//! 卡宽 = 聊天内容区宽（`workspace::chat_content_width()`，composer 胶囊
+//! /消息列同源），高 = 90% 上下居中；标题「计划」+ 标准 × 控件（§5.7）。
+//! 正文 100% 卡宽 markdown（`editor::markdown::render` 复用）；footer 两钮
+//! 同款 Secondary 堆叠。Esc/×/点外 = 否决路径（计划模式保持），焦点走
+//! 老控件链（dialog_focus + focus_arbitrate 白名单）。
 
 use gpui::{Context, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 
@@ -17,7 +18,7 @@ pub(crate) struct PlanUi {
     /// Some(plan 正文) = 审批弹窗在屏。present_plan 工具事件触发（Session
     /// Event::PlanPresent）；同一时刻仅一份挂起裁决，开着时后来的丢弃。
     pub approval: Option<String>,
-    /// 计划正文滚动句柄（预览列独立滚动）
+    /// 计划正文滚动句柄（info 区独立滚动）
     pub scroll: gpui::ScrollHandle,
 }
 
@@ -29,9 +30,6 @@ impl PlanUi {
         }
     }
 }
-
-/// 操作面板宽（2026-11-08 定稿：两钮 600px 居中）。
-const OPS_W: f32 = 600.;
 
 /// 渲染审批弹窗（调用方保证 `chat.dlg.plan.approval.is_some()`；未挂起时
 /// 返回空元素，挂载点无需再判）。
@@ -51,20 +49,29 @@ pub(crate) fn render_plan_approval(
     let dismiss = move |_w: &mut gpui::Window, cx: &mut gpui::App| {
         let _ = weak_dismiss.update(cx, |c, cx| c.mc_plan_reject_abort(cx));
     };
-    // 老控件链（dialog_shell 同款）：overlay::layer(dialog_focus) + 整面
-    // 面板 stop_click——点击面板不冒泡成否决；ESC 由 layer 派发
-    crate::ui::overlay::layer(false, Some(&chat.dlg.dialog_focus), dismiss)
+    // 标准模态 = render_ext_dialog 同款骨架：layer 遮罩 + 居中卡片 +
+    // stop_click（卡片内点击不冒泡成否决）；焦点 = dialog_focus（ESC 派发）
+    crate::ui::overlay::layer(true, Some(&chat.dlg.dialog_focus), dismiss)
         .flex()
         .items_center()
         .justify_center()
         .child(crate::ui::overlay::stop_click(
             div()
-                .w_full()
+                // 卡宽 = 聊天内容区宽（composer 胶囊/消息列同一真源），
+                // 高 = 90% 上下居中；上限防小窗溢出
+                .w(px(crate::services::workspace::chat_content_width()))
+                .max_w(relative(0.96))
                 .h(relative(0.9))
+                .bg(rgb(t.bg_panel))
+                .border_1()
+                .border_color(rgb(t.border))
+                .rounded_lg()
+                .overflow_hidden()
                 .flex()
                 .flex_col()
-                .bg(rgb(t.bg))
-                // ── 标题栏 40px（§5.7：标题左、关闭钮右上） ──
+                .shadow_lg()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                // ── 标题栏 40px（§5.7：标题左、关闭钮右上；ext 弹窗同款） ──
                 .child(
                     div()
                         .h(px(40.))
@@ -90,7 +97,7 @@ pub(crate) fn render_plan_approval(
                             },
                         )),
                 )
-                // ── 计划正文（100% 宽，markdown 复用件） ──
+                // ── 计划正文（100% 卡宽，独立滚动，markdown 复用件） ──
                 .child(
                     div()
                         .flex_1()
@@ -104,52 +111,39 @@ pub(crate) fn render_plan_approval(
                                 .left(px(0.))
                                 .w_full()
                                 .h_full()
+                                .px_4()
+                                .py_3()
                                 .overflow_y_scroll()
                                 .track_scroll(&scroll)
-                                .child(
-                                    div()
-                                        .px(px(24.))
-                                        .pt(px(24.))
-                                        .pb(px(40.))
-                                        .child(crate::editor::markdown::render(&plan, t, false)),
-                                ),
+                                .child(crate::editor::markdown::render(&plan, t, false)),
                         )
                         .child(crate::ui::psp_scrollbar::menu_scrollbar(&scroll)),
                 )
-                // ── 操作面板：两钮 600px 居中，通铺分隔线 ──
+                // ── footer 按钮行（ext 弹窗同款：border_t + px_4 py_3） ──
                 .child(
                     div()
                         .flex_shrink_0()
-                        .border_t_1()
-                        .border_color(rgb(t.border))
                         .flex()
                         .flex_col()
-                        .items_center()
-                        .gap(px(8.))
-                        .py(px(16.))
-                        .child(
-                            div()
-                                .w(px(OPS_W))
-                                .max_w_full()
-                                .px(px(16.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(plan_btn(
-                                    "plan-approve",
-                                    weak.clone(),
-                                    tr("plan.approve").into(),
-                                    t,
-                                    |c, cx| c.mc_plan_approve(cx),
-                                ))
-                                .child(plan_btn(
-                                    "plan-reject",
-                                    weak.clone(),
-                                    tr("plan.reject").into(),
-                                    t,
-                                    |c, cx| c.mc_plan_reject_abort(cx),
-                                )),
-                        ),
+                        .gap_2()
+                        .px_4()
+                        .py_3()
+                        .border_t_1()
+                        .border_color(rgb(t.border))
+                        .child(plan_btn(
+                            "plan-approve",
+                            weak.clone(),
+                            tr("plan.approve").into(),
+                            t,
+                            |c, cx| c.mc_plan_approve(cx),
+                        ))
+                        .child(plan_btn(
+                            "plan-reject",
+                            weak.clone(),
+                            tr("plan.reject").into(),
+                            t,
+                            |c, cx| c.mc_plan_reject_abort(cx),
+                        )),
                 ),
         ))
         .into_any_element()
