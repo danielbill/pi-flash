@@ -411,10 +411,10 @@ pub(crate) fn turn_agents_row(tones: &[DotTone]) -> gpui::AnyElement {
         .items_center()
         .gap(px(6.))
         .mt(px(5.))
-        // 与 agent 摘要行同构：20px 标号列对齐（bot icon 居位）
+        // 与 agent 摘要行同构：25px 标号列对齐（bot icon 居位）
         .child(
             div()
-                .w(px(20.))
+                .w(px(25.))
                 .flex_shrink_0()
                 .flex()
                 .justify_end()

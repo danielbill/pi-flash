@@ -92,6 +92,12 @@ pub(crate) fn nav_gutter(
             // 全面板字体族跟随「面板」槽位设置（2026-11-08）：总结栏 + 摘要
             // 卡全部继承；卡内轮次编号仍显式 mono（右对齐等宽设计）
             .font_family(crate::appearance::panel_font().family)
+            // 1px accent 描边 + 5px 圆角（2026-11-08 用户定夺）：挂在 wrap
+            // 上，总结栏/滚动区子元素的方角由 overflow_hidden 裁进圆角
+            .rounded(px(5.))
+            .border_1()
+            .border_color(rgb(t.accent))
+            .overflow_hidden()
             // 悬停保持打开：挂 wrap（含总结栏）而不是滚动区——鼠标挪到
             // 总结栏不算离开面板，否则 250ms 宽限一到面板就收了
             .occlude()
@@ -129,10 +135,9 @@ pub(crate) fn nav_gutter(
             //（v63-6 踩坑；session_list 的父容器同样是 flex().flex_col()）
             .flex()
             .flex_col()
-            // 背景同功能面板（左 dock t.nav）——旧值 t.bg 比面板浅一档
+            // 背景同功能面板（左 dock t.nav）——旧值 t.bg 比面板浅一档；
+            // 左描边已上收至 wrap 的整圈 accent 边框，此处不再重复
             .bg(rgb(t.nav))
-            .border_l_1()
-            .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x80)))
             // 水平 padding 必须挂外层容器：gpui List 的 prepaint 只应用
             // 条目的 padding.top/bottom，左右 padding 对条目完全无效
             //（session_list 同款结论）
