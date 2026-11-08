@@ -195,6 +195,8 @@ pub(crate) fn project_turn_agents(msgs: &[crate::session::messages::Msg]) -> Vec
 /// 点色 = 会话列表状态槽口径（[`DotTone`]，7px 同列表彩点）；bot icon =
 /// MD(16)（2026-11-08 用户定夺）。
 /// 事后统计呈现（2026-11-07 用户定夺）；超长截断（容器裁切）。
+/// 整行缩进 34px（2026-11-08 用户定夺）：子代理信息是 agent 发言的一部分，
+/// 与 A 行正文同列对齐（25px 标号列 + 9px gap），不再占标号位。
 pub(crate) fn turn_agents_row(tones: &[DotTone]) -> gpui::AnyElement {
     let t = T();
     let mut dots = div().flex().flex_shrink_0().items_center().gap(px(4.));
@@ -206,22 +208,22 @@ pub(crate) fn turn_agents_row(tones: &[DotTone]) -> gpui::AnyElement {
         .overflow_hidden()
         .flex()
         .items_center()
-        .gap(px(6.))
         .mt(px(5.))
-        // 与 agent 摘要行同构：25px 标号列对齐（bot icon 居位）
+        // 缩进 = A 行正文起点（25px 标号列 + 9px gap）；icon 与点阵同组
+        .pl(px(34.))
         .child(
             div()
-                .w(px(25.))
-                .flex_shrink_0()
                 .flex()
-                .justify_end()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(6.))
                 .child(crate::ui::icon(
                     "bot",
                     crate::ui::tokens::icon::MD,
                     t.text_dim,
-                )),
+                ))
+                .child(dots),
         )
-        .child(dots)
         .into_any_element()
 }
 
