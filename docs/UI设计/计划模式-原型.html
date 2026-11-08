@@ -169,8 +169,13 @@ body{
 /* ---------- 下 20%：操作面板（600px 居中） ---------- */
 .plan-foot{
   height:20%;flex:none;min-height:158px;
-  border-top:1px solid var(--border);
+  position:relative;
   display:flex;align-items:center;justify-content:center;
+}
+/* 预览/面板分隔线：宽度=会话内容区（与 markdown 列同宽 760px 居中），非整区通铺 */
+.foot-divider{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:760px;height:1px;background:var(--border);
 }
 .ops{width:600px;display:flex;flex-direction:column;gap:8px}
 .ops .btn{width:100%}
@@ -288,6 +293,7 @@ body{
 
       <!-- 下 20%：操作面板 600px 居中，三行堆叠 -->
       <div class="plan-foot">
+        <div class="foot-divider"></div>
         <div class="ops">
           <button class="btn btn-secondary">批准计划，取消计划模式</button>
           <button class="btn btn-secondary">否决 / 取消（Esc）</button>
