@@ -16,3 +16,6 @@ notify = "7"
 pi-link = { path = "../pi-link" }
 # 投影 generated_at（001-2 §2）；workspace 已有同版，零新增编译
 chrono = "0.4"
+# S5 domain 持久层（001-0 §2）：bundled 自带 SQLite（免系统依赖），WAL +
+# busy_timeout；仅 domain 子集使用，settings 永不进 DB（001-0 §4 规则 3）
+rusqlite = { version = "0.37", features = ["bundled"] }

@@ -22,7 +22,7 @@
 //!
 //! 设计文档：`docs/模块设计/001-PFContext/001-0-PFContext总体设计.md`。
 
-mod domain;
+pub mod domain;
 pub mod settings;
 pub mod state;
 
@@ -38,7 +38,7 @@ pub struct Hub {
     /// 运行期状态（S4 最小集：当前会话/面板/子代理计数/窗口快照；内存为主，
     /// 不落盘不投影）
     pub state: state::StateStore,
-    /// 域数据 SQLite WAL（S5 落地，beads pi-flash-nndc.5；先占位 trait）
+    /// 域数据 SQLite WAL（S5：context.db，懒开；settings 永不进 DB）
     pub domain: domain::DomainStore,
 }
 
@@ -69,9 +69,14 @@ impl Hub {
     /// `None` = 纯内存态（set/flush 不落盘）。
     pub fn open(settings_path: Option<std::path::PathBuf>) -> Hub {
         Hub {
-            settings: settings::SettingsStore::open(settings_path),
+            settings: settings::SettingsStore::open(settings_path.clone()),
             state: state::StateStore::default(),
-            domain: domain::DomainStore,
+            // domain DB 与 settings 同目录（<PF数据目录>/context.db），懒开
+            domain: domain::DomainStore::new(
+                settings_path
+                    .as_ref()
+                    .and_then(|p| p.parent().map(std::path::Path::to_path_buf)),
+            ),
         }
     }
 }
