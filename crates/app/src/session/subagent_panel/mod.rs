@@ -395,7 +395,8 @@ fn spawn_poll(cx: &mut gpui::Context<Chat>) {
 }
 
 /// 导航轮卡第三行（044-0 验收⑥①）：`[bot] ●●●●`——点数 = 该轮子代理数，
-/// 点色 = 会话列表状态槽口径（[`DotTone`]，7px 同列表彩点）。
+/// 点色 = 会话列表状态槽口径（[`DotTone`]，7px 同列表彩点）；bot icon =
+/// MD(16)（2026-11-08 用户定夺）。
 /// 事后统计呈现（2026-11-07 用户定夺）；超长截断（容器裁切）。
 pub(crate) fn turn_agents_row(tones: &[DotTone]) -> gpui::AnyElement {
     let t = T();
@@ -417,7 +418,11 @@ pub(crate) fn turn_agents_row(tones: &[DotTone]) -> gpui::AnyElement {
                 .flex_shrink_0()
                 .flex()
                 .justify_end()
-                .child(crate::ui::icon("bot", 11., t.text_dim)),
+                .child(crate::ui::icon(
+                    "bot",
+                    crate::ui::tokens::icon::MD,
+                    t.text_dim,
+                )),
         )
         .child(dots)
         .into_any_element()
