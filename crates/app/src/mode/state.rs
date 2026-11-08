@@ -4,7 +4,6 @@
 //! 响应速度**；真值永远以 setStatus("pf-plan") 广播为准（防哑弹见
 //! runtime/response.rs 的 plan_cmd_inflight 分支）。
 
-use crate::i18n::tr;
 use crate::*;
 use gpui::Context;
 use pi_link::protocol::Command;
@@ -25,9 +24,15 @@ impl Chat {
             (id, prev)
         };
         let Some(id) = id else {
-            // 无进程（草稿/断线）：命令发不出去就不翻——真值没变，翻了的
-            // 勾选是骗人的
-            self.set_status(tr("plan.ext_unavailable").to_string(), cx);
+            // 无进程（新会话草稿/断线）：记住意图，spawn 后由 spawn_attached
+            // 补发 `/plan on|off` 同步扩展（先于用户首条消息，闸门首轮生效）。
+            // 同步窗口期广播里相反的值被忽略（plan_sync_pending，裁决 1）。
+            let rt = self.rt();
+            rt.update(cx, |r, _| {
+                r.plan_enabled = !prev;
+                r.plan_sync_pending = true;
+            });
+            cx.notify();
             return;
         };
         let rt = self.rt();

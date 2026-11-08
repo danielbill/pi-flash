@@ -242,6 +242,10 @@ pub(crate) struct SessionRuntime {
     /// 值）——disposition 非 handled（-e 装载失败，pi 把命令当普通消息发
     /// 给模型）时回滚乐观位 + toast；handled 时真值以广播为准。
     pub plan_cmd_inflight: Option<(String, bool)>,
+    /// 031-1 草稿意图窗口：无进程（新会话草稿）时勾选的计划意图尚未同步
+    /// 给扩展——spawn 后由 spawn_attached 补发 `/plan on|off`；期间广播里
+    /// 与意图相反的值被忽略（防 session_start 的 false 覆盖用户勾选）。
+    pub plan_sync_pending: bool,
 
     /// (下标, 点亮时刻) — 复制 pill 的「已复制」反馈（032 恢复）：下标对
     /// 用户栏是 msg_ix、对 agent 轮栏是轮头 start_ix（两者互不重叠）。
@@ -375,6 +379,7 @@ impl SessionRuntime {
             plan_enabled: false,
             plan_pending: None,
             plan_cmd_inflight: None,
+            plan_sync_pending: false,
 
             pending_locate: None,
 
@@ -454,10 +459,28 @@ impl SessionRuntime {
                 // 034：扩展状态同理——旧 pi 进程的 setStatus 快照随进程作废，
                 // 新进程重新发（否则 /reload、空闲回收重建后带子上挂旧文案）
                 self.ext_status.clear();
-                // 031-1：计划态投影同理——新进程 session_start 广播立刻补齐真值
-                self.plan_enabled = false;
+                // 031-1：计划态投影——plan_enabled **不清**：草稿期它是用户
+                // 勾选的意图（spawn 后由此同步扩展），活会话它是投影（新进
+                // 程 session_start 广播会立刻校正）；挂起裁决正文与在途回执
+                // 属于旧进程，照旧作废。
                 self.plan_pending = None;
                 self.plan_cmd_inflight = None;
+                // 031-1：草稿期勾选的意图在此兑现——同步命令**先于**用户首
+                // 条消息入 pi stdin（spawn 返回后才发 prompt），闸门从第一
+                // 轮就生效；真值由同步命令的广播回填（plan_sync_pending 清零）。
+                if self.plan_enabled && self.plan_sync_pending {
+                    let _ = self.rpc(&pi_link::protocol::Command::Prompt {
+                        message: if self.plan_enabled {
+                            "/plan on"
+                        } else {
+                            "/plan off"
+                        }
+                        .into(),
+                        images: Vec::new(),
+                        streaming_behavior: None,
+                    });
+                    self.plan_sync_pending = false;
+                }
                 let epoch = self.agent.epoch;
                 Self::attach_pump(&this, rx, epoch, cx);
                 true

@@ -145,6 +145,10 @@ pub mod method {
     pub const TERMINAL_OPEN: &str = "terminal.open";
     /// 工具预设直调（UI 测试用：full 档的精确集 / 自定义档的重绑都走这条）
     pub const SESSION_TOOLS_PRESET: &str = "session.tools_preset";
+    /// 031-1 计划模式 toggle 直调（UI 测试用：与工具菜单「计划模式」行
+    /// **同一条分派** `mc_toggle_plan`——草稿意图/spawn 同步/防哑弹全走
+    /// 同一条路；无参数，回 {ok}，状态读 session 面 plan_enabled）
+    pub const SESSION_PLAN_TOGGLE: &str = "session.plan_toggle";
     /// 034 底部状态带可点项直调（UI 测试用：与点项**同一条分派**
     /// `footer_status_act`；args {key}，回 {action}；未知/无动作键报错）
     pub const SESSION_STATUS_ACT: &str = "session.status_act";

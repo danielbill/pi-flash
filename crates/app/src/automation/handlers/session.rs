@@ -108,6 +108,12 @@ pub(super) fn dispatch(
             chat.mc_set_tools_preset(preset, cx);
             ok()
         }
+        method::SESSION_PLAN_TOGGLE => {
+            // 031-1：与工具菜单「计划模式」行同一条分派（草稿意图/spawn
+            // 同步/防哑弹一体）；状态读 session 面 plan_enabled
+            chat.mc_toggle_plan(cx);
+            ok()
+        }
         method::SESSION_STATUS_ACT => {
             let key = params
                 .get("key")

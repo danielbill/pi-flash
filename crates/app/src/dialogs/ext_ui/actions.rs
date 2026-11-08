@@ -56,6 +56,14 @@ impl Chat {
                     .and_then(crate::mode::parse_plan_broadcast)
                 {
                     self.rt().update(cx, |r, _| {
+                        // 031-1 同步窗口期（草稿勾选意图未获扩展确认前）：
+                        // 与意图相反的广播忽略（session_start 的 false 不能
+                        // 覆盖用户勾选），意图由 spawn_attached 的同步命令
+                        // 兑现，其广播与意图一致时在此收口。
+                        if r.plan_sync_pending && b.enabled != r.plan_enabled {
+                            return;
+                        }
+                        r.plan_sync_pending = false;
                         r.plan_enabled = b.enabled;
                         r.plan_pending = b.pending.filter(|s| !s.is_empty());
                     });
