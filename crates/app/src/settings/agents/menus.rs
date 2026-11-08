@@ -18,10 +18,12 @@ use super::*;
 use crate::session::input::bar_trigger;
 use crate::session::mcp_picker::{mcp_menu_header, mcp_menu_items, mcp_row};
 use crate::session::menu_rows::{PillRow, pill_row, thinking_rows, tools_preset_rows};
-use crate::session::model_picker::{MODEL_FILTER_MIN, model_menu_body, model_menu_content_h};
+use crate::session::model_picker::{
+    MODEL_FILTER_MIN, group_header_row, model_menu_body, model_menu_content_h,
+};
 use crate::session::pi_extension_picker::{ext_menu_header, ext_menu_items, plugin_row};
 use crate::session::picker_shell::{
-    PAD, PillCardPos, capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges,
+    PAD, PillCardPos, ROW_H, capped_list, capped_list_h, empty_row, picker_card, pill_anchor_edges,
 };
 
 type BoundsSlot = std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>;
@@ -274,7 +276,7 @@ pub(super) fn skills_trigger(
         readonly,
         bar_trigger(
             "ag-skills-trg",
-            Some("layers"),
+            Some("wand"),
             &if custom {
                 tr("agents.skills_custom").to_string()
             } else {
@@ -626,15 +628,30 @@ fn skills_card(
     t: &'static crate::appearance::theme::Theme,
 ) -> Div {
     let is_sel = |s: &str| d.ag_skills.iter().any(|x| x == s);
-    // 过滤（名称包含，大小写不敏）后按 全局 → 项目 排（设计定稿）
+    // 过滤（名称包含，大小写不敏）；分组 = 全局 → 项目（2026-11-08 设计
+    // 定稿：组头 + 分隔线，不再逐项挂「项目」标）
     let flt = d.ag_skill_filter_value.trim().to_lowercase();
-    let mut items: Vec<&pi_link::skills::SkillEntry> = chat
+    let filtered: Vec<&pi_link::skills::SkillEntry> = chat
         .cfg
         .mc_skills
         .iter()
         .filter(|e| flt.is_empty() || e.name.to_lowercase().contains(&flt))
         .collect();
-    items.sort_by_key(|e| e.scope != pi_link::skills::SkillScope::Global);
+    let global: Vec<&pi_link::skills::SkillEntry> = filtered
+        .iter()
+        .copied()
+        .filter(|e| e.scope == pi_link::skills::SkillScope::Global)
+        .collect();
+    let project: Vec<&pi_link::skills::SkillEntry> = filtered
+        .iter()
+        .copied()
+        .filter(|e| e.scope == pi_link::skills::SkillScope::Project)
+        .collect();
+    let items: Vec<&pi_link::skills::SkillEntry> = global
+        .iter()
+        .copied()
+        .chain(project.iter().copied())
+        .collect();
     let visible_sel = items.iter().filter(|e| is_sel(&e.name)).count();
     let all_selected = !items.is_empty() && visible_sel == items.len();
 
@@ -702,35 +719,64 @@ fn skills_card(
             )
         });
 
-    let rows: Vec<AnyElement> = items
-        .iter()
-        .map(|e| {
-            let name = e.name.clone();
-            let pick = name.clone();
-            plugin_row(
-                weak,
-                &name,
-                is_sel(&name),
-                e.scope == pi_link::skills::SkillScope::Project,
-                None,
-                move |c, cx| {
-                    form_edit(c, cx, |s, _| {
-                        match s.ag_skills.iter().position(|x| *x == pick) {
-                            Some(ix) => {
-                                s.ag_skills.remove(ix);
-                            }
-                            None => s.ag_skills.push(pick.clone()),
+    // 分组列表：组头（composer 模型菜单同款 group_header_row）+ 分隔线，
+    // 行不再挂项目标（组头即分组语义）。内容高按组头 0.8 行 + 技能行 1 行
+    // 精确累加，超 10 行滚动（capped_list + 句柄）。
+    let header = |label: &str| group_header_row(label, PAD, ROW_H * 0.8, t);
+    let skill_row = |e: &pi_link::skills::SkillEntry| {
+        let name = e.name.clone();
+        let pick = name.clone();
+        plugin_row(
+            weak,
+            &name,
+            is_sel(&name),
+            false, // 分组语义交给组头，行内不再挂「项目」标（2026-11-08）
+            None,
+            move |c, cx| {
+                form_edit(c, cx, |s, _| {
+                    match s.ag_skills.iter().position(|x| *x == pick) {
+                        Some(ix) => {
+                            s.ag_skills.remove(ix);
                         }
-                    });
-                },
-                t,
-            )
-        })
-        .collect();
-    let n = rows.len();
-    let mut body = rows;
+                        None => s.ag_skills.push(pick.clone()),
+                    }
+                });
+            },
+            t,
+        )
+    };
+    let mut body: Vec<AnyElement> = Vec::new();
+    let mut content_h = 0.;
+    if !global.is_empty() {
+        body.push(header(&tr("scope.global")));
+        content_h += ROW_H * 0.8;
+        for e in &global {
+            body.push(skill_row(e));
+            content_h += ROW_H;
+        }
+    }
+    if !global.is_empty() && !project.is_empty() {
+        body.push(
+            div()
+                .h(px(1.))
+                .mx(px(PAD))
+                .my(px(4.))
+                .bg(rgb(t.border))
+                .into_any_element(),
+        );
+        content_h += 9.;
+    }
+    if !project.is_empty() {
+        body.push(header(&tr("scope.project")));
+        content_h += ROW_H * 0.8;
+        for e in &project {
+            body.push(skill_row(e));
+            content_h += ROW_H;
+        }
+    }
     if body.is_empty() {
         body.push(empty_row(SharedString::from(tr("agents.pick_empty"))));
+        content_h += 60.;
     }
 
     div()
@@ -751,7 +797,7 @@ fn skills_card(
         .child(capped_list(
             "ag-skills-list",
             &d.ag_skills_scroll,
-            capped_list_h(n),
+            content_h.min(300.),
             body,
         ))
 }

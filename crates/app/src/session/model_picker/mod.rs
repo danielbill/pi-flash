@@ -33,7 +33,7 @@ mod tests;
 /// 打开时的键盘选择位 + 滚动位（过滤文本变化时 sel 归零）。
 pub(crate) mod view;
 pub(crate) use view::{
-    ModelPickAction, group_model_row, model_menu_body, model_menu_content_h, view,
+    ModelPickAction, group_header_row, group_model_row, model_menu_body, model_menu_content_h, view,
 };
 impl Chat {
     /// 自动化入口（无点击坐标）：锚点缺省走面板右下兜底定位（open_mcp_picker 同款）。
