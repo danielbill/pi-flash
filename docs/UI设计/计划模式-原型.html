@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>031-1 计划模式 · 弹窗原型 — PF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   031-1 计划模式审批弹窗 · 交互原型
+   设计基准：docs/UI设计/UI组件规范.md + theme.rs ONE_DARK 实测色板
+   布局：会话区 100%×100% · 上 80% markdown 预览 · 下 20% 操作面板(600px 居中)
+   开关：右上「第二行布局」并排 / 上下 对比（待决策点 1）
+   ============================================================ */
+:root{
+  /* ONE_DARK（theme.rs::ONE_DARK 1:1） */
+  --bg:#22252b; --bg-panel:#282c33; --bg-hover:#343843; --bg-selected:#3b3f4a;
+  --border:#353a45; --text:#d7dadf; --text-muted:#9ea4af; --text-dim:#828996;
+  --text-soft:#767d8a; --text-faint:#6b7280;
+  --accent:#6189eb; --accent-hover:#7ba0f0; --accent-contrast:#ffffff;
+  --user-bg:#2f333d; --assistant-bg:#262931; --tool-bg:#2a2e36;
+  --chrome:#23262c; --nav:#2b2f36; --danger:#df5561; --danger-hover:#e0666f;
+  --mono:'JetBrains Mono',Consolas,monospace;
+  --ui:'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:#141519;
+  background-image:
+    radial-gradient(1200px 600px at 20% -10%, rgba(97,137,235,.05), transparent 60%),
+    radial-gradient(900px 500px at 95% 110%, rgba(223,85,97,.04), transparent 60%);
+  font-family:var(--ui);color:var(--text);
+  display:flex;flex-direction:column;align-items:center;
+  padding:22px 24px 30px;gap:14px;
+  font-size:13px;
+}
+
+/* ---------- 页眉：说明 + 布局对比开关 ---------- */
+.specbar{
+  width:min(1240px,100%);display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.specbar h1{font-size:14px;font-weight:600;letter-spacing:.2px;color:var(--text)}
+.specbar .tag{
+  font-size:11px;color:var(--text-muted);border:1px solid var(--border);
+  border-radius:5px;padding:3px 8px;background:#1b1d22;
+}
+.specbar .dims{font-size:11.5px;color:var(--text-dim);font-family:var(--mono);letter-spacing:.2px}
+.layout-switch{margin-left:auto;display:flex;align-items:center;gap:8px}
+.layout-switch .lab{font-size:11.5px;color:var(--text-dim)}
+.chip{
+  font-size:12px;color:var(--text-muted);background:#1b1d22;border:1px solid var(--border);
+  border-radius:6px;padding:5px 12px;cursor:pointer;transition:all .15s;user-select:none;
+}
+.chip:hover{background:var(--bg-hover);color:var(--text)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-contrast);font-weight:600}
+
+/* ---------- 应用窗框（CSD 10px 特例） ---------- */
+.app{
+  width:min(1240px,100%);height:782px;
+  background:var(--bg);border:1px solid #3a3f4b;border-radius:10px;overflow:hidden;
+  box-shadow:0 24px 80px rgba(0,0,0,.55),0 4px 16px rgba(0,0,0,.4);
+  display:flex;flex-direction:column;
+}
+
+/* topbar 40px（chrome 层，高 40 规范） */
+.titlebar{
+  height:40px;flex:none;background:var(--chrome);
+  border-bottom:1px solid rgba(53,58,69,.6);
+  display:flex;align-items:center;padding:0 0 0 14px;gap:10px;
+}
+.titlebar .logo{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,#6189eb,#9a6bff)}
+.titlebar .t{font-size:12px;color:var(--text-muted);font-weight:600}
+.titlebar .sess{font-size:12px;color:var(--text-faint);margin-left:6px}
+.win-controls{margin-left:auto;display:flex;height:100%}
+.win-controls .wc{
+  width:42px;height:40px;display:grid;place-items:center;color:var(--text-muted);
+  font-size:10px;font-family:var(--mono);
+}
+.win-controls .wc:hover{background:var(--bg-hover)}
+.win-controls .wc.close:hover{background:#d8626a;color:#fff}
+
+/* 主行：psp dock + 会话区 */
+.main{flex:1;display:flex;min-height:0}
+
+/* dock（nav 层）——原型简化：仅示意布局边界 */
+.dock{
+  width:224px;flex:none;background:var(--nav);
+  border-right:1px solid rgba(53,58,69,.6);
+  display:flex;flex-direction:column;padding:10px 10px 0;gap:2px;font-size:12px;
+}
+.dock .sec{font-size:10px;color:var(--text-faint);letter-spacing:.6px;padding:6px 2px 4px}
+.dock .row{
+  height:28px;border-radius:5px;display:flex;align-items:center;gap:8px;
+  padding:0 8px;color:var(--text-dim);white-space:nowrap;overflow:hidden;
+}
+.dock .row .ic{width:12px;text-align:center;opacity:.75;font-size:11px}
+.dock .row.active{background:var(--bg-selected);color:var(--text);font-weight:600}
+.dock .row .meta{margin-left:auto;font-size:10px;color:var(--text-faint);font-family:var(--mono)}
+.dock .spacer{flex:1}
+
+/* ============================================================
+   会话区 = 计划弹窗本体（100%×100% 完全覆盖）
+   ============================================================ */
+.plan{
+  flex:1;min-width:0;display:flex;flex-direction:column;
+  background:var(--bg);
+  animation:planIn .28s cubic-bezier(.2,.7,.3,1);
+}
+@keyframes planIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* 标题行 36px（§5.7 标题行高 36） */
+.plan-head{
+  height:36px;flex:none;display:flex;align-items:center;gap:10px;
+  padding:0 8px 0 16px;border-bottom:1px solid var(--border);
+}
+.mode-badge{
+  display:flex;align-items:center;gap:6px;
+  font-size:11px;font-weight:600;color:var(--accent);
+  background:rgba(97,137,235,.12);border:1px solid rgba(97,137,235,.35);
+  border-radius:3px;padding:2px 8px;
+}
+.mode-badge .bulb{font-size:12px;line-height:1}
+.plan-head .title{font-size:14px;font-weight:600;color:var(--text)}
+.plan-head .sub{font-size:11px;color:var(--text-faint)}
+.plan-head .esc-hint{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--text-faint);font-size:11px}
+.kbd{
+  font-family:var(--mono);font-size:10px;color:var(--text-dim);
+  background:#1d2026;border:1px solid var(--border);border-bottom-width:2px;
+  border-radius:4px;padding:1px 5px;line-height:1.4;
+}
+/* 关闭钮 IB_MD 28 / ICON_XS 12（§5.2/§5.7） */
+.icon-btn{
+  width:28px;height:28px;border-radius:6px;border:none;background:transparent;
+  display:grid;place-items:center;color:var(--text-muted);cursor:pointer;transition:background .12s;
+}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text)}
+.icon-btn .x{font-size:12px;line-height:1;font-family:var(--mono)}
+
+/* ---------- 上 80%：markdown 预览（editor-markdown 复用件的观感） ---------- */
+.plan-body{
+  height:80%;min-height:0;overflow-y:auto;position:relative;
+}
+.plan-body::-webkit-scrollbar{width:10px}
+.plan-body::-webkit-scrollbar-thumb{
+  width:6px;border-radius:99px;background:rgba(158,164,175,.28);
+  border:4px solid transparent;background-clip:padding-box;
+}
+.plan-body::-webkit-scrollbar-thumb:hover{width:10px;border-width:1px;background:rgba(158,164,175,.5);background-clip:padding-box}
+.md{
+  max-width:760px;margin:0 auto;padding:28px 32px 40px;
+  font-size:13.5px;line-height:1.75;color:var(--text);
+}
+.md h1{font-size:20px;font-weight:700;line-height:1.4;margin:6px 0 14px;letter-spacing:.2px}
+.md h2{
+  font-size:15px;font-weight:700;margin:28px 0 10px;color:var(--text);
+  display:flex;align-items:center;gap:8px;
+}
+.md h2 .hash{color:var(--accent);font-family:var(--mono);font-size:14px;font-weight:700}
+.md p{margin:8px 0;color:var(--text)}
+.md .muted{color:var(--text-muted)}
+.md code{
+  font-family:var(--mono);font-size:12px;color:#98c3f0;
+  background:var(--tool-bg);border:1px solid rgba(53,58,69,.7);
+  border-radius:3px;padding:1px 5px;white-space:nowrap;
+}
+.md pre{
+  background:var(--tool-bg);border:1px solid var(--border);border-radius:8px;
+  padding:14px 16px;margin:12px 0;overflow-x:auto;
+}
+.md pre code{background:none;border:none;padding:0;white-space:pre;font-size:12px;line-height:1.6;color:#c3c8d1}
+.md pre .cm{color:#6b7280}.md pre .kw{color:#7ba0f0}.md pre .st{color:#8ec07c}.md pre .fn{color:#e0b589}
+.md ul{margin:8px 0;padding-left:22px}
+.md li{margin:4px 0}
+.md li::marker{color:var(--text-faint)}
+.md strong{color:var(--text);font-weight:600}
+.md hr{border:none;border-top:1px solid var(--border);margin:20px 0}
+
+/* 步骤复选框（§5.4：14×14 r3，勾 10） */
+.steps{list-style:none;padding:0;margin:10px 0}
+.steps li{display:flex;gap:10px;align-items:flex-start;margin:7px 0;font-size:13px}
+.cbx{
+  flex:none;width:14px;height:14px;border-radius:3px;margin-top:4px;
+  border:1px solid var(--border);background:transparent;
+  display:grid;place-items:center;font-size:10px;color:var(--accent-contrast);
+}
+.steps li.done .cbx{background:var(--accent);border-color:var(--accent)}
+.steps li.done .cbx::after{content:'✓';font-size:9px;font-weight:700}
+.steps li.done .tx{color:var(--text-dim);text-decoration:line-through;text-decoration-color:rgba(130,137,150,.5)}
+.steps .f{font-family:var(--mono);font-size:12px;color:var(--text-dim)}
+
+/* 影响文件表 */
+.md table{border-collapse:collapse;width:100%;margin:12px 0;font-size:12.5px}
+.md th{
+  text-align:left;font-size:11px;font-weight:600;color:var(--text-muted);
+  padding:6px 10px;border-bottom:1px solid var(--border);background:var(--tool-bg);
+}
+.md td{padding:7px 10px;border-bottom:1px solid rgba(53,58,69,.5);color:var(--text)}
+.md td.mono{font-family:var(--mono);font-size:12px;color:#98c3f0}
+.md td .pill-add{color:#7fb285;font-size:11px}
+.md td .pill-mod{color:#d0a35f;font-size:11px}
+
+/* ---------- 下 20%：操作面板（600px 居中） ---------- */
+.plan-foot{
+  height:20%;flex:none;min-height:158px;
+  border-top:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,rgba(40,44,51,0) 0%,rgba(40,44,51,.45) 100%);
+}
+.ops{width:600px;display:flex;flex-direction:column;gap:8px;padding:0 16px}
+
+/* BTN_LG 32 / px14 / ui12 / r6（§5.1） */
+.btn{
+  height:32px;border-radius:6px;border:none;cursor:pointer;
+  font-family:var(--ui);font-size:12px;font-weight:600;letter-spacing:.3px;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:background .12s,border-color .12s,color .12s;
+}
+.btn .ic{font-size:13px;line-height:1}
+.btn-primary{background:var(--accent);color:var(--accent-contrast)}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:active{transform:translateY(1px)}
+/* Danger 变体：透明底 + danger 字 + 35% 边，hover 12% 红（§5.1） */
+.btn-danger{
+  background:transparent;color:var(--danger);
+  border:1px solid rgba(223,85,97,.35);
+}
+.btn-danger:hover{background:rgba(223,85,97,.12)}
+.btn-danger:active{transform:translateY(1px)}
+
+/* 行 2 变体 A：并排（推荐） */
+.ops .row2{display:flex;gap:8px}
+.ops .row2 .btn-danger{flex:none;width:150px}
+/* 输入框：高 30 r5 边框聚焦 accent（§5.5） */
+.op-input{position:relative;flex:1}
+.op-input input{
+  width:100%;height:30px;border-radius:5px;
+  background:var(--bg-panel);border:1px solid var(--border);
+  color:var(--text);font-family:var(--ui);font-size:12px;
+  padding:0 40px 0 12px;outline:none;transition:border-color .12s;
+}
+.op-input input::placeholder{color:var(--text-faint)}
+.op-input input:focus{border-color:var(--accent)}
+.op-input .enter{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  display:flex;align-items:center;gap:4px;color:var(--text-faint);pointer-events:none;
+}
+
+/* 行 2 变体 B：上下两行 */
+body.stack .row2{flex-direction:column}
+body.stack .row2 .btn-danger{width:100%}
+
+/* 变体标注角标 */
+.variant-note{
+  font-size:11px;color:var(--text-faint);text-align:center;margin-top:2px;
+  font-family:var(--mono);letter-spacing:.3px;
+}
+
+/* statusbar 40（chrome 层，示意） */
+.statusbar{
+  height:40px;flex:none;background:var(--chrome);
+  border-top:1px solid rgba(53,58,69,.6);
+  display:flex;align-items:center;gap:8px;padding:0 12px;font-size:11px;color:var(--text-dim);
+}
+.statusbar .sb-tab{
+  display:flex;align-items:center;gap:6px;height:28px;border-radius:5px;padding:0 10px;
+}
+.statusbar .sb-tab.on{background:var(--bg-hover);color:var(--text)}
+.statusbar .dot{width:6px;height:6px;border-radius:99px;background:#3aa6d0}
+.statusbar .right{margin-left:auto;display:flex;gap:14px;color:var(--text-faint);font-family:var(--mono);font-size:10.5px}
+</style>
+</head>
+<body>
+
+<div class="specbar">
+  <h1>031-1 计划模式 · 审批弹窗原型</h1>
+  <span class="tag">会话区 100%×100%</span>
+  <span class="tag">上 80% markdown 预览</span>
+  <span class="tag">下 20% 操作面板 · 600px 居中</span>
+  <span class="dims">BTN_LG 32 · 输入 30/r5 · 标题行 36 · R_CTRL 6</span>
+  <div class="layout-switch">
+    <span class="lab">第二行布局（待决策 1）</span>
+    <button class="chip on" id="chipSide" onclick="setLayout(false)">并排（推荐）</button>
+    <button class="chip" id="chipStack" onclick="setLayout(true)">上下</button>
+  </div>
+</div>
+
+<div class="app">
+  <!-- topbar -->
+  <div class="titlebar">
+    <div class="logo"></div>
+    <span class="t">pi-flash</span>
+    <span class="sess">— 031 计划模式实现</span>
+    <div class="win-controls">
+      <div class="wc">─</div><div class="wc">□</div><div class="wc close">✕</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- psp dock：弹窗只盖会话区，dock 保持可见 -->
+    <div class="dock">
+      <div class="sec">会话</div>
+      <div class="row"><span class="ic">▤</span>031 计划模式实现<span class="meta">now</span></div>
+      <div class="row"><span class="ic">▤</span>090 插件生命周期收尾<span class="meta">2h</span></div>
+      <div class="row"><span class="ic">▤</span>042 模型管理对齐<span class="meta">昨</span></div>
+      <div class="sec">文件</div>
+      <div class="row"><span class="ic">▸</span>crates / app / src</div>
+      <div class="row"><span class="ic">·</span>session / input</div>
+      <div class="spacer"></div>
+    </div>
+
+    <!-- ============ 计划弹窗（覆盖整个会话区） ============ -->
+    <div class="plan">
+      <!-- 标题行 36 -->
+      <div class="plan-head">
+        <span class="mode-badge"><span class="bulb">💡</span>计划模式</span>
+        <span class="title">实施计划</span>
+        <span class="sub">agent 已完成只读探索，等待你的裁决</span>
+        <span class="esc-hint"><span class="kbd">Esc</span> 否决并退出</span>
+        <button class="icon-btn" title="否决/取消"><span class="x">✕</span></button>
+      </div>
+
+      <!-- 上 80%：markdown 预览 -->
+      <div class="plan-body">
+        <div class="md">
+          <h1>为输入面板新增「计划模式」</h1>
+          <p class="muted">依据 031-1 需求与 ZCode 对照调研结论。闸门落在 pi 进程内（asset 扩展 <code>plan_mode.ts</code>），PF 侧只做状态投影与审批 UI。</p>
+
+          <h2><span class="hash">##</span>实施步骤</h2>
+          <ul class="steps">
+            <li class="done"><span class="cbx"></span><span class="tx"><strong>扩展核心</strong>：状态机 / 三命令 / <code>tool_call</code> 硬闸 / 提醒注入 — <span class="f">assets/plan_mode.ts</span></span></li>
+            <li class="done"><span class="cbx"></span><span class="tx"><strong>装配</strong>：全档位 <code>-e</code> 挂载 + 磁盘落盘 — <span class="f">tools_recipe.rs</span></span></li>
+            <li><span class="cbx"></span><span class="tx"><strong>状态通道</strong>：<code>setStatus("pf-plan")</code> 拦截 → <code>plan_enabled</code> 字段 + disposition 校验</span></li>
+            <li><span class="cbx"></span><span class="tx"><strong>菜单</strong>：工具菜单顶部「计划模式」+ 分隔线（正交勾选）</span></li>
+            <li><span class="cbx"></span><span class="tx"><strong>审批弹窗</strong>：本原型对应件，复用 <span class="f">editor/markdown::render</span></span></li>
+          </ul>
+
+          <h2><span class="hash">##</span>关键裁决</h2>
+          <pre><code><span class="cm">// block 而非摘工具：硬闸是唯一可靠执行点</span>
+<span class="kw">fn</span> <span class="fn">on_tool_call</span>(tool, input) {
+  <span class="kw">if</span> plan_enabled &amp;&amp; !read_only(tool) {
+    <span class="kw">return</span> { block: <span class="kw">true</span>, reason: <span class="st">"计划模式：只读探索"</span> }
+  }
+}</code></pre>
+
+          <h2><span class="hash">##</span>影响文件</h2>
+          <table>
+            <tr><th>文件</th><th>改动</th><th>阶段</th></tr>
+            <tr><td class="mono">assets/plan_mode.ts</td><td><span class="pill-add">+ 新增</span></td><td>P0</td></tr>
+            <tr><td class="mono">session/tools_recipe.rs</td><td><span class="pill-mod">~ 修改</span></td><td>P0</td></tr>
+            <tr><td class="mono">session/runtime/mod.rs</td><td><span class="pill-mod">~ plan_enabled 字段</span></td><td>P1</td></tr>
+            <tr><td class="mono">session/menu_rows.rs</td><td><span class="pill-mod">~ 菜单顶项</span></td><td>P2</td></tr>
+          </table>
+
+          <h2><span class="hash">##</span>风险与回滚</h2>
+          <ul>
+            <li>扩展未装载时 <code>/plan</code> 会被当普通消息发出 —— 以 <code>disposition:"handled"</code> 校验兜底；</li>
+            <li><code>setActiveTools</code> 下轮生效，硬闸不可省；</li>
+            <li>回滚 = 摘掉 <code>-e</code> 一行，无持久化迁移。</li>
+          </ul>
+          <hr>
+        </div>
+      </div>
+
+      <!-- 下 20%：操作面板 600px 居中 -->
+      <div class="plan-foot">
+        <div class="ops">
+          <button class="btn btn-primary" style="width:100%">
+            <span class="ic">✓</span>批准计划，退出计划模式
+          </button>
+          <div class="row2">
+            <button class="btn btn-danger"><span class="ic">✕</span>否决 / 取消</button>
+            <div class="op-input">
+              <input type="text" placeholder="输入其他想法，agent 将重新计划">
+              <span class="enter"><span class="kbd">↵</span></span>
+            </div>
+          </div>
+          <div class="variant-note" id="variantNote">row2: 并排 — 否决 150px + 输入自适应</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- statusbar -->
+  <div class="statusbar">
+    <div class="sb-tab on"><span class="dot"></span>agent 运行中</div>
+    <div class="sb-tab">计划模式</div>
+    <div class="right"><span>GLM-5.3</span><span>main*</span><span>32.4k tok</span></div>
+  </div>
+</div>
+
+<script>
+function setLayout(stack){
+  document.body.classList.toggle('stack',stack);
+  document.getElementById('chipSide').classList.toggle('on',!stack);
+  document.getElementById('chipStack').classList.toggle('on',stack);
+  document.getElementById('variantNote').textContent = stack
+    ? 'row2: 上下 — 否决整行 + 输入整行'
+    : 'row2: 并排 — 否决 150px + 输入自适应';
+}
+/* 交互预览：Esc = 否决路径 / 输入框回车 = 发送其他想法（原型仅演示焦点环） */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){document.querySelector('.plan').style.outline='1px solid rgba(223,85,97,.5)';setTimeout(()=>document.querySelector('.plan').style.outline='',350);}
+});
+</script>
+</body>
+</html>
