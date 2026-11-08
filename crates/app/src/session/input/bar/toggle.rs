@@ -131,12 +131,12 @@ pub(crate) fn composer_bar(
                     .children(ctx_tip),
             ),
     );
-    // 模型 ∨（基座 = bar_trigger；锚点与守卫留在本处）。cpu-ai 前缀：
+    // 模型 ∨（基座 = bar_trigger；锚点与守卫留在本处）。cpu 前缀：
     // 与思考/工具钮同款 icon+label 节奏（2026-11-08 用户定稿）
     right = right.child(
         super::bar_trigger(
             "open-model-select",
-            Some("cpu-ai"),
+            Some("cpu"),
             model_label,
             true,
             if locked { t.text_faint } else { t.text_muted },

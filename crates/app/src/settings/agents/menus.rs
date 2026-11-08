@@ -156,7 +156,7 @@ fn model_trigger(
         readonly,
         bar_trigger(
             "ag-model-trg",
-            Some("cpu-ai"),
+            Some("cpu"),
             &label,
             true,
             trg_color(readonly, d.ag_popup == Some(0)),
