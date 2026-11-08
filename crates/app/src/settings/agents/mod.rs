@@ -6,7 +6,7 @@
 //! `pi_link::agents`）。
 //!
 //! 尺寸/配色逐值照抄 `docs/UI设计/设置-子代理页-原型.html`（已过稿）：列表
-//! 宽 400（[`widgets::LIST_W`]）、行 30px 圆点 7px、label 96px 上沿对齐、
+//! 宽 450（[`widgets::LIST_W`]，2026-11-08 随全局 400→450）、行 30px 圆点 7px、label 96px 上沿对齐、
 //! 输入 30px、系统提示 textarea 170px。模型/思考/工具行的触发钮与菜单
 //! 2026-11-07 对齐 InputPanel（menus.rs 全组件复用，见该文件头清单）。
 //!

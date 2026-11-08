@@ -1,15 +1,15 @@
 //! 页面骨架：两栏（`sidebar_shell` / `sidebar_list` / `sidebar_item` /
-//! `group_header`）与详情区（`detail_shell`），列宽 `LIST_W = 400`。见 §10.2。
+//! `group_header`）与详情区（`detail_shell`），列宽 `LIST_W = 450`。见 §10.2。
 
 use gpui::prelude::*;
 use gpui::{AnyElement, FontWeight, SharedString, div, px, rgb};
 
 use crate::appearance::theme::theme as T;
 
-/// 设置页左列表列宽（Providers / 扩展 / MCP 清单 / 技能）：四页统一 400
-/// （082：350→400，扩展页行内要容「↑ 可更新」箭头；四页同步加宽），
+/// 设置页左列表列宽（Providers / 扩展 / MCP 清单 / 技能 / 子代理）：五页统一 450
+/// （082：350→400；2026-11-08：400→450，子代理页并入同宽，五页同步加宽），
 /// 基准 = 扩展页（2026-10-09 用户定稿「全部和扩展的列表宽度对齐」）。
-pub(crate) const LIST_W: f32 = 400.;
+pub(crate) const LIST_W: f32 = 450.;
 
 /// ConfigSidebar 基座（240px 列，bg_panel + 右边框）。
 pub(crate) fn sidebar_shell(id: &'static str) -> gpui::Stateful<gpui::Div> {
