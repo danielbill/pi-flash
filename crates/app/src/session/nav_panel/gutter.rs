@@ -9,7 +9,7 @@ use super::*;
 /// 轮）。当前定位段 accent
 /// 实色——选中跟随真实滚动位置（贴底 = 末段），卡片悬浮框不回写。
 /// 悬停向左弹出 500px 轮次摘要卡片列表（用户前 50 字 + agent 首条回复
-/// 前 50 字，编号 01-99）+ 30px 总结栏，点击卡片/段定位会话；内容溢出
+/// 前 50 字，编号 01-99）+ 36px 总结栏，点击卡片/段定位会话；内容溢出
 /// 时右缘显示滚动条。摘要数据走 runtime 缓存（v63-3）：notify_list 置
 /// 脏惰性重建，渲染帧零重算。
 pub(crate) fn nav_gutter(
@@ -62,9 +62,9 @@ pub(crate) fn nav_gutter(
     let mut gutter = div()
         .id("nav-gutter")
         .relative()
-        // 10 = 段命中区宽（实体 6 + 右侧 4px 透明可点，不贴窗口边；
-        // 2026-11-08 二次定夺：透明余量 8→4，右缘更贴边）
-        .w(px(10.))
+        // 9 = 段命中区宽（实体 5 + 右侧 4px 透明可点，不贴窗口边；
+        // 2026-11-08 透明余量 8→4，实体 6→5 并弃边框改 accent 填充）
+        .w(px(9.))
         .h_full()
         .flex_shrink_0();
     // 悬停展开的轮次摘要列表（033：topbar 之下 100% 高、400px 宽、向左
@@ -77,8 +77,8 @@ pub(crate) fn nav_gutter(
         let mut flyout_wrap = div()
             .id("nav-flyout-wrap")
             .absolute()
-            // 10 = 与段左缘齐平（gutter 10 = 段命中区 6 实体 + 右 4 透明）
-            .right(px(10.))
+            // 9 = 与段左缘齐平（gutter 9 = 段命中区 5 实体 + 右 4 透明）
+            .right(px(9.))
             .top_0()
             // 下缘与 input panel 底线对齐：composer 悬浮容器的 bottom =
             // footer_bar::BAR_H（034 起永久上移，input/area.rs composer_wrap
@@ -187,7 +187,8 @@ pub(crate) fn nav_gutter(
             flyout_wrap = flyout_wrap.child(
                 div()
                     .absolute()
-                    .top(px(38.))
+                    // 44 = 总结栏 36 + list pt 8（v63-4 口径同款）
+                    .top(px(44.))
                     .bottom(px(8.))
                     .right(px(3.))
                     .w(px(8.))
@@ -203,17 +204,17 @@ pub(crate) fn nav_gutter(
     // 后居中——rail 挂 mb(0.5×composer高)，flex 连 margin 盒一起居中，
     // 视觉中心正好上移 composer/4。生成算法（v63-5）：轮次均分切割整条
     // ——flex_1 等分 + 2px 缝，1 轮 = 整条弱主题色、2 轮 = 上下两段……
-    // 10 轮后段高不再缩小（>10 百分比桶映射）。段色 = 弱主题色常驻，
-    // 选中 = accent 边框（不整段覆盖），hover 增亮；段命中区 10px = 实体
-    // 6px + 右侧 4px 透明可点（2026-10-10：命中不满宽会点穿下方内容误收
-    // 面板；2026-11-08 实体 10→6、透明余量 8→4）
+    // 10 轮后段高不再缩小（>10 百分比桶映射）。段色 = 弱 accent 填充常驻，
+    // 选中/hover = accent 实色填充（2026-11-08 弃边框方案），命中区 9px =
+    // 实体 5px + 右侧 4px 透明可点（2026-10-10：命中不满宽会点穿下方内容
+    // 误收面板；2026-11-08 实体 10→6→5、透明余量定稿 4）
     if !summary.turns.is_empty() {
         let composer_h = chat.composer.composer_h.get();
         let active_tick = active_turn.map(tick_of_turn);
         let mut rail = div()
             .id("nav-rail")
             .h_full()
-            .w(px(10.))
+            .w(px(9.))
             .flex()
             .flex_col()
             // 实体段贴左，右侧留 4px 透明命中区
@@ -226,7 +227,7 @@ pub(crate) fn nav_gutter(
             rail = rail.child(
                 div()
                     .id(SharedString::from(format!("nav-node-{i}")))
-                    // 命中区吃满 rail 10px：左 6px 实体 + 右 4px 透明同权
+                    // 命中区吃满 rail 9px：左 5px 实体 + 右 4px 透明同权
                     .w_full()
                     .flex_1()
                     .min_h_0()
@@ -247,19 +248,16 @@ pub(crate) fn nav_gutter(
                             window.refresh();
                         }),
                     )
-                    // 可见段体只有左 6px；右 4px 透明但同属命中区
+                    // 可见段体只有左 5px；右 4px 透明但同属命中区
                     .child(
                         div()
-                            .w(px(6.))
+                            .w(px(5.))
                             .h_full()
                             .rounded(px(2.))
-                            // 常驻 1px 边框（透明↔accent）防选中时尺寸跳动；
-                            // 选中 = 1px accent 实边（2026-11-08 段体 10→6，
-                            // 边框 2→1：border-box 下 2px 边框会吞掉大半可见填充）
-                            .border_1()
+                            // 弱 accent 填充常驻，选中/hover = accent 实色
+                            //（2026-11-08 弃边框：填充色区分选中，无尺寸跳动）
                             .bg(gpui::rgba((t.accent as u32) << 8 | 0x3d))
-                            .when(on, |d| d.border_color(rgb(t.accent)))
-                            .when(!on, |d| d.border_color(gpui::rgba(0x00000000)))
+                            .when(on, |d| d.bg(rgb(t.accent)))
                             // 段 hover：整段增亮到实色（navtick 组联动——
                             // 4px 透明区悬停同样增亮）
                             .group_hover("navtick", |s| s.bg(rgb(t.accent))),

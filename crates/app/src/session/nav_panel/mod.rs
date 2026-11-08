@@ -11,12 +11,12 @@ use super::*;
 /// 轮）。当前定位段 accent
 /// 实色——选中跟随真实滚动位置（贴底 = 末段），卡片悬浮框不回写。
 /// 悬停向左弹出 500px 轮次摘要卡片列表（用户前 50 字 + agent 首条回复
-/// 前 50 字，编号 01-99）+ 30px 总结栏，点击卡片/段定位会话；内容溢出
+/// 前 50 字，编号 01-99）+ 36px 总结栏，点击卡片/段定位会话；内容溢出
 /// 时右缘显示滚动条。摘要数据走 runtime 缓存（v63-3）：notify_list 置
 /// 脏惰性重建，渲染帧零重算。
 pub(crate) mod gutter;
 pub(crate) use gutter::nav_gutter;
-/// 总结栏（v63-4 自 nav_gutter 内切抽出）：30px 固定高，滚动区之外。口径
+/// 总结栏（v63-4 自 nav_gutter 内切抽出）：36px 固定高，滚动区之外。口径
 /// 「按我们自己设计」：N = 用户 + 助手 + 工具调用（ToolCall 块数），非 pi-web
 /// totalMessages。样式「icon 数字」四组：消息总数：用户/助手/工具，
 /// 全 icon+数字无文案，不走过 i18n。尺寸全取 UI组件规范令牌：图标
@@ -44,12 +44,15 @@ pub(crate) fn nav_summary_header(
         ("wrench", summary.tool_calls, false),
     ];
     let mut header = div()
-        .h(px(32.))
+        // 36px（2026-11-08 由 32 加高，用户定夺）
+        .h(px(36.))
         .flex_shrink_0()
         .flex()
         .items_center()
-        // 左缘 14 = 面板 pl 6 + 卡片 px 8，与卡片文字对齐
-        .px(px(14.))
+        // 左缘 48 = 面板 pl 6 + 卡片 px 8 + 编号列 25 + gap 9，与用户发言
+        // 正文对齐（2026-11-08 由 14 改；原仅对齐卡片文字左缘）
+        .pl(px(48.))
+        .pr(px(14.))
         .gap(px(space::SP5))
         .border_b_1()
         // 分隔线与面板左边框同档（0x40 太淡看不出）
