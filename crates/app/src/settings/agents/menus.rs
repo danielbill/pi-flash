@@ -224,7 +224,12 @@ fn tier_trigger(
         bar_trigger(
             "ag-tier-trg",
             Some("wrench"),
-            &d.ag_tools.clone(),
+            // inherit 显示「继承委派者」，与模型/技能钮一致；其余档位沿用键名
+            &if d.ag_tools == "inherit" {
+                tr("agents.inherit_tools").to_string()
+            } else {
+                d.ag_tools.clone()
+            },
             true,
             trg_color(readonly, d.ag_popup == Some(1)),
             !readonly,
