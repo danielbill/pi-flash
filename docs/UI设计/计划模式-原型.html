@@ -48,13 +48,6 @@ body{
   border-radius:5px;padding:3px 8px;background:#1b1d22;
 }
 .specbar .dims{font-size:11.5px;color:var(--text-dim);font-family:var(--mono);letter-spacing:.2px}
-.kbd{
-  font-family:var(--mono);font-size:10px;color:var(--text-dim);
-  background:#1d2026;border:1px solid var(--border);border-bottom-width:2px;
-  border-radius:4px;padding:1px 5px;line-height:1.4;
-}
-/* 按钮内嵌键帽：继承按钮字色，弱化为纹理 */
-.btn .kbd{background:transparent;border-color:currentColor;border-bottom-width:1px;color:inherit;opacity:.55;margin-left:6px;font-size:9px}
 
 /* ---------- 应用窗框（CSD 10px 特例） ---------- */
 .app{
@@ -178,45 +171,39 @@ body{
   height:20%;flex:none;min-height:158px;
   border-top:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(180deg,rgba(40,44,51,0) 0%,rgba(40,44,51,.45) 100%);
 }
 .ops{width:600px;display:flex;flex-direction:column;gap:8px}
+.ops .btn{width:100%}
 
 /* BTN_LG 32 / px14 / ui12 / r6（§5.1） */
 .btn{
-  height:32px;border-radius:6px;border:none;cursor:pointer;
+  height:32px;border-radius:6px;border:none;cursor:pointer;text-align:left;
   font-family:var(--ui);font-size:12px;font-weight:600;letter-spacing:.3px;
-  display:flex;align-items:center;justify-content:center;gap:8px;
+  display:flex;align-items:center;justify-content:flex-start;
+  padding:0 14px; /* BTN_LG px14（§5.1） */
   transition:background .12s,border-color .12s,color .12s;
 }
-.btn .ic{font-size:13px;line-height:1}
 .btn-primary{background:var(--accent);color:var(--accent-contrast)}
 .btn-primary:hover{background:var(--accent-hover)}
 .btn-primary:active{transform:translateY(1px)}
-/* Danger 变体：透明底 + danger 字 + 35% 边，hover 12% 红（§5.1） */
-.btn-danger{
-  background:transparent;color:var(--danger);
-  border:1px solid rgba(223,85,97,.35);
+/* Secondary 变体（§5.1）：透明底 + text 字 + 1px border，hover bg_hover
+   （用户裁决：取消/否决不用警告色，正常态） */
+.btn-secondary{
+  background:transparent;color:var(--text);
+  border:1px solid var(--border);
 }
-.btn-danger:hover{background:rgba(223,85,97,.12)}
-.btn-danger:active{transform:translateY(1px)}
+.btn-secondary:hover{background:var(--bg-hover)}
+.btn-secondary:active{transform:translateY(1px)}
 
-/* 行 2：否决整行（Esc 键帽内嵌） */
-.ops .btn-danger{width:100%}
 /* 行 3：输入框整行 —— 高 30 r5 边框聚焦 accent（§5.5） */
-.op-input{position:relative}
 .op-input input{
   width:100%;height:30px;border-radius:5px;
   background:var(--bg-panel);border:1px solid var(--border);
   color:var(--text);font-family:var(--ui);font-size:12px;
-  padding:0 40px 0 12px;outline:none;transition:border-color .12s;
+  padding:0 12px;outline:none;transition:border-color .12s;
 }
 .op-input input::placeholder{color:var(--text-faint)}
 .op-input input:focus{border-color:var(--accent)}
-.op-input .enter{
-  position:absolute;right:8px;top:50%;transform:translateY(-50%);
-  display:flex;align-items:center;gap:4px;color:var(--text-faint);pointer-events:none;
-}
 
 /* statusbar 40（chrome 层，示意） */
 .statusbar{
@@ -239,7 +226,7 @@ body{
   <span class="tag">会话区 100%×100%</span>
   <span class="tag">上 80% markdown 预览</span>
   <span class="tag">下 20% 操作面板 · 600px 居中</span>
-  <span class="dims">BTN_LG 32 · 输入 30/r5 · R_CTRL 6 · 无标题条</span>
+  <span class="dims">BTN_LG 32 · 输入 30/r5 · R_CTRL 6 · 无标题条 · 全左对齐 · 无图标无键帽</span>
 </div>
 
 <div class="app">
@@ -313,15 +300,10 @@ body{
       <!-- 下 20%：操作面板 600px 居中，三行堆叠 -->
       <div class="plan-foot">
         <div class="ops">
-          <button class="btn btn-primary" style="width:100%">
-            <span class="ic">✓</span>批准计划，退出计划模式
-          </button>
-          <button class="btn btn-danger">
-            <span class="ic">✕</span>否决 / 取消<span class="kbd">Esc</span>
-          </button>
+          <button class="btn btn-primary">批准计划，取消计划模式</button>
+          <button class="btn btn-secondary">否决 / 取消（Esc）</button>
           <div class="op-input">
-            <input type="text" placeholder="输入其他想法，agent 将重新计划">
-            <span class="enter"><span class="kbd">↵</span></span>
+            <input type="text" placeholder="输入其他想法，回车确认">
           </div>
         </div>
       </div>
@@ -329,22 +311,10 @@ body{
   </div>
 
   <!-- statusbar -->
-  <div class="statusbar">
-    <div class="sb-tab on"><span class="dot"></span>agent 运行中</div>
+  <div class="statusbar">    <div class="sb-tab on"><span class="dot"></span>agent 运行中</div>
     <div class="sb-tab">计划模式</div>
     <div class="right"><span>GLM-5.3</span><span>main*</span><span>32.4k tok</span></div>
   </div>
 </div>
-
-<script>
-/* 交互预览：Esc = 否决（原型仅演示高亮反馈） */
-document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){
-    const b=document.querySelector('.btn-danger');
-    b.style.background='rgba(223,85,97,.25)';
-    setTimeout(()=>b.style.background='',300);
-  }
-});
-</script>
 </body>
 </html>
