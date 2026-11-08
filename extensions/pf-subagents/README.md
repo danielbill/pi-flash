@@ -14,6 +14,11 @@ Tests: `44-子代理/044-4-subagent验收清单.md`. Parity with dsh: [`PARITY.m
   are woken, streaming parents get it steered into the current turn (044-5 §4).
 - `blocking: true` is the opt-in for programmatic callers (code-mode fan-out) that must
   read `structuredContent.text` inline; it parks the turn for the child's whole run.
+- `resumeFrom` continues an earlier child run instead of starting over: the new child
+  opens that session file (`SessionManager.open`) and keeps its whole history, so a run
+  that hit `max_turns` never costs the research twice. New child id over the same file —
+  a card is one run. Bad targets fail `NOT_RESUMABLE` before a slot is spent (missing
+  file, not `.jsonl`, the parent's own session, a child that is still running).
 - Providers: `spawn` (fresh child context), `fork` (inherits completed history).
 - Activation lifecycle: reserve identity and capacity → publish only after the child
   accepted the task → settle after cleanup → close admission on settle.
@@ -36,8 +41,9 @@ Tests: `44-子代理/044-4-subagent验收清单.md`. Parity with dsh: [`PARITY.m
 
 ## Not in M1
 
-Background (`parent`) delivery notifications, codemode fan-out, worktree isolation,
-external backends (ACP / Claude Code / Codex), aggregation panel.
+codemode fan-out, worktree isolation, external backends (ACP / Claude Code / Codex),
+aggregation panel, a per-card "continue" button (resume is driven by
+`agent(prompt, { resumeFrom })` / the completion notice).
 
 ## Module config
 

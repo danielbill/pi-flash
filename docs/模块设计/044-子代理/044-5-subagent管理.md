@@ -30,12 +30,13 @@
 ## 3 工具面：一个工具，两个入口
 
 ```
-agent(prompt, { profile?, model?, cwd?, label?, maxloop?, blocking? })
+agent(prompt, { profile?, model?, cwd?, label?, maxloop?, resumeFrom?, blocking? })
   → { childId, status: "started" }        # 默认：立即返回，终态走完成通知
   → { childId, text, stopReason, … }      # 仅 blocking: true
 
 - label: 任务短标签(transcript/面板显示);maxloop: 委派级轮次预算
   (0=不限,省略=100;优先级 maxloop > profile maxTurns > 默认 100)。
+- resumeFrom: 冷恢复入口（§4.6）——续跑既有子会话，而不是重开一个。
 - 工具描述注册期动态注入容量上限 +「CAPACITY_REACHED 等槽位释放重派」引导。
 ```
 
@@ -107,6 +108,17 @@ List this session's child agents with id, phase, label, provider and depth. You 
 notified when a background subagent finishes; there is no need to keep checking its status.
 ```
 
+### 4.6 冷恢复（`resumeFrom`，对齐 dsh `coldResume`）
+
+```ts
+agent("continue the survey", { resumeFrom: "…/2026-11-08T05-20-11-330Z_01a1b….jsonl" })
+```
+
+- **语义**：新 childId + **同一会话文件**。子代理带着完整历史续跑，父会话看到一张新卡、一条新结算；不复用旧 childId（卡片=一次运行，复用会让已结算卡二次结算，破坏 044-3 的「一个状态」不变量）。dsh 是 same-id 续聊，差别在宿主卡片模型，不在机制。
+- **准入**（先于容量，失败不花槽位）：`assertResumable()`（`backends/local.ts`）要求 `*.jsonl` + 文件存在 + 非目录；`tool.ts` 另拒「父会话自己的文件」（会把父 transcript 写成子会话）与 `manager.liveSessionFiles()` 里的会话（两个写者交错同一文件）。错误码统一 `NOT_RESUMABLE`。
+- **构造**：`index.ts` 用 `SessionManager.open(file, parentSessionDir)`，cwd 取会话头的 `getCwd()`（历史工具结果都相对于它）；**不重打 `subagent/child` 标记**（文件里已有，重复 append 会污染侧栏过滤与深度恢复）。
+- **发现入口**：完成通知（`completion.ts`）在 `max_turns`/`aborted` 且带 `session_file` 时附「Resume it with `agent(prompt, { resumeFrom: "<file>" })`」，卡片 details 里也一直有 `session_file`。
+
 ## 5 子会话构造
 
 ```
@@ -133,7 +145,7 @@ createAgentSessionFromServices({
 ## 7 持久化与孤儿恢复
 
 - 子会话落 `subagent/child` 标记 entry（深度）；父会话不落 descriptor（pi-flash-9eck 已删）
-- 孤儿恢复（重启后续跑遗留子代理）**未做**：宿主重启后遗留卡按中断态呈现，resume 机制（复用同一子 session 文件续跑）另案
+- 孤儿恢复：**机制已具备**（§4.6 `resumeFrom` 复用同一子 session 文件续跑，路径来自卡片/结算的 `session_file`）；宿主重启后遗留卡仍按中断态呈现，卡片上的「继续」按钮未做（当前由模型/用户经 `agent(resumeFrom)` 触发）
 
 ## 8 profile = Agent 定义（用户资产）
 

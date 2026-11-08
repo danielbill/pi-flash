@@ -106,6 +106,8 @@ export class ScriptedProvider implements Provider {
 	readonly name: string;
 	readonly capabilities: ProviderCapabilities;
 	readonly children: ScriptedChild[] = [];
+	/** Every request the manager passed down, in start order (resume assertions). */
+	readonly requests: SubagentRequest[] = [];
 	prepareCalls = 0;
 	#options: ScriptedOptions;
 
@@ -124,6 +126,7 @@ export class ScriptedProvider implements Provider {
 
 	async prepare(request: SubagentRequest): Promise<ChildHandle> {
 		this.prepareCalls += 1;
+		this.requests.push(request);
 		if (this.#options.failPrepare) throw new Error("scripted prepare failure");
 		const child = new ScriptedChild(this.#options.idOverride ?? request.childId ?? "unknown", this.#options);
 		this.children.push(child);

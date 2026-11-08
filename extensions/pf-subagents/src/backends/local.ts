@@ -6,6 +6,9 @@
  * suite) and lets the extension entry decide how a real session is created.
  */
 
+import { statSync } from "node:fs";
+import { extname } from "node:path";
+
 import type { ChildHandle, ChildProgress, ChildSessionStats, Provider, ProviderCapabilities, SubagentRequest, SubagentResult, SubagentUsage } from "../types.ts";
 import { asSubagentError, SubagentError, SubagentErrorCode } from "../errors.ts";
 import { DEFAULT_MAX_TURNS } from "../profile.ts";
@@ -47,6 +50,12 @@ export interface SessionFactoryOptions {
 	maxTurns?: number;
 	/** Session file of the parent, recorded in the child header for fork children. */
 	parentSession?: string;
+	/**
+	 * Cold resume: open this child session instead of creating a new one. The
+	 * backend then skips first-start bookkeeping (no second child marker) — the
+	 * session already carries its own.
+	 */
+	resumeSessionFile?: string;
 	/** True when the child must start from the parent's completed history. */
 	inheritParentContext?: boolean;
 	/** Stamped into the child's marker entry (side-bar filtering keys on it). */
@@ -376,6 +385,17 @@ export class LocalProvider implements Provider {
 	async prepare(request: SubagentRequest): Promise<ChildHandle> {
 		const childId = request.childId;
 		if (!childId) throw new SubagentError(SubagentErrorCode.START_REJECTED, "manager did not reserve a child id");
+		// Cold resume: reject before any resource is taken, so a bad path never
+		// spends a capacity slot (044-5 §4.6, dsh `NOT_RESUMABLE`).
+		if (request.resumeFrom !== undefined) {
+			if (!this.capabilities.continuable) {
+				throw new SubagentError(
+					SubagentErrorCode.NOT_RESUMABLE,
+					`provider ${this.name} cannot resume sessions`,
+				);
+			}
+			assertResumable(request.resumeFrom);
+		}
 		const composition = this.#options.resolveComposition
 			? await this.#options.resolveComposition(request)
 			: {};
@@ -388,6 +408,7 @@ export class LocalProvider implements Provider {
 		try {
 			session = await this.#options.factory({
 				cwd: request.cwd ?? process.cwd(),
+				...(request.resumeFrom ? { resumeSessionFile: request.resumeFrom } : {}),
 				model: composition.model ?? request.model,
 				systemPrompt: composition.systemPrompt,
 				appendSystemPrompt: composition.appendSystemPrompt,
@@ -409,5 +430,29 @@ export class LocalProvider implements Provider {
 		const child = new LocalChild(childId, session, maxTurns);
 		this.sessions.set(childId, child);
 		return child;
+	}
+}
+
+/**
+ * Cold resume targets: an existing plain session file (`.jsonl`). Anything else
+ * is a caller mistake, not a provider failure — the code stays `NOT_RESUMABLE`
+ * so hosts and scripts can act on it (dsh parity).
+ */
+export function assertResumable(path: string): void {
+	const target = path.trim();
+	if (!target) {
+		throw new SubagentError(SubagentErrorCode.NOT_RESUMABLE, "resumeFrom must be a session file path");
+	}
+	if (extname(target).toLowerCase() !== ".jsonl") {
+		throw new SubagentError(SubagentErrorCode.NOT_RESUMABLE, `resumeFrom is not a session file: ${path}`);
+	}
+	let stat: ReturnType<typeof statSync>;
+	try {
+		stat = statSync(target);
+	} catch {
+		throw new SubagentError(SubagentErrorCode.NOT_RESUMABLE, `resumeFrom does not exist: ${path}`);
+	}
+	if (!stat.isFile()) {
+		throw new SubagentError(SubagentErrorCode.NOT_RESUMABLE, `resumeFrom is not a file: ${path}`);
 	}
 }

@@ -98,6 +98,23 @@ export class SubagentManager {
 	}
 
 	/**
+	 * Session files owned by children that have not settled yet.
+	 *
+	 * Cold resume (044-5 §4.6) opens an existing session file writable, so two
+	 * writers on one file would interleave a transcript. The tool rejects such a
+	 * request instead of corrupting the child's history.
+	 */
+	liveSessionFiles(): Set<string> {
+		const files = new Set<string>();
+		for (const record of this.#records.values()) {
+			if (record.state === "settled" || record.state === "failed") continue;
+			const file = record.descriptor.sessionFile;
+			if (file) files.add(file);
+		}
+		return files;
+	}
+
+	/**
 	 * Start one activation.
 	 *
 	 * Rejections (never a half-published activation): `DEPTH_LIMIT`,
@@ -252,10 +269,15 @@ export class SubagentManager {
 			wait: () => manager.#settle(record),
 			send: async (message: string) => {
 				if (!record.admissionOpen) {
-					throw new SubagentError(
-						SubagentErrorCode.ADMISSION_CLOSED,
-						`child ${record.childId} is ${record.state === "settled" ? "settled" : "not accepting input"}`,
-					);
+					// 结算后的子代理只能冷恢复：把入口直接写进错误里，否则模型会
+					// 以为「续聊」这条路断了，转头重派一个（044-5 §4.6）。
+					const file = record.descriptor.sessionFile;
+					const hint = record.state === "settled" && file
+						? `settled; continue it with agent({ resumeFrom: "${file}" })`
+						: record.state === "settled"
+							? "settled"
+							: "not accepting input";
+					throw new SubagentError(SubagentErrorCode.ADMISSION_CLOSED, `child ${record.childId} is ${hint}`);
 				}
 				try {
 					await record.handle?.send(message);

@@ -30,6 +30,12 @@ export const SubagentErrorCode = {
 	MODULE_CONFIG_INVALID: "MODULE_CONFIG_INVALID",
 	/** 子代理模块开关已关（001-1 §5：关闭后 agent 工具直接拒绝）。 */
 	MODULE_DISABLED: "MODULE_DISABLED",
+	/**
+	 * Cold resume was asked for but cannot be honoured: the session file is
+	 * missing, is not a session file, belongs to the parent, or is still owned by
+	 * a running child (dsh `NOT_RESUMABLE`, continuation-messages/manager).
+	 */
+	NOT_RESUMABLE: "NOT_RESUMABLE",
 	/** The work was aborted (parent turn cancel, session shutdown). */
 	ABORTED: "ABORTED",
 	/**

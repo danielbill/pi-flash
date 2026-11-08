@@ -41,6 +41,12 @@ export interface SubagentRequest {
 	/** Depth of the child: parent depth + 1. Root callers pass 1. */
 	depth: number;
 	prompt: string;
+	/**
+	 * Cold resume: session file of an earlier child run. The backend opens that
+	 * session instead of creating one, so the child keeps its whole history —
+	 * dsh parity (`manager.ts:1330 coldResume`, `send_message` to a settled child).
+	 */
+	resumeFrom?: string;
 	/** Working directory for the child; resolved against the parent cwd when relative. */
 	cwd?: string;
 	/** Profile id (`~/.pi/agent/agents/<id>.md` or `.pi/agents/<id>.md`). */

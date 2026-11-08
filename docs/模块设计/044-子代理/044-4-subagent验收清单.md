@@ -28,15 +28,19 @@ cargo run -p app
 
 同轮快照 `messages` 为 user → assistant(tool_calls=1) → assistant("PF-SUBAGENT-OK")；子会话文件与描述符齐备。
 
+**冷恢复排查**：让子代理撞 `maxloop`（如 `maxloop: 2`），完成通知里应出现
+`Resume it with agent(prompt, { resumeFrom: "<子会话文件>" })`；再发「用 `agent` 带 `resumeFrom` 续跑刚才那个子代理」，
+期望出现第二张卡、子会话文件**同一个**（时间戳与 id 不变、条目继续追加），且父会话里能看到它引用了中断前的结论。
+
 ## B. 机制层测试（改扩展后必跑）
 
 ```bash
 cd extensions/pf-subagents && node --test "test/*.test.ts"
 ```
 
-期望：全绿（现行 149 条；`npm test` = `node --test`）。
+期望：全绿（现行 168 条；`npm test` = `node --test`）。**跑之前清环境**：`PI_FLASH_DIR= PI_SUBAGENTS_PROFILES_DIR= node --test test/*.test.ts`——否则 `syncModuleConfig` 会先读 PF 数据目录里的 `ext-context.json`（评审机上是 capacity=3），把 `module-config.test.ts` 的容量用例顶成假失败。
 
-覆盖：容量（拒绝不排队/降低上限不杀已在跑）、结算（清理后才交付结果/关准入/迟到输入被拒）、注册表（能力协商/重复注册）、深度、描述符（版本/对账）、工具面（caller/parent 双投递/分码/结算消息三段式）、profile（两级/fail-closed）、本地后端（答案/继续输入/中断/失败/max_loop 软限）。
+覆盖：容量（拒绝不排队/降低上限不杀已在跑）、结算（清理后才交付结果/关准入/迟到输入被拒）、注册表（能力协商/重复注册）、深度、描述符（版本/对账）、工具面（caller/parent 双投递/分码/结算消息三段式）、冷恢复（`resumeFrom` 透传 / 缺文件 / 非 jsonl / 父会话 / 活会话 → `NOT_RESUMABLE`、`max_turns` 通知带续跑指引）、profile（两级/fail-closed）、本地后端（答案/继续输入/中断/失败/max_loop 软限）。
 
 ## C. CLI 级排查（可选）
 

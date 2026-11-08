@@ -61,12 +61,23 @@ function settlementSummary(result: SubagentResult): string {
 		case "completed":
 			return `${head} finished. Its closing message follows. It will do no further work unless you send it more.`;
 		case "aborted":
-			return `${head} was stopped before it finished. Its closing message follows.`;
+			return `${head} was stopped before it finished. Its closing message follows.${resumeHint(result)}`;
 		case "max_turns":
-			return `${head} ran out of turn budget before it finished. Its closing message follows.`;
+			// 轮次用尽的子代理把整份调研留在了会话文件里：明确给模型续跑入口，
+			// 否则下一轮只会重新派一个、白烧一遍 token（044-5 §4.6）。
+			return `${head} ran out of turn budget before it finished. Its closing message follows.${resumeHint(result)}`;
 		default:
 			return `${head} failed before it finished. (${result.errorCode ?? result.stopReason}) Its closing message follows.`;
 	}
+}
+
+/**
+ * 可续跑提示：有会话文件才给，路径原样回引，模型不必再翻卡片。
+ * 只挂在中途结束的两种停因上——正常完成不需要续跑建议。
+ */
+function resumeHint(result: SubagentResult): string {
+	if (!result.session_file) return "";
+	return ` Resume it with \`agent(prompt, { resumeFrom: "${result.session_file}" })\` to continue with its full history instead of redoing the work.`;
 }
 
 /** `Structured result: {...}` tail — the machine-readable half of the notice. */

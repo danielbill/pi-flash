@@ -20,6 +20,7 @@
 | 语义 | dsh | 本实现 | 状态 |
 |---|---|---|---|
 | 派发即返回（不占父轮） | `tool-subagent/src/index.ts` 唯一形态：`startActivation({ delivery: 'parent' })` → 返回 `{kind:'activation', subagentId}`，没有阻塞分支 | `tool.ts` 默认 `delivery: "parent"`，返回 `started subagent <id>`；`blocking: true` 是 code-mode 聚合的显式 opt-in（dsh 没有该形态，因它没有 PTC 侧 agent 工具） | **对齐**（默认路径无阻塞） |
+| 冷恢复 | `manager.ts:1330` `coldResume`：对已结算子代理 `send_message` 时读会话事件、重建 session、提交新消息（same id） | `tool.ts` `resumeFrom` → `backends/local.ts` 校验 → `index.ts` `SessionManager.open`（新 childId，同一文件）；拒绝 `NOT_RESUMABLE` | **机制对齐**（same-id 差异在宿主卡片模型，见 044-5 §4.6） |
 | 结算投递 | `manager.ts:1199` `sendWaking(parent, createSettlementMessage(...), parent.status === 'idle' ? 'queue' : 'steer')` | `index.ts` `pi.sendMessage(..., ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" })` | 同形 |
 | 结算消息归属 | `subagent-settled` / `form: 'notice'` 的会话来源标记 | `subagent-completion` 自定义消息 + `subagent-settled` 条目（卡片当帧收口） | 同形 |
 | 先占槽后启动 | `activation.ts` `pool.reserve(capacity)` 后才 prepare | `manager.ts` 先 `acquire` 再 `prepare` | 同 |

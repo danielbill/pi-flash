@@ -113,11 +113,23 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 			getSessionFile?: () => string | undefined;
 		};
 		const parentFile = parentSessionFile ?? parent.getSessionFile?.();
+		// Cold resume (044-5 §4.6): open the child's own session instead of creating
+		// one. The header, cwd and parent link are already in that file, so the
+		// child comes back with its whole history — dsh parity (`coldResume`).
+		const resumeFile = options.resumeSessionFile;
 		// Children live beside the parent so hosts can find and open them, and the
 		// header records the parent link (045: parentSession).
-		const sessionManager = sdk.SessionManager.create(options.cwd, parent.getSessionDir?.(), {
-			parentSession: parentFile,
-		});
+		const sessionManager = resumeFile
+			? sdk.SessionManager.open(resumeFile, parent.getSessionDir?.())
+			: sdk.SessionManager.create(options.cwd, parent.getSessionDir?.(), {
+					parentSession: parentFile,
+				});
+		// A resumed session keeps the cwd it was started in: the transcript's tool
+		// results are relative to it, and switching cwd mid-conversation would make
+		// old references dangle.
+		const cwd = resumeFile
+			? ((sessionManager as { getCwd?: () => string }).getCwd?.() ?? options.cwd)
+			: options.cwd;
 		// Marker extension: the child stamps its own file with a `subagent/child`
 		// custom entry at session_start. Session-file filtering (pi-link/sessions.rs)
 		// keys on THIS marker, never on `parentSession` — pi-native forks carry that
@@ -125,7 +137,7 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 		// agentDir is mandatory for DefaultResourceLoader (resolvePath chokes on
 		// undefined on Windows); reuse the parent's own agent dir.
 		const loader = new sdk.DefaultResourceLoader({
-			cwd: options.cwd,
+			cwd,
 			agentDir: sdk.getAgentDir(),
 			// Persona from the profile. `systemPrompt` fully replaces pi's default; the
 			// body (`appendSystemPrompt`) adds to it. Both were previously parsed but
@@ -151,22 +163,28 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 					}
 				: {}),
 			extensionFactories: [
-				{
-					name: "subagent-child-marker",
-					hidden: true,
-					factory: (childPi: { on(event: string, handler: () => void): void; appendEntry(type: string, data?: unknown): void }) => {
-						childPi.on("session_start", () => {
-							try {
-								childPi.appendEntry(CHILD_MARKER_TYPE, {
-								provider: options.providerName,
-								depth: options.depth,
-							});
-							} catch {
-								// Missing marker degrades to "child shows in the list"; never fatal.
-							}
-						});
-					},
-				},
+				// 冷恢复不装标记扩展：会话文件里已经有一条 `subagent/child`，重复
+				// append 会把侧栏过滤与深度恢复的输入变脏（044-5 §4.6）。
+				...(resumeFile
+					? []
+					: [
+							{
+								name: "subagent-child-marker",
+								hidden: true,
+								factory: (childPi: { on(event: string, handler: () => void): void; appendEntry(type: string, data?: unknown): void }) => {
+									childPi.on("session_start", () => {
+										try {
+											childPi.appendEntry(CHILD_MARKER_TYPE, {
+												provider: options.providerName,
+												depth: options.depth,
+											});
+										} catch {
+											// Missing marker degrades to "child shows in the list"; never fatal.
+										}
+									});
+								},
+							},
+						]),
 				// 045 M2.5：子会话是“一等公民 pi session”——codemode / tool_search /
 				// MCP 显式装配（SDK 会话默认不加载内建扩展，pi-web 就栽在这里）。
 				// 官方姿势见 examples/sdk/14-codemode-mcp.ts。
@@ -211,10 +229,10 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 		// codemode / tool_search 注册为 inactive；用 defaultTools 的 `+name`
 		// 追加语义激活。与 profile 白名单（createAgentSession 的 tools 参数）
 		// 相互独立：白名单裁模型面工具，codemode 是子会话基础设施。
-		const settingsManager = sdk.SettingsManager.create(options.cwd, sdk.getAgentDir());
+		const settingsManager = sdk.SettingsManager.create(cwd, sdk.getAgentDir());
 		settingsManager.applyOverrides?.({ defaultTools: ["+codemode", "+tool_search"] });
 		const { session } = await sdk.createAgentSession({
-			cwd: options.cwd,
+			cwd,
 			model,
 			sessionManager,
 			settingsManager,
@@ -266,6 +284,8 @@ interface SdkLike {
 			sessionDir?: string,
 			options?: { id?: string; parentSession?: string },
 		): unknown;
+		/** Cold resume: open an existing session file (cwd comes from its header). */
+		open(path: string, sessionDir?: string, cwdOverride?: string): unknown;
 	};
 	DefaultResourceLoader: new (options?: {
 		cwd?: string;
@@ -484,10 +504,12 @@ export default function piSubagents(pi: ExtensionAPI): void {
 					cwd: typeof params.cwd === "string" ? params.cwd : undefined,
 					label: typeof params.label === "string" ? params.label : undefined,
 					maxloop: typeof params.maxloop === "number" ? params.maxloop : undefined,
+					resumeFrom: typeof params.resumeFrom === "string" ? params.resumeFrom : undefined,
 					blocking: params.blocking === true,
 				},
 				{
 					parentId,
+					parentSessionFile: (ctx.sessionManager as unknown as { sessionFile?: string }).sessionFile,
 					depth,
 					cwd: ctx.cwd,
 					signal: ctx.signal,

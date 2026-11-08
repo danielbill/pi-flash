@@ -17,7 +17,10 @@
  * the same with two phrasings).
  */
 
-import { SubagentError, SubagentErrorCode } from "./errors.ts";
+import { resolve } from "node:path";
+
+import { assertResumable } from "./backends/local.ts";
+import { asSubagentError, SubagentError, SubagentErrorCode } from "./errors.ts";
 import type { ProfileSummary } from "./profile.ts";
 import type { SubagentManager } from "./manager.ts";
 import type { Delivery, SubagentResult } from "./types.ts";
@@ -37,6 +40,9 @@ export interface DelegationToolOptions {
 
 export interface DelegationContext {
 	parentId: string;
+	/** Parent's own session file: resuming it would fork the parent into a child
+	 * that writes the parent's transcript, so it is rejected. */
+	parentSessionFile?: string;
 	/** Depth of the calling agent; the child is one deeper. */
 	depth: number;
 	cwd: string;
@@ -68,6 +74,13 @@ export const DELEGATION_PARAMETERS = {
 			description:
 				"Estimated turns this task needs; the child wraps up at the budget and is cut off if it ignores the wrap-up. " +
 				"0 means no budget; omitted defaults to 100.",
+		},
+		resumeFrom: {
+			type: "string",
+			description:
+				"Session file of an earlier child run to continue instead of starting fresh: " +
+				"`resumeFrom: <session_file>` (the path the card / completion notice reports). " +
+				"The child keeps its whole history, so resumed work never has to be redone.",
 		},
 		blocking: {
 			type: "boolean",
@@ -118,11 +131,20 @@ export function delegationDescription(
 		"This tool starts an independently managed subagent and immediately returns its id: it never parks your turn. The runtime notifies you when it finishes, and the notice includes its final answer.",
 		"Right after dispatching, keep working or reply to the user — the notice is steered into your turn if you are still working, or starts a new one when you are idle, so the user can talk to you at any time.",
 		"The child does not report mid-run; use `subagent_send` to steer it while running or continue its conversation after it finishes.",
+		// 冷恢复（044-5 §4.6 / dsh coldResume）：轮次用尽或中断的子代理可以带着
+		// 全部历史续跑，别重做调研——这是 token 预算最容易漏掉的一条。
+		"To continue a child whose run already ended (for example it ran out of turns), pass `resumeFrom` with its session file: it resumes that session with all its history instead of starting over. The notice and the card both carry the path.",
 		`${profiles} Delegate independent work in parallel by issuing several calls in one turn.${capacity}`,
 		// 委派政策（对齐 ZCode task 工具描述的力度——实测只有机械说明时
 		// 模型从不主动委派，哪怕系统提示词里有鼓励 bullet；见 buglist 第五批）
 		"When to delegate: the task matches one of the profiles above, or answering means sweeping many files or whole directories — research, comparing implementations, locating where something is done, multi-step verification — and you only need the conclusions, not the file dumps. Delegate it and continue the main task; do not repeat the delegated searches yourself, wait for the results. For a single known file, symbol, or value, act directly instead.",
 	].join(" ");
+}
+
+/** Path identity for the resume guard (case-insensitive on Windows). */
+function sameFile(a: string, b: string): boolean {
+	const normalize = (p: string) => resolve(p).toLowerCase();
+	return normalize(a) === normalize(b);
 }
 
 export async function runDelegation(
@@ -134,6 +156,8 @@ export async function runDelegation(
 		cwd?: string;
 		label?: string;
 		maxloop?: number;
+		/** 冷恢复：把这一轮接到既有子会话文件上（044-5 §4.6）。 */
+		resumeFrom?: string;
 		/** 显式等待模式（code-mode 聚合用）；交互派发一律不传，见文件头。 */
 		blocking?: boolean;
 	},
@@ -161,6 +185,26 @@ export async function runDelegation(
 	if (input.maxloop !== undefined && (!Number.isSafeInteger(input.maxloop) || input.maxloop < 0)) {
 		return fail(SubagentErrorCode.START_REJECTED, `maxloop must be a non-negative integer, got ${input.maxloop}`);
 	}
+	// 冷恢复的准入检查先于容量：坏路径/父会话/仍在跑的会话都不该花掉一个名额。
+	const resumeFrom = typeof input.resumeFrom === "string" && input.resumeFrom.trim() ? input.resumeFrom.trim() : undefined;
+	if (resumeFrom !== undefined) {
+		try {
+			assertResumable(resumeFrom);
+		} catch (error) {
+			const failure = asSubagentError(error, SubagentErrorCode.NOT_RESUMABLE);
+			return fail(failure.code, failure.message);
+		}
+		if (context.parentSessionFile && sameFile(context.parentSessionFile, resumeFrom)) {
+			return fail(SubagentErrorCode.NOT_RESUMABLE, "resumeFrom must be a child session, not the parent's own session file");
+		}
+		// 路径比对要归一：manager 记的是 prepare 返回的绝对路径，模型给的可能
+		// 是相对路径或大小写不同的写法。
+		for (const live of options.manager.liveSessionFiles()) {
+			if (sameFile(live, resumeFrom)) {
+				return fail(SubagentErrorCode.NOT_RESUMABLE, `that child session is still running: ${resumeFrom}`);
+			}
+		}
+	}
 	// 默认派发即返回（dsh 的唯一投递形态）；只有显式 `blocking: true` 才等结果。
 	const delivery: Delivery = input.blocking === true ? "caller" : "parent";
 	try {
@@ -174,6 +218,7 @@ export async function runDelegation(
 			model: input.model,
 			cwd: input.cwd ?? context.cwd,
 			label: input.label,
+			resumeFrom,
 			delivery,
 			maxTurns: input.maxloop,
 			signal: context.signal,
