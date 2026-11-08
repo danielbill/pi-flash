@@ -198,12 +198,14 @@ pub(crate) fn composer_bar(
         .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.thinking)),
     );
     // 圆形发送 ↑（运行中变停止：主题色圆角方块+对比色停止块）；用户定位：
-    // 左移 5px、上移 8px
+    // 左移 5px、上移 13px（034 胶囊 pb 12→7 后底距只剩 7，补上 5 追平右边
+    // 距 12——2026-11-08 用户定夺）
     right = right.child(
         div()
             .id("send")
             .mr(px(2.)) // 右边距=栏padding10+2=12（与下边距对齐）
-            .mt(px(-8.))
+            .mt(px(-13.))
+            .mb(px(5.)) // 行高守恒：36-13+5=28 与行内 pill 齐平，行高不被撑高
             .size(px(36.)) // 发送/停止共用直径（用户微调处）
             .rounded(if running { px(9.) } else { px(18.) })
             .flex()
