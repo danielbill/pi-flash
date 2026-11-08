@@ -2,10 +2,10 @@
 //! `dialogs/ext_ui/dialog.rs::render_ext_dialog`（overlay::layer 遮罩 +
 //! 居中卡片 + 40px 标题栏 + info 滚动区 + footer 按钮行——不手搓）。
 //! 卡宽 = 聊天内容区宽（`workspace::chat_content_width()`，composer 胶囊
-//! /消息列同源），高 = 90% 上下居中；标题「计划」+ 标准 × 控件（§5.7）。
+//! /消息列同源），高 = 94% 上下居中；标题「计划」+ 标准 × 控件（§5.7）。
 //! 正文 100% 卡宽 markdown（`editor::markdown::render` 复用）；footer 两钮
-//! 同款 Secondary 堆叠。Esc/×/点外 = 否决路径（计划模式保持），焦点走
-//! 老控件链（dialog_focus + focus_arbitrate 白名单）。
+//! 一行 250×50、间距 50 并排居中。Esc/×/点外 = 否决路径（计划模式保持），
+//! 焦点走老控件链（dialog_focus + focus_arbitrate 白名单）。
 
 use gpui::{Context, MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 
@@ -58,10 +58,10 @@ pub(crate) fn render_plan_approval(
         .child(crate::ui::overlay::stop_click(
             div()
                 // 卡宽 = 聊天内容区宽（composer 胶囊/消息列同一真源），
-                // 高 = 90% 上下居中；上限防小窗溢出
+                // 高 = 94% 上下居中；上限防小窗溢出
                 .w(px(crate::services::workspace::chat_content_width()))
                 .max_w(relative(0.96))
-                .h(relative(0.9))
+                .h(relative(0.94))
                 .bg(rgb(t.bg_panel))
                 .border_1()
                 .border_color(rgb(t.border))
@@ -119,13 +119,14 @@ pub(crate) fn render_plan_approval(
                         )
                         .child(crate::ui::psp_scrollbar::menu_scrollbar(&scroll)),
                 )
-                // ── footer 按钮行（ext 弹窗同款：border_t + px_4 py_3） ──
+                // ── footer 按钮行（ext 弹窗同款：border_t + px_4 py_3）；
+                //    两钮一行 250×50、间距 50 并排居中（2026-11-08 定稿） ──
                 .child(
                     div()
                         .flex_shrink_0()
                         .flex()
-                        .flex_col()
-                        .gap_2()
+                        .justify_center()
+                        .gap(px(50.))
                         .px_4()
                         .py_3()
                         .border_t_1()
@@ -149,8 +150,9 @@ pub(crate) fn render_plan_approval(
         .into_any_element()
 }
 
-/// 两钮同款 Secondary 按钮（§5.1 h36 / px14 / ui12 / r6；全左对齐，无图标
-/// 无键帽——键位提示已在文案里）。点击 stop_propagation 不触发浮层外点关闭。
+/// 两钮同款 Secondary 定制大钮（2026-11-08 定稿：250×50 并排居中；全左
+/// 对齐，无图标无键帽——键位提示已在文案里）。点击 stop_propagation 不触
+/// 发浮层外点关闭。
 fn plan_btn(
     id: &'static str,
     weak: gpui::WeakEntity<Chat>,
@@ -160,8 +162,8 @@ fn plan_btn(
 ) -> gpui::AnyElement {
     div()
         .id(id)
-        .w_full()
-        .h(px(36.))
+        .w(px(250.))
+        .h(px(50.))
         .px(px(14.))
         .rounded(px(6.))
         .border_1()

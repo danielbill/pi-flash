@@ -25,6 +25,12 @@ pub(crate) fn render_tool_card(
     t: &theme::Theme,
 ) -> gpui::Div {
     let _ = images; // c11 渲染
+    // 031-1：present_plan 审批弹窗专用工具——调用与结果都对用户隐藏
+    // （结果文案是给模型的反馈「用户否决/批准」，用户视角的裁决 UI 是
+    // 弹窗本身；真机反馈：不应看到工具返回行）。空 Div：不占版面。
+    if name == "present_plan" {
+        return gpui::div();
+    }
     // 044：subagent 专属卡（扩展 pf-subagents 的 agent 工具）——数据源为
     // 扩展 details（snake_case），不走通用 diff/preview 主流程。
     if name == "agent" {
