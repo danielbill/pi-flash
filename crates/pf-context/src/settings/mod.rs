@@ -149,6 +149,8 @@ struct StoreInner {
     exports: AtomicU64,
     /// 当前写失败退避时长（成功即复位）
     fail_backoff: Mutex<Duration>,
+    /// pfctx.log（Hub 级共享；S7 观测留痕）
+    logger: std::sync::Arc<crate::log::Logger>,
 }
 
 /// settings 存储：一个 [`Hub`] 生命周期内的读模型 + 写通道 + watcher 门面。
@@ -161,7 +163,20 @@ impl SettingsStore {
     /// 打开（一次读盘 + 单写者线程）。`None` = 纯内存态。
     /// `[perf] settings.load` 打点走 `PI_FLASH_PERF=1` 门控（app 同约定）。
     pub fn open(path: Option<PathBuf>) -> SettingsStore {
+        Self::open_logged(path, None)
+    }
+
+    /// 带 Hub 级 pfctx.log 日志器构造（Hub::open 用；独立调用 = 自建日志器）。
+    pub(crate) fn open_logged(
+        path: Option<PathBuf>,
+        logger: Option<std::sync::Arc<crate::log::Logger>>,
+    ) -> SettingsStore {
         let t0 = Instant::now();
+        let logger = logger.unwrap_or_else(|| {
+            std::sync::Arc::new(crate::log::Logger::open(
+                path.as_ref().and_then(|p| p.parent()),
+            ))
+        });
         // boot-only 段（S2：dev_flags）：dev-flags.json + PI_FLASH_* env 的一次性
         // 解析（语义全在 pi-link::dev_flags，env 最高优先；boot-only = 改了需重启）
         let mut boot = HashMap::new();
@@ -189,6 +204,7 @@ impl SettingsStore {
             reloads: AtomicU64::new(0),
             exports: AtomicU64::new(0),
             fail_backoff: Mutex::new(FAIL_BACKOFF_START),
+            logger,
         });
         let snapshot = match inner.build_snapshot() {
             Ok(s) => s,
@@ -200,7 +216,21 @@ impl SettingsStore {
         };
         *inner.snap.write().unwrap() = Arc::new(snapshot);
         inner.update_last_seen();
+        let load_us = t0.elapsed().as_micros();
+        let sections_n = inner.snap.read().unwrap().section_json.len();
+        let problems_n = inner.problems.lock().unwrap().len();
         perf_log("settings.load", t0.elapsed());
+        inner.logger.log(
+            "perf",
+            &format!(
+                "settings.load={load_us}µs sections={sections_n} problems={problems_n} path={}",
+                inner
+                    .path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<内存>".into())
+            ),
+        );
         spawn_writer(Arc::clone(&inner));
         // 001-S3：初次投影（后台线程，启动热路径零 IO；扩展首次委派前就绪）
         std::thread::Builder::new()
@@ -226,6 +256,10 @@ impl SettingsStore {
             return;
         };
         let _ = std::fs::create_dir_all(dir);
+        self.inner.logger.log(
+            "watch",
+            &format!("监听启动 dir={}（非递归）", dir.display()),
+        );
         watch::spawn(Arc::clone(&self.inner), dir.to_path_buf(), path.clone());
     }
 
@@ -414,9 +448,21 @@ impl StoreInner {
                 eprintln!(
                     "[settings] 另一写入者修改了 app-settings.json，本进程有未落盘改动（随后写盘将以本进程为准）"
                 );
+                self.logger.log(
+                    "watch",
+                    "另一写入者改动，本进程有未落盘改动（写盘以本进程为准）",
+                );
             }
         }
-        self.reload()
+        let reloaded = self.reload();
+        if reloaded {
+            let n = self.reloads.load(Ordering::Relaxed);
+            self.logger
+                .log("watch", &format!("外部改动 → 重载完成 (reloads={n})"));
+        } else {
+            self.logger.log("watch", "外部改动命中坏档，保持上一份快照");
+        }
+        reloaded
     }
 
     fn broadcast(&self, snap: &Arc<Snapshot>) {
@@ -439,6 +485,8 @@ impl StoreInner {
                 // 001-S3：外部改动落进快照 → 投影跟进（同 payload 自动跳过）
                 if let Err(e) = self.export_projection() {
                     eprintln!("[settings] 投影写盘失败（下次重载重试）: {e}");
+                    self.logger
+                        .log("export", &format!("写盘失败（下次重载重试）: {e}"));
                 }
                 true
             }
@@ -557,6 +605,8 @@ impl StoreInner {
                     // 内存保留（快照未动 = 用户意图不丢），退避重试
                     self.dirty.lock().unwrap().insert(key);
                     eprintln!("[settings] 写盘失败（内存保留，将重试）{key}: {e}");
+                    self.logger
+                        .log("write", &format!("失败（内存保留，将重试）{key}: {e}"));
                     if first_err.is_none() {
                         first_err = Some(e);
                     }
@@ -565,9 +615,15 @@ impl StoreInner {
         }
         if wrote {
             perf_log("settings.flush", t0.elapsed());
+            self.logger.log(
+                "perf",
+                &format!("settings.flush={}µs", t0.elapsed().as_micros()),
+            );
             // 001-S3：段内容变了 → 投影跟进（同 payload 自动跳过）
             if let Err(e) = self.export_projection() {
                 eprintln!("[settings] 投影写盘失败（下次写盘重试）: {e}");
+                self.logger
+                    .log("export", &format!("写盘失败（下次写盘重试）: {e}"));
             }
         }
         match first_err {
@@ -589,6 +645,15 @@ impl StoreInner {
         let written = doc::write_section(path, key, &snap)?;
         if written {
             self.writes.fetch_add(1, Ordering::Relaxed);
+            // S7 观测：每次实际写盘留痕（段名 + 规范值；coalesce 保证低频）
+            self.logger.log(
+                "write",
+                &format!(
+                    "{key} {} (write #{})",
+                    serde_json::to_string(&snap.section_json[key]).unwrap_or_default(),
+                    self.writes.load(Ordering::Relaxed)
+                ),
+            );
             if let Ok(mut w) = self.watch.lock() {
                 let now = Instant::now();
                 while let Some((_, at)) = w.expected.front() {
@@ -619,6 +684,13 @@ impl StoreInner {
         let wrote = export::export(&snap, dir, &mut last)?;
         if wrote {
             self.exports.fetch_add(1, Ordering::Relaxed);
+            self.logger.log(
+                "export",
+                &format!(
+                    "ext-context.json 落盘 (export #{})",
+                    self.exports.load(Ordering::Relaxed)
+                ),
+            );
         }
         Ok(wrote)
     }
@@ -635,6 +707,7 @@ impl StoreInner {
     }
 
     fn push_problem(&self, key: &str, detail: &str) {
+        self.logger.log("problem", &format!("{key}: {detail}"));
         let mut log = self.problems.lock().unwrap();
         log_problem(&mut log, key, detail);
     }

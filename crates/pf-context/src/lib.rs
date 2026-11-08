@@ -23,6 +23,7 @@
 //! 设计文档：`docs/模块设计/001-PFContext/001-0-PFContext总体设计.md`。
 
 pub mod domain;
+mod log;
 pub mod settings;
 pub mod state;
 
@@ -68,14 +69,22 @@ impl Hub {
     /// 指定 settings 文件路径构造（无文件监听）。测试与嵌入用；
     /// `None` = 纯内存态（set/flush 不落盘）。
     pub fn open(settings_path: Option<std::path::PathBuf>) -> Hub {
+        // pfctx.log：settings/domain 共享 Hub 级日志器（state 不落盘无日志点）
+        let logger = std::sync::Arc::new(log::Logger::open(
+            settings_path.as_ref().and_then(|p| p.parent()),
+        ));
         Hub {
-            settings: settings::SettingsStore::open(settings_path.clone()),
+            settings: settings::SettingsStore::open_logged(
+                settings_path.clone(),
+                Some(logger.clone()),
+            ),
             state: state::StateStore::default(),
             // domain DB 与 settings 同目录（<PF数据目录>/context.db），懒开
             domain: domain::DomainStore::new(
                 settings_path
                     .as_ref()
                     .and_then(|p| p.parent().map(std::path::Path::to_path_buf)),
+                Some(logger),
             ),
         }
     }

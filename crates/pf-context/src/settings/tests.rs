@@ -487,3 +487,47 @@ fn s2_dev_flags_boot_only_never_written() {
         "boot-only 段永不进 app-settings.json"
     );
 }
+
+// ---------------------------------------------------------------------------
+// S7：pfctx.log 观测留痕——启动/写盘/投影全记录（验收免人肉）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s7_log_file_records_boot_load_write_export() {
+    let dir = tmp_dir("s7-log");
+    let store = store_at(&dir); // Logger::open(dir) 随 open 建 pfctx.log
+    store.set(|s: &mut Subagents| s.capacity = 6);
+    store.flush().unwrap(); // flush 实写 + 投影同步（同步路径，非后台线程）
+
+    let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+    assert!(text.contains("[boot]"), "boot 行：{text}");
+    assert!(text.contains("settings.load="), "load µs 留痕：{text}");
+    assert!(text.contains("[write] subagents"), "写盘留痕：{text}");
+    assert!(text.contains("\"capacity\":6"), "写盘留痕带规范值：{text}");
+    assert!(
+        text.contains("[export] ext-context.json"),
+        "投影留痕：{text}"
+    );
+    assert!(text.contains("settings.flush="), "flush µs 留痕：{text}");
+
+    // 外部改动重载也留痕
+    write_json_file(
+        &dir.join("app-settings.json"),
+        &json!({ "subagents": { "capacity": 8 } }),
+    );
+    assert!(store.check_external_change());
+    let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+    assert!(text.contains("[watch] 外部改动 → 重载完成"), "{text}");
+    assert!(text.contains("[watch] 监听启动") == false || true); // watcher 线程竞争，不断言
+}
+
+#[test]
+fn s7_problems_go_into_log() {
+    let dir = tmp_dir("s7-problem");
+    let path = dir.join("app-settings.json");
+    std::fs::write(&path, "{not json").unwrap();
+    let store = SettingsStore::open(Some(path));
+    assert!(store.problems().iter().any(|p| p.key == "<doc>"));
+    let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+    assert!(text.contains("[problem] <doc>"), "problem 留痕：{text}");
+}

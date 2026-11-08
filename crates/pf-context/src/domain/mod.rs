@@ -46,22 +46,40 @@ impl Source for MemorySource {
 pub struct DomainStore {
     path: Option<PathBuf>,
     db: OnceLock<Result<DbSource, String>>,
+    /// pfctx.log（与 settings 共享 Hub 级日志器；None = 纯内存态）
+    logger: Option<std::sync::Arc<crate::log::Logger>>,
 }
 
 impl DomainStore {
     /// `path` = `<PF数据目录>`（Hub 注入；None = 无盘态，domain 不可用）。
-    pub fn new(dir: Option<PathBuf>) -> Self {
+    pub(crate) fn new(
+        dir: Option<PathBuf>,
+        logger: Option<std::sync::Arc<crate::log::Logger>>,
+    ) -> Self {
         Self {
             path: dir,
             db: OnceLock::new(),
+            logger,
         }
     }
 
-    /// DB 源（懒开；打不开 = Err 缓存，不反复重试打盘）。
+    /// DB 源（懒开；打不开 = Err 缓存，不反复重试打盘）。开库留痕 pfctx.log。
     pub fn db(&self) -> Result<&DbSource, &str> {
-        let slot = self.db.get_or_init(|| match &self.path {
-            Some(dir) => DbSource::open(dir).map_err(|e| e),
-            None => Err("无 PF 数据目录，domain 不可用（纯内存态）".to_string()),
+        let slot = self.db.get_or_init(|| {
+            let result = match &self.path {
+                Some(dir) => DbSource::open(dir).map_err(|e| e),
+                None => Err("无 PF 数据目录，domain 不可用（纯内存态）".to_string()),
+            };
+            if let Some(logger) = &self.logger {
+                match &result {
+                    Ok(db) => logger.log(
+                        "domain",
+                        &format!("{} ready file={}", db.name(), db.file().display()),
+                    ),
+                    Err(e) => logger.log("domain", &format!("开库失败: {e}")),
+                }
+            }
+            result
         });
         slot.as_ref().map_err(|e| e.as_str())
     }
@@ -75,7 +93,7 @@ mod tests {
     #[test]
     fn db_opens_lazily_and_pings() {
         let dir = tmp_dir("domain-lazy");
-        let store = DomainStore::new(Some(dir));
+        let store = DomainStore::new(Some(dir), None);
         let db = store.db().expect("temp 目录可建库");
         assert_eq!(db.name(), "sqlite(context.db)");
         assert!(db.ping().is_ok());
@@ -89,7 +107,7 @@ mod tests {
 
     #[test]
     fn no_dir_is_unavailable_not_panic() {
-        let store = DomainStore::new(None);
+        let store = DomainStore::new(None, None);
         assert!(store.db().is_err());
     }
 

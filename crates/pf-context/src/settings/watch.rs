@@ -33,10 +33,16 @@ fn watch_loop(inner: std::sync::Arc<StoreInner>, dir: PathBuf, watch_path: PathB
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let Ok(mut watcher) = notify::recommended_watcher(tx) else {
         eprintln!("[settings] notify 初始化失败，外部改动不再自动重载");
+        inner
+            .logger
+            .log("watch", "notify 初始化失败，外部改动不再自动重载");
         return;
     };
     if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::NonRecursive) {
         eprintln!("[settings] 监听 {dir:?} 失败（{e}），外部改动不再自动重载");
+        inner
+            .logger
+            .log("watch", &format!("监听失败（{e}），外部改动不再自动重载"));
         return;
     }
     // 监听器必须活满进程：存进 WatchState（Mutex 内不 poll，只持有）

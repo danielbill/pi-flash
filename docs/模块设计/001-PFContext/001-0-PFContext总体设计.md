@@ -77,6 +77,10 @@ crates/pf-context/src/
 3. **多实例**：文件是仲裁者，last-writer-wins；仅当检测到对方写入、内容不同、且本进程有未落盘改动时，状态栏提示一次（不弹窗）。
 4. **坏档**：保持上一份好快照并记录 `problem`（学扩展 `syncModuleConfig`：坏文件不许静默改行为）。
 5. **写失败**：内存保留（用户意图不丢）+ 退避重试 + 可见告警，禁止静默吞。
+6. **观测留痕（S7，beads pi-flash-h6ai）**：启动 / 实际写盘（段名+规范值）/
+   外部重载 / 投影落盘 / problem / perf(load·flush µs) / domain 开库全部追加进
+   `<PF数据目录>/pfctx.log`（>2MB 滚动 `pfctx.log.old`；纯内存态零写）——
+   真机验收 = tail 这一个文件，不必人肉比对。
 
 ## 6 与 pi 文件的边界（严禁并入）
 
