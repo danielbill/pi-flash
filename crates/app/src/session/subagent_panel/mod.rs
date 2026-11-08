@@ -152,7 +152,8 @@ impl Chat {
         let rt = self.rt();
         let rebind_now = {
             let r = rt.read(cx);
-            !r.observer && !r.agent_running && r.agent.session.is_some()
+            // 独立 `!` bash 也在活进程里跑；重绑会把它连带杀掉——同样推迟
+            !r.observer && !r.agent_running && !r.bash_running && r.agent.session.is_some()
         };
         if rebind_now {
             rt.update(cx, |r, cx| {
