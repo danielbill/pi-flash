@@ -233,14 +233,15 @@ pub(crate) struct PillBtns {
     /// chat-wrap 容器（044-0：面板挂 wrap 内，窗口坐标 → wrap 坐标换算
     /// 需要 wrap 原点；function_panel dock 容器 bounds 同款捕获）
     pub chat_wrap: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    // ---- 设置·子代理页五触发钮（2026-11-07 弹层对齐 inputpanel）：独立
-    // 槽位——composer 钮在模态后面照样每帧 paint tracker，与设置页共用
-    // 槽位会互相覆盖（谁后 paint 谁赢），独占才稳定
+    // ---- 设置·子代理页六触发钮（2026-11-07 弹层对齐 inputpanel；技能钮
+    // 2026-11-08 加）：独立槽位——composer 钮在模态后面照样每帧 paint
+    // tracker，与设置页共用槽位会互相覆盖（谁后 paint 谁赢），独占才稳定
     pub ag_model: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_thinking: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_tier: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_ext: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub ag_mcp: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    pub ag_skills: std::rc::Rc<std::cell::RefCell<Option<gpui::Bounds<gpui::Pixels>>>>,
 }
 
 impl PillBtns {

@@ -19,6 +19,11 @@ pub const FIELD_INJECT_AGENTS_MD: &str = "injectAgentsMd";
 /// 思考强度（2026-11-07 子代理表单加）：键省略 = auto = 不覆盖（子会话落
 /// pi 默认档）。值集 = pi `ThinkingLevel` 七档。
 pub const FIELD_THINKING: &str = "thinking";
+/// 工作目录（2026-11-08 子代理表单加）：键省略 = 继承委派者 cwd；
+/// `pf-data` = PF 数据目录（扩展侧从 PI_FLASH_APP_SETTINGS 取 dirname）。
+pub const FIELD_CWD: &str = "cwd";
+/// [`FIELD_CWD`] 唯一合法显式值。
+pub const CWD_PF_DATA: &str = "pf-data";
 
 /// 工具档位四选一（034 配方复用；无 `full+`，那是委派者专属）。
 pub const TOOL_TIERS: [&str; 6] = [
@@ -51,13 +56,16 @@ impl AgentOrigin {
     }
 }
 
-/// 最大轮次档（UI 四档，044-1 §2.2）。`Custom` 携带用户指定的 N。
+/// 最大轮次档（2026-11-08 用户定稿四档：30 | 100 | 不限 | 指定）。
+/// `Custom` = 「指定」= 由主代理委派时给 `maxloop`，profile **不写**
+/// maxTurns；档外显式数值（手写档）也归到 `Custom` 视图，原始值留在
+/// [`AgentProfile::max_turns`] 透传保真，只有用户换档才归一。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaxTurnsTier {
-    Fifty,
+    Thirty,
     Hundred,
     Unlimited,
-    Custom(u32),
+    Custom,
 }
 
 /// 一份 Agent 定义（已解析 + 定位）。损坏的文件不丢弃：解析失败的错误
@@ -74,6 +82,8 @@ pub struct AgentProfile {
     pub tools: Option<String>,
     /// `thinking` 思考强度：None = auto = 不覆盖（子会话落 pi 默认档）。
     pub thinking_level: Option<String>,
+    /// `cwd` 工作目录：None = 继承委派者；`pf-data` = PF 数据目录。
+    pub cwd: Option<String>,
     /// `maxTurns`：None = 键省略（默认 100 档）。
     pub max_turns: Option<u32>,
     /// `injectAgentsMd`：None = 键省略（默认 true）。
@@ -101,10 +111,12 @@ impl AgentProfile {
     /// UI 最大轮次档位视图。
     pub fn max_turns_tier(&self) -> MaxTurnsTier {
         match self.max_turns {
-            None => MaxTurnsTier::Hundred,
+            // 缺省 = 「指定」= 主代理委派时给 maxloop（2026-11-08 定稿）
+            None => MaxTurnsTier::Custom,
             Some(0) => MaxTurnsTier::Unlimited,
-            Some(50) => MaxTurnsTier::Fifty,
-            Some(n) => MaxTurnsTier::Custom(n),
+            Some(30) => MaxTurnsTier::Thirty,
+            Some(100) => MaxTurnsTier::Hundred,
+            Some(_) => MaxTurnsTier::Custom,
         }
     }
 
@@ -171,6 +183,7 @@ pub fn read_agent_file(id: String, path: &Path) -> AgentProfile {
             model: None,
             tools: None,
             thinking_level: None,
+            cwd: None,
             max_turns: None,
             inject_agents_md: None,
             system_prompt: None,
@@ -209,6 +222,12 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
             ));
         }
     }
+    let cwd = get(FIELD_CWD);
+    if let Some(v) = &cwd {
+        if v != CWD_PF_DATA {
+            return Err(format!("{FIELD_CWD} must be \"{CWD_PF_DATA}\" (got {v})"));
+        }
+    }
     let thinking = get(FIELD_THINKING);
     if let Some(lv) = &thinking {
         if !THINKING_LEVELS.contains(&lv.as_str()) {
@@ -245,6 +264,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         FIELD_MAX_TURNS,
         FIELD_INJECT_AGENTS_MD,
         "systemPrompt",
+        FIELD_CWD,
         "inheritContextLimit",
         "isolation",
         "extensions",
@@ -274,6 +294,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         model: get("model").filter(|m| !m.is_empty()),
         tools,
         thinking_level: thinking.filter(|l| !l.is_empty()),
+        cwd: cwd.filter(|c| !c.is_empty()),
         max_turns,
         inject_agents_md: inject,
         system_prompt: get("systemPrompt").filter(|s| !s.is_empty()),
@@ -303,6 +324,9 @@ pub fn serialize_agent(a: &AgentProfile) -> String {
     }
     if let Some(lv) = &a.thinking_level {
         out.push_str(&scalar(FIELD_THINKING, lv));
+    }
+    if let Some(c) = &a.cwd {
+        out.push_str(&scalar(FIELD_CWD, c));
     }
     if let Some(n) = a.max_turns {
         out.push_str(&format!("{FIELD_MAX_TURNS}: {n}\n"));

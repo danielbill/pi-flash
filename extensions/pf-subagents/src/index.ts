@@ -599,6 +599,15 @@ export default function piSubagents(pi: ExtensionAPI): void {
  * tiers expand to whitelists. `model` passed by the delegator wins over the
  * profile's.
  */
+/** PF data directory from the host-provided env (settings file absolute path).
+ * `undefined` when absent — non-PF hosts keep the inherit semantics. */
+function pfDataDir(): string | undefined {
+	const settings = process.env.PI_FLASH_APP_SETTINGS;
+	if (!settings) return undefined;
+	const i = Math.max(settings.lastIndexOf("/"), settings.lastIndexOf("\\"));
+	return i > 0 ? settings.slice(0, i) : undefined;
+}
+
 async function resolveComposition(
 	ctx: ExtensionContext,
 	profileId: string | undefined,

@@ -37,7 +37,6 @@ pub(crate) struct SettingsFormData {
     pub ag_name: gpui::Entity<TextInput>,
     pub ag_desc: gpui::Entity<TextInput>,
     pub ag_prompt: gpui::Entity<TextInput>,
-    pub ag_turns_n: gpui::Entity<TextInput>,
     pub ag_model: Option<String>,
     pub ag_thinking: String,
     pub ag_tools: String,
@@ -53,6 +52,12 @@ pub(crate) struct SettingsFormData {
     /// ext / mcp 勾选清单滚动位（Rc 句柄，快照克隆零成本）
     pub ag_ext_scroll: gpui::ScrollHandle,
     pub ag_mcp_scroll: gpui::ScrollHandle,
+    pub ag_skills_scroll: gpui::ScrollHandle,
+    /// 技能菜单过滤框（实体 + 值快照）
+    pub ag_skill_filter: gpui::Entity<TextInput>,
+    pub ag_skill_filter_value: String,
+    /// 工作目录：false = 继承委派者（默认），true = PF 数据目录
+    pub ag_cwd_pf: bool,
     pub ag_dirty: bool,
     /// 表单三个文本域的值快照（只读态渲染静态文本用；视图无 cx）
     pub ag_name_value: String,
@@ -102,7 +107,6 @@ impl SettingsFormData {
             ag_name: p.ag_name.clone(),
             ag_desc: p.ag_desc.clone(),
             ag_prompt: p.ag_prompt.clone(),
-            ag_turns_n: p.ag_turns_n.clone(),
             ag_model: p.ag_model.clone(),
             ag_thinking: p.ag_thinking.clone(),
             ag_tools: p.ag_tools.clone(),
@@ -116,6 +120,10 @@ impl SettingsFormData {
             ag_filter_value: p.ag_filter.read(cx).value().to_string(),
             ag_ext_scroll: p.ag_ext_scroll.clone(),
             ag_mcp_scroll: p.ag_mcp_scroll.clone(),
+            ag_skills_scroll: p.ag_skills_scroll.clone(),
+            ag_skill_filter: p.ag_skill_filter.clone(),
+            ag_skill_filter_value: p.ag_skill_filter.read(cx).value().to_string(),
+            ag_cwd_pf: p.ag_cwd_pf,
             ag_dirty: p.ag_dirty,
             ag_name_value: p.ag_name.read(cx).value().to_string(),
             ag_desc_value: p.ag_desc.read(cx).value().to_string(),

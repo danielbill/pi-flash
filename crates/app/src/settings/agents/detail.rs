@@ -1,8 +1,7 @@
-//! 子代理右表单：agent_detail 全字段装配（名称/模型/提示词/轮数等）
-//! 与 detail_shell / turns_seg 构件。
+//! 子代理右表单：agent_detail 全字段装配（名称/简介/定制指令/轮次等）
+//! 与 detail_shell / seg_control 构件。
 
-use super::dropdowns::pick_list;
-use super::menus::{model_thinking_control, tools_control};
+use super::menus::{model_thinking_control, skills_trigger, tools_control};
 use super::*;
 
 /// 右栏表单：新建 / 损坏 / 内置只读 / 自定义可编辑 四态。
@@ -17,10 +16,9 @@ pub(super) fn agent_detail(
         ag_name,
         ag_desc,
         ag_prompt,
-        ag_turns_n,
         ag_turns,
         ag_inject,
-        ag_skills,
+        ag_cwd_pf,
         ag_dirty,
         ag_name_value,
         ag_desc_value,
@@ -201,35 +199,18 @@ pub(super) fn agent_detail(
             ));
     }
 
-    // skills 定制恒显（ext / mcp 已并入「工具」行三菜单，2026-11-07）。
-    // 只读态（内置）不渲染清单（内置不配技能）。
-    if !readonly {
+    // 技能设置（继承 | 自定义下拉，2026-11-08 设计对齐）：菜单 = 技能页
+    // 同一份列表（mc_skills，全局在前项目在后）+ 搜索 + 全选。
+    // 只读态（内置）不渲染定制入口。
+    if let Some(panel) = chat.dlg.settings.clone() {
         form = form.child(agent_row(
             &tr("agents.skills_pick"),
-            {
-                let cwd = chat.ws.cwd.clone().unwrap_or_default();
-                let agent_dir = pi_link::config::agent_dir();
-                let home_agents = agent_dir
-                    .parent()
-                    .map(|p| p.join("..").join(".agents").join("skills"))
-                    .map(|p| dunce::canonicalize(&p).unwrap_or(p))
-                    .unwrap_or_else(|| agent_dir.clone());
-                let settings_value = pi_link::config::read_json(&pi_link::config::settings_path())
-                    .unwrap_or(serde_json::json!({}));
-                let entries = pi_link::skills::discover_skills(
-                    std::path::Path::new(&cwd),
-                    &agent_dir,
-                    &home_agents,
-                    &settings_value,
-                );
-                let opts = entries.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
-                pick_list(weak, "skill", opts, ag_skills)
-            },
+            skills_trigger(chat, &panel, weak, d, readonly),
             false,
         ));
     }
 
-    // 系统提示 textarea（170px）；只读态渲染静态文本块
+    // 定制指令 textarea（170px，追加在 Pi 系统指令之后）；只读态渲染静态文本块
     form = form.child(agent_row(
         &tr("agents.prompt"),
         if readonly {
@@ -259,12 +240,17 @@ pub(super) fn agent_detail(
         true,
     ));
 
-    // 最大轮次 seg（50/100/不限/指定）+ 注入AGENTS.md 开关
-    let seg = turns_seg(weak, ag_turns, ag_turns_n, readonly);
-    let inject_label = div()
-        .text_size(crate::appearance::ui_size(12.))
-        .text_color(rgb(t.text))
-        .child(tr("agents.inject_agents_md"));
+    // 环境注入（默认注入 = 与主代理一致的环境上下文；2026-11-08 设计对齐，
+    // 自「最大轮次」行拆出独立行）
+    let inject_hint = div()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .text_size(crate::appearance::ui_size(11.))
+        .text_color(rgb(t.text_dim))
+        .child(tr("agents.env_inject_hint"));
     let inject_sw = config_switch("ag-inject", weak, *ag_inject, readonly, |c, cx| {
         if let Some(st) = c.dlg.settings.clone() {
             let _ = st.update(cx, |s, cx| {
@@ -275,16 +261,28 @@ pub(super) fn agent_detail(
         }
     });
     form = form.child(agent_row(
-        &tr("agents.max_turns"),
+        &tr("agents.inject_agents_md"),
         div()
             .flex()
             .items_center()
             .gap(px(8.))
             .w_full()
-            .child(seg)
-            .child(div().flex_1())
-            .child(inject_label)
+            .child(inject_hint)
             .child(inject_sw),
+        false,
+    ));
+
+    // 最大轮次 seg（30/100/不限/指定；指定 = 主代理委派时给 maxloop）
+    form = form.child(agent_row(
+        &tr("agents.max_turns"),
+        turns_seg(weak, ag_turns, readonly),
+        false,
+    ));
+
+    // 工作目录（继承 | PF运行目录；默认继承，2026-11-08 设计对齐）
+    form = form.child(agent_row(
+        &tr("agents.workdir"),
+        workdir_seg(weak, *ag_cwd_pf, readonly),
         false,
     ));
 
@@ -312,21 +310,62 @@ fn detail_shell_with(head: gpui::Div, form: gpui::Div) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 最大轮次四档 seg（原型 `.seg`）+ 指定时的数字输入。
+/// 最大轮次四档 seg（原型 `.seg`；2026-11-08 设计对齐）：30/100/不限/指定，
+/// 「指定」= 主代理委派时给 maxloop，profile 不写 maxTurns（原数字输入退役）。
 fn turns_seg(
     weak: &gpui::WeakEntity<Chat>,
     turns: &MaxTurnsTier,
-    turns_n: &gpui::Entity<TextInput>,
     readonly: bool,
 ) -> gpui::AnyElement {
+    seg_control(
+        weak,
+        readonly,
+        [
+            (MaxTurnsTier::Thirty, "30", *turns == MaxTurnsTier::Thirty),
+            (
+                MaxTurnsTier::Hundred,
+                "100",
+                *turns == MaxTurnsTier::Hundred,
+            ),
+            (
+                MaxTurnsTier::Unlimited,
+                tr("agents.unlimited"),
+                *turns == MaxTurnsTier::Unlimited,
+            ),
+            (
+                MaxTurnsTier::Custom,
+                tr("agents.specify"),
+                *turns == MaxTurnsTier::Custom,
+            ),
+        ],
+        |s, tier| s.ag_turns = tier,
+    )
+}
+
+/// 工作目录两档 seg（2026-11-08 设计对齐）：继承委派者 | PF 数据目录
+/// （profile `cwd: pf-data`，子进程落 PF 数据目录）。
+fn workdir_seg(weak: &gpui::WeakEntity<Chat>, cwd_pf: bool, readonly: bool) -> gpui::AnyElement {
+    seg_control(
+        weak,
+        readonly,
+        [
+            (false, tr("agents.inherit"), !cwd_pf),
+            (true, tr("agents.workdir_pf"), cwd_pf),
+        ],
+        |s, v| s.ag_cwd_pf = v,
+    )
+}
+
+/// seg 通用装配（最大轮次/工作目录共用一份壳：28px 圆角分段、选中
+/// bg_selected + semibold）：`options` = (值, 文案, 选中)，`set` 写对应
+/// 表单字段 + 脏标。
+fn seg_control<T: Copy + PartialEq + 'static>(
+    weak: &gpui::WeakEntity<Chat>,
+    readonly: bool,
+    options: impl IntoIterator<Item = (T, &'static str, bool)>,
+    set: impl Fn(&mut SettingsPanel, T) + Copy + 'static,
+) -> gpui::AnyElement {
     let t = T();
-    let tiers: [(MaxTurnsTier, &'static str); 4] = [
-        (MaxTurnsTier::Fifty, "50"),
-        (MaxTurnsTier::Hundred, "100"),
-        (MaxTurnsTier::Unlimited, tr("agents.unlimited")),
-        (MaxTurnsTier::Custom(0), tr("agents.specify")),
-    ];
-    let is_custom = matches!(turns, MaxTurnsTier::Custom(_));
     let mut seg = div()
         .flex()
         .flex_shrink_0()
@@ -335,14 +374,7 @@ fn turns_seg(
         .border_color(rgb(t.border))
         .bg(rgb(t.bg_panel))
         .overflow_hidden();
-    for (tier, label) in tiers {
-        let on = match (tier, turns) {
-            (MaxTurnsTier::Custom(_), MaxTurnsTier::Custom(_)) => true,
-            (a, b) => {
-                std::mem::discriminant(&a) == std::mem::discriminant(b)
-                    && !matches!(a, MaxTurnsTier::Custom(_))
-            }
-        };
+    for (value, label, on) in options {
         let weak_item = weak.clone();
         seg = seg.child(
             div()
@@ -361,14 +393,7 @@ fn turns_seg(
                             let _ = weak_item.update(cx, |c, cx| {
                                 if let Some(st) = c.dlg.settings.clone() {
                                     st.update(cx, |s, cx| {
-                                        s.ag_turns = tier;
-                                        if matches!(tier, MaxTurnsTier::Custom(_)) {
-                                            if s.ag_turns_n.read(cx).value().trim().is_empty() {
-                                                s.ag_turns_n.update(cx, |ti, cx| {
-                                                    ti.set_value("25".into(), cx)
-                                                });
-                                            }
-                                        }
+                                        set(s, value);
                                         s.ag_dirty = true;
                                         cx.notify();
                                     });
@@ -379,9 +404,5 @@ fn turns_seg(
                 .child(SharedString::from(label.to_string())),
         );
     }
-    let mut out = div().flex().items_center().gap(px(8.)).child(seg);
-    if is_custom && !readonly {
-        out = out.child(div().w(px(70.)).flex_shrink_0().child(turns_n.clone()));
-    }
-    out.into_any_element()
+    seg.into_any_element()
 }

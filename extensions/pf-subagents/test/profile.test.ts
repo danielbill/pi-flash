@@ -79,6 +79,20 @@ describe("profileFromDocument", () => {
 		assert.equal(auto.thinking, undefined, "no thinking key = auto = don't override");
 	});
 
+	it("parses cwd pf-data; absent = inherit (2026-11-08 子代理表单)", () => {
+		const doc = ["---", "description: lab", "cwd: pf-data", "---", "body"].join("\n");
+		const profile = profileFromDocument("p", doc, "mem");
+		assert.equal(profile.cwd, "pf-data");
+		const inherit = profileFromDocument("p", "---\ndescription: x\n---\n", "mem");
+		assert.equal(inherit.cwd, undefined);
+	});
+
+	it("rejects a cwd value other than pf-data", () => {
+		const bad = ["---", "cwd: /tmp", "---", "x"].join("\n");
+		const error = captureSync(() => profileFromDocument("p", bad, "mem"));
+		assert.match((error as Error).message, /cwd must be/);
+	});
+
 	it("rejects a thinking value outside pi's seven levels", () => {
 		const bad = ["---", "thinking: ultra", "---", "x"].join("\n");
 		const error = captureSync(() => profileFromDocument("p", bad, "mem"));

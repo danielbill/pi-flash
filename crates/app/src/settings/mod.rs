@@ -82,11 +82,10 @@ pub(crate) struct SettingsPanel {
     // -- MCP 页【配置MCP】表单（043：粘贴框 + 名称，全局 only）
     pub mcp_add: gpui::Entity<TextInput>,
     pub mcp_name: gpui::Entity<TextInput>,
-    // -- 子代理页表单（044-1 §2）
+    // -- 子代理页表单（044-1 §2；2026-11-08 设计对齐）
     pub ag_name: gpui::Entity<TextInput>,
     pub ag_desc: gpui::Entity<TextInput>,
     pub ag_prompt: gpui::Entity<TextInput>,
-    pub ag_turns_n: gpui::Entity<TextInput>,
     /// 模型（None = 键省略 = 继承会话模型）
     pub ag_model: Option<String>,
     /// 思考强度档（"auto" = 不覆盖，落 pi 默认；其余 = pi ThinkingLevel 七档键）
@@ -106,9 +105,14 @@ pub(crate) struct SettingsPanel {
     pub ag_popup: Option<u8>,
     /// 模型菜单过滤框（≥ MODEL_FILTER_MIN 才渲染，同 composer 菜单规则）
     pub ag_filter: gpui::Entity<TextInput>,
+    /// 技能菜单过滤框（实时刷新列表）
+    pub ag_skill_filter: gpui::Entity<TextInput>,
+    /// 工作目录：false = 继承委派者（默认），true = PF 数据目录
+    pub ag_cwd_pf: bool,
     /// ext / mcp 勾选清单滚动位（跨帧复用，滚动句柄不能每帧重建）
     pub ag_ext_scroll: gpui::ScrollHandle,
     pub ag_mcp_scroll: gpui::ScrollHandle,
+    pub ag_skills_scroll: gpui::ScrollHandle,
     /// 有未保存改动（表单头黄点 + 保存键可用）
     pub ag_dirty: bool,
     pub error: Option<String>,
@@ -233,18 +237,14 @@ impl SettingsPanel {
                         }))
                 })
             },
-            ag_turns_n: {
-                let weak_tn = cx.weak_entity();
+            ag_skill_filter: {
+                let weak_sf = cx.weak_entity();
                 cx.new(|cx| {
                     TextInput::new(cx)
-                        .numeric(true)
-                        .placeholder("25")
+                        .placeholder(tr("agents.skills_search"))
                         .on_change(Box::new(move |_, cx| {
-                            if let Some(p) = weak_tn.upgrade() {
-                                p.update(cx, |s, cx| {
-                                    s.ag_dirty = true;
-                                    cx.notify();
-                                });
+                            if let Some(p) = weak_sf.upgrade() {
+                                p.update(cx, |_, cx| cx.notify());
                             }
                         }))
                 })
@@ -252,11 +252,12 @@ impl SettingsPanel {
             ag_model: None,
             ag_thinking: "auto".into(),
             ag_tools: "inherit".into(),
-            ag_turns: pi_link::agents::MaxTurnsTier::Hundred,
+            ag_turns: pi_link::agents::MaxTurnsTier::Custom,
             ag_inject: true,
             ag_extensions: Vec::new(),
             ag_mcp: Vec::new(),
             ag_skills: Vec::new(),
+            ag_cwd_pf: false,
             ag_popup: None,
             ag_filter: {
                 let weak_af = cx.weak_entity();
@@ -272,6 +273,7 @@ impl SettingsPanel {
             },
             ag_ext_scroll: gpui::ScrollHandle::new(),
             ag_mcp_scroll: gpui::ScrollHandle::new(),
+            ag_skills_scroll: gpui::ScrollHandle::new(),
             ag_dirty: false,
             error: None,
             font_popup: None,
@@ -326,7 +328,7 @@ impl SettingsPanel {
             &self.ag_name,
             &self.ag_desc,
             &self.ag_prompt,
-            &self.ag_turns_n,
+            &self.ag_skill_filter,
         ];
         self.focus.is_focused(window)
             || inputs

@@ -39,10 +39,7 @@ impl Chat {
         let model = a.model.clone();
         let tools = a.tools_tier().to_string();
         let turns = a.max_turns_tier();
-        let turns_n = match turns {
-            MaxTurnsTier::Custom(n) => n.to_string(),
-            _ => String::new(),
-        };
+        let cwd_pf = a.cwd.as_deref() == Some(pi_link::agents::CWD_PF_DATA);
         let inject = a.inject_enabled();
         let thinking = a.thinking_level.clone().unwrap_or_else(|| "auto".into());
         let (ag_extensions, ag_mcp, ag_skills) = (
@@ -56,7 +53,6 @@ impl Chat {
                 s.ag_name.update(cx, |ti, cx| ti.set_value(name, cx));
                 s.ag_desc.update(cx, |ti, cx| ti.set_value(desc, cx));
                 s.ag_prompt.update(cx, |ti, cx| ti.set_value(prompt, cx));
-                s.ag_turns_n.update(cx, |ti, cx| ti.set_value(turns_n, cx));
                 s.ag_model = model;
                 s.ag_thinking = thinking;
                 s.ag_tools = tools;
@@ -65,6 +61,7 @@ impl Chat {
                 s.ag_extensions = ag_extensions;
                 s.ag_mcp = ag_mcp;
                 s.ag_skills = ag_skills;
+                s.ag_cwd_pf = cwd_pf;
                 s.ag_popup = None;
                 s.ag_dirty = false;
                 cx.notify();
@@ -84,12 +81,13 @@ impl Chat {
                     .update(cx, |ti, cx| ti.set_value(String::new(), cx));
                 s.ag_prompt
                     .update(cx, |ti, cx| ti.set_value(String::new(), cx));
-                s.ag_turns_n
-                    .update(cx, |ti, cx| ti.set_value(String::new(), cx));
                 s.ag_model = None;
                 s.ag_thinking = "auto".into();
                 s.ag_tools = "inherit".into();
-                s.ag_turns = MaxTurnsTier::Hundred;
+                // 2026-11-08 设计对齐：最大轮次默认「指定」= 主代理委派时给
+                // maxloop；工作目录默认继承
+                s.ag_turns = MaxTurnsTier::Custom;
+                s.ag_cwd_pf = false;
                 s.ag_inject = true;
                 s.ag_extensions = Vec::new();
                 s.ag_mcp = Vec::new();
@@ -113,7 +111,6 @@ impl Chat {
             name,
             desc,
             prompt,
-            turns_n,
             model,
             thinking,
             tools,
@@ -122,13 +119,13 @@ impl Chat {
             ag_extensions,
             ag_mcp,
             ag_skills,
+            cwd_pf,
         ) = st.update(cx, |s, cx| {
             (
                 s.section.clone(),
                 s.ag_name.read(cx).value().trim().to_string(),
                 s.ag_desc.read(cx).value().trim().to_string(),
                 s.ag_prompt.read(cx).value().to_string(),
-                s.ag_turns_n.read(cx).value().trim().to_string(),
                 s.ag_model.clone(),
                 s.ag_thinking.clone(),
                 s.ag_tools.clone(),
@@ -137,6 +134,7 @@ impl Chat {
                 s.ag_extensions.clone(),
                 s.ag_mcp.clone(),
                 s.ag_skills.clone(),
+                s.ag_cwd_pf,
             )
         });
         if name.is_empty()
@@ -156,10 +154,11 @@ impl Chat {
             .map(|a| a.unknown.clone())
             .unwrap_or_default();
         let max_turns = match turns {
-            MaxTurnsTier::Fifty => Some(50),
+            MaxTurnsTier::Thirty => Some(30),
             MaxTurnsTier::Hundred => Some(100),
             MaxTurnsTier::Unlimited => Some(0),
-            MaxTurnsTier::Custom(_) => turns_n.parse::<u32>().ok(),
+            // 指定 = 主代理委派时给 maxloop，profile 不写 maxTurns
+            MaxTurnsTier::Custom => None,
         };
         let prompt_trimmed = prompt.trim().to_string();
         let profile = AgentProfile {
@@ -176,6 +175,11 @@ impl Chat {
                 None
             } else {
                 Some(thinking)
+            },
+            cwd: if cwd_pf {
+                Some(pi_link::agents::CWD_PF_DATA.into())
+            } else {
+                None
             },
             max_turns,
             inject_agents_md: Some(inject),

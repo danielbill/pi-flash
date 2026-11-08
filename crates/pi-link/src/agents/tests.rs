@@ -15,7 +15,11 @@ fn parses_v1_fields_and_ignores_unknown() {
     assert_eq!(a.model.as_deref(), Some("deepseek/deepseek-chat"));
     assert_eq!(a.tools_tier(), "read-only");
     assert_eq!(a.max_turns, Some(42));
-    assert_eq!(a.max_turns_tier(), MaxTurnsTier::Custom(42));
+    assert_eq!(
+        a.max_turns_tier(),
+        MaxTurnsTier::Custom,
+        "档外值归 Custom 视图"
+    );
     assert!(!a.inject_enabled());
     assert_eq!(a.append_system_prompt.as_deref(), Some("append body"));
     // 未知字段透传
@@ -39,10 +43,27 @@ fn reads_systemprompt_block_scalar() {
 
 #[test]
 fn max_turns_tiers_and_validation() {
+    // 档外显式数值（手写档）：原始值透传保真，视图归 Custom
+    let odd = parse_agent(
+        "odd",
+        "---
+description: x
+maxTurns: 45
+---
+",
+        AgentOrigin::Custom,
+    )
+    .unwrap();
+    assert_eq!(odd.max_turns, Some(45));
+    assert_eq!(odd.max_turns_tier(), MaxTurnsTier::Custom);
     let u = parse_agent("u", "---\nmaxTurns: 0\n---\nx\n", AgentOrigin::Custom).unwrap();
     assert_eq!(u.max_turns_tier(), MaxTurnsTier::Unlimited);
     let d = parse_agent("d", "---\ndescription: d\n---\n", AgentOrigin::Custom).unwrap();
-    assert_eq!(d.max_turns_tier(), MaxTurnsTier::Hundred);
+    assert_eq!(
+        d.max_turns_tier(),
+        MaxTurnsTier::Custom,
+        "缺省 = 指定(主代理给 maxloop)"
+    );
     assert!(parse_agent("n", "---\nmaxTurns: -1\n---\nx\n", AgentOrigin::Custom).is_err());
     assert!(parse_agent("i", "---\nmaxTurns: abc\n---\nx\n", AgentOrigin::Custom).is_err());
 }
@@ -92,7 +113,7 @@ fn list_fields_roundtrip_0440() {
 
 #[test]
 fn roundtrip_preserves_fields_and_unknown() {
-    let doc = "---\ndescription: 评审\nmodel: a/b\ntools: full\nthinking: high\nmaxTurns: 50\ninjectAgentsMd: true\nsystemPrompt: |\n  line1\n  line2\nextra: keep\n---\n\nbody line\n";
+    let doc = "---\ndescription: 评审\nmodel: a/b\ntools: full\nthinking: high\nmaxTurns: 30\ncwd: pf-data\ninjectAgentsMd: true\nsystemPrompt: |\n  line1\n  line2\nextra: keep\n---\n\nbody line\n";
     let a = parse_agent("rt", doc, AgentOrigin::Custom).unwrap();
     let out = serialize_agent(&a);
     let b = parse_agent("rt", &out, AgentOrigin::Custom).unwrap();
@@ -100,7 +121,9 @@ fn roundtrip_preserves_fields_and_unknown() {
     assert_eq!(b.model.as_deref(), Some("a/b"));
     assert_eq!(b.tools_tier(), "full");
     assert_eq!(b.thinking_level.as_deref(), Some("high"));
-    assert_eq!(b.max_turns, Some(50));
+    assert_eq!(b.max_turns, Some(30));
+    assert_eq!(b.max_turns_tier(), MaxTurnsTier::Thirty);
+    assert_eq!(b.cwd.as_deref(), Some("pf-data"));
     assert!(b.inject_enabled());
     assert_eq!(b.system_prompt.as_deref(), Some("line1\nline2"));
     assert_eq!(b.append_system_prompt.as_deref(), Some("body line"));
@@ -109,6 +132,27 @@ fn roundtrip_preserves_fields_and_unknown() {
     let auto = parse_agent("rt2", "---\ndescription: x\n---\n", AgentOrigin::Custom).unwrap();
     assert_eq!(auto.thinking_level, None);
     assert!(!serialize_agent(&auto).contains("thinking"));
+    assert_eq!(
+        auto.max_turns_tier(),
+        MaxTurnsTier::Custom,
+        "缺省 = 指定(主代理给 maxloop)"
+    );
+    assert!(!serialize_agent(&auto).contains("cwd"));
+}
+
+#[test]
+fn rejects_bad_cwd_value() {
+    let err = parse_agent(
+        "bad",
+        "---
+description: x
+cwd: /tmp
+---
+",
+        AgentOrigin::Custom,
+    )
+    .unwrap_err();
+    assert!(err.contains("cwd must be"), "{err}");
 }
 
 #[test]

@@ -124,6 +124,9 @@ export interface Profile {
 	inheritContextLimit?: number;
 	/** `worktree` isolates the child in a separate checkout. */
 	isolation?: "worktree";
+	/** Working directory override (2026-11-08 子代理表单). `"pf-data"` runs the
+	 * child in the PF data directory; `undefined` = inherit the delegator's cwd. */
+	cwd?: string;
 	/** pi-extension paths to mount in the child (full+ 档的 pi-ext 选择；044-0). */
 	extensions?: string[];
 	/** MCP server names the child may use (full+ 档的 mcp 服务选择；044-0). */
@@ -256,6 +259,13 @@ export function profileFromDocument(id: string, text: string, source: string): P
 	if (isolation !== undefined && isolation !== "worktree") {
 		throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `${source}: unsupported isolation ${String(isolation)}`);
 	}
+	const cwd = data.cwd;
+	if (cwd !== undefined && cwd !== "pf-data") {
+		throw new SubagentError(
+			SubagentErrorCode.PROFILE_INVALID,
+			`${source}: cwd must be "pf-data" (got ${String(cwd)})`,
+		);
+	}
 	const limit = data.inheritContextLimit;
 	if (limit !== undefined && (!Number.isSafeInteger(Number(limit)) || Number(limit) < 0)) {
 		throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `${source}: inheritContextLimit must be a number`);
@@ -284,6 +294,7 @@ export function profileFromDocument(id: string, text: string, source: string): P
 		injectAgentsMd: inject === undefined ? undefined : inject === "true",
 		inheritContextLimit: limit === undefined ? undefined : Number(limit),
 		isolation: isolation as "worktree" | undefined,
+		cwd: cwd === undefined ? undefined : String(cwd),
 		extensions,
 		mcpServers,
 		skills,

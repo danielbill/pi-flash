@@ -55,6 +55,23 @@ fn form_pick(
     cx.notify();
 }
 
+/// 表单字段写入（**勾选清单**用：composer 语义 = 勾选即生效且菜单不关，
+/// 2026-11-08 与 ext/mcp/skills 三清单对齐；改值 + 脏标，不收弹层）。
+fn form_edit(
+    c: &mut Chat,
+    cx: &mut gpui::Context<Chat>,
+    f: impl FnOnce(&mut SettingsPanel, &mut gpui::Context<SettingsPanel>),
+) {
+    if let Some(st) = c.dlg.settings.clone() {
+        let _ = st.update(cx, |s, cx| {
+            s.ag_dirty = true;
+            f(s, cx);
+            cx.notify();
+        });
+    }
+    cx.notify();
+}
+
 // ---------------------------------------------------------------------------
 // 触发钮（渲染在表单行内；弹层本体在 overlay 层，见 ag_menus_overlay）
 // ---------------------------------------------------------------------------
@@ -239,6 +256,37 @@ fn ext_trigger(
     )
 }
 
+/// 技能触发钮（继承 | 自定义，2026-11-08 设计对齐）：档外默认继承；
+/// 自定义 = ag_skills 非空。菜单见 [`skills_card`]。
+pub(super) fn skills_trigger(
+    chat: &Chat,
+    panel: &gpui::Entity<SettingsPanel>,
+    weak: &gpui::WeakEntity<Chat>,
+    d: &SettingsFormData,
+    readonly: bool,
+) -> AnyElement {
+    let custom = !d.ag_skills.is_empty();
+    ag_trigger(
+        weak,
+        panel,
+        5,
+        &chat.dlg.pill_btn.ag_skills,
+        readonly,
+        bar_trigger(
+            "ag-skills-trg",
+            Some("layers"),
+            &if custom {
+                tr("agents.skills_custom").to_string()
+            } else {
+                tr("agents.inherit").to_string()
+            },
+            true,
+            trg_color(readonly, d.ag_popup == Some(5)),
+            !readonly,
+        ),
+    )
+}
+
 fn mcp_trigger(
     chat: &Chat,
     panel: &gpui::Entity<SettingsPanel>,
@@ -287,6 +335,7 @@ pub(crate) fn ag_menus_overlay(
         2 => 320., // 思考
         3 => 420., // ext
         4 => 320., // mcp
+        5 => 380., // 技能
         _ => return None,
     };
     // 唯一定位落点（composer picker 同款：按钮居中 + 半屏定向）
@@ -298,6 +347,7 @@ pub(crate) fn ag_menus_overlay(
         2 => thinking_card(weak, d),
         3 => ext_card(chat, weak, d, t),
         4 => mcp_card(chat, weak, d, t),
+        5 => skills_card(chat, weak, d, t),
         _ => return None,
     };
     let layer = crate::ui::menu::menu_layer(None, weak, |c, cx| {
@@ -477,7 +527,7 @@ fn ext_card(
                 *project,
                 tokens,
                 move |c, cx| {
-                    form_pick(c, cx, |s, _| {
+                    form_edit(c, cx, |s, _| {
                         match s.ag_extensions.iter().position(|x| *x == pick) {
                             Some(ix) => {
                                 s.ag_extensions.remove(ix);
@@ -530,7 +580,7 @@ fn mcp_card(
                 is_sel(&name),
                 transport,
                 move |c, cx| {
-                    form_pick(c, cx, |s, _| {
+                    form_edit(c, cx, |s, _| {
                         match s.ag_mcp.iter().position(|x| *x == pick) {
                             Some(ix) => {
                                 s.ag_mcp.remove(ix);
@@ -561,6 +611,146 @@ fn mcp_card(
         .child(capped_list(
             "ag-mcp-list",
             &d.ag_mcp_scroll,
+            capped_list_h(n),
+            body,
+        ))
+}
+
+/// 技能卡（2026-11-08 设计对齐）：「继承」置顶 + 搜索框 / 分隔线 / 全选行 /
+/// 技能列表（设置-技能页同一份列表 `mc_skills`，全局在前项目在后）。勾选
+/// 即存且菜单不关；全选作用于过滤后可见集（全中 = 清可见，否则全加）。
+fn skills_card(
+    chat: &Chat,
+    weak: &gpui::WeakEntity<Chat>,
+    d: &SettingsFormData,
+    t: &'static crate::appearance::theme::Theme,
+) -> Div {
+    let is_sel = |s: &str| d.ag_skills.iter().any(|x| x == s);
+    // 过滤（名称包含，大小写不敏）后按 全局 → 项目 排（设计定稿）
+    let flt = d.ag_skill_filter_value.trim().to_lowercase();
+    let mut items: Vec<&pi_link::skills::SkillEntry> = chat
+        .cfg
+        .mc_skills
+        .iter()
+        .filter(|e| flt.is_empty() || e.name.to_lowercase().contains(&flt))
+        .collect();
+    items.sort_by_key(|e| e.scope != pi_link::skills::SkillScope::Global);
+    let visible_sel = items.iter().filter(|e| is_sel(&e.name)).count();
+    let all_selected = !items.is_empty() && visible_sel == items.len();
+
+    // 「继承」置顶（✓ = 清单空）：点它清空清单并收卡（与模型卡同语义）
+    let inherit = pill_row(
+        weak,
+        |c, cx| {
+            form_pick(c, cx, |s, _| s.ag_skills.clear());
+        },
+        PillRow {
+            key: "ag-skills-inherit",
+            label: tr("agents.inherit").to_string(),
+            desc: String::new(),
+            active: d.ag_skills.is_empty(),
+        },
+    );
+
+    // 全选行：checkbox + 全选（作用于可见集；点击不收卡）
+    let weak_all = weak.clone();
+    let all_items: Vec<String> = items.iter().map(|e| e.name.clone()).collect();
+    let select_all = div()
+        .id("ag-skills-all")
+        .h(px(30.))
+        .px(px(PAD))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(t.bg_hover)))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            let all = all_items.clone();
+            let _ = weak_all.update(cx, |c, cx| {
+                form_edit(c, cx, |s, _| {
+                    if all.iter().all(|n| s.ag_skills.iter().any(|x| x == n)) {
+                        s.ag_skills.retain(|x| !all.iter().any(|n| n == x));
+                    } else {
+                        for n in all {
+                            if !s.ag_skills.iter().any(|x| *x == n) {
+                                s.ag_skills.push(n);
+                            }
+                        }
+                    }
+                });
+            });
+        })
+        .child(crate::ui::kit::checkbox(all_selected))
+        .child(
+            div()
+                .text_size(crate::appearance::ui_size(12.))
+                .text_color(rgb(t.text))
+                .child(SharedString::from(tr("agents.skills_select_all"))),
+        )
+        .when(visible_sel > 0, |row| {
+            row.child(
+                div()
+                    .ml_auto()
+                    .text_size(crate::appearance::ui_size(10.))
+                    .text_color(rgb(t.text_dim))
+                    .child(SharedString::from(format!(
+                        "{}/{}",
+                        visible_sel,
+                        items.len()
+                    ))),
+            )
+        });
+
+    let rows: Vec<AnyElement> = items
+        .iter()
+        .map(|e| {
+            let name = e.name.clone();
+            let pick = name.clone();
+            plugin_row(
+                weak,
+                &name,
+                is_sel(&name),
+                e.scope == pi_link::skills::SkillScope::Project,
+                None,
+                move |c, cx| {
+                    form_edit(c, cx, |s, _| {
+                        match s.ag_skills.iter().position(|x| *x == pick) {
+                            Some(ix) => {
+                                s.ag_skills.remove(ix);
+                            }
+                            None => s.ag_skills.push(pick.clone()),
+                        }
+                    });
+                },
+                t,
+            )
+        })
+        .collect();
+    let n = rows.len();
+    let mut body = rows;
+    if body.is_empty() {
+        body.push(empty_row(SharedString::from(tr("agents.pick_empty"))));
+    }
+
+    div()
+        .flex()
+        .flex_col()
+        .child(inherit)
+        .child(div().h(px(1.)).mx(px(PAD)).my(px(4.)).bg(rgb(t.border)))
+        // 搜索框顶置 + 分隔线 + 全选行，然后才是技能列表（设计定稿顺序）
+        .child(
+            div()
+                .px(px(PAD))
+                .pt(px(PAD))
+                .pb(px(PAD))
+                .child(d.ag_skill_filter.clone()),
+        )
+        .child(select_all)
+        .child(div().h(px(1.)).mx(px(PAD)).bg(rgb(t.border)))
+        .child(capped_list(
+            "ag-skills-list",
+            &d.ag_skills_scroll,
             capped_list_h(n),
             body,
         ))
