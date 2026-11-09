@@ -1,6 +1,6 @@
 # 044-4 subagent 验收清单（测试口径 + CLI 排查手册）
 
-> 对象：`extensions/pf-subagents`。界面形态见 `044-0` 验收①-⑥；扩展机制见 `044-5`。
+> 对象：`extensions/pf-subagents`。界面形态见 `044-0`；扩展机制见 `044-5`。
 > **验收主路径就是跑 PF**：`cargo run -p app`，新会话里让模型委派一次，界面上看到 `agent` 工具卡与子代理结果。下面的 CLI 步骤是排查用的下位手段。
 
 ## A. PF 内验收（主路径）
@@ -38,7 +38,7 @@ cargo run -p app
 cd extensions/pf-subagents && node --test "test/*.test.ts"
 ```
 
-期望：全绿（现行 168 条；`npm test` = `node --test`）。**跑之前清环境**：`PI_FLASH_DIR= PI_SUBAGENTS_PROFILES_DIR= node --test test/*.test.ts`——否则 `syncModuleConfig` 会先读 PF 数据目录里的 `ext-context.json`（评审机上是 capacity=3），把 `module-config.test.ts` 的容量用例顶成假失败。
+期望：全绿（现行 170 条；`npm test` = `node --test`）。**跑之前清环境**：`PI_FLASH_DIR= PI_SUBAGENTS_PROFILES_DIR= node --test test/*.test.ts`——否则 `syncModuleConfig` 会先读 PF 数据目录里的 `ext-context.json`，把 `module-config.test.ts` 的容量用例顶成假失败。
 
 覆盖：容量（拒绝不排队/降低上限不杀已在跑）、结算（清理后才交付结果/关准入/迟到输入被拒）、注册表（能力协商/重复注册）、深度、描述符（版本/对账）、工具面（caller/parent 双投递/分码/结算消息三段式）、冷恢复（`resumeFrom` 透传 / 缺文件 / 非 jsonl / 父会话 / 活会话 → `NOT_RESUMABLE`、`max_turns` 通知带续跑指引）、profile（两级/fail-closed）、本地后端（答案/继续输入/中断/失败/max_loop 软限）。
 
@@ -79,7 +79,7 @@ head -c 300 <子会话文件>
 
 期望：子会话与父同目录；header 含 `"parentSession":"…"`；跑完后 `~/.pi/agent/sessions/` 不新增本次子会话文件。
 
-### C4 观测数据（pi-flash-9eck：descriptor 落盘已删）
+### C4 观测数据
 
 ```bash
 grep -c '"subagent-completion"' tmp/subagent-smoke/*.jsonl
@@ -89,7 +89,7 @@ grep -c '"subagent-completion"' tmp/subagent-smoke/*.jsonl
 
 ### C5 容量耗尽（可选，约 3 次调用）
 
-`PI_SUBAGENTS_CAPACITY=2` + 并行三次 → 第三次返回 `CAPACITY_REACHED`（不排队、不挂起）。默认 3，设置页可配 2-5 且实时生效。
+`PI_SUBAGENTS_CAPACITY=2` + 并行三次 → 第三次返回 `CAPACITY_REACHED`（不排队、不挂起）。默认 3，设置页可配 2-10 且实时生效。
 
 ### C6 Profile
 
@@ -114,5 +114,5 @@ You are a probe. Answer in one word.
 
 - 子会话 loader 带 marker inline extension（不注册工具），与"子会话不装配 pf-subagents"的防孙代约束不冲突；自定义 loader 必须显式传 `agentDir`，否则 pi 的 `resolvePath(undefined)` 崩（`undefined.startsWith`）
 - CLI 用 `--no-session` 时父会话无文件 → 子会话拿不到 `parentSession`，会作为普通会话出现（仅影响 CLI 冒烟，PF 恒有会话文件）
-- 派发即返回（无参数，默认）：派发结果回 `started subagent <id> — it runs in the background. Do NOT poll…`（2026-11-08 加的反轮询契约，见 044-5 §4.2），完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；`blocking: true` 才等结果（code-mode 聚合）；实时进度流未做
+- 派发即返回（无参数，默认）：派发结果回 `started subagent <id> — it runs in the background. Do NOT poll…`（反轮询契约，见 044-5 §4.2），完成经 `subagent-completion` 自定义消息投递（空闲 `triggerTurn` / 流式 `steer`，见 044-5 §4）；`blocking: true` 才等结果（code-mode 聚合）；实时进度流未做
 - 未做：codemode fan-out / usage 上卷展示、worktree、外部后端（ACP/CC/Codex）

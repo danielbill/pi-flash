@@ -8,11 +8,11 @@
 
 1. **服务层（扩展内 SubagentManager）**：统一启动、消息准入、容量、父子所有权、结算与释放；"兑现即发布"——启动仅在子级已接受且可取消后返回。
 2. **provider 注册表**：具名后端，按名称路由。两个进程内后端：`spawn`（全新上下文）/ `fork`（带父转录）；外部后端（ACP / Claude Code / Codex）属未做。**能力声明协商**：每个 provider 声明 `continuable` / `depthLimit` / `modelOptions` / `worktree`，请求不满足的能力 → 稳定分码显式拒绝，**绝不静默降级**。
-3. **派发即返回**（对齐 dsh `tool-subagent/src/index.ts` 的唯一形态 `delivery: 'parent'`）：工具只准入子级并返回 childId，答案由结算消息送回，父轮**永远不会**被子代理占住。`caller`（await 即工具结果）只留给需要内联结果的程序化调用方（code-mode 聚合），必须显式 `blocking: true`——这是唯一会让父轮挂起的入口。
-4. **容量⊥深度分离**：每父会话在线名额（默认 3，glm 服务器侧约束；设置页可配 2-10），**耗尽即拒不排队**（`CAPACITY_REACHED`；排队会造成"等待后代的父代理又等待自己占用名额"级联死锁）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度/开关**事实源 = 投影 `<PF数据目录>/ext-context.json` 的 `subagents` 段**（001-2；`module-config.ts::readSubagentsProjection`，capacity / max_depth / enabled）——扩展每次委派入口重读（`syncModuleConfig`）所以改完即生效、不重启。回退链固定：投影（version 匹配）→ legacy `<profiles dir>/config.json`（`capacity` / `maxDepth` 各一组 `{default,min,max}`，`maxTurns` / `model` 仍以此文件为准）→ 扩展内置 FALLBACK(8)；**投影坏档/版本不匹配 = 保持现值不覆盖在跑上限**，problem 上报。PF 设置页改动写 hub `subagents` section（S3 起投影为扩展契约源）并**双写一版** legacy `config.json`（`pi-link/agents/module_config.rs`，给未升级扩展留活路）。env 值传导已全退役（`PI_SUBAGENTS_CAPACITY` / `PI_SUBAGENTS_MAX_DEPTH` / `PI_FLASH_APP_SETTINGS` 不再由 spawn 传递），路径类只留 `PI_SUBAGENTS_PROFILES_DIR` / `PI_FLASH_DIR`（001-2 §5）。
+3. **派发即返回**（唯一常规形态）：工具只准入子级并返回 childId，答案由结算消息送回，父轮**永远不会**被子代理占住。`caller`（await 即工具结果）只留给需要内联结果的程序化调用方（code-mode 聚合），必须显式 `blocking: true`——这是唯一会让父轮挂起的入口。
+4. **容量⊥深度分离**：每父会话在线名额（默认 3，设置页可配 2-10），**耗尽即拒不排队**（`CAPACITY_REACHED`）；名额与 `maxTurns`、委派深度预算相互独立。深度默认 1（可配 1-3；构造期子会话 loader 不装配本扩展；运行期读到 child-marker entry 不注册工具）。容量/深度/开关**事实源 = 投影 `<PF数据目录>/ext-context.json` 的 `subagents` 段**（001-2；`module-config.ts::readSubagentsProjection`，capacity / max_depth / enabled）——扩展每次委派入口重读（`syncModuleConfig`）所以改完即生效、不重启。回退链固定：投影（version 匹配）→ legacy `<profiles dir>/config.json`（`capacity` / `maxDepth` 各一组 `{default,min,max}`，`maxTurns` / `model` 仍以此文件为准）→ 扩展内置 FALLBACK(8)；**投影坏档/版本不匹配 = 保持现值不覆盖在跑上限**，problem 上报。PF 设置页改动写 hub `subagents` section（S3 起投影为扩展契约源）并**双写一版** legacy `config.json`（`pi-link/agents/module_config.rs`，给未升级扩展留活路）。env 值传导已全退役（`PI_SUBAGENTS_CAPACITY` / `PI_SUBAGENTS_MAX_DEPTH` / `PI_FLASH_APP_SETTINGS` 不再由 spawn 传递），路径类只留 `PI_SUBAGENTS_PROFILES_DIR` / `PI_FLASH_DIR`（001-2 §5）。
 5. **中断三层**：本地子级 = 停当前轮次、保留队列与后代；外部后端 = 永久停止；对已结束子级 = 空操作容忍。父 turn 中止 = 前台子代理级联中止（signal 级联）。
 6. **稳定失败分码**：`CAPACITY_REACHED` / `PROFILE_INVALID` / `DEPTH_LIMIT` / `BACKEND_UNSUPPORTED` / `ABORTED` 等——宿主与 codemode 脚本按码编程，不解析自由文本。
-7. **子代理目录（catalog）**：父会话自有投影（`children` / 聚合状态），宿主面板与 `subagent_list` 共用同一数据源。**内存 only**（pi-flash-9eck：descriptor 逐条落盘已删——曾以 ~15 条/秒灌爆父会话到 209MB；宿主观测改从主会话消息推导，见 044-3）。
+7. **子代理目录（catalog）**：父会话自有投影（`children` / 聚合状态），宿主面板与 `subagent_list` 共用同一数据源。**内存 only**（宿主观测从主会话消息推导，见 044-3）。
 
 ## 2 pi 核心机制映射
 
@@ -22,9 +22,9 @@
 | 结构化输出 | `outputSchema` + `structuredContent` |
 | 并行 fan-out | codemode：`Promise.all([tools.agent(…), …])`（direct 暴露，脚本可调）；分类汇总类任务只有结论进模型 |
 | 驻留子会话 | 子会话是**一等公民 pi session**：独立 JSONL、`parentSession` header、自己的 codemode/tool_search/MCP（`extensionFactories` 显式装配） |
-| 冷恢复与孤儿 | 子会话 `subagent/child` custom entry 记深度（`restoreChildDepth`）；孤儿恢复 UI 未做（原「重启标 interrupted descriptor」随 descriptor 落盘删除，pi-flash-9eck） |
+| 冷恢复与孤儿 | 子会话 `subagent/child` custom entry 记深度（`restoreChildDepth`）；孤儿恢复 UI 未做 |
 | 完成通知（parent） | toast `ctx.ui.notify`（人看）+ `pi.sendMessage(customType: subagent-completion)` 进父会话（模型看）；空闲 `triggerTurn` 唤醒、流式 `steer` 注入当前轮；三段式结算见 §4 |
-| persona / 工具面收敛 | profile 体系（§8）：`.md` frontmatter，语义对齐 dsh preset，形态走 pi package 资源 |
+| persona / 工具面收敛 | profile 体系（§8）：`.md` frontmatter，形态走 pi package 资源 |
 | 上下文继承措辞 | 工具描述按 profile 继承配置动态生成（fresh 类"看不到本对话"/继承类"看不到进行中的轮次"） |
 
 ## 3 工具面：一个工具，两个入口
@@ -47,8 +47,6 @@ agent(prompt, { profile?, model?, cwd?, label?, maxloop?, resumeFrom?, blocking?
 
 ### 4.1 工具描述（`tool.ts` · `delegationDescription()`）
 
-原第一句「The child's final answer is returned as this tool's result.」已删（它与派发即返回矛盾），改为直接声明派发语义：
-
 ```
 This tool starts an independently managed subagent and immediately returns its id: it
 never parks your turn. The runtime notifies you when it finishes, and the notice includes
@@ -68,15 +66,12 @@ started subagent <id> — it runs in the background. Do NOT poll for it (no `sle
 no repeated `subagent_list`): its result arrives as a notification on its own.
 ```
 
-**2026-11-08 真机回归**：裸句 `started subagent <id>` 太软——模型把它读成「在等结果」，
-接着 `bash sleep 30` 轮询。反轮询契约因此落到**结果文案**上（不只是描述）：每一条
-派发结果都必须点名 `sleep` / `subagent_list` 轮询为非法。同步把描述里
-「wait for the results」删掉（`wait` 会被模型读成「去等」）。
+**反轮询契约**：每一条派发结果都必须点名 `sleep` / `subagent_list` 轮询为非法；工具描述与 `subagent_list` 描述里不得出现 `wait for the results` 类措辞（会被模型读成「去等」）。
 
-`subagent_list` 同样收紧：描述声明它是 **diagnostic snapshot, NOT a polling API**，
+`subagent_list` 同款约束：描述声明它是 **diagnostic snapshot, NOT a polling API**，
 结果首行固定为 `Snapshot only — do not poll: finished children notify you on their own.`；
 `manager.list()` 对已 `settled` 的记录强制归一到终态（`stopReason` → completed/
-interrupted/failed），避免快照里残留 `active` 让模型「看到还在跑」而去轮询。
+interrupted/failed），快照里不残留 `active`。
 
 ### 4.3 结算消息（`completion.ts` · `composeCompletion()`）
 
@@ -108,7 +103,7 @@ pi.sendMessage({ customType: COMPLETION_TYPE, content, display: true, details },
   ctx.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" });
 ```
 
-只发 toast 时父模型拿不到回执，故双发。
+双发：toast（人看）+ 消息（模型回执）。
 
 ### 4.5 `subagent_list` 描述（`index.ts`）
 
@@ -117,25 +112,24 @@ List this session's child agents with id, phase, label, provider and depth. You 
 notified when a background subagent finishes; there is no need to keep checking its status.
 ```
 
-### 4.6 冷恢复（`resumeFrom`，对齐 dsh `coldResume`）
+### 4.6 冷恢复（`resumeFrom`）
 
 ```ts
 agent("continue the survey", { resumeFrom: "…/2026-11-08T05-20-11-330Z_01a1b….jsonl" })
 ```
 
-- **语义**：新 childId + **同一会话文件**。子代理带着完整历史续跑，父会话看到一张新卡、一条新结算；不复用旧 childId（卡片=一次运行，复用会让已结算卡二次结算，破坏 044-3 的「一个状态」不变量）。dsh 是 same-id 续聊，差别在宿主卡片模型，不在机制。
+- **语义**：新 childId + **同一会话文件**。子代理带着完整历史续跑，父会话看到一张新卡、一条新结算；不复用旧 childId（卡片=一次运行，复用会让已结算卡二次结算，破坏 044-3 的「一个状态」不变量）。
 - **准入**（先于容量，失败不花槽位）：`assertResumable()`（`backends/local.ts`）要求 `*.jsonl` + 文件存在 + 非目录；`tool.ts` 另拒「父会话自己的文件」（会把父 transcript 写成子会话）与 `manager.liveSessionFiles()` 里的会话（两个写者交错同一文件）。错误码统一 `NOT_RESUMABLE`。
 - **构造**：`index.ts` 用 `SessionManager.open(file, parentSessionDir)`，cwd 取会话头的 `getCwd()`（历史工具结果都相对于它）；**不重打 `subagent/child` 标记**（文件里已有，重复 append 会污染侧栏过滤与深度恢复）。
 - **发现入口**：完成通知（`completion.ts`）在 `max_turns`/`aborted` 且带 `session_file` 时附「Resume it with `agent(prompt, { resumeFrom: "<file>" })`」，卡片 details 里也一直有 `session_file`。
 
-### 4.7 外部委派面：billion-context 的 `acp_delegate*`（2026-11-08）
+### 4.7 外部委派面排除：billion-context 的 `acp_delegate*`
 
-PF 宿主里**曾有第二个委派面**，不是 PF 也不是 pi 内核提供的：billion-context 扩展（`~/.pi/agent/npm/node_modules/billion-context`，`pi.extensions → ./dist/agent/pi-native.js`）注册 `acp_delegate` / `acp_delegate_wait` / `acp_delegate_cancel`，语义与 `agent` 相反（`runId`、默认异步但可阻塞 wait）。模型混用二者 → 拿 `childId` 去 `acp_delegate_wait` 报 `No delegate run with runId`，再读 `subagent_list` 当状态轮询，最后 `bash sleep 30`。
+billion-context 扩展注册 `acp_delegate` / `acp_delegate_wait` / `acp_delegate_cancel`，与 `agent` 语义相反（`runId` vs `childId`），混用会导致模型轮询。排除手段：
 
-- **它的自动避让不生效**：billion-context 自带 `delegate.forceEnable=false` 检测——只在发现 npm `pi-subagents` 安装（`npmInstallAt(agentDir)` / `extensions/*` 的 `package.json.name === "pi-subagents"`）时关掉。PF 用 `-e` 指仓库 `extensions/pf-subagents`，检测不到。
-- **关闭方式**：`C:/Users/bi_da/.config/billion-context/billion-context.json` 加 `"pi": {"subagents": {"enabled": false}}`（`CONFIGURATION.md:868-905`；`enabled:false` 同时移除三个工具与其系统提示词段，**新会话生效**）。已改（备份 `billion-context.json.bak-20261108`）。
-- **不依赖它**：即使没关，4.2 的反轮询契约 + `subagent_list` 的 snapshot 语义也让模型不去 poll。
-- **为什么还要 spawn 侧钉一次**：那份 JSON 会被 bili 自己的 web UI 整份重写成它的 schema（实测 16:36 把 `pi` 段丢了，只留 `providers`/`compress`），所以 `spawn.rs` 在所有档位额外发 `--exclude-tools acp_delegate,acp_delegate_wait,acp_delegate_cancel`（denylist 对扩展工具同样生效，已用 probe 扩展实测 `getAllTools()` 里三项彻底消失）。
+- 它自带的 `delegate.forceEnable=false` 检测只认 npm 安装的 `pi-subagents`，对 PF 的 `-e` 仓库布局检测不到——**不可依赖**
+- 其配置文件的 `pi.subagents.enabled: false` 关闭项会被该扩展的 web UI 整份重写丢失——**不可依赖**
+- **唯一可靠手段**：`spawn.rs` 在所有档位发 `--exclude-tools acp_delegate,acp_delegate_wait,acp_delegate_cancel`（denylist 对扩展工具同样生效）
 
 ## 5 子会话构造
 
@@ -157,13 +151,13 @@ createAgentSessionFromServices({
 
 - 进度经 spawn 工具 `onUpdate` 流出（details 带 sessionId、状态、最后活动、token 计数）→ `tool_execution_update` 过 RPC → 嵌套卡片；失败 onUpdate 分片（status=failed + error_code）即时上卡（限 agent 工具）
 - 完整过程：宿主直读子 JSONL（路径在 details/entry），点击跳转
-- 聚合面板：**主会话自足**（pi-flash-9eck：caller=工具 result details、background=父会话 `subagent-completion` custom 消息回灌，宿主零读盘推导，见 044-3）；被拒委派经 fail onUpdate 即时上卡
-- watcher 守卫陷阱：每轮 stats/usage 上报的守卫须 **settled/failed 才拦**——caller 投递下 `wait()` 即置 settling，`state!=="active"` 会吞掉整个运行期的逐轮上报
+- 聚合面板：**主会话自足**（caller=工具 result details、background=父会话 `subagent-completion` custom 消息回灌，宿主零读盘推导，见 044-3）；被拒委派经 fail onUpdate 即时上卡
+- watcher 守卫：每轮 stats/usage 上报的守卫须 **settled/failed 才拦**——caller 投递下 `wait()` 即置 settling，`state!=="active"` 会吞掉整个运行期的逐轮上报
 
 ## 7 持久化与孤儿恢复
 
-- 子会话落 `subagent/child` 标记 entry（深度）；父会话不落 descriptor（pi-flash-9eck 已删）
-- 孤儿恢复：**机制已具备**（§4.6 `resumeFrom` 复用同一子 session 文件续跑，路径来自卡片/结算的 `session_file`）；宿主重启后遗留卡仍按中断态呈现，卡片上的「继续」按钮未做（当前由模型/用户经 `agent(resumeFrom)` 触发）
+- 子会话落 `subagent/child` 标记 entry（深度）；父会话不落 descriptor
+- 孤儿恢复：机制已具备（§4.6 `resumeFrom` 复用同一子 session 文件续跑，路径来自卡片/结算的 `session_file`）；宿主重启后遗留卡仍按中断态呈现，卡片上的「继续」按钮未做（当前由模型/用户经 `agent(resumeFrom)` 触发）
 
 ## 8 profile = Agent 定义（用户资产）
 
