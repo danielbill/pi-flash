@@ -7,7 +7,7 @@ use super::*;
 use crate::Chat;
 use crate::PillMenu;
 use crate::i18n::tr;
-use crate::ui::{icon, icon_hover};
+use crate::ui::{WithTip, icon, icon_hover};
 
 /// 操作栏字体大小（工具预设/模型/思考统一；单点改这里）。
 /// inputpanel 操作栏文字 = 面板设置值（字体大小设置.md §1）
@@ -89,6 +89,49 @@ fn mcp_button(
     // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
     el.child(crate::PillBtns::tracker(&chat.dlg.pill_btn.mcp))
         .into_any_element()
+}
+
+/// 031-1 计划模式状态 pill（仅计划态渲染，见 bar_left_group 插入点）：
+/// notebook-pen 图标 + 「计划」，悬停原位换 x（§5.10 状态驱动，send/stop
+/// 先例），tooltip「取消下一次提交的计划模式」；点击 = mc_toggle_plan
+/// （计划态下即退出）。不开菜单、无 PillBtns 槽位。
+fn plan_marker_button(
+    chat: &mut Chat,
+    t: &'static crate::appearance::theme::Theme,
+    cx: &mut Context<Chat>,
+) -> gpui::AnyElement {
+    let icon_name: &'static str = if chat.composer.plan_marker_hover {
+        "x"
+    } else {
+        "notebook-pen"
+    };
+    let color = if chat.composer.plan_marker_hover {
+        t.text
+    } else {
+        t.text_muted
+    };
+    bar_trigger(
+        "plan-marker",
+        Some(icon_name),
+        &tr("plan.marker"),
+        false,
+        color,
+        true,
+    )
+    .with_tip("plan.marker_tip")
+    .on_hover(cx.listener(|this, h: &bool, _w, cx| {
+        if this.composer.plan_marker_hover != *h {
+            this.composer.plan_marker_hover = *h;
+            cx.notify();
+        }
+    }))
+    .on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+            this.mc_toggle_plan(cx);
+        }),
+    )
+    .into_any_element()
 }
 
 /// 操作栏触发钮基座（InputPanel 五颗触发钮唯一样式落点：工具/模型/思考/
@@ -258,6 +301,18 @@ fn bar_left_group(
                 })
                 // 统一定位测量端：抓按钮 bounds（paint 期，每帧覆盖）
                 .child(crate::PillBtns::tracker(&chat.dlg.pill_btn.tools)),
+            )
+            // 031-1 计划模式状态 pill：**仅计划态渲染**（提示当前状态），
+            // 工具胶囊右侧挤开 ext/MCP（flex 兄弟节点；各自弹窗锚点 paint
+            // 在自身，不受影响）。常态 notebook-pen 图标，悬停原位换 x
+            // （2026-11-09 用户定稿）；点击退出计划模式（同工具菜单行一条
+            // mc_toggle_plan 分派——乐观翻转+广播确认）。不开菜单，无锚点
+            // 槽位；tooltip 走 §5.10 WithTip。
+            .children(
+                chat.rt()
+                    .read(cx)
+                    .plan_enabled
+                    .then(|| plan_marker_button(chat, t, cx)),
             )
             // 扩展按钮（040 定稿）：**工具胶囊的兄弟节点**，不是子节点——
             // 塞进胶囊里点它会冒泡触发工具菜单（用户踩过）。仅「full+」档

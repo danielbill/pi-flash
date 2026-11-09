@@ -80,6 +80,8 @@ assets! {
     "icons/panel-left.svg",
     "icons/history.svg",
     "icons/pencil.svg",
+    // 031-1 计划模式状态 pill（lucide notebook-pen，用户指定）
+    "icons/notebook-pen.svg",
     "icons/play.svg",
     "icons/copy.svg",
     "icons/file-text.svg",

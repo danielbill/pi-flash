@@ -465,6 +465,8 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("plan.menu", "计划模式", "計劃模式", "Plan mode"),
     ("plan.menu_desc", "只读探索，先出计划", "只讀探索，先出計劃", "Read-only exploration, plan first"),
     ("plan.title", "计划", "計劃", "Plan"),
+    ("plan.marker", "计划", "計劃", "Plan"),
+    ("plan.marker_tip", "取消下一次提交的计划模式", "取消下一次提交的計劃模式", "Cancel plan mode for the next submission"),
     ("plan.ext_unavailable", "计划模式不可用：扩展命令未被消费", "計劃模式不可用：擴展命令未被消費", "Plan mode unavailable: extension command was not consumed"),
     ("plan.approve", "批准计划，取消计划模式", "批准計劃，取消計劃模式", "Approve plan, exit plan mode"),
     ("plan.reject", "否决 / 取消（Esc）", "否決 / 取消（Esc）", "Reject / Cancel (Esc)"),

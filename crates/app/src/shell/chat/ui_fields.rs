@@ -386,6 +386,9 @@ pub(crate) struct ComposerUi {
     /// gpui-component Scrollbar 读取）
     pub(crate) bubble_scrolls:
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, gpui::ScrollHandle>>>,
+    /// 031-1 计划模式状态 pill 悬停态（input/bar plan_marker_button）：
+    /// 悬停时图标 notebook-pen 原位换 x（§5.10 状态驱动）
+    pub(crate) plan_marker_hover: bool,
 }
 
 /// 壳布局簇（4ea 字段重组）：dock 面板、内容区路由、分隔条拖拽、

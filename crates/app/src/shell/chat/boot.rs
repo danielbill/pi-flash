@@ -125,6 +125,7 @@ impl Chat {
                 bubble_scrolls: std::rc::Rc::new(std::cell::RefCell::new(
                     std::collections::HashMap::new(),
                 )),
+                plan_marker_hover: false,
             },
             pool: PoolUi {
                 runtimes: std::collections::HashMap::new(),
