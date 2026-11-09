@@ -40,11 +40,24 @@ impl Chat {
             card.open = true;
             self.aux.ask = Some(card);
             // flat 输入框常驻自定义行：placeholder 由输入框自身显示，布防时
-            // 现取 tr()（语言切换后下一张卡即刷新）
+            // 现取 tr()（语言切换后下一张卡即刷新）；上一张卡残留文本一并
+            // 清掉（新卷 = 空输入）
             let ph = tr("ask.other_placeholder").to_string();
-            self.aux
-                .ask_input
-                .update(cx, |ti, _| ti.set_placeholder(Some(ph.into())));
+            let weak = cx.entity().downgrade();
+            self.aux.ask_input.update(cx, |ti, cx| {
+                ti.set_placeholder(Some(ph.into()));
+                ti.set_value(String::new(), cx);
+                // 打字实时镜像进当前题 other_text：作答态判定 / 确认 [n/N]
+                // 门控 / Enter 全答完判定读的都是这份镜像。不挂 on_change 时
+                // 自定义文本只在 tab 切换才落账——单题卡没有「切走」这一步，
+                // 确认恒 [0/1] 灰死（2026-11-09 用户报告）。回调在 TextInput
+                // 自身 update 里发出：只许写 Chat 态，不许回头 read 输入框
+                // 实体（重复租 = panic，gpui.md 双租节；值由参数传入）。
+                ti.set_on_change(Box::new(move |v, cx| {
+                    let v = v.to_string();
+                    let _ = weak.update(cx, |c, cx| c.ask_input_mirror(&v, cx));
+                }));
+            });
             pi_link::client::ext_trace("ask: armed");
             cx.notify();
             return true;
@@ -180,8 +193,24 @@ impl Chat {
         cx.notify();
     }
 
+    /// 输入框现值镜像进当前题 other_text（布防时挂的 on_change 逐键驱动）：
+    /// 作答口径仍由 answered() 把关（单选要 other_sel，文本非空才作数）。
+    pub(crate) fn ask_input_mirror(&mut self, v: &str, cx: &mut Context<Self>) {
+        let Some(card) = self.aux.ask.as_mut() else {
+            return;
+        };
+        card.questions[card.active].other_text = v.to_string();
+        cx.notify();
+    }
+
     /// Enter：未答完跳到下一未答题；全部答完 = 确认提交（AskCard 同款）
     pub(crate) fn ask_enter(&mut self, cx: &mut Context<Self>) {
+        // 活题自定义文本落账（on_change 已逐键同步，此处兜底 IME 迟发等
+        // 场景；on_submit 经 defer 到此，输入框租约已释放，read 安全）
+        if let Some(card) = self.aux.ask.as_mut() {
+            let val = self.aux.ask_input.read(cx).value().to_string();
+            card.questions[card.active].other_text = val;
+        }
         let Some(card) = self.aux.ask.as_ref() else {
             return;
         };
@@ -217,14 +246,16 @@ impl Chat {
             let Some(card) = self.aux.ask.as_mut() else {
                 return;
             };
+            let val = self.aux.ask_input.read(cx).value().to_string();
+            {
+                let q = &mut card.questions[card.active];
+                q.other_text = val;
+                if q.other_sel && q.other_text.trim().is_empty() {
+                    q.other_sel = false;
+                }
+            }
             if !card.questions.iter().all(|q| q.answered()) {
                 return;
-            }
-            let val = self.aux.ask_input.read(cx).value().to_string();
-            let q = &mut card.questions[card.active];
-            q.other_text = val;
-            if q.other_sel && q.other_text.trim().is_empty() {
-                q.other_sel = false;
             }
             let resp = card.pending.take().map(|req| {
                 let value = card.questions[card.next_request].serialize_for(&req);
