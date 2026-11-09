@@ -531,3 +531,49 @@ fn s7_problems_go_into_log() {
     let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
     assert!(text.contains("[problem] <doc>"), "problem 留痕：{text}");
 }
+
+// ---------------------------------------------------------------------------
+// S8：agent section（自我调试开关，默认 on）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s8_agent_section_defaults_on_and_persists() {
+    let dir = tmp_dir("s8-agent");
+    let path = dir.join("app-settings.json");
+    let store = SettingsStore::open(Some(path.clone()));
+    assert!(
+        store.get::<crate::settings::sections::Agent>().self_debug,
+        "默认开"
+    );
+    store.set(|a: &mut crate::settings::sections::Agent| a.self_debug = false);
+    store.flush().unwrap();
+    assert_eq!(read_json_file(&path)["agent"]["self_debug"], false);
+    assert_eq!(
+        SettingsStore::open(Some(path))
+            .get::<crate::settings::sections::Agent>()
+            .self_debug,
+        false
+    );
+}
+
+#[test]
+fn s8_reload_diff_logged_with_values() {
+    let dir = tmp_dir("s8-reload-diff");
+    let path = dir.join("app-settings.json");
+    write_json_file(&path, &json!({ "subagents": { "capacity": 5 } }));
+    let store = SettingsStore::open(Some(path.clone()));
+    let text_before = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+    assert!(!text_before.contains("[reload]"));
+
+    write_json_file(&path, &json!({ "subagents": { "capacity": 8 } }));
+    assert!(store.check_external_change());
+    let text = std::fs::read_to_string(dir.join("pfctx.log")).unwrap();
+    assert!(
+        text.contains("[reload] subagents:") && text.contains("→"),
+        "重载差值带新旧值：{text}"
+    );
+    assert!(
+        text.contains("\"capacity\":5") && text.contains("\"capacity\":8"),
+        "{text}"
+    );
+}

@@ -30,6 +30,7 @@ pub mod model_test;
 pub mod models_json;
 pub mod paths;
 pub mod pf_plugins;
+pub mod pfctx_manager;
 pub mod probe;
 pub mod projects;
 pub mod protocol;

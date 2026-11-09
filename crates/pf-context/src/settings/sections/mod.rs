@@ -4,6 +4,7 @@
 //! 键名即 `Section::KEY`、字段名即结构体字段；`in_file = false` 的段（dev_flags）
 //! 不落 app-settings.json，源在别处（boot 层）。
 
+mod agent;
 mod appearance;
 mod chat;
 pub(crate) mod dev_flags;
@@ -13,6 +14,7 @@ mod sessions;
 mod shell;
 mod subagents;
 
+pub use agent::Agent;
 pub use appearance::{Appearance, FontSpec};
 pub use chat::{CHAT_WIDTH_DEFAULT, CHAT_WIDTH_MAX, CHAT_WIDTH_MIN, CHAT_WIDTH_STEP, Chat};
 pub use dev_flags::DevFlags;
@@ -86,6 +88,11 @@ pub(crate) fn registered() -> &'static [SectionDef] {
             exportable: false,
         },
         SectionDef {
+            key: Agent::KEY,
+            in_file: true,
+            exportable: false,
+        },
+        SectionDef {
             key: probe::Probe::KEY,
             in_file: true,
             exportable: false,
@@ -138,6 +145,11 @@ pub(crate) fn registered() -> &'static [SectionDef] {
             in_file: false,
             exportable: false,
         },
+        SectionDef {
+            key: Agent::KEY,
+            in_file: true,
+            exportable: false,
+        },
     ];
 }
 
@@ -181,6 +193,7 @@ pub(crate) fn build(
         Updates::KEY => build_one::<Updates>(layers),
         Shell::KEY => build_one::<Shell>(layers),
         DevFlags::KEY => build_one::<DevFlags>(layers),
+        Agent::KEY => build_one::<Agent>(layers),
         #[cfg(test)]
         probe::Probe::KEY => build_one::<probe::Probe>(layers),
         _ => Err(format!("未注册的 section: {key}")),

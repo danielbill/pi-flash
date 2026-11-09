@@ -93,8 +93,15 @@ impl SessionRuntime {
             }
             "default" => {
                 extra.push("--tools".into());
+                // pfctx_manager 同 agent 口径：挂了才点名（allowlist 指向
+                // 不存在的注册工具没有意义；001-4 自我调试开关）
+                let pfctx = if crate::services::workspace::agent_self_debug() {
+                    ",pfctx_manager"
+                } else {
+                    ""
+                };
                 extra.push(format!(
-                    "read,bash,edit,write,{}",
+                    "read,bash,edit,write{pfctx},{}",
                     crate::mode::PRESENT_PLAN_TOOL
                 ));
             }
@@ -105,7 +112,7 @@ impl SessionRuntime {
             "full" => {
                 extra.push("--tools".into());
                 // present_plan 同上（031-1 注册级 allowlist 点名）
-                let tools = if crate::services::workspace::subagent_module_active() {
+                let mut tools = if crate::services::workspace::subagent_module_active() {
                     format!(
                         "bash,read,edit,write,grep,find,ls,agent,{}",
                         crate::mode::PRESENT_PLAN_TOOL
@@ -116,6 +123,13 @@ impl SessionRuntime {
                         crate::mode::PRESENT_PLAN_TOOL
                     )
                 };
+                // 001-4：自我调试开着才点名 pfctx_manager（同 agent 口径）
+                if crate::services::workspace::agent_self_debug() {
+                    tools = tools.replace(
+                        &format!(",{}", crate::mode::PRESENT_PLAN_TOOL),
+                        &format!(",pfctx_manager,{}", crate::mode::PRESENT_PLAN_TOOL),
+                    );
+                }
                 extra.push(tools);
                 extra.extend(crate::session::tools_recipe::full_args(&self.cwd));
             }
@@ -208,6 +222,12 @@ impl SessionRuntime {
         // （首条消息前 undefined + uuid 随重启漂移，门控必失配——真机
         // 2026-11-03）。所有 pi 扩展通用。
         envs.push(("PF_SESSION_KEY".into(), self.key.clone()));
+        // 001-4：PF 数据目录（路径类白名单，001-2 §5）——pfctx_manager 扩展
+        // 靠它定位 app-settings.json（query）与 pfctx.log。子进程继承父 env，
+        // 这里补的是「父进程未显式设置 = 默认目录」情形。
+        if let Some(dir) = pi_link::paths::dir() {
+            envs.push(("PI_FLASH_DIR".into(), dir.to_string_lossy().into_owned()));
+        }
         // 044-0 模块设置传导：并发/深度从设置页到 pf-subagents（env 覆盖
         // 扩展默认值；模块开关关着 = 空 vec，委派停用无意义）。
         envs.extend(crate::services::workspace::subagent_envs());
@@ -249,6 +269,9 @@ impl SessionRuntime {
             // pf-subagents，子代理四件工具不注册（设置页关开关的另一半
             // 在 `Chat::apply_subagent_switch`：空闲会话立即重绑）。
             crate::services::workspace::subagent_module_active(),
+            // 001-4：自我调试开关（设置-更多，默认 on）——关着不挂
+            // pfctx_manager 工具（切换的另一半：misc 页 closure 全池重绑）
+            crate::services::workspace::agent_self_debug(),
         )
     }
 }

@@ -198,6 +198,15 @@ pub fn save_app_settings(s: &AppSettings) {
     }
 }
 
+/// 001-4：自我调试开关（设置-更多【自我调试】，默认 on）——pfctx_manager
+/// 工具是否注入 agent 会话（spawn 门控 + 切换重绑，见 extensions/pfctx-manager）。
+pub fn agent_self_debug() -> bool {
+    pf_context::hub()
+        .settings
+        .get::<pf_context::sections::Agent>()
+        .self_debug
+}
+
 /// 042：默认模型读取（两键齐生效；键不存在 = 未设置默认）。
 pub fn default_model_pref() -> Option<(String, String)> {
     let s = app_settings();

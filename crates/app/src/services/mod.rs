@@ -13,6 +13,7 @@ pub(crate) mod mj_doc_cache;
 pub(crate) mod models_config;
 pub mod paths_sort;
 pub(crate) mod pf_state;
+pub(crate) mod pfctx_ops;
 pub mod pi_extension_updates;
 pub(crate) mod script_exec;
 pub(crate) mod session_clean;

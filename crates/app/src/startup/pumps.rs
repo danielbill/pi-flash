@@ -159,6 +159,9 @@ fn spawn_pump_120ms(cx: &mut gpui::Context<Chat>) {
                     if crate::services::workspace::take_settings_reload() {
                         dirty = true;
                     }
+                    // 001-4：pfctx_manager 设置 op（agent 经扩展条目投递）→
+                    // 设置页同链执行（含 theme token 重映射/子代理重绑等副作用）
+                    crate::services::pfctx_ops::execute_pending(c, cx);
                     // 导航 flyout 250ms 离开宽限（pi-web PREVIEW_HIDE_DELAY parity）
                     if c.layout.nav_open {
                         if let Some(at) = c.layout.nav_hide_at {

@@ -81,6 +81,7 @@ pub fn spawn(
     extra_args: &[&str],
     envs: &[(String, String)],
     mount_subagents: bool,
+    mount_pfctx_manager: bool,
 ) -> Result<(PiSession, UnboundedReceiver<Event>), String> {
     let cli = vendor::cli_path().ok_or_else(|| {
         "vendored pi not found — run `npm ci` inside vendor/pi (see PORT_PLAN.md)".to_string()
@@ -151,6 +152,12 @@ pub fn spawn(
     // `agent` 工具；不挂只是没有该工具，不影响启动。工具清单是 spawn 参数，
     // 关掉开关要重绑进程才消失（app 侧 `Chat::apply_subagent_switch`）。
     if let Some(ext) = crate::subagents::mount_target(mount_subagents) {
+        cmd.arg("-e").arg(ext);
+    }
+    // 001-4：pfctx_manager 设置工具。宿主意愿 = 设置-更多【自我调试】
+    // （hub `agent.self_debug`，默认开），关掉即不挂（工具清单是 spawn 参数，
+    // 切换由 app 侧仿 apply_subagent_switch 重绑生效）。
+    if let Some(ext) = crate::pfctx_manager::mount_target(mount_pfctx_manager) {
         cmd.arg("-e").arg(ext);
     }
     // 执行域（90-6）唯一例外：PF_SVC_CONFIG = 宿主自带 shim 的配置指针（无凭据）

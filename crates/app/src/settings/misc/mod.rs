@@ -163,6 +163,33 @@ pub(crate) fn mc_misc_view(_chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) -> g
         t,
     ));
 
+    // 自我调试 switch（001-4：默认 on——允许 agent 经 pfctx_manager 工具
+    // 动态修改 PF 设置；工具清单是 spawn 参数，切换 = 全池 pending + 空闲
+    // 会话立即重绑，同「子代理模块开关」的另一半）
+    let self_debug = crate::services::workspace::agent_self_debug();
+    col = col.child(set_row(
+        tr("settings.self_debug"),
+        tr("settings.self_debug_hint"),
+        switch(
+            "misc-self-debug",
+            self_debug,
+            {
+                let weak = weak.clone();
+                move |on, cx| {
+                    let _ = weak.update(cx, |c, cx| {
+                        pf_context::hub()
+                            .settings
+                            .set::<pf_context::sections::Agent>(|a| a.self_debug = on);
+                        c.apply_subagent_switch(cx);
+                        cx.notify();
+                    });
+                }
+            },
+            t,
+        ),
+        t,
+    ));
+
     // 工作区数据目录：pf 自有目录（~/.pi-flash）在上、pi 目录（~/.pi/agent）
     // 在下，上下两行；每行右侧「打开」按钮（系统文件浏览器打开，右对齐）
     let pf_dir = pi_link::paths::dir()

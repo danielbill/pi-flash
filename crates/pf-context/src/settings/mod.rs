@@ -296,6 +296,11 @@ impl SettingsStore {
         self.inner.problems.lock().unwrap().clone()
     }
 
+    /// pfctx.log 追加一行（宿主侧留痕入口，如 [agent]）。
+    pub fn log_line(&self, tag: &str, msg: &str) {
+        self.inner.logger.log(tag, msg);
+    }
+
     /// 观测计数副本。
     pub fn stats(&self) -> SettingsStats {
         let i = &self.inner;
@@ -454,8 +459,29 @@ impl StoreInner {
                 );
             }
         }
+        // S7.1：重载差值留痕——外部写/多实例写也有全值轨迹（与宿主 [write]、
+        // agent [agent] 三类写者闭环）
+        let old_json: HashMap<&'static str, Value> = {
+            let snap = self.snap.read().unwrap();
+            snap.section_json.clone()
+        };
         let reloaded = self.reload();
         if reloaded {
+            let new_json = self.snap.read().unwrap().section_json.clone();
+            for (key, new_v) in &new_json {
+                if let Some(old_v) = old_json.get(key) {
+                    if old_v != new_v {
+                        self.logger.log(
+                            "reload",
+                            &format!(
+                                "{key}: {} → {}",
+                                serde_json::to_string(old_v).unwrap_or_default(),
+                                serde_json::to_string(new_v).unwrap_or_default()
+                            ),
+                        );
+                    }
+                }
+            }
             let n = self.reloads.load(Ordering::Relaxed);
             self.logger
                 .log("watch", &format!("外部改动 → 重载完成 (reloads={n})"));

@@ -65,6 +65,14 @@ pub fn hub() -> &'static Hub {
 pub use settings::sections;
 pub use settings::{Layer, Origin, Section, SettingProblem};
 
+/// pfctx.log 追加一行（宿主各模块观测留痕；Hub 未初始化 = no-op）。
+/// tag 约定：`agent` = 宿主执行 agent 设置 op（001-4）。
+pub fn log(tag: &str, msg: &str) {
+    if let Some(hub) = HUB.get() {
+        hub.settings.log_line(tag, msg);
+    }
+}
+
 impl Hub {
     /// 指定 settings 文件路径构造（无文件监听）。测试与嵌入用；
     /// `None` = 纯内存态（set/flush 不落盘）。

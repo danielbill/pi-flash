@@ -365,6 +365,23 @@ impl SessionRuntime {
                             }
                         }
                     }
+                    // 001-4：pfctx_manager 的设置 op 条目——扩展 set 当帧
+                    // appendEntry，pi 立即广播；收进 op 队列，由 120ms 泵在
+                    // Chat 上下文按设置页同链执行（services::pfctx_ops）。
+                    if entry["type"].as_str() == Some("custom")
+                        && entry["customType"].as_str() == Some("pfctx-manager-op")
+                    {
+                        if let Some(ops) = entry["data"]["ops"].as_array() {
+                            for op in ops {
+                                let (Some(setting), Some(value)) =
+                                    (op["setting"].as_str(), op.get("value"))
+                                else {
+                                    continue;
+                                };
+                                crate::services::pfctx_ops::push(&self.key, setting, value.clone());
+                            }
+                        }
+                    }
                 }
             }
             // 思考档真值（pi 按模型能力截断后广播）：状态槽是胶囊标签的
