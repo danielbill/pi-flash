@@ -1,9 +1,19 @@
 //! 问卷卡交互逻辑（impl Chat，与 ext_ui.rs 同风格；自 ask_card.rs 外移）：
 //! 阻塞请求路由 / Enter·数字键 / 选项点选 / 取消·确认。
 
-use super::parse::{parse_from_transcript, title_matches};
+use super::parse::{find_last_ask_call, parse_args};
 use crate::*;
 use pi_link::protocol::{ExtUiMethod, ExtensionUiRequest};
+
+/// 留痕一条卡内应答（值压平截断）：扩展追问 / 重问时靠它对账发出去了什么。
+fn trace_reply(req_id: &str, idx: usize, value: &str) {
+    let flat: String = value
+        .chars()
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .take(120)
+        .collect();
+    pi_link::client::ext_trace(&format!("ask: reply id={req_id} q={idx} value={flat:?}"));
+}
 
 // ---------------------------------------------------------------------------
 // 交互逻辑（impl Chat，与 ext_ui.rs 同风格）
@@ -23,20 +33,44 @@ impl Chat {
         if !blocking {
             return false;
         }
-        // 未布防：从 transcript 解析整卷，题目命中才接管
-        if self.aux.ask.is_none() {
-            let Some(mut card) = parse_from_transcript(&self.rt().read(cx)) else {
-                // #问题卡不弹：transcript 里找不到可解析的 ask_user_question
-                // toolCall（未送达 / args_partial / parse_args 拒收）→ 落 legacy
+        // 卷标识：transcript 里最近的 ask_user_question tool_call。同一 id 的
+        // 请求都归这一卷（多选=input、单选=select、自定义答案还有一条
+        // "Type your answer:" input 追问）；换 id = 新卷，旧卡作废重解析。
+        let cur = find_last_ask_call(&self.rt().read(cx));
+        let same_call = matches!(
+            (&cur, self.aux.ask.as_ref()),
+            (Some((id, _)), Some(card)) if *id == card.call_id
+        );
+        if !same_call {
+            // 旧卡作废：它若还挂着请求，先回 cancelled——否则那条阻塞的
+            // 扩展 handler 永久吊死（新卷 tool_call 与旧卷互不相关）
+            if let Some(mut old) = self.aux.ask.take() {
+                if let Some((_, req)) = old.pending.take() {
+                    pi_link::client::ext_trace("ask: superseded by new questionnaire → cancel old");
+                    self.ext_send(&req, None, None, true, cx);
+                }
+            }
+            // #问题卡不弹：transcript 里找不到可解析的 ask_user_question
+            // toolCall（未送达 / args_partial / parse_args 拒收）→ 落 legacy
+            let Some((id, args)) = cur else {
                 pi_link::client::ext_trace("ask: no parseable tool_call in transcript → legacy");
                 return false;
             };
-            let idx = card.next_request;
-            if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
-                pi_link::client::ext_trace(&format!("ask: title mismatch (idx={idx}) → legacy"));
+            let Some(mut card) = parse_args(&args) else {
+                pi_link::client::ext_trace("ask: parse_args rejected args → legacy");
                 return false;
-            }
-            card.pending = Some(req);
+            };
+            card.call_id = id;
+            // 题目按 title 定位（不假设首请求就是第一题）：一题都不命中才交 legacy
+            let Some(idx) = card.match_question(&req) else {
+                pi_link::client::ext_trace(&format!(
+                    "ask: title mismatch ({} questions) → legacy",
+                    card.questions.len()
+                ));
+                return false;
+            };
+            card.active = idx;
+            card.pending = Some((idx, req));
             card.open = true;
             self.aux.ask = Some(card);
             // flat 输入框常驻自定义行：placeholder 由输入框自身显示，布防时
@@ -62,46 +96,36 @@ impl Chat {
             cx.notify();
             return true;
         }
-        // 已布防：请求必须对应下一题；未确认 → 挂起，已确认 → 静默自动应答
-        let submitted = match self.aux.ask.as_ref() {
-            Some(card) => {
-                let idx = card.next_request;
-                if idx >= card.questions.len() || !title_matches(&req, &card.questions[idx]) {
-                    pi_link::client::ext_trace(&format!(
-                        "ask: stale-card mismatch (idx={idx}) → legacy"
-                    ));
-                    return false;
-                }
-                card.submitted
-            }
-            None => return false,
+        // 同一卷：该题已作答 → 静默应答（确认后扩展继续问下一题，或对自
+        // 定义答案追问）；未作答 → 挂起等用户，同题重复请求以最新为准。
+        let Some(idx) = self.aux.ask.as_ref().and_then(|c| c.match_question(&req)) else {
+            pi_link::client::ext_trace("ask: stale-card title mismatch → legacy");
+            return false;
         };
-        if !submitted {
-            if let Some(card) = self.aux.ask.as_mut() {
-                card.pending = Some(req);
-                card.open = true;
-            }
-            cx.notify();
+        let answered = self
+            .aux
+            .ask
+            .as_ref()
+            .is_some_and(|c| c.questions[idx].answered());
+        if answered {
+            let value = match self.aux.ask.as_ref() {
+                Some(card) => card.questions[idx].serialize_for(&req),
+                None => return false,
+            };
+            trace_reply(&req.id, idx, &value);
+            self.ext_send(&req, Some(value), None, false, cx);
             return true;
         }
-        // 已确认：静默自动应答，流完即清
-        let value = match self.aux.ask.as_ref() {
-            Some(card) => card.questions[card.next_request].serialize_for(&req),
-            None => return false,
-        };
-        let finished = match self.aux.ask.as_mut() {
-            Some(card) => {
-                card.next_request += 1;
-                let done = card.next_request >= card.questions.len();
-                if done {
-                    self.aux.ask = None;
-                }
-                done
-            }
-            None => true,
-        };
-        let _ = finished;
-        self.ext_send(&req, Some(value), None, false, cx);
+        let prev = self.aux.ask.as_ref().map(|c| c.active).unwrap_or(idx);
+        if let Some(card) = self.aux.ask.as_mut() {
+            card.pending = Some((idx, req));
+            card.open = true;
+        }
+        if prev != idx {
+            // 挂起题的 tab 成为当前题：输入框文本随切题同步
+            self.ask_switch_tab(idx, cx);
+        }
+        cx.notify();
         true
     }
 
@@ -239,10 +263,13 @@ impl Chat {
         }
     }
 
-    /// 确认：全答完才生效；应答挂起请求 → 收起卡 → 后续请求静默流过
+    /// 确认：全答完才生效；应答挂起请求 → 收起卡。卡**不在此销毁**：
+    /// 本卷可能还有追问请求（自定义答案的 "Type your answer:" input、
+    /// 确认后扩展继续问下一题），得留着按 title 静默应答；换卷（新
+    /// tool_call id）或取消时自然作废。
     pub(crate) fn ask_confirm(&mut self, cx: &mut Context<Self>) {
-        // ① 卡内状态收尾（不触碰 ext_send）
-        let (resp, finished) = {
+        // ① 卡内状态收尾（不触 ext_send）
+        let resp = {
             let Some(card) = self.aux.ask.as_mut() else {
                 return;
             };
@@ -257,24 +284,18 @@ impl Chat {
             if !card.questions.iter().all(|q| q.answered()) {
                 return;
             }
-            let resp = card.pending.take().map(|req| {
-                let value = card.questions[card.next_request].serialize_for(&req);
-                (req, value)
+            // 应答「请求 ↔ 题目」对应关系由匹配时确定，不靠下标自增
+            let resp = card.pending.take().map(|(idx, req)| {
+                let value = card.questions[idx].serialize_for(&req);
+                (idx, req, value)
             });
-            if resp.is_some() {
-                card.next_request += 1;
-            }
-            card.submitted = true;
             card.open = false;
-            let finished = card.next_request >= card.questions.len();
-            (resp, finished)
+            resp
         };
-        // ② 卡外：应答 + 清态
-        if let Some((req, value)) = &resp {
+        // ② 卡外：应答
+        if let Some((idx, req, value)) = &resp {
+            trace_reply(&req.id, *idx, value);
             self.ext_send(req, Some(value.clone()), None, false, cx);
-        }
-        if finished {
-            self.aux.ask = None;
         }
         cx.notify();
     }
@@ -284,7 +305,7 @@ impl Chat {
         let Some(mut card) = self.aux.ask.take() else {
             return;
         };
-        if let Some(req) = card.pending.take() {
+        if let Some((_, req)) = card.pending.take() {
             self.ext_send(&req, None, None, true, cx);
         }
         cx.notify();

@@ -9,14 +9,19 @@ use pi_link::protocol::{Block, ExtUiMethod, ExtensionUiRequest};
 // 解析：tool_call args → AskCard
 // ---------------------------------------------------------------------------
 
-/// 从 transcript 末尾向前找最近的 ask_user_question tool_call（args 已收全）。
-pub(crate) fn parse_from_transcript(rt: &session::runtime::SessionRuntime) -> Option<AskCard> {
+/// 从 transcript 末尾向前找最近的 ask_user_question tool_call（args 已收全），
+/// 返回（卷标识 = tool_call id，args 原文）。id 是「卷」的唯一标识：同一
+/// 问卷的后续请求（含自定义答案追问）都带同一题面，靠它判新卷/旧卡作废。
+pub(super) fn find_last_ask_call(
+    rt: &session::runtime::SessionRuntime,
+) -> Option<(String, String)> {
     for msg in rt.messages.iter().rev() {
         if !matches!(msg.role, session::messages::Role::Assistant) {
             continue;
         }
         for b in msg.blocks.iter().rev() {
             let Block::ToolCall {
+                id,
                 name,
                 args,
                 args_partial,
@@ -28,14 +33,14 @@ pub(crate) fn parse_from_transcript(rt: &session::runtime::SessionRuntime) -> Op
             if name != "ask_user_question" || *args_partial {
                 continue;
             }
-            return parse_args(args);
+            return Some((id.clone(), args.clone()));
         }
     }
     None
 }
 
 /// 手解 args JSON（app 不直接依赖 serde derive，pi-link 协议层用 Value 同款）
-fn parse_args(args: &str) -> Option<AskCard> {
+pub(super) fn parse_args(args: &str) -> Option<AskCard> {
     let v: serde_json::Value = serde_json::from_str(args).ok()?;
     let qs = v.get("questions")?.as_array()?;
     if qs.is_empty() || qs.len() > 10 {
@@ -86,12 +91,11 @@ fn parse_args(args: &str) -> Option<AskCard> {
         });
     }
     Some(AskCard {
+        call_id: String::new(),
         questions,
         active: 0,
-        next_request: 0,
-        submitted: false,
-        open: false,
         pending: None,
+        open: false,
         pv_scroll: gpui::ScrollHandle::new(),
     })
 }

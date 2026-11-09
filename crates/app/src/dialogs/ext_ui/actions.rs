@@ -263,7 +263,7 @@ impl Chat {
         pending.append(&mut self.aux.ext_dialog_waiting);
         // 问卷卡自身也持有阻塞请求（ask_user_question 整卷流）
         if let Some(card) = self.aux.ask.as_mut() {
-            if let Some(req) = card.pending.take() {
+            if let Some((_, req)) = card.pending.take() {
                 pending.push(req);
             }
         }

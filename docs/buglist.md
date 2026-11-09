@@ -761,3 +761,24 @@ gpui.md「repeat() 动画不限帧」节。用户体感「subagent 后开始卡�
 > **修复（2026-11-09）**：`render_ask_card` 的 keys 闭包先查
 > `ask_input.focus_handle_in(cx).is_focused(window)`，输入框持股焦点时整卡
 > 键盘处理让位（Enter 归输入框 on_submit，数字只作正文）。
+
+## 问卷卡答完三题后又弹「坏掉的窗口」（2026-11-09 修，待构建验收）
+
+用户实测：整卷三题答完、卡收走后，又冒出一个 legacy 扩展弹窗（题面 + 选项 +
+"Type your answer:"）。`logs/ext-ui.log` 实锤：这一卷扩展发了 **4 个**阻塞请求
+（select → input → select → input），而题目只有 3 道。前 3 个被卡按
+`next_request` 下标正确应答，第 4 个到时卡的 `next_request` 已到卷尾、卡被
+清成 None → 重解析 → `title mismatch (idx=0)` → 落 legacy。
+
+根因：问询卡的路由假设「一题一请求、按序自增」——与
+`@juicesharp/rpiv-ask-user-question` 的 rpc-fallback 实际时序不符：多选走
+`ui.input`、单选走 `ui.select`，自定义答案还会追一条
+`ui.input(题面+选项+"Type your answer:")`；追问数不与题数对齐。
+
+> **修复（2026-11-09）**：请求 ↔ 题目改**按 title 含题面匹配**
+> （`AskCard::match_question`），不再按下标/条数；卷标识 = tool_call id
+> （新 id = 新卷，旧卡先 cancelled 再作废）。已作答的题来请求 → 静默应答；
+> 未作答才挂起弹卡。确认后卡**不销毁**（`open=false`、`pending=None`），专为
+> 接住最后那条追问；`AskCard::finished()`（全答完 + 无挂起）让自动化快照
+> `dialogs.ask` 维持旧语义（= null）。新增 `ask: reply id=… q=… value=…`
+> 留痕：下一次再出现追问可直接对账 PF 到底回了什么。

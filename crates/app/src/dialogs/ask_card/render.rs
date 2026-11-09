@@ -212,7 +212,7 @@ fn ask_tab_bar(
                 let _ = weak_tab.update(cx, |c, cx| c.ask_switch_tab(i, cx));
             });
         // 挂起中的请求对应题给一个呼吸点提示（提交前正在等这题）
-        if i == card.next_request && card.pending.is_some() && !card.submitted {
+        if card.pending.as_ref().is_some_and(|(pi, _)| *pi == i) {
             tab = tab.border_1().border_color(accent_tint(0.35));
         }
         tabs = tabs.child(tab);
