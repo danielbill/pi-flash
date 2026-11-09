@@ -11,8 +11,8 @@
 //   D 自定义 subagent（profile）       test/44-子代理/profile/case.md
 //   E 生命周期与工具面                 test/44-子代理/生命周期与工具面/case.md
 //
-// 人工项（不在此跑，见各 case.md）：
-//   B7 外部并发（模型服务端限流）、D11 地区限制冒烟。
+// 人工项（不在此跑，清单见 README）：
+//   A13 套娃端到端、B7 外部并发（模型服务端限流）、D11-D15 模型行为冒烟。
 
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -105,6 +105,6 @@ if (problems.length) {
 }
 
 console.log(
-	`\n${failed ? "验收 FAIL" : "验收 PASS"}  （用例-断言映射见 test/44-子代理/*/case.md；人工项 B7/D11 除外）`,
+	`\n${failed ? "验收 FAIL" : "验收 PASS"}  （用例-断言映射见 test/44-子代理/*/case.md；人工项 A13/B7/D11-D15 除外，清单见 README）`,
 );
 process.exit(failed ? 1 : 0);
