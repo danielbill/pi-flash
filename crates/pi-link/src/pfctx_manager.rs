@@ -80,3 +80,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod layout_tests {
+    /// 仓库内 cargo test（dev 布局）：candidates 经 vendor 推导覆盖 repo 根，
+    /// 必能定位随仓扩展文件——挂载链第一环（文件不在 = 后续全空转）。
+    #[test]
+    fn dev_layout_resolves_bundled_extension() {
+        let p = super::ext_path().expect("dev 布局下必能定位随仓扩展");
+        assert!(p.is_file(), "{p:?}");
+        assert!(
+            p.to_string_lossy()
+                .replace('\\', "/")
+                .ends_with("extensions/pfctx-manager/src/index.ts")
+        );
+    }
+}

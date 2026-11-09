@@ -22,6 +22,12 @@ const ENTRY_TYPE = "pfctx-manager-op";
 const SETTINGS_FILE = "app-settings.json";
 const LOG_FILE = "pfctx.log";
 
+/** pi 工具结果契约：content 必须是块数组（纯字符串会让 pi 的 content.some 崩）。 */
+type TextBlock = { type: "text"; text: string };
+function asText(text: string): TextBlock[] {
+	return [{ type: "text", text }];
+}
+
 /** 设置目录（单一事实源 = 宿主各设置页 setter；此处手工同步，见 001-1 §8）。 */
 interface CatalogEntry {
 	/** 含义（给 agent 看） */
@@ -197,13 +203,9 @@ function dataDir(): string | undefined {
 	return dir && dir.length > 0 ? dir : undefined;
 }
 
-function settingsPath(dir: string): string {
-	return join(dir, SETTINGS_FILE);
-}
-
 function readSettings(dir: string): { text?: string; error?: string } {
 	try {
-		return { text: readFileSync(settingsPath(dir), "utf8") };
+		return { text: readFileSync(join(dir, SETTINGS_FILE), "utf8") };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { error: message };
@@ -272,7 +274,9 @@ export function validateOps(ops: Array<{ setting?: unknown; value?: unknown }>):
 				continue;
 			}
 			if (entry.enum && typeof value === "string" && !entry.enum.includes(value)) {
-				errors.push(`ops[${i}] ${setting}: 需要 ${entry.enum.map((e) => JSON.stringify(e)).join(" | ")}`);
+				errors.push(
+					`ops[${i}] ${setting}: 需要 ${entry.enum.map((e) => JSON.stringify(e)).join(" | ")}`,
+				);
 				continue;
 			}
 		}
@@ -315,7 +319,7 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 						},
 						required: ["setting", "value"],
 					},
-					description: 'set 必填：修改清单（全成功才受理，任一非法整批拒绝）',
+					description: "set 必填：修改清单（全成功才受理，任一非法整批拒绝）",
 				},
 			},
 			required: ["action"],
@@ -331,7 +335,7 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 			if (!dir) {
 				return {
 					isError: true,
-					content: "非 PF 宿主（缺 PI_FLASH_DIR env），本工具不可用",
+					content: asText("非 PF 宿主（缺 PI_FLASH_DIR env），本工具不可用"),
 				};
 			}
 
@@ -341,38 +345,46 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 				if (read.error !== undefined) {
 					return {
 						isError: true,
-						content: `读 ${SETTINGS_FILE} 失败: ${read.error}（文件可能尚不存在——改动任一设置后会创建）`,
+						content: asText(
+							`读 ${SETTINGS_FILE} 失败: ${read.error}（文件可能尚不存在——改动任一设置后会创建）`,
+						),
 					};
 				}
-				return {
-					content: [
-						`## 参数目录（${Object.keys(CATALOG).length} 项，点路径 → 含义 / 可设值）`,
-						...Object.entries(CATALOG).map(
-							([k, e]) => `- **${k}** — ${e.desc}；可设值: ${e.values}`,
-						),
-						`## 拒绝项（恒不可改）`,
-						...Object.entries(REJECTED).map(([k, why]) => `- **${k}** — ${why}`),
-						`## 当前值（${SETTINGS_FILE} 落盘态，与宿主内存合并窗口 ≤50ms）`,
-						"```json",
-						read.text ?? "",
-						"```",
-						`## 变更日志`,
-						`${join(dir, LOG_FILE)}（[agent] 执行 / [write] 落盘 / [reload] 外部变更）`,
-					].join("\n"),
-				};
+				const lines = [
+					`## 参数目录（${Object.keys(CATALOG).length} 项，点路径 → 含义 / 可设值）`,
+					...Object.entries(CATALOG).map(
+						([k, e]) => `- **${k}** — ${e.desc}；可设值: ${e.values}`,
+					),
+					`## 拒绝项（恒不可改）`,
+					...Object.entries(REJECTED).map(([k, why]) => `- **${k}** — ${why}`),
+					`## 当前值（${SETTINGS_FILE} 落盘态，与宿主内存合并窗口 ≤50ms）`,
+					"```json",
+					read.text ?? "",
+					"```",
+					`## 变更日志`,
+					`${join(dir, LOG_FILE)}（[agent] 执行 / [write] 落盘 / [reload] 外部变更）`,
+				];
+				return { content: asText(lines.join("\n")) };
 			}
 
 			if (action === "set") {
 				const raw = Array.isArray(params.ops) ? params.ops : [];
 				const ops = raw as Array<{ setting?: unknown; value?: unknown }>;
 				if (ops.length === 0) {
-					return { isError: true, content: 'set 需要 ops 数组，如 [{"setting":"subagents.capacity","value":6}]' };
+					return {
+						isError: true,
+						content: asText(
+							'set 需要 ops 数组，如 [{"setting":"subagents.capacity","value":6}]',
+						),
+					};
 				}
 				const errors = validateOps(ops);
 				if (errors.length > 0) {
 					return {
 						isError: true,
-						content: ["整批拒绝（任一非法即不受理，未做任何修改）：", ...errors].join("\n"),
+						content: asText(
+							["整批拒绝（任一非法即不受理，未做任何修改）：", ...errors].join("\n"),
+						),
 					};
 				}
 				try {
@@ -382,18 +394,17 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 					});
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
-					return { isError: true, content: `投递失败: ${message}` };
+					return { isError: true, content: asText(`投递失败: ${message}`) };
 				}
-				return {
-					content: [
-						`已受理 ${ops.length} 项（异步执行，宿主将按设置界面同链逐项应用）：`,
-						...ops.map((op) => `- ${op.setting} = ${JSON.stringify(op.value)}`),
-						`确认方式：稍候 {action:"query"} 重读当前值；或查 ${join(dir, LOG_FILE)} 的 [agent]/[write] 行。`,
-					].join("\n"),
-				};
+				const lines = [
+					`已受理 ${ops.length} 项（异步执行，宿主将按设置界面同链逐项应用）：`,
+					...ops.map((op) => `- ${op.setting} = ${JSON.stringify(op.value)}`),
+					`确认方式：稍候 {action:"query"} 重读当前值；或查 ${join(dir, LOG_FILE)} 的 [agent]/[write] 行。`,
+				];
+				return { content: asText(lines.join("\n")) };
 			}
 
-			return { isError: true, content: '未知 action，需要 "query" 或 "set"' };
+			return { isError: true, content: asText('未知 action，需要 "query" 或 "set"') };
 		},
 	});
 }

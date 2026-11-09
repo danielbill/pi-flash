@@ -445,3 +445,62 @@ impl SessionRuntime {
         self.notify_list(cx);
     }
 }
+
+#[cfg(test)]
+mod pfctx_bridge_tests {
+    //! 001-4 桥单测：pfctx-manager-op 条目 → op 队列（无 UI，纯实体上下文）。
+    use crate::session::runtime::SessionRuntime;
+    use gpui::AppContext as _;
+    use pi_link::protocol::Event;
+
+    /// 扩展 set 投递的自定义条目被宿主收进 op 队列（session 归属 + FIFO）。
+    /// 这是「agent 能调用工具」宿主侧契约的第一环：条目形状由扩展
+    /// `extensions/pfctx-manager/src/index.ts` 定义，此处锁定消费契约。
+    #[gpui::test]
+    fn pfctx_manager_op_entry_feeds_queue(cx: &mut gpui::TestAppContext) {
+        let _g = crate::services::pfctx_ops::test_lock();
+        crate::services::pfctx_ops::drain(); // 清残留
+        let rt =
+            cx.new(|_| SessionRuntime::new("pfctx-test-key".into(), std::env::temp_dir(), None));
+        let event = Event::WireEvent {
+            kind: "entry_appended".into(),
+            value: serde_json::json!({
+                "entry": {
+                    "type": "custom",
+                    "customType": "pfctx-manager-op",
+                    "data": { "ops": [
+                        { "setting": "subagents.capacity", "value": 8 },
+                        { "setting": "chat.send_mode", "value": "steer" },
+                    ] },
+                },
+            }),
+        };
+        rt.update(cx, |r, cx| r.on_event(event, cx));
+        let ops = crate::services::pfctx_ops::drain();
+        assert_eq!(ops.len(), 2, "两个 op 全部入队");
+        assert_eq!(ops[0].session, "pfctx-test-key");
+        assert_eq!(ops[0].setting, "subagents.capacity");
+        assert_eq!(ops[0].value, serde_json::json!(8));
+        assert_eq!(ops[1].setting, "chat.send_mode");
+        assert!(
+            crate::services::pfctx_ops::drain().is_empty(),
+            "drain 即清空"
+        );
+    }
+
+    /// 其它自定义条目（如 subagent-settled）不串进 op 队列。
+    #[gpui::test]
+    fn other_custom_entries_do_not_feed_queue(cx: &mut gpui::TestAppContext) {
+        let _g = crate::services::pfctx_ops::test_lock();
+        crate::services::pfctx_ops::drain();
+        let rt = cx.new(|_| SessionRuntime::new("k".into(), std::env::temp_dir(), None));
+        let event = Event::WireEvent {
+            kind: "entry_appended".into(),
+            value: serde_json::json!({
+                "entry": { "type": "custom", "customType": "subagent-settled", "data": {} },
+            }),
+        };
+        rt.update(cx, |r, cx| r.on_event(event, cx));
+        assert!(crate::services::pfctx_ops::drain().is_empty());
+    }
+}

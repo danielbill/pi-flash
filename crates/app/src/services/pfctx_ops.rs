@@ -34,7 +34,7 @@ pub(crate) fn push(session: &str, setting: &str, value: Value) {
         });
 }
 
-fn drain() -> Vec<PfctxOp> {
+pub(crate) fn drain() -> Vec<PfctxOp> {
     QUEUE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -206,6 +206,14 @@ fn string_of(value: &Value) -> Result<String, String> {
         .ok_or_else(|| format!("需要 string，得到 {value}"))
 }
 
+/// 测试共享全局静态队列的串行锁（否则桥测试的 push/drain 会插进 FIFO
+/// 断言之间——隔离 target 目录首跑实测翻车）。
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    L.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +221,7 @@ mod tests {
     /// 队列 FIFO 与清空语义（跨线程信箱的最小契约）。
     #[test]
     fn push_then_drain_is_fifo_and_empties() {
+        let _g = test_lock();
         push("s1", "subagents.capacity", Value::from(6));
         push("s1", "chat.send_mode", Value::from("steer"));
         let ops = drain();
