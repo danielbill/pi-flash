@@ -120,10 +120,12 @@ pub(crate) fn render_plan_approval(
                         .child(crate::ui::psp_scrollbar::menu_scrollbar(&scroll)),
                 )
                 // ── footer 按钮行（ext 弹窗同款：border_t + px_4 py_3）；
-                //    两钮一行 250×50、间距 50 并排居中（2026-11-08 定稿） ──
+                //    背景同左侧功能面板（nav 层）；两钮一行 300×50、间距 50
+                //    并排居中，文字居中（2026-11-09 定稿） ──
                 .child(
                     div()
                         .flex_shrink_0()
+                        .bg(rgb(t.nav))
                         .flex()
                         .justify_center()
                         .gap(px(50.))
@@ -150,9 +152,8 @@ pub(crate) fn render_plan_approval(
         .into_any_element()
 }
 
-/// 两钮同款 Secondary 定制大钮（2026-11-08 定稿：250×50 并排居中；全左
-/// 对齐，无图标无键帽——键位提示已在文案里）。点击 stop_propagation 不触
-/// 发浮层外点关闭。
+/// 两钮同款 Secondary 定制大钮（2026-11-09 定稿：300×50 并排居中，文字
+/// 居中）。点击 stop_propagation 不触发浮层外点关闭。
 fn plan_btn(
     id: &'static str,
     weak: gpui::WeakEntity<Chat>,
@@ -162,7 +163,7 @@ fn plan_btn(
 ) -> gpui::AnyElement {
     div()
         .id(id)
-        .w(px(250.))
+        .w(px(300.))
         .h(px(50.))
         .px(px(14.))
         .rounded(px(6.))
@@ -170,6 +171,7 @@ fn plan_btn(
         .border_color(rgb(t.border))
         .flex()
         .items_center()
+        .justify_center()
         .cursor_pointer()
         .text_size(crate::appearance::ui_size(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
