@@ -725,3 +725,24 @@ panic 落在 window_procedure（cannot unwind）→ 进程直接消失。前几�
 > 已归还"），read/set_value 全部安全；按钮/Root 键盘路径不在输入框
 > update 里，无需改。同族已排除：ext_input 的 ext_respond 用回调参数 v，
 > 不摸实体。
+
+## 输入卡顿：repeat() 动画满帧率整窗重绘烧满一核（2026-11-09 修，待构建验收）
+
+用户报 InputPanel 输入卡（拆分 itlq.5/itlq.olba 与 subagent 功能期间渐起）。
+排查链：隔离实例（PI_FLASH_DIR=tmp/perf-run + PI_FLASH_PERF=1 + pif-ui）逐帧
+测量——空闲帧 avg 18.5ms、大会话打字 13.1ms、草稿打字 14.8ms，打字不比空闲
+贵 ⇒ 打字每键付的是「整窗每帧渲染 13-18ms(debug)」的钱，卡不卡取决于屏幕上
+有没有别的帧源在抢。帧源就是 repeat() 动画：屏上有 spinner 时用户实例单核
+102%（无 spinner 隔离实例 2.3%），~66fps × 15ms ≈ 100% 数学吻合；机制见
+gpui.md「repeat() 动画不限帧」节。用户体感「subagent 后开始卡」= subagent
+时代 agent 运行窗口变长，spinner/点阵常驻时间随之变长。
+
+> **修复（2026-11-09）**：vendored gpui `Animation` 新增 `.with_fps(n)`
+> （`min_frame_interval` + 每窗口共享 pending 续帧，见 gpui.md）；四个
+> repeat() 站点全部上限（spark/spinner=24、working_dots=15、nav 计时=2）。
+> 预期 spinner 常驻期单核占用 102% → ~35%(debug)/~6%(release)。遗留待查：
+> ①「pump 批处理耗时 699ms」单批卡顿（打开大会话后 4s 零帧同期出现）；
+> ② user_row loader 900ms oneshot 无 repeat()，转一圈就停，疑似漏 .repeat()
+> （观感 bug，非性能）；③ PI_FLASH_SUBAGENTS=0 设了但启动日志 subagents=on
+> （dev_flags env 解析待查）；④ debug 每帧 13-18ms 的构成拆解（基线对照
+> tmp/wt-baseline @ e145a3d8 构建中）。

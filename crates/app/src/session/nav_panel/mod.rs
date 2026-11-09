@@ -234,7 +234,9 @@ pub(crate) fn phase_row(
         .child(tr("status.working"))
         .with_animation(
             "phase-row-timer",
-            Animation::new(std::time::Duration::from_millis(1000)).repeat(),
+            Animation::new(std::time::Duration::from_millis(1000))
+                .repeat()
+                .with_fps(2.),
             move |el, _| {
                 let secs = started.elapsed().as_secs();
                 let days = secs / 86_400;

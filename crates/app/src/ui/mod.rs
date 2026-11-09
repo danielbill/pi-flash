@@ -419,7 +419,9 @@ pub fn working_dots(color: gpui::Rgba) -> gpui::AnyElement {
         .gap(gpui::px(2.))
         .with_animation(
             "working-dots",
-            Animation::new(std::time::Duration::from_millis(1500)).repeat(),
+            Animation::new(std::time::Duration::from_millis(1500))
+                .repeat()
+                .with_fps(15.),
             move |el, delta| {
                 let mut el = el;
                 // 3×3 行主序里除中心(4)外的 8 点，顺时针边缘序
@@ -458,7 +460,9 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
         .size(gpui::px(size))
         .with_animation(
             "spin",
-            Animation::new(std::time::Duration::from_millis(900)).repeat(),
+            Animation::new(std::time::Duration::from_millis(900))
+                .repeat()
+                .with_fps(24.),
             |el, delta| {
                 el.with_transformation(gpui::Transformation::rotate(gpui::radians(
                     delta * std::f32::consts::TAU,
@@ -478,7 +482,9 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         .size(gpui::px(size))
         .with_animation(
             "spark-spin",
-            Animation::new(std::time::Duration::from_millis(900)).repeat(),
+            Animation::new(std::time::Duration::from_millis(900))
+                .repeat()
+                .with_fps(24.),
             |el, delta| {
                 el.with_transformation(gpui::Transformation::rotate(gpui::radians(
                     delta * std::f32::consts::TAU,

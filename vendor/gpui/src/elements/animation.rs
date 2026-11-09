@@ -4,11 +4,24 @@ use std::{
 };
 
 use crate::{
-    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Timer,
+    Window,
 };
 
 pub use easing::*;
 use smallvec::SmallVec;
+
+/// Shared per-window pending re-arms for throttled animations (see
+/// [`Animation::with_fps`]). At most one timer-driven redraw is scheduled per
+/// window at any time, so multiple throttled animations merge into a single
+/// shared frame cadence instead of multiplying the induced frame rate.
+#[derive(Default)]
+struct AnimationFrameThrottle {
+    /// window handle -> instant the pending re-arm was scheduled for
+    pending: std::collections::HashMap<crate::AnyWindowHandle, Instant>,
+}
+
+impl crate::Global for AnimationFrameThrottle {}
 
 /// An animation that can be applied to an element.
 #[derive(Clone)]
@@ -20,6 +33,13 @@ pub struct Animation {
     /// A function that takes a delta between 0 and 1 and returns a new delta
     /// between 0 and 1 based on the given easing function.
     pub easing: Rc<dyn Fn(f32) -> f32>,
+    /// Optional throttle: minimum interval between animation frames requested
+    /// by this animation. `None` (the default) requests a frame after every
+    /// frame, which makes the animation run at the maximum frame rate the
+    /// window can sustain. Continuous (`repeat()`) animations such as spinners
+    /// should set this via [`Animation::with_fps`] to cap the window redraw
+    /// rate they induce (each animation frame is a full window redraw).
+    pub min_frame_interval: Option<Duration>,
 }
 
 impl Animation {
@@ -30,7 +50,19 @@ impl Animation {
             duration,
             oneshot: true,
             easing: Rc::new(linear),
+            min_frame_interval: None,
         }
+    }
+
+    /// Throttle this animation to at most `fps` frames per second.
+    ///
+    /// Every animation frame triggers a full window redraw, so continuous
+    /// (`repeat()`) animations without a cap burn an entire core redrawing the
+    /// window as fast as it can. Small looping animations (spinners, marching
+    /// dots) look smooth at 20-30fps; use this to cap the induced frame rate.
+    pub fn with_fps(mut self, fps: f32) -> Self {
+        self.min_frame_interval = Some(Duration::from_secs_f32(1.0 / fps.max(1.)));
+        self
     }
 
     /// Set the animation to loop when it finishes.
@@ -173,7 +205,34 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
-                window.request_animation_frame();
+                match self.animations[animation_ix].min_frame_interval {
+                    // Re-arm at most once per `min_interval`, and share a single
+                    // pending re-arm per window across all throttled animations,
+                    // so N concurrent spinners still induce at most one frame
+                    // per interval instead of N. External frames (input,
+                    // streaming updates) still redraw at any rate and sample the
+                    // animation whenever they happen, since delta is computed
+                    // from `state.start`.
+                    Some(min_interval) => {
+                        let handle = window.window_handle();
+                        let entity = window.current_view();
+                        let throttle = cx.global_mut::<AnimationFrameThrottle>();
+                        if !throttle.pending.contains_key(&handle) {
+                            throttle.pending.insert(handle, Instant::now() + min_interval);
+                            cx.spawn(async move |cx| {
+                                Timer::after(min_interval).await;
+                                let _ = handle.update(cx, |_root_view, _window, cx| {
+                                    cx.global_mut::<AnimationFrameThrottle>()
+                                        .pending
+                                        .remove(&handle);
+                                    cx.notify(entity);
+                                });
+                            })
+                            .detach();
+                        }
+                    }
+                    None => window.request_animation_frame(),
+                }
             }
 
             ((element.request_layout(window, cx), element), state)

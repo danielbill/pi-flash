@@ -303,3 +303,23 @@ gpui 的 `div()` **不带 `.flex()` 时不是横排 flex row**——子元素纵
 的消息下标做钳制；一个条目在结构未变前**高度不许变**（等待行的显隐也要等
 sync，否则跟尾胶水期改末条高度 = 整屏推上/推下）。数据侧计数只能用于「数据
 是否比列表新」的判断，不能用于下推条目下标。
+
+## repeat() 动画不限帧 = 整窗满帧率重绘烧满一核（2026-11-09，输入卡顿根因，pi-flash 动画限帧）
+
+`AnimationElement::request_layout`（`elements/animation.rs`）在动画未完时无条件
+`window.request_animation_frame()`（= `on_next_frame(|_, cx| cx.notify(current_view))`）。
+gpui 没有任何局部重绘——**每帧动画都是整窗重排+重绘**，repeat() 动画把窗口
+帧率顶到渲染极限：debug 每帧 13-18ms ⇒ ~66fps ⇒ 烧满一核。实测：用户实例屏上
+有 spinner 时单核 102%，无 spinner 隔离实例 2.3%；打字卡顿的真相是「每键一帧
+都在和 66fps 的动画帧抢 15ms 的整窗渲染」，spinner 一停卡顿即消失。oneshot
+动画（工具卡 chevron 150ms、ctx_tip 160ms）放完即停，无害；病源只有 repeat()：
+`ui::working_dots`(1500ms)、`ui::spinner`/`ui::spark_spinner`(900ms)、
+nav_panel 计时行(1000ms)、user_row loader(900ms)。
+
+规则：**repeat() 动画必须 `.with_fps(n)`**（vendored 补丁新增，旋转 spinner
+24、离散点阵 15、纯文本计时 2）。实现：`min_frame_interval` 进 `Animation`；
+节流续帧不链帧，改 spawn `Timer::after` 延迟再 notify；且全局
+`AnimationFrameThrottle` 按窗口共享一个 pending 续帧——N 个 spinner 并存也只
+有 1/interval 的帧率，不会叠加。外部帧（输入/流式事件）照常随时重绘并按
+`state.start` 采样 delta，观感只有轻微步进。注意 timer 触发后 pending 在
+handle.update 闭包内移除，窗口已关则该条目滞留（按句柄为键，量级可忽略）。
