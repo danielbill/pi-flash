@@ -50,8 +50,16 @@
   且错误被原样带回父会话，不被扩展吞掉。
 - 人工原因：限流在服务端，结果依赖当时负载，无法做出稳定断言；扩展侧只保证
   "不吞错、不重试放大"。记录见本文件"实测记录"。
-- 实测（2026-11-10 真机 pif-ui）：`capacity=10` 一次并发派 10 个 `zai/glm-5.3-flash`
-  子代理（chat-only 单回合），**10/10 全部 completed，无服务端报错**——本次负载下
-  智谱限流未触发（预期"10 个失败"未复现，属人工项"依赖当时负载"约定内的不确定结果）。
-  PF 侧语义验证通过：10 并发全放行（真机复现 B1"设 10 派 10"）、结果全量原样回传、
-  无吞错无重试放大。复测可加重任务负载或压低 provider 侧配额后再触发。
+- 实测（2026-11-10 真机 pif-ui，**归因修正版**）：派 10 个 `zai/glm-5.3-flash`（chat-only
+  单回合），**3 个准入、7 个当场 `CAPACITY_REACHED (active child limit: 3)`**，A2 文案
+  原样上抛；父模型按"wait for an existing child to finish"指引逐个重发（每 ~3 秒一个），
+  槽位随结算逐个归还，最终 10/10 completed。
+- **归因**：有效并发 3 来自 PF 自家闸——`app-settings.json` 缺省 `subagent_capacity: 3`
+  → 投影 `ext-context.json` `subagents.capacity: 3`，**覆盖** `agents/config.json` 的
+  `capacity.default: 10`（001-1 §5 投影更窄可收窄）。"轮流执行"= 自家容量闸 + 槽位归还，
+  **不是智谱服务端限流**（zai 从未收到 >3 并发，全程无 429）。
+- **测试陷阱（复测 B7 必读）**：观察外部限流前，必须把 PF 设置页的子代理并发调到目标值
+  （或改 `app-settings.json` 的 `subagent_capacity`），只写 `agents/config.json` 会被
+  投影盖掉。修正后 zai 侧才可能收到 10 并发。
+- 意外收益：本次等价于真机验证了 A1（满即拒不排队）、A2（文案给出下一步）、A6
+  （结算归还槽位后放行后续）。
