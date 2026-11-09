@@ -40,7 +40,23 @@ pub(crate) fn render_ask_card(chat: &mut Chat, weak: &gpui::WeakEntity<Chat>) ->
     // ---- 键盘：Enter 跳题·提交 / 数字直选（Tab 已砍：与 Enter 表观重叠，
     //      用户拍板删除；Root 层 tab→Tab 绑定吞键的陷阱见 gpui.md keymap 节） ----
     let weak_keys = weak.clone();
-    let keys = move |ev: &gpui::KeyDownEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
+    let keys = move |ev: &gpui::KeyDownEvent, window: &mut gpui::Window, cx: &mut gpui::App| {
+        // 输入框持股焦点时整卡键盘让位：gpui-component 的 InputState 不停
+        // 传播 Enter/数字键（vendor 仅 otp_input 停），按键会冒泡到这里 ——
+        // 与输入框自己的 on_submit→defer(ask_enter) 双发 → 一次 Enter 连
+        // 跳两题（2026-11-09 用户实测 Q1→Q3）；数字键同理会边打字边选中
+        // 选项。打字态下 Enter 归输入框（on_submit），数字只作正文。
+        let typing = weak_keys.upgrade().is_some_and(|h| {
+            h.read(cx)
+                .aux
+                .ask_input
+                .read(cx)
+                .focus_handle_in(cx)
+                .is_focused(window)
+        });
+        if typing {
+            return;
+        }
         let key = ev.keystroke.key.as_str();
         match key {
             "enter" => {

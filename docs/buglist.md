@@ -748,3 +748,16 @@ gpui.md「repeat() 动画不限帧」节。用户体感「subagent 后开始卡�
 > tmp/wt-baseline @ e145a3d8 空闲帧 avg 10.5ms / p50 10.0 / max 14.7，
 > HEAD 同条件 18.5ms（+76%）——动画限帧之外，每帧本身的增量（拆分/
 > spark 时代引入）待另行拆解定位。
+
+## 问卷卡输入框内 Enter 一次连跳两题（2026-11-09 修，待构建验收）
+
+用户实测：多题卡 Q1 用自定义答案作答后回车，直接落到 Q3（跳过 Q2）。
+根因：gpui-component 的 `InputState` 对 Enter/数字键**不停传播**（vendor
+仅 `otp_input` 调 stop_propagation），按键冒泡到问卷卡浮层的 `on_key_down`
+→ 同一帧两条路径各调一次 `ask_enter`：① 输入框 `on_submit → cx.defer
+(ask_enter)`；② 浮层监听器同步 `ask_enter`。第一次 Q1→Q2，第二次 Q2→Q3。
+同族隐患：在自定义答案里打数字会顺带选中第 N 个选项（同一冒泡路径）。
+
+> **修复（2026-11-09）**：`render_ask_card` 的 keys 闭包先查
+> `ask_input.focus_handle_in(cx).is_focused(window)`，输入框持股焦点时整卡
+> 键盘处理让位（Enter 归输入框 on_submit，数字只作正文）。
