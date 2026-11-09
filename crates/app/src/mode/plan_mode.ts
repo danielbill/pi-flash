@@ -3,8 +3,12 @@
  * dev 直读本文件、release 落盘 ~/.pi-flash）。所有裁决以
  * docs/模块设计/031-输入面板/031-1-计划模式.md §2 为准：
  *
- * - 无工具集切换/无快照（裁决 2）：工具集始终是原选项，计划模式只靠
+ * - 无工具集切换/无快照（裁决 2）：内置工具集始终是原选项，计划模式只靠
  *   tool_call 硬闸把写操作打回（裁决 3），批准 = 仅清除计划状态。
+ *   唯一例外（2026-11-09 用户裁决）：present_plan 的**模型声明**随计划态
+ *   收放——只在计划态 declared（syncToolExposure）；注册仍恒在（--tools
+ *   白名单点名是注册前提，白名单分支会无条件激活点名工具，所以声明态
+ *   只能由本扩展 setActiveTools 主动收放，handler guard 仍在兜底）。
  * - 拦截面（裁决 6）：edit/write 一律 block；bash 按只读白名单
  *   （官方 plan-mode 示例 isSafeCommand 同款 + git 只读子集）；
  *   其余非白名单工具（含 MCP/子代理）一律 block。
@@ -82,6 +86,25 @@ function persist(ctx: ExtensionContext): void {
 	// action 未绑定会抛错（RPC 模式实测，探针 2026-11-08），ctx 上的
 	// sessionManager 是当前会话本体，语义等价（custom 条目 + data）。
 	ctx.sessionManager.appendCustomEntry(ENTRY_TYPE, { enabled: planEnabled });
+}
+
+/** present_plan 声明态跟随计划态（2026-11-09 用户裁决）。只在有差时调用
+ * setActiveTools（它每调一次都重建系统提示词，无条件调用 = 每轮提示词
+ * 缓存失效）。RPC 命令 handler 里实测可用（探针 probe-plan-tool-exposure
+ * 2026-11-09；appendEntry 的 unbound 前科不适用于这对 API）。 */
+function syncToolExposure(pi: ExtensionAPI): void {
+	try {
+		const active = pi.getActiveTools();
+		const has = active.includes(PLAN_TOOL);
+		if (planEnabled && !has) {
+			pi.setActiveTools([...active, PLAN_TOOL]);
+		} else if (!planEnabled && has) {
+			pi.setActiveTools(active.filter((n) => n !== PLAN_TOOL));
+		}
+	} catch {
+		// 取/设失败退回「恒注册 + execute guard 兜底」——工具仍可用，
+		// 只是声明不随计划态收放。
+	}
 }
 
 function settle(verdict: "approved" | "rejected" | "aborted"): void {
@@ -200,6 +223,7 @@ When the plan is complete (and only then), call the '${PLAN_TOOL}' tool with the
 				if (verdict === "approved") {
 					planEnabled = false;
 					persist(ctx);
+					syncToolExposure(pi); // 批准即退出计划态 → 声明随收
 					broadcast(ctx);
 					return {
 						content: [{
@@ -240,6 +264,7 @@ When the plan is complete (and only then), call the '${PLAN_TOOL}' tool with the
 				if (!planEnabled) settle("rejected"); // 关闭时若有挂起等待，先放行
 				persist(ctx);
 			}
+			syncToolExposure(pi); // no-op 翻转也同步（自愈漂移）
 			broadcast(ctx);
 		},
 	});
@@ -287,6 +312,7 @@ When the plan is complete (and only then), call the '${PLAN_TOOL}' tool with the
 		} catch {
 			// 读不到条目按非计划态处理
 		}
+		syncToolExposure(pi); // 声明态对齐恢复出的计划态
 		broadcast(ctx);
 	});
 }
