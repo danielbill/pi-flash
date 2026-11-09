@@ -323,3 +323,13 @@ nav_panel 计时行(1000ms)、user_row loader(900ms)。
 有 1/interval 的帧率，不会叠加。外部帧（输入/流式事件）照常随时重绘并按
 `state.start` 采样 delta，观感只有轻微步进。注意 timer 触发后 pending 在
 handle.update 闭包内移除，窗口已关则该条目滞留（按句柄为键，量级可忽略）。
+
+**陷阱：`AnimationFrameThrottle` 必须用 `default_global` 取，禁 `global_mut`**
+（2026-11-09 崩溃根因）：该全局没有任何启动期 `set_global`，而 `global_mut`
+对未赋值全局直接 panic（「no state of type ... exists」）——首个 with_fps
+动画元素首次布局即炸（spinner/working_dots 一上屏就崩，日志
+`crash-*.log` 报 animation.rs:219）。panic 又穿 winit Win32 事件回调的
+extern 边界 → abort 0xc0000409 STATUS_STACK_BUFFER_OVERRUN，表象是
+「发消息就闪退」。修复：两处取用改 `default_global`（缺省自动落 default，
+补丁自洽，`#[derive(Default)]` 本就在结构体上）。今后给该全局加字段也
+无需初始化钩子。

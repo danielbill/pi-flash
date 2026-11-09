@@ -216,13 +216,13 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                     Some(min_interval) => {
                         let handle = window.window_handle();
                         let entity = window.current_view();
-                        let throttle = cx.global_mut::<AnimationFrameThrottle>();
+                        let throttle = cx.default_global::<AnimationFrameThrottle>();
                         if !throttle.pending.contains_key(&handle) {
                             throttle.pending.insert(handle, Instant::now() + min_interval);
                             cx.spawn(async move |cx| {
                                 Timer::after(min_interval).await;
                                 let _ = handle.update(cx, |_root_view, _window, cx| {
-                                    cx.global_mut::<AnimationFrameThrottle>()
+                                    cx.default_global::<AnimationFrameThrottle>()
                                         .pending
                                         .remove(&handle);
                                     cx.notify(entity);
