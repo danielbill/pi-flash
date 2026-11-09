@@ -29,4 +29,7 @@
 - D14 AGENTS.md 注入问答冒烟（环境注入 off → 回答失败）
 - D15 附加身份（"你是大恐龙"）冒烟
 
-当前状态：2026-11-10 验收 PASS（extension pass=170 fail=0；host-model pass）；人工项 A13/B7/D11-D15 待真机走查。
+当前状态：2026-11-10 验收 PASS（extension pass=170 fail=0；host-model pass）；
+人工项 2026-11-10 真机走查完成——A13/D12/D13/D14/D15/D11 均 PASS（D11 因
+crouton-alpha 已退役，改验 404 错误原样上抛；D14 首跑提示词泄漏判无效后重跑），
+B7 的 10 并发未触发服务端限流（10/10 completed，PF 侧语义验证通过，见并发上限/case.md 实测记录）。
