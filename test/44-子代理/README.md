@@ -11,7 +11,7 @@
 | [profile](profile/case.md) | 自定义 subagent（D1-D15） | 4 自定义subagent |
 | [生命周期与工具面](生命周期与工具面/case.md) | 投递/描述符/中断/对账（E1-E8） | 4 附带验收面 |
 
-自动化主体 = `extensions/pf-subagents` 的 node:test（138 条，2026-11-07 实况），
+自动化主体 = `extensions/pf-subagents` 的 node:test（170 条，2026-11-10 实况），
 `run.mjs` 只做两件额外的事：
 
 1. 聚合跑扩展测试并报告 pass/fail；
@@ -29,4 +29,4 @@
 - D14 AGENTS.md 注入问答冒烟（环境注入 off → 回答失败）
 - D15 附加身份（"你是大恐龙"）冒烟
 
-当前状态：2026-11-07 验收 PASS（extension pass=138 fail=0；host-model pass）。
+当前状态：2026-11-10 验收 PASS（extension pass=170 fail=0；host-model pass）；人工项 A13/B7/D11-D15 待真机走查。
