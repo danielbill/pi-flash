@@ -31,6 +31,7 @@
 - **烟测「启动零输出」与更新探查鸡生蛋**：release 构建默认跑更新检查（`PI_FLASH_UPDATE_CHECK` 未设时 `!cfg!(debug_assertions)` 为真），而 GitHub Release 还没建时 `/releases/latest` 必 404 → `eprintln!("[updater] 检查更新失败…")` 把门禁打红。烟测须 `export PI_FLASH_UPDATE_CHECK=0`（门禁只验启动，不验更新）。
 - **CHANGELOG 收编不能假设首行是版本段**：文件顶部的 `# 更新日志` 标题 + 说明段会被原 `tail -n +2` 吃掉，且同版本段已存在时会写出两份 → 已改成幂等 `upsert_section`（同版本段原地替换，否则插到首个 `## [` 之前，前言原样保留）。收编前还要去**段首空行**，否则 `<!-- EN -->` 前后空行会在英文段标题下多出一行。
 - 烟测会 `taskkill` 全部 `pi-flash.exe`：发版前必须让用户自己优雅关掉实例（草稿/回合会丢），别替他 kill。
+- **拆文件必须同步重写 ui-raw 基线路径（两次踩坑：4b284fcc、0.5.0 发版前）**：check_arch §4 按**路径逐条**比对基线，「超规文件全拆 ≤500 行」把代码搬进目录模块后，旧路径消失按 0 计、新路径无档按新增计 → 40+ 文件全红，看似债暴涨实为漂移。判别法：在发版 tag 的 worktree 上跑 `python -I scripts/check_ui_raw.py --list` 对账总量——**总账不涨（甚至下降）= 纯漂移**，走「所有者确认 → `--update-baseline` 重写」；总账真涨才算新增违规。agent 不得自行刷基线，对账数字须写进 commit message 备案。
 
 ## npm 相关（本机环境事实）
 
