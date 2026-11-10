@@ -58,8 +58,8 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 		// 044-0 技能设置三态：键省略 = 继承系统开启集；裸键 = 关闭
 		"skills:",
 		"---",
-		"你是只读探索员：调研代码、定位实现、回答问题。",
-		"不执行任何写操作。",
+		"你是本地探索员：探索目录、调研代码、定位信息、搜寻答案。",
+		"不执行写操作。",
 	].join("\n"),
 	// 2026-10-19 拍板：dsh 无出厂内置，对齐 ZCode 的两内置（general-purpose +
 	// Explore，explorer 即 Explore 位）。不写 `tools:` = 继承委派者全部工具。
@@ -70,8 +70,8 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 		// 工具/技能/环境全继承：不写 tools / skills / injectAgentsMd；
 		// 轮次「指定」= 不写 maxTurns（委派方给 maxloop）
 		"---",
-		"你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。",
-		"可使用会话的全部工具，按需读写文件与执行命令。",
+		"你是委派者Clone：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。",
+		"请明智使用手头工具，按需完成任务。",
 	].join("\n"),
 	// 044-0 第三枚内置：摘要机——无状态摘要，不注入 AGENTS.md（不继承环境
 	// 上下文），只读工具集。适用本地/廉价模型跑系统日志摘要等批量总结。
@@ -87,8 +87,8 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 		"maxTurns: 5",
 		"skills:",
 		"---",
-		"你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。",
-		"不继承任何环境上下文，不执行任何写操作，只输出摘要。",
+		"你是摘要员：阅读指定文件或内容，按要求总结并返回摘要，勿写文件",
+
 	].join("\n"),
 };
 

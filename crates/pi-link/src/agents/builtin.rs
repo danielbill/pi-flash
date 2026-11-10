@@ -36,7 +36,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
             inject_agents_md: Some(true),
             system_prompt: None,
             append_system_prompt: Some(
-                "你是只读探索员：调研代码、定位实现、回答问题。\n不执行任何写操作。".into(),
+                "你是本地探索员：探索目录、调研代码、定位信息、搜寻答案。\n不执行写操作。".into(),
             ),
             unknown: Vec::new(),
             extensions: Vec::new(),
@@ -61,7 +61,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
             inject_agents_md: Some(true),
             system_prompt: None,
             append_system_prompt: Some(
-                "你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n可使用会话的全部工具，按需读写文件与执行命令。".into(),
+                "你是委派者Clone：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n请明智使用手头工具，按需完成任务。".into(),
             ),
             unknown: Vec::new(),
             extensions: Vec::new(),
@@ -89,7 +89,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
             inject_agents_md: Some(false),
             system_prompt: None,
             append_system_prompt: Some(
-                "你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。\n不继承任何环境上下文，不执行任何写操作，只输出摘要。".into(),
+                "你是摘要员：阅读指定文件或内容，按要求总结并返回摘要，勿写文件".into(),
             ),
             unknown: Vec::new(),
             extensions: Vec::new(),
