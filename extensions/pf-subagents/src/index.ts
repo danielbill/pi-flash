@@ -87,7 +87,6 @@ export function syncModuleConfig(
 			capacity: boundFromScalar(projection.value.capacity, legacy.config.capacity),
 			maxDepth: boundFromScalar(projection.value.max_depth, legacy.config.maxDepth),
 			maxTurns: legacy.config.maxTurns,
-			model: legacy.config.model,
 		};
 		applyModuleConfig(manager, config);
 		return { config, path: projection.path, problem: legacy.problem, enabled: projection.value.enabled };
@@ -703,7 +702,8 @@ async function resolveComposition(
 ): Promise<ResolvedComposition> {
 	// 每次组合都重读：模型兜底与轮数预算同属 module config
 	const config = loadModuleConfig(defaultProfilePaths(ctx.cwd).globalDir).config;
-	if (!profileId) return { model: model ?? config.model };
+	// 模块级默认模型已废除（2026-11-10）：不点名 profile = 继承父会话模型
+	if (!profileId) return { model };
 	const profile = await loadProfile(profileId, defaultProfilePaths(ctx.cwd));
 	const tier = profile.tools && profile.tools !== "inherit" ? profile.tools : undefined;
 	return {
@@ -713,7 +713,7 @@ async function resolveComposition(
 		tools: tier && tier !== "chat-only" ? [...TOOL_TIER_WHITELISTS[tier]] : undefined,
 		noTools: tier === "chat-only" ? true : undefined,
 		thinkingLevel: profile.thinking,
-		model: model ?? profile.model ?? config.model,
+		model: model ?? profile.model,
 		injectAgentsMd: profile.injectAgentsMd,
 		maxTurns: profile.maxTurns ?? config.maxTurns,
 		extensions: profile.extensions,

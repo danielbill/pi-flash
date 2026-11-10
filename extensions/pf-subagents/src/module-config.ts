@@ -40,9 +40,12 @@ export interface ModuleConfig {
 	readonly maxDepth: BoundedSetting;
 	/** Turn budget for a child when neither the call nor its profile sets one; `0` = unlimited. */
 	readonly maxTurns: number;
-	/** `provider/model` handed to profiles that name none; `undefined` = inherit the parent's model. */
-	readonly model?: string;
 }
+
+// 2026-11-10 用户定夺：模块级 `model` **已废除**（不再读、不再写）。默认模型
+// 只有两条路——profile frontmatter 的 `model:` 与调用级 `model` 参数；
+// 都没写 = 继承父会话模型。旧文件里残留的 `model` 键按未知键忽略（PF 写入
+// 时顺手删除，见 pi-link `agents/module_config.rs`）。
 
 /**
  * Used **only** when `config.json` is absent or unreadable — a host must keep
@@ -56,7 +59,6 @@ export const FALLBACK_MODULE_CONFIG: ModuleConfig = Object.freeze({
 	capacity: Object.freeze({ default: 8, min: 1, max: Number.MAX_SAFE_INTEGER }),
 	maxDepth: Object.freeze({ default: 1, min: 0, max: Number.MAX_SAFE_INTEGER }),
 	maxTurns: 100,
-	model: undefined,
 });
 
 export interface ModuleConfigReadResult {
@@ -115,17 +117,6 @@ function readMaxTurns(raw: unknown, source: string): number {
 	return raw;
 }
 
-function readModel(raw: unknown, source: string): string | undefined {
-	if (raw === undefined || raw === null || raw === "") return undefined;
-	if (typeof raw !== "string") {
-		throw invalidConfig(source, `model must be a "provider/model" string, got ${JSON.stringify(raw)}`);
-	}
-	if (raw.indexOf("/") <= 0) {
-		throw invalidConfig(source, `model must be "provider/model", got "${raw}"`);
-	}
-	return raw;
-}
-
 /**
  * Parse and validate a module config document.
  *
@@ -150,7 +141,7 @@ export function parseModuleConfig(raw: string, source: string = MODULE_CONFIG_FI
 		capacity: readBoundedSetting(doc["capacity"], "capacity", FALLBACK_MODULE_CONFIG.capacity, source),
 		maxDepth: readBoundedSetting(doc["maxDepth"], "maxDepth", FALLBACK_MODULE_CONFIG.maxDepth, source),
 		maxTurns: readMaxTurns(doc["maxTurns"], source),
-		model: readModel(doc["model"], source),
+		// `model` 不再是模块字段（2026-11-10 废除）：残留值按未知键忽略
 	};
 }
 

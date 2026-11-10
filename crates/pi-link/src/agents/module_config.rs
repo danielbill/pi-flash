@@ -8,7 +8,11 @@
 //!
 //! 语义对齐扩展侧 `module-config.ts`：`capacity` / `maxDepth` 都是
 //! `{ "default", "min", "max" }`，未知字段原样保留（扩展明确允许宿主写
-//! `version`、UI 提示等）。写入走「读-改-原子替换」（同目录 tmp + rename），
+//! `version`、UI 提示等）。
+//!
+//! **退役键**：模块级 `model`（2026-11-10 用户定夺废除）——扩展不再读它，
+//! 本模块在启动补齐与每次容量写入时清掉残留值（`strip_retired_model_at`）；
+//! 子代理默认模型只剩 profile frontmatter 与调用级参数两条路。写入走「读-改-原子替换」（同目录 tmp + rename），
 //! 扩展的重读并发永远读不到半份 JSON。
 
 use std::io;
@@ -67,13 +71,38 @@ pub fn set_capacity(value: u64) -> io::Result<u64> {
 /// 启动期补齐：`config.json` 不存在时按 PF 设置写一份。
 ///
 /// 否则扩展落到自己的 `FALLBACK_MODULE_CONFIG`（并发 8），与设置页默认 3
-/// 静默分叉。已存在的文件一律不动——它是唯一事实源。
+/// 静默分叉。已存在的文件只做**退役键清理**（`model`，2026-11-10 废除），
+/// 其余字段一律不动——它是唯一事实源。
 pub fn ensure_module_config(default_capacity: u64) -> io::Result<u64> {
     let path = module_config_path();
     if path.exists() {
-        return Ok(capacity().unwrap_or(default_capacity.clamp(CAPACITY_UI_MIN, CAPACITY_UI_MAX)));
+        let value = capacity().unwrap_or(default_capacity.clamp(CAPACITY_UI_MIN, CAPACITY_UI_MAX));
+        let _ = strip_retired_model_at(&path);
+        return Ok(value);
     }
     set_capacity(default_capacity)
+}
+
+/// 删掉模块级 `model` 键（2026-11-10 用户定夺：全局默认模型不该存在）。
+///
+/// 默认模型只有 profile frontmatter 与调用级参数两条路，两条都没有 = 继承
+/// 父会话模型；文件里残留的 `model` 扩展已按未知键忽略，这里把键清掉免得
+/// 用户以为它还在生效。返回是否真的改写过文件；无该键 = `Ok(false)`，
+/// 文件缺失/损坏 = `Ok(false)`（不是错误，交给下次容量写入重写）。
+pub(crate) fn strip_retired_model_at(path: &Path) -> io::Result<bool> {
+    let mut doc = match parse_doc(path) {
+        Some(doc) => doc,
+        None => return Ok(false),
+    };
+    let removed = doc
+        .as_object_mut()
+        .map(|o| o.remove("model").is_some())
+        .unwrap_or(false);
+    if !removed {
+        return Ok(false);
+    }
+    atomic_write(path, &doc)?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +128,8 @@ pub fn write_capacity_at(path: &Path, value: u64) -> io::Result<u64> {
     let obj = doc.as_object_mut().expect("fresh_doc/parse_doc 保证对象");
     let (lo, hi) = bounds(obj.get("capacity")).unwrap_or((CAPACITY_UI_MIN, CAPACITY_UI_MAX));
     let effective = requested.clamp(lo, hi);
+    // 退役键（2026-11-10）：模块级 model 已废除，写路径顺手清掉
+    obj.remove("model");
 
     let slot = obj.entry("capacity").or_insert_with(|| json!({}));
     if !slot.is_object() {
@@ -190,10 +221,27 @@ mod tests {
         .unwrap();
         assert_eq!(write_capacity_at(&path, 8).unwrap(), 8);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("\"model\": \"deepseek/deepseek-flash\""));
+        assert!(!text.contains("\"model\""), "退役键 model 写路径清除");
         assert!(text.contains("\"maxTurns\": 100"));
         assert!(text.contains("\"uiHint\": \"keep me\""));
         assert_eq!(read_capacity_at(&path), Some(8));
+    }
+
+    #[test]
+    fn strips_retired_model_key() {
+        let path = tmp_path("strip-model");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"model":"deepseek/deepseek-flash","maxTurns":100,"capacity":{"default":3,"min":2,"max":10}}"#,
+        )
+        .unwrap();
+        assert_eq!(strip_retired_model_at(&path).unwrap(), true);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"model\""), "model 键已清除：{text}");
+        assert!(text.contains("\"maxTurns\": 100"), "其余字段保留：{text}");
+        assert_eq!(read_capacity_at(&path), Some(3));
+        // 幂等：再跑一次不再改写
+        assert_eq!(strip_retired_model_at(&path).unwrap(), false);
     }
 
     #[test]

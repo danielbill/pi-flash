@@ -22,13 +22,11 @@ describe("module config document", () => {
 				capacity: { default: 10, min: 2, max: 10 },
 				maxDepth: { default: 2, min: 1, max: 3 },
 				maxTurns: 40,
-				model: "deepseek/deepseek-flash",
 			}),
 		);
 		assert.deepEqual(config.capacity, { default: 10, min: 2, max: 10 });
 		assert.deepEqual(config.maxDepth, { default: 2, min: 1, max: 3 });
 		assert.equal(config.maxTurns, 40);
-		assert.equal(config.model, "deepseek/deepseek-flash");
 	});
 
 	it("clamps against the bounds declared in that same file", () => {
@@ -57,9 +55,16 @@ describe("module config document", () => {
 		);
 	});
 
-	it("rejects malformed JSON and a non-provider/model model string", () => {
+	it("rejects malformed JSON", () => {
 		assert.throws(() => parseModuleConfig("{not json"), /not valid JSON/);
-		assert.throws(() => parseModuleConfig(JSON.stringify({ model: "deepseek-flash" })), /provider\/model/);
+	});
+
+	it("ignores the retired module-level model key (default model = profile / call / parent)", () => {
+		const config = parseModuleConfig(
+			JSON.stringify({ model: "deepseek/deepseek-flash", capacity: { default: 4 } }),
+		);
+		assert.equal("model" in config, false, "model 不再是模块字段");
+		assert.equal(config.capacity.default, 4);
 	});
 
 	it("leaves unset fields at the fallback and ignores unknown keys", () => {
@@ -67,7 +72,6 @@ describe("module config document", () => {
 		assert.deepEqual(config.capacity, FALLBACK_MODULE_CONFIG.capacity);
 		assert.deepEqual(config.maxDepth, FALLBACK_MODULE_CONFIG.maxDepth);
 		assert.equal(config.maxTurns, FALLBACK_MODULE_CONFIG.maxTurns);
-		assert.equal(config.model, undefined);
 	});
 });
 
