@@ -200,3 +200,16 @@ lnk + `User Pinned\TaskBar` 死链自愈。这里只记工程陷阱：
 - 关态生效点示例（subagents，7 处）：不注入 `-e pi-subagents`、full 档 `--tools` 不点名 agent、设置页/操作栏按钮/徽标隐藏、会话激活不建面板缓存不起轮询（零 IO）。
 
 
+
+## trash 禁上主线程：COM apartment 两个方向都会炸（2026-11-10 实锤）
+
+trash（Windows 回收站删除）必须**只在 `background_spawn` 线程池线程调用**，两个方向的坑都实锤过：
+
+- **后台线程池是 MTA**：trash 默认请求 STA（apartmentthreaded）→ `RPC_E_CHANGED_MODE(0x80010106)` panic——这是 Cargo.toml 给 trash 配 `coinit_multithreaded` 的原因（该注释只写了这半边）。
+- **主线程是 STA**：winit 启动时 `OleInitialize` 主线程成 STA，配了 `coinit_multithreaded` 的 trash 在主线程请求 MTA → 同样 `RPC_E_CHANGED_MODE` panic。**任何 feature 组合都两头不讨好**，per-thread COM 语义决定了没有万能配置。
+- panic 还会雪上加霜：从 gpui 事件帧里 panic 无法 unwind（extern 帧），`panic in a function that cannot unwind` → 整进程 abort（实测删除自定义子代理崩溃，`settings/agents/mod.rs::mc_agent_delete`，修复 a80cc1fd）。
+
+**范式**（抄 `function_panel/file_actions_delete.rs::tree_delete_commit`）：
+1. 主线程只做状态准备 + `cx.spawn`；
+2. 真删包 `cx.background_spawn` + `catch_unwind(AssertUnwindSafe(|| trash::delete(..)))` 双保险（trash 内部再 panic 也降级成 Err）；
+3. 完成回 `this.update` 收尾。存量违规点用 `grep -rn "trash::delete" crates/app/src` 查（现仅 agents/settings 与 session_clean/file_actions 三处，全在后台）。
