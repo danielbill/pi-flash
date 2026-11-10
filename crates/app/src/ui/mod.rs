@@ -481,7 +481,7 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 转速锚**真机验证过的速度档** 200°/s（1800ms/圈；ZCode 参考实现是
 /// 360°/s——`TaskListItem.tsx:596`，浏览器合成线程原生刷新率连续扫过，
 /// 同速在 16fps 离散采样下实测「反而更快」：步幅 22.5° 读作秒针跳动，
-/// 故离散采样不能照抄连续渲染的速度锚，见 `SPARK_DEG_PER_SEC`）；
+/// 故离散采样不能照抄连续渲染的速度锚，见 `SPARK_SPEED_RATIO`）；
 /// 时长 = 360 / 转速 自动得出，换档只改 `SPARK_FPS` 一个常量。
 ///
 /// 三个感受三个旋钮，各管各的（`delta` 取墙钟，速度与帧率解耦）：
@@ -501,7 +501,7 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 1800ms/24fps「不快不慢」；1600ms/30fps 按量化节拍理论推的，真机更顿
 /// 当场回退（30fps 非 144 因子）。现改锚 ZCode 转速重试帧率档。
 pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
-    let duration_ms = 360. / SPARK_DEG_PER_SEC * 1000.;
+    let duration_ms = 360. / (SPARK_BASE_DEG_PER_SEC * SPARK_SPEED_RATIO) * 1000.;
     gpui::svg()
         .path(SharedString::from("icons/spark.svg"))
         .text_color(gpui::rgb(color))
@@ -520,11 +520,14 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 转速锚：真机验证的 200°/s（1800ms/圈「不快不慢」档）。ZCode 参考为
-/// 360°/s，但其连续扫过无「步」概念；离散采样下同速步幅过大读作跳动。
-const SPARK_DEG_PER_SEC: f32 = 200.;
+/// ZCode 基准转速：360°/s（1s/圈，Tailwind `animate-spin` 默认，无覆盖）。
+const SPARK_BASE_DEG_PER_SEC: f32 = 360.;
+
+/// **速度倍率旋钮**（第二个独立旋钮）：相对 ZCode 基准的快慢倍数。
+/// 1.0 = 与 ZCode 同速；0.5 = 放慢一倍（2000ms/圈）。时长自动推导。
+const SPARK_SPEED_RATIO: f32 = 0.5;
 
 /// **唯一调参旋钮**：spinner 主动申请重绘的帧率。时长由基准转速推导，
 /// 不要另改 duration。必须取 144 的整数因子（24/18/16/12…）才锁相，
 /// 步幅角 = 360/本值 度。
-const SPARK_FPS: f32 = 48.;
+const SPARK_FPS: f32 = 16.;
