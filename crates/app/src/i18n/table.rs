@@ -806,7 +806,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.tools", "工具设置", "工具設定", "Tools"),
     ("agents.inherit_main", "继承委派者", "繼承委派者", "inherit"),
     ("agents.prompt", "定制指令", "定制指令", "Instructions"),
-    ("agents.prompt_ph", "定制 system prompt，追加在 Pi 系统指令之后（留空则不追加）", "定制 system prompt，追加在 Pi 系統指令之後（留空則不追加）", "Appended after Pi's system prompt (leave empty for none)"),
+    ("agents.prompt_ph", "定制 system prompt，追加在 Pi 系统指令之后", "定制 system prompt，追加在 Pi 系統指令之後", "Appended after Pi's system prompt "),
     ("agents.max_turns", "最大轮次", "最大輪次", "Max turns"),
     ("agents.inject_agents_md", "环境注入", "環境注入", "Environment"),
     ("agents.env_inject_hint", "注入所有 AGENTS.md，获得与主代理一致的环境上下文", "注入所有 AGENTS.md，獲得與主代理一致的環境上下文", "Inject all AGENTS.md for the delegator's environment context"),
