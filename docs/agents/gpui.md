@@ -313,8 +313,9 @@ gpui 没有任何局部重绘——**每帧动画都是整窗重排+重绘**，r
 有 spinner 时单核 102%，无 spinner 隔离实例 2.3%；打字卡顿的真相是「每键一帧
 都在和 66fps 的动画帧抢 15ms 的整窗渲染」，spinner 一停卡顿即消失。oneshot
 动画（工具卡 chevron 150ms、ctx_tip 160ms）放完即停，无害；病源只有 repeat()：
-`ui::working_dots`(1500ms)、`ui::spinner`(900ms)、`ui::spark_spinner`(2400ms，
-8 针等分 ⇒ 仅 45° 对称，900ms 时视觉周期 112.5ms 看着飞快，2026-11-10 降速)、
+`ui::working_dots`(1500ms)、`ui::spinner`(900ms)、`ui::spark_spinner`(1800ms，
+8 针等分 ⇒ 仅 45° 对称，900ms 时视觉周期 112.5ms 看着飞快；2026-11-10 先降
+2400ms 嫌慢，定档 1800ms)、
 nav_panel 计时行(1000ms)、user_row loader(900ms)。
 
 规则：**repeat() 动画必须 `.with_fps(n)`**（vendored 补丁新增，旋转 spinner
