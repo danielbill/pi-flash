@@ -64,7 +64,7 @@ export const DELEGATION_PARAMETERS = {
 	additionalProperties: false,
 	properties: {
 		prompt: { type: "string", description: "The task for the child agent, stated in full." },
-		profile: { type: "string", description: "Profile id selecting the child's model, prompt and tools." },
+		profile: { type: "string", description: "Profile name selecting the child's model, prompt and tools." },
 		model: { type: "string", description: "Exact model override, `provider/model`." },
 		cwd: { type: "string", description: "Working directory for the child; defaults to the caller's." },
 		label: { type: "string", description: "Short (3-5 word) display name for the child." },
@@ -114,7 +114,7 @@ export function delegationDescription(
 	const profiles = summaries && summaries.length > 0
 		? ` Choose a profile:\n${summaries
 				.map((p) =>
-					`- ${p.id}${p.description ? `: ${p.description}` : ""}${p.tools ? ` (tools: ${p.tools})` : " (tools: inherit)"}`,
+					`- ${p.name}${p.description ? `: ${p.description}` : ""}${p.tools ? ` (tools: ${p.tools})` : " (tools: inherit)"}`,
 				)
 				.join("\n")}.`
 		: options.allowedProfiles && options.allowedProfiles.length > 0

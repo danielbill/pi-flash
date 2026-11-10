@@ -17,11 +17,12 @@ const ARGS_FIELDS_CACHE_CAP: usize = 128;
 /// 2MB 能装上千条普通任务。
 const ARGS_FIELDS_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 
-/// 卡片需要的两个 args 字段：`profile`（缺省 general-purpose）与任务名
+/// 卡片需要的两个 args 字段：`profile`（缺省 = 未点名 = 「继承」）与任务名
 /// （`label` 优先，退回 `prompt` 前 25 字）。带线程局部 LRU。
 fn subagent_args_fields(args: &str) -> (String, String) {
+    let inherit = tr("subagent.no_profile").to_string();
     if args.is_empty() {
-        return ("general-purpose".to_string(), String::new());
+        return (inherit, String::new());
     }
     let key = (crate::editor::markdown::hash_str(args), args.len());
     ARGS_FIELDS_CACHE.with(|cell| {
@@ -34,7 +35,8 @@ fn subagent_args_fields(args: &str) -> (String, String) {
                 return out;
             }
         }
-        let out = subagent_args_fields_uncached(args);
+        let out = subagent_args_fields_uncached(args, &inherit);
+        cache.push_back((key, (args.to_string(), out.clone())));
         cache.push_back((key, (args.to_string(), out.clone())));
         while cache.len() > ARGS_FIELDS_CACHE_CAP
             || cache.iter().map(|(k, _)| k.1).sum::<usize>() > ARGS_FIELDS_CACHE_BUDGET_BYTES
@@ -47,15 +49,15 @@ fn subagent_args_fields(args: &str) -> (String, String) {
     })
 }
 
-fn subagent_args_fields_uncached(args: &str) -> (String, String) {
+fn subagent_args_fields_uncached(args: &str, inherit: &str) -> (String, String) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(args) else {
-        return ("general-purpose".to_string(), String::new());
+        return (inherit.to_string(), String::new());
     };
     let profile = v
         .get("profile")
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
-        .unwrap_or("general-purpose")
+        .unwrap_or(inherit)
         .to_string();
     let task = v
         .get("label")
@@ -329,9 +331,9 @@ mod args_fields_tests {
     #[test]
     fn label_and_profile_come_from_args() {
         let (p, t) = subagent_args_fields(
-            r#"{"profile":"explorer","label":"查日志","prompt":"很长的任务描述"}"#,
+            r#"{"profile":"本地探索者","label":"查日志","prompt":"很长的任务描述"}"#,
         );
-        assert_eq!(p, "explorer");
+        assert_eq!(p, "本地探索者");
         assert_eq!(t, "查日志");
     }
 
@@ -340,7 +342,7 @@ mod args_fields_tests {
         let long = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十";
         let args = format!(r#"{{"prompt":"{long}"}}"#);
         let (p, t) = subagent_args_fields(&args);
-        assert_eq!(p, "general-purpose");
+        assert_eq!(p, tr("subagent.no_profile"), "未点名 profile = 继承");
         assert_eq!(t.chars().count(), 25);
         assert!(long.starts_with(&t));
     }
@@ -348,11 +350,11 @@ mod args_fields_tests {
     #[test]
     fn partial_args_fall_back_without_panicking() {
         let (p, t) = subagent_args_fields(r#"{"profile":"expl"#);
-        assert_eq!(p, "general-purpose");
+        assert_eq!(p, tr("subagent.no_profile"));
         assert!(t.is_empty());
         assert_eq!(
             subagent_args_fields(""),
-            ("general-purpose".to_string(), String::new())
+            (tr("subagent.no_profile").to_string(), String::new())
         );
     }
 

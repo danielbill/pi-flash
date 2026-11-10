@@ -213,90 +213,75 @@ fn scan_marks_corrupt_and_builtin_override() {
 }
 
 #[test]
-fn builtin_explorer_and_custom_override() {
+fn builtin_trio_ids_names_and_tiers() {
     let builtins = builtin_agents();
     assert_eq!(
         builtins.len(),
         3,
         "explorer + general-purpose（2026-10-19 拍板）+ summarizer（044-0 摘要机）"
     );
-    let ex = builtins.iter().find(|b| b.id == "explorer").unwrap();
+    // id = 不可见短 UUID（2026-11-10）：8 位小写 hex、互不相同、对上常量
+    let short_uuid = |s: &str| {
+        s.len() == 8
+            && s.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    };
+    let ids: Vec<&str> = builtins.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, [EXPLORER_ID, GENERAL_PURPOSE_ID, SUMMARIZER_ID]);
+    for id in &ids {
+        assert!(short_uuid(id), "{id} 必须是 8 位小写 hex 短 UUID");
+    }
+    // name = 点名句柄 + 显示名（中文，全局唯一）；内置三件都带
+    let names: Vec<&str> = builtins
+        .iter()
+        .map(|b| b.name.as_deref().expect("内置必须有 name"))
+        .collect();
+    assert_eq!(names, ["本地探索者", "通用子代理", "摘要机"]);
+
+    let ex = builtins.iter().find(|b| b.id == EXPLORER_ID).unwrap();
     assert_eq!(ex.tools_tier(), "read-only");
     assert_eq!(ex.max_turns_tier(), MaxTurnsTier::Custom, "轮次「指定」");
-    let gp = builtins.iter().find(|b| b.id == "general-purpose").unwrap();
+    let gp = builtins
+        .iter()
+        .find(|b| b.id == GENERAL_PURPOSE_ID)
+        .unwrap();
     assert_eq!(gp.tools_tier(), "inherit", "general-purpose 继承全部工具");
     assert_eq!(gp.max_turns_tier(), MaxTurnsTier::Custom, "轮次「指定」");
-    let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
+    let sum = builtins.iter().find(|b| b.id == SUMMARIZER_ID).unwrap();
     assert_eq!(
         sum.max_turns_tier(),
         MaxTurnsTier::Five,
         "摘要机 = 面板 5 档（无双语义）"
     );
     assert_eq!(sum.max_turns, Some(5), "摘要机固定 5 轮");
-    let custom = AgentProfile {
-        id: "explorer".into(),
-        origin: AgentOrigin::Custom,
-        ..parse_agent(
-            "explorer",
-            "---\ndescription: mine\n---\n",
-            AgentOrigin::Custom,
-        )
-        .unwrap()
-    };
-    assert!(custom.overrides_builtin(&builtins));
-    let other = AgentProfile {
-        id: "nope".into(),
-        ..custom.clone()
-    };
-    assert!(!other.overrides_builtin(&builtins));
 }
 
 /// 两侧内置清单逐字一致（profile.ts `BUILTIN_PROFILE_DOCS` ↔ 本模块
-/// `builtin_agents`）：id 集、description、tools、maxTurns、正文。
+/// `builtin_agents`）：id、name、description、tools、maxTurns、正文。
 /// 防止「两处各存一份」的同步契约静默烂掉——扩展侧改了这边忘改就红。
-/// `name` 只是显示名：id 仍是文件名（扩展按 id 点名），键省略回落 id。
-#[test]
-fn name_is_display_only_and_roundtrips() {
-    let text = "---\nname: 新建子代理\ndescription: 我的探索员\ntools: read-only\n---\n\n干活。\n";
-    let p = parse_agent("subagent-1", text, AgentOrigin::Custom).unwrap();
-    assert_eq!(p.id, "subagent-1", "文件名才是 id");
-    assert_eq!(p.display_name(), "新建子代理");
-    assert!(p.unknown.is_empty(), "name 是已知键，不该进 unknown 透传");
-    let again = parse_agent("subagent-1", &serialize_agent(&p), AgentOrigin::Custom).unwrap();
-    assert_eq!(
-        again.name.as_deref(),
-        Some("新建子代理"),
-        "写回再读不丢显示名"
-    );
-    assert_eq!(again.append_system_prompt.as_deref(), Some("干活。"));
-    let bare = parse_agent(
-        "explorer",
-        "---\ndescription: x\n---\n",
-        AgentOrigin::Custom,
-    )
-    .unwrap();
-    assert_eq!(bare.display_name(), "explorer", "键省略 = 直接用 id 展示");
-}
-
 #[test]
 fn builtins_match_extension_docs() {
+    // (id, name, description, tools, max_turns, body)——与扩展侧逐字同步
     let docs = [
         (
-            "explorer",
+            EXPLORER_ID,
+            "本地探索者",
             "只读探索 · 调研与定位",
             Some("read-only"),
             None,
             "你是只读探索员：调研代码、定位实现、回答问题。\n不执行任何写操作。",
         ),
         (
-            "general-purpose",
+            GENERAL_PURPOSE_ID,
+            "通用子代理",
             "通用子代理 · 复杂调研、代码检索、多步任务",
             None,
             None,
             "你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n可使用会话的全部工具，按需读写文件与执行命令。",
         ),
         (
-            "summarizer",
+            SUMMARIZER_ID,
+            "摘要机",
             "无状态摘要 · 阅读文件或内容按要求总结",
             Some("read-only"),
             Some(5),
@@ -305,11 +290,12 @@ fn builtins_match_extension_docs() {
     ];
     let builtins = builtin_agents();
     assert_eq!(builtins.len(), docs.len());
-    for (id, description, tools, max_turns, body) in docs {
+    for (id, name, description, tools, max_turns, body) in docs {
         let a = builtins
             .iter()
             .find(|b| b.id == id)
             .unwrap_or_else(|| panic!("builtin {id} missing"));
+        assert_eq!(a.name.as_deref(), Some(name), "{id} name 与扩展侧不一致");
         assert_eq!(
             a.description, description,
             "{id} description 与扩展侧不一致"
@@ -322,9 +308,9 @@ fn builtins_match_extension_docs() {
             "{id} 正文与扩展侧不一致"
         );
     }
-    // skills 三态（044-0）：explorer/summarizer 关闭 = Some(空)，gp 继承 = None
+    // skills 三态（044-0）：本地探索者/摘要机关闭 = Some(空)，通用子代理继承 = None
     let closed = Some(Vec::new());
-    for id in ["explorer", "summarizer"] {
+    for id in [EXPLORER_ID, SUMMARIZER_ID] {
         let a = builtins.iter().find(|b| b.id == id).unwrap();
         assert_eq!(a.skills, closed, "{id} skills 应为关闭（裸键）");
         assert!(
@@ -332,14 +318,62 @@ fn builtins_match_extension_docs() {
             "{id} 序列化必须写出裸 skills 键"
         );
     }
-    let gp = builtins.iter().find(|b| b.id == "general-purpose").unwrap();
-    assert_eq!(gp.skills, None, "general-purpose skills 继承（不写键）");
+    let gp = builtins
+        .iter()
+        .find(|b| b.id == GENERAL_PURPOSE_ID)
+        .unwrap();
+    assert_eq!(gp.skills, None, "通用子代理 skills 继承（不写键）");
     // 摘要机的定义性特征：不继承环境（044-0）——不注入 AGENTS.md + cwd 落 PF 数据目录
-    let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
+    let sum = builtins.iter().find(|b| b.id == SUMMARIZER_ID).unwrap();
     assert_eq!(sum.inject_agents_md, Some(false));
     assert_eq!(sum.cwd.as_deref(), Some(CWD_PF_DATA));
-    let ex = builtins.iter().find(|b| b.id == "explorer").unwrap();
+    let ex = builtins.iter().find(|b| b.id == EXPLORER_ID).unwrap();
     assert_eq!(ex.inject_agents_md, Some(true), "explorer 继承环境");
+}
+
+/// name = 点名句柄 + 显示名；id = 不可见短 UUID。name 往返不丢、键省略
+/// （迁移残留）回落 id 展示。
+#[test]
+fn name_is_display_only_and_roundtrips() {
+    let text = "---\nname: 新建子代理\ndescription: 我的探索员\ntools: read-only\n---\n\n干活。\n";
+    let p = parse_agent("subagent-1", text, AgentOrigin::Custom).unwrap();
+    assert_eq!(p.id, "subagent-1", "文件名才是 id（不可见句柄）");
+    assert_eq!(p.display_name(), "新建子代理");
+    assert!(p.unknown.is_empty(), "name 是已知键，不该进 unknown 透传");
+    let again = parse_agent("subagent-1", &serialize_agent(&p), AgentOrigin::Custom).unwrap();
+    assert_eq!(
+        again.name.as_deref(),
+        Some("新建子代理"),
+        "写回再读不丢显示名"
+    );
+    assert_eq!(again.append_system_prompt.as_deref(), Some("干活。"));
+    let bare = parse_agent(
+        "legacy-file",
+        "---\ndescription: x\n---\n",
+        AgentOrigin::Custom,
+    )
+    .unwrap();
+    assert_eq!(
+        bare.display_name(),
+        "legacy-file",
+        "键省略（迁移残留）= 直接用 id 展示"
+    );
+}
+
+/// 新建 id：短 UUID 格式 + 进程内多次调用不重复。
+#[test]
+fn new_agent_id_is_short_uuid_and_unique() {
+    let short_uuid = |s: &str| {
+        s.len() == 8
+            && s.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    };
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..200 {
+        let id = new_agent_id();
+        assert!(short_uuid(&id), "{id} 必须是 8 位小写 hex 短 UUID");
+        assert!(seen.insert(id), "进程内重复 id: 碰撞");
+    }
 }
 
 #[test]

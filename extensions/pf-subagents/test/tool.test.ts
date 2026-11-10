@@ -186,19 +186,20 @@ describe("delegation description", () => {
 		const text = delegationDescription({
 			inheritsParentContext: false,
 			profileSummaries: [
-				{ id: "explorer", description: "只读探索 · 调研与定位", tools: "read-only" },
-				{ id: "general-purpose", description: "通用子代理 · 复杂调研、代码检索、多步任务" },
+				{ id: "e1a7c052", name: "本地探索者", description: "只读探索 · 调研与定位", tools: "read-only" },
+				{ id: "9f3d2b84", name: "通用子代理", description: "通用子代理 · 复杂调研、代码检索、多步任务" },
 			],
 		});
-		assert.match(text, /- explorer: 只读探索 · 调研与定位 \(tools: read-only\)/);
-		assert.match(text, /- general-purpose: 通用子代理.*\(tools: inherit\)/);
-		assert.doesNotMatch(text, /explorer, writer/);
+		// 点名句柄 = name（id 不可见，不进清单）
+		assert.match(text, /- 本地探索者: 只读探索 · 调研与定位 \(tools: read-only\)/);
+		assert.match(text, /- 通用子代理: 通用子代理.*\(tools: inherit\)/);
+		assert.doesNotMatch(text, /e1a7c052/);
 	});
 
-	it("degrades a summary without a description to a bare id line", () => {
+	it("degrades a summary without a description to a bare name line", () => {
 		const text = delegationDescription({
 			inheritsParentContext: false,
-			profileSummaries: [{ id: "broken", description: "" }],
+			profileSummaries: [{ id: "broken", name: "broken", description: "" }],
 		});
 		assert.match(text, /- broken/);
 	});

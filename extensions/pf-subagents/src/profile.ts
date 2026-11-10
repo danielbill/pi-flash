@@ -34,15 +34,25 @@ export const DEFAULT_MAX_TURNS = 100;
 
 /**
  * Built-in profiles shipped with the extension (044-1 §0：内置 = 扩展代码内
- * 常量，只读，同名自定义文件覆盖；自定义 > 内置与目录 shadow 同序)。
+ * 常量，只读)。
  *
- * 内容须与 PF Settings 页的内置清单逐字一致（crates/pi-link/src/agents.rs
+ * 2026-11-10 id 语义重定义：id = 不可见短 UUID（程序内调用句柄 + 文件名），
+ * 用户与模型都看不见、无含义、只需唯一；委派点名走 `name`（中文显示名，
+ * 全局唯一，PF Settings 强制查重）——内置三件同样如此。id 与 name 须与
+ * PF Settings 页的内置清单逐字一致（crates/pi-link/src/agents.rs
  * `builtin_agents`）——两侧各存一份，改动时同步。没有这份常量，委派模型
- * 永远无从得知有哪些 profile 可点名（文件系统之外它看不见任何清单）。
+ * 永远无从得知有哪些子代理可点名（文件系统之外它看不见任何清单）。
  */
+export const BUILTIN_IDS = {
+	explorer: "e1a7c052",
+	generalPurpose: "9f3d2b84",
+	summarizer: "c58e07af",
+} as const;
+
 export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
-	explorer: [
+	[BUILTIN_IDS.explorer]: [
 		"---",
+		"name: 本地探索者",
 		"description: 只读探索 · 调研与定位",
 		"tools: read-only",
 		// 044-0 技能设置三态：键省略 = 继承系统开启集；裸键 = 关闭
@@ -53,8 +63,9 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 	].join("\n"),
 	// 2026-10-19 拍板：dsh 无出厂内置，对齐 ZCode 的两内置（general-purpose +
 	// Explore，explorer 即 Explore 位）。不写 `tools:` = 继承委派者全部工具。
-	"general-purpose": [
+	[BUILTIN_IDS.generalPurpose]: [
 		"---",
+		"name: 通用子代理",
 		"description: 通用子代理 · 复杂调研、代码检索、多步任务",
 		// 工具/技能/环境全继承：不写 tools / skills / injectAgentsMd；
 		// 轮次「指定」= 不写 maxTurns（委派方给 maxloop）
@@ -64,8 +75,9 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 	].join("\n"),
 	// 044-0 第三枚内置：摘要机——无状态摘要，不注入 AGENTS.md（不继承环境
 	// 上下文），只读工具集。适用本地/廉价模型跑系统日志摘要等批量总结。
-	summarizer: [
+	[BUILTIN_IDS.summarizer]: [
 		"---",
+		"name: 摘要机",
 		"description: 无状态摘要 · 阅读文件或内容按要求总结",
 		"tools: read-only",
 		// 不继承环境（044-0「no cwd」）：cwd 落 PF 数据目录、不注入 AGENTS.md
@@ -105,6 +117,10 @@ export const TOOL_TIER_WHITELISTS: Record<Exclude<ToolTier, "inherit">, readonly
 
 export interface Profile {
 	id: string;
+	/** Delegation handle + display name (2026-11-10 重定义)：模型在 `agent`
+	 * 工具的 `profile` 参数里传它；全局唯一（PF 强制）。`undefined` = 迁移
+	 * 残留，展示回落到 id。 */
+	name?: string;
 	description?: string;
 	model?: string;
 	/** Replacement persona; wins over the body when both are present. */
@@ -238,6 +254,7 @@ function unquote(value: string): string {
 
 export function profileFromDocument(id: string, text: string, source: string): Profile {
 	const { data, body } = parseFrontmatter(text, source);
+	const name = typeof data.name === "string" && data.name !== "" ? data.name : undefined;
 	const tools = data.tools;
 	if (tools !== undefined && !TOOL_TIERS.includes(tools as ToolTier)) {
 		throw new SubagentError(
@@ -295,6 +312,7 @@ export function profileFromDocument(id: string, text: string, source: string): P
 	}
 	return {
 		id,
+		name,
 		description: typeof data.description === "string" ? data.description : undefined,
 		model: typeof data.model === "string" && data.model !== "" ? data.model : undefined,
 		systemPrompt: typeof data.systemPrompt === "string" && data.systemPrompt !== "" ? data.systemPrompt : undefined,
@@ -329,30 +347,73 @@ export function resolveProfileCwd(
 	return dataDir;
 }
 
-/** Load one profile by id; the project directory shadows the global one, and
- * the built-in constant is the last fallback before failing. */
-export async function loadProfile(id: string, paths: ProfilePaths): Promise<Profile> {
-	if (!/^[A-Za-z0-9._-]+$/.test(id)) {
-		throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `invalid profile id: ${id}`);
+/** The profile's effective name: frontmatter `name` if non-empty, else its id
+ * (migration leftovers). `parseFrontmatter` failures degrade to `undefined` —
+ * name matching skips corrupt docs; loading them by id still fails closed. */
+function effectiveName(doc: string): string | undefined {
+	try {
+		const { data } = parseFrontmatter(doc, "<name>");
+		return typeof data.name === "string" && data.name !== "" ? data.name : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Load one profile by **key**: the delegation handle is the profile `name`
+ * (the model passes what the tool description lists); ids still resolve as a
+ * fallback for legacy transcripts and hand-written docs. Name matching scans
+ * built-ins, then the global dir, then the project dir; id lookup keeps the
+ * classic shadow order (project > global > built-in). Nothing found fails
+ * closed with `PROFILE_INVALID`. */
+export async function loadProfile(key: string, paths: ProfilePaths): Promise<Profile> {
+	for (const [id, doc] of Object.entries(BUILTIN_PROFILE_DOCS)) {
+		if (effectiveName(doc) === key) {
+			return profileFromDocument(id, doc, "<builtin>");
+		}
+	}
+	for (const dir of [paths.globalDir, paths.projectDir]) {
+		let ids: string[];
+		try {
+			ids = (await readdir(dir)).filter((e) => e.endsWith(".md")).map((e) => e.slice(0, -3)).sort();
+		} catch {
+			continue;
+		}
+		for (const id of ids) {
+			const file = join(dir, `${id}.md`);
+			try {
+				const text = await readFile(file, "utf8");
+				if (effectiveName(text) === key) {
+					return profileFromDocument(id, text, file);
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				throw asProfileError(error, file);
+			}
+		}
+	}
+	// id 兑底：旧转录/手写文档仍可能直接传 id（不可见短 UUID 或迁移残留文件名）
+	if (!/^[A-Za-z0-9._-]+$/.test(key)) {
+		throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `profile not found: ${key}`);
 	}
 	for (const dir of [paths.projectDir, paths.globalDir]) {
-		const file = join(dir, `${id}.md`);
+		const file = join(dir, `${key}.md`);
 		try {
-			return profileFromDocument(id, await readFile(file, "utf8"), file);
+			return profileFromDocument(key, await readFile(file, "utf8"), file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 			throw asProfileError(error, file);
 		}
 	}
-	const doc = BUILTIN_PROFILE_DOCS[id];
+	const doc = BUILTIN_PROFILE_DOCS[key];
 	if (doc !== undefined) {
-		return profileFromDocument(id, doc, "<builtin>");
+		return profileFromDocument(key, doc, "<builtin>");
 	}
-	throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `profile not found: ${id}`);
+	throw new SubagentError(SubagentErrorCode.PROFILE_INVALID, `profile not found: ${key}`);
 }
 
-/** List profile ids from both directories plus the built-ins; project entries
- * win on collision (ids are unique regardless of which side provides them). */
+/** List profile ids from both directories plus the built-ins; same-id files
+ * occupy the built-in's slot (migration leftovers; ids are unique regardless
+ * of which side provides them). */
 export async function listProfiles(paths: ProfilePaths): Promise<string[]> {
 	const ids = new Set<string>(Object.keys(BUILTIN_PROFILE_DOCS));
 	for (const dir of [paths.globalDir, paths.projectDir]) {
@@ -373,6 +434,9 @@ export async function listProfiles(paths: ProfilePaths): Promise<string[]> {
  * a profile without reading the whole document. */
 export interface ProfileSummary {
 	id: string;
+	/** Delegation handle: what the model passes as `profile`. Falls back to
+	 * the id for migration leftovers without a `name` key. */
+	name: string;
 	description: string;
 	/** Tool tier; `undefined` = inherit the delegator's assembly. */
 	tools?: ToolTier;
@@ -382,9 +446,10 @@ export interface ProfileSummary {
  * tool-description building — `registerTool` takes a static string, so the
  * delegation tool's view of the nameable profiles is computed once at
  * registration. Fresh sessions see newly written profile files (PF spawns one
- * pi process per session). Shadow order matches {@link loadProfile}: project
- * file > global file > built-in. A corrupt document still lists (bare id);
- * actually delegating to it fails closed via {@link loadProfile}. */
+ * pi process per session). Same-id files occupy the built-in's slot; name
+ * uniqueness (names are the delegation handle) is enforced PF-side. A corrupt
+ * document still lists (bare id); actually delegating to it fails closed via
+ * {@link loadProfile}. */
 export function listProfilesSync(paths: ProfilePaths): ProfileSummary[] {
 	const docs = new Map<string, string>(Object.entries(BUILTIN_PROFILE_DOCS));
 	for (const dir of [paths.globalDir, paths.projectDir]) {
@@ -405,9 +470,10 @@ export function listProfilesSync(paths: ProfilePaths): ProfileSummary[] {
 	return [...docs.entries()]
 		.sort(([a], [b]) => (a < b ? -1 : 1))
 		.map(([id, doc]) => {
-			const summary: ProfileSummary = { id, description: "" };
+			const summary: ProfileSummary = { id, name: id, description: "" };
 			try {
 				const { data } = parseFrontmatter(doc, id);
+				if (typeof data.name === "string" && data.name !== "") summary.name = data.name;
 				if (typeof data.description === "string") summary.description = data.description;
 				if (TOOL_TIERS.includes(data.tools as ToolTier)) summary.tools = data.tools as ToolTier;
 			} catch {

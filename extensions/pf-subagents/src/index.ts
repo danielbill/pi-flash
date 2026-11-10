@@ -423,17 +423,18 @@ export default function piSubagents(pi: ExtensionAPI): void {
 			resolveComposition: (request) => resolveComposition(ctx, request.profile, request.model),
 		});
 
-	// 模型靠这段描述知道有哪些 profile 可点名——不列出来，内置永远
+	// 模型靠这段描述知道有哪些子代理可点名——不列出来，内置永远
 	// 没人用（文件系统之外它看不见任何清单）。注册期同步扫盘；PF 每
 	// 会话独立 spawn pi（cwd = 项目根），新建 profile 下次会话可见。
-	// 清单带 frontmatter 摘要（description），模型按意图挑而不是盲猜 id。
+	// 清单带 frontmatter 摘要，模型按意图挑；点名句柄 = `name`（显示名，
+	// 全局唯一），id 是不可见句柄不出现在清单里。
 	const profiles = listProfilesSync(defaultProfilePaths(process.cwd()));
 	pi.registerTool({
 		name: TOOL_NAME,
 		label: "Subagent",
 		description: delegationDescription({
 			inheritsParentContext: false,
-			allowedProfiles: profiles.map((p) => p.id),
+			allowedProfiles: profiles.map((p) => p.name),
 			profileSummaries: profiles,
 			// B3①：容量上限进描述——模型按它节流，被拒也知道是等槽位重派
 			// 而不是放弃。
@@ -705,14 +706,16 @@ function pfDataDir(): string | undefined {
 
 async function resolveComposition(
 	ctx: ExtensionContext,
-	profileId: string | undefined,
+	// 点名句柄：模型传 `name`（显示名），旧转录/手写文档也可能直接传 id ——
+	// loadProfile 两者都解析
+	profileKey: string | undefined,
 	model: string | undefined,
 ): Promise<ResolvedComposition> {
 	// 每次组合都重读：模型兜底与轮数预算同属 module config
 	const config = loadModuleConfig(defaultProfilePaths(ctx.cwd).globalDir).config;
 	// 模块级默认模型已废除（2026-11-10）：不点名 profile = 继承父会话模型
-	if (!profileId) return { model };
-	const profile = await loadProfile(profileId, defaultProfilePaths(ctx.cwd));
+	if (!profileKey) return { model };
+	const profile = await loadProfile(profileKey, defaultProfilePaths(ctx.cwd));
 	const tier = profile.tools && profile.tools !== "inherit" ? profile.tools : undefined;
 	return {
 		systemPrompt: profile.systemPrompt,

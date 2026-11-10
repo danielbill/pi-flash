@@ -90,12 +90,10 @@ pub(crate) fn mc_agents_view(
         .into_any_element()
 }
 
-/// 列表行：7px 圆点 + 名称（+ 覆盖内置徽标）。
+/// 列表行：7px 圆点 + 名称（name = 点名句柄 + 显示名）。
 fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> gpui::AnyElement {
     let t = T();
     let id = a.id.clone();
-    let builtins: Vec<AgentProfile> = pi_link::agents::builtin_agents();
-    let overrides = a.overrides_builtin(&builtins);
     let broken = a.error.is_some();
     widgets::sidebar_item(format!("ag-{}", a.id), active)
         .bg(rgb(t.bg))
@@ -117,17 +115,5 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
                 .when(broken, |d| d.text_color(rgb(t.danger)))
                 .child(SharedString::from(a.display_name().to_string())),
         )
-        .when(overrides, |d| {
-            d.child(
-                div()
-                    .px(px(5.))
-                    .py(px(1.))
-                    .rounded(px(3.))
-                    .bg(gpui::hsla(0., 0., 0.5, 0.12))
-                    .text_size(crate::appearance::ui_size(10.))
-                    .text_color(rgb(t.text_dim))
-                    .child(tr("agents.overrides_builtin")),
-            )
-        })
         .into_any_element()
 }

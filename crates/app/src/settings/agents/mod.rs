@@ -146,10 +146,20 @@ impl Chat {
             self.mc_set_error(&tr("agents.name_invalid"), cx);
             return;
         }
-        // id = 文件名（扩展按它点名），名称只是显示名：既有条目 id 稳定不变，
-        // 新建条目按名称派生（ASCII 合法名可直用，否则顺序号 subagent-N）。
+        // 名称 = 委派点名句柄，全局唯一（内置 + 自定义一起查重；编辑时排除自己）
+        if self
+            .cfg
+            .mc_agents
+            .iter()
+            .any(|a| a.id != section && a.display_name() == name)
+        {
+            self.mc_set_error(&tr("agents.name_taken"), cx);
+            return;
+        }
+        // id = 不可见短 UUID（程序内句柄 + 文件名）：既有条目 id 稳定不变，
+        // 新建条目重摇到未占用为止；名称不参与 id 派生。
         let id = if section == AG_NEW || section.is_empty() {
-            self.mc_agent_unique_id(&name)
+            self.mc_agent_unique_id()
         } else {
             section.clone()
         };
@@ -269,8 +279,8 @@ impl Chat {
         }
     }
 
-    /// 内置「复制为自定义」：**新建**一个自定义条目（新 id），内置本身保持可见。
-    /// 注意不能用原 id 写盘——同 id 的自定义文件会遮蔽内置，列表里内置就消失。
+    /// 内置「复制为自定义」：**新建**一个自定义条目（新短 UUID id），内置
+    /// 本身保持可见。名称置「新建子代理」并唯一化（重名退「新建子代理2」…）。
     pub(crate) fn mc_agent_copy_builtin(&mut self, id: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let Some(a) = self.cfg.mc_agents.iter().find(|a| a.id == id).cloned() else {
@@ -281,11 +291,12 @@ impl Chat {
             self.mc_set_error(&e.to_string(), cx);
             return;
         }
-        let new_id = self.mc_agent_unique_copy_id(&id);
+        let new_id = self.mc_agent_unique_id();
+        let new_name = self.mc_agent_unique_name(&tr("agents.new_default").to_string());
         let path = dir.join(format!("{new_id}.md"));
         let mut copy = a;
         copy.id = new_id.clone();
-        copy.name = Some(tr("agents.new_default").to_string());
+        copy.name = Some(new_name);
         copy.origin = AgentOrigin::Custom;
         copy.path = None;
         if let Err(e) = std::fs::write(&path, pi_link::agents::serialize_agent(&copy)) {
@@ -296,7 +307,7 @@ impl Chat {
         self.mc_agent_select(new_id, cx);
     }
 
-    /// id（= 文件名）是否已被占用：当前清单（含内置）与磁盘都算。
+    /// id（= 不可见短 UUID + 文件名）是否已被占用：当前清单（含内置）与磁盘都算。
     fn mc_agent_id_taken(&self, id: &str) -> bool {
         self.cfg.mc_agents.iter().any(|a| a.id == id)
             || pi_link::agents::agents_dir()
@@ -304,30 +315,23 @@ impl Chat {
                 .exists()
     }
 
-    /// 新条目 id：ASCII 合法名直用（模型点名好读），否则 `subagent-N` 序号。
-    fn mc_agent_unique_id(&self, name: &str) -> String {
-        let ascii_ok = !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
-        if ascii_ok && !self.mc_agent_id_taken(name) {
-            return name.to_string();
-        }
-        (1..)
-            .map(|n| format!("subagent-{n}"))
+    /// 新条目 id：短 UUID 重摇到未占用为止（id 无含义，唯一即可）。
+    fn mc_agent_unique_id(&self) -> String {
+        (0..)
+            .map(|_| pi_link::agents::new_agent_id())
             .find(|candidate| !self.mc_agent_id_taken(candidate))
             .expect("unbounded candidate space")
     }
 
-    /// 复制体 id：`{id}-copy`、`{id}-copy-2`…… 取第一个没占用的。
-    fn mc_agent_unique_copy_id(&self, base: &str) -> String {
-        let first = format!("{base}-copy");
-        if !self.mc_agent_id_taken(&first) {
-            return first;
+    /// 新条目名称：唯一化（名称 = 点名句柄，禁止同名）。
+    fn mc_agent_unique_name(&self, base: &str) -> String {
+        let taken = |n: &str| self.cfg.mc_agents.iter().any(|a| a.display_name() == n);
+        if !taken(base) {
+            return base.to_string();
         }
         (2..)
-            .map(|n| format!("{base}-copy-{n}"))
-            .find(|candidate| !self.mc_agent_id_taken(candidate))
+            .map(|i| format!("{base}{i}"))
+            .find(|candidate| !taken(candidate))
             .expect("unbounded candidate space")
     }
 

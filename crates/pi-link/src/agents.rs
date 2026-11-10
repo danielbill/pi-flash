@@ -13,8 +13,9 @@
 use std::path::{Path, PathBuf};
 
 /// v1 已知字段（044-1 §3）。新增字段时同步扩展侧 `Profile` 与本 struct。
-/// 显示名（2026-11-10）：列表/表单展示用，可中文；`id` 仍是文件名（扩展按
-/// id 点名）。键省略 = 直接展示 id。
+/// 名称（2026-11-10 重定义）：**委派点名句柄 + 列表/表单显示名**，可中文，
+/// 全局唯一（PF 侧强制查重）；`id` 是不可见短 UUID（程序内句柄 + 文件
+/// 名）。键省略（迁移残留）= 展示 id。
 pub const FIELD_NAME: &str = "name";
 pub const FIELD_TOOLS: &str = "tools";
 pub const FIELD_MAX_TURNS: &str = "maxTurns";
@@ -83,8 +84,11 @@ pub enum MaxTurnsTier {
 /// 职责，PF 保证可修，044-1 §2.2）。
 #[derive(Debug, Clone)]
 pub struct AgentProfile {
+    /// 不可见短 UUID：纯程序内调用句柄 + 文件名，用户与模型都看不见、无
+    /// 含义、只需唯一；委派点名走 [`AgentProfile::name`]。
     pub id: String,
-    /// frontmatter 的 `name`：显示名（可中文），None = 直接展示 `id`。
+    /// frontmatter 的 `name`：委派点名句柄 + 显示名（可中文，全局唯一），
+    /// None（迁移残留）= 展示回落到 `id`。
     pub name: Option<String>,
     /// frontmatter 的 `description`（列表展示）。
     pub description: String,
@@ -157,15 +161,10 @@ impl AgentProfile {
     pub fn prompt_text(&self) -> String {
         self.append_system_prompt.clone().unwrap_or_default()
     }
-
-    /// 内置清单里同名条目是否被本自定义条目覆盖（044-1 §0 同名覆盖）。
-    pub fn overrides_builtin(&self, builtins: &[AgentProfile]) -> bool {
-        self.origin.is_custom() && builtins.iter().any(|b| b.id == self.id)
-    }
 }
 
 mod builtin;
-pub use builtin::builtin_agents;
+pub use builtin::{EXPLORER_ID, GENERAL_PURPOSE_ID, SUMMARIZER_ID, builtin_agents};
 mod module_config;
 pub use module_config::{
     CAPACITY_UI_MAX, CAPACITY_UI_MIN, MODULE_CONFIG_FILENAME, capacity, ensure_module_config,
@@ -578,7 +577,33 @@ pub fn migrate_agents_from(from: &Path, to: &Path) {
     }
 }
 
-/// 全局目录 + 内置（自定义 > 内置同名覆盖；内置只留未被覆盖的）。
+/// 新建 Agent 的 id：短 UUID（8 位小写 hex）。id 是纯程序内调用句柄（兼
+/// 文件名），用户与模型都不可见、不需要有含义、只需唯一——委派点名走
+/// `name`。无随机依赖：splitmix64 终混「时间纳秒 ^ 进程 id ^ 进程内原子
+/// 计数」，格式落在扩展侧 id 校验 `[A-Za-z0-9._-]+` 内；跨调用唯一性由
+/// 调用方查重重摇保证（见 app `mc_agent_unique_id`）。
+pub fn new_agent_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut x = nanos
+        ^ (std::process::id() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_mul(0x2545_F491_4F6C_DD1D);
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    format!("{:08x}", x & 0xFFFF_FFFF)
+}
+
+/// 全局目录 + 内置。同 id 的自定义文件占住内置槽位（迁移残留/手写 uuid
+/// 文件名的兜底去重，纯 id 级、无显示层语义）——**不存在「自定义覆盖内
+/// 置」**：名称全局唯一（PF 侧强制），委派按名称点名。
 pub fn list_all_agents() -> Vec<AgentProfile> {
     let custom = scan_agents_dir(&agents_dir());
     let mut builtins: Vec<AgentProfile> = builtin_agents()
