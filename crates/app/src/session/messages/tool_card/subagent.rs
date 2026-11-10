@@ -21,8 +21,11 @@ const ARGS_FIELDS_CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 /// （`label` 优先，退回 `prompt` 前 25 字）。带线程局部 LRU。
 fn subagent_args_fields(args: &str) -> (String, String) {
     let inherit = tr("subagent.no_profile").to_string();
+    // 流式生成中（args 未到/半截 JSON）用「委派中……」占位——「继承」只留
+    // 给 args 收齐后确实没点名 profile 的场景（语义：继承委派者）。
+    let dispatching = tr("subagent.dispatching").to_string();
     if args.is_empty() {
-        return (inherit, String::new());
+        return (dispatching.clone(), String::new());
     }
     let key = (crate::editor::markdown::hash_str(args), args.len());
     ARGS_FIELDS_CACHE.with(|cell| {
@@ -35,7 +38,7 @@ fn subagent_args_fields(args: &str) -> (String, String) {
                 return out;
             }
         }
-        let out = subagent_args_fields_uncached(args, &inherit);
+        let out = subagent_args_fields_uncached(args, &inherit, &dispatching);
         cache.push_back((key, (args.to_string(), out.clone())));
         cache.push_back((key, (args.to_string(), out.clone())));
         while cache.len() > ARGS_FIELDS_CACHE_CAP
@@ -49,9 +52,9 @@ fn subagent_args_fields(args: &str) -> (String, String) {
     })
 }
 
-fn subagent_args_fields_uncached(args: &str, inherit: &str) -> (String, String) {
+fn subagent_args_fields_uncached(args: &str, inherit: &str, dispatching: &str) -> (String, String) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(args) else {
-        return (inherit.to_string(), String::new());
+        return (dispatching.to_string(), String::new());
     };
     let profile = v
         .get("profile")
@@ -349,12 +352,13 @@ mod args_fields_tests {
 
     #[test]
     fn partial_args_fall_back_without_panicking() {
+        // 半截 JSON / 未到达 = 流式生成中 →「委派中……」占位，不再是「继承」
         let (p, t) = subagent_args_fields(r#"{"profile":"expl"#);
-        assert_eq!(p, tr("subagent.no_profile"));
+        assert_eq!(p, tr("subagent.dispatching"));
         assert!(t.is_empty());
         assert_eq!(
             subagent_args_fields(""),
-            (tr("subagent.no_profile").to_string(), String::new())
+            (tr("subagent.dispatching").to_string(), String::new())
         );
     }
 

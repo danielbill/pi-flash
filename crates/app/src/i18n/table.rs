@@ -854,6 +854,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("subagent.row.tools", "工具", "工具", " tools"),
     ("subagent.failed", "失败", "失敗", "Failed"),
     ("subagent.no_profile", "继承", "繼承", "Inherit"),
+    ("subagent.dispatching", "委派中……", "委派中……", "Dispatching…"),
     ("subagent.observer", "只读观察窗 —— 子代理由主会话管理，此处仅观察", "只讀觀察窗 —— 子代理由主會話管理，此處僅觀察", "Read-only observer — this subagent is managed from the main session"),
     ("subagent.n_agents", "个子代理", "個子代理", "sub-agents"),
     ("subagent.total", "合计", "合計", "Total"),
