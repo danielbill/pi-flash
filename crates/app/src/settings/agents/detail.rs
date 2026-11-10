@@ -74,35 +74,20 @@ pub(super) fn agent_detail(
             }
         })
         .child(div().flex_1())
-        .when(!is_new, |d| {
-            // 删除（仅自定义）/ 复制为自定义（仅内置）
-            if builtin {
-                d.child(config_button(
-                    "ag-copy",
-                    weak,
-                    &tr("agents.copy_custom"),
-                    Btn::Secondary,
-                    true,
-                    false,
-                    {
-                        let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                        move |c, cx| c.mc_agent_copy_builtin(id.clone(), cx)
-                    },
-                ))
-            } else {
-                d.child(config_button(
-                    "ag-del",
-                    weak,
-                    &tr("agents.delete"),
-                    Btn::Danger,
-                    true,
-                    false,
-                    {
-                        let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                        move |c, cx| c.mc_agent_delete(id.clone(), cx)
-                    },
-                ))
-            }
+        .when(!is_new && !builtin, |d| {
+            // 删除（仅自定义；复制入口已移列表行 hover [复制]，2026-11-10）
+            d.child(config_button(
+                "ag-del",
+                weak,
+                &tr("agents.delete"),
+                Btn::Danger,
+                true,
+                false,
+                {
+                    let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
+                    move |c, cx| c.mc_agent_delete(id.clone(), cx)
+                },
+            ))
         })
         .when(is_new || !builtin, |d| {
             d.child(config_button(

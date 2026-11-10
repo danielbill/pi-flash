@@ -48,7 +48,7 @@ pub const DEFAULT_MAX_TURNS: u32 = 100;
 /// Agent 定义的来源分组。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentOrigin {
-    /// 扩展随包出厂：只读，可「复制为自定义」。
+    /// 扩展随包出厂：只读，可复制为自定义条目。
     Builtin,
     /// 用户在 `~/.pi/agent/agents/` 自建：可建/改/删。
     Custom,

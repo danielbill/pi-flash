@@ -319,9 +319,10 @@ impl Chat {
         }
     }
 
-    /// 内置「复制为自定义」：**新建**一个自定义条目（新短 UUID id），内置
-    /// 本身保持可见。名称置「新建子代理」并唯一化（重名退「新建子代理2」…）。
-    pub(crate) fn mc_agent_copy_builtin(&mut self, id: String, cx: &mut Context<Self>) {
+    /// 复制条目（列表行 hover [复制]，内置/自定义通用）：**新建**一个自定义
+    /// 条目（新短 UUID id），来源条目保持可见。名称置「新建子代理」并唯一化
+    /// （重名退「新建子代理2」…）。
+    pub(crate) fn mc_agent_copy(&mut self, id: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let Some(a) = self.cfg.mc_agents.iter().find(|a| a.id == id).cloned() else {
             return;

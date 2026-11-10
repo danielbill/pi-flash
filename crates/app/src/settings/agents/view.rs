@@ -90,13 +90,18 @@ pub(crate) fn mc_agents_view(
         .into_any_element()
 }
 
-/// 列表行：7px 圆点 + 名称（name = 点名句柄 + 显示名）。
+/// 列表行：7px 圆点 + 名称（name = 点名句柄 + 显示名）+ hover 浮现「复制」
+/// （2026-11-10 从右表单头「复制为自定义」迁来，内置/自定义通用，右缘与组头
+/// 「新建」对齐）。显影 = 行 group + 绘制期 opacity（命中区不变，psp 控制栏
+/// 同款；GroupHitboxes 按名分栈、paint 子树内 push/pop，同名组不跨行显影）。
 fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> gpui::AnyElement {
     let t = T();
     let id = a.id.clone();
     let broken = a.error.is_some();
+    let reveal = SharedString::from(format!("ag-row-{}", a.id));
     widgets::sidebar_item(format!("ag-{}", a.id), active)
         .bg(rgb(t.bg))
+        .group(reveal.clone())
         .on_mouse_down(MouseButton::Left, {
             let weak = weak.clone();
             let sel = id.clone();
@@ -114,6 +119,21 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
                 .text_ellipsis()
                 .when(broken, |d| d.text_color(rgb(t.danger)))
                 .child(SharedString::from(a.display_name().to_string())),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .opacity(0.)
+                .group_hover(reveal, |s| s.opacity(1.))
+                .child(config_button(
+                    format!("ag-copy-{}", a.id),
+                    weak,
+                    &tr("agents.copy"),
+                    Btn::Secondary,
+                    true,
+                    false,
+                    move |c, cx| c.mc_agent_copy(id.clone(), cx),
+                )),
         )
         .into_any_element()
 }

@@ -828,7 +828,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.specify", "指定", "指定", "Custom"),
     ("agents.save", "保存", "儲存", "Save"),
     ("agents.delete", "删除", "刪除", "Delete"),
-    ("agents.copy_custom", "复制为自定义", "複製為自訂", "Copy to custom"),
+    ("agents.copy", "复制", "複製", "Copy"),
     ("agents.readonly_builtin", "内置 · 只读", "內建 · 唯讀", "Built-in · read-only"),
     ("agents.name_taken", "名称已存在（子代理禁止同名）", "名稱已存在（子代理禁止同名）", "Name already exists (subagent names must be unique)"),
     ("agents.broken", "此定义已损坏，无法解析", "此定義已損毀，無法解析", "This definition is broken and cannot be parsed"),
