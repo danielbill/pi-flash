@@ -242,7 +242,12 @@ impl Chat {
         cx.notify();
     }
 
-    /// 删除自定义条目（进回收站）。
+    /// 删除自定义条目（进回收站）。trash **禁上主线程**：主线程被 winit
+    /// OleInitialize 成 STA，而 trash 按 Cargo.toml 配置请求 MTA——主线程
+    /// 直接 RPC_E_CHANGED_MODE(0x80010106) panic，且 gpui 帧不可 unwind、
+    /// 整进程 abort（删除子代理崩溃的根因）。同 file_actions_delete.rs
+    /// 范式：乐观摘除 + 真删下沉 background_spawn（线程池 MTA）+
+    /// catch_unwind 双保险，完成后回主线程收尾。
     pub(crate) fn mc_agent_delete(&mut self, id: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let Some(a) = self.cfg.mc_agents.iter().find(|a| a.id == id).cloned() else {
@@ -251,11 +256,46 @@ impl Chat {
         if !a.origin.is_custom() {
             return;
         }
-        if let Some(path) = a.path {
-            if let Err(e) = trash::delete(&path) {
-                self.mc_set_error(&e.to_string(), cx);
-                return;
-            }
+        // 乐观摘除：面板即时反馈，也防在飞期间重复投递（失败后收尾重读复原）
+        self.cfg.mc_agents.retain(|x| x.id != id);
+        cx.notify();
+        let Some(path) = a.path else {
+            // 无盘上文件的幽灵条目：不必过回收站，直接收尾
+            self.mc_agent_delete_finished(None, cx);
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            // 双保险：trash 内部若再 panic（如 COM 模式冲突），在 gpui 线
+            // 池的 FFI 回调里无法 unwind、会整进程 abort——就地 catch 降级
+            // 成 Err，走错误弹层而不是崩溃。
+            let res = cx
+                .background_spawn(async move {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| trash::delete(&path)))
+                        .unwrap_or_else(|_| {
+                            Err(trash::Error::Unknown {
+                                description: "trash::delete panicked".into(),
+                            })
+                        })
+                })
+                .await;
+            let _ = this.update(cx, |chat, cx| {
+                chat.mc_agent_delete_finished(Some(res), cx);
+            });
+        })
+        .detach();
+    }
+
+    /// 删除收尾（回主线程）：Err 弹错并重读（乐观摘除的条目从盘上复原，
+    /// 选中不动）；Ok 重读面板并选中第一条装进表单。
+    fn mc_agent_delete_finished(
+        &mut self,
+        res: Option<Result<(), trash::Error>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(Err(e)) = &res {
+            self.mc_set_error(&e.to_string(), cx);
+            self.reload_settings_panel();
+            return;
         }
         self.reload_settings_panel();
         if let Some(st) = self.dlg.settings.clone() {
