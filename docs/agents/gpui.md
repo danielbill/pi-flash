@@ -313,18 +313,28 @@ gpui 没有任何局部重绘——**每帧动画都是整窗重排+重绘**，r
 有 spinner 时单核 102%，无 spinner 隔离实例 2.3%；打字卡顿的真相是「每键一帧
 都在和 66fps 的动画帧抢 15ms 的整窗渲染」，spinner 一停卡顿即消失。oneshot
 动画（工具卡 chevron 150ms、ctx_tip 160ms）放完即停，无害；病源只有 repeat()：
-`ui::working_dots`(1500ms)、`ui::spinner`(900ms)、`ui::spark_spinner`(1800ms，
-8 针等分 ⇒ 仅 45° 对称，900ms 时视觉周期 112.5ms 看着飞快；2026-11-10 先降
-2400ms 嫌慢，定档 1800ms)、
+`ui::working_dots`(1500ms)、`ui::spinner`(900ms)、`ui::spark_spinner`(1600ms/
+30fps：8 针等分 ⇒ 仅 45° 对称，900ms 时视觉周期 112.5ms 看着飞快；2026-11-10
+降速路线 2400→1800「不够顺」→ 1600ms + fps 30，使每格恰好 6 帧、每帧恰好 2 个
+60Hz 刷新周期)、
 nav_panel 计时行(1000ms)、user_row loader(900ms)。
 
 规则：**repeat() 动画必须 `.with_fps(n)`**（vendored 补丁新增，旋转 spinner
-24、离散点阵 15、纯文本计时 2）。实现：`min_frame_interval` 进 `Animation`；
+24、星芒 30、离散点阵 15、纯文本计时 2）。实现：`min_frame_interval` 进 `Animation`；
 节流续帧不链帧，改 spawn `Timer::after` 延迟再 notify；且全局
 `AnimationFrameThrottle` 按窗口共享一个 pending 续帧——N 个 spinner 并存也只
 有 1/interval 的帧率，不会叠加。外部帧（输入/流式事件）照常随时重绘并按
 `state.start` 采样 delta，观感只有轻微步进。注意 timer 触发后 pending 在
 handle.update 闭包内移除，窗口已关则该条目滞留（按句柄为键，量级可忽略）。
+
+**限帧之后的「不流畅」是量化题，不是帧率高低题**（2026-11-10 真机反馈
+「速度对了但不流畅」，spinner 栈）：24fps ⇒ 帧间隔 41.67ms。① 对称图标
+（如 8 针等分 spark）一格（45°）要 duration/8/41.67 帧，非整数就格间 5/6 帧
+交替，**转速不变但每格耗时抖 20%、每秒抖 N 次**，眼睛读作「匀步不匀」；
+② 41.67ms 在 60Hz 上 = 2.5 个刷新周期 ⇒ 每帧时长在 2/3 周期间摆动（judder），
+144Hz 下 = 6.0 才整除。调参规则：**先让「一格」与「一帧」都落在整数上**
+（spark 取 1600ms/30fps ⇒ 每格 6 帧、每帧 33.33ms = 60Hz 的 2 周期），
+再谈快慢。
 
 **陷阱：`AnimationFrameThrottle` 必须用 `default_global` 取，禁 `global_mut`**
 （2026-11-09 崩溃根因）：该全局没有任何启动期 `set_global`，而 `global_mut`
