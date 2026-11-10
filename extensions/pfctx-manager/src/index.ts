@@ -289,14 +289,14 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 		name: "pfctx_manager",
 		label: "PF-settings-manager",
 		description: [
-			"Pi-Flash 动态自管理工具：查询并修改 PF 应用设置，效果与用户在设置界面操作完全一致（同一执行链，含即时生效与持久化）。",
+			"Pi-Flash 动态自管理：查询并修改 PF 应用设置，与在设置界面操作完全一致，含即时生效与持久化",
 			"",
 			"用法：",
 			'1. {action:"query"} — 返回全部参数目录（名称/含义/可设值）与当前值、pfctx.log 路径。首次先 query。',
 			'2. {action:"set", ops:[{"setting":"subagents.capacity","value":6}]} — 批量修改。目录外参数/越界值会被拒绝；set 为异步受理，之后用 query 确认生效值。',
-			"3. 所有变更记录在 pfctx.log（[agent] 宿主执行行 / [write] 落盘行 / [reload] 外部变更行），可用 bash tail 查看。",
+			"3. 变更记录见 pfctx.log（[agent] 宿主执行 / [write] 落盘行 / [reload] 外部变更），可用 bash tail 查看。",
 			"",
-			"注意：修改即持久生效并影响用户全局设置——仅在任务明确需要时修改，完成后考虑改回。",
+			"注意：修改即持久生效并影响用户全局设置，如用于测试，完成后应改回。",
 		].join("\n"),
 		// 注册级 allowlist 点名（spawn --tools）；与设置页同为常驻能力
 		promptSnippet:
