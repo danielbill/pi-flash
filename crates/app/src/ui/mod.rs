@@ -476,7 +476,7 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 透明度，整体旋转。会话列表运行态用；弧线 spinner（`spinner`）仍服务
 /// 其余 15+ 处调用点。
 ///
-/// **时长 1600ms / 30fps，不与弧线 spinner 的 900ms/24fps 对齐**
+/// **时长 1800ms / 24fps，不与弧线 spinner 的 900ms 对齐**
 /// （2026-11-10 用户报「会话列表那圈转得飞快」查实为真）：8 根针**同亮度
 /// 等分** ⇒ 图标只有 **45° 旋转对称**，视觉周期 = 45°/转速，比真转速快
 /// 8 倍——900ms/圈（400°/s）时视觉周期仅 112.5ms，肉眼读作「每秒 8.9 次
@@ -485,14 +485,13 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 参考边）没有这个问题，故只有这里动参数。要么加针尾渐变破对称，要么
 /// 保持等分但调参——本处选后者。
 ///
-/// 定档过程（都是真机观感反馈）：900ms「飞快」⇒ 2400ms「有点点慢」⇒
-/// 1800ms/24fps「速度对但不够顺」——因 1800ms 下每格要 **5.4 帧**，帧只能
-/// 取整 ⇒ 格与格之间 5/6 帧交替，**每格耗时抖 20%、每秒抖 4.4 次**（转速
-/// 没变，只是不匀步）⇒ 现定 **1600ms / 30fps**：48 帧/圈、**每格正好 6 帧**
-/// （225°/s、每秒 5 格、7.5°/帧），且 33.33ms 在 60Hz 上正好 **2 个刷新
-/// 周期**，时长恒定不再 judder（24fps 的 41.67ms 是 2.5 个周期，半帧摆动）。
-/// 代价：spinner 常驻时续帧 24→30Hz（相对不限帧的 66fps 仍是半量级）。
-/// 以后调转速：**先保每格整数帧 + 每帧整数刷新周期**，再谈快慢。
+/// 定档过程（全是真机观感反馈，别凭公式改回去）：900ms「飞快」⇒
+/// 2400ms「有点点慢」⇒ **1800ms/24fps「不快不慢」**（200°/s、一格 225ms、
+/// 每秒 4.4 格）⇒ 曾按「量化节拍」理论试 1600ms/30fps（每格整 6 帧、
+/// 33.33ms = 60Hz 的 2 周期）⇒ **真机更顿，当场回退**。教训：整数化只在
+/// 屏幕刷新率整除帧间隔时才有意义，而实际刷新率不是 60Hz 的屏，30fps 的
+/// 33.33ms 反而与刷新去同步；24fps 的 41.67ms 在 144Hz 上正好 6 个周期。
+/// 再想提平滑度，先问清显示器刷新率，不要照公式硬套。
 pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
     gpui::svg()
         .path(SharedString::from("icons/spark.svg"))
@@ -500,9 +499,9 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         .size(gpui::px(size))
         .with_animation(
             "spark-spin",
-            Animation::new(std::time::Duration::from_millis(1600))
+            Animation::new(std::time::Duration::from_millis(1800))
                 .repeat()
-                .with_fps(30.),
+                .with_fps(24.),
             |el, delta| {
                 el.with_transformation(gpui::Transformation::rotate(gpui::radians(
                     delta * std::f32::consts::TAU,
