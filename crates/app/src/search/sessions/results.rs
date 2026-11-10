@@ -95,11 +95,14 @@ pub(super) fn results(chat: &mut Chat, weak: &WeakEntity<Chat>, t: &'static Them
             };
             let is_collapsed = collapsed.contains(&group.key);
             let first_ts = group.hits.first().and_then(|h| h.ts);
+            let group_subagent = group.hits.first().is_some_and(|h| h.subagent);
             let path_open = group.path.clone();
             let weak_open = weak_rows.clone();
             let open: Rc<dyn Fn(&mut gpui::App)> = Rc::new(move |cx| {
                 let path = path_open.clone();
-                let _ = weak_open.update(cx, |c, cx| c.jump_to_hit(path, first_ts, cx));
+                let _ = weak_open.update(cx, |c, cx| {
+                    c.jump_to_hit(path, first_ts, group_subagent, cx)
+                });
             });
             let key = group.key.clone();
             let weak_toggle = weak_rows.clone();
@@ -213,6 +216,7 @@ fn snippet_row(
     let highlights = match_highlights(&text, &[span], t);
     let path = hit.session_path.clone();
     let ts = hit.ts;
+    let subagent = hit.subagent;
     let weak = weak.clone();
     div()
         .id(SharedString::from(format!(
@@ -233,7 +237,7 @@ fn snippet_row(
         .cursor_pointer()
         .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
             let path = path.clone();
-            let _ = weak.update(cx, |c, cx| c.jump_to_hit(path, ts, cx));
+            let _ = weak.update(cx, |c, cx| c.jump_to_hit(path, ts, subagent, cx));
         })
         .child(
             div()

@@ -1,5 +1,6 @@
-//! 会话打开/删除与页签管理：open_session（transcript 回放挂接）、
-//! delete_session、主 tab 激活与观察窗关闭。
+//! 会话打开/删除与页签管理：open_session（普通会话，transcript 回放挂接）、
+//! open_subagent_session_window（子代理观察窗唯一入口）、delete_session、
+//! 主 tab 激活与观察窗关闭。
 
 use super::*;
 
@@ -22,32 +23,22 @@ impl Chat {
         // 大小写）：先归一到扫描器形态再入池——pool key、侧栏行匹配、通知
         // 点集合共用同一条字符串身份，形态分裂就会点行重复 spawn runtime
         let path = pi_link::sessions::canonical_session_path(&path);
-        // 子会话判定（044-0 只读观察窗）：头部有 subagent/child marker 的
-        // 会话 = 观察窗——永不 spawn 进程（驱动权归父 pi），无输入通道。
-        // 判定在 touch_recent 之前：子会话不进最近列表（侧栏扫描器同口径）。
-        let observer = pi_link::sessions::is_subagent_session(&path);
+        // 防呆闸（唯一身份判定，只拦**未知来源**路径）：子会话文件永不做
+        // 普通会话打开——驱动权归父 pi，这里 spawn 进程 = 两个 pi 同抢一份
+        // 转录（分叉账本/双花 token）。已知意图入口（子代理卡点击 / 观察窗
+        // tab 激活 / 搜索跳转）直达 [`Chat::open_subagent_session_window`]，
+        // 不经过这里——它们不过判定，身份错不了（2026-11-10 挤占主会话
+        // tab 教训：旧版把意图入口也交给嗅探，判否即抢占固定段）。
+        if pi_link::sessions::is_subagent_session(&path) {
+            self.open_subagent_session_window(path, cx);
+            return;
+        }
         // recents (003-session管理): opening is activity — promote to the
         // top of the recent-activity list (persist throttled)
-        if !observer {
-            pi_link::recents::touch_recent(&path);
-        }
-        // cwd lookup: current project first, then all psp groups (v54 跨项目)，
-        // 兜底当前项目；三处皆无（无项目态孤儿会话）→ 不开
-        let cwd = self
-            .pool
-            .sessions
-            .iter()
-            .find(|s| s.path == path)
-            .map(|s| PathBuf::from(s.cwd.clone()))
-            .or_else(|| {
-                self.psp
-                    .projects
-                    .iter()
-                    .find(|g| g.sessions.iter().any(|s| s.path == path))
-                    .map(|g| g.path.clone())
-            })
-            .or_else(|| self.ws.cwd.clone());
-        let Some(cwd) = cwd else { return };
+        pi_link::recents::touch_recent(&path);
+        let Some(cwd) = self.cwd_for_session(&path) else {
+            return;
+        };
         let key = path.to_string_lossy().to_string();
         // pool hit: switch attention — instant, all messages in place
         if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
@@ -62,67 +53,19 @@ impl Chat {
         }
         // new runtime: tail render first (cache or disk), process spawns in
         // the background — the conversation is on screen before node exists
-        let tail = match self.pool.session_tail_cache.get(&path).cloned() {
-            Some(msgs) => msgs,
-            None => {
-                let msgs = msgs_from_tail(read_tail_messages(&path, 256 * 1024, 100));
-                // 空 tail 不入缓存（pi-flash-9eck）：老洪泛会话尾段垃圾行
-                // 读空时缓存空 Vec 会让每次重开都复用空投影、永远走慢放行
-                // 链；扩窗（read_tail_messages 内建）读空说明确实真空。
-                if !msgs.is_empty() {
-                    if self.pool.session_tail_cache.len()
-                        >= crate::services::workspace::TAIL_PRELOAD * 2
-                    {
-                        self.pool.session_tail_cache.clear();
-                    }
-                    self.pool
-                        .session_tail_cache
-                        .insert(path.clone(), msgs.clone());
-                }
-                msgs
-            }
-        };
+        let tail = self.session_tail(&path);
         let rt = cx.new(|_| {
             let mut r = session::runtime::SessionRuntime::new(key, cwd.clone(), Some(path.clone()));
             r.default_model = services::workspace::default_model_pref();
-            r.observer = observer;
             r.messages = tail;
             // tail 有内容 = 打开即有东西看，加载页不拦；空尾窗（文件刚建 /
             // 老洪泛会话尾段全是 custom 条目）等 get_messages 投影放行
             r.messages_loaded = !r.messages.is_empty();
             r.pager.reload(r.messages.len());
-            r.status = if observer {
-                "observer".into()
-            } else {
-                "resuming".into()
-            };
+            r.status = "resuming".into();
             r.pending_rename = rename;
             r
         });
-        // observer 子会话的 tab 标题 = 任务名（044-0 验收）：主会话消息反查
-        // （agent 调用 args 的 label → profile → prompt 首行），查不到占位
-        // 「子代理」。父会话 = 当前激活会话（面板行/compact 卡点击两条路都
-        // 满足）。
-        if observer {
-            let new_key = rt.read(cx).key.clone();
-            let label = self.subagent_tab_label(&path, &new_key, cx);
-            self.pool.tab_labels.insert(new_key.clone(), label);
-            // 观察窗 = 自由区普通 tab（044-0 验收②：追加**末尾**，不抢固定
-            // 段第一位）；已开过（面板行重复点）只激活不重复 push
-            let existing =
-                self.ws.panel_tabs.iter().position(
-                    |t| matches!(t, crate::PanelTab::Observer { key: k } if *k == new_key),
-                );
-            match existing {
-                Some(ix) => self.activate_panel_tab(ix, cx),
-                None => {
-                    self.ws
-                        .panel_tabs
-                        .push(crate::PanelTab::Observer { key: new_key });
-                    self.activate_panel_tab(self.ws.panel_tabs.len() - 1, cx);
-                }
-            }
-        }
         self.pool
             .runtimes
             .insert(rt.read(cx).key.clone(), rt.clone());
@@ -134,26 +77,21 @@ impl Chat {
         // 判据要过 090-10 版本层自愈：插件升级后台账里只剩旧版本的死路径，
         // 按原样判非空会为一个再也挂不上任何 ext 的会话白起进程（且 spawn
         // 时那条死 `-e` 还会让其立刻退出）。
-        // 只读观察窗不预热（永不 spawn，044-0）。
-        if !observer {
-            let key = rt.read(cx).key.clone();
-            let has_ext = pi_link::session_ext::store_path()
-                .map(|p| {
-                    let raw = pi_link::session_ext::read_for(&p, &key);
-                    !pi_link::session_ext::resolve_sources(&raw).0.is_empty()
-                })
-                .unwrap_or(false);
-            if has_ext {
-                rt.update(cx, |r, cx| {
-                    r.ensure_spawned(cx);
-                });
-            }
+        let key = rt.read(cx).key.clone();
+        let has_ext = pi_link::session_ext::store_path()
+            .map(|p| {
+                let raw = pi_link::session_ext::read_for(&p, &key);
+                !pi_link::session_ext::resolve_sources(&raw).0.is_empty()
+            })
+            .unwrap_or(false);
+        if has_ext {
+            rt.update(cx, |r, cx| {
+                r.ensure_spawned(cx);
+            });
         }
         // 秒开深度优化（pi-flash-2o92）：磁盘计数改后台——主线程全文件读
-        // 是 O(会话大小) 的打开冻结源（观察窗跳过：全量快照自己计数）
-        if !observer {
-            rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
-        }
+        // 是 O(会话大小) 的打开冻结源
+        rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
         if !self
             .ws
             .cwd
@@ -176,12 +114,6 @@ impl Chat {
         let rt_spawn = rt;
         cx.spawn(async move |_this, cx| {
             let _ = rt_spawn.update(cx, |r, cx| {
-                if r.observer {
-                    // 观察窗：无进程可起，磁盘链即真相；全量快照后台装载
-                    // （tail 只是首帧），此后外部追加靠 3s tick 跟随（044-0）
-                    r.spawn_observer_snapshot(cx);
-                    return;
-                }
                 if r.agent.session.is_none() {
                     if let Some(rx) = r.spawn() {
                         let epoch = r.agent.epoch;
@@ -194,6 +126,139 @@ impl Chat {
             });
         })
         .detach();
+    }
+
+    /// 子代理观察窗**唯一入口**（044-0）：调用方（子代理卡点击 / 观察窗
+    /// tab 激活 / 会话搜索跳转）本来就知道目标 = 子会话——身份由调用意图
+    /// 携带，不从文件内容反推（2026-11-10「挤占主会话 tab」根因：旧版把
+    /// 意图入口也交给嗅探判定，判否即按普通会话开 → 抢占固定段第一位、
+    /// 侧栏/last-open 全被污染）。
+    /// 只读：永不 spawn 进程（驱动权归父 pi）、无输入通道；不进最近列表、
+    /// 不写 last-open（子会话不是恢复目标）。tab = 自由区**末尾**追加
+    ///（044-0 验收②，不抢固定段第一位）；已开过只激活不重复 push。
+    pub(crate) fn open_subagent_session_window(&mut self, child: PathBuf, cx: &mut Context<Self>) {
+        let path = pi_link::sessions::canonical_session_path(&child);
+        let key = path.to_string_lossy().to_string();
+        let rt = match self.pool.runtimes.get(&key).cloned() {
+            Some(rt) if rt.read(cx).observer => Some(rt),
+            // 同 key 被当普通会话开着（进程内不应发生——open_session 有防
+            // 呆闸改道；留着是防自动化/外部直开的历史态）：拆掉重建，保住
+            // 「子会话文件 ⟹ 观察窗 runtime」不变量
+            Some(rt) => {
+                rt.update(cx, |r, _| {
+                    r.rpc(&Command::Abort);
+                    r.shutdown_process();
+                });
+                self.pool.runtimes.remove(&key);
+                self.build_observer_rt(&path, cx)
+            }
+            None => self.build_observer_rt(&path, cx),
+        };
+        let Some(rt) = rt else { return };
+        let new_key = rt.read(cx).key.clone();
+        // tab：已开只激活，未开追加末尾；标题 = 任务名（044-0 验收：父会话
+        // 消息反查 label → profile → prompt 首行，查不到占位「子代理」。
+        // 父会话 = 当前激活会话，反查直读内存消息，零读盘）
+        let ix = match self
+            .ws
+            .panel_tabs
+            .iter()
+            .position(|t| matches!(t, crate::PanelTab::Observer { key: k } if *k == new_key))
+        {
+            Some(ix) => ix,
+            None => {
+                let label = self.subagent_tab_label(&path, &new_key, cx);
+                self.pool.tab_labels.insert(new_key.clone(), label);
+                self.ws
+                    .panel_tabs
+                    .push(crate::PanelTab::Observer { key: new_key });
+                self.ws.panel_tabs.len() - 1
+            }
+        };
+        self.activate_panel_tab(ix, cx);
+        self.switch_pool_rt(rt.clone(), cx);
+        // 全量快照后台装载（tail 只是首帧），此后外部追加靠 3s tick 跟随
+        cx.spawn(async move |_this, cx| {
+            let _ = rt.update(cx, |r, cx| r.spawn_observer_snapshot(cx));
+        })
+        .detach();
+    }
+
+    /// 观察窗 runtime 铸造（[`Chat::open_subagent_session_window`] 专用）：
+    /// tail 秒开、observer 姿态、入池、挂事件泵。空尾窗（文件刚落盘、
+    /// 尾段全是 custom 条目）等全量快照投影放行。
+    fn build_observer_rt(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<session::runtime::SessionRuntime>> {
+        let Some(cwd) = self.cwd_for_session(path) else {
+            return None;
+        };
+        let key = path.to_string_lossy().to_string();
+        let tail = self.session_tail(path);
+        let rt = cx.new(|_| {
+            let mut r = session::runtime::SessionRuntime::new(
+                key.clone(),
+                cwd.clone(),
+                Some(path.to_path_buf()),
+            );
+            r.default_model = services::workspace::default_model_pref();
+            r.observer = true;
+            r.messages = tail;
+            r.messages_loaded = !r.messages.is_empty();
+            r.pager.reload(r.messages.len());
+            r.status = "observer".into();
+            r
+        });
+        self.pool
+            .runtimes
+            .insert(rt.read(cx).key.clone(), rt.clone());
+        self.subscribe_runtime(&rt, cx);
+        Some(rt)
+    }
+
+    /// 会话文件的项目 cwd 兜底链：池内现值 → 项目组索引（v54 跨项目）→
+    /// 当前项目。三处皆无（无项目态孤儿会话）→ None（不开）。
+    /// open_session 与 build_observer_rt 共用。
+    fn cwd_for_session(&self, path: &Path) -> Option<PathBuf> {
+        self.pool
+            .sessions
+            .iter()
+            .find(|s| s.path == path)
+            .map(|s| PathBuf::from(s.cwd.clone()))
+            .or_else(|| {
+                self.psp
+                    .projects
+                    .iter()
+                    .find(|g| g.sessions.iter().any(|s| s.path == path))
+                    .map(|g| g.path.clone())
+            })
+            .or_else(|| self.ws.cwd.clone())
+    }
+
+    /// 尾段秒开素材：缓存命中直取，未命中读盘入缓存。空 tail 不入缓存
+    ///（pi-flash-9eck）：老洪泛会话尾段垃圾行读空时缓存空 Vec 会让每次
+    /// 重开都复用空投影、永远走慢放行链；扩窗（read_tail_messages 内建）
+    /// 读空说明确实真空。
+    fn session_tail(&mut self, path: &Path) -> Vec<Msg> {
+        match self.pool.session_tail_cache.get(path).cloned() {
+            Some(msgs) => msgs,
+            None => {
+                let msgs = msgs_from_tail(read_tail_messages(path, 256 * 1024, 100));
+                if !msgs.is_empty() {
+                    if self.pool.session_tail_cache.len()
+                        >= crate::services::workspace::TAIL_PRELOAD * 2
+                    {
+                        self.pool.session_tail_cache.clear();
+                    }
+                    self.pool
+                        .session_tail_cache
+                        .insert(path.to_path_buf(), msgs.clone());
+                }
+                msgs
+            }
+        }
     }
 
     /// pi-web DELETE /api/sessions/{id}: unlink the session file; a live

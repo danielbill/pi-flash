@@ -135,4 +135,4 @@ pub(crate) use globals::{
     purge_ghosts, write_cache,
 };
 pub(crate) use pumps::spawn_boot_tasks;
-pub(crate) use restore::spawn_boot_restore;
+pub(crate) use restore::{restorable_session, spawn_boot_restore};

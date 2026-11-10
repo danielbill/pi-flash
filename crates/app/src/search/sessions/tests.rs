@@ -14,6 +14,7 @@ fn hit(path: &str, name: Option<&str>, ts: i64) -> SearchHit {
         before: "aaa ".into(),
         match_text: "needle".into(),
         after: " bbb".into(),
+        subagent: false,
     }
 }
 

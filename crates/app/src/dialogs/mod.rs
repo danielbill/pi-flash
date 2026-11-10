@@ -351,13 +351,24 @@ impl Chat {
 
     /// Jump to a search hit: open (or switch to) the session, then reveal the
     /// matched row — located by payload timestamp, falling back to the first
-    /// message containing the needle.
-    pub(crate) fn jump_to_hit(&mut self, path: PathBuf, ts: Option<i64>, cx: &mut Context<Self>) {
+    /// message containing the needle. `subagent` 随命中行携带（SearchHit，
+    /// 头部 marker 同口径）：子会话开只读观察窗，普通会话走 open_session。
+    pub(crate) fn jump_to_hit(
+        &mut self,
+        path: PathBuf,
+        ts: Option<i64>,
+        subagent: bool,
+        cx: &mut Context<Self>,
+    ) {
         let needle = self.psp.search_needle.clone();
         let key = path.to_string_lossy().to_string();
         let already_open = self.pool.active_key == key || self.pool.runtimes.contains_key(&key);
         if self.pool.active_key != key {
-            self.open_session(path.clone(), false, cx);
+            if subagent {
+                self.open_subagent_session_window(path.clone(), cx);
+            } else {
+                self.open_session(path.clone(), false, cx);
+            }
         }
         let rt = self.rt();
         let located = rt.update(cx, |r, cx| r.locate_message(ts, &needle, cx));

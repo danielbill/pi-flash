@@ -46,7 +46,8 @@ pub(crate) struct SessionRuntime {
     /// PF 打开它只是观察同一账本文件——永不 spawn 进程（spawn 会造出第二
     /// 驱动：分叉账本/双花 token/抢占并发槽），无输入通道（composer/操作
     /// 栏隐藏），外部追加靠 3s tick（check_external_append 空闲态天然覆盖）。
-    /// open_session 按文件头部 marker 判定置位（sessions::is_subagent_session）。
+    /// 置位点唯一：`open_subagent_session_window`（身份由调用意图携带，
+    /// 不从文件反推——2026-11-10 挤占主会话 tab 根因）。
     pub observer: bool,
     /// disk-side message count at open time — get_messages shorter than
     /// this means pi's restored leaf chain is truncated (mis-parented

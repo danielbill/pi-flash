@@ -34,6 +34,10 @@ pub struct SearchHit {
     pub before: String,
     pub match_text: String,
     pub after: String,
+    /// 子代理子会话（头部 marker 同口径）。搜索不排除子会话——命中要能
+    /// 跳转；UI 据此路由只读观察窗（`open_subagent_session_window`），
+    /// 不在打开层反推身份（2026-11-10 挤占主会话 tab 教训）。
+    pub subagent: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -135,6 +139,8 @@ fn search_in_groups(groups: &[PathBuf], query: &str) -> SearchResponse {
         let Ok(text) = String::from_utf8(bytes) else {
             continue;
         };
+        // 子会话身份：文件已整读入内存，头部 marker 判定零额外 IO。
+        let subagent = super::info::is_subagent_head(text.as_bytes());
         let mut session_name: Option<String> = None;
         // 项目 cwd：会话文件首行 `{"type":"session","cwd":...}`；老文件/截断
         // 时回落 group 目录名（`--D--ai_workspace-pi-flash--` → 去掉 `--` 外壳）
@@ -248,6 +254,7 @@ fn search_in_groups(groups: &[PathBuf], query: &str) -> SearchResponse {
                 before,
                 match_text,
                 after,
+                subagent,
             });
         }
     }

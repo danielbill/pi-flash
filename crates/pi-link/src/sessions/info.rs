@@ -17,10 +17,31 @@ pub(super) const SUBAGENT_CHILD_MARKER: &str = "subagent/child";
 /// 按前 64KB 有界扫即可判，免整文件读（面板逐行点击热路径）。
 const SUBAGENT_HEAD_SCAN: u64 = 64 * 1024;
 
-/// 该会话文件是否是子代理子会话（044-0 只读观察窗的打开守卫）：头部窗口
-/// 内出现 `subagent/child` custom entry 即是。header 的 parentSession 不可
-/// 用作判定——pi 原生 fork 的分支同样带它。文件不存在/读不了 → false
-/// （按普通会话开，行为不变）。
+/// 头部字节窗口内的 marker 判定（[`is_subagent_session`] 与会话搜索共用）。
+/// 按**行字节切**逐行解析，整段不做 UTF-8 解码：窗口末字节常切在多字节
+/// 字符中间（真机 2026-11-10：中文会话文件第 65536 字节落在汉字 3 字节
+/// 序列内部，整段解码失败曾被误判「不是子会话」→ 按普通会话抢占主会话
+/// tab）。marker 行是 ASCII JSON，不受窗口截断影响；被截断的末行解析
+/// 失败自然跳过。
+pub(super) fn is_subagent_head(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(SUBAGENT_HEAD_SCAN as usize)];
+    head.split_inclusive(|b| *b == b'\n').any(|line| {
+        serde_json::from_slice::<Value>(line.trim_ascii())
+            .ok()
+            .is_some_and(|v| {
+                v["type"].as_str() == Some("custom")
+                    && v["customType"].as_str() == Some(SUBAGENT_CHILD_MARKER)
+            })
+    })
+}
+
+/// 该会话文件是否是子代理子会话（头部 marker 守卫）。仅两处合法用途，
+/// 都是**未知来源路径**的安全闸（存在即改道只读观察窗，不推断行为）：
+/// 启动恢复/项目切换的持久化指针过滤（`restorable_session`）与
+/// open_session 的防呆门。子代理卡点击等**已知意图**入口不走这里——
+/// 直接 `open_subagent_session_window`（app/session/pool/open.rs）。
+/// header 的 parentSession 不可用作判定——pi 原生 fork 的分支同样带它。
+/// 文件不存在/读不了 → false（按普通会话开，行为不变）。
 pub fn is_subagent_session(path: &Path) -> bool {
     let Ok(mut f) = std::fs::File::open(path) else {
         return false;
@@ -31,17 +52,7 @@ pub fn is_subagent_session(path: &Path) -> bool {
     if f.read_exact(&mut buf).is_err() {
         return false;
     }
-    let Ok(text) = String::from_utf8(buf) else {
-        return false;
-    };
-    text.split_inclusive('\n').any(|line| {
-        serde_json::from_str::<Value>(line.trim())
-            .ok()
-            .is_some_and(|v| {
-                v["type"].as_str() == Some("custom")
-                    && v["customType"].as_str() == Some(SUBAGENT_CHILD_MARKER)
-            })
-    })
+    is_subagent_head(&buf)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,6 +203,48 @@ mod tests {
         );
         // 不存在的文件 → false（按普通会话开，行为不变）
         assert!(!is_subagent_session(&root.join("missing.jsonl")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 64KB 头部窗口切在多字节字符中间（真机 2026-11-10 挤占主会话 tab
+    /// 根因）：旧实现整段 `String::from_utf8` 解码失败 → 误判「不是子会话」。
+    /// 逐行字节判定不受截断影响。
+    #[test]
+    fn is_subagent_session_survives_multibyte_head_cut() {
+        let root = temp_root("subagent-head-cut");
+        // marker 之后一条超长中文字符行把文件推过 64KB；可变填充加在 marker
+        // 的 id 字符串**内部**（逐次加一字节微调总长，直到窗口末字节确定
+        // 落在某个 3 字节汉字内部）。前提显式断言，构造失效时先炸断言
+        // 而不是假绿。
+        let mut extra = String::new();
+        let pad = "中".repeat(30_000);
+        let mut child = PathBuf::new();
+        for _ in 0..8 {
+            let marker = format!(
+                "{{\"type\":\"custom\",\"customType\":\"subagent/child\",\"id\":\"m1{extra}\",\"data\":{{\"provider\":\"spawn\",\"depth\":1}}}}"
+            );
+            let body = format!(
+                "{marker}\n{{\"type\":\"message\",\"message\":{{\"role\":\"system\",\"content\":\"{pad}\"}}}}\n"
+            );
+            child = write_session(&root, "D:\\proj-c", "cut1", &body);
+            let raw = std::fs::read(&child).unwrap();
+            if raw.len() > SUBAGENT_HEAD_SCAN as usize
+                && String::from_utf8(raw[..SUBAGENT_HEAD_SCAN as usize].to_vec()).is_err()
+            {
+                break;
+            }
+            extra.push('x');
+            let _ = std::fs::remove_file(&child);
+        }
+        let raw = std::fs::read(&child).unwrap();
+        assert!(
+            String::from_utf8(raw[..SUBAGENT_HEAD_SCAN as usize].to_vec()).is_err(),
+            "前提：64KB 窗口末字节切在字符内部",
+        );
+        assert!(
+            is_subagent_session(&child),
+            "头部窗口切在汉字中间不得误判为普通会话",
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

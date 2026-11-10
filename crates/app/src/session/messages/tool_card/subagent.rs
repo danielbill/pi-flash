@@ -303,6 +303,8 @@ pub(super) fn render_subagent_card(
     // session_file 时（background 派发尚未落 completion）用 child_id 在主
     // 会话消息里反查，避免「点不动」。派发失败行不挂点击也不出手指
     // （2026-11-08 用户定夺）：没有子会话可开，disabled 视觉要彻底。
+    // 直达 open_subagent_session_window：卡片本身就是「这是子会话」的
+    // 意图凭证，不过 open_session 的防呆闸（2026-11-10 挤占主会话 tab）。
     let child_id = details
         .and_then(|d| d.get("child_id"))
         .and_then(|v| v.as_str())
@@ -319,7 +321,7 @@ pub(super) fn render_subagent_card(
                         c.session_file_for_child(cx, cid)
                     });
                     if let Some(sf) = sf {
-                        c.open_session(sf, false, cx);
+                        c.open_subagent_session_window(sf, cx);
                     }
                 });
             });

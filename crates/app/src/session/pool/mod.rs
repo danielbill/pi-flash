@@ -135,9 +135,9 @@ impl Chat {
         // 且 panic 发生在鼠标事件回调（非 unwind 边界）里 → 进程直接消失
         // （用户 2026-10-17 报崩：从文件树切项目后点 psp 项目行 ＋ 新建会话）。
         self.remount_workspace(cx);
-        let resumed = get_last_open(&cwd.to_string_lossy())
-            .map(PathBuf::from)
-            .filter(|p| p.exists())
+        // 恢复目标过 restorable_session 共享闸（与启动恢复同源）：影子/
+        // 认领/子会话（历史污染指针）一律不开——落新会话页
+        let resumed = crate::startup::restorable_session(&cwd.to_string_lossy())
             .map(|path| self.open_session(path, false, cx))
             .is_some();
         if resumed {

@@ -83,13 +83,14 @@ impl Chat {
         cx: &mut Context<Self>,
     ) {
         // 子代理观察窗（044-0 验收②）：复用 Chat 视图——内容区渲染
-        // active_key runtime，激活它 = 切池指针到该子会话。runtime 被
-        // 空闲退役摘走时 open_session 秒开重开（key 即会话文件路径）。
+        // active_key runtime，激活它 = 切池指针到该子会话。池命中缺失时
+        // open_subagent_session_window 重建（key 即子会话文件路径；身份
+        // 由 tab 本身携带，不走 open_session 防呆闸）。
         if let Some(PanelTab::Observer { key }) = self.ws.panel_tabs.get(ix).cloned() {
             self.activate_panel_tab(ix, cx);
             match self.pool.runtimes.get(&key).cloned() {
                 Some(rt) => self.switch_pool_rt(rt, cx),
-                None => self.open_session(PathBuf::from(&key), false, cx),
+                None => self.open_subagent_session_window(PathBuf::from(&key), cx),
             }
             return;
         }

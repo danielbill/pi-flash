@@ -32,6 +32,37 @@ fn recent_project() -> Option<PathBuf> {
         .map(|r| r.path)
 }
 
+/// 持久化指针（per-project last-open）→ 可恢复会话：存在、非影子、非
+/// 插件认领、非子会话。启动恢复（[`boot_target`]）与项目切换
+///（`Chat::switch_project`）共用同一道闸——两处各写一遍必然漂移
+///（2026-11-10 挤占 bug 的姊妹雷：误开的子会话写进了 last-open，
+/// switch_project 路当时无守卫会照常按普通会话开）。
+pub(crate) fn restorable_session(cwd: &str) -> Option<PathBuf> {
+    let hidden = pi_link::hidden_sessions::load();
+    // 影子会话（插件认领线）**永不**做桌面恢复目标（2026-10-25 孤儿页
+    // 事故）：认领线归插件管，历史遗留指针一律按「无会话可恢复」处理，
+    // 落新会话页。铁闸数据源 = 已装插件**清单声明**的认领前缀
+    // （[[contributes.sessions]]）——静态、不随运行期过滤清单滞后或
+    // 停用清条而漂移；PF 不含任何具体插件的身份信息。
+    let claim_prefixes = crate::pf_plugin::declared_claim_prefixes();
+    crate::services::workspace::get_last_open(cwd)
+        .map(PathBuf::from)
+        .filter(|p| p.exists() && !hidden.hides(None, p))
+        // 子会话（044-0 观察窗）永不做恢复目标：它是只读检视，驱动权归
+        // 父 pi；旧版 open_session 曾把子会话写进 last-open（已修），这里
+        // 把历史污染一并挡住——落新会话页
+        .filter(|p| !pi_link::sessions::is_subagent_session(p))
+        .filter(|p| {
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            !claim_prefixes
+                .iter()
+                .any(|pre| name.starts_with(pre.as_str()))
+        })
+}
+
 /// 启动落点判定（纯盘读，后台线程跑）：
 /// - `PI_FLASH_CWD` 显式覆盖优先（开发意图）：目录存在即进，目录不存在直接
 ///   无项目态（绝不兜底乱进）；
@@ -60,29 +91,7 @@ fn boot_target() -> BootTarget {
 
     // ③ restore 只决定要不要连带加载该项目的最后会话
     let session = if restore {
-        let hidden = pi_link::hidden_sessions::load();
-        // 影子会话（插件认领线）**永不**做桌面恢复目标（2026-10-25 孤儿页
-        // 事故）：认领线归插件管，历史遗留指针一律按「无会话可恢复」处理，
-        // 落新会话页。铁闸数据源 = 已装插件**清单声明**的认领前缀
-        // （[[contributes.sessions]]）——静态、不随运行期过滤清单滞后或
-        // 停用清条而漂移；PF 不含任何具体插件的身份信息。
-        let claim_prefixes = crate::pf_plugin::declared_claim_prefixes();
-        crate::services::workspace::get_last_open(&cwd.to_string_lossy())
-            .map(PathBuf::from)
-            .filter(|p| p.exists() && !hidden.hides(None, p))
-            // 子会话（044-0 观察窗）永不做恢复目标：它是只读检视，驱动权归
-            // 父 pi；旧版 open_session 曾把子会话写进 last-open（已修），这里
-            // 把历史污染一并挡住——落新会话页
-            .filter(|p| !pi_link::sessions::is_subagent_session(p))
-            .filter(|p| {
-                let name = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                !claim_prefixes
-                    .iter()
-                    .any(|pre| name.starts_with(pre.as_str()))
-            })
+        restorable_session(&cwd.to_string_lossy())
     } else {
         None
     };
