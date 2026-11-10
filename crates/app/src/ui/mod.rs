@@ -478,10 +478,11 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 ///
 /// ## 唯一旋钮 [`SPARK_FPS`]，其余自动推导
 ///
-/// 转速锚死 ZCode 基准（`SPARK_DEG_PER_SEC` = 360°/s，即 Tailwind
-/// `animate-spin` 默认 1s/圈——浏览器合成线程按原生刷新率连续扫过，
-/// 参考实现 `TaskListItem.tsx:596`）；时长 = 360 / 转速 自动得出，
-/// 换档只改 `SPARK_FPS` 一个常量。
+/// 转速锚**真机验证过的速度档** 200°/s（1800ms/圈；ZCode 参考实现是
+/// 360°/s——`TaskListItem.tsx:596`，浏览器合成线程原生刷新率连续扫过，
+/// 同速在 16fps 离散采样下实测「反而更快」：步幅 22.5° 读作秒针跳动，
+/// 故离散采样不能照抄连续渲染的速度锚，见 `SPARK_DEG_PER_SEC`）；
+/// 时长 = 360 / 转速 自动得出，换档只改 `SPARK_FPS` 一个常量。
 ///
 /// 三个感受三个旋钮，各管各的（`delta` 取墙钟，速度与帧率解耦）：
 /// - **快慢感** = 转速（锚死，不动）
@@ -519,10 +520,11 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// ZCode 基准转速：360°/s（1s/圈，Tailwind `animate-spin` 默认，无覆盖）。
-const SPARK_DEG_PER_SEC: f32 = 360.;
+/// 转速锚：真机验证的 200°/s（1800ms/圈「不快不慢」档）。ZCode 参考为
+/// 360°/s，但其连续扫过无「步」概念；离散采样下同速步幅过大读作跳动。
+const SPARK_DEG_PER_SEC: f32 = 200.;
 
 /// **唯一调参旋钮**：spinner 主动申请重绘的帧率。时长由基准转速推导，
 /// 不要另改 duration。必须取 144 的整数因子（24/18/16/12…）才锁相，
 /// 步幅角 = 360/本值 度。
-const SPARK_FPS: f32 = 16.;
+const SPARK_FPS: f32 = 48.;
