@@ -254,6 +254,30 @@ fn builtin_explorer_and_custom_override() {
 /// 两侧内置清单逐字一致（profile.ts `BUILTIN_PROFILE_DOCS` ↔ 本模块
 /// `builtin_agents`）：id 集、description、tools、maxTurns、正文。
 /// 防止「两处各存一份」的同步契约静默烂掉——扩展侧改了这边忘改就红。
+/// `name` 只是显示名：id 仍是文件名（扩展按 id 点名），键省略回落 id。
+#[test]
+fn name_is_display_only_and_roundtrips() {
+    let text = "---\nname: 新建子代理\ndescription: 我的探索员\ntools: read-only\n---\n\n干活。\n";
+    let p = parse_agent("subagent-1", text, AgentOrigin::Custom).unwrap();
+    assert_eq!(p.id, "subagent-1", "文件名才是 id");
+    assert_eq!(p.display_name(), "新建子代理");
+    assert!(p.unknown.is_empty(), "name 是已知键，不该进 unknown 透传");
+    let again = parse_agent("subagent-1", &serialize_agent(&p), AgentOrigin::Custom).unwrap();
+    assert_eq!(
+        again.name.as_deref(),
+        Some("新建子代理"),
+        "写回再读不丢显示名"
+    );
+    assert_eq!(again.append_system_prompt.as_deref(), Some("干活。"));
+    let bare = parse_agent(
+        "explorer",
+        "---\ndescription: x\n---\n",
+        AgentOrigin::Custom,
+    )
+    .unwrap();
+    assert_eq!(bare.display_name(), "explorer", "键省略 = 直接用 id 展示");
+}
+
 #[test]
 fn builtins_match_extension_docs() {
     let docs = [

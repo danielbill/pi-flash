@@ -115,7 +115,7 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .when(broken, |d| d.text_color(rgb(t.danger)))
-                .child(SharedString::from(a.id.clone())),
+                .child(SharedString::from(a.display_name().to_string())),
         )
         .when(overrides, |d| {
             d.child(

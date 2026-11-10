@@ -13,6 +13,9 @@
 use std::path::{Path, PathBuf};
 
 /// v1 已知字段（044-1 §3）。新增字段时同步扩展侧 `Profile` 与本 struct。
+/// 显示名（2026-11-10）：列表/表单展示用，可中文；`id` 仍是文件名（扩展按
+/// id 点名）。键省略 = 直接展示 id。
+pub const FIELD_NAME: &str = "name";
 pub const FIELD_TOOLS: &str = "tools";
 pub const FIELD_MAX_TURNS: &str = "maxTurns";
 pub const FIELD_INJECT_AGENTS_MD: &str = "injectAgentsMd";
@@ -81,6 +84,8 @@ pub enum MaxTurnsTier {
 #[derive(Debug, Clone)]
 pub struct AgentProfile {
     pub id: String,
+    /// frontmatter 的 `name`：显示名（可中文），None = 直接展示 `id`。
+    pub name: Option<String>,
     /// frontmatter 的 `description`（列表展示）。
     pub description: String,
     /// `model`：None = 键省略 = 继承会话模型。
@@ -117,6 +122,14 @@ pub struct AgentProfile {
 }
 
 impl AgentProfile {
+    /// 列表/表单上展示的名字：`name` 优先，缺省回落到 id。
+    pub fn display_name(&self) -> &str {
+        match &self.name {
+            Some(n) if !n.is_empty() => n,
+            _ => &self.id,
+        }
+    }
+
     /// UI 最大轮次档位视图。
     pub fn max_turns_tier(&self) -> MaxTurnsTier {
         match self.max_turns {
@@ -189,6 +202,7 @@ pub fn read_agent_file(id: String, path: &Path) -> AgentProfile {
     .map_or_else(
         |(_, error)| AgentProfile {
             id,
+            name: None,
             description: String::new(),
             model: None,
             tools: None,
@@ -267,6 +281,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
 
     // 未知字段原序透传（已知键剔除，正文单独走 append_system_prompt）
     let known = [
+        FIELD_NAME,
         "description",
         "model",
         FIELD_TOOLS,
@@ -300,6 +315,7 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
 
     Ok(AgentProfile {
         id: id.to_string(),
+        name: get(FIELD_NAME).filter(|n| !n.is_empty()),
         description: get("description").unwrap_or_default(),
         model: get("model").filter(|m| !m.is_empty()),
         tools,
@@ -324,6 +340,9 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
 pub fn serialize_agent(a: &AgentProfile) -> String {
     let mut out = String::from("---\n");
     let scalar = |k: &str, v: &str| scalar_line(k, v);
+    if let Some(n) = a.name.as_deref().filter(|n| !n.is_empty()) {
+        out.push_str(&scalar(FIELD_NAME, n));
+    }
     if !a.description.is_empty() {
         out.push_str(&scalar("description", &a.description));
     }

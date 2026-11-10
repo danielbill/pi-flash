@@ -800,6 +800,8 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.builtin_group", "内置", "內建", "Built-in"),
     ("agents.custom_group", "自定义", "自訂", "Custom"),
     ("agents.new", "新建", "新增", "New"),
+    // 新建/复制出来的条目名称占位（id 由保存时派生，名称只是显示名）
+    ("agents.new_default", "新建子代理", "新建子代理", "New subagent"),
     ("agents.name", "名称", "名稱", "Name"),
     ("agents.desc", "简介", "簡介", "Summary"),
     ("agents.model", "模型", "模型", "Model"),
@@ -833,7 +835,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.open_fix", "打开文件修复", "開啟檔案修復", "Open file to fix"),
     ("agents.empty", "还没有自定义子代理——点上方「新建」创建一个", "還沒有自訂子代理——點上方「新增」建立一個", "No custom subagents yet — click New above to create one"),
     ("agents.saved", "已保存", "已儲存", "Saved"),
-    ("agents.name_invalid", "名称只能含字母、数字、连字符与下划线", "名稱只能含字母、數字、連字號與底線", "Name may only contain letters, digits, hyphens and underscores"),
+    ("agents.name_invalid", "名称不能为空", "名稱不能為空", "Name is required"),
     // -- 子代理面板（044-1 §1）
     ("subagent.tab", "子代理", "子代理", "Subagent"),
     // 044-0 验收⑤：会话流 compact 卡完成提示（faint；异常态 faint+下划线+tooltip）

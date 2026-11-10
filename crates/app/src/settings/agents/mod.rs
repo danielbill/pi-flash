@@ -33,7 +33,8 @@ impl Chat {
         let Some(a) = self.cfg.mc_agents.iter().find(|a| a.id == id).cloned() else {
             return;
         };
-        let name = a.id.clone();
+        // 表单「名称」= 显示名（可中文，缺省回落 id）；id 本身不暴露给用户
+        let name = a.display_name().to_string();
         let desc = a.description.clone();
         let prompt = a.prompt_text();
         let model = a.model.clone();
@@ -77,8 +78,10 @@ impl Chat {
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
                 s.section = AG_NEW.into();
-                s.ag_name
-                    .update(cx, |ti, cx| ti.set_value(String::new(), cx));
+                // 名称预填一个占位显示名（id 在保存时按名称/序号生成）
+                s.ag_name.update(cx, |ti, cx| {
+                    ti.set_value(tr("agents.new_default").to_string(), cx)
+                });
                 s.ag_desc
                     .update(cx, |ti, cx| ti.set_value(String::new(), cx));
                 s.ag_prompt
@@ -139,14 +142,17 @@ impl Chat {
                 s.ag_cwd_pf,
             )
         });
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-        {
+        if name.is_empty() {
             self.mc_set_error(&tr("agents.name_invalid"), cx);
             return;
         }
+        // id = 文件名（扩展按它点名），名称只是显示名：既有条目 id 稳定不变，
+        // 新建条目按名称派生（ASCII 合法名可直用，否则顺序号 subagent-N）。
+        let id = if section == AG_NEW || section.is_empty() {
+            self.mc_agent_unique_id(&name)
+        } else {
+            section.clone()
+        };
         // 保留原条目的未知字段（编辑时不丢 v1 之外的手写键）
         let prev_unknown = self
             .cfg
@@ -165,7 +171,8 @@ impl Chat {
         };
         let prompt_trimmed = prompt.trim().to_string();
         let profile = AgentProfile {
-            id: name.clone(),
+            id: id.clone(),
+            name: Some(name),
             description: desc,
             model,
             tools: if tools == "inherit" {
@@ -210,21 +217,15 @@ impl Chat {
             self.mc_set_error(&e.to_string(), cx);
             return;
         }
-        let path = dir.join(format!("{name}.md"));
-        // 改名：旧文件进回收站（id 变了 = 换了一个定义）
-        if section != AG_NEW && section != name {
-            let old = dir.join(format!("{section}.md"));
-            if old.exists() {
-                let _ = trash::delete(&old);
-            }
-        }
+        // 名称可随时改（显示名），文件/ id 不动——改名不再搬文件
+        let path = dir.join(format!("{id}.md"));
         if let Err(e) = std::fs::write(&path, pi_link::agents::serialize_agent(&profile)) {
             self.mc_set_error(&e.to_string(), cx);
             return;
         }
         self.reload_settings_panel();
         let _ = st.update(cx, |s, cx| {
-            s.section = name;
+            s.section = id;
             s.ag_dirty = false;
             cx.notify();
         });
@@ -268,7 +269,8 @@ impl Chat {
         }
     }
 
-    /// 内置「复制为自定义」：fork 进自定义目录（同名则覆盖自定义侧）。
+    /// 内置「复制为自定义」：**新建**一个自定义条目（新 id），内置本身保持可见。
+    /// 注意不能用原 id 写盘——同 id 的自定义文件会遮蔽内置，列表里内置就消失。
     pub(crate) fn mc_agent_copy_builtin(&mut self, id: String, cx: &mut Context<Self>) {
         self.mc_clear_error(cx);
         let Some(a) = self.cfg.mc_agents.iter().find(|a| a.id == id).cloned() else {
@@ -279,15 +281,54 @@ impl Chat {
             self.mc_set_error(&e.to_string(), cx);
             return;
         }
-        let path = dir.join(format!("{id}.md"));
+        let new_id = self.mc_agent_unique_copy_id(&id);
+        let path = dir.join(format!("{new_id}.md"));
         let mut copy = a;
+        copy.id = new_id.clone();
+        copy.name = Some(tr("agents.new_default").to_string());
         copy.origin = AgentOrigin::Custom;
+        copy.path = None;
         if let Err(e) = std::fs::write(&path, pi_link::agents::serialize_agent(&copy)) {
             self.mc_set_error(&e.to_string(), cx);
             return;
         }
         self.reload_settings_panel();
-        self.mc_agent_select(id, cx);
+        self.mc_agent_select(new_id, cx);
+    }
+
+    /// id（= 文件名）是否已被占用：当前清单（含内置）与磁盘都算。
+    fn mc_agent_id_taken(&self, id: &str) -> bool {
+        self.cfg.mc_agents.iter().any(|a| a.id == id)
+            || pi_link::agents::agents_dir()
+                .join(format!("{id}.md"))
+                .exists()
+    }
+
+    /// 新条目 id：ASCII 合法名直用（模型点名好读），否则 `subagent-N` 序号。
+    fn mc_agent_unique_id(&self, name: &str) -> String {
+        let ascii_ok = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+        if ascii_ok && !self.mc_agent_id_taken(name) {
+            return name.to_string();
+        }
+        (1..)
+            .map(|n| format!("subagent-{n}"))
+            .find(|candidate| !self.mc_agent_id_taken(candidate))
+            .expect("unbounded candidate space")
+    }
+
+    /// 复制体 id：`{id}-copy`、`{id}-copy-2`…… 取第一个没占用的。
+    fn mc_agent_unique_copy_id(&self, base: &str) -> String {
+        let first = format!("{base}-copy");
+        if !self.mc_agent_id_taken(&first) {
+            return first;
+        }
+        (2..)
+            .map(|n| format!("{base}-copy-{n}"))
+            .find(|candidate| !self.mc_agent_id_taken(candidate))
+            .expect("unbounded candidate space")
     }
 
     /// 损坏态「打开文件修复」：源码编辑器打开（表单化的唯一源码逃生口）。

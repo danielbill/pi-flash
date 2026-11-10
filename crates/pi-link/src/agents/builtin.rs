@@ -17,6 +17,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
     vec![
         AgentProfile {
             id: "explorer".into(),
+            name: None,
             description: "只读探索 · 调研与定位".into(),
             model: None,
             tools: Some("read-only".into()),
@@ -41,6 +42,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
         // 不写 `tools:` = inherit = 继承委派者全部工具（ZCode「全部工具」位）
         AgentProfile {
             id: "general-purpose".into(),
+            name: None,
             description: "通用子代理 · 复杂调研、代码检索、多步任务".into(),
             model: None,
             tools: None,
@@ -67,6 +69,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
         // 适用本地/廉价模型跑系统日志摘要等批量总结。
         AgentProfile {
             id: "summarizer".into(),
+            name: None,
             description: "无状态摘要 · 阅读文件或内容按要求总结".into(),
             model: None,
             tools: Some("read-only".into()),
