@@ -828,7 +828,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.specify", "指定", "指定", "Custom"),
     ("agents.save", "保存", "儲存", "Save"),
     ("agents.delete", "删除", "刪除", "Delete"),
-    ("agents.delete_confirm", "删除子代理「{name}」？删除后主代理将无法再委派它。", "刪除子代理「{name}」？刪除後主代理將無法再委派它。", "Delete subagent \"{name}\"? The main agent will no longer be able to delegate to it."),
+    ("agents.delete_confirm", "删除子代理「{name}」？", "刪除子代理「{name}」？", "Delete subagent \"{name}\"?"),
     ("agents.copy", "复制", "複製", "Copy"),
     ("agents.readonly_builtin", "内置 · 只读", "內建 · 唯讀", "Built-in · read-only"),
     ("agents.name_taken", "名称已存在（子代理禁止同名）", "名稱已存在（子代理禁止同名）", "Name already exists (subagent names must be unique)"),
