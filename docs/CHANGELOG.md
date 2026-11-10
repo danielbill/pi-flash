@@ -2,6 +2,29 @@
 
 所有对外发布的版本变化记录于此，格式见 `docs/CHANGELOG规范.md`。
 
+## [Unreleased]
+
+> 发版时把本段改写为版本号 + 日期，并按规范补「安装与更新」与英文段。
+
+### 新增
+- **子代理系统大改版（044）**：面板改版 + 观察窗（Observer tab）、`resumeFrom` 冷恢复续跑；并发容量事实源迁 PF 自有 `agents/config.json`（2–10、缺省 3，深度恒 1）；子代理 profile 目录迁 `<PF数据目录>/agents`（项目 `.pi-flash/agents` 可覆盖，96bb7e82）；删除确认 + 回收站后台清理；错误码细分（DEPTH_LIMIT / NOT_RESUMABLE 等）。(96bb7e82)
+- **计划模式（031）**：`/plan` 切换 + composer 指示；plan 提案卡一键批准 / 拒绝；`plan_mode.ts` P0 门禁脚本随包分发。
+- **PFContext 会话上下文基座（001，新 crate `pf-context`）**：设置快照单写者 + 原子写 + watcher，`ext-context.json` 投影给扩展，SQLite WAL 域库，`pfctx-manager` 守护进程 + pfctx.log 滚动日志。
+- **PF 插件宿主独立成 crate（`pf-plugin-host`，090-4）**。
+- 会话输入跨重启持久化：草稿 / 附件按项目落盘，重开不丢；新会话页每项目稳定草稿。
+
+### 修复
+- **流式输出卡死**：事件泵批处理 + notify 节流；禁用插件隐式首装不再卡住首帧（流式约 116 t/s）。
+- 输入卡顿：spinner `repeat()` 动画限帧（with_fps）。
+- 问卷卡：Enter 一次连跳两题；答完复弹坏掉的窗口。
+- 子代理观察窗挤掉主会话 tab；导航第三行 / 悬浮菜单哑火（descriptor 丢 `parentToolCallId`）。
+- 任务栏图标更新后点不开；启动卡死（wasm 验签移出主线程）。
+
+### 改进
+- 会话底部状态栏：插件状态显隐开关移入设置›界面（034 收尾）；乐观上屏（optimistic_send）。
+- 会话流 subagent 卡对齐会话列表样式：状态标记 + 完成提示重设计（044-0 验收⑤）。
+- 性能与整理：三市场页等超规文件全拆 ≤500 行（行为零变化）。
+
 ## [0.4.3] - 2026-11-05
 
 本次更新核心：
