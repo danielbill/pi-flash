@@ -289,7 +289,7 @@ export default function pfctxManager(pi: ExtensionAPI): void {
 		name: "pfctx_manager",
 		label: "PF-settings-manager",
 		description: [
-			"Pi-Flash 动态自管理：查询并修改 PF 应用设置，与在设置界面操作完全一致，含即时生效与持久化",
+			"Pi-Flash 动态自管理：查询并修改 PF 应用设置，与在设置界面操作完全一致，即时生效并持久",
 			"",
 			"用法：",
 			'1. {action:"query"} — 返回全部参数目录（名称/含义/可设值）与当前值、pfctx.log 路径。首次先 query。',
