@@ -475,6 +475,15 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 8 针荆棘圈 spinner（ZCode 同款星芒）：spark.svg 8 根放射短针统一
 /// 透明度，整体旋转。会话列表运行态用；弧线 spinner（`spinner`）仍服务
 /// 其余 15+ 处调用点。
+///
+/// **时长 2400ms，不与弧线 spinner 的 900ms 对齐**（2026-11-10 用户报
+/// 「会话列表那圈转得飞快」查实为真）：8 根针**同亮度等分** ⇒ 图标只有
+/// **45° 旋转对称**，视觉周期 = 45°/转速，比真转速快 8 倍——900ms/圈
+/// （400°/s）时视觉周期仅 112.5ms，肉眼读作「每秒 8.9 次转一格」；叠加
+/// 24fps 采样每帧 16.67°、一个对称周期只有 2.7 帧（非整数）⇒ wagon-wheel
+/// 混叠，跳格甚至看着反向。弧线 spinner 是 3/4 弧（唯一参考边）没有这个
+/// 问题，故只有这里降速：2400ms/圈 ⇒ 视觉周期 300ms、≈42°/s、6.25°/帧，
+/// 混叠消失。要么加针尾渐变破对称，要么保持等分但降速——本处选后者。
 pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
     gpui::svg()
         .path(SharedString::from("icons/spark.svg"))
@@ -482,7 +491,7 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         .size(gpui::px(size))
         .with_animation(
             "spark-spin",
-            Animation::new(std::time::Duration::from_millis(900))
+            Animation::new(std::time::Duration::from_millis(2400))
                 .repeat()
                 .with_fps(24.),
             |el, delta| {
