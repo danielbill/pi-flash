@@ -315,7 +315,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("about.auto_update", "自动更新", "自動更新", "Auto-update"),
     ("settings.auto_update_hint", "允许Pi-Flash自动更新", "允許Pi-Flash自動更新", "Let Pi-Flash update itself automatically"),
     ("settings.self_debug", "自我调试", "自我除錯", "Self-debug"),
-    ("settings.self_debug_hint", "允许Agent动态修改Pi-Flash设置（pfctx-manager 工具；切换重绑空闲会话）", "允許Agent動態修改Pi-Flash設置（pfctx-manager 工具；切換重綁空閒會話）", "Let the Agent change Pi-Flash settings at runtime (pfctx-manager tool; toggling rebinds idle sessions)"),
+    ("settings.self_debug_hint", "允许Agent动态修改Pi-Flash设置", "允許Agent動態修改Pi-Flash設置", "Let the Agent change Pi-Flash settings at runtime"),
     ("about.downloading_v", "下载 {v} 版本中…", "下載 {v} 版本中…", "Downloading v{v}…"),
     ("about.extracting_v", "解压安装中…", "解壓安裝中…", "Extracting & installing…"),
     ("update.ready_click", "下载完成，点击重启更新", "下載完成，點擊重啟更新", "Download complete — click to restart and update"),
