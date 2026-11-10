@@ -534,6 +534,11 @@ fn unquote(value: &str) -> String {
 /// 与 pi 市场社区 subagent 扩展共用目录 = 同一批 `.md` 被两套 schema 各自
 /// 解释（真机实况：explorer.md 被双向消费、目录里还躺着别家的
 /// settings.json）——命名空间污染，迁回 PF 自治。
+///
+/// **旧目录不读取、不迁移**（2026-11-10 移除启动 copy 迁移）：它非设计项，
+/// 且每次启动都跑、只凭「新目录有无同名文件」判断是否迁过、旧文件又永不
+/// 清除——用户在新目录删掉的条目下次启动就被拷回来（删掉的 explorer 每次
+/// 启动复活）。别再加回来。
 pub fn agents_dir() -> PathBuf {
     match crate::paths::dir() {
         Some(d) => d.join("agents"),
@@ -542,37 +547,6 @@ pub fn agents_dir() -> PathBuf {
                 .or_else(|_| std::env::var("HOME"))
                 .unwrap_or_else(|_| ".".into());
             Path::new(&home).join(".pi-flash").join("agents")
-        }
-    }
-}
-
-/// 旧全局目录（pi 生态约定，2026-11-06 起弃用）。
-pub fn legacy_agents_dir() -> PathBuf {
-    crate::config::agent_dir().join("agents")
-}
-
-/// 一次性迁移：旧目录的 `*.md` 复制进新目录（**不覆盖已存在**——同名冲突
-/// 以新目录为准；别家工具还要用旧目录，copy 而非 move）。幂等：无 .md 或
-/// 已迁过 = no-op。
-pub fn migrate_legacy_agents() {
-    migrate_agents_from(&legacy_agents_dir(), &agents_dir());
-}
-
-/// 迁移核心（路径解耦，纯函数可测）：from 目录的 `*.md` copy 进 to（不覆盖）。
-pub fn migrate_agents_from(from: &Path, to: &Path) {
-    let Ok(entries) = std::fs::read_dir(from) else {
-        return;
-    };
-    let _ = std::fs::create_dir_all(to);
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let Some(name) = p.file_name() else { continue };
-        let dst = to.join(&name);
-        if !dst.exists() {
-            let _ = std::fs::copy(&p, &dst);
         }
     }
 }

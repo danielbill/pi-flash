@@ -375,29 +375,3 @@ fn new_agent_id_is_short_uuid_and_unique() {
         assert!(seen.insert(id), "进程内重复 id: 碰撞");
     }
 }
-
-#[test]
-fn migrate_copies_without_overwriting_and_skips_non_md() {
-    let from = tmp_dir("mig-from");
-    let to = tmp_dir("mig-to");
-    std::fs::write(from.join("old.md"), "---\ndescription: legacy\n---\n").unwrap();
-    // 别家的非 .md 文件（实况：旧目录里有 settings.json）不迁
-    std::fs::write(from.join("settings.json"), "{}").unwrap();
-    // 新目录已有同名 = 用户已在新家改过，以新为准
-    std::fs::create_dir_all(&to).unwrap();
-    std::fs::write(to.join("old.md"), "---\ndescription: new-home\n---\n").unwrap();
-    migrate_agents_from(&from, &to);
-    assert!(to.join("old.md").exists());
-    assert!(!to.join("settings.json").exists());
-    let list = scan_agents_dir(&to);
-    let old = list.iter().find(|a| a.id == "old").unwrap();
-    assert_eq!(old.description, "new-home", "已存在的同名不被覆盖");
-    assert_eq!(list.len(), 1);
-}
-
-#[test]
-fn migrate_from_missing_dir_is_noop() {
-    let to = tmp_dir("mig-empty");
-    migrate_agents_from(&to.join("nonexistent"), &to);
-    assert!(to.exists() || !to.exists()); // 不 panic 即可；目录可能建出（幂等）
-}
