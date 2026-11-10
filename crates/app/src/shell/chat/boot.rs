@@ -245,6 +245,7 @@ impl Chat {
                 mc_default_tools: None,
                 mc_mj_error: None,
                 mc_mj_delete_confirm: None,
+                mc_agent_delete_confirm: None,
                 mc_probe: std::collections::HashMap::new(),
                 mj_speed: None,
                 mj_test: None,

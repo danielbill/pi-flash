@@ -143,3 +143,36 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
         )
         .into_any_element()
 }
+
+/// 子代理【删除】确认浮层（2026-11-10 加，custom_models::mj_delete_confirm_overlay
+/// 同款机制）：入口 = 右表单 [删除] / 损坏态 [删除]（先置
+/// `mc_agent_delete_confirm`），确认后走 [`Chat::mc_agent_delete`] 真删（进回收站）。
+pub(crate) fn agent_delete_confirm_overlay(
+    chat: &Chat,
+    cx: &mut Context<Chat>,
+) -> Option<gpui::AnyElement> {
+    let id = chat.cfg.mc_agent_delete_confirm.clone()?;
+    // 文案带显示名（name = 点名句柄）；条目已不在清单（损坏清掉等）回落 id
+    let name = chat
+        .cfg
+        .mc_agents
+        .iter()
+        .find(|a| a.id == id)
+        .map(|a| a.display_name().to_string())
+        .unwrap_or_else(|| id.clone());
+    let weak = cx.entity().downgrade();
+    let message = crate::i18n::tf("agents.delete_confirm", &[("name", name)]);
+    Some(crate::ui::overlay::confirm(
+        &chat.dlg.dialog_focus,
+        message,
+        {
+            let weak = weak.clone();
+            move |_, cx| {
+                let _ = weak.update(cx, |c, cx| c.mc_agent_delete_close(false, cx));
+            }
+        },
+        move |_, cx| {
+            let _ = weak.update(cx, |c, cx| c.mc_agent_delete_close(true, cx));
+        },
+    ))
+}

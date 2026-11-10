@@ -828,6 +828,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("agents.specify", "指定", "指定", "Custom"),
     ("agents.save", "保存", "儲存", "Save"),
     ("agents.delete", "删除", "刪除", "Delete"),
+    ("agents.delete_confirm", "删除「{name}」？（移入回收站）", "刪除「{name}」？（移入回收站）", "Delete \"{name}\"? (moves to the recycle bin)"),
     ("agents.copy", "复制", "複製", "Copy"),
     ("agents.readonly_builtin", "内置 · 只读", "內建 · 唯讀", "Built-in · read-only"),
     ("agents.name_taken", "名称已存在（子代理禁止同名）", "名稱已存在（子代理禁止同名）", "Name already exists (subagent names must be unique)"),

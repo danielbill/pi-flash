@@ -101,6 +101,8 @@ pub(crate) struct CfgUi {
     pub(crate) mc_mj_error: Option<String>,
     /// 自定义商【删除】确认浮层：待删 provider 名（含其下全部模型）
     pub(crate) mc_mj_delete_confirm: Option<String>,
+    /// 子代理【删除】确认浮层（044，2026-11-10 加）：待删 agent id
+    pub(crate) mc_agent_delete_confirm: Option<String>,
     /// 042：provider 通路探查状态（保存 key 后自动一次 + 详情页手动重试）
     pub(crate) mc_probe: std::collections::HashMap<String, McProbe>,
     /// 042-1 自定义商「测速」状态（单槽：详情页同屏只有一个）

@@ -25,7 +25,7 @@ pub(crate) mod dropdowns;
 pub(crate) mod menus;
 pub(crate) mod view;
 
-pub(crate) use view::mc_agents_view;
+pub(crate) use view::{agent_delete_confirm_overlay, mc_agents_view};
 
 impl Chat {
     /// 选中一个 Agent 并把字段装进表单（导航预填与行点击共用）。
@@ -242,7 +242,26 @@ impl Chat {
         cx.notify();
     }
 
-    /// 删除自定义条目（进回收站）。trash **禁上主线程**：主线程被 winit
+    /// 【删除】入口（2026-11-10 加确认弹窗，对齐 custom_models）：只置确认
+    /// 状态，真正删除在确认后走 [`Self::mc_agent_delete`]。
+    pub(crate) fn mc_agent_ask_delete(&mut self, id: String, cx: &mut Context<Self>) {
+        self.cfg.mc_agent_delete_confirm = Some(id);
+        cx.notify();
+    }
+
+    /// 删除确认浮层收尾：取消 = 清态；确认 = 交真删。
+    pub(crate) fn mc_agent_delete_close(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let Some(id) = self.cfg.mc_agent_delete_confirm.take() else {
+            return;
+        };
+        if !ok {
+            cx.notify();
+            return;
+        }
+        self.mc_agent_delete(id, cx);
+    }
+
+    /// 删除自定义条目（进回收站；确认弹窗后的真删动作）。trash **禁上主线程**：主线程被 winit
     /// OleInitialize 成 STA，而 trash 按 Cargo.toml 配置请求 MTA——主线程
     /// 直接 RPC_E_CHANGED_MODE(0x80010106) panic，且 gpui 帧不可 unwind、
     /// 整进程 abort（删除子代理崩溃的根因）。同 file_actions_delete.rs

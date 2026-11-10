@@ -53,6 +53,10 @@ impl Chat {
         if let Some(el) = settings::custom_models::mj_delete_confirm_overlay(self, cx) {
             root = root.child(el);
         }
+        // 044 子代理【删除】确认浮层（进回收站前确认；2026-11-10 加，同款机制）
+        if let Some(el) = settings::agents::agent_delete_confirm_overlay(self, cx) {
+            root = root.child(el);
+        }
         // 042-1 模型编辑器小弹窗（自定义商模型行 /【+模型】打开；叠在设置弹窗
         // 之上，section = mj:m:{prov}:{ix} 即打开态，关闭退回 Provider 详情）
         {

@@ -211,6 +211,8 @@ pub(super) fn dialogs_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         "tree_deleting": chat.dlg.tree_deleting.len(),
         // 040 扩展页卸载确认浮层（Some=开着，值为待卸载来源）
         "pkg_confirm_remove": chat.cfg.pkg_confirm_remove.clone(),
+        // 044 子代理删除确认浮层（Some=开着，值为待删 agent id）
+        "agent_delete_confirm": chat.cfg.mc_agent_delete_confirm.clone(),
         "renaming": opt_path(chat.dlg.renaming.as_ref()),
         // 编辑区右键菜单（file.context_menu 置槽；null=关）——开合/收起
         // 断言的数据化出口（此前只能开，断言靠 shot 像素）

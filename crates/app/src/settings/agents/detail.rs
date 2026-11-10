@@ -85,7 +85,7 @@ pub(super) fn agent_detail(
                 false,
                 {
                     let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                    move |c, cx| c.mc_agent_delete(id.clone(), cx)
+                    move |c, cx| c.mc_agent_ask_delete(id.clone(), cx)
                 },
             ))
         })
@@ -145,7 +145,7 @@ pub(super) fn agent_detail(
                         false,
                         {
                             let id = agent.as_ref().map(|a| a.id.clone()).unwrap_or_default();
-                            move |c, cx| c.mc_agent_delete(id.clone(), cx)
+                            move |c, cx| c.mc_agent_ask_delete(id.clone(), cx)
                         },
                     )),
             );
