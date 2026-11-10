@@ -131,7 +131,8 @@ export interface Profile {
 	/** `worktree` isolates the child in a separate checkout. */
 	isolation?: "worktree";
 	/** Working directory override (2026-11-08 子代理表单). `"pf-data"` runs the
-	 * child in the PF data directory; `undefined` = inherit the delegator's cwd. */
+	 * child in the PF data directory; `undefined` = inherit the delegator's cwd.
+	 * Resolve it with `resolveProfileCwd` — never pass the raw token down. */
 	cwd?: string;
 	/** pi-extension paths to mount in the child (full+ 档的 pi-ext 选择；044-0). */
 	extensions?: string[];
@@ -310,6 +311,22 @@ export function profileFromDocument(id: string, text: string, source: string): P
 		skills,
 		source,
 	};
+}
+
+/**
+ * Resolve a profile's `cwd` token to an absolute path.
+ *
+ * `undefined` (key absent/empty) = inherit the delegator's cwd. `"pf-data"` =
+ * the PF data directory (`PI_FLASH_DIR`); a host that does not expose it gets
+ * `undefined` — inherit beats guessing a project directory, and PF always sets
+ * the env var.
+ */
+export function resolveProfileCwd(
+	profileCwd: string | undefined,
+	dataDir: string | undefined,
+): string | undefined {
+	if (profileCwd === undefined) return undefined;
+	return dataDir;
 }
 
 /** Load one profile by id; the project directory shadows the global one, and

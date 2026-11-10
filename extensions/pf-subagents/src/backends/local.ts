@@ -68,7 +68,8 @@ export interface SessionFactoryOptions {
 	extensions?: string[];
 	/** MCP server names the child may use (full+ 档；空/缺省 = 全部按默认装配). */
 	mcpServers?: string[];
-	/** Skill ids to inject; empty/absent = the loader's own discovery. */
+	/** Skill ids to inject (044-0 三态): absent = the loader's own discovery,
+	 * empty list = no skills (关闭), non-empty = exactly those ids. */
 	skills?: string[];
 }
 
@@ -95,6 +96,8 @@ export interface ResolvedComposition {
 	/** Thinking level from the profile; `undefined` = auto = no override. */
 	thinkingLevel?: string;
 	model?: string;
+	/** Absolute working directory resolved from the profile (`cwd: pf-data`). */
+	cwd?: string;
 	injectAgentsMd?: boolean;
 	maxTurns?: number;
 	/** chat-only tier (044-0 六档): the child starts with no tools. */
@@ -407,7 +410,8 @@ export class LocalProvider implements Provider {
 		let session: ChildSession;
 		try {
 			session = await this.#options.factory({
-				cwd: request.cwd ?? process.cwd(),
+				// 调用级 cwd 优先（委派者显式指定），其次 profile 的 cwd，最后父进程
+				cwd: request.cwd ?? composition.cwd ?? process.cwd(),
 				...(request.resumeFrom ? { resumeSessionFile: request.resumeFrom } : {}),
 				model: composition.model ?? request.model,
 				systemPrompt: composition.systemPrompt,

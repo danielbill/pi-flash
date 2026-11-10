@@ -156,6 +156,7 @@ impl Chat {
             .map(|a| a.unknown.clone())
             .unwrap_or_default();
         let max_turns = match turns {
+            MaxTurnsTier::Five => Some(5),
             MaxTurnsTier::Thirty => Some(30),
             MaxTurnsTier::Hundred => Some(100),
             MaxTurnsTier::Unlimited => Some(0),

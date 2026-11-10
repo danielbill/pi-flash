@@ -58,6 +58,10 @@ maxTurns: 45
     assert_eq!(odd.max_turns_tier(), MaxTurnsTier::Custom);
     let u = parse_agent("u", "---\nmaxTurns: 0\n---\nx\n", AgentOrigin::Custom).unwrap();
     assert_eq!(u.max_turns_tier(), MaxTurnsTier::Unlimited);
+    // 5 档（2026-11-10 用户加档）：内置摘要机就是这一档，面板同样可选中
+    let s = parse_agent("s", "---\nmaxTurns: 5\n---\nx\n", AgentOrigin::Custom).unwrap();
+    assert_eq!(s.max_turns, Some(5));
+    assert_eq!(s.max_turns_tier(), MaxTurnsTier::Five);
     let d = parse_agent("d", "---\ndescription: d\n---\n", AgentOrigin::Custom).unwrap();
     assert_eq!(
         d.max_turns_tier(),
@@ -223,7 +227,11 @@ fn builtin_explorer_and_custom_override() {
     assert_eq!(gp.tools_tier(), "inherit", "general-purpose 继承全部工具");
     assert_eq!(gp.max_turns_tier(), MaxTurnsTier::Custom, "轮次「指定」");
     let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
-    assert_eq!(sum.max_turns_tier(), MaxTurnsTier::Custom);
+    assert_eq!(
+        sum.max_turns_tier(),
+        MaxTurnsTier::Five,
+        "摘要机 = 面板 5 档（无双语义）"
+    );
     assert_eq!(sum.max_turns, Some(5), "摘要机固定 5 轮");
     let custom = AgentProfile {
         id: "explorer".into(),

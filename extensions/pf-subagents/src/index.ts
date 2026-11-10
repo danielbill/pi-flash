@@ -20,7 +20,13 @@ import { LocalProvider } from "./backends/local.ts";
 import { COMPLETION_TYPE, composeCompletion, settledEntry } from "./completion.ts";
 import { SubagentError, SubagentErrorCode } from "./errors.ts";
 import { SubagentManager } from "./manager.ts";
-import { TOOL_TIER_WHITELISTS, defaultProfilePaths, listProfilesSync, loadProfile } from "./profile.ts";
+import {
+	TOOL_TIER_WHITELISTS,
+	defaultProfilePaths,
+	listProfilesSync,
+	loadProfile,
+	resolveProfileCwd,
+} from "./profile.ts";
 import {
 	applyModuleConfig,
 	boundFromScalar,
@@ -716,6 +722,9 @@ async function resolveComposition(
 		noTools: tier === "chat-only" ? true : undefined,
 		thinkingLevel: profile.thinking,
 		model: model ?? profile.model,
+		// `cwd: pf-data` → PF 数据目录（表单两档之一）；缺省 = 继承委派者。
+		// 必须在委派前解析成绝对路径，子会话构造不吃原始 token。
+		cwd: resolveProfileCwd(profile.cwd, pfDataDir()),
 		injectAgentsMd: profile.injectAgentsMd,
 		maxTurns: profile.maxTurns ?? config.maxTurns,
 		extensions: profile.extensions,

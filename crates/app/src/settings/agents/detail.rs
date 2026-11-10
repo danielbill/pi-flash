@@ -273,7 +273,7 @@ pub(super) fn agent_detail(
         false,
     ));
 
-    // 最大轮次 seg（30/100/不限/指定；指定 = 主代理委派时给 maxloop）
+    // 最大轮次 seg（5/30/100/不限/指定；指定 = 主代理委派时给 maxloop）
     form = form.child(agent_row(
         &tr("agents.max_turns"),
         turns_seg(weak, ag_turns, readonly),
@@ -311,8 +311,9 @@ fn detail_shell_with(head: gpui::Div, form: gpui::Div) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// 最大轮次四档 seg（原型 `.seg`；2026-11-08 设计对齐）：30/100/不限/指定，
-/// 「指定」= 主代理委派时给 maxloop，profile 不写 maxTurns（原数字输入退役）。
+/// 最大轮次五档 seg（原型 `.seg`；2026-11-08 设计对齐 + 2026-11-10 加 5 档）：
+/// 5/30/100/不限/指定。「指定」= 主代理委派时给 maxloop，profile 不写
+/// maxTurns（原数字输入退役）；5 档给内置摘要机用，不另造语义。
 fn turns_seg(
     weak: &gpui::WeakEntity<Chat>,
     turns: &MaxTurnsTier,
@@ -322,6 +323,7 @@ fn turns_seg(
         weak,
         readonly,
         [
+            (MaxTurnsTier::Five, "5", *turns == MaxTurnsTier::Five),
             (MaxTurnsTier::Thirty, "30", *turns == MaxTurnsTier::Thirty),
             (
                 MaxTurnsTier::Hundred,

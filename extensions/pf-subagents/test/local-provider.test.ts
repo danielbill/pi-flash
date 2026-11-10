@@ -369,6 +369,26 @@ describe("LocalProvider", () => {
 		assert.equal(seen[1].maxTurns, 40);
 	});
 
+	it("starts the child in the profile's cwd, and the call-level cwd wins", async () => {
+		const seen: SessionFactoryOptions[] = [];
+		const provider = new LocalProvider({
+			name: "spawn",
+			inheritsParentContext: false,
+			resolveComposition: async () => ({ cwd: "/pf/data" }),
+			factory: async (factoryOptions) => {
+				seen.push(factoryOptions);
+				return new ScriptedSession();
+			},
+		});
+		const manager = new SubagentManager();
+		manager.registry.register(provider);
+		await (await manager.start(baseRequest({ provider: "spawn" }))).wait();
+		assert.equal(seen[0].cwd, "/pf/data", "profile cwd: pf-data 解析后生效");
+
+		await (await manager.start(baseRequest({ provider: "spawn", cwd: "/work/project" }))).wait();
+		assert.equal(seen[1].cwd, "/work/project", "调用级 cwd 覆盖 profile");
+	});
+
 	it("forwards the profile composition to the factory", async () => {
 		const seen: SessionFactoryOptions[] = [];
 		const provider = new LocalProvider({

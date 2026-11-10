@@ -56,12 +56,19 @@ impl AgentOrigin {
     }
 }
 
-/// 最大轮次档（2026-11-08 用户定稿四档：30 | 100 | 不限 | 指定）。
+/// 最大轮次档（2026-11-08 定稿四档 + 2026-11-10 加 5 档 = 五档：
+/// 5 | 30 | 100 | 不限 | 指定）。
+///
+/// 5 档是内置摘要机（summarizer）的固定预算——不给它单独造一套语义，
+/// 面板上就是一个普通档位，用户选它写 `maxTurns: 5`，内置条目读出来也是
+/// 这一档，不存在「文档说 5、面板显示指定」的双重语义。
+///
 /// `Custom` = 「指定」= 由主代理委派时给 `maxloop`，profile **不写**
 /// maxTurns；档外显式数值（手写档）也归到 `Custom` 视图，原始值留在
 /// [`AgentProfile::max_turns`] 透传保真，只有用户换档才归一。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaxTurnsTier {
+    Five,
     Thirty,
     Hundred,
     Unlimited,
@@ -116,6 +123,7 @@ impl AgentProfile {
             // 缺省 = 「指定」= 主代理委派时给 maxloop（2026-11-08 定稿）
             None => MaxTurnsTier::Custom,
             Some(0) => MaxTurnsTier::Unlimited,
+            Some(5) => MaxTurnsTier::Five,
             Some(30) => MaxTurnsTier::Thirty,
             Some(100) => MaxTurnsTier::Hundred,
             Some(_) => MaxTurnsTier::Custom,

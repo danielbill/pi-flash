@@ -6,10 +6,22 @@ import { describe, it } from "node:test";
 import { homedir } from "node:os";
 
 import { SubagentError, SubagentErrorCode } from "../src/errors.ts";
-import { defaultProfilePaths, listProfiles, listProfilesSync, loadProfile, parseFrontmatter, profileFromDocument } from "../src/profile.ts";
+import { defaultProfilePaths, listProfiles, listProfilesSync, loadProfile, parseFrontmatter, profileFromDocument, resolveProfileCwd } from "../src/profile.ts";
 import { captureSync } from "./helpers.ts";
 
 const code = (error: unknown) => (error as SubagentError).code;
+
+describe("cwd token", () => {
+	it("resolves pf-data to the PF data directory and absent to inherit", () => {
+		assert.equal(resolveProfileCwd(undefined, "/pf/data"), undefined, "键省略 = 继承委派者 cwd");
+		assert.equal(resolveProfileCwd("pf-data", "/pf/data"), "/pf/data");
+		assert.equal(
+			resolveProfileCwd("pf-data", undefined),
+			undefined,
+			"宿主没给 PI_FLASH_DIR 时退回继承，不猜项目目录",
+		);
+	});
+});
 
 describe("frontmatter", () => {
 	it("reads scalars, lists, and the body", () => {
