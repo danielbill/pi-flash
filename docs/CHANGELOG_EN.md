@@ -2,6 +2,41 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.5.0] - 2026-11-11
+
+Highlights of this release:
+1. New async subagent system
+2. New plan mode
+3. New self-debugging tools
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # Same command for first install and updates
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. A portable zip is also available: download, unzip, and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **Async subagent system (044)**: async subagent task dispatching, a redesigned navigation panel + sub-session observer tab, `resumeFrom` cold-resume continuation; the concurrency-capacity source of truth moved to PF's own `agents/config.json` (2–10, default 3, depth fixed at 1); the subagent profile directory moved to `<PF data dir>/agents` (overridable per project via `.pi-flash/agents`, 96bb7e82); delete confirmation + background recycle-bin cleanup; finer-grained error codes (DEPTH_LIMIT / NOT_RESUMABLE, etc.). (96bb7e82)
+- **Plan mode (031)**: toggle with `/plan` + composer indicator; one-click approve/reject on plan proposal cards; the `plan_mode.ts` P0 gate script ships with the package.
+- **PFContext session-context foundation (001, new crate `pf-context`)**: settings-snapshot single writer + atomic writes + watcher, `ext-context.json` projected to extensions, SQLite WAL domain store, `pfctx-manager` daemon + rotating pfctx.log.
+- **PFContext-based self-debugging tools**.
+- **PF plugin host extracted into its own crate (`pf-plugin-host`, 090-4)**.
+- Session input persists across restarts: drafts/attachments are stored per project and survive reopening; the new-session page keeps a stable per-project draft.
+
+### Bug fixes
+- **Streaming output stalls**: event-pump batching + notify throttling; implicitly installing a disabled plugin no longer blocks the first frame (streaming at ~116 t/s).
+- Input lag: spinner `repeat()` animation is now frame-limited (with_fps).
+- AskCard: pressing Enter no longer skips two questions at once; after finishing, a broken window no longer pops up again.
+- The subagent observer tab no longer squeezes out the main session tab; the third nav row / hover menu no longer goes dead (the descriptor dropped `parentToolCallId`).
+- The taskbar icon could not be clicked after being updated; startup hangs (wasm signature verification moved off the main thread).
+
+### Improvements
+- Session bottom status bar: the per-plugin status visibility toggle moved into Settings›Interface (034 wrap-up); optimistic sending (optimistic_send).
+- The session-flow subagent card now matches the session-list style: status marker + redesigned completion notice (044-0 acceptance ⑤).
+- Performance and tidy-up: oversized files such as the three market pages were all split to ≤500 lines (zero behavior change).
 ## [0.4.3] - 2026-11-05
 
 Highlights of this release:

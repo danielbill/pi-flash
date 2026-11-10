@@ -2,14 +2,28 @@
 
 所有对外发布的版本变化记录于此，格式见 `docs/CHANGELOG规范.md`。
 
-## [Unreleased]
+## [0.5.0] - 2026-11-11
 
-> 发版时把本段改写为版本号 + 日期，并按规范补「安装与更新」与英文段。
+本次更新核心：
+1、新增子异步代理系统
+2、新增计划模式
+3、新增自我调试工具
+
+
+### 安装与更新
+
+```bash
+npm install -g pi-flash@latest   # 首次安装与更新同命令
+pi-flash
+```
+
+需要 Node.js ≥ 22.19。也可直接下载 zip 绿色包，解压后双击 `pi-flash.exe` 即用。仅提供 Windows x64 版本。
 
 ### 新增
-- **子代理系统大改版（044）**：面板改版 + 观察窗（Observer tab）、`resumeFrom` 冷恢复续跑；并发容量事实源迁 PF 自有 `agents/config.json`（2–10、缺省 3，深度恒 1）；子代理 profile 目录迁 `<PF数据目录>/agents`（项目 `.pi-flash/agents` 可覆盖，96bb7e82）；删除确认 + 回收站后台清理；错误码细分（DEPTH_LIMIT / NOT_RESUMABLE 等）。(96bb7e82)
+- **异步子代理系统（044）**：异步子代理任务派发、导航面板改版 + 子会话观察窗（Observer tab）、`resumeFrom` 冷恢复续跑；并发容量事实源迁 PF 自有 `agents/config.json`（2–10、缺省 3，深度恒 1）；子代理 profile 目录迁 `<PF数据目录>/agents`（项目 `.pi-flash/agents` 可覆盖，96bb7e82）；删除确认 + 回收站后台清理；错误码细分（DEPTH_LIMIT / NOT_RESUMABLE 等）。(96bb7e82)
 - **计划模式（031）**：`/plan` 切换 + composer 指示；plan 提案卡一键批准 / 拒绝；`plan_mode.ts` P0 门禁脚本随包分发。
 - **PFContext 会话上下文基座（001，新 crate `pf-context`）**：设置快照单写者 + 原子写 + watcher，`ext-context.json` 投影给扩展，SQLite WAL 域库，`pfctx-manager` 守护进程 + pfctx.log 滚动日志。
+- **基于PFContext的自我调试工具**
 - **PF 插件宿主独立成 crate（`pf-plugin-host`，090-4）**。
 - 会话输入跨重启持久化：草稿 / 附件按项目落盘，重开不丢；新会话页每项目稳定草稿。
 
@@ -24,7 +38,6 @@
 - 会话底部状态栏：插件状态显隐开关移入设置›界面（034 收尾）；乐观上屏（optimistic_send）。
 - 会话流 subagent 卡对齐会话列表样式：状态标记 + 完成提示重设计（044-0 验收⑤）。
 - 性能与整理：三市场页等超规文件全拆 ≤500 行（行为零变化）。
-
 ## [0.4.3] - 2026-11-05
 
 本次更新核心：
