@@ -105,7 +105,8 @@ pub(crate) fn composer_bar(
     right = right.child(
         super::bar_trigger(
             "open-model-select",
-            Some("cpu"),
+            // Some("cpu"), // 2026-11-10 用户：去掉模型左侧 chip icon
+            None,
             model_label,
             true,
             if locked { t.text_faint } else { t.text_muted },
