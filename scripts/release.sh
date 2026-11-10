@@ -106,6 +106,12 @@ cp -r vendor/pi dist/pi-flash/vendor/
 if [[ -d extensions/pf-subagents ]]; then
   mkdir -p dist/pi-flash/extensions
   cp -r extensions/pf-subagents dist/pi-flash/extensions/
+  # target-check/（CARGO_TARGET_DIR 检查缓存，git 已忽略）是开发期垃圾，cp -r 会照搬
+  # → 0.5.0 曾把包撑到 1.4GB（正常 ≈90MB），dist 侧剥掉，仓库侧不动。
+  if [[ -d dist/pi-flash/extensions/pf-subagents/target-check ]]; then
+    rm -rf dist/pi-flash/extensions/pf-subagents/target-check
+    echo "    ⚠ 已从包内剥离 extensions/pf-subagents/target-check（开发缓存，勿入库勿随包）"
+  fi
   echo "    subagent 扩展已随包分发"
 else
   echo "    ⚠ extensions/pf-subagents 缺失，本包将没有 agent 工具"
