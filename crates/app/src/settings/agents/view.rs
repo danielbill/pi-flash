@@ -121,10 +121,16 @@ fn agent_item(weak: &gpui::WeakEntity<Chat>, a: &AgentProfile, active: bool) -> 
                 .child(SharedString::from(a.display_name().to_string())),
         )
         .child(
+            // 按钮壳：① 截停下压穿透——ui::button 挂在 mouse_down、且 gpui
+            // 内层先外层后派发，行 on_mouse_down 若不拦会把 copy 刚选中的
+            // 新条目覆盖回源条目（2026-11-10 真机实锤）；② 字重显式归位
+            // NORMAL——active 行的 SEMIBOLD 会继承进按钮文字。
             div()
                 .flex_shrink_0()
                 .opacity(0.)
                 .group_hover(reveal, |s| s.opacity(1.))
+                .font_weight(gpui::FontWeight::NORMAL)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(config_button(
                     format!("ag-copy-{}", a.id),
                     weak,
