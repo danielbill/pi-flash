@@ -38,7 +38,7 @@
       勿 stash、勿代提交；若按规范流程**预写**了 CHANGELOG 新版本段，同样要先提交——
       收编幂等，内容一致则零改动）
 - [ ] CHANGELOG写完交所有者审批，审批通过方可继续
-- [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（19 项）
+- [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（28 项）
 - [ ] 架构守卫 PASS：`scripts/check_arch.sh`（行数红线按**非测试行数**计；超线存量冻结在
       `scripts/arch-lines-baseline.txt`，新增超线/存量增长 = 先拆分或口径复核再发版；
       基线只许人工 `--update-baseline` 刷新）
@@ -93,7 +93,7 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 scripts/ship.sh <v> tmp/release-notes-<v>.md
 ```
 
-前置校验（版本三处一致、dist 三资产在位、tag 未占用、§3.2 标记在位）→ 发版提交（pathspec 限六文件）→
+前置校验（版本三处一致、dist 三资产在位、tag 未占用、§3.2 标记在位）→ 发版提交（pathspec 限五文件）→
 tag → 推 main + tags → `gh release create` 挂三资产。等价手动序列（顺序敏感）：
 
 ```bash

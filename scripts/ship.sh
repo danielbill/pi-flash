@@ -7,7 +7,7 @@
 #   例：scripts/ship.sh 0.2.0 tmp/release-notes-0.2.0.md
 #
 # 步骤：前置校验（版本三处一致、资产三件在位、tag 未占用、人工验收标记在位）→ 发版提交
-# （pathspec 限定六文件，不卷并行改动）→ tag → 推 main + tags（HTTPS 被墙
+# （pathspec 限定五文件，不卷并行改动）→ tag → 推 main + tags（HTTPS 被墙
 # 自动降级 SSH over 443）→ gh release create 挂三资产（紧跟推送，压缩薄壳
 # 用户的 404 竞态窗口，080 §4）。
 # npm 薄壳不在此发：publish-npm.yml 随 tag 自动 OIDC 发布（RELEASE.md §4）。

@@ -31,10 +31,11 @@ crates/app/src/
 ├── main.rs            mod 树 + 根 re-export + main()（~200 行）
 ├── shell/             应用壳域：chat.rs（Chat 实体本体：8 个状态子结构簇
 │                      PoolUi/ComposerUi/LayoutUi/PspUi/WsUi/DlgUi/CfgUi/AuxUi
+│                      + 直属插件字段 plugins: pf_plugin::PluginUi
 │                      + 构造器）+ render.rs（渲染根/焦点仲裁）+ types.rs
 │                      （跨域壳类型 Dialog/PanelTab/DockPanel/ContentView/
 │                      Pill 三件套/FileTab…；单域类型已下沉所属域）
-├── startup.rs         启动唯一入口(010)
+├── startup.rs startup/  启动唯一入口(globals/pumps/restore)(010)
 ├── agent_session.rs   无头实体:PiSession/事件泵/epoch/on_event 分发
 ├── appearance/        主题注册表 + ActiveTheme + 字体(theme.rs,rgba_a 等色助手)
 ├── content.rs         内容区状态机 chat/term/md(v54)
@@ -53,26 +54,35 @@ crates/app/src/
 │                      psp_rows(行模型+rebuild 簇) + project_row + psp_* +
 │                      file_tree.rs(三视图+行渲染) + file_tree/(action_bar +
 │                      tree_state) + file_actions + git_panel + 菜单原语上移 ui/menu
-├── remote_control/    微信桥(060;mod/menu/pipeline)
-├── services/          无 UI 助手(pi-web lib/ parity):updater/(mod+version+
+├── search/            全局搜索域(083 Zed ProjectSearch 复刻)：actions/engine/
+│                      nav/panel/query/replace/results/sessions
+├── mode/              计划模式(031)：dialog/state + plan_mode.ts
+├── services/          无 UI 助手(pi-web lib/ parity)：updater/(mod+version+
 │                      payload+fetch) + workspace/(mod re-export+store+ws_state+
-│                      app_settings) + models_config + git/format/… 原平铺件
+│                      app_settings) + models_config + custom_models_store/
+│                      mj_doc_cache/pf_state/pfctx_ops(001)/script_exec/win_pin
+│                      + git/format/… 原平铺件
 ├── session/           会话域:mod(sessionView 组装/列表) + runtime/(mod 结构+
 │                      生命周期+泵、events 事件臂、send 发送路径+rpc 门面、
 │                      nav 定位对账、ingest 摄入) + messages/(mod、model 类型
 │                      与尾窗解码、tool_card/compaction/diff_view、user_row
 │                      用户行+块分发、turn 轮装配、images 解码缓存) + input/(mod Chat 委托层、area 主输入区+
 │                      键路由、bar 控件行、ctx_tip 用量面板) + pool + chat_list
-│                      + menu + attachments + fork + diff + pickers +
-│                      new_session + tools_recipe
-├── settings/          设置六页(models/general/plugins/skills/mcp/
-│                      custom_models/misc/remote;McProbe/PkgOp 各归其页)
+│                      + footer_bar/fn_bar(034) + menu+menu_rows + attachments
+│                      + fork + diff + pickers(model/mcp/pi_extension)
+│                      + new_session + tools_recipe
+├── settings/          设置十页(general/models/custom_models/agents/skills/
+│                      pi_extensions/mcp/shortcuts/misc/about；McProbe/PkgOp 各归其页)
 └── ui/                通用件:tokens/button/text_input/composer_input/dropdown/
                        overlay/popup/vlist/psp_scrollbar/tooltip
 ```
 
 pi-link:sessions.rs 索引化扫描(group 目录定位 + tail-seek 摘要 + (mtime,size)
 指纹索引落盘 + `read_tail_messages` 尾窗解析)+ 协议层(不变,只对钉版 pi 负责)。
+
+workspace 共 4 crate：`pi-link` + `app` + `pf-context`(001 会话上下文基座：
+设置快照单写者/原子写/watcher、ext-context.json 投影、SQLite WAL 域库、
+pfctx-manager 守护)+ `pf-plugin-host`(090-4 wasm 插件宿主)。
 
 ## 2.5 会话模型(pi-web 多开对齐)
 
@@ -89,11 +99,11 @@ Chat 是壳:池(runtimes map)+ 注意力指针 + 侧栏/git/文件/终端/设置
 
 ## 3. 状态所有权
 
-Chat 是壳实体，**直属字段只有 8 个子结构**：`pool`（会话池/
+Chat 是壳实体，**直属字段 = 8 个子结构簇 + 直属插件字段 `plugins`（pf_plugin::PluginUi）**：`pool`（会话池/
 指针/缓存/启动闸门）、`composer`（输入面板 031）、`layout`（dock/路由/分隔条/
 flyout/焦点）、`psp`（项目/会话列表/搜索/通知点）、`ws`（文件树/编辑器/终端/
 git/cwd）、`dlg`（弹窗/悬浮层/右键菜单/toast/设置句柄）、`cfg`（设置页配置状态）、
-`aux`（扩展 UI/更新/远程/系统提示词弹窗）。跨域字段访问在代码里可见可查：
+`aux`（扩展 UI/更新/系统提示词弹窗）。跨域字段访问在代码里可见可查：
 `chat.ws.tree_rows` vs `chat.dlg.tree_menu` 一眼可辨归属。
 
 | 状态 | 属主 |
@@ -112,7 +122,7 @@ git/cwd）、`dlg`（弹窗/悬浮层/右键菜单/toast/设置句柄）、`cfg`
 | 弹窗/右键菜单/toast/设置面板句柄 | Chat.dlg |
 | 设置页配置状态（mc_*/provider registry/mcp） | Chat.cfg；面板实体渲染在 settings/ |
 | 窗口 bounds/布局状态 | 状态文件(services/workspace,shell 恢复) |
-| 扩展 UI/自动更新/远程桥 | Chat.aux |
+| 扩展 UI/自动更新 | Chat.aux |
 | 主题/语言/字体 | 全局(appearance/i18n) |
 
 **RPC 发送纪律**：`Command` 直发只允许出现在
