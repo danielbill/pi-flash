@@ -228,7 +228,7 @@ pub fn big_card(
         row = row.child(nav);
     }
     div()
-        .w(gpui::relative(0.7))
+        .w(gpui::relative(0.8))
         .h(gpui::relative(0.98))
         .bg(rgb(t.bg))
         .border_1()

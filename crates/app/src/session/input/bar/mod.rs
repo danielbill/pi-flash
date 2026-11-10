@@ -93,7 +93,7 @@ fn mcp_button(
 
 /// 031-1 计划模式状态 pill（仅计划态渲染，见 bar_left_group 插入点）：
 /// notebook-pen 图标 + 「计划」，悬停原位换 x（§5.10 状态驱动，send/stop
-/// 先例），tooltip「取消下一次提交的计划模式」；点击 = mc_toggle_plan
+/// 先例），tooltip「取消计划模式」；点击 = mc_toggle_plan
 /// （计划态下即退出）。不开菜单、无 PillBtns 槽位。
 fn plan_marker_button(
     chat: &mut Chat,
