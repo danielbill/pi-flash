@@ -148,9 +148,11 @@ function createSessionFactory(ctx: ExtensionContext, parentSessionFile: string |
 			...(options.injectAgentsMd === false ? { noContextFiles: true } : {}),
 			// full+ 档的 pi-ext 选择（044-0）：清单即 -e，挂进 loader。
 			...(options.extensions?.length ? { additionalExtensionPaths: options.extensions } : {}),
-			// skills 定制（044-0）：清单缺省 = 发现集原样；有清单 = 按名字过滤
-			// （skillsOverride 在 discovery 之后、装配之前生效）。
-			...(options.skills?.length
+			// skills 定制（044-0 三态）：键缺省 = 发现集原样（继承）；空清单 =
+			// 关闭（过滤后一个不留）；有清单 = 按名字过滤。三者靠 `!== undefined`
+			// 区分——`?.length` 会把「关闭」误判成「继承」。
+			// （skillsOverride 在 discovery 之后、装配之前生效。）
+			...(options.skills !== undefined
 				? {
 						skillsOverride: (base: { skills: Array<{ name?: string; id?: string }>; diagnostics: unknown[] }) => ({
 							skills: base.skills.filter((s) => {

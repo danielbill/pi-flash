@@ -98,8 +98,10 @@ pub struct AgentProfile {
     pub extensions: Vec<String>,
     /// `mcp` 清单（full+ 档的 mcp 服务选择；空 = 默认装配，044-0）。
     pub mcp_servers: Vec<String>,
-    /// `skills` 清单（skills 定制；空 = 注入系统开启的 skills，044-0）。
-    pub skills: Vec<String>,
+    /// `skills` 清单（044-0 技能设置三态）：`None` = 键缺失 = 注入系统开启
+    /// 集（继承）；`Some(空)` = **键存在但无条目 = 关闭**；`Some(清单)` =
+    /// 自定义。键的存在性是语义的一部分，别用空 Vec 表示继承。
+    pub skills: Option<Vec<String>>,
     pub origin: AgentOrigin,
     /// 文件路径；内置常量无文件时为 None。
     pub path: Option<PathBuf>,
@@ -191,7 +193,7 @@ pub fn read_agent_file(id: String, path: &Path) -> AgentProfile {
             unknown: Vec::new(),
             extensions: Vec::new(),
             mcp_servers: Vec::new(),
-            skills: Vec::new(),
+            skills: None,
             origin: AgentOrigin::Custom,
             path: Some(path.to_path_buf()),
             error: Some(error),
@@ -302,7 +304,8 @@ pub fn parse_agent(id: &str, text: &str, origin: AgentOrigin) -> Result<AgentPro
         unknown,
         extensions: parse_list("extensions"),
         mcp_servers: parse_list("mcp"),
-        skills: parse_list("skills"),
+        // 三态（044-0）：键缺失 = None = 继承；键存在空清单 = Some([]) = 关闭
+        skills: get("skills").map(|_| parse_list("skills")),
         origin,
         path: None,
         error: None,
@@ -349,7 +352,16 @@ pub fn serialize_agent(a: &AgentProfile) -> String {
     };
     list("extensions", &a.extensions);
     list("mcp", &a.mcp_servers);
-    list("skills", &a.skills);
+    // skills 三态（044-0）：None 不写键（继承）；Some(空) 写裸键（关闭）
+    match &a.skills {
+        None => {}
+        Some(items) => {
+            out.push_str("skills:\n");
+            for item in items {
+                out.push_str(&format!("- {item}\n"));
+            }
+        }
+    }
     for (k, v) in &a.unknown {
         out.push_str(&scalar(k, v));
     }

@@ -45,7 +45,9 @@ impl Chat {
         let (ag_extensions, ag_mcp, ag_skills) = (
             a.extensions.clone(),
             a.mcp_servers.clone(),
-            a.skills.clone(),
+            // 表单只有「继承 / 自定义」两态：关闭态（Some(空)）在表单里按
+            // 继承显示，内置条目只读，保存自定义时按表单值落盘。
+            a.skills.clone().unwrap_or_default(),
         );
         if let Some(st) = self.dlg.settings.clone() {
             st.update(cx, |s, cx| {
@@ -192,7 +194,12 @@ impl Chat {
             unknown: prev_unknown,
             extensions: ag_extensions,
             mcp_servers: ag_mcp,
-            skills: ag_skills,
+            // 空勾选 = 继承（不写键）；自定义 = 写清单。关闭态只属于内置常量。
+            skills: if ag_skills.is_empty() {
+                None
+            } else {
+                Some(ag_skills)
+            },
             origin: AgentOrigin::Custom,
             path: None,
             error: None,

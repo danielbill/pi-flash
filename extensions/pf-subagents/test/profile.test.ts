@@ -200,7 +200,8 @@ describe("profile loading", () => {
 		const paths = { globalDir: join(root, "missing"), projectDir: join(root, "also-missing") };
 		const profile = await loadProfile("explorer", paths);
 		assert.equal(profile.tools, "read-only");
-		assert.equal(profile.maxTurns, 0, "explorer is the unlimited tier");
+		assert.equal(profile.maxTurns, undefined, "轮次「指定」= 不写 maxTurns（委派方给 maxloop）");
+		assert.deepEqual(profile.skills, [], "skills 关闭（裸键 = 空清单）");
 		assert.match(profile.appendSystemPrompt ?? "", /只读探索员/);
 		assert.equal(profile.source, "<builtin>");
 	});
@@ -210,7 +211,8 @@ describe("profile loading", () => {
 		const paths = { globalDir: join(root, "missing"), projectDir: join(root, "also-missing") };
 		const profile = await loadProfile("general-purpose", paths);
 		assert.equal(profile.tools, undefined, "no tools key = inherit the delegator's assembly");
-		assert.equal(profile.maxTurns, 0);
+		assert.equal(profile.maxTurns, undefined, "轮次「指定」= 不写 maxTurns");
+		assert.equal(profile.skills, undefined, "skills 继承 = 不写键");
 		assert.match(profile.appendSystemPrompt ?? "", /通用子代理/);
 		assert.equal(profile.source, "<builtin>");
 	});
@@ -221,7 +223,9 @@ describe("profile loading", () => {
 		const profile = await loadProfile("summarizer", paths);
 		assert.equal(profile.tools, "read-only");
 		assert.equal(profile.injectAgentsMd, false, "摘要机不注入 AGENTS.md（不继承环境）");
-		assert.equal(profile.maxTurns, 0);
+		assert.equal(profile.cwd, "pf-data", "不继承 cwd → PF 数据目录");
+		assert.equal(profile.maxTurns, 5, "摘要机固定 5 轮");
+		assert.deepEqual(profile.skills, [], "skills 关闭");
 		assert.match(profile.appendSystemPrompt ?? "", /摘要机/);
 		assert.equal(profile.source, "<builtin>");
 	});

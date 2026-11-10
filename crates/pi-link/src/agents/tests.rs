@@ -97,12 +97,34 @@ fn list_fields_roundtrip_0440() {
     let a = parse_agent("picks", doc, AgentOrigin::Custom).unwrap();
     assert_eq!(a.extensions, vec!["D:/ext/a", "D:/ext/b"]);
     assert_eq!(a.mcp_servers, vec!["mcp-server-one"]);
-    assert_eq!(a.skills, vec!["mx-data"]);
+    assert_eq!(a.skills, Some(vec!["mx-data".to_string()]));
     // 序列化→再解析回环
     let b = parse_agent("picks", &serialize_agent(&a), AgentOrigin::Custom).unwrap();
     assert_eq!(b.extensions, a.extensions);
     assert_eq!(b.mcp_servers, a.mcp_servers);
     assert_eq!(b.skills, a.skills);
+    // skills 三态（044-0）：裸 `skills:` 键 = 关闭，回环后仍是 Some(空)；
+    // 键缺失 = 继承（None）。空 Vec 绝不能被当成继承。
+    let off = parse_agent(
+        "off",
+        "---\ndescription: x\nskills:\n---\n",
+        AgentOrigin::Custom,
+    )
+    .unwrap();
+    assert_eq!(off.skills, Some(Vec::new()));
+    assert_eq!(
+        parse_agent("off", &serialize_agent(&off), AgentOrigin::Custom)
+            .unwrap()
+            .skills,
+        Some(Vec::new())
+    );
+    let inherit = parse_agent(
+        "inherited",
+        "---\ndescription: x\n---\n",
+        AgentOrigin::Custom,
+    )
+    .unwrap();
+    assert_eq!(inherit.skills, None);
     // 不进 unknown（已知键）
     assert!(
         !b.unknown
@@ -196,10 +218,13 @@ fn builtin_explorer_and_custom_override() {
     );
     let ex = builtins.iter().find(|b| b.id == "explorer").unwrap();
     assert_eq!(ex.tools_tier(), "read-only");
-    assert_eq!(ex.max_turns_tier(), MaxTurnsTier::Unlimited);
+    assert_eq!(ex.max_turns_tier(), MaxTurnsTier::Custom, "轮次「指定」");
     let gp = builtins.iter().find(|b| b.id == "general-purpose").unwrap();
     assert_eq!(gp.tools_tier(), "inherit", "general-purpose 继承全部工具");
-    assert_eq!(gp.max_turns_tier(), MaxTurnsTier::Unlimited);
+    assert_eq!(gp.max_turns_tier(), MaxTurnsTier::Custom, "轮次「指定」");
+    let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
+    assert_eq!(sum.max_turns_tier(), MaxTurnsTier::Custom);
+    assert_eq!(sum.max_turns, Some(5), "摘要机固定 5 轮");
     let custom = AgentProfile {
         id: "explorer".into(),
         origin: AgentOrigin::Custom,
@@ -228,11 +253,13 @@ fn builtins_match_extension_docs() {
             "explorer",
             "只读探索 · 调研与定位",
             Some("read-only"),
+            None,
             "你是只读探索员：调研代码、定位实现、回答问题。\n不执行任何写操作。",
         ),
         (
             "general-purpose",
             "通用子代理 · 复杂调研、代码检索、多步任务",
+            None,
             None,
             "你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n可使用会话的全部工具，按需读写文件与执行命令。",
         ),
@@ -240,12 +267,13 @@ fn builtins_match_extension_docs() {
             "summarizer",
             "无状态摘要 · 阅读文件或内容按要求总结",
             Some("read-only"),
+            Some(5),
             "你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。\n不继承任何环境上下文，不执行任何写操作，只输出摘要。",
         ),
     ];
     let builtins = builtin_agents();
     assert_eq!(builtins.len(), docs.len());
-    for (id, description, tools, body) in docs {
+    for (id, description, tools, max_turns, body) in docs {
         let a = builtins
             .iter()
             .find(|b| b.id == id)
@@ -255,16 +283,31 @@ fn builtins_match_extension_docs() {
             "{id} description 与扩展侧不一致"
         );
         assert_eq!(a.tools.as_deref(), tools, "{id} tools 与扩展侧不一致");
-        assert_eq!(a.max_turns, Some(0), "{id} maxTurns 与扩展侧不一致");
+        assert_eq!(a.max_turns, max_turns, "{id} maxTurns 与扩展侧不一致");
         assert_eq!(
             a.append_system_prompt.as_deref(),
             Some(body),
             "{id} 正文与扩展侧不一致"
         );
     }
-    // 摘要机的定义性特征：不注入 AGENTS.md（044-0 不继承环境）
+    // skills 三态（044-0）：explorer/summarizer 关闭 = Some(空)，gp 继承 = None
+    let closed = Some(Vec::new());
+    for id in ["explorer", "summarizer"] {
+        let a = builtins.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(a.skills, closed, "{id} skills 应为关闭（裸键）");
+        assert!(
+            serialize_agent(a).contains("skills:\n"),
+            "{id} 序列化必须写出裸 skills 键"
+        );
+    }
+    let gp = builtins.iter().find(|b| b.id == "general-purpose").unwrap();
+    assert_eq!(gp.skills, None, "general-purpose skills 继承（不写键）");
+    // 摘要机的定义性特征：不继承环境（044-0）——不注入 AGENTS.md + cwd 落 PF 数据目录
     let sum = builtins.iter().find(|b| b.id == "summarizer").unwrap();
     assert_eq!(sum.inject_agents_md, Some(false));
+    assert_eq!(sum.cwd.as_deref(), Some(CWD_PF_DATA));
+    let ex = builtins.iter().find(|b| b.id == "explorer").unwrap();
+    assert_eq!(ex.inject_agents_md, Some(true), "explorer 继承环境");
 }
 
 #[test]

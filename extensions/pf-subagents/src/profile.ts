@@ -45,7 +45,8 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 		"---",
 		"description: 只读探索 · 调研与定位",
 		"tools: read-only",
-		"maxTurns: 0",
+		// 044-0 技能设置三态：键省略 = 继承系统开启集；裸键 = 关闭
+		"skills:",
 		"---",
 		"你是只读探索员：调研代码、定位实现、回答问题。",
 		"不执行任何写操作。",
@@ -55,7 +56,8 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 	"general-purpose": [
 		"---",
 		"description: 通用子代理 · 复杂调研、代码检索、多步任务",
-		"maxTurns: 0",
+		// 工具/技能/环境全继承：不写 tools / skills / injectAgentsMd；
+		// 轮次「指定」= 不写 maxTurns（委派方给 maxloop）
 		"---",
 		"你是通用子代理：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。",
 		"可使用会话的全部工具，按需读写文件与执行命令。",
@@ -66,8 +68,12 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 		"---",
 		"description: 无状态摘要 · 阅读文件或内容按要求总结",
 		"tools: read-only",
+		// 不继承环境（044-0「no cwd」）：cwd 落 PF 数据目录、不注入 AGENTS.md
+		"cwd: pf-data",
 		"injectAgentsMd: false",
-		"maxTurns: 0",
+		// 轮次固定 5（044-0 内置清单）
+		"maxTurns: 5",
+		"skills:",
 		"---",
 		"你是摘要机：无状态的摘要机器人——阅读指定的文件或一段内容，按要求总结。",
 		"不继承任何环境上下文，不执行任何写操作，只输出摘要。",
@@ -131,7 +137,11 @@ export interface Profile {
 	extensions?: string[];
 	/** MCP server names the child may use (full+ 档的 mcp 服务选择；044-0). */
 	mcpServers?: string[];
-	/** Skill ids to inject; empty/absent = the system-enabled set (044-0 skills 定制). */
+	/**
+	 * Skill ids to inject (044-0 skills 定制, three states): **absent** = the
+	 * system-enabled set (inherit), **present but empty** = no skills at all
+	 * (关闭), non-empty list = exactly those ids.
+	 */
 	skills?: string[];
 	/** Where the profile came from, for diagnostics. */
 	source: string;
