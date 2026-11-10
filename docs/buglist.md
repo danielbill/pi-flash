@@ -742,8 +742,10 @@ gpui.md「repeat() 动画不限帧」节。用户体感「subagent 后开始卡�
 > repeat() 站点全部上限（spark/spinner=24、working_dots=15、nav 计时=2）。
 > 预期 spinner 常驻期单核占用 102% → ~35%(debug)/~6%(release)。遗留待查：
 > ①「pump 批处理耗时 699ms」单批卡顿（打开大会话后 4s 零帧同期出现）；
-> ② user_row loader 900ms oneshot 无 repeat()，转一圈就停，疑似漏 .repeat()
-> （观感 bug，非性能）；③ PI_FLASH_SUBAGENTS=0 设了但启动日志 subagents=on
+> ② user_row loader 900ms oneshot 无 repeat()，转一圈就停 → **已修
+> （2026-11-10）**：`session/messages/user_row/mod.rs:402` 改走
+> `crate::ui::spinner(11., t.accent)`（loader.svg + repeat() + with_fps(24)），
+> 删掉内联的 `bash-spin-{msg_ix}` 手写动画；③ PI_FLASH_SUBAGENTS=0 设了但启动日志 subagents=on
 > （dev_flags env 解析待查）；④ debug 每帧成本回退已证实：基线
 > tmp/wt-baseline @ e145a3d8 空闲帧 avg 10.5ms / p50 10.0 / max 14.7，
 > HEAD 同条件 18.5ms（+76%）——动画限帧之外，每帧本身的增量（拆分/

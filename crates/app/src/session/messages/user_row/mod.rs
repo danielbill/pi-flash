@@ -5,9 +5,7 @@
 use super::*;
 use std::collections::HashMap;
 
-use gpui::{
-    Animation, AnimationExt, MouseButton, SharedString, div, prelude::*, px, relative, rgb,
-};
+use gpui::{MouseButton, SharedString, div, prelude::*, px, relative, rgb};
 use pi_link::protocol::Block;
 
 use crate::Chat;
@@ -394,20 +392,12 @@ pub(crate) fn render_bash_msg(
                 .text_size(crate::appearance::sess_size(-3.))
                 .text_color(rgb(t.text_dim))
                 .child(
-                    gpui::svg()
-                        .path(SharedString::from("icons/loader.svg"))
-                        .text_color(rgb(t.accent))
-                        .size(px(11.))
-                        .with_animation(
-                            SharedString::from(format!("bash-spin-{msg_ix}")),
-                            Animation::new(std::time::Duration::from_millis(900)),
-                            |el, delta| {
-                                el.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                                    delta * 2. * std::f32::consts::PI,
-                                )))
-                            },
-                        )
-                        .into_any_element(),
+                    // 共用 ui::spinner（loader.svg + repeat() + with_fps(24)）：
+                    // 旧实现把同一个弧线 spinner 内联手写，漏了 `.repeat()` →
+                    // 转一圈就停（观感 bug），也没上帧率限速阀（repeat() 动画
+                    // 不限帧 = 整窗满帧率重绘，见 docs/agents/gpui.md
+                    // 「repeat() 动画不限帧」）。走 helper 后一处定义一处改。
+                    crate::ui::spinner(11., t.accent),
                 )
                 .child(SharedString::from(tr("composer.running_hint"))),
         );
