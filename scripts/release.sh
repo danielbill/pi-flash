@@ -101,20 +101,27 @@ NODE_BIN=$(command -v node || true)
 cp "$NODE_BIN" dist/pi-flash/node.exe
 cp -r vendor/pi dist/pi-flash/vendor/
 
-# 045：subagent 扩展随包分发（PF 用 `-e <path>` 挂载，运行时 lazy import SDK，
-# 无需构建）。放在 exe 旁的 extensions/，与 subagents.rs 的查找顺序一致。
-if [[ -d extensions/pf-subagents ]]; then
-  mkdir -p dist/pi-flash/extensions
-  cp -r extensions/pf-subagents dist/pi-flash/extensions/
-  # target-check/（CARGO_TARGET_DIR 检查缓存，git 已忽略）是开发期垃圾，cp -r 会照搬
-  # → 0.5.0 曾把包撑到 1.4GB（正常 ≈90MB），dist 侧剥掉，仓库侧不动。
-  if [[ -d dist/pi-flash/extensions/pf-subagents/target-check ]]; then
-    rm -rf dist/pi-flash/extensions/pf-subagents/target-check
-    echo "    ⚠ 已从包内剥离 extensions/pf-subagents/target-check（开发缓存，勿入库勿随包）"
+# 045 / 001-4：随包扩展（subagent、pfctx-manager）逐个分发（PF 用 `-e <path>`
+# 挂载，运行时 lazy import SDK，无需构建）。放在 exe 旁的 extensions/，与
+# subagents.rs / pfctx_manager.rs 的查找顺序一致——漏拷 = mount_target 返回
+# None = 工具静默不注入（真机 2026-11-11：装好的 PF 里自我调试开着却没有
+# pfctx_manager，根因就是这里只拷了 pf-subagents）。
+mkdir -p dist/pi-flash/extensions
+for ext in pf-subagents pfctx-manager; do
+  if [[ -d "extensions/$ext" ]]; then
+    cp -r "extensions/$ext" dist/pi-flash/extensions/
+    echo "    $ext 扩展已随包分发"
+  elif [[ "$ext" == "pf-subagents" ]]; then
+    echo "    ⚠ extensions/pf-subagents 缺失，本包将没有 agent 工具"
+  else
+    echo "    ⚠ extensions/$ext 缺失，本包将没有 pfctx_manager（自我调试工具缺席）"
   fi
-  echo "    subagent 扩展已随包分发"
-else
-  echo "    ⚠ extensions/pf-subagents 缺失，本包将没有 agent 工具"
+done
+# target-check/（CARGO_TARGET_DIR 检查缓存，git 已忽略）是开发期垃圾，cp -r 会照搬
+# → 0.5.0 曾把包撑到 1.4GB（正常 ≈90MB），dist 侧剥掉，仓库侧不动。
+if [[ -d dist/pi-flash/extensions/pf-subagents/target-check ]]; then
+  rm -rf dist/pi-flash/extensions/pf-subagents/target-check
+  echo "    ⚠ 已从包内剥离 extensions/pf-subagents/target-check（开发缓存，勿入库勿随包）"
 fi
 
 # 裁掉非宿主平台 esbuild 二进制（vendor/pi 416MB 里 284MB 是 26 个平台副本，
