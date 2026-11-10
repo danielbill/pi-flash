@@ -185,7 +185,10 @@ pub(crate) struct SessionRuntime {
     pub history_ix: Option<usize>,
     pub thinking_override: Option<String>,
     /// model picked while the draft had no process yet (pi-web
-    /// newSessionModelOverrideRef parity) — applied as a `--model` spawn flag
+    /// newSessionModelOverrideRef parity) — applied as a `--model` spawn flag.
+    /// spawn 读 clone 不清账：手选要撑到首个 get_state（pi 冷启动窗口里
+    /// 标签三段链靠它顶住），首个 state 到达时由 get_state 响应臂清零
+    /// （state 即真值源，见 response.rs）。
     pub pending_model: Option<(String, String)>,
     /// 042：PF 默认模型（app-settings 五角星；Chat 在默认变化/建会话时
     /// 填充）。仅**全新 draft** spawn 时落 `--model`（`file` 为空）——重绑
@@ -556,6 +559,8 @@ mod binding_guard_tests;
 mod custom_msg_tests;
 #[cfg(test)]
 mod ext_source_registered_tests;
+#[cfg(test)]
+mod pending_model_tests;
 #[cfg(test)]
 mod pin_regression_tests;
 #[cfg(test)]

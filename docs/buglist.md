@@ -3,6 +3,17 @@
 > 约定：条目按时间倒序；**已修复的只留「根因一行 + 修法一行 + 验证口径」**，展开细节
 > 见 `docs/progress.md` 与 `docs/agents/*.md`。标记 `待复验` 的条目才是当前要跑的手工清单。
 
+## 已验证（本轮修复，2026-11-10）——新会话手选模型，等待首轮响应期间胶囊跳回默认模型
+
+- 根因：草稿手选存 `pending_model`，spawn 带 `--model` 用 `take()` 当下清账；pi 冷启动
+  1-3s+ 期间首个 get_state 未到，胶囊标签三段链（pending → state → 新会话默认）跌进
+  默认模型，state 一到又跳回手选（割裂）。pif-ui 复现实录：pill zai → deepseek(默认)
+  → zai。
+- 修法：spawn 读 `pending_model.clone()` 不 take；清账挪到首个 get_state 响应臂
+  （state 即真值源，`--model` 解析失败 pi 回落默认时也不被旧手选遮蔽）。
+- 验证：pif-ui 全流程复测（pick → send → 16×500ms 轮询）pill 恒为手选模型；
+  `pending_model_tests` 3 例（清账/回落遮蔽/非 state 流量不动）+ app 474 / pi-link 278 全绿。
+
 ## 待复验（2026-11-06 修复）——子代理 044-0 首轮真机实测 B1-B5（代码全落 d5ecf742→ac33bdee，真机验收未做）
 
 ### 验收反馈①：观察窗挤掉主会话，tab 栏找不回（464e1fa5 → 返工 aa637453，2026-11-06）

@@ -143,6 +143,10 @@ impl SessionRuntime {
                 // fork / clone 换分支）→ shell 身份必须跟着换
                 let rebound = st.session_file.clone().map(PathBuf::from);
                 self.state = Some(st);
+                // 草稿手选在此清账（spawn.rs --model 用 clone 不 take 的对侧）：
+                // state 已就位成为标签真值源，留着旧手选会在三段链里遮蔽
+                // pi 的真值（--model 解析失败时 pi 回落默认模型）
+                self.pending_model = None;
                 // 换模型/轮末/思考档回执都会走到这里：状态槽是
                 // 标签真值源，override 相形之下只是草稿意图
                 self.reconcile_thinking_override();

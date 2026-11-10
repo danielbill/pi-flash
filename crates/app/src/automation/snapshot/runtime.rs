@@ -105,7 +105,8 @@ pub(super) fn model_json(r: &SessionRuntime) -> Value {
 }
 
 /// 草稿 pill 的模型（镜像 `input/area.rs` 的三段链）：草稿手选 `pending_model`
-/// （无活进程时的最新意图）→ state 模型 → `new_session_default` 兜底。
+/// （无活进程时的最新意图；spawn 后撑到首个 get_state 清账）→ state 模型
+/// → `new_session_default` 兜底。
 pub(super) fn draft_model_json(chat: &Chat, r: &SessionRuntime) -> Value {
     let picked = r
         .pending_model

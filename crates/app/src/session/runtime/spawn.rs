@@ -200,8 +200,13 @@ impl SessionRuntime {
         // draft picks made before the process existed ride the spawn flags
         // (pi CLI parity: --model provider/id, --thinking level)
         // 042：无手选时落 PF 默认模型——只在全新 draft（`file` 空）生效，
-        // 重绑/恢复的会话不强行切模型
-        let model = match self.pending_model.take() {
+        // 重绑/恢复的会话不强行切模型。用户手选（pending_model）优先于默认。
+        // clone 不 take（2026-11-10 真机割裂）：pi 冷启动 1-3s+，首个
+        // get_state 到达前标签三段链（pending → state → 新会话默认）会跌进
+        // 默认模型、state 一到又跳回手选——挑中模型必须撑满这段窗口。清账
+        // 在 get_state 响应臂（response.rs）：state 即真值源，pi 解析失败
+        // 回落默认时也不被旧手选遮蔽。
+        let model = match self.pending_model.clone() {
             Some(m) => Some(m),
             None if self.file.is_none() => self.default_model.clone(),
             None => None,

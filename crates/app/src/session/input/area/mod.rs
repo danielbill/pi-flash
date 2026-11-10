@@ -57,7 +57,9 @@ pub(crate) fn input_area(
             (None, None)
         };
         // 手选（pending_model）优先于 state：它只在无活进程时写入（草稿 /
-        // 进程已死），是用户最新意图，spawn 时才变成 --model；活进程下恒空
+        // 进程已死），是用户最新意图，spawn 时变成 --model 但不清账——
+        // 首个 get_state 到达才由 response 臂清零（pi 冷启动 1-3s+，这
+        // 段窗口 state 还没答案，清早了标签会先跳默认模型再跳回手选）
         let model_label = r
             .pending_model
             .as_ref()
