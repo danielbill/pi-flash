@@ -101,20 +101,22 @@ NODE_BIN=$(command -v node || true)
 cp "$NODE_BIN" dist/pi-flash/node.exe
 cp -r vendor/pi dist/pi-flash/vendor/
 
-# 045 / 001-4：随包扩展（subagent、pfctx-manager）逐个分发（PF 用 `-e <path>`
-# 挂载，运行时 lazy import SDK，无需构建）。放在 exe 旁的 extensions/，与
-# subagents.rs / pfctx_manager.rs 的查找顺序一致——漏拷 = mount_target 返回
-# None = 工具静默不注入（真机 2026-11-11：装好的 PF 里自我调试开着却没有
-# pfctx_manager，根因就是这里只拷了 pf-subagents）。
+# 045 / 001-4 / 090-6：随包扩展逐个分发（PF 用 `-e <path>` 挂载，运行时 lazy
+# import SDK，无需构建）。放在 exe 旁的 extensions/，与 subagents.rs /
+# pfctx_manager.rs / service_ext.rs 的查找顺序一致——漏拷 = 静默缺席：
+#   pf-subagents    缺 = 没有 agent 工具（044）
+#   pfctx-manager   缺 = 自我调试工具不注入（001，真机 2026-11-11 实锤）
+#   pf-svc-runtime  缺 = ctx.service 执行域 shim 落空、service 声明告警（090-6）
+# 新增随包扩展必须同步：extensions/ 仓库目录 + 本清单 + 对应 *_rs 查找链。
 mkdir -p dist/pi-flash/extensions
-for ext in pf-subagents pfctx-manager; do
+for ext in pf-subagents pfctx-manager pf-svc-runtime; do
   if [[ -d "extensions/$ext" ]]; then
     cp -r "extensions/$ext" dist/pi-flash/extensions/
     echo "    $ext 扩展已随包分发"
   elif [[ "$ext" == "pf-subagents" ]]; then
     echo "    ⚠ extensions/pf-subagents 缺失，本包将没有 agent 工具"
   else
-    echo "    ⚠ extensions/$ext 缺失，本包将没有 pfctx_manager（自我调试工具缺席）"
+    echo "    ⚠ extensions/$ext 缺失，对应随包能力静默缺席"
   fi
 done
 # target-check/（CARGO_TARGET_DIR 检查缓存，git 已忽略）是开发期垃圾，cp -r 会照搬
