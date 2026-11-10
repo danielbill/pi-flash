@@ -476,32 +476,40 @@ pub fn spinner(size: f32, color: u32) -> gpui::AnyElement {
 /// 透明度，整体旋转。会话列表运行态用；弧线 spinner（`spinner`）仍服务
 /// 其余 15+ 处调用点。
 ///
-/// **时长 1800ms / 24fps，不与弧线 spinner 的 900ms 对齐**
-/// （2026-11-10 用户报「会话列表那圈转得飞快」查实为真）：8 根针**同亮度
-/// 等分** ⇒ 图标只有 **45° 旋转对称**，视觉周期 = 45°/转速，比真转速快
-/// 8 倍——900ms/圈（400°/s）时视觉周期仅 112.5ms，肉眼读作「每秒 8.9 次
-/// 转一格」；叠加 24fps 采样每帧 16.67°、一个对称周期只有 2.7 帧（非整数）
-/// ⇒ wagon-wheel 混叠，跳格甚至看着反向。弧线 spinner 是 3/4 弧（唯一
-/// 参考边）没有这个问题，故只有这里动参数。要么加针尾渐变破对称，要么
-/// 保持等分但调参——本处选后者。
+/// ## 唯一旋钮 [`SPARK_FPS`]，其余自动推导
 ///
-/// 定档过程（全是真机观感反馈，别凭公式改回去）：900ms「飞快」⇒
-/// 2400ms「有点点慢」⇒ **1800ms/24fps「不快不慢」**（200°/s、一格 225ms、
-/// 每秒 4.4 格）⇒ 曾按「量化节拍」理论试 1600ms/30fps（每格整 6 帧、
-/// 33.33ms = 60Hz 的 2 周期）⇒ **真机更顿，当场回退**。教训：整数化只在
-/// 屏幕刷新率整除帧间隔时才有意义，而实际刷新率不是 60Hz 的屏，30fps 的
-/// 33.33ms 反而与刷新去同步；24fps 的 41.67ms 在 144Hz 上正好 6 个周期。
-/// 再想提平滑度，先问清显示器刷新率，不要照公式硬套。
+/// 转速锚死 ZCode 基准（`SPARK_DEG_PER_SEC` = 360°/s，即 Tailwind
+/// `animate-spin` 默认 1s/圈——浏览器合成线程按原生刷新率连续扫过，
+/// 参考实现 `TaskListItem.tsx:596`）；时长 = 360 / 转速 自动得出，
+/// 换档只改 `SPARK_FPS` 一个常量。
+///
+/// 三个感受三个旋钮，各管各的（`delta` 取墙钟，速度与帧率解耦）：
+/// - **快慢感** = 转速（锚死，不动）
+/// - **顿挫感** = 帧间隔是否锁相刷新栅格（DWM 按 vsync 合成，144Hz 格
+///   6.944ms）：只允许 144 的整数因子档位——24(6格)/18(8格)/16(9格)/
+///   12(12格)；非整除档（30、60、1600ms/30 那次）相位每帧漂移，确定性
+///   pulldown 节奏（如 30fps = 34.7ms×4+27.8ms 循环），真机读作周期性打嗝
+/// - **跳格感** = 步幅角 = 转速 ÷ 帧率：16fps 为 22.5°/步（钟表棘轮感，
+///   超 10° 即明显跳格）、18fps 20°、24fps 15°、48fps 7.5°、72fps 5°；
+///   8 针 45° 对称下视觉步数 = 步幅角内可辨姿态数，锐利无模糊 sprite
+///   没有电影 180° 快门的帧间桥接，融合阈值远高于 24fps 全屏闪烁
+///
+/// 历史教训（2026-11-10，全是真机观感反馈，别凭公式改回去）：最初
+/// 900ms/24fps「飞快跳格」根因有二——400°/s 对 45° 对称 ⇒ 视觉周期
+/// 112.5ms 读作每秒 8.9 格 + 每帧 16.67° 跳格；后调 2400ms「有点慢」→
+/// 1800ms/24fps「不快不慢」；1600ms/30fps 按量化节拍理论推的，真机更顿
+/// 当场回退（30fps 非 144 因子）。现改锚 ZCode 转速重试帧率档。
 pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
+    let duration_ms = 360. / SPARK_DEG_PER_SEC * 1000.;
     gpui::svg()
         .path(SharedString::from("icons/spark.svg"))
         .text_color(gpui::rgb(color))
         .size(gpui::px(size))
         .with_animation(
             "spark-spin",
-            Animation::new(std::time::Duration::from_millis(1800))
+            Animation::new(std::time::Duration::from_millis(duration_ms as u64))
                 .repeat()
-                .with_fps(24.),
+                .with_fps(SPARK_FPS),
             |el, delta| {
                 el.with_transformation(gpui::Transformation::rotate(gpui::radians(
                     delta * std::f32::consts::TAU,
@@ -510,3 +518,11 @@ pub fn spark_spinner(size: f32, color: u32) -> gpui::AnyElement {
         )
         .into_any_element()
 }
+
+/// ZCode 基准转速：360°/s（1s/圈，Tailwind `animate-spin` 默认，无覆盖）。
+const SPARK_DEG_PER_SEC: f32 = 360.;
+
+/// **唯一调参旋钮**：spinner 主动申请重绘的帧率。时长由基准转速推导，
+/// 不要另改 duration。必须取 144 的整数因子（24/18/16/12…）才锁相，
+/// 步幅角 = 360/本值 度。
+const SPARK_FPS: f32 = 16.;
