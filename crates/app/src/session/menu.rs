@@ -29,6 +29,8 @@ const SEARCH_LIMIT: usize = 20;
 /// 内容区 = 39 − 5 = 34，tab 填满内容区、顶缘与搜索栏接洽，2026-11-11
 /// 用户定稿；topbar 的「条内 tab 高 = 条高 −4 + 上圆角」在菜单里不适用）
 const STRIP_H: f32 = 39.;
+/// 条下同色带高（= strip 的 border_b_5）；tab 高 = STRIP_H − BAND_H
+const BAND_H: f32 = 5.;
 const SKILL_PREFIX: &str = "skill:";
 
 /// 当前触发 token：类目 + 输入里的字节区间 `[start, end)` + 查询词。
@@ -549,10 +551,14 @@ pub(crate) fn slash_menu_view(
             Some(badge),
             false,
         )
-        // 菜单变体：无圆角 + 填满条高（与搜索栏接洽）；mb(-1)（tab_body
-        // 内置）让激活 tab 的底缘嵌进条下 5px 同色带，接缝不可见
-        .h(px(STRIP_H))
+        // 菜单变体：无圆角 + 填满条高（与搜索栏接洽）；抹掉 tab_body 连体
+        // 态的左右 1px 边线与 mb(-1)（条下已是 5px 同色带无线可盖，-1 只会让
+        // 文字偏下 + 满高边线成「插入痕」，2026-11-11 用户定稿）
+        .h(px(STRIP_H - BAND_H))
         .rounded(px(0.))
+        .mb(px(0.))
+        .border_l_0()
+        .border_r_0()
         .when(!enabled, |d| {
             d.opacity(0.45).cursor(gpui::CursorStyle::Arrow)
         });
@@ -805,28 +811,31 @@ pub(crate) fn slash_menu_view(
                 .border_color(rgb(t.bg))
                 .children(MenuKind::ALL.iter().map(|k| tab(*k)))
                 .child(
-                    // 浅图标钮（bar.rs eye_button 同款 24×24 r5）：系统文件
-                    // 选择器，选中文件以 `@path ` 插入
-                    div()
-                        .id("menu-open-file")
-                        .ml(px(4.))
-                        .mb(px(3.))
-                        .size(px(24.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(5.))
-                        .text_color(rgb(t.text_muted))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgb(t.bg_hover)))
-                        .with_tip("menu.open_file")
-                        .on_mouse_down(gpui::MouseButton::Left, {
-                            let weak = weak.clone();
-                            move |_, _, cx| {
-                                let _ = weak.update(cx, |c, cx| c.menu_open_file(cx));
-                            }
-                        })
-                        .child(crate::ui::icon("plus", 14., t.text_muted)),
+                    // 整高居中壳：条 items_end 对 24px 钮不友好（mb 手调对
+                    // 不齐 tab 文字中线），壳内 items_center 兜底
+                    div().h_full().flex().items_center().child(
+                        // 浅图标钮（bar.rs eye_button 同款 24×24 r5）：系统文件
+                        // 选择器，选中文件以 `@path ` 插入
+                        div()
+                            .id("menu-open-file")
+                            .ml(px(4.))
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.))
+                            .text_color(rgb(t.text_muted))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(t.bg_hover)))
+                            .with_tip("menu.open_file")
+                            .on_mouse_down(gpui::MouseButton::Left, {
+                                let weak = weak.clone();
+                                move |_, _, cx| {
+                                    let _ = weak.update(cx, |c, cx| c.menu_open_file(cx));
+                                }
+                            })
+                            .child(crate::ui::icon("plus", 14., t.text_muted)),
+                    ),
                 )
                 .child(
                     div()
