@@ -32,14 +32,43 @@ ZIP_NAME="pi-flash-${VERSION}-win32-x64.zip"
 # --- 0. 前置校验 -----------------------------------------------------------
 # only tracked changes block a release; untracked scratch files (e.g.
 # buglist.md) never enter the build
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-  echo "✗ 工作区有未提交改动，先提交再发布："
-  git status --short
-  exit 1
+# 同版本残迹放行（0.5.0 实录：上一次中止的 step1 已改版本号，重跑被自家残迹卡门禁，
+# 每轮都要手工还原三件套）：脏文件仅限版本三件套、且 Cargo.toml / package.json
+# 内容已是目标版本 = 确定性残迹，放行（step1 的 sed 幂等重打）；Cargo.lock 由
+# step2 构建确定性重生成，同批放行。版本不符 = 人工误动，照旧硬失败。
+DIRTY=$(git status --porcelain --untracked-files=no)
+if [[ -n "$DIRTY" ]]; then
+  RESIDUE_OK=1
+  while IFS= read -r line; do
+    f=${line#?? }; f=${f#\"}; f=${f%\"}
+    case "$f" in
+      Cargo.lock) ;;
+      crates/app/Cargo.toml) grep -q "^version = \"$VERSION\"" "$f" || RESIDUE_OK=0 ;;
+      npm/package.json)      grep -q "\"version\": \"$VERSION\"" "$f" || RESIDUE_OK=0 ;;
+      *) RESIDUE_OK=0 ;;
+    esac
+  done <<< "$DIRTY"
+  if [[ "$RESIDUE_OK" == 1 ]]; then
+    echo "    检测到同版本残迹（三件套已是 $VERSION），放行整脚重跑"
+  else
+    echo "✗ 工作区有未提交改动，先提交再发布："
+    git status --short
+    exit 1
+  fi
 fi
 [[ -f vendor/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js ]] || {
   echo "✗ vendor/pi 未安装（cd vendor/pi && npm ci）"; exit 1;
 }
+
+# --- 0.5 打包现场预清理 ----------------------------------------------------
+# 0.5.0 实录：extensions/pf-subagents/target-check（CARGO_TARGET_DIR 检查缓存，
+# 4.3GB）随 cp -r 进包，90MB → 1.4GB，靠人眼在第 8 步才发现。git 已忽略的
+# cargo 检查/构建缓存不属发版现场——仓库侧直接清，杜绝「dist 侧剥离漏网」与拷贝耗时。
+for junk in extensions/*/target-check extensions/*/target; do
+  [[ -d "$junk" ]] || continue
+  echo "    预清理开发缓存：$junk"
+  rm -rf "$junk"
+done
 
 echo "==> 1/8 更新版本号 -> $VERSION"
 sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/app/Cargo.toml
@@ -178,19 +207,32 @@ fi
 
 echo "==> 4/8 包内烟测（独立目录启动）"
 SMOKE_LOG="$ROOT/dist/smoke.log"
+SMOKE_FAIL=""
 # 烟测只验「启动无输出」，更新探查不属于启动门禁：release 构建默认跑更新检查，而
 # GitHub Release 尚未创建时 /releases/latest 必404 → eprintln 污染日志（首发鸡生蛋）。
 PI_FLASH_UPDATE_CHECK=0
 export PI_FLASH_UPDATE_CHECK
-(cd / && "$ROOT/dist/pi-flash/pi-flash.exe" > "$SMOKE_LOG" 2>&1 &)
-sleep 6
-if ! tasklist //FI "IMAGENAME eq pi-flash.exe" 2>/dev/null | grep -qi pi-flash; then
-  echo "✗ 打包后启动失败："; cat "$SMOKE_LOG"; exit 1
-fi
-taskkill //IM pi-flash.exe //F > /dev/null 2>&1 || true
-sleep 1
-if [[ -s "$SMOKE_LOG" ]]; then
-  echo "✗ 启动有输出（视为异常）："; cat "$SMOKE_LOG"; exit 1
+smoke_once() {
+  : > "$SMOKE_LOG"
+  (cd / && "$ROOT/dist/pi-flash/pi-flash.exe" > "$SMOKE_LOG" 2>&1 &)
+  sleep 6
+  if ! tasklist //FI "IMAGENAME eq pi-flash.exe" 2>/dev/null | grep -qi pi-flash; then
+    SMOKE_FAIL="进程未起"; return 1
+  fi
+  taskkill //IM pi-flash.exe //F > /dev/null 2>&1 || true
+  sleep 1
+  if [[ -s "$SMOKE_LOG" ]]; then SMOKE_FAIL="启动有输出"; return 1; fi
+  return 0
+}
+# Defender 实时扫描对刚拷出的 exe 会短暂持锁 → 首启 Permission denied（0.5.0 实录，
+# 重跑即过）＝瞬时失败：歇 3 秒重试一轮，两轮都败才是真异常。
+if ! smoke_once; then
+  echo "    首轮烟测未过（$SMOKE_FAIL；多为 Defender 瞬时锁），3s 后重试…"
+  taskkill //IM pi-flash.exe //F > /dev/null 2>&1 || true
+  sleep 3
+  if ! smoke_once; then
+    echo "✗ 打包后烟测失败（两轮，$SMOKE_FAIL）："; cat "$SMOKE_LOG"; exit 1
+  fi
 fi
 rm -f "$SMOKE_LOG"
 echo "    启动正常"
@@ -254,6 +296,10 @@ echo "==> 6/8 压缩 $ZIP_NAME"
 # System32 bsdtar -xf / Expand-Archive 回落两条路均实测可读、逐字节一致；
 # 2026-11 实测 15379 文件/约300MB：bsdtar 24s·90.3MB，7z -mx=9 100s·85.9MB，
 # Compress-Archive 分钟级最慢）：
+# ⚠ bsdtar 必须带 --options zip:hdrcharset=UTF-8：libarchive 在 Windows 上默认
+# 把非 ASCII 条目名按本机 ACP（zh-CN=GBK）写入且不置 EFS 标志，Rust zip crate
+# 解压端按 CP437 解 → 落盘乱码名（0.5.0 实录：启动说明.txt → ╞⌠╢»╦╡├≈.txt）；
+# EFS 名压缩后另有 zip_name_check.mjs 硬门禁兜底（任何压缩器产物不过即拒发）。
 # ① System32 bsdtar（Win10 1803+ 自带，与薄壳解压端同一支，零依赖，最快）
 # ② 7-Zip（PF_7Z 可覆盖路径；压得略小但慢 4 倍）
 # ③ Compress-Archive 兜底（仅在前两者都缺时）
@@ -265,9 +311,11 @@ if [[ -n "${SYSTEMROOT:-}" ]] && command -v cygpath >/dev/null 2>&1; then
   [[ -f "$_p" ]] && SYS_TAR="$_p"
 fi
 [[ -n "$SYS_TAR" ]] || SYS_TAR="/c/Windows/System32/tar.exe"
-if [[ -f "$SYS_TAR" ]] && (cd dist && "$SYS_TAR" -a -cf "$ZIP_NAME" pi-flash); then
+if [[ -f "$SYS_TAR" ]] && (cd dist && "$SYS_TAR" -a --options zip:hdrcharset=UTF-8 -cf "$ZIP_NAME" pi-flash); then
   ZIP_TOOL="bsdtar"
 else
+  # bsdtar 失败可能留下半截产物——绝不留给后续 7z a 追加成混合包
+  rm -f "dist/$ZIP_NAME"
   SEVENZIP=""
   if [[ -n "${PF_7Z:-}" ]] && [[ -f "${PF_7Z}" ]]; then
     SEVENZIP="$PF_7Z"
@@ -288,6 +336,36 @@ else
   fi
 fi
 echo "    压缩完成（$ZIP_TOOL，$((SECONDS - ZIP_T0))s）"
+
+# 条目名编码硬门禁：非 ASCII 名必须 EFS/UTF-8（0.5.0 GBK 名乱码实录，机制见上）
+node "$ROOT/scripts/zip_name_check.mjs" "dist/$ZIP_NAME"
+
+# 体积硬守卫（0.5.0 实录：target-check 4.3GB 随包撑到 1.4GB，靠人眼在第 8 步才
+# 发现——正常包 ≈90MB，守卫必须机器化）：绝对上限 250MB；能取到上一版资产体积
+# （gh api，owner/repo 从 origin 解析）则动态比 1.8×；离线/gh 失效只降级跳过
+# 动态对比，不阻塞打包。
+CUR_MB=$(( $(stat -c%s "dist/$ZIP_NAME") / 1024 / 1024 ))
+[[ "$CUR_MB" -le 250 ]] || {
+  echo "✗ 包体积 ${CUR_MB}MB 超绝对上限 250MB（正常 ≈90MB）——打包现场混入异物，清完重跑"; exit 1;
+}
+REPO_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+/[^/.]+?)(\.git)?$#\1#')
+PREV_TAG=$(git tag --sort=-v:refname 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+if [[ -n "$REPO_SLUG" && -n "$PREV_TAG" && "$PREV_TAG" != "v$VERSION" ]]; then
+  PREV_BYTES=$(gh api "repos/$REPO_SLUG/releases/tags/$PREV_TAG" --jq \
+    ".assets[] | select(.name==\"pi-flash-${PREV_TAG#v}-win32-x64.zip\") | .size" 2>/dev/null || true)
+  if [[ -n "$PREV_BYTES" && "$PREV_BYTES" -gt 0 ]]; then
+    PREV_MB=$(( PREV_BYTES / 1024 / 1024 ))
+    LIMIT_MB=$(( PREV_MB * 18 / 10 + 1 ))
+    if [[ "$CUR_MB" -gt "$LIMIT_MB" ]]; then
+      echo "✗ 包体积 ${CUR_MB}MB > 上一版（$PREV_TAG）${PREV_MB}MB × 1.8 = ${LIMIT_MB}MB——打包现场混入异物，清完重跑"; exit 1;
+    fi
+    echo "    体积 ${CUR_MB}MB / 上一版 ${PREV_MB}MB，正常"
+  else
+    echo "    ⚠ 取不到上一版资产体积（离线或 gh 失效），跳过动态对比（绝对上限已过）"
+  fi
+else
+  echo "    ⚠ 无上一版语义化 tag 可比，跳过动态对比（绝对上限已过）"
+fi
 
 echo "==> 7/8 生成校验和（SHA256SUMS + 资产 sidecar，供 npm 薄壳下载校验）"
 (cd dist && sha256sum "$ZIP_NAME" | tee "${ZIP_NAME}.sha256" > SHA256SUMS)

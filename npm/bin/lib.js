@@ -411,6 +411,9 @@ function extractZip(zipPath, destDir) {
   const args = ["-xf", zipPath, "-C", destDir];
   const quiet = { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" };
   if (process.platform === "win32") {
+    // 条目名无需任何特判：release.sh 产物非 ASCII 名一律 EFS/UTF-8
+    // （zip_name_check.mjs 硬门禁），bsdtar / Expand-Archive 都按标志正确解
+    // （0.5.0 曾发 GBK 无标志名，Rust 更新器按 CP437 解出乱码文件名）。
     // 首选系统自带 bsdtar 的绝对路径（Win10 1803+ 支持 zip）。不能裸调 PATH 里的
     // "tar"：git-bash 环境会抢到 GNU tar，而它把 "D:" 当远程主机名直接报错。
     const sysTar = process.env.SystemRoot

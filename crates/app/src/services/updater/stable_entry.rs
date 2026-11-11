@@ -80,6 +80,7 @@ pub(crate) fn refresh_stable_entry(root: &Path, me: &Path) -> bool {
         Ok(failed) if failed.is_empty() => {
             let _ = std::fs::write(stable_dir.join(".payload-version"), format!("{src_ver}\n"));
             let _ = std::fs::remove_file(stable_dir.join(STAGE_MARKER)); // 全量成功也顺手清旧标记
+            sweep_legacy_mojibake(&stable_dir);
             eprintln!(
                 "[updater] 稳定入口已刷新到 v{src_ver}：{}",
                 stable_dir.display()
@@ -218,6 +219,7 @@ pub(crate) fn precopy_stable_entry(root: &Path, me: &Path, target: &Path, ver: &
     if failed.is_empty() {
         let _ = std::fs::write(stable_dir.join(".payload-version"), format!("{ver}\n"));
         let _ = std::fs::remove_file(stable_dir.join(STAGE_MARKER));
+        sweep_legacy_mojibake(&stable_dir);
         // 直接迁移完成 → 指针同步收敛稳定入口（版本化目录随时可被清理）
         repoint_pi_shim_to_stable(&stable_dir);
         eprintln!(
@@ -231,6 +233,31 @@ pub(crate) fn precopy_stable_entry(root: &Path, me: &Path, target: &Path, ver: &
             failed.len(),
             stable_dir.display()
         );
+    }
+}
+
+/// 0.5.0 遗留乱码清扫：旧打包链（bsdtar 按 ACP 写 GBK 名、无 EFS 标志）的
+/// `启动说明.txt` 被解压端按 CP437 解成乱码名文件，随载荷树覆盖拷进稳定入口，
+/// 而 copy_payload_tree 只增不删——乱码文件从此永驻（0.5.0 用户实录，稳定
+/// 入口里正确名与乱码名并存）。0.5.1 起打包端写 EFS 名 + 解压端 GBK 回解，
+/// 但存量文件只能在这里点名清除。精确匹配两个已知变体（CP437 = zip crate
+/// 解码产物 `╞⌠╢»╦╡├≈.txt`；CP1252 = EN-Windows 解压端产物 `Æô¶¯ËµÃ÷.txt`，
+/// 码位见 \u 转义），best-effort，失败不阻断刷新。
+pub(crate) fn sweep_legacy_mojibake(stable_dir: &Path) {
+    const LEGACY_MOJIBAKE_READMES: [&str; 2] = [
+        // ╞⌠╢»╦╡├≈.txt（GBK 启动说明 四字 → CP437）
+        "\u{255E}\u{2320}\u{2562}\u{00BB}\u{2566}\u{2561}\u{251C}\u{2248}.txt",
+        // Æô¶¯ËµÃ÷.txt（同 GBK 字节 → CP1252）
+        "\u{00C6}\u{00F4}\u{00B6}\u{00AF}\u{00CB}\u{00B5}\u{00C3}\u{00F7}.txt",
+    ];
+    for name in LEGACY_MOJIBAKE_READMES {
+        let p = stable_dir.join(name);
+        if p.is_file() {
+            match std::fs::remove_file(&p) {
+                Ok(()) => eprintln!("[updater] 已清除 0.5.0 遗留乱码文件：{}", p.display()),
+                Err(e) => eprintln!("[updater] 遗留乱码文件清除失败 {}：{e}", p.display()),
+            }
+        }
     }
 }
 

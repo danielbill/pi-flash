@@ -730,3 +730,158 @@ fn count_files(root: &Path) -> usize {
     }
     n
 }
+
+// --- 0.5.0 zip 条目名乱码实录（GBK 名无 EFS 标志 → CP437 落盘乱码）-----------
+
+/// 条目名解码：ASCII / EFS-UTF-8 原样；GBK 字节（0.5.0 bsdtar 产物）回解成功；
+/// 两边都表示不了的字节 lossy 兜底不 panic。
+#[test]
+fn zip_entry_name_decode() {
+    assert_eq!(decode_zip_entry_name(b"pi-flash/x.txt"), "pi-flash/x.txt");
+    assert_eq!(
+        decode_zip_entry_name("pi-flash/启动说明.txt".as_bytes()),
+        "pi-flash/启动说明.txt",
+        "合法 UTF-8（EFS 名）原样收"
+    );
+    // GBK 字节「启动说明」= C6F4 B6AF CBB5 C3F7（zip crate 按 CP437 会解出
+    // ╞⌠╢»╦╡├≈，本函数应回解成正确名）
+    let mut raw = b"pi-flash/".to_vec();
+    raw.extend_from_slice(&[0xC6, 0xF4, 0xB6, 0xAF, 0xCB, 0xB5, 0xC3, 0xF7]);
+    raw.extend_from_slice(b".txt");
+    assert_eq!(decode_zip_entry_name(&raw), "pi-flash/启动说明.txt");
+    // 0xFF 是 GBK 与 UTF-8 都表示不了的引导位 → lossy 占位，不 panic
+    assert_eq!(decode_zip_entry_name(&[0xFF, 0xFE]), "\u{FFFD}\u{FFFD}");
+}
+
+/// 手造 0.5.0 形态的遗留 zip（STORE + GBK 名 + 标志位 0）端到端：
+/// extract_zip 必须落盘 `pi-flash/启动说明.txt`，且不得出现 CP437 乱码名。
+#[test]
+#[cfg(windows)]
+fn extract_zip_rescues_legacy_gbk_name() {
+    let dir = temp_dir("zip-gbk");
+    let name: Vec<u8> = {
+        let mut n = b"pi-flash/".to_vec();
+        n.extend_from_slice(&[0xC6, 0xF4, 0xB6, 0xAF, 0xCB, 0xB5, 0xC3, 0xF7]);
+        n.extend_from_slice(b".txt");
+        n
+    };
+    let content = b"pi-flash v0.5.0 readme body";
+    let zip_path = dir.join("legacy.zip");
+    std::fs::write(&zip_path, build_stored_zip(&name, content)).unwrap();
+
+    let dest = dir.join("out");
+    extract_zip(&zip_path, &dest).unwrap();
+    let got = dest.join("pi-flash").join("启动说明.txt");
+    assert!(
+        got.is_file(),
+        "GBK 名应回解落盘；实际目录：{:?}",
+        std::fs::read_dir(dest.join("pi-flash"))
+            .map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>())
+    );
+    assert_eq!(std::fs::read(&got).unwrap(), content);
+    // 乱码名（zip crate 旧行为的产物）不得出现：╞⌠╢»╦╡├≈.txt
+    let mojibake = dest
+        .join("pi-flash")
+        .join("\u{255E}\u{2320}\u{2562}\u{00BB}\u{2566}\u{2561}\u{251C}\u{2248}.txt");
+    assert!(!mojibake.exists(), "不得再落 CP437 乱码名");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 遗留乱码清扫：只点名删两个已知变体，正确名与无关文件不动，幂等。
+#[test]
+fn sweep_legacy_mojibake_targets_exact_names() {
+    let root = temp_dir("sweep");
+    let stable = root.join("payload");
+    std::fs::create_dir_all(&stable).unwrap();
+    let cp437 = "\u{255E}\u{2320}\u{2562}\u{00BB}\u{2566}\u{2561}\u{251C}\u{2248}.txt";
+    let cp1252 = "\u{00C6}\u{00F4}\u{00B6}\u{00AF}\u{00CB}\u{00B5}\u{00C3}\u{00F7}.txt";
+    std::fs::write(stable.join(&cp437), b"stale").unwrap();
+    std::fs::write(stable.join(&cp1252), b"stale").unwrap();
+    std::fs::write(stable.join("启动说明.txt"), b"keep").unwrap();
+    std::fs::write(stable.join("CHANGELOG.md"), b"keep").unwrap();
+
+    sweep_legacy_mojibake(&stable);
+    assert!(!stable.join(&cp437).exists(), "CP437 变体应被清除");
+    assert!(!stable.join(&cp1252).exists(), "CP1252 变体应被清除");
+    assert!(stable.join("启动说明.txt").exists(), "正确名不得误删");
+    assert!(stable.join("CHANGELOG.md").exists(), "无关文件不得误删");
+    sweep_legacy_mojibake(&stable); // 幂等：文件不在也零动作
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 手造最小 STORE zip（单条目、标志位 0、无 extra）——zip crate 的 writer 只会
+/// 写 EFS 名，复刻 0.5.0 遗留包必须手拼字节（CRC-32 就地实现，不引新依赖）。
+#[cfg(windows)]
+fn build_stored_zip(name: &[u8], content: &[u8]) -> Vec<u8> {
+    let crc = crc32_ieee(content);
+    let sz = content.len() as u32;
+    let mut out = Vec::new();
+    let mut lfh = Vec::new();
+    lfh.extend_from_slice(b"PK\x03\x04");
+    lfh.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    lfh.extend_from_slice(&0u16.to_le_bytes()); // flags：无 EFS——正是遗留包病灶
+    lfh.extend_from_slice(&0u16.to_le_bytes()); // method = STORE
+    lfh.extend_from_slice(&0u16.to_le_bytes()); // time
+    lfh.extend_from_slice(&0x21u16.to_le_bytes()); // dos date 1980-01-01
+    lfh.extend_from_slice(&crc.to_le_bytes());
+    lfh.extend_from_slice(&sz.to_le_bytes());
+    lfh.extend_from_slice(&sz.to_le_bytes());
+    lfh.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    lfh.extend_from_slice(&0u16.to_le_bytes()); // extra len
+    lfh.extend_from_slice(name);
+    let lfh_ofs = out.len() as u32;
+    out.extend_from_slice(&lfh);
+    out.extend_from_slice(content);
+
+    let cd_start = out.len() as u32;
+    out.extend_from_slice(b"PK\x01\x02");
+    out.extend_from_slice(&20u16.to_le_bytes()); // version made by
+    out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+    out.extend_from_slice(&0u16.to_le_bytes()); // flags
+    out.extend_from_slice(&0u16.to_le_bytes()); // method
+    out.extend_from_slice(&0u16.to_le_bytes()); // time
+    out.extend_from_slice(&0x21u16.to_le_bytes()); // date
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&sz.to_le_bytes());
+    out.extend_from_slice(&sz.to_le_bytes());
+    out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // extra
+    out.extend_from_slice(&0u16.to_le_bytes()); // comment
+    out.extend_from_slice(&0u16.to_le_bytes()); // disk start
+    out.extend_from_slice(&0u16.to_le_bytes()); // internal attr
+    out.extend_from_slice(&0u32.to_le_bytes()); // external attr
+    out.extend_from_slice(&lfh_ofs.to_le_bytes());
+    out.extend_from_slice(name);
+    let cd_len = out.len() as u32 - cd_start;
+
+    out.extend_from_slice(b"PK\x05\x06");
+    out.extend_from_slice(&0u16.to_le_bytes()); // disk
+    out.extend_from_slice(&0u16.to_le_bytes()); // cd disk
+    out.extend_from_slice(&1u16.to_le_bytes()); // 条目数（本盘）
+    out.extend_from_slice(&1u16.to_le_bytes()); // 条目数（总）
+    out.extend_from_slice(&cd_len.to_le_bytes());
+    out.extend_from_slice(&cd_start.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes()); // comment len
+    out
+}
+
+#[cfg(windows)]
+fn crc32_ieee(data: &[u8]) -> u32 {
+    let mut table = [0u32; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        let mut c = i as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+        }
+        *slot = c;
+    }
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in data {
+        c = table[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8);
+    }
+    c ^ 0xFFFF_FFFF
+}

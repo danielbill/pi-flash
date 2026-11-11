@@ -52,6 +52,30 @@ pub(crate) fn safe_zip_path(dest: &Path, name: &str) -> Option<PathBuf> {
     Some(out)
 }
 
+/// zip 条目名解码：EFS（bit 11，UTF-8 标志）名或纯 ASCII 直接收；其余按 GBK
+/// 回解。zip crate 对无标志名一律按 CP437 解码，而打包端（System32 bsdtar，
+/// libarchive）在 Windows 上把非 ASCII 名按本机 ACP（zh-CN = GBK）写 zip 且
+/// 不置标志——0.5.0 实录：`启动说明.txt`（GBK C6F4 B6AF CBB5 C3F7）被解成
+/// `╞⌠╢»╦╡├≈.txt` 落盘。0.5.1 起打包端统一写 EFS 名（release.sh
+/// `zip:hdrcharset=UTF-8` + `scripts/zip_name_check.mjs` 硬门禁），此回解只救
+/// 遗留 zip；误判面 = GBK 字节恰为合法 UTF-8（极低概率，仅影响文件名不影响
+/// 内容）。
+pub(crate) fn decode_zip_entry_name(raw: &[u8]) -> String {
+    match std::str::from_utf8(raw) {
+        Ok(name) => name.to_string(),
+        Err(_) => {
+            // 不走 Encoding::decode——它做 BOM 嗅探，FF FE 开头会被整个切去
+            // UTF-16LE 解码；条目名是裸字节，无 BOM 语义。
+            let (name, had_errors) = encoding_rs::GBK.decode_without_bom_handling(raw);
+            if had_errors {
+                String::from_utf8_lossy(raw).into_owned()
+            } else {
+                name.into_owned()
+            }
+        }
+    }
+}
+
 /// 并行解压。条目互不依赖，按原子下标工作窃取；Windows 瓶颈是 Defender
 /// 对每个新建文件的实时扫描，多线程摊薄单文件延迟（单线程 4 万小文件
 /// 分钟级，并行后 10s 上下）。进度写 EXTRACT_PCT 供版本号位读取。
@@ -112,7 +136,9 @@ pub(crate) fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
                     }
                     let r = (|| -> Result<(), String> {
                         let mut entry = archive.by_index(i).map_err(|e| format!("{e}"))?;
-                        let Some(out) = safe_zip_path(dest, entry.name()) else {
+                        let Some(out) =
+                            safe_zip_path(dest, &decode_zip_entry_name(entry.name_raw()))
+                        else {
                             return Ok(());
                         };
                         if entry.is_dir() {

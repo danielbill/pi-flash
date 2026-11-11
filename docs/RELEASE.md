@@ -36,7 +36,8 @@
 - [ ] 所有者已拍板本次版本号
 - [ ] git 工作区干净（release.sh 门禁拒绝 tracked 改动；**并行会话的活必须先由其本人提交**，
       勿 stash、勿代提交；若按规范流程**预写**了 CHANGELOG 新版本段，同样要先提交——
-      收编幂等，内容一致则零改动）
+      收编幂等，内容一致则零改动；中止后整脚重跑时「同版本版本三件套残迹」脚本自动放行，
+      无需手工还原）
 - [ ] CHANGELOG写完交所有者审批，审批通过方可继续
 - [ ] 门禁测试全绿：`cargo check --workspace`、`cargo test -p pi-link`、`node npm/test/e2e.js`（28 项）
 - [ ] 架构守卫 PASS：`scripts/check_arch.sh`（行数红线按**非测试行数**计；超线存量冻结在
@@ -70,14 +71,24 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
 3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ **pi.exe**
    （全局 pi 前置 shim，缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
    + **随包扩展双向清点**（`SHIP_EXTS` 清单：extensions/ 下清单外目录 = 硬失败、
-   清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏 pfctx-manager / pf-svc-runtime）
+   清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏 pfctx-manager / pf-svc-runtime）；
+   step 0.5 已自动预清理 extensions/*/target-check|target 开发缓存（0.5.0 曾把
+   4.3GB 缓存随包撑到 1.4GB）
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
-   查 `PI_FLASH_PERF`）；结束 taskkill
+   查 `PI_FLASH_PERF`）；Defender 对新拷 exe 的瞬时锁自动歇 3s 重试一轮（0.5.0
+   Permission denied 实录），两轮都败才中止；结束 taskkill
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
    （双语以单独一行 `<!-- EN -->` 分隔；无英文段则只收中文，英文版不动）
 6. 压缩 `pi-flash-<v>-win32-x64.zip`（压缩器择优：System32 bsdtar 优先 → 7-Zip
    （`PF_7Z` 可覆盖路径）→ Compress-Archive 兜底；产物同为标准 deflate zip，
-   根带 `pi-flash/` 包装目录，npm 薄壳两条解压路径均可读）
+   根带 `pi-flash/` 包装目录，npm 薄壳两条解压路径均可读）。
+   **非 ASCII 条目名必须 EFS/UTF-8**：bsdtar 带 `--options zip:hdrcharset=UTF-8`
+   （libarchive 默认按本机 ACP/GBK 写名不置标志，Rust zip crate 解压端按 CP437
+   解 → 落盘乱码名，0.5.0 实录 `启动说明.txt` → `╞⌠╢»╦╡├≈.txt`）；压缩后跑
+   `scripts/zip_name_check.mjs` 硬门禁，不过即拒发。
+   **体积硬守卫**：> 250MB 绝对上限即中止；能取到上一版资产体积（gh api，
+   owner/repo 从 origin 解析）则动态比 1.8×，离线降级跳过动态对比不阻塞打包
+   （0.5.0 曾 1.4GB 靠人眼在第 8 步才发现）
 7. 生成 `SHA256SUMS` + `<资产>.sha256`（薄壳校验取用顺序：sidecar → SHA256SUMS）
 8. 完成，打印尾部块（下一步是 §3.2 人工验收，不是直接 ship）
 
@@ -159,8 +170,9 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 
 | 症状 | 处置 |
 |---|---|
-| 烟测 ✗ 启动有输出 | 看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑 |
-| 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。预写的 CHANGELOG 段自行提交后再整脚重跑 |
+| 烟测 ✗ 启动有输出 | 脚本已自动歇 3s 重试一轮（Defender 对新拷 exe 的瞬时锁属瞬时失败，0.5.0 实录）；两轮都败才看 `dist/smoke.log`；perf 行 = `PI_FLASH_PERF` 门控回归，修码重跑 |
+| 门禁 ✗ 工作区不干净 | 等并行会话自行提交；勿 stash / 勿代提交。预写的 CHANGELOG 段自行提交后再整脚重跑。中止重跑被**同版本版本三件套残迹**卡住的情况脚本已自动放行，无需手工还原 |
+| 体积守卫 ✗（>250MB 或 > 上一版 ×1.8） | 打包现场混入异物（0.5.0：extensions 里 target-check 4.3GB 随包）；step 0.5 预清理只清已知模式，按 `du -sh dist/pi-flash/*` 查体积构成，清完重跑 |
 | ship.sh ✗ tag 已存在 / push 断网 / release 撞名 | 分别见 §0 永不复用、§6 git push 断网、§6 release 撞名；脚本各步失败信息已带对应处置 |
 | ship.sh ✗ 缺 `dist/MANUAL-OK-<v>` | 未做 §3.2 人工验收，或 release.sh 重跑后标记已清（重打包即重验）→ 按 §3.2 验收通过后 `touch dist/MANUAL-OK-<v>` 再 ship |
 | git push 断网 | 网络恢复重推，本地提交不丢；勿强推 |
