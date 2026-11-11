@@ -47,9 +47,13 @@ pub fn extract_trigger_query(before_cursor: &str, trigger: u8) -> Option<AtQuery
         if bytes[i] != trigger || !boundary(i) {
             continue;
         }
-        if bytes[i + 1..]
-            .iter()
-            .all(|b| *b != b'"' && !(*b as char).is_whitespace())
+        // token 体按**字符**判空白/引号（pi-web 正则 [^\s"] 的语义）：字节
+        // 直转 char 会把 UTF-8 续字节当 Latin-1 判——0x85→U+0085(NEL)、
+        // 0xA0→U+00A0(NBSP) 都是空白，「内存」(E5 86 85)这类字会掐断
+        // token，@ 菜单对这些目录名直接失灵（2026-11-12 用户实测）
+        if before_cursor[i + 1..]
+            .chars()
+            .all(|c| c != '"' && !c.is_whitespace())
         {
             return Some(AtQueryMatch {
                 start: i,
@@ -313,6 +317,26 @@ mod tests {
         // 大小写不敏感（query 已小写，条目侧预计算）
         let hits = filter_file_names(&es, "readme", 20);
         assert_eq!(hits[0].path, "README.md");
+    }
+
+    #[test]
+    fn cjk_token_body_not_cut_by_utf8_bytes() {
+        // 「内」(E5 86 85)「研」(E7 A0 94)「光」的 UTF-8 字节里有 0x85/0xA0，
+        // 直转 char 是 U+0085(NEL)/U+00A0(NBSP) 空白——曾把 token 掐断，
+        // @内存/个股调研/太空光伏 菜单整体失灵（2026-11-12 用户实测）
+        assert_eq!(extract_trigger_query("@内存", b'@').unwrap().query, "内存");
+        assert_eq!(
+            extract_trigger_query("@个股调研/", b'@').unwrap().query,
+            "个股调研/"
+        );
+        assert_eq!(
+            extract_trigger_query("@专题/内存/", b'@').unwrap().query,
+            "专题/内存/"
+        );
+        // 真·空白字符仍终止 token（NBSP 是 JS \s，语义保持）
+        assert_eq!(extract_trigger_query("@a\u{a0}b", b'@'), None);
+        // token 后跟空白仍不触发
+        assert_eq!(extract_trigger_query("@内存 存", b'@'), None);
     }
 
     fn files() -> Vec<String> {

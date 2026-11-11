@@ -7,12 +7,30 @@ use std::path::Path;
 
 use super::{Chat, cwd_json, truncate};
 
-pub(super) fn composer_surface(chat: &Chat) -> Value {
+pub(super) fn composer_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
+    // 输入菜单状态（031-2 统一菜单）：@ 文件钻取等断言读这里，不靠截图猜
+    let menu = {
+        let kind = chat.active_menu(cx);
+        let items: Vec<Value> = chat
+            .menu_items(cx)
+            .iter()
+            .take(30)
+            .map(|i| json!({"label": truncate(&i.label, 80), "is_dir": i.is_dir}))
+            .collect();
+        json!({
+            "active_kind": kind.map(|k| k.prefix().to_string()),
+            "searching": chat.menu_searching(),
+            "ix": chat.composer.menu_ix,
+            "count": items.len(),
+            "items": items,
+        })
+    };
     json!({
         "text": truncate(&chat.composer.input, 2000),
         "pending_images": chat.composer.pending_images.len(),
         "history_len": chat.composer.history.len(),
         "composer_open": chat.composer.composer.is_some(),
+        "menu": menu,
     })
 }
 

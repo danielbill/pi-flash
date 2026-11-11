@@ -51,7 +51,7 @@ fn surface_one(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>, name: &st
         "app" => app_surface(chat, window, cx),
         "sessions" => sessions_surface(chat, cx),
         "session" => session_surface(chat, cx),
-        "composer" => composer_surface(chat),
+        "composer" => composer_surface(chat, cx),
         "files" => files_surface(chat, cx),
         "git" => git_surface(chat),
         "settings" => settings_surface(chat, cx),
