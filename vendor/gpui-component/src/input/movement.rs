@@ -45,6 +45,10 @@ impl InputState {
     /// Ensure the offset use self.next_boundary or self.previous_boundary to get the correct offset.
     pub(crate) fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let offset = offset.clamp(0, self.text.len());
+        // pi-flash patch（对齐 zed）：光标移出自动补入括号对即失效追踪——
+        // 键盘移动与鼠标点击都汇经本方法（zed region 仅在选区处于对内时
+        // 参与输入辅助）
+        self.autoclose_invalidate_outside(offset);
         self.selected_range = (offset..offset).into();
         self.scroll_to(offset, cx);
         self.pause_blink_cursor(cx);

@@ -19,7 +19,7 @@ use sum_tree::Bias;
 use unicode_segmentation::*;
 
 use super::{
-    assist::ENTIRE_LINE_META,
+    assist::{AutoclosedPair, ENTIRE_LINE_META},
     blink_cursor::BlinkCursor,
     change::Change,
     decorations::{DecorationProvider, Decorations},
@@ -298,6 +298,10 @@ pub struct InputState {
     /// Range for save the selected word, use to keep word range when drag move.
     pub(super) selected_word_range: Option<Selection>,
     pub(super) selection_reversed: bool,
+    /// pi-flash patch（对齐 zed）：autoclose 追踪——自动补入括号对的
+    /// overtype（越过）/backspace 成对删除辅助用；随编辑平移（对内编辑平
+    /// 移闭合符）、光标移出即失效（见 input/assist.rs）。
+    pub(super) autoclosed_pair: Option<AutoclosedPair>,
     /// The marked range is the temporary insert text on IME typing.
     pub(super) ime_marked_range: Option<Selection>,
     pub(super) last_layout: Option<LastLayout>,
@@ -430,6 +434,7 @@ impl InputState {
             searchable: false,
             selected_word_range: None,
             selection_reversed: false,
+            autoclosed_pair: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
             selecting: false,
@@ -1178,6 +1183,8 @@ impl InputState {
     pub fn set_selected_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         let end = range.end.min(self.text.len());
         let start = range.start.min(end);
+        // pi-flash patch：光标移出自动补入括号对即失效追踪（同 move_to）
+        self.autoclose_invalidate_outside(start);
         self.selected_range = (start..end).into();
         self.selection_reversed = false;
         cx.notify();
@@ -1190,6 +1197,8 @@ impl InputState {
     pub fn set_selected_range_reversed(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         let end = range.end.min(self.text.len());
         let start = range.start.min(end);
+        // pi-flash patch：光标移出自动补入括号对即失效追踪（同 move_to）
+        self.autoclose_invalidate_outside(start);
         self.selected_range = (start..end).into();
         self.selection_reversed = true;
         cx.notify();
@@ -1337,6 +1346,12 @@ impl InputState {
             return;
         }
         if self.selected_range.is_empty() {
+            // pi-flash patch（对齐 zed）：光标紧贴自动补入括号对 → 成对删除
+            // （zed 仅对 autoclosed region 生效；普通括号退格删单字符）
+            if self.backspace_delete_pair(window, cx) {
+                self.pause_blink_cursor(cx);
+                return;
+            }
             self.select_to(self.previous_boundary(self.cursor()), cx)
         }
         self.replace_text_in_range(None, "", window, cx);
@@ -2541,6 +2556,31 @@ impl EntityInputHandler for InputState {
 
         let old_text = self.text.clone();
         self.text.replace(range.clone(), new_text);
+
+        // pi-flash patch（对齐 zed）：autoclose 追踪随编辑平移/失效——对内
+        // 编辑平移闭合符（含贴闭合符插入），触及括号本体或范围外编辑即失效
+        self.autoclosed_pair = match self.autoclosed_pair {
+            Some(pair) => {
+                let (s, e) = (range.start, range.end);
+                let delta = new_text.len() as isize - (e - s) as isize;
+                let shift = |v: usize| (v as isize + delta).max(0) as usize;
+                if e <= pair.open {
+                    Some(AutoclosedPair {
+                        open: shift(pair.open),
+                        close: shift(pair.close),
+                        ..pair
+                    })
+                } else if s > pair.open && e <= pair.close {
+                    Some(AutoclosedPair {
+                        close: shift(pair.close),
+                        ..pair
+                    })
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
 
         let mut new_offset = (range.start + new_text.len()).min(self.text.len());
 
