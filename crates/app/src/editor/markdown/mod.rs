@@ -205,6 +205,8 @@ fn render_impl(src: &str, t: &Theme, streaming: bool, html: bool) -> AnyElement 
 mod cache;
 mod runs;
 
+#[cfg(test)]
+use self::cache::parse_events;
 use self::cache::{cached_blocks, flex_span, literal_runs, render_oversize, stream_gate_blocks};
 pub(crate) use self::cache::{hash_bytes, hash_str, md_parse_probe};
 pub(crate) use self::runs::highlight;

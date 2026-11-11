@@ -77,6 +77,36 @@ pub(crate) fn hash_bytes(b: &[u8]) -> u64 {
     h
 }
 
+/// 解析事件流（含单波浪线纠正）：pulldown-cmark 0.13 的
+/// ENABLE_STRIKETHROUGH 会把同段内配对的**单** `~` 也当删除线（Tag 层面
+/// 单/双不可分、亦无开关），而 pi-web remark-gfm 是 `{singleTilde:false}`
+/// ——CJK 文本里 `约 ~4.5%`、`5~10 倍` 这类约等/范围号极常见（2026-11-11
+/// 调研 AMD 会话两整句被误标中划线）。借 offset_iter 的 End 区间（恰为
+/// 闭合定界符）数 `~`：单条则把 Start/End 改写成字面 `~`，内容照常。
+pub(in crate::editor::markdown) fn parse_events<'a>(src: &'a str, opts: Options) -> Vec<Event<'a>> {
+    use pulldown_cmark::{Tag, TagEnd};
+    let mut events: Vec<Event> = Vec::new();
+    let mut strike_starts: Vec<usize> = Vec::new();
+    for (ev, range) in Parser::new_ext(src, opts).into_offset_iter() {
+        let ev = match ev {
+            Event::Start(Tag::Strikethrough) => {
+                strike_starts.push(events.len());
+                Event::Start(Tag::Strikethrough)
+            }
+            Event::End(TagEnd::Strikethrough) => match strike_starts.pop() {
+                Some(start_ix) if src[range].matches('~').count() == 1 => {
+                    events[start_ix] = Event::Text("~".into());
+                    Event::Text("~".into())
+                }
+                _ => Event::End(TagEnd::Strikethrough),
+            },
+            other => other,
+        };
+        events.push(ev);
+    }
+    events
+}
+
 pub(super) fn cached_blocks(src: &str, html: bool) -> std::rc::Rc<Vec<MdBlock>> {
     let key = (hash_str(src), src.len(), html);
     MD_PARSE_CACHE.with(|cell| {
@@ -98,7 +128,7 @@ pub(super) fn cached_blocks(src: &str, html: bool) -> std::rc::Rc<Vec<MdBlock>> 
         opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
         // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
         opts.insert(Options::ENABLE_MATH);
-        let events: Vec<Event> = Parser::new_ext(src, opts).collect();
+        let events = parse_events(src, opts);
         let parsed = std::rc::Rc::new(parse_blocks(&events, html));
         cache.push_back((key, (src.to_string(), std::rc::Rc::clone(&parsed))));
         while cache.len() > MD_PARSE_CACHE_CAP

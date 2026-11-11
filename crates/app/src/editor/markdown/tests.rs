@@ -48,7 +48,7 @@ fn parse_with(src: &str, html: bool) -> Vec<MdBlock> {
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     // v57-2: $…$ / $$…$$ 数学（pi-web remark-math parity）
     opts.insert(Options::ENABLE_MATH);
-    parse_blocks(&Parser::new_ext(src, opts).collect::<Vec<_>>(), html)
+    parse_blocks(&parse_events(src, opts), html)
 }
 
 #[test]
@@ -555,14 +555,30 @@ hello",
 
 #[test]
 fn single_tilde_is_not_strikethrough() {
-    // pi-web remark-gfm {singleTilde:false}: CJK 范围 "5~7" 不误删
-    let blocks = parse("range 5~7 days");
+    // pi-web remark-gfm {singleTilde:false}：单 `~` 是约等/范围号（“约
+    // ~4.5%”、“5~10 倍”），同段内两个单 `~` 配对也不得误标删除线
+    // （2026-11-11 调研 AMD 会话实测：两整句被中划线）；`~~双波浪~~` 才是。
+    // 案例一取自真实会话第二段原文（无 `$`，不掺数学行为）：
+    let src = "9 月 MI455X 还传提价 ~10%，说明短期供不应求，但长期定价天花板明显低于 NVIDIA（75% 毛利率 vs AMD 55~56%）";
+    match &parse(src)[0] {
+        MdBlock::Paragraph { runs } => {
+            assert!(!runs.iter().any(|r| r.style == Style::Strike));
+            // 字面波浪线一字不丢
+            assert_eq!(text_of(runs), src);
+        }
+        other => panic!("{other:?}"),
+    }
+    // 案例二：真实会话第一段（含 `$`，数学行为不掺判，只锁删除线）：
+    let blocks = parse(
+        "（AI 加速器份额 ~4.5%）；NVIDIA 单季 $89B、YoY +117% 仍在加速，订单簿 $500B~$1T 是 AMD 的 5~10 倍。",
+    );
     match &blocks[0] {
         MdBlock::Paragraph { runs } => {
             assert!(!runs.iter().any(|r| r.style == Style::Strike));
         }
         other => panic!("{other:?}"),
     }
+    // `~~双波浪~~` 仍是删除线：见 strikethrough_run，不再重复。
 }
 
 #[test]
