@@ -138,6 +138,16 @@ def main():
         return 1 if sum(len(v[0]) for v in report.values()) else 0
 
     base = load_baseline()
+    # 基线卫生：键指向不存在的文件 = 文件拆分/删除后基线未重写（0.5.0 发版实录：
+    # 41 处旧债挂死路径 + 78 处新路径无档 → 42 文件批发假红，靠 worktree 对账人工
+    # 裁定）。死路径当场硬失败，把漂移前移到拆分现场，不再攒到发版日结算。
+    dead = [p for p in base if not os.path.exists(os.path.join(ROOT, p))]
+    if dead:
+        print('VIOLATION(基线卫生): %d 条基线指向已不存在的文件——'
+              '拆分/删除后须人工 --update-baseline 重写：' % len(dead))
+        for p in sorted(dead):
+            print(f'    {p}  {base[p]}')
+        return 1
     violations, cleared = [], []
     for path, (bad, _esc) in sorted(report.items()):
         allowed = base.get(path, 0)
