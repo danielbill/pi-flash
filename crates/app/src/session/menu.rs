@@ -25,7 +25,8 @@ use crate::ui::WithTip;
 const TAB_LIMIT: usize = 60;
 /// 万能搜索每类上限（文件名过滤同值）
 const SEARCH_LIMIT: usize = 20;
-/// tab 条高度；条内 tab 高 = 条高 −4（规范 §5.3「bar 内 tab 高」）
+/// tab 条高度；菜单 tab 填满条高（无圆角，顶缘与搜索栏接洽，2026-11-11
+/// 用户定稿——topbar 的「条内 tab 高 = 条高 −4 + 上圆角」在菜单里不适用）
 const STRIP_H: f32 = 34.;
 const SKILL_PREFIX: &str = "skill:";
 
@@ -547,7 +548,10 @@ pub(crate) fn slash_menu_view(
             Some(badge),
             false,
         )
-        .h(px(STRIP_H - 4.))
+        // 菜单变体：无圆角 + 填满条高（与搜索栏接洽）；mb(-1)（tab_body
+        // 内置）让激活 tab 的底缘嵌进条下 5px 同色带，接缝不可见
+        .h(px(STRIP_H))
+        .rounded(px(0.))
         .when(!enabled, |d| {
             d.opacity(0.45).cursor(gpui::CursorStyle::Arrow)
         });
@@ -775,8 +779,6 @@ pub(crate) fn slash_menu_view(
                 .gap(px(8.))
                 .px(px(10.))
                 .bg(rgb(t.bg))
-                .border_b_1()
-                .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
                 .child(crate::ui::icon("search", 14., t.text_faint))
                 .child(
                     div().flex_1().min_w_0().children(
@@ -796,9 +798,9 @@ pub(crate) fn slash_menu_view(
                 .items_end()
                 .px(px(8.))
                 .bg(rgb(t.chrome))
-                // 条下 4px 菜单底色带（2026-11-11 用户定稿）：激活 tab 的
+                // 条下 5px 菜单底色带（2026-11-11 用户定稿）：激活 tab 的
                 // mb(-1) 连体缘落在这条带上，接缝不可见
-                .border_b_4()
+                .border_b_5()
                 .border_color(rgb(t.bg))
                 .children(MenuKind::ALL.iter().map(|k| tab(*k)))
                 .child(
