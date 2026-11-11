@@ -628,11 +628,18 @@ pub(crate) fn slash_menu_view(
         } else {
             (None, c.label.clone())
         };
+        // 目录段可收缩（min_w_0 缩到 0），名称恒显（flex_shrink_0）——
+        // file_tree 021 五改同款优先级：钻取深层目录时目录前缀巨长，名称
+        // 才是用户认条目的键，让目录段吃掉全部收缩；行级 overflow_hidden
+        // 兜底。超宽硬剪不加省略号（2026-11-12 用户令）
         let dir_el = dir_el.map(|dir| {
             div()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
                 .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
+                .flex_shrink()
+                .min_w_0()
+                .overflow_hidden()
                 .whitespace_nowrap()
                 .child(SharedString::from(dir))
                 .into_any_element()
@@ -650,6 +657,8 @@ pub(crate) fn slash_menu_view(
             .py(px(8.))
             .rounded(px(7.))
             .border_1()
+            // 内容超宽的兜底剪裁（长路径名曾溢出条目框外，2026-11-12）
+            .overflow_hidden()
             .border_color(rgb(if active { t.accent } else { t.border }))
             .bg(rgb(if active { t.bg_selected } else { t.bg_panel }))
             .cursor_pointer()
@@ -702,9 +711,16 @@ pub(crate) fn slash_menu_view(
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
                     .child(SharedString::from(name_text));
-                // 会话标题固定 400px 宽、超长省略号截断（2026-11-11 用户定稿）
+                // 会话标题固定 400px 宽、超长省略号截断（2026-11-11 用户定稿）；
+                // 文件条目名恒显（flex_shrink_0，收缩由目录段承担）；技能/
+                // 命令名可收缩。超宽一律 overflow_hidden 硬剪，不加省略号、
+                // 不缩字号（2026-11-12 长路径溢出条目框修复 + 用户令）
                 if kind == MenuKind::Session {
                     name = name.w(px(400.)).min_w_0().overflow_hidden().text_ellipsis();
+                } else if kind == MenuKind::File {
+                    name = name.flex_shrink_0().min_w_0().overflow_hidden();
+                } else {
+                    name = name.min_w_0().overflow_hidden();
                 }
                 name
             })

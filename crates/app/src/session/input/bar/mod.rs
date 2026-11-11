@@ -135,7 +135,8 @@ fn plan_marker_button(
 }
 
 /// 操作栏触发钮基座（InputPanel 五颗触发钮唯一样式落点：工具/模型/思考/
-/// 扩展/MCP，2026-11-07 自各处内联样式收口）：28px 高、gap5、圆角 8、
+/// 扩展/MCP，2026-11-07 自各处内联样式收口）：28px 高、gap5、圆角 2、
+/// 左右 2px 内边距（背景较内容左右各扩 2px，2026-11-12 用户令）、
 /// BAR_FONT 字号；可选前置 icon（`icon_hover` 悬停提亮，尺寸**恒
 /// [`tokens::icon::MD`]**——同一控件行 icon 不许两种大小，2026-11-08 用户
 /// 定稿，原 plug 16 特档一并废除；参数已删，想漂移都没门）+ 文案 + 可选
@@ -159,7 +160,8 @@ pub(crate) fn bar_trigger(
         .flex()
         .items_center()
         .gap(px(5.))
-        .rounded(px(8.))
+        .px(px(2.))
+        .rounded(px(2.))
         .text_size(ui(BAR_FONT))
         .text_color(rgb(color))
         .children(icon_name.map(|name| icon_hover(name, crate::ui::tokens::icon::MD, color)))
@@ -230,9 +232,11 @@ fn bar_left_group(
                 div()
                     .id("attach-image")
                     // 方形 hover 底（ZCode parity，2026-11-11 四轮用户令）：
-                    // 28×28 居中 18px 字形，ml(3) 保字形左缘 18 = 正文首行左对齐
+                    // 28×28 居中 18px 字形，ml(3) 保字形左缘 18 = 正文首行左
+                    // 对齐；圆角 2 与操作栏各背景统一（2026-11-12 用户令）
                     .ml(px(3.))
                     .size(px(28.))
+                    .rounded(px(2.))
                     .flex()
                     .items_center()
                     .justify_center()
