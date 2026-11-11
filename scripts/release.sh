@@ -101,30 +101,41 @@ NODE_BIN=$(command -v node || true)
 cp "$NODE_BIN" dist/pi-flash/node.exe
 cp -r vendor/pi dist/pi-flash/vendor/
 
-# 045 / 001-4 / 090-6：随包扩展逐个分发（PF 用 `-e <path>` 挂载，运行时 lazy
-# import SDK，无需构建）。放在 exe 旁的 extensions/，与 subagents.rs /
-# pfctx_manager.rs / service_ext.rs 的查找顺序一致——漏拷 = 静默缺席：
+# 045 / 001-4 / 090-6：随包扩展清单（唯一事实源）——PF 用 `-e <path>` 挂载，
+# 运行时 lazy import SDK，无需构建，放 exe 旁 extensions/，与 subagents.rs /
+# pfctx_manager.rs / service_ext.rs 的查找顺序一致。缺件 = 静默缺席：
 #   pf-subagents    缺 = 没有 agent 工具（044）
 #   pfctx-manager   缺 = 自我调试工具不注入（001，真机 2026-11-11 实锤）
 #   pf-svc-runtime  缺 = ctx.service 执行域 shim 落空、service 声明告警（090-6）
-# 新增随包扩展必须同步：extensions/ 仓库目录 + 本清单 + 对应 *_rs 查找链。
+# 新增/下线随包扩展：改此清单 + extensions/ 仓库目录 + 对应 *_rs 查找链，三者同步。
+SHIP_EXTS=(pf-subagents pfctx-manager pf-svc-runtime)
+
+# 清点①：仓内不得有清单外目录（0.5.0 实录：pfctx-manager、pf-svc-runtime 两连漏，
+# 都是「目录在、清单没有」的静默缺席——新扩展先登记清单再入库，或移出 extensions/）
+if [[ -d extensions ]]; then
+  for d in extensions/*/; do
+    name=$(basename "$d")
+    [[ " ${SHIP_EXTS[*]} " == *" $name "* ]] || {
+      echo "✗ extensions/$name 不在随包清单 SHIP_EXTS：先登记发版清单并接好查找链，或移出 extensions/"; exit 1;
+    }
+  done
+fi
+
+# 清点② + 分发：清单已登记但目录缺失同样硬失败（防清单与仓库反向漂移）
 mkdir -p dist/pi-flash/extensions
-for ext in pf-subagents pfctx-manager pf-svc-runtime; do
-  if [[ -d "extensions/$ext" ]]; then
-    cp -r "extensions/$ext" dist/pi-flash/extensions/
-    echo "    $ext 扩展已随包分发"
-  elif [[ "$ext" == "pf-subagents" ]]; then
-    echo "    ⚠ extensions/pf-subagents 缺失，本包将没有 agent 工具"
-  else
-    echo "    ⚠ extensions/$ext 缺失，对应随包能力静默缺席"
-  fi
+for ext in "${SHIP_EXTS[@]}"; do
+  [[ -d "extensions/$ext" ]] || { echo "✗ extensions/$ext 在随包清单中但目录缺失，对应能力将静默缺席"; exit 1; }
+  cp -r "extensions/$ext" dist/pi-flash/extensions/
+  echo "    $ext 扩展已随包分发"
 done
+
 # target-check/（CARGO_TARGET_DIR 检查缓存，git 已忽略）是开发期垃圾，cp -r 会照搬
 # → 0.5.0 曾把包撑到 1.4GB（正常 ≈90MB），dist 侧剥掉，仓库侧不动。
-if [[ -d dist/pi-flash/extensions/pf-subagents/target-check ]]; then
-  rm -rf dist/pi-flash/extensions/pf-subagents/target-check
-  echo "    ⚠ 已从包内剥离 extensions/pf-subagents/target-check（开发缓存，勿入库勿随包）"
-fi
+for d in dist/pi-flash/extensions/*/target-check; do
+  [[ -d "$d" ]] || continue
+  rm -rf "$d"
+  echo "    ⚠ 已从包内剥离 ${d#dist/}（开发缓存，勿入库勿随包）"
+done
 
 # 裁掉非宿主平台 esbuild 二进制（vendor/pi 416MB 里 284MB 是 26 个平台副本，
 # 每包只用 win32-x64 一个 → 下载体积 200MB+ → ≈120MB；见 080 §1.2）。

@@ -69,6 +69,8 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
    **exe 烙入自检**（proof b64 前缀必须命中，未烙入 = 拒打包）
 3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ **pi.exe**
    （全局 pi 前置 shim，缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
+   + **随包扩展双向清点**（`SHIP_EXTS` 清单：extensions/ 下清单外目录 = 硬失败、
+   清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏 pfctx-manager / pf-svc-runtime）
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
    查 `PI_FLASH_PERF`）；结束 taskkill
 5. CHANGELOG：中文段收编 `docs/CHANGELOG.md`、英文段收编 `docs/CHANGELOG_EN.md`
