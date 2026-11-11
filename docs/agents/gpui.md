@@ -344,3 +344,18 @@ extern 边界 → abort 0xc0000409 STATUS_STACK_BUFFER_OVERRUN，表象是
 「发消息就闪退」。修复：两处取用改 `default_global`（缺省自动落 default，
 补丁自洽，`#[derive(Default)]` 本就在结构体上）。今后给该全局加字段也
 无需初始化钩子。
+
+## pulldown-cmark 单波浪线删除线：Tag 层单/双不可分，须 offset_iter 数 ~（2026-11-11，pi-flash-e210f7cf）
+
+`ENABLE_STRIKETHROUGH` 下 pulldown-cmark 0.13 把同段内**配对的单 `~`** 也当
+删除线（未开 ENABLE_SUBSCRIPT 时单 `~` 直接落 Strikethrough，见其
+parse.rs:995-1007），且无开关、`Tag::Strikethrough` 不携带定界符长度——
+CJK 文本「约 ~4.5%」「5~10 倍」一配对整句中划线（调研 AMD 会话实测）。
+pi-web remark-gfm 是 `{singleTilde:false}`，PF 必须对齐。修法：解析改走
+`into_offset_iter()`，**End 事件区间恰为闭合定界符**（`src[range]` 数 `~`
+即定界符长度；开闭长度必相等），单条则把配对的 Start/End 事件改写成
+字面 `Text("~")`，内容事件不动——实现在 `editor/markdown/cache.rs` 的
+`parse_events`（chat/doc/compaction 共用）。教训：**「单例不配对」的测试
+是假绿**（一个 `~` 天然配不成对，怎么写都过），回归用例必须给成对单
+`~` 的真实句子；另 `$…$`（ENABLE_MATH）会先吃掉 `$500B~$` 这类片段，
+写用例时别让两个扩展掺在一起断言。
