@@ -230,6 +230,8 @@ fn bar_left_group(
                 div()
                     .id("attach-image")
                     .pl(px(8.)) // 图片与正文首行左对齐：正文=编辑行6+组件12=18，图片=栏10+8=18
+                    .pr(px(8.)) // hover 底绕字形对称（031-2：+ 放大后左重明显）
+                    .rounded(px(8.))
                     .flex()
                     .items_center()
                     .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
@@ -255,7 +257,7 @@ fn bar_left_group(
                     )
                     .child(icon_hover(
                         "plus",
-                        17.,
+                        18.,
                         if locked { t.text_faint } else { t.text_muted },
                     )),
             )

@@ -54,6 +54,9 @@ pub struct TextInput {
     caret_color: Option<u32>,
     /// 占位符色覆盖（None = 主题 `muted_foreground`）：同理，深肤页要用页内灰。
     placeholder_color: Option<u32>,
+    /// 字号覆盖（ui() 档位值；None = 组件默认阶梯 form 15 / compact 11 / 其余 12）。
+    /// 统一菜单搜索栏用：菜单正文 = 面板−1，搜索栏随 tab 文字同号 ui(11)。
+    text_size: Option<f32>,
     /// 正文文字色覆盖（None = 主题 `foreground`）：同理，深肤页要用页内白。
     text_color: Option<u32>,
     select_all_on_focus: bool,
@@ -93,6 +96,7 @@ impl TextInput {
             form: false,
             caret_color: None,
             placeholder_color: None,
+            text_size: None,
             text_color: None,
             select_all_on_focus: false,
             disabled: false,
@@ -179,6 +183,12 @@ impl TextInput {
     /// 打字文字恒取主题 foreground，浅色主题下是墨色，落在固定深底页上看不见。
     pub fn text_color(mut self, rgb24: u32) -> Self {
         self.text_color = Some(rgb24);
+        self
+    }
+
+    /// 字号覆盖（ui() 档位值；占位符与正文同号——容器 text_size 内件整体继承）。
+    pub fn text_size(mut self, v: f32) -> Self {
+        self.text_size = Some(v);
         self
     }
 

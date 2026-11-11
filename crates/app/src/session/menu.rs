@@ -443,8 +443,10 @@ impl Chat {
         let weak = cx.entity().downgrade();
         let weak_esc = weak.clone();
         let input = cx.new(|cx| {
+            // 字号 = 面板−1，与 tab 文字同号（2026-11-11 用户定稿）
             TextInput::new(cx)
                 .flat()
+                .text_size(11.)
                 .placeholder(tr("menu.search_placeholder"))
         });
         input.update(cx, |ti, _| {

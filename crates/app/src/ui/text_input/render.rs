@@ -147,6 +147,8 @@ impl Render for TextInput {
             })
             .text_size(if self.form {
                 gpui::px(15.)
+            } else if let Some(v) = self.text_size {
+                crate::appearance::ui_size(v)
             } else {
                 crate::appearance::ui_size(if self.compact { 11. } else { 12. })
             })
