@@ -18,8 +18,8 @@ cd "$(dirname "$0")/.."
   echo "用法: scripts/check_arch.sh [--update-baseline]"; exit 1;
 }
 
-LIMIT_FILE=1500        # 单文件非测试行数上限
-LIMIT_RENDER=300       # 单个顶层视图函数行数上限
+LIMIT_FILE=1000        # 单文件非测试行数上限
+LIMIT_RENDER=400       # 单个顶层视图函数行数上限
 
 fail=0
 
