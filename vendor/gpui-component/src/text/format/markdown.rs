@@ -22,9 +22,19 @@ pub(crate) fn parse(
     cx: &mut NodeContext,
     highlight_theme: &HighlightTheme,
 ) -> Result<node::Node, SharedString> {
-    markdown::to_mdast(&raw, &ParseOptions::gfm())
-        .map(|n| ast_to_node(n, style, cx, highlight_theme))
-        .map_err(|e| e.to_string().into())
+    // PF 本地补丁：gfm_strikethrough_single_tilde=false——单 ~ 是约等/范围号
+    // （约 ~4.5%、5~10 倍），不标删除线；~~双波浪~~ 才是。pi-web remark-gfm
+    // {singleTilde:false} parity（2026-11-11，pi-flash 调研 AMD 会话实测单
+    // ~ 配对整句被划掉）。
+    markdown::to_mdast(
+        &raw,
+        &ParseOptions {
+            gfm_strikethrough_single_tilde: false,
+            ..ParseOptions::gfm()
+        },
+    )
+    .map(|n| ast_to_node(n, style, cx, highlight_theme))
+    .map_err(|e| e.to_string().into())
 }
 
 fn parse_table_row(table: &mut Table, node: &mdast::TableRow, cx: &mut NodeContext) {
