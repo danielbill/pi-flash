@@ -369,3 +369,33 @@ pi-web remark-gfm 是 `{singleTilde:false}`，PF 必须对齐。修法（两处�
 教训：**「单例不配对」的测试是假绿**（一个 `~` 天然配不成对，怎么写都
 过），回归用例必须给成对单 `~` 的真实句子；另 `$…$`（ENABLE_MATH）会先
 吃掉 `$500B~$` 这类片段，写用例时别让两个扩展掺在一起断言。
+
+## 定稿块 mermaid：TextView 不识围栏图，AgentMarkdown 拆段（2026-11-11，pi-flash-拆段）
+
+「agent 消息两条渲染路径」的另一处坑：PF 的 mermaid 管线
+（mermaid-rs-renderer → SVG）住在**自研渲染器**里，只覆盖流式块/用户行/
+doc 预览；agent 定稿块换装 gpui-component TextView（划选/复制）后
+```mermaid 只能落普通码块——pi-web 的 MermaidBlock 在 web 端处处出图，
+PF 定稿块不出图即 parity 破坏。修法：`AgentMarkdown::render` 先走
+`mermaid::split_mermaid_segments` 按**顶层（0 缩进）** ```mermaid/~~~mermaid
+围栏拆段（字节切片重建原文零改写；口径对齐 parse/block.rs 的
+`info.trim() == "mermaid"`；未闭合围栏延伸到文末；图渲染失败该段回退
+TextView 码块），图段走 `diagram_element`（自带 LRU），文本段逐段
+TextView、**id 必须逐段唯一**（`{id}#m{ix}`，use_keyed_state 按全局 id
+存解析树，同 id 撞树）。缩进围栏不抽——留给 TextView 兑底，与旧行为
+一致，别试图在拆段器里做完整嵌套解析。
+
+## 定稿块 mermaid：TextView 不识围栏图，AgentMarkdown 拆段（2026-11-11，pi-flash-拆段）
+
+「agent 消息两条渲染路径」的另一处坑：PF 的 mermaid 管线
+（mermaid-rs-renderer → SVG）住在**自研渲染器**里，只覆盖流式块/用户行/
+doc 预览；agent 定稿块换装 gpui-component TextView（划选/复制）后
+```mermaid 只能落普通码块——pi-web 的 MermaidBlock 在 web 端处处出图，
+PF 定稿块不出图即 parity 破坏。修法：`AgentMarkdown::render` 先走
+`mermaid::split_mermaid_segments` 按**顶层（0 缩进）** mermaid 围栏拆段
+（字节切片重建原文零改写；口径对齐 parse/block.rs 的
+`info.trim() == "mermaid"`；未闭合围栏延伸到文末；图渲染失败该段回退
+TextView 码块），图段走 `diagram_element`（自带 LRU），文本段逐段
+TextView、**id 必须逐段唯一**（`{id}#m{ix}`，use_keyed_state 按全局 id
+存解析树，同 id 撞树）。缩进围栏不抽——留给 TextView 兑底，与旧行为
+一致，别试图在拆段器里做完整嵌套解析。

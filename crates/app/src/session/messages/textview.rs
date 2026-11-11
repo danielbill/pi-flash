@@ -9,8 +9,8 @@
 //! TextView::markdown（use_keyed_state 需要 &mut Window）在此构造零改造。
 
 use gpui::{
-    App, ElementId, IntoElement, RenderOnce, SharedString, Styled, Window, div, prelude::*, px,
-    relative, rgb,
+    AnyElement, App, ElementId, IntoElement, RenderOnce, SharedString, Styled, Window, div,
+    prelude::*, px, relative, rgb,
 };
 use gpui_component::ActiveTheme;
 use gpui_component::text::TextView;
@@ -20,7 +20,8 @@ use crate::editor::markdown;
 
 #[derive(IntoElement, Clone)]
 pub(crate) struct AgentMarkdown {
-    id: ElementId,
+    /// id 基串（含文本哈希 + 主题名）；mermaid 拆段后逐段追加 `#m{ix}`
+    id_str: SharedString,
     text: SharedString,
 }
 
@@ -33,11 +34,11 @@ impl AgentMarkdown {
     /// 语法盘上（暗底配 #0433ff/#0000A2，即用户截图的难读色）。
     pub(crate) fn new(id: SharedString, text: impl Into<SharedString>) -> Self {
         Self {
-            id: ElementId::from(SharedString::from(format!(
+            id_str: SharedString::from(format!(
                 "{}#{}",
                 id,
                 crate::appearance::theme::theme_name()
-            ))),
+            )),
             text: text.into(),
         }
     }
@@ -46,6 +47,39 @@ impl AgentMarkdown {
 impl RenderOnce for AgentMarkdown {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = T();
+        // mermaid 拆段：TextView 不识 ```mermaid，顶层围栏抽出来走自家
+        // SVG 管线（mermaid.rs）；单普通段（常态）走原路径，id 语义不变。
+        let segments = markdown::render::mermaid::split_mermaid_segments(&self.text);
+        if segments.len() == 1 && segments[0].source.is_none() {
+            return self
+                .text_view(self.id_str.clone(), self.text.clone(), window, cx)
+                .into_any_element();
+        }
+        let mut col = div().w_full().flex().flex_col();
+        for (ix, seg) in segments.iter().enumerate() {
+            if let Some(source) = &seg.source {
+                if let Some(el) = markdown::render::mermaid::diagram_element(source, t.dark) {
+                    col = col.child(el);
+                    continue;
+                }
+                // 图渲染失败：该段原文照旧 TextView（落成码块）
+            }
+            let id = SharedString::from(format!("{}#m{}", self.id_str, ix));
+            col = col.child(self.text_view(id, SharedString::from(seg.text.clone()), window, cx));
+        }
+        col.into_any_element()
+    }
+}
+
+impl AgentMarkdown {
+    /// `id` 必须逐段唯一（use_keyed_state 按全局 id 存解析树）。
+    fn text_view(
+        &self,
+        id: SharedString,
+        text: SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         div()
             .w_full()
             // 正文样式对齐自研渲染器：会话字体/字号、1.5 行高（gpui 0.2.2
@@ -53,12 +87,13 @@ impl RenderOnce for AgentMarkdown {
             .font_family(crate::appearance::session_font().family)
             .text_size(crate::appearance::sess_size(0.))
             .line_height(relative(1.5))
-            .text_color(rgb(t.text))
+            .text_color(rgb(T().text))
             .child(
-                TextView::markdown(self.id, self.text, window, cx)
+                TextView::markdown(ElementId::from(id), text, window, cx)
                     .selectable()
                     .style(text_view_style(cx)),
             )
+            .into_any_element()
     }
 }
 

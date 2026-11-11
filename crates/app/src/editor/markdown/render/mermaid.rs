@@ -54,6 +54,72 @@ fn render_svg(source: &str, dark: bool) -> Option<Arc<Image>> {
     )))
 }
 
+/// 定稿块拆段（session/messages/textview.rs 的 AgentMarkdown 用）：
+/// gpui-component TextView 不识 mermaid，agent 定稿文本里的 ```mermaid
+/// 只能落成普通码块。顶层（0 缩进）mermaid 围栏抽出来走自家 SVG 管线；
+/// 缩进围栏（列表/引用内）不抽，整段留给 TextView 码块兑底（与旧行为
+/// 一致）。口径对齐 parse/block.rs：`info.trim() == "mermaid"`。
+pub(crate) struct MermaidSegment {
+    /// 喂 TextView 的原文（mermaid 段渲染失败也用它兑底成码块）
+    pub text: String,
+    /// 围栏内的 mermaid 源码（None = 普通 markdown 段）
+    pub source: Option<String>,
+}
+
+pub(crate) fn split_mermaid_segments(src: &str) -> Vec<MermaidSegment> {
+    // 按行扫字节偏移（切片重建原文，零改写）；围栏未闭合视为延伸到
+    // 文末（与 CommonMark 同）。闭栏 = 同字符、长度≥开栏、无信息串。
+    let mut out: Vec<MermaidSegment> = Vec::new();
+    let mut plain_start = 0usize; // 当前普通段起点
+    let mut seg_start = 0usize; // 当前待收段（含 mermaid 段从开栏行）起点
+    let mut i = 0usize;
+    let mut fence: Option<(u8, usize, usize)> = None; // (字符, 开栏长度, 源码起点)
+    while i < src.len() {
+        let end = src[i..].find('\n').map_or(src.len(), |p| i + p + 1);
+        let line = &src[i..end];
+        if let Some((ch, open_len, code_start)) = fence {
+            let t = line.trim_end();
+            if !t.is_empty() && t.len() >= open_len && t.bytes().all(|b| b == ch) {
+                let source = src[code_start..i].replace("\r\n", "\n");
+                out.push(MermaidSegment {
+                    text: src[seg_start..end].to_string(),
+                    source: Some(source),
+                });
+                fence = None;
+                plain_start = end;
+                seg_start = end;
+            }
+        } else if line.starts_with("```") || line.starts_with("~~~") {
+            let ch = line.as_bytes()[0];
+            let open_len = line.bytes().take_while(|&b| b == ch).count();
+            if line[open_len..].trim_end().trim() == "mermaid" {
+                if plain_start < i {
+                    out.push(MermaidSegment {
+                        text: src[plain_start..i].to_string(),
+                        source: None,
+                    });
+                }
+                fence = Some((ch, open_len, end));
+                seg_start = i;
+            }
+        }
+        i = end;
+    }
+    if let Some((_, _, code_start)) = fence {
+        // 未闭合 mermaid 围栏：延伸到文末（与 CommonMark 同）
+        out.push(MermaidSegment {
+            text: src[seg_start..].to_string(),
+            source: Some(src[code_start..].replace("\r\n", "\n")),
+        });
+    } else if plain_start < src.len() {
+        out.push(MermaidSegment {
+            text: src[plain_start..].to_string(),
+            source: None,
+        });
+    }
+    out
+}
+
 /// 图元素。None = 失败（调用方回退源码块）。
 pub(crate) fn diagram_element(source: &str, dark: bool) -> Option<gpui::AnyElement> {
     let key = cache_key(source, dark);
@@ -130,5 +196,74 @@ mod tests {
     fn invalid_syntax_returns_none() {
         // 乱语法应当失败回退（不 panic）
         let _ = diagram_element("this is not mermaid at all {{{", false);
+    }
+
+    // ---- split_mermaid_segments（定稿块拆段，AgentMarkdown 消费）----
+
+    fn segs(src: &str) -> Vec<(String, Option<String>)> {
+        split_mermaid_segments(src)
+            .into_iter()
+            .map(|s| (s.text, s.source))
+            .collect()
+    }
+
+    #[test]
+    fn split_top_level_mermaid_fence() {
+        let src = "前置说明\n\n```mermaid\nflowchart TD\n A-->B\n```\n\n后文\n";
+        let out = segs(src);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].1, None);
+        assert_eq!(out[1].1.as_deref(), Some("flowchart TD\n A-->B\n"));
+        assert_eq!(out[2].1, None);
+        // 切片重建：拼接必须逐字节等于原文
+        let joined: String = out.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(joined, src);
+    }
+
+    #[test]
+    fn split_info_string_extra_not_mermaid() {
+        // parse/block.rs 口径：info.trim() 必须全等于 mermaid
+        assert!(segs("```mermaid foo\nA\n```")[0].1.is_none());
+    }
+
+    #[test]
+    fn split_indented_fence_not_intercepted() {
+        // 列表/引用内的缩进围栏不抽，整段留给 TextView 码块兑底
+        let out = segs("- 项\n  ```mermaid\n  A-->B\n  ```\n");
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.is_none());
+    }
+
+    #[test]
+    fn split_tilde_fence_and_unclosed_fence() {
+        let out = segs("~~~mermaid\nA-->B\n~~~\n");
+        assert_eq!(out[0].1.as_deref(), Some("A-->B\n"));
+        // 未闭合：延伸到文末（与 CommonMark 同）
+        let out = segs("```mermaid\nA --> B");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1.as_deref(), Some("A --> B"));
+    }
+
+    #[test]
+    fn split_closing_fence_needs_at_least_open_length() {
+        // 4 反引号开栏、3 反引号行不算闭栏 → 延伸到文末
+        let out = segs("````mermaid\nA\n```\nB\n````\n");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1.as_deref(), Some("A\n```\nB\n"));
+    }
+
+    #[test]
+    fn split_plain_text_single_segment() {
+        let out = segs("普通文本，没有围栏。\n\n```rust\nfn x() {}\n```\n");
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.is_none());
+    }
+
+    #[test]
+    fn split_crlf_source_normalized() {
+        let out = segs("```mermaid\r\nA --> B\r\n```\r\n");
+        assert_eq!(out[0].1.as_deref(), Some("A --> B\n"));
+        // 段文本仍是原字节（重建无损）
+        assert!(out[0].0.contains('\r'));
     }
 }
