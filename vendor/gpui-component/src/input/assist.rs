@@ -64,6 +64,9 @@ pub(super) struct LangAssist {
     pub line_comments: &'static [&'static str],
     /// 块注释（zed block_comment：续行前缀 + start tag 行加档空格数）
     pub block_comment: Option<&'static BlockComment>,
+    /// 多行粘贴按上下文重缩进（zed auto_indent_on_paste；markdown 显式
+    /// false——zed markdown config 同款，无 indent query 时以光标行缩进为锚）
+    pub auto_indent_on_paste: bool,
 }
 
 /// 块注释续行配置（zed block_comment config 对应物）。
@@ -129,48 +132,56 @@ static BLOCK_XML: BlockComment = BlockComment {
 static RUST: LangAssist = LangAssist {
     pairs: code_brackets!(),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["/// ", "//! ", "// "],
     block_comment: Some(&BLOCK_C),
 };
 static PYTHON: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
 };
 static JS: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false), p('`', '`', true, true, false)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
 };
 static GO: LangAssist = LangAssist {
     pairs: code_brackets!(p('`', '`', true, true, false)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
 };
 static JSON: LangAssist = LangAssist {
     pairs: code_brackets!(),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: None,
 };
 static C_LIKE: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
 };
 static HTML: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false), p('<', '>', true, true, true)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: Some(&BLOCK_XML),
 };
 static CSS: LangAssist = LangAssist {
     pairs: code_brackets!(),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: Some(&BLOCK_C),
 };
@@ -181,12 +192,14 @@ static TOML: LangAssist = LangAssist {
         p('"', '"', true, true, false),
     ],
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
 };
 static YAML: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
 };
@@ -205,6 +218,7 @@ static MARKDOWN: LangAssist = LangAssist {
         p('~', '~', false, true, false),
     ],
     lists: Some(&MD_LISTS),
+    auto_indent_on_paste: false,
     line_comments: &[],
     block_comment: Some(&BLOCK_XML),
 };
@@ -213,6 +227,7 @@ static MARKDOWN: LangAssist = LangAssist {
 static FALLBACK: LangAssist = LangAssist {
     pairs: code_brackets!(),
     lists: None,
+    auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: None,
 };
@@ -412,6 +427,102 @@ impl InputState {
         self.replace_text_in_range_silent(Some(self.range_to_utf16(&range)), "", window, cx);
         self.autoclosed_pair = None;
         true
+    }
+
+    /// 行首缩进区退格（zed editor.rs backspace tab-stop 分支）：空选区、
+    /// 光标在行首缩进内（col>0 且 ≤ 行缩进列）→ 一次退到上一制表位
+    /// （floor((col-1)/unit)*unit），而非删一个字符。
+    pub(super) fn backspace_outdent_stop(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.mode.is_code_editor() {
+            return false;
+        }
+        let cursor = self.cursor();
+        let row = self.text.offset_to_point(cursor).row;
+        let line_start = self.text.line_start_offset(row);
+        let line = self.text.slice_line(row).to_string();
+        let col = cursor - line_start;
+        if col == 0 {
+            return false;
+        }
+        let ws = line
+            .bytes()
+            .take_while(|b| *b == b' ' || *b == b'\t')
+            .count();
+        if col > ws {
+            return false;
+        }
+        let (tab_size, hard_tabs) = self
+            .mode
+            .tab_size()
+            .map(|t| (t.tab_size, t.hard_tabs))
+            .unwrap_or((2, false));
+        let unit = if hard_tabs { 1 } else { tab_size.max(1) };
+        let target = ((col - 1) / unit) * unit;
+        if target >= col {
+            return false;
+        }
+        let range = line_start + target..cursor;
+        self.replace_text_in_range_silent(Some(self.range_to_utf16(&range)), "", window, cx);
+        true
+    }
+
+    /// ts_lang 名比对（code_editor 外恒 false）。
+    pub(super) fn lang_name_is(&self, name: &str) -> bool {
+        match &self.mode {
+            InputMode::CodeEditor { language, .. } => language.as_ref() == name,
+            _ => false,
+        }
+    }
+
+    /// 多行粘贴重缩进（zed auto_indent_on_paste 的 Block 模式近似；PF 无
+    /// indent query）：以光标行缩进为锚，保持粘贴块相对缩进。行首粘贴
+    /// （光标贴/在行首缩进内且行无前文）全行跟随；行中粘贴首行原样
+    /// （粘在行尾时首行缩进本就黏在前文之后）、后续行跟随。制表缩进按
+    /// 字符计列的近似。
+    pub(super) fn reindent_for_paste(&self, new_text: &str) -> String {
+        let cursor = self.cursor();
+        let row = self.text.offset_to_point(cursor).row;
+        let line_start = self.text.line_start_offset(row);
+        let line = self.text.slice_line(row).to_string();
+        let cur_ws = line.bytes().take_while(|b| *b == b' ' || *b == b'\t').count();
+        let col = cursor - line_start;
+
+        let first_line = new_text.split('\n').next().unwrap_or("");
+        let first_ws = first_line
+            .bytes()
+            .take_while(|b| *b == b' ' || *b == b'\t')
+            .count();
+        let delta = cur_ws as isize - first_ws as isize;
+        if delta == 0 {
+            return new_text.to_string();
+        }
+
+        let at_line_head = col == 0 || (col <= cur_ws && line[col..].trim().is_empty());
+        let mut out = String::with_capacity(new_text.len() + 16);
+        for (i, part) in new_text.split('\n').enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            if i == 0 && !at_line_head {
+                out.push_str(part);
+                continue;
+            }
+            if delta > 0 {
+                for _ in 0..delta {
+                    out.push(' ');
+                }
+                out.push_str(part);
+            } else {
+                let ws = part.bytes().take_while(|b| *b == b' ' || *b == b'\t').count();
+                let remove = ((-delta) as usize).min(ws);
+                out.push_str(&part[remove..]);
+            }
+        }
+        out
     }
 
     /// 块注释续行（zed documentation_delimiter_for_newline）：光标在
@@ -798,6 +909,13 @@ fn line_comment_delimiter(
     } else {
         None
     }
+}
+
+/// 独立 URL 判定（zed is_standalone_url 的简化：zed 用 linkify，PF 无该
+/// 依赖——http/https 前缀 + 全文无空白）。
+pub(super) fn is_standalone_url(text: &str) -> bool {
+    let has_scheme = text.starts_with("https://") || text.starts_with("http://");
+    has_scheme && text.len() > 8 && !text.chars().any(|c| c.is_whitespace())
 }
 
 /// 解析有序列表标记（zed ordered_list pattern `(\d+)\. ` 的非正则版）：

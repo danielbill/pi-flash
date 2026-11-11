@@ -19,7 +19,7 @@ use sum_tree::Bias;
 use unicode_segmentation::*;
 
 use super::{
-    assist::{AutoclosedPair, ENTIRE_LINE_META},
+    assist::{is_standalone_url, AutoclosedPair, ENTIRE_LINE_META},
     blink_cursor::BlinkCursor,
     change::Change,
     decorations::{DecorationProvider, Decorations},
@@ -1352,6 +1352,11 @@ impl InputState {
                 self.pause_blink_cursor(cx);
                 return;
             }
+            // pi-flash patch（对齐 zed）：行首缩进区内退格 → 退到上一制表位
+            if self.backspace_outdent_stop(window, cx) {
+                self.pause_blink_cursor(cx);
+                return;
+            }
             self.select_to(self.previous_boundary(self.cursor()), cx)
         }
         self.replace_text_in_range(None, "", window, cx);
@@ -1933,6 +1938,30 @@ impl InputState {
             }
             if !self.mode.is_multi_line() {
                 new_text = new_text.replace('\n', "");
+            }
+
+            // pi-flash patch（对齐 zed edit_for_markdown_paste）：markdown
+            // 选区上粘贴独立 URL → [选区](url)；选区本身是 URL 或空选区
+            // 走普通路径（zed 同款）
+            if self.lang_name_is("markdown")
+                && !self.selected_range.is_empty()
+                && is_standalone_url(&new_text)
+            {
+                let old_text = self
+                    .text
+                    .slice(self.selected_range.start..self.selected_range.end)
+                    .to_string();
+                if !is_standalone_url(&old_text) {
+                    new_text = format!("[{}]({})", old_text, new_text);
+                }
+            }
+
+            // pi-flash patch（对齐 zed auto_indent_on_paste）：代码语言多行
+            // 粘贴按上下文重缩进（markdown 关——zed markdown config 同款；
+            // Block 模式近似见 assist.rs reindent_for_paste）
+            if self.lang_assist().is_some_and(|l| l.auto_indent_on_paste) && new_text.contains('\n')
+            {
+                new_text = self.reindent_for_paste(&new_text);
             }
 
             // pi-flash patch（对齐 zed）：整行复制 + 空选区 → 插到当前行上
