@@ -646,7 +646,7 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("menu.no_command_found", "未找到扩展、提示词或技能命令", "", ""),
     ("menu.no_search_result", "没有匹配的结果", "沒有符合的結果", "No matching results"),
     ("menu.no_session_found", "没有匹配的会话", "沒有符合的會話", "No matching sessions"),
-    ("menu.open_skills", "打开技能菜单", "開啟技能選單", "Open skills menu"),
+    ("menu.open_file", "打开资源管理器", "開啟資源管理器", "Open file explorer"),
     ("menu.search_placeholder", "搜索技能、命令、文件、会话…", "搜尋技能、命令、檔案、會話…", "Search skills, commands, files, sessions…"),
     ("menu.tab_command", "命令", "命令", "Commands"),
     ("menu.tab_file", "项目文件", "專案檔案", "Project files"),

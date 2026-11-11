@@ -868,7 +868,7 @@ pub(crate) fn slash_menu_view(
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .with_tip("menu.open_skills")
+                            .with_tip("menu.open_file")
                             .on_mouse_down(gpui::MouseButton::Left, {
                                 let weak = weak.clone();
                                 move |_, _, cx| {
