@@ -1,0 +1,49 @@
+name: ci
+
+# 门禁三件套 + 架构守卫「平时化」：每次 push/PR 即时结算，发版日只做确认不再发现。
+# 0.5.0 教训：无日常 CI，check_arch / pi-link / e2e 全攒在发版日跑——基线路径漂移
+# 42 文件假红、人工 worktree 对账，全是本可在拆分当场结算的债。
+# check_arch §5 里「基线对比交由 CI」一句自设立起就指向本文件（此前不存在）。
+# runner 锁 Windows：e2e.js 仅支持 win32-x64（fixture 按 win32 设计），
+# 且 gpui Windows 构建无系统依赖，与开发环境同构。
+# 首跑无缓存较慢（gpui vendored 全量编译），rust-cache 命中后增量分钟级。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # gpui + gpui-component vendored，编译重；缓存 target/ 是时长关键
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vendor/pi/package-lock.json
+
+      - name: vendor/pi 安装（内置内核，发布门禁同款前置）
+        run: cd vendor/pi && npm ci
+
+      # §1-§4 静态守卫（含 ui-raw 基线卫生：死路径当场红）+ §5 build 无新警告/test 全绿
+      - name: 架构守卫 check_arch
+        run: bash scripts/check_arch.sh
+
+      - name: pi-link 协议测试
+        run: cargo test -p pi-link
+
+      - name: npm 薄壳 e2e（28 项）
+        run: node npm/test/e2e.js

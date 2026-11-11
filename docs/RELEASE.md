@@ -142,7 +142,11 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
 
 ## 5. 发版后验收
 
-- [ ] 凭据取回链路（**仅当本版改动涉及 auth.json / pif-secret / 打包清单**）：
+> 定位：本节是**确认**不是发现——e2e 类验证的触发点在**提交日**（谁改谁当场跑，
+> 0.5.0 实录：打包清单变更的 secret-e2e 攒到发版日补跑被终止，悬了一整个发版周期）。
+
+- [ ] 凭据取回链路（**触发点=提交日**：本周期内任何动了 auth.json / pif-secret /
+      打包清单（release.sh、extensions/）的提交，其作者当场跑过并绿；发版日仅确认）：
       `cargo build --release -p app && cargo build --release -p pi-link --bin pif-secret && scripts/secret-e2e.sh`
       （模拟包内存 key → 标记指向包内 helper → 凭据库取回 → 藏起即断放回即通；
       隔离目录 + pif-ui，不碰真实 ~/.pi；带 `E2E_SECRET_KEY=<真 key>` 加验真对话，
@@ -159,7 +163,8 @@ tag 推送后 `publish-npm.yml` 自动 OIDC 发薄壳（分钟级），无需干
       → 载荷下载/校验/落位成功 → `pi-flash` 启动正常
       （**本机 github.com 不通时用镜像验**：`PI_FLASH_MIRROR=http://127.0.0.1:<port>` +
       `python -m http.server`，把 dist 产物摆成 `<base>/v<版本>/` 布局，见 docs/agents/engineering.md）
-- [ ] 真机更新链路（**仅当本版改动涉及 updater / npm 薄壳 / 载荷结构**；19 项断言）：
+- [ ] 真机更新链路（**触发点=提交日**：本周期内任何动了 updater / npm 薄壳 / 载荷结构
+      的提交，其作者当场跑过并绿；发版日仅确认；19 项断言）：
       `cargo build && scripts/upd-e2e.sh`
       （081 §7 的夹具：真 release zip + 本地假 API/镜像，隔离目录 + pif-ui 驱动，
       不碰真实安装、不改版本号；github 直连/镜像与 release 构建需有网环境另验）

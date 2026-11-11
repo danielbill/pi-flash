@@ -35,6 +35,7 @@
 - **打包现场预清理 + 体积硬守卫（0.5.0 实录）**：extensions/pf-subagents/target-check（CARGO_TARGET_DIR 检查缓存 4.3GB）随 `cp -r` 进包，90MB → 1.4GB，靠人眼在第 8 步才发现。已固化：release.sh step 0.5 预清理 `extensions/*/target-check|target`；压缩后体积守卫 >250MB 绝对上限或 > 上一版 ×1.8（gh api 取基线，离线降级）即中止。**发版看脚本输出不能只看 ✓/✗，产物体积必须过守卫，不许靠目测。**
 - **同版本残迹卡门禁（0.5.0 实录）**：release.sh step1 改版本号后中止，重跑被自家残迹卡门禁，每轮手工 `git checkout --` 三件套。已固化：门禁识别「脏文件仅限版本三件套且内容已是目标版本」自动放行。
 - **Defender 对新拷 exe 瞬时锁（0.5.0 实录）**：烟测首启 `Permission denied`，重跑即过＝瞬时失败。已固化：烟测失败歇 3s 自动重试一轮，两轮都败才中止。
+- **开发缓存落位纪律（target-check 事故根因）**：在 extensions/* 里跑 cargo 检查/构建时，`CARGO_TARGET_DIR` 指到 `tmp/<名字>-target`（仓库根 tmp/），**勿把 target-check / target 留在扩展目录里**——release.sh `cp -r` 随包盲拷，0.5.0 曾把 4.3GB 缓存打进包（90MB→1.4GB）。step 0.5 预清理 + dist 侧剥离是兜底，根因在落位。
 
 ## 发版 agent 行为守则（0.5.0 检讨固化）
 
