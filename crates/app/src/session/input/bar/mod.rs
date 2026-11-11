@@ -243,16 +243,19 @@ fn bar_left_group(
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+                        cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
                             if this.rt().read(cx).compacting {
                                 return;
                             }
-                            this.attach_images(cx);
+                            // 031-2：+ 钮 = 打开统一菜单技能页（与键入 / 同效；
+                            // 图片附件入口 = Ctrl+V 粘贴，资源管理器选择器撤）
+                            this.set_input("/".to_string(), cx);
+                            window.focus(&this.focus_handle(cx));
                         }),
                     )
                     .child(icon_hover(
                         "plus",
-                        15.,
+                        17.,
                         if locked { t.text_faint } else { t.text_muted },
                     )),
             )

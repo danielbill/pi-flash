@@ -22,41 +22,6 @@ fn attached_image_from_bytes(mime: String, bytes: Vec<u8>) -> AttachedImage {
 }
 
 impl Chat {
-    pub(crate) fn attach_images(&mut self, cx: &mut Context<Self>) {
-        // 压缩锁：压缩期间不弹文件选择器
-        if self.rt().read(cx).compacting {
-            return;
-        }
-        let opts = gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: None,
-        };
-        let rx = cx.prompt_for_paths(opts);
-        cx.spawn(async move |this, cx| {
-            let picked = rx.await.ok().and_then(|r| r.ok()).flatten();
-            let Some(paths) = picked else {
-                return;
-            };
-            let _ = this.update(cx, |chat, cx| {
-                for path in paths {
-                    let Ok(bytes) = std::fs::read(&path) else {
-                        continue;
-                    };
-                    let mime = mime_from_ext(&path);
-                    chat.composer
-                        .pending_images
-                        .push(attached_image_from_bytes(mime, bytes));
-                }
-                if !chat.composer.pending_images.is_empty() {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
     /// Ctrl+V 剪贴板图片 → 附件（pi-web handlePaste parity：剪贴板含图
     /// 即接管本次粘贴，文本不再落输入框）。返回 true 表示已消费（宿主
     /// 不再重派发组件 Paste）；false 交还原文本粘贴路径。

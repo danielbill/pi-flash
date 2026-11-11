@@ -126,21 +126,6 @@ pub fn walk_files(cwd: &Path, depth: usize, cap: usize) -> Vec<String> {
     out
 }
 
-pub fn mime_from_ext(path: &Path) -> String {
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png".to_string(),
-        Some("jpg") | Some("jpeg") => "image/jpeg".to_string(),
-        Some("gif") => "image/gif".to_string(),
-        Some("webp") => "image/webp".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
-}
-
 /// pi-web estimateTokens（CJK ≈1 token/字，其余 4 字符/token）——实现在
 /// `pi_link::estimate`（独立工具脚本 token-count 同源），这里转出口维持
 /// 既有调用面（session/mod.rs 的 glob use）。

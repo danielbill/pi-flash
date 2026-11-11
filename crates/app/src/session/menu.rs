@@ -537,7 +537,7 @@ pub(crate) fn slash_menu_view(
             .is_some_and(|tr| chat.menu_tab_available(kind, tr));
         let badge = div()
             .font_family(crate::editor::markdown::MONO_FAMILY)
-            .text_size(crate::appearance::ui_size(11.))
+            .text_size(crate::appearance::ui_size(10.))
             .text_color(rgb(if active { t.accent } else { t.text_faint }))
             .child(SharedString::from(kind.prefix().to_string()))
             .into_any_element();
@@ -557,6 +557,8 @@ pub(crate) fn slash_menu_view(
         .h(px(STRIP_H - BAND_H))
         .rounded(px(0.))
         .mb(px(0.))
+        // tab 文字 = 面板字体−1（2026-11-11 用户定稿；覆盖 tab_body 的 ui(12)）
+        .text_size(crate::appearance::ui_size(11.))
         .border_l_0()
         .border_r_0()
         .when(!enabled, |d| {
@@ -595,7 +597,7 @@ pub(crate) fn slash_menu_view(
         let dir_el = dir_el.map(|dir| {
             div()
                 .font_family(crate::editor::markdown::MONO_FAMILY)
-                .text_size(crate::appearance::ui_size(13.))
+                .text_size(crate::appearance::ui_size(11.))
                 .text_color(rgb(t.text_dim))
                 .whitespace_nowrap()
                 .child(SharedString::from(dir))
@@ -662,7 +664,7 @@ pub(crate) fn slash_menu_view(
             .child({
                 let mut name = div()
                     .font_family(crate::editor::markdown::MONO_FAMILY)
-                    .text_size(crate::appearance::ui_size(13.))
+                    .text_size(crate::appearance::ui_size(11.))
                     .text_color(rgb(t.text))
                     .whitespace_nowrap()
                     .child(SharedString::from(name_text));
@@ -676,7 +678,7 @@ pub(crate) fn slash_menu_view(
                 d.child(
                     div()
                         .font_family(crate::editor::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(13.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_dim))
                         .child(tr("session.slash_prefix")),
                 )
@@ -686,7 +688,7 @@ pub(crate) fn slash_menu_view(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(crate::appearance::ui_size(11.))
+                        .text_size(crate::appearance::ui_size(10.))
                         .text_color(rgb(t.text_dim))
                         .whitespace_nowrap()
                         .overflow_hidden()
@@ -706,7 +708,7 @@ pub(crate) fn slash_menu_view(
             let count = items.iter().filter(|i| i.kind == c.kind).count();
             children.push(
                 div()
-                    .text_size(crate::appearance::ui_size(11.))
+                    .text_size(crate::appearance::ui_size(10.))
                     .text_color(rgb(t.text_dim))
                     .child(SharedString::from(format!(
                         "{} · {count}",
@@ -834,7 +836,7 @@ pub(crate) fn slash_menu_view(
                                     let _ = weak.update(cx, |c, cx| c.menu_open_file(cx));
                                 }
                             })
-                            .child(crate::ui::icon("plus", 14., t.text_muted)),
+                            .child(crate::ui::icon("plus", 16., t.text_muted)),
                     ),
                 )
                 .child(
@@ -845,8 +847,8 @@ pub(crate) fn slash_menu_view(
                         .items_center()
                         .px(px(4.))
                         .font_family(crate::editor::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(t.text_dim))
+                        .text_size(crate::appearance::ui_size(10.))
+                        .text_color(rgb(t.text_soft))
                         .child(tr("menu.tab_insert")),
                 ),
         )
@@ -874,7 +876,7 @@ pub(crate) fn slash_menu_view(
                     if n == 0 {
                         scroll = scroll.child(
                             div()
-                                .text_size(crate::appearance::ui_size(12.))
+                                .text_size(crate::appearance::ui_size(11.))
                                 .text_color(rgb(t.text_dim))
                                 .child(empty_text),
                         );
