@@ -251,10 +251,13 @@ fn bar_left_group(
                             if this.rt().read(cx).compacting {
                                 return;
                             }
-                            // 031-2：+ 钮 = 打开统一菜单技能页（与键入 / 同效；
-                            // 图片附件入口 = Ctrl+V 粘贴，资源管理器选择器撤）
-                            this.set_input("/".to_string(), cx);
+                            // 031-2 五轮定夺：+ 钮 = 钉住统一菜单技能页
+                            //（无前缀触发，不往输入里插 `/`，草稿保留为查询
+                            // 词）；图片附件入口 = Ctrl+V 粘贴
+                            this.composer.menu_pinned = Some(crate::MenuKind::Skill);
+                            this.composer.menu_dismissed = false;
                             window.focus(&this.focus_handle(cx));
+                            cx.notify();
                         }),
                     )
                     .child(icon_hover(

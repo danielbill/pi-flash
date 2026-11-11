@@ -121,6 +121,7 @@ impl Chat {
                 menu_query: String::new(),
                 menu_search_cache: std::cell::RefCell::new(None),
                 menu_refocus: false,
+                menu_pinned: None,
                 expanded_skills: std::collections::HashSet::new(),
                 bar_hover: None,
                 queue_drag: None,

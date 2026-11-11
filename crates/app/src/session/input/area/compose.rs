@@ -334,6 +334,8 @@ pub(super) fn ensure_composer(
                         || was_bang != is_bang
                         || had_menu_chars
                         || has_menu_chars
+                        // + 钮钉住的菜单开着时无触发字符，打字也要刷过滤
+                        || chat.composer.menu_pinned.is_some()
                     {
                         cx.notify();
                     }

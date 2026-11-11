@@ -383,6 +383,10 @@ pub(crate) struct ComposerUi {
     /// 搜索栏持焦期间发生确认/tab 切换：置位让下一帧焦点仲裁放行 composer
     /// 回收（见 focus_arbitrate 白名单分支）
     pub(crate) menu_refocus: bool,
+    /// 无前缀触发的钉住子菜单（操作栏 + 钮，031-2 五轮定夺：+ 不再插
+    /// `/`）——钉住期间整段草稿即查询词；显式前缀（/ $ @ &）出现即被压
+    /// 过，Esc/点外收起时清零
+    pub(crate) menu_pinned: Option<MenuKind>,
     /// 技能展开消息的展开态（key = entry_id 或序号键）
     pub(crate) expanded_skills: std::collections::HashSet<String>,
     /// 操作栏悬停态（pi-web onMouseEnter/Leave parity，状态驱动而非

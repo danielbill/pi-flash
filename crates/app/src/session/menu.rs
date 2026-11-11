@@ -34,12 +34,14 @@ const BAND_H: f32 = 5.;
 const SKILL_PREFIX: &str = "skill:";
 
 /// 当前触发 token：类目 + 输入里的字节区间 `[start, end)` + 查询词。
-/// `start == 0 && end == input.len()` = 整段输入型触发（`/` `$`）。
+/// `start == 0 && end == input.len()` = 整段输入型触发（`/` `$`）；
+/// `pinned` = 无前缀触发（操作栏 + 钮钉住的子菜单，草稿即查询词）。
 pub(crate) struct MenuTrigger {
     pub(crate) kind: MenuKind,
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) query: String,
+    pub(crate) pinned: bool,
 }
 
 impl Chat {
@@ -63,11 +65,12 @@ impl Chat {
                     start: 0,
                     end: input.len(),
                     query: input[1..].to_string(),
+                    pinned: false,
                 });
             }
         }
         if !has_token {
-            return None;
+            return self.pinned_trigger(input);
         }
         let cursor = self.composer_cursor(cx);
         let before = &input[..cursor];
@@ -77,6 +80,7 @@ impl Chat {
                 start: m.start,
                 end: cursor,
                 query: m.query,
+                pinned: false,
             });
         }
         // `&` 会话 token：`!` bash 模式不触发（shell 里 `&&` 常见）；查询
@@ -93,6 +97,23 @@ impl Chat {
             start: m.start,
             end: cursor,
             query: m.query,
+            pinned: false,
+        })
+    }
+
+    /// 无前缀触发（+ 钮钉住的子菜单）：整段输入即查询词，空白意味着用户
+    /// 在写正文 → 不触发（与 `/` 后跟空白的收起语义一致）。
+    fn pinned_trigger(&self, input: &str) -> Option<MenuTrigger> {
+        let kind = self.composer.menu_pinned?;
+        if input.contains(char::is_whitespace) {
+            return None;
+        }
+        Some(MenuTrigger {
+            kind,
+            start: 0,
+            end: input.len(),
+            query: input.to_string(),
+            pinned: true,
         })
     }
 
@@ -329,6 +350,14 @@ impl Chat {
         let Some(tr) = self.menu_trigger(cx) else {
             return;
         };
+        if tr.pinned {
+            // 无前缀触发：tab 即状态，无字符可改写；查询词（整段草稿）不变
+            if tr.kind != kind {
+                self.composer.menu_pinned = Some(kind);
+                self.close_menu_common(cx);
+            }
+            return;
+        }
         if tr.kind != kind {
             if !self.menu_tab_available(kind, &tr) {
                 return;
@@ -344,7 +373,7 @@ impl Chat {
     /// tab 是否可点：`@`/`&` 恒可；`/`/`$` 需要整段输入型触发（token 在
     /// 开头且改写后无空白/引号残留——`@"..` 引号形态换前缀会破语法）。
     fn menu_tab_available(&self, kind: MenuKind, tr: &MenuTrigger) -> bool {
-        if matches!(kind, MenuKind::File | MenuKind::Session) {
+        if tr.pinned || matches!(kind, MenuKind::File | MenuKind::Session) {
             return true;
         }
         tr.start == 0 && !tr.query.contains(char::is_whitespace) && !tr.query.contains('"')
@@ -408,6 +437,7 @@ impl Chat {
     /// 还给 composer（menu_refocus 放行白名单）。
     pub(crate) fn menu_dismiss(&mut self, cx: &mut Context<Self>) {
         self.composer.menu_dismissed = true;
+        self.composer.menu_pinned = None;
         self.close_menu_common(cx);
     }
 
@@ -838,7 +868,7 @@ pub(crate) fn slash_menu_view(
                             .text_color(rgb(t.text_muted))
                             .cursor_pointer()
                             .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .with_tip("menu.open_file")
+                            .with_tip("menu.open_skills")
                             .on_mouse_down(gpui::MouseButton::Left, {
                                 let weak = weak.clone();
                                 move |_, _, cx| {
