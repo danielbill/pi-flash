@@ -64,6 +64,24 @@ impl Chat {
         cx.notify();
     }
 
+    /// 会话卡「@到会话输入框」：会话可跨项目，不能走文件 @（tree_at_insert
+    /// 按当前 cwd 剥前缀、且绑定 at 索引补全语义）；@ 前缀特指项目内短
+    /// 路径，这里插**会话文件全路径纯文本**（不带 @，/ 分隔，后续空格收
+    /// 尾）。收卡 + 内容区切回会话，让插入可见。
+    pub(crate) fn hover_card_at_insert(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.dlg.hover_card = None;
+        let full = path.to_string_lossy().replace('\\', "/");
+        let mut base = std::mem::take(&mut self.composer.input);
+        if !base.is_empty() && !base.ends_with(' ') && !base.ends_with('\n') {
+            base.push(' ');
+        }
+        base.push_str(&full);
+        let cursor = base.len() + 1;
+        base.push(' ');
+        self.set_input_with_cursor(base, cursor, cx);
+        self.set_content_view(ContentView::Chat);
+    }
+
     /// 打开项目菜单的【打开文件夹】：目录选择器 → 切换工作区。`fresh`
     /// （新会话页来源）= 选完落**全新草稿**（new_session_in，不恢复该目录
     /// 的 last_open）；psp 来源保持恢复上次会话的既定行为。

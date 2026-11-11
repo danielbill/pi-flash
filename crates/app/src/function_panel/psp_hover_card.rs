@@ -54,7 +54,7 @@ pub(crate) fn hover_card(
     // 置顶态（020 会话置顶 ②）：渲染期判定一次，pin 钮的图标文案随它翻转；
     // 点击只 toggle 不收卡——用户能直接看到置顶态变化
     let pinned = chat.session_pinned(&card.path);
-    let weak_hc_pin = cx.entity().downgrade();
+    let weak_hc = cx.entity().downgrade();
     // 统一算法四象限：左缘对齐鼠标 x、上/下方让 12px（光标不压卡，防误点）
     let dir = PopupEdges::around((card.x, card.y), vp, 0., 12.);
     let mut el = div()
@@ -152,13 +152,14 @@ pub(crate) fn hover_card(
                 .mb(px(7.)),
         )
         .child(
-            // 操作栏：pin 钮在最左（贴卡内左缘），删除/确认组仍右对齐
-            //（020 会话置顶 ②）
+            // 操作栏：pin 钮在最左（贴卡内左缘），@ 紧随其后（跨项目不能走
+            // 文件 @，直插会话全路径，见 Chat::hover_card_at_insert），删除/
+            // 确认组仍右对齐（020 会话置顶 ②）
             div()
                 .flex()
                 .items_center()
                 .child(card_icon_btn(
-                    &weak_hc_pin,
+                    &weak_hc,
                     "hc-pin",
                     // 已置顶 → pin-off（与 tooltip「取消置顶」同频翻转）
                     if pinned { "pin-off" } else { "pin" },
@@ -171,6 +172,17 @@ pub(crate) fn hover_card(
                     {
                         let path = path.clone();
                         move |c, cx| c.session_pin_toggle(path.clone(), cx)
+                    },
+                ))
+                .child(card_icon_btn(
+                    &weak_hc,
+                    "hc-at",
+                    "at-sign",
+                    tr("file_tree.insert_at_mention"),
+                    t.text,
+                    {
+                        let path = path.clone();
+                        move |c, cx| c.hover_card_at_insert(path.clone(), cx)
                     },
                 ))
                 .child(div().flex_1())
