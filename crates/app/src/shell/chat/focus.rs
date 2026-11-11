@@ -56,6 +56,26 @@ impl Chat {
         };
         ed.read(cx).search_panel_focused(window, cx)
     }
+
+    /// 文件编辑器**本体**持焦判定（不含其 Ctrl+F 搜索面板）。与
+    /// [`Self::file_editor_focus`] 的区别：那个把搜索面板一并算进（帧级
+    /// 回收白名单语义）；编辑器键位分流（body.rs 的 Tab/Ctrl+←/→）要
+    /// 区分两者——编辑器本体 = Zed 编辑语义（块缩进/词移动），搜索框
+    /// 是单行输入，走原单行语义。
+    pub(crate) fn file_editor_body_focused(&self, window: &gpui::Window, cx: &App) -> bool {
+        self.file_editor_focus(window, cx)
+            .is_some_and(|h| h.is_focused(window))
+    }
+
+    /// composer 输入框持焦判定——消息划选 Ctrl+C 分流的守卫：只有
+    /// composer 持焦才回落消息选区，其余输入框（编辑器/对话框/搜索
+    /// 面板）自身选区优先（消息选区状态可能陈旧，见 body.rs）。
+    pub(crate) fn composer_input_focused(&self, window: &gpui::Window, cx: &App) -> bool {
+        self.composer
+            .composer
+            .as_ref()
+            .is_some_and(|c| c.read(cx).focus_handle_in(cx).is_focused(window))
+    }
 }
 
 impl Focusable for Chat {

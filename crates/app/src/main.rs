@@ -296,8 +296,9 @@ fn main() {
                 // 消息划选：抢占组件 ctrl-c→input::Copy（gpui 键盘派发绑定
                 // 先于 on_key_down 监听器，纯监听器兜底够不到 Input 焦点场景；
                 // composer 空选区时组件 Copy 直接 return 不写剪贴板但吞键）。
-                // 分流在渲染根 on_action：有消息选区复制消息，否则原样转发
-                // input::Copy，输入框选区照常复制
+                // 分流在渲染根 on_action：仅 composer 持焦且仍有消息选区才
+                // 复制消息（选区状态可能陈旧）；其余输入框（编辑器/对话框）
+                // 原样转发 input::Copy，自身选区优先
                 KeyBinding::new("ctrl-c", CopyMessageSelection, Some("Input")),
                 // 023 fileView：编辑器里 Ctrl+S 保存（composer 等其他 Input
                 // 上下文内无人监听该 action，自然空转）
@@ -305,10 +306,12 @@ fn main() {
                 // 082 四期（Zed Pane 模式，替代三期无上下文版）：双绑定锚定——
                 // Some("ContentTabs") 命中内容区任意后代焦点（终端/预览/中性
                 // 锚点，同 gpui 前缀匹配 keymap/context.rs:253）；Some("Input")
-                // 同深度后注册抢组件词移动（composer/编辑器内也切，082 二期
-                // 语义）。模态是根的子、不在 content-col 子树 → 路径无该上下
-                // 文 → 模态内词移动不受影响（天然隔离，Zed RunModal 反向可
-                // 参）。终端跳词仍走 Ctrl+Shift+←/→（修饰符精确匹配不互斥）
+                // 同深度后注册抢组件词移动（composer 内也切，082 二期语义；
+                // 文件编辑器本体例外——body.rs 分流退回词移动，P0 Zed 对齐，
+                // 082 二期「编辑器内也切」对编辑器废止）。模态是根的子、不在
+                // content-col 子树 → 路径无该上下文 → 模态内词移动不受影响
+                // （天然隔离，Zed RunModal 反向可参）。终端跳词仍走
+                // Ctrl+Shift+←/→（修饰符精确匹配不互斥）
                 KeyBinding::new("ctrl-left", ViewLeft, Some("ContentTabs")),
                 KeyBinding::new("ctrl-left", ViewLeft, Some("Input")),
                 KeyBinding::new("ctrl-right", ViewRight, Some("ContentTabs")),

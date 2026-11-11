@@ -193,15 +193,22 @@ pub(super) fn root_shell(
         // 023：同款兜底 ×3——composer 绑定在 "Input" 上下文全局劫持了
         // up/down/tab（同深度后注册者优先），焦点在文件编辑器时这四个
         // 动作无人处理=按键全死；bubble 走到根=非 composer，重派发组件
-        // 原动作（composer 内层有更近 handler，不会到这里）
+        // 原动作（composer 内层有更近 handler，不会到这里）。P0 Zed 对齐：
+        // 编辑器本体持焦时 Tab = 块缩进 Indent（Zed editor::Tab 语义，
+        // 多行选区整体缩进/反缩进配 shift-tab→Outdent）；其余（composer/
+        // 搜索面板等单行/聊天输入）仍 IndentInline
         .on_action(cx.listener(|_, _: &ComposerUp, window, cx| {
             window.dispatch_action(Box::new(gpui_component::input::MoveUp), cx);
         }))
         .on_action(cx.listener(|_, _: &ComposerDown, window, cx| {
             window.dispatch_action(Box::new(gpui_component::input::MoveDown), cx);
         }))
-        .on_action(cx.listener(|_, _: &ComposerTab, window, cx| {
-            window.dispatch_action(Box::new(gpui_component::input::IndentInline), cx);
+        .on_action(cx.listener(|this, _: &ComposerTab, window, cx| {
+            if this.file_editor_body_focused(window, cx) {
+                window.dispatch_action(Box::new(gpui_component::input::Indent), cx);
+            } else {
+                window.dispatch_action(Box::new(gpui_component::input::IndentInline), cx);
+            }
         }))
         // psp 全局三动作（Ctrl+P / Ctrl+N / Ctrl+K，绑定见 main.rs bind_keys）：
         // 直开项目/新建会话/搜索会话，与 psp 头部三钮同一方法
@@ -236,19 +243,26 @@ pub(super) fn root_shell(
         }))
         // 082 四期视图切换 Ctrl+←/→ 分流（绑定见 main.rs：锚定
         // "ContentTabs" 上下文 + Input 同深度后注册双绑定，内容区任意
-        // 焦点命中、终端/输入框原键位一律截断）：仅模态/弹层与编辑器
-        // 搜索面板两处退回组件词移动（模态不在 content-col 子树，绑定
-        // 本就不命中，guard 防未来结构变化），其余切 tab；边界 = no-op
-        // 死键（不再退回词移动）
+        // 焦点命中、终端/输入框原键位一律截断）：模态/弹层、编辑器搜索
+        // 面板与编辑器本体三处退回组件词移动（模态不在 content-col 子树，
+        // 绑定本就不命中，guard 防未来结构变化）。P0 Zed 对齐：编辑器
+        // 本体 Ctrl+←/→ = 词移动（082 二期「编辑器内也切 tab」废止），
+        // 其余（composer/终端/预览/中性锚点）仍切 tab；边界 = no-op 死键
         .on_action(cx.listener(|this, _: &ViewLeft, window, cx| {
-            if this.modal_layer_open() || this.editor_search_panel_focused(window, cx) {
+            if this.modal_layer_open()
+                || this.editor_search_panel_focused(window, cx)
+                || this.file_editor_body_focused(window, cx)
+            {
                 window.dispatch_action(Box::new(gpui_component::input::MoveToPreviousWord), cx);
             } else {
                 this.cycle_content_tab(-1, window, cx);
             }
         }))
         .on_action(cx.listener(|this, _: &ViewRight, window, cx| {
-            if this.modal_layer_open() || this.editor_search_panel_focused(window, cx) {
+            if this.modal_layer_open()
+                || this.editor_search_panel_focused(window, cx)
+                || this.file_editor_body_focused(window, cx)
+            {
                 window.dispatch_action(Box::new(gpui_component::input::MoveToNextWord), cx);
             } else {
                 this.cycle_content_tab(1, window, cx);
@@ -256,11 +270,16 @@ pub(super) fn root_shell(
         }))
         // 消息划选 Ctrl+C 分流（绑定在 main.rs："Input" 深度后注册抢占
         // 组件 ctrl-c→input::Copy——gpui 键盘派发绑定先于 on_key_down
-        // 监听器，纯监听器够不到 composer 焦点场景）：有消息选区复制
-        // 消息；否则原样转发组件 Copy，输入框选区照常复制
-        //（ComposerPaste 兜底同款模式）
-        .on_action(cx.listener(|_, _: &CopyMessageSelection, window, cx| {
-            if let Some(text) = gpui_component::text::take_last_selected_text(cx) {
+        // 监听器，纯监听器够不到 composer 焦点场景）。P0 修复：消息选区
+        // 可能陈旧——TextView 的 outside-down 清除监听只在该消息仍渲染
+        // 的帧注册，划选的消息滚出视口后选区残留，此前会把编辑器/对话
+        // 框里的 Ctrl+C 劫去复制陈旧消息文本。新规则：仅 composer 持焦
+        // （空选区吞键场景）才回落消息选区；其余输入框直接转发组件
+        // Copy，自身选区优先（ComposerPaste 兜底同款模式）
+        .on_action(cx.listener(|this, _: &CopyMessageSelection, window, cx| {
+            if this.composer_input_focused(window, cx)
+                && let Some(text) = gpui_component::text::take_last_selected_text(cx)
+            {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
             } else {
                 window.dispatch_action(Box::new(gpui_component::input::Copy), cx);
