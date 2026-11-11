@@ -111,6 +111,20 @@
 修复后同一探针 `attached=false`、进程树只剩 `node.exe`（pi 侧车）与 `git.exe`
 （都 CREATE_NO_WINDOW），无 conhost、无 WT 新进程。
 
+## pif-ui 台架残留实例：先杀净再跑（2026-11-11 实锤）
+
+pif-ui 按 `PI_FLASH_DIR/automation/<pid>.json` 发现实例；调试期手动起的
+app 忘了 quit，残留 automation 登记会让后续台架 `pif-ui` 报「没有找到自动化
+实例」或连到死实例（C2 曾因此假 FAIL，单跑复现即 PASS）。pi 侧车（node/pi）
+退出 app 后仍可能握着 cwd 目录锁，`rm -rf` 报 Device or resource busy。
+跑台架前先按可执行路径杀净：
+
+```bash
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { `$_.ExecutablePath -like '*pi-flash\target*' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force }"
+```
+
+（按路径过滤，勿按进程名——会误杀本机安装版。）
+
 ## git 子进程语义三坑：pathspec / porcelain 路径基准 / -z rename（2026-10-19 实锤）
 
 外部用户实测报告（`docs/pi-flash-file-tree-freeze-20261019/`，含复现脚本与

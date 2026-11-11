@@ -102,14 +102,17 @@ pub(super) fn term_surface(chat: &Chat, window: &gpui::Window, _cx: &Context<Cha
 }
 
 pub(super) fn app_surface(chat: &Chat, window: &gpui::Window, cx: &Context<Chat>) -> Value {
-    // 斜杠/@ 补全菜单（031）：形态 + 候选（insert 值，断言模糊命中/触发条件）
+    // 统一输入菜单（031-2）：形态 + 候选（insert 值，断言模糊命中/触发条件）
     let menu_kind = chat.active_menu(cx);
     let composer_menu = json!({
         "kind": match menu_kind {
-            Some(crate::MenuKind::Slash) => "slash",
-            Some(crate::MenuKind::At) => "at",
+            Some(crate::MenuKind::Skill) => "skill",
+            Some(crate::MenuKind::Command) => "command",
+            Some(crate::MenuKind::File) => "file",
+            Some(crate::MenuKind::Session) => "session",
             None => "none",
         },
+        "search": chat.composer.menu_query,
         "items": if menu_kind.is_some() {
             chat.menu_items(cx)
                 .iter()

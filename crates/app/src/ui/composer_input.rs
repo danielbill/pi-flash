@@ -44,13 +44,6 @@ impl Token {
             Self::Session { path, .. } => format!("{} ", path),
         }
     }
-
-    /// Enter 直发裁决：只有命令 chip 与「/菜单过滤态」同形（裸 "/名字"
-    /// 与过滤中的输入无法区分），必须以 chip 态裁决直发；会话 chip 不与
-    /// 菜单态冲突——正文里 @ 文件时 Enter 仍应先接受补全再发送。
-    fn sends_on_enter(&self) -> bool {
-        matches!(self, Self::Command { .. })
-    }
 }
 
 /// 从完整输入中拆出命令/技能 chip：`/名字 ` 或 `/名字 参数...`（命令词
@@ -255,12 +248,6 @@ impl ComposerInput {
         }
         self.commands = names;
         cx.notify();
-    }
-
-    /// Enter 直发裁决（compose on_submit 门）：命令 chip 与「/过滤态」同形
-    /// 才需要直发；会话 chip 走常规菜单流（@ 补全优先于发送）。
-    pub fn chip_sends_on_enter(&self) -> bool {
-        self.token.as_ref().is_some_and(Token::sends_on_enter)
     }
 
     /// 注册会话引用 token（Chat 每帧派生下发；同值跳过不 notify，否则

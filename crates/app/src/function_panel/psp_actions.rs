@@ -83,17 +83,7 @@ impl Chat {
                     && input.starts_with(&p)
                     && (input.len() == p.len() || input.as_bytes()[p.len()] == b' ');
                 if hit {
-                    let title = s
-                        .name
-                        .clone()
-                        .filter(|n| !n.trim().is_empty())
-                        .unwrap_or_else(|| {
-                            if s.preview.is_empty() {
-                                "(empty)".to_string()
-                            } else {
-                                s.preview.clone()
-                            }
-                        });
+                    let title = crate::session::menu::session_title(s).to_string();
                     return Some((p, title));
                 }
             }

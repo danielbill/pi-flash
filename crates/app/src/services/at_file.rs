@@ -17,7 +17,10 @@ pub struct AtQueryMatch {
 /// @ 必须在文本开头或前面是空白字符（`foo@bar` 不触发），@ 到末尾之间无
 /// 空白；引号形态 `@"查询` 允许查询词含空格，但内部出现 `"` 或换行即失
 /// 效（闭合引号 = 菜单收起）。返回 None = 无激活 token。
-pub fn extract_at_query(before_cursor: &str) -> Option<AtQueryMatch> {
+/// [`extract_at_query`] 的触发符参数化版（031-2 统一输入菜单）：`&` 会话
+/// token 与 `@` 同构（同一套行首/空白边界与引号语法），`trigger` 传对应
+/// ASCII 字节即可。
+pub fn extract_trigger_query(before_cursor: &str, trigger: u8) -> Option<AtQueryMatch> {
     let bytes = before_cursor.as_bytes();
     // 正则按左最匹配：同形 token 多个候选时取最左。引号形态整体优先于
     // 普通形态（pi-web 先试 quoted 正则）。
@@ -29,7 +32,7 @@ pub fn extract_at_query(before_cursor: &str) -> Option<AtQueryMatch> {
                 .is_some_and(|c| c.is_whitespace())
     };
     for i in 0..bytes.len() {
-        if bytes[i] != b'@' || !boundary(i) || bytes.get(i + 1) != Some(&b'"') {
+        if bytes[i] != trigger || !boundary(i) || bytes.get(i + 1) != Some(&b'"') {
             continue;
         }
         if bytes[i + 2..].iter().all(|b| *b != b'"' && *b != b'\n') {
@@ -41,7 +44,7 @@ pub fn extract_at_query(before_cursor: &str) -> Option<AtQueryMatch> {
         }
     }
     for i in 0..bytes.len() {
-        if bytes[i] != b'@' || !boundary(i) {
+        if bytes[i] != trigger || !boundary(i) {
             continue;
         }
         if bytes[i + 1..]
@@ -188,6 +191,28 @@ pub fn filter_file_entries_limit(
     scored.into_iter().map(|(_, e)| e.clone()).collect()
 }
 
+/// 万能搜索的文件名过滤（031-2）：仅 basename 子串命中（`query` 须已
+/// 小写），顺序沿用构建序（浅层优先 → 字母序），截前 limit 条。
+/// 全量扫描有 `menu_search_cache` 记忆化兜底（menu.rs），热路径只在
+/// 输入变化时发生。
+pub fn filter_file_names(entries: &[FileEntry], lower_query: &str, limit: usize) -> Vec<FileEntry> {
+    if lower_query.is_empty() {
+        return entries.iter().take(limit).cloned().collect();
+    }
+    entries
+        .iter()
+        .filter(|e| {
+            let n = match e.lower_path.rfind('/') {
+                Some(ix) => &e.lower_path[ix + 1..],
+                None => e.lower_path.as_str(),
+            };
+            n.contains(lower_query)
+        })
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
 /// 候选确认后的替换文本（pi-web buildAtInsertText）：
 /// - 文件闭合 token：`@path `（路径含空格加引号 `@"path" `），光标在末尾；
 /// - 目录不闭合：`@dir/`，菜单保持打开供钻取；引号目录插成闭合的
@@ -221,34 +246,73 @@ mod tests {
     #[test]
     fn at_requires_line_start_or_whitespace() {
         // 行首 / 空白后触发
-        assert_eq!(extract_at_query("@").unwrap().query, "");
-        assert_eq!(extract_at_query("看 @src").unwrap().query, "src");
-        assert_eq!(extract_at_query("a\n@read").unwrap().query, "read");
+        assert_eq!(extract_trigger_query("@", b'@').unwrap().query, "");
+        assert_eq!(extract_trigger_query("看 @src", b'@').unwrap().query, "src");
+        assert_eq!(
+            extract_trigger_query("a\n@read", b'@').unwrap().query,
+            "read"
+        );
         // 邮箱不触发
-        assert_eq!(extract_at_query("foo@bar"), None);
+        assert_eq!(extract_trigger_query("foo@bar", b'@'), None);
         // 查询中断（空白）不触发
-        assert_eq!(extract_at_query("@src main"), None);
+        assert_eq!(extract_trigger_query("@src main", b'@'), None);
     }
 
     #[test]
     fn quoted_form_and_closed_quote() {
-        let m = extract_at_query("@\"my dir/fi").unwrap();
+        let m = extract_trigger_query("@\"my dir/fi", b'@').unwrap();
         assert!(m.quoted);
         assert_eq!(m.query, "my dir/fi");
         // 闭合引号 = token 失效
-        assert_eq!(extract_at_query("@\"my dir\""), None);
+        assert_eq!(extract_trigger_query("@\"my dir\"", b'@'), None);
         // 无空白前的 @" 不触发
-        assert_eq!(extract_at_query("x@\"y"), None);
+        assert_eq!(extract_trigger_query("x@\"y", b'@'), None);
         // 左最匹配：@b@c 的查询是 "b@c"（pi-web 正则语义）
-        let m = extract_at_query("a @b@c").unwrap();
+        let m = extract_trigger_query("a @b@c", b'@').unwrap();
         assert_eq!((m.start, m.query.as_str()), (2, "b@c"));
     }
 
     #[test]
     fn extract_reports_byte_start() {
-        let m = extract_at_query("看看 @crates").unwrap();
+        let m = extract_trigger_query("看看 @crates", b'@').unwrap();
         assert_eq!(m.start, "看看 ".len());
         assert_eq!(&"看看 @crates"[m.start..], "@crates");
+    }
+
+    #[test]
+    fn amp_trigger_is_isomorphic_to_at() {
+        // 031-2 统一菜单：`&` 会话 token 与 `@` 同一语法
+        let m = extract_trigger_query("看 &会话名", b'&').unwrap();
+        assert_eq!((m.start, m.query.as_str()), ("看 ".len(), "会话名"));
+        assert_eq!(extract_trigger_query("a&&b", b'&'), None);
+        // 边界同规：`foo&bar` 不触发（非行首/空白后）
+        assert_eq!(extract_trigger_query("foo&bar", b'&'), None);
+        // `@` 语义不受参数化影响（回归）
+        assert_eq!(extract_trigger_query("foo@bar", b'@'), None);
+    }
+
+    #[test]
+    fn name_filter_matches_basename_only() {
+        let es = build_entries_from_files(&files());
+        // 仅 basename 子串命中：派生目录 src/app 按名入选；src/lib/util.ts
+        // 不因全路径含 "app" 入选
+        let hits = filter_file_names(&es, "app", 20);
+        assert_eq!(
+            hits.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["src/app"]
+        );
+        // 文件按 basename 命中（basename "page.tsx" 含 "page"）
+        let hits = filter_file_names(&es, "page", 20);
+        assert_eq!(
+            hits.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["src/app/page.tsx"]
+        );
+        // 空查询 = 构建序截断
+        let hits = filter_file_names(&es, "", 2);
+        assert_eq!(hits.len(), 2);
+        // 大小写不敏感（query 已小写，条目侧预计算）
+        let hits = filter_file_names(&es, "readme", 20);
+        assert_eq!(hits[0].path, "README.md");
     }
 
     fn files() -> Vec<String> {

@@ -151,7 +151,7 @@ pub(super) fn content_tab(
 /// tab 外观本体（zed `Tab` 的 render）：前置 icon + 标题 + 行尾标记/钮。
 /// 交互（激活/拖拽/右键）由调用点挂：真实 tab 走 `tab_shell`，拖拽幽灵
 /// 复用同一份外观（zed `DraggedTab::render` 就是重渲染那个 Tab）。
-pub(super) fn tab_body(
+pub(crate) fn tab_body(
     icon: Option<gpui::AnyElement>,
     label: SharedString,
     active: bool,

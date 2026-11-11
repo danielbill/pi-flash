@@ -129,16 +129,15 @@ pub(super) fn wire_composer_keys(
                 // 走到这说明组件的 escape 已处理（解除 IME 标记且未清
                 // 草稿）并传播；这里做 app 层语义：菜单取消 / 中止
                 let menu = this.active_menu(cx);
-                if let Some(kind) = menu {
-                    if kind == MenuKind::Slash && !this.composer.input.is_empty() {
+                if menu.is_some() {
+                    // 技能前缀 Esc = 尾追空格成 chip 形态（pi-web parity）；
+                    // 其余类目 Esc = 只收起（token 原样保留，下一次输入
+                    // 变化重新打开）
+                    if menu == Some(MenuKind::Skill) && !this.composer.input.is_empty() {
                         let v = format!("{} ", this.composer.input);
                         this.set_input(v, cx);
                     }
-                    // @ 菜单 Esc = 只收起（pi-web parity：token 原样保留，
-                    // 下一次输入变化重新打开）
-                    this.composer.menu_dismissed = true;
-                    this.composer.menu_ix = 0;
-                    cx.notify();
+                    this.menu_dismiss(cx);
                 } else {
                     // `!` 执行中优先中止 bash（rpc abort_bash），其次模型流
                     let bash_running = this.rt().read(cx).bash_running;
@@ -153,14 +152,10 @@ pub(super) fn wire_composer_keys(
             }
         }))
         .on_action(cx.listener(|this, _: &ComposerUp, window, cx| {
-            let items = this.menu_items(cx);
-            if this.active_menu(cx).is_some() && !items.is_empty() {
-                this.composer.menu_ix = this.composer.menu_ix.saturating_sub(1);
-                this.composer
-                    .menu_scroll
-                    .scroll_to_item(this.composer.menu_ix);
-                cx.notify();
-            } else if this.composer.input.is_empty() && !this.composer.history.is_empty() {
+            if this.menu_move(-1, cx) {
+                return;
+            }
+            if this.composer.input.is_empty() && !this.composer.history.is_empty() {
                 let ix = match this.composer.history_ix {
                     None => this.composer.history.len() - 1,
                     Some(i) => i.saturating_sub(1),
@@ -174,14 +169,10 @@ pub(super) fn wire_composer_keys(
             }
         }))
         .on_action(cx.listener(|this, _: &ComposerDown, window, cx| {
-            let items = this.menu_items(cx);
-            if this.active_menu(cx).is_some() && !items.is_empty() {
-                this.composer.menu_ix = (this.composer.menu_ix + 1).min(items.len() - 1);
-                this.composer
-                    .menu_scroll
-                    .scroll_to_item(this.composer.menu_ix);
-                cx.notify();
-            } else if this.composer.input.is_empty() {
+            if this.menu_move(1, cx) {
+                return;
+            }
+            if this.composer.input.is_empty() {
                 if let Some(i) = this.composer.history_ix {
                     if i + 1 < this.composer.history.len() {
                         this.composer.history_ix = Some(i + 1);
@@ -197,12 +188,7 @@ pub(super) fn wire_composer_keys(
             }
         }))
         .on_action(cx.listener(|this, _: &ComposerTab, _window, cx| {
-            let items = this.menu_items(cx);
-            if this.active_menu(cx).is_some() && !items.is_empty() {
-                let ix = this.composer.menu_ix.min(items.len() - 1);
-                let insert = items[ix].insert.clone();
-                this.accept_menu(insert, cx);
-            }
+            this.menu_accept_current(cx);
         }))
         // Ctrl+V 截获（bind_keys 覆盖组件粘贴绑定）：剪贴板含图 → 附件化；
         // 否则重派发组件 Paste 走原文本粘贴
@@ -324,6 +310,9 @@ pub(super) fn ensure_composer(
                         chat.composer
                             .menu_scroll
                             .set_offset(gpui::point(px(0.), px(0.)));
+                        // 万能搜索词只属于菜单内搜索栏会话：composer 输入一变
+                        // 即回当前子菜单视图（同值短路，菜单关着时是空操作）
+                        chat.clear_menu_search(cx);
                     }
                     // **派生界面态不变就不 notify**：正文中间打字/删字（绝大
                     // 多数键）只改组件自己的内容，它自绘自己；此前每键一次
@@ -356,27 +345,12 @@ pub(super) fn ensure_composer(
                 if chat.rt().read(cx).compacting {
                     return;
                 }
-                // 先落到剥离换行后的 v 再判菜单：组件 enter() 会先插一个
-                // 换行并经 Change 污染 chat.composer.input（含空白使菜单判定失败，
-                // 回车被误当发送）
+                // 先落到剥离换行后的 v 再发送：组件 enter() 会先插一个换行
+                // 并经 Change 污染 chat.composer.input（含空白使菜单判定
+                // 失败）。031-2 起 Enter 不再接受补全（只认 Tab/点击）——
+                // 菜单过滤态直接回车 = 按字面发送，裸 "/命令" 命中内置表
+                // 仍走 builtin_slash_dispatch
                 chat.composer.input = v.to_string();
-                // 命令 chip 激活时 Enter=发送——裸 "/命令" 的输入形态与菜单
-                // 过滤态相同，必须以 chip 态区分，否则 Enter 会走"接受补全"
-                // 永远发不出去。会话 chip 不在此列：它与菜单态无歧义，正文
-                // 里 @ 文件时 Enter 仍应先接受补全（chip_sends_on_enter）
-                let chip = chat
-                    .composer
-                    .composer
-                    .as_ref()
-                    .map(|c| c.read(cx).chip_sends_on_enter())
-                    .unwrap_or(false);
-                let items = chat.menu_items(cx);
-                if !chip && chat.active_menu(cx).is_some() && !items.is_empty() {
-                    let ix = chat.composer.menu_ix.min(items.len() - 1);
-                    let insert = items[ix].insert.clone();
-                    chat.accept_menu(insert, cx);
-                    return;
-                }
                 let can_queue =
                     !chat.composer.input.is_empty() || !chat.composer.pending_images.is_empty();
                 // 090：发送方式收在 send_input 内部分流（queue 模式=本地队列，

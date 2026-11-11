@@ -21,10 +21,12 @@ use crate::{ComposerDown, ComposerPaste, ComposerTab, ComposerUp};
 pub(crate) mod compose;
 use compose::{composer_wrap, ensure_composer, pending_images_strip, wire_composer_keys};
 
-/// `/` `@` 是否出现在输入中（菜单/过滤相关的廉价判定）。
-/// 单次字节扫描（memchr 级），不跑两遍 `contains`。
+/// `/` `$` `@` `&` 是否出现在输入中（菜单/过滤相关的廉价判定）。
+/// 单次字节扫描（memchr 级），不跑四遍 `contains`。
 fn has_menu_trigger(s: &str) -> bool {
-    s.as_bytes().iter().any(|&b| b == b'/' || b == b'@')
+    s.as_bytes()
+        .iter()
+        .any(|&b| b == b'/' || b == b'@' || b == b'$' || b == b'&')
 }
 
 /// `hero` = 012 新会话页模式：胶囊走正常流（由新会话页内容簇摆位），
@@ -90,9 +92,18 @@ pub(crate) fn input_area(
     // 无图片附着——边框着色 + 提示行（!! = 输出仅本地）
     let bash_mode = chat.composer.pending_images.is_empty()
         && chat.composer.input.trim_start().starts_with('!');
-    // @ 菜单可能打开：预热/续期文件索引（TTL 内幂等，后台构建）
-    if chat.active_menu(cx) == Some(MenuKind::At) {
+    // @ 菜单/万能搜索可能用到文件索引：预热/续期（TTL 内幂等，后台构建）
+    let menu_open = chat.active_menu(cx).is_some();
+    if menu_open && (chat.active_menu(cx) == Some(MenuKind::File) || chat.menu_searching()) {
         chat.ensure_at_index(cx);
+    }
+    // 菜单已关但搜索词残留（点外收起路径等）：清掉，下次打开不落旧视图
+    if !menu_open && !chat.composer.menu_query.is_empty() {
+        chat.clear_menu_search(cx);
+    }
+    // 统一菜单搜索栏实体惰性创建（模型菜单过滤框同款）
+    if menu_open {
+        chat.ensure_menu_search(cx);
     }
     let ph: SharedString = if compacting {
         // 压缩期间输入锁死（下方 on_change/on_submit 丢弃变更），用

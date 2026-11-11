@@ -186,17 +186,55 @@ pub(crate) struct QueueDragState {
     pub(crate) at: std::time::Instant,
 }
 
+/// 统一输入菜单（031-2）的子菜单类目：既是 tab，也是触发前缀
+/// （`/` 技能、`$` 命令、`@` 项目文件、`&` 会话）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum MenuKind {
-    Slash,
-    At,
+    Skill,
+    Command,
+    File,
+    Session,
+}
+
+impl MenuKind {
+    pub(crate) const ALL: [MenuKind; 4] = [
+        MenuKind::Skill,
+        MenuKind::Command,
+        MenuKind::File,
+        MenuKind::Session,
+    ];
+
+    /// 触发前缀字符（tab 切换时据此改写输入里的触发符）。
+    pub(crate) fn prefix(self) -> char {
+        match self {
+            MenuKind::Skill => '/',
+            MenuKind::Command => '$',
+            MenuKind::File => '@',
+            MenuKind::Session => '&',
+        }
+    }
+
+    /// i18n 键（tab 文案）。
+    pub(crate) fn label_key(self) -> &'static str {
+        match self {
+            MenuKind::Skill => "menu.tab_skill",
+            MenuKind::Command => "menu.tab_command",
+            MenuKind::File => "menu.tab_file",
+            MenuKind::Session => "menu.tab_session",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct MenuItem {
+    pub(crate) kind: MenuKind,
+    /// 插入载荷：技能/命令 = 命令名；文件 = 相对路径；会话 = 会话文件全路径
     pub(crate) insert: String,
+    /// 显示名：技能 = 剥 `skill:` 前缀；命令 = 命令名；文件 = 相对路径
+    /// （视图拆目录前缀）；会话 = 会话标题
+    pub(crate) label: String,
     pub(crate) desc: String,
-    /// @ 菜单条目的目录形态（决定插入文本 `@dir/` 不闭合 + 图标）
+    /// 文件条目的目录形态（决定插入文本 `@dir/` 不闭合 + 图标）
     pub(crate) is_dir: bool,
 }
 

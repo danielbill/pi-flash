@@ -373,6 +373,16 @@ pub(crate) struct ComposerUi {
     /// @ 菜单过滤结果记忆化（menu_items 渲染期是 &self，走 RefCell 内部
     /// 可变性，先例 bubble_scrolls；见 AtFilterCache）
     pub(crate) at_filter_cache: std::cell::RefCell<Option<AtFilterCache>>,
+    /// 统一菜单搜索栏（031-2 万能搜索）：输入实体在菜单首帧惰性创建；
+    /// `menu_query` 是其值镜像（on_change 下发），非空 = 万能搜索结果视图
+    /// （四类仅按名称子串匹配、分组罗列）
+    pub(crate) menu_search: Option<gpui::Entity<crate::TextInput>>,
+    pub(crate) menu_query: String,
+    /// 万能搜索的文件名过滤记忆化（同 at_filter_cache，键含查询词）
+    pub(crate) menu_search_cache: std::cell::RefCell<Option<AtFilterCache>>,
+    /// 搜索栏持焦期间发生确认/tab 切换：置位让下一帧焦点仲裁放行 composer
+    /// 回收（见 focus_arbitrate 白名单分支）
+    pub(crate) menu_refocus: bool,
     /// 技能展开消息的展开态（key = entry_id 或序号键）
     pub(crate) expanded_skills: std::collections::HashSet<String>,
     /// 操作栏悬停态（pi-web onMouseEnter/Leave parity，状态驱动而非

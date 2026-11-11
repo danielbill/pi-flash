@@ -37,7 +37,6 @@ mod audit {
         "mcp.closed",
         "mcp.failed_count",
         "menu.no_command_found",
-        "menu.tab_enter_insert",
         "messages.before",
         "messages.extended_hidden",
         "messages.generating_args",

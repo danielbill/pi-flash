@@ -294,5 +294,5 @@ fn caption_button(
 mod tab_item;
 mod tabs;
 
-use self::tab_item::tab_body;
+pub(crate) use self::tab_item::tab_body;
 use self::tabs::tab_strip;

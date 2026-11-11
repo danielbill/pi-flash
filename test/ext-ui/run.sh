@@ -240,9 +240,20 @@ case_c9() { # 内置斜杠命令客户端拦截（zi2s.5）：wire 断言无 pro
   # 断言放在首次发送之后。set_text 的值含 / 时 --arg 会被吃掉，走 params-file
   MSYS2_ARG_CONV_EXCL='*' P exec session.send --arg text=x >/dev/null
   await_wire '"type":"prompt"' 8 || rc=1
+  # 031-2 统一菜单：`/`=技能、`$`=命令（内置 8 条 + 扩展 websearch）、
+  # `@`=文件、`&`=会话（四类同弹层，kind 分流）
   echo '{"text":"/"}' > "$CUR_OUT/slash.json"
   P exec composer.set_text --params-file "$CUR_OUT/slash.json" >/dev/null
-  jcheck app 'd.composer_menu.kind==="slash" && JSON.stringify(d.composer_menu.items).includes("compact") && JSON.stringify(d.composer_menu.items).includes("websearch")' || rc=1
+  jcheck app 'd.composer_menu.kind==="skill"' || rc=1
+  echo '{"text":"$"}' > "$CUR_OUT/cmd.json"
+  P exec composer.set_text --params-file "$CUR_OUT/cmd.json" >/dev/null
+  jcheck app 'd.composer_menu.kind==="command" && JSON.stringify(d.composer_menu.items).includes("compact") && JSON.stringify(d.composer_menu.items).includes("websearch")' || rc=1
+  echo '{"text":"@"}' > "$CUR_OUT/at.json"
+  P exec composer.set_text --params-file "$CUR_OUT/at.json" >/dev/null
+  jcheck app 'd.composer_menu.kind==="file"' || rc=1
+  echo '{"text":"&"}' > "$CUR_OUT/amp.json"
+  P exec composer.set_text --params-file "$CUR_OUT/amp.json" >/dev/null
+  jcheck app 'd.composer_menu.kind==="session"' || rc=1
   echo '{"text":""}' > "$CUR_OUT/empty.json"
   P exec composer.set_text --params-file "$CUR_OUT/empty.json" >/dev/null
   # /name <name> → set_session_name 命令 + 输入清空 + 不发 prompt（menu 断言

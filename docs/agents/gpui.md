@@ -200,6 +200,17 @@
 - 焦点分两层：`window.focus(&h)` 直接写 `Window.focus`（`is_focused()` 读的就是它，`focus()` 同值提前 return），而**帧焦点路径**（`rendered_frame.focus`）只由这一帧 prepaint 过的 `set_focus_handle` 写出。给一个这一帧**不在元素树里**的句柄聚焦（组件的 fallback 句柄、滚出视口的虚拟列表行里的输入框）= 路径为空：旧持有者收 blur、新持有者收不到 focus，键事件按 root 兜底，而 `Window.focus` 还留着那个悬空 id（下次渲染又「复活」）。改焦点一律先问「这个元素这帧渲染了吗」。
 - `Chat::render` 的焦点级联每帧仲裁「谁持焦」（优先级：对话框/弹层 > 设置 > 文件编辑器 > 终端 > 行内编辑 > composer）。要在**存续期**持焦的行内输入框必须进这条级联；只挂一次性聚焦、靠 blur 收场的写法会被级联末级的 composer 回收逐帧打掉（文件树行内改名「焦点捕捉不到」的根因）。真夺焦（对话框/终端/编辑器/设置）走级联靠前分支，blur 收场照常。
 - gpui-component `InputState` 内件首帧才建（`TextInput::ensure_state`）→ 首发聚焦走 `TextInput::focus_soon`（want_focus 在输入框自己的 render 里兑现，内件建好即同帧生效，Zed `focus_filename_editor` 请求同位）；此后兜底用 `has_inner()` + `focus_handle_in()`（内件未建时不要碰 fallback 句柄）。
+- **弹层内嵌 TextInput 的持焦白名单（031-2 统一菜单搜索栏，2026-11-11）**：
+  composer 弹层（挂在 input_area 的 absolute 槽）里放 `TextInput`（模型菜单
+  过滤框 / 菜单搜索栏），焦点会话被逐帧仲裁收口——用户点进输入框后必须进
+  `focus_arbitrate` 白名单（判据 = `is_focused(window)`，命中即本帧不抢），
+  否则下一帧被 composer 回收、打字进不去。确认/切 tab/收起要回 composer
+  焦点时置一次性 flag（`menu_refocus`，`std::mem::take` 消费）放行白名单，
+  末级回家分支接管。↑/↓/Tab 绑定在 "Input" 上下文，弹层根挂同名
+  `on_action` 即可接管来自内嵌输入框的派发（composer 焦点时由胶囊侧
+  handler 接管，两处共用同一批 Chat 方法）。搜索词是输入实体的镜像值
+  （on_change 下发），Esc 回调发生在 TextInput 自身 update 内——收起动作
+  必须 `cx.defer`，同步摸实体会撞双租约（model_picker 同款）。
 - **切 tab ≠ 聚焦内容区（082 四期 Zed Pane 模式）**：tab 切换是导航不是输入——`activate_content_tab`（editor/tabs.rs）只改状态，视图真变化即把焦点收回 content-main 可聚焦锚点（`layout.focus`，track_focus 永在树上；blur() 方案验收已证伪：空焦点派发路径只剩 node0，根上 on_action 够不着，连续切换卡死）。锚点宿主 = `content.rs content_main`，**勿上移 content-col**（见下行 NC 陷阱）。焦点归属由逐帧仲裁收口：Chat→composer、File+md 预览→预览容器（被动只读，`MdPreview` 上下文方向键滚动）、Term/File 源码→中性锚点（点击内容区才接管键盘）；显式打开手势（树点开/eye 切源码/md 链接）才置 `pending_focus_file`，且仅源码态消费（预览态树里无编辑器元素，聚焦实体句柄必悬空——即上行陷阱）。反例教训：给未渲染元素 `window.focus`（082 二期 cycle/切标签路径）+ 逐帧仲裁终端兑底分支 = 终端「永远持焦」假象，切进终端后所有键入 PTY、Ctrl+←/→ 也被 `terminal_key` 截走，键盘无逃生口。
 - **track_focus 的 div 会吞 Windows 非客户区点击（窗口钮/拖拽杀手）**：`Interactivity::paint` 给每个 track_focus 元素注册全局 MouseDown 监听（div.rs：命中盒 hovered → `window.focus` + **`window.prevent_default()`**；内层先跑并 prevent，外层跳过——「最内层 track_focus 赢」）。Windows 平台把 NC 按下（WM_NCLBUTTONDOWN，点自绘窗口钮/拖拽区）伪装成普通 MouseDown 派进 app（events.rs `handle_nc_mouse_down_msg`）：**只要有人 prevent_default 就算 handled，平台不再记录 `nc_button_pressed`** → NC up 查无记录，最小化/最大化/关闭/HTCAPTION 拖拽/双击最大化全喳（16fdfba 实证：锚点挂 content-col，而 topbar_r 是其子树）。铁律：**track_focus 容器不得包住 `WindowControlArea` 区域**；锚点挂在纯视图宿主上（zed 不踩坑是因为其 titlebar 不在 pane 子树内）。
 

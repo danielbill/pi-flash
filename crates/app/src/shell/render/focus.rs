@@ -123,6 +123,13 @@ impl Chat {
                 .is_some_and(|i| i.read(cx).focus_handle_in(cx).is_focused(window))
         {
             // 040-2：原生市场搜索框持焦不回收
+        } else if !std::mem::take(&mut self.composer.menu_refocus)
+            && self.menu_search_focused(window, cx)
+        {
+            // 031-2：统一输入菜单搜索栏持焦不回收（同搜索条输入框白名单）
+            // ——用户点进万能搜索框后打字不能被 composer 逐帧抢回。
+            // menu_refocus = 确认/切 tab/收起刚发生：放行本分支，末级回家
+            // 分支把焦点还 composer
         } else if !(self.layout.content_view == crate::ContentView::Term
             && self
                 .shown_terminal_focus()
