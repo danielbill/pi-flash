@@ -10,8 +10,15 @@
 //!   按 Enter 清标记退出列表（zed extend_list_on_newline）
 //! - 整行复制/剪切：空选区 Ctrl+C/X 取整行（含行尾换行），剪贴板带
 //!   entire-line 标记，空选区粘贴时插到当前行上方（zed clipboard.rs）
+//! - 换行缩进语法感知（P3，zed auto_indent=SyntaxAware 的 per-language
+//!   近似）：before 触发增档 / 新行以闭合括号开头对齐开括号行 / 空白行
+//!   basis 取最近非空行 / python decrease 词组锚行对齐
+//! - 行首缩进区键入闭合括号 → 对齐开括号行缩进（P3，zed on-type
+//!   formatting 的无 LSP 近似）
 //!
-//! 性能铁律：只做 O(当前行/选区) 级逻辑，禁每键全文扫描。
+//! 性能铁律：只做 O(当前行/选区) 级逻辑，禁每键全文扫描。P3 的开括号
+//! 回扫（≤200 行）只在 Enter 对齐/行首键入闭合括号时触发，均非每键
+//! 热路径。
 
 use gpui::{ClipboardItem, Context, Window};
 
@@ -56,6 +63,14 @@ pub(super) struct ListConfig {
     pub ordered_dots: &'static [char],
 }
 
+/// 换行 outdent 词规则（zed decrease_indent_patterns 对应物）：新行首词
+/// 命中 words → 向上找首词 ∈ valid_after 且缩进更浅的锚行对齐（zed
+/// regex_outdent_map 的 valid_after suffix 近似）；找不到退一档。
+pub(super) struct OutdentRule {
+    pub words: &'static [&'static str],
+    pub valid_after: &'static [&'static str],
+}
+
 pub(super) struct LangAssist {
     pub pairs: &'static [Pair],
     pub lists: Option<&'static ListConfig>,
@@ -67,6 +82,20 @@ pub(super) struct LangAssist {
     /// 多行粘贴按上下文重缩进（zed auto_indent_on_paste；markdown 显式
     /// false——zed markdown config 同款，无 indent query 时以光标行缩进为锚）
     pub auto_indent_on_paste: bool,
+    /// 换行缩进语法感知（P3 #7，zed auto_indent=SyntaxAware 的近似）：
+    /// false 保持旧行为（复制当前行缩进截到光标列）。markdown/未知语言关。
+    pub auto_indent: bool,
+    /// 换行增档触发词尾（P3 #7）：before 剥行注释、trim_end 后以此结尾
+    /// → 新行 +1 档（zed increase_indent_pattern / indents query 近似，
+    /// 如 python `:`、rust/js `=>`）。开括号字符（pairs start≠end）恒
+    /// 触发，不在此表。
+    pub indent_after: &'static [&'static str],
+    /// 新行首词命中 → 对齐锚行/退一档（P3 #7，zed decrease_indent_patterns
+    /// 近似；python else 族、c else）
+    pub outdent_rules: &'static [OutdentRule],
+    /// 行首缩进区键入闭合括号 → 对齐开括号行缩进（P3 #6，zed on-type
+    /// formatting 的无 LSP 近似；markdown/未知语言关）
+    pub dedent_close: bool,
 }
 
 /// 块注释续行配置（zed block_comment config 对应物）。
@@ -129,12 +158,43 @@ static BLOCK_XML: BlockComment = BlockComment {
     tab_size: 1,
 };
 
+/// zed python decrease_indent_patterns（crates/grammars/src/python/
+/// config.toml:34，valid_after 锚词表同源）
+static PY_OUTDENTS: &[OutdentRule] = &[
+    OutdentRule {
+        words: &["elif"],
+        valid_after: &["if", "elif"],
+    },
+    OutdentRule {
+        words: &["else"],
+        valid_after: &["if", "elif", "for", "while", "except"],
+    },
+    OutdentRule {
+        words: &["except"],
+        valid_after: &["try", "except"],
+    },
+    OutdentRule {
+        words: &["finally"],
+        valid_after: &["try", "except", "else"],
+    },
+];
+/// zed c decrease_indent_patterns 的 `else` 规则（`^\s*else\b` valid_after
+/// if；`{` 收尾规则由闭合括号对齐覆盖）
+static C_OUTDENTS: &[OutdentRule] = &[OutdentRule {
+    words: &["else"],
+    valid_after: &["if"],
+}];
+
 static RUST: LangAssist = LangAssist {
     pairs: code_brackets!(),
     lists: None,
     auto_indent_on_paste: true,
     line_comments: &["/// ", "//! ", "// "],
     block_comment: Some(&BLOCK_C),
+    auto_indent: true,
+    indent_after: &["=>"],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static PYTHON: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
@@ -142,6 +202,10 @@ static PYTHON: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
+    auto_indent: true,
+    indent_after: &[":"],
+    outdent_rules: PY_OUTDENTS,
+    dedent_close: true,
 };
 static JS: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false), p('`', '`', true, true, false)),
@@ -149,6 +213,10 @@ static JS: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
+    auto_indent: true,
+    indent_after: &["=>"],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static GO: LangAssist = LangAssist {
     pairs: code_brackets!(p('`', '`', true, true, false)),
@@ -156,6 +224,10 @@ static GO: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
+    auto_indent: true,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static JSON: LangAssist = LangAssist {
     pairs: code_brackets!(),
@@ -163,6 +235,10 @@ static JSON: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: None,
+    auto_indent: true,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static C_LIKE: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
@@ -170,6 +246,10 @@ static C_LIKE: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["// "],
     block_comment: Some(&BLOCK_C),
+    auto_indent: true,
+    indent_after: &[],
+    outdent_rules: C_OUTDENTS,
+    dedent_close: true,
 };
 static HTML: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false), p('<', '>', true, true, true)),
@@ -177,6 +257,10 @@ static HTML: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: Some(&BLOCK_XML),
+    auto_indent: true,
+    indent_after: &[">"],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static CSS: LangAssist = LangAssist {
     pairs: code_brackets!(),
@@ -184,6 +268,10 @@ static CSS: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: Some(&BLOCK_C),
+    auto_indent: true,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static TOML: LangAssist = LangAssist {
     pairs: &[
@@ -195,6 +283,10 @@ static TOML: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
+    auto_indent: true,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 static YAML: LangAssist = LangAssist {
     pairs: code_brackets!(p('\'', '\'', true, true, false)),
@@ -202,9 +294,15 @@ static YAML: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &["# "],
     block_comment: None,
+    auto_indent: true,
+    indent_after: &[":"],
+    outdent_rules: &[],
+    dedent_close: true,
 };
 /// zed markdown：括号 close+newline；引号/反引号 close=false（只插入不补
-/// 对）；`*` `~` 仅 surround（粗体/删除线包裹）。
+/// 对）；`*` `~` 仅 surround（粗体/删除线包裹）。缩进感知/on-type 反缩进
+/// 关（列表续行由 lists 专管，zed markdown config auto_indent_using_last_
+/// non_empty_line=false 不做代码式缩进）。
 static MARKDOWN: LangAssist = LangAssist {
     pairs: &[
         p('(', ')', true, true, true),
@@ -221,6 +319,10 @@ static MARKDOWN: LangAssist = LangAssist {
     auto_indent_on_paste: false,
     line_comments: &[],
     block_comment: Some(&BLOCK_XML),
+    auto_indent: false,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: false,
 };
 /// 未知语言兜底：基础括号 + 引号（zed 无语言配置时不启用任何辅助；PF 的
 /// code_editor 只挂在已注册 kind 上，兜底仅为未知 ts_lang 留基础体验）。
@@ -230,6 +332,10 @@ static FALLBACK: LangAssist = LangAssist {
     auto_indent_on_paste: true,
     line_comments: &[],
     block_comment: None,
+    auto_indent: false,
+    indent_after: &[],
+    outdent_rules: &[],
+    dedent_close: false,
 };
 
 static TABLE: &[(&str, &LangAssist)] = &[
@@ -241,6 +347,12 @@ static TABLE: &[(&str, &LangAssist)] = &[
     ("go", &GO),
     ("json", &JSON),
     ("c", &C_LIKE),
+    // P3：C 系语言并入 C_LIKE（此前落 FALLBACK 只有基础括号对）——
+    // cpp/csharp/java/swift 均为 `//`+`/* */` 注释、同款括号集
+    ("cpp", &C_LIKE),
+    ("csharp", &C_LIKE),
+    ("java", &C_LIKE),
+    ("swift", &C_LIKE),
     ("html", &HTML),
     ("css", &CSS),
     ("toml", &TOML),
@@ -343,6 +455,12 @@ impl InputState {
                     self.move_to((cursor + typed.len_utf8()).min(self.text.len()), cx);
                     return true;
                 }
+            }
+
+            // P3 #6：行首缩进区键入闭合括号 → 对齐开括号行缩进（zed on-type
+            // formatting 的无 LSP 近似；dedent_close 门控——md/未知语言关）
+            if lang.dedent_close && self.dedent_closing_bracket(typed, lang, cursor, window, cx) {
+                return true;
             }
         }
 
@@ -468,6 +586,259 @@ impl InputState {
         let range = line_start + target..cursor;
         self.replace_text_in_range_silent(Some(self.range_to_utf16(&range)), "", window, cx);
         true
+    }
+
+    /// P3 #6：行首缩进区键入闭合括号 → 把行首空白前缀替换为匹配开括号
+    /// 所在行的缩进，再照常插入闭合符（zed on-type formatting 的无 LSP
+    /// 近似；zed 经 LSP on-type 重排整行，PF 以开括号行缩进为锚）。顶格
+    /// 且行尾（空行/光标在行尾）时补齐缩进（indent-up 向）。前缀已等于
+    /// 目标缩进则免改。两次 silent replace 同拍（history 1s group
+    /// interval）并成一步 undo。
+    pub(super) fn dedent_closing_bracket(
+        &mut self,
+        typed: char,
+        lang: &LangAssist,
+        cursor: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let row = self.text.offset_to_point(cursor).row;
+        let line_start = self.text.line_start_offset(row);
+        let line = self.text.slice_line(row).to_string();
+        let col = cursor - line_start;
+        let full_ws = line
+            .bytes()
+            .take_while(|b| *b == b' ' || *b == b'\t')
+            .count();
+        // 仅行首缩进区（光标前全为空白）触发；键入处不是行首不算
+        if col > full_ws {
+            return false;
+        }
+        let Some(open_indent) = self.find_matching_open_indent(lang, typed, cursor) else {
+            return false;
+        };
+        let prefix = &line[..col.min(line.len())];
+        let at_tail = cursor >= self.text.line_end_offset(row).min(self.text.len());
+        if prefix != open_indent && !(col > 0 || at_tail) {
+            // 顶格插在行中内容之前：不动缩进
+            return false;
+        }
+        if prefix != open_indent {
+            self.replace_text_in_range_silent(
+                Some(self.range_to_utf16(&(line_start..cursor))),
+                &open_indent,
+                window,
+                cx,
+            );
+        }
+        let at = line_start + open_indent.len();
+        self.replace_text_in_range_silent(
+            Some(self.range_to_utf16(&(at..at))),
+            &typed.to_string(),
+            window,
+            cx,
+        );
+        true
+    }
+
+    /// 向后扫描找与 close_ch 匹配的开括号所在行缩进（同对字符计数，
+    /// start≠end 的对；cap 200 行）。#6（键入的闭合符尚未入文）与 #7
+    /// 新行对齐（闭合符恰在光标处，扫描区间不含它）共用。PF 无
+    /// tree-sitter，字符串/注释内的同形字符不识别——启发式近似。
+    pub(super) fn find_matching_open_indent(
+        &self,
+        lang: &LangAssist,
+        close_ch: char,
+        scan_from: usize,
+    ) -> Option<String> {
+        let pair = lang
+            .pairs
+            .iter()
+            .copied()
+            .find(|p| p.end == close_ch && p.start != p.end)?;
+        let end = scan_from.min(self.text.len());
+        let mut depth = 0i32;
+        let mut rows = 0usize;
+        let mut open_off = None;
+        let mut off = end;
+        // 行 + 字节双预算：防超大单行（minified）文件上的长回扫
+        const MAX_SCAN_ROWS: usize = 200;
+        const MAX_SCAN_BYTES: usize = 512 * 1024;
+        for c in self.text.slice(0..end).chars().reversed() {
+            off -= c.len_utf8();
+            if end - off > MAX_SCAN_BYTES {
+                return None;
+            }
+            if c == '\n' {
+                rows += 1;
+                if rows > MAX_SCAN_ROWS {
+                    return None;
+                }
+            } else if c == pair.end {
+                depth += 1;
+            } else if c == pair.start {
+                if depth == 0 {
+                    open_off = Some(off);
+                    break;
+                }
+                depth -= 1;
+            }
+        }
+        let open_off = open_off?;
+        let row = self.text.offset_to_point(open_off).row;
+        let line = self.text.slice_line(row).to_string();
+        let ws = line
+            .bytes()
+            .take_while(|b| *b == b' ' || *b == b'\t')
+            .count();
+        Some(line[..ws].to_string())
+    }
+
+    /// P3 #7：换行缩进语法感知（zed suggested_indents 的 per-language
+    /// 近似；auto_indent 门控）。返回（新行缩进，须一并吞掉的 sel.end
+    /// 起始空白长度——闭合括号对齐/outdent 词行重排时把残行首空白归零，
+    /// zed autoindent pass 重写整行缩进的对应物）。规则未覆盖处以
+    /// base_indent（当前行缩进截到光标列，P1a 语义）兜底。
+    #[allow(clippy::too_many_arguments)]
+    fn syntax_indent_for_newline(
+        &self,
+        lang: &LangAssist,
+        line: &str,
+        row: usize,
+        col: usize,
+        full_ws: usize,
+        base_indent: &str,
+        sel_end: usize,
+        tab_size: usize,
+        hard_tabs: bool,
+    ) -> (String, usize) {
+        let unit = self
+            .mode
+            .tab_size()
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "    ".into());
+
+        // 空白行：zed auto_indent_using_last_non_empty_line——basis 向上
+        // 找最近非空行（cap 200 行），增档触发基于该行（如 `{`/`:` 结尾
+        // 的上一行）
+        if line.len() == full_ws && col <= full_ws {
+            let mut r = row;
+            let mut scanned = 0usize;
+            while r > 0 && scanned < 200 {
+                r -= 1;
+                scanned += 1;
+                let t = self.text.slice_line(r).to_string();
+                if t.trim().is_empty() {
+                    continue;
+                }
+                let ws = t.bytes().take_while(|b| *b == b' ' || *b == b'\t').count();
+                let mut indent = t[..ws].to_string();
+                if self.newline_increase_hit(lang, &t) {
+                    indent.push_str(&unit);
+                }
+                return (indent, 0);
+            }
+            return (base_indent.to_string(), 0);
+        }
+
+        let sel_end = sel_end.min(self.text.len());
+        let after_row = self.text.offset_to_point(sel_end).row;
+        let after = self
+            .text
+            .slice(sel_end..self.text.line_end_offset(after_row).min(self.text.len()))
+            .to_string();
+        let after_trim = after.trim_start();
+        let ws_run = after.len() - after_trim.len();
+
+        // 1. 新行以闭合括号开头（zed @end capture/outdent）：对齐开括号
+        //    行缩进，并吞掉残行首空白（zed 重写整行缩进）
+        if let Some(c) = after_trim.chars().next() {
+            if lang.pairs.iter().any(|p| p.end == c && p.start != p.end) {
+                if let Some(indent) = self.find_matching_open_indent(lang, c, sel_end) {
+                    return (indent, ws_run);
+                }
+                return (base_indent.to_string(), ws_run);
+            }
+        }
+
+        // 2. 新行首词命中 outdent 规则（zed decrease_indent_patterns +
+        //    valid_after 锚行）：向上找锚词行且缩进更浅者对齐；找不到退
+        //    一档
+        let first = first_word(after_trim);
+        if !first.is_empty() {
+            if let Some(rule) = lang
+                .outdent_rules
+                .iter()
+                .find(|r| r.words.contains(&first))
+            {
+                let mut r = row;
+                let mut scanned = 0usize;
+                while r > 0 && scanned < 200 {
+                    r -= 1;
+                    scanned += 1;
+                    let t = self.text.slice_line(r).to_string();
+                    if t.trim().is_empty() {
+                        continue;
+                    }
+                    let t_ws = t
+                        .bytes()
+                        .take_while(|b| *b == b' ' || *b == b'\t')
+                        .count();
+                    if t_ws >= full_ws {
+                        continue;
+                    }
+                    let anchor = first_word(strip_line_comment(lang, &t));
+                    if rule.valid_after.contains(&anchor) {
+                        return (t[..t_ws].to_string(), ws_run);
+                    }
+                }
+                return (
+                    outdent_one_stop(base_indent, tab_size, hard_tabs),
+                    ws_run,
+                );
+            }
+        }
+
+        // 3. 增档：before（剥行注释）以开括号/indent_after 词尾结尾，或
+        //    净开括号 > 0（zed increase_indent_pattern / indents range 近似）
+        let before = &line[..col.min(line.len())];
+        if self.newline_increase_hit(lang, before) {
+            return (format!("{}{}", base_indent, unit), 0);
+        }
+        (base_indent.to_string(), 0)
+    }
+
+    /// 换行增档触发：剥行注释、trim_end 后以开括号（start≠end 对）或
+    /// indent_after 词尾结尾，或净开括号 > 0。
+    fn newline_increase_hit(&self, lang: &LangAssist, text: &str) -> bool {
+        let trimmed = strip_line_comment(lang, text).trim_end();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if lang
+            .pairs
+            .iter()
+            .any(|p| p.start != p.end && trimmed.ends_with(p.start))
+        {
+            return true;
+        }
+        if lang.indent_after.iter().any(|w| trimmed.ends_with(w)) {
+            return true;
+        }
+        let mut net = 0i32;
+        for c in trimmed.chars() {
+            for p in lang.pairs.iter() {
+                if p.start == p.end {
+                    continue;
+                }
+                if c == p.start {
+                    net += 1;
+                } else if c == p.end {
+                    net -= 1;
+                }
+            }
+        }
+        net > 0
     }
 
     /// ts_lang 名比对（code_editor 外恒 false）。
@@ -642,8 +1013,9 @@ impl InputState {
 
     /// code_editor 的 Enter 换行辅助（动作版，必然处理）。优先级对齐 zed
     /// newline()（input.rs:535）：注释续行 > 块注释续行 > 列表续行 > 花括号
-    /// 对内三行结构 > 默认缩进；P1a 先落列表族与默认缩进（zed 语义：当前
-    /// 行缩进截到光标列；光标贴住缩进末尾时清掉行首残留缩进）。
+    /// 对内三行结构 > 默认缩进；P1a 落列表族与默认缩进（zed 语义：当前行
+    /// 缩进截到光标列；光标贴住缩进末尾时清掉行首残留缩进）；P3 起默认
+    /// 缩进对 auto_indent 语言走语法感知（syntax_indent_for_newline）。
     pub(super) fn enter_newline_assist(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let sel = self.selected_range;
         let cursor = sel.start;
@@ -741,16 +1113,34 @@ impl InputState {
             }
         }
 
-        // 默认：换行 + 缩进（zed：当前行缩进截到光标列）。空选区且光标贴
-        // 住缩进末尾（空行/纯缩进行）时编辑扩展到行首，清掉残留缩进空白，
-        // 避免上一行留下尾随空格（zed 同款）。
+        // 默认：换行 + 缩进（zed：当前行缩进截到光标列）。P3 起对开启
+        // auto_indent 的语言做语法感知近似（syntax_indent_for_newline）：
+        // before 触发增档 / 新行以闭合括号开头对齐开括号行 / 空白行 basis
+        // 取最近非空行 / decrease 词组锚行对齐；md/未知语言维持旧行为。
+        // 空选区且光标贴住缩进末尾（空行/纯缩进行）时编辑扩展到行首，
+        // 清掉残留缩进空白，避免上一行留下尾随空格（zed 同款）。
         let mut edit_start = sel.start;
         if sel.is_empty() && full_ws > 0 && col == full_ws {
             edit_start = line_start;
         }
-        let new_text = format!("\n{}", indent_str);
+        let (indent_new, consume) = match lang.filter(|l| l.auto_indent) {
+            Some(l) => self.syntax_indent_for_newline(
+                l,
+                &line,
+                row,
+                col,
+                full_ws,
+                &indent_str,
+                sel.end,
+                tab_size,
+                hard_tabs,
+            ),
+            None => (indent_str, 0),
+        };
+        let edit_end = sel.end + consume;
+        let new_text = format!("\n{}", indent_new);
         self.replace_text_in_range_silent(
-            Some(self.range_to_utf16(&(edit_start..sel.end))),
+            Some(self.range_to_utf16(&(edit_start..edit_end))),
             &new_text,
             window,
             cx,
@@ -878,6 +1268,28 @@ impl InputState {
 /// 整行复制的剪贴板元数据标记（gpui ClipboardString metadata 原样字符串，
 /// Windows 后端经注册格式随 OS 剪贴板往返持久）。
 pub(super) const ENTIRE_LINE_META: &str = "pf:entire-line";
+
+/// 剥行注释（增档/outdent 判定用，zed increase/decrease pattern 里
+/// `[^#]`/`[^#]+` 起始的近似）：取各标记最早出现处截断。字符串内的
+/// 标记形字符不识别——启发式近似。
+fn strip_line_comment<'a>(lang: &'a LangAssist, text: &'a str) -> &'a str {
+    let mut cut = text.len();
+    for delim in lang.line_comments {
+        if let Some(i) = text.find(delim.trim_end()) {
+            cut = cut.min(i);
+        }
+    }
+    &text[..cut]
+}
+
+/// 行首词（outdent 规则匹配用：字母/数字/下划线连续段）。
+fn first_word(text: &str) -> &str {
+    let t = text.trim_start();
+    let end = t
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(t.len());
+    &t[..end]
+}
 
 /// 行注释续行标记（zed comment_delimiter_for_newline）：光标在行注释标记
 /// 之后 → Some(标记含尾随空格)；块注释起始行不算（zed 同款排除）。
