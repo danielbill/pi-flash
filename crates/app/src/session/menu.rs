@@ -25,9 +25,10 @@ use crate::ui::WithTip;
 const TAB_LIMIT: usize = 60;
 /// 万能搜索每类上限（文件名过滤同值）
 const SEARCH_LIMIT: usize = 20;
-/// tab 条高度；菜单 tab 填满条高（无圆角，顶缘与搜索栏接洽，2026-11-11
-/// 用户定稿——topbar 的「条内 tab 高 = 条高 −4 + 上圆角」在菜单里不适用）
-const STRIP_H: f32 = 34.;
+/// tab 条高度（含条下 5px 同色 border——taffy 的 border 画在 bounds 内，
+/// 内容区 = 39 − 5 = 34，tab 填满内容区、顶缘与搜索栏接洽，2026-11-11
+/// 用户定稿；topbar 的「条内 tab 高 = 条高 −4 + 上圆角」在菜单里不适用）
+const STRIP_H: f32 = 39.;
 const SKILL_PREFIX: &str = "skill:";
 
 /// 当前触发 token：类目 + 输入里的字节区间 `[start, end)` + 查询词。
