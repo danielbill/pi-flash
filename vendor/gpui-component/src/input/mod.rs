@@ -1,3 +1,4 @@
+mod assist;
 mod blink_cursor;
 mod change;
 mod clear_button;

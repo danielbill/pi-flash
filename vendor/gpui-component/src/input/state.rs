@@ -19,6 +19,7 @@ use sum_tree::Bias;
 use unicode_segmentation::*;
 
 use super::{
+    assist::ENTIRE_LINE_META,
     blink_cursor::BlinkCursor,
     change::Change,
     decorations::{DecorationProvider, Decorations},
@@ -1325,42 +1326,6 @@ impl InputState {
     /// Get indent string of next line.
     ///
     /// To get current and next line indent, to return more depth one.
-    pub(super) fn indent_of_next_line(&mut self) -> String {
-        if self.mode.is_single_line() {
-            return "".into();
-        }
-
-        let mut current_indent = String::new();
-        let mut next_indent = String::new();
-        let current_line_start_pos = self.start_of_line();
-        let next_line_start_pos = self.end_of_line();
-        for c in self.text.slice(current_line_start_pos..).chars() {
-            if !c.is_whitespace() {
-                break;
-            }
-            if c == '\n' || c == '\r' {
-                break;
-            }
-            current_indent.push(c);
-        }
-
-        for c in self.text.slice(next_line_start_pos..).chars() {
-            if !c.is_whitespace() {
-                break;
-            }
-            if c == '\n' || c == '\r' {
-                break;
-            }
-            next_indent.push(c);
-        }
-
-        if next_indent.len() > current_indent.len() {
-            return next_indent;
-        } else {
-            return current_indent;
-        }
-    }
-
     pub(super) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         // v57: chip 模式（宿主在编辑器外渲染命令/技能原子 chip）下，编辑器
         // 文本为空时退格 = 删除整个 chip。回调 defer：动作处理期间本实体
@@ -1457,21 +1422,22 @@ impl InputState {
         self.pause_blink_cursor(cx);
     }
 
-    pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {        if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
+    pub(super) fn enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.handle_action_for_context_menu(Box::new(action.clone()), window, cx) {
             return;
         }
 
         if self.mode.is_multi_line() {
-            // Get current line indent
-            let indent = if self.mode.is_code_editor() {
-                self.indent_of_next_line()
+            // pi-flash patch（对齐 zed）：code_editor 换行走输入辅助
+            // （input/assist.rs：列表续行族——`- ` 后换行自动续、`1.` 递增、
+            // `- [ ] ` 任务续行、空列表项 Enter 退列表；默认缩进改 zed 语义：
+            // 当前行缩进截到光标列，贴缩进末尾时清残留空白）；
+            // 非 code_editor（composer 等）维持裸换行，行为不变
+            if self.mode.is_code_editor() {
+                self.enter_newline_assist(window, cx);
             } else {
-                "".to_string()
-            };
-
-            // Add newline and indent
-            let new_line_text = format!("\n{}", indent);
-            self.replace_text_in_range_silent(None, &new_line_text, window, cx);
+                self.replace_text_in_range_silent(None, "\n", window, cx);
+            }
             self.pause_blink_cursor(cx);
         } else {
             // Single line input, just emit the event (e.g.: In a modal dialog to confirm).
@@ -1887,23 +1853,45 @@ impl InputState {
     }
 
     pub(super) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() {
+            let selected_text = self.text.slice(self.selected_range).to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
             return;
         }
 
-        let selected_text = self.text.slice(self.selected_range).to_string();
-        cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
+        // pi-flash patch（对齐 zed）：code_editor 空选区 = 整行复制（含行
+        // 尾换行；剪贴板带 entire-line 标记）；composer 等输入维持吞键
+        if !self.mode.is_code_editor() {
+            return;
+        }
+        cx.write_to_clipboard(self.whole_line_clipboard_item());
     }
 
     pub(super) fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() {
+            let selected_text = self.text.slice(self.selected_range).to_string();
+            cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
+
+            self.replace_text_in_range_silent(None, "", window, cx);
             return;
         }
 
-        let selected_text = self.text.slice(self.selected_range).to_string();
-        cx.write_to_clipboard(ClipboardItem::new_string(selected_text));
-
-        self.replace_text_in_range_silent(None, "", window, cx);
+        // pi-flash patch（对齐 zed）：code_editor 空选区 = 整行剪切（整行
+        // 复制同款语义，删除当前行含行尾换行；末行删到行尾）
+        if !self.mode.is_code_editor() {
+            return;
+        }
+        let item = self.whole_line_clipboard_item();
+        let range = self.whole_line_range();
+        cx.write_to_clipboard(item);
+        if !range.is_empty() {
+            self.replace_text_in_range_silent(
+                Some(self.range_to_utf16(&(range.start..range.end))),
+                "",
+                window,
+                cx,
+            );
+        }
     }
 
     pub(super) fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -1930,6 +1918,31 @@ impl InputState {
             }
             if !self.mode.is_multi_line() {
                 new_text = new_text.replace('\n', "");
+            }
+
+            // pi-flash patch（对齐 zed）：整行复制 + 空选区 → 插到当前行上
+            // 方（zed clipboard.rs entire_line 分支），光标落回原列。外部
+            // 复制内容无标记，走普通路径不受影响
+            if self.mode.is_code_editor()
+                && self.selected_range.is_empty()
+                && !new_text.is_empty()
+                && clipboard.metadata().map(String::as_str) == Some(ENTIRE_LINE_META)
+            {
+                let cursor = self.cursor();
+                let row = self.text.offset_to_point(cursor).row;
+                let line_start = self.text.line_start_offset(row);
+                let col = cursor - line_start;
+                self.replace_text_in_range_silent(
+                    Some(self.range_to_utf16(&(line_start..line_start))),
+                    &new_text,
+                    window,
+                    cx,
+                );
+                let cur = (line_start + col).min(self.text.len());
+                self.selected_range = (cur..cur).into();
+                self.update_preferred_column();
+                cx.notify();
+                return;
             }
 
             self.replace_text_in_range_silent(None, &new_text, window, cx);
@@ -2502,6 +2515,19 @@ impl EntityInputHandler for InputState {
         if self.disabled {
             return;
         }
+
+        // pi-flash patch（对齐 zed）：纯键入路径（无显式范围、无 IME 组合
+        // 串）的单字符输入先过输入辅助（input/assist.rs：auto-surround，
+        // P1b 扩展 autoclose/overtype）；backspace/paste/indent 等动作路径
+        // 带显式范围或多字符文本，不进辅助。
+        if range_utf16.is_none()
+            && self.ime_marked_range.is_none()
+            && new_text.chars().count() == 1
+            && self.try_type_assist(new_text.chars().next().unwrap(), window, cx)
+        {
+            return;
+        }
+
         self.pause_blink_cursor(cx);
 
         let range = range_utf16
