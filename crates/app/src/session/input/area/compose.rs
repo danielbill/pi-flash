@@ -360,14 +360,15 @@ pub(super) fn ensure_composer(
                 // 换行并经 Change 污染 chat.composer.input（含空白使菜单判定失败，
                 // 回车被误当发送）
                 chat.composer.input = v.to_string();
-                // chip 激活（命令已确认成胶囊）时 Enter=发送——裸 "/命令"
-                // 的输入形态与菜单过滤态相同，必须以 chip 态区分，否则
-                // Enter 会走"接受补全"永远发不出去
+                // 命令 chip 激活时 Enter=发送——裸 "/命令" 的输入形态与菜单
+                // 过滤态相同，必须以 chip 态区分，否则 Enter 会走"接受补全"
+                // 永远发不出去。会话 chip 不在此列：它与菜单态无歧义，正文
+                // 里 @ 文件时 Enter 仍应先接受补全（chip_sends_on_enter）
                 let chip = chat
                     .composer
                     .composer
                     .as_ref()
-                    .map(|c| c.read(cx).chip_active())
+                    .map(|c| c.read(cx).chip_sends_on_enter())
                     .unwrap_or(false);
                 let items = chat.menu_items(cx);
                 if !chip && chat.active_menu(cx).is_some() && !items.is_empty() {

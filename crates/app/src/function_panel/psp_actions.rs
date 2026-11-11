@@ -64,6 +64,43 @@ impl Chat {
         cx.notify();
     }
 
+    /// 会话引用 chip token：输入以已知会话全路径（/ 归一形态）开头时返回
+    /// (path, title) 供 composer 隐藏原始路径、展示 图标+会话名（ZCode
+    /// parity）。title 口径与会话详情卡一致：会话名优先，空则预览/占位。
+    /// 前缀门控：非路径形态（盘符/UNC 开头）不扫清单——普通打字零开销。
+    pub(crate) fn session_token_for_input(&self) -> Option<(String, String)> {
+        let input = self.composer.input.as_str();
+        let b = input.as_bytes();
+        let plausible = b.len() >= 2
+            && ((b[0].is_ascii_alphanumeric() && b[1] == b':') || input.starts_with("//"));
+        if !plausible {
+            return None;
+        }
+        for g in &self.psp.projects {
+            for s in &g.sessions {
+                let p = s.path.to_string_lossy().replace('\\', "/");
+                let hit = input.len() >= p.len()
+                    && input.starts_with(&p)
+                    && (input.len() == p.len() || input.as_bytes()[p.len()] == b' ');
+                if hit {
+                    let title = s
+                        .name
+                        .clone()
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| {
+                            if s.preview.is_empty() {
+                                "(empty)".to_string()
+                            } else {
+                                s.preview.clone()
+                            }
+                        });
+                    return Some((p, title));
+                }
+            }
+        }
+        None
+    }
+
     /// 会话卡「@到会话输入框」：会话可跨项目，不能走文件 @（tree_at_insert
     /// 按当前 cwd 剥前缀、且绑定 at 索引补全语义）；@ 前缀特指项目内短
     /// 路径，这里插**会话文件全路径纯文本**（不带 @，/ 分隔，后续空格收

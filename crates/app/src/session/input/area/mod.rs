@@ -125,6 +125,10 @@ pub(crate) fn input_area(
     } else {
         None
     };
+    // 会话 chip token 同帧派生：输入以已知会话路径开头时下发 (path, title)，
+    // composer 把原始路径藏进「图标+会话名」胶囊（内部有前缀门控，普通
+    // 打字不扫清单）。update 外先算好，避与 chat 的借用嵌套（同 names）。
+    let session_token = chat.session_token_for_input();
     {
         let input = &chat.composer.input;
         composer.update(cx, |f, fcx| {
@@ -136,6 +140,7 @@ pub(crate) fn input_area(
             if let Some(names) = names {
                 f.set_command_names(names, fcx);
             }
+            f.set_session_token(session_token, fcx);
         });
     }
 

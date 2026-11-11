@@ -26,16 +26,58 @@ use gpui_component::input::{InputEvent, InputState, TextInput as GpInput};
 use crate::appearance::theme::theme as T;
 use gpui::{px, rgb};
 
+/// chip 的两种形态（由 value 前缀派生，互斥）：命令/技能 `/名字 ` 与
+/// 会话引用 `<全路径> `。编辑器只装前缀之后的参数部分，Change/Submit
+/// 再把前缀拼回去——发送出去的仍是原始文本（会话 = 全路径，模型可读；
+/// chip 只是视觉替身，ZCode parity：图标+会话名隐藏原始路径）。
+#[derive(Clone, Debug, PartialEq)]
+enum Token {
+    Command { name: String, skill: bool },
+    Session { path: String, title: String },
+}
+
+impl Token {
+    /// chip 前缀（含终止空格）——完整输入 = 前缀 + 编辑器参数部分
+    fn prefix(&self) -> String {
+        match self {
+            Self::Command { name, .. } => format!("/{} ", name),
+            Self::Session { path, .. } => format!("{} ", path),
+        }
+    }
+
+    /// Enter 直发裁决：只有命令 chip 与「/菜单过滤态」同形（裸 "/名字"
+    /// 与过滤中的输入无法区分），必须以 chip 态裁决直发；会话 chip 不与
+    /// 菜单态冲突——正文里 @ 文件时 Enter 仍应先接受补全再发送。
+    fn sends_on_enter(&self) -> bool {
+        matches!(self, Self::Command { .. })
+    }
+}
+
 /// 从完整输入中拆出命令/技能 chip：`/名字 ` 或 `/名字 参数...`（命令词
 /// 已终止——尾随空格存在才成 chip，打字途中 "/llam" 仍是普通文本走菜单）。
-/// 返回 (命令名, 是否技能)。
-fn split_token(value: &str, commands: &[String]) -> Option<(String, bool)> {
+fn split_command_token(value: &str, commands: &[String]) -> Option<Token> {
     let after = value.strip_prefix('/')?;
     let ix = after.find(' ')?;
     let word = &after[..ix];
     let name = commands.iter().find(|c| c.as_str() == word)?;
-    let skill = name.starts_with("skill:");
-    Some((name.clone(), skill))
+    Some(Token::Command {
+        skill: name.starts_with("skill:"),
+        name: name.clone(),
+    })
+}
+
+/// 会话 chip 派生：value 以注册的会话全路径开头（恰好等于，或后随空格）
+/// 即成 chip——@插入写入的就是 `path ` 形态，裸路径（用户删掉尾空格）
+/// 也认，退格可整颗删除。token 由 Chat 每帧按 psp 清单派生下发。
+fn split_session_token(value: &str, token: Option<&(String, String)>) -> Option<Token> {
+    let (path, title) = token?;
+    let hit = value.len() >= path.len()
+        && value.starts_with(path.as_str())
+        && (value.len() == path.len() || value.as_bytes()[path.len()] == b' ');
+    hit.then(|| Token::Session {
+        path: path.clone(),
+        title: title.clone(),
+    })
 }
 
 /// 向下取整到 UTF-8 字符边界（move_to 接受任意字节但语义要求边界）
@@ -86,7 +128,11 @@ pub struct ComposerInput {
     /// 命令名镜像（渲染期判断 token 态用）
     commands: Vec<String>,
     /// 当前激活的命令/技能 chip（由 value 派生；编辑器只装参数部分）
-    token: Option<(String, bool)>,
+    token: Option<Token>,
+    /// 会话引用 token（path, title）——Chat 每帧按输入前缀从 psp 清单
+    /// 派生下发（set_session_token 同值跳过）；split_session_token 拿它
+    /// 与 value 对拼决定会话 chip
+    session_token: Option<(String, String)>,
     on_chip_backspace: Option<std::rc::Rc<dyn Fn(&mut gpui::App)>>,
     on_change: Option<Changed>,
     on_submit: Option<Submitted>,
@@ -114,6 +160,7 @@ impl ComposerInput {
             value: String::new(),
             commands: Vec::new(),
             token: None,
+            session_token: None,
             on_chip_backspace: None,
             on_change: None,
             on_submit: None,
@@ -210,9 +257,20 @@ impl ComposerInput {
         cx.notify();
     }
 
-    /// 命令/技能 chip 是否激活（输入 = "/命令名" + 可选尾随空格/参数）。
-    pub fn chip_active(&self) -> bool {
-        self.token.is_some()
+    /// Enter 直发裁决（compose on_submit 门）：命令 chip 与「/过滤态」同形
+    /// 才需要直发；会话 chip 走常规菜单流（@ 补全优先于发送）。
+    pub fn chip_sends_on_enter(&self) -> bool {
+        self.token.as_ref().is_some_and(Token::sends_on_enter)
+    }
+
+    /// 注册会话引用 token（Chat 每帧派生下发；同值跳过不 notify，否则
+    /// Chat 每帧渲染连坐标脏，同 set_command_names 的节流约定）。
+    pub fn set_session_token(&mut self, token: Option<(String, String)>, cx: &mut Context<Self>) {
+        if self.session_token == token {
+            return;
+        }
+        self.session_token = token;
+        cx.notify();
     }
 
     /// 编辑器为空时退格 = 删除整个 chip（转发给宿主清空输入）。
@@ -257,7 +315,7 @@ impl ComposerInput {
                 // 首帧编辑器被置空，此处若不带前缀会把输入清成 ""）
                 let rest = entity.read(cx).value().to_string();
                 let v = match &self.token {
-                    Some((n, _)) => format!("/{} {}", n, rest),
+                    Some(tok) => format!("{}{}", tok.prefix(), rest),
                     None => rest,
                 };
                 self.value = v.clone();
@@ -279,8 +337,8 @@ impl ComposerInput {
                     }
                 };
                 let sent = match &self.token {
-                    Some((n, _)) if stripped.is_empty() => format!("/{}", n),
-                    Some((n, _)) => format!("/{} {}", n, stripped),
+                    Some(tok) if stripped.is_empty() => tok.prefix().trim_end().to_string(),
+                    Some(tok) => format!("{}{}", tok.prefix(), stripped),
                     None => stripped,
                 };
                 // 事件派发期间本实体处于租用中——回调若同步再 composer
@@ -305,8 +363,8 @@ impl ComposerInput {
                     }
                 };
                 let sent = match &self.token {
-                    Some((n, _)) if stripped.is_empty() => format!("/{}", n),
-                    Some((n, _)) => format!("/{} {}", n, stripped),
+                    Some(tok) if stripped.is_empty() => tok.prefix().trim_end().to_string(),
+                    Some(tok) => format!("{}{}", tok.prefix(), stripped),
                     None => stripped,
                 };
                 if let Some(cb) = self.on_submit_secondary.clone() {
@@ -327,12 +385,22 @@ impl Render for ComposerInput {
             self.commands = names;
         }
         let t = T();
-        // chip 派生：value = "/名字 参数..."（尾随空格已终止命令词）
-        self.token = split_token(&self.value, &self.commands);
+        // chip 派生：命令 `/名字 参数...` 优先，会话引用 `<path> 参数...`
+        // 其次（两者前缀互斥，不可能同帧双命中）
+        self.token = split_command_token(&self.value, &self.commands)
+            .or_else(|| split_session_token(&self.value, self.session_token.as_ref()));
         // 编辑器值取借用切片：每帧与 Rope 的 memcmp 零分配，只有真变了
-        // 才物化 String（长草稿下每帧一次全文拷贝就是打字延迟）
+        // 才物化 String（长草稿下每帧一次全文拷贝就是打字延迟）。
+        // 会话裸路径形态（value == path，无尾空格）编辑器为空
         let editor_value: &str = match &self.token {
-            Some((n, _)) => &self.value[1 + n.len() + 1..],
+            Some(tok) => {
+                let pfx = tok.prefix();
+                if self.value.len() >= pfx.len() {
+                    &self.value[pfx.len()..]
+                } else {
+                    ""
+                }
+            }
             None => &self.value,
         };
         // Rope 直接与 &str 比对（ropey PartialEq，零分配 memcmp）
@@ -366,9 +434,20 @@ impl Render for ComposerInput {
         let ph = self.placeholder.clone().unwrap_or_default();
         let empty = self.value.is_empty();
         let ph_lh = gpui::rems(COMPOSER_LINE_HEIGHT_REMS);
-        // token chip（ZCode 原子节点 parity）：图标+裸名胶囊，顶格插在编辑器前
-        let chip_el = self.token.as_ref().map(|(n, skill)| {
-            let bare = n.strip_prefix("skill:").unwrap_or(n);
+        // token chip（ZCode 原子节点 parity）：图标+裸名胶囊，顶格插在编辑器前。
+        // 会话引用 = message-square-text + 会话名（原始全路径隐藏，超宽省略号）
+        let chip_el = self.token.as_ref().map(|tok| {
+            let (icon_name, label): (&'static str, String) = match tok {
+                Token::Command { name, skill } => (
+                    if *skill {
+                        "wand"
+                    } else {
+                        "icon-terminal-solid"
+                    },
+                    name.strip_prefix("skill:").unwrap_or(name).to_string(),
+                ),
+                Token::Session { title, .. } => ("message-square-text", title.clone()),
+            };
             div()
                 .flex()
                 .items_center()
@@ -380,20 +459,17 @@ impl Render for ComposerInput {
                 .border_1()
                 .border_color(gpui::rgba(((t.accent as u64) << 8) as u32 | 0x4d))
                 .bg(rgb(t.bg_selected))
-                .child(crate::ui::icon(
-                    if *skill {
-                        "wand"
-                    } else {
-                        "icon-terminal-solid"
-                    },
-                    13.,
-                    t.accent,
-                ))
+                .child(crate::ui::icon(icon_name, 13., t.accent))
                 .child(
                     div()
                         .text_size(crate::appearance::ui_size(14.))
                         .text_color(rgb(t.accent))
-                        .child(SharedString::from(bare.to_string())),
+                        // 会话名可长（preview 兑底）：超宽省略号截断，不挤压编辑器
+                        .max_w(px(280.))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(SharedString::from(label)),
                 )
         });
 
