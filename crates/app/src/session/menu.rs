@@ -763,9 +763,9 @@ pub(crate) fn slash_menu_view(
         .border_color(rgb(t.border))
         .rounded(px(8.))
         .shadow_lg()
-        .max_h(px(420.))
+        .max_h(px(520.))
         .overflow_hidden()
-        // ---- 搜索栏（chrome 底，同 topbar；万能搜索入口）----
+        // ---- 搜索栏（菜单底色同体；万能搜索入口）----
         .child(
             div()
                 .flex_shrink_0()
@@ -774,7 +774,7 @@ pub(crate) fn slash_menu_view(
                 .items_center()
                 .gap(px(8.))
                 .px(px(10.))
-                .bg(rgb(t.chrome))
+                .bg(rgb(t.bg))
                 .border_b_1()
                 .border_color(gpui::rgba(crate::appearance::theme::border_alpha(t, 0x66)))
                 .child(crate::ui::icon("search", 14., t.text_faint))
@@ -796,6 +796,10 @@ pub(crate) fn slash_menu_view(
                 .items_end()
                 .px(px(8.))
                 .bg(rgb(t.chrome))
+                // 条下 4px 菜单底色带（2026-11-11 用户定稿）：激活 tab 的
+                // mb(-1) 连体缘落在这条带上，接缝不可见
+                .border_b_4()
+                .border_color(rgb(t.bg))
                 .children(MenuKind::ALL.iter().map(|k| tab(*k)))
                 .child(
                     // 浅图标钮（bar.rs eye_button 同款 24×24 r5）：系统文件

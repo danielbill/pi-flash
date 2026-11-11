@@ -251,7 +251,7 @@ fn bar_left_group(
                         }),
                     )
                     .child(icon_hover(
-                        "image",
+                        "plus",
                         15.,
                         if locked { t.text_faint } else { t.text_muted },
                     )),
