@@ -70,10 +70,12 @@ scripts/release.sh <v> tmp/release-notes-<v>.md
    **exe 烙入自检**（proof b64 前缀必须命中，未烙入 = 拒打包）
 3. 组装 `dist/pi-flash`：exe + **pif-secret.exe**（缺源即中止）+ **pi.exe**
    （全局 pi 前置 shim，缺源即中止）+ node.exe + vendor/pi **裁非宿主 esbuild** + 启动说明
-   + **随包扩展双向清点**（`SHIP_EXTS` 清单：extensions/ 下清单外目录 = 硬失败、
-   清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏 pfctx-manager / pf-svc-runtime）；
-   step 0.5 已自动预清理 extensions/*/target-check|target 开发缓存（0.5.0 曾把
-   4.3GB 缓存随包撑到 1.4GB）
+   + 随包扩展分发（清单与双向清点在 step 0.5 构建前已过）；组装完跑 **dist 总量
+   守卫**（> 500MB = 混入异物即中止，正常 ≈320MB；0.5.0 事故态 4.8GB）
+   ——step 0.5（构建前）已做：extensions/*/target-check|target 开发缓存预清理
+   （0.5.0 曾 4.3GB 随包撑到 1.4GB）+ **随包扩展双向清点**（`SHIP_EXTS` 清单：
+   extensions/ 下清单外目录 = 硬失败、清单登记但目录缺失 = 硬失败；0.5.0 曾两连漏
+   pfctx-manager / pf-svc-runtime）——失败只花 1 秒，不留到构建/压缩后才发现
 4. **GUI 烟测**：独立目录启动，**stdout/stderr 必须零输出**（`[perf]` 行 = 门控回归，
    查 `PI_FLASH_PERF`）；Defender 对新拷 exe 的瞬时锁自动歇 3s 重试一轮（0.5.0
    Permission denied 实录），两轮都败才中止；结束 taskkill

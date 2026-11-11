@@ -60,7 +60,8 @@ fi
   echo "✗ vendor/pi 未安装（cd vendor/pi && npm ci）"; exit 1;
 }
 
-# --- 0.5 打包现场预清理 ----------------------------------------------------
+# --- 0.5 打包现场预清理 + 随包扩展清点（全部前移到构建前：失败只花 1 秒，
+# --- 留在组装期/压缩期才发现 = 白跑 4 分钟构建 + 16 秒压缩）-----------------
 # 0.5.0 实录：extensions/pf-subagents/target-check（CARGO_TARGET_DIR 检查缓存，
 # 4.3GB）随 cp -r 进包，90MB → 1.4GB，靠人眼在第 8 步才发现。git 已忽略的
 # cargo 检查/构建缓存不属发版现场——仓库侧直接清，杜绝「dist 侧剥离漏网」与拷贝耗时。
@@ -68,6 +69,29 @@ for junk in extensions/*/target-check extensions/*/target; do
   [[ -d "$junk" ]] || continue
   echo "    预清理开发缓存：$junk"
   rm -rf "$junk"
+done
+
+# 045 / 001-4 / 090-6：随包扩展清单（唯一事实源）——PF 用 `-e <path>` 挂载，
+# 运行时 lazy import SDK，无需构建，放 exe 旁 extensions/，与 subagents.rs /
+# pfctx_manager.rs / service_ext.rs 的查找顺序一致。缺件 = 静默缺席：
+#   pf-subagents    缺 = 没有 agent 工具（044）
+#   pfctx-manager   缺 = 自我调试工具不注入（001，真机 2026-11-11 实锤）
+#   pf-svc-runtime  缺 = ctx.service 执行域 shim 落空、service 声明告警（090-6）
+# 新增/下线随包扩展：改此清单 + extensions/ 仓库目录 + 对应 *_rs 查找链，三者同步。
+SHIP_EXTS=(pf-subagents pfctx-manager pf-svc-runtime)
+
+# 双向清点（0.5.0 实录：pfctx-manager、pf-svc-runtime 两连漏，都是「目录在、
+# 清单没有」的静默缺席）：清单外目录硬失败 + 登记但缺失硬失败。
+if [[ -d extensions ]]; then
+  for d in extensions/*/; do
+    name=$(basename "$d")
+    [[ " ${SHIP_EXTS[*]} " == *" $name "* ]] || {
+      echo "✗ extensions/$name 不在随包清单 SHIP_EXTS：先登记发版清单并接好查找链，或移出 extensions/"; exit 1;
+    }
+  done
+fi
+for ext in "${SHIP_EXTS[@]}"; do
+  [[ -d "extensions/$ext" ]] || { echo "✗ extensions/$ext 在随包清单中但目录缺失，对应能力将静默缺席"; exit 1; }
 done
 
 echo "==> 1/8 更新版本号 -> $VERSION"
@@ -130,30 +154,10 @@ NODE_BIN=$(command -v node || true)
 cp "$NODE_BIN" dist/pi-flash/node.exe
 cp -r vendor/pi dist/pi-flash/vendor/
 
-# 045 / 001-4 / 090-6：随包扩展清单（唯一事实源）——PF 用 `-e <path>` 挂载，
-# 运行时 lazy import SDK，无需构建，放 exe 旁 extensions/，与 subagents.rs /
-# pfctx_manager.rs / service_ext.rs 的查找顺序一致。缺件 = 静默缺席：
-#   pf-subagents    缺 = 没有 agent 工具（044）
-#   pfctx-manager   缺 = 自我调试工具不注入（001，真机 2026-11-11 实锤）
-#   pf-svc-runtime  缺 = ctx.service 执行域 shim 落空、service 声明告警（090-6）
-# 新增/下线随包扩展：改此清单 + extensions/ 仓库目录 + 对应 *_rs 查找链，三者同步。
-SHIP_EXTS=(pf-subagents pfctx-manager pf-svc-runtime)
-
-# 清点①：仓内不得有清单外目录（0.5.0 实录：pfctx-manager、pf-svc-runtime 两连漏，
-# 都是「目录在、清单没有」的静默缺席——新扩展先登记清单再入库，或移出 extensions/）
-if [[ -d extensions ]]; then
-  for d in extensions/*/; do
-    name=$(basename "$d")
-    [[ " ${SHIP_EXTS[*]} " == *" $name "* ]] || {
-      echo "✗ extensions/$name 不在随包清单 SHIP_EXTS：先登记发版清单并接好查找链，或移出 extensions/"; exit 1;
-    }
-  done
-fi
-
-# 清点② + 分发：清单已登记但目录缺失同样硬失败（防清单与仓库反向漂移）
+# 045 / 001-4 / 090-6：随包扩展分发（清单事实源与双向清点在 step 0.5，构建前已过）。
+# 清点已在 step 0.5 构建前双向过掉，此处直接分发。
 mkdir -p dist/pi-flash/extensions
 for ext in "${SHIP_EXTS[@]}"; do
-  [[ -d "extensions/$ext" ]] || { echo "✗ extensions/$ext 在随包清单中但目录缺失，对应能力将静默缺席"; exit 1; }
   cp -r "extensions/$ext" dist/pi-flash/extensions/
   echo "    $ext 扩展已随包分发"
 done
@@ -204,6 +208,17 @@ cp docs/CHANGELOG.md dist/pi-flash/CHANGELOG.md
 if [[ -s docs/CHANGELOG_EN.md ]]; then
   cp docs/CHANGELOG_EN.md dist/pi-flash/CHANGELOG_EN.md
 fi
+
+# dist 总量守卫（组装后、烟测/压缩前）：正常解压态 ≈320MB（exe 91M + node 90M +
+# vendor 136M + 扩展 ≈200M 内），0.5.0 事故态 4.8GB——超 500MB = 组装混入异物，
+# 此处中止只损失拷贝时间，留到压缩后才发现多付烟测+压缩且体积守卫报数更晚。
+DIST_MB=$(du -sm dist/pi-flash | cut -f1)
+if [[ "$DIST_MB" -gt 500 ]]; then
+  echo "✗ dist/pi-flash 总量 ${DIST_MB}MB 超 500MB（正常 ≈320MB）——组装混入异物："
+  du -sh dist/pi-flash/* | sort -rh | head -8
+  exit 1
+fi
+echo "    dist 总量 ${DIST_MB}MB，正常"
 
 echo "==> 4/8 包内烟测（独立目录启动）"
 SMOKE_LOG="$ROOT/dist/smoke.log"
