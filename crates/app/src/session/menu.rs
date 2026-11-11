@@ -539,7 +539,9 @@ pub(crate) fn slash_menu_view(
             .is_some_and(|tr| chat.menu_tab_available(kind, tr));
         let badge = div()
             .font_family(crate::editor::markdown::MONO_FAMILY)
-            .text_size(crate::appearance::ui_size(10.))
+            // 前缀随 tab 文字：面板字体 ui(11)（031-2 四轮：搜索框/tab 栏统一
+            // 面板字体，字号 −1；mono 仅条目名保留）
+            .text_size(crate::appearance::ui_size(11.))
             .text_color(rgb(if active { t.accent } else { t.text_faint }))
             .child(SharedString::from(kind.prefix().to_string()))
             .into_any_element();
@@ -848,8 +850,7 @@ pub(crate) fn slash_menu_view(
                         .flex()
                         .items_center()
                         .px(px(4.))
-                        .font_family(crate::editor::markdown::MONO_FAMILY)
-                        .text_size(crate::appearance::ui_size(10.))
+                        .text_size(crate::appearance::ui_size(11.))
                         .text_color(rgb(t.text_soft))
                         .child(tr("menu.tab_insert")),
                 ),

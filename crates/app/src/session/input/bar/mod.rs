@@ -229,11 +229,13 @@ fn bar_left_group(
                 // 图片
                 div()
                     .id("attach-image")
-                    .pl(px(8.)) // 图片与正文首行左对齐：正文=编辑行6+组件12=18，图片=栏10+8=18
-                    .pr(px(8.)) // hover 底绕字形对称（031-2：+ 放大后左重明显）
-                    .rounded(px(8.))
+                    // 方形 hover 底（ZCode parity，2026-11-11 四轮用户令）：
+                    // 28×28 居中 18px 字形，ml(3) 保字形左缘 18 = 正文首行左对齐
+                    .ml(px(3.))
+                    .size(px(28.))
                     .flex()
                     .items_center()
+                    .justify_center()
                     .text_color(rgb(if locked { t.text_faint } else { t.text_muted }))
                     .when(!locked, |d| d.cursor_pointer())
                     .hover(move |s| {
