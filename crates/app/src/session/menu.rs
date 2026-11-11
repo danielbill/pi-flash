@@ -810,6 +810,11 @@ pub(crate) fn slash_menu_view(
                 .flex()
                 .items_end()
                 .px(px(8.))
+                // tab 栏钉面板字体槽（与搜索框同源）：挂载点是会话区，ambient
+                // 字体 = 会话字体槽（用户可设霞鹜文楷等），不钉会与搜索框分叉
+                .font_family(SharedString::from(
+                    crate::appearance::panel_font().family.clone(),
+                ))
                 .bg(rgb(t.chrome))
                 // 条下 5px 菜单底色带（2026-11-11 用户定稿）：激活 tab 的
                 // mb(-1) 连体缘落在这条带上，接缝不可见
