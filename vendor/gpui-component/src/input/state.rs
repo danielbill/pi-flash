@@ -1154,20 +1154,16 @@ impl InputState {
         self.select_to(self.next_boundary(self.cursor()), cx);
     }
 
+    // pi-flash patch（对齐 zed）：Shift+↑/↓ 按**显示行**逐行延伸并保持列。
+    // 上游按逻辑行首尾跳（start_of_line/end_of_line）——软换行下一次跳过
+    // 整个段落，且每次都落行尾/下一行第 2 字符、从不保列。换算与光标
+    // 上下移动共用一套，见 movement.rs `select_vertical`。
     pub(super) fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
-        if self.mode.is_single_line() {
-            return;
-        }
-        let offset = self.start_of_line().saturating_sub(1);
-        self.select_to(self.previous_boundary(offset), cx);
+        self.select_vertical(-1, cx);
     }
 
     pub(super) fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
-        if self.mode.is_single_line() {
-            return;
-        }
-        let offset = (self.end_of_line() + 1).min(self.text.len());
-        self.select_to(self.next_boundary(offset), cx);
+        self.select_vertical(1, cx);
     }
 
     pub(super) fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -2129,9 +2125,13 @@ impl InputState {
                 self.selected_range.end = word_range.end;
             }
         }
-        if self.selected_range.is_empty() {
-            self.update_preferred_column();
-        }
+        // pi-flash patch：目标列（preferred_column）跟随**选区头**，上游仅
+        // 空选区时重算。Shift+↑/↓ 现按 preferred_column 保列（movement.rs
+        // select_vertical），而 Shift+←/→、词选、行首尾选、鼠标拖选 /
+        // shift+点击都经本函数移动选区头——不重算则目标列停在起选处，
+        // 接着 Shift+↑/↓ 选区头会横跳回锚点列。纵向路径在 select_to 之后
+        // 自行恢复原目标列（select_vertical，保持粘性不漂）。
+        self.update_preferred_column();
         cx.notify()
     }
 

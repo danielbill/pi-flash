@@ -115,6 +115,68 @@ impl InputState {
         cx.notify();
     }
 
+    /// pi-flash patch（对齐 zed）：选区头纵向移动——Shift+↑/↓ 用。
+    ///
+    /// 与 [`Self::move_vertical`] 同一套换算（按**显示行**走、preferred
+    /// column 锚定目标列、PF-024 折叠列换回 doc 偏移），区别只在终点走
+    /// `select_to`（保留选区另一端，越过锚点时的翻转由它处理）而非
+    /// `move_to`（塌缩成光标）。
+    ///
+    /// move_lines: 选区头移动的显示行数（正 = 向下，负 = 向上）。
+    pub(super) fn select_vertical(&mut self, move_lines: isize, cx: &mut Context<Self>) {
+        if self.mode.is_single_line() {
+            return;
+        }
+        let Some(last_layout) = &self.last_layout else {
+            return;
+        };
+
+        let offset = self.cursor();
+        let was_preferred_column = self.preferred_column;
+
+        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
+        display_point.row = display_point.row.saturating_add_signed(move_lines);
+        display_point.column = 0;
+        let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
+
+        if let Some((preferred_x, column)) = was_preferred_column {
+            // Get display point again to update local_row.
+            let mut next_display_point = self.text_wrapper.offset_to_display_point(new_offset);
+            next_display_point.column = 0;
+            let next_point = self.text_wrapper.display_point_to_point(next_display_point);
+            let line_start_offset = self.text.line_start_offset(next_point.row);
+
+            // If in visible range, prefer to use position to get column.
+            if let Some(line) = last_layout.line(next_point.row) {
+                if let Some(x) = line.closest_index_for_position(
+                    Point {
+                        x: preferred_x,
+                        y: next_display_point.local_row * last_layout.line_height,
+                    },
+                    last_layout.line_height,
+                ) {
+                    new_offset = if let Some(dec) = &last_layout.decorations {
+                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x)
+                    } else {
+                        line_start_offset + x
+                    };
+                }
+            } else {
+                // Not in visible range, use column directly.
+                let max_line_len = self.text.slice_line(next_point.row).len();
+                new_offset = line_start_offset + column.min(max_line_len);
+            }
+        }
+
+        self.pause_blink_cursor(cx);
+        self.select_to(new_offset, cx);
+        // 纵向移动保持目标列粘性：select_to 会按新选区头重算
+        // preferred_column，这里显式恢复——连续 Shift+↑/↓ 经过短行/空行
+        // 后回到长行，列不漂（与 move_vertical 同语义）
+        self.preferred_column = was_preferred_column;
+        cx.notify();
+    }
+
     pub(super) fn left(&mut self, _: &MoveLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.pause_blink_cursor(cx);
         if self.selected_range.is_empty() {
