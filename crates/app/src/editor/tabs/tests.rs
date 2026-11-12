@@ -73,3 +73,42 @@ fn tabs_state_snapshot_maps_active_past_transient() {
     let st = tabs_state_from_parts(&many, |_| None, None, true);
     assert_eq!(st.tabs.len(), cap);
 }
+
+/// 047-P2-2 soft cap 逐出选择（纯函数口径锁）：有序表头起第一个非脏
+/// File——脏/冲突跳过、非 File tab 不拦路、全脏 None 放行。
+#[test]
+fn eviction_victim_picks_oldest_clean_file() {
+    use super::open::eviction_victim;
+    use crate::PanelTab;
+    use std::path::{Path, PathBuf};
+
+    let file = |s: &str| PanelTab::File(PathBuf::from(s));
+    let dirty_set: &[&str] = &["D:\\a\\dirty.rs", "D:\\a\\conflict.rs"];
+    let dirty = |p: &Path| dirty_set.iter().any(|d| Path::new(d) == p);
+
+    // 最旧干净者胜：表头脏 tab 跳过
+    let tabs = [
+        file("D:\\a\\dirty.rs"),
+        file("D:\\a\\old.rs"),
+        file("D:\\a\\new.rs"),
+    ];
+    assert_eq!(
+        eviction_victim(&tabs, &dirty),
+        Some(Path::new("D:\\a\\old.rs")),
+        "从最旧起第一个非脏"
+    );
+
+    // 非 File tab（终端/搜索等瞬态页）不参与也不拦路
+    let tabs = [PanelTab::Term(3), PanelTab::Search, file("D:\\a\\x.rs")];
+    assert_eq!(
+        eviction_victim(&tabs, &dirty),
+        Some(Path::new("D:\\a\\x.rs"))
+    );
+
+    // 全脏 → None（soft cap 放行，不硬拒）
+    let tabs = [file("D:\\a\\dirty.rs"), file("D:\\a\\conflict.rs")];
+    assert_eq!(eviction_victim(&tabs, &dirty), None);
+
+    // 空 tab 带 → None
+    assert_eq!(eviction_victim(&[], &dirty), None);
+}

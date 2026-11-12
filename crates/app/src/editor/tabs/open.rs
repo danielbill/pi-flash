@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// 047-P2-2：文件 tab soft cap。达到即从最旧起逐出一个非脏 tab（全脏
+/// 放行）；`TABS_SAVE_CAP=32` 恢复带与此无关，不动。
+const FILE_TAB_CAP: usize = 64;
+
 impl Chat {
     /// v54.4：文件打开路由——统一打开为内容区 tab，主体渲染与编辑器配置
     /// 由 kind handler 决定（未注册类型走默认文本 kind）。html/htm 直接
@@ -62,6 +66,15 @@ impl Chat {
             cx.notify();
             return;
         }
+        // 047-P2-2：soft cap——先逐旧再开新。已开的走上面的复用路（不
+        // 计数不触发）；启动恢复路直调 load_file_tab_core 不经过这里，
+        // 其上限由 TABS_SAVE_CAP 管。
+        if let Some(name) = self.evict_oldest_file_tab_if_full(cx) {
+            self.set_status(
+                crate::i18n::tf("mem.editor_tab_evicted", &[("name", name)]),
+                cx,
+            );
+        }
         // 装载 + 挂带（读盘/解码/入缓存/单文件监听），不激活不切视图
         // ——与启动 tab 恢复共用同一条装载路（pi-flash-weia）
         if !self.load_file_tab_core(path.clone(), cx) {
@@ -71,6 +84,46 @@ impl Chat {
         self.activate_panel_tab(ix, cx);
         self.set_content_view(ContentView::File);
         cx.notify();
+    }
+
+    /// 逐出对象选择（纯函数，tests 锁口径）：有序表头起第一个非脏
+    /// File tab 的路径——脏/冲突跳过（谓词即 [`Chat::file_tab_dirty`]，
+    /// 口径同 close），非 File tab 不参与也不拦路；全脏/无 File → None
+    /// （放行）。**序取 panel_tabs 视觉序（= 打开序），与 file_cache
+    /// HashMap 无关**——HashMap 无序，不可作逐出序。
+    pub(super) fn eviction_victim<'a>(
+        tabs: &'a [PanelTab],
+        dirty: &dyn Fn(&Path) -> bool,
+    ) -> Option<&'a Path> {
+        tabs.iter().find_map(|t| match t {
+            PanelTab::File(p) if !dirty(p) => Some(p.as_path()),
+            _ => None,
+        })
+    }
+
+    /// soft cap 逐出：File tab 达 [`FILE_TAB_CAP`] 时按 tabs 域有序表丢
+    /// 最旧非脏 tab（`discard_file_tab` 无提示丢弃）；全脏返回 None 放行
+    /// ——soft cap 不硬拒。返回被逐 tab 的文件名供 toast。一次至多逐
+    /// 一个：File tab 唯一 push 点是 [`Self::load_file_tab_core`]，每次
+    /// 调用计数恰 +1，逐一个即回落 cap-1，新 tab 开完正好顶回 cap。
+    fn evict_oldest_file_tab_if_full(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let file_tabs = self
+            .ws
+            .panel_tabs
+            .iter()
+            .filter(|t| matches!(t, PanelTab::File(_)))
+            .count();
+        if file_tabs < FILE_TAB_CAP {
+            return None;
+        }
+        let victim =
+            Self::eviction_victim(&self.ws.panel_tabs, &|p| self.file_tab_dirty(p))?.to_path_buf();
+        let name = victim
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| victim.display().to_string());
+        self.discard_file_tab(&victim, cx);
+        Some(name)
     }
 
     /// 文件 tab 装载核心：读盘 + kind 认领/文本解码 + 入 file_cache +

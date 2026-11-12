@@ -4,20 +4,25 @@
 use super::*;
 
 impl Chat {
-    /// 关文件 tab：有未保存修改（或挂着外部改动冲突）先弹确认，否则直接
-    /// 关。zed parity：已从磁盘消失（Deleted）且无未保存修改的缓冲不算
-    /// 脏——直接关，不弹「未保存的修改」；脏的照旧弹（保存并关闭=重建文件）。
-    pub(crate) fn close_file_tab(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let dirty = self
-            .ws
+    /// 脏判据（close_file_tab / close_tabs_batch 批量关 / 047-P2-2 soft cap
+    /// 逐出三处同源）：挂冲突即脏，唯 `Deleted` 且内容干净不算——已从磁盘
+    /// 消失且无未保存修改的缓冲直接关，不弹「未保存的修改」（zed parity）。
+    pub(crate) fn file_tab_dirty(&self, path: &Path) -> bool {
+        self.ws
             .file_cache
             .get(path)
             .map(|f| match f.conflict {
                 Some(crate::FileConflict::Deleted) => f.dirty,
                 _ => f.dirty || f.conflict.is_some(),
             })
-            .unwrap_or(false);
-        if dirty {
+            .unwrap_or(false)
+    }
+
+    /// 关文件 tab：有未保存修改（或挂着外部改动冲突）先弹确认，否则直接
+    /// 关。zed parity：已从磁盘消失（Deleted）且无未保存修改的缓冲不算
+    /// 脏——直接关，不弹「未保存的修改」；脏的照旧弹（保存并关闭=重建文件）。
+    pub(crate) fn close_file_tab(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if self.file_tab_dirty(path) {
             self.dlg.dialog = Some(crate::Dialog::FileDirty {
                 paths: vec![path.to_path_buf()],
             });
@@ -108,16 +113,7 @@ impl Chat {
             match tab {
                 PanelTab::File(p) => {
                     // 脏判据与 close_file_tab 同源（Deleted 且干净不算脏）
-                    let is_dirty = self
-                        .ws
-                        .file_cache
-                        .get(&p)
-                        .map(|f| match f.conflict {
-                            Some(crate::FileConflict::Deleted) => f.dirty,
-                            _ => f.dirty || f.conflict.is_some(),
-                        })
-                        .unwrap_or(false);
-                    if is_dirty {
+                    if self.file_tab_dirty(&p) {
                         dirty.push(p);
                     } else {
                         self.discard_file_tab(&p, cx);
