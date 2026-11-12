@@ -378,6 +378,10 @@ impl Chat {
         // 「点外/Esc 收起」不能跨会话泄漏：否则上个会话收起过菜单，切过来
         // 后 / @ 永远弹不出（active_menu 第一行就短路）
         self.composer.menu_dismissed = false;
+        // 气泡滚动句柄是 Chat 级共享 map，按渲染过的消息 id 只增不减——
+        // 切会话即清（047-内存削减 P0-2）：回旧会话句柄按需重建（user_row
+        // 的 or_insert_with），滚动位由 chat_list pager 锚点接管
+        self.composer.bubble_scrolls.borrow_mut().clear();
         // surface queued permission requests of the incoming session
         let queued = rt.update(cx, |r, _| {
             let q = std::mem::take(&mut r.ext_queue);
