@@ -157,7 +157,7 @@ impl Chat {
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        let (text, off) = crate::services::at_file::build_at_insert_text(&rel, is_dir);
+        let (text, off) = crate::services::at_file::build_at_insert_text(&rel, is_dir, false);
         let mut base = std::mem::take(&mut self.composer.input);
         if !base.is_empty() && !base.ends_with(' ') && !base.ends_with('\n') {
             base.push(' ');

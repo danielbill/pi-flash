@@ -219,24 +219,27 @@ pub fn filter_file_names(entries: &[FileEntry], lower_query: &str, limit: usize)
 
 /// 候选确认后的替换文本（pi-web buildAtInsertText）：
 /// - 文件闭合 token：`@path `（路径含空格加引号 `@"path" `），光标在末尾；
-/// - 目录不闭合：`@dir/`，菜单保持打开供钻取；引号目录插成闭合的
-///   `@"dir/"`，光标在闭引号前。
+/// - 目录不闭合：`@dir/`，菜单保持打开供钻取；
+/// - `force_quotes`：引号态触发（当前 token 是 `@"…`）时强制引号形态——
+///   无空格路径也插 `@"dir/"`，否则引号态钻取会退化成裸形态、与残留的
+///   闭引号错乱（pi-web forceQuotes parity，2026-11-12 修引号钻取挂引号）。
 /// 返回 (替换文本, 光标相对替换文本开头的字节偏移)。
-pub fn build_at_insert_text(path: &str, is_dir: bool) -> (String, usize) {
+pub fn build_at_insert_text(path: &str, is_dir: bool, force_quotes: bool) -> (String, usize) {
     let p = if is_dir {
         format!("{path}/")
     } else {
         path.to_string()
     };
+    let needs_quotes = force_quotes || p.contains(' ');
     if is_dir {
-        if p.contains(' ') {
+        if needs_quotes {
             let text = format!("@\"{p}\"");
             (text.clone(), text.len() - 1)
         } else {
             let text = format!("@{p}");
             (text.clone(), text.len())
         }
-    } else if p.contains(' ') {
+    } else if needs_quotes {
         (format!("@\"{p}\" "), format!("@\"{p}\" ").len())
     } else {
         (format!("@{p} "), format!("@{p} ").len())
@@ -411,19 +414,32 @@ mod tests {
     fn insert_text_forms() {
         // 文件闭合 + 尾空格
         assert_eq!(
-            build_at_insert_text("src/a.ts", false),
+            build_at_insert_text("src/a.ts", false, false),
             ("@src/a.ts ".into(), 10)
         );
         // 含空格加引号
         assert_eq!(
-            build_at_insert_text("my file.ts", false),
+            build_at_insert_text("my file.ts", false, false),
             ("@\"my file.ts\" ".into(), 14)
         );
         // 目录不闭合（钻取继续）
-        assert_eq!(build_at_insert_text("src", true), ("@src/".into(), 5));
+        assert_eq!(
+            build_at_insert_text("src", true, false),
+            ("@src/".into(), 5)
+        );
         // 引号目录闭合、光标在闭引号前
-        let (text, cur) = build_at_insert_text("my dir", true);
+        let (text, cur) = build_at_insert_text("my dir", true, false);
         assert_eq!(text, "@\"my dir/\"");
         assert_eq!(cur, text.len() - 1);
+        // 引号态触发强制引号形态：无空格路径也插引号（pi-web forceQuotes
+        // parity——否则裸形态与残留闭引号错乱，2026-11-12 修引号钻取挂引号）
+        assert_eq!(
+            build_at_insert_text("sub", true, true),
+            ("@\"sub/\"".into(), 6)
+        );
+        assert_eq!(
+            build_at_insert_text("sub/a.ts", false, true),
+            ("@\"sub/a.ts\" ".into(), 12)
+        );
     }
 }

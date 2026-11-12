@@ -35,13 +35,16 @@ const SKILL_PREFIX: &str = "skill:";
 
 /// 当前触发 token：类目 + 输入里的字节区间 `[start, end)` + 查询词。
 /// `start == 0 && end == input.len()` = 整段输入型触发（`/` `$`）；
-/// `pinned` = 无前缀触发（操作栏 + 钮钉住的子菜单，草稿即查询词）。
+/// `pinned` = 无前缀触发（操作栏 + 钮钉住的子菜单，草稿即查询词）；
+/// `quoted` = `@"…` 引号形态（确认插入须强制引号形态并吃掉悬在光标处的
+/// 旧闭引号，pi-web applyAtCompletion parity）。
 pub(crate) struct MenuTrigger {
     pub(crate) kind: MenuKind,
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) query: String,
     pub(crate) pinned: bool,
+    pub(crate) quoted: bool,
 }
 
 impl Chat {
@@ -66,6 +69,7 @@ impl Chat {
                     end: input.len(),
                     query: input[1..].to_string(),
                     pinned: false,
+                    quoted: false,
                 });
             }
         }
@@ -81,6 +85,7 @@ impl Chat {
                 end: cursor,
                 query: m.query,
                 pinned: false,
+                quoted: m.quoted,
             });
         }
         // `&` 会话 token：`!` bash 模式不触发（shell 里 `&&` 常见）；查询
@@ -98,6 +103,7 @@ impl Chat {
             end: cursor,
             query: m.query,
             pinned: false,
+            quoted: m.quoted,
         })
     }
 
@@ -114,6 +120,7 @@ impl Chat {
             end: input.len(),
             query: input.to_string(),
             pinned: true,
+            quoted: false,
         })
     }
 
@@ -312,7 +319,15 @@ impl Chat {
         };
         let input = self.composer.input.clone();
         let before = &input[..tr.start];
-        let after = &input[tr.end.min(input.len())..];
+        // 引号形态钻取：token 的闭引号悬在光标处（前次 accept 插入 `@"…/"`
+        // 的形态，光标停在闭引号前）——替换须吃掉它，否则每钻一层残留一个
+        // `"`（pi-web applyAtCompletion 同款 after.startsWith('"') 剥离，
+        // 2026-11-12 修引号钻取挂引号）
+        let mut end = tr.end.min(input.len());
+        if tr.quoted && input.as_bytes().get(end) == Some(&b'"') {
+            end += 1;
+        }
+        let after = &input[end..];
         let (text, cursor) = match item.kind {
             // 命令形态 `/name `：技能/命令仅输入开头合法，token 前若有正文
             // 则命令置顶、原文作参数跟在后面（不丢字）
@@ -323,10 +338,15 @@ impl Chat {
                 (v, cursor)
             }
             // pi-web applyAtCompletion：只替换触发 token（保留光标后的文本），
-            // 插入形态见 build_at_insert_text（目录不闭合 → 菜单继续钻取）
+            // 插入形态见 build_at_insert_text（目录不闭合 → 菜单继续钻取）；
+            // 引号态强制引号形态（无空格子目录也插 `@"…/"`，否则裸形态与
+            // 旧闭引号错乱）
             MenuKind::File => {
-                let (t, off) =
-                    crate::services::at_file::build_at_insert_text(&item.insert, item.is_dir);
+                let (t, off) = crate::services::at_file::build_at_insert_text(
+                    &item.insert,
+                    item.is_dir,
+                    tr.quoted,
+                );
                 let v = format!("{before}{t}{after}");
                 (v, tr.start + off)
             }
@@ -404,6 +424,10 @@ impl Chat {
             return;
         }
         let cwd = self.ws.cwd.clone().unwrap_or_default();
+        // 引号态触发：插入文本强制引号形态 + 吃掉悬在光标处的旧闭引号
+        //（同 accept_menu，2026-11-12 修引号钻取挂引号）
+        let tr = self.menu_trigger(cx);
+        let quoted = tr.as_ref().is_some_and(|t| t.quoted);
         let mut text = String::new();
         for p in &paths {
             let rel = p
@@ -411,11 +435,17 @@ impl Chat {
                 .unwrap_or(p)
                 .to_string_lossy()
                 .replace('\\', "/");
-            text.push_str(&crate::services::at_file::build_at_insert_text(&rel, false).0);
+            text.push_str(&crate::services::at_file::build_at_insert_text(&rel, false, quoted).0);
         }
         // 替换触发 token；菜单已收起/输入已变 = 追加到输入末尾
-        let (start, end) = match self.menu_trigger(cx) {
-            Some(tr) => (tr.start, tr.end.min(self.composer.input.len())),
+        let (start, end) = match tr {
+            Some(tr) => {
+                let mut e = tr.end.min(self.composer.input.len());
+                if tr.quoted && self.composer.input.as_bytes().get(e) == Some(&b'"') {
+                    e += 1;
+                }
+                (tr.start, e)
+            }
             None => {
                 let l = self.composer.input.len();
                 (l, l)
