@@ -2,6 +2,41 @@
 
 All notable changes to released versions live here; see `docs/CHANGELOG规范.md` for the format.
 
+## [0.5.1] - 2026-11-12
+
+Highlights of this release:
+1. Unified input menu: the + button opens one menu aggregating skills & commands, models, files and sessions, with universal search
+2. Editor input assistance aligned with Zed: bracket/quote autoclose & paired deletion, auto-surround, list continuation, paste re-indent, syntax-aware indentation
+3. A batch of editor selection/keyboard and rendering fixes
+
+### Install & Update
+
+```bash
+npm install -g pi-flash@latest   # same command for first install and update
+pi-flash
+```
+
+Requires Node.js ≥ 22.19. Alternatively download the zip portable build, extract it and double-click `pi-flash.exe`. Windows x64 only.
+
+### New
+- **Unified input menu**: the "+" button in the composer toolbar opens one unified menu with tabs aggregating `/` skills & commands, `$` models, `@` project files and `&` sessions; the universal search at the top matches all categories at once; with no prefix typed, "+" pins straight to the skills page; the "open file" button invokes the system file picker and inserts the pick as @path; the attachment button becomes "+" (image attachments now go through Ctrl+V paste). (73a0c790, f4b9130d)
+- **Session reference chip**: a session path inserted via `@` now folds into an "icon + session name" chip instead of a long path; session cards gain an "@ to input box" button for one-click referencing. (4496e0e4, 559588ad)
+- **Input assistance (aligned with Zed, code-editor mode)**:
+  - Autoclose family: typing a bracket/quote with an empty selection inserts the closing pair, typing the same closer overtypes instead of inserting, backspace deletes the pair; typing an opener with a selection auto-wraps it (brackets/quotes/`*`/`~`); Enter inside a bracket pair creates the three-line structure;
+  - List & comment continuation: Markdown `-` `*` `+` list continuation, `1.` increments, task item continuation, Enter on an empty item exits the list; comment continuation (`//`, `#`, …);
+  - Paste enhancements: multi-line paste re-indents to the cursor line's indentation, pasting a URL over a Markdown selection becomes `[selection](url)`, backspace in an indented region steps back one tab stop; copy/cut with an empty selection takes the whole line;
+  - Syntax-aware indentation: a line-start closing bracket aligns with its opening line after Enter; indent-aware newlines. (dd113e6c, 007274cc, f90938f7, 005c399a)
+
+### Bug fixes
+- Editor key hijacking: stale message selections no longer hijack Ctrl+C (selection copy takes priority); Ctrl+←/→ restores word-wise movement; Tab restores block indent for multi-line selections. (fca63183)
+- Under soft wrap, Shift+↑/↓ extends the selection line by visual line while keeping the column, instead of jumping by paragraph. (9b4b7b5b)
+- Single tilde `~x~` in Markdown is no longer rendered as strikethrough. (e210f7cf)
+- Mermaid fences inside agent finalization blocks render as diagrams again. (5c94d7ac)
+- The `@` menu treated CJK directory names like "内存" as whitespace and went dead; quoted directory drilling left one stray quote per level; menu items are now a fixed 30px tall. (d25fc137, 3cde3071, 5b449583)
+- Mojibake for Chinese file names in the zip portable build (0.5.0: "启动说明.txt" extracted as garbage names) — entry names forced to UTF-8 with triple defense plus a hard packaging gate. (0ad4a686)
+
+### Improvements
+- Input menu visual polish: font sizes aligned to panel font slots, dimmer hints, larger + button with a symmetric hover base, tab bar flush with the search bar, toolbar background corners unified at 4px, over-long paths clipped inside item boxes. (cb99b6aa, be97266b, 6eb0f577, 20797d93, 8287ff05, a48c8e48, b1d486d8, 1dec3ae3, acbf4d83, ee2070fd)
 ## [0.5.0] - 2026-11-11
 
 Highlights of this release:
