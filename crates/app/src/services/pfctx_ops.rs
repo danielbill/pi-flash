@@ -7,8 +7,8 @@
 //! 点击完全同链。执行留痕 `pfctx.log [agent]`；hub 写自动 `[write]`。
 //!
 //! 队列 = 静态 Mutex<VecDeque>（pf-svc `SvcShared.queues` 同款先例）：跨
-//! RPC 线程（on_event）与主线程（泵）的单生产多消费信箱，容量天然有界
-//! （agent 工具调用频率）。
+//! RPC 线程（on_event）与主线程（泵）的单生产多消费信箱，soft cap 256 弃
+//! 最旧（047-内存削减 P0-3——主线程停摆时 op（含任意 Value）不再无限积压）。
 
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -23,15 +23,25 @@ pub(crate) struct PfctxOp {
 
 static QUEUE: Mutex<VecDeque<PfctxOp>> = Mutex::new(VecDeque::new());
 
+/// soft cap（047-内存削减 P0-3）：120ms 泵消费下正常永远到不了这个量级，
+/// 触顶 = 主线程停摆的异常态——弃最旧保新。
+const QUEUE_CAP: usize = 256;
+/// 弃量记账（投递线程只累计，[`execute_pending`] 在主线程落 pfctx.log——
+/// log 的既有消费点全在主线程，不给投递侧引入新的写盘依赖）。
+static DROPPED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub(crate) fn push(session: &str, setting: &str, value: Value) {
-    QUEUE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push_back(PfctxOp {
-            session: session.to_string(),
-            setting: setting.to_string(),
-            value,
-        });
+    let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    if q.len() >= QUEUE_CAP {
+        let dropped = q.len() + 1 - QUEUE_CAP;
+        q.drain(..dropped);
+        DROPPED.fetch_add(dropped, std::sync::atomic::Ordering::Relaxed);
+    }
+    q.push_back(PfctxOp {
+        session: session.to_string(),
+        setting: setting.to_string(),
+        value,
+    });
 }
 
 pub(crate) fn drain() -> Vec<PfctxOp> {
@@ -45,6 +55,13 @@ pub(crate) fn drain() -> Vec<PfctxOp> {
 /// 120ms 泵消费：在 Chat 上下文逐 op 执行（设置页同链）。
 pub(crate) fn execute_pending(chat: &mut crate::Chat, cx: &mut gpui::Context<crate::Chat>) {
     let ops = drain();
+    let dropped = DROPPED.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if dropped > 0 {
+        pf_context::log(
+            "agent",
+            &format!("op 队列触顶 {QUEUE_CAP}，弃最旧 {dropped} 条（主线程停摆过？）"),
+        );
+    }
     if ops.is_empty() {
         return;
     }
@@ -229,5 +246,24 @@ mod tests {
         assert_eq!(ops[0].setting, "subagents.capacity");
         assert_eq!(ops[1].setting, "chat.send_mode");
         assert!(drain().is_empty(), "drain 即清空");
+    }
+
+    /// soft cap：触顶弃最旧保新（047-内存削减 P0-3）。
+    #[test]
+    fn queue_soft_cap_drops_oldest() {
+        let _g = test_lock();
+        drain();
+        let extra = 10usize;
+        for i in 0..(QUEUE_CAP + extra) {
+            push("s", &format!("set{i}"), Value::from(i));
+        }
+        let ops = drain();
+        assert_eq!(ops.len(), QUEUE_CAP);
+        assert_eq!(ops[0].setting, format!("set{extra}"), "最旧的 extra 条被弃");
+        assert_eq!(
+            ops.last().unwrap().setting,
+            format!("set{}", QUEUE_CAP + extra - 1),
+            "最新条目保留"
+        );
     }
 }
