@@ -136,6 +136,18 @@ fn utf8_len(b: u8) -> usize {
     }
 }
 
+/// Reader 线程 WireEvent kind 白名单（047-内存削减 P1-2）：WireEvent 是
+/// 「app 挑着吃」的杂项筐，唯一消费点 `session/runtime/events/on_event.rs`
+/// 的 WireEvent 臂只认这两个 kind——`tool_execution_update`（且仅
+/// toolName=="agent" 的嵌套派发详情）与 `entry_appended`（subagent-settled
+/// 结算 + pfctx 设置 op）；`session_info_changed` 解析后完全落空。事件通道
+/// 无界（backpressure 会塞死 pi 的 stdout 管道），无消费者的死重 Value 会在
+/// UI 卡顿期间无限积压——reader 直接掐掉，不进通道。升级 pi 或改 on_event
+/// WireEvent 臂时同步复核本表。
+pub fn wire_event_allowed(kind: &str) -> bool {
+    matches!(kind, "tool_execution_update" | "entry_appended")
+}
+
 /// Parse a single JSONL line from pi's stdout.
 pub fn parse_line(line: &str) -> Option<Event> {
     // NOT serde_json::from_str: get_tree nests the whole conversation

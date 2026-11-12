@@ -21,7 +21,7 @@ pub use session::{
     BashResult, CostInfo, ModelInfo, SessionEntry, SessionState, SessionStats, TreeNode,
     active_user_entry_ids, parse_entries, parse_model_info, parse_model_list, parse_tree,
 };
-pub use wire::{parse_line, parse_record, prompt_disposition, strip_ansi};
+pub use wire::{parse_line, parse_record, prompt_disposition, strip_ansi, wire_event_allowed};
 
 #[cfg(test)]
 mod tests;

@@ -513,3 +513,13 @@ fn unparsed_keeps_whole_value() {
     let e = parse_line(r#"[1,2,3]"#).unwrap();
     assert!(matches!(e, Event::Unparsed(v) if v.is_array()));
 }
+
+/// P1-2 reader 白名单：放行 app 消费的两个 kind，session_info_changed 与
+/// 未知杂项全拒（与 on_event.rs WireEvent 臂的实际消费对齐）。
+#[test]
+fn wire_event_allowed_whitelist() {
+    assert!(wire_event_allowed("tool_execution_update"));
+    assert!(wire_event_allowed("entry_appended"));
+    assert!(!wire_event_allowed("session_info_changed"));
+    assert!(!wire_event_allowed("something_else"));
+}

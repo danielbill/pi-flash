@@ -22,6 +22,9 @@ use crate::vendor;
 /// fatal）只需尾部几行，整段留存反而吃内存
 const STDERR_TAIL_CAP: usize = 16 * 1024;
 
+/// reader 线程按白名单丢弃的无消费者 WireEvent 计数（047-内存削减 P1-2）
+static DROPPED_WIRE: AtomicU64 = AtomicU64::new(0);
+
 /// ext-ui 全链路留痕（#问题卡不弹，2026-11-04 真机两次复现）：wire 送达锚点 /
 /// pool 路由与 parked 队列 / bind 迁移碰撞 / ask_card 分支统一走这里。
 /// release 无控制台 stderr 不可见——必须落盘 `<PF dir>/logs/ext-ui.log`，
@@ -262,6 +265,22 @@ pub fn spawn(
                 }
                 match parse_line(&line) {
                     Some(event) => {
+                        // 047-P1-2 kind 白名单：无消费者 WireEvent 掐在 reader
+                        //（白名单依据见 wire::wire_event_allowed），不进无界
+                        // 通道积压。丢弃走 ext_trace 文件留痕（首条 + 每
+                        // 1000 条），wire log 不受影响（原始行在解析前已落）。
+                        if let Event::WireEvent { kind, .. } = &event {
+                            if !crate::protocol::wire_event_allowed(kind) {
+                                let n = DROPPED_WIRE.fetch_add(1, Ordering::Relaxed);
+                                if n == 0 || n % 1000 == 0 {
+                                    ext_trace(&format!(
+                                        "wire 无消费者丢弃 kind={kind}（累计 {}）",
+                                        n + 1
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
                         // ext-ui 链路留痕（2026-11-04 #问题卡不弹）：阻塞类
                         // extension_ui_request 一旦在宿主侧被吞，pi 永久挂起且
                         // 界面零痕迹——本行是链路最上游的「确已送达」锚点，
