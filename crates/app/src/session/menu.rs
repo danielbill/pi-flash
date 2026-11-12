@@ -654,7 +654,10 @@ pub(crate) fn slash_menu_view(
             .items_center()
             .gap(px(8.))
             .px(px(10.))
-            .py(px(8.))
+            // 条目固定 30px 高、内容垂直居中（2026-11-12 用户令；py(8) 随
+            // 内容浮动，废）
+            .h(px(30.))
+            .flex_shrink_0()
             .rounded(px(7.))
             .border_1()
             // 内容超宽的兜底剪裁（长路径名曾溢出条目框外，2026-11-12）
