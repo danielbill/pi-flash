@@ -266,7 +266,7 @@ fn builtins_match_extension_docs() {
         (
             EXPLORER_ID,
             "本地探索者",
-            "只读探索 · 调研与定位",
+            "本地只读探索 · 目录调研、资料收集与定位",
             Some("read-only"),
             None,
             "你是本地探索员：探索目录、调研代码、定位信息、搜寻答案。\n不执行写操作。",
@@ -274,10 +274,10 @@ fn builtins_match_extension_docs() {
         (
             GENERAL_PURPOSE_ID,
             "通用子代理",
-            "通用子代理 · 复杂调研、代码检索、多步任务",
+            "委派者克隆体 · 可执行复杂任务",
             None,
             None,
-            "你是委派者Clone：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n请明智使用手头工具，按需完成任务。",
+            "你是委派者Clone，请明智使用手头工具与技能，按需完成任务",
         ),
         (
             SUMMARIZER_ID,

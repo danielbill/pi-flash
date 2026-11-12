@@ -186,12 +186,12 @@ describe("delegation description", () => {
 		const text = delegationDescription({
 			inheritsParentContext: false,
 			profileSummaries: [
-				{ id: "e1a7c052", name: "本地探索者", description: "只读探索 · 调研与定位", tools: "read-only" },
-				{ id: "9f3d2b84", name: "通用子代理", description: "通用子代理 · 复杂调研、代码检索、多步任务" },
+				{ id: "e1a7c052", name: "本地探索者", description: "本地只读探索 · 目录调研、资料收集与定位", tools: "read-only" },
+				{ id: "9f3d2b84", name: "通用子代理", description: "委派者克隆体 · 可执行复杂任务" },
 			],
 		});
 		// 点名句柄 = name（id 不可见，不进清单）
-		assert.match(text, /- 本地探索者: 只读探索 · 调研与定位 \(tools: read-only\)/);
+		assert.match(text, /- 本地只读探索 · 目录调研、资料收集与定位 \(tools: read-only\)/);
 		assert.match(text, /- 通用子代理: 通用子代理.*\(tools: inherit\)/);
 		assert.doesNotMatch(text, /e1a7c052/);
 	});

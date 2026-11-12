@@ -26,7 +26,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
         AgentProfile {
             id: EXPLORER_ID.into(),
             name: Some("本地探索者".into()),
-            description: "只读探索 · 调研与定位".into(),
+            description: "本地只读探索 · 目录调研、资料收集与定位".into(),
             model: None,
             tools: Some("read-only".into()),
             thinking_level: None,
@@ -51,7 +51,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
         AgentProfile {
             id: GENERAL_PURPOSE_ID.into(),
             name: Some("通用子代理".into()),
-            description: "通用子代理 · 复杂调研、代码检索、多步任务".into(),
+            description: "委派者克隆体 · 可执行复杂任务".into(),
             model: None,
             tools: None,
             thinking_level: None,
@@ -61,7 +61,7 @@ pub fn builtin_agents() -> Vec<AgentProfile> {
             inject_agents_md: Some(true),
             system_prompt: None,
             append_system_prompt: Some(
-                "你是委派者Clone：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。\n请明智使用手头工具，按需完成任务。".into(),
+                "你是委派者Clone，请明智使用手头工具与技能，按需完成任务".into(),
             ),
             unknown: Vec::new(),
             extensions: Vec::new(),

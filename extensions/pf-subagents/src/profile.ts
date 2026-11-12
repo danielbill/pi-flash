@@ -66,12 +66,11 @@ export const BUILTIN_PROFILE_DOCS: Readonly<Record<string, string>> = {
 	[BUILTIN_IDS.generalPurpose]: [
 		"---",
 		"name: 通用子代理",
-		"description: 通用子代理 · 复杂调研、代码检索、多步任务",
+		"description: 委派者克隆体 · 可执行复杂任务",
 		// 工具/技能/环境全继承：不写 tools / skills / injectAgentsMd；
 		// 轮次「指定」= 不写 maxTurns（委派方给 maxloop）
 		"---",
-		"你是委派者Clone：独立完成委派的任务——调研复杂问题、检索代码、执行多步操作。",
-		"请明智使用手头工具，按需完成任务。",
+		"你是委派者Clone，请明智使用手头工具与技能，按需完成任务",
 	].join("\n"),
 	// 044-0 第三枚内置：摘要机——无状态摘要，不注入 AGENTS.md（不继承环境
 	// 上下文），只读工具集。适用本地/廉价模型跑系统日志摘要等批量总结。

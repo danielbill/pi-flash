@@ -291,9 +291,9 @@ describe("listProfilesSync", () => {
 		const root = join(tmpdir(), "pf-subagents-sync-missing");
 		const summaries = listProfilesSync({ globalDir: join(root, "x"), projectDir: join(root, "y") });
 		assert.deepEqual(summaries, [
-			{ id: "9f3d2b84", name: "通用子代理", description: "通用子代理 · 复杂调研、代码检索、多步任务" },
+			{ id: "9f3d2b84", name: "通用子代理", description: "委派者克隆体 · 可执行复杂任务" },
 			{ id: "c58e07af", name: "摘要机", description: "无状态摘要 · 阅读文件或内容按要求总结", tools: "read-only" },
-			{ id: "e1a7c052", name: "本地探索者", description: "只读探索 · 调研与定位", tools: "read-only" },
+			{ id: "e1a7c052", name: "本地探索者", description: "本地只读探索 · 目录调研、资料收集与定位", tools: "read-only" },
 		]);
 	});
 
