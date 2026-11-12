@@ -45,6 +45,37 @@ pub(crate) const MAX_PATH_HITS: usize = 50;
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 /// 单文件命中行上限（防单文件刷满全局额度）
 const MAX_LINES_PER_FILE: usize = 500;
+/// 单行字节上限（047-内存削减 P1-6）：命中行与摘录行整行存储——minified
+/// 大单行（实测 8MB 单行文件）一行就是 8MB×(1+2·ctx)。超限截断 + 「…」
+/// （对齐 Zed 行折叠；正则跨截断点的匹配会漏，病理大单行可接受）。
+const MAX_LINE_BYTES: usize = 4 * 1024;
+
+/// 截断到 [`MAX_LINE_BYTES`]（字符边界），截断尾补「…」；未超限原样返回。
+fn clip_line(line: &str) -> String {
+    if line.len() <= MAX_LINE_BYTES {
+        return line.to_string();
+    }
+    let mut cut = MAX_LINE_BYTES;
+    while !line.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut out = line[..cut].to_string();
+    out.push('…');
+    out
+}
+
+/// 截断字节点（未超限 = 全长）：供搜索视图先截再匹配，spans 落在截断前缀
+/// 内与真实行保持自洽（跳转定位不受影响）。
+fn clip_point(line: &str) -> usize {
+    if line.len() <= MAX_LINE_BYTES {
+        return line.len();
+    }
+    let mut cut = MAX_LINE_BYTES;
+    while !line.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    cut
+}
 
 /// 搜索开关位（对应 Zed `SearchOptions` 里本项目用到的四个）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -138,7 +169,10 @@ pub(crate) fn scan_text(rel: String, text: &str, q: &SearchQuery) -> Option<File
         // 尾 CR 会让 `$` 之后多一个字节；Zed 在 detect 里做整文件归一，
         // PF 逐行剥尾（等价）。
         let line = raw.strip_suffix('\r').unwrap_or(raw);
-        let spans = q.search_str(line);
+        // 超长行先截到字节窗再匹配（047-P1-6）：spans 落在截断前缀内，
+        // 与摘录行的截断展示保持自洽
+        let view = &line[..clip_point(line)];
+        let spans = q.search_str(view);
         if spans.is_empty() {
             continue;
         }
@@ -195,7 +229,9 @@ fn build_blocks(text: &str, hit_lines: &[u32], ctx: u32) -> Vec<Vec<(u32, String
             (start..=end)
                 .map(|n| {
                     let raw = lines.get(n as usize - 1).copied().unwrap_or("");
-                    (n, raw.strip_suffix('\r').unwrap_or(raw).to_string())
+                    // 摘录行同口径截断（047-P1-6）：大单行不整行进内存
+                    let line = raw.strip_suffix('\r').unwrap_or(raw);
+                    (n, clip_line(line))
                 })
                 .collect()
         })
@@ -451,5 +487,40 @@ mod tests {
         );
         let hit = scan_text("a.txt".into(), "ab 12 cd\n", &c).expect("hit");
         assert_eq!(hit.hits[0].spans, vec![3..5]);
+    }
+
+    /// P1-6（047-内存削减）：超长行截断——摘录行 ≤4KB + 「…」收尾；截断
+    /// 窗内的命中正常给出；只在窗外的匹配不报（截断语义，防 8MB minified
+    /// 单行整行进内存）。
+    #[test]
+    fn long_lines_clipped_to_budget() {
+        let head = "a".repeat(MAX_LINE_BYTES - 16);
+        let tail = "b".repeat(1024);
+        // 命中在截断窗内
+        let text = format!("{head}NEEDLE{tail}\nplain\n");
+        let c = query("NEEDLE", SearchOpts::default());
+        let hit = scan_text("big.txt".into(), &text, &c).expect("hit");
+        let seg = &hit.segments[0][0].1;
+        assert!(
+            seg.len() <= MAX_LINE_BYTES + 3,
+            "摘录行截断（{}B）",
+            seg.len()
+        );
+        assert!(seg.ends_with('…'), "截断尾补省略号");
+        assert_eq!(
+            hit.hits[0].spans,
+            vec![(MAX_LINE_BYTES - 16)..(MAX_LINE_BYTES - 10)]
+        );
+
+        // 命中只在窗外：不报
+        let text = format!("{head}{tail}NEEDLE\n");
+        let hit = scan_text("big.txt".into(), &text, &c);
+        assert!(hit.is_none(), "截断窗外的匹配不报");
+
+        // 摘录段里的上下文行（非命中行）同样截断
+        let long = "x".repeat(MAX_LINE_BYTES + 2048);
+        let text = format!("{long}\nNEEDLE\n");
+        let hit = scan_text("big.txt".into(), &text, &c).expect("hit");
+        assert!(hit.segments[0][0].1.ends_with('…'), "上下文行截断");
     }
 }
