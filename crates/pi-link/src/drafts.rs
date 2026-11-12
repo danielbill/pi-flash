@@ -113,6 +113,10 @@ mod drafts_tests {
 
     #[test]
     fn file_name_stable_and_distinct() {
+        // file_for → paths::dir 读进程级 PI_FLASH_DIR：与动 env 的测试
+        // （dev_flags DirGuard 等）同锁串行，防窗口内读到别人的目录
+        // （CI runner 实录：a/a2 一次默认一次 devflags-all）
+        let _env = crate::test_support::env_lock();
         let a = file_for("D:\\proj-a").unwrap();
         let b = file_for("D:\\proj-b").unwrap();
         let a2 = file_for("D:\\proj-a").unwrap();

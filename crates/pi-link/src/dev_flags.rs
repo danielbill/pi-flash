@@ -95,22 +95,24 @@ mod tests {
     use super::*;
 
     /// PI_FLASH_DIR 指到临时目录再读写 dev-flags.json。
-    /// env 操作在测试进程内是进程级的：本测试串行改 / 恢复，且不用并行断言。
-    struct DirGuard(std::path::PathBuf);
+    /// env 操作在测试进程内是进程级的：持 test_support::env_lock 与其它
+    /// 动 env / 读 env 的测试串行（守卫全程持有，Drop 先清 env 后放锁）。
+    struct DirGuard(std::path::PathBuf, std::sync::MutexGuard<'static, ()>);
     impl DirGuard {
         fn new(tag: &str) -> Self {
+            let lock = crate::test_support::env_lock();
             let dir = std::env::temp_dir().join(format!("devflags-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
-            // 先例 = updater.rs 测试：env 突变进程级，接受并行测试间的权衡
             unsafe { std::env::set_var("PI_FLASH_DIR", &dir) };
-            Self(dir)
+            Self(dir, lock)
         }
     }
     impl Drop for DirGuard {
         fn drop(&mut self) {
             unsafe { std::env::remove_var("PI_FLASH_DIR") };
             let _ = std::fs::remove_dir_all(&self.0);
+            // self.1（锁）字段在 drop 体之后释放：env 清理在放锁前完成
         }
     }
 
