@@ -264,12 +264,27 @@ fn read_tail_window(path: &Path, tail_bytes: u64, max: usize) -> Vec<Value> {
 /// Message *text* can contain the literal (false positives), so this is only
 /// a cheap upper bound for the leaf-chain integrity check — a false positive
 /// costs one full `read_leaf_messages` pass, never correctness.
+/// 流式逐行（128KB BufReader，047-内存削减 P0-1）：pi 每行一条 compact
+/// JSON，needle 不可能跨行，逐行 occurrence 计数与整文件 windows 扫描严格
+/// 等价——不再把整个文件一次性读进内存（500MB 洪泛会话曾是 500MB 瞬时分配）。
 pub fn count_message_entries(path: &Path) -> u64 {
-    let Ok(data) = std::fs::read(path) else {
+    use std::io::BufRead;
+    let Ok(file) = std::fs::File::open(path) else {
         return 0;
     };
     const NEEDLE: &[u8] = b"\"type\":\"message\"";
-    data.windows(NEEDLE.len()).filter(|&w| w == NEEDLE).count() as u64
+    let mut count = 0u64;
+    let mut line = Vec::new();
+    let mut reader = std::io::BufReader::with_capacity(128 * 1024, file);
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            // 尾部无换行的半行也计入——与旧整文件扫描同口径（字节级上界）
+            Ok(_) => count += line.windows(NEEDLE.len()).filter(|&w| w == NEEDLE).count() as u64,
+        }
+    }
+    count
 }
 
 /// Full leaf-chain read anchored at the LAST `type=message` entry.

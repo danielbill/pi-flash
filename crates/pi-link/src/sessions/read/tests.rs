@@ -184,3 +184,30 @@ fn leaf_anchored_at_last_message_recovers_stranded_turn() {
 
     std::fs::remove_file(&path).ok();
 }
+
+/// P0-1（047-内存削减）：count_message_entries 流式化后与整文件字节扫描
+/// 的等价性边界——行首/行尾命中、单行多 needle、嵌套假阳性、垃圾行、
+/// 空文件、无换行尾行。occurrence 计数（单行两个 needle = 2）。
+#[test]
+fn count_message_entries_streaming_edge_cases() {
+    let dir = std::env::temp_dir().join("pi-flash-count-entries-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("count-entries.jsonl");
+
+    // 空文件
+    std::fs::write(&path, "").unwrap();
+    assert_eq!(count_message_entries(&path), 0);
+
+    let body = concat!(
+        "\"type\":\"message\"\n",                        // 行首命中
+        "{\"x\":1,\"type\":\"message\"}\n",              // 行尾命中
+        "\"type\":\"message\" x \"type\":\"message\"\n", // 单行 2 次
+        "{\"type\":\"custom\",\"id\":\"c\",\"data\":{\"type\":\"message\"}}\n", // 嵌套假阳性（计入上界）
+        "not json\n",                                                           // 垃圾行
+        "{\"type\":\"message\"}",                                               // 无换行尾行
+    );
+    std::fs::write(&path, body).unwrap();
+    assert_eq!(count_message_entries(&path), 6);
+
+    std::fs::remove_file(&path).ok();
+}
