@@ -387,3 +387,129 @@ fn bash_execution_update_event() {
         other => panic!("wrong event: {other:?}"),
     }
 }
+
+// ---- 047-P1-1 move 语义等价锁：大字段 null/missing 区分 + 全值保留 ----
+
+/// Response.data：缺失 → None；null → Some(Null)（旧 get().cloned() 口径，
+/// 不能把 null 折成 missing——调用方据此区分「无数据」与「空数据」）。
+#[test]
+fn response_data_null_vs_missing() {
+    let missing = parse_line(r#"{"type":"response","id":"1","success":true}"#).unwrap();
+    match missing {
+        Event::Response { data, .. } => assert!(data.is_none()),
+        other => panic!("wrong event: {other:?}"),
+    }
+    let null = parse_line(r#"{"type":"response","id":"1","success":true,"data":null}"#).unwrap();
+    match null {
+        Event::Response { data, .. } => assert_eq!(data, Some(serde_json::Value::Null)),
+        other => panic!("wrong event: {other:?}"),
+    }
+}
+
+/// tool_execution_start/end 的 args/result：缺失或 null → None；存在 →
+/// Some 且值完整（move 不得改写内容）。
+#[test]
+fn tool_execution_args_result_null_vs_missing() {
+    let e = parse_line(r#"{"type":"tool_execution_start","toolCallId":"t1"}"#).unwrap();
+    assert!(matches!(e, Event::ToolExecutionStart { args: None, .. }));
+    let e = parse_line(r#"{"type":"tool_execution_start","toolCallId":"t1","args":null}"#).unwrap();
+    assert!(matches!(e, Event::ToolExecutionStart { args: None, .. }));
+    let e = parse_line(
+        r#"{"type":"tool_execution_end","toolCallId":"t1","result":{"output":"big text","nested":{"a":[1,2]}}}"#,
+    )
+    .unwrap();
+    match e {
+        Event::ToolExecutionEnd { result, .. } => {
+            let r = result.expect("result preserved");
+            assert_eq!(r["output"], "big text");
+            assert_eq!(r["nested"]["a"][1], 2);
+        }
+        other => panic!("wrong event: {other:?}"),
+    }
+}
+
+/// message_start details：非 object（字符串）→ None；object → Some。
+/// system 消息的 raw_system 必须携带完整 message 本体（含 details 与
+/// toolsAdded——app live 重放的数据源）。
+#[test]
+fn message_start_details_and_raw_system_move_semantics() {
+    // details 非 object → None（system 角色也在内）
+    let e = parse_line(
+        r#"{"type":"message_start","message":{"role":"assistant","content":[],"details":"not-an-object"}}"#,
+    )
+    .unwrap();
+    match e {
+        Event::MessageStart { details, .. } => assert!(details.is_none()),
+        other => panic!("wrong event: {other:?}"),
+    }
+    // 非 system：details move 直出
+    let e = parse_line(
+        r#"{"type":"message_start","message":{"role":"custom","customType":"x","content":[],"details":{"k":1}}}"#,
+    )
+    .unwrap();
+    match e {
+        Event::MessageStart {
+            details,
+            raw_system,
+            ..
+        } => {
+            assert_eq!(details.expect("details"), serde_json::json!({"k":1}));
+            assert!(raw_system.is_none());
+        }
+        other => panic!("wrong event: {other:?}"),
+    }
+    // system：raw_system 全值保留（含 details），details 同时独立存在
+    let e = parse_line(
+        r#"{"type":"message_start","message":{"role":"system","content":"base","details":{"toolCount":3},"toolsAdded":[{"name":"read"}]}}"#,
+    )
+    .unwrap();
+    match e {
+        Event::MessageStart {
+            details,
+            raw_system,
+            ..
+        } => {
+            assert_eq!(details.expect("details")["toolCount"], 3);
+            let raw = raw_system.expect("raw_system");
+            assert_eq!(raw["details"]["toolCount"], 3, "raw_system 含 details");
+            assert_eq!(raw["content"], "base");
+            assert_eq!(raw["toolsAdded"][0]["name"], "read");
+        }
+        other => panic!("wrong event: {other:?}"),
+    }
+}
+
+/// WireEvent.value：整行原值保留（entry_appended 的 app 消费方按字段挖取）。
+#[test]
+fn wire_event_value_preserved_whole() {
+    let e = parse_line(
+        r#"{"type":"entry_appended","entry":{"type":"pfctx-manager-op","customType":"x","data":{"k":"v"}},"seq":7}"#,
+    )
+    .unwrap();
+    match e {
+        Event::WireEvent { kind, value } => {
+            assert_eq!(kind, "entry_appended");
+            assert_eq!(value["entry"]["type"], "pfctx-manager-op");
+            assert_eq!(value["entry"]["data"]["k"], "v");
+            assert_eq!(value["seq"], 7);
+        }
+        other => panic!("wrong event: {other:?}"),
+    }
+}
+
+/// 未知 type / 非 object 顶级行落 Unparsed 且原值保留（按 type 去重留痕的
+/// 数据源）。
+#[test]
+fn unparsed_keeps_whole_value() {
+    let e = parse_line(r#"{"type":"something_new","payload":{"x":1}}"#).unwrap();
+    match e {
+        Event::Unparsed(v) => {
+            assert_eq!(v["type"], "something_new");
+            assert_eq!(v["payload"]["x"], 1);
+        }
+        other => panic!("wrong event: {other:?}"),
+    }
+    // 非 object 顶级行
+    let e = parse_line(r#"[1,2,3]"#).unwrap();
+    assert!(matches!(e, Event::Unparsed(v) if v.is_array()));
+}

@@ -3,7 +3,43 @@
 
 use super::blocks::content_blocks;
 use super::events::{AssistantEvent, Event, ExtUiMethod, ExtensionUiRequest, Usage};
-use serde_json::Value;
+use serde_json::{Map, Value};
+
+// ---- map 读/取小助手（047-内存削减 P1-1：parse_record 消费所有权，大字段
+// ---- args/result/data/raw_system/WireEvent.value 全部 move 不 clone——旧行为
+// ---- 解析一条 5MB 工具输出事件要同时持有 line + 整行 Value + clone 出的
+// ---- 子树三份，峰值 ~3×；move 化后砍掉最后一层翻倍）----
+
+fn s(map: &Map<String, Value>, k: &str) -> String {
+    map.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+}
+fn os(map: &Map<String, Value>, k: &str) -> Option<String> {
+    map.get(k).and_then(Value::as_str).map(str::to_string)
+}
+fn b(map: &Map<String, Value>, k: &str) -> bool {
+    map.get(k).and_then(Value::as_bool).unwrap_or(false)
+}
+fn opt_b(map: &Map<String, Value>, k: &str) -> Option<bool> {
+    map.get(k).and_then(Value::as_bool)
+}
+fn opt_i(map: &Map<String, Value>, k: &str) -> Option<i64> {
+    map.get(k).and_then(Value::as_i64)
+}
+fn opt_u(map: &Map<String, Value>, k: &str) -> Option<u64> {
+    map.get(k).and_then(Value::as_u64)
+}
+/// move 出子字段；缺失/None 等价。null → None（对应旧 `!v[k].is_null()` 口径）。
+fn take_not_null(map: &mut Map<String, Value>, k: &str) -> Option<Value> {
+    map.remove(k).filter(|v| !v.is_null())
+}
+/// move 出嵌套 object；非 object（含缺失/null）一律空表——旧 `v[k][..]`
+/// 索引链对非 object 取值恒 Null，行为等价。
+fn take_map(map: &mut Map<String, Value>, k: &str) -> Map<String, Value> {
+    match map.remove(k) {
+        Some(Value::Object(m)) => m,
+        _ => Map::new(),
+    }
+}
 
 /// Extract an array of plain strings (`queue_update` steering/followUp 快照)
 pub(super) fn string_list(v: &Value) -> Vec<String> {
@@ -106,132 +142,170 @@ pub fn parse_line(line: &str) -> Option<Event> {
     // (~4-5 JSON levels per turn), so any session past ~25 turns blows
     // serde_json's 128-level default and the whole response is lost.
     let v = crate::json::parse_value(line).ok()?;
-    Some(parse_record(&v))
+    Some(parse_record(v))
 }
 
-pub fn parse_record(v: &Value) -> Event {
-    match v["type"].as_str() {
+/// 消费所有权版（047-内存削减 P1-1）：旧签名 `(&Value)` 迫使每个大字段
+/// `.clone()`（data/args/result/raw_system/WireEvent.value），解析峰值 = 整行
+/// Value + clone 子树两份并存。move 化后子树直接摘走。字段语义逐条保持与
+/// 旧实现等价（见各臂注释与 wire_parse 测试的 null/missing 区分用例）。
+pub fn parse_record(v: Value) -> Event {
+    let mut map = match v {
+        Value::Object(map) => map,
+        // 旧口径：非 object 的 v["type"] 索引恒 Null → 落 Unparsed(v.clone())
+        other => return Event::Unparsed(other),
+    };
+    // type 先拷一份小串（type 键 ~20B，与 Value 树无关）——scrutinee 借用
+    // 与臂内 map.remove 的互斥解法
+    let ty = map.get("type").and_then(Value::as_str).map(str::to_string);
+    match ty.as_deref() {
         Some("response") => Event::Response {
-            id: v["id"].as_str().unwrap_or("").to_string(),
-            command: v["command"].as_str().unwrap_or("").to_string(),
-            success: v["success"].as_bool().unwrap_or(false),
-            error: v["error"].as_str().map(str::to_string),
-            data: v.get("data").cloned(),
+            id: s(&map, "id"),
+            command: s(&map, "command"),
+            success: b(&map, "success"),
+            error: os(&map, "error"),
+            // 旧口径 get().cloned()：缺失 → None，null → Some(Null)
+            data: map.remove("data"),
         },
         // roles: "system" | "user" | "assistant" | "toolResult" (json.md wire)
-        Some("message_start") => Event::MessageStart {
-            role: v["message"]["role"].as_str().unwrap_or("").to_string(),
-            blocks: content_blocks(&v["message"]["content"]),
-            timestamp: v["message"]["timestamp"].as_i64(),
-            is_error: v["message"]["isError"].as_bool().unwrap_or(false),
-            tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
-            custom_type: v["message"]["customType"].as_str().map(str::to_string),
-            custom_display: v["message"]["display"].as_bool().unwrap_or(true),
-            details: v["message"]["details"]
-                .as_object()
-                .map(|_| v["message"]["details"].clone()),
-            raw_system: (v["message"]["role"].as_str() == Some("system"))
-                .then(|| v["message"].clone()),
-        },
-        Some("message_update") => {
-            Event::MessageUpdate(AssistantEvent::parse(&v["assistantMessageEvent"]))
+        Some("message_start") => {
+            let mut msg = take_map(&mut map, "message");
+            let role = s(&msg, "role");
+            let is_system = role == "system";
+            // content 借读不摘：raw_system 必须携带完整 message 本体（含
+            // content/sections/toolsAdded——app live 重放的数据源）
+            let blocks = content_blocks(msg.get("content").unwrap_or(&Value::Null));
+            // system：details 与 raw_system 同源于完整 message——details 保持
+            // clone 共存；非 system 无 raw_system，details 直接 move
+            let details = if is_system {
+                msg.get("details").filter(|d| d.is_object()).cloned()
+            } else {
+                msg.remove("details").filter(|d| d.is_object())
+            };
+            Event::MessageStart {
+                role,
+                blocks,
+                timestamp: opt_i(&msg, "timestamp"),
+                is_error: b(&msg, "isError"),
+                tool_call_id: os(&msg, "toolCallId"),
+                custom_type: os(&msg, "customType"),
+                custom_display: msg.get("display").and_then(Value::as_bool).unwrap_or(true),
+                details,
+                // 全量 message 本体 move（含 details/content/sections/toolsAdded）
+                raw_system: is_system.then(|| Value::Object(std::mem::take(&mut msg))),
+            }
         }
-        Some("message_end") => Event::MessageEnd {
-            role: v["message"]["role"].as_str().unwrap_or("").to_string(),
-            blocks: content_blocks(&v["message"]["content"]),
-            usage: Usage::parse(&v["message"]["usage"]),
-            timestamp: v["message"]["timestamp"].as_i64(),
-            stop_reason: v["message"]["stopReason"].as_str().map(str::to_string),
-            error_message: v["message"]["errorMessage"].as_str().map(str::to_string),
-            is_error: v["message"]["isError"].as_bool().unwrap_or(false),
-            tool_call_id: v["message"]["toolCallId"].as_str().map(str::to_string),
-            custom_type: v["message"]["customType"].as_str().map(str::to_string),
-            custom_display: v["message"]["display"].as_bool().unwrap_or(true),
-            model: v["message"]["model"].as_str().map(str::to_string),
-        },
+        Some("message_update") => Event::MessageUpdate(AssistantEvent::parse(
+            map.get("assistantMessageEvent").unwrap_or(&Value::Null),
+        )),
+        Some("message_end") => {
+            let mut msg = take_map(&mut map, "message");
+            let content = msg.remove("content").unwrap_or(Value::Null);
+            let blocks = content_blocks(&content);
+            Event::MessageEnd {
+                role: s(&msg, "role"),
+                blocks,
+                usage: Usage::parse(msg.get("usage").unwrap_or(&Value::Null)),
+                timestamp: opt_i(&msg, "timestamp"),
+                stop_reason: os(&msg, "stopReason"),
+                error_message: os(&msg, "errorMessage"),
+                is_error: b(&msg, "isError"),
+                tool_call_id: os(&msg, "toolCallId"),
+                custom_type: os(&msg, "customType"),
+                custom_display: msg.get("display").and_then(Value::as_bool).unwrap_or(true),
+                model: os(&msg, "model"),
+            }
+        }
         Some("agent_start") => Event::AgentStart,
         Some("agent_end") => Event::AgentEnd {
-            will_retry: v["willRetry"].as_bool().unwrap_or(false),
+            will_retry: b(&map, "willRetry"),
         },
         Some("agent_settled") => Event::AgentSettled,
         Some("auto_retry_start") => Event::AutoRetryStart {
-            attempt: v["attempt"].as_u64().unwrap_or(0) as u32,
-            max_attempts: v["maxAttempts"].as_u64().unwrap_or(0) as u32,
-            delay_ms: v["delayMs"].as_u64().unwrap_or(0),
-            error_message: v["errorMessage"].as_str().map(str::to_string),
+            attempt: opt_u(&map, "attempt").unwrap_or(0) as u32,
+            max_attempts: opt_u(&map, "maxAttempts").unwrap_or(0) as u32,
+            delay_ms: opt_u(&map, "delayMs").unwrap_or(0),
+            error_message: os(&map, "errorMessage"),
         },
         Some("auto_retry_end") => Event::AutoRetryEnd {
-            success: v["success"].as_bool().unwrap_or(false),
-            attempt: v["attempt"].as_u64().unwrap_or(0) as u32,
-            final_error: v["finalError"].as_str().map(str::to_string),
+            success: b(&map, "success"),
+            attempt: opt_u(&map, "attempt").unwrap_or(0) as u32,
+            final_error: os(&map, "finalError"),
         },
         Some("bash_execution_update") => Event::BashExecutionUpdate {
-            id: v["id"].as_str().map(str::to_string),
-            delta: v["delta"].as_str().unwrap_or("").to_string(),
+            id: os(&map, "id"),
+            delta: s(&map, "delta"),
         },
         Some("compaction_start") => Event::CompactionStart {
-            reason: v["reason"].as_str().map(str::to_string),
+            reason: os(&map, "reason"),
         },
         Some("compaction_end") => Event::CompactionEnd {
-            reason: v["reason"].as_str().map(str::to_string),
-            aborted: v["aborted"].as_bool().unwrap_or(false),
-            will_retry: v["willRetry"].as_bool().unwrap_or(false),
-            error_message: v["errorMessage"].as_str().map(str::to_string),
+            reason: os(&map, "reason"),
+            aborted: b(&map, "aborted"),
+            will_retry: b(&map, "willRetry"),
+            error_message: os(&map, "errorMessage"),
         },
         Some("summarization_retry_scheduled") => Event::SummarizationRetryScheduled {
-            attempt: v["attempt"].as_u64().unwrap_or(0) as u32,
-            max_attempts: v["maxAttempts"].as_u64().unwrap_or(0) as u32,
-            delay_ms: v["delayMs"].as_u64().unwrap_or(0),
-            error_message: v["errorMessage"].as_str().map(str::to_string),
+            attempt: opt_u(&map, "attempt").unwrap_or(0) as u32,
+            max_attempts: opt_u(&map, "maxAttempts").unwrap_or(0) as u32,
+            delay_ms: opt_u(&map, "delayMs").unwrap_or(0),
+            error_message: os(&map, "errorMessage"),
         },
         Some("summarization_retry_attempt_start") => Event::SummarizationRetryAttemptStart {
-            source: v["source"].as_str().map(str::to_string),
+            source: os(&map, "source"),
         },
         Some("summarization_retry_finished") => Event::SummarizationRetryFinished,
         Some("extension_error") => Event::ExtensionError {
-            extension_path: v["extensionPath"].as_str().map(str::to_string),
-            event_name: v["event"].as_str().map(str::to_string),
-            error: v["error"].as_str().map(str::to_string),
+            extension_path: os(&map, "extensionPath"),
+            event_name: os(&map, "event"),
+            error: os(&map, "error"),
         },
         Some("queue_update") => Event::QueueUpdate {
-            steering: string_list(&v["steering"]),
-            follow_up: string_list(&v["followUp"]),
+            steering: string_list(map.get("steering").unwrap_or(&Value::Null)),
+            follow_up: string_list(map.get("followUp").unwrap_or(&Value::Null)),
         },
         Some("thinking_level_changed") => Event::ThinkingLevelChanged {
-            level: v["level"].as_str().unwrap_or_default().to_string(),
+            level: map
+                .get("level")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         },
         // 工具执行起收：立正式事件（嵌套调用的完整 result 只在这里出现，
-        // 派发账本靠它落 child_id / stop_reason）
+        // 派发账本靠它落 child_id / stop_reason）。args/result 是大字段主
+        // 载体——move 直摘
         Some("tool_execution_start") => Event::ToolExecutionStart {
-            tool_call_id: v["toolCallId"].as_str().unwrap_or_default().to_string(),
-            tool_name: v["toolName"].as_str().unwrap_or_default().to_string(),
-            parent_tool_call_id: v["parentToolCallId"].as_str().map(str::to_string),
-            args: (!v["args"].is_null()).then(|| v["args"].clone()),
+            tool_call_id: s(&map, "toolCallId"),
+            tool_name: s(&map, "toolName"),
+            parent_tool_call_id: os(&map, "parentToolCallId"),
+            args: take_not_null(&mut map, "args"),
         },
         Some("tool_execution_end") => Event::ToolExecutionEnd {
-            tool_call_id: v["toolCallId"].as_str().unwrap_or_default().to_string(),
-            tool_name: v["toolName"].as_str().unwrap_or_default().to_string(),
-            parent_tool_call_id: v["parentToolCallId"].as_str().map(str::to_string),
-            is_error: v["isError"].as_bool().unwrap_or(false),
-            result: (!v["result"].is_null()).then(|| v["result"].clone()),
-            duration_ms: v["durationMs"].as_u64(),
+            tool_call_id: s(&map, "toolCallId"),
+            tool_name: s(&map, "toolName"),
+            parent_tool_call_id: os(&map, "parentToolCallId"),
+            is_error: b(&map, "isError"),
+            result: take_not_null(&mut map, "result"),
+            duration_ms: opt_u(&map, "durationMs"),
         },
         // app 暂不消费的会话事件：按 type 归类为 WireEvent，别落 Unparsed
-        Some("tool_execution_update" | "entry_appended" | "session_info_changed") => {
+        Some(kind @ ("tool_execution_update" | "entry_appended" | "session_info_changed")) => {
             Event::WireEvent {
-                kind: v["type"].as_str().unwrap_or("").to_string(),
-                value: v.clone(),
+                kind: kind.to_string(),
+                value: Value::Object(map),
             }
         }
-        Some("extension_ui_request") => {
-            Event::ExtensionUi(ExtensionUiRequest::parse(v).unwrap_or(ExtensionUiRequest {
-                id: String::new(),
-                method: ExtUiMethod::Notify {
-                    message: String::new(),
-                    notify_type: None,
+        Some("extension_ui_request") => Event::ExtensionUi(
+            ExtensionUiRequest::parse(&Value::Object(std::mem::take(&mut map))).unwrap_or(
+                ExtensionUiRequest {
+                    id: String::new(),
+                    method: ExtUiMethod::Notify {
+                        message: String::new(),
+                        notify_type: None,
+                    },
                 },
-            }))
-        }
-        _ => Event::Unparsed(v.clone()),
+            ),
+        ),
+        _ => Event::Unparsed(Value::Object(map)),
     }
 }
