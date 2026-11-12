@@ -3,7 +3,23 @@
 
 use super::*;
 
+/// 047-P2-3：终端 tab 上限。隐藏 tab 不释放 PTY 是有意设计（并发监控
+/// 卖点），所以顶的是进程数：`terminals` 达 16 拒开新终端（两个独立
+/// push 点 [`Chat::spawn_terminal_tab`] / [`Chat::open_script_terminal`]
+/// 同源卡口），toast 告知不硬崩。
+const TERM_CAP: usize = 16;
+
 impl Chat {
+    /// 终端上限检查（047-P2-3）：达 [`TERM_CAP`] → toast + true（调用方
+    /// 不再创建）。两个 push 点口共用，杜绝只卡一处从另一处绕过。
+    fn term_cap_blocked(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.ws.terminals.len() < TERM_CAP {
+            return false;
+        }
+        self.set_status(crate::i18n::tr("mem.term_cap_reached").to_string(), cx);
+        true
+    }
+
     /// 打开一个终端；`cwd_override` 为 psp 项目菜单定向打开时
     /// 的项目目录，None = 当前工作区。v54: 终端在内容区 tab 显示。
     ///
@@ -46,6 +62,11 @@ impl Chat {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // 047-P2-3：达上限先拒（不白量字格、不白占 term_seq）——启动恢复
+        // 路也走这里，超限终端不回放（false 已被调用方容忍）
+        if self.term_cap_blocked(cx) {
+            return false;
+        }
         let Some(tx) = self.ws.term_events.clone() else {
             return false;
         };
@@ -83,6 +104,11 @@ impl Chat {
         let Some(dir) = file.parent().map(|p| p.to_path_buf()) else {
             return;
         };
+        // 047-P2-3：与 spawn_terminal_tab 独立 push 点同源卡口（超限不创建）
+        if self.term_cap_blocked(cx) {
+            cx.notify();
+            return;
+        }
         let Some(tx) = self.ws.term_events.clone() else {
             return;
         };

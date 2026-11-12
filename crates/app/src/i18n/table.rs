@@ -879,4 +879,5 @@ pub(super) const TABLE: &[(&str, &str, &str, &str)] = &[
     ("footerbar.mgr.empty", "暂无申请常驻状态的插件", "暫無申請常駐狀態的外掛", "No extensions have requested status-bar residency"),
     // -- 047 内存削减（mem.*：资源上限的逐出/超限提示，status_toast 呈现）
     ("mem.editor_tab_evicted", "已关闭最早打开的标签页「{name}」以释放内存", "已關閉最早開啟的標籤頁「{name}」以釋放記憶體", "Closed the oldest tab \"{name}\" to free memory"),
+    ("mem.term_cap_reached", "终端数量已达上限（16）", "終端數量已達上限（16）", "Terminal tab limit reached (16)"),
 ];
