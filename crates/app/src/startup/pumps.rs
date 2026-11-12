@@ -248,8 +248,12 @@ fn spawn_idle_recycle(cx: &mut gpui::Context<Chat>) {
                                 // 阻塞件未兑现不得退役（切回要浮卡兑现）；
                                 // fire-and-forget 队尾残留不拦退役——旧口径
                                 // 整队非空即拦，服务会话 park 期间猛发
-                                // setStatus 后进程永不退休（2026-11-05 黄点同源）
-                                && r.ext_queue.iter().all(|q| !q.method.is_blocking())
+                                // setStatus 后进程永不退休（2026-11-05 黄点同源）。
+                                // 阻塞件另带 600s 保护窗时效（047-内存削减
+                                // P0-4）：泵死扩展/用户长期不回不再钉死退役
+                                && crate::session::runtime::ext_queue_allows_recycle(
+                                    &r.ext_queue,
+                                )
                         };
                         if idle {
                             retire.push(key.clone());

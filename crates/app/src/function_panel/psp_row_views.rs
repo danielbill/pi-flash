@@ -58,7 +58,7 @@ pub(crate) fn session_row_view(
     // 类服务会话 park 期间猛发 setStatus，橙点常亮且切回也不消（2026-11-05）
     let awaiting = chat.pool.runtimes.values().any(|rt| {
         let r = rt.read(cx);
-        r.ext_queue.iter().any(|q| q.method.is_blocking())
+        r.ext_queue.iter().any(|q| q.req.method.is_blocking())
             && crate::services::workspace::same_path(std::path::Path::new(&r.key), &info.path)
     });
     let title: SharedString = info

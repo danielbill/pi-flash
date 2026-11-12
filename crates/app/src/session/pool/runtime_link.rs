@@ -128,7 +128,12 @@ impl Chat {
                             rt.read(cx).key,
                             chat.pool.active_key
                         ));
-                        rt.update(cx, |r, _| r.ext_queue.push(req.clone()));
+                        rt.update(cx, |r, _| {
+                            r.ext_queue.push(crate::session::runtime::ExtPending {
+                                at: std::time::Instant::now(),
+                                req: req.clone(),
+                            })
+                        });
                         if blocking {
                             // 每请求只叫一次（claimExtensionAttentionNotification
                             // parity）；切回兑现后不再打扰
@@ -396,18 +401,18 @@ impl Chat {
             // 其余回队等逐个兑现。旧逻辑「只兑现队首、其余无差别回队」
             // 会把 fire-and-forget 永远留在队里——徽标常亮、空闲退役被卡。
             let (blocking, forget): (Vec<_>, Vec<_>) =
-                queued.into_iter().partition(|q| q.method.is_blocking());
+                queued.into_iter().partition(|q| q.req.method.is_blocking());
             pi_link::client::ext_trace(&format!(
                 "switch flush: {} forget + {} blocking (first id={})",
                 forget.len(),
                 blocking.len(),
-                blocking.first().map(|q| q.id.as_str()).unwrap_or("-")
+                blocking.first().map(|q| q.req.id.as_str()).unwrap_or("-")
             ));
             for q in forget {
-                self.on_ext_ui(q, cx);
+                self.on_ext_ui(q.req, cx);
             }
             if let Some(first) = blocking.first() {
-                let first = first.clone();
+                let first = first.req.clone();
                 cx.notify();
                 self.on_ext_ui(first, cx);
             }
