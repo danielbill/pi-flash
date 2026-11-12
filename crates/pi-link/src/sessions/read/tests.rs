@@ -211,3 +211,72 @@ fn count_message_entries_streaming_edge_cases() {
 
     std::fs::remove_file(&path).ok();
 }
+
+/// P1-3 两遍法等价性：分叉链末锚支路胜出、链外消息不进结果（旧实现全量
+/// Value 驻留再 retain，新实现第一遍即弃）、max 截断保最新。
+#[test]
+fn leaf_two_pass_branch_pick_and_off_chain_excluded() {
+    let dir = std::env::temp_dir().join("pi-flash-leaf-two-pass");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("two-pass.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"hdr","cwd":"/w"}"#, "\n",
+            r#"{"type":"message","id":"m1","parentId":"hdr","timestamp":1,"message":{"role":"user","content":[{"type":"text","text":"q"}]}}"#, "\n",
+            // 支路 A + 链外洪泛（先写；锚定规则 = 文件序最后一条 message 胜出）
+            r#"{"type":"message","id":"m2a","parentId":"m1","timestamp":2,"message":{"role":"assistant","content":[{"type":"text","text":"branch-a"}]}}"#, "\n",
+            r#"{"type":"message","id":"x0","parentId":"m2a","timestamp":4,"message":{"role":"user","content":[{"type":"text","text":"off-chain-0"}]}}"#, "\n",
+            r#"{"type":"message","id":"x1","parentId":"x0","timestamp":5,"message":{"role":"assistant","content":[{"type":"text","text":"off-chain-1"}]}}"#, "\n",
+            // 支路 B（最后落盘 = 末锚，胜出）
+            r#"{"type":"message","id":"m2b","parentId":"m1","timestamp":3,"message":{"role":"assistant","content":[{"type":"text","text":"branch-b"}]}}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let msgs = read_leaf_messages(&path, 100);
+    let texts: Vec<&str> = msgs
+        .iter()
+        .map(|v| v["message"]["content"][0]["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["q", "branch-b"], "末锚支路胜出，链外排除");
+
+    let trimmed = read_leaf_messages(&path, 1);
+    let texts: Vec<&str> = trimmed
+        .iter()
+        .map(|v| v["message"]["content"][0]["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["branch-b"], "max 截断保留最新");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// P1-3 环防护：锚点的祖先链成环（a↔b）时不得挂死/不得爆栈——环内非
+/// renderable 条目不进结果，renderable 叶照常返回。
+#[test]
+fn leaf_two_pass_cycle_guard_terminates() {
+    let dir = std::env::temp_dir().join("pi-flash-leaf-cycle");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cycle.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"hdr","cwd":"/w"}"#, "\n",
+            // 环：cyc1 ↔ cyc2
+            r#"{"type":"custom","id":"cyc1","parentId":"cyc2","data":{}}"#, "\n",
+            r#"{"type":"custom","id":"cyc2","parentId":"cyc1","data":{}}"#, "\n",
+            // 叶挂在环上
+            r#"{"type":"message","id":"m9","parentId":"cyc1","timestamp":9,"message":{"role":"assistant","content":[{"type":"text","text":"leaf-on-cycle"}]}}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let msgs = read_leaf_messages(&path, 100);
+    let texts: Vec<&str> = msgs
+        .iter()
+        .map(|v| v["message"]["content"][0]["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, vec!["leaf-on-cycle"], "环防护截断回溯，叶照常返回");
+
+    std::fs::remove_file(&path).ok();
+}

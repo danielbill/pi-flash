@@ -297,36 +297,56 @@ pub fn count_message_entries(path: &Path) -> u64 {
 /// parentId repairs the display side. Returns chain messages oldest→newest
 /// (file order = chain order: entries always append below their parent),
 /// up to `max`.
+///
+/// 两遍法（047-内存削减 P1-3）：第一遍流式浅读只收 id→parentId 拓扑与
+/// renderable 行的字节偏移（每行即弃，无 Value 驻留）；第二遍顺序重读仅
+/// 叶链上的行建 Value。内存 O(全史 id 串 + 叶链) 替代旧实现 O(全史 Value)
+/// ——50MB 会话旧峰值 100~200MB。输出与旧实现逐条一致（锚定/回溯/环防护
+/// /max 截断语义全部保留，`LEAF_REPAIR_MAX` 长度竞赛口径不动）。
 pub fn read_leaf_messages(path: &Path, max: usize) -> Vec<Value> {
-    use std::io::BufRead;
+    use std::io::{BufRead, Seek, SeekFrom};
     let Ok(file) = std::fs::File::open(path) else {
         return Vec::new();
     };
+
+    // ---- pass 1：拓扑 + renderable 行偏移（每行即弃，无 Value 驻留）----
     let mut parent_of: HashMap<String, String> = HashMap::new();
-    let mut messages: Vec<Value> = Vec::new();
+    let mut msg_offsets: HashMap<String, u64> = HashMap::new();
     let mut anchor: Option<String> = None;
-    for line in std::io::BufReader::new(file).lines() {
-        let Ok(line) = line else { break };
-        let Ok(v) = crate::json::parse_value(&line) else {
-            continue;
-        };
-        if v["type"].as_str() == Some("session") {
-            continue;
-        }
-        if let Some(id) = v["id"].as_str() {
-            parent_of.insert(
-                id.to_string(),
-                v["parentId"].as_str().unwrap_or("").to_string(),
-            );
-            if let Some(m) = renderable_message(&v) {
-                anchor = Some(id.to_string());
-                messages.push(m);
+    let mut reader = std::io::BufReader::with_capacity(128 * 1024, file);
+    let mut offset = 0u64;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let line_start = offset;
+                offset += n as u64;
+                let Ok(v) = crate::json::parse_value(line.trim_end()) else {
+                    continue;
+                };
+                if v["type"].as_str() == Some("session") {
+                    continue;
+                }
+                if let Some(id) = v["id"].as_str() {
+                    parent_of.insert(
+                        id.to_string(),
+                        v["parentId"].as_str().unwrap_or("").to_string(),
+                    );
+                    if renderable_message(&v).is_some() {
+                        anchor = Some(id.to_string());
+                        msg_offsets.insert(id.to_string(), line_start);
+                    }
+                }
             }
         }
     }
     let Some(anchor) = anchor else {
         return Vec::new();
     };
+
+    // ---- 叶链回溯（环防护不变；parent_of 只服务此处，随后即释放）----
     let mut on_chain: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut cur = Some(anchor);
     while let Some(id) = cur {
@@ -335,11 +355,44 @@ pub fn read_leaf_messages(path: &Path, max: usize) -> Vec<Value> {
         }
         cur = parent_of.get(&id).filter(|p| !p.is_empty()).cloned();
     }
-    messages.retain(|v| v["id"].as_str().is_some_and(|id| on_chain.contains(id)));
-    if messages.len() > max {
-        messages.drain(..messages.len() - max);
+    drop(parent_of);
+
+    // ---- pass 2：顺序重读，仅为叶链行建 Value（文件序 = 链序，偏移排序
+    // ---- 后双指针对齐，无需逐行 seek）----
+    let mut order: Vec<(u64, &String)> = msg_offsets
+        .iter()
+        .filter(|(id, _)| on_chain.contains(*id))
+        .map(|(id, off)| (*off, id))
+        .collect();
+    order.sort_unstable_by_key(|(off, _)| *off);
+    let mut out: Vec<Value> = Vec::new();
+    let mut want_ix = 0usize;
+    if reader.seek(SeekFrom::Start(0)).is_err() {
+        return Vec::new();
     }
-    messages
+    offset = 0;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let line_start = offset;
+                offset += n as u64;
+                if want_ix < order.len() && order[want_ix].0 == line_start {
+                    want_ix += 1;
+                    if let Ok(v) = crate::json::parse_value(line.trim_end()) {
+                        if let Some(m) = renderable_message(&v) {
+                            out.push(m);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if out.len() > max {
+        out.drain(..out.len() - max);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
