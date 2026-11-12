@@ -112,7 +112,21 @@ pub fn git_status_files(cwd: &Path) -> Vec<GitFile> {
     let repo_root = run_git(cwd, &["rev-parse", "--show-toplevel"])
         .map(|s| PathBuf::from(s.trim()))
         .unwrap_or_else(|| cwd.to_path_buf());
-    let rel_cwd = cwd.strip_prefix(&repo_root).ok();
+    // 常规前缀不中时的兜底：env 侧路径与 git 回报路径形态分叉（CI runner
+    // TEMP=RUNNER~1 8.3 短名 vs git 报长名 runneradmin；大小写/斜杠同理）
+    // 会让 strip_prefix 组件比对失败、丢失重定基。两边 canonicalize 成同一
+    // 真身再比；命中后 join 回原 cwd 形态，与文件树 read_dir 同形态的前提
+    // 不变。常规路径零开销（首个 strip_prefix 已中）。
+    let rel_cwd = match cwd.strip_prefix(&repo_root) {
+        Ok(rel) => Some(rel.to_path_buf()),
+        Err(_) => match (
+            std::fs::canonicalize(cwd),
+            std::fs::canonicalize(&repo_root),
+        ) {
+            (Ok(c), Ok(r)) => c.strip_prefix(r).ok().map(PathBuf::from),
+            _ => None,
+        },
+    };
     let mut files = Vec::new();
     // -z: 记录 NUL 分隔；rename/copy 是两条记录——新路径带 "XY " 前缀，
     // 旧路径是紧跟的无前缀记录（没有 TAB 可切）。
@@ -143,7 +157,10 @@ pub fn git_status_files(cwd: &Path) -> Vec<GitFile> {
                 (st, rest)
             }
         };
-        let full = match rel_cwd.and_then(|prefix| Path::new(file_path).strip_prefix(prefix).ok()) {
+        let full = match rel_cwd
+            .as_ref()
+            .and_then(|prefix| Path::new(file_path).strip_prefix(prefix).ok())
+        {
             Some(sub) => cwd.join(sub),
             None => repo_root.join(file_path),
         };

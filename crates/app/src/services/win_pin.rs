@@ -288,10 +288,17 @@ mod tests {
 
         write_shortcut(&lnk, &target).expect("写 lnk 失败");
         let got = read_shortcut_target(&lnk).expect("读回失败");
-        assert!(
-            crate::services::workspace::same_path(Path::new(&got), &target),
-            "目标不符：{got}"
-        );
+        // CI runner TEMP=RUNNER~1 8.3 短名：shell 回读长名，same_path 字符串
+        // 级比对必失——两边 canonicalize 成同一真身再比（目标在盘上必可解
+        // 析；canonicalize 失败时回落字符串比对，保底旧行为）
+        let same = match (
+            std::fs::canonicalize(Path::new(got.trim())),
+            std::fs::canonicalize(&target),
+        ) {
+            (Ok(a), Ok(b)) => crate::services::workspace::same_path(&a, &b),
+            _ => crate::services::workspace::same_path(Path::new(&got), &target),
+        };
+        assert!(same, "目标不符：{got}");
 
         // AUMID 属性读回（GetValue 返回的 PROPVARIANT 由系统分配，Drop 正常清）
         com(|| unsafe {

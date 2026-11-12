@@ -118,6 +118,12 @@ def write_baseline(report):
 
 
 def main():
+    # CI runner（windows-latest）stdout 默认 cp1252：下面的中文 OK/违规行会
+    # UnicodeEncodeError 直接炸守卫。统一强制 UTF-8（本地 UTF-8 终端不受影响）。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
+
     report = scan()
     debt = sum(len(v[1]) for v in report.values())
 
