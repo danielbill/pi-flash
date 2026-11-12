@@ -253,71 +253,100 @@ fn content_text(content: &Value) -> String {
 /// Returns `None` when the transcript carries no system message at all, so
 /// callers can tell "not loaded" from "empty prompt".
 pub fn transcript_system(entries: &[Value]) -> Option<TranscriptSystem> {
-    let mut parts: Vec<(String, String)> = Vec::new();
-    let mut sections: Vec<(String, String)> = Vec::new();
-    let mut tools: Vec<ToolDecl> = Vec::new();
-    let mut seen_system = false;
-
-    let tool_of = |v: &Value| -> Option<ToolDecl> {
-        let name = v["name"].as_str()?.to_string();
-        Some(ToolDecl {
-            name,
-            description: v["description"].as_str().unwrap_or("").to_string(),
-            parameters: v.get("parameters").cloned().unwrap_or(Value::Null),
-        })
-    };
-
+    let mut fold = TranscriptFold::new();
     for entry in entries {
+        fold.apply(entry);
+    }
+    fold.finish()
+}
+
+/// 增量折算器（047-内存削减 P1-4）：系统提示词/工具声明的累积态。逐条
+/// [`apply`](Self::apply) 与全量 [`transcript_system`] **同一折算口径**
+/// （content 追加、sections 增删、tools 移除/声明、插入序保序）——app 侧
+/// 增量喂单条 message_start 的 raw_system，不再整表持有原始 system 消息
+/// （数百 run 长会话曾累积 6~30MB 常驻）。
+///
+/// `finish()` = None 表示从未见过 system 消息（「尚未加载」语义），与
+/// [`transcript_system`] 的 None 同源。
+#[derive(Debug, Default)]
+pub struct TranscriptFold {
+    parts: Vec<(String, String)>,
+    sections: Vec<(String, String)>,
+    tools: Vec<ToolDecl>,
+    seen_system: bool,
+}
+
+impl TranscriptFold {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 折进一条原始条目（裸 message 或 `{message: …}` 包装均可）；非
+    /// system 角色为 no-op（调用方无需预过滤）。
+    pub fn apply(&mut self, entry: &Value) {
         let m = entry.get("message").unwrap_or(entry);
         if m["role"].as_str() != Some("system") {
-            continue;
+            return;
         }
-        seen_system = true;
+        self.seen_system = true;
 
         let text = content_text(&m["content"]);
         if !text.is_empty() {
-            parts.push(("content".to_string(), text));
+            self.parts.push(("content".to_string(), text));
         }
         if let Some(patch) = m["sections"].as_object() {
             for (name, value) in patch {
                 if value.is_null() {
-                    sections.retain(|(n, _)| n != name);
+                    self.sections.retain(|(n, _)| n != name);
                     continue;
                 }
                 let text = content_text(value);
-                match sections.iter_mut().find(|(n, _)| n == name) {
+                match self.sections.iter_mut().find(|(n, _)| n == name) {
                     Some(slot) => slot.1 = text,
-                    None => sections.push((name.clone(), text)),
+                    None => self.sections.push((name.clone(), text)),
                 }
             }
         }
         for removed in m["toolsRemoved"].as_array().into_iter().flatten() {
             if let Some(name) = removed["name"].as_str() {
-                tools.retain(|t| t.name != name);
+                self.tools.retain(|t| t.name != name);
             }
         }
         for added in m["toolsAdded"].as_array().into_iter().flatten() {
             let Some(decl) = tool_of(added) else { continue };
-            match tools.iter_mut().find(|t| t.name == decl.name) {
+            match self.tools.iter_mut().find(|t| t.name == decl.name) {
                 Some(slot) => *slot = decl,
-                None => tools.push(decl),
+                None => self.tools.push(decl),
             }
         }
     }
 
-    if !seen_system {
-        return None;
+    /// 产出当前折算态；从未见过 system 消息 → None。
+    pub fn finish(&self) -> Option<TranscriptSystem> {
+        if !self.seen_system {
+            return None;
+        }
+        let mut parts = self.parts.clone();
+        parts.extend(self.sections.iter().cloned());
+        Some(TranscriptSystem {
+            prompt: parts
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            tools: self.tools.clone(),
+            parts,
+        })
     }
-    parts.extend(sections);
-    Some(TranscriptSystem {
-        prompt: parts
-            .iter()
-            .map(|(_, text)| text.as_str())
-            .filter(|p| !p.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n"),
-        tools,
-        parts,
+}
+
+fn tool_of(v: &Value) -> Option<ToolDecl> {
+    let name = v["name"].as_str()?.to_string();
+    Some(ToolDecl {
+        name,
+        description: v["description"].as_str().unwrap_or("").to_string(),
+        parameters: v.get("parameters").cloned().unwrap_or(Value::Null),
     })
 }
 

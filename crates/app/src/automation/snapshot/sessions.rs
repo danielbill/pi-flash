@@ -55,7 +55,7 @@ pub(super) fn sessions_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
         .collect();
     // 内存探针：各缓存（条数, 字节）+ 队列 + 活跃会话 transcript 规模——
     // 长跑内存回归验收用（退役/驱逐前后对照）
-    let (active_msgs, active_sys_msgs) = chat
+    let (active_msgs, active_sys_folded) = chat
         .pool
         .runtimes
         .get(&chat.pool.active_key)
@@ -71,7 +71,7 @@ pub(super) fn sessions_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
     let mem = json!({
         "runtimes": chat.pool.runtimes.len(),
         "active_msgs": active_msgs,
-        "active_system_msgs": active_sys_msgs,
+        "active_system_folded": active_sys_folded,
         "asset_evict_pending": crate::services::asset_evict::pending_len(),
         "img_cache": {"len": img_n, "bytes": img_bytes},
         "md_parse": {"len": md_n, "bytes": md_bytes},

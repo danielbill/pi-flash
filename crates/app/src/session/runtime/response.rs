@@ -253,15 +253,14 @@ impl SessionRuntime {
                 // 系统提示词 + 工具声明：pi 0.86+ 把它们写进 transcript
                 // 的 system 消息（sections / toolsAdded），replay 是唯一读法
                 // （pi-ai transcript.js；pi-web 的 System/Tools 面板同源）。
-                // 快照是权威源：system 消息整表替换后重放（live 流式追加
-                // 的增量以快照为准对齐）。在叶子链修复之前算——那份回退只
-                // 喂显示用的消息。
-                self.system_msgs = rpc_msgs
-                    .iter()
-                    .map(|e| e.get("message").unwrap_or(e))
-                    .filter(|m| m["role"].as_str() == Some("system"))
-                    .cloned()
-                    .collect();
+                // 快照是权威源：折算器整表重建后重放（live 流式追加的增量
+                // 以快照为准对齐）。在叶子链修复之前算——那份回退只喂显示
+                // 用的消息。
+                let mut fold = pi_link::transcript::TranscriptFold::new();
+                for e in &rpc_msgs {
+                    fold.apply(e);
+                }
+                self.sys_fold = Some(fold);
                 self.replay_system(cx);
                 // leaf-chain repair: pi anchors its restored leaf at the
                 // last entry of ANY type; a mis-parented custom entry

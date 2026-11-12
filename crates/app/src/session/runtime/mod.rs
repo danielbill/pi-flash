@@ -193,11 +193,13 @@ pub(crate) struct SessionRuntime {
     /// pi_link::transcript::transcript_system replay 得出 —— pi-web 的
     /// System/Tools 面板同源。`None` = 尚未加载（无进程或消息还没回来）。
     pub sys: Option<pi_link::transcript::TranscriptSystem>,
-    /// transcript 里 `role:"system"` 消息原文。live `message_start`（pi 每个
-    /// run 都先追加一条，实测 RPC 全量携带 content/sections/toolsAdded）逐条
-    /// 追加；get_messages 快照到达时整表替换。`sys` 由它重放得出 —— 新会话
-    /// 第一轮即可点亮面板，不必等下一次 get_messages。
-    system_msgs: Vec<serde_json::Value>,
+    /// transcript 系统消息的增量折算态（047-内存削减 P1-4：不再整表持有
+    /// 原始 system 消息——数百 run 长会话曾累积 6~30MB 常驻）。live
+    /// `message_start`（pi 每个 run 都先追加一条，实测 RPC 全量携带
+    /// content/sections/toolsAdded）逐条 apply；get_messages 快照到达时
+    /// 折算器整表重建。`sys` 由它 finish 得出 —— 新会话第一轮即可点亮
+    /// 面板，不必等下一次 get_messages。
+    sys_fold: Option<pi_link::transcript::TranscriptFold>,
 
     // ---- inputPanel (031) per-session state ----
     pub input: String,
@@ -384,7 +386,7 @@ impl SessionRuntime {
             fork_source_title: None,
             commands: Vec::new(),
             sys: None,
-            system_msgs: Vec::new(),
+            sys_fold: None,
             input: String::new(),
             pending_images: Vec::new(),
             history: Vec::new(),
@@ -446,10 +448,10 @@ impl SessionRuntime {
         self.last_activity = std::time::Instant::now();
     }
 
-    /// 探针（automation snapshot）：（消息条数，system 消息条数）——
+    /// 探针（automation snapshot）：（消息条数，system 折算态有/无 0|1）——
     /// 退役回收的前后对照用。
     pub(crate) fn mem_probe(&self) -> (usize, usize) {
-        (self.messages.len(), self.system_msgs.len())
+        (self.messages.len(), usize::from(self.sys_fold.is_some()))
     }
 
     pub(crate) fn refresh_state(&self) {

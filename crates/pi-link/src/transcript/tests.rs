@@ -183,3 +183,54 @@ fn split_project_context_by_path() {
         ]
     );
 }
+
+/// P1-4（047-内存削减）：TranscriptFold 增量折算与全量 transcript_system
+/// 逐条等价——content 追加 / sections 增删 / tools 移除声明 / 非 system
+/// no-op / 从未见过 system 消息 finish=None。
+#[test]
+fn fold_incremental_equals_batch() {
+    let m1 = json!({"role":"system","content":"base prompt",
+        "toolsAdded":[{"name":"read","description":"d","parameters":{"type":"object"}}]});
+    let m2 = json!({"role":"system","sections":{"rules":"R1"},
+        "toolsAdded":[{"name":"bash","description":"b","parameters":null}]});
+    let m3 = json!({"role":"system","sections":{"rules":null},
+        "toolsRemoved":[{"name":"read"}]});
+    let noise = json!({"role":"user","content":"not a system message"});
+    let all = [m1, m2, m3, noise];
+
+    let batch = transcript_system(&all).expect("batch fold");
+    let mut fold = TranscriptFold::new();
+    for e in &all {
+        fold.apply(e);
+    }
+    let mut fold = TranscriptFold::new();
+    for e in &all {
+        fold.apply(e);
+    }
+    let incremental = fold.finish().expect("incremental fold");
+    assert_eq!(batch, incremental, "增量与全量逐字段一致");
+    // 折算语义抽查
+    assert!(incremental.prompt.contains("base prompt"));
+    assert!(
+        !incremental.prompt.contains("R1"),
+        "sections:null 删除规则段"
+    );
+    assert!(
+        !incremental.tools.iter().any(|t| t.name == "read"),
+        "toolsRemoved 生效"
+    );
+    assert!(
+        incremental.tools.iter().any(|t| t.name == "bash"),
+        "toolsAdded 保留"
+    );
+    // 包装形态（{message: …}）与裸 message 同口径
+    let wrapped = json!({"id":"e1","parentId":"e0","message": all[1]});
+    let mut f = TranscriptFold::new();
+    f.apply(&wrapped);
+    assert!(f.finish().is_some(), "包装条目可折算");
+
+    // 从未见过 system 消息 → finish None（「尚未加载」语义）
+    let mut f = TranscriptFold::new();
+    f.apply(&all[3]);
+    assert!(f.finish().is_none());
+}

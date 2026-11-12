@@ -52,11 +52,11 @@ impl SessionRuntime {
         }
     }
 
-    /// 重放 [`Self::system_msgs`] 刷新 `sys`（transcript 无 system 消息时保留
-    /// 旧值，维持「尚未加载」语义）；变了就发 Changed，让开着的信息面板当场
-    /// 点亮。
+    /// 从 [`Self::sys_fold`] 折算态产出刷新 `sys`（从未见过 system 消息时
+    /// 保留旧值，维持「尚未加载」语义）；变了就发 Changed，让开着的信息
+    /// 面板当场点亮。
     pub(super) fn replay_system(&mut self, cx: &mut Context<Self>) {
-        if let Some(sys) = pi_link::transcript::transcript_system(&self.system_msgs) {
+        if let Some(sys) = self.sys_fold.as_ref().and_then(|f| f.finish()) {
             let changed = match &self.sys {
                 Some(prev) => prev.prompt != sys.prompt || prev.tools != sys.tools,
                 None => true,

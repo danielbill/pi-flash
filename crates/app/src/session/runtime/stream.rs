@@ -187,7 +187,9 @@ impl SessionRuntime {
                 // （新会话第一轮就有，不必等下一次 get_messages）。
                 // message_end 不重复处理（start 已带全量）。
                 if let Some(raw) = raw_system {
-                    self.system_msgs.push(raw);
+                    self.sys_fold
+                        .get_or_insert_with(pi_link::transcript::TranscriptFold::new)
+                        .apply(&raw);
                     self.replay_system(cx);
                 }
             }
