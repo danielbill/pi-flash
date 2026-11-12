@@ -22,6 +22,13 @@ use crate::vendor;
 /// fatal）只需尾部几行，整段留存反而吃内存
 const STDERR_TAIL_CAP: usize = 16 * 1024;
 
+/// node 侧车 V8 堆缺省上限（MB）（047-内存削减 P2-1）。上限≠分配：正常
+/// 运行占用不变，只在 pi 失控时把 OOM 限制在侧车进程内（stderr 尾 16KB
+/// 留痕 + ensure_spawned 重启兜底），宿主不陪葬。node 缺省按机器总内存
+/// 放宽（大内存 Windows 机器可到 4GB+），这里收口到 3GB——pi RPC 常态
+/// 远低于此。
+const DEFAULT_NODE_HEAP_MB: u64 = 3072;
+
 /// reader 线程按白名单丢弃的无消费者 WireEvent 计数（047-内存削减 P1-2）
 static DROPPED_WIRE: AtomicU64 = AtomicU64::new(0);
 
@@ -60,6 +67,18 @@ pub struct PiSession {
     cmd_tx: mpsc::Sender<String>,
     seq: AtomicU64,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
+}
+
+/// PI_FLASH_NODE_HEAP_MB 口径（047-P2-1）：None = 未设或非法（回落
+/// [`DEFAULT_NODE_HEAP_MB`]）；`Some(0)` = 显式禁用（用户显式接管堆策略）；
+/// `Some(n)` = n MB。非法值不静默禁用——笔误回落缺省比裸奔安全。
+fn parse_heap_mb(raw: Option<&str>) -> Option<u64> {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+}
+
+/// spawn 时读一次堆上限 env（PI_FLASH_PI_STDERR 同口径：env 只读一次）。
+fn node_heap_mb_from_env() -> Option<u64> {
+    parse_heap_mb(std::env::var("PI_FLASH_NODE_HEAP_MB").ok().as_deref())
 }
 
 /// Spawn the vendored pi in RPC mode bound to `cwd`.
@@ -137,6 +156,12 @@ pub fn spawn(
     };
     // no baked-in --no-session: fresh spawns persist by default (pi-web
     // parity: sessions are resumable); pass ["--session", <path>] to resume
+    // 047-P2-1：V8 堆上限。node 自己的 flag 必须在脚本路径之前——cli.js
+    // 之后的 argv 全归 pi。0=禁用（不插旗）。
+    let node_heap_mb = node_heap_mb_from_env().unwrap_or(DEFAULT_NODE_HEAP_MB);
+    if node_heap_mb > 0 {
+        cmd.arg(format!("--max-old-space-size={node_heap_mb}"));
+    }
     cmd.arg(&cli);
     cmd.args(["--mode", "rpc"])
         .args(extra_args)
@@ -402,3 +427,6 @@ impl Drop for PiSession {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
