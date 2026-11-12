@@ -280,12 +280,20 @@ fn read_cache(path: &std::path::Path) -> CacheDoc {
         .unwrap_or_default()
 }
 
+/// 条目硬寿限（047-内存削减 P0-5）：CACHE_TTL 只管新鲜度不管删除，写入
+/// 顺带清 90 天前的陈旧条目——否则 `~/.pi-flash/model-price-cache.json`
+/// 条目只增不减，多年累积成死账。
+const CACHE_PRUNE_SECS: u64 = 60 * 60 * 24 * 90;
+
 fn write_cache_entry(path: &std::path::Path, key: &str, entry: &Entry) {
+    let now = now_secs();
     let mut doc = read_cache(path);
+    doc.entries
+        .retain(|_, c| now.saturating_sub(c.fetched_at) < CACHE_PRUNE_SECS);
     doc.entries.insert(
         key.to_string(),
         CachedEntry {
-            fetched_at: now_secs(),
+            fetched_at: now,
             entry: entry.clone(),
         },
     );

@@ -94,3 +94,38 @@ fn cache_roundtrip_and_expiry_keying() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// P0-5（047-内存削减）：写入顺带清 90 天前陈旧条目（TTL 只管新鲜度）。
+#[test]
+fn cache_write_prunes_90d_stale_entries() {
+    let dir = std::env::temp_dir().join(format!("pf-mprice-prune-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cache.json");
+    let e = parse_toml(DEEPSEEK_FLASH_TOML).unwrap();
+    let now = now_secs();
+    let stale = CacheDoc {
+        entries: HashMap::from([
+            (
+                "stale/dead".to_string(),
+                CachedEntry {
+                    fetched_at: now - 91 * 86_400,
+                    entry: e.clone(),
+                },
+            ),
+            (
+                "fresh/live".to_string(),
+                CachedEntry {
+                    fetched_at: now - 86_400,
+                    entry: e.clone(),
+                },
+            ),
+        ]),
+    };
+    std::fs::write(&path, serde_json::to_string(&stale).unwrap()).unwrap();
+    write_cache_entry(&path, "deepseek/deepseek-flash", &e);
+    let doc = read_cache(&path);
+    assert!(!doc.entries.contains_key("stale/dead"), "90 天前条目被清");
+    assert!(doc.entries.contains_key("fresh/live"), "新鲜条目保留");
+    assert!(doc.entries.contains_key("deepseek/deepseek-flash"));
+    std::fs::remove_dir_all(&dir).ok();
+}
