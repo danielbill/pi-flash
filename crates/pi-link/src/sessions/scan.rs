@@ -14,6 +14,10 @@ use super::read::{count_messages, preview_from_partial_line, read_prefix};
 const PREFIX_BYTES: u64 = 256 * 1024;
 /// Lines of the prefix considered when looking for the preview message.
 const PREVIEW_LINES: usize = 40;
+/// 索引条目上限（047-内存削减 P1-5）：内存 + session-index.json 双份持有，
+/// 每条 ≈300-600B——10 万会话 ≈ 30-60MB。超限按 mtime 升序截断保留最新
+/// （正常用户离这个量级很远；上限只为多年累积的极端兜底）。
+const INDEX_ENTRY_CAP: usize = 50_000;
 
 // ---------------------------------------------------------------------------
 // fingerprint index entry (persisted)
@@ -91,6 +95,8 @@ pub struct Scanner {
     dirty: bool,
     /// files actually scanned since `Scanner` creation (diagnostics/tests)
     pub(crate) scans: u64,
+    /// 启动后首次 list 已做过全库 prune（047-P1-5，一次性开关）
+    full_pruned: bool,
 }
 
 impl Scanner {
@@ -102,6 +108,7 @@ impl Scanner {
             entries: HashMap::new(),
             dirty: false,
             scans: 0,
+            full_pruned: false,
         }
     }
 
@@ -226,6 +233,11 @@ impl Scanner {
         }
         files.sort_by(|a, b| b.0.cmp(&a.0));
 
+        // 进程生命周期内首次 list：对整份索引做一次全库死行对账（纯
+        // exists() 批量，无内容读）——prune_missing 只覆盖被枚举的 group，
+        // 从未枚举过的 group 的死行永不清（047-P1-5）
+        self.full_prune_once();
+
         let mut out = Vec::new();
         let mut seen: Vec<PathBuf> = Vec::new();
         for (mtime, path) in files {
@@ -243,6 +255,7 @@ impl Scanner {
             }
         }
         self.prune_missing(&seen, groups);
+        self.cap_entries();
         if self.dirty {
             self.save_index();
             self.dirty = false;
@@ -281,6 +294,46 @@ impl Scanner {
             // out-of-scope rows and files that still exist
             !(groups.iter().any(|g| path.starts_with(g)) && !path.is_file())
         });
+        if self.entries.len() != before {
+            self.dirty = true;
+        }
+    }
+
+    /// 全库死行对账（进程生命周期一次，047-P1-5）：prune_missing 只清被
+    /// 枚举 group 范围内的死行，其余 group 的死行按旧口径永不清。这里对
+    /// 整份 entries 做一次纯 `is_file()` 批量（5 万行 stat ≈ 百 ms 级，
+    /// 每进程只付一次），死行全清。
+    fn full_prune_once(&mut self) {
+        if self.full_pruned {
+            return;
+        }
+        self.full_pruned = true;
+        let before = self.entries.len();
+        self.entries.retain(|path, _| path.is_file());
+        if self.entries.len() != before {
+            self.dirty = true;
+        }
+    }
+
+    /// 条目上限（047-P1-5）：超限按 (mtime_sec, mtime_nsec) 降序保留最新
+    /// INDEX_ENTRY_CAP 条。只截索引缓存行，不碰磁盘文件。
+    fn cap_entries(&mut self) {
+        if self.entries.len() <= INDEX_ENTRY_CAP {
+            return;
+        }
+        let mut rows: Vec<(u64, u32, PathBuf)> = self
+            .entries
+            .iter()
+            .map(|(p, e)| (e.mtime_sec, e.mtime_nsec, p.clone()))
+            .collect();
+        rows.sort_unstable_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+        let keep: std::collections::HashSet<PathBuf> = rows
+            .into_iter()
+            .take(INDEX_ENTRY_CAP)
+            .map(|(_, _, p)| p)
+            .collect();
+        let before = self.entries.len();
+        self.entries.retain(|p, _| keep.contains(p));
         if self.entries.len() != before {
             self.dirty = true;
         }

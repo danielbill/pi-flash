@@ -407,3 +407,99 @@ fn parses_session_info_name_from_real_file_tail() {
     );
     assert!(e.name.is_some(), "session_info name must be parsed");
 }
+
+/// P1-5（047-内存削减）：索引条目上限——超限按 mtime 降序保留最新，最旧
+/// 行被截；未超限不动。
+#[test]
+fn index_cap_keeps_newest_entries() {
+    let mut sc = Scanner::open(Path::new("Z:/nonexistent-root"));
+    let mk = |sec: u64| IndexEntry {
+        mtime_sec: sec,
+        mtime_nsec: 0,
+        size: 1,
+        id: format!("id-{sec}"),
+        cwd: "D:\\p".into(),
+        preview: String::new(),
+        name: None,
+        message_count: 0,
+        count_bytes: 0,
+        child_marker: false,
+    };
+    for sec in 0..(INDEX_ENTRY_CAP as u64 + 10) {
+        sc.entries
+            .insert(PathBuf::from(format!("p{sec}.jsonl")), mk(sec));
+    }
+    sc.cap_entries();
+    assert_eq!(sc.entries.len(), INDEX_ENTRY_CAP);
+    // 最旧 10 条（sec 0..10）被截，最新保留
+    assert!(!sc.entries.contains_key(&PathBuf::from("p0.jsonl")));
+    assert!(!sc.entries.contains_key(&PathBuf::from("p9.jsonl")));
+    assert!(sc.entries.contains_key(&PathBuf::from(format!(
+        "p{}.jsonl",
+        INDEX_ENTRY_CAP as u64 + 9
+    ))));
+    assert!(sc.dirty, "截断置脏落盘");
+    // 未超限不动
+    sc.dirty = false;
+    sc.cap_entries();
+    assert!(!sc.dirty);
+}
+
+/// P1-5：进程生命周期首次 list 全库 prune——从未枚举过的 group 死行也清；
+/// 只做一次。
+#[test]
+fn full_prune_once_clears_dead_rows_outside_scanned_groups() {
+    let root = temp_root("full-prune");
+    let live = write_session(&root, "D:\\proj-live", "live1", BODY);
+    // 死行：从未被任何 group 枚举过的路径
+    let dead = PathBuf::from(format!(
+        "Z:/pf-never-scanned/gone-{}.jsonl",
+        std::process::id()
+    ));
+    let mut sc = Scanner::open(&root);
+    sc.entries.insert(
+        dead.clone(),
+        IndexEntry {
+            mtime_sec: 1,
+            mtime_nsec: 0,
+            size: 1,
+            id: "dead".into(),
+            cwd: "Z:\\never".into(),
+            preview: String::new(),
+            name: None,
+            message_count: 0,
+            count_bytes: 0,
+            child_marker: false,
+        },
+    );
+    sc.list(10);
+    assert!(sc.entries.contains_key(&live), "活文件行保留");
+    assert!(
+        !sc.entries.contains_key(&dead),
+        "全库死行被清（旧口径不清）"
+    );
+    assert!(sc.full_pruned, "一次性开关置位");
+    // 第二次 list 不再做全库对账（新死行留到下个进程周期的全库 prune）
+    let dead2 = dead.with_file_name("gone2.jsonl");
+    sc.entries.insert(
+        dead2.clone(),
+        IndexEntry {
+            mtime_sec: 2,
+            mtime_nsec: 0,
+            size: 1,
+            id: "dead2".into(),
+            cwd: "Z:\\never".into(),
+            preview: String::new(),
+            name: None,
+            message_count: 0,
+            count_bytes: 0,
+            child_marker: false,
+        },
+    );
+    sc.list(10);
+    assert!(
+        sc.entries.contains_key(&dead2),
+        "full_pruned 后不再全库对账"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
