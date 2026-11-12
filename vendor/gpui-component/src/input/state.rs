@@ -24,6 +24,8 @@ use super::{
     change::Change,
     decorations::{DecorationProvider, Decorations},
     element::TextElement,
+    fold::FoldMap,
+    element::LINE_NUMBER_ARROW_ZONE,
     mask_pattern::MaskPattern,
     mode::{InputMode, TabSize},
     number_input,
@@ -240,6 +242,9 @@ pub(crate) fn init(cx: &mut App) {
 #[derive(Clone)]
 pub(super) struct LastLayout {
     /// The visible range (no wrap) of lines in the viewport, the value is row (0-based) index.
+    ///
+    /// pi-flash patch（折叠）：**显示行**空间（buffer 行 − 之前隐藏行数；
+    /// 无折叠时与 buffer 行恒等）。
     pub(super) visible_range: Range<usize>,
     /// The first visible line top position in scroll viewport.
     pub(super) visible_top: Pixels,
@@ -247,6 +252,10 @@ pub(super) struct LastLayout {
     pub(super) visible_range_offset: Range<usize>,
     /// The last layout lines (Only have visible lines).
     pub(super) lines: Rc<Vec<LineLayout>>,
+    /// pi-flash patch（折叠）：与 lines 平行的缓冲行表（显示行 i → 缓冲行）
+    /// 及其行首 doc 字节偏移表。行号绘制/偏移映射/命中反算都按它走。
+    pub(super) buffer_rows: Rc<Vec<usize>>,
+    pub(super) doc_starts: Rc<Vec<usize>>,
     /// The line_height of text layout, this will change will InputElement painted.
     pub(super) line_height: Pixels,
     /// The wrap width of text layout, this will change will InputElement painted.
@@ -264,15 +273,11 @@ pub(super) struct LastLayout {
 impl LastLayout {
     /// Get the line layout for the given row (0-based).
     ///
-    /// 0 is the viewport first visible line.
-    ///
-    /// Returns None if the row is out of range.
+    /// pi-flash patch（折叠）：row 是**缓冲行**（调用方语义不变），经
+    /// buffer_rows 表定位显示行；隐藏行返回 None。
     pub(crate) fn line(&self, row: usize) -> Option<&LineLayout> {
-        if row < self.visible_range.start || row >= self.visible_range.end {
-            return None;
-        }
-
-        self.lines.get(row.saturating_sub(self.visible_range.start))
+        let ix = self.buffer_rows.iter().position(|&r| r == row)?;
+        self.lines.get(ix)
     }
 }
 
@@ -302,6 +307,12 @@ pub struct InputState {
     /// overtype（越过）/backspace 成对删除辅助用；随编辑平移（对内编辑平
     /// 移闭合符）、光标移出即失效（见 input/assist.rs）。
     pub(super) autoclosed_pair: Option<AutoclosedPair>,
+    /// pi-flash patch（对齐 zed）：块级折叠集（input/fold.rs；zed FoldMap
+    /// 对应物，无 LSP 缩进折叠 starts_indent）。仅 code_editor 启用。
+    pub(super) folds: FoldMap,
+    /// pi-flash patch（对齐 zed）：gutter hover 行（缓冲行号）——折叠箭头
+    /// hover 显示用；None = 鼠标不在 gutter。
+    pub(super) gutter_hover_row: Option<usize>,
     /// The marked range is the temporary insert text on IME typing.
     pub(super) ime_marked_range: Option<Selection>,
     pub(super) last_layout: Option<LastLayout>,
@@ -435,6 +446,8 @@ impl InputState {
             selected_word_range: None,
             selection_reversed: false,
             autoclosed_pair: None,
+            folds: FoldMap::default(),
+            gutter_hover_row: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
             selecting: false,
@@ -802,10 +815,21 @@ impl InputState {
         };
         let line_height = last_layout.line_height;
 
-        let mut prev_lines_offset = last_layout.visible_range_offset.start;
+        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取（可见行
+        // 经 buffer_rows 表，隐藏行间不连续；vis 长度不再参与行界推进）
         let mut y_offset = last_layout.visible_top;
         for (line_index, line) in last_layout.lines.iter().enumerate() {
-            let local_offset = offset.saturating_sub(prev_lines_offset);
+            let Some(&line_start) = last_layout.doc_starts.get(line_index) else {
+                break;
+            };
+            let mut local_offset = offset.saturating_sub(line_start);
+            // PF-024: 折叠态 local 是 vis 坐标（与 layout_cursor pos_for
+            // 同款换算）
+            if let Some(dec) = &last_layout.decorations {
+                local_offset = dec
+                    .doc_to_vis(line_start + local_offset.min(line.len()))
+                    .saturating_sub(dec.doc_to_vis(line_start));
+            }
             if let Some(pos) = line.position_for_index(local_offset, line_height) {
                 let sub_line_index = (pos.y / line_height) as usize;
                 let adjusted_pos = point(pos.x + last_layout.line_number_width, pos.y + y_offset);
@@ -813,7 +837,6 @@ impl InputState {
             }
 
             y_offset += line.size(line_height).height;
-            prev_lines_offset += line.len() + 1;
         }
         (0, 0, None)
     }
@@ -868,6 +891,7 @@ impl InputState {
         }
         let new_len = text.len();
         self.text = text;
+        self.folds.clear(); // pi-flash patch：整文替换，折叠集作废（zed 打开新 buffer 同款）
         self.text_wrapper.reset(&self.text, cx);
         // 高亮器置 None，语法树重建延迟到渲染帧的 update_highlighter
         // （text 语言不会建；代码语言沿用原先的全量 parse 行为）。
@@ -1671,6 +1695,21 @@ impl InputState {
         self.selecting = true;
         let offset = self.index_for_mouse_position(event.position);
 
+        // pi-flash patch（对齐 zed）：gutter 折叠箭头点击 → toggle fold
+        // （Disclosure toggle_callback 语义；命中带 = LINE_NUMBER_ARROW_ZONE）
+        if event.button == MouseButton::Left {
+            if let Some(row) = self.gutter_arrow_hit(event.position) {
+                if self.folds.is_fold_start(row)
+                    || self.folds.is_line_folded(row)
+                    || self.fold_starts_indent(row)
+                {
+                    self.selecting = false;
+                    self.toggle_fold_at(row, cx);
+                    return;
+                }
+            }
+        }
+
         if self.handle_click_hover_definition(event, offset, window, cx) {
             return;
         }
@@ -1715,6 +1754,30 @@ impl InputState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // pi-flash patch（对齐 zed）：gutter hover 行跟踪（折叠箭头 hover
+        // 显隐；zed gutter_hovered 同语义，整条 gutter 命中）
+        let hover_row = if self.mode.is_code_editor() && self.last_bounds.is_some() {
+            let in_gutter = self
+                .last_bounds
+                .as_ref()
+                .zip(self.last_layout.as_ref())
+                .is_some_and(|(bounds, layout)| {
+                    let inner_x = event.position.x - bounds.origin.x;
+                    inner_x >= px(0.) && inner_x < layout.line_number_width
+                });
+            if in_gutter {
+                self.buffer_row_at_mouse_y(event.position)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if self.gutter_hover_row != hover_row {
+            self.gutter_hover_row = hover_row;
+            cx.notify();
+        }
+
         // Show diagnostic popover on mouse move
         let offset = self.index_for_mouse_position(event.position);
         self.handle_mouse_move(offset, event, window, cx);
@@ -1794,14 +1857,19 @@ impl InputState {
 
         let point = self.text.offset_to_point(offset);
         let row = point.row;
+        // pi-flash patch（折叠）：行 y 按显示行（隐藏行不计）
+        let disp_row = self.folds.display_row(row);
 
         // 等高行（不软换行）时行 y 有闭式解：不再从第 0 行累加行高
         // （PageDown/光标定位到 8 万行深处原本是每次 O(行号)）
         let row_offset_y = if self.text_wrapper.is_uniform() {
-            row as f32 * line_height
+            disp_row as f32 * line_height
         } else {
             let mut y = px(0.);
             for (ix, wrap_line) in self.text_wrapper.lines.iter().enumerate() {
+                if self.folds.is_line_folded(ix) {
+                    continue;
+                }
                 if ix == row {
                     break;
                 }
@@ -1812,7 +1880,7 @@ impl InputState {
 
         if let Some(line) = last_layout
             .lines
-            .get(row.saturating_sub(last_layout.visible_range.start))
+            .get(disp_row.saturating_sub(last_layout.visible_range.start))
         {
             // Check to scroll horizontally
             if let Some(pos) = line.position_for_index(point.column, line_height) {
@@ -2092,15 +2160,11 @@ impl InputState {
         // - included the scroll offset.
         let inner_position = position - bounds.origin - point(line_number_width, px(0.));
 
-        let mut index = last_layout.visible_range_offset.start;
+        // pi-flash patch（折叠）：行定位走缓冲行表（行首 doc 偏移直取，
+        // 隐藏行间不连续）
         let mut y_offset = last_layout.visible_top;
-        for (ix, line) in self
-            .text_wrapper
-            .lines
-            .iter()
-            .skip(last_layout.visible_range.start)
-            .enumerate()
-        {
+        for (ix, &row) in last_layout.buffer_rows.iter().enumerate() {
+            let line = &self.text_wrapper.lines[row];
             let line_origin = self.line_origin_with_y_offset(&mut y_offset, line, line_height);
             let pos = inner_position - line_origin;
 
@@ -2117,22 +2181,62 @@ impl InputState {
                 return line_layout.closest_index_for_x(pos.x);
             }
 
+            let line_start = self.text.line_start_offset(row);
             if let Some(v) = line_layout.closest_index_for_position(pos, line_height) {
-                index += v;
-                break;
+                // PF-024: closest 返回 vis 列 → doc 换算同 movement 主口
+                return if let Some(dec) = &last_layout.decorations {
+                    dec.vis_to_doc(dec.doc_to_vis(line_start) + v)
+                } else {
+                    line_start + v
+                }
+                .min(self.text.len());
             } else if pos.y < px(0.) {
                 break;
             }
-
-            // +1 for `\n`
-            index += line_layout.len() + 1;
         }
 
-        if index > self.text.len() {
-            self.text.len()
-        } else {
-            index
+        // 落点在可见行集合之外（视口底空白等）：钳到最后可见行末
+        last_layout
+            .buffer_rows
+            .last()
+            .map(|&row| {
+                (self.text.line_start_offset(row) + self.text.line_len(row)).min(self.text.len())
+            })
+            .unwrap_or_else(|| self.text.len())
+    }
+
+    /// pi-flash patch（折叠）：鼠标位置的显示行 → 缓冲行（gutter 判定用）。
+    fn buffer_row_at_mouse_y(&self, position: Point<Pixels>) -> Option<usize> {
+        let last_layout = self.last_layout.as_ref()?;
+        let bounds = self.last_bounds.as_ref()?;
+        let inner_y = position.y - bounds.origin.y;
+        let rel = ((inner_y - last_layout.visible_top) / last_layout.line_height).floor();
+        if rel < 0. {
+            return None;
         }
+        let disp = last_layout.visible_range.start + rel as usize;
+        last_layout
+            .buffer_rows
+            .get(disp.saturating_sub(last_layout.visible_range.start))
+            .copied()
+    }
+
+    /// pi-flash patch（对齐 zed）：gutter 折叠箭头命中区（右缘
+    /// LINE_NUMBER_ARROW_ZONE 带）→ 缓冲行。仅 code_editor。
+    pub(super) fn gutter_arrow_hit(&self, position: Point<Pixels>) -> Option<usize> {
+        if !self.mode.is_code_editor() {
+            return None;
+        }
+        let last_layout = self.last_layout.as_ref()?;
+        let bounds = self.last_bounds.as_ref()?;
+        let inner_x = position.x - bounds.origin.x;
+        if inner_x < px(0.) || inner_x >= last_layout.line_number_width {
+            return None;
+        }
+        if inner_x < last_layout.line_number_width - LINE_NUMBER_ARROW_ZONE {
+            return None;
+        }
+        self.buffer_row_at_mouse_y(position)
     }
 
     /// Returns a y offsetted point for the line origin.
@@ -2584,6 +2688,16 @@ impl EntityInputHandler for InputState {
             .unwrap_or(self.selected_range.into());
 
         let old_text = self.text.clone();
+        // pi-flash patch（对齐 zed）：折叠集随编辑维护（先取编辑前行区间，
+        // 替换后取新末行）——与编辑相交的折叠展开，其下折叠平移
+        let edit_old_rows = if self.folds.is_empty() {
+            None
+        } else {
+            Some(
+                self.text.offset_to_point(range.start).row
+                    ..self.text.offset_to_point(range.end.min(self.text.len())).row + 1,
+            )
+        };
         self.text.replace(range.clone(), new_text);
 
         // pi-flash patch（对齐 zed）：autoclose 追踪随编辑平移/失效——对内
@@ -2610,6 +2724,17 @@ impl EntityInputHandler for InputState {
             }
             None => None,
         };
+
+        // pi-flash patch（对齐 zed）：折叠集随编辑维护——相交展开、其下
+        // 平移（old_rows 已在替换前取出）
+        if let Some(old_rows) = edit_old_rows {
+            let new_end_row = self
+                .text
+                .offset_to_point((range.start + new_text.len()).min(self.text.len()))
+                .row
+                + 1;
+            self.folds.edit_rows_adjust(old_rows, new_end_row);
+        }
 
         let mut new_offset = (range.start + new_text.len()).min(self.text.len());
 
@@ -2737,12 +2862,17 @@ impl EntityInputHandler for InputState {
         let mut end_origin = None;
         let line_number_origin = point(line_number_width, px(0.));
         let mut y_offset = last_layout.visible_top;
-        let mut index_offset = last_layout.visible_range_offset.start;
 
-        for line in last_layout.lines.iter() {
+        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取
+        // （隐藏行间不连续；连续行累加会把 IME 定位推进行间隙）
+        for (line_ix, line) in last_layout.lines.iter().enumerate() {
             if start_origin.is_some() && end_origin.is_some() {
                 break;
             }
+
+            let Some(&index_offset) = last_layout.doc_starts.get(line_ix) else {
+                break;
+            };
 
             if start_origin.is_none() {
                 if let Some(p) =
@@ -2760,7 +2890,6 @@ impl EntityInputHandler for InputState {
                 }
             }
 
-            index_offset += line.len() + 1;
             y_offset += line.size(line_height).height;
         }
 
@@ -2785,10 +2914,15 @@ impl EntityInputHandler for InputState {
         let last_layout = self.last_layout.as_ref()?;
         let line_height = last_layout.line_height;
         let line_point = self.last_bounds?.localize(&point)?;
-        let offset = last_layout.visible_range_offset.start;
 
-        for line in last_layout.lines.iter() {
+        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取
+        for (line_ix, line) in last_layout.lines.iter().enumerate() {
             if let Some(utf8_index) = line.index_for_position(line_point, line_height) {
+                let offset = last_layout
+                    .doc_starts
+                    .get(line_ix)
+                    .copied()
+                    .unwrap_or(last_layout.visible_range_offset.start);
                 return Some(self.offset_to_utf16(offset + utf8_index));
             }
         }

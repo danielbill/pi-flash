@@ -187,6 +187,25 @@ pub(super) fn files_surface(chat: &Chat, cx: &Context<Chat>) -> Value {
                     "editor_len": f.and_then(|f| f.editor.as_ref()).map(|e| e.read(cx).value().len()).unwrap_or(0),
                     // 024 P2：光标 doc 字节偏移（pif-ui 原子跳词/reveal 断言）
                     "editor_cursor": f.and_then(|f| f.editor.as_ref()).map(|e| e.read(cx).cursor()).unwrap_or(0),
+                    // 折叠状态（块级折叠 pif-ui 断言面）：ranges = buffer 行
+                    // 区间 [start, end)（start=块首可见行），hidden = 隐藏行数
+                    "editor_folds": f.and_then(|f| f.editor.as_ref()).map(|e| {
+                        let ed = e.read(cx);
+                        let geom = ed.layout_metrics();
+                        json!({
+                            "ranges": ed.fold_ranges().iter()
+                                .map(|r| json!([r.start, r.end]))
+                                .collect::<Vec<_>>(),
+                            "hidden": ed.fold_hidden_rows(),
+                            // 自动化坐标换算：bounds 原点（含滚动）/行号宽/
+                            // 行高/首可见行 top（逻辑 px）
+                            "geom": geom.map(|(ox, oy, w, lh, vt)| json!({
+                                "origin_x": ox, "origin_y": oy,
+                                "line_number_width": w, "line_height": lh,
+                                "visible_top": vt,
+                            })),
+                        })
+                    }),
                     "pending": f.map(|f| f.reload_pending).unwrap_or(false),
                 }))
             }

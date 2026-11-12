@@ -14,8 +14,9 @@ impl InputState {
         };
 
         let point = self.text.offset_to_point(self.cursor());
-        let row = point.row.saturating_sub(last_layout.visible_range.start);
-        let Some(line) = last_layout.lines.get(row) else {
+        // pi-flash patch（折叠）：行布局按缓冲行查（LastLayout::line 经
+        // buffer_rows 表回映显示行）
+        let Some(line) = last_layout.line(point.row) else {
             self.preferred_column = None;
             return;
         };
@@ -49,7 +50,11 @@ impl InputState {
         // 键盘移动与鼠标点击都汇经本方法（zed region 仅在选区处于对内时
         // 参与输入辅助）
         self.autoclose_invalidate_outside(offset);
+        // pi-flash patch（对齐 zed）：防御性 reveal——光标落在隐藏行
+        // （undo/程序化选区）→ 展开包含它的折叠（折叠块内移动经
+        // move_vertical 的显示行跳行主口，不进这里）
         self.selected_range = (offset..offset).into();
+        self.reveal_folded_cursor(cx);
         self.scroll_to(offset, cx);
         self.pause_blink_cursor(cx);
         self.update_preferred_column();
@@ -77,7 +82,19 @@ impl InputState {
         let was_preferred_column = self.preferred_column;
 
         let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        display_point.row = display_point.row.saturating_add_signed(move_lines);
+        // pi-flash patch（对齐 zed）：显示行移动跳过折叠区——下行入块 →
+        // 落块后首行；上行入块 → 落块首行（zed display 行移动语义）
+        let mut target_row = display_point.row.saturating_add_signed(move_lines);
+        if move_lines > 0 {
+            if let Some(r) = self.folds.hiding(target_row) {
+                target_row = r.end;
+            }
+        } else if move_lines < 0 {
+            if let Some(r) = self.folds.hiding(target_row) {
+                target_row = r.start;
+            }
+        }
+        display_point.row = target_row;
         display_point.column = 0;
         let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
 
@@ -139,7 +156,18 @@ impl InputState {
         let was_preferred_column = self.preferred_column;
 
         let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        display_point.row = display_point.row.saturating_add_signed(move_lines);
+        // pi-flash patch（对齐 zed）：同 move_vertical，选区头跳过折叠区
+        let mut target_row = display_point.row.saturating_add_signed(move_lines);
+        if move_lines > 0 {
+            if let Some(r) = self.folds.hiding(target_row) {
+                target_row = r.end;
+            }
+        } else if move_lines < 0 {
+            if let Some(r) = self.folds.hiding(target_row) {
+                target_row = r.start;
+            }
+        }
+        display_point.row = target_row;
         display_point.column = 0;
         let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
 
