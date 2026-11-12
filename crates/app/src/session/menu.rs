@@ -19,7 +19,7 @@
 
 use crate::*;
 
-use crate::ui::WithTip;
+use super::menu_views::{menu_search_bar, menu_tab_strip};
 
 /// 子菜单条目上限（技能/命令/会话；文件走 at_file::AT_RESULT_LIMIT）
 const TAB_LIMIT: usize = 60;
@@ -28,9 +28,9 @@ const SEARCH_LIMIT: usize = 20;
 /// tab 条高度（含条下 5px 同色 border——taffy 的 border 画在 bounds 内，
 /// 内容区 = 39 − 5 = 34，tab 填满内容区、顶缘与搜索栏接洽，2026-11-11
 /// 用户定稿；topbar 的「条内 tab 高 = 条高 −4 + 上圆角」在菜单里不适用）
-const STRIP_H: f32 = 39.;
+pub(super) const STRIP_H: f32 = 39.;
 /// 条下同色带高（= strip 的 border_b_5）；tab 高 = STRIP_H − BAND_H
-const BAND_H: f32 = 5.;
+pub(super) const BAND_H: f32 = 5.;
 const SKILL_PREFIX: &str = "skill:";
 
 /// 当前触发 token：类目 + 输入里的字节区间 `[start, end)` + 查询词。
@@ -392,7 +392,7 @@ impl Chat {
 
     /// tab 是否可点：`@`/`&` 恒可；`/`/`$` 需要整段输入型触发（token 在
     /// 开头且改写后无空白/引号残留——`@"..` 引号形态换前缀会破语法）。
-    fn menu_tab_available(&self, kind: MenuKind, tr: &MenuTrigger) -> bool {
+    pub(crate) fn menu_tab_available(&self, kind: MenuKind, tr: &MenuTrigger) -> bool {
         if tr.pinned || matches!(kind, MenuKind::File | MenuKind::Session) {
             return true;
         }
@@ -590,56 +590,6 @@ pub(crate) fn slash_menu_view(
     let active_kind = trigger.as_ref().map(|tr| tr.kind);
     let items = chat.menu_items(cx);
     let n = items.len();
-
-    // ---- tab 条（topbar tab_body 复用：连体态，条上不画横线）----
-    let tab = |kind: MenuKind| -> gpui::AnyElement {
-        let active = !searching && active_kind == Some(kind);
-        let enabled = trigger
-            .as_ref()
-            .is_some_and(|tr| chat.menu_tab_available(kind, tr));
-        let badge = div()
-            .font_family(crate::editor::markdown::MONO_FAMILY)
-            // 前缀随 tab 文字：面板字体 ui(11)（031-2 四轮：搜索框/tab 栏统一
-            // 面板字体，字号 −1；mono 仅条目名保留）
-            .text_size(crate::appearance::ui_size(11.))
-            .text_color(rgb(if active { t.accent } else { t.text_faint }))
-            .child(SharedString::from(kind.prefix().to_string()))
-            .into_any_element();
-        let tab = crate::titlebar::tab_body(
-            None,
-            tr(kind.label_key()).into(),
-            active,
-            0.,
-            t,
-            None,
-            Some(badge),
-            false,
-        )
-        // 菜单变体：无圆角 + 填满条高（与搜索栏接洽）；抹掉 tab_body 连体
-        // 态的左右 1px 边线与 mb(-1)（条下已是 5px 同色带无线可盖，-1 只会让
-        // 文字偏下 + 满高边线成「插入痕」，2026-11-11 用户定稿）
-        .h(px(STRIP_H - BAND_H))
-        .rounded(px(0.))
-        .mb(px(0.))
-        // tab 文字 = 面板字体−1（2026-11-11 用户定稿；覆盖 tab_body 的 ui(12)）
-        .text_size(crate::appearance::ui_size(11.))
-        .border_l_0()
-        .border_r_0()
-        .when(!enabled, |d| {
-            d.opacity(0.45).cursor(gpui::CursorStyle::Arrow)
-        });
-        let tab = if enabled {
-            let weak = weak.clone();
-            tab.id(SharedString::from(format!("menu-tab-{}", kind.prefix())))
-                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                    let _ = weak.update(cx, |c, cx| c.menu_switch_tab(kind, cx));
-                })
-                .into_any_element()
-        } else {
-            tab.into_any_element()
-        };
-        tab
-    };
 
     // ---- 行条目 ----
     let card = |ix: usize, child_ix: usize, c: &MenuItem| -> gpui::AnyElement {
@@ -861,83 +811,16 @@ pub(crate) fn slash_menu_view(
         .max_h(px(520.))
         .overflow_hidden()
         // ---- 搜索栏（菜单底色同体；万能搜索入口）----
-        .child(
-            div()
-                .flex_shrink_0()
-                .h(px(36.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .px(px(10.))
-                .bg(rgb(t.bg))
-                .child(crate::ui::icon("search", 14., t.text_faint))
-                .child(
-                    div().flex_1().min_w_0().children(
-                        chat.composer
-                            .menu_search
-                            .as_ref()
-                            .map(|i| i.clone().into_any_element()),
-                    ),
-                ),
-        )
+        .child(menu_search_bar(chat, t))
         // ---- tab 条 + 「打开文件」钮 + Tab插入 提示 ----
-        .child(
-            div()
-                .flex_shrink_0()
-                .h(px(STRIP_H))
-                .flex()
-                .items_end()
-                .px(px(8.))
-                // tab 栏钉面板字体槽（与搜索框同源）：挂载点是会话区，ambient
-                // 字体 = 会话字体槽（用户可设霞鹜文楷等），不钉会与搜索框分叉
-                .font_family(SharedString::from(
-                    crate::appearance::panel_font().family.clone(),
-                ))
-                .bg(rgb(t.chrome))
-                // 条下 5px 菜单底色带（2026-11-11 用户定稿）：激活 tab 的
-                // mb(-1) 连体缘落在这条带上，接缝不可见
-                .border_b_5()
-                .border_color(rgb(t.bg))
-                .children(MenuKind::ALL.iter().map(|k| tab(*k)))
-                .child(
-                    // 整高居中壳：条 items_end 对 24px 钮不友好（mb 手调对
-                    // 不齐 tab 文字中线），壳内 items_center 兜底
-                    div().h_full().flex().items_center().child(
-                        // 浅图标钮（bar.rs eye_button 同款 24×24 r5）：系统文件
-                        // 选择器，选中文件以 `@path ` 插入
-                        div()
-                            .id("menu-open-file")
-                            .ml(px(4.))
-                            .size(px(24.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(5.))
-                            .text_color(rgb(t.text_muted))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(t.bg_hover)))
-                            .with_tip("menu.open_file")
-                            .on_mouse_down(gpui::MouseButton::Left, {
-                                let weak = weak.clone();
-                                move |_, _, cx| {
-                                    let _ = weak.update(cx, |c, cx| c.menu_open_file(cx));
-                                }
-                            })
-                            .child(crate::ui::icon("plus", 16., t.text_muted)),
-                    ),
-                )
-                .child(
-                    div()
-                        .ml_auto()
-                        .h_full()
-                        .flex()
-                        .items_center()
-                        .px(px(4.))
-                        .text_size(crate::appearance::ui_size(11.))
-                        .text_color(rgb(t.text_soft))
-                        .child(tr("menu.tab_insert")),
-                ),
-        )
+        .child(menu_tab_strip(
+            chat,
+            weak,
+            trigger.as_ref(),
+            searching,
+            active_kind,
+            t,
+        ))
         .child(
             // 滚动区包 relative 壳：滚动条贴壳右缘（psp 面板同构），不随
             // 内容滚走；卡片直接挂在滚动容器下（scroll_to_item 依赖）

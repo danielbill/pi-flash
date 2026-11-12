@@ -13,6 +13,7 @@ pub(crate) mod input;
 pub(crate) mod mcp_picker;
 pub(crate) mod menu;
 pub(crate) mod menu_rows;
+pub(crate) mod menu_views;
 pub(crate) mod messages;
 pub(crate) mod model_picker;
 pub(crate) mod nav_panel;
