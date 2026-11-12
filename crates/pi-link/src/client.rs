@@ -183,6 +183,11 @@ pub fn spawn(
     if let Some(mut err) = stderr {
         let tail = stderr_tail.clone();
         let log_err = rpc_log.clone();
+        // PI_FLASH_PI_STDERR=1：pi 侧 stderr（扩展 console.error 等）直通
+        // 宿主 stderr——插件通信排障用（[wxbridge] 等）。env 门控，
+        // 缺省关闭：release 零输出烟测门禁不变。（env 只读一次——drainer
+        // 是 4KB 块的热循环，逐块 env::var 白付系统调用，047-内存削减 P0-7）
+        let pi_stderr_passthrough = std::env::var("PI_FLASH_PI_STDERR").as_deref() == Ok("1");
         thread::spawn(move || {
             let mut buf = [0u8; 4096];
             use std::io::Read as _;
@@ -203,10 +208,7 @@ pub fn spawn(
                     let mut f = log.lock().unwrap();
                     let _ = write!(f, "[stderr] {text}");
                 }
-                // PI_FLASH_PI_STDERR=1：pi 侧 stderr（扩展 console.error 等）直通
-                // 宿主 stderr——插件通信排障用（[wxbridge] 等）。env 门控，
-                // 缺省关闭：release 零输出烟测门禁不变。
-                if std::env::var("PI_FLASH_PI_STDERR").as_deref() == Ok("1") {
+                if pi_stderr_passthrough {
                     let text = String::from_utf8_lossy(&buf[..n]);
                     eprint!("[pi-stderr] {text}");
                 }
