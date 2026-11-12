@@ -78,18 +78,20 @@ pub(crate) fn spaced_label(s: &str) -> SharedString {
 /// 市场索引（分发规范 §2：**无内置索引**）。数据源 = registry 清单包
 /// `@pi-flash-plugins/market`（插件仓每次发版自动更新），扫描链见
 /// pi_link::market::pf_scan。拉不到 = 空清单（stderr 告警），无兜底。
-static PF_INDEX: std::sync::RwLock<Option<pi_link::pf_plugins::MarketIndex>> =
+static PF_INDEX: std::sync::RwLock<Option<std::sync::Arc<pi_link::pf_plugins::MarketIndex>>> =
     std::sync::RwLock::new(None);
 
-fn index() -> pi_link::pf_plugins::MarketIndex {
-    if let Some(ix) = PF_INDEX.read().unwrap().as_ref() {
-        return ix.clone();
+fn index() -> std::sync::Arc<pi_link::pf_plugins::MarketIndex> {
+    // Arc 换手零拷贝（047-内存削减 P0-6）：旧实现每次调用整表深克隆，
+    // 渲染路径每帧一次全表拷贝。
+    if let Some(ix) = PF_INDEX.read().unwrap().clone() {
+        return ix;
     }
     *PF_INDEX.write().unwrap() = Some(Default::default());
     std::thread::spawn(|| match pi_link::market::pf_scan::fetch() {
         Ok(ix) => {
             eprintln!("[pf-market] 公域扫描完成（{} 包）", ix.packages.len());
-            *PF_INDEX.write().unwrap() = Some(ix);
+            *PF_INDEX.write().unwrap() = Some(std::sync::Arc::new(ix));
         }
         Err(e) => eprintln!("[pf-market] 公域扫描失败：{e}"),
     });
@@ -127,8 +129,8 @@ pub(crate) fn ledger_version_of<'a>(
         .map(|l| l.version.as_str())
 }
 
-/// 索引快照（pub 口子给 pf_installed；整表克隆一次后本地连查）。
-pub(crate) fn index_snapshot() -> pi_link::pf_plugins::MarketIndex {
+/// 索引快照（pub 口子给 pf_installed；Arc 换手零拷贝，读侧 Deref 连查）。
+pub(crate) fn index_snapshot() -> std::sync::Arc<pi_link::pf_plugins::MarketIndex> {
     index()
 }
 
@@ -218,7 +220,7 @@ impl Chat {
             let scanned = scan.await;
             let _ = this.update(cx, |c, cx| {
                 if let Ok(ix) = scanned {
-                    *PF_INDEX.write().unwrap() = Some(ix);
+                    *PF_INDEX.write().unwrap() = Some(std::sync::Arc::new(ix));
                 }
                 c.aux.market.pf.loading = false;
                 c.aux.market.pf.ledger = pf_plugins::load_ledger();
