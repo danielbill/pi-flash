@@ -13,7 +13,7 @@
 | 外观体系(006/007) | 架构 ZED,数据 pi-web | ThemeRegistry/ActiveTheme + mist/rose 令牌 + pi-web markdown |
 | 通用基座(弹窗/浮层/输入) | gpui-component 0.2.0(已接通,钉版) | Modal/Popover/Notification/InputState |
 
-## 1. 设计原则(pi-web 三层 → GPUI 对应物,不变)
+## 1. 设计原则
 
 | pi-web | pi-flash |
 |---|---|
@@ -84,7 +84,7 @@ workspace 共 4 crate：`pi-link` + `app` + `pf-context`(001 会话上下文基�
 设置快照单写者/原子写/watcher、ext-context.json 投影、SQLite WAL 域库、
 pfctx-manager 守护)+ `pf-plugin-host`(090-4 wasm 插件宿主)。
 
-## 2.5 会话模型(pi-web 多开对齐)
+## 2.5 会话模型
 
 **每个会话 = 一个常驻 SessionRuntime 实体**(session/runtime.rs):独立 pi 进程
 (AgentSession)+ 全量消息 + 投影状态 + **独立 inputPanel(草稿/附件/history/
@@ -219,8 +219,4 @@ clear+替换对账(权威投影替换预渲染,修复叠加翻倍)。已知偏�
 
 守卫挂进发版 checklist（RELEASE.md §2）——发版前必跑 `scripts/check_arch.sh`。
 
-## 9. 待办
 
-- G+(功能细化,等详细要求;含 InputPanel/SessionsPanel/FunctionPanel
-  实体升级、外观字体设置 tab、032 气泡控制栏、013 会话搜索)。
-- 待补交互实测:dock 换边/git 面板操作/池多会话并发场景。
