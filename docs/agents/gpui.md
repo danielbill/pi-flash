@@ -103,6 +103,7 @@
 
 - **StyledText runs 的 font_size/font_weight 无效**（shape_text 只认容器继承链）→ 字号/加粗挂容器 div（markdown sized_text/weight 参数即此）。
 - 字节/字符边界：gpui highlight/切片 range 按字节且必须落字符边界（粘贴 panic 0xc0000409 两连的根源）。
+- **`highlight_lines` 产出的样式 runs 数组必须从 doc 0 连续平铺**（2026-11-13，打开 sh 脚本滚屏即崩，pif-ui pagedown 复现）：`highlight_lines` 只覆盖视口窗（窗前/窗后 filler 补到 `visible_byte_range`），但消费端 `runs_for_range` 的 cursor **从 0 累计**（`TextRun` 无区间信息，数组第 i 项被当作从 doc 0 平铺）——2026-10-15 补丁的 filler 只从 `visible_byte_range.start`（视口首）起，两个"0"语义不一致：**滚动后（buffer_span.start>0）整体错位该字节数**，ASCII 行高亮悄悄漂移，CJK 行 run 边界切进多字节字符中间 → DirectWrite `byte index N is not a char boundary` panic（用户打开中文注释 sh 实机崩；诊断日志 pagedown 复现同栈）。修法 = 数组首项 filler 从 **doc 0** 起（`0..array_start`），让「数组起点」与「消费端原点」落在同一层级。判据记忆点：**滚动后才崩 / 首屏正常 = 坐标系原点错位**，先查 runs 数组起点与消费端 cursor 原点是否同一坐标系。
 - **注入语言高亮（`<style>`→css / `<script>`→javascript）是每可见行成本**：
   `InputElement::highlight_lines` **逐可见行**调 `SyntaxHighlighter::styles()`，
   而 vendor 原 `handle_injection` 每次调用都 `parser.parse` 整块注入内容 + 在

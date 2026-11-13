@@ -207,12 +207,18 @@ fn paint_indent_guides(
                 px(0.)
             };
         let y = origin.y + top_padding + (seg_start - vis_start) as f32 * line_height;
+        // zed default_colors.rs:128/282：editor_indent_guide = 前景色极淡
+        // 透明版（暗色 dark_alpha step_4 ≈ 8% 白、亮色 ≈ 9% 黑）——PF 主题
+        // 无该令牌，border 令牌暗色下与编辑器背景亮度差过小（1px 线不可见，
+        // 用户实机暗色主题复现），用 foreground 同 hue 压 alpha 等价换算。
+        let mut guide = cx.theme().foreground;
+        guide.a = 0.14;
         window.paint_quad(fill(
             Bounds {
                 origin: point(x, y),
                 size: size(px(1.), length),
             },
-            cx.theme().border,
+            guide,
         ));
     }
 }
@@ -1082,11 +1088,19 @@ impl TextElement {
         let mut styles = vec![];
 
         // PF 修复（2026-10-15）：runs 的消费端（layout_lines → runs_for_range
-        // → shape_text）假设样式区间**从 visible 文本 0 起连续平铺**（旧实现
-        // 逐行 styles 恰好平铺全部可见行）。视口窗裁剪后窗前/窗后有缺口，
+        // → shape_text）假设样式区间**从 doc 0 起连续平铺**（runs_for_range
+        // 的 cursor 从 0 累计，TextRun 无区间信息）。视口窗裁剪后窗前/窗后
         // 必须补默认样式段——否则所有 run 边界相对文本整体错位：ASCII 文件
         // 只是高亮悄悄错位，含 CJK 的文件在 shape_text 里被从多字节字符
         // 中间切开直接 panic（"byte index is not a char boundary"）。
+        // PF 修复（2026-11-13）：filler 原从 visible_byte_range.start（视口
+        // 首行）起——「数组起点」与消费端的「doc 0」是两个层级，滚动后
+        // （buffer_span.start>0）整体错位该字节数：长 sh 滚屏即崩（'相'
+        // 88..91 被 89 切中，pif-ui pagedown 复现）。数组首项必须从 doc 0。
+        let array_start = shape_window.start.min(visible_byte_range.start);
+        if array_start > 0 {
+            styles.push((0..array_start, HighlightStyle::default()));
+        }
         if shape_window.start > visible_byte_range.start {
             styles.push((
                 visible_byte_range.start..shape_window.start,
