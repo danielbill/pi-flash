@@ -1977,6 +1977,7 @@ impl InputState {
         let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
         writer.fold([(range, placeholder)]);
         self.sync_fold_snapshot();
+        self.fold_clip_selections();
     }
 
     /// gutter 判定：该缓冲行是否为折叠块首。
@@ -2003,6 +2004,7 @@ impl InputState {
         // ...)：行区间与 crease 相切也算相交（crease 起点在行尾）。
         writer.unfold_intersecting([row_start..row_end], true);
         self.sync_fold_snapshot();
+        self.fold_clip_selections();
     }
 
     /// zed unfold_intersecting（字节区间入口；编辑 reveal 用）。
@@ -2037,6 +2039,32 @@ impl InputState {
     /// 只取回 snapshot；buffer 未变，inlay 版本不变）。
     fn sync_fold_snapshot(&mut self) {
         self.fold_snapshot = self.fold_map.snapshot.clone();
+    }
+
+    /// zed 折叠后选区收口（fold.rs fold_creases → 显示换算经 clip_point；
+    /// PF 光标/选区是裸 offset，必须落锤后显式钳出隐藏区，否则插入落在
+    /// 隐藏文本里不可见）。走全变换链 buffer→to_fold_point→clip_point→
+    /// fold_offset_to_buffer——不得把 buffer 点当 fold 点直接钳（fold 后
+    /// 行号错位，见 fold_clip_offset 的教训）。
+    fn fold_clip_selections(&mut self) {
+        if !self.fold_snapshot.has_folds() {
+            return;
+        }
+        let mut clip = |off: usize, bias: Bias| -> usize {
+            let p = self.text.offset_to_point(off);
+            let fp = self.fold_snapshot.to_fold_point(
+                InlayPoint(Point::new(p.row as u32, p.column as u32)),
+                bias,
+            );
+            let clipped = self.fold_snapshot.clip_point(fp, bias);
+            self.fold_snapshot
+                .fold_offset_to_buffer(clipped.to_offset(&self.fold_snapshot))
+        };
+        let start = clip(self.selected_range.start, Bias::Left);
+        let end = clip(self.selected_range.end, Bias::Right);
+        if start != self.selected_range.start || end != self.selected_range.end {
+            self.selected_range = (start..end).into();
+        }
     }
 
     /// 光标钳出折叠占位符（zed clip_point 经 change_selections 应用）。

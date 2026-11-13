@@ -2258,11 +2258,20 @@ impl InputState {
         let inner_position = position - bounds.origin - point(line_number_width, px(0.));
 
         // pi-flash patch（折叠）：行定位走缓冲行表（行首 doc 偏移直取，
-        // 隐藏行间不连续）
+        // 隐藏行间不连续）。zed 命中 = point_for_position 在 display 空间
+        // 逐行走（display 行等高）——fold 态 y 按 line_height 累进（绘制
+        // 同式），不得用 text_wrapper 的 doc 软换行行高。
+        let fold_walk = self.fold_snapshot.has_folds() && self.fold_allowed();
         let mut y_offset = last_layout.visible_top;
         for (ix, &row) in last_layout.buffer_rows.iter().enumerate() {
-            let line = &self.text_wrapper.lines[row];
-            let line_origin = self.line_origin_with_y_offset(&mut y_offset, line, line_height);
+            let line_origin = if fold_walk {
+                let p = point(px(0.), y_offset);
+                y_offset += line_height;
+                p
+            } else {
+                let line = &self.text_wrapper.lines[row];
+                self.line_origin_with_y_offset(&mut y_offset, line, line_height)
+            };
             let pos = inner_position - line_origin;
 
             let Some(line_layout) = last_layout.lines.get(ix) else {
@@ -2289,7 +2298,10 @@ impl InputState {
                 // pi-flash patch（移植）：closest 返回 tab 展开字节，换回源
                 // 字节（md 装饰态其 vis 坐标自成体系，跳过）
                 let v_src = if self.fold_snapshot.has_folds() {
-                    let row_text = self.fold_snapshot.row_text(ix as u32);
+                    // 行文本按**绝对 fold 行号**（可视窗相对下标 ix + 窗起点
+                    // ——同 1f54bca0 高亮 runs 错配追修，滚动后不错行）
+                    let fold_row = (last_layout.visible_range.start + ix) as u32;
+                    let row_text = self.fold_snapshot.row_text(fold_row);
                     super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
                         .expanded_to_source(v)
                 } else if last_layout.decorations.is_none() {
@@ -2300,7 +2312,7 @@ impl InputState {
                 } else {
                     v
                 };
-                return if self.fold_snapshot.has_folds() {
+                let ret = if self.fold_snapshot.has_folds() {
                     self.fold_snapshot
                         .fold_offset_to_buffer(FoldOffset(line_start + v_src))
                 } else if let Some(dec) = &last_layout.decorations {
@@ -2309,6 +2321,7 @@ impl InputState {
                     line_start + v_src
                 }
                 .min(self.text.len());
+                return ret;
             } else if pos.y < px(0.) {
                 break;
             }

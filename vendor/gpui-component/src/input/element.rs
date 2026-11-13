@@ -223,6 +223,19 @@ fn paint_indent_guides(
     }
 }
 
+/// zed element.rs:281 `point_selection.to_display_point(map)`：高亮区间先
+/// 换算成**显示空间点（行,列）**再逐行画——zed 按行号范围取行，绝不用字节
+/// 坐标逐行试探（起点钳 0/终点 clamp 行尾会让选区之前的行两端 "Some" 而
+/// 提前误断，折叠占位符多字节再叠加偏移）。
+pub(crate) struct QuadSpan {
+    /// quads 空间字节窗（fold 态 = fold 空间字节），窗夹取用
+    pub bytes: Range<usize>,
+    pub start_row: usize,
+    pub start_col: usize,
+    pub end_row: usize,
+    pub end_col: usize,
+}
+
 pub(super) struct TextElement {
     pub(crate) state: Entity<InputState>,
     placeholder: SharedString,
@@ -561,11 +574,17 @@ impl TextElement {
     }
 
     /// Layout the match range to per-row rect quads (Zed-style).
+    ///
+    /// pi-flash patch（移植）：入参 = QuadSpan（显示空间行,列 + 字节窗）。
+    /// zed 按行号范围逐行画高亮（element.rs 高亮系列同构），绝不用字节坐标
+    /// 逐行试探——选区之前的行起点钳 0/终点 clamp 行尾会把两端变 "Some"，
+    /// 首行误判 + 提前 break（折叠占位符多字节再叠加偏移）。
     pub(crate) fn layout_match_quads(
-        range: Range<usize>,
+        span: &QuadSpan,
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
     ) -> Option<Vec<Bounds<Pixels>>> {
+        let range = &span.bytes;
         if range.is_empty() {
             return None;
         }
@@ -581,11 +600,8 @@ impl TextElement {
         let lines = &last_layout.lines;
         let line_number_width = last_layout.line_number_width;
 
-        let start_ix = range.start;
-        let end_ix = range.end;
-
-        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取（可见行
-        // 经 buffer_rows 表，隐藏行间不再连续）；doc→vis 换算同 PF-024
+        // pi-flash patch（折叠）：行首 doc 偏移按 fold_row_starts 直取（可
+        // 见行经 buffer_rows 表，隐藏行间不连续）；doc→vis 换算同 PF-024
         let mut offset_y = visible_top;
         let mut line_corners = vec![];
 
@@ -593,25 +609,36 @@ impl TextElement {
             let line_size = line.size(line_height);
             let line_wrap_width = line_size.width;
 
-            let line_origin = point(px(0.), offset_y);
-
-            // pi-flash patch（移植）：行首偏移按 fold_row_starts（fold 空间
-            // 行首）优先、doc_starts 兜底（非折叠 == buffer 行首）；折叠态
-            // 再 doc→vis 换算本行 local 坐标（PF-024 同款）
             let Some(&line_start_doc) = last_layout.fold_row_starts.get(line_ix) else {
                 break;
             };
+            // zed 行区间语义：选区行区间外的行跳过；起点行取起点列、终点行
+            // 取终点列、中间行整行
+            if line_ix < span.start_row || line_ix > span.end_row {
+                offset_y += line_size.height;
+                continue;
+            }
+
+            let line_origin = point(px(0.), offset_y);
+
             let (local_start, local_end) = match &last_layout.decorations {
                 Some(dec) => {
                     let base = dec.doc_to_vis(line_start_doc);
-                    (
-                        dec.doc_to_vis(start_ix).saturating_sub(base),
-                        dec.doc_to_vis(end_ix).saturating_sub(base),
-                    )
+                    let s = if line_ix == span.start_row {
+                        dec.doc_to_vis(line_start_doc + span.start_col)
+                            .saturating_sub(base)
+                    } else {
+                        0
+                    };
+                    let e = if line_ix == span.end_row {
+                        dec.doc_to_vis(line_start_doc + span.end_col)
+                            .saturating_sub(base)
+                    } else {
+                        line.len()
+                    };
+                    (s, e)
                 }
                 None => {
-                    let s = start_ix.saturating_sub(line_start_doc);
-                    let e = end_ix.saturating_sub(line_start_doc);
                     // pi-flash patch（移植）：行 shape 用 tab 展开文本，选区
                     // 端点换展开坐标——行文本取 fold_row_texts（cvr 统一填
                     // 充，fold 态 = fold 行文本、非折叠 = buffer 行文本）
@@ -621,7 +648,17 @@ impl TextElement {
                         .cloned()
                         .unwrap_or_default();
                     let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
-                    (exp.source_to_expanded(s), exp.source_to_expanded(e))
+                    let s = if line_ix == span.start_row {
+                        exp.source_to_expanded(span.start_col)
+                    } else {
+                        0
+                    };
+                    let e = if line_ix == span.end_row {
+                        exp.source_to_expanded(span.end_col)
+                    } else {
+                        line.len()
+                    };
+                    (s, e)
                 }
             };
             let line_cursor_start = line.position_for_index(local_start, line_height);
@@ -670,7 +707,7 @@ impl TextElement {
                 }
             }
 
-            if line_cursor_start.is_some() && line_cursor_end.is_some() {
+            if line_ix >= span.end_row {
                 break;
             }
 
@@ -726,8 +763,10 @@ impl TextElement {
         };
 
         let mut matches = Vec::new();
+        let state = self.state.read(cx);
         for (index, range) in ranges.as_ref().iter().enumerate() {
-            if let Some(quads) = Self::layout_match_quads(range.clone(), last_layout, bounds) {
+            let span = Self::quad_span(state, range.clone());
+            if let Some(quads) = Self::layout_match_quads(&span, last_layout, bounds) {
                 matches.push((quads, current_match_ix == index));
             }
         }
@@ -747,7 +786,8 @@ impl TextElement {
             return None;
         };
 
-        Self::layout_match_quads(symbol_range, last_layout, bounds)
+        let span = Self::quad_span(&self.state.read(cx), symbol_range);
+        Self::layout_match_quads(&span, last_layout, bounds)
     }
 
     fn layout_document_colors(
@@ -755,15 +795,59 @@ impl TextElement {
         document_colors: &[(Range<usize>, Hsla)],
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
+        cx: &mut App,
     ) -> Vec<(Vec<Bounds<Pixels>>, Hsla)> {
         let mut colors = vec![];
+        let state = self.state.read(cx);
         for (range, color) in document_colors.iter() {
-            if let Some(quads) = Self::layout_match_quads(range.clone(), last_layout, bounds) {
+            let span = Self::quad_span(state, range.clone());
+            if let Some(quads) = Self::layout_match_quads(&span, last_layout, bounds) {
                 colors.push((quads, *color));
             }
         }
 
         colors
+    }
+
+    /// buffer 字节 → QuadSpan。fold 态经 to_fold_point（Bias::Left/Right =
+    /// zed anchor before/after 偏向）；装饰态行号 == doc 行号（folds 不跨
+    /// 行，decorations.rs 行数严格一致）；其余 = buffer 点。
+    fn quad_span(state: &InputState, range: Range<usize>) -> QuadSpan {
+        let start = range.start;
+        let end = range.end;
+        if state.fold_snapshot.has_folds() && state.fold_allowed() {
+            let fp = |off: usize, bias: Bias| -> FoldPoint {
+                let p = state.text.offset_to_point(off);
+                state.fold_snapshot.to_fold_point(
+                    InlayPoint(FoldSpacePoint::new(p.row as u32, p.column as u32)),
+                    bias,
+                )
+            };
+            let s = fp(start, Bias::Left);
+            let e = fp(end, Bias::Right);
+            QuadSpan {
+                bytes: FoldPoint::new(s.row(), s.column())
+                    .to_offset(&state.fold_snapshot)
+                    .0
+                    ..FoldPoint::new(e.row(), e.column())
+                        .to_offset(&state.fold_snapshot)
+                        .0,
+                start_row: s.row() as usize,
+                start_col: s.column() as usize,
+                end_row: e.row() as usize,
+                end_col: e.column() as usize,
+            }
+        } else {
+            let s = state.text.offset_to_point(start);
+            let e = state.text.offset_to_point(end);
+            QuadSpan {
+                bytes: start..end,
+                start_row: s.row,
+                start_col: s.column,
+                end_row: e.row,
+                end_col: e.column,
+            }
+        }
     }
 
     fn layout_selections(
@@ -789,10 +873,18 @@ impl TextElement {
             (selected_range.end, selected_range.start)
         };
 
-        let range = start_ix.max(last_layout.visible_range_offset.start)
-            ..end_ix.min(last_layout.visible_range_offset.end);
+        let mut span = Self::quad_span(state, start_ix..end_ix);
+        // 视口窗夹取（字节窗；跨视口选区的行自然由行区间逻辑覆盖）
+        span.bytes = span
+            .bytes
+            .start
+            .max(last_layout.visible_range_offset.start)
+            ..span
+                .bytes
+                .end
+                .min(last_layout.visible_range_offset.end);
 
-        Self::layout_match_quads(range, &last_layout, bounds).unwrap_or_default()
+        Self::layout_match_quads(&span, &last_layout, bounds).unwrap_or_default()
     }
 
     /// Calculate the visible range of lines in the viewport.
@@ -1384,14 +1476,24 @@ impl Element for TextElement {
 
         // PF-024: 装饰 provider（md Live Preview）每帧纯函数现算——折叠文本 +
         // 折叠坐标系样式；None = 走原路径（tree-sitter 高亮 + doc 文本）。
-        // pi-flash patch（折叠）：provider 行区间是缓冲行空间，给缓冲行超集。
+        // pi-flash patch（折叠）：provider 契约是**缓冲行号区间**
+        // （decorations.rs:134 `visible_lines` 0-based 行号）；buffer_span
+        // 已是字节窗（fold 态还是 fold 空间字节），行窗另按 rows 表合成。
+        let provider_row_span = rows
+            .first()
+            .map(|(r, _, _)| *r)
+            .unwrap_or(visible_range.start)
+            ..rows
+                .last()
+                .map(|(r, _, _)| *r + 1)
+                .unwrap_or(visible_range.end);
         let decorations: Option<Rc<Decorations>> = state
             .decorations
             .as_ref()
             .and_then(|p| {
                 p.decorate(
                     &state.text,
-                    buffer_span.clone(),
+                    provider_row_span,
                     state.selected_range.start..state.selected_range.end,
                 )
             })
@@ -1811,7 +1913,7 @@ impl Element for TextElement {
         let selection_quads = self.layout_selections(&last_layout, &mut bounds, cx);
         let hover_highlight_quads = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
         let document_color_quads =
-            self.layout_document_colors(&document_colors, &last_layout, &bounds);
+            self.layout_document_colors(&document_colors, &last_layout, &bounds, cx);
 
         let state = self.state.read(cx);
                 let line_numbers = if state.mode.line_number() {
