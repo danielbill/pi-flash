@@ -179,6 +179,13 @@ pub(crate) struct SessionRuntime {
     pub branch_tree: Option<(Vec<TreeNode>, Option<String>)>,
     pub active_user_entry_ids: Vec<String>,
     pub pending_rename: bool,
+    /// 卡片改名的一次性进程（pi-flash-n3k8）：进程是专为发 SetSessionName
+    /// 现起的（send_session_rename），set_session_name **回执一到**（成败都
+    /// 算）就 shutdown_process——不能「发完即收」：node 冷启动数百 ms，命令
+    /// 还在 stdin 管道里没人读就 kill，session_info 永不落盘，侧栏标题被
+    /// 扫描器真值弹回（用户 2026-11-13：改 2 次都改回去）。进程退出事件
+    /// 兜底清除（pump），防残留标记误杀后来 rebinding 的正经进程。
+    pub rename_transient: bool,
     /// 手动压缩进行中（圆环弹窗按钮防连点；compact 响应清除）
     pub compacting: bool,
     /// fork 在飞：agent 回复下的「新分支」显示「创建中…」并禁用（pi-web
@@ -381,6 +388,7 @@ impl SessionRuntime {
             branch_tree: None,
             active_user_entry_ids: Vec::new(),
             pending_rename: false,
+            rename_transient: false,
             compacting: false,
             forking: false,
             fork_source_title: None,

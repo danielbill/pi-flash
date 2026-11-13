@@ -51,6 +51,26 @@ impl SessionRuntime {
         self.agent.session.as_ref().and_then(|s| s.send(cmd).ok())
     }
 
+    /// 会话改名发送（卡片改名 [`Chat::rename_card_commit`] 共用，pi-flash-n3k8）：
+    /// 进程不在场就临时起一个，`set_session_name` 递进 stdin 后按
+    /// [`Self::rename_transient`] 挂「回执即收」标记，response.rs 见回执
+    /// （成功/失败都算）就 shutdown_process。此前「发完即收」把 node 在冷
+    /// 启动中途 kill，命令没人读，session_info 永不落盘，侧栏标题被扫描器
+    /// 真值弹回。命令没递出去（spawn 失败/进程已死）就地发 ListDirty，让
+    /// 乐观标题回落文件真值，不假装改成了。
+    pub(crate) fn send_session_rename(&mut self, name: String, cx: &mut Context<Self>) {
+        let fresh = self.agent.session.is_none();
+        if fresh && !self.spawn_attached(cx) {
+            cx.emit(SessionEvent::ListDirty);
+            return;
+        }
+        if !self.rpc(&Command::SetSessionName { name }) {
+            cx.emit(SessionEvent::ListDirty);
+            return;
+        }
+        self.rename_transient = fresh;
+    }
+
     /// steer（中断当前运行并立即注入）。090 起两个入口：设置「插话」模式下
     /// composer 的 Enter，与 queue 模式下卡片「立即」/Ctrl+Enter 的显式插话
     /// （pif-ui `session.steer` 自动化也走这里）。乐观上屏与翻页和 prompt/

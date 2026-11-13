@@ -244,8 +244,9 @@ impl Chat {
 
 impl Chat {
     /// psp 详情卡改名提交（Enter）：对目标会话的 runtime 发
-    /// SetSessionName；未加载的会话临时 spawn 进程发完即收。名字先乐观
-    /// 写入内存，扫描器随后从会话文件回读确认。
+    /// SetSessionName；未加载的会话临时 spawn 进程，**回执到达再收**
+    /// （send_session_rename，pi-flash-n3k8）。名字先乐观写入内存，
+    /// 扫描器随后从会话文件回读确认。
     pub(crate) fn rename_card_commit(
         &mut self,
         path: &PathBuf,
@@ -261,9 +262,9 @@ impl Chat {
         let key = path.to_string_lossy().to_string();
         match self.pool.runtimes.get(&key).cloned() {
             Some(rt) => {
-                rt.update(cx, |r, _| {
-                    r.rpc(&Command::SetSessionName { name: name.clone() });
-                });
+                // 进程不在场（空闲退役）同样走临时进程链：rpc 假成功会静默
+                // 丢改名（pi-flash-n3k8 同源）
+                rt.update(cx, |r, cx| r.send_session_rename(name.clone(), cx));
             }
             None => {
                 // 未加载的会话：tail 渲染 + 临时进程发改名，不切换活跃会话
@@ -294,23 +295,11 @@ impl Chat {
                 self.pool.runtimes.insert(key, rt.clone());
                 self.subscribe_runtime(&rt, cx);
                 rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
-                let rt_spawn = rt.clone();
-                cx.spawn(async move |_this, cx| {
-                    let _ = rt_spawn.update(cx, |r, cx| {
-                        if r.agent.session.is_none() {
-                            if let Some(rx) = r.spawn() {
-                                let epoch = r.agent.epoch;
-                                session::runtime::SessionRuntime::attach_pump(
-                                    &rt_spawn, rx, epoch, cx,
-                                );
-                            }
-                        }
-                        r.rpc(&Command::SetSessionName { name: name.clone() });
-                    });
-                    // 改名发完即收进程（消息保留，下次打开秒开）
-                    let _ = rt_spawn.update(cx, |r, _| r.shutdown_process());
-                })
-                .detach();
+                // 改名链收口 send_session_rename：回执到达才收进程。旧版
+                // 「发完即收」把 node 在冷启动中途 kill，session_info 永不
+                // 落盘，标题改完就被扫描器弹回（pi-flash-n3k8 用户报障：
+                // 改 2 次都改回去）
+                rt.update(cx, |r, cx| r.send_session_rename(name.clone(), cx));
             }
         }
         // 乐观更新内存中的标题

@@ -180,22 +180,35 @@ impl SessionRuntime {
                     self.follow_session_file(f, cx);
                 }
             }
-        } else if command == "set_session_name" && success {
-            // pi flushed the name to the session file — reload the
-            // sidebar labels (pi-web onRenamed → loadSessions), with
-            // one delayed pass to cover flush lag
-            cx.emit(SessionEvent::ListDirty);
-            cx.notify();
-            cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
-                    .await;
-                let _ = this.update(cx, |_c, cx| {
-                    cx.emit(SessionEvent::ListDirty);
-                    cx.notify();
-                });
-            })
-            .detach();
+        } else if command == "set_session_name" {
+            if success {
+                // pi flushed the name to the session file — reload the
+                // sidebar labels (pi-web onRenamed → loadSessions), with
+                // one delayed pass to cover flush lag
+                cx.emit(SessionEvent::ListDirty);
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+                    let _ = this.update(cx, |_c, cx| {
+                        cx.emit(SessionEvent::ListDirty);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            } else {
+                // pi 拒绝（空名等）：也刷一遍侧栏——乐观标题回落文件真值
+                cx.emit(SessionEvent::ListDirty);
+                cx.notify();
+            }
+            // 一次性改名进程收工（send_session_rename 挂的标记，n3k8）：
+            // 回执到了 = session_info 已落盘（或被拒），成败都收，不留
+            // 一次性进程占内存
+            if self.rename_transient {
+                self.rename_transient = false;
+                self.shutdown_process();
+            }
         } else if command == "get_commands" && success {
             if let Some(data) = &data {
                 let commands = SlashCommand::parse_list(data);
