@@ -19,7 +19,7 @@ fn read_json_file(path: &Path) -> serde_json::Value {
 }
 
 fn store_at(dir: &Path) -> SettingsStore {
-    SettingsStore::open(Some(dir.join("app-settings.json")))
+    crate::tests_support::store_at(dir)
 }
 
 // ---------------------------------------------------------------------------

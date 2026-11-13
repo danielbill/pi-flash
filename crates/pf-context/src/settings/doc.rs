@@ -7,6 +7,7 @@
 
 use serde_json::{Map, Value};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::section::deep_merge;
 use super::{Snapshot, sections};
@@ -54,17 +55,45 @@ pub(crate) fn write_section(path: &Path, key: &str, snap: &Snapshot) -> Result<b
     if std::fs::read_to_string(path).is_ok_and(|cur| cur == text) {
         return Ok(false);
     }
-    // 父目录已被删除（临时目录被清理/测试收尾）= 不重建、不写、不报错。
-    // 否则 pi-link::config::write_json 的 create_dir_all 会把整个目录树
-    // 重建出来——测试结束后的后台 flush 会复活临时目录。
-    if let Some(parent) = path.parent() {
-        if !parent.is_dir() {
-            return Ok(false);
-        }
-    }
-    // tmp + rename 原子写（pi-link::config 与 workspace 存储层同一条管线）
-    pi_link::config::write_json(path, &value)?;
+    write_json_no_mkdir(path, &value)?;
     Ok(true)
+}
+
+/// 原子写（同目录 tmp + rename），**绝不创建父目录**。
+///
+/// 与 `pi_link::config::write_json` 的唯一差别就是这条：那个函数自带
+/// `create_dir_all(parent)`，因此「目录已被删除之后的一次迟到写」会把整棵
+/// 目录树重新建出来——测试收尾删掉的临时目录、用户刚移走的数据目录都会被
+/// 复活。数据目录的生命周期归启动期（`Hub::open` / `paths::ensure_dir`），
+/// 写路径只负责往里写。
+///
+/// tmp 名带 pid + 进程内自增序号：并发写同一目标（后台投影线程 vs flush）
+/// 不再共用同一个 `.json.tmp` 互相 rename 抢跑（Windows 上表现为 os error 2）。
+/// 失败时清掉 tmp，不留垃圾。
+pub(crate) fn write_json_no_mkdir(path: &Path, value: &Value) -> Result<(), String> {
+    let parent = path.parent().ok_or_else(|| "路径无父目录".to_string())?;
+    if !parent.is_dir() {
+        return Err(format!("目录不存在（不重建）: {}", parent.display()));
+    }
+    static TMP_NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("doc.json");
+    let tmp = parent.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        TMP_NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let text = serde_json::to_string_pretty(value).map_err(|e| format!("序列化失败: {e}"))?;
+    if let Err(e) = std::fs::write(&tmp, text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 /// 原地深合并 upsert（不用 remove+insert——preserve_order 下那会把键挪到

@@ -33,8 +33,8 @@ impl Logger {
         let Some(dir) = dir else {
             return Logger::default();
         };
-        // 父目录不存在（临时目录被清理/测试收尾）：不重建，静默 no-op，
-        // 否则观测日志会复活已删的测试临时目录。
+        // 目录不存在（临时目录清理 / 数据目录被移走）：不重建，静默 no-op。
+        // 观测日志不值得为它复活一棵已删的目录树。
         if !dir.is_dir() {
             return Logger::default();
         }

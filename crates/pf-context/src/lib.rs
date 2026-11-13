@@ -77,6 +77,10 @@ impl Hub {
     /// 指定 settings 文件路径构造（无文件监听）。测试与嵌入用；
     /// `None` = 纯内存态（set/flush 不落盘）。
     pub fn open(settings_path: Option<std::path::PathBuf>) -> Hub {
+        // 写方职责（docs/paths.rs：写方负责 create_dir_all）——启动期显式建目录。
+        if let Some(dir) = settings_path.as_ref().and_then(|p| p.parent()) {
+            let _ = std::fs::create_dir_all(dir);
+        }
         // pfctx.log：settings/domain 共享 Hub 级日志器（state 不落盘无日志点）
         let logger = std::sync::Arc::new(log::Logger::open(
             settings_path.as_ref().and_then(|p| p.parent()),

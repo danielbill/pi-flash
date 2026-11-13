@@ -40,7 +40,8 @@ pub(crate) fn export(snap: &Snapshot, dir: &Path, last_payload: &mut u64) -> Res
     }
     guard_no_sensitive(&payload)?;
 
-    // 数据目录已被删除（临时目录被清理/测试收尾）= 不重建、不写。
+    // 数据目录已被删除（临时目录清理 / 数据目录被移走）：投影是派生物，跳过即可，
+    // 下次正常写盘会重新生成；绝不重建目录树（否则已删目录被复活）。
     if !dir.is_dir() {
         return Ok(false);
     }
@@ -59,7 +60,8 @@ pub(crate) fn export(snap: &Snapshot, dir: &Path, last_payload: &mut u64) -> Res
     for (k, v) in payload {
         doc.insert(k, v);
     }
-    pi_link::config::write_json(
+    // 同一条不建目录的原子写（写路径绝不复活已删目录树）
+    super::doc::write_json_no_mkdir(
         &dir.join(PROJECTION_FILENAME),
         &serde_json::Value::Object(doc),
     )?;
