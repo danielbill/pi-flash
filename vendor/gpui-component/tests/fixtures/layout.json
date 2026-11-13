@@ -1,0 +1,77 @@
+{
+  "center": {
+    "panel_name": "StackPanel",
+    "children": [
+      {
+        "panel_name": "TabPanel",
+        "children": [],
+        "info": { "tabs": { "active_index": 0 } }
+      },
+      {
+        "panel_name": "TabPanel",
+        "children": [
+          {
+            "panel_name": "StoryContainer",
+            "children": [],
+            "info": { "panel": null }
+          }
+        ],
+        "info": { "tabs": { "active_index": 0 } }
+      }
+    ],
+    "info": { "stack": { "sizes": [300.0, 700.0], "axis": 1 } }
+  },
+  "left_dock": {
+    "panel": {
+      "panel_name": "TabPanel",
+      "children": [
+        {
+          "panel_name": "StoryContainer",
+          "children": [],
+          "info": { "panel": null }
+        }
+      ],
+      "info": { "tabs": { "active_index": 0 } }
+    },
+    "placement": "left",
+    "size": 350.0,
+    "open": true
+  },
+  "bottom_dock": {
+    "panel": {
+      "panel_name": "TabPanel",
+      "children": [
+        {
+          "panel_name": "StoryContainer",
+          "children": [],
+          "info": { "panel": null }
+        },
+        {
+          "panel_name": "StoryContainer",
+          "children": [],
+          "info": { "panel": null }
+        }
+      ],
+      "info": { "tabs": { "active_index": 0 } }
+    },
+    "placement": "bottom",
+    "size": 200.0,
+    "open": true
+  },
+  "right_dock": {
+    "panel": {
+      "panel_name": "TabPanel",
+      "children": [
+        {
+          "panel_name": "StoryContainer",
+          "children": [],
+          "info": { "panel": null }
+        }
+      ],
+      "info": { "tabs": { "active_index": 0 } }
+    },
+    "placement": "right",
+    "size": 320.0,
+    "open": true
+  }
+}

@@ -750,7 +750,8 @@ mod tests {
         wrapper._update(&text, &range, &Rope::from(new_text), &mut fake_wrap_line);
         assert_eq!(text.to_string(), "");
         assert_eq!(wrapper.lines.len(), 1);
-        assert_eq!(wrapper.lines[0].wrapped_lines, smallvec![0..0]);
+        let expected_empty: SmallVec<[Range<usize>; 1]> = smallvec![0..0];
+        assert_eq!(wrapper.lines[0].wrapped_lines, expected_empty);
 
         // Test update_all
         let range = 0..text.len();
