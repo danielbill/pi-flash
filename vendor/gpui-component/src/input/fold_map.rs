@@ -37,6 +37,7 @@ use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary};
 
 use super::rope_ext::RopeExt as _;
 use super::state::InputState;
+use super::mode::InputMode;
 
 // ---------- Point（zed crates/language/src/point.rs 移植） ----------
 
@@ -1781,15 +1782,49 @@ pub(super) trait FoldBufferExt {
     /// zed starts_indent（display_map.rs:2241 原样）：当前行非空白、其下
     /// 第一个非空行缩进更深 → 可折叠。
     fn starts_indent(&self, buffer_row: u32) -> bool;
-    /// zed closing_bracket_indent_len（display_map.rs 移植）：行以闭合括号
-    /// 开头 → Some(缩进位)；PF 无 language_scope，括号闭合集取通用集。
-    fn closing_bracket_indent_len(&self, row: u32) -> Option<u32>;
+    /// zed closing_bracket_indent_len（display_map.rs:2267 移植）：行以该
+    /// 语言的闭合括号/闭合关键词开头 → Some(缩进位)。`language` =
+    /// InputMode::CodeEditor 的 language 名（zed language_scope_at(row,0)
+    /// 的括号表在 PF 的对应物）。
+    fn closing_bracket_indent_len(&self, row: u32, language: Option<&str>) -> Option<u32>;
     /// zed crease_for_buffer_row 的无 LSP 路（display_map.rs:2290 移植）：
     /// crease = (行尾, 闭合括号缩进位 | 最后非空行尾)，闭合括号随折叠行
     /// 显示在占位符后。
-    fn fold_crease_for_row(&self, buffer_row: u32) -> Option<(Range<usize>, FoldPlaceholder)>;
+    fn fold_crease_for_row(
+        &self,
+        buffer_row: u32,
+        language: Option<&str>,
+    ) -> Option<(Range<usize>, FoldPlaceholder)>;
 }
 
+/// 各语言的闭合括号/闭合关键词 **end** 串表——zed 各语言 config.toml 的
+/// `brackets` 数组原样数据移植（zed closing_bracket_indent_len 用
+/// `scope.brackets().any(|(pair,_)| line_text.starts_with(&pair.end))` 全量
+/// 匹配，不做上下文过滤——language.rs:1373 brackets() 的 bool 只供补全）。
+/// bash 的 then→else/fi/done/elif、in→esac 关键词对即用户截图
+/// `then⋯else`（else 保留在占位符后）的语义来源。
+/// 不在 zed 参考仓的语言（java/csharp/swift/zig/cmake/elixir/graphql/
+/// scala/make/toml 等外部扩展）沿用 PF 通用字符集兜底。
+const FOLD_BRACKET_ENDS: &[(&str, &[&str])] = &[
+    ("rust", &["}", "\"#", "\"##", "\"###", "]", ")", ">", "\"", "`", " */"]),
+    ("python", &["\"", "'", "}", "]", ")"]),
+    ("javascript", &["}", "]", ")", ">", "\"", "'", "`", " */"]),
+    ("typescript", &["}", "]", ")", ">", "\"", "'", "`", " */"]),
+    ("tsx", &["}", "]", ")", ">", "\"", "'", "`", " */"]),
+    ("go", &["}", "]", ")", "\"", "'", "`", " */"]),
+    ("json", &["}", "]", ")", "\""]),
+    ("jsonc", &["}", "]", ")", "\""]),
+    ("css", &["}", "]", ")", "\"", "'"]),
+    ("yaml", &["}", "]", "\"", "'"]),
+    ("c", &["}", "]", ")", "\"", "`", "'", " */"]),
+    ("cpp", &["}", "]", ")", "\"", "`", "'", " */"]),
+    ("bash", &["]", ")", "}", "\"", "'", "done", "fi", "else", "elif", "esac"]),
+    ("proto", &["}", "]", ")", "\"", "'", " */"]),
+    ("html", &["}", "]", ")", "\"", ">", " --"]),
+    ("markdown", &["}", "]", ")", ">", "\"", "'", "`", "*", "~"]),
+    ("diff", &[]),
+];
+/// 未收录语言的兜底闭合集（PF 原 FOLD_CLOSING_BRACKETS 保留）。
 const FOLD_CLOSING_BRACKETS: &[char] = &['}', ')', ']', '>'];
 
 impl FoldBufferExt for Rope {
@@ -1818,21 +1853,35 @@ impl FoldBufferExt for Rope {
             .unwrap_or(false)
     }
 
-    fn closing_bracket_indent_len(&self, row: u32) -> Option<u32> {
+    fn closing_bracket_indent_len(&self, row: u32, language: Option<&str>) -> Option<u32> {
         let indent_len = indent_len_for_line(self, row);
         let line_text = text_slice(
             self,
             self.point_to_offset(tree_sitter::Point::new(row as usize, indent_len as usize))..self.len(),
         );
         let line_head = line_text.lines().next().unwrap_or("");
-        if FOLD_CLOSING_BRACKETS.iter().any(|b| line_head.starts_with(*b)) {
+        // zed：全量括号对表 starts_with(pair.end)；先查语言表，未收录语言
+        // 落通用字符集兜底
+        let lang_hit = language
+            .and_then(|lang| {
+                FOLD_BRACKET_ENDS
+                    .iter()
+                    .find(|(name, _)| *name == lang)
+                    .map(|(_, ends)| *ends)
+            })
+            .is_some_and(|ends| ends.iter().any(|e| line_head.starts_with(*e)));
+        if lang_hit || FOLD_CLOSING_BRACKETS.iter().any(|b| line_head.starts_with(*b)) {
             Some(indent_len)
         } else {
             None
         }
     }
 
-    fn fold_crease_for_row(&self, buffer_row: u32) -> Option<(Range<usize>, FoldPlaceholder)> {
+    fn fold_crease_for_row(
+        &self,
+        buffer_row: u32,
+        language: Option<&str>,
+    ) -> Option<(Range<usize>, FoldPlaceholder)> {
         let start = self.point_to_offset(tree_sitter::Point::new(
             buffer_row as usize,
             self.line_len(buffer_row as usize),
@@ -1865,7 +1914,7 @@ impl FoldBufferExt for Rope {
         };
 
         let end = if let Some(row) = closing_row {
-            if let Some(indent_len) = self.closing_bracket_indent_len(row) {
+            if let Some(indent_len) = self.closing_bracket_indent_len(row, language) {
                 // Include newline and whitespace before closing delimiter,
                 // so it appears on the same display line as the fold placeholder
                 self.point_to_offset(tree_sitter::Point::new(row as usize, indent_len as usize))
@@ -1909,7 +1958,15 @@ fn is_line_blank(buffer: &Rope, row: u32) -> bool {
 impl InputState {
     /// zed fold_at（fold.rs:424 移植）：折叠 buffer_row 所在 crease。
     pub(super) fn fold_map_fold_at(&mut self, buffer_row: u32) {
-        let Some((range, placeholder)) = self.text.fold_crease_for_row(buffer_row) else {
+        // closing_bracket_indent_len 的语言表入口（zed language_scope_at
+        // 的 PF 对应物 = CodeEditor mode 的 language 名）
+        let language = match &self.mode {
+            InputMode::CodeEditor { language, .. } => Some(language.as_ref().to_string()),
+            _ => None,
+        };
+        let Some((range, placeholder)) =
+            self.text.fold_crease_for_row(buffer_row, language.as_deref())
+        else {
             return;
         };
         let version = self.fold_snapshot.version;

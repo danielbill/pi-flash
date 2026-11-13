@@ -419,8 +419,10 @@ impl TextElement {
                 }
 
                 let disp = ix;
-                let disp_ix = (disp >= visible_range.start)
-                    .then_some(disp - visible_range.start);
+                // checked_sub 而非 then_some(disp - start)：then_some 急切
+                // 求值，disp < start 时减法先算，usize 下溢 panic（md 软换行
+                // + 恢复滚动位首帧即触发）
+                let disp_ix = disp.checked_sub(visible_range.start);
                 let in_visible_range = disp_ix.is_some();
                 if let Some(line) = in_visible_range
                     .then(|| lines.get(disp_ix.unwrap()))
