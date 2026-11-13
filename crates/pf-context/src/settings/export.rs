@@ -40,6 +40,11 @@ pub(crate) fn export(snap: &Snapshot, dir: &Path, last_payload: &mut u64) -> Res
     }
     guard_no_sensitive(&payload)?;
 
+    // 数据目录已被删除（临时目录被清理/测试收尾）= 不重建、不写。
+    if !dir.is_dir() {
+        return Ok(false);
+    }
+
     let mut doc = serde_json::Map::new();
     doc.insert(
         "version".into(),

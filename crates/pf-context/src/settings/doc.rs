@@ -54,6 +54,14 @@ pub(crate) fn write_section(path: &Path, key: &str, snap: &Snapshot) -> Result<b
     if std::fs::read_to_string(path).is_ok_and(|cur| cur == text) {
         return Ok(false);
     }
+    // 父目录已被删除（临时目录被清理/测试收尾）= 不重建、不写、不报错。
+    // 否则 pi-link::config::write_json 的 create_dir_all 会把整个目录树
+    // 重建出来——测试结束后的后台 flush 会复活临时目录。
+    if let Some(parent) = path.parent() {
+        if !parent.is_dir() {
+            return Ok(false);
+        }
+    }
     // tmp + rename 原子写（pi-link::config 与 workspace 存储层同一条管线）
     pi_link::config::write_json(path, &value)?;
     Ok(true)

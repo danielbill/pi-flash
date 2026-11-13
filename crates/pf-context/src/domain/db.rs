@@ -176,19 +176,7 @@ impl Source for DbSource {
 mod tests {
     use super::*;
 
-    fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pf-context-db-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::tests_support::tmp_dir;
 
     #[test]
     fn wal_mode_and_version_persist() {

@@ -6,21 +6,9 @@ use section::Section;
 use sections::probe::Probe;
 use sections::{Appearance, Chat, DevFlags, FontSpec, Index, Models, Sessions, Shell, Subagents};
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-fn tmp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pf-context-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
+use crate::tests_support::tmp_dir;
 
 fn write_json_file(path: &Path, v: &serde_json::Value) {
     std::fs::write(path, serde_json::to_string_pretty(v).unwrap()).unwrap();

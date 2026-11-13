@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn db_opens_lazily_and_pings() {
         let dir = tmp_dir("domain-lazy");
-        let store = DomainStore::new(Some(dir), None);
+        let store = DomainStore::new(Some(dir.to_path_buf()), None);
         let db = store.db().expect("temp 目录可建库");
         assert_eq!(db.name(), "sqlite(context.db)");
         assert!(db.ping().is_ok());

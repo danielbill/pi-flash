@@ -33,7 +33,9 @@ impl Logger {
         let Some(dir) = dir else {
             return Logger::default();
         };
-        if std::fs::create_dir_all(dir).is_err() {
+        // 父目录不存在（临时目录被清理/测试收尾）：不重建，静默 no-op，
+        // 否则观测日志会复活已删的测试临时目录。
+        if !dir.is_dir() {
             return Logger::default();
         }
         let path = dir.join(NAME);
@@ -85,15 +87,10 @@ fn rfc3339_now() -> String {
 mod tests {
     use super::*;
     use crate::tests_support::tmp_dir;
-    use std::path::PathBuf;
-
-    fn tmp(tag: &str) -> PathBuf {
-        tmp_dir(tag)
-    }
 
     #[test]
     fn writes_tagged_lines_with_timestamps() {
-        let dir = tmp("log-writes");
+        let dir = tmp_dir("log-writes");
         let logger = Logger::open(Some(&dir));
         logger.log("write", "subagents {\"capacity\":6}");
         logger.log("watch", "外部改动 → 重载完成");
@@ -111,7 +108,7 @@ mod tests {
 
     #[test]
     fn oversize_file_rotates_to_old_on_open() {
-        let dir = tmp("log-rotate");
+        let dir = tmp_dir("log-rotate");
         std::fs::write(dir.join(NAME), vec![b'x'; (MAX_BYTES as usize) + 1]).unwrap();
         let _logger = Logger::open(Some(&dir));
         assert!(dir.join("pfctx.log.old").is_file(), "超限文件滚动为 .old");
@@ -121,7 +118,7 @@ mod tests {
 
     #[test]
     fn under_limit_file_is_appended_not_rotated() {
-        let dir = tmp("log-append");
+        let dir = tmp_dir("log-append");
         std::fs::write(dir.join(NAME), "previous\n").unwrap();
         let logger = Logger::open(Some(&dir));
         logger.log("write", "x");

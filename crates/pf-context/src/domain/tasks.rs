@@ -144,13 +144,17 @@ mod tests {
     use super::*;
     use crate::tests_support::tmp_dir;
 
-    fn db() -> DbSource {
-        DbSource::open(&tmp_dir("tasks")).unwrap()
+    /// 返回 (临时目录, DbSource)：目录必须活得比连接久，
+    /// 否则 Drop 删目录时 rusqlite 还持有 context.db。
+    fn db() -> (crate::tests_support::TestDir, DbSource) {
+        let dir = tmp_dir("tasks");
+        let db = DbSource::open(&dir).unwrap();
+        (dir, db)
     }
 
     #[test]
     fn consumer_writes_and_reads_back_last_run() {
-        let db = db();
+        let (_dir, db) = db();
         let tasks = TaskStore::new(&db);
         tasks
             .upsert_def(&TaskDef {
@@ -181,7 +185,7 @@ mod tests {
 
     #[test]
     fn upsert_overwrites_spec_keeps_single_row() {
-        let db = db();
+        let (_dir, db) = db();
         let tasks = TaskStore::new(&db);
         let def = |spec: &str| TaskDef {
             id: "t".into(),
