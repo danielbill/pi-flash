@@ -30,7 +30,7 @@ impl InputState {
             };
             // pi-flash patch（移植）：行 shape 用 tab 展开文本，列换展开坐标
             let row_text = self.fold_snapshot.row_text(fp.row());
-            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
             let Some(pos) = line.position_for_index(
                 exp.source_to_expanded(fp.column() as usize),
                 last_layout.line_height,
@@ -59,7 +59,7 @@ impl InputState {
         // pi-flash patch（移植）：tab 展开坐标（md 装饰态不展开）
         if last_layout.decorations.is_none() {
             let row_text = self.text.slice_line(point.row).to_string();
-            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
             col = exp.source_to_expanded(col);
         }
 
@@ -136,7 +136,7 @@ impl InputState {
                         // 换回源字节再进 fold 偏移
                         let row_text = self.fold_snapshot.row_text(target);
                         let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                         let x_src = exp.expanded_to_source(x);
                         new_offset = self.fold_snapshot.fold_offset_to_buffer(
                             fold_map::FoldOffset(row_start + x_src),
@@ -179,7 +179,7 @@ impl InputState {
                     let x_src = if last_layout.decorations.is_none() {
                         let row_text = self.text.slice_line(next_point.row).to_string();
                         let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                         exp.expanded_to_source(x)
                     } else {
                         x
@@ -247,7 +247,7 @@ impl InputState {
                         // 换回源字节再进 fold 偏移
                         let row_text = self.fold_snapshot.row_text(target);
                         let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                         let x_src = exp.expanded_to_source(x);
                         new_offset = self.fold_snapshot.fold_offset_to_buffer(
                             fold_map::FoldOffset(row_start + x_src),
@@ -288,7 +288,7 @@ impl InputState {
                     let x_src = if last_layout.decorations.is_none() {
                         let row_text = self.text.slice_line(next_point.row).to_string();
                         let exp =
-                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                         exp.expanded_to_source(x)
                     } else {
                         x

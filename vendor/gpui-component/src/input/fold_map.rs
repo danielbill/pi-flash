@@ -27,6 +27,7 @@
 use std::{
     cmp::{self, Ordering},
     iter,
+    num::NonZeroU32,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub, SubAssign},
     usize,
 };
@@ -38,6 +39,7 @@ use sum_tree::{Bias, Cursor, Dimensions, FilterCursor, SumTree, Summary};
 use super::rope_ext::RopeExt as _;
 use super::state::InputState;
 use super::mode::InputMode;
+use super::tab_map::{TabMap, TabSnapshot};
 
 // ---------- Point（zed crates/language/src/point.rs 移植） ----------
 
@@ -1202,6 +1204,13 @@ impl FoldSnapshot {
         fold_point.to_offset(self)
     }
 
+    /// fold 点 → buffer 点（fold→inlay→buffer；tab 层 tab_point_to_point、
+    /// 显示层收口共用）。
+    pub fn fold_point_to_buffer_point(&self, point: FoldPoint) -> Point {
+        let inlay = point.to_inlay_point(self);
+        self.inlay_snapshot.to_buffer_point(inlay)
+    }
+
     /// fold 行文本（懒取：transforms 游标 seek + 收集到换行；PF element
     /// 每帧只取可见行）。
     pub fn row_text(&self, row: u32) -> String {
@@ -2033,12 +2042,30 @@ impl InputState {
         }];
         let (snapshot, _) = self.fold_map.read(inlay_snapshot, edits);
         self.fold_snapshot = snapshot;
+        self.sync_tab_snapshot();
     }
 
     /// writer 产物回填（fold/unfold 后 folds 树在 writer 内已重建，这里
     /// 只取回 snapshot；buffer 未变，inlay 版本不变）。
     fn sync_fold_snapshot(&mut self) {
         self.fold_snapshot = self.fold_map.snapshot.clone();
+        self.sync_tab_snapshot();
+    }
+
+    /// pi-flash patch（移植）：TabMap 链层随 fold 快照前进（tab_size 取
+    /// mode 配置；fold 编辑经 TabMap::sync 透传给下游 wrap 层）。
+    pub(super) fn sync_tab_snapshot(&mut self) {
+        let tab_size = self
+            .mode
+            .tab_size()
+            .map_or(2u32, |t| (t.tab_size as u32).max(1));
+        let mut tab_map = TabMap(std::mem::replace(
+            &mut self.tab_snapshot,
+            TabSnapshot::new(self.fold_snapshot.clone(), NonZeroU32::new(tab_size).unwrap()),
+        ));
+        let (snapshot, _edits) =
+            tab_map.sync(self.fold_snapshot.clone(), Vec::new(), NonZeroU32::new(tab_size).unwrap());
+        self.tab_snapshot = snapshot;
     }
 
     /// zed 折叠后选区收口（fold.rs fold_creases → 显示换算经 clip_point；

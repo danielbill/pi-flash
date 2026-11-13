@@ -32,8 +32,10 @@ use super::{
     mask_pattern::MaskPattern,
     mode::{InputMode, TabSize},
     number_input,
+    tab_map::TabSnapshot,
     text_wrapper::TextWrapper,
 };
+use std::num::NonZeroU32;
 use crate::input::{
     element::RIGHT_MARGIN,
     popovers::{ContextMenu, DiagnosticPopover, HoverPopover, MouseContextMenu},
@@ -329,6 +331,10 @@ pub struct InputState {
     /// 且非 md wysiwyg 装饰态启用。
     pub(super) fold_map: FoldMap,
     pub(super) fold_snapshot: FoldSnapshot,
+    /// pi-flash patch（移植）：TabMap 链层（input/tab_map.rs = zed
+    /// tab_map.rs 移植）——fold 快照上的懒 tab 展开换算；编辑/折叠同步后
+    /// 由 [`Self::sync_tab_snapshot`] 前进。
+    pub(super) tab_snapshot: TabSnapshot,
     /// pi-flash patch（对齐 zed）：gutter hover 行（缓冲行号）——折叠箭头
     /// hover 显示用；None = 鼠标不在 gutter。
     pub(super) gutter_hover_row: Option<usize>,
@@ -475,6 +481,14 @@ impl InputState {
                 version: 0,
             })
             .1,
+            tab_snapshot: TabSnapshot::new(
+                FoldMap::new(InlaySnapshot {
+                    buffer: Rope::from(""),
+                    version: 0,
+                })
+                .1,
+                NonZeroU32::new(2).unwrap(),
+            ),
             gutter_hover_row: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
@@ -869,7 +883,7 @@ impl InputState {
                 let row_text = self
                     .fold_snapshot
                     .row_text(last_layout.visible_range.start as u32 + line_index as u32);
-                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                     .source_to_expanded(local_offset)
             } else if last_layout.decorations.is_none() {
                 let row = last_layout
@@ -878,7 +892,7 @@ impl InputState {
                     .copied()
                     .unwrap_or(0);
                 let row_text = self.text.slice_line(row).to_string();
-                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                     .source_to_expanded(local_offset)
             } else {
                 local_offset
@@ -953,6 +967,7 @@ impl InputState {
             });
             self.fold_map = map;
             self.fold_snapshot = snapshot;
+            self.sync_tab_snapshot();
         }
         self.text_wrapper.reset(&self.text, cx);
         // 高亮器置 None，语法树重建延迟到渲染帧的 update_highlighter
@@ -1979,7 +1994,7 @@ impl InputState {
             // Check to scroll horizontally
             // pi-flash patch（移植）：列换 tab 展开坐标再查 x
             let row_text = self.fold_snapshot.row_text(row as u32);
-            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
             if let Some(pos) = line.position_for_index(exp.source_to_expanded(fold_col as usize), line_height) {
                 let bounds_width = bounds.size.width - last_layout.line_number_width;
                 let col_offset_x = pos.x;
@@ -2302,12 +2317,12 @@ impl InputState {
                     // ——同 1f54bca0 高亮 runs 错配追修，滚动后不错行）
                     let fold_row = (last_layout.visible_range.start + ix) as u32;
                     let row_text = self.fold_snapshot.row_text(fold_row);
-                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                         .expanded_to_source(v)
                 } else if last_layout.decorations.is_none() {
                     let row = last_layout.buffer_rows.get(ix).copied().unwrap_or(0);
                     let row_text = self.text.slice_line(row).to_string();
-                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                         .expanded_to_source(v)
                 } else {
                     v
@@ -2369,7 +2384,7 @@ impl InputState {
                 // 字节（fold_pos_for_mouse 的列语义 = fold 行内源字节）
                 let fold_row = last_layout.visible_range.start + ix;
                 let row_text = self.fold_snapshot.row_text(fold_row as u32);
-                let v_src = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                let v_src = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                     .expanded_to_source(v);
                 return Some((fold_row, v_src));
             }
@@ -3064,6 +3079,7 @@ impl EntityInputHandler for InputState {
                 Some(super::tab_map::TabExpansion::build(
                     &row_text,
                     last_layout.tab_size,
+                    super::tab_map::MAX_EXPANSION_COLUMN,
                 ))
             } else if last_layout.decorations.is_none() {
                 let row = last_layout.buffer_rows.get(line_ix).copied().unwrap_or(0);
@@ -3071,6 +3087,7 @@ impl EntityInputHandler for InputState {
                 Some(super::tab_map::TabExpansion::build(
                     &row_text,
                     last_layout.tab_size,
+                    super::tab_map::MAX_EXPANSION_COLUMN,
                 ))
             } else {
                 None

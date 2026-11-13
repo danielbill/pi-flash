@@ -366,7 +366,7 @@ impl TextElement {
                         // （tab_map），光标列换到展开坐标再查 x
                         let row_text = state.fold_snapshot.row_text(row as u32);
                         let exp =
-                            super::tab_map::TabExpansion::build(&row_text, tab_size);
+                            super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                         if let Some(pos) = line.position_for_index(
                             exp.source_to_expanded(fp.column() as usize),
                             line_height,
@@ -405,7 +405,7 @@ impl TextElement {
                         if last_layout.decorations.is_none() {
                             let row_text = state.text.slice_line(row).to_string();
                             let exp =
-                                super::tab_map::TabExpansion::build(&row_text, tab_size);
+                                super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                             local = exp.source_to_expanded(local);
                         }
                         if let Some(p) = line.position_for_index(local, line_height) {
@@ -448,7 +448,7 @@ impl TextElement {
                     let tab_exp = (last_layout.decorations.is_none())
                         .then(|| {
                             let row_text = state.text.slice_line(row).to_string();
-                            super::tab_map::TabExpansion::build(&row_text, tab_size)
+                            super::tab_map::TabExpansion::build(&row_text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN)
                         });
                     let to_exp = |v: usize| -> usize {
                         tab_exp
@@ -647,7 +647,7 @@ impl TextElement {
                         .get(line_ix)
                         .cloned()
                         .unwrap_or_default();
-                    let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                    let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                     let s = if line_ix == span.start_row {
                         exp.source_to_expanded(span.start_col)
                     } else {
@@ -1769,7 +1769,7 @@ impl Element for TextElement {
                         .mode
                         .tab_size()
                         .map_or(2, |t| t.tab_size as u32);
-                    let exp = super::tab_map::TabExpansion::build(&text, tab_size);
+                    let exp = super::tab_map::TabExpansion::build(&text, tab_size, super::tab_map::MAX_EXPANSION_COLUMN);
                     let expanded: SharedString = exp.text.clone().into();
                     let row_runs = super::tab_map::rerun_expanded(
                         &row_runs,
