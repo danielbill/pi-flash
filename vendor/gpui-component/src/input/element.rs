@@ -1558,7 +1558,15 @@ impl Element for TextElement {
                     let mut row_runs: Vec<TextRun> = vec![];
                     let mut produced = 0usize;
                     let row_len = text.len();
-                    let segs = state.fold_snapshot.row_segments(ix as u32);
+                    // PF 修复（2026-11-13）：ix 是**可视窗内相对下标**（枚举
+                    // 起点 = visible_range.start），row_segments 要绝对 fold
+                    // 行号——滚动后错位配行：查到注释行整行灰、查到无捕获
+                    // 行整行默认色（折叠=全屏变灰的根因，用户实机截图 +
+                    // pif-ui 折叠 agent-workspace.sh 复现；未滚动时两者相等
+                    // 掩住了它）。zed 无此路径——fold 只是 transform，高亮
+                    // 仍在 buffer 空间，不变色。
+                    let fold_row = (last_layout.visible_range.start + ix) as u32;
+                    let segs = state.fold_snapshot.row_segments(fold_row);
                     let mut styled: Vec<(Range<usize>, gpui::HighlightStyle)> = vec![];
                     for (local, buf) in &segs {
                         match buf {
@@ -2122,28 +2130,38 @@ impl Element for TextElement {
                 let mut arrow_y = invisible_top_padding;
                 for (sub_count, folded, show, hovered) in rows_info {
                     if show {
-                        let pill_h = px(20.0);
-                        let pill_y = origin.y
-                            + arrow_y
-                            + ((line_height - pill_h) / 2.).max(px(0.));
-                        if hovered {
-                            window.paint_quad(
-                                fill(
-                                    Bounds::new(
-                                        point(fold_area_x, pill_y),
-                                        size(fold_area_w, pill_h),
-                                    ),
-                                    pill_bg,
-                                )
-                                .corner_radii(px(4.0)),
-                            );
-                        }
                         // zed prepaint_crease_toggles：centering = (fold_area
                         // - toggle) / 2, (line_height - toggle) / 2
                         let icon_origin = point(
                             fold_area_x + (fold_area_w - px(icon_px)) / 2.,
                             origin.y + arrow_y + ((line_height - px(icon_px)) / 2.).max(px(0.)),
                         );
+                        // zed Disclosure = IconButton（style 默认 Subtle）：hover
+                        // 底是**图标外一圈的紧凑方钮**（icon + 各向 ~4px 内边距，
+                        // rounded sm），不是整个 fold 带宽——整带宽 = right_
+                        // padding（4ch），字号一大就是贴住行号/正文的长条（用
+                        // 户实机截图）；折叠态 chevron = Color::Selected、展开
+                        // = Muted（IconButton render 分支）。
+                        if hovered {
+                            let btn_pad = px(4.0);
+                            let btn_w = px(icon_px) + btn_pad * 2.;
+                            let btn_h = (px(icon_px) + btn_pad * 2.).min(line_height);
+                            window.paint_quad(
+                                fill(
+                                    Bounds::new(
+                                        point(
+                                            fold_area_x + (fold_area_w - btn_w) / 2.,
+                                            origin.y
+                                                + arrow_y
+                                                + ((line_height - btn_h) / 2.).max(px(0.)),
+                                        ),
+                                        size(btn_w, btn_h),
+                                    ),
+                                    pill_bg,
+                                )
+                                .corner_radii(px(4.0)),
+                            );
+                        }
                         // zed Disclosure：is_open = !folded（折叠态显 ChevronRight ˃）
                         let icon_color = if folded { accent } else { muted };
                         paint_chevron(window, icon_origin, icon_px, !folded, icon_color);
