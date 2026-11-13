@@ -7,6 +7,22 @@ use super::*;
 /// 放行）；`TABS_SAVE_CAP=32` 恢复带与此无关，不动。
 const FILE_TAB_CAP: usize = 64;
 
+/// 逐出对象选择（纯函数，tests 锁口径）：有序表头起第一个非脏
+/// File tab 的路径——脏/冲突跳过（谓词即 [`Chat::file_tab_dirty`]，
+/// 口径同 close），非 File tab 不参与也不拦路；全脏/无 File → None
+/// （放行）。**序取 panel_tabs 视觉序（= 打开序），与 file_cache
+/// HashMap 无关**——HashMap 无序，不可作逐出序。模块级自由函数（非
+/// impl 关联函数）：tests 经 `super::open::` 导入。
+pub(super) fn eviction_victim<'a>(
+    tabs: &'a [PanelTab],
+    dirty: &dyn Fn(&Path) -> bool,
+) -> Option<&'a Path> {
+    tabs.iter().find_map(|t| match t {
+        PanelTab::File(p) if !dirty(p) => Some(p.as_path()),
+        _ => None,
+    })
+}
+
 impl Chat {
     /// v54.4：文件打开路由——统一打开为内容区 tab，主体渲染与编辑器配置
     /// 由 kind handler 决定（未注册类型走默认文本 kind）。html/htm 直接
@@ -86,21 +102,6 @@ impl Chat {
         cx.notify();
     }
 
-    /// 逐出对象选择（纯函数，tests 锁口径）：有序表头起第一个非脏
-    /// File tab 的路径——脏/冲突跳过（谓词即 [`Chat::file_tab_dirty`]，
-    /// 口径同 close），非 File tab 不参与也不拦路；全脏/无 File → None
-    /// （放行）。**序取 panel_tabs 视觉序（= 打开序），与 file_cache
-    /// HashMap 无关**——HashMap 无序，不可作逐出序。
-    pub(super) fn eviction_victim<'a>(
-        tabs: &'a [PanelTab],
-        dirty: &dyn Fn(&Path) -> bool,
-    ) -> Option<&'a Path> {
-        tabs.iter().find_map(|t| match t {
-            PanelTab::File(p) if !dirty(p) => Some(p.as_path()),
-            _ => None,
-        })
-    }
-
     /// soft cap 逐出：File tab 达 [`FILE_TAB_CAP`] 时按 tabs 域有序表丢
     /// 最旧非脏 tab（`discard_file_tab` 无提示丢弃）；全脏返回 None 放行
     /// ——soft cap 不硬拒。返回被逐 tab 的文件名供 toast。一次至多逐
@@ -117,7 +118,7 @@ impl Chat {
             return None;
         }
         let victim =
-            Self::eviction_victim(&self.ws.panel_tabs, &|p| self.file_tab_dirty(p))?.to_path_buf();
+            eviction_victim(&self.ws.panel_tabs, &|p| self.file_tab_dirty(p))?.to_path_buf();
         let name = victim
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
