@@ -2732,6 +2732,7 @@ dependencies = [
  "gpui",
  "gpui-component-macros",
  "gpui-macros",
+ "gpui_sum_tree",
  "html5ever 0.27.0",
  "indoc",
  "itertools 0.13.0",
@@ -2784,7 +2785,6 @@ dependencies = [
  "tree-sitter-zig",
  "unicode-segmentation",
  "uuid",
- "zed-sum-tree",
 ]
 
 [[package]]
@@ -8945,12 +8945,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
-name = "workspace-hack"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "beffa227304dbaea3ad6a06ac674f9bc83a3dec3b7f63eeb442de37e7cb6bb01"
-
-[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9312,18 +9306,6 @@ dependencies = [
  "windows-capture",
  "x11",
  "xcb",
-]
-
-[[package]]
-name = "zed-sum-tree"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d490156d0d7311855564d6e1d6dccab992405a0c0e15e1c8ef18920c02177e35"
-dependencies = [
- "arrayvec",
- "log",
- "rayon",
- "workspace-hack",
 ]
 
 [[package]]
