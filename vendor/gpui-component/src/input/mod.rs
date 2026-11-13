@@ -16,6 +16,7 @@ pub(crate) mod popovers;
 mod rope_ext;
 mod search;
 mod state;
+mod tab_map;
 mod text_input;
 mod text_wrapper;
 

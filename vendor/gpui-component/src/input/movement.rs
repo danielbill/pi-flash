@@ -28,8 +28,13 @@ impl InputState {
                 self.preferred_column = None;
                 return;
             };
-            let Some(pos) = line.position_for_index(fp.column() as usize, last_layout.line_height)
-            else {
+            // pi-flash patch（移植）：行 shape 用 tab 展开文本，列换展开坐标
+            let row_text = self.fold_snapshot.row_text(fp.row());
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            let Some(pos) = line.position_for_index(
+                exp.source_to_expanded(fp.column() as usize),
+                last_layout.line_height,
+            ) else {
                 self.preferred_column = None;
                 return;
             };
@@ -49,6 +54,13 @@ impl InputState {
             col = dec
                 .doc_to_vis(line_start + col)
                 .saturating_sub(dec.doc_to_vis(line_start));
+        }
+
+        // pi-flash patch（移植）：tab 展开坐标（md 装饰态不展开）
+        if last_layout.decorations.is_none() {
+            let row_text = self.text.slice_line(point.row).to_string();
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            col = exp.source_to_expanded(col);
         }
 
         let Some(pos) = line.position_for_index(col, last_layout.line_height) else {
@@ -120,8 +132,14 @@ impl InputState {
                         gpui::Point { x: preferred_x, y: px(0.) },
                         last_layout.line_height,
                     ) {
+                        // pi-flash patch（移植）：closest 返回 tab 展开字节，
+                        // 换回源字节再进 fold 偏移
+                        let row_text = self.fold_snapshot.row_text(target);
+                        let exp =
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                        let x_src = exp.expanded_to_source(x);
                         new_offset = self.fold_snapshot.fold_offset_to_buffer(
-                            fold_map::FoldOffset(row_start + x),
+                            fold_map::FoldOffset(row_start + x_src),
                         );
                     }
                 }
@@ -156,10 +174,20 @@ impl InputState {
                 ) {
                     // PF-024: closest 返回折叠列 → 经 FoldSet 换回 doc 偏移
                     // （直接 line_start + x 会把折叠坐标当 doc 用，光标漂移）
-                    new_offset = if let Some(dec) = &last_layout.decorations {
-                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x)
+                    // pi-flash patch（移植）：closest 返回 tab 展开字节，换回
+                    // 源字节（md 装饰态不展开）
+                    let x_src = if last_layout.decorations.is_none() {
+                        let row_text = self.text.slice_line(next_point.row).to_string();
+                        let exp =
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                        exp.expanded_to_source(x)
                     } else {
-                        line_start_offset + x
+                        x
+                    };
+                    new_offset = if let Some(dec) = &last_layout.decorations {
+                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x_src)
+                    } else {
+                        line_start_offset + x_src
                     };
                 }
             } else {
@@ -215,8 +243,14 @@ impl InputState {
                         gpui::Point { x: preferred_x, y: px(0.) },
                         last_layout.line_height,
                     ) {
+                        // pi-flash patch（移植）：closest 返回 tab 展开字节，
+                        // 换回源字节再进 fold 偏移
+                        let row_text = self.fold_snapshot.row_text(target);
+                        let exp =
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                        let x_src = exp.expanded_to_source(x);
                         new_offset = self.fold_snapshot.fold_offset_to_buffer(
-                            fold_map::FoldOffset(row_start + x),
+                            fold_map::FoldOffset(row_start + x_src),
                         );
                     }
                 }
@@ -249,10 +283,20 @@ impl InputState {
                     },
                     last_layout.line_height,
                 ) {
-                    new_offset = if let Some(dec) = &last_layout.decorations {
-                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x)
+                    // pi-flash patch（移植）：closest 返回 tab 展开字节，换回
+                    // 源字节（md 装饰态不展开，其 close 本就 vis 坐标）
+                    let x_src = if last_layout.decorations.is_none() {
+                        let row_text = self.text.slice_line(next_point.row).to_string();
+                        let exp =
+                            super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                        exp.expanded_to_source(x)
                     } else {
-                        line_start_offset + x
+                        x
+                    };
+                    new_offset = if let Some(dec) = &last_layout.decorations {
+                        dec.vis_to_doc(dec.doc_to_vis(line_start_offset) + x_src)
+                    } else {
+                        line_start_offset + x_src
                     };
                 }
             } else {

@@ -280,6 +280,9 @@ pub(super) struct LastLayout {
     /// （ch_width）与右侧折叠符号带宽（ch_width*4）；非行号态 = 0。
     pub(super) gutter_left_padding: Pixels,
     pub(super) gutter_right_padding: Pixels,
+    /// pi-flash patch（移植）：tab 制表位宽（tab_map 展开层用；mode 配置
+    /// 或默认 2，与 Tab 键入缩进一致）。
+    pub(super) tab_size: u32,
     /// The cursor position (top, left) in pixels.
     pub(super) cursor_bounds: Option<Bounds<Pixels>>,
 }
@@ -860,7 +863,27 @@ impl InputState {
                     .doc_to_vis(line_start_doc + local_offset.min(line.len()))
                     .saturating_sub(dec.doc_to_vis(line_start_doc));
             }
-            if let Some(pos) = line.position_for_index(local_offset, line_height) {
+            // pi-flash patch（移植）：行 shape 用 tab 展开文本，local 列换
+            // 展开坐标（md 装饰态其换算本就 vis 坐标，跳过）
+            let exp_col = if self.fold_snapshot.has_folds() {
+                let row_text = self
+                    .fold_snapshot
+                    .row_text(last_layout.visible_range.start as u32 + line_index as u32);
+                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                    .source_to_expanded(local_offset)
+            } else if last_layout.decorations.is_none() {
+                let row = last_layout
+                    .buffer_rows
+                    .get(line_index)
+                    .copied()
+                    .unwrap_or(0);
+                let row_text = self.text.slice_line(row).to_string();
+                super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                    .source_to_expanded(local_offset)
+            } else {
+                local_offset
+            };
+            if let Some(pos) = line.position_for_index(exp_col, line_height) {
                 let sub_line_index = (pos.y / line_height) as usize;
                 let adjusted_pos = point(pos.x + last_layout.line_number_width, pos.y + y_offset);
                 return (line_index, sub_line_index, Some(adjusted_pos));
@@ -1954,7 +1977,10 @@ impl InputState {
             .get(row.saturating_sub(last_layout.visible_range.start))
         {
             // Check to scroll horizontally
-            if let Some(pos) = line.position_for_index(fold_col, line_height) {
+            // pi-flash patch（移植）：列换 tab 展开坐标再查 x
+            let row_text = self.fold_snapshot.row_text(row as u32);
+            let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+            if let Some(pos) = line.position_for_index(exp.source_to_expanded(fold_col as usize), line_height) {
                 let bounds_width = bounds.size.width - last_layout.line_number_width;
                 let col_offset_x = pos.x;
                 if col_offset_x - RIGHT_MARGIN < -scroll_offset.x {
@@ -2260,13 +2286,27 @@ impl InputState {
                 self.text.line_start_offset(row)
             };
             if let Some(v) = line_layout.closest_index_for_position(pos, line_height) {
+                // pi-flash patch（移植）：closest 返回 tab 展开字节，换回源
+                // 字节（md 装饰态其 vis 坐标自成体系，跳过）
+                let v_src = if self.fold_snapshot.has_folds() {
+                    let row_text = self.fold_snapshot.row_text(ix as u32);
+                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                        .expanded_to_source(v)
+                } else if last_layout.decorations.is_none() {
+                    let row = last_layout.buffer_rows.get(ix).copied().unwrap_or(0);
+                    let row_text = self.text.slice_line(row).to_string();
+                    super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                        .expanded_to_source(v)
+                } else {
+                    v
+                };
                 return if self.fold_snapshot.has_folds() {
                     self.fold_snapshot
-                        .fold_offset_to_buffer(FoldOffset(line_start + v))
+                        .fold_offset_to_buffer(FoldOffset(line_start + v_src))
                 } else if let Some(dec) = &last_layout.decorations {
-                    dec.vis_to_doc(dec.doc_to_vis(line_start) + v)
+                    dec.vis_to_doc(dec.doc_to_vis(line_start) + v_src)
                 } else {
-                    line_start + v
+                    line_start + v_src
                 }
                 .min(self.text.len());
             } else if pos.y < px(0.) {
@@ -2312,7 +2352,13 @@ impl InputState {
                 continue;
             }
             if let Some(v) = line_layout.closest_index_for_position(pos, line_height) {
-                return Some((last_layout.visible_range.start + ix, v));
+                // pi-flash patch（移植）：closest 返回 tab 展开字节，换回源
+                // 字节（fold_pos_for_mouse 的列语义 = fold 行内源字节）
+                let fold_row = last_layout.visible_range.start + ix;
+                let row_text = self.fold_snapshot.row_text(fold_row as u32);
+                let v_src = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size)
+                    .expanded_to_source(v);
+                return Some((fold_row, v_src));
             }
         }
         None
@@ -2997,9 +3043,32 @@ impl EntityInputHandler for InputState {
             };
             let _ = (query_start, query_end);
 
+            // pi-flash patch（移植）：行 shape 用 tab 展开文本，列换展开坐标
+            let exp = if self.fold_snapshot.has_folds() {
+                let row_text = self.fold_snapshot.row_text(
+                    (last_layout.visible_range.start + line_ix) as u32,
+                );
+                Some(super::tab_map::TabExpansion::build(
+                    &row_text,
+                    last_layout.tab_size,
+                ))
+            } else if last_layout.decorations.is_none() {
+                let row = last_layout.buffer_rows.get(line_ix).copied().unwrap_or(0);
+                let row_text = self.text.slice_line(row).to_string();
+                Some(super::tab_map::TabExpansion::build(
+                    &row_text,
+                    last_layout.tab_size,
+                ))
+            } else {
+                None
+            };
+            let to_exp = |v: usize| -> usize {
+                exp.as_ref().map(|e| e.source_to_expanded(v)).unwrap_or(v)
+            };
+
             if start_origin.is_none() {
                 if let Some(p) = line.position_for_index(
-                    query_start.saturating_sub(index_offset),
+                    to_exp(query_start.saturating_sub(index_offset)),
                     line_height,
                 ) {
                     start_origin = Some(p + point(px(0.), y_offset));
@@ -3008,7 +3077,7 @@ impl EntityInputHandler for InputState {
 
             if end_origin.is_none() {
                 if let Some(p) = line.position_for_index(
-                    query_end.saturating_sub(index_offset),
+                    to_exp(query_end.saturating_sub(index_offset)),
                     line_height,
                 ) {
                     end_origin = Some(p + point(px(0.), y_offset));

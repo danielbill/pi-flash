@@ -338,6 +338,7 @@ impl TextElement {
         // pi-flash patch（移植）：fold 空间布局——光标/选区经 to_fold_point
         // 映射到显示行（zed display map 同语义），y = 显示行 × 行高。
         if fold_active {
+            let tab_size = last_layout.tab_size;
             let to_fold = |offset: usize| -> (usize, Point<Pixels>) {
                 let p = state.text.offset_to_point(offset);
                 let fp = state.fold_snapshot.to_fold_point(
@@ -348,8 +349,15 @@ impl TextElement {
                 let mut x = px(0.);
                 if row >= visible_range.start {
                     if let Some(line) = lines.get(row - visible_range.start) {
-                        if let Some(pos) = line.position_for_index(fp.column() as usize, line_height)
-                        {
+                        // pi-flash patch（移植）：行 shape 用的是 tab 展开文本
+                        // （tab_map），光标列换到展开坐标再查 x
+                        let row_text = state.fold_snapshot.row_text(row as u32);
+                        let exp =
+                            super::tab_map::TabExpansion::build(&row_text, tab_size);
+                        if let Some(pos) = line.position_for_index(
+                            exp.source_to_expanded(fp.column() as usize),
+                            line_height,
+                        ) {
                             x = pos.x;
                         }
                     }
@@ -363,6 +371,7 @@ impl TextElement {
             cursor_start = Some(to_fold(selected_range.start).1);
             cursor_end = Some(to_fold(selected_range.end).1);
         } else if text_wrapper.is_uniform() {
+            let tab_size = last_layout.tab_size;
             let pos_for = |offset: usize| -> (usize, Point<Pixels>) {
                 let row = state.text.offset_to_point(offset).row;
                 let disp = row;
@@ -377,6 +386,14 @@ impl TextElement {
                             local = dec
                                 .doc_to_vis(line_start + local)
                                 .saturating_sub(dec.doc_to_vis(line_start));
+                        }
+                        // pi-flash patch（移植）：行 shape 用 tab 展开文本，
+                        // 光标列换展开坐标（md 装饰态不展开，同 024 互斥）
+                        if last_layout.decorations.is_none() {
+                            let row_text = state.text.slice_line(row).to_string();
+                            let exp =
+                                super::tab_map::TabExpansion::build(&row_text, tab_size);
+                            local = exp.source_to_expanded(local);
                         }
                         if let Some(p) = line.position_for_index(local, line_height) {
                             x = p.x;
@@ -410,22 +427,36 @@ impl TextElement {
                     .flatten()
                 {
                     // If in visible range lines
+                    // pi-flash patch（移植）：行 shape 用 tab 展开文本，索引
+                    // 换展开坐标（md 装饰态不展开）
+                    let tab_size = last_layout.tab_size;
+                    let tab_exp = (last_layout.decorations.is_none())
+                        .then(|| {
+                            let row_text = state.text.slice_line(row).to_string();
+                            super::tab_map::TabExpansion::build(&row_text, tab_size)
+                        });
+                    let to_exp = |v: usize| -> usize {
+                        tab_exp
+                            .as_ref()
+                            .map(|e| e.source_to_expanded(v))
+                            .unwrap_or(v)
+                    };
                     if cursor_pos.is_none() {
                         let offset = cursor.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
                             current_row = Some(row);
                             cursor_pos = Some(line_origin + pos);
                         }
                     }
                     if cursor_start.is_none() {
                         let offset = selected_range.start.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
                             cursor_start = Some(line_origin + pos);
                         }
                     }
                     if cursor_end.is_none() {
                         let offset = selected_range.end.saturating_sub(prev_lines_offset);
-                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                        if let Some(pos) = line.position_for_index(to_exp(offset), line_height) {
                             cursor_end = Some(line_origin + pos);
                         }
                     }
@@ -576,10 +607,20 @@ impl TextElement {
                         dec.doc_to_vis(end_ix).saturating_sub(base),
                     )
                 }
-                None => (
-                    start_ix.saturating_sub(line_start_doc),
-                    end_ix.saturating_sub(line_start_doc),
-                ),
+                None => {
+                    let s = start_ix.saturating_sub(line_start_doc);
+                    let e = end_ix.saturating_sub(line_start_doc);
+                    // pi-flash patch（移植）：行 shape 用 tab 展开文本，选区
+                    // 端点换展开坐标——行文本取 fold_row_texts（cvr 统一填
+                    // 充，fold 态 = fold 行文本、非折叠 = buffer 行文本）
+                    let row_text = last_layout
+                        .fold_row_texts
+                        .get(line_ix)
+                        .cloned()
+                        .unwrap_or_default();
+                    let exp = super::tab_map::TabExpansion::build(&row_text, last_layout.tab_size);
+                    (exp.source_to_expanded(s), exp.source_to_expanded(e))
+                }
             };
             let line_cursor_start = line.position_for_index(local_start, line_height);
             let line_cursor_end = line.position_for_index(local_end, line_height);
@@ -817,8 +858,16 @@ impl TextElement {
             let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
             let start = rows_above.min(total_lines);
             let end = (start + visible_rows + extra_rows + 1).min(total_lines);
+            // pi-flash patch（移植）：行文本进 LastLayout（tab_map 展开/
+            // match_quads 的行内换算共用）
             let rows = (start..end)
-                .map(|row| (row, state.text.line_start_offset(row), String::new()))
+                .map(|row| {
+                    (
+                        row,
+                        state.text.line_start_offset(row),
+                        state.text.slice_line(row).to_string(),
+                    )
+                })
                 .collect();
             return (start..end, start as f32 * line_height, rows);
         }
@@ -848,7 +897,13 @@ impl TextElement {
         }
 
         let rows = (visible_range.start..visible_range.end)
-            .map(|row| (row, state.text.line_start_offset(row), String::new()))
+            .map(|row| {
+                (
+                    row,
+                    state.text.line_start_offset(row),
+                    state.text.slice_line(row).to_string(),
+                )
+            })
             .collect();
         (visible_range, visible_top, rows)
     }
@@ -1031,6 +1086,33 @@ impl TextElement {
                 };
 
                 let sub_line: SharedString = line_slice.slice(range.clone()).to_string().into();
+                // pi-flash patch（移植）：tab 展开层（zed TabMap 语义）——
+                // DirectWrite 对 \t 渲染 0 宽，shape 前展开为制表位空格、
+                // runs 经映射表重排；段首初始列 = 行首到段首的字符数（软换
+                // 行段的制表位按整行列对齐）。md 装饰态不展开（024 互斥）。
+                let tab_size = state
+                    .mode
+                    .tab_size()
+                    .map_or(2, |t| t.tab_size as u32);
+                let (sub_line, line_runs) = if last_layout.decorations.is_some() {
+                    (sub_line, line_runs)
+                } else {
+                    let init_col = line_slice.slice(0..range.start).chars().count() as u32;
+                    let exp = super::tab_map::TabExpansion::build_with_col(
+                        &sub_line,
+                        tab_size,
+                        init_col,
+                    );
+                    let expanded: SharedString = exp.text.clone().into();
+                    let (fb_font, fb_color) = runs
+                        .first()
+                        .map(|r| (r.font.clone(), r.color))
+                        .unwrap_or_else(|| {
+                            (window.text_style().font(), gpui::black())
+                        });
+                    let rerun = super::tab_map::rerun_expanded(&line_runs, &exp, fb_font, fb_color);
+                    (expanded, rerun)
+                };
                 // PF-024 P1：行级字号上浮（标题行）——倍数来自装饰，
                 // cap 在行高内（行高 uniform，行级行高缝留 P2）。
                 let line_size = last_layout
@@ -1377,6 +1459,7 @@ impl Element for TextElement {
             line_number_width,
             gutter_left_padding,
             gutter_right_padding,
+            tab_size: state.mode.tab_size().map_or(2, |t| t.tab_size as u32),
             // pi-flash patch（移植）：与 lines 平行的表——缓冲行号（行号
             // 栏）/ fold 行首（非折叠 == buffer 行首）/ fold 行文本
             buffer_rows: Rc::new(buffer_rows.clone()),
@@ -1569,8 +1652,21 @@ impl Element for TextElement {
                     }
                     produced = row_len;
                     let _ = produced;
+                    // pi-flash patch（移植）：tab 展开层（同 layout_lines）
+                    let tab_size = state
+                        .mode
+                        .tab_size()
+                        .map_or(2, |t| t.tab_size as u32);
+                    let exp = super::tab_map::TabExpansion::build(&text, tab_size);
+                    let expanded: SharedString = exp.text.clone().into();
+                    let row_runs = super::tab_map::rerun_expanded(
+                        &row_runs,
+                        &exp,
+                        base_font.clone(),
+                        base_color,
+                    );
                     let shaped = window.text_system().shape_line(
-                        text.clone().into(),
+                        expanded,
                         font_size,
                         &row_runs,
                         None,
