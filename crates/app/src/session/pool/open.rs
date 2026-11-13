@@ -312,6 +312,8 @@ impl Chat {
         self.psp.session_pins.retain(|p| !same_path(p, &path));
         // recents (003-session管理): the file is gone, drop the entry
         pi_link::recents::remove_recent(&path);
+        // PF 名台账同步摘行（session_names/pi-flash-pkhr）
+        pi_link::session_names::remove(&path);
         if was_active {
             self.psp.active_file = None;
             self.new_session(cx);

@@ -39,6 +39,7 @@ pub mod register_to_sys;
 pub mod registry;
 pub mod service_ext;
 pub mod session_ext;
+pub mod session_names;
 pub mod sessions;
 pub mod skills;
 pub mod subagents;

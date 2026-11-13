@@ -419,7 +419,11 @@ fn with_scanner<T>(f: impl FnOnce(&mut Scanner) -> T) -> T {
 
 /// List most-recently-modified sessions across all projects, newest first.
 pub fn list_sessions(max: usize) -> Vec<SessionInfo> {
-    with_scanner(|s| s.list(max))
+    let mut out = with_scanner(|s| s.list(max));
+    // PF 名台账覆盖（session_names：显示层真值，pi-flash-pkhr）——四个
+    // list 出口同口径，侧栏/最近/启动装载全走这里
+    crate::session_names::overlay(&mut out);
+    out
 }
 
 /// [`list_sessions`] minus the excluded files (recents poll's live-runtime
@@ -428,14 +432,17 @@ pub fn list_sessions_excluding(
     max: usize,
     exclude: &std::collections::HashSet<PathBuf>,
 ) -> Vec<SessionInfo> {
-    with_scanner(|s| s.list_excluding(max, exclude))
+    let mut out = with_scanner(|s| s.list_excluding(max, exclude));
+    crate::session_names::overlay(&mut out);
+    out
 }
 
 /// Summaries for an explicit path list (recents top-N startup), input order
 /// preserved, dead paths dropped. Fingerprint-served like every scanner
 /// read; a stale entry is rescanned on the spot.
 pub fn sessions_for_paths(paths: &[PathBuf]) -> Vec<SessionInfo> {
-    with_scanner(|s| {
+    // 显式标注：overlay 的 &mut [SessionInfo] 形参会把推断引向切片类型
+    let mut out: Vec<SessionInfo> = with_scanner(|s| {
         paths
             .iter()
             .filter_map(|p| {
@@ -444,13 +451,17 @@ pub fn sessions_for_paths(paths: &[PathBuf]) -> Vec<SessionInfo> {
                 s.info_for(p, &mtime)
             })
             .collect()
-    })
+    });
+    crate::session_names::overlay(&mut out);
+    out
 }
 
 /// List one project's sessions without touching other groups' files.
 /// (Header-cwd semantic filtering stays with the caller.)
 pub fn list_sessions_for_cwd(cwd: &str, max: usize) -> Vec<SessionInfo> {
-    with_scanner(|s| s.list_for_cwd(cwd, max))
+    let mut out = with_scanner(|s| s.list_for_cwd(cwd, max));
+    crate::session_names::overlay(&mut out);
+    out
 }
 
 /// 052 会话自动清理候选：root 下所有 `<group>/*.jsonl` 里 mtime 早于

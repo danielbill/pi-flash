@@ -130,10 +130,6 @@ pub(super) async fn consume_runtime_events(
             // `Error: Model not found` 退出，列表点不动、消息转圈）。与
             // shutdown_process 同口径；重开/发送由 ensure_spawned 重起
             rt.agent.session = None;
-            // 一次性改名进程死在这儿（启动即崩/OOM）：标记就地清——残留的
-            // rename_transient 会在**下一个** set_session_name 回执上误杀
-            // 后来重绑的正经进程（pi-flash-n3k8）
-            rt.rename_transient = false;
             // 进程死了：文件落过盘就补绑定（真标签接管；重启后可重开），
             // 没落盘（boot 即死 / 全程无消息）撤伪标签
             if !rt.try_bind_reported_file(cx) {

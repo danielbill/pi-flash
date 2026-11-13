@@ -41,6 +41,12 @@ impl Chat {
     /// Rename commit path that never reads the input entity (called from
     /// the input's own submit callback where the entity is borrowed).
     pub(crate) fn apply_rename(&mut self, name: String, cx: &mut Context<Self>) {
+        // PF 台账即时落账（显示层真值，session_names/pi-flash-pkhr）；pi 侧
+        // 照发一条尽力同步——这条链只在会话已打开时走，回执照旧触发
+        // ListDirty 重扫，台账 overlay 兜住显示不依赖它
+        if let Some(p) = self.dlg.renaming.clone() {
+            pi_link::session_names::set(&p, &name);
+        }
         self.rt().read(cx).rpc(&Command::SetSessionName { name });
         // sidebar label comes from the session file's `session_info` entry;
         // reload it when pi confirms the write (set_session_name response —

@@ -156,10 +156,14 @@ impl SessionRuntime {
             }
             if self.pending_rename {
                 self.pending_rename = false;
+                // 预填优先级 = PF 台账名 → pi state 名 → 首条用户消息
+                // （session_names/pi-flash-pkhr：台账是 PF 的显示真值，
+                // 用户上次在 PF 里改过的名要原样回填）
                 let prefill = self
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.session_name.clone())
+                    .file
+                    .as_deref()
+                    .and_then(pi_link::session_names::get)
+                    .or_else(|| self.state.as_ref().and_then(|s| s.session_name.clone()))
                     .or_else(|| {
                         self.messages
                             .iter()
@@ -198,16 +202,10 @@ impl SessionRuntime {
                 })
                 .detach();
             } else {
-                // pi 拒绝（空名等）：也刷一遍侧栏——乐观标题回落文件真值
+                // pi 拒绝（空名等）：显示真值已由 PF 台账兜住
+                // （session_names overlay），刷一遍保持缓存对齐
                 cx.emit(SessionEvent::ListDirty);
                 cx.notify();
-            }
-            // 一次性改名进程收工（send_session_rename 挂的标记，n3k8）：
-            // 回执到了 = session_info 已落盘（或被拒），成败都收，不留
-            // 一次性进程占内存
-            if self.rename_transient {
-                self.rename_transient = false;
-                self.shutdown_process();
             }
         } else if command == "get_commands" && success {
             if let Some(data) = &data {

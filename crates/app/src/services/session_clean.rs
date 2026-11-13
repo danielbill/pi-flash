@@ -73,6 +73,8 @@ impl Chat {
                     }
                     // recents（003-session管理）：文件没了，条目摘除
                     pi_link::recents::remove_recent(path);
+                    // PF 名台账同步摘行（session_names/pi-flash-pkhr）
+                    pi_link::session_names::remove(path);
                     c.psp.unread.remove(path);
                     c.psp.turn_errors.remove(path);
                     c.psp.turn_warnings.remove(path);

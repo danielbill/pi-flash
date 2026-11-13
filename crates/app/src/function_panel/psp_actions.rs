@@ -1,6 +1,6 @@
 //! psp 项目级动作：选目录开项目（fresh 草稿 vs 恢复语义）、组内新会话、
-//! 终端定向打开、删除项目及全部会话、psp 卡片行内改名（含未加载会话的
-//! 临时进程发改名即收）。
+//! 终端定向打开、删除项目及全部会话、psp 卡片行内改名（PF 台账落账 +
+//! 在场进程 pi 同步，session_names）。
 //! （P2 归并：actions_panels 的 psp 侧。）
 
 use crate::*;
@@ -243,10 +243,11 @@ impl Chat {
 }
 
 impl Chat {
-    /// psp 详情卡改名提交（Enter）：对目标会话的 runtime 发
-    /// SetSessionName；未加载的会话临时 spawn 进程，**回执到达再收**
-    /// （send_session_rename，pi-flash-n3k8）。名字先乐观写入内存，
-    /// 扫描器随后从会话文件回读确认。
+    /// psp 详情卡改名提交（Enter）：PF 台账即时落账（显示层真值，
+    /// session_names），pi 侧只对**在场进程**尽力同步一条 set_session_name
+    /// ——冷会话不再为改名 spawn 临时进程（pi-flash-n3k8 方案 B
+    /// pi-flash-pkhr，2026-11-13 定案；旧「发完即杀」竞态链整链删除）。
+    /// 名字乐观写入内存，列表随后随 ListDirty 重扫走台账 overlay 同值。
     pub(crate) fn rename_card_commit(
         &mut self,
         path: &PathBuf,
@@ -259,50 +260,16 @@ impl Chat {
             return;
         }
         let name_for_status = name.clone();
+        pi_link::session_names::set(path, &name);
         let key = path.to_string_lossy().to_string();
-        match self.pool.runtimes.get(&key).cloned() {
-            Some(rt) => {
-                // 进程不在场（空闲退役）同样走临时进程链：rpc 假成功会静默
-                // 丢改名（pi-flash-n3k8 同源）
-                rt.update(cx, |r, cx| r.send_session_rename(name.clone(), cx));
-            }
-            None => {
-                // 未加载的会话：tail 渲染 + 临时进程发改名，不切换活跃会话
-                let tail = match self.pool.session_tail_cache.get(path).cloned() {
-                    Some(msgs) => msgs,
-                    None => msgs_from_tail(read_tail_messages(path, 256 * 1024, 100)),
-                };
-                let cwd = self
-                    .psp
-                    .projects
-                    .iter()
-                    .find(|g| g.sessions.iter().any(|s| same_path(&s.path, path)))
-                    .map(|g| g.path.clone())
-                    .or_else(|| self.ws.cwd.clone());
-                let Some(cwd) = cwd else {
-                    return;
-                };
-                let rt = cx.new(|_| {
-                    let mut r =
-                        session::runtime::SessionRuntime::new(key.clone(), cwd, Some(path.clone()));
-                    r.default_model = services::workspace::default_model_pref();
-                    // 秒开深度优化（pi-flash-2o92）：磁盘计数改后台——主线程
-                    // 全文件读是 O(会话大小) 的冻结源，回灌走 load_disk_msg_count
-                    r.messages = tail;
-                    r.pager.reload(r.messages.len());
-                    r
-                });
-                self.pool.runtimes.insert(key, rt.clone());
-                self.subscribe_runtime(&rt, cx);
-                rt.update(cx, |r, cx| r.load_disk_msg_count(cx));
-                // 改名链收口 send_session_rename：回执到达才收进程。旧版
-                // 「发完即收」把 node 在冷启动中途 kill，session_info 永不
-                // 落盘，标题改完就被扫描器弹回（pi-flash-n3k8 用户报障：
-                // 改 2 次都改回去）
-                rt.update(cx, |r, cx| r.send_session_rename(name.clone(), cx));
-            }
+        if let Some(rt) = self.pool.runtimes.get(&key).cloned() {
+            // 进程在场才同步；rpc 内部判无进程返回 false，台账已兜住显示
+            rt.update(cx, |r, _| {
+                r.rpc(&Command::SetSessionName { name: name.clone() });
+            });
         }
-        // 乐观更新内存中的标题
+        // 乐观更新内存中的标题：其他项目组的缓存行不随刷新重建，靠这步
+        // 即时可见（当前项目组随后重扫，overlay 同值不打架）
         for g in &mut self.psp.projects {
             for s in &mut g.sessions {
                 if same_path(&s.path, path) {
