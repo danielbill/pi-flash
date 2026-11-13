@@ -1,4 +1,8 @@
-use gpui::{Context, Point, Window};
+use gpui::{px, Context, Point, Window};
+use sum_tree::Bias;
+
+#[allow(unused_imports)]
+use super::fold_map;
 
 use crate::input::{
     InputState, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp, MoveRight,
@@ -14,8 +18,24 @@ impl InputState {
         };
 
         let point = self.text.offset_to_point(self.cursor());
-        // pi-flash patch（折叠）：行布局按缓冲行查（LastLayout::line 经
-        // buffer_rows 表回映显示行）
+        // pi-flash patch（移植）：fold 态 preferred 列取 fold 空间列
+        if self.fold_snapshot.has_folds() {
+            let fp = self.fold_snapshot.to_fold_point(
+                fold_map::InlayPoint(fold_map::Point::new(point.row as u32, point.column as u32)),
+                Bias::Right,
+            );
+            let Some(line) = last_layout.lines.get(fp.row() as usize) else {
+                self.preferred_column = None;
+                return;
+            };
+            let Some(pos) = line.position_for_index(fp.column() as usize, last_layout.line_height)
+            else {
+                self.preferred_column = None;
+                return;
+            };
+            self.preferred_column = Some((pos.x, fp.column() as usize));
+            return;
+        }
         let Some(line) = last_layout.line(point.row) else {
             self.preferred_column = None;
             return;
@@ -50,11 +70,9 @@ impl InputState {
         // 键盘移动与鼠标点击都汇经本方法（zed region 仅在选区处于对内时
         // 参与输入辅助）
         self.autoclose_invalidate_outside(offset);
-        // pi-flash patch（对齐 zed）：防御性 reveal——光标落在隐藏行
-        // （undo/程序化选区）→ 展开包含它的折叠（折叠块内移动经
-        // move_vertical 的显示行跳行主口，不进这里）
+        // pi-flash patch（移植）：光标在 fold 空间渲染（折叠内 offset 经
+        // to_fold_point 贴边显示），buffer offset 不动（zed 同语义）
         self.selected_range = (offset..offset).into();
-        self.reveal_folded_cursor(cx);
         self.scroll_to(offset, cx);
         self.pause_blink_cursor(cx);
         self.update_preferred_column();
@@ -81,20 +99,42 @@ impl InputState {
         let offset = self.cursor();
         let was_preferred_column = self.preferred_column;
 
-        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        // pi-flash patch（对齐 zed）：显示行移动跳过折叠区——下行入块 →
-        // 落块后首行；上行入块 → 落块首行（zed display 行移动语义）
-        let mut target_row = display_point.row.saturating_add_signed(move_lines);
-        if move_lines > 0 {
-            if let Some(r) = self.folds.hiding(target_row) {
-                target_row = r.end;
+        // pi-flash patch（移植）：fold 态按显示行移动（fold 空间无隐藏行，
+        // zed display 行移动同语义）
+        if self.fold_snapshot.has_folds() {
+            let p = self.text.offset_to_point(offset);
+            let fp = self.fold_snapshot.to_fold_point(
+                fold_map::InlayPoint(fold_map::Point::new(p.row as u32, p.column as u32)),
+                Bias::Right,
+            );
+            let target = (fp.row() as isize + move_lines).max(0) as u32;
+            let target = target.min(self.fold_snapshot.max_point().row());
+            let row_start = fold_map::FoldPoint::new(target, 0)
+                .to_offset(&self.fold_snapshot)
+                .0;
+            let mut new_offset =
+                self.fold_snapshot.fold_offset_to_buffer(fold_map::FoldOffset(row_start));
+            if let Some((preferred_x, _)) = was_preferred_column {
+                if let Some(line) = last_layout.line(target as usize) {
+                    if let Some(x) = line.closest_index_for_position(
+                        gpui::Point { x: preferred_x, y: px(0.) },
+                        last_layout.line_height,
+                    ) {
+                        new_offset = self.fold_snapshot.fold_offset_to_buffer(
+                            fold_map::FoldOffset(row_start + x),
+                        );
+                    }
+                }
             }
-        } else if move_lines < 0 {
-            if let Some(r) = self.folds.hiding(target_row) {
-                target_row = r.start;
-            }
+            self.pause_blink_cursor(cx);
+            self.move_to(new_offset, cx);
+            self.preferred_column = was_preferred_column;
+            cx.notify();
+            return;
         }
-        display_point.row = target_row;
+
+        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
+        display_point.row = display_point.row.saturating_add_signed(move_lines);
         display_point.column = 0;
         let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
 
@@ -155,19 +195,41 @@ impl InputState {
         let offset = self.cursor();
         let was_preferred_column = self.preferred_column;
 
-        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
-        // pi-flash patch（对齐 zed）：同 move_vertical，选区头跳过折叠区
-        let mut target_row = display_point.row.saturating_add_signed(move_lines);
-        if move_lines > 0 {
-            if let Some(r) = self.folds.hiding(target_row) {
-                target_row = r.end;
+        // pi-flash patch（移植）：fold 态按显示行移动（选区头）
+        if self.fold_snapshot.has_folds() {
+            let p = self.text.offset_to_point(offset);
+            let fp = self.fold_snapshot.to_fold_point(
+                fold_map::InlayPoint(fold_map::Point::new(p.row as u32, p.column as u32)),
+                Bias::Right,
+            );
+            let target = (fp.row() as isize + move_lines).max(0) as u32;
+            let target = target.min(self.fold_snapshot.max_point().row());
+            let row_start = fold_map::FoldPoint::new(target, 0)
+                .to_offset(&self.fold_snapshot)
+                .0;
+            let mut new_offset =
+                self.fold_snapshot.fold_offset_to_buffer(fold_map::FoldOffset(row_start));
+            if let Some((preferred_x, _)) = was_preferred_column {
+                if let Some(line) = last_layout.line(target as usize) {
+                    if let Some(x) = line.closest_index_for_position(
+                        gpui::Point { x: preferred_x, y: px(0.) },
+                        last_layout.line_height,
+                    ) {
+                        new_offset = self.fold_snapshot.fold_offset_to_buffer(
+                            fold_map::FoldOffset(row_start + x),
+                        );
+                    }
+                }
             }
-        } else if move_lines < 0 {
-            if let Some(r) = self.folds.hiding(target_row) {
-                target_row = r.start;
-            }
+            self.pause_blink_cursor(cx);
+            self.select_to(new_offset, cx);
+            self.preferred_column = was_preferred_column;
+            cx.notify();
+            return;
         }
-        display_point.row = target_row;
+
+        let mut display_point = self.text_wrapper.offset_to_display_point(offset);
+        display_point.row = display_point.row.saturating_add_signed(move_lines);
         display_point.column = 0;
         let mut new_offset = self.text_wrapper.display_point_to_offset(display_point);
 

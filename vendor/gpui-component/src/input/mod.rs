@@ -5,7 +5,7 @@ mod clear_button;
 mod cursor;
 mod decorations;
 mod element;
-mod fold;
+mod fold_map;
 mod lsp;
 mod mask_pattern;
 mod mode;

@@ -8,7 +8,8 @@ use gpui::{
     ClipboardItem, Context, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollHandle,
-    ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, UTF16Selection, Window,
+    ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, UTF16Selection,
+    Window,
 };
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
@@ -24,8 +25,10 @@ use super::{
     change::Change,
     decorations::{DecorationProvider, Decorations},
     element::TextElement,
-    fold::FoldMap,
-    element::LINE_NUMBER_ARROW_ZONE,
+    fold_map::{
+        FoldBufferExt, FoldMap, FoldOffset, FoldPoint, FoldSnapshot, InlaySnapshot, InlayPoint,
+        Point as FoldSpacePoint,
+    },
     mask_pattern::MaskPattern,
     mode::{InputMode, TabSize},
     number_input,
@@ -252,10 +255,17 @@ pub(super) struct LastLayout {
     pub(super) visible_range_offset: Range<usize>,
     /// The last layout lines (Only have visible lines).
     pub(super) lines: Rc<Vec<LineLayout>>,
-    /// pi-flash patch（折叠）：与 lines 平行的缓冲行表（显示行 i → 缓冲行）
-    /// 及其行首 doc 字节偏移表。行号绘制/偏移映射/命中反算都按它走。
+    /// pi-flash patch（折叠）：与 lines 平行的表——每显示行的缓冲行号
+    /// （行号栏）与 fold 空间行首字节偏移（行内定位基准）。折叠态 = fold
+    /// 空间行（zed display row）；无折叠 = buffer 行恒等。
     pub(super) buffer_rows: Rc<Vec<usize>>,
-    pub(super) doc_starts: Rc<Vec<usize>>,
+    pub(super) fold_row_starts: Rc<Vec<usize>>,
+    /// pi-flash patch（折叠）：每显示行的 fold 空间文本（含 "⋯" 占位符，
+    /// zed fold chunk 文本）；无折叠 = None（走 buffer 路径）。
+    pub(super) fold_row_texts: Rc<Vec<String>>,
+    /// pi-flash patch（移植）：fold 空间布局开关（显式标志——非折叠时
+    /// fold_row_texts 也填充空串，不能靠 is_empty 推断）。
+    pub(super) fold_mode: bool,
     /// The line_height of text layout, this will change will InputElement painted.
     pub(super) line_height: Pixels,
     /// The wrap width of text layout, this will change will InputElement painted.
@@ -266,6 +276,10 @@ pub(super) struct LastLayout {
     pub(super) decorations: Option<Rc<Decorations>>,
     /// The line number area width of text layout, if not line number, this will be 0px.
     pub(super) line_number_width: Pixels,
+    /// pi-flash patch（移植）：zed GutterDimensions——行号左 padding
+    /// （ch_width）与右侧折叠符号带宽（ch_width*4）；非行号态 = 0。
+    pub(super) gutter_left_padding: Pixels,
+    pub(super) gutter_right_padding: Pixels,
     /// The cursor position (top, left) in pixels.
     pub(super) cursor_bounds: Option<Bounds<Pixels>>,
 }
@@ -307,9 +321,11 @@ pub struct InputState {
     /// overtype（越过）/backspace 成对删除辅助用；随编辑平移（对内编辑平
     /// 移闭合符）、光标移出即失效（见 input/assist.rs）。
     pub(super) autoclosed_pair: Option<AutoclosedPair>,
-    /// pi-flash patch（对齐 zed）：块级折叠集（input/fold.rs；zed FoldMap
-    /// 对应物，无 LSP 缩进折叠 starts_indent）。仅 code_editor 启用。
-    pub(super) folds: FoldMap,
+    /// pi-flash patch（移植）：块级折叠映射（input/fold_map.rs = zed
+    /// fold_map.rs 移植；无 LSP 缩进折叠 starts_indent）。仅 code_editor
+    /// 且非 md wysiwyg 装饰态启用。
+    pub(super) fold_map: FoldMap,
+    pub(super) fold_snapshot: FoldSnapshot,
     /// pi-flash patch（对齐 zed）：gutter hover 行（缓冲行号）——折叠箭头
     /// hover 显示用；None = 鼠标不在 gutter。
     pub(super) gutter_hover_row: Option<usize>,
@@ -446,7 +462,16 @@ impl InputState {
             selected_word_range: None,
             selection_reversed: false,
             autoclosed_pair: None,
-            folds: FoldMap::default(),
+            fold_map: FoldMap::new(InlaySnapshot {
+                buffer: Rope::from(""),
+                version: 0,
+            })
+            .0,
+            fold_snapshot: FoldMap::new(InlaySnapshot {
+                buffer: Rope::from(""),
+                version: 0,
+            })
+            .1,
             gutter_hover_row: None,
             ime_marked_range: None,
             input_bounds: Bounds::default(),
@@ -815,20 +840,25 @@ impl InputState {
         };
         let line_height = last_layout.line_height;
 
-        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取（可见行
-        // 经 buffer_rows 表，隐藏行间不连续；vis 长度不再参与行界推进）
+        // pi-flash patch（移植）：fold 空间行定位（buffer offset → fold
+        // point → 显示行内列）
         let mut y_offset = last_layout.visible_top;
         for (line_index, line) in last_layout.lines.iter().enumerate() {
-            let Some(&line_start) = last_layout.doc_starts.get(line_index) else {
+            let Some(&line_start) = last_layout.fold_row_starts.get(line_index) else {
                 break;
             };
             let mut local_offset = offset.saturating_sub(line_start);
-            // PF-024: 折叠态 local 是 vis 坐标（与 layout_cursor pos_for
-            // 同款换算）
-            if let Some(dec) = &last_layout.decorations {
+            if self.fold_snapshot.has_folds() {
+                // offset 是 buffer 偏移：经 fold 换算到本显示行的 local 列
+                let fp = self.fold_snapshot.buffer_offset_to_fold(offset, Bias::Right);
+                local_offset = fp.0 - line_start;
+            } else if let Some(dec) = &last_layout.decorations {
+                let line_start_doc = self.text.line_start_offset(
+                    last_layout.buffer_rows.get(line_index).copied().unwrap_or(0),
+                );
                 local_offset = dec
-                    .doc_to_vis(line_start + local_offset.min(line.len()))
-                    .saturating_sub(dec.doc_to_vis(line_start));
+                    .doc_to_vis(line_start_doc + local_offset.min(line.len()))
+                    .saturating_sub(dec.doc_to_vis(line_start_doc));
             }
             if let Some(pos) = line.position_for_index(local_offset, line_height) {
                 let sub_line_index = (pos.y / line_height) as usize;
@@ -891,7 +921,16 @@ impl InputState {
         }
         let new_len = text.len();
         self.text = text;
-        self.folds.clear(); // pi-flash patch：整文替换，折叠集作废（zed 打开新 buffer 同款）
+        // pi-flash patch（移植）：整文替换，折叠映射整体重建（zed 换
+        // buffer 同款）
+        {
+            let (map, snapshot) = FoldMap::new(InlaySnapshot {
+                buffer: self.text.clone(),
+                version: 0,
+            });
+            self.fold_map = map;
+            self.fold_snapshot = snapshot;
+        }
         self.text_wrapper.reset(&self.text, cx);
         // 高亮器置 None，语法树重建延迟到渲染帧的 update_highlighter
         // （text 语言不会建；代码语言沿用原先的全量 parse 行为）。
@@ -1695,16 +1734,42 @@ impl InputState {
         self.selecting = true;
         let offset = self.index_for_mouse_position(event.position);
 
+        // pi-flash patch（移植）：点击折叠占位符 `⋯` → 展开该块（zed
+        // fold_placeholder on_click unfold 同语义）——点击位置落在某显示行
+        // 的占位符字节区间内即触发
+        if event.button == MouseButton::Left && self.fold_snapshot.has_folds() {
+            if let Some((disp_row, local_col)) = self.fold_pos_for_mouse(event.position) {
+                let hit = self
+                    .fold_snapshot
+                    .placeholder_ranges_in_row(disp_row as u32)
+                    .iter()
+                    .any(|r| r.contains(&local_col));
+                if hit {
+                    self.selecting = false;
+                    let buf_row = self
+                        .fold_snapshot
+                        .row_to_buffer_row(disp_row as u32);
+                    self.fold_map_unfold_at(buf_row);
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
         // pi-flash patch（对齐 zed）：gutter 折叠箭头点击 → toggle fold
-        // （Disclosure toggle_callback 语义；命中带 = LINE_NUMBER_ARROW_ZONE）
+        // （Disclosure toggle_callback 语义；命中带 = 折叠符号带 right_padding）
         if event.button == MouseButton::Left {
             if let Some(row) = self.gutter_arrow_hit(event.position) {
-                if self.folds.is_fold_start(row)
-                    || self.folds.is_line_folded(row)
-                    || self.fold_starts_indent(row)
-                {
+                let folded = self.fold_snapshot.is_line_folded(row as u32)
+                    || self.fold_starts_at_row(row as u32);
+                if folded || self.text.starts_indent(row as u32) {
                     self.selecting = false;
-                    self.toggle_fold_at(row, cx);
+                    if folded {
+                        self.fold_map_unfold_at(row as u32);
+                    } else {
+                        self.fold_map_fold_at(row as u32);
+                    }
+                    cx.notify();
                     return;
                 }
             }
@@ -1856,20 +1921,26 @@ impl InputState {
         let line_height = last_layout.line_height;
 
         let point = self.text.offset_to_point(offset);
-        let row = point.row;
-        // pi-flash patch（折叠）：行 y 按显示行（隐藏行不计）
-        let disp_row = self.folds.display_row(row);
+        // pi-flash patch（移植）：fold 空间行号/列（zed display 空间滚动）
+        let (row, fold_col) = if self.fold_snapshot.has_folds() {
+            let fp = self
+                .fold_snapshot
+                .to_fold_point(
+                    InlayPoint(FoldSpacePoint::new(point.row as u32, point.column as u32)),
+                    Bias::Right,
+                );
+            (fp.row() as usize, fp.column() as usize)
+        } else {
+            (point.row, point.column)
+        };
 
         // 等高行（不软换行）时行 y 有闭式解：不再从第 0 行累加行高
         // （PageDown/光标定位到 8 万行深处原本是每次 O(行号)）
-        let row_offset_y = if self.text_wrapper.is_uniform() {
-            disp_row as f32 * line_height
+        let row_offset_y = if self.fold_snapshot.has_folds() || self.text_wrapper.is_uniform() {
+            row as f32 * line_height
         } else {
             let mut y = px(0.);
             for (ix, wrap_line) in self.text_wrapper.lines.iter().enumerate() {
-                if self.folds.is_line_folded(ix) {
-                    continue;
-                }
                 if ix == row {
                     break;
                 }
@@ -1880,10 +1951,10 @@ impl InputState {
 
         if let Some(line) = last_layout
             .lines
-            .get(disp_row.saturating_sub(last_layout.visible_range.start))
+            .get(row.saturating_sub(last_layout.visible_range.start))
         {
             // Check to scroll horizontally
-            if let Some(pos) = line.position_for_index(point.column, line_height) {
+            if let Some(pos) = line.position_for_index(fold_col, line_height) {
                 let bounds_width = bounds.size.width - last_layout.line_number_width;
                 let col_offset_x = pos.x;
                 if col_offset_x - RIGHT_MARGIN < -scroll_offset.x {
@@ -2181,10 +2252,18 @@ impl InputState {
                 return line_layout.closest_index_for_x(pos.x);
             }
 
-            let line_start = self.text.line_start_offset(row);
+            // pi-flash patch（移植）：fold 空间 local 列 → fold offset →
+            // buffer offset（占位符内 → crease 起点，zed 显示点→buffer 同语义）
+            let line_start = if self.fold_snapshot.has_folds() {
+                last_layout.fold_row_starts.get(ix).copied().unwrap_or(0)
+            } else {
+                self.text.line_start_offset(row)
+            };
             if let Some(v) = line_layout.closest_index_for_position(pos, line_height) {
-                // PF-024: closest 返回 vis 列 → doc 换算同 movement 主口
-                return if let Some(dec) = &last_layout.decorations {
+                return if self.fold_snapshot.has_folds() {
+                    self.fold_snapshot
+                        .fold_offset_to_buffer(FoldOffset(line_start + v))
+                } else if let Some(dec) = &last_layout.decorations {
                     dec.vis_to_doc(dec.doc_to_vis(line_start) + v)
                 } else {
                     line_start + v
@@ -2195,7 +2274,19 @@ impl InputState {
             }
         }
 
-        // 落点在可见行集合之外（视口底空白等）：钳到最后可见行末
+        // 落点在可见行集合之外（视口底空白等）：钳到最后显示行末（fold 空间）
+        if self.fold_snapshot.has_folds() {
+            let last_disp = last_layout
+                .visible_range
+                .end
+                .saturating_sub(1)
+                .min(self.fold_snapshot.max_point().row() as usize);
+            let fp = FoldPoint::new(last_disp as u32, u32::MAX);
+            let clipped = self.fold_snapshot.clip_point(fp, Bias::Right);
+            return self
+                .fold_snapshot
+                .fold_offset_to_buffer(clipped.to_offset(&self.fold_snapshot));
+        }
         last_layout
             .buffer_rows
             .last()
@@ -2203,6 +2294,28 @@ impl InputState {
                 (self.text.line_start_offset(row) + self.text.line_len(row)).min(self.text.len())
             })
             .unwrap_or_else(|| self.text.len())
+    }
+
+    /// pi-flash patch（移植）：鼠标位置 → (显示行, 行内字节列)——折叠
+    /// 占位符命中判定用。
+    pub(super) fn fold_pos_for_mouse(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
+        let last_layout = self.last_layout.as_ref()?;
+        let bounds = self.last_bounds.as_ref()?;
+        let line_height = last_layout.line_height;
+        let inner_position = position - bounds.origin - point(last_layout.line_number_width, px(0.));
+        let mut y_offset = last_layout.visible_top;
+        for (ix, line_layout) in last_layout.lines.iter().enumerate() {
+            let line_origin = point(px(0.), y_offset);
+            y_offset += line_layout.size(line_height).height;
+            let pos = inner_position - line_origin;
+            if pos.y < px(0.) {
+                continue;
+            }
+            if let Some(v) = line_layout.closest_index_for_position(pos, line_height) {
+                return Some((last_layout.visible_range.start + ix, v));
+            }
+        }
+        None
     }
 
     /// pi-flash patch（折叠）：鼠标位置的显示行 → 缓冲行（gutter 判定用）。
@@ -2221,8 +2334,9 @@ impl InputState {
             .copied()
     }
 
-    /// pi-flash patch（对齐 zed）：gutter 折叠箭头命中区（右缘
-    /// LINE_NUMBER_ARROW_ZONE 带）→ 缓冲行。仅 code_editor。
+    /// pi-flash patch（移植）：gutter 折叠符号命中区 = 右侧折叠符号带
+    /// （zed prepaint_crease_toggles：width - right_padding .. width）
+    /// → 缓冲行。仅 code_editor。
     pub(super) fn gutter_arrow_hit(&self, position: Point<Pixels>) -> Option<usize> {
         if !self.mode.is_code_editor() {
             return None;
@@ -2233,7 +2347,7 @@ impl InputState {
         if inner_x < px(0.) || inner_x >= last_layout.line_number_width {
             return None;
         }
-        if inner_x < last_layout.line_number_width - LINE_NUMBER_ARROW_ZONE {
+        if inner_x < last_layout.line_number_width - last_layout.gutter_right_padding {
             return None;
         }
         self.buffer_row_at_mouse_y(position)
@@ -2688,15 +2802,12 @@ impl EntityInputHandler for InputState {
             .unwrap_or(self.selected_range.into());
 
         let old_text = self.text.clone();
-        // pi-flash patch（对齐 zed）：折叠集随编辑维护（先取编辑前行区间，
-        // 替换后取新末行）——与编辑相交的折叠展开，其下折叠平移
-        let edit_old_rows = if self.folds.is_empty() {
-            None
+        // pi-flash patch（移植）：折叠映射随 buffer 编辑 sync（zed anchor
+        // 平移 + transforms 重建；fold_map.rs 移植）
+        let fold_edit_old = if self.fold_snapshot.has_folds() {
+            Some(range.clone())
         } else {
-            Some(
-                self.text.offset_to_point(range.start).row
-                    ..self.text.offset_to_point(range.end.min(self.text.len())).row + 1,
-            )
+            None
         };
         self.text.replace(range.clone(), new_text);
 
@@ -2725,15 +2836,8 @@ impl EntityInputHandler for InputState {
             None => None,
         };
 
-        // pi-flash patch（对齐 zed）：折叠集随编辑维护——相交展开、其下
-        // 平移（old_rows 已在替换前取出）
-        if let Some(old_rows) = edit_old_rows {
-            let new_end_row = self
-                .text
-                .offset_to_point((range.start + new_text.len()).min(self.text.len()))
-                .row
-                + 1;
-            self.folds.edit_rows_adjust(old_rows, new_end_row);
+        if let Some(old_range) = fold_edit_old {
+            self.fold_map_sync_edit(old_range, new_text.len());
         }
 
         let mut new_offset = (range.start + new_text.len()).min(self.text.len());
@@ -2863,29 +2967,50 @@ impl EntityInputHandler for InputState {
         let line_number_origin = point(line_number_width, px(0.));
         let mut y_offset = last_layout.visible_top;
 
-        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取
-        // （隐藏行间不连续；连续行累加会把 IME 定位推进行间隙）
+        // pi-flash patch（移植）：fold 空间行定位（IME 候选窗）
+        let (fold_range_start, fold_range_end) = if self.fold_snapshot.has_folds() {
+            (
+                self.fold_snapshot.buffer_offset_to_fold(range.start, Bias::Left).0,
+                self.fold_snapshot.buffer_offset_to_fold(range.end, Bias::Right).0,
+            )
+        } else {
+            (range.start, range.end)
+        };
         for (line_ix, line) in last_layout.lines.iter().enumerate() {
             if start_origin.is_some() && end_origin.is_some() {
                 break;
             }
 
-            let Some(&index_offset) = last_layout.doc_starts.get(line_ix) else {
-                break;
+            let index_offset = if self.fold_snapshot.has_folds() {
+                match last_layout.fold_row_starts.get(line_ix) {
+                    Some(v) => *v,
+                    None => break,
+                }
+            } else {
+                let row = last_layout.buffer_rows.get(line_ix).copied().unwrap_or(0);
+                self.text.line_start_offset(row)
             };
+            let (query_start, query_end) = if self.fold_snapshot.has_folds() {
+                (fold_range_start, fold_range_end)
+            } else {
+                (range.start, range.end)
+            };
+            let _ = (query_start, query_end);
 
             if start_origin.is_none() {
-                if let Some(p) =
-                    line.position_for_index(range.start.saturating_sub(index_offset), line_height)
-                {
+                if let Some(p) = line.position_for_index(
+                    query_start.saturating_sub(index_offset),
+                    line_height,
+                ) {
                     start_origin = Some(p + point(px(0.), y_offset));
                 }
             }
 
             if end_origin.is_none() {
-                if let Some(p) =
-                    line.position_for_index(range.end.saturating_sub(index_offset), line_height)
-                {
+                if let Some(p) = line.position_for_index(
+                    query_end.saturating_sub(index_offset),
+                    line_height,
+                ) {
                     end_origin = Some(p + point(px(0.), y_offset));
                 }
             }
@@ -2915,15 +3040,22 @@ impl EntityInputHandler for InputState {
         let line_height = last_layout.line_height;
         let line_point = self.last_bounds?.localize(&point)?;
 
-        // pi-flash patch（折叠）：行首 doc 偏移按 doc_starts 直取
+        // pi-flash patch（移植）：fold 空间行定位
         for (line_ix, line) in last_layout.lines.iter().enumerate() {
             if let Some(utf8_index) = line.index_for_position(line_point, line_height) {
-                let offset = last_layout
-                    .doc_starts
-                    .get(line_ix)
-                    .copied()
-                    .unwrap_or(last_layout.visible_range_offset.start);
-                return Some(self.offset_to_utf16(offset + utf8_index));
+                let offset = if self.fold_snapshot.has_folds() {
+                    let fold_off = last_layout
+                        .fold_row_starts
+                        .get(line_ix)
+                        .copied()
+                        .unwrap_or(0)
+                        + utf8_index;
+                    self.fold_snapshot.fold_offset_to_buffer(FoldOffset(fold_off))
+                } else {
+                    let row = last_layout.buffer_rows.get(line_ix).copied().unwrap_or(0);
+                    self.text.line_start_offset(row) + utf8_index
+                };
+                return Some(self.offset_to_utf16(offset));
             }
         }
 

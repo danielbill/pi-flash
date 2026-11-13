@@ -14,14 +14,13 @@ use crate::{
     ActiveTheme as _, Colorize, Root,
 };
 
+use super::fold_map::{FoldBufferExt, FoldOffset, FoldPoint, InlayPoint, Point as FoldSpacePoint};
 use super::{mode::InputMode, Decorations, InputState, LastLayout};
+use sum_tree::Bias;
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
 pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(10.);
-/// pi-flash patch（折叠）：gutter 右缘折叠箭头命中带宽（渲染 + 点击命中
-/// 同一带；行号右侧 padding 区 16px，覆盖数字右缘与 margin）。
-pub(super) const LINE_NUMBER_ARROW_ZONE: Pixels = px(16.);
 /// 视口上下额外 shaping/高亮的软换行行数：方向键/选区端点会落在视口外
 /// 1-2 行，这些行要保持真实 shaped（preferred_column 取 x 用）。
 const EXTRA_SHAPE_ROWS: usize = 2;
@@ -49,7 +48,7 @@ fn snap_line_height(line_height: Pixels, scale_factor: f32) -> Pixels {
 fn viewport_byte_window(
     text: &Rope,
     wrapper: &super::text_wrapper::TextWrapper,
-    buffer_rows: &[usize],
+    rows: &[(usize, usize, String)],
     visible_top: Pixels,
     line_height: Pixels,
     viewport_top: Pixels,
@@ -57,13 +56,14 @@ fn viewport_byte_window(
 ) -> Range<usize> {
     let mut window = usize::MAX..0;
     let mut line_y = visible_top;
-    // pi-flash patch（折叠）：rows 是缓冲行表（隐藏行不在内），行首偏移
-    // 按行直取（不再连续行累加——折叠区间隙会跳行）。
-    for &row in buffer_rows {
+    // pi-flash patch（移植）：rows = (缓冲行号, fold 行首, 行文本)——fold
+    // 空间窗按 fold 行首偏移；无折叠时 fold 行首 == buffer 行首。
+    for (_row, fold_start, _text) in rows {
+        let line_start_offset = *fold_start;
+        let row = *_row;
         let Some(item) = wrapper.lines.get(row) else {
             break;
         };
-        let line_start_offset = text.line_start_offset(row);
         for (ix, seg) in item.wrapped_lines.iter().enumerate() {
             let seg_top = line_y + ix as f32 * line_height;
             if seg_top + line_height > viewport_top && seg_top < viewport_bottom {
@@ -77,6 +77,143 @@ fn viewport_byte_window(
         0..0
     } else {
         window
+    }
+}
+
+/// pi-flash patch（移植）：zed Disclosure 折叠符号——assets/icons/
+/// chevron_right.svg / chevron_down.svg 原样路径（16 视箱、stroke-width
+/// 1.2、round 端点），Disclosure 用 IconSize::Small = 14px 渲染（缩放
+/// px_size/16），PathBuilder 描边。
+fn paint_chevron(
+    window: &mut Window,
+    origin: Point<Pixels>,
+    px_size: f32,
+    down: bool,
+    color: Hsla,
+) {
+    let s = px_size / 16.0;
+    let pts: [(f32, f32); 3] = if down {
+        // chevron_down.svg: M4.15186 6.47321L7.99258 10.1696L11.8483 6.47321
+        [(4.15186, 6.47321), (7.99258, 10.1696), (11.8483, 6.47321)]
+    } else {
+        // chevron_right.svg: M6.44653 4.16071L10.1608 8.00143L6.44653 11.8571
+        [(6.44653, 4.16071), (10.1608, 8.00143), (6.44653, 11.8571)]
+    };
+    let mut b = gpui::PathBuilder::stroke(px(1.2 * s));
+    b.move_to(point(origin.x + px(pts[0].0 * s), origin.y + px(pts[0].1 * s)));
+    b.line_to(point(origin.x + px(pts[1].0 * s), origin.y + px(pts[1].1 * s)));
+    b.line_to(point(origin.x + px(pts[2].0 * s), origin.y + px(pts[2].1 * s)));
+    if let Ok(path) = b.build() {
+        window.paint_path(path, color);
+    }
+}
+
+/// pi-flash patch（移植）：zed indent guides 绘制（multi_buffer.rs
+/// indent_guides_in_range 走栈算法 + indent_guides.rs fold 过滤 +
+/// element.rs column_pixels / paint_indent_guides；calculate_indent_guide_
+/// bounds 的 multibuffer 块调整不适用单 buffer，略）。1px 竖线，色取主题
+/// border（zed editor_indent_guide 语义位）。
+#[allow(clippy::too_many_arguments)]
+fn paint_indent_guides(
+    state: &InputState,
+    last_layout: &LastLayout,
+    line_height: Pixels,
+    origin: Point<Pixels>,
+    top_padding: Pixels,
+    window: &mut Window,
+    cx: &App,
+) {
+    if state.decorations.is_some() {
+        return;
+    }
+    // zed LanguageSettings 默认 tab_size = 4；PF TabSize 配置了则取之
+    let tab_size = state.mode.tab_size().map_or(4, |t| t.tab_size as u32);
+    let max_row = state.text.lines_len().saturating_sub(1) as u32;
+    if max_row == 0 {
+        return;
+    }
+
+    // zed visible_buffer_range：可见显示行 → buffer 行范围
+    let first_buf = last_layout.buffer_rows.first().copied().unwrap_or(0) as u32;
+    let last_buf = last_layout.buffer_rows.last().copied().unwrap_or(0) as u32;
+    let guides = super::fold_map::indent_guides_in_range(
+        &state.text,
+        first_buf..(last_buf + 1).min(max_row + 1),
+        tab_size,
+    );
+    let guides = state.indent_guides_filter_folds(guides);
+    if guides.is_empty() {
+        return;
+    }
+
+    // zed column_pixels（editor.rs:12373）：shape " ".repeat(column)
+    let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+    let single_indent = window
+        .text_system()
+        .shape_line(
+            " ".repeat(tab_size as usize).into(),
+            font_size,
+            &[TextRun {
+                len: tab_size as usize,
+                font: window.text_style().font(),
+                color: gpui::black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+            None,
+        )
+        .width;
+
+    // buffer 行 → 显示行（zed calculate_indent_guide_bounds 的 to_display_
+    // point：fold 态 = fold 空间行；软换行 = wrap 行；普通 = buffer 行恒等）
+    let to_display = |buf_row: u32| -> usize {
+        if state.fold_snapshot.has_folds() && state.fold_allowed() {
+            state
+                .fold_snapshot
+                .to_fold_point(
+                    super::fold_map::InlayPoint(super::fold_map::Point::new(buf_row, 0)),
+                    Bias::Right,
+                )
+                .row() as usize
+        } else {
+            let offset = state.text.line_start_offset(buf_row as usize);
+            state.text_wrapper.offset_to_display_point(offset).row
+        }
+    };
+
+    let vis_start = last_layout.visible_range.start;
+    let vis_end = last_layout.visible_range.end;
+    for g in guides {
+        // zed：guide x = 文本起点 + depth × 单级缩进宽（depth 0 贴文本左缘）
+        let x = origin.x
+            + last_layout.line_number_width
+            + single_indent * g.depth as f32;
+        let start_display = to_display(g.start_row);
+        let end_display = to_display(g.end_row);
+        // zed calculate_indent_guide_bounds：cons = end_row+1 的显示行（zed
+        // to_display_point 把超尾点钳到末行），length = (cons - start) × 行高；
+        // cons == end（buffer 尾）时再延一行补末行全长
+        let cons_display = to_display((g.end_row + 1).min(max_row));
+        let seg_start = start_display.max(vis_start);
+        let seg_end = cons_display.max(vis_start).min(vis_end);
+        if seg_end <= seg_start {
+            continue;
+        }
+        let length = (seg_end - seg_start) as f32 * line_height
+            + if cons_display <= end_display {
+                line_height
+            } else {
+                px(0.)
+            };
+        let y = origin.y + top_padding + (seg_start - vis_start) as f32 * line_height;
+        window.paint_quad(fill(
+            Bounds {
+                origin: point(x, y),
+                size: size(px(1.), length),
+            },
+            cx.theme().border,
+        ));
     }
 }
 
@@ -167,6 +304,8 @@ impl TextElement {
             selected_range = (ime_marked_range.end..ime_marked_range.end).into();
         }
         let is_selected_all = selected_range.len() == state.text.len();
+        // pi-flash patch（移植）：fold 态开关（layout_cursor 局部）
+        let fold_active = state.fold_snapshot.has_folds() && state.fold_allowed();
 
         let cursor = state.cursor();
         let mut current_row = None;
@@ -190,14 +329,37 @@ impl TextElement {
         let mut prev_lines_offset = 0;
         let mut offset_y = px(0.);
 
-        // 等高行（不软换行）：行 y = 显示行 × 行高、行首字节 = 该行行首偏移，
-        // 三者位置直接算，不再从第 0 行扫到光标（那是 O(光标行号)/帧，
-        // PageDown 到大文件深处时最贵；Zed 的 PositionMap 同款闭式）。
-        // pi-flash patch（折叠）：buffer 行 → 显示行（隐藏行取块首）。
-        if text_wrapper.is_uniform() {
+        // pi-flash patch（移植）：fold 空间布局——光标/选区经 to_fold_point
+        // 映射到显示行（zed display map 同语义），y = 显示行 × 行高。
+        if fold_active {
+            let to_fold = |offset: usize| -> (usize, Point<Pixels>) {
+                let p = state.text.offset_to_point(offset);
+                let fp = state.fold_snapshot.to_fold_point(
+                    InlayPoint(FoldSpacePoint::new(p.row as u32, p.column as u32)),
+                    Bias::Right,
+                );
+                let row = fp.row() as usize;
+                let mut x = px(0.);
+                if row >= visible_range.start {
+                    if let Some(line) = lines.get(row - visible_range.start) {
+                        if let Some(pos) = line.position_for_index(fp.column() as usize, line_height)
+                        {
+                            x = pos.x;
+                        }
+                    }
+                }
+                (row, point(x, row as f32 * line_height))
+            };
+
+            let (cursor_row, cursor_point) = to_fold(cursor);
+            current_row = Some(cursor_row);
+            cursor_pos = Some(cursor_point);
+            cursor_start = Some(to_fold(selected_range.start).1);
+            cursor_end = Some(to_fold(selected_range.end).1);
+        } else if text_wrapper.is_uniform() {
             let pos_for = |offset: usize| -> (usize, Point<Pixels>) {
                 let row = state.text.offset_to_point(offset).row;
-                let disp = state.folds.display_row(row);
+                let disp = row;
                 let mut x = px(0.);
                 if disp >= visible_range.start {
                     if let Some(line) = lines.get(disp - visible_range.start) {
@@ -226,12 +388,6 @@ impl TextElement {
         } else {
             for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
                 let row = ix;
-                // pi-flash patch（折叠）：隐藏行不占 y、不查 lines，但 doc
-                // 字节游标照常推进（偏移区间判断用）
-                if state.folds.is_line_folded(ix) {
-                    prev_lines_offset += wrap_line.len() + 1;
-                    continue;
-                }
                 let line_origin = point(px(0.), offset_y);
 
                 // break loop if all cursor positions are found
@@ -239,10 +395,7 @@ impl TextElement {
                     break;
                 }
 
-                // pi-flash patch（折叠）：显示行索引 = fold 映射（O(折叠数)，
-                // 不逐行扫 buffer_rows 表——总行走 O(总行) 软换行路径时
-                // 二次方会放大成每帧百万级比较）
-                let disp = state.folds.display_row(ix);
+                let disp = ix;
                 let disp_ix = (disp >= visible_range.start)
                     .then_some(disp - visible_range.start);
                 let in_visible_range = disp_ix.is_some();
@@ -403,10 +556,10 @@ impl TextElement {
 
             let line_origin = point(px(0.), offset_y);
 
-            // pi-flash patch（折叠）：行首 doc 偏移 = doc_starts[line_ix]
-            // （doc 空间直取，隐藏行间不连续）；折叠态再 doc→vis 换算
-            // 本行 local 坐标（PF-024 同款）
-            let Some(&line_start_doc) = last_layout.doc_starts.get(line_ix) else {
+            // pi-flash patch（移植）：行首偏移按 fold_row_starts（fold 空间
+            // 行首）优先、doc_starts 兜底（非折叠 == buffer 行首）；折叠态
+            // 再 doc→vis 换算本行 local 坐标（PF-024 同款）
+            let Some(&line_start_doc) = last_layout.fold_row_starts.get(line_ix) else {
                 break;
             };
             let (local_start, local_end) = match &last_layout.decorations {
@@ -601,22 +754,47 @@ impl TextElement {
     ///   pi-flash patch（折叠）：**显示行**空间（隐藏行不计）。
     /// - visible_top: The top position of the first visible line in the scroll viewport.
     /// - buffer_rows: 显示行对应的缓冲行表（无折叠时 = start..end 顺序行）。
+    /// pi-flash patch（移植）：每显示行的 (缓冲行号, fold 行首字节, 行文本)。
     fn calculate_visible_range(
         &self,
         state: &InputState,
         line_height: Pixels,
         input_height: Pixels,
-    ) -> (Range<usize>, Pixels, Vec<usize>) {
+    ) -> (Range<usize>, Pixels, Vec<(usize, usize, String)>) {
         // Add extra rows to avoid showing empty space when scroll to bottom.
         let extra_rows = 1;
         let mut visible_top = px(0.);
         if state.mode.is_single_line() {
-            return (0..1, visible_top, vec![0]);
+            return (0..1, visible_top, vec![(0, 0, String::new())]);
+        }
+
+        // pi-flash patch（移植）：fold 空间布局——显示行 = fold 行，行文本
+        // 含 "⋯" 占位符（zed fold chunk 同构）；折叠态关软折行（024 同规则）
+        if state.fold_snapshot.has_folds() && state.fold_allowed() {
+            let total_display = state.fold_snapshot.max_point().row() as usize + 1;
+            let scroll_top = if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
+                deferred_scroll_offset.y
+            } else {
+                state.scroll_handle.offset().y
+            };
+            let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
+            let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
+            let start = rows_above.min(total_display);
+            let end = (start + visible_rows + extra_rows + 1).min(total_display);
+            let rows = (start..end)
+                .map(|row| {
+                    let fp = FoldPoint::new(row as u32, 0);
+                    (
+                        state.fold_snapshot.row_to_buffer_row(row as u32) as usize,
+                        fp.to_offset(&state.fold_snapshot).0,
+                        state.fold_snapshot.row_text(row as u32),
+                    )
+                })
+                .collect();
+            return (start..end, start as f32 * line_height, rows);
         }
 
         let total_lines = state.text_wrapper.len();
-        // pi-flash patch（折叠）：滚动/可见计算全在显示行空间
-        let total_display = state.folds.total_display_rows(total_lines);
         let scroll_top = if let Some(deferred_scroll_offset) = state.deferred_scroll_offset {
             deferred_scroll_offset.y
         } else {
@@ -631,10 +809,12 @@ impl TextElement {
         if state.text_wrapper.is_uniform() {
             let rows_above = ((-scroll_top) / line_height).max(0.) as usize;
             let visible_rows = (input_height / line_height).ceil().max(0.) as usize;
-            let start = rows_above.min(total_display);
-            let end = (start + visible_rows + extra_rows + 1).min(total_display);
-            let buffer_rows = state.folds.buffer_rows(start..end);
-            return (start..end, start as f32 * line_height, buffer_rows);
+            let start = rows_above.min(total_lines);
+            let end = (start + visible_rows + extra_rows + 1).min(total_lines);
+            let rows = (start..end)
+                .map(|row| (row, state.text.line_start_offset(row), String::new()))
+                .collect();
+            return (start..end, start as f32 * line_height, rows);
         }
 
         // PF 修复（2026-10-14）：visible_range 是**逻辑行**空间，界限必须取
@@ -646,43 +826,42 @@ impl TextElement {
         let logical_lines = state.text_wrapper.lines.len();
         let mut visible_range = 0..logical_lines;
         let mut line_bottom = px(0.);
-        let mut visible: Vec<usize> = Vec::with_capacity(64);
         for (ix, line) in state.text_wrapper.lines.iter().enumerate() {
-            if state.folds.is_line_folded(ix) {
-                continue;
-            }
             let wrapped_height = line.height(line_height);
             line_bottom += wrapped_height;
-            visible.push(ix);
 
             if line_bottom < -scroll_top {
                 visible_top = line_bottom - wrapped_height;
-                visible_range.start = visible.len() - 1;
+                visible_range.start = ix;
             }
 
             if line_bottom + scroll_top >= input_height {
-                visible_range.end = (visible.len() + extra_rows).min(total_display);
+                visible_range.end = (ix + extra_rows).min(logical_lines);
                 break;
             }
         }
-        if visible_range.end > logical_lines || visible.len() < visible_range.end {
-            visible_range.end = (visible_range.end).min(visible.len()).max(visible_range.start);
-        }
-        let buffer_rows = visible[visible_range.start.min(visible.len())
-            ..visible_range.end.min(visible.len())]
-            .to_vec();
 
-        (visible_range, visible_top, buffer_rows)
+        let rows = (visible_range.start..visible_range.end)
+            .map(|row| (row, state.text.line_start_offset(row), String::new()))
+            .collect();
+        (visible_range, visible_top, rows)
     }
 
-    /// Return (line_number_width, line_number_len)
+    /// Return (line_number_width, line_number_len, left_padding, right_padding)
+    ///
+    /// pi-flash patch（移植）：zed GutterDimensions::gutter_dimensions
+    /// （editor.rs:12184，singleton + 行号 + folds 分支）——left_padding =
+    /// ch_width、right_padding = ch_width * 4（fold 符号区），width =
+    /// 数字宽 + left + right；折叠符号带宽 = right_padding（zed
+    /// fold_area_width = margin + right_padding，margin = -descent 是基线
+    /// 前移，PF 无此项故命中带取 right_padding）。
     fn layout_line_numbers(
         state: &InputState,
         text: &Rope,
         font_size: Pixels,
         style: &TextStyle,
         window: &mut Window,
-    ) -> (Pixels, usize) {
+    ) -> (Pixels, usize, Pixels, Pixels) {
         let total_lines = text.lines_len();
         let line_number_len = match total_lines {
             0..=9999 => 5,
@@ -691,27 +870,56 @@ impl TextElement {
             _ => 8,
         };
 
-        let line_number_width = if state.mode.line_number() {
-            let empty_line_number = window.text_system().shape_line(
-                "+".repeat(line_number_len).into(),
-                font_size,
-                &[TextRun {
-                    len: line_number_len,
-                    font: style.font(),
-                    color: gpui::black(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }],
-                None,
-            );
+        let (left_padding, right_padding) = if state.mode.line_number() {
+            let ch_width = window
+                .text_system()
+                .shape_line(
+                    "0".into(),
+                    font_size,
+                    &[TextRun {
+                        len: 1,
+                        font: style.font(),
+                        color: gpui::black(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width;
+            (ch_width, ch_width * 4.)
+        } else {
+            (px(0.), px(0.))
+        };
 
-            empty_line_number.width + px(6.) + LINE_NUMBER_RIGHT_MARGIN
+        let line_number_width = if state.mode.line_number() {
+            let digit_width = window
+                .text_system()
+                .shape_line(
+                    "0".repeat(line_number_len).into(),
+                    font_size,
+                    &[TextRun {
+                        len: line_number_len,
+                        font: style.font(),
+                        color: gpui::black(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width;
+            digit_width + left_padding + right_padding
         } else {
             px(0.)
         };
 
-        (line_number_width, line_number_len)
+        (
+            line_number_width,
+            line_number_len,
+            left_padding,
+            right_padding,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -727,9 +935,10 @@ impl TextElement {
     ) -> Vec<LineLayout> {
         let is_multi_line = state.mode.is_multi_line();
         let text_wrapper = &state.text_wrapper;
-        // pi-flash patch（折叠）：行迭代走缓冲行表（隐藏行不在列），行首
-        // doc 偏移按行直取（连续行累加在折叠区间隙会错位）
-        let doc_starts = &last_layout.doc_starts;
+        // pi-flash patch（移植）：行首偏移 = fold_row_starts（非折叠 ==
+        // buffer 行首；cvr 两分支都按行直取填充）
+        let doc_starts = &last_layout.fold_row_starts;
+        let fold_mode = last_layout.fold_mode;
 
         if !is_multi_line {
             let shaped_line = window.text_system().shape_line(
@@ -775,7 +984,7 @@ impl TextElement {
             // 文本的行模型（含软换行），折叠后长度不再相等；挂装饰的同时
             // 必须关软换行（app 侧 sync_live_decorations 同步收口，折叠与
             // 折行结构互斥），单段即全行。
-            let folded = last_layout.decorations.is_some();
+            let folded = last_layout.decorations.is_some() || fold_mode;
             if folded {
                 debug_assert!(
                     last_layout.wrap_width.is_none(),
@@ -786,7 +995,7 @@ impl TextElement {
             }
 
             let mut line_layout = LineLayout::new();
-            let mut wrapped_lines = SmallVec::with_capacity(1);
+            let mut wrapped_lines: SmallVec<[ShapedLine; 1]> = SmallVec::with_capacity(1);
 
             let wrapped_ranges: SmallVec<[Range<usize>; 1]> = if folded {
                 smallvec::smallvec![0..line_slice.len()]
@@ -831,7 +1040,7 @@ impl TextElement {
                     .unwrap_or(font_size);
                 let shaped_line = window
                     .text_system()
-                    .shape_line(sub_line, line_size, &line_runs, None);
+                    .shape_line(sub_line.clone(), line_size, &line_runs, None);
 
                 wrapped_lines.push(shaped_line);
             }
@@ -886,7 +1095,10 @@ impl TextElement {
         }
 
         // pi-flash patch（折叠）：按缓冲行表迭代（隐藏行不进高亮查询），
-        // 行区间按行直取（行首 + 行长 + 换行）
+        // 行区间按行直取（行首 + 行长 + 换行）。折叠洞补默认样式段——
+        // runs 消费端（runs_for_range）按绝对字节切，洞不补会错位切空
+        // （折叠行重现为空白的根因）。
+        let mut prev_end = shape_window.start;
         for &row in buffer_rows {
             let line_start = text.line_start_offset(row);
             // +1 for `\n`
@@ -898,8 +1110,15 @@ impl TextElement {
             if start >= end {
                 continue;
             }
+            if start > prev_end {
+                styles.push((prev_end..start, HighlightStyle::default()));
+            }
             let line_styles = highlighter.styles(&(start..end), &cx.theme().highlight_theme);
             styles = gpui::combine_highlights(styles, line_styles).collect();
+            prev_end = prev_end.max(end);
+        }
+        if shape_window.end > prev_end {
+            styles.push((prev_end..shape_window.end, HighlightStyle::default()));
         }
 
         if shape_window.end < visible_byte_range.end {
@@ -1006,16 +1225,41 @@ impl Element for TextElement {
         let state = self.state.read(cx);
         let line_height = snap_line_height(window.line_height(), window.scale_factor());
 
-        let (visible_range, visible_top, buffer_rows) =
+        // pi-flash patch（移植）：rows = 每显示行 (缓冲行号, fold 行首, 行文本)
+        let (visible_range, visible_top, rows) =
             self.calculate_visible_range(&state, line_height, bounds.size.height);
-        // pi-flash patch（折叠）：doc 字节窗/装饰按缓冲行区间（可见显示行的
-        // 缓冲行首尾——夹在中间的隐藏行随超集无害通过）
-        let buffer_span = buffer_rows.first().copied().unwrap_or(visible_range.start)
-            ..buffer_rows.last().map(|r| r + 1).unwrap_or(visible_range.end);
-        let visible_start_offset = state.text.line_start_offset(buffer_span.start);
-        let visible_end_offset = state
-            .text
-            .line_end_offset(buffer_span.end.saturating_sub(1));
+        let fold_active = state.fold_snapshot.has_folds() && state.fold_allowed();
+        let buffer_rows: Vec<usize> = rows.iter().map(|(r, _, _)| *r).collect();
+        let fold_row_starts: Vec<usize> = rows.iter().map(|(_, f, _)| *f).collect();
+        let fold_row_texts: Vec<String> = rows.iter().map(|(_, _, t)| t.clone()).collect();
+        // 字节窗：fold 态 = fold 空间窗；非折叠 = buffer 行窗（缓冲行首尾）
+        let buffer_span = if fold_active {
+            let first = rows.first().map(|(_, f, _)| *f).unwrap_or(0);
+            // 最后一显示行末（= 下一行起点；文档末行钳到 max 行——fold 点
+            // 越界会触发 zed to_offset 的 display point 断言）
+            let max_row = state.fold_snapshot.max_point().row();
+            let last_end = rows
+                .last()
+                .map(|(_, f, _)| {
+                    FoldOffset(*f)
+                        .to_point(&state.fold_snapshot)
+                        .row()
+                        .saturating_add(1)
+                        .min(max_row)
+                })
+                .unwrap_or(0);
+            let last_start = FoldPoint::new(last_end as u32, 0)
+                .to_offset(&state.fold_snapshot)
+                .0;
+            first..last_start
+        } else {
+            let first = rows.first().map(|(r, _, _)| *r).unwrap_or(0);
+            let last = rows.last().map(|(r, _, _)| *r + 1).unwrap_or(0);
+            state.text.line_start_offset(first)
+                ..state.text.line_end_offset(last.saturating_sub(1))
+        };
+        let visible_start_offset = buffer_span.start;
+        let visible_end_offset = buffer_span.end;
 
         // PF 大文件修复（2026-10-14，见 docs/agents/gpui.md）：高亮查询与
         // 文本 shaping 一律裁到「视口字节窗」（含上下 EXTRA_SHAPE_ROWS 行
@@ -1028,7 +1272,7 @@ impl Element for TextElement {
         let shape_window = viewport_byte_window(
             &state.text,
             &state.text_wrapper,
-            &buffer_rows,
+            &rows,
             visible_top,
             line_height,
             viewport_top - EXTRA_SHAPE_ROWS as f32 * line_height,
@@ -1058,6 +1302,9 @@ impl Element for TextElement {
         let highlight_styles = if let Some(dec) = decorations.as_ref() {
             // 折叠坐标系样式（可见区按序全覆盖），替代 ts 高亮（两者不叠加）
             Some(dec.styles.clone())
+        } else if fold_active {
+            // pi-flash patch（移植）：fold 态 runs 按显示行构建（见下）
+            None
         } else {
             self.highlight_lines(
                 &buffer_rows,
@@ -1098,7 +1345,7 @@ impl Element for TextElement {
         let text_style = window.text_style();
 
         // Calculate the width of the line numbers
-        let (line_number_width, line_number_len) =
+        let (line_number_width, line_number_len, gutter_left_padding, gutter_right_padding) =
             Self::layout_line_numbers(&state, &text, font_size, &text_style, window);
 
         let wrap_width = if multi_line && state.soft_wrap {
@@ -1114,15 +1361,14 @@ impl Element for TextElement {
             line_height,
             wrap_width,
             line_number_width,
-            // pi-flash patch（折叠）：缓冲行表 + 行首 doc 偏移表（与 lines
-            // 平行；无折叠时 doc_starts = 顺序行首）
+            gutter_left_padding,
+            gutter_right_padding,
+            // pi-flash patch（移植）：与 lines 平行的表——缓冲行号（行号
+            // 栏）/ fold 行首（非折叠 == buffer 行首）/ fold 行文本
             buffer_rows: Rc::new(buffer_rows.clone()),
-            doc_starts: Rc::new(
-                buffer_rows
-                    .iter()
-                    .map(|&row| state.text.line_start_offset(row))
-                    .collect(),
-            ),
+            fold_row_starts: Rc::new(fold_row_starts.clone()),
+            fold_row_texts: Rc::new(fold_row_texts.clone()),
+            fold_mode: fold_active,
             lines: Rc::new(vec![]),
             cursor_bounds: None,
             decorations: decorations.as_ref().map(Rc::clone),
@@ -1199,18 +1445,164 @@ impl Element for TextElement {
         let document_colors = state
             .lsp
             .document_colors_for_range(&text, &last_layout.visible_range);
-        let lines = Self::layout_lines(
-            &state,
-            &display_text,
-            &last_layout,
-            font_size,
-            &runs,
-            &document_colors,
-            &shape_window,
-            window,
-        );
+        let lines = if fold_active {
+            // pi-flash patch（移植）：fold 空间行 shaping——行文本含 "⋯"；
+            // runs 按行内分段（buffer 段走 ts 高亮，占位符段灰显）
+            let text_style = window.text_style();
+            let base_font = text_style.font();
+            let base_color = text_color;
+            let muted = cx.theme().muted_foreground;
+            fold_row_texts
+                .iter()
+                .enumerate()
+                .map(|(ix, text)| {
+                    let mut row_runs: Vec<TextRun> = vec![];
+                    let mut produced = 0usize;
+                    let row_len = text.len();
+                    let segs = state.fold_snapshot.row_segments(ix as u32);
+                    let mut styled: Vec<(Range<usize>, gpui::HighlightStyle)> = vec![];
+                    for (local, buf) in &segs {
+                        match buf {
+                            Some(buf) => {
+                                if let Some((hl, _diagnostics)) = match &state.mode {
+                                    InputMode::CodeEditor {
+                                        highlighter,
+                                        diagnostics,
+                                        ..
+                                    } => Some((highlighter.borrow(), diagnostics)),
+                                    _ => None,
+                                } {
+                                    if let Some(hl) = hl.as_ref() {
+                                        // 样式相对 buf.start，平移到行内 local 坐标
+                                        let mut seg_styles = hl
+                                            .styles(buf, &cx.theme().highlight_theme)
+                                            .into_iter()
+                                            .filter_map(|(r, st)| {
+                                                let a = local.start + r.start.saturating_sub(buf.start);
+                                                let b = local.start + r.end.saturating_sub(buf.start);
+                                                (b > a).then_some((a..b.min(local.end), st))
+                                            })
+                                            .collect::<Vec<_>>();
+                                        seg_styles.sort_by_key(|(r, _)| r.start);
+                                        let mut cursor = local.start;
+                                        for (r, st) in seg_styles {
+                                            if r.start > cursor {
+                                                styled.push((cursor..r.start, gpui::HighlightStyle::default()));
+                                            }
+                                            styled.push((r.clone(), st));
+                                            cursor = cursor.max(r.end);
+                                        }
+                                        if cursor < local.end {
+                                            styled.push((cursor..local.end, gpui::HighlightStyle::default()));
+                                        }
+                                    } else {
+                                        styled.push((local.clone(), gpui::HighlightStyle::default()));
+                                    }
+                                } else {
+                                    styled.push((local.clone(), gpui::HighlightStyle::default()));
+                                }
+                            }
+                            None => {
+                                styled.push((local.clone(), gpui::HighlightStyle::default()));
+                            }
+                        }
+                        let _ = &mut row_runs;
+                    }
+                    styled.sort_by_key(|(r, _)| r.start);
+                    let mut merged: Vec<(Range<usize>, gpui::HighlightStyle)> = vec![];
+                    for (r, st) in styled {
+                        let r = r.start..r.end.min(row_len);
+                        if r.end <= r.start {
+                            continue;
+                        }
+                        if let Some(last) = merged.last_mut() {
+                            if last.0.end == r.start && last.1 == st {
+                                last.0.end = r.end;
+                                continue;
+                            }
+                        }
+                        merged.push((r, st));
+                    }
+                    let mut cursor = 0usize;
+                    for (r, st) in &merged {
+                        if r.start > cursor {
+                            row_runs.push(TextRun {
+                                len: r.start - cursor,
+                                font: base_font.clone(),
+                                color: base_color,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            });
+                        }
+                        let mut run = text_style.clone().highlight(*st).to_run(r.len());
+                        // 占位符段（buffer=None 的 local 区间）灰显
+                        if segs.iter().any(|(l, b)| b.is_none() && l.start <= r.start && l.end >= r.end) {
+                            run.color = muted;
+                        }
+                        row_runs.push(run);
+                        cursor = r.end;
+                    }
+                    if cursor < row_len {
+                        row_runs.push(TextRun {
+                            len: row_len - cursor,
+                            font: base_font.clone(),
+                            color: base_color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        });
+                    }
+                    produced = row_len;
+                    let _ = produced;
+                    let shaped = window.text_system().shape_line(
+                        text.clone().into(),
+                        font_size,
+                        &row_runs,
+                        None,
+                    );
+                    LineLayout::new().lines(smallvec::smallvec![shaped])
+                })
+                .collect()
+        } else {
+            Self::layout_lines(
+                &state,
+                &display_text,
+                &last_layout,
+                font_size,
+                &runs,
+                &document_colors,
+                &shape_window,
+                window,
+            )
+        };
 
         let mut longest_line_width = wrap_width.unwrap_or(px(0.));
+        // pi-flash patch（移植）：fold 态横向宽度按最长显示行（zed
+        // TransformSummary.output.longest_row）
+        if fold_active {
+            let longest_row = state.fold_snapshot.longest_row();
+            let longest_text = state.fold_snapshot.row_text(longest_row);
+            let longest_len = longest_text.len();
+            longest_line_width = window
+                .text_system()
+                .shape_line(
+                    longest_text.into(),
+                    font_size,
+                    &[TextRun {
+                        len: longest_len,
+                        font: style.font(),
+                        color: gpui::black(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width
+                + line_number_width
+                + RIGHT_MARGIN;
+        }
         if state.mode.is_multi_line() && !state.soft_wrap && lines.len() > 1 {
             let longest_row = state.text_wrapper.longest_row.row;
             let longtest_line: SharedString = if let Some(dec) = &last_layout.decorations {
@@ -1238,19 +1630,12 @@ impl Element for TextElement {
         }
         last_layout.lines = Rc::new(lines);
 
-        // pi-flash patch（折叠）：滚动高度按显示行数（隐藏行不计；软换行
-        // 路径本就按行数×行高近似，隐藏行同口径剔除——折行行高折算成整行）
-        let total_wrapped_lines = if state.folds.is_empty() {
-            state.text_wrapper.len()
+        // pi-flash patch（移植）：fold 态滚动高度 = 显示行数×行高；非折叠
+        // 走 text_wrapper（软换行行数）
+        let total_wrapped_lines = if fold_active {
+            state.fold_snapshot.max_point().row() as usize + 1
         } else {
-            let mut hidden_height = px(0.);
-            for row in state.folds.hidden_rows() {
-                if let Some(item) = state.text_wrapper.lines.get(row) {
-                    hidden_height += item.height(line_height);
-                }
-            }
-            state.text_wrapper.len().saturating_sub(state.folds.hidden_count())
-                + (hidden_height / line_height).round() as usize
+            state.text_wrapper.len()
         };
         let empty_bottom_height = bounds
             .size
@@ -1443,6 +1828,21 @@ impl Element for TextElement {
 
         let active_line_color = cx.theme().highlight_theme.style.editor_active_line;
 
+        // pi-flash patch（移植）：indent guides（zed paint_indent_guides，
+        // 顺序同 zed：背景之后、行号/文本之前——最底层）
+        {
+            let st = self.state.read(cx);
+            paint_indent_guides(
+                &st,
+                &prepaint.last_layout,
+                line_height,
+                origin,
+                invisible_top_padding,
+                window,
+                cx,
+            );
+        }
+
         // Paint active line
         let mut offset_y = px(0.);
         if let Some(line_numbers) = prepaint.line_numbers.as_ref() {
@@ -1525,14 +1925,12 @@ impl Element for TextElement {
         if let Some(line_numbers) = prepaint.line_numbers.as_ref() {
             offset_y += invisible_top_padding;
 
-            // Paint line number background
+            // Paint line number background（pi-flash patch（移植）：zed
+            // gutter 背景 = editor 背景全宽，含折叠符号带）
             window.paint_quad(fill(
                 Bounds {
                     origin: input_bounds.origin,
-                    size: size(
-                        prepaint.last_layout.line_number_width - LINE_NUMBER_RIGHT_MARGIN,
-                        input_bounds.size.height,
-                    ),
+                    size: size(prepaint.last_layout.line_number_width, input_bounds.size.height),
                 },
                 cx.theme().editor_background(),
             ));
@@ -1547,7 +1945,12 @@ impl Element for TextElement {
                     .copied()
                     .unwrap_or(visible_range.start + ix);
 
-                let p = point(input_bounds.origin.x, origin.y + offset_y);
+                // pi-flash patch（移植）：行号右对齐于折叠符号带左侧
+                // （zed 行号 justify_end；统一位数时 = origin + left_padding）
+                let p = point(
+                    input_bounds.origin.x + prepaint.last_layout.gutter_left_padding,
+                    origin.y + offset_y,
+                );
                 let is_active = prepaint.current_row == Some(row);
 
                 let height = line_height * lines.len() as f32;
@@ -1567,62 +1970,73 @@ impl Element for TextElement {
                 }
             }
 
-            // pi-flash patch（对齐 zed）：gutter 折叠箭头（Disclosure
-            // parity）——folded 块首恒显；可折叠行 hover/光标行显。点击
-            // 命中带见 state 侧 gutter_arrow_hit（同 LINE_NUMBER_ARROW_ZONE）。
+            // pi-flash patch（移植）：gutter 折叠符号（zed render_crease_
+            // toggle / prepaint_crease_toggles）——符号带起点 = width -
+            // right_padding，符号在带内水平居中、行内垂直居中；显示条件 =
+            // 折叠块首恒显，可折叠行悬停 gutter 或光标行显（render_crease_
+            // toggle 同式）；悬停行带 secondary 药丸底（IconButton hover
+            // 态）；色 = 折叠态 Color::Selected(text_accent) / 展开态
+            // Color::Muted（IconButton render 分支）。点击命中带见 state 侧
+            // gutter_arrow_hit（同符号带）。
             if self.state.read(cx).mode.is_code_editor() {
-                let arrow_color = cx.theme().muted_foreground;
-                let arrow_folded_color = cx.theme().foreground;
-                let arrow_font = window.text_style().font();
-                let arrow_font_size = window.text_style().font_size.to_pixels(window.rem_size());
-                // 先取本帧箭头状态（borrow 收口），再进 paint（paint 需
-                // &mut App）
-                let arrows: Vec<(usize, bool, bool)> = {
-                    let fold_state = self.state.read(cx);
+                let muted = cx.theme().muted_foreground;
+                let accent = cx.theme().accent;
+                let pill_bg = cx.theme().secondary;
+                let icon_px = 14.0_f32;
+                let gutter_w = f32::from(prepaint.last_layout.line_number_width);
+                let right_padding = f32::from(prepaint.last_layout.gutter_right_padding);
+                let fold_area_x = input_bounds.origin.x + px(gutter_w - right_padding);
+                let fold_area_w = px(right_padding);
+                let rows_info: Vec<(usize, bool, bool, bool)> = {
+                    let fs = self.state.read(cx);
+                    let gutter_hovered = fs.gutter_hover_row.is_some();
                     let mut v = Vec::new();
                     for (ix, sub_lines) in line_numbers.iter().enumerate() {
-                        let Some(&row) = prepaint.last_layout.buffer_rows.get(ix) else {
+                        // pi-flash patch（移植）：buffer_rows = 每显示行的缓冲
+                        // 行号；folded = 该缓冲行首有折叠块（crease 起点 =
+                        // 行尾，fold_starting_at_row 按行查）
+                        let Some(&buf_row) = prepaint.last_layout.buffer_rows.get(ix) else {
                             break;
                         };
-                        let folded = fold_state.folds.is_fold_start(row)
-                            || fold_state.folds.is_line_folded(row);
+                        let folded = fs.fold_starts_at_row(buf_row as u32);
+                        let foldable = folded || fs.text.starts_indent(buf_row as u32);
                         let show = folded
-                            || (fold_state.fold_starts_indent(row)
-                                && (fold_state.gutter_hover_row == Some(row)
-                                    || prepaint.current_row == Some(row)));
-                        v.push((sub_lines.len(), folded, show));
+                            || (foldable && (gutter_hovered || prepaint.current_row == Some(buf_row)));
+                        let hovered = fs.gutter_hover_row == Some(buf_row);
+                        v.push((sub_lines.len(), folded, show, hovered));
                     }
                     v
                 };
                 let mut arrow_y = invisible_top_padding;
-                for (row_h, folded, show) in arrows {
+                for (sub_count, folded, show, hovered) in rows_info {
                     if show {
-                        let glyph_str: &'static str = if folded { "▸" } else { "▾" };
-                        let glyph: SharedString = glyph_str.into();
-                        let arrow = window.text_system().shape_line(
-                            glyph,
-                            arrow_font_size,
-                            &[TextRun {
-                                len: glyph_str.len(),
-                                font: arrow_font.clone(),
-                                color: if folded {
-                                    arrow_folded_color
-                                } else {
-                                    arrow_color
-                                },
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            }],
-                            None,
+                        let pill_h = px(20.0);
+                        let pill_y = origin.y
+                            + arrow_y
+                            + ((line_height - pill_h) / 2.).max(px(0.));
+                        if hovered {
+                            window.paint_quad(
+                                fill(
+                                    Bounds::new(
+                                        point(fold_area_x, pill_y),
+                                        size(fold_area_w, pill_h),
+                                    ),
+                                    pill_bg,
+                                )
+                                .corner_radii(px(4.0)),
+                            );
+                        }
+                        // zed prepaint_crease_toggles：centering = (fold_area
+                        // - toggle) / 2, (line_height - toggle) / 2
+                        let icon_origin = point(
+                            fold_area_x + (fold_area_w - px(icon_px)) / 2.,
+                            origin.y + arrow_y + ((line_height - px(icon_px)) / 2.).max(px(0.)),
                         );
-                        let ax = input_bounds.origin.x
-                            + prepaint.last_layout.line_number_width
-                            - LINE_NUMBER_ARROW_ZONE;
-                        let ay = origin.y + arrow_y;
-                        _ = arrow.paint(point(ax, ay), line_height, window, cx);
+                        // zed Disclosure：is_open = !folded（折叠态显 ChevronRight ˃）
+                        let icon_color = if folded { accent } else { muted };
+                        paint_chevron(window, icon_origin, icon_px, !folded, icon_color);
                     }
-                    arrow_y += line_height * row_h as f32;
+                    arrow_y += line_height * sub_count as f32;
                 }
             }
         }

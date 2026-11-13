@@ -33,6 +33,7 @@ keywords = [
 license-file = "LICENSE-APACHE"
 
 [features]
+pf_fold_debug = []
 decimal = ["dep:rust_decimal"]
 inspector = ["gpui/inspector"]
 tree-sitter-languages = [
@@ -155,8 +156,11 @@ version = "1"
 version = "1"
 
 [dependencies.sum-tree]
-version = "0.2.0"
-package = "zed-sum-tree"
+# pi-flash patch（折叠移植 pi-flash-dv53）：zed fold_map 需要 find/find_exact
+# （0.2.2 起新增）；zed-sum-tree 0.2.0 是旧 fork 无此 API。gpui 本体同源
+# crate（gpui_sum_tree 0.2.2），切过去统一。
+version = "0.2.2"
+package = "gpui_sum_tree"
 
 [dependencies.tracing]
 version = "0.1.41"
