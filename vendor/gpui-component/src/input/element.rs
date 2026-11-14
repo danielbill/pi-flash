@@ -45,8 +45,8 @@ fn snap_line_height(line_height: Pixels, scale_factor: f32) -> Pixels {
 /// chevron_right.svg / chevron_down.svg 原样路径（16 视箱、stroke-width
 /// 1.2、round 端点），Disclosure 用 IconSize::Small = 14px 渲染（缩放
 /// px_size/16），PathBuilder 描边。PF 偏差（有意，用户实测反馈）：
-/// 14px 视箱里 chevron 笔迹只占 ~48%（≈7px）太小，放大到 18px（zed
-/// 14px + 4，笔迹 ≈8.7px）——hover 药丸随 icon_px 同步放大。
+/// 14px 视箱里 chevron 笔迹只占 ~48%（≈7px）太小，放大到 20px（zed
+/// 14px + 6，笔迹 ≈9.7px）——hover 药丸随 icon_px 同步放大。
 fn paint_chevron(
     window: &mut Window,
     origin: Point<Pixels>,
@@ -673,6 +673,9 @@ pub(super) struct PrepaintState {
     search_match_quads: Vec<(Vec<Bounds<Pixels>>, bool)>,
     document_color_quads: Vec<(Vec<Bounds<Pixels>>, Hsla)>,
     hover_definition_hitbox: Option<Hitbox>,
+    /// 折叠符号带 hover 命中区（每可折叠/已折叠显示行一条）——paint 末尾
+    /// 挂 PointingHand 光标（zed Disclosure cursor_pointer 语义）。
+    fold_band_hitboxes: Vec<Hitbox>,
     bounds: Bounds<Pixels>,
 }
 
@@ -1152,6 +1155,41 @@ impl Element for TextElement {
         let hover_definition_hitbox =
             self.layout_hover_definition_hitbox(&self.state.read(cx), window, cx);
 
+        // pi-flash patch：折叠符号带 hover 命中区（zed Disclosure 是
+        // IconButton——cursor_pointer 只挂折叠行符号带，行号/正文不受影响）。
+        // 与 paint 的箭头/点击命中带同锚（bounds.origin + width-right_padding
+        // ..width、visible_top + ix*line_height）。
+        let mut fold_band_hitboxes = Vec::new();
+        {
+            let state = self.state.read(cx);
+            if state.mode.is_code_editor() && last_layout.fold_mode {
+                let band_x = bounds.origin.x + last_layout.line_number_width
+                    - last_layout.gutter_right_padding;
+                for (ix, row) in last_layout.rows.iter().enumerate() {
+                    if !row.is_row_start {
+                        continue;
+                    }
+                    let buf_row = row.buffer_row as u32;
+                    let folded = state.fold_starts_at_row(buf_row);
+                    let foldable = folded || state.text.starts_indent(buf_row);
+                    if !foldable {
+                        continue;
+                    }
+                    let band = Bounds::new(
+                        point(
+                            band_x,
+                            bounds.origin.y
+                                + last_layout.visible_top
+                                + ix as f32 * last_layout.line_height,
+                        ),
+                        size(last_layout.gutter_right_padding, last_layout.line_height),
+                    );
+                    fold_band_hitboxes
+                        .push(window.insert_hitbox(band, gpui::HitboxBehavior::Normal));
+                }
+            }
+        }
+
         // ---------- 滚动内容尺寸 ----------
         let empty_bottom_height = bounds
             .size
@@ -1179,6 +1217,7 @@ impl Element for TextElement {
             search_match_quads,
             hover_highlight_quads,
             hover_definition_hitbox,
+            fold_band_hitboxes,
             document_color_quads,
         }
     }
@@ -1397,7 +1436,7 @@ impl Element for TextElement {
                 let muted = cx.theme().muted_foreground;
                 let accent = cx.theme().accent;
                 let pill_bg = cx.theme().secondary;
-                let icon_px = 18.0_f32;
+                let icon_px = 20.0_f32;
                 let gutter_w = f32::from(prepaint.last_layout.line_number_width);
                 let right_padding = f32::from(prepaint.last_layout.gutter_right_padding);
                 let fold_area_x = input_bounds.origin.x + px(gutter_w - right_padding);
@@ -1500,6 +1539,9 @@ impl Element for TextElement {
             }
         });
 
+        for hitbox in &prepaint.fold_band_hitboxes {
+            window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+        }
         if let Some(hitbox) = prepaint.hover_definition_hitbox.as_ref() {
             window.set_cursor_style(gpui::CursorStyle::PointingHand, &hitbox);
         }
