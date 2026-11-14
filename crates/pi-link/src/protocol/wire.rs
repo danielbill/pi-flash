@@ -19,9 +19,6 @@ fn os(map: &Map<String, Value>, k: &str) -> Option<String> {
 fn b(map: &Map<String, Value>, k: &str) -> bool {
     map.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
-fn opt_b(map: &Map<String, Value>, k: &str) -> Option<bool> {
-    map.get(k).and_then(Value::as_bool)
-}
 fn opt_i(map: &Map<String, Value>, k: &str) -> Option<i64> {
     map.get(k).and_then(Value::as_i64)
 }

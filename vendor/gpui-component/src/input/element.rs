@@ -44,7 +44,9 @@ fn snap_line_height(line_height: Pixels, scale_factor: f32) -> Pixels {
 /// pi-flash patch（移植）：zed Disclosure 折叠符号——assets/icons/
 /// chevron_right.svg / chevron_down.svg 原样路径（16 视箱、stroke-width
 /// 1.2、round 端点），Disclosure 用 IconSize::Small = 14px 渲染（缩放
-/// px_size/16），PathBuilder 描边。
+/// px_size/16），PathBuilder 描边。PF 偏差（有意，用户实测反馈）：
+/// 14px 视箱里 chevron 笔迹只占 ~48%（≈7px）太小，放大到 18px（zed
+/// 14px + 4，笔迹 ≈8.7px）——hover 药丸随 icon_px 同步放大。
 fn paint_chevron(
     window: &mut Window,
     origin: Point<Pixels>,
@@ -277,7 +279,7 @@ impl TextElement {
 
         let cursor = state.cursor();
         let mut scroll_offset = state.scroll_handle.offset();
-        let mut cursor_bounds = None;
+        let cursor_bounds;
 
         // If the input has a fixed height (Otherwise is auto-grow), we need to add a bottom margin to the input.
         let top_bottom_margin = if state.mode.is_auto_grow() {
@@ -770,7 +772,6 @@ impl Element for TextElement {
             // 而归）才回无折叠态。
             None => state.fold_snapshot.has_folds() && state.fold_snapshot.is_deco_folded(),
         };
-        drop(state);
         if deco_stale {
             let folds = decorations
                 .as_ref()
@@ -827,7 +828,6 @@ impl Element for TextElement {
                     is_row_start: true,
                     indent: 0,
                     seg_start: 0,
-                    seg_end: mask_len as u32,
                     row_start_fold: 0,
                     exp: None,
                     text: mask_text.clone().into(),
@@ -857,7 +857,6 @@ impl Element for TextElement {
                     is_row_start: true,
                     indent: 0,
                     seg_start: 0,
-                    seg_end: 0,
                     row_start_fold: 0,
                     exp: None,
                     text: (*line).to_string().into(),
@@ -940,7 +939,6 @@ impl Element for TextElement {
                     is_row_start: info.is_row_start,
                     indent: info.indent,
                     seg_start: info.seg_start,
-                    seg_end: info.seg_end,
                     row_start_fold,
                     exp: Some(exp.clone()),
                     text: text.into(),
@@ -1061,7 +1059,7 @@ impl Element for TextElement {
             first.row_start_fold..last.row_start_fold + last_len
         };
 
-        let mut last_layout = LastLayout {
+        let last_layout = LastLayout {
             visible_range: visible_range.clone(),
             visible_top,
             visible_range_offset,
@@ -1070,7 +1068,6 @@ impl Element for TextElement {
             line_number_width,
             gutter_left_padding,
             gutter_right_padding,
-            tab_size: state.mode.tab_size().map_or(2, |t| t.tab_size as u32),
             rows: Rc::new(rows),
             fold_mode: decorations.is_none(),
             lines: Rc::new(lines),
@@ -1400,7 +1397,7 @@ impl Element for TextElement {
                 let muted = cx.theme().muted_foreground;
                 let accent = cx.theme().accent;
                 let pill_bg = cx.theme().secondary;
-                let icon_px = 14.0_f32;
+                let icon_px = 18.0_f32;
                 let gutter_w = f32::from(prepaint.last_layout.line_number_width);
                 let right_padding = f32::from(prepaint.last_layout.gutter_right_padding);
                 let fold_area_x = input_bounds.origin.x + px(gutter_w - right_padding);

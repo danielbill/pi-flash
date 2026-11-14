@@ -278,9 +278,6 @@ pub(super) struct LastLayout {
     /// （ch_width）与右侧折叠符号带宽（ch_width*4）；非行号态 = 0。
     pub(super) gutter_left_padding: Pixels,
     pub(super) gutter_right_padding: Pixels,
-    /// pi-flash patch（移植）：tab 制表位宽（tab_map 展开层用；mode 配置
-    /// 或默认 2，与 Tab 键入缩进一致）。
-    pub(super) tab_size: u32,
     /// The cursor position (top, left) in pixels.
     pub(super) cursor_bounds: Option<Bounds<Pixels>>,
 }
@@ -300,7 +297,6 @@ pub(super) struct DisplayRowData {
     pub(super) indent: u32,
     /// 段区间（tab 展开字节，行内；deco 态 = vis 字节）。
     pub(super) seg_start: u32,
-    pub(super) seg_end: u32,
     /// 结构行首在 fold 空间的字节（deco 态 = 0）。
     pub(super) row_start_fold: usize,
     /// 行内展开映射（deco 态 = None——vis 字节即显示字节）。

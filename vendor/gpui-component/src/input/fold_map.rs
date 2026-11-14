@@ -231,6 +231,7 @@ impl InlayPoint {
         self.0.row
     }
 
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn column(self) -> u32 {
         self.0.column
     }
@@ -287,6 +288,7 @@ impl InlaySnapshot {
         InlayOffset(self.buffer.len())
     }
 
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     fn max_point(&self) -> InlayPoint {
         let row = self.buffer.lines_len().saturating_sub(1) as u32;
         InlayPoint::new(row, self.buffer.line_len(row as usize) as u32)
@@ -345,6 +347,7 @@ pub(crate) struct BufEdit<T> {
     pub new: Range<T>,
 }
 
+#[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
 impl<T: Copy + Sub<Output = T> + Into<f64>> BufEdit<T> {
     fn old_len(&self) -> T {
         self.old.end - self.old.start
@@ -409,11 +412,13 @@ impl FoldPoint {
         self.0.column
     }
 
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
     /// zed FoldPoint::to_inlay_point（transforms 查找 + overshoot）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn to_inlay_point(self, snapshot: &FoldSnapshot) -> InlayPoint {
         let (start, _, _) = snapshot
             .transforms
@@ -953,10 +958,12 @@ impl Deref for FoldSnapshot {
 }
 
 impl FoldSnapshot {
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn buffer(&self) -> &Rope {
         &self.inlay_snapshot.buffer
     }
 
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn fold_count(&self) -> usize {
         self.folds.items(&self.inlay_snapshot.buffer).len()
     }
@@ -1013,6 +1020,7 @@ impl FoldSnapshot {
     }
 
     /// zed text_summary_for_range（fold 空间 → 摘要）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
@@ -1100,6 +1108,7 @@ impl FoldSnapshot {
     }
 
     /// zed row_infos：显示行 → 缓冲行迭代器（PF 恒等 inlay：缓冲行 = 输入行）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn row_infos(&self, start_row: u32) -> FoldRows<'_> {
         if start_row > self.transforms.summary().output.lines.row {
             panic!("invalid display row {}", start_row);
@@ -1135,11 +1144,13 @@ impl FoldSnapshot {
     }
 
     /// zed FoldSnapshot::longest_row（fold_map.rs:925 原文）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn longest_row(&self) -> u32 {
         self.transforms.summary().output.longest_row
     }
 
     /// zed folds_in_range（区间内折叠迭代）。
+    #[allow(dead_code)] // zed 对齐面
     pub fn folds_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &Fold> {
         let mut folds = intersecting_folds(&self.inlay_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
@@ -1150,6 +1161,7 @@ impl FoldSnapshot {
     }
 
     /// zed intersects_fold（offset 是否落在折叠变换内）。
+    #[allow(dead_code)] // zed 对齐面
     pub fn intersects_fold(&self, offset: usize) -> bool {
         let inlay_offset = self.inlay_snapshot.to_inlay_offset(offset);
         let (_, _, item) = self
@@ -1188,6 +1200,7 @@ impl FoldSnapshot {
     }
 
     /// zed placeholder_range_at（给定 fold 点所在占位符区间）。
+    #[allow(dead_code)] // zed 对齐面
     pub(crate) fn placeholder_range_at(&self, point: FoldPoint) -> Option<Range<FoldPoint>> {
         let (start, end, item) = self
             .transforms
@@ -1237,6 +1250,7 @@ impl FoldSnapshot {
     }
 
     /// buffer offset → fold offset（经 fold point 换算，折叠内按 bias 贴边）。
+    #[allow(dead_code)] // zed 对齐面
     pub fn buffer_offset_to_fold(&self, offset: usize, bias: Bias) -> FoldOffset {
         let point = self.inlay_snapshot.to_point(InlayOffset(offset));
         let fold_point = self.to_fold_point(point, bias);
@@ -1492,6 +1506,7 @@ struct Transform {
 #[derive(Clone, Debug)]
 struct TransformPlaceholder {
     text: SharedString,
+    #[allow(dead_code)] // zed TransformSummary 对齐字段（PF 摘要另行计算）
     chars: u128,
 }
 
@@ -1660,11 +1675,13 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 // ---------- FoldRows（显示行 → 缓冲行迭代；zed RowInfo 对应物 = 缓冲行号） ----------
 
 /// zed InlayBufferRows 对应物（PF 恒等 inlay：缓冲行计数器）。
+#[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
 struct BufferRows {
     next: u32,
     max: u32,
 }
 
+#[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
 impl BufferRows {
     fn seek(&mut self, row: u32) {
         self.next = row;
@@ -1681,6 +1698,7 @@ impl BufferRows {
     }
 }
 
+#[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
 pub struct FoldRows<'a> {
     cursor: Cursor<'a, 'static, Transform, Dimensions<FoldPoint, InlayPoint>>,
     input_rows: BufferRows,
@@ -1688,6 +1706,7 @@ pub struct FoldRows<'a> {
 }
 
 impl FoldRows<'_> {
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left);
@@ -2057,23 +2076,6 @@ impl InputState {
         self.fold_clip_selections();
     }
 
-    /// zed unfold_intersecting（字节区间入口；编辑 reveal 用）。
-    pub(super) fn fold_map_unfold_ranges(
-        &mut self,
-        ranges: impl IntoIterator<Item = Range<usize>>,
-        cx: &mut Context<Self>,
-    ) {
-        let version = self.fold_snapshot.version;
-        let inlay_snapshot = InlaySnapshot {
-            buffer: self.text.clone(),
-            version,
-        };
-        let (mut writer, _snapshot, _edits) = self.fold_map.write(inlay_snapshot, Vec::new());
-        let (_snap, fold_edits) = writer.unfold_intersecting(ranges, true);
-        self.fold_snapshot = self.fold_map.snapshot.clone();
-        self.sync_chain_fold_edits(fold_edits, cx);
-    }
-
     /// buffer 编辑后的链同步（dqjd S2）：fold read（折叠区间 anchor 平移
     /// + transforms 重建，产出 fold 编辑）→ tab 映射 → wrap rewrap。
     /// zed 分居三层的 read/sync 链在 PF 收口为 sync_chain_after_edit（编辑）
@@ -2121,12 +2123,12 @@ impl InputState {
     /// PF 光标/选区是裸 offset，必须落锤后显式钳出隐藏区，否则插入落在
     /// 隐藏文本里不可见）。走全变换链 buffer→to_fold_point→clip_point→
     /// fold_offset_to_buffer——不得把 buffer 点当 fold 点直接钳（fold 后
-    /// 行号错位，见 fold_clip_offset 的教训）。
+    /// 行号错位——教训：fold 空间钳制点必须用 fold 快照的 clip_point 原语义，不得自拼平移）。
     fn fold_clip_selections(&mut self) {
         if !self.fold_snapshot.has_folds() {
             return;
         }
-        let mut clip = |off: usize, bias: Bias| -> usize {
+        let clip = |off: usize, bias: Bias| -> usize {
             let p = self.text.offset_to_point(off);
             let fp = self.fold_snapshot.to_fold_point(
                 InlayPoint(Point::new(p.row as u32, p.column as u32)),
@@ -2141,23 +2143,6 @@ impl InputState {
         if start != self.selected_range.start || end != self.selected_range.end {
             self.selected_range = (start..end).into();
         }
-    }
-
-    /// 光标钳出折叠占位符（zed clip_point 经 change_selections 应用）。
-    pub(super) fn fold_clip_offset(&mut self, offset: usize, bias: Bias) -> usize {
-        if !self.fold_snapshot.has_folds() {
-            return offset;
-        }
-        let p = self.text.offset_to_point(offset);
-        let point = Point::new(p.row as u32, p.column as u32);
-        let clipped = self.fold_snapshot.clip_point(FoldPoint(point), bias);
-        if clipped.0 == point {
-            return offset;
-        }
-        self.text.point_to_offset(tree_sitter::Point::new(
-            clipped.0.row as usize,
-            clipped.0.column as usize,
-        ))
     }
 
     /// dqjd S3：从区间表重建折叠快照（md 装饰链用）——折叠替换文本 =
@@ -2390,6 +2375,7 @@ pub(super) struct IndentGuide {
     pub(super) start_row: u32,
     pub(super) end_row: u32,
     pub(super) depth: u32,
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub(super) tab_size: u32,
 }
 

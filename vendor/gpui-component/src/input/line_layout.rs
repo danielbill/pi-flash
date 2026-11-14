@@ -41,11 +41,6 @@ impl LineLayout {
         self.wrapped_lines = wrapped_lines;
     }
 
-    #[inline]
-    pub(super) fn len(&self) -> usize {
-        self.len
-    }
-
     /// Get the position (x, y) for the given index in this line layout.
     ///
     /// - The `offset` is a local byte index in this line layout.

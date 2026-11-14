@@ -42,13 +42,11 @@ impl WrapPoint {
         self.0.column
     }
 
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
 }
-
-/// zed WrapEdit 的 PF 形态（不产 patch，仅 sync 内部行区间推导用）。
-pub(crate) type WrapRowRange = Range<u32>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct WTransform {
@@ -580,6 +578,7 @@ impl WrapSnapshot {
     }
 
     /// zed to_point：显示点 → buffer 点。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn to_point(&self, point: WrapPoint, bias: Bias) -> FoldSpacePoint {
         self.tab_snapshot.tab_point_to_point(self.to_tab_point(point), bias)
     }
@@ -591,6 +590,7 @@ impl WrapSnapshot {
 
     /// zed clip_point（wrap_map.rs:969）：wrap 变换内 Left 贴段首（续行
     /// 缩进区不可停靠），再经 tab 层钳制（折叠/行尾）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
             let (start, _, item) = self
@@ -627,6 +627,7 @@ impl WrapSnapshot {
     }
 
     /// zed soft_wrap_indent：续行缩进（None = 非续行）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
         let (.., item) = self
             .transforms
@@ -648,6 +649,7 @@ impl WrapSnapshot {
     /// zed prev_row_boundary（wrap_map.rs:986）：显示点所在/之前的最近
     /// tab 行边界（Home：软换行回退到 tab 行首——zed stop_at_soft_wraps
     /// 默认停显示行首；本方法给「跳到 tab 行首」语义用）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn prev_row_boundary(&self, point: WrapPoint) -> u32 {
         if self.transforms.is_empty() {
             return 0;
@@ -682,6 +684,7 @@ impl WrapSnapshot {
     }
 
     /// zed next_row_boundary：显示点之后的最近 tab 行边界。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn next_row_boundary(&self, mut point: WrapPoint) -> Option<u32> {
         point.0 += FoldSpacePoint::new(1, 0);
 
@@ -794,6 +797,7 @@ impl WrapSnapshot {
     }
 
     /// tab 空间总摘要（行区间直取行文本拼接；gap/全量重建用，区间通常小）。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn text_summary_for_rows(&self, rows: Range<u32>) -> TextSummary {
         tab_text_summary_rows(&self.tab_snapshot, rows)
     }

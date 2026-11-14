@@ -75,6 +75,7 @@ impl TabPoint {
 pub(crate) struct TabMap(pub TabSnapshot);
 
 impl TabMap {
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> Self {
         Self(TabSnapshot::new(fold_snapshot, tab_size))
     }
@@ -221,6 +222,7 @@ impl TabSnapshot {
 
     /// zed TabSnapshot::clip_point：先塌回 fold 空间钳制（光标不入折叠/
     /// 行尾钳制），再展开回 tab 空间。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
         let (fold_point, _, _) = self.tab_point_to_fold_point(point, bias);
         let clipped = self.fold_snapshot.clip_point(fold_point, bias);
@@ -264,6 +266,7 @@ impl TabSnapshot {
     }
 
     /// zed TabSnapshot::tab_point_to_point：tab 点 → fold 点 → buffer 点。
+    #[allow(dead_code)] // zed 对齐面：PF 消费点未接入（升级重套时照 zed 原文核对）
     pub fn tab_point_to_point(&self, point: TabPoint, bias: Bias) -> FoldSpacePoint {
         let (fold_point, _, _) = self.tab_point_to_fold_point(point, bias);
         self.fold_snapshot.fold_point_to_buffer_point(fold_point)
@@ -413,43 +416,8 @@ impl TabExpansion {
         Self { text, map, is_tab }
     }
 
-    /// 同 build，`init_col` = 段首的行内字符列（软换行段的制表位按整行
-    /// 对齐）。**legacy**：S2 显示行收口后由 wrap 链的缩进变换取代（守卫
-    /// 仍是字符列——段首前序字节数在切片上不可得，与 zed byte 守卫的偏差
-    /// 仅影响 256 列外的 CJK 行，S2 一并消灭）。
-    pub(crate) fn build_with_col(line: &str, tab_size: u32, init_col: u32) -> Self {
-        let tab_size = tab_size.max(1);
-        let mut text = String::with_capacity(line.len());
-        let mut map = Vec::with_capacity(line.len() + 1);
-        let mut is_tab = Vec::with_capacity(line.len() + 1);
-        let mut col = init_col;
-        let mut src_ix = 0usize;
-        for c in line.chars() {
-            let src_len = c.len_utf8();
-            if c == '\t' && col < MAX_EXPANSION_COLUMN {
-                let tab_len = tab_size - (col % tab_size);
-                for _ in 0..tab_len {
-                    map.push(src_ix);
-                    is_tab.push(true);
-                    text.push(' ');
-                }
-                col += tab_len;
-            } else {
-                for _ in 0..src_len {
-                    map.push(src_ix);
-                    is_tab.push(false);
-                }
-                text.push(c);
-                col += 1;
-            }
-            src_ix += src_len;
-        }
-        map.push(src_ix);
-        is_tab.push(false);
-        Self { text, map, is_tab }
-    }
-
     /// 行内源字节 → 展开文本字节（源字节落在其对应展开段起点）。
+    #[allow(dead_code)] // 测试与 zed 对拍消费
     pub(crate) fn source_to_expanded(&self, src: usize) -> usize {
         // 线性扫映射表首个 ≥ src 的项（src 是源字节边界）。行长度有限，
         // 每帧每行仅一两次调用。
