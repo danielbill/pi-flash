@@ -404,13 +404,9 @@ pub(crate) fn render_preview_body(
 /// 源码视图既有能力不丢）。鼠标 eye 与 `file.view_mode` op 都只改
 /// ft.md_source，状态差异在此收口防漂移。
 ///
-/// **本函数是软换行 ⇄ WYSIWYG 的唯一耦合点**（2026-10-14 用户定夺解耦）：
-/// md 的折行由 kind.rs `EditorConfig` 声明恒开（stock 路径回行，6bc1f2f
-/// 口径）；但折叠与折行结构互斥（vendor element.rs 折叠分支 debug_assert
-/// 「折叠态必须关软换行」——折叠改写每行字节长，text_wrapper 的换行段是按
-/// doc 文本算的），所以挂装饰必须同时关折行、摘装饰恢复折行。早退分支
-/// 安全：装饰与折行总在本 closure 里一起写，`has_decorations()==live` 蕴含
-/// 折行已同步。
+/// dqjd S3（pi-flash-dqjd）后本函数**不再耦合软换行**：装饰折叠进 vendor
+/// 变换链（fold→tab→wrap 空占位符 Transform），md 折行恒开（kind.rs
+/// EditorConfig）在 WYSIWYG 态照常生效——挂/摘装饰只切换 provider。
 pub(crate) fn sync_live_decorations(
     chat: &mut crate::Chat,
     path: &std::path::Path,
@@ -424,8 +420,10 @@ pub(crate) fn sync_live_decorations(
     if ed.read(cx).has_decorations() == live {
         return;
     }
-    ed.update(cx, |st, scx| {
-        st.set_soft_wrap_cx(!live, scx);
+    // dqjd S3（pi-flash-dqjd）：装饰折叠进 vendor 变换链（空占位符
+    // Transform），与软换行自由组合——挂/摘装饰不再动 soft_wrap（疤 B 删除，
+    // md 折行恒开由 kind.rs EditorConfig 声明）。
+    ed.update(cx, |st, _scx| {
         st.set_decorations(if live {
             Some(std::rc::Rc::new(wysiwyg::MdLiveProvider))
         } else {

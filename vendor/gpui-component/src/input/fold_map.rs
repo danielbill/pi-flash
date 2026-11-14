@@ -500,12 +500,33 @@ impl FoldMapWriter<'_> {
 
         self.0.snapshot.folds = {
             let mut new_tree = SumTree::new(&snapshot.buffer);
-            let mut cursor = self.0.snapshot.folds.cursor::<FoldRange>(&snapshot.buffer);
+            // pi-flash patch（dqjd S3）：游标走 **usize 维度**（零 = 0 是最小
+            // seek 元）。FoldRange 维度的零值是 Default(0..usize::MAX)——
+            // 对**字节 0 起始**的折叠（deco 的 `# ` 标记折叠）任何全新游标
+            // 的首 seek 都判"后退"直接 panic；zed 同款潜伏问题（crease 恒
+            // 从行尾 >0 起踩不到）。改为按旧折叠起点推进的归并游标，等价
+            // zed slice 交错语义 + 同区间去重。
+            let mut cursor = self.0.snapshot.folds.cursor::<usize>(&snapshot.buffer);
+            cursor.seek(&0usize, Bias::Right);
             for fold in folds {
-                new_tree.append(cursor.slice(&fold.range, Bias::Right), &snapshot.buffer);
+                loop {
+                    let Some(old) = cursor.item() else { break };
+                    if old.range.0 == fold.range.0 {
+                        // 旧树已有同区间折叠：去重（下方推入新的）
+                        cursor.next();
+                    } else if old.range.start < fold.range.start {
+                        new_tree.push(old.clone(), &snapshot.buffer);
+                        cursor.next();
+                    } else {
+                        break;
+                    }
+                }
                 new_tree.push(fold, &snapshot.buffer);
             }
-            new_tree.append(cursor.suffix(), &snapshot.buffer);
+            while let Some(old) = cursor.item() {
+                new_tree.push(old.clone(), &snapshot.buffer);
+                cursor.next();
+            }
             new_tree
         };
 
@@ -2051,6 +2072,8 @@ impl InputState {
         new_text_len: usize,
         cx: &mut Context<Self>,
     ) {
+        // dqjd S3：deco 态的折叠层由 provider 折叠集全量重建（prepaint 链
+        // 对账收口），这里只做 anchor 平移的过渡态（provider 下一帧纠偏）。
         shift_fold_ranges_for_edit(&mut self.fold_snapshot, old_range.clone(), new_text_len);
         let version = self.fold_snapshot.version;
         let inlay_snapshot = InlaySnapshot {
@@ -2125,6 +2148,70 @@ impl InputState {
         ))
     }
 
+    /// dqjd S3：从区间表重建折叠快照（md 装饰链用）——折叠替换文本 =
+    /// **空占位符**（Some("")：行内字节删除、行数不变），等价 024 的
+    /// doc_to_vis 折叠语义但进 Transform 链（可与 tab/软换行组合）。
+    /// 全量重建 O(doc)：md 文档小、且仅在折叠集变化时调用。
+    pub(super) fn rebuild_fold_snapshot_from_ranges(
+        &mut self,
+        ranges: Vec<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        // 归一化：排序 + 空区间剔除 + 重叠/嵌套区间并集归并——fold 树游标
+        // 只前进，重叠区间会触发 "cannot seek backward" panic（真机 md
+        // reveal 实测：容器级 reveal 会产出与合并集相交的区间）。
+        let mut sorted = ranges;
+        sorted.sort_by_key(|r| (r.start, r.end));
+        let mut normalized: Vec<Range<usize>> = Vec::with_capacity(sorted.len());
+        for r in sorted {
+            if r.end <= r.start {
+                continue;
+            }
+            match normalized.last_mut() {
+                Some(last) if r.start <= last.end => {
+                    if r.end > last.end {
+                        last.end = r.end;
+                    }
+                }
+                _ => normalized.push(r),
+            }
+        }
+
+        let inlay = InlaySnapshot {
+            buffer: self.text.clone(),
+            version: self.fold_snapshot.version + 1,
+        };
+        let (mut map, snap0) = FoldMap::new(inlay.clone());
+        let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+        let (_fs, fold_edits) = writer.fold(
+            normalized
+                .into_iter()
+                .map(|r| {
+                    (
+                        r,
+                        FoldPlaceholder {
+                            collapsed_text: Some("".into()),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        self.fold_map = map;
+        self.fold_snapshot = snap0;
+        // 与链语义对齐：折叠编辑的 new 端 = 折叠后空间——直接以整文替换
+        // 语义送链（区间表全量重建，wrap 层按行编辑收敛）
+        let _ = fold_edits;
+        self.fold_snapshot = self.fold_map.snapshot.clone();
+        // 全量重建：tab/wrap 层整文重置（md 文档小，O(doc) 可接受）
+        let tab_size = self
+            .mode
+            .tab_size()
+            .map_or(2u32, |t| (t.tab_size as u32).max(1));
+        self.tab_snapshot =
+            TabSnapshot::new(self.fold_snapshot.clone(), NonZeroU32::new(tab_size).unwrap());
+        self.wrap_map.reset(self.tab_snapshot.clone(), cx);
+    }
     /// 折叠区间表（buffer 字节空间）。宿主快照/自动化观测只读视图；
     /// 非 code_editor 或 md 装饰态恒空。
     pub fn fold_ranges(&self) -> Vec<Range<usize>> {
@@ -2388,4 +2475,41 @@ pub(super) fn indent_guides_in_range(
 
     result.extend(indent_stack);
     result
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+
+    /// dqjd S3 回归：**字节 0 起始**的折叠（deco `# ` 标记）——FoldRange
+    /// 游标维度零值为 (0..usize::MAX)，对全新游标首 seek 即"后退" panic
+    /// （zed 同款潜伏问题）。usize 归并游标 + 同区间去重后可折叠/重折叠。
+    #[test]
+    fn test_fold_starting_at_byte_zero_and_refold() {
+        let rope = Rope::from("# 标题\n正文\n");
+        let (mut map, _snap) = FoldMap::new(InlaySnapshot {
+            buffer: rope.clone(),
+            version: 0,
+        });
+        let ph = || FoldPlaceholder {
+            collapsed_text: Some("".into()),
+            ..Default::default()
+        };
+        // 首次折叠（0 起始 + 普通）
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 1 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![(0..2, ph()), (10..12, ph())]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 1 }, Vec::new());
+        assert_eq!(snap.fold_ranges(), vec![0..2, 10..12]);
+        // 重折叠（同区间去重 + 交错新区间）
+        {
+            let inlay = InlaySnapshot { buffer: rope.clone(), version: 2 };
+            let (mut writer, _s, _e) = map.write(inlay, Vec::new());
+            let (_fs, _e) = writer.fold(vec![(0..2, ph()), (6..8, ph())]);
+        }
+        let (snap, _) = map.read(InlaySnapshot { buffer: rope.clone(), version: 2 }, Vec::new());
+        assert_eq!(snap.fold_ranges(), vec![0..2, 6..8, 10..12]);
+    }
 }

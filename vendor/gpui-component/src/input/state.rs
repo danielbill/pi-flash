@@ -893,20 +893,14 @@ impl InputState {
         offset: usize,
         bias: Bias,
     ) -> (u32, usize) {
+        // dqjd S3：deco 态折叠已进链（空占位符 Transform），统一走 wrap 链
+        // ——024 的 doc_to_vis 旁路换算删除。
+        let _ = layout;
         let offset = offset.min(self.text.len());
-        if let Some(dec) = &layout.decorations {
-            let p = self.text.offset_to_point(offset);
-            let line_start = self.text.line_start_offset(p.row);
-            let col = dec
-                .doc_to_vis(line_start + p.column)
-                .saturating_sub(dec.doc_to_vis(line_start));
-            (p.row as u32, col)
-        } else {
-            let wrap = self.wrap_map.snapshot();
-            let p = self.text.offset_to_point(offset);
-            let wp = wrap.make_wrap_point(FoldSpacePoint::new(p.row as u32, p.column as u32), bias);
-            (wp.row(), wp.column() as usize)
-        }
+        let wrap = self.wrap_map.snapshot();
+        let p = self.text.offset_to_point(offset);
+        let wp = wrap.make_wrap_point(FoldSpacePoint::new(p.row as u32, p.column as u32), bias);
+        (wp.row(), wp.column() as usize)
     }
 
     /// 显示点 → buffer offset。
@@ -917,24 +911,17 @@ impl InputState {
         col: usize,
         bias: Bias,
     ) -> usize {
-        if let Some(dec) = &layout.decorations {
-            let line_start = self.text.line_start_offset(row as usize);
-            let line_end = line_start + self.text.line_len(row as usize);
-            let base = dec.doc_to_vis(line_start);
-            let vis_len = dec.doc_to_vis(line_end).saturating_sub(base);
-            let col = col.min(vis_len);
-            dec.vis_to_doc(base + col).min(self.text.len())
-        } else {
-            let wrap = self.wrap_map.snapshot();
-            // 列钳到本显示行长（越列越行会被 find 落进后续变换）
-            let col = col.min(wrap.line_len(row) as usize);
-            let tp = wrap.to_tab_point(WrapPoint::new(row, col as u32));
-            let (fp, _, _) = wrap.tab_snapshot.tab_point_to_fold_point(tp, bias);
-            let fold_off = fp.to_offset(&wrap.tab_snapshot.fold_snapshot);
-            wrap.tab_snapshot
-                .fold_snapshot
-                .fold_offset_to_buffer(fold_off)
-        }
+        // dqjd S3：统一 wrap 链（deco 折叠已进链）
+        let _ = layout;
+        let wrap = self.wrap_map.snapshot();
+        // 列钳到本显示行长（越列越行会被 find 落进后续变换）
+        let col = col.min(wrap.line_len(row) as usize);
+        let tp = wrap.to_tab_point(WrapPoint::new(row, col as u32));
+        let (fp, _, _) = wrap.tab_snapshot.tab_point_to_fold_point(tp, bias);
+        let fold_off = fp.to_offset(&wrap.tab_snapshot.fold_snapshot);
+        wrap.tab_snapshot
+            .fold_snapshot
+            .fold_offset_to_buffer(fold_off)
     }
 
     pub(super) fn line_and_position_for_offset(
@@ -1475,11 +1462,7 @@ impl InputState {
             return self.text.line_end_offset(row);
         };
         let (row, _) = self.offset_to_display_point(last_layout, self.cursor(), Bias::Right);
-        let len = if last_layout.decorations.is_some() {
-            usize::MAX // deco：display_point_to_offset 内按 vis 行长钳制
-        } else {
-            self.wrap_map.snapshot().line_len(row) as usize
-        };
+        let len = self.wrap_map.snapshot().line_len(row) as usize;
         self.display_point_to_offset(last_layout, row, len, Bias::Right)
     }
 
@@ -2340,7 +2323,7 @@ impl InputState {
         let pos = inner_position - point(px(0.), last_layout.visible_top + ix as f32 * line_height);
         let d = line_layout.closest_index_for_x(pos.x);
 
-        // 显示字节 → 源字节（fold 行内 local / deco vis 行内 local）
+        // 显示字节 → 源字节（fold 行内 local；deco 折叠已进链同路径）
         let src = if let Some(exp) = &row_data.exp {
             // 段内显示字节 → 展开字节（续行先去缩进）
             let in_seg = (d as u32).saturating_sub(row_data.indent) + row_data.seg_start;
@@ -2348,13 +2331,6 @@ impl InputState {
         } else {
             d
         };
-        if let Some(dec) = &last_layout.decorations {
-            // deco：vis 行内 local → doc
-            let line_start = self.text.line_start_offset(row_data.buffer_row as usize);
-            return dec
-                .vis_to_doc(dec.doc_to_vis(line_start) + src)
-                .min(self.text.len());
-        }
         // 链：fold 行内 local → fold offset → buffer（占位符内 → crease 起点）
         self.fold_snapshot
             .fold_offset_to_buffer(FoldOffset(row_data.row_start_fold + src))
@@ -3058,12 +3034,7 @@ impl EntityInputHandler for InputState {
         let rel = gpui::point(px(0.), last_layout.visible_top + ix as f32 * line_height);
         let pos = line_point - rel;
         let d = line_layout.index_for_position(pos, line_height)?;
-        let offset = if let Some(dec) = &last_layout.decorations {
-            // deco：vis 行内 local → doc
-            let src = d;
-            let line_start = self.text.line_start_offset(row_data.buffer_row as usize);
-            dec.vis_to_doc(dec.doc_to_vis(line_start) + src)
-        } else if let Some(exp) = &row_data.exp {
+        let offset = if let Some(exp) = &row_data.exp {
             let in_seg = (d as u32).saturating_sub(row_data.indent) + row_data.seg_start;
             let src = exp.expanded_to_source(in_seg as usize);
             self.fold_snapshot

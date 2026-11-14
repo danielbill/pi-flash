@@ -742,6 +742,40 @@ impl Element for TextElement {
         let is_empty = state.text.len() == 0;
         let multi_line = state.mode.is_multi_line();
 
+        // ---------- PF-024 装饰 provider（dqjd S3 收编链） ----------
+        // provider 每帧纯函数现算（折叠集随选区 reveal）；折叠集与链快照
+        // 不一致时重建 fold→tab→wrap 链（deco 折叠 = 空占位符 Transform，
+        // 与 tab/软换行自由组合）。styles = **绝对 vis 坐标**（契约 v2）。
+        // 摘装饰后残留 deco 折叠也在此清空（快照回无折叠态）。
+        let decorations: Option<Rc<Decorations>> = if is_empty {
+            None
+        } else {
+            match state.decorations.as_ref() {
+                Some(p) => p
+                    .decorate(
+                        &state.text,
+                        0..state.text.lines_len(),
+                        state.selected_range.start..state.selected_range.end,
+                    )
+                    .map(Rc::new),
+                None => None,
+            }
+        };
+        let deco_stale = match decorations.as_ref() {
+            Some(dec) => dec.folds != state.fold_snapshot.fold_ranges(),
+            None => state.fold_snapshot.has_folds(),
+        };
+        drop(state);
+        if deco_stale {
+            let folds = decorations
+                .as_ref()
+                .map(|d| d.folds.clone())
+                .unwrap_or_default();
+            self.state
+                .update(cx, |st, scx| st.rebuild_fold_snapshot_from_ranges(folds, scx));
+        }
+        let state = self.state.read(cx);
+
         // ---------- 可视区间（显示行恒等高，闭式解；Zed PositionMap 同款） ----------
         let wrap = state.wrap_map.snapshot();
         let total_rows = if is_empty {
@@ -762,23 +796,6 @@ impl Element for TextElement {
         let end = (start + visible_rows + EXTRA_SHAPE_ROWS + 2).min(total_rows);
         let visible_range = start as usize..end as usize;
         let visible_top = start as f32 * line_height;
-
-        // ---------- PF-024 装饰 provider（md Live Preview 旁路，S3 收编链） ----------
-        let decorations: Option<Rc<Decorations>> = if is_empty {
-            None
-        } else {
-            state
-                .decorations
-                .as_ref()
-                .and_then(|p| {
-                    p.decorate(
-                        &state.text,
-                        start as usize..end as usize,
-                        state.selected_range.start..state.selected_range.end,
-                    )
-                })
-                .map(Rc::new)
-        };
 
         let text_style = window.text_style();
         let base_color = self.text_color.unwrap_or(cx.theme().foreground);
@@ -851,66 +868,11 @@ impl Element for TextElement {
                     }],
                 });
             }
-        } else if let Some(dec) = decorations.as_ref() {
-            // deco 行（024）：doc 行 = 显示行（folds 不跨行、行数不变；软换
-            // 行在 deco 态由 app 侧关闭——S3 收编链后解除）。样式 runs 复刻
-            // 旧全局 runs + runs_for_range 切片组合（slice 基准语义原样）。
-            let highlight_styles = dec.styles.clone();
-            let mut global_runs: Vec<TextRun> = highlight_styles
-                .iter()
-                .map(|(range, style)| {
-                    let mut run = text_style.clone().highlight(*style).to_run(range.len());
-                    if let Some(ime_marked_range) = &state.ime_marked_range {
-                        if range.start >= ime_marked_range.start
-                            && range.end <= ime_marked_range.end
-                        {
-                            run.color = base_color;
-                            run.strikethrough = Some(gpui::StrikethroughStyle {
-                                thickness: px(1.),
-                                color: Some(base_color),
-                            });
-                            run.underline = Some(UnderlineStyle {
-                                thickness: px(1.),
-                                color: Some(base_color),
-                                wavy: false,
-                            });
-                        }
-                    }
-                    run
-                })
-                .filter(|run| run.len > 0)
-                .collect();
-            if global_runs.is_empty() {
-                global_runs.push(TextRun {
-                    len: 0,
-                    font: text_style.font(),
-                    color: base_color,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                });
-            }
-            for doc_row in start..end {
-                let vis_text = dec.display.slice_line(doc_row as usize).to_string();
-                let doc_line_start = state.text.line_start_offset(doc_row as usize);
-                let line_runs = runs_for_range(&global_runs, doc_line_start, &(0..vis_text.len()));
-                rows.push(DisplayRowData {
-                    wrap_row: doc_row,
-                    tab_row: doc_row,
-                    buffer_row: doc_row,
-                    is_row_start: true,
-                    indent: 0,
-                    seg_start: 0,
-                    seg_end: vis_text.len() as u32,
-                    row_start_fold: 0,
-                    exp: None,
-                    text: vis_text.into(),
-                    runs: line_runs,
-                });
-            }
         } else {
-            // 链行（fold/plain/single-line 统一）：fold 行渲染数据缓存构建
-            // （tab 展开 + 样式 runs 每 fold 行一次，段切片共享）
+            // 链行（fold/plain/deco/single-line 统一——deco 折叠 = 链上的空
+            // 占位符 Transform，样式源分歧收进 row_source_runs）：fold 行渲染
+            // 数据缓存构建（tab 展开 + 样式 runs 每 fold 行一次，段切片共享）
+            let deco = decorations.as_ref().map(|d| &**d);
             let mut fold_cache: Option<(u32, Rc<TabExpansion>, Rc<str>, Vec<TextRun>)> = None;
             for wrap_row in start..end {
                 let info = wrap.row_info(wrap_row);
@@ -927,6 +889,7 @@ impl Element for TextElement {
                         &document_colors,
                         &text_style,
                         base_color,
+                        deco,
                         cx,
                     );
                     fold_cache = Some((info.tab_row, exp, expanded_text, runs));
@@ -1563,6 +1526,7 @@ impl TextElement {
         document_colors: &[(Range<usize>, Hsla)],
         text_style: &TextStyle,
         base_color: Hsla,
+        deco: Option<&Decorations>,
         cx: &App,
     ) -> Vec<TextRun> {
         let has_folds = state.fold_snapshot.has_folds();
@@ -1571,7 +1535,55 @@ impl TextElement {
         let base_font = text_style.font();
         let mut src_runs: Vec<TextRun> = Vec::new();
 
-        if has_folds {
+        if let Some(dec) = deco {
+            // dqjd S3：deco 行——dec.styles = **绝对 vis 坐标**（契约 v2），
+            // 按本行 vis 区间切片（vis = fold 空间：行首 fold offset + 行长）。
+            // 空占位符段零宽，无需灰显；IME 区间 doc→vis 后同法相交。
+            let row_start_vis = FoldPoint::new(tab_row, 0)
+                .to_offset(&state.fold_snapshot)
+                .0;
+            let styles: Vec<(Range<usize>, HighlightStyle)> = dec
+                .styles
+                .iter()
+                .filter_map(|(r, st)| {
+                    let a = r.start.saturating_sub(row_start_vis).min(row_len);
+                    let b = r.end.saturating_sub(row_start_vis).min(row_len);
+                    (b > a).then_some((a..b, *st))
+                })
+                .collect();
+            let partitioned = style_partition(styles, row_len);
+            let mut line_runs: Vec<TextRun> = Vec::new();
+            let mut cursor = 0usize;
+            for (r, st) in &partitioned {
+                if r.start > cursor {
+                    line_runs.push(TextRun {
+                        len: r.start - cursor,
+                        font: base_font.clone(),
+                        color: base_color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    });
+                }
+                line_runs.push(text_style.clone().highlight(*st).to_run(r.len()));
+                cursor = r.end;
+            }
+            if cursor < row_len {
+                line_runs.push(TextRun {
+                    len: row_len - cursor,
+                    font: base_font.clone(),
+                    color: base_color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
+            // IME 组串下划线（doc→vis 映射后按行 vis 区间相交）
+            let ime_vis = state.ime_marked_range.as_ref().map(|ime| {
+                dec.doc_to_vis(ime.start)..dec.doc_to_vis(ime.end)
+            });
+            src_runs = apply_ime_marking(line_runs, row_start_vis..row_start_vis + row_len, ime_vis);
+        } else if has_folds {
             // fold 行：buffer 段走 ts 高亮，占位符段灰显（zed fold chunk
             // placeholder 语义；行号 = 绝对 fold 行）
             let segs = state.fold_snapshot.row_segments(tab_row);
@@ -1740,7 +1752,8 @@ impl TextElement {
                 split_runs_by_bg_segments(row_start, &line_runs, &bg)
             };
             // IME 组串下划线（行内相交区间）
-            src_runs = apply_ime_marking(state, line_runs, row_start..row_end);
+            let ime = state.ime_marked_range.clone().map(|r| r.start..r.end);
+            src_runs = apply_ime_marking(line_runs, row_start..row_end, ime);
         }
 
         // tab 展开层：runs 重排到展开坐标（shape 输入同坐标系）
@@ -1832,15 +1845,15 @@ fn style_partition(
 }
 
 /// dqjd S2：IME 组选区下划线——行 runs 与 ime 区间相交段拆分加标记。
+/// `ime` 与 `row_range` 同坐标系（普通行 = doc；deco 行 = vis）。
 fn apply_ime_marking(
-    state: &InputState,
     mut runs: Vec<TextRun>,
     row_range: Range<usize>,
+    ime: Option<Range<usize>>,
 ) -> Vec<TextRun> {
-    let Some(ime) = &state.ime_marked_range else {
+    let Some(ime) = ime else {
         return runs;
     };
-    let ime = ime.clone();
     if ime.end <= row_range.start || ime.start >= row_range.end {
         return runs;
     }

@@ -143,7 +143,7 @@ struct CodeKind {
 
 /// Markdown：双态（默认源码态 WYSIWYG，024 二改拍板；eye 切渲染预览）、
 /// 图片粘贴插图钩子（025）。软换行开（stock 路径；仅 WYSIWYG 装饰挂上
-/// 期间由 sync_live_decorations 关——折叠与折行互斥）。
+/// 期间由 sync_live_decorations 关——折叠与折行经变换链组合（dqjd S3 后无互斥））。
 struct MarkdownKind;
 
 /// 图片：gpui img() 查看器，无编辑器、只读。注册即后缀门（zed

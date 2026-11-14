@@ -63,22 +63,21 @@ impl DecorationProvider for MdLiveProvider {
             display.replace_range(f.clone(), "");
         }
 
-        // 可见切片基准——与 element.rs 的 slice_lines(vr.start..vr.end) 同式
-        let slice_start = text.line_start_offset(visible_lines.start);
-        let end_row = visible_lines.end.saturating_sub(1).min(line_count - 1);
-        let slice_end = text.line_end_offset(end_row);
-        let base0 = fold::doc_to_vis(&folds, slice_start);
-        let total = fold::doc_to_vis(&folds, slice_end).saturating_sub(base0);
+        // dqjd S3 契约 v2：styles = **绝对 vis 坐标**（从 doc 0 起）——
+        // vendor 链按行 vis 区间直取切片，不再依赖视口切片基准（旧 base0
+        // 相对坐标在滚动 + 折叠叠加时错位）。visible_lines 参数保留（签名
+        // 兼容），样式计算不再用。
+        let total = fold::doc_to_vis(&folds, text.len());
 
-        // span → 折叠坐标系（可见切片为原点）→ 全覆盖分区 run
+        // span → 绝对 vis 坐标 → 全覆盖分区 run
         let t = crate::appearance::theme::theme();
         let mut overlaps = Vec::with_capacity(spans.len());
         for s in &spans {
             let Some(hl) = crate::editor::markdown::highlight(s.style, t) else {
                 continue;
             };
-            let a = fold::doc_to_vis(&folds, s.range.start).saturating_sub(base0);
-            let b = fold::doc_to_vis(&folds, s.range.end).saturating_sub(base0);
+            let a = fold::doc_to_vis(&folds, s.range.start);
+            let b = fold::doc_to_vis(&folds, s.range.end);
             if a < b && a < total {
                 overlaps.push((a..b.min(total), hl));
             }
